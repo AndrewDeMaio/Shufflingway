@@ -30,6 +30,7 @@ public record CardData(
         String primingTarget,
         List<String> primingCost,
         List<ActionAbility> actionAbilities,
+        List<FieldAbility>  fieldAbilities,
         String job,
         String category1,
         String category2,
@@ -54,6 +55,7 @@ public record CardData(
         warpCost        = List.copyOf(warpCost);
         primingCost     = List.copyOf(primingCost);
         actionAbilities = List.copyOf(actionAbilities);
+        fieldAbilities  = List.copyOf(fieldAbilities);
         job       = job       != null ? job       : "";
         category1 = category1 != null ? category1 : "";
         category2 = category2 != null ? category2 : "";
@@ -383,6 +385,55 @@ public record CardData(
     static final Pattern WHILE_CARD_IN_HAND_PATTERN = Pattern.compile(
         "(?i)You\\s+can\\s+only\\s+use\\s+this\\s+ability\\s+if\\s+.+?\\s+is\\s+in\\s+your\\s+hand[.!]?"
     );
+
+    /**
+     * Matches a single "When [card] [trigger], [optional you/opponent may] [effect]" block.
+     * <ul>
+     *   <li>{@code card}    — card name in the trigger (may contain spaces)</li>
+     *   <li>{@code trigger} — "attack(s)", "block(s)", "attacks? or blocks?", or "enters? the field"</li>
+     *   <li>{@code youmay}  — "you may " or "your opponent may " prefix (optional)</li>
+     *   <li>{@code effect}  — remaining effect text</li>
+     * </ul>
+     * The effect capture ends at the next field-ability header, an action-ability cost sequence
+     * ({@code 《token》:}), or end of input.
+     */
+    private static final Pattern FIELD_ABILITY_PATTERN = Pattern.compile(
+        "(?i)When\\s+(?<card>[^,]+?)\\s+(?<trigger>attacks?(?:\\s+or\\s+blocks?)?|blocks?|enters?\\s+the\\s+field)\\s*,\\s+" +
+        "(?<youmay>(?:you|your\\s+opponent)\\s+may\\s+)?" +
+        "(?<effect>.+?)\\s*" +
+        "(?=\\s*When\\s+[^,]+?\\s+(?:attacks?|blocks?|enters?)|\\s*(?:《[^》]+》)+\\s*:|\\s*$)",
+        Pattern.DOTALL
+    );
+
+    /**
+     * Parses all Field Abilities ("When X Y, Z") from {@code textEn}.
+     * The returned list is immutable.
+     */
+    public static List<FieldAbility> parseFieldAbilities(String textEn) {
+        if (textEn == null || textEn.isBlank()) return List.of();
+        List<FieldAbility> result = new ArrayList<>();
+        Matcher m = FIELD_ABILITY_PATTERN.matcher(textEn);
+        while (m.find()) {
+            String card      = m.group("card").trim();
+            String triggerRaw = m.group("trigger").trim().toLowerCase(java.util.Locale.ROOT);
+            // Normalise trigger to a canonical form
+            String trigger;
+            if (triggerRaw.contains("attack") && triggerRaw.contains("block")) trigger = "attacks or blocks";
+            else if (triggerRaw.contains("attack"))                              trigger = "attacks";
+            else if (triggerRaw.contains("block"))                               trigger = "blocks";
+            else                                                                  trigger = "enters the field";
+
+            String  youMayRaw   = m.group("youmay");
+            boolean opponentMay = youMayRaw != null
+                    && youMayRaw.trim().toLowerCase(java.util.Locale.ROOT).startsWith("your opponent");
+            boolean youMay      = youMayRaw != null && !opponentMay;
+
+            String effect = m.group("effect").trim();
+            if (effect.isEmpty()) continue;
+            result.add(new FieldAbility(card, trigger, youMay, opponentMay, effect));
+        }
+        return List.copyOf(result);
+    }
 
     /** Parses a "remove … from the game" cost phrase into a list of {@link RemoveFromGameCost} items. */
     private static List<RemoveFromGameCost> parseRemoveFromGameCosts(String raw) {

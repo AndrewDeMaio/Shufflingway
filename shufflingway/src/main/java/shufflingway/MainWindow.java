@@ -961,7 +961,7 @@ public class MainWindow {
 							card.multicard(), CardData.parseTraits(tx),
 							CardData.parseWarpValue(tx), CardData.parseWarpCost(tx),
 							CardData.parsePrimingTarget(tx), CardData.parsePrimingCost(tx),
-							CardData.parseActionAbilities(tx), card.job(), card.category1(), card.category2(), tx);
+							CardData.parseActionAbilities(tx), CardData.parseFieldAbilities(tx), card.job(), card.category1(), card.category2(), tx);
 					if (card.isLb()) lb.add(cd);
 					else             main.add(cd);
 				}
@@ -980,7 +980,7 @@ public class MainWindow {
 								card.multicard(), CardData.parseTraits(tx),
 								CardData.parseWarpValue(tx), CardData.parseWarpCost(tx),
 								CardData.parsePrimingTarget(tx), CardData.parsePrimingCost(tx),
-								CardData.parseActionAbilities(tx), card.job(), card.category1(), card.category2(), tx);
+								CardData.parseActionAbilities(tx), CardData.parseFieldAbilities(tx), card.job(), card.category1(), card.category2(), tx);
 						if (card.isLb()) p2Lb.add(cd);
 						else             p2Main.add(cd);
 					}
@@ -2760,6 +2760,7 @@ public class MainWindow {
 		if (blockerIdx >= 0) {
 			CardData blocker = p2ForwardCards.get(blockerIdx);
 			logEntry("[P2] " + blocker.name() + " blocks!");
+			triggerFieldAbilitiesForBlock(blocker, false);
 			resolveCombat(attacker, true, attackerIdx, blocker, false, blockerIdx);
 		} else {
 			p2TakeDamage();
@@ -2843,6 +2844,7 @@ public class MainWindow {
 			CardData top = p1ForwardPrimedTop.get(chosen[0]);
 			CardData blocker = top != null ? top : p1ForwardCards.get(chosen[0]);
 			p1BlockingIdx = chosen[0];
+			triggerFieldAbilitiesForBlock(blocker, true);
 			resolveCombat(attacker, false, attackerIdx, blocker, true, chosen[0]);
 			p1BlockingIdx = -1;
 		} else {
@@ -5705,6 +5707,73 @@ public class MainWindow {
 		return canAffordAbilityCost(ability, isP1);
 	}
 
+	// -------------------------------------------------------------------------
+	// Field Ability triggers
+	// -------------------------------------------------------------------------
+
+	private void triggerFieldAbilitiesForEntersField(CardData card, boolean isP1) {
+		for (FieldAbility fa : card.fieldAbilities()) {
+			if (!fa.triggerCard().equalsIgnoreCase(card.name())) continue;
+			if (fa.trigger().contains("enter")) executeFieldAbility(fa, card, isP1);
+		}
+	}
+
+	private void triggerFieldAbilitiesForAttack(CardData card, boolean isP1) {
+		for (FieldAbility fa : card.fieldAbilities()) {
+			if (!fa.triggerCard().equalsIgnoreCase(card.name())) continue;
+			if (fa.trigger().contains("attack")) executeFieldAbility(fa, card, isP1);
+		}
+	}
+
+	private void triggerFieldAbilitiesForBlock(CardData card, boolean isP1) {
+		for (FieldAbility fa : card.fieldAbilities()) {
+			if (!fa.triggerCard().equalsIgnoreCase(card.name())) continue;
+			if (fa.trigger().contains("block")) executeFieldAbility(fa, card, isP1);
+		}
+	}
+
+	/**
+	 * Resolves a triggered field ability.  When the ability is optional ({@code youMay} or
+	 * {@code opponentMay}), P1 is shown a Decline / OK dialog; the AI always accepts.
+	 *
+	 * <p>For {@code opponentMay} effects the execution context is flipped to the opponent's
+	 * perspective so that "play from hand" and similar effects target the correct player.
+	 */
+	private void executeFieldAbility(FieldAbility fa, CardData source, boolean isP1) {
+		// opponentMay effects run from the opponent's context
+		boolean effectIsP1 = fa.opponentMay() ? !isP1 : isP1;
+
+		java.util.function.Consumer<GameContext> effect = ActionResolver.parse(fa.effectText(), source);
+		if (effect == null) {
+			logEntry("[FieldAbility] Unrecognized effect: " + fa.effectText());
+			return;
+		}
+
+		// P1 (human) decides when: they control the card and "you may", or
+		// they are the opponent of P2's "your opponent may" ability.
+		boolean p1GetsDialog = (fa.youMay() && isP1) || (fa.opponentMay() && !isP1);
+		if (p1GetsDialog) {
+			String prompt = (fa.youMay() ? "You may: " : "Your opponent may: ") + fa.effectText();
+			int choice = JOptionPane.showOptionDialog(frame,
+					source.name() + " — " + prompt,
+					"Field Ability",
+					JOptionPane.DEFAULT_OPTION,
+					JOptionPane.PLAIN_MESSAGE,
+					null,
+					new Object[]{"OK", "Decline"},
+					"OK");
+			if (choice != 0) {
+				logEntry("[FieldAbility] " + source.name() + " — optional effect declined");
+				return;
+			}
+		} else if (fa.youMay() || fa.opponentMay()) {
+			logEntry("[FieldAbility] [AI] auto-accepts optional ability");
+		}
+
+		logEntry("[FieldAbility] " + source.name() + " — " + fa.effectText());
+		effect.accept(buildGameContext(effectIsP1));
+	}
+
 	private boolean canActivateHandAbility(ActionAbility ability, CardData source, boolean isP1) {
 		if (ability.yourTurnOnly() && !isP1) return false;
 		if (ability.oncePerTurn()
@@ -8184,6 +8253,7 @@ public class MainWindow {
 		p1ForwardPanel.repaint();
 
 		refreshP1ForwardSlot(idx);
+		triggerFieldAbilitiesForEntersField(card, true);
 	}
 
 	/** Adds a Monster card to P1's monster zone (right side of forward zone, newest leftmost). */
@@ -8433,6 +8503,8 @@ public class MainWindow {
 				animateDullForward(idx, null);
 			}
 		}
+		for (int idx : selection)
+			triggerFieldAbilitiesForAttack(p1ForwardCards.get(idx), true);
 		if (selection.size() == 1) {
 			int idx = selection.get(0);
 			CardData attacker = p1ForwardCards.get(idx);
@@ -9386,6 +9458,7 @@ public class MainWindow {
 		p2ForwardPanel.repaint();
 
 		refreshP2ForwardSlot(idx);
+		triggerFieldAbilitiesForEntersField(card, false);
 	}
 
 	private void placeP2CardInFirstBackupSlot(CardData card) {
@@ -9662,6 +9735,7 @@ public class MainWindow {
 					p2ForwardStates.set(i, CardState.DULL);
 					animateDullP2Forward(i, null);
 				}
+				triggerFieldAbilitiesForAttack(attacker, false);
 				final int fi = i;
 				p1ChooseBlockerDialog(attacker, fi, () -> {
 					if (!gameState.isP1GameOver()) step(() -> doAttackPhase(onDone));
