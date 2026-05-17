@@ -292,11 +292,15 @@ public record CardData(
             boolean oncePerTurn       = ONCE_PER_TURN_PATTERN.matcher(effectRaw).find();
             boolean mainPhaseOnly     = MAIN_PHASE_ONLY_PATTERN.matcher(effectRaw).find();
             boolean whilePartyAtk     = WHILE_PARTY_ATTACKING_PATTERN.matcher(effectRaw).find();
-            Matcher wAtkM             = whilePartyAtk ? null : WHILE_CARD_ATTACKING_PATTERN.matcher(effectRaw);
-            String  whileCardAtk      = (!whilePartyAtk && wAtkM.find()) ? wAtkM.group("card").trim() : null;
+            String  whileCardAtk      = null;
+            if (!whilePartyAtk) {
+                Matcher wAtkM = WHILE_CARD_ATTACKING_PATTERN.matcher(effectRaw);
+                if (wAtkM.find()) whileCardAtk = wAtkM.group("card").trim();
+            }
             Matcher wBlkM             = WHILE_CARD_BLOCKING_PATTERN.matcher(effectRaw);
             String  whileCardBlk      = wBlkM.find() ? wBlkM.group("card").trim() : null;
-            result.add(new ActionAbility(abilityName, requiresDull, isSpecial, crystalCost, hasXCost, cpCost, breakZoneCosts, discardCosts, removeFromGameCosts, returnToHandCosts, yourTurnOnly, oncePerTurn, mainPhaseOnly, whileCardAtk, whileCardBlk, whilePartyAtk, effectRaw));
+            boolean whileCardInHand   = WHILE_CARD_IN_HAND_PATTERN.matcher(effectRaw).find();
+            result.add(new ActionAbility(abilityName, requiresDull, isSpecial, crystalCost, hasXCost, cpCost, breakZoneCosts, discardCosts, removeFromGameCosts, returnToHandCosts, yourTurnOnly, oncePerTurn, mainPhaseOnly, whileCardAtk, whileCardBlk, whilePartyAtk, whileCardInHand, effectRaw));
         }
         return List.copyOf(result);
     }
@@ -375,6 +379,9 @@ public record CardData(
     );
     static final Pattern WHILE_CARD_BLOCKING_PATTERN = Pattern.compile(
         "(?i)You\\s+can\\s+only\\s+use\\s+this\\s+ability\\s+while\\s+(?<card>.+?)\\s+is\\s+blocking[.!]?"
+    );
+    static final Pattern WHILE_CARD_IN_HAND_PATTERN = Pattern.compile(
+        "(?i)You\\s+can\\s+only\\s+use\\s+this\\s+ability\\s+if\\s+.+?\\s+is\\s+in\\s+your\\s+hand[.!]?"
     );
 
     /** Parses a "remove … from the game" cost phrase into a list of {@link RemoveFromGameCost} items. */

@@ -3740,6 +3740,18 @@ public class MainWindow {
 			menu.add(warpItem);
 		}
 
+		for (ActionAbility ability : card.actionAbilities()) {
+			if (!ability.whileCardInHand()) continue;
+			JMenuItem item = new JMenuItem("Use: " + buildAbilityMenuLabel(ability));
+			item.setEnabled(canActivateHandAbility(ability, card, true));
+			item.addActionListener(ae -> {
+				hideZoom();
+				if (handPopup != null) { handPopup.dispose(); handPopup = null; }
+				showActionAbilityPaymentDialog(ability, card, () -> {}, true);
+			});
+			menu.add(item);
+		}
+
 		menu.addPopupMenuListener(new PopupMenuListener() {
 			@Override public void popupMenuWillBecomeVisible(PopupMenuEvent e) {}
 			@Override public void popupMenuCanceled(PopupMenuEvent e) {
@@ -5693,6 +5705,23 @@ public class MainWindow {
 		return canAffordAbilityCost(ability, isP1);
 	}
 
+	private boolean canActivateHandAbility(ActionAbility ability, CardData source, boolean isP1) {
+		if (ability.yourTurnOnly() && !isP1) return false;
+		if (ability.oncePerTurn()
+				&& usedOncePerTurnAbilities.getOrDefault(source, java.util.Set.of()).contains(ability.effectText()))
+			return false;
+		GameState.GamePhase p = gameState.getCurrentPhase();
+		if (p != GameState.GamePhase.MAIN_1 && p != GameState.GamePhase.MAIN_2) return false;
+		if (ability.crystalCost() > 0 && playerCrystals(isP1) < ability.crystalCost()) return false;
+		for (BreakZoneCost bz : ability.breakZoneCosts())
+			if (!bzCostSatisfied(bz, isP1)) return false;
+		for (RemoveFromGameCost rfg : ability.removeFromGameCosts())
+			if (!rfgCostSatisfied(rfg, isP1)) return false;
+		for (ReturnToHandCost rth : ability.returnToHandCosts())
+			if (!rfthCostSatisfied(rth, isP1)) return false;
+		return canAffordAbilityCost(ability, isP1);
+	}
+
 	/**
 	 * Builds the BZ-target list for ability payment by finding the source card's
 	 * current field position.  The BZ cost is always "put itself into the Break Zone",
@@ -5990,6 +6019,7 @@ public class MainWindow {
 		boolean isAttackPhase = phase == GameState.GamePhase.ATTACK;
 
 		for (ActionAbility ability : abilities) {
+			if (ability.whileCardInHand()) continue; // only usable from hand, not from the field
 			boolean hasAttackRestriction = ability.whileCardAttacking() != null
 					|| ability.whileCardBlocking() != null || ability.whilePartyAttacking();
 			boolean phaseOk = hasAttackRestriction ? isAttackPhase : isMainPhase;

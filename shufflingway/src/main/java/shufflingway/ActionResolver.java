@@ -926,6 +926,7 @@ public class ActionResolver {
         if (CardData.WHILE_PARTY_ATTACKING_PATTERN.matcher(effectText).matches()) return "WhilePartyAttacking";
         if (CardData.WHILE_CARD_ATTACKING_PATTERN.matcher(effectText).matches())  return "WhileCardAttacking";
         if (CardData.WHILE_CARD_BLOCKING_PATTERN.matcher(effectText).matches())   return "WhileCardBlocking";
+        if (CardData.WHILE_CARD_IN_HAND_PATTERN.matcher(effectText).matches())   return "WhileCardInHand";
         if (tryParseDealDamageToForwards(effectText) != null)               return "DealDamageToForwards";
 
         Matcher chooseM = CHOOSE_CHARACTER_PATTERN.matcher(effectText);
@@ -999,6 +1000,7 @@ public class ActionResolver {
         }
         Matcher wBlkM = CardData.WHILE_CARD_BLOCKING_PATTERN.matcher(effectText);
         if (wBlkM.find()) parts.add("whileCardBlocking:" + wBlkM.group("card"));
+        if (CardData.WHILE_CARD_IN_HAND_PATTERN.matcher(effectText).find()) parts.add("whileCardInHand");
         return parts.isEmpty() ? "" : " [" + String.join(", ", parts) + "]";
     }
 
