@@ -694,7 +694,7 @@ public class DeckManager extends JDialog {
         boolean isLb  = lbSerials.contains(serial);
         int current   = getCardCountInDeck(serial);
 
-        if (current >= MAX_COPIES) {
+        if (getCombinedCardCountInDeck(serial) >= MAX_COPIES) {
             JOptionPane.showMessageDialog(this,
                     "You already have " + MAX_COPIES + " copies of this card in the deck.");
             return;
@@ -741,7 +741,7 @@ public class DeckManager extends JDialog {
     private int computeMaxAddable(String serial) {
         if (selectedDeckId < 0) return 0;
         boolean isLb = lbSerials.contains(serial);
-        int current  = getCardCountInDeck(serial);
+        int current  = getCombinedCardCountInDeck(serial);
         int byLimit  = MAX_COPIES - current;
         int byZone   = isLb ? MAX_LB_DECK_SIZE - getLbDeckTotal()
                             : MAX_DECK_SIZE    - getMainDeckTotal();
@@ -820,6 +820,34 @@ public class DeckManager extends JDialog {
                 return (Integer) deckModel.getValueAt(i, 0);
         }
         return 0;
+    }
+
+    /** Splits a serial on '/' and returns the trimmed components. */
+    private static Set<String> splitSerial(String serial) {
+        Set<String> parts = new java.util.HashSet<>();
+        for (String part : serial.split("/"))
+            parts.add(part.trim());
+        return parts;
+    }
+
+    /**
+     * Returns the total copies in the deck for a card identity, summing all deck entries
+     * whose serial shares at least one component with the given serial after splitting on '/'.
+     * This ensures dual-serial cards like "23-007C / 15-007C" are counted against "15-007C".
+     */
+    private int getCombinedCardCountInDeck(String serial) {
+        Set<String> incoming = splitSerial(serial);
+        int total = 0;
+        for (int i = 0; i < deckModel.getRowCount(); i++) {
+            String deckSerial = (String) deckModel.getValueAt(i, 1);
+            for (String part : splitSerial(deckSerial)) {
+                if (incoming.contains(part)) {
+                    total += (Integer) deckModel.getValueAt(i, 0);
+                    break;
+                }
+            }
+        }
+        return total;
     }
 
     private int getMainDeckTotal() {
