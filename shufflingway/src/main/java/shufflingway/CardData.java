@@ -401,7 +401,7 @@ public record CardData(
         "(?i)When\\s+(?<card>[^,]+?)\\s+(?<trigger>attacks?(?:\\s+or\\s+blocks?)?|blocks?|enters?\\s+the\\s+field)\\s*,\\s+" +
         "(?<youmay>(?:you|your\\s+opponent)\\s+may\\s+)?" +
         "(?<effect>.+?)\\s*" +
-        "(?=\\s*When\\s+[^,]+?\\s+(?:attacks?|blocks?|enters?)|\\s*(?:《[^》]+》)+\\s*:|\\s*$)",
+        "(?=\\s*\\[\\[br\\]\\]|\\s*When\\s+[^,]+?\\s+(?:attacks?|blocks?|enters?)|\\s*(?:《[^》]+》)+\\s*:|\\s*$)",
         Pattern.DOTALL
     );
 
@@ -430,7 +430,7 @@ public record CardData(
                     && youMayRaw.trim().toLowerCase(java.util.Locale.ROOT).startsWith("your opponent");
             boolean youMay      = youMayRaw != null && !opponentMay;
 
-            String effect = m.group("effect").trim();
+            String effect = SUMMON_MARKUP.matcher(m.group("effect").trim()).replaceAll("").trim();
             if (effect.isEmpty()) continue;
             result.add(new FieldAbility(card, trigger, youMay, opponentMay, effect));
         }
