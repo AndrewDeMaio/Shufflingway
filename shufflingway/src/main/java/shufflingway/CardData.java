@@ -597,6 +597,7 @@ public record CardData(
         "(?<trigger>" +
             "attacks?(?:\\s+or\\s+blocks?)?|blocks?" +
             "|enters?\\s+the\\s+field" +
+            "|leaves?\\s+the\\s+field" +
             "|is\\s+put\\s+(?:from\\s+the\\s+field\\s+)?into\\s+the\\s+Break\\s+Zone" +
             "|casts?\\s+a\\s+Summon" +
             "|is\\s+put\\s+into\\s+(?:your\\s+)?Damage\\s+Zone" +
@@ -604,7 +605,7 @@ public record CardData(
         ")\\s*,\\s+" +
         "(?<youmay>(?:you|your\\s+opponent)\\s+may\\s+)?" +
         "(?<effect>.+?)\\s*" +
-        "(?=\\s*\\[\\[br\\]\\]|\\s*When\\s+[^,]+?\\s+(?:attacks?|blocks?|enters?|is\\s+(?:put|removed))|\\s*(?:《[^》]+》)+\\s*:|\\s*$)",
+        "(?=\\s*\\[\\[br\\]\\]|\\s*When\\s+[^,]+?\\s+(?:attacks?|blocks?|enters?|leaves?|is\\s+(?:put|removed))|\\s*(?:《[^》]+》)+\\s*:|\\s*$)",
         Pattern.DOTALL
     );
 
@@ -616,7 +617,7 @@ public record CardData(
         "(?i)When\\s+a\\s+Warp\\s+Counter\\s+is\\s+removed\\s+from\\s+(?<target>[^,]+?)\\s*,\\s+" +
         "(?<youmay>(?:you|your\\s+opponent)\\s+may\\s+)?" +
         "(?<effect>.+?)\\s*" +
-        "(?=\\s*\\[\\[br\\]\\]|\\s*When\\s+[^,]+?\\s+(?:attacks?|blocks?|enters?|is\\s+(?:put|removed))|\\s*(?:《[^》]+》)+\\s*:|\\s*$)",
+        "(?=\\s*\\[\\[br\\]\\]|\\s*When\\s+[^,]+?\\s+(?:attacks?|blocks?|enters?|leaves?|is\\s+(?:put|removed))|\\s*(?:《[^》]+》)+\\s*:|\\s*$)",
         Pattern.DOTALL
     );
 
@@ -652,6 +653,7 @@ public record CardData(
             else if (triggerRaw.contains("break zone"))                             trigger = "put into break zone";
             else if (triggerRaw.contains("summon"))                                 trigger = "cast summon";
             else if (triggerRaw.contains("damage zone"))                            trigger = "damage zone";
+            else if (triggerRaw.contains("leaves"))                                   trigger = "leaves the field";
             else if (triggerRaw.contains("warp"))                                   trigger = "warp placed";
             else                                                                     trigger = "enters the field";
 

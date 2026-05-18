@@ -2023,6 +2023,7 @@ public class MainWindow {
 			for (int i = 0; i < p1ForwardCards.size(); i++) refreshP1ForwardSlot(i);
 		}
 		refreshP1BreakLabel();
+		triggerFieldAbilitiesForLeavesField(card, true);
 		triggerFieldAbilitiesForBreakZone(card, true);
 	}
 
@@ -2076,6 +2077,7 @@ public class MainWindow {
 			for (int i = 0; i < p2ForwardCards.size(); i++) refreshP2ForwardSlot(i);
 		}
 		refreshP2BreakLabel();
+		triggerFieldAbilitiesForLeavesField(card, false);
 		triggerFieldAbilitiesForBreakZone(card, false);
 	}
 
@@ -2149,6 +2151,7 @@ public class MainWindow {
 			for (int i = 0; i < p1ForwardCards.size(); i++) refreshP1ForwardSlot(i);
 		}
 		refreshP1DeckLabel();
+		triggerFieldAbilitiesForLeavesField(card, true);
 	}
 
 	private void returnP2ForwardToDeck(int idx, boolean toBottom) {
@@ -2202,6 +2205,7 @@ public class MainWindow {
 			for (int i = 0; i < p2ForwardCards.size(); i++) refreshP2ForwardSlot(i);
 		}
 		refreshP2DeckLabel();
+		triggerFieldAbilitiesForLeavesField(card, false);
 	}
 
 	private void returnP1ForwardUnderDeckTop(int idx, int position) {
@@ -2276,6 +2280,7 @@ public class MainWindow {
 			for (int i = 0; i < p1ForwardCards.size(); i++) refreshP1ForwardSlot(i);
 		}
 		refreshP1DeckLabel();
+		triggerFieldAbilitiesForLeavesField(card, true);
 	}
 
 	private void returnP2ForwardUnderDeckTop(int idx, int position) {
@@ -2331,6 +2336,7 @@ public class MainWindow {
 			for (int i = 0; i < p2ForwardCards.size(); i++) refreshP2ForwardSlot(i);
 		}
 		refreshP2DeckLabel();
+		triggerFieldAbilitiesForLeavesField(card, false);
 	}
 
 	private void searchDeckForCard(boolean inclForwards, boolean inclBackups,
@@ -2537,6 +2543,7 @@ public class MainWindow {
 			for (int i = 0; i < p1ForwardCards.size(); i++) refreshP1ForwardSlot(i);
 		}
 		refreshP1HandLabel();
+		triggerFieldAbilitiesForLeavesField(card, true);
 	}
 
 	private void returnP2ForwardToHand(int idx) {
@@ -2588,6 +2595,7 @@ public class MainWindow {
 			for (int i = 0; i < p2ForwardCards.size(); i++) refreshP2ForwardSlot(i);
 		}
 		refreshP2HandCountLabel();
+		triggerFieldAbilitiesForLeavesField(card, false);
 	}
 
 	private void returnP1BackupToHand(int idx) {
@@ -2601,6 +2609,7 @@ public class MainWindow {
 		p1BackupFrozen[idx] = false;
 		if (p1BackupLabels[idx] != null) { p1BackupLabels[idx].setIcon(null); p1BackupLabels[idx].setText(null); }
 		refreshP1HandLabel();
+		triggerFieldAbilitiesForLeavesField(c, true);
 	}
 
 	private void returnP2BackupToHand(int idx) {
@@ -2613,6 +2622,7 @@ public class MainWindow {
 		p2BackupStates[idx] = CardState.ACTIVE;
 		p2BackupFrozen[idx] = false;
 		if (p2BackupLabels[idx] != null) { p2BackupLabels[idx].setIcon(null); p2BackupLabels[idx].setText(null); }
+		triggerFieldAbilitiesForLeavesField(c, false);
 	}
 
 	private void returnP1MonsterToHand(int idx) {
@@ -2628,6 +2638,7 @@ public class MainWindow {
 		JLabel lbl = p1MonsterLabels.remove(idx);
 		if (p1MonsterPanel != null) { p1MonsterPanel.remove(lbl); p1MonsterPanel.revalidate(); p1MonsterPanel.repaint(); }
 		refreshP1HandLabel();
+		triggerFieldAbilitiesForLeavesField(c, true);
 	}
 
 	private void returnP2MonsterToHand(int idx) {
@@ -2642,6 +2653,7 @@ public class MainWindow {
 		p2MonsterUrls.remove(idx);
 		JLabel lbl = p2MonsterLabels.remove(idx);
 		if (p2MonsterPanel != null) { p2MonsterPanel.remove(lbl); p2MonsterPanel.revalidate(); p2MonsterPanel.repaint(); }
+		triggerFieldAbilitiesForLeavesField(c, false);
 	}
 
 	private int effectiveP1ForwardPower(int idx) {
@@ -5988,6 +6000,7 @@ public class MainWindow {
 			p2BackupLabels[idx].setText(null);
 		}
 		refreshP2BreakLabel();
+		triggerFieldAbilitiesForLeavesField(c, false);
 		triggerFieldAbilitiesForBreakZone(c, false);
 	}
 
@@ -6159,6 +6172,18 @@ public class MainWindow {
 			if (!fa.trigger().equals("put into break zone")) continue;
 			if (!matchesBreakZoneSubject(fa, broken, brokenIsP1, ownerIsP1)) continue;
 			executeFieldAbility(fa, card, ownerIsP1);
+		}
+	}
+
+	/**
+	 * Fires "leaves the field" field abilities that belong to {@code departing} itself.
+	 * Call this after the card has been removed from all field tracking lists.
+	 */
+	private void triggerFieldAbilitiesForLeavesField(CardData departing, boolean isP1) {
+		for (FieldAbility fa : departing.fieldAbilities()) {
+			if (!fa.trigger().equals("leaves the field")) continue;
+			if (!fa.triggerCard().equalsIgnoreCase(departing.name())) continue;
+			executeFieldAbility(fa, departing, isP1);
 		}
 	}
 
@@ -6839,6 +6864,7 @@ public class MainWindow {
 			p1BackupLabels[idx].setText(null);
 		}
 		refreshP1BreakLabel();
+		triggerFieldAbilitiesForLeavesField(c, true);
 		triggerFieldAbilitiesForBreakZone(c, true);
 	}
 
@@ -6859,6 +6885,7 @@ public class MainWindow {
 			p1MonsterPanel.repaint();
 		}
 		refreshP1BreakLabel();
+		triggerFieldAbilitiesForLeavesField(c, true);
 		triggerFieldAbilitiesForBreakZone(c, true);
 	}
 
