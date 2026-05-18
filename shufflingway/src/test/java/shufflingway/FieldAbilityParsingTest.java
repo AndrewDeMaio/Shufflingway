@@ -199,7 +199,8 @@ public class FieldAbilityParsingTest {
             boolean ok   = ActionResolver.parse(fa.effectText(), source) != null;
             String  desc = ActionResolver.fullDescription(fa.effectText(), source);
             sb.append("  [").append(ok ? "OK" : "--").append("] ").append(fieldAbilityText(fa)).append('\n');
-            sb.append("       ").append(desc != null ? desc : "(none)").append('\n');
+            sb.append("       [").append(fa.trigger()).append("] ")
+              .append(desc != null ? desc : "(none)").append('\n');
         }
         return sb.toString();
     }
@@ -208,7 +209,7 @@ public class FieldAbilityParsingTest {
         String status = desc == null ? "--" : desc.contains("?") ? "??" : "OK";
         return "  Card: " + cardName + '\n' +
                "  [" + status + "] " + fieldAbilityText(fa) + '\n' +
-               "       " + (desc != null ? desc : "(none)") + '\n';
+               "       [" + fa.trigger() + "] " + (desc != null ? desc : "(none)") + '\n';
     }
 
     /** Reconstructs the original trigger line for display. */
