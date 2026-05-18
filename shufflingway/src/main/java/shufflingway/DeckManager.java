@@ -163,7 +163,7 @@ public class DeckManager extends JDialog {
             lbSerials = db.getLbSerials();
             loadDeckList();
         } catch (SQLException e) {
-            JOptionPane.showMessageDialog(this, "Error opening database:\n" + e.getMessage(),
+            JOptionPane.showMessageDialog(parent, "Error opening database:\n" + e.getMessage(),
                     "Database Error", JOptionPane.ERROR_MESSAGE);
         }
 

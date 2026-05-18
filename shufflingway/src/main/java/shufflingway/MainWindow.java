@@ -3750,6 +3750,22 @@ public class MainWindow {
 			menu.add(warpItem);
 		}
 
+		if (card.altCrystalCost() > 0) {
+			int ac = card.altCrystalCost(), acp = card.altCpCost();
+			String crystalStr = "《C》".repeat(ac);
+			String altLabel = "Play (Alt: " + crystalStr + (acp > 0 ? " + " + acp + " CP" : "") + ")";
+			JMenuItem altItem = new JMenuItem(altLabel);
+			altItem.setEnabled(isMainPhase && !nameConflict && !lightDarkConflict
+					&& canAffordAltCost(card, handIdx)
+					&& (!card.isBackup() || hasAvailableBackupSlot()));
+			altItem.addActionListener(ae -> {
+				hideZoom();
+				if (handPopup != null) { handPopup.dispose(); handPopup = null; }
+				showAltCostPlayDialog(card, handIdx);
+			});
+			menu.add(altItem);
+		}
+
 		for (ActionAbility ability : card.actionAbilities()) {
 			if (!ability.whileCardInHand()) continue;
 			JMenuItem item = new JMenuItem("Use: " + buildAbilityMenuLabel(ability));
@@ -3929,6 +3945,30 @@ public class MainWindow {
 	}
 
 	/**
+	 * Returns true when the player can pay the alternate Crystal cast cost for {@code card}.
+	 * For the 0-CP case this is purely a crystal check; for the reduced-CP case it also
+	 * verifies there are enough element-matching sources to cover {@code card.altCpCost()}.
+	 */
+	private boolean canAffordAltCost(CardData card, int handIdx) {
+		if (playerCrystals(true) < card.altCrystalCost()) return false;
+		int altCp = card.altCpCost();
+		if (altCp == 0) return true;
+		// Reduced-CP check: count element-matching sources (banked CP + backups + hand discards)
+		String[] elems = card.elements();
+		int sources = 0;
+		for (String e : elems) sources += gameState.getP1CpForElement(e);
+		for (int i = 0; i < p1BackupCards.length; i++)
+			if (p1BackupCards[i] != null && p1BackupStates[i] == CardState.ACTIVE
+					&& matchesAnyElement(p1BackupCards[i], elems)) sources++;
+		for (int i = 0; i < gameState.getP1Hand().size(); i++) {
+			if (i == handIdx) continue;
+			CardData h = gameState.getP1Hand().get(i);
+			if (!h.isLightOrDark() && matchesAnyElement(h, elems)) sources += 2;
+		}
+		return sources >= altCp;
+	}
+
+	/**
 	 * Returns true if the player can afford the Warp alternate cost of {@code card}.
 	 * Warp cost is a list of element CP requirements (e.g. ["Lightning"] = 1 Lightning CP).
 	 */
@@ -3995,6 +4035,222 @@ public class MainWindow {
 	 * Opens a payment dialog for the Warp alternate cost and, on confirm,
 	 * moves the card from hand to the Removed-From-Play zone with Warp counters.
 	 */
+	/**
+	 * Handles the alternate Crystal cast cost.
+	 * <ul>
+	 *   <li>Crystal-only (altCpCost == 0): confirms and spends crystals, then plays for free.</li>
+	 *   <li>Crystal + reduced CP (altCpCost &gt; 0): shows a backup/discard selection dialog for
+	 *       the reduced CP amount, spending crystals on confirm.</li>
+	 * </ul>
+	 */
+	private void showAltCostPlayDialog(CardData card, int handIdx) {
+		int altC   = card.altCrystalCost();
+		int altCp  = card.altCpCost();
+		String crystalStr = "《C》".repeat(altC);
+		String costDesc   = crystalStr + (altCp > 0 ? " + " + altCp + " CP" : "");
+
+		if (altCp == 0) {
+			// Crystal-only: simple confirm then play for free
+			int choice = JOptionPane.showOptionDialog(frame,
+					card.name() + " — Pay " + costDesc + " to cast?",
+					"Alternate Cost",
+					JOptionPane.DEFAULT_OPTION, JOptionPane.PLAIN_MESSAGE, null,
+					new Object[]{"Confirm", "Cancel"}, "Confirm");
+			if (choice != 0) return;
+			playerSpendCrystals(true, altC);
+			refreshCrystalDisplays();
+			executePlay(card, handIdx, Collections.emptyList(), Collections.emptyList());
+			return;
+		}
+
+		// Crystal + reduced CP: show a payment dialog for altCp of the card's element(s)
+		LinkedHashMap<String, Integer> costByElem = new LinkedHashMap<>();
+		long genericNeeded = 0;
+		if (card.isLightOrDark()) {
+			genericNeeded = altCp;
+		} else {
+			String[] elems = card.elements();
+			int perElem = altCp / elems.length;
+			int remainder = altCp % elems.length;
+			for (int i = 0; i < elems.length; i++)
+				costByElem.put(elems[i], perElem + (i < remainder ? 1 : 0));
+		}
+		String[] elems = costByElem.keySet().toArray(String[]::new);
+		final long gn = genericNeeded;
+
+		JDialog dlg = new JDialog(frame, "Alt Cost: " + card.name() + "  (" + costDesc + ")", true);
+		dlg.setResizable(false);
+		dlg.setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
+
+		List<CardData> hand       = gameState.getP1Hand();
+		CardData[]     bkpCards   = playerBackupCards(true);
+		CardState[]    bkpStates  = playerBackupStates(true);
+		String[]       bkpUrls    = playerBackupUrls(true);
+
+		List<Integer> selectedBackups  = new ArrayList<>();
+		List<Integer> selectedDiscards = new ArrayList<>();
+		Map<String, Integer> bankCp    = new LinkedHashMap<>(costByElem);
+		bankCp.replaceAll((k, v) -> 0);
+
+		JLabel   cpLabel    = new JLabel();
+		cpLabel.setFont(FontLoader.loadPixelNESFont(11));
+		cpLabel.setHorizontalAlignment(SwingConstants.CENTER);
+		JButton confirmBtn  = new JButton("Confirm");
+		confirmBtn.setFont(FontLoader.loadPixelNESFont(11));
+		confirmBtn.setEnabled(false);
+
+		List<JLabel>  backupLbls  = new ArrayList<>();
+		List<Integer> backupSlots = new ArrayList<>();
+		List<JLabel>  discardLbls = new ArrayList<>();
+		List<Integer> discardIdxs = new ArrayList<>();
+		boolean[] canAddBackup  = {true};
+		boolean[] canAddDiscard = {true};
+
+		Runnable updateAll = () -> {
+			Map<String, Integer> cp = new LinkedHashMap<>(bankCp);
+			int extra = 0;
+			for (int s : selectedBackups) {
+				if (matchesAnyElement(bkpCards[s], elems))
+					cp.merge(contributingElement(bkpCards[s], elems, cp, costByElem), 1, Integer::sum);
+				else extra++;
+			}
+			for (int idx : selectedDiscards) {
+				if (matchesAnyElement(hand.get(idx), elems))
+					cp.merge(contributingElement(hand.get(idx), elems, cp, costByElem), 2, Integer::sum);
+				else extra += 2;
+			}
+			int total = cp.values().stream().mapToInt(Integer::intValue).sum() + extra;
+			int maxAllowed = altCp + elems.length + (altCp % 2);
+			canAddBackup[0]  = total < altCp;
+			canAddDiscard[0] = (total + 2 <= maxAllowed) && (total < altCp);
+			boolean satisfied = cp.entrySet().stream().allMatch(en -> en.getValue() >= costByElem.getOrDefault(en.getKey(), 0));
+			confirmBtn.setEnabled(total >= altCp && satisfied);
+
+			StringBuilder sb = new StringBuilder("CP: " + total + " / " + altCp + "  (");
+			boolean first = true;
+			for (String en : elems) {
+				if (!first) sb.append(", ");
+				sb.append(en).append(": ").append(cp.getOrDefault(en, 0)).append("/").append(costByElem.get(en));
+				first = false;
+			}
+			if (gn > 0) { if (!first) sb.append(", "); sb.append("any: ").append(Math.min(extra, (int)gn)).append("/").append((int)gn); }
+			if (first) sb.append("free");
+			sb.append(")");
+			cpLabel.setText(sb.toString());
+
+			for (int i = 0; i < backupLbls.size(); i++) {
+				JLabel lbl = backupLbls.get(i); boolean sel = selectedBackups.contains(backupSlots.get(i));
+				lbl.setBorder(BorderFactory.createLineBorder(sel ? Color.YELLOW : (canAddBackup[0] ? Color.GRAY : new Color(80,80,80)), sel?3:1));
+				lbl.setBackground(sel || canAddBackup[0] ? Color.DARK_GRAY : new Color(50,50,50));
+				lbl.setCursor(sel || canAddBackup[0] ? Cursor.getPredefinedCursor(Cursor.HAND_CURSOR) : Cursor.getDefaultCursor());
+			}
+			for (int i = 0; i < discardLbls.size(); i++) {
+				JLabel lbl = discardLbls.get(i); boolean sel = selectedDiscards.contains(discardIdxs.get(i));
+				lbl.setBorder(BorderFactory.createLineBorder(sel ? Color.YELLOW : (canAddDiscard[0] ? Color.GRAY : new Color(80,80,80)), sel?3:1));
+				lbl.setBackground(sel || canAddDiscard[0] ? Color.DARK_GRAY : new Color(50,50,50));
+				lbl.setCursor(sel || canAddDiscard[0] ? Cursor.getPredefinedCursor(Cursor.HAND_CURSOR) : Cursor.getDefaultCursor());
+			}
+		};
+
+		JPanel center = new JPanel(); center.setLayout(new BoxLayout(center, BoxLayout.Y_AXIS));
+
+		List<Integer> eligibleSlots = new ArrayList<>();
+		for (int i = 0; i < bkpCards.length; i++)
+			if (bkpCards[i] != null && bkpCards[i] != card && bkpStates[i] == CardState.ACTIVE
+					&& (gn > 0 || matchesAnyElement(bkpCards[i], elems))) eligibleSlots.add(i);
+
+		if (!eligibleSlots.isEmpty()) {
+			JLabel hdr = new JLabel("Backups — dull for 1 CP each:"); hdr.setFont(FontLoader.loadPixelNESFont(9)); hdr.setAlignmentX(Component.LEFT_ALIGNMENT);
+			JPanel bp = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 6)); bp.setAlignmentX(Component.LEFT_ALIGNMENT);
+			for (int slot : eligibleSlots) {
+				JLabel lbl = new JLabel("...", SwingConstants.CENTER);
+				lbl.setPreferredSize(new Dimension(CARD_W, CARD_H)); lbl.setMinimumSize(new Dimension(CARD_W, CARD_H));
+				lbl.setOpaque(true); lbl.setBackground(Color.DARK_GRAY); lbl.setForeground(Color.WHITE);
+				lbl.setFont(FontLoader.loadPixelNESFont(10)); lbl.setBorder(BorderFactory.createLineBorder(Color.GRAY, 1));
+				lbl.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+				final String url = bkpUrls[slot];
+				lbl.addMouseListener(new MouseAdapter() {
+					@Override public void mousePressed(MouseEvent ev) {
+						if (!selectedBackups.remove(Integer.valueOf(slot)) && canAddBackup[0]) selectedBackups.add(slot);
+						updateAll.run();
+					}
+					@Override public void mouseEntered(MouseEvent ev) { if (lbl.getIcon() != null) showZoomAt(url); }
+					@Override public void mouseExited(MouseEvent ev)  { hideZoom(); }
+				});
+				new SwingWorker<ImageIcon, Void>() {
+					@Override protected ImageIcon doInBackground() throws Exception { Image img = ImageCache.load(url); return img == null ? null : new ImageIcon(img.getScaledInstance(CARD_W, CARD_H, Image.SCALE_SMOOTH)); }
+					@Override protected void done() { try { ImageIcon ic = get(); if (ic != null) { lbl.setIcon(ic); lbl.setText(null); } } catch (InterruptedException | ExecutionException ignored) {} }
+				}.execute();
+				backupLbls.add(lbl); backupSlots.add(slot); bp.add(lbl);
+			}
+			center.add(hdr); center.add(bp);
+		}
+
+		JLabel discHdr = new JLabel("Hand — discard for 2 CP each:"); discHdr.setFont(FontLoader.loadPixelNESFont(9)); discHdr.setAlignmentX(Component.LEFT_ALIGNMENT);
+		JPanel dp = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 6)); dp.setAlignmentX(Component.LEFT_ALIGNMENT);
+		for (int i = 0; i < hand.size(); i++) {
+			final int hi = i; CardData hc = hand.get(i);
+			boolean payable = (i != handIdx) && !hc.isLightOrDark();
+			JLabel lbl = new JLabel("...", SwingConstants.CENTER);
+			lbl.setPreferredSize(new Dimension(CARD_W, CARD_H)); lbl.setMinimumSize(new Dimension(CARD_W, CARD_H));
+			lbl.setOpaque(true); lbl.setBackground(payable ? Color.DARK_GRAY : new Color(50,50,50));
+			lbl.setForeground(Color.WHITE); lbl.setFont(FontLoader.loadPixelNESFont(10));
+			lbl.setBorder(BorderFactory.createLineBorder(payable ? Color.GRAY : new Color(80,80,80), 1));
+			lbl.setCursor(payable ? Cursor.getPredefinedCursor(Cursor.HAND_CURSOR) : Cursor.getDefaultCursor());
+			final String imgUrl = hc.imageUrl();
+			if (payable) {
+				lbl.addMouseListener(new MouseAdapter() {
+					@Override public void mousePressed(MouseEvent ev) {
+						if (!selectedDiscards.remove(Integer.valueOf(hi)) && canAddDiscard[0]) selectedDiscards.add(hi);
+						updateAll.run();
+					}
+					@Override public void mouseEntered(MouseEvent ev) { if (lbl.getIcon() != null) showZoomAt(imgUrl); }
+					@Override public void mouseExited(MouseEvent ev)  { hideZoom(); }
+				});
+				discardLbls.add(lbl); discardIdxs.add(hi);
+			} else {
+				lbl.addMouseListener(new MouseAdapter() {
+					@Override public void mouseEntered(MouseEvent ev) { if (lbl.getIcon() != null) showZoomAt(imgUrl); }
+					@Override public void mouseExited(MouseEvent ev)  { hideZoom(); }
+				});
+			}
+			new SwingWorker<ImageIcon, Void>() {
+				@Override protected ImageIcon doInBackground() throws Exception { Image img = ImageCache.load(imgUrl); return img == null ? null : new ImageIcon(img.getScaledInstance(CARD_W, CARD_H, Image.SCALE_SMOOTH)); }
+				@Override protected void done() { try { ImageIcon ic = get(); if (ic != null) { lbl.setIcon(ic); lbl.setText(null); } } catch (InterruptedException | ExecutionException ignored) {} }
+			}.execute();
+			dp.add(lbl);
+		}
+		center.add(discHdr); center.add(dp);
+
+		updateAll.run();
+
+		JButton cancelBtn = new JButton("Cancel"); cancelBtn.setFont(FontLoader.loadPixelNESFont(11));
+		cancelBtn.addActionListener(ev -> dlg.dispose());
+		confirmBtn.addActionListener(ev -> {
+			dlg.dispose();
+			playerSpendCrystals(true, altC);
+			refreshCrystalDisplays();
+			executePlay(card, handIdx, new ArrayList<>(selectedDiscards), new ArrayList<>(selectedBackups));
+		});
+		JPanel south = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 6));
+		south.add(confirmBtn); south.add(cancelBtn);
+
+		JLabel titleLbl = new JLabel("<html><center>" + card.name() + " — Alt Cost: " + costDesc + "</center></html>", SwingConstants.CENTER);
+		titleLbl.setFont(FontLoader.loadPixelNESFont(11));
+		JPanel topPanel = new JPanel(new BorderLayout(0, 4));
+		topPanel.setBorder(BorderFactory.createEmptyBorder(8, 8, 4, 8));
+		topPanel.add(titleLbl, BorderLayout.NORTH);
+		topPanel.add(cpLabel,  BorderLayout.CENTER);
+		JPanel mainPanel = new JPanel(new BorderLayout(0, 4));
+		mainPanel.setBorder(BorderFactory.createEmptyBorder(0, 8, 8, 8));
+		mainPanel.add(new JScrollPane(center), BorderLayout.CENTER);
+		mainPanel.add(south,                   BorderLayout.SOUTH);
+		dlg.getContentPane().setLayout(new BorderLayout());
+		dlg.getContentPane().add(topPanel,  BorderLayout.NORTH);
+		dlg.getContentPane().add(mainPanel, BorderLayout.CENTER);
+		dlg.pack(); dlg.setLocationRelativeTo(frame); dlg.setVisible(true);
+	}
+
 	private void showWarpPaymentDialog(CardData card, int handIdx) {
 		List<String> rawCost = card.warpCost();
 		// Generic CP (empty-string entries) don't go into the per-element cost map

@@ -293,6 +293,6 @@ public class CardDatabase implements AutoCloseable {
         int start = idx + LB_PHRASE.length();
         int end = start;
         while (end < textEn.length() && Character.isDigit(textEn.charAt(end))) end++;
-        return end > start ? Integer.parseInt(textEn.substring(start, end)) : null;
+        return end > start ? Integer.parseInt(textEn, start, end, 10) : null;
     }
 }

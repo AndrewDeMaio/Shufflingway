@@ -66,13 +66,69 @@ public record CardData(
             Pattern.compile("(?i)^\\s*\\[\\[ex\\]\\]\\s*");
     private static final Pattern SUMMON_MARKUP =
             Pattern.compile("(?i)\\[\\[[a-z/0-9]+\\]\\]");
+    private static final Pattern SUMMON_BR =
+            Pattern.compile("(?i)\\[\\[br\\]\\]");
+
+    /**
+     * Matches the alternate summon cost prefix:
+     * "Before paying the cost to cast X, you can pay 《C》… to reduce the cost … by N."
+     */
+    private static final Pattern ALT_COST_SUMMON = Pattern.compile(
+        "(?i)Before\\s+paying\\s+the\\s+cost\\s+to\\s+cast\\s+[^,]+,\\s+" +
+        "you\\s+can\\s+pay\\s+(?<crystals>(?:《C》)+)\\s+" +
+        "to\\s+reduce\\s+the\\s+cost\\s+required\\s+to\\s+cast\\s+\\S.*?\\s+by\\s+(?<reduction>\\d+)\\."
+    );
+
+    /**
+     * Matches the alternate non-summon cost prefix:
+     * "You can pay 《C》… (instead of paying the CP cost) to cast X."
+     */
+    private static final Pattern ALT_COST_NONSUMMON = Pattern.compile(
+        "(?i)You\\s+can\\s+pay\\s+(?<crystals>(?:《C》)+)\\s+" +
+        "\\(instead\\s+of\\s+paying\\s+the\\s+CP\\s+cost\\)\\s+to\\s+cast\\s+\\S[^.]+"
+    );
+
+    /**
+     * Returns the number of Crystals required by the alternate cast cost, or 0 if
+     * no alternate cost exists in this card's text.
+     */
+    public int altCrystalCost() {
+        Matcher m = ALT_COST_SUMMON.matcher(textEn);
+        if (m.find()) return countCrystalTokens(m.group("crystals"));
+        m = ALT_COST_NONSUMMON.matcher(textEn);
+        if (m.find()) return countCrystalTokens(m.group("crystals"));
+        return 0;
+    }
+
+    /**
+     * Returns the CP to pay alongside the Crystal cost for the alternate cast.
+     * For summons this is {@code cost - reduction}; for non-summons (crystal-only) it is 0.
+     * Returns 0 when {@link #altCrystalCost()} is 0.
+     */
+    public int altCpCost() {
+        Matcher m = ALT_COST_SUMMON.matcher(textEn);
+        if (m.find()) return Math.max(0, cost - Integer.parseInt(m.group("reduction")));
+        return 0; // non-summon alt cost has no CP component
+    }
+
+    private static int countCrystalTokens(String s) {
+        int count = 0, idx = 0;
+        while ((idx = s.indexOf("《C》", idx)) >= 0) { count++; idx += 3; }
+        return count;
+    }
 
     /**
      * Returns cleaned effect text for a Summon: strips the {@code [[ex]]} exBurst
-     * prefix and all other inline markup tags, then collapses whitespace.
+     * prefix, skips the alternate-cost prefix block when one exists, then removes
+     * all other inline markup tags and collapses whitespace.
      */
     public String summonEffect() {
         String t = SUMMON_EX_PREFIX.matcher(textEn).replaceFirst("");
+        // Skip the alternate-cost block that precedes the first [[br]] separator
+        if (altCrystalCost() > 0) {
+            Matcher br = SUMMON_BR.matcher(t);
+            if (br.find()) t = t.substring(br.end());
+        }
         t = SUMMON_MARKUP.matcher(t).replaceAll(" ");
         return t.replaceAll("\\s+", " ").trim();
     }
