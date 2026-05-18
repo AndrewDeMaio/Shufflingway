@@ -8300,12 +8300,12 @@ public class MainWindow {
 		java.util.List<ForwardTarget> chosen = new ArrayList<>();
 		java.util.Set<Integer> sel = new java.util.LinkedHashSet<>();
 
-		JPanel btnsPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 8, 4));
-		JButton[] btns = new JButton[eligible.size()];
+		JPanel opponentRow = new JPanel(new FlowLayout(FlowLayout.CENTER, 8, 4));
+		JPanel selfRow     = new JPanel(new FlowLayout(FlowLayout.CENTER, 8, 4));
 
 		JButton confirmBtn = new JButton("Confirm");
 		confirmBtn.setFont(FontLoader.loadPixelNESFont(11));
-		confirmBtn.setEnabled(upTo); // enabled immediately for "up to", otherwise waits for maxCount
+		confirmBtn.setEnabled(upTo);
 
 		for (int i = 0; i < eligible.size(); i++) {
 			ForwardTarget target = eligible.get(i);
@@ -8344,8 +8344,8 @@ public class MainWindow {
 				}
 				confirmBtn.setEnabled(upTo || sel.size() == maxCount);
 			});
-			btns[i] = btn;
-			btnsPanel.add(btn);
+			if (!target.isP1()) opponentRow.add(btn);
+			else                selfRow.add(btn);
 		}
 
 		confirmBtn.addActionListener(ae -> {
@@ -8365,14 +8365,37 @@ public class MainWindow {
 		hdr.setFont(FontLoader.loadPixelNESFont(11));
 		hdr.setBorder(BorderFactory.createEmptyBorder(8, 8, 4, 8));
 
+		JPanel center = buildTwoRowTargetPanel(opponentRow, selfRow);
+
 		dlg.getContentPane().setLayout(new BorderLayout(0, 4));
-		dlg.getContentPane().add(hdr,      BorderLayout.NORTH);
-		dlg.getContentPane().add(btnsPanel, BorderLayout.CENTER);
-		dlg.getContentPane().add(south,     BorderLayout.SOUTH);
+		dlg.getContentPane().add(hdr,    BorderLayout.NORTH);
+		dlg.getContentPane().add(center, BorderLayout.CENTER);
+		dlg.getContentPane().add(south,  BorderLayout.SOUTH);
 		dlg.pack();
 		dlg.setLocationRelativeTo(frame);
 		dlg.setVisible(true);
 		return java.util.List.copyOf(chosen);
+	}
+
+	/** Stacks {@code opponentRow} above {@code selfRow} with section labels; omits empty rows. */
+	private JPanel buildTwoRowTargetPanel(JPanel opponentRow, JPanel selfRow) {
+		JPanel center = new JPanel();
+		center.setLayout(new BoxLayout(center, BoxLayout.Y_AXIS));
+		if (opponentRow.getComponentCount() > 0) {
+			JLabel lbl = new JLabel("— Opponent —", SwingConstants.CENTER);
+			lbl.setFont(FontLoader.loadPixelNESFont(9));
+			lbl.setAlignmentX(Component.CENTER_ALIGNMENT);
+			center.add(lbl);
+			center.add(opponentRow);
+		}
+		if (selfRow.getComponentCount() > 0) {
+			JLabel lbl = new JLabel("— Yours —", SwingConstants.CENTER);
+			lbl.setFont(FontLoader.loadPixelNESFont(9));
+			lbl.setAlignmentX(Component.CENTER_ALIGNMENT);
+			center.add(lbl);
+			center.add(selfRow);
+		}
+		return center;
 	}
 
 	/**
@@ -8393,7 +8416,8 @@ public class MainWindow {
 		java.util.List<ForwardTarget> chosen = new ArrayList<>();
 		java.util.Set<Integer> sel = new java.util.LinkedHashSet<>();
 
-		JPanel btnsPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 8, 4));
+		JPanel opponentRow = new JPanel(new FlowLayout(FlowLayout.CENTER, 8, 4));
+		JPanel selfRow     = new JPanel(new FlowLayout(FlowLayout.CENTER, 8, 4));
 
 		JButton confirmBtn = new JButton("Confirm");
 		confirmBtn.setFont(FontLoader.loadPixelNESFont(11));
@@ -8424,7 +8448,8 @@ public class MainWindow {
 				}
 				confirmBtn.setEnabled(upTo || sel.size() == maxCount);
 			});
-			btnsPanel.add(btn);
+			if (!target.isP1()) opponentRow.add(btn);
+			else                selfRow.add(btn);
 		}
 
 		confirmBtn.addActionListener(ae -> {
@@ -8445,9 +8470,9 @@ public class MainWindow {
 		hdr.setBorder(BorderFactory.createEmptyBorder(8, 8, 4, 8));
 
 		dlg.getContentPane().setLayout(new BorderLayout(0, 4));
-		dlg.getContentPane().add(hdr,       BorderLayout.NORTH);
-		dlg.getContentPane().add(btnsPanel,  BorderLayout.CENTER);
-		dlg.getContentPane().add(south,      BorderLayout.SOUTH);
+		dlg.getContentPane().add(hdr,                                    BorderLayout.NORTH);
+		dlg.getContentPane().add(buildTwoRowTargetPanel(opponentRow, selfRow), BorderLayout.CENTER);
+		dlg.getContentPane().add(south,                                  BorderLayout.SOUTH);
 		dlg.pack();
 		dlg.setLocationRelativeTo(frame);
 		dlg.setVisible(true);
