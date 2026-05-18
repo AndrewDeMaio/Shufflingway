@@ -3750,10 +3750,16 @@ public class MainWindow {
 			menu.add(warpItem);
 		}
 
-		if (card.altCrystalCost() > 0) {
-			int ac = card.altCrystalCost(), acp = card.altCpCost();
-			String crystalStr = "《C》".repeat(ac);
-			String altLabel = "Play (Alt: " + crystalStr + (acp > 0 ? " + " + acp + " CP" : "") + ")";
+		if (card.altCrystalCost() > 0 || card.altCpCost() > 0) {
+			int ac = card.altCrystalCost();
+			List<String> altElems = card.altCpElements();
+			String crystalStr = ac > 0 ? "《C》".repeat(ac) : "";
+			String cpStr = altElems.isEmpty() ? "" : (ac > 0 ? " + " : "") + altElems.stream()
+					.collect(java.util.stream.Collectors.groupingBy(elem -> elem.isEmpty() ? "generic" : elem, java.util.LinkedHashMap::new, java.util.stream.Collectors.counting()))
+					.entrySet().stream().map(en -> (en.getKey().equals("generic") ? en.getValue() + " CP" : en.getValue() + " " + en.getKey() + " CP")).collect(java.util.stream.Collectors.joining(" + "));
+			List<String> cond = card.altConditionCardNames();
+			String condStr = cond.isEmpty() ? "" : " [req: " + String.join("/", cond) + "]";
+			String altLabel = "Play (Alt: " + crystalStr + cpStr + condStr + ")";
 			JMenuItem altItem = new JMenuItem(altLabel);
 			altItem.setEnabled(isMainPhase && !nameConflict && !lightDarkConflict
 					&& canAffordAltCost(card, handIdx)
@@ -3945,27 +3951,65 @@ public class MainWindow {
 	}
 
 	/**
-	 * Returns true when the player can pay the alternate Crystal cast cost for {@code card}.
-	 * For the 0-CP case this is purely a crystal check; for the reduced-CP case it also
-	 * verifies there are enough element-matching sources to cover {@code card.altCpCost()}.
+	 * Returns true when the player can pay the alternate cast cost for {@code card},
+	 * including satisfying any field-presence condition.
 	 */
 	private boolean canAffordAltCost(CardData card, int handIdx) {
+		// Condition check: "If you control a Card Name X or a Card Name Y"
+		List<String> condNames = card.altConditionCardNames();
+		if (!condNames.isEmpty() && condNames.stream().noneMatch(this::hasCharacterNameOnField)) return false;
+
 		if (playerCrystals(true) < card.altCrystalCost()) return false;
-		int altCp = card.altCpCost();
-		if (altCp == 0) return true;
-		// Reduced-CP check: count element-matching sources (banked CP + backups + hand discards)
-		String[] elems = card.elements();
-		int sources = 0;
-		for (String e : elems) sources += gameState.getP1CpForElement(e);
+
+		// Break Zone removal check
+		List<String> bzReqs = card.altBzRemovals();
+		if (!bzReqs.isEmpty()) {
+			List<CardData> available = new ArrayList<>(gameState.getP1BreakZone());
+			for (String req : bzReqs) {
+				String[] parts = req.split(" ", 2);
+				String elem = parts[0], type = parts.length > 1 ? parts[1] : "";
+				boolean found = false;
+				for (int i = 0; i < available.size(); i++) {
+					CardData c = available.get(i);
+					if (c.containsElement(elem) && matchesAltBzType(c, type)) {
+						available.remove(i); found = true; break;
+					}
+				}
+				if (!found) return false;
+			}
+		}
+
+		List<String> altElems = card.altCpElements();
+		if (altElems.isEmpty()) return true;
+
+		// Count available CP sources (backup-only restriction respected)
+		LinkedHashMap<String, Integer> needed = new LinkedHashMap<>();
+		long genericNeeded = 0;
+		for (String e : altElems) { if (e.isEmpty()) genericNeeded++; else needed.merge(e, 1, Integer::sum); }
+		String[] elems = needed.keySet().toArray(String[]::new);
+
+		int totalSources = 0;
+		for (String e : elems) totalSources += gameState.getP1CpForElement(e);
 		for (int i = 0; i < p1BackupCards.length; i++)
 			if (p1BackupCards[i] != null && p1BackupStates[i] == CardState.ACTIVE
-					&& matchesAnyElement(p1BackupCards[i], elems)) sources++;
-		for (int i = 0; i < gameState.getP1Hand().size(); i++) {
-			if (i == handIdx) continue;
-			CardData h = gameState.getP1Hand().get(i);
-			if (!h.isLightOrDark() && matchesAnyElement(h, elems)) sources += 2;
+					&& (genericNeeded > 0 || matchesAnyElement(p1BackupCards[i], elems))) totalSources++;
+		if (!card.altBackupOnlyCp()) {
+			for (int i = 0; i < gameState.getP1Hand().size(); i++) {
+				if (i == handIdx) continue;
+				CardData h = gameState.getP1Hand().get(i);
+				if (!h.isLightOrDark() && (genericNeeded > 0 || matchesAnyElement(h, elems))) totalSources += 2;
+			}
 		}
-		return sources >= altCp;
+		return totalSources >= altElems.size();
+	}
+
+	private static boolean matchesAltBzType(CardData c, String type) {
+		return switch (type.toLowerCase(java.util.Locale.ROOT)) {
+			case "forward"  -> c.isForward();
+			case "backup"   -> c.isBackup();
+			case "monster"  -> c.isMonster();
+			default         -> !c.isSummon(); // "Character" and empty = any non-Summon
+		};
 	}
 
 	/**
@@ -4049,31 +4093,31 @@ public class MainWindow {
 		String crystalStr = "《C》".repeat(altC);
 		String costDesc   = crystalStr + (altCp > 0 ? " + " + altCp + " CP" : "");
 
-		if (altCp == 0) {
-			// Crystal-only: simple confirm then play for free
+		List<String> altElemsList  = card.altCpElements();
+		String followupText        = card.altFollowupText();
+		List<String> bzRemovals    = card.altBzRemovals();
+		boolean backupOnly         = card.altBackupOnlyCp();
+
+		if (altElemsList.isEmpty()) {
+			// Crystal-only (or no cost at all): simple confirm then play for free
 			int choice = JOptionPane.showOptionDialog(frame,
 					card.name() + " — Pay " + costDesc + " to cast?",
 					"Alternate Cost",
 					JOptionPane.DEFAULT_OPTION, JOptionPane.PLAIN_MESSAGE, null,
 					new Object[]{"Confirm", "Cancel"}, "Confirm");
 			if (choice != 0) return;
-			playerSpendCrystals(true, altC);
-			refreshCrystalDisplays();
+			if (altC > 0) { playerSpendCrystals(true, altC); refreshCrystalDisplays(); }
 			executePlay(card, handIdx, Collections.emptyList(), Collections.emptyList());
+			executeAltFollowup(followupText, card);
 			return;
 		}
 
-		// Crystal + reduced CP: show a payment dialog for altCp of the card's element(s)
+		// Build costByElem from altCpElements()
 		LinkedHashMap<String, Integer> costByElem = new LinkedHashMap<>();
 		long genericNeeded = 0;
-		if (card.isLightOrDark()) {
-			genericNeeded = altCp;
-		} else {
-			String[] elems = card.elements();
-			int perElem = altCp / elems.length;
-			int remainder = altCp % elems.length;
-			for (int i = 0; i < elems.length; i++)
-				costByElem.put(elems[i], perElem + (i < remainder ? 1 : 0));
+		for (String elem : altElemsList) {
+			if (elem.isEmpty()) genericNeeded++;
+			else costByElem.merge(elem, 1, Integer::sum);
 		}
 		String[] elems = costByElem.keySet().toArray(String[]::new);
 		final long gn = genericNeeded;
@@ -4122,7 +4166,7 @@ public class MainWindow {
 			int total = cp.values().stream().mapToInt(Integer::intValue).sum() + extra;
 			int maxAllowed = altCp + elems.length + (altCp % 2);
 			canAddBackup[0]  = total < altCp;
-			canAddDiscard[0] = (total + 2 <= maxAllowed) && (total < altCp);
+			canAddDiscard[0] = !backupOnly && (total + 2 <= maxAllowed) && (total < altCp);
 			boolean satisfied = cp.entrySet().stream().allMatch(en -> en.getValue() >= costByElem.getOrDefault(en.getKey(), 0));
 			confirmBtn.setEnabled(total >= altCp && satisfied);
 
@@ -4186,6 +4230,7 @@ public class MainWindow {
 			center.add(hdr); center.add(bp);
 		}
 
+		if (!backupOnly) {
 		JLabel discHdr = new JLabel("Hand — discard for 2 CP each:"); discHdr.setFont(FontLoader.loadPixelNESFont(9)); discHdr.setAlignmentX(Component.LEFT_ALIGNMENT);
 		JPanel dp = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 6)); dp.setAlignmentX(Component.LEFT_ALIGNMENT);
 		for (int i = 0; i < hand.size(); i++) {
@@ -4221,6 +4266,7 @@ public class MainWindow {
 			dp.add(lbl);
 		}
 		center.add(discHdr); center.add(dp);
+		} // end if (!backupOnly)
 
 		updateAll.run();
 
@@ -4228,9 +4274,10 @@ public class MainWindow {
 		cancelBtn.addActionListener(ev -> dlg.dispose());
 		confirmBtn.addActionListener(ev -> {
 			dlg.dispose();
-			playerSpendCrystals(true, altC);
-			refreshCrystalDisplays();
+			if (altC > 0) { playerSpendCrystals(true, altC); refreshCrystalDisplays(); }
+			executeAltBzRemovals(bzRemovals);
 			executePlay(card, handIdx, new ArrayList<>(selectedDiscards), new ArrayList<>(selectedBackups));
+			executeAltFollowup(followupText, card);
 		});
 		JPanel south = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 6));
 		south.add(confirmBtn); south.add(cancelBtn);
@@ -4249,6 +4296,42 @@ public class MainWindow {
 		dlg.getContentPane().add(topPanel,  BorderLayout.NORTH);
 		dlg.getContentPane().add(mainPanel, BorderLayout.CENTER);
 		dlg.pack(); dlg.setLocationRelativeTo(frame); dlg.setVisible(true);
+	}
+
+	/**
+	 * Removes one BZ card matching each entry in {@code removals} from P1's Break Zone and
+	 * adds it to the permanent Removed-From-Play zone.  Auto-selects the first matching card.
+	 */
+	private void executeAltBzRemovals(List<String> removals) {
+		if (removals.isEmpty()) return;
+		List<CardData> bz = gameState.getP1BreakZone();
+		for (String req : removals) {
+			String[] parts = req.split(" ", 2);
+			String elem = parts[0], type = parts.length > 1 ? parts[1] : "";
+			for (int i = 0; i < bz.size(); i++) {
+				CardData c = bz.get(i);
+				if (c.containsElement(elem) && matchesAltBzType(c, type)) {
+					bz.remove(i);
+					gameState.addToP1PermanentRfp(c);
+					logEntry(c.name() + " removed from Break Zone → Removed From Play (alt cost)");
+					refreshP1BreakLabel();
+					refreshP1WarpZoneUI();
+					break;
+				}
+			}
+		}
+	}
+
+	/** Executes the "If you do so" followup effect attached to an alternate cast, if any. */
+	private void executeAltFollowup(String followupText, CardData source) {
+		if (followupText == null || followupText.isBlank()) return;
+		java.util.function.Consumer<GameContext> effect = ActionResolver.parse(followupText, source);
+		if (effect != null) {
+			logEntry("[AltCost followup] " + source.name() + " — " + followupText);
+			effect.accept(buildGameContext(true));
+		} else {
+			logEntry("[AltCost followup] Unrecognized effect: " + followupText);
+		}
 	}
 
 	private void showWarpPaymentDialog(CardData card, int handIdx) {

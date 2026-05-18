@@ -70,64 +70,203 @@ public record CardData(
             Pattern.compile("(?i)\\[\\[br\\]\\]");
 
     /**
-     * Matches the alternate summon cost prefix:
-     * "Before paying the cost to cast X, you can pay 《C》… to reduce the cost … by N."
+     * Matches the alternate summon cost prefix (may appear after a traits [[br]]):
+     * "Before paying the cost to cast X, you can pay 《costs》 to reduce the cost … by N."
+     * Group {@code costs} captures all 《…》 tokens; group {@code reduction} captures N.
      */
     private static final Pattern ALT_COST_SUMMON = Pattern.compile(
         "(?i)Before\\s+paying\\s+the\\s+cost\\s+to\\s+cast\\s+[^,]+,\\s+" +
-        "you\\s+can\\s+pay\\s+(?<crystals>(?:《C》)+)\\s+" +
+        "you\\s+can\\s+pay\\s+(?<costs>(?:《[^》]+》)+)\\s+" +
         "to\\s+reduce\\s+the\\s+cost\\s+required\\s+to\\s+cast\\s+\\S.*?\\s+by\\s+(?<reduction>\\d+)\\."
     );
 
     /**
-     * Matches the alternate non-summon cost prefix:
-     * "You can pay 《C》… (instead of paying the CP cost) to cast X."
+     * Matches the alternate non-summon cost prefix.  Optional groups:
+     * <ul>
+     *   <li>{@code condition}  — "If you control …, " prefix</li>
+     *   <li>{@code costs}      — one or more 《…》 CP/Crystal tokens</li>
+     *   <li>{@code bzremovals} — "and remove N Elem Type … in your Break Zone …" clause</li>
+     *   <li>{@code backuponly} — "You can only pay this cost with CP produced by Backups" sentence</li>
+     *   <li>{@code followup}   — "If/When you do so, …" trailing effect</li>
+     * </ul>
      */
     private static final Pattern ALT_COST_NONSUMMON = Pattern.compile(
-        "(?i)You\\s+can\\s+pay\\s+(?<crystals>(?:《C》)+)\\s+" +
-        "\\(instead\\s+of\\s+paying\\s+the\\s+CP\\s+cost\\)\\s+to\\s+cast\\s+\\S[^.]+"
+        "(?i)(?:If\\s+you\\s+control\\s+(?<condition>[^,]+),\\s+)?" +
+        "you\\s+can\\s+pay\\s+(?<costs>(?:《[^》]+》)+)" +
+        "(?:\\s+and\\s+remove\\s+(?<bzremovals>[^(]+?)\\s+(?:in|from)\\s+(?:your\\s+)?Break\\s+Zone(?:\\s+from\\s+the\\s+game)?)?" +
+        "\\s+\\(instead\\s+of\\s+paying\\s+the\\s+CP\\s+cost\\)\\s+to\\s+cast\\s+\\S[^.]*\\.?" +
+        "(?:\\s+(?<backuponly>You\\s+can\\s+only\\s+pay\\s+this\\s+cost\\s+with\\s+CP\\s+produced\\s+by\\s+Backups)\\.?)?" +
+        "(?:\\s+(?:If|When)\\s+you\\s+do\\s+so[,.]?\\s+(?<followup>.+?))?" +
+        "(?=\\s*(?:\\[\\[br\\]\\]|$))"
     );
 
+    /** Parses one "N Element Type" requirement phrase from a BZ-removal list. */
+    private static final Pattern BZ_REMOVAL_ENTRY = Pattern.compile(
+        "(?i)(\\d+)\\s+(Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)" +
+        "(?:\\s+(Character|Forward|Backup|Monster))?"
+    );
+
+    /** Extracts card names from "a Card Name X" phrases in a condition string. */
+    private static final Pattern CONDITION_CARD_NAME = Pattern.compile(
+        "(?i)a\\s+Card\\s+Name\\s+(?<name>[^,]+?)(?=\\s+(?:or\\b|and\\b)|\\s*$)"
+    );
+
+    /** Matches a segment that contains only trait keywords (Haste, Brave, Back Attack, etc.). */
+    private static final Pattern TRAIT_ONLY_SEGMENT = Pattern.compile(
+        "(?i)^(?:(?:Haste|Brave|First\\s+Strike|Back\\s+Attack|Warp\\s+\\d+|Priming)" +
+        "(?:\\s*[,/]\\s*)?)+\\.?$"
+    );
+
+    // ── Alt-cost helpers ──────────────────────────────────────────────────────
+
     /**
-     * Returns the number of Crystals required by the alternate cast cost, or 0 if
-     * no alternate cost exists in this card's text.
+     * Splits a cost token string (e.g. {@code "《C》《2》《Fire》"}) into CP element strings
+     * (empty string = generic CP) and returns the crystal count in {@code crystalOut[0]}.
      */
+    private static List<String> parseCostTokens(String costs, int[] crystalOut) {
+        List<String> cpElems = new ArrayList<>();
+        Matcher m = Pattern.compile("《([^》]+)》").matcher(costs);
+        while (m.find()) {
+            String token = m.group(1).trim();
+            if (token.equalsIgnoreCase("C")) {
+                crystalOut[0]++;
+            } else {
+                try {
+                    int n = Integer.parseInt(token);
+                    for (int i = 0; i < n; i++) cpElems.add(""); // generic CP
+                } catch (NumberFormatException e) {
+                    cpElems.add(token); // element name
+                }
+            }
+        }
+        return cpElems;
+    }
+
+    /** Returns the number of Crystals in the alternate cast cost, or 0 if none exists. */
     public int altCrystalCost() {
+        int[] c = {0};
         Matcher m = ALT_COST_SUMMON.matcher(textEn);
-        if (m.find()) return countCrystalTokens(m.group("crystals"));
+        if (m.find()) { parseCostTokens(m.group("costs"), c); return c[0]; }
         m = ALT_COST_NONSUMMON.matcher(textEn);
-        if (m.find()) return countCrystalTokens(m.group("crystals"));
+        if (m.find()) { parseCostTokens(m.group("costs"), c); return c[0]; }
         return 0;
     }
 
     /**
-     * Returns the CP to pay alongside the Crystal cost for the alternate cast.
-     * For summons this is {@code cost - reduction}; for non-summons (crystal-only) it is 0.
-     * Returns 0 when {@link #altCrystalCost()} is 0.
+     * Returns the CP elements for the alternate cast cost as a list of element strings
+     * (empty string = generic CP).  For summons the list is derived from the card's own
+     * element(s) and the cost reduction; for non-summons it is taken directly from the
+     * cost token string.  Returns an empty list when no alternate cost exists.
      */
-    public int altCpCost() {
+    public List<String> altCpElements() {
+        int[] crystals = {0};
         Matcher m = ALT_COST_SUMMON.matcher(textEn);
-        if (m.find()) return Math.max(0, cost - Integer.parseInt(m.group("reduction")));
-        return 0; // non-summon alt cost has no CP component
+        if (m.find()) {
+            parseCostTokens(m.group("costs"), crystals);
+            int altCp = Math.max(0, cost - Integer.parseInt(m.group("reduction")));
+            List<String> elems = new ArrayList<>();
+            String[] cardElems = elements();
+            for (int i = 0; i < altCp; i++) elems.add(cardElems.length > 0 ? cardElems[i % cardElems.length] : "");
+            return List.copyOf(elems);
+        }
+        m = ALT_COST_NONSUMMON.matcher(textEn);
+        if (m.find()) return List.copyOf(parseCostTokens(m.group("costs"), crystals));
+        return List.of();
     }
 
-    private static int countCrystalTokens(String s) {
-        int count = 0, idx = 0;
-        while ((idx = s.indexOf("《C》", idx)) >= 0) { count++; idx += 3; }
-        return count;
+    /** Convenience: total CP to pay for the alternate cast ({@code altCpElements().size()}). */
+    public int altCpCost() { return altCpElements().size(); }
+
+    /**
+     * Returns the condition text that must be satisfied before the alternate cost may be used
+     * (e.g. {@code "a Card Name Cecil or a Card Name Rosa"}), or an empty string if there is
+     * no condition.
+     */
+    public String altConditionText() {
+        Matcher m = ALT_COST_NONSUMMON.matcher(textEn);
+        if (m.find()) { String c = m.group("condition"); return c != null ? c.trim() : ""; }
+        return "";
     }
 
     /**
-     * Returns cleaned effect text for a Summon: strips the {@code [[ex]]} exBurst
-     * prefix, skips the alternate-cost prefix block when one exists, then removes
-     * all other inline markup tags and collapses whitespace.
+     * Returns card names parsed from the alternate cost condition (e.g. {@code ["Cecil", "Rosa"]}
+     * for "a Card Name Cecil or a Card Name Rosa").  Returns an empty list when there is no
+     * condition.  The condition is satisfied if the player controls ANY of the listed cards.
+     */
+    public List<String> altConditionCardNames() {
+        String cond = altConditionText();
+        if (cond.isEmpty()) return List.of();
+        List<String> names = new ArrayList<>();
+        Matcher m = CONDITION_CARD_NAME.matcher(cond);
+        while (m.find()) names.add(m.group("name").trim());
+        return List.copyOf(names);
+    }
+
+    /**
+     * Returns the "If you do so" followup effect text attached to the alternate cost, or an
+     * empty string if there is none.
+     */
+    public String altFollowupText() {
+        Matcher m = ALT_COST_NONSUMMON.matcher(textEn);
+        if (m.find()) { String f = m.group("followup"); return f != null ? f.trim() : ""; }
+        return "";
+    }
+
+    /**
+     * Returns the list of Break Zone removal requirements for the alternate cost, one entry per
+     * card that must be removed from the game.  Each entry is {@code "Element Type"} (e.g.
+     * {@code "Fire Character"}).  Returns an empty list when no BZ-removal clause is present.
+     */
+    public List<String> altBzRemovals() {
+        Matcher m = ALT_COST_NONSUMMON.matcher(textEn);
+        if (!m.find()) return List.of();
+        String bz = m.group("bzremovals");
+        if (bz == null || bz.isBlank()) return List.of();
+
+        // Find the card type once from the end of the whole phrase (e.g. "Character")
+        Matcher typM = Pattern.compile("(?i)(Character|Forward|Backup|Monster)\\s*$").matcher(bz.trim());
+        String globalType = typM.find() ? typM.group(1) : "Character";
+
+        List<String> result = new ArrayList<>();
+        Matcher em = BZ_REMOVAL_ENTRY.matcher(bz);
+        while (em.find()) {
+            int count = Integer.parseInt(em.group(1));
+            String elem = em.group(2);
+            String type = em.group(3) != null ? em.group(3) : globalType;
+            for (int i = 0; i < count; i++) result.add(elem + " " + type);
+        }
+        return List.copyOf(result);
+    }
+
+    /**
+     * Returns {@code true} when the alternate cost may only be paid with CP produced by Backups
+     * (hand-card discards are not allowed).
+     */
+    public boolean altBackupOnlyCp() {
+        Matcher m = ALT_COST_NONSUMMON.matcher(textEn);
+        return m.find() && m.group("backuponly") != null;
+    }
+
+    /**
+     * Returns cleaned effect text for a Summon: strips the {@code [[ex]]} exBurst prefix,
+     * then (when an alternate cost exists) splits on {@code [[br]]} and skips segments that
+     * are trait-only lines or alternate-cost blocks.  All remaining markup tags are removed
+     * and whitespace is collapsed.
      */
     public String summonEffect() {
         String t = SUMMON_EX_PREFIX.matcher(textEn).replaceFirst("");
-        // Skip the alternate-cost block that precedes the first [[br]] separator
         if (altCrystalCost() > 0) {
-            Matcher br = SUMMON_BR.matcher(t);
-            if (br.find()) t = t.substring(br.end());
+            String[] parts = SUMMON_BR.split(t);
+            StringBuilder sb = new StringBuilder();
+            for (String part : parts) {
+                String trimmed = part.trim();
+                if (trimmed.isEmpty()) continue;
+                if (ALT_COST_SUMMON.matcher(trimmed).find())    continue; // alt-cost block
+                if (ALT_COST_NONSUMMON.matcher(trimmed).find()) continue; // alt-cost block
+                if (TRAIT_ONLY_SEGMENT.matcher(trimmed).matches()) continue; // trait-only line
+                sb.append(trimmed).append(" ");
+            }
+            t = sb.toString().trim();
         }
         t = SUMMON_MARKUP.matcher(t).replaceAll(" ");
         return t.replaceAll("\\s+", " ").trim();
