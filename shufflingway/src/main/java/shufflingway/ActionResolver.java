@@ -708,6 +708,18 @@ public class ActionResolver {
         "You\\s+may\\s+put\\s+it\\s+into\\s+the\\s+Break\\s+Zone[.!]?"
     );
 
+    /**
+     * Matches "Place N [Name] Counter(s) on [CardName][.]".
+     * <ul>
+     *   <li>Group {@code count} — number of counters to place</li>
+     *   <li>Group {@code name}  — counter name (e.g. {@code "Shuriken"})</li>
+     *   <li>Group {@code target} — card name the counters are placed on</li>
+     * </ul>
+     */
+    private static final Pattern PLACE_COUNTERS = Pattern.compile(
+        "(?i)Place\\s+(?<count>\\d+)\\s+(?<name>.+?)\\s+Counters?\\s+on\\s+(?<target>.+?)[.!]?"
+    );
+
     /** Matches "Gain 《C》." — the ability user gains one Crystal. */
     private static final Pattern GAIN_CRYSTAL = Pattern.compile(
         "(?i)Gain\\s+《C》[.!]?"
@@ -880,6 +892,9 @@ public class ActionResolver {
         result = tryParseGainCrystal(effectText);
         if (result != null) return result;
 
+        result = tryParsePlaceCounters(effectText, source);
+        if (result != null) return result;
+
         result = tryParseLookTopDeckOptionallyBreak(effectText);
         if (result != null) return result;
 
@@ -911,6 +926,7 @@ public class ActionResolver {
         if (tryParseExtraTurnThenLose(effectText)               != null) return "ExtraTurnThenLose";
         if (tryParseGainCrystalPerX(effectText, 0)               != null) return "GainCrystalPerX";
         if (tryParseGainCrystal(effectText)                      != null) return "GainCrystal";
+        if (tryParsePlaceCounters(effectText, source)            != null) return "PlaceCounters";
         if (tryParseLookTopDeckOptionallyBreak(effectText)       != null) return "LookTopDeckOptionallyBreak";
         return null;
     }
@@ -1027,6 +1043,7 @@ public class ActionResolver {
         if (tryParseExtraTurnThenLose(effectText) != null)                  return "ExtraTurnThenLose";
         if (tryParseGainCrystalPerX(effectText, 0) != null)                 return "GainCrystalPerX";
         if (tryParseGainCrystal(effectText)        != null)                  return "GainCrystal";
+        if (tryParsePlaceCounters(effectText, source) != null)               return "PlaceCounters";
         if (tryParseLookTopDeckOptionallyBreak(effectText) != null)          return "LookTopDeckOptionallyBreak";
         return null;
     }
@@ -2687,6 +2704,20 @@ public class ActionResolver {
         return ctx -> {
             ctx.logEntry("Effect: Gain 1 Crystal");
             ctx.gainCrystal(1);
+        };
+    }
+
+    private static Consumer<GameContext> tryParsePlaceCounters(String text, CardData source) {
+        Matcher m = PLACE_COUNTERS.matcher(text);
+        if (!m.find()) return null;
+        int    count      = Integer.parseInt(m.group("count"));
+        String name       = m.group("name").trim();
+        String target     = m.group("target").trim();
+        // Only handle self-placement (target matches the source card's name)
+        if (source == null || !source.name().equalsIgnoreCase(target)) return null;
+        return ctx -> {
+            ctx.logEntry("Effect: Place " + count + " " + name + " Counter(s) on " + source.name());
+            ctx.placeCounters(source, name, count);
         };
     }
 

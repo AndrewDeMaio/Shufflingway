@@ -236,6 +236,12 @@ public interface GameContext {
      */
     void setTargetPower(ForwardTarget t, int power);
 
+    /** Places {@code count} counters named {@code counterName} on {@code card}. */
+    void placeCounters(CardData card, String counterName, int count);
+
+    /** Returns the number of counters named {@code counterName} currently on {@code card}. */
+    int getCounters(CardData card, String counterName);
+
     /**
      * Reveals the top card of the ability owner's deck in a dialog.  The player may then
      * choose to put it into the Break Zone; if they decline the card stays on top of the deck.

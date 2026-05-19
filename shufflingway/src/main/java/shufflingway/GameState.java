@@ -24,6 +24,50 @@ public class GameState {
         }
     }
 
+    // --- Named counters on field cards (e.g. Shuriken Counters on Yuffie) ---
+    // IdentityHashMap so different CardData instances with the same name don't alias each other.
+    private final java.util.IdentityHashMap<CardData, Map<String, Integer>> cardCounters =
+            new java.util.IdentityHashMap<>();
+
+    /** Places {@code count} counters named {@code name} on {@code card}. */
+    public void placeCounters(CardData card, String name, int count) {
+        if (count <= 0) return;
+        cardCounters.computeIfAbsent(card, k -> new java.util.LinkedHashMap<>())
+                    .merge(name, count, Integer::sum);
+    }
+
+    /** Returns how many counters named {@code name} are currently on {@code card} (0 if none). */
+    public int getCounters(CardData card, String name) {
+        Map<String, Integer> m = cardCounters.get(card);
+        return m == null ? 0 : m.getOrDefault(name, 0);
+    }
+
+    /**
+     * Removes up to {@code count} counters named {@code name} from {@code card}.
+     * @return the number actually removed (may be less than {@code count})
+     */
+    public int removeCounters(CardData card, String name, int count) {
+        Map<String, Integer> m = cardCounters.get(card);
+        if (m == null) return 0;
+        int current = m.getOrDefault(name, 0);
+        int removed = Math.min(current, count);
+        if (removed > 0) {
+            int remaining = current - removed;
+            if (remaining == 0) m.remove(name); else m.put(name, remaining);
+            if (m.isEmpty()) cardCounters.remove(card);
+        }
+        return removed;
+    }
+
+    /** Removes all counters from {@code card} (called when it leaves the field). */
+    public void clearCounters(CardData card) { cardCounters.remove(card); }
+
+    /** Returns an unmodifiable view of all counter entries for {@code card}. */
+    public Map<String, Integer> getCountersMap(CardData card) {
+        Map<String, Integer> m = cardCounters.get(card);
+        return m == null ? Map.of() : java.util.Collections.unmodifiableMap(m);
+    }
+
     // --- Crystals (persistent resource; does not expire like CP) ---
     private int p1Crystals = 0;
     private int p2Crystals = 0;

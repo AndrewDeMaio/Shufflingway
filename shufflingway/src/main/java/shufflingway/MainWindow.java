@@ -6088,6 +6088,17 @@ public class MainWindow {
 	// Field Ability triggers
 	// -------------------------------------------------------------------------
 
+	/**
+	 * Matches "remove N [Name] Counter(s) from [CardName][.] When/If you do so, sub-effect".
+	 * Used for field-ability costs that consume a named counter before resolving an effect.
+	 */
+	private static final java.util.regex.Pattern FA_REMOVE_COUNTER_WHEN_DO_SO =
+			java.util.regex.Pattern.compile(
+				"(?i)^remove\\s+(?<n>\\d+)\\s+(?<counterName>.+?)\\s+Counters?\\s+from" +
+				"\\s+(?<target>.+?)[.,!]\\s+(?:When|If)\\s+you\\s+do\\s+so[,.]?\\s+(?<sub>.+?)$",
+				java.util.regex.Pattern.DOTALL
+			);
+
 	/** Matches "pay 《cost》[.] When/If you do so, sub-effect[. The maximum you can pay for 《X》 is N]". */
 	private static final java.util.regex.Pattern FA_PAY_WHEN_DO_SO = java.util.regex.Pattern.compile(
 		"(?i)^pay\\s+《([^》]+)》[.,]?\\s+(?:When|If)\\s+you\\s+do\\s+so[,.]?\\s+(.+?)(?:[.,]?\\s+The\\s+maximum\\s+you\\s+can\\s+pay\\s+for\\s+《X》\\s+is\\s+\\d+\\.?)?$",
@@ -6197,6 +6208,7 @@ public class MainWindow {
 			if (!fa.triggerCard().equalsIgnoreCase(departing.name())) continue;
 			executeFieldAbility(fa, departing, isP1);
 		}
+		gameState.clearCounters(departing);
 	}
 
 	/** Fires "cast summon" field abilities for all field cards belonging to the casting player. */
@@ -6295,6 +6307,13 @@ public class MainWindow {
 		// opponentMay effects run from the opponent's context
 		boolean effectIsP1 = fa.opponentMay() ? !isP1 : isP1;
 
+		// Detect "remove N [Name] Counter(s) from [CardName]. When you do so, [effect]"
+		java.util.regex.Matcher ctrM = FA_REMOVE_COUNTER_WHEN_DO_SO.matcher(fa.effectText());
+		if (ctrM.find()) {
+			executeCounterRemovalWhenDoSoFieldAbility(fa, source, isP1, effectIsP1, ctrM);
+			return;
+		}
+
 		// Detect "pay 《X/N》. When you do so, [effect]" — requires a payment dialog before resolving.
 		java.util.regex.Matcher payM = FA_PAY_WHEN_DO_SO.matcher(fa.effectText());
 		if (payM.find()) {
@@ -6333,6 +6352,50 @@ public class MainWindow {
 			usedOncePerTurnAbilities.computeIfAbsent(source, k -> new java.util.HashSet<>()).add(fa.effectText());
 
 		logEntry("[FieldAbility] " + source.name() + " — " + fa.effectText());
+		effect.accept(buildGameContext(effectIsP1));
+	}
+
+	private void executeCounterRemovalWhenDoSoFieldAbility(FieldAbility fa, CardData source,
+			boolean isP1, boolean effectIsP1, java.util.regex.Matcher m) {
+		int    n           = Integer.parseInt(m.group("n"));
+		String counterName = m.group("counterName").trim();
+		String subEffect   = m.group("sub").trim();
+
+		// Require enough counters to be present; skip silently if not.
+		if (gameState.getCounters(source, counterName) < n) {
+			logEntry("[FieldAbility] " + source.name() + " — not enough " + counterName
+					+ " Counters (need " + n + ", have " + gameState.getCounters(source, counterName) + ")");
+			return;
+		}
+
+		// youMay / AI decision
+		boolean p1GetsDialog = (fa.youMay() && isP1) || (fa.opponentMay() && !isP1);
+		if (p1GetsDialog) {
+			String prompt = (fa.youMay() ? "You may: " : "Your opponent may: ") + fa.effectText();
+			int choice = JOptionPane.showOptionDialog(frame,
+					source.name() + " — " + prompt, "Field Ability",
+					JOptionPane.DEFAULT_OPTION, JOptionPane.PLAIN_MESSAGE, null,
+					new Object[]{"OK", "Decline"}, "OK");
+			if (choice != 0) {
+				logEntry("[FieldAbility] " + source.name() + " — optional effect declined");
+				return;
+			}
+		} else if (fa.youMay() || fa.opponentMay()) {
+			logEntry("[FieldAbility] [AI] auto-accepts optional ability");
+		}
+
+		// Remove the counter(s)
+		int removed = gameState.removeCounters(source, counterName, n);
+		logEntry("[FieldAbility] " + source.name() + " — removed " + removed + " " + counterName
+				+ " Counter(s)  [remaining: " + gameState.getCounters(source, counterName) + "]");
+
+		// Execute the sub-effect
+		java.util.function.Consumer<GameContext> effect = ActionResolver.parse(subEffect, source);
+		if (effect == null) {
+			logEntry("[FieldAbility] Unrecognized counter-removal sub-effect: " + subEffect);
+			return;
+		}
+		logEntry("[FieldAbility] " + source.name() + " — when you do so: " + subEffect);
 		effect.accept(buildGameContext(effectIsP1));
 	}
 
@@ -8301,6 +8364,17 @@ public class MainWindow {
 					logEntry("[P2] " + p2ForwardCards.get(idx).name() + " power becomes " + power + " until end of turn");
 					refreshP2ForwardSlot(idx);
 				}
+			}
+
+			@Override public void placeCounters(CardData card, String counterName, int count) {
+				gameState.placeCounters(card, counterName, count);
+				Map<String, Integer> all = gameState.getCountersMap(card);
+				logEntry(card.name() + " — placed " + count + " " + counterName
+						+ " Counter(s)  [now: " + all + "]");
+			}
+
+			@Override public int getCounters(CardData card, String counterName) {
+				return gameState.getCounters(card, counterName);
 			}
 
 			@Override public void lookAtTopDeckAndOptionallyBreak() {
