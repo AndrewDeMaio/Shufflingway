@@ -88,6 +88,7 @@ public interface GameContext {
      */
     List<ForwardTarget> selectCharacters(int maxCount, boolean upTo, boolean opponentOnly,
             boolean selfOnly, String condition, String element, int costVal, String costCmp,
+            int powerVal, String powerCmp,
             boolean forwards, boolean backups, boolean monsters,
             String jobFilter, String cardNameFilter, String categoryFilter, String excludeName, boolean summons);
 
@@ -110,6 +111,7 @@ public interface GameContext {
      */
     List<ForwardTarget> selectCharactersFromBreakZone(int maxCount, boolean upTo,
             boolean opponentZone, String condition, String element, int costVal, String costCmp,
+            int powerVal, String powerCmp,
             boolean forwards, boolean backups, boolean monsters,
             String jobFilter, String cardNameFilter, String categoryFilter, String excludeName, boolean summons);
 

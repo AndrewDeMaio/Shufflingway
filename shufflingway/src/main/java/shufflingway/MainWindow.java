@@ -7621,7 +7621,7 @@ public class MainWindow {
 			public java.util.List<ForwardTarget> selectCharacters(
 					int maxCount, boolean upTo, boolean opponentOnly,
 					boolean selfOnly, String condition, String element,
-					int costVal, String costCmp,
+					int costVal, String costCmp, int powerVal, String powerCmp,
 					boolean inclForwards, boolean inclBackups, boolean inclMonsters,
 					String jobFilter, String cardNameFilter, String categoryFilter, String excludeName, boolean inclSummons) {
 				java.util.List<ForwardTarget> eligible = new ArrayList<>();
@@ -7630,6 +7630,7 @@ public class MainWindow {
 						CardData card = p1Forward(i);
 						if (element != null && !card.containsElement(element)) continue;
 						if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
+						if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
 						if (!meetsJobFilter(card, jobFilter)) continue;
 						if (!meetsCardNameFilter(card, cardNameFilter)) continue;
 						if (!meetsCategoryFilter(card, categoryFilter)) continue;
@@ -7642,6 +7643,7 @@ public class MainWindow {
 						if (p1BackupCards[i] == null) continue;
 						if (element != null && !p1BackupCards[i].containsElement(element)) continue;
 						if (!meetsCostConstraint(p1BackupCards[i].cost(), costVal, costCmp)) continue;
+						if (!meetsPowerConstraint(p1BackupCards[i].power(), powerVal, powerCmp)) continue;
 						if (!meetsJobFilter(p1BackupCards[i], jobFilter)) continue;
 						if (!meetsCardNameFilter(p1BackupCards[i], cardNameFilter)) continue;
 						if (!meetsCategoryFilter(p1BackupCards[i], categoryFilter)) continue;
@@ -7653,6 +7655,7 @@ public class MainWindow {
 						CardData card = p1MonsterCards.get(i);
 						if (element != null && !card.containsElement(element)) continue;
 						if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
+						if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
 						if (!meetsJobFilter(card, jobFilter)) continue;
 						if (!meetsCardNameFilter(card, cardNameFilter)) continue;
 						if (!meetsCategoryFilter(card, categoryFilter)) continue;
@@ -7666,6 +7669,7 @@ public class MainWindow {
 						CardData card = p2ForwardCards.get(i);
 						if (element != null && !card.containsElement(element)) continue;
 						if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
+						if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
 						if (!meetsJobFilter(card, jobFilter)) continue;
 						if (!meetsCardNameFilter(card, cardNameFilter)) continue;
 						if (!meetsCategoryFilter(card, categoryFilter)) continue;
@@ -7678,6 +7682,7 @@ public class MainWindow {
 						if (p2BackupCards[i] == null) continue;
 						if (element != null && !p2BackupCards[i].containsElement(element)) continue;
 						if (!meetsCostConstraint(p2BackupCards[i].cost(), costVal, costCmp)) continue;
+						if (!meetsPowerConstraint(p2BackupCards[i].power(), powerVal, powerCmp)) continue;
 						if (!meetsJobFilter(p2BackupCards[i], jobFilter)) continue;
 						if (!meetsCardNameFilter(p2BackupCards[i], cardNameFilter)) continue;
 						if (!meetsCategoryFilter(p2BackupCards[i], categoryFilter)) continue;
@@ -7689,6 +7694,7 @@ public class MainWindow {
 						CardData card = p2MonsterCards.get(i);
 						if (element != null && !card.containsElement(element)) continue;
 						if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
+						if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
 						if (!meetsJobFilter(card, jobFilter)) continue;
 						if (!meetsCardNameFilter(card, cardNameFilter)) continue;
 						if (!meetsCategoryFilter(card, categoryFilter)) continue;
@@ -7697,12 +7703,12 @@ public class MainWindow {
 							eligible.add(new ForwardTarget(false, i, ForwardTarget.CardZone.MONSTER));
 					}
 				}
-				String costLabel = costVal >= 0
-						? " of cost " + costVal + (costCmp != null ? " or " + costCmp : "") : "";
+				String costLabel  = costVal  >= 0 ? " of cost "  + costVal  + (costCmp  != null ? " or " + costCmp  : "") : "";
+				String powerLabel = powerVal >= 0 ? " of power " + powerVal + (powerCmp != null ? " or " + powerCmp : "") : "";
 				String title = "Choose " + (upTo ? "up to " : "") + maxCount
 						+ (condition != null ? " " + condition : "")
 						+ (element != null ? " " + element : "")
-						+ " Character" + (maxCount != 1 ? "s" : "") + costLabel
+						+ " Character" + (maxCount != 1 ? "s" : "") + costLabel + powerLabel
 						+ (opponentOnly ? " (opponent)" : selfOnly ? " (yours)" : "");
 				return showForwardSelectDialog(eligible, maxCount, upTo, title);
 			}
@@ -7837,6 +7843,7 @@ public class MainWindow {
 			public java.util.List<ForwardTarget> selectCharactersFromBreakZone(
 					int maxCount, boolean upTo, boolean opponentZone,
 					String condition, String element, int costVal, String costCmp,
+					int powerVal, String powerCmp,
 					boolean inclForwards, boolean inclBackups, boolean inclMonsters,
 					String jobFilter, String cardNameFilter, String categoryFilter, String excludeName, boolean inclSummons) {
 				java.util.List<CardData> bz = opponentZone
@@ -7850,6 +7857,7 @@ public class MainWindow {
 					if (card.isSummon()   && !inclSummons)  continue;
 					if (element != null && !card.containsElement(element)) continue;
 					if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
+					if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
 					if (!meetsJobFilter(card, jobFilter)) continue;
 					if (!meetsCardNameFilter(card, cardNameFilter)) continue;
 					if (!meetsCategoryFilter(card, categoryFilter)) continue;
@@ -7859,11 +7867,11 @@ public class MainWindow {
 					                         :                    ForwardTarget.CardZone.FORWARD;
 					eligible.add(new ForwardTarget(!opponentZone, i, cz));
 				}
-				String costLabel = costVal >= 0
-						? " of cost " + costVal + (costCmp != null ? " or " + costCmp : "") : "";
+				String costLabel  = costVal  >= 0 ? " of cost "  + costVal  + (costCmp  != null ? " or " + costCmp  : "") : "";
+				String powerLabel = powerVal >= 0 ? " of power " + powerVal + (powerCmp != null ? " or " + powerCmp : "") : "";
 				String title = "Choose " + (upTo ? "up to " : "") + maxCount
 						+ (element != null ? " " + element : "")
-						+ " Character" + (maxCount != 1 ? "s" : "") + costLabel
+						+ " Character" + (maxCount != 1 ? "s" : "") + costLabel + powerLabel
 						+ " in " + (opponentZone ? "opponent's" : "your") + " Break Zone";
 				return showBreakZoneSelectDialog(eligible, bz, maxCount, upTo, title);
 			}
@@ -8958,6 +8966,16 @@ public class MainWindow {
 			case "less" -> cardCost <= costVal;
 			case "more" -> cardCost >= costVal;
 			default     -> cardCost == costVal;
+		};
+	}
+
+	private static boolean meetsPowerConstraint(int cardPower, int powerVal, String powerCmp) {
+		if (powerVal < 0) return true;
+		if (powerCmp == null)             return cardPower == powerVal;
+		return switch (powerCmp.toLowerCase()) {
+			case "less" -> cardPower <= powerVal;
+			case "more" -> cardPower >= powerVal;
+			default     -> cardPower == powerVal;
 		};
 	}
 
