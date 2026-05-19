@@ -1883,6 +1883,7 @@ public class MainWindow {
 		refreshP1DeckLabel();
 		logEntry("P1 takes 1 damage — " + drawn.name() + (isEx ? " [EX BURST!]" : ""));
 		triggerFieldAbilitiesForDamageZone(true);
+		if (isEx) triggerExBurst(drawn, true);
 
 		if (gameState.getP1DamageZone().size() >= 7) {
 			triggerGameOver("7 Damage Taken - You Lose!");
@@ -1926,6 +1927,7 @@ public class MainWindow {
 		String cardInfo = drawn != null ? " — " + drawn.name() + (isEx ? " [EX BURST!]" : "") : "";
 		logEntry("P2 takes 1 damage (" + p2DamageCount + "/7)" + cardInfo);
 		triggerFieldAbilitiesForDamageZone(false);
+		if (isEx && drawn != null) triggerExBurst(drawn, false);
 
 		int slotIdx = p2DamageCount - 1;
 		if (drawn != null) animateCardToDamage(false, slotIdx);
@@ -6254,6 +6256,44 @@ public class MainWindow {
 	/** Fires "damage zone" field abilities for all field cards belonging to the player who took damage. */
 	private void triggerFieldAbilitiesForDamageZone(boolean isP1) {
 		triggerFieldAbilitiesForEvent("damage zone", isP1);
+	}
+
+	/**
+	 * Resolves the EX Burst effect on {@code card} for the player whose damage zone received it.
+	 * The controlling player may decline; if accepted the effect resolves immediately, bypassing
+	 * the stack so neither player can respond.
+	 * Summon effects run the full card effect; forward/backup/monster effects strip the field-ability
+	 * trigger prefix and run the bare effect text.
+	 */
+	private void triggerExBurst(CardData card, boolean isP1) {
+		String effect = card.exBurstEffect();
+		if (effect.isEmpty()) {
+			logEntry("[EX BURST] " + card.name() + " — no parseable effect");
+			return;
+		}
+		java.util.function.Consumer<GameContext> fn = ActionResolver.parse(effect, card);
+		if (fn == null) {
+			logEntry("[EX BURST] Effect not yet implemented: " + effect);
+			return;
+		}
+		if (isP1) {
+			int choice = JOptionPane.showOptionDialog(frame,
+					card.name() + " — EX Burst!\n" + effect,
+					"EX Burst",
+					JOptionPane.DEFAULT_OPTION,
+					JOptionPane.PLAIN_MESSAGE,
+					null,
+					new Object[]{"Activate", "Decline"},
+					"Activate");
+			if (choice != 0) {
+				logEntry("[EX BURST] " + card.name() + " — declined");
+				return;
+			}
+		} else {
+			logEntry("[EX BURST] [AI] " + card.name() + " — auto-activates");
+		}
+		logEntry("[EX BURST] " + card.name() + " — " + effect);
+		fn.accept(buildGameContext(isP1));
 	}
 
 	/**

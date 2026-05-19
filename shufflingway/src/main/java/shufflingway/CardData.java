@@ -64,6 +64,9 @@ public record CardData(
 
     private static final Pattern SUMMON_EX_PREFIX =
             Pattern.compile("(?i)^\\s*\\[\\[ex\\]\\]\\s*");
+    /** Matches the full [[ex]]…[[/]] EX Burst tag anywhere in card text. */
+    private static final Pattern EX_BURST_TAG =
+            Pattern.compile("(?i)\\[\\[ex\\]\\].*?\\[\\[/\\]\\]\\s*", Pattern.DOTALL);
     private static final Pattern SUMMON_MARKUP =
             Pattern.compile("(?i)\\[\\[[a-z/0-9]+\\]\\]");
     private static final Pattern SUMMON_BR =
@@ -282,6 +285,32 @@ public record CardData(
         }
         t = SUMMON_MARKUP.matcher(t).replaceAll(" ");
         return t.replaceAll("\\s+", " ").trim();
+    }
+
+    /**
+     * Returns the effect text to execute when this card triggers an EX Burst.
+     * <ul>
+     *   <li>Summons — everything after the {@code [[ex]]…[[/]]} tag, markup cleaned.</li>
+     *   <li>Forwards / Backups / Monsters — the first {@code [[br]]}-delimited segment after
+     *       the tag, with any leading "When [trigger]," clause stripped.</li>
+     * </ul>
+     * Returns an empty string if the card has no EX Burst tag or no parseable effect.
+     */
+    public String exBurstEffect() {
+        Matcher m = EX_BURST_TAG.matcher(textEn);
+        if (!m.find()) return "";
+        String after = textEn.substring(m.end()).trim();
+        if (after.isEmpty()) return "";
+
+        if (!isSummon()) {
+            int brIdx = after.toLowerCase(java.util.Locale.ROOT).indexOf("[[br]]");
+            if (brIdx >= 0) after = after.substring(0, brIdx).trim();
+            // Strip "When [CardName] [trigger], " so the bare effect text is left
+            after = after.replaceFirst("(?i)^When\\s+[^,]+,\\s*", "").trim();
+        }
+
+        after = SUMMON_MARKUP.matcher(after).replaceAll(" ");
+        return after.replaceAll("\\s+", " ").trim();
     }
 
     // Haste: start with [[br]] or (This descriptor, middle [[br]]…[[br]], or paired with other keywords
