@@ -582,4 +582,14 @@ public interface GameContext {
     void applyMassFieldPowerBoost(int amount, boolean inclForwards, boolean inclMonsters,
             boolean opponentOnly, boolean selfOnly,
             String element, int costVal, String costCmp);
+
+    /**
+     * Returns all {@link FieldAbility} instances currently active — that is, belonging to
+     * any card (Forward, Backup, or Monster) on either player's field.
+     *
+     * <p>Because field abilities are "always on" while their owning card is on the field,
+     * the caller can use this list to check whether a particular global effect (e.g.
+     * "All Forwards lose Haste") is currently suppressing a game mechanic.
+     */
+    List<FieldAbility> getActiveFieldAbilities();
 }

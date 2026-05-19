@@ -31,6 +31,7 @@ public record CardData(
         List<String> primingCost,
         List<ActionAbility> actionAbilities,
         List<AutoAbility>  autoAbilities,
+        List<FieldAbility> fieldAbilities,
         String job,
         String category1,
         String category2,
@@ -55,7 +56,8 @@ public record CardData(
         warpCost        = List.copyOf(warpCost);
         primingCost     = List.copyOf(primingCost);
         actionAbilities = List.copyOf(actionAbilities);
-        autoAbilities  = List.copyOf(autoAbilities);
+        autoAbilities   = List.copyOf(autoAbilities);
+        fieldAbilities  = List.copyOf(fieldAbilities);
         job       = job       != null ? job       : "";
         category1 = category1 != null ? category1 : "";
         category2 = category2 != null ? category2 : "";
@@ -782,6 +784,73 @@ public record CardData(
         if (effect.isEmpty()) return null;
         return new AutoAbility(card, trigger, youMay, opponentMay, effect,
                 oncePerTurn, yourTurnOnly, rfpConditionCard, castPaymentMinElements, castOnly);
+    }
+
+    // -------------------------------------------------------------------------
+    // Field Ability parsing
+    // -------------------------------------------------------------------------
+
+    /**
+     * Matches a segment that consists solely of trait keyword(s) — possibly followed
+     * by a parenthetical description — with no other content.
+     * Covers: Haste, Brave, First Strike, Back Attack (alone or combined),
+     * Warp N -- costs, Priming "name" -- costs.
+     */
+    private static final Pattern FA_TRAIT_KEYWORD = Pattern.compile(
+        "(?i)^(?:" +
+        "(?:(?:Haste|Brave|First\\s+Strike|Back\\s+Attack)(?:\\s+(?:Haste|Brave|First\\s+Strike|Back\\s+Attack))*)" +
+        "|Warp\\s+\\d+\\s*--\\s*(?:《[^》]*》\\s*)*" +
+        "|Priming\\s+\"[^\"]+\"\\s*--\\s*(?:《[^》]*》\\s*)*" +
+        ")(?:\\s*\\([^)]*\\))*\\s*$"
+    );
+
+    /**
+     * Matches the "When " prefix common to all Auto abilities and Warp Counter triggers.
+     * Used to exclude auto-ability segments from field-ability parsing.
+     */
+    private static final Pattern FA_AUTO_PREFIX = Pattern.compile("(?i)^When\\s+");
+
+    /**
+     * Parses all Field Abilities from {@code textEn} by exclusion:
+     * any {@code [[br]]}-delimited segment that is not a trait keyword, an Auto ability,
+     * an Action ability, or an alternate-cost declaration is a Field ability.
+     *
+     * <p>The returned list is immutable.
+     */
+    public static List<FieldAbility> parseFieldAbilities(String textEn) {
+        if (textEn == null || textEn.isBlank()) return List.of();
+
+        // Remove EX Burst block entirely — it is either an action ability or a summon effect
+        String text = EX_BURST_TAG.matcher(textEn).replaceAll(" ");
+
+        List<FieldAbility> result = new ArrayList<>();
+        for (String raw : text.split("(?i)\\[\\[br\\]\\]")) {
+            String rawTrimmed = raw.trim();
+            if (rawTrimmed.isEmpty()) continue;
+
+            // Action abilities: check raw text (preserves [[s]]…[[/]] markup the pattern needs)
+            if (ACTION_ABILITY_PATTERN.matcher(rawTrimmed).find()) continue;
+
+            // Strip remaining markup tags for the checks below
+            String seg = SUMMON_MARKUP.matcher(rawTrimmed).replaceAll("").trim();
+            if (seg.isEmpty()) continue;
+
+            // Alternate-cost declarations
+            if (ALT_COST_SUMMON.matcher(seg).find())    continue;
+            if (ALT_COST_NONSUMMON.matcher(seg).find()) continue;
+
+            // Auto abilities: "When [card/event] [trigger], [effect]"
+            if (FA_AUTO_PREFIX.matcher(seg).find()) continue;
+
+            // Trait keyword segments (Haste, Brave, Warp N, Priming "…", etc.)
+            if (FA_TRAIT_KEYWORD.matcher(seg).find()) continue;
+
+            // Parenthetical trait descriptions like "(This Forward can attack…)"
+            if (seg.startsWith("(")) continue;
+
+            result.add(new FieldAbility(seg));
+        }
+        return List.copyOf(result);
     }
 
     private static final Pattern COUNTER_COST_PATTERN = Pattern.compile(

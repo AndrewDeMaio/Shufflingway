@@ -973,7 +973,8 @@ public class MainWindow {
 							card.multicard(), CardData.parseTraits(tx),
 							CardData.parseWarpValue(tx), CardData.parseWarpCost(tx),
 							CardData.parsePrimingTarget(tx), CardData.parsePrimingCost(tx),
-							CardData.parseActionAbilities(tx), CardData.parseAutoAbilities(tx), card.job(), card.category1(), card.category2(), tx);
+							CardData.parseActionAbilities(tx), CardData.parseAutoAbilities(tx),
+							CardData.parseFieldAbilities(tx), card.job(), card.category1(), card.category2(), tx);
 					if (card.isLb()) lb.add(cd);
 					else             main.add(cd);
 				}
@@ -992,7 +993,8 @@ public class MainWindow {
 								card.multicard(), CardData.parseTraits(tx),
 								CardData.parseWarpValue(tx), CardData.parseWarpCost(tx),
 								CardData.parsePrimingTarget(tx), CardData.parsePrimingCost(tx),
-								CardData.parseActionAbilities(tx), CardData.parseAutoAbilities(tx), card.job(), card.category1(), card.category2(), tx);
+								CardData.parseActionAbilities(tx), CardData.parseAutoAbilities(tx),
+								CardData.parseFieldAbilities(tx), card.job(), card.category1(), card.category2(), tx);
 						if (card.isLb()) p2Lb.add(cd);
 						else             p2Main.add(cd);
 					}
@@ -8987,6 +8989,17 @@ public class MainWindow {
 				for (CardData c : mons) if (c != null && c.name().equalsIgnoreCase(cardName)) return true;
 				for (CardData c : bkps) if (c != null && c.name().equalsIgnoreCase(cardName)) return true;
 				return false;
+			}
+
+			@Override public java.util.List<FieldAbility> getActiveFieldAbilities() {
+				java.util.List<FieldAbility> active = new ArrayList<>();
+				for (CardData c : p1ForwardCards) active.addAll(c.fieldAbilities());
+				for (CardData c : p1MonsterCards)  active.addAll(c.fieldAbilities());
+				for (CardData c : p1BackupCards)   if (c != null) active.addAll(c.fieldAbilities());
+				for (CardData c : p2ForwardCards)  active.addAll(c.fieldAbilities());
+				for (CardData c : p2MonsterCards)  active.addAll(c.fieldAbilities());
+				for (CardData c : p2BackupCards)   if (c != null) active.addAll(c.fieldAbilities());
+				return active;
 			}
 
 			@Override public int p1DamageCount() { return gameState.getP1DamageZone().size(); }
