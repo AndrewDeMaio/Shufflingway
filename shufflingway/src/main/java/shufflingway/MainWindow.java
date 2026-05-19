@@ -240,6 +240,9 @@ public class MainWindow {
 	private javax.swing.Timer    glowTimer;
 	private final float[]        glowAngle = { 0f };
 
+	// Phase tracker strip
+	private PhaseTracker         phaseTracker;
+
 	// Attack button and selection state for party attacks
 	private JButton              attackButton;
 	private final List<Integer>  p1AttackSelection = new ArrayList<>();
@@ -765,9 +768,12 @@ public class MainWindow {
 		nextBtnPanel.add(nextPhaseButton);
 		nextBtnPanel.add(attackButton);
 
+		phaseTracker = new PhaseTracker();
+
 		JPanel sideNorth = new JPanel();
 		sideNorth.setLayout(new BoxLayout(sideNorth, BoxLayout.Y_AXIS));
 		sideNorth.add(cardPreviewPanel);
+		sideNorth.add(phaseTracker);
 		sideNorth.add(nextBtnPanel);
 
 		// Game log (scrollable, fills the rest of the side panel)
@@ -819,7 +825,7 @@ public class MainWindow {
 
 		handPanel = new JPanel(null);
 		handPanel.setBackground(Color.DARK_GRAY);
-		handPanel.setPreferredSize(new Dimension(sidePanelW, CARD_H));
+		handPanel.setPreferredSize(new Dimension(sidePanelW, (int)(CARD_H * 0.6)));
 		handPanel.setBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, Color.GRAY));
 		handPanel.addMouseListener(new MouseAdapter() {
 			@Override public void mouseEntered(MouseEvent e) {
@@ -1129,6 +1135,7 @@ public class MainWindow {
 			GameState.Player firstPlayer = p1GoesFirst
 					? GameState.Player.P1 : GameState.Player.P2;
 			gameState.startFirstTurn(firstPlayer);
+			refreshPhaseTracker();
 			refreshP1HandLabel();
 			if (p1GoesFirst) {
 				logEntry("Coin flip: You go first!");
@@ -1200,7 +1207,8 @@ public class MainWindow {
 		JLabel lbl = new JLabel(text, SwingConstants.CENTER);
 		lbl.setFont(FontLoader.loadPixelNESFont(11));
 		lbl.setForeground(Color.LIGHT_GRAY);
-		lbl.setBounds(0, 0, handPanel.getWidth() > 0 ? handPanel.getWidth() : sidePanelW, CARD_H);
+		int handH = handPanel.getHeight() > 0 ? handPanel.getHeight() : (int)(CARD_H * 0.6);
+		lbl.setBounds(0, 0, handPanel.getWidth() > 0 ? handPanel.getWidth() : sidePanelW, handH);
 		handPanel.add(lbl);
 		handPanel.revalidate();
 		handPanel.repaint();
@@ -1265,6 +1273,7 @@ public class MainWindow {
 				usedOncePerTurnAbilities.clear();
 				// Advance first so getTurnNumber() still reflects the current turn
 				gameState.advancePhase();   // ACTIVE → DRAW
+				refreshPhaseTracker();
 				int drawCount = gameState.getTurnNumber() == 1 ? 1 : 2;
 				List<CardData> drawn = gameState.drawToHand(drawCount);
 				animateCardDraw(true, drawn.size());
@@ -1282,6 +1291,7 @@ public class MainWindow {
 
 			case DRAW -> {
                             gameState.advancePhase();   // DRAW → MAIN_1
+                            refreshPhaseTracker();
                             logEntry("Main Phase 1");
                             processWarpCounters();
             }
@@ -1289,6 +1299,7 @@ public class MainWindow {
 			case MAIN_1 -> {
                             p1AttackSelection.clear();
                             gameState.advancePhase();   // MAIN_1 → ATTACK
+                            refreshPhaseTracker();
                             refreshAttackButton();
                             logEntry("Attack Phase");
                             refreshAllForwardSlots();
@@ -1302,12 +1313,14 @@ public class MainWindow {
                             p1AttackSelection.clear();
                             refreshAttackButton();
                             gameState.advancePhase();   // ATTACK → MAIN_2
+                            refreshPhaseTracker();
                             refreshAllForwardSlots();
                             logEntry("Main Phase 2");
 			}
 
 			case MAIN_2 -> {
                             gameState.advancePhase();   // MAIN_2 → END
+                            refreshPhaseTracker();
                             logEntry("End Phase");
                             fireEndOfTurnEffects(true);
                             for (int i = 0; i < p1ForwardDamage.size(); i++) p1ForwardDamage.set(i, 0);
@@ -1341,17 +1354,28 @@ public class MainWindow {
 					p1ExtraTurnThenLose = false;
 					logEntry("Extra Turn — P1 takes one additional turn");
 					gameState.advancePhaseExtraTurn(); // END → ACTIVE, same player
+					refreshPhaseTracker();
 					nextPhaseButton.setEnabled(true);
 					endOfTurnEffects.add(ctx -> triggerGameOver("Extra Turn ended — You Lose!"));
 					onNextPhase(); // begin ACTIVE → DRAW automatically
 				} else {
 					// END → ACTIVE: increments turn number and switches to P2
 					gameState.advancePhase();
+					refreshPhaseTracker();
 					nextPhaseButton.setEnabled(false);
 					computerPlayer.runTurn();
 				}
 			}
 		}
+	}
+
+	private void refreshPhaseTracker() {
+		if (phaseTracker == null || gameState.getCurrentPhase() == null) return;
+		phaseTracker.setState(
+			PhaseTracker.PHASES[gameState.getCurrentPhase().ordinal()],
+			gameState.getTurnNumber(),
+			gameState.getCurrentPlayer() == GameState.Player.P1
+		);
 	}
 
 	/** Appends a timestamped entry to the game log. */
@@ -10711,6 +10735,7 @@ public class MainWindow {
 			logEntry(msg.toString());
 
 			gameState.advancePhase(); // ACTIVE → DRAW
+			refreshPhaseTracker();
 			step(this::doDrawPhase);
 		}
 
@@ -10728,9 +10753,11 @@ public class MainWindow {
 			}
 			logEntry("[P2] Draw Phase — Drew " + drawn.size() + " card(s) (hand: " + gameState.getP2Hand().size() + ")");
 			gameState.advancePhase(); // DRAW → MAIN_1
+			refreshPhaseTracker();
 			logEntry("[P2] Main Phase 1");
 			step(() -> doMainPhase(() -> {
 				gameState.advancePhase(); // MAIN_1 → ATTACK
+				refreshPhaseTracker();
 				boolean canAttack = false;
 				for (int i = 0; i < p2ForwardStates.size(); i++) {
 					if (p2ForwardCanAttack(i)) { canAttack = true; break; }
@@ -10738,6 +10765,7 @@ public class MainWindow {
 				if (!canAttack) {
 					logEntry("[P2] Attack Phase — No attackers, skipping");
 					gameState.advancePhase(); // ATTACK → MAIN_2
+					refreshPhaseTracker();
 					logEntry("[P2] Main Phase 2");
 					step(() -> doMainPhase(this::doEndPhase));
 				} else {
@@ -10745,6 +10773,7 @@ public class MainWindow {
 					refreshAllP2ForwardSlots();
 					step(() -> doAttackPhase(() -> {
 						gameState.advancePhase(); // ATTACK → MAIN_2
+						refreshPhaseTracker();
 						logEntry("[P2] Main Phase 2");
 						step(() -> doMainPhase(this::doEndPhase));
 					}));
@@ -10891,8 +10920,10 @@ public class MainWindow {
 			p1NonLethalProtection = false;    p2NonLethalProtection = false;
 			p1GlobalDmgReduction  = 0;        p2GlobalDmgReduction  = 0;
 			gameState.advancePhase(); // MAIN_2 → END
+			refreshPhaseTracker();
 			logEntry("[P2] End Phase");
 			gameState.advancePhase(); // END → ACTIVE (switches to P1, increments turn)
+			refreshPhaseTracker();
 			step(this::startP1Turn);  // startP1Turn expects phase == ACTIVE
 		}
 
@@ -10928,6 +10959,7 @@ public class MainWindow {
 			logEntry(msg.toString());
 
 			gameState.advancePhase(); // ACTIVE → DRAW
+			refreshPhaseTracker();
 
 			List<CardData> drawn = gameState.drawToHand(2);
 			animateCardDraw(true, drawn.size());
@@ -10939,6 +10971,7 @@ public class MainWindow {
 			}
 			logEntry("Draw Phase — Drew " + drawn.size() + " card(s)");
 			gameState.advancePhase(); // DRAW → MAIN_1
+			refreshPhaseTracker();
 			logEntry("Main Phase 1");
 			processWarpCounters();
 			nextPhaseButton.setEnabled(true);
