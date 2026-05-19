@@ -123,7 +123,9 @@ public class CardDatabase implements AutoCloseable {
             ps.setInt   (11, card.exBurst  ? 1 : 0);
             ps.setInt   (12, card.multicard ? 1 : 0);
             String textEn = card.textEn == null ? null
-                    : card.textEn.replaceAll("(?si)\\[\\[i\\]\\](.*?)\\[\\[/\\]\\]", "$1");
+                    : card.textEn.replaceAll("(?si)\\[\\[i\\]\\](.*?)\\[\\[/\\]\\]", "$1")
+                                 .replace("<br />", "[[br]]")
+                                 .replaceAll("(?i)</?p>", "");
             ps.setString(13, textEn);
             ps.setString(14, card.thumbName);
             ps.setString(15, card.imageUrl);
