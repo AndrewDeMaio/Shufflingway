@@ -7649,82 +7649,165 @@ public class MainWindow {
 					boolean inclForwards, boolean inclBackups, boolean inclMonsters,
 					String jobFilter, String cardNameFilter, String categoryFilter, String excludeName, boolean inclSummons) {
 				java.util.List<ForwardTarget> eligible = new ArrayList<>();
+				// "own" = cards belonging to effect controller; "opp" = other player's cards.
+				// isP1 captures the controller's perspective, so the two blocks below must
+				// flip which physical side they iterate when isP1 is false (P2 controls).
 				if (!opponentOnly) {
-					if (inclForwards) for (int i = 0; i < p1ForwardCards.size(); i++) {
-						CardData card = p1Forward(i);
-						if (element != null && !card.containsElement(element)) continue;
-						if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
-						if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
-						if (!meetsJobFilter(card, jobFilter)) continue;
-						if (!meetsCardNameFilter(card, cardNameFilter)) continue;
-						if (!meetsCategoryFilter(card, categoryFilter)) continue;
-						if (excludeName != null && excludeName.equalsIgnoreCase(card.name())) continue;
-						if (meetsTargetCondition(p1ForwardStates.get(i), p1ForwardDamage.get(i),
-								p1AttackSelection.contains(i), false, condition))
-							eligible.add(new ForwardTarget(true, i, ForwardTarget.CardZone.FORWARD));
-					}
-					if (inclBackups) for (int i = 0; i < p1BackupCards.length; i++) {
-						if (p1BackupCards[i] == null) continue;
-						if (element != null && !p1BackupCards[i].containsElement(element)) continue;
-						if (!meetsCostConstraint(p1BackupCards[i].cost(), costVal, costCmp)) continue;
-						if (!meetsPowerConstraint(p1BackupCards[i].power(), powerVal, powerCmp)) continue;
-						if (!meetsJobFilter(p1BackupCards[i], jobFilter)) continue;
-						if (!meetsCardNameFilter(p1BackupCards[i], cardNameFilter)) continue;
-						if (!meetsCategoryFilter(p1BackupCards[i], categoryFilter)) continue;
-						if (excludeName != null && excludeName.equalsIgnoreCase(p1BackupCards[i].name())) continue;
-						if (meetsTargetCondition(p1BackupStates[i], 0, false, false, condition))
-							eligible.add(new ForwardTarget(true, i, ForwardTarget.CardZone.BACKUP));
-					}
-					if (inclMonsters) for (int i = 0; i < p1MonsterCards.size(); i++) {
-						CardData card = p1MonsterCards.get(i);
-						if (element != null && !card.containsElement(element)) continue;
-						if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
-						if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
-						if (!meetsJobFilter(card, jobFilter)) continue;
-						if (!meetsCardNameFilter(card, cardNameFilter)) continue;
-						if (!meetsCategoryFilter(card, categoryFilter)) continue;
-						if (excludeName != null && excludeName.equalsIgnoreCase(card.name())) continue;
-						if (meetsTargetCondition(p1MonsterStates.get(i), 0, false, false, condition))
-							eligible.add(new ForwardTarget(true, i, ForwardTarget.CardZone.MONSTER));
+					if (isP1) {
+						if (inclForwards) for (int i = 0; i < p1ForwardCards.size(); i++) {
+							CardData card = p1Forward(i);
+							if (element != null && !card.containsElement(element)) continue;
+							if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
+							if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
+							if (!meetsJobFilter(card, jobFilter)) continue;
+							if (!meetsCardNameFilter(card, cardNameFilter)) continue;
+							if (!meetsCategoryFilter(card, categoryFilter)) continue;
+							if (excludeName != null && excludeName.equalsIgnoreCase(card.name())) continue;
+							if (meetsTargetCondition(p1ForwardStates.get(i), p1ForwardDamage.get(i),
+									p1AttackSelection.contains(i), false, condition))
+								eligible.add(new ForwardTarget(true, i, ForwardTarget.CardZone.FORWARD));
+						}
+						if (inclBackups) for (int i = 0; i < p1BackupCards.length; i++) {
+							if (p1BackupCards[i] == null) continue;
+							if (element != null && !p1BackupCards[i].containsElement(element)) continue;
+							if (!meetsCostConstraint(p1BackupCards[i].cost(), costVal, costCmp)) continue;
+							if (!meetsPowerConstraint(p1BackupCards[i].power(), powerVal, powerCmp)) continue;
+							if (!meetsJobFilter(p1BackupCards[i], jobFilter)) continue;
+							if (!meetsCardNameFilter(p1BackupCards[i], cardNameFilter)) continue;
+							if (!meetsCategoryFilter(p1BackupCards[i], categoryFilter)) continue;
+							if (excludeName != null && excludeName.equalsIgnoreCase(p1BackupCards[i].name())) continue;
+							if (meetsTargetCondition(p1BackupStates[i], 0, false, false, condition))
+								eligible.add(new ForwardTarget(true, i, ForwardTarget.CardZone.BACKUP));
+						}
+						if (inclMonsters) for (int i = 0; i < p1MonsterCards.size(); i++) {
+							CardData card = p1MonsterCards.get(i);
+							if (element != null && !card.containsElement(element)) continue;
+							if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
+							if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
+							if (!meetsJobFilter(card, jobFilter)) continue;
+							if (!meetsCardNameFilter(card, cardNameFilter)) continue;
+							if (!meetsCategoryFilter(card, categoryFilter)) continue;
+							if (excludeName != null && excludeName.equalsIgnoreCase(card.name())) continue;
+							if (meetsTargetCondition(p1MonsterStates.get(i), 0, false, false, condition))
+								eligible.add(new ForwardTarget(true, i, ForwardTarget.CardZone.MONSTER));
+						}
+					} else {
+						if (inclForwards) for (int i = 0; i < p2ForwardCards.size(); i++) {
+							CardData card = p2ForwardCards.get(i);
+							if (element != null && !card.containsElement(element)) continue;
+							if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
+							if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
+							if (!meetsJobFilter(card, jobFilter)) continue;
+							if (!meetsCardNameFilter(card, cardNameFilter)) continue;
+							if (!meetsCategoryFilter(card, categoryFilter)) continue;
+							if (excludeName != null && excludeName.equalsIgnoreCase(card.name())) continue;
+							if (meetsTargetCondition(p2ForwardStates.get(i), p2ForwardDamage.get(i),
+									false, false, condition))
+								eligible.add(new ForwardTarget(false, i, ForwardTarget.CardZone.FORWARD));
+						}
+						if (inclBackups) for (int i = 0; i < p2BackupCards.length; i++) {
+							if (p2BackupCards[i] == null) continue;
+							if (element != null && !p2BackupCards[i].containsElement(element)) continue;
+							if (!meetsCostConstraint(p2BackupCards[i].cost(), costVal, costCmp)) continue;
+							if (!meetsPowerConstraint(p2BackupCards[i].power(), powerVal, powerCmp)) continue;
+							if (!meetsJobFilter(p2BackupCards[i], jobFilter)) continue;
+							if (!meetsCardNameFilter(p2BackupCards[i], cardNameFilter)) continue;
+							if (!meetsCategoryFilter(p2BackupCards[i], categoryFilter)) continue;
+							if (excludeName != null && excludeName.equalsIgnoreCase(p2BackupCards[i].name())) continue;
+							if (meetsTargetCondition(p2BackupStates[i], 0, false, false, condition))
+								eligible.add(new ForwardTarget(false, i, ForwardTarget.CardZone.BACKUP));
+						}
+						if (inclMonsters) for (int i = 0; i < p2MonsterCards.size(); i++) {
+							CardData card = p2MonsterCards.get(i);
+							if (element != null && !card.containsElement(element)) continue;
+							if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
+							if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
+							if (!meetsJobFilter(card, jobFilter)) continue;
+							if (!meetsCardNameFilter(card, cardNameFilter)) continue;
+							if (!meetsCategoryFilter(card, categoryFilter)) continue;
+							if (excludeName != null && excludeName.equalsIgnoreCase(card.name())) continue;
+							if (meetsTargetCondition(p2MonsterStates.get(i), 0, false, false, condition))
+								eligible.add(new ForwardTarget(false, i, ForwardTarget.CardZone.MONSTER));
+						}
 					}
 				}
 				if (!selfOnly) {
-					if (inclForwards) for (int i = 0; i < p2ForwardCards.size(); i++) {
-						CardData card = p2ForwardCards.get(i);
-						if (element != null && !card.containsElement(element)) continue;
-						if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
-						if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
-						if (!meetsJobFilter(card, jobFilter)) continue;
-						if (!meetsCardNameFilter(card, cardNameFilter)) continue;
-						if (!meetsCategoryFilter(card, categoryFilter)) continue;
-						if (excludeName != null && excludeName.equalsIgnoreCase(card.name())) continue;
-						if (meetsTargetCondition(p2ForwardStates.get(i), p2ForwardDamage.get(i),
-								false, false, condition))
-							eligible.add(new ForwardTarget(false, i, ForwardTarget.CardZone.FORWARD));
-					}
-					if (inclBackups) for (int i = 0; i < p2BackupCards.length; i++) {
-						if (p2BackupCards[i] == null) continue;
-						if (element != null && !p2BackupCards[i].containsElement(element)) continue;
-						if (!meetsCostConstraint(p2BackupCards[i].cost(), costVal, costCmp)) continue;
-						if (!meetsPowerConstraint(p2BackupCards[i].power(), powerVal, powerCmp)) continue;
-						if (!meetsJobFilter(p2BackupCards[i], jobFilter)) continue;
-						if (!meetsCardNameFilter(p2BackupCards[i], cardNameFilter)) continue;
-						if (!meetsCategoryFilter(p2BackupCards[i], categoryFilter)) continue;
-						if (excludeName != null && excludeName.equalsIgnoreCase(p2BackupCards[i].name())) continue;
-						if (meetsTargetCondition(p2BackupStates[i], 0, false, false, condition))
-							eligible.add(new ForwardTarget(false, i, ForwardTarget.CardZone.BACKUP));
-					}
-					if (inclMonsters) for (int i = 0; i < p2MonsterCards.size(); i++) {
-						CardData card = p2MonsterCards.get(i);
-						if (element != null && !card.containsElement(element)) continue;
-						if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
-						if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
-						if (!meetsJobFilter(card, jobFilter)) continue;
-						if (!meetsCardNameFilter(card, cardNameFilter)) continue;
-						if (!meetsCategoryFilter(card, categoryFilter)) continue;
-						if (excludeName != null && excludeName.equalsIgnoreCase(card.name())) continue;
-						if (meetsTargetCondition(p2MonsterStates.get(i), 0, false, false, condition))
-							eligible.add(new ForwardTarget(false, i, ForwardTarget.CardZone.MONSTER));
+					if (isP1) {
+						if (inclForwards) for (int i = 0; i < p2ForwardCards.size(); i++) {
+							CardData card = p2ForwardCards.get(i);
+							if (element != null && !card.containsElement(element)) continue;
+							if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
+							if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
+							if (!meetsJobFilter(card, jobFilter)) continue;
+							if (!meetsCardNameFilter(card, cardNameFilter)) continue;
+							if (!meetsCategoryFilter(card, categoryFilter)) continue;
+							if (excludeName != null && excludeName.equalsIgnoreCase(card.name())) continue;
+							if (meetsTargetCondition(p2ForwardStates.get(i), p2ForwardDamage.get(i),
+									false, false, condition))
+								eligible.add(new ForwardTarget(false, i, ForwardTarget.CardZone.FORWARD));
+						}
+						if (inclBackups) for (int i = 0; i < p2BackupCards.length; i++) {
+							if (p2BackupCards[i] == null) continue;
+							if (element != null && !p2BackupCards[i].containsElement(element)) continue;
+							if (!meetsCostConstraint(p2BackupCards[i].cost(), costVal, costCmp)) continue;
+							if (!meetsPowerConstraint(p2BackupCards[i].power(), powerVal, powerCmp)) continue;
+							if (!meetsJobFilter(p2BackupCards[i], jobFilter)) continue;
+							if (!meetsCardNameFilter(p2BackupCards[i], cardNameFilter)) continue;
+							if (!meetsCategoryFilter(p2BackupCards[i], categoryFilter)) continue;
+							if (excludeName != null && excludeName.equalsIgnoreCase(p2BackupCards[i].name())) continue;
+							if (meetsTargetCondition(p2BackupStates[i], 0, false, false, condition))
+								eligible.add(new ForwardTarget(false, i, ForwardTarget.CardZone.BACKUP));
+						}
+						if (inclMonsters) for (int i = 0; i < p2MonsterCards.size(); i++) {
+							CardData card = p2MonsterCards.get(i);
+							if (element != null && !card.containsElement(element)) continue;
+							if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
+							if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
+							if (!meetsJobFilter(card, jobFilter)) continue;
+							if (!meetsCardNameFilter(card, cardNameFilter)) continue;
+							if (!meetsCategoryFilter(card, categoryFilter)) continue;
+							if (excludeName != null && excludeName.equalsIgnoreCase(card.name())) continue;
+							if (meetsTargetCondition(p2MonsterStates.get(i), 0, false, false, condition))
+								eligible.add(new ForwardTarget(false, i, ForwardTarget.CardZone.MONSTER));
+						}
+					} else {
+						if (inclForwards) for (int i = 0; i < p1ForwardCards.size(); i++) {
+							CardData card = p1Forward(i);
+							if (element != null && !card.containsElement(element)) continue;
+							if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
+							if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
+							if (!meetsJobFilter(card, jobFilter)) continue;
+							if (!meetsCardNameFilter(card, cardNameFilter)) continue;
+							if (!meetsCategoryFilter(card, categoryFilter)) continue;
+							if (excludeName != null && excludeName.equalsIgnoreCase(card.name())) continue;
+							if (meetsTargetCondition(p1ForwardStates.get(i), p1ForwardDamage.get(i),
+									p1AttackSelection.contains(i), false, condition))
+								eligible.add(new ForwardTarget(true, i, ForwardTarget.CardZone.FORWARD));
+						}
+						if (inclBackups) for (int i = 0; i < p1BackupCards.length; i++) {
+							if (p1BackupCards[i] == null) continue;
+							if (element != null && !p1BackupCards[i].containsElement(element)) continue;
+							if (!meetsCostConstraint(p1BackupCards[i].cost(), costVal, costCmp)) continue;
+							if (!meetsPowerConstraint(p1BackupCards[i].power(), powerVal, powerCmp)) continue;
+							if (!meetsJobFilter(p1BackupCards[i], jobFilter)) continue;
+							if (!meetsCardNameFilter(p1BackupCards[i], cardNameFilter)) continue;
+							if (!meetsCategoryFilter(p1BackupCards[i], categoryFilter)) continue;
+							if (excludeName != null && excludeName.equalsIgnoreCase(p1BackupCards[i].name())) continue;
+							if (meetsTargetCondition(p1BackupStates[i], 0, false, false, condition))
+								eligible.add(new ForwardTarget(true, i, ForwardTarget.CardZone.BACKUP));
+						}
+						if (inclMonsters) for (int i = 0; i < p1MonsterCards.size(); i++) {
+							CardData card = p1MonsterCards.get(i);
+							if (element != null && !card.containsElement(element)) continue;
+							if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
+							if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
+							if (!meetsJobFilter(card, jobFilter)) continue;
+							if (!meetsCardNameFilter(card, cardNameFilter)) continue;
+							if (!meetsCategoryFilter(card, categoryFilter)) continue;
+							if (excludeName != null && excludeName.equalsIgnoreCase(card.name())) continue;
+							if (meetsTargetCondition(p1MonsterStates.get(i), 0, false, false, condition))
+								eligible.add(new ForwardTarget(true, i, ForwardTarget.CardZone.MONSTER));
+						}
 					}
 				}
 				String costLabel  = costVal  >= 0 ? " of cost "  + costVal  + (costCmp  != null ? " or " + costCmp  : "") : "";
@@ -7734,6 +7817,22 @@ public class MainWindow {
 						+ (element != null ? " " + element : "")
 						+ " Character" + (maxCount != 1 ? "s" : "") + costLabel + powerLabel
 						+ (opponentOnly ? " (opponent)" : selfOnly ? " (yours)" : "");
+				if (!isP1) {
+					// AI (P2 controls the effect): auto-select rather than prompting the human.
+					if (eligible.isEmpty()) return java.util.List.of();
+					java.util.List<ForwardTarget> copy = new ArrayList<>(eligible);
+					java.util.Collections.shuffle(copy);
+					java.util.List<ForwardTarget> picked = java.util.List.copyOf(copy.subList(0, Math.min(maxCount, copy.size())));
+					picked.forEach(t -> {
+						CardData c = switch (t.zone()) {
+							case BACKUP  -> t.isP1() ? p1BackupCards[t.idx()] : p2BackupCards[t.idx()];
+							case MONSTER -> t.isP1() ? p1MonsterCards.get(t.idx()) : p2MonsterCards.get(t.idx());
+							default      -> t.isP1() ? p1Forward(t.idx()) : p2ForwardCards.get(t.idx());
+						};
+						logEntry("[AI] chose " + c.name());
+					});
+					return picked;
+				}
 				return showForwardSelectDialog(eligible, maxCount, upTo, title);
 			}
 
