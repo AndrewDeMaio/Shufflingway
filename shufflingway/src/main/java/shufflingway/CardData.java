@@ -403,6 +403,7 @@ public record CardData(
         "((?i)(?:,\\s*)?discard[^:]+)?"                                     +  // optional discard cost phrase
         "((?i)(?:,\\s*)?remove\\s+[^:]+?\\s+from\\s+(?:the\\s+)?game\\s*)?" + // optional remove-from-game cost phrase
         "((?i)(?:,\\s*)?return\\s+[^:]+?\\s+to\\s+(?:its|their)\\s+owner(?:'s|s')?\\s+hand\\s*)?" + // optional return-to-hand cost phrase
+        "((?i)(?:,\\s*)?remove\\s+\\d+\\s+[^:]+?\\s+Counters?\\s+from\\s+[^:,]+?\\s*)?" +           // optional counter-removal cost phrase
         ":\\s*"                                                              +  // colon separator
         "((?:[^\\[]|\\[(?!\\[))*)"                                              // effect text (up to next [[markup]])
     );
@@ -448,10 +449,12 @@ public record CardData(
             String discardRaw    = m.group(4);
             String removeRaw     = m.group(5);
             String returnRaw     = m.group(6);
-            String effectRaw     = m.group(7).trim();
+            String counterRaw    = m.group(7);
+            String effectRaw     = m.group(8).trim();
             if (effectRaw.isEmpty()) continue;
             // Skip if there are no CP tokens or any non-CP cost phrase (spurious match)
-            if ((costPart == null || costPart.isBlank()) && bzRaw == null && discardRaw == null && removeRaw == null && returnRaw == null) continue;
+            if ((costPart == null || costPart.isBlank()) && bzRaw == null && discardRaw == null
+                    && removeRaw == null && returnRaw == null && counterRaw == null) continue;
 
             String  abilityName  = rawName != null ? rawName.trim() : "";
             boolean isSpecial    = !abilityName.isEmpty();
@@ -485,6 +488,7 @@ public record CardData(
             List<DiscardCost>        discardCosts        = parseDiscardCosts(discardRaw);
             List<RemoveFromGameCost> removeFromGameCosts = parseRemoveFromGameCosts(removeRaw);
             List<ReturnToHandCost>   returnToHandCosts   = parseReturnToHandCosts(returnRaw);
+            List<CounterCost>        counterCosts        = parseCounterCosts(counterRaw);
             boolean yourTurnOnly      = YOUR_TURN_ONLY_PATTERN.matcher(effectRaw).find();
             boolean oncePerTurn       = ONCE_PER_TURN_PATTERN.matcher(effectRaw).find();
             boolean mainPhaseOnly     = MAIN_PHASE_ONLY_PATTERN.matcher(effectRaw).find();
@@ -497,7 +501,7 @@ public record CardData(
             Matcher wBlkM             = WHILE_CARD_BLOCKING_PATTERN.matcher(effectRaw);
             String  whileCardBlk      = wBlkM.find() ? wBlkM.group("card").trim() : null;
             boolean whileCardInHand   = WHILE_CARD_IN_HAND_PATTERN.matcher(effectRaw).find();
-            result.add(new ActionAbility(abilityName, requiresDull, isSpecial, crystalCost, hasXCost, cpCost, breakZoneCosts, discardCosts, removeFromGameCosts, returnToHandCosts, yourTurnOnly, oncePerTurn, mainPhaseOnly, whileCardAtk, whileCardBlk, whilePartyAtk, whileCardInHand, effectRaw));
+            result.add(new ActionAbility(abilityName, requiresDull, isSpecial, crystalCost, hasXCost, cpCost, breakZoneCosts, discardCosts, removeFromGameCosts, returnToHandCosts, counterCosts, yourTurnOnly, oncePerTurn, mainPhaseOnly, whileCardAtk, whileCardBlk, whilePartyAtk, whileCardInHand, effectRaw));
         }
         return List.copyOf(result);
     }
@@ -736,6 +740,21 @@ public record CardData(
         if (effect.isEmpty()) return null;
         return new FieldAbility(card, trigger, youMay, opponentMay, effect,
                 oncePerTurn, yourTurnOnly, rfpConditionCard, castPaymentMinElements);
+    }
+
+    private static final Pattern COUNTER_COST_PATTERN = Pattern.compile(
+        "(?i)remove\\s+(?<n>\\d+)\\s+(?<name>.+?)\\s+Counters?\\s+from\\s+(?<card>[^,:.]+?)\\s*$"
+    );
+
+    /** Parses "remove N [Name] Counter(s) from [CardName]" into a {@link CounterCost} list. */
+    private static List<CounterCost> parseCounterCosts(String raw) {
+        if (raw == null || raw.isBlank()) return List.of();
+        Matcher m = COUNTER_COST_PATTERN.matcher(raw.trim());
+        if (!m.find()) return List.of();
+        int    count       = Integer.parseInt(m.group("n"));
+        String counterName = m.group("name").trim();
+        String cardName    = m.group("card").trim();
+        return List.of(new CounterCost(cardName, counterName, count));
     }
 
     /** Parses a "remove … from the game" cost phrase into a list of {@link RemoveFromGameCost} items. */

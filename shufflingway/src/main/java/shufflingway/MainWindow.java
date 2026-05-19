@@ -6081,6 +6081,8 @@ public class MainWindow {
 			if (!rfgCostSatisfied(rfg, isP1)) return false;
 		for (ReturnToHandCost rth : ability.returnToHandCosts())
 			if (!rfthCostSatisfied(rth, isP1)) return false;
+		for (CounterCost cc : ability.counterCosts())
+			if (!counterCostSatisfied(cc, source)) return false;
 		return canAffordAbilityCost(ability, isP1);
 	}
 
@@ -6687,6 +6689,8 @@ public class MainWindow {
 			if (!rfgCostSatisfied(rfg, isP1)) return false;
 		for (ReturnToHandCost rth : ability.returnToHandCosts())
 			if (!rfthCostSatisfied(rth, isP1)) return false;
+		for (CounterCost cc : ability.counterCosts())
+			if (!counterCostSatisfied(cc, source)) return false;
 		return canAffordAbilityCost(ability, isP1);
 	}
 
@@ -6739,6 +6743,12 @@ public class MainWindow {
 
 	private boolean bzCostSatisfied(BreakZoneCost bz, boolean isP1) {
 		return eligibleBzFieldCards(bz, isP1).size() >= bz.count();
+	}
+
+	/** True when {@code source} (the activating card) has enough counters to pay {@code cc}. */
+	private boolean counterCostSatisfied(CounterCost cc, CardData source) {
+		if (!source.name().equalsIgnoreCase(cc.cardName())) return false;
+		return gameState.getCounters(source, cc.counterName()) >= cc.count();
 	}
 
 	private List<ForwardTarget> eligibleBzFieldCards(BreakZoneCost bz, boolean isP1) {
@@ -7266,6 +7276,12 @@ public class MainWindow {
 			}
 			cf = false;
 		}
+		for (CounterCost cc : ability.counterCosts()) {
+			if (!cf) costDesc.append(" + ");
+			costDesc.append("remove ").append(cc.count()).append(' ')
+					.append(cc.counterName()).append(" Counter(s)");
+			cf = false;
+		}
 
 		JLabel titleLabel = new JLabel(
 				"<html><center>" + source.name() + " — " + (costDesc.length() > 0 ? costDesc : "free") + "</center></html>",
@@ -7405,6 +7421,14 @@ public class MainWindow {
 		// Return-to-hand costs
 		for (ReturnToHandCost rth : ability.returnToHandCosts())
 			executeReturnToHandCost(rth, isP1);
+
+		// Counter removal costs
+		for (CounterCost cc : ability.counterCosts()) {
+			int removed = gameState.removeCounters(source, cc.counterName(), cc.count());
+			logEntry(source.name() + " — removed " + removed + " " + cc.counterName()
+					+ " Counter(s) (cost)  [remaining: "
+					+ gameState.getCounters(source, cc.counterName()) + "]");
+		}
 
 		logEntry("\"" + source.name() + "\" activated ability");
 

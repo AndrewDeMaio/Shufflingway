@@ -47,6 +47,7 @@ public record ActionAbility(
         List<DiscardCost>       discardCosts,          // "discard X" hand-card costs (may be empty)
         List<RemoveFromGameCost> removeFromGameCosts,  // "remove X from the game" costs (may be empty)
         List<ReturnToHandCost>   returnToHandCosts,    // "return X to its owner's hand" costs (may be empty)
+        List<CounterCost>        counterCosts,         // "remove N [Name] Counter(s) from [CardName]" costs
         boolean                 yourTurnOnly,          // "can only use this ability during your turn" restriction
         boolean                 oncePerTurn,           // "can only use this ability once per turn" restriction
         boolean                 mainPhaseOnly,         // "can only use this ability during your Main Phase" restriction
@@ -61,6 +62,7 @@ public record ActionAbility(
         breakZoneCosts    = List.copyOf(breakZoneCosts);
         discardCosts      = List.copyOf(discardCosts);
         removeFromGameCosts = List.copyOf(removeFromGameCosts);
-        returnToHandCosts = List.copyOf(returnToHandCosts);
+        returnToHandCosts   = List.copyOf(returnToHandCosts);
+        counterCosts        = List.copyOf(counterCosts);
     }
 }
