@@ -974,7 +974,7 @@ public class MainWindow {
 							CardData.parseWarpValue(tx), CardData.parseWarpCost(tx),
 							CardData.parsePrimingTarget(tx), CardData.parsePrimingCost(tx),
 							CardData.parseActionAbilities(tx), CardData.parseAutoAbilities(tx),
-							CardData.parseFieldAbilities(tx), card.job(), card.category1(), card.category2(), tx);
+							CardData.parseFieldAbilities(tx, card.type()), card.job(), card.category1(), card.category2(), tx);
 					if (card.isLb()) lb.add(cd);
 					else             main.add(cd);
 				}
@@ -994,7 +994,7 @@ public class MainWindow {
 								CardData.parseWarpValue(tx), CardData.parseWarpCost(tx),
 								CardData.parsePrimingTarget(tx), CardData.parsePrimingCost(tx),
 								CardData.parseActionAbilities(tx), CardData.parseAutoAbilities(tx),
-								CardData.parseFieldAbilities(tx), card.job(), card.category1(), card.category2(), tx);
+								CardData.parseFieldAbilities(tx, card.type()), card.job(), card.category1(), card.category2(), tx);
 						if (card.isLb()) p2Lb.add(cd);
 						else             p2Main.add(cd);
 					}
@@ -6279,15 +6279,72 @@ public class MainWindow {
 			return;
 		}
 		if (isP1) {
-			int choice = JOptionPane.showOptionDialog(frame,
-					card.name() + " — EX Burst!\n" + effect,
-					"EX Burst",
-					JOptionPane.DEFAULT_OPTION,
-					JOptionPane.PLAIN_MESSAGE,
-					null,
-					new Object[]{"Activate", "Decline"},
-					"Activate");
-			if (choice != 0) {
+			JDialog dlg = new JDialog(frame, "EX Burst — " + card.name(), true);
+			dlg.setResizable(false);
+			dlg.setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
+
+			JLabel cardLabel = new JLabel("...", SwingConstants.CENTER);
+			cardLabel.setPreferredSize(new Dimension(CARD_W, CARD_H));
+			cardLabel.setMinimumSize(new Dimension(CARD_W, CARD_H));
+			cardLabel.setOpaque(true);
+			cardLabel.setBackground(Color.DARK_GRAY);
+			cardLabel.setBorder(BorderFactory.createLineBorder(new Color(160, 110, 220), 1));
+			cardLabel.addMouseListener(new MouseAdapter() {
+				@Override public void mouseEntered(MouseEvent e) { showZoomAt(card.imageUrl()); }
+				@Override public void mouseExited(MouseEvent e)  { hideZoom(); }
+			});
+			new SwingWorker<ImageIcon, Void>() {
+				@Override protected ImageIcon doInBackground() throws Exception {
+					Image img = ImageCache.load(card.imageUrl());
+					return img == null ? null : new ImageIcon(img.getScaledInstance(CARD_W, CARD_H, Image.SCALE_SMOOTH));
+				}
+				@Override protected void done() {
+					try { ImageIcon ic = get(); if (ic != null) { cardLabel.setIcon(ic); cardLabel.setText(null); } }
+					catch (InterruptedException | ExecutionException ignored) {}
+				}
+			}.execute();
+
+			JLabel nameLabel = new JLabel(card.name(), SwingConstants.CENTER);
+			nameLabel.setFont(FontLoader.loadPixelNESFont(9));
+			nameLabel.setPreferredSize(new Dimension(CARD_W, 18));
+
+			JLabel effectLabel = new JLabel(
+					"<html><div style='text-align:center;width:" + CARD_W + "px'>" + effect + "</div></html>",
+					SwingConstants.CENTER);
+
+			JPanel infoPanel = new JPanel();
+			infoPanel.setLayout(new BoxLayout(infoPanel, BoxLayout.Y_AXIS));
+			nameLabel.setAlignmentX(java.awt.Component.CENTER_ALIGNMENT);
+			effectLabel.setAlignmentX(java.awt.Component.CENTER_ALIGNMENT);
+			infoPanel.add(nameLabel);
+			infoPanel.add(effectLabel);
+
+			JPanel wrapper = new JPanel(new BorderLayout(0, 4));
+			wrapper.setBorder(BorderFactory.createEmptyBorder(8, 8, 0, 8));
+			wrapper.add(cardLabel,  BorderLayout.CENTER);
+			wrapper.add(infoPanel,  BorderLayout.SOUTH);
+
+			boolean[] activated = {false};
+			JButton declineBtn = new JButton("Decline");
+			declineBtn.setFont(FontLoader.loadPixelNESFont(11));
+			declineBtn.addActionListener(ae -> { hideZoom(); dlg.dispose(); });
+			JButton okBtn = new JButton("OK");
+			okBtn.setFont(FontLoader.loadPixelNESFont(11));
+			okBtn.addActionListener(ae -> { activated[0] = true; hideZoom(); dlg.dispose(); });
+
+			JPanel south = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 6));
+			south.add(declineBtn);
+			south.add(okBtn);
+			south.setBorder(BorderFactory.createEmptyBorder(0, 8, 8, 8));
+
+			dlg.getContentPane().setLayout(new BorderLayout(0, 4));
+			dlg.getContentPane().add(wrapper, BorderLayout.CENTER);
+			dlg.getContentPane().add(south,   BorderLayout.SOUTH);
+			dlg.pack();
+			dlg.setLocationRelativeTo(frame);
+			dlg.setVisible(true);
+
+			if (!activated[0]) {
 				logEntry("[EX BURST] " + card.name() + " — declined");
 				return;
 			}

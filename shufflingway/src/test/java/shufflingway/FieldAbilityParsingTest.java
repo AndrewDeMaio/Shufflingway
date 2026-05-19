@@ -10,17 +10,17 @@ import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
-public class AutoAbilityParsingTest {
+public class FieldAbilityParsingTest {
 
     // -------------------------------------------------------------------------
-    // Per-card coverage (mirrors reportCardParsingCoverage in CardParsingTest)
+    // Per-card coverage
     // -------------------------------------------------------------------------
 
     @Test
-    void reportAutoAbilityParsingCoverage() throws Exception {
+    void reportFieldAbilityParsingCoverage() throws Exception {
         File dbFile = new File("fftcg_cards.db");
         if (!dbFile.exists()) {
-            System.out.println("[AutoAbilityParsingTest] fftcg_cards.db not found — skipping.");
+            System.out.println("[FieldAbilityParsingTest] fftcg_cards.db not found — skipping.");
             return;
         }
 
@@ -47,13 +47,14 @@ public class AutoAbilityParsingTest {
                 String textEn = rs.getString("text_en");
                 if (textEn == null || textEn.isBlank()) { noAbilities++; continue; }
 
-                List<AutoAbility> abilities = CardData.parseAutoAbilities(textEn);
+                String typeEn = rs.getString("type_en");
+                List<FieldAbility> abilities = CardData.parseFieldAbilities(textEn, typeEn);
                 if (abilities.isEmpty()) { noAbilities++; continue; }
 
                 CardData source = buildSource(rs, textEn);
 
                 int parsed = 0;
-                for (AutoAbility fa : abilities)
+                for (FieldAbility fa : abilities)
                     if (ActionResolver.parse(fa.effectText(), source) != null) parsed++;
 
                 String example = formatCardExample(source.name(), abilities, source);
@@ -71,15 +72,15 @@ public class AutoAbilityParsingTest {
         }
 
         int withAbilities = fullyParsed + partiallyParsed + noneParsed;
-        System.out.printf("%n=== Auto Ability Parsing Coverage (per card) ===%n");
-        System.out.printf("Total cards:            %5d%n", totalCards);
-        System.out.printf("No auto abilities:     %5d%n", noAbilities);
-        System.out.printf("With auto abilities:   %5d%n", withAbilities);
-        System.out.printf("  Fully parsed:         %5d  (%.1f%%)%n", fullyParsed,     pct(fullyParsed,     withAbilities));
-        System.out.printf("  Partially parsed:     %5d  (%.1f%%)%n", partiallyParsed, pct(partiallyParsed, withAbilities));
-        System.out.printf("  None parsed:          %5d  (%.1f%%)%n", noneParsed,      pct(noneParsed,      withAbilities));
+        System.out.printf("%n=== Field Ability Parsing Coverage (per card) ===%n");
+        System.out.printf("Total cards:             %5d%n", totalCards);
+        System.out.printf("No field abilities:      %5d%n", noAbilities);
+        System.out.printf("With field abilities:    %5d%n", withAbilities);
+        System.out.printf("  Fully parsed:          %5d  (%.1f%%)%n", fullyParsed,     pct(fullyParsed,     withAbilities));
+        System.out.printf("  Partially parsed:      %5d  (%.1f%%)%n", partiallyParsed, pct(partiallyParsed, withAbilities));
+        System.out.printf("  None parsed:           %5d  (%.1f%%)%n", noneParsed,      pct(noneParsed,      withAbilities));
         System.out.println();
-        printExamples("Fully parsed",    examplesFully);
+        printExamples("Fully parsed",     examplesFully);
         printExamples("Partially parsed", examplesPartial);
         printExamples("Unrecognized",     examplesNone);
     }
@@ -112,26 +113,15 @@ public class AutoAbilityParsingTest {
                 rs.getString("category_1"), rs.getString("category_2"), textEn);
     }
 
-    private static String formatCardExample(String name, List<AutoAbility> abilities, CardData source) {
+    private static String formatCardExample(String name, List<FieldAbility> abilities, CardData source) {
         StringBuilder sb = new StringBuilder();
         sb.append("  Card: ").append(name).append('\n');
-        for (AutoAbility fa : abilities) {
+        for (FieldAbility fa : abilities) {
             boolean ok   = ActionResolver.parse(fa.effectText(), source) != null;
             String  desc = ActionResolver.fullDescription(fa.effectText(), source);
-            sb.append("  [").append(ok ? "OK" : "--").append("] ").append(autoAbilityText(fa)).append('\n');
-            sb.append("       [").append(fa.trigger()).append("] ")
-              .append(desc != null ? desc : "(none)").append('\n');
+            sb.append("  [").append(ok ? "OK" : "--").append("] ").append(fa.effectText()).append('\n');
+            sb.append("       ").append(desc != null ? desc : "(none)").append('\n');
         }
-        return sb.toString();
-    }
-
-    /** Reconstructs the original trigger line for display. */
-    private static String autoAbilityText(AutoAbility fa) {
-        StringBuilder sb = new StringBuilder("When ");
-        sb.append(fa.triggerCard()).append(' ').append(fa.trigger()).append(", ");
-        if (fa.youMay())       sb.append("you may ");
-        else if (fa.opponentMay()) sb.append("your opponent may ");
-        sb.append(fa.effectText());
         return sb.toString();
     }
 

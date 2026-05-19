@@ -811,14 +811,38 @@ public record CardData(
     private static final Pattern FA_AUTO_PREFIX = Pattern.compile("(?i)^When\\s+");
 
     /**
+     * Matches standalone restriction sentences that trail action or auto abilities but
+     * may appear as their own {@code [[br]]}-delimited segment in the card text.
+     * Examples:
+     * <ul>
+     *   <li>"You can only use this ability once per turn."</li>
+     *   <li>"You can only use this ability during your turn."</li>
+     *   <li>"You can only pay this cost with CP produced by Backups."</li>
+     *   <li>"This effect will trigger only once per turn."</li>
+     * </ul>
+     */
+    private static final Pattern FA_RESTRICTION_SENTENCE = Pattern.compile(
+        "(?i)^(?:" +
+        "You\\s+can(?:\\s+only)?\\s+use\\s+this\\s+ability" +
+        "|You\\s+can\\s+only\\s+pay\\s+this\\s+cost" +
+        "|This\\s+effect\\s+will\\s+trigger" +
+        ")"
+    );
+
+    /**
      * Parses all Field Abilities from {@code textEn} by exclusion:
      * any {@code [[br]]}-delimited segment that is not a trait keyword, an Auto ability,
-     * an Action ability, or an alternate-cost declaration is a Field ability.
+     * an Action ability, an alternate-cost declaration, or an ability restriction sentence
+     * is a Field ability.
+     *
+     * <p>Summon cards have no field abilities — their card text is a one-time effect — so
+     * passing {@code "Summon"} as {@code cardType} always returns an empty list.
      *
      * <p>The returned list is immutable.
      */
-    public static List<FieldAbility> parseFieldAbilities(String textEn) {
+    public static List<FieldAbility> parseFieldAbilities(String textEn, String cardType) {
         if (textEn == null || textEn.isBlank()) return List.of();
+        if ("Summon".equalsIgnoreCase(cardType))  return List.of();
 
         // Remove EX Burst block entirely — it is either an action ability or a summon effect
         String text = EX_BURST_TAG.matcher(textEn).replaceAll(" ");
@@ -847,6 +871,9 @@ public record CardData(
 
             // Parenthetical trait descriptions like "(This Forward can attack…)"
             if (seg.startsWith("(")) continue;
+
+            // Standalone restriction sentences that trail action/auto abilities
+            if (FA_RESTRICTION_SENTENCE.matcher(seg).find()) continue;
 
             result.add(new FieldAbility(seg));
         }
