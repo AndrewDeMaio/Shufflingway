@@ -199,7 +199,7 @@ public class PhaseTracker extends JPanel {
 
         for (int i = 0; i < n - 1; i++) {
             int x1 = cx[i]   + DIAMOND / 2 + 1;
-            int x2 = cx[i+1] - DIAMOND / 2 - 1;
+            int x2 = cx[i+1] - DIAMOND / 2;
             if (x2 <= x1) continue;
             g.setColor(CONNECTOR_LO);
             g.fillRect(x1, centerY - 1, x2 - x1, 1);

@@ -3652,7 +3652,7 @@ public class MainWindow {
 		cardPreviewPanel.setMinimumSize  (new Dimension(w, previewH));
 		cardPreviewPanel.setMaximumSize  (new Dimension(w, previewH));
 		sidePanel.setPreferredSize(new Dimension(w, 0));
-		handPanel.setPreferredSize(new Dimension(w, CARD_H));
+		handPanel.setPreferredSize(new Dimension(w, (int)(CARD_H * 0.6)));
 		if (sideWrapper != null)
 			sideWrapper.setPreferredSize(new Dimension(w + RESIZE_HANDLE_W, 0));
 		refreshHandPanel();
