@@ -5874,7 +5874,8 @@ public class MainWindow {
 			sb.append("[").append(ability.abilityName()).append("] ");
 		sb.append("[");
 		boolean first = true;
-		if (ability.requiresDull())    { sb.append("Dull");      first = false; }
+		if (ability.damageThreshold() > 0) { sb.append("Dmg").append(ability.damageThreshold()); first = false; }
+		if (ability.requiresDull())    { if (!first) sb.append(", "); sb.append("Dull");      first = false; }
 		if (ability.isSpecial())       { if (!first) sb.append(", "); sb.append("S"); first = false; }
 		if (ability.hasXCost())        { if (!first) sb.append(", "); sb.append("X"); first = false; }
 		if (ability.yourTurnOnly())        { if (!first) sb.append(", "); sb.append("your turn"); first = false; }
@@ -6111,6 +6112,10 @@ public class MainWindow {
 			if (playedTurn == gameState.getTurnNumber()) return false;
 		}
 		if (ability.isSpecial() && !hasSameNameInHand(source.name(), isP1)) return false;
+		if (ability.damageThreshold() > 0) {
+			int dmg = isP1 ? gameState.getP1DamageZone().size() : gameState.getP2DamageZone().size();
+			if (dmg < ability.damageThreshold()) return false;
+		}
 		if (ability.crystalCost() > 0 && playerCrystals(isP1) < ability.crystalCost()) return false;
 		for (BreakZoneCost bz : ability.breakZoneCosts())
 			if (!bzCostSatisfied(bz, isP1)) return false;
@@ -6410,6 +6415,12 @@ public class MainWindow {
 	 * perspective so that "play from hand" and similar effects target the correct player.
 	 */
 	private void executeAutoAbility(AutoAbility fa, CardData source, boolean isP1) {
+		// Damage threshold: skip if the controlling player doesn't have enough damage counters
+		if (fa.damageThreshold() > 0) {
+			int dmg = isP1 ? gameState.getP1DamageZone().size() : gameState.getP2DamageZone().size();
+			if (dmg < fa.damageThreshold()) return;
+		}
+
 		// "only during your turn" — skip when the ability owner is not the active player
 		if (fa.yourTurnOnly() && !isP1) return;
 

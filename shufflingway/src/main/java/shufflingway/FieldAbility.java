@@ -18,4 +18,8 @@ package shufflingway;
  * an Action ability (cost : effect), or an alternate-cost declaration is treated
  * as a Field ability.
  */
-public record FieldAbility(String effectText) {}
+/**
+ * @param damageThreshold the number of damage counters the controlling player must have in their
+ *                        Damage Zone before this ability is active; {@code 0} means always active.
+ */
+public record FieldAbility(String effectText, int damageThreshold) {}

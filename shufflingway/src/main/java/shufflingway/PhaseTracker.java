@@ -173,7 +173,7 @@ public class PhaseTracker extends JPanel {
         int stripY = PAD_TOP + fm.getAscent();
         g.drawString("TURN " + turn, PAD_X, stripY);
 
-        String pillText  = isMyTurn ? "YOUR TURN" : "OPP TURN";
+        String pillText  = isMyTurn ? "YOUR TURN" : "OPPONENT'S TURN";
         int    pillTextW = fm.stringWidth(pillText);
         int    pillPadX  = 5, pillPadY = 2;
         int    pillW     = pillTextW + pillPadX * 2;

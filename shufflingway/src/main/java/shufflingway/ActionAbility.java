@@ -55,7 +55,8 @@ public record ActionAbility(
         String                  whileCardBlocking,     // non-null = named P1 forward must be the declared blocker
         boolean                 whilePartyAttacking,   // true = P1's attack selection must have ≥ 2 forwards
         boolean                 whileCardInHand,       // true = ability can only be activated while this card is in hand
-        String                  effectText             // raw effect text — future work will parse this further
+        String                  effectText,            // raw effect text — future work will parse this further
+        int                     damageThreshold        // > 0: only usable when controlling player has ≥ this many damage counters
 ) {
     public ActionAbility {
         cpCost            = List.copyOf(cpCost);

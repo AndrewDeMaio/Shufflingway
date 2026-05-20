@@ -439,16 +439,17 @@ public record CardData(
      * spurious matches on arbitrary colons in card text.
      */
     private static final Pattern ACTION_ABILITY_PATTERN = Pattern.compile(
-        "(?:(?i)\\[\\[s\\]\\]\\s*([^\\[]+?)\\s*\\[\\[/\\]\\]\\s*)?"  +  // optional [[s]]Name[[/]]
+        "(?i)(?:Damage\\s+(\\d+)\\s+--\\s+)?"                               +  // group 1: optional Damage N -- threshold
+        "(?:(?i)\\[\\[s\\]\\]\\s*([^\\[]+?)\\s*\\[\\[/\\]\\]\\s*)?"        +  // group 2: optional [[s]]Name[[/]]
         "(?=(?:《|(?i:put)\\b|(?i:discard)\\b|(?i:remove)\\b|(?i:return)\\b))" + // lookahead: must start with 《, put, discard, remove, or return
-        "((?:《[^》]*》\\s*)*)"                                              +  // zero or more 《cost》 tokens
-        "((?i)(?:,\\s*)?put\\s+.+?\\s+into\\s+the\\s+Break\\s+Zone\\s*)?"  + // optional BZ cost phrase
-        "((?i)(?:,\\s*)?discard[^:]+)?"                                     +  // optional discard cost phrase
-        "((?i)(?:,\\s*)?remove\\s+[^:]+?\\s+from\\s+(?:the\\s+)?game\\s*)?" + // optional remove-from-game cost phrase
-        "((?i)(?:,\\s*)?return\\s+[^:]+?\\s+to\\s+(?:its|their)\\s+owner(?:'s|s')?\\s+hand\\s*)?" + // optional return-to-hand cost phrase
-        "((?i)(?:,\\s*)?remove\\s+\\d+\\s+[^:]+?\\s+Counters?\\s+from\\s+[^:,]+?\\s*)?" +           // optional counter-removal cost phrase
+        "((?:《[^》]*》\\s*)*)"                                              +  // group 3: zero or more 《cost》 tokens
+        "((?i)(?:,\\s*)?put\\s+.+?\\s+into\\s+the\\s+Break\\s+Zone\\s*)?"  + // group 4: optional BZ cost phrase
+        "((?i)(?:,\\s*)?discard[^:]+)?"                                     +  // group 5: optional discard cost phrase
+        "((?i)(?:,\\s*)?remove\\s+[^:]+?\\s+from\\s+(?:the\\s+)?game\\s*)?" + // group 6: optional remove-from-game cost phrase
+        "((?i)(?:,\\s*)?return\\s+[^:]+?\\s+to\\s+(?:its|their)\\s+owner(?:'s|s')?\\s+hand\\s*)?" + // group 7: optional return-to-hand cost phrase
+        "((?i)(?:,\\s*)?remove\\s+\\d+\\s+[^:]+?\\s+Counters?\\s+from\\s+[^:,]+?\\s*)?" +           // group 8: optional counter-removal cost phrase
         ":\\s*"                                                              +  // colon separator
-        "((?:[^\\[]|\\[(?!\\[))*)"                                              // effect text (up to next [[markup]])
+        "((?:[^\\[]|\\[(?!\\[))*)"                                              // group 9: effect text (up to next [[markup]])
     );
 
     // Captures the content between "put " and " into the Break Zone"
@@ -486,14 +487,16 @@ public record CardData(
         List<ActionAbility> result = new ArrayList<>();
         Matcher m = ACTION_ABILITY_PATTERN.matcher(textEn);
         while (m.find()) {
-            String rawName       = m.group(1);
-            String costPart      = m.group(2);
-            String bzRaw         = m.group(3);
-            String discardRaw    = m.group(4);
-            String removeRaw     = m.group(5);
-            String returnRaw     = m.group(6);
-            String counterRaw    = m.group(7);
-            String effectRaw     = m.group(8).trim();
+            String thresholdStr  = m.group(1);
+            int    damageThreshold = thresholdStr != null ? Integer.parseInt(thresholdStr) : 0;
+            String rawName       = m.group(2);
+            String costPart      = m.group(3);
+            String bzRaw         = m.group(4);
+            String discardRaw    = m.group(5);
+            String removeRaw     = m.group(6);
+            String returnRaw     = m.group(7);
+            String counterRaw    = m.group(8);
+            String effectRaw     = m.group(9).trim();
             if (effectRaw.isEmpty()) continue;
             // Skip if there are no CP tokens or any non-CP cost phrase (spurious match)
             if ((costPart == null || costPart.isBlank()) && bzRaw == null && discardRaw == null
@@ -544,7 +547,7 @@ public record CardData(
             Matcher wBlkM             = WHILE_CARD_BLOCKING_PATTERN.matcher(effectRaw);
             String  whileCardBlk      = wBlkM.find() ? wBlkM.group("card").trim() : null;
             boolean whileCardInHand   = WHILE_CARD_IN_HAND_PATTERN.matcher(effectRaw).find();
-            result.add(new ActionAbility(abilityName, requiresDull, isSpecial, crystalCost, hasXCost, cpCost, breakZoneCosts, discardCosts, removeFromGameCosts, returnToHandCosts, counterCosts, yourTurnOnly, oncePerTurn, mainPhaseOnly, whileCardAtk, whileCardBlk, whilePartyAtk, whileCardInHand, effectRaw));
+            result.add(new ActionAbility(abilityName, requiresDull, isSpecial, crystalCost, hasXCost, cpCost, breakZoneCosts, discardCosts, removeFromGameCosts, returnToHandCosts, counterCosts, yourTurnOnly, oncePerTurn, mainPhaseOnly, whileCardAtk, whileCardBlk, whilePartyAtk, whileCardInHand, effectRaw, damageThreshold));
         }
         return List.copyOf(result);
     }
@@ -640,7 +643,8 @@ public record CardData(
      * ({@code 《token》:}), or end of input.
      */
     private static final Pattern FIELD_ABILITY_PATTERN = Pattern.compile(
-        "(?i)When\\s+(?<card>[^,]+?)\\s+" +
+        "(?i)(?:Damage\\s+(?<threshold>\\d+)\\s+--\\s+)?" +
+        "When\\s+(?<card>[^,]+?)\\s+" +
         "(?<trigger>" +
             "attacks?(?:\\s+or\\s+blocks?)?|blocks?" +
             "|enters?\\s+the\\s+field(?:\\s+due\\s+to\\s+your\\s+cast)?" +
@@ -727,7 +731,10 @@ public record CardData(
             String effect = SUMMON_MARKUP.matcher(m.group("effect").trim()).replaceAll("").trim();
             if (effect.isEmpty()) continue;
 
-            AutoAbility fa = parseAutoAbilityRestrictions(card, trigger, youMay, opponentMay, castOnly, effect);
+            String thresholdStr = m.group("threshold");
+            int damageThreshold = thresholdStr != null ? Integer.parseInt(thresholdStr) : 0;
+
+            AutoAbility fa = parseAutoAbilityRestrictions(card, trigger, youMay, opponentMay, castOnly, effect, damageThreshold);
             if (fa != null) result.add(fa);
         }
 
@@ -741,7 +748,7 @@ public record CardData(
             boolean youMay      = youMayRaw != null && !opponentMay;
             String effect = SUMMON_MARKUP.matcher(wm.group("effect").trim()).replaceAll("").trim();
             if (effect.isEmpty()) continue;
-            AutoAbility fa = parseAutoAbilityRestrictions(target, "warp counter removed", youMay, opponentMay, false, effect);
+            AutoAbility fa = parseAutoAbilityRestrictions(target, "warp counter removed", youMay, opponentMay, false, effect, 0);
             if (fa != null) result.add(fa);
         }
 
@@ -754,7 +761,8 @@ public record CardData(
      * after stripping.
      */
     private static AutoAbility parseAutoAbilityRestrictions(
-            String card, String trigger, boolean youMay, boolean opponentMay, boolean castOnly, String effect) {
+            String card, String trigger, boolean youMay, boolean opponentMay, boolean castOnly, String effect,
+            int damageThreshold) {
 
         boolean oncePerTurn = false, yourTurnOnly = false;
         String  rfpConditionCard = "";
@@ -783,7 +791,7 @@ public record CardData(
 
         if (effect.isEmpty()) return null;
         return new AutoAbility(card, trigger, youMay, opponentMay, effect,
-                oncePerTurn, yourTurnOnly, rfpConditionCard, castPaymentMinElements, castOnly);
+                oncePerTurn, yourTurnOnly, rfpConditionCard, castPaymentMinElements, castOnly, damageThreshold);
     }
 
     // -------------------------------------------------------------------------
@@ -809,6 +817,14 @@ public record CardData(
      * Used to exclude auto-ability segments from field-ability parsing.
      */
     private static final Pattern FA_AUTO_PREFIX = Pattern.compile("(?i)^When\\s+");
+
+    /**
+     * Matches a "Damage N -- " threshold prefix at the start of a {@code [[br]]}-delimited
+     * segment.  Group 1 captures the numeric threshold value.
+     */
+    private static final Pattern DAMAGE_THRESHOLD_PREFIX = Pattern.compile(
+        "(?i)^Damage\\s+(\\d+)\\s+--\\s+"
+    );
 
     /**
      * Matches standalone restriction sentences that trail action or auto abilities but
@@ -859,6 +875,16 @@ public record CardData(
             String seg = SUMMON_MARKUP.matcher(rawTrimmed).replaceAll("").trim();
             if (seg.isEmpty()) continue;
 
+            // Damage threshold prefix: "Damage N -- rest" — strip prefix and record threshold,
+            // then re-apply the exclusion checks on the bare ability text.
+            int damageThreshold = 0;
+            Matcher dtM = DAMAGE_THRESHOLD_PREFIX.matcher(seg);
+            if (dtM.find()) {
+                damageThreshold = Integer.parseInt(dtM.group(1));
+                seg = seg.substring(dtM.end()).trim();
+                if (seg.isEmpty()) continue;
+            }
+
             // Alternate-cost declarations
             if (ALT_COST_SUMMON.matcher(seg).find())    continue;
             if (ALT_COST_NONSUMMON.matcher(seg).find()) continue;
@@ -875,7 +901,7 @@ public record CardData(
             // Standalone restriction sentences that trail action/auto abilities
             if (FA_RESTRICTION_SENTENCE.matcher(seg).find()) continue;
 
-            result.add(new FieldAbility(seg));
+            result.add(new FieldAbility(seg, damageThreshold));
         }
         return List.copyOf(result);
     }

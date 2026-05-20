@@ -43,5 +43,6 @@ public record AutoAbility(
         boolean yourTurnOnly,          // "This effect will trigger only during your turn"
         String  rfpConditionCard,      // non-empty: trigger only if this card is in the RFP zone
         int     castPaymentMinElements,// > 0: trigger only if the card was cast with ≥ N distinct element types
-        boolean castOnly               // true = "enters the field due to your cast" — only fires when cast from hand
+        boolean castOnly,              // true = "enters the field due to your cast" — only fires when cast from hand
+        int     damageThreshold        // > 0: only fires when controlling player has ≥ this many damage counters
 ) {}
