@@ -547,7 +547,12 @@ public record CardData(
             Matcher wBlkM             = WHILE_CARD_BLOCKING_PATTERN.matcher(effectRaw);
             String  whileCardBlk      = wBlkM.find() ? wBlkM.group("card").trim() : null;
             boolean whileCardInHand   = WHILE_CARD_IN_HAND_PATTERN.matcher(effectRaw).find();
-            result.add(new ActionAbility(abilityName, requiresDull, isSpecial, crystalCost, hasXCost, cpCost, breakZoneCosts, discardCosts, removeFromGameCosts, returnToHandCosts, counterCosts, yourTurnOnly, oncePerTurn, mainPhaseOnly, whileCardAtk, whileCardBlk, whilePartyAtk, whileCardInHand, effectRaw, damageThreshold));
+            ControlCondition controlCondition = null;
+            if (!whileCardInHand) {
+                Matcher ctrlM = CONTROL_IF_PATTERN.matcher(effectRaw);
+                if (ctrlM.find()) controlCondition = parseControlCondition(ctrlM.group("condition"));
+            }
+            result.add(new ActionAbility(abilityName, requiresDull, isSpecial, crystalCost, hasXCost, cpCost, breakZoneCosts, discardCosts, removeFromGameCosts, returnToHandCosts, counterCosts, yourTurnOnly, oncePerTurn, mainPhaseOnly, whileCardAtk, whileCardBlk, whilePartyAtk, whileCardInHand, effectRaw, damageThreshold, controlCondition));
         }
         return List.copyOf(result);
     }
@@ -629,6 +634,44 @@ public record CardData(
     );
     static final Pattern WHILE_CARD_IN_HAND_PATTERN = Pattern.compile(
         "(?i)You\\s+can\\s+only\\s+use\\s+this\\s+ability\\s+if\\s+.+?\\s+is\\s+in\\s+your\\s+hand[.!]?"
+    );
+
+    /** Captures the raw condition text from "You can only use this ability if you control [X]". */
+    static final Pattern CONTROL_IF_PATTERN = Pattern.compile(
+        "(?i)You\\s+can\\s+only\\s+use\\s+this\\s+ability\\s+if\\s+you\\s+control\\s+(?<condition>.+?)\\s*[.!]?\\s*$"
+    );
+
+    /**
+     * Named-card mode: "Card Name X [and Card Name Y [and Card Name Z]]"
+     * Also handles the "a Card Name X" leading article.
+     */
+    private static final Pattern CONTROL_NAMED_CARDS_PATTERN = Pattern.compile(
+        "(?i)(?:a\\s+)?Card\\s+Name\\s+(?<n1>.+?)(?:\\s+and\\s+Card\\s+Name\\s+(?<n2>.+?))?(?:\\s+and\\s+Card\\s+Name\\s+(?<n3>.+?))?\\s*$"
+    );
+
+    /**
+     * Count mode: "[N or more | only N | a(n)] [element] [Category X] [Job name] [type] [of power P or more] [or Card Name X]"
+     * <ul>
+     *   <li>{@code count}    — "N or more" numeric threshold; absent when "only" or "a/an" prefix</li>
+     *   <li>{@code exactn}   — "only N" exact count; absent otherwise</li>
+     *   <li>{@code element}  — element name, absent if none</li>
+     *   <li>{@code category} — category name after "Category", absent if none</li>
+     *   <li>{@code job}      — job name after "Job", lazily captured until type/or/end</li>
+     *   <li>{@code type}     — card type: Forward(s)/Monster(s)/Backup(s)/Character(s)</li>
+     *   <li>{@code power}    — power threshold from "of power P or more"</li>
+     *   <li>{@code altname}  — card name after "or Card Name"</li>
+     * </ul>
+     */
+    private static final Pattern CONTROL_COUNT_CONDITION_PATTERN = Pattern.compile(
+        "(?i)" +
+        "(?:(?<count>\\d+)\\s+or\\s+more|only\\s+(?<exactn>\\d+)|a(?:n)?\\s+)" +
+        "(?:(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?" +
+        "(?:Category\\s+(?<category>\\S+)\\s+)?" +
+        "(?:Job\\s+(?<job>.+?)(?=\\s+(?:Forwards?|Monsters?|Backups?|Characters?)(?:\\s|$)|\\s+or\\s+Card\\s+Name\\b|\\s*$))?" +
+        "(?<type>Forwards?|Monsters?|Backups?|Characters?)?" +
+        "(?:\\s+of\\s+power\\s+(?<power>\\d+)\\s+or\\s+more)?" +
+        "(?:\\s+or\\s+Card\\s+Name\\s+(?<altname>.+?))?" +
+        "\\s*$"
     );
 
     /**
@@ -919,6 +962,61 @@ public record CardData(
         String counterName = m.group("name").trim();
         String cardName    = m.group("card").trim();
         return List.of(new CounterCost(cardName, counterName, count));
+    }
+
+    /**
+     * Parses the raw condition text extracted from "You can only use this ability if you control [X]".
+     * Returns {@code null} if the text is unrecognised.
+     *
+     * <p>Before parsing, trailing restriction clauses already captured elsewhere
+     * ("and only once per turn", "during your turn") are stripped so they do not
+     * contaminate the condition match.
+     */
+    static ControlCondition parseControlCondition(String raw) {
+        if (raw == null || raw.isBlank()) return null;
+        // Strip trailing ", during your turn" and "and only once per turn" clauses
+        String cond = raw.replaceAll("(?i)\\s*,?\\s*during\\s+your\\s+turn\\b.*", "").trim();
+        cond = cond.replaceAll("(?i)\\s*,?\\s*(?:and\\s+)?only\\s+once\\s+per\\s+turn\\b.*", "").trim();
+
+        // Named-card mode: "(a) Card Name X [and Card Name Y [and Card Name Z]]"
+        // Must be checked before count mode to avoid "a Card Name X" being parsed as count=1
+        Matcher namedM = CONTROL_NAMED_CARDS_PATTERN.matcher(cond);
+        if (namedM.find()) {
+            List<String> names = new ArrayList<>();
+            if (namedM.group("n1") != null) names.add(namedM.group("n1").trim());
+            if (namedM.group("n2") != null) names.add(namedM.group("n2").trim());
+            if (namedM.group("n3") != null) names.add(namedM.group("n3").trim());
+            return new ControlCondition(names, 0, false, null, null, null, null, 0, List.of());
+        }
+
+        // Count mode: "[N or more | only N | a] [element] [Category X] [Job name] [type] [of power P or more] [or Card Name X]"
+        Matcher countM = CONTROL_COUNT_CONDITION_PATTERN.matcher(cond);
+        if (!countM.find()) return null;
+
+        int     minCount;
+        boolean exactCount;
+        if (countM.group("count") != null) {
+            minCount   = Integer.parseInt(countM.group("count"));
+            exactCount = false;
+        } else if (countM.group("exactn") != null) {
+            minCount   = Integer.parseInt(countM.group("exactn"));
+            exactCount = true;
+        } else {
+            minCount   = 1;   // "a / an"
+            exactCount = false;
+        }
+
+        String element  = countM.group("element");
+        String category = countM.group("category");
+        String job      = countM.group("job") != null ? countM.group("job").trim() : null;
+        String rawType  = countM.group("type");
+        String cardType = rawType != null ? rawType.replaceAll("(?i)s$", "").trim() : null; // normalise "Forwards" → "Forward"
+        if (cardType != null) cardType = Character.toUpperCase(cardType.charAt(0)) + cardType.substring(1).toLowerCase();
+        int minPower    = countM.group("power") != null ? Integer.parseInt(countM.group("power")) : 0;
+        String altRaw   = countM.group("altname");
+        List<String> orCardNames = altRaw != null ? List.of(altRaw.trim()) : List.of();
+
+        return new ControlCondition(List.of(), minCount, exactCount, cardType, element, job, category, minPower, orCardNames);
     }
 
     /** Parses a "remove … from the game" cost phrase into a list of {@link RemoveFromGameCost} items. */

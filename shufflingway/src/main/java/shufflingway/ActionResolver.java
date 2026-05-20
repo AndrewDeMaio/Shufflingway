@@ -52,8 +52,8 @@ public class ActionResolver {
         "(?i)Choose\\s+(?<upto>up\\s+to\\s+)?(?<count>\\d+)\\s+" +
         "(?:(?<condition>dull|damaged|attacking|blocking|active)\\s+)?" +
         "(?:(?<element>Multi-Element|Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?" +
-        "(?:Category\\s+(?<category>.+?)(?=\\s+(?:Forwards?|Backups?|Characters?|Monsters?|Summons?))\\s+)?" +
-        "(?<targets>Forwards?(?:\\s+or\\s+Monsters?)?|Monsters?|Backups?|Characters?|Summons?" +
+        "(?:Category\\s+(?<category>.+?)(?=\\s+(?:cards?|Forwards?|Backups?|Characters?|Monsters?|Summons?))\\s+)?" +
+        "(?<targets>cards?|Forwards?(?:\\s+or\\s+Monsters?)?|Monsters?|Backups?|Characters?|Summons?" +
             "|\\[Job\\s+\\([^)]+\\)\\]" +
             "|\\[Card\\s+Name\\s+\\([^)]+\\)\\]" +
             "|Card\\s+Name\\s+\\S+(?:\\s+\\([^)]+\\))?" +
@@ -213,19 +213,19 @@ public class ActionResolver {
         "(?i)Return\\s+it\\s+to\\s+your\\s+hand\\.?"
     );
 
-    /** Matches "Put it at the top or bottom of its owner's deck." — player chooses placement. */
+    /** Matches "Put it at the top or bottom of its owner's deck." — player chooses placement. Also handles "Your opponent puts it…" */
     private static final Pattern FOLLOWUP_PUT_TOP_OR_BOTTOM_OF_DECK = Pattern.compile(
-        "(?i)Put\\s+it\\s+at\\s+the\\s+top\\s+or\\s+bottom\\s+of\\s+its\\s+owner's\\s+deck\\.?"
+        "(?i)(?:Your\\s+opponent\\s+puts?\\s+it|Put\\s+it)\\s+at\\s+the\\s+top\\s+or\\s+bottom\\s+of\\s+its\\s+owner's\\s+deck\\.?"
     );
 
-    /** Matches "Put it at the bottom of its owner's deck." */
+    /** Matches "Put it at the bottom of its owner's deck." Also handles "Your opponent puts it…" */
     private static final Pattern FOLLOWUP_PUT_BOTTOM_OF_DECK = Pattern.compile(
-        "(?i)Put\\s+it\\s+at\\s+the\\s+bottom\\s+of\\s+its\\s+owner's\\s+deck\\.?"
+        "(?i)(?:Your\\s+opponent\\s+puts?\\s+it|Put\\s+it)\\s+at\\s+the\\s+bottom\\s+of\\s+its\\s+owner's\\s+deck\\.?"
     );
 
-    /** Matches "Put it on top of its owner's deck." */
+    /** Matches "Put it on top of its owner's deck." Also handles "Your opponent puts it…" */
     private static final Pattern FOLLOWUP_PUT_TOP_OF_DECK = Pattern.compile(
-        "(?i)Put\\s+it\\s+on\\s+top\\s+of\\s+its\\s+owner's\\s+deck\\.?"
+        "(?i)(?:Your\\s+opponent\\s+puts?\\s+it|Put\\s+it)\\s+on\\s+top\\s+of\\s+its\\s+owner's\\s+deck\\.?"
     );
 
     /**
@@ -756,6 +756,41 @@ public class ActionResolver {
     );
 
     /**
+     * Matches "Double the power of &lt;subject&gt; until [the] end of [the] turn".
+     * <ul>
+     *   <li>Group {@code subject} — card name before "until"</li>
+     * </ul>
+     */
+    private static final Pattern STANDALONE_DOUBLE_POWER_UNTIL = Pattern.compile(
+        "(?i)Double\\s+the\\s+power\\s+of\\s+(?<subject>.+?)\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn[.!]?"
+    );
+
+    /**
+     * Matches "Until the end of the turn, &lt;subject&gt; doubles its power [and gains traits]".
+     * <ul>
+     *   <li>Group {@code subject} — card name before "doubles"</li>
+     *   <li>Group {@code traits}  — optional trailing text (e.g. "and gains First Strike and Brave")</li>
+     * </ul>
+     */
+    private static final Pattern STANDALONE_DOUBLES_ITS_POWER_UNTIL = Pattern.compile(
+        "(?i)Until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn\\s*,\\s+" +
+        "(?<subject>.+?)\\s+doubles?\\s+its\\s+power(?<traits>[^.!]*)"
+    );
+
+    /**
+     * Matches "At the beginning of your next turn's Main Phase 1 and until the end of the same
+     * turn, &lt;subject&gt;'s power will double."
+     * <ul>
+     *   <li>Group {@code subject} — card name before "'s power will double"</li>
+     * </ul>
+     */
+    private static final Pattern STANDALONE_DOUBLE_POWER_MAIN_PHASE_NEXT_TURN = Pattern.compile(
+        "(?i)At\\s+the\\s+beginning\\s+of\\s+your\\s+next\\s+turn['’]s\\s+Main\\s+Phase\\s+1" +
+        "\\s+and\\s+until\\s+the\\s+end\\s+of\\s+the\\s+same\\s+turn\\s*,\\s+" +
+        "(?<subject>.+?)['’]s\\s+power\\s+will\\s+double[.!]?"
+    );
+
+    /**
      * Matches "it/they loses/lose [N power] [, traits] until end of turn".
      * Both power and traits are optional, but at least one must be present in practice.
      * <ul>
@@ -1006,6 +1041,15 @@ public class ActionResolver {
         result = tryParseStandalonePowerBoostUntil(effectText, source);
         if (result != null) return result;
 
+        result = tryParseStandaloneDoublePowerUntil(effectText, source);
+        if (result != null) return result;
+
+        result = tryParseStandaloneDoublesItsPowerUntil(effectText, source);
+        if (result != null) return result;
+
+        result = tryParseStandaloneDoublePowerMainPhaseNextTurn(effectText, source);
+        if (result != null) return result;
+
         result = tryParseStandalonePowerReduceUntil(effectText, source);
         if (result != null) return result;
 
@@ -1075,6 +1119,9 @@ public class ActionResolver {
         if (tryParseNegateAllDamage(effectText)                != null) return "NegateDamage";
         if (tryParseAllFieldEffect(effectText)                != null) return "AllFieldEffect";
         if (tryParseStandalonePowerBoostUntil(effectText, source) != null) return "StandalonePowerBoostUntil";
+        if (tryParseStandaloneDoublePowerUntil(effectText, source) != null) return "StandaloneDoublePowerUntil";
+        if (tryParseStandaloneDoublesItsPowerUntil(effectText, source) != null) return "StandaloneDoublesItsPowerUntil";
+        if (tryParseStandaloneDoublePowerMainPhaseNextTurn(effectText, source) != null) return "StandaloneDoublePowerMainPhaseNextTurn";
         if (tryParseStandalonePowerReduceUntil(effectText, source) != null) return "StandalonePowerReduceUntil";
         if (tryParseStandaloneSelfBoost(effectText, source)   != null) return "StandaloneSelfBoost";
         if (tryParseOpponentDiscard(effectText)               != null) return "OpponentDiscard";
@@ -1198,6 +1245,9 @@ public class ActionResolver {
         if (tryParseNegateAllDamage(effectText) != null)                     return "NegateDamage";
         if (tryParseAllFieldEffect(effectText) != null)                     return "AllFieldEffect";
         if (tryParseStandalonePowerBoostUntil(effectText, source) != null)  return "StandalonePowerBoostUntil";
+        if (tryParseStandaloneDoublePowerUntil(effectText, source) != null) return "StandaloneDoublePowerUntil";
+        if (tryParseStandaloneDoublesItsPowerUntil(effectText, source) != null) return "StandaloneDoublesItsPowerUntil";
+        if (tryParseStandaloneDoublePowerMainPhaseNextTurn(effectText, source) != null) return "StandaloneDoublePowerMainPhaseNextTurn";
         if (tryParseStandalonePowerReduceUntil(effectText, source) != null) return "StandalonePowerReduceUntil";
         if (tryParseStandaloneSelfBoost(effectText, source) != null)        return "StandaloneSelfBoost";
         if (tryParseOpponentDiscard(effectText) != null)                    return "OpponentDiscard";
@@ -1470,9 +1520,10 @@ public class ActionResolver {
         } else {
             jobFilter      = null;
             cardNameFilter = null;
-            inclForwards   = tgtLower.contains("forward") || tgtLower.contains("character");
-            inclBackups    = tgtLower.contains("backup")  || tgtLower.contains("character");
-            inclMonsters   = tgtLower.contains("monster") || tgtLower.contains("character");
+            boolean isGenericCard = tgtLower.equals("card") || tgtLower.equals("cards");
+            inclForwards   = isGenericCard || tgtLower.contains("forward") || tgtLower.contains("character");
+            inclBackups    = isGenericCard || tgtLower.contains("backup")  || tgtLower.contains("character");
+            inclMonsters   = isGenericCard || tgtLower.contains("monster") || tgtLower.contains("character");
         }
         boolean inclSummons  = tgtLower.contains("summon");
         String  categoryFilter = m.group("category");
@@ -2327,6 +2378,20 @@ public class ActionResolver {
         return sb.toString();
     }
 
+    /** Returns a human-readable list of trait names, e.g. {@code "First Strike and Brave"}, or {@code ""}. */
+    private static String traitNamesOnly(EnumSet<CardData.Trait> traits) {
+        List<String> names = new ArrayList<>();
+        if (traits.contains(CardData.Trait.HASTE))        names.add("Haste");
+        if (traits.contains(CardData.Trait.FIRST_STRIKE)) names.add("First Strike");
+        if (traits.contains(CardData.Trait.BRAVE))        names.add("Brave");
+        return switch (names.size()) {
+            case 0  -> "";
+            case 1  -> names.get(0);
+            case 2  -> names.get(0) + " and " + names.get(1);
+            default -> names.get(0) + ", " + names.get(1) + ", and " + names.get(2);
+        };
+    }
+
     /** Parses a traits string (e.g. {@code ", Haste, and First Strike"}) into a set of traits. */
     private static EnumSet<CardData.Trait> parseTraits(String traitStr) {
         EnumSet<CardData.Trait> traits = EnumSet.noneOf(CardData.Trait.class);
@@ -2357,6 +2422,64 @@ public class ActionResolver {
         return ctx -> {
             ctx.logEntry(source.name() + logSuffix);
             ctx.boostSourceForward(source, boost, traits);
+        };
+    }
+
+    /**
+     * Parses "Double the power of &lt;cardName&gt; until end of turn" as a standalone self-buff.
+     * The subject must match {@code source.name()} (case-insensitive).
+     */
+    private static Consumer<GameContext> tryParseStandaloneDoublePowerUntil(
+            String text, CardData source) {
+        if (source == null) return null;
+        Matcher m = STANDALONE_DOUBLE_POWER_UNTIL.matcher(text);
+        if (!m.find()) return null;
+        String subject = m.group("subject").trim();
+        if (!subject.equalsIgnoreCase(source.name())) return null;
+        return ctx -> {
+            ctx.logEntry(source.name() + " — power doubled until end of turn");
+            ctx.doubleSourceForwardPower(source, EnumSet.noneOf(CardData.Trait.class));
+        };
+    }
+
+    /**
+     * Parses "Until the end of the turn, &lt;cardName&gt; doubles its power [and gains traits]".
+     * Subject must match {@code source.name()}.
+     */
+    private static Consumer<GameContext> tryParseStandaloneDoublesItsPowerUntil(
+            String text, CardData source) {
+        if (source == null) return null;
+        Matcher m = STANDALONE_DOUBLES_ITS_POWER_UNTIL.matcher(text);
+        if (!m.find()) return null;
+        String subject = m.group("subject").trim();
+        if (!subject.equalsIgnoreCase(source.name())) return null;
+        EnumSet<CardData.Trait> traits = parseTraits(m.group("traits"));
+        String trailPart = traitNamesOnly(traits);
+        String logSuffix = " — power doubled" + (trailPart.isEmpty() ? "" : ", gains " + trailPart) + " until end of turn";
+        return ctx -> {
+            ctx.logEntry(source.name() + logSuffix);
+            ctx.doubleSourceForwardPower(source, traits);
+        };
+    }
+
+    /**
+     * Parses "At the beginning of your next turn's Main Phase 1 and until the end of the same
+     * turn, &lt;cardName&gt;'s power will double." — defers doubling to the start of next Main Phase 1.
+     * Subject must match {@code source.name()}.
+     */
+    private static Consumer<GameContext> tryParseStandaloneDoublePowerMainPhaseNextTurn(
+            String text, CardData source) {
+        if (source == null) return null;
+        Matcher m = STANDALONE_DOUBLE_POWER_MAIN_PHASE_NEXT_TURN.matcher(text);
+        if (!m.find()) return null;
+        String subject = m.group("subject").trim();
+        if (!subject.equalsIgnoreCase(source.name())) return null;
+        return ctx -> {
+            ctx.logEntry(source.name() + " — power will double at the start of next Main Phase 1");
+            ctx.addPendingMainPhase1Effect(innerCtx -> {
+                innerCtx.logEntry(source.name() + " — power doubled until end of turn (deferred)");
+                innerCtx.doubleSourceForwardPower(source, EnumSet.noneOf(CardData.Trait.class));
+            });
         };
     }
 

@@ -266,6 +266,9 @@ public class MainWindow {
 	/** End-of-turn effects queued this turn; fired at the beginning of the END phase. */
 	private final List<java.util.function.Consumer<GameContext>> endOfTurnEffects = new ArrayList<>();
 
+	/** Effects deferred until the start of P1's next Main Phase 1. */
+	private final List<java.util.function.Consumer<GameContext>> pendingMainPhase1Effects = new ArrayList<>();
+
 	/** Tracks once-per-turn ability uses this turn; keyed by card instance identity, value is set of effectText strings used. */
 	private final java.util.IdentityHashMap<CardData, java.util.Set<String>> usedOncePerTurnAbilities = new java.util.IdentityHashMap<>();
 
@@ -936,6 +939,7 @@ public class MainWindow {
 		gameState.reset();
 		p1LbIndex = 0;
 		endOfTurnEffects.clear();
+		pendingMainPhase1Effects.clear();
 		computerPlayer = new ComputerPlayer();
 		clearUIZones();
 		if (nextPhaseButton != null) nextPhaseButton.setEnabled(false);
@@ -1054,7 +1058,6 @@ public class MainWindow {
 		List<CardData> handOrder = new ArrayList<>(cards);
 
 		// ── Card labels ──────────────────────────────────────────────────────
-		@SuppressWarnings("unchecked")
 		JLabel[] cardLabels = new JLabel[handOrder.size()];
 		int[] selectedIdx = { -1 };  // -1 = nothing selected
 
@@ -1315,6 +1318,12 @@ public class MainWindow {
                             refreshPhaseTracker();
                             logEntry("Main Phase 1");
                             processWarpCounters();
+                            if (!pendingMainPhase1Effects.isEmpty()) {
+                                List<java.util.function.Consumer<GameContext>> pending = new ArrayList<>(pendingMainPhase1Effects);
+                                pendingMainPhase1Effects.clear();
+                                GameContext ctx = buildGameContext(true);
+                                pending.forEach(e -> e.accept(ctx));
+                            }
             }
 
 			case MAIN_1 -> {
@@ -6391,6 +6400,7 @@ public class MainWindow {
 			int dmg = isP1 ? gameState.getP1DamageZone().size() : gameState.getP2DamageZone().size();
 			if (dmg < ability.damageThreshold()) return false;
 		}
+		if (ability.controlCondition() != null && !controlConditionMet(ability.controlCondition(), isP1)) return false;
 		if (ability.crystalCost() > 0 && playerCrystals(isP1) < ability.crystalCost()) return false;
 		for (BreakZoneCost bz : ability.breakZoneCosts())
 			if (!bzCostSatisfied(bz, isP1)) return false;
@@ -6401,6 +6411,52 @@ public class MainWindow {
 		for (CounterCost cc : ability.counterCosts())
 			if (!counterCostSatisfied(cc, source)) return false;
 		return canAffordAbilityCost(ability, isP1);
+	}
+
+	/**
+	 * Returns {@code true} when the "if you control [X]" restriction on an action ability is met
+	 * by the controlling player's current field state.
+	 */
+	private boolean controlConditionMet(ControlCondition cond, boolean isP1) {
+		List<CardData> fwds = isP1 ? p1ForwardCards : p2ForwardCards;
+		CardData[]     bkps = isP1 ? p1BackupCards  : p2BackupCards;
+		List<CardData> mons = isP1 ? p1MonsterCards : p2MonsterCards;
+
+		if (cond.isNamedMode()) {
+			for (String name : cond.requiredCardNames()) {
+				boolean found = fwds.stream().anyMatch(c -> c.name().equalsIgnoreCase(name))
+						|| mons.stream().anyMatch(c -> c.name().equalsIgnoreCase(name));
+				if (!found) for (CardData bkp : bkps) if (bkp != null && bkp.name().equalsIgnoreCase(name)) { found = true; break; }
+				if (!found) return false;
+			}
+			return true;
+		}
+
+		// Count mode: collect field cards that match the type filter
+		String type = cond.cardType() != null ? cond.cardType().toLowerCase() : null;
+		List<CardData> pool = new ArrayList<>();
+		if (type == null || type.equals("forward") || type.equals("character")) pool.addAll(fwds);
+		if (type == null || type.equals("monster")  || type.equals("character")) pool.addAll(mons);
+		if (type == null || type.equals("backup")   || type.equals("character")) {
+			for (CardData bkp : bkps) if (bkp != null) pool.add(bkp);
+		}
+
+		int count = 0;
+		for (CardData card : pool) {
+			boolean matchesAltName = !cond.orCardNames().isEmpty()
+					&& cond.orCardNames().stream().anyMatch(n -> n.equalsIgnoreCase(card.name()));
+			if (matchesAltName) {
+				count++;
+				continue;
+			}
+			if (cond.element()  != null && !card.containsElement(cond.element())) continue;
+			if (cond.job()      != null && !meetsJobFilter(card, cond.job()))      continue;
+			if (cond.category() != null && !meetsCategoryFilter(card, cond.category())) continue;
+			if (cond.minPower() > 0     && card.power() < cond.minPower())         continue;
+			count++;
+		}
+
+		return cond.exactCount() ? count == cond.minCount() : count >= cond.minCount();
 	}
 
 	// -------------------------------------------------------------------------
@@ -9018,6 +9074,24 @@ public class MainWindow {
 						return;
 					}
 				}
+			}
+
+			@Override public void doubleSourceForwardPower(CardData source,
+					java.util.EnumSet<CardData.Trait> traits) {
+				for (int i = 0; i < p1ForwardCards.size(); i++) {
+					if (p1ForwardCards.get(i).name().equals(source.name())) {
+						int current = effectiveP1ForwardPower(i);
+						p1ForwardPowerBoost.set(i, p1ForwardPowerBoost.get(i) + current);
+						p1ForwardTempTraits.get(i).addAll(traits);
+						logEntry(source.name() + " — power doubled to " + (current * 2) + " until end of turn");
+						refreshP1ForwardSlot(i);
+						return;
+					}
+				}
+			}
+
+			@Override public void addPendingMainPhase1Effect(java.util.function.Consumer<GameContext> effect) {
+				pendingMainPhase1Effects.add(effect);
 			}
 
 			@Override public void setTargetPower(ForwardTarget t, int power) {

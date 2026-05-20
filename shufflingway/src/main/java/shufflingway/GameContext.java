@@ -233,6 +233,12 @@ public interface GameContext {
     void boostSourceForward(CardData source, int amount, EnumSet<CardData.Trait> traits);
 
     /**
+     * Finds {@code source} on the field and doubles its power (and optionally grants
+     * {@code traits}) until end of turn by boosting it by its current effective power.
+     */
+    void doubleSourceForwardPower(CardData source, java.util.EnumSet<CardData.Trait> traits);
+
+    /**
      * Sets the target's effective power to exactly {@code power} until the end of the turn,
      * overriding any existing temporary boosts or reductions.
      */
@@ -597,6 +603,12 @@ public interface GameContext {
      * before turn-cleanup clearing.
      */
     void addEndOfTurnEffect(Consumer<GameContext> effect);
+
+    /**
+     * Registers {@code effect} to execute at the start of the player's next Main Phase 1
+     * (and persist until end of that turn via normal boost expiry).
+     */
+    void addPendingMainPhase1Effect(Consumer<GameContext> effect);
 
     /**
      * Returns {@code true} if the ability user controls a field card whose name
