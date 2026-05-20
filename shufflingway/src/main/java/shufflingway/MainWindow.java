@@ -2169,6 +2169,19 @@ public class MainWindow {
 		int        savedDmg   = p2ForwardDamage.get(p2Idx);
 		CardState  savedState = p2ForwardStates.get(p2Idx);
 
+		// Uniqueness rule: a non-multicard cannot coexist with another copy of itself.
+		// If P1 already controls a Forward with this name, both copies go to their owner's Break Zones.
+		if (!card.multicard()) {
+			for (int i = 0; i < p1ForwardCards.size(); i++) {
+				if (p1ForwardCards.get(i).name().equalsIgnoreCase(card.name())) {
+					logEntry(card.name() + " — uniqueness rule: both copies sent to their owner's Break Zone");
+					breakP2Forward(p2Idx);  // P2's copy → P2's Break Zone (triggers leave/break abilities)
+					breakP1Forward(i);       // P1's copy → P1's Break Zone (triggers leave/break abilities)
+					return;
+				}
+			}
+		}
+
 		// Remove from P2 (no break zone, no auto-ability trigger)
 		p2ForwardCards.remove(p2Idx);
 		p2ForwardUrls.remove(p2Idx);
