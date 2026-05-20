@@ -100,6 +100,23 @@ public class ActionResolver {
     );
 
     /**
+     * Matches "Deal it/them N damage. If &lt;condition&gt;, deal it/them M damage instead."
+     * Groups: {@code base}, {@code cond}, {@code alt}.
+     */
+    private static final Pattern FOLLOWUP_DAMAGE_INSTEAD = Pattern.compile(
+        "(?i)deal\\s+(?:it|them)\\s+(?<base>\\d+)\\s+damage\\.\\s+If\\s+(?<cond>.+?),\\s+deal\\s+(?:it|them)\\s+(?<alt>\\d+)\\s+damage\\s+instead\\.?"
+    );
+
+    /**
+     * Matches any "P. If [name] results from an EX Burst, A instead." followup.
+     * Groups: {@code primary} (text before the period), {@code alt} (alternate action text).
+     * The card name before "results from an EX Burst" is intentionally not captured.
+     */
+    private static final Pattern FOLLOWUP_INSTEAD_EXBURST = Pattern.compile(
+        "(?i)(?<primary>.+?)\\.\\s+If\\s+\\S+(?:\\s+\\S+)*?\\s+results\\s+from\\s+an\\s+EX\\s+Burst,\\s+(?<alt>.+?)\\s+instead[.!]?"
+    );
+
+    /**
      * Matches "deal it/them damage equal to &lt;expr&gt;" where the amount is computed
      * from the game state at resolution time.  Exactly one named group will be set:
      * <ul>
@@ -142,7 +159,7 @@ public class ActionResolver {
             "(?<selfdmg>point\\s+of\\s+damage\\s+you\\s+have\\s+received)" +
             "|\\[Job\\s+\\((?<jobbname>[^)]+)\\)\\]\\s+you\\s+control" +
             "|Job\\s+(?<jobwname>.+?)(?:\\s+(?<jobwtype>Forwards?|Backups?|Monsters?))?\\s+you\\s+control" +
-            "|(?<chartype>Forwards?|Characters?|Backups?|Monsters?)\\s+you\\s+control" +
+            "|(?:Category\\s+(?<category>\\S+)\\s+)?(?<chartype>Forwards?|Characters?|Backups?|Monsters?)\\s+you\\s+control" +
             "|Card\\s+Name\\s+(?<bzname>\\S+(?:\\s+\\([^)]+\\))?)\\s+in\\s+your\\s+Break\\s+Zone" +
             "|(?<opphand>card\\s+in\\s+your\\s+opponent'?s?\\s+hand)" +
             "|(?<xpaid>CP\\s+paid\\s+as\\s+X)" +
@@ -201,6 +218,11 @@ public class ActionResolver {
             "if\\s+possible[,]?\\s+it\\s+must\\s+block\\s+this\\s+turn" +
             "|it\\s+gains\\s+[\"']If\\s+possible[,]?\\s+this\\s+Forward\\s+must\\s+block\\.?[\"']\\s+until\\s+the\\s+end\\s+of\\s+the\\s+turn" +
         ")[.!]?"
+    );
+
+    /** Matches "Return it to its owner's hand and draw N card(s)." — group {@code draw} is the count. */
+    private static final Pattern FOLLOWUP_RETURN_AND_DRAW = Pattern.compile(
+        "(?i)Return\\s+it\\s+to\\s+its\\s+owner's\\s+hand\\s+and\\s+draw\\s+(?<draw>\\d+)\\s+cards?[.!]?"
     );
 
     /** Matches "Return it to its owner's hand." */
@@ -1476,6 +1498,179 @@ public class ActionResolver {
     }
 
     // -------------------------------------------------------------------------
+    // Damage-instead condition helpers
+    // -------------------------------------------------------------------------
+
+    private static DamageInsteadCondition parseDamageInsteadCondition(String cond) {
+        String s = cond.trim();
+
+        // Target-state conditions
+        if (s.equalsIgnoreCase("it is active"))
+            return new DamageInsteadCondition.TargetIsActive();
+        if (s.matches("(?i)it is a Multi-Element (?:Forward|Monster|Character|Backup)?\\s*"))
+            return new DamageInsteadCondition.TargetIsMultiElement();
+
+        // Self-state conditions
+        if (s.equalsIgnoreCase("you have received a point of damage this turn"))
+            return new DamageInsteadCondition.YouReceivedDamageThisTurn();
+        if (s.equalsIgnoreCase("you have a Summon in your Break Zone"))
+            return new DamageInsteadCondition.YouHaveSummonInBreakZone();
+
+        // Opponent damage count: "your opponent has received N points of damage or more"
+        java.util.regex.Matcher oppDmgM = java.util.regex.Pattern
+                .compile("(?i)your opponent has received (\\d+) points? of damage or more").matcher(s);
+        if (oppDmgM.find())
+            return new DamageInsteadCondition.OpponentDamageAtLeast(Integer.parseInt(oppDmgM.group(1)));
+
+        // Opponent hand size: "your opponent has N cards or less in their hand"
+        java.util.regex.Matcher oppHandM = java.util.regex.Pattern
+                .compile("(?i)your opponent has (\\d+) cards? or (?:less|fewer) in their hand").matcher(s);
+        if (oppHandM.find())
+            return new DamageInsteadCondition.OpponentHandAtMost(Integer.parseInt(oppHandM.group(1)));
+
+        // Cards cast this turn: "you have cast N or more cards this turn"
+        java.util.regex.Matcher castM = java.util.regex.Pattern
+                .compile("(?i)you have cast (\\d+) or more cards this turn").matcher(s);
+        if (castM.find())
+            return new DamageInsteadCondition.YouCastAtLeast(Integer.parseInt(castM.group(1)));
+
+        // Forward count comparison
+        if (s.equalsIgnoreCase("the number of Forwards your opponent controls is greater than the number of Forwards you control"))
+            return new DamageInsteadCondition.OpponentHasMoreForwards();
+
+        // EX Burst: "<name> results from an EX Burst"
+        if (s.matches("(?i).+ results from an EX Burst"))
+            return new DamageInsteadCondition.IsExBurst();
+
+        // "If you control …" — delegate to ControlCondition parser
+        if (s.toLowerCase().startsWith("you control ")) {
+            ControlCondition cc = CardData.parseControlCondition(s.substring("you control ".length()).trim());
+            if (cc != null) return new DamageInsteadCondition.YouControl(cc);
+        }
+        return null;
+    }
+
+    /**
+     * Parses an action-text string (a followup without target-selection) into a
+     * {@code BiConsumer} that applies the action to an already-selected target list.
+     * Returns {@code null} if the text is not recognised.
+     * Handles: Freeze, Dull+Freeze, Break, Return-to-hand (+draw), Reduce power,
+     * and "Deal N damage for each [Category X] Type you control".
+     */
+    private static java.util.function.BiConsumer<GameContext, List<ForwardTarget>>
+            parseTargetAction(String text, int xValue) {
+        String t = text.trim();
+
+        // Dull+Freeze must precede plain Freeze (Freeze matches as a substring)
+        if (FOLLOWUP_DULL_AND_FREEZE.matcher(t).find())
+            return (ctx, ts) -> {
+                sortedByIdxDesc(ts, true) .forEach(ctx::dullAndFreezeTarget);
+                sortedByIdxDesc(ts, false).forEach(ctx::dullAndFreezeTarget);
+            };
+
+        if (FOLLOWUP_FREEZE.matcher(t).find())
+            return (ctx, ts) -> {
+                sortedByIdxDesc(ts, true) .forEach(ctx::freezeTarget);
+                sortedByIdxDesc(ts, false).forEach(ctx::freezeTarget);
+            };
+
+        if (FOLLOWUP_BREAK.matcher(t).find())
+            return (ctx, ts) -> {
+                sortedByIdxDesc(ts, true) .forEach(ctx::breakTarget);
+                sortedByIdxDesc(ts, false).forEach(ctx::breakTarget);
+            };
+
+        // Return + draw must precede plain return (draw extends the return text)
+        java.util.regex.Matcher retDrawM = FOLLOWUP_RETURN_AND_DRAW.matcher(t);
+        if (retDrawM.find()) {
+            int draws = Integer.parseInt(retDrawM.group("draw"));
+            return (ctx, ts) -> {
+                for (ForwardTarget ft : ts) {
+                    if (ft.zone() != ForwardTarget.CardZone.FORWARD) continue;
+                    if (ft.isP1()) ctx.returnP1ForwardToHand(ft.idx());
+                    else           ctx.returnP2ForwardToHand(ft.idx());
+                }
+                ctx.drawCards(draws);
+            };
+        }
+
+        if (FOLLOWUP_RETURN_TO_OWNERS_HAND.matcher(t).find())
+            return (ctx, ts) -> {
+                for (ForwardTarget ft : ts) {
+                    if (ft.zone() != ForwardTarget.CardZone.FORWARD) continue;
+                    if (ft.isP1()) ctx.returnP1ForwardToHand(ft.idx());
+                    else           ctx.returnP2ForwardToHand(ft.idx());
+                }
+            };
+
+        // Power reduce — both word orders
+        java.util.regex.Matcher reduceM = FOLLOWUP_POWER_REDUCE.matcher(t);
+        if (reduceM.find()) {
+            int reduction = reduceM.group(1) != null ? Integer.parseInt(reduceM.group(1)) : 0;
+            EnumSet<CardData.Trait> traits = parseTraits(reduceM.group(2));
+            return (ctx, ts) -> {
+                sortedByIdxDesc(ts, true) .forEach(ft -> ctx.reduceTarget(ft, reduction, traits));
+                sortedByIdxDesc(ts, false).forEach(ft -> ctx.reduceTarget(ft, reduction, traits));
+            };
+        }
+        java.util.regex.Matcher reduceUntilM = FOLLOWUP_POWER_REDUCE_UNTIL.matcher(t);
+        if (reduceUntilM.find()) {
+            int reduction = reduceUntilM.group(1) != null ? Integer.parseInt(reduceUntilM.group(1)) : 0;
+            EnumSet<CardData.Trait> traits = parseTraits(reduceUntilM.group(2));
+            return (ctx, ts) -> {
+                sortedByIdxDesc(ts, true) .forEach(ft -> ctx.reduceTarget(ft, reduction, traits));
+                sortedByIdxDesc(ts, false).forEach(ft -> ctx.reduceTarget(ft, reduction, traits));
+            };
+        }
+
+        // Deal N damage for each [Category X] Type you control
+        java.util.regex.Matcher forEachM = FOLLOWUP_DAMAGE_FOR_EACH.matcher(t);
+        if (forEachM.find() && forEachM.group("chartype") != null) {
+            int    baseDmg  = Integer.parseInt(forEachM.group("base"));
+            String charType = forEachM.group("chartype");
+            String category = forEachM.group("category") != null ? forEachM.group("category").trim() : null;
+            boolean fwd = charType.matches("(?i)Forwards?|Characters?");
+            boolean bkp = charType.matches("(?i)Backups?|Characters?");
+            boolean mon = charType.matches("(?i)Monsters?|Characters?");
+            return (ctx, ts) -> {
+                int n = ctx.countP1FieldCards(fwd, bkp, mon, null, null, category);
+                int damage = baseDmg * n;
+                sortedByIdxDesc(ts, true) .forEach(ft -> ctx.damageTarget(ft, damage));
+                sortedByIdxDesc(ts, false).forEach(ft -> ctx.damageTarget(ft, damage));
+            };
+        }
+
+        return null;
+    }
+
+    private static int resolveInsteadDamage(GameContext ctx, ForwardTarget t,
+            DamageInsteadCondition cond, int base, int alt) {
+        boolean condMet = switch (cond) {
+            case DamageInsteadCondition.TargetIsActive() ->
+                (t.isP1() ? ctx.p1ForwardState(t.idx()) : ctx.p2ForwardState(t.idx())) == CardState.ACTIVE;
+            case DamageInsteadCondition.TargetIsMultiElement() ->
+                (t.isP1() ? ctx.p1Forward(t.idx()) : ctx.p2Forward(t.idx())).containsElement("Multi-Element");
+            case DamageInsteadCondition.YouControl(ControlCondition cc) ->
+                ctx.controlConditionMet(cc);
+            case DamageInsteadCondition.YouReceivedDamageThisTurn() ->
+                ctx.selfReceivedDamageThisTurn();
+            case DamageInsteadCondition.YouHaveSummonInBreakZone() ->
+                ctx.selfHasSummonInBreakZone();
+            case DamageInsteadCondition.OpponentDamageAtLeast(int min) ->
+                ctx.opponentDamageCount() >= min;
+            case DamageInsteadCondition.OpponentHandAtMost(int max) ->
+                ctx.opponentHandSize() <= max;
+            case DamageInsteadCondition.YouCastAtLeast(int min) ->
+                ctx.selfCardsCastThisTurn() >= min;
+            case DamageInsteadCondition.OpponentHasMoreForwards() ->
+                ctx.opponentForwardCount() > ctx.selfForwardCount();
+            case DamageInsteadCondition.IsExBurst() ->
+                ctx.isExBurst();
+        };
+        return condMet ? alt : base;
+    }
+
+    // -------------------------------------------------------------------------
     // Choose-character effect parser
     // -------------------------------------------------------------------------
 
@@ -1609,6 +1804,49 @@ public class ActionResolver {
                 + (element   != null ? " " + element   : "")
                 + categoryLabel + " " + targets + costLabel + powerLabel + controlLabel + excludeLabel + zoneLabel;
 
+        // --- "Deal it N damage. If <cond>, deal it M damage instead." ---
+        // Matched against the full followup before the primary/secondary split to avoid losing the condition.
+        Matcher insteadM = FOLLOWUP_DAMAGE_INSTEAD.matcher(followup);
+        if (insteadM.find()) {
+            int    baseDmg   = Integer.parseInt(insteadM.group("base"));
+            int    altDmg    = Integer.parseInt(insteadM.group("alt"));
+            String condText  = insteadM.group("cond").trim();
+            DamageInsteadCondition insteadCond = parseDamageInsteadCondition(condText);
+            if (insteadCond != null) {
+                return ctx -> {
+                    ctx.logEntry(choosePrefix + " — Deal " + baseDmg + "/" + altDmg + " damage (if " + condText + ")");
+                    List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                            opponentOnly, selfOnly, condition, element, zone, opponentZone,
+                            costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons);
+                    sortedByIdxDesc(ts, true) .forEach(t -> ctx.damageTarget(t, resolveInsteadDamage(ctx, t, insteadCond, baseDmg, altDmg)));
+                    sortedByIdxDesc(ts, false).forEach(t -> ctx.damageTarget(t, resolveInsteadDamage(ctx, t, insteadCond, baseDmg, altDmg)));
+                };
+            }
+        }
+
+        // --- General EX Burst instead ("P. If [name] results from an EX Burst, A instead.") ---
+        // Checked before the for-each and fixed-damage handlers so the condition isn't lost.
+        // FOLLOWUP_DAMAGE_INSTEAD already covers fixed-damage EX burst cases above; this handles
+        // the for-each damage and non-damage EX burst instead variants.
+        Matcher exBurstM = FOLLOWUP_INSTEAD_EXBURST.matcher(followup);
+        if (exBurstM.find()) {
+            String primaryText = exBurstM.group("primary").trim();
+            String altText     = exBurstM.group("alt").trim();
+            java.util.function.BiConsumer<GameContext, List<ForwardTarget>> primaryAction =
+                    parseTargetAction(primaryText, xValue);
+            java.util.function.BiConsumer<GameContext, List<ForwardTarget>> altAction =
+                    parseTargetAction(altText, xValue);
+            if (primaryAction != null && altAction != null) {
+                return ctx -> {
+                    ctx.logEntry(choosePrefix + " — EX Burst: " + primaryText + " / " + altText);
+                    List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                            opponentOnly, selfOnly, condition, element, zone, opponentZone,
+                            costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons);
+                    (ctx.isExBurst() ? altAction : primaryAction).accept(ctx, ts);
+                };
+            }
+        }
+
         // --- "Deal it N damage for each [source]" followup ---
         Matcher forEachM = FOLLOWUP_DAMAGE_FOR_EACH.matcher(primaryFollowup);
         if (forEachM.find()) {
@@ -1620,6 +1858,7 @@ public class ActionResolver {
             String  srcJobWritten = forEachM.group("jobwname") != null ? forEachM.group("jobwname").trim() : null;
             String  srcJobWType   = forEachM.group("jobwtype") != null ? forEachM.group("jobwtype").trim() : null;
             String  srcCharType   = forEachM.group("chartype");
+            String  srcCategory   = srcCharType != null && forEachM.group("category") != null ? forEachM.group("category").trim() : null;
             String  srcBzName     = forEachM.group("bzname")   != null ? forEachM.group("bzname").trim()   : null;
             boolean srcOppHand    = forEachM.group("opphand")  != null;
             // if none of the above → xpaid
@@ -1630,7 +1869,7 @@ public class ActionResolver {
             if      (srcSelfDmg)           sourceLabel = "P1 damage";
             else if (srcJobBracket != null) sourceLabel = "[Job (" + srcJobBracket + ")] you control";
             else if (srcJobWritten != null) sourceLabel = "Job " + srcJobWritten + (srcJobWType != null ? " " + srcJobWType : "") + " you control";
-            else if (srcCharType   != null) sourceLabel = srcCharType + " you control";
+            else if (srcCharType   != null) sourceLabel = (srcCategory != null ? "Category " + srcCategory + " " : "") + srcCharType + " you control";
             else if (srcBzName     != null) sourceLabel = "Card Name " + srcBzName + " in BZ";
             else if (srcOppHand)           sourceLabel = "opponent hand";
             else                            sourceLabel = "X CP paid";
@@ -1647,7 +1886,7 @@ public class ActionResolver {
                     boolean jwMon = srcJobWType == null || srcJobWType.matches("(?i)Monsters?");
                     n = ctx.countP1FieldCards(jwFwd, jwBkp, jwMon, srcJobWritten, null);
                 }
-                else if (srcCharType   != null) n = ctx.countP1FieldCards(charFwd, charBkp, charMon, null, null);
+                else if (srcCharType   != null) n = ctx.countP1FieldCards(charFwd, charBkp, charMon, null, null, srcCategory);
                 else if (srcBzName     != null) n = ctx.countP1BreakZoneCards(srcBzName, null);
                 else if (srcOppHand)           n = ctx.opponentHandSize();
                 else                            n = xValue;

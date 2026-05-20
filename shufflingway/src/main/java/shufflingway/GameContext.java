@@ -359,6 +359,30 @@ public interface GameContext {
 
     // ---- "For each" scaling queries -------------------------------------------
 
+    /** Returns {@code true} if the "if you control" condition is met by the active player's field. */
+    boolean controlConditionMet(ControlCondition cond);
+
+    /** Returns {@code true} if the active player received at least one point of game damage this turn. */
+    boolean selfReceivedDamageThisTurn();
+
+    /** Returns {@code true} if the active player has at least one Summon in their Break Zone. */
+    boolean selfHasSummonInBreakZone();
+
+    /** Returns the number of cards in the opponent's damage zone. */
+    int opponentDamageCount();
+
+    /** Returns the number of cards the active player has cast from hand this turn. */
+    int selfCardsCastThisTurn();
+
+    /** Returns the number of Forwards the active player controls. */
+    int selfForwardCount();
+
+    /** Returns the number of Forwards the opponent controls. */
+    int opponentForwardCount();
+
+    /** Returns {@code true} if this ability is resolving as the result of an EX Burst. */
+    boolean isExBurst();
+
     /** Returns the number of cards in P1's damage zone. */
     int p1DamageCount();
 
@@ -376,6 +400,14 @@ public interface GameContext {
      */
     int countP1FieldCards(boolean inclForwards, boolean inclBackups, boolean inclMonsters,
             String jobFilter, String cardNameFilter);
+
+    /**
+     * Counts P1's field cards matching all supplied filters, including an optional category filter.
+     *
+     * @param categoryFilter category substring (e.g. {@code "VII"}); {@code null} = any
+     */
+    int countP1FieldCards(boolean inclForwards, boolean inclBackups, boolean inclMonsters,
+            String jobFilter, String cardNameFilter, String categoryFilter);
 
     /**
      * Counts cards in P1's Break Zone matching all supplied filters.

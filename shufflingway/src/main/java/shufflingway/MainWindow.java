@@ -256,6 +256,9 @@ public class MainWindow {
 	private final Set<CardData>          nullifyAbilityOnlyDmgSet = new java.util.HashSet<>();
 	private final Set<CardData>          nextOutgoingDmgZeroSet   = new java.util.HashSet<>();
 	private final Set<CardData>          perCardNonLethalDmgSet   = new java.util.HashSet<>();
+	private boolean p1ReceivedDamageThisTurn = false;
+	private boolean p2ReceivedDamageThisTurn = false;
+	private int     p1CardsCastThisTurn      = 0;
 	private boolean p1NonLethalProtection   = false;
 	private boolean p2NonLethalProtection   = false;
 	private boolean p1DmgReductionDisabled  = false;
@@ -1904,6 +1907,7 @@ public class MainWindow {
 
 	private void p1TakeDamage() {
 		if (gameState.isP1GameOver()) return;
+		p1ReceivedDamageThisTurn = true;
 		CardData drawn = gameState.drawToDamageZone();
 		if (drawn == null) {
 			triggerGameOver("P1 milled out — You Lose!");
@@ -1953,6 +1957,7 @@ public class MainWindow {
 	}
 
 	private void p2TakeDamage() {
+		p2ReceivedDamageThisTurn = true;
 		CardData drawn = gameState.drawToP2DamageZone();
 		p2DamageCount++;
 		boolean isEx = drawn != null && drawn.exBurst();
@@ -5377,6 +5382,7 @@ public class MainWindow {
 		lastCastPaymentDistinctElements = (int) execCpAccum.keySet().stream()
 				.filter(e -> !e.isEmpty()).distinct().count();
 		gameState.removeFromHand(cardHandIdx);
+		p1CardsCastThisTurn++;
 		logEntry("Played \"" + card.name() + "\"");
 
 		lastCardWasCast = true;
@@ -6700,7 +6706,7 @@ public class MainWindow {
 		}
 		logEntry("[EX BURST] " + card.name() + " — " + effect);
 		if (card.isSummon()) currentResolutionIsSummon = true;
-		try { fn.accept(buildGameContext(isP1)); } finally { currentResolutionIsSummon = false; }
+		try { fn.accept(buildGameContext(isP1, true)); } finally { currentResolutionIsSummon = false; }
 	}
 
 	/**
@@ -8062,6 +8068,10 @@ public class MainWindow {
 	 * @param isP1 {@code true} when P1 is the ability user (affects discard/draw direction)
 	 */
 	private GameContext buildGameContext(boolean isP1) {
+		return buildGameContext(isP1, false);
+	}
+
+	private GameContext buildGameContext(boolean isP1, boolean exBurst) {
 		return new GameContext() {
 			@Override public void logEntry(String msg) { MainWindow.this.logEntry(msg); }
 
@@ -9561,21 +9571,29 @@ public class MainWindow {
 
 			@Override public int countP1FieldCards(boolean inclForwards, boolean inclBackups,
 					boolean inclMonsters, String jobFilter, String cardNameFilter) {
+				return countP1FieldCards(inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, null);
+			}
+
+			@Override public int countP1FieldCards(boolean inclForwards, boolean inclBackups,
+					boolean inclMonsters, String jobFilter, String cardNameFilter, String categoryFilter) {
 				int count = 0;
 				if (inclForwards) for (CardData c : p1ForwardCards) {
 					if (!meetsJobFilter(c, jobFilter)) continue;
 					if (!meetsCardNameFilter(c, cardNameFilter)) continue;
+					if (!meetsCategoryFilter(c, categoryFilter)) continue;
 					count++;
 				}
 				if (inclBackups) for (CardData c : p1BackupCards) {
 					if (c == null) continue;
 					if (!meetsJobFilter(c, jobFilter)) continue;
 					if (!meetsCardNameFilter(c, cardNameFilter)) continue;
+					if (!meetsCategoryFilter(c, categoryFilter)) continue;
 					count++;
 				}
 				if (inclMonsters) for (CardData c : p1MonsterCards) {
 					if (!meetsJobFilter(c, jobFilter)) continue;
 					if (!meetsCardNameFilter(c, cardNameFilter)) continue;
+					if (!meetsCategoryFilter(c, categoryFilter)) continue;
 					count++;
 				}
 				return count;
@@ -9590,6 +9608,35 @@ public class MainWindow {
 				}
 				return count;
 			}
+
+			@Override public boolean controlConditionMet(ControlCondition cond) {
+				return MainWindow.this.controlConditionMet(cond, isP1);
+			}
+
+			@Override public boolean selfReceivedDamageThisTurn() {
+				return isP1 ? p1ReceivedDamageThisTurn : p2ReceivedDamageThisTurn;
+			}
+
+			@Override public boolean selfHasSummonInBreakZone() {
+				List<CardData> bz = isP1 ? gameState.getP1BreakZone() : gameState.getP2BreakZone();
+				return bz.stream().anyMatch(CardData::isSummon);
+			}
+
+			@Override public int opponentDamageCount() {
+				return (isP1 ? gameState.getP2DamageZone() : gameState.getP1DamageZone()).size();
+			}
+
+			@Override public int selfCardsCastThisTurn() { return p1CardsCastThisTurn; }
+
+			@Override public int selfForwardCount() {
+				return isP1 ? p1ForwardCards.size() : p2ForwardCards.size();
+			}
+
+			@Override public int opponentForwardCount() {
+				return isP1 ? p2ForwardCards.size() : p1ForwardCards.size();
+			}
+
+			@Override public boolean isExBurst() { return exBurst; }
 		};
 	}
 
@@ -11453,6 +11500,7 @@ public class MainWindow {
 		// ── Active Phase ─────────────────────────────────────────────────────
 
 		private void doActivePhase() {
+			p2ReceivedDamageThisTurn = false;
 			int activated = 0, thawed = 0;
 
 			// Pass 1: activate DULL/BRAVE_ATTACKED cards; frozen cards are skipped
@@ -11699,6 +11747,8 @@ public class MainWindow {
 		// ── P1 turn start (Active + Draw, then hand control back to player) ──
 
 		private void startP1Turn() {
+			p1ReceivedDamageThisTurn = false;
+			p1CardsCastThisTurn = 0;
 			int activated = 0, thawed = 0;
 
 			// Pass 1: activate DULL/BRAVE_ATTACKED cards; frozen cards are skipped
