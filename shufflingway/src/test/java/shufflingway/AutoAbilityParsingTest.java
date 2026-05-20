@@ -131,8 +131,12 @@ public class AutoAbilityParsingTest {
         sb.append(fa.triggerCard()).append(' ').append(fa.trigger()).append(", ");
         if (fa.youMay())       sb.append("you may ");
         else if (fa.opponentMay()) sb.append("your opponent may ");
-        sb.append(fa.effectText());
+        sb.append(fa.effectText()).append(dmgTag(fa.damageThreshold()));
         return sb.toString();
+    }
+
+    private static String dmgTag(int threshold) {
+        return threshold > 0 ? "  [Damage ≥" + threshold + "]" : "";
     }
 
     private static void reservoirAdd(List<String> reservoir, String item, int seen, java.util.Random rng) {

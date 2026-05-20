@@ -277,6 +277,17 @@ public class ActionResolver {
         "(?i)At\\s+the\\s+end\\s+of\\s+this\\s+turn,\\s+(?<rest>.+)"
     );
 
+    /**
+     * Matches "At the end of each of your turns, &lt;inner&gt;" — a recurring end-of-turn
+     * field-ability trigger.
+     * <ul>
+     *   <li>Group {@code inner} — the effect text that fires each end phase</li>
+     * </ul>
+     */
+    static final Pattern AT_END_OF_EACH_TURN_FA_PATTERN = Pattern.compile(
+        "(?i)At\\s+the\\s+end\\s+of\\s+each\\s+of\\s+your\\s+turns?\\s*,\\s+(?<inner>.+)"
+    );
+
     // ---- Damage-shield followup patterns (apply to selected "it/them" targets) --------
 
     /** Matches "During this turn, the next damage dealt to it/him becomes 0 instead." */
@@ -702,6 +713,18 @@ public class ActionResolver {
     );
 
     /**
+     * Matches "&lt;subject&gt; gains +N power." with no duration clause — a permanent passive
+     * field-ability self-boost (e.g. "Gilgamesh gains +1000 power.").
+     * <ul>
+     *   <li>Group {@code subject} — card name before "gains"</li>
+     *   <li>Group {@code amount}  — numeric power amount</li>
+     * </ul>
+     */
+    private static final Pattern FIELD_SELF_POWER_BOOST = Pattern.compile(
+        "(?i)(?<subject>.+?)\\s+gains?\\s+\\+(?<amount>\\d+)\\s+[Pp]ower[.!]?\\s*$"
+    );
+
+    /**
      * Matches "it/they gains/gain +N power [, Haste[, First Strike[, and Brave]]] until end of turn".
      * <ul>
      *   <li>Group 1 — numeric power amount</li>
@@ -857,11 +880,13 @@ public class ActionResolver {
         "(?i)(?<action>Break|Activate|dull\\s+and\\s+freeze|dull|freeze)\\s+" +
         "all\\s+(?:the\\s+)?" +
         "(?:(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?" +
-        "(?<targets>Forwards?(?:\\s+and\\s+Monsters?)?|Backups?|Characters?)" +
+        "(?:Category\\s+(?<category>\\S+)\\s+)?" +
+        "(?:Job\\s+(?<job>.+?)(?=\\s+(?:Forwards?|Backups?|Characters?|you\\b|opponent\\b)|\\s*[.!]?$))?" +
+        "(?<targets>Forwards?(?:\\s+and\\s+Monsters?)?|Backups?|Characters?)?" +
         "(?:\\s+of\\s+cost\\s+(?<cost>\\d+)(?:\\s+or\\s+(?<costcmp>less|more))?)?" +
         "(?:\\s+other\\s+than\\s+cost\\s+(?<excludecost>\\d+))?" +
         "(?:\\s+(?<control>(?:your\\s+)?opponent\\s+controls?|you\\s+control))?" +
-        "[.]?"
+        "[.!]?"
     );
 
     /**
@@ -1023,6 +1048,9 @@ public class ActionResolver {
         result = tryParseChooseCharacter(effectText, source, xValue);
         if (result != null) return result;
 
+        result = tryParseEndOfEachTurnFieldAbility(effectText, source);
+        if (result != null) return result;
+
         result = tryParseDelayedEffect(effectText);
         if (result != null) return result;
 
@@ -1051,6 +1079,9 @@ public class ActionResolver {
         if (result != null) return result;
 
         result = tryParseStandalonePowerReduceUntil(effectText, source);
+        if (result != null) return result;
+
+        result = tryParseFieldSelfPowerBoost(effectText, source);
         if (result != null) return result;
 
         result = tryParseStandaloneSelfBoost(effectText, source);
@@ -1114,6 +1145,7 @@ public class ActionResolver {
     public static String matchedPatternName(String effectText, CardData source) {
         if (tryParseDealDamageToForwards(effectText)          != null) return "DealDamageToForwards";
         if (tryParseChooseCharacter(effectText, source, 0)    != null) return "ChooseCharacter";
+        if (tryParseEndOfEachTurnFieldAbility(effectText, source) != null) return "EndOfEachTurnFieldAbility";
         if (tryParseDelayedEffect(effectText)                 != null) return "DelayedEffect";
         if (tryParseCannotBeChosenStandalone(effectText, source) != null) return "CannotBeChosen";
         if (tryParseNegateAllDamage(effectText)                != null) return "NegateDamage";
@@ -1123,6 +1155,7 @@ public class ActionResolver {
         if (tryParseStandaloneDoublesItsPowerUntil(effectText, source) != null) return "StandaloneDoublesItsPowerUntil";
         if (tryParseStandaloneDoublePowerMainPhaseNextTurn(effectText, source) != null) return "StandaloneDoublePowerMainPhaseNextTurn";
         if (tryParseStandalonePowerReduceUntil(effectText, source) != null) return "StandalonePowerReduceUntil";
+        if (tryParseFieldSelfPowerBoost(effectText, source)    != null) return "FieldSelfPowerBoost";
         if (tryParseStandaloneSelfBoost(effectText, source)   != null) return "StandaloneSelfBoost";
         if (tryParseOpponentDiscard(effectText)               != null) return "OpponentDiscard";
         if (tryParseDrawCards(effectText)                     != null) return "DrawCards";
@@ -2528,6 +2561,23 @@ public class ActionResolver {
     }
 
     /**
+     * Parses "&lt;cardName&gt; gains +N power." (no duration clause) as a permanent passive
+     * field-ability self-boost.  Subject must match {@code source.name()}.
+     */
+    private static Consumer<GameContext> tryParseFieldSelfPowerBoost(String text, CardData source) {
+        if (source == null) return null;
+        Matcher m = FIELD_SELF_POWER_BOOST.matcher(text);
+        if (!m.find()) return null;
+        String subject = m.group("subject").trim();
+        if (!subject.equalsIgnoreCase(source.name())) return null;
+        int boost = Integer.parseInt(m.group("amount"));
+        return ctx -> {
+            ctx.logEntry(source.name() + " — Gain +" + boost + " power (field)");
+            ctx.boostSourceForward(source, boost, EnumSet.noneOf(CardData.Trait.class));
+        };
+    }
+
+    /**
      * Parses "&lt;cardName&gt; gains [+N power] [, traits] until end of turn" as a standalone
      * self-boost on the source card (standard order, no "Until" prefix).
      * Pronoun subjects ("it", "they") are skipped — they are followup pronouns.
@@ -2615,8 +2665,24 @@ public class ActionResolver {
     }
 
     // -------------------------------------------------------------------------
-    // Delayed ("at the end of this turn") effect parser
+    // Delayed ("at the end of this turn") and recurring end-of-turn field parsers
     // -------------------------------------------------------------------------
+
+    /**
+     * Parses "At the end of each of your turns, &lt;effect&gt;" — a recurring field-ability
+     * trigger.  Returns a consumer that executes the inner effect directly; the caller
+     * ({@code fireFieldEndOfTurnAbilities}) is responsible for invoking it each end phase.
+     * The inner effect is resolved via the full {@link #parse} dispatcher so all supported
+     * effect types work.
+     */
+    static Consumer<GameContext> tryParseEndOfEachTurnFieldAbility(String text, CardData source) {
+        Matcher m = AT_END_OF_EACH_TURN_FA_PATTERN.matcher(text);
+        if (!m.find()) return null;
+        String inner = m.group("inner").trim();
+        Consumer<GameContext> innerEffect = parse(inner, source);
+        if (innerEffect == null) return null;
+        return innerEffect;
+    }
 
     /**
      * Parses "At the end of this turn, &lt;effect&gt;" — wraps any supported mass-field
@@ -2659,12 +2725,20 @@ public class ActionResolver {
         };
         if (action == null) return null;
 
-        String element  = m.group("element");
-        String targets  = m.group("targets");
-        String tgtLower = targets.toLowerCase();
-        boolean inclForwards = tgtLower.contains("forward") || tgtLower.contains("character");
-        boolean inclBackups  = tgtLower.contains("backup")  || tgtLower.contains("character");
-        boolean inclMonsters = tgtLower.contains("monster") || tgtLower.contains("character");
+        String element   = m.group("element");
+        String job       = m.group("job") != null ? m.group("job").trim() : null;
+        String category  = m.group("category");
+        String targets   = m.group("targets");
+        // When no explicit type is given (job-only or category-only), sweep all card types
+        boolean inclForwards, inclBackups, inclMonsters;
+        if (targets == null) {
+            inclForwards = true; inclBackups = true; inclMonsters = (job == null && category == null);
+        } else {
+            String tgtLower  = targets.toLowerCase();
+            inclForwards = tgtLower.contains("forward") || tgtLower.contains("character");
+            inclBackups  = tgtLower.contains("backup")  || tgtLower.contains("character");
+            inclMonsters = tgtLower.contains("monster") || tgtLower.contains("character");
+        }
 
         String costStr = m.group("cost");
         String costCmp = m.group("costcmp");
@@ -2684,16 +2758,17 @@ public class ActionResolver {
             case DULL_AND_FREEZE -> "Dull & Freeze";
             case ACTIVATE       -> "Activate";
         };
+        String tgtLabel     = targets != null ? targets : (job != null ? "Job " + job : category != null ? "Cat " + category : "all");
         String costLabel    = costVal >= 0
                 ? " of cost " + costVal + (costCmp != null ? " or " + costCmp : "") : "";
         String exclLabel    = excludeCostVal >= 0 ? " [not cost " + excludeCostVal + "]" : "";
         String controlLabel = opponentOnly ? " (opponent)" : selfOnly ? " (yours)" : "";
-        String logMsg = actionLabel + " all " + targets + costLabel + exclLabel + controlLabel;
+        String logMsg = actionLabel + " all " + tgtLabel + costLabel + exclLabel + controlLabel;
 
         return ctx -> {
             ctx.logEntry("Effect: " + logMsg);
             ctx.applyMassFieldEffect(action, inclForwards, inclBackups, inclMonsters,
-                    opponentOnly, selfOnly, element, costVal, costCmp, excludeCostVal);
+                    opponentOnly, selfOnly, element, costVal, costCmp, excludeCostVal, job, category);
         };
     }
 
@@ -3113,7 +3188,7 @@ public class ActionResolver {
             boolean ba = actM.group("scope").toLowerCase(java.util.Locale.ROOT).contains("abilit");
             return ctx -> {
                 ctx.logEntry("Effect: Activate all own Forwards + cannot be chosen by opponent");
-                ctx.applyMassFieldEffect(GameContext.MassAction.ACTIVATE, true, false, false, false, true, null, -1, null, -1);
+                ctx.applyMassFieldEffect(GameContext.MassAction.ACTIVATE, true, false, false, false, true, null, -1, null, -1, null, null);
                 ctx.shieldAllOwnForwardsCannotBeChosen(bs, ba);
             };
         }
@@ -3173,7 +3248,7 @@ public class ActionResolver {
             return ctx -> {
                 ctx.logEntry("Effect: Activate all own Forwards and negate their damage");
                 ctx.applyMassFieldEffect(GameContext.MassAction.ACTIVATE,
-                        true, false, false, false, true, null, -1, null, -1);
+                        true, false, false, false, true, null, -1, null, -1, null, null);
                 ctx.negateAllDamageOwnForwards();
             };
         }

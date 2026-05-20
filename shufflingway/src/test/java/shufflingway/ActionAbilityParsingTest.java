@@ -114,10 +114,15 @@ public class ActionAbilityParsingTest {
         for (ActionAbility ab : abilities) {
             String desc = ActionResolver.fullDescription(ab.effectText(), source);
             boolean ok = ActionResolver.parse(ab.effectText(), source) != null;
-            sb.append("  [").append(ok ? "OK" : "--").append("] ").append(ab.effectText()).append('\n');
+            sb.append("  [").append(ok ? "OK" : "--").append("] ")
+              .append(ab.effectText()).append(dmgTag(ab.damageThreshold())).append('\n');
             sb.append("       ").append(desc != null ? desc : "(none)").append('\n');
         }
         return sb.toString();
+    }
+
+    private static String dmgTag(int threshold) {
+        return threshold > 0 ? "  [Damage ≥" + threshold + "]" : "";
     }
 
     /** Reservoir sampling (k=3): keeps up to 3 uniformly random items seen so far. */

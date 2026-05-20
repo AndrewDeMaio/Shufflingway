@@ -119,10 +119,15 @@ public class FieldAbilityParsingTest {
         for (FieldAbility fa : abilities) {
             boolean ok   = ActionResolver.parse(fa.effectText(), source) != null;
             String  desc = ActionResolver.fullDescription(fa.effectText(), source);
-            sb.append("  [").append(ok ? "OK" : "--").append("] ").append(fa.effectText()).append('\n');
+            sb.append("  [").append(ok ? "OK" : "--").append("] ")
+              .append(fa.effectText()).append(dmgTag(fa.damageThreshold())).append('\n');
             sb.append("       ").append(desc != null ? desc : "(none)").append('\n');
         }
         return sb.toString();
+    }
+
+    private static String dmgTag(int threshold) {
+        return threshold > 0 ? "  [Damage ≥" + threshold + "]" : "";
     }
 
     private static void reservoirAdd(List<String> reservoir, String item, int seen, java.util.Random rng) {

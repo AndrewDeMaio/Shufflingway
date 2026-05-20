@@ -633,11 +633,14 @@ public interface GameContext {
      * @param costVal         CP cost filter value; {@code -1} = no filter
      * @param costCmp         {@code "less"}, {@code "more"}, or {@code null} for exact
      * @param excludeCostVal  exact cost to exclude; {@code -1} = no exclusion
+     * @param job             optional job filter (bar-separated for OR); {@code null} = any
+     * @param category        optional category filter; {@code null} = any
      */
     void applyMassFieldEffect(MassAction action,
             boolean forwards, boolean backups, boolean monsters,
             boolean opponentOnly, boolean selfOnly,
-            String element, int costVal, String costCmp, int excludeCostVal);
+            String element, int costVal, String costCmp, int excludeCostVal,
+            String job, String category);
 
     /**
      * Adds {@code amount} power until end of turn to every matching field card.

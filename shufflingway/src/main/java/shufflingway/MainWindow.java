@@ -1352,6 +1352,7 @@ public class MainWindow {
                             gameState.advancePhase();   // MAIN_2 → END
                             refreshPhaseTracker();
                             logEntry("End Phase");
+                            fireFieldEndOfTurnAbilities(true);
                             fireEndOfTurnEffects(true);
                             for (int i = 0; i < p1ForwardDamage.size(); i++) p1ForwardDamage.set(i, 0);
                             for (int i = 0; i < p1ForwardPowerBoost.size(); i++) p1ForwardPowerBoost.set(i, 0);
@@ -9330,7 +9331,8 @@ public class MainWindow {
 			public void applyMassFieldEffect(GameContext.MassAction action,
 					boolean forwards, boolean backups, boolean monsters,
 					boolean opponentOnly, boolean selfOnly,
-					String element, int costVal, String costCmp, int excludeCostVal) {
+					String element, int costVal, String costCmp, int excludeCostVal,
+					String job, String category) {
 				if (!opponentOnly) {
 					if (forwards) {
 						for (int i = p1ForwardCards.size() - 1; i >= 0; i--) {
@@ -9338,6 +9340,8 @@ public class MainWindow {
 							if (element != null && !c.containsElement(element)) continue;
 							if (!meetsCostConstraint(c.cost(), costVal, costCmp)) continue;
 							if (excludeCostVal >= 0 && c.cost() == excludeCostVal) continue;
+							if (!meetsJobFilter(c, job)) continue;
+							if (!meetsCategoryFilter(c, category)) continue;
 							switch (action) {
 								case BREAK          -> breakP1Forward(i);
 								case DULL           -> dullP1Forward(i);
@@ -9354,6 +9358,8 @@ public class MainWindow {
 							if (element != null && !c.containsElement(element)) continue;
 							if (!meetsCostConstraint(c.cost(), costVal, costCmp)) continue;
 							if (excludeCostVal >= 0 && c.cost() == excludeCostVal) continue;
+							if (!meetsJobFilter(c, job)) continue;
+							if (!meetsCategoryFilter(c, category)) continue;
 							switch (action) {
 								case BREAK -> {
 									logEntry(c.name() + " is broken");
@@ -9376,6 +9382,8 @@ public class MainWindow {
 							if (element != null && !c.containsElement(element)) continue;
 							if (!meetsCostConstraint(c.cost(), costVal, costCmp)) continue;
 							if (excludeCostVal >= 0 && c.cost() == excludeCostVal) continue;
+							if (!meetsJobFilter(c, job)) continue;
+							if (!meetsCategoryFilter(c, category)) continue;
 							switch (action) {
 								case BREAK -> {
 									logEntry(c.name() + " is broken");
@@ -9406,6 +9414,8 @@ public class MainWindow {
 							if (element != null && !c.containsElement(element)) continue;
 							if (!meetsCostConstraint(c.cost(), costVal, costCmp)) continue;
 							if (excludeCostVal >= 0 && c.cost() == excludeCostVal) continue;
+							if (!meetsJobFilter(c, job)) continue;
+							if (!meetsCategoryFilter(c, category)) continue;
 							switch (action) {
 								case BREAK          -> breakP2Forward(i);
 								case DULL           -> dullP2Forward(i);
@@ -9422,6 +9432,8 @@ public class MainWindow {
 							if (element != null && !c.containsElement(element)) continue;
 							if (!meetsCostConstraint(c.cost(), costVal, costCmp)) continue;
 							if (excludeCostVal >= 0 && c.cost() == excludeCostVal) continue;
+							if (!meetsJobFilter(c, job)) continue;
+							if (!meetsCategoryFilter(c, category)) continue;
 							switch (action) {
 								case BREAK -> {
 									logEntry("[P2] " + c.name() + " is broken");
@@ -9579,6 +9591,33 @@ public class MainWindow {
 				return count;
 			}
 		};
+	}
+
+	/**
+	 * Fires "At the end of each of your turns" field abilities for the controlling player.
+	 * Called at the start of the END phase, before temporary-boost cleanup.
+	 */
+	private void fireFieldEndOfTurnAbilities(boolean isP1) {
+		List<CardData> fwds = isP1 ? p1ForwardCards : p2ForwardCards;
+		CardData[]     bkps = isP1 ? p1BackupCards  : p2BackupCards;
+		List<CardData> mons = isP1 ? p1MonsterCards : p2MonsterCards;
+		GameContext ctx = buildGameContext(isP1);
+		int dmg = isP1 ? gameState.getP1DamageZone().size() : gameState.getP2DamageZone().size();
+		for (CardData card : fwds) fireFieldEndOfTurnAbilitiesForCard(card, ctx, dmg);
+		for (CardData card : bkps) if (card != null) fireFieldEndOfTurnAbilitiesForCard(card, ctx, dmg);
+		for (CardData card : mons) fireFieldEndOfTurnAbilitiesForCard(card, ctx, dmg);
+	}
+
+	private void fireFieldEndOfTurnAbilitiesForCard(CardData card, GameContext ctx, int dmg) {
+		for (FieldAbility fa : card.fieldAbilities()) {
+			if (fa.damageThreshold() > 0 && dmg < fa.damageThreshold()) continue;
+			java.util.function.Consumer<GameContext> effect =
+					ActionResolver.tryParseEndOfEachTurnFieldAbility(fa.effectText(), card);
+			if (effect != null) {
+				logEntry("[Field] " + card.name() + " — end-of-turn: " + fa.effectText());
+				effect.accept(ctx);
+			}
+		}
 	}
 
 	/** Fires all queued end-of-turn effects using a context for {@code isP1}, then clears the queue. */
