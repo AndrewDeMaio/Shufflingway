@@ -141,7 +141,7 @@ public class ActionResolver {
         "(?:" +
             "(?<selfdmg>point\\s+of\\s+damage\\s+you\\s+have\\s+received)" +
             "|\\[Job\\s+\\((?<jobbname>[^)]+)\\)\\]\\s+you\\s+control" +
-            "|Job\\s+(?<jobwname>.+?)\\s+you\\s+control" +
+            "|Job\\s+(?<jobwname>.+?)(?:\\s+(?<jobwtype>Forwards?|Backups?|Monsters?))?\\s+you\\s+control" +
             "|(?<chartype>Forwards?|Characters?|Backups?|Monsters?)\\s+you\\s+control" +
             "|Card\\s+Name\\s+(?<bzname>\\S+(?:\\s+\\([^)]+\\))?)\\s+in\\s+your\\s+Break\\s+Zone" +
             "|(?<opphand>card\\s+in\\s+your\\s+opponent'?s?\\s+hand)" +
@@ -1513,6 +1513,7 @@ public class ActionResolver {
             boolean srcSelfDmg    = forEachM.group("selfdmg")  != null;
             String  srcJobBracket = forEachM.group("jobbname") != null ? forEachM.group("jobbname").trim() : null;
             String  srcJobWritten = forEachM.group("jobwname") != null ? forEachM.group("jobwname").trim() : null;
+            String  srcJobWType   = forEachM.group("jobwtype") != null ? forEachM.group("jobwtype").trim() : null;
             String  srcCharType   = forEachM.group("chartype");
             String  srcBzName     = forEachM.group("bzname")   != null ? forEachM.group("bzname").trim()   : null;
             boolean srcOppHand    = forEachM.group("opphand")  != null;
@@ -1523,7 +1524,7 @@ public class ActionResolver {
             String sourceLabel;
             if      (srcSelfDmg)           sourceLabel = "P1 damage";
             else if (srcJobBracket != null) sourceLabel = "[Job (" + srcJobBracket + ")] you control";
-            else if (srcJobWritten != null) sourceLabel = "Job " + srcJobWritten + " you control";
+            else if (srcJobWritten != null) sourceLabel = "Job " + srcJobWritten + (srcJobWType != null ? " " + srcJobWType : "") + " you control";
             else if (srcCharType   != null) sourceLabel = srcCharType + " you control";
             else if (srcBzName     != null) sourceLabel = "Card Name " + srcBzName + " in BZ";
             else if (srcOppHand)           sourceLabel = "opponent hand";
@@ -1535,7 +1536,12 @@ public class ActionResolver {
                 int n;
                 if      (srcSelfDmg)           n = ctx.p1DamageCount();
                 else if (srcJobBracket != null) n = ctx.countP1FieldCards(true, true, true, srcJobBracket, null);
-                else if (srcJobWritten != null) n = ctx.countP1FieldCards(true, true, true, srcJobWritten, null);
+                else if (srcJobWritten != null) {
+                    boolean jwFwd = srcJobWType == null || srcJobWType.matches("(?i)Forwards?");
+                    boolean jwBkp = srcJobWType == null || srcJobWType.matches("(?i)Backups?");
+                    boolean jwMon = srcJobWType == null || srcJobWType.matches("(?i)Monsters?");
+                    n = ctx.countP1FieldCards(jwFwd, jwBkp, jwMon, srcJobWritten, null);
+                }
                 else if (srcCharType   != null) n = ctx.countP1FieldCards(charFwd, charBkp, charMon, null, null);
                 else if (srcBzName     != null) n = ctx.countP1BreakZoneCards(srcBzName, null);
                 else if (srcOppHand)           n = ctx.opponentHandSize();
