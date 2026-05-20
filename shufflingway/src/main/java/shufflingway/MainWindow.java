@@ -264,6 +264,12 @@ public class MainWindow {
 
 	/** Tracks once-per-turn ability uses this turn; keyed by card instance identity, value is set of effectText strings used. */
 	private final java.util.IdentityHashMap<CardData, java.util.Set<String>> usedOncePerTurnAbilities = new java.util.IdentityHashMap<>();
+
+	/**
+	 * Forwards currently stolen by P1 from P2, mapped to their restoration condition:
+	 * {@code "permanent"}, {@code "endOfTurn"}, or {@code "whileCardOnField:Name"}.
+	 */
+	private final java.util.IdentityHashMap<CardData, String> stolenForwards = new java.util.IdentityHashMap<>();
 	/** Distinct element types used to pay the most recent card's CP cost; checked by castPaymentMinElements conditions. */
 	private int lastCastPaymentDistinctElements = 0;
 	/** True while a card is being placed as a direct result of being cast from hand; gates castOnly field abilities. */
@@ -2055,6 +2061,11 @@ public class MainWindow {
 			p1ForwardPanel.repaint();
 			for (int i = 0; i < p1ForwardCards.size(); i++) refreshP1ForwardSlot(i);
 		}
+		// If the broken card was itself stolen from P2, drop its tracking entry
+		stolenForwards.remove(card);
+		// Restore any forwards that were conditioned on this card remaining on the field
+		checkAndRestoreStolenOnLeave(card.name());
+
 		refreshP1BreakLabel();
 		triggerAutoAbilitiesForLeavesField(card, true);
 		triggerAutoAbilitiesForBreakZone(card, true);
@@ -2112,6 +2123,241 @@ public class MainWindow {
 		refreshP2BreakLabel();
 		triggerAutoAbilitiesForLeavesField(card, false);
 		triggerAutoAbilitiesForBreakZone(card, false);
+	}
+
+	// -------------------------------------------------------------------------
+	// Gain-control helpers
+	// -------------------------------------------------------------------------
+
+	/**
+	 * Rebuilds all P2 forward JLabels from scratch to match the current {@code p2ForwardCards} list.
+	 * Must be called after any modification to the list so the panel stays in sync.
+	 */
+	private void rebuildP2ForwardPanel() {
+		if (p2ForwardPanel == null) return;
+		p2ForwardPanel.removeAll();
+		p2ForwardLabels.clear();
+		for (int i = 0; i < p2ForwardCards.size(); i++) {
+			final int fi = i;
+			JLabel lbl = new JLabel("", SwingConstants.CENTER);
+			lbl.setPreferredSize(new Dimension(CARD_H, CARD_H));
+			lbl.setMinimumSize(new Dimension(CARD_H, CARD_H));
+			lbl.setOpaque(false);
+			lbl.setFont(FontLoader.loadPixelNESFont(11));
+			lbl.setBorder(BorderFactory.createEmptyBorder());
+			lbl.addMouseListener(new MouseAdapter() {
+				@Override public void mouseEntered(MouseEvent e) {
+					if (lbl.getIcon() != null) showZoomAt(p2ForwardUrls.get(fi));
+				}
+				@Override public void mouseExited(MouseEvent e) { hideZoom(); }
+			});
+			p2ForwardLabels.add(lbl);
+			p2ForwardPanel.add(lbl);
+		}
+		p2ForwardPanel.revalidate();
+		p2ForwardPanel.repaint();
+		for (int i = 0; i < p2ForwardCards.size(); i++) refreshP2ForwardSlot(i);
+	}
+
+	/**
+	 * Moves P2's forward at {@code p2Idx} to P1's field without triggering ETF or break-zone
+	 * auto-abilities, and registers the restoration condition in {@link #stolenForwards}.
+	 */
+	private void stealForwardFromP2ToP1(int p2Idx, String condition, boolean activate) {
+		if (p2Idx < 0 || p2Idx >= p2ForwardCards.size()) return;
+		CardData   card       = p2ForwardCards.get(p2Idx);
+		int        savedDmg   = p2ForwardDamage.get(p2Idx);
+		CardState  savedState = p2ForwardStates.get(p2Idx);
+
+		// Remove from P2 (no break zone, no auto-ability trigger)
+		p2ForwardCards.remove(p2Idx);
+		p2ForwardUrls.remove(p2Idx);
+		p2ForwardStates.remove(p2Idx);
+		p2ForwardPlayedOnTurn.remove(p2Idx);
+		p2ForwardDamage.remove(p2Idx);
+		p2ForwardPowerBoost.remove(p2Idx);
+		p2ForwardPowerReduction.remove(p2Idx);
+		p2ForwardTempTraits.remove(p2Idx);
+		p2ForwardRemovedTraits.remove(p2Idx);
+		p2ForwardFrozen.remove(p2Idx);
+		p2ForwardLabels.remove(p2Idx);
+		shiftBlockSet(p2ForwardCannotBlock,            p2Idx);
+		shiftBlockSet(p2ForwardMustBlock,              p2Idx);
+		shiftBlockSet(p2ForwardCannotAttack,           p2Idx);
+		shiftBlockSet(p2ForwardMustAttack,             p2Idx);
+		shiftBlockSet(p2ForwardCannotAttackPersistent, p2Idx);
+		shiftBlockSet(p2ForwardCannotBlockPersistent,  p2Idx);
+		rebuildP2ForwardPanel();
+
+		// Add to P1 with preserved damage; state forced ACTIVE if requested
+		addStolenForwardToP1Field(card, savedDmg, activate ? CardState.ACTIVE : savedState);
+
+		String condLabel = condition.equals("permanent") ? " (permanent)"
+				: condition.equals("endOfTurn") ? " (until EOT)"
+				: " (while " + condition.substring("whileCardOnField:".length()) + " on field)";
+		logEntry(card.name() + " — control stolen by P1" + condLabel);
+
+		if (!condition.equals("permanent")) {
+			stolenForwards.put(card, condition);
+			if (condition.equals("endOfTurn")) {
+				endOfTurnEffects.add(ctx -> {
+					if (stolenForwards.remove(card) != null) restoreStolenForward(card);
+				});
+			}
+		}
+	}
+
+	/** Adds {@code card} to P1's forward zone with the given damage and state; does NOT fire ETF. */
+	private void addStolenForwardToP1Field(CardData card, int damage, CardState state) {
+		if (p1ForwardPanel == null) return;
+		int idx = p1ForwardLabels.size();
+
+		JLabel lbl = new JLabel("", SwingConstants.CENTER);
+		lbl.setPreferredSize(new Dimension(CARD_H, CARD_H));
+		lbl.setMinimumSize(new Dimension(CARD_H, CARD_H));
+		lbl.setOpaque(false);
+		lbl.setForeground(Color.DARK_GRAY);
+		lbl.setFont(FontLoader.loadPixelNESFont(11));
+		lbl.setBorder(BorderFactory.createEmptyBorder());
+		lbl.addMouseListener(new MouseAdapter() {
+			@Override public void mousePressed(MouseEvent e) {
+				if (lbl.getIcon() == null) return;
+				if (SwingUtilities.isLeftMouseButton(e)
+						&& gameState.getCurrentPhase() == GameState.GamePhase.ATTACK) {
+					toggleAttackSelection(idx);
+				} else {
+					showForwardContextMenu(idx, lbl, e);
+				}
+			}
+			@Override public void mouseEntered(MouseEvent e) {
+				if (lbl.getIcon() == null) return;
+				CardData top = p1ForwardPrimedTop.get(idx);
+				showZoomAt(top != null ? top.imageUrl() : p1ForwardUrls.get(idx));
+			}
+			@Override public void mouseExited(MouseEvent e) { hideZoom(); }
+		});
+
+		p1ForwardUrls.add(card.imageUrl());
+		p1ForwardCards.add(card);
+		p1ForwardStates.add(state);
+		p1ForwardPlayedOnTurn.add(gameState.getTurnNumber());
+		p1ForwardDamage.add(damage);
+		p1ForwardPowerBoost.add(0);
+		p1ForwardPowerReduction.add(0);
+		p1ForwardTempTraits.add(java.util.EnumSet.noneOf(CardData.Trait.class));
+		p1ForwardRemovedTraits.add(java.util.EnumSet.noneOf(CardData.Trait.class));
+		p1ForwardPrimedTop.add(null);
+		p1ForwardFrozen.add(false);
+		p1ForwardLabels.add(lbl);
+
+		p1ForwardPanel.add(lbl);
+		p1ForwardPanel.revalidate();
+		p1ForwardPanel.repaint();
+		refreshP1ForwardSlot(idx);
+	}
+
+	/**
+	 * Removes a stolen forward from P1's field (without sending it to any zone) and returns
+	 * it to P2's field with its current state.  If the card is no longer on P1's field
+	 * (already broken), this is a no-op except for a log entry.
+	 */
+	private void restoreStolenForward(CardData card) {
+		int p1Idx = -1;
+		for (int i = 0; i < p1ForwardCards.size(); i++) {
+			if (p1ForwardCards.get(i) == card) { p1Idx = i; break; }
+		}
+		if (p1Idx < 0) {
+			logEntry(card.name() + " — already left field, P2 control restored implicitly");
+			return;
+		}
+
+		int       dmg   = p1ForwardDamage.get(p1Idx);
+		CardState state = p1ForwardStates.get(p1Idx);
+
+		// Remove from P1 arrays (no break zone)
+		p1ForwardCards.remove(p1Idx);
+		p1ForwardUrls.remove(p1Idx);
+		p1ForwardStates.remove(p1Idx);
+		p1ForwardPlayedOnTurn.remove(p1Idx);
+		p1ForwardDamage.remove(p1Idx);
+		p1ForwardPowerBoost.remove(p1Idx);
+		p1ForwardPowerReduction.remove(p1Idx);
+		p1ForwardTempTraits.remove(p1Idx);
+		p1ForwardRemovedTraits.remove(p1Idx);
+		p1ForwardPrimedTop.remove(p1Idx);
+		p1ForwardFrozen.remove(p1Idx);
+		p1ForwardLabels.remove(p1Idx);
+		shiftBlockSet(p1ForwardCannotBlock,            p1Idx);
+		shiftBlockSet(p1ForwardMustBlock,              p1Idx);
+		shiftBlockSet(p1ForwardCannotAttack,           p1Idx);
+		shiftBlockSet(p1ForwardMustAttack,             p1Idx);
+		shiftBlockSet(p1ForwardCannotAttackPersistent, p1Idx);
+		shiftBlockSet(p1ForwardCannotBlockPersistent,  p1Idx);
+
+		// Rebuild P1 panel
+		if (p1ForwardPanel != null) {
+			p1ForwardPanel.removeAll();
+			p1ForwardLabels.clear();
+			for (int i = 0; i < p1ForwardCards.size(); i++) {
+				final int fi = i;
+				JLabel lbl = new JLabel("", SwingConstants.CENTER);
+				lbl.setPreferredSize(new Dimension(CARD_H, CARD_H));
+				lbl.setMinimumSize(new Dimension(CARD_H, CARD_H));
+				lbl.setOpaque(false);
+				lbl.setForeground(Color.DARK_GRAY);
+				lbl.setFont(FontLoader.loadPixelNESFont(11));
+				lbl.setBorder(BorderFactory.createEmptyBorder());
+				lbl.addMouseListener(new MouseAdapter() {
+					@Override public void mousePressed(MouseEvent e) {
+						if (lbl.getIcon() == null) return;
+						if (SwingUtilities.isLeftMouseButton(e)
+								&& gameState.getCurrentPhase() == GameState.GamePhase.ATTACK) {
+							toggleAttackSelection(fi);
+						} else {
+							showForwardContextMenu(fi, lbl, e);
+						}
+					}
+					@Override public void mouseEntered(MouseEvent e) {
+						if (lbl.getIcon() == null) return;
+						CardData top = p1ForwardPrimedTop.get(fi);
+						showZoomAt(top != null ? top.imageUrl() : p1ForwardUrls.get(fi));
+					}
+					@Override public void mouseExited(MouseEvent e) { hideZoom(); }
+				});
+				p1ForwardLabels.add(lbl);
+				p1ForwardPanel.add(lbl);
+			}
+			p1ForwardPanel.revalidate();
+			p1ForwardPanel.repaint();
+			for (int i = 0; i < p1ForwardCards.size(); i++) refreshP1ForwardSlot(i);
+		}
+
+		// Return to P2's field with current damage/state
+		p2ForwardUrls.add(card.imageUrl());
+		p2ForwardCards.add(card);
+		p2ForwardStates.add(state);
+		p2ForwardPlayedOnTurn.add(gameState.getTurnNumber());
+		p2ForwardDamage.add(dmg);
+		p2ForwardPowerBoost.add(0);
+		p2ForwardPowerReduction.add(0);
+		p2ForwardTempTraits.add(java.util.EnumSet.noneOf(CardData.Trait.class));
+		p2ForwardRemovedTraits.add(java.util.EnumSet.noneOf(CardData.Trait.class));
+		p2ForwardFrozen.add(false);
+		rebuildP2ForwardPanel();
+
+		logEntry(card.name() + " — control returned to P2");
+	}
+
+	/** Checks if any stolen forward had {@code leavingCardName} as its on-field condition and restores them. */
+	private void checkAndRestoreStolenOnLeave(String leavingCardName) {
+		String condKey = "whileCardOnField:" + leavingCardName;
+		java.util.List<CardData> toRestore = new java.util.ArrayList<>();
+		for (java.util.Map.Entry<CardData, String> e : stolenForwards.entrySet())
+			if (e.getValue().equalsIgnoreCase(condKey)) toRestore.add(e.getKey());
+		for (CardData c : toRestore) {
+			stolenForwards.remove(c);
+			restoreStolenForward(c);
+		}
 	}
 
 	private void returnP1ForwardToDeck(int idx, boolean toBottom) {
@@ -7791,6 +8037,12 @@ public class MainWindow {
 				}
 			}
 
+			@Override public void gainControlOfForward(ForwardTarget t, String condition, boolean activate) {
+				// Only supported for P1 stealing from P2 in the current implementation
+				if (!isP1 || t.isP1() || t.zone() != ForwardTarget.CardZone.FORWARD) return;
+				stealForwardFromP2ToP1(t.idx(), condition, activate);
+			}
+
 			@Override
 			public java.util.List<ForwardTarget> selectCharacters(
 					int maxCount, boolean upTo, boolean opponentOnly,
@@ -8277,6 +8529,12 @@ public class MainWindow {
 				CardData card = deck.pollFirst();
 				logEntry("Revealed from " + deckLabel + ": " + card.name() + " (" + card.type() + ")");
 
+				// When the only applicable clause is "castSummonFree" and the card is a Summon,
+				// show Decline/OK buttons so the player can choose whether to cast it.
+				boolean castFreeApplicable = card.isSummon() &&
+						clauses.stream().anyMatch(c -> "castSummonFree".equals(c.cardOp()));
+				boolean[] activated = {false};
+
 				JDialog dlg = new JDialog(frame, "Reveal", true);
 				dlg.setResizable(false);
 				dlg.setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
@@ -8313,13 +8571,23 @@ public class MainWindow {
 				wrapper.add(cardLabel,  BorderLayout.CENTER);
 				wrapper.add(nameLabel,  BorderLayout.SOUTH);
 
-				JButton okBtn = new JButton("OK");
-				okBtn.setFont(FontLoader.loadPixelNESFont(11));
-				okBtn.addActionListener(ae -> { hideZoom(); dlg.dispose(); });
-
 				JPanel south = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 6));
-				south.add(okBtn);
 				south.setBorder(BorderFactory.createEmptyBorder(0, 8, 8, 8));
+				if (castFreeApplicable) {
+					JButton declineBtn = new JButton("Decline");
+					declineBtn.setFont(FontLoader.loadPixelNESFont(11));
+					declineBtn.addActionListener(ae -> { hideZoom(); dlg.dispose(); });
+					JButton okBtn = new JButton("OK");
+					okBtn.setFont(FontLoader.loadPixelNESFont(11));
+					okBtn.addActionListener(ae -> { activated[0] = true; hideZoom(); dlg.dispose(); });
+					south.add(declineBtn);
+					south.add(okBtn);
+				} else {
+					JButton okBtn = new JButton("OK");
+					okBtn.setFont(FontLoader.loadPixelNESFont(11));
+					okBtn.addActionListener(ae -> { hideZoom(); dlg.dispose(); });
+					south.add(okBtn);
+				}
 
 				dlg.getContentPane().setLayout(new BorderLayout(0, 4));
 				dlg.getContentPane().add(wrapper, BorderLayout.CENTER);
@@ -8364,6 +8632,16 @@ public class MainWindow {
 								gameState.getP1BreakZone().add(card);
 								logEntry(card.name() + " put into Break Zone from reveal");
 								refreshP1BreakLabel();
+							}
+							case "castSummonFree" -> {
+								if (!activated[0]) {
+									logEntry(card.name() + " — free cast declined, returned to top of deck");
+									deck.addFirst(card);
+									if (opponentDeck) refreshP2DeckLabel(); else refreshP1DeckLabel();
+									return;
+								}
+								logEntry(card.name() + " — cast for free from reveal");
+								showSummonOnStack(card);
 							}
 						}
 					} else {

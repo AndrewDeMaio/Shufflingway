@@ -313,6 +313,39 @@ public class ActionResolver {
         "(?i)Activate\\s+(?:it|them)\\s+and\\s+negate\\s+all\\s+(?:the\\s+)?damage\\s+dealt\\s+to\\s+(?:it|them)\\.?"
     );
 
+    // ---- Gain-control followup patterns -----------------------------------------------
+
+    /**
+     * "Activate it/them and gain control of it/them until the end of the turn."
+     * Checked before {@link #FOLLOWUP_ACTIVATE} and {@link #FOLLOWUP_GAIN_CONTROL_EOT}
+     * to avoid partial matches on the "Activate" or plain "gain control" prefixes.
+     */
+    private static final Pattern FOLLOWUP_ACTIVATE_AND_GAIN_CONTROL_EOT = Pattern.compile(
+        "(?i)Activate\\s+(?:it|them)\\s+and\\s+(?:you\\s+)?gain\\s+control\\s+of\\s+(?:it|them)" +
+        "\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn\\.?"
+    );
+
+    /**
+     * "gain control of it/them for as long as [card] is on the field."
+     * Checked before {@link #FOLLOWUP_GAIN_CONTROL} to avoid the shorter pattern matching first.
+     * Group {@code condCard} captures the card name that must remain on the field.
+     */
+    private static final Pattern FOLLOWUP_GAIN_CONTROL_WHILE_CARD = Pattern.compile(
+        "(?i)(?:you\\s+)?gain\\s+control\\s+of\\s+(?:it|them)" +
+        "\\s+for\\s+as\\s+long\\s+as\\s+(?<condCard>.+?)\\s+is\\s+on\\s+the\\s+field\\.?"
+    );
+
+    /** "gain control of it/them until the end of the turn." */
+    private static final Pattern FOLLOWUP_GAIN_CONTROL_EOT = Pattern.compile(
+        "(?i)(?:you\\s+)?gain\\s+control\\s+of\\s+(?:it|them)" +
+        "\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn\\.?"
+    );
+
+    /** "you gain control of it/them." — permanent, no duration qualifier. */
+    private static final Pattern FOLLOWUP_GAIN_CONTROL = Pattern.compile(
+        "(?i)(?:you\\s+)?gain\\s+control\\s+of\\s+(?:it|them)\\.?"
+    );
+
     // ---- Standalone damage-shield patterns (apply globally or to a named card) --------
 
     /** "Negate all [the] damage dealt to all the Forwards/Characters you control." */
@@ -975,8 +1008,12 @@ public class ActionResolver {
         if (FOLLOWUP_DAMAGE_FOR_EACH.matcher(followupText).find())                    return "DamageForEach";
         if (FOLLOWUP_DAMAGE.matcher(followupText).find())                             return "Damage";
         if (FOLLOWUP_DAMAGE_EXPR.matcher(followupText).find())                        return "DamageExpr";
+        if (FOLLOWUP_ACTIVATE_AND_GAIN_CONTROL_EOT.matcher(followupText).find())        return "ActivateAndGainControlEOT";
         if (FOLLOWUP_ACTIVATE_AND_NEGATE_DAMAGE.matcher(followupText).find())          return "ActivateAndNegateDamage";
         if (FOLLOWUP_NEGATE_DAMAGE.matcher(followupText).find())                      return "NegateDamage";
+        if (FOLLOWUP_GAIN_CONTROL_WHILE_CARD.matcher(followupText).find())            return "GainControlWhileCard";
+        if (FOLLOWUP_GAIN_CONTROL_EOT.matcher(followupText).find())                   return "GainControlEOT";
+        if (FOLLOWUP_GAIN_CONTROL.matcher(followupText).find())                       return "GainControl";
         if (FOLLOWUP_ACTIVATE.matcher(followupText).find())                           return "Activate";
         if (FOLLOWUP_DULL.matcher(followupText).find()
                 && !FOLLOWUP_DULL_AND_FREEZE.matcher(followupText).find())            return "Dull";
@@ -1501,6 +1538,58 @@ public class ActionResolver {
                     if (secondary != null) secondary.accept(ctx);
                 };
             }
+        }
+
+        // --- Activate + Gain control (EOT) followup (must precede plain Activate) ---
+        if (FOLLOWUP_ACTIVATE_AND_GAIN_CONTROL_EOT.matcher(primaryFollowup).find()) {
+            return ctx -> {
+                ctx.logEntry(choosePrefix + " — Activate & Gain control until EOT");
+                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
+                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons);
+                sortedByIdxDesc(ts, true) .forEach(t -> ctx.activateTarget(t));
+                sortedByIdxDesc(ts, false).forEach(t -> ctx.activateTarget(t));
+                ts.forEach(t -> ctx.gainControlOfForward(t, "endOfTurn", true));
+                if (secondary != null) secondary.accept(ctx);
+            };
+        }
+
+        // --- Gain control while named card on field ---
+        Matcher gcWhileM = FOLLOWUP_GAIN_CONTROL_WHILE_CARD.matcher(primaryFollowup);
+        if (gcWhileM.find()) {
+            String condCard = gcWhileM.group("condCard").trim();
+            return ctx -> {
+                ctx.logEntry(choosePrefix + " — Gain control while " + condCard + " is on field");
+                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
+                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons);
+                ts.forEach(t -> ctx.gainControlOfForward(t, "whileCardOnField:" + condCard, false));
+                if (secondary != null) secondary.accept(ctx);
+            };
+        }
+
+        // --- Gain control until EOT ---
+        if (FOLLOWUP_GAIN_CONTROL_EOT.matcher(primaryFollowup).find()) {
+            return ctx -> {
+                ctx.logEntry(choosePrefix + " — Gain control until EOT");
+                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
+                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons);
+                ts.forEach(t -> ctx.gainControlOfForward(t, "endOfTurn", false));
+                if (secondary != null) secondary.accept(ctx);
+            };
+        }
+
+        // --- Gain control (permanent) ---
+        if (FOLLOWUP_GAIN_CONTROL.matcher(primaryFollowup).find()) {
+            return ctx -> {
+                ctx.logEntry(choosePrefix + " — Gain control");
+                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
+                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons);
+                ts.forEach(t -> ctx.gainControlOfForward(t, "permanent", false));
+                if (secondary != null) secondary.accept(ctx);
+            };
         }
 
         // --- Activate + Negate damage followup (must precede plain Activate to avoid partial match) ---
@@ -2721,6 +2810,7 @@ public class ActionResolver {
         if (lo.contains("field"))  return "playOntoField";
         if (lo.contains("hand"))   return "addToHand";
         if (lo.contains("break"))  return "putToBreakZone";
+        if (lo.contains("cast") && lo.contains("cost")) return "castSummonFree";
         return null;
     }
 

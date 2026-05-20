@@ -293,6 +293,18 @@ public interface GameContext {
     void shieldActivePlayerDamageReduction(int reduction);
 
     /**
+     * Moves the Forward at {@code t} (currently opponent-controlled) to the active player's field.
+     * The card retains its current accumulated damage. No ETF auto-abilities fire.
+     *
+     * @param t        target — must be opponent-controlled; silently ignored otherwise
+     * @param condition {@code "permanent"} to keep the card indefinitely;
+     *                  {@code "endOfTurn"} to return it at end of turn;
+     *                  {@code "whileCardOnField:Name"} to return it when the named card leaves the field
+     * @param activate  {@code true} to force the card to ACTIVE state when it arrives
+     */
+    void gainControlOfForward(ForwardTarget t, String condition, boolean activate);
+
+    /**
      * Immediately removes all accumulated damage from the Forward at {@code t}, negating it.
      * Has no effect on non-Forward targets or targets with no damage.
      */
