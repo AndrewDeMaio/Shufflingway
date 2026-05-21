@@ -1210,13 +1210,13 @@ public class ActionResolver {
         result = tryParseNegateAllDamage(effectText);
         if (result != null) return result;
 
+        result = tryParseSelectNumber(effectText, source);
+        if (result != null) return result;
+
         result = tryParseAllFieldEffect(effectText);
         if (result != null) return result;
 
         result = tryParseAllFieldPowerBoost(effectText);
-        if (result != null) return result;
-
-        result = tryParseSelectNumber(effectText, source);
         if (result != null) return result;
 
         result = tryParseStandalonePowerBoostUntil(effectText, source);
@@ -1323,8 +1323,8 @@ public class ActionResolver {
         if (tryParseDelayedEffect(effectText)                 != null) return "DelayedEffect";
         if (tryParseCannotBeChosenStandalone(effectText, source) != null) return "CannotBeChosen";
         if (tryParseNegateAllDamage(effectText)                != null) return "NegateDamage";
-        if (tryParseAllFieldEffect(effectText)                != null) return "AllFieldEffect";
         if (tryParseSelectNumber(effectText, source)          != null) return "SelectNumber";
+        if (tryParseAllFieldEffect(effectText)                != null) return "AllFieldEffect";
         if (tryParseStandalonePowerBoostUntil(effectText, source) != null) return "StandalonePowerBoostUntil";
         if (tryParseStandaloneDoublePowerUntil(effectText, source) != null) return "StandaloneDoublePowerUntil";
         if (tryParseStandaloneDoublesItsPowerUntil(effectText, source) != null) return "StandaloneDoublesItsPowerUntil";
@@ -1465,8 +1465,8 @@ public class ActionResolver {
 
         if (tryParseCannotBeChosenStandalone(effectText, source) != null)      return "CannotBeChosen";
         if (tryParseNegateAllDamage(effectText) != null)                     return "NegateDamage";
-        if (tryParseAllFieldEffect(effectText) != null)                     return "AllFieldEffect";
         if (tryParseSelectNumber(effectText, source) != null)               return "SelectNumber";
+        if (tryParseAllFieldEffect(effectText) != null)                     return "AllFieldEffect";
         if (tryParseStandalonePowerBoostUntil(effectText, source) != null)  return "StandalonePowerBoostUntil";
         if (tryParseStandaloneDoublePowerUntil(effectText, source) != null) return "StandaloneDoublePowerUntil";
         if (tryParseStandaloneDoublesItsPowerUntil(effectText, source) != null) return "StandaloneDoublesItsPowerUntil";
@@ -3274,12 +3274,13 @@ public class ActionResolver {
         final String innerText = rest;
 
         // --- Dual variant: "Break all Forwards of cost equal to either number." ---
+        // P1 selects via dialog; the opponent AI picks the cost most common among P1's forwards.
         if (dualSelect && SELECT_NUMBER_INNER_EITHER_BREAK.matcher(innerText).find()) {
             return ctx -> {
                 int n1 = ctx.selectNumber(0, 11, "Select a number:");
-                ctx.logEntry("Effect: P1 selects number " + n1);
-                int n2 = ctx.selectNumber(0, 11, "Opponent selects a number:");
-                ctx.logEntry("Effect: Opponent selects number " + n2);
+                ctx.logEntry("Effect: Player selects number " + n1);
+                int n2 = aiMostCommonP1ForwardCost(ctx);
+                ctx.logEntry("Effect: Opponent selects number " + n2 + " (AI)");
                 ctx.logEntry("Effect: Break all Forwards of cost " + n1
                         + (n1 != n2 ? " or " + n2 : ""));
                 ctx.applyMassFieldEffect(GameContext.MassAction.BREAK,
@@ -4088,6 +4089,21 @@ public class ActionResolver {
      * Routes target selection to either the field or a Break Zone depending on
      * whether {@code zone} is non-null, and forwards all filter parameters.
      */
+    /**
+     * Returns the cost value that appears most frequently among P1's current Forwards.
+     * Used by the opponent AI in dual-number selection to target the ability user's cards.
+     * Returns 0 when P1 has no Forwards on the field.
+     */
+    private static int aiMostCommonP1ForwardCost(GameContext ctx) {
+        java.util.Map<Integer, Integer> freq = new java.util.HashMap<>();
+        for (int i = 0; i < ctx.p1ForwardCount(); i++)
+            freq.merge(ctx.p1Forward(i).cost(), 1, Integer::sum);
+        return freq.entrySet().stream()
+                .max(java.util.Map.Entry.comparingByValue())
+                .map(java.util.Map.Entry::getKey)
+                .orElse(0);
+    }
+
     private static List<ForwardTarget> selectTargets(GameContext ctx,
             int maxCount, boolean upTo, boolean opponentOnly, boolean selfOnly,
             String condition, String element, String zone, boolean opponentZone,
