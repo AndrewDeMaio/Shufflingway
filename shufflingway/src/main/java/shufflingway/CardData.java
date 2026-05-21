@@ -924,6 +924,19 @@ public record CardData(
         ")"
     );
 
+    /** Matches "[CardName] has all the jobs." as a field ability. */
+    private static final Pattern HAS_ALL_JOBS_PATTERN = Pattern.compile(
+        "(?i)^.+?\\s+has\\s+all\\s+the\\s+jobs\\.?$"
+    );
+
+    /**
+     * Matches "[CardName] has all the Elements [except X[, Y, ...]]." as a field ability.
+     * Group {@code exceptions} captures the comma- or "and"-separated exclusion list, if any.
+     */
+    private static final Pattern HAS_ALL_ELEMENTS_PATTERN = Pattern.compile(
+        "(?i)^.+?\\s+has\\s+all\\s+the\\s+Elements?(?:\\s+except\\s+(?<exceptions>[^.]+))?\\.?$"
+    );
+
     /**
      * Parses all Field Abilities from {@code textEn} by exclusion:
      * any {@code [[br]]}-delimited segment that is not a trait keyword, an Auto ability,
@@ -1226,9 +1239,42 @@ public record CardData(
      *  The special value {@code "Multi-Element"} matches any card that has more than one element. */
     public boolean containsElement(String elem) {
         if ("Multi-Element".equalsIgnoreCase(elem)) return element.split("/").length > 1;
+        // "has all the Elements except X" field ability
+        java.util.Set<String> excluded = allElementsExcept();
+        if (excluded != null)
+            return excluded.stream().noneMatch(ex -> ex.equalsIgnoreCase(elem));
         for (String e : element.split("/"))
             if (e.equalsIgnoreCase(elem)) return true;
         return false;
+    }
+
+    /**
+     * Returns {@code true} if any field ability on this card matches
+     * "[name] has all the jobs."
+     */
+    public boolean hasAllJobs() {
+        for (FieldAbility fa : fieldAbilities())
+            if (HAS_ALL_JOBS_PATTERN.matcher(fa.effectText()).matches()) return true;
+        return false;
+    }
+
+    /**
+     * Returns the set of elements excluded by a "has all the Elements except X" field ability,
+     * an empty set if the ability grants all elements with no exceptions, or {@code null} if no
+     * such ability is present on this card.
+     */
+    public java.util.Set<String> allElementsExcept() {
+        for (FieldAbility fa : fieldAbilities()) {
+            Matcher m = HAS_ALL_ELEMENTS_PATTERN.matcher(fa.effectText());
+            if (!m.matches()) continue;
+            String raw = m.group("exceptions");
+            if (raw == null || raw.isBlank()) return java.util.Set.of();
+            return java.util.Arrays.stream(raw.split(",\\s*|\\s+and\\s+"))
+                    .map(String::trim)
+                    .filter(s -> !s.isEmpty())
+                    .collect(java.util.stream.Collectors.toSet());
+        }
+        return null;
     }
 
     /** Returns each element of this card as a separate string. */

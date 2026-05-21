@@ -10064,6 +10064,7 @@ public class MainWindow {
 	/** Returns {@code true} if the card's job matches any job in the bar-separated {@code jobFilter}, or if the filter is {@code null}. */
 	private static boolean meetsJobFilter(CardData card, String jobFilter) {
 		if (jobFilter == null) return true;
+		if (card.hasAllJobs()) return true;
 		for (String j : jobFilter.split("\\|")) {
 			if (j.trim().equalsIgnoreCase(card.job())) return true;
 		}
