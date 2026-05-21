@@ -1,7 +1,6 @@
 package shufflingway;
 
 import java.awt.AlphaComposite;
-import java.awt.Rectangle;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;

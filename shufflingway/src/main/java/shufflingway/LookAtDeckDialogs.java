@@ -341,7 +341,6 @@ class LookAtDeckDialogs {
             }
         };
 
-        @SuppressWarnings("unchecked")
         javax.swing.JToggleButton[] handBtns = new javax.swing.JToggleButton[n];
         JPanel cardsPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 8, 8));
         for (int i = 0; i < n; i++) {
@@ -447,7 +446,6 @@ class LookAtDeckDialogs {
         confirmBtn.setFont(FontLoader.loadPixelNESFont(11));
         confirmBtn.setEnabled(false);
 
-        @SuppressWarnings("unchecked")
         javax.swing.JToggleButton[] handBtns = new javax.swing.JToggleButton[n];
         JPanel cardsPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 8, 8));
         for (int i = 0; i < n; i++) {
