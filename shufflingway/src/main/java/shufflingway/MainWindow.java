@@ -9285,6 +9285,16 @@ public class MainWindow {
 				}
 			}
 
+			@Override public void removeTopCardsOfDeckFromGame(int count) {
+				java.util.Deque<CardData> deck = isP1 ? gameState.getP1MainDeck() : gameState.getP2MainDeck();
+				for (int i = 0; i < count && !deck.isEmpty(); i++) {
+					CardData c = deck.pollFirst();
+					if (isP1) gameState.addToP1PermanentRfp(c); else gameState.addToP2PermanentRfp(c);
+					logEntry(c.name() + " → Removed From Game (top of deck)");
+				}
+				if (isP1) refreshP1DeckLabel(); else refreshP2DeckLabel();
+			}
+
 			@Override public void playTargetOntoField(ForwardTarget t) {
 				java.util.List<CardData> bz = t.isP1() ? gameState.getP1BreakZone() : gameState.getP2BreakZone();
 				if (t.idx() >= bz.size()) return;

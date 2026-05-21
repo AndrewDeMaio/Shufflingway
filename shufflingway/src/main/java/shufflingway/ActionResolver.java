@@ -197,6 +197,14 @@ public class ActionResolver {
         "(?i)Remove\\s+(?:it|them)\\s+from\\s+(?:the\\s+)?game"
     );
 
+    /**
+     * Matches "Remove the top [N cards / card] of your deck from the game."
+     * Group {@code count} — number of cards (absent means 1).
+     */
+    private static final Pattern REMOVE_TOP_OF_DECK_FROM_GAME = Pattern.compile(
+        "(?i)Remove\\s+the\\s+top\\s+(?:(?<count>\\d+)\\s+cards?|card)\\s+of\\s+your\\s+deck\\s+from\\s+(?:the\\s+)?game\\.?"
+    );
+
     /** Matches "Play it onto the field" or "Play them onto the field". */
     private static final Pattern FOLLOWUP_PLAY_ONTO_FIELD = Pattern.compile(
         "(?i)Play\\s+(?:it|them)\\s+onto\\s+(?:the\\s+)?field"
@@ -1258,6 +1266,9 @@ public class ActionResolver {
         result = tryParseLookTopDeckPeek(effectText);
         if (result != null) return result;
 
+        result = tryParseRemoveTopOfDeckFromGame(effectText);
+        if (result != null) return result;
+
         return null;
     }
 
@@ -1301,6 +1312,7 @@ public class ActionResolver {
         if (tryParseLookTopDeckTopOrBottom(effectText)            != null) return "LookTopDeckTopOrBottom";
         if (tryParseLookTopDeckReturnTopOrdered(effectText)       != null) return "LookTopDeckReturnTopOrdered";
         if (tryParseLookTopDeckPeek(effectText)                   != null) return "LookTopDeckPeek";
+        if (tryParseRemoveTopOfDeckFromGame(effectText)            != null) return "RemoveTopOfDeckFromGame";
         if (SELECT_FOLLOWING_ACTIONS_DETECT.matcher(effectText).find())    return "SelectFollowingActions";
         return null;
     }
@@ -1447,6 +1459,7 @@ public class ActionResolver {
         if (tryParseLookTopDeckTopOrBottom(effectText)            != null) return "LookTopDeckTopOrBottom";
         if (tryParseLookTopDeckReturnTopOrdered(effectText)       != null) return "LookTopDeckReturnTopOrdered";
         if (tryParseLookTopDeckPeek(effectText)                   != null) return "LookTopDeckPeek";
+        if (tryParseRemoveTopOfDeckFromGame(effectText)            != null) return "RemoveTopOfDeckFromGame";
         if (SELECT_FOLLOWING_ACTIONS_DETECT.matcher(effectText).find())    return "SelectFollowingActions";
         return null;
     }
@@ -3762,6 +3775,17 @@ public class ActionResolver {
         return ctx -> {
             ctx.logEntry("Effect: Look at top " + count + " card(s) of deck");
             ctx.lookAtTopDeck(new LookConfig(count, LookConfig.LookAction.PEEK));
+        };
+    }
+
+    private static Consumer<GameContext> tryParseRemoveTopOfDeckFromGame(String text) {
+        java.util.regex.Matcher m = REMOVE_TOP_OF_DECK_FROM_GAME.matcher(text);
+        if (!m.find()) return null;
+        String countStr = m.group("count");
+        int count = (countStr != null) ? Integer.parseInt(countStr) : 1;
+        return ctx -> {
+            ctx.logEntry("Effect: Remove top " + count + " card(s) of deck from game");
+            ctx.removeTopCardsOfDeckFromGame(count);
         };
     }
 

@@ -209,6 +209,9 @@ public interface GameContext {
     /** Removes the target from the game permanently (not to the Break Zone). */
     void removeTargetFromGame(ForwardTarget t);
 
+    /** Removes the top {@code count} cards of the active player's deck from the game. */
+    void removeTopCardsOfDeckFromGame(int count);
+
     /**
      * Plays the target (chosen from a Break Zone) onto the field without
      * paying costs.  Forwards go to the forward zone, Backups to a backup

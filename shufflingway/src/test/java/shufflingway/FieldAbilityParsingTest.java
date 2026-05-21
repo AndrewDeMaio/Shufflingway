@@ -78,7 +78,7 @@ public class FieldAbilityParsingTest {
         System.out.printf("With field abilities:    %5d%n", withAbilities);
         System.out.printf("  Fully parsed:          %5d  (%.1f%%)%n", fullyParsed,     pct(fullyParsed,     withAbilities));
         System.out.printf("  Partially parsed:      %5d  (%.1f%%)%n", partiallyParsed, pct(partiallyParsed, withAbilities));
-        System.out.printf("  Nothing parsed:           %5d  (%.1f%%)%n", noneParsed,      pct(noneParsed,      withAbilities));
+        System.out.printf("  Nothing parsed:        %5d  (%.1f%%)%n", noneParsed,      pct(noneParsed,      withAbilities));
         System.out.println();
         printExamples("Fully parsed",     examplesFully);
         printExamples("Partially parsed", examplesPartial);
