@@ -773,7 +773,11 @@ public record CardData(
         if (textEn == null || textEn.isBlank()) return List.of();
         textEn = joinSelectActions(textEn);
         List<AutoAbility> result = new ArrayList<>();
-        Matcher m = FIELD_ABILITY_PATTERN.matcher(textEn);
+        // Strip double-quoted substrings before pattern-matching so that
+        // quoted ability text inside action-ability grants (e.g. "When X attacks, ...")
+        // is never incorrectly registered as a permanent auto-ability.
+        String textForSearch = textEn.replaceAll("\"[^\"]+\"", "");
+        Matcher m = FIELD_ABILITY_PATTERN.matcher(textForSearch);
         while (m.find()) {
             String card      = m.group("card").trim();
             String triggerRaw = m.group("trigger").trim().toLowerCase(java.util.Locale.ROOT);
@@ -814,7 +818,7 @@ public record CardData(
         }
 
         // Second pass: "When a Warp Counter is removed from [CardName], [effect]"
-        Matcher wm = WARP_COUNTER_PATTERN.matcher(textEn);
+        Matcher wm = WARP_COUNTER_PATTERN.matcher(textForSearch);
         while (wm.find()) {
             String target     = wm.group("target").trim();
             String youMayRaw  = wm.group("youmay");

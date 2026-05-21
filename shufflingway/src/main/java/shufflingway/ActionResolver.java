@@ -805,6 +805,24 @@ public class ActionResolver {
      *   <li>Group {@code traits}  — optional traits string</li>
      * </ul>
      */
+    /**
+     * Matches "Until [the] end of [the] turn, &lt;subject&gt; gains +N power and
+     * '<em>When &lt;subject&gt; attacks, &lt;attackEffect&gt;</em>'."
+     * Used by action abilities that temporarily grant a power boost AND an attack auto-ability
+     * (e.g. Black Mage's 《C》 ability).
+     * <ul>
+     *   <li>Group {@code subject}      — card name, must match {@code source.name()}</li>
+     *   <li>Group {@code amount}       — power boost value</li>
+     *   <li>Group {@code attackEffect} — the effect text that fires when the card attacks</li>
+     * </ul>
+     */
+    private static final Pattern STANDALONE_POWER_BOOST_AND_ATTACK_TRIGGER = Pattern.compile(
+        "(?i)Until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn\\s*,\\s+" +
+        "(?<subject>.+?)\\s+gains?\\s+\\+(?<amount>\\d+)\\s+[Pp]ower\\s+and\\s+" +
+        "\"When\\s+[^\"]+?\\s+attacks?\\s*,\\s+(?<attackEffect>[^\"]+?)\"\\s*[.!]?\\s*$",
+        Pattern.DOTALL
+    );
+
     private static final Pattern STANDALONE_POWER_BOOST_UNTIL = Pattern.compile(
         "(?i)Until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn\\s*,\\s+" +
         "(?<subject>.+?)\\s+gains?\\s+\\+(?<amount>\\d+)\\s+[Pp]ower" +
@@ -1219,6 +1237,9 @@ public class ActionResolver {
         result = tryParseAllFieldPowerBoost(effectText);
         if (result != null) return result;
 
+        result = tryParseStandalonePowerBoostAndAttackTrigger(effectText, source);
+        if (result != null) return result;
+
         result = tryParseStandalonePowerBoostUntil(effectText, source);
         if (result != null) return result;
 
@@ -1325,6 +1346,7 @@ public class ActionResolver {
         if (tryParseNegateAllDamage(effectText)                != null) return "NegateDamage";
         if (tryParseSelectNumber(effectText, source)          != null) return "SelectNumber";
         if (tryParseAllFieldEffect(effectText)                != null) return "AllFieldEffect";
+        if (tryParseStandalonePowerBoostAndAttackTrigger(effectText, source) != null) return "StandalonePowerBoostAndAttackTrigger";
         if (tryParseStandalonePowerBoostUntil(effectText, source) != null) return "StandalonePowerBoostUntil";
         if (tryParseStandaloneDoublePowerUntil(effectText, source) != null) return "StandaloneDoublePowerUntil";
         if (tryParseStandaloneDoublesItsPowerUntil(effectText, source) != null) return "StandaloneDoublesItsPowerUntil";
@@ -1467,6 +1489,7 @@ public class ActionResolver {
         if (tryParseNegateAllDamage(effectText) != null)                     return "NegateDamage";
         if (tryParseSelectNumber(effectText, source) != null)               return "SelectNumber";
         if (tryParseAllFieldEffect(effectText) != null)                     return "AllFieldEffect";
+        if (tryParseStandalonePowerBoostAndAttackTrigger(effectText, source) != null) return "StandalonePowerBoostAndAttackTrigger";
         if (tryParseStandalonePowerBoostUntil(effectText, source) != null)  return "StandalonePowerBoostUntil";
         if (tryParseStandaloneDoublePowerUntil(effectText, source) != null) return "StandaloneDoublePowerUntil";
         if (tryParseStandaloneDoublesItsPowerUntil(effectText, source) != null) return "StandaloneDoublesItsPowerUntil";
@@ -2877,6 +2900,31 @@ public class ActionResolver {
      * standalone self-buff.  The subject must match {@code source.name()} (case-insensitive);
      * pronoun subjects ("it", "they") are ignored here — they are handled as Choose followups.
      */
+    /**
+     * Parses "Until end of turn, &lt;subject&gt; gains +N power and
+     * 'When &lt;subject&gt; attacks, &lt;effect&gt;.'"
+     * Applies the power boost and registers a temporary one-turn attack trigger.
+     * Must be tried before {@link #tryParseStandalonePowerBoostUntil} because it is more specific.
+     */
+    private static Consumer<GameContext> tryParseStandalonePowerBoostAndAttackTrigger(
+            String text, CardData source) {
+        if (source == null) return null;
+        Matcher m = STANDALONE_POWER_BOOST_AND_ATTACK_TRIGGER.matcher(text);
+        if (!m.find()) return null;
+        String subject = m.group("subject").trim();
+        if (!subject.equalsIgnoreCase(source.name())) return null;
+        int boost = Integer.parseInt(m.group("amount"));
+        String attackEffectText = m.group("attackEffect").trim();
+        Consumer<GameContext> attackEffect = parse(attackEffectText, source);
+        if (attackEffect == null) return null;
+        return ctx -> {
+            ctx.logEntry(source.name() + " — +" + boost + " power until end of turn"
+                    + " and gains 'When attacks: " + attackEffectText + "'");
+            ctx.boostSourceForward(source, boost, EnumSet.noneOf(CardData.Trait.class));
+            ctx.addTempAttackTrigger(source, attackEffect);
+        };
+    }
+
     private static Consumer<GameContext> tryParseStandalonePowerBoostUntil(
             String text, CardData source) {
         if (source == null) return null;
