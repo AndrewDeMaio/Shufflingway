@@ -1017,6 +1017,15 @@ public class ActionResolver {
     );
 
     /**
+     * Detects "select [up to] N of the M following actions" — handled by MainWindow's
+     * {@code executeSelectFollowingActionsAutoAbility}, not by ActionResolver's parse chain.
+     * Used only for pattern-name reporting.
+     */
+    static final Pattern SELECT_FOLLOWING_ACTIONS_DETECT = Pattern.compile(
+        "(?i)^(?:if\\s+[^,]+,\\s+)?select\\s+(?:up\\s+to\\s+)?\\d+\\s+of\\s+the\\s+\\d+\\s+following\\s+actions?"
+    );
+
+    /**
      * Matches "Place N [Name] Counter(s) on [CardName][.]".
      * <ul>
      *   <li>Group {@code count} — number of counters to place</li>
@@ -1288,6 +1297,7 @@ public class ActionResolver {
         if (tryParseLookTopDeckTopOrBottom(effectText)            != null) return "LookTopDeckTopOrBottom";
         if (tryParseLookTopDeckReturnTopOrdered(effectText)       != null) return "LookTopDeckReturnTopOrdered";
         if (tryParseLookTopDeckPeek(effectText)                   != null) return "LookTopDeckPeek";
+        if (SELECT_FOLLOWING_ACTIONS_DETECT.matcher(effectText).find())    return "SelectFollowingActions";
         return null;
     }
 
@@ -1428,6 +1438,7 @@ public class ActionResolver {
         if (tryParseLookTopDeckTopOrBottom(effectText)            != null) return "LookTopDeckTopOrBottom";
         if (tryParseLookTopDeckReturnTopOrdered(effectText)       != null) return "LookTopDeckReturnTopOrdered";
         if (tryParseLookTopDeckPeek(effectText)                   != null) return "LookTopDeckPeek";
+        if (SELECT_FOLLOWING_ACTIONS_DETECT.matcher(effectText).find())    return "SelectFollowingActions";
         return null;
     }
 

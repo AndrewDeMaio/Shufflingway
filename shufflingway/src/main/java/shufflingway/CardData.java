@@ -690,6 +690,8 @@ public record CardData(
         "When\\s+(?<card>[^,]+?)\\s+" +
         "(?<trigger>" +
             "attacks?(?:\\s+or\\s+blocks?)?|blocks?" +
+            // "enters the field or attacks" must precede plain "enters the field"
+            "|enters?\\s+the\\s+field\\s+or\\s+attacks?" +
             "|enters?\\s+the\\s+field(?:\\s+due\\s+to\\s+your\\s+cast)?" +
             "|leaves?\\s+the\\s+field" +
             "|is\\s+put\\s+(?:from\\s+the\\s+field\\s+)?into\\s+the\\s+Break\\s+Zone" +
@@ -700,6 +702,18 @@ public record CardData(
         "(?<youmay>(?:you|your\\s+opponent)\\s+may\\s+)?" +
         "(?<effect>.+?)\\s*" +
         "(?=\\s*\\[\\[br\\]\\]|\\s*When\\s+[^,]+?\\s+(?:attacks?|blocks?|enters?|leaves?|is\\s+(?:put|removed))|\\s*(?:《[^》]+》)+\\s*:|\\s*$)",
+        Pattern.DOTALL
+    );
+
+    /**
+     * Joins "select N of M following actions" headers with their [[br]]-delimited quoted
+     * action strings so that {@link #FIELD_ABILITY_PATTERN} captures the full effect as one unit.
+     * Input: {@code ...select 1 of the 2 following actions.[[br]] "A."[[br]] "B."...}
+     * Output: {@code ...select 1 of the 2 following actions. "A." "B."...}
+     */
+    private static final Pattern SELECT_ACTIONS_JOINER = Pattern.compile(
+        "(?i)((?:[^.!?]*,\\s+)?select\\s+(?:up\\s+to\\s+)?\\d+\\s+of\\s+the\\s+\\d+\\s+following\\s+actions?[.!]?)" +
+        "((?:\\s*\\[\\[br\\]\\]\\s*\"[^\"]+\")+)",
         Pattern.DOTALL
     );
 
@@ -739,8 +753,25 @@ public record CardData(
      * Parses all Auto Abilities ("When X Y, Z") from {@code textEn}.
      * The returned list is immutable.
      */
+    /**
+     * Joins "select N of M following actions" headers with their [[br]]-delimited quoted
+     * action strings into a single line so {@link #FIELD_ABILITY_PATTERN} captures them together.
+     */
+    private static String joinSelectActions(String text) {
+        Matcher m = SELECT_ACTIONS_JOINER.matcher(text);
+        StringBuffer sb = new StringBuffer();
+        while (m.find()) {
+            String header  = m.group(1);
+            String actions = m.group(2).replaceAll("\\[\\[br\\]\\]\\s*", " ").trim();
+            m.appendReplacement(sb, Matcher.quoteReplacement(header + " " + actions));
+        }
+        m.appendTail(sb);
+        return sb.toString();
+    }
+
     public static List<AutoAbility> parseAutoAbilities(String textEn) {
         if (textEn == null || textEn.isBlank()) return List.of();
+        textEn = joinSelectActions(textEn);
         List<AutoAbility> result = new ArrayList<>();
         Matcher m = FIELD_ABILITY_PATTERN.matcher(textEn);
         while (m.find()) {
@@ -751,12 +782,13 @@ public record CardData(
             boolean cardIsParty = card.toLowerCase(java.util.Locale.ROOT).contains("party");
             if      (triggerRaw.contains("attack") && triggerRaw.contains("block")) trigger = "attacks or blocks";
             else if (triggerRaw.contains("attack") && cardIsParty)                  trigger = "party attacks";
+            else if (triggerRaw.contains("enter") && triggerRaw.contains("attack")) trigger = "enters the field or attacks";
             else if (triggerRaw.contains("attack"))                                 trigger = "attacks";
             else if (triggerRaw.contains("block"))                                  trigger = "blocks";
             else if (triggerRaw.contains("break zone"))                             trigger = "put into break zone";
             else if (triggerRaw.contains("summon"))                                 trigger = "cast summon";
             else if (triggerRaw.contains("damage zone"))                            trigger = "damage zone";
-            else if (triggerRaw.contains("leaves"))                                   trigger = "leaves the field";
+            else if (triggerRaw.contains("leaves"))                                 trigger = "leaves the field";
             else if (triggerRaw.contains("warp"))                                   trigger = "warp placed";
             else                                                                     trigger = "enters the field";
 

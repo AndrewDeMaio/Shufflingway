@@ -6492,6 +6492,30 @@ public class MainWindow {
 				"(?i)If\\s+(?<card>.+?)\\s+is\\s+dealt\\s+damage\\s+by\\s+your\\s+opponent's\\s+Summons?,\\s+the\\s+damage\\s+becomes\\s+0\\s+instead\\.?"
 			);
 
+	/**
+	 * Matches "select [up to] N of the M following actions. "action1" "action2" ..."
+	 * with an optional leading "if condition, " clause.
+	 * <ul>
+	 *   <li>{@code condition} — optional "if" clause text (without "if " prefix), e.g.
+	 *       {@code "you control a Job AVALANCHE Operative Forward"}</li>
+	 *   <li>{@code upTo}     — non-null when "up to" is present</li>
+	 *   <li>{@code select}   — how many actions the player chooses</li>
+	 *   <li>{@code total}    — total number of options listed</li>
+	 *   <li>{@code actions}  — the remainder containing the quoted action strings</li>
+	 * </ul>
+	 */
+	private static final java.util.regex.Pattern FA_SELECT_FOLLOWING_ACTIONS =
+		java.util.regex.Pattern.compile(
+			"(?i)^(?:if\\s+(?<condition>[^,]+),\\s+)?select\\s+(?<upTo>up\\s+to\\s+)?" +
+			"(?<select>\\d+)\\s+of\\s+the\\s+(?<total>\\d+)\\s+following\\s+actions?[.!]?\\s*" +
+			"(?<actions>.+)$",
+			java.util.regex.Pattern.DOTALL
+		);
+
+	/** Extracts individual quoted action strings from the {@code actions} capture group above. */
+	private static final java.util.regex.Pattern FA_QUOTED_ACTION =
+		java.util.regex.Pattern.compile("\"([^\"]+)\"");
+
 	/** Matches "pay 《cost》[.] When/If you do so, sub-effect[. The maximum you can pay for 《X》 is N]". */
 	private static final java.util.regex.Pattern FA_PAY_WHEN_DO_SO = java.util.regex.Pattern.compile(
 		"(?i)^pay\\s+《([^》]+)》[.,]?\\s+(?:When|If)\\s+you\\s+do\\s+so[,.]?\\s+(.+?)(?:[.,]?\\s+The\\s+maximum\\s+you\\s+can\\s+pay\\s+for\\s+《X》\\s+is\\s+\\d+\\.?)?$",
@@ -6819,6 +6843,13 @@ public class MainWindow {
 			return;
 		}
 
+		// Detect "select [up to] N of the M following actions. "..." "..."..."
+		java.util.regex.Matcher selM = FA_SELECT_FOLLOWING_ACTIONS.matcher(fa.effectText());
+		if (selM.find()) {
+			executeSelectFollowingActionsAutoAbility(fa, source, isP1, effectIsP1, selM);
+			return;
+		}
+
 		java.util.function.Consumer<GameContext> effect = ActionResolver.parse(fa.effectText(), source);
 		if (effect == null) {
 			logEntry("[AutoAbility] Unrecognized effect: " + fa.effectText());
@@ -6966,6 +6997,226 @@ public class MainWindow {
 		}
 		logEntry("[AutoAbility] " + source.name() + " — when you do so: " + subEffect + " (X=" + xValue + ")");
 		effect.accept(ctx);
+	}
+
+	// ─── "Select N of M following actions" auto-ability ─────────────────────────
+
+	private void executeSelectFollowingActionsAutoAbility(
+			AutoAbility fa, CardData source, boolean isP1, boolean effectIsP1,
+			java.util.regex.Matcher m) {
+
+		// Optional "if condition" prefix
+		String condition = m.group("condition");
+		if (condition != null && !checkAutoAbilityCondition(condition.trim(), isP1)) {
+			logEntry("[AutoAbility] " + source.name() + " — condition not met: " + condition);
+			return;
+		}
+
+		boolean upTo       = m.group("upTo") != null;
+		int     selectCount = Integer.parseInt(m.group("select"));
+		int     totalCount  = Integer.parseInt(m.group("total"));
+
+		// Extract the quoted action strings
+		java.util.regex.Matcher qm = FA_QUOTED_ACTION.matcher(m.group("actions"));
+		List<String> actions = new ArrayList<>();
+		while (qm.find()) actions.add(qm.group(1).trim());
+
+		if (actions.isEmpty()) {
+			logEntry("[AutoAbility] " + source.name() + " — no actions found in select effect");
+			return;
+		}
+
+		// youMay / opponentMay decline dialog (the select dialog itself is the interaction,
+		// but we still honour an explicit "you may" decline option)
+		boolean p1GetsDialog = (fa.youMay() && isP1) || (fa.opponentMay() && !isP1);
+		if (p1GetsDialog) {
+			String prompt = "Select " + (upTo ? "up to " : "") + selectCount + " of "
+					+ totalCount + " actions for " + source.name() + "?";
+			int choice = JOptionPane.showOptionDialog(frame, prompt, "Auto Ability",
+					JOptionPane.DEFAULT_OPTION, JOptionPane.PLAIN_MESSAGE, null,
+					new Object[]{"Choose Actions", "Decline"}, "Choose Actions");
+			if (choice != 0) {
+				logEntry("[AutoAbility] " + source.name() + " — optional select declined");
+				return;
+			}
+		} else if (fa.youMay() || fa.opponentMay()) {
+			logEntry("[AutoAbility] [AI] auto-accepts select ability");
+		}
+
+		if (fa.oncePerTurn())
+			usedOncePerTurnAbilities.computeIfAbsent(source, k -> new java.util.HashSet<>())
+					.add(fa.effectText());
+
+		// P1 picks interactively; AI always picks the first N actions
+		List<String> chosen;
+		if (isP1) {
+			chosen = showSelectActionsDialog(source, actions, selectCount, upTo);
+		} else {
+			int take = Math.min(selectCount, actions.size());
+			chosen = new ArrayList<>(actions.subList(0, take));
+			logEntry("[AutoAbility] [AI] selected first " + take + " action(s)");
+		}
+
+		if (chosen == null || chosen.isEmpty()) {
+			logEntry("[AutoAbility] " + source.name() + " — no actions chosen");
+			return;
+		}
+
+		for (String actionText : chosen) {
+			java.util.function.Consumer<GameContext> effect = ActionResolver.parse(actionText, source);
+			if (effect == null) {
+				logEntry("[AutoAbility] " + source.name() + " — unrecognized action: " + actionText);
+			} else {
+				logEntry("[AutoAbility] " + source.name() + " — " + actionText);
+				effect.accept(buildGameContext(effectIsP1));
+			}
+		}
+	}
+
+	/**
+	 * Shows a modal dialog for P1 to choose actions from a "select N of M" list.
+	 * Uses radio buttons when exactly 1 must be chosen, checkboxes otherwise.
+	 * Returns the chosen action texts, or an empty list if the dialog is dismissed.
+	 */
+	private List<String> showSelectActionsDialog(
+			CardData source, List<String> actions, int selectCount, boolean upTo) {
+
+		int  n             = actions.size();
+		boolean singlePick = selectCount == 1 && !upTo;
+		String title = source.name() + " — Select "
+				+ (upTo ? "up to " : "") + selectCount + " action" + (selectCount != 1 || upTo ? "s" : "");
+
+		JDialog dlg = new JDialog(frame, title, true);
+		dlg.setResizable(false);
+		dlg.setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
+
+		List<String> result = new ArrayList<>();
+
+		JPanel choicesPanel = new JPanel(new GridLayout(0, 1, 0, 6));
+		choicesPanel.setBorder(BorderFactory.createEmptyBorder(10, 12, 6, 12));
+
+		JButton confirmBtn = new JButton("Confirm");
+		confirmBtn.setFont(FontLoader.loadPixelNESFont(11));
+
+		if (singlePick) {
+			// ── Radio buttons — exactly one action ──
+			javax.swing.ButtonGroup group = new javax.swing.ButtonGroup();
+			javax.swing.JRadioButton[] radios = new javax.swing.JRadioButton[n];
+			for (int i = 0; i < n; i++) {
+				javax.swing.JRadioButton rb = new javax.swing.JRadioButton(
+						"<html><body style='width:340px'>" + actions.get(i) + "</body></html>");
+				rb.setFont(FontLoader.loadPixelNESFont(10));
+				group.add(rb);
+				radios[i] = rb;
+				choicesPanel.add(rb);
+			}
+			radios[0].setSelected(true);
+			confirmBtn.addActionListener(ae -> {
+				for (int i = 0; i < radios.length; i++)
+					if (radios[i].isSelected()) { result.add(actions.get(i)); break; }
+				dlg.dispose();
+			});
+		} else {
+			// ── Checkboxes — up to N, or exactly N ──
+			javax.swing.JCheckBox[] checks = new javax.swing.JCheckBox[n];
+			JLabel countLbl = new JLabel(
+					"Selected: 0 / " + selectCount + (upTo ? " (up to)" : ""),
+					SwingConstants.CENTER);
+			countLbl.setFont(FontLoader.loadPixelNESFont(10));
+
+			for (int i = 0; i < n; i++) {
+				javax.swing.JCheckBox cb = new javax.swing.JCheckBox(
+						"<html><body style='width:340px'>" + actions.get(i) + "</body></html>");
+				cb.setFont(FontLoader.loadPixelNESFont(10));
+				checks[i] = cb;
+				cb.addItemListener(ie -> {
+					int sel = 0;
+					for (javax.swing.JCheckBox c : checks) if (c.isSelected()) sel++;
+					countLbl.setText("Selected: " + sel + " / " + selectCount + (upTo ? " (up to)" : ""));
+					// For exact selection: disable unchecked boxes once limit is reached
+					if (!upTo && sel >= selectCount) {
+						for (javax.swing.JCheckBox c : checks) if (!c.isSelected()) c.setEnabled(false);
+					} else {
+						for (javax.swing.JCheckBox c : checks) c.setEnabled(true);
+					}
+					confirmBtn.setEnabled(upTo || sel == selectCount);
+				});
+				choicesPanel.add(cb);
+			}
+			confirmBtn.setEnabled(upTo); // "up to" can confirm with 0; exact needs N selected
+			confirmBtn.addActionListener(ae -> {
+				for (int i = 0; i < checks.length; i++)
+					if (checks[i].isSelected()) result.add(actions.get(i));
+				dlg.dispose();
+			});
+
+			JPanel countRow = new JPanel(new FlowLayout(FlowLayout.CENTER, 0, 2));
+			countRow.add(countLbl);
+			choicesPanel.add(countRow);
+		}
+
+		JPanel south = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 6));
+		south.add(confirmBtn);
+
+		dlg.getContentPane().setLayout(new BorderLayout(0, 4));
+		dlg.getContentPane().add(choicesPanel, BorderLayout.CENTER);
+		dlg.getContentPane().add(south,        BorderLayout.SOUTH);
+		dlg.pack();
+		dlg.setLocationRelativeTo(frame);
+		dlg.setVisible(true);
+		return result;
+	}
+
+	/**
+	 * Evaluates a simple auto-ability precondition such as
+	 * "you control a Job AVALANCHE Operative Forward".
+	 * Returns {@code true} when the condition is satisfied, or when the condition
+	 * text is not recognised (fail-open to avoid silently blocking abilities).
+	 */
+	private boolean checkAutoAbilityCondition(String condition, boolean isP1) {
+		String lo = condition.toLowerCase(java.util.Locale.ROOT).trim();
+		if (lo.startsWith("you control a") || lo.startsWith("you control an")) {
+			String spec = lo.replaceFirst("^you\\s+control\\s+an?\\s+", "").trim();
+			return controlsMatchingCard(spec, isP1);
+		}
+		logEntry("[AutoAbility] Unrecognized condition (defaulting to true): " + condition);
+		return true;
+	}
+
+	/**
+	 * Returns {@code true} if the given player has at least one card on the field that matches
+	 * a description such as "forward", "job avalanche operative forward", "ice backup", etc.
+	 */
+	private boolean controlsMatchingCard(String spec, boolean isP1) {
+		// Collect all field cards for this player
+		List<CardData> field = new ArrayList<>();
+		field.addAll(isP1 ? p1ForwardCards : p2ForwardCards);
+		for (CardData c : (isP1 ? p1BackupCards : p2BackupCards)) if (c != null) field.add(c);
+		field.addAll(isP1 ? p1MonsterCards : p2MonsterCards);
+
+		// Determine target type restriction
+		String specLo = spec.toLowerCase(java.util.Locale.ROOT);
+		String requiredType = null;
+		if      (specLo.endsWith("forward"))   requiredType = "Forward";
+		else if (specLo.endsWith("backup"))    requiredType = "Backup";
+		else if (specLo.endsWith("monster"))   requiredType = "Monster";
+		else if (specLo.endsWith("character")) requiredType = null; // any type matches
+
+		// Strip the type suffix to isolate job / element qualifiers
+		String qualifiers = specLo
+				.replaceAll("(?i)\\s+(forward|backup|monster|character)$", "").trim();
+		// Strip leading "job " keyword if present (keep the actual job name)
+		String jobFilter = qualifiers.startsWith("job ")
+				? qualifiers.replaceFirst("^job\\s+", "").trim()
+				: (qualifiers.isEmpty() ? null : qualifiers);
+
+		for (CardData c : field) {
+			if (c == null) continue;
+			if (requiredType != null && !c.type().equalsIgnoreCase(requiredType)) continue;
+			if (jobFilter != null && !c.job().toLowerCase(java.util.Locale.ROOT).contains(jobFilter)) continue;
+			return true;
+		}
+		return false;
 	}
 
 	/**
