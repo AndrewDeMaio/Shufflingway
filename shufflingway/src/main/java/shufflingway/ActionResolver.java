@@ -208,6 +208,11 @@ public class ActionResolver {
         "(?i)Remove\\s+the\\s+top\\s+(?:(?<count>\\d+)\\s+cards?|card)\\s+of\\s+your\\s+deck\\s+from\\s+(?:the\\s+)?game\\.?"
     );
 
+    /** Matches "Shuffle your deck." */
+    private static final Pattern SHUFFLE_DECK = Pattern.compile(
+        "(?i)Shuffle\\s+your\\s+deck\\.?"
+    );
+
     /** Matches "Play it onto the field" or "Play them onto the field". */
     private static final Pattern FOLLOWUP_PLAY_ONTO_FIELD = Pattern.compile(
         "(?i)Play\\s+(?:it|them)\\s+onto\\s+(?:the\\s+)?field"
@@ -1340,6 +1345,9 @@ public class ActionResolver {
         result = tryParseRemoveTopOfDeckFromGame(effectText);
         if (result != null) return result;
 
+        result = tryParseShuffleDeck(effectText);
+        if (result != null) return result;
+
         return null;
     }
 
@@ -1387,6 +1395,7 @@ public class ActionResolver {
         if (tryParseLookTopDeckReturnTopOrdered(effectText)       != null) return "LookTopDeckReturnTopOrdered";
         if (tryParseLookTopDeckPeek(effectText)                   != null) return "LookTopDeckPeek";
         if (tryParseRemoveTopOfDeckFromGame(effectText)            != null) return "RemoveTopOfDeckFromGame";
+        if (tryParseShuffleDeck(effectText)                        != null) return "ShuffleDeck";
         if (SELECT_FOLLOWING_ACTIONS_DETECT.matcher(effectText).find())    return "SelectFollowingActions";
         return null;
     }
@@ -1538,6 +1547,7 @@ public class ActionResolver {
         if (tryParseLookTopDeckReturnTopOrdered(effectText)       != null) return "LookTopDeckReturnTopOrdered";
         if (tryParseLookTopDeckPeek(effectText)                   != null) return "LookTopDeckPeek";
         if (tryParseRemoveTopOfDeckFromGame(effectText)            != null) return "RemoveTopOfDeckFromGame";
+        if (tryParseShuffleDeck(effectText)                        != null) return "ShuffleDeck";
         if (SELECT_FOLLOWING_ACTIONS_DETECT.matcher(effectText).find())    return "SelectFollowingActions";
         return null;
     }
@@ -4000,6 +4010,11 @@ public class ActionResolver {
             ctx.logEntry("Effect: Remove top " + count + " card(s) of deck from game");
             ctx.removeTopCardsOfDeckFromGame(count);
         };
+    }
+
+    private static Consumer<GameContext> tryParseShuffleDeck(String text) {
+        if (!SHUFFLE_DECK.matcher(text).find()) return null;
+        return ctx -> ctx.shuffleDeck();
     }
 
     /** Returns true when {@code text} is a "gain 《C》 for each CP paid as X" effect. */

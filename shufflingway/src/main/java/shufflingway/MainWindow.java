@@ -9373,6 +9373,16 @@ public class MainWindow {
 				if (isP1) refreshP1DeckLabel(); else refreshP2DeckLabel();
 			}
 
+			@Override public void shuffleDeck() {
+				java.util.Deque<CardData> deck = isP1 ? gameState.getP1MainDeck() : gameState.getP2MainDeck();
+				java.util.List<CardData> list = new java.util.ArrayList<>(deck);
+				java.util.Collections.shuffle(list);
+				deck.clear();
+				deck.addAll(list);
+				if (isP1) refreshP1DeckLabel(); else refreshP2DeckLabel();
+				logEntry("Shuffled deck");
+			}
+
 			@Override public void playTargetOntoField(ForwardTarget t) {
 				java.util.List<CardData> bz = t.isP1() ? gameState.getP1BreakZone() : gameState.getP2BreakZone();
 				if (t.idx() >= bz.size()) return;

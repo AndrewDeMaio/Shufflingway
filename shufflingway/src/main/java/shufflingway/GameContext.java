@@ -214,6 +214,9 @@ public interface GameContext {
     /** Removes the top {@code count} cards of the active player's deck from the game. */
     void removeTopCardsOfDeckFromGame(int count);
 
+    /** Shuffles the active player's deck. */
+    void shuffleDeck();
+
     /**
      * Plays the target (chosen from a Break Zone) onto the field without
      * paying costs.  Forwards go to the forward zone, Backups to a backup
