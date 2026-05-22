@@ -97,11 +97,16 @@ class CardAnimation {
 	}
 
 	/** Draws {@code value} in a dark pill in the bottom-right of {@code canvas} using {@code textColor}. */
-	static void renderPowerOverlayRight(BufferedImage canvas, int value, Color textColor) {
-		renderPill(canvas, value, textColor, true);
+	static void renderPowerOverlayRight(BufferedImage canvas, int value, Color textColor, CardState state) {
+		int rightEdge = (state == CardState.DULL) ? canvas.getWidth() : CARD_W;
+		renderPill(canvas, value, textColor, true, rightEdge);
 	}
 
 	private static void renderPill(BufferedImage canvas, int value, Color textColor, boolean alignRight) {
+		renderPill(canvas, value, textColor, alignRight, canvas.getWidth());
+	}
+
+	private static void renderPill(BufferedImage canvas, int value, Color textColor, boolean alignRight, int rightEdge) {
 		Graphics2D g = canvas.createGraphics();
 		g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
 		String text = String.valueOf(value);
@@ -109,7 +114,7 @@ class CardAnimation {
 		g.setFont(font);
 		FontMetrics fm = g.getFontMetrics();
 		int tw = fm.stringWidth(text);
-		int tx = alignRight ? canvas.getWidth() - tw - 8 : 4;
+		int tx = alignRight ? rightEdge - tw - 8 : 4;
 		int ty = canvas.getHeight() - 5;
 		g.setColor(new Color(0, 0, 0, 180));
 		g.fillRoundRect(tx - 4, ty - fm.getAscent() - 1, tw + 8, fm.getAscent() + fm.getDescent() + 2, 5, 5);

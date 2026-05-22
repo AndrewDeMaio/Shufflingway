@@ -1402,6 +1402,7 @@ public class MainWindow {
                             p1AttackSelection.clear();
                             attackSubStep = -1;
                             if (skipAttackButton != null) skipAttackButton.setEnabled(false);
+                            if (nextPhaseButton != null) nextPhaseButton.setEnabled(true);
                             refreshAttackButton();
                             gameState.advancePhase();   // ATTACK → MAIN_2
                             refreshPhaseTracker();
@@ -11061,9 +11062,9 @@ public class MainWindow {
 					CardAnimation.renderDamageOverlay(canvas, damage);
 				}
 				if (power > basePower) {
-					CardAnimation.renderPowerOverlayRight(canvas, power, new Color(80, 220, 80));
+					CardAnimation.renderPowerOverlayRight(canvas, power, new Color(80, 220, 80), state);
 				} else if (power < basePower) {
-					CardAnimation.renderPowerOverlayRight(canvas, power, new Color(230, 200, 60));
+					CardAnimation.renderPowerOverlayRight(canvas, power, new Color(230, 200, 60), state);
 				}
 				return new ImageIcon(canvas);
 			}
@@ -11189,6 +11190,7 @@ public class MainWindow {
 				&& gameState.getCurrentPhase() == GameState.GamePhase.ATTACK) {
 			phaseTracker.setAttackStep(step);
 		}
+		if (nextPhaseButton != null && step == 1) nextPhaseButton.setEnabled(false);
 	}
 
 	/** Returns true if any P1 field card has at least one action ability. */
@@ -12446,9 +12448,9 @@ public class MainWindow {
 					CardAnimation.renderDamageOverlay(canvas, damage);
 				}
 				if (power > basePower) {
-					CardAnimation.renderPowerOverlayRight(canvas, power, new Color(80, 220, 80));
+					CardAnimation.renderPowerOverlayRight(canvas, power, new Color(80, 220, 80), state);
 				} else if (power < basePower) {
-					CardAnimation.renderPowerOverlayRight(canvas, power, new Color(230, 200, 60));
+					CardAnimation.renderPowerOverlayRight(canvas, power, new Color(230, 200, 60), state);
 				}
 				return new ImageIcon(canvas);
 			}
