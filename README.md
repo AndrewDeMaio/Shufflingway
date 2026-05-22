@@ -9,5 +9,6 @@ Links to rules and guides are found in the Help menu.
 
 <img width="1905" height="1071" alt="image" src="https://github.com/user-attachments/assets/e2c6a611-6f6b-4998-b1c5-91e53a6f6b06" />
 
+<img width="1903" height="1072" alt="image" src="https://github.com/user-attachments/assets/d52ec854-d746-4c93-b32b-060a385b9b86" />
 
 The ultimate goal for this application will be to play against someone else with the application facilitating the flow of the game, tracking the game state and resolving card interactions.
