@@ -14,6 +14,9 @@ Links to rules and guides are found in the Help menu.
 The ultimate goal for this application will be to play against someone else with the application facilitating the flow of the game, tracking the game state and resolving card interactions.
 
 Current card coverage (estimate):
+
 Action/Special Abilities: (64.9%)
+
 Auto Abilities: (71.0%)
+
 Field Abilities: (>20.8%)
