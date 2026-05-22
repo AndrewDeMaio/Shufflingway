@@ -943,6 +943,11 @@ public record CardData(
         "(?i)^.+?\\s+is\\s+also\\s+a\\s+Monster\\s+in\\s+all\\s+situations\\.?\\s*$"
     );
 
+    /** Matches "[CardName] enters the field dull." */
+    private static final Pattern ENTERS_FIELD_DULL_PATTERN = Pattern.compile(
+        "(?i)^.+?\\s+enters\\s+the\\s+field\\s+dull[.!]?\\s*$"
+    );
+
     /**
      * Matches "[CardName] has all the Elements [except X[, Y, ...]]." as a field ability.
      * Group {@code exceptions} captures the comma- or "and"-separated exclusion list, if any.
@@ -1007,9 +1012,10 @@ public record CardData(
             // Standalone restriction sentences that trail action/auto abilities
             if (FA_RESTRICTION_SENTENCE.matcher(seg).find()) continue;
 
-            // Name/type alias declarations — handled as static card properties, not game effects
-            if (IS_ALSO_CARD_NAME_PATTERN.matcher(seg).find()) continue;
-            if (IS_ALSO_MONSTER_PATTERN.matcher(seg).find())   continue;
+            // Name/type alias declarations and enter-dull — handled as static card properties
+            if (IS_ALSO_CARD_NAME_PATTERN.matcher(seg).find())  continue;
+            if (IS_ALSO_MONSTER_PATTERN.matcher(seg).find())    continue;
+            if (ENTERS_FIELD_DULL_PATTERN.matcher(seg).matches()) continue;
 
             result.add(new FieldAbility(seg, damageThreshold));
         }
@@ -1277,34 +1283,57 @@ public record CardData(
     }
 
     /**
+     * Splits {@code textEn} on {@code [[br]]} and returns the markup-stripped, trimmed segments.
+     * Used by static-property accessors that scan raw card text rather than parsed FieldAbility
+     * entries (because those entries intentionally exclude static-property sentences).
+     */
+    private java.util.List<String> rawFieldSegments() {
+        String text = EX_BURST_TAG.matcher(textEn).replaceAll(" ");
+        java.util.List<String> segs = new java.util.ArrayList<>();
+        for (String raw : text.split("(?i)\\[\\[br\\]\\]")) {
+            String seg = SUMMON_MARKUP.matcher(raw.trim()).replaceAll("").trim();
+            if (!seg.isEmpty()) segs.add(seg);
+        }
+        return segs;
+    }
+
+    /**
      * Returns the set of alternate card names this card counts as, parsed from
-     * "[name] is also Card Name X [and Card Name Y] in all situations." field abilities.
+     * "[name] is also Card Name X [and Card Name Y] in all situations." segments.
      * Returns an empty set when no such ability is present.
      */
     public java.util.Set<String> alsoCardNames() {
         java.util.Set<String> result = null;
-        for (FieldAbility fa : fieldAbilities()) {
-            Matcher m = IS_ALSO_CARD_NAME_PATTERN.matcher(fa.effectText());
+        for (String seg : rawFieldSegments()) {
+            Matcher m = IS_ALSO_CARD_NAME_PATTERN.matcher(seg);
             if (!m.matches()) continue;
             if (result == null) result = new java.util.LinkedHashSet<>();
-            // Parse "Card Name X and Card Name Y" → split on " and Card Name "
             String raw = m.group("names");
-            for (String segment : raw.split("(?i)\\s+and\\s+Card\\s+Name\\s+")) {
-                String name = segment.replaceFirst("(?i)^Card\\s+Name\\s+", "").trim();
-                if (!name.isEmpty()) result.add(name);
+            for (String part : raw.split("(?i)\\s+and\\s+Card\\s+Name\\s+")) {
+                String n = part.replaceFirst("(?i)^Card\\s+Name\\s+", "").trim();
+                if (!n.isEmpty()) result.add(n);
             }
         }
         return result != null ? java.util.Collections.unmodifiableSet(result) : java.util.Set.of();
     }
 
     /**
-     * Returns {@code true} if any field ability on this card grants it "is also a Monster
-     * in all situations", making it eligible for Monster-targeting effects even though it
-     * occupies a non-monster zone.
+     * Returns {@code true} if this card has a "is also a Monster in all situations" ability,
+     * making it eligible for Monster-targeting effects regardless of zone.
      */
     public boolean alsoCountsAsMonster() {
-        for (FieldAbility fa : fieldAbilities())
-            if (IS_ALSO_MONSTER_PATTERN.matcher(fa.effectText()).matches()) return true;
+        for (String seg : rawFieldSegments())
+            if (IS_ALSO_MONSTER_PATTERN.matcher(seg).matches()) return true;
+        return false;
+    }
+
+    /**
+     * Returns {@code true} if this card has an "enters the field dull" ability,
+     * meaning it enters the field in the dull state instead of the active state.
+     */
+    public boolean entersFieldDull() {
+        for (String seg : rawFieldSegments())
+            if (ENTERS_FIELD_DULL_PATTERN.matcher(seg).matches()) return true;
         return false;
     }
 
