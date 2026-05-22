@@ -8515,7 +8515,8 @@ public class MainWindow {
 					boolean selfOnly, String condition, String element,
 					int costVal, String costCmp, int powerVal, String powerCmp,
 					boolean inclForwards, boolean inclBackups, boolean inclMonsters,
-					String jobFilter, String cardNameFilter, String categoryFilter, String excludeName, boolean inclSummons) {
+					String jobFilter, String cardNameFilter, String categoryFilter, String excludeName, boolean inclSummons,
+					String excludeElement) {
 				java.util.List<ForwardTarget> eligible = new ArrayList<>();
 				// "own" = cards belonging to effect controller; "opp" = other player's cards.
 				// isP1 captures the controller's perspective, so the two blocks below must
@@ -8526,6 +8527,7 @@ public class MainWindow {
 							CardData card = p1Forward(i);
 							if (!inclForwards && !card.alsoCountsAsMonster()) continue;
 							if (element != null && !card.containsElement(element)) continue;
+							if (!meetsElementExclusion(card, excludeElement)) continue;
 							if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
 							if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
 							if (!meetsJobFilter(card, jobFilter)) continue;
@@ -8551,6 +8553,7 @@ public class MainWindow {
 						if (inclMonsters) for (int i = 0; i < p1MonsterCards.size(); i++) {
 							CardData card = p1MonsterCards.get(i);
 							if (element != null && !card.containsElement(element)) continue;
+							if (!meetsElementExclusion(card, excludeElement)) continue;
 							if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
 							if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
 							if (!meetsJobFilter(card, jobFilter)) continue;
@@ -8565,6 +8568,7 @@ public class MainWindow {
 							CardData card = p2ForwardCards.get(i);
 							if (!inclForwards && !card.alsoCountsAsMonster()) continue;
 							if (element != null && !card.containsElement(element)) continue;
+							if (!meetsElementExclusion(card, excludeElement)) continue;
 							if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
 							if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
 							if (!meetsJobFilter(card, jobFilter)) continue;
@@ -8590,6 +8594,7 @@ public class MainWindow {
 						if (inclMonsters) for (int i = 0; i < p2MonsterCards.size(); i++) {
 							CardData card = p2MonsterCards.get(i);
 							if (element != null && !card.containsElement(element)) continue;
+							if (!meetsElementExclusion(card, excludeElement)) continue;
 							if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
 							if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
 							if (!meetsJobFilter(card, jobFilter)) continue;
@@ -8607,6 +8612,7 @@ public class MainWindow {
 							CardData card = p2ForwardCards.get(i);
 							if (!inclForwards && !card.alsoCountsAsMonster()) continue;
 							if (element != null && !card.containsElement(element)) continue;
+							if (!meetsElementExclusion(card, excludeElement)) continue;
 							if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
 							if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
 							if (!meetsJobFilter(card, jobFilter)) continue;
@@ -8632,6 +8638,7 @@ public class MainWindow {
 						if (inclMonsters) for (int i = 0; i < p2MonsterCards.size(); i++) {
 							CardData card = p2MonsterCards.get(i);
 							if (element != null && !card.containsElement(element)) continue;
+							if (!meetsElementExclusion(card, excludeElement)) continue;
 							if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
 							if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
 							if (!meetsJobFilter(card, jobFilter)) continue;
@@ -8648,6 +8655,7 @@ public class MainWindow {
 							CardData card = p1Forward(i);
 							if (noChoose.contains(card)) continue;
 							if (element != null && !card.containsElement(element)) continue;
+							if (!meetsElementExclusion(card, excludeElement)) continue;
 							if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
 							if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
 							if (!meetsJobFilter(card, jobFilter)) continue;
@@ -8675,6 +8683,7 @@ public class MainWindow {
 							CardData card = p1MonsterCards.get(i);
 							if (noChoose.contains(card)) continue;
 							if (element != null && !card.containsElement(element)) continue;
+							if (!meetsElementExclusion(card, excludeElement)) continue;
 							if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
 							if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
 							if (!meetsJobFilter(card, jobFilter)) continue;
@@ -8847,7 +8856,8 @@ public class MainWindow {
 					String condition, String element, int costVal, String costCmp,
 					int powerVal, String powerCmp,
 					boolean inclForwards, boolean inclBackups, boolean inclMonsters,
-					String jobFilter, String cardNameFilter, String categoryFilter, String excludeName, boolean inclSummons) {
+					String jobFilter, String cardNameFilter, String categoryFilter, String excludeName, boolean inclSummons,
+					String excludeElement) {
 				java.util.List<CardData> bz = opponentZone
 						? gameState.getP2BreakZone() : gameState.getP1BreakZone();
 				java.util.List<ForwardTarget> eligible = new ArrayList<>();
@@ -9140,7 +9150,7 @@ public class MainWindow {
 			@Override public void playCharacterFromHand(boolean inclForwards, boolean inclBackups,
 					boolean inclMonsters, int costVal, String costCmp, int costVal2,
 					String jobFilter, String cardNameFilter, String categoryFilter,
-					String elementFilter, String excludeName, boolean entersDull) {
+					String elementFilter, String excludeName, boolean entersDull, String excludeElement) {
 				java.util.List<CardData> hand = gameState.getP1Hand();
 				java.util.List<Integer> eligible = new ArrayList<>();
 				for (int i = 0; i < hand.size(); i++) {
@@ -9160,6 +9170,7 @@ public class MainWindow {
 					if (!passesNameJob) continue;
 					if (!meetsCategoryFilter(card, categoryFilter)) continue;
 					if (!meetsElementFilter(card, elementFilter)) continue;
+					if (!meetsElementExclusion(card, excludeElement)) continue;
 					if (excludeName != null && excludeName.equalsIgnoreCase(card.name())) continue;
 					eligible.add(i);
 				}
@@ -10281,6 +10292,19 @@ public class MainWindow {
 			if (card.containsElement(e.trim())) return true;
 		}
 		return false;
+	}
+
+	/**
+	 * Returns {@code false} if the card contains any element listed in {@code excludeElement}
+	 * (an "and"-separated list such as {@code "Ice"} or {@code "Ice and Water"}).
+	 * Returns {@code true} when {@code excludeElement} is {@code null} (no exclusion).
+	 */
+	private static boolean meetsElementExclusion(CardData card, String excludeElement) {
+		if (excludeElement == null) return true;
+		for (String e : excludeElement.split("(?i)\\s+and\\s+")) {
+			if (card.containsElement(e.trim())) return false;
+		}
+		return true;
 	}
 
 	/**

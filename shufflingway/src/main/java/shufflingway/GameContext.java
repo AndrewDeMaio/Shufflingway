@@ -90,7 +90,8 @@ public interface GameContext {
             boolean selfOnly, String condition, String element, int costVal, String costCmp,
             int powerVal, String powerCmp,
             boolean forwards, boolean backups, boolean monsters,
-            String jobFilter, String cardNameFilter, String categoryFilter, String excludeName, boolean summons);
+            String jobFilter, String cardNameFilter, String categoryFilter, String excludeName, boolean summons,
+            String excludeElement);
 
     /**
      * Shows a modal dialog letting P1 choose up to {@code maxCount} eligible
@@ -113,7 +114,8 @@ public interface GameContext {
             boolean opponentZone, String condition, String element, int costVal, String costCmp,
             int powerVal, String powerCmp,
             boolean forwards, boolean backups, boolean monsters,
-            String jobFilter, String cardNameFilter, String categoryFilter, String excludeName, boolean summons);
+            String jobFilter, String cardNameFilter, String categoryFilter, String excludeName, boolean summons,
+            String excludeElement);
 
     /**
      * Presents the ability user with Summons currently on the stack and cancels
@@ -172,7 +174,7 @@ public interface GameContext {
     void playCharacterFromHand(boolean inclForwards, boolean inclBackups, boolean inclMonsters,
             int costVal, String costCmp, int costVal2,
             String jobFilter, String cardNameFilter, String categoryFilter,
-            String elementFilter, String excludeName, boolean entersDull);
+            String elementFilter, String excludeName, boolean entersDull, String excludeElement);
 
     // ---- Zone-dispatch single-target effects --------------------------------
 
