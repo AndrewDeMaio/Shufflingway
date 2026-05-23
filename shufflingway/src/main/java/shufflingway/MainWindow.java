@@ -6221,10 +6221,6 @@ public class MainWindow {
 		}.execute();
 	}
 
-	/**
-	 * Shows a debug context menu for a P1 backup slot.
-	 * Only visible when Debug Mode is enabled.
-	 */
 	// -------------------------------------------------------------------------
 	// Action Ability helpers
 	// -------------------------------------------------------------------------
@@ -10765,24 +10761,6 @@ public class MainWindow {
 					() -> { p1BackupStates[idx] = CardState.DULL; animateDullBackup(idx, true); }, true);
 		}
 
-		if (AppSettings.isDebugMode()) {
-			if (menu.getComponentCount() > 0) menu.addSeparator();
-			JMenuItem dullItem = new JMenuItem("Debug: Dull");
-			dullItem.addActionListener(ae -> {
-				boolean dulling = p1BackupStates[idx] != CardState.DULL;
-				p1BackupStates[idx] = dulling ? CardState.DULL : CardState.ACTIVE;
-				animateDullBackup(idx, dulling);
-			});
-			menu.add(dullItem);
-
-			JMenuItem freezeItem = new JMenuItem("Debug: Freeze");
-			freezeItem.addActionListener(ae -> {
-				p1BackupFrozen[idx] = !p1BackupFrozen[idx];
-				refreshP1BackupSlot(idx);
-			});
-			menu.add(freezeItem);
-		}
-
 		if (menu.getComponentCount() > 0) menu.show(slot, e.getX(), e.getY());
 	}
 
@@ -11042,22 +11020,7 @@ public class MainWindow {
 				p1MonsterStates.get(idx), p1MonsterPlayedOnTurn.get(idx),
 				() -> { p1MonsterStates.set(idx, CardState.DULL); refreshP1MonsterSlot(idx); }, true);
 
-		if (AppSettings.isDebugMode()) {
-			JMenuItem dullItem = new JMenuItem("Debug: Dull");
-			dullItem.addActionListener(ae -> {
-				p1MonsterStates.set(idx,
-						p1MonsterStates.get(idx) == CardState.DULL ? CardState.ACTIVE : CardState.DULL);
-				refreshP1MonsterSlot(idx);
-			});
-			menu.add(dullItem);
 
-			JMenuItem freezeItem = new JMenuItem("Debug: Freeze");
-			freezeItem.addActionListener(ae -> {
-				p1MonsterFrozen.set(idx, !p1MonsterFrozen.get(idx));
-				refreshP1MonsterSlot(idx);
-			});
-			menu.add(freezeItem);
-		}
 
 		if (menu.getComponentCount() > 0) menu.show(slot, e.getX(), e.getY());
 	}
@@ -11596,24 +11559,6 @@ public class MainWindow {
 			menu.add(primeItem);
 		}
 
-		if (AppSettings.isDebugMode()) {
-			JMenuItem dullItem = new JMenuItem("Debug: Dull");
-			dullItem.addActionListener(ae -> {
-				boolean dulling = p1ForwardStates.get(idx) != CardState.DULL;
-				p1ForwardStates.set(idx, dulling ? CardState.DULL : CardState.ACTIVE);
-				if (dulling) animateDullForward(idx, null);
-				else refreshP1ForwardSlot(idx);
-			});
-			menu.add(dullItem);
-
-			JMenuItem freezeItem = new JMenuItem("Debug: Freeze");
-			freezeItem.addActionListener(ae -> {
-				p1ForwardFrozen.set(idx, !p1ForwardFrozen.get(idx));
-				refreshP1ForwardSlot(idx);
-			});
-			menu.add(freezeItem);
-		}
-
 		if (menu.getComponentCount() > 0) menu.show(slot, e.getX(), e.getY());
 	}
 
@@ -11624,22 +11569,6 @@ public class MainWindow {
 			addAbilityMenuItems(menu, card, p2BackupFrozen[idx], p2BackupStates[idx], 0,
 					() -> { p2BackupStates[idx] = CardState.DULL; animateDullP2Backup(idx, true); }, false);
 		}
-		if (AppSettings.isDebugMode()) {
-			if (menu.getComponentCount() > 0) menu.addSeparator();
-			JMenuItem dullItem = new JMenuItem("Debug: Dull");
-			dullItem.addActionListener(ae -> {
-				boolean dulling = p2BackupStates[idx] != CardState.DULL;
-				p2BackupStates[idx] = dulling ? CardState.DULL : CardState.ACTIVE;
-				animateDullP2Backup(idx, dulling);
-			});
-			menu.add(dullItem);
-			JMenuItem freezeItem = new JMenuItem("Debug: Freeze");
-			freezeItem.addActionListener(ae -> {
-				p2BackupFrozen[idx] = !p2BackupFrozen[idx];
-				refreshP2BackupSlot(idx);
-			});
-			menu.add(freezeItem);
-		}
 		if (menu.getComponentCount() > 0) menu.show(slot, e.getX(), e.getY());
 	}
 
@@ -11648,21 +11577,6 @@ public class MainWindow {
 		addAbilityMenuItems(menu, p2MonsterCards.get(idx), p2MonsterFrozen.get(idx),
 				p2MonsterStates.get(idx), p2MonsterPlayedOnTurn.get(idx),
 				() -> { p2MonsterStates.set(idx, CardState.DULL); refreshP2MonsterSlot(idx); }, false);
-		if (AppSettings.isDebugMode()) {
-			JMenuItem dullItem = new JMenuItem("Debug: Dull");
-			dullItem.addActionListener(ae -> {
-				p2MonsterStates.set(idx,
-						p2MonsterStates.get(idx) == CardState.DULL ? CardState.ACTIVE : CardState.DULL);
-				refreshP2MonsterSlot(idx);
-			});
-			menu.add(dullItem);
-			JMenuItem freezeItem = new JMenuItem("Debug: Freeze");
-			freezeItem.addActionListener(ae -> {
-				p2MonsterFrozen.set(idx, !p2MonsterFrozen.get(idx));
-				refreshP2MonsterSlot(idx);
-			});
-			menu.add(freezeItem);
-		}
 		if (menu.getComponentCount() > 0) menu.show(slot, e.getX(), e.getY());
 	}
 
@@ -11671,21 +11585,6 @@ public class MainWindow {
 		addAbilityMenuItems(menu, p2ForwardCards.get(idx), p2ForwardFrozen.get(idx),
 				p2ForwardStates.get(idx), p2ForwardPlayedOnTurn.get(idx),
 				() -> { p2ForwardStates.set(idx, CardState.DULL); refreshP2ForwardSlot(idx); }, false);
-		if (AppSettings.isDebugMode()) {
-			JMenuItem dullItem = new JMenuItem("Debug: Dull");
-			dullItem.addActionListener(ae -> {
-				boolean dulling = p2ForwardStates.get(idx) != CardState.DULL;
-				p2ForwardStates.set(idx, dulling ? CardState.DULL : CardState.ACTIVE);
-				refreshP2ForwardSlot(idx);
-			});
-			menu.add(dullItem);
-			JMenuItem freezeItem = new JMenuItem("Debug: Freeze");
-			freezeItem.addActionListener(ae -> {
-				p2ForwardFrozen.set(idx, !p2ForwardFrozen.get(idx));
-				refreshP2ForwardSlot(idx);
-			});
-			menu.add(freezeItem);
-		}
 		if (menu.getComponentCount() > 0) menu.show(slot, e.getX(), e.getY());
 	}
 
@@ -12188,12 +12087,6 @@ public class MainWindow {
 				@Override public void mousePressed(MouseEvent e) {
 					if (javax.swing.SwingUtilities.isRightMouseButton(e)) {
 						JPopupMenu menu = new JPopupMenu();
-						boolean gameActive = gameState.getCurrentPhase() != null;
-						if (gameActive && !gameState.getP1MainDeck().isEmpty() && AppSettings.isDebugMode()) {
-							JMenuItem dmgItem = new JMenuItem("Debug: Take 1 Damage");
-							dmgItem.addActionListener(ae -> p1TakeDamage());
-							menu.add(dmgItem);
-						}
 						boolean ex = slotsPanel.getClientProperty("exBurst") == Boolean.TRUE;
 						if (ex) {
 							JMenuItem clearEx = new JMenuItem("Dismiss EX");

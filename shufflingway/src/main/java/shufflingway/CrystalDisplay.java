@@ -48,9 +48,8 @@ class CrystalDisplay extends javax.swing.JComponent {
 		repaint();
 	}
 
-	/** Shown in debug mode or once the count has ever been > 0 this game. */
 	void updateVisibility() {
-		setVisible(AppSettings.isDebugMode() || hasBeenNonZero);
+		setVisible(hasBeenNonZero);
 	}
 
 	/** Fully resets for a new game: count, persistence flag, and visibility. */

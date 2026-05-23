@@ -12,7 +12,6 @@ import java.nio.file.StandardCopyOption;
 import javax.swing.BorderFactory;
 import javax.swing.BoxLayout;
 import javax.swing.JButton;
-import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JDialog;
@@ -24,6 +23,7 @@ import javax.swing.KeyStroke;
 import javax.swing.border.EmptyBorder;
 import javax.swing.border.TitledBorder;
 import javax.swing.filechooser.FileNameExtensionFilter;
+
 
 public class PreferencesDialog extends JDialog {
 
@@ -39,32 +39,6 @@ public class PreferencesDialog extends JDialog {
 		JPanel contentPanel = new JPanel();
 		contentPanel.setLayout(new BoxLayout(contentPanel, BoxLayout.Y_AXIS));
 		contentPanel.setBorder(new EmptyBorder(12, 16, 8, 16));
-
-		// ── Developer ────────────────────────────────────────────────────────
-		JPanel devPanel = new JPanel();
-		devPanel.setLayout(new BoxLayout(devPanel, BoxLayout.Y_AXIS));
-		devPanel.setBorder(BorderFactory.createTitledBorder(
-				BorderFactory.createEtchedBorder(), "Developer",
-				TitledBorder.LEFT, TitledBorder.TOP));
-
-		JCheckBox debugCheckBox = new JCheckBox("Enable Debug Mode");
-		debugCheckBox.setSelected(AppSettings.isDebugMode());
-		debugCheckBox.setAlignmentX(Component.LEFT_ALIGNMENT);
-		debugCheckBox.addActionListener(e -> {
-			AppSettings.setDebugMode(debugCheckBox.isSelected());
-			AppSettings.save();
-		});
-		devPanel.add(debugCheckBox);
-
-		JLabel debugHint = new JLabel(
-				"<html><font color='gray' size='2'>Enables debug actions (e.g. adding test cards to zones).</font></html>");
-		debugHint.setBorder(new EmptyBorder(2, 20, 4, 4));
-		debugHint.setAlignmentX(Component.LEFT_ALIGNMENT);
-		devPanel.add(debugHint);
-
-		devPanel.setAlignmentX(Component.LEFT_ALIGNMENT);
-		contentPanel.add(devPanel);
-		contentPanel.add(javax.swing.Box.createVerticalStrut(8));
 
 		// ── Layout ───────────────────────────────────────────────────────────
 		JPanel layoutPanel = new JPanel();

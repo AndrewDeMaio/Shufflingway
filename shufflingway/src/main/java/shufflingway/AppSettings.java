@@ -53,16 +53,6 @@ public final class AppSettings {
     // Settings
     // -------------------------------------------------------------------------
 
-    /** Returns {@code true} when Debug Mode is enabled. */
-    public static boolean isDebugMode() {
-        return Boolean.parseBoolean(props.getProperty("debug.mode", "false"));
-    }
-
-    /** Enables or disables Debug Mode (call {@link #save()} to persist). */
-    public static void setDebugMode(boolean enabled) {
-        props.setProperty("debug.mode", String.valueOf(enabled));
-    }
-
     /** Returns the saved P1 board color selection, or {@code "Default"} if unset. */
     public static String getP1BoardColor() {
         return props.getProperty("p1.board.color", "Default");
