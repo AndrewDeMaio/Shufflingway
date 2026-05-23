@@ -298,7 +298,7 @@ public class CardScraper {
     }
 
     public static void main(String[] args) throws IOException, InterruptedException {
-        try (CardDatabase db = new CardDatabase("fftcg_cards.db")) {
+        try (CardDatabase db = new CardDatabase("shufflingway.db")) {
             CardScraper scraper = new CardScraper();
             List<ScrapedCard> total = scraper.scrapeOnePage("1");
             db.saveCards(total);

@@ -21,9 +21,9 @@ public class FieldAbilityParsingTest {
 
     @Test
     void reportFieldAbilityParsingCoverage() throws Exception {
-        File dbFile = new File("fftcg_cards.db");
+        File dbFile = new File("shufflingway.db");
         if (!dbFile.exists()) {
-            System.out.println("[FieldAbilityParsingTest] fftcg_cards.db not found — skipping.");
+            System.out.println("[FieldAbilityParsingTest] shufflingway.db not found — skipping.");
             return;
         }
 

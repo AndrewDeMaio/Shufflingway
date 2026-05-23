@@ -1,6 +1,11 @@
 package scraper;
 
-import java.sql.*;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -9,7 +14,7 @@ import java.util.Set;
 /**
  * SQLite persistence layer for FFTCG saved decks.
  *
- * Stores decks and their card lists in the same fftcg_cards.db used by CardDatabase.
+ * Stores decks and their card lists in the same shufflingway.db used by CardDatabase.
  * Tables are created automatically on first use.
  *
  * Usage:
@@ -20,7 +25,7 @@ import java.util.Set;
  */
 public class DeckDatabase implements AutoCloseable {
 
-    private static final String DB_URL = "jdbc:sqlite:fftcg_cards.db";
+    private static final String DB_URL = "jdbc:sqlite:shufflingway.db";
 
     private final Connection conn;
 

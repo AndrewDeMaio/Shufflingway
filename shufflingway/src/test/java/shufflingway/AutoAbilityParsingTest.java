@@ -18,9 +18,9 @@ public class AutoAbilityParsingTest {
 
     @Test
     void reportAutoAbilityParsingCoverage() throws Exception {
-        File dbFile = new File("fftcg_cards.db");
+        File dbFile = new File("shufflingway.db");
         if (!dbFile.exists()) {
-            System.out.println("[AutoAbilityParsingTest] fftcg_cards.db not found — skipping.");
+            System.out.println("[AutoAbilityParsingTest] shufflingway.db not found — skipping.");
             return;
         }
 

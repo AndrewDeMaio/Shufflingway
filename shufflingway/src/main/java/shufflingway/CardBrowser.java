@@ -45,7 +45,7 @@ import scraper.CardScraper;
 
 public class CardBrowser extends JDialog {
 
-    private static final String DB_URL = "jdbc:sqlite:fftcg_cards.db";
+    private static final String DB_URL = "jdbc:sqlite:shufflingway.db";
     private static final String[] COLUMNS = {
         "Serial", "Name", "Type", "Element", "Cost", "Power",
         "Rarity", "Job", "Category 1", "Category 2", "Card Text"
@@ -249,7 +249,7 @@ public class CardBrowser extends JDialog {
             }
             @Override
             protected void done() {
-                if (!new java.io.File("fftcg_cards.db").exists()) {
+                if (!new java.io.File("shufflingway.db").exists()) {
                     int choice = JOptionPane.showConfirmDialog(
                             CardBrowser.this,
                             "No card database found. Fetch card data from the Square Enix API now?",

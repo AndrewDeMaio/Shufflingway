@@ -1,6 +1,12 @@
 package scraper;
 
-import java.sql.*;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.sql.Types;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -8,7 +14,7 @@ import java.util.List;
  * SQLite persistence layer for scraped FFTCG card metadata.
  *
  * Usage:
- *   try (CardDatabase db = new CardDatabase("fftcg_cards.db")) {
+ *   try (CardDatabase db = new CardDatabase("shufflingway.db")) {
  *       db.saveCards(scraper.scrapeSet("1"));
  *   }
  *
@@ -274,7 +280,7 @@ public class CardDatabase implements AutoCloseable {
 
     /** Run via: mvn compile exec:java -Dexec.mainClass=scraper.CardDatabase */
     public static void main(String[] args) throws SQLException {
-        try (CardDatabase db = new CardDatabase("fftcg_cards.db")) {
+        try (CardDatabase db = new CardDatabase("shufflingway.db")) {
             System.out.println("Migration complete.");
         }
     }

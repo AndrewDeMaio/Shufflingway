@@ -14,12 +14,12 @@ import java.util.List;
  *   4. One image can be downloaded from the CDN
  *
  * Only the first page of Opus I is fetched (~60 cards) so it completes quickly.
- * The database is written to fftcg_cards_test.db in the working directory.
+ * The database is written to shufflingway_test.db in the working directory.
  */
 public class ScrapeRunner {
 
     private static final String TEST_SET    = "1";   // Opus I
-    private static final String TEST_DB     = "fftcg_cards_test.db";
+    private static final String TEST_DB     = "shufflingway_test.db";
     private static final int    CARDS_TO_PRINT = 5;
 
     public static void main(String[] args) {

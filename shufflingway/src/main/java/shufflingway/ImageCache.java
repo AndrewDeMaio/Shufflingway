@@ -1,9 +1,5 @@
 package shufflingway;
 
-import dev.matrixlab.webp4j.WebPCodec;
-import scraper.CardDatabase;
-
-import javax.imageio.ImageIO;
 import java.awt.Image;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
@@ -13,13 +9,18 @@ import java.net.URL;
 import java.sql.SQLException;
 import java.util.concurrent.ConcurrentHashMap;
 
+import javax.imageio.ImageIO;
+
+import dev.matrixlab.webp4j.WebPCodec;
+import scraper.CardDatabase;
+
 /**
  * Session-level image cache that layers three sources:
  * <ol>
  *   <li><b>Memory</b> — a {@link ConcurrentHashMap} keyed by image URL, populated
  *       on first access and retained for the lifetime of the JVM.</li>
  *   <li><b>Database</b> — the {@code image_data} BLOB column in
- *       {@code fftcg_cards.db}.  Populated from the network on first download.</li>
+ *       {@code shufflingway.db}.  Populated from the network on first download.</li>
  *   <li><b>Network</b> — falls back to an HTTP download when no blob is stored.
  *       The downloaded bytes are automatically persisted to the DB so subsequent
  *       sessions skip the network entirely.</li>
@@ -106,7 +107,7 @@ public final class ImageCache {
 
     /** Opens the DB connection on first use; reuses it thereafter. */
     private static CardDatabase openDb() throws SQLException {
-        if (db == null) db = new CardDatabase("fftcg_cards.db");
+        if (db == null) db = new CardDatabase("shufflingway.db");
         return db;
     }
 

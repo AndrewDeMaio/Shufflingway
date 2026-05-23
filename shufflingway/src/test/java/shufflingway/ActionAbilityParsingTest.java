@@ -14,9 +14,9 @@ public class ActionAbilityParsingTest {
 
     @Test
     void reportActionAbilityParsingCoverage() throws Exception {
-        File dbFile = new File("fftcg_cards.db");
+        File dbFile = new File("shufflingway.db");
         if (!dbFile.exists()) {
-            System.out.println("[ActionAbilityParsingTest] fftcg_cards.db not found — skipping.");
+            System.out.println("[ActionAbilityParsingTest] shufflingway.db not found — skipping.");
             return;
         }
 
