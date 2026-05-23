@@ -7,15 +7,15 @@ import java.io.IOException;
 import java.util.Properties;
 
 /**
- * Persists application settings to an .ini (properties) file under the user's
- * home directory at {@code ~/.fftcg/settings.ini}.
+ * Persists application settings to {@code settings.ini} in the same directory
+ * as the card database (see {@link scraper.AppPaths}).
  *
  * All access is through static methods; the file is loaded once on class
  * initialisation and can be saved at any time.
  */
 public final class AppSettings {
 
-    private static final String DIR  = System.getProperty("user.home") + File.separator + ".fftcg";
+    private static final String DIR  = scraper.AppPaths.appDataDir().toString();
     private static final String PATH = DIR + File.separator + "settings.ini";
     private static final String CARDBACK_CUSTOM_DIR =
             DIR + File.separator + "cardback" + File.separator + "custom";
