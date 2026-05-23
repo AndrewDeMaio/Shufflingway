@@ -47,6 +47,7 @@ jobs:
 
       # ── Sync pom.xml version with the release tag so it ends up in the JAR manifest ──
       - name: Set pom version
+        shell: bash
         run: mvn versions:set -DnewVersion=${{ steps.ver.outputs.version }} -DgenerateBackupPoms=false
 
       # ── Build ──────────────────────────────────────────────────────────────
