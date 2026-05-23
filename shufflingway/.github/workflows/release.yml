@@ -1,10 +1,17 @@
 name: Release
 
 # Triggered by pushing a version tag: git tag v1.0.0 && git push origin v1.0.0
+# Can also be triggered manually from the Actions tab (for testing)
 on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version number (e.g. 0.1.0)'
+        required: true
+        default: '0.1.0'
 
 jobs:
   # ── Windows installer (MSI) ────────────────────────────────────────────────
@@ -28,11 +35,16 @@ jobs:
       - name: Build fat JAR
         run: mvn package -DskipTests
 
-      # ── Extract version from tag (v1.2.3 → 1.2.3) ─────────────────────────
+      # ── Extract version (from tag v1.2.3 → 1.2.3, or manual input) ──────────
       - name: Extract version
         id: ver
         shell: bash
-        run: echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+          fi
 
       # ── Prepare a clean input directory for jpackage ───────────────────────
       # jpackage includes every JAR in --input on the classpath; keeping only
