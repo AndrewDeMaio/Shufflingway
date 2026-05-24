@@ -57,7 +57,7 @@ public class ActionResolver {
             "|\\[Job\\s+\\([^)]+\\)\\]" +
             "|\\[Card\\s+Name\\s+\\([^)]+\\)\\]" +
             "|Card\\s+Name\\s+\\S+(?:\\s+\\([^)]+\\))?" +
-            "|Job\\s+.+?\\s+or\\s+Card\\s+Name\\s+\\S+" +
+            "|Job\\s+.+?\\s+(?:and/)?or\\s+Card\\s+Name\\s+\\S+" +
             "|Job\\s+.+?\\s+Forwards?(?:\\s+or\\s+Job\\s+.+?\\s+Forwards?)*" +
             "|Job\\s+.+?(?=\\s+(?:of\\s+|other\\s+than|in\\s+your|from\\s+your)|[,.]))" +
         "(?:\\s+of\\s+any\\s+Element\\s+except\\s+(?<excludeelem>" +
@@ -66,7 +66,7 @@ public class ActionResolver {
         "(?:\\s+of\\s+cost\\s+(?<cost>\\d+)(?:\\s+or\\s+(?<costcmp>less|more))?)?" +
         "(?:\\s+of\\s+power\\s+(?<power>\\d+)(?:\\s+or\\s+(?<powercmp>less|more))?)?" +
         "(?:\\s+(?<control>(?:your\\s+)?opponent\\s+controls|you\\s+control))?" +
-        "(?:\\s+other\\s+than\\s+Card\\s+Name\\s+(?<excludename>\\S+(?:\\s+\\([^)]+\\))?))?"+
+        "(?:\\s+other\\s+than\\s+(?:Card\\s+Name\\s+)?(?<excludename>\\S+(?:\\s+\\([^)]+\\))?))?"+
         "(?:\\s+(?<zone>(?:in|from)\\s+your(?:\\s+opponent(?:'s)?)?\\s+Break\\s+Zone))?" +
         "(?:[.]\\s*|\\s+and\\s+|,\\s*)" +
         "(?<followup>.+)"
@@ -2002,10 +2002,14 @@ public class ActionResolver {
             inclForwards   = true;
             inclBackups    = true;
             inclMonsters   = true;
-        } else if (tgtLower.startsWith("job ") && tgtLower.contains(" or card name ")) {
-            int orIdx      = tgtLower.indexOf(" or card name ");
-            jobFilter      = targets.substring("Job ".length(), orIdx).trim();
-            cardNameFilter = targets.substring(orIdx + " or card name ".length()).trim();
+        } else if (tgtLower.startsWith("job ") && tgtLower.contains("or card name ")) {
+            int orCnIdx    = tgtLower.indexOf("or card name ");
+            String rawJob  = targets.substring("Job ".length(), orCnIdx)
+                                    .trim().replaceAll("(?i)\\s*and\\s*/\\s*$", "").trim();
+            List<String> jobParts = new ArrayList<>();
+            for (String p : rawJob.split("(?i)\\s+or\\s+Job\\s+")) jobParts.add(p.trim());
+            jobFilter      = String.join("|", jobParts);
+            cardNameFilter = targets.substring(orCnIdx + "or card name ".length()).trim();
             inclForwards   = true;
             inclBackups    = true;
             inclMonsters   = true;
@@ -2014,7 +2018,9 @@ public class ActionResolver {
             Matcher wm = JOB_WRITTEN_SEGMENT.matcher(targets);
             while (wm.find()) jobs.add(wm.group(1).trim());
             boolean bareJob = jobs.isEmpty();
-            if (bareJob) jobs.add(targets.substring("Job ".length()).trim());
+            if (bareJob)
+                for (String p : targets.substring("Job ".length()).trim().split("(?i)\\s+or\\s+Job\\s+"))
+                    jobs.add(p.trim());
             jobFilter      = String.join("|", jobs);
             cardNameFilter = null;
             inclForwards   = true;
