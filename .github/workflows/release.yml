@@ -145,6 +145,13 @@ jobs:
           mkdir -p jpackage-input
           cp target/shufflingway.jar jpackage-input/
 
+      - name: Compute macOS-compatible app-version
+        id: macver
+        run: |
+          RAW="${{ needs.create-release.outputs.version }}"
+          VER="$(echo "$RAW" | sed 's/^0\./1./')"
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+
       - name: Convert icon PNG to ICNS
         run: |
           mkdir -p Shufflingway.iconset
@@ -164,7 +171,7 @@ jobs:
           jpackage \
             --input            jpackage-input \
             --name             Shufflingway \
-            --app-version      ${{ needs.create-release.outputs.version }} \
+            --app-version      ${{ steps.macver.outputs.version }} \
             --vendor           "RockefellerA" \
             --main-jar         shufflingway.jar \
             --main-class       shufflingway.MainWindow \
