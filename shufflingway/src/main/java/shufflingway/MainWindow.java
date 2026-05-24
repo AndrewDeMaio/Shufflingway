@@ -74,6 +74,7 @@ import static shufflingway.CardAnimation.CARD_W;
 import static shufflingway.CardFilters.*;
 import static shufflingway.CpPaymentUtils.contributingElement;
 import static shufflingway.CpPaymentUtils.matchesAnyElement;
+import shufflingway.dialog.*;
 import shufflingway.menu.FileMenu;
 import shufflingway.menu.HelpMenu;
 import shufflingway.menu.MultiplayerMenu;

@@ -70,7 +70,7 @@ public class ActionResolver {
         "(?:\\s+(?<zone>(?:in|from)\\s+your(?:\\s+opponent(?:'s)?)?\\s+Break\\s+Zone))?" +
         // "blocking [CardName]" or "blocking a [Job] [JobName]" — targets the blocker of the named card
         "(?:\\s+blocking\\s+" +
-            "(?:a\\s+(?:Job\\s+)?(?<blockingjob>[^.,]+?)(?=\\s*[.,]))" +
+            "(?:(?:a\\s+(?:Job\\s+)?(?<blockingjob>[^.,]+?)(?=\\s*[.,]))" +
             "|(?<blockingname>[^.,]+?)(?=\\s*[.,])))?"+
         "(?:[.]\\s*|\\s+and\\s+|,\\s*)" +
         "(?<followup>.+)"

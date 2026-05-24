@@ -1,4 +1,6 @@
-package shufflingway;
+package shufflingway.dialog;
+
+import shufflingway.*;
 
 import java.awt.BorderLayout;
 import java.awt.Component;

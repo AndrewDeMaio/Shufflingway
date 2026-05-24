@@ -11,10 +11,10 @@ import java.awt.image.BufferedImage;
 import java.awt.image.RescaleOp;
 
 /** Static utilities for rendering and transforming card images. */
-class CardAnimation {
+public class CardAnimation {
 
-	static final int CARD_W = 140;
-	static final int CARD_H = 205;
+	public static final int CARD_W = 140;
+	public static final int CARD_H = 205;
 
 	private CardAnimation() {}
 
@@ -97,7 +97,7 @@ class CardAnimation {
 	}
 
 	/** Returns a zero-inset border that paints a multi-layer inner glow using the given {@code color}. */
-	static javax.swing.border.Border createCardGlowBorder(Color color) {
+	public static javax.swing.border.Border createCardGlowBorder(Color color) {
 		return new javax.swing.border.AbstractBorder() {
 			@Override public void paintBorder(java.awt.Component c, java.awt.Graphics g0,
 					int x, int y, int w, int h) {

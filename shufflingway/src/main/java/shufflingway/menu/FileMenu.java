@@ -12,8 +12,8 @@ import javax.swing.KeyStroke;
 
 import shufflingway.CardBrowser;
 import shufflingway.DeckManager;
-import shufflingway.DeckSelectDialog;
-import shufflingway.PreferencesDialog;
+import shufflingway.dialog.DeckSelectDialog;
+import shufflingway.dialog.PreferencesDialog;
 
 /**
  * File menu for the main window.

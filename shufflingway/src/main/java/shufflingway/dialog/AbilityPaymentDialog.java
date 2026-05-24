@@ -1,4 +1,6 @@
-package shufflingway;
+package shufflingway.dialog;
+
+import shufflingway.*;
 
 import java.awt.Color;
 import java.awt.Component;
@@ -33,10 +35,10 @@ import static shufflingway.CpPaymentUtils.contributingElement;
 import static shufflingway.CpPaymentUtils.matchesAnyElement;
 
 /** CP payment dialog for an action ability activation. */
-class AbilityPaymentDialog {
+public class AbilityPaymentDialog {
 
     @FunctionalInterface
-    interface Callback {
+    public interface Callback {
         void onConfirm(List<Integer> discards, List<Integer> backups, int xValue);
     }
 
@@ -51,7 +53,7 @@ class AbilityPaymentDialog {
     private final Runnable         onZoomHide;
     private final Callback         onConfirm;
 
-    AbilityPaymentDialog(JFrame owner, ActionAbility ability, CardData source,
+    public AbilityPaymentDialog(JFrame owner, ActionAbility ability, CardData source,
             List<CardData> hand, CardData[] backupCards, CardState[] backupStates,
             String[] backupUrls, Consumer<String> onZoom, Runnable onZoomHide,
             Callback onConfirm) {
@@ -67,7 +69,7 @@ class AbilityPaymentDialog {
         this.onConfirm    = onConfirm;
     }
 
-    void show() {
+    public void show() {
         List<String> rawCost   = ability.cpCost();
         long genericNeeded     = rawCost.stream().filter(String::isEmpty).count();
         LinkedHashMap<String, Integer> costByElem = new LinkedHashMap<>();

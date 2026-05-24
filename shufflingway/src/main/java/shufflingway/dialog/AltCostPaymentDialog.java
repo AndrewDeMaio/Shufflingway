@@ -1,4 +1,6 @@
-package shufflingway;
+package shufflingway.dialog;
+
+import shufflingway.*;
 
 import java.awt.Color;
 import java.awt.Component;
@@ -34,7 +36,7 @@ import static shufflingway.CpPaymentUtils.contributingElement;
 import static shufflingway.CpPaymentUtils.matchesAnyElement;
 
 /** CP payment dialog for a card's alternate cost (non-Warp). */
-class AltCostPaymentDialog {
+public class AltCostPaymentDialog {
 
     private final JFrame         owner;
     private final CardData       card;
@@ -53,7 +55,7 @@ class AltCostPaymentDialog {
     /** Called on Confirm with (discardIndices, backupSlots). */
     private final BiConsumer<List<Integer>, List<Integer>> onConfirm;
 
-    AltCostPaymentDialog(JFrame owner, CardData card, int handIdx,
+    public AltCostPaymentDialog(JFrame owner, CardData card, int handIdx,
             int altCp, long genericNeeded, String[] elems, LinkedHashMap<String, Integer> costByElem,
             boolean backupOnly, List<CardData> hand, CardData[] backupCards, CardState[] backupStates,
             String[] backupUrls, Consumer<String> onZoom, Runnable onZoomHide,
@@ -75,7 +77,7 @@ class AltCostPaymentDialog {
         this.onConfirm     = onConfirm;
     }
 
-    void show() {
+    public void show() {
         String crystalStr = "《C》".repeat(card.altCrystalCost());
         String costDesc   = crystalStr + (altCp > 0 ? " + " + altCp + " CP" : "");
 
