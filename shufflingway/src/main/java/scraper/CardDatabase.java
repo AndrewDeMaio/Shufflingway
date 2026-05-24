@@ -1,5 +1,8 @@
 package scraper;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
@@ -180,6 +183,39 @@ public class CardDatabase implements AutoCloseable {
             ps.setBytes(1, imageData);
             ps.setString(2, imageUrl);
             return ps.executeUpdate();
+        }
+    }
+
+    /**
+     * Returns a SHA-256 hex digest of all gameplay-relevant card columns, ordered by serial.
+     * Display-only columns (image_data, image_url, thumb_name) are excluded so that
+     * differing image cache states don't cause a false mismatch.
+     */
+    public String computeCardChecksum() throws SQLException {
+        String sql = """
+                SELECT serial, name_en, type_en, element, cost, power, rarity,
+                       job_en, category_1, category_2, ex_burst, multicard, text_en,
+                       set_number, limit_break, lb_cost
+                FROM cards ORDER BY serial
+                """;
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            try (Statement s = conn.createStatement();
+                 ResultSet rs = s.executeQuery(sql)) {
+                while (rs.next()) {
+                    for (int i = 1; i <= 16; i++) {
+                        String val = rs.getString(i);
+                        if (val != null) md.update(val.getBytes(StandardCharsets.UTF_8));
+                        md.update((byte) 0); // NUL separator — unambiguous regardless of field content
+                    }
+                }
+            }
+            byte[] hash = md.digest();
+            StringBuilder sb = new StringBuilder(64);
+            for (byte b : hash) sb.append(String.format("%02x", b));
+            return sb.toString();
+        } catch (NoSuchAlgorithmException e) {
+            throw new RuntimeException("SHA-256 not available", e);
         }
     }
 

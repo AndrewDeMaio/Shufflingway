@@ -3,7 +3,7 @@ package shufflingway.net;
 public enum ActionType {
 
     // ── Handshake ─────────────────────────────────────────────────────────────
-    HELLO,          // payload: { "name": "PlayerName" }
+    HELLO,          // payload: { "version": "1.0.0", "cardChecksum": "abc123..." }
     READY,          // payload: {} — both sides ready, game can begin
 
     // ── Opening hand ──────────────────────────────────────────────────────────

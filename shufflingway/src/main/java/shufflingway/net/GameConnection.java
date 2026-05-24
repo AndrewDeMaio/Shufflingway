@@ -37,6 +37,13 @@ public class GameConnection {
         writer.println(action.serialize());
     }
 
+    /** Blocking read for use during the handshake before {@link #start()} is called. */
+    public GameAction receiveSync() throws IOException {
+        String line = reader.readLine();
+        if (line == null) throw new IOException("Connection closed during handshake");
+        return GameAction.deserialize(line);
+    }
+
     /** Starts the background reader thread. Call once after construction. */
     public void start() {
         Thread t = new Thread(() -> {

@@ -1,5 +1,6 @@
 package scraper;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
@@ -21,7 +22,7 @@ public final class AppPaths {
         Path dir = (appData != null && !appData.isBlank())
                 ? Path.of(appData, "Shufflingway")
                 : Path.of(System.getProperty("user.home"), ".shufflingway");
-        try { Files.createDirectories(dir); } catch (Exception ignored) {}
+        try { Files.createDirectories(dir); } catch (IOException ignored) {}
         return dir;
     }
 

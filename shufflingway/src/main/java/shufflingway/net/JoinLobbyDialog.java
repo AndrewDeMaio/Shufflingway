@@ -1,9 +1,15 @@
 package shufflingway.net;
 
+import org.json.JSONObject;
+import scraper.AppPaths;
+import scraper.CardDatabase;
+import shufflingway.UpdateChecker;
+
 import javax.swing.*;
 import java.awt.*;
 import java.io.IOException;
 import java.net.Socket;
+import java.sql.SQLException;
 
 /**
  * Modal dialog that connects to a host's IP:port.
@@ -86,9 +92,40 @@ public class JoinLobbyDialog extends JDialog {
         new Thread(() -> {
             try {
                 Socket socket = new Socket(host, port);
-                connection = new GameConnection(socket);
+                GameConnection conn = new GameConnection(socket);
+
+                SwingUtilities.invokeLater(() -> statusLabel.setText("Verifying…"));
+                String localVersion = UpdateChecker.currentVersion();
+                String localChecksum;
+                try (CardDatabase db = new CardDatabase(AppPaths.dbPath())) {
+                    localChecksum = db.computeCardChecksum();
+                }
+                conn.send(GameAction.of(ActionType.HELLO, new JSONObject()
+                        .put("version", localVersion)
+                        .put("cardChecksum", localChecksum)));
+
+                GameAction response = conn.receiveSync();
+                if (response.type() == ActionType.DISCONNECT) {
+                    String reason = response.payload().optString("reason", "Rejected by host");
+                    conn.close();
+                    SwingUtilities.invokeLater(() -> {
+                        statusLabel.setText(reason);
+                        connectBtn.setEnabled(true);
+                    });
+                    return;
+                }
+                if (response.type() != ActionType.HELLO) {
+                    conn.close();
+                    SwingUtilities.invokeLater(() -> {
+                        statusLabel.setText("Unexpected response from host.");
+                        connectBtn.setEnabled(true);
+                    });
+                    return;
+                }
+
+                connection = conn;
                 SwingUtilities.invokeLater(this::dispose);
-            } catch (IOException ex) {
+            } catch (IOException | SQLException ex) {
                 SwingUtilities.invokeLater(() -> {
                     statusLabel.setText("Failed: " + ex.getMessage());
                     connectBtn.setEnabled(true);

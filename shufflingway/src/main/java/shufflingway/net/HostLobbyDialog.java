@@ -1,11 +1,17 @@
 package shufflingway.net;
 
+import org.json.JSONObject;
+import scraper.AppPaths;
+import scraper.CardDatabase;
+import shufflingway.UpdateChecker;
+
 import javax.swing.*;
 import java.awt.*;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.io.IOException;
 import java.net.*;
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Enumeration;
 import java.util.List;
@@ -79,13 +85,27 @@ public class HostLobbyDialog extends JDialog {
         new Thread(() -> {
             try {
                 serverSocket = new ServerSocket(DEFAULT_PORT);
-                Socket client = serverSocket.accept();
-                connection = new GameConnection(client);
-                SwingUtilities.invokeLater(() -> {
-                    statusLabel.setText("Connected: " + connection.getRemoteAddress());
-                    startBtn.setEnabled(true);
-                    cancelBtn.setText("Cancel");
-                });
+                while (true) {
+                    Socket client = serverSocket.accept();
+                    GameConnection conn = new GameConnection(client);
+                    String rejection = performHandshake(conn);
+                    if (rejection != null) {
+                        conn.send(GameAction.of(ActionType.DISCONNECT,
+                                new JSONObject().put("reason", rejection)));
+                        conn.close();
+                        final String reason = rejection;
+                        SwingUtilities.invokeLater(() ->
+                                statusLabel.setText("Rejected: " + reason + " — waiting…"));
+                        continue;
+                    }
+                    connection = conn;
+                    SwingUtilities.invokeLater(() -> {
+                        statusLabel.setText("Connected: " + conn.getRemoteAddress());
+                        startBtn.setEnabled(true);
+                        cancelBtn.setText("Cancel");
+                    });
+                    break;
+                }
             } catch (IOException e) {
                 if (serverSocket != null && !serverSocket.isClosed()) {
                     SwingUtilities.invokeLater(() -> statusLabel.setText("Error: " + e.getMessage()));
@@ -95,6 +115,43 @@ public class HostLobbyDialog extends JDialog {
                 catch (IOException ignored) {}
             }
         }, "HostLobby-accept").start();
+    }
+
+    /**
+     * Exchanges HELLO with the joining player and validates their version and card checksum.
+     * Returns {@code null} on success, or a human-readable rejection reason on failure.
+     */
+    private static String performHandshake(GameConnection conn) {
+        try {
+            String localVersion = UpdateChecker.currentVersion();
+            String localChecksum;
+            try (CardDatabase db = new CardDatabase(AppPaths.dbPath())) {
+                localChecksum = db.computeCardChecksum();
+            }
+
+            GameAction hello = conn.receiveSync();
+            if (hello.type() != ActionType.HELLO) {
+                return "Unexpected message during handshake";
+            }
+
+            String remoteVersion = hello.payload().optString("version", "");
+            String remoteChecksum = hello.payload().optString("cardChecksum", "");
+
+            boolean devMode = "dev".equals(localVersion) || "dev".equals(remoteVersion);
+            if (!devMode && !localVersion.equals(remoteVersion)) {
+                return "Version mismatch (host: " + localVersion + ", joiner: " + remoteVersion + ")";
+            }
+            if (!localChecksum.equals(remoteChecksum)) {
+                return "Card database mismatch — re-sync card data and try again";
+            }
+
+            conn.send(GameAction.of(ActionType.HELLO, new JSONObject()
+                    .put("version", localVersion)
+                    .put("cardChecksum", localChecksum)));
+            return null;
+        } catch (IOException | SQLException e) {
+            return "Handshake error: " + e.getMessage();
+        }
     }
 
     private void cancel() {
