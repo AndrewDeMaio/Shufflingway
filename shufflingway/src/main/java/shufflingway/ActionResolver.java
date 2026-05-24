@@ -58,7 +58,8 @@ public class ActionResolver {
             "|\\[Card\\s+Name\\s+\\([^)]+\\)\\]" +
             "|Card\\s+Name\\s+\\S+(?:\\s+\\([^)]+\\))?" +
             "|Job\\s+.+?\\s+or\\s+Card\\s+Name\\s+\\S+" +
-            "|Job\\s+.+?\\s+Forwards?(?:\\s+or\\s+Job\\s+.+?\\s+Forwards?)*)" +
+            "|Job\\s+.+?\\s+Forwards?(?:\\s+or\\s+Job\\s+.+?\\s+Forwards?)*" +
+            "|Job\\s+.+?(?=\\s+(?:of\\s+|other\\s+than|in\\s+your|from\\s+your)|[,.]))" +
         "(?:\\s+of\\s+any\\s+Element\\s+except\\s+(?<excludeelem>" +
             "(?:Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)" +
             "(?:\\s+and\\s+(?:Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark))*))?" +
@@ -2012,11 +2013,13 @@ public class ActionResolver {
             List<String> jobs = new ArrayList<>();
             Matcher wm = JOB_WRITTEN_SEGMENT.matcher(targets);
             while (wm.find()) jobs.add(wm.group(1).trim());
-            jobFilter      = jobs.isEmpty() ? null : String.join("|", jobs);
+            boolean bareJob = jobs.isEmpty();
+            if (bareJob) jobs.add(targets.substring("Job ".length()).trim());
+            jobFilter      = String.join("|", jobs);
             cardNameFilter = null;
             inclForwards   = true;
-            inclBackups    = false;
-            inclMonsters   = false;
+            inclBackups    = bareJob;
+            inclMonsters   = bareJob;
         } else {
             jobFilter      = null;
             cardNameFilter = null;
