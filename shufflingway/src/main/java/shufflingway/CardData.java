@@ -29,9 +29,10 @@ public record CardData(
         List<String> warpCost,
         String primingTarget,
         List<String> primingCost,
-        List<ActionAbility> actionAbilities,
-        List<AutoAbility>  autoAbilities,
-        List<FieldAbility> fieldAbilities,
+        List<ActionAbility>  actionAbilities,
+        List<AutoAbility>   autoAbilities,
+        List<FieldAbility>  fieldAbilities,
+        List<IfControlBoost> ifControlBoosts,
         String job,
         String category1,
         String category2,
@@ -55,9 +56,10 @@ public record CardData(
         traits          = Set.copyOf(traits);
         warpCost        = List.copyOf(warpCost);
         primingCost     = List.copyOf(primingCost);
-        actionAbilities = List.copyOf(actionAbilities);
-        autoAbilities   = List.copyOf(autoAbilities);
-        fieldAbilities  = List.copyOf(fieldAbilities);
+        actionAbilities  = List.copyOf(actionAbilities);
+        autoAbilities    = List.copyOf(autoAbilities);
+        fieldAbilities   = List.copyOf(fieldAbilities);
+        ifControlBoosts  = List.copyOf(ifControlBoosts);
         job       = job       != null ? job       : "";
         category1 = category1 != null ? category1 : "";
         category2 = category2 != null ? category2 : "";
@@ -920,6 +922,96 @@ public record CardData(
         if (effect.isEmpty()) return null;
         return new AutoAbility(card, trigger, youMay, opponentMay, effect,
                 oncePerTurn, yourTurnOnly, rfpConditionCard, castPaymentMinElements, castOnly, warpOnly, damageThreshold);
+    }
+
+    // -------------------------------------------------------------------------
+    // "If you control X, Y gains Z" conditional field-boost parsing
+    // -------------------------------------------------------------------------
+
+    /** Outer structure: "If you control <raw>, <target> gains <effects>[.]" */
+    private static final Pattern IF_CTRL_BOOST_OUTER = Pattern.compile(
+        "(?i)^If\\s+you\\s+control\\s+(?<raw>[^,]+),\\s+(?<target>.+?)\\s+gains?\\s+(?<effects>.+?)\\.?\\s*$"
+    );
+
+    /** Splits a single condition part on " other than ": group(1) = condition, group(2) = excluded name. */
+    private static final Pattern IF_CTRL_BOOST_EXCEPT = Pattern.compile(
+        "(?i)^(.+?)\\s+other\\s+than\\s+(\\S.*)$"
+    );
+
+    /** Extracts the +N power value from an effects substring. */
+    private static final Pattern IF_CTRL_EFFECT_POWER = Pattern.compile("(?i)\\+(\\d+)\\s+power");
+
+    /** Extracts quoted special ability text from an effects substring. */
+    private static final Pattern IF_CTRL_EFFECT_QUOTED = Pattern.compile("\"([^\"]+)\"");
+
+    // Simple keyword matchers for effect substrings (not positional like the card-text trait patterns)
+    private static final Pattern ICB_EFFECT_HASTE        = Pattern.compile("(?i)\\bHaste\\b");
+    private static final Pattern ICB_EFFECT_BRAVE        = Pattern.compile("(?i)\\bBrave\\b");
+    private static final Pattern ICB_EFFECT_FIRST_STRIKE = Pattern.compile("(?i)\\bFirst\\s+Strike\\b");
+    private static final Pattern ICB_EFFECT_BACK_ATTACK  = Pattern.compile("(?i)\\bBack\\s+Attack\\b");
+
+    /**
+     * Parses all "If you control [X], [target] gains [Z]" conditional field boosts from
+     * {@code textEn}.  Returns an empty list for Summons (field abilities don't apply to them)
+     * and whenever no matching segments are found.
+     *
+     * <p>Each {@code [[br]]}-delimited segment is checked independently.  Segments that
+     * have already been identified as action or auto abilities are still re-examined here
+     * because the outer structure differs; the parse is additive and does not conflict.
+     */
+    public static List<IfControlBoost> parseIfControlBoosts(String textEn, String cardType) {
+        if (textEn == null || textEn.isBlank()) return List.of();
+        if ("Summon".equalsIgnoreCase(cardType)) return List.of();
+
+        List<IfControlBoost> result = new ArrayList<>();
+        for (String raw : textEn.split("(?i)\\[\\[br\\]\\]")) {
+            String seg = SUMMON_MARKUP.matcher(raw.trim()).replaceAll("").trim();
+            if (seg.isEmpty()) continue;
+
+            Matcher m = IF_CTRL_BOOST_OUTER.matcher(seg);
+            if (!m.find()) continue;
+
+            String rawCond    = m.group("raw").trim();
+            String targetName = m.group("target").trim();
+            String effectsStr = m.group("effects").trim();
+
+            // Split on " and a " to support AND conditions ("a Job Father and a Job Mother")
+            String[] condParts = rawCond.split("(?i)\\s+and\\s+(?=a\\s+)");
+
+            List<ControlCondition> conditions = new ArrayList<>();
+            String exceptName = "";
+
+            for (String part : condParts) {
+                Matcher exceptM = IF_CTRL_BOOST_EXCEPT.matcher(part.trim());
+                String condText;
+                if (exceptM.matches()) {
+                    condText   = exceptM.group(1).trim();
+                    exceptName = exceptM.group(2).trim();
+                } else {
+                    condText = part.trim();
+                }
+                ControlCondition cond = parseControlCondition(condText);
+                if (cond != null) conditions.add(cond);
+            }
+            if (conditions.isEmpty()) continue;
+
+            Matcher pwrM = IF_CTRL_EFFECT_POWER.matcher(effectsStr);
+            int powerBonus = pwrM.find() ? Integer.parseInt(pwrM.group(1)) : 0;
+
+            Matcher quotedM = IF_CTRL_EFFECT_QUOTED.matcher(effectsStr);
+            String specialText = quotedM.find() ? quotedM.group(1).trim() : "";
+
+            java.util.EnumSet<Trait> traits = java.util.EnumSet.noneOf(Trait.class);
+            if (ICB_EFFECT_HASTE.matcher(effectsStr).find())        traits.add(Trait.HASTE);
+            if (ICB_EFFECT_BRAVE.matcher(effectsStr).find())        traits.add(Trait.BRAVE);
+            if (ICB_EFFECT_FIRST_STRIKE.matcher(effectsStr).find()) traits.add(Trait.FIRST_STRIKE);
+            if (ICB_EFFECT_BACK_ATTACK.matcher(effectsStr).find())  traits.add(Trait.BACK_ATTACK);
+
+            if (powerBonus == 0 && traits.isEmpty() && specialText.isEmpty()) continue;
+
+            result.add(new IfControlBoost(conditions, exceptName, targetName, powerBonus, traits, specialText));
+        }
+        return List.copyOf(result);
     }
 
     // -------------------------------------------------------------------------

@@ -1048,7 +1048,9 @@ public class MainWindow {
 							CardData.parseWarpValue(tx), CardData.parseWarpCost(tx),
 							CardData.parsePrimingTarget(tx), CardData.parsePrimingCost(tx),
 							CardData.parseActionAbilities(tx), CardData.parseAutoAbilities(tx),
-							CardData.parseFieldAbilities(tx, card.type()), card.job(), card.category1(), card.category2(), tx);
+							CardData.parseFieldAbilities(tx, card.type()),
+							CardData.parseIfControlBoosts(tx, card.type()),
+							card.job(), card.category1(), card.category2(), tx);
 					if (card.isLb()) lb.add(cd);
 					else             main.add(cd);
 				}
@@ -1068,7 +1070,9 @@ public class MainWindow {
 								CardData.parseWarpValue(tx), CardData.parseWarpCost(tx),
 								CardData.parsePrimingTarget(tx), CardData.parsePrimingCost(tx),
 								CardData.parseActionAbilities(tx), CardData.parseAutoAbilities(tx),
-								CardData.parseFieldAbilities(tx, card.type()), card.job(), card.category1(), card.category2(), tx);
+								CardData.parseFieldAbilities(tx, card.type()),
+								CardData.parseIfControlBoosts(tx, card.type()),
+								card.job(), card.category1(), card.category2(), tx);
 						if (card.isLb()) p2Lb.add(cd);
 						else             p2Main.add(cd);
 					}
@@ -3106,22 +3110,34 @@ public class MainWindow {
 
 	private int effectiveP1ForwardPower(int idx) {
 		CardData top = p1ForwardPrimedTop.get(idx);
-		int base = top != null ? top.power() : p1ForwardCards.get(idx).power();
-		return base + p1ForwardPowerBoost.get(idx) - p1ForwardPowerReduction.get(idx);
+		CardData card = p1ForwardCards.get(idx);
+		int base = top != null ? top.power() : card.power();
+		String name = top != null ? top.name() : card.name();
+		return base + p1ForwardPowerBoost.get(idx) - p1ForwardPowerReduction.get(idx)
+				+ computeConditionalBoostForTarget(name, true);
 	}
 
 	private int effectiveP2ForwardPower(int idx) {
-		return p2ForwardCards.get(idx).power() + p2ForwardPowerBoost.get(idx) - p2ForwardPowerReduction.get(idx);
+		CardData card = p2ForwardCards.get(idx);
+		return card.power() + p2ForwardPowerBoost.get(idx) - p2ForwardPowerReduction.get(idx)
+				+ computeConditionalBoostForTarget(card.name(), false);
 	}
 
 	private boolean effectiveP1HasTrait(int idx, CardData.Trait trait) {
 		if (p1ForwardRemovedTraits.get(idx).contains(trait)) return false;
-		return p1ForwardCards.get(idx).hasTrait(trait) || p1ForwardTempTraits.get(idx).contains(trait);
+		CardData top = p1ForwardPrimedTop.get(idx);
+		String name = top != null ? top.name() : p1ForwardCards.get(idx).name();
+		return p1ForwardCards.get(idx).hasTrait(trait)
+				|| p1ForwardTempTraits.get(idx).contains(trait)
+				|| computeConditionalTraitsForTarget(name, true).contains(trait);
 	}
 
 	private boolean effectiveP2HasTrait(int idx, CardData.Trait trait) {
 		if (p2ForwardRemovedTraits.get(idx).contains(trait)) return false;
-		return p2ForwardCards.get(idx).hasTrait(trait) || p2ForwardTempTraits.get(idx).contains(trait);
+		String name = p2ForwardCards.get(idx).name();
+		return p2ForwardCards.get(idx).hasTrait(trait)
+				|| p2ForwardTempTraits.get(idx).contains(trait)
+				|| computeConditionalTraitsForTarget(name, false).contains(trait);
 	}
 
 	private boolean effectiveHasTrait(boolean isP1, int idx, CardData.Trait trait) {
@@ -6668,10 +6684,14 @@ public class MainWindow {
 	 * by the controlling player's current field state.
 	 */
 	private boolean controlConditionMet(ControlCondition cond, boolean isP1) {
-		List<CardData> fwds = isP1 ? p1ForwardCards : p2ForwardCards;
-		CardData[]     bkps = isP1 ? p1BackupCards  : p2BackupCards;
-		List<CardData> mons = isP1 ? p1MonsterCards : p2MonsterCards;
+		return controlConditionMetWithPools(cond,
+				isP1 ? p1ForwardCards : p2ForwardCards,
+				isP1 ? p1BackupCards  : p2BackupCards,
+				isP1 ? p1MonsterCards : p2MonsterCards);
+	}
 
+	private boolean controlConditionMetWithPools(ControlCondition cond,
+			List<CardData> fwds, CardData[] bkps, List<CardData> mons) {
 		if (cond.isNamedMode()) {
 			for (String name : cond.requiredCardNames()) {
 				boolean found = fwds.stream().anyMatch(c -> c.name().equalsIgnoreCase(name))
@@ -6695,18 +6715,95 @@ public class MainWindow {
 		for (CardData card : pool) {
 			boolean matchesAltName = !cond.orCardNames().isEmpty()
 					&& cond.orCardNames().stream().anyMatch(n -> n.equalsIgnoreCase(card.name()));
-			if (matchesAltName) {
-				count++;
-				continue;
-			}
+			if (matchesAltName) { count++; continue; }
 			if (cond.element()  != null && !card.containsElement(cond.element())) continue;
 			if (cond.job()      != null && !meetsJobFilter(card, cond.job()))      continue;
 			if (cond.category() != null && !meetsCategoryFilter(card, cond.category())) continue;
 			if (cond.minPower() > 0     && card.power() < cond.minPower())         continue;
 			count++;
 		}
-
 		return cond.exactCount() ? count == cond.minCount() : count >= cond.minCount();
+	}
+
+	/**
+	 * Like {@link #controlConditionMet} but removes all instances of {@code exceptName} from
+	 * every pool before evaluating — used for the "other than X" exclusion in
+	 * {@link IfControlBoost}.
+	 */
+	private boolean controlConditionMetExcluding(ControlCondition cond, String exceptName, boolean isP1) {
+		if (exceptName.isEmpty()) return controlConditionMet(cond, isP1);
+		List<CardData> fwds = new ArrayList<>(isP1 ? p1ForwardCards : p2ForwardCards);
+		CardData[] srcBkps  = isP1 ? p1BackupCards : p2BackupCards;
+		CardData[] bkps     = java.util.Arrays.copyOf(srcBkps, srcBkps.length);
+		List<CardData> mons = new ArrayList<>(isP1 ? p1MonsterCards : p2MonsterCards);
+		fwds.removeIf(c -> c.name().equalsIgnoreCase(exceptName));
+		mons.removeIf(c -> c.name().equalsIgnoreCase(exceptName));
+		for (int i = 0; i < bkps.length; i++)
+			if (bkps[i] != null && bkps[i].name().equalsIgnoreCase(exceptName)) bkps[i] = null;
+		return controlConditionMetWithPools(cond, fwds, bkps, mons);
+	}
+
+	/** Returns {@code true} when all conditions of {@code icb} are satisfied for the given player. */
+	private boolean icbConditionsMet(IfControlBoost icb, boolean isP1) {
+		for (ControlCondition cond : icb.conditions())
+			if (!controlConditionMetExcluding(cond, icb.exceptCardName(), isP1)) return false;
+		return true;
+	}
+
+	/**
+	 * Computes the total conditional power bonus for a field card named {@code targetName}
+	 * on the given player's side, summing contributions from all {@link IfControlBoost}
+	 * abilities across every card currently on that player's field.
+	 */
+	private int computeConditionalBoostForTarget(String targetName, boolean isP1) {
+		int boost = 0;
+		List<CardData> fwds = isP1 ? p1ForwardCards : p2ForwardCards;
+		CardData[]     bkps = isP1 ? p1BackupCards  : p2BackupCards;
+		List<CardData> mons = isP1 ? p1MonsterCards : p2MonsterCards;
+		for (CardData src : fwds) boost += icbBoostContribution(src, targetName, isP1);
+		for (CardData bkp : bkps) if (bkp != null) boost += icbBoostContribution(bkp, targetName, isP1);
+		for (CardData src : mons) boost += icbBoostContribution(src, targetName, isP1);
+		return boost;
+	}
+
+	private int icbBoostContribution(CardData src, String targetName, boolean isP1) {
+		int boost = 0;
+		for (IfControlBoost icb : src.ifControlBoosts())
+			if (icb.targetCardName().equalsIgnoreCase(targetName) && icbConditionsMet(icb, isP1))
+				boost += icb.powerBonus();
+		return boost;
+	}
+
+	/**
+	 * Collects all traits conditionally granted to {@code targetName} on the given player's side
+	 * by any active {@link IfControlBoost} on the field.
+	 */
+	private java.util.EnumSet<CardData.Trait> computeConditionalTraitsForTarget(String targetName, boolean isP1) {
+		java.util.EnumSet<CardData.Trait> out = java.util.EnumSet.noneOf(CardData.Trait.class);
+		List<CardData> fwds = isP1 ? p1ForwardCards : p2ForwardCards;
+		CardData[]     bkps = isP1 ? p1BackupCards  : p2BackupCards;
+		List<CardData> mons = isP1 ? p1MonsterCards : p2MonsterCards;
+		for (CardData src : fwds) collectIcbTraits(src, targetName, isP1, out);
+		for (CardData bkp : bkps) if (bkp != null) collectIcbTraits(bkp, targetName, isP1, out);
+		for (CardData src : mons) collectIcbTraits(src, targetName, isP1, out);
+		return out;
+	}
+
+	private void collectIcbTraits(CardData src, String targetName, boolean isP1,
+			java.util.EnumSet<CardData.Trait> out) {
+		for (IfControlBoost icb : src.ifControlBoosts())
+			if (icb.targetCardName().equalsIgnoreCase(targetName) && icbConditionsMet(icb, isP1))
+				out.addAll(icb.grantedTraits());
+	}
+
+	private int effectiveP1MonsterPower(int idx) {
+		CardData card = p1MonsterCards.get(idx);
+		return card.power() + computeConditionalBoostForTarget(card.name(), true);
+	}
+
+	private int effectiveP2MonsterPower(int idx) {
+		CardData card = p2MonsterCards.get(idx);
+		return card.power() + computeConditionalBoostForTarget(card.name(), false);
 	}
 
 	// -------------------------------------------------------------------------
@@ -6772,6 +6869,9 @@ public class MainWindow {
 			if (!fa.triggerCard().equalsIgnoreCase(card.name())) continue;
 			if (fa.trigger().contains("enter")) executeAutoAbility(fa, card, isP1);
 		}
+		// Re-evaluate all conditional field boosts now that the field composition has changed
+		refreshAllForwardSlots();
+		for (int i = 0; i < p2ForwardCards.size(); i++) refreshP2ForwardSlot(i);
 	}
 
 	private void triggerAutoAbilitiesForAttack(CardData card, boolean isP1) {
@@ -6877,6 +6977,9 @@ public class MainWindow {
 			executeAutoAbility(fa, departing, isP1);
 		}
 		gameState.clearCounters(departing);
+		// Re-evaluate all conditional field boosts now that the field composition has changed
+		refreshAllForwardSlots();
+		for (int i = 0; i < p2ForwardCards.size(); i++) refreshP2ForwardSlot(i);
 	}
 
 	/** Fires "cast summon" field abilities for all field cards belonging to the casting player. */
@@ -9768,10 +9871,10 @@ public class MainWindow {
 						return effectiveP2ForwardPower(i);
 				for (int i = 0; i < p1MonsterCards.size(); i++)
 					if (p1MonsterCards.get(i).name().equalsIgnoreCase(cardName))
-						return p1MonsterCards.get(i).power();
+						return effectiveP1MonsterPower(i);
 				for (int i = 0; i < p2MonsterCards.size(); i++)
 					if (p2MonsterCards.get(i).name().equalsIgnoreCase(cardName))
-						return p2MonsterCards.get(i).power();
+						return effectiveP2MonsterPower(i);
 				logEntry("[ActionResolver] fieldForwardPowerByName: \"" + cardName + "\" not found on field");
 				return -1;
 			}
@@ -9783,8 +9886,8 @@ public class MainWindow {
 							? (t.idx() < p1ForwardCards.size() ? effectiveP1ForwardPower(t.idx()) : 0)
 							: (t.idx() < p2ForwardCards.size() ? effectiveP2ForwardPower(t.idx()) : 0);
 				return t.isP1()
-						? (t.idx() < p1MonsterCards.size() ? p1MonsterCards.get(t.idx()).power() : 0)
-						: (t.idx() < p2MonsterCards.size() ? p2MonsterCards.get(t.idx()).power() : 0);
+						? (t.idx() < p1MonsterCards.size() ? effectiveP1MonsterPower(t.idx()) : 0)
+						: (t.idx() < p2MonsterCards.size() ? effectiveP2MonsterPower(t.idx()) : 0);
 			}
 
 			@Override public void forceOpponentDiscard(int count) {
@@ -11318,6 +11421,8 @@ public class MainWindow {
 		p1MonsterPanel.repaint();
 
 		refreshP1MonsterSlot(idx);
+		// Monster entering the field may satisfy a condition for a forward's boost
+		refreshAllForwardSlots();
 	}
 
 	/** Reloads and re-renders a single P1 monster slot using its stored URL and state. */
@@ -11326,13 +11431,18 @@ public class MainWindow {
 		CardState state = p1MonsterStates.get(idx);
 		JLabel slot  = p1MonsterLabels.get(idx);
 		if (url == null) return;
+		int power     = effectiveP1MonsterPower(idx);
+		int basePower = p1MonsterCards.get(idx).power();
 		if (slot.getIcon() == null) slot.setIcon(new ImageIcon(CardAnimation.renderPlaceholder(state)));
 		new SwingWorker<ImageIcon, Void>() {
 			@Override protected ImageIcon doInBackground() throws Exception {
 				Image raw = ImageCache.load(url);
 				if (raw == null) return new ImageIcon(CardAnimation.renderPlaceholder(state));
-				BufferedImage card = CardAnimation.toARGB(raw, CARD_W, CARD_H);
-				return new ImageIcon(CardAnimation.renderBackupCard(card, state, false, false, p1MonsterFrozen.get(idx)));
+				BufferedImage canvas = CardAnimation.renderBackupCard(
+						CardAnimation.toARGB(raw, CARD_W, CARD_H), state, false, false, p1MonsterFrozen.get(idx));
+				if (power > basePower)
+					CardAnimation.renderPowerOverlayRight(canvas, power, new Color(80, 220, 80), state);
+				return new ImageIcon(canvas);
 			}
 			@Override protected void done() {
 				try {
