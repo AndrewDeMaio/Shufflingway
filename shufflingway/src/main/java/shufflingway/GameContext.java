@@ -471,6 +471,34 @@ public interface GameContext {
     void forceOpponentRandomDiscard(int count);
 
     /**
+     * Randomly removes {@code count} cards from the ability-user's opponent's hand and
+     * places them in the permanent RFP zone.  Neither player chooses — selected at random.
+     */
+    void forceOpponentRandomHandRfp(int count);
+
+    /**
+     * Reveals the ability-user's opponent's hand, then lets the ability user select
+     * {@code count} cards from it to remove from the game permanently.
+     * When P1 is the ability user, P1 is shown a dialog with P2's hand.
+     * When P2 is the ability user, the AI picks the highest-value cards from P1's hand.
+     */
+    void selectFromOpponentHandAndRfp(int count);
+
+    /**
+     * Forces the ability-user's opponent to remove {@code count} cards from their own
+     * hand from the game permanently.  The opponent (not the ability user) chooses which.
+     * When P1 is the ability user, the P2 AI picks automatically.
+     * When P2 is the ability user, P1 is prompted via a selection dialog.
+     */
+    void forceOpponentHandRfp(int count);
+
+    /**
+     * Searches the field (both players' forwards, backups, and monsters) for a card
+     * matching {@code cardName} and removes the first match from the game permanently.
+     */
+    void removeNamedCardFromGame(String cardName);
+
+    /**
      * Grants the ability user one additional turn immediately after the current turn ends.
      * At the end of that extra turn, the ability user loses the game.
      */

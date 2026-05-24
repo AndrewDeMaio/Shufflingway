@@ -3957,6 +3957,136 @@ public class MainWindow {
 		dlg.setVisible(true);
 	}
 
+	/**
+	 * Shows a modal dialog letting P1 select {@code count} cards from {@code targetHand}
+	 * to remove from the game permanently.
+	 * If {@code rfpIsP1}, the cards go to P1's permanent RFP zone (P1 removing from own hand);
+	 * otherwise they go to P2's (P1 selecting from P2's revealed hand).
+	 */
+	private void showHandRfpSelectionDialog(List<CardData> targetHand, int count, boolean rfpIsP1) {
+		int mustSelect = Math.min(count, targetHand.size());
+		if (mustSelect == 0) return;
+
+		JDialog dlg = new JDialog(frame, "Remove " + mustSelect + " Card(s) From Game", true);
+		dlg.setResizable(false);
+		dlg.setDefaultCloseOperation(JDialog.DO_NOTHING_ON_CLOSE);
+
+		Set<Integer> selected = new java.util.HashSet<>();
+
+		JLabel statusLabel = new JLabel("Select " + mustSelect + " card(s) to remove from the game.", SwingConstants.CENTER);
+		statusLabel.setFont(FontLoader.loadPixelNESFont(10));
+
+		List<JLabel> cardLabels = new ArrayList<>();
+		JPanel cardsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 8));
+
+		JButton confirmBtn = new JButton("Remove From Game");
+		confirmBtn.setFont(FontLoader.loadPixelNESFont(11));
+		confirmBtn.setEnabled(false);
+
+		Runnable refresh = () -> {
+			int remaining = mustSelect - selected.size();
+			statusLabel.setText(remaining > 0
+					? "Select " + remaining + " more card(s) to remove."
+					: "Ready — click Remove From Game to confirm.");
+			confirmBtn.setEnabled(selected.size() == mustSelect);
+			for (int i = 0; i < cardLabels.size(); i++) {
+				cardLabels.get(i).setBorder(BorderFactory.createLineBorder(
+						selected.contains(i) ? new Color(0xff8800) : Color.LIGHT_GRAY,
+						selected.contains(i) ? 3 : 1));
+			}
+		};
+
+		for (int i = 0; i < targetHand.size(); i++) {
+			final int idx = i;
+			CardData cd = targetHand.get(i);
+
+			JPanel wrapper = new JPanel(new BorderLayout(0, 4));
+			wrapper.setBackground(cardsPanel.getBackground());
+
+			JLabel lbl = new JLabel("...", SwingConstants.CENTER);
+			lbl.setPreferredSize(new Dimension(CARD_W, CARD_H));
+			lbl.setMinimumSize(new Dimension(CARD_W, CARD_H));
+			lbl.setOpaque(true);
+			lbl.setBackground(Color.DARK_GRAY);
+			lbl.setBorder(BorderFactory.createLineBorder(Color.LIGHT_GRAY, 1));
+			lbl.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+			cardLabels.add(lbl);
+
+			lbl.addMouseListener(new MouseAdapter() {
+				@Override public void mouseEntered(MouseEvent e) { if (lbl.getIcon() != null) showZoomAt(cd.imageUrl()); }
+				@Override public void mouseExited(MouseEvent e)  { hideZoom(); }
+				@Override public void mousePressed(MouseEvent e) {
+					if (selected.contains(idx)) selected.remove(idx);
+					else if (selected.size() < mustSelect) selected.add(idx);
+					refresh.run();
+				}
+			});
+
+			new SwingWorker<ImageIcon, Void>() {
+				@Override protected ImageIcon doInBackground() throws Exception {
+					Image img = ImageCache.load(cd.imageUrl());
+					if (img == null) return null;
+					BufferedImage buf = new BufferedImage(CARD_W, CARD_H, BufferedImage.TYPE_INT_ARGB);
+					Graphics2D g2 = buf.createGraphics();
+					g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+					g2.drawImage(img, 0, 0, CARD_W, CARD_H, null);
+					g2.dispose();
+					return new ImageIcon(buf);
+				}
+				@Override protected void done() {
+					try { ImageIcon icon = get(); if (icon != null) { lbl.setIcon(icon); lbl.setText(null); } }
+					catch (InterruptedException | ExecutionException ignored) {}
+				}
+			}.execute();
+
+			JLabel nameLabel = new JLabel(cd.name(), SwingConstants.CENTER);
+			nameLabel.setFont(FontLoader.loadPixelNESFont(9));
+			nameLabel.setPreferredSize(new Dimension(CARD_W, 18));
+
+			wrapper.add(lbl,       BorderLayout.CENTER);
+			wrapper.add(nameLabel, BorderLayout.SOUTH);
+			cardsPanel.add(wrapper);
+		}
+
+		confirmBtn.addActionListener(ae -> {
+			hideZoom();
+			dlg.dispose();
+			List<Integer> toRemove = new ArrayList<>(selected);
+			toRemove.sort(Collections.reverseOrder());
+			for (int ri : toRemove) {
+				if (ri < targetHand.size()) {
+					CardData d = targetHand.remove(ri);
+					if (rfpIsP1) {
+						gameState.addToP1PermanentRfp(d);
+						logEntry("Removed from game: " + d.name());
+					} else {
+						gameState.addToP2PermanentRfp(d);
+						logEntry("[P2] Removed from game (selected by P1): " + d.name());
+					}
+				}
+			}
+			if (rfpIsP1) { refreshP1HandLabel(); refreshP1WarpZoneUI(); }
+			else          { refreshP2HandCountLabel(); }
+		});
+
+		JScrollPane scrollPane = new JScrollPane(cardsPanel,
+				JScrollPane.VERTICAL_SCROLLBAR_NEVER,
+				JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED);
+		scrollPane.setPreferredSize(new Dimension(
+				Math.min(targetHand.size() * (CARD_W + 16) + 16, 900),
+				CARD_H + 60));
+
+		JPanel south = new JPanel(new BorderLayout(4, 4));
+		south.add(statusLabel, BorderLayout.NORTH);
+		south.add(confirmBtn,  BorderLayout.SOUTH);
+
+		dlg.getContentPane().add(scrollPane, BorderLayout.CENTER);
+		dlg.getContentPane().add(south,      BorderLayout.SOUTH);
+		dlg.pack();
+		dlg.setLocationRelativeTo(frame);
+		dlg.setVisible(true);
+	}
+
 	// -------------------------------------------------------------------------
 	// Async image loading helpers
 	// -------------------------------------------------------------------------
@@ -9709,6 +9839,111 @@ public class MainWindow {
 					refreshP1HandLabel();
 					refreshP1DeckLabel();
 				}
+			}
+
+			@Override public void forceOpponentRandomHandRfp(int count) {
+				if (isP1) {
+					List<CardData> hand = gameState.getP2Hand();
+					int actual = Math.min(count, hand.size());
+					for (int i = 0; i < actual; i++) {
+						if (hand.isEmpty()) break;
+						int idx = (int) (Math.random() * hand.size());
+						CardData d = hand.remove(idx);
+						gameState.addToP2PermanentRfp(d);
+						logEntry("[P2] Randomly removed from game: " + d.name());
+					}
+					refreshP2HandCountLabel();
+				} else {
+					List<CardData> hand = gameState.getP1Hand();
+					int actual = Math.min(count, hand.size());
+					for (int i = 0; i < actual; i++) {
+						if (hand.isEmpty()) break;
+						int idx = (int) (Math.random() * hand.size());
+						CardData d = gameState.removeFromHand(idx);
+						if (d != null) { gameState.addToP1PermanentRfp(d); logEntry("[P1] Randomly removed from game: " + d.name()); }
+					}
+					refreshP1HandLabel();
+					refreshP1WarpZoneUI();
+				}
+			}
+
+			@Override public void selectFromOpponentHandAndRfp(int count) {
+				if (isP1) {
+					showHandRfpSelectionDialog(gameState.getP2Hand(), count, false);
+				} else {
+					// AI picks highest-cost cards from P1's hand
+					int actual = Math.min(count, gameState.getP1Hand().size());
+					for (int i = 0; i < actual; i++) {
+						List<CardData> hand = gameState.getP1Hand();
+						if (hand.isEmpty()) break;
+						int best = 0;
+						for (int j = 1; j < hand.size(); j++)
+							if (hand.get(j).cost() > hand.get(best).cost()) best = j;
+						CardData d = gameState.removeFromHand(best);
+						if (d != null) { gameState.addToP1PermanentRfp(d); logEntry("[P2 AI selects from P1 hand] " + d.name() + " removed from game"); }
+					}
+					refreshP1HandLabel();
+					refreshP1WarpZoneUI();
+				}
+			}
+
+			@Override public void forceOpponentHandRfp(int count) {
+				if (isP1) {
+					List<CardData> hand = gameState.getP2Hand();
+					int actual = Math.min(count, hand.size());
+					for (int i = 0; i < actual; i++) {
+						if (hand.isEmpty()) break;
+						int idx = pickWorstHandCard0(hand);
+						CardData d = hand.remove(idx);
+						gameState.addToP2PermanentRfp(d);
+						logEntry("[P2] Removes from game: " + d.name());
+					}
+					refreshP2HandCountLabel();
+				} else {
+					showHandRfpSelectionDialog(gameState.getP1Hand(), count, true);
+				}
+			}
+
+			@Override public void removeNamedCardFromGame(String cardName) {
+				// P1 forwards
+				for (int i = 0; i < p1ForwardCards.size(); i++) {
+					if (p1ForwardCards.get(i).name().equalsIgnoreCase(cardName)) { removeP1ForwardFromGame(i); return; }
+				}
+				// P1 backups
+				for (int i = 0; i < p1BackupCards.length; i++) {
+					if (p1BackupCards[i] != null && p1BackupCards[i].name().equalsIgnoreCase(cardName)) {
+						logEntry(cardName + " → Removed From Game");
+						gameState.addToP1PermanentRfp(p1BackupCards[i]);
+						p1BackupCards[i] = null; p1BackupStates[i] = CardState.ACTIVE;
+						refreshP1BackupSlot(i); refreshP1WarpZoneUI(); return;
+					}
+				}
+				// P1 monsters
+				for (int i = 0; i < p1MonsterCards.size(); i++) {
+					if (p1MonsterCards.get(i).name().equalsIgnoreCase(cardName)) {
+						removeTargetFromGame(new ForwardTarget(true, i, ForwardTarget.CardZone.MONSTER)); return;
+					}
+				}
+				// P2 forwards
+				for (int i = 0; i < p2ForwardCards.size(); i++) {
+					if (p2ForwardCards.get(i).name().equalsIgnoreCase(cardName)) { removeP2ForwardFromGame(i); return; }
+				}
+				// P2 backups
+				for (int i = 0; i < p2BackupCards.length; i++) {
+					if (p2BackupCards[i] != null && p2BackupCards[i].name().equalsIgnoreCase(cardName)) {
+						logEntry("[P2] " + cardName + " → Removed From Game");
+						gameState.addToP2PermanentRfp(p2BackupCards[i]);
+						p2BackupCards[i] = null; p2BackupStates[i] = CardState.ACTIVE;
+						refreshP2BackupSlot(i); return;
+					}
+				}
+				// P2 monsters
+				for (int i = 0; i < p2MonsterCards.size(); i++) {
+					if (p2MonsterCards.get(i).name().equalsIgnoreCase(cardName)) {
+						removeTargetFromGame(new ForwardTarget(false, i, ForwardTarget.CardZone.MONSTER)); return;
+					}
+				}
+				logEntry("[Warning] removeNamedCardFromGame: \"" + cardName + "\" not found on field");
 			}
 
 			@Override public void takeExtraTurnThenLose() {

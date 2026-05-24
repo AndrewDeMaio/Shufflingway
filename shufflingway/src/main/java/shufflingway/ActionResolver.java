@@ -203,6 +203,52 @@ public class ActionResolver {
     );
 
     /**
+     * Matches "Remove it/them and [CardName] from the game" — chosen target(s) plus a named card.
+     * Group {@code named} — the additional card name to remove.
+     */
+    private static final Pattern FOLLOWUP_REMOVE_FROM_GAME_AND_NAMED = Pattern.compile(
+        "(?i)Remove\\s+(?:it|them)\\s+and\\s+(?<named>.+?)\\s+from\\s+(?:the\\s+)?game[.!]?"
+    );
+
+    /**
+     * Matches "Your opponent randomly removes N card(s) in his/her/their hand from the game."
+     * Group 1 — count.
+     */
+    private static final Pattern OPPONENT_RANDOM_HAND_RFP = Pattern.compile(
+        "(?i)Your\\s+opponent\\s+randomly\\s+removes?\\s+(\\d+)\\s+cards?\\s+in\\s+" +
+        "(?:his/her|his|her|their)\\s+hand\\s+from\\s+(?:the\\s+)?game[.!]?"
+    );
+
+    /**
+     * Matches the style "reveal and select from hand to remove from game":
+     * "Your opponent reveals their hand. Select N card(s) in their hand.
+     *  Your opponent removes it/them from the game."
+     * Group 1 — count of cards to select.
+     */
+    private static final Pattern REVEAL_SELECT_HAND_RFP = Pattern.compile(
+        "(?i)Your\\s+opponent\\s+reveals?\\s+(?:his/her|his|her|their)\\s+hand[.!]\\s+" +
+        "Select\\s+(\\d+)\\s+cards?\\s+in\\s+(?:his/her|his|her|their)\\s+hand[.!]\\s+" +
+        "Your\\s+opponent\\s+removes?\\s+(?:it|them)\\s+from\\s+(?:the\\s+)?game[.!]?"
+    );
+
+    /**
+     * Matches "Your opponent removes N card(s) in his/her/their hand from the game."
+     * (opponent chooses which cards — not random).  Group 1 — count.
+     */
+    private static final Pattern OPPONENT_HAND_RFP = Pattern.compile(
+        "(?i)Your\\s+opponent\\s+removes?\\s+(\\d+)\\s+cards?\\s+in\\s+" +
+        "(?:his/her|his|her|their)\\s+hand\\s+from\\s+(?:the\\s+)?game[.!]?"
+    );
+
+    /**
+     * Matches "Remove [CardName] from the game." as a standalone sentence.
+     * Group {@code named} — the card name.  Does NOT match "Remove it/them …" (pronouns).
+     */
+    private static final Pattern REMOVE_NAMED_FROM_GAME = Pattern.compile(
+        "(?i)Remove\\s+(?!(?:it|them)\\b)(?<named>.+?)\\s+from\\s+(?:the\\s+)?game[.!]?"
+    );
+
+    /**
      * Matches "Remove the top [N cards / card] of your deck from the game."
      * Group {@code count} — number of cards (absent means 1).
      */
@@ -1327,6 +1373,18 @@ public class ActionResolver {
         result = tryParseStandaloneSelfBoost(effectText, source);
         if (result != null) return result;
 
+        result = tryParseRevealSelectHandRfp(effectText);
+        if (result != null) return result;
+
+        result = tryParseOpponentRandomHandRfp(effectText);
+        if (result != null) return result;
+
+        result = tryParseOpponentHandRfp(effectText);
+        if (result != null) return result;
+
+        result = tryParseRemoveNamedFromGame(effectText, source);
+        if (result != null) return result;
+
         result = tryParseOpponentDrawThenRandomDiscard(effectText);
         if (result != null) return result;
 
@@ -1433,6 +1491,10 @@ public class ActionResolver {
         if (tryParseStandalonePowerReduceUntil(effectText, source) != null) return "StandalonePowerReduceUntil";
         if (tryParseFieldSelfPowerBoost(effectText, source)    != null) return "FieldSelfPowerBoost";
         if (tryParseStandaloneSelfBoost(effectText, source)   != null) return "StandaloneSelfBoost";
+        if (tryParseRevealSelectHandRfp(effectText)            != null) return "RevealSelectHandRfp";
+        if (tryParseOpponentRandomHandRfp(effectText)         != null) return "OpponentRandomHandRfp";
+        if (tryParseOpponentHandRfp(effectText)               != null) return "OpponentHandRfp";
+        if (tryParseRemoveNamedFromGame(effectText, source)   != null) return "RemoveNamedFromGame";
         if (tryParseOpponentDrawThenRandomDiscard(effectText)  != null) return "OpponentDrawThenRandomDiscard";
         if (tryParseOpponentRandomDiscard(effectText)         != null) return "OpponentRandomDiscard";
         if (tryParseOpponentDiscard(effectText)               != null) return "OpponentDiscard";
@@ -1582,6 +1644,10 @@ public class ActionResolver {
         if (tryParseStandaloneDoublePowerMainPhaseNextTurn(effectText, source) != null) return "StandaloneDoublePowerMainPhaseNextTurn";
         if (tryParseStandalonePowerReduceUntil(effectText, source) != null) return "StandalonePowerReduceUntil";
         if (tryParseStandaloneSelfBoost(effectText, source) != null)        return "StandaloneSelfBoost";
+        if (tryParseRevealSelectHandRfp(effectText) != null)               return "RevealSelectHandRfp";
+        if (tryParseOpponentRandomHandRfp(effectText) != null)             return "OpponentRandomHandRfp";
+        if (tryParseOpponentHandRfp(effectText) != null)                   return "OpponentHandRfp";
+        if (tryParseRemoveNamedFromGame(effectText, source) != null)        return "RemoveNamedFromGame";
         if (tryParseOpponentDrawThenRandomDiscard(effectText) != null)      return "OpponentDrawThenRandomDiscard";
         if (tryParseOpponentRandomDiscard(effectText) != null)              return "OpponentRandomDiscard";
         if (tryParseOpponentDiscard(effectText) != null)                    return "OpponentDiscard";
@@ -2467,6 +2533,22 @@ public class ActionResolver {
             };
         }
 
+        // --- Remove from game + named card followup (e.g. "Remove it and Shuyin from the game") ---
+        Matcher rfgNamedM = FOLLOWUP_REMOVE_FROM_GAME_AND_NAMED.matcher(primaryFollowup);
+        if (rfgNamedM.find()) {
+            String alsoNamed = rfgNamedM.group("named").trim();
+            return ctx -> {
+                ctx.logEntry(choosePrefix + " — Remove From Game (+ " + alsoNamed + ")");
+                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
+                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem);
+                sortedByIdxDesc(ts, true) .forEach(t -> ctx.removeTargetFromGame(t));
+                sortedByIdxDesc(ts, false).forEach(t -> ctx.removeTargetFromGame(t));
+                ctx.removeNamedCardFromGame(alsoNamed);
+                if (secondary != null) secondary.accept(ctx);
+            };
+        }
+
         // --- Remove from game followup ---
         if (FOLLOWUP_REMOVE_FROM_GAME.matcher(primaryFollowup).find()) {
             return ctx -> {
@@ -3277,6 +3359,56 @@ public class ActionResolver {
         return ctx -> {
             ctx.logEntry("Effect: Opponent discards " + count + " card(s)");
             ctx.forceOpponentDiscard(count);
+        };
+    }
+
+    /** Parses "Your opponent randomly removes N card(s) in their hand from the game." */
+    private static Consumer<GameContext> tryParseOpponentRandomHandRfp(String text) {
+        Matcher m = OPPONENT_RANDOM_HAND_RFP.matcher(text);
+        if (!m.find()) return null;
+        int count = Integer.parseInt(m.group(1));
+        return ctx -> {
+            ctx.logEntry("Effect: Opponent randomly removes " + count + " hand card(s) from the game");
+            ctx.forceOpponentRandomHandRfp(count);
+        };
+    }
+
+    /**
+     * Parses "Your opponent reveals their hand. Select N card(s) in their hand.
+     * Your opponent removes it from the game."
+     */
+    private static Consumer<GameContext> tryParseRevealSelectHandRfp(String text) {
+        Matcher m = REVEAL_SELECT_HAND_RFP.matcher(text);
+        if (!m.find()) return null;
+        int count = Integer.parseInt(m.group(1));
+        return ctx -> {
+            ctx.logEntry("Effect: Opponent reveals hand — select " + count + " to remove from game");
+            ctx.selectFromOpponentHandAndRfp(count);
+        };
+    }
+
+    /**
+     * Parses "Your opponent removes N card(s) in their hand from the game."
+     * (opponent chooses which cards, not random).
+     */
+    private static Consumer<GameContext> tryParseOpponentHandRfp(String text) {
+        Matcher m = OPPONENT_HAND_RFP.matcher(text);
+        if (!m.find()) return null;
+        int count = Integer.parseInt(m.group(1));
+        return ctx -> {
+            ctx.logEntry("Effect: Opponent removes " + count + " hand card(s) from the game");
+            ctx.forceOpponentHandRfp(count);
+        };
+    }
+
+    /** Parses "Remove [CardName] from the game." — removes a named card from the field. */
+    private static Consumer<GameContext> tryParseRemoveNamedFromGame(String text, CardData source) {
+        Matcher m = REMOVE_NAMED_FROM_GAME.matcher(text);
+        if (!m.find()) return null;
+        String named = m.group("named").trim();
+        return ctx -> {
+            ctx.logEntry("Effect: Remove " + named + " from the game");
+            ctx.removeNamedCardFromGame(named);
         };
     }
 
