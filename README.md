@@ -13,8 +13,25 @@ The ultimate goal for this application will be to play against someone else with
 
 Current card coverage (estimate):
 
-Action/Special Abilities: (64.9%)
+* Action/Special Abilities: (68%)
 
-Auto Abilities: (71.0%)
+* Auto Abilities: (74.5%)
 
-Field Abilities: (>20.8%)
+* Field Abilities: (>20.0%)
+
+# Installation Guide
+
+Use the 'Releases' section on the right to download the latest version.
+
+* .msi: Windows Installer
+
+* .dmg: MacOS
+
+Once the application has been installed, you can update to any new releases from "Check for Updates..." in the Help menu.
+
+# Quick Start Guide
+
+* Open the Card Browser to initiate fetching card data from the official API.  
+* After this completes, create a deck in the Deck Manager.
+* Once a 50-card deck has been created, you can either create another 50-card deck for the CPU to randomly choose, or do a mirror match against the CPU.
+* NOTE: Multiplayer is a work-in-progress!
