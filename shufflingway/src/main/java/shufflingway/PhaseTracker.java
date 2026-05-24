@@ -94,7 +94,8 @@ public class PhaseTracker extends JPanel {
     private int     attackStep     = 0;   // 0..3; only meaningful in Attack phase
     private int     prevAttackStep = 0;
     private int     turn           = 1;
-    private boolean isMyTurn       = true;
+    private boolean isMyTurn       = true;  // whose turn it is (controls the banner)
+    private boolean hasPriority    = true;  // who currently holds priority (controls diamond color)
 
     private static final int ANIM_MS = 240;
     private long  animStart = 0L;
@@ -176,6 +177,13 @@ public class PhaseTracker extends JPanel {
     public void setMyTurn(boolean isMyTurn) {
         if (this.isMyTurn == isMyTurn) return;
         this.isMyTurn = isMyTurn;
+        this.hasPriority = isMyTurn;
+        repaint();
+    }
+
+    public void setHasPriority(boolean hasPriority) {
+        if (this.hasPriority == hasPriority) return;
+        this.hasPriority = hasPriority;
         repaint();
     }
 
@@ -214,9 +222,9 @@ public class PhaseTracker extends JPanel {
 
         int w = getWidth();
 
-        Color glow     = isMyTurn ? BLUE         : RED;
-        Color glowFill = isMyTurn ? BLUE_FILL    : RED_FILL;
-        Color pillBg   = isMyTurn ? BLUE_PILL_BG : RED_PILL_BG;
+        Color glow     = hasPriority ? BLUE         : RED;
+        Color glowFill = hasPriority ? BLUE_FILL    : RED_FILL;
+        Color pillBg   = isMyTurn   ? BLUE_PILL_BG : RED_PILL_BG;
 
         drawTopStrip(g, w, pillBg);
 

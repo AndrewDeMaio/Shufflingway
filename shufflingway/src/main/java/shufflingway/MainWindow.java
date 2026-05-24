@@ -11407,11 +11407,11 @@ public class MainWindow {
 	 */
 	private void p2AutoPass(Runnable onDone) {
 		if (p2AutoPassTimer != null) { p2AutoPassTimer.stop(); p2AutoPassTimer = null; }
-		phaseTracker.setMyTurn(false);
+		phaseTracker.setHasPriority(false);
 		p2AutoPassTimer = new javax.swing.Timer(1500, e -> {
 			((javax.swing.Timer) e.getSource()).stop();
 			p2AutoPassTimer = null;
-			phaseTracker.setMyTurn(true);
+			phaseTracker.setHasPriority(true);
 			onDone.run();
 		});
 		p2AutoPassTimer.setRepeats(false);
