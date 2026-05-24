@@ -70,7 +70,8 @@ public class ActionAbilityParsingTest {
                         CardData.parsePrimingTarget(textEn),
                         CardData.parsePrimingCost(textEn),
                         abilities, CardData.parseAutoAbilities(textEn),
-                        CardData.parseFieldAbilities(textEn, rs.getString("type_en")), rs.getString("job_en"),
+                        CardData.parseFieldAbilities(textEn, rs.getString("type_en")),
+                        CardData.parseIfControlBoosts(textEn, rs.getString("type_en")), rs.getString("job_en"),
                         rs.getString("category_1"), rs.getString("category_2"), textEn);
 
                 int parsed = 0;
