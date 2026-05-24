@@ -715,10 +715,11 @@ public record CardData(
             "|casts?\\s+a\\s+Summon" +
             "|is\\s+put\\s+into\\s+(?:your\\s+)?Damage\\s+Zone" +
             "|is\\s+removed\\s+from\\s+the\\s+game\\s+due\\s+to\\s+Warp" +
+            "|deals?\\s+damage\\s+to\\s+a\\s+Forward" +
         ")\\s*,\\s+" +
         "(?<youmay>(?:you|your\\s+opponent)\\s+may\\s+)?" +
         "(?<effect>.+?)\\s*" +
-        "(?=\\s*\\[\\[br\\]\\]|\\s*When\\s+[^,]+?\\s+(?:attacks?|blocks?|enters?|leaves?|is\\s+(?:put|removed))|\\s*(?:《[^》]+》)+\\s*:|\\s*$)",
+        "(?=\\s*\\[\\[br\\]\\]|\\s*When\\s+[^,]+?\\s+(?:attacks?|blocks?|enters?|leaves?|is\\s+(?:put|removed)|deals?)|\\s*(?:《[^》]+》)+\\s*:|\\s*$)",
         Pattern.DOTALL
     );
 
@@ -743,6 +744,18 @@ public record CardData(
         "(?<youmay>(?:you|your\\s+opponent)\\s+may\\s+)?" +
         "(?<effect>.+?)\\s*" +
         "(?=\\s*\\[\\[br\\]\\]|\\s*When\\s+[^,]+?\\s+(?:attacks?|blocks?|enters?|leaves?|is\\s+(?:put|removed))|\\s*(?:《[^》]+》)+\\s*:|\\s*$)",
+        Pattern.DOTALL
+    );
+
+    /**
+     * Matches "When [CardName] or your [Element] Summon deals damage to a Forward, [effect]".
+     * Produces two {@link AutoAbility} entries: one for the named card's battle damage and one
+     * for the element-typed Summon's ability damage (e.g. Ramuh + Lightning Summon).
+     */
+    private static final Pattern BREAKTOUCH_SUMMON_PATTERN = Pattern.compile(
+        "(?i)When\\s+(?<card>[^,]+?)\\s+or\\s+your\\s+(?<element>\\w+)\\s+Summon\\s+deals?\\s+damage\\s+to\\s+a\\s+Forward\\s*,\\s+" +
+        "(?<effect>.+?)\\s*" +
+        "(?=\\s*\\[\\[br\\]\\]|\\s*When\\s+[^,]+?\\s+(?:attacks?|blocks?|enters?|leaves?|is\\s+(?:put|removed)|deals?)|\\s*(?:《[^》]+》)+\\s*:|\\s*$)",
         Pattern.DOTALL
     );
 
@@ -811,6 +824,7 @@ public record CardData(
             else if (triggerRaw.contains("damage zone"))                            trigger = "damage zone";
             else if (triggerRaw.contains("leaves"))                                 trigger = "leaves the field";
             else if (triggerRaw.contains("warp"))                                   trigger = "warp placed";
+            else if (triggerRaw.contains("deals damage"))                          trigger = "deals damage to forward";
             else                                                                     trigger = "enters the field";
 
             // For "warp placed", strip the " in your hand" suffix from the card name
@@ -846,6 +860,22 @@ public record CardData(
             if (effect.isEmpty()) continue;
             AutoAbility fa = parseAutoAbilityRestrictions(target, "warp counter removed", youMay, opponentMay, false, effect, 0);
             if (fa != null) result.add(fa);
+        }
+
+        // Third pass: "When [CardName] or your [Element] Summon deals damage to a Forward, [effect]"
+        // Produces two AutoAbility entries: battle-damage trigger and element-summon trigger.
+        Matcher sm = BREAKTOUCH_SUMMON_PATTERN.matcher(textForSearch);
+        while (sm.find()) {
+            String card    = sm.group("card").trim();
+            String element = sm.group("element").trim();
+            String elemCap = Character.toUpperCase(element.charAt(0)) + element.substring(1).toLowerCase(java.util.Locale.ROOT);
+            String effect  = SUMMON_MARKUP.matcher(sm.group("effect").trim()).replaceAll("").trim();
+            if (effect.isEmpty()) continue;
+            AutoAbility fa1 = parseAutoAbilityRestrictions(card, "deals damage to forward", false, false, false, effect, 0);
+            if (fa1 != null) result.add(fa1);
+            String summonTrigger = elemCap.toLowerCase(java.util.Locale.ROOT) + " summon deals damage to forward";
+            AutoAbility fa2 = parseAutoAbilityRestrictions(card, summonTrigger, false, false, false, effect, 0);
+            if (fa2 != null) result.add(fa2);
         }
 
         return List.copyOf(result);

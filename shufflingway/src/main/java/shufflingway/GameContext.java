@@ -343,6 +343,18 @@ public interface GameContext {
     void shieldJobForwardsCannotBeChosen(String job, String excludeName, boolean bySummons, boolean byAbilities);
 
     /**
+     * Registers that the Character at {@code t} cannot be broken this turn.
+     * Respected by {@link #breakTarget}; bypassed by {@link #forceTargetToBreakZone}.
+     */
+    void shieldCannotBeBroken(ForwardTarget t);
+
+    /**
+     * Grants {@code t} the Breaktouch battle effect until end of turn:
+     * when this Forward deals battle damage to a Forward, that Forward is broken.
+     */
+    void shieldBreaktouchBattle(ForwardTarget t);
+
+    /**
      * Moves the Forward at {@code t} (currently opponent-controlled) to the active player's field.
      * The card retains its current accumulated damage. No ETF auto-abilities fire.
      *

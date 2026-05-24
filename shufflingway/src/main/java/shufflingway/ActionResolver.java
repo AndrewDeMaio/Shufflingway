@@ -443,6 +443,18 @@ public class ActionResolver {
         "(?i)(?:it|they)\\s+cannot\\s+be\\s+chosen\\s+by\\s+your\\s+opponent's\\s+abilities\\.?"
     );
 
+    /** "It gains 'This Character/Forward/Monster cannot be broken.' until the end of the turn." */
+    private static final Pattern FOLLOWUP_CANNOT_BE_BROKEN = Pattern.compile(
+        "(?i)(?:it|they)\\s+gains?\\s+['\"]This\\s+(?:Forward|Character|Monster)\\s+cannot\\s+be\\s+broken\\.?['\"]" +
+        "\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn\\.?"
+    );
+
+    /** "It gains 'When this Forward deals battle damage to a Forward, break that Forward.' until the end of the turn." */
+    private static final Pattern FOLLOWUP_GAINS_BREAKTOUCH_BATTLE = Pattern.compile(
+        "(?i)(?:it|they)\\s+gains?\\s+['\"]When\\s+this\\s+Forward\\s+deals\\s+battle\\s+damage\\s+to\\s+a\\s+Forward,\\s+break\\s+that\\s+Forward\\.?['\"]" +
+        "\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn\\.?"
+    );
+
     // ---- Standalone cannot-be-chosen patterns ---------------------------------------
 
     /**
@@ -1449,6 +1461,8 @@ public class ActionResolver {
         if (FOLLOWUP_GAIN_CONTROL_EOT.matcher(followupText).find())                   return "GainControlEOT";
         if (FOLLOWUP_GAIN_CONTROL.matcher(followupText).find())                       return "GainControl";
         if (FOLLOWUP_GAINS_CANNOT_BE_CHOSEN.matcher(followupText).find())             return "GainsCannotBeChosen";
+        if (FOLLOWUP_CANNOT_BE_BROKEN.matcher(followupText).find())                  return "CannotBeBroken";
+        if (FOLLOWUP_GAINS_BREAKTOUCH_BATTLE.matcher(followupText).find())           return "BreaktouchBattle";
         if (FOLLOWUP_CANNOT_BE_CHOSEN_BOTH.matcher(followupText).find())              return "CannotBeChosenBoth";
         if (FOLLOWUP_CANNOT_BE_CHOSEN_SUMMONS.matcher(followupText).find())           return "CannotBeChosenSummons";
         if (FOLLOWUP_CANNOT_BE_CHOSEN_ABILITIES.matcher(followupText).find())         return "CannotBeChosenAbilities";
@@ -2868,6 +2882,30 @@ public class ActionResolver {
                         opponentOnly, selfOnly, condition, element, zone, opponentZone,
                         costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem);
                 ts.forEach(ctx::shieldAbilityOnlyDamage);
+                if (secondary != null) secondary.accept(ctx);
+            };
+        }
+
+        // --- "Cannot be broken" until end of turn ---
+        if (FOLLOWUP_CANNOT_BE_BROKEN.matcher(primaryFollowup).find()) {
+            return ctx -> {
+                ctx.logEntry(choosePrefix + " — Shield: cannot be broken until end of turn");
+                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
+                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem);
+                ts.forEach(ctx::shieldCannotBeBroken);
+                if (secondary != null) secondary.accept(ctx);
+            };
+        }
+
+        // --- Breaktouch battle: "When this Forward deals battle damage to a Forward, break that Forward" until EOT ---
+        if (FOLLOWUP_GAINS_BREAKTOUCH_BATTLE.matcher(primaryFollowup).find()) {
+            return ctx -> {
+                ctx.logEntry(choosePrefix + " — Breaktouch (battle damage) until end of turn");
+                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
+                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem);
+                ts.forEach(ctx::shieldBreaktouchBattle);
                 if (secondary != null) secondary.accept(ctx);
             };
         }

@@ -302,6 +302,13 @@ public class MainWindow {
 	private final Set<CardData> cannotBeChosenBySummons   = new java.util.HashSet<>();
 	/** Forwards that cannot be selected as targets by the opponent's abilities this turn. */
 	private final Set<CardData> cannotBeChosenByAbilities = new java.util.HashSet<>();
+	/** Characters that cannot be broken this turn. */
+	private final Set<CardData> cannotBeBrokenSet         = new java.util.HashSet<>();
+	/** Forwards that have Breaktouch (battle damage) until end of turn. */
+	private final Set<CardData> breaktouchBattleSet       = new java.util.HashSet<>();
+	/** The card currently dealing ability damage (null when no ability damage is in flight). */
+	private CardData currentBreaktouchSource    = null;
+	private boolean  currentBreaktouchSourceIsP1 = false;
 	/** Set to {@code true} while a Summon effect is resolving so {@link #selectCharacters} applies the correct protection set. */
 	private boolean currentResolutionIsSummon = false;
 
@@ -1442,6 +1449,7 @@ public class MainWindow {
                             nullifyAbilityOnlyDmgSet.clear(); perCardNonLethalDmgSet.clear();
                             nextOutgoingDmgZeroSet.clear();
                             cannotBeChosenBySummons.clear();  cannotBeChosenByAbilities.clear();
+                            cannotBeBrokenSet.clear();        breaktouchBattleSet.clear();
                             p1NonLethalProtection = false;    p2NonLethalProtection = false;
                             p1DmgReductionDisabled = false;   p2DmgReductionDisabled = false;
                             p1GlobalDmgReduction  = 0;        p2GlobalDmgReduction  = 0;
@@ -3164,6 +3172,29 @@ public class MainWindow {
 			dmgList.set(blockerIdx, dmgList.get(blockerIdx) + dmgToBlocker);
 			if (blockerIsP1) refreshP1ForwardSlot(blockerIdx); else refreshP2ForwardSlot(blockerIdx);
 		}
+
+		// Breaktouch (battle): temporary EOT grant — fires after main damage is resolved
+		if (!blockerBroken && dmgToBlocker > 0 && breaktouchBattleSet.contains(attacker)) {
+			logEntry((attackerIsP1 ? "" : "[P2] ") + attacker.name() + " — Breaktouch! "
+					+ (blockerIsP1 ? "" : "[P2] ") + blocker.name() + " is broken.");
+			if (blockerIsP1) breakP1Forward(blockerIdx); else breakP2Forward(blockerIdx);
+			blockerBroken = true;
+		}
+		if (!attackerBroken && dmgToAttacker > 0 && breaktouchBattleSet.contains(blocker)) {
+			logEntry((blockerIsP1 ? "" : "[P2] ") + blocker.name() + " — Breaktouch! "
+					+ (attackerIsP1 ? "" : "[P2] ") + attacker.name() + " is broken.");
+			if (attackerIsP1) breakP1Forward(attackerIdx); else breakP2Forward(attackerIdx);
+			attackerBroken = true;
+		}
+
+		// Permanent "deals damage to forward" auto-abilities (e.g. Mandragora, Tonberry)
+		if (dmgToBlocker > 0 && !blockerBroken) {
+			if (fireBreaktouchForDamage(attacker, attackerIsP1, blockerIsP1, blockerIdx)) blockerBroken = true;
+		}
+		if (dmgToAttacker > 0 && !attackerBroken) {
+			if (fireBreaktouchForDamage(blocker, blockerIsP1, attackerIsP1, attackerIdx)) attackerBroken = true;
+		}
+
 		if (!attackerBroken && !blockerBroken) {
 			logEntry("Both forwards survive combat");
 		}
@@ -5638,8 +5669,13 @@ public class MainWindow {
 			logEntry("[Summon] Resolving \"" + entry.source().name() + "\": " + effectText);
 			java.util.function.Consumer<GameContext> effect = ActionResolver.parse(effectText, entry.source());
 			if (effect != null) {
-				currentResolutionIsSummon = true;
-				try { effect.accept(ctx); } finally { currentResolutionIsSummon = false; }
+				currentResolutionIsSummon   = true;
+				currentBreaktouchSource     = entry.source();
+				currentBreaktouchSourceIsP1 = entry.isP1();
+				try { effect.accept(ctx); } finally {
+					currentResolutionIsSummon = false;
+					currentBreaktouchSource   = null;
+				}
 			} else logEntry("[ActionResolver] Summon effect not yet implemented: " + effectText);
 			triggerAutoAbilitiesForCastSummon(entry.isP1());
 			gameState.getP1BreakZone().add(entry.source());
@@ -8494,6 +8530,20 @@ public class MainWindow {
 				if (byAbilities) cannotBeChosenByAbilities.add(c);
 			}
 
+			@Override public void shieldCannotBeBroken(ForwardTarget t) {
+				CardData c = fieldCardData(t);
+				if (c == null) return;
+				cannotBeBrokenSet.add(c);
+				logEntry((t.isP1() ? "" : "[P2] ") + c.name() + " cannot be broken until end of turn");
+			}
+
+			@Override public void shieldBreaktouchBattle(ForwardTarget t) {
+				CardData c = fieldCardData(t);
+				if (c == null) return;
+				breaktouchBattleSet.add(c);
+				logEntry((t.isP1() ? "" : "[P2] ") + c.name() + " — Breaktouch (battle damage) until end of turn");
+			}
+
 			@Override public void shieldAllOwnForwardsCannotBeChosen(boolean bySummons, boolean byAbilities) {
 				List<CardData> fwds = isP1 ? p1ForwardCards : p2ForwardCards;
 				for (CardData c : fwds) {
@@ -9309,6 +9359,11 @@ public class MainWindow {
 			@Override public void dullAndFreezeTarget(ForwardTarget t) { dullTarget(t); freezeTarget(t); }
 
 			@Override public void breakTarget(ForwardTarget t) {
+				CardData breakCard = fieldCardData(t);
+				if (breakCard != null && cannotBeBrokenSet.contains(breakCard)) {
+					logEntry((t.isP1() ? "" : "[P2] ") + breakCard.name() + " cannot be broken (protected until end of turn)");
+					return;
+				}
 				switch (t.zone()) {
 					case FORWARD -> { if (t.isP1()) breakP1Forward(t.idx()); else breakP2Forward(t.idx()); }
 					case BACKUP  -> {
@@ -10104,7 +10159,60 @@ public class MainWindow {
 			if (isP1) breakP1Forward(idx); else breakP2Forward(idx);
 		} else {
 			if (isP1) refreshP1ForwardSlot(idx); else refreshP2ForwardSlot(idx);
+			// Fire "deals damage to forward" triggers from tracked ability source (e.g. Ramuh + Lightning Summon)
+			if (currentBreaktouchSource != null)
+				fireBreaktouchForDamage(currentBreaktouchSource, currentBreaktouchSourceIsP1, isP1, idx);
 		}
+	}
+
+	/**
+	 * Fires auto-ability "deals damage to forward" triggers for {@code source} dealing damage
+	 * to the surviving forward at {@code damagedIdx}.  Returns {@code true} if the forward was broken.
+	 * Handles two cases:
+	 * <ul>
+	 *   <li>Source card has a permanent "deals damage to forward" auto-ability (e.g. Mandragora)</li>
+	 *   <li>Source is a Lightning Summon and the casting player has a card with
+	 *       "lightning summon deals damage to forward" (e.g. Ramuh, Lord of Levin)</li>
+	 * </ul>
+	 */
+	private boolean fireBreaktouchForDamage(CardData source, boolean sourceIsP1,
+			boolean damagedIsP1, int damagedIdx) {
+		List<CardData> damagedList = damagedIsP1 ? p1ForwardCards : p2ForwardCards;
+		if (damagedIdx >= damagedList.size()) return false;
+		CardData damaged = damagedList.get(damagedIdx);
+
+		// Case 1: source card itself has "deals damage to forward" auto-ability
+		for (AutoAbility fa : source.autoAbilities()) {
+			if (!fa.trigger().equals("deals damage to forward")) continue;
+			if (!fa.triggerCard().equalsIgnoreCase(source.name())) continue;
+			logEntry((sourceIsP1 ? "" : "[P2] ") + source.name() + " — Breaktouch! "
+					+ (damagedIsP1 ? "" : "[P2] ") + damaged.name() + " is broken.");
+			if (damagedIsP1) breakP1Forward(damagedIdx); else breakP2Forward(damagedIdx);
+			return true;
+		}
+
+		// Case 2: source is a Summon of matching element; check caster's field for the Summon trigger
+		if (source.isSummon()) {
+			String[] sourceElems = source.elements();
+			List<CardData> casterFwds = new ArrayList<>(sourceIsP1 ? p1ForwardCards : p2ForwardCards);
+			for (CardData fieldCard : casterFwds) {
+				for (AutoAbility fa : fieldCard.autoAbilities()) {
+					String trig = fa.trigger();
+					if (!trig.endsWith(" summon deals damage to forward")) continue;
+					String elemPrefix = trig.substring(0, trig.indexOf(" summon")).toLowerCase(java.util.Locale.ROOT);
+					boolean elemMatch = false;
+					for (String e : sourceElems) {
+						if (e.toLowerCase(java.util.Locale.ROOT).equals(elemPrefix)) { elemMatch = true; break; }
+					}
+					if (!elemMatch) continue;
+					logEntry((sourceIsP1 ? "" : "[P2] ") + fieldCard.name() + " — Breaktouch (Summon)! "
+							+ (damagedIsP1 ? "" : "[P2] ") + damaged.name() + " is broken.");
+					if (damagedIsP1) breakP1Forward(damagedIdx); else breakP2Forward(damagedIdx);
+					return true;
+				}
+			}
+		}
+		return false;
 	}
 
 	// -------------------------------------------------------------------------
