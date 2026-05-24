@@ -378,7 +378,7 @@ public class MainWindow {
 		// --- Menu Bar ---
 		JMenuBar menuBar = new JMenuBar();
 		frame.setJMenuBar(menuBar);
-		menuBar.add(new FileMenu(frame, this::startGame,
+		menuBar.add(new FileMenu(frame, (p1Id, p2Id) -> startGame(p1Id, p2Id),
 				() -> applySidePanelSide(AppSettings.getSidePanelSide())));
 		multiplayerMenu = new MultiplayerMenu(frame,
 				() -> {
@@ -998,7 +998,7 @@ public class MainWindow {
 	// Game startup
 	// -------------------------------------------------------------------------
 
-	private void startGame(int deckId) {
+	private void startGame(int deckId, int p2DeckId) {
 		gameState.reset();
 		p1LbIndex = 0;
 		endOfTurnEffects.clear();
@@ -1021,20 +1021,13 @@ public class MainWindow {
 				try (DeckDatabase db = new DeckDatabase()) {
 					p1Cards = db.getDeckCardsDetailed(deckId);
 
-					List<scraper.DeckDatabase.DeckSummary> eligible = db.getDecksSummary()
+					scraper.DeckDatabase.DeckSummary p2Summary = db.getDecksSummary()
 							.stream()
-							.filter(d -> d.mainCardCount() == 50 && d.id() != deckId)
-							.collect(java.util.stream.Collectors.toList());
-					if (!eligible.isEmpty()) {
-						scraper.DeckDatabase.DeckSummary chosen =
-								eligible.get(new java.util.Random().nextInt(eligible.size()));
-						p2DeckName = chosen.name();
-						p2Cards    = db.getDeckCardsDetailed(chosen.id());
-					} else {
-						// Only one deck available — P2 uses the same deck as P1
-						p2DeckName = "(same as P1)";
-						p2Cards = new java.util.ArrayList<>(p1Cards);
-					}
+							.filter(d -> d.id() == p2DeckId)
+							.findFirst()
+							.orElseThrow();
+					p2DeckName = p2Summary.name();
+					p2Cards    = db.getDeckCardsDetailed(p2DeckId);
 				}
 				return null;
 			}
@@ -1070,30 +1063,28 @@ public class MainWindow {
 				refreshP1LimitLabel();
 				drawOpeningHand();
 
-				if (p2Cards != null) {
-					List<CardData> p2Main = new ArrayList<>();
-					List<CardData> p2Lb   = new ArrayList<>();
-					for (DeckCardDetail card : p2Cards) {
-						String tx = card.textEn();
-						CardData cd = new CardData(card.imageUrl(), card.name(), card.element(),
-								card.cost(), card.power(), card.type(), card.isLb(), card.lbCost(), card.exBurst(),
-								card.multicard(), CardData.parseTraits(tx),
-								CardData.parseWarpValue(tx), CardData.parseWarpCost(tx),
-								CardData.parsePrimingTarget(tx), CardData.parsePrimingCost(tx),
-								CardData.parseActionAbilities(tx), CardData.parseAutoAbilities(tx),
-								CardData.parseFieldAbilities(tx, card.type()),
-								CardData.parseIfControlBoosts(tx, card.type()),
-								card.job(), card.category1(), card.category2(), tx);
-						if (card.isLb()) p2Lb.add(cd);
-						else             p2Main.add(cd);
-					}
-					gameState.initializeP2Deck(p2Main);
-					gameState.initializeP2LbDeck(p2Lb);
-					refreshP2DeckLabel();
-					refreshP2HandCountLabel();
-					refreshP2LimitButton();
-					logEntry("P2 deck: " + p2DeckName);
+				List<CardData> p2Main = new ArrayList<>();
+				List<CardData> p2Lb   = new ArrayList<>();
+				for (DeckCardDetail card : p2Cards) {
+					String tx = card.textEn();
+					CardData cd = new CardData(card.imageUrl(), card.name(), card.element(),
+							card.cost(), card.power(), card.type(), card.isLb(), card.lbCost(), card.exBurst(),
+							card.multicard(), CardData.parseTraits(tx),
+							CardData.parseWarpValue(tx), CardData.parseWarpCost(tx),
+							CardData.parsePrimingTarget(tx), CardData.parsePrimingCost(tx),
+							CardData.parseActionAbilities(tx), CardData.parseAutoAbilities(tx),
+							CardData.parseFieldAbilities(tx, card.type()),
+							CardData.parseIfControlBoosts(tx, card.type()),
+							card.job(), card.category1(), card.category2(), tx);
+					if (card.isLb()) p2Lb.add(cd);
+					else             p2Main.add(cd);
 				}
+				gameState.initializeP2Deck(p2Main);
+				gameState.initializeP2LbDeck(p2Lb);
+				refreshP2DeckLabel();
+				refreshP2HandCountLabel();
+				refreshP2LimitButton();
+				logEntry("P2 deck: " + p2DeckName);
 			}
 		}.execute();
 	}

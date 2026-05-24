@@ -2,7 +2,7 @@ package shufflingway.menu;
 
 import java.awt.event.ActionEvent;
 import java.awt.event.KeyEvent;
-import java.util.function.IntConsumer;
+import java.util.function.BiConsumer;
 
 import javax.swing.JFrame;
 import javax.swing.JMenu;
@@ -21,7 +21,7 @@ import shufflingway.dialog.PreferencesDialog;
  */
 public class FileMenu extends JMenu {
 
-    public FileMenu(JFrame owner, IntConsumer startGame, Runnable onLayoutChanged) {
+    public FileMenu(JFrame owner, BiConsumer<Integer, Integer> startGame, Runnable onLayoutChanged) {
         super("File");
 
         JMenuItem newGame = new JMenuItem("New Game");
@@ -29,8 +29,9 @@ public class FileMenu extends JMenu {
         newGame.addActionListener((ActionEvent e) -> {
             DeckSelectDialog dialog = new DeckSelectDialog(owner);
             dialog.setVisible(true);
-            int deckId = dialog.getSelectedDeckId();
-            if (deckId >= 0) startGame.accept(deckId);
+            int p1Id = dialog.getPlayerDeckId();
+            int p2Id = dialog.getCpuDeckId();
+            if (p1Id >= 0 && p2Id >= 0) startGame.accept(p1Id, p2Id);
         });
 
         JMenuItem deckManager = new JMenuItem("Deck Manager");
