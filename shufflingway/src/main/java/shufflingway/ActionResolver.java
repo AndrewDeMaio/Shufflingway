@@ -2547,14 +2547,37 @@ public class ActionResolver {
 
         // --- Activate followup ---
         if (FOLLOWUP_ACTIVATE.matcher(primaryFollowup).find()) {
+            // Detect "It gains +N power [traits] until end of turn" secondary and apply inline.
+            final int activateBoost;
+            final EnumSet<CardData.Trait> activateTraits;
+            final Consumer<GameContext> activateSecondary;
+            {
+                Matcher bm = secondaryText != null ? FOLLOWUP_POWER_BOOST.matcher(secondaryText) : null;
+                if (bm == null) { bm = secondaryText != null ? FOLLOWUP_POWER_BOOST_UNTIL.matcher(secondaryText) : null; }
+                if (bm != null && bm.find()) {
+                    activateBoost      = Integer.parseInt(bm.group(1));
+                    activateTraits     = parseTraits(bm.group(2));
+                    activateSecondary  = null;
+                } else {
+                    activateBoost      = 0;
+                    activateTraits     = EnumSet.noneOf(CardData.Trait.class);
+                    activateSecondary  = secondary;
+                }
+            }
+            String activateLogSuffix = activateBoost > 0 ? boostLogSuffix(activateBoost, activateTraits) : "";
             return ctx -> {
-                ctx.logEntry(choosePrefix + " — Activate");
+                ctx.logEntry(choosePrefix + " — Activate" + activateLogSuffix);
                 List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
                         opponentOnly, selfOnly, condition, element, zone, opponentZone,
                         costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem);
                 sortedByIdxDesc(ts, true) .forEach(t -> ctx.activateTarget(t));
                 sortedByIdxDesc(ts, false).forEach(t -> ctx.activateTarget(t));
-                if (secondary != null) secondary.accept(ctx);
+                if (activateBoost > 0) {
+                    sortedByIdxDesc(ts, true) .forEach(t -> ctx.boostTarget(t, activateBoost, activateTraits));
+                    sortedByIdxDesc(ts, false).forEach(t -> ctx.boostTarget(t, activateBoost, activateTraits));
+                } else if (activateSecondary != null) {
+                    activateSecondary.accept(ctx);
+                }
             };
         }
 
