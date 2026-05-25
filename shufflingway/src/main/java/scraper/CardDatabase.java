@@ -135,7 +135,8 @@ public class CardDatabase implements AutoCloseable {
                     : card.textEn.replaceAll("(?si)\\[\\[i\\]\\](.*?)\\[\\[/\\]\\]", "$1")
                                  .replace("<br />", "[[br]]")
                                  .replaceAll("(?i)</?p>", "")
-                                 .replace("&amp;", "&");
+                                 .replace("&amp;", "&")
+                                 .replace("orCard", "or Card");
             ps.setString(13, textEn);
             ps.setString(14, card.thumbName);
             ps.setString(15, card.imageUrl);

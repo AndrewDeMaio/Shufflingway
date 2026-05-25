@@ -1119,6 +1119,14 @@ public record CardData(
         Pattern.DOTALL
     );
 
+    /**
+     * Matches "You cannot play {name1} or Card Name {name2} while already in control of either Character."
+     * Group {@code name2} captures the Card Name that pairs with this card in the play restriction.
+     */
+    private static final Pattern ALIAS_PLAY_RESTRICTION_PATTERN = Pattern.compile(
+        "(?i)^You\\s+cannot\\s+play\\s+(?<name1>.+?)\\s+or\\s+Card\\s+Name\\s+(?<name2>.+?)\\s+while\\s+already\\s+in\\s+control\\s+of\\s+either\\s+Character\\.?\\s*$"
+    );
+
     /** Matches "[CardName] is also a Monster in all situations." */
     private static final Pattern IS_ALSO_MONSTER_PATTERN = Pattern.compile(
         "(?i)^.+?\\s+is\\s+also\\s+a\\s+Monster\\s+in\\s+all\\s+situations\\.?\\s*$"
@@ -1197,9 +1205,10 @@ public record CardData(
             if (FA_RESTRICTION_SENTENCE.matcher(seg).find()) continue;
 
             // Name/type alias declarations and enter-dull — handled as static card properties
-            if (IS_ALSO_CARD_NAME_PATTERN.matcher(seg).find())  continue;
-            if (IS_ALSO_MONSTER_PATTERN.matcher(seg).find())    continue;
-            if (ENTERS_FIELD_DULL_PATTERN.matcher(seg).matches()) continue;
+            if (IS_ALSO_CARD_NAME_PATTERN.matcher(seg).find())         continue;
+            if (IS_ALSO_MONSTER_PATTERN.matcher(seg).find())           continue;
+            if (ENTERS_FIELD_DULL_PATTERN.matcher(seg).matches())      continue;
+            if (ALIAS_PLAY_RESTRICTION_PATTERN.matcher(seg).matches()) continue;
 
             result.add(new FieldAbility(seg, damageThreshold));
         }
@@ -1512,6 +1521,20 @@ public record CardData(
             }
         }
         return result != null ? java.util.Collections.unmodifiableSet(result) : java.util.Set.of();
+    }
+
+    /**
+     * Returns the Card Name that pairs with this card in the
+     * "You cannot play {name} or Card Name X while already in control of either Character"
+     * restriction, or {@code null} if no such restriction exists.
+     */
+    public String aliasPlayRestrictionName() {
+        for (String seg : rawFieldSegments()) {
+            Matcher m = ALIAS_PLAY_RESTRICTION_PATTERN.matcher(seg);
+            if (!m.matches()) continue;
+            return m.group("name2").trim();
+        }
+        return null;
     }
 
     /**
