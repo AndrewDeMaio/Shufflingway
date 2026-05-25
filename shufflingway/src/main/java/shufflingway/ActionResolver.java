@@ -304,6 +304,26 @@ public class ActionResolver {
         "(?i)Return\\s+it\\s+to\\s+your\\s+hand\\.?"
     );
 
+    /** Matches "Return [name] to its owner's hand." — named card, not a pronoun. */
+    private static final Pattern RETURN_NAMED_TO_OWNERS_HAND = Pattern.compile(
+        "(?i)Return\\s+(?!(?:it|them)\\b)(?<named>.+?)\\s+to\\s+its\\s+owner(?:'s|s')?\\s+hand[.!]?"
+    );
+
+    /** Matches "Return [name] to your hand." — named card, not a pronoun. */
+    private static final Pattern RETURN_NAMED_TO_YOUR_HAND_STANDALONE = Pattern.compile(
+        "(?i)Return\\s+(?!(?:it|them)\\b)(?<named>.+?)\\s+to\\s+your\\s+hand[.!]?"
+    );
+
+    /**
+     * Matches "If its power has become N or less/more, return [name] to your/its owner's hand."
+     * Groups: {@code threshold} — power value; {@code cmp} — "less" or "more";
+     * {@code name} — card name; {@code toowner} — non-null when "its owner's hand".
+     */
+    private static final Pattern CONDITIONAL_POWER_RETURN = Pattern.compile(
+        "(?i)If\\s+its?\\s+power\\s+has\\s+become\\s+(?<threshold>\\d+)\\s+or\\s+(?<cmp>less|more),\\s+" +
+        "return\\s+(?<name>.+?)\\s+to\\s+(?:(?<toowner>its\\s+owner(?:'s|s')?)\\s+|your\\s+)hand[.!]?"
+    );
+
     /** Matches "Put it at the top or bottom of its owner's deck." — player chooses placement. Also handles "Your opponent puts it…" */
     private static final Pattern FOLLOWUP_PUT_TOP_OR_BOTTOM_OF_DECK = Pattern.compile(
         "(?i)(?:Your\\s+opponent\\s+puts?\\s+it|Put\\s+it)\\s+at\\s+the\\s+top\\s+or\\s+bottom\\s+of\\s+its\\s+owner's\\s+deck\\.?"
@@ -1399,6 +1419,9 @@ public class ActionResolver {
         result = tryParseOpponentHandRfp(effectText);
         if (result != null) return result;
 
+        result = tryParseReturnNamedToHand(effectText);
+        if (result != null) return result;
+
         result = tryParseRemoveNamedFromGame(effectText, source);
         if (result != null) return result;
 
@@ -1682,6 +1705,7 @@ public class ActionResolver {
         if (tryParseRevealSelectHandRfp(effectText) != null)               return "RevealSelectHandRfp";
         if (tryParseOpponentRandomHandRfp(effectText) != null)             return "OpponentRandomHandRfp";
         if (tryParseOpponentHandRfp(effectText) != null)                   return "OpponentHandRfp";
+        if (tryParseReturnNamedToHand(effectText) != null)                   return "ReturnNamedToHand";
         if (tryParseRemoveNamedFromGame(effectText, source) != null)        return "RemoveNamedFromGame";
         if (tryParseOpponentDrawThenRandomDiscard(effectText) != null)      return "OpponentDrawThenRandomDiscard";
         if (tryParseOpponentRandomDiscard(effectText) != null)              return "OpponentRandomDiscard";
@@ -2186,17 +2210,19 @@ public class ActionResolver {
         // (applied to selected targets) and a secondary standalone effect that follows.
         // E.g. "Break it. <name> deals you 1 damage." → primary="Break it", secondary parsed separately.
         final String primaryFollowup;
+        final String secondaryText;
         final Consumer<GameContext> secondary;
         {
             int dotSpaceIdx = followup.indexOf(". ");
             if (dotSpaceIdx >= 0) {
                 primaryFollowup = followup.substring(0, dotSpaceIdx).trim();
-                String secondaryText = followup.substring(dotSpaceIdx + 2).trim();
+                secondaryText   = followup.substring(dotSpaceIdx + 2).trim();
                 Consumer<GameContext> parsed = secondaryText.isEmpty() ? null : parse(secondaryText, source);
                 secondary = (parsed != null) ? parsed
                         : ctx -> ctx.logEntry("[ActionResolver] Secondary followup not yet implemented: " + secondaryText);
             } else {
                 primaryFollowup = followup;
+                secondaryText   = null;
                 secondary = null;
             }
         }
@@ -2879,6 +2905,31 @@ public class ActionResolver {
             int boost = Integer.parseInt(boostUntilM.group(1));
             EnumSet<CardData.Trait> traits = parseTraits(boostUntilM.group(2));
             String logSuffix = boostLogSuffix(boost, traits);
+
+            // Detect "If its power has become N or less/more, return [name] to hand" secondary
+            // and handle it inline so we have access to the target list for the power check.
+            final String    crCard;
+            final int       crThreshold;
+            final boolean   crOrLess;
+            final boolean   crToOwner;
+            final Consumer<GameContext> boostSecondary;
+            {
+                Matcher crM = secondaryText != null ? CONDITIONAL_POWER_RETURN.matcher(secondaryText) : null;
+                if (crM != null && crM.find()) {
+                    crCard       = crM.group("name").trim();
+                    crThreshold  = Integer.parseInt(crM.group("threshold"));
+                    crOrLess     = "less".equalsIgnoreCase(crM.group("cmp"));
+                    crToOwner    = crM.group("toowner") != null;
+                    boostSecondary = null;
+                } else {
+                    crCard       = null;
+                    crThreshold  = 0;
+                    crOrLess     = false;
+                    crToOwner    = false;
+                    boostSecondary = secondary;
+                }
+            }
+
             return ctx -> {
                 ctx.logEntry(choosePrefix + logSuffix);
                 List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
@@ -2886,7 +2937,21 @@ public class ActionResolver {
                         costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem);
                 sortedByIdxDesc(ts, true) .forEach(t -> ctx.boostTarget(t, boost, traits));
                 sortedByIdxDesc(ts, false).forEach(t -> ctx.boostTarget(t, boost, traits));
-                if (secondary != null) secondary.accept(ctx);
+                if (crCard != null) {
+                    boolean condMet = ts.stream().anyMatch(t -> {
+                        int p = ctx.effectiveTargetPower(t);
+                        return crOrLess ? p <= crThreshold : p >= crThreshold;
+                    });
+                    if (condMet) {
+                        ctx.logEntry("Condition met (power " + (crOrLess ? "≤ " : "≥ ") + crThreshold + "): return " + crCard + " to " + (crToOwner ? "owner's" : "your") + " hand");
+                        if (crToOwner) ctx.returnNamedCardToOwnersHand(crCard);
+                        else           ctx.returnNamedCardToYourHand(crCard);
+                    } else {
+                        ctx.logEntry("Condition not met: " + crCard + " stays (power " + (crOrLess ? "> " : "< ") + crThreshold + ")");
+                    }
+                } else if (boostSecondary != null) {
+                    boostSecondary.accept(ctx);
+                }
             };
         }
 
@@ -3451,6 +3516,27 @@ public class ActionResolver {
             ctx.logEntry("Effect: Opponent removes " + count + " hand card(s) from the game");
             ctx.forceOpponentHandRfp(count);
         };
+    }
+
+    /** Parses "Return [name] to its owner's hand." or "Return [name] to your hand." */
+    private static Consumer<GameContext> tryParseReturnNamedToHand(String text) {
+        Matcher m = RETURN_NAMED_TO_OWNERS_HAND.matcher(text);
+        if (m.find()) {
+            String named = m.group("named").trim();
+            return ctx -> {
+                ctx.logEntry("Effect: Return " + named + " to its owner's hand");
+                ctx.returnNamedCardToOwnersHand(named);
+            };
+        }
+        m = RETURN_NAMED_TO_YOUR_HAND_STANDALONE.matcher(text);
+        if (m.find()) {
+            String named = m.group("named").trim();
+            return ctx -> {
+                ctx.logEntry("Effect: Return " + named + " to your hand");
+                ctx.returnNamedCardToYourHand(named);
+            };
+        }
+        return null;
     }
 
     /** Parses "Remove [CardName] from the game." — removes a named card from the field. */

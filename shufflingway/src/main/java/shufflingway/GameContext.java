@@ -505,6 +505,18 @@ public interface GameContext {
     void removeNamedCardFromGame(String cardName);
 
     /**
+     * Searches the field for a card matching {@code cardName} and returns it to its owner's hand.
+     * P1-zone cards go to P1's hand; P2-zone cards go to P2's hand.
+     */
+    void returnNamedCardToOwnersHand(String cardName);
+
+    /**
+     * Searches the field for a card matching {@code cardName} and returns it to your (P1's) hand.
+     * If the card is the currently resolving Summon, it returns to hand instead of the Break Zone.
+     */
+    void returnNamedCardToYourHand(String cardName);
+
+    /**
      * Removes the named card from the current Battle — marks it as having escaped so that
      * {@code resolveCombat} skips damage resolution for that pairing.
      * Only meaningful while the card is in Battle (attacking or blocking).

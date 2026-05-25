@@ -324,6 +324,8 @@ public class MainWindow {
 	private boolean  currentBreaktouchSourceIsP1 = false;
 	/** Set to {@code true} while a Summon effect is resolving so {@link #selectCharacters} applies the correct protection set. */
 	private boolean currentResolutionIsSummon = false;
+	/** Set to {@code true} by {@code returnNamedCardToYourHand} when the Summon itself is being returned to hand. */
+	private boolean pendingSummonReturnToHand = false;
 
 	/**
 	 * Forwards currently stolen by P1 from P2, mapped to their restoration condition:
@@ -5118,15 +5120,23 @@ public class MainWindow {
 				currentResolutionIsSummon   = true;
 				currentBreaktouchSource     = entry.source();
 				currentBreaktouchSourceIsP1 = entry.isP1();
+				pendingSummonReturnToHand   = false;
 				try { effect.accept(ctx); } finally {
 					currentResolutionIsSummon = false;
 					currentBreaktouchSource   = null;
 				}
 			} else logEntry("[ActionResolver] Summon effect not yet implemented: " + effectText);
 			triggerAutoAbilitiesForCastSummon(entry.isP1());
-			gameState.getP1BreakZone().add(entry.source());
-			logEntry("\"" + entry.source().name() + "\" → Break Zone");
-			refreshP1BreakLabel();
+			if (pendingSummonReturnToHand) {
+				gameState.getP1Hand().add(entry.source());
+				logEntry("\"" + entry.source().name() + "\" → Hand");
+				refreshP1HandLabel();
+				pendingSummonReturnToHand = false;
+			} else {
+				gameState.getP1BreakZone().add(entry.source());
+				logEntry("\"" + entry.source().name() + "\" → Break Zone");
+				refreshP1BreakLabel();
+			}
 		} else {
 			ActionResolver.resolve(entry.ability(), entry.source(), gameState, ctx, entry.xValue());
 			refreshP1HandLabel();
@@ -8853,6 +8863,46 @@ public class MainWindow {
 					}
 				}
 				logEntry("[Warning] removeNamedCardFromGame: \"" + cardName + "\" not found on field");
+			}
+
+			@Override public void returnNamedCardToOwnersHand(String cardName) {
+				for (int i = 0; i < p1ForwardCards.size(); i++) {
+					if (p1ForwardCards.get(i).name().equalsIgnoreCase(cardName)) { returnP1ForwardToHand(i); return; }
+				}
+				for (int i = 0; i < p1BackupCards.length; i++) {
+					if (p1BackupCards[i] != null && p1BackupCards[i].name().equalsIgnoreCase(cardName)) { returnP1BackupToHand(i); return; }
+				}
+				for (int i = 0; i < p1MonsterCards.size(); i++) {
+					if (p1MonsterCards.get(i).name().equalsIgnoreCase(cardName)) { returnP1MonsterToHand(i); return; }
+				}
+				for (int i = 0; i < p2ForwardCards.size(); i++) {
+					if (p2ForwardCards.get(i).name().equalsIgnoreCase(cardName)) { returnP2ForwardToHand(i); return; }
+				}
+				for (int i = 0; i < p2BackupCards.length; i++) {
+					if (p2BackupCards[i] != null && p2BackupCards[i].name().equalsIgnoreCase(cardName)) { returnP2BackupToHand(i); return; }
+				}
+				for (int i = 0; i < p2MonsterCards.size(); i++) {
+					if (p2MonsterCards.get(i).name().equalsIgnoreCase(cardName)) { returnP2MonsterToHand(i); return; }
+				}
+				logEntry("[Warning] returnNamedCardToOwnersHand: \"" + cardName + "\" not found on field");
+			}
+
+			@Override public void returnNamedCardToYourHand(String cardName) {
+				if (currentResolutionIsSummon && currentBreaktouchSource != null
+						&& currentBreaktouchSource.name().equalsIgnoreCase(cardName)) {
+					pendingSummonReturnToHand = true;
+					return;
+				}
+				for (int i = 0; i < p1ForwardCards.size(); i++) {
+					if (p1ForwardCards.get(i).name().equalsIgnoreCase(cardName)) { returnP1ForwardToHand(i); return; }
+				}
+				for (int i = 0; i < p1BackupCards.length; i++) {
+					if (p1BackupCards[i] != null && p1BackupCards[i].name().equalsIgnoreCase(cardName)) { returnP1BackupToHand(i); return; }
+				}
+				for (int i = 0; i < p1MonsterCards.size(); i++) {
+					if (p1MonsterCards.get(i).name().equalsIgnoreCase(cardName)) { returnP1MonsterToHand(i); return; }
+				}
+				logEntry("[Warning] returnNamedCardToYourHand: \"" + cardName + "\" not found on field");
 			}
 
 			@Override public void removeFromBattle(String cardName) {
