@@ -606,6 +606,11 @@ public class ActionResolver {
         "(?i)During\\s+this\\s+turn,\\s+if\\s+(?<card>.+?)\\s+is\\s+dealt\\s+damage\\s+by\\s+your\\s+opponent's\\s+Summons?\\s+or\\s+abilities,\\s+the\\s+damage\\s+becomes\\s+0\\s+instead\\.?"
     );
 
+    /** "During this turn, the next damage dealt to [name] is reduced by N instead." — named card, not pronoun. */
+    private static final Pattern STANDALONE_SHIELD_NEXT_DMG_REDUCTION_NAMED = Pattern.compile(
+        "(?i)During\\s+this\\s+turn,\\s+the\\s+next\\s+damage\\s+dealt\\s+to\\s+(?!(?:it|them)\\b)(?<name>[A-Za-z][^.]+?)\\s+is\\s+reduced\\s+by\\s+(?<reduction>\\d+)\\s+instead[.!]?"
+    );
+
     /** "The damage dealt to Forwards opponent controls cannot be reduced this turn." */
     private static final Pattern STANDALONE_DISABLE_OPPONENT_DMG_REDUCTION = Pattern.compile(
         "(?i)The\\s+damage\\s+dealt\\s+to\\s+Forwards?\\s+(?:your\\s+)?opponent\\s+controls\\s+cannot\\s+be\\s+reduced\\s+this\\s+turn\\.?"
@@ -4343,6 +4348,36 @@ public class ActionResolver {
             return ctx -> {
                 ctx.logEntry("Effect: Opponent's Forwards cannot benefit from damage reduction this turn");
                 ctx.disableOpponentDamageReduction();
+            };
+        }
+
+        // "During this turn, the next damage dealt to [name] is reduced by N instead."
+        Matcher namedRedM = STANDALONE_SHIELD_NEXT_DMG_REDUCTION_NAMED.matcher(text);
+        if (namedRedM.find()) {
+            String cardName = namedRedM.group("name").trim();
+            int reduction   = Integer.parseInt(namedRedM.group("reduction"));
+            return ctx -> {
+                ctx.logEntry("Effect: " + cardName + " — next damage reduced by " + reduction);
+                boolean actorIsP1 = ctx.isP1();
+                int ownCount  = actorIsP1 ? ctx.p1ForwardCount() : ctx.p2ForwardCount();
+                int oppCount  = actorIsP1 ? ctx.p2ForwardCount() : ctx.p1ForwardCount();
+                for (int i = 0; i < ownCount; i++) {
+                    CardData c = actorIsP1 ? ctx.p1Forward(i) : ctx.p2Forward(i);
+                    if (c.name().equalsIgnoreCase(cardName)) {
+                        ctx.shieldNextIncomingDamageReduction(
+                                new ForwardTarget(actorIsP1, i, ForwardTarget.CardZone.FORWARD), reduction);
+                        return;
+                    }
+                }
+                for (int i = 0; i < oppCount; i++) {
+                    CardData c = actorIsP1 ? ctx.p2Forward(i) : ctx.p1Forward(i);
+                    if (c.name().equalsIgnoreCase(cardName)) {
+                        ctx.shieldNextIncomingDamageReduction(
+                                new ForwardTarget(!actorIsP1, i, ForwardTarget.CardZone.FORWARD), reduction);
+                        return;
+                    }
+                }
+                ctx.logEntry("[Warning] " + cardName + " not found on field for damage reduction");
             };
         }
 

@@ -18,6 +18,9 @@ public interface GameContext {
     /** Appends a timestamped line to the game log. */
     void logEntry(String message);
 
+    /** Returns {@code true} if P1 is the ability user for this context. */
+    boolean isP1();
+
     // ---- P1 forwards --------------------------------------------------------
 
     /** Number of P1 forwards currently on the field. */

@@ -7489,6 +7489,7 @@ public class MainWindow {
 	private GameContext buildGameContext(boolean isP1, boolean exBurst) {
 		return new GameContext() {
 			@Override public void logEntry(String msg) { MainWindow.this.logEntry(msg); }
+			@Override public boolean isP1() { return isP1; }
 
 			@Override public int p1ForwardCount()                    { return p1ForwardCards.size(); }
 			@Override public CardData p1Forward(int idx) {
