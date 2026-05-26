@@ -38,5 +38,5 @@ Once the application has been installed, you can update to any new releases from
 
 * Open the Card Browser to initiate fetching card data from the official API.  
 * After this completes, create a deck in the Deck Manager.
-* Once a 50-card deck has been created, you can either create another 50-card deck for the CPU to randomly choose, or do a mirror match against the CPU.
+* Once a 50-card deck has been created, you can either create another 50-card deck for the CPU, or do a mirror match.
 * NOTE: Multiplayer is a work-in-progress!
