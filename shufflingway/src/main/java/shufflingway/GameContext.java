@@ -834,4 +834,11 @@ public interface GameContext {
      * automatically at end of turn if unused.
      */
     void applyNextCastCostReduction(CostReductionModifier modifier);
+
+    /**
+     * Returns {@code true} if the most recent card cast by the ability user
+     * was paid entirely by dulling Backups (no hand-card discards were used).
+     * Used for "If the CP paid to cast X was only produced by Backups" conditionals.
+     */
+    boolean castWasPaidByBackupsOnly();
 }

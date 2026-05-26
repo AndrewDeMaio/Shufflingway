@@ -338,6 +338,8 @@ public class MainWindow {
 	private final java.util.IdentityHashMap<CardData, String> stolenForwards = new java.util.IdentityHashMap<>();
 	/** Distinct element types used to pay the most recent card's CP cost; checked by castPaymentMinElements conditions. */
 	private int lastCastPaymentDistinctElements = 0;
+	/** True if the most recently cast card was paid entirely by dulling Backups (no hand discards). */
+	private boolean lastCastWasPaidByBackupsOnly = false;
 	/** True while a card is being placed as a direct result of being cast from hand; gates castOnly field abilities. */
 	private boolean lastCardWasCast = false;
 	/** True while a card is entering the field via Warp resolution; gates warpOnly field abilities. */
@@ -5019,6 +5021,7 @@ public class MainWindow {
 		// Record distinct element types used for payment (checked by castPaymentMinElements field abilities)
 		lastCastPaymentDistinctElements = (int) execCpAccum.keySet().stream()
 				.filter(e -> !e.isEmpty()).distinct().count();
+		lastCastWasPaidByBackupsOnly = discardIndices.isEmpty() && !backupDullIndices.isEmpty();
 		gameState.removeFromHand(cardHandIdx);
 		activeCostReductions.removeIf(m -> m.matches(card));
 		p1CardsCastThisTurn++;
@@ -9426,6 +9429,7 @@ public class MainWindow {
 			}
 
 			@Override public boolean isExBurst() { return exBurst; }
+			@Override public boolean castWasPaidByBackupsOnly() { return lastCastWasPaidByBackupsOnly; }
 		};
 	}
 

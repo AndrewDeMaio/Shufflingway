@@ -42,7 +42,12 @@ public final class CardFilters {
 
     public static boolean meetsCostConstraint(int cardCost, int costVal, String costCmp) {
         if (costVal < 0) return true;
-        if (costCmp == null)            return cardCost == costVal;
+        if (costCmp == null) return cardCost == costVal;
+        // "or_N" encodes a two-value exact filter: cost == costVal OR cost == N
+        if (costCmp.startsWith("or_")) {
+            int val2 = Integer.parseInt(costCmp.substring(3));
+            return cardCost == costVal || cardCost == val2;
+        }
         return switch (costCmp.toLowerCase()) {
             case "less" -> cardCost <= costVal;
             case "more" -> cardCost >= costVal;

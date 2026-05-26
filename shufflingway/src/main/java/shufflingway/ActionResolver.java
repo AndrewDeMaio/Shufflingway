@@ -39,7 +39,8 @@ public class ActionResolver {
      *   <li>Group {@code targets}   — card type(s): "Forward(s)", "Forward(s) or Monster(s)",
      *                                 "Backup(s)", or "Character(s)"</li>
      *   <li>Group {@code cost}      — optional CP cost value, e.g. "3" in "of cost 3 or less"</li>
-     *   <li>Group {@code costcmp}   — optional comparison: "less" or "more" (absent = exact match)</li>
+     *   <li>Group {@code costcmp}   — optional: "less", "more", or a second digit value for
+     *                                 "cost N or M" two-value filters (absent = exact match)</li>
      *   <li>Group {@code control}   — optional: "opponent controls", "your opponent controls",
      *                                 or "you control"</li>
      *   <li>Group {@code excludename} — optional card name to exclude, from "other than Card Name X"</li>
@@ -63,7 +64,7 @@ public class ActionResolver {
         "(?:\\s+of\\s+any\\s+Element\\s+except\\s+(?<excludeelem>" +
             "(?:Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)" +
             "(?:\\s+and\\s+(?:Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark))*))?" +
-        "(?:\\s+of\\s+cost\\s+(?<cost>\\d+)(?:\\s+or\\s+(?<costcmp>less|more))?)?" +
+        "(?:\\s+of\\s+cost\\s+(?<cost>\\d+)(?:\\s+or\\s+(?<costcmp>less|more|\\d+))?)?" +
         "(?:\\s+of\\s+power\\s+(?<power>\\d+)(?:\\s+or\\s+(?<powercmp>less|more))?)?" +
         "(?:\\s+(?<control>(?:your\\s+)?opponent\\s+controls|you\\s+control))?" +
         "(?:\\s+other\\s+than\\s+(?:Card\\s+Name\\s+)?(?<excludename>\\S+(?:\\s+\\([^)]+\\))?))?"+
@@ -1364,6 +1365,15 @@ public class ActionResolver {
         "At\\s+the\\s+end\\s+of\\s+that\\s+turn,\\s+you\\s+lose\\s+the\\s+game[.!]?"
     );
 
+    /**
+     * Matches "If the CP paid to cast [Name] was only produced by Backups, [also] draw N card(s)."
+     * Group {@code count} — number of cards to draw.
+     */
+    private static final Pattern BACKUP_CP_DRAW = Pattern.compile(
+        "(?i)If\\s+the\\s+CP\\s+paid\\s+to\\s+cast\\s+.+?\\s+was\\s+only\\s+produced\\s+by\\s+Backups?," +
+        "\\s+(?:also\\s+)?draw\\s+(?<count>\\d+)\\s+cards?[.!]?"
+    );
+
     // -------------------------------------------------------------------------
     // Public API
     // -------------------------------------------------------------------------
@@ -1555,6 +1565,9 @@ public class ActionResolver {
         if (result != null) return result;
 
         result = tryParseShuffleDeck(effectText);
+        if (result != null) return result;
+
+        result = tryParseBackupCpDraw(effectText);
         if (result != null) return result;
 
         // Compound-sentence fallback: split on ". " between sentences and compose effects.
@@ -1796,6 +1809,7 @@ public class ActionResolver {
         if (tryParseLookTopDeckPeek(effectText)                   != null) return "LookTopDeckPeek";
         if (tryParseRemoveTopOfDeckFromGame(effectText)            != null) return "RemoveTopOfDeckFromGame";
         if (tryParseShuffleDeck(effectText)                        != null) return "ShuffleDeck";
+        if (tryParseBackupCpDraw(effectText)                       != null) return "BackupCpDraw";
         if (SELECT_FOLLOWING_ACTIONS_DETECT.matcher(effectText).find())    return "SelectFollowingActions";
         return null;
     }
@@ -2246,8 +2260,11 @@ public class ActionResolver {
         String  rawExcludeElem = m.group("excludeelem");
         final String fExcludeElem = rawExcludeElem != null ? rawExcludeElem.trim() : null;
         String  costStr      = m.group("cost");
-        String  costCmp      = m.group("costcmp");
+        String  rawCostCmp   = m.group("costcmp");
         int     costVal      = costStr != null ? Integer.parseInt(costStr) : -1;
+        // Convert "cost N or M" (digit costcmp) to the "or_M" sentinel understood by meetsCostConstraint
+        String  costCmp      = (rawCostCmp != null && rawCostCmp.matches("\\d+"))
+                ? "or_" + rawCostCmp : rawCostCmp;
         String  powerStr     = m.group("power");
         String  powerCmp     = m.group("powercmp");
         int     powerVal     = powerStr != null ? Integer.parseInt(powerStr) : -1;
@@ -2281,8 +2298,9 @@ public class ActionResolver {
         }
 
         // Shared log prefix helper (captured once, reused in all lambdas)
-        String costLabel     = costVal >= 0
-                ? " of cost " + costVal + (costCmp != null ? " or " + costCmp : "") : "";
+        String costCmpDisplay = costCmp != null && costCmp.startsWith("or_")
+                ? " or " + costCmp.substring(3) : (costCmp != null ? " or " + costCmp : "");
+        String costLabel     = costVal >= 0 ? " of cost " + costVal + costCmpDisplay : "";
         String powerLabel    = powerVal >= 0
                 ? " of power " + powerVal + (powerCmp != null ? " or " + powerCmp : "") : "";
         String controlLabel  = opponentOnly ? " (opponent)" : selfOnly ? " (yours)" : "";
@@ -4587,6 +4605,18 @@ public class ActionResolver {
     private static Consumer<GameContext> tryParseShuffleDeck(String text) {
         if (!SHUFFLE_DECK.matcher(text).find()) return null;
         return ctx -> ctx.shuffleDeck();
+    }
+
+    private static Consumer<GameContext> tryParseBackupCpDraw(String text) {
+        Matcher m = BACKUP_CP_DRAW.matcher(text);
+        if (!m.find()) return null;
+        int count = Integer.parseInt(m.group("count"));
+        return ctx -> {
+            if (ctx.castWasPaidByBackupsOnly()) {
+                ctx.logEntry("BackupCpDraw — CP was only from Backups, draw " + count);
+                ctx.drawCards(count);
+            }
+        };
     }
 
     /** Returns true when {@code text} is a "gain 《C》 for each CP paid as X" effect. */
