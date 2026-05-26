@@ -37,32 +37,26 @@ class CrystalDisplay extends javax.swing.JComponent {
 				repaint();
 			}
 		});
-		updateVisibility();
 	}
 
 	/** Updates count, latches persistence when count first exceeds zero, then repaints. */
 	void setCount(int n) {
 		this.count = n;
 		if (n > 0) hasBeenNonZero = true;
-		updateVisibility();
 		repaint();
 	}
 
-	void updateVisibility() {
-		setVisible(hasBeenNonZero);
-	}
-
-	/** Fully resets for a new game: count, persistence flag, and visibility. */
+	/** Fully resets for a new game: count and persistence flag. */
 	void hardReset() {
 		count          = 0;
 		hasBeenNonZero = false;
-		updateVisibility();
 		repaint();
 	}
 
 	@Override
 	protected void paintComponent(Graphics g0) {
 		super.paintComponent(g0);
+		if (!hasBeenNonZero) return;
 		Graphics2D g = (Graphics2D) g0.create();
 		g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 		g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
