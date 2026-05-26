@@ -355,6 +355,13 @@ public interface GameContext {
     void shieldCannotBeBroken(ForwardTarget t);
 
     /**
+     * Registers that the Character at {@code t} cannot be broken this turn by
+     * opposing Summons or abilities that don't deal damage.
+     * Respected by {@link #breakTarget}; bypassed by damage-based breaks and {@link #forceTargetToBreakZone}.
+     */
+    void shieldCannotBeBrokenByNonDmg(ForwardTarget t);
+
+    /**
      * Grants {@code t} the Breaktouch battle effect until end of turn:
      * when this Forward deals battle damage to a Forward, that Forward is broken.
      */

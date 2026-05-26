@@ -316,6 +316,8 @@ public class MainWindow {
 	private final Set<CardData> cannotBeChosenByAbilities = new java.util.HashSet<>();
 	/** Characters that cannot be broken this turn. */
 	private final Set<CardData> cannotBeBrokenSet         = new java.util.HashSet<>();
+	/** Characters that cannot be broken this turn by opposing non-damage abilities/summons. */
+	private final Set<CardData> cannotBeBrokenByNonDmgSet = new java.util.HashSet<>();
 	/** Forwards that have Breaktouch (battle damage) until end of turn. */
 	private final Set<CardData> breaktouchBattleSet       = new java.util.HashSet<>();
 	/** Cards that have escaped from the current Battle via an Escape ability — combat is skipped for their pairing. */
@@ -1462,7 +1464,7 @@ public class MainWindow {
                             nullifyAbilityOnlyDmgSet.clear(); perCardNonLethalDmgSet.clear();
                             nextOutgoingDmgZeroSet.clear();
                             cannotBeChosenBySummons.clear();  cannotBeChosenByAbilities.clear();
-                            cannotBeBrokenSet.clear();        breaktouchBattleSet.clear();
+                            cannotBeBrokenSet.clear();        cannotBeBrokenByNonDmgSet.clear();  breaktouchBattleSet.clear();
                             p1NonLethalProtection = false;    p2NonLethalProtection = false;
                             p1DmgReductionDisabled = false;   p2DmgReductionDisabled = false;
                             p1GlobalDmgReduction  = 0;        p2GlobalDmgReduction  = 0;
@@ -7587,6 +7589,13 @@ public class MainWindow {
 				logEntry((t.isP1() ? "" : "[P2] ") + c.name() + " cannot be broken until end of turn");
 			}
 
+			@Override public void shieldCannotBeBrokenByNonDmg(ForwardTarget t) {
+				CardData c = fieldCardData(t);
+				if (c == null) return;
+				cannotBeBrokenByNonDmgSet.add(c);
+				logEntry((t.isP1() ? "" : "[P2] ") + c.name() + " cannot be broken by opposing non-damage Summons or abilities until end of turn");
+			}
+
 			@Override public void shieldBreaktouchBattle(ForwardTarget t) {
 				CardData c = fieldCardData(t);
 				if (c == null) return;
@@ -8424,6 +8433,10 @@ public class MainWindow {
 				CardData breakCard = fieldCardData(t);
 				if (breakCard != null && cannotBeBrokenSet.contains(breakCard)) {
 					logEntry((t.isP1() ? "" : "[P2] ") + breakCard.name() + " cannot be broken (protected until end of turn)");
+					return;
+				}
+				if (breakCard != null && cannotBeBrokenByNonDmgSet.contains(breakCard)) {
+					logEntry((t.isP1() ? "" : "[P2] ") + breakCard.name() + " cannot be broken by this effect (protected from non-damage breaks until end of turn)");
 					return;
 				}
 				switch (t.zone()) {
@@ -9439,7 +9452,15 @@ public class MainWindow {
 		logEntry((isP1 ? "" : "[P2] ") + fwds.get(idx).name() + " takes " + amount + " damage"
 				+ (effPow > 0 ? " (" + (effPow - accum) + " remaining)" : ""));
 		if (effPow > 0 && accum >= effPow) {
-			if (isP1) breakP1Forward(idx); else breakP2Forward(idx);
+			CardData fwd = fwds.get(idx);
+			if (cannotBeBrokenSet.contains(fwd)) {
+				logEntry((isP1 ? "" : "[P2] ") + fwd.name() + " survives lethal damage (cannot be broken — damage clears at end of turn)");
+				if (isP1) refreshP1ForwardSlot(idx); else refreshP2ForwardSlot(idx);
+				if (currentBreaktouchSource != null)
+					fireBreaktouchForDamage(currentBreaktouchSource, currentBreaktouchSourceIsP1, isP1, idx);
+			} else {
+				if (isP1) breakP1Forward(idx); else breakP2Forward(idx);
+			}
 		} else {
 			if (isP1) refreshP1ForwardSlot(idx); else refreshP2ForwardSlot(idx);
 			// Fire "deals damage to forward" triggers from tracked ability source (e.g. Ramuh + Lightning Summon)
