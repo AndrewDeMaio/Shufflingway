@@ -1,8 +1,8 @@
-# Shufflingway
-
 <a href="https://ko-fi.com/rockefellera" target="_blank">
   <img width="142" height="18" alt="image" src="https://github.com/user-attachments/assets/deae1d46-12c9-4e5a-9e97-fa2002b94a8f" />
 </a>
+
+# Shufflingway
 
 Lightweight FFTCG client and fan project.
 
