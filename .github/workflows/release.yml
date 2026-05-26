@@ -115,7 +115,7 @@ jobs:
   # ── macOS DMG ─────────────────────────────────────────────────────────────
   release-macos:
     needs: create-release
-    runs-on: macos-13
+    runs-on: macos-latest
     permissions:
       contents: write
     defaults:
@@ -177,7 +177,6 @@ jobs:
             --main-class       shufflingway.MainWindow \
             --java-options     "--enable-native-access=ALL-UNNAMED" \
             --icon             Shufflingway.icns \
-            --mac-os-minimum-version 12 \
             --type             dmg \
             --dest             target/dist
 
