@@ -266,6 +266,78 @@ public record CardData(
         return CAST_BACKUP_CP_ONLY.matcher(textEn).find();
     }
 
+    /** "You can only cast X during your turn." */
+    private static final Pattern CAST_YOUR_TURN_ONLY = Pattern.compile(
+        "(?i)You\\s+can\\s+only\\s+cast\\s+\\S[^.]+?\\s+during\\s+your\\s+turn[.!]?"
+    );
+
+    /** "You can only cast X during your Main Phase." */
+    private static final Pattern CAST_MAIN_PHASE_ONLY = Pattern.compile(
+        "(?i)You\\s+can\\s+only\\s+cast\\s+\\S[^.]+?\\s+during\\s+your\\s+Main\\s+Phase[.!]?"
+    );
+
+    /** "You can only cast X during your opponent's turn." (Back Attack cards) */
+    private static final Pattern CAST_OPPONENT_TURN_ONLY = Pattern.compile(
+        "(?i)You\\s+can\\s+only\\s+cast\\s+\\S[^.]+?\\s+during\\s+your\\s+opponent(?:'s|s')\\s+turn[.!]?"
+    );
+
+    /** "You can only cast X if you don't control any Forwards." */
+    private static final Pattern CAST_REQUIRES_NO_FORWARDS = Pattern.compile(
+        "(?i)You\\s+can\\s+only\\s+cast\\s+\\S[^.]+?\\s+if\\s+you\\s+don(?:'t|t)\\s+control\\s+any\\s+Forwards[.!]?"
+    );
+
+    /**
+     * "You can only cast X if you have a Forward, Backup, Monster, and a Summon in your Break Zone …"
+     * Group {@code types} captures the word list before "in your Break Zone".
+     * The negative lookahead {@code (?!a\s+total)} prevents matching Eiko's count variant.
+     */
+    private static final Pattern CAST_REQUIRES_BZ_TYPES = Pattern.compile(
+        "(?i)You\\s+can\\s+only\\s+cast\\s+\\S[^.]+?\\s+if\\s+you\\s+have\\s+(?!a\\s+total)(?<types>[^.]+?)\\s+in\\s+your\\s+Break\\s+Zone"
+    );
+
+    /**
+     * "You can only cast X if you have a total of N or more Summons in your Break Zone
+     *  and/or Summons you own removed from the game."
+     * Group 1 = minimum count N.
+     */
+    private static final Pattern CAST_MIN_BZ_RFP_SUMMONS = Pattern.compile(
+        "(?i)You\\s+can\\s+only\\s+cast\\s+\\S[^.]+?\\s+if\\s+you\\s+have\\s+a\\s+total\\s+of\\s+(\\d+)" +
+        "\\s+or\\s+more\\s+Summons\\s+in\\s+your\\s+Break\\s+Zone\\s+and/or\\s+Summons\\s+you\\s+own\\s+removed\\s+from\\s+the\\s+game"
+    );
+
+    /**
+     * Returns a {@link CastRestriction} describing any "You can only cast …" constraint on this
+     * card, or {@code null} if no such restriction is present.
+     */
+    public CastRestriction castRestriction() {
+        boolean yourTurnOnly     = CAST_YOUR_TURN_ONLY.matcher(textEn).find();
+        boolean mainPhaseOnly    = CAST_MAIN_PHASE_ONLY.matcher(textEn).find();
+        boolean opponentTurnOnly = CAST_OPPONENT_TURN_ONLY.matcher(textEn).find();
+        boolean requiresNoFwds   = CAST_REQUIRES_NO_FORWARDS.matcher(textEn).find();
+
+        java.util.Set<String> requiredBZTypes = java.util.Set.of();
+        Matcher bzM = CAST_REQUIRES_BZ_TYPES.matcher(textEn);
+        if (bzM.find()) {
+            String typesText = bzM.group("types");
+            java.util.Set<String> found = new java.util.HashSet<>();
+            for (String t : new String[]{"Forward", "Backup", "Monster", "Summon"}) {
+                if (typesText.contains(t)) found.add(t);
+            }
+            requiredBZTypes = java.util.Set.copyOf(found);
+        }
+
+        int minBZAndRfpSummons = 0;
+        Matcher sumM = CAST_MIN_BZ_RFP_SUMMONS.matcher(textEn);
+        if (sumM.find()) minBZAndRfpSummons = Integer.parseInt(sumM.group(1));
+
+        if (!yourTurnOnly && !mainPhaseOnly && !opponentTurnOnly && !requiresNoFwds
+                && requiredBZTypes.isEmpty() && minBZAndRfpSummons == 0) {
+            return null;
+        }
+        return new CastRestriction(yourTurnOnly, mainPhaseOnly, opponentTurnOnly,
+                requiresNoFwds, requiredBZTypes, minBZAndRfpSummons);
+    }
+
     /**
      * Returns cleaned effect text for a Summon: strips the {@code [[ex]]} exBurst prefix,
      * then (when an alternate cost exists) splits on {@code [[br]]} and skips segments that

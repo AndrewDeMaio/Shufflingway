@@ -4344,7 +4344,7 @@ public class MainWindow {
 		boolean nameConflict = isCharacter && !card.multicard() && hasCharacterNameOnField(card.name());
 		boolean lightDarkConflict = isCharacter && card.isLightOrDark() && hasLightOrDarkOnField(true);
 		playItem.setEnabled(isMainPhase && !nameConflict && !lightDarkConflict && canAffordCard(card, handIdx)
-				&& (!card.isBackup() || hasAvailableBackupSlot()));
+				&& (!card.isBackup() || hasAvailableBackupSlot()) && castRestrictionMet(card));
 		playItem.addActionListener(ae -> {
 			hideZoom();
 			if (handPopup != null) { handPopup.dispose(); handPopup = null; }
@@ -4354,7 +4354,7 @@ public class MainWindow {
 
 		if (card.hasWarp()) {
 			JMenuItem warpItem = new JMenuItem("Play (Warp " + card.warpValue() + ")");
-			warpItem.setEnabled(isMainPhase && canAffordWarpCost(card, handIdx));
+			warpItem.setEnabled(isMainPhase && canAffordWarpCost(card, handIdx) && castRestrictionMet(card));
 			warpItem.addActionListener(ae -> {
 				hideZoom();
 				if (handPopup != null) { handPopup.dispose(); handPopup = null; }
@@ -4376,7 +4376,7 @@ public class MainWindow {
 			JMenuItem altItem = new JMenuItem(altLabel);
 			altItem.setEnabled(isMainPhase && !nameConflict && !lightDarkConflict
 					&& canAffordAltCost(card, handIdx)
-					&& (!card.isBackup() || hasAvailableBackupSlot()));
+					&& (!card.isBackup() || hasAvailableBackupSlot()) && castRestrictionMet(card));
 			altItem.addActionListener(ae -> {
 				hideZoom();
 				if (handPopup != null) { handPopup.dispose(); handPopup = null; }
@@ -4525,6 +4525,44 @@ public class MainWindow {
 	 * {@code excludeHandIdx} is the index of the card being played (not available
 	 * for discard).
 	 */
+	/**
+	 * Returns {@code true} if the card's "You can only cast X …" restriction (if any) is
+	 * satisfied by the current game state from P1's perspective.
+	 */
+	private boolean castRestrictionMet(CardData card) {
+		CastRestriction cr = card.castRestriction();
+		if (cr == null) return true;
+
+		boolean isP1Turn = gameState.getCurrentPlayer() == GameState.Player.P1;
+
+		if (cr.opponentTurnOnly() && isP1Turn)  return false;
+		if ((cr.yourTurnOnly() || cr.mainPhaseOnly()) && !isP1Turn) return false;
+
+		if (cr.requiresNoForwards() && !p1ForwardCards.isEmpty()) return false;
+
+		if (!cr.requiredBZTypes().isEmpty()) {
+			List<CardData> bz = gameState.getP1BreakZone();
+			for (String requiredType : cr.requiredBZTypes()) {
+				boolean found = switch (requiredType) {
+					case "Forward" -> bz.stream().anyMatch(CardData::isForward);
+					case "Backup"  -> bz.stream().anyMatch(CardData::isBackup);
+					case "Monster" -> bz.stream().anyMatch(CardData::isMonster);
+					case "Summon"  -> bz.stream().anyMatch(CardData::isSummon);
+					default        -> false;
+				};
+				if (!found) return false;
+			}
+		}
+
+		if (cr.minBZAndRfpSummons() > 0) {
+			long bzSummons  = gameState.getP1BreakZone().stream().filter(CardData::isSummon).count();
+			long rfpSummons = gameState.getP1PermanentRfp().stream().filter(CardData::isSummon).count();
+			if (bzSummons + rfpSummons < cr.minBZAndRfpSummons()) return false;
+		}
+
+		return true;
+	}
+
 	private boolean canAffordCard(CardData card, int excludeHandIdx) {
 		String[]       elems = card.elements();
 		List<CardData> hand  = gameState.getP1Hand();
