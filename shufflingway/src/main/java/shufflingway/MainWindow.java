@@ -3289,6 +3289,7 @@ public class MainWindow {
 			resolveCombat(attacker, true, attackerIdx, blocker, false, blockerIdx);
 		} else {
 			p2TakeDamage();
+			triggerAutoAbilitiesForDealsDamageToOpponent(attacker, true);
 		}
 	}
 
@@ -3313,6 +3314,7 @@ public class MainWindow {
 		if (!anyEligible) {
 			// No eligible blockers — auto-take damage
 			p1TakeDamage();
+			triggerAutoAbilitiesForDealsDamageToOpponent(attacker, false);
 			onDone.run();
 			return;
 		}
@@ -5920,6 +5922,13 @@ public class MainWindow {
 		// Re-evaluate all conditional field boosts now that the field composition has changed
 		refreshAllForwardSlots();
 		for (int i = 0; i < p2ForwardCards.size(); i++) refreshP2ForwardSlot(i);
+	}
+
+	private void triggerAutoAbilitiesForDealsDamageToOpponent(CardData attacker, boolean attackerIsP1) {
+		for (AutoAbility fa : attacker.autoAbilities()) {
+			if (!fa.triggerCard().equalsIgnoreCase(attacker.name())) continue;
+			if (fa.trigger().equals("deals damage to opponent")) executeAutoAbility(fa, attacker, attackerIsP1);
+		}
 	}
 
 	private void triggerAutoAbilitiesForAttack(CardData card, boolean isP1) {
@@ -8990,6 +8999,26 @@ public class MainWindow {
 				}
 			}
 
+			@Override public void selfDiscardEntireHand() {
+				if (isP1) {
+					List<CardData> hand = gameState.getP1Hand();
+					for (int i = hand.size() - 1; i >= 0; i--) {
+						CardData d = gameState.breakFromHand(i);
+						if (d != null) logEntry("Discards " + d.name());
+					}
+					refreshP1HandLabel();
+					refreshP1BreakLabel();
+				} else {
+					List<CardData> hand = gameState.getP2Hand();
+					for (int i = hand.size() - 1; i >= 0; i--) {
+						CardData d = gameState.breakP2FromHand(i);
+						if (d != null) logEntry("[P2] Discards " + d.name());
+					}
+					refreshP2HandCountLabel();
+					refreshP2BreakLabel();
+				}
+			}
+
 			@Override public void dealDamageToOpponent(int amount) {
 				for (int i = 0; i < amount; i++) {
 					if (isP1) p2TakeDamage(); else p1TakeDamage();
@@ -10495,6 +10524,7 @@ public class MainWindow {
 			});
 		} else {
 			p1TakeDamage();
+			triggerAutoAbilitiesForDealsDamageToOpponent(attacker, false);
 			setAttackSubStep(-1);
 			onDone.run();
 		}
@@ -10741,6 +10771,7 @@ public class MainWindow {
 				} else {
 					setAttackSubStep(3);
 					p2TakeDamage();
+					triggerAutoAbilitiesForDealsDamageToOpponent(attacker, true);
 					continueAttackPhase();
 				}
 			});

@@ -568,6 +568,12 @@ public interface GameContext {
     void selfDiscard(int count);
 
     /**
+     * Discards all cards from the ability user's hand to their Break Zone.  No CP is generated.
+     * No selection dialog is shown — the entire hand is automatically discarded.
+     */
+    void selfDiscardEntireHand();
+
+    /**
      * Flips {@code amount} cards from the opponent's deck into their damage zone,
      * using the same mechanic as attack-phase damage (EX Burst triggers included).
      * When P1 is the ability user the opponent is P2, and vice versa.

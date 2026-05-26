@@ -669,6 +669,16 @@ public class ActionResolver {
         "(?:\\s+from\\s+(?:his/her|his|her|their)\\s+hand)?[.!]?"
     );
 
+    /** Matches "Discard your hand. Then, draw N card(s)." Group 1 = draw count. */
+    private static final Pattern DISCARD_HAND_THEN_DRAW = Pattern.compile(
+        "(?i)Discard\\s+your\\s+hand[.,]?\\s+[Tt]hen[,]?\\s+draw\\s+(\\d+)\\s+cards?[.!]?\\s*$"
+    );
+
+    /** Matches "Discard your hand." as a standalone effect. */
+    private static final Pattern DISCARD_HAND = Pattern.compile(
+        "(?i)Discard\\s+your\\s+hand[.!]?\\s*$"
+    );
+
     /** Matches "Your opponent randomly discards N card(s) [from his/her/their hand]". Group 1 = count. */
     private static final Pattern OPPONENT_RANDOM_DISCARD = Pattern.compile(
         "(?i)Your\\s+opponent\\s+randomly\\s+discards?\\s+(\\d+)\\s+cards?" +
@@ -1463,6 +1473,12 @@ public class ActionResolver {
         result = tryParseDrawCards(effectText);
         if (result != null) return result;
 
+        result = tryParseDiscardHandThenDraw(effectText);
+        if (result != null) return result;
+
+        result = tryParseDiscardHand(effectText);
+        if (result != null) return result;
+
         result = tryParseDiscardThenDraw(effectText);
         if (result != null) return result;
 
@@ -1585,6 +1601,8 @@ public class ActionResolver {
         if (tryParseOpponentRandomDiscard(effectText)         != null) return "OpponentRandomDiscard";
         if (tryParseOpponentDiscard(effectText)               != null) return "OpponentDiscard";
         if (tryParseDrawCards(effectText)                     != null) return "DrawCards";
+        if (tryParseDiscardHandThenDraw(effectText)           != null) return "DiscardHandThenDraw";
+        if (tryParseDiscardHand(effectText)                   != null) return "DiscardHand";
         if (tryParseDiscardThenDraw(effectText)               != null) return "DiscardThenDraw";
         if (tryParseDealPlayerDamageToOpponent(effectText)    != null) return "DealPlayerDamageToOpponent";
         if (tryParseDealPlayerDamageToSelf(effectText)        != null) return "DealPlayerDamageToSelf";
@@ -1744,6 +1762,8 @@ public class ActionResolver {
         if (tryParseOpponentRandomDiscard(effectText) != null)              return "OpponentRandomDiscard";
         if (tryParseOpponentDiscard(effectText) != null)                    return "OpponentDiscard";
         if (tryParseDrawCards(effectText) != null)                          return "DrawCards";
+        if (tryParseDiscardHandThenDraw(effectText) != null)                return "DiscardHandThenDraw";
+        if (tryParseDiscardHand(effectText) != null)                        return "DiscardHand";
         if (tryParseDiscardThenDraw(effectText) != null)                    return "DiscardThenDraw";
         if (tryParseDealPlayerDamageToOpponent(effectText) != null)         return "DealPlayerDamageToOpponent";
         if (tryParseDealPlayerDamageToSelf(effectText) != null)             return "DealPlayerDamageToSelf";
@@ -3537,6 +3557,27 @@ public class ActionResolver {
             ctx.logEntry("Effect: Discard " + discardCount + ", then draw " + drawCount);
             ctx.selfDiscard(discardCount);
             ctx.drawCards(drawCount);
+        };
+    }
+
+    /** Parses "Discard your hand. Then, draw N card(s)" as a standalone effect. */
+    private static Consumer<GameContext> tryParseDiscardHandThenDraw(String text) {
+        Matcher m = DISCARD_HAND_THEN_DRAW.matcher(text);
+        if (!m.find()) return null;
+        int drawCount = Integer.parseInt(m.group(1));
+        return ctx -> {
+            ctx.logEntry("Effect: Discard hand, then draw " + drawCount);
+            ctx.selfDiscardEntireHand();
+            ctx.drawCards(drawCount);
+        };
+    }
+
+    /** Parses "Discard your hand." as a standalone effect. */
+    private static Consumer<GameContext> tryParseDiscardHand(String text) {
+        if (!DISCARD_HAND.matcher(text).find()) return null;
+        return ctx -> {
+            ctx.logEntry("Effect: Discard hand");
+            ctx.selfDiscardEntireHand();
         };
     }
 

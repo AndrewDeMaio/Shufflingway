@@ -733,6 +733,7 @@ public record CardData(
             "|casts?\\s+a\\s+Summon" +
             "|is\\s+put\\s+into\\s+(?:your\\s+)?Damage\\s+Zone" +
             "|is\\s+removed\\s+from\\s+the\\s+game\\s+due\\s+to\\s+Warp" +
+            "|deals?\\s+damage\\s+to\\s+your\\s+opponent" +
             "|deals?\\s+damage\\s+to\\s+a\\s+Forward" +
         ")\\s*,\\s+" +
         "(?<youmay>(?:you|your\\s+opponent)\\s+may\\s+)?" +
@@ -844,6 +845,7 @@ public record CardData(
             else if (triggerRaw.contains("leaves"))                                 trigger = "leaves the field";
             else if (warpOnly)                                                       trigger = "enters the field";
             else if (triggerRaw.contains("warp"))                                   trigger = "warp placed";
+            else if (triggerRaw.contains("deals damage") && triggerRaw.contains("opponent")) trigger = "deals damage to opponent";
             else if (triggerRaw.contains("deals damage"))                          trigger = "deals damage to forward";
             else                                                                     trigger = "enters the field";
 
