@@ -295,14 +295,14 @@ public class ActionResolver {
         "(?i)Return\\s+it\\s+to\\s+its\\s+owner's\\s+hand\\s+and\\s+draw\\s+(?<draw>\\d+)\\s+cards?[.!]?"
     );
 
-    /** Matches "Return it to its owner's hand." */
+    /** Matches "Return it/them to its/their owner's/owners' hand/hands." */
     private static final Pattern FOLLOWUP_RETURN_TO_OWNERS_HAND = Pattern.compile(
-        "(?i)Return\\s+it\\s+to\\s+its\\s+owner's\\s+hand\\.?"
+        "(?i)Return\\s+(?:it|them)\\s+to\\s+(?:its|their)\\s+owners?'s?\\s+hands?\\.?"
     );
 
-    /** Matches "Return it to your hand." */
+    /** Matches "Return it/them to your hand/hands." */
     private static final Pattern FOLLOWUP_RETURN_TO_YOUR_HAND = Pattern.compile(
-        "(?i)Return\\s+it\\s+to\\s+your\\s+hand\\.?"
+        "(?i)Return\\s+(?:it|them)\\s+to\\s+your\\s+hands?\\.?"
     );
 
     /** Matches "Return [name] to its owner's hand." — named card, not a pronoun. */
