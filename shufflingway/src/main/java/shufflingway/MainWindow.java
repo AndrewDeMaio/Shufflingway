@@ -229,7 +229,6 @@ public class MainWindow {
 	private final List<Integer>   p2ForwardDamage       = new ArrayList<>();
 	private ComputerPlayer        computerPlayer;
 
-	private int             p1LbIndex   = 0;
 	private final Set<Integer> spentLbIndices   = new HashSet<>();
 	private final Set<Integer> p2SpentLbIndices = new HashSet<>();
 	private JButton            p2LimitButton;
@@ -237,7 +236,6 @@ public class MainWindow {
 	// Damage zone UI
 	private JPanel   p1DamageSlotPanel;
 	private JPanel[] p1DamageSlots = new JPanel[7];
-	private JPanel   p2DamageSlotPanel;
 
 	// Next-phase button and its glow animation
 	private JButton              nextPhaseButton;
@@ -1015,7 +1013,6 @@ public class MainWindow {
 
 	private void startGame(int deckId, int p2DeckId) {
 		gameState.reset();
-		p1LbIndex = 0;
 		endOfTurnEffects.clear();
 		pendingMainPhase1Effects.clear();
 		activeCostReductions.clear();
@@ -11764,7 +11761,6 @@ public class MainWindow {
 					if (!gameState.getP2DamageZone().isEmpty()) showP2DamageZoneDialog();
 				}
 			});
-			p2DamageSlotPanel = slotsPanel;
 		}
 
 		JPanel panel = new JPanel(new BorderLayout(0, 4));
