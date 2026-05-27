@@ -646,6 +646,11 @@ public class ActionResolver {
         "(?i)The\\s+damage\\s+dealt\\s+to\\s+Forwards?\\s+(?:your\\s+)?opponent\\s+controls\\s+cannot\\s+be\\s+reduced\\s+this\\s+turn\\.?"
     );
 
+    /** "This damage cannot be reduced." — modifier on a preceding damage sentence. */
+    private static final Pattern CANNOT_BE_REDUCED_PATTERN = Pattern.compile(
+        "(?i)This\\s+damage\\s+cannot\\s+be\\s+reduced[.!]?"
+    );
+
     /**
      * Matches "Activate &lt;cardName&gt;[.]" as a standalone named-card activate effect.
      * Also handles "Activate Card Name X [and Card Name Y] [you control]" for
@@ -2039,14 +2044,16 @@ public class ActionResolver {
         String costCmp       = m.group("costcmp");
         String excludeJob    = m.group("excludejob") != null ? m.group("excludejob").trim() : null;
         boolean opponentOnly = m.group("opponent") != null;
+        boolean unreduced    = CANNOT_BE_REDUCED_PATTERN.matcher(text).find();
 
         return ctx -> {
             String condLabel   = condition  != null ? (condition + " ")   : "";
             String costLabel   = costVal >= 0 ? " of cost " + costVal + (costCmp != null ? " or " + costCmp : "") : "";
             String exclLabel   = excludeJob != null ? " [not Job " + excludeJob + "]" : "";
             String scopeLabel  = opponentOnly ? "P2's " : "all ";
+            String unredLabel  = unreduced ? " (cannot be reduced)" : "";
             ctx.logEntry("Effect: Deal " + damage + " damage to "
-                    + scopeLabel + condLabel + "Forwards" + costLabel + exclLabel);
+                    + scopeLabel + condLabel + "Forwards" + costLabel + exclLabel + unredLabel);
 
             // --- P2 forwards (always included) ---
             List<Integer> p2Targets = new ArrayList<>();
@@ -2060,8 +2067,10 @@ public class ActionResolver {
             }
             for (int i = p2Targets.size() - 1; i >= 0; i--) {
                 int idx = p2Targets.get(i);
-                if (idx < ctx.p2ForwardCount())
-                    ctx.damageP2Forward(idx, damage);
+                if (idx < ctx.p2ForwardCount()) {
+                    if (unreduced) ctx.damageP2ForwardUnreduced(idx, damage);
+                    else           ctx.damageP2Forward(idx, damage);
+                }
             }
 
             // --- P1 forwards (only when effect is not opponent-only) ---
@@ -2077,8 +2086,10 @@ public class ActionResolver {
                 }
                 for (int i = p1Targets.size() - 1; i >= 0; i--) {
                     int idx = p1Targets.get(i);
-                    if (idx < ctx.p1ForwardCount())
-                        ctx.damageP1Forward(idx, damage);
+                    if (idx < ctx.p1ForwardCount()) {
+                        if (unreduced) ctx.damageP1ForwardUnreduced(idx, damage);
+                        else           ctx.damageP1Forward(idx, damage);
+                    }
                 }
             }
         };
@@ -2412,6 +2423,7 @@ public class ActionResolver {
         boolean opponentZone = zone != null && zone.toLowerCase().contains("opponent");
 
         String  followup     = m.group("followup").trim();
+        boolean unreduced    = CANNOT_BE_REDUCED_PATTERN.matcher(followup).find();
 
         // If the followup contains ". " (sentence boundary), split into a primary effect
         // (applied to selected targets) and a secondary standalone effect that follows.
@@ -2619,14 +2631,20 @@ public class ActionResolver {
             int damage = Integer.parseInt(dmgM.group("amount"));
             String alsoCard = dmgM.group("also") != null ? dmgM.group("also").trim() : null;
             return ctx -> {
+                String unredSuffix = unreduced ? " (cannot be reduced)" : "";
                 ctx.logEntry(alsoCard != null
-                        ? choosePrefix + " — Deal " + damage + " damage (and to " + alsoCard + ")"
-                        : choosePrefix + " — Deal " + damage + " damage");
+                        ? choosePrefix + " — Deal " + damage + " damage (and to " + alsoCard + ")" + unredSuffix
+                        : choosePrefix + " — Deal " + damage + " damage" + unredSuffix);
                 List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
                         opponentOnly, selfOnly, condition, element, zone, opponentZone,
                         costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem);
-                sortedByIdxDesc(ts, true) .forEach(t -> ctx.damageTarget(t, damage));
-                sortedByIdxDesc(ts, false).forEach(t -> ctx.damageTarget(t, damage));
+                if (unreduced) {
+                    sortedByIdxDesc(ts, true) .forEach(t -> ctx.damageTargetUnreduced(t, damage));
+                    sortedByIdxDesc(ts, false).forEach(t -> ctx.damageTargetUnreduced(t, damage));
+                } else {
+                    sortedByIdxDesc(ts, true) .forEach(t -> ctx.damageTarget(t, damage));
+                    sortedByIdxDesc(ts, false).forEach(t -> ctx.damageTarget(t, damage));
+                }
                 if (alsoCard != null) ctx.damageFieldForwardByName(alsoCard, damage);
                 if (secondary != null) secondary.accept(ctx);
             };
@@ -4701,6 +4719,13 @@ public class ActionResolver {
                 ctx.logEntry("Effect: Opponent's Forwards cannot benefit from damage reduction this turn");
                 ctx.disableOpponentDamageReduction();
             };
+        }
+
+        // "This damage cannot be reduced." — modifier on a preceding damage sentence.
+        // The actual unreduced routing is handled at the damage call site; this entry
+        // prevents the "not yet implemented" log when it appears as a secondary followup.
+        if (CANNOT_BE_REDUCED_PATTERN.matcher(text).find()) {
+            return ctx -> {};
         }
 
         // "During this turn, the next damage dealt to [name] is reduced by N instead."

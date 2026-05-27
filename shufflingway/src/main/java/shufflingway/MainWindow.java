@@ -3237,9 +3237,9 @@ public class MainWindow {
 
 		// Compute actual damage each side deals after outgoing and incoming modifiers
 		int rawDmgToBlocker  = modifyOutgoingCombatDamage(attackerIsP1, attackerIdx, effAttackerPow);
-		int dmgToBlocker     = modifyIncomingDamage(blockerIsP1,  blockerIdx,  rawDmgToBlocker,  false);
+		int dmgToBlocker     = modifyIncomingDamage(blockerIsP1,  blockerIdx,  rawDmgToBlocker,  false, false);
 		int rawDmgToAttacker = modifyOutgoingCombatDamage(blockerIsP1, blockerIdx, effBlockerPow);
-		int dmgToAttacker    = modifyIncomingDamage(attackerIsP1, attackerIdx, rawDmgToAttacker, false);
+		int dmgToAttacker    = modifyIncomingDamage(attackerIsP1, attackerIdx, rawDmgToAttacker, false, false);
 
 		List<Integer> attackerDmgList = attackerIsP1 ? p1ForwardDamage : p2ForwardDamage;
 		List<Integer> blockerDmgList  = blockerIsP1  ? p1ForwardDamage : p2ForwardDamage;
@@ -7658,7 +7658,7 @@ public class MainWindow {
 			@Override public int       p1ForwardCurrentDamage(int idx) { return p1ForwardDamage.get(idx); }
 			@Override public CardState p1ForwardState(int idx)          { return p1ForwardStates.get(idx); }
 			@Override public void damageP1Forward(int idx, int amount) {
-				applyDamageToForward(true, idx, amount, true);
+				applyDamageToForward(true, idx, amount, true, false);
 			}
 
 			@Override public int p2ForwardCount()                    { return p2ForwardCards.size(); }
@@ -7666,7 +7666,19 @@ public class MainWindow {
 			@Override public int       p2ForwardCurrentDamage(int idx) { return p2ForwardDamage.get(idx); }
 			@Override public CardState p2ForwardState(int idx)          { return p2ForwardStates.get(idx); }
 			@Override public void damageP2Forward(int idx, int amount) {
-				applyDamageToForward(false, idx, amount, true);
+				applyDamageToForward(false, idx, amount, true, false);
+			}
+
+			@Override public void damageP1ForwardUnreduced(int idx, int amount) {
+				applyDamageToForward(true, idx, amount, true, true);
+			}
+			@Override public void damageP2ForwardUnreduced(int idx, int amount) {
+				applyDamageToForward(false, idx, amount, true, true);
+			}
+			@Override public void damageTargetUnreduced(ForwardTarget t, int amount) {
+				if (t.zone() == ForwardTarget.CardZone.BACKUP) return;
+				if (t.isP1()) damageP1ForwardUnreduced(t.idx(), amount);
+				else          damageP2ForwardUnreduced(t.idx(), amount);
 			}
 
 			@Override public void shieldNextIncomingDamage(ForwardTarget t) {
@@ -9655,8 +9667,10 @@ public class MainWindow {
 	 * Applies all incoming-damage modifiers for {@code idx} and returns the final amount.
 	 * One-time shields (next-damage-zero, next-damage-reduction) are consumed here.
 	 * {@code fromAbility} is true when the damage source is an effect/summon, false for combat.
+	 * {@code unreduced} bypasses all reductions: one-shot shields are still consumed but
+	 * their reduction is not applied; persistent shields stay up and also do not reduce.
 	 */
-	private int modifyIncomingDamage(boolean isP1, int idx, int rawAmount, boolean fromAbility) {
+	private int modifyIncomingDamage(boolean isP1, int idx, int rawAmount, boolean fromAbility, boolean unreduced) {
 		List<CardData> fwds = isP1 ? p1ForwardCards : p2ForwardCards;
 		if (idx >= fwds.size()) return rawAmount;
 		CardData card = fwds.get(idx);
@@ -9679,6 +9693,15 @@ public class MainWindow {
 					if (m.find() && m.group("card").trim().equalsIgnoreCase(card.name())) return 0;
 				}
 			}
+		}
+
+		if (unreduced) {
+			// Consume one-shot shields so they are spent, but do not apply any reduction.
+			// Persistent shields ("until end of turn") remain in place unchanged.
+			nextIncomingDmgZeroSet.remove(card);
+			nextIncomingDmgReduceMap.remove(card);
+			if (fromAbility) nextAbilityDmgReduceMap.remove(card);
+			return amount;
 		}
 
 		// If damage reductions are disabled for this side, skip all target-side protections
@@ -9730,11 +9753,11 @@ public class MainWindow {
 	 * Applies incoming-damage modifiers, writes the result to the damage accumulator,
 	 * and breaks the forward if accumulated damage reaches its effective power.
 	 */
-	private void applyDamageToForward(boolean isP1, int idx, int rawAmount, boolean fromAbility) {
+	private void applyDamageToForward(boolean isP1, int idx, int rawAmount, boolean fromAbility, boolean unreduced) {
 		List<CardData>  fwds   = isP1 ? p1ForwardCards   : p2ForwardCards;
 		List<Integer>   dmgList = isP1 ? p1ForwardDamage  : p2ForwardDamage;
 		if (idx >= fwds.size()) return;
-		int amount = modifyIncomingDamage(isP1, idx, rawAmount, fromAbility);
+		int amount = modifyIncomingDamage(isP1, idx, rawAmount, fromAbility, unreduced);
 		if (amount <= 0) {
 			logEntry((isP1 ? "" : "[P2] ") + fwds.get(idx).name() + " — damage blocked");
 			return;

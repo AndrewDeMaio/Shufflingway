@@ -188,6 +188,24 @@ public interface GameContext {
     void damageTarget(ForwardTarget t, int amount);
 
     /**
+     * Like {@link #damageP1Forward} but the damage bypasses all reduction effects.
+     * One-shot shields are still consumed; persistent shields remain but provide no reduction.
+     */
+    void damageP1ForwardUnreduced(int idx, int amount);
+
+    /**
+     * Like {@link #damageP2Forward} but the damage bypasses all reduction effects.
+     * One-shot shields are still consumed; persistent shields remain but provide no reduction.
+     */
+    void damageP2ForwardUnreduced(int idx, int amount);
+
+    /**
+     * Like {@link #damageTarget} but the damage bypasses all reduction effects.
+     * One-shot shields are still consumed; persistent shields remain but provide no reduction.
+     */
+    void damageTargetUnreduced(ForwardTarget t, int amount);
+
+    /**
      * Deals {@code amount} damage to the first P1 or P2 Forward whose name matches
      * {@code cardName} (case-insensitive). Logs a warning if no matching card is found.
      */
