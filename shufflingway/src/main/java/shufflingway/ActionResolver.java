@@ -941,14 +941,25 @@ public class ActionResolver {
      * </ul>
      */
     /**
-     * Matches "Until end of turn, it gains +N power for each [Element] [Type] you control."
+     * Matches either word order of the "gains +N power for each [Element] [Type] you control" followup:
+     * <ul>
+     *   <li>"Until end of turn, it gains +N power for each [Element] Type you control."</li>
+     *   <li>"It gains +N power for each [Element] Type you control until end of turn."</li>
+     * </ul>
      * Groups: 1 = per-unit amount, {@code element} = optional element, {@code chartype} = card type.
      */
     private static final Pattern FOLLOWUP_POWER_BOOST_UNTIL_FOR_EACH = Pattern.compile(
-        "(?i)Until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn\\s*,\\s+" +
-        "(?:it|they)\\s+gains?\\s+\\+(\\d+)\\s+[Pp]ower\\s+for\\s+each\\s+" +
-        "(?:(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?" +
-        "(?<chartype>Forwards?|Backups?|Monsters?|Characters?)\\s+you\\s+control[.!]?"
+        "(?i)(?:" +
+            "Until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn\\s*,\\s+" +
+            "(?:it|they)\\s+gains?\\s+\\+(\\d+)\\s+[Pp]ower\\s+for\\s+each\\s+" +
+            "(?:(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?" +
+            "(?<chartype>Forwards?|Backups?|Monsters?|Characters?)\\s+you\\s+control" +
+        "|" +
+            "(?:it|they)\\s+gains?\\s+\\+(\\d+)\\s+[Pp]ower\\s+for\\s+each\\s+" +
+            "(?:(?<element2>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?" +
+            "(?<chartype2>Forwards?|Backups?|Monsters?|Characters?)\\s+you\\s+control" +
+            "\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn" +
+        ")[.!]?"
     );
 
     private static final Pattern FOLLOWUP_POWER_BOOST_UNTIL = Pattern.compile(
@@ -3115,9 +3126,10 @@ public class ActionResolver {
         // --- Power boost for each [element] [type] you control (must precede plain UNTIL boost) ---
         Matcher boostForEachM = FOLLOWUP_POWER_BOOST_UNTIL_FOR_EACH.matcher(primaryFollowup);
         if (boostForEachM.find()) {
-            int    perUnit    = Integer.parseInt(boostForEachM.group(1));
-            String srcElem    = boostForEachM.group("element");
-            String srcType    = boostForEachM.group("chartype").toLowerCase();
+            boolean untilPrefix = boostForEachM.group(1) != null;
+            int    perUnit    = Integer.parseInt(untilPrefix ? boostForEachM.group(1) : boostForEachM.group(4));
+            String srcElem    = untilPrefix ? boostForEachM.group("element") : boostForEachM.group("element2");
+            String srcType    = (untilPrefix ? boostForEachM.group("chartype") : boostForEachM.group("chartype2")).toLowerCase();
             boolean cntFwd    = srcType.startsWith("forward") || srcType.startsWith("character");
             boolean cntBkp    = srcType.startsWith("backup")  || srcType.startsWith("character");
             boolean cntMon    = srcType.startsWith("monster")  || srcType.startsWith("character");
