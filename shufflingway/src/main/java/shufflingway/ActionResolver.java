@@ -1905,7 +1905,12 @@ public class ActionResolver {
         while (m.find()) {
             String action = m.group("action").trim();
             String op = normalizeRevealOp(action);
-            clauseDescs.add(op != null ? op : "?");
+            if (op != null) {
+                clauseDescs.add(op);
+            } else {
+                String effName = matchedPatternName(action, source);
+                clauseDescs.add(effName != null ? effName : "?");
+            }
         }
         return clauseDescs.isEmpty() ? "RevealTopDeck"
                 : "RevealTopDeck / " + String.join(", ", clauseDescs);
