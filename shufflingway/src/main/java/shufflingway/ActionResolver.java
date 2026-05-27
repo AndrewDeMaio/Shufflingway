@@ -1385,6 +1385,38 @@ public class ActionResolver {
         "\\s+(?:also\\s+)?draw\\s+(?<count>\\d+)\\s+cards?[.!]?"
     );
 
+    /**
+     * Matches "If your opponent has [no | N cards or less] cards in his/her hand, [effect][ instead][.!]?"
+     * <ul>
+     *   <li>{@code n}       — numeric threshold; absent when the condition is "no cards" (threshold = 0)</li>
+     *   <li>{@code effect}  — the conditional inner effect text</li>
+     *   <li>{@code instead} — present when "instead" immediately follows the effect</li>
+     * </ul>
+     */
+    private static final Pattern OPPONENT_HAND_CONDITION_PATTERN = Pattern.compile(
+        "(?i)^If\\s+your\\s+opponent\\s+has\\s+" +
+        "(?:no|(?<n>\\d+)\\s+cards?\\s+or\\s+less)\\s+cards?\\s+in\\s+" +
+        "(?:his/her|his|her|their)\\s+hand,?\\s*" +
+        "(?<effect>.+?)" +
+        "(?<instead>\\s+instead)?[.!]?$"
+    );
+
+    /**
+     * Matches a two-clause hand condition used as a Choose followup:
+     * "If your opponent has N cards or less …, [action1]. If your opponent has no cards …, [action2] instead."
+     * <ul>
+     *   <li>{@code n}       — upper threshold for the relaxed condition</li>
+     *   <li>{@code effect1} — action applied when 0 &lt; handSize ≤ N</li>
+     *   <li>{@code effect2} — action applied when handSize == 0 (overrides effect1)</li>
+     * </ul>
+     */
+    private static final Pattern OPPONENT_HAND_DOUBLE_CONDITION_PATTERN = Pattern.compile(
+        "(?i)^If\\s+your\\s+opponent\\s+has\\s+(?<n>\\d+)\\s+cards?\\s+or\\s+less\\s+cards?\\s+in\\s+" +
+        "(?:his/her|his|her|their)\\s+hand,?\\s*(?<effect1>.+?)[.!]\\s+" +
+        "If\\s+your\\s+opponent\\s+has\\s+no\\s+cards?\\s+in\\s+" +
+        "(?:his/her|his|her|their)\\s+hand,?\\s*(?<effect2>.+?)\\s+instead[.!]?$"
+    );
+
     // -------------------------------------------------------------------------
     // Public API
     // -------------------------------------------------------------------------
@@ -1595,7 +1627,34 @@ public class ActionResolver {
             if (allParsed) return ctx -> consumers.forEach(c -> c.accept(ctx));
         }
 
+        result = tryParseConditionalOpponentHand(effectText, source, xValue);
+        if (result != null) return result;
+
         return null;
+    }
+
+    /**
+     * Parses "If your opponent has [no | N cards or less] cards in his/her hand, [effect]."
+     * The inner effect is parsed recursively; returns {@code null} if the inner effect is
+     * not yet supported.
+     */
+    private static Consumer<GameContext> tryParseConditionalOpponentHand(
+            String text, CardData source, int xValue) {
+        Matcher m = OPPONENT_HAND_CONDITION_PATTERN.matcher(text.trim());
+        if (!m.matches()) return null;
+        String nStr      = m.group("n");
+        int    threshold = nStr != null ? Integer.parseInt(nStr) : 0;
+        String innerText = m.group("effect").trim();
+        Consumer<GameContext> inner = parse(innerText, source, xValue);
+        if (inner == null) return null;
+        return ctx -> {
+            int hs = ctx.opponentHandSize();
+            boolean condMet = (nStr != null) ? hs <= threshold : hs == 0;
+            if (!condMet) return;
+            ctx.logEntry("[Hand condition] opponent has " + hs
+                    + " card(s) — " + innerText);
+            inner.accept(ctx);
+        };
     }
 
     /** Returns the name of the first pattern that matches {@code effectText}, or {@code null}. */
@@ -1654,6 +1713,7 @@ public class ActionResolver {
         if (tryParseLookTopDeckPeek(effectText)                   != null) return "LookTopDeckPeek";
         if (tryParseRemoveTopOfDeckFromGame(effectText)            != null) return "RemoveTopOfDeckFromGame";
         if (tryParseShuffleDeck(effectText)                        != null) return "ShuffleDeck";
+        if (tryParseConditionalOpponentHand(effectText, source, 0) != null) return "ConditionalOpponentHand";
         if (SELECT_FOLLOWING_ACTIONS_DETECT.matcher(effectText).find())    return "SelectFollowingActions";
         return null;
     }
@@ -1823,6 +1883,7 @@ public class ActionResolver {
         if (tryParseRemoveTopOfDeckFromGame(effectText)            != null) return "RemoveTopOfDeckFromGame";
         if (tryParseShuffleDeck(effectText)                        != null) return "ShuffleDeck";
         if (tryParseBackupCpDraw(effectText)                       != null) return "BackupCpDraw";
+        if (tryParseConditionalOpponentHand(effectText, source, 0) != null) return "ConditionalOpponentHand";
         if (SELECT_FOLLOWING_ACTIONS_DETECT.matcher(effectText).find())    return "SelectFollowingActions";
         return null;
     }
@@ -2365,6 +2426,51 @@ public class ActionResolver {
                             opponentOnly, selfOnly, condition, element, zone, opponentZone,
                             costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem);
                     (ctx.isExBurst() ? altAction : primaryAction).accept(ctx, ts);
+                };
+            }
+        }
+
+        // --- "If opponent has N cards or less…, [action1]. If no cards…, [action2] instead." ---
+        // Two-tier hand condition — checked against the full followup before the dot-split.
+        Matcher dblHandM = OPPONENT_HAND_DOUBLE_CONDITION_PATTERN.matcher(followup);
+        if (dblHandM.matches()) {
+            int    threshold  = Integer.parseInt(dblHandM.group("n"));
+            String eff1Text   = dblHandM.group("effect1").trim();
+            String eff2Text   = dblHandM.group("effect2").trim();
+            java.util.function.BiConsumer<GameContext, List<ForwardTarget>> action1 = parseTargetAction(eff1Text, xValue);
+            java.util.function.BiConsumer<GameContext, List<ForwardTarget>> action2 = parseTargetAction(eff2Text, xValue);
+            if (action1 != null && action2 != null) {
+                return ctx -> {
+                    ctx.logEntry(choosePrefix + " — hand condition (≤" + threshold + "/0)");
+                    List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                            opponentOnly, selfOnly, condition, element, zone, opponentZone,
+                            costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
+                            jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem);
+                    int hs = ctx.opponentHandSize();
+                    if (hs == 0)           action2.accept(ctx, ts);
+                    else if (hs <= threshold) action1.accept(ctx, ts);
+                };
+            }
+        }
+
+        // --- "If opponent has [no|N cards or less] cards in hand, [action]" as single followup ---
+        Matcher handM = OPPONENT_HAND_CONDITION_PATTERN.matcher(primaryFollowup);
+        if (handM.matches()) {
+            String nStr      = handM.group("n");
+            int    threshold = nStr != null ? Integer.parseInt(nStr) : 0;
+            String effText   = handM.group("effect").trim();
+            java.util.function.BiConsumer<GameContext, List<ForwardTarget>> action = parseTargetAction(effText, xValue);
+            if (action != null) {
+                return ctx -> {
+                    ctx.logEntry(choosePrefix + " — hand condition");
+                    List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                            opponentOnly, selfOnly, condition, element, zone, opponentZone,
+                            costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
+                            jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem);
+                    int hs = ctx.opponentHandSize();
+                    boolean condMet = (nStr != null) ? hs <= threshold : hs == 0;
+                    if (condMet) action.accept(ctx, ts);
+                    if (secondary != null) secondary.accept(ctx);
                 };
             }
         }
