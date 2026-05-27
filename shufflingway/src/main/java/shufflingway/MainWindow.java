@@ -1069,6 +1069,7 @@ public class MainWindow {
 							CardData.parseActionAbilities(tx), CardData.parseAutoAbilities(tx),
 							CardData.parseFieldAbilities(tx, card.type()),
 							CardData.parseIfControlBoosts(tx, card.type()),
+							CardData.parseFieldPowerGrants(tx, card.type()),
 							card.job(), card.category1(), card.category2(), tx);
 					if (card.isLb()) lb.add(cd);
 					else             main.add(cd);
@@ -1090,6 +1091,7 @@ public class MainWindow {
 							CardData.parseActionAbilities(tx), CardData.parseAutoAbilities(tx),
 							CardData.parseFieldAbilities(tx, card.type()),
 							CardData.parseIfControlBoosts(tx, card.type()),
+							CardData.parseFieldPowerGrants(tx, card.type()),
 							card.job(), card.category1(), card.category2(), tx);
 					if (card.isLb()) p2Lb.add(cd);
 					else             p2Main.add(cd);
@@ -2021,12 +2023,6 @@ public class MainWindow {
 		refreshP1DeckLabel();
 		logEntry("P1 takes 1 damage — " + drawn.name() + (isEx ? " [EX BURST!]" : ""));
 		triggerAutoAbilitiesForDamageZone(true);
-		if (isEx) triggerExBurst(drawn, true);
-
-		if (gameState.getP1DamageZone().size() >= 7) {
-			triggerGameOver("7 Damage Taken - You Lose!");
-		}
-
 		animateCardToDamage(true, idx);
 
 		int animDelay = CardSlideAnimator.TOTAL_FRAMES * CardSlideAnimator.FRAME_MS;
@@ -2053,6 +2049,11 @@ public class MainWindow {
 					}
 				}.execute();
 			}
+			if (gameState.getP1DamageZone().size() >= 7) {
+				triggerGameOver("7 Damage Taken - You Lose!");
+				return;
+			}
+			if (isEx) triggerExBurst(drawn, true);
 		});
 		revealTimer.setRepeats(false);
 		revealTimer.start();
@@ -2066,7 +2067,6 @@ public class MainWindow {
 		String cardInfo = drawn != null ? " — " + drawn.name() + (isEx ? " [EX BURST!]" : "") : "";
 		logEntry("P2 takes 1 damage (" + p2DamageCount + "/7)" + cardInfo);
 		triggerAutoAbilitiesForDamageZone(false);
-		if (isEx && drawn != null) triggerExBurst(drawn, false);
 
 		int slotIdx = p2DamageCount - 1;
 		if (drawn != null) animateCardToDamage(false, slotIdx);
@@ -2094,13 +2094,14 @@ public class MainWindow {
 					}.execute();
 				}
 			}
+			if (p2DamageCount >= 7) {
+				triggerGameOver("Player 2 Defeated - You Win!");
+				return;
+			}
+			if (isEx && drawn != null) triggerExBurst(drawn, false);
 		});
 		revealTimer.setRepeats(false);
 		revealTimer.start();
-
-		if (p2DamageCount >= 7) {
-			triggerGameOver("Player 2 Defeated - You Win!");
-		}
 	}
 
 	// -------------------------------------------------------------------------
@@ -2123,6 +2124,7 @@ public class MainWindow {
 		if (idx < 0 || idx >= p1ForwardCards.size()) return;
 		startBreakAnim(p1ForwardLabels.get(idx));
 		CardData card    = p1ForwardCards.get(idx);
+		boolean  hadGrants = !card.fieldPowerGrants().isEmpty();
 		CardData topCard = p1ForwardPrimedTop.get(idx);
 
 		if (topCard != null) {
@@ -2193,6 +2195,7 @@ public class MainWindow {
 			p1ForwardPanel.repaint();
 			for (int i = 0; i < p1ForwardCards.size(); i++) refreshP1ForwardSlot(i);
 		}
+		if (hadGrants) for (int i = 0; i < p1MonsterCards.size(); i++) refreshP1MonsterSlot(i);
 		// If the broken card was itself stolen from P2, drop its tracking entry
 		stolenForwards.remove(card);
 		// Restore any forwards that were conditioned on this card remaining on the field
@@ -2208,6 +2211,7 @@ public class MainWindow {
 		if (idx < 0 || idx >= p2ForwardCards.size()) return;
 		startBreakAnim(p2ForwardLabels.get(idx));
 		CardData card = p2ForwardCards.get(idx);
+		boolean hadGrants = !card.fieldPowerGrants().isEmpty();
 		addToP2BreakZone(card);
 		logEntry("[P2] " + card.name() + " → Break Zone");
 
@@ -2253,6 +2257,7 @@ public class MainWindow {
 			p2ForwardPanel.repaint();
 			for (int i = 0; i < p2ForwardCards.size(); i++) refreshP2ForwardSlot(i);
 		}
+		if (hadGrants) for (int i = 0; i < p2MonsterCards.size(); i++) refreshP2MonsterSlot(i);
 		refreshP2BreakLabel();
 		triggerAutoAbilitiesForLeavesField(card, false);
 		triggerAutoAbilitiesForBreakZone(card, false);
@@ -2438,6 +2443,7 @@ public class MainWindow {
 		p1ForwardPanel.revalidate();
 		p1ForwardPanel.repaint();
 		refreshP1ForwardSlot(idx);
+		if (!card.fieldPowerGrants().isEmpty()) refreshFieldGrantDependents(true);
 	}
 
 	/**
@@ -2528,6 +2534,7 @@ public class MainWindow {
 		p2ForwardRemovedTraits.add(java.util.EnumSet.noneOf(CardData.Trait.class));
 		p2ForwardFrozen.add(false);
 		rebuildP2ForwardPanel();
+		if (!card.fieldPowerGrants().isEmpty()) refreshFieldGrantDependents(false);
 
 		logEntry(card.name() + " — control returned to P2");
 	}
@@ -2949,6 +2956,7 @@ public class MainWindow {
 	private void returnP1ForwardToHand(int idx) {
 		if (idx < 0 || idx >= p1ForwardCards.size()) return;
 		CardData card    = p1ForwardCards.get(idx);
+		boolean hadGrants = !card.fieldPowerGrants().isEmpty();
 		CardData topCard = p1ForwardPrimedTop.get(idx);
 		if (topCard != null) {
 			addToP1BreakZone(topCard);
@@ -3013,6 +3021,7 @@ public class MainWindow {
 			p1ForwardPanel.repaint();
 			for (int i = 0; i < p1ForwardCards.size(); i++) refreshP1ForwardSlot(i);
 		}
+		if (hadGrants) for (int i = 0; i < p1MonsterCards.size(); i++) refreshP1MonsterSlot(i);
 		refreshP1HandLabel();
 		triggerAutoAbilitiesForLeavesField(card, true);
 	}
@@ -3020,6 +3029,7 @@ public class MainWindow {
 	private void returnP2ForwardToHand(int idx) {
 		if (idx < 0 || idx >= p2ForwardCards.size()) return;
 		CardData card = p2ForwardCards.get(idx);
+		boolean hadGrants = !card.fieldPowerGrants().isEmpty();
 		gameState.getP2Hand().add(card);
 		logEntry("[P2] " + card.name() + " → returned to hand");
 
@@ -3065,6 +3075,7 @@ public class MainWindow {
 			p2ForwardPanel.repaint();
 			for (int i = 0; i < p2ForwardCards.size(); i++) refreshP2ForwardSlot(i);
 		}
+		if (hadGrants) for (int i = 0; i < p2MonsterCards.size(); i++) refreshP2MonsterSlot(i);
 		refreshP2HandCountLabel();
 		triggerAutoAbilitiesForLeavesField(card, false);
 	}
@@ -3128,35 +3139,33 @@ public class MainWindow {
 	}
 
 	private int effectiveP1ForwardPower(int idx) {
-		CardData top = p1ForwardPrimedTop.get(idx);
+		CardData top  = p1ForwardPrimedTop.get(idx);
 		CardData card = p1ForwardCards.get(idx);
 		int base = top != null ? top.power() : card.power();
-		String name = top != null ? top.name() : card.name();
 		return base + p1ForwardPowerBoost.get(idx) - p1ForwardPowerReduction.get(idx)
-				+ computeConditionalBoostForTarget(name, true);
+				+ computeConditionalBoostForTarget(card, true);
 	}
 
 	private int effectiveP2ForwardPower(int idx) {
 		CardData card = p2ForwardCards.get(idx);
 		return card.power() + p2ForwardPowerBoost.get(idx) - p2ForwardPowerReduction.get(idx)
-				+ computeConditionalBoostForTarget(card.name(), false);
+				+ computeConditionalBoostForTarget(card, false);
 	}
 
 	private boolean effectiveP1HasTrait(int idx, CardData.Trait trait) {
 		if (p1ForwardRemovedTraits.get(idx).contains(trait)) return false;
-		CardData top = p1ForwardPrimedTop.get(idx);
-		String name = top != null ? top.name() : p1ForwardCards.get(idx).name();
-		return p1ForwardCards.get(idx).hasTrait(trait)
+		CardData card = p1ForwardCards.get(idx);
+		return card.hasTrait(trait)
 				|| p1ForwardTempTraits.get(idx).contains(trait)
-				|| computeConditionalTraitsForTarget(name, true).contains(trait);
+				|| computeConditionalTraitsForTarget(card, true).contains(trait);
 	}
 
 	private boolean effectiveP2HasTrait(int idx, CardData.Trait trait) {
 		if (p2ForwardRemovedTraits.get(idx).contains(trait)) return false;
-		String name = p2ForwardCards.get(idx).name();
-		return p2ForwardCards.get(idx).hasTrait(trait)
+		CardData card = p2ForwardCards.get(idx);
+		return card.hasTrait(trait)
 				|| p2ForwardTempTraits.get(idx).contains(trait)
-				|| computeConditionalTraitsForTarget(name, false).contains(trait);
+				|| computeConditionalTraitsForTarget(card, false).contains(trait);
 	}
 
 	private boolean effectiveHasTrait(boolean isP1, int idx, CardData.Trait trait) {
@@ -5892,55 +5901,61 @@ public class MainWindow {
 	 * on the given player's side, summing contributions from all {@link IfControlBoost}
 	 * abilities across every card currently on that player's field.
 	 */
-	private int computeConditionalBoostForTarget(String targetName, boolean isP1) {
+	private int computeConditionalBoostForTarget(CardData target, boolean isP1) {
 		int boost = 0;
 		List<CardData> fwds = isP1 ? p1ForwardCards : p2ForwardCards;
 		CardData[]     bkps = isP1 ? p1BackupCards  : p2BackupCards;
 		List<CardData> mons = isP1 ? p1MonsterCards : p2MonsterCards;
-		for (CardData src : fwds) boost += icbBoostContribution(src, targetName, isP1);
-		for (CardData bkp : bkps) if (bkp != null) boost += icbBoostContribution(bkp, targetName, isP1);
-		for (CardData src : mons) boost += icbBoostContribution(src, targetName, isP1);
+		for (CardData src : fwds) boost += fieldBoostContribution(src, target, isP1);
+		for (CardData bkp : bkps) if (bkp != null) boost += fieldBoostContribution(bkp, target, isP1);
+		for (CardData src : mons) boost += fieldBoostContribution(src, target, isP1);
 		return boost;
 	}
 
-	private int icbBoostContribution(CardData src, String targetName, boolean isP1) {
+	private int fieldBoostContribution(CardData src, CardData target, boolean isP1) {
 		int boost = 0;
 		for (IfControlBoost icb : src.ifControlBoosts())
-			if (icb.targetCardName().equalsIgnoreCase(targetName) && icbConditionsMet(icb, isP1))
+			if (icb.targetCardName().equalsIgnoreCase(target.name()) && icbConditionsMet(icb, isP1))
 				boost += icb.powerBonus();
+		for (FieldPowerGrant fpg : src.fieldPowerGrants())
+			if (fpg.appliesToCard(target))
+				boost += fpg.powerBonus();
 		return boost;
 	}
 
 	/**
-	 * Collects all traits conditionally granted to {@code targetName} on the given player's side
-	 * by any active {@link IfControlBoost} on the field.
+	 * Collects all traits conditionally granted to {@code target} on the given player's side
+	 * by any active {@link IfControlBoost} or {@link FieldPowerGrant} on the field.
 	 */
-	private java.util.EnumSet<CardData.Trait> computeConditionalTraitsForTarget(String targetName, boolean isP1) {
+	private java.util.EnumSet<CardData.Trait> computeConditionalTraitsForTarget(CardData target, boolean isP1) {
 		java.util.EnumSet<CardData.Trait> out = java.util.EnumSet.noneOf(CardData.Trait.class);
 		List<CardData> fwds = isP1 ? p1ForwardCards : p2ForwardCards;
 		CardData[]     bkps = isP1 ? p1BackupCards  : p2BackupCards;
 		List<CardData> mons = isP1 ? p1MonsterCards : p2MonsterCards;
-		for (CardData src : fwds) collectIcbTraits(src, targetName, isP1, out);
-		for (CardData bkp : bkps) if (bkp != null) collectIcbTraits(bkp, targetName, isP1, out);
-		for (CardData src : mons) collectIcbTraits(src, targetName, isP1, out);
+		for (CardData src : fwds) collectFieldTraits(src, target, isP1, out);
+		for (CardData bkp : bkps) if (bkp != null) collectFieldTraits(bkp, target, isP1, out);
+		for (CardData src : mons) collectFieldTraits(src, target, isP1, out);
 		return out;
 	}
 
-	private void collectIcbTraits(CardData src, String targetName, boolean isP1,
+	private void collectFieldTraits(CardData src, CardData target, boolean isP1,
 			java.util.EnumSet<CardData.Trait> out) {
 		for (IfControlBoost icb : src.ifControlBoosts())
-			if (icb.targetCardName().equalsIgnoreCase(targetName) && icbConditionsMet(icb, isP1))
+			if (icb.targetCardName().equalsIgnoreCase(target.name()) && icbConditionsMet(icb, isP1))
 				out.addAll(icb.grantedTraits());
+		for (FieldPowerGrant fpg : src.fieldPowerGrants())
+			if (fpg.appliesToCard(target))
+				out.addAll(fpg.grantedTraits());
 	}
 
 	private int effectiveP1MonsterPower(int idx) {
 		CardData card = p1MonsterCards.get(idx);
-		return card.power() + computeConditionalBoostForTarget(card.name(), true);
+		return card.power() + computeConditionalBoostForTarget(card, true);
 	}
 
 	private int effectiveP2MonsterPower(int idx) {
 		CardData card = p2MonsterCards.get(idx);
-		return card.power() + computeConditionalBoostForTarget(card.name(), false);
+		return card.power() + computeConditionalBoostForTarget(card, false);
 	}
 
 	// -------------------------------------------------------------------------
@@ -10383,6 +10398,7 @@ public class MainWindow {
 		p1ForwardPanel.repaint();
 
 		refreshP1ForwardSlot(idx);
+		if (!card.fieldPowerGrants().isEmpty()) refreshFieldGrantDependents(true);
 		triggerAutoAbilitiesForEntersField(card, true);
 	}
 
@@ -10525,6 +10541,17 @@ public class MainWindow {
 
 
 		if (menu.getComponentCount() > 0) menu.show(slot, e.getX(), e.getY());
+	}
+
+	/** Refreshes all forward and monster slots on the given player's side to reflect updated field grants. */
+	private void refreshFieldGrantDependents(boolean isP1) {
+		if (isP1) {
+			for (int i = 0; i < p1ForwardCards.size(); i++) refreshP1ForwardSlot(i);
+			for (int i = 0; i < p1MonsterCards.size(); i++) refreshP1MonsterSlot(i);
+		} else {
+			for (int i = 0; i < p2ForwardCards.size(); i++) refreshP2ForwardSlot(i);
+			for (int i = 0; i < p2MonsterCards.size(); i++) refreshP2MonsterSlot(i);
+		}
 	}
 
 	/** Reloads and re-renders a single P1 forward slot using its stored URL and state. */
@@ -11825,6 +11852,7 @@ public class MainWindow {
 		p2ForwardPanel.repaint();
 
 		refreshP2ForwardSlot(idx);
+		if (!card.fieldPowerGrants().isEmpty()) refreshFieldGrantDependents(false);
 		triggerAutoAbilitiesForEntersField(card, false);
 	}
 

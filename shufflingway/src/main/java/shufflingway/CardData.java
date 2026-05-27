@@ -31,8 +31,9 @@ public record CardData(
         List<String> primingCost,
         List<ActionAbility>  actionAbilities,
         List<AutoAbility>   autoAbilities,
-        List<FieldAbility>  fieldAbilities,
+        List<FieldAbility>   fieldAbilities,
         List<IfControlBoost> ifControlBoosts,
+        List<FieldPowerGrant> fieldPowerGrants,
         String job,
         String category1,
         String category2,
@@ -60,6 +61,7 @@ public record CardData(
         autoAbilities    = List.copyOf(autoAbilities);
         fieldAbilities   = List.copyOf(fieldAbilities);
         ifControlBoosts  = List.copyOf(ifControlBoosts);
+        fieldPowerGrants = List.copyOf(fieldPowerGrants);
         job       = job       != null ? job       : "";
         category1 = category1 != null ? category1 : "";
         category2 = category2 != null ? category2 : "";
@@ -1100,6 +1102,74 @@ public record CardData(
             if (powerBonus == 0 && traits.isEmpty() && specialText.isEmpty()) continue;
 
             result.add(new IfControlBoost(conditions, exceptName, targetName, powerBonus, traits, specialText));
+        }
+        return List.copyOf(result);
+    }
+
+    // -------------------------------------------------------------------------
+    // FieldPowerGrant parsing
+    // -------------------------------------------------------------------------
+
+    /**
+     * Matches passive grants of the form:
+     * "The (Job X | Category Y) [Forwards?|Backups?|Monsters?|Characters?]
+     *  [other than Z] you control gain[s] [+N power] [and] [Trait...]"
+     */
+    private static final Pattern FIELD_GRANT_PATTERN = Pattern.compile(
+        "(?i)^The\\s+" +
+        "(?:Job\\s+(?<job>[A-Za-z][A-Za-z\\s''\\-]*?)(?=\\s+Forwards?|\\s+Backups?|\\s+Monsters?|\\s+Characters?|\\s+other\\s+than|\\s+you)|" +
+        "Category\\s+(?<category>\\S+))\\s*" +
+        "(?<targets>Forwards?(?:\\s+and\\s+Monsters?)?|Backups?|Monsters?|Characters?)?\\s*" +
+        "(?:other\\s+than\\s+(?<except>[A-Z][A-Za-z''\\-]+(?:\\s+[A-Za-z''\\-]+)*)\\s+)?you\\s+control\\s+gains?\\s+" +
+        "(?:\\+(?<power>\\d+)\\s+power(?:\\s+and\\s+)?)?" +
+        "(?<traitstext>.+?)?[.!]?$"
+    );
+
+    public static List<FieldPowerGrant> parseFieldPowerGrants(String textEn, String cardType) {
+        if (textEn == null || textEn.isBlank()) return List.of();
+        if ("Summon".equalsIgnoreCase(cardType)) return List.of();
+
+        List<FieldPowerGrant> result = new ArrayList<>();
+        for (String raw : textEn.split("(?i)\\[\\[br\\]\\]")) {
+            String seg = SUMMON_MARKUP.matcher(raw.trim()).replaceAll("").trim();
+            if (seg.isEmpty()) continue;
+
+            Matcher m = FIELD_GRANT_PATTERN.matcher(seg);
+            if (!m.find()) continue;
+
+            String job      = m.group("job");
+            String category = m.group("category");
+            if (job != null) job = job.trim();
+
+            String targets = m.group("targets");
+            boolean inclForwards, inclBackups, inclMonsters;
+            if (targets == null) {
+                inclForwards = true; inclBackups = true; inclMonsters = true;
+            } else {
+                String tl = targets.toLowerCase();
+                inclForwards = tl.contains("forward") || tl.contains("character");
+                inclBackups  = tl.contains("backup")  || tl.contains("character");
+                inclMonsters = tl.contains("monster")  || tl.contains("character");
+            }
+
+            String except = m.group("except");
+            if (except != null) except = except.trim();
+
+            String powerStr = m.group("power");
+            int power = powerStr != null ? Integer.parseInt(powerStr) : 0;
+
+            String traitsText = m.group("traitstext");
+            EnumSet<Trait> traits = EnumSet.noneOf(Trait.class);
+            if (traitsText != null) {
+                if (ICB_EFFECT_HASTE.matcher(traitsText).find())        traits.add(Trait.HASTE);
+                if (ICB_EFFECT_BRAVE.matcher(traitsText).find())        traits.add(Trait.BRAVE);
+                if (ICB_EFFECT_FIRST_STRIKE.matcher(traitsText).find()) traits.add(Trait.FIRST_STRIKE);
+                if (ICB_EFFECT_BACK_ATTACK.matcher(traitsText).find())  traits.add(Trait.BACK_ATTACK);
+            }
+
+            if (power == 0 && traits.isEmpty()) continue;
+            result.add(new FieldPowerGrant(job, category, inclForwards, inclBackups, inclMonsters,
+                    except, power, traits));
         }
         return List.copyOf(result);
     }
