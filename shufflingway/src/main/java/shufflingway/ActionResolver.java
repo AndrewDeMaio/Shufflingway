@@ -999,6 +999,20 @@ public class ActionResolver {
     );
 
     /**
+     * Alternate word order: "Until the end of the turn, it/they gains Haste/First Strike/Brave [and …]"
+     * with no power amount (EOT prefix, keywords only).
+     * <ul>
+     *   <li>Group 1 — traits string, e.g. {@code "Haste and First Strike"}</li>
+     * </ul>
+     */
+    private static final Pattern FOLLOWUP_KEYWORD_GRANT_UNTIL = Pattern.compile(
+        "(?i)Until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn\\s*,\\s+" +
+        "(?:it|they)\\s+gains?\\s+" +
+        "((?:\\s*,?\\s*(?:and\\s+)?(?:Haste|First\\s+Strike|Brave))+)" +
+        "[.!]?"
+    );
+
+    /**
      * Matches standalone "Until the end of the turn, &lt;subject&gt; gains +N power [and traits]".
      * Used when the subject is a specific card name rather than "it"/"they".
      * <ul>
@@ -1826,6 +1840,7 @@ public class ActionResolver {
         if (FOLLOWUP_POWER_BOOST_UNTIL_FOR_EACH.matcher(followupText).find())         return "PowerBoostUntilForEach";
         if (FOLLOWUP_POWER_BOOST_UNTIL.matcher(followupText).find())                  return "PowerBoostUntil";
         if (FOLLOWUP_KEYWORD_GRANT.matcher(followupText).find())                      return "KeywordGrant";
+        if (FOLLOWUP_KEYWORD_GRANT_UNTIL.matcher(followupText).find())               return "KeywordGrant";
         if (FOLLOWUP_POWER_REDUCE.matcher(followupText).find())                       return "PowerReduce";
         if (FOLLOWUP_POWER_REDUCE_UNTIL.matcher(followupText).find())                 return "PowerReduceUntil";
         if (OPPONENT_DISCARD.matcher(followupText).find())                            return "OpponentDiscard";
@@ -3278,6 +3293,22 @@ public class ActionResolver {
         Matcher keywordM = FOLLOWUP_KEYWORD_GRANT.matcher(primaryFollowup);
         if (keywordM.find()) {
             EnumSet<CardData.Trait> traits = parseTraits(keywordM.group(1));
+            String logSuffix = boostLogSuffix(0, traits);
+            return ctx -> {
+                ctx.logEntry(choosePrefix + logSuffix);
+                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
+                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem);
+                sortedByIdxDesc(ts, true) .forEach(t -> ctx.boostTarget(t, 0, traits));
+                sortedByIdxDesc(ts, false).forEach(t -> ctx.boostTarget(t, 0, traits));
+                if (secondary != null) secondary.accept(ctx);
+            };
+        }
+
+        // --- Keyword-only grant followup (EOT prefix: "Until end of turn, it gains Haste [and …]") ---
+        Matcher keywordUntilM = FOLLOWUP_KEYWORD_GRANT_UNTIL.matcher(primaryFollowup);
+        if (keywordUntilM.find()) {
+            EnumSet<CardData.Trait> traits = parseTraits(keywordUntilM.group(1));
             String logSuffix = boostLogSuffix(0, traits);
             return ctx -> {
                 ctx.logEntry(choosePrefix + logSuffix);
