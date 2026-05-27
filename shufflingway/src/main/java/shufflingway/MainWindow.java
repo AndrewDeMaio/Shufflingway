@@ -6034,6 +6034,9 @@ public class MainWindow {
 	private static final java.util.regex.Pattern FA_MAX_X = java.util.regex.Pattern.compile(
 		"(?i)The\\s+maximum\\s+you\\s+can\\s+pay\\s+for\\s+《X》\\s+is\\s+(\\d+)"
 	);
+	private static final java.util.Set<String> ELEMENT_NAMES = java.util.Set.of(
+		"fire", "ice", "wind", "earth", "lightning", "water", "light", "dark"
+	);
 
 	private void triggerAutoAbilitiesForEntersField(CardData card, boolean isP1) {
 		for (AutoAbility fa : card.autoAbilities()) {
@@ -6469,15 +6472,21 @@ public class MainWindow {
 		String subEffect = payM.group(2).trim().replaceAll("[.!,]+$", "");
 
 		boolean isXCost = costToken.equalsIgnoreCase("X");
+		boolean isElementCost = !isXCost && ELEMENT_NAMES.stream()
+				.anyMatch(e -> costToken.toLowerCase(java.util.Locale.ROOT).contains(e));
 		int fixedCost;
 		if (!isXCost) {
-			try { fixedCost = Integer.parseInt(costToken); }
-			catch (NumberFormatException e) {
-				// Non-numeric, non-X cost token (e.g. 《C》 for crystal) — resolve normally.
-				java.util.function.Consumer<GameContext> effect = ActionResolver.parse(fa.effectText(), source);
-				if (effect != null) { logEntry("[AutoAbility] " + source.name() + " — " + fa.effectText()); effect.accept(buildGameContext(effectIsP1)); }
-				else logEntry("[AutoAbility] Unrecognized effect: " + fa.effectText());
-				return;
+			if (isElementCost) {
+				fixedCost = 1;
+			} else {
+				try { fixedCost = Integer.parseInt(costToken); }
+				catch (NumberFormatException e) {
+					// Non-numeric, non-X cost token (e.g. 《C》 for crystal) — resolve normally.
+					java.util.function.Consumer<GameContext> effect = ActionResolver.parse(fa.effectText(), source);
+					if (effect != null) { logEntry("[AutoAbility] " + source.name() + " — " + fa.effectText()); effect.accept(buildGameContext(effectIsP1)); }
+					else logEntry("[AutoAbility] Unrecognized effect: " + fa.effectText());
+					return;
+				}
 			}
 		} else { fixedCost = 0; }
 
@@ -6501,6 +6510,12 @@ public class MainWindow {
 				return;
 			}
 		} else if (fa.youMay() || fa.opponentMay()) {
+			// Decline if the effect targets Forwards but the opponent has none to target.
+			boolean effectNeedsForward = subEffect.toLowerCase(java.util.Locale.ROOT).contains("forward");
+			if (effectNeedsForward && p1ForwardCards.isEmpty()) {
+				logEntry("[AutoAbility] [AI] declines optional ability — no opponent Forwards to target");
+				return;
+			}
 			logEntry("[AutoAbility] [AI] auto-accepts optional ability");
 		}
 
@@ -7979,7 +7994,14 @@ public class MainWindow {
 				if (!isP1) {
 					// AI (P2 controls the effect): auto-select rather than prompting the human.
 					if (eligible.isEmpty()) return java.util.List.of();
-					java.util.List<ForwardTarget> copy = new ArrayList<>(eligible);
+					// For unqualified targeting, prefer opponent (P1) targets over own cards.
+					java.util.List<ForwardTarget> pool = eligible;
+					if (!opponentOnly && !selfOnly) {
+						java.util.List<ForwardTarget> oppTargets = eligible.stream()
+								.filter(ForwardTarget::isP1).toList();
+						if (!oppTargets.isEmpty()) pool = oppTargets;
+					}
+					java.util.List<ForwardTarget> copy = new ArrayList<>(pool);
 					java.util.Collections.shuffle(copy);
 					java.util.List<ForwardTarget> picked = java.util.List.copyOf(copy.subList(0, Math.min(maxCount, copy.size())));
 					picked.forEach(t -> {
