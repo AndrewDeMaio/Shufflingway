@@ -1359,6 +1359,20 @@ public class ActionResolver {
     );
 
     /**
+     * Alternate word order: "Deal all [the] [condition] Forwards [of cost N] [other than Job Y] [opponent controls] X damage."
+     * Same named groups as {@link #DEAL_DAMAGE_TO_FORWARDS} so {@link #tryParseDealDamageToForwards} can share extraction logic.
+     */
+    private static final Pattern DEAL_DAMAGE_TO_FORWARDS_ALT = Pattern.compile(
+        "(?i)Deal\\s+all(?:\\s+the)?\\s+" +
+        "(?:(?<condition>damaged|dull|attacking|blocking)\\s+)?" +
+        "Forwards?" +
+        "(?:\\s+of\\s+cost\\s+(?<cost>\\d+)(?:\\s+or\\s+(?<costcmp>less|more))?)?" +
+        "(?:\\s+other\\s+than\\s+Job\\s+(?<excludejob>.+?)(?=\\s+(?:your\\s+)?opponent\\s+controls\\b|\\s+\\d+\\s+damage))?" +
+        "(?:\\s+(?<opponent>(?:your\\s+)?opponent\\s+controls))?" +
+        "\\s+(?<amount>\\d+)\\s+damage[.!]?"
+    );
+
+    /**
      * Matches "During this turn, the cost required to cast your next [filter] is reduced by N
      * [(it cannot become 0)][.]"
      * <ul>
@@ -1983,7 +1997,10 @@ public class ActionResolver {
      */
     private static Consumer<GameContext> tryParseDealDamageToForwards(String text) {
         Matcher m = DEAL_DAMAGE_TO_FORWARDS.matcher(text);
-        if (!m.find()) return null;
+        if (!m.find()) {
+            m = DEAL_DAMAGE_TO_FORWARDS_ALT.matcher(text);
+            if (!m.find()) return null;
+        }
 
         int    damage        = Integer.parseInt(m.group("amount"));
         String condition     = m.group("condition");   // nullable
