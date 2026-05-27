@@ -204,6 +204,7 @@ public class MainWindow {
 	private final List<Integer>  p1MonsterPlayedOnTurn = new ArrayList<>();
 	private final List<Integer>  p1MonsterDamage       = new ArrayList<>();
 	private int                  p1MonsterAttackIdx    = -1;
+	private final java.util.Map<CardData, Integer> p1MonsterTempForwardPower = new java.util.HashMap<>();
 	private JPanel p1MonsterPanel;
 
 	private final List<Boolean>   p2MonsterFrozen       = new ArrayList<>();
@@ -213,6 +214,7 @@ public class MainWindow {
 	private final List<CardState> p2MonsterStates        = new ArrayList<>();
 	private final List<Integer>   p2MonsterPlayedOnTurn  = new ArrayList<>();
 	private final List<Integer>   p2MonsterDamage        = new ArrayList<>();
+	private final java.util.Map<CardData, Integer> p2MonsterTempForwardPower = new java.util.HashMap<>();
 	private JPanel p2MonsterPanel;
 
 	private int      p2DamageCount = 0;
@@ -262,9 +264,11 @@ public class MainWindow {
 	private int attackSubStep = -1;
 
 	// Non-modal P2-attack pending state: set while P1 is interactively declaring a blocker
-	private CardData pendingP2Attacker    = null;
-	private int      pendingP2AttackerIdx = -1;
-	private Runnable pendingP2BlockDone   = null;
+	private CardData pendingP2Attacker        = null;
+	private int      pendingP2AttackerIdx     = -1;
+	private Runnable pendingP2BlockDone       = null;
+	private boolean  pendingP2AttackerIsMonster = false;
+	private int      pendingP2AttackerPower     = 0;
 	private int      p1BlockerSelection   = -1;   // index of forward P1 clicked to block with
 
 	// Blocking-target tracking: set between "Blocker Declared" and resolveCombat so that
@@ -1579,6 +1583,7 @@ public class MainWindow {
 		p1MonsterPlayedOnTurn.clear();
 		p1MonsterDamage.clear();
 		p1MonsterAttackIdx = -1;
+		p1MonsterTempForwardPower.clear();
 
 		if (p2MonsterPanel != null) {
 			p2MonsterPanel.removeAll();
@@ -1591,6 +1596,7 @@ public class MainWindow {
 		p2MonsterStates.clear();
 		p2MonsterPlayedOnTurn.clear();
 		p2MonsterDamage.clear();
+		p2MonsterTempForwardPower.clear();
 		p2MonsterFrozen.clear();
 		spentLbIndices.clear();
 		p2SpentLbIndices.clear();
@@ -3140,6 +3146,7 @@ public class MainWindow {
 		CardData c = p1MonsterCards.get(idx);
 		gameState.getP1Hand().add(c);
 		logEntry(c.name() + " → returned to hand");
+		p1MonsterTempForwardPower.remove(c);
 		p1MonsterCards.remove(idx);
 		p1MonsterStates.remove(idx);
 		p1MonsterFrozen.remove(idx);
@@ -3156,6 +3163,7 @@ public class MainWindow {
 		CardData c = p2MonsterCards.get(idx);
 		gameState.getP2Hand().add(c);
 		logEntry("[P2] " + c.name() + " → returned to hand");
+		p2MonsterTempForwardPower.remove(c);
 		p2MonsterCards.remove(idx);
 		p2MonsterStates.remove(idx);
 		p2MonsterFrozen.remove(idx);
@@ -3370,7 +3378,8 @@ public class MainWindow {
 			return;
 		}
 
-		logEntry("[P2] " + attacker.name() + " (" + effectiveP2ForwardPower(attackerIdx) + ") attacks!"
+		int displayPow = pendingP2AttackerIsMonster ? pendingP2AttackerPower : effectiveP2ForwardPower(attackerIdx);
+		logEntry("[P2] " + attacker.name() + " (" + displayPow + ") attacks!"
 				+ " Select a blocker or click 'Take Damage'.");
 
 		// Store pending state so the attack button and forward clicks know what to do
@@ -5774,6 +5783,7 @@ public class MainWindow {
 		CardData c = p2MonsterCards.get(idx);
 		logEntry("[P2] " + c.name() + " → Break Zone");
 		addToP2BreakZone(c);
+		p2MonsterTempForwardPower.remove(c);
 		p2MonsterCards.remove(idx);
 		p2MonsterStates.remove(idx);
 		p2MonsterFrozen.remove(idx);
@@ -7290,6 +7300,7 @@ public class MainWindow {
 		CardData c = p1MonsterCards.get(idx);
 		logEntry(c.name() + " → Break Zone");
 		addToP1BreakZone(c);
+		p1MonsterTempForwardPower.remove(c);
 		p1MonsterCards.remove(idx);
 		p1MonsterStates.remove(idx);
 		p1MonsterFrozen.remove(idx);
@@ -7860,7 +7871,8 @@ public class MainWindow {
 							if (meetsTargetCondition(p1BackupStates[i], 0, false, false, condition))
 								eligible.add(new ForwardTarget(true, i, ForwardTarget.CardZone.BACKUP));
 						}
-						if (inclMonsters) for (int i = 0; i < p1MonsterCards.size(); i++) {
+						if (inclMonsters || inclForwards) for (int i = 0; i < p1MonsterCards.size(); i++) {
+							if (!inclMonsters && !isP1MonsterTemporarilyForward(i)) continue;
 							CardData card = p1MonsterCards.get(i);
 							if (element != null && !card.containsElement(element)) continue;
 							if (!meetsElementExclusion(card, excludeElement)) continue;
@@ -7904,7 +7916,8 @@ public class MainWindow {
 							if (meetsTargetCondition(p2BackupStates[i], 0, false, false, condition))
 								eligible.add(new ForwardTarget(false, i, ForwardTarget.CardZone.BACKUP));
 						}
-						if (inclMonsters) for (int i = 0; i < p2MonsterCards.size(); i++) {
+						if (inclMonsters || inclForwards) for (int i = 0; i < p2MonsterCards.size(); i++) {
+							if (!inclMonsters && !isP2MonsterTemporarilyForward(i)) continue;
 							CardData card = p2MonsterCards.get(i);
 							if (element != null && !card.containsElement(element)) continue;
 							if (!meetsElementExclusion(card, excludeElement)) continue;
@@ -7951,7 +7964,8 @@ public class MainWindow {
 							if (meetsTargetCondition(p2BackupStates[i], 0, false, false, condition))
 								eligible.add(new ForwardTarget(false, i, ForwardTarget.CardZone.BACKUP));
 						}
-						if (inclMonsters) for (int i = 0; i < p2MonsterCards.size(); i++) {
+						if (inclMonsters || inclForwards) for (int i = 0; i < p2MonsterCards.size(); i++) {
+							if (!inclMonsters && !isP2MonsterTemporarilyForward(i)) continue;
 							CardData card = p2MonsterCards.get(i);
 							if (element != null && !card.containsElement(element)) continue;
 							if (!meetsElementExclusion(card, excludeElement)) continue;
@@ -7998,7 +8012,8 @@ public class MainWindow {
 							if (meetsTargetCondition(p1BackupStates[i], 0, false, false, condition))
 								eligible.add(new ForwardTarget(true, i, ForwardTarget.CardZone.BACKUP));
 						}
-						if (inclMonsters) for (int i = 0; i < p1MonsterCards.size(); i++) {
+						if (inclMonsters || inclForwards) for (int i = 0; i < p1MonsterCards.size(); i++) {
+							if (!inclMonsters && !isP1MonsterTemporarilyForward(i)) continue;
 							CardData card = p1MonsterCards.get(i);
 							if (noChoose.contains(card)) continue;
 							if (element != null && !card.containsElement(element)) continue;
@@ -9270,6 +9285,7 @@ public class MainWindow {
 								case BREAK -> {
 									logEntry(c.name() + " is broken");
 									addToP1BreakZone(c);
+									p1MonsterTempForwardPower.remove(c);
 									p1MonsterCards.remove(i);
 									p1MonsterStates.remove(i);
 									p1MonsterFrozen.remove(i);
@@ -9343,6 +9359,7 @@ public class MainWindow {
 								case BREAK -> {
 									logEntry("[P2] " + c.name() + " is broken");
 									addToP2BreakZone(c);
+									p2MonsterTempForwardPower.remove(c);
 									p2MonsterCards.remove(i);
 									p2MonsterStates.remove(i);
 									p2MonsterFrozen.remove(i);
@@ -9580,6 +9597,30 @@ public class MainWindow {
 
 			@Override public boolean isExBurst() { return exBurst; }
 			@Override public boolean castWasPaidByBackupsOnly() { return lastCastWasPaidByBackupsOnly; }
+
+			@Override public void makeMonsterTemporaryForward(CardData source, int power) {
+				if (isP1) {
+					int idx = p1MonsterCards.indexOf(source);
+					if (idx < 0) return;
+					p1MonsterTempForwardPower.put(source, power);
+					endOfTurnEffects.add(ctx -> {
+						p1MonsterTempForwardPower.remove(source);
+						int stillIdx = p1MonsterCards.indexOf(source);
+						if (stillIdx >= 0) refreshP1MonsterSlot(stillIdx);
+					});
+					refreshP1MonsterSlot(idx);
+				} else {
+					int idx = p2MonsterCards.indexOf(source);
+					if (idx < 0) return;
+					p2MonsterTempForwardPower.put(source, power);
+					endOfTurnEffects.add(ctx -> {
+						p2MonsterTempForwardPower.remove(source);
+						int stillIdx = p2MonsterCards.indexOf(source);
+						if (stillIdx >= 0) refreshP2MonsterSlot(stillIdx);
+					});
+					refreshP2MonsterSlot(idx);
+				}
+			}
 		};
 	}
 
@@ -9869,6 +9910,7 @@ public class MainWindow {
 				if (!cardNamesOverlap(incoming, c)) continue;
 				logEntry("[Uniqueness] " + c.name() + " — sent to Break Zone");
 				addToP1BreakZone(c);
+				p1MonsterTempForwardPower.remove(c);
 				p1MonsterCards.remove(i); p1MonsterStates.remove(i);
 				p1MonsterFrozen.remove(i); p1MonsterPlayedOnTurn.remove(i);
 				p1MonsterDamage.remove(i);
@@ -9914,6 +9956,7 @@ public class MainWindow {
 				if (!cardNamesOverlap(incoming, c)) continue;
 				logEntry("[Uniqueness] [P2] " + c.name() + " — sent to Break Zone");
 				addToP2BreakZone(c);
+				p2MonsterTempForwardPower.remove(c);
 				p2MonsterCards.remove(i); p2MonsterStates.remove(i);
 				p2MonsterFrozen.remove(i); p2MonsterPlayedOnTurn.remove(i);
 				p2MonsterDamage.remove(i);
@@ -10528,7 +10571,7 @@ public class MainWindow {
 		int power         = effectiveP1MonsterPower(idx);
 		int basePower     = card.power();
 		CardData.BecomeForwardAbility bfa = card.becomeForwardAbility();
-		int displayPower  = (bfa != null) ? bfa.power() : power;
+		Integer tempFwdPower = p1MonsterTempForwardPower.get(card);
 		boolean canAttack = isMonsterSelectableAsForward(idx);
 		boolean selected  = p1MonsterAttackIdx == idx;
 		int damage        = p1MonsterDamage.get(idx);
@@ -10543,6 +10586,8 @@ public class MainWindow {
 					CardAnimation.renderDamageOverlay(canvas, damage);
 				if (bfa != null)
 					CardAnimation.renderPowerOverlayRight(canvas, bfa.power(), new Color(80, 220, 80), state);
+				else if (tempFwdPower != null)
+					CardAnimation.renderPowerOverlayRight(canvas, tempFwdPower, new Color(80, 220, 80), state);
 				else if (power > basePower)
 					CardAnimation.renderPowerOverlayRight(canvas, power, new Color(80, 220, 80), state);
 				return new ImageIcon(canvas);
@@ -10599,13 +10644,28 @@ public class MainWindow {
 		CardState state = p2MonsterStates.get(idx);
 		JLabel slot = p2MonsterLabels.get(idx);
 		if (url == null) return;
+		CardData card     = p2MonsterCards.get(idx);
+		int power         = effectiveP2MonsterPower(idx);
+		int basePower     = card.power();
+		CardData.BecomeForwardAbility bfa = card.becomeForwardAbility();
+		Integer tempFwdPower = p2MonsterTempForwardPower.get(card);
+		int damage        = p2MonsterDamage.get(idx);
 		if (slot.getIcon() == null) slot.setIcon(new ImageIcon(CardAnimation.renderPlaceholder(state)));
 		new SwingWorker<ImageIcon, Void>() {
 			@Override protected ImageIcon doInBackground() throws Exception {
 				Image raw = ImageCache.load(url);
 				if (raw == null) return new ImageIcon(CardAnimation.renderPlaceholder(state));
-				BufferedImage card = CardAnimation.toARGB(raw, CARD_W, CARD_H);
-				return new ImageIcon(CardAnimation.renderBackupCard(card, state, false, false, p2MonsterFrozen.get(idx)));
+				BufferedImage canvas = CardAnimation.toARGB(raw, CARD_W, CARD_H);
+				canvas = CardAnimation.renderBackupCard(canvas, state, false, false, p2MonsterFrozen.get(idx));
+				if (damage > 0)
+					CardAnimation.renderDamageOverlay(canvas, damage);
+				if (bfa != null)
+					CardAnimation.renderPowerOverlayRight(canvas, bfa.power(), new Color(80, 220, 80), state);
+				else if (tempFwdPower != null)
+					CardAnimation.renderPowerOverlayRight(canvas, tempFwdPower, new Color(80, 220, 80), state);
+				else if (power > basePower)
+					CardAnimation.renderPowerOverlayRight(canvas, power, new Color(80, 220, 80), state);
+				return new ImageIcon(canvas);
 			}
 			@Override protected void done() {
 				try {
@@ -10759,16 +10819,20 @@ public class MainWindow {
 	/** Called when P1 clicks the Attack/Block/Take-Damage button during block declaration. */
 	private void handleP1BlockAction() {
 		if (pendingP2Attacker == null) return;
-		CardData attacker    = pendingP2Attacker;
-		int      attackerIdx = pendingP2AttackerIdx;
-		Runnable onDone      = pendingP2BlockDone;
-		int      blockerIdx  = p1BlockerSelection;
+		CardData attacker      = pendingP2Attacker;
+		int      attackerIdx   = pendingP2AttackerIdx;
+		Runnable onDone        = pendingP2BlockDone;
+		int      blockerIdx    = p1BlockerSelection;
+		boolean  isMonster     = pendingP2AttackerIsMonster;
+		int      attackerPower = pendingP2AttackerPower;
 
 		// Clear pending state before any callbacks to avoid re-entrancy
-		pendingP2Attacker    = null;
-		pendingP2AttackerIdx = -1;
-		pendingP2BlockDone   = null;
-		p1BlockerSelection   = -1;
+		pendingP2Attacker           = null;
+		pendingP2AttackerIdx        = -1;
+		pendingP2BlockDone          = null;
+		p1BlockerSelection          = -1;
+		pendingP2AttackerIsMonster  = false;
+		pendingP2AttackerPower      = 0;
 		refreshAttackButton();
 
 		if (blockerIdx >= 0 && blockerIdx < p1ForwardCards.size()) {
@@ -10779,7 +10843,11 @@ public class MainWindow {
 			triggerAutoAbilitiesForBlock(blocker, true);
 			setAttackSubStep(3);
 			combatPriority("Blocker Declared", false, () -> {
-				resolveCombat(attacker, false, attackerIdx, blocker, true, blockerIdx);
+				if (isMonster) {
+					resolveP2MonsterAttackerCombat(attacker, attackerIdx, attackerPower, blocker, blockerIdx);
+				} else {
+					resolveCombat(attacker, false, attackerIdx, blocker, true, blockerIdx);
+				}
 				p1BlockingIdx       = -1;
 				p1BlockedByAttacker = null;
 				setAttackSubStep(-1);
@@ -10973,12 +11041,31 @@ public class MainWindow {
 	}
 
 	/** Returns true when the P1 monster at {@code idx} can attack as a Forward this turn. */
+	/** Returns true when the P1 monster at {@code idx} currently has the Forward type. */
+	private boolean isP1MonsterTemporarilyForward(int idx) {
+		if (idx < 0 || idx >= p1MonsterCards.size()) return false;
+		CardData card = p1MonsterCards.get(idx);
+		if (p1MonsterTempForwardPower.containsKey(card)) return true;
+		return card.becomeForwardAbility() != null
+				&& gameState.getCurrentPlayer() == GameState.Player.P1;
+	}
+
+	/** Returns true when the P2 monster at {@code idx} currently has the Forward type. */
+	private boolean isP2MonsterTemporarilyForward(int idx) {
+		if (idx < 0 || idx >= p2MonsterCards.size()) return false;
+		CardData card = p2MonsterCards.get(idx);
+		if (p2MonsterTempForwardPower.containsKey(card)) return true;
+		return card.becomeForwardAbility() != null
+				&& gameState.getCurrentPlayer() == GameState.Player.P2;
+	}
+
 	private boolean isMonsterSelectableAsForward(int idx) {
 		if (gameState.getCurrentPhase() != GameState.GamePhase.ATTACK) return false;
 		if (gameState.getCurrentPlayer() != GameState.Player.P1) return false;
 		if (idx < 0 || idx >= p1MonsterStates.size()) return false;
 		if (p1MonsterStates.get(idx) != CardState.ACTIVE) return false;
-		if (p1MonsterCards.get(idx).becomeForwardAbility() == null) return false;
+		CardData card = p1MonsterCards.get(idx);
+		if (card.becomeForwardAbility() == null && !p1MonsterTempForwardPower.containsKey(card)) return false;
 		return p1MonsterPlayedOnTurn.get(idx) != gameState.getTurnNumber();
 	}
 
@@ -11011,7 +11098,9 @@ public class MainWindow {
 	 */
 	private void executeP1MonsterAttack(int monIdx) {
 		CardData attacker = p1MonsterCards.get(monIdx);
-		int attackerPower = attacker.becomeForwardAbility().power();
+		CardData.BecomeForwardAbility bfa = attacker.becomeForwardAbility();
+		int attackerPower = bfa != null ? bfa.power()
+				: p1MonsterTempForwardPower.getOrDefault(attacker, 0);
 
 		p1MonsterStates.set(monIdx, CardState.DULL);
 		refreshP1MonsterSlot(monIdx);
@@ -11074,6 +11163,46 @@ public class MainWindow {
 			p2ForwardDamage.set(blockerIdx, p2ForwardDamage.get(blockerIdx) + attackerPower);
 			refreshP2ForwardSlot(blockerIdx);
 		}
+	}
+
+	private void resolveP2MonsterAttackerCombat(CardData attacker, int monIdx, int attackerPower,
+			CardData blocker, int blockerIdx) {
+		int effBlockerPow = effectiveP1ForwardPower(blockerIdx);
+		logEntry("[P2] " + attacker.name() + " (" + attackerPower + ") vs "
+				+ blocker.name() + " (" + effBlockerPow + ")");
+
+		int curMonDmg     = p2MonsterDamage.get(monIdx);
+		boolean monsterBroken = effBlockerPow > 0 && curMonDmg + effBlockerPow >= attackerPower;
+		boolean blockerBroken = attackerPower > 0
+				&& p1ForwardDamage.get(blockerIdx) + attackerPower >= effBlockerPow;
+
+		if (monsterBroken) {
+			breakP2MonsterSlot(monIdx);
+		} else if (effBlockerPow > 0) {
+			p2MonsterDamage.set(monIdx, curMonDmg + effBlockerPow);
+			refreshP2MonsterSlot(monIdx);
+		}
+
+		if (blockerBroken) {
+			breakP1Forward(blockerIdx);
+		} else if (attackerPower > 0) {
+			p1ForwardDamage.set(blockerIdx, p1ForwardDamage.get(blockerIdx) + attackerPower);
+			refreshP1ForwardSlot(blockerIdx);
+		}
+	}
+
+	/** Returns the power a P2 monster uses when attacking as a Forward. */
+	private int p2MonsterForwardPower(int idx) {
+		CardData card = p2MonsterCards.get(idx);
+		CardData.BecomeForwardAbility bfa = card.becomeForwardAbility();
+		return bfa != null ? bfa.power() : p2MonsterTempForwardPower.getOrDefault(card, 0);
+	}
+
+	/** Returns true when the P2 monster at {@code idx} can attack as a Forward this turn. */
+	private boolean p2MonsterCanAttackAsForward(int idx) {
+		if (p2MonsterStates.get(idx) != CardState.ACTIVE) return false;
+		if (!isP2MonsterTemporarilyForward(idx)) return false;
+		return p2MonsterPlayedOnTurn.get(idx) != gameState.getTurnNumber();
 	}
 
 	private void refreshAttackButton() {
@@ -12223,6 +12352,11 @@ public class MainWindow {
 					if (p2ForwardCanAttack(i)) { canAttack = true; break; }
 				}
 				if (!canAttack) {
+					for (int i = 0; i < p2MonsterStates.size(); i++) {
+						if (p2MonsterCanAttackAsForward(i)) { canAttack = true; break; }
+					}
+				}
+				if (!canAttack) {
 					logEntry("[P2] Attack Phase — No attackers, skipping");
 					gameState.advancePhase(); // ATTACK → MAIN_2
 					refreshPhaseTracker();
@@ -12328,6 +12462,8 @@ public class MainWindow {
 
 		private void doAttackPhase(Runnable onDone) {
 			if (gameState.isP1GameOver()) return;
+			pendingP2AttackerIsMonster = false;
+			pendingP2AttackerPower     = 0;
 			for (int i = 0; i < p2ForwardStates.size(); i++) {
 				if (!p2ForwardCanAttack(i)) continue;
 				CardData attacker = p2ForwardCards.get(i);
@@ -12342,6 +12478,22 @@ public class MainWindow {
 				triggerAutoAbilitiesForAttack(attacker, false);
 				final int fi = i;
 				initP1BlockDeclaration(attacker, fi, () -> {
+					if (!gameState.isP1GameOver()) step(() -> doAttackPhase(onDone));
+				});
+				return;
+			}
+			for (int i = 0; i < p2MonsterStates.size(); i++) {
+				if (!p2MonsterCanAttackAsForward(i)) continue;
+				CardData attacker = p2MonsterCards.get(i);
+				int power = p2MonsterForwardPower(i);
+				p2MonsterStates.set(i, CardState.DULL);
+				refreshP2MonsterSlot(i);
+				triggerAutoAbilitiesForAttack(attacker, false);
+				logEntry("[P2] " + attacker.name() + " attacks! (Forward — " + power + ")");
+				pendingP2AttackerIsMonster = true;
+				pendingP2AttackerPower     = power;
+				final int mi = i;
+				initP1BlockDeclaration(attacker, mi, () -> {
 					if (!gameState.isP1GameOver()) step(() -> doAttackPhase(onDone));
 				});
 				return;

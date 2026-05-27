@@ -895,4 +895,11 @@ public interface GameContext {
      * Used for "If the CP paid to cast X was only produced by Backups" conditionals.
      */
     boolean castWasPaidByBackupsOnly();
+
+    /**
+     * Marks {@code source} (a Monster on the ability user's field) as temporarily a Forward
+     * with the given {@code power} until the end of the turn.  No-op if the source is not a
+     * Monster currently on the field.
+     */
+    void makeMonsterTemporaryForward(CardData source, int power);
 }

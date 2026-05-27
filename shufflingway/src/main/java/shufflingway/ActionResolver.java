@@ -1416,6 +1416,14 @@ public class ActionResolver {
     );
 
     /**
+     * Matches "Until the end of the turn, [CardName] also becomes a Forward with N power."
+     * Used for action abilities on Monsters.  Group {@code power} captures the power value.
+     */
+    private static final Pattern BECOME_FORWARD_UNTIL_EOT_PATTERN = Pattern.compile(
+        "(?i)^Until\\s+the\\s+end\\s+of\\s+the\\s+turn,\\s+.+?\\s+also\\s+becomes?\\s+a\\s+Forward\\s+with\\s+(?<power>\\d+)\\s+power"
+    );
+
+    /**
      * Matches "If the CP paid to cast [Name] was only produced by Backups, [also] draw N card(s)."
      * Group {@code count} — number of cards to draw.
      */
@@ -1653,6 +1661,9 @@ public class ActionResolver {
         if (result != null) return result;
 
         result = tryParseBackupCpDraw(effectText);
+        if (result != null) return result;
+
+        result = tryParseBecomeForwardUntilEot(effectText, source);
         if (result != null) return result;
 
         // Compound-sentence fallback: split on ". " between sentences and compose effects.
@@ -4841,6 +4852,17 @@ public class ActionResolver {
                 ctx.logEntry("BackupCpDraw — CP was only from Backups, draw " + count);
                 ctx.drawCards(count);
             }
+        };
+    }
+
+    private static Consumer<GameContext> tryParseBecomeForwardUntilEot(String text, CardData source) {
+        if (source == null) return null;
+        Matcher m = BECOME_FORWARD_UNTIL_EOT_PATTERN.matcher(text);
+        if (!m.find()) return null;
+        int power = Integer.parseInt(m.group("power"));
+        return ctx -> {
+            ctx.logEntry(source.name() + " becomes a Forward with " + power + " power until end of turn");
+            ctx.makeMonsterTemporaryForward(source, power);
         };
     }
 

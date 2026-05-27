@@ -1284,9 +1284,10 @@ public record CardData(
     /**
      * Matches "During your turn, [CardName] also becomes a Forward with [X] power."
      * Group {@code power} captures the numeric power value.
+     * Trailing text (e.g. embedded auto-abilities) is allowed after the power clause.
      */
     private static final Pattern BECOME_FORWARD_DURING_TURN_PATTERN = Pattern.compile(
-        "(?i)^During\\s+your\\s+turn,\\s+.+?\\s+also\\s+becomes?\\s+a\\s+Forward\\s+with\\s+(?<power>\\d+)\\s+power\\.?\\s*$"
+        "(?i)^During\\s+your\\s+turn,\\s+.+?\\s+also\\s+becomes?\\s+a\\s+Forward\\s+with\\s+(?<power>\\d+)\\s+power"
     );
 
     /**
@@ -1361,7 +1362,7 @@ public record CardData(
             if (IS_ALSO_MONSTER_PATTERN.matcher(seg).find())                continue;
             if (ENTERS_FIELD_DULL_PATTERN.matcher(seg).matches())           continue;
             if (ALIAS_PLAY_RESTRICTION_PATTERN.matcher(seg).matches())      continue;
-            if (BECOME_FORWARD_DURING_TURN_PATTERN.matcher(seg).matches())  continue;
+            if (BECOME_FORWARD_DURING_TURN_PATTERN.matcher(seg).find())     continue;
 
             result.add(new FieldAbility(seg, damageThreshold));
         }
@@ -1723,7 +1724,7 @@ public record CardData(
     public BecomeForwardAbility becomeForwardAbility() {
         for (String seg : rawFieldSegments()) {
             Matcher m = BECOME_FORWARD_DURING_TURN_PATTERN.matcher(seg);
-            if (m.matches()) return new BecomeForwardAbility(Integer.parseInt(m.group("power")));
+            if (m.find()) return new BecomeForwardAbility(Integer.parseInt(m.group("power")));
         }
         return null;
     }
