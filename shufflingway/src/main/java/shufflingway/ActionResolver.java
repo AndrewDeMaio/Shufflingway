@@ -1009,7 +1009,8 @@ public class ActionResolver {
 
     private static final Pattern STANDALONE_POWER_BOOST_UNTIL = Pattern.compile(
         "(?i)Until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn\\s*,\\s+" +
-        "(?<subject>.+?)\\s+gains?\\s+\\+(?<amount>\\d+)\\s+[Pp]ower" +
+        "(?<subject>.+?)\\s+gains?\\s+" +
+        "(?:\\+(?<amount>\\d+)\\s+[Pp]ower)?" +
         "(?<traits>(?:\\s*,?\\s*(?:and\\s+)?(?:Haste|First\\s+Strike|Brave))*)" +
         "[.\\s]*$"
     );
@@ -3571,8 +3572,9 @@ public class ActionResolver {
         String subject = m.group("subject").trim();
         if (subject.equalsIgnoreCase("it") || subject.equalsIgnoreCase("they")) return null;
         if (!subject.equalsIgnoreCase(source.name())) return null;
-        int boost = Integer.parseInt(m.group("amount"));
+        int boost = m.group("amount") != null ? Integer.parseInt(m.group("amount")) : 0;
         EnumSet<CardData.Trait> traits = parseTraits(m.group("traits"));
+        if (boost == 0 && traits.isEmpty()) return null;
         String logSuffix = boostLogSuffix(boost, traits);
         return ctx -> {
             ctx.logEntry(source.name() + logSuffix);
