@@ -349,6 +349,9 @@ public class MainWindow {
 	private boolean p1ExtraTurnThenLose = false;
 
 	public static void main(String[] args) {
+		AppLogger.init();
+		Thread.setDefaultUncaughtExceptionHandler((thread, throwable) ->
+				AppLogger.log("Uncaught exception in thread: " + thread.getName(), throwable));
 		Runtime.getRuntime().addShutdownHook(new Thread(ImageCache::shutdown));
 		EventQueue.invokeLater(new Runnable() {
 			public void run() {
@@ -358,6 +361,7 @@ public class MainWindow {
 					ImageIcon icon40 = new ImageIcon(getClass().getResource("/resources/shufflingway.png"));
 					window.frame.setIconImage(icon40.getImage());
 				} catch (Exception e) {
+					AppLogger.log("Startup exception", e);
 					e.printStackTrace();
 				}
 			}
@@ -9122,7 +9126,9 @@ public class MainWindow {
 					boolean opponentOnly, boolean selfOnly,
 					String element, int costVal, String costCmp, int excludeCostVal,
 					String job, String category) {
-				if (!opponentOnly) {
+				boolean touchP1 = isP1 ? !opponentOnly : !selfOnly;
+				boolean touchP2 = isP1 ? !selfOnly     : !opponentOnly;
+				if (touchP1) {
 					if (forwards || monsters) {
 						for (int i = p1ForwardCards.size() - 1; i >= 0; i--) {
 							CardData c = p1Forward(i);
@@ -9197,7 +9203,7 @@ public class MainWindow {
 						}
 					}
 				}
-				if (!selfOnly) {
+				if (touchP2) {
 					if (forwards || monsters) {
 						for (int i = p2ForwardCards.size() - 1; i >= 0; i--) {
 							CardData c = p2ForwardCards.get(i);
@@ -9277,7 +9283,9 @@ public class MainWindow {
 					boolean opponentOnly, boolean selfOnly,
 					String element, int costVal, String costCmp) {
 				java.util.EnumSet<CardData.Trait> noTraits = java.util.EnumSet.noneOf(CardData.Trait.class);
-				if (!opponentOnly) {
+				boolean touchP1 = isP1 ? !opponentOnly : !selfOnly;
+				boolean touchP2 = isP1 ? !selfOnly     : !opponentOnly;
+				if (touchP1) {
 					if (inclForwards) {
 						for (int i = 0; i < p1ForwardCards.size(); i++) {
 							CardData c = p1Forward(i);
@@ -9297,7 +9305,7 @@ public class MainWindow {
 						}
 					}
 				}
-				if (!selfOnly) {
+				if (touchP2) {
 					if (inclForwards) {
 						for (int i = 0; i < p2ForwardCards.size(); i++) {
 							CardData c = p2ForwardCards.get(i);
