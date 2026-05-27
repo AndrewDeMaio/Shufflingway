@@ -2809,14 +2809,16 @@ public class MainWindow {
 		triggerAutoAbilitiesForLeavesField(card, false);
 	}
 
-	private void searchDeckForCard(boolean inclForwards, boolean inclBackups,
+	private void searchDeckForCard(boolean isP1,
+			boolean inclForwards, boolean inclBackups,
 			boolean inclMonsters, boolean inclSummons,
 			int costVal, String costCmp, String cardNameFilter, String jobFilter,
 			String categoryFilter, String elementFilter, String excludeName, String excludeElem,
 			String destination) {
+		Deque<CardData> deck = isP1 ? gameState.getP1MainDeck() : gameState.getP2MainDeck();
 		boolean anyType = !inclForwards && !inclBackups && !inclMonsters && !inclSummons;
 		List<CardData> matches = new ArrayList<>();
-		for (CardData c : gameState.getP1MainDeck()) {
+		for (CardData c : deck) {
 			if (!anyType) {
 				boolean typeMatch = (inclForwards && c.isForward())
 				                 || (inclBackups  && c.isBackup())
@@ -2843,31 +2845,39 @@ public class MainWindow {
 			matches.add(c);
 		}
 		if (matches.isEmpty()) {
-			shuffleP1MainDeck();
+			shuffleDeck(isP1);
 			logEntry("Search: no matching card found in deck");
 			return;
 		}
 		CardData chosen = showDeckSearchSelectDialog(matches);
-		if (chosen != null) gameState.removeFromP1MainDeck(chosen);
-		shuffleP1MainDeck();
+		if (chosen != null) {
+			if (isP1) gameState.removeFromP1MainDeck(chosen);
+			else      deck.remove(chosen);
+		}
+		shuffleDeck(isP1);
 		if (chosen == null) {
 			logEntry("Search: no card selected");
 			return;
 		}
 		switch (destination) {
 			case "hand" -> {
-				gameState.getP1Hand().add(chosen);
-				logEntry(chosen.name() + " → hand (search)");
-				refreshP1HandLabel();
+				playerHand(isP1).add(chosen);
+				logEntry((isP1 ? "" : "[P2] ") + chosen.name() + " → hand (search)");
+				if (isP1) refreshP1HandLabel(); else refreshP2HandCountLabel();
 			}
 			case "field" -> {
-				logEntry(chosen.name() + " → field (search)");
-				if (chosen.isBackup())       placeCardInFirstBackupSlot(chosen);
-				else if (chosen.isMonster()) placeCardInMonsterZone(chosen);
-				else                         placeCardInForwardZone(chosen);
+				logEntry((isP1 ? "" : "[P2] ") + chosen.name() + " → field (search)");
+				if (isP1) {
+					if (chosen.isBackup())       placeCardInFirstBackupSlot(chosen);
+					else if (chosen.isMonster()) placeCardInMonsterZone(chosen);
+					else                         placeCardInForwardZone(chosen);
+				} else {
+					if (chosen.isBackup())       placeP2CardInFirstBackupSlot(chosen);
+					else if (chosen.isMonster()) placeP2CardInMonsterZone(chosen);
+					else                         placeP2CardInForwardZone(chosen);
+				}
 			}
 			case "underTop" -> {
-				Deque<CardData> deck = gameState.getP1MainDeck();
 				if (deck.isEmpty()) {
 					deck.addFirst(chosen);
 				} else {
@@ -2875,10 +2885,19 @@ public class MainWindow {
 					deck.addFirst(chosen);
 					deck.addFirst(top);
 				}
-				logEntry(chosen.name() + " → under top card of deck (search)");
-				refreshP1DeckLabel();
+				logEntry((isP1 ? "" : "[P2] ") + chosen.name() + " → under top card of deck (search)");
+				if (isP1) refreshP1DeckLabel(); else refreshP2DeckLabel();
 			}
 		}
+	}
+
+	private void shuffleDeck(boolean isP1) {
+		Deque<CardData> deck = isP1 ? gameState.getP1MainDeck() : gameState.getP2MainDeck();
+		List<CardData> list = new ArrayList<>(deck);
+		Collections.shuffle(list);
+		deck.clear();
+		deck.addAll(list);
+		if (isP1) refreshP1DeckLabel(); else refreshP2DeckLabel();
 	}
 
 	private CardData showDeckSearchSelectDialog(List<CardData> matches) {
@@ -8065,7 +8084,7 @@ public class MainWindow {
 					int costVal, String costCmp, String cardNameFilter, String jobFilter,
 					String categoryFilter, String elementFilter, String excludeName, String excludeElem,
 					String destination) {
-				MainWindow.this.searchDeckForCard(inclForwards, inclBackups, inclMonsters, inclSummons,
+				MainWindow.this.searchDeckForCard(isP1, inclForwards, inclBackups, inclMonsters, inclSummons,
 						costVal, costCmp, cardNameFilter, jobFilter, categoryFilter, elementFilter, excludeName, excludeElem, destination);
 			}
 
