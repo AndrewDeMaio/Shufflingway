@@ -9368,11 +9368,17 @@ public class MainWindow {
 
 			@Override public int countP1FieldCards(boolean inclForwards, boolean inclBackups,
 					boolean inclMonsters, String jobFilter, String cardNameFilter, String categoryFilter) {
+				return countP1FieldCards(inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, null);
+			}
+
+			@Override public int countP1FieldCards(boolean inclForwards, boolean inclBackups,
+					boolean inclMonsters, String jobFilter, String cardNameFilter, String categoryFilter, String elementFilter) {
 				int count = 0;
 				if (inclForwards) for (CardData c : p1ForwardCards) {
 					if (!meetsJobFilter(c, jobFilter)) continue;
 					if (!meetsCardNameFilter(c, cardNameFilter)) continue;
 					if (!meetsCategoryFilter(c, categoryFilter)) continue;
+					if (elementFilter != null && !c.containsElement(elementFilter)) continue;
 					count++;
 				}
 				if (inclBackups) for (CardData c : p1BackupCards) {
@@ -9380,12 +9386,14 @@ public class MainWindow {
 					if (!meetsJobFilter(c, jobFilter)) continue;
 					if (!meetsCardNameFilter(c, cardNameFilter)) continue;
 					if (!meetsCategoryFilter(c, categoryFilter)) continue;
+					if (elementFilter != null && !c.containsElement(elementFilter)) continue;
 					count++;
 				}
 				if (inclMonsters) for (CardData c : p1MonsterCards) {
 					if (!meetsJobFilter(c, jobFilter)) continue;
 					if (!meetsCardNameFilter(c, cardNameFilter)) continue;
 					if (!meetsCategoryFilter(c, categoryFilter)) continue;
+					if (elementFilter != null && !c.containsElement(elementFilter)) continue;
 					count++;
 				}
 				return count;
@@ -9396,6 +9404,54 @@ public class MainWindow {
 				for (CardData c : gameState.getP1BreakZone()) {
 					if (!meetsCardNameFilter(c, cardNameFilter)) continue;
 					if (!meetsJobFilter(c, jobFilter)) continue;
+					count++;
+				}
+				return count;
+			}
+
+			@Override public int countP2BreakZoneCards(String cardNameFilter, String jobFilter) {
+				int count = 0;
+				for (CardData c : gameState.getP2BreakZone()) {
+					if (!meetsCardNameFilter(c, cardNameFilter)) continue;
+					if (!meetsJobFilter(c, jobFilter)) continue;
+					count++;
+				}
+				return count;
+			}
+
+			@Override public int countP2FieldCards(boolean inclForwards, boolean inclBackups,
+					boolean inclMonsters, String jobFilter, String cardNameFilter) {
+				return countP2FieldCards(inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, null);
+			}
+
+			@Override public int countP2FieldCards(boolean inclForwards, boolean inclBackups,
+					boolean inclMonsters, String jobFilter, String cardNameFilter, String categoryFilter) {
+				return countP2FieldCards(inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, null);
+			}
+
+			@Override public int countP2FieldCards(boolean inclForwards, boolean inclBackups,
+					boolean inclMonsters, String jobFilter, String cardNameFilter, String categoryFilter, String elementFilter) {
+				int count = 0;
+				if (inclForwards) for (CardData c : p2ForwardCards) {
+					if (!meetsJobFilter(c, jobFilter)) continue;
+					if (!meetsCardNameFilter(c, cardNameFilter)) continue;
+					if (!meetsCategoryFilter(c, categoryFilter)) continue;
+					if (elementFilter != null && !c.containsElement(elementFilter)) continue;
+					count++;
+				}
+				if (inclBackups) for (CardData c : p2BackupCards) {
+					if (c == null) continue;
+					if (!meetsJobFilter(c, jobFilter)) continue;
+					if (!meetsCardNameFilter(c, cardNameFilter)) continue;
+					if (!meetsCategoryFilter(c, categoryFilter)) continue;
+					if (elementFilter != null && !c.containsElement(elementFilter)) continue;
+					count++;
+				}
+				if (inclMonsters) for (CardData c : p2MonsterCards) {
+					if (!meetsJobFilter(c, jobFilter)) continue;
+					if (!meetsCardNameFilter(c, cardNameFilter)) continue;
+					if (!meetsCategoryFilter(c, categoryFilter)) continue;
+					if (elementFilter != null && !c.containsElement(elementFilter)) continue;
 					count++;
 				}
 				return count;

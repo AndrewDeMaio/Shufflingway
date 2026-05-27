@@ -443,12 +443,60 @@ public interface GameContext {
             String jobFilter, String cardNameFilter, String categoryFilter);
 
     /**
+     * Counts P1's field cards matching all supplied filters, including an optional element filter.
+     *
+     * @param elementFilter element name (e.g. {@code "Earth"}); {@code null} = any
+     */
+    int countP1FieldCards(boolean inclForwards, boolean inclBackups, boolean inclMonsters,
+            String jobFilter, String cardNameFilter, String categoryFilter, String elementFilter);
+
+    int countP2FieldCards(boolean inclForwards, boolean inclBackups, boolean inclMonsters,
+            String jobFilter, String cardNameFilter);
+
+    int countP2FieldCards(boolean inclForwards, boolean inclBackups, boolean inclMonsters,
+            String jobFilter, String cardNameFilter, String categoryFilter);
+
+    int countP2FieldCards(boolean inclForwards, boolean inclBackups, boolean inclMonsters,
+            String jobFilter, String cardNameFilter, String categoryFilter, String elementFilter);
+
+    /** Counts the ability user's own field cards — routes to P1 or P2 based on {@link #isP1()}. */
+    default int countSelfFieldCards(boolean inclForwards, boolean inclBackups, boolean inclMonsters,
+            String jobFilter, String cardNameFilter) {
+        return isP1()
+                ? countP1FieldCards(inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter)
+                : countP2FieldCards(inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter);
+    }
+
+    default int countSelfFieldCards(boolean inclForwards, boolean inclBackups, boolean inclMonsters,
+            String jobFilter, String cardNameFilter, String categoryFilter) {
+        return isP1()
+                ? countP1FieldCards(inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter)
+                : countP2FieldCards(inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter);
+    }
+
+    default int countSelfFieldCards(boolean inclForwards, boolean inclBackups, boolean inclMonsters,
+            String jobFilter, String cardNameFilter, String categoryFilter, String elementFilter) {
+        return isP1()
+                ? countP1FieldCards(inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, elementFilter)
+                : countP2FieldCards(inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, elementFilter);
+    }
+
+    /**
      * Counts cards in P1's Break Zone matching all supplied filters.
      *
      * @param cardNameFilter exact card name; {@code null} = any
      * @param jobFilter      bar-separated job name(s); {@code null} = any
      */
     int countP1BreakZoneCards(String cardNameFilter, String jobFilter);
+
+    int countP2BreakZoneCards(String cardNameFilter, String jobFilter);
+
+    /** Counts the ability user's own Break Zone cards — routes to P1 or P2 based on {@link #isP1()}. */
+    default int countSelfBreakZoneCards(String cardNameFilter, String jobFilter) {
+        return isP1()
+                ? countP1BreakZoneCards(cardNameFilter, jobFilter)
+                : countP2BreakZoneCards(cardNameFilter, jobFilter);
+    }
 
     // ---- Computed-damage queries -----------------------------------------------
 

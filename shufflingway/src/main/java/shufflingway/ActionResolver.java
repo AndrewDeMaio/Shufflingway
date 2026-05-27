@@ -940,6 +940,17 @@ public class ActionResolver {
      *   <li>Group 2 — optional traits string</li>
      * </ul>
      */
+    /**
+     * Matches "Until end of turn, it gains +N power for each [Element] [Type] you control."
+     * Groups: 1 = per-unit amount, {@code element} = optional element, {@code chartype} = card type.
+     */
+    private static final Pattern FOLLOWUP_POWER_BOOST_UNTIL_FOR_EACH = Pattern.compile(
+        "(?i)Until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn\\s*,\\s+" +
+        "(?:it|they)\\s+gains?\\s+\\+(\\d+)\\s+[Pp]ower\\s+for\\s+each\\s+" +
+        "(?:(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?" +
+        "(?<chartype>Forwards?|Backups?|Monsters?|Characters?)\\s+you\\s+control[.!]?"
+    );
+
     private static final Pattern FOLLOWUP_POWER_BOOST_UNTIL = Pattern.compile(
         "(?i)Until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn\\s*,\\s+" +
         "(?:it|they)\\s+gains?\\s+\\+(\\d+)\\s+[Pp]ower" +
@@ -1693,6 +1704,7 @@ public class ActionResolver {
         if (FOLLOWUP_CANNOT_ATTACK_OR_BLOCK_PERSISTENT.matcher(followupText).find())  return "CannotAttackOrBlockPersistent";
         if (FOLLOWUP_POWER_BECOMES.matcher(followupText).find())                      return "PowerBecomes";
         if (FOLLOWUP_POWER_BOOST.matcher(followupText).find())                        return "PowerBoost";
+        if (FOLLOWUP_POWER_BOOST_UNTIL_FOR_EACH.matcher(followupText).find())         return "PowerBoostUntilForEach";
         if (FOLLOWUP_POWER_BOOST_UNTIL.matcher(followupText).find())                  return "PowerBoostUntil";
         if (FOLLOWUP_KEYWORD_GRANT.matcher(followupText).find())                      return "KeywordGrant";
         if (FOLLOWUP_POWER_REDUCE.matcher(followupText).find())                       return "PowerReduce";
@@ -2114,7 +2126,7 @@ public class ActionResolver {
             boolean bkp = charType.matches("(?i)Backups?|Characters?");
             boolean mon = charType.matches("(?i)Monsters?|Characters?");
             return (ctx, ts) -> {
-                int n = ctx.countP1FieldCards(fwd, bkp, mon, null, null, category);
+                int n = ctx.countSelfFieldCards(fwd, bkp, mon, null, null, category);
                 int damage = baseDmg * n;
                 sortedByIdxDesc(ts, true) .forEach(ft -> ctx.damageTarget(ft, damage));
                 sortedByIdxDesc(ts, false).forEach(ft -> ctx.damageTarget(ft, damage));
@@ -2410,15 +2422,15 @@ public class ActionResolver {
             return ctx -> {
                 int n;
                 if      (srcSelfDmg)           n = ctx.p1DamageCount();
-                else if (srcJobBracket != null) n = ctx.countP1FieldCards(true, true, true, srcJobBracket, null);
+                else if (srcJobBracket != null) n = ctx.countSelfFieldCards(true, true, true, srcJobBracket, null);
                 else if (srcJobWritten != null) {
                     boolean jwFwd = srcJobWType == null || srcJobWType.matches("(?i)Forwards?");
                     boolean jwBkp = srcJobWType == null || srcJobWType.matches("(?i)Backups?");
                     boolean jwMon = srcJobWType == null || srcJobWType.matches("(?i)Monsters?");
-                    n = ctx.countP1FieldCards(jwFwd, jwBkp, jwMon, srcJobWritten, null);
+                    n = ctx.countSelfFieldCards(jwFwd, jwBkp, jwMon, srcJobWritten, null);
                 }
-                else if (srcCharType   != null) n = ctx.countP1FieldCards(charFwd, charBkp, charMon, null, null, srcCategory);
-                else if (srcBzName     != null) n = ctx.countP1BreakZoneCards(srcBzName, null);
+                else if (srcCharType   != null) n = ctx.countSelfFieldCards(charFwd, charBkp, charMon, null, null, srcCategory);
+                else if (srcBzName     != null) n = ctx.countSelfBreakZoneCards(srcBzName, null);
                 else if (srcOppHand)           n = ctx.opponentHandSize();
                 else                            n = xValue;
                 int damage = perDmg > 0 ? baseDmg + perDmg * n : baseDmg * n;
@@ -2990,6 +3002,30 @@ public class ActionResolver {
                         costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem);
                 sortedByIdxDesc(ts, true) .forEach(t -> ctx.boostTarget(t, boost, traits));
                 sortedByIdxDesc(ts, false).forEach(t -> ctx.boostTarget(t, boost, traits));
+                if (secondary != null) secondary.accept(ctx);
+            };
+        }
+
+        // --- Power boost for each [element] [type] you control (must precede plain UNTIL boost) ---
+        Matcher boostForEachM = FOLLOWUP_POWER_BOOST_UNTIL_FOR_EACH.matcher(primaryFollowup);
+        if (boostForEachM.find()) {
+            int    perUnit    = Integer.parseInt(boostForEachM.group(1));
+            String srcElem    = boostForEachM.group("element");
+            String srcType    = boostForEachM.group("chartype").toLowerCase();
+            boolean cntFwd    = srcType.startsWith("forward") || srcType.startsWith("character");
+            boolean cntBkp    = srcType.startsWith("backup")  || srcType.startsWith("character");
+            boolean cntMon    = srcType.startsWith("monster")  || srcType.startsWith("character");
+            String logSuffix  = " +" + perUnit + "×[" + (srcElem != null ? srcElem + " " : "") + boostForEachM.group("chartype") + " you control] until EOT";
+            return ctx -> {
+                int n      = ctx.countSelfFieldCards(cntFwd, cntBkp, cntMon, null, null, null, srcElem);
+                int boost  = perUnit * n;
+                ctx.logEntry(choosePrefix + logSuffix + " (n=" + n + ", boost=" + boost + ")");
+                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
+                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem);
+                EnumSet<CardData.Trait> noTraits = EnumSet.noneOf(CardData.Trait.class);
+                sortedByIdxDesc(ts, true) .forEach(t -> ctx.boostTarget(t, boost, noTraits));
+                sortedByIdxDesc(ts, false).forEach(t -> ctx.boostTarget(t, boost, noTraits));
                 if (secondary != null) secondary.accept(ctx);
             };
         }
@@ -4071,11 +4107,11 @@ public class ActionResolver {
             if (isDynamic) {
                 int n;
                 if (fDynJob != null && fDynName != null) {
-                    n = ctx.countP1FieldCards(true, true, true, fDynJob, null)
-                      + ctx.countP1FieldCards(true, true, true, null, fDynName)
-                      - ctx.countP1FieldCards(true, true, true, fDynJob, fDynName);
+                    n = ctx.countSelfFieldCards(true, true, true, fDynJob, null)
+                      + ctx.countSelfFieldCards(true, true, true, null, fDynName)
+                      - ctx.countSelfFieldCards(true, true, true, fDynJob, fDynName);
                 } else {
-                    n = ctx.countP1FieldCards(true, true, true, fDynJob, fDynName);
+                    n = ctx.countSelfFieldCards(true, true, true, fDynJob, fDynName);
                 }
                 resolvedCost = n;
                 resolvedCmp  = "less";
