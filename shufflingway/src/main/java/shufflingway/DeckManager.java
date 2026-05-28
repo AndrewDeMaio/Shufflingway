@@ -221,10 +221,10 @@ public class DeckManager extends JFrame {
         JButton copyBtn   = new JButton("Copy");
         JButton deleteBtn = new JButton("Delete");
 
-        newBtn.addActionListener(_    -> onNewDeck());
-        renameBtn.addActionListener(_ -> onRenameDeck());
-        copyBtn.addActionListener(_   -> onCopyDeck());
-        deleteBtn.addActionListener(_ -> onDeleteDeck());
+        newBtn.addActionListener(e    -> onNewDeck());
+        renameBtn.addActionListener(e -> onRenameDeck());
+        copyBtn.addActionListener(e   -> onCopyDeck());
+        deleteBtn.addActionListener(e -> onDeleteDeck());
 
         JButton importBtn = new JButton("Import");
         JButton exportBtn = new JButton("Export");
