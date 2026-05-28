@@ -1533,6 +1533,8 @@ public class MainWindow {
 					// END → ACTIVE: increments turn number and switches to P2
 					gameState.advancePhase();
 					refreshPhaseTracker();
+					for (int i = 0; i < p1MonsterCards.size(); i++) refreshP1MonsterSlot(i);
+					for (int i = 0; i < p2MonsterCards.size(); i++) refreshP2MonsterSlot(i);
 					nextPhaseButton.setEnabled(false);
 					computerPlayer.runTurn();
 				}
@@ -5671,57 +5673,65 @@ public class MainWindow {
 		StringBuilder sb = new StringBuilder();
 		if (ability.isSpecial() && !ability.abilityName().isEmpty())
 			sb.append("[").append(ability.abilityName()).append("] ");
-		sb.append("[");
-		boolean first = true;
-		if (ability.damageThreshold() > 0) { sb.append("Dmg").append(ability.damageThreshold()); first = false; }
-		if (ability.requiresDull())    { if (!first) sb.append(", "); sb.append("Dull");      first = false; }
-		if (ability.isSpecial())       { if (!first) sb.append(", "); sb.append("S"); first = false; }
-		if (ability.hasXCost())        { if (!first) sb.append(", "); sb.append("X"); first = false; }
-		if (ability.yourTurnOnly())        { if (!first) sb.append(", "); sb.append("your turn"); first = false; }
-		if (ability.oncePerTurn())         { if (!first) sb.append(", "); sb.append("1/turn");      first = false; }
-		if (ability.mainPhaseOnly())       { if (!first) sb.append(", "); sb.append("main phase"); first = false; }
-		if (ability.whilePartyAttacking()) { if (!first) sb.append(", "); sb.append("while party atk"); first = false; }
-		else if (ability.whileCardAttacking() != null) { if (!first) sb.append(", "); sb.append("while ").append(ability.whileCardAttacking()).append(" atk"); first = false; }
-		if (ability.whileCardBlocking() != null) { if (!first) sb.append(", "); sb.append("while ").append(ability.whileCardBlocking()).append(" blk"); first = false; }
-		if (ability.crystalCost() > 0) { if (!first) sb.append(", "); sb.append(ability.crystalCost()).append(" Crystal"); first = false; }
+
+		// --- Cost section (left of →) ---
+		StringBuilder cost = new StringBuilder();
+		boolean firstCost = true;
+		if (ability.requiresDull())    { cost.append("Dull");      firstCost = false; }
+		if (ability.isSpecial())       { if (!firstCost) cost.append(", "); cost.append("S"); firstCost = false; }
+		if (ability.hasXCost())        { if (!firstCost) cost.append(", "); cost.append("X"); firstCost = false; }
+		if (ability.crystalCost() > 0) { if (!firstCost) cost.append(", "); cost.append(ability.crystalCost()).append(" Crystal"); firstCost = false; }
 		for (String e : ability.cpCost()) {
-			if (!first) sb.append(", ");
-			sb.append(e.isEmpty() ? "any" : e);
-			first = false;
+			if (!firstCost) cost.append(", ");
+			cost.append(e.isEmpty() ? "any" : e);
+			firstCost = false;
 		}
 		for (BreakZoneCost bz : ability.breakZoneCosts()) {
-			if (!first) sb.append(", ");
-			sb.append("put ");
-			if (bz.name().isEmpty()) sb.append(bz.count()).append(' ').append(bz.cardType());
-			else sb.append(bz.name());
-			sb.append("→BZ");
-			first = false;
+			if (!firstCost) cost.append(", ");
+			cost.append("put ");
+			if (bz.name().isEmpty()) cost.append(bz.count()).append(' ').append(bz.cardType());
+			else cost.append(bz.name());
+			cost.append("→BZ");
+			firstCost = false;
 		}
 		for (RemoveFromGameCost rfg : ability.removeFromGameCosts()) {
-			if (!first) sb.append(", ");
-			sb.append("RFG ");
-			if (rfg.cardName() != null) sb.append(rfg.cardName());
+			if (!firstCost) cost.append(", ");
+			cost.append("RFG ");
+			if (rfg.cardName() != null) cost.append(rfg.cardName());
 			else {
-				sb.append(rfg.count() == -1 ? "all" : rfg.count());
-				if (rfg.element()  != null) sb.append(' ').append(rfg.element());
-				if (rfg.cardType() != null) sb.append(' ').append(rfg.cardType());
-				else sb.append(" card");
+				cost.append(rfg.count() == -1 ? "all" : rfg.count());
+				if (rfg.element()  != null) cost.append(' ').append(rfg.element());
+				if (rfg.cardType() != null) cost.append(' ').append(rfg.cardType());
+				else cost.append(" card");
 			}
-			sb.append(" (").append(rfg.zone().toLowerCase().replace('_', ' ')).append(')');
-			first = false;
+			cost.append(" (").append(rfg.zone().toLowerCase().replace('_', ' ')).append(')');
+			firstCost = false;
 		}
 		for (ReturnToHandCost rth : ability.returnToHandCosts()) {
-			if (!first) sb.append(", ");
-			sb.append("RTH ");
-			if (rth.cardName() != null) sb.append(rth.cardName());
+			if (!firstCost) cost.append(", ");
+			cost.append("RTH ");
+			if (rth.cardName() != null) cost.append(rth.cardName());
 			else {
-				sb.append(rth.count());
-				if (rth.category() != null) sb.append(" Cat.").append(rth.category());
-				if (rth.cardType() != null) sb.append(' ').append(rth.cardType());
+				cost.append(rth.count());
+				if (rth.category() != null) cost.append(" Cat.").append(rth.category());
+				if (rth.cardType() != null) cost.append(' ').append(rth.cardType());
 			}
-			first = false;
+			firstCost = false;
 		}
-		sb.append("] → ");
+		sb.append("[").append(firstCost ? "0" : cost).append("] → ");
+
+		// --- Restriction section (right of →, before effect) ---
+		StringBuilder restrict = new StringBuilder();
+		boolean firstRestrict = true;
+		if (ability.damageThreshold() > 0)         { restrict.append("Dmg≥").append(ability.damageThreshold()); firstRestrict = false; }
+		if (ability.yourTurnOnly())                 { if (!firstRestrict) restrict.append(", "); restrict.append("your turn");     firstRestrict = false; }
+		if (ability.oncePerTurn())                  { if (!firstRestrict) restrict.append(", "); restrict.append("1/turn");        firstRestrict = false; }
+		if (ability.mainPhaseOnly())                { if (!firstRestrict) restrict.append(", "); restrict.append("main phase");    firstRestrict = false; }
+		if (ability.whilePartyAttacking())          { if (!firstRestrict) restrict.append(", "); restrict.append("while party atk"); firstRestrict = false; }
+		else if (ability.whileCardAttacking() != null) { if (!firstRestrict) restrict.append(", "); restrict.append("while ").append(ability.whileCardAttacking()).append(" atk"); firstRestrict = false; }
+		if (ability.whileCardBlocking() != null)    { if (!firstRestrict) restrict.append(", "); restrict.append("while ").append(ability.whileCardBlocking()).append(" blk"); }
+		if (restrict.length() > 0) sb.append(restrict).append(" — ");
+
 		String fx = ability.effectText();
 		sb.append(fx.length() > 55 ? fx.substring(0, 52) + "..." : fx);
 		return sb.toString();
@@ -10691,7 +10701,7 @@ public class MainWindow {
 						CardAnimation.toARGB(raw, CARD_W, CARD_H), state, canAttack, selected, p1MonsterFrozen.get(idx));
 				if (damage > 0)
 					CardAnimation.renderDamageOverlay(canvas, damage);
-				if (bfa != null)
+				if (bfa != null && gameState.getCurrentPlayer() == GameState.Player.P1)
 					CardAnimation.renderPowerOverlayRight(canvas, bfa.power(), new Color(80, 220, 80), state);
 				else if (tempFwdPower != null)
 					CardAnimation.renderPowerOverlayRight(canvas, tempFwdPower, new Color(80, 220, 80), state);
@@ -10766,7 +10776,7 @@ public class MainWindow {
 				canvas = CardAnimation.renderBackupCard(canvas, state, false, false, p2MonsterFrozen.get(idx));
 				if (damage > 0)
 					CardAnimation.renderDamageOverlay(canvas, damage);
-				if (bfa != null)
+				if (bfa != null && gameState.getCurrentPlayer() == GameState.Player.P2)
 					CardAnimation.renderPowerOverlayRight(canvas, bfa.power(), new Color(80, 220, 80), state);
 				else if (tempFwdPower != null)
 					CardAnimation.renderPowerOverlayRight(canvas, tempFwdPower, new Color(80, 220, 80), state);
@@ -12664,6 +12674,8 @@ public class MainWindow {
 		private void startP1Turn() {
 			p1ReceivedDamageThisTurn = false;
 			p1CardsCastThisTurn = 0;
+			for (int i = 0; i < p1MonsterCards.size(); i++) refreshP1MonsterSlot(i);
+			for (int i = 0; i < p2MonsterCards.size(); i++) refreshP2MonsterSlot(i);
 			int activated = 0, thawed = 0;
 
 			// Pass 1: activate DULL/BRAVE_ATTACKED cards; frozen cards are skipped
