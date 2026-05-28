@@ -5187,6 +5187,13 @@ public class MainWindow {
 		if (stackCountdownTimer != null) { stackCountdownTimer.stop(); stackCountdownTimer = null; }
 		if (summonStackWindow   != null) { summonStackWindow.dispose(); summonStackWindow = null; }
 
+		// P1 acted → CPU (P2) has priority → auto-resolve silently
+		if (entry.isP1()) {
+			resolveTopOfStack();
+			return;
+		}
+
+		// P2 acted → P1 (human) has priority → show interactive Respond/OK window
 		final int myGeneration = ++stackWindowGeneration;
 
 		summonStackWindow = new JWindow(frame);
