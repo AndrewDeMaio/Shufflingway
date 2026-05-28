@@ -19,15 +19,20 @@ import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import javax.swing.BorderFactory;
+import javax.swing.JMenuItem;
+import javax.swing.JPopupMenu;
 import javax.swing.DefaultListModel;
 import javax.swing.ImageIcon;
 import javax.swing.JButton;
@@ -72,6 +77,9 @@ public class DeckManager extends JFrame {
     private static final int MAX_DECK_SIZE    = 50;
     private static final int MAX_LB_DECK_SIZE = 8;
     private static final int MAX_COPIES       = 3;
+
+    private static final Pattern FFDECKS_CARD_LINE =
+            Pattern.compile("^(\\d+)\\s+.+\\(([^)]+)\\)\\s*$");
 
     // Deck list (left panel)
     private final DefaultListModel<DeckEntry> deckListModel = new DefaultListModel<>();
@@ -226,10 +234,28 @@ public class DeckManager extends JFrame {
         copyBtn.addActionListener(e   -> onCopyDeck());
         deleteBtn.addActionListener(e -> onDeleteDeck());
 
-        JButton importBtn = new JButton("Import");
-        JButton exportBtn = new JButton("Export");
-        importBtn.addActionListener(e -> onImportDeck());
-        exportBtn.addActionListener(e -> onExportDeck());
+        JButton importBtn = new JButton("Import ▾");
+        JButton exportBtn = new JButton("Export ▾");
+        importBtn.addActionListener(e -> {
+            JPopupMenu menu = new JPopupMenu();
+            JMenuItem shuffItem = new JMenuItem("Shufflingway");
+            JMenuItem ffItem    = new JMenuItem("FFDecks");
+            shuffItem.addActionListener(ev -> onImportDeck());
+            ffItem.addActionListener(ev -> onImportFFDecks());
+            menu.add(shuffItem);
+            menu.add(ffItem);
+            menu.show(importBtn, 0, importBtn.getHeight());
+        });
+        exportBtn.addActionListener(e -> {
+            JPopupMenu menu = new JPopupMenu();
+            JMenuItem shuffItem = new JMenuItem("Shufflingway");
+            JMenuItem ffItem    = new JMenuItem("FFDecks");
+            shuffItem.addActionListener(ev -> onExportDeck());
+            ffItem.addActionListener(ev -> onExportFFDecks());
+            menu.add(shuffItem);
+            menu.add(ffItem);
+            menu.show(exportBtn, 0, exportBtn.getHeight());
+        });
 
         JPanel mgmtPanel = new JPanel(new GridLayout(2, 2, 4, 4));
         mgmtPanel.add(newBtn);
@@ -1095,6 +1121,135 @@ public class DeckManager extends JFrame {
         } catch (SQLException e) {
             JOptionPane.showMessageDialog(this, "Error importing deck:\n" + e.getMessage(),
                     "Import Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void onImportFFDecks() {
+        JTextArea textArea = new JTextArea(16, 50);
+        textArea.setLineWrap(true);
+        textArea.setWrapStyleWord(true);
+        textArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
+
+        int result = JOptionPane.showConfirmDialog(this, new JScrollPane(textArea),
+                "Paste FFDecks Text", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+        if (result != JOptionPane.OK_OPTION) return;
+
+        String text = textArea.getText().trim();
+        if (text.isBlank()) return;
+
+        String deckName = "Imported Deck";
+        Map<String, Integer> cardMap = new LinkedHashMap<>();
+
+        for (String line : text.split("\\r?\\n")) {
+            String trimmed = line.trim();
+            if (trimmed.startsWith("Deck Name:")) {
+                deckName = trimmed.substring("Deck Name:".length()).trim();
+                continue;
+            }
+            Matcher m = FFDECKS_CARD_LINE.matcher(trimmed);
+            if (m.matches()) {
+                int qty    = Integer.parseInt(m.group(1));
+                String serial = m.group(2);
+                cardMap.merge(serial, qty, Integer::sum);
+            }
+        }
+
+        if (cardMap.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "No cards found in FFDecks format.",
+                    "Import Error", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+
+        try {
+            List<String> missing = new ArrayList<>();
+            for (String serial : cardMap.keySet()) {
+                if (!db.serialExists(serial)) missing.add(serial);
+            }
+
+            int newId = db.createDeck(deckName);
+            for (Map.Entry<String, Integer> e : cardMap.entrySet()) {
+                if (!missing.contains(e.getKey())) {
+                    int qty = e.getValue();
+                    if (qty > 0) db.setCardCount(newId, e.getKey(), Math.min(qty, MAX_COPIES));
+                }
+            }
+
+            loadDeckList();
+            selectDeckById(newId);
+
+            if (!missing.isEmpty()) {
+                JOptionPane.showMessageDialog(this,
+                        "Card serials not found: " + String.join(", ", missing),
+                        "Import Warning", JOptionPane.WARNING_MESSAGE);
+            }
+        } catch (SQLException ex) {
+            JOptionPane.showMessageDialog(this, "Error importing deck:\n" + ex.getMessage(),
+                    "Import Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void onExportFFDecks() {
+        DeckEntry entry = deckList.getSelectedValue();
+        if (entry == null) { JOptionPane.showMessageDialog(this, "Select a deck to export."); return; }
+
+        try {
+            List<Object[]> cards = db.getDeckCards(entry.id());
+            Set<String> lbSerials = db.getLbSerials();
+
+            String[] typeOrder = {"Forward", "Summon", "Backup", "Monster"};
+            Map<String, List<Object[]>> lbByType   = new LinkedHashMap<>();
+            Map<String, List<Object[]>> mainByType = new LinkedHashMap<>();
+            for (String t : typeOrder) {
+                lbByType.put(t, new ArrayList<>());
+                mainByType.put(t, new ArrayList<>());
+            }
+
+            // getDeckCards rows: [count, serial, name_en, type_en, ...]
+            for (Object[] row : cards) {
+                String serial = (String) row[1];
+                String type   = normalizeFFType((String) row[3]);
+                (lbSerials.contains(serial) ? lbByType : mainByType).get(type).add(row);
+            }
+
+            StringBuilder sb = new StringBuilder();
+            sb.append("--Generated By Shufflingway--\n");
+            sb.append("Deck Name: ").append(entry.name()).append("\n\n\n");
+            appendFFSection(sb, "limit break", lbByType);
+            sb.append("\n");
+            appendFFSection(sb, "main", mainByType);
+
+            Toolkit.getDefaultToolkit().getSystemClipboard()
+                    .setContents(new StringSelection(sb.toString()), null);
+            JOptionPane.showMessageDialog(this, "FFDecks text copied to clipboard.",
+                    "Export Successful", JOptionPane.INFORMATION_MESSAGE);
+        } catch (SQLException e) {
+            JOptionPane.showMessageDialog(this, "Error exporting deck:\n" + e.getMessage(),
+                    "Export Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private static String normalizeFFType(String typeEn) {
+        if (typeEn == null) return "Forward";
+        return switch (typeEn) {
+            case "Summon"  -> "Summon";
+            case "Backup"  -> "Backup";
+            case "Monster" -> "Monster";
+            default        -> "Forward";
+        };
+    }
+
+    private static void appendFFSection(StringBuilder sb, String sectionName,
+            Map<String, List<Object[]>> byType) {
+        int total = 0;
+        for (List<Object[]> rows : byType.values())
+            for (Object[] row : rows) total += (int) row[0];
+        sb.append(sectionName).append("(").append(total).append("):\n\n");
+        for (Map.Entry<String, List<Object[]>> e : byType.entrySet()) {
+            int count = 0;
+            for (Object[] row : e.getValue()) count += (int) row[0];
+            sb.append(e.getKey()).append("(").append(count).append("):\n");
+            for (Object[] row : e.getValue())
+                sb.append(row[0]).append(" ").append(row[2]).append(" (").append(row[1]).append(")\n");
         }
     }
 

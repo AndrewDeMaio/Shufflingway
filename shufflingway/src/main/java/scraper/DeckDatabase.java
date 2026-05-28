@@ -282,6 +282,17 @@ public class DeckDatabase implements AutoCloseable {
         }
     }
 
+    /** Returns true if a card with this serial exists in the cards table. */
+    public boolean serialExists(String serial) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT 1 FROM cards WHERE serial = ?")) {
+            ps.setString(1, serial);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
+    }
+
     /**
      * Sets the copy count for a card in a deck.
      * If count <= 0, the card entry is removed entirely.
