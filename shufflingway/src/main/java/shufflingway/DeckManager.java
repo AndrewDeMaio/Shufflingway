@@ -645,10 +645,10 @@ public class DeckManager extends JFrame {
     }
 
     private void updateLabels(int forward, int backup, int summon, int monster) {
-        forwardLabel.setText(Integer.toString(forward) + " " + forwardLabel.getName());
-        backupLabel.setText(Integer.toString(backup) + " " + backupLabel.getName());
-        summonLabel.setText(Integer.toString(summon) + " " + summonLabel.getName());
-        monsterLabel.setText(Integer.toString(monster) + " " + monsterLabel.getName());
+        forwardLabel.setText(forward + " " + forwardLabel.getName());
+        backupLabel.setText(backup + " " + backupLabel.getName());
+        summonLabel.setText(summon + " " + summonLabel.getName());
+        monsterLabel.setText(monster + " " + monsterLabel.getName());
     }
 
     private void updateCountLabel(int mainTotal, int lbTotal) {
