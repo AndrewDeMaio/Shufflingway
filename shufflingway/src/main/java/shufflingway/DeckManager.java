@@ -633,7 +633,7 @@ public class DeckManager extends JFrame {
                         break;
                 }
             }
-            updateLabels(forward, backup, summon, monster);
+            updateBreakdownLabels(forward, backup, summon, monster);
             updateCountLabel(mainTotal, lbTotal);
         } catch (SQLException e) {
             JOptionPane.showMessageDialog(this, "Error loading deck:\n" + e.getMessage(),
@@ -643,7 +643,7 @@ public class DeckManager extends JFrame {
         refreshFormatLegality();
     }
 
-    private void updateLabels(int forward, int backup, int summon, int monster) {
+    private void updateBreakdownLabels(int forward, int backup, int summon, int monster) {
         forwardLabel.setText(forward + " " + forwardLabel.getName());
         backupLabel.setText(backup + " " + backupLabel.getName());
         summonLabel.setText(summon + " " + summonLabel.getName());
