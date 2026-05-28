@@ -1109,15 +1109,19 @@ public class DeckManager extends JDialog {
 
         try {
             List<String> missing = new ArrayList<>();
+            Map<String, String> resolved = new LinkedHashMap<>();
             for (String serial : cardMap.keySet()) {
-                if (!db.serialExists(serial)) missing.add(serial);
+                String canonical = db.resolveSerial(serial);
+                if (canonical == null) missing.add(serial);
+                else resolved.put(serial, canonical);
             }
 
             int newId = db.createDeck(deckName);
             for (Map.Entry<String, Integer> e : cardMap.entrySet()) {
-                if (!missing.contains(e.getKey())) {
+                String canonical = resolved.get(e.getKey());
+                if (canonical != null) {
                     int qty = e.getValue();
-                    if (qty > 0) db.setCardCount(newId, e.getKey(), Math.min(qty, MAX_COPIES));
+                    if (qty > 0) db.setCardCount(newId, canonical, Math.min(qty, MAX_COPIES));
                 }
             }
 

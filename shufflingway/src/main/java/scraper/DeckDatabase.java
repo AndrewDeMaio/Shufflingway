@@ -294,6 +294,30 @@ public class DeckDatabase implements AutoCloseable {
     }
 
     /**
+     * Resolves a serial to its canonical form in the DB.
+     * Tries exact match first, then a prefix match for dual-serial cards
+     * (e.g. FFDecks may give "6-022R" while the DB stores "6-022R/7-004C").
+     * Returns null if no match is found.
+     */
+    public String resolveSerial(String serial) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT serial FROM cards WHERE serial = ?")) {
+            ps.setString(1, serial);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) return rs.getString(1);
+            }
+        }
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT serial FROM cards WHERE serial LIKE ? LIMIT 1")) {
+            ps.setString(1, serial + "/%");
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) return rs.getString(1);
+            }
+        }
+        return null;
+    }
+
+    /**
      * Sets the copy count for a card in a deck.
      * If count <= 0, the card entry is removed entirely.
      */
