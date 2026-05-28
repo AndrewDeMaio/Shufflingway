@@ -28,17 +28,18 @@ import org.json.JSONObject;
  */
 public class CardScraper {
 
-    private static final Map<String, String> TRANSLATIONS = Map.of(
-            "火", "Fire",
-            "氷", "Ice",
-            "風", "Wind",
-            "雷", "Lightning",
-            "土", "Earth",
-            "水", "Water",
-            "光", "Light",
-            "闇", "Dark",
-            "ダル", "Dull"
-    );
+    private static final Map<String, String> TRANSLATIONS = Map.ofEntries( 
+            Map.entry("火",   "Fire"),
+            Map.entry("氷",   "Ice"),
+            Map.entry("風",   "Wind"),
+            Map.entry("雷",   "Lightning"),
+            Map.entry("土",   "Earth"),
+            Map.entry("水",   "Water"),
+            Map.entry("光",   "Light"),
+            Map.entry("闇",   "Dark"),
+            Map.entry("ダル", "Dull"),
+            Map.entry("一般", "Multicard")
+    ); // Map.of has a 10-entry limit. but not Map.ofEntries. Now you know!
 
     private static final String API_URL =
             "https://fftcg.square-enix-games.com/na/get-cards";
