@@ -218,7 +218,8 @@ public class StandardPaymentDialog {
                         boolean isAnyElem = bkp.backupCpAnyElement()
                                 || (!anyElemCat.isEmpty()
                                     && (anyElemCat.equalsIgnoreCase(card.category1())
-                                        || anyElemCat.equalsIgnoreCase(card.category2())));
+                                        || anyElemCat.equalsIgnoreCase(card.category2())))
+                                || isGrantedAnyElement(bkp);
                         boolean isAnyElemOfFwds = bkp.backupCpAnyElementOfForwards()
                                 && !controlledForwards.isEmpty();
                         if (isAnyElem || isAnyElemOfFwds) {
@@ -324,6 +325,21 @@ public class StandardPaymentDialog {
         dlg.getContentPane().add(topPanel,  java.awt.BorderLayout.NORTH);
         dlg.getContentPane().add(mainPanel, java.awt.BorderLayout.CENTER);
         dlg.pack(); dlg.setLocationRelativeTo(owner); dlg.setVisible(true);
+    }
+
+    /** Returns true if any on-field card (backup or forward) grants {@code backup} any-element CP. */
+    private boolean isGrantedAnyElement(CardData backup) {
+        for (CardData b : backupCards) {
+            if (b != null) {
+                BackupCpGrant grant = b.backupCpGrant();
+                if (grant != null && grant.appliesTo(backup)) return true;
+            }
+        }
+        for (CardData fwd : controlledForwards) {
+            BackupCpGrant grant = fwd.backupCpGrant();
+            if (grant != null && grant.appliesTo(backup)) return true;
+        }
+        return false;
     }
 
     private static final String[] ALL_ELEMENTS =

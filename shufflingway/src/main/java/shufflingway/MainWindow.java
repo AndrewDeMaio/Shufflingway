@@ -4729,6 +4729,21 @@ public class MainWindow {
 		return true;
 	}
 
+	/** Returns true if any on-field card (backup or forward) grants {@code backup} any-element CP. */
+	private boolean isGrantedAnyElementCp(CardData backup) {
+		for (CardData b : p1BackupCards) {
+			if (b != null) {
+				BackupCpGrant grant = b.backupCpGrant();
+				if (grant != null && grant.appliesTo(backup)) return true;
+			}
+		}
+		for (CardData fwd : p1ForwardCards) {
+			BackupCpGrant grant = fwd.backupCpGrant();
+			if (grant != null && grant.appliesTo(backup)) return true;
+		}
+		return false;
+	}
+
 	private boolean canAffordCard(CardData card, int excludeHandIdx) {
 		String[]       elems = card.elements();
 		List<CardData> hand  = gameState.getP1Hand();
@@ -4772,7 +4787,8 @@ public class MainWindow {
 						|| (bkp.backupCpAnyElementOfForwards() && !p1ForwardCards.isEmpty())
 						|| (!anyElemCat.isEmpty()
 							&& (anyElemCat.equalsIgnoreCase(card.category1())
-								|| anyElemCat.equalsIgnoreCase(card.category2())));
+								|| anyElemCat.equalsIgnoreCase(card.category2())))
+						|| isGrantedAnyElementCp(bkp);
 				if (isAnyElem) {
 					totalGenerate += 1;
 					for (int ei = 0; ei < elems.length; ei++) hasElemSource[ei] = true;

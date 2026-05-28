@@ -269,8 +269,9 @@ public record CardData(
     }
 
     // "While paying the cost to cast a Category X card, if Rikku is on the field, Rikku can produce CP of any Element."
+    // Captures the category identifier only (e.g. "XI"), not the "Category" prefix.
     private static final Pattern BACKUP_CP_ANY_ELEM_CATEGORY = Pattern.compile(
-        "(?i)While\\s+paying\\s+the\\s+cost\\s+to\\s+cast\\s+a\\s+(Category\\s+\\S+)\\s+card.*?can\\s+produce\\s+CP\\s+of\\s+any\\s+Element",
+        "(?i)While\\s+paying\\s+the\\s+cost\\s+to\\s+cast\\s+a\\s+Category\\s+(\\S+)\\s+card.*?can\\s+produce\\s+CP\\s+of\\s+any\\s+Element",
         Pattern.DOTALL
     );
 
@@ -309,6 +310,33 @@ public record CardData(
         if (!backupCpAnyElementCategory().isEmpty()) return false;
         if (backupCpAnyElementOfForwards()) return false;
         return BACKUP_CP_ANY_ELEM_ALWAYS.matcher(textEn).find();
+    }
+
+    /**
+     * Matches field abilities that grant "can produce CP of any Element" to a set of Backups:
+     * <ul>
+     *   <li>"[The] Backups you control can produce CP of any Element."</li>
+     *   <li>"The Job Moogle Backups you control can produce CP of any Element."</li>
+     *   <li>"The Category VI Backups you control can produce CP of any Element."</li>
+     *   <li>"The Earth Backups you control can produce CP of any Element."</li>
+     * </ul>
+     * Named groups {@code job}, {@code category}, {@code element} capture the optional filter.
+     */
+    private static final Pattern BACKUP_CP_GRANT = Pattern.compile(
+        "(?i)(?:The\\s+)?(?:Job\\s+(?<job>\\S+)\\s+|Category\\s+(?<category>\\S+)\\s+" +
+        "|(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?" +
+        "Backups\\s+you\\s+control\\s+can\\s+produce\\s+CP\\s+of\\s+any\\s+Element"
+    );
+
+    /**
+     * Returns a {@link BackupCpGrant} describing the field-ability grant on this card, or
+     * {@code null} if no such ability is present.  All three filter fields are {@code null}
+     * when the grant applies to every Backup (the unconditional form).
+     */
+    public BackupCpGrant backupCpGrant() {
+        Matcher m = BACKUP_CP_GRANT.matcher(textEn);
+        if (!m.find()) return null;
+        return new BackupCpGrant(m.group("job"), m.group("category"), m.group("element"));
     }
 
     /** "You can only cast X during your turn." */

@@ -31,8 +31,6 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import javax.swing.BorderFactory;
-import javax.swing.JMenuItem;
-import javax.swing.JPopupMenu;
 import javax.swing.DefaultListModel;
 import javax.swing.ImageIcon;
 import javax.swing.JButton;
@@ -41,8 +39,10 @@ import javax.swing.JComponent;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JList;
+import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
+import javax.swing.JPopupMenu;
 import javax.swing.JScrollPane;
 import javax.swing.JSplitPane;
 import javax.swing.JTable;
@@ -527,7 +527,7 @@ public class DeckManager extends JFrame {
             protected void done() {
                 try {
                     for (Object[] row : get()) browserModel.addRow(row);
-                } catch (Exception e) {
+                } catch (InterruptedException | ExecutionException e) {
                     JOptionPane.showMessageDialog(DeckManager.this,
                             "Error loading card browser:\n" + e.getMessage(),
                             "Database Error", JOptionPane.ERROR_MESSAGE);
