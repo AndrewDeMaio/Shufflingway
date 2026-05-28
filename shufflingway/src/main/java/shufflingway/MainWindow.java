@@ -4766,11 +4766,23 @@ public class MainWindow {
 		}
 		for (int i = 0; i < p1BackupCards.length; i++) {
 			if (p1BackupCards[i] != null && p1BackupStates[i] == CardState.ACTIVE) {
-				for (int ei = 0; ei < elems.length; ei++) {
-					if (p1BackupCards[i].containsElement(elems[ei])) {
-						totalGenerate += 1;
-						hasElemSource[ei] = true;
-						break;
+				CardData bkp = p1BackupCards[i];
+				String anyElemCat = bkp.backupCpAnyElementCategory();
+				boolean isAnyElem = bkp.backupCpAnyElement()
+						|| (bkp.backupCpAnyElementOfForwards() && !p1ForwardCards.isEmpty())
+						|| (!anyElemCat.isEmpty()
+							&& (anyElemCat.equalsIgnoreCase(card.category1())
+								|| anyElemCat.equalsIgnoreCase(card.category2())));
+				if (isAnyElem) {
+					totalGenerate += 1;
+					for (int ei = 0; ei < elems.length; ei++) hasElemSource[ei] = true;
+				} else {
+					for (int ei = 0; ei < elems.length; ei++) {
+						if (bkp.containsElement(elems[ei])) {
+							totalGenerate += 1;
+							hasElemSource[ei] = true;
+							break;
+						}
 					}
 				}
 			}
@@ -4923,7 +4935,7 @@ public class MainWindow {
 					new Object[]{"Confirm", "Cancel"}, "Confirm");
 			if (choice != 0) return;
 			if (altC > 0) { playerSpendCrystals(true, altC); refreshCrystalDisplays(); }
-			executePlay(card, handIdx, java.util.Collections.emptyList(), java.util.Collections.emptyList());
+			executePlay(card, handIdx, java.util.Collections.emptyList(), java.util.Collections.emptyList(), Map.of());
 			executeAltFollowup(followupText, card);
 			return;
 		}
@@ -4942,7 +4954,7 @@ public class MainWindow {
 				(discards, backups) -> {
 					if (altC > 0) { playerSpendCrystals(true, altC); refreshCrystalDisplays(); }
 					executeAltBzRemovals(bzRemovals);
-					executePlay(card, handIdx, discards, backups);
+					executePlay(card, handIdx, discards, backups, Map.of());
 					executeAltFollowup(followupText, card);
 				}).show();
 	}
@@ -5087,7 +5099,8 @@ public class MainWindow {
 		new StandardPaymentDialog(frame, card, handIdx, effectiveCastCost(card),
 				gameState.getP1Hand(), p1BackupCards, p1BackupStates, p1BackupUrls,
 				this::showZoomAt, this::hideZoom,
-				(discards, backups) -> executePlay(card, handIdx, discards, backups))
+				new ArrayList<>(p1ForwardCards),
+				(discards, backups, overrides) -> executePlay(card, handIdx, discards, backups, overrides))
 			.show();
 	}
 
@@ -5097,7 +5110,8 @@ public class MainWindow {
 	 * removes the played card from hand, and places it in the appropriate zone.
 	 */
 	private void executePlay(CardData card, int cardHandIdx,
-			List<Integer> discardIndices, List<Integer> backupDullIndices) {
+			List<Integer> discardIndices, List<Integer> backupDullIndices,
+			Map<Integer, String> backupElementOverrides) {
 		String[] elems = card.elements();
 		boolean  isLD  = card.isLightOrDark();
 		Map<String, Integer> execCostByElem = new LinkedHashMap<>();
@@ -5112,8 +5126,14 @@ public class MainWindow {
 		for (int bi : sortedBackups) {
 			p1BackupStates[bi] = CardState.DULL;
 			animateDullBackup(bi, true);
-			String cpElem = isLD ? p1BackupCards[bi].elements()[0]
-					: contributingElement(p1BackupCards[bi], elems, execCpAccum, execCostByElem);
+			String cpElem;
+			if (backupElementOverrides.containsKey(bi)) {
+				cpElem = backupElementOverrides.get(bi);
+			} else if (isLD) {
+				cpElem = p1BackupCards[bi].elements()[0];
+			} else {
+				cpElem = contributingElement(p1BackupCards[bi], elems, execCpAccum, execCostByElem);
+			}
 			gameState.addP1Cp(cpElem, 1);
 			execCpAccum.merge(cpElem, 1, Integer::sum);
 		}

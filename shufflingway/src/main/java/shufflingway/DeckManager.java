@@ -144,6 +144,8 @@ public class DeckManager extends JFrame {
         super("Deck Manager");
         setSize(1600, 800);
         setLocationRelativeTo(parent);
+        java.net.URL iconUrl = getClass().getResource("/resources/shufflingway.png");
+        if (iconUrl != null) setIconImage(new javax.swing.ImageIcon(iconUrl).getImage());
         setLayout(new BorderLayout(4, 4));
 
         browserModel = new DefaultTableModel(BROWSER_COLUMNS, 0) {

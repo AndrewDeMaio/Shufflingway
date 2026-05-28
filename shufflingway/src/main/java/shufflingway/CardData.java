@@ -268,6 +268,49 @@ public record CardData(
         return CAST_BACKUP_CP_ONLY.matcher(textEn).find();
     }
 
+    // "While paying the cost to cast a Category X card, if Rikku is on the field, Rikku can produce CP of any Element."
+    private static final Pattern BACKUP_CP_ANY_ELEM_CATEGORY = Pattern.compile(
+        "(?i)While\\s+paying\\s+the\\s+cost\\s+to\\s+cast\\s+a\\s+(Category\\s+\\S+)\\s+card.*?can\\s+produce\\s+CP\\s+of\\s+any\\s+Element",
+        Pattern.DOTALL
+    );
+
+    // "If Sherlotta is on the field, Sherlotta can produce CP of any Element of the Forwards you control."
+    private static final Pattern BACKUP_CP_ANY_ELEM_OF_FORWARDS = Pattern.compile(
+        "(?i)can\\s+produce\\s+CP\\s+of\\s+any\\s+Element\\s+of\\s+the\\s+Forwards\\s+you\\s+control"
+    );
+
+    // "If Chaos is on the field, Chaos can produce CP of any Element."
+    private static final Pattern BACKUP_CP_ANY_ELEM_ALWAYS = Pattern.compile(
+        "(?i)can\\s+produce\\s+CP\\s+of\\s+any\\s+Element"
+    );
+
+    /**
+     * Returns the category (e.g. "Category X") for which this backup can produce CP of any
+     * Element while paying casting costs, or an empty string if no such ability exists.
+     */
+    public String backupCpAnyElementCategory() {
+        Matcher m = BACKUP_CP_ANY_ELEM_CATEGORY.matcher(textEn);
+        return m.find() ? m.group(1) : "";
+    }
+
+    /**
+     * Returns true if this backup can produce CP of any Element of the Forwards the player
+     * controls (Sherlotta-type ability).
+     */
+    public boolean backupCpAnyElementOfForwards() {
+        return BACKUP_CP_ANY_ELEM_OF_FORWARDS.matcher(textEn).find();
+    }
+
+    /**
+     * Returns true if this backup can unconditionally produce CP of any Element (Chaos/Cosmos-type).
+     * Returns false if the ability is category-restricted or limited to controlled forwards' elements.
+     */
+    public boolean backupCpAnyElement() {
+        if (!backupCpAnyElementCategory().isEmpty()) return false;
+        if (backupCpAnyElementOfForwards()) return false;
+        return BACKUP_CP_ANY_ELEM_ALWAYS.matcher(textEn).find();
+    }
+
     /** "You can only cast X during your turn." */
     private static final Pattern CAST_YOUR_TURN_ONLY = Pattern.compile(
         "(?i)You\\s+can\\s+only\\s+cast\\s+\\S[^.]+?\\s+during\\s+your\\s+turn[.!]?"

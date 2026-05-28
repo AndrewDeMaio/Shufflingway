@@ -19,8 +19,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
-import java.util.function.BiConsumer;
 import java.util.function.Consumer;
+import javax.swing.JMenuItem;
+import javax.swing.JPopupMenu;
 
 import javax.swing.BorderFactory;
 import javax.swing.BoxLayout;
@@ -52,26 +53,34 @@ public class StandardPaymentDialog {
     private final CardData[]    backupCards;
     private final CardState[]   backupStates;
     private final String[]      backupUrls;
-    private final Consumer<String> onZoom;
-    private final Runnable         onZoomHide;
-    /** Called on Confirm with (discardIndices, backupSlots). */
-    private final BiConsumer<List<Integer>, List<Integer>> onConfirm;
+    private final List<CardData>    controlledForwards;
+    private final Consumer<String>  onZoom;
+    private final Runnable          onZoomHide;
+
+    /** Callback invoked on payment confirmation. */
+    @FunctionalInterface
+    public interface ConfirmCallback {
+        void accept(List<Integer> discards, List<Integer> backups, Map<Integer, String> elementOverrides);
+    }
+    /** Called on Confirm with (discardIndices, backupSlots, elementOverrides). */
+    private final ConfirmCallback onConfirm;
 
     public StandardPaymentDialog(JFrame owner, CardData card, int handIdx, int cost,
             List<CardData> hand, CardData[] backupCards, CardState[] backupStates,
             String[] backupUrls, Consumer<String> onZoom, Runnable onZoomHide,
-            BiConsumer<List<Integer>, List<Integer>> onConfirm) {
-        this.owner        = owner;
-        this.card         = card;
-        this.handIdx      = handIdx;
-        this.cost         = cost;
-        this.hand         = hand;
-        this.backupCards  = backupCards;
-        this.backupStates = backupStates;
-        this.backupUrls   = backupUrls;
-        this.onZoom       = onZoom;
-        this.onZoomHide   = onZoomHide;
-        this.onConfirm    = onConfirm;
+            List<CardData> controlledForwards, ConfirmCallback onConfirm) {
+        this.owner              = owner;
+        this.card               = card;
+        this.handIdx            = handIdx;
+        this.cost               = cost;
+        this.hand               = hand;
+        this.backupCards        = backupCards;
+        this.backupStates       = backupStates;
+        this.backupUrls         = backupUrls;
+        this.onZoom             = onZoom;
+        this.onZoomHide         = onZoomHide;
+        this.controlledForwards = controlledForwards;
+        this.onConfirm          = onConfirm;
     }
 
     public void show() {
@@ -88,8 +97,9 @@ public class StandardPaymentDialog {
         if (isLD) bankCpByElem.put(elem, 0);
         else      for (String e : elems) bankCpByElem.put(e, 0);
 
-        List<Integer> selectedBackups  = new ArrayList<>();
-        List<Integer> selectedDiscards = new ArrayList<>();
+        List<Integer> selectedBackups      = new ArrayList<>();
+        List<Integer> selectedDiscards     = new ArrayList<>();
+        Map<Integer, String> backupElementOverrides = new LinkedHashMap<>();
 
         List<Integer> eligibleBackupSlots = new ArrayList<>();
         for (int i = 0; i < backupCards.length; i++) {
@@ -120,12 +130,19 @@ public class StandardPaymentDialog {
                     (int) java.util.Arrays.stream(elems)
                             .filter(e -> backupCards[s].containsElement(e)).count()));
             for (int slot : sortedBackups) {
-                if (isLD)
+                if (isLD) {
                     cpByElem.merge(elem, 1, Integer::sum);
-                else if (matchesAnyElement(backupCards[slot], elems))
+                } else if (backupElementOverrides.containsKey(slot)) {
+                    String overElem = backupElementOverrides.get(slot);
+                    if (cpByElem.containsKey(overElem))
+                        cpByElem.merge(overElem, 1, Integer::sum);
+                    else
+                        extraCp++;
+                } else if (matchesAnyElement(backupCards[slot], elems)) {
                     cpByElem.merge(contributingElement(backupCards[slot], elems, cpByElem, costByElem), 1, Integer::sum);
-                else
+                } else {
                     extraCp++;
+                }
             }
             List<Integer> sortedDiscards = new ArrayList<>(selectedDiscards);
             if (!isLD) sortedDiscards.sort(Comparator.comparingInt(i ->
@@ -188,11 +205,41 @@ public class StandardPaymentDialog {
                 final String url = backupUrls[slot];
                 lbl.addMouseListener(new MouseAdapter() {
                     @Override public void mousePressed(MouseEvent e) {
+                        if (selectedBackups.remove(Integer.valueOf(slot))) {
+                            backupElementOverrides.remove(slot);
+                            updateAll.run();
+                            return;
+                        }
                         int tot = bankCpByElem.values().stream().mapToInt(Integer::intValue).sum()
                                 + selectedBackups.size() + selectedDiscards.size() * 2;
-                        if (!selectedBackups.remove(Integer.valueOf(slot)) && tot < cost)
+                        if (tot >= cost) return;
+                        CardData bkp = backupCards[slot];
+                        String anyElemCat = bkp.backupCpAnyElementCategory();
+                        boolean isAnyElem = bkp.backupCpAnyElement()
+                                || (!anyElemCat.isEmpty()
+                                    && (anyElemCat.equalsIgnoreCase(card.category1())
+                                        || anyElemCat.equalsIgnoreCase(card.category2())));
+                        boolean isAnyElemOfFwds = bkp.backupCpAnyElementOfForwards()
+                                && !controlledForwards.isEmpty();
+                        if (isAnyElem || isAnyElemOfFwds) {
+                            String[] available;
+                            if (isAnyElemOfFwds && !isAnyElem) {
+                                java.util.LinkedHashSet<String> fwdElems = new java.util.LinkedHashSet<>();
+                                for (CardData fwd : controlledForwards)
+                                    for (String fe : fwd.elements()) fwdElems.add(fe);
+                                available = fwdElems.toArray(String[]::new);
+                            } else {
+                                available = ALL_ELEMENTS;
+                            }
+                            showElementPicker(lbl, e, bkp.name(), available, picked -> {
+                                backupElementOverrides.put(slot, picked);
+                                selectedBackups.add(slot);
+                                updateAll.run();
+                            });
+                        } else {
                             selectedBackups.add(slot);
-                        updateAll.run();
+                            updateAll.run();
+                        }
                     }
                     @Override public void mouseEntered(MouseEvent e) { if (lbl.getIcon() != null) onZoom.accept(url); }
                     @Override public void mouseExited(MouseEvent e)  { onZoomHide.run(); }
@@ -251,7 +298,8 @@ public class StandardPaymentDialog {
         cancelBtn.addActionListener(e -> dlg.dispose());
         confirmBtn.addActionListener(e -> {
             dlg.dispose();
-            onConfirm.accept(new ArrayList<>(selectedDiscards), new ArrayList<>(selectedBackups));
+            onConfirm.accept(new ArrayList<>(selectedDiscards), new ArrayList<>(selectedBackups),
+                    new LinkedHashMap<>(backupElementOverrides));
         });
 
         JPanel south = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 6));
@@ -276,6 +324,32 @@ public class StandardPaymentDialog {
         dlg.getContentPane().add(topPanel,  java.awt.BorderLayout.NORTH);
         dlg.getContentPane().add(mainPanel, java.awt.BorderLayout.CENTER);
         dlg.pack(); dlg.setLocationRelativeTo(owner); dlg.setVisible(true);
+    }
+
+    private static final String[] ALL_ELEMENTS =
+            {"Fire", "Ice", "Wind", "Earth", "Lightning", "Water", "Light", "Dark"};
+
+    private static void showElementPicker(java.awt.Component anchor, MouseEvent trigger,
+            String backupName, String[] elements, Consumer<String> onPick) {
+        JPopupMenu popup = new JPopupMenu();
+        JMenuItem header = new JMenuItem(backupName + " — choose element:");
+        header.setFont(FontLoader.loadPixelNESFont(9));
+        header.setEnabled(false);
+        popup.add(header);
+        popup.addSeparator();
+        for (String elem : elements) {
+            JMenuItem item = new JMenuItem(elem);
+            item.setFont(FontLoader.loadPixelNESFont(10));
+            ElementColor ec = ElementColor.fromName(elem);
+            if (ec != null) {
+                item.setBackground(ec.color);
+                item.setForeground(Color.WHITE);
+                item.setOpaque(true);
+            }
+            item.addActionListener(ae -> onPick.accept(elem));
+            popup.add(item);
+        }
+        popup.show(anchor, trigger.getX(), trigger.getY());
     }
 
     private static JLabel makeCardLabel() {
