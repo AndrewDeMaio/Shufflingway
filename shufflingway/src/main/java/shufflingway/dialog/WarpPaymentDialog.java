@@ -86,8 +86,7 @@ public class WarpPaymentDialog {
 
         List<Integer> eligibleBackupSlots = new ArrayList<>();
         for (int i = 0; i < backupCards.length; i++) {
-            if (backupCards[i] != null && backupStates[i] == CardState.ACTIVE
-                    && (genericNeeded > 0 || matchesAnyElement(backupCards[i], elems)))
+            if (backupCards[i] != null && backupStates[i] == CardState.ACTIVE)
                 eligibleBackupSlots.add(i);
         }
 

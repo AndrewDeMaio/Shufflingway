@@ -88,8 +88,7 @@ public class LbPaymentDialog {
 
         List<Integer> eligibleBackupSlots = new ArrayList<>();
         for (int i = 0; i < backupCards.length; i++) {
-            if (backupCards[i] != null && backupStates[i] == CardState.ACTIVE
-                    && (isLD || matchesAnyElement(backupCards[i], elems)))
+            if (backupCards[i] != null && backupStates[i] == CardState.ACTIVE)
                 eligibleBackupSlots.add(i);
         }
 

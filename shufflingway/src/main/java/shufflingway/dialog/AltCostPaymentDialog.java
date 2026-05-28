@@ -156,8 +156,8 @@ public class AltCostPaymentDialog {
 
         List<Integer> eligibleSlots = new ArrayList<>();
         for (int i = 0; i < backupCards.length; i++)
-            if (backupCards[i] != null && backupCards[i] != card && backupStates[i] == CardState.ACTIVE
-                    && (genericNeeded > 0 || matchesAnyElement(backupCards[i], elems))) eligibleSlots.add(i);
+            if (backupCards[i] != null && backupCards[i] != card && backupStates[i] == CardState.ACTIVE)
+                eligibleSlots.add(i);
 
         if (!eligibleSlots.isEmpty()) {
             JLabel hdr = new JLabel("Backups — dull for 1 CP each:");
