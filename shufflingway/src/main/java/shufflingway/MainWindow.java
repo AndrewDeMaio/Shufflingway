@@ -31,6 +31,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.Deque;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -71,10 +72,26 @@ import scraper.DeckDatabase;
 import scraper.DeckDatabase.DeckCardDetail;
 import static shufflingway.CardAnimation.CARD_H;
 import static shufflingway.CardAnimation.CARD_W;
-import static shufflingway.CardFilters.*;
+import static shufflingway.CardFilters.cardNamesOverlap;
+import static shufflingway.CardFilters.discardTypeKey;
+import static shufflingway.CardFilters.isBlockingTargetFilter;
+import static shufflingway.CardFilters.matchesAltBzType;
+import static shufflingway.CardFilters.matchesDiscardType;
+import static shufflingway.CardFilters.meetsCardNameFilter;
+import static shufflingway.CardFilters.meetsCategoryFilter;
+import static shufflingway.CardFilters.meetsCostConstraint;
+import static shufflingway.CardFilters.meetsElementExclusion;
+import static shufflingway.CardFilters.meetsElementFilter;
+import static shufflingway.CardFilters.meetsJobFilter;
+import static shufflingway.CardFilters.meetsPowerConstraint;
+import static shufflingway.CardFilters.meetsTargetCondition;
 import static shufflingway.CpPaymentUtils.contributingElement;
 import static shufflingway.CpPaymentUtils.matchesAnyElement;
-import shufflingway.dialog.*;
+import shufflingway.dialog.AbilityPaymentDialog;
+import shufflingway.dialog.AltCostPaymentDialog;
+import shufflingway.dialog.LbPaymentDialog;
+import shufflingway.dialog.StandardPaymentDialog;
+import shufflingway.dialog.WarpPaymentDialog;
 import shufflingway.menu.FileMenu;
 import shufflingway.menu.HelpMenu;
 import shufflingway.menu.MultiplayerMenu;
@@ -210,7 +227,7 @@ public class MainWindow {
 	private final List<Integer>  p1MonsterPlayedOnTurn = new ArrayList<>();
 	private final List<Integer>  p1MonsterDamage       = new ArrayList<>();
 	private int                  p1MonsterAttackIdx    = -1;
-	private final java.util.Map<CardData, Integer> p1MonsterTempForwardPower = new java.util.HashMap<>();
+	private final java.util.Map<CardData, Integer> p1MonsterTempForwardPower = new HashMap<>();
 	private JPanel p1MonsterPanel;
 
 	private final List<Boolean>   p2MonsterFrozen       = new ArrayList<>();
@@ -220,7 +237,7 @@ public class MainWindow {
 	private final List<CardState> p2MonsterStates        = new ArrayList<>();
 	private final List<Integer>   p2MonsterPlayedOnTurn  = new ArrayList<>();
 	private final List<Integer>   p2MonsterDamage        = new ArrayList<>();
-	private final java.util.Map<CardData, Integer> p2MonsterTempForwardPower = new java.util.HashMap<>();
+	private final java.util.Map<CardData, Integer> p2MonsterTempForwardPower = new HashMap<>();
 	private JPanel p2MonsterPanel;
 
 	private int      p2DamageCount = 0;
@@ -292,14 +309,14 @@ public class MainWindow {
 	private javax.swing.Timer         p2AutoPassTimer;
 
 	// Damage-shield / damage-modifier state (keyed by CardData identity; cleared at end of turn)
-	private final Set<CardData>          nextIncomingDmgZeroSet   = new java.util.HashSet<>();
-	private final Map<CardData, Integer> nextIncomingDmgReduceMap      = new java.util.HashMap<>();
-	private final Map<CardData, Integer> nextAbilityDmgReduceMap       = new java.util.HashMap<>();
-	private final Map<CardData, Integer> incomingDmgIncreaseMap   = new java.util.HashMap<>();
-	private final Set<CardData>          nullifyAbilityDmgSet     = new java.util.HashSet<>();
-	private final Set<CardData>          nullifyAbilityOnlyDmgSet = new java.util.HashSet<>();
-	private final Set<CardData>          nextOutgoingDmgZeroSet   = new java.util.HashSet<>();
-	private final Set<CardData>          perCardNonLethalDmgSet   = new java.util.HashSet<>();
+	private final Set<CardData>          nextIncomingDmgZeroSet   = new HashSet<>();
+	private final Map<CardData, Integer> nextIncomingDmgReduceMap      = new HashMap<>();
+	private final Map<CardData, Integer> nextAbilityDmgReduceMap       = new HashMap<>();
+	private final Map<CardData, Integer> incomingDmgIncreaseMap   = new HashMap<>();
+	private final Set<CardData>          nullifyAbilityDmgSet     = new HashSet<>();
+	private final Set<CardData>          nullifyAbilityOnlyDmgSet = new HashSet<>();
+	private final Set<CardData>          nextOutgoingDmgZeroSet   = new HashSet<>();
+	private final Set<CardData>          perCardNonLethalDmgSet   = new HashSet<>();
 	private boolean p1ReceivedDamageThisTurn = false;
 	private boolean p2ReceivedDamageThisTurn = false;
 	private int     p1CardsCastThisTurn      = 0;
@@ -323,17 +340,17 @@ public class MainWindow {
 	private final java.util.IdentityHashMap<CardData, java.util.Set<String>> usedOncePerTurnAbilities = new java.util.IdentityHashMap<>();
 
 	/** Forwards that cannot be selected as targets by the opponent's Summons this turn. */
-	private final Set<CardData> cannotBeChosenBySummons   = new java.util.HashSet<>();
+	private final Set<CardData> cannotBeChosenBySummons   = new HashSet<>();
 	/** Forwards that cannot be selected as targets by the opponent's abilities this turn. */
-	private final Set<CardData> cannotBeChosenByAbilities = new java.util.HashSet<>();
+	private final Set<CardData> cannotBeChosenByAbilities = new HashSet<>();
 	/** Characters that cannot be broken this turn. */
-	private final Set<CardData> cannotBeBrokenSet         = new java.util.HashSet<>();
+	private final Set<CardData> cannotBeBrokenSet         = new HashSet<>();
 	/** Characters that cannot be broken this turn by opposing non-damage abilities/summons. */
-	private final Set<CardData> cannotBeBrokenByNonDmgSet = new java.util.HashSet<>();
+	private final Set<CardData> cannotBeBrokenByNonDmgSet = new HashSet<>();
 	/** Forwards that have Breaktouch (battle damage) until end of turn. */
-	private final Set<CardData> breaktouchBattleSet       = new java.util.HashSet<>();
+	private final Set<CardData> breaktouchBattleSet       = new HashSet<>();
 	/** Cards that have escaped from the current Battle via an Escape ability — combat is skipped for their pairing. */
-	private final Set<CardData> escapedFromBattle         = new java.util.HashSet<>();
+	private final Set<CardData> escapedFromBattle         = new HashSet<>();
 	/** The card currently dealing ability damage (null when no ability damage is in flight). */
 	private CardData currentBreaktouchSource    = null;
 	private boolean  currentBreaktouchSourceIsP1 = false;
@@ -350,7 +367,7 @@ public class MainWindow {
 	/** Distinct element types used to pay the most recent card's CP cost; checked by castPaymentMinElements conditions. */
 	private int lastCastPaymentDistinctElements = 0;
 	/** Specific element types used to pay the most recent card's CP cost; checked by castPaymentElement conditions. */
-	private final java.util.Set<String> lastCastPaymentElements = new java.util.HashSet<>();
+	private final java.util.Set<String> lastCastPaymentElements = new HashSet<>();
 	/** True if the most recently cast card was paid entirely by dulling Backups (no hand discards). */
 	private boolean lastCastWasPaidByBackupsOnly = false;
 	/** True while a card is being placed as a direct result of being cast from hand; gates castOnly field abilities. */
@@ -3655,7 +3672,7 @@ public class MainWindow {
 		// Track which cards are being cast / selected for payment in this dialog session
 		int[] castingIdx       = { -1 };   // index of card being cast
 		int[] paymentChosen    = { 0 };    // how many payment cards selected so far
-		Set<Integer> paymentSet = new java.util.HashSet<>();
+		Set<Integer> paymentSet = new HashSet<>();
 
 		JLabel statusLabel = new JLabel(" ", SwingConstants.CENTER);
 		statusLabel.setFont(FontLoader.loadPixelNESFont(10));
@@ -3869,7 +3886,7 @@ public class MainWindow {
 		dlg.setResizable(false);
 		dlg.setDefaultCloseOperation(JDialog.DO_NOTHING_ON_CLOSE);
 
-		Set<Integer> selected = new java.util.HashSet<>();
+		Set<Integer> selected = new HashSet<>();
 		int mustDiscard = hand.size() - 5;
 
 		JLabel statusLabel = new JLabel("Select " + mustDiscard + " card(s) to discard.", SwingConstants.CENTER);
@@ -3994,7 +4011,7 @@ public class MainWindow {
 		dlg.setResizable(false);
 		dlg.setDefaultCloseOperation(JDialog.DO_NOTHING_ON_CLOSE);
 
-		Set<Integer> selected = new java.util.HashSet<>();
+		Set<Integer> selected = new HashSet<>();
 
 		JLabel statusLabel = new JLabel("Select " + mustDiscard + " card(s) to discard.", SwingConstants.CENTER);
 		statusLabel.setFont(FontLoader.loadPixelNESFont(10));
@@ -4118,7 +4135,7 @@ public class MainWindow {
 		dlg.setResizable(false);
 		dlg.setDefaultCloseOperation(JDialog.DO_NOTHING_ON_CLOSE);
 
-		Set<Integer> selected = new java.util.HashSet<>();
+		Set<Integer> selected = new HashSet<>();
 
 		JLabel statusLabel = new JLabel("Select " + mustSelect + " card(s) to remove from the game.", SwingConstants.CENTER);
 		statusLabel.setFont(FontLoader.loadPixelNESFont(10));
@@ -6489,7 +6506,7 @@ public class MainWindow {
 		}
 
 		if (fa.oncePerTurn())
-			usedOncePerTurnAbilities.computeIfAbsent(source, k -> new java.util.HashSet<>()).add(fa.effectText());
+			usedOncePerTurnAbilities.computeIfAbsent(source, k -> new HashSet<>()).add(fa.effectText());
 
 		logEntry("[AutoAbility] " + source.name() + " — " + fa.effectText());
 		effect.accept(buildGameContext(effectIsP1));
@@ -6667,7 +6684,7 @@ public class MainWindow {
 		}
 
 		if (fa.oncePerTurn())
-			usedOncePerTurnAbilities.computeIfAbsent(source, k -> new java.util.HashSet<>())
+			usedOncePerTurnAbilities.computeIfAbsent(source, k -> new HashSet<>())
 					.add(fa.effectText());
 
 		// P1 picks interactively; AI always picks the first N actions
@@ -7457,7 +7474,7 @@ public class MainWindow {
 
 		// Mark once-per-turn ability as used for this turn
 		if (ability.oncePerTurn())
-			usedOncePerTurnAbilities.computeIfAbsent(source, k -> new java.util.HashSet<>()).add(ability.effectText());
+			usedOncePerTurnAbilities.computeIfAbsent(source, k -> new HashSet<>()).add(ability.effectText());
 
 		// Dull source card
 		if (ability.requiresDull()) applyDull.run();
@@ -7495,7 +7512,7 @@ public class MainWindow {
 
 		// Discard costs — paid from hand, no CP generated
 		for (DiscardCost dc : ability.discardCosts()) {
-			Set<String> usedTypes = new java.util.HashSet<>();
+			Set<String> usedTypes = new HashSet<>();
 			for (int pick = 0; pick < dc.count(); pick++) {
 				List<CardData> hand = playerHand(isP1);
 				List<Integer> eligible = new ArrayList<>();
