@@ -133,7 +133,8 @@ public class ActionResolver {
      * from the game state at resolution time.  Exactly one named group will be set:
      * <ul>
      *   <li>{@code highest} — "the highest [power] Forward you control['s power]"</li>
-     *   <li>{@code halfcard} — card name in "half of &lt;name&gt;'s power [(round down…)]"</li>
+     *   <li>{@code halfcard}     — card name in "half of &lt;name&gt;'s power [(round up/down…)]"</li>
+     *   <li>{@code halfrounding} — "up" or "down" when an explicit rounding clause is present (absent = round down, matching legacy behaviour)</li>
      *   <li>{@code itspower} — "its/their power [minus &lt;minus&gt;]"</li>
      *   <li>{@code card}     — card name in "&lt;name&gt;'s power"</li>
      * </ul>
@@ -143,7 +144,7 @@ public class ActionResolver {
         "(?i)deal\\s+(?:it|them)\\s+damage\\s+equal\\s+to\\s+" +
         "(?:" +
             "(?<highest>the\\s+highest(?:\\s+power)?\\s+Forward(?:\\s+you\\s+control)?(?:'s\\s+power)?)" +
-            "|half\\s+of\\s+(?<halfcard>.+?)'s\\s+power(?:\\s*\\([^)]*\\))?" +
+            "|half\\s+of\\s+(?<halfcard>.+?)'s\\s+power(?:\\s*\\(\\s*round\\s+(?<halfrounding>up|down)[^)]*\\))?" +
             "|(?<itspower>(?:its|their)\\s+power)(?:\\s+minus\\s+(?<minus>\\d+))?" +
             "|(?<dullforward>the\\s+power\\s+of\\s+the\\s+dull(?:ed)?\\s+Forward)" +
             "|(?<card>.+?)'s\\s+power" +
@@ -1467,6 +1468,26 @@ public class ActionResolver {
     );
 
     /**
+     * Matches "Deal damage equal to half of [name]'s power to all [the] [condition] Forward[s]
+     * [opponent controls] [(round up/down to the nearest 1000)]."
+     * <ul>
+     *   <li>Group {@code sourcename} — name of the card whose power determines damage</li>
+     *   <li>Group {@code condition}  — optional "damaged", "dull", "attacking", or "blocking"</li>
+     *   <li>Group {@code opponent}   — present when "opponent controls" appears</li>
+     *   <li>Group {@code rounding}   — "up" or "down" (absent defaults to round down)</li>
+     * </ul>
+     */
+    private static final Pattern DEAL_HALF_SOURCE_POWER_DAMAGE_TO_FORWARDS = Pattern.compile(
+        "(?i)Deal\\s+damage\\s+equal\\s+to\\s+half\\s+of\\s+(?<sourcename>.+?)'s\\s+power\\s+" +
+        "to\\s+all(?:\\s+the)?\\s+" +
+        "(?:(?<condition>damaged|dull|attacking|blocking)\\s+)?" +
+        "Forwards?\\s*" +
+        "(?<opponent>(?:your\\s+)?opponent\\s+controls)?\\s*" +
+        "(?:\\(\\s*round\\s+(?<rounding>up|down)[^)]*\\))?\\s*" +
+        "[.!]?"
+    );
+
+    /**
      * Matches "During this turn, the cost required to cast your next [filter] is reduced by N
      * [(it cannot become 0)][.]"
      * <ul>
@@ -1602,6 +1623,9 @@ public class ActionResolver {
         if (result != null) return result;
 
         result = tryParseDealHalfPowerDamageToForwards(effectText);
+        if (result != null) return result;
+
+        result = tryParseDealHalfSourcePowerDamageToForwards(effectText);
         if (result != null) return result;
 
         result = tryParseChooseCharacter(effectText, source, xValue);
@@ -1818,6 +1842,7 @@ public class ActionResolver {
         if (tryParseSelectNumber(effectText, source)                    != null) return "SelectNumber";
         if (tryParseDealDamageToForwards(effectText)                    != null) return "DealDamageToForwards";
         if (tryParseDealHalfPowerDamageToForwards(effectText)           != null) return "DealHalfPowerDamageToForwards";
+        if (tryParseDealHalfSourcePowerDamageToForwards(effectText)     != null) return "DealHalfSourcePowerDamageToForwards";
         if (tryParseChooseCharacter(effectText, source, 0)              != null) return "ChooseCharacter";
         if (tryParseEndOfEachTurnFieldAbility(effectText, source) != null) return "EndOfEachTurnFieldAbility";
         if (tryParseDelayedEffect(effectText)                 != null) return "DelayedEffect";
@@ -1965,8 +1990,9 @@ public class ActionResolver {
         if (CardData.WHILE_CARD_BLOCKING_PATTERN.matcher(effectText).matches())   return "WhileCardBlocking";
         if (CardData.WHILE_CARD_IN_HAND_PATTERN.matcher(effectText).matches())   return "WhileCardInHand";
         if (tryParseSelectNumber(effectText, source)          != null) return "SelectNumber";
-        if (tryParseDealDamageToForwards(effectText)          != null) return "DealDamageToForwards";
-        if (tryParseDealHalfPowerDamageToForwards(effectText) != null) return "DealHalfPowerDamageToForwards";
+        if (tryParseDealDamageToForwards(effectText)                != null) return "DealDamageToForwards";
+        if (tryParseDealHalfPowerDamageToForwards(effectText)       != null) return "DealHalfPowerDamageToForwards";
+        if (tryParseDealHalfSourcePowerDamageToForwards(effectText) != null) return "DealHalfSourcePowerDamageToForwards";
 
         Matcher chooseM = CHOOSE_CHARACTER_PATTERN.matcher(effectText);
         if (chooseM.find()) {
@@ -2244,6 +2270,56 @@ public class ActionResolver {
                     int idx = p1Targets.get(i);
                     if (idx < ctx.p1ForwardCount())
                         ctx.damageP1Forward(idx, halfPowerDamage(ctx.p1Forward(idx).power()));
+                }
+            }
+        };
+    }
+
+    private static Consumer<GameContext> tryParseDealHalfSourcePowerDamageToForwards(String text) {
+        Matcher m = DEAL_HALF_SOURCE_POWER_DAMAGE_TO_FORWARDS.matcher(text);
+        if (!m.find()) return null;
+
+        String  sourceName   = m.group("sourcename").trim();
+        String  condition    = m.group("condition");
+        boolean opponentOnly = m.group("opponent") != null;
+        boolean roundUp      = "up".equalsIgnoreCase(m.group("rounding"));
+
+        return ctx -> {
+            int raw       = Math.max(0, ctx.fieldForwardPowerByName(sourceName));
+            int damage    = roundUp ? halfPowerDamage(raw) : (raw / 2 / 1000) * 1000;
+            String condLabel  = condition   != null ? (condition + " ")   : "";
+            boolean oppIsP2   = opponentOnly && ctx.isP1();
+            boolean oppIsP1   = opponentOnly && !ctx.isP1();
+            String  scopeLabel = opponentOnly ? "opponent's " : "all ";
+            String  dir        = roundUp ? "up" : "down";
+            ctx.logEntry("Effect: Deal " + damage + " damage (half of " + sourceName
+                    + "'s power, round " + dir + ") to " + scopeLabel + condLabel + "Forwards");
+
+            if (!opponentOnly || oppIsP2) {
+                List<Integer> p2Targets = new ArrayList<>();
+                for (int i = 0; i < ctx.p2ForwardCount(); i++) {
+                    if (meetsCondition(ctx.p2ForwardState(i), ctx.p2ForwardCurrentDamage(i),
+                            ctx.isP2ForwardAttacking(i), ctx.isP2ForwardBlocking(i), condition))
+                        p2Targets.add(i);
+                }
+                for (int i = p2Targets.size() - 1; i >= 0; i--) {
+                    int idx = p2Targets.get(i);
+                    if (idx < ctx.p2ForwardCount())
+                        ctx.damageP2Forward(idx, damage);
+                }
+            }
+
+            if (!opponentOnly || oppIsP1) {
+                List<Integer> p1Targets = new ArrayList<>();
+                for (int i = 0; i < ctx.p1ForwardCount(); i++) {
+                    if (meetsCondition(ctx.p1ForwardState(i), ctx.p1ForwardCurrentDamage(i),
+                            ctx.isP1ForwardAttacking(i), ctx.isP1ForwardBlocking(i), condition))
+                        p1Targets.add(i);
+                }
+                for (int i = p1Targets.size() - 1; i >= 0; i--) {
+                    int idx = p1Targets.get(i);
+                    if (idx < ctx.p1ForwardCount())
+                        ctx.damageP1Forward(idx, damage);
                 }
             }
         };
@@ -2828,11 +2904,13 @@ public class ActionResolver {
                     if (secondary != null) secondary.accept(ctx);
                 };
             } else if (exprM.group("halfcard") != null) {
-                String cardName = exprM.group("halfcard").trim();
+                String  cardName = exprM.group("halfcard").trim();
+                boolean roundUp  = "up".equalsIgnoreCase(exprM.group("halfrounding"));
                 return ctx -> {
                     int raw    = Math.max(0, ctx.fieldForwardPowerByName(cardName));
-                    int damage = (raw / 2 / 1000) * 1000;
-                    ctx.logEntry(choosePrefix + " — Deal " + damage + " damage (half of " + cardName + "'s power)");
+                    int damage = roundUp ? halfPowerDamage(raw) : (raw / 2 / 1000) * 1000;
+                    String dir = roundUp ? "up" : "down";
+                    ctx.logEntry(choosePrefix + " — Deal " + damage + " damage (half of " + cardName + "'s power, round " + dir + ")");
                     List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
                             opponentOnly, selfOnly, condition, element, zone, opponentZone,
                             costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
