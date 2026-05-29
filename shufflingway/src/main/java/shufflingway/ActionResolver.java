@@ -1255,6 +1255,15 @@ public class ActionResolver {
     );
 
     /**
+     * Followup used inside {@link #tryParseChooseCharacter}:
+     * "Select a Job. It gains that Job until the end of the turn."
+     * Matched against the full followup (before the dot-split) so both sentences are seen together.
+     */
+    private static final Pattern FOLLOWUP_SELECT_JOB_GRANT = Pattern.compile(
+        "(?i)^Select\\s+a\\s+Job\\.\\s+It\\s+gains?\\s+that\\s+Job\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn[.!]?$"
+    );
+
+    /**
      * Matches "Look at the top card of your deck. You may put it into the Break Zone."
      */
     private static final Pattern LOOK_TOP_DECK_OPTIONALLY_BREAK = Pattern.compile(
@@ -3669,6 +3678,22 @@ public class ActionResolver {
                     });
                 }
                 if (secondary != null) secondary.accept(ctx);
+            };
+        }
+
+        // --- "Select a Job. It gains that Job until the end of the turn." ---
+        // Checked against the full followup (before dot-split) so both sentences are seen together.
+        if (FOLLOWUP_SELECT_JOB_GRANT.matcher(followup).find()) {
+            return ctx -> {
+                ctx.logEntry(choosePrefix + " — Select a Job, grant until end of turn");
+                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
+                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
+                        jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem);
+                if (ts.isEmpty()) return;
+                String job = ctx.selectJobFromDatabase();
+                if (job == null || job.isBlank()) return;
+                ts.forEach(t -> ctx.grantJobUntilEndOfTurn(t, job));
             };
         }
 

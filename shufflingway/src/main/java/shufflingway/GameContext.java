@@ -941,4 +941,16 @@ public interface GameContext {
      * Monster currently on the field.
      */
     void makeMonsterTemporaryForward(CardData source, int power);
+
+    /**
+     * Shows a modal dialog listing every distinct Job name in the card database and returns
+     * the one the player selected, or {@code null} if the dialog was cancelled.
+     */
+    String selectJobFromDatabase();
+
+    /**
+     * Grants the Forward at {@code t} the given {@code job} until the end of the turn.
+     * No-op for Backup and Monster targets.
+     */
+    void grantJobUntilEndOfTurn(ForwardTarget t, String job);
 }

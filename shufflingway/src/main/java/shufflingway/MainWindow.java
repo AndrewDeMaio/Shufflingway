@@ -190,6 +190,9 @@ public class MainWindow {
 	private final List<java.util.EnumSet<CardData.Trait>> p2ForwardTempTraits    = new ArrayList<>();
 	private final List<java.util.EnumSet<CardData.Trait>> p1ForwardRemovedTraits = new ArrayList<>();
 	private final List<java.util.EnumSet<CardData.Trait>> p2ForwardRemovedTraits = new ArrayList<>();
+	/** Temporary job granted to P1/P2 Forwards until end of turn; {@code null} = no override. */
+	private final List<String> p1ForwardTempJobs = new ArrayList<>();
+	private final List<String> p2ForwardTempJobs = new ArrayList<>();
 	/** Forwards that may not be chosen as a blocker for the remainder of this turn. */
 	private final Set<Integer> p1ForwardCannotBlock = new HashSet<>();
 	private final Set<Integer> p2ForwardCannotBlock = new HashSet<>();
@@ -1496,12 +1499,14 @@ public class MainWindow {
                             for (int i = 0; i < p1ForwardPowerReduction.size(); i++) p1ForwardPowerReduction.set(i, 0);
                             p1ForwardTempTraits.forEach(java.util.EnumSet::clear);
                             p1ForwardRemovedTraits.forEach(java.util.EnumSet::clear);
+                            java.util.Collections.fill(p1ForwardTempJobs, null);
                             for (int i = 0; i < p1ForwardCards.size(); i++) refreshP1ForwardSlot(i);
                             for (int i = 0; i < p2ForwardDamage.size(); i++) p2ForwardDamage.set(i, 0);
                             for (int i = 0; i < p2ForwardPowerBoost.size(); i++) p2ForwardPowerBoost.set(i, 0);
                             for (int i = 0; i < p2ForwardPowerReduction.size(); i++) p2ForwardPowerReduction.set(i, 0);
                             p2ForwardTempTraits.forEach(java.util.EnumSet::clear);
                             p2ForwardRemovedTraits.forEach(java.util.EnumSet::clear);
+                            java.util.Collections.fill(p2ForwardTempJobs, null);
                             p1ForwardCannotBeBlocked.clear();       p2ForwardCannotBeBlocked.clear();
                             p1ForwardCannotBeBlockedByCost.clear(); p2ForwardCannotBeBlockedByCost.clear();
                             p1ForwardCannotBlock.clear();           p2ForwardCannotBlock.clear();
@@ -1596,6 +1601,7 @@ public class MainWindow {
 		p1ForwardPowerReduction.clear();
 		p1ForwardTempTraits.clear();
 		p1ForwardRemovedTraits.clear();
+		p1ForwardTempJobs.clear();
 		p1ForwardPrimedTop.clear();
 		p1ForwardFrozen.clear();
 		p1MonsterFrozen.clear();
@@ -1695,6 +1701,7 @@ public class MainWindow {
 		p2ForwardPowerReduction.clear();
 		p2ForwardTempTraits.clear();
 		p2ForwardRemovedTraits.clear();
+		p2ForwardTempJobs.clear();
 		p2ForwardPrimedTop.clear();
 		p2ForwardFrozen.clear();
 		java.util.Arrays.fill(p2BackupFrozen, false);
@@ -2210,6 +2217,7 @@ public class MainWindow {
 		p1ForwardPowerReduction.remove(idx);
 		p1ForwardTempTraits.remove(idx);
 		p1ForwardRemovedTraits.remove(idx);
+		p1ForwardTempJobs.remove(idx);
 		p1ForwardPrimedTop.remove(idx);
 		p1ForwardFrozen.remove(idx);
 		p1ForwardLabels.remove(idx);
@@ -2299,6 +2307,7 @@ public class MainWindow {
 		p2ForwardPowerReduction.remove(idx);
 		p2ForwardTempTraits.remove(idx);
 		p2ForwardRemovedTraits.remove(idx);
+		p2ForwardTempJobs.remove(idx);
 		p2ForwardPrimedTop.remove(idx);
 		p2ForwardFrozen.remove(idx);
 		p2ForwardLabels.remove(idx);
@@ -2447,6 +2456,7 @@ public class MainWindow {
 		p2ForwardPowerReduction.remove(p2Idx);
 		p2ForwardTempTraits.remove(p2Idx);
 		p2ForwardRemovedTraits.remove(p2Idx);
+		p2ForwardTempJobs.remove(p2Idx);
 		p2ForwardPrimedTop.remove(p2Idx);
 		p2ForwardFrozen.remove(p2Idx);
 		p2ForwardLabels.remove(p2Idx);
@@ -2517,6 +2527,7 @@ public class MainWindow {
 		p1ForwardPowerReduction.add(0);
 		p1ForwardTempTraits.add(java.util.EnumSet.noneOf(CardData.Trait.class));
 		p1ForwardRemovedTraits.add(java.util.EnumSet.noneOf(CardData.Trait.class));
+		p1ForwardTempJobs.add(null);
 		p1ForwardPrimedTop.add(null);
 		p1ForwardFrozen.add(false);
 		p1ForwardLabels.add(lbl);
@@ -2556,6 +2567,7 @@ public class MainWindow {
 		p1ForwardPowerReduction.remove(p1Idx);
 		p1ForwardTempTraits.remove(p1Idx);
 		p1ForwardRemovedTraits.remove(p1Idx);
+		p1ForwardTempJobs.remove(p1Idx);
 		p1ForwardPrimedTop.remove(p1Idx);
 		p1ForwardFrozen.remove(p1Idx);
 		p1ForwardLabels.remove(p1Idx);
@@ -2616,6 +2628,7 @@ public class MainWindow {
 		p2ForwardPowerReduction.add(0);
 		p2ForwardTempTraits.add(java.util.EnumSet.noneOf(CardData.Trait.class));
 		p2ForwardRemovedTraits.add(java.util.EnumSet.noneOf(CardData.Trait.class));
+		p2ForwardTempJobs.add(null);
 		p2ForwardFrozen.add(false);
 		rebuildP2ForwardPanel();
 		if (!card.fieldPowerGrants().isEmpty()) refreshFieldGrantDependents(false);
@@ -9817,7 +9830,55 @@ public class MainWindow {
 					refreshP2MonsterSlot(idx);
 				}
 			}
+
+			@Override public String selectJobFromDatabase() {
+				return showJobSelectionDialog();
+			}
+
+			@Override public void grantJobUntilEndOfTurn(ForwardTarget t, String job) {
+				if (t.zone() != ForwardTarget.CardZone.FORWARD) return;
+				if (t.isP1()) {
+					int idx = t.idx();
+					if (idx < 0 || idx >= p1ForwardCards.size()) return;
+					p1ForwardTempJobs.set(idx, job);
+					logEntry(p1Forward(idx).name() + " gains the Job [" + job + "] until end of turn");
+				} else {
+					int idx = t.idx();
+					if (idx < 0 || idx >= p2ForwardCards.size()) return;
+					p2ForwardTempJobs.set(idx, job);
+					logEntry("[P2] " + p2ForwardCards.get(idx).name() + " gains the Job [" + job + "] until end of turn");
+				}
+			}
 		};
+	}
+
+	/** Loads every distinct job name from the database and shows a sorted dropdown dialog. */
+	private String showJobSelectionDialog() {
+		java.io.File dbFile = new java.io.File("shufflingway.db");
+		if (!dbFile.exists()) {
+			logEntry("[Job select] shufflingway.db not found");
+			return null;
+		}
+		java.util.List<String> jobs = new java.util.ArrayList<>();
+		try (java.sql.Connection conn = java.sql.DriverManager.getConnection(
+				"jdbc:sqlite:" + dbFile.getAbsolutePath());
+			 java.sql.Statement stmt = conn.createStatement();
+			 java.sql.ResultSet rs   = stmt.executeQuery(
+				"SELECT DISTINCT job_en FROM cards WHERE job_en IS NOT NULL AND job_en != '' ORDER BY job_en")) {
+			while (rs.next()) jobs.add(rs.getString(1));
+		} catch (Exception e) {
+			logEntry("[Job select] DB error: " + e.getMessage());
+		}
+		if (jobs.isEmpty()) return null;
+		String[] options = jobs.toArray(new String[0]);
+		return (String) javax.swing.JOptionPane.showInputDialog(
+				frame,
+				"Select a Job:",
+				"Select Job",
+				javax.swing.JOptionPane.PLAIN_MESSAGE,
+				null,
+				options,
+				options[0]);
 	}
 
 	/**
@@ -10707,6 +10768,7 @@ public class MainWindow {
 		p1ForwardPowerReduction.add(0);
 		p1ForwardTempTraits.add(java.util.EnumSet.noneOf(CardData.Trait.class));
 		p1ForwardRemovedTraits.add(java.util.EnumSet.noneOf(CardData.Trait.class));
+		p1ForwardTempJobs.add(null);
 		p1ForwardPrimedTop.add(null);
 		p1ForwardFrozen.add(false);
 		p1ForwardLabels.add(lbl);
@@ -12447,6 +12509,7 @@ public class MainWindow {
 		p2ForwardPowerReduction.add(0);
 		p2ForwardTempTraits.add(java.util.EnumSet.noneOf(CardData.Trait.class));
 		p2ForwardRemovedTraits.add(java.util.EnumSet.noneOf(CardData.Trait.class));
+		p2ForwardTempJobs.add(null);
 		p2ForwardPrimedTop.add(null);
 		p2ForwardFrozen.add(false);
 		p2ForwardLabels.add(lbl);
