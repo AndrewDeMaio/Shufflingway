@@ -299,7 +299,9 @@ public class MainWindow {
 	private Runnable pendingP2BlockDone       = null;
 	private boolean  pendingP2AttackerIsMonster = false;
 	private int      pendingP2AttackerPower     = 0;
-	private int      p1BlockerSelection   = -1;   // index of forward P1 clicked to block with
+	private int           p1BlockerSelection      = -1;   // index of forward P1 clicked to block with
+	private List<Integer> pendingP2PartyIndices   = null; // set while P1 declares blocker vs P2 party
+	private int           pendingP2PartyCombined  = 0;
 
 	// Blocking-target tracking: set between "Blocker Declared" and resolveCombat so that
 	// "Choose 1 Forward blocking [Name/Job]" effects can identify the blocking forward.
@@ -401,7 +403,6 @@ public class MainWindow {
 					window.frame.setIconImage(icon40.getImage());
 				} catch (Exception e) {
 					AppLogger.log("Startup exception", e);
-					e.printStackTrace();
 				}
 			}
 		});
@@ -876,7 +877,7 @@ public class MainWindow {
 		attackButton.setEnabled(false);
 		attackButton.setFocusPainted(false);
 		attackButton.addActionListener(e -> {
-			if (pendingP2Attacker != null) {
+			if (p1InBlockDeclaration()) {
 				// Block declaration mode: P1 commits to their block choice (or takes damage)
 				handleP1BlockAction();
 			} else if (!p1AttackSelection.isEmpty()) {
@@ -3525,6 +3526,48 @@ public class MainWindow {
 			// handleP1BlockAction() fires when P1 clicks the button.
 		});
 	}
+
+	private void initP1BlockDeclarationVsParty(List<Integer> attackerIndices, int combinedPower, Runnable onDone) {
+		boolean anyEligible = false;
+		for (int i = 0; i < p1ForwardStates.size(); i++) {
+			CardState s = p1ForwardStates.get(i);
+			if ((s == CardState.ACTIVE || s == CardState.BRAVE_ATTACKED)
+					&& !p1ForwardCannotBlock.contains(i)
+					&& !p1ForwardCannotBlockPersistent.contains(i)) {
+				anyEligible = true;
+				break;
+			}
+		}
+
+		if (!anyEligible) {
+			p1TakeDamage();
+			for (int idx : attackerIndices)
+				triggerAutoAbilitiesForDealsDamageToOpponent(p2ForwardCards.get(idx), false);
+			onDone.run();
+			return;
+		}
+
+		StringBuilder names = new StringBuilder();
+		for (int idx : attackerIndices) {
+			if (names.length() > 0) names.append(", ");
+			names.append(p2ForwardCards.get(idx).name());
+		}
+		logEntry("[P2] Party Attack: " + names + " (" + combinedPower
+				+ " combined)! Select a blocker or click 'Take Damage'.");
+
+		pendingP2PartyIndices  = new ArrayList<>(attackerIndices);
+		pendingP2PartyCombined = combinedPower;
+		pendingP2BlockDone     = onDone;
+		p1BlockerSelection     = -1;
+
+		setAttackSubStep(2);
+		refreshPhaseTracker();
+		refreshAttackButton();
+		refreshAllForwardSlots();
+
+		combatPriority("P2 Party Attacker Declared", false, () -> { });
+	}
+
 
 	private void showP2DamageZoneDialog() {
 		List<CardData> zone = gameState.getP2DamageZone();
@@ -10379,7 +10422,7 @@ public class MainWindow {
 	 * @return mapping of attacker index → damage assigned; empty if dialog was dismissed
 	 */
 	private Map<Integer, Integer> showPartyDamageAssignmentDialog(
-			List<Integer> attackerIndices, int blockerPower) {
+			List<Integer> attackerIndices, List<CardData> attackerCards, int[] effectivePowers, int blockerPower) {
 
 		int n = attackerIndices.size();
 		int[] assigned = new int[n]; // damage assigned per attacker slot, multiples of 1000
@@ -10425,8 +10468,8 @@ public class MainWindow {
 		for (int i = 0; i < n; i++) {
 			final int slot = i;
 			int idx = attackerIndices.get(i);
-			CardData card = p1ForwardCards.get(idx);
-			int power = effectiveP1ForwardPower(idx);
+			CardData card = attackerCards.get(i);
+			int power = effectivePowers[i];
 
 			JPanel cardPanel = new JPanel();
 			cardPanel.setLayout(new BoxLayout(cardPanel, BoxLayout.Y_AXIS));
@@ -11167,9 +11210,13 @@ public class MainWindow {
 				|| p1ForwardPlayedOnTurn.get(idx) != gameState.getTurnNumber();
 	}
 
+	private boolean p1InBlockDeclaration() {
+		return pendingP2Attacker != null || pendingP2PartyIndices != null;
+	}
+
 	/** Returns true if {@code idx} is a valid P1 blocker choice during block declaration. */
 	private boolean isForwardBlockSelectable(int idx) {
-		if (pendingP2Attacker == null) return false;
+		if (!p1InBlockDeclaration()) return false;
 		if (idx < 0 || idx >= p1ForwardStates.size()) return false;
 		CardState s = p1ForwardStates.get(idx);
 		if (s != CardState.ACTIVE && s != CardState.BRAVE_ATTACKED) return false;
@@ -11211,7 +11258,7 @@ public class MainWindow {
 	 */
 	private void handleP1ForwardLeftClick(int idx) {
 		if (gameState.getCurrentPhase() != GameState.GamePhase.ATTACK) return;
-		if (pendingP2Attacker != null) {
+		if (p1InBlockDeclaration()) {
 			toggleP1BlockerSelection(idx);
 		} else {
 			toggleAttackSelection(idx);
@@ -11228,6 +11275,7 @@ public class MainWindow {
 
 	/** Called when P1 clicks the Attack/Block/Take-Damage button during block declaration. */
 	private void handleP1BlockAction() {
+		if (pendingP2PartyIndices != null) { handleP1PartyBlockAction(); return; }
 		if (pendingP2Attacker == null) return;
 		CardData attacker      = pendingP2Attacker;
 		int      attackerIdx   = pendingP2AttackerIdx;
@@ -11268,6 +11316,43 @@ public class MainWindow {
 		} else {
 			p1TakeDamage();
 			triggerAutoAbilitiesForDealsDamageToOpponent(attacker, false);
+			setAttackSubStep(-1);
+			onDone.run();
+		}
+	}
+
+	private void handleP1PartyBlockAction() {
+		List<Integer> attackerIndices = pendingP2PartyIndices;
+		int           combinedPower   = pendingP2PartyCombined;
+		Runnable      onDone          = pendingP2BlockDone;
+		int           blockerIdx      = p1BlockerSelection;
+
+		pendingP2PartyIndices  = null;
+		pendingP2PartyCombined = 0;
+		pendingP2BlockDone     = null;
+		p1BlockerSelection     = -1;
+		refreshAttackButton();
+
+		if (blockerIdx >= 0 && blockerIdx < p1ForwardCards.size()) {
+			CardData top    = p1ForwardPrimedTop.get(blockerIdx);
+			CardData blocker = (top != null) ? top : p1ForwardCards.get(blockerIdx);
+			p1BlockingIdx = blockerIdx;
+			triggerAutoAbilitiesForBlock(blocker, true);
+			for (int idx : attackerIndices)
+				triggerAutoAbilitiesForIsBlocked(p2ForwardCards.get(idx), false);
+			setAttackSubStep(3);
+			combatPriority("Blocker Declared", false, () -> {
+				resolveP1BlockVsP2Party(blockerIdx, blocker, attackerIndices, combinedPower);
+				p1BlockingIdx       = -1;
+				p1BlockedByAttacker = null;
+				setAttackSubStep(-1);
+				refreshAllForwardSlots();
+				onDone.run();
+			});
+		} else {
+			p1TakeDamage();
+			for (int idx : attackerIndices)
+				triggerAutoAbilitiesForDealsDamageToOpponent(p2ForwardCards.get(idx), false);
 			setAttackSubStep(-1);
 			onDone.run();
 		}
@@ -11632,7 +11717,7 @@ public class MainWindow {
 		boolean inAttack = gameState.getCurrentPhase() == GameState.GamePhase.ATTACK;
 		boolean p1Turn   = gameState.getCurrentPlayer() == GameState.Player.P1;
 
-		if (pendingP2Attacker != null) {
+		if (p1InBlockDeclaration()) {
 			// Block declaration mode: P1 chooses a blocker by clicking a forward
 			boolean hasBlocker = p1BlockerSelection >= 0;
 			attackButton.setText(hasBlocker ? "Block" : "Take Damage");
@@ -11646,7 +11731,7 @@ public class MainWindow {
 
 		if (skipAttackButton != null)
 			skipAttackButton.setEnabled(inAttack && p1Turn && attackSubStep == 1
-					&& pendingP2Attacker == null);
+					&& !p1InBlockDeclaration());
 	}
 
 	private void executeP1Attack(List<Integer> selection) {
@@ -11785,6 +11870,46 @@ public class MainWindow {
 		toBreak.sort(Collections.reverseOrder());
 		for (int idx : toBreak) breakP1Forward(idx);
 		for (int i = 0; i < p1ForwardCards.size(); i++) refreshP1ForwardSlot(i);
+	}
+
+	/** P1 blocks a P2 party attack: combined power hits the blocker; P1 assigns blocker power back. */
+	private void resolveP1BlockVsP2Party(int blockerIdx, CardData blocker,
+			List<Integer> attackerIndices, int combinedPower) {
+		int blockerPower = effectiveP1ForwardPower(blockerIdx);
+		logEntry("[P2] Party deals " + combinedPower + " damage to " + blocker.name());
+		if (combinedPower >= blockerPower) breakP1Forward(blockerIdx);
+
+		List<CardData> attackerCards = new ArrayList<>();
+		int[] effectivePowers = new int[attackerIndices.size()];
+		for (int i = 0; i < attackerIndices.size(); i++) {
+			int idx = attackerIndices.get(i);
+			attackerCards.add(p2ForwardCards.get(idx));
+			effectivePowers[i] = effectiveP2ForwardPower(idx);
+		}
+		Map<Integer, Integer> damageMap = showPartyDamageAssignmentDialog(
+				attackerIndices, attackerCards, effectivePowers, blockerPower);
+		if (damageMap.isEmpty()) damageMap = p2AiBuildDamageMap(attackerIndices, blockerPower);
+		applyP2PartyAttackerDamage(damageMap);
+	}
+
+	/** Applies a damage map onto P2 party attackers; breaks those that reach lethal. */
+	private void applyP2PartyAttackerDamage(Map<Integer, Integer> damageMap) {
+		if (damageMap.isEmpty()) return;
+		for (Map.Entry<Integer, Integer> entry : damageMap.entrySet()) {
+			int idx = entry.getKey(), dmg = entry.getValue();
+			if (idx >= p2ForwardCards.size()) continue;
+			p2ForwardDamage.set(idx, p2ForwardDamage.get(idx) + dmg);
+			logEntry("Deals " + dmg + " damage to " + p2ForwardCards.get(idx).name());
+		}
+		List<Integer> toBreak = new ArrayList<>();
+		for (int idx : damageMap.keySet()) {
+			if (idx < p2ForwardCards.size()
+					&& p2ForwardDamage.get(idx) >= effectiveP2ForwardPower(idx))
+				toBreak.add(idx);
+		}
+		toBreak.sort(Collections.reverseOrder());
+		for (int idx : toBreak) breakP2Forward(idx);
+		for (int i = 0; i < p2ForwardCards.size(); i++) refreshP2ForwardSlot(i);
 	}
 
 	private static int roundToThousand(int value) {
@@ -12936,10 +13061,87 @@ public class MainWindow {
 
 		// ── Attack Phase ─────────────────────────────────────────────────────
 
+		/**
+		 * Returns a list of P2 forward indices to party-attack with, or null if a party
+		 * attack offers no advantage. A party attack is chosen when the combined power of
+		 * 2-3 forwards can break a P1 forward that no single P2 forward could kill alone.
+		 */
+		private List<Integer> p2ChoosePartyAttack() {
+			List<Integer> attackable = new ArrayList<>();
+			for (int i = 0; i < p2ForwardStates.size(); i++)
+				if (p2ForwardCanAttack(i)) attackable.add(i);
+			if (attackable.size() < 2) return null;
+
+			for (int p1 = 0; p1 < p1ForwardStates.size(); p1++) {
+				CardState s = p1ForwardStates.get(p1);
+				if (s != CardState.ACTIVE && s != CardState.BRAVE_ATTACKED) continue;
+				int p1Hp = effectiveP1ForwardPower(p1) - p1ForwardDamage.get(p1);
+
+				boolean canKillAlone = false;
+				for (int i : attackable)
+					if (effectiveP2ForwardPower(i) >= p1Hp) { canKillAlone = true; break; }
+				if (canKillAlone) continue;
+
+				// Try pairs
+				for (int a = 0; a < attackable.size(); a++) {
+					for (int b = a + 1; b < attackable.size(); b++) {
+						if (effectiveP2ForwardPower(attackable.get(a))
+								+ effectiveP2ForwardPower(attackable.get(b)) >= p1Hp)
+							return List.of(attackable.get(a), attackable.get(b));
+					}
+				}
+				// Try triples
+				for (int a = 0; a < attackable.size(); a++) {
+					for (int b = a + 1; b < attackable.size(); b++) {
+						for (int c = b + 1; c < attackable.size(); c++) {
+							if (effectiveP2ForwardPower(attackable.get(a))
+									+ effectiveP2ForwardPower(attackable.get(b))
+									+ effectiveP2ForwardPower(attackable.get(c)) >= p1Hp)
+								return List.of(attackable.get(a), attackable.get(b), attackable.get(c));
+						}
+					}
+				}
+			}
+			return null;
+		}
+
+		private void executeP2PartyAttack(List<Integer> partyIndices, Runnable onDone) {
+			int combinedPower = 0;
+			StringBuilder names = new StringBuilder();
+			for (int idx : partyIndices) {
+				if (effectiveP2HasTrait(idx, CardData.Trait.BRAVE)) {
+					p2ForwardStates.set(idx, CardState.BRAVE_ATTACKED);
+					refreshP2ForwardSlot(idx);
+				} else {
+					p2ForwardStates.set(idx, CardState.DULL);
+					animateDullP2Forward(idx, null);
+				}
+				combinedPower += effectiveP2ForwardPower(idx);
+				if (names.length() > 0) names.append(", ");
+				names.append(p2ForwardCards.get(idx).name());
+			}
+			logEntry("[P2] Party Attack! " + names + " (" + combinedPower + " combined)");
+			for (int idx : partyIndices)
+				triggerAutoAbilitiesForAttack(p2ForwardCards.get(idx), false);
+			triggerAutoAbilitiesForPartyAttack(false);
+			final int fCombined = combinedPower;
+			initP1BlockDeclarationVsParty(partyIndices, fCombined, onDone);
+		}
+
+
 		private void doAttackPhase(Runnable onDone) {
 			if (gameState.isP1GameOver()) return;
 			pendingP2AttackerIsMonster = false;
 			pendingP2AttackerPower     = 0;
+
+			List<Integer> party = p2ChoosePartyAttack();
+			if (party != null) {
+				executeP2PartyAttack(party, () -> {
+					if (!gameState.isP1GameOver()) step(() -> doAttackPhase(onDone));
+				});
+				return;
+			}
+
 			for (int i = 0; i < p2ForwardStates.size(); i++) {
 				if (!p2ForwardCanAttack(i)) continue;
 				CardData attacker = p2ForwardCards.get(i);
