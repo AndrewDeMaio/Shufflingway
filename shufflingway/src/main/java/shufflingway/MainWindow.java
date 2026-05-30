@@ -3109,6 +3109,10 @@ public class MainWindow {
 	 * value-equal duplicates.
 	 */
 	private int showCardImageChooser(List<CardData> cards, String title, boolean allowCancel) {
+		return showCardImageChooser(cards, title, allowCancel, true);
+	}
+
+	private int showCardImageChooser(List<CardData> cards, String title, boolean allowCancel, boolean showCost) {
 		if (cards.isEmpty()) return -1;
 		JDialog dlg = new JDialog(frame, title, true);
 		dlg.setResizable(false);
@@ -3159,9 +3163,10 @@ public class MainWindow {
 				}
 			}.execute();
 
-			JLabel nameLabel = new JLabel(candidate.name() + " (Cost: " + candidate.cost() + ")", SwingConstants.CENTER);
+			JLabel nameLabel = new JLabel("<html><div style='width:" + CARD_W + "px;text-align:center'>"
+					+ candidate.name() + (showCost ? "<br>(Cost: " + candidate.cost() + ")" : "") + "</div></html>",
+					SwingConstants.CENTER);
 			nameLabel.setFont(FontLoader.loadPixelNESFont(9));
-			nameLabel.setPreferredSize(new Dimension(CARD_W, 18));
 
 			wrapper.add(lbl, BorderLayout.CENTER);
 			wrapper.add(nameLabel, BorderLayout.SOUTH);
@@ -8955,7 +8960,7 @@ public class MainWindow {
 				}
 				java.util.List<CardData> candidates = new ArrayList<>();
 				for (int i : eligible) candidates.add(hand.get(i));
-				int listIdx = showCardImageChooser(candidates, "Play a card onto the field", true);
+				int listIdx = showCardImageChooser(candidates, "Play a card onto the field", true, false);
 				if (listIdx < 0) { markEffectFizzled(); return; }
 				int handIdx = eligible.get(listIdx);
 				CardData card = hand.remove(handIdx);
