@@ -2071,8 +2071,10 @@ public class MainWindow {
 		if (nextPhaseButton != null) nextPhaseButton.setEnabled(false);
 	}
 
-	private void p1TakeDamage() {
-		if (gameState.isP1GameOver()) return;
+	private void p1TakeDamage() { p1TakeDamage(null); }
+
+	private void p1TakeDamage(Runnable onDone) {
+		if (gameState.isP1GameOver()) { if (onDone != null) onDone.run(); return; }
 		p1ReceivedDamageThisTurn = true;
 		CardData drawn = gameState.drawToDamageZone();
 		if (drawn == null) {
@@ -2116,12 +2118,15 @@ public class MainWindow {
 				return;
 			}
 			if (isEx) triggerExBurst(drawn, true);
+			if (onDone != null) onDone.run();
 		});
 		revealTimer.setRepeats(false);
 		revealTimer.start();
 	}
 
-	private void p2TakeDamage() {
+	private void p2TakeDamage() { p2TakeDamage(null); }
+
+	private void p2TakeDamage(Runnable onDone) {
 		p2ReceivedDamageThisTurn = true;
 		CardData drawn = gameState.drawToP2DamageZone();
 		p2DamageCount++;
@@ -2161,6 +2166,7 @@ public class MainWindow {
 				return;
 			}
 			if (isEx && drawn != null) triggerExBurst(drawn, false);
+			if (onDone != null) onDone.run();
 		});
 		revealTimer.setRepeats(false);
 		revealTimer.start();
@@ -3174,6 +3180,7 @@ public class MainWindow {
 				nameLabel.setPreferredSize(new Dimension(CARD_W, 18));
 			}
 			nameLabel.setFont(FontLoader.loadPixelNESFont(9));
+			nameLabel.setPreferredSize(new Dimension(CARD_W, showCost ? 30 : 18));
 
 			wrapper.add(lbl, BorderLayout.CENTER);
 			wrapper.add(nameLabel, BorderLayout.SOUTH);
@@ -3600,9 +3607,10 @@ public class MainWindow {
 
 		if (!anyEligible) {
 			// No eligible blockers — auto-take damage
-			p1TakeDamage();
-			triggerAutoAbilitiesForDealsDamageToOpponent(attacker, false);
-			onDone.run();
+			p1TakeDamage(() -> {
+				triggerAutoAbilitiesForDealsDamageToOpponent(attacker, false);
+				onDone.run();
+			});
 			return;
 		}
 
@@ -11440,10 +11448,11 @@ public class MainWindow {
 				onDone.run();
 			});
 		} else {
-			p1TakeDamage();
-			triggerAutoAbilitiesForDealsDamageToOpponent(attacker, false);
-			setAttackSubStep(-1);
-			onDone.run();
+			p1TakeDamage(() -> {
+				triggerAutoAbilitiesForDealsDamageToOpponent(attacker, false);
+				setAttackSubStep(-1);
+				onDone.run();
+			});
 		}
 	}
 
@@ -11760,9 +11769,10 @@ public class MainWindow {
 				});
 			} else {
 				setAttackSubStep(3);
-				p2TakeDamage();
-				triggerAutoAbilitiesForDealsDamageToOpponent(attacker, true);
-				continueAttackPhase();
+				p2TakeDamage(() -> {
+					triggerAutoAbilitiesForDealsDamageToOpponent(attacker, true);
+					continueAttackPhase();
+				});
 			}
 		});
 	}
@@ -11903,9 +11913,10 @@ public class MainWindow {
 					});
 				} else {
 					setAttackSubStep(3);
-					p2TakeDamage();
-					triggerAutoAbilitiesForDealsDamageToOpponent(attacker, true);
-					continueAttackPhase();
+					p2TakeDamage(() -> {
+						triggerAutoAbilitiesForDealsDamageToOpponent(attacker, true);
+						continueAttackPhase();
+					});
 				}
 			});
 		} else {
@@ -11919,14 +11930,12 @@ public class MainWindow {
 			logEntry("Party Attack! " + names + " (" + combinedPower + " combined)");
 			triggerAutoAbilitiesForPartyAttack(true);
 			final int fCombined = combinedPower;
-			combatPriority("Party Attacker Declared", true, () -> {
-				p2OfferBlockParty(selection, fCombined);
-				continueAttackPhase();
-			});
+			combatPriority("Party Attacker Declared", true, () ->
+				p2OfferBlockParty(selection, fCombined, this::continueAttackPhase));
 		}
 	}
 
-	private void p2OfferBlockParty(List<Integer> attackerIndices, int combinedPower) {
+	private void p2OfferBlockParty(List<Integer> attackerIndices, int combinedPower, Runnable onDone) {
 		int bestBlockerIdx = -1, bestBlockerPower = 0;
 		int minAttackerPower = Integer.MAX_VALUE;
 		for (int idx : attackerIndices) {
@@ -11948,8 +11957,9 @@ public class MainWindow {
 			logEntry("[P2] " + blocker.name() + " blocks the party!");
 			if (combinedPower >= blockerPower) breakP2Forward(bestBlockerIdx);
 			applyPartyBlockerDamage(p2AiBuildDamageMap(attackerIndices, blockerPower));
+			if (onDone != null) onDone.run();
 		} else {
-			p2TakeDamage();
+			p2TakeDamage(onDone);
 		}
 	}
 
