@@ -312,6 +312,8 @@ public class MainWindow {
 	// Power of the Forward dulled as "Dull N active Forward" ability cost; set during payment.
 	private int      lastDullForwardCostPower = 0;
 
+	private boolean  effectProgress = true;
+
 	// Separate JWindow for combat priority checkpoints (kept apart from summonStackWindow)
 	private javax.swing.JWindow       combatPriorityWindow;
 	private javax.swing.Timer         combatPriorityTimer;
@@ -2969,7 +2971,15 @@ public class MainWindow {
 			logEntry("Search: no matching card found in deck");
 			return;
 		}
-		CardData chosen = showDeckSearchSelectDialog(matches);
+		CardData chosen;
+		if (!isP1) {
+			List<CardData> copy = new ArrayList<>(matches);
+			Collections.shuffle(copy);
+			chosen = copy.get(0);
+			logEntry("[AI] chose " + chosen.name());
+		} else {
+			chosen = showDeckSearchSelectDialog(matches);
+		}
 		if (chosen != null) {
 			if (isP1) gameState.removeFromP1MainDeck(chosen);
 			else      deck.remove(chosen);
@@ -3080,6 +3090,92 @@ public class MainWindow {
 		}
 
 		JLabel hint = new JLabel("Click a card to select it", SwingConstants.CENTER);
+		hint.setFont(FontLoader.loadPixelNESFont(9));
+
+		dlg.getContentPane().setLayout(new BorderLayout(0, 6));
+		dlg.getContentPane().add(cardsPanel, BorderLayout.CENTER);
+		dlg.getContentPane().add(hint, BorderLayout.SOUTH);
+		dlg.pack();
+		dlg.setLocationRelativeTo(frame);
+		dlg.setVisible(true);
+
+		return selection[0];
+	}
+
+	/**
+	 * Shows a modal dialog that displays {@code cards} as clickable card images and returns the
+	 * index of the chosen card within {@code cards}, or {@code -1} if the player cancelled
+	 * (only possible when {@code allowCancel} is true). Reporting the position — rather than the
+	 * {@link CardData} — lets callers map back to a hand/zone index even when the list contains
+	 * value-equal duplicates.
+	 */
+	private int showCardImageChooser(List<CardData> cards, String title, boolean allowCancel) {
+		return showCardImageChooser(cards, title, allowCancel, true);
+	}
+
+	private int showCardImageChooser(List<CardData> cards, String title, boolean allowCancel, boolean showCost) {
+		if (cards.isEmpty()) return -1;
+		JDialog dlg = new JDialog(frame, title, true);
+		dlg.setResizable(false);
+		dlg.setDefaultCloseOperation(allowCancel ? JDialog.DISPOSE_ON_CLOSE : JDialog.DO_NOTHING_ON_CLOSE);
+
+		int[] selection = { -1 };
+
+		JPanel cardsPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 12));
+		for (int idx = 0; idx < cards.size(); idx++) {
+			final int pos = idx;
+			CardData candidate = cards.get(idx);
+			JPanel wrapper = new JPanel(new BorderLayout(0, 4));
+			wrapper.setBackground(cardsPanel.getBackground());
+
+			JLabel lbl = new JLabel("...", SwingConstants.CENTER);
+			lbl.setPreferredSize(new Dimension(CARD_W, CARD_H));
+			lbl.setMinimumSize(new Dimension(CARD_W, CARD_H));
+			lbl.setOpaque(true);
+			lbl.setBackground(Color.DARK_GRAY);
+			lbl.setBorder(BorderFactory.createLineBorder(Color.GRAY, 2));
+			lbl.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+
+			lbl.addMouseListener(new MouseAdapter() {
+				@Override public void mouseEntered(MouseEvent e) {
+					if (lbl.getIcon() != null) showZoomAt(candidate.imageUrl());
+					lbl.setBorder(createCardGlowBorder(Color.YELLOW));
+				}
+				@Override public void mouseExited(MouseEvent e) {
+					hideZoom();
+					lbl.setBorder(BorderFactory.createLineBorder(Color.GRAY, 1));
+				}
+				@Override public void mousePressed(MouseEvent e) {
+					selection[0] = pos;
+					hideZoom();
+					dlg.dispose();
+				}
+			});
+
+			new SwingWorker<ImageIcon, Void>() {
+				@Override protected ImageIcon doInBackground() throws Exception {
+					Image img = ImageCache.load(candidate.imageUrl());
+					return img == null ? null
+							: new ImageIcon(img.getScaledInstance(CARD_W, CARD_H, Image.SCALE_SMOOTH));
+				}
+				@Override protected void done() {
+					try { ImageIcon ic = get(); if (ic != null) { lbl.setIcon(ic); lbl.setText(null); } }
+					catch (InterruptedException | ExecutionException ignored) {}
+				}
+			}.execute();
+
+			JLabel nameLabel = new JLabel("<html><div style='width:" + CARD_W + "px;text-align:center'>"
+					+ candidate.name() + (showCost ? "<br>(Cost: " + candidate.cost() + ")" : "") + "</div></html>",
+					SwingConstants.CENTER);
+			nameLabel.setFont(FontLoader.loadPixelNESFont(9));
+
+			wrapper.add(lbl, BorderLayout.CENTER);
+			wrapper.add(nameLabel, BorderLayout.SOUTH);
+			cardsPanel.add(wrapper);
+		}
+
+		JLabel hint = new JLabel(allowCancel ? "Click a card to play it, or close to decline"
+				: "Click a card to select it", SwingConstants.CENTER);
 		hint.setFont(FontLoader.loadPixelNESFont(9));
 
 		dlg.getContentPane().setLayout(new BorderLayout(0, 6));
@@ -6581,13 +6677,15 @@ public class MainWindow {
 	 */
 	private void triggerAutoAbilitiesForWarpCounterRemoved(CardData target) {
 		List<CardData> all = new ArrayList<>();
+		List<GameState.WarpEntry> warpZone = gameState.getP1WarpZone();
 		all.addAll(p1ForwardCards);
 		for (CardData c : p1BackupCards) if (c != null) all.add(c);
+		for (GameState.WarpEntry we : warpZone) if (we != null) all.add(we.card);
 		all.addAll(p1MonsterCards);
 		for (CardData card : all)
 			for (AutoAbility fa : card.autoAbilities())
 				if (fa.trigger().equals("warp counter removed")
-						&& fa.triggerCard().equalsIgnoreCase(target.name()))
+						&& (fa.triggerCard().equalsIgnoreCase("any player's card") || fa.triggerCard().equalsIgnoreCase(target.name())))
 					executeAutoAbility(fa, card, true);
 	}
 
@@ -7981,6 +8079,10 @@ public class MainWindow {
 			@Override public void logEntry(String msg) { MainWindow.this.logEntry(msg); }
 			@Override public boolean isP1() { return isP1; }
 
+			@Override public void resetEffectProgress() { effectProgress = true; }
+			@Override public void markEffectFizzled()   { effectProgress = false; }
+			@Override public boolean effectMadeProgress() { return effectProgress; }
+
 			@Override public int p1ForwardCount()                    { return p1ForwardCards.size(); }
 			@Override public CardData p1Forward(int idx) {
 				CardData top = p1ForwardPrimedTop.get(idx);
@@ -8489,6 +8591,10 @@ public class MainWindow {
 			@Override public void returnP1ForwardToHand(int idx) { MainWindow.this.returnP1ForwardToHand(idx); }
 			@Override public void returnP2ForwardToHand(int idx) { MainWindow.this.returnP2ForwardToHand(idx); }
 			@Override public boolean askTopOrBottom(String cardName) {
+					if (!isP1) {
+						logEntry("[AI] places " + cardName + " on top of the deck");
+						return true;
+					}
 				Object[] options = { "Top", "Bottom" };
 				int result = JOptionPane.showOptionDialog(frame,
 						"Place " + cardName + " at the top or bottom of the deck?",
@@ -8498,6 +8604,10 @@ public class MainWindow {
 				return result != 1;
 			}
 			@Override public int selectNumber(int min, int max, String prompt) {
+					if (!isP1) {
+						logEntry("[AI] selected " + max + " (" + prompt + ")");
+						return max;
+					}
 				return MainWindow.this.showNumberSelectDialog(prompt, min, max);
 			}
 			@Override public void returnP1ForwardToDeckBottom(int idx)   { returnP1ForwardToDeck(idx, true);  }
@@ -8587,6 +8697,15 @@ public class MainWindow {
 						+ (element != null ? " " + element : "")
 						+ " Character" + (maxCount != 1 ? "s" : "") + costLabel + powerLabel
 						+ " in " + (opponentZone ? "opponent's" : "your") + " Break Zone";
+				if (!isP1) {
+					if (eligible.isEmpty()) return java.util.List.of();
+					java.util.List<ForwardTarget> copy = new ArrayList<>(eligible);
+					java.util.Collections.shuffle(copy);
+					java.util.List<ForwardTarget> picked =
+							java.util.List.copyOf(copy.subList(0, Math.min(maxCount, copy.size())));
+					picked.forEach(t -> logEntry("[AI] chose " + bz.get(t.idx()).name()));
+					return picked;
+				}
 				return showBreakZoneSelectDialog(eligible, bz, maxCount, upTo, title);
 			}
 
@@ -8879,17 +8998,13 @@ public class MainWindow {
 				}
 				if (eligible.isEmpty()) {
 					logEntry("No eligible cards in hand to play.");
+					markEffectFizzled();
 					return;
 				}
-				String[] options = eligible.stream()
-						.map(i -> hand.get(i).name() + " (Cost: " + hand.get(i).cost() + ")")
-						.toArray(String[]::new);
-				String choice = (String) JOptionPane.showInputDialog(frame,
-						"Choose a card to play onto the field:", "Play from Hand",
-						JOptionPane.PLAIN_MESSAGE, null, options, options[0]);
-				if (choice == null) return;
-				int listIdx = java.util.Arrays.asList(options).indexOf(choice);
-				if (listIdx < 0) return;
+				java.util.List<CardData> candidates = new ArrayList<>();
+				for (int i : eligible) candidates.add(hand.get(i));
+				int listIdx = showCardImageChooser(candidates, "Play a card onto the field", true, false);
+				if (listIdx < 0) { markEffectFizzled(); return; }
 				int handIdx = eligible.get(listIdx);
 				CardData card = hand.remove(handIdx);
 				logEntry(card.name() + " played from hand onto field" + (entersDull ? " (dull)" : "")
@@ -10007,7 +10122,7 @@ public class MainWindow {
 			}
 
 			@Override public String selectJobFromDatabase() {
-				return showJobSelectionDialog();
+				return showJobSelectionDialog(isP1);
 			}
 
 			@Override public void grantJobUntilEndOfTurn(ForwardTarget t, String job) {
@@ -10028,7 +10143,7 @@ public class MainWindow {
 	}
 
 	/** Loads every distinct job name from the database and shows a sorted dropdown dialog. */
-	private String showJobSelectionDialog() {
+	private String showJobSelectionDialog(boolean interactive) {
 		java.io.File dbFile = new java.io.File("shufflingway.db");
 		if (!dbFile.exists()) {
 			logEntry("[Job select] shufflingway.db not found");
@@ -10045,6 +10160,11 @@ public class MainWindow {
 			logEntry("[Job select] DB error: " + e.getMessage());
 		}
 		if (jobs.isEmpty()) return null;
+		if (!interactive) {
+			String picked = jobs.get((int) (Math.random() * jobs.size()));
+			logEntry("[AI] selected Job: " + picked);
+			return picked;
+		}
 		String[] options = jobs.toArray(new String[0]);
 		return (String) javax.swing.JOptionPane.showInputDialog(
 				frame,
