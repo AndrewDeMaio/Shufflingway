@@ -4212,7 +4212,7 @@ public class MainWindow {
 	 * (or fewer if hand is smaller) to discard to the Break Zone.  No CP is generated.
 	 * Called when P2 activates a "Your opponent discards N cards" ability.
 	 */
-	private void showForcedDiscardDialog(int count) {
+	private void showForcedDiscardDialog(int count, boolean forcedByOpponent) {
 		List<CardData> hand = gameState.getP1Hand();
 		int mustDiscard = Math.min(count, hand.size());
 		if (mustDiscard == 0) return;
@@ -4305,7 +4305,7 @@ public class MainWindow {
 			toDiscard.sort(Collections.reverseOrder());
 			for (int di : toDiscard) {
 				CardData d = gameState.breakFromHand(di);
-				if (d != null) logEntry("Discards " + d.name() + " (forced by opponent)");
+				if (d != null) logEntry("Discards " + d.name() + (forcedByOpponent ? " (forced by opponent)" : ""));
 			}
 			refreshP1HandLabel();
 			refreshP1BreakLabel();
@@ -9440,7 +9440,7 @@ public class MainWindow {
 					refreshP2HandCountLabel();
 					refreshP2BreakLabel();
 				} else {
-					showForcedDiscardDialog(count);
+					showForcedDiscardDialog(count, true);
 				}
 			}
 
@@ -9680,7 +9680,7 @@ public class MainWindow {
 
 			@Override public void selfDiscard(int count) {
 				if (isP1) {
-					showForcedDiscardDialog(count);
+					showForcedDiscardDialog(count, false);
 				} else {
 					List<CardData> hand = gameState.getP2Hand();
 					int actual = Math.min(count, hand.size());
