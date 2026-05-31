@@ -185,3 +185,56 @@ jobs:
         with:
           tag_name: v${{ needs.create-release.outputs.version }}
           files: shufflingway/target/dist/*.dmg
+
+  # ── Linux DEB ─────────────────────────────────────────────────────────────
+  release-linux:
+    needs: create-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: ./shufflingway
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Java 25
+        uses: actions/setup-java@v4
+        with:
+          java-version: '25'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Set pom version
+        run: mvn versions:set -DnewVersion=${{ needs.create-release.outputs.version }} -DgenerateBackupPoms=false
+
+      - name: Build fat JAR
+        run: mvn package -DskipTests
+
+      - name: Stage fat JAR for jpackage
+        run: |
+          mkdir -p jpackage-input
+          cp target/shufflingway.jar jpackage-input/
+
+      - name: Run jpackage (DEB)
+        run: |
+          jpackage \
+            --input            jpackage-input \
+            --name             shufflingway \
+            --app-version      ${{ needs.create-release.outputs.version }} \
+            --vendor           "RockefellerA" \
+            --main-jar         shufflingway.jar \
+            --main-class       shufflingway.MainWindow \
+            --java-options     "--enable-native-access=ALL-UNNAMED" \
+            --icon             src/main/resources/resources/shufflingway.png \
+            --linux-shortcut \
+            --type             deb \
+            --dest             target/dist
+
+      - name: Upload DEB to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.create-release.outputs.version }}
+          files: shufflingway/target/dist/*.deb
