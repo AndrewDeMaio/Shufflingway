@@ -3164,9 +3164,15 @@ public class MainWindow {
 				}
 			}.execute();
 
-			JLabel nameLabel = new JLabel("<html><div style='width:" + CARD_W + "px;text-align:center'>"
-					+ candidate.name() + (showCost ? "<br>(Cost: " + candidate.cost() + ")" : "") + "</div></html>",
-					SwingConstants.CENTER);
+			JLabel nameLabel;
+			if (showCost) {
+				nameLabel = new JLabel("<html><div style='width:" + CARD_W + "px;text-align:center'>"
+						+ candidate.name() + "<br>(Cost: " + candidate.cost() + ")" + "</div></html>",
+						SwingConstants.CENTER);
+			} else {
+				nameLabel = new JLabel(candidate.name(), SwingConstants.CENTER);
+				nameLabel.setPreferredSize(new Dimension(CARD_W, 18));
+			}
 			nameLabel.setFont(FontLoader.loadPixelNESFont(9));
 
 			wrapper.add(lbl, BorderLayout.CENTER);
