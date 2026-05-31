@@ -62,6 +62,7 @@ public class ActionResolver {
             "|Job\\s+.+?\\s+(?:and/)?or\\s+Card\\s+Name\\s+\\S+" +
             "|Job\\s+.+?\\s+Forwards?(?:\\s+or\\s+Job\\s+.+?\\s+Forwards?)*" +
             "|Job\\s+.+?(?=\\s+(?:of\\s+|other\\s+than|in\\s+your|from\\s+your)|[,.]))" +
+        "(?:\\s+that\\s+(?<postcondition>entered\\s+the\\s+field\\s+this\\s+turn|entered\\s+this\\s+turn))?" +
         "(?:\\s+without\\s+《(?<excludekw>[^》]+)》)?" +
         "(?:\\s+of\\s+any\\s+Element\\s+except\\s+(?<excludeelem>" +
             "(?:Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)" +
@@ -2613,12 +2614,15 @@ public class ActionResolver {
         int     maxCount     = Integer.parseInt(m.group("count"));
         String  element      = m.group("element");
         // Resolve condition: "blocking [Name]"/"blocking a Job [Job]" overrides the standard condition.
-        String  rawCondition = m.group("condition");
-        String  blockingName = m.group("blockingname");
-        String  blockingJob  = m.group("blockingjob");
-        String  condition    = blockingName != null ? "blocking:"     + blockingName.trim()
-                             : blockingJob  != null ? "blocking-job:" + blockingJob.trim()
-                             : rawCondition;
+        // Post-target qualifiers ("that entered the field this turn") are normalized to the same string.
+        String  rawCondition  = m.group("condition");
+        String  postCondition = m.group("postcondition");
+        String  blockingName  = m.group("blockingname");
+        String  blockingJob   = m.group("blockingjob");
+        String  condition     = blockingName  != null ? "blocking:"     + blockingName.trim()
+                              : blockingJob   != null ? "blocking-job:" + blockingJob.trim()
+                              : postCondition != null ? "entered the field this turn"
+                              : rawCondition;
         String  targets      = m.group("targets");
         String  tgtLower = targets.toLowerCase();
         String  jobFilter;

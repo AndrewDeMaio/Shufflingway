@@ -76,6 +76,7 @@ import static shufflingway.CardAnimation.CARD_W;
 import static shufflingway.CardFilters.cardNamesOverlap;
 import static shufflingway.CardFilters.discardTypeKey;
 import static shufflingway.CardFilters.isBlockingTargetFilter;
+import static shufflingway.CardFilters.isEnteredThisTurnCondition;
 import static shufflingway.CardFilters.matchesAltBzType;
 import static shufflingway.CardFilters.matchesDiscardType;
 import static shufflingway.CardFilters.meetsCardNameFilter;
@@ -8302,6 +8303,8 @@ public class MainWindow {
 							if (withoutMulticard && card.multicard()) continue;
 							if (isBlockingTargetFilter(condition)
 									? meetsBlockingTargetFilter(true, i, condition)
+									: isEnteredThisTurnCondition(condition)
+									? p1ForwardPlayedOnTurn.get(i) == gameState.getTurnNumber()
 									: meetsTargetCondition(p1ForwardStates.get(i), p1ForwardDamage.get(i),
 											p1AttackSelection.contains(i), false, condition))
 								eligible.add(new ForwardTarget(true, i, ForwardTarget.CardZone.FORWARD));
@@ -8332,7 +8335,9 @@ public class MainWindow {
 							if (!meetsCategoryFilter(card, categoryFilter)) continue;
 							if (excludeName != null && excludeName.equalsIgnoreCase(card.name())) continue;
 							if (withoutMulticard && card.multicard()) continue;
-							if (meetsTargetCondition(p1MonsterStates.get(i), 0, false, false, condition))
+							if (isEnteredThisTurnCondition(condition)
+									? p1MonsterPlayedOnTurn.get(i) == gameState.getTurnNumber()
+									: meetsTargetCondition(p1MonsterStates.get(i), 0, false, false, condition))
 								eligible.add(new ForwardTarget(true, i, ForwardTarget.CardZone.MONSTER));
 						}
 					} else {
@@ -8350,6 +8355,8 @@ public class MainWindow {
 							if (withoutMulticard && card.multicard()) continue;
 							if (isBlockingTargetFilter(condition)
 									? meetsBlockingTargetFilter(false, i, condition)
+									: isEnteredThisTurnCondition(condition)
+									? p2ForwardPlayedOnTurn.get(i) == gameState.getTurnNumber()
 									: meetsTargetCondition(p2ForwardStates.get(i), p2ForwardDamage.get(i),
 											false, false, condition))
 								eligible.add(new ForwardTarget(false, i, ForwardTarget.CardZone.FORWARD));
@@ -8380,7 +8387,9 @@ public class MainWindow {
 							if (!meetsCategoryFilter(card, categoryFilter)) continue;
 							if (excludeName != null && excludeName.equalsIgnoreCase(card.name())) continue;
 							if (withoutMulticard && card.multicard()) continue;
-							if (meetsTargetCondition(p2MonsterStates.get(i), 0, false, false, condition))
+							if (isEnteredThisTurnCondition(condition)
+									? p2MonsterPlayedOnTurn.get(i) == gameState.getTurnNumber()
+									: meetsTargetCondition(p2MonsterStates.get(i), 0, false, false, condition))
 								eligible.add(new ForwardTarget(false, i, ForwardTarget.CardZone.MONSTER));
 						}
 					}
@@ -8401,6 +8410,8 @@ public class MainWindow {
 							if (withoutMulticard && card.multicard()) continue;
 							if (isBlockingTargetFilter(condition)
 									? meetsBlockingTargetFilter(false, i, condition)
+									: isEnteredThisTurnCondition(condition)
+									? p2ForwardPlayedOnTurn.get(i) == gameState.getTurnNumber()
 									: meetsTargetCondition(p2ForwardStates.get(i), p2ForwardDamage.get(i),
 											false, false, condition))
 								eligible.add(new ForwardTarget(false, i, ForwardTarget.CardZone.FORWARD));
@@ -8431,7 +8442,9 @@ public class MainWindow {
 							if (!meetsCategoryFilter(card, categoryFilter)) continue;
 							if (excludeName != null && excludeName.equalsIgnoreCase(card.name())) continue;
 							if (withoutMulticard && card.multicard()) continue;
-							if (meetsTargetCondition(p2MonsterStates.get(i), 0, false, false, condition))
+							if (isEnteredThisTurnCondition(condition)
+									? p2MonsterPlayedOnTurn.get(i) == gameState.getTurnNumber()
+									: meetsTargetCondition(p2MonsterStates.get(i), 0, false, false, condition))
 								eligible.add(new ForwardTarget(false, i, ForwardTarget.CardZone.MONSTER));
 						}
 					} else {
@@ -8451,6 +8464,8 @@ public class MainWindow {
 							if (withoutMulticard && card.multicard()) continue;
 							if (isBlockingTargetFilter(condition)
 									? meetsBlockingTargetFilter(true, i, condition)
+									: isEnteredThisTurnCondition(condition)
+									? p1ForwardPlayedOnTurn.get(i) == gameState.getTurnNumber()
 									: meetsTargetCondition(p1ForwardStates.get(i), p1ForwardDamage.get(i),
 											p1AttackSelection.contains(i), false, condition))
 								eligible.add(new ForwardTarget(true, i, ForwardTarget.CardZone.FORWARD));
@@ -8483,7 +8498,9 @@ public class MainWindow {
 							if (!meetsCategoryFilter(card, categoryFilter)) continue;
 							if (excludeName != null && excludeName.equalsIgnoreCase(card.name())) continue;
 							if (withoutMulticard && card.multicard()) continue;
-							if (meetsTargetCondition(p1MonsterStates.get(i), 0, false, false, condition))
+							if (isEnteredThisTurnCondition(condition)
+									? p1MonsterPlayedOnTurn.get(i) == gameState.getTurnNumber()
+									: meetsTargetCondition(p1MonsterStates.get(i), 0, false, false, condition))
 								eligible.add(new ForwardTarget(true, i, ForwardTarget.CardZone.MONSTER));
 						}
 					}

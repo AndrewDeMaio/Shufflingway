@@ -137,12 +137,14 @@ public final class CardFilters {
         // if they reach here they should pass (the forward loop already applied the filter).
         if (lower.startsWith("blocking:") || lower.startsWith("blocking-job:")) return true;
         return switch (lower) {
-            case "active"    -> state == CardState.ACTIVE;
-            case "dull"      -> state == CardState.DULL;
-            case "damaged"   -> damage > 0;
-            case "attacking" -> isAttacking;
-            case "blocking"  -> isBlocking;
-            default          -> true;
+            case "active"                   -> state == CardState.ACTIVE;
+            case "dull"                     -> state == CardState.DULL;
+            case "damaged"                  -> damage > 0;
+            case "attacking"                -> isAttacking;
+            case "blocking"                 -> isBlocking;
+            // Handled inline by caller (requires turn-tracking state not available here)
+            case "entered the field this turn" -> false;
+            default                         -> true;
         };
     }
 
@@ -151,6 +153,11 @@ public final class CardFilters {
         if (condition == null) return false;
         String lower = condition.toLowerCase();
         return lower.startsWith("blocking:") || lower.startsWith("blocking-job:");
+    }
+
+    /** Returns true when {@code condition} requires checking which turn a card entered the field. */
+    public static boolean isEnteredThisTurnCondition(String condition) {
+        return "entered the field this turn".equals(condition);
     }
 
     // -------------------------------------------------------------------------
