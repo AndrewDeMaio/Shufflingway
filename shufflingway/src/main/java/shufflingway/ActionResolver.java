@@ -807,6 +807,11 @@ public class ActionResolver {
         "(?:[.!]?\\s*Draw\\s+(?<draw>\\d+)\\s+cards?[.!]?)?"
     );
 
+    private static final Pattern SELF_MILL_PATTERN = Pattern.compile(
+        "(?i)Put\\s+the\\s+top\\s+(?:(?<count>\\d+)\\s+cards?|card)\\s+" +
+        "of\\s+your\\s+deck\\s+into\\s+the\\s+Break\\s+Zone"
+    );
+
     /**
      * Matches "Play 1 [elements] [filter] [type] of cost … from your hand onto the field [dull]".
      * <ul>
@@ -1787,6 +1792,9 @@ public class ActionResolver {
         result = tryParseOpponentMill(effectText);
         if (result != null) return result;
 
+        result = tryParseSelfMill(effectText);
+        if (result != null) return result;
+
         result = tryParseOpponentRevealHand(effectText);
         if (result != null) return result;
 
@@ -1937,6 +1945,7 @@ public class ActionResolver {
         if (tryParseOpponentSelects(effectText)               != null) return "OpponentSelects";
         if (tryParseOpponentPutsForwardToBreakZone(effectText) != null) return "OpponentPutsForwardToBreakZone";
         if (tryParseOpponentMill(effectText)                  != null) return "OpponentMill";
+        if (tryParseSelfMill(effectText)                      != null) return "SelfMill";
         if (tryParseOpponentRevealHand(effectText)            != null) return "OpponentRevealHand";
         if (tryParseRevealTopDeck(effectText, source)         != null) return "RevealTopDeck";
         if (tryParseStandaloneDamageShields(effectText, source) != null) return "StandaloneDamageShields";
@@ -4942,6 +4951,20 @@ public class ActionResolver {
                     + (draw > 0 ? ", draw " + draw : ""));
             ctx.opponentMillCards(mill);
             if (draw > 0) ctx.drawCards(draw);
+        };
+    }
+
+    /** Parses "Put the top N card(s) of your deck into the Break Zone." */
+    private static Consumer<GameContext> tryParseSelfMill(String text) {
+        Matcher m = SELF_MILL_PATTERN.matcher(text);
+        if (!m.find()) return null;
+
+        String countStr = m.group("count");
+        int    mill     = countStr != null ? Integer.parseInt(countStr) : 1;
+
+        return ctx -> {
+            ctx.logEntry("Effect: Mill " + mill + " card(s) into own Break Zone");
+            ctx.millCards(mill);
         };
     }
 

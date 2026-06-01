@@ -8875,6 +8875,29 @@ public class MainWindow {
 				refreshP2BreakLabel();
 			}
 
+			@Override public void millCards(int count) {
+				java.util.Deque<CardData> deck = gameState.getP1MainDeck();
+				JLayeredPane lp    = frame.getRootPane().getLayeredPane();
+				Point start = SwingUtilities.convertPoint(
+						p1DeckLabel, p1DeckLabel.getWidth() / 2, p1DeckLabel.getHeight() / 2, lp);
+				Point end   = SwingUtilities.convertPoint(
+						p1BreakLabel, p1BreakLabel.getWidth() / 2, p1BreakLabel.getHeight() / 2, lp);
+				BufferedImage img = CardAnimation.toARGB(
+						loadCardbackImage(), CardAnimation.CARD_W, CardAnimation.CARD_H);
+				int milled = 0;
+				for (int i = 0; i < count && !deck.isEmpty(); i++) {
+					CardData card = deck.pop();
+					addToP1BreakZone(card);
+					logEntry("[P1] Mill: \"" + card.name() + "\" → Break Zone");
+					cardSlideAnimator.startSlide(img, start, end, i * 5);
+					milled++;
+				}
+				if (milled > 0) {
+					refreshP1DeckLabel();
+					refreshP1BreakLabel();
+				}
+			}
+
 			@Override public void revealOpponentHand() {
 				java.util.List<CardData> hand = gameState.getP2Hand();
 				if (hand.isEmpty()) {

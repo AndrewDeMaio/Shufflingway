@@ -155,6 +155,12 @@ public interface GameContext {
     void opponentMillCards(int count);
 
     /**
+     * Moves the top {@code count} cards from the ability user's own main deck into their Break Zone,
+     * animating each card sliding from deck to break zone.
+     */
+    void millCards(int count);
+
+    /**
      * Displays the opponent's hand to the ability user in a timed popup window.
      */
     void revealOpponentHand();
