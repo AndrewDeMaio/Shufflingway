@@ -20,11 +20,11 @@ The ultimate goal for this application will be to play against someone else with
 
 Current card coverage (estimate):
 
-* Action/Special Abilities: (75.8%)
+* Action/Special Abilities: (76.2%)
 
-* Auto Abilities: (75.7%)
+* Auto Abilities: (76.1%)
 
-* Field Abilities: (>20.0%)
+* Field Abilities: (>23.4%)
 
 # Installation Guide
 
@@ -33,6 +33,8 @@ Use the 'Releases' section on the right to download the latest version.
 * .msi: Windows Installer
 
 * .dmg: MacOS 13+
+
+* .deb: Linux
 
 Once the application has been installed, you can update to any new releases from "Check for Updates..." in the Help menu.
 
