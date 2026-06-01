@@ -11179,7 +11179,7 @@ public class MainWindow {
 		int basePower     = card.power();
 		CardData.BecomeForwardAbility bfa = card.becomeForwardAbility();
 		Integer tempFwdPower = p1MonsterTempForwardPower.get(card);
-		boolean canAttack = isMonsterSelectableAsForward(idx);
+		boolean canAttack = attackSubStep == 1 && isMonsterSelectableAsForward(idx);
 		boolean selected  = p1MonsterAttackIdx == idx;
 		int damage        = p1MonsterDamage.get(idx);
 		boolean bfaActive = bfa != null && (bfa.damageThreshold() > 0
@@ -11325,6 +11325,7 @@ public class MainWindow {
 		if (url == null) return;
 		boolean hasHaste  = effectiveP1HasTrait(idx, CardData.Trait.HASTE);
 		boolean canAttack = gameState.getCurrentPhase() == GameState.GamePhase.ATTACK
+				&& attackSubStep == 1
 				&& state == CardState.ACTIVE
 				&& !p1ForwardCannotAttack.contains(idx)
 				&& !p1ForwardCannotAttackPersistent.contains(idx)
