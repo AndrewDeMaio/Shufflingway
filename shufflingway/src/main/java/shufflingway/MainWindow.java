@@ -1460,29 +1460,31 @@ public class MainWindow {
                                 onNextPhase();
                                 return;
                             }
-                            // Sub-step 0: Preparation — both players may use abilities
+                            // Sub-step 0: Attack Preparation — P1 has priority first
                             setAttackSubStep(0);
+                            if (nextPhaseButton != null) nextPhaseButton.setEnabled(true);
                             refreshPhaseTracker();
                             refreshAttackButton();
-                            boolean anyAbilities = p1HasActivatableAbilities() || p2HasActivatableAbilities();
-                            if (!anyAbilities) {
-                                // No abilities available on either side — skip prep silently
-                                setAttackSubStep(1);
-                                refreshPhaseTracker();
-                                refreshAttackButton();
-                                logEntry("Declare an attacker, or click Skip to end the Attack Phase.");
-                            } else {
-                                // P1 (attacker) gets priority first in Preparation
-                                combatPriority("Attack Preparation", true, () -> {
+                            logEntry("Attack Preparation — use abilities or click Next to pass priority.");
+            }
+
+			case ATTACK -> {
+                            if (combatPriorityTimer  != null) { combatPriorityTimer.stop();    combatPriorityTimer  = null; }
+                            if (combatPriorityWindow != null) { combatPriorityWindow.dispose(); combatPriorityWindow = null; }
+                            if (p2AutoPassTimer      != null) { p2AutoPassTimer.stop();         p2AutoPassTimer      = null; }
+
+                            if (attackSubStep == 0) {
+                                // P1 passed priority — opponent auto-passes, then declare attackers
+                                p2AutoPass(() -> {
                                     setAttackSubStep(1);
                                     refreshPhaseTracker();
                                     refreshAttackButton();
                                     logEntry("Declare an attacker, or click Skip to end the Attack Phase.");
                                 });
+                                return;
                             }
-            }
 
-			case ATTACK -> {
+                            // ATTACK → MAIN_2 (all attacks finished or skipped)
                             p1AttackSelection.clear();
                             attackSubStep = -1;
                             if (skipAttackButton != null) skipAttackButton.setEnabled(false);
