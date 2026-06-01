@@ -1,7 +1,5 @@
 package shufflingway.dialog;
 
-import shufflingway.*;
-
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Cursor;
@@ -24,17 +22,21 @@ import javax.swing.JButton;
 import javax.swing.JDialog;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
-import javax.swing.JMenuItem;
 import javax.swing.JPanel;
-import javax.swing.JPopupMenu;
 import javax.swing.JScrollPane;
 import javax.swing.SwingConstants;
 import javax.swing.SwingWorker;
 
+import shufflingway.BackupCpGrant;
+import shufflingway.CardAnimation;
 import static shufflingway.CardAnimation.CARD_H;
 import static shufflingway.CardAnimation.CARD_W;
+import shufflingway.CardData;
+import shufflingway.CardState;
 import static shufflingway.CpPaymentUtils.contributingElement;
 import static shufflingway.CpPaymentUtils.matchesAnyElement;
+import shufflingway.FontLoader;
+import shufflingway.ImageCache;
 
 /** CP payment dialog for a Warp alternate cost. */
 public class WarpPaymentDialog {
