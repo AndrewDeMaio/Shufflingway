@@ -1117,6 +1117,7 @@ public class MainWindow {
 							CardData.parseFieldAbilities(tx, card.type()),
 							CardData.parseIfControlBoosts(tx, card.type()),
 							CardData.parseFieldPowerGrants(tx, card.type()),
+							CardData.parseFieldCostReductions(tx, card.type()),
 							card.job(), card.category1(), card.category2(), tx);
 					if (card.isLb()) lb.add(cd);
 					else             main.add(cd);
@@ -1139,6 +1140,7 @@ public class MainWindow {
 							CardData.parseFieldAbilities(tx, card.type()),
 							CardData.parseIfControlBoosts(tx, card.type()),
 							CardData.parseFieldPowerGrants(tx, card.type()),
+							CardData.parseFieldCostReductions(tx, card.type()),
 							card.job(), card.category1(), card.category2(), tx);
 					if (card.isLb()) p2Lb.add(cd);
 					else             p2Main.add(cd);

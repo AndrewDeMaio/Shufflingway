@@ -33,7 +33,8 @@ public record CardData(
         List<AutoAbility>   autoAbilities,
         List<FieldAbility>   fieldAbilities,
         List<IfControlBoost> ifControlBoosts,
-        List<FieldPowerGrant> fieldPowerGrants,
+        List<FieldPowerGrant>    fieldPowerGrants,
+        List<FieldCostReduction> fieldCostReductions,
         String job,
         String category1,
         String category2,
@@ -61,7 +62,8 @@ public record CardData(
         autoAbilities    = List.copyOf(autoAbilities);
         fieldAbilities   = List.copyOf(fieldAbilities);
         ifControlBoosts  = List.copyOf(ifControlBoosts);
-        fieldPowerGrants = List.copyOf(fieldPowerGrants);
+        fieldPowerGrants    = List.copyOf(fieldPowerGrants);
+        fieldCostReductions = List.copyOf(fieldCostReductions);
         job       = job       != null ? job       : "";
         category1 = category1 != null ? category1 : "";
         category2 = category2 != null ? category2 : "";
@@ -1271,6 +1273,91 @@ public record CardData(
     }
 
     // -------------------------------------------------------------------------
+    // FieldCostReduction parsing
+    // -------------------------------------------------------------------------
+
+    /**
+     * Matches passive cost reductions of the form:
+     * "The cost required to cast [your] &lt;spec&gt; is reduced by N
+     *  [for each Job X forward you control] [(it cannot become 0)]."
+     *
+     * <p>Spec variants:
+     * <ul>
+     *   <li>{@code [Card Name (Name)]} — specific card by name in bracket notation</li>
+     *   <li>{@code [Element] [Card Name Name] Type} — element / inline name / card type</li>
+     *   <li>{@code Job JobName} — job filter (all types)</li>
+     * </ul>
+     */
+    private static final Pattern FIELD_COST_REDUCTION_PATTERN = Pattern.compile(
+        "(?i)^The\\s+cost\\s+required\\s+to\\s+cast\\s+" +
+        "(?<your>your\\s+)?" +
+        "(?:" +
+            // [Card Name (Name)] — bracket notation for a single specific card
+            "\\[Card\\s+Name\\s+\\((?<bracketedname>[^)]+)\\)\\]" +
+        "|" +
+            // [Element] [Card Name InlineName] Type
+            "(?:(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?" +
+            "(?:Card\\s+Name\\s+(?<cardname>\\S+)\\s+)?" +
+            "(?<type>(?:Forwards?|Backups?|Monsters?|Summons?|Characters?)(?:\\s+or\\s+(?:Forwards?|Backups?|Monsters?|Summons?|Characters?))?)" +
+        "|" +
+            // Job JobName (lazy so it stops before " is reduced")
+            "Job\\s+(?<job>[A-Za-z][A-Za-z\\s''’\\-]*?)" +
+        ")\\s+is\\s+reduced\\s+by\\s+(?<amount>\\d+)" +
+        "(?:\\s+for\\s+each\\s+Job\\s+(?<scalingjob>[A-Za-z][A-Za-z\\s''’\\-]*?)\\s+forward\\s+you\\s+control)?" +
+        "(?:\\s+(?<flooratone>\\(it\\s+cannot\\s+become\\s+0\\)))?" +
+        "\\s*\\.?$"
+    );
+
+    /** Parses all "The cost required to cast … is reduced by N" segments from {@code textEn}. */
+    public static List<FieldCostReduction> parseFieldCostReductions(String textEn, String cardType) {
+        if (textEn == null || textEn.isBlank()) return List.of();
+        if ("Summon".equalsIgnoreCase(cardType)) return List.of();
+
+        List<FieldCostReduction> result = new ArrayList<>();
+        for (String raw : textEn.split("(?i)\\[\\[br\\]\\]")) {
+            String seg = SUMMON_MARKUP.matcher(raw.trim()).replaceAll("").trim();
+            if (seg.isEmpty()) continue;
+
+            Matcher m = FIELD_COST_REDUCTION_PATTERN.matcher(seg);
+            if (!m.find()) continue;
+
+            boolean ownerOnly  = m.group("your")      != null;
+            boolean floorAtOne = m.group("flooratone") != null;
+            int     amount     = Integer.parseInt(m.group("amount"));
+
+            String elementFilter  = m.group("element");
+            String jobFilter      = m.group("job");
+            if (jobFilter != null) jobFilter = jobFilter.trim();
+            String cardNameFilter = m.group("bracketedname") != null
+                    ? m.group("bracketedname").trim()
+                    : m.group("cardname");
+            String scalingJob = m.group("scalingjob");
+            if (scalingJob != null) scalingJob = scalingJob.trim();
+
+            boolean inclForwards, inclBackups, inclMonsters, inclSummons;
+            if (cardNameFilter != null && m.group("type") == null) {
+                // Bracket notation: match all card types with that name
+                inclForwards = inclBackups = inclMonsters = inclSummons = true;
+            } else if (jobFilter != null) {
+                // Job filter: match all card types
+                inclForwards = inclBackups = inclMonsters = inclSummons = true;
+            } else {
+                String type = m.group("type");
+                String tl   = type != null ? type.toLowerCase() : "";
+                inclForwards = tl.contains("forward")   || tl.contains("character");
+                inclBackups  = tl.contains("backup")    || tl.contains("character");
+                inclMonsters = tl.contains("monster")   || tl.contains("character");
+                inclSummons  = tl.contains("summon");
+            }
+
+            result.add(new FieldCostReduction(amount, floorAtOne, ownerOnly,
+                    inclForwards, inclBackups, inclMonsters, inclSummons,
+                    elementFilter, jobFilter, cardNameFilter, scalingJob));
+        }
+        return List.copyOf(result);
+    }
+
+    // -------------------------------------------------------------------------
     // Field Ability parsing
     // -------------------------------------------------------------------------
 
@@ -1464,6 +1551,9 @@ public record CardData(
 
             // Extra-element CP production — handled as a static card property
             if (BACKUP_CP_EXTRA_ELEMENTS.matcher(seg).find())               continue;
+
+            // Field cost reduction declarations — handled as static card properties
+            if (FIELD_COST_REDUCTION_PATTERN.matcher(seg).find())           continue;
 
             // Name/type alias declarations and enter-dull — handled as static card properties
             if (IS_ALSO_CARD_NAME_PATTERN.matcher(seg).find())              continue;
