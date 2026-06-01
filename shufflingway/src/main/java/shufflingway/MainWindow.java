@@ -2212,7 +2212,8 @@ public class MainWindow {
 		if (idx < 0 || idx >= p1ForwardCards.size()) return;
 		startBreakAnim(p1ForwardLabels.get(idx));
 		CardData card    = p1ForwardCards.get(idx);
-		boolean  hadGrants = !card.fieldPowerGrants().isEmpty();
+		boolean  hadGrants      = !card.fieldPowerGrants().isEmpty();
+		boolean  hadCostReduces = !card.fieldCostReductions().isEmpty();
 		CardData topCard = p1ForwardPrimedTop.get(idx);
 
 		if (topCard != null) {
@@ -2287,6 +2288,7 @@ public class MainWindow {
 			for (int i = 0; i < p1ForwardCards.size(); i++) refreshP1ForwardSlot(i);
 		}
 		if (hadGrants) for (int i = 0; i < p1MonsterCards.size(); i++) refreshP1MonsterSlot(i);
+		if (hadCostReduces) refreshHandPopupIfVisible();
 		// If the broken card was itself stolen from P2, drop its tracking entry
 		stolenForwards.remove(card);
 		// Restore any forwards that were conditioned on this card remaining on the field
@@ -2303,7 +2305,8 @@ public class MainWindow {
 		if (idx < 0 || idx >= p2ForwardCards.size()) return;
 		startBreakAnim(p2ForwardLabels.get(idx));
 		CardData card    = p2ForwardCards.get(idx);
-		boolean hadGrants = !card.fieldPowerGrants().isEmpty();
+		boolean hadGrants      = !card.fieldPowerGrants().isEmpty();
+		boolean hadCostReduces = !card.fieldCostReductions().isEmpty();
 		CardData topCard = p2ForwardPrimedTop.get(idx);
 
 		if (topCard != null) {
@@ -2365,6 +2368,7 @@ public class MainWindow {
 			for (int i = 0; i < p2ForwardCards.size(); i++) refreshP2ForwardSlot(i);
 		}
 		if (hadGrants) for (int i = 0; i < p2MonsterCards.size(); i++) refreshP2MonsterSlot(i);
+		if (hadCostReduces) refreshHandPopupIfVisible();
 		refreshP2BreakLabel();
 		triggerAutoAbilitiesForLeavesField(card, false);
 		triggerAutoAbilitiesForBreakZone(card, false);
@@ -2557,6 +2561,7 @@ public class MainWindow {
 		p1ForwardPanel.repaint();
 		refreshP1ForwardSlot(idx);
 		if (!card.fieldPowerGrants().isEmpty()) refreshFieldGrantDependents(true);
+		if (!card.fieldCostReductions().isEmpty()) refreshHandPopupIfVisible();
 	}
 
 	/**
@@ -2652,6 +2657,7 @@ public class MainWindow {
 		p2ForwardFrozen.add(false);
 		rebuildP2ForwardPanel();
 		if (!card.fieldPowerGrants().isEmpty()) refreshFieldGrantDependents(false);
+		if (!card.fieldCostReductions().isEmpty()) refreshHandPopupIfVisible();
 
 		logEntry(card.name() + " — control returned to P2");
 	}
@@ -4647,7 +4653,34 @@ public class MainWindow {
 				}
 			}.execute();
 
-			cardsPanel.add(lbl);
+			int effectiveCost = effectiveCastCost(card);
+			int delta = card.cost() - effectiveCost;
+			if (delta == 0) {
+				cardsPanel.add(lbl);
+			} else {
+				JPanel wrapper = new JPanel(new BorderLayout()) {
+					@Override protected void paintChildren(Graphics g) {
+						super.paintChildren(g);
+						Graphics2D g2 = (Graphics2D) g.create();
+						g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+						String text = String.valueOf(effectiveCost);
+						Font pillFont = FontLoader.loadPixelNESFont(9);
+						g2.setFont(pillFont);
+						FontMetrics fm = g2.getFontMetrics();
+						int tw = fm.stringWidth(text);
+						int pw = tw + 10, ph = fm.getAscent() + fm.getDescent() + 4;
+						g2.setColor(delta > 0 ? new Color(0x2E7D32) : new Color(0xBF5000));
+						g2.fillRoundRect(4, 4, pw, ph, 8, 8);
+						g2.setColor(Color.WHITE);
+						g2.drawString(text, 4 + 5, 4 + fm.getAscent() + 2);
+						g2.dispose();
+					}
+				};
+				wrapper.setOpaque(false);
+				wrapper.setPreferredSize(new Dimension(CARD_W, CARD_H));
+				wrapper.add(lbl, BorderLayout.CENTER);
+				cardsPanel.add(wrapper);
+			}
 		}
 
 		handPopup.getContentPane().add(cardsPanel);
@@ -4681,6 +4714,13 @@ public class MainWindow {
 
 	private void cancelHandPopupHide() {
 		if (handPopupHideTimer != null) { handPopupHideTimer.stop(); handPopupHideTimer = null; }
+	}
+
+	private void refreshHandPopupIfVisible() {
+		if (handPopup == null || !handPopup.isVisible()) return;
+		handPopup.dispose();
+		handPopup = null;
+		showHandPopup();
 	}
 
 	private void onHandPopupCardClicked(int handIdx, CardData card, JLabel cardLabel, MouseEvent e) {
@@ -4899,10 +4939,45 @@ public class MainWindow {
 	 * is applied (modifiers stack only when multiple fire independently).
 	 */
 	private int effectiveCastCost(CardData card) {
+		int cost = Math.max(0, card.cost() - totalFieldReduction(card, true));
 		for (CostReductionModifier m : activeCostReductions) {
-			if (m.matches(card)) return m.apply(card.cost());
+			if (m.matches(card)) return m.apply(cost);
 		}
-		return card.cost();
+		return cost;
+	}
+
+	private int totalFieldReduction(CardData card, boolean isP1) {
+		int total = 0;
+		for (int s = 0; s < 2; s++) {
+			boolean sIsP1 = s == 0;
+			List<CardData> fwds = sIsP1 ? p1ForwardCards : p2ForwardCards;
+			CardData[]     bkps = sIsP1 ? p1BackupCards  : p2BackupCards;
+			List<CardData> mons = sIsP1 ? p1MonsterCards : p2MonsterCards;
+			for (CardData src : fwds)                        total += reductionFrom(src, card, isP1, sIsP1);
+			for (CardData bkp : bkps) if (bkp != null)      total += reductionFrom(bkp, card, isP1, sIsP1);
+			for (CardData src : mons)                        total += reductionFrom(src, card, isP1, sIsP1);
+		}
+		return total;
+	}
+
+	private int reductionFrom(CardData src, CardData card, boolean isP1, boolean srcIsP1) {
+		int total = 0;
+		for (FieldCostReduction fcr : src.fieldCostReductions()) {
+			if (fcr.amountPerUnit() == 0) continue;
+			if (fcr.ownerOnly() && srcIsP1 != isP1) continue;
+			if (!fcr.matchesCard(card)) continue;
+			int units = fcr.scalingJobFilter() != null
+					? countForwardsWithJob(fcr.scalingJobFilter(), isP1) : 1;
+			total += fcr.amountPerUnit() * units;
+		}
+		return total;
+	}
+
+	private int countForwardsWithJob(String job, boolean isP1) {
+		int count = 0;
+		for (CardData fwd : (isP1 ? p1ForwardCards : p2ForwardCards))
+			if (job.equalsIgnoreCase(fwd.job())) count++;
+		return count;
 	}
 
 	/**
@@ -11130,6 +11205,7 @@ public class MainWindow {
 
 		refreshP1ForwardSlot(idx);
 		if (!card.fieldPowerGrants().isEmpty()) refreshFieldGrantDependents(true);
+		if (!card.fieldCostReductions().isEmpty()) refreshHandPopupIfVisible();
 		triggerAutoAbilitiesForEntersField(card, true);
 	}
 
@@ -12963,6 +13039,7 @@ public class MainWindow {
 
 		refreshP2ForwardSlot(idx);
 		if (!card.fieldPowerGrants().isEmpty()) refreshFieldGrantDependents(false);
+		if (!card.fieldCostReductions().isEmpty()) refreshHandPopupIfVisible();
 		triggerAutoAbilitiesForEntersField(card, false);
 	}
 
