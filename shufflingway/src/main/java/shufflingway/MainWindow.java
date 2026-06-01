@@ -9422,9 +9422,15 @@ public class MainWindow {
 				CardData card = bz.remove(t.idx());
 				String src = t.isP1() ? "Break Zone" : "opponent's Break Zone";
 				logEntry(card.name() + " played from " + src + " onto field");
-				if (card.isBackup())       placeCardInFirstBackupSlot(card);
-				else if (card.isMonster()) placeCardInMonsterZone(card);
-				else                       placeCardInForwardZone(card);
+				if (t.isP1()) {
+					if (card.isBackup())       placeCardInFirstBackupSlot(card);
+					else if (card.isMonster()) placeCardInMonsterZone(card);
+					else                       placeCardInForwardZone(card);
+				} else {
+					if (card.isBackup())       placeP2CardInFirstBackupSlot(card);
+					else if (card.isMonster()) placeP2CardInMonsterZone(card);
+					else                       placeP2CardInForwardZone(card);
+				}
 				if (t.isP1()) refreshP1BreakLabel(); else refreshP2BreakLabel();
 			}
 
@@ -11088,33 +11094,69 @@ public class MainWindow {
 		confirmBtn.setFont(FontLoader.loadPixelNESFont(11));
 		confirmBtn.setEnabled(upTo);
 
+		javax.swing.border.Border normalBorder   = BorderFactory.createLineBorder(new Color(100, 100, 100), 2);
+		javax.swing.border.Border selectedBorder = BorderFactory.createLineBorder(Color.YELLOW, 3);
+
 		for (int i = 0; i < eligible.size(); i++) {
 			ForwardTarget target = eligible.get(i);
 			CardData card = zone.get(target.idx());
 			final int fi = i;
-			JButton btn = new JButton("<html><center>"
-					+ (target.isP1() ? "[Your BZ] " : "[P2 BZ] ")
-					+ card.name() + "<br>(" + card.power() + ")</center></html>");
-			btn.setFont(FontLoader.loadPixelNESFont(9));
-			btn.setPreferredSize(new Dimension(130, 56));
-			btn.addActionListener(ae -> {
-				if (sel.contains(fi)) {
-					sel.remove(fi);
-					btn.setBackground(null);
-				} else {
-					if (sel.size() >= maxCount) return;
-					sel.add(fi);
-					btn.setBackground(Color.YELLOW);
-					if (!upTo && sel.size() == maxCount) {
-						for (int si : sel) chosen.add(eligible.get(si));
-						dlg.dispose();
-						return;
-					}
+
+			JLabel imgLbl = new JLabel("...", SwingConstants.CENTER);
+			imgLbl.setPreferredSize(new Dimension(CARD_W, CARD_H));
+			imgLbl.setMinimumSize(new Dimension(CARD_W, CARD_H));
+			imgLbl.setOpaque(true);
+			imgLbl.setBackground(Color.DARK_GRAY);
+			imgLbl.setBorder(normalBorder);
+
+			new SwingWorker<ImageIcon, Void>() {
+				@Override protected ImageIcon doInBackground() throws Exception {
+					Image img = ImageCache.load(card.imageUrl());
+					return img == null ? null
+							: new ImageIcon(img.getScaledInstance(CARD_W, CARD_H, Image.SCALE_SMOOTH));
 				}
-				confirmBtn.setEnabled(upTo || sel.size() == maxCount);
-			});
-			if (!target.isP1()) opponentRow.add(btn);
-			else                selfRow.add(btn);
+				@Override protected void done() {
+					try {
+						ImageIcon icon = get();
+						if (icon != null) { imgLbl.setIcon(icon); imgLbl.setText(null); }
+					} catch (InterruptedException | ExecutionException ignored) {}
+				}
+			}.execute();
+
+			MouseAdapter cardListener = new MouseAdapter() {
+				@Override public void mouseEntered(MouseEvent e) { showZoomAt(card.imageUrl()); }
+				@Override public void mouseExited(MouseEvent e)  { hideZoom(); }
+				@Override public void mouseClicked(MouseEvent e) {
+					if (sel.contains(fi)) {
+						sel.remove(fi);
+						imgLbl.setBorder(normalBorder);
+					} else {
+						if (sel.size() >= maxCount) return;
+						sel.add(fi);
+						imgLbl.setBorder(selectedBorder);
+						if (!upTo && sel.size() == maxCount) {
+							for (int si : sel) chosen.add(eligible.get(si));
+							dlg.dispose();
+							return;
+						}
+					}
+					confirmBtn.setEnabled(upTo || sel.size() == maxCount);
+				}
+			};
+			imgLbl.addMouseListener(cardListener);
+
+			JLabel nameLbl = new JLabel(card.name(), SwingConstants.CENTER);
+			nameLbl.setFont(FontLoader.loadPixelNESFont(9));
+			nameLbl.setPreferredSize(new Dimension(CARD_W, 18));
+			nameLbl.addMouseListener(cardListener);
+
+			JPanel wrapper = new JPanel(new BorderLayout(0, 2));
+			wrapper.setOpaque(false);
+			wrapper.add(imgLbl,  BorderLayout.CENTER);
+			wrapper.add(nameLbl, BorderLayout.SOUTH);
+
+			if (!target.isP1()) opponentRow.add(wrapper);
+			else                selfRow.add(wrapper);
 		}
 
 		confirmBtn.addActionListener(ae -> {
