@@ -5409,8 +5409,32 @@ public class MainWindow {
 				gameState.getP1Hand(), p1BackupCards, p1BackupStates, p1BackupUrls,
 				this::showZoomAt, this::hideZoom,
 				new ArrayList<>(p1ForwardCards),
-				(discards, backups, overrides) -> executePlay(card, handIdx, discards, backups, overrides))
+				(discards, backups, overrides) -> executePlay(card, handIdx, discards, backups, overrides),
+				isAnyElementCast(card))
 			.show();
+	}
+
+	/** Returns true if any field card grants any-element payment for {@code card}. */
+	private boolean isAnyElementCast(CardData card) {
+		for (int s = 0; s < 2; s++) {
+			boolean sIsP1 = s == 0;
+			List<CardData> fwds = sIsP1 ? p1ForwardCards : p2ForwardCards;
+			CardData[]     bkps = sIsP1 ? p1BackupCards  : p2BackupCards;
+			List<CardData> mons = sIsP1 ? p1MonsterCards : p2MonsterCards;
+			for (CardData src : fwds)                   { if (srcGrantsAnyElement(src, card, sIsP1)) return true; }
+			for (CardData bkp : bkps) if (bkp != null) { if (srcGrantsAnyElement(bkp, card, sIsP1)) return true; }
+			for (CardData src : mons)                   { if (srcGrantsAnyElement(src, card, sIsP1)) return true; }
+		}
+		return false;
+	}
+
+	private boolean srcGrantsAnyElement(CardData src, CardData card, boolean srcIsP1) {
+		for (FieldCostReduction fcr : src.fieldCostReductions()) {
+			if (!fcr.anyElement()) continue;
+			if (fcr.ownerOnly() && !srcIsP1) continue;
+			if (fcr.matchesCard(card)) return true;
+		}
+		return false;
 	}
 
 	/**

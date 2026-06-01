@@ -64,11 +64,21 @@ public class StandardPaymentDialog {
     }
     /** Called on Confirm with (discardIndices, backupSlots, elementOverrides). */
     private final ConfirmCallback onConfirm;
+    private final boolean        anyElementCast;
 
     public StandardPaymentDialog(JFrame owner, CardData card, int handIdx, int cost,
             List<CardData> hand, CardData[] backupCards, CardState[] backupStates,
             String[] backupUrls, Consumer<String> onZoom, Runnable onZoomHide,
             List<CardData> controlledForwards, ConfirmCallback onConfirm) {
+        this(owner, card, handIdx, cost, hand, backupCards, backupStates, backupUrls,
+                onZoom, onZoomHide, controlledForwards, onConfirm, false);
+    }
+
+    public StandardPaymentDialog(JFrame owner, CardData card, int handIdx, int cost,
+            List<CardData> hand, CardData[] backupCards, CardState[] backupStates,
+            String[] backupUrls, Consumer<String> onZoom, Runnable onZoomHide,
+            List<CardData> controlledForwards, ConfirmCallback onConfirm,
+            boolean anyElementCast) {
         this.owner              = owner;
         this.card               = card;
         this.handIdx            = handIdx;
@@ -81,6 +91,7 @@ public class StandardPaymentDialog {
         this.onZoomHide         = onZoomHide;
         this.controlledForwards = controlledForwards;
         this.onConfirm          = onConfirm;
+        this.anyElementCast     = anyElementCast;
     }
 
     public void show() {
@@ -90,7 +101,7 @@ public class StandardPaymentDialog {
 
         String   elem  = card.element();
         String[] elems = card.elements();
-        boolean  isLD  = card.isLightOrDark();
+        boolean  isLD  = card.isLightOrDark() || anyElementCast;
         boolean backupCpOnly = card.castBackupCpOnly();
 
         Map<String, Integer> bankCpByElem = new LinkedHashMap<>();
