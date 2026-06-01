@@ -222,13 +222,20 @@ public class StandardPaymentDialog {
                                 || isGrantedAnyElement(bkp);
                         boolean isAnyElemOfFwds = bkp.backupCpAnyElementOfForwards()
                                 && !controlledForwards.isEmpty();
-                        if (isAnyElem || isAnyElemOfFwds) {
+                        java.util.List<String> extraElems = bkp.backupCpExtraElements();
+                        boolean hasExtraElems = !extraElems.isEmpty();
+                        if (isAnyElem || isAnyElemOfFwds || hasExtraElems) {
                             String[] available;
                             if (isAnyElemOfFwds && !isAnyElem) {
                                 java.util.LinkedHashSet<String> fwdElems = new java.util.LinkedHashSet<>();
                                 for (CardData fwd : controlledForwards)
                                     for (String fe : fwd.elements()) fwdElems.add(fe);
                                 available = fwdElems.toArray(String[]::new);
+                            } else if (hasExtraElems && !isAnyElem && !isAnyElemOfFwds) {
+                                java.util.LinkedHashSet<String> opts = new java.util.LinkedHashSet<>(
+                                        java.util.Arrays.asList(bkp.elements()));
+                                opts.addAll(extraElems);
+                                available = opts.toArray(String[]::new);
                             } else {
                                 available = ALL_ELEMENTS;
                             }

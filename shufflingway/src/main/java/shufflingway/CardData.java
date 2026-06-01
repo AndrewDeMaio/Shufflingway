@@ -275,6 +275,27 @@ public record CardData(
         Pattern.DOTALL
     );
 
+    // "If Urianger is on the field, Urianger can produce Lightning CP."
+    // "If Cindy is on the field, Cindy can produce Ice or Lightning CP."
+    // Matches any "If [name] is on the field, [name] can produce [elements] CP." sentence.
+    // Named group {@code elems} captures the element list (e.g. "Lightning" or "Ice or Lightning").
+    private static final Pattern BACKUP_CP_EXTRA_ELEMENTS = Pattern.compile(
+        "(?i)If\\s+.+?\\s+is\\s+on\\s+the\\s+field,.+?can\\s+produce\\s+" +
+        "(?<elems>(?:Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)" +
+        "(?:\\s+or\\s+(?:Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark))*)\\s+CP[.!]?"
+    );
+
+    /**
+     * Returns the list of extra CP elements this backup can produce when on the field
+     * (the "If [Name] is on the field, [Name] can produce X [or Y] CP." ability).
+     * Returns an empty list if no such ability exists.
+     */
+    public List<String> backupCpExtraElements() {
+        Matcher m = BACKUP_CP_EXTRA_ELEMENTS.matcher(textEn);
+        if (!m.find()) return List.of();
+        return List.of(m.group("elems").split("(?i)\\s+or\\s+"));
+    }
+
     // "If Sherlotta is on the field, Sherlotta can produce CP of any Element of the Forwards you control."
     private static final Pattern BACKUP_CP_ANY_ELEM_OF_FORWARDS = Pattern.compile(
         "(?i)can\\s+produce\\s+CP\\s+of\\s+any\\s+Element\\s+of\\s+the\\s+Forwards\\s+you\\s+control"
@@ -1440,6 +1461,9 @@ public record CardData(
 
             // Standalone restriction sentences that trail action/auto abilities
             if (FA_RESTRICTION_SENTENCE.matcher(seg).find()) continue;
+
+            // Extra-element CP production — handled as a static card property
+            if (BACKUP_CP_EXTRA_ELEMENTS.matcher(seg).find())               continue;
 
             // Name/type alias declarations and enter-dull — handled as static card properties
             if (IS_ALSO_CARD_NAME_PATTERN.matcher(seg).find())              continue;
