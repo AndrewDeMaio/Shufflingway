@@ -11130,6 +11130,47 @@ public class MainWindow {
 		};
 	}
 
+	/** Current {@link CardState} of a field {@link ForwardTarget}, used to glow at the right card bounds. */
+	private CardState fieldTargetState(ForwardTarget t) {
+		return switch (t.zone()) {
+			case FORWARD -> t.isP1() ? p1ForwardStates.get(t.idx()) : p2ForwardStates.get(t.idx());
+			case BACKUP  -> t.isP1() ? p1BackupStates[t.idx()]      : p2BackupStates[t.idx()];
+			case MONSTER -> t.isP1() ? p1MonsterStates.get(t.idx()) : p2MonsterStates.get(t.idx());
+		};
+	}
+
+	/**
+	 * Border that paints the card-selection glow over the actual card rectangle within a
+	 * {@code CARD_H}×{@code CARD_H} slot (matching {@link CardAnimation#renderBackupCard}),
+	 * rather than the full label bounds, so the highlight hugs the art.
+	 */
+	private static javax.swing.border.Border cardBoundsGlowBorder(Color color, boolean dull) {
+		return new javax.swing.border.AbstractBorder() {
+			@Override public void paintBorder(java.awt.Component c, java.awt.Graphics g0,
+					int x, int y, int w, int h) {
+				int cw = dull ? CARD_H : CARD_W;
+				int ch = dull ? CARD_W : CARD_H;
+				int cy = dull ? y + (CARD_H - CARD_W) : y;
+				java.awt.Graphics2D g = (java.awt.Graphics2D) g0.create();
+				g.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING,
+						java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+				int layers = 16;
+				for (int layer = layers; layer >= 0; layer--) {
+					float t   = (float) layer / layers;
+					int   alpha = Math.round(t * t * 235);
+					g.setColor(new Color(color.getRed(), color.getGreen(), color.getBlue(), alpha));
+					g.setStroke(new java.awt.BasicStroke(2.5f));
+					int off = layers - layer;
+					g.drawRect(x + off, cy + off, cw - 1 - 2 * off, ch - 1 - 2 * off);
+				}
+				g.setColor(color);
+				g.setStroke(new java.awt.BasicStroke(3f));
+				g.drawRect(x + 1, cy + 1, cw - 3, ch - 3);
+				g.dispose();
+			}
+		};
+	}
+
 	/**
 	 * In-place field-target selection: glows each eligible card on the board and lets the
 	 * player click to toggle it.  Exact-count selections resolve as soon as {@code maxCount}
@@ -11174,19 +11215,20 @@ public class MainWindow {
 		for (int i = 0; i < eligible.size(); i++) {
 			final int fi = i;
 			JLabel lbl = labelForTarget(eligible.get(i));
+			final boolean dull = fieldTargetState(eligible.get(i)) == CardState.DULL;
 			labels.add(lbl);
 			origBorders.put(lbl, lbl.getBorder());
-			lbl.setBorder(createCardGlowBorder(GLOW_ELIGIBLE));
+			lbl.setBorder(cardBoundsGlowBorder(GLOW_ELIGIBLE, dull));
 			java.awt.event.MouseListener ml = new MouseAdapter() {
 				@Override public void mousePressed(MouseEvent e) {
 					if (!SwingUtilities.isLeftMouseButton(e)) return;
 					if (sel.contains(fi)) {
 						sel.remove(fi);
-						lbl.setBorder(createCardGlowBorder(GLOW_ELIGIBLE));
+						lbl.setBorder(cardBoundsGlowBorder(GLOW_ELIGIBLE, dull));
 					} else {
 						if (sel.size() >= maxCount) return;
 						sel.add(fi);
-						lbl.setBorder(createCardGlowBorder(GLOW_PICKED));
+						lbl.setBorder(cardBoundsGlowBorder(GLOW_PICKED, dull));
 						if (!upTo && sel.size() == maxCount) { finish.run(); return; }
 					}
 				}
