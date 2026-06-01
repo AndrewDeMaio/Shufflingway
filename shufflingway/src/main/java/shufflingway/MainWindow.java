@@ -6481,6 +6481,26 @@ public class MainWindow {
 			);
 
 	/**
+	 * Matches "put N [Job jobname / Card Name name / type] you control into the Break Zone.
+	 * When/If you do so, sub-effect."
+	 */
+	private static final java.util.regex.Pattern FA_PUT_INTO_BZ_WHEN_DO_SO =
+			java.util.regex.Pattern.compile(
+				"(?i)^put\\s+(?<count>\\d+)\\s+" +
+				"(?:" +
+					"Job\\s+(?<job>.+?)\\s+you\\s+control" +
+				"|" +
+					"Card\\s+Name\\s+(?<cardname>\\S+(?:\\s+\\([^)]+\\))?)\\s+you\\s+control" +
+				"|" +
+					"(?<type>Forwards?|Backups?|Monsters?|Characters?)\\s+you\\s+control" +
+				")" +
+				"\\s+into\\s+the\\s+Break\\s+Zone[.,]?\\s+" +
+				"(?:When|If)\\s+you\\s+do\\s+so[,.]?\\s+" +
+				"(?<sub>.+?)$",
+				java.util.regex.Pattern.DOTALL
+			);
+
+	/**
 	 * Matches a card's own passive field ability text:
 	 * "If &lt;cardName&gt; is dealt damage by your opponent's Summons, the damage becomes 0 instead."
 	 * Checked inline in {@link #modifyIncomingDamage} against the receiving card's field abilities.
@@ -6904,6 +6924,13 @@ public class MainWindow {
 			return;
 		}
 
+		// Detect "put N [Job/CardName/type] you control into the Break Zone. When you do so, [effect]"
+		java.util.regex.Matcher bzM = FA_PUT_INTO_BZ_WHEN_DO_SO.matcher(fa.effectText());
+		if (bzM.find()) {
+			executePutIntoBzWhenDoSoAutoAbility(fa, source, isP1, effectIsP1, bzM);
+			return;
+		}
+
 		// Detect "select [up to] N of the M following actions. "..." "..."..."
 		java.util.regex.Matcher selM = FA_SELECT_FOLLOWING_ACTIONS.matcher(fa.effectText());
 		if (selM.find()) {
@@ -7034,6 +7061,68 @@ public class MainWindow {
 		targets.forEach(t -> ctx2.removeTargetFromGame(t));
 
 		// Parse and execute the sub-effect ("Its auto-ability will not trigger." is handled inside tryParsePlayFromHand)
+		Consumer<GameContext> effect = ActionResolver.parse(subEffect, source);
+		if (effect == null) {
+			logEntry("[AutoAbility] Unrecognized sub-effect: " + subEffect);
+			return;
+		}
+		logEntry("[AutoAbility] " + source.name() + " — when you do so: " + subEffect);
+		effect.accept(buildGameContext(effectIsP1));
+	}
+
+	private void executePutIntoBzWhenDoSoAutoAbility(AutoAbility fa, CardData source,
+			boolean isP1, boolean effectIsP1, java.util.regex.Matcher m) {
+		int    count         = Integer.parseInt(m.group("count"));
+		String jobRaw        = m.group("job");
+		String cardNameRaw   = m.group("cardname");
+		String typeRaw       = m.group("type");
+		String subEffect     = m.group("sub").trim();
+
+		String jobFilter      = jobRaw      != null ? jobRaw.trim()      : null;
+		String cardNameFilter = cardNameRaw != null ? cardNameRaw.trim() : null;
+		boolean inclForwards, inclBackups, inclMonsters;
+		if (jobFilter != null || cardNameFilter != null) {
+			inclForwards = inclBackups = inclMonsters = true;
+		} else if (typeRaw != null) {
+			String tl = typeRaw.toLowerCase(java.util.Locale.ROOT);
+			inclForwards = tl.contains("forward") || tl.contains("character");
+			inclBackups  = tl.contains("backup")  || tl.contains("character");
+			inclMonsters = tl.contains("monster") || tl.contains("character");
+		} else {
+			inclForwards = inclBackups = inclMonsters = true;
+		}
+
+		// youMay / AI decision
+		boolean p1GetsDialog = (fa.youMay() && isP1) || (fa.opponentMay() && !isP1);
+		if (p1GetsDialog) {
+			String prompt = (fa.youMay() ? "You may: " : "Your opponent may: ") + fa.effectText();
+			int choice = JOptionPane.showOptionDialog(frame,
+					source.name() + " — " + prompt, "Auto Ability",
+					JOptionPane.DEFAULT_OPTION, JOptionPane.PLAIN_MESSAGE, null,
+					new Object[]{"OK", "Decline"}, "OK");
+			if (choice != 0) {
+				logEntry("[AutoAbility] " + source.name() + " — optional effect declined");
+				return;
+			}
+		} else if (fa.youMay() || fa.opponentMay()) {
+			logEntry("[AutoAbility] [AI] auto-accepts optional ability");
+		}
+
+		// Select the card(s) to put into the Break Zone
+		GameContext ctx = buildGameContext(effectIsP1);
+		java.util.List<ForwardTarget> targets = ctx.selectCharacters(count, false,
+				false, true, null, null, -1, null, -1, null,
+				inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, null, null, false, null, false);
+		if (targets.isEmpty()) {
+			logEntry("[AutoAbility] " + source.name() + " — no eligible target to put into Break Zone, sub-effect skipped");
+			return;
+		}
+
+		// Rebuild ctx after selectCharacters in case field indices shifted; break the targets
+		GameContext ctx2 = buildGameContext(effectIsP1);
+		targets.forEach(t -> ctx2.forceTargetToBreakZone(t));
+
+		// Parse and execute the sub-effect
 		Consumer<GameContext> effect = ActionResolver.parse(subEffect, source);
 		if (effect == null) {
 			logEntry("[AutoAbility] Unrecognized sub-effect: " + subEffect);
