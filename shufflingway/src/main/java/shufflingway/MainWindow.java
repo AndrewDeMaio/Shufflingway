@@ -11144,6 +11144,14 @@ public class MainWindow {
 	 * {@code CARD_H}×{@code CARD_H} slot (matching {@link CardAnimation#renderBackupCard}),
 	 * rather than the full label bounds, so the highlight hugs the art.
 	 */
+	private static Color pulseColor(Color base, float t) {
+		float f = 0.5f + 0.5f * t;
+		return new Color(
+				Math.round(base.getRed()   * f),
+				Math.round(base.getGreen() * f),
+				Math.round(base.getBlue()  * f));
+	}
+
 	private static javax.swing.border.Border cardBoundsGlowBorder(Color color, boolean dull) {
 		return new javax.swing.border.AbstractBorder() {
 			@Override public void paintBorder(java.awt.Component c, java.awt.Graphics g0,
@@ -11189,6 +11197,8 @@ public class MainWindow {
 		java.util.Map<JLabel, javax.swing.border.Border> origBorders = new java.util.HashMap<>();
 		java.util.List<java.awt.event.MouseListener> listeners = new ArrayList<>(eligible.size());
 		java.util.List<ForwardTarget> result = new ArrayList<>();
+		boolean[] dulls = new boolean[eligible.size()];
+		final javax.swing.Timer[] pulseTimerRef = { null };
 
 		java.awt.SecondaryLoop loop =
 				java.awt.Toolkit.getDefaultToolkit().getSystemEventQueue().createSecondaryLoop();
@@ -11201,6 +11211,7 @@ public class MainWindow {
 		Runnable finish = () -> {
 			if (done[0]) return;
 			done[0] = true;
+			if (pulseTimerRef[0] != null) pulseTimerRef[0].stop();
 			for (int i = 0; i < labels.size(); i++) {
 				labels.get(i).setBorder(origBorders.get(labels.get(i)));
 				labels.get(i).removeMouseListener(listeners.get(i));
@@ -11216,6 +11227,7 @@ public class MainWindow {
 			final int fi = i;
 			JLabel lbl = labelForTarget(eligible.get(i));
 			final boolean dull = fieldTargetState(eligible.get(i)) == CardState.DULL;
+			dulls[fi] = dull;
 			labels.add(lbl);
 			origBorders.put(lbl, lbl.getBorder());
 			lbl.setBorder(cardBoundsGlowBorder(GLOW_ELIGIBLE, dull));
@@ -11224,11 +11236,9 @@ public class MainWindow {
 					if (!SwingUtilities.isLeftMouseButton(e)) return;
 					if (sel.contains(fi)) {
 						sel.remove(fi);
-						lbl.setBorder(cardBoundsGlowBorder(GLOW_ELIGIBLE, dull));
 					} else {
 						if (sel.size() >= maxCount) return;
 						sel.add(fi);
-						lbl.setBorder(cardBoundsGlowBorder(GLOW_PICKED, dull));
 						if (!upTo && sel.size() == maxCount) { finish.run(); return; }
 					}
 				}
@@ -11236,6 +11246,18 @@ public class MainWindow {
 			lbl.addMouseListener(ml);
 			listeners.add(ml);
 		}
+
+		final float[] pulse = { 0f };
+		javax.swing.Timer pulseTimer = new javax.swing.Timer(40, ev -> {
+			pulse[0] += 0.12f;
+			float t = (float) (0.5 + 0.5 * Math.sin(pulse[0]));
+			for (int i = 0; i < labels.size(); i++) {
+				Color base = sel.contains(i) ? GLOW_PICKED : GLOW_ELIGIBLE;
+				labels.get(i).setBorder(cardBoundsGlowBorder(pulseColor(base, t), dulls[i]));
+			}
+		});
+		pulseTimerRef[0] = pulseTimer;
+		pulseTimer.start();
 
 		JLabel hdr = new JLabel(title + (upTo ? "  (up to " + maxCount + ")" : "  (select " + maxCount + ")"),
 				SwingConstants.CENTER);
