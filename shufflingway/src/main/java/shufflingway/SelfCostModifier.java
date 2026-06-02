@@ -49,12 +49,43 @@ public record SelfCostModifier(
         IF_CAST_SUMMON_THIS_TURN,
         /** Flat delta (×1) if you control a field card named {@code param1}; 0 otherwise. */
         IF_CONTROL_NAME,
+        /**
+         * Flat delta (×1) if the count of field cards with category {@code param1-part} and
+         * type {@code param2-part} is ≥ {@code Integer.parseInt(param1)}.
+         * Encoding: {@code param1} = threshold string, {@code param2} = "category|type"
+         * (type is singular: "Forward", "Backup", "Character", etc.).
+         */
+        IF_CONTROL_N_OR_MORE_CATEGORY_TYPE,
         /** Flat delta (×1) if the controller has received ≥ {@code Integer.parseInt(param1)} damage; 0 otherwise. */
         IF_RECEIVED_N_DAMAGE_OR_MORE,
         /** Flat delta (×1) if a Forward the opponent controlled was broken this turn; 0 otherwise. */
         IF_OPPONENT_FORWARD_BROKEN_THIS_TURN,
+        /** Flat delta (×1) if a card with job {@code param1} the controller controlled was broken this turn; 0 otherwise. */
+        IF_OWN_JOB_BROKEN_THIS_TURN,
+        /** Flat delta (×1) if the controller controls zero cards of the type in {@code param1}; 0 otherwise.
+         *  param1: singular type ("Forward", "Backup", "Monster", "Character"). */
+        IF_CONTROL_NONE_OF_TYPE,
+        /** Flat delta (×1) if the opponent has discarded a card from their hand this turn due to abilities; 0 otherwise. */
+        IF_OPPONENT_DISCARDED_THIS_TURN,
+        /** Flat delta (×1) if the opponent has discarded a card due to the controller's own Summons or abilities this turn; 0 otherwise. */
+        IF_OPPONENT_DISCARDED_BY_ME_THIS_TURN,
+        /** Flat delta (×1) if the controller has drawn ≥ {@code Integer.parseInt(param1)} cards this turn; 0 otherwise. */
+        IF_DRAWN_N_OR_MORE_THIS_TURN,
+        /** Flat delta (×1) if the opponent controls more cards of type {@code param1} than the controller; 0 otherwise. */
+        IF_OPPONENT_CONTROLS_MORE_TYPE,
+        /** Flat delta (×1) if a Forward the controller controlled formed a party attack this turn; 0 otherwise. */
+        IF_OWN_FORWARD_FORMED_PARTY_THIS_TURN,
+        /** Flat delta (×1) if the opponent's hand size is ≤ {@code Integer.parseInt(param1)}; 0 otherwise. */
+        IF_OPPONENT_HAND_N_OR_LESS,
+        /**
+         * Scales by field cards the controller controls of type {@code param2}
+         * ("Forward", "Backup", "Character") whose printed cost is ≥ {@code Integer.parseInt(param1)}.
+         */
+        EACH_TYPE_WITH_MIN_COST,
         /** Scales by the number of Forwards the controller controls. */
         EACH_FORWARD,
+        /** Scales by the number of Backups the controller controls. */
+        EACH_BACKUP,
         /** Scales by Forwards the controller controls that belong to category {@code param1}. */
         EACH_FORWARD_WITH_CATEGORY,
         /**
@@ -85,5 +116,17 @@ public record SelfCostModifier(
         EACH_OPPONENT_HAND_CARD,
         /** Scales by the number of cards the controller has cast this turn (before this card). */
         EACH_CARD_CAST_THIS_TURN,
+        /**
+         * Scales by field cards the controller controls with element {@code param1}
+         * and card type matching {@code param2} ("Forward", "Backup", "Monster", "Character").
+         * "Character" counts Forwards + Backups.
+         */
+        EACH_ELEMENT_TYPE_CONTROLLED,
+        /**
+         * Scales by the number of distinct single elements among the controller's Backups
+         * (multi-element backups, i.e. those with a "/" in their element field, are excluded).
+         * Uses base printed element only, not field-granted elements.
+         */
+        EACH_DISTINCT_BACKUP_ELEMENT,
     }
 }

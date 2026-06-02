@@ -2284,7 +2284,7 @@ public record CardData(
      */
     private static final Pattern SELF_COST_MAIN = Pattern.compile(
         "(?i)" +
-        "(?:If\\s+(?<cond>[^,]+),\\s+)?" +
+        "(?:(?:During\\s+this\\s+turn,\\s+)?If\\s+(?<cond>[^,]+),\\s+)?" +
         "The\\s+cost\\s+required\\s+to\\s+" +
         "(?:play\\s+(?<name1>.+?)\\s+onto\\s+the\\s+field|cast\\s+(?<name2>.+?))" +
         "\\s+is\\s+(?<dir>reduced|increased)\\s+by\\s+(?<amount>\\d+)" +
@@ -2306,10 +2306,43 @@ public record CardData(
     private static final Pattern SELF_COND_OPP_FWD_BROKEN = Pattern.compile(
         "(?i)^a\\s+Forward\\s+(?:your\\s+)?opponent\\s+controlled\\s+was\\s+put\\s+from\\s+the\\s+field\\s+into\\s+the\\s+Break\\s+Zone\\s+this\\s+turn$"
     );
+    private static final Pattern SELF_COND_CONTROL_N_CATEGORY_TYPE = Pattern.compile(
+        "(?i)^you\\s+control\\s+(?<n>\\d+)\\s+or\\s+more\\s+Category\\s+(?<cat>\\S+)\\s+(?<type>Forwards?|Backups?|Monsters?|Characters?)$"
+    );
+    private static final Pattern SELF_COND_OWN_JOB_BROKEN = Pattern.compile(
+        "(?i)^a\\s+Job\\s+(?<job>.+?)\\s+you\\s+controlled\\s+has\\s+been\\s+put\\s+from\\s+the\\s+field\\s+into\\s+the\\s+Break\\s+Zone$"
+    );
+    private static final Pattern SELF_COND_CONTROL_NONE_OF_TYPE = Pattern.compile(
+        "(?i)^you\\s+don'?t\\s+control\\s+any\\s+(?<type>Forwards?|Backups?|Monsters?|Characters?)$"
+    );
+    private static final Pattern SELF_COND_OPPONENT_DISCARDED_BY_ME = Pattern.compile(
+        "(?i)^your\\s+opponent\\s+has\\s+discarded\\s+a\\s+card\\s+from\\s+their\\s+hand\\s+due\\s+to\\s+your\\s+(?:Summons?|abilities?)(?:\\s+or\\s+(?:Summons?|abilities?))*$"
+    );
+    private static final Pattern SELF_COND_OPPONENT_DISCARDED = Pattern.compile(
+        "(?i)^your\\s+opponent\\s+has\\s+discarded\\s+a\\s+card\\s+from\\s+their\\s+hand(?:\\s+due\\s+to\\s+(?:the\\s+)?(?:Summons?|abilities?)(?:\\s+or\\s+(?:the\\s+)?(?:Summons?|abilities?))*)?$"
+    );
+    private static final Pattern SELF_COND_DRAWN_N_OR_MORE = Pattern.compile(
+        "(?i)^you\\s+have\\s+drawn\\s+(?<n>\\d+)\\s+or\\s+more\\s+cards$"
+    );
+    private static final Pattern SELF_COND_OPPONENT_CONTROLS_MORE_TYPE = Pattern.compile(
+        "(?i)^the\\s+number\\s+of\\s+(?<type>Forwards?|Backups?|Monsters?|Characters?)\\s+your\\s+opponent\\s+controls\\s+is\\s+greater\\s+than\\s+the\\s+number\\s+of\\s+(?:Forwards?|Backups?|Monsters?|Characters?)\\s+you\\s+control$"
+    );
+    private static final Pattern SELF_COND_CONTROL_A_CATEGORY_TYPE = Pattern.compile(
+        "(?i)^you\\s+control\\s+a\\s+Category\\s+(?<cat>\\S+)\\s+(?<type>Forwards?|Backups?|Monsters?|Characters?)$"
+    );
+    private static final Pattern SELF_COND_OWN_FORWARD_FORMED_PARTY = Pattern.compile(
+        "(?i)^a\\s+Forward\\s+you\\s+controlled\\s+formed\\s+a\\s+party\\s+this\\s+turn$"
+    );
+    private static final Pattern SELF_COND_OPPONENT_HAND_N_OR_LESS = Pattern.compile(
+        "(?i)^your\\s+opponent\\s+has\\s+(?<n>\\d+)\\s+cards?\\s+or\\s+less\\s+in\\s+their\\s+hand$"
+    );
 
     // Scaling sub-patterns
     private static final Pattern SELF_SCALE_EACH_FWD = Pattern.compile(
         "(?i)^for\\s+each\\s+Forward\\s+you\\s+control$"
+    );
+    private static final Pattern SELF_SCALE_EACH_BKP = Pattern.compile(
+        "(?i)^for\\s+each\\s+Backup\\s+you\\s+control$"
     );
     private static final Pattern SELF_SCALE_EACH_CAT_FWD = Pattern.compile(
         "(?i)^for\\s+each\\s+\\[Category\\s+\\((?<cat>[^)]+)\\)\\]\\s+Forward\\s+you\\s+control$"
@@ -2336,6 +2369,18 @@ public record CardData(
     );
     private static final Pattern SELF_SCALE_EACH_CARD_CAST = Pattern.compile(
         "(?i)^for\\s+each\\s+card\\s+you\\s+have\\s+cast\\s+this\\s+turn$"
+    );
+    /** Matches "for each [Type] of cost N or more you control" — e.g. "for each Character of cost 5 or more you control". */
+    private static final Pattern SELF_SCALE_EACH_TYPE_MIN_COST = Pattern.compile(
+        "(?i)^for\\s+each\\s+(?<type>Forwards?|Backups?|Monsters?|Characters?)\\s+of\\s+cost\\s+(?<n>\\d+)\\s+or\\s+more\\s+you\\s+control$"
+    );
+    /** Matches "for each Backup of a different Element you control, other than Multi-Element". */
+    private static final Pattern SELF_SCALE_EACH_DISTINCT_BACKUP_ELEM = Pattern.compile(
+        "(?i)^for\\s+each\\s+Backup\\s+of\\s+a\\s+different\\s+Element\\s+you\\s+control,?\\s+other\\s+than\\s+Multi-Element$"
+    );
+    /** Matches "for each [Element] [Type] you control" — e.g. "for each Fire Backup you control". */
+    private static final Pattern SELF_SCALE_EACH_ELEM_TYPE = Pattern.compile(
+        "(?i)^for\\s+each\\s+(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+(?<type>Forwards?|Backups?|Monsters?|Characters?)\\s+you\\s+control$"
     );
     /** Matches "for each Card Name X or Card Name Y you control". */
     private static final Pattern SELF_SCALE_EACH_NAME_OR_NAME = Pattern.compile(
@@ -2404,6 +2449,91 @@ public record CardData(
                                 null, null);
                     }
                 }
+                if (mod == null) {
+                    cm = SELF_COND_CONTROL_N_CATEGORY_TYPE.matcher(condRaw.trim());
+                    if (cm.find()) {
+                        String type = cm.group("type").replaceAll("(?i)s$", "");
+                        mod = new SelfCostModifier(amount, minCost, isIncrease,
+                                SelfCostModifier.ScalingType.IF_CONTROL_N_OR_MORE_CATEGORY_TYPE,
+                                cm.group("n").trim(),
+                                cm.group("cat").trim() + "|" + type);
+                    }
+                }
+                if (mod == null) {
+                    cm = SELF_COND_OWN_JOB_BROKEN.matcher(condRaw.trim());
+                    if (cm.find()) {
+                        mod = new SelfCostModifier(amount, minCost, isIncrease,
+                                SelfCostModifier.ScalingType.IF_OWN_JOB_BROKEN_THIS_TURN,
+                                cm.group("job").trim(), null);
+                    }
+                }
+                if (mod == null) {
+                    cm = SELF_COND_CONTROL_NONE_OF_TYPE.matcher(condRaw.trim());
+                    if (cm.find()) {
+                        String type = cm.group("type").replaceAll("(?i)s$", "");
+                        mod = new SelfCostModifier(amount, minCost, isIncrease,
+                                SelfCostModifier.ScalingType.IF_CONTROL_NONE_OF_TYPE,
+                                type, null);
+                    }
+                }
+                if (mod == null) {
+                    cm = SELF_COND_OPPONENT_DISCARDED.matcher(condRaw.trim());
+                    if (cm.find()) {
+                        mod = new SelfCostModifier(amount, minCost, isIncrease,
+                                SelfCostModifier.ScalingType.IF_OPPONENT_DISCARDED_THIS_TURN,
+                                null, null);
+                    }
+                }
+                if (mod == null) {
+                    cm = SELF_COND_DRAWN_N_OR_MORE.matcher(condRaw.trim());
+                    if (cm.find()) {
+                        mod = new SelfCostModifier(amount, minCost, isIncrease,
+                                SelfCostModifier.ScalingType.IF_DRAWN_N_OR_MORE_THIS_TURN,
+                                cm.group("n").trim(), null);
+                    }
+                }
+                if (mod == null) {
+                    cm = SELF_COND_OPPONENT_CONTROLS_MORE_TYPE.matcher(condRaw.trim());
+                    if (cm.find()) {
+                        String type = cm.group("type").replaceAll("(?i)s$", "");
+                        mod = new SelfCostModifier(amount, minCost, isIncrease,
+                                SelfCostModifier.ScalingType.IF_OPPONENT_CONTROLS_MORE_TYPE,
+                                type, null);
+                    }
+                }
+                if (mod == null) {
+                    cm = SELF_COND_OPPONENT_DISCARDED_BY_ME.matcher(condRaw.trim());
+                    if (cm.find()) {
+                        mod = new SelfCostModifier(amount, minCost, isIncrease,
+                                SelfCostModifier.ScalingType.IF_OPPONENT_DISCARDED_BY_ME_THIS_TURN,
+                                null, null);
+                    }
+                }
+                if (mod == null) {
+                    cm = SELF_COND_CONTROL_A_CATEGORY_TYPE.matcher(condRaw.trim());
+                    if (cm.find()) {
+                        String type = cm.group("type").replaceAll("(?i)s$", "");
+                        mod = new SelfCostModifier(amount, minCost, isIncrease,
+                                SelfCostModifier.ScalingType.IF_CONTROL_N_OR_MORE_CATEGORY_TYPE,
+                                "1", cm.group("cat").trim() + "|" + type);
+                    }
+                }
+                if (mod == null) {
+                    cm = SELF_COND_OWN_FORWARD_FORMED_PARTY.matcher(condRaw.trim());
+                    if (cm.find()) {
+                        mod = new SelfCostModifier(amount, minCost, isIncrease,
+                                SelfCostModifier.ScalingType.IF_OWN_FORWARD_FORMED_PARTY_THIS_TURN,
+                                null, null);
+                    }
+                }
+                if (mod == null) {
+                    cm = SELF_COND_OPPONENT_HAND_N_OR_LESS.matcher(condRaw.trim());
+                    if (cm.find()) {
+                        mod = new SelfCostModifier(amount, minCost, isIncrease,
+                                SelfCostModifier.ScalingType.IF_OPPONENT_HAND_N_OR_LESS,
+                                cm.group("n").trim(), null);
+                    }
+                }
             }
 
             // --- Scaling suffix forms ---
@@ -2415,6 +2545,14 @@ public record CardData(
                 if (sm.find()) {
                     mod = new SelfCostModifier(amount, minCost, isIncrease,
                             SelfCostModifier.ScalingType.EACH_FORWARD, null, null);
+                }
+
+                if (mod == null) {
+                    sm = SELF_SCALE_EACH_BKP.matcher(sc);
+                    if (sm.find()) {
+                        mod = new SelfCostModifier(amount, minCost, isIncrease,
+                                SelfCostModifier.ScalingType.EACH_BACKUP, null, null);
+                    }
                 }
 
                 if (mod == null) {
@@ -2488,6 +2626,34 @@ public record CardData(
                     if (sm.find()) {
                         mod = new SelfCostModifier(amount, minCost, isIncrease,
                                 SelfCostModifier.ScalingType.EACH_CARD_CAST_THIS_TURN, null, null);
+                    }
+                }
+
+                if (mod == null) {
+                    sm = SELF_SCALE_EACH_TYPE_MIN_COST.matcher(sc);
+                    if (sm.find()) {
+                        String type = sm.group("type").replaceAll("(?i)s$", "");
+                        mod = new SelfCostModifier(amount, minCost, isIncrease,
+                                SelfCostModifier.ScalingType.EACH_TYPE_WITH_MIN_COST,
+                                sm.group("n").trim(), type);
+                    }
+                }
+
+                if (mod == null) {
+                    sm = SELF_SCALE_EACH_DISTINCT_BACKUP_ELEM.matcher(sc);
+                    if (sm.find()) {
+                        mod = new SelfCostModifier(amount, minCost, isIncrease,
+                                SelfCostModifier.ScalingType.EACH_DISTINCT_BACKUP_ELEMENT, null, null);
+                    }
+                }
+
+                if (mod == null) {
+                    sm = SELF_SCALE_EACH_ELEM_TYPE.matcher(sc);
+                    if (sm.find()) {
+                        String type = sm.group("type").replaceAll("(?i)s$", "");
+                        mod = new SelfCostModifier(amount, minCost, isIncrease,
+                                SelfCostModifier.ScalingType.EACH_ELEMENT_TYPE_CONTROLLED,
+                                sm.group("element").trim(), type);
                     }
                 }
 
