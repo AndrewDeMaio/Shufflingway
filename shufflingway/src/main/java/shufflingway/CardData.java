@@ -2284,7 +2284,10 @@ public record CardData(
      */
     private static final Pattern SELF_COST_MAIN = Pattern.compile(
         "(?i)" +
-        "(?:(?:During\\s+this\\s+turn,\\s+)?If\\s+(?<cond>[^,]+),\\s+)?" +
+        "(?:" +
+          "(?:(?:During\\s+this\\s+turn,\\s+)?If\\s+(?<cond>[^,]+),\\s+)" +
+          "|(?<yourturn>During\\s+your\\s+turn,\\s+)" +
+        ")?" +
         "The\\s+cost\\s+required\\s+to\\s+" +
         "(?:play\\s+(?<name1>.+?)\\s+onto\\s+the\\s+field|cast\\s+(?<name2>.+?))" +
         "\\s+is\\s+(?<dir>reduced|increased)\\s+by\\s+(?<amount>\\d+)" +
@@ -2372,6 +2375,25 @@ public record CardData(
     private static final Pattern SELF_COND_OPPONENT_CONTROLS_N_MORE_THAN_ME = Pattern.compile(
         "(?i)^your\\s+opponent\\s+controls\\s+(?<n>\\d+)\\s+or\\s+more\\s+(?<type>Forwards?|Backups?|Monsters?|Characters?)\\s+more\\s+than\\s+you$"
     );
+    private static final Pattern SELF_COND_CONTROL_JOB_OR_NAME = Pattern.compile(
+        "(?i)^you\\s+control\\s+a\\s+Job\\s+(?<job>.+?)\\s+or\\s+Card\\s+Name\\s+(?<name>.+?)$"
+    );
+    /** Matches "you control a Job X" (no "or Card Name" — must be checked after CONTROL_JOB_OR_NAME). */
+    private static final Pattern SELF_COND_CONTROL_A_JOB = Pattern.compile(
+        "(?i)^you\\s+control\\s+a\\s+Job\\s+(?<job>.+?)$"
+    );
+    private static final Pattern SELF_COND_OPPONENT_CHAR_RETURNED_TO_HAND = Pattern.compile(
+        "(?i)^a\\s+Character\\s+(?:your\\s+)?opponent\\s+controlled\\s+was\\s+returned\\s+from\\s+the\\s+field\\s+to\\s+its\\s+owner'?s\\s+hand\\s+this\\s+turn$"
+    );
+    private static final Pattern SELF_COND_CONTROL_N_OR_MORE_JOB_OR_NAME = Pattern.compile(
+        "(?i)^you\\s+control\\s+(?<n>\\d+)\\s+or\\s+more\\s+Job\\s+(?<job>.+?)\\s+and/or\\s+Card\\s+Name\\s+(?<name>.+?)$"
+    );
+    private static final Pattern SELF_COND_N_OR_MORE_CATEGORY_BZ_AND_RFP = Pattern.compile(
+        "(?i)^you\\s+have\\s+a\\s+total\\s+of\\s+(?<n>\\d+)\\s+or\\s+more\\s+Category\\s+(?<cat>\\S+)\\s+cards\\s+in\\s+your\\s+Break\\s+Zone\\s+and/or\\s+Category\\s+\\S+\\s+cards\\s+you\\s+own\\s+removed\\s+from\\s+the\\s+game$"
+    );
+    private static final Pattern SELF_COND_OWN_ELEMENT_OR_CATEGORY_BROKEN = Pattern.compile(
+        "(?i)^a\\s+(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+Characters?\\s+or\\s+Category\\s+(?<cat>\\S+)\\s+Characters?\\s+you\\s+controlled\\s+has\\s+been\\s+put\\s+from\\s+the\\s+field\\s+into\\s+the\\s+Break\\s+Zone\\s+this\\s+turn$"
+    );
 
     // Scaling sub-patterns
     private static final Pattern SELF_SCALE_EACH_FWD = Pattern.compile(
@@ -2442,6 +2464,12 @@ public record CardData(
     private static final Pattern SELF_SCALE_PER_N_ELEM_TYPE = Pattern.compile(
         "(?i)^for\\s+every\\s+(?<n>\\d+)\\s+(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+(?<type>Forwards?|Backups?|Monsters?|Characters?)\\s+you\\s+control$"
     );
+    private static final Pattern SELF_SCALE_EACH_MONSTER = Pattern.compile(
+        "(?i)^for\\s+each\\s+Monster\\s+you\\s+control$"
+    );
+    private static final Pattern SELF_SCALE_EACH_CARD_DRAWN = Pattern.compile(
+        "(?i)^for\\s+each\\s+card\\s+you\\s+have\\s+drawn\\s+this\\s+turn$"
+    );
 
     /**
      * Parses self-referential cost modifiers from a card's own text.
@@ -2459,6 +2487,7 @@ public record CardData(
             if (!m.find()) continue;
 
             String condRaw    = m.group("cond");
+            String yourTurnRaw = m.group("yourturn");
             String scalingRaw = m.group("scaling");
             boolean isIncrease = "increased".equalsIgnoreCase(m.group("dir"));
             int amount = Integer.parseInt(m.group("amount"));
@@ -2469,8 +2498,14 @@ public record CardData(
 
             SelfCostModifier mod = null;
 
+            // --- "During your turn" flat form ---
+            if (yourTurnRaw != null && condRaw == null && scalingRaw == null) {
+                mod = new SelfCostModifier(amount, minCost, isIncrease,
+                        SelfCostModifier.ScalingType.IF_IS_YOUR_TURN, null, null);
+            }
+
             // --- Condition prefix forms ---
-            if (condRaw != null && scalingRaw == null) {
+            if (mod == null && condRaw != null && scalingRaw == null) {
                 Matcher cm;
                 cm = SELF_COND_CAST_SUMMON.matcher(condRaw.trim());
                 if (cm.find()) {
@@ -2605,11 +2640,60 @@ public record CardData(
                     }
                 }
                 if (mod == null) {
+                    cm = SELF_COND_CONTROL_N_OR_MORE_JOB_OR_NAME.matcher(condRaw.trim());
+                    if (cm.find()) {
+                        mod = new SelfCostModifier(amount, minCost, isIncrease,
+                                SelfCostModifier.ScalingType.IF_CONTROL_N_OR_MORE_JOB_OR_NAME,
+                                cm.group("n").trim(),
+                                cm.group("job").trim() + "|" + cm.group("name").trim());
+                    }
+                }
+                if (mod == null) {
                     cm = SELF_COND_CONTROL_N_OR_MORE_JOB.matcher(condRaw.trim());
                     if (cm.find()) {
                         mod = new SelfCostModifier(amount, minCost, isIncrease,
                                 SelfCostModifier.ScalingType.IF_CONTROL_N_OR_MORE_JOB,
                                 cm.group("n").trim(), cm.group("job").trim());
+                    }
+                }
+                if (mod == null) {
+                    cm = SELF_COND_CONTROL_JOB_OR_NAME.matcher(condRaw.trim());
+                    if (cm.find()) {
+                        mod = new SelfCostModifier(amount, minCost, isIncrease,
+                                SelfCostModifier.ScalingType.IF_CONTROL_JOB_OR_NAME,
+                                cm.group("job").trim(), cm.group("name").trim());
+                    }
+                }
+                if (mod == null) {
+                    cm = SELF_COND_CONTROL_A_JOB.matcher(condRaw.trim());
+                    if (cm.find()) {
+                        mod = new SelfCostModifier(amount, minCost, isIncrease,
+                                SelfCostModifier.ScalingType.IF_CONTROL_N_OR_MORE_JOB,
+                                "1", cm.group("job").trim());
+                    }
+                }
+                if (mod == null) {
+                    cm = SELF_COND_OPPONENT_CHAR_RETURNED_TO_HAND.matcher(condRaw.trim());
+                    if (cm.find()) {
+                        mod = new SelfCostModifier(amount, minCost, isIncrease,
+                                SelfCostModifier.ScalingType.IF_OPPONENT_CHARACTER_RETURNED_TO_HAND_THIS_TURN,
+                                null, null);
+                    }
+                }
+                if (mod == null) {
+                    cm = SELF_COND_N_OR_MORE_CATEGORY_BZ_AND_RFP.matcher(condRaw.trim());
+                    if (cm.find()) {
+                        mod = new SelfCostModifier(amount, minCost, isIncrease,
+                                SelfCostModifier.ScalingType.IF_N_OR_MORE_CATEGORY_IN_BZ_AND_RFP,
+                                cm.group("n").trim(), cm.group("cat").trim());
+                    }
+                }
+                if (mod == null) {
+                    cm = SELF_COND_OWN_ELEMENT_OR_CATEGORY_BROKEN.matcher(condRaw.trim());
+                    if (cm.find()) {
+                        mod = new SelfCostModifier(amount, minCost, isIncrease,
+                                SelfCostModifier.ScalingType.IF_OWN_ELEMENT_OR_CATEGORY_BROKEN_THIS_TURN,
+                                cm.group("element").trim(), cm.group("cat").trim());
                     }
                 }
                 if (mod == null) {
@@ -2836,6 +2920,22 @@ public record CardData(
                         mod = new SelfCostModifier(amount, minCost, isIncrease,
                                 SelfCostModifier.ScalingType.EACH_NAME_OR_NAME_CONTROLLED,
                                 sm.group("name1").trim(), sm.group("name2").trim());
+                    }
+                }
+
+                if (mod == null) {
+                    sm = SELF_SCALE_EACH_MONSTER.matcher(sc);
+                    if (sm.find()) {
+                        mod = new SelfCostModifier(amount, minCost, isIncrease,
+                                SelfCostModifier.ScalingType.EACH_MONSTER, null, null);
+                    }
+                }
+
+                if (mod == null) {
+                    sm = SELF_SCALE_EACH_CARD_DRAWN.matcher(sc);
+                    if (sm.find()) {
+                        mod = new SelfCostModifier(amount, minCost, isIncrease,
+                                SelfCostModifier.ScalingType.EACH_CARD_DRAWN_THIS_TURN, null, null);
                     }
                 }
 

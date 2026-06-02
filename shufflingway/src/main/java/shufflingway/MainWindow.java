@@ -340,7 +340,9 @@ public class MainWindow {
 	private int     p1CardsCastThisTurn          = 0;
 	private boolean p1SummonCastThisTurn         = false;
 	private boolean p1TurnOpponentFwdBroken      = false;
-	private final java.util.Set<String> p1BrokenJobsThisTurn = new java.util.HashSet<>();
+	private final java.util.Set<String> p1BrokenJobsThisTurn      = new java.util.HashSet<>();
+	private final java.util.Set<String> p1BrokenElementsThisTurn  = new java.util.HashSet<>();
+	private final java.util.Set<String> p1BrokenCategoriesThisTurn = new java.util.HashSet<>();
 	private int     p1CardsDrawnThisTurn         = 0;
 	private boolean p1DiscardedByEffectThisTurn  = false;
 	private boolean p1CausedOpponentDiscardThisTurn = false;
@@ -348,7 +350,9 @@ public class MainWindow {
 	private int     p2CardsCastThisTurn          = 0;
 	private boolean p2SummonCastThisTurn         = false;
 	private boolean p2TurnOpponentFwdBroken      = false;
-	private final java.util.Set<String> p2BrokenJobsThisTurn = new java.util.HashSet<>();
+	private final java.util.Set<String> p2BrokenJobsThisTurn      = new java.util.HashSet<>();
+	private final java.util.Set<String> p2BrokenElementsThisTurn  = new java.util.HashSet<>();
+	private final java.util.Set<String> p2BrokenCategoriesThisTurn = new java.util.HashSet<>();
 	private int     p2CardsDrawnThisTurn         = 0;
 	private boolean p2DiscardedByEffectThisTurn  = false;
 	private boolean p2CausedOpponentDiscardThisTurn = false;
@@ -358,6 +362,8 @@ public class MainWindow {
 	private final java.util.Set<String> p1ElementForwardsEnteredThisTurn = new java.util.HashSet<>();
 	private final java.util.Set<String> p2ElementForwardsEnteredThisTurn = new java.util.HashSet<>();
 	private boolean p1ForwardEnteredViaWarpThisTurn = false;
+	private boolean p1TurnOpponentCharReturnedToHand = false;
+	private boolean p2TurnOpponentCharReturnedToHand = false;
 	private boolean p1NonLethalProtection   = false;
 	private boolean p2NonLethalProtection   = false;
 	private boolean p1DmgReductionDisabled  = false;
@@ -2354,6 +2360,9 @@ public class MainWindow {
 		if (hadCostReduces) refreshHandPopupIfVisible();
 		p2TurnOpponentFwdBroken = true;
 		if (card.job() != null && !card.job().isBlank()) p1BrokenJobsThisTurn.add(card.job().toLowerCase());
+		if (card.element() != null && !card.element().isBlank()) p1BrokenElementsThisTurn.add(card.element().toLowerCase());
+		if (card.category1() != null && !card.category1().isBlank()) p1BrokenCategoriesThisTurn.add(card.category1().toLowerCase());
+		if (card.category2() != null && !card.category2().isBlank()) p1BrokenCategoriesThisTurn.add(card.category2().toLowerCase());
 		if (gameState.getCurrentPlayer() == GameState.Player.P1) p1ForwardsLeftFieldThisTurn++;
 		else p2ForwardsLeftFieldThisTurn++;
 		// If the broken card was itself stolen from P2, drop its tracking entry
@@ -2438,6 +2447,9 @@ public class MainWindow {
 		if (hadCostReduces) refreshHandPopupIfVisible();
 		p1TurnOpponentFwdBroken = true;
 		if (card.job() != null && !card.job().isBlank()) p2BrokenJobsThisTurn.add(card.job().toLowerCase());
+		if (card.element() != null && !card.element().isBlank()) p2BrokenElementsThisTurn.add(card.element().toLowerCase());
+		if (card.category1() != null && !card.category1().isBlank()) p2BrokenCategoriesThisTurn.add(card.category1().toLowerCase());
+		if (card.category2() != null && !card.category2().isBlank()) p2BrokenCategoriesThisTurn.add(card.category2().toLowerCase());
 		if (gameState.getCurrentPlayer() == GameState.Player.P1) p1ForwardsLeftFieldThisTurn++;
 		else p2ForwardsLeftFieldThisTurn++;
 		refreshP2BreakLabel();
@@ -3361,6 +3373,7 @@ public class MainWindow {
 		if (topCard != null) refreshP1WarpZoneUI();
 		if (gameState.getCurrentPlayer() == GameState.Player.P1) p1ForwardsLeftFieldThisTurn++;
 		else p2ForwardsLeftFieldThisTurn++;
+		p2TurnOpponentCharReturnedToHand = true;
 		triggerAutoAbilitiesForLeavesField(card, true);
 	}
 
@@ -3425,6 +3438,7 @@ public class MainWindow {
 		refreshP2HandCountLabel();
 		if (gameState.getCurrentPlayer() == GameState.Player.P1) p1ForwardsLeftFieldThisTurn++;
 		else p2ForwardsLeftFieldThisTurn++;
+		p1TurnOpponentCharReturnedToHand = true;
 		triggerAutoAbilitiesForLeavesField(card, false);
 	}
 
@@ -3439,6 +3453,7 @@ public class MainWindow {
 		p1BackupFrozen[idx] = false;
 		if (p1BackupLabels[idx] != null) { p1BackupLabels[idx].setIcon(null); p1BackupLabels[idx].setText(null); }
 		refreshP1HandLabel();
+		p2TurnOpponentCharReturnedToHand = true;
 		triggerAutoAbilitiesForLeavesField(c, true);
 	}
 
@@ -3452,6 +3467,7 @@ public class MainWindow {
 		p2BackupStates[idx] = CardState.ACTIVE;
 		p2BackupFrozen[idx] = false;
 		if (p2BackupLabels[idx] != null) { p2BackupLabels[idx].setIcon(null); p2BackupLabels[idx].setText(null); }
+		p1TurnOpponentCharReturnedToHand = true;
 		triggerAutoAbilitiesForLeavesField(c, false);
 	}
 
@@ -5393,6 +5409,53 @@ public class MainWindow {
 					monCount = mons.stream().filter(mn -> elem.equalsIgnoreCase(mn.element())).count();
 				}
 				yield (int) ((fwdCount + bkpCount + monCount) / n);
+			}
+		case IF_IS_YOUR_TURN ->
+				(isP1 == (gameState.getCurrentPlayer() == GameState.Player.P1)) ? 1 : 0;
+		case IF_CONTROL_JOB_OR_NAME -> {
+				String job  = mod.param1();
+				String name = mod.param2();
+				boolean found = fwds.stream().anyMatch(f -> job.equalsIgnoreCase(f.job()) || name.equalsIgnoreCase(f.name()))
+						|| java.util.Arrays.stream(bkps).filter(b -> b != null)
+								.anyMatch(b -> job.equalsIgnoreCase(b.job()) || name.equalsIgnoreCase(b.name()));
+				yield found ? 1 : 0;
+			}
+		case EACH_MONSTER -> {
+				List<CardData> mons = isP1 ? p1MonsterCards : p2MonsterCards;
+				yield mons.size();
+			}
+		case IF_OPPONENT_CHARACTER_RETURNED_TO_HAND_THIS_TURN ->
+				(isP1 ? p1TurnOpponentCharReturnedToHand : p2TurnOpponentCharReturnedToHand) ? 1 : 0;
+		case IF_CONTROL_N_OR_MORE_JOB_OR_NAME -> {
+				int n = Integer.parseInt(mod.param1());
+				String[] parts = mod.param2().split("\\|", 2);
+				String job  = parts[0];
+				String name = parts.length > 1 ? parts[1] : "";
+				long count = fwds.stream()
+								.filter(f -> job.equalsIgnoreCase(f.job()) || name.equalsIgnoreCase(f.name())).count()
+						+ java.util.Arrays.stream(bkps).filter(b -> b != null
+								&& (job.equalsIgnoreCase(b.job()) || name.equalsIgnoreCase(b.name()))).count();
+				yield count >= n ? 1 : 0;
+			}
+		case EACH_CARD_DRAWN_THIS_TURN ->
+				isP1 ? p1CardsDrawnThisTurn : p2CardsDrawnThisTurn;
+		case IF_N_OR_MORE_CATEGORY_IN_BZ_AND_RFP -> {
+				int n    = Integer.parseInt(mod.param1());
+				String cat = mod.param2();
+				java.util.function.Predicate<CardData> hasCat = c ->
+						cat.equalsIgnoreCase(c.category1()) || cat.equalsIgnoreCase(c.category2());
+				long bzCount  = bz.stream().filter(hasCat).count();
+				List<CardData> rfp = isP1 ? gameState.getP1PermanentRfp() : gameState.getP2PermanentRfp();
+				long rfpCount = rfp.stream().filter(hasCat).count();
+				yield (bzCount + rfpCount) >= n ? 1 : 0;
+			}
+		case IF_OWN_ELEMENT_OR_CATEGORY_BROKEN_THIS_TURN -> {
+				String elem = mod.param1();
+				String cat  = mod.param2();
+				java.util.Set<String> elems = isP1 ? p1BrokenElementsThisTurn : p2BrokenElementsThisTurn;
+				java.util.Set<String> cats  = isP1 ? p1BrokenCategoriesThisTurn : p2BrokenCategoriesThisTurn;
+				yield (elem != null && elems.contains(elem.toLowerCase()))
+					|| (cat  != null && cats.contains(cat.toLowerCase())) ? 1 : 0;
 			}
 		case IF_OPPONENT_CONTROLS_N_MORE_THAN_ME -> {
 				int n = Integer.parseInt(mod.param1());
@@ -13923,12 +13986,15 @@ public class MainWindow {
 			p2SummonCastThisTurn = false;
 			p2TurnOpponentFwdBroken = false;
 			p2BrokenJobsThisTurn.clear();
+			p2BrokenElementsThisTurn.clear();
+			p2BrokenCategoriesThisTurn.clear();
 			p2CardsDrawnThisTurn = 0;
 			p2DiscardedByEffectThisTurn = false;
 			p2CausedOpponentDiscardThisTurn = false;
 			p2FormedPartyThisTurn = false;
 			p2ForwardsLeftFieldThisTurn = 0;
 			p2ElementForwardsEnteredThisTurn.clear();
+			p2TurnOpponentCharReturnedToHand = false;
 			int activated = 0, thawed = 0;
 
 			// Pass 1: activate DULL/BRAVE_ATTACKED cards; frozen cards are skipped
@@ -14291,6 +14357,8 @@ public class MainWindow {
 			p1SummonCastThisTurn = false;
 			p1TurnOpponentFwdBroken = false;
 			p1BrokenJobsThisTurn.clear();
+			p1BrokenElementsThisTurn.clear();
+			p1BrokenCategoriesThisTurn.clear();
 			p1CardsDrawnThisTurn = 0;
 			p1DiscardedByEffectThisTurn = false;
 			p1CausedOpponentDiscardThisTurn = false;
@@ -14298,6 +14366,7 @@ public class MainWindow {
 			p1ForwardsLeftFieldThisTurn = 0;
 			p1ElementForwardsEnteredThisTurn.clear();
 			p1ForwardEnteredViaWarpThisTurn = false;
+			p1TurnOpponentCharReturnedToHand = false;
 			for (int i = 0; i < p1MonsterCards.size(); i++) refreshP1MonsterSlot(i);
 			for (int i = 0; i < p2MonsterCards.size(); i++) refreshP2MonsterSlot(i);
 			int activated = 0, thawed = 0;

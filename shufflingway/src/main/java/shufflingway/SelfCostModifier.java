@@ -116,6 +116,29 @@ public record SelfCostModifier(
         PER_N_ELEMENT_TYPE_CONTROLLED,
         /** Flat delta (×1) if the opponent controls ≥ {@code Integer.parseInt(param1)} cards of type {@code param2} more than the controller; 0 otherwise. */
         IF_OPPONENT_CONTROLS_N_MORE_THAN_ME,
+        /** Flat delta (×1) if it is currently the controller's own turn; 0 otherwise. */
+        IF_IS_YOUR_TURN,
+        /** Flat delta (×1) if the controller controls a card with job {@code param1} OR name {@code param2}; 0 otherwise. */
+        IF_CONTROL_JOB_OR_NAME,
+        /** Scales by the number of Monster cards the controller controls. */
+        EACH_MONSTER,
+        /** Flat delta (×1) if a Character the opponent controlled was returned from the field to hand this turn; 0 otherwise. */
+        IF_OPPONENT_CHARACTER_RETURNED_TO_HAND_THIS_TURN,
+        /** Flat delta (×1) if the controller controls ≥ {@code Integer.parseInt(param1)} cards with job {@code param2-part} OR name {@code param2-part2};
+         *  param2 encoded as "job|name". */
+        IF_CONTROL_N_OR_MORE_JOB_OR_NAME,
+        /** Scales by the number of cards the controller has drawn this turn. */
+        EACH_CARD_DRAWN_THIS_TURN,
+        /**
+         * Flat delta (×1) if a card the controller controlled with element {@code param1} OR
+         * category {@code param2} was put from the field into the Break Zone this turn; 0 otherwise.
+         */
+        IF_OWN_ELEMENT_OR_CATEGORY_BROKEN_THIS_TURN,
+        /**
+         * Flat delta (×1) if the total count of cards with category {@code param2} in the controller's
+         * Break Zone plus their permanent Remove-From-Play zone is ≥ {@code Integer.parseInt(param1)}.
+         */
+        IF_N_OR_MORE_CATEGORY_IN_BZ_AND_RFP,
         /**
          * Scales by field cards the controller controls of type {@code param2}
          * ("Forward", "Backup", "Character") whose printed cost is ≥ {@code Integer.parseInt(param1)}.
