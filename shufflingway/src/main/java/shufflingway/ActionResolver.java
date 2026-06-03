@@ -82,6 +82,19 @@ public class ActionResolver {
     );
 
     /**
+     * Matches "Choose N [targets] you control and N [targets] opponent controls. [followup]"
+     * — one selection from the active player's side and one from the opponent's side.
+     */
+    private static final Pattern CHOOSE_ONE_EACH_PATTERN = Pattern.compile(
+        "(?i)Choose\\s+(?<count1>\\d+)\\s+" +
+        "(?<targets1>Forwards?|Backups?|Characters?|Monsters?)\\s+" +
+        "you\\s+control\\s+and\\s+(?<count2>\\d+)\\s+" +
+        "(?<targets2>Forwards?|Backups?|Characters?|Monsters?)\\s+" +
+        "(?:your\\s+)?opponent\\s+controls[.]?\\s+" +
+        "(?<followup>.+)"
+    );
+
+    /**
      * Normalises "Element Type or Element Type" → "Element or Element Type" so that
      * CHOOSE_CHARACTER_PATTERN's element group can capture both elements.
      * E.g. "Light Character or Dark Character" → "Light or Dark Character".
@@ -1920,6 +1933,9 @@ public class ActionResolver {
         result = tryParseDamageToCombatBlocker(effectText);
         if (result != null) return result;
 
+        result = tryParseChooseOneEach(effectText, source);
+        if (result != null) return result;
+
         result = tryParseChooseCharacter(effectText, source, xValue);
         if (result != null) return result;
 
@@ -2366,6 +2382,11 @@ public class ActionResolver {
         if (tryParseDamageToCombatBlocker(effectText)               != null) return "DamageToCombatBlocker";
 
         String normalizedEffectText = ELEM_TYPE_OR_ELEM_TYPE.matcher(effectText).replaceAll("$1 or $3 $2");
+        Matcher oneEachM = CHOOSE_ONE_EACH_PATTERN.matcher(normalizedEffectText);
+        if (oneEachM.find()) {
+            String followupName = matchedFollowupName(oneEachM.group("followup").trim(), source);
+            return "ChooseOneEach / " + (followupName != null ? followupName : "?");
+        }
         Matcher chooseM = CHOOSE_CHARACTER_PATTERN.matcher(normalizedEffectText);
         if (chooseM.find()) {
             String followup      = chooseM.group("followup").trim();
@@ -3017,6 +3038,53 @@ public class ActionResolver {
      *   <li>"Put it at the top or bottom of its owner's deck" — player chooses placement</li>
      * </ul>
      */
+    private static Consumer<GameContext> tryParseChooseOneEach(String text, CardData source) {
+        Matcher m = CHOOSE_ONE_EACH_PATTERN.matcher(text);
+        if (!m.find()) return null;
+
+        int    count1     = Integer.parseInt(m.group("count1"));
+        String targets1   = m.group("targets1");
+        String tgt1Lower  = targets1.toLowerCase();
+        boolean fwd1 = tgt1Lower.contains("forward") || tgt1Lower.contains("character");
+        boolean bak1 = tgt1Lower.contains("backup")  || tgt1Lower.contains("character");
+        boolean mon1 = tgt1Lower.contains("monster") || tgt1Lower.contains("character");
+
+        int    count2     = Integer.parseInt(m.group("count2"));
+        String targets2   = m.group("targets2");
+        String tgt2Lower  = targets2.toLowerCase();
+        boolean fwd2 = tgt2Lower.contains("forward") || tgt2Lower.contains("character");
+        boolean bak2 = tgt2Lower.contains("backup")  || tgt2Lower.contains("character");
+        boolean mon2 = tgt2Lower.contains("monster") || tgt2Lower.contains("character");
+
+        String followup  = m.group("followup").trim();
+        String logPrefix = "Choose " + count1 + " " + targets1 + " (yours) and "
+                + count2 + " " + targets2 + " (opponent)";
+
+        if (FOLLOWUP_RETURN_TO_OWNERS_HAND.matcher(followup).find()) {
+            return ctx -> {
+                ctx.logEntry(logPrefix + " — Return to owner's hand");
+                List<ForwardTarget> selfTs = selectTargets(ctx, count1, false,
+                        false, true, null, null, null, false, -1, null, -1, null,
+                        fwd1, bak1, mon1, null, null, null, null, false, null, false);
+                List<ForwardTarget> oppTs = selectTargets(ctx, count2, false,
+                        true, false, null, null, null, false, -1, null, -1, null,
+                        fwd2, bak2, mon2, null, null, null, null, false, null, false);
+                for (ForwardTarget t : selfTs) {
+                    if (t.zone() != ForwardTarget.CardZone.FORWARD) continue;
+                    if (t.isP1()) ctx.returnP1ForwardToHand(t.idx());
+                    else          ctx.returnP2ForwardToHand(t.idx());
+                }
+                for (ForwardTarget t : oppTs) {
+                    if (t.zone() != ForwardTarget.CardZone.FORWARD) continue;
+                    if (t.isP1()) ctx.returnP1ForwardToHand(t.idx());
+                    else          ctx.returnP2ForwardToHand(t.idx());
+                }
+            };
+        }
+
+        return null;
+    }
+
     private static Consumer<GameContext> tryParseChooseCharacter(String text, CardData source, int xValue) {
         text = ELEM_TYPE_OR_ELEM_TYPE.matcher(text).replaceAll("$1 or $3 $2");
         Matcher m = CHOOSE_CHARACTER_PATTERN.matcher(text);

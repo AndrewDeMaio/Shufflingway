@@ -5593,6 +5593,10 @@ public class MainWindow {
 		if ((cr.yourTurnOnly() || cr.mainPhaseOnly()) && !isP1Turn) return false;
 
 		if (cr.requiresNoForwards() && !p1ForwardCards.isEmpty()) return false;
+		if (cr.requiresAForward()   &&  p1ForwardCards.isEmpty()) return false;
+
+		if (cr.maxOpponentHandSize() >= 0
+				&& gameState.getP2Hand().size() > cr.maxOpponentHandSize()) return false;
 
 		if (!cr.requiredBZTypes().isEmpty()) {
 			List<CardData> bz = gameState.getP1BreakZone();

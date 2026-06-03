@@ -387,6 +387,21 @@ public record CardData(
         "(?i)You\\s+can\\s+only\\s+cast\\s+\\S[^.]+?\\s+if\\s+you\\s+don(?:'t|t)\\s+control\\s+any\\s+Forwards[.!]?"
     );
 
+    /** "You can only cast X if you have a Forward." (on the field; not in Break Zone) */
+    private static final Pattern CAST_REQUIRES_A_FORWARD = Pattern.compile(
+        "(?i)You\\s+can\\s+only\\s+cast\\s+\\S[^.]+?\\s+if\\s+you\\s+have\\s+a\\s+Forward" +
+        "(?!\\s+in\\s+your\\s+Break\\s+Zone)[.!]?"
+    );
+
+    /**
+     * "You can only cast X if your opponent has N cards or less in their hand."
+     * Group {@code count} — the maximum allowed hand size.
+     */
+    private static final Pattern CAST_MAX_OPPONENT_HAND = Pattern.compile(
+        "(?i)You\\s+can\\s+only\\s+cast\\s+\\S[^.]+?\\s+if\\s+your\\s+opponent\\s+has\\s+" +
+        "(?<count>\\d+)\\s+cards?\\s+or\\s+less\\s+in\\s+their\\s+hand[.!]?"
+    );
+
     /**
      * "You can only cast X if you have a Forward, Backup, Monster, and a Summon in your Break Zone …"
      * Group {@code types} captures the word list before "in your Break Zone".
@@ -415,6 +430,7 @@ public record CardData(
         boolean mainPhaseOnly    = CAST_MAIN_PHASE_ONLY.matcher(textEn).find();
         boolean opponentTurnOnly = CAST_OPPONENT_TURN_ONLY.matcher(textEn).find();
         boolean requiresNoFwds   = CAST_REQUIRES_NO_FORWARDS.matcher(textEn).find();
+        boolean requiresAFwd     = CAST_REQUIRES_A_FORWARD.matcher(textEn).find();
 
         java.util.Set<String> requiredBZTypes = java.util.Set.of();
         Matcher bzM = CAST_REQUIRES_BZ_TYPES.matcher(textEn);
@@ -431,12 +447,17 @@ public record CardData(
         Matcher sumM = CAST_MIN_BZ_RFP_SUMMONS.matcher(textEn);
         if (sumM.find()) minBZAndRfpSummons = Integer.parseInt(sumM.group(1));
 
+        int maxOpponentHand = -1;
+        Matcher oppHandM = CAST_MAX_OPPONENT_HAND.matcher(textEn);
+        if (oppHandM.find()) maxOpponentHand = Integer.parseInt(oppHandM.group("count"));
+
         if (!yourTurnOnly && !mainPhaseOnly && !opponentTurnOnly && !requiresNoFwds
-                && requiredBZTypes.isEmpty() && minBZAndRfpSummons == 0) {
+                && !requiresAFwd && requiredBZTypes.isEmpty()
+                && minBZAndRfpSummons == 0 && maxOpponentHand < 0) {
             return null;
         }
         return new CastRestriction(yourTurnOnly, mainPhaseOnly, opponentTurnOnly,
-                requiresNoFwds, requiredBZTypes, minBZAndRfpSummons);
+                requiresNoFwds, requiresAFwd, requiredBZTypes, minBZAndRfpSummons, maxOpponentHand);
     }
 
     /**
