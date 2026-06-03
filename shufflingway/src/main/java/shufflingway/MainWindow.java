@@ -10868,6 +10868,36 @@ public class MainWindow {
 				}
 			}
 
+			@Override public void applyMassFieldKeywordGrant(java.util.EnumSet<CardData.Trait> traits,
+					boolean inclForwards, boolean inclMonsters,
+					boolean opponentOnly, boolean selfOnly,
+					String element, int costVal, String costCmp, String category) {
+				boolean touchP1 = isP1 ? !opponentOnly : !selfOnly;
+				boolean touchP2 = isP1 ? !selfOnly     : !opponentOnly;
+				if (touchP1 && inclForwards) {
+					for (int i = 0; i < p1ForwardCards.size(); i++) {
+						CardData c = p1Forward(i);
+						if (element != null && !c.containsElement(element)) continue;
+						if (!meetsCostConstraint(c.cost(), costVal, costCmp)) continue;
+						if (!CardFilters.meetsCategoryFilter(c, category)) continue;
+						p1ForwardTempTraits.get(i).addAll(traits);
+						logEntry(c.name() + " gains " + traits + " until end of turn");
+						refreshP1ForwardSlot(i);
+					}
+				}
+				if (touchP2 && inclForwards) {
+					for (int i = 0; i < p2ForwardCards.size(); i++) {
+						CardData c = p2ForwardCards.get(i);
+						if (element != null && !c.containsElement(element)) continue;
+						if (!meetsCostConstraint(c.cost(), costVal, costCmp)) continue;
+						if (!CardFilters.meetsCategoryFilter(c, category)) continue;
+						p2ForwardTempTraits.get(i).addAll(traits);
+						logEntry("[P2] " + c.name() + " gains " + traits + " until end of turn");
+						refreshP2ForwardSlot(i);
+					}
+				}
+			}
+
 			@Override public void addEndOfTurnEffect(Consumer<GameContext> effect) {
 				endOfTurnEffects.add(effect);
 			}

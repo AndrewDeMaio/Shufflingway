@@ -71,7 +71,7 @@ public class ActionResolver {
         "(?:\\s+of\\s+power\\s+(?<power>\\d+)(?:\\s+or\\s+(?<powercmp>less|more))?)?" +
         "(?:\\s+(?<control>(?:your\\s+)?opponent\\s+controls|you\\s+control))?" +
         "(?:\\s+other\\s+than\\s+(?:Card\\s+Name\\s+)?(?<excludename>\\S+(?:\\s+\\([^)]+\\))?))?"+
-        "(?:\\s+(?<zone>(?:in|from)\\s+your(?:\\s+opponent(?:'s)?)?\\s+Break\\s+Zone))?" +
+        "(?:\\s+(?<zone>(?:in|from)\\s+(?:your(?:\\s+opponent(?:'s)?)?|the)\\s+Break\\s+Zone))?" +
         // "blocking [CardName]" or "blocking a [Job] [JobName]" — targets the blocker of the named card
         "(?:\\s+blocking\\s+" +
             "(?:(?:a\\s+(?:Job\\s+)?(?<blockingjob>[^.,]+?)(?=\\s*[.,]))" +
@@ -1258,6 +1258,23 @@ public class ActionResolver {
     );
 
     /**
+     * Matches "All [the] [element] [Category X] [targets] [of cost N [or less|more]]
+     * [you control | opponent controls] gain Keyword[, Keyword2, ...] until end of turn."
+     * Groups: {@code element}, {@code category}, {@code targets}, {@code cost}, {@code costcmp},
+     * {@code control}, {@code keywords}.
+     */
+    private static final Pattern ALL_FIELD_KEYWORD_GRANT_PATTERN = Pattern.compile(
+        "(?i)All\\s+(?:the\\s+)?" +
+        "(?:(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?" +
+        "(?:Category\\s+(?<category>\\S+)\\s+)?" +
+        "(?<targets>Forwards?(?:\\s+and\\s+Monsters?)?|Backups?|Characters?)" +
+        "(?:\\s+of\\s+cost\\s+(?<cost>\\d+)(?:\\s+or\\s+(?<costcmp>less|more))?)?" +
+        "(?:\\s+(?<control>(?:your\\s+)?opponent\\s+controls?|you\\s+control))?" +
+        "\\s+gains?\\s+(?<keywords>(?:(?:Haste|First\\s+Strike|Brave)(?:\\s*[,]?\\s*(?:and\\s+)?)?)+)" +
+        "\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn[.!]?"
+    );
+
+    /**
      * Matches "Draw N card(s)[, then discard M card(s)]".
      * <ul>
      *   <li>Group 1 — number of cards to draw</li>
@@ -1712,6 +1729,9 @@ public class ActionResolver {
         result = tryParseAllFieldPowerBoost(effectText);
         if (result != null) return result;
 
+        result = tryParseAllFieldKeywordGrant(effectText);
+        if (result != null) return result;
+
         result = tryParseReturnAllToHand(effectText);
         if (result != null) return result;
 
@@ -2104,6 +2124,7 @@ public class ActionResolver {
         if (tryParseSelectNumber(effectText, source) != null)               return "SelectNumber";
         if (tryParseAllFieldEffect(effectText) != null)                     return "AllFieldEffect";
         if (tryParseAllFieldPowerBoost(effectText) != null)                 return "AllFieldPowerBoost";
+        if (tryParseAllFieldKeywordGrant(effectText) != null)               return "AllFieldKeywordGrant";
         if (tryParseStandalonePowerBoostAndAttackTrigger(effectText, source) != null) return "StandalonePowerBoostAndAttackTrigger";
         if (tryParseStandalonePowerBoostUntil(effectText, source) != null)  return "StandalonePowerBoostUntil";
         if (tryParseStandaloneDoublePowerUntil(effectText, source) != null) return "StandaloneDoublePowerUntil";
@@ -4646,6 +4667,46 @@ public class ActionResolver {
         return ctx -> {
             ctx.logEntry("Effect: " + logMsg);
             ctx.applyMassFieldPowerBoost(amount, inclForwards, inclMonsters,
+                    opponentOnly, selfOnly, element, costVal, costCmp, category);
+        };
+    }
+
+    /**
+     * Parses "All [the] [element] [targets] [of cost N or less/more] [you control] gain
+     * Keyword[, Keyword2, ...] until end of turn."
+     */
+    private static Consumer<GameContext> tryParseAllFieldKeywordGrant(String text) {
+        Matcher m = ALL_FIELD_KEYWORD_GRANT_PATTERN.matcher(text);
+        if (!m.find()) return null;
+
+        String element  = m.group("element");
+        String category = m.group("category");
+        String targets  = m.group("targets");
+        String tgtLower = targets.toLowerCase();
+        boolean inclForwards = tgtLower.contains("forward") || tgtLower.contains("character");
+        boolean inclMonsters = tgtLower.contains("monster") || tgtLower.contains("character");
+
+        String costStr = m.group("cost");
+        String costCmp = m.group("costcmp");
+        int    costVal = costStr != null ? Integer.parseInt(costStr) : -1;
+
+        String control       = m.group("control");
+        boolean opponentOnly = control != null && !control.toLowerCase().contains("you control");
+        boolean selfOnly     = control != null && control.toLowerCase().contains("you control");
+
+        EnumSet<CardData.Trait> traits = parseTraits(m.group("keywords"));
+        if (traits.isEmpty()) return null;
+
+        String elemLabel    = element != null ? element + " " : "";
+        String catLabel     = category != null ? "Category " + category + " " : "";
+        String costLabel    = costVal >= 0 ? " of cost " + costVal + (costCmp != null ? " or " + costCmp : "") : "";
+        String controlLabel = opponentOnly ? " (opponent)" : selfOnly ? " (yours)" : "";
+        String traitNames   = traitNamesOnly(traits);
+        String logMsg = "All " + elemLabel + catLabel + targets + costLabel + controlLabel + " gain " + traitNames + " until end of turn";
+
+        return ctx -> {
+            ctx.logEntry("Effect: " + logMsg);
+            ctx.applyMassFieldKeywordGrant(traits, inclForwards, inclMonsters,
                     opponentOnly, selfOnly, element, costVal, costCmp, category);
         };
     }

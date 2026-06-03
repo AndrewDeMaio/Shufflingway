@@ -953,6 +953,15 @@ public interface GameContext {
             String element, int costVal, String costCmp, String category);
 
     /**
+     * Grants {@code traits} until end of turn to every matching Forward (and Monster when
+     * {@code inclMonsters} is true) that satisfies the element, cost, and category filters.
+     */
+    void applyMassFieldKeywordGrant(java.util.EnumSet<CardData.Trait> traits,
+            boolean inclForwards, boolean inclMonsters,
+            boolean opponentOnly, boolean selfOnly,
+            String element, int costVal, String costCmp, String category);
+
+    /**
      * Returns all {@link FieldAbility} instances currently active — that is, belonging to
      * any card (Forward, Backup, or Monster) on either player's field.
      *
