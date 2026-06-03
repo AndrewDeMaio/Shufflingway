@@ -785,6 +785,26 @@ public class ActionResolver {
         "(?:\\s+from\\s+(?:his/her|his|her|their)\\s+hand)?[.!]?"
     );
 
+    /** Matches "Each player discards N card(s) [from his/her/their hand]". Group {@code count} = N. */
+    private static final Pattern EACH_PLAYER_DISCARD = Pattern.compile(
+        "(?i)each\\s+player\\s+discards?\\s+(?<count>\\d+)\\s+cards?" +
+        "(?:\\s+from\\s+(?:his/her|his|her|their)\\s+hand)?[.!]?"
+    );
+
+    /**
+     * Matches the compound form "Each player discards N cards. If you control [Card Name (X)] /
+     * Card Name X, your opponent discards M more cards [from his/her/their hand]".
+     * Groups: {@code count}, {@code bracketname} or {@code plainname}, {@code extra}.
+     */
+    private static final Pattern EACH_PLAYER_DISCARD_WITH_CONDITIONAL = Pattern.compile(
+        "(?i)each\\s+player\\s+discards?\\s+(?<count>\\d+)\\s+cards?" +
+        "(?:\\s+from\\s+(?:his/her|his|her|their)\\s+hand)?[.!]?\\s+" +
+        "if\\s+you\\s+control\\s+" +
+        "(?:\\[Card\\s+Name\\s+\\((?<bracketname>[^)]+)\\)\\]|Card\\s+Name\\s+(?<plainname>\\S+))" +
+        ",\\s+your\\s+opponent\\s+discards?\\s+(?<extra>\\d+)\\s+more\\s+cards?" +
+        "(?:\\s+from\\s+(?:his/her|his|her|their)\\s+hand)?[.!]?"
+    );
+
     /** Matches "Discard your hand. Then, draw N card(s)." Group 1 = draw count. */
     private static final Pattern DISCARD_HAND_THEN_DRAW = Pattern.compile(
         "(?i)Discard\\s+your\\s+hand[.,]?\\s+[Tt]hen[,]?\\s+draw\\s+(\\d+)\\s+cards?[.!]?\\s*$"
@@ -2000,6 +2020,9 @@ public class ActionResolver {
         result = tryParseOpponentRandomDiscard(effectText);
         if (result != null) return result;
 
+        result = tryParseEachPlayerDiscard(effectText);
+        if (result != null) return result;
+
         result = tryParseOpponentDiscard(effectText);
         if (result != null) return result;
 
@@ -2193,6 +2216,7 @@ public class ActionResolver {
         if (tryParseRemoveNamedFromGame(effectText, source)   != null) return "RemoveNamedFromGame";
         if (tryParseOpponentDrawThenRandomDiscard(effectText)  != null) return "OpponentDrawThenRandomDiscard";
         if (tryParseOpponentRandomDiscard(effectText)         != null) return "OpponentRandomDiscard";
+        if (tryParseEachPlayerDiscard(effectText)              != null) return "EachPlayerDiscard";
         if (tryParseOpponentDiscard(effectText)               != null) return "OpponentDiscard";
         if (tryParseDrawCards(effectText)                     != null) return "DrawCards";
         if (tryParseDiscardHandThenDraw(effectText)           != null) return "DiscardHandThenDraw";
@@ -2393,6 +2417,7 @@ public class ActionResolver {
         if (tryParseRemoveNamedFromGame(effectText, source) != null)        return "RemoveNamedFromGame";
         if (tryParseOpponentDrawThenRandomDiscard(effectText) != null)      return "OpponentDrawThenRandomDiscard";
         if (tryParseOpponentRandomDiscard(effectText) != null)              return "OpponentRandomDiscard";
+        if (tryParseEachPlayerDiscard(effectText) != null)                  return "EachPlayerDiscard";
         if (tryParseOpponentDiscard(effectText) != null)                    return "OpponentDiscard";
         if (tryParseDrawCards(effectText) != null)                          return "DrawCards";
         if (tryParseDiscardHandThenDraw(effectText) != null)                return "DiscardHandThenDraw";
@@ -4902,6 +4927,42 @@ public class ActionResolver {
         int count = Integer.parseInt(m.group(1));
         return ctx -> {
             ctx.logEntry("Effect: Opponent discards " + count + " card(s)");
+            ctx.forceOpponentDiscard(count);
+        };
+    }
+
+    /** Parses "Each player discards N card(s) [from his/her/their hand]" — both players discard. */
+    private static Consumer<GameContext> tryParseEachPlayerDiscard(String text) {
+        String stripped = stripRestrictionSentences(text);
+        if (stripped.isEmpty()) return null;
+
+        // Compound form: "each player discards N. If you control [Card Name (X)], opponent discards M more."
+        Matcher compM = EACH_PLAYER_DISCARD_WITH_CONDITIONAL.matcher(stripped);
+        if (compM.matches()) {
+            int count        = Integer.parseInt(compM.group("count"));
+            String cardName  = compM.group("bracketname") != null
+                               ? compM.group("bracketname") : compM.group("plainname");
+            ControlCondition cc = new ControlCondition(
+                    List.of(cardName), 0, false, null, null, null, null, 0, List.of());
+            int extra = Integer.parseInt(compM.group("extra"));
+            return ctx -> {
+                ctx.logEntry("Effect: Each player discards " + count + " card(s)");
+                ctx.selfDiscard(count);
+                ctx.forceOpponentDiscard(count);
+                if (ctx.controlConditionMet(cc)) {
+                    ctx.logEntry("Effect: Opponent discards " + extra + " more (controlling " + cardName + ")");
+                    ctx.forceOpponentDiscard(extra);
+                }
+            };
+        }
+
+        // Simple form: "each player discards N card(s) [from his/her/their hand]"
+        Matcher m = EACH_PLAYER_DISCARD.matcher(stripped);
+        if (!m.matches()) return null;
+        int count = Integer.parseInt(m.group("count"));
+        return ctx -> {
+            ctx.logEntry("Effect: Each player discards " + count + " card(s)");
+            ctx.selfDiscard(count);
             ctx.forceOpponentDiscard(count);
         };
     }
