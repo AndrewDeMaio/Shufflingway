@@ -1719,6 +1719,11 @@ public record CardData(
         "(?i)^.+?\\s+has\\s+all\\s+the\\s+jobs\\.?$"
     );
 
+    /** Matches "[CardName] has the Jobs of the Forwards you control." as a field ability. */
+    private static final Pattern HAS_JOBS_OF_FORWARDS_PATTERN = Pattern.compile(
+        "(?i)^.+?\\s+has\\s+the\\s+Jobs\\s+of\\s+the\\s+Forwards\\s+you\\s+control\\.?$"
+    );
+
     /**
      * Matches "[CardName] is also Card Name X [and Card Name Y ...] in all situations."
      * Group {@code names} captures the raw "Card Name A [and Card Name B]" list.
@@ -2156,6 +2161,40 @@ public record CardData(
     public boolean hasAllJobs() {
         for (FieldAbility fa : fieldAbilities())
             if (HAS_ALL_JOBS_PATTERN.matcher(fa.effectText()).matches()) return true;
+        return false;
+    }
+
+    /**
+     * Returns {@code true} if any field ability on this card matches
+     * "[name] has the Jobs of the Forwards you control."
+     */
+    public boolean hasJobsOfControlledForwards() {
+        for (FieldAbility fa : fieldAbilities())
+            if (HAS_JOBS_OF_FORWARDS_PATTERN.matcher(fa.effectText()).matches()) return true;
+        return false;
+    }
+
+    /**
+     * Returns all individual jobs for this card.  Multi-job cards store their jobs as a
+     * slash-separated string (e.g. {@code "Warrior/Rebel"}); this method splits on {@code "/"}
+     * and trims each component.  Returns an empty list when the card has no job.
+     */
+    public java.util.List<String> jobs() {
+        if (job == null || job.isBlank()) return java.util.List.of();
+        String[] parts = job.split("/");
+        java.util.List<String> result = new java.util.ArrayList<>(parts.length);
+        for (String p : parts) { String t = p.trim(); if (!t.isEmpty()) result.add(t); }
+        return java.util.List.copyOf(result);
+    }
+
+    /**
+     * Returns {@code true} if {@code jobName} matches any of this card's jobs (case-insensitive).
+     * Handles slash-separated multi-job values such as {@code "Warrior/Rebel"}.
+     */
+    public boolean hasJob(String jobName) {
+        if (jobName == null || job == null || job.isBlank()) return false;
+        for (String j : job.split("/"))
+            if (j.trim().equalsIgnoreCase(jobName)) return true;
         return false;
     }
 

@@ -40,6 +40,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 
 import javax.imageio.ImageIO;
 import javax.swing.BorderFactory;
@@ -2376,7 +2377,7 @@ public class MainWindow {
 		if (hadGrants) for (int i = 0; i < p1MonsterCards.size(); i++) refreshP1MonsterSlot(i);
 		if (hadCostReduces) refreshHandPopupIfVisible();
 		p2TurnOpponentFwdBroken = true;
-		if (card.job() != null && !card.job().isBlank()) p1BrokenJobsThisTurn.add(card.job().toLowerCase());
+		for (String j : card.jobs()) p1BrokenJobsThisTurn.add(j.toLowerCase());
 		if (card.element() != null && !card.element().isBlank()) p1BrokenElementsThisTurn.add(card.element().toLowerCase());
 		if (card.category1() != null && !card.category1().isBlank()) p1BrokenCategoriesThisTurn.add(card.category1().toLowerCase());
 		if (card.category2() != null && !card.category2().isBlank()) p1BrokenCategoriesThisTurn.add(card.category2().toLowerCase());
@@ -2463,7 +2464,7 @@ public class MainWindow {
 		if (hadGrants) for (int i = 0; i < p2MonsterCards.size(); i++) refreshP2MonsterSlot(i);
 		if (hadCostReduces) refreshHandPopupIfVisible();
 		p1TurnOpponentFwdBroken = true;
-		if (card.job() != null && !card.job().isBlank()) p2BrokenJobsThisTurn.add(card.job().toLowerCase());
+		for (String j : card.jobs()) p2BrokenJobsThisTurn.add(j.toLowerCase());
 		if (card.element() != null && !card.element().isBlank()) p2BrokenElementsThisTurn.add(card.element().toLowerCase());
 		if (card.category1() != null && !card.category1().isBlank()) p2BrokenCategoriesThisTurn.add(card.category1().toLowerCase());
 		if (card.category2() != null && !card.category2().isBlank()) p2BrokenCategoriesThisTurn.add(card.category2().toLowerCase());
@@ -5141,15 +5142,15 @@ public class MainWindow {
 			}
 			case EACH_FORWARD_WITH_JOB -> {
 				String job = mod.param1();
-				yield (int) (fwds.stream().filter(f -> job.equalsIgnoreCase(f.job())).count()
-						+ java.util.Arrays.stream(bkps).filter(b -> b != null && job.equalsIgnoreCase(b.job())).count());
+				yield (int) (fwds.stream().filter(f -> f.hasJob(job)).count()
+						+ java.util.Arrays.stream(bkps).filter(b -> b != null && b.hasJob(job)).count());
 			}
 			case EACH_FORWARD_WITH_JOB_OR_NAME -> {
 				String job  = mod.param1();
 				String name = mod.param2();
-				yield (int) (fwds.stream().filter(f -> job.equalsIgnoreCase(f.job()) || name.equalsIgnoreCase(f.name())).count()
+				yield (int) (fwds.stream().filter(f -> f.hasJob(job) || name.equalsIgnoreCase(f.name())).count()
 						+ java.util.Arrays.stream(bkps).filter(b -> b != null
-								&& (job.equalsIgnoreCase(b.job()) || name.equalsIgnoreCase(b.name()))).count());
+								&& (b.hasJob(job) || name.equalsIgnoreCase(b.name()))).count());
 			}
 			case EACH_DAMAGE_RECEIVED ->
 				dmg.size();
@@ -5306,7 +5307,7 @@ public class MainWindow {
 				String cat      = catType[0];
 				String type     = catType.length > 1 ? catType[1] : "Forward";
 				String excluded = mod.param2();
-				java.util.function.Predicate<CardData> matches = c ->
+				Predicate<CardData> matches = c ->
 						(cat.equalsIgnoreCase(c.category1()) || cat.equalsIgnoreCase(c.category2()))
 						&& !c.containsElement(excluded);
 				boolean found = false;
@@ -5345,8 +5346,8 @@ public class MainWindow {
 		case IF_CONTROL_N_OR_MORE_JOB -> {
 				int n    = Integer.parseInt(mod.param1());
 				String job = mod.param2();
-				long count = fwds.stream().filter(f -> job.equalsIgnoreCase(f.job())).count()
-						+ java.util.Arrays.stream(bkps).filter(b -> b != null && job.equalsIgnoreCase(b.job())).count();
+				long count = fwds.stream().filter(f -> f.hasJob(job)).count()
+						+ java.util.Arrays.stream(bkps).filter(b -> b != null && b.hasJob(job)).count();
 				yield count >= n ? 1 : 0;
 			}
 		case IF_ELEMENT_FORWARD_ENTERED_FIELD_THIS_TURN -> {
@@ -5374,7 +5375,7 @@ public class MainWindow {
 		case IF_N_OR_MORE_JOB_IN_BZ -> {
 				int n    = Integer.parseInt(mod.param1());
 				String job = mod.param2();
-				long count = bz.stream().filter(c -> job.equalsIgnoreCase(c.job())).count();
+				long count = bz.stream().filter(c -> c.hasJob(job)).count();
 				yield count >= n ? 1 : 0;
 			}
 		case IF_RECEIVED_EXACTLY_N_DAMAGE -> {
@@ -5449,9 +5450,9 @@ public class MainWindow {
 		case IF_CONTROL_JOB_OR_NAME -> {
 				String job  = mod.param1();
 				String name = mod.param2();
-				boolean found = fwds.stream().anyMatch(f -> job.equalsIgnoreCase(f.job()) || name.equalsIgnoreCase(f.name()))
+				boolean found = fwds.stream().anyMatch(f -> f.hasJob(job) || name.equalsIgnoreCase(f.name()))
 						|| java.util.Arrays.stream(bkps).filter(b -> b != null)
-								.anyMatch(b -> job.equalsIgnoreCase(b.job()) || name.equalsIgnoreCase(b.name()));
+								.anyMatch(b -> b.hasJob(job) || name.equalsIgnoreCase(b.name()));
 				yield found ? 1 : 0;
 			}
 		case EACH_MONSTER -> {
@@ -5466,9 +5467,9 @@ public class MainWindow {
 				String job  = parts[0];
 				String name = parts.length > 1 ? parts[1] : "";
 				long count = fwds.stream()
-								.filter(f -> job.equalsIgnoreCase(f.job()) || name.equalsIgnoreCase(f.name())).count()
+								.filter(f -> f.hasJob(job) || name.equalsIgnoreCase(f.name())).count()
 						+ java.util.Arrays.stream(bkps).filter(b -> b != null
-								&& (job.equalsIgnoreCase(b.job()) || name.equalsIgnoreCase(b.name()))).count();
+								&& (b.hasJob(job) || name.equalsIgnoreCase(b.name()))).count();
 				yield count >= n ? 1 : 0;
 			}
 		case EACH_CARD_DRAWN_THIS_TURN ->
@@ -5476,7 +5477,7 @@ public class MainWindow {
 		case IF_N_OR_MORE_CATEGORY_IN_BZ_AND_RFP -> {
 				int n    = Integer.parseInt(mod.param1());
 				String cat = mod.param2();
-				java.util.function.Predicate<CardData> hasCat = c ->
+				Predicate<CardData> hasCat = c ->
 						cat.equalsIgnoreCase(c.category1()) || cat.equalsIgnoreCase(c.category2());
 				long bzCount  = bz.stream().filter(hasCat).count();
 				List<CardData> rfp = isP1 ? gameState.getP1PermanentRfp() : gameState.getP2PermanentRfp();
@@ -5519,17 +5520,17 @@ public class MainWindow {
 				String elem = parts[0];
 				String type = parts.length > 1 ? parts[1] : "Character";
 				List<CardData> mons = isP1 ? p1MonsterCards : p2MonsterCards;
-				java.util.function.Predicate<CardData> fwdPred = f ->
-						job.equalsIgnoreCase(f.job())
+				Predicate<CardData> fwdPred = f ->
+						f.hasJob(job)
 						|| (("Forward".equalsIgnoreCase(type) || "Character".equalsIgnoreCase(type))
 							&& elem.equalsIgnoreCase(f.element()));
-				java.util.function.Predicate<CardData> bkpPred = b ->
-						job.equalsIgnoreCase(b.job())
+				Predicate<CardData> bkpPred = b ->
+						b.hasJob(job)
 						|| (("Backup".equalsIgnoreCase(type) || "Character".equalsIgnoreCase(type))
 							&& elem.equalsIgnoreCase(b.element()));
 				yield (int) (fwds.stream().filter(fwdPred).count()
 						+ java.util.Arrays.stream(bkps).filter(b -> b != null).filter(bkpPred).count()
-						+ mons.stream().filter(mn -> job.equalsIgnoreCase(mn.job())
+						+ mons.stream().filter(mn -> mn.hasJob(job)
 								|| ("Monster".equalsIgnoreCase(type) && elem.equalsIgnoreCase(mn.element()))).count());
 			}
 		};
@@ -5565,7 +5566,7 @@ public class MainWindow {
 	private int countForwardsWithJob(String job, boolean isP1) {
 		int count = 0;
 		for (CardData fwd : (isP1 ? p1ForwardCards : p2ForwardCards))
-			if (job.equalsIgnoreCase(fwd.job())) count++;
+			if (fwd.hasJob(job)) count++;
 		return count;
 	}
 
@@ -6151,7 +6152,7 @@ public class MainWindow {
 		gameState.removeFromHand(cardHandIdx);
 		activeCostReductions.removeIf(m -> m.matches(card));
 		p1CardsCastThisTurn++;
-		if (card.job() != null) p1CastJobsThisTurn.add(card.job().toLowerCase());
+		for (String j : card.jobs()) p1CastJobsThisTurn.add(j.toLowerCase());
 		p1CastNamesThisTurn.add(card.name().toLowerCase());
 		if (card.isSummon()) {
 			p1SummonCastThisTurn = true;
@@ -9224,7 +9225,7 @@ public class MainWindow {
 							if (!meetsElementExclusion(card, excludeElement)) continue;
 							if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
 							if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
-							if (!meetsJobFilter(card, jobFilter)) continue;
+							if (!meetsJobFilter(card, jobFilter, p1ForwardCards)) continue;
 							if (!meetsCardNameFilter(card, cardNameFilter)) continue;
 							if (!meetsCategoryFilter(card, categoryFilter)) continue;
 							if (excludeName != null && excludeName.equalsIgnoreCase(card.name())) continue;
@@ -9243,7 +9244,7 @@ public class MainWindow {
 							if (element != null && !p1BackupCards[i].containsElement(element)) continue;
 							if (!meetsCostConstraint(p1BackupCards[i].cost(), costVal, costCmp)) continue;
 							if (!meetsPowerConstraint(p1BackupCards[i].power(), powerVal, powerCmp)) continue;
-							if (!meetsJobFilter(p1BackupCards[i], jobFilter)) continue;
+							if (!meetsJobFilter(p1BackupCards[i], jobFilter, p1ForwardCards)) continue;
 							if (!meetsCardNameFilter(p1BackupCards[i], cardNameFilter)) continue;
 							if (!meetsCategoryFilter(p1BackupCards[i], categoryFilter)) continue;
 							if (excludeName != null && excludeName.equalsIgnoreCase(p1BackupCards[i].name())) continue;
@@ -9258,7 +9259,7 @@ public class MainWindow {
 							if (!meetsElementExclusion(card, excludeElement)) continue;
 							if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
 							if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
-							if (!meetsJobFilter(card, jobFilter)) continue;
+							if (!meetsJobFilter(card, jobFilter, p1ForwardCards)) continue;
 							if (!meetsCardNameFilter(card, cardNameFilter)) continue;
 							if (!meetsCategoryFilter(card, categoryFilter)) continue;
 							if (excludeName != null && excludeName.equalsIgnoreCase(card.name())) continue;
@@ -9276,7 +9277,7 @@ public class MainWindow {
 							if (!meetsElementExclusion(card, excludeElement)) continue;
 							if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
 							if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
-							if (!meetsJobFilter(card, jobFilter)) continue;
+							if (!meetsJobFilter(card, jobFilter, p2ForwardCards)) continue;
 							if (!meetsCardNameFilter(card, cardNameFilter)) continue;
 							if (!meetsCategoryFilter(card, categoryFilter)) continue;
 							if (excludeName != null && excludeName.equalsIgnoreCase(card.name())) continue;
@@ -9295,7 +9296,7 @@ public class MainWindow {
 							if (element != null && !p2BackupCards[i].containsElement(element)) continue;
 							if (!meetsCostConstraint(p2BackupCards[i].cost(), costVal, costCmp)) continue;
 							if (!meetsPowerConstraint(p2BackupCards[i].power(), powerVal, powerCmp)) continue;
-							if (!meetsJobFilter(p2BackupCards[i], jobFilter)) continue;
+							if (!meetsJobFilter(p2BackupCards[i], jobFilter, p2ForwardCards)) continue;
 							if (!meetsCardNameFilter(p2BackupCards[i], cardNameFilter)) continue;
 							if (!meetsCategoryFilter(p2BackupCards[i], categoryFilter)) continue;
 							if (excludeName != null && excludeName.equalsIgnoreCase(p2BackupCards[i].name())) continue;
@@ -9310,7 +9311,7 @@ public class MainWindow {
 							if (!meetsElementExclusion(card, excludeElement)) continue;
 							if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
 							if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
-							if (!meetsJobFilter(card, jobFilter)) continue;
+							if (!meetsJobFilter(card, jobFilter, p2ForwardCards)) continue;
 							if (!meetsCardNameFilter(card, cardNameFilter)) continue;
 							if (!meetsCategoryFilter(card, categoryFilter)) continue;
 							if (excludeName != null && excludeName.equalsIgnoreCase(card.name())) continue;
@@ -9331,7 +9332,7 @@ public class MainWindow {
 							if (!meetsElementExclusion(card, excludeElement)) continue;
 							if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
 							if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
-							if (!meetsJobFilter(card, jobFilter)) continue;
+							if (!meetsJobFilter(card, jobFilter, p2ForwardCards)) continue;
 							if (!meetsCardNameFilter(card, cardNameFilter)) continue;
 							if (!meetsCategoryFilter(card, categoryFilter)) continue;
 							if (excludeName != null && excludeName.equalsIgnoreCase(card.name())) continue;
@@ -9350,7 +9351,7 @@ public class MainWindow {
 							if (element != null && !p2BackupCards[i].containsElement(element)) continue;
 							if (!meetsCostConstraint(p2BackupCards[i].cost(), costVal, costCmp)) continue;
 							if (!meetsPowerConstraint(p2BackupCards[i].power(), powerVal, powerCmp)) continue;
-							if (!meetsJobFilter(p2BackupCards[i], jobFilter)) continue;
+							if (!meetsJobFilter(p2BackupCards[i], jobFilter, p2ForwardCards)) continue;
 							if (!meetsCardNameFilter(p2BackupCards[i], cardNameFilter)) continue;
 							if (!meetsCategoryFilter(p2BackupCards[i], categoryFilter)) continue;
 							if (excludeName != null && excludeName.equalsIgnoreCase(p2BackupCards[i].name())) continue;
@@ -9365,7 +9366,7 @@ public class MainWindow {
 							if (!meetsElementExclusion(card, excludeElement)) continue;
 							if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
 							if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
-							if (!meetsJobFilter(card, jobFilter)) continue;
+							if (!meetsJobFilter(card, jobFilter, p2ForwardCards)) continue;
 							if (!meetsCardNameFilter(card, cardNameFilter)) continue;
 							if (!meetsCategoryFilter(card, categoryFilter)) continue;
 							if (excludeName != null && excludeName.equalsIgnoreCase(card.name())) continue;
@@ -9385,7 +9386,7 @@ public class MainWindow {
 							if (!meetsElementExclusion(card, excludeElement)) continue;
 							if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
 							if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
-							if (!meetsJobFilter(card, jobFilter)) continue;
+							if (!meetsJobFilter(card, jobFilter, p1ForwardCards)) continue;
 							if (!meetsCardNameFilter(card, cardNameFilter)) continue;
 							if (!meetsCategoryFilter(card, categoryFilter)) continue;
 							if (excludeName != null && excludeName.equalsIgnoreCase(card.name())) continue;
@@ -9405,7 +9406,7 @@ public class MainWindow {
 							if (element != null && !p1BackupCards[i].containsElement(element)) continue;
 							if (!meetsCostConstraint(p1BackupCards[i].cost(), costVal, costCmp)) continue;
 							if (!meetsPowerConstraint(p1BackupCards[i].power(), powerVal, powerCmp)) continue;
-							if (!meetsJobFilter(p1BackupCards[i], jobFilter)) continue;
+							if (!meetsJobFilter(p1BackupCards[i], jobFilter, p1ForwardCards)) continue;
 							if (!meetsCardNameFilter(p1BackupCards[i], cardNameFilter)) continue;
 							if (!meetsCategoryFilter(p1BackupCards[i], categoryFilter)) continue;
 							if (excludeName != null && excludeName.equalsIgnoreCase(p1BackupCards[i].name())) continue;
@@ -11515,9 +11516,9 @@ public class MainWindow {
 		if (lower.startsWith("blocking-job:")) {
 			String targetJob = condition.substring("blocking-job:".length()).trim();
 			return (cardIsP1  && cardIdx == p1BlockingIdx && p1BlockedByAttacker != null
-					&& p1BlockedByAttacker.job().equalsIgnoreCase(targetJob))
+					&& p1BlockedByAttacker.hasJob(targetJob))
 				|| (!cardIsP1 && cardIdx == p2BlockingIdx && p2BlockedByAttacker != null
-					&& p2BlockedByAttacker.job().equalsIgnoreCase(targetJob));
+					&& p2BlockedByAttacker.hasJob(targetJob));
 		}
 		return false;
 	}
@@ -14397,7 +14398,7 @@ public class MainWindow {
 				logEntry("[P2] Plays LB \"" + card.name() + "\"");
 				lastCardWasCast = true;
 				p2CardsCastThisTurn++;
-				if (card.job() != null) p2CastJobsThisTurn.add(card.job().toLowerCase());
+				for (String j : card.jobs()) p2CastJobsThisTurn.add(j.toLowerCase());
 				p2CastNamesThisTurn.add(card.name().toLowerCase());
 				if (card.isSummon()) p2SummonCastThisTurn = true;
 				if (card.isForward())      placeP2CardInForwardZone(card);
@@ -14460,7 +14461,7 @@ public class MainWindow {
 				logEntry("[P2] Plays " + toPlay.name());
 				lastCardWasCast = true;
 				p2CardsCastThisTurn++;
-				if (toPlay.job() != null) p2CastJobsThisTurn.add(toPlay.job().toLowerCase());
+				for (String j : toPlay.jobs()) p2CastJobsThisTurn.add(j.toLowerCase());
 				p2CastNamesThisTurn.add(toPlay.name().toLowerCase());
 				if (toPlay.isSummon()) p2SummonCastThisTurn = true;
 				if (toPlay.isForward())      placeP2CardInForwardZone(toPlay);

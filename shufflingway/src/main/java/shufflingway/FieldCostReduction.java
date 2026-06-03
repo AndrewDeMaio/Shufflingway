@@ -54,7 +54,7 @@ public record FieldCostReduction(
         if (card.isMonster() && !inclMonsters) return false;
         if (card.isSummon()  && !inclSummons)  return false;
         if (elementFilter  != null && !card.containsElement(elementFilter))         return false;
-        if (jobFilter      != null && !card.job().equalsIgnoreCase(jobFilter))       return false;
+        if (jobFilter      != null && !card.hasJob(jobFilter))                       return false;
         if (cardNameFilter != null && !card.name().equalsIgnoreCase(cardNameFilter)) return false;
         if (categoryFilter != null
                 && !categoryFilter.equalsIgnoreCase(card.category1())

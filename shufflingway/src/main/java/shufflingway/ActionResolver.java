@@ -2445,7 +2445,7 @@ public class ActionResolver {
                 for (int i = 0; i < ctx.p2ForwardCount(); i++) {
                     CardData c = ctx.p2Forward(i);
                     if (!meetsCostFilter(c.cost(), costVal, costCmp)) continue;
-                    if (excludeJob != null && excludeJob.equalsIgnoreCase(c.job())) continue;
+                    if (excludeJob != null && c.hasJob(excludeJob)) continue;
                     if (meetsCondition(ctx.p2ForwardState(i), ctx.p2ForwardCurrentDamage(i),
                             ctx.isP2ForwardAttacking(i), ctx.isP2ForwardBlocking(i), condition))
                         p2Targets.add(i);
@@ -2465,7 +2465,7 @@ public class ActionResolver {
                 for (int i = 0; i < ctx.p1ForwardCount(); i++) {
                     CardData c = ctx.p1Forward(i);
                     if (!meetsCostFilter(c.cost(), costVal, costCmp)) continue;
-                    if (excludeJob != null && excludeJob.equalsIgnoreCase(c.job())) continue;
+                    if (excludeJob != null && c.hasJob(excludeJob)) continue;
                     if (meetsCondition(ctx.p1ForwardState(i), ctx.p1ForwardCurrentDamage(i),
                             ctx.isP1ForwardAttacking(i), ctx.isP1ForwardBlocking(i), condition))
                         p1Targets.add(i);
@@ -5388,7 +5388,7 @@ public class ActionResolver {
         if (jobM.matches()) {
             String job  = jobM.group(1).trim();
             String name = jobM.group(2) != null ? jobM.group(2).trim() : null;
-            pred = card -> card.job().equalsIgnoreCase(job)
+            pred = card -> card.hasJob(job)
                     || (name != null && card.name().equalsIgnoreCase(name));
             return negated ? pred.negate() : pred;
         }

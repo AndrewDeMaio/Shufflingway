@@ -74,7 +74,29 @@ public final class CardFilters {
         if (jobFilter == null) return true;
         if (card.hasAllJobs()) return true;
         for (String j : jobFilter.split("\\|")) {
-            if (j.trim().equalsIgnoreCase(card.job())) return true;
+            if (card.hasJob(j.trim())) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Like {@link #meetsJobFilter(CardData, String)}, but also matches when the card has
+     * "has the Jobs of the Forwards you control" and any Forward in {@code controlledForwards}
+     * carries the required job.
+     */
+    public static boolean meetsJobFilter(CardData card, String jobFilter,
+            java.util.List<CardData> controlledForwards) {
+        if (jobFilter == null) return true;
+        if (card.hasAllJobs()) return true;
+        if (card.hasJobsOfControlledForwards() && controlledForwards != null) {
+            for (CardData fwd : controlledForwards) {
+                for (String j : jobFilter.split("\\|")) {
+                    if (fwd.hasJob(j.trim())) return true;
+                }
+            }
+        }
+        for (String j : jobFilter.split("\\|")) {
+            if (card.hasJob(j.trim())) return true;
         }
         return false;
     }
