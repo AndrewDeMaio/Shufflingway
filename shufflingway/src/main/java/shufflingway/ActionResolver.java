@@ -53,12 +53,13 @@ public class ActionResolver {
     private static final Pattern CHOOSE_CHARACTER_PATTERN = Pattern.compile(
         "(?i)Choose\\s+(?<upto>up\\s+to\\s+)?(?<count>\\d+)\\s+" +
         "(?:(?<condition>dull|damaged|attacking|blocking|active)\\s+)?" +
-        "(?:(?<element>Multi-Element|Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?" +
+        "(?:(?<element>(?:Multi-Element|Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)(?:\\s+or\\s+(?:Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark))*)\\s+)?" +
         "(?:Category\\s+(?<category>.+?)(?=\\s+(?:cards?|Forwards?|Backups?|Characters?|Monsters?|Summons?))\\s+)?" +
         "(?<targets>cards?|Forwards?(?:\\s+or\\s+(?:Monsters?|Backups?))?|Monsters?|Backups?|Characters?|Summons?" +
             "|\\[Job\\s+\\([^)]+\\)\\]" +
             "|\\[Card\\s+Name\\s+\\([^)]+\\)\\]" +
-            "|Card\\s+Name\\s+\\S+(?:\\s+\\([^)]+\\))?(?:\\s+or\\s+Card\\s+Name\\s+\\S+(?:\\s+\\([^)]+\\))?)*" +
+            "|Card\\s+Name\\s+.+?\\s+Forwards?(?:\\s+or\\s+Job\\s+.+?\\s+Forwards?)*" +
+            "|Card\\s+Name\\s+\\S+(?:\\s+\\S+)*?(?:\\s+\\([^)]+\\))?(?:\\s+or\\s+Card\\s+Name\\s+\\S+(?:\\s+\\S+)*?(?:\\s+\\([^)]+\\))?)*" +
             "|Job\\s+.+?\\s+(?:and/)?or\\s+Card\\s+Name\\s+\\S+" +
             "|Job\\s+.+?\\s+Forwards?(?:\\s+or\\s+Job\\s+.+?\\s+Forwards?)*" +
             "|Job\\s+.+?(?=\\s+(?:of\\s+|other\\s+than|in\\s+your|from\\s+your)|[,.]))" +
@@ -299,6 +300,13 @@ public class ActionResolver {
         "(?i)it\\s+cannot\\s+be\\s+blocked" +
         "(?:\\s+by\\s+a\\s+Forward\\s+of\\s+cost\\s+(?<costval>\\d+)(?:\\s+or\\s+(?<costcmp>less|more))?)?" +
         "\\s+this\\s+turn\\.?"
+    );
+
+    /** Matches "[CardName] cannot be blocked this turn." — self-referential standalone form. */
+    private static final Pattern STANDALONE_SELF_CANNOT_BE_BLOCKED = Pattern.compile(
+        "(?i)(?<subject>.+?)\\s+cannot\\s+be\\s+blocked" +
+        "(?:\\s+by\\s+a\\s+Forward\\s+of\\s+cost\\s+(?<costval>\\d+)(?:\\s+or\\s+(?<costcmp>less|more))?)?" +
+        "\\s+this\\s+turn[.!]?"
     );
 
     /**
@@ -1762,6 +1770,9 @@ public class ActionResolver {
         result = tryParseStandaloneShieldCannotBeBroken(effectText, source);
         if (result != null) return result;
 
+        result = tryParseStandaloneCannotBeBlocked(effectText, source);
+        if (result != null) return result;
+
         result = tryParseRevealSelectHandRfp(effectText);
         if (result != null) return result;
 
@@ -1957,6 +1968,7 @@ public class ActionResolver {
         if (tryParseFieldSelfPowerBoost(effectText, source)    != null) return "FieldSelfPowerBoost";
         if (tryParseStandaloneSelfBoost(effectText, source)   != null) return "StandaloneSelfBoost";
         if (tryParseStandaloneShieldCannotBeBroken(effectText, source) != null) return "StandaloneShieldCannotBeBroken";
+        if (tryParseStandaloneCannotBeBlocked(effectText, source) != null) return "StandaloneCannotBeBlocked";
         if (tryParseRevealSelectHandRfp(effectText)            != null) return "RevealSelectHandRfp";
         if (tryParseOpponentRandomHandRfp(effectText)         != null) return "OpponentRandomHandRfp";
         if (tryParseOpponentHandRfp(effectText)               != null) return "OpponentHandRfp";
@@ -2133,6 +2145,7 @@ public class ActionResolver {
         if (tryParseStandalonePowerReduceUntil(effectText, source) != null) return "StandalonePowerReduceUntil";
         if (tryParseStandaloneSelfBoost(effectText, source) != null)        return "StandaloneSelfBoost";
         if (tryParseStandaloneShieldCannotBeBroken(effectText, source) != null) return "StandaloneShieldCannotBeBroken";
+        if (tryParseStandaloneCannotBeBlocked(effectText, source) != null) return "StandaloneCannotBeBlocked";
         if (tryParseRevealSelectHandRfp(effectText) != null)               return "RevealSelectHandRfp";
         if (tryParseOpponentRandomHandRfp(effectText) != null)             return "OpponentRandomHandRfp";
         if (tryParseOpponentHandRfp(effectText) != null)                   return "OpponentHandRfp";
@@ -2689,7 +2702,9 @@ public class ActionResolver {
 
         boolean upTo         = m.group("upto") != null;
         int     maxCount     = Integer.parseInt(m.group("count"));
-        String  element      = m.group("element");
+        String  rawElement   = m.group("element");
+        String  element      = rawElement != null && rawElement.contains(" or ")
+                ? rawElement.replaceAll("(?i)\\s+or\\s+", "|") : rawElement;
         // Resolve condition: "blocking [Name]"/"blocking a Job [Job]" overrides the standard condition.
         // Post-target qualifiers ("that entered the field this turn") are normalized to the same string.
         String  rawCondition  = m.group("condition");
@@ -2722,6 +2737,16 @@ public class ActionResolver {
             inclForwards   = true;
             inclBackups    = true;
             inclMonsters   = true;
+        } else if (tgtLower.startsWith("card name ") && tgtLower.contains(" or job ")) {
+            // "Card Name X Forward or Job Y Forward" — mixed card-name + job filter, both typed
+            int orJobIdx = tgtLower.indexOf(" or job ");
+            String cardNamePart = targets.substring("Card Name ".length(), orJobIdx).trim();
+            cardNameFilter = cardNamePart.replaceAll("(?i)\\s+(?:Forwards?|Backups?|Monsters?|Characters?)$", "").trim();
+            String jobPart = targets.substring(orJobIdx + " or job ".length()).trim();
+            jobFilter    = jobPart.replaceAll("(?i)\\s+(?:Forwards?|Backups?|Monsters?|Characters?)$", "").trim();
+            inclForwards = tgtLower.contains("forward");
+            inclBackups  = tgtLower.contains("backup");
+            inclMonsters = tgtLower.contains("monster");
         } else if (tgtLower.startsWith("card name ")) {
             // Support "Card Name X" and "Card Name X or Card Name Y [or …]"
             String rest = targets.substring("Card Name ".length());
@@ -4252,6 +4277,19 @@ public class ActionResolver {
         return ctx -> {
             ctx.logEntry(source.name() + " cannot be broken until end of turn");
             ctx.shieldSourceForward(source);
+        };
+    }
+
+    private static Consumer<GameContext> tryParseStandaloneCannotBeBlocked(String text, CardData source) {
+        if (source == null) return null;
+        Matcher m = STANDALONE_SELF_CANNOT_BE_BLOCKED.matcher(text);
+        if (!m.find()) return null;
+        String subject = m.group("subject").trim();
+        if (subject.equalsIgnoreCase("it") || subject.equalsIgnoreCase("they")) return null;
+        if (!subject.equalsIgnoreCase(source.name())) return null;
+        return ctx -> {
+            ctx.logEntry(source.name() + " cannot be blocked this turn");
+            ctx.setSourceForwardCannotBeBlocked(source);
         };
     }
 

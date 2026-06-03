@@ -2127,6 +2127,10 @@ public record CardData(
     /** Returns {@code true} if any of this card's elements matches {@code elem} (case-insensitive).
      *  The special value {@code "Multi-Element"} matches any card that has more than one element. */
     public boolean containsElement(String elem) {
+        if (elem.contains("|")) {
+            for (String e : elem.split("\\|")) if (containsElement(e.trim())) return true;
+            return false;
+        }
         if ("Multi-Element".equalsIgnoreCase(elem)) return element.split("/").length > 1;
         // "has all the Elements except X" field ability
         java.util.Set<String> excluded = allElementsExcept();

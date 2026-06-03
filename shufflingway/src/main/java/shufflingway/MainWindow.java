@@ -10180,6 +10180,15 @@ public class MainWindow {
 				}
 			}
 
+			@Override public void setSourceForwardCannotBeBlocked(CardData source) {
+				for (int i = 0; i < p1ForwardCards.size(); i++) {
+					if (p1ForwardCards.get(i).name().equals(source.name())) {
+						setP1ForwardCannotBeBlocked(i);
+						return;
+					}
+				}
+			}
+
 			@Override public void boostSourceForward(CardData source, int amount,
 					java.util.EnumSet<CardData.Trait> traits) {
 				for (int i = 0; i < p1ForwardCards.size(); i++) {

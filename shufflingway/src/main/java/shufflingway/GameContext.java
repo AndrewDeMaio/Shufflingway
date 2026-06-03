@@ -715,6 +715,9 @@ public interface GameContext {
     /** Prevents P2's forward at {@code idx} from being chosen as a blocker this turn. */
     void setP2ForwardCannotBlock(int idx);
 
+    /** Finds {@code source} on own forward zone and marks it as unable to be blocked this turn. */
+    void setSourceForwardCannotBeBlocked(CardData source);
+
     /** Marks P1's forward at {@code idx} as unable to be blocked this turn. */
     void setP1ForwardCannotBeBlocked(int idx);
 
