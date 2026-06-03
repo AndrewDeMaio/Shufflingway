@@ -6,7 +6,7 @@
 
 Lightweight FFTCG client and fan project.
 
-Includes a deck manager, full card browser, and a game board and CPU opponent.
+Includes a deck manager, full card browser, game board and CPU opponent.
 
 Links to rules and guides are found in the Help menu.
 
@@ -20,11 +20,11 @@ The ultimate goal for this application will be to play against someone else with
 
 Current card coverage (estimate):
 
-* Action/Special Abilities: (77.0%)
+* Action/Special Abilities: (80.3%)
 
-* Auto Abilities: (76.4%)
+* Auto Abilities: (77.4%)
 
-* Field Abilities: (>24.2%)
+* Field Abilities: (>24.3%)
 
 # Installation Guide
 
