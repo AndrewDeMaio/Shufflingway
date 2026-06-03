@@ -303,9 +303,17 @@ public class ActionResolver {
         "(?i)Add\\s+(?:it|them)\\s+to\\s+your\\s+hand"
     );
 
-    /** Matches "it cannot block this turn". */
+    /**
+     * Matches "it cannot block this turn" or
+     * "It gains 'This Forward cannot block.' until the end of the turn."
+     */
     private static final Pattern FOLLOWUP_CANNOT_BLOCK = Pattern.compile(
-        "(?i)it\\s+cannot\\s+block\\s+this\\s+turn\\.?"
+        "(?i)(?:" +
+            "(?:it|they)\\s+cannot\\s+block\\s+this\\s+turn" +
+        "|" +
+            "(?:it|they)\\s+gains?\\s+['\"]This\\s+Forward\\s+cannot\\s+block\\.['\"]" +
+            "\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn" +
+        ")[.!]?"
     );
 
     /**
