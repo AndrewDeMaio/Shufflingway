@@ -11090,6 +11090,10 @@ public class MainWindow {
 				return (isP1 ? gameState.getP2Hand() : gameState.getP1Hand()).size();
 			}
 
+			@Override public int yourHandSize() {
+				return (isP1 ? gameState.getP1Hand() : gameState.getP2Hand()).size();
+			}
+
 			@Override public int countP1FieldCards(boolean inclForwards, boolean inclBackups,
 					boolean inclMonsters, String jobFilter, String cardNameFilter) {
 				return countP1FieldCards(inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, null);

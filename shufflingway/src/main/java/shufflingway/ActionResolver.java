@@ -214,6 +214,11 @@ public class ActionResolver {
         "(?i)dull\\s+(?:it|them)\\s+and\\s+freeze\\s+(?:it|them)"
     );
 
+    /** Matches "Dull it/them and deal it/them N damage". Group {@code amount} is the damage value. */
+    private static final Pattern FOLLOWUP_DULL_AND_DAMAGE = Pattern.compile(
+        "(?i)dull\\s+(?:it|them)\\s+and\\s+deal\\s+(?:it|them)\\s+(?<amount>\\d+)\\s+damage"
+    );
+
     /** Matches "Break it" or "Break them". */
     private static final Pattern FOLLOWUP_BREAK = Pattern.compile(
         "(?i)Break\\s+(?:it|them)"
@@ -1303,6 +1308,12 @@ public class ActionResolver {
         "((?:\\s*,?\\s*(?:and\\s+)?(?:Haste|First\\s+Strike|Brave))*)"
     );
 
+    /** Matches "Until [of] the end of [the] turn, it/they loses N power for each card in your hand." */
+    private static final Pattern FOLLOWUP_POWER_REDUCE_UNTIL_FOR_EACH_HAND = Pattern.compile(
+        "(?i)Until\\s+(?:of\\s+)?(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn\\s*,\\s+" +
+        "(?:it|they)\\s+loses?\\s+(\\d+)\\s+[Pp]ower\\s+for\\s+each\\s+card\\s+in\\s+your\\s+hand[.!]?"
+    );
+
     /**
      * Matches standalone "Until the end of the turn, &lt;subject&gt; loses [N power] [and traits]".
      * <ul>
@@ -2229,6 +2240,7 @@ public class ActionResolver {
      */
     public static String matchedFollowupName(String followupText, CardData source) {
         if (FOLLOWUP_DAMAGE_FOR_EACH.matcher(followupText).find())                    return "DamageForEach";
+        if (FOLLOWUP_DULL_AND_DAMAGE.matcher(followupText).find())                   return "DullAndDamage";
         if (FOLLOWUP_DAMAGE.matcher(followupText).find())                             return "Damage";
         if (FOLLOWUP_DAMAGE_EXPR.matcher(followupText).find())                        return "DamageExpr";
         if (FOLLOWUP_ACTIVATE_AND_GAIN_CONTROL_EOT.matcher(followupText).find())        return "ActivateAndGainControlEOT";
@@ -2277,6 +2289,7 @@ public class ActionResolver {
         if (FOLLOWUP_KEYWORD_GRANT.matcher(followupText).find())                      return "KeywordGrant";
         if (FOLLOWUP_KEYWORD_GRANT_UNTIL.matcher(followupText).find())               return "KeywordGrant";
         if (FOLLOWUP_POWER_REDUCE.matcher(followupText).find())                       return "PowerReduce";
+        if (FOLLOWUP_POWER_REDUCE_UNTIL_FOR_EACH_HAND.matcher(followupText).find())  return "PowerReduceUntilForEachHand";
         if (FOLLOWUP_POWER_REDUCE_UNTIL.matcher(followupText).find())                 return "PowerReduceUntil";
         if (OPPONENT_DISCARD.matcher(followupText).find())                            return "OpponentDiscard";
         if (source != null) {
@@ -3301,6 +3314,21 @@ public class ActionResolver {
             };
         }
 
+        // --- Dull + Damage followup ---
+        Matcher dullDmgM = FOLLOWUP_DULL_AND_DAMAGE.matcher(primaryFollowup);
+        if (dullDmgM.find()) {
+            int damage = Integer.parseInt(dullDmgM.group("amount"));
+            return ctx -> {
+                ctx.logEntry(choosePrefix + " — Dull & Deal " + damage + " damage");
+                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
+                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
+                sortedByIdxDesc(ts, true) .forEach(t -> { ctx.dullTarget(t); ctx.damageTarget(t, damage); });
+                sortedByIdxDesc(ts, false).forEach(t -> { ctx.dullTarget(t); ctx.damageTarget(t, damage); });
+                if (secondary != null) secondary.accept(ctx);
+            };
+        }
+
         // --- Damage followup (fixed amount) ---
         Matcher dmgM = FOLLOWUP_DAMAGE.matcher(primaryFollowup);
         if (dmgM.find()) {
@@ -4077,6 +4105,24 @@ public class ActionResolver {
                         costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
                 sortedByIdxDesc(ts, true) .forEach(t -> ctx.reduceTarget(t, reduction, traits));
                 sortedByIdxDesc(ts, false).forEach(t -> ctx.reduceTarget(t, reduction, traits));
+                if (secondary != null) secondary.accept(ctx);
+            };
+        }
+
+        // --- Power reduce for each card in your hand ("Until…, it/they loses N power for each card in your hand") ---
+        Matcher reduceForEachHandM = FOLLOWUP_POWER_REDUCE_UNTIL_FOR_EACH_HAND.matcher(primaryFollowup);
+        if (reduceForEachHandM.find()) {
+            int perCard = Integer.parseInt(reduceForEachHandM.group(1));
+            return ctx -> {
+                int n = ctx.yourHandSize();
+                int reduction = perCard * n;
+                ctx.logEntry(choosePrefix + " -" + perCard + "×[your hand] until EOT (n=" + n + ", reduction=" + reduction + ")");
+                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
+                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
+                EnumSet<CardData.Trait> noTraits = EnumSet.noneOf(CardData.Trait.class);
+                sortedByIdxDesc(ts, true) .forEach(t -> ctx.reduceTarget(t, reduction, noTraits));
+                sortedByIdxDesc(ts, false).forEach(t -> ctx.reduceTarget(t, reduction, noTraits));
                 if (secondary != null) secondary.accept(ctx);
             };
         }

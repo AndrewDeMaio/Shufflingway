@@ -494,6 +494,9 @@ public interface GameContext {
     /** Returns the number of cards in the opponent's hand. */
     int opponentHandSize();
 
+    /** Returns the number of cards in the ability user's hand. */
+    int yourHandSize();
+
     /**
      * Counts P1's field cards matching all supplied filters.
      *
