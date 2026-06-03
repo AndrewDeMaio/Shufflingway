@@ -179,7 +179,7 @@ public class ActionResolver {
      */
     private static final Pattern FOLLOWUP_DAMAGE_FOR_EACH = Pattern.compile(
         "(?i)deal\\s+(?:it|them)\\s+(?<base>\\d+)\\s+damage" +
-        "(?:\\s+and\\s+(?<per>\\d+)\\s+more\\s+damage)?" +
+        "(?:\\s+(?<op>and|minus)\\s+(?<per>\\d+)\\s+(?:more\\s+)?damage)?" +
         "\\s+for\\s+each\\s+" +
         "(?:" +
             "(?<selfdmg>point\\s+of\\s+damage\\s+you\\s+have\\s+received)" +
@@ -1680,6 +1680,19 @@ public class ActionResolver {
     );
 
     /**
+     * Matches "Deal each [condition] Forward[s] [opponent controls] damage equal to its power minus N."
+     * Groups: {@code condition}, {@code opponent}, {@code amount}.
+     */
+    private static final Pattern DEAL_POWER_MINUS_N_DAMAGE_TO_FORWARDS = Pattern.compile(
+        "(?i)Deal\\s+each(?:\\s+the)?\\s+" +
+        "(?:(?<condition>damaged|dull|attacking|blocking)\\s+)?" +
+        "Forwards?\\s+" +
+        "(?<opponent>(?:your\\s+)?opponent\\s+controls\\s+)?" +
+        "damage\\s+equal\\s+to\\s+its\\s+power\\s+minus\\s+(?<amount>\\d+)" +
+        "[.!]?"
+    );
+
+    /**
      * Matches "Deal damage equal to half of [name]'s power to all [the] [condition] Forward[s]
      * [opponent controls] [(round up/down to the nearest 1000)]."
      * <ul>
@@ -1841,6 +1854,9 @@ public class ActionResolver {
         if (result != null) return result;
 
         result = tryParseDealHalfPowerDamageToForwards(effectText);
+        if (result != null) return result;
+
+        result = tryParseDealPowerMinusNDamageToForwards(effectText);
         if (result != null) return result;
 
         result = tryParseDealHalfSourcePowerDamageToForwards(effectText);
@@ -2113,6 +2129,7 @@ public class ActionResolver {
         if (tryParseSelectNumber(effectText, source)                    != null) return "SelectNumber";
         if (tryParseDealDamageToForwards(effectText)                    != null) return "DealDamageToForwards";
         if (tryParseDealHalfPowerDamageToForwards(effectText)           != null) return "DealHalfPowerDamageToForwards";
+        if (tryParseDealPowerMinusNDamageToForwards(effectText)         != null) return "DealPowerMinusNDamageToForwards";
         if (tryParseDealHalfSourcePowerDamageToForwards(effectText)     != null) return "DealHalfSourcePowerDamageToForwards";
         if (tryParseDamageToCombatBlocker(effectText)                   != null) return "DamageToCombatBlocker";
         if (tryParseChooseCharacter(effectText, source, 0)              != null) return "ChooseCharacter";
@@ -2278,6 +2295,7 @@ public class ActionResolver {
         if (tryParseSelectNumber(effectText, source)          != null) return "SelectNumber";
         if (tryParseDealDamageToForwards(effectText)                != null) return "DealDamageToForwards";
         if (tryParseDealHalfPowerDamageToForwards(effectText)       != null) return "DealHalfPowerDamageToForwards";
+        if (tryParseDealPowerMinusNDamageToForwards(effectText)     != null) return "DealPowerMinusNDamageToForwards";
         if (tryParseDealHalfSourcePowerDamageToForwards(effectText) != null) return "DealHalfSourcePowerDamageToForwards";
         if (tryParseDamageToCombatBlocker(effectText)               != null) return "DamageToCombatBlocker";
 
@@ -2576,6 +2594,52 @@ public class ActionResolver {
                     int idx = p1Targets.get(i);
                     if (idx < ctx.p1ForwardCount())
                         ctx.damageP1Forward(idx, halfPowerDamage(ctx.p1Forward(idx).power()));
+                }
+            }
+        };
+    }
+
+    private static Consumer<GameContext> tryParseDealPowerMinusNDamageToForwards(String text) {
+        Matcher m = DEAL_POWER_MINUS_N_DAMAGE_TO_FORWARDS.matcher(text);
+        if (!m.find()) return null;
+
+        String  condition    = m.group("condition");
+        boolean opponentOnly = m.group("opponent") != null;
+        int     reduction    = Integer.parseInt(m.group("amount"));
+
+        return ctx -> {
+            String  condLabel  = condition != null ? (condition + " ") : "";
+            boolean oppIsP2    = opponentOnly && ctx.isP1();
+            boolean oppIsP1    = opponentOnly && !ctx.isP1();
+            String  scopeLabel = opponentOnly ? "opponent's " : "all ";
+            ctx.logEntry("Effect: Deal each " + scopeLabel + condLabel
+                    + "Forward damage equal to its power minus " + reduction);
+
+            if (!opponentOnly || oppIsP2) {
+                List<Integer> targets = new ArrayList<>();
+                for (int i = 0; i < ctx.p2ForwardCount(); i++) {
+                    if (meetsCondition(ctx.p2ForwardState(i), ctx.p2ForwardCurrentDamage(i),
+                            ctx.isP2ForwardAttacking(i), ctx.isP2ForwardBlocking(i), condition))
+                        targets.add(i);
+                }
+                for (int i = targets.size() - 1; i >= 0; i--) {
+                    int idx = targets.get(i);
+                    if (idx < ctx.p2ForwardCount())
+                        ctx.damageP2Forward(idx, Math.max(0, ctx.p2Forward(idx).power() - reduction));
+                }
+            }
+
+            if (!opponentOnly || oppIsP1) {
+                List<Integer> targets = new ArrayList<>();
+                for (int i = 0; i < ctx.p1ForwardCount(); i++) {
+                    if (meetsCondition(ctx.p1ForwardState(i), ctx.p1ForwardCurrentDamage(i),
+                            ctx.isP1ForwardAttacking(i), ctx.isP1ForwardBlocking(i), condition))
+                        targets.add(i);
+                }
+                for (int i = targets.size() - 1; i >= 0; i--) {
+                    int idx = targets.get(i);
+                    if (idx < ctx.p1ForwardCount())
+                        ctx.damageP1Forward(idx, Math.max(0, ctx.p1Forward(idx).power() - reduction));
                 }
             }
         };
@@ -3160,6 +3224,7 @@ public class ActionResolver {
             int    baseDmg        = Integer.parseInt(forEachM.group("base"));
             String perStr         = forEachM.group("per");
             int    perDmg         = perStr != null ? Integer.parseInt(perStr) : 0;
+            boolean subtract      = "minus".equalsIgnoreCase(forEachM.group("op"));
             boolean srcSelfDmg    = forEachM.group("selfdmg")  != null;
             String  srcJobBracket = forEachM.group("jobbname") != null ? forEachM.group("jobbname").trim() : null;
             String  srcJobWritten = forEachM.group("jobwname") != null ? forEachM.group("jobwname").trim() : null;
@@ -3182,8 +3247,9 @@ public class ActionResolver {
             else if (srcOppHand)           sourceLabel = "opponent hand";
             else if (srcCrystal)           sourceLabel = "《C》 you have";
             else                            sourceLabel = "X CP paid";
+            String op = subtract ? " - " : " + ";
             String logLabel = perDmg > 0
-                    ? baseDmg + " + " + perDmg + "×[" + sourceLabel + "]"
+                    ? baseDmg + op + perDmg + "×[" + sourceLabel + "]"
                     : baseDmg + "×[" + sourceLabel + "]";
             return ctx -> {
                 int n;
@@ -3200,7 +3266,9 @@ public class ActionResolver {
                 else if (srcOppHand)           n = ctx.opponentHandSize();
                 else if (srcCrystal)           n = ctx.crystalCount();
                 else                            n = xValue;
-                int damage = perDmg > 0 ? baseDmg + perDmg * n : baseDmg * n;
+                int damage = perDmg > 0
+                        ? (subtract ? Math.max(0, baseDmg - perDmg * n) : baseDmg + perDmg * n)
+                        : baseDmg * n;
                 ctx.logEntry(choosePrefix + " — Deal " + damage + " damage (" + logLabel + ", n=" + n + ")");
                 List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
                         opponentOnly, selfOnly, condition, element, zone, opponentZone,
