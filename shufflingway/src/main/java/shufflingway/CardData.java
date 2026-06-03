@@ -2300,6 +2300,9 @@ public record CardData(
     private static final Pattern SELF_COND_CAST_SUMMON = Pattern.compile(
         "(?i)^you\\s+have\\s+cast\\s+a\\s+Summon\\s+this\\s+turn$"
     );
+    private static final Pattern SELF_COND_CAST_JOB_OR_NAME = Pattern.compile(
+        "(?i)^you\\s+have\\s+cast\\s+a\\s+Job\\s+(?<job>.+?)\\s+or\\s+Card\\s+Name\\s+(?<name>.+?)\\s+this\\s+turn$"
+    );
     private static final Pattern SELF_COND_CONTROL_NAME = Pattern.compile(
         "(?i)^you\\s+control\\s+Card\\s+Name\\s+(?<name>.+?)\\s*$"
     );
@@ -2319,7 +2322,7 @@ public record CardData(
         "(?i)^you\\s+don'?t\\s+control\\s+any\\s+(?<type>Forwards?|Backups?|Monsters?|Characters?)$"
     );
     private static final Pattern SELF_COND_OPPONENT_DISCARDED_BY_ME = Pattern.compile(
-        "(?i)^your\\s+opponent\\s+has\\s+discarded\\s+a\\s+card\\s+from\\s+their\\s+hand\\s+due\\s+to\\s+your\\s+(?:Summons?|abilities?)(?:\\s+or\\s+(?:Summons?|abilities?))*$"
+        "(?i)^your\\s+opponent\\s+has\\s+discarded\\s+a\\s+card(?:\\s+from\\s+their\\s+hand)?\\s+due\\s+to\\s+your\\s+(?:Summons?|abilities?)(?:\\s+or\\s+(?:Summons?|abilities?))*$"
     );
     private static final Pattern SELF_COND_OPPONENT_DISCARDED = Pattern.compile(
         "(?i)^your\\s+opponent\\s+has\\s+discarded\\s+a\\s+card\\s+from\\s+their\\s+hand(?:\\s+due\\s+to\\s+(?:the\\s+)?(?:Summons?|abilities?)(?:\\s+or\\s+(?:the\\s+)?(?:Summons?|abilities?))*)?$"
@@ -2452,6 +2455,10 @@ public record CardData(
     private static final Pattern SELF_SCALE_EACH_NAME_OR_NAME = Pattern.compile(
         "(?i)^for\\s+each\\s+Card\\s+Name\\s+(?<name1>.+?)\\s+or\\s+Card\\s+Name\\s+(?<name2>.+?)\\s+you\\s+control$"
     );
+    /** Matches "for each Job X and/or Element Type you control" (e.g. "Job Class Zero Cadet and/or Fire Character"). */
+    private static final Pattern SELF_SCALE_EACH_JOB_OR_ELEM_TYPE = Pattern.compile(
+        "(?i)^for\\s+each\\s+Job\\s+(?<job>.+?)\\s+and/or\\s+(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+(?<type>Forwards?|Backups?|Monsters?|Characters?)\\s+you\\s+control$"
+    );
     /** Matches "for each Job X [or Card Name Y] you control" — no "forward" keyword. */
     private static final Pattern SELF_SCALE_EACH_JOB = Pattern.compile(
         "(?i)^for\\s+each\\s+Job\\s+(?<job>.+?)(?:\\s+or\\s+Card\\s+Name\\s+(?<name>\\S+))?\\s+you\\s+control$"
@@ -2511,6 +2518,14 @@ public record CardData(
                 if (cm.find()) {
                     mod = new SelfCostModifier(amount, minCost, isIncrease,
                             SelfCostModifier.ScalingType.IF_CAST_SUMMON_THIS_TURN, null, null);
+                }
+                if (mod == null) {
+                    cm = SELF_COND_CAST_JOB_OR_NAME.matcher(condRaw.trim());
+                    if (cm.find()) {
+                        mod = new SelfCostModifier(amount, minCost, isIncrease,
+                                SelfCostModifier.ScalingType.IF_CAST_JOB_OR_NAME_THIS_TURN,
+                                cm.group("job").trim(), cm.group("name").trim());
+                    }
                 }
                 if (mod == null) {
                     cm = SELF_COND_CONTROL_NAME.matcher(condRaw.trim());
@@ -2956,6 +2971,22 @@ public record CardData(
                         mod = new SelfCostModifier(amount, minCost, isIncrease,
                                 SelfCostModifier.ScalingType.HIGHEST_COST_ELEMENT_FORWARD,
                                 sm.group("element").trim(), null);
+                    }
+                }
+
+                if (mod == null) {
+                    sm = SELF_SCALE_EACH_JOB_OR_ELEM_TYPE.matcher(sc);
+                    if (sm.find()) {
+                        String job  = sm.group("job").trim();
+                        String elem = sm.group("element");
+                        String type = sm.group("type");
+                        String typeNorm = type.toLowerCase().startsWith("forward") ? "Forward"
+                                        : type.toLowerCase().startsWith("backup")  ? "Backup"
+                                        : type.toLowerCase().startsWith("monster") ? "Monster"
+                                        : "Character";
+                        mod = new SelfCostModifier(amount, minCost, isIncrease,
+                                SelfCostModifier.ScalingType.EACH_JOB_OR_ELEMENT_TYPE_CONTROLLED,
+                                job, elem + "|" + typeNorm);
                     }
                 }
 

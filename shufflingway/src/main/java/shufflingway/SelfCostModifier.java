@@ -47,6 +47,8 @@ public record SelfCostModifier(
     public enum ScalingType {
         /** Flat delta (×1) if a Summon was cast by the controller this turn; 0 otherwise. */
         IF_CAST_SUMMON_THIS_TURN,
+        /** Flat delta (×1) if the controller has cast a card with job {@code param1} OR name {@code param2} this turn; 0 otherwise. */
+        IF_CAST_JOB_OR_NAME_THIS_TURN,
         /** Flat delta (×1) if you control a field card named {@code param1}; 0 otherwise. */
         IF_CONTROL_NAME,
         /**
@@ -116,6 +118,12 @@ public record SelfCostModifier(
         PER_N_ELEMENT_TYPE_CONTROLLED,
         /** Flat delta (×1) if the opponent controls ≥ {@code Integer.parseInt(param1)} cards of type {@code param2} more than the controller; 0 otherwise. */
         IF_OPPONENT_CONTROLS_N_MORE_THAN_ME,
+        /**
+         * Scales by field cards the controller controls where the card's job equals {@code param1} OR
+         * (the card's element equals {@code param2-element} AND the card's type matches {@code param2-type}).
+         * Param2 encoded as "element|type". De-duplicates: a card satisfying both conditions is counted once.
+         */
+        EACH_JOB_OR_ELEMENT_TYPE_CONTROLLED,
         /** Flat delta (×1) if it is currently the controller's own turn; 0 otherwise. */
         IF_IS_YOUR_TURN,
         /** Flat delta (×1) if the controller controls a card with job {@code param1} OR name {@code param2}; 0 otherwise. */

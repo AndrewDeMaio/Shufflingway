@@ -339,6 +339,8 @@ public class MainWindow {
 	private boolean p2ReceivedDamageThisTurn = false;
 	private int     p1CardsCastThisTurn          = 0;
 	private boolean p1SummonCastThisTurn         = false;
+	private final java.util.Set<String> p1CastJobsThisTurn  = new java.util.HashSet<>();
+	private final java.util.Set<String> p1CastNamesThisTurn = new java.util.HashSet<>();
 	private boolean p1TurnOpponentFwdBroken      = false;
 	private final java.util.Set<String> p1BrokenJobsThisTurn      = new java.util.HashSet<>();
 	private final java.util.Set<String> p1BrokenElementsThisTurn  = new java.util.HashSet<>();
@@ -349,6 +351,8 @@ public class MainWindow {
 	private boolean p1FormedPartyThisTurn        = false;
 	private int     p2CardsCastThisTurn          = 0;
 	private boolean p2SummonCastThisTurn         = false;
+	private final java.util.Set<String> p2CastJobsThisTurn  = new java.util.HashSet<>();
+	private final java.util.Set<String> p2CastNamesThisTurn = new java.util.HashSet<>();
 	private boolean p2TurnOpponentFwdBroken      = false;
 	private final java.util.Set<String> p2BrokenJobsThisTurn      = new java.util.HashSet<>();
 	private final java.util.Set<String> p2BrokenElementsThisTurn  = new java.util.HashSet<>();
@@ -5087,6 +5091,12 @@ public class MainWindow {
 		return switch (mod.scalingType()) {
 			case IF_CAST_SUMMON_THIS_TURN ->
 				summonCastFlag ? 1 : 0;
+			case IF_CAST_JOB_OR_NAME_THIS_TURN -> {
+				java.util.Set<String> castJobs  = isP1 ? p1CastJobsThisTurn  : p2CastJobsThisTurn;
+				java.util.Set<String> castNames = isP1 ? p1CastNamesThisTurn : p2CastNamesThisTurn;
+				yield (castJobs.contains(mod.param1().toLowerCase())
+						|| castNames.contains(mod.param2().toLowerCase())) ? 1 : 0;
+			}
 			case IF_CONTROL_NAME -> {
 				String name = mod.param1();
 				yield fwds.stream().anyMatch(f -> f.name().equalsIgnoreCase(name))
@@ -5106,16 +5116,15 @@ public class MainWindow {
 			}
 			case EACH_FORWARD_WITH_JOB -> {
 				String job = mod.param1();
-				yield (int) fwds.stream()
-						.filter(f -> job.equalsIgnoreCase(f.job()))
-						.count();
+				yield (int) (fwds.stream().filter(f -> job.equalsIgnoreCase(f.job())).count()
+						+ java.util.Arrays.stream(bkps).filter(b -> b != null && job.equalsIgnoreCase(b.job())).count());
 			}
 			case EACH_FORWARD_WITH_JOB_OR_NAME -> {
 				String job  = mod.param1();
 				String name = mod.param2();
-				yield (int) fwds.stream()
-						.filter(f -> job.equalsIgnoreCase(f.job()) || name.equalsIgnoreCase(f.name()))
-						.count();
+				yield (int) (fwds.stream().filter(f -> job.equalsIgnoreCase(f.job()) || name.equalsIgnoreCase(f.name())).count()
+						+ java.util.Arrays.stream(bkps).filter(b -> b != null
+								&& (job.equalsIgnoreCase(b.job()) || name.equalsIgnoreCase(b.name()))).count());
 			}
 			case EACH_DAMAGE_RECEIVED ->
 				dmg.size();
@@ -5478,6 +5487,25 @@ public class MainWindow {
 					oppCount  += oppMons.size();
 				}
 				yield (oppCount - selfCount) >= n ? 1 : 0;
+			}
+		case EACH_JOB_OR_ELEMENT_TYPE_CONTROLLED -> {
+				String job = mod.param1();
+				String[] parts = mod.param2().split("\\|", 2);
+				String elem = parts[0];
+				String type = parts.length > 1 ? parts[1] : "Character";
+				List<CardData> mons = isP1 ? p1MonsterCards : p2MonsterCards;
+				java.util.function.Predicate<CardData> fwdPred = f ->
+						job.equalsIgnoreCase(f.job())
+						|| (("Forward".equalsIgnoreCase(type) || "Character".equalsIgnoreCase(type))
+							&& elem.equalsIgnoreCase(f.element()));
+				java.util.function.Predicate<CardData> bkpPred = b ->
+						job.equalsIgnoreCase(b.job())
+						|| (("Backup".equalsIgnoreCase(type) || "Character".equalsIgnoreCase(type))
+							&& elem.equalsIgnoreCase(b.element()));
+				yield (int) (fwds.stream().filter(fwdPred).count()
+						+ java.util.Arrays.stream(bkps).filter(b -> b != null).filter(bkpPred).count()
+						+ mons.stream().filter(mn -> job.equalsIgnoreCase(mn.job())
+								|| ("Monster".equalsIgnoreCase(type) && elem.equalsIgnoreCase(mn.element()))).count());
 			}
 		};
 	}
@@ -6046,6 +6074,8 @@ public class MainWindow {
 		gameState.removeFromHand(cardHandIdx);
 		activeCostReductions.removeIf(m -> m.matches(card));
 		p1CardsCastThisTurn++;
+		if (card.job() != null) p1CastJobsThisTurn.add(card.job().toLowerCase());
+		p1CastNamesThisTurn.add(card.name().toLowerCase());
 		if (card.isSummon()) {
 			p1SummonCastThisTurn = true;
 			refreshHandPopupIfVisible();
@@ -13984,6 +14014,8 @@ public class MainWindow {
 			p2ReceivedDamageThisTurn = false;
 			p2CardsCastThisTurn = 0;
 			p2SummonCastThisTurn = false;
+			p2CastJobsThisTurn.clear();
+			p2CastNamesThisTurn.clear();
 			p2TurnOpponentFwdBroken = false;
 			p2BrokenJobsThisTurn.clear();
 			p2BrokenElementsThisTurn.clear();
@@ -14109,6 +14141,8 @@ public class MainWindow {
 				logEntry("[P2] Plays LB \"" + card.name() + "\"");
 				lastCardWasCast = true;
 				p2CardsCastThisTurn++;
+				if (card.job() != null) p2CastJobsThisTurn.add(card.job().toLowerCase());
+				p2CastNamesThisTurn.add(card.name().toLowerCase());
 				if (card.isSummon()) p2SummonCastThisTurn = true;
 				if (card.isForward())      placeP2CardInForwardZone(card);
 				else if (card.isBackup())  placeP2CardInFirstBackupSlot(card);
@@ -14170,6 +14204,8 @@ public class MainWindow {
 				logEntry("[P2] Plays " + toPlay.name());
 				lastCardWasCast = true;
 				p2CardsCastThisTurn++;
+				if (toPlay.job() != null) p2CastJobsThisTurn.add(toPlay.job().toLowerCase());
+				p2CastNamesThisTurn.add(toPlay.name().toLowerCase());
 				if (toPlay.isSummon()) p2SummonCastThisTurn = true;
 				if (toPlay.isForward())      placeP2CardInForwardZone(toPlay);
 				else if (toPlay.isBackup())  placeP2CardInFirstBackupSlot(toPlay);
@@ -14355,6 +14391,8 @@ public class MainWindow {
 			p1ReceivedDamageThisTurn = false;
 			p1CardsCastThisTurn = 0;
 			p1SummonCastThisTurn = false;
+			p1CastJobsThisTurn.clear();
+			p1CastNamesThisTurn.clear();
 			p1TurnOpponentFwdBroken = false;
 			p1BrokenJobsThisTurn.clear();
 			p1BrokenElementsThisTurn.clear();
