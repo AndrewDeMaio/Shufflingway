@@ -800,7 +800,14 @@ public interface GameContext {
      */
     void searchDeckForCard(boolean inclForwards, boolean inclBackups, boolean inclMonsters, boolean inclSummons,
             int costVal, String costCmp, String cardNameFilter, String jobFilter,
-            String categoryFilter, String elementFilter, String excludeName, String excludeElem, String destination);
+            String categoryFilter, String elementFilter, String excludeName, String excludeElem,
+            String destination, int count, boolean entersDull);
+
+    /**
+     * Moves all cards matching {@code cardName} from the active player's Break Zone onto the
+     * field, entering dull if {@code dull} is true.
+     */
+    void playAllByNameFromOwnBreakZoneDull(String cardName, boolean dull);
 
     /** Removes P1's backup at {@code idx} from the field and adds it to P1's hand. */
     void returnP1BackupToHand(int idx);

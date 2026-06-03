@@ -1781,6 +1781,14 @@ public record CardData(
     );
 
     /**
+     * Matches "You can play 2 or more Card Name X onto the field."
+     * as a field-wide name-specific multi-play grant. Group: {@code cardname}.
+     */
+    private static final Pattern MULTI_NAME_PLAY_PATTERN = Pattern.compile(
+        "(?i)^You can play 2 or more Card Name (?<cardname>.+?) onto the field\\.?$"
+    );
+
+    /**
      * Parses all Field Abilities from {@code textEn} by exclusion:
      * any {@code [[br]]}-delimited segment that is not a trait keyword, an Auto ability,
      * an Action ability, an alternate-cost declaration, or an ability restriction sentence
@@ -2285,6 +2293,19 @@ public record CardData(
         for (FieldAbility fa : fieldAbilities()) {
             Matcher m = MULTI_LIGHT_DARK_PLAY_PATTERN.matcher(fa.effectText());
             if (m.matches()) return m.group("element");
+        }
+        return null;
+    }
+
+    /**
+     * Returns the card name for which this card grants a name-specific multi-play exception
+     * ("You can play 2 or more Card Name X onto the field") while on the field,
+     * or {@code null} if no such ability is present.
+     */
+    public String grantsMultiNamePlay() {
+        for (FieldAbility fa : fieldAbilities()) {
+            Matcher m = MULTI_NAME_PLAY_PATTERN.matcher(fa.effectText());
+            if (m.matches()) return m.group("cardname").trim();
         }
         return null;
     }

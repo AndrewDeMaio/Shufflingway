@@ -896,7 +896,7 @@ public class ActionResolver {
      * </ul>
      */
     private static final Pattern SEARCH_DECK_PATTERN = Pattern.compile(
-        "(?i)Search\\s+for\\s+(?:up\\s+to\\s+)?1\\s+" +
+        "(?i)Search\\s+for\\s+(?:up\\s+to\\s+)?(?<count>\\d+)\\s+" +
         // Element(s) that precede the job/name filter (e.g. "Fire Job Knight")
         "(?:(?<preelems>(?:Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)" +
             "(?:\\s+or\\s+(?:Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark))*)\\s+)?" +
@@ -936,7 +936,8 @@ public class ActionResolver {
         "and\\s+" +
         "(?<destination>" +
             "add\\s+it\\s+to\\s+your\\s+hand" +
-            "|play\\s+it\\s+onto\\s+(?:the\\s+)?field" +
+            "|play\\s+it\\s+onto\\s+(?:the\\s+)?field(?:\\s+dull)?" +
+            "|play\\s+them\\s+onto\\s+(?:the\\s+)?field(?:\\s+dull)?" +
             "|put\\s+it\\s+under\\s+the\\s+top\\s+card\\s+of\\s+(?:your|its\\s+owner's)\\s+deck" +
         ")" +
         "[.!]?"
@@ -1808,6 +1809,9 @@ public class ActionResolver {
         if (result != null) return result;
 
         result = tryParseSearchDeck(effectText, source, xValue);
+        if (result != null) return result;
+
+        result = tryParsePlayAllByNameFromBreakZone(effectText);
         if (result != null) return result;
 
         result = tryParseActivateNamedCard(effectText);
@@ -5704,8 +5708,13 @@ public class ActionResolver {
         int    costVal = costStr == null ? -1 : Integer.parseInt(costStr);
         String costCmp = m.group("costcmp");
 
+        // --- Count ---
+        String countStr = m.group("count");
+        int count = (countStr != null) ? Integer.parseInt(countStr) : 1;
+
         // --- Destination ---
         String destText   = m.group("destination").toLowerCase();
+        boolean entersDull = destText.contains("dull");
         String destination = destText.contains("hand")    ? "hand"
                            : destText.contains("field")   ? "field"
                            :                                "underTop";
@@ -5728,10 +5737,28 @@ public class ActionResolver {
         final String fName = cardNameFilter, fJob = jobFilter, fCat = categoryFilter;
         final String fElem = elementFilter, fExclude = excludeName, fExclElem = excludeElem;
         final boolean fwd = inclForwards, bk = inclBackups, mn = inclMonsters, sm = inclSummons;
+        final int fCount = count;
+        final boolean fDull = entersDull;
         return ctx -> {
-            ctx.logEntry("Effect: Search deck for 1" + filterDesc + typeDesc + costLabel + " → " + destination);
-            ctx.searchDeckForCard(fwd, bk, mn, sm, costVal, costCmp, fName, fJob, fCat, fElem, fExclude, fExclElem, destination);
+            ctx.logEntry("Effect: Search deck for " + fCount + filterDesc + typeDesc + costLabel + " → " + destination + (fDull ? " dull" : ""));
+            ctx.searchDeckForCard(fwd, bk, mn, sm, costVal, costCmp, fName, fJob, fCat, fElem, fExclude, fExclElem, destination, fCount, fDull);
             if (secondary != null) secondary.accept(ctx);
+        };
+    }
+
+    /** Matches "play all the Card Name X from your Break Zone onto [the] field [dull]." */
+    private static final Pattern PLAY_ALL_FROM_BREAK_ZONE_PATTERN = Pattern.compile(
+        "(?i)^play\\s+all\\s+the\\s+Card\\s+Name\\s+(?<cardname>.+?)\\s+from\\s+your\\s+Break\\s+Zone\\s+onto\\s+(?:the\\s+)?field(?:\\s+(?<dull>dull))?[.!]?$"
+    );
+
+    private static Consumer<GameContext> tryParsePlayAllByNameFromBreakZone(String text) {
+        Matcher m = PLAY_ALL_FROM_BREAK_ZONE_PATTERN.matcher(text.trim());
+        if (!m.find()) return null;
+        String cardName = m.group("cardname").trim();
+        boolean dull = m.group("dull") != null;
+        return ctx -> {
+            ctx.logEntry("Effect: Play all Card Name " + cardName + " from Break Zone → field" + (dull ? " dull" : ""));
+            ctx.playAllByNameFromOwnBreakZoneDull(cardName, dull);
         };
     }
 

@@ -3044,7 +3044,7 @@ public class MainWindow {
 			boolean inclMonsters, boolean inclSummons,
 			int costVal, String costCmp, String cardNameFilter, String jobFilter,
 			String categoryFilter, String elementFilter, String excludeName, String excludeElem,
-			String destination) {
+			String destination, int count, boolean entersDull) {
 		Deque<CardData> deck = isP1 ? gameState.getP1MainDeck() : gameState.getP2MainDeck();
 		boolean anyType = !inclForwards && !inclBackups && !inclMonsters && !inclSummons;
 		List<CardData> matches = new ArrayList<>();
@@ -3057,7 +3057,6 @@ public class MainWindow {
 				if (!typeMatch) continue;
 			}
 			if (!meetsCostConstraint(c.cost(), costVal, costCmp)) continue;
-			// Job+name: OR when both are set (e.g. "Job X or Card Name Y"); AND otherwise
 			boolean passesNameJob = (jobFilter == null && cardNameFilter == null)
 				|| (jobFilter != null && cardNameFilter != null
 					? meetsJobFilter(c, jobFilter) || meetsCardNameFilter(c, cardNameFilter)
@@ -3079,52 +3078,65 @@ public class MainWindow {
 			logEntry("Search: no matching card found in deck");
 			return;
 		}
-		CardData chosen;
-		if (!isP1) {
-			List<CardData> copy = new ArrayList<>(matches);
-			Collections.shuffle(copy);
-			chosen = copy.get(0);
-			logEntry("[AI] chose " + chosen.name());
-		} else {
-			chosen = showDeckSearchSelectDialog(matches);
-		}
-		if (chosen != null) {
-			if (isP1) gameState.removeFromP1MainDeck(chosen);
-			else      deck.remove(chosen);
+		List<CardData> chosen = new ArrayList<>();
+		for (int i = 0; i < count && !matches.isEmpty(); i++) {
+			CardData pick;
+			if (!isP1) {
+				List<CardData> copy = new ArrayList<>(matches);
+				Collections.shuffle(copy);
+				pick = copy.get(0);
+				logEntry("[AI] chose " + pick.name());
+			} else {
+				pick = showDeckSearchSelectDialog(matches);
+			}
+			if (pick == null) break;
+			matches.remove(pick);
+			if (isP1) gameState.removeFromP1MainDeck(pick);
+			else      deck.remove(pick);
+			chosen.add(pick);
 		}
 		shuffleDeck(isP1);
-		if (chosen == null) {
+		if (chosen.isEmpty()) {
 			logEntry("Search: no card selected");
 			return;
 		}
-		switch (destination) {
-			case "hand" -> {
-				playerHand(isP1).add(chosen);
-				logEntry((isP1 ? "" : "[P2] ") + chosen.name() + " → hand (search)");
-				if (isP1) refreshP1HandLabel(); else refreshP2HandCountLabel();
-			}
-			case "field" -> {
-				logEntry((isP1 ? "" : "[P2] ") + chosen.name() + " → field (search)");
-				if (isP1) {
-					if (chosen.isBackup())       placeCardInFirstBackupSlot(chosen);
-					else if (chosen.isMonster()) placeCardInMonsterZone(chosen);
-					else                         placeCardInForwardZone(chosen);
-				} else {
-					if (chosen.isBackup())       placeP2CardInFirstBackupSlot(chosen);
-					else if (chosen.isMonster()) placeP2CardInMonsterZone(chosen);
-					else                         placeP2CardInForwardZone(chosen);
+		for (CardData card : chosen) {
+			switch (destination) {
+				case "hand" -> {
+					playerHand(isP1).add(card);
+					logEntry((isP1 ? "" : "[P2] ") + card.name() + " → hand (search)");
+					if (isP1) refreshP1HandLabel(); else refreshP2HandCountLabel();
 				}
-			}
-			case "underTop" -> {
-				if (deck.isEmpty()) {
-					deck.addFirst(chosen);
-				} else {
-					CardData top = deck.pollFirst();
-					deck.addFirst(chosen);
-					deck.addFirst(top);
+				case "field" -> {
+					logEntry((isP1 ? "" : "[P2] ") + card.name() + " → field (search)" + (entersDull ? " dull" : ""));
+					if (isP1) {
+						if (card.isBackup())       placeCardInFirstBackupSlot(card);
+						else if (card.isMonster()) placeCardInMonsterZone(card);
+						else {
+							placeCardInForwardZone(card);
+							if (entersDull) {
+								int newIdx = p1ForwardCards.size() - 1;
+								p1ForwardStates.set(newIdx, CardState.DULL);
+								refreshP1ForwardSlot(newIdx);
+							}
+						}
+					} else {
+						if (card.isBackup())       placeP2CardInFirstBackupSlot(card);
+						else if (card.isMonster()) placeP2CardInMonsterZone(card);
+						else                       placeP2CardInForwardZone(card);
+					}
 				}
-				logEntry((isP1 ? "" : "[P2] ") + chosen.name() + " → under top card of deck (search)");
-				if (isP1) refreshP1DeckLabel(); else refreshP2DeckLabel();
+				case "underTop" -> {
+					if (deck.isEmpty()) {
+						deck.addFirst(card);
+					} else {
+						CardData top = deck.pollFirst();
+						deck.addFirst(card);
+						deck.addFirst(top);
+					}
+					logEntry((isP1 ? "" : "[P2] ") + card.name() + " → under top card of deck (search)");
+					if (isP1) refreshP1DeckLabel(); else refreshP2DeckLabel();
+				}
 			}
 		}
 	}
@@ -4019,8 +4031,8 @@ public class MainWindow {
 				boolean inPaymentMode = castingIdx[0] >= 0;
 				boolean nameBlocked = !inPaymentMode && !spent
 						&& (lcd.isForward() || lcd.isBackup() || lcd.isMonster())
-						&& ((!lcd.multicard() && hasCharacterNameOnField(lcd.name()))
-							|| (lcd.isLightOrDark() && hasLightOrDarkOnField(true)));
+						&& ((!lcd.multicard() && hasCharacterNameOnField(lcd.name()) && !isMultiNameExceptionActive(lcd.name()))
+							|| isLightDarkConflict(lcd));
 
 				if (casting) {
 					lbl.setBorder(createCardGlowBorder(new Color(255, 200, 0)));
@@ -4102,8 +4114,8 @@ public class MainWindow {
 					if (spent) return;
 					boolean nameBlocked = castingIdx[0] < 0
 							&& (cd.isForward() || cd.isBackup() || cd.isMonster())
-							&& ((!cd.multicard() && hasCharacterNameOnField(cd.name()))
-								|| (cd.isLightOrDark() && hasLightOrDarkOnField(true)));
+							&& ((!cd.multicard() && hasCharacterNameOnField(cd.name()) && !isMultiNameExceptionActive(cd.name()))
+								|| isLightDarkConflict(cd));
 					if (nameBlocked) return;
 
 					if (castingIdx[0] < 0) {
@@ -4741,7 +4753,7 @@ public class MainWindow {
 			boolean handIsMainPhase = handPhase == GameState.GamePhase.MAIN_1 || handPhase == GameState.GamePhase.MAIN_2;
 			boolean handCanPlayAction = handIsMainPhase && phaseTracker.isMyTurn() && gameState.getStack().isEmpty();
 			boolean handIsCharacter = card.isForward() || card.isBackup() || card.isMonster();
-			boolean handNameConflict = handIsCharacter && !card.multicard() && hasCharacterNameOnField(card.name());
+			boolean handNameConflict = handIsCharacter && !card.multicard() && hasCharacterNameOnField(card.name()) && !isMultiNameExceptionActive(card.name());
 			boolean handLightDarkConflict = handIsCharacter && isLightDarkConflict(card);
 			final boolean canPlay = handCanPlayAction && !handNameConflict && !handLightDarkConflict
 					&& canAffordCard(card, idx) && (!card.isBackup() || hasAvailableBackupSlot()) && castRestrictionMet(card);
@@ -4838,7 +4850,7 @@ public class MainWindow {
 		boolean isMainPhase = phase == GameState.GamePhase.MAIN_1 || phase == GameState.GamePhase.MAIN_2;
 		boolean canPlaySpecialAction = isMainPhase && phaseTracker.isMyTurn() && gameState.getStack().isEmpty();
 		boolean isCharacter = card.isForward() || card.isBackup() || card.isMonster();
-		boolean nameConflict = isCharacter && !card.multicard() && hasCharacterNameOnField(card.name());
+		boolean nameConflict = isCharacter && !card.multicard() && hasCharacterNameOnField(card.name()) && !isMultiNameExceptionActive(card.name());
 		boolean lightDarkConflict = isCharacter && isLightDarkConflict(card);
 		playItem.setEnabled(canPlaySpecialAction && !nameConflict && !lightDarkConflict && canAffordCard(card, handIdx)
 				&& (!card.isBackup() || hasAvailableBackupSlot()) && castRestrictionMet(card));
@@ -5963,6 +5975,17 @@ public class MainWindow {
 			// Same-element conflicts unless an exception is active
 			if (hasSpecificElementOnField(elem) && !isLightDarkExceptionActive(elem, card)) return true;
 		}
+		return false;
+	}
+
+	/**
+	 * Returns true if a "You can play 2 or more Card Name X" exception is active on P1's field
+	 * for the given card name, allowing the name-uniqueness rule to be bypassed.
+	 */
+	private boolean isMultiNameExceptionActive(String cardName) {
+		for (CardData c : p1ForwardCards) if (cardName.equalsIgnoreCase(c.grantsMultiNamePlay())) return true;
+		for (CardData c : p1MonsterCards) if (cardName.equalsIgnoreCase(c.grantsMultiNamePlay())) return true;
+		for (CardData c : p1BackupCards)  if (c != null && cardName.equalsIgnoreCase(c.grantsMultiNamePlay())) return true;
 		return false;
 	}
 
@@ -9455,9 +9478,36 @@ public class MainWindow {
 					boolean inclMonsters, boolean inclSummons,
 					int costVal, String costCmp, String cardNameFilter, String jobFilter,
 					String categoryFilter, String elementFilter, String excludeName, String excludeElem,
-					String destination) {
+					String destination, int count, boolean entersDull) {
 				MainWindow.this.searchDeckForCard(isP1, inclForwards, inclBackups, inclMonsters, inclSummons,
-						costVal, costCmp, cardNameFilter, jobFilter, categoryFilter, elementFilter, excludeName, excludeElem, destination);
+						costVal, costCmp, cardNameFilter, jobFilter, categoryFilter, elementFilter, excludeName, excludeElem, destination, count, entersDull);
+			}
+
+			@Override public void playAllByNameFromOwnBreakZoneDull(String cardName, boolean dull) {
+				java.util.List<CardData> bz = isP1 ? gameState.getP1BreakZone() : gameState.getP2BreakZone();
+				java.util.List<CardData> toPlay = new java.util.ArrayList<>();
+				for (int i = bz.size() - 1; i >= 0; i--)
+					if (meetsCardNameFilter(bz.get(i), cardName)) toPlay.add(bz.remove(i));
+				for (CardData card : toPlay) {
+					logEntry(card.name() + " played from Break Zone → field" + (dull ? " dull" : ""));
+					if (isP1) {
+						if (card.isBackup())       placeCardInFirstBackupSlot(card);
+						else if (card.isMonster()) placeCardInMonsterZone(card);
+						else {
+							placeCardInForwardZone(card);
+							if (dull) {
+								int idx = p1ForwardCards.size() - 1;
+								p1ForwardStates.set(idx, CardState.DULL);
+								refreshP1ForwardSlot(idx);
+							}
+						}
+					} else {
+						if (card.isBackup())       placeP2CardInFirstBackupSlot(card);
+						else if (card.isMonster()) placeP2CardInMonsterZone(card);
+						else                       placeP2CardInForwardZone(card);
+					}
+				}
+				if (isP1) refreshP1BreakLabel(); else refreshP2BreakLabel();
 			}
 
 			@Override public void returnP1BackupToHand(int idx) { MainWindow.this.returnP1BackupToHand(idx); }
@@ -11324,6 +11374,7 @@ public class MainWindow {
 	 */
 	private void sendToBreakZoneByUniquenessRule(CardData incoming, boolean isP1) {
 		if (incoming.multicard()) return;
+		if (isP1 && isMultiNameExceptionActive(incoming.name())) return;
 		if (isP1) {
 			// P1 forwards
 			for (int i = p1ForwardCards.size() - 1; i >= 0; i--) {
