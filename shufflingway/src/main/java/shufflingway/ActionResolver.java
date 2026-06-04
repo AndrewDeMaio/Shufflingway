@@ -1695,7 +1695,7 @@ public class ActionResolver {
      */
     private static final Pattern DEAL_DAMAGE_TO_FORWARDS = Pattern.compile(
         "(?i)Deal\\s+(?<amount>\\d+)\\s+damage\\s+to\\s+all(?:\\s+the)?\\s+" +
-        "(?:(?<condition>damaged|dull|attacking|blocking)\\s+)?" +
+        "(?:(?<condition>damaged|dull|attacking|blocking|active)\\s+)?" +
         "Forwards?" +
         "(?:\\s+of\\s+cost\\s+(?<cost>\\d+)(?:\\s+or\\s+(?<costcmp>less|more))?)?" +
         "(?:\\s+other\\s+than\\s+Job\\s+(?<excludejob>.+?)(?=\\s+(?:your\\s+)?opponent\\s+controls\\b|[.!]?$))?" +
@@ -1709,7 +1709,7 @@ public class ActionResolver {
      */
     private static final Pattern DEAL_DAMAGE_TO_FORWARDS_ALT = Pattern.compile(
         "(?i)Deal\\s+all(?:\\s+the)?\\s+" +
-        "(?:(?<condition>damaged|dull|attacking|blocking)\\s+)?" +
+        "(?:(?<condition>damaged|dull|attacking|blocking|active)\\s+)?" +
         "Forwards?" +
         "(?:\\s+of\\s+cost\\s+(?<cost>\\d+)(?:\\s+or\\s+(?<costcmp>less|more))?)?" +
         "(?:\\s+other\\s+than\\s+Job\\s+(?<excludejob>.+?)(?=\\s+(?:your\\s+)?opponent\\s+controls\\b|\\s+\\d+\\s+damage))?" +
