@@ -7279,6 +7279,13 @@ public class MainWindow {
 		}
 	}
 
+	private void triggerAutoAbilitiesForPrimedInto(CardData primingCard, CardData primedCard, boolean primedCardIsP1) {
+		for (AutoAbility fa : primedCard.autoAbilities()) {
+			if (!fa.triggerCard().equalsIgnoreCase(primingCard.name())) continue;
+			if (fa.trigger().equals("primed into")) executeAutoAbility(fa, primedCard, primedCardIsP1);
+		}
+	}
+
 	private void triggerAutoAbilitiesForAttack(CardData card, boolean isP1) {
 		for (AutoAbility fa : card.autoAbilities()) {
 			if (!fa.triggerCard().equalsIgnoreCase(card.name())) continue;
@@ -13505,6 +13512,7 @@ public class MainWindow {
 		p2ForwardPrimedTop.set(slotIdx, chosen);
 		logEntry("[P2] Primed: \"" + primingCard.name() + "\" topped with \"" + chosen.name() + "\"");
 		refreshP2ForwardSlot(slotIdx);
+		triggerAutoAbilitiesForPrimedInto(primingCard, chosen, false);
 	}
 
 	/**
@@ -13853,6 +13861,7 @@ public class MainWindow {
 		p1ForwardPrimedTop.set(slotIdx, chosen);
 		logEntry("Primed: \"" + primingCard.name() + "\" topped with \"" + chosen.name() + "\"");
 		refreshP1ForwardSlot(slotIdx);
+		triggerAutoAbilitiesForPrimedInto(primingCard, chosen, true);
 	}
 
 	/**

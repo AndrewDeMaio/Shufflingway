@@ -1019,6 +1019,37 @@ public record CardData(
     );
 
     /**
+     * Matches priming triggers in two forms:
+     * <ol>
+     *   <li>Pure: {@code "When [PrimerCard] primes into [TargetCard], [effect]"}</li>
+     *   <li>Combined: {@code "When [TargetCard] [trigger] [, extra] or when [PrimerCard] primes into [TargetCard], [effect]"}</li>
+     * </ol>
+     * Named groups: {@code pretarget}, {@code pretrigger}, {@code preextra} (optional preceding
+     * trigger clause), {@code primer} (card initiating the prime), {@code target} (card being
+     * primed into), {@code youmay}, and {@code effect}.
+     */
+    private static final Pattern PRIMES_INTO_PATTERN = Pattern.compile(
+        "(?i)" +
+        // Optional preceding clause: "When [TargetCard] [trigger] [, extra] or"
+        "(?:When\\s+(?<pretarget>[^,]+?)\\s+" +
+        "(?<pretrigger>" +
+            "attacks?(?:\\s+or\\s+blocks?)?" +
+            "|blocks?(?:\\s+or\\s+is\\s+blocked)?" +
+            "|is\\s+blocked" +
+            "|enters?\\s+the\\s+field(?:\\s+due\\s+to\\s+(?:your\\s+cast|Warp))?" +
+            "|leaves?\\s+the\\s+field" +
+            "|deals?\\s+damage\\s+to\\s+your\\s+opponent" +
+            "|deals?\\s+damage\\s+to\\s+a\\s+Forward" +
+        ")(?:\\s*,\\s*(?<preextra>[^.!]*?))?\\s+or\\s+)?" +
+        // Prime trigger: "[W]hen [PrimerCard] primes into [TargetCard],"
+        "when\\s+(?<primer>[^,]+?)\\s+primes?\\s+into\\s+(?<target>[^,]+?)\\s*,\\s+" +
+        "(?<youmay>(?:you|your\\s+opponent)\\s+may\\s+)?" +
+        "(?<effect>.+?)\\s*" +
+        "(?=\\s*\\[\\[br\\]\\]|\\s*when\\s+[^,]+?\\s+(?:attacks?|blocks?|enters?|leaves?|is\\s+(?:put|removed|blocked)|deals?|primes?)|\\s*(?:《[^》]+》)+\\s*:|\\s*$)",
+        Pattern.DOTALL
+    );
+
+    /**
      * Matches "When [CardName] or your [Element] Summon deals damage to a Forward, [effect]".
      * Produces two {@link AutoAbility} entries: one for the named card's battle damage and one
      * for the element-typed Summon's ability damage (e.g. Ramuh + Lightning Summon).
@@ -1078,6 +1109,55 @@ public record CardData(
         // quoted ability text inside action-ability grants (e.g. "When X attacks, ...")
         // is never incorrectly registered as a permanent auto-ability.
         String textForSearch = textEn.replaceAll("\"[^\"]+\"", "");
+
+        // First pass: "when [PrimerCard] primes into [TargetCard], [effect]"
+        // Also handles "When [Target] [trigger] [, extra] or when [Primer] primes into [Target], [effect]"
+        // Matched regions are stripped from textForSearch before the remaining passes run.
+        Matcher pm = PRIMES_INTO_PATTERN.matcher(textForSearch);
+        StringBuffer strippedBuf = new StringBuffer();
+        while (pm.find()) {
+            String primer    = pm.group("primer").trim();
+            String youMayRaw = pm.group("youmay");
+            boolean opponentMay = youMayRaw != null
+                    && youMayRaw.trim().toLowerCase(java.util.Locale.ROOT).startsWith("your opponent");
+            boolean youMay  = youMayRaw != null && !opponentMay;
+            String effect = SUMMON_MARKUP.matcher(pm.group("effect").trim()).replaceAll("").trim();
+            if (!effect.isEmpty()) {
+                // Prime trigger: triggerCard = primer card name
+                AutoAbility primeFA = parseAutoAbilityRestrictions(
+                        primer, "primed into", youMay, opponentMay, false, false, effect, 0);
+                if (primeFA != null) result.add(primeFA);
+
+                // Optional preceding trigger clause
+                String pretargetRaw  = pm.group("pretarget");
+                String pretriggerRaw = pm.group("pretrigger");
+                if (pretargetRaw != null && pretriggerRaw != null) {
+                    String pretarget  = pretargetRaw.trim();
+                    String pretrigRaw = pretriggerRaw.trim().toLowerCase(java.util.Locale.ROOT);
+                    boolean castOnly  = pretrigRaw.contains("due to your cast");
+                    boolean warpOnly  = pretrigRaw.contains("enter") && pretrigRaw.contains("warp");
+                    boolean preIsParty = pretarget.toLowerCase(java.util.Locale.ROOT).contains("party");
+                    String preTrig = normalizePretrigger(pretrigRaw, preIsParty, warpOnly);
+                    AutoAbility preFA = parseAutoAbilityRestrictions(
+                            pretarget, preTrig, youMay, opponentMay, castOnly, warpOnly, effect, 0);
+                    if (preFA != null) result.add(preFA);
+
+                    // Extra trigger phrase between preceding comma and "or" (e.g. "deals damage to your opponent")
+                    String preextra = pm.group("preextra");
+                    if (preextra != null && !preextra.isBlank()) {
+                        String extraTrig = normalizePretrigger(
+                                preextra.trim().toLowerCase(java.util.Locale.ROOT), false, false);
+                        AutoAbility extraFA = parseAutoAbilityRestrictions(
+                                pretarget, extraTrig, youMay, opponentMay, false, false, effect, 0);
+                        if (extraFA != null) result.add(extraFA);
+                    }
+                }
+            }
+            pm.appendReplacement(strippedBuf, "");
+        }
+        pm.appendTail(strippedBuf);
+        textForSearch = strippedBuf.toString();
+
         Matcher m = FIELD_ABILITY_PATTERN.matcher(textForSearch);
         while (m.find()) {
             String card      = m.group("card").trim();
@@ -1194,6 +1274,28 @@ public record CardData(
         if (effect.isEmpty()) return null;
         return new AutoAbility(card, trigger, youMay, opponentMay, effect,
                 oncePerTurn, yourTurnOnly, rfpConditionCard, castPaymentMinElements, castOnly, warpOnly, damageThreshold);
+    }
+
+    /** Normalises a raw trigger string (lower-cased) to a canonical trigger value. */
+    private static String normalizePretrigger(String raw, boolean cardIsParty, boolean warpOnly) {
+        if (raw == null || raw.isBlank()) return "enters the field";
+        String r = raw.trim();
+        if (r.contains("attack") && r.contains("block"))           return "attacks or blocks";
+        if (r.contains("attack") && cardIsParty)                   return "party attacks";
+        if (r.contains("enter") && r.contains("attack"))           return "enters the field or attacks";
+        if (r.contains("attack"))                                   return "attacks";
+        if (r.contains("block") && r.contains("is blocked"))       return "blocks or is blocked";
+        if (r.equals("is blocked"))                                 return "is blocked";
+        if (r.contains("block"))                                    return "blocks";
+        if (r.contains("break zone"))                               return "put into break zone";
+        if (r.contains("summon"))                                   return "cast summon";
+        if (r.contains("damage zone"))                              return "damage zone";
+        if (r.contains("leaves"))                                   return "leaves the field";
+        if (warpOnly)                                               return "enters the field";
+        if (r.contains("warp"))                                     return "warp placed";
+        if (r.contains("deals damage") && r.contains("opponent"))  return "deals damage to opponent";
+        if (r.contains("deals damage"))                             return "deals damage to forward";
+        return "enters the field";
     }
 
     // -------------------------------------------------------------------------

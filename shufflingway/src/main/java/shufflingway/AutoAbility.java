@@ -17,7 +17,8 @@ package shufflingway;
  * {@code "attacks"}, {@code "blocks"}, {@code "attacks or blocks"},
  * {@code "is blocked"}, {@code "blocks or is blocked"},
  * {@code "party attacks"}, {@code "enters the field"},
- * {@code "put into break zone"}, {@code "cast summon"}, or {@code "damage zone"}.
+ * {@code "put into break zone"}, {@code "cast summon"}, {@code "damage zone"},
+ * or {@code "primed into"}.
  *
  * <p>The {@code triggerCard} field holds:
  * <ul>
@@ -26,6 +27,7 @@ package shufflingway;
  *       (e.g. {@code "a Forward you control"}, {@code "Geomancer"},
  *       {@code "a Character opponent controls"}).</li>
  *   <li>For cast-summon / damage-zone triggers — empty string (trigger is not card-specific).</li>
+ *   <li>For primed-into triggers — the name of the card that initiates the priming.</li>
  * </ul>
  *
  * <p>Firing restrictions:
