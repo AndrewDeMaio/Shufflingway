@@ -5101,8 +5101,9 @@ public class MainWindow {
 				selfFloor = Math.max(selfFloor, mod.minCost());
 			}
 		}
-		int cost = card.cost() + selfInc - selfRed - totalFieldReduction(card, true);
+		int cost = card.cost() + selfInc - selfRed;
 		cost = Math.max(selfFloor, cost);
+		cost = applyFieldReductions(cost, card, true);
 		for (CostReductionModifier m : activeCostReductions) {
 			if (m.matches(card)) return m.apply(cost);
 		}
@@ -5557,31 +5558,29 @@ public class MainWindow {
 		};
 	}
 
-	private int totalFieldReduction(CardData card, boolean isP1) {
-		int total = 0;
+	private int applyFieldReductions(int cost, CardData card, boolean isP1) {
 		for (int s = 0; s < 2; s++) {
 			boolean sIsP1 = s == 0;
 			List<CardData> fwds = sIsP1 ? p1ForwardCards : p2ForwardCards;
 			CardData[]     bkps = sIsP1 ? p1BackupCards  : p2BackupCards;
 			List<CardData> mons = sIsP1 ? p1MonsterCards : p2MonsterCards;
-			for (CardData src : fwds)                        total += reductionFrom(src, card, isP1, sIsP1);
-			for (CardData bkp : bkps) if (bkp != null)      total += reductionFrom(bkp, card, isP1, sIsP1);
-			for (CardData src : mons)                        total += reductionFrom(src, card, isP1, sIsP1);
+			for (CardData src : fwds)               cost = applyFieldReductionsFrom(src, cost, card, isP1, sIsP1);
+			for (CardData bkp : bkps) if (bkp != null)  cost = applyFieldReductionsFrom(bkp, cost, card, isP1, sIsP1);
+			for (CardData src : mons)               cost = applyFieldReductionsFrom(src, cost, card, isP1, sIsP1);
 		}
-		return total;
+		return cost;
 	}
 
-	private int reductionFrom(CardData src, CardData card, boolean isP1, boolean srcIsP1) {
-		int total = 0;
+	private int applyFieldReductionsFrom(CardData src, int cost, CardData card, boolean isP1, boolean srcIsP1) {
 		for (FieldCostReduction fcr : src.fieldCostReductions()) {
 			if (fcr.amountPerUnit() == 0) continue;
 			if (fcr.ownerOnly() && srcIsP1 != isP1) continue;
 			if (!fcr.matchesCard(card)) continue;
 			int units = fcr.scalingJobFilter() != null
 					? countForwardsWithJob(fcr.scalingJobFilter(), isP1) : 1;
-			total += fcr.amountPerUnit() * units;
+			cost = fcr.apply(cost, units);
 		}
-		return total;
+		return cost;
 	}
 
 	private int countForwardsWithJob(String job, boolean isP1) {
