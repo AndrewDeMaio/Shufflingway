@@ -4489,19 +4489,19 @@ public class ActionResolver {
 
     /** Builds a log suffix like " — Gain +1000 power, Haste, and First Strike until end of turn". */
     private static String boostLogSuffix(int amount, EnumSet<CardData.Trait> traits) {
-        StringBuilder sb = new StringBuilder(" — Gain +").append(amount).append(" power");
-        List<String> names = new ArrayList<>();
-        if (traits.contains(CardData.Trait.HASTE))        names.add("Haste");
-        if (traits.contains(CardData.Trait.FIRST_STRIKE)) names.add("First Strike");
-        if (traits.contains(CardData.Trait.BRAVE))        names.add("Brave");
-        switch (names.size()) {
-            case 1 -> sb.append(" and ").append(names.get(0));
-            case 2 -> sb.append(", ").append(names.get(0)).append(", and ").append(names.get(1));
-            case 3 -> sb.append(", ").append(names.get(0))
-                        .append(", ").append(names.get(1))
-                        .append(", and ").append(names.get(2));
-            default -> {
+        List<String> parts = new ArrayList<>();
+        if (amount != 0)                                  parts.add("+" + amount + " power");
+        if (traits.contains(CardData.Trait.HASTE))        parts.add("Haste");
+        if (traits.contains(CardData.Trait.FIRST_STRIKE)) parts.add("First Strike");
+        if (traits.contains(CardData.Trait.BRAVE))        parts.add("Brave");
+        StringBuilder sb = new StringBuilder(" — Gain ");
+        for (int i = 0; i < parts.size(); i++) {
+            if (i > 0) {
+                if (parts.size() == 2)            sb.append(" and ");
+                else if (i == parts.size() - 1)   sb.append(", and ");
+                else                              sb.append(", ");
             }
+            sb.append(parts.get(i));
         }
         sb.append(" until end of turn");
         return sb.toString();
