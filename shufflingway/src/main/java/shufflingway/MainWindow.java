@@ -13313,8 +13313,17 @@ public class MainWindow {
 			CardData blocker = p2ForwardCards.get(bestBlockerIdx);
 			int blockerPower = effectiveP2ForwardPower(bestBlockerIdx);
 			logEntry("[P2] " + blocker.name() + " blocks the party!");
-			if (combinedPower >= blockerPower) breakP2Forward(bestBlockerIdx);
-			applyPartyBlockerDamage(p2AiBuildDamageMap(attackerIndices, blockerPower));
+			// Party has First Strike only if every attacker has it and the blocker does not
+			boolean partyFirst = attackerIndices.stream()
+					.allMatch(i -> effectiveHasTrait(true, i, CardData.Trait.FIRST_STRIKE))
+					&& !effectiveHasTrait(false, bestBlockerIdx, CardData.Trait.FIRST_STRIKE);
+			boolean blockerBroken = combinedPower >= blockerPower;
+			if (blockerBroken) breakP2Forward(bestBlockerIdx);
+			if (!partyFirst || !blockerBroken) {
+				applyPartyBlockerDamage(p2AiBuildDamageMap(attackerIndices, blockerPower));
+			} else {
+				logEntry("First Strike — party takes no return damage");
+			}
 			if (onDone != null) onDone.run();
 		} else {
 			p2TakeDamage(onDone);
@@ -13369,21 +13378,31 @@ public class MainWindow {
 	/** P1 blocks a P2 party attack: combined power hits the blocker; P1 assigns blocker power back. */
 	private void resolveP1BlockVsP2Party(int blockerIdx, CardData blocker,
 			List<Integer> attackerIndices, int combinedPower) {
+		// Party has First Strike only if every attacker has it and the blocker does not
+		boolean partyFirst = attackerIndices.stream()
+				.allMatch(i -> effectiveHasTrait(false, i, CardData.Trait.FIRST_STRIKE))
+				&& !effectiveHasTrait(true, blockerIdx, CardData.Trait.FIRST_STRIKE);
+
 		int blockerPower = effectiveP1ForwardPower(blockerIdx);
 		logEntry("[P2] Party deals " + combinedPower + " damage to " + blocker.name());
-		if (combinedPower >= blockerPower) breakP1Forward(blockerIdx);
+		boolean blockerBroken = combinedPower >= blockerPower;
+		if (blockerBroken) breakP1Forward(blockerIdx);
 
-		List<CardData> attackerCards = new ArrayList<>();
-		int[] effectivePowers = new int[attackerIndices.size()];
-		for (int i = 0; i < attackerIndices.size(); i++) {
-			int idx = attackerIndices.get(i);
-			attackerCards.add(p2ForwardCards.get(idx));
-			effectivePowers[i] = effectiveP2ForwardPower(idx);
+		if (!partyFirst || !blockerBroken) {
+			List<CardData> attackerCards = new ArrayList<>();
+			int[] effectivePowers = new int[attackerIndices.size()];
+			for (int i = 0; i < attackerIndices.size(); i++) {
+				int idx = attackerIndices.get(i);
+				attackerCards.add(p2ForwardCards.get(idx));
+				effectivePowers[i] = effectiveP2ForwardPower(idx);
+			}
+			Map<Integer, Integer> damageMap = showPartyDamageAssignmentDialog(
+					attackerIndices, attackerCards, effectivePowers, blockerPower);
+			if (damageMap.isEmpty()) damageMap = p2AiBuildDamageMap(attackerIndices, blockerPower);
+			applyP2PartyAttackerDamage(damageMap);
+		} else {
+			logEntry("First Strike — party takes no return damage");
 		}
-		Map<Integer, Integer> damageMap = showPartyDamageAssignmentDialog(
-				attackerIndices, attackerCards, effectivePowers, blockerPower);
-		if (damageMap.isEmpty()) damageMap = p2AiBuildDamageMap(attackerIndices, blockerPower);
-		applyP2PartyAttackerDamage(damageMap);
 	}
 
 	/** Applies a damage map onto P2 party attackers; breaks those that reach lethal. */
