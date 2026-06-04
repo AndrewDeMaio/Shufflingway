@@ -6,6 +6,7 @@ import java.awt.Color;
 import java.awt.Component;
 import java.awt.Cursor;
 import java.awt.Dimension;
+import java.util.stream.Collectors;
 import java.awt.EventQueue;
 import java.awt.FlowLayout;
 import java.awt.Font;
@@ -10327,14 +10328,34 @@ public class MainWindow {
 					if (idx >= p1ForwardCards.size()) return;
 					p1ForwardPowerBoost.set(idx, p1ForwardPowerBoost.get(idx) + amount);
 					p1ForwardTempTraits.get(idx).addAll(traits);
-					if (amount != 0) logEntry(p1Forward(idx).name() + " gains +" + amount + " power until end of turn");
+					StringBuilder sb = new StringBuilder();
+					if(traits.size() > 0)
+					{
+						sb.append(traits.stream().map(Enum::name).map(s -> s.substring(0, 1).toUpperCase() +
+										s.substring(1).toLowerCase())
+								.collect(Collectors.joining(" and "))
+						);
+					}
+					if (amount != 0)
+						sb.append(" and +").append(amount).append(" power");
+					logEntry(p1Forward(idx).name() + " gains " + sb + " until end of turn");
 					refreshP1ForwardSlot(idx);
 				} else {
 					int idx = t.idx();
 					if (idx >= p2ForwardCards.size()) return;
 					p2ForwardPowerBoost.set(idx, p2ForwardPowerBoost.get(idx) + amount);
 					p2ForwardTempTraits.get(idx).addAll(traits);
-					logEntry("[P2] " + p2ForwardCards.get(idx).name() + " gains +" + amount + " power until end of turn");
+					StringBuilder sb = new StringBuilder();
+					if(traits.size() > 0)
+					{
+						sb.append(traits.stream().map(Enum::name).map(s -> s.substring(0, 1).toUpperCase() +
+										s.substring(1).toLowerCase())
+								.collect(Collectors.joining(" and "))
+						);
+					}
+					if (amount != 0)
+						sb.append(" and +").append(amount).append(" power");
+					logEntry(p1Forward(idx).name() + " gains " + sb + " until end of turn");
 					refreshP2ForwardSlot(idx);
 				}
 			}
