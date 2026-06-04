@@ -10327,7 +10327,7 @@ public class MainWindow {
 					if (idx >= p1ForwardCards.size()) return;
 					p1ForwardPowerBoost.set(idx, p1ForwardPowerBoost.get(idx) + amount);
 					p1ForwardTempTraits.get(idx).addAll(traits);
-					logEntry(p1Forward(idx).name() + " gains +" + amount + " power until end of turn");
+					if (amount != 0) logEntry(p1Forward(idx).name() + " gains +" + amount + " power until end of turn");
 					refreshP1ForwardSlot(idx);
 				} else {
 					int idx = t.idx();
