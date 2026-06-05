@@ -9371,16 +9371,19 @@ public class MainWindow {
 			}
 
 			@Override public String selectElement(String prompt) {
-				String[] elems = ActionResolver.ELEMENT_NAMES;
+				return selectOption(prompt, ActionResolver.ELEMENT_NAMES);
+			}
+
+			@Override public String selectOption(String prompt, String[] choices) {
 				if (!isP1) {
-					String picked = elems[(int)(Math.random() * elems.length)];
-					logEntry("[AI] named Element: " + picked);
+					String picked = choices[(int)(Math.random() * choices.length)];
+					logEntry("[AI] chose: " + picked);
 					return picked;
 				}
 				return (String) javax.swing.JOptionPane.showInputDialog(
-						frame, prompt, "Select Element",
+						frame, prompt, "Choose",
 						javax.swing.JOptionPane.PLAIN_MESSAGE,
-						null, elems, elems[0]);
+						null, choices, choices[0]);
 			}
 
 			@Override public void shieldJobForwardsCannotBeChosen(String job, String excludeName,

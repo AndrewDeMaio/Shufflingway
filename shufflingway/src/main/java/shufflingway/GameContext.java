@@ -439,6 +439,16 @@ public interface GameContext {
     String selectElement(String prompt);
 
     /**
+     * Presents the ability user with a choice among {@code choices} and returns the selected value.
+     * The AI picks randomly.
+     *
+     * @param prompt  text shown above the picker
+     * @param choices the options to present
+     * @return the selected option, or {@code null} if cancelled
+     */
+    String selectOption(String prompt, String[] choices);
+
+    /**
      * Applies "cannot be chosen" protection to all Forwards matching {@code job} that the active
      * player controls, optionally excluding the card named {@code excludeName}.
      */

@@ -1283,6 +1283,17 @@ public class ActionResolver {
     );
 
     /**
+     * "It/they gains [TraitA] or [TraitB] until [the] end of [the] turn." — player picks one trait.
+     * Groups {@code t1} and {@code t2} are the two trait names.  Must be checked before
+     * {@link #FOLLOWUP_KEYWORD_GRANT} since the latter doesn't handle the "or" separator.
+     */
+    private static final Pattern FOLLOWUP_KEYWORD_GRANT_CHOICE = Pattern.compile(
+        "(?i)(?:it|they)\\s+gains?\\s+" +
+        "(?<t1>Haste|First\\s+Strike|Brave)\\s+or\\s+(?<t2>Haste|First\\s+Strike|Brave)" +
+        "\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn"
+    );
+
+    /**
      * Matches "it/they gains Haste/First Strike/Brave [and …] until end of turn" with no power amount.
      * <ul>
      *   <li>Group 1 — traits string, e.g. {@code "Haste"} or {@code "Haste and First Strike"}</li>
@@ -4243,6 +4254,30 @@ public class ActionResolver {
                 } else if (boostSecondary != null) {
                     boostSecondary.accept(ctx);
                 }
+            };
+        }
+
+        // --- Trait-choice grant followup: "it gains [T1] or [T2] until end of turn" ---
+        Matcher choiceM = FOLLOWUP_KEYWORD_GRANT_CHOICE.matcher(primaryFollowup);
+        if (choiceM.find()) {
+            String t1Name = choiceM.group("t1").trim();
+            String t2Name = choiceM.group("t2").trim();
+            EnumSet<CardData.Trait> t1Traits = parseTraits(t1Name);
+            EnumSet<CardData.Trait> t2Traits = parseTraits(t2Name);
+            return ctx -> {
+                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
+                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
+                        jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
+                if (ts.isEmpty()) return;
+                String chosen = ctx.selectOption("Grant " + t1Name + " or " + t2Name + "?",
+                        new String[]{t1Name, t2Name});
+                EnumSet<CardData.Trait> traits = (chosen != null && chosen.equalsIgnoreCase(t2Name)) ? t2Traits : t1Traits;
+                String logLabel = chosen != null ? chosen : t1Name;
+                ctx.logEntry(choosePrefix + " — grants " + logLabel);
+                sortedByIdxDesc(ts, true) .forEach(t -> ctx.boostTarget(t, 0, traits));
+                sortedByIdxDesc(ts, false).forEach(t -> ctx.boostTarget(t, 0, traits));
+                if (secondary != null) secondary.accept(ctx);
             };
         }
 
