@@ -512,6 +512,19 @@ public class ActionResolver {
         "(?i)At\\s+the\\s+end\\s+of\\s+each\\s+of\\s+your\\s+turns?\\s*,\\s+(?<inner>.+)"
     );
 
+    /**
+     * "At the beginning of your Main Phase 1, select 1 Element. &lt;CardName&gt; becomes that Element."
+     * Group {@code name} is the card whose element changes.
+     */
+    static final Pattern AT_BEGINNING_OF_MAIN_PHASE_1_ELEMENT_CHANGE_PATTERN = Pattern.compile(
+        "(?i)At\\s+the\\s+beginning\\s+of\\s+your\\s+Main\\s+Phase\\s+1,\\s+select\\s+1\\s+Element\\.\\s+" +
+        "(?<name>[A-Z][A-Za-z''\\-\\s]+?)\\s+becomes\\s+that\\s+Element" +
+        "(?:\\s*\\(this\\s+effect\\s+does\\s+not\\s+end\\s+at\\s+the\\s+end\\s+of\\s+the\\s+turn\\))?\\s*\\.?"
+    );
+
+    /** All eight FFTCG element names, in standard order. */
+    static final String[] ELEMENT_NAMES = {"Fire", "Ice", "Wind", "Earth", "Lightning", "Water", "Light", "Dark"};
+
     // ---- Damage-shield followup patterns (apply to selected "it/them" targets) --------
 
     /** Matches "During this turn, the next damage dealt to it/him becomes 0 instead." */
@@ -688,15 +701,16 @@ public class ActionResolver {
     // ---- Standalone cannot-be-chosen patterns ---------------------------------------
 
     /**
-     * "Activate all the Forwards/Characters you control. They cannot be chosen by
-     * your opponent's Summons [or abilities] [this turn]."
+     * "Activate all [the] Forwards/Characters you control. They cannot be chosen by
+     * [your opponent's] Summons [or abilities] [this turn]."
+     * "your opponent's" and "the" are optional; treated as opponent-only either way.
      * Registered before {@link #tryParseAllFieldEffect} to prevent the activate-all part
      * from consuming the text without the cannot-be-chosen clause.
      */
     private static final Pattern STANDALONE_ACTIVATE_AND_CANNOT_BE_CHOSEN = Pattern.compile(
-        "(?i)Activate\\s+all\\s+the\\s+(?:Forwards?|Characters?)\\s+you\\s+control\\." +
-        "\\s*They\\s+cannot\\s+be\\s+chosen\\s+by\\s+your\\s+opponent's\\s+" +
-        "(?<scope>Summons?(?:\\s+or\\s+abilities)?|abilities)\\s*\\.?"
+        "(?i)Activate\\s+all\\s+(?:the\\s+)?(?:Forwards?|Characters?)\\s+you\\s+control\\." +
+        "\\s*They\\s+cannot\\s+be\\s+chosen\\s+by\\s+(?:your\\s+opponent's\\s+)?" +
+        "(?<scope>Summons?(?:\\s+or\\s+abilities)?|abilities)\\s*(?:this\\s+turn)?\\s*\\.?"
     );
 
     /**
@@ -725,6 +739,35 @@ public class ActionResolver {
     private static final Pattern STANDALONE_NAMED_CANNOT_BE_CHOSEN_ANY_SUMMON = Pattern.compile(
         "(?i)(?<name>[A-Z][A-Za-z''\\-\\s]+?)\\s+cannot\\s+be\\s+chosen\\s+by\\s+(?!your\\s)Summons?" +
         "(?:\\s+during\\s+this\\s+turn)?\\s*\\.?"
+    );
+
+    /**
+     * "Name 1 Element. During this turn, [CardName] cannot be chosen by Summons or abilities of the named
+     * Element and if [CardName] is dealt damage by a Summon or an ability of the named Element, the damage
+     * becomes 0 instead." — targeting immunity AND damage nullification for the named element.
+     */
+    private static final Pattern STANDALONE_NAME_ELEMENT_IMMUNE_AND_NULLIFY_DAMAGE = Pattern.compile(
+        "(?i)Name\\s+1\\s+Element\\.\\s+During\\s+this\\s+turn,\\s+" +
+        "(?<name>[A-Z][A-Za-z''\\-\\s]+?)\\s+cannot\\s+be\\s+chosen\\s+by\\s+Summons?\\s+or\\s+abilities\\s+of\\s+the\\s+named\\s+Element" +
+        "\\s+and\\s+if\\s+[A-Za-z''\\-\\s]+?is\\s+dealt\\s+damage\\s+by\\s+a\\s+Summon\\s+or\\s+an\\s+ability\\s+of\\s+the\\s+named\\s+Element,\\s+" +
+        "the\\s+damage\\s+becomes\\s+0\\s+instead\\s*\\.?"
+    );
+
+    /**
+     * "Name 1 Element. [CardName] cannot be chosen by Summons or abilities of the named Element this turn."
+     * Action ability: the player names an element, and the card gains immunity to that element this turn.
+     */
+    private static final Pattern STANDALONE_NAME_ELEMENT_AND_IMMUNE = Pattern.compile(
+        "(?i)Name\\s+1\\s+Element\\.\\s+" +
+        "(?<name>[A-Z][A-Za-z''\\-\\s]+?)\\s+cannot\\s+be\\s+chosen\\s+by\\s+Summons?\\s+or\\s+abilities\\s+of\\s+the\\s+named\\s+Element\\s+this\\s+turn\\s*\\.?"
+    );
+
+    /**
+     * "[CardName] cannot be chosen by Summons or abilities that share its Element."
+     * Passive field ability: immunity is checked dynamically against the resolving card's element.
+     */
+    private static final Pattern STANDALONE_NAMED_CANNOT_BE_CHOSEN_BY_OWN_ELEMENT = Pattern.compile(
+        "(?i)(?<name>[A-Z][A-Za-z''\\-\\s]+?)\\s+cannot\\s+be\\s+chosen\\s+by\\s+Summons?\\s+or\\s+abilities\\s+that\\s+share\\s+its\\s+Element\\s*\\.?"
     );
 
     /**
@@ -1960,6 +2003,9 @@ public class ActionResolver {
         if (result != null) return result;
 
         result = tryParseEndOfEachTurnFieldAbility(effectText, source);
+        if (result != null) return result;
+
+        result = tryParseBeginningOfMainPhase1FieldAbility(effectText, source);
         if (result != null) return result;
 
         result = tryParseDelayedEffect(effectText);
@@ -6066,6 +6112,36 @@ public class ActionResolver {
                 return ctx -> ctx.shieldNamedCardCannotBeChosenByAnySummon(nm);
         }
 
+        // 6. "Name 1 Element. [Name] cannot be chosen … and if [Name] is dealt damage … becomes 0."
+        //    (Hein-style: targeting immunity + damage nullification for the named element)
+        Matcher heinM = STANDALONE_NAME_ELEMENT_IMMUNE_AND_NULLIFY_DAMAGE.matcher(text);
+        if (heinM.find() && source != null) {
+            String nm = heinM.group("name").trim();
+            if (nm.equalsIgnoreCase(source.name()))
+                return ctx -> {
+                    String elem = ctx.selectElement("Name 1 Element (" + nm + " full protection):");
+                    if (elem != null) {
+                        ctx.logEntry("Effect: " + nm + " cannot be chosen by " + elem + " Summons/abilities; damage from them → 0 this turn");
+                        ctx.shieldNamedCardCannotBeChosenByElement(nm, elem);
+                        ctx.nullifyNamedCardDamageByElement(nm, elem);
+                    }
+                };
+        }
+
+        // 7. "Name 1 Element. [Name] cannot be chosen by Summons or abilities of the named Element this turn."
+        Matcher elemM = STANDALONE_NAME_ELEMENT_AND_IMMUNE.matcher(text);
+        if (elemM.find() && source != null) {
+            String nm = elemM.group("name").trim();
+            if (nm.equalsIgnoreCase(source.name()))
+                return ctx -> {
+                    String elem = ctx.selectElement("Name 1 Element (" + nm + " immunity):");
+                    if (elem != null) {
+                        ctx.logEntry("Effect: " + nm + " cannot be chosen by " + elem + " Summons/abilities this turn");
+                        ctx.shieldNamedCardCannotBeChosenByElement(nm, elem);
+                    }
+                };
+        }
+
         return null;
     }
 
@@ -6080,6 +6156,36 @@ public class ActionResolver {
             if (m.find() && m.group("name").trim().equalsIgnoreCase(card.name())) return true;
         }
         return false;
+    }
+
+    /**
+     * Returns {@code true} if the card has a field ability of the form
+     * "[CardName] cannot be chosen by Summons or abilities that share its Element."
+     * Immunity is evaluated dynamically against the resolving card's element.
+     */
+    static boolean hasCannotBeChosenByOwnElementFieldAbility(CardData card) {
+        for (FieldAbility fa : card.fieldAbilities()) {
+            Matcher m = STANDALONE_NAMED_CANNOT_BE_CHOSEN_BY_OWN_ELEMENT.matcher(fa.effectText());
+            if (m.find() && m.group("name").trim().equalsIgnoreCase(card.name())) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Parses "At the beginning of your Main Phase 1, select 1 Element. [CardName] becomes that
+     * Element." — a recurring field-ability trigger.  Returns a consumer that prompts the player
+     * to select an element and applies a permanent override via {@link GameContext#setCardElement};
+     * {@code fireFieldMainPhase1Abilities} is responsible for invoking it each Main Phase 1 start.
+     */
+    static Consumer<GameContext> tryParseBeginningOfMainPhase1FieldAbility(String text, CardData source) {
+        Matcher m = AT_BEGINNING_OF_MAIN_PHASE_1_ELEMENT_CHANGE_PATTERN.matcher(text);
+        if (!m.find()) return null;
+        String cardName = m.group("name").trim();
+        if (source == null || !cardName.equalsIgnoreCase(source.name())) return null;
+        return ctx -> {
+            String elem = ctx.selectElement("Select 1 Element (" + cardName + " becomes that Element):");
+            if (elem != null) ctx.setCardElement(cardName, elem);
+        };
     }
 
     /**

@@ -405,6 +405,12 @@ public class MainWindow {
 	private final Set<CardData> cannotBeChosenByAbilities      = new HashSet<>();
 	/** Forwards that cannot be selected as targets by either player's Summons this turn. */
 	private final Set<CardData> cannotBeChosenBySummonsAnyone  = new HashSet<>();
+	/** Maps a card to an element: that card cannot be chosen by Summons/abilities of that element this turn. */
+	private final Map<CardData, String> cannotBeChosenByElement = new HashMap<>();
+	/** Maps a card to an element: damage dealt to that card by Summons/abilities of that element becomes 0 this turn. */
+	private final Map<CardData, String> nullifyElementDamageMap = new HashMap<>();
+	/** Maps a card to a permanent element override (Kam'lanaut ability); persists across turns. */
+	private final Map<CardData, String> elementOverrideMap      = new HashMap<>();
 	/** Characters that cannot be broken this turn. */
 	private final Set<CardData> cannotBeBrokenSet         = new HashSet<>();
 	/** Characters that cannot be broken this turn by opposing non-damage abilities/summons. */
@@ -413,11 +419,12 @@ public class MainWindow {
 	private final Set<CardData> breaktouchBattleSet       = new HashSet<>();
 	/** Cards that have escaped from the current Battle via an Escape ability — combat is skipped for their pairing. */
 	private final Set<CardData> escapedFromBattle         = new HashSet<>();
-	/** The card currently dealing ability damage (null when no ability damage is in flight). */
-	private CardData currentBreaktouchSource    = null;
+	/** The Summon card currently resolving (from the stack or as an EX Burst); null otherwise. */
+	private CardData currentSummonSource    = null;
+	/** {@code true} if {@link #currentSummonSource} belongs to P1. */
+	private boolean  currentSummonSourceIsP1 = false;
 	/** The source card of the action ability currently resolving off the stack (null otherwise). */
 	private CardData currentAbilitySource       = null;
-	private boolean  currentBreaktouchSourceIsP1 = false;
 	/** Set to {@code true} while a Summon effect is resolving so {@link #selectCharacters} applies the correct protection set. */
 	private boolean currentResolutionIsSummon = false;
 	/** Set to {@code true} by {@code returnNamedCardToYourHand} when the Summon itself is being returned to hand. */
@@ -1540,6 +1547,7 @@ public class MainWindow {
                                 GameContext ctx = buildGameContext(true);
                                 pending.forEach(e -> e.accept(ctx));
                             }
+                            fireFieldMainPhase1Abilities(true);
             }
 
 			case MAIN_1 -> {
@@ -1626,7 +1634,7 @@ public class MainWindow {
                             perCardIncomingDmgMultiplierMap.clear();
                             p1ForwardIncomingDmgMult = 1;      p2ForwardIncomingDmgMult = 1;
                             p1AbilityOutgoingDmgMult = 1;      p2AbilityOutgoingDmgMult = 1;
-                            cannotBeChosenBySummons.clear();  cannotBeChosenByAbilities.clear();  cannotBeChosenBySummonsAnyone.clear();
+                            cannotBeChosenBySummons.clear();  cannotBeChosenByAbilities.clear();  cannotBeChosenBySummonsAnyone.clear();  cannotBeChosenByElement.clear();  nullifyElementDamageMap.clear();
                             cannotBeBrokenSet.clear();        cannotBeBrokenByNonDmgSet.clear();  breaktouchBattleSet.clear();
                             p1NonLethalProtection = false;    p2NonLethalProtection = false;
                             p1DmgReductionDisabled = false;   p2DmgReductionDisabled = false;
@@ -6374,12 +6382,12 @@ public class MainWindow {
 			Consumer<GameContext> effect = ActionResolver.parse(effectText, entry.source());
 			if (effect != null) {
 				currentResolutionIsSummon   = true;
-				currentBreaktouchSource     = entry.source();
-				currentBreaktouchSourceIsP1 = entry.isP1();
+				currentSummonSource     = entry.source();
+				currentSummonSourceIsP1 = entry.isP1();
 				pendingSummonReturnToHand   = false;
 				try { effect.accept(ctx); } finally {
 					currentResolutionIsSummon = false;
-					currentBreaktouchSource   = null;
+					currentSummonSource   = null;
 				}
 			} else logEntry("[ActionResolver] Summon effect not yet implemented: " + effectText);
 			triggerAutoAbilitiesForCastSummon(entry.isP1());
@@ -7091,6 +7099,23 @@ public class MainWindow {
 		return controlConditionMetWithPools(cond, fwds, bkps, mons);
 	}
 
+	/** Returns the effective element of {@code c}, applying any runtime override (e.g. Kam'lanaut). */
+	private String effectiveElement(CardData c) {
+		String override = elementOverrideMap.get(c);
+		if (override != null) return override;
+		String[] elems = c.elements();
+		return elems.length == 0 ? null : elems[0];
+	}
+
+	/**
+	 * Returns the effective element list of {@code c}, substituting the override element when present.
+	 * Used to compare against the currently-resolving Summon/ability's elements.
+	 */
+	private List<String> effectiveElements(CardData c) {
+		String override = elementOverrideMap.get(c);
+		return (override != null) ? List.of(override) : java.util.Arrays.asList(c.elements());
+	}
+
 	/**
 	 * Returns {@code true} if any {@link IfControlBoost} on the given player's field
 	 * targets {@code targetName} and grants it immunity to Summons ({@code forSummon=true})
@@ -7561,8 +7586,8 @@ public class MainWindow {
 			logEntry("[EX BURST] [AI] " + card.name() + " — auto-activates");
 		}
 		logEntry("[EX BURST] " + card.name() + " — " + effect);
-		if (card.isSummon()) currentResolutionIsSummon = true;
-		try { fn.accept(buildGameContext(isP1, true)); } finally { currentResolutionIsSummon = false; }
+		if (card.isSummon()) { currentResolutionIsSummon = true; currentSummonSource = card; }
+		try { fn.accept(buildGameContext(isP1, true)); } finally { currentResolutionIsSummon = false; currentSummonSource = null; }
 	}
 
 	/**
@@ -9301,6 +9326,63 @@ public class MainWindow {
 				logEntry("Effect: " + name + " cannot be chosen by any Summon this turn");
 			}
 
+			@Override public void shieldNamedCardCannotBeChosenByElement(String cardName, String element) {
+				List<CardData> fwds = isP1 ? p1ForwardCards : p2ForwardCards;
+				for (CardData c : fwds) {
+					if (c.name().equalsIgnoreCase(cardName)) {
+						cannotBeChosenByElement.put(c, element);
+						return;
+					}
+				}
+				logEntry("shieldByElement: " + cardName + " not found on field");
+			}
+
+			@Override public void nullifyNamedCardDamageByElement(String cardName, String element) {
+				List<CardData> fwds = isP1 ? p1ForwardCards : p2ForwardCards;
+				for (CardData c : fwds) {
+					if (c.name().equalsIgnoreCase(cardName)) {
+						nullifyElementDamageMap.put(c, element);
+						return;
+					}
+				}
+				logEntry("nullifyDamageByElement: " + cardName + " not found on field");
+			}
+
+			@Override public void setCardElement(String cardName, String element) {
+				for (boolean p1s : new boolean[]{true, false}) {
+					List<CardData> fwds = p1s ? p1ForwardCards : p2ForwardCards;
+					for (CardData c : fwds) {
+						if (c.name().equalsIgnoreCase(cardName)) {
+							elementOverrideMap.put(c, element);
+							logEntry("[Field] " + cardName + " → element becomes " + element);
+							return;
+						}
+					}
+					CardData[] bkps = p1s ? p1BackupCards : p2BackupCards;
+					for (CardData c : bkps) {
+						if (c != null && c.name().equalsIgnoreCase(cardName)) {
+							elementOverrideMap.put(c, element);
+							logEntry("[Field] " + cardName + " → element becomes " + element);
+							return;
+						}
+					}
+				}
+				logEntry("[Field] setCardElement: " + cardName + " not found");
+			}
+
+			@Override public String selectElement(String prompt) {
+				String[] elems = ActionResolver.ELEMENT_NAMES;
+				if (!isP1) {
+					String picked = elems[(int)(Math.random() * elems.length)];
+					logEntry("[AI] named Element: " + picked);
+					return picked;
+				}
+				return (String) javax.swing.JOptionPane.showInputDialog(
+						frame, prompt, "Select Element",
+						javax.swing.JOptionPane.PLAIN_MESSAGE,
+						null, elems, elems[0]);
+			}
+
 			@Override public void shieldJobForwardsCannotBeChosen(String job, String excludeName,
 					boolean bySummons, boolean byAbilities) {
 				List<CardData> fwds = isP1 ? p1ForwardCards : p2ForwardCards;
@@ -9330,30 +9412,48 @@ public class MainWindow {
 				// Build symmetric "cannot be chosen" sets — checked in all four targeting quadrants.
 				// summonImmuneAnyone: blocked from Summon targeting regardless of which player casts.
 				// abilityImmuneAnyone: blocked from ability targeting regardless of which player uses.
-				// Sources: turn-scoped shields (action abilities), standalone field abilities, and
-				// conditional IfControlBoost grants (e.g. "If you control Yuna, Rikku cannot be chosen").
+				// Sources: turn-scoped shields (action abilities), standalone field abilities,
+				// conditional IfControlBoost grants, and element-based immunity.
+				CardData resCard = currentResolutionIsSummon ? currentSummonSource : currentAbilitySource;
+				List<String> resElems = (resCard != null) ? effectiveElements(resCard) : List.of();
 				final Set<CardData> summonImmuneAnyone;
 				final Set<CardData> abilityImmuneAnyone;
 				{
 					Set<CardData> sumTmp = new HashSet<>(cannotBeChosenBySummonsAnyone);
 					Set<CardData> ablTmp = new HashSet<>();
+					// Rubicante-style: "cannot be chosen by [element] Summons/abilities this turn"
+					for (java.util.Map.Entry<CardData, String> e : cannotBeChosenByElement.entrySet()) {
+						if (resElems.contains(e.getValue())) { sumTmp.add(e.getKey()); ablTmp.add(e.getKey()); }
+					}
 					for (boolean p1side : new boolean[]{true, false}) {
 						List<CardData> fwds = p1side ? p1ForwardCards : p2ForwardCards;
 						CardData[]     bkps = p1side ? p1BackupCards  : p2BackupCards;
 						List<CardData> mons = p1side ? p1MonsterCards : p2MonsterCards;
 						for (CardData c : fwds) {
 							if (ActionResolver.hasCannotBeChosenByAnySummonFieldAbility(c)) sumTmp.add(c);
+							if (ActionResolver.hasCannotBeChosenByOwnElementFieldAbility(c)) {
+								String ce = effectiveElement(c);
+								if (ce != null && resElems.contains(ce)) { sumTmp.add(c); ablTmp.add(c); }
+							}
 							if (icbGrantsImmunity(c.name(), p1side, true))  sumTmp.add(c);
 							if (icbGrantsImmunity(c.name(), p1side, false)) ablTmp.add(c);
 						}
 						for (CardData c : bkps) {
 							if (c == null) continue;
 							if (ActionResolver.hasCannotBeChosenByAnySummonFieldAbility(c)) sumTmp.add(c);
+							if (ActionResolver.hasCannotBeChosenByOwnElementFieldAbility(c)) {
+								String ce = effectiveElement(c);
+								if (ce != null && resElems.contains(ce)) { sumTmp.add(c); ablTmp.add(c); }
+							}
 							if (icbGrantsImmunity(c.name(), p1side, true))  sumTmp.add(c);
 							if (icbGrantsImmunity(c.name(), p1side, false)) ablTmp.add(c);
 						}
 						for (CardData c : mons) {
 							if (ActionResolver.hasCannotBeChosenByAnySummonFieldAbility(c)) sumTmp.add(c);
+							if (ActionResolver.hasCannotBeChosenByOwnElementFieldAbility(c)) {
+								String ce = effectiveElement(c);
+								if (ce != null && resElems.contains(ce)) { sumTmp.add(c); ablTmp.add(c); }
+							}
 							if (icbGrantsImmunity(c.name(), p1side, true))  sumTmp.add(c);
 							if (icbGrantsImmunity(c.name(), p1side, false)) ablTmp.add(c);
 						}
@@ -10861,8 +10961,8 @@ public class MainWindow {
 			}
 
 			@Override public void returnNamedCardToYourHand(String cardName) {
-				if (currentResolutionIsSummon && currentBreaktouchSource != null
-						&& currentBreaktouchSource.name().equalsIgnoreCase(cardName)) {
+				if (currentResolutionIsSummon && currentSummonSource != null
+						&& currentSummonSource.name().equalsIgnoreCase(cardName)) {
 					pendingSummonReturnToHand = true;
 					return;
 				}
@@ -11510,6 +11610,28 @@ public class MainWindow {
 		}
 	}
 
+	/** Called at the start of Main Phase 1 to fire "At the beginning of your Main Phase 1" field abilities. */
+	private void fireFieldMainPhase1Abilities(boolean isP1) {
+		List<CardData> fwds = isP1 ? p1ForwardCards : p2ForwardCards;
+		CardData[]     bkps = isP1 ? p1BackupCards  : p2BackupCards;
+		List<CardData> mons = isP1 ? p1MonsterCards : p2MonsterCards;
+		GameContext ctx = buildGameContext(isP1);
+		for (CardData card : fwds) fireFieldMainPhase1AbilitiesForCard(card, ctx);
+		for (CardData card : bkps) if (card != null) fireFieldMainPhase1AbilitiesForCard(card, ctx);
+		for (CardData card : mons) fireFieldMainPhase1AbilitiesForCard(card, ctx);
+	}
+
+	private void fireFieldMainPhase1AbilitiesForCard(CardData card, GameContext ctx) {
+		for (FieldAbility fa : card.fieldAbilities()) {
+			Consumer<GameContext> effect =
+					ActionResolver.tryParseBeginningOfMainPhase1FieldAbility(fa.effectText(), card);
+			if (effect != null) {
+				logEntry("[Field] " + card.name() + " — Main Phase 1 start: " + fa.effectText());
+				effect.accept(ctx);
+			}
+		}
+	}
+
 	/** Fires all queued end-of-turn effects using a context for {@code isP1}, then clears the queue. */
 	private void fireEndOfTurnEffects(boolean isP1) {
 		if (endOfTurnEffects.isEmpty()) return;
@@ -11547,6 +11669,12 @@ public class MainWindow {
 			if (nullifyAbilityDmgSet.contains(card)) return 0;
 			// Nullify ability-only damage (not Summons)
 			if (!currentResolutionIsSummon && nullifyAbilityOnlyDmgSet.contains(card)) return 0;
+			// Element-scoped nullification (Hein ability): covers both targeted and AoE damage
+			String nullifyElem = nullifyElementDamageMap.get(card);
+			if (nullifyElem != null) {
+				CardData resCard = currentResolutionIsSummon ? currentSummonSource : currentAbilitySource;
+				if (resCard != null && effectiveElements(resCard).contains(nullifyElem)) return 0;
+			}
 			// Passive field ability: nullify Summon-only damage
 			if (currentResolutionIsSummon) {
 				for (FieldAbility fa : card.fieldAbilities()) {
@@ -11649,16 +11777,16 @@ public class MainWindow {
 			if (cannotBeBrokenSet.contains(fwd)) {
 				logEntry((isP1 ? "" : "[P2] ") + fwd.name() + " survives lethal damage (cannot be broken — damage clears at end of turn)");
 				if (isP1) refreshP1ForwardSlot(idx); else refreshP2ForwardSlot(idx);
-				if (currentBreaktouchSource != null)
-					fireBreaktouchForDamage(currentBreaktouchSource, currentBreaktouchSourceIsP1, isP1, idx);
+				if (currentSummonSource != null)
+					fireBreaktouchForDamage(currentSummonSource, currentSummonSourceIsP1, isP1, idx);
 			} else {
 				if (isP1) breakP1Forward(idx); else breakP2Forward(idx);
 			}
 		} else {
 			if (isP1) refreshP1ForwardSlot(idx); else refreshP2ForwardSlot(idx);
 			// Fire "deals damage to forward" triggers from tracked ability source (e.g. Ramuh + Lightning Summon)
-			if (currentBreaktouchSource != null)
-				fireBreaktouchForDamage(currentBreaktouchSource, currentBreaktouchSourceIsP1, isP1, idx);
+			if (currentSummonSource != null)
+				fireBreaktouchForDamage(currentSummonSource, currentSummonSourceIsP1, isP1, idx);
 		}
 	}
 
@@ -14863,6 +14991,7 @@ public class MainWindow {
 			nextIncomingDmgZeroSet.clear();   nextIncomingDmgReduceMap.clear();   nextAbilityDmgReduceMap.clear();
 			incomingDmgIncreaseMap.clear();   nullifyAbilityDmgSet.clear();
 			nullifyAbilityOnlyDmgSet.clear(); perCardNonLethalDmgSet.clear();
+			cannotBeChosenByElement.clear();  nullifyElementDamageMap.clear();
 			nextOutgoingDmgZeroSet.clear();    outgoingDmgMultiplierMap.clear();
 			nextOutgoingDmgDoublerSet.clear(); outgoingDmgFlatBoostMap.clear();
 			perCardIncomingDmgMultiplierMap.clear();

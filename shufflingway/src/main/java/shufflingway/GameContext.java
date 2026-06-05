@@ -412,6 +412,33 @@ public interface GameContext {
     void shieldNamedCardCannotBeChosenByAnySummon(String name);
 
     /**
+     * Registers that the named card (on the ability user's field) cannot be chosen by
+     * Summons or abilities whose element matches {@code element} this turn.
+     */
+    void shieldNamedCardCannotBeChosenByElement(String cardName, String element);
+
+    /**
+     * Registers that damage dealt to the named card by a Summon or ability whose element
+     * matches {@code element} becomes 0 this turn — including AoE effects that do not target.
+     */
+    void nullifyNamedCardDamageByElement(String cardName, String element);
+
+    /**
+     * Finds the named card on the field and stores a permanent element override.
+     * While active, the card's effective element is {@code element} instead of its printed element.
+     * This override persists across turns until explicitly changed.
+     */
+    void setCardElement(String cardName, String element);
+
+    /**
+     * Shows a modal dialog for the ability user to name one Element, or picks randomly for the AI.
+     *
+     * @param prompt text shown above the picker
+     * @return the selected element name, or {@code null} if cancelled
+     */
+    String selectElement(String prompt);
+
+    /**
      * Applies "cannot be chosen" protection to all Forwards matching {@code job} that the active
      * player controls, optionally excluding the card named {@code excludeName}.
      */
