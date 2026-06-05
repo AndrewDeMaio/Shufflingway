@@ -119,7 +119,7 @@ public class CardDatabase implements AutoCloseable {
                     lb_cost     = excluded.lb_cost
                 """)) {
             ps.setString(1,  card.serial);
-            ps.setString(2,  card.nameEn == null ? null : card.nameEn.replace("&amp;", "&"));
+            ps.setString(2,  card.nameEn == null ? null : card.nameEn.replace("&amp;", "&").replace("’", "'"));
             ps.setString(3,  card.typeEn);
             ps.setString(4,  card.element);
             ps.setInt   (5,  card.cost);
@@ -137,7 +137,8 @@ public class CardDatabase implements AutoCloseable {
                                  .replaceAll("(?i)</?p>", "")
                                  .replace("&amp;", "&")
                                  .replace("orCard", "or Card")
-                                 .replace("ofYang", "of Yang");
+                                 .replace("ofYang", "of Yang")
+                                 .replace("'", "'");
             ps.setString(13, textEn);
             ps.setString(14, card.thumbName);
             ps.setString(15, card.imageUrl);

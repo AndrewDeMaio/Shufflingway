@@ -77,7 +77,7 @@ public class ActionResolver {
         "(?:\\s+blocking\\s+" +
             "(?:(?:a\\s+(?:Job\\s+)?(?<blockingjob>[^.,]+?)(?=\\s*[.,]))" +
             "|(?<blockingname>[^.,]+?)(?=\\s*[.,])))?"+
-        "(?:[.]\\s*|\\s+and\\s+|,\\s*)" +
+        "(?:[.]\\s+|\\s+and\\s+|,\\s*)" +
         "(?<followup>.+)"
     );
 

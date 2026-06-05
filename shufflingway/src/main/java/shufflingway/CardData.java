@@ -904,7 +904,9 @@ public record CardData(
         "(?i)You\\s+can\\s+only\\s+use\\s+this\\s+ability\\s+while\\s+(?<card>.+?)\\s+is\\s+blocking[.!]?"
     );
     static final Pattern WHILE_CARD_IN_HAND_PATTERN = Pattern.compile(
-        "(?i)You\\s+can\\s+only\\s+use\\s+this\\s+ability\\s+if\\s+.+?\\s+is\\s+in\\s+your\\s+hand[.!]?"
+        "(?i)You\\s+can\\s+only\\s+use\\s+this\\s+ability" +
+        "(?:\\s+during\\s+your\\s+turn\\s+and)?" +
+        "\\s+if\\s+.+?\\s+is\\s+in\\s+your\\s+hand[.!]?"
     );
 
     static final Pattern SOURCE_IN_BATTLE_PATTERN = Pattern.compile(
