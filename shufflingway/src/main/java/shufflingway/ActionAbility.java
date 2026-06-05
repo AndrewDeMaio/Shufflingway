@@ -67,7 +67,8 @@ public record ActionAbility(
         String                  cpBackupElement,       // null = no restriction; "" = any Backup CP; "Wind" etc. = specific element
         boolean                 sourceInBattle,        // true = source card must be in Battle (attacking or blocking) to activate
         boolean                 requiresOppDiscardedThisTurn, // true = opponent must have discarded from hand via P1's Summons/abilities this turn
-        boolean                 requiresCastSummonThisTurn    // true = controller must have cast a Summon this turn
+        boolean                 requiresCastSummonThisTurn,   // true = controller must have cast a Summon this turn
+        String                  requiresElementForwardEnteredThisTurn // null = no restriction; else = element (lower-case) that must have entered your field this turn
 ) {
     public ActionAbility {
         cpCost            = List.copyOf(cpCost);

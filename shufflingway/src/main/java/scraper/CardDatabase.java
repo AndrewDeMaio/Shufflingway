@@ -138,7 +138,7 @@ public class CardDatabase implements AutoCloseable {
                                  .replace("&amp;", "&")
                                  .replace("orCard", "or Card")
                                  .replace("ofYang", "of Yang")
-                                 .replace("'", "'");
+                                 .replace("’", "'");
             ps.setString(13, textEn);
             ps.setString(14, card.thumbName);
             ps.setString(15, card.imageUrl);

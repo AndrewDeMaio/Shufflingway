@@ -2524,6 +2524,8 @@ public class ActionResolver {
         Matcher wBlkM = CardData.WHILE_CARD_BLOCKING_PATTERN.matcher(effectText);
         if (wBlkM.find()) parts.add("whileCardBlocking:" + wBlkM.group("card"));
         if (CardData.WHILE_CARD_IN_HAND_PATTERN.matcher(effectText).find()) parts.add("whileCardInHand");
+        Matcher elemFwdM = CardData.ELEMENT_FORWARD_ENTERED_THIS_TURN_PATTERN.matcher(effectText);
+        if (elemFwdM.find()) parts.add("elemFwdEntered:" + elemFwdM.group("element"));
         return parts.isEmpty() ? "" : " [" + String.join(", ", parts) + "]";
     }
 
@@ -4528,6 +4530,7 @@ public class ActionResolver {
         s = CardData.SOURCE_IN_BATTLE_PATTERN     .matcher(s).replaceAll("").trim();
         s = CardData.OPP_DISCARD_THIS_TURN_PATTERN .matcher(s).replaceAll("").trim();
         s = CardData.CAST_SUMMON_THIS_TURN_PATTERN .matcher(s).replaceAll("").trim();
+        s = CardData.ELEMENT_FORWARD_ENTERED_THIS_TURN_PATTERN.matcher(s).replaceAll("").trim();
         s = CardData.CONTROL_IF_PATTERN            .matcher(s).replaceAll("").trim();
         // Strip leftover leading/trailing ", and" / "," / "." artifacts
         s = s.replaceAll("^[,.;\\s]+|[,.;\\s]+$", "").trim();
