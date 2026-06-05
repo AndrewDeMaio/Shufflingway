@@ -1098,10 +1098,27 @@ public interface GameContext {
     String selectJobFromDatabase();
 
     /**
+     * Shows a combined dialog for the player to name 1 Element and 1 Job simultaneously.
+     * The OK button is disabled until both dropdowns have a valid selection.
+     * The AI picks randomly for non-interactive contexts.
+     *
+     * @param prompt text shown above the pickers
+     * @return {@code {element, job}} array, or {@code null} if cancelled
+     */
+    String[] selectElementAndJob(String prompt);
+
+    /**
      * Grants the Forward at {@code t} the given {@code job} until the end of the turn.
      * No-op for Backup and Monster targets.
      */
     void grantJobUntilEndOfTurn(ForwardTarget t, String job);
+
+    /**
+     * Changes {@code source}'s element to {@code element} and grants it Job {@code job}
+     * until the end of the turn. {@code source} must currently be in a Forward slot.
+     * Both changes are reverted at end of turn.
+     */
+    void changeSourceCardElementAndJobUntilEOT(CardData source, String element, String job);
 
     /**
      * Doubles the incoming damage taken by the Forward at {@code t} for the rest of this turn.

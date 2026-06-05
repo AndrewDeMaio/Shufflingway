@@ -11651,17 +11651,48 @@ public class MainWindow {
 					logEntry("[P2] " + p2ForwardCards.get(idx).name() + " gains the Job [" + job + "] until end of turn");
 				}
 			}
+
+			@Override public String[] selectElementAndJob(String prompt) {
+				if (!isP1) {
+					String elem = ActionResolver.ELEMENT_NAMES[(int)(Math.random() * ActionResolver.ELEMENT_NAMES.length)];
+					java.util.List<String> jobs = loadJobsFromDb();
+					String job  = jobs.isEmpty() ? "Warrior" : jobs.get((int)(Math.random() * jobs.size()));
+					logEntry("[AI] named Element: " + elem + ", Job: " + job);
+					return new String[]{elem, job};
+				}
+				return showElementAndJobDialog(prompt);
+			}
+
+			@Override public void changeSourceCardElementAndJobUntilEOT(CardData source, String element, String job) {
+				for (boolean p1s : new boolean[]{true, false}) {
+					List<CardData> fwds = p1s ? p1ForwardCards : p2ForwardCards;
+					for (int i = 0; i < fwds.size(); i++) {
+						if (fwds.get(i) != source) continue;
+						final String prevElem = elementOverrideMap.get(source);
+						elementOverrideMap.put(source, element);
+						endOfTurnEffects.add(x -> {
+							if (prevElem != null) elementOverrideMap.put(source, prevElem);
+							else                  elementOverrideMap.remove(source);
+						});
+						List<String> tempJobs = p1s ? p1ForwardTempJobs : p2ForwardTempJobs;
+						final int idx = i;
+						final String prevJob = idx < tempJobs.size() ? tempJobs.get(idx) : null;
+						if (idx < tempJobs.size()) tempJobs.set(idx, job);
+						endOfTurnEffects.add(x -> { if (idx < tempJobs.size()) tempJobs.set(idx, prevJob); });
+						logEntry(source.name() + " → becomes " + element + " element, Job [" + job + "] until end of turn");
+						return;
+					}
+				}
+				logEntry("[changeSourceCardElementAndJobUntilEOT] " + source.name() + " not found in forward slots");
+			}
 		};
 	}
 
-	/** Loads every distinct job name from the database and shows a sorted dropdown dialog. */
-	private String showJobSelectionDialog(boolean interactive) {
-		java.io.File dbFile = new java.io.File("shufflingway.db");
-		if (!dbFile.exists()) {
-			logEntry("[Job select] shufflingway.db not found");
-			return null;
-		}
+	/** Loads every distinct job name from the database, returning a sorted list. */
+	private java.util.List<String> loadJobsFromDb() {
 		java.util.List<String> jobs = new java.util.ArrayList<>();
+		java.io.File dbFile = new java.io.File("shufflingway.db");
+		if (!dbFile.exists()) return jobs;
 		try (java.sql.Connection conn = java.sql.DriverManager.getConnection(
 				"jdbc:sqlite:" + dbFile.getAbsolutePath());
 			 java.sql.Statement stmt = conn.createStatement();
@@ -11671,6 +11702,77 @@ public class MainWindow {
 		} catch (Exception e) {
 			logEntry("[Job select] DB error: " + e.getMessage());
 		}
+		return jobs;
+	}
+
+	/**
+	 * Shows a combined dialog for naming 1 Element and 1 Job.
+	 * The OK button stays disabled until both dropdowns have a real selection.
+	 * Returns {@code {element, job}} or {@code null} if cancelled.
+	 */
+	private String[] showElementAndJobDialog(String prompt) {
+		java.util.List<String> jobs = loadJobsFromDb();
+		if (jobs.isEmpty()) {
+			logEntry("[Element+Job dialog] no jobs found in DB");
+			return null;
+		}
+
+		String[] elemItems = new String[ActionResolver.ELEMENT_NAMES.length + 1];
+		elemItems[0] = "— Element —";
+		System.arraycopy(ActionResolver.ELEMENT_NAMES, 0, elemItems, 1, ActionResolver.ELEMENT_NAMES.length);
+
+		String[] jobItems = new String[jobs.size() + 1];
+		jobItems[0] = "— Job —";
+		for (int i = 0; i < jobs.size(); i++) jobItems[i + 1] = jobs.get(i);
+
+		javax.swing.JComboBox<String> elemCombo = new javax.swing.JComboBox<>(elemItems);
+		javax.swing.JComboBox<String> jobCombo  = new javax.swing.JComboBox<>(jobItems);
+
+		javax.swing.JButton okBtn = new javax.swing.JButton("OK");
+		okBtn.setEnabled(false);
+		Runnable checkReady = () -> okBtn.setEnabled(
+				elemCombo.getSelectedIndex() > 0 && jobCombo.getSelectedIndex() > 0);
+		elemCombo.addItemListener(e -> checkReady.run());
+		jobCombo.addItemListener(e -> checkReady.run());
+
+		javax.swing.JPanel panel = new javax.swing.JPanel(new java.awt.GridBagLayout());
+		java.awt.GridBagConstraints gc = new java.awt.GridBagConstraints();
+		gc.insets = new java.awt.Insets(4, 4, 4, 4);
+		gc.anchor = java.awt.GridBagConstraints.WEST;
+
+		gc.gridx = 0; gc.gridy = 0; panel.add(new javax.swing.JLabel(prompt), gc);
+		gc.gridx = 0; gc.gridy = 1; panel.add(new javax.swing.JLabel("Element:"), gc);
+		gc.gridx = 1; gc.gridy = 1; panel.add(elemCombo, gc);
+		gc.gridx = 0; gc.gridy = 2; panel.add(new javax.swing.JLabel("Job:"), gc);
+		gc.gridx = 1; gc.gridy = 2; panel.add(jobCombo, gc);
+
+		String[] result = {null, null};
+		javax.swing.JDialog dialog = new javax.swing.JDialog(frame, "Name Element and Job", true);
+		okBtn.addActionListener(e -> {
+			result[0] = (String) elemCombo.getSelectedItem();
+			result[1] = (String) jobCombo.getSelectedItem();
+			dialog.dispose();
+		});
+		javax.swing.JButton cancelBtn = new javax.swing.JButton("Cancel");
+		cancelBtn.addActionListener(e -> dialog.dispose());
+
+		javax.swing.JPanel buttons = new javax.swing.JPanel();
+		buttons.add(okBtn);
+		buttons.add(cancelBtn);
+
+		dialog.setLayout(new java.awt.BorderLayout());
+		dialog.add(panel, java.awt.BorderLayout.CENTER);
+		dialog.add(buttons, java.awt.BorderLayout.SOUTH);
+		dialog.pack();
+		dialog.setLocationRelativeTo(frame);
+		dialog.setVisible(true);
+
+		return result[0] != null ? result : null;
+	}
+
+	/** Loads every distinct job name from the database and shows a sorted dropdown dialog. */
+	private String showJobSelectionDialog(boolean interactive) {
+		java.util.List<String> jobs = loadJobsFromDb();
 		if (jobs.isEmpty()) return null;
 		if (!interactive) {
 			String picked = jobs.get((int) (Math.random() * jobs.size()));

@@ -530,6 +530,15 @@ public class ActionResolver {
     /** All eight FFTCG element names, in standard order. */
     static final String[] ELEMENT_NAMES = {"Fire", "Ice", "Wind", "Earth", "Lightning", "Water", "Light", "Dark"};
 
+    /**
+     * Matches "Name 1 Element and 1 Job. &lt;CardName&gt; becomes the named Element and Job
+     * until the end of the turn." — action ability on a card that changes its own element and job.
+     */
+    private static final Pattern NAME_ELEMENT_AND_JOB_SELF_BECOMES = Pattern.compile(
+        "(?i)Name\\s+1\\s+Element\\s+and\\s+1\\s+Job[.!]?\\s+" +
+        "(?<name>.+?)\\s+becomes?\\s+the\\s+named\\s+Element\\s+and\\s+Job\\s+until\\s+the\\s+end\\s+of\\s+the\\s+turn[.!]?"
+    );
+
     // ---- Damage-shield followup patterns (apply to selected "it/them" targets) --------
 
     /** Matches "During this turn, the next damage dealt to it/him becomes 0 instead." */
@@ -2258,6 +2267,9 @@ public class ActionResolver {
         result = tryParseBecomeForwardUntilEot(effectText, source);
         if (result != null) return result;
 
+        result = tryParseNameElementAndJobSelfBecomes(effectText, source);
+        if (result != null) return result;
+
         // Compound-sentence fallback: split on ". " between sentences and compose effects.
         // Handles "Activate <cardName>. <cardName> gains +2000 power until the end of the turn." etc.
         String[] sentences = effectText.split("(?<=\\.)\\s+(?=[A-Z])");
@@ -2590,8 +2602,9 @@ public class ActionResolver {
         if (tryParseRemoveTopOfDeckFromGame(effectText)            != null) return "RemoveTopOfDeckFromGame";
         if (tryParseShuffleDeck(effectText)                        != null) return "ShuffleDeck";
         if (tryParseBackupCpDraw(effectText)                       != null) return "BackupCpDraw";
-        if (tryParseBecomeForwardUntilEot(effectText, source)      != null) return "BecomeForwardUntilEot";
-        if (tryParseConditionalOpponentHand(effectText, source, 0) != null) return "ConditionalOpponentHand";
+        if (tryParseBecomeForwardUntilEot(effectText, source)         != null) return "BecomeForwardUntilEot";
+        if (tryParseNameElementAndJobSelfBecomes(effectText, source)  != null) return "NameElementAndJobSelfBecomes";
+        if (tryParseConditionalOpponentHand(effectText, source, 0)    != null) return "ConditionalOpponentHand";
         if (SELECT_FOLLOWING_ACTIONS_DETECT.matcher(effectText).find())    return "SelectFollowingActions";
         if (CardData.HAS_ALL_ELEMENTS_PATTERN.matcher(effectText.trim()).matches()) return "HasAllElements";
         return null;
@@ -6263,6 +6276,19 @@ public class ActionResolver {
         return ctx -> {
             String elem = ctx.selectElement("Select 1 Element (" + cardName + " becomes that Element):");
             if (elem != null) ctx.setCardElement(cardName, elem);
+        };
+    }
+
+    private static Consumer<GameContext> tryParseNameElementAndJobSelfBecomes(String text, CardData source) {
+        if (source == null) return null;
+        Matcher m = NAME_ELEMENT_AND_JOB_SELF_BECOMES.matcher(text);
+        if (!m.find()) return null;
+        if (!m.group("name").trim().equalsIgnoreCase(source.name())) return null;
+        return ctx -> {
+            ctx.logEntry("Effect: Name 1 Element and 1 Job — " + source.name() + " becomes both until end of turn");
+            String[] choice = ctx.selectElementAndJob("Name 1 Element and 1 Job (" + source.name() + " becomes both):");
+            if (choice == null || choice[0] == null || choice[1] == null) return;
+            ctx.changeSourceCardElementAndJobUntilEOT(source, choice[0], choice[1]);
         };
     }
 
