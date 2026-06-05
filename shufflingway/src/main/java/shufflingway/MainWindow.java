@@ -9611,9 +9611,10 @@ public class MainWindow {
 											p1AttackSelection.contains(i), false, condition))
 								eligible.add(new ForwardTarget(true, i, ForwardTarget.CardZone.FORWARD));
 						}
-						if (inclBackups) for (int i = 0; i < p1BackupCards.length; i++) {
+						if (inclBackups || inclForwards) for (int i = 0; i < p1BackupCards.length; i++) {
 							if (isBlockingTargetFilter(condition)) continue;
 							if (p1BackupCards[i] == null) continue;
+							if (!inclBackups && !isP1BackupTemporarilyForward(i)) continue;
 							if (element != null && !p1BackupCards[i].containsElement(element)) continue;
 							if (!meetsCostConstraint(p1BackupCards[i].cost(), costVal, costCmp)) continue;
 							if (!meetsPowerConstraint(p1BackupCards[i].power(), powerVal, powerCmp)) continue;
@@ -9665,9 +9666,10 @@ public class MainWindow {
 											false, false, condition))
 								eligible.add(new ForwardTarget(false, i, ForwardTarget.CardZone.FORWARD));
 						}
-						if (inclBackups) for (int i = 0; i < p2BackupCards.length; i++) {
+						if (inclBackups || inclForwards) for (int i = 0; i < p2BackupCards.length; i++) {
 							if (isBlockingTargetFilter(condition)) continue;
 							if (p2BackupCards[i] == null) continue;
+							if (!inclBackups && !isP2BackupTemporarilyForward(i)) continue;
 							if (immuneAnyone.contains(p2BackupCards[i])) continue;
 							if (element != null && !p2BackupCards[i].containsElement(element)) continue;
 							if (!meetsCostConstraint(p2BackupCards[i].cost(), costVal, costCmp)) continue;
@@ -9723,9 +9725,10 @@ public class MainWindow {
 											false, false, condition))
 								eligible.add(new ForwardTarget(false, i, ForwardTarget.CardZone.FORWARD));
 						}
-						if (inclBackups) for (int i = 0; i < p2BackupCards.length; i++) {
+						if (inclBackups || inclForwards) for (int i = 0; i < p2BackupCards.length; i++) {
 							if (isBlockingTargetFilter(condition)) continue;
 							if (p2BackupCards[i] == null) continue;
+							if (!inclBackups && !isP2BackupTemporarilyForward(i)) continue;
 							if (immuneAnyone.contains(p2BackupCards[i])) continue;
 							if (element != null && !p2BackupCards[i].containsElement(element)) continue;
 							if (!meetsCostConstraint(p2BackupCards[i].cost(), costVal, costCmp)) continue;
@@ -9780,9 +9783,10 @@ public class MainWindow {
 											p1AttackSelection.contains(i), false, condition))
 								eligible.add(new ForwardTarget(true, i, ForwardTarget.CardZone.FORWARD));
 						}
-						if (inclBackups) for (int i = 0; i < p1BackupCards.length; i++) {
+						if (inclBackups || inclForwards) for (int i = 0; i < p1BackupCards.length; i++) {
 							if (isBlockingTargetFilter(condition)) continue;
 							if (p1BackupCards[i] == null) continue;
+							if (!inclBackups && !isP1BackupTemporarilyForward(i)) continue;
 							if (noChoose.contains(p1BackupCards[i])) continue;
 							if (immuneAnyone.contains(p1BackupCards[i])) continue;
 							if (element != null && !p1BackupCards[i].containsElement(element)) continue;
@@ -14169,13 +14173,7 @@ public class MainWindow {
 				return true;
 		}
 		for (int i = 0; i < p1MonsterStates.size(); i++) {
-			if (p1MonsterStates.get(i) != CardState.ACTIVE) continue;
-			if (Boolean.TRUE.equals(p1MonsterFrozen.get(i))) continue;
-			if (p1MonsterPlayedOnTurn.get(i) == turn) continue;
-			CardData.BecomeForwardAbility bfa = p1MonsterCards.get(i).becomeForwardAbility();
-			if (bfa == null) continue;
-			if (bfa.damageThreshold() > 0 && gameState.getP1DamageZone().size() < bfa.damageThreshold()) continue;
-			return true;
+			if (isMonsterSelectableAsForward(i)) return true;
 		}
 		for (int i = 0; i < p1BackupCards.length; i++) {
 			if (isBackupSelectableAsForward(i)) return true;
