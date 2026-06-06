@@ -7464,23 +7464,63 @@ public class MainWindow {
 		showStackWindowIfNeeded();
 	}
 
-	/** Fires "party attacks" field abilities on every card the controller has on the field. */
-	private void triggerAutoAbilitiesForPartyAttack(boolean isP1) {
-		List<CardData> fwds = isP1 ? p1ForwardCards : p2ForwardCards;
-		for (int i = 0; i < fwds.size(); i++) {
-			CardData card = fwds.get(i);
-			for (AutoAbility fa : card.autoAbilities())
-				if (fa.trigger().equals("party attacks"))
-					executeAutoAbility(fa, card, isP1);
+	/**
+	 * Fires "party attacks" field abilities on every card the controller has on the field,
+	 * filtering by any party-composition requirements encoded in the {@link AutoAbility}.
+	 *
+	 * @param partyMembers the CardData objects that are attacking in the party
+	 */
+	private void triggerAutoAbilitiesForPartyAttack(boolean isP1, List<CardData> partyMembers) {
+		List<CardData> fwds = new ArrayList<>(isP1 ? p1ForwardCards : p2ForwardCards);
+		for (CardData card : fwds) {
+			for (AutoAbility fa : card.autoAbilities()) {
+				if (!fa.trigger().equals("party attacks")) continue;
+				if (!partyAttackMatchesFilter(fa, partyMembers)) continue;
+				executeAutoAbility(fa, card, isP1);
+			}
 		}
 		CardData[] bkps = isP1 ? p1BackupCards : p2BackupCards;
 		for (CardData card : bkps) {
 			if (card == null) continue;
-			for (AutoAbility fa : card.autoAbilities())
-				if (fa.trigger().equals("party attacks"))
-					executeAutoAbility(fa, card, isP1);
+			for (AutoAbility fa : card.autoAbilities()) {
+				if (!fa.trigger().equals("party attacks")) continue;
+				if (!partyAttackMatchesFilter(fa, partyMembers)) continue;
+				executeAutoAbility(fa, card, isP1);
+			}
 		}
 		showStackWindowIfNeeded();
+	}
+
+	/** Returns true when the party composition satisfies all filter fields of a "party attacks" ability. */
+	private boolean partyAttackMatchesFilter(AutoAbility fa, List<CardData> partyMembers) {
+		if (fa.partyCardName() != null) {
+			boolean found = partyMembers.stream()
+					.anyMatch(m -> m.name().equalsIgnoreCase(fa.partyCardName()));
+			if (!found) return false;
+		}
+		if (fa.partyMinCount() > 0) {
+			long qualifying = partyMembers.stream()
+					.filter(m -> partyMemberMatchesCountFilter(m, fa))
+					.count();
+			if (qualifying < fa.partyMinCount()) return false;
+		}
+		return true;
+	}
+
+	/** Returns true when {@code member} satisfies the category/job filter of a party-attack ability. */
+	private boolean partyMemberMatchesCountFilter(CardData member, AutoAbility fa) {
+		if (fa.partyCategory() != null) {
+			boolean hasCategory =
+					(member.category1() != null && member.category1().equalsIgnoreCase(fa.partyCategory())) ||
+					(member.category2() != null && member.category2().equalsIgnoreCase(fa.partyCategory()));
+			if (!hasCategory) return false;
+		}
+		if (fa.partyJob() != null) {
+			boolean hasJob = member.jobs().stream()
+					.anyMatch(j -> j.equalsIgnoreCase(fa.partyJob()));
+			if (!hasJob) return false;
+		}
+		return true;
 	}
 
 	/** Subject pattern for break-zone triggers: "a [Type] [you|opponent] control[s]". */
@@ -13841,7 +13881,9 @@ public class MainWindow {
 			}
 			logEntry("Party Attack! " + names + " (" + combinedPower + " combined)");
 			p1FormedPartyThisTurn = true;
-			triggerAutoAbilitiesForPartyAttack(true);
+			List<CardData> p1PartyMembers = selection.stream()
+					.map(p1ForwardCards::get).collect(java.util.stream.Collectors.toList());
+			triggerAutoAbilitiesForPartyAttack(true, p1PartyMembers);
 			final int fCombined = combinedPower;
 			combatPriority("Party Attacker Declared", true, () ->
 				p2OfferBlockParty(selection, fCombined, this::continueAttackPhase));
@@ -15233,7 +15275,9 @@ public class MainWindow {
 			p2FormedPartyThisTurn = true;
 			for (int idx : partyIndices)
 				triggerAutoAbilitiesForAttack(p2ForwardCards.get(idx), false);
-			triggerAutoAbilitiesForPartyAttack(false);
+			List<CardData> p2PartyMembers = partyIndices.stream()
+					.map(p2ForwardCards::get).collect(java.util.stream.Collectors.toList());
+			triggerAutoAbilitiesForPartyAttack(false, p2PartyMembers);
 			final int fCombined = combinedPower;
 			initP1BlockDeclarationVsParty(partyIndices, fCombined, onDone);
 		}
