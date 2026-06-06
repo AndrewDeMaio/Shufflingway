@@ -37,6 +37,7 @@ public record CardData(
         List<FieldCostReduction>    fieldCostReductions,
         List<SelfCostModifier>      selfCostModifiers,
         List<FieldPrimingAnyElement> fieldPrimingAnyElements,
+        List<FieldPartyAnyElement>   fieldPartyAnyElements,
         boolean warpCostAnyElement,
         boolean canFormPartyAnyElement,
         String job,
@@ -70,6 +71,7 @@ public record CardData(
         fieldCostReductions    = List.copyOf(fieldCostReductions);
         selfCostModifiers      = List.copyOf(selfCostModifiers);
         fieldPrimingAnyElements = List.copyOf(fieldPrimingAnyElements);
+        fieldPartyAnyElements   = List.copyOf(fieldPartyAnyElements);
         job       = job       != null ? job       : "";
         category1 = category1 != null ? category1 : "";
         category2 = category2 != null ? category2 : "";
@@ -1815,9 +1817,21 @@ public record CardData(
         return false;
     }
 
-    /** Matches "[CardName] can form a party with Forwards of any Element." */
+    /** Matches "[CardName] can form a party with Forwards of any Element." (self-grant on card text). */
     private static final Pattern PARTY_ANY_ELEMENT_PATTERN = Pattern.compile(
         "(?i)\\S.*?\\s+can\\s+form\\s+a\\s+party\\s+with\\s+Forwards?\\s+of\\s+any\\s+Element\\s*\\.?"
+    );
+
+    /**
+     * Matches "The [Job X / Category X / all] Forwards you control can form a party with
+     * [anything] Forwards of any Element." — a field-ability grant to other cards.
+     * Groups: {@code job}, {@code category}, {@code cardname} (all optional).
+     */
+    private static final Pattern FIELD_PARTY_ANY_ELEMENT_PATTERN = Pattern.compile(
+        "(?i)The\\s+" +
+        "(?:Job\\s+(?<job>.+?)\\s+|Category\\s+(?<category>\\S+)\\s+|Card\\s+Name\\s+(?<cardname>\\S+)\\s+)?" +
+        "Forwards?\\s+you\\s+control\\s+can\\s+form\\s+a\\s+party\\s+with\\s+" +
+        "(?:.+?\\s+)?Forwards?\\s+of\\s+any\\s+Element\\s*\\.?"
     );
 
     /** Returns {@code true} if the card text contains a "can form a party with Forwards of any Element" clause. */
@@ -1828,6 +1842,26 @@ public record CardData(
             if (PARTY_ANY_ELEMENT_PATTERN.matcher(seg).find()) return true;
         }
         return false;
+    }
+
+    /**
+     * Parses all "The [filter] Forwards you control can form a party with … Forwards of any Element."
+     * field-ability grants into a list of {@link FieldPartyAnyElement} records.
+     */
+    public static List<FieldPartyAnyElement> parseFieldPartyAnyElements(String textEn, String cardType) {
+        if (textEn == null || textEn.isBlank()) return List.of();
+        if ("Summon".equalsIgnoreCase(cardType)) return List.of();
+        List<FieldPartyAnyElement> result = new ArrayList<>();
+        for (String raw : textEn.split("(?i)\\[\\[br\\]\\]")) {
+            String seg = SUMMON_MARKUP.matcher(raw.trim()).replaceAll("").trim();
+            Matcher m = FIELD_PARTY_ANY_ELEMENT_PATTERN.matcher(seg);
+            if (!m.find()) continue;
+            String job      = m.group("job")      != null ? m.group("job").trim()      : null;
+            String category = m.group("category") != null ? m.group("category").trim() : null;
+            String cardname = m.group("cardname") != null ? m.group("cardname").trim() : null;
+            result.add(new FieldPartyAnyElement(job, category, cardname));
+        }
+        return List.copyOf(result);
     }
 
     // -------------------------------------------------------------------------
@@ -2063,6 +2097,7 @@ public record CardData(
             if (FIELD_PRIMING_ANY_ELEMENT_PATTERN.matcher(seg).find())       continue;
             if (WARP_ANY_ELEMENT_PATTERN.matcher(seg).find())                continue;
             if (PARTY_ANY_ELEMENT_PATTERN.matcher(seg).find())               continue;
+            if (FIELD_PARTY_ANY_ELEMENT_PATTERN.matcher(seg).find())        continue;
 
             // Name/type alias declarations and enter-dull — handled as static card properties
             if (IS_ALSO_CARD_NAME_PATTERN.matcher(seg).find())              continue;

@@ -361,6 +361,8 @@ public class MainWindow {
 	private boolean p1DiscardedByEffectThisTurn  = false;
 	private boolean p1CausedOpponentDiscardThisTurn = false;
 	private boolean p1FormedPartyThisTurn        = false;
+	private boolean p1PartyAnyElementThisTurn   = false;
+	private boolean p2PartyAnyElementThisTurn   = false;
 	private int     p2CardsCastThisTurn          = 0;
 	private boolean p2SummonCastThisTurn         = false;
 	private final Set<String> p2CastJobsThisTurn  = new HashSet<>();
@@ -1184,6 +1186,7 @@ public class MainWindow {
 							CardData.parseFieldCostReductions(tx, card.type()),
 							CardData.parseSelfCostModifiers(tx),
 							CardData.parseFieldPrimingAnyElements(tx, card.type()),
+							CardData.parseFieldPartyAnyElements(tx, card.type()),
 							CardData.parseWarpCostAnyElement(tx),
 							CardData.parseCanFormPartyAnyElement(tx),
 							card.job(), card.category1(), card.category2(), tx);
@@ -1211,6 +1214,7 @@ public class MainWindow {
 							CardData.parseFieldCostReductions(tx, card.type()),
 							CardData.parseSelfCostModifiers(tx),
 							CardData.parseFieldPrimingAnyElements(tx, card.type()),
+							CardData.parseFieldPartyAnyElements(tx, card.type()),
 							CardData.parseWarpCostAnyElement(tx),
 							CardData.parseCanFormPartyAnyElement(tx),
 							card.job(), card.category1(), card.category2(), tx);
@@ -11687,6 +11691,17 @@ public class MainWindow {
 				}
 				logEntry("[changeSourceCardElementAndJobUntilEOT] " + source.name() + " not found in forward slots");
 			}
+
+			@Override public void grantForwardsPartyAnyElementThisTurn() {
+				if (isP1) {
+					p1PartyAnyElementThisTurn = true;
+					endOfTurnEffects.add(x -> p1PartyAnyElementThisTurn = false);
+				} else {
+					p2PartyAnyElementThisTurn = true;
+					endOfTurnEffects.add(x -> p2PartyAnyElementThisTurn = false);
+				}
+				logEntry((isP1 ? "P1" : "[P2]") + " Forwards can form a party with Forwards of any Element this turn");
+			}
 		};
 	}
 
@@ -13155,14 +13170,40 @@ public class MainWindow {
 	}
 
 	/**
-	 * Returns the set of elements common to all non-wildcard members of {@code party},
-	 * or {@code null} if every member has {@link CardData#canFormPartyAnyElement()} (all wildcards).
-	 * An empty set means the non-wildcard members share no element — an invalid party.
+	 * Returns {@code true} if the forward at {@code idx} on the given player's side is a
+	 * party-element wildcard — either intrinsically, via an active field ability from a card
+	 * on the same player's field, or via a turn-scoped grant.
 	 */
-	private java.util.Set<String> partyRequiredElements(List<CardData> party) {
+	private boolean effectiveCanFormPartyAnyElement(boolean isP1, int idx) {
+		List<CardData> fwds = isP1 ? p1ForwardCards : p2ForwardCards;
+		if (idx < 0 || idx >= fwds.size()) return false;
+		CardData fwd = fwds.get(idx);
+		if (fwd.canFormPartyAnyElement()) return true;
+		if (isP1 ? p1PartyAnyElementThisTurn : p2PartyAnyElementThisTurn) return true;
+		// Check permanent field-ability grants from any card on the same player's field
+		List<CardData> srcFwds = isP1 ? p1ForwardCards : p2ForwardCards;
+		CardData[] srcBkps     = isP1 ? p1BackupCards  : p2BackupCards;
+		List<CardData> srcMons = isP1 ? p1MonsterCards : p2MonsterCards;
+		for (CardData src : srcFwds) for (FieldPartyAnyElement g : src.fieldPartyAnyElements()) if (g.appliesToCard(fwd)) return true;
+		for (CardData src : srcBkps) if (src != null) for (FieldPartyAnyElement g : src.fieldPartyAnyElements()) if (g.appliesToCard(fwd)) return true;
+		for (CardData src : srcMons) for (FieldPartyAnyElement g : src.fieldPartyAnyElements()) if (g.appliesToCard(fwd)) return true;
+		return false;
+	}
+
+	/**
+	 * Returns the set of elements common to all non-wildcard members of {@code party},
+	 * or {@code null} if every member is a wildcard (all-wildcard party, no element constraint).
+	 * An empty set means the non-wildcard members share no element — an invalid party.
+	 *
+	 * @param isP1    which player's field abilities to check for wildcard grants
+	 * @param indices forward-slot indices making up the party (from that player's forward list)
+	 */
+	private java.util.Set<String> partyRequiredElements(boolean isP1, List<Integer> indices) {
+		List<CardData> fwds = isP1 ? p1ForwardCards : p2ForwardCards;
 		java.util.Set<String> required = null;
-		for (CardData m : party) {
-			if (m.canFormPartyAnyElement()) continue;
+		for (int i : indices) {
+			if (effectiveCanFormPartyAnyElement(isP1, i)) continue;
+			CardData m = fwds.get(i);
 			java.util.Set<String> elems = new java.util.HashSet<>(java.util.Arrays.asList(m.elements()));
 			if (required == null) required = elems;
 			else required.retainAll(elems);
@@ -13170,9 +13211,9 @@ public class MainWindow {
 		return required;
 	}
 
-	/** Returns {@code true} if {@code party} is a valid party (non-wildcards share a common element). */
-	private boolean canFormValidParty(List<CardData> party) {
-		java.util.Set<String> req = partyRequiredElements(party);
+	/** Returns {@code true} if {@code indices} form a valid party for {@code isP1}'s forwards. */
+	private boolean canFormValidParty(boolean isP1, List<Integer> indices) {
+		java.util.Set<String> req = partyRequiredElements(isP1, indices);
 		return req == null || !req.isEmpty();
 	}
 
@@ -13185,24 +13226,17 @@ public class MainWindow {
 			return;
 		}
 		if (!p1AttackSelection.isEmpty()) {
-			CardData newFwd = p1ForwardCards.get(idx);
-			if (!newFwd.canFormPartyAnyElement()) {
-				// Compute required elements from non-wildcard existing members
-				List<CardData> existing = p1AttackSelection.stream()
-						.map(p1ForwardCards::get).collect(java.util.stream.Collectors.toList());
-				java.util.Set<String> required = partyRequiredElements(existing);
-				// required == null → all existing are wildcards → any element is OK
+			if (!effectiveCanFormPartyAnyElement(true, idx)) {
+				// Compute the common element constraint across non-wildcard existing members
+				java.util.Set<String> required = partyRequiredElements(true, p1AttackSelection);
+				// null  → all existing members are wildcards → any element OK
+				// empty → existing members share no common element (shouldn't occur in valid state)
 				if (required != null && !required.isEmpty()) {
-					boolean canJoin = java.util.Arrays.stream(newFwd.elements())
-							.anyMatch(required::contains);
-					if (!canJoin) {
+					CardData newFwd = p1ForwardCards.get(idx);
+					if (java.util.Arrays.stream(newFwd.elements()).noneMatch(required::contains)) {
 						logEntry("Cannot add to party — no shared element with the party");
 						return;
 					}
-				} else if (required != null && required.isEmpty()) {
-					// Existing non-wildcards have no common element — party already invalid (shouldn't occur)
-					logEntry("Cannot add to party — existing members share no element");
-					return;
 				}
 			}
 		}
@@ -15107,7 +15141,7 @@ public class MainWindow {
 				for (int a = 0; a < attackable.size(); a++) {
 					for (int b = a + 1; b < attackable.size(); b++) {
 						List<Integer> pair = List.of(attackable.get(a), attackable.get(b));
-						if (!canFormValidParty(pair.stream().map(p2ForwardCards::get).collect(java.util.stream.Collectors.toList()))) continue;
+						if (!canFormValidParty(false, pair)) continue;
 						if (effectiveP2ForwardPower(attackable.get(a))
 								+ effectiveP2ForwardPower(attackable.get(b)) >= p1Hp)
 							return pair;
@@ -15118,7 +15152,7 @@ public class MainWindow {
 					for (int b = a + 1; b < attackable.size(); b++) {
 						for (int c = b + 1; c < attackable.size(); c++) {
 							List<Integer> triple = List.of(attackable.get(a), attackable.get(b), attackable.get(c));
-							if (!canFormValidParty(triple.stream().map(p2ForwardCards::get).collect(java.util.stream.Collectors.toList()))) continue;
+							if (!canFormValidParty(false, triple)) continue;
 							if (effectiveP2ForwardPower(attackable.get(a))
 									+ effectiveP2ForwardPower(attackable.get(b))
 									+ effectiveP2ForwardPower(attackable.get(c)) >= p1Hp)
@@ -15274,6 +15308,8 @@ public class MainWindow {
 			p1DiscardedByEffectThisTurn = false;
 			p1CausedOpponentDiscardThisTurn = false;
 			p1FormedPartyThisTurn = false;
+			p1PartyAnyElementThisTurn = false;
+			p2PartyAnyElementThisTurn = false;
 			p1ForwardsLeftFieldThisTurn = 0;
 			p1ElementForwardsEnteredThisTurn.clear();
 			p1ForwardEnteredViaWarpThisTurn = false;

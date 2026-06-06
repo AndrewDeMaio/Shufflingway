@@ -531,6 +531,19 @@ public class ActionResolver {
     static final String[] ELEMENT_NAMES = {"Fire", "Ice", "Wind", "Earth", "Lightning", "Water", "Light", "Dark"};
 
     /**
+     * Matches "The [optional filter] Forwards you control can form a party with [anything]
+     * Forwards of any Element this turn." — turn-scoped party-element-wildcard grant.
+     * Identical to the field-ability form in {@link CardData#FIELD_PARTY_ANY_ELEMENT_PATTERN}
+     * except it requires "this turn" at the end.
+     */
+    private static final Pattern GRANT_PARTY_ANY_ELEMENT_THIS_TURN = Pattern.compile(
+        "(?i)The\\s+" +
+        "(?:Job\\s+(?<job>.+?)\\s+|Category\\s+(?<category>\\S+)\\s+|Card\\s+Name\\s+(?<cardname>\\S+)\\s+)?" +
+        "Forwards?\\s+you\\s+control\\s+can\\s+form\\s+a\\s+party\\s+with\\s+" +
+        "(?:.+?\\s+)?Forwards?\\s+of\\s+any\\s+Element\\s+this\\s+turn\\s*\\.?"
+    );
+
+    /**
      * Matches "Name 1 Element and 1 Job. &lt;CardName&gt; becomes the named Element and Job
      * until the end of the turn." — action ability on a card that changes its own element and job.
      */
@@ -2270,6 +2283,9 @@ public class ActionResolver {
         result = tryParseNameElementAndJobSelfBecomes(effectText, source);
         if (result != null) return result;
 
+        result = tryParseGrantPartyAnyElementThisTurn(effectText);
+        if (result != null) return result;
+
         // Compound-sentence fallback: split on ". " between sentences and compose effects.
         // Handles "Activate <cardName>. <cardName> gains +2000 power until the end of the turn." etc.
         String[] sentences = effectText.split("(?<=\\.)\\s+(?=[A-Z])");
@@ -2603,7 +2619,8 @@ public class ActionResolver {
         if (tryParseShuffleDeck(effectText)                        != null) return "ShuffleDeck";
         if (tryParseBackupCpDraw(effectText)                       != null) return "BackupCpDraw";
         if (tryParseBecomeForwardUntilEot(effectText, source)         != null) return "BecomeForwardUntilEot";
-        if (tryParseNameElementAndJobSelfBecomes(effectText, source)  != null) return "NameElementAndJobSelfBecomes";
+        if (tryParseNameElementAndJobSelfBecomes(effectText, source)   != null) return "NameElementAndJobSelfBecomes";
+        if (tryParseGrantPartyAnyElementThisTurn(effectText)           != null) return "GrantPartyAnyElementThisTurn";
         if (tryParseConditionalOpponentHand(effectText, source, 0)    != null) return "ConditionalOpponentHand";
         if (SELECT_FOLLOWING_ACTIONS_DETECT.matcher(effectText).find())    return "SelectFollowingActions";
         if (CardData.HAS_ALL_ELEMENTS_PATTERN.matcher(effectText.trim()).matches()) return "HasAllElements";
@@ -6276,6 +6293,14 @@ public class ActionResolver {
         return ctx -> {
             String elem = ctx.selectElement("Select 1 Element (" + cardName + " becomes that Element):");
             if (elem != null) ctx.setCardElement(cardName, elem);
+        };
+    }
+
+    private static Consumer<GameContext> tryParseGrantPartyAnyElementThisTurn(String text) {
+        if (!GRANT_PARTY_ANY_ELEMENT_THIS_TURN.matcher(text).find()) return null;
+        return ctx -> {
+            ctx.logEntry("Effect: Forwards you control can form a party with Forwards of any Element this turn");
+            ctx.grantForwardsPartyAnyElementThisTurn();
         };
     }
 

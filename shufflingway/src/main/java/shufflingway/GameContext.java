@@ -1121,6 +1121,12 @@ public interface GameContext {
     void changeSourceCardElementAndJobUntilEOT(CardData source, String element, String job);
 
     /**
+     * Grants all Forwards the controller controls the ability to form a party with Forwards of
+     * any Element until the end of the turn.
+     */
+    void grantForwardsPartyAnyElementThisTurn();
+
+    /**
      * Doubles the incoming damage taken by the Forward at {@code t} for the rest of this turn.
      * Stacks multiplicatively if called multiple times on the same target.
      */
