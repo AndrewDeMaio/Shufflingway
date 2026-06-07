@@ -349,6 +349,8 @@ public class MainWindow {
 	private javax.swing.JWindow       combatPriorityWindow;
 	private Timer         combatPriorityTimer;
 	private Timer         p2AutoPassTimer;
+	/** Non-null while P1 holds priority during P2's main phase; callback advances to the next phase. */
+	private Runnable      p1PriorityInP2MainOnDone = null;
 
 	// Damage-shield / damage-modifier state (keyed by CardData identity; cleared at end of turn)
 	private final Set<CardData>          nextIncomingDmgZeroSet   = new HashSet<>();
@@ -1551,7 +1553,17 @@ public class MainWindow {
 	 */
 	private void onNextPhase() {
 		if (gameState.isP1GameOver()) return;
-		if (gameState.getCurrentPlayer() == GameState.Player.P2) return;
+		if (gameState.getCurrentPlayer() == GameState.Player.P2) {
+			// P1 pressing Next Phase during P2's turn = passing priority back
+			if (p1PriorityInP2MainOnDone != null && gameState.getStack().isEmpty()) {
+				Runnable callback = p1PriorityInP2MainOnDone;
+				p1PriorityInP2MainOnDone = null;
+				if (nextPhaseButton != null) nextPhaseButton.setEnabled(false);
+				logEntry("[Priority] P1 passes — advancing phase.");
+				callback.run();
+			}
+			return;
+		}
 		GameState.GamePhase current = gameState.getCurrentPhase();
 		if (current == null) return;
 
@@ -4913,7 +4925,8 @@ public class MainWindow {
 
 			GameState.GamePhase handPhase = gameState.getCurrentPhase();
 			boolean handIsMainPhase = handPhase == GameState.GamePhase.MAIN_1 || handPhase == GameState.GamePhase.MAIN_2;
-			boolean handCanPlayAction = handIsMainPhase && phaseTracker.isMyTurn() && gameState.getStack().isEmpty();
+			boolean handCanPlayAction = handIsMainPhase && gameState.getStack().isEmpty()
+					&& (phaseTracker.isMyTurn() || (p1PriorityInP2MainOnDone != null && card.isSummon()));
 			boolean handIsCharacter = card.isForward() || card.isBackup() || card.isMonster();
 			boolean handNameConflict = handIsCharacter && !card.multicard() && hasCharacterNameOnField(card.name()) && !isMultiNameExceptionActive(card.name());
 			boolean handLightDarkConflict = handIsCharacter && isLightDarkConflict(card);
@@ -5010,7 +5023,8 @@ public class MainWindow {
 		JMenuItem playItem = new JMenuItem("Play");
 		GameState.GamePhase phase = gameState.getCurrentPhase();
 		boolean isMainPhase = phase == GameState.GamePhase.MAIN_1 || phase == GameState.GamePhase.MAIN_2;
-		boolean canPlaySpecialAction = isMainPhase && phaseTracker.isMyTurn() && gameState.getStack().isEmpty();
+		boolean canPlaySpecialAction = isMainPhase && gameState.getStack().isEmpty()
+				&& (phaseTracker.isMyTurn() || (p1PriorityInP2MainOnDone != null && card.isSummon()));
 		boolean isCharacter = card.isForward() || card.isBackup() || card.isMonster();
 		boolean nameConflict = isCharacter && !card.multicard() && hasCharacterNameOnField(card.name()) && !isMultiNameExceptionActive(card.name());
 		boolean lightDarkConflict = isCharacter && isLightDarkConflict(card);
@@ -6841,6 +6855,46 @@ public class MainWindow {
 		}.execute();
 	}
 
+	private void animateDullMonster(int idx) {
+		String url  = p1MonsterUrls.get(idx);
+		JLabel slot = p1MonsterLabels.get(idx);
+		if (url == null || slot == null) { refreshP1MonsterSlot(idx); return; }
+
+		new SwingWorker<BufferedImage, Void>() {
+			@Override protected BufferedImage doInBackground() throws Exception {
+				Image raw = ImageCache.load(url);
+				return raw == null ? null : CardAnimation.toARGB(raw, CARD_W, CARD_H);
+			}
+			@Override protected void done() {
+				try {
+					BufferedImage card = get();
+					if (card == null) { refreshP1MonsterSlot(idx); return; }
+
+					int   totalFrames = 12;
+					int[] frame       = { 0 };
+					Timer timer = new Timer(16, null);
+					timer.addActionListener(ae -> {
+						frame[0]++;
+						double progress = Math.min(1.0, (double) frame[0] / totalFrames);
+						double t = progress < 0.5
+								? 2 * progress * progress
+								: 1 - Math.pow(-2 * progress + 2, 2) / 2;
+						double angle = Math.PI / 2 * t;
+						slot.setIcon(new ImageIcon(CardAnimation.renderBackupCardAtAngle(card, angle)));
+						slot.setText(null);
+						if (frame[0] >= totalFrames) {
+							timer.stop();
+							refreshP1MonsterSlot(idx);
+						}
+					});
+					timer.start();
+				} catch (InterruptedException | ExecutionException ignored) {
+					refreshP1MonsterSlot(idx);
+				}
+			}
+		}.execute();
+	}
+
 	private void animateActivateP2Forward(int idx) {
 		String url  = p2ForwardUrls.get(idx);
 		JLabel slot = p2ForwardLabels.get(idx);
@@ -7118,6 +7172,46 @@ public class MainWindow {
 		}.execute();
 	}
 
+	private void animateDullP2Monster(int idx) {
+		String url  = p2MonsterUrls.get(idx);
+		JLabel slot = p2MonsterLabels.get(idx);
+		if (url == null || slot == null) { refreshP2MonsterSlot(idx); return; }
+
+		new SwingWorker<BufferedImage, Void>() {
+			@Override protected BufferedImage doInBackground() throws Exception {
+				Image raw = ImageCache.load(url);
+				return raw == null ? null : CardAnimation.toARGB(raw, CARD_W, CARD_H);
+			}
+			@Override protected void done() {
+				try {
+					BufferedImage card = get();
+					if (card == null) { refreshP2MonsterSlot(idx); return; }
+
+					int   totalFrames = 12;
+					int[] frame       = { 0 };
+					Timer timer = new Timer(16, null);
+					timer.addActionListener(ae -> {
+						frame[0]++;
+						double progress = Math.min(1.0, (double) frame[0] / totalFrames);
+						double t = progress < 0.5
+								? 2 * progress * progress
+								: 1 - Math.pow(-2 * progress + 2, 2) / 2;
+						double angle = Math.PI / 2 * t;
+						slot.setIcon(new ImageIcon(CardAnimation.renderBackupCardAtAngle(card, angle)));
+						slot.setText(null);
+						if (frame[0] >= totalFrames) {
+							timer.stop();
+							refreshP2MonsterSlot(idx);
+						}
+					});
+					timer.start();
+				} catch (InterruptedException | ExecutionException ignored) {
+					refreshP2MonsterSlot(idx);
+				}
+			}
+		}.execute();
+	}
+
 	private void breakP2BackupSlot(int idx) {
 		CardData c = p2BackupCards[idx];
 		if (c == null) return;
@@ -7175,7 +7269,10 @@ public class MainWindow {
 	 */
 	private boolean canActivateAbility(ActionAbility ability, boolean isFrozen, CardState state,
 			int playedTurn, CardData source, boolean isP1) {
-		if (ability.yourTurnOnly() && !isP1) return false;
+		if (ability.yourTurnOnly()) {
+			GameState.Player activePlayer = isP1 ? GameState.Player.P1 : GameState.Player.P2;
+			if (gameState.getCurrentPlayer() != activePlayer) return false;
+		}
 		if (ability.oncePerTurn()
 				&& usedOncePerTurnAbilities.getOrDefault(source, java.util.Set.of()).contains(ability.effectText()))
 			return false;
@@ -8706,7 +8803,10 @@ public class MainWindow {
 	}
 
 	private boolean canActivateHandAbility(ActionAbility ability, CardData source, boolean isP1) {
-		if (ability.yourTurnOnly() && !isP1) return false;
+		if (ability.yourTurnOnly()) {
+			GameState.Player activePlayer = isP1 ? GameState.Player.P1 : GameState.Player.P2;
+			if (gameState.getCurrentPlayer() != activePlayer) return false;
+		}
 		if (ability.oncePerTurn()
 				&& usedOncePerTurnAbilities.getOrDefault(source, java.util.Set.of()).contains(ability.effectText()))
 			return false;
@@ -12824,6 +12924,8 @@ public class MainWindow {
 		bar.setFocusableWindowState(false);   // never steal focus, so the board stays clickable
 		bar.setResizable(false);
 
+		boolean nextWasEnabled = nextPhaseButton != null && nextPhaseButton.isEnabled();
+
 		Runnable finish = () -> {
 			if (done[0]) return;
 			done[0] = true;
@@ -12833,12 +12935,14 @@ public class MainWindow {
 				labels.get(i).removeMouseListener(listeners.get(i));
 			}
 			fieldTargetingActive = false;
+			if (nextPhaseButton != null) nextPhaseButton.setEnabled(nextWasEnabled);
 			for (Integer si : sel) result.add(eligible.get(si));
 			bar.dispose();
 			if (loop != null) loop.exit();
 		};
 
 		fieldTargetingActive = true;
+		if (nextPhaseButton != null) nextPhaseButton.setEnabled(false);
 		for (int i = 0; i < eligible.size(); i++) {
 			final int fi = i;
 			JLabel lbl = labelForTarget(eligible.get(i));
@@ -13869,6 +13973,17 @@ public class MainWindow {
 	}
 
 	/**
+	 * Grants P1 priority during P2's main phase. Enables the Next Phase button so P1 can cast
+	 * Summons or use Action abilities, then pass by clicking Next. Calling {@link #onNextPhase()}
+	 * while this is active clears the state and runs {@code onPass}.
+	 */
+	void offerP1MainPhasePriority(Runnable onPass) {
+		p1PriorityInP2MainOnDone = onPass;
+		if (nextPhaseButton != null) nextPhaseButton.setEnabled(true);
+		logEntry("[Priority] P2 passes — you may cast Summons or use abilities. Click Next Phase to pass.");
+	}
+
+	/**
 	 * Runs a full two-player priority sequence for a combat checkpoint.
 	 * {@code p1IsAttacker} == true: P1 goes first (interactive window), then P2 auto-passes.
 	 * {@code p1IsAttacker} == false: P2 auto-passes first, then P1 gets an interactive window
@@ -13993,10 +14108,11 @@ public class MainWindow {
 
 		if (effectiveMonsterHasTrait(true, monIdx, CardData.Trait.BRAVE)) {
 			p1MonsterStates.set(monIdx, CardState.BRAVE_ATTACKED);
+			refreshP1MonsterSlot(monIdx);
 		} else {
 			p1MonsterStates.set(monIdx, CardState.DULL);
+			animateDullMonster(monIdx);
 		}
-		refreshP1MonsterSlot(monIdx);
 		triggerAutoAbilitiesForAttack(attacker, true);
 
 		setAttackSubStep(2);
@@ -14274,10 +14390,11 @@ public class MainWindow {
 
 		if (effectiveBackupHasTrait(true, bIdx, CardData.Trait.BRAVE)) {
 			p1BackupStates[bIdx] = CardState.BRAVE_ATTACKED;
+			refreshP1BackupSlot(bIdx);
 		} else {
 			p1BackupStates[bIdx] = CardState.DULL;
+			animateDullBackup(bIdx, true);
 		}
-		refreshP1BackupSlot(bIdx);
 		triggerAutoAbilitiesForAttack(attacker, true);
 
 		setAttackSubStep(2);
@@ -15532,10 +15649,12 @@ public class MainWindow {
 	private class ComputerPlayer {
 		private static final int PAUSE_MS = 500;
 
-		/** Schedules {@code r} to run after {@link #PAUSE_MS} ms on the EDT. */
+		/** Schedules {@code r} to run after {@link #PAUSE_MS} ms on the EDT, but waits for the stack to be empty first. */
 		private void step(Runnable r) {
 			Timer t = new Timer(PAUSE_MS, e -> {
-				if (!gameState.isP1GameOver()) r.run();
+				if (gameState.isP1GameOver()) return;
+				if (!gameState.getStack().isEmpty()) { step(r); return; }
+				r.run();
 			});
 			t.setRepeats(false);
 			t.start();
@@ -15692,7 +15811,11 @@ public class MainWindow {
 			}
 
 			int[] plan = findPlayPlan();
-			if (plan == null) { onDone.run(); return; }
+			if (plan == null) {
+				// P2 has no more plays — pass priority to P1
+				p2AutoPass(() -> offerP1MainPhasePriority(onDone));
+				return;
+			}
 
 			int cardIdx = plan[0];
 			List<Integer> discards = new ArrayList<>();
@@ -15869,10 +15992,11 @@ public class MainWindow {
 				int power = p2MonsterForwardPower(i);
 				if (effectiveMonsterHasTrait(false, i, CardData.Trait.BRAVE)) {
 					p2MonsterStates.set(i, CardState.BRAVE_ATTACKED);
+					refreshP2MonsterSlot(i);
 				} else {
 					p2MonsterStates.set(i, CardState.DULL);
+					animateDullP2Monster(i);
 				}
-				refreshP2MonsterSlot(i);
 				triggerAutoAbilitiesForAttack(attacker, false);
 				logEntry("[P2] " + attacker.name() + " attacks! (Forward — " + power + ")");
 				pendingP2AttackerIsMonster = true;
@@ -15889,10 +16013,11 @@ public class MainWindow {
 				int power = p2BackupForwardPower(i);
 				if (effectiveBackupHasTrait(false, i, CardData.Trait.BRAVE)) {
 					p2BackupStates[i] = CardState.BRAVE_ATTACKED;
+					refreshP2BackupSlot(i);
 				} else {
 					p2BackupStates[i] = CardState.DULL;
+					animateDullP2Backup(i, true);
 				}
-				refreshP2BackupSlot(i);
 				triggerAutoAbilitiesForAttack(attacker, false);
 				logEntry("[P2] " + attacker.name() + " attacks! (Forward — " + power + ")");
 				pendingP2AttackerIsBackup = true;
@@ -15959,9 +16084,12 @@ public class MainWindow {
 			gameState.advancePhase(); // MAIN_2 → END
 			refreshPhaseTracker();
 			logEntry("[P2] End Phase");
-			gameState.advancePhase(); // END → ACTIVE (switches to P1, increments turn)
-			refreshPhaseTracker();
-			step(this::startP1Turn);  // startP1Turn expects phase == ACTIVE
+			// Wait for any end-of-turn auto abilities on the stack to resolve before returning priority to P1.
+			step(() -> {
+				gameState.advancePhase(); // END → ACTIVE (switches to P1, increments turn)
+				refreshPhaseTracker();
+				step(this::startP1Turn);  // startP1Turn expects phase == ACTIVE
+			});
 		}
 
 		// ── P1 turn start (Active + Draw, then hand control back to player) ──

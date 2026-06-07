@@ -822,7 +822,17 @@ public record CardData(
             ControlCondition controlCondition = null;
             if (!whileCardInHand) {
                 Matcher ctrlM = CONTROL_IF_PATTERN.matcher(effectRaw);
-                if (ctrlM.find()) controlCondition = parseControlCondition(ctrlM.group("condition"));
+                if (ctrlM.find()) {
+                    controlCondition = parseControlCondition(ctrlM.group("condition"));
+                } else {
+                    Matcher notM = CONTROL_IF_NOT_ANY_PATTERN.matcher(effectRaw);
+                    if (notM.find()) {
+                        String rawType = notM.group("type");
+                        String cardType = rawType.replaceAll("(?i)s$", "").trim();
+                        cardType = Character.toUpperCase(cardType.charAt(0)) + cardType.substring(1).toLowerCase();
+                        controlCondition = new ControlCondition(List.of(), 0, true, cardType, null, null, null, 0, List.of());
+                    }
+                }
             }
             Matcher cpBkpM = CP_BACKUP_ONLY_ABILITY.matcher(effectRaw);
             String cpBackupElement = cpBkpM.find()
@@ -957,6 +967,11 @@ public record CardData(
     /** Captures the raw condition text from "You can only use this ability if you control [X]". */
     static final Pattern CONTROL_IF_PATTERN = Pattern.compile(
         "(?i)You\\s+can\\s+only\\s+use\\s+this\\s+ability\\s+if\\s+you\\s+control\\s+(?<condition>.+?)\\s*[.!]?\\s*$"
+    );
+
+    /** Captures the card type from "You can only use this ability if you don't control any [type]". */
+    static final Pattern CONTROL_IF_NOT_ANY_PATTERN = Pattern.compile(
+        "(?i)You\\s+can\\s+only\\s+use\\s+this\\s+ability\\s+if\\s+you\\s+don't\\s+control\\s+any\\s+(?<type>Forwards?|Monsters?|Backups?|Characters?)\\s*[.!]?\\s*$"
     );
 
     /**
