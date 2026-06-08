@@ -764,6 +764,28 @@ public interface GameContext {
      */
     void selfDiscardByType(String cardType);
 
+    // ---- Special-ability replay offers ------------------------------------------
+
+    /**
+     * Offers the player the option to pay 1 CP of {@code element} to replay the ability.
+     * Skips the offer if the player has no way to pay. Calls {@code replayAction} if accepted.
+     */
+    void mayPayToReplayAbility(String element, java.util.function.Consumer<GameContext> replayAction);
+
+    /**
+     * Offers the player the option to dull an active card named {@code cardName} to replay
+     * the ability. Skips the offer silently if no active card of that name is on the field.
+     * Calls {@code replayAction} if the player accepts.
+     */
+    void mayDullActiveCardToReplayAbility(String cardName, java.util.function.Consumer<GameContext> replayAction);
+
+    /**
+     * Offers the player the option to discard a card named {@code cardName} from hand to
+     * replay the ability. Skips the offer silently if no such card is in hand.
+     * Calls {@code replayAction} if the player accepts.
+     */
+    void mayDiscardCardNameToReplayAbility(String cardName, java.util.function.Consumer<GameContext> replayAction);
+
     /**
      * Discards all cards from the ability user's hand to their Break Zone.  No CP is generated.
      * No selection dialog is shown — the entire hand is automatically discarded.

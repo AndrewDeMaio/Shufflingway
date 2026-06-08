@@ -2636,6 +2636,7 @@ public class ActionResolver {
         if (tryParseDealPowerMinusNDamageToForwards(effectText)     != null) return "DealPowerMinusNDamageToForwards";
         if (tryParseDealHalfSourcePowerDamageToForwards(effectText) != null) return "DealHalfSourcePowerDamageToForwards";
         if (tryParseDamageToCombatBlocker(effectText)               != null) return "DamageToCombatBlocker";
+        if (MAY_COST_REPLAY_ABILITY.matcher(effectText).find())               return "MayReplayAbility";
 
         String normalizedEffectText = ELEM_TYPE_OR_ELEM_TYPE.matcher(effectText).replaceAll("$1 or $3 $2");
         Matcher oneEachM = CHOOSE_ONE_EACH_PATTERN.matcher(normalizedEffectText);
@@ -3483,9 +3484,31 @@ public class ActionResolver {
                 if (secondaryText == null) {
                     secondary = null;
                 } else {
-                    Consumer<GameContext> parsed = parse(secondaryText, source);
-                    secondary = (parsed != null) ? parsed
-                            : ctx -> ctx.logEntry("[ActionResolver] Secondary followup not yet implemented: " + secondaryText);
+                    // Special case: "You may [cost]. When/If you do so, use this ability again."
+                    // Captured here so the replay Consumer closes over the full original effect text.
+                    Matcher replayM = MAY_COST_REPLAY_ABILITY.matcher(secondaryText);
+                    if (replayM.find()) {
+                        String payCost     = replayM.group("payCost");
+                        String dullName    = replayM.group("dullName");
+                        String discardName = replayM.group("discardName");
+                        final String capturedText = text;
+                        Consumer<GameContext> replayEffect =
+                                ctx2 -> { Consumer<GameContext> inner = parse(capturedText, source, 0); if (inner != null) inner.accept(ctx2); };
+                        if (payCost != null) {
+                            final String elem = payCost.trim();
+                            secondary = ctx -> ctx.mayPayToReplayAbility(elem, replayEffect);
+                        } else if (dullName != null) {
+                            final String name = dullName.trim();
+                            secondary = ctx -> ctx.mayDullActiveCardToReplayAbility(name, replayEffect);
+                        } else {
+                            final String name = discardName.trim();
+                            secondary = ctx -> ctx.mayDiscardCardNameToReplayAbility(name, replayEffect);
+                        }
+                    } else {
+                        Consumer<GameContext> parsed = parse(secondaryText, source);
+                        secondary = (parsed != null) ? parsed
+                                : ctx -> ctx.logEntry("[ActionResolver] Secondary followup not yet implemented: " + secondaryText);
+                    }
                 }
             } else {
                 primaryFollowup = followup;
@@ -5208,6 +5231,25 @@ public class ActionResolver {
     /** Parses "Draw N card(s)[, then discard M card(s)]" as a standalone effect. */
     private static final Pattern WHEN_YOU_DO_SO_SEQUENCE = Pattern.compile(
         "(?is)(?<primary>.+?)\\.\\s+(?:When|If)\\s+you\\s+do\\s+so,?\\s+(?<followup>.+)"
+    );
+
+    /**
+     * Matches the optional-cost replay clause appended to Special abilities:
+     * "You may [cost]. When/If you do so, use this (special) ability again without paying the cost."
+     * Three cost variants:
+     * <ul>
+     *   <li>{@code payCost}     — element name from "pay 《Earth》"</li>
+     *   <li>{@code dullName}    — card name from "dull active Yuna"</li>
+     *   <li>{@code discardName} — card name from "discard 1 Card Name Golbez"</li>
+     * </ul>
+     */
+    private static final Pattern MAY_COST_REPLAY_ABILITY = Pattern.compile(
+        "(?i)You\\s+may\\s+(?:" +
+            "pay\\s+《(?<payCost>[^》]+)》" +
+            "|dull\\s+active\\s+(?<dullName>[^.,]+)" +
+            "|discard\\s+1\\s+Card\\s+Name\\s+(?<discardName>[^.,]+)" +
+        ")\\s*[.,]?\\s+(?:When|If)\\s+you\\s+do\\s+so,?\\s+" +
+        "use\\s+this\\s+(?:special\\s+)?ability\\s+again\\s+without\\s+paying\\s+the\\s+cost[.!]?"
     );
 
     /**

@@ -11925,6 +11925,72 @@ public class MainWindow {
 				}
 			}
 
+			@Override public void mayPayToReplayAbility(String element, java.util.function.Consumer<GameContext> replayAction) {
+				if (!isP1) { logEntry("[P2 AI] Passes on ability replay (pay 《" + element + "》)"); return; }
+				String label = "Pay 《" + element + "》 to use this ability again?";
+				String src   = currentAbilitySource != null ? currentAbilitySource.name() : "Ability";
+				int choice = showEffectOptionDialog(src + " — " + label, "Replay Ability", new Object[]{"Pay", "Pass"});
+				if (choice != 0) { logEntry("Replay: declined to pay 《" + element + "》"); return; }
+				showAutoAbilityPaymentDialog(src + " (replay)", 1, 1, isP1, paid -> {
+					if (paid >= 1) { logEntry("Replay: paid 《" + element + "》 — using ability again"); replayAction.accept(this); }
+				});
+			}
+
+			@Override public void mayDullActiveCardToReplayAbility(String cardName, java.util.function.Consumer<GameContext> replayAction) {
+				// Find an active card of that name on the ability user's side
+				int fwdIdx = -1;
+				for (int i = 0; i < p1ForwardCards.size(); i++) {
+					if (p1ForwardCards.get(i).name().equalsIgnoreCase(cardName)
+							&& p1ForwardStates.get(i) == CardState.ACTIVE) { fwdIdx = i; break; }
+				}
+				int bkpIdx = -1;
+				if (fwdIdx < 0) {
+					for (int i = 0; i < p1BackupCards.length; i++) {
+						if (p1BackupCards[i] != null && p1BackupCards[i].name().equalsIgnoreCase(cardName)
+								&& p1BackupStates[i] == CardState.ACTIVE) { bkpIdx = i; break; }
+					}
+				}
+				if (fwdIdx < 0 && bkpIdx < 0) {
+					logEntry("Replay: no active " + cardName + " on field — offer skipped");
+					return;
+				}
+				if (!isP1) { logEntry("[P2 AI] Passes on ability replay (dull " + cardName + ")"); return; }
+				String src = currentAbilitySource != null ? currentAbilitySource.name() : "Ability";
+				int choice = showEffectOptionDialog(
+						src + " — Dull active " + cardName + " to use this ability again?",
+						"Replay Ability", new Object[]{"Dull", "Pass"});
+				if (choice != 0) { logEntry("Replay: declined to dull " + cardName); return; }
+				if (fwdIdx >= 0) {
+					dullP1Forward(fwdIdx);
+				} else {
+					p1BackupStates[bkpIdx] = CardState.DULL;
+					refreshP1BackupSlot(bkpIdx);
+				}
+				logEntry("Replay: dulled " + cardName + " — using ability again");
+				replayAction.accept(this);
+			}
+
+			@Override public void mayDiscardCardNameToReplayAbility(String cardName, java.util.function.Consumer<GameContext> replayAction) {
+				List<CardData> hand = isP1 ? gameState.getP1Hand() : gameState.getP2Hand();
+				int handIdx = -1;
+				for (int i = 0; i < hand.size(); i++) {
+					if (hand.get(i).name().equalsIgnoreCase(cardName)) { handIdx = i; break; }
+				}
+				if (handIdx < 0) { logEntry("Replay: no " + cardName + " in hand — offer skipped"); return; }
+				if (!isP1) { logEntry("[P2 AI] Passes on ability replay (discard " + cardName + ")"); return; }
+				String src = currentAbilitySource != null ? currentAbilitySource.name() : "Ability";
+				int choice = showEffectOptionDialog(
+						src + " — Discard " + cardName + " from hand to use this ability again?",
+						"Replay Ability", new Object[]{"Discard", "Pass"});
+				if (choice != 0) { logEntry("Replay: declined to discard " + cardName); return; }
+				CardData d = gameState.breakFromHand(handIdx);
+				if (d != null) { logEntry("Replay: discarded " + d.name()); p1DiscardedByEffectThisTurn = true; }
+				refreshP1HandLabel();
+				refreshP1BreakLabel();
+				logEntry("Replay: using ability again");
+				replayAction.accept(this);
+			}
+
 			@Override public void placeFromHandToBottomOfDeck(int count) {
 				if (isP1) {
 					showPlaceToBottomOfDeckDialog(count);
