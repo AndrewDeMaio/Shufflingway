@@ -9300,7 +9300,7 @@ public class MainWindow {
                 }
 
 				if (eligible.isEmpty()) { logEntry(isP1 ? "[P1]" : "[P2]" + "No eligible card for discard cost."); return; }
-				int choice = showCardImageChooser(eligible, "Discard Cost", true, false);
+				int choice = showCardImageChooser(eligible, "Discard Cost", false, false);
 
 				if (choice < 0) return;
 				if (dc.eachDifferentType()) usedTypes.add(discardTypeKey(hand.get(choice)));
