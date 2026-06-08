@@ -2274,6 +2274,7 @@ public class MainWindow {
 		logEntry("P1 takes 1 damage — " + drawn.name() + (isEx ? " [EX BURST!]" : ""));
 		triggerAutoAbilitiesForDamageZone(true);
 		triggerAutoAbilitiesForEitherPlayerReceivesDamage();
+		triggerAutoAbilitiesForYouReceiveDamage(true);
 		animateCardToDamage(true, idx);
 
 		int animDelay = CardSlideAnimator.TOTAL_FRAMES * CardSlideAnimator.FRAME_MS;
@@ -2322,6 +2323,7 @@ public class MainWindow {
 		logEntry("P2 takes 1 damage (" + p2DamageCount + "/7)" + cardInfo);
 		triggerAutoAbilitiesForDamageZone(false);
 		triggerAutoAbilitiesForEitherPlayerReceivesDamage();
+		triggerAutoAbilitiesForYouReceiveDamage(false);
 
 		int slotIdx = p2DamageCount - 1;
 		if (drawn != null) animateCardToDamage(false, slotIdx);
@@ -8411,6 +8413,11 @@ public class MainWindow {
 		triggerAutoAbilitiesForEvent("either player receives damage", false);
 	}
 
+	/** Fires "you receive damage" abilities on all field cards belonging to the player who took damage. */
+	private void triggerAutoAbilitiesForYouReceiveDamage(boolean isP1) {
+		triggerAutoAbilitiesForEvent("you receive damage", isP1);
+	}
+
 	/**
 	 * Resolves the EX Burst effect on {@code card} for the player whose damage zone received it.
 	 * The controlling player may decline; if accepted the effect resolves immediately, bypassing
@@ -13212,7 +13219,7 @@ public class MainWindow {
 			// P1 backups
 			for (int i = 0; i < p1BackupCards.length; i++) {
 				CardData c = p1BackupCards[i];
-				if (c == null || !cardNamesOverlap(incoming, c)) continue;
+				if (c == null || c == incoming || !cardNamesOverlap(incoming, c)) continue;
 				conflict = true;
 				logEntry("[Uniqueness] " + c.name() + " — sent to Break Zone");
 				addToP1BreakZone(c);
@@ -13223,7 +13230,7 @@ public class MainWindow {
 			// P1 monsters
 			for (int i = p1MonsterCards.size() - 1; i >= 0; i--) {
 				CardData c = p1MonsterCards.get(i);
-				if (!cardNamesOverlap(incoming, c)) continue;
+				if (c == incoming || !cardNamesOverlap(incoming, c)) continue;
 				conflict = true;
 				logEntry("[Uniqueness] " + c.name() + " — sent to Break Zone");
 				addToP1BreakZone(c);
@@ -13262,7 +13269,7 @@ public class MainWindow {
 			// P2 backups
 			for (int i = 0; i < p2BackupCards.length; i++) {
 				CardData c = p2BackupCards[i];
-				if (c == null || !cardNamesOverlap(incoming, c)) continue;
+				if (c == null || c == incoming || !cardNamesOverlap(incoming, c)) continue;
 				conflict = true;
 				logEntry("[Uniqueness] [P2] " + c.name() + " — sent to Break Zone");
 				addToP2BreakZone(c);
@@ -13273,7 +13280,7 @@ public class MainWindow {
 			// P2 monsters
 			for (int i = p2MonsterCards.size() - 1; i >= 0; i--) {
 				CardData c = p2MonsterCards.get(i);
-				if (!cardNamesOverlap(incoming, c)) continue;
+				if (c == incoming || !cardNamesOverlap(incoming, c)) continue;
 				conflict = true;
 				logEntry("[Uniqueness] [P2] " + c.name() + " — sent to Break Zone");
 				addToP2BreakZone(c);

@@ -18,6 +18,7 @@ package shufflingway;
  * {@code "is blocked"}, {@code "blocks or is blocked"},
  * {@code "party attacks"}, {@code "enters the field"},
  * {@code "put into break zone"}, {@code "cast summon"}, {@code "damage zone"},
+ * {@code "either player receives damage"}, {@code "you receive damage"},
  * or {@code "primed into"}.
  *
  * <p>For {@code trigger == "party attacks"}, optional filters narrow which parties fire the trigger:

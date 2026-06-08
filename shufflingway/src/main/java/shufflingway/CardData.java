@@ -1263,7 +1263,10 @@ public record CardData(
             else if (triggerRaw.contains("warp"))                                                           trigger = "warp placed";
             else if (triggerRaw.contains("deals damage") && triggerRaw.contains("opponent"))                trigger = "deals damage to opponent";
             else if (triggerRaw.contains("deals damage"))                                                   trigger = "deals damage to forward";
-            else if (triggerRaw.contains("receives a point of damage"))                                     trigger = "either player receives damage";
+            else if (triggerRaw.contains("receive") && triggerRaw.contains("a point of damage")) {
+                if (card.equalsIgnoreCase("you"))   trigger = "you receive damage";
+                else                                trigger = "either player receives damage";
+            }
             else                                                                                             trigger = "enters the field";
 
             // For "warp placed", strip the " in your hand" suffix from the card name
