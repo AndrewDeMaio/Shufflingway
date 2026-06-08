@@ -1129,6 +1129,12 @@ public interface GameContext {
     void makeMonsterTemporaryForward(CardData source, int power);
 
     /**
+     * Immediately breaks {@code source} — searches own forwards then monsters by identity
+     * and calls {@link #breakTarget} on the first match.  No-op if already off the field.
+     */
+    void breakSourceCard(CardData source);
+
+    /**
      * Queues an end-of-turn break for {@code source} on the ability user's field.
      * Searches Forwards then Monsters; no-op if the card is no longer on the field at end of turn.
      */

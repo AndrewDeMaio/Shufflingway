@@ -12525,6 +12525,19 @@ public class MainWindow {
 				}
 			}
 
+			@Override public void breakSourceCard(CardData source) {
+				List<CardData> fwds = isP1 ? p1ForwardCards : p2ForwardCards;
+				for (int fi = 0; fi < fwds.size(); fi++) {
+					if (fwds.get(fi) == source) {
+						breakTarget(new ForwardTarget(isP1, fi, ForwardTarget.CardZone.FORWARD));
+						return;
+					}
+				}
+				List<CardData> mons = isP1 ? p1MonsterCards : p2MonsterCards;
+				int mi = mons.indexOf(source);
+				if (mi >= 0) breakTarget(new ForwardTarget(isP1, mi, ForwardTarget.CardZone.MONSTER));
+			}
+
 			@Override public void breakSourceAtEndOfTurn(CardData source) {
 				addEndOfTurnEffect(ctx -> {
 					java.util.List<CardData> fwds = isP1 ? p1ForwardCards : p2ForwardCards;

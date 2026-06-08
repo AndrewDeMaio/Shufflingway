@@ -293,6 +293,11 @@ public class ActionResolver {
         "(?i)Remove\\s+(?!(?:it|them)\\b)(?<named>.+?)\\s+from\\s+(?:the\\s+)?game[.!]?"
     );
 
+    /** Matches "Break [CardName]." — used when the source card breaks itself. */
+    private static final Pattern BREAK_SOURCE_CARD = Pattern.compile(
+        "(?i)^break\\s+(?<name>.+?)[.!]?$"
+    );
+
     /**
      * Matches "Remove the top [N cards / card] of your deck from the game."
      * Group {@code count} — number of cards (absent means 1).
@@ -2263,6 +2268,9 @@ public class ActionResolver {
         result = tryParseRemoveNamedFromGame(effectText, source);
         if (result != null) return result;
 
+        result = tryParseBreakSourceCard(effectText, source);
+        if (result != null) return result;
+
         result = tryParseOpponentDrawThenRandomDiscard(effectText);
         if (result != null) return result;
 
@@ -2493,6 +2501,7 @@ public class ActionResolver {
         if (tryParseOpponentRandomHandRfp(effectText)         != null) return "OpponentRandomHandRfp";
         if (tryParseOpponentHandRfp(effectText)               != null) return "OpponentHandRfp";
         if (tryParseRemoveNamedFromGame(effectText, source)   != null) return "RemoveNamedFromGame";
+        if (tryParseBreakSourceCard(effectText, source)        != null) return "BreakSourceCard";
         if (tryParseOpponentDrawThenRandomDiscard(effectText)  != null) return "OpponentDrawThenRandomDiscard";
         if (tryParseOpponentRandomDiscard(effectText)         != null) return "OpponentRandomDiscard";
         if (tryParseEachPlayerDiscard(effectText)              != null) return "EachPlayerDiscard";
@@ -2706,6 +2715,7 @@ public class ActionResolver {
         if (tryParseOpponentHandRfp(effectText) != null)                   return "OpponentHandRfp";
         if (tryParseReturnNamedToHand(effectText) != null)                   return "ReturnNamedToHand";
         if (tryParseRemoveNamedFromGame(effectText, source) != null)        return "RemoveNamedFromGame";
+        if (tryParseBreakSourceCard(effectText, source)     != null)        return "BreakSourceCard";
         if (tryParseOpponentDrawThenRandomDiscard(effectText) != null)      return "OpponentDrawThenRandomDiscard";
         if (tryParseOpponentRandomDiscard(effectText) != null)              return "OpponentRandomDiscard";
         if (tryParseEachPlayerDiscard(effectText) != null)                  return "EachPlayerDiscard";
@@ -5574,6 +5584,17 @@ public class ActionResolver {
         return ctx -> {
             ctx.logEntry("Effect: Remove " + named + " from the game");
             ctx.removeNamedCardFromGame(named);
+        };
+    }
+
+    /** Parses "Break [CardName]." when CardName is the source card — breaks the source forward/monster. */
+    private static Consumer<GameContext> tryParseBreakSourceCard(String text, CardData source) {
+        Matcher m = BREAK_SOURCE_CARD.matcher(text.trim());
+        if (!m.matches()) return null;
+        if (!m.group("name").trim().equalsIgnoreCase(source.name())) return null;
+        return ctx -> {
+            ctx.logEntry("Effect: Break " + source.name());
+            ctx.breakSourceCard(source);
         };
     }
 
