@@ -2158,6 +2158,9 @@ public class ActionResolver {
         result = tryParseControlConditionGate(effectText, source, xValue);
         if (result != null) return result;
 
+        result = tryParseIfCastAtLeast(effectText, source, xValue);
+        if (result != null) return result;
+
         result = tryParseSelectNumber(effectText, source);
         if (result != null) return result;
 
@@ -2574,6 +2577,7 @@ public class ActionResolver {
         if (tryParseShuffleDeck(effectText)                        != null) return "ShuffleDeck";
         if (tryParseIfOwnForwardFormedParty(effectText, source, 0) != null) return "IfOwnForwardFormedParty";
         if (tryParseIfControlAtMost(effectText, source, 0)         != null) return "IfControlAtMost";
+        if (tryParseIfCastAtLeast(effectText, source, 0)           != null) return "IfCastAtLeast";
         if (tryParseConditionalOpponentHand(effectText, source, 0) != null) return "ConditionalOpponentHand";
         if (SELECT_FOLLOWING_ACTIONS_DETECT.matcher(effectText).find())    return "SelectFollowingActions";
         if (CardData.HAS_ALL_ELEMENTS_PATTERN.matcher(effectText.trim()).matches()) return "HasAllElements";
@@ -2673,6 +2677,7 @@ public class ActionResolver {
         if (CardData.WHILE_CARD_ATTACKING_PATTERN.matcher(effectText).matches())  return "WhileCardAttacking";
         if (CardData.WHILE_CARD_BLOCKING_PATTERN.matcher(effectText).matches())   return "WhileCardBlocking";
         if (CardData.WHILE_CARD_IN_HAND_PATTERN.matcher(effectText).matches())   return "WhileCardInHand";
+        if (tryParseIfCastAtLeast(effectText, source, 0)           != null) return "IfCastAtLeast";
         if (tryParseSelectNumber(effectText, source)          != null) return "SelectNumber";
         if (tryParseDealDamageToForwards(effectText)                != null) return "DealDamageToForwards";
         if (tryParseDealHalfPowerDamageToForwards(effectText)       != null) return "DealHalfPowerDamageToForwards";
@@ -5350,6 +5355,11 @@ public class ActionResolver {
         "(?is)^if\\s+you\\s+(?<neg>do\\s+not\\s+|don't\\s+)?control\\s+(?<cond>.+?),\\s+(?<effect>.+)$"
     );
 
+    /** Matches "If you have cast N or more cards this turn, &lt;effect&gt;". */
+    private static final Pattern IF_CAST_AT_LEAST = Pattern.compile(
+        "(?is)^if\\s+you\\s+have\\s+cast\\s+(?<min>\\d+)\\s+or\\s+more\\s+cards?\\s+this\\s+turn,\\s+(?<effect>.+)$"
+    );
+
     private static Consumer<GameContext> tryParseIfOwnForwardFormedParty(String text, CardData source, int xValue) {
         Matcher m = IF_OWN_FORWARD_FORMED_PARTY.matcher(text.trim());
         if (!m.matches()) return null;
@@ -5399,6 +5409,22 @@ public class ActionResolver {
                 inner.accept(ctx);
             } else {
                 ctx.logEntry("Effect: control " + count + " " + type + " (max " + max + ") — skipped");
+            }
+        };
+    }
+
+    private static Consumer<GameContext> tryParseIfCastAtLeast(String text, CardData source, int xValue) {
+        Matcher m = IF_CAST_AT_LEAST.matcher(text.trim());
+        if (!m.matches()) return null;
+        int min = Integer.parseInt(m.group("min"));
+        Consumer<GameContext> inner = parse(m.group("effect").trim(), source, xValue);
+        if (inner == null) return null;
+        return ctx -> {
+            int cast = ctx.selfCardsCastThisTurn();
+            if (cast >= min) {
+                inner.accept(ctx);
+            } else {
+                ctx.logEntry("Effect: only cast " + cast + " card(s) this turn (need " + min + ") — skipped");
             }
         };
     }
