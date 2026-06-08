@@ -4646,6 +4646,126 @@ public class MainWindow {
 		dlg.setVisible(true);
 	}
 
+	private void showPlaceToBottomOfDeckDialog(int count) {
+		List<CardData> hand = gameState.getP1Hand();
+		int mustPlace = Math.min(count, hand.size());
+		if (mustPlace == 0) return;
+
+		JDialog dlg = new JDialog(frame, "Place " + mustPlace + " Card(s) at Bottom of Deck", true);
+		dlg.setResizable(false);
+		dlg.setDefaultCloseOperation(JDialog.DO_NOTHING_ON_CLOSE);
+
+		Set<Integer> selected = new HashSet<>();
+
+		JLabel statusLabel = new JLabel("Select " + mustPlace + " card(s) to place at the bottom of your deck.", SwingConstants.CENTER);
+		statusLabel.setFont(FontLoader.loadPixelNESFont(10));
+
+		List<JLabel> cardLabels = new ArrayList<>();
+		JPanel cardsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 8));
+
+		JButton confirmBtn = new JButton("Place");
+		confirmBtn.setFont(FontLoader.loadPixelNESFont(11));
+		confirmBtn.setEnabled(false);
+
+		Runnable refresh = () -> {
+			int remaining = mustPlace - selected.size();
+			statusLabel.setText(remaining > 0
+					? "Select " + remaining + " more card(s)."
+					: "Ready — click Place to confirm.");
+			confirmBtn.setEnabled(selected.size() == mustPlace);
+			for (int i = 0; i < cardLabels.size(); i++) {
+				cardLabels.get(i).setBorder(BorderFactory.createLineBorder(
+						selected.contains(i) ? Color.BLUE : Color.LIGHT_GRAY,
+						selected.contains(i) ? 3 : 1));
+			}
+		};
+
+		for (int i = 0; i < hand.size(); i++) {
+			final int idx = i;
+			CardData cd = hand.get(i);
+
+			JPanel wrapper = new JPanel(new BorderLayout(0, 4));
+			wrapper.setBackground(cardsPanel.getBackground());
+
+			JLabel lbl = new JLabel("...", SwingConstants.CENTER);
+			lbl.setPreferredSize(new Dimension(CARD_W, CARD_H));
+			lbl.setMinimumSize(new Dimension(CARD_W, CARD_H));
+			lbl.setOpaque(true);
+			lbl.setBackground(Color.DARK_GRAY);
+			lbl.setBorder(BorderFactory.createLineBorder(Color.LIGHT_GRAY, 1));
+			lbl.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+			cardLabels.add(lbl);
+
+			lbl.addMouseListener(new MouseAdapter() {
+				@Override public void mouseEntered(MouseEvent e) { if (lbl.getIcon() != null) showZoomAt(cd.imageUrl()); }
+				@Override public void mouseExited(MouseEvent e)  { hideZoom(); }
+				@Override public void mousePressed(MouseEvent e) {
+					if (selected.contains(idx)) selected.remove(idx);
+					else if (selected.size() < mustPlace) selected.add(idx);
+					refresh.run();
+				}
+			});
+
+			new SwingWorker<ImageIcon, Void>() {
+				@Override protected ImageIcon doInBackground() throws Exception {
+					Image img = ImageCache.load(cd.imageUrl());
+					if (img == null) return null;
+					BufferedImage buf = new BufferedImage(CARD_W, CARD_H, BufferedImage.TYPE_INT_ARGB);
+					Graphics2D g2 = buf.createGraphics();
+					g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+					g2.drawImage(img, 0, 0, CARD_W, CARD_H, null);
+					g2.dispose();
+					return new ImageIcon(buf);
+				}
+				@Override protected void done() {
+					try { ImageIcon icon = get(); if (icon != null) { lbl.setIcon(icon); lbl.setText(null); } }
+					catch (InterruptedException | ExecutionException ignored) {}
+				}
+			}.execute();
+
+			JLabel nameLabel = new JLabel(cd.name(), SwingConstants.CENTER);
+			nameLabel.setFont(FontLoader.loadPixelNESFont(9));
+			nameLabel.setPreferredSize(new Dimension(CARD_W, 18));
+
+			wrapper.add(lbl,       BorderLayout.CENTER);
+			wrapper.add(nameLabel, BorderLayout.SOUTH);
+			cardsPanel.add(wrapper);
+		}
+
+		confirmBtn.addActionListener(ae -> {
+			hideZoom();
+			dlg.dispose();
+			List<Integer> toPlace = new ArrayList<>(selected);
+			toPlace.sort(Collections.reverseOrder());
+			for (int pi : toPlace) {
+				CardData d = gameState.getP1Hand().remove(pi);
+				gameState.getP1MainDeck().addLast(d);
+				logEntry("Places " + d.name() + " at bottom of deck");
+			}
+			refreshP1HandLabel();
+			refreshP1DeckLabel();
+		});
+
+		JScrollPane scrollPane = new JScrollPane(cardsPanel,
+				JScrollPane.VERTICAL_SCROLLBAR_NEVER,
+				JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED);
+		scrollPane.setPreferredSize(new Dimension(
+				Math.min(hand.size() * (CARD_W + 16) + 16, 900),
+				CARD_H + 60));
+
+		JPanel south = new JPanel(new BorderLayout());
+		south.add(statusLabel, BorderLayout.CENTER);
+		south.add(confirmBtn,  BorderLayout.EAST);
+		south.setBorder(BorderFactory.createEmptyBorder(0, 8, 8, 8));
+
+		dlg.getContentPane().setLayout(new BorderLayout(0, 4));
+		dlg.getContentPane().add(scrollPane, BorderLayout.CENTER);
+		dlg.getContentPane().add(south,      BorderLayout.SOUTH);
+		dlg.pack();
+		dlg.setLocationRelativeTo(frame);
+		dlg.setVisible(true);
+	}
+
 	/**
 	 * Shows a modal dialog letting P1 select {@code count} cards from {@code targetHand}
 	 * to remove from the game permanently.
@@ -6649,7 +6769,6 @@ public class MainWindow {
 	/** Places a card into the first empty P1 backup slot and renders it. */
 	private void placeCardInFirstBackupSlot(CardData card) {
 		if (p1BackupLabels == null) return;
-		sendToBreakZoneByUniquenessRule(card, true);
 		for (int i = 0; i < p1BackupLabels.length; i++) {
 			if (p1BackupLabels[i] == null || p1BackupLabels[i].getIcon() != null) continue;
 			p1BackupUrls[i]          = card.imageUrl();
@@ -6658,6 +6777,7 @@ public class MainWindow {
 			p1BackupPlayedOnTurn[i]  = gameState.getTurnNumber();
 			refreshP1BackupSlot(i);
 			triggerAutoAbilitiesForEntersField(card, true);
+			sendToBreakZoneByUniquenessRule(card, true);
 			break;
 		}
 	}
@@ -7286,7 +7406,7 @@ public class MainWindow {
 			if (gameState.getCurrentPlayer() != activePlayer) return false;
 		}
 		if (ability.oncePerTurn()
-				&& usedOncePerTurnAbilities.getOrDefault(source, java.util.Set.of()).contains(ability.effectText()))
+				&& usedOncePerTurnAbilities.getOrDefault(source, Set.of()).contains(ability.effectText()))
 			return false;
 		if (ability.mainPhaseOnly()) {
 			GameState.Player activePlayer = isP1 ? GameState.Player.P1 : GameState.Player.P2;
@@ -7664,7 +7784,7 @@ public class MainWindow {
 	private static final Pattern FA_MAX_X = Pattern.compile(
 		"(?i)The\\s+maximum\\s+you\\s+can\\s+pay\\s+for\\s+《X》\\s+is\\s+(\\d+)"
 	);
-	private static final Set<String> ELEMENT_NAMES = java.util.Set.of(
+	private static final Set<String> ELEMENT_NAMES = Set.of(
 		"fire", "ice", "wind", "earth", "lightning", "water", "light", "dark"
 	);
 
@@ -8112,7 +8232,7 @@ public class MainWindow {
 
 		// "only once per turn" — skip if already fired this turn
 		if (fa.oncePerTurn() && usedOncePerTurnAbilities
-				.getOrDefault(source, java.util.Set.of()).contains(fa.effectText())) {
+				.getOrDefault(source, Set.of()).contains(fa.effectText())) {
 			logEntry("[AutoAbility] " + source.name() + " — already used this turn, skipping");
 			return;
 		}
@@ -8840,7 +8960,7 @@ public class MainWindow {
 			if (gameState.getCurrentPlayer() != activePlayer) return false;
 		}
 		if (ability.oncePerTurn()
-				&& usedOncePerTurnAbilities.getOrDefault(source, java.util.Set.of()).contains(ability.effectText()))
+				&& usedOncePerTurnAbilities.getOrDefault(source, Set.of()).contains(ability.effectText()))
 			return false;
 		GameState.GamePhase p = gameState.getCurrentPhase();
 		if (p != GameState.GamePhase.MAIN_1 && p != GameState.GamePhase.MAIN_2) return false;
@@ -9808,6 +9928,10 @@ public class MainWindow {
 
 			@Override public String selectElement(String prompt) {
 				return NameSelectionDialogs.selectElement(frame, prompt, isP1, MainWindow.this::logEntry);
+			}
+
+			@Override public String selectElement(String prompt, Set<String> excluded) {
+				return NameSelectionDialogs.selectElement(frame, prompt, excluded, isP1, MainWindow.this::logEntry);
 			}
 
 			@Override public String selectOption(String prompt, String[] choices) {
@@ -11541,6 +11665,23 @@ public class MainWindow {
 				}
 			}
 
+			@Override public void placeFromHandToBottomOfDeck(int count) {
+				if (isP1) {
+					showPlaceToBottomOfDeckDialog(count);
+				} else {
+					List<CardData> hand = gameState.getP2Hand();
+					int actual = Math.min(count, hand.size());
+					for (int i = 0; i < actual; i++) {
+						int idx = pickWorstHandCard0(hand);
+						CardData d = hand.remove(idx);
+						gameState.getP2MainDeck().addLast(d);
+						logEntry("[P2] Places " + d.name() + " at bottom of deck");
+					}
+					refreshP2HandCountLabel();
+					refreshP2DeckLabel();
+				}
+			}
+
 			@Override public void selfDiscardEntireHand() {
 				if (isP1) {
 					List<CardData> hand = gameState.getP1Hand();
@@ -11578,7 +11719,7 @@ public class MainWindow {
 				java.util.List<java.util.EnumSet<CardData.Trait>> tempList = p1Side ? p1ForwardTempTraits : p2ForwardTempTraits;
 				java.util.List<java.util.EnumSet<CardData.Trait>> rmList   = p1Side ? p1ForwardRemovedTraits : p2ForwardRemovedTraits;
 				CardData c = p1Side ? p1Forward(idx) : p2ForwardCards.get(idx);
-				java.util.Set<CardData.Trait> base = c.traits();
+				Set<CardData.Trait> base = c.traits();
 				java.util.EnumSet<CardData.Trait> temp = idx < tempList.size() ? tempList.get(idx) : null;
 				java.util.EnumSet<CardData.Trait> rem  = idx < rmList.size()   ? rmList.get(idx)   : null;
 				for (CardData.Trait t : traitFilter) {
@@ -12080,7 +12221,7 @@ public class MainWindow {
 				}
 			}
 
-			@Override public String[] selectElementAndJob(String prompt, java.util.Set<String> excluded) {
+			@Override public String[] selectElementAndJob(String prompt, Set<String> excluded) {
 				return NameSelectionDialogs.selectElementAndJob(frame, prompt, excluded, isP1, MainWindow.this::logEntry);
 			}
 
@@ -12176,6 +12317,24 @@ public class MainWindow {
 					}
 				}
 				logEntry("[changeSourceCardElementAndJobUntilEOT] " + source.name() + " not found in forward slots");
+			}
+
+			@Override public void changeSourceCardElementUntilEOT(CardData source, String element) {
+				for (boolean p1s : new boolean[]{true, false}) {
+					List<CardData> fwds = p1s ? p1ForwardCards : p2ForwardCards;
+					for (int i = 0; i < fwds.size(); i++) {
+						if (fwds.get(i) != source) continue;
+						final String prevElem = elementOverrideMap.get(source);
+						elementOverrideMap.put(source, element);
+						endOfTurnEffects.add(x -> {
+							if (prevElem != null) elementOverrideMap.put(source, prevElem);
+							else                  elementOverrideMap.remove(source);
+						});
+						logEntry(source.name() + " → becomes " + element + " element until end of turn");
+						return;
+					}
+				}
+				logEntry("[changeSourceCardElementUntilEOT] " + source.name() + " not found in forward slots");
 			}
 
 			@Override public void grantForwardsPartyAnyElementThisTurn() {
@@ -12494,23 +12653,26 @@ public class MainWindow {
 	}
 
 	/**
-	 * Enforces the uniqueness rule for a card about to enter a side of the field.
-	 * Any existing card on that side whose name (or alias) overlaps with {@code incoming}
-	 * is sent directly to the Break Zone — this does NOT count as "breaking" the card,
-	 * so "cannot be broken" protection is bypassed and break-zone auto-abilities do not
+	 * Enforces the uniqueness rule after {@code incoming} has entered the field.
+	 * Every card on that side (including {@code incoming} itself) whose name overlaps
+	 * is sent directly to the Break Zone.  This does NOT count as "breaking", so
+	 * "cannot be broken" protection is bypassed and break-zone auto-abilities do not
 	 * fire.  "Leaves field" auto-abilities still fire.  Multicards are exempt.
 	 *
-	 * <p>Call this before adding {@code incoming} to the field so the card is not
-	 * compared against itself.
+	 * <p>Call this AFTER {@code incoming} has been added to the field and its
+	 * enter-the-field abilities have been queued, so ETF effects resolve first.
+	 * Returns {@code true} if any conflict was found.
 	 */
-	private void sendToBreakZoneByUniquenessRule(CardData incoming, boolean isP1) {
-		if (incoming.multicard()) return;
-		if (isP1 && isMultiNameExceptionActive(incoming.name())) return;
+	private boolean sendToBreakZoneByUniquenessRule(CardData incoming, boolean isP1) {
+		if (incoming.multicard()) return false;
+		if (isP1 && isMultiNameExceptionActive(incoming.name())) return false;
+		boolean conflict = false;
 		if (isP1) {
 			// P1 forwards
 			for (int i = p1ForwardCards.size() - 1; i >= 0; i--) {
 				CardData c = p1ForwardCards.get(i);
 				if (!cardNamesOverlap(incoming, c)) continue;
+				conflict = true;
 				logEntry("[Uniqueness] " + c.name() + " — sent to Break Zone");
 				CardData top = p1ForwardPrimedTop.get(i);
 				if (top != null) {
@@ -12540,6 +12702,7 @@ public class MainWindow {
 			for (int i = 0; i < p1BackupCards.length; i++) {
 				CardData c = p1BackupCards[i];
 				if (c == null || !cardNamesOverlap(incoming, c)) continue;
+				conflict = true;
 				logEntry("[Uniqueness] " + c.name() + " — sent to Break Zone");
 				addToP1BreakZone(c);
 				p1BackupCards[i] = null; p1BackupStates[i] = CardState.ACTIVE;
@@ -12550,6 +12713,7 @@ public class MainWindow {
 			for (int i = p1MonsterCards.size() - 1; i >= 0; i--) {
 				CardData c = p1MonsterCards.get(i);
 				if (!cardNamesOverlap(incoming, c)) continue;
+				conflict = true;
 				logEntry("[Uniqueness] " + c.name() + " — sent to Break Zone");
 				addToP1BreakZone(c);
 				p1MonsterTempForwardPower.remove(c);
@@ -12567,6 +12731,7 @@ public class MainWindow {
 			for (int i = p2ForwardCards.size() - 1; i >= 0; i--) {
 				CardData c = p2ForwardCards.get(i);
 				if (!cardNamesOverlap(incoming, c)) continue;
+				conflict = true;
 				logEntry("[Uniqueness] [P2] " + c.name() + " — sent to Break Zone");
 				addToP2BreakZone(c);
 				p2ForwardCards.remove(i); p2ForwardUrls.remove(i);
@@ -12586,6 +12751,7 @@ public class MainWindow {
 			for (int i = 0; i < p2BackupCards.length; i++) {
 				CardData c = p2BackupCards[i];
 				if (c == null || !cardNamesOverlap(incoming, c)) continue;
+				conflict = true;
 				logEntry("[Uniqueness] [P2] " + c.name() + " — sent to Break Zone");
 				addToP2BreakZone(c);
 				p2BackupCards[i] = null; p2BackupStates[i] = CardState.ACTIVE;
@@ -12596,6 +12762,7 @@ public class MainWindow {
 			for (int i = p2MonsterCards.size() - 1; i >= 0; i--) {
 				CardData c = p2MonsterCards.get(i);
 				if (!cardNamesOverlap(incoming, c)) continue;
+				conflict = true;
 				logEntry("[Uniqueness] [P2] " + c.name() + " — sent to Break Zone");
 				addToP2BreakZone(c);
 				p2MonsterTempForwardPower.remove(c);
@@ -12609,6 +12776,7 @@ public class MainWindow {
 				triggerAutoAbilitiesForLeavesField(c, false);
 			}
 		}
+		return conflict;
 	}
 
 	/**
@@ -13246,7 +13414,6 @@ public class MainWindow {
 	/** Adds a Forward card to P1's forward zone and wires up the debug context menu. */
 	private void placeCardInForwardZone(CardData card) {
 		if (p1ForwardPanel == null) return;
-		sendToBreakZoneByUniquenessRule(card, true);
 		int idx = p1ForwardLabels.size();
 
 		JLabel lbl = new JLabel("", SwingConstants.CENTER);
@@ -13297,12 +13464,12 @@ public class MainWindow {
 		if (!card.fieldPowerGrants().isEmpty()) refreshFieldGrantDependents(true);
 		if (!card.fieldCostReductions().isEmpty() || p1HandHasSelfCostModifiers()) refreshHandPopupIfVisible();
 		triggerAutoAbilitiesForEntersField(card, true);
+		sendToBreakZoneByUniquenessRule(card, true);
 	}
 
 	/** Adds a Monster card to P1's monster zone (right side of forward zone, newest leftmost). */
 	private void placeCardInMonsterZone(CardData card) {
 		if (p1MonsterPanel == null) return;
-		sendToBreakZoneByUniquenessRule(card, true);
 		int idx = p1MonsterLabels.size();
 
 		JLabel lbl = new JLabel("", SwingConstants.CENTER);
@@ -13344,6 +13511,7 @@ public class MainWindow {
 		refreshP1MonsterSlot(idx);
 		// Monster entering the field may satisfy a condition for a forward's boost
 		refreshAllForwardSlots();
+		sendToBreakZoneByUniquenessRule(card, true);
 	}
 
 	/** Reloads and re-renders a single P1 monster slot using its stored URL and state. */
@@ -13604,13 +13772,13 @@ public class MainWindow {
 	 * @param isP1    which player's field abilities to check for wildcard grants
 	 * @param indices forward-slot indices making up the party (from that player's forward list)
 	 */
-	private java.util.Set<String> partyRequiredElements(boolean isP1, List<Integer> indices) {
+	private Set<String> partyRequiredElements(boolean isP1, List<Integer> indices) {
 		List<CardData> fwds = isP1 ? p1ForwardCards : p2ForwardCards;
-		java.util.Set<String> required = null;
+		Set<String> required = null;
 		for (int i : indices) {
 			if (effectiveCanFormPartyAnyElement(isP1, i)) continue;
 			CardData m = fwds.get(i);
-			java.util.Set<String> elems = new java.util.HashSet<>(java.util.Arrays.asList(m.elements()));
+			Set<String> elems = new java.util.HashSet<>(java.util.Arrays.asList(m.elements()));
 			if (required == null) required = elems;
 			else required.retainAll(elems);
 		}
@@ -13619,7 +13787,7 @@ public class MainWindow {
 
 	/** Returns {@code true} if {@code indices} form a valid party for {@code isP1}'s forwards. */
 	private boolean canFormValidParty(boolean isP1, List<Integer> indices) {
-		java.util.Set<String> req = partyRequiredElements(isP1, indices);
+		Set<String> req = partyRequiredElements(isP1, indices);
 		return req == null || !req.isEmpty();
 	}
 
@@ -13634,7 +13802,7 @@ public class MainWindow {
 		if (!p1AttackSelection.isEmpty()) {
 			if (!effectiveCanFormPartyAnyElement(true, idx)) {
 				// Compute the common element constraint across non-wildcard existing members
-				java.util.Set<String> required = partyRequiredElements(true, p1AttackSelection);
+				Set<String> required = partyRequiredElements(true, p1AttackSelection);
 				// null  → all existing members are wildcards → any element OK
 				// empty → existing members share no common element (shouldn't occur in valid state)
 				if (required != null && !required.isEmpty()) {

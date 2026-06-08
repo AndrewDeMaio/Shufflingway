@@ -438,6 +438,9 @@ public interface GameContext {
      */
     String selectElement(String prompt);
 
+    /** Like {@link #selectElement(String)} but hides elements in {@code excluded} from the picker. */
+    String selectElement(String prompt, java.util.Set<String> excluded);
+
     /**
      * Presents the ability user with a choice among {@code choices} and returns the selected value.
      * The AI picks randomly.
@@ -742,6 +745,12 @@ public interface GameContext {
      * When P2 is the ability user, the AI discards automatically (worst cards first).
      */
     void selfDiscard(int count);
+
+    /**
+     * Prompts the active player to choose {@code count} card(s) from their hand and place
+     * them at the bottom of their deck. The AI places its worst cards automatically.
+     */
+    void placeFromHandToBottomOfDeck(int count);
 
     /**
      * Discards all cards from the ability user's hand to their Break Zone.  No CP is generated.
@@ -1160,6 +1169,12 @@ public interface GameContext {
      * Both changes are reverted at end of turn.
      */
     void changeSourceCardElementAndJobUntilEOT(CardData source, String element, String job);
+
+    /**
+     * Changes {@code source}'s element to {@code element} until the end of the turn.
+     * {@code source} must currently be in a Forward slot. Reverted at end of turn.
+     */
+    void changeSourceCardElementUntilEOT(CardData source, String element);
 
     /**
      * Grants all Forwards the controller controls the ability to form a party with Forwards of

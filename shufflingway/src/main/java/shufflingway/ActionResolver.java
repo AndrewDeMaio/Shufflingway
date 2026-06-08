@@ -549,13 +549,25 @@ public class ActionResolver {
     );
 
     /**
+     * Matches "Name 1 Element[ other than X[ or Y]]. [CardName] becomes the named Element until the end of the turn."
+     * — element-only self-becomes with optional exclusion.
+     */
+    private static final Pattern NAME_ELEMENT_ONLY_SELF_BECOMES = Pattern.compile(
+        "(?i)Name\\s+1\\s+Element" +
+        "(?:\\s+other\\s+than\\s+(?<exclude>[^.]+))?" +
+        "[.!]?\\s+" +
+        "(?<name>.+?)\\s+becomes?\\s+the\\s+named\\s+Element" +
+        "\\s+until\\s+the\\s+end\\s+of\\s+the\\s+turn[.!]?"
+    );
+
+    /**
      * Matches "Name 1 Element and 1 Job" / "Name 1 Job and 1 Element" with an optional
      * "other than X[ or Y]" element exclusion, where the source card becomes the named Element
      * and Job until end of turn.
      */
     private static final Pattern NAME_ELEMENT_AND_JOB_SELF_BECOMES = Pattern.compile(
         "(?i)Name\\s+1\\s+(?:Element\\s+and\\s+1\\s+Job|Job\\s+and\\s+1\\s+Element)" +
-        "(?:\\s+other\\s+than\\s+(?<exclude>[^.]+?))?" +
+        "(?:\\s+other\\s+than\\s+(?<exclude>[^.]+))?" +
         "[.!]?\\s+" +
         "(?<name>.+?)\\s+becomes?\\s+the\\s+named\\s+(?:Element\\s+and\\s+Job|Job\\s+and\\s+Element)" +
         "\\s+until\\s+the\\s+end\\s+of\\s+the\\s+turn[.!]?"
@@ -568,7 +580,7 @@ public class ActionResolver {
      */
     private static final Pattern NAME_JOB_AND_ELEMENT_SELF_GAINS_PERMANENT = Pattern.compile(
         "(?i)Name\\s+1\\s+(?:Job\\s+and\\s+1\\s+Element|Element\\s+and\\s+1\\s+Job)" +
-        "(?:\\s+other\\s+than\\s+(?<exclude>[^.]+?))?" +
+        "(?:\\s+other\\s+than\\s+(?<exclude>[^.]+))?" +
         "[.!]?\\s+" +
         "(?<name>.+?)\\s+gains?\\s+(?:the\\s+)?named\\s+(?:Job\\s+and\\s+Element|Element\\s+and\\s+Job)[.!]?\\s*" +
         "(?:\\(This\\s+effect\\s+does\\s+not\\s+end\\s+at\\s+the\\s+end\\s+of\\s+the\\s+turn\\.?\\))?"
@@ -1801,6 +1813,14 @@ public class ActionResolver {
         "(?i)If\\s+your\\s+opponent\\s+has\\s+a\\s+《C》,\\s+(?:also\\s+)?gain\\s+《C》[.!]?"
     );
 
+    /**
+     * Matches "Draw N card(s), then place M card(s) from your hand at the bottom of your deck."
+     * Group 1 = draw count, Group 2 = place count.
+     */
+    private static final Pattern DRAW_THEN_PLACE_HAND_TO_BOTTOM = Pattern.compile(
+        "(?i)Draw\\s+(\\d+)\\s+cards?[,.]?\\s+then\\s+place\\s+(\\d+)\\s+cards?\\s+from\\s+your\\s+hand\\s+at\\s+the\\s+bottom\\s+of\\s+your\\s+deck[.!]?"
+    );
+
     private static final Pattern DRAW_CARDS = Pattern.compile(
         "(?i)Draw\\s+(\\d+)\\s+cards?(?:\\s*[,.]?\\s*then\\s+discard\\s+(\\d+)\\s+cards?)?[.!]?"
     );
@@ -2243,6 +2263,9 @@ public class ActionResolver {
         result = tryParseDiscardHandThenDraw(effectText);
         if (result != null) return result;
 
+        result = tryParseDrawThenPlaceHandToBottom(effectText);
+        if (result != null) return result;
+
         result = tryParseDrawCards(effectText);
         if (result != null) return result;
 
@@ -2346,6 +2369,9 @@ public class ActionResolver {
         if (result != null) return result;
 
         result = tryParseBecomeForwardUntilEot(effectText, source);
+        if (result != null) return result;
+
+        result = tryParseNameElementOnlySelfBecomes(effectText, source);
         if (result != null) return result;
 
         result = tryParseNameElementAndJobSelfBecomes(effectText, source);
@@ -2454,6 +2480,7 @@ public class ActionResolver {
         if (tryParseEachPlayerDiscard(effectText)              != null) return "EachPlayerDiscard";
         if (tryParseOpponentDiscard(effectText)               != null) return "OpponentDiscard";
         if (tryParseDiscardHandThenDraw(effectText)           != null) return "DiscardHandThenDraw";
+        if (tryParseDrawThenPlaceHandToBottom(effectText)     != null) return "DrawThenPlaceHandToBottom";
         if (tryParseDrawCards(effectText)                     != null) return "DrawCards";
         if (tryParseDiscardHand(effectText)                   != null) return "DiscardHand";
         if (tryParseDiscardThenDraw(effectText)               != null) return "DiscardThenDraw";
@@ -2700,6 +2727,7 @@ public class ActionResolver {
         if (tryParseShuffleDeck(effectText)                        != null) return "ShuffleDeck";
         if (tryParseBackupCpDraw(effectText)                       != null) return "BackupCpDraw";
         if (tryParseBecomeForwardUntilEot(effectText, source)         != null) return "BecomeForwardUntilEot";
+        if (tryParseNameElementOnlySelfBecomes(effectText, source)      != null) return "NameElementOnlySelfBecomes";
         if (tryParseNameElementAndJobSelfBecomes(effectText, source)   != null) return "NameElementAndJobSelfBecomes";
         if (tryParseNameJob(effectText)                                != null) return "NameJob";
         if (tryParseGrantPartyAnyElementThisTurn(effectText)           != null) return "GrantPartyAnyElementThisTurn";
@@ -5209,6 +5237,18 @@ public class ActionResolver {
         };
     }
 
+    private static Consumer<GameContext> tryParseDrawThenPlaceHandToBottom(String text) {
+        Matcher m = DRAW_THEN_PLACE_HAND_TO_BOTTOM.matcher(text);
+        if (!m.find()) return null;
+        int drawCount  = Integer.parseInt(m.group(1));
+        int placeCount = Integer.parseInt(m.group(2));
+        return ctx -> {
+            ctx.logEntry("Effect: Draw " + drawCount + " card(s), then place " + placeCount + " card(s) at bottom of deck");
+            ctx.drawCards(drawCount);
+            ctx.placeFromHandToBottomOfDeck(placeCount);
+        };
+    }
+
     private static Consumer<GameContext> tryParseDrawCards(String text) {
         Matcher m = DRAW_CARDS.matcher(text);
         if (!m.find()) return null;
@@ -6452,6 +6492,20 @@ public class ActionResolver {
             ctx.logEntry("Effect: Name 1 Job");
             String job = ctx.selectJobFromDatabase();
             if (job != null && !job.isBlank()) ctx.logEntry("Named Job: " + job);
+        };
+    }
+
+    private static Consumer<GameContext> tryParseNameElementOnlySelfBecomes(String text, CardData source) {
+        if (source == null) return null;
+        Matcher m = NAME_ELEMENT_ONLY_SELF_BECOMES.matcher(text);
+        if (!m.find()) return null;
+        if (!m.group("name").trim().equalsIgnoreCase(source.name())) return null;
+        java.util.Set<String> excluded = parseExcludeElements(m.group("exclude"));
+        return ctx -> {
+            ctx.logEntry("Effect: Name 1 Element — " + source.name() + " becomes named Element until end of turn");
+            String elem = ctx.selectElement("Name 1 Element (" + source.name() + " becomes it):", excluded);
+            if (elem == null) return;
+            ctx.changeSourceCardElementUntilEOT(source, elem);
         };
     }
 

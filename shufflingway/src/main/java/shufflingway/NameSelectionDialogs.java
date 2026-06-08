@@ -25,12 +25,21 @@ class NameSelectionDialogs {
      * @param log         receives log messages
      */
     static String selectElement(JFrame frame, String prompt, boolean interactive, Consumer<String> log) {
+        return selectElement(frame, prompt, Collections.emptySet(), interactive, log);
+    }
+
+    static String selectElement(JFrame frame, String prompt, Set<String> excluded,
+                                boolean interactive, Consumer<String> log) {
         if (!interactive) {
-            String picked = ActionResolver.ELEMENT_NAMES[(int) (Math.random() * ActionResolver.ELEMENT_NAMES.length)];
+            List<String> available = new ArrayList<>();
+            for (String e : ActionResolver.ELEMENT_NAMES)
+                if (excluded.stream().noneMatch(e::equalsIgnoreCase)) available.add(e);
+            if (available.isEmpty()) available = List.of(ActionResolver.ELEMENT_NAMES);
+            String picked = available.get((int) (Math.random() * available.size()));
             log.accept("[AI] selected Element: " + picked);
             return picked;
         }
-        return showElementDialog(frame, prompt);
+        return showElementDialog(frame, prompt, excluded);
     }
 
     /**
@@ -176,13 +185,17 @@ class NameSelectionDialogs {
     }
 
     private static String showElementDialog(JFrame frame, String prompt) {
-        String[] elements = ActionResolver.ELEMENT_NAMES;
+        return showElementDialog(frame, prompt, Collections.emptySet());
+    }
+
+    private static String showElementDialog(JFrame frame, String prompt, Set<String> excluded) {
         String[] result = {null};
         JDialog dialog = new JDialog(frame, "Name an Element", true);
         dialog.setDefaultCloseOperation(JDialog.DO_NOTHING_ON_CLOSE);
 
         DefaultListModel<String> listModel = new DefaultListModel<>();
-        for (String e : elements) listModel.addElement(e);
+        for (String e : ActionResolver.ELEMENT_NAMES)
+            if (excluded.stream().noneMatch(e::equalsIgnoreCase)) listModel.addElement(e);
         JList<String> elemList = new JList<>(listModel);
         elemList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         elemList.setSelectedIndex(0);
