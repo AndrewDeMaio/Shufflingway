@@ -2273,6 +2273,7 @@ public class MainWindow {
 		refreshP1DeckLabel();
 		logEntry("P1 takes 1 damage — " + drawn.name() + (isEx ? " [EX BURST!]" : ""));
 		triggerAutoAbilitiesForDamageZone(true);
+		triggerAutoAbilitiesForEitherPlayerReceivesDamage();
 		animateCardToDamage(true, idx);
 
 		int animDelay = CardSlideAnimator.TOTAL_FRAMES * CardSlideAnimator.FRAME_MS;
@@ -2320,6 +2321,7 @@ public class MainWindow {
 		String cardInfo = drawn != null ? " — " + drawn.name() + (isEx ? " [EX BURST!]" : "") : "";
 		logEntry("P2 takes 1 damage (" + p2DamageCount + "/7)" + cardInfo);
 		triggerAutoAbilitiesForDamageZone(false);
+		triggerAutoAbilitiesForEitherPlayerReceivesDamage();
 
 		int slotIdx = p2DamageCount - 1;
 		if (drawn != null) animateCardToDamage(false, slotIdx);
@@ -8278,6 +8280,12 @@ public class MainWindow {
 	/** Fires "damage zone" field abilities for all field cards belonging to the player who took damage. */
 	private void triggerAutoAbilitiesForDamageZone(boolean isP1) {
 		triggerAutoAbilitiesForEvent("damage zone", isP1);
+	}
+
+	/** Fires "either player receives damage" abilities on all field cards from both sides. */
+	private void triggerAutoAbilitiesForEitherPlayerReceivesDamage() {
+		triggerAutoAbilitiesForEvent("either player receives damage", true);
+		triggerAutoAbilitiesForEvent("either player receives damage", false);
 	}
 
 	/**

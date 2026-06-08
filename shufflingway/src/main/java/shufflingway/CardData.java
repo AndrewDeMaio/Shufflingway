@@ -1037,6 +1037,7 @@ public record CardData(
             "|is\\s+removed\\s+from\\s+the\\s+game\\s+due\\s+to\\s+Warp" +
             "|deals?\\s+damage\\s+to\\s+your\\s+opponent" +
             "|deals?\\s+damage\\s+to\\s+a\\s+Forward" +
+            "|receives?\\s+a\\s+point\\s+of\\s+damage" +
         ")\\s*,\\s+" +
         "(?<youmay>(?:you|your\\s+opponent)\\s+may\\s+)?" +
         "(?<effect>.+?)\\s*" +
@@ -1179,10 +1180,12 @@ public record CardData(
         if (textEn == null || textEn.isBlank()) return List.of();
         textEn = joinSelectActions(textEn);
         List<AutoAbility> result = new ArrayList<>();
-        // Strip double-quoted substrings before pattern-matching so that
+        // Strip double-quoted substrings that contain a trigger word ("When") so that
         // quoted ability text inside action-ability grants (e.g. "When X attacks, ...")
         // is never incorrectly registered as a permanent auto-ability.
-        String textForSearch = textEn.replaceAll("\"[^\"]+\"", "");
+        // We intentionally leave bare quoted status text (e.g. "X cannot be blocked.")
+        // in place so the surrounding ability effect is captured in full.
+        String textForSearch = textEn.replaceAll("(?i)\"(?=[^\"]*\\bWhen\\b)[^\"]+\"", "");
 
         // First pass: "when [PrimerCard] primes into [TargetCard], [effect]"
         // Also handles "When [Target] [trigger] [, extra] or when [Primer] primes into [Target], [effect]"
@@ -1260,6 +1263,7 @@ public record CardData(
             else if (triggerRaw.contains("warp"))                                                           trigger = "warp placed";
             else if (triggerRaw.contains("deals damage") && triggerRaw.contains("opponent"))                trigger = "deals damage to opponent";
             else if (triggerRaw.contains("deals damage"))                                                   trigger = "deals damage to forward";
+            else if (triggerRaw.contains("receives a point of damage"))                                     trigger = "either player receives damage";
             else                                                                                             trigger = "enters the field";
 
             // For "warp placed", strip the " in your hand" suffix from the card name

@@ -1451,6 +1451,18 @@ public class ActionResolver {
         Pattern.DOTALL
     );
 
+    /**
+     * Matches "Until the end of the turn, [name] gains [traits] and '[name] cannot be blocked.'"
+     * Used when a self-buff grants keyword traits AND unblockable status simultaneously.
+     * Groups: {@code subject} — card name; {@code traits} — keyword list.
+     */
+    private static final Pattern STANDALONE_GAINS_TRAITS_AND_CANNOT_BE_BLOCKED = Pattern.compile(
+        "(?i)Until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn\\s*,\\s+" +
+        "(?<subject>.+?)\\s+gains?\\s+" +
+        "(?<traits>(?:Haste|First\\s+Strike|Brave)(?:\\s+and\\s+(?:Haste|First\\s+Strike|Brave))*)" +
+        "\\s+and\\s+\".+?\\s+cannot\\s+be\\s+blocked\\.?\"[.!]?"
+    );
+
     private static final Pattern STANDALONE_POWER_BOOST_UNTIL = Pattern.compile(
         "(?i)Until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn\\s*,\\s+" +
         "(?<subject>.+?)\\s+gains?\\s+" +
@@ -1861,13 +1873,13 @@ public class ActionResolver {
     );
 
     /**
-     * Matches "&lt;subject&gt; deals you N point(s) of damage."
+     * Matches "&lt;subject&gt; deals you N point(s) of damage." or "receive N point(s) of damage."
      * <ul>
      *   <li>Group {@code amount} — number of damage points dealt to the ability user</li>
      * </ul>
      */
     private static final Pattern DEAL_PLAYER_DAMAGE_TO_SELF = Pattern.compile(
-        "(?i).+?\\s+deals?\\s+you\\s+(?<amount>\\d+)\\s+points?\\s+of\\s+damage[.!]?"
+        "(?i)(?:.+?\\s+deals?\\s+you|receive)\\s+(?<amount>\\d+)\\s+points?\\s+of\\s+damage[.!]?"
     );
 
     /**
@@ -2199,6 +2211,9 @@ public class ActionResolver {
         result = tryParseStandalonePowerBoostAndAttackTrigger(effectText, source);
         if (result != null) return result;
 
+        result = tryParseStandaloneGainsTraitsAndCannotBeBlocked(effectText, source);
+        if (result != null) return result;
+
         result = tryParseStandalonePowerBoostUntil(effectText, source);
         if (result != null) return result;
 
@@ -2479,6 +2494,7 @@ public class ActionResolver {
         if (tryParseSelectNumber(effectText, source)          != null) return "SelectNumber";
         if (tryParseAllFieldEffect(effectText)                != null) return "AllFieldEffect";
         if (tryParseStandalonePowerBoostAndAttackTrigger(effectText, source) != null) return "StandalonePowerBoostAndAttackTrigger";
+        if (tryParseStandaloneGainsTraitsAndCannotBeBlocked(effectText, source) != null) return "StandaloneGainsTraitsAndCannotBeBlocked";
         if (tryParseStandalonePowerBoostUntil(effectText, source) != null) return "StandalonePowerBoostUntil";
         if (tryParseStandaloneDoublePowerUntil(effectText, source) != null) return "StandaloneDoublePowerUntil";
         if (tryParseStandaloneDoublesItsPowerUntil(effectText, source) != null) return "StandaloneDoublesItsPowerUntil";
@@ -2693,6 +2709,7 @@ public class ActionResolver {
         if (tryParseUntilEotDualPowerShift(effectText) != null)            return "UntilEotDualPowerShift";
         if (tryParseUntilEotAllFieldPowerBoost(effectText) != null)        return "UntilEotAllFieldPowerBoost";
         if (tryParseStandalonePowerBoostAndAttackTrigger(effectText, source) != null) return "StandalonePowerBoostAndAttackTrigger";
+        if (tryParseStandaloneGainsTraitsAndCannotBeBlocked(effectText, source) != null) return "StandaloneGainsTraitsAndCannotBeBlocked";
         if (tryParseStandalonePowerBoostUntil(effectText, source) != null)  return "StandalonePowerBoostUntil";
         if (tryParseStandaloneDoublePowerUntil(effectText, source) != null) return "StandaloneDoublePowerUntil";
         if (tryParseStandaloneDoublesItsPowerUntil(effectText, source) != null) return "StandaloneDoublesItsPowerUntil";
@@ -4946,6 +4963,22 @@ public class ActionResolver {
                     + " and gains 'When attacks: " + attackEffectText + "'");
             ctx.boostSourceForward(source, boost, EnumSet.noneOf(CardData.Trait.class));
             ctx.addTempAttackTrigger(source, attackEffect);
+        };
+    }
+
+    private static Consumer<GameContext> tryParseStandaloneGainsTraitsAndCannotBeBlocked(
+            String text, CardData source) {
+        if (source == null) return null;
+        Matcher m = STANDALONE_GAINS_TRAITS_AND_CANNOT_BE_BLOCKED.matcher(text);
+        if (!m.find()) return null;
+        String subject = m.group("subject").trim();
+        if (!subject.equalsIgnoreCase(source.name())) return null;
+        EnumSet<CardData.Trait> traits = parseTraits(m.group("traits"));
+        String logSuffix = boostLogSuffix(0, traits) + " and cannot be blocked until end of turn";
+        return ctx -> {
+            ctx.logEntry(source.name() + logSuffix);
+            ctx.boostSourceForward(source, 0, traits);
+            ctx.setSourceForwardCannotBeBlocked(source);
         };
     }
 
