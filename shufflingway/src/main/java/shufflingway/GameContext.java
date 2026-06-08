@@ -762,7 +762,7 @@ public interface GameContext {
      * a card is actually discarded.
      * When P2 is the ability user the AI always passes (never voluntarily discards).
      */
-    void selfMayDiscardByType(String cardType);
+    void selfDiscardByType(String cardType);
 
     /**
      * Discards all cards from the ability user's hand to their Break Zone.  No CP is generated.

@@ -990,9 +990,13 @@ public class ActionResolver {
         "(?i)Discard\\s+your\\s+hand[.!]?\\s*$"
     );
 
-    /** Matches "You may discard 1 &lt;Type&gt;." — optional discard of a card of the given type. */
-    private static final Pattern YOU_MAY_DISCARD_TYPE = Pattern.compile(
-        "(?i)you\\s+may\\s+discard\\s+1\\s+(?<type>Summon|Forward|Backup|Monster|Character)[.!]?"
+    /**
+     * Matches "discard 1 &lt;Type&gt;." — player discards one card of the named type from hand.
+     * Used as the primary clause in "discard 1 X. When you do so, Y." sequences.
+     * The "you may" qualifier is stripped by the AutoAbility parser before this is reached.
+     */
+    private static final Pattern DISCARD_TYPE = Pattern.compile(
+        "(?i)discard\\s+1\\s+(?<type>Summon|Forward|Backup|Monster|Character)[.!]?"
     );
 
     /** Matches "Your opponent randomly discards N card(s) [from his/her/their hand]". Group 1 = count. */
@@ -5335,15 +5339,31 @@ public class ActionResolver {
         };
     }
 
-    /** Parses "You may discard 1 &lt;Type&gt;." — optional discard; fizzles if player passes. */
+    /**
+     * Parses "discard 1 &lt;Type&gt;." — player must discard one card of that type from hand.
+     * Fizzles (marks no progress) when no eligible card is available.
+     * The "you may" qualifier is handled at the AutoAbility layer before this is reached.
+     */
     private static Consumer<GameContext> tryParseYouMayDiscardType(String text) {
-        Matcher m = YOU_MAY_DISCARD_TYPE.matcher(text);
+        Matcher m = DISCARD_TYPE.matcher(text);
         if (!m.find()) return null;
         String type = m.group("type");
         return ctx -> {
-            ctx.logEntry("Effect: You may discard 1 " + type);
-            ctx.selfMayDiscardByType(type);
+            ctx.logEntry("Effect: Discard 1 " + type);
+            ctx.selfDiscardByType(type);
         };
+    }
+
+    /**
+     * Returns the card type (e.g. "Summon") when the effect text begins with a
+     * "discard 1 &lt;Type&gt;" clause, or {@code null} if no such clause is present.
+     * Used by {@code executeAutoAbility} to skip offering the "you may?" dialog
+     * when the player has no eligible cards in hand.
+     */
+    public static String youMayDiscardType(String effectText) {
+        Matcher m = DISCARD_TYPE.matcher(effectText);
+        if (!m.find()) return null;
+        return m.group("type");
     }
 
     /** Parses "&lt;name&gt; deals your opponent N point(s) of damage." — flips from opponent's deck to their damage zone. */

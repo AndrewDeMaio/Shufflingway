@@ -4647,28 +4647,26 @@ public class MainWindow {
 	}
 
 	/**
-	 * Shows a modal dialog letting P1 optionally discard 1 card of the given type
-	 * (e.g. "Summon") from their hand. Returns true if a card was discarded, false if passed.
+	 * Shows a modal dialog letting P1 choose exactly 1 card of the given type to discard.
+	 * Returns true if a card was discarded, false if no eligible cards (no dialog shown).
+	 * No "Pass" button — player already committed by accepting the "you may?" prompt.
 	 */
-	private boolean showMayDiscardByTypeDialog(String cardType) {
+	private boolean showDiscardByTypeDialog(String cardType) {
 		List<CardData> hand = gameState.getP1Hand();
 		List<Integer> eligible = new ArrayList<>();
 		for (int i = 0; i < hand.size(); i++) {
 			if (matchesDiscardType(hand.get(i), cardType)) eligible.add(i);
 		}
+		if (eligible.isEmpty()) return false;
 
-		JDialog dlg = new JDialog(frame, "Discard 1 " + cardType + "? (Optional)", true);
+		JDialog dlg = new JDialog(frame, "Discard 1 " + cardType, true);
 		dlg.setResizable(false);
 		dlg.setDefaultCloseOperation(JDialog.DO_NOTHING_ON_CLOSE);
 
 		boolean[] result = {false};
 		int[] selectedIdx = {-1};
 
-		JLabel statusLabel = new JLabel(
-				eligible.isEmpty()
-						? "No " + cardType + " cards in hand."
-						: "Select 1 " + cardType + " to discard, or Pass.",
-				SwingConstants.CENTER);
+		JLabel statusLabel = new JLabel("Select 1 " + cardType + " to discard.", SwingConstants.CENTER);
 		statusLabel.setFont(FontLoader.loadPixelNESFont(10));
 
 		List<JLabel> cardLabels = new ArrayList<>();
@@ -4677,9 +4675,6 @@ public class MainWindow {
 		JButton confirmBtn = new JButton("Discard");
 		confirmBtn.setFont(FontLoader.loadPixelNESFont(11));
 		confirmBtn.setEnabled(false);
-
-		JButton passBtn = new JButton("Pass");
-		passBtn.setFont(FontLoader.loadPixelNESFont(11));
 
 		Runnable refresh = () -> {
 			confirmBtn.setEnabled(selectedIdx[0] >= 0);
@@ -4754,14 +4749,11 @@ public class MainWindow {
 			}
 		});
 
-		passBtn.addActionListener(ae -> { hideZoom(); dlg.dispose(); });
-
 		JScrollPane scroll = new JScrollPane(cardsPanel);
 		scroll.setPreferredSize(new Dimension(Math.min(eligible.size() * (CARD_W + 16) + 20, 600), CARD_H + 60));
 
 		JPanel btnPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 10, 4));
 		btnPanel.add(confirmBtn);
-		btnPanel.add(passBtn);
 
 		JPanel main = new JPanel(new BorderLayout(0, 6));
 		main.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
@@ -8414,6 +8406,17 @@ public class MainWindow {
 		// youMay / opponentMay: player decides at trigger time whether to put ability on stack.
 		boolean p1GetsDialog = (fa.youMay() && isP1) || (fa.opponentMay() && !isP1);
 		if (p1GetsDialog) {
+			// If the effect requires discarding a card of a specific type, skip offering
+			// when the player has no eligible cards in hand — nothing to choose from.
+			String discardType = ActionResolver.youMayDiscardType(fa.effectText());
+			if (discardType != null) {
+				List<CardData> hand = effectIsP1 ? gameState.getP1Hand() : gameState.getP2Hand();
+				boolean hasEligible = hand.stream().anyMatch(c -> matchesDiscardType(c, discardType));
+				if (!hasEligible) {
+					logEntry("[AutoAbility] " + source.name() + " — no " + discardType + " in hand, offer skipped");
+					return;
+				}
+			}
 			String prompt = (fa.youMay() ? "You may: " : "Your opponent may: ") + fa.effectText();
 			int choice = showEffectOptionDialog(source.name() + " — " + prompt,
 					"Auto Ability", new Object[]{"OK", "Decline"});
@@ -11795,9 +11798,9 @@ public class MainWindow {
 				}
 			}
 
-			@Override public void selfMayDiscardByType(String cardType) {
+			@Override public void selfDiscardByType(String cardType) {
 				if (isP1) {
-					boolean discarded = showMayDiscardByTypeDialog(cardType);
+					boolean discarded = showDiscardByTypeDialog(cardType);
 					if (!discarded) markEffectFizzled();
 				} else {
 					markEffectFizzled();
