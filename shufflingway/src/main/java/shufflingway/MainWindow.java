@@ -9288,31 +9288,24 @@ public class MainWindow {
 			Set<String> usedTypes = new HashSet<>();
 			for (int pick = 0; pick < dc.count(); pick++) {
 				List<CardData> hand = playerHand(isP1);
-				List<Integer> eligible = new ArrayList<>();
-				for (int i = 0; i < hand.size(); i++) {
-					CardData c = hand.get(i);
-					if (dc.cardName()  != null && !meetsCardNameFilter(c, dc.cardName())) continue;
-					if (dc.element()   != null && !c.containsElement(dc.element()))          continue;
-					if (dc.cardType()  != null && !matchesDiscardType(c, dc.cardType()))     continue;
-					if (dc.category()  != null && !meetsCategoryFilter(c, dc.category()))    continue;
-					if (dc.eachDifferentType() && usedTypes.contains(discardTypeKey(c)))     continue;
-					eligible.add(i);
-				}
+				List<CardData> eligible = new ArrayList<>();
+                for (CardData c : hand) {
+                    if (dc.cardName() != null && !meetsCardNameFilter(c, dc.cardName())) continue;
+                    if (dc.element() != null && !c.containsElement(dc.element())) continue;
+                    if (dc.cardType() != null && !matchesDiscardType(c, dc.cardType())) continue;
+                    if (dc.category() != null && !meetsCategoryFilter(c, dc.category())) continue;
+                    if (dc.eachDifferentType() && usedTypes.contains(discardTypeKey(c))) continue;
+                    eligible.add(c);
+                }
+
 				if (eligible.isEmpty()) { logEntry("No eligible card for discard cost."); break; }
-				String[] options = eligible.stream()
-						.map(i -> hand.get(i).name() + " (Cost: " + hand.get(i).cost() + ")")
-						.toArray(String[]::new);
-				String label = "Discard cost" + (dc.count() > 1 ? " (" + (pick + 1) + "/" + dc.count() + ")" : "");
-				String choice = (String) JOptionPane.showInputDialog(frame,
-						"Choose a card to discard:", label,
-						JOptionPane.PLAIN_MESSAGE, null, options, options[0]);
-				if (choice == null) break;
-				int listIdx = java.util.Arrays.asList(options).indexOf(choice);
-				if (listIdx < 0) break;
-				int handIdx = eligible.get(listIdx);
-				if (dc.eachDifferentType()) usedTypes.add(discardTypeKey(hand.get(handIdx)));
-				String discarded = hand.get(handIdx).name();
-				playerBreakFromHand(isP1, handIdx);
+				int choice = showCardImageChooser(eligible, "Discard Cost", false, false);
+
+				if (choice < 0) break;
+				if (dc.eachDifferentType()) usedTypes.add(discardTypeKey(hand.get(choice)));
+
+				String discarded = hand.get(choice).name();
+				playerBreakFromHand(isP1, choice);
 				logEntry("Discard cost: \"" + discarded + "\" discarded");
 			}
 		}
