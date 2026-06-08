@@ -516,6 +516,9 @@ public interface GameContext {
     /** Returns {@code true} if the active player received at least one point of game damage this turn. */
     boolean selfReceivedDamageThisTurn();
 
+    /** Returns {@code true} if a Forward the active player controls formed a party attack this turn. */
+    boolean ownForwardFormedPartyThisTurn();
+
     /** Returns {@code true} if the active player has at least one Summon in their Break Zone. */
     boolean selfHasSummonInBreakZone();
 

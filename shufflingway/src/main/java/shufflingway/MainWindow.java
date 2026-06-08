@@ -12135,6 +12135,10 @@ public class MainWindow {
 				return isP1 ? p1ReceivedDamageThisTurn : p2ReceivedDamageThisTurn;
 			}
 
+			@Override public boolean ownForwardFormedPartyThisTurn() {
+				return isP1 ? p1FormedPartyThisTurn : p2FormedPartyThisTurn;
+			}
+
 			@Override public boolean selfHasSummonInBreakZone() {
 				List<CardData> bz = isP1 ? gameState.getP1BreakZone() : gameState.getP2BreakZone();
 				return bz.stream().anyMatch(CardData::isSummon);

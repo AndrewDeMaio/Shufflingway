@@ -2113,6 +2113,9 @@ public class ActionResolver {
         result = tryParseWhenYouDoSoSequence(effectText, source, xValue);
         if (result != null) return result;
 
+        result = tryParseIfOwnForwardFormedParty(effectText, source, xValue);
+        if (result != null) return result;
+
         result = tryParseControlConditionGate(effectText, source, xValue);
         if (result != null) return result;
 
@@ -2514,6 +2517,7 @@ public class ActionResolver {
         if (tryParseLookTopDeckPeek(effectText)                   != null) return "LookTopDeckPeek";
         if (tryParseRemoveTopOfDeckFromGame(effectText)            != null) return "RemoveTopOfDeckFromGame";
         if (tryParseShuffleDeck(effectText)                        != null) return "ShuffleDeck";
+        if (tryParseIfOwnForwardFormedParty(effectText, source, 0) != null) return "IfOwnForwardFormedParty";
         if (tryParseConditionalOpponentHand(effectText, source, 0) != null) return "ConditionalOpponentHand";
         if (SELECT_FOLLOWING_ACTIONS_DETECT.matcher(effectText).find())    return "SelectFollowingActions";
         if (CardData.HAS_ALL_ELEMENTS_PATTERN.matcher(effectText.trim()).matches()) return "HasAllElements";
@@ -5210,10 +5214,29 @@ public class ActionResolver {
         };
     }
 
+    /** Matches "If a Forward you controlled formed a party this turn, &lt;effect&gt;." */
+    private static final Pattern IF_OWN_FORWARD_FORMED_PARTY = Pattern.compile(
+        "(?is)^if\\s+a\\s+Forward\\s+you\\s+controlled\\s+formed\\s+a\\s+party\\s+this\\s+turn,\\s+(?<effect>.+)$"
+    );
+
     /** Matches a leading "If you [do not] control &lt;condition&gt;, &lt;effect&gt;" gate. */
     private static final Pattern CONTROL_CONDITION_GATE = Pattern.compile(
         "(?is)^if\\s+you\\s+(?<neg>do\\s+not\\s+|don't\\s+)?control\\s+(?<cond>.+?),\\s+(?<effect>.+)$"
     );
+
+    private static Consumer<GameContext> tryParseIfOwnForwardFormedParty(String text, CardData source, int xValue) {
+        Matcher m = IF_OWN_FORWARD_FORMED_PARTY.matcher(text.trim());
+        if (!m.matches()) return null;
+        Consumer<GameContext> inner = parse(m.group("effect").trim(), source, xValue);
+        if (inner == null) return null;
+        return ctx -> {
+            if (ctx.ownForwardFormedPartyThisTurn()) {
+                inner.accept(ctx);
+            } else {
+                ctx.logEntry("Effect: no party formed this turn — skipped");
+            }
+        };
+    }
 
     /**
      * Parses "If you [do not] control X, Y" — resolves Y only when the control condition is

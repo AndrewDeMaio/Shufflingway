@@ -213,7 +213,10 @@ class NameSelectionDialogs {
 
         JPanel top = new JPanel(new BorderLayout(0, 4));
         top.setBorder(BorderFactory.createEmptyBorder(8, 8, 0, 8));
-        top.add(new JLabel(prompt), BorderLayout.NORTH);
+        String labelText = prompt.contains(" (")
+                ? "<html>" + prompt.replaceFirst(" \\(", "<br>(") + "</html>"
+                : prompt;
+        top.add(new JLabel(labelText), BorderLayout.NORTH);
 
         JPanel bottom = new JPanel(new FlowLayout(FlowLayout.CENTER));
         bottom.add(okButton);
