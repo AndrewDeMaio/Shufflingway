@@ -557,6 +557,11 @@ public class ActionResolver {
         "(?<name>.+?)\\s+becomes?\\s+the\\s+named\\s+Element\\s+and\\s+Job\\s+until\\s+the\\s+end\\s+of\\s+the\\s+turn[.!]?"
     );
 
+    /** Matches the standalone "name 1 Job" ETF effect. */
+    private static final Pattern NAME_JOB_STANDALONE = Pattern.compile(
+        "(?i)^name\\s+1\\s+Job[.!]?$"
+    );
+
     // ---- Damage-shield followup patterns (apply to selected "it/them" targets) --------
 
     /** Matches "During this turn, the next damage dealt to it/him becomes 0 instead." */
@@ -2304,21 +2309,23 @@ public class ActionResolver {
         result = tryParseNameElementAndJobSelfBecomes(effectText, source);
         if (result != null) return result;
 
+        result = tryParseNameJob(effectText);
+        if (result != null) return result;
+
         result = tryParseGrantPartyAnyElementThisTurn(effectText);
         if (result != null) return result;
 
         // Compound-sentence fallback: split on ". " between sentences and compose effects.
         // Handles "Activate <cardName>. <cardName> gains +2000 power until the end of the turn." etc.
+        // Sentences that don't parse are silently skipped so that implemented parts still fire.
         String[] sentences = effectText.split("(?<=\\.)\\s+(?=[A-Z])");
         if (sentences.length > 1) {
             List<Consumer<GameContext>> consumers = new ArrayList<>();
-            boolean allParsed = true;
             for (String s : sentences) {
                 Consumer<GameContext> c = parse(s.trim(), source, xValue);
-                if (c == null) { allParsed = false; break; }
-                consumers.add(c);
+                if (c != null) consumers.add(c);
             }
-            if (allParsed) return ctx -> consumers.forEach(c -> c.accept(ctx));
+            if (!consumers.isEmpty()) return ctx -> consumers.forEach(c -> c.accept(ctx));
         }
 
         result = tryParseConditionalOpponentHand(effectText, source, xValue);
@@ -2643,6 +2650,7 @@ public class ActionResolver {
         if (tryParseBackupCpDraw(effectText)                       != null) return "BackupCpDraw";
         if (tryParseBecomeForwardUntilEot(effectText, source)         != null) return "BecomeForwardUntilEot";
         if (tryParseNameElementAndJobSelfBecomes(effectText, source)   != null) return "NameElementAndJobSelfBecomes";
+        if (tryParseNameJob(effectText)                                != null) return "NameJob";
         if (tryParseGrantPartyAnyElementThisTurn(effectText)           != null) return "GrantPartyAnyElementThisTurn";
         if (tryParseConditionalOpponentHand(effectText, source, 0)    != null) return "ConditionalOpponentHand";
         if (SELECT_FOLLOWING_ACTIONS_DETECT.matcher(effectText).find())    return "SelectFollowingActions";
@@ -6352,6 +6360,15 @@ public class ActionResolver {
         return ctx -> {
             ctx.logEntry("Effect: Forwards you control can form a party with Forwards of any Element this turn");
             ctx.grantForwardsPartyAnyElementThisTurn();
+        };
+    }
+
+    private static Consumer<GameContext> tryParseNameJob(String text) {
+        if (!NAME_JOB_STANDALONE.matcher(text.trim()).find()) return null;
+        return ctx -> {
+            ctx.logEntry("Effect: Name 1 Job");
+            String job = ctx.selectJobFromDatabase();
+            if (job != null && !job.isBlank()) ctx.logEntry("Named Job: " + job);
         };
     }
 

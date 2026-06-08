@@ -27,7 +27,6 @@ import java.awt.image.BufferedImage;
 import java.awt.image.ColorConvertOp;
 import java.io.File;
 import java.io.IOException;
-import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -1735,11 +1734,13 @@ public class MainWindow {
 
 	private void refreshPhaseTracker() {
 		if (phaseTracker == null || gameState.getCurrentPhase() == null) return;
+		boolean isP1Turn = gameState.getCurrentPlayer() == GameState.Player.P1;
 		phaseTracker.setState(
 			PhaseTracker.PHASES[gameState.getCurrentPhase().ordinal()],
 			gameState.getTurnNumber(),
-			gameState.getCurrentPlayer() == GameState.Player.P1
+			isP1Turn
 		);
+		phaseTracker.setHasPriority(isP1Turn);
 		if (gameState.getCurrentPhase() == GameState.GamePhase.ATTACK && attackSubStep >= 0)
 			phaseTracker.setAttackStep(attackSubStep);
 	}
@@ -12034,7 +12035,11 @@ public class MainWindow {
 			}
 
 			@Override public String selectJobFromDatabase() {
-				return showJobSelectionDialog(isP1);
+				List<String> candidates = NameSelectionDialogs.collectFieldJobs(
+						isP1 ? p1ForwardCards : p2ForwardCards,
+						isP1 ? p1BackupCards  : p2BackupCards,
+						isP1 ? p1MonsterCards : p2MonsterCards);
+				return NameSelectionDialogs.selectJob(frame, candidates, isP1, MainWindow.this::logEntry);
 			}
 
 			@Override public void grantJobUntilEndOfTurn(ForwardTarget t, String job) {
@@ -12053,14 +12058,7 @@ public class MainWindow {
 			}
 
 			@Override public String[] selectElementAndJob(String prompt) {
-				if (!isP1) {
-					String elem = ActionResolver.ELEMENT_NAMES[(int)(Math.random() * ActionResolver.ELEMENT_NAMES.length)];
-					java.util.List<String> jobs = loadJobsFromDb();
-					String job  = jobs.isEmpty() ? "Warrior" : jobs.get((int)(Math.random() * jobs.size()));
-					logEntry("[AI] named Element: " + elem + ", Job: " + job);
-					return new String[]{elem, job};
-				}
-				return showElementAndJobDialog(prompt);
+				return NameSelectionDialogs.selectElementAndJob(frame, prompt, isP1, MainWindow.this::logEntry);
 			}
 
 			@Override public void changeSourceCardElementAndJobUntilEOT(CardData source, String element, String job) {
@@ -12097,102 +12095,6 @@ public class MainWindow {
 				logEntry((isP1 ? "P1" : "[P2]") + " Forwards can form a party with Forwards of any Element this turn");
 			}
 		};
-	}
-
-	/** Loads every distinct job name from the database, returning a sorted list.
-	 *  Multi-jobs (e.g. "Warrior/Rebel") are split into their individual components. */
-	private List<String> loadJobsFromDb() {
-		try {
-			return scraper.CardDatabase.loadJobs();
-		} catch (SQLException e) {
-			logEntry("[Job select] DB error: " + e.getMessage());
-			return new ArrayList<>();
-		}
-	}
-
-	/**
-	 * Shows a combined dialog for naming 1 Element and 1 Job.
-	 * The OK button stays disabled until both dropdowns have a real selection.
-	 * Returns {@code {element, job}} or {@code null} if cancelled.
-	 */
-	private String[] showElementAndJobDialog(String prompt) {
-		java.util.List<String> jobs = loadJobsFromDb();
-		if (jobs.isEmpty()) {
-			logEntry("[Element+Job dialog] no jobs found in DB");
-			return null;
-		}
-
-		String[] elemItems = new String[ActionResolver.ELEMENT_NAMES.length + 1];
-		elemItems[0] = "— Element —";
-		System.arraycopy(ActionResolver.ELEMENT_NAMES, 0, elemItems, 1, ActionResolver.ELEMENT_NAMES.length);
-
-		String[] jobItems = new String[jobs.size() + 1];
-		jobItems[0] = "— Job —";
-		for (int i = 0; i < jobs.size(); i++) jobItems[i + 1] = jobs.get(i);
-
-		javax.swing.JComboBox<String> elemCombo = new javax.swing.JComboBox<>(elemItems);
-		javax.swing.JComboBox<String> jobCombo  = new javax.swing.JComboBox<>(jobItems);
-
-		javax.swing.JButton okBtn = new javax.swing.JButton("OK");
-		okBtn.setEnabled(false);
-		Runnable checkReady = () -> okBtn.setEnabled(
-				elemCombo.getSelectedIndex() > 0 && jobCombo.getSelectedIndex() > 0);
-		elemCombo.addItemListener(e -> checkReady.run());
-		jobCombo.addItemListener(e -> checkReady.run());
-
-		javax.swing.JPanel panel = new javax.swing.JPanel(new java.awt.GridBagLayout());
-		java.awt.GridBagConstraints gc = new java.awt.GridBagConstraints();
-		gc.insets = new java.awt.Insets(4, 4, 4, 4);
-		gc.anchor = java.awt.GridBagConstraints.WEST;
-
-		gc.gridx = 0; gc.gridy = 0; panel.add(new javax.swing.JLabel(prompt), gc);
-		gc.gridx = 0; gc.gridy = 1; panel.add(new javax.swing.JLabel("Element:"), gc);
-		gc.gridx = 1; gc.gridy = 1; panel.add(elemCombo, gc);
-		gc.gridx = 0; gc.gridy = 2; panel.add(new javax.swing.JLabel("Job:"), gc);
-		gc.gridx = 1; gc.gridy = 2; panel.add(jobCombo, gc);
-
-		String[] result = {null, null};
-		javax.swing.JDialog dialog = new javax.swing.JDialog(frame, "Name Element and Job", true);
-		okBtn.addActionListener(e -> {
-			result[0] = (String) elemCombo.getSelectedItem();
-			result[1] = (String) jobCombo.getSelectedItem();
-			dialog.dispose();
-		});
-		javax.swing.JButton cancelBtn = new javax.swing.JButton("Cancel");
-		cancelBtn.addActionListener(e -> dialog.dispose());
-
-		javax.swing.JPanel buttons = new javax.swing.JPanel();
-		buttons.add(okBtn);
-		buttons.add(cancelBtn);
-
-		dialog.setLayout(new java.awt.BorderLayout());
-		dialog.add(panel, java.awt.BorderLayout.CENTER);
-		dialog.add(buttons, java.awt.BorderLayout.SOUTH);
-		dialog.pack();
-		dialog.setLocationRelativeTo(frame);
-		dialog.setVisible(true);
-
-		return result[0] != null ? result : null;
-	}
-
-	/** Loads every distinct job name from the database and shows a sorted dropdown dialog. */
-	private String showJobSelectionDialog(boolean interactive) {
-		java.util.List<String> jobs = loadJobsFromDb();
-		if (jobs.isEmpty()) return null;
-		if (!interactive) {
-			String picked = jobs.get((int) (Math.random() * jobs.size()));
-			logEntry("[AI] selected Job: " + picked);
-			return picked;
-		}
-		String[] options = jobs.toArray(new String[0]);
-		return (String) javax.swing.JOptionPane.showInputDialog(
-				frame,
-				"Select a Job:",
-				"Select Job",
-				javax.swing.JOptionPane.PLAIN_MESSAGE,
-				null,
-				options,
-				options[0]);
 	}
 
 	/**
