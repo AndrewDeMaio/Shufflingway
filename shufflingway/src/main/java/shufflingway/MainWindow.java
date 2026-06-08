@@ -4646,6 +4646,136 @@ public class MainWindow {
 		dlg.setVisible(true);
 	}
 
+	/**
+	 * Shows a modal dialog letting P1 optionally discard 1 card of the given type
+	 * (e.g. "Summon") from their hand. Returns true if a card was discarded, false if passed.
+	 */
+	private boolean showMayDiscardByTypeDialog(String cardType) {
+		List<CardData> hand = gameState.getP1Hand();
+		List<Integer> eligible = new ArrayList<>();
+		for (int i = 0; i < hand.size(); i++) {
+			if (matchesDiscardType(hand.get(i), cardType)) eligible.add(i);
+		}
+
+		JDialog dlg = new JDialog(frame, "Discard 1 " + cardType + "? (Optional)", true);
+		dlg.setResizable(false);
+		dlg.setDefaultCloseOperation(JDialog.DO_NOTHING_ON_CLOSE);
+
+		boolean[] result = {false};
+		int[] selectedIdx = {-1};
+
+		JLabel statusLabel = new JLabel(
+				eligible.isEmpty()
+						? "No " + cardType + " cards in hand."
+						: "Select 1 " + cardType + " to discard, or Pass.",
+				SwingConstants.CENTER);
+		statusLabel.setFont(FontLoader.loadPixelNESFont(10));
+
+		List<JLabel> cardLabels = new ArrayList<>();
+		JPanel cardsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 8));
+
+		JButton confirmBtn = new JButton("Discard");
+		confirmBtn.setFont(FontLoader.loadPixelNESFont(11));
+		confirmBtn.setEnabled(false);
+
+		JButton passBtn = new JButton("Pass");
+		passBtn.setFont(FontLoader.loadPixelNESFont(11));
+
+		Runnable refresh = () -> {
+			confirmBtn.setEnabled(selectedIdx[0] >= 0);
+			for (int j = 0; j < cardLabels.size(); j++) {
+				boolean sel = eligible.get(j).equals(selectedIdx[0]);
+				cardLabels.get(j).setBorder(BorderFactory.createLineBorder(
+						sel ? Color.RED : Color.LIGHT_GRAY, sel ? 3 : 1));
+			}
+		};
+
+		for (int j = 0; j < eligible.size(); j++) {
+			final int handIdx = eligible.get(j);
+			CardData cd = hand.get(handIdx);
+
+			JPanel wrapper = new JPanel(new BorderLayout(0, 4));
+			wrapper.setBackground(cardsPanel.getBackground());
+
+			JLabel lbl = new JLabel("...", SwingConstants.CENTER);
+			lbl.setPreferredSize(new Dimension(CARD_W, CARD_H));
+			lbl.setMinimumSize(new Dimension(CARD_W, CARD_H));
+			lbl.setOpaque(true);
+			lbl.setBackground(Color.DARK_GRAY);
+			lbl.setBorder(BorderFactory.createLineBorder(Color.LIGHT_GRAY, 1));
+			lbl.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+			cardLabels.add(lbl);
+
+			lbl.addMouseListener(new MouseAdapter() {
+				@Override public void mouseEntered(MouseEvent e) { if (lbl.getIcon() != null) showZoomAt(cd.imageUrl()); }
+				@Override public void mouseExited(MouseEvent e)  { hideZoom(); }
+				@Override public void mousePressed(MouseEvent e) {
+					selectedIdx[0] = selectedIdx[0] == handIdx ? -1 : handIdx;
+					refresh.run();
+				}
+			});
+
+			new SwingWorker<ImageIcon, Void>() {
+				@Override protected ImageIcon doInBackground() throws Exception {
+					Image img = ImageCache.load(cd.imageUrl());
+					if (img == null) return null;
+					BufferedImage buf = new BufferedImage(CARD_W, CARD_H, BufferedImage.TYPE_INT_ARGB);
+					Graphics2D g2 = buf.createGraphics();
+					g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+					g2.drawImage(img, 0, 0, CARD_W, CARD_H, null);
+					g2.dispose();
+					return new ImageIcon(buf);
+				}
+				@Override protected void done() {
+					try { ImageIcon icon = get(); if (icon != null) { lbl.setIcon(icon); lbl.setText(null); } }
+					catch (InterruptedException | ExecutionException ignored) {}
+				}
+			}.execute();
+
+			JLabel nameLabel = new JLabel(cd.name(), SwingConstants.CENTER);
+			nameLabel.setFont(FontLoader.loadPixelNESFont(9));
+			nameLabel.setPreferredSize(new Dimension(CARD_W, 18));
+
+			wrapper.add(lbl,       BorderLayout.CENTER);
+			wrapper.add(nameLabel, BorderLayout.SOUTH);
+			cardsPanel.add(wrapper);
+		}
+
+		confirmBtn.addActionListener(ae -> {
+			hideZoom();
+			dlg.dispose();
+			int idx = selectedIdx[0];
+			if (idx >= 0) {
+				CardData d = gameState.breakFromHand(idx);
+				if (d != null) { logEntry("Discards " + d.name()); p1DiscardedByEffectThisTurn = true; }
+				refreshP1HandLabel();
+				refreshP1BreakLabel();
+				result[0] = true;
+			}
+		});
+
+		passBtn.addActionListener(ae -> { hideZoom(); dlg.dispose(); });
+
+		JScrollPane scroll = new JScrollPane(cardsPanel);
+		scroll.setPreferredSize(new Dimension(Math.min(eligible.size() * (CARD_W + 16) + 20, 600), CARD_H + 60));
+
+		JPanel btnPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 10, 4));
+		btnPanel.add(confirmBtn);
+		btnPanel.add(passBtn);
+
+		JPanel main = new JPanel(new BorderLayout(0, 6));
+		main.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
+		main.add(statusLabel, BorderLayout.NORTH);
+		main.add(scroll,      BorderLayout.CENTER);
+		main.add(btnPanel,    BorderLayout.SOUTH);
+
+		dlg.setContentPane(main);
+		dlg.pack();
+		dlg.setLocationRelativeTo(frame);
+		dlg.setVisible(true);
+		return result[0];
+	}
+
 	private void showPlaceToBottomOfDeckDialog(int count) {
 		List<CardData> hand = gameState.getP1Hand();
 		int mustPlace = Math.min(count, hand.size());
@@ -11665,6 +11795,15 @@ public class MainWindow {
 				}
 			}
 
+			@Override public void selfMayDiscardByType(String cardType) {
+				if (isP1) {
+					boolean discarded = showMayDiscardByTypeDialog(cardType);
+					if (!discarded) markEffectFizzled();
+				} else {
+					markEffectFizzled();
+				}
+			}
+
 			@Override public void placeFromHandToBottomOfDeck(int count) {
 				if (isP1) {
 					showPlaceToBottomOfDeckDialog(count);
@@ -12675,6 +12814,7 @@ public class MainWindow {
 			// P1 forwards
 			for (int i = p1ForwardCards.size() - 1; i >= 0; i--) {
 				CardData c = p1ForwardCards.get(i);
+				if (c == incoming) continue;
 				if (!cardNamesOverlap(incoming, c)) continue;
 				conflict = true;
 				logEntry("[Uniqueness] " + c.name() + " — sent to Break Zone");
@@ -12734,6 +12874,7 @@ public class MainWindow {
 			// P2 forwards
 			for (int i = p2ForwardCards.size() - 1; i >= 0; i--) {
 				CardData c = p2ForwardCards.get(i);
+				if (c == incoming) continue;
 				if (!cardNamesOverlap(incoming, c)) continue;
 				conflict = true;
 				logEntry("[Uniqueness] [P2] " + c.name() + " — sent to Break Zone");

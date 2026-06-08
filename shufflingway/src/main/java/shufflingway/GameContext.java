@@ -756,6 +756,15 @@ public interface GameContext {
     void placeFromHandToBottomOfDeck(int count);
 
     /**
+     * Prompts the ability user to optionally discard exactly 1 card of the given type
+     * (e.g. "Summon") from their hand to their Break Zone. No CP is generated.
+     * The player may choose to pass (discard nothing). Sets effectMadeProgress only when
+     * a card is actually discarded.
+     * When P2 is the ability user the AI always passes (never voluntarily discards).
+     */
+    void selfMayDiscardByType(String cardType);
+
+    /**
      * Discards all cards from the ability user's hand to their Break Zone.  No CP is generated.
      * No selection dialog is shown — the entire hand is automatically discarded.
      */

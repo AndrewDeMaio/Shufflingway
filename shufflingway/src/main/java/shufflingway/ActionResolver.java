@@ -990,6 +990,11 @@ public class ActionResolver {
         "(?i)Discard\\s+your\\s+hand[.!]?\\s*$"
     );
 
+    /** Matches "You may discard 1 &lt;Type&gt;." — optional discard of a card of the given type. */
+    private static final Pattern YOU_MAY_DISCARD_TYPE = Pattern.compile(
+        "(?i)you\\s+may\\s+discard\\s+1\\s+(?<type>Summon|Forward|Backup|Monster|Character)[.!]?"
+    );
+
     /** Matches "Your opponent randomly discards N card(s) [from his/her/their hand]". Group 1 = count. */
     private static final Pattern OPPONENT_RANDOM_DISCARD = Pattern.compile(
         "(?i)Your\\s+opponent\\s+randomly\\s+discards?\\s+(\\d+)\\s+cards?" +
@@ -1795,9 +1800,9 @@ public class ActionResolver {
         "(?i)Place\\s+(?<count>\\d+)\\s+(?<name>.+?)\\s+Counters?\\s+on\\s+(?<target>.+?)[.!]?"
     );
 
-    /** Matches "Gain 《C》." — the ability user gains one Crystal. */
+    /** Matches "Gain 《C》[《C》...]." — captures one or more consecutive Crystal symbols. */
     private static final Pattern GAIN_CRYSTAL = Pattern.compile(
-        "(?i)Gain\\s+《C》[.!]?"
+        "(?i)Gain\\s+(?<crystals>(?:《C》)+)[.!]?"
     );
 
     /** Matches "Gain 《C》 for each CP paid as X." — crystal count equals the X value paid. */
@@ -2272,6 +2277,9 @@ public class ActionResolver {
         result = tryParseDrawCards(effectText);
         if (result != null) return result;
 
+        result = tryParseYouMayDiscardType(effectText);
+        if (result != null) return result;
+
         result = tryParseDiscardHand(effectText);
         if (result != null) return result;
 
@@ -2485,6 +2493,7 @@ public class ActionResolver {
         if (tryParseDiscardHandThenDraw(effectText)           != null) return "DiscardHandThenDraw";
         if (tryParseDrawThenPlaceHandToBottom(effectText)     != null) return "DrawThenPlaceHandToBottom";
         if (tryParseDrawCards(effectText)                     != null) return "DrawCards";
+        if (tryParseYouMayDiscardType(effectText)             != null) return "YouMayDiscardType";
         if (tryParseDiscardHand(effectText)                   != null) return "DiscardHand";
         if (tryParseDiscardThenDraw(effectText)               != null) return "DiscardThenDraw";
         if (tryParseDealPlayerDamageToOpponent(effectText)    != null) return "DealPlayerDamageToOpponent";
@@ -2694,6 +2703,7 @@ public class ActionResolver {
         if (tryParseOpponentDiscard(effectText) != null)                    return "OpponentDiscard";
         if (tryParseDiscardHandThenDraw(effectText) != null)                return "DiscardHandThenDraw";
         if (tryParseDrawCards(effectText) != null)                          return "DrawCards";
+        if (tryParseYouMayDiscardType(effectText) != null)                  return "YouMayDiscardType";
         if (tryParseDiscardHand(effectText) != null)                        return "DiscardHand";
         if (tryParseDiscardThenDraw(effectText) != null)                    return "DiscardThenDraw";
         if (tryParseDealPlayerDamageToOpponent(effectText) != null)         return "DealPlayerDamageToOpponent";
@@ -5325,6 +5335,17 @@ public class ActionResolver {
         };
     }
 
+    /** Parses "You may discard 1 &lt;Type&gt;." — optional discard; fizzles if player passes. */
+    private static Consumer<GameContext> tryParseYouMayDiscardType(String text) {
+        Matcher m = YOU_MAY_DISCARD_TYPE.matcher(text);
+        if (!m.find()) return null;
+        String type = m.group("type");
+        return ctx -> {
+            ctx.logEntry("Effect: You may discard 1 " + type);
+            ctx.selfMayDiscardByType(type);
+        };
+    }
+
     /** Parses "&lt;name&gt; deals your opponent N point(s) of damage." — flips from opponent's deck to their damage zone. */
     private static Consumer<GameContext> tryParseDealPlayerDamageToOpponent(String text) {
         Matcher m = DEAL_PLAYER_DAMAGE_TO_OPPONENT.matcher(text);
@@ -6686,10 +6707,13 @@ public class ActionResolver {
     }
 
     private static Consumer<GameContext> tryParseGainCrystal(String text) {
-        if (!GAIN_CRYSTAL.matcher(text).find()) return null;
+        Matcher m = GAIN_CRYSTAL.matcher(text);
+        if (!m.find()) return null;
+        String crystalRun = m.group("crystals");
+        int count = (crystalRun.length()) / "《C》".length();
         return ctx -> {
-            ctx.logEntry("Effect: Gain 1 Crystal");
-            ctx.gainCrystal(1);
+            ctx.logEntry("Effect: Gain " + count + " Crystal(s)");
+            ctx.gainCrystal(count);
         };
     }
 
