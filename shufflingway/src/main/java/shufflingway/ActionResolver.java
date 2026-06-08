@@ -485,7 +485,7 @@ public class ActionResolver {
      * "…until the end of the next turn".
      */
     private static final Pattern FOLLOWUP_CANNOT_ATTACK_OR_BLOCK_PERSISTENT = Pattern.compile(
-        "(?i)it\\s+cannot\\s+attack\\s+or\\s+block\\s+until\\s+the\\s+end\\s+of\\s+" +
+        "(?i)(?:it|they)\\s+cannot\\s+attack\\s+or\\s+block\\s+until\\s+the\\s+end\\s+of\\s+" +
         "(?:your\\s+opponent's|the\\s+next)\\s+turn\\.?"
     );
 
@@ -2125,6 +2125,9 @@ public class ActionResolver {
         result = tryParseIfOwnForwardFormedParty(effectText, source, xValue);
         if (result != null) return result;
 
+        result = tryParseIfControlAtMost(effectText, source, xValue);
+        if (result != null) return result;
+
         result = tryParseControlConditionGate(effectText, source, xValue);
         if (result != null) return result;
 
@@ -2531,6 +2534,7 @@ public class ActionResolver {
         if (tryParseRemoveTopOfDeckFromGame(effectText)            != null) return "RemoveTopOfDeckFromGame";
         if (tryParseShuffleDeck(effectText)                        != null) return "ShuffleDeck";
         if (tryParseIfOwnForwardFormedParty(effectText, source, 0) != null) return "IfOwnForwardFormedParty";
+        if (tryParseIfControlAtMost(effectText, source, 0)         != null) return "IfControlAtMost";
         if (tryParseConditionalOpponentHand(effectText, source, 0) != null) return "ConditionalOpponentHand";
         if (SELECT_FOLLOWING_ACTIONS_DETECT.matcher(effectText).find())    return "SelectFollowingActions";
         if (CardData.HAS_ALL_ELEMENTS_PATTERN.matcher(effectText.trim()).matches()) return "HasAllElements";
@@ -5275,6 +5279,14 @@ public class ActionResolver {
         "(?is)^if\\s+a\\s+Forward\\s+you\\s+controlled\\s+formed\\s+a\\s+party\\s+this\\s+turn,\\s+(?<effect>.+)$"
     );
 
+    /**
+     * Matches "if you control N or less/fewer [Forwards/Backups/Monsters/Characters], [effect]."
+     * Groups: {@code max} — the maximum count; {@code type} — card type; {@code effect} — inner effect.
+     */
+    private static final Pattern IF_CONTROL_AT_MOST = Pattern.compile(
+        "(?is)^if\\s+you\\s+control\\s+(?<max>\\d+)\\s+or\\s+(?:less|fewer)\\s+(?<type>Forwards?|Backups?|Monsters?|Characters?),\\s+(?<effect>.+)$"
+    );
+
     /** Matches a leading "If you [do not] control &lt;condition&gt;, &lt;effect&gt;" gate. */
     private static final Pattern CONTROL_CONDITION_GATE = Pattern.compile(
         "(?is)^if\\s+you\\s+(?<neg>do\\s+not\\s+|don't\\s+)?control\\s+(?<cond>.+?),\\s+(?<effect>.+)$"
@@ -5312,6 +5324,23 @@ public class ActionResolver {
                 inner.accept(ctx);
             } else {
                 ctx.logEntry("Effect: control condition not met — skipped");
+            }
+        };
+    }
+
+    private static Consumer<GameContext> tryParseIfControlAtMost(String text, CardData source, int xValue) {
+        Matcher m = IF_CONTROL_AT_MOST.matcher(text.trim());
+        if (!m.matches()) return null;
+        int max = Integer.parseInt(m.group("max"));
+        String type = m.group("type").trim();
+        Consumer<GameContext> inner = parse(m.group("effect").trim(), source, xValue);
+        if (inner == null) return null;
+        return ctx -> {
+            int count = ctx.ownFieldCount(type);
+            if (count <= max) {
+                inner.accept(ctx);
+            } else {
+                ctx.logEntry("Effect: control " + count + " " + type + " (max " + max + ") — skipped");
             }
         };
     }

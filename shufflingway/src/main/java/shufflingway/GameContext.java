@@ -519,6 +519,12 @@ public interface GameContext {
     /** Returns {@code true} if a Forward the active player controls formed a party attack this turn. */
     boolean ownForwardFormedPartyThisTurn();
 
+    /**
+     * Returns the number of cards of {@code cardType} ("Forward", "Backup", "Monster",
+     * or "Character") the active player currently controls on the field.
+     */
+    int ownFieldCount(String cardType);
+
     /** Returns {@code true} if the active player has at least one Summon in their Break Zone. */
     boolean selfHasSummonInBreakZone();
 

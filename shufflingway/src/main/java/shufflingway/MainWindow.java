@@ -12465,6 +12465,18 @@ public class MainWindow {
 				return isP1 ? p1FormedPartyThisTurn : p2FormedPartyThisTurn;
 			}
 
+			@Override public int ownFieldCount(String cardType) {
+				String t = cardType.toLowerCase().replaceAll("s$", "");
+				List<CardData> fwds = isP1 ? p1ForwardCards : p2ForwardCards;
+				CardData[]     bkps = isP1 ? p1BackupCards  : p2BackupCards;
+				List<CardData> mons = isP1 ? p1MonsterCards : p2MonsterCards;
+				int count = 0;
+				if (t.equals("forward")   || t.equals("character")) count += fwds.size();
+				if (t.equals("monster")   || t.equals("character")) count += mons.size();
+				if (t.equals("backup")    || t.equals("character")) { for (CardData c : bkps) if (c != null) count++; }
+				return count;
+			}
+
 			@Override public boolean selfHasSummonInBreakZone() {
 				List<CardData> bz = isP1 ? gameState.getP1BreakZone() : gameState.getP2BreakZone();
 				return bz.stream().anyMatch(CardData::isSummon);
