@@ -793,6 +793,13 @@ public interface GameContext {
     void mayDiscardCardNameToReplayAbility(String cardName, java.util.function.Consumer<GameContext> replayAction);
 
     /**
+     * Offers the player the option to discard a card named {@code cardName} from hand.
+     * Skips the offer silently if no such card is in hand.
+     * Calls {@code ifDiscarded} if the player accepts and the card is discarded.
+     */
+    void mayDiscardCardNameFromHand(String cardName, java.util.function.Consumer<GameContext> ifDiscarded);
+
+    /**
      * Discards all cards from the ability user's hand to their Break Zone.  No CP is generated.
      * No selection dialog is shown — the entire hand is automatically discarded.
      */

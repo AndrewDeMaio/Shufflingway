@@ -12137,6 +12137,27 @@ public class MainWindow {
 				replayAction.accept(this);
 			}
 
+			@Override public void mayDiscardCardNameFromHand(String cardName, java.util.function.Consumer<GameContext> ifDiscarded) {
+				List<CardData> hand = isP1 ? gameState.getP1Hand() : gameState.getP2Hand();
+				int handIdx = -1;
+				for (int i = 0; i < hand.size(); i++) {
+					if (hand.get(i).name().equalsIgnoreCase(cardName)) { handIdx = i; break; }
+				}
+				if (handIdx < 0) { logEntry("[Effect] No " + cardName + " in hand — optional discard skipped"); return; }
+				if (!isP1) { logEntry("[P2 AI] Passes on optional discard of " + cardName); return; }
+				String src = currentAbilitySource != null ? currentAbilitySource.name() : "Ability";
+				int choice = showEffectOptionDialog(
+						src + " — Discard " + cardName + " from hand?",
+						"You May Discard", new Object[]{"Discard", "Pass"});
+				if (choice != 0) { logEntry("[Effect] Declined to discard " + cardName); return; }
+				final int idx = handIdx;
+				CardData d = gameState.breakFromHand(idx);
+				if (d != null) { logEntry("[Effect] Discarded " + d.name()); p1DiscardedByEffectThisTurn = true; }
+				refreshP1HandLabel();
+				refreshP1BreakLabel();
+				ifDiscarded.accept(this);
+			}
+
 			@Override public void placeFromHandToBottomOfDeck(int count) {
 				if (isP1) {
 					showPlaceToBottomOfDeckDialog(count);

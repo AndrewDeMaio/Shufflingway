@@ -142,6 +142,14 @@ public class ActionResolver {
     );
 
     /**
+     * Matches "You may discard 1 Card Name X from your hand. If you do so, deal it N damage."
+     * Groups: {@code cardname}, {@code amount}.
+     */
+    private static final Pattern FOLLOWUP_MAY_DISCARD_NAMED_DEAL_DAMAGE = Pattern.compile(
+        "(?i)^you\\s+may\\s+discard\\s+1\\s+Card\\s+Name\\s+(?<cardname>.+?)\\s+from\\s+your\\s+hand\\.\\s+If\\s+you\\s+do\\s+so,\\s+deal\\s+it\\s+(?<amount>\\d+)\\s+damage\\.?$"
+    );
+
+    /**
      * Matches "Deal it/them N damage. If &lt;condition&gt;, deal it/them M damage instead."
      * Groups: {@code base}, {@code cond}, {@code alt}.
      */
@@ -2712,6 +2720,8 @@ public class ActionResolver {
                 return "ChooseCharacter / DamageInstead";
             if (FOLLOWUP_SELECT_JOB_GRANT.matcher(followup).find())
                 return "ChooseCharacter / SelectJobGrant";
+            if (FOLLOWUP_MAY_DISCARD_NAMED_DEAL_DAMAGE.matcher(followup).matches())
+                return "ChooseCharacter / MayDiscardNamedDealDamage";
             int    dotIdx        = followup.indexOf(". ");
             String primaryPart   = dotIdx >= 0 ? followup.substring(0, dotIdx).trim() : followup;
             String secondaryRaw  = dotIdx >= 0 ? followup.substring(dotIdx + 2).trim() : null;
@@ -3596,6 +3606,25 @@ public class ActionResolver {
                 + (condition != null ? " " + condition : "")
                 + (element   != null ? " " + element   : "")
                 + categoryLabel + " " + targets + costLabel + powerLabel + controlLabel + excludeLabel + zoneLabel;
+
+        // --- "You may discard 1 Card Name X from your hand. If you do so, deal it N damage." ---
+        // Checked against the full followup before the primary/secondary split.
+        Matcher mayDiscardNamedM = FOLLOWUP_MAY_DISCARD_NAMED_DEAL_DAMAGE.matcher(followup);
+        if (mayDiscardNamedM.matches()) {
+            String discardName = mayDiscardNamedM.group("cardname").trim();
+            int    damage      = Integer.parseInt(mayDiscardNamedM.group("amount"));
+            return ctx -> {
+                ctx.logEntry(choosePrefix + " — May discard Card Name " + discardName + ", if so deal " + damage + " damage");
+                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
+                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
+                        jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
+                ctx.mayDiscardCardNameFromHand(discardName, ctx2 -> {
+                    sortedByIdxDesc(ts, true) .forEach(t -> ctx2.damageTarget(t, damage));
+                    sortedByIdxDesc(ts, false).forEach(t -> ctx2.damageTarget(t, damage));
+                });
+            };
+        }
 
         // --- "Deal it N damage. If <cond>, deal it M damage instead." ---
         // Matched against the full followup before the primary/secondary split to avoid losing the condition.
