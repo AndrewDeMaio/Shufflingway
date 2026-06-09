@@ -2329,6 +2329,9 @@ public class ActionResolver {
         result = tryParseDiscardHand(effectText);
         if (result != null) return result;
 
+        result = tryParseDiscardNCards(effectText);
+        if (result != null) return result;
+
         result = tryParseDiscardThenDraw(effectText);
         if (result != null) return result;
 
@@ -2366,6 +2369,9 @@ public class ActionResolver {
         if (result != null) return result;
 
         result = tryParsePlayAllByNameFromBreakZone(effectText);
+        if (result != null) return result;
+
+        result = tryParsePlaySourceFromBreakZone(effectText, source);
         if (result != null) return result;
 
         result = tryParseActivateNamedCard(effectText);
@@ -2544,6 +2550,7 @@ public class ActionResolver {
         if (tryParseDrawCards(effectText)                     != null) return "DrawCards";
         if (tryParseYouMayDiscardType(effectText)             != null) return "YouMayDiscardType";
         if (tryParseDiscardHand(effectText)                   != null) return "DiscardHand";
+        if (tryParseDiscardNCards(effectText)                 != null) return "DiscardNCards";
         if (tryParseDiscardThenDraw(effectText)               != null) return "DiscardThenDraw";
         if (tryParseDealPlayerDamageToOpponent(effectText)    != null) return "DealPlayerDamageToOpponent";
         if (tryParseDealPlayerDamageToSelf(effectText)        != null) return "DealPlayerDamageToSelf";
@@ -2556,6 +2563,8 @@ public class ActionResolver {
         if (tryParseRevealTopDeck(effectText, source)         != null) return "RevealTopDeck";
         if (tryParseStandaloneDamageShields(effectText, source) != null) return "StandaloneDamageShields";
         if (tryParseSearchDeck(effectText, source, 0)           != null) return "SearchDeck";
+        if (tryParsePlayAllByNameFromBreakZone(effectText)      != null) return "PlayAllByNameFromBreakZone";
+        if (tryParsePlaySourceFromBreakZone(effectText, source) != null) return "PlaySourceFromBreakZone";
         if (tryParseActivateNamedCard(effectText)               != null) return "ActivateNamedCard";
         if (tryParseAttackOnceMore(effectText)                  != null) return "AttackOnceMore";
         if (tryParseRemoveFromBattle(effectText)                != null) return "RemoveFromBattle";
@@ -2677,6 +2686,7 @@ public class ActionResolver {
         if (CardData.WHILE_CARD_ATTACKING_PATTERN.matcher(effectText).matches())  return "WhileCardAttacking";
         if (CardData.WHILE_CARD_BLOCKING_PATTERN.matcher(effectText).matches())   return "WhileCardBlocking";
         if (CardData.WHILE_CARD_IN_HAND_PATTERN.matcher(effectText).matches())   return "WhileCardInHand";
+        if (tryParseWhenYouDoSoSequence(effectText, source, 0)     != null) return "WhenYouDoSo";
         if (tryParseIfCastAtLeast(effectText, source, 0)           != null) return "IfCastAtLeast";
         if (tryParseSelectNumber(effectText, source)          != null) return "SelectNumber";
         if (tryParseDealDamageToForwards(effectText)                != null) return "DealDamageToForwards";
@@ -2761,6 +2771,7 @@ public class ActionResolver {
         if (tryParseDrawCards(effectText) != null)                          return "DrawCards";
         if (tryParseYouMayDiscardType(effectText) != null)                  return "YouMayDiscardType";
         if (tryParseDiscardHand(effectText) != null)                        return "DiscardHand";
+        if (tryParseDiscardNCards(effectText) != null)                      return "DiscardNCards";
         if (tryParseDiscardThenDraw(effectText) != null)                    return "DiscardThenDraw";
         if (tryParseDealPlayerDamageToOpponent(effectText) != null)         return "DealPlayerDamageToOpponent";
         if (tryParseDealPlayerDamageToSelf(effectText) != null)             return "DealPlayerDamageToSelf";
@@ -2780,6 +2791,8 @@ public class ActionResolver {
             return revealTopDeckDescription(effectText, source) + restrictionDesc(effectText);
         if (tryParseStandaloneDamageShields(effectText, source) != null)    return "StandaloneDamageShields";
         if (tryParseSearchDeck(effectText, source, 0) != null)              return "SearchDeck";
+        if (tryParsePlayAllByNameFromBreakZone(effectText) != null)         return "PlayAllByNameFromBreakZone";
+        if (tryParsePlaySourceFromBreakZone(effectText, source) != null)    return "PlaySourceFromBreakZone";
         if (tryParseActivateNamedCard(effectText) != null)                  return "ActivateNamedCard";
         if (tryParseExtraTurnThenLose(effectText) != null)                  return "ExtraTurnThenLose";
         if (tryParseGainCrystalPerX(effectText, 0) != null)                 return "GainCrystalPerX";
@@ -5521,6 +5534,38 @@ public class ActionResolver {
         return m.group("type");
     }
 
+    private static final Pattern DISCARD_N_CARDS = Pattern.compile(
+        "(?i)^discard\\s+(?<count>\\d+)\\s+cards?[.!]?$"
+    );
+
+    /** Parses "Discard N cards." as a standalone effect. */
+    private static Consumer<GameContext> tryParseDiscardNCards(String text) {
+        Matcher m = DISCARD_N_CARDS.matcher(text.trim());
+        if (!m.matches()) return null;
+        int count = Integer.parseInt(m.group("count"));
+        return ctx -> {
+            ctx.logEntry("Effect: Discard " + count + " card(s)");
+            ctx.selfDiscard(count);
+        };
+    }
+
+    /** Matches "discard N cards" at the start of an effect text (may have more text after). */
+    private static final Pattern DISCARD_N_CARDS_PREFIX = Pattern.compile(
+        "(?i)^discard\\s+(?<count>\\d+)\\s+cards?[.!]?(?:\\s|$)"
+    );
+
+    /**
+     * Returns the discard count when the effect text begins with "discard N cards",
+     * or -1 if it doesn't match.
+     * Used by {@code executeAutoAbility} to skip offering the "you may?" dialog
+     * when the player has fewer cards in hand than required.
+     */
+    public static int youMayDiscardCount(String effectText) {
+        Matcher m = DISCARD_N_CARDS_PREFIX.matcher(effectText.trim());
+        if (!m.find()) return -1;
+        return Integer.parseInt(m.group("count"));
+    }
+
     /** Parses "&lt;name&gt; deals your opponent N point(s) of damage." — flips from opponent's deck to their damage zone. */
     private static Consumer<GameContext> tryParseDealPlayerDamageToOpponent(String text) {
         Matcher m = DEAL_PLAYER_DAMAGE_TO_OPPONENT.matcher(text);
@@ -7388,6 +7433,24 @@ public class ActionResolver {
         return ctx -> {
             ctx.logEntry("Effect: Play all Card Name " + cardName + " from Break Zone → field" + (dull ? " dull" : ""));
             ctx.playAllByNameFromOwnBreakZoneDull(cardName, dull);
+        };
+    }
+
+    /** Matches "play [source card name] from [your/the] Break Zone onto [the] field [dull]." */
+    private static final Pattern PLAY_SOURCE_FROM_BREAK_ZONE = Pattern.compile(
+        "(?i)^play\\s+(?<name>.+?)\\s+from\\s+(?:your\\s+|the\\s+)?Break\\s+Zone\\s+onto\\s+(?:the\\s+)?field(?:\\s+(?<dull>dull))?[.!]?$"
+    );
+
+    private static Consumer<GameContext> tryParsePlaySourceFromBreakZone(String text, CardData source) {
+        if (source == null) return null;
+        Matcher m = PLAY_SOURCE_FROM_BREAK_ZONE.matcher(text.trim());
+        if (!m.matches()) return null;
+        String name = m.group("name").trim();
+        if (!name.equalsIgnoreCase(source.name())) return null;
+        boolean dull = m.group("dull") != null;
+        return ctx -> {
+            ctx.logEntry("Effect: Play " + name + " from Break Zone → field" + (dull ? " dull" : ""));
+            ctx.playAllByNameFromOwnBreakZoneDull(name, dull);
         };
     }
 

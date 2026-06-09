@@ -8672,6 +8672,14 @@ public class MainWindow {
 					return;
 				}
 			}
+			int discardCount = ActionResolver.youMayDiscardCount(fa.effectText());
+			if (discardCount > 0) {
+				List<CardData> hand = effectIsP1 ? gameState.getP1Hand() : gameState.getP2Hand();
+				if (hand.size() < discardCount) {
+					logEntry("[AutoAbility] " + source.name() + " — need " + discardCount + " cards to discard, have " + hand.size() + ", offer skipped");
+					return;
+				}
+			}
 			String prompt = (fa.youMay() ? "You may: " : "Your opponent may: ") + fa.effectText();
 			int choice = showEffectOptionDialog(source.name() + " — " + prompt,
 					"Auto Ability", new Object[]{"OK", "Decline"});
