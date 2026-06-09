@@ -692,8 +692,10 @@ public record CardData(
         "((?i)(?:,\\s*)?remove\\s+[^:]+?\\s+from\\s+(?:the\\s+)?game\\s*)?" + // group 6: optional remove-from-game cost phrase
         "((?i)(?:,\\s*)?return\\s+[^:]+?\\s+to\\s+(?:its|their)\\s+owner(?:'s|s')?\\s+hand\\s*)?" + // group 7: optional return-to-hand cost phrase
         "((?i)(?:,\\s*)?remove\\s+\\d+\\s+[^:]+?\\s+Counters?\\s+from\\s+[^:,]+?\\s*)?" +           // group 8: optional counter-removal cost phrase
-        "(?<dullcost>(?i)(?:,\\s*)?Dull\\s+(?<dullcount>\\d+)\\s*(?<dullcond>active|dull|damaged)?\\s*" + // group 9 (named): optional Dull N [cond] [elem] Forward cost
-        "(?<dullelem>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)?\\s*Forwards?\\s*)?" +
+        "(?<dullcost>(?i)(?:,\\s*)?Dull\\s+(?<dullcount>\\d+)\\s*(?<dullcond>active|dull|damaged)?\\s*" + // group 9 (named): optional Dull N [cond] Forward(s) cost — simple or Card Name form
+        "(?:Card\\s+Name\\s+.+?\\s+Forwards?" +                                              // named-card branch: "Dull N [cond] Card Name X Forward [and N [cond] Card Name Y Forward]"
+        "(?:\\s+and\\s+\\d+\\s*(?:active|dull|damaged)?\\s*Card\\s+Name\\s+.+?\\s+Forwards?)*" +
+        "|(?<dullelem>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)?\\s*Forwards?)\\s*)?" + // standard branch: "Dull N [cond] [elem] Forward(s)"
         ":\\s*"                                                              +  // colon separator
         "((?:[^\\[]|\\[(?!\\[))*)"                                              // group 13: effect text (up to next [[markup]])
     );
@@ -701,6 +703,13 @@ public record CardData(
     // Captures the content between "put " and " into the Break Zone"
     private static final Pattern BREAK_ZONE_COST_PATTERN = Pattern.compile(
         "(?i)put\\s+(.+?)\\s+into\\s+the\\s+Break\\s+Zone"
+    );
+
+    /** Matches a single dull-forward cost item in either standard or named-card form. */
+    private static final Pattern DULL_COST_ITEM_PATTERN = Pattern.compile(
+        "(?i)Dull\\s+(?<count>\\d+)\\s*(?<cond>active|dull|damaged)?\\s*" +
+        "(?:Card\\s+Name\\s+(?<cardname>.+?)\\s+Forwards?" +
+        "|(?<elem>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)?\\s*Forwards?)"
     );
 
     private static final Pattern SELF_MILL_COST_PATTERN = Pattern.compile(
@@ -800,7 +809,7 @@ public record CardData(
             List<RemoveFromGameCost> removeFromGameCosts = parseRemoveFromGameCosts(removeRaw);
             List<ReturnToHandCost>   returnToHandCosts   = parseReturnToHandCosts(returnRaw);
             List<CounterCost>        counterCosts        = parseCounterCosts(counterRaw);
-            List<DullForwardCost>    dullForwardCosts    = parseDullForwardCosts(dullCostRaw, m);
+            List<DullForwardCost>    dullForwardCosts    = parseDullForwardCosts(dullCostRaw);
             boolean yourTurnOnly      = YOUR_TURN_ONLY_PATTERN.matcher(effectRaw).find();
             boolean oncePerTurn       = ONCE_PER_TURN_PATTERN.matcher(effectRaw).find();
             boolean mainPhaseOnly     = MAIN_PHASE_ONLY_PATTERN.matcher(effectRaw).find();
@@ -819,6 +828,8 @@ public record CardData(
             boolean requiresCastSummonThisTurn   = CAST_SUMMON_THIS_TURN_PATTERN.matcher(effectRaw).find();
             Matcher elemFwdM = ELEMENT_FORWARD_ENTERED_THIS_TURN_PATTERN.matcher(effectRaw);
             String  requiresElementForwardEnteredThisTurn = elemFwdM.find() ? elemFwdM.group("element").toLowerCase() : null;
+            Matcher cardNameFwdM = CARD_NAME_ENTERED_THIS_TURN_PATTERN.matcher(effectRaw);
+            String  requiresCardNameEnteredThisTurn = cardNameFwdM.find() ? cardNameFwdM.group("cardname").trim() : null;
             Matcher bzOnlyM = CARD_IN_BREAK_ZONE_PATTERN.matcher(effectRaw);
             String  breakZoneOnly = bzOnlyM.find() ? bzOnlyM.group("card").trim() : null;
             ControlCondition controlCondition = null;
@@ -840,7 +851,7 @@ public record CardData(
             String cpBackupElement = cpBkpM.find()
                     ? (cpBkpM.group("element") != null ? cpBkpM.group("element") : "")
                     : null;
-            result.add(new ActionAbility(abilityName, requiresDull, isSpecial, crystalCost, selfMillCost, hasXCost, cpCost, breakZoneCosts, discardCosts, removeFromGameCosts, returnToHandCosts, counterCosts, dullForwardCosts, yourTurnOnly, oncePerTurn, mainPhaseOnly, whileCardAtk, whileCardBlk, whilePartyAtk, whileCardInHand, hasBlockingTarget, effectRaw, damageThreshold, controlCondition, cpBackupElement, sourceInBattle, requiresOppDiscardedThisTurn, requiresCastSummonThisTurn, requiresElementForwardEnteredThisTurn, breakZoneOnly));
+            result.add(new ActionAbility(abilityName, requiresDull, isSpecial, crystalCost, selfMillCost, hasXCost, cpCost, breakZoneCosts, discardCosts, removeFromGameCosts, returnToHandCosts, counterCosts, dullForwardCosts, yourTurnOnly, oncePerTurn, mainPhaseOnly, whileCardAtk, whileCardBlk, whilePartyAtk, whileCardInHand, hasBlockingTarget, effectRaw, damageThreshold, controlCondition, cpBackupElement, sourceInBattle, requiresOppDiscardedThisTurn, requiresCastSummonThisTurn, requiresElementForwardEnteredThisTurn, requiresCardNameEnteredThisTurn, breakZoneOnly));
         }
         return List.copyOf(result);
     }
@@ -964,6 +975,11 @@ public record CardData(
     /** "You can only use this ability if an/a [Element] Forward has entered your field this turn." */
     static final Pattern ELEMENT_FORWARD_ENTERED_THIS_TURN_PATTERN = Pattern.compile(
         "(?i)You\\s+can\\s+only\\s+use\\s+this\\s+ability\\s+if\\s+an?\\s+(?<element>\\w+)\\s+Forward\\s+has\\s+entered\\s+your\\s+field\\s+this\\s+turn[.!]?"
+    );
+
+    /** Matches "if a Card Name X has entered your field this turn" — captures the card name. */
+    static final Pattern CARD_NAME_ENTERED_THIS_TURN_PATTERN = Pattern.compile(
+        "(?i)\\bif\\s+a\\s+Card\\s+Name\\s+(?<cardname>.+?)\\s+has\\s+entered\\s+your\\s+field\\s+this\\s+turn[.!]?"
     );
 
     /**
@@ -2240,17 +2256,23 @@ public record CardData(
         return List.of(new CounterCost(cardName, counterName, count));
     }
 
-    /** Parses a "Dull N [condition] [element] Forward(s)" cost phrase into a {@link DullForwardCost} list. */
-    private static List<DullForwardCost> parseDullForwardCosts(String raw, Matcher actionMatcher) {
+    /** Parses one or more dull-forward cost items from the raw {@code dullcost} group string.
+     *  Handles both "Dull N [cond] [elem] Forward(s)" and "Dull N [cond] Card Name X Forward [and ...]" forms. */
+    private static List<DullForwardCost> parseDullForwardCosts(String raw) {
         if (raw == null || raw.isBlank()) return List.of();
-        String countStr = actionMatcher.group("dullcount");
-        if (countStr == null) return List.of();
-        int    count    = Integer.parseInt(countStr);
-        String cond     = actionMatcher.group("dullcond");
-        String elem     = actionMatcher.group("dullelem");
-        return List.of(new DullForwardCost(count,
-                cond != null ? cond.toLowerCase() : null,
-                elem != null ? elem    : null));
+        List<DullForwardCost> costs = new ArrayList<>();
+        Matcher m = DULL_COST_ITEM_PATTERN.matcher(raw);
+        while (m.find()) {
+            int    count    = Integer.parseInt(m.group("count"));
+            String cond     = m.group("cond");
+            String cardName = m.group("cardname");
+            String elem     = m.group("elem");
+            costs.add(new DullForwardCost(count,
+                    cond     != null ? cond.toLowerCase()  : null,
+                    elem     != null ? elem.trim()         : null,
+                    cardName != null ? cardName.trim()     : null));
+        }
+        return costs.isEmpty() ? List.of() : List.copyOf(costs);
     }
 
     /**

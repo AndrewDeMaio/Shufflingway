@@ -69,6 +69,7 @@ public record ActionAbility(
         boolean                 requiresOppDiscardedThisTurn, // true = opponent must have discarded from hand via P1's Summons/abilities this turn
         boolean                 requiresCastSummonThisTurn,   // true = controller must have cast a Summon this turn
         String                  requiresElementForwardEnteredThisTurn, // null = no restriction; else = element (lower-case) that must have entered your field this turn
+        String                  requiresCardNameEnteredThisTurn,      // null = no restriction; else = card name that must have entered your field this turn
         String                  breakZoneOnly                 // null = usable from field; non-null = card name that must be in the Break Zone (can only activate from BZ)
 ) {
     public ActionAbility {
