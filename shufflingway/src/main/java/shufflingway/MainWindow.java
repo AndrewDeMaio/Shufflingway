@@ -1278,7 +1278,8 @@ public class MainWindow {
 		List<CardData> drawn = gameState.drawOpeningHand();
 		refreshP1DeckLabel();
 		logEntry("Drew opening hand (" + drawn.size() + " cards)");
-		showOpeningHandPopup(drawn, !gameState.isP1MulliganUsed());
+		showOpeningHandPopup(drawn,
+				!gameState.isP1MulliganUsed() || AppSettings.isDebugUnlimitedMulligan());
 	}
 
 	/**
@@ -1422,7 +1423,7 @@ public class MainWindow {
 			// handOrder is the player's chosen bottom-of-deck order
 			List<CardData> newCards = gameState.mulligan(new ArrayList<>(handOrder));
 			refreshP1DeckLabel();
-			showOpeningHandPopup(newCards, false);
+			showOpeningHandPopup(newCards, AppSettings.isDebugUnlimitedMulligan());
 		});
 
 		JPanel buttonsPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 6));

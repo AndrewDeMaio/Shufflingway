@@ -14,6 +14,7 @@ import java.nio.file.StandardCopyOption;
 import javax.swing.BorderFactory;
 import javax.swing.BoxLayout;
 import javax.swing.JButton;
+import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JDialog;
@@ -131,6 +132,28 @@ public class PreferencesDialog extends JDialog {
 
 		cardBackPanel.setAlignmentX(Component.LEFT_ALIGNMENT);
 		contentPanel.add(cardBackPanel);
+		contentPanel.add(javax.swing.Box.createVerticalStrut(8));
+
+		// ── Debug ────────────────────────────────────────────────────────────
+		JPanel debugPanel = new JPanel();
+		debugPanel.setLayout(new BoxLayout(debugPanel, BoxLayout.Y_AXIS));
+		debugPanel.setBorder(BorderFactory.createTitledBorder(
+				BorderFactory.createEtchedBorder(), "Debug",
+				TitledBorder.LEFT, TitledBorder.TOP));
+
+		JCheckBox unlimitedMulliganBox = new JCheckBox("Unlimited Mulligan",
+				AppSettings.isDebugUnlimitedMulligan());
+		unlimitedMulliganBox.setToolTipText(
+				"Keep the Mulligan button enabled across repeated mulligans (overrides once-per-game limit).");
+		unlimitedMulliganBox.addActionListener(e -> {
+			AppSettings.setDebugUnlimitedMulligan(unlimitedMulliganBox.isSelected());
+			AppSettings.save();
+		});
+		unlimitedMulliganBox.setAlignmentX(Component.LEFT_ALIGNMENT);
+		debugPanel.add(unlimitedMulliganBox);
+
+		debugPanel.setAlignmentX(Component.LEFT_ALIGNMENT);
+		contentPanel.add(debugPanel);
 
 		// ── Buttons ──────────────────────────────────────────────────────────
 		JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));

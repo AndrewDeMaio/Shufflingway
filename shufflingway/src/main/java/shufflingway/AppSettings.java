@@ -115,4 +115,17 @@ public final class AppSettings {
     public static void setCustomCardbackPath(String path) {
         props.setProperty("cardback.custom.path", path);
     }
+
+    /**
+     * Debug toggle: when {@code true}, the opening-hand mulligan button stays enabled across
+     * repeated mulligans (overrides the once-per-game limit). Defaults to {@code false}.
+     */
+    public static boolean isDebugUnlimitedMulligan() {
+        return Boolean.parseBoolean(props.getProperty("debug.unlimited.mulligan", "false"));
+    }
+
+    /** Sets the unlimited-mulligan debug flag (call {@link #save()} to persist). */
+    public static void setDebugUnlimitedMulligan(boolean enabled) {
+        props.setProperty("debug.unlimited.mulligan", Boolean.toString(enabled));
+    }
 }
