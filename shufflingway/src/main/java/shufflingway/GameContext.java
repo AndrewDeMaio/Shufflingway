@@ -1096,6 +1096,14 @@ public interface GameContext {
             String element, int costVal, String costCmp, String category);
 
     /**
+     * Applies a power boost until end of turn to all Forwards (and Monsters when
+     * {@code inclMonsters} is true) that match {@code jobFilter} OR {@code cardNameFilter}.
+     * Both filters use bar-separated OR semantics (see {@link CardFilters}).
+     */
+    void applyMassFieldJobCardNamePowerBoost(int amount, boolean inclForwards, boolean inclMonsters,
+            boolean opponentOnly, boolean selfOnly, String jobFilter, String cardNameFilter);
+
+    /**
      * Grants {@code traits} until end of turn to every matching Forward (and Monster when
      * {@code inclMonsters} is true) that satisfies the element, cost, and category filters.
      */

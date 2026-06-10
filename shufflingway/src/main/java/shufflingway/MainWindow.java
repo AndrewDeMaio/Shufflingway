@@ -12567,6 +12567,48 @@ public class MainWindow {
 				}
 			}
 
+			@Override public void applyMassFieldJobCardNamePowerBoost(int amount, boolean inclForwards, boolean inclMonsters,
+					boolean opponentOnly, boolean selfOnly, String jobFilter, String cardNameFilter) {
+				boolean touchP1 = isP1 ? !opponentOnly : !selfOnly;
+				boolean touchP2 = isP1 ? !selfOnly     : !opponentOnly;
+				if (touchP1) {
+					if (inclForwards) {
+						for (int i = 0; i < p1ForwardCards.size(); i++) {
+							CardData c = p1Forward(i);
+							if (!CardFilters.meetsJobFilter(c, jobFilter) && !CardFilters.meetsCardNameFilter(c, cardNameFilter)) continue;
+							p1ForwardPowerBoost.set(i, p1ForwardPowerBoost.get(i) + amount);
+							logEntry(c.name() + " gains +" + amount + " power until end of turn");
+							refreshP1ForwardSlot(i);
+						}
+					}
+					if (inclMonsters) {
+						for (int i = 0; i < p1MonsterCards.size(); i++) {
+							CardData c = p1MonsterCards.get(i);
+							if (!CardFilters.meetsJobFilter(c, jobFilter) && !CardFilters.meetsCardNameFilter(c, cardNameFilter)) continue;
+							logEntry(c.name() + " gains +" + amount + " power until end of turn");
+						}
+					}
+				}
+				if (touchP2) {
+					if (inclForwards) {
+						for (int i = 0; i < p2ForwardCards.size(); i++) {
+							CardData c = p2ForwardCards.get(i);
+							if (!CardFilters.meetsJobFilter(c, jobFilter) && !CardFilters.meetsCardNameFilter(c, cardNameFilter)) continue;
+							p2ForwardPowerBoost.set(i, p2ForwardPowerBoost.get(i) + amount);
+							logEntry("[P2] " + c.name() + " gains +" + amount + " power until end of turn");
+							refreshP2ForwardSlot(i);
+						}
+					}
+					if (inclMonsters) {
+						for (int i = 0; i < p2MonsterCards.size(); i++) {
+							CardData c = p2MonsterCards.get(i);
+							if (!CardFilters.meetsJobFilter(c, jobFilter) && !CardFilters.meetsCardNameFilter(c, cardNameFilter)) continue;
+							logEntry("[P2] " + c.name() + " gains +" + amount + " power until end of turn");
+						}
+					}
+				}
+			}
+
 			@Override public void applyMassFieldKeywordGrant(java.util.EnumSet<CardData.Trait> traits,
 					boolean inclForwards, boolean inclMonsters,
 					boolean opponentOnly, boolean selfOnly,
