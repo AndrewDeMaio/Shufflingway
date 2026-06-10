@@ -6887,6 +6887,11 @@ public class MainWindow {
 		refreshP1BreakLabel();
 	}
 
+	/** True when P2 is the built-in computer player (no active multiplayer connection). */
+	private boolean isP2Cpu() {
+		return multiplayerMenu == null || multiplayerMenu.getActiveConnection() == null;
+	}
+
 	/** Pushes a Summon onto the stack and opens the stack overlay. */
 	private void showSummonOnStack(CardData card) {
 		gameState.pushStack(new StackEntry(card, null, true));
@@ -6993,19 +6998,23 @@ public class MainWindow {
 			}
 		}.execute();
 
-		// 10-second countdown timer
-		stackCountdownTimer = new Timer(1000, null);
-		stackCountdownTimer.addActionListener(e -> {
-			if (stackWindowGeneration != myGeneration) { ((Timer) e.getSource()).stop(); return; }
-			countdown[0]--;
-			if (countdown[0] <= 0) {
-				stackCountdownTimer.stop();
-				resolveTopOfStack();
-			} else {
-				countdownLabel.setText("Resolving in " + countdown[0] + "...");
-			}
-		});
-		stackCountdownTimer.start();
+		// 10-second countdown timer — but no time limit when P2 is a CPU
+		if (isP2Cpu()) {
+			countdownLabel.setText("Your response...");
+		} else {
+			stackCountdownTimer = new Timer(1000, null);
+			stackCountdownTimer.addActionListener(e -> {
+				if (stackWindowGeneration != myGeneration) { ((Timer) e.getSource()).stop(); return; }
+				countdown[0]--;
+				if (countdown[0] <= 0) {
+					stackCountdownTimer.stop();
+					resolveTopOfStack();
+				} else {
+					countdownLabel.setText("Resolving in " + countdown[0] + "...");
+				}
+			});
+			stackCountdownTimer.start();
+		}
 
 		okBtn.addActionListener(e -> {
 			if (stackWindowGeneration != myGeneration) return;
@@ -7015,8 +7024,14 @@ public class MainWindow {
 
 		respondBtn.addActionListener(e -> {
 			if (stackWindowGeneration != myGeneration) return;
-			stackCountdownTimer.stop();
+			if (stackCountdownTimer != null) stackCountdownTimer.stop();
 			respondBtn.setEnabled(false);
+
+			// No time limit on the response window when P2 is a CPU
+			if (isP2Cpu()) {
+				countdownLabel.setText("Responding...");
+				return;
+			}
 
 			// 20-second response window
 			int[] responseCountdown = { 20 };
@@ -15003,16 +15018,21 @@ public class MainWindow {
 				loc.y + (frame.getHeight() - win.getHeight()) / 2);
 		win.setVisible(true);
 
-		combatPriorityTimer = new Timer(1000, null);
-		combatPriorityTimer.addActionListener(e -> {
-			countdown[0]--;
-			if (countdown[0] <= 0) {
-				proceed.run();
-			} else {
-				countdownLabel.setText("OK in " + countdown[0] + "...");
-			}
-		});
-		combatPriorityTimer.start();
+		// No time limit when P2 is a CPU
+		if (isP2Cpu()) {
+			countdownLabel.setText("Your priority");
+		} else {
+			combatPriorityTimer = new Timer(1000, null);
+			combatPriorityTimer.addActionListener(e -> {
+				countdown[0]--;
+				if (countdown[0] <= 0) {
+					proceed.run();
+				} else {
+					countdownLabel.setText("OK in " + countdown[0] + "...");
+				}
+			});
+			combatPriorityTimer.start();
+		}
 	}
 
 	/**
