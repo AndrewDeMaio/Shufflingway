@@ -7018,7 +7018,7 @@ public class MainWindow {
 
 		okBtn.addActionListener(e -> {
 			if (stackWindowGeneration != myGeneration) return;
-			stackCountdownTimer.stop();
+			if (stackCountdownTimer != null) stackCountdownTimer.stop();
 			resolveTopOfStack();
 		});
 
