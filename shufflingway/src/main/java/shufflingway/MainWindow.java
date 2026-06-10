@@ -11665,6 +11665,39 @@ public class MainWindow {
 				}
 			}
 
+			@Override public void dullOrFreezeTarget(ForwardTarget t) {
+				CardState state = switch (t.zone()) {
+					case FORWARD -> t.isP1()
+							? (t.idx() < p1ForwardStates.size() ? p1ForwardStates.get(t.idx()) : null)
+							: (t.idx() < p2ForwardStates.size() ? p2ForwardStates.get(t.idx()) : null);
+					case BACKUP  -> t.isP1()
+							? (t.idx() < p1BackupCards.length && p1BackupCards[t.idx()] != null ? p1BackupStates[t.idx()] : null)
+							: (t.idx() < p2BackupCards.length && p2BackupCards[t.idx()] != null ? p2BackupStates[t.idx()] : null);
+					case MONSTER -> t.isP1()
+							? (t.idx() < p1MonsterStates.size() ? p1MonsterStates.get(t.idx()) : null)
+							: (t.idx() < p2MonsterStates.size() ? p2MonsterStates.get(t.idx()) : null);
+				};
+				if (state == null) return;
+				CardData card = fieldCardData(t);
+				String name = card != null ? card.name() : "Forward";
+				boolean chooseDull;
+				if (!isP1) {
+					// AI picks the option that actually changes state
+					chooseDull = (state != CardState.DULL);
+					logEntry("[AI] chooses to " + (chooseDull ? "Dull" : "Freeze") + " " + name);
+				} else {
+					Object[] options = { "Dull", "Freeze" };
+					int result = JOptionPane.showOptionDialog(frame,
+							"Dull or Freeze " + name + "?",
+							"Dull or Freeze",
+							JOptionPane.YES_NO_OPTION, JOptionPane.QUESTION_MESSAGE,
+							null, options, options[0]);
+					chooseDull = (result != 1);
+				}
+				if (chooseDull) dullTarget(t);
+				else            freezeTarget(t);
+			}
+
 			@Override public void dullAndFreezeTarget(ForwardTarget t) { dullTarget(t); freezeTarget(t); }
 
 			@Override public void breakTarget(ForwardTarget t) {
