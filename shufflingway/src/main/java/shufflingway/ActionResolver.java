@@ -1261,10 +1261,10 @@ public class ActionResolver {
             "\\s+or\\s+Card\\s+Name\\s+(?<cnameor>.+?)" +
             "(?=\\s+of\\s+cost|\\s+(?:Forwards?|Backups?|Monsters?|Summons?|Characters?|card)\\b|\\s+and\\b)\\s*" +
         "|" +
-            // Written job — lookahead keeps element, type word, "other than", or "and" ahead
+            // Written job — lookahead keeps element, type word, "of cost", "other than", or "and" ahead
             "Job\\s+(?<jobnm>.+?)(?=\\s+(?:Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\b" +
             "|\\s+(?:Forwards?|Backups?|Monsters?|Summons?|Characters?|card)\\b" +
-            "|\\s+other\\b|\\s+and\\b)\\s*" +
+            "|\\s+of\\s+cost\\b|\\s+other\\b|\\s+and\\b)\\s*" +
         ")?" +
         "(?:(?<elements>(?:Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)" +
             "(?:\\s+or\\s+(?:Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark))*)\\s+)?" +
