@@ -14361,6 +14361,7 @@ public class MainWindow {
 		refreshP1MonsterSlot(idx);
 		// Monster entering the field may satisfy a condition for a forward's boost
 		refreshAllForwardSlots();
+		triggerAutoAbilitiesForEntersField(card, true);
 		sendToBreakZoneByUniquenessRule(card, true);
 	}
 
@@ -14442,6 +14443,7 @@ public class MainWindow {
 		p2MonsterPanel.repaint();
 
 		refreshP2MonsterSlot(idx);
+		triggerAutoAbilitiesForEntersField(card, false);
 	}
 
 	/** Reloads and re-renders a single P2 monster slot using its stored URL and state. */
