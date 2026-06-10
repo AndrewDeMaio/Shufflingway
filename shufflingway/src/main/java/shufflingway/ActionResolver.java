@@ -1242,6 +1242,7 @@ public class ActionResolver {
         "and\\s+" +
         "(?<destination>" +
             "add\\s+it\\s+to\\s+your\\s+hand" +
+            "|add\\s+them\\s+to\\s+your\\s+hand" +
             "|play\\s+it\\s+onto\\s+(?:the\\s+)?field(?:\\s+dull)?" +
             "|play\\s+them\\s+onto\\s+(?:the\\s+)?field(?:\\s+dull)?" +
             "|put\\s+it\\s+under\\s+the\\s+top\\s+card\\s+of\\s+(?:your|its\\s+owner's)\\s+deck" +
@@ -1914,6 +1915,17 @@ public class ActionResolver {
         "(?i)Draw\\s+(\\d+)\\s+cards?[,.]?\\s+then\\s+place\\s+(\\d+)\\s+cards?\\s+from\\s+your\\s+hand\\s+at\\s+the\\s+bottom\\s+of\\s+your\\s+deck[.!]?"
     );
 
+    /**
+     * Matches "pay 《Element》[…]. When you do so, [followup]."
+     * Used when an auto-ability's effect text begins with an explicit CP payment followed by
+     * a conditional effect clause.
+     * Groups: {@code cost} — the raw CP token(s); {@code followup} — the effect text after the condition.
+     */
+    private static final Pattern PAY_CP_WHEN_DO_SO = Pattern.compile(
+        "(?i)^\\s*pay\\s+(?<cost>(?:《[^》]+》\\s*)+)[.!]?\\s+When\\s+you\\s+do\\s+so[,.]?\\s+(?<followup>.+)$",
+        Pattern.DOTALL
+    );
+
     private static final Pattern DRAW_CARDS = Pattern.compile(
         "(?i)^Draw\\s+(\\d+)\\s+cards?(?:\\s*[,.]?\\s*then\\s+discard\\s+(\\d+)\\s+cards?)?[.!]?"
     );
@@ -2385,6 +2397,9 @@ public class ActionResolver {
         result = tryParseDrawThenPlaceHandToBottom(effectText);
         if (result != null) return result;
 
+        result = tryParsePayCpWhenDoSo(effectText, source);
+        if (result != null) return result;
+
         result = tryParseDrawCards(effectText);
         if (result != null) return result;
 
@@ -2615,6 +2630,7 @@ public class ActionResolver {
         if (tryParseOpponentDiscard(effectText)               != null) return "OpponentDiscard";
         if (tryParseDiscardHandThenDraw(effectText)           != null) return "DiscardHandThenDraw";
         if (tryParseDrawThenPlaceHandToBottom(effectText)     != null) return "DrawThenPlaceHandToBottom";
+        if (tryParsePayCpWhenDoSo(effectText, source)         != null) return "PayCpWhenDoSo";
         if (tryParseDrawCards(effectText)                     != null) return "DrawCards";
         if (tryParseYouMayDiscardType(effectText)             != null) return "YouMayDiscardType";
         if (tryParseDiscardHand(effectText)                   != null) return "DiscardHand";
@@ -5577,6 +5593,19 @@ public class ActionResolver {
         };
     }
 
+    private static Consumer<GameContext> tryParsePayCpWhenDoSo(String text, CardData source) {
+        Matcher m = PAY_CP_WHEN_DO_SO.matcher(text);
+        if (!m.find()) return null;
+        String costDesc    = m.group("cost").trim();
+        String followupText = m.group("followup").trim();
+        Consumer<GameContext> followup = parse(followupText, source);
+        if (followup == null) return null;
+        return ctx -> {
+            ctx.logEntry("Effect: Pay " + costDesc + " CP, then: " + followupText);
+            followup.accept(ctx);
+        };
+    }
+
     private static Consumer<GameContext> tryParseDrawCards(String text) {
         Matcher m = DRAW_CARDS.matcher(text);
         if (!m.find()) return null;
@@ -5658,7 +5687,7 @@ public class ActionResolver {
     }
 
     private static final Pattern DISCARD_N_CARDS = Pattern.compile(
-        "(?i)^discard\\s+(?<count>\\d+)\\s+cards?[.!]?$"
+        "(?i)^discard\\s+(?<count>\\d+)\\s+cards?(?:\\s+from\\s+your\\s+hand)?[.!]?$"
     );
 
     /** Parses "Discard N cards." as a standalone effect. */

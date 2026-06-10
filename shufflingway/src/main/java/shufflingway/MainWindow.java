@@ -8908,6 +8908,22 @@ public class MainWindow {
 		Matcher maxM = FA_MAX_X.matcher(fa.effectText());
 		int maxCp = isXCost ? (maxM.find() ? Integer.parseInt(maxM.group(1)) : Integer.MAX_VALUE) : fixedCost;
 
+		// For fixed CP costs, check whether the paying player can actually generate enough CP.
+		// effectIsP1 identifies the player who would pay (already accounts for opponentMay).
+		// Skip the ability entirely if they cannot — no active backups and insufficient hand cards.
+		if (!isXCost && fixedCost > 0) {
+			CardData[] bkpCards  = playerBackupCards(effectIsP1);
+			CardState[] bkpStates = playerBackupStates(effectIsP1);
+			int availCp = 0;
+			for (int i = 0; i < bkpCards.length; i++)
+				if (bkpCards[i] != null && bkpStates[i] == CardState.ACTIVE) availCp++;
+			availCp += playerHand(effectIsP1).size() * 2;
+			if (availCp < fixedCost) {
+				logEntry("[AutoAbility] " + source.name() + " — cannot afford " + fixedCost + " CP (" + costToken + "), skipping");
+				return;
+			}
+		}
+
 		// P1 gets a confirm dialog; AI auto-accepts.
 		boolean p1GetsDialog = (fa.youMay() && isP1) || (fa.opponentMay() && !isP1);
 		if (p1GetsDialog) {
