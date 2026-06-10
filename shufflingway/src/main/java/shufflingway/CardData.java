@@ -1059,6 +1059,7 @@ public record CardData(
             // "enters the field or attacks" must precede plain "enters the field"
             "|enters?\\s+the\\s+field\\s+or\\s+attacks?" +
             "|enters?\\s+the\\s+field(?:\\s+due\\s+to\\s+(?:your\\s+cast|Warp))?" +
+            "|enters?\\s+your\\s+field" +
             "|leaves?\\s+the\\s+field" +
             "|is\\s+put\\s+(?:from\\s+the\\s+field\\s+)?into\\s+the\\s+Break\\s+Zone" +
             "|casts?\\s+a\\s+Summon" +
@@ -1280,6 +1281,7 @@ public record CardData(
             if      (triggerRaw.contains("attack") && triggerRaw.contains("block"))                        trigger = "attacks or blocks";
             else if (triggerRaw.contains("attack") && (cardIsParty || triggerHasParty))                    trigger = "party attacks";
             else if (triggerRaw.contains("enter") && triggerRaw.contains("attack"))                        trigger = "enters the field or attacks";
+            else if (triggerRaw.contains("enter") && triggerRaw.contains("your")  && triggerRaw.contains("field")) trigger = "enters your field";
             else if (triggerRaw.contains("attack"))                                                         trigger = "attacks";
             else if (triggerRaw.contains("block") && triggerRaw.contains("is blocked"))                    trigger = "blocks or is blocked";
             else if (triggerRaw.equals("is blocked"))                                                       trigger = "is blocked";

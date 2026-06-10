@@ -239,6 +239,11 @@ public class ActionResolver {
         "(?i)Activate\\s+(?:it|them)\\.?"
     );
 
+    /** Matches "Dull it or activate it." / "Dull them or activate them." — toggle dull/active. */
+    private static final Pattern FOLLOWUP_DULL_OR_ACTIVATE = Pattern.compile(
+        "(?i)Dulls?\\s+(?:it|them)\\s+or\\s+activates?\\s+(?:it|them)[.!]?"
+    );
+
     /** Matches "dull it/them" or "dulls it/them" (third-person form used in opponent-selects effects). */
     private static final Pattern FOLLOWUP_DULL = Pattern.compile(
         "(?i)dulls?\\s+(?:it|them)"
@@ -2758,6 +2763,7 @@ public class ActionResolver {
         if (FOLLOWUP_CANNOT_BE_CHOSEN_BOTH.matcher(followupText).find())              return "CannotBeChosenBoth";
         if (FOLLOWUP_CANNOT_BE_CHOSEN_SUMMONS.matcher(followupText).find())           return "CannotBeChosenSummons";
         if (FOLLOWUP_CANNOT_BE_CHOSEN_ABILITIES.matcher(followupText).find())         return "CannotBeChosenAbilities";
+        if (FOLLOWUP_DULL_OR_ACTIVATE.matcher(followupText).find())                   return "DullOrActivate";
         if (FOLLOWUP_ACTIVATE.matcher(followupText).find())                           return "Activate";
         if (FOLLOWUP_DULL.matcher(followupText).find()
                 && !FOLLOWUP_DULL_AND_FREEZE.matcher(followupText).find())            return "Dull";
@@ -4280,6 +4286,19 @@ public class ActionResolver {
                         opponentOnly, selfOnly, condition, element, zone, opponentZone,
                         costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
                 ts.forEach(ctx::negateAllDamage);
+                if (secondary != null) secondary.accept(ctx);
+            };
+        }
+
+        // --- Dull-or-Activate toggle followup (must precede FOLLOWUP_ACTIVATE/DULL since it contains both) ---
+        if (FOLLOWUP_DULL_OR_ACTIVATE.matcher(primaryFollowup).find()) {
+            return ctx -> {
+                ctx.logEntry(choosePrefix + " — Dull or Activate (toggle)");
+                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
+                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
+                sortedByIdxDesc(ts, true) .forEach(t -> ctx.toggleTargetDullActivate(t));
+                sortedByIdxDesc(ts, false).forEach(t -> ctx.toggleTargetDullActivate(t));
                 if (secondary != null) secondary.accept(ctx);
             };
         }

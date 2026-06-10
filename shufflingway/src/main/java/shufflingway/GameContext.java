@@ -270,6 +270,13 @@ public interface GameContext {
     /** Dulls the target and refreshes its slot. */
     void dullTarget(ForwardTarget t);
 
+    /**
+     * Toggles the target between Active and Dull. If the target is currently dull it is
+     * activated; if active it is dulled. Used by "Dull it or activate it." effects where the
+     * action depends on the chosen card's current state.
+     */
+    void toggleTargetDullActivate(ForwardTarget t);
+
     /** Freezes the target (skips activation next Active Phase) and refreshes its slot. */
     void freezeTarget(ForwardTarget t);
 

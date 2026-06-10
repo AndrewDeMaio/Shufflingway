@@ -8207,10 +8207,50 @@ public class MainWindow {
 			if (!fa.triggerCard().equalsIgnoreCase(card.name())) continue;
 			if (fa.trigger().contains("enter")) executeAutoAbility(fa, card, isP1);
 		}
+		// Watcher dispatch: "When a <Type> enters your field, ..." abilities live on other field cards
+		// on the same side as the entering card.
+		fireEntersYourFieldWatchers(card, isP1);
 		// Re-evaluate all conditional field boosts now that the field composition has changed
 		refreshAllForwardSlots();
 		for (int i = 0; i < p2ForwardCards.size(); i++) refreshP2ForwardSlot(i);
 		showStackWindowIfNeeded();
+	}
+
+	/**
+	 * Fires "{@code <Type>} enters your field" auto-abilities on other field cards owned by the
+	 * same player as {@code enteringCard}. The watcher's {@link AutoAbility#triggerCard()} encodes
+	 * the type subject (e.g. "a Monster", "a Forward", "a Character") which is matched against
+	 * the entering card's type.
+	 */
+	private void fireEntersYourFieldWatchers(CardData enteringCard, boolean enteringIsP1) {
+		List<CardData> fwds = new ArrayList<>(enteringIsP1 ? p1ForwardCards : p2ForwardCards);
+		CardData[]     bkps = enteringIsP1 ? p1BackupCards : p2BackupCards;
+		List<CardData> mons = new ArrayList<>(enteringIsP1 ? p1MonsterCards : p2MonsterCards);
+		for (CardData c : fwds) fireEntersYourFieldWatcher(c, enteringCard, enteringIsP1);
+		for (CardData c : bkps) if (c != null) fireEntersYourFieldWatcher(c, enteringCard, enteringIsP1);
+		for (CardData c : mons) fireEntersYourFieldWatcher(c, enteringCard, enteringIsP1);
+	}
+
+	private void fireEntersYourFieldWatcher(CardData watcher, CardData enteringCard, boolean enteringIsP1) {
+		for (AutoAbility fa : watcher.autoAbilities()) {
+			if (!fa.trigger().equals("enters your field")) continue;
+			if (!matchesEntersFieldSubject(fa.triggerCard(), enteringCard)) continue;
+			executeAutoAbility(fa, watcher, enteringIsP1);
+		}
+	}
+
+	/** Returns {@code true} if {@code enteringCard}'s type matches the watcher's subject phrase. */
+	private boolean matchesEntersFieldSubject(String subject, CardData enteringCard) {
+		String s = subject.trim().toLowerCase(java.util.Locale.ROOT)
+				.replaceAll("^(?:a|an)\\s+", "");
+		return switch (s) {
+			case "monster", "monsters"     -> enteringCard.isMonster();
+			case "forward", "forwards"     -> enteringCard.isForward();
+			case "backup", "backups"       -> enteringCard.isBackup();
+			case "summon", "summons"       -> enteringCard.isSummon();
+			case "character", "characters" -> enteringCard.isForward() || enteringCard.isBackup() || enteringCard.isMonster();
+			default                        -> false;
+		};
 	}
 
 	private void triggerAutoAbilitiesForDealsDamageToOpponent(CardData attacker, boolean attackerIsP1) {
@@ -11496,7 +11536,10 @@ public class MainWindow {
 					List<ForwardTarget> p1Eligible = new ArrayList<>();
 					for (int i = 0; i < p1ForwardCards.size(); i++)
 						p1Eligible.add(new ForwardTarget(true, i, ForwardTarget.CardZone.FORWARD));
-					List<ForwardTarget> picks = showForwardSelectDialog(p1Eligible, 1, false,
+					// Bypass the single-eligible auto-pick in showForwardSelectDialog — the card text
+					// explicitly says "each player selects", so the choice must be explicit even when
+					// only one Forward is eligible (e.g. Brute Bomber alone on the field).
+					List<ForwardTarget> picks = selectFieldTargetsInPlace(p1Eligible, 1, false,
 							"Each player selects 1 Forward — choose yours");
 					if (!picks.isEmpty()) p1Pick = picks.get(0);
 				} else {
@@ -11550,6 +11593,23 @@ public class MainWindow {
 						else          { if (i < p2MonsterCards.size()) { p2MonsterStates.set(i, CardState.DULL); logEntry("[P2] " + p2MonsterCards.get(i).name() + " is dulled"); refreshP2MonsterSlot(i); } }
 					}
 				}
+			}
+
+			@Override public void toggleTargetDullActivate(ForwardTarget t) {
+				CardState state = switch (t.zone()) {
+					case FORWARD -> t.isP1()
+							? (t.idx() < p1ForwardStates.size() ? p1ForwardStates.get(t.idx()) : null)
+							: (t.idx() < p2ForwardStates.size() ? p2ForwardStates.get(t.idx()) : null);
+					case BACKUP  -> t.isP1()
+							? (t.idx() < p1BackupCards.length && p1BackupCards[t.idx()] != null ? p1BackupStates[t.idx()] : null)
+							: (t.idx() < p2BackupCards.length && p2BackupCards[t.idx()] != null ? p2BackupStates[t.idx()] : null);
+					case MONSTER -> t.isP1()
+							? (t.idx() < p1MonsterStates.size() ? p1MonsterStates.get(t.idx()) : null)
+							: (t.idx() < p2MonsterStates.size() ? p2MonsterStates.get(t.idx()) : null);
+				};
+				if (state == null) return;
+				if (state == CardState.DULL) activateTarget(t);
+				else                         dullTarget(t);
 			}
 
 			@Override public void freezeTarget(ForwardTarget t) {
