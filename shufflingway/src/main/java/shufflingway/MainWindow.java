@@ -8134,6 +8134,18 @@ public class MainWindow {
 				"(?i)If\\s+(?<card>.+?)\\s+is\\s+dealt\\s+damage\\s+by\\s+your\\s+opponent's\\s+Summons?,\\s+the\\s+damage\\s+becomes\\s+0\\s+instead\\.?"
 			);
 
+	/**
+	 * Matches a card's own passive field ability text:
+	 * "If &lt;cardName&gt; is dealt damage by abilities, reduce the damage by N instead."
+	 * Gated by the surrounding {@link FieldAbility#damageThreshold()} when the parser captured
+	 * a "Damage N --" prefix. Applied inline in {@link #modifyIncomingDamage} when the damage
+	 * source is an ability (not a Summon, not combat).
+	 */
+	private static final Pattern FA_REDUCE_ABILITY_DAMAGE =
+			Pattern.compile(
+				"(?i)If\\s+(?<card>.+?)\\s+is\\s+dealt\\s+damage\\s+by\\s+abilities,\\s+reduce\\s+the\\s+damage\\s+by\\s+(?<reduction>\\d+)\\s+instead\\.?"
+			);
+
 	/** "If [name] deals damage to a Forward of cost N or more, double the damage instead." */
 	private static final Pattern FA_DOUBLE_DAMAGE_VS_COST_THRESHOLD =
 			Pattern.compile(
@@ -11478,6 +11490,32 @@ public class MainWindow {
 				logEntry("[ActionResolver] damageFieldForwardByName: \"" + cardName + "\" not found on field");
 			}
 
+			@Override public void eachPlayerSelectForwardAndDamage(int amount) {
+				ForwardTarget p1Pick = null;
+				if (!p1ForwardCards.isEmpty()) {
+					List<ForwardTarget> p1Eligible = new ArrayList<>();
+					for (int i = 0; i < p1ForwardCards.size(); i++)
+						p1Eligible.add(new ForwardTarget(true, i, ForwardTarget.CardZone.FORWARD));
+					List<ForwardTarget> picks = showForwardSelectDialog(p1Eligible, 1, false,
+							"Each player selects 1 Forward — choose yours");
+					if (!picks.isEmpty()) p1Pick = picks.get(0);
+				} else {
+					logEntry("P1 has no Forwards — skipping selection");
+				}
+
+				ForwardTarget p2Pick = null;
+				if (!p2ForwardCards.isEmpty()) {
+					p2Pick = aiPickForwardToSurvive(amount);
+					if (p2Pick != null)
+						logEntry("[AI] selected " + p2ForwardCards.get(p2Pick.idx()).name());
+				} else {
+					logEntry("[P2] has no Forwards — skipping selection");
+				}
+
+				if (p1Pick != null) damageP1Forward(p1Pick.idx(), amount);
+				if (p2Pick != null) damageP2Forward(p2Pick.idx(), amount);
+			}
+
 			@Override public void activateTarget(ForwardTarget t) {
 				switch (t.zone()) {
 					case FORWARD -> {
@@ -13181,6 +13219,21 @@ public class MainWindow {
 				for (FieldAbility fa : card.fieldAbilities()) {
 					Matcher m = FA_NULLIFY_SUMMON_DAMAGE.matcher(fa.effectText());
 					if (m.find() && m.group("card").trim().equalsIgnoreCase(card.name())) return 0;
+				}
+			}
+
+			// Passive field ability: reduce ability-source damage by N (gated on damage threshold)
+			if (!currentResolutionIsSummon) {
+				int dmgInZone = isP1 ? gameState.getP1DamageZone().size() : gameState.getP2DamageZone().size();
+				for (FieldAbility fa : card.fieldAbilities()) {
+					if (fa.damageThreshold() > 0 && dmgInZone < fa.damageThreshold()) continue;
+					Matcher m = FA_REDUCE_ABILITY_DAMAGE.matcher(fa.effectText());
+					if (m.find() && m.group("card").trim().equalsIgnoreCase(card.name())) {
+						int reduction = Integer.parseInt(m.group("reduction"));
+						int before = amount;
+						amount = Math.max(0, amount - reduction);
+						logEntry(card.name() + " — ability damage reduced by " + reduction + " (" + before + " → " + amount + ")");
+					}
 				}
 			}
 		}
@@ -15593,6 +15646,31 @@ public class MainWindow {
 
 	private static int roundToThousand(int value) {
 		return ((value + 999) / 1000) * 1000;
+	}
+
+	/**
+	 * AI picks one of P2's Forwards to selectively take {@code amount} damage. Prefers a Forward
+	 * whose effective power (minus current damage) exceeds {@code amount} so it survives;
+	 * if none, falls back to the lowest-cost Forward (least valuable loss).
+	 */
+	private ForwardTarget aiPickForwardToSurvive(int amount) {
+		if (p2ForwardCards.isEmpty()) return null;
+		int bestSurvivorIdx = -1;
+		int bestSurvivorMargin = -1;
+		int bestFallbackIdx = 0;
+		int bestFallbackCost = Integer.MAX_VALUE;
+		for (int i = 0; i < p2ForwardCards.size(); i++) {
+			int effPower = effectiveP2ForwardPower(i);
+			int remaining = effPower - p2ForwardDamage.get(i);
+			if (remaining > amount) {
+				int margin = remaining - amount;
+				if (margin > bestSurvivorMargin) { bestSurvivorMargin = margin; bestSurvivorIdx = i; }
+			}
+			int cost = p2ForwardCards.get(i).cost();
+			if (cost < bestFallbackCost) { bestFallbackCost = cost; bestFallbackIdx = i; }
+		}
+		int chosen = bestSurvivorIdx >= 0 ? bestSurvivorIdx : bestFallbackIdx;
+		return new ForwardTarget(false, chosen, ForwardTarget.CardZone.FORWARD);
 	}
 
 	/** Returns the index of the least-valuable card in {@code hand} (lowest cost; backups before forwards). */

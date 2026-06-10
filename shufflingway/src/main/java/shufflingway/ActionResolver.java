@@ -191,6 +191,19 @@ public class ActionResolver {
     );
 
     /**
+     * Matches "&lt;SourceCardName&gt; and the chosen Forward deal damage equal to their respective power to the other."
+     * Used as a followup after "Choose 1 Forward …" to apply simultaneous power-as-damage between
+     * the source card and the selected target.
+     * <ul>
+     *   <li>{@code srcname} — the card name on the left side of "and the chosen Forward"; verified
+     *       against the ability's source card at match time.</li>
+     * </ul>
+     */
+    private static final Pattern FOLLOWUP_MUTUAL_POWER_DAMAGE = Pattern.compile(
+        "(?i)(?<srcname>.+?)\\s+and\\s+the\\s+chosen\\s+Forward\\s+deal\\s+damage\\s+equal\\s+to\\s+their\\s+respective\\s+power\\s+to\\s+the\\s+other[.!]?"
+    );
+
+    /**
      * Matches "Deal it/them [base] damage [and [per] more damage] for each [source]".
      * <ul>
      *   <li>{@code base}     — base damage per unit (or fixed base when {@code per} is set)</li>
@@ -1027,6 +1040,15 @@ public class ActionResolver {
         "(?:\\[Card\\s+Name\\s+\\((?<bracketname>[^)]+)\\)\\]|Card\\s+Name\\s+(?<plainname>\\S+))" +
         ",\\s+your\\s+opponent\\s+discards?\\s+(?<extra>\\d+)\\s+more\\s+cards?" +
         "(?:\\s+from\\s+(?:his/her|his|her|their)\\s+hand)?[.!]?"
+    );
+
+    /**
+     * Matches "Each player selects 1 Forward they control. Deal them N damage."
+     * Group {@code amount} — damage dealt to each selected Forward.
+     */
+    private static final Pattern EACH_PLAYER_SELECT_FORWARD_DAMAGE = Pattern.compile(
+        "(?i)each\\s+player\\s+selects?\\s+1\\s+Forward\\s+they\\s+control[.!]?\\s+" +
+        "Deal\\s+them\\s+(?<amount>\\d+)\\s+damage[.!]?"
     );
 
     /** Matches "Discard your hand. Then, draw N card(s)." Group 1 = draw count. */
@@ -2411,6 +2433,9 @@ public class ActionResolver {
         result = tryParseOpponentRandomDiscard(effectText);
         if (result != null) return result;
 
+        result = tryParseEachPlayerSelectForwardDamage(effectText);
+        if (result != null) return result;
+
         result = tryParseEachPlayerDiscard(effectText);
         if (result != null) return result;
 
@@ -2653,6 +2678,7 @@ public class ActionResolver {
         if (tryParseChooseExBurstFromDamageZone(effectText)    != null) return "ChooseExBurstFromDamageZone";
         if (tryParseOpponentDrawThenRandomDiscard(effectText)  != null) return "OpponentDrawThenRandomDiscard";
         if (tryParseOpponentRandomDiscard(effectText)         != null) return "OpponentRandomDiscard";
+        if (tryParseEachPlayerSelectForwardDamage(effectText)  != null) return "EachPlayerSelectForwardDamage";
         if (tryParseEachPlayerDiscard(effectText)              != null) return "EachPlayerDiscard";
         if (tryParseOpponentDiscard(effectText)               != null) return "OpponentDiscard";
         if (tryParseDiscardHandThenDraw(effectText)           != null) return "DiscardHandThenDraw";
@@ -2710,6 +2736,10 @@ public class ActionResolver {
      * used inside {@link #tryParseChooseCharacter}.
      */
     public static String matchedFollowupName(String followupText, CardData source) {
+        if (source != null) {
+            Matcher mutM = FOLLOWUP_MUTUAL_POWER_DAMAGE.matcher(followupText);
+            if (mutM.find() && mutM.group("srcname").trim().equalsIgnoreCase(source.name())) return "MutualPowerDamage";
+        }
         if (FOLLOWUP_DAMAGE_FOR_EACH.matcher(followupText).find())                    return "DamageForEach";
         if (FOLLOWUP_DULL_AND_DAMAGE.matcher(followupText).find())                   return "DullAndDamage";
         if (FOLLOWUP_DAMAGE.matcher(followupText).find())                             return "Damage";
@@ -2893,6 +2923,7 @@ public class ActionResolver {
         if (tryParseChooseExBurstFromDamageZone(effectText) != null)        return "ChooseExBurstFromDamageZone";
         if (tryParseOpponentDrawThenRandomDiscard(effectText) != null)      return "OpponentDrawThenRandomDiscard";
         if (tryParseOpponentRandomDiscard(effectText) != null)              return "OpponentRandomDiscard";
+        if (tryParseEachPlayerSelectForwardDamage(effectText) != null)      return "EachPlayerSelectForwardDamage";
         if (tryParseEachPlayerDiscard(effectText) != null)                  return "EachPlayerDiscard";
         if (tryParseOpponentDiscard(effectText) != null)                    return "OpponentDiscard";
         if (tryParseDiscardHandThenDraw(effectText) != null)                return "DiscardHandThenDraw";
@@ -4060,6 +4091,29 @@ public class ActionResolver {
                 if (alsoCard != null) ctx.damageFieldForwardByName(alsoCard, damage);
                 if (secondary != null) secondary.accept(ctx);
             };
+        }
+
+        // --- Mutual power-as-damage between source and chosen Forward ---
+        if (source != null) {
+            Matcher mutM = FOLLOWUP_MUTUAL_POWER_DAMAGE.matcher(primaryFollowup);
+            if (mutM.find() && mutM.group("srcname").trim().equalsIgnoreCase(source.name())) {
+                String srcName = source.name();
+                return ctx -> {
+                    List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                            opponentOnly, selfOnly, condition, element, zone, opponentZone,
+                            costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
+                    if (ts.isEmpty()) { if (secondary != null) secondary.accept(ctx); return; }
+                    int srcPower = Math.max(0, ctx.fieldForwardPowerByName(srcName));
+                    for (ForwardTarget t : ts) {
+                        int tgtPower = Math.max(0, ctx.effectiveTargetPower(t));
+                        ctx.logEntry(choosePrefix + " — Mutual power damage: " + srcName + " (" + srcPower
+                                + ") ↔ chosen Forward (" + tgtPower + ")");
+                        ctx.damageTarget(t, srcPower);
+                        ctx.damageFieldForwardByName(srcName, tgtPower);
+                    }
+                    if (secondary != null) secondary.accept(ctx);
+                };
+            }
         }
 
         // --- Damage followup (computed amount) ---
@@ -5885,6 +5939,17 @@ public class ActionResolver {
             ctx.logEntry("Effect: Each player discards " + count + " card(s)");
             ctx.selfDiscard(count);
             ctx.forceOpponentDiscard(count);
+        };
+    }
+
+    /** Parses "Each player selects 1 Forward they control. Deal them N damage." */
+    private static Consumer<GameContext> tryParseEachPlayerSelectForwardDamage(String text) {
+        Matcher m = EACH_PLAYER_SELECT_FORWARD_DAMAGE.matcher(text);
+        if (!m.find()) return null;
+        int amount = Integer.parseInt(m.group("amount"));
+        return ctx -> {
+            ctx.logEntry("Effect: Each player selects 1 Forward they control. Deal them " + amount + " damage");
+            ctx.eachPlayerSelectForwardAndDamage(amount);
         };
     }
 

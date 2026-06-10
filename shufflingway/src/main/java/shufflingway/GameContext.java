@@ -235,6 +235,14 @@ public interface GameContext {
      */
     void damageFieldForwardByName(String cardName, int amount);
 
+    /**
+     * Each player selects 1 Forward they control, then both receive {@code amount} damage.
+     * P1 picks via dialog; P2 (AI) picks automatically — preferring a Forward whose effective
+     * power exceeds {@code amount} so it survives, otherwise picking the lowest-cost Forward.
+     * Skips a side that has no Forwards.
+     */
+    void eachPlayerSelectForwardAndDamage(int amount);
+
     /** Grants the ability user {@code count} Crystals. */
     void gainCrystal(int count);
 
