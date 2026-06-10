@@ -456,9 +456,9 @@ public class ActionResolver {
         "(?i)Return\\s+(?!(?:it|them)\\b)(?<named>.+?)\\s+to\\s+your\\s+hand[.!]?"
     );
 
-    /** Matches "Add [name] to your hand." — named card, not a pronoun. Used for break-zone-origin abilities. */
+    /** Matches "Add [name] to your hand." — named card, not a pronoun or a count. Used for break-zone-origin abilities. */
     private static final Pattern ADD_NAMED_TO_YOUR_HAND = Pattern.compile(
-        "(?i)\\bAdd\\s+(?!(?:it|them)\\b)(?<named>.+?)\\s+to\\s+your\\s+hand[.!]?"
+        "(?i)\\bAdd\\s+(?!(?:it|them|\\d)\\b)(?<named>.+?)\\s+to\\s+your\\s+hand[.!]?"
     );
 
     /**
@@ -652,6 +652,17 @@ public class ActionResolver {
         "(?:Job\\s+or\\s+Category|Category\\s+or\\s+Job)\\s+among\\s+them\\s+to\\s+your\\s+hand\\s+" +
         "and\\s+return\\s+the\\s+other\\s+cards?\\s+to\\s+the\\s+bottom\\s+of\\s+your\\s+deck\\s+" +
         "in\\s+any\\s+order[.!]?"
+    );
+
+    /**
+     * Matches "reveal the top N cards of your deck. Add 1 Category X [Type] among them to your hand
+     * and return the other cards to the bottom of your deck in any order."
+     * Groups: {@code n} (card count), {@code cat} (category identifier, e.g. "MBM").
+     */
+    private static final Pattern REVEAL_TOP_N_CATEGORY_TO_HAND = Pattern.compile(
+        "(?i)^\\s*(?:you\\s+may\\s+)?reveal\\s+the\\s+top\\s+(?<n>\\d+)\\s+cards?\\s+of\\s+your\\s+deck[.!]?\\s+" +
+        "Add\\s+1\\s+Category\\s+(?<cat>\\S+)(?:\\s+(?:Forward|Backup|Character|Monster|card))?\\s+among\\s+them\\s+to\\s+your\\s+hand\\s+" +
+        "and\\s+return\\s+the\\s+other\\s+cards?\\s+to\\s+the\\s+bottom\\s+of\\s+(?:your|the)\\s+deck(?:\\s+in\\s+any\\s+order)?[.!]?\\s*$"
     );
 
     // ---- Damage-shield followup patterns (apply to selected "it/them" targets) --------
@@ -2341,6 +2352,9 @@ public class ActionResolver {
         result = tryParseOpponentHandRfp(effectText);
         if (result != null) return result;
 
+        result = tryParseRevealTopNCategoryToHand(effectText);
+        if (result != null) return result;
+
         result = tryParseReturnNamedToHand(effectText);
         if (result != null) return result;
 
@@ -2828,6 +2842,7 @@ public class ActionResolver {
         if (tryParseRevealSelectHandRfp(effectText) != null)               return "RevealSelectHandRfp";
         if (tryParseOpponentRandomHandRfp(effectText) != null)             return "OpponentRandomHandRfp";
         if (tryParseOpponentHandRfp(effectText) != null)                   return "OpponentHandRfp";
+        if (tryParseRevealTopNCategoryToHand(effectText) != null)            return "RevealTopNCategoryToHand";
         if (tryParseReturnNamedToHand(effectText) != null)                   return "ReturnNamedToHand";
         if (tryParseRemoveNamedFromGame(effectText, source) != null)        return "RemoveNamedFromGame";
         if (tryParseBreakSourceCard(effectText, source)     != null)        return "BreakSourceCard";
@@ -6920,6 +6935,17 @@ public class ActionResolver {
             String jobFilter = "job".equalsIgnoreCase(choice[0]) ? choice[1] : null;
             String catFilter = "category".equalsIgnoreCase(choice[0]) ? choice[1] : null;
             ctx.revealTopAddUpToMatchingRestBottom(reveal, maxAdd, jobFilter, catFilter);
+        };
+    }
+
+    private static Consumer<GameContext> tryParseRevealTopNCategoryToHand(String text) {
+        Matcher m = REVEAL_TOP_N_CATEGORY_TO_HAND.matcher(text);
+        if (!m.find()) return null;
+        int n = Integer.parseInt(m.group("n"));
+        String cat = m.group("cat");
+        return ctx -> {
+            ctx.logEntry("Effect: Reveal top " + n + " — add 1 Category " + cat + " to hand, rest to bottom");
+            ctx.revealTopAddUpToMatchingRestBottom(n, 1, null, cat);
         };
     }
 
