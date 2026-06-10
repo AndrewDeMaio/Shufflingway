@@ -925,7 +925,8 @@ public interface GameContext {
      * @param elementFilter  bar-separated element(s) — card must contain at least one; {@code null} = any
      * @param excludeName    exact card name to exclude from results; {@code null} = no exclusion
      * @param destination    {@code "hand"} — add to hand, {@code "field"} — play onto field,
-     *                       {@code "underTop"} — place second from top of deck
+     *                       {@code "underTop"} — place second from top of deck,
+     *                       {@code "breakZone"} — put into the Break Zone
      */
     void searchDeckForCard(boolean inclForwards, boolean inclBackups, boolean inclMonsters, boolean inclSummons,
             int costVal, String costCmp, String cardNameFilter, String jobFilter,

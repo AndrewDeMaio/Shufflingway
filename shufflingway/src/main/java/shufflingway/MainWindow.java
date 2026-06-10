@@ -3280,6 +3280,11 @@ public class MainWindow {
 					logEntry((isP1 ? "" : "[P2] ") + card.name() + " → under top card of deck (search)");
 					if (isP1) refreshP1DeckLabel(); else refreshP2DeckLabel();
 				}
+				case "breakZone" -> {
+					if (isP1) { addToP1BreakZone(card); refreshP1BreakLabel(); }
+					else      { addToP2BreakZone(card); refreshP2BreakLabel(); }
+					logEntry((isP1 ? "" : "[P2] ") + card.name() + " → Break Zone (search)");
+				}
 			}
 		}
 	}

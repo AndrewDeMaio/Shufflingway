@@ -1234,6 +1234,7 @@ public class ActionResolver {
             "|play\\s+it\\s+onto\\s+(?:the\\s+)?field(?:\\s+dull)?" +
             "|play\\s+them\\s+onto\\s+(?:the\\s+)?field(?:\\s+dull)?" +
             "|put\\s+it\\s+under\\s+the\\s+top\\s+card\\s+of\\s+(?:your|its\\s+owner's)\\s+deck" +
+            "|put\\s+it\\s+into\\s+(?:the\\s+)?Break\\s+Zone" +
         ")" +
         "[.!]?"
     );
@@ -7543,6 +7544,7 @@ public class ActionResolver {
         boolean entersDull = destText.contains("dull");
         String destination = destText.contains("hand")    ? "hand"
                            : destText.contains("field")   ? "field"
+                           : destText.contains("break")   ? "breakZone"
                            :                                "underTop";
 
         // Build log label
