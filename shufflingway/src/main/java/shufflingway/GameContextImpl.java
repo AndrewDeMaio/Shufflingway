@@ -4190,15 +4190,18 @@ final class GameContextImpl implements GameContext {
 
 			@Override public void drawCardsForOpponent(int count) {
 				if (isP1) {
-					mw.drawP2Cards(count);
-					mw.animateCardDraw(false, count);
+					int drew = mw.drawP2Cards(count).size();
+					mw.animateCardDraw(false, drew);
 					mw.refreshP2DeckLabel();
 					mw.refreshP2HandCountLabel();
+					// Forcing the opponent to draw more than their deck holds loses the game for them.
+					if (drew < count) mw.triggerGameOver("P2 milled out — You Win!");
 				} else {
-					mw.drawP1Cards(count);
-					mw.animateCardDraw(true, count);
+					int drew = mw.drawP1Cards(count).size();
+					mw.animateCardDraw(true, drew);
 					mw.refreshP1HandLabel();
 					mw.refreshP1DeckLabel();
+					if (drew < count) mw.triggerGameOver("Milled Out - You Lose!");
 				}
 			}
 
@@ -4551,15 +4554,19 @@ final class GameContextImpl implements GameContext {
 
 			@Override public void drawCards(int count) {
 				if (isP1) {
-					mw.drawP1Cards(count);
-					mw.animateCardDraw(true, count);
+					int drew = mw.drawP1Cards(count).size();
+					mw.animateCardDraw(true, drew);
 					mw.refreshP1HandLabel();
 					mw.refreshP1DeckLabel();
+					// A mandatory "draw N" the deck can't satisfy loses the game for the drawer.
+					// ("Draw up to N" effects protect the player by requesting count ≤ deck size.)
+					if (drew < count) mw.triggerGameOver("Milled Out - You Lose!");
 				} else {
-					mw.drawP2Cards(count);
-					mw.animateCardDraw(false, count);
+					int drew = mw.drawP2Cards(count).size();
+					mw.animateCardDraw(false, drew);
 					mw.refreshP2DeckLabel();
 					mw.refreshP2HandCountLabel();
+					if (drew < count) mw.triggerGameOver("P2 milled out — You Win!");
 				}
 			}
 

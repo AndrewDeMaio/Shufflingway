@@ -816,7 +816,7 @@ public class MainWindow {
 
 		p2RemoveButton = new JButton("RFP");
 		p2RemoveButton.setToolTipText("Player 2 Removed From Play");
-		p2RemoveButton.setFont(FontLoader.loadPixelFont(7));
+		p2RemoveButton.setFont(FontLoader.loadPixelFont(9));
 		p2RemoveButton.setBackground(new Color(30, 30, 30));
 		p2RemoveButton.setForeground(Color.LIGHT_GRAY);
 		p2RemoveButton.setOpaque(true);
@@ -988,7 +988,7 @@ public class MainWindow {
 
 		p1RemoveButton = new JButton("RFP");
 		p1RemoveButton.setToolTipText("Player 1 Removed From Play");
-		p1RemoveButton.setFont(FontLoader.loadPixelFont(7));
+		p1RemoveButton.setFont(FontLoader.loadPixelFont(9));
 		p1RemoveButton.setBackground(new Color(30, 30, 30));
 		p1RemoveButton.setForeground(Color.LIGHT_GRAY);
 		p1RemoveButton.setOpaque(true);
@@ -2907,6 +2907,11 @@ public class MainWindow {
 		}
 		p2ReceivedDamageThisTurn = true;
 		CardData drawn = gameState.drawToP2DamageZone();
+		if (drawn == null) {
+			// Deck is empty — P2 cannot flip a card into their Damage Zone, so they lose immediately
+			triggerGameOver("Player 2 milled out - You Win!");
+			return;
+		}
 		p2DamageCount++;
 		boolean isEx = drawn != null && drawn.exBurst();
 		String cardInfo = drawn != null ? " — " + drawn.name() + (isEx ? " [EX BURST!]" : "") : "";
