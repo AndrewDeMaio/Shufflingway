@@ -1075,6 +1075,21 @@ final class GameContextImpl implements GameContext {
 				if (idx >= 0 && idx < mw.p2ForwardCards.size())
 					mw.p2ForwardCannotBeBlockedByCost.put(idx, new int[]{costVal, isMore ? 1 : 0});
 			}
+			@Override public void grantSelfCannotBeBlockedByCost(CardData source, int costVal, boolean isMore) {
+				boolean applied = false;
+				for (int i = 0; i < mw.p1ForwardCards.size() && !applied; i++)
+					if (mw.p1ForwardCards.get(i) == source) { setP1ForwardCannotBeBlockedByCost(i, costVal, isMore); applied = true; }
+				for (int i = 0; i < mw.p2ForwardCards.size() && !applied; i++)
+					if (mw.p2ForwardCards.get(i) == source) { setP2ForwardCannotBeBlockedByCost(i, costVal, isMore); applied = true; }
+				if (applied)
+					logEntry(source.name() + " gains \"cannot be blocked by a Forward of cost " + costVal
+							+ " or " + (isMore ? "more" : "less") + "\" until end of turn");
+			}
+			@Override public void grantCanAttackTwiceUntilEndOfTurn(CardData source) {
+				mw.grantedCanAttackTwice.add(source);
+				mw.endOfTurnEffects.add(ctx -> mw.grantedCanAttackTwice.remove(source));
+				logEntry(source.name() + " gains \"can attack twice in the same turn\" until end of turn");
+			}
 			@Override public void setOppForwardsCannotBlockInferiorPowerThisTurn() {
 				if (isP1()) mw.p2ForwardCannotBlockInferiorPower = true;
 				else        mw.p1ForwardCannotBlockInferiorPower = true;

@@ -555,6 +555,46 @@ public class CardBehaviorTest {
                 "the granted-ability effect text (with its quotes) should be recognized");
     }
 
+    // Granted field abilities via "gains \"…\" until the end of the turn":
+    // Tsukinowa (cannot be blocked by cost), Ace/Tifa (can attack twice, with traits/power).
+    @Test
+    void tsukinowaGrantsSelfCannotBeBlockedByCost() {
+        CardData tsukinowa = makeForward("Tsukinowa", "Wind", 2, 5000);
+        String effect = "Tsukinowa gains \"Tsukinowa cannot be blocked by a Forward of cost 5 or more.\" "
+                + "until the end of the turn.";
+        assertEquals("GainsQuotedFieldAbilityUntilEot", ActionResolver.matchedPatternName(effect, tsukinowa));
+        Consumer<GameContext> fn = ActionResolver.parse(effect, tsukinowa);
+        assertNotNull(fn);
+        GameContext ctx = mock(GameContext.class);
+        fn.accept(ctx);
+        verify(ctx).grantSelfCannotBeBlockedByCost(tsukinowa, 5, true);
+    }
+
+    @Test
+    void aceGrantsBraveAndAttackTwice() {
+        CardData ace = makeForward("Ace", "Fire", 3, 7000);
+        String effect = "Until the end of the turn, Ace gains Brave and \"Ace can attack twice in the same turn.\"";
+        Consumer<GameContext> fn = ActionResolver.parse(effect, ace);
+        assertNotNull(fn, "Ace's grant (Brave + attack twice) should parse");
+        GameContext ctx = mock(GameContext.class);
+        fn.accept(ctx);
+        verify(ctx).boostSourceForward(eq(ace), eq(0), eq(java.util.EnumSet.of(CardData.Trait.BRAVE)));
+        verify(ctx).grantCanAttackTwiceUntilEndOfTurn(ace);
+    }
+
+    @Test
+    void tifaGrantsPowerHasteAndAttackTwice() {
+        CardData tifa = makeForward("Tifa", "Fire", 4, 8000);
+        String effect = "Until the end of the turn, Tifa gains +2000 power, Haste and "
+                + "\"Tifa can attack twice in the same turn.\"";
+        Consumer<GameContext> fn = ActionResolver.parse(effect, tifa);
+        assertNotNull(fn, "Tifa's grant (power + Haste + attack twice) should parse");
+        GameContext ctx = mock(GameContext.class);
+        fn.accept(ctx);
+        verify(ctx).boostSourceForward(eq(tifa), eq(2000), eq(java.util.EnumSet.of(CardData.Trait.HASTE)));
+        verify(ctx).grantCanAttackTwiceUntilEndOfTurn(tifa);
+    }
+
     // Gladiolus: "Choose 1 Forward. Deal it damage equal to Gladiolus' power." — the card's own
     // text uses a bare apostrophe (no trailing 's'), so "<name>'s power" must accept "'s?".
     @Test

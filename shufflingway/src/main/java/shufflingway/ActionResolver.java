@@ -5100,6 +5100,12 @@ public class ActionResolver {
         result = tryParseGainOutgoingDmgBoostUntilEot(effectText, source);
         if (result != null) return result;
 
+        result = tryParseGainsQuotedFieldAbilityUntilEot(effectText, source);
+        if (result != null) return result;
+
+        result = tryParseUntilEotGainsPowerTraitsAndQuoted(effectText, source);
+        if (result != null) return result;
+
         result = tryParseDoubleOpponentIncomingDamageThisTurn(effectText);
         if (result != null) return result;
 
@@ -5727,6 +5733,8 @@ public class ActionResolver {
         if (tryParseDoubleOutgoingDamageThisTurnAlt(effectText, source) != null) return "DoubleOutgoingDamageThisTurnAlt";
         if (tryParseSelfOutgoingDmgBoostThisTurn(effectText, source) != null)   return "SelfOutgoingDmgBoostThisTurn";
         if (tryParseGainOutgoingDmgBoostUntilEot(effectText, source) != null)   return "GainOutgoingDmgBoostUntilEot";
+        if (tryParseGainsQuotedFieldAbilityUntilEot(effectText, source) != null) return "GainsQuotedFieldAbilityUntilEot";
+        if (tryParseUntilEotGainsPowerTraitsAndQuoted(effectText, source) != null) return "UntilEotGainsPowerTraitsAndQuoted";
         if (tryParseDoubleOpponentIncomingDamageThisTurn(effectText) != null)   return "DoubleOpponentIncomingDamageThisTurn";
         if (tryParseAllForwardIncomingDmgIncreaseThisTurn(effectText) != null)  return "AllForwardIncomingDmgIncreaseThisTurn";
         if (tryParseChooseForwardDoubleIncomingThisTurn(effectText) != null)    return "ChooseForwardDoubleIncomingThisTurn";
@@ -6251,6 +6259,8 @@ public class ActionResolver {
         if (tryParseDoubleOutgoingDamageThisTurnAlt(effectText, source) != null) return "DoubleOutgoingDamageThisTurnAlt";
         if (tryParseSelfOutgoingDmgBoostThisTurn(effectText, source) != null)   return "SelfOutgoingDmgBoostThisTurn";
         if (tryParseGainOutgoingDmgBoostUntilEot(effectText, source) != null)   return "GainOutgoingDmgBoostUntilEot";
+        if (tryParseGainsQuotedFieldAbilityUntilEot(effectText, source) != null) return "GainsQuotedFieldAbilityUntilEot";
+        if (tryParseUntilEotGainsPowerTraitsAndQuoted(effectText, source) != null) return "UntilEotGainsPowerTraitsAndQuoted";
         if (tryParseDoubleOpponentIncomingDamageThisTurn(effectText) != null)   return "DoubleOpponentIncomingDamageThisTurn";
         if (tryParseAllForwardIncomingDmgIncreaseThisTurn(effectText) != null)  return "AllForwardIncomingDmgIncreaseThisTurn";
         if (tryParseChooseForwardDoubleIncomingThisTurn(effectText) != null)    return "ChooseForwardDoubleIncomingThisTurn";
@@ -11054,6 +11064,77 @@ public class ActionResolver {
             ctx.logEntry(source.name() + " gains \"deals damage to a Forward — damage +" + amount
                     + "\" until end of turn");
             ctx.boostSelfOutgoingDamageThisTurn(source, amount);
+        };
+    }
+
+    // ---- Granted field abilities (self "gains \"…\" until the end of the turn") --------------------
+
+    /** A quoted "[Self] can attack twice in the same turn." field ability being granted. */
+    private static final Pattern GRANTED_CAN_ATTACK_TWICE = Pattern.compile(
+        "(?i)^(?<subj>.+?)\\s+can\\s+attack\\s+twice\\s+in\\s+the\\s+same\\s+turn[.!]?$");
+
+    /** A quoted "[Self] cannot be blocked by a Forward of cost N or more/less." field ability being granted. */
+    private static final Pattern GRANTED_CANNOT_BE_BLOCKED_BY_COST = Pattern.compile(
+        "(?i)^(?<subj>.+?)\\s+cannot\\s+be\\s+blocked\\s+by\\s+a\\s+Forward\\s+of\\s+cost\\s+(?<cost>\\d+)\\s+or\\s+(?<cmp>more|less)[.!]?$");
+
+    /**
+     * Routes a quoted field-ability text (the contents of {@code "…"} in a "gains" grant) to the
+     * primitive that applies it to {@code source} until end of turn. Returns {@code null} when the
+     * quoted ability isn't a supported self-grant (letting other parsers try). The subject named
+     * inside the quotes must be the source card.
+     */
+    private static Consumer<GameContext> grantedSelfFieldAbilityEffect(String quoted, CardData source) {
+        if (source == null) return null;
+        Matcher at = GRANTED_CAN_ATTACK_TWICE.matcher(quoted);
+        if (at.matches() && at.group("subj").trim().equalsIgnoreCase(source.name()))
+            return ctx -> ctx.grantCanAttackTwiceUntilEndOfTurn(source);
+        Matcher nb = GRANTED_CANNOT_BE_BLOCKED_BY_COST.matcher(quoted);
+        if (nb.matches() && nb.group("subj").trim().equalsIgnoreCase(source.name())) {
+            int cost = Integer.parseInt(nb.group("cost"));
+            boolean more = "more".equalsIgnoreCase(nb.group("cmp"));
+            return ctx -> ctx.grantSelfCannotBeBlockedByCost(source, cost, more);
+        }
+        return null;
+    }
+
+    /** "[Self] gains \"[quoted field ability]\" until the end of the turn." (e.g. Tsukinowa). */
+    private static final Pattern GAINS_QUOTED_FIELD_ABILITY_UNTIL_EOT = Pattern.compile(
+        "(?i)^(?<subject>.+?)\\s+gains\\s+\"(?<quoted>.+?)\"\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn[.!]?$");
+
+    private static Consumer<GameContext> tryParseGainsQuotedFieldAbilityUntilEot(String text, CardData source) {
+        if (source == null) return null;
+        Matcher m = GAINS_QUOTED_FIELD_ABILITY_UNTIL_EOT.matcher(text.trim());
+        if (!m.matches()) return null;
+        if (!m.group("subject").trim().equalsIgnoreCase(source.name())) return null;
+        return grantedSelfFieldAbilityEffect(m.group("quoted").trim(), source);
+    }
+
+    /**
+     * "Until the end of the turn, [Self] gains [+N power][, traits] and \"[quoted field ability]\"."
+     * (e.g. Ace, Tifa). Applies the power/trait boost via {@link GameContext#boostSourceForward} and
+     * routes the quoted ability to its grant primitive; returns {@code null} when the quoted ability
+     * isn't a supported self-grant.
+     */
+    private static final Pattern UNTIL_EOT_GAINS_POWER_TRAITS_AND_QUOTED = Pattern.compile(
+        "(?i)^Until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn,\\s+(?<subject>.+?)\\s+gains\\s+" +
+        "(?<boosts>.+?)\\s+and\\s+\"(?<quoted>.+?)\"[.!]?$");
+
+    private static final Pattern POWER_AMOUNT_PLUS = Pattern.compile("(?i)\\+(\\d+)\\s+power");
+
+    private static Consumer<GameContext> tryParseUntilEotGainsPowerTraitsAndQuoted(String text, CardData source) {
+        if (source == null) return null;
+        Matcher m = UNTIL_EOT_GAINS_POWER_TRAITS_AND_QUOTED.matcher(text.trim());
+        if (!m.matches()) return null;
+        if (!m.group("subject").trim().equalsIgnoreCase(source.name())) return null;
+        Consumer<GameContext> abilityGrant = grantedSelfFieldAbilityEffect(m.group("quoted").trim(), source);
+        if (abilityGrant == null) return null;
+        String boosts = m.group("boosts").trim();
+        Matcher pm = POWER_AMOUNT_PLUS.matcher(boosts);
+        int amount = pm.find() ? Integer.parseInt(pm.group(1)) : 0;
+        EnumSet<CardData.Trait> traits = parseTraits(boosts);
+        return ctx -> {
+            if (amount > 0 || !traits.isEmpty()) ctx.boostSourceForward(source, amount, traits);
+            abilityGrant.accept(ctx);
         };
     }
 

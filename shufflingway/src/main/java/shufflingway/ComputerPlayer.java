@@ -410,7 +410,7 @@ class ComputerPlayer {
 				if (p2SingleBefore == CardState.ACTIVE)
 					mw.autoAbilityTriggers.triggerAutoAbilitiesForBecomesDull(mw.p2ForwardCards.get(i), false);
 			}
-			if (attacker.canAttackTwice()) {
+			if (attacker.canAttackTwice() || mw.grantedCanAttackTwice.contains(attacker)) {
 				if (!mw.p2ForwardCanDoSecondAttack.remove(i))
 					mw.p2ForwardCanDoSecondAttack.add(i);
 			}

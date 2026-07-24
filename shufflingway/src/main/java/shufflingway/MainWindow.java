@@ -250,6 +250,8 @@ public class MainWindow {
 	/** Forwards eligible to attack a second time this turn (have attacked once and have "can attack twice"). */
 	final Set<Integer> p1ForwardCanDoSecondAttack = new HashSet<>();
 	final Set<Integer> p2ForwardCanDoSecondAttack = new HashSet<>();
+	/** Cards granted "can attack twice in the same turn" until end of turn (via an ability), keyed by instance. */
+	final Set<CardData> grantedCanAttackTwice = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
 	/** Forwards restricted from blocking until the end of their owner's turn (survives one end-phase). */
 	final Set<Integer> p1ForwardCannotBlockPersistent  = new HashSet<>();
 	final Set<Integer> p2ForwardCannotBlockPersistent  = new HashSet<>();
@@ -12216,8 +12218,8 @@ public class MainWindow {
 				if (p1AttackFwdBefore == CardState.ACTIVE)
 					autoAbilityTriggers.triggerAutoAbilitiesForBecomesDull(p1ForwardCards.get(idx), true);
 			}
-			// Track second-attack eligibility for "can attack twice" forwards
-			if (p1ForwardCards.get(idx).canAttackTwice()) {
+			// Track second-attack eligibility for "can attack twice" forwards (printed or granted this turn)
+			if (p1ForwardCards.get(idx).canAttackTwice() || grantedCanAttackTwice.contains(p1ForwardCards.get(idx))) {
 				if (!p1ForwardCanDoSecondAttack.remove(idx))
 					p1ForwardCanDoSecondAttack.add(idx);
 			}
