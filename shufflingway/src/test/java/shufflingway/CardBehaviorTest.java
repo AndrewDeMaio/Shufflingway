@@ -525,6 +525,142 @@ public class CardBehaviorTest {
                 "Choose 1 Backup. Return it to its owner's hand."));
     }
 
+    // Gladiolus: "Choose 1 Forward. Deal it damage equal to Gladiolus' power." — the card's own
+    // text uses a bare apostrophe (no trailing 's'), so "<name>'s power" must accept "'s?".
+    @Test
+    void dealDamageEqualToNamedPowerAllowsApostropheWithoutS() {
+        String full = "Choose 1 Forward. Deal it damage equal to Gladiolus' power.";
+        Consumer<GameContext> fn = ActionResolver.parse(full, null);
+        assertNotNull(fn, "\"Gladiolus' power\" (apostrophe, no s) should parse");
+        GameContext ctx = mock(GameContext.class);
+        when(ctx.consumePreloadedTargets()).thenReturn(null);
+        ForwardTarget t = new ForwardTarget(true, 0, ForwardTarget.CardZone.FORWARD);
+        when(ctx.selectCharacters(anyInt(), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(),
+                anyInt(), any(), anyInt(), any(), anyBoolean(), anyBoolean(), anyBoolean(),
+                any(), any(), any(), any(), anyBoolean(), any(), anyBoolean())).thenReturn(List.of(t));
+        when(ctx.fieldForwardPowerByName("Gladiolus")).thenReturn(6000);
+        fn.accept(ctx);
+        verify(ctx).damageTarget(t, 6000);
+    }
+
+    @Test
+    void dealDamageEqualToNamedPowerStillWorksWithApostropheS() {
+        String full = "Choose 1 Forward. Deal it damage equal to Ifrit's power.";
+        Consumer<GameContext> fn = ActionResolver.parse(full, null);
+        assertNotNull(fn);
+        GameContext ctx = mock(GameContext.class);
+        when(ctx.consumePreloadedTargets()).thenReturn(null);
+        ForwardTarget t = new ForwardTarget(true, 0, ForwardTarget.CardZone.FORWARD);
+        when(ctx.selectCharacters(anyInt(), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(),
+                anyInt(), any(), anyInt(), any(), anyBoolean(), anyBoolean(), anyBoolean(),
+                any(), any(), any(), any(), anyBoolean(), any(), anyBoolean())).thenReturn(List.of(t));
+        when(ctx.fieldForwardPowerByName("Ifrit")).thenReturn(9000);
+        fn.accept(ctx);
+        verify(ctx).damageTarget(t, 9000);
+    }
+
+    // "If the discarded card is of Wind Element, it also loses all its abilities until the end of the
+    // turn." — the target-additive discard conditional tacked onto a "Choose 1 Forward" primary.
+    private static final String DISCARD_COND_LOSE_ABILITIES =
+            "If the discarded card is of Wind Element, it also loses all its abilities until the end of the turn.";
+
+    @Test
+    void discardConditionalTargetLosesAbilitiesWhenElementMatches() {
+        Consumer<GameContext> fn = ActionResolver.parse(DISCARD_COND_LOSE_ABILITIES, null);
+        assertNotNull(fn, "target-additive discard conditional (\"it also loses...\") should parse");
+        GameContext ctx = mock(GameContext.class);
+        ForwardTarget t = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+        when(ctx.lastChosenTargets()).thenReturn(List.of(t));
+        when(ctx.lastDiscardedCostCardElement()).thenReturn("Wind");
+        fn.accept(ctx);
+        verify(ctx).targetLoseAllAbilitiesUntilEndOfTurn(t);
+    }
+
+    @Test
+    void discardConditionalTargetNoAbilityLossWhenElementDiffers() {
+        Consumer<GameContext> fn = ActionResolver.parse(DISCARD_COND_LOSE_ABILITIES, null);
+        assertNotNull(fn);
+        GameContext ctx = mock(GameContext.class);
+        when(ctx.lastDiscardedCostCardElement()).thenReturn("Fire");
+        fn.accept(ctx);
+        verify(ctx, never()).targetLoseAllAbilitiesUntilEndOfTurn(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void discardConditionalRoutesThroughChooseForwardPrimary() {
+        String full = "Choose 1 Forward. It loses 1000 power until the end of the turn. "
+                + "If the discarded card is of Wind Element, it also loses all its abilities until the end of the turn.";
+        Consumer<GameContext> fn = ActionResolver.parse(full, null);
+        assertNotNull(fn, "the full Choose-Forward + conditional-followup effect should parse");
+        GameContext ctx = mock(GameContext.class);
+        ForwardTarget t = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+        when(ctx.selectCharacters(anyInt(), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(),
+                anyInt(), any(), anyInt(), any(), anyBoolean(), anyBoolean(), anyBoolean(),
+                any(), any(), any(), any(), anyBoolean(), any(), anyBoolean())).thenReturn(List.of(t));
+        when(ctx.lastChosenTargets()).thenReturn(List.of(t));
+        when(ctx.lastDiscardedCostCardElement()).thenReturn("Wind");
+        fn.accept(ctx);
+        verify(ctx).targetLoseAllAbilitiesUntilEndOfTurn(t);
+    }
+
+    // Corsair: "draw 1 card, then discard 1 card from your hand. If the discarded card is a
+    // Multi-Element card, draw 1 card, then discard 1 card from your hand." — additive repeat.
+    private static final String CORSAIR_DRAW_DISCARD =
+            "draw 1 card, then discard 1 card from your hand. If the discarded card is a "
+            + "Multi-Element card, draw 1 card, then discard 1 card from your hand.";
+
+    @Test
+    void drawDiscardRepeatsWhenDiscardIsMultiElement() {
+        Consumer<GameContext> fn = ActionResolver.parse(CORSAIR_DRAW_DISCARD, null);
+        assertNotNull(fn, "draw/discard + Multi-Element conditional should parse");
+        GameContext ctx = mock(GameContext.class);
+        when(ctx.lastDiscardedCardIsMultiElement()).thenReturn(true);
+        fn.accept(ctx);
+        verify(ctx, times(2)).drawCards(1);
+        verify(ctx, times(2)).selfDiscard(1);
+    }
+
+    @Test
+    void drawDiscardDoesNotRepeatWhenDiscardNotMultiElement() {
+        Consumer<GameContext> fn = ActionResolver.parse(CORSAIR_DRAW_DISCARD, null);
+        assertNotNull(fn);
+        GameContext ctx = mock(GameContext.class);
+        when(ctx.lastDiscardedCardIsMultiElement()).thenReturn(false);
+        fn.accept(ctx);
+        verify(ctx, times(1)).drawCards(1);
+        verify(ctx, times(1)).selfDiscard(1);
+    }
+
+    // Prishe: "Discard 1 card: Prishe gains +2000 power ... If the discarded card is a Card Name
+    // Prishe, Prishe gains +4000 power ... instead." — the "instead" (replacement) discard conditional.
+    private static final String PRISHE_INSTEAD =
+            "Prishe gains +2000 power until the end of the turn. If the discarded card is a Card Name "
+            + "Prishe, Prishe gains +4000 power until the end of the turn instead.";
+
+    @Test
+    void discardConditionalSelfBoostUsesInsteadWhenNameMatches() {
+        CardData prishe = makeForward("Prishe", "Wind", 3, 5000);
+        Consumer<GameContext> fn = ActionResolver.parse(PRISHE_INSTEAD, prishe);
+        assertNotNull(fn, "self-boost 'instead' discard conditional should parse");
+        GameContext ctx = mock(GameContext.class);
+        when(ctx.lastDiscardedCostCardName()).thenReturn("Prishe");
+        fn.accept(ctx);
+        verify(ctx).boostSourceForward(eq(prishe), eq(4000), any());
+        verify(ctx, never()).boostSourceForward(eq(prishe), eq(2000), any());
+    }
+
+    @Test
+    void discardConditionalSelfBoostUsesBaseWhenNameDiffers() {
+        CardData prishe = makeForward("Prishe", "Wind", 3, 5000);
+        Consumer<GameContext> fn = ActionResolver.parse(PRISHE_INSTEAD, prishe);
+        assertNotNull(fn);
+        GameContext ctx = mock(GameContext.class);
+        when(ctx.lastDiscardedCostCardName()).thenReturn("Ulmia");
+        fn.accept(ctx);
+        verify(ctx).boostSourceForward(eq(prishe), eq(2000), any());
+        verify(ctx, never()).boostSourceForward(eq(prishe), eq(4000), any());
+    }
+
     // Gogo (15-028H) "Mimic": replay a special ability used this turn, without paying its cost.
     private static final String GOGO_TEXT =
             "When a Forward or Monster you control uses an action ability, Gogo uses the same action "

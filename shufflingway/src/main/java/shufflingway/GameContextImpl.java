@@ -3993,6 +3993,12 @@ final class GameContextImpl implements GameContext {
 			@Override public String lastDiscardedCostCardElement() {
 				return mw.lastDiscardedCostCard == null ? null : mw.lastDiscardedCostCard.elements()[0];
 			}
+			@Override public String lastDiscardedCostCardName() {
+				return mw.lastDiscardedCostCard == null ? null : mw.lastDiscardedCostCard.name();
+			}
+			@Override public boolean lastDiscardedCardIsMultiElement() {
+				return mw.lastDiscardedCard != null && mw.lastDiscardedCard.containsElement("Multi-Element");
+			}
 			@Override public int lastRemovedFromGameCardCost()  { return mw.lastRemovedFromGameCardCost; }
 			@Override public int lastRemovedFromGameCardPower() { return mw.lastRemovedFromGameCardPower; }
 			@Override public int countRemovedFromGame() {
@@ -4540,7 +4546,7 @@ final class GameContextImpl implements GameContext {
 					for (int i = 0; i < actual; i++) {
 						int idx = MainWindow.pickWorstHandCard0(hand);
 						CardData d = mw.playerBreakFromHand(false,idx);
-						if (d != null) { logEntry("[P2] Discards " + d.name()); mw.p2DiscardedByEffectThisTurn = true; mw.lastDiscardedCardName = d.name(); }
+						if (d != null) { logEntry("[P2] Discards " + d.name()); mw.p2DiscardedByEffectThisTurn = true; mw.lastDiscardedCardName = d.name(); mw.lastDiscardedCard = d; }
 					}
 					mw.refreshP2HandCountLabel();
 					mw.refreshP2BreakLabel();

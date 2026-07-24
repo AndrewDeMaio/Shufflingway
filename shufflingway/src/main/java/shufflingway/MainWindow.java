@@ -456,6 +456,8 @@ public class MainWindow {
 	// Power and name of the card most recently discarded as part of resolving an ability.
 	int      lastDiscardedForwardPower    = 0;
 	String   lastDiscardedCardName        = null;
+	// Card most recently discarded by an effect (not a cost), for "If the discarded card is …" conditionals.
+	CardData lastDiscardedCard            = null;
 	// Card most recently discarded as a cost payment (for element-conditional branch effects).
 	CardData lastDiscardedCostCard        = null;
 	// Cost/power of the Forward most recently removed from the game by a "remove it from the game" effect.
@@ -4956,7 +4958,11 @@ public class MainWindow {
 			selected.sort(Collections.reverseOrder());
 			for (int di : selected) {
 				CardData d = playerBreakFromHand(true, di);
-				if (d != null) logEntry("Discards " + d.name() + (forcedByOpponent ? " (forced by opponent)" : ""));
+				if (d != null) {
+					logEntry("Discards " + d.name() + (forcedByOpponent ? " (forced by opponent)" : ""));
+					lastDiscardedCard = d;
+					lastDiscardedCardName = d.name();
+				}
 			}
 			if (!selected.isEmpty()) p1DiscardedByEffectThisTurn = true;
 			refreshP1HandLabel();
@@ -8150,7 +8156,7 @@ public class MainWindow {
 		}
 
 		if (!gameState.getStack().isEmpty()) showStackWindow();
-		else { lastDiscardedForwardPower = 0; lastDiscardedCardName = null; lastDiscardedCostCard = null; }
+		else { lastDiscardedForwardPower = 0; lastDiscardedCardName = null; lastDiscardedCard = null; lastDiscardedCostCard = null; }
 	}
 
 	/** Calls {@link #showStackWindow()} only when we are not already inside a stack resolution chain. */

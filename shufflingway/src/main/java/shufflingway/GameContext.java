@@ -1237,6 +1237,20 @@ public interface GameContext {
     String lastDiscardedCostCardElement();
 
     /**
+     * Returns the name of the card most recently discarded as a cost payment in the current ability
+     * chain, or {@code null} if none has been. Used by "If the discarded card is a Card Name X"
+     * conditionals attached to a cost-discard ability.
+     */
+    String lastDiscardedCostCardName();
+
+    /**
+     * Returns {@code true} when the card most recently discarded by an effect (not a cost) in the
+     * current ability chain is a Multi-Element card. Used by "If the discarded card is a
+     * Multi-Element card, …" conditionals attached to a draw/discard effect.
+     */
+    boolean lastDiscardedCardIsMultiElement();
+
+    /**
      * Returns the CP cost of the Forward most recently removed from the game by a
      * "remove it from the game" effect in the current ability chain.
      * Returns {@code 0} if no Forward has been removed yet.

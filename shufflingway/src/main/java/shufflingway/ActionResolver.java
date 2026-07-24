@@ -597,7 +597,7 @@ public class ActionResolver {
             "|(?<dullforward>the\\s+power\\s+of\\s+the\\s+dull(?:ed)?\\s+Forward)" +
             "|(?<discardedfwd>the\\s+discarded\\s+Forward(?:'s\\s+power)?)" +
             "|(?<bzcostfwd>the\\s+power\\s+of\\s+the\\s+Forward\\s+put\\s+in(?:to)?\\s+the\\s+Break\\s+Zone)" +
-            "|(?<card>.+?)'s\\s+power" +
+            "|(?<card>.+?)'s?\\s+power" +
         ")"
     );
 
@@ -4784,6 +4784,15 @@ public class ActionResolver {
         result = tryParseDiscardConditionalElementSingle(effectText, source, xValue);
         if (result != null) return result;
 
+        result = tryParseDiscardConditionalTargetLoseAbilities(effectText);
+        if (result != null) return result;
+
+        result = tryParseDiscardConditionalSelfBoostInstead(effectText, source, xValue);
+        if (result != null) return result;
+
+        result = tryParseDrawDiscardIfMultiElement(effectText);
+        if (result != null) return result;
+
         result = tryParseIfCastAtLeast(effectText, source, xValue);
         if (result != null) return result;
 
@@ -5861,6 +5870,9 @@ public class ActionResolver {
         if (tryParseIfOppControlsNOrMoreCondTypeGate(effectText, source, 0) != null) return "IfOppControlsNOrMoreCondType";
         if (tryParseDiscardConditionalElement(effectText, source, 0)   != null) return "DiscardConditionalElement";
         if (tryParseDiscardConditionalElementSingle(effectText, source, 0) != null) return "DiscardConditionalElementSingle";
+        if (tryParseDiscardConditionalTargetLoseAbilities(effectText) != null) return "DiscardConditionalTargetLoseAbilities";
+        if (tryParseDiscardConditionalSelfBoostInstead(effectText, source, 0) != null) return "DiscardConditionalSelfBoostInstead";
+        if (tryParseDrawDiscardIfMultiElement(effectText) != null) return "DrawDiscardIfMultiElement";
         if (tryParseConditionalOpponentHand(effectText, source, 0)     != null) return "ConditionalOpponentHand";
         if (tryParseConditionalOpponentHandMin(effectText, source, 0) != null) return "ConditionalOpponentHandMin";
         if (tryParseYouMayPutSelfToBZWhenDoSo(effectText, source)    != null) return "YouMayPutSelfToBZWhenDoSo";
@@ -6025,6 +6037,9 @@ public class ActionResolver {
         if (tryParseIfOppControlsNOrMoreCondTypeGate(effectText, source, 0) != null) return "IfOppControlsNOrMoreCondTypeDraw";
         if (tryParseDiscardConditionalElement(effectText, source, 0)    != null) return "DiscardConditionalElement";
         if (tryParseDiscardConditionalElementSingle(effectText, source, 0) != null) return "DiscardConditionalElementSingle";
+        if (tryParseDiscardConditionalTargetLoseAbilities(effectText) != null) return "DiscardConditionalTargetLoseAbilities";
+        if (tryParseDiscardConditionalSelfBoostInstead(effectText, source, 0) != null) return "DiscardConditionalSelfBoostInstead";
+        if (tryParseDrawDiscardIfMultiElement(effectText) != null) return "DrawDiscardIfMultiElement";
         if (tryParseSelectNumber(effectText, source)          != null) return "SelectNumber";
         if (tryParseForEachJobAndNameDealDamageToForwards(effectText)   != null) return "ForEachJobAndNameDealDamageToForwards";
         if (tryParseSelfGainsWhenAttacksEOT(effectText, source)        != null) return "SelfGainsWhenAttacksEOT";
@@ -11762,6 +11777,95 @@ public class ActionResolver {
                 effect.accept(ctx);
             } else {
                 ctx.logEntry("Discard conditional: discarded card is " + discardedElem + ", not " + elem + " — no bonus");
+            }
+        };
+    }
+
+    /**
+     * Matches the target-additive discard conditional that tacks an extra effect onto the Forward
+     * the primary already chose: "If the discarded card is of Elem Element, it also loses all its
+     * abilities until the end of the turn." (The "it/they" pronoun refers back to the chosen target,
+     * so the effect is applied to {@link GameContext#lastChosenTargets()} rather than re-selected.)
+     */
+    private static final Pattern DISCARD_CONDITIONAL_TARGET_LOSE_ABILITIES = Pattern.compile(
+        "(?i)^If\\s+the\\s+discarded\\s+card\\s+is\\s+of\\s+(?<elem>\\w+)\\s+Element\\s*,\\s*" +
+        "(?:it|they)\\s+(?:also\\s+)?loses?\\s+all\\s+(?:its|their)\\s+abilities\\s+" +
+        "until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn[.!]?$");
+
+    private static Consumer<GameContext> tryParseDiscardConditionalTargetLoseAbilities(String text) {
+        Matcher m = DISCARD_CONDITIONAL_TARGET_LOSE_ABILITIES.matcher(text.trim());
+        if (!m.matches()) return null;
+        final String needElem = m.group("elem").trim();
+        return ctx -> {
+            String de = ctx.lastDiscardedCostCardElement();
+            if (de == null) { ctx.logEntry("Discard conditional: no cost card recorded"); return; }
+            if (de.equalsIgnoreCase(needElem)) {
+                ctx.logEntry("Discard conditional: discarded " + de
+                        + " card — chosen Forward loses all abilities until end of turn");
+                for (ForwardTarget t : ctx.lastChosenTargets()) ctx.targetLoseAllAbilitiesUntilEndOfTurn(t);
+            } else {
+                ctx.logEntry("Discard conditional: discarded card is " + de + ", not " + needElem + " — no ability loss");
+            }
+        };
+    }
+
+    /**
+     * Matches the "instead" (replacement) discard conditional on a self power boost:
+     * "[Self] gains +A power until the end of the turn. If the discarded card is a Card Name X,
+     * [Self] gains +B power until the end of the turn instead." Applies the boosted (alt) branch
+     * when the cost-discarded card is named X, otherwise the base branch — never both.
+     */
+    private static final Pattern DISCARD_CONDITIONAL_SELF_BOOST_INSTEAD = Pattern.compile(
+        "(?is)^(?<primary>.+?\\s+gains?\\s+\\+\\d+\\s+power\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn)\\.\\s+" +
+        "If\\s+the\\s+discarded\\s+card\\s+is\\s+(?:a\\s+)?Card\\s+Name\\s+(?<name>.+?)\\s*,\\s*" +
+        "(?<alt>.+?\\s+gains?\\s+\\+\\d+\\s+power\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn)\\s+instead[.!]?$");
+
+    private static Consumer<GameContext> tryParseDiscardConditionalSelfBoostInstead(String text, CardData source, int xValue) {
+        Matcher m = DISCARD_CONDITIONAL_SELF_BOOST_INSTEAD.matcher(text.trim());
+        if (!m.matches()) return null;
+        Consumer<GameContext> primary = parse(m.group("primary").trim(), source, xValue);
+        Consumer<GameContext> alt     = parse(m.group("alt").trim(), source, xValue);
+        if (primary == null || alt == null) return null;
+        final String needName = m.group("name").trim();
+        return ctx -> {
+            String dn = ctx.lastDiscardedCostCardName();
+            if (dn != null && dn.equalsIgnoreCase(needName)) {
+                ctx.logEntry("Discard conditional: discarded Card Name " + needName + " — applying the \"instead\" effect");
+                alt.accept(ctx);
+            } else {
+                primary.accept(ctx);
+            }
+        };
+    }
+
+    /**
+     * Matches the no-target additive discard conditional gated on a Multi-Element discard:
+     * "draw A card(s), then discard B card(s) from your hand. If the discarded card is a
+     * Multi-Element card, draw C card(s), then discard D card(s) from your hand." (Corsair) —
+     * repeats the draw/discard only when the first discard was a Multi-Element card.
+     */
+    private static final Pattern DRAW_DISCARD_IF_MULTI_ELEMENT = Pattern.compile(
+        "(?i)^draw\\s+(?<d1>\\d+)\\s+cards?,\\s+then\\s+discard\\s+(?<x1>\\d+)\\s+cards?\\s+from\\s+your\\s+hand\\.\\s+" +
+        "If\\s+the\\s+discarded\\s+card\\s+is\\s+a\\s+Multi-Element\\s+card,\\s+" +
+        "draw\\s+(?<d2>\\d+)\\s+cards?,\\s+then\\s+discard\\s+(?<x2>\\d+)\\s+cards?\\s+from\\s+your\\s+hand[.!]?$");
+
+    private static Consumer<GameContext> tryParseDrawDiscardIfMultiElement(String text) {
+        Matcher m = DRAW_DISCARD_IF_MULTI_ELEMENT.matcher(text.trim());
+        if (!m.matches()) return null;
+        int d1 = Integer.parseInt(m.group("d1"));
+        int x1 = Integer.parseInt(m.group("x1"));
+        int d2 = Integer.parseInt(m.group("d2"));
+        int x2 = Integer.parseInt(m.group("x2"));
+        return ctx -> {
+            ctx.logEntry("Effect: Draw " + d1 + ", then discard " + x1);
+            ctx.drawCards(d1);
+            ctx.selfDiscard(x1);
+            if (ctx.lastDiscardedCardIsMultiElement()) {
+                ctx.logEntry("Effect: discarded a Multi-Element card — Draw " + d2 + ", then discard " + x2 + " again");
+                ctx.drawCards(d2);
+                ctx.selfDiscard(x2);
+            } else {
+                ctx.logEntry("Effect: discarded card is not Multi-Element — no repeat");
             }
         };
     }
