@@ -303,6 +303,9 @@ public class CardScraper {
             CardScraper scraper = new CardScraper();
             List<ScrapedCard> total = scraper.scrapeOnePage("1");
             db.saveCards(total);
+            // Final ETL step: upgrade identified first prints to their reprint's cleaner text.
+            int upgraded = db.applyReprintTextUpgrades();
+            System.out.printf("Applied %d reprint text upgrade(s)%n", upgraded);
         } catch (SQLException e) {
             System.err.println("FAIL - database error:");
             e.printStackTrace();

@@ -382,7 +382,69 @@ public class CardDatabase implements AutoCloseable {
     /** Run via: mvn compile exec:java -Dexec.mainClass=scraper.CardDatabase */
     public static void main(String[] args) throws SQLException {
         try (CardDatabase db = new CardDatabase("shufflingway.db")) {
-            System.out.println("Migration complete.");
+            int upgraded = db.applyReprintTextUpgrades();
+            System.out.printf("Migration complete. Applied %d reprint text upgrade(s).%n", upgraded);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Reprint text upgrades (final ETL step)
+    // -------------------------------------------------------------------------
+
+    /**
+     * First-print serials whose card text should be replaced by the cleaner wording
+     * of their reprint. A reprint is stored under a combined serial of the form
+     * {@code "Re-XXX/<firstPrint>"} — i.e. the reprint's own code plus the first
+     * print's serial after a slash — so the first-print serial listed here is all
+     * that's needed to locate the matching reprint row.
+     *
+     * Only add a serial here after confirming the reprint reproduces the same
+     * gameplay with clearer text (e.g. quoted nested choices), not an errata that
+     * changes the card's function.
+     */
+    private static final List<String> REPRINT_TEXT_UPGRADES = List.of(
+            "11-140S"  // Kadaj — reprint quotes the three nested "select 1 of 3 actions" choices
+    );
+
+    /**
+     * Final ETL step: for each first-print serial in {@link #REPRINT_TEXT_UPGRADES},
+     * copy the already-normalized {@code text_en} from its reprint row onto the
+     * first-print row (recomputing the Limit Break columns from the new text).
+     *
+     * Idempotent — re-running against an already-upgraded database simply rewrites
+     * the same text. Safe to call whenever both the first print and its reprint have
+     * been scraped; entries with no matching reprint row are skipped.
+     *
+     * @return number of first-print rows updated
+     */
+    public int applyReprintTextUpgrades() throws SQLException {
+        int updated = 0;
+        for (String serial : REPRINT_TEXT_UPGRADES) {
+            String reprintText = fetchReprintText(serial);
+            if (reprintText == null) continue;
+            try (PreparedStatement ps = conn.prepareStatement(
+                    "UPDATE cards SET text_en = ?, limit_break = ?, lb_cost = ? WHERE serial = ?")) {
+                ps.setString(1, reprintText);
+                ps.setInt   (2, computeLimitBreak(reprintText));
+                Integer lbCost = computeLbCost(reprintText);
+                if (lbCost != null) ps.setInt (3, lbCost);
+                else                ps.setNull(3, Types.INTEGER);
+                ps.setString(4, serial);
+                updated += ps.executeUpdate();
+            }
+        }
+        return updated;
+    }
+
+    /** Returns the reprint's text for a first print, or {@code null} if no reprint row exists. */
+    private String fetchReprintText(String firstPrintSerial) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT text_en FROM cards " +
+                "WHERE serial LIKE 'Re-%/%' AND SUBSTR(serial, INSTR(serial, '/') + 1) = ? LIMIT 1")) {
+            ps.setString(1, firstPrintSerial);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getString("text_en") : null;
+            }
         }
     }
 
