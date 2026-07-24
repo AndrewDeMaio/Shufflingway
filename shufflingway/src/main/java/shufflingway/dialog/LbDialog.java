@@ -1,7 +1,15 @@
 package shufflingway.dialog;
 
-import shufflingway.*;
-import java.awt.*;
+import java.awt.BorderLayout;
+import java.awt.Color;
+import java.awt.Cursor;
+import java.awt.Dimension;
+import java.awt.FlowLayout;
+import java.awt.FontMetrics;
+import java.awt.Graphics2D;
+import java.awt.GridLayout;
+import java.awt.Image;
+import java.awt.RenderingHints;
 import java.awt.color.ColorSpace;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
@@ -12,9 +20,23 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
-import javax.swing.*;
+
+import javax.swing.BorderFactory;
+import javax.swing.ImageIcon;
+import javax.swing.JButton;
+import javax.swing.JDialog;
+import javax.swing.JFrame;
+import javax.swing.JLabel;
+import javax.swing.JPanel;
+import javax.swing.SwingConstants;
+import javax.swing.SwingWorker;
+
+import shufflingway.CardData;
+import shufflingway.FontLoader;
+import shufflingway.ImageCache;
 import shufflingway.graphics.CardAnimation;
-import static shufflingway.graphics.CardAnimation.*;
+import static shufflingway.graphics.CardAnimation.CARD_H;
+import static shufflingway.graphics.CardAnimation.CARD_W;
 
 public class LbDialog {
 
@@ -31,7 +53,7 @@ public class LbDialog {
     public static void show(JFrame owner, List<CardData> lbDeck, Callbacks cb) {
         if (lbDeck.isEmpty()) return;
 
-        JDialog dlg = new JDialog(owner, "Limit Break", true);
+        JDialog dlg = new JDialog(owner, "Limit Break Deck", true);
         dlg.setResizable(false);
         dlg.setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
 

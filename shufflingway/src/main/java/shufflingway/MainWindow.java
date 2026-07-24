@@ -1071,7 +1071,7 @@ public class MainWindow {
 		JScrollPane p1ForwardZone = buildForwardZonePanel(true);
 
 		// --- Next Phase Button ---
-		nextPhaseButton = new JButton("<html><center>NEXT<br>&#9658;</center></html>");
+		nextPhaseButton = new JButton("<html><center>Next<br>&#9658;</center></html>");
 		nextPhaseButton.setFont(FontLoader.loadPixelFont(14));
 		nextPhaseButton.setEnabled(false);
 		nextPhaseButton.setFocusPainted(false);
@@ -1809,7 +1809,7 @@ public class MainWindow {
 		if (handPanel == null) return;
 		handPanel.removeAll();
 		int n = gameState.getP1Hand().size();
-		String text = n == 0 ? "HAND" : "HAND -" + n + "-";
+		String text = n == 0 ? "HAND" : "HAND - " + n;
 		int panelW = handPanel.getWidth() > 0 ? handPanel.getWidth() : sidePanelW;
 		int handH  = handPanel.getHeight() > 0 ? handPanel.getHeight() : (int)(CARD_H * 0.6);
 
@@ -2421,7 +2421,7 @@ public class MainWindow {
 			p1LimitLabel.setText("LIMIT");
 			p1LimitLabel.setForeground(new Color(80, 65, 20));
 		} else {
-			p1LimitLabel.setText("LIMIT -" + playable + "-");
+			p1LimitLabel.setText("LIMIT - " + playable);
 			p1LimitLabel.setForeground(Color.BLACK);
 		}
 	}
@@ -2435,7 +2435,7 @@ public class MainWindow {
 			p2LimitButton.setText("LIMIT");
 			p2LimitButton.setForeground(new Color(80, 65, 20));
 		} else {
-			p2LimitButton.setText("LIMIT -" + playable + "-");
+			p2LimitButton.setText("LIMIT - " + playable);
 			p2LimitButton.setForeground(Color.BLACK);
 		}
 	}
