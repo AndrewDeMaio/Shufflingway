@@ -5347,6 +5347,9 @@ public class ActionResolver {
         result = tryParseDrawDiscardRetriggerIfCardName(effectText, source);
         if (result != null) return result;
 
+        result = tryParseDrawOnePerForwardCapped(effectText);
+        if (result != null) return result;
+
         result = tryParseDrawCards(effectText);
         if (result != null) return result;
 
@@ -12291,6 +12294,28 @@ public class ActionResolver {
                 ctx.logEntry("Effect: Discarded Card Name " + cardName + " — triggering auto-ability again");
                 ctx.retriggerAutoAbility(source, "beginning of attack phase");
             }
+        };
+    }
+
+    /**
+     * Matches "draw 1 card for each Forward you control. You can only draw up to N cards with this
+     * ability." (Hilda 6-122H). Draws {@code min(Forwards you control, N)} — the cap is a hard limit
+     * on the ability, not deck protection, so a too-small deck still mills the drawer out.
+     */
+    private static final Pattern DRAW_ONE_PER_FORWARD_CAPPED = Pattern.compile(
+        "(?i)^draw\\s+1\\s+card\\s+for\\s+each\\s+Forward\\s+you\\s+control\\.\\s+" +
+        "You\\s+can\\s+only\\s+draw\\s+up\\s+to\\s+(?<cap>\\d+)\\s+cards?\\s+with\\s+this\\s+ability[.!]?$");
+
+    private static Consumer<GameContext> tryParseDrawOnePerForwardCapped(String text) {
+        Matcher m = DRAW_ONE_PER_FORWARD_CAPPED.matcher(text.trim());
+        if (!m.matches()) return null;
+        int cap = Integer.parseInt(m.group("cap"));
+        return ctx -> {
+            int forwards = ctx.selfForwardCount();
+            int draws = Math.min(forwards, cap);
+            ctx.logEntry("Effect: Draw 1 per Forward you control (" + forwards + "), up to " + cap
+                    + " → draw " + draws);
+            if (draws > 0) ctx.drawCards(draws);
         };
     }
 

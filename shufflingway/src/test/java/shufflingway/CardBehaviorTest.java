@@ -555,6 +555,39 @@ public class CardBehaviorTest {
                 "the granted-ability effect text (with its quotes) should be recognized");
     }
 
+    // Hilda (6-122H): "draw 1 card for each Forward you control. You can only draw up to 4 cards
+    // with this ability." — draws min(Forwards, 4).
+    private static final String HILDA_DRAW =
+            "draw 1 card for each Forward you control. You can only draw up to 4 cards with this ability.";
+
+    @Test
+    void hildaDrawsOnePerForwardBelowCap() {
+        Consumer<GameContext> fn = ActionResolver.parse(HILDA_DRAW, null);
+        assertNotNull(fn, "Hilda's draw-per-Forward ability should parse");
+        GameContext ctx = mock(GameContext.class);
+        when(ctx.selfForwardCount()).thenReturn(2);
+        fn.accept(ctx);
+        verify(ctx).drawCards(2);
+    }
+
+    @Test
+    void hildaDrawCapsAtFour() {
+        Consumer<GameContext> fn = ActionResolver.parse(HILDA_DRAW, null);
+        GameContext ctx = mock(GameContext.class);
+        when(ctx.selfForwardCount()).thenReturn(6);
+        fn.accept(ctx);
+        verify(ctx).drawCards(4);
+    }
+
+    @Test
+    void hildaDrawsNothingWithNoForwards() {
+        Consumer<GameContext> fn = ActionResolver.parse(HILDA_DRAW, null);
+        GameContext ctx = mock(GameContext.class);
+        when(ctx.selfForwardCount()).thenReturn(0);
+        fn.accept(ctx);
+        verify(ctx, never()).drawCards(anyInt());
+    }
+
     // "Choose 1 Forward. Remove the top card of your deck from the game. If the removed card is a
     // Forward, break it. If not, deal it 3000 damage." — both branches act on the chosen Forward.
     private static final String RFP_TOP_DECK_IF_FWD =

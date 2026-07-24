@@ -816,7 +816,8 @@ public class MainWindow {
 
 		p2RemoveButton = new JButton("RFP");
 		p2RemoveButton.setToolTipText("Player 2 Removed From Play");
-		p2RemoveButton.setFont(FontLoader.loadPixelFont(9));
+		p2RemoveButton.setFont(FontLoader.loadPixelFont(10));
+		p2RemoveButton.setMargin(new Insets(0, 0, 0, 0));
 		p2RemoveButton.setBackground(new Color(30, 30, 30));
 		p2RemoveButton.setForeground(Color.LIGHT_GRAY);
 		p2RemoveButton.setOpaque(true);
@@ -988,7 +989,8 @@ public class MainWindow {
 
 		p1RemoveButton = new JButton("RFP");
 		p1RemoveButton.setToolTipText("Player 1 Removed From Play");
-		p1RemoveButton.setFont(FontLoader.loadPixelFont(9));
+		p1RemoveButton.setFont(FontLoader.loadPixelFont(10));
+		p1RemoveButton.setMargin(new Insets(0, 0, 0, 0));
 		p1RemoveButton.setBackground(new Color(30, 30, 30));
 		p1RemoveButton.setForeground(Color.LIGHT_GRAY);
 		p1RemoveButton.setOpaque(true);
