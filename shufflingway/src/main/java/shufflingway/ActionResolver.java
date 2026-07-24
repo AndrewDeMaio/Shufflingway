@@ -5097,6 +5097,9 @@ public class ActionResolver {
         result = tryParseSelfOutgoingDmgBoostThisTurn(effectText, source);
         if (result != null) return result;
 
+        result = tryParseGainOutgoingDmgBoostUntilEot(effectText, source);
+        if (result != null) return result;
+
         result = tryParseDoubleOpponentIncomingDamageThisTurn(effectText);
         if (result != null) return result;
 
@@ -5723,6 +5726,7 @@ public class ActionResolver {
         if (tryParseDoubleOutgoingDamageThisTurn(effectText, source) != null)    return "DoubleOutgoingDamageThisTurn";
         if (tryParseDoubleOutgoingDamageThisTurnAlt(effectText, source) != null) return "DoubleOutgoingDamageThisTurnAlt";
         if (tryParseSelfOutgoingDmgBoostThisTurn(effectText, source) != null)   return "SelfOutgoingDmgBoostThisTurn";
+        if (tryParseGainOutgoingDmgBoostUntilEot(effectText, source) != null)   return "GainOutgoingDmgBoostUntilEot";
         if (tryParseDoubleOpponentIncomingDamageThisTurn(effectText) != null)   return "DoubleOpponentIncomingDamageThisTurn";
         if (tryParseAllForwardIncomingDmgIncreaseThisTurn(effectText) != null)  return "AllForwardIncomingDmgIncreaseThisTurn";
         if (tryParseChooseForwardDoubleIncomingThisTurn(effectText) != null)    return "ChooseForwardDoubleIncomingThisTurn";
@@ -6246,6 +6250,7 @@ public class ActionResolver {
         if (tryParseDoubleOutgoingDamageThisTurn(effectText, source) != null)    return "DoubleOutgoingDamageThisTurn";
         if (tryParseDoubleOutgoingDamageThisTurnAlt(effectText, source) != null) return "DoubleOutgoingDamageThisTurnAlt";
         if (tryParseSelfOutgoingDmgBoostThisTurn(effectText, source) != null)   return "SelfOutgoingDmgBoostThisTurn";
+        if (tryParseGainOutgoingDmgBoostUntilEot(effectText, source) != null)   return "GainOutgoingDmgBoostUntilEot";
         if (tryParseDoubleOpponentIncomingDamageThisTurn(effectText) != null)   return "DoubleOpponentIncomingDamageThisTurn";
         if (tryParseAllForwardIncomingDmgIncreaseThisTurn(effectText) != null)  return "AllForwardIncomingDmgIncreaseThisTurn";
         if (tryParseChooseForwardDoubleIncomingThisTurn(effectText) != null)    return "ChooseForwardDoubleIncomingThisTurn";
@@ -11023,6 +11028,33 @@ public class ActionResolver {
         if (!m.group("subject").trim().equalsIgnoreCase(source.name())) return null;
         int amount = Integer.parseInt(m.group("amount"));
         return ctx -> ctx.boostSelfOutgoingDamageThisTurn(source, amount);
+    }
+
+    /**
+     * Matches an action ability that temporarily grants the source card its own "deals damage to a
+     * Forward → damage increases" field ability:
+     * "[Self] gains \"If [Self] deals damage to a Forward, the damage increases by N instead.\"
+     * until the end of the turn." (Delita 16-014R). Both the card that "gains" the ability and the
+     * subject named inside the quoted ability must be the source card. The granted ability lasts the
+     * turn, which is exactly a self outgoing-flat-boost this turn.
+     */
+    private static final Pattern GAINS_OUTGOING_DMG_BOOST_UNTIL_EOT = Pattern.compile(
+        "(?i)^(?<subject>.+?)\\s+gains\\s+\"If\\s+(?<inner>.+?)\\s+deals\\s+damage\\s+to\\s+a\\s+Forward" +
+        "(?:\\s+opponent\\s+controls?)?,?\\s+the\\s+damage\\s+increases?\\s+by\\s+(?<amount>\\d+)(?:\\s+instead)?\\.\"\\s+" +
+        "until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn[.!]?$");
+
+    private static Consumer<GameContext> tryParseGainOutgoingDmgBoostUntilEot(String text, CardData source) {
+        if (source == null) return null;
+        Matcher m = GAINS_OUTGOING_DMG_BOOST_UNTIL_EOT.matcher(text.trim());
+        if (!m.matches()) return null;
+        if (!m.group("subject").trim().equalsIgnoreCase(source.name())) return null;
+        if (!m.group("inner").trim().equalsIgnoreCase(source.name())) return null;
+        int amount = Integer.parseInt(m.group("amount"));
+        return ctx -> {
+            ctx.logEntry(source.name() + " gains \"deals damage to a Forward — damage +" + amount
+                    + "\" until end of turn");
+            ctx.boostSelfOutgoingDamageThisTurn(source, amount);
+        };
     }
 
     /**

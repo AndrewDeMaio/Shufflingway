@@ -525,6 +525,36 @@ public class CardBehaviorTest {
                 "Choose 1 Backup. Return it to its owner's hand."));
     }
 
+    // Delita (16-014R): "Remove 1 Forward other than Delita from the game: Delita gains \"If Delita
+    // deals damage to a Forward, the damage increases by 2000 instead.\" until the end of the turn."
+    // The action ability grants the source its own outgoing-flat-boost field ability for the turn.
+    private static final String DELITA_GRANT_EFFECT =
+            "Delita gains \"If Delita deals damage to a Forward, the damage increases by 2000 instead.\" "
+            + "until the end of the turn.";
+
+    @Test
+    void delitaGrantsSelfOutgoingDamageBoostUntilEot() {
+        CardData delita = makeForward("Delita", "Ice", 4, 8000);
+        assertEquals("GainOutgoingDmgBoostUntilEot",
+                ActionResolver.matchedPatternName(DELITA_GRANT_EFFECT, delita));
+        Consumer<GameContext> fn = ActionResolver.parse(DELITA_GRANT_EFFECT, delita);
+        assertNotNull(fn);
+        GameContext ctx = mock(GameContext.class);
+        fn.accept(ctx);
+        verify(ctx).boostSelfOutgoingDamageThisTurn(delita, 2000);
+    }
+
+    @Test
+    void delitaGrantActionAbilityParsesFromCardText() {
+        String abilityLine = "Remove 1 Forward other than Delita from the game: " + DELITA_GRANT_EFFECT;
+        CardData delita = makeForward("Delita", "Ice", 4, 8000);
+        ActionAbility ab = CardData.parseActionAbilities(abilityLine).stream().findFirst().orElse(null);
+        assertNotNull(ab, "the action ability should parse");
+        assertFalse(ab.removeFromGameCosts().isEmpty(), "its cost is remove-from-game");
+        assertNotNull(ActionResolver.parse(ab.effectText(), delita),
+                "the granted-ability effect text (with its quotes) should be recognized");
+    }
+
     // Gladiolus: "Choose 1 Forward. Deal it damage equal to Gladiolus' power." — the card's own
     // text uses a bare apostrophe (no trailing 's'), so "<name>'s power" must accept "'s?".
     @Test
