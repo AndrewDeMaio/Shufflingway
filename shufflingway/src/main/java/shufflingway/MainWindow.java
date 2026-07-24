@@ -145,7 +145,8 @@ public class MainWindow {
 	JLabel p2DeckLabel;
 	private CrystalDisplay p1CrystalDisplay;
 	private CrystalDisplay p2CrystalDisplay;
-	private JButton p1LimitLabel;
+	private JButton p1LimitButton;
+	private JButton p2LimitButton;
 	private JPanel handPanel;
 	JLabel p1BreakLabel;
 	JLabel p2BreakLabel;
@@ -326,7 +327,6 @@ public class MainWindow {
 
 	final Set<Integer> spentLbIndices   = new HashSet<>();
 	final Set<Integer> p2SpentLbIndices = new HashSet<>();
-	JButton            p2LimitButton;
 
 	// Damage zone UI
 	private JPanel     p1DamageSlotPanel;
@@ -771,18 +771,18 @@ public class MainWindow {
 		int CRYSTAL_W    = CARD_W - (CARD_W * 3) / 4; // 1/4 of deck width
 
 		p2LimitButton = new JButton("LIMIT");
-		JButton lblLimit_1 = p2LimitButton;
-		lblLimit_1.setToolTipText("Player 2 LB Deck");
-		lblLimit_1.setFont(FontLoader.loadPixelFont(10));
-		lblLimit_1.setBackground(new Color(212, 175, 55));
-		lblLimit_1.setForeground(Color.BLACK);
-		lblLimit_1.setOpaque(true);
-		lblLimit_1.setBorderPainted(false);
-		lblLimit_1.setFocusPainted(false);
-		lblLimit_1.setPreferredSize(new Dimension(LIMIT_W, CORNER_BAR_H));
-		lblLimit_1.setMinimumSize(new Dimension(LIMIT_W, CORNER_BAR_H));
-		lblLimit_1.setMaximumSize(new Dimension(LIMIT_W, CORNER_BAR_H));
-		lblLimit_1.addActionListener(e -> showP2LbViewerDialog());
+		p2LimitButton.setToolTipText("Player 2 LB Deck");
+		p2LimitButton.setFont(FontLoader.loadPixelFont(10));
+		p2LimitButton.setMargin(new Insets(0, 0, 0, 0));
+		p2LimitButton.setBackground(new Color(212, 175, 55));
+		p2LimitButton.setForeground(Color.BLACK);
+		p2LimitButton.setOpaque(true);
+		p2LimitButton.setBorderPainted(false);
+		p2LimitButton.setFocusPainted(false);
+		p2LimitButton.setPreferredSize(new Dimension(LIMIT_W, CORNER_BAR_H));
+		p2LimitButton.setMinimumSize(new Dimension(LIMIT_W, CORNER_BAR_H));
+		p2LimitButton.setMaximumSize(new Dimension(LIMIT_W, CORNER_BAR_H));
+		p2LimitButton.addActionListener(e -> showP2LbViewerDialog());
 
 		p2BreakLabel = new JLabel("BREAK");
 		p2BreakLabel.setToolTipText("Player 2 Break Zone");
@@ -835,7 +835,7 @@ public class MainWindow {
 		{
 			GridBagConstraints bbc = new GridBagConstraints();
 			bbc.fill = GridBagConstraints.BOTH; bbc.weighty = 1.0; bbc.gridy = 0;
-			bbc.gridx = 0; bbc.weightx = 2.0 / 3.0; p2BottomBar.add(lblLimit_1, bbc);
+			bbc.gridx = 0; bbc.weightx = 2.0 / 3.0; p2BottomBar.add(p2LimitButton, bbc);
 			bbc.gridx = 1; bbc.weightx = 1.0 / 3.0; p2BottomBar.add(p2RemoveButton, bbc);
 		}
 
@@ -967,18 +967,19 @@ public class MainWindow {
 		});
 
 		// P1 limit button — gold, 2/3 of card width
-		p1LimitLabel = new JButton("LIMIT");
-		p1LimitLabel.setToolTipText("Player 1 LB Deck");
-		p1LimitLabel.setFont(FontLoader.loadPixelFont(10));
-		p1LimitLabel.setBackground(new Color(212, 175, 55));
-		p1LimitLabel.setForeground(Color.BLACK);
-		p1LimitLabel.setOpaque(true);
-		p1LimitLabel.setBorderPainted(false);
-		p1LimitLabel.setFocusPainted(false);
-		p1LimitLabel.setPreferredSize(new Dimension(LIMIT_W, CORNER_BAR_H));
-		p1LimitLabel.setMinimumSize(new Dimension(LIMIT_W, CORNER_BAR_H));
-		p1LimitLabel.setMaximumSize(new Dimension(LIMIT_W, CORNER_BAR_H));
-		p1LimitLabel.addActionListener(e -> {
+		p1LimitButton = new JButton("LIMIT");
+		p1LimitButton.setToolTipText("Player 1 LB Deck");
+		p1LimitButton.setFont(FontLoader.loadPixelFont(10));
+		p1LimitButton.setMargin(new Insets(0, 0, 0, 0));
+		p1LimitButton.setBackground(new Color(212, 175, 55));
+		p1LimitButton.setForeground(Color.BLACK);
+		p1LimitButton.setOpaque(true);
+		p1LimitButton.setBorderPainted(false);
+		p1LimitButton.setFocusPainted(false);
+		p1LimitButton.setPreferredSize(new Dimension(LIMIT_W, CORNER_BAR_H));
+		p1LimitButton.setMinimumSize(new Dimension(LIMIT_W, CORNER_BAR_H));
+		p1LimitButton.setMaximumSize(new Dimension(LIMIT_W, CORNER_BAR_H));
+		p1LimitButton.addActionListener(e -> {
 			GameState.GamePhase phase = gameState.getCurrentPhase();
 			boolean isMainPhase = phase == GameState.GamePhase.MAIN_1
 					|| phase == GameState.GamePhase.MAIN_2;
@@ -1013,7 +1014,7 @@ public class MainWindow {
 		p1CrystalRow.add(p1CrystalDisplay, BorderLayout.EAST);
 
 		// Restore the limit button's original height constraint
-		p1LimitLabel.setMaximumSize(new Dimension(LIMIT_W, CORNER_BAR_H));
+		p1LimitButton.setMaximumSize(new Dimension(LIMIT_W, CORNER_BAR_H));
 
 		// Restore the original two-button top bar
 		JPanel p1TopBar = new JPanel(new GridBagLayout());
@@ -1022,7 +1023,7 @@ public class MainWindow {
 		{
 			GridBagConstraints tbc = new GridBagConstraints();
 			tbc.fill = GridBagConstraints.BOTH; tbc.weighty = 1.0; tbc.gridy = 0;
-			tbc.gridx = 0; tbc.weightx = 2.0 / 3.0; p1TopBar.add(p1LimitLabel, tbc);
+			tbc.gridx = 0; tbc.weightx = 2.0 / 3.0; p1TopBar.add(p1LimitButton, tbc);
 			tbc.gridx = 1; tbc.weightx = 1.0 / 3.0; p1TopBar.add(p1RemoveButton, tbc);
 		}
 
@@ -2418,11 +2419,11 @@ public class MainWindow {
 		int total    = gameState.getP1LbDeck().size();
 		int playable = total - spentLbIndices.size();
 		if (total == 0) {
-			p1LimitLabel.setText("LIMIT");
-			p1LimitLabel.setForeground(new Color(80, 65, 20));
+			p1LimitButton.setText("LIMIT");
+			p1LimitButton.setForeground(new Color(80, 65, 20));
 		} else {
-			p1LimitLabel.setText("LIMIT - " + playable);
-			p1LimitLabel.setForeground(Color.BLACK);
+			p1LimitButton.setText("LIMIT - " + playable);
+			p1LimitButton.setForeground(Color.BLACK);
 		}
 	}
 
