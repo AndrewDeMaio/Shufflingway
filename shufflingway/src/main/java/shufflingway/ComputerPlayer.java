@@ -1385,6 +1385,16 @@ class ComputerPlayer {
 			if (!mw.canActivateAbility(ability, isFrozen, state, playedTurn, card, false)) continue;
 			if (ActionResolver.parse(ability.effectText(), card) == null) continue;
 			if (abilityHarmsChosenTarget(ability) && !p1HasAnyForward()) continue;
+			// A "return Forward to hand" bounce paid by sacrificing your own card(s) to the Break
+			// Zone is only worth it when it removes an opponent's Forward. A self-only bounce
+			// ("Forward you control") is never a proactive gain — it's a defensive save best left for
+			// a reactive window — and an any-target bounce does nothing when P1 has no Forward to
+			// return. Skipping both stops plays like Sahagin Chief sacrificing itself to bounce the
+			// very Forward P2 just cast.
+			if (!ability.breakZoneCosts().isEmpty()
+					&& ActionResolver.isReturnForwardToHandEffect(ability.effectText())
+					&& (ActionResolver.isReturnOwnForwardToHandEffect(ability.effectText()) || !p1HasAnyForward()))
+				continue;
 			// Don't waste a once-per-turn become-Forward ability on a Monster played this turn:
 			// the resulting Forward can't attack yet, so hold it for blocking on P1's turn instead.
 			if (card.isMonster() && ability.oncePerTurn()

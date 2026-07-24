@@ -759,8 +759,9 @@ public class MainWindow {
 		p2RemoveLabel = new GrayscaleLabel("");
 
 		int CORNER_BAR_H = UiScale.scale(28);
-		int LIMIT_W      = (CARD_W * 3) / 4;   // 105 px
-		int REMOVE_W     = CARD_W - LIMIT_W;    //  35 px
+		int LIMIT_W      = (CARD_W * 2) / 3;   // 2/3 of deck width
+		int REMOVE_W     = CARD_W - LIMIT_W;    // 1/3 of deck width (RFP button)
+		int CRYSTAL_W    = CARD_W - (CARD_W * 3) / 4; // 1/4 of deck width
 
 		p2LimitButton = new JButton("LIMIT");
 		JButton lblLimit_1 = p2LimitButton;
@@ -826,17 +827,17 @@ public class MainWindow {
 		{
 			GridBagConstraints bbc = new GridBagConstraints();
 			bbc.fill = GridBagConstraints.BOTH; bbc.weighty = 1.0; bbc.gridy = 0;
-			bbc.gridx = 0; bbc.weightx = 0.75; p2BottomBar.add(lblLimit_1, bbc);
-			bbc.gridx = 1; bbc.weightx = 0.25; p2BottomBar.add(p2RemoveButton, bbc);
+			bbc.gridx = 0; bbc.weightx = 2.0 / 3.0; p2BottomBar.add(lblLimit_1, bbc);
+			bbc.gridx = 1; bbc.weightx = 1.0 / 3.0; p2BottomBar.add(p2RemoveButton, bbc);
 		}
 
 		p2DeckLabel.setPreferredSize(cardSize);
 		p2DeckLabel.setMinimumSize(cardSize);
 
 		p2CrystalDisplay = new CrystalDisplay(0);
-		p2CrystalDisplay.setPreferredSize(new Dimension(REMOVE_W, CrystalDisplay.CRYSTAL_H));
-		p2CrystalDisplay.setMinimumSize(new Dimension(REMOVE_W, CrystalDisplay.CRYSTAL_H));
-		p2CrystalDisplay.setMaximumSize(new Dimension(REMOVE_W, CrystalDisplay.CRYSTAL_H));
+		p2CrystalDisplay.setPreferredSize(new Dimension(CRYSTAL_W, CrystalDisplay.CRYSTAL_H));
+		p2CrystalDisplay.setMinimumSize(new Dimension(CRYSTAL_W, CrystalDisplay.CRYSTAL_H));
+		p2CrystalDisplay.setMaximumSize(new Dimension(CRYSTAL_W, CrystalDisplay.CRYSTAL_H));
 
 		JPanel p2CornerPanel = new JPanel(new BorderLayout(0, 0));
 		p2CornerPanel.add(p2BreakLabel, BorderLayout.NORTH);
@@ -957,7 +958,7 @@ public class MainWindow {
 			}
 		});
 
-		// P1 limit button — gold, 3/4 of card width
+		// P1 limit button — gold, 2/3 of card width
 		p1LimitLabel = new JButton("LIMIT");
 		p1LimitLabel.setToolTipText("Player 1 LB Deck");
 		p1LimitLabel.setFont(FontLoader.loadPixelFont(10));
@@ -993,9 +994,9 @@ public class MainWindow {
 		p1RemoveButton.addActionListener(e -> showRemovedFromPlayDialog(p1RemoveLabel, "P1"));
 
 		p1CrystalDisplay = new CrystalDisplay(0);
-		p1CrystalDisplay.setPreferredSize(new Dimension(REMOVE_W, CrystalDisplay.CRYSTAL_H));
-		p1CrystalDisplay.setMinimumSize(new Dimension(REMOVE_W, CrystalDisplay.CRYSTAL_H));
-		p1CrystalDisplay.setMaximumSize(new Dimension(REMOVE_W, CrystalDisplay.CRYSTAL_H));
+		p1CrystalDisplay.setPreferredSize(new Dimension(CRYSTAL_W, CrystalDisplay.CRYSTAL_H));
+		p1CrystalDisplay.setMinimumSize(new Dimension(CRYSTAL_W, CrystalDisplay.CRYSTAL_H));
+		p1CrystalDisplay.setMaximumSize(new Dimension(CRYSTAL_W, CrystalDisplay.CRYSTAL_H));
 
 		// Crystal sits above the full bar, pinned to the right to align with the RFP button
 		JPanel p1CrystalRow = new JPanel(new BorderLayout(0, 0));
@@ -1012,8 +1013,8 @@ public class MainWindow {
 		{
 			GridBagConstraints tbc = new GridBagConstraints();
 			tbc.fill = GridBagConstraints.BOTH; tbc.weighty = 1.0; tbc.gridy = 0;
-			tbc.gridx = 0; tbc.weightx = 0.75; p1TopBar.add(p1LimitLabel, tbc);
-			tbc.gridx = 1; tbc.weightx = 0.25; p1TopBar.add(p1RemoveButton, tbc);
+			tbc.gridx = 0; tbc.weightx = 2.0 / 3.0; p1TopBar.add(p1LimitLabel, tbc);
+			tbc.gridx = 1; tbc.weightx = 1.0 / 3.0; p1TopBar.add(p1RemoveButton, tbc);
 		}
 
 		// Wrapper: crystal row above, top bar below

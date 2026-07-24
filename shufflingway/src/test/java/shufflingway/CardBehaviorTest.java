@@ -498,6 +498,33 @@ public class CardBehaviorTest {
         verify(ctx).selfDiscard(1);
     }
 
+    // Sahagin Chief self-bounce classification — the CPU uses these to avoid sacrificing a card to
+    // the Break Zone just to return its own Forward to hand (a self-defeating proactive play).
+    @Test
+    void classifiesSahaginSelfOnlyForwardBounce() {
+        String selfOnly = "Choose 1 Forward you control. Return it to its owner's hand.";
+        assertTrue(ActionResolver.isReturnForwardToHandEffect(selfOnly));
+        assertTrue(ActionResolver.isReturnOwnForwardToHandEffect(selfOnly),
+                "\"Forward you control\" bounce must be recognised as self-only");
+    }
+
+    @Test
+    void classifiesSahaginAnyTargetForwardBounceAsNotSelfOnly() {
+        String anyTarget = "Choose up to 2 Forwards. Return them to their owners' hands. "
+                + "You can only use this ability if 3 or more Monster Counters are placed on Sahagin Chief.";
+        assertTrue(ActionResolver.isReturnForwardToHandEffect(anyTarget));
+        assertFalse(ActionResolver.isReturnOwnForwardToHandEffect(anyTarget),
+                "an unqualified \"Forwards\" bounce can hit the opponent and is not self-only");
+    }
+
+    @Test
+    void nonBounceEffectIsNotClassifiedAsForwardBounce() {
+        assertFalse(ActionResolver.isReturnForwardToHandEffect(
+                "Choose 1 Forward. Deal it 8000 damage."));
+        assertFalse(ActionResolver.isReturnForwardToHandEffect(
+                "Choose 1 Backup. Return it to its owner's hand."));
+    }
+
     // Kadaj's second modal action: "Choose up to 2 cards from either player's Break Zone.
     // Remove them from the game." must offer BOTH break zones (bothZones=true), not just the
     // controller's. Regression guard for the dropped bothZones flag on the RFG followup path.

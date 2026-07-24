@@ -15863,6 +15863,29 @@ public class ActionResolver {
         return GAIN_CRYSTAL_PER_X.matcher(text).find();
     }
 
+    /**
+     * Returns {@code true} when {@code text} returns Forward(s) to their owner's hand — a bounce
+     * such as "Choose 1 Forward. Return it to its owner's hand." — regardless of whether the target
+     * is the controller's own or any Forward. Used by the CPU to gate self-sacrifice bounce abilities.
+     */
+    static boolean isReturnForwardToHandEffect(String text) {
+        if (text == null) return false;
+        String t = text.toLowerCase(java.util.Locale.ROOT);
+        return t.contains("forward") && t.contains("return") && t.contains("hand");
+    }
+
+    /**
+     * Returns {@code true} when {@code text} bounces only Forward(s) the controller controls — a
+     * self-bounce such as "Choose 1 Forward you control. Return it to its owner's hand." Implies
+     * {@link #isReturnForwardToHandEffect}. Such a play is never proactively useful (it costs a card
+     * for no board gain), so the CPU only performs it reactively to save a Forward from removal.
+     */
+    static boolean isReturnOwnForwardToHandEffect(String text) {
+        if (!isReturnForwardToHandEffect(text)) return false;
+        String t = text.toLowerCase(java.util.Locale.ROOT);
+        return t.contains("forward you control") || t.contains("forwards you control");
+    }
+
     private static Consumer<GameContext> tryParseGainCrystalPerX(String text, int xValue) {
         if (!GAIN_CRYSTAL_PER_X.matcher(text).find()) return null;
         return ctx -> {

@@ -137,7 +137,7 @@ public class PreferencesDialog extends JDialog {
 			}
 		});
 
-		JLabel fontPreview = new JLabel("Shufflingway 012345678910");
+		JLabel fontPreview = new JLabel("Shufflingway 0123456789");
 		JLabel fontHint = new JLabel(
 				"<html><font color='gray' size='2'>Applies after restart.</font></html>");
 		fontHint.setBorder(new EmptyBorder(0, 4, 2, 4));
