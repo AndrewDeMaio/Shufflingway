@@ -21,7 +21,6 @@ public class ScrapedCard {
     public String textEn;       // card ability text
     public String thumbName;    // image filename, e.g. "1-001H_eg.jpg"
     public String imageUrl;     // full CDN URL
-    public String setNumber;    // Opus number as string, e.g. "1", "2", …
 
     @Override
     public String toString() {

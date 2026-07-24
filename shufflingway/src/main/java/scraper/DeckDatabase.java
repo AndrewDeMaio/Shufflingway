@@ -62,7 +62,6 @@ public class DeckDatabase implements AutoCloseable {
                     thumb_name   TEXT,
                     image_url    TEXT,
                     image_data   BLOB,
-                    set_number   TEXT,
                     limit_break  INTEGER NOT NULL DEFAULT 0,
                     lb_cost      INTEGER
                 )

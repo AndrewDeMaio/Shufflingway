@@ -75,7 +75,7 @@ public class CardScraper {
         List<ScrapedCard> result = new ArrayList<>();
         if (cards != null) {
             for (int i = 0; i < cards.length(); i++) {
-                result.add(parseCard(cards.getJSONObject(i), setNumber));
+                result.add(parseCard(cards.getJSONObject(i)));
             }
         }
         return result;
@@ -118,7 +118,7 @@ public class CardScraper {
             if (cards == null || cards.isEmpty()) break;
 
             for (int i = 0; i < cards.length(); i++) {
-                result.add(parseCard(cards.getJSONObject(i), setNumber));
+                result.add(parseCard(cards.getJSONObject(i)));
             }
 
             System.out.printf("  … %d / %d%n", result.size(), totalCount);
@@ -234,7 +234,7 @@ public class CardScraper {
                 .toString();
     }
 
-    private ScrapedCard parseCard(JSONObject j, String setNumber) {
+    private ScrapedCard parseCard(JSONObject j) {
         ScrapedCard c = new ScrapedCard();
 
         c.serial    = j.optString("code",       "");
@@ -250,7 +250,6 @@ public class CardScraper {
         for (Map.Entry<String, String> entry : TRANSLATIONS.entrySet())
             rawTextEn = rawTextEn.replace(entry.getKey(), entry.getValue());
         c.textEn = rawTextEn;
-        c.setNumber = setNumber;
 
         // element is an array, e.g. ["Fire"] or ["火", "水"] for dual-element cards.
         // The API may return Japanese kanji — translate to English here.

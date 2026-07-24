@@ -61,12 +61,10 @@ public class CardDatabase implements AutoCloseable {
                     thumb_name   TEXT,
                     image_url    TEXT,
                     image_data   BLOB,
-                    set_number   TEXT,
                     limit_break  INTEGER NOT NULL DEFAULT 0,
                     lb_cost      INTEGER
                 )
                 """);
-            s.execute("CREATE INDEX IF NOT EXISTS idx_cards_set     ON cards(set_number)");
             s.execute("CREATE INDEX IF NOT EXISTS idx_cards_type    ON cards(type_en)");
             s.execute("CREATE INDEX IF NOT EXISTS idx_cards_element ON cards(element)");
             s.execute("CREATE INDEX IF NOT EXISTS idx_cards_rarity  ON cards(rarity)");
@@ -75,6 +73,11 @@ public class CardDatabase implements AutoCloseable {
             try { s.execute("ALTER TABLE cards ADD COLUMN image_data BLOB"); } catch (SQLException ignored) {}
             try { s.execute("ALTER TABLE cards ADD COLUMN limit_break INTEGER NOT NULL DEFAULT 0"); } catch (SQLException ignored) {}
             try { s.execute("ALTER TABLE cards ADD COLUMN lb_cost INTEGER"); } catch (SQLException ignored) {}
+
+            // Migration: drop the obsolete set_number column (always evaluated to "1" because
+            // the whole API is scraped in one pass) and its index.
+            try { s.execute("DROP INDEX IF EXISTS idx_cards_set"); } catch (SQLException ignored) {}
+            try { s.execute("ALTER TABLE cards DROP COLUMN set_number"); } catch (SQLException ignored) {}
 
             // Populate limit_break / lb_cost for any rows not yet processed
             s.execute("""
@@ -97,9 +100,9 @@ public class CardDatabase implements AutoCloseable {
                 INSERT INTO cards (
                     serial, name_en, type_en, element, cost, power, rarity,
                     job_en, category_1, category_2, ex_burst, multicard,
-                    text_en, thumb_name, image_url, set_number,
+                    text_en, thumb_name, image_url,
                     limit_break, lb_cost
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(serial) DO UPDATE SET
                     name_en     = excluded.name_en,
                     type_en     = excluded.type_en,
@@ -115,7 +118,6 @@ public class CardDatabase implements AutoCloseable {
                     text_en     = excluded.text_en,
                     thumb_name  = excluded.thumb_name,
                     image_url   = excluded.image_url,
-                    set_number  = excluded.set_number,
                     limit_break = excluded.limit_break,
                     lb_cost     = excluded.lb_cost
                 """)) {
@@ -170,11 +172,10 @@ public class CardDatabase implements AutoCloseable {
             ps.setString(13, textEn);
             ps.setString(14, card.thumbName);
             ps.setString(15, card.imageUrl);
-            ps.setString(16, card.setNumber);
-            ps.setInt   (17, computeLimitBreak(textEn));
+            ps.setInt   (16, computeLimitBreak(textEn));
             Integer lbCost = computeLbCost(textEn);
-            if (lbCost != null) ps.setInt (18, lbCost);
-            else                ps.setNull(18, Types.INTEGER);
+            if (lbCost != null) ps.setInt (17, lbCost);
+            else                ps.setNull(17, Types.INTEGER);
             ps.executeUpdate();
         }
     }
@@ -226,7 +227,7 @@ public class CardDatabase implements AutoCloseable {
         String sql = """
                 SELECT serial, name_en, type_en, element, cost, power, rarity,
                        job_en, category_1, category_2, ex_burst, multicard, text_en,
-                       set_number, limit_break, lb_cost
+                       limit_break, lb_cost
                 FROM cards ORDER BY serial
                 """;
         try {
@@ -234,7 +235,7 @@ public class CardDatabase implements AutoCloseable {
             try (Statement s = conn.createStatement();
                  ResultSet rs = s.executeQuery(sql)) {
                 while (rs.next()) {
-                    for (int i = 1; i <= 16; i++) {
+                    for (int i = 1; i <= 15; i++) {
                         String val = rs.getString(i);
                         if (val != null) md.update(val.getBytes(StandardCharsets.UTF_8));
                         md.update((byte) 0); // NUL separator — unambiguous regardless of field content
@@ -312,10 +313,6 @@ public class CardDatabase implements AutoCloseable {
         }
     }
 
-    public List<ScrapedCard> getCardsBySet(String setNumber) throws SQLException {
-        return query("SELECT * FROM cards WHERE set_number = ? ORDER BY serial", setNumber);
-    }
-
     public List<ScrapedCard> getCardsByType(String typeEn) throws SQLException {
         return query("SELECT * FROM cards WHERE type_en = ? ORDER BY serial", typeEn);
     }
@@ -327,15 +324,6 @@ public class CardDatabase implements AutoCloseable {
     public List<ScrapedCard> searchByName(String namePart) throws SQLException {
         return query("SELECT * FROM cards WHERE name_en LIKE ? ORDER BY serial",
                 "%" + namePart + "%");
-    }
-
-    /** Returns true if any cards are stored for the given set number. */
-    public boolean hasSet(String setNumber) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement(
-                "SELECT 1 FROM cards WHERE set_number = ? LIMIT 1")) {
-            ps.setString(1, setNumber);
-            return ps.executeQuery().next();
-        }
     }
 
     // -------------------------------------------------------------------------
@@ -370,7 +358,6 @@ public class CardDatabase implements AutoCloseable {
         c.textEn    = rs.getString("text_en");
         c.thumbName = rs.getString("thumb_name");
         c.imageUrl  = rs.getString("image_url");
-        c.setNumber = rs.getString("set_number");
         return c;
     }
 
