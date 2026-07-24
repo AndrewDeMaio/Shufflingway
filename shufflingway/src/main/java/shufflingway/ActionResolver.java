@@ -928,6 +928,19 @@ public class ActionResolver {
     );
 
     /**
+     * Number of top-of-deck cards {@code effectText} removes from the game (1 for "the top card…",
+     * N for "the top N cards…"), or {@code 0} if it has no such removal. Used to gate activation:
+     * you cannot remove the top card(s) of an empty (or too-small) deck, so the ability is illegal then.
+     */
+    public static int topDeckRemovalCount(String effectText) {
+        if (effectText == null) return 0;
+        Matcher m = REMOVE_TOP_OF_DECK_FROM_GAME.matcher(effectText);
+        if (!m.find()) return 0;
+        String c = m.group("count");
+        return c != null ? Integer.parseInt(c) : 1;
+    }
+
+    /**
      * Matches the compound followup "Remove the top card of your deck from the game.
      * Deal it/them N damage for each CP required to play/cast the removed card."
      * Group {@code base} — damage per CP.
@@ -935,6 +948,18 @@ public class ActionResolver {
     private static final Pattern FOLLOWUP_RFP_TOP_DECK_AND_DAMAGE_PER_CP = Pattern.compile(
         "(?i)Remove\\s+the\\s+top\\s+card\\s+of\\s+your\\s+deck\\s+from\\s+(?:the\\s+)?game\\.\\s+" +
         "Deal\\s+(?:it|them)\\s+(?<base>\\d+)\\s+damage\\s+for\\s+each\\s+CP\\s+required\\s+to\\s+(?:play|cast)\\s+the\\s+removed\\s+card[.!]?"
+    );
+
+    /**
+     * Matches the compound followup "Remove the top card of your deck from the game. If the removed
+     * card is a Forward, break it. If not, deal it N damage." — the break / damage both apply to the
+     * Forward chosen by the preceding "Choose 1 Forward" header ({@code it}).
+     * Group {@code dmg} — damage dealt when the removed card is not a Forward.
+     */
+    private static final Pattern FOLLOWUP_RFP_TOP_DECK_IF_FORWARD_BREAK_ELSE_DAMAGE = Pattern.compile(
+        "(?i)Remove\\s+the\\s+top\\s+card\\s+of\\s+your\\s+deck\\s+from\\s+(?:the\\s+)?game\\.\\s+" +
+        "If\\s+the\\s+removed\\s+card\\s+is\\s+a\\s+Forward,?\\s+break\\s+it\\.\\s+" +
+        "If\\s+not,?\\s+deal\\s+it\\s+(?<dmg>\\d+)\\s+damage[.!]?"
     );
 
     /**
@@ -8804,6 +8829,26 @@ public class ActionResolver {
                         costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
                 sortedByIdxDesc(ts, true) .forEach(t -> ctx.damageTarget(t, damage));
                 sortedByIdxDesc(ts, false).forEach(t -> ctx.damageTarget(t, damage));
+            };
+        }
+
+        // --- "Remove the top card of your deck from the game. If the removed card is a Forward, break it. If not, deal it N damage." ---
+        Matcher rfpTopDeckIfFwdM = FOLLOWUP_RFP_TOP_DECK_IF_FORWARD_BREAK_ELSE_DAMAGE.matcher(followup);
+        if (rfpTopDeckIfFwdM.find()) {
+            int dmg = Integer.parseInt(rfpTopDeckIfFwdM.group("dmg"));
+            return ctx -> {
+                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
+                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
+                if (ctx.removeTopCardOfDeckFromGameIsForward()) {
+                    ctx.logEntry(choosePrefix + " — removed card is a Forward: break the chosen Forward");
+                    sortedByIdxDesc(ts, true) .forEach(ctx::breakTarget);
+                    sortedByIdxDesc(ts, false).forEach(ctx::breakTarget);
+                } else {
+                    ctx.logEntry(choosePrefix + " — removed card is not a Forward: deal the chosen Forward " + dmg + " damage");
+                    sortedByIdxDesc(ts, true) .forEach(t -> ctx.damageTarget(t, dmg));
+                    sortedByIdxDesc(ts, false).forEach(t -> ctx.damageTarget(t, dmg));
+                }
             };
         }
 

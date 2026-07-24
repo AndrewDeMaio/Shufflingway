@@ -3507,6 +3507,17 @@ final class GameContextImpl implements GameContext {
 				return c.cost();
 			}
 
+			@Override public boolean removeTopCardOfDeckFromGameIsForward() {
+				Deque<CardData> deck = isP1 ? mw.gameState.getP1MainDeck() : mw.gameState.getP2MainDeck();
+				if (deck.isEmpty()) { logEntry("Deck is empty — no card removed"); return false; }
+				CardData c = deck.pollFirst();
+				mw.gameState.addToPermanentRfp(c);
+				boolean fwd = c.isForward();
+				logEntry(c.name() + " → Removed From Game (top of deck, " + (fwd ? "Forward" : c.type()) + ")");
+				if (isP1) mw.refreshP1DeckLabel(); else mw.refreshP2DeckLabel();
+				return fwd;
+			}
+
 			@Override public int revealTopNAndAddAllToHandGetTotalCP(int n) {
 				Deque<CardData> deck = isP1 ? mw.gameState.getP1MainDeck() : mw.gameState.getP2MainDeck();
 				List<CardData> hand = isP1 ? mw.gameState.getP1Hand() : mw.gameState.getP2Hand();

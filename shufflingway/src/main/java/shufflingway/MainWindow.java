@@ -8712,6 +8712,11 @@ public class MainWindow {
 		if (ability.oncePerTurn()
 				&& usedOncePerTurnAbilities.getOrDefault(source, Set.of()).contains(ability.effectText()))
 			return false;
+		// Effects that remove the top card(s) of your deck are illegal with too few cards to remove.
+		int topDeckNeeded = ActionResolver.topDeckRemovalCount(ability.effectText());
+		if (topDeckNeeded > 0
+				&& (isP1 ? gameState.getP1MainDeck() : gameState.getP2MainDeck()).size() < topDeckNeeded)
+			return false;
 		if (ability.mainPhaseOnly()) {
 			GameState.Player activePlayer = isP1 ? GameState.Player.P1 : GameState.Player.P2;
 			if (gameState.getCurrentPlayer() != activePlayer) return false;

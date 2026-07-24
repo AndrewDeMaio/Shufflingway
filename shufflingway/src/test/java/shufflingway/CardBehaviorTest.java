@@ -555,6 +555,52 @@ public class CardBehaviorTest {
                 "the granted-ability effect text (with its quotes) should be recognized");
     }
 
+    // "Choose 1 Forward. Remove the top card of your deck from the game. If the removed card is a
+    // Forward, break it. If not, deal it 3000 damage." — both branches act on the chosen Forward.
+    private static final String RFP_TOP_DECK_IF_FWD =
+            "Choose 1 Forward. Remove the top card of your deck from the game. "
+            + "If the removed card is a Forward, break it. If not, deal it 3000 damage.";
+
+    private static GameContext rfpTopDeckMock(ForwardTarget t, boolean removedForward) {
+        GameContext ctx = mock(GameContext.class);
+        when(ctx.consumePreloadedTargets()).thenReturn(null);
+        when(ctx.selectCharacters(anyInt(), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(),
+                anyInt(), any(), anyInt(), any(), anyBoolean(), anyBoolean(), anyBoolean(),
+                any(), any(), any(), any(), anyBoolean(), any(), anyBoolean())).thenReturn(List.of(t));
+        when(ctx.removeTopCardOfDeckFromGameIsForward()).thenReturn(removedForward);
+        return ctx;
+    }
+
+    @Test
+    void topDeckRemovalCountReportsNeededCardsForActivationGate() {
+        // canActivateAbility uses this to forbid the ability when the deck can't supply the removal.
+        assertEquals(1, ActionResolver.topDeckRemovalCount(RFP_TOP_DECK_IF_FWD));
+        assertEquals(3, ActionResolver.topDeckRemovalCount("Remove the top 3 cards of your deck from the game."));
+        assertEquals(0, ActionResolver.topDeckRemovalCount("Choose 1 Forward. Break it."));
+    }
+
+    @Test
+    void removeTopDeckBreaksChosenTargetWhenRemovedIsForward() {
+        Consumer<GameContext> fn = ActionResolver.parse(RFP_TOP_DECK_IF_FWD, null);
+        assertNotNull(fn, "the remove-top-deck conditional ability should parse");
+        ForwardTarget t = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+        GameContext ctx = rfpTopDeckMock(t, true);
+        fn.accept(ctx);
+        verify(ctx).breakTarget(t);
+        verify(ctx, never()).damageTarget(eq(t), anyInt());
+    }
+
+    @Test
+    void removeTopDeckDamagesChosenTargetWhenRemovedIsNotForward() {
+        Consumer<GameContext> fn = ActionResolver.parse(RFP_TOP_DECK_IF_FWD, null);
+        assertNotNull(fn);
+        ForwardTarget t = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+        GameContext ctx = rfpTopDeckMock(t, false);
+        fn.accept(ctx);
+        verify(ctx).damageTarget(t, 3000);
+        verify(ctx, never()).breakTarget(t);
+    }
+
     // Granted field abilities via "gains \"…\" until the end of the turn":
     // Tsukinowa (cannot be blocked by cost), Ace/Tifa (can attack twice, with traits/power).
     @Test
