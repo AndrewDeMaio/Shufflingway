@@ -4880,6 +4880,9 @@ public class ActionResolver {
         result = tryParseChooseOppFwdGainsSpecialAbilityFreeOnce(effectText, source);
         if (result != null) return result;
 
+        result = tryParseUseSpecialAbilityUsedThisTurn(effectText, source);
+        if (result != null) return result;
+
         result = tryParseChooseOppDamagedFwdIfHasAbilityBreak(effectText);
         if (result != null) return result;
 
@@ -5649,6 +5652,7 @@ public class ActionResolver {
         if (tryParseChooseFwdPowerInferiorToSource(effectText, source)     != null) return "ChooseFwdPowerInferiorToSource";
         if (tryParseChooseFwdBzCostInferiorToRemovedPlay(effectText)       != null) return "ChooseFwdBzCostInferiorToRemovedPlay";
         if (tryParseChooseOppFwdGainsSpecialAbilityFreeOnce(effectText, source) != null) return "ChooseOppFwdGainsSpecialAbilityFreeOnce";
+        if (tryParseUseSpecialAbilityUsedThisTurn(effectText, source) != null) return "UseSpecialAbilityUsedThisTurn";
         if (tryParseChooseOppDamagedFwdIfHasAbilityBreak(effectText)     != null) return "ChooseOppDamagedFwdIfHasAbilityBreak";
         if (tryParseChooseAsManyAsFieldCount(effectText, source)         != null) return "ChooseAsManyAsFieldCount";
         if (tryParseChooseAsManyAsBzRfgJobCount(effectText)             != null) return "ChooseAsManyAsBzRfgJobCount";
@@ -6351,6 +6355,7 @@ public class ActionResolver {
         if (tryParseLookTopDeckOptionallyBreak(effectText)        != null) return "LookTopDeckOptionallyBreak";
         if (tryParseLookTopDeckBottomOrKeep(effectText)           != null) return "LookTopDeckBottomOrKeep";
         if (tryParseChooseOppFwdGainsSpecialAbilityFreeOnce(effectText, source) != null) return "ChooseOppFwdGainsSpecialAbilityFreeOnce";
+        if (tryParseUseSpecialAbilityUsedThisTurn(effectText, source) != null) return "UseSpecialAbilityUsedThisTurn";
         if (tryParseChooseOppDamagedFwdIfHasAbilityBreak(effectText)       != null) return "ChooseOppDamagedFwdIfHasAbilityBreak";
         if (tryParseChooseAsManyAsFieldCount(effectText, source)           != null) return "ChooseAsManyAsFieldCount";
         if (tryParseChooseAsManyAsBzRfgJobCount(effectText)               != null) return "ChooseAsManyAsBzRfgJobCount";
@@ -15378,6 +15383,32 @@ public class ActionResolver {
             for (ActionAbility original : specials)
                 ctx.grantCopiedSpecialAbilityFreeOnce(source, original);
         };
+    }
+
+    /**
+     * Matches Gogo's "Mimic": "Use 1 special ability that a Character has used this turn
+     * [other than Ability Name X] without paying the cost." Captures the excluded ability name.
+     */
+    static final Pattern USE_SPECIAL_ABILITY_USED_THIS_TURN = Pattern.compile(
+            "(?i)^Use 1 special ability that a Character has used this turn"
+            + "(?:\\s+other than Ability Name (?<excluded>.+?))?"
+            + "\\s+without paying the cost\\.?$");
+
+    /**
+     * Parses Gogo's "Mimic" — delegates to {@link GameContext#useSpecialAbilityUsedThisTurn}, which
+     * lets the acting player replay a special ability used this turn (name-substituted to the mimic).
+     */
+    private static Consumer<GameContext> tryParseUseSpecialAbilityUsedThisTurn(String text, CardData source) {
+        Matcher m = USE_SPECIAL_ABILITY_USED_THIS_TURN.matcher(text.trim());
+        if (!m.matches()) return null;
+        String excluded = m.group("excluded");
+        String excludedName = excluded == null ? null : excluded.trim();
+        return ctx -> ctx.useSpecialAbilityUsedThisTurn(source, excludedName);
+    }
+
+    /** True when {@code text} is Gogo's "Mimic" effect (see {@link #USE_SPECIAL_ABILITY_USED_THIS_TURN}). */
+    static boolean isUseSpecialAbilityUsedThisTurnEffect(String text) {
+        return text != null && USE_SPECIAL_ABILITY_USED_THIS_TURN.matcher(text.trim()).matches();
     }
 
     /**

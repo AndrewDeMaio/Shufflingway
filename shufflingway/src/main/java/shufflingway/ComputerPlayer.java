@@ -1419,6 +1419,11 @@ class ComputerPlayer {
 			// a card outright (no matching-element card in hand) or grant a boost with no relevant
 			// combat to use it in (e.g. no Haste to attack with the turn it enters the field).
 			if (ActionResolver.discardConditionalElementBranches(ability.effectText()) != null) continue;
+			// Gogo's "Mimic" replays a special ability a Character used this turn — pointless (and a
+			// wasted S + Dull cost) when none other than Mimic itself has been used yet.
+			if (ActionResolver.isUseSpecialAbilityUsedThisTurnEffect(ability.effectText())
+					&& !hasMimicableSpecialAbility(ability))
+				continue;
 
 			List<Integer>        backupDullIndices = new ArrayList<>();
 			Map<Integer, String> backupElems       = new LinkedHashMap<>();
@@ -1579,6 +1584,16 @@ class ComputerPlayer {
 		if (t.contains("you control") || t.contains("forward you")) return false;
 		// Damage to a chosen forward / character (single-target or quantity-qualified)
 		return t.contains("deal") && (t.contains("forward") || t.contains("character") || t.contains(" it "));
+	}
+
+	/**
+	 * True if any special ability used this turn (other than {@code mimic} itself, matched by name)
+	 * is available for Gogo's "Mimic" to replay.
+	 */
+	private boolean hasMimicableSpecialAbility(ActionAbility mimic) {
+		for (UsedSpecialAbility u : mw.specialAbilitiesUsedThisTurn)
+			if (!u.ability().abilityName().equalsIgnoreCase(mimic.abilityName())) return true;
+		return false;
 	}
 
 	/** Returns unique non-empty CP cost elements, in encounter order. */

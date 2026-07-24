@@ -525,6 +525,46 @@ public class CardBehaviorTest {
                 "Choose 1 Backup. Return it to its owner's hand."));
     }
 
+    // Gogo (15-028H) "Mimic": replay a special ability used this turn, without paying its cost.
+    private static final String GOGO_TEXT =
+            "When a Forward or Monster you control uses an action ability, Gogo uses the same action "
+            + "ability without paying the cost. This effect will trigger only once per turn.[[br]]   "
+            + "[[s]]Mimic [[/]]《S》《Dull》: Use 1 special ability that a Character has used this turn "
+            + "other than Ability Name Mimic without paying the cost.";
+
+    private static final String MIMIC_EFFECT =
+            "Use 1 special ability that a Character has used this turn other than Ability Name Mimic "
+            + "without paying the cost.";
+
+    @Test
+    void gogoMimicSpecialAbilityParses() {
+        ActionAbility mimic = CardData.parseActionAbilities(GOGO_TEXT).stream()
+                .filter(a -> a.abilityName().equalsIgnoreCase("Mimic")).findFirst().orElse(null);
+        assertNotNull(mimic, "Gogo's Mimic special ability should parse");
+        assertTrue(mimic.isSpecial(),   "Mimic has an 《S》 cost");
+        assertTrue(mimic.requiresDull(), "Mimic has a 《Dull》 cost");
+        assertEquals(MIMIC_EFFECT, mimic.effectText());
+    }
+
+    @Test
+    void mimicEffectIsRecognizedAndImplemented() {
+        assertTrue(ActionResolver.isUseSpecialAbilityUsedThisTurnEffect(MIMIC_EFFECT));
+        CardData gogo = makeForward("Gogo", "Fire", 5, 9000);
+        assertNotNull(ActionResolver.parse(MIMIC_EFFECT, gogo),
+                "Mimic must resolve to an implemented effect so the ability is activatable");
+    }
+
+    @Test
+    void mimicEffectDelegatesToContextExcludingItself() {
+        CardData gogo = makeForward("Gogo", "Fire", 5, 9000);
+        Consumer<GameContext> fn = ActionResolver.parse(MIMIC_EFFECT, gogo);
+        assertNotNull(fn);
+        GameContext ctx = mock(GameContext.class);
+        fn.accept(ctx);
+        // The excluded ability name ("Mimic") is threaded through so Gogo can't copy another Mimic.
+        verify(ctx).useSpecialAbilityUsedThisTurn(gogo, "Mimic");
+    }
+
     // Kadaj's second modal action: "Choose up to 2 cards from either player's Break Zone.
     // Remove them from the game." must offer BOTH break zones (bothZones=true), not just the
     // controller's. Regression guard for the dropped bothZones flag on the RFG followup path.

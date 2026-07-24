@@ -5939,6 +5939,38 @@ final class GameContextImpl implements GameContext {
 				logEntry(source.name() + " gains " + original.abilityName() + " (free, once): " + original.effectText());
 			}
 
+			@Override public void useSpecialAbilityUsedThisTurn(CardData mimicSource, String excludedAbilityName) {
+				List<UsedSpecialAbility> options = new ArrayList<>();
+				for (UsedSpecialAbility u : mw.specialAbilitiesUsedThisTurn) {
+					if (excludedAbilityName != null && !excludedAbilityName.isBlank()
+							&& excludedAbilityName.equalsIgnoreCase(u.ability().abilityName())) continue;
+					options.add(u);
+				}
+				if (options.isEmpty()) {
+					logEntry(mimicSource.name() + " — Mimic: no special ability has been used this turn to copy");
+					return;
+				}
+				UsedSpecialAbility chosen;
+				if (isP1) {
+					chosen = mw.chooseMimicSpecialAbility(options);
+					if (chosen == null) { logEntry(mimicSource.name() + " — Mimic cancelled"); return; }
+				} else {
+					chosen = options.get(0); // AI: replay the earliest eligible special used this turn
+				}
+				// Substitute the mimicking card's name for the original user's where the effect names it.
+				String originalName = chosen.source().name();
+				String effect = chosen.ability().effectText();
+				String substituted = originalName.equals(mimicSource.name())
+						? effect : effect.replace(originalName, mimicSource.name());
+				String label = chosen.ability().abilityName().isEmpty()
+						? "" : chosen.ability().abilityName() + " ";
+				logEntry((isP1 ? "" : "[P2] ") + mimicSource.name() + " — Mimic uses "
+						+ chosen.source().name() + "'s " + label + "→ " + substituted);
+				Consumer<GameContext> eff = ActionResolver.parse(substituted, mimicSource);
+				if (eff != null) eff.accept(this);
+				else logEntry("[Mimic] Effect not implemented: " + substituted);
+			}
+
 			@Override public void swapDamageZoneCardWithHandCard(boolean drawCardBetween) {
 				List<CardData> dz   = isP1 ? mw.gameState.getP1DamageZone() : mw.gameState.getP2DamageZone();
 				List<CardData> hand = isP1 ? mw.gameState.getP1Hand()       : mw.gameState.getP2Hand();

@@ -582,6 +582,9 @@ public class MainWindow {
 	/** Tracks once-per-turn ability uses this turn; keyed by card instance identity, value is set of effectText strings used. */
 	final IdentityHashMap<CardData, Set<String>> usedOncePerTurnAbilities = new IdentityHashMap<>();
 
+	/** Special abilities activated this turn (either player), in activation order, for Gogo's "Mimic". Cleared each turn. */
+	final List<UsedSpecialAbility> specialAbilitiesUsedThisTurn = new ArrayList<>();
+
 	/** Forwards that cannot be selected as targets by the opponent's Summons this turn. */
 	final Set<CardData> cannotBeChosenBySummons        = new HashSet<>();
 	/** Forwards that cannot be selected as targets by the opponent's abilities this turn. */
@@ -1403,6 +1406,7 @@ public class MainWindow {
 		// Per-game / per-turn collections that are not covered by gameState.reset() or clearUIZones().
 		cancelledStackEntries.clear();
 		usedOncePerTurnAbilities.clear();
+		specialAbilitiesUsedThisTurn.clear();
 		elementOverrideMap.clear();
 		permanentExtraJobMap.clear();
 		stolenForwards.clear();
@@ -2221,6 +2225,7 @@ public class MainWindow {
 					computerPlayer.runTurn();
 				}
 				usedOncePerTurnAbilities.clear();
+				specialAbilitiesUsedThisTurn.clear();
 			}
 		}
 	}
@@ -13345,6 +13350,27 @@ public class MainWindow {
 	void refreshCrystalDisplays() {
 		if (p1CrystalDisplay != null) p1CrystalDisplay.setCount(gameState.getP1Crystals());
 		if (p2CrystalDisplay != null) p2CrystalDisplay.setCount(gameState.getP2Crystals());
+	}
+
+	/**
+	 * Prompts P1 to pick one special ability used this turn to replay for Gogo's "Mimic".
+	 * Returns the chosen entry, or {@code null} if the player cancels.
+	 */
+	UsedSpecialAbility chooseMimicSpecialAbility(List<UsedSpecialAbility> options) {
+		if (options.isEmpty()) return null;
+		if (options.size() == 1) return options.get(0);
+		String[] labels = new String[options.size()];
+		for (int i = 0; i < options.size(); i++) {
+			UsedSpecialAbility u = options.get(i);
+			String name = u.ability().abilityName().isEmpty() ? "" : u.ability().abilityName() + " — ";
+			labels[i] = u.source().name() + ": " + name + u.ability().effectText();
+		}
+		String choice = (String) JOptionPane.showInputDialog(frame,
+				"Choose a special ability used this turn to Mimic:", "Mimic",
+				JOptionPane.PLAIN_MESSAGE, null, labels, labels[0]);
+		if (choice == null) return null;
+		int idx = java.util.Arrays.asList(labels).indexOf(choice);
+		return idx >= 0 ? options.get(idx) : null;
 	}
 
 	// -------------------------------------------------------------------------

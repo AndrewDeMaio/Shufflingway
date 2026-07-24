@@ -3498,6 +3498,10 @@ final class AutoAbilityTriggers {
 
 		mw.logEntry("\"" + source.name() + "\" activated ability");
 
+		// Record special abilities used this turn so Gogo's "Mimic" can replay one later.
+		if (ability.isSpecial())
+			mw.specialAbilitiesUsedThisTurn.add(new UsedSpecialAbility(source, ability));
+
 		java.util.List<ForwardTarget> preTargets = ActionResolver.preSelectTargets(
 				ability.effectText(), source, xValue, mw.buildGameContext(isP1));
 		mw.gameState.pushStack(new StackEntry(source, ability, isP1, xValue, preTargets));

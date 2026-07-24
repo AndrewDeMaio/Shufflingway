@@ -2142,6 +2142,15 @@ public interface GameContext {
     void grantCopiedSpecialAbilityFreeOnce(CardData source, ActionAbility original);
 
     /**
+     * Gogo's "Mimic": lets the acting player use one special ability that a Character has used this
+     * turn — excluding any whose ability name equals {@code excludedAbilityName} — without paying its
+     * cost. Where the copied effect names its original user, {@code mimicSource}'s name is substituted
+     * in (e.g. Tidus's "Activate Tidus" becomes "Activate Gogo"). No-op with a log line when nothing
+     * eligible has been used this turn.
+     */
+    void useSpecialAbilityUsedThisTurn(CardData mimicSource, String excludedAbilityName);
+
+    /**
      * Shows the controlling player a picker for EX Burst cards in their own Damage Zone,
      * then places the chosen card's EX Burst effect on the resolution stack.
      * No-op when the Damage Zone has no cards with a parseable EX Burst effect.
