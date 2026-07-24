@@ -83,7 +83,7 @@ public class CrystalDisplay extends javax.swing.JComponent {
 		g.drawPolygon(xp, yp, 6);
 
 		// Count number centered inside the hexagon (no colon)
-		g.setFont(FontLoader.loadPixelNESFont(10));
+		g.setFont(FontLoader.loadPixelFont(10));
 		g.setColor(Color.WHITE);
 		String text = String.valueOf(count);
 		FontMetrics fm = g.getFontMetrics();

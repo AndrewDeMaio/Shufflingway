@@ -202,7 +202,7 @@ final class StackOrderingDialog {
 		CardCellRenderer() {
 			super(new BorderLayout(0, 2));
 			imgLbl.setPreferredSize(new Dimension(CardAnimation.CARD_W, CardAnimation.CARD_H));
-			nameLbl.setFont(FontLoader.loadPixelNESFont(9));
+			nameLbl.setFont(FontLoader.loadPixelFont(9));
 			nameLbl.setForeground(Color.WHITE);
 			add(imgLbl,  BorderLayout.CENTER);
 			add(nameLbl, BorderLayout.SOUTH);

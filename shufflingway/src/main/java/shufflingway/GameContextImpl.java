@@ -73,6 +73,17 @@ final class GameContextImpl implements GameContext {
 		this.exBurst = exBurst;
 	}
 
+	/**
+	 * True if a modal sub-action removes cards from a Break Zone that can include the
+	 * opponent's (i.e. "either/any player's" or "your opponent's" Break Zone). Used by the
+	 * AI to skip such an action when the opponent has nothing there to remove.
+	 */
+	private static boolean removesFromOpponentBreakZone(String action) {
+		String a = action.toLowerCase(java.util.Locale.ROOT);
+		if (!a.contains("break zone") || !a.contains("remove")) return false;
+		return a.contains("either player") || a.contains("any player") || a.contains("opponent");
+	}
+
 			@Override public void logEntry(String msg) { mw.logEntry(msg); }
 			@Override public boolean isP1() { return isP1; }
 
@@ -1431,7 +1442,7 @@ final class GameContextImpl implements GameContext {
 					for (int ci = 0; ci < eligible.size(); ci++) {
 						reindexed.add(new ForwardTarget(eligible.get(ci).isP1(), ci, ForwardTarget.CardZone.BREAK_ZONE));
 					}
-					List<ForwardTarget> chosen = mw.showBreakZoneSelectDialog(reindexed, combined, maxCount, upTo, title);
+					List<ForwardTarget> chosen = mw.showBreakZoneSelectDialogTabbed(reindexed, combined, maxCount, upTo, title);
 					// Map chosen reindexed targets back to original targets so callers use real BZ indices
 					List<ForwardTarget> result = new ArrayList<>();
 					for (ForwardTarget t : chosen) result.add(eligible.get(t.idx()));
@@ -1931,7 +1942,7 @@ final class GameContextImpl implements GameContext {
 					JPanel wrapper = new JPanel(new BorderLayout(0, 4));
 					wrapper.setBackground(cardsPanel.getBackground());
 					JLabel nameLabel = new JLabel(cd.name(), SwingConstants.CENTER);
-					nameLabel.setFont(FontLoader.loadPixelNESFont(9));
+					nameLabel.setFont(FontLoader.loadPixelFont(9));
 					nameLabel.setPreferredSize(new Dimension(CARD_W, 18));
 					wrapper.add(lbl,       BorderLayout.CENTER);
 					wrapper.add(nameLabel, BorderLayout.SOUTH);
@@ -1947,10 +1958,10 @@ final class GameContextImpl implements GameContext {
 				int[] countdown = { 10 };
 				boolean vsCpu = mw.isP2Cpu();
 				JLabel countdownLabel = new JLabel(vsCpu ? "" : "Closing in 10...", SwingConstants.CENTER);
-				countdownLabel.setFont(FontLoader.loadPixelNESFont(10));
+				countdownLabel.setFont(FontLoader.loadPixelFont(10));
 
 				JButton okBtn = new JButton("OK");
-				okBtn.setFont(FontLoader.loadPixelNESFont(11));
+				okBtn.setFont(FontLoader.loadPixelFont(11));
 				okBtn.addActionListener(ae -> { mw.hideZoom(); dlg.dispose(); });
 
 				JPanel south = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 6));
@@ -2030,7 +2041,7 @@ final class GameContextImpl implements GameContext {
 					JPanel wrapper = new JPanel(new BorderLayout(0, 4));
 					wrapper.setBorder(BorderFactory.createEmptyBorder(8, 8, 0, 8));
 					JLabel nameLabel = new JLabel(card.name(), SwingConstants.CENTER);
-					nameLabel.setFont(FontLoader.loadPixelNESFont(9));
+					nameLabel.setFont(FontLoader.loadPixelFont(9));
 					nameLabel.setPreferredSize(new Dimension(CARD_W, 18));
 					wrapper.add(cardLabel,  BorderLayout.CENTER);
 					wrapper.add(nameLabel,  BorderLayout.SOUTH);
@@ -2039,16 +2050,16 @@ final class GameContextImpl implements GameContext {
 					south.setBorder(BorderFactory.createEmptyBorder(0, 8, 8, 8));
 					if (castFreeApplicable) {
 						JButton declineBtn = new JButton("Decline");
-						declineBtn.setFont(FontLoader.loadPixelNESFont(11));
+						declineBtn.setFont(FontLoader.loadPixelFont(11));
 						declineBtn.addActionListener(ae -> { mw.hideZoom(); dlg.dispose(); });
 						JButton okBtn = new JButton("OK");
-						okBtn.setFont(FontLoader.loadPixelNESFont(11));
+						okBtn.setFont(FontLoader.loadPixelFont(11));
 						okBtn.addActionListener(ae -> { activated[0] = true; mw.hideZoom(); dlg.dispose(); });
 						south.add(declineBtn);
 						south.add(okBtn);
 					} else {
 						JButton okBtn = new JButton("OK");
-						okBtn.setFont(FontLoader.loadPixelNESFont(11));
+						okBtn.setFont(FontLoader.loadPixelFont(11));
 						okBtn.addActionListener(ae -> { mw.hideZoom(); dlg.dispose(); });
 						south.add(okBtn);
 					}
@@ -2190,7 +2201,7 @@ final class GameContextImpl implements GameContext {
 					JPanel wrapper = new JPanel(new BorderLayout(0, 4));
 					wrapper.setBorder(BorderFactory.createEmptyBorder(8, 8, 0, 8));
 					JLabel nameLabel = new JLabel(card.name(), SwingConstants.CENTER);
-					nameLabel.setFont(FontLoader.loadPixelNESFont(9));
+					nameLabel.setFont(FontLoader.loadPixelFont(9));
 					nameLabel.setPreferredSize(new Dimension(CARD_W, 18));
 					wrapper.add(cardLabel,  BorderLayout.CENTER);
 					wrapper.add(nameLabel,  BorderLayout.SOUTH);
@@ -2198,7 +2209,7 @@ final class GameContextImpl implements GameContext {
 					JPanel south = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 6));
 					south.setBorder(BorderFactory.createEmptyBorder(0, 8, 8, 8));
 					JButton okBtn = new JButton("OK");
-					okBtn.setFont(FontLoader.loadPixelNESFont(11));
+					okBtn.setFont(FontLoader.loadPixelFont(11));
 					okBtn.addActionListener(ae -> { mw.hideZoom(); dlg.dispose(); });
 					south.add(okBtn);
 
@@ -2262,7 +2273,7 @@ final class GameContextImpl implements GameContext {
 					JPanel p1Wrapper = new JPanel(new BorderLayout(0, 4));
 					p1Wrapper.setBorder(BorderFactory.createEmptyBorder(8, 8, 0, 8));
 					JLabel p1NameLabel = new JLabel(p1Card.name(), SwingConstants.CENTER);
-					p1NameLabel.setFont(FontLoader.loadPixelNESFont(9));
+					p1NameLabel.setFont(FontLoader.loadPixelFont(9));
 					p1NameLabel.setPreferredSize(new Dimension(CARD_W, 18));
 					p1Wrapper.add(p1CardLabel, BorderLayout.CENTER);
 					p1Wrapper.add(p1NameLabel, BorderLayout.SOUTH);
@@ -2270,16 +2281,16 @@ final class GameContextImpl implements GameContext {
 					p1South.setBorder(BorderFactory.createEmptyBorder(0, 8, 8, 8));
 					if (p1Eligible) {
 						JButton declineBtn = new JButton("Decline");
-						declineBtn.setFont(FontLoader.loadPixelNESFont(11));
+						declineBtn.setFont(FontLoader.loadPixelFont(11));
 						declineBtn.addActionListener(ae -> { mw.hideZoom(); p1Dlg.dispose(); });
 						JButton okBtn = new JButton("Play onto field");
-						okBtn.setFont(FontLoader.loadPixelNESFont(11));
+						okBtn.setFont(FontLoader.loadPixelFont(11));
 						okBtn.addActionListener(ae -> { p1Play[0] = true; mw.hideZoom(); p1Dlg.dispose(); });
 						p1South.add(declineBtn);
 						p1South.add(okBtn);
 					} else {
 						JButton okBtn = new JButton("OK");
-						okBtn.setFont(FontLoader.loadPixelNESFont(11));
+						okBtn.setFont(FontLoader.loadPixelFont(11));
 						okBtn.addActionListener(ae -> { mw.hideZoom(); p1Dlg.dispose(); });
 						p1South.add(okBtn);
 					}
@@ -2336,14 +2347,14 @@ final class GameContextImpl implements GameContext {
 					JPanel p2Wrapper = new JPanel(new BorderLayout(0, 4));
 					p2Wrapper.setBorder(BorderFactory.createEmptyBorder(8, 8, 0, 8));
 					JLabel p2NameLabel = new JLabel(p2Card.name() + (p2Eligible ? " → field" : " → deck"), SwingConstants.CENTER);
-					p2NameLabel.setFont(FontLoader.loadPixelNESFont(9));
+					p2NameLabel.setFont(FontLoader.loadPixelFont(9));
 					p2NameLabel.setPreferredSize(new Dimension(CARD_W, 18));
 					p2Wrapper.add(p2CardLabel, BorderLayout.CENTER);
 					p2Wrapper.add(p2NameLabel, BorderLayout.SOUTH);
 					JPanel p2South = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 6));
 					p2South.setBorder(BorderFactory.createEmptyBorder(0, 8, 8, 8));
 					JButton p2OkBtn = new JButton("OK");
-					p2OkBtn.setFont(FontLoader.loadPixelNESFont(11));
+					p2OkBtn.setFont(FontLoader.loadPixelFont(11));
 					p2OkBtn.addActionListener(ae -> { mw.hideZoom(); p2Dlg.dispose(); });
 					p2South.add(p2OkBtn);
 					p2Dlg.getContentPane().setLayout(new BorderLayout(0, 4));
@@ -2406,14 +2417,14 @@ final class GameContextImpl implements GameContext {
 					JPanel wrapper = new JPanel(new BorderLayout(0, 4));
 					wrapper.setBorder(BorderFactory.createEmptyBorder(8, 8, 0, 8));
 					JLabel nameLabel = new JLabel(card.name() + " (cost " + card.cost() + ")", SwingConstants.CENTER);
-					nameLabel.setFont(FontLoader.loadPixelNESFont(9));
+					nameLabel.setFont(FontLoader.loadPixelFont(9));
 					nameLabel.setPreferredSize(new Dimension(CARD_W, 18));
 					wrapper.add(cardLabel, BorderLayout.CENTER);
 					wrapper.add(nameLabel, BorderLayout.SOUTH);
 					JPanel south = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 6));
 					south.setBorder(BorderFactory.createEmptyBorder(0, 8, 8, 8));
 					JButton okBtn = new JButton("OK");
-					okBtn.setFont(FontLoader.loadPixelNESFont(11));
+					okBtn.setFont(FontLoader.loadPixelFont(11));
 					okBtn.addActionListener(ae -> { mw.hideZoom(); dlg.dispose(); });
 					south.add(okBtn);
 					dlg.getContentPane().setLayout(new BorderLayout(0, 4));
@@ -4003,8 +4014,26 @@ final class GameContextImpl implements GameContext {
 			@Override public List<String> chooseActions(CardData source,
 					List<String> actions, int selectCount, boolean upTo) {
 				if (isP1) return mw.autoAbilityTriggers.showSelectActionsDialog(source, actions, selectCount, upTo);
-				int take = Math.min(selectCount, actions.size());
-				return new ArrayList<>(actions.subList(0, take));
+				// AI: a "remove from either/opponent's Break Zone" action is worth taking only when
+				// the opponent has cards there. When they do, prefer it (strips their resources);
+				// when they don't, skip it entirely (it would only hit our own cards). All other
+				// actions keep their original top-down order behind any preferred removal.
+				boolean oppBzEmpty = (isP1 ? mw.gameState.getP2BreakZone()
+						: mw.gameState.getP1BreakZone()).isEmpty();
+				List<String> preferred = new ArrayList<>();
+				List<String> rest      = new ArrayList<>();
+				for (String a : actions) {
+					if (removesFromOpponentBreakZone(a)) {
+						if (!oppBzEmpty) preferred.add(a); // else: nothing to remove — drop it
+					} else {
+						rest.add(a);
+					}
+				}
+				List<String> ordered = new ArrayList<>(preferred.size() + rest.size());
+				ordered.addAll(preferred);
+				ordered.addAll(rest);
+				int take = Math.min(selectCount, ordered.size());
+				return new ArrayList<>(ordered.subList(0, take));
 			}
 
 			@Override public int highestP1ForwardPower() {

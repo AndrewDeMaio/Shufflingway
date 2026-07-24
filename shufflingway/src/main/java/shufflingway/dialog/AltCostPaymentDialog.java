@@ -99,10 +99,10 @@ public class AltCostPaymentDialog {
         bankCp.replaceAll((k, v) -> 0);
 
         JLabel  cpLabel    = new JLabel();
-        cpLabel.setFont(FontLoader.loadPixelNESFont(11));
+        cpLabel.setFont(FontLoader.loadPixelFont(11));
         cpLabel.setHorizontalAlignment(SwingConstants.CENTER);
         JButton confirmBtn = new JButton("Confirm");
-        confirmBtn.setFont(FontLoader.loadPixelNESFont(11));
+        confirmBtn.setFont(FontLoader.loadPixelFont(11));
         confirmBtn.setEnabled(false);
 
         List<JLabel>  backupLbls  = new ArrayList<>();
@@ -169,7 +169,7 @@ public class AltCostPaymentDialog {
 
         if (!eligibleSlots.isEmpty()) {
             JLabel hdr = new JLabel("Backups — dull for 1 CP each:");
-            hdr.setFont(FontLoader.loadPixelNESFont(9)); hdr.setAlignmentX(Component.LEFT_ALIGNMENT);
+            hdr.setFont(FontLoader.loadPixelFont(9)); hdr.setAlignmentX(Component.LEFT_ALIGNMENT);
             JPanel bp = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 6)); bp.setAlignmentX(Component.LEFT_ALIGNMENT);
             for (int slot : eligibleSlots) {
                 JLabel lbl = makeCardLabel();
@@ -190,7 +190,7 @@ public class AltCostPaymentDialog {
 
         if (!backupOnly) {
             JLabel discHdr = new JLabel("Hand — discard for 2 CP each:");
-            discHdr.setFont(FontLoader.loadPixelNESFont(9)); discHdr.setAlignmentX(Component.LEFT_ALIGNMENT);
+            discHdr.setFont(FontLoader.loadPixelFont(9)); discHdr.setAlignmentX(Component.LEFT_ALIGNMENT);
             JPanel dp = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 6)); dp.setAlignmentX(Component.LEFT_ALIGNMENT);
             for (int i = 0; i < hand.size(); i++) {
                 final int hi = i; CardData hc = hand.get(i);
@@ -225,7 +225,7 @@ public class AltCostPaymentDialog {
         updateAll.run();
 
         JButton cancelBtn = new JButton("Cancel");
-        cancelBtn.setFont(FontLoader.loadPixelNESFont(11));
+        cancelBtn.setFont(FontLoader.loadPixelFont(11));
         cancelBtn.addActionListener(ev -> dlg.dispose());
         confirmBtn.addActionListener(ev -> {
             dlg.dispose();
@@ -237,7 +237,7 @@ public class AltCostPaymentDialog {
         JLabel titleLbl = new JLabel(
                 "<html><center>" + card.name() + " — Alt Cost: " + costDesc + "</center></html>",
                 SwingConstants.CENTER);
-        titleLbl.setFont(FontLoader.loadPixelNESFont(11));
+        titleLbl.setFont(FontLoader.loadPixelFont(11));
         JPanel topPanel = new JPanel(new java.awt.BorderLayout(0, 4));
         topPanel.setBorder(BorderFactory.createEmptyBorder(8, 8, 4, 8));
         topPanel.add(titleLbl, java.awt.BorderLayout.NORTH);
@@ -259,7 +259,7 @@ public class AltCostPaymentDialog {
         lbl.setOpaque(true);
         lbl.setBackground(Color.DARK_GRAY);
         lbl.setForeground(Color.WHITE);
-        lbl.setFont(FontLoader.loadPixelNESFont(10));
+        lbl.setFont(FontLoader.loadPixelFont(10));
         lbl.setBorder(BorderFactory.createLineBorder(Color.GRAY, 1));
         lbl.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         return lbl;

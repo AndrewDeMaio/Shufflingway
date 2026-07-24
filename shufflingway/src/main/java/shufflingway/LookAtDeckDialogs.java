@@ -214,10 +214,10 @@ class LookAtDeckDialogs {
 
         boolean[] sendToBreak = { false };
         JButton breakBtn = new JButton("Break Zone");
-        breakBtn.setFont(FontLoader.loadPixelNESFont(11));
+        breakBtn.setFont(FontLoader.loadPixelFont(11));
         breakBtn.addActionListener(ae -> { sendToBreak[0] = true; hideZoom(); dlg.dispose(); });
         JButton keepBtn = new JButton("Keep on Top");
-        keepBtn.setFont(FontLoader.loadPixelNESFont(11));
+        keepBtn.setFont(FontLoader.loadPixelFont(11));
         keepBtn.addActionListener(ae -> { hideZoom(); dlg.dispose(); });
 
         JPanel south = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 6));
@@ -251,10 +251,10 @@ class LookAtDeckDialogs {
 
         boolean[] moveToBottom = { false };
         JButton bottomBtn = new JButton("Move to Bottom");
-        bottomBtn.setFont(FontLoader.loadPixelNESFont(11));
+        bottomBtn.setFont(FontLoader.loadPixelFont(11));
         bottomBtn.addActionListener(ae -> { moveToBottom[0] = true; hideZoom(); dlg.dispose(); });
         JButton keepBtn = new JButton("Keep on Top");
-        keepBtn.setFont(FontLoader.loadPixelNESFont(11));
+        keepBtn.setFont(FontLoader.loadPixelFont(11));
         keepBtn.addActionListener(ae -> { hideZoom(); dlg.dispose(); });
 
         JPanel south = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 6));
@@ -293,7 +293,7 @@ class LookAtDeckDialogs {
         }
 
         JButton okBtn = new JButton("OK");
-        okBtn.setFont(FontLoader.loadPixelNESFont(11));
+        okBtn.setFont(FontLoader.loadPixelFont(11));
         okBtn.addActionListener(ae -> { hideZoom(); dlg.dispose(); });
         JPanel south = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 6));
         south.add(okBtn);
@@ -369,9 +369,9 @@ class LookAtDeckDialogs {
 
         JLabel instructions = new JLabel(
                 "Click to select, click another to swap. Left = top of deck.", SwingConstants.CENTER);
-        instructions.setFont(FontLoader.loadPixelNESFont(9));
+        instructions.setFont(FontLoader.loadPixelFont(9));
         JButton confirmBtn = new JButton("Confirm Order");
-        confirmBtn.setFont(FontLoader.loadPixelNESFont(11));
+        confirmBtn.setFont(FontLoader.loadPixelFont(11));
         confirmBtn.addActionListener(ae -> { hideZoom(); dlg.dispose(); });
 
         JPanel south = new JPanel(new BorderLayout(0, 2));
@@ -408,7 +408,7 @@ class LookAtDeckDialogs {
         int[] selectedForSwap = { -1 };
 
         JButton confirmBtn = new JButton("Confirm");
-        confirmBtn.setFont(FontLoader.loadPixelNESFont(11));
+        confirmBtn.setFont(FontLoader.loadPixelFont(11));
         confirmBtn.setEnabled(false);
 
         Runnable updateLabels = () -> {
@@ -455,7 +455,7 @@ class LookAtDeckDialogs {
             cardLabels[i] = lbl;
 
             JToggleButton handBtn = new JToggleButton("→ Hand");
-            handBtn.setFont(FontLoader.loadPixelNESFont(9));
+            handBtn.setFont(FontLoader.loadPixelFont(9));
             handBtns[i] = handBtn;
             handBtn.addItemListener(ie -> {
                 if (ie.getStateChange() == java.awt.event.ItemEvent.SELECTED) {
@@ -494,7 +494,7 @@ class LookAtDeckDialogs {
         JLabel instructions = new JLabel(
                 "Click '→ Hand' to pick the card for your hand. Swap the rest to order them (left = first at bottom).",
                 SwingConstants.CENTER);
-        instructions.setFont(FontLoader.loadPixelNESFont(9));
+        instructions.setFont(FontLoader.loadPixelFont(9));
         confirmBtn.addActionListener(ae -> { hideZoom(); dlg.dispose(); });
 
         JPanel south = new JPanel(new BorderLayout(0, 2));
@@ -534,7 +534,7 @@ class LookAtDeckDialogs {
         int[]      selTop    = { -1 };
 
         JButton okBtn = new JButton("OK");
-        okBtn.setFont(FontLoader.loadPixelNESFont(11));
+        okBtn.setFont(FontLoader.loadPixelFont(11));
         okBtn.setEnabled(false);
 
         Map<CardData, ImageIcon> imgCache = new LinkedHashMap<>();
@@ -623,7 +623,7 @@ class LookAtDeckDialogs {
             botLabels[i] = slotCard;
 
             JLabel destNameLbl = new JLabel(destLabels[i], SwingConstants.CENTER);
-            destNameLbl.setFont(FontLoader.loadPixelNESFont(9));
+            destNameLbl.setFont(FontLoader.loadPixelFont(9));
             destNameLbl.setForeground(labelColor);
 
             JPanel wrapper = new JPanel(new BorderLayout(0, 2));
@@ -664,7 +664,7 @@ class LookAtDeckDialogs {
         JLabel instructions = new JLabel(
                 "Select a card in the top row, then click a destination. Click it again to return it.",
                 SwingConstants.CENTER);
-        instructions.setFont(FontLoader.loadPixelNESFont(9));
+        instructions.setFont(FontLoader.loadPixelFont(9));
         okBtn.addActionListener(ae -> { hideZoom(); dlg.dispose(); });
 
         JPanel centerPanel = new JPanel(new BorderLayout(0, 8));
@@ -722,7 +722,7 @@ class LookAtDeckDialogs {
         int[] handLblIdx = { -1 };
         JLabel[] cardLabels = new JLabel[n];
         JButton confirmBtn = new JButton("Confirm");
-        confirmBtn.setFont(FontLoader.loadPixelNESFont(11));
+        confirmBtn.setFont(FontLoader.loadPixelFont(11));
         confirmBtn.setEnabled(false);
 
         JToggleButton[] handBtns = new JToggleButton[n];
@@ -738,7 +738,7 @@ class LookAtDeckDialogs {
             cardLabels[i] = lbl;
 
             JToggleButton handBtn = new JToggleButton("→ Hand");
-            handBtn.setFont(FontLoader.loadPixelNESFont(9));
+            handBtn.setFont(FontLoader.loadPixelFont(9));
             handBtns[i] = handBtn;
             handBtn.addItemListener(ie -> {
                 if (ie.getStateChange() == java.awt.event.ItemEvent.SELECTED) {
@@ -765,7 +765,7 @@ class LookAtDeckDialogs {
 
         JLabel instructions = new JLabel(
                 "Click '→ Hand' to choose a card. The rest go to the Break Zone.", SwingConstants.CENTER);
-        instructions.setFont(FontLoader.loadPixelNESFont(9));
+        instructions.setFont(FontLoader.loadPixelFont(9));
         confirmBtn.addActionListener(ae -> { hideZoom(); dlg.dispose(); });
 
         JPanel south = new JPanel(new BorderLayout(0, 2));
@@ -849,11 +849,11 @@ class LookAtDeckDialogs {
         };
 
         JButton confirmBtn = new JButton("Confirm");
-        confirmBtn.setFont(FontLoader.loadPixelNESFont(11));
+        confirmBtn.setFont(FontLoader.loadPixelFont(11));
         confirmBtn.setEnabled(false);
 
         JLabel timerLabel = new JLabel("20s", SwingConstants.CENTER);
-        timerLabel.setFont(FontLoader.loadPixelNESFont(12));
+        timerLabel.setFont(FontLoader.loadPixelFont(12));
         timerLabel.setForeground(new Color(255, 220, 0));
 
         JDialog dlg = new JDialog(frame, "Order Cards — Top or Bottom of Deck", true);
@@ -879,7 +879,7 @@ class LookAtDeckDialogs {
                 g2.setColor(new Color(45, 25, 25));
                 g2.fillRect(deckX + TW + GAP / 2, zoneY - 4, panelW - deckX - TW - GAP / 2, TH + 8);
 
-                g2.setFont(FontLoader.loadPixelNESFont(9));
+                g2.setFont(FontLoader.loadPixelFont(9));
                 FontMetrics fm = g2.getFontMetrics();
 
                 g2.setColor(Color.LIGHT_GRAY);
@@ -1067,7 +1067,7 @@ class LookAtDeckDialogs {
         boolean[] updating = { false };
 
         JButton confirmBtn = new JButton("Confirm");
-        confirmBtn.setFont(FontLoader.loadPixelNESFont(11));
+        confirmBtn.setFont(FontLoader.loadPixelFont(11));
         confirmBtn.setEnabled(true);
 
         Runnable updateLabels = () -> {
@@ -1142,7 +1142,7 @@ class LookAtDeckDialogs {
             cardLabels[i] = lbl;
 
             JToggleButton handBtn = new JToggleButton("→ Hand");
-            handBtn.setFont(FontLoader.loadPixelNESFont(9));
+            handBtn.setFont(FontLoader.loadPixelFont(9));
             handBtns[i] = handBtn;
             handBtn.addItemListener(ie -> {
                 if (updating[0]) return;
@@ -1191,7 +1191,7 @@ class LookAtDeckDialogs {
         JLabel instructions = new JLabel(
                 "Toggle '→ Hand' on " + filterDesc + " (up to " + maxAdd + "). Swap the rest to order (left = first at bottom).",
                 SwingConstants.CENTER);
-        instructions.setFont(FontLoader.loadPixelNESFont(9));
+        instructions.setFont(FontLoader.loadPixelFont(9));
         confirmBtn.addActionListener(ae -> { hideZoom(); dlg.dispose(); });
 
         JPanel south = new JPanel(new BorderLayout(0, 2));
@@ -1242,7 +1242,7 @@ class LookAtDeckDialogs {
         Set<CardData> handSet = new LinkedHashSet<>();
 
         JButton confirmBtn = new JButton("Confirm");
-        confirmBtn.setFont(FontLoader.loadPixelNESFont(11));
+        confirmBtn.setFont(FontLoader.loadPixelFont(11));
 
         JToggleButton[] handBtns = new JToggleButton[n];
 
@@ -1280,7 +1280,7 @@ class LookAtDeckDialogs {
             cardLabels[i] = lbl;
 
             JToggleButton handBtn = new JToggleButton("→ Hand");
-            handBtn.setFont(FontLoader.loadPixelNESFont(9));
+            handBtn.setFont(FontLoader.loadPixelFont(9));
             handBtns[i] = handBtn;
             handBtn.addItemListener(ie -> {
                 CardData c = cards.get(idx);
@@ -1321,7 +1321,7 @@ class LookAtDeckDialogs {
                 "Toggle '→ Hand' to add cards (up to " + maxAdd
                         + "). Card Name " + excludeName + " (red) must go to Break Zone.",
                 SwingConstants.CENTER);
-        instructions.setFont(FontLoader.loadPixelNESFont(9));
+        instructions.setFont(FontLoader.loadPixelFont(9));
         confirmBtn.addActionListener(ae -> { hideZoom(); dlg.dispose(); });
 
         JPanel south = new JPanel(new BorderLayout(0, 2));
@@ -1421,7 +1421,7 @@ class LookAtDeckDialogs {
         boolean[] updating       = { false };
 
         JButton confirmBtn = new JButton("Confirm");
-        confirmBtn.setFont(FontLoader.loadPixelNESFont(11));
+        confirmBtn.setFont(FontLoader.loadPixelFont(11));
 
         Runnable updateLabels = () -> {
             for (int j = 0; j < n; j++) {
@@ -1484,7 +1484,7 @@ class LookAtDeckDialogs {
             cardLabels[i] = lbl;
 
             JToggleButton fieldBtn = new JToggleButton("→ Field");
-            fieldBtn.setFont(FontLoader.loadPixelNESFont(9));
+            fieldBtn.setFont(FontLoader.loadPixelFont(9));
             fieldBtns[i] = fieldBtn;
             fieldBtn.addItemListener(ie -> {
                 if (updating[0]) return;
@@ -1525,7 +1525,7 @@ class LookAtDeckDialogs {
         JLabel instructions = new JLabel(
                 "Click '→ Field' on up to " + maxPlay + " " + typeLabel + "(s) to play. Swap the rest to set bottom-of-deck order (left = first).",
                 SwingConstants.CENTER);
-        instructions.setFont(FontLoader.loadPixelNESFont(9));
+        instructions.setFont(FontLoader.loadPixelFont(9));
         confirmBtn.addActionListener(ae -> { hideZoom(); dlg.dispose(); });
 
         JPanel south = new JPanel(new BorderLayout(0, 2));
@@ -1582,7 +1582,7 @@ class LookAtDeckDialogs {
         boolean[]  updating             = { false };
 
         JButton confirmBtn = new JButton("Confirm");
-        confirmBtn.setFont(FontLoader.loadPixelNESFont(11));
+        confirmBtn.setFont(FontLoader.loadPixelFont(11));
 
         Runnable updateLabels = () -> {
             for (int j = 0; j < n; j++) {
@@ -1654,8 +1654,8 @@ class LookAtDeckDialogs {
 
             JToggleButton handBtn  = new JToggleButton("→ Hand");
             JToggleButton fieldBtn = new JToggleButton("→ Field");
-            handBtn.setFont(FontLoader.loadPixelNESFont(9));
-            fieldBtn.setFont(FontLoader.loadPixelNESFont(9));
+            handBtn.setFont(FontLoader.loadPixelFont(9));
+            fieldBtn.setFont(FontLoader.loadPixelFont(9));
             handBtns[i]  = handBtn;
             fieldBtns[i] = fieldBtn;
 
@@ -1718,7 +1718,7 @@ class LookAtDeckDialogs {
                 + (fieldJobFilter != null ? "Job " + fieldJobFilter + " " : "") + fieldTypeFilter
                 + "). Swap others to set bottom-of-deck order (left = first).",
                 SwingConstants.CENTER);
-        instructions.setFont(FontLoader.loadPixelNESFont(9));
+        instructions.setFont(FontLoader.loadPixelFont(9));
         confirmBtn.addActionListener(ae -> { hideZoom(); dlg.dispose(); });
 
         JPanel south = new JPanel(new BorderLayout(0, 2));
@@ -1770,7 +1770,7 @@ class LookAtDeckDialogs {
         boolean[] updating      = { false };
 
         JButton confirmBtn = new JButton("Confirm");
-        confirmBtn.setFont(FontLoader.loadPixelNESFont(11));
+        confirmBtn.setFont(FontLoader.loadPixelFont(11));
 
         Runnable updateLabels = () -> {
             for (int j = 0; j < n; j++) {
@@ -1834,7 +1834,7 @@ class LookAtDeckDialogs {
             cardLabels[i] = lbl;
 
             JToggleButton fieldBtn = new JToggleButton("→ Field");
-            fieldBtn.setFont(FontLoader.loadPixelNESFont(9));
+            fieldBtn.setFont(FontLoader.loadPixelFont(9));
             fieldBtns[i] = fieldBtn;
             fieldBtn.addItemListener(ie -> {
                 if (updating[0]) return;
@@ -1875,7 +1875,7 @@ class LookAtDeckDialogs {
         JLabel instructions = new JLabel(
                 "Click '→ Field' on 1 Card Name " + cardName + costSuffix + " to play. Swap the rest to order (left = first at bottom).",
                 SwingConstants.CENTER);
-        instructions.setFont(FontLoader.loadPixelNESFont(9));
+        instructions.setFont(FontLoader.loadPixelFont(9));
         confirmBtn.addActionListener(ae -> { hideZoom(); dlg.dispose(); });
 
         JPanel south = new JPanel(new BorderLayout(0, 2));
@@ -1934,7 +1934,7 @@ class LookAtDeckDialogs {
         dlg.setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
 
         JButton confirmBtn = new JButton("Confirm");
-        confirmBtn.setFont(FontLoader.loadPixelNESFont(11));
+        confirmBtn.setFont(FontLoader.loadPixelFont(11));
         confirmBtn.setEnabled(false);
 
         int[] topIdx = { -1 };
@@ -1952,7 +1952,7 @@ class LookAtDeckDialogs {
             cardLabels[i] = lbl;
 
             JToggleButton btn = new JToggleButton("→ Top");
-            btn.setFont(FontLoader.loadPixelNESFont(9));
+            btn.setFont(FontLoader.loadPixelFont(9));
             topBtns[i] = btn;
             btn.addItemListener(ie -> {
                 if (ie.getStateChange() == java.awt.event.ItemEvent.SELECTED) {
@@ -1980,7 +1980,7 @@ class LookAtDeckDialogs {
         JLabel instructions = new JLabel(
                 "Pick exactly 1 card to put on top of your deck. The rest go to the bottom.",
                 SwingConstants.CENTER);
-        instructions.setFont(FontLoader.loadPixelNESFont(9));
+        instructions.setFont(FontLoader.loadPixelFont(9));
 
         confirmBtn.addActionListener(ae -> { hideZoom(); dlg.dispose(); });
 

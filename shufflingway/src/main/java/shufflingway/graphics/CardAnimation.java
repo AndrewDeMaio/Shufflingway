@@ -152,7 +152,7 @@ public class CardAnimation {
 			g.rotate(Math.PI / 2);
 		}
 		String text = String.valueOf(value);
-		Font font = FontLoader.loadPixelNESFont(14);
+		Font font = FontLoader.loadPixelFont(14);
 		g.setFont(font);
 		FontMetrics fm = g.getFontMetrics();
 		int tw = fm.stringWidth(text);
@@ -185,7 +185,7 @@ public class CardAnimation {
 		int x = (CARD_W - orbW) / 2, y = (CARD_H - orbH) / 2;
 		g.drawImage(orb, x, y, null);
 		String text = String.valueOf(totalCount);
-		Font font = FontLoader.loadPixelNESFont(10);
+		Font font = FontLoader.loadPixelFont(10);
 		g.setFont(font);
 		FontMetrics fm = g.getFontMetrics();
 		int tx = x + (orbW - fm.stringWidth(text)) / 2;
@@ -221,7 +221,7 @@ public class CardAnimation {
 		g.drawRoundRect(cx + 2, cy + 2, rw - 4, rh - 4, 10, 10);
 
 		String text = "Loading...";
-		Font font = FontLoader.loadPixelNESFont(11);
+		Font font = FontLoader.loadPixelFont(11);
 		g.setFont(font);
 		FontMetrics fm = g.getFontMetrics();
 		int tx = cx + (rw - fm.stringWidth(text)) / 2;

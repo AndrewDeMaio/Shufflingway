@@ -106,7 +106,7 @@ public class BreakZoneDialog {
                         g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING,
                                 RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
                         String text = String.valueOf(bzPlayCost);
-                        g2.setFont(FontLoader.loadPixelNESFont(15));
+                        g2.setFont(FontLoader.loadPixelFont(15));
                         FontMetrics fm = g2.getFontMetrics();
                         int x = 8, y = fm.getAscent() + 7;
                         g2.setColor(Color.BLACK);
@@ -129,7 +129,7 @@ public class BreakZoneDialog {
             }.execute();
 
             JLabel nameLabel = new JLabel(cd.name(), SwingConstants.CENTER);
-            nameLabel.setFont(FontLoader.loadPixelNESFont(9));
+            nameLabel.setFont(FontLoader.loadPixelFont(9));
             nameLabel.setPreferredSize(new Dimension(CARD_W, 18));
 
             cardWrapper.add(lbl,       BorderLayout.CENTER);
@@ -145,7 +145,7 @@ public class BreakZoneDialog {
                 CARD_H + 60));
 
         JButton closeBtn = new JButton("Close");
-        closeBtn.setFont(FontLoader.loadPixelNESFont(11));
+        closeBtn.setFont(FontLoader.loadPixelFont(11));
         closeBtn.addActionListener(ae -> { cb.onZoomHide(); dlg.dispose(); });
 
         JPanel south = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 6));
@@ -173,7 +173,7 @@ public class BreakZoneDialog {
 
         CardData[] picked = { null };
         JButton confirmBtn = new JButton("Confirm");
-        confirmBtn.setFont(FontLoader.loadPixelNESFont(11));
+        confirmBtn.setFont(FontLoader.loadPixelFont(11));
         confirmBtn.setEnabled(false);
 
         JPanel cardsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 8));
@@ -219,7 +219,7 @@ public class BreakZoneDialog {
             }.execute();
 
             JLabel nameLabel = new JLabel(cd.name(), SwingConstants.CENTER);
-            nameLabel.setFont(FontLoader.loadPixelNESFont(9));
+            nameLabel.setFont(FontLoader.loadPixelFont(9));
             nameLabel.setPreferredSize(new Dimension(CARD_W, 18));
 
             JPanel wrapper = new JPanel(new BorderLayout(0, 4));

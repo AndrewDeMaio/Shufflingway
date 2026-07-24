@@ -37,6 +37,8 @@ import javax.swing.ScrollPaneConstants;
 import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
 import javax.swing.SwingWorker;
+import javax.swing.JTabbedPane;
+import javax.swing.border.Border;
 
 import shufflingway.CardData;
 import static shufflingway.CardFilters.discardTypeKey;
@@ -128,7 +130,7 @@ public class CardPickerDialog {
             }.execute();
 
             JLabel nameLabel = new JLabel(candidate.name(), SwingConstants.CENTER);
-            nameLabel.setFont(FontLoader.loadPixelNESFont(9));
+            nameLabel.setFont(FontLoader.loadPixelFont(9));
             nameLabel.setPreferredSize(new Dimension(CARD_W, 18));
 
             wrapper.add(lbl, BorderLayout.CENTER);
@@ -137,7 +139,7 @@ public class CardPickerDialog {
         }
 
         JLabel hint = new JLabel("Click a card to select it", SwingConstants.CENTER);
-        hint.setFont(FontLoader.loadPixelNESFont(9));
+        hint.setFont(FontLoader.loadPixelFont(9));
 
         int rowHeight = 12 + CARD_H + 4 + 18 + 12;
         int rowsToShow = Math.min(2, (matches.size() + CARDS_PER_ROW - 1) / CARDS_PER_ROW);
@@ -179,14 +181,14 @@ public class CardPickerDialog {
         boolean[]     confirmed  = { false };
 
         JButton confirmBtn = new JButton("Confirm");
-        confirmBtn.setFont(FontLoader.loadPixelNESFont(11));
+        confirmBtn.setFont(FontLoader.loadPixelFont(11));
         confirmBtn.setEnabled(false);
 
         JButton skipBtn = new JButton("Skip");
-        skipBtn.setFont(FontLoader.loadPixelNESFont(11));
+        skipBtn.setFont(FontLoader.loadPixelFont(11));
 
         JLabel hint = new JLabel("", SwingConstants.CENTER);
-        hint.setFont(FontLoader.loadPixelNESFont(9));
+        hint.setFont(FontLoader.loadPixelFont(9));
 
         Runnable refresh = () -> {
             int n = selected.size();
@@ -259,7 +261,7 @@ public class CardPickerDialog {
             }.execute();
 
             JLabel nameLabel = new JLabel(candidate.name(), SwingConstants.CENTER);
-            nameLabel.setFont(FontLoader.loadPixelNESFont(9));
+            nameLabel.setFont(FontLoader.loadPixelFont(9));
             nameLabel.setPreferredSize(new Dimension(CARD_W, 18));
             wrapper.add(lbl,       BorderLayout.CENTER);
             wrapper.add(nameLabel, BorderLayout.SOUTH);
@@ -318,14 +320,14 @@ public class CardPickerDialog {
         boolean[]     confirmed  = { false };
 
         JButton confirmBtn = new JButton("Confirm");
-        confirmBtn.setFont(FontLoader.loadPixelNESFont(11));
+        confirmBtn.setFont(FontLoader.loadPixelFont(11));
         confirmBtn.setEnabled(false);
 
         JButton skipBtn = new JButton("Skip");
-        skipBtn.setFont(FontLoader.loadPixelNESFont(11));
+        skipBtn.setFont(FontLoader.loadPixelFont(11));
 
         JLabel hint = new JLabel("", SwingConstants.CENTER);
-        hint.setFont(FontLoader.loadPixelNESFont(9));
+        hint.setFont(FontLoader.loadPixelFont(9));
 
         Runnable refresh = () -> {
             int n = selected.size();
@@ -407,7 +409,7 @@ public class CardPickerDialog {
 
             JLabel nameLabel = new JLabel(
                     candidate.name() + " (cost " + candidate.cost() + ")", SwingConstants.CENTER);
-            nameLabel.setFont(FontLoader.loadPixelNESFont(9));
+            nameLabel.setFont(FontLoader.loadPixelFont(9));
             nameLabel.setPreferredSize(new Dimension(CARD_W, 18));
             wrapper.add(lbl,       BorderLayout.CENTER);
             wrapper.add(nameLabel, BorderLayout.SOUTH);
@@ -464,7 +466,7 @@ public class CardPickerDialog {
         dlg.setResizable(false);
 
         JLabel hintLabel = new JLabel(" ", SwingConstants.CENTER);
-        hintLabel.setFont(FontLoader.loadPixelNESFont(9));
+        hintLabel.setFont(FontLoader.loadPixelFont(9));
 
         JButton okBtn = new JButton("OK");
         okBtn.addActionListener(e -> dlg.dispose());
@@ -498,7 +500,7 @@ public class CardPickerDialog {
         content.setLayout(new BoxLayout(content, BoxLayout.Y_AXIS));
         if (!pool1.isEmpty()) {
             JLabel hdr = new JLabel(label1, SwingConstants.LEFT);
-            hdr.setFont(FontLoader.loadPixelNESFont(11));
+            hdr.setFont(FontLoader.loadPixelFont(11));
             hdr.setAlignmentX(Component.LEFT_ALIGNMENT);
             content.add(hdr);
             content.add(buildDualSearchPoolPanel(pool1, labels1, 0, sel, refresh));
@@ -506,7 +508,7 @@ public class CardPickerDialog {
         if (!pool1.isEmpty() && !pool2.isEmpty()) content.add(Box.createVerticalStrut(10));
         if (!pool2.isEmpty()) {
             JLabel hdr = new JLabel(label2, SwingConstants.LEFT);
-            hdr.setFont(FontLoader.loadPixelNESFont(11));
+            hdr.setFont(FontLoader.loadPixelFont(11));
             hdr.setAlignmentX(Component.LEFT_ALIGNMENT);
             content.add(hdr);
             content.add(buildDualSearchPoolPanel(pool2, labels2, 1, sel, refresh));
@@ -600,7 +602,7 @@ public class CardPickerDialog {
             }.execute();
 
             JLabel nameLabel = new JLabel(candidate.name(), SwingConstants.CENTER);
-            nameLabel.setFont(FontLoader.loadPixelNESFont(9));
+            nameLabel.setFont(FontLoader.loadPixelFont(9));
             nameLabel.setPreferredSize(new Dimension(CARD_W, 18));
             wrapper.add(lbl, BorderLayout.CENTER);
             wrapper.add(nameLabel, BorderLayout.SOUTH);
@@ -690,7 +692,7 @@ public class CardPickerDialog {
                 nameLabel = new JLabel(candidate.name(), SwingConstants.CENTER);
                 nameLabel.setPreferredSize(new Dimension(CARD_W, 18));
             }
-            nameLabel.setFont(FontLoader.loadPixelNESFont(9));
+            nameLabel.setFont(FontLoader.loadPixelFont(9));
             nameLabel.setPreferredSize(new Dimension(CARD_W, costFn != null ? 30 : 18));
 
             wrapper.add(lbl, BorderLayout.CENTER);
@@ -700,7 +702,7 @@ public class CardPickerDialog {
 
         JLabel hint = new JLabel(allowCancel ? "Click a card to play it, or close to decline"
                 : "Click a card to select it", SwingConstants.CENTER);
-        hint.setFont(FontLoader.loadPixelNESFont(9));
+        hint.setFont(FontLoader.loadPixelFont(9));
 
         dlg.getContentPane().setLayout(new BorderLayout(0, 6));
         dlg.getContentPane().add(cardsPanel, BorderLayout.CENTER);
@@ -728,11 +730,11 @@ public class CardPickerDialog {
         boolean[] confirmed = { false };
 
         JButton selectBtn = new JButton("Select");
-        selectBtn.setFont(FontLoader.loadPixelNESFont(11));
+        selectBtn.setFont(FontLoader.loadPixelFont(11));
         selectBtn.setEnabled(false);
 
         JLabel hint = new JLabel("", SwingConstants.CENTER);
-        hint.setFont(FontLoader.loadPixelNESFont(9));
+        hint.setFont(FontLoader.loadPixelFont(9));
 
         Runnable refresh = () -> {
             for (int i = 0; i < labels.size(); i++) {
@@ -799,7 +801,7 @@ public class CardPickerDialog {
                 nameLabel = new JLabel(candidate.name(), SwingConstants.CENTER);
                 nameLabel.setPreferredSize(new Dimension(CARD_W, 18));
             }
-            nameLabel.setFont(FontLoader.loadPixelNESFont(9));
+            nameLabel.setFont(FontLoader.loadPixelFont(9));
             nameLabel.setPreferredSize(new Dimension(CARD_W, showCost ? 30 : 18));
 
             wrapper.add(lbl, BorderLayout.CENTER);
@@ -816,7 +818,7 @@ public class CardPickerDialog {
         });
 
         JButton cancelBtn = new JButton("Cancel");
-        cancelBtn.setFont(FontLoader.loadPixelNESFont(11));
+        cancelBtn.setFont(FontLoader.loadPixelFont(11));
         cancelBtn.addActionListener(ev -> { onZoomHide.run(); dlg.dispose(); });
 
         refresh.run();
@@ -854,16 +856,16 @@ public class CardPickerDialog {
         int[] selectedIdx = {-1};
 
         JLabel statusLabel = new JLabel("Select 1 EX Burst card from your Damage Zone.", SwingConstants.CENTER);
-        statusLabel.setFont(FontLoader.loadPixelNESFont(10));
+        statusLabel.setFont(FontLoader.loadPixelFont(10));
 
         List<JLabel> cardLabels = new ArrayList<>();
         JPanel cardsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 8));
 
         JButton triggerBtn = new JButton("Trigger");
-        triggerBtn.setFont(FontLoader.loadPixelNESFont(11));
+        triggerBtn.setFont(FontLoader.loadPixelFont(11));
         triggerBtn.setEnabled(false);
         JButton passBtn = new JButton("Pass");
-        passBtn.setFont(FontLoader.loadPixelNESFont(11));
+        passBtn.setFont(FontLoader.loadPixelFont(11));
 
         Runnable refresh = () -> {
             triggerBtn.setEnabled(selectedIdx[0] >= 0);
@@ -917,7 +919,7 @@ public class CardPickerDialog {
             }.execute();
 
             JLabel nameLabel = new JLabel(cd.name(), SwingConstants.CENTER);
-            nameLabel.setFont(FontLoader.loadPixelNESFont(9));
+            nameLabel.setFont(FontLoader.loadPixelFont(9));
             nameLabel.setPreferredSize(new Dimension(CARD_W, 18));
 
             wrapper.add(lbl,       BorderLayout.CENTER);
@@ -967,13 +969,13 @@ public class CardPickerDialog {
         int[] result      = {-1};
 
         JLabel statusLabel = new JLabel(prompt, SwingConstants.CENTER);
-        statusLabel.setFont(FontLoader.loadPixelNESFont(10));
+        statusLabel.setFont(FontLoader.loadPixelFont(10));
 
         List<JLabel> cardLabels = new ArrayList<>();
         JPanel cardsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 8));
 
         JButton confirmBtn = new JButton(confirmLabel);
-        confirmBtn.setFont(FontLoader.loadPixelNESFont(11));
+        confirmBtn.setFont(FontLoader.loadPixelFont(11));
         confirmBtn.setEnabled(false);
 
         Runnable refresh = () -> {
@@ -1028,7 +1030,7 @@ public class CardPickerDialog {
             }.execute();
 
             JLabel nameLabel = new JLabel(cd.name() + (cd.exBurst() ? " EX" : ""), SwingConstants.CENTER);
-            nameLabel.setFont(FontLoader.loadPixelNESFont(9));
+            nameLabel.setFont(FontLoader.loadPixelFont(9));
             nameLabel.setPreferredSize(new Dimension(CARD_W, 18));
 
             wrapper.add(lbl,       BorderLayout.CENTER);
@@ -1051,7 +1053,7 @@ public class CardPickerDialog {
         btnPanel.add(confirmBtn);
         if (cancelable) {
             JButton cancelBtn = new JButton("Cancel");
-            cancelBtn.setFont(FontLoader.loadPixelNESFont(11));
+            cancelBtn.setFont(FontLoader.loadPixelFont(11));
             cancelBtn.addActionListener(ae -> { onZoomHide.run(); dlg.dispose(); });
             btnPanel.add(cancelBtn);
         }
@@ -1090,16 +1092,16 @@ public class CardPickerDialog {
         JLabel headerLabel = new JLabel(
                 "Assign " + blockerPower + " damage across the party (multiples of 1000):",
                 SwingConstants.CENTER);
-        headerLabel.setFont(FontLoader.loadPixelNESFont(9));
+        headerLabel.setFont(FontLoader.loadPixelFont(9));
         headerLabel.setBorder(BorderFactory.createEmptyBorder(10, 12, 6, 12));
 
         JLabel remainLabel = new JLabel("Remaining: " + blockerPower, SwingConstants.CENTER);
-        remainLabel.setFont(FontLoader.loadPixelNESFont(10));
+        remainLabel.setFont(FontLoader.loadPixelFont(10));
         remainLabel.setForeground(new Color(200, 80, 80));
 
         boolean[] confirmed = { false };
         JButton confirmBtn = new JButton("Confirm");
-        confirmBtn.setFont(FontLoader.loadPixelNESFont(11));
+        confirmBtn.setFont(FontLoader.loadPixelFont(11));
         confirmBtn.setFocusPainted(false);
         confirmBtn.setEnabled(blockerPower == 0);
 
@@ -1129,11 +1131,11 @@ public class CardPickerDialog {
             JLabel nameLabel = new JLabel(
                     "<html><center>" + card.name() + "<br>(" + power + ")</center></html>",
                     SwingConstants.CENTER);
-            nameLabel.setFont(FontLoader.loadPixelNESFont(8));
+            nameLabel.setFont(FontLoader.loadPixelFont(8));
             nameLabel.setAlignmentX(0.5f);
 
             JLabel valueLabel = new JLabel("0", SwingConstants.CENTER);
-            valueLabel.setFont(FontLoader.loadPixelNESFont(16));
+            valueLabel.setFont(FontLoader.loadPixelFont(16));
             valueLabel.setPreferredSize(new Dimension(72, 40));
             valueLabel.setMinimumSize(new Dimension(72, 40));
             valueLabel.setOpaque(true);
@@ -1145,7 +1147,7 @@ public class CardPickerDialog {
             valueLabels[i] = valueLabel;
 
             JButton leftBtn = new JButton("◄");
-            leftBtn.setFont(FontLoader.loadPixelNESFont(11));
+            leftBtn.setFont(FontLoader.loadPixelFont(11));
             leftBtn.setFocusPainted(false);
             leftBtn.addActionListener(ae -> {
                 if (assigned[slot] >= 1000) {
@@ -1156,7 +1158,7 @@ public class CardPickerDialog {
             });
 
             JButton rightBtn = new JButton("►");
-            rightBtn.setFont(FontLoader.loadPixelNESFont(11));
+            rightBtn.setFont(FontLoader.loadPixelFont(11));
             rightBtn.setFocusPainted(false);
             rightBtn.addActionListener(ae -> {
                 int total = 0;
@@ -1212,11 +1214,11 @@ public class CardPickerDialog {
         dlg.setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
 
         JLabel promptLabel = new JLabel(prompt, SwingConstants.CENTER);
-        promptLabel.setFont(FontLoader.loadPixelNESFont(11));
+        promptLabel.setFont(FontLoader.loadPixelFont(11));
         promptLabel.setBorder(BorderFactory.createEmptyBorder(10, 12, 4, 12));
 
         JLabel valueLabel = new JLabel(String.valueOf(value[0]), SwingConstants.CENTER);
-        valueLabel.setFont(FontLoader.loadPixelNESFont(20));
+        valueLabel.setFont(FontLoader.loadPixelFont(20));
         valueLabel.setPreferredSize(new Dimension(64, 48));
         valueLabel.setOpaque(true);
         valueLabel.setBackground(Color.WHITE);
@@ -1248,7 +1250,7 @@ public class CardPickerDialog {
         pickerRow.add(rightBtn);
 
         JButton confirmBtn = new JButton("Confirm");
-        confirmBtn.setFont(FontLoader.loadPixelNESFont(11));
+        confirmBtn.setFont(FontLoader.loadPixelFont(11));
         confirmBtn.setFocusPainted(false);
         confirmBtn.addActionListener(ae -> dlg.dispose());
 
@@ -1281,11 +1283,11 @@ public class CardPickerDialog {
         dlg.setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
 
         JLabel promptLabel = new JLabel(prompt, SwingConstants.CENTER);
-        promptLabel.setFont(FontLoader.loadPixelNESFont(11));
+        promptLabel.setFont(FontLoader.loadPixelFont(11));
         promptLabel.setBorder(BorderFactory.createEmptyBorder(10, 12, 4, 12));
 
         JLabel valueLabel = new JLabel(String.format("%05d", value[0]), SwingConstants.CENTER);
-        valueLabel.setFont(FontLoader.loadPixelNESFont(20));
+        valueLabel.setFont(FontLoader.loadPixelFont(20));
         valueLabel.setPreferredSize(new Dimension(90, 48));
         valueLabel.setOpaque(true);
         valueLabel.setBackground(Color.WHITE);
@@ -1312,7 +1314,7 @@ public class CardPickerDialog {
         });
 
         JButton okBtn = new JButton("OK");
-        okBtn.setFont(FontLoader.loadPixelNESFont(11));
+        okBtn.setFont(FontLoader.loadPixelFont(11));
         okBtn.setFocusPainted(false);
         okBtn.addActionListener(ae -> dlg.dispose());
 
@@ -1354,10 +1356,10 @@ public class CardPickerDialog {
         JLabel promptLabel = new JLabel(prompt, SwingConstants.CENTER);
         JLabel damageLabel = new JLabel(String.format(damage >= 10000 ? "%05d" : "%04d", damage));
 
-        promptLabel.setFont(FontLoader.loadPixelNESFont(11));
+        promptLabel.setFont(FontLoader.loadPixelFont(11));
         promptLabel.setBorder(BorderFactory.createEmptyBorder(10, 12, 4, 12));
         promptLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
-        damageLabel.setFont(FontLoader.loadPixelNESFont(11));
+        damageLabel.setFont(FontLoader.loadPixelFont(11));
         damageLabel.setBorder(BorderFactory.createEmptyBorder(10, 12, 4, 12));
         damageLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
 
@@ -1374,7 +1376,7 @@ public class CardPickerDialog {
         // Declared before the per-card loop so the up/down listeners below can toggle it directly;
         // added to the layout later. Only allow confirming once the full amount has been divided up.
         JButton okBtn = new JButton("OK");
-        okBtn.setFont(FontLoader.loadPixelNESFont(11));
+        okBtn.setFont(FontLoader.loadPixelFont(11));
         okBtn.setFocusPainted(false);
         okBtn.setEnabled(damage == 0);
         okBtn.addActionListener(e -> dlg.dispose());
@@ -1384,7 +1386,7 @@ public class CardPickerDialog {
             values.add(v);
 
             JLabel valueLabel = new JLabel(String.format("%05d", v[0]), SwingConstants.CENTER);
-            valueLabel.setFont(FontLoader.loadPixelNESFont(16));
+            valueLabel.setFont(FontLoader.loadPixelFont(16));
             valueLabel.setOpaque(true);
             valueLabel.setBackground(Color.WHITE);
             valueLabel.setBorder(BorderFactory.createLineBorder(Color.DARK_GRAY, 2));
@@ -1497,71 +1499,17 @@ public class CardPickerDialog {
         JPanel selfRow     = new JPanel(new FlowLayout(FlowLayout.CENTER, 8, 4));
 
         JButton confirmBtn = new JButton("Confirm");
-        confirmBtn.setFont(FontLoader.loadPixelNESFont(11));
+        confirmBtn.setFont(FontLoader.loadPixelFont(11));
         confirmBtn.setEnabled(false);
 
-        javax.swing.border.Border normalBorder   = BorderFactory.createLineBorder(new Color(100, 100, 100), 2);
-        javax.swing.border.Border selectedBorder = BorderFactory.createLineBorder(Color.YELLOW, 3);
+        Border normalBorder   = BorderFactory.createLineBorder(new Color(100, 100, 100), 2);
+        Border selectedBorder = BorderFactory.createLineBorder(Color.YELLOW, 3);
 
         for (int i = 0; i < eligible.size(); i++) {
             ForwardTarget target = eligible.get(i);
             CardData card = zone.get(target.idx());
-            final int fi = i;
-
-            JLabel imgLbl = new JLabel("...", SwingConstants.CENTER);
-            imgLbl.setPreferredSize(new Dimension(CARD_W, CARD_H));
-            imgLbl.setMinimumSize(new Dimension(CARD_W, CARD_H));
-            imgLbl.setOpaque(true);
-            imgLbl.setBackground(Color.DARK_GRAY);
-            imgLbl.setBorder(normalBorder);
-            cardLabels.add(imgLbl);
-
-            new SwingWorker<ImageIcon, Void>() {
-                @Override protected ImageIcon doInBackground() throws Exception {
-                    Image img = ImageCache.load(card.imageUrl());
-                    return img == null ? null
-                            : new ImageIcon(img.getScaledInstance(CARD_W, CARD_H, Image.SCALE_SMOOTH));
-                }
-                @Override protected void done() {
-                    try {
-                        ImageIcon icon = get();
-                        if (icon != null) { imgLbl.setIcon(icon); imgLbl.setText(null); }
-                    } catch (InterruptedException | ExecutionException ignored) {}
-                }
-            }.execute();
-
-            MouseAdapter cardListener = new MouseAdapter() {
-                @Override public void mouseEntered(MouseEvent e) { onZoom.accept(card.imageUrl()); }
-                @Override public void mouseExited(MouseEvent e)  { onZoomHide.run(); }
-                @Override public void mousePressed(MouseEvent e) {
-                    if (sel.contains(fi)) {
-                        sel.remove(fi);
-                        imgLbl.setBorder(normalBorder);
-                    } else {
-                        if (maxCount == 1) {
-                            for (int si : sel) cardLabels.get(si).setBorder(normalBorder);
-                            sel.clear();
-                        } else if (sel.size() >= maxCount) {
-                            return;
-                        }
-                        sel.add(fi);
-                        imgLbl.setBorder(selectedBorder);
-                    }
-                    confirmBtn.setEnabled(upTo ? !sel.isEmpty() : sel.size() == maxCount);
-                }
-            };
-            imgLbl.addMouseListener(cardListener);
-
-            JLabel nameLbl = new JLabel(card.name(), SwingConstants.CENTER);
-            nameLbl.setFont(FontLoader.loadPixelNESFont(9));
-            nameLbl.setPreferredSize(new Dimension(CARD_W, 18));
-            nameLbl.addMouseListener(cardListener);
-
-            JPanel wrapper = new JPanel(new BorderLayout(0, 2));
-            wrapper.setOpaque(false);
-            wrapper.add(imgLbl,  BorderLayout.CENTER);
-            wrapper.add(nameLbl, BorderLayout.SOUTH);
-
+            JPanel wrapper = buildBreakZoneCardCell(target, card, i, cardLabels, sel,
+                    maxCount, upTo, confirmBtn, normalBorder, selectedBorder);
             if (!target.isP1()) opponentRow.add(wrapper);
             else                selfRow.add(wrapper);
         }
@@ -1574,13 +1522,13 @@ public class CardPickerDialog {
         south.add(confirmBtn);
         if (upTo) {
             JButton skipBtn = new JButton("Skip");
-            skipBtn.setFont(FontLoader.loadPixelNESFont(11));
+            skipBtn.setFont(FontLoader.loadPixelFont(11));
             skipBtn.addActionListener(ae -> dlg.dispose());
             south.add(skipBtn);
         }
 
         JLabel hdr = new JLabel(title, SwingConstants.CENTER);
-        hdr.setFont(FontLoader.loadPixelNESFont(11));
+        hdr.setFont(FontLoader.loadPixelFont(11));
         hdr.setBorder(BorderFactory.createEmptyBorder(8, 8, 4, 8));
 
         dlg.getContentPane().setLayout(new BorderLayout(0, 4));
@@ -1591,6 +1539,158 @@ public class CardPickerDialog {
         dlg.setLocationRelativeTo(owner);
         dlg.setVisible(true);
         return List.copyOf(chosen);
+    }
+
+    /**
+     * Tabbed break-zone picker for "either player's Break Zone" selections. One tab per
+     * player shows that player's eligible cards; selection (capped at {@code maxCount}) is
+     * shared across both tabs. Callers own the early-exit guards, exactly as with
+     * {@link #pickFromBreakZone}.
+     */
+    public List<ForwardTarget> pickFromBreakZoneTabbed(
+            List<ForwardTarget> eligible, List<CardData> zone,
+            int maxCount, boolean upTo, String title) {
+        JDialog dlg = new JDialog(owner, title, true);
+        dlg.setResizable(false);
+        dlg.setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
+
+        List<ForwardTarget> chosen = new ArrayList<>();
+        Set<Integer> sel = new LinkedHashSet<>();
+        List<JLabel> cardLabels = new ArrayList<>(eligible.size());
+
+        JButton confirmBtn = new JButton("Confirm");
+        confirmBtn.setFont(FontLoader.loadPixelFont(11));
+        confirmBtn.setEnabled(false);
+
+        Border normalBorder   = BorderFactory.createLineBorder(new Color(100, 100, 100), 2);
+        Border selectedBorder = BorderFactory.createLineBorder(Color.YELLOW, 3);
+
+        JPanel p1Row = new JPanel(new FlowLayout(FlowLayout.CENTER, 8, 4));
+        JPanel p2Row = new JPanel(new FlowLayout(FlowLayout.CENTER, 8, 4));
+        p1Row.setOpaque(false);
+        p2Row.setOpaque(false);
+        int p1Count = 0, p2Count = 0;
+
+        for (int i = 0; i < eligible.size(); i++) {
+            ForwardTarget target = eligible.get(i);
+            CardData card = zone.get(target.idx());
+            JPanel wrapper = buildBreakZoneCardCell(target, card, i, cardLabels, sel,
+                    maxCount, upTo, confirmBtn, normalBorder, selectedBorder);
+            if (target.isP1()) { p1Row.add(wrapper); p1Count++; }
+            else               { p2Row.add(wrapper); p2Count++; }
+        }
+
+        confirmBtn.addActionListener(ae -> {
+            for (int si : sel) chosen.add(eligible.get(si));
+            dlg.dispose();
+        });
+        JPanel south = new JPanel(new FlowLayout(FlowLayout.CENTER, 8, 4));
+        south.add(confirmBtn);
+        if (upTo) {
+            JButton skipBtn = new JButton("Skip");
+            skipBtn.setFont(FontLoader.loadPixelFont(11));
+            skipBtn.addActionListener(ae -> dlg.dispose());
+            south.add(skipBtn);
+        }
+
+        JTabbedPane tabs = new JTabbedPane();
+        tabs.setFont(FontLoader.loadPixelFont(10));
+        tabs.addTab("Player 1 (You) — " + p1Count, wrapBreakZoneTab(p1Row, p1Count));
+        tabs.addTab("Player 2 (Opponent) — " + p2Count, wrapBreakZoneTab(p2Row, p2Count));
+        // Open on the tab that actually has cards when one break zone is empty.
+        if (p1Count == 0 && p2Count > 0) tabs.setSelectedIndex(1);
+
+        JLabel hdr = new JLabel(title, SwingConstants.CENTER);
+        hdr.setFont(FontLoader.loadPixelFont(11));
+        hdr.setBorder(BorderFactory.createEmptyBorder(8, 8, 4, 8));
+
+        dlg.getContentPane().setLayout(new BorderLayout(0, 4));
+        dlg.getContentPane().add(hdr,   BorderLayout.NORTH);
+        dlg.getContentPane().add(tabs,  BorderLayout.CENTER);
+        dlg.getContentPane().add(south, BorderLayout.SOUTH);
+        dlg.pack();
+        dlg.setLocationRelativeTo(owner);
+        dlg.setVisible(true);
+        return List.copyOf(chosen);
+    }
+
+    /** Wraps a player's break-zone card row in a horizontally-scrollable, height-capped tab body. */
+    private JScrollPane wrapBreakZoneTab(JPanel row, int count) {
+        JScrollPane sp = new JScrollPane(row,
+                ScrollPaneConstants.VERTICAL_SCROLLBAR_NEVER,
+                ScrollPaneConstants.HORIZONTAL_SCROLLBAR_AS_NEEDED);
+        sp.setBorder(null);
+        int cols = Math.min(Math.max(count, 1), 8);
+        int width  = 16 + cols * (CARD_W + 8) + 16;
+        int height = CARD_H + 18 + 2 + 20; // card + name + gap + horizontal scrollbar allowance
+        sp.setPreferredSize(new Dimension(width, height));
+        return sp;
+    }
+
+    /**
+     * Builds one selectable break-zone card cell wired into the shared {@code sel} selection
+     * state and {@code confirmBtn} enablement. {@code cardLabels} is appended in call order,
+     * so its index matches {@code fi} (the cell's position in the eligible list).
+     */
+    private JPanel buildBreakZoneCardCell(
+            ForwardTarget target, CardData card, int fi,
+            List<JLabel> cardLabels, Set<Integer> sel, int maxCount, boolean upTo,
+            JButton confirmBtn, Border normalBorder, Border selectedBorder) {
+
+        JLabel imgLbl = new JLabel("...", SwingConstants.CENTER);
+        imgLbl.setPreferredSize(new Dimension(CARD_W, CARD_H));
+        imgLbl.setMinimumSize(new Dimension(CARD_W, CARD_H));
+        imgLbl.setOpaque(true);
+        imgLbl.setBackground(Color.DARK_GRAY);
+        imgLbl.setBorder(normalBorder);
+        cardLabels.add(imgLbl);
+
+        new SwingWorker<ImageIcon, Void>() {
+            @Override protected ImageIcon doInBackground() throws Exception {
+                Image img = ImageCache.load(card.imageUrl());
+                return img == null ? null
+                        : new ImageIcon(img.getScaledInstance(CARD_W, CARD_H, Image.SCALE_SMOOTH));
+            }
+            @Override protected void done() {
+                try {
+                    ImageIcon icon = get();
+                    if (icon != null) { imgLbl.setIcon(icon); imgLbl.setText(null); }
+                } catch (InterruptedException | ExecutionException ignored) {}
+            }
+        }.execute();
+
+        MouseAdapter cardListener = new MouseAdapter() {
+            @Override public void mouseEntered(MouseEvent e) { onZoom.accept(card.imageUrl()); }
+            @Override public void mouseExited(MouseEvent e)  { onZoomHide.run(); }
+            @Override public void mousePressed(MouseEvent e) {
+                if (sel.contains(fi)) {
+                    sel.remove(fi);
+                    imgLbl.setBorder(normalBorder);
+                } else {
+                    if (maxCount == 1) {
+                        for (int si : sel) cardLabels.get(si).setBorder(normalBorder);
+                        sel.clear();
+                    } else if (sel.size() >= maxCount) {
+                        return;
+                    }
+                    sel.add(fi);
+                    imgLbl.setBorder(selectedBorder);
+                }
+                confirmBtn.setEnabled(upTo ? !sel.isEmpty() : sel.size() == maxCount);
+            }
+        };
+        imgLbl.addMouseListener(cardListener);
+
+        JLabel nameLbl = new JLabel(card.name(), SwingConstants.CENTER);
+        nameLbl.setFont(FontLoader.loadPixelFont(9));
+        nameLbl.setPreferredSize(new Dimension(CARD_W, 18));
+        nameLbl.addMouseListener(cardListener);
+
+        JPanel wrapper = new JPanel(new BorderLayout(0, 2));
+        wrapper.setOpaque(false);
+        wrapper.add(imgLbl,  BorderLayout.CENTER);
+        wrapper.add(nameLbl, BorderLayout.SOUTH);
+        return wrapper;
     }
 
     // -------------------------------------------------------------------------
@@ -1611,14 +1711,14 @@ public class CardPickerDialog {
         JPanel cardsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 8));
 
         JLabel statusLabel = new JLabel("Click a card to select it, then Remove From Game — or Skip.", SwingConstants.CENTER);
-        statusLabel.setFont(FontLoader.loadPixelNESFont(10));
+        statusLabel.setFont(FontLoader.loadPixelFont(10));
 
         JButton confirmBtn = new JButton("Remove From Game");
-        confirmBtn.setFont(FontLoader.loadPixelNESFont(11));
+        confirmBtn.setFont(FontLoader.loadPixelFont(11));
         confirmBtn.setEnabled(false);
 
         JButton skipBtn = new JButton("Skip");
-        skipBtn.setFont(FontLoader.loadPixelNESFont(11));
+        skipBtn.setFont(FontLoader.loadPixelFont(11));
 
         Runnable refresh = () -> {
             confirmBtn.setEnabled(selectedIdx[0] >= 0);
@@ -1652,7 +1752,7 @@ public class CardPickerDialog {
             HandPickDialog.loadCardImage(lbl, cd.imageUrl());
 
             JLabel nameLabel = new JLabel(cd.name(), SwingConstants.CENTER);
-            nameLabel.setFont(FontLoader.loadPixelNESFont(9));
+            nameLabel.setFont(FontLoader.loadPixelFont(9));
             nameLabel.setPreferredSize(new Dimension(CARD_W, 18));
             wrapper.add(lbl,       BorderLayout.CENTER);
             wrapper.add(nameLabel, BorderLayout.SOUTH);
@@ -1705,13 +1805,13 @@ public class CardPickerDialog {
 
         String hint = "Reveal 0 → " + sourceName + " breaks. Reveal " + minForBonus + "+ → bonus effect.";
         JLabel statusLabel = new JLabel(hint, SwingConstants.CENTER);
-        statusLabel.setFont(FontLoader.loadPixelNESFont(9));
+        statusLabel.setFont(FontLoader.loadPixelFont(9));
 
         java.util.List<JLabel> cardLabels = new ArrayList<>();
         JPanel cardsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 8));
 
         JButton confirmBtn = new JButton("Reveal 0");
-        confirmBtn.setFont(FontLoader.loadPixelNESFont(11));
+        confirmBtn.setFont(FontLoader.loadPixelFont(11));
 
         Runnable refresh = () -> {
             int n = selected.size();
@@ -1747,7 +1847,7 @@ public class CardPickerDialog {
             HandPickDialog.loadCardImage(lbl, cd.imageUrl());
 
             JLabel nameLabel = new JLabel(cd.name(), SwingConstants.CENTER);
-            nameLabel.setFont(FontLoader.loadPixelNESFont(9));
+            nameLabel.setFont(FontLoader.loadPixelFont(9));
             nameLabel.setPreferredSize(new Dimension(CARD_W, 18));
 
             wrapper.add(lbl,       BorderLayout.CENTER);
@@ -1782,14 +1882,14 @@ public class CardPickerDialog {
         center.setLayout(new BoxLayout(center, BoxLayout.Y_AXIS));
         if (opponentRow.getComponentCount() > 0) {
             JLabel lbl = new JLabel("— Opponent —", SwingConstants.CENTER);
-            lbl.setFont(FontLoader.loadPixelNESFont(9));
+            lbl.setFont(FontLoader.loadPixelFont(9));
             lbl.setAlignmentX(Component.CENTER_ALIGNMENT);
             center.add(lbl);
             center.add(opponentRow);
         }
         if (selfRow.getComponentCount() > 0) {
             JLabel lbl = new JLabel("— Yours —", SwingConstants.CENTER);
-            lbl.setFont(FontLoader.loadPixelNESFont(9));
+            lbl.setFont(FontLoader.loadPixelFont(9));
             lbl.setAlignmentX(Component.CENTER_ALIGNMENT);
             center.add(lbl);
             center.add(selfRow);

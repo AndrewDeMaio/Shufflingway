@@ -43,8 +43,10 @@ class DebugUtility {
             JOptionPane.showMessageDialog(mw.frame, "Start a game first.", "Debug Spawn", JOptionPane.WARNING_MESSAGE);
             return;
         }
-        DebugCardPickerDialog.Selection sel = DebugCardPickerDialog.pick(mw.frame, "Spawn Card on Field");
-        if (sel == null) return;
+        DebugCardPickerDialog.pickRepeated(mw.frame, "Spawn Card on Field", this::spawnSelectedOnField);
+    }
+
+    private void spawnSelectedOnField(DebugCardPickerDialog.Selection sel) {
         CardData card = mw.buildCardDataFromSerial(sel.serial());
         if (card == null) {
             JOptionPane.showMessageDialog(mw.frame, "Card not found: " + sel.serial(), "Debug Spawn", JOptionPane.ERROR_MESSAGE);
@@ -77,8 +79,10 @@ class DebugUtility {
             JOptionPane.showMessageDialog(mw.frame, "Start a game first.", "Debug Spawn", JOptionPane.WARNING_MESSAGE);
             return;
         }
-        DebugCardPickerDialog.Selection sel = DebugCardPickerDialog.pick(mw.frame, "Add Card to Hand", this::clearHand, "Clear Hand");
-        if (sel == null) return;
+        DebugCardPickerDialog.pickRepeated(mw.frame, "Add Card to Hand", this::addSelectedToHand, this::clearHand, "Clear Hand");
+    }
+
+    private void addSelectedToHand(DebugCardPickerDialog.Selection sel) {
         CardData card = mw.buildCardDataFromSerial(sel.serial());
         if (card == null) {
             JOptionPane.showMessageDialog(mw.frame, "Card not found: " + sel.serial(), "Debug Spawn", JOptionPane.ERROR_MESSAGE);
@@ -110,8 +114,10 @@ class DebugUtility {
             JOptionPane.showMessageDialog(mw.frame, "Start a game first.", "Debug Spawn", JOptionPane.WARNING_MESSAGE);
             return;
         }
-        DebugCardPickerDialog.Selection sel = DebugCardPickerDialog.pick(mw.frame, "Add Card to BZ", this::clearBreakZone, "Clear BZ");
-        if (sel == null) return;
+        DebugCardPickerDialog.pickRepeated(mw.frame, "Add Card to BZ", this::addSelectedToBreakZone, this::clearBreakZone, "Clear BZ");
+    }
+
+    private void addSelectedToBreakZone(DebugCardPickerDialog.Selection sel) {
         CardData card = mw.buildCardDataFromSerial(sel.serial());
         if (card == null) {
             JOptionPane.showMessageDialog(mw.frame, "Card not found: " + sel.serial(), "Debug Spawn", JOptionPane.ERROR_MESSAGE);

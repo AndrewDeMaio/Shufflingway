@@ -113,10 +113,10 @@ public class AbilityPaymentDialog {
         }
 
         JLabel  cpLabel    = new JLabel();
-        cpLabel.setFont(FontLoader.loadPixelNESFont(11));
+        cpLabel.setFont(FontLoader.loadPixelFont(11));
         cpLabel.setHorizontalAlignment(SwingConstants.CENTER);
         JButton confirmBtn = new JButton("Confirm");
-        confirmBtn.setFont(FontLoader.loadPixelNESFont(11));
+        confirmBtn.setFont(FontLoader.loadPixelFont(11));
 
         List<JLabel>  backupLbls    = new ArrayList<>();
         List<Integer> backupSlots   = new ArrayList<>();
@@ -236,7 +236,7 @@ public class AbilityPaymentDialog {
 
         if (!eligibleBackupSlots.isEmpty()) {
             JLabel hdr = new JLabel("Backups — dull for 1 CP each:");
-            hdr.setFont(FontLoader.loadPixelNESFont(9)); hdr.setAlignmentX(Component.LEFT_ALIGNMENT);
+            hdr.setFont(FontLoader.loadPixelFont(9)); hdr.setAlignmentX(Component.LEFT_ALIGNMENT);
             JPanel bp = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 6)); bp.setAlignmentX(Component.LEFT_ALIGNMENT);
             for (int slot : eligibleBackupSlots) {
                 JLabel lbl = makeCardLabel();
@@ -275,7 +275,7 @@ public class AbilityPaymentDialog {
         if (ability.isSpecial()) {
             String sCostDesc = source.name() + (proxy != null ? " or " + proxy.substituteDescription() : "");
             JLabel sHdr = new JLabel("S Cost — click a " + sCostDesc + " below to commit:");
-            sHdr.setFont(FontLoader.loadPixelNESFont(9));
+            sHdr.setFont(FontLoader.loadPixelFont(9));
             sHdr.setAlignmentX(Component.LEFT_ALIGNMENT);
 
             JLabel slotLbl = makeCardLabel();
@@ -312,7 +312,7 @@ public class AbilityPaymentDialog {
         }
 
         JLabel discHdr = new JLabel("Hand — discard for 2 CP each:");
-        discHdr.setFont(FontLoader.loadPixelNESFont(9)); discHdr.setAlignmentX(Component.LEFT_ALIGNMENT);
+        discHdr.setFont(FontLoader.loadPixelFont(9)); discHdr.setAlignmentX(Component.LEFT_ALIGNMENT);
         JPanel dp = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 6)); dp.setAlignmentX(Component.LEFT_ALIGNMENT);
         for (int i = 0; i < hand.size(); i++) {
             final int hi = i;
@@ -382,7 +382,7 @@ public class AbilityPaymentDialog {
         center.add(discHdr); center.add(dp);
 
         JButton cancelBtn = new JButton("Cancel");
-        cancelBtn.setFont(FontLoader.loadPixelNESFont(11));
+        cancelBtn.setFont(FontLoader.loadPixelFont(11));
         cancelBtn.addActionListener(ev -> dlg.dispose());
         confirmBtn.addActionListener(ev -> {
             dlg.dispose();
@@ -444,7 +444,7 @@ public class AbilityPaymentDialog {
         JLabel titleLabel = new JLabel(
                 "<html><center>" + source.name() + " — " + (costDesc.length() > 0 ? costDesc : "free") + "</center></html>",
                 SwingConstants.CENTER);
-        titleLabel.setFont(FontLoader.loadPixelNESFont(11));
+        titleLabel.setFont(FontLoader.loadPixelFont(11));
 
         JPanel topPanel = new JPanel(new java.awt.BorderLayout(0, 4));
         topPanel.setBorder(BorderFactory.createEmptyBorder(8, 8, 4, 8));
@@ -469,7 +469,7 @@ public class AbilityPaymentDialog {
         lbl.setOpaque(true);
         lbl.setBackground(Color.DARK_GRAY);
         lbl.setForeground(Color.WHITE);
-        lbl.setFont(FontLoader.loadPixelNESFont(10));
+        lbl.setFont(FontLoader.loadPixelFont(10));
         lbl.setBorder(BorderFactory.createLineBorder(Color.GRAY, 1));
         lbl.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         return lbl;

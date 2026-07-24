@@ -111,10 +111,10 @@ public class WarpPaymentDialog {
         }
 
         JLabel  cpLabel    = new JLabel();
-        cpLabel.setFont(FontLoader.loadPixelNESFont(11));
+        cpLabel.setFont(FontLoader.loadPixelFont(11));
         cpLabel.setHorizontalAlignment(SwingConstants.CENTER);
         JButton confirmBtn = new JButton("Confirm Warp");
-        confirmBtn.setFont(FontLoader.loadPixelNESFont(11));
+        confirmBtn.setFont(FontLoader.loadPixelFont(11));
 
         List<JLabel>  backupLbls  = new ArrayList<>();
         List<Integer> backupSlots = new ArrayList<>();
@@ -187,7 +187,7 @@ public class WarpPaymentDialog {
 
         if (!eligibleBackupSlots.isEmpty()) {
             JLabel hdr = new JLabel("Backups — dull for 1 CP each:");
-            hdr.setFont(FontLoader.loadPixelNESFont(9)); hdr.setAlignmentX(Component.LEFT_ALIGNMENT);
+            hdr.setFont(FontLoader.loadPixelFont(9)); hdr.setAlignmentX(Component.LEFT_ALIGNMENT);
             JPanel bp = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 6)); bp.setAlignmentX(Component.LEFT_ALIGNMENT);
             for (int slot : eligibleBackupSlots) {
                 JLabel lbl = makeCardLabel();
@@ -248,7 +248,7 @@ public class WarpPaymentDialog {
         }
 
         JLabel discHdr = new JLabel("Hand — discard for 2 CP each:");
-        discHdr.setFont(FontLoader.loadPixelNESFont(9)); discHdr.setAlignmentX(Component.LEFT_ALIGNMENT);
+        discHdr.setFont(FontLoader.loadPixelFont(9)); discHdr.setAlignmentX(Component.LEFT_ALIGNMENT);
         JPanel dp = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 6)); dp.setAlignmentX(Component.LEFT_ALIGNMENT);
         for (int i = 0; i < hand.size(); i++) {
             if (i == handIdx) continue;
@@ -281,7 +281,7 @@ public class WarpPaymentDialog {
         centerPanel.add(discHdr); centerPanel.add(dp);
 
         JButton cancelBtn = new JButton("Cancel");
-        cancelBtn.setFont(FontLoader.loadPixelNESFont(11));
+        cancelBtn.setFont(FontLoader.loadPixelFont(11));
         cancelBtn.addActionListener(e -> dlg.dispose());
         confirmBtn.addActionListener(e -> {
             dlg.dispose();
@@ -303,7 +303,7 @@ public class WarpPaymentDialog {
         JLabel titleLabel = new JLabel(
                 "Warp cost for: " + card.name() + "  (" + (costDesc.length() > 0 ? costDesc : "free") + ")",
                 SwingConstants.CENTER);
-        titleLabel.setFont(FontLoader.loadPixelNESFont(11));
+        titleLabel.setFont(FontLoader.loadPixelFont(11));
 
         JPanel topPanel = new JPanel(new java.awt.BorderLayout(0, 4));
         topPanel.setBorder(BorderFactory.createEmptyBorder(8, 8, 4, 8));
@@ -363,7 +363,7 @@ public class WarpPaymentDialog {
         lbl.setOpaque(true);
         lbl.setBackground(Color.DARK_GRAY);
         lbl.setForeground(Color.WHITE);
-        lbl.setFont(FontLoader.loadPixelNESFont(10));
+        lbl.setFont(FontLoader.loadPixelFont(10));
         lbl.setBorder(BorderFactory.createLineBorder(Color.GRAY, 1));
         lbl.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         return lbl;

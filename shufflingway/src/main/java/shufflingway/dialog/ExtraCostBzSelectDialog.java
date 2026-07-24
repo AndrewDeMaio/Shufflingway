@@ -54,10 +54,10 @@ public class ExtraCostBzSelectDialog {
         JPanel         cardsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 8));
 
         JLabel statusLabel = new JLabel("", SwingConstants.CENTER);
-        statusLabel.setFont(FontLoader.loadPixelNESFont(10));
+        statusLabel.setFont(FontLoader.loadPixelFont(10));
 
         JButton confirmBtn = new JButton("Confirm");
-        confirmBtn.setFont(FontLoader.loadPixelNESFont(11));
+        confirmBtn.setFont(FontLoader.loadPixelFont(11));
         confirmBtn.setEnabled(false);
 
         Runnable refresh = () -> {
@@ -98,7 +98,7 @@ public class ExtraCostBzSelectDialog {
             HandPickDialog.loadCardImage(lbl, cd.imageUrl());
 
             JLabel nameLabel = new JLabel(cd.name(), SwingConstants.CENTER);
-            nameLabel.setFont(FontLoader.loadPixelNESFont(9));
+            nameLabel.setFont(FontLoader.loadPixelFont(9));
             nameLabel.setPreferredSize(new Dimension(CARD_W, 18));
 
             wrapper.add(lbl,       BorderLayout.CENTER);
@@ -128,7 +128,7 @@ public class ExtraCostBzSelectDialog {
         JLabel titleLabel = new JLabel(
                 "<html><center>" + card.name() + " — Extra Cost: " + ec.description() + "</center></html>",
                 SwingConstants.CENTER);
-        titleLabel.setFont(FontLoader.loadPixelNESFont(11));
+        titleLabel.setFont(FontLoader.loadPixelFont(11));
 
         JPanel south = new JPanel(new BorderLayout());
         south.add(statusLabel, BorderLayout.CENTER);

@@ -37,13 +37,13 @@ public class HandPickDialog {
         Set<Integer> selected = new HashSet<>();
 
         JLabel statusLabel = new JLabel("Select " + mustDiscard + " card(s) to discard.", SwingConstants.CENTER);
-        statusLabel.setFont(FontLoader.loadPixelNESFont(10));
+        statusLabel.setFont(FontLoader.loadPixelFont(10));
 
         List<JLabel> cardLabels = new ArrayList<>();
         JPanel cardsPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 8, 8));
 
         JButton confirmBtn = new JButton("Confirm");
-        confirmBtn.setFont(FontLoader.loadPixelNESFont(11));
+        confirmBtn.setFont(FontLoader.loadPixelFont(11));
         confirmBtn.setEnabled(false);
 
         Runnable refresh = () -> {
@@ -76,7 +76,7 @@ public class HandPickDialog {
                 CARD_H + 60));
 
         JLabel titleLabel = new JLabel("End Phase — Discard to 5", SwingConstants.CENTER);
-        titleLabel.setFont(FontLoader.loadPixelNESFont(14));
+        titleLabel.setFont(FontLoader.loadPixelFont(14));
 
         JPanel south = new JPanel(new BorderLayout());
         south.add(statusLabel, BorderLayout.CENTER);
@@ -110,13 +110,13 @@ public class HandPickDialog {
         Set<Integer> selected = new HashSet<>();
 
         JLabel statusLabel = new JLabel("Select " + mustDiscard + " card(s) to discard.", SwingConstants.CENTER);
-        statusLabel.setFont(FontLoader.loadPixelNESFont(10));
+        statusLabel.setFont(FontLoader.loadPixelFont(10));
 
         List<JLabel> cardLabels = new ArrayList<>();
         JPanel cardsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 8));
 
         JButton confirmBtn = new JButton("Discard");
-        confirmBtn.setFont(FontLoader.loadPixelNESFont(11));
+        confirmBtn.setFont(FontLoader.loadPixelFont(11));
         confirmBtn.setEnabled(false);
 
         Runnable refresh = () -> {
@@ -180,13 +180,13 @@ public class HandPickDialog {
         int[] selectedIdx = { -1 };
 
         JLabel statusLabel = new JLabel("Select 1 " + cardType + " to discard.", SwingConstants.CENTER);
-        statusLabel.setFont(FontLoader.loadPixelNESFont(10));
+        statusLabel.setFont(FontLoader.loadPixelFont(10));
 
         List<JLabel> cardLabels = new ArrayList<>();
         JPanel cardsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 8));
 
         JButton confirmBtn = new JButton("Discard");
-        confirmBtn.setFont(FontLoader.loadPixelNESFont(11));
+        confirmBtn.setFont(FontLoader.loadPixelFont(11));
         confirmBtn.setEnabled(false);
 
         Runnable refresh = () -> {
@@ -221,7 +221,7 @@ public class HandPickDialog {
             loadCardImage(lbl, cd.imageUrl());
 
             JLabel nameLabel = new JLabel(cd.name(), SwingConstants.CENTER);
-            nameLabel.setFont(FontLoader.loadPixelNESFont(9));
+            nameLabel.setFont(FontLoader.loadPixelFont(9));
             nameLabel.setPreferredSize(new Dimension(CARD_W, 18));
 
             wrapper.add(lbl,       BorderLayout.CENTER);
@@ -278,17 +278,17 @@ public class HandPickDialog {
         int[] selectedIdx = { -1 };
 
         JLabel statusLabel = new JLabel("Select 1 " + element + " card to reveal — or Pass.", SwingConstants.CENTER);
-        statusLabel.setFont(FontLoader.loadPixelNESFont(10));
+        statusLabel.setFont(FontLoader.loadPixelFont(10));
 
         List<JLabel> cardLabels = new ArrayList<>();
         JPanel cardsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 8));
 
         JButton confirmBtn = new JButton("Reveal");
-        confirmBtn.setFont(FontLoader.loadPixelNESFont(11));
+        confirmBtn.setFont(FontLoader.loadPixelFont(11));
         confirmBtn.setEnabled(false);
 
         JButton passBtn = new JButton("Pass");
-        passBtn.setFont(FontLoader.loadPixelNESFont(11));
+        passBtn.setFont(FontLoader.loadPixelFont(11));
 
         Runnable refresh = () -> {
             confirmBtn.setEnabled(selectedIdx[0] >= 0);
@@ -322,7 +322,7 @@ public class HandPickDialog {
             loadCardImage(lbl, cd.imageUrl());
 
             JLabel nameLabel = new JLabel(cd.name(), SwingConstants.CENTER);
-            nameLabel.setFont(FontLoader.loadPixelNESFont(9));
+            nameLabel.setFont(FontLoader.loadPixelFont(9));
             nameLabel.setPreferredSize(new Dimension(CARD_W, 18));
 
             wrapper.add(lbl,       BorderLayout.CENTER);
@@ -372,13 +372,13 @@ public class HandPickDialog {
 
         JLabel statusLabel = new JLabel("Select " + mustPlace + " card(s) to place at the bottom of your deck.",
                 SwingConstants.CENTER);
-        statusLabel.setFont(FontLoader.loadPixelNESFont(10));
+        statusLabel.setFont(FontLoader.loadPixelFont(10));
 
         List<JLabel> cardLabels = new ArrayList<>();
         JPanel cardsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 8));
 
         JButton confirmBtn = new JButton("Place");
-        confirmBtn.setFont(FontLoader.loadPixelNESFont(11));
+        confirmBtn.setFont(FontLoader.loadPixelFont(11));
         confirmBtn.setEnabled(false);
 
         Runnable refresh = () -> {
@@ -438,13 +438,13 @@ public class HandPickDialog {
 
         JLabel statusLabel = new JLabel("Select " + mustSelect + " card(s) to remove from the game.",
                 SwingConstants.CENTER);
-        statusLabel.setFont(FontLoader.loadPixelNESFont(10));
+        statusLabel.setFont(FontLoader.loadPixelFont(10));
 
         List<JLabel> cardLabels = new ArrayList<>();
         JPanel cardsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 8));
 
         JButton confirmBtn = new JButton("Remove From Game");
-        confirmBtn.setFont(FontLoader.loadPixelNESFont(11));
+        confirmBtn.setFont(FontLoader.loadPixelFont(11));
         confirmBtn.setEnabled(false);
 
         Runnable refresh = () -> {
@@ -523,7 +523,7 @@ public class HandPickDialog {
             loadCardImage(lbl, cd.imageUrl());
 
             JLabel nameLabel = new JLabel(cd.name(), SwingConstants.CENTER);
-            nameLabel.setFont(FontLoader.loadPixelNESFont(9));
+            nameLabel.setFont(FontLoader.loadPixelFont(9));
             nameLabel.setPreferredSize(new Dimension(CARD_W, 18));
 
             wrapper.add(lbl,       BorderLayout.CENTER);
@@ -539,7 +539,7 @@ public class HandPickDialog {
         lbl.setOpaque(true);
         lbl.setBackground(Color.DARK_GRAY);
         lbl.setForeground(Color.WHITE);
-        lbl.setFont(FontLoader.loadPixelNESFont(10));
+        lbl.setFont(FontLoader.loadPixelFont(10));
         lbl.setBorder(BorderFactory.createLineBorder(Color.LIGHT_GRAY, 1));
         return lbl;
     }

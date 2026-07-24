@@ -498,6 +498,33 @@ public class CardBehaviorTest {
         verify(ctx).selfDiscard(1);
     }
 
+    // Kadaj's second modal action: "Choose up to 2 cards from either player's Break Zone.
+    // Remove them from the game." must offer BOTH break zones (bothZones=true), not just the
+    // controller's. Regression guard for the dropped bothZones flag on the RFG followup path.
+    @Test
+    void eitherPlayerBreakZoneRfgOffersBothZones() {
+        GameContext ctx = mock(GameContext.class);
+        when(ctx.consumePreloadedTargets()).thenReturn(null);
+        when(ctx.selectCharactersFromBreakZone(
+                anyInt(), anyBoolean(), anyBoolean(), anyBoolean(),
+                any(), any(), anyInt(), any(), anyInt(), any(),
+                anyBoolean(), anyBoolean(), anyBoolean(),
+                any(), any(), any(), any(), anyBoolean(), any(), anyBoolean()
+        )).thenReturn(List.of());
+
+        String text = "Choose up to 2 cards from either player's Break Zone. Remove them from the game.";
+        Consumer<GameContext> fn = ActionResolver.parse(text, null);
+        assertNotNull(fn);
+        fn.accept(ctx);
+
+        // maxCount=2, upTo=true, bothZones=true (4th arg)
+        verify(ctx).selectCharactersFromBreakZone(
+                eq(2), eq(true), anyBoolean(), eq(true),
+                any(), any(), anyInt(), any(), anyInt(), any(),
+                anyBoolean(), anyBoolean(), anyBoolean(),
+                any(), any(), any(), any(), anyBoolean(), any(), anyBoolean());
+    }
+
     // =========================================================================================
     // Rubicante: "Name 1 Element. During this turn, if Rubicante is dealt damage by abilities of
     // the named Element, the damage becomes 0 instead." — ability-only element damage

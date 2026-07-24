@@ -32,12 +32,13 @@ import javax.swing.table.DefaultTableModel;
 import javax.swing.table.TableRowSorter;
 
 /**
- * Modal searchable card picker over the entire card database. Returns the selected card's serial
- * together with the target player (or {@code null} if cancelled). Used by the debug spawn/add tooling.
+ * Non-modal searchable card picker over the entire card database. Each {@code + Add} click feeds the
+ * selected card serial and target player to a caller-supplied action and leaves the dialog open, so
+ * multiple cards can be added in one sitting. Used by the debug spawn/add tooling.
  */
 public class DebugCardPickerDialog extends JDialog {
 
-    /** A confirmed pick: the chosen card serial and which player it targets. */
+    /** A single add: the chosen card serial and which player it targets. */
     public record Selection(String serial, boolean isP1) {}
 
     private static final String DB_URL = scraper.AppPaths.dbUrl();
@@ -61,13 +62,13 @@ public class DebugCardPickerDialog extends JDialog {
     private final DefaultTableModel tableModel;
     private final TableRowSorter<DefaultTableModel> sorter;
     private final JTable table;
-    private String selectedSerial = null;
-    /** Target player for the spawn/add; defaults to P2. */
-    private boolean targetIsP1 = false;
+    /** Target player for the spawn/add; defaults to P1. */
+    private boolean targetIsP1 = true;
 
     private DebugCardPickerDialog(JFrame parent, String title,
+            java.util.function.Consumer<Selection> addAction,
             java.util.function.Consumer<Boolean> clearAction, String clearActionLabel) {
-        super(parent, title, true);
+        super(parent, title, false);
         setSize(720, 520);
         setLocationRelativeTo(parent);
         setLayout(new BorderLayout());
@@ -99,8 +100,8 @@ public class DebugCardPickerDialog extends JDialog {
         searchPanel.add(new JLabel("Search:"));
         searchPanel.add(searchField);
 
-        JRadioButton p1Radio = new JRadioButton("P1");
-        JRadioButton p2Radio = new JRadioButton("P2", true);
+        JRadioButton p1Radio = new JRadioButton("P1", true);
+        JRadioButton p2Radio = new JRadioButton("P2");
         ButtonGroup targetGroup = new ButtonGroup();
         targetGroup.add(p1Radio);
         targetGroup.add(p2Radio);
@@ -115,14 +116,14 @@ public class DebugCardPickerDialog extends JDialog {
         northPanel.add(targetPanel, BorderLayout.NORTH);
         northPanel.add(searchPanel, BorderLayout.CENTER);
 
-        JButton selectButton = new JButton("Select");
-        JButton cancelButton = new JButton("Cancel");
-        selectButton.addActionListener(e -> confirmSelection());
-        cancelButton.addActionListener(e -> { selectedSerial = null; dispose(); });
+        JButton addButton = new JButton("+ Add");
+        JButton closeButton = new JButton("Close");
+        addButton.addActionListener(e -> addSelected(addAction));
+        closeButton.addActionListener(e -> dispose());
 
         JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
-        buttonPanel.add(cancelButton);
-        buttonPanel.add(selectButton);
+        buttonPanel.add(closeButton);
+        buttonPanel.add(addButton);
 
         JPanel southPanel = new JPanel(new BorderLayout());
         // Optional lower-left action (e.g. the "Add Card to Hand"/"Add Card to BZ" flows): wipe the
@@ -139,7 +140,7 @@ public class DebugCardPickerDialog extends JDialog {
 
         table.addMouseListener(new java.awt.event.MouseAdapter() {
             @Override public void mouseClicked(java.awt.event.MouseEvent e) {
-                if (e.getClickCount() == 2) confirmSelection();
+                if (e.getClickCount() == 2) addSelected(addAction);
             }
         });
 
@@ -147,9 +148,9 @@ public class DebugCardPickerDialog extends JDialog {
         add(new JScrollPane(table), BorderLayout.CENTER);
         add(southPanel, BorderLayout.SOUTH);
 
-        getRootPane().setDefaultButton(selectButton);
+        getRootPane().setDefaultButton(addButton);
         getRootPane().registerKeyboardAction(
-                e -> { selectedSerial = null; dispose(); },
+                e -> dispose(),
                 KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0),
                 JComponent.WHEN_IN_FOCUSED_WINDOW);
 
@@ -171,12 +172,20 @@ public class DebugCardPickerDialog extends JDialog {
         sorter.setRowFilter(RowFilter.regexFilter(sb.toString()));
     }
 
-    private void confirmSelection() {
+    /**
+     * Feeds the currently selected card (for the current target player) to {@code addAction} and
+     * keeps the dialog open so more cards can be added. Warns if no table row is selected.
+     */
+    private void addSelected(java.util.function.Consumer<Selection> addAction) {
         int row = table.getSelectedRow();
-        if (row < 0) return;
+        if (row < 0) {
+            JOptionPane.showMessageDialog(this, "Select a card in the table first.",
+                    getTitle(), JOptionPane.WARNING_MESSAGE);
+            return;
+        }
         int modelRow = table.convertRowIndexToModel(row);
-        selectedSerial = (String) tableModel.getValueAt(modelRow, 0);
-        dispose();
+        String serial = (String) tableModel.getValueAt(modelRow, 0);
+        addAction.accept(new Selection(serial, targetIsP1));
     }
 
     private void loadCards() {
@@ -198,23 +207,23 @@ public class DebugCardPickerDialog extends JDialog {
     }
 
     /**
-     * Opens the picker modally and returns the chosen card serial and target player,
-     * or {@code null} if cancelled.
+     * Opens the picker (non-modal) and invokes {@code addAction} for each {@code + Add} click with
+     * the selected card and target player. The dialog stays open until the user closes it.
      */
-    public static Selection pick(JFrame parent, String title) {
-        return pick(parent, title, null, null);
+    public static void pickRepeated(JFrame parent, String title,
+            java.util.function.Consumer<Selection> addAction) {
+        pickRepeated(parent, title, addAction, null, null);
     }
 
     /**
      * Variant that also shows a lower-left button labelled {@code clearActionLabel} running
      * {@code clearAction} with the currently selected target player ({@code true} = P1); pass
-     * {@code null} to omit the button. The action fires in place and does not close the dialog, so the
-     * picker can still be used to add a card afterwards.
+     * {@code null} to omit the button. The action fires in place and does not close the dialog.
      */
-    public static Selection pick(JFrame parent, String title,
+    public static void pickRepeated(JFrame parent, String title,
+            java.util.function.Consumer<Selection> addAction,
             java.util.function.Consumer<Boolean> clearAction, String clearActionLabel) {
-        DebugCardPickerDialog dialog = new DebugCardPickerDialog(parent, title, clearAction, clearActionLabel);
+        DebugCardPickerDialog dialog = new DebugCardPickerDialog(parent, title, addAction, clearAction, clearActionLabel);
         dialog.setVisible(true);
-        return dialog.selectedSerial == null ? null : new Selection(dialog.selectedSerial, dialog.targetIsP1);
     }
 }

@@ -160,10 +160,10 @@ public class StandardPaymentDialog {
         if (!isLD) for (String e : elems) costByElem.put(e, 1);
 
         JLabel   cpLabel    = new JLabel();
-        cpLabel.setFont(FontLoader.loadPixelNESFont(11));
+        cpLabel.setFont(FontLoader.loadPixelFont(11));
         cpLabel.setHorizontalAlignment(SwingConstants.CENTER);
         JButton confirmBtn = new JButton("Confirm");
-        confirmBtn.setFont(FontLoader.loadPixelNESFont(11));
+        confirmBtn.setFont(FontLoader.loadPixelFont(11));
 
         List<JLabel>  backupLbls  = new ArrayList<>();
         List<Integer> backupSlots = new ArrayList<>();
@@ -247,7 +247,7 @@ public class StandardPaymentDialog {
 
         if (!eligibleBackupSlots.isEmpty()) {
             JLabel hdr = new JLabel("Backups — dull for 1 CP each:");
-            hdr.setFont(FontLoader.loadPixelNESFont(9)); hdr.setAlignmentX(Component.LEFT_ALIGNMENT);
+            hdr.setFont(FontLoader.loadPixelFont(9)); hdr.setAlignmentX(Component.LEFT_ALIGNMENT);
             JPanel bp = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 6)); bp.setAlignmentX(Component.LEFT_ALIGNMENT);
             for (int slot : eligibleBackupSlots) {
                 JLabel lbl = makeCardLabel();
@@ -319,7 +319,7 @@ public class StandardPaymentDialog {
 
         if (!backupCpOnly) {
             JLabel discHdr = new JLabel("Hand — discard for 2 CP each:");
-            discHdr.setFont(FontLoader.loadPixelNESFont(9)); discHdr.setAlignmentX(Component.LEFT_ALIGNMENT);
+            discHdr.setFont(FontLoader.loadPixelFont(9)); discHdr.setAlignmentX(Component.LEFT_ALIGNMENT);
             JPanel dp = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 6)); dp.setAlignmentX(Component.LEFT_ALIGNMENT);
             for (int i = 0; i < hand.size(); i++) {
                 if (i == handIdx) continue;
@@ -361,7 +361,7 @@ public class StandardPaymentDialog {
                         + (ldDiscardGrants.isEmpty() ? "" : " or " + String.join("/", ldDiscardGrants))
                         + "): discard for 2 CP.</center></html>",
                 SwingConstants.CENTER);
-        hint.setFont(FontLoader.loadPixelNESFont(9));
+        hint.setFont(FontLoader.loadPixelFont(9));
 
         boolean showMultiElemNote = !isLD && elems.length > 1 && cost < elems.length;
         JLabel multiElemNote = null;
@@ -369,12 +369,12 @@ public class StandardPaymentDialog {
             multiElemNote = new JLabel(
                     "<html><center>Multi-element cards still require 1 CP of each of their elements.</center></html>",
                     SwingConstants.CENTER);
-            multiElemNote.setFont(FontLoader.loadPixelNESFont(9));
+            multiElemNote.setFont(FontLoader.loadPixelFont(9));
             multiElemNote.setForeground(new Color(255, 200, 80));
         }
 
         JButton cancelBtn = new JButton("Cancel");
-        cancelBtn.setFont(FontLoader.loadPixelNESFont(11));
+        cancelBtn.setFont(FontLoader.loadPixelFont(11));
         cancelBtn.addActionListener(e -> dlg.dispose());
         confirmBtn.addActionListener(e -> {
             dlg.dispose();
@@ -387,7 +387,7 @@ public class StandardPaymentDialog {
 
         JLabel title = new JLabel("Pay for: " + card.name() + "  (Cost " + cost + " " + elem + " CP)",
                 SwingConstants.CENTER);
-        title.setFont(FontLoader.loadPixelNESFont(11));
+        title.setFont(FontLoader.loadPixelFont(11));
 
         JPanel hintPanel = new JPanel();
         hintPanel.setLayout(new BoxLayout(hintPanel, BoxLayout.Y_AXIS));
@@ -459,13 +459,13 @@ public class StandardPaymentDialog {
             String backupName, String[] elements, Consumer<String> onPick) {
         JPopupMenu popup = new JPopupMenu();
         JMenuItem header = new JMenuItem(backupName + " — choose element:");
-        header.setFont(FontLoader.loadPixelNESFont(9));
+        header.setFont(FontLoader.loadPixelFont(9));
         header.setEnabled(false);
         popup.add(header);
         popup.addSeparator();
         for (String elem : elements) {
             JMenuItem item = new JMenuItem(elem);
-            item.setFont(FontLoader.loadPixelNESFont(10));
+            item.setFont(FontLoader.loadPixelFont(10));
             ElementColor ec = ElementColor.fromName(elem);
             if (ec != null) {
                 item.setBackground(ec.color);
@@ -485,7 +485,7 @@ public class StandardPaymentDialog {
         lbl.setOpaque(true);
         lbl.setBackground(Color.DARK_GRAY);
         lbl.setForeground(Color.WHITE);
-        lbl.setFont(FontLoader.loadPixelNESFont(10));
+        lbl.setFont(FontLoader.loadPixelFont(10));
         lbl.setBorder(BorderFactory.createLineBorder(Color.GRAY, 1));
         lbl.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         return lbl;

@@ -1445,7 +1445,7 @@ final class AutoAbilityTriggers {
 			}.execute();
 
 			JLabel nameLabel = new JLabel(card.name(), SwingConstants.CENTER);
-			nameLabel.setFont(FontLoader.loadPixelNESFont(9));
+			nameLabel.setFont(FontLoader.loadPixelFont(9));
 			nameLabel.setPreferredSize(new Dimension(CARD_W, 18));
 
 			JLabel effectLabel = new JLabel(
@@ -1466,10 +1466,10 @@ final class AutoAbilityTriggers {
 
 			boolean[] activated = {false};
 			JButton declineBtn = new JButton("Decline");
-			declineBtn.setFont(FontLoader.loadPixelNESFont(11));
+			declineBtn.setFont(FontLoader.loadPixelFont(11));
 			declineBtn.addActionListener(ae -> { mw.hideZoom(); dlg.dispose(); });
 			JButton okBtn = new JButton("OK");
-			okBtn.setFont(FontLoader.loadPixelNESFont(11));
+			okBtn.setFont(FontLoader.loadPixelFont(11));
 			okBtn.addActionListener(ae -> { activated[0] = true; mw.hideZoom(); dlg.dispose(); });
 
 			JPanel south = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 6));
@@ -2278,7 +2278,7 @@ final class AutoAbilityTriggers {
 		choicesPanel.setBorder(BorderFactory.createEmptyBorder(10, 12, 6, 12));
 
 		JButton confirmBtn = new JButton("Confirm");
-		confirmBtn.setFont(FontLoader.loadPixelNESFont(11));
+		confirmBtn.setFont(FontLoader.loadPixelFont(11));
 
 		if (singlePick) {
 			// ── Radio buttons — exactly one action ──
@@ -2287,7 +2287,7 @@ final class AutoAbilityTriggers {
 			for (int i = 0; i < n; i++) {
 				javax.swing.JRadioButton rb = new javax.swing.JRadioButton(
 						"<html><body style='width:340px'>" + actions.get(i) + "</body></html>");
-				rb.setFont(FontLoader.loadPixelNESFont(10));
+				rb.setFont(FontLoader.loadPixelFont(10));
 				group.add(rb);
 				radios[i] = rb;
 				choicesPanel.add(rb);
@@ -2304,12 +2304,12 @@ final class AutoAbilityTriggers {
 			JLabel countLbl = new JLabel(
 					"Selected: 0 / " + selectCount + (upTo ? " (up to)" : ""),
 					SwingConstants.CENTER);
-			countLbl.setFont(FontLoader.loadPixelNESFont(10));
+			countLbl.setFont(FontLoader.loadPixelFont(10));
 
 			for (int i = 0; i < n; i++) {
 				javax.swing.JCheckBox cb = new javax.swing.JCheckBox(
 						"<html><body style='width:340px'>" + actions.get(i) + "</body></html>");
-				cb.setFont(FontLoader.loadPixelNESFont(10));
+				cb.setFont(FontLoader.loadPixelFont(10));
 				checks[i] = cb;
 				cb.addItemListener(ie -> {
 					int sel = 0;
@@ -2444,11 +2444,11 @@ final class AutoAbilityTriggers {
 		List<Integer> selectedDiscards = new ArrayList<>();
 
 		JLabel   cpLabel    = new JLabel();
-		cpLabel.setFont(FontLoader.loadPixelNESFont(11));
+		cpLabel.setFont(FontLoader.loadPixelFont(11));
 		cpLabel.setHorizontalAlignment(SwingConstants.CENTER);
 
 		JButton confirmBtn = new JButton("Confirm");
-		confirmBtn.setFont(FontLoader.loadPixelNESFont(11));
+		confirmBtn.setFont(FontLoader.loadPixelFont(11));
 
 		List<JLabel>  backupLbls  = new ArrayList<>();
 		List<Integer> backupSlots = new ArrayList<>();
@@ -2506,13 +2506,13 @@ final class AutoAbilityTriggers {
 
 		if (!eligibleBackupSlots.isEmpty()) {
 			JLabel hdr = new JLabel("Backups — dull for 1 CP each:");
-			hdr.setFont(FontLoader.loadPixelNESFont(9)); hdr.setAlignmentX(Component.LEFT_ALIGNMENT);
+			hdr.setFont(FontLoader.loadPixelFont(9)); hdr.setAlignmentX(Component.LEFT_ALIGNMENT);
 			JPanel bp = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 6)); bp.setAlignmentX(Component.LEFT_ALIGNMENT);
 			for (int slot : eligibleBackupSlots) {
 				JLabel lbl = new JLabel("...", SwingConstants.CENTER);
 				lbl.setPreferredSize(new Dimension(CARD_W, CARD_H)); lbl.setMinimumSize(new Dimension(CARD_W, CARD_H));
 				lbl.setOpaque(true); lbl.setBackground(Color.DARK_GRAY); lbl.setForeground(Color.WHITE);
-				lbl.setFont(FontLoader.loadPixelNESFont(10)); lbl.setBorder(BorderFactory.createLineBorder(Color.GRAY, 1));
+				lbl.setFont(FontLoader.loadPixelFont(10)); lbl.setBorder(BorderFactory.createLineBorder(Color.GRAY, 1));
 				lbl.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
 				final String url = bkpUrls[slot];
 				lbl.addMouseListener(new MouseAdapter() {
@@ -2541,7 +2541,7 @@ final class AutoAbilityTriggers {
 		if (!hand.isEmpty()) {
 			java.util.Set<String> ldGrants = mw.lightDarkDiscardGrants(isP1);
 			JLabel discHdr = new JLabel("Hand — discard for 2 CP each:");
-			discHdr.setFont(FontLoader.loadPixelNESFont(9)); discHdr.setAlignmentX(Component.LEFT_ALIGNMENT);
+			discHdr.setFont(FontLoader.loadPixelFont(9)); discHdr.setAlignmentX(Component.LEFT_ALIGNMENT);
 			JPanel dp = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 6)); dp.setAlignmentX(Component.LEFT_ALIGNMENT);
 			for (int i = 0; i < hand.size(); i++) {
 				final int hi = i; CardData hc = hand.get(i);
@@ -2549,7 +2549,7 @@ final class AutoAbilityTriggers {
 				JLabel lbl = new JLabel("...", SwingConstants.CENTER);
 				lbl.setPreferredSize(new Dimension(CARD_W, CARD_H)); lbl.setMinimumSize(new Dimension(CARD_W, CARD_H));
 				lbl.setOpaque(true); lbl.setBackground(payable ? Color.DARK_GRAY : new Color(50, 50, 50));
-				lbl.setForeground(Color.WHITE); lbl.setFont(FontLoader.loadPixelNESFont(10));
+				lbl.setForeground(Color.WHITE); lbl.setFont(FontLoader.loadPixelFont(10));
 				lbl.setBorder(BorderFactory.createLineBorder(payable ? Color.GRAY : new Color(80, 80, 80), 1));
 				lbl.setCursor(payable ? Cursor.getPredefinedCursor(Cursor.HAND_CURSOR) : Cursor.getDefaultCursor());
 				final String imgUrl = hc.imageUrl();
@@ -2585,7 +2585,7 @@ final class AutoAbilityTriggers {
 		}
 
 		JButton cancelBtn = new JButton("Cancel");
-		cancelBtn.setFont(FontLoader.loadPixelNESFont(11));
+		cancelBtn.setFont(FontLoader.loadPixelFont(11));
 		cancelBtn.addActionListener(ev -> {
 			mw.logEntry("[AutoAbility] " + cardName + " — payment cancelled");
 			dlg.dispose();
@@ -2610,7 +2610,7 @@ final class AutoAbilityTriggers {
 		buttonPanel.add(confirmBtn);
 		if (crystalAltCost > 0) {
 			JButton crystalBtn = new JButton("Pay " + crystalAltCost + " Crystal" + (crystalAltCost == 1 ? "" : "s"));
-			crystalBtn.setFont(FontLoader.loadPixelNESFont(11));
+			crystalBtn.setFont(FontLoader.loadPixelFont(11));
 			crystalBtn.setEnabled(mw.playerCrystals(isP1) >= crystalAltCost);
 			crystalBtn.addActionListener(ev -> {
 				dlg.dispose();

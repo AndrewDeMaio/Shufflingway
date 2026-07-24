@@ -78,7 +78,7 @@ public class DamageZoneDialog {
                     g2.dispose();
                 }
             } : new JLabel(labelText, SwingConstants.CENTER);
-            nameLabel.setFont(FontLoader.loadPixelNESFont(9));
+            nameLabel.setFont(FontLoader.loadPixelFont(9));
             nameLabel.setPreferredSize(new Dimension(CARD_W, 18));
 
             cardWrapper.add(lbl,       BorderLayout.CENTER);
@@ -94,7 +94,7 @@ public class DamageZoneDialog {
                 CARD_H + 60));
 
         JButton closeBtn = new JButton("Close");
-        closeBtn.setFont(FontLoader.loadPixelNESFont(11));
+        closeBtn.setFont(FontLoader.loadPixelFont(11));
         closeBtn.addActionListener(ae -> { onZoomHide.run(); dlg.dispose(); });
 
         JPanel south = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 6));

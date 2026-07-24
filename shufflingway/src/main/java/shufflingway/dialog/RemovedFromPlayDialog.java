@@ -30,7 +30,7 @@ public class RemovedFromPlayDialog {
             wrapper.setBackground(cardsPanel.getBackground());
             JLabel lbl = makeRfpCardLabel(entry.card.imageUrl(), onZoom, onZoomHide);
             JLabel info = new JLabel(entry.card.name() + "  [" + entry.counters + "]", SwingConstants.CENTER);
-            info.setFont(FontLoader.loadPixelNESFont(9));
+            info.setFont(FontLoader.loadPixelFont(9));
             info.setPreferredSize(new Dimension(CARD_W, 18));
             wrapper.add(lbl,  BorderLayout.CENTER);
             wrapper.add(info, BorderLayout.SOUTH);
@@ -42,7 +42,7 @@ public class RemovedFromPlayDialog {
             wrapper.setBackground(cardsPanel.getBackground());
             JLabel lbl = makeRfpCardLabel(card.imageUrl(), onZoom, onZoomHide);
             JLabel info = new JLabel(card.name() + "  [RFG]", SwingConstants.CENTER);
-            info.setFont(FontLoader.loadPixelNESFont(9));
+            info.setFont(FontLoader.loadPixelFont(9));
             info.setPreferredSize(new Dimension(CARD_W, 18));
             wrapper.add(lbl,  BorderLayout.CENTER);
             wrapper.add(info, BorderLayout.SOUTH);

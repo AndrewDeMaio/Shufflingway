@@ -39,14 +39,14 @@ public class LbDialog {
         Set<Integer> paymentSet = new HashSet<>();
 
         JLabel statusLabel = new JLabel(" ", SwingConstants.CENTER);
-        statusLabel.setFont(FontLoader.loadPixelNESFont(10));
+        statusLabel.setFont(FontLoader.loadPixelFont(10));
 
         JButton confirmCastBtn = new JButton("Confirm Cast");
-        confirmCastBtn.setFont(FontLoader.loadPixelNESFont(11));
+        confirmCastBtn.setFont(FontLoader.loadPixelFont(11));
         confirmCastBtn.setVisible(false);
 
         JButton cancelCastBtn = new JButton("Cancel");
-        cancelCastBtn.setFont(FontLoader.loadPixelNESFont(11));
+        cancelCastBtn.setFont(FontLoader.loadPixelFont(11));
         cancelCastBtn.setVisible(false);
 
         List<JLabel> cardLabels = new ArrayList<>();
@@ -169,7 +169,7 @@ public class LbDialog {
                     if (!spent && lbCostDelta != 0) {
                         g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
                         String text = String.valueOf(lbEffectiveCost);
-                        g2.setFont(FontLoader.loadPixelNESFont(15));
+                        g2.setFont(FontLoader.loadPixelFont(15));
                         FontMetrics fm = g2.getFontMetrics();
                         int x = 8, y = fm.getAscent() + 7;
                         g2.setColor(Color.BLACK);
@@ -196,7 +196,7 @@ public class LbDialog {
             }.execute();
 
             JLabel nameLabel = new JLabel(cd.name() + " - LB " + cd.lbCost(), SwingConstants.CENTER);
-            nameLabel.setFont(FontLoader.loadPixelNESFont(9));
+            nameLabel.setFont(FontLoader.loadPixelFont(9));
             nameLabel.setPreferredSize(new Dimension(CARD_W, 18));
 
             cardWrapper.add(lbl,       BorderLayout.CENTER);
@@ -212,7 +212,7 @@ public class LbDialog {
         statusBar.add(cancelCastBtn);
 
         JButton closeBtn = new JButton("Close");
-        closeBtn.setFont(FontLoader.loadPixelNESFont(11));
+        closeBtn.setFont(FontLoader.loadPixelFont(11));
         closeBtn.addActionListener(ae -> { cb.onZoomHide(); dlg.dispose(); });
 
         JPanel south = new JPanel(new BorderLayout());
