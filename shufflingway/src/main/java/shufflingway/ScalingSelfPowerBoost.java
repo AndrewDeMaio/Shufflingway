@@ -72,6 +72,12 @@ public record ScalingSelfPowerBoost(
          * Number of counters placed on the source card itself, named by {@link #cardNameFilter}
          * (e.g. "EXP" for "For each EXP Counter placed on Palom, Palom gains +1000 power.").
          */
-        COUNTERS_ON_SELF
+        COUNTERS_ON_SELF,
+        /**
+         * Number of cards the source card has removed from the game with its own ability and not yet
+         * retrieved — "Cloud of Darkness gains +1000 power for each card removed by Cloud of
+         * Darkness' ability." (10-140S, B-012).
+         */
+        CARDS_REMOVED_BY_OWN_ABILITY
     }
 }

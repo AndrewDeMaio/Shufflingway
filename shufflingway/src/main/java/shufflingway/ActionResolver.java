@@ -4882,6 +4882,14 @@ public class ActionResolver {
         result = tryParseIfNotPayOrElse(effectText, source, xValue);
         if (result != null) return result;
 
+        // Same reasoning: the mass-break matcher would find "break all the Forwards opponent
+        // controls" in the tail and apply it with no regard for the pile threshold in front of it.
+        result = tryParseRemoveTopThenPileThreshold(effectText, source);
+        if (result != null) return result;
+
+        result = tryParseAddRemovedBySourceAbilityToHand(effectText, source);
+        if (result != null) return result;
+
         result = tryParseIfOwnForwardFormedParty(effectText, source, xValue);
         if (result != null) return result;
 
@@ -5797,6 +5805,8 @@ public class ActionResolver {
     public static String matchedPatternName(String effectText, CardData source) {
         // Mirrors parse(): the pay-or-else gate is reported ahead of its consequence's own pattern.
         if (tryParseIfNotPayOrElse(effectText, source, 0)               != null) return "IfNotPayOrElse";
+        if (tryParseRemoveTopThenPileThreshold(effectText, source)          != null) return "RemoveTopThenPileThreshold";
+        if (tryParseAddRemovedBySourceAbilityToHand(effectText, source)     != null) return "AddRemovedBySourceAbilityToHand";
         if (tryParseOppRfpTopDeckCastable(effectText)                   != null) return "OppRfpTopDeckCastable";
         if (tryParseChooseFromOppBzCastable(effectText)                 != null) return "ChooseFromOppBzCastable";
         if (tryParseChooseSummonsFromBzCastable(effectText)             != null) return "ChooseSummonsFromBzCastable";
@@ -6200,6 +6210,8 @@ public class ActionResolver {
         if (CardData.OPPONENT_CONTROLS_N_OR_MORE_PATTERN.matcher(effectText).find()) return "UseRestriction";
         if (tryParseWhenYouDoSoSequence(effectText, source, 0)          != null) return "WhenYouDoSo";
         if (tryParseIfNotPayOrElse(effectText, source, 0)               != null) return "IfNotPayOrElse";
+        if (tryParseRemoveTopThenPileThreshold(effectText, source)          != null) return "RemoveTopThenPileThreshold";
+        if (tryParseAddRemovedBySourceAbilityToHand(effectText, source)     != null) return "AddRemovedBySourceAbilityToHand";
         if (tryParseIfCastAtLeast(effectText, source, 0)                != null) return "IfCastAtLeast";
         if (tryParseIfControlCondOtherThan(effectText, source, 0)      != null) return "IfControlCondOtherThan";
         if (tryParseIfOppControlsNOrMoreCondTypeGate(effectText, source, 0) != null) return "IfOppControlsNOrMoreCondTypeDraw";
@@ -16527,6 +16539,87 @@ public class ActionResolver {
         "effect\\s+left[,.]?\\s+put\\s+(?<name>.+?)\\s+into\\s+the\\s+Break\\s+Zone[.!]?)?$",
         Pattern.DOTALL
     );
+
+    /**
+     * Matches the "cards removed by [CardName]'s ability" family, which calls back the pile a card
+     * built up with its own removal ability:
+     * <ul>
+     *   <li>"add all the cards removed by X's ability to your hand." — Gutsco 14-010H, Cloud of Darkness B-012</li>
+     *   <li>"add 1 card removed by X's ability to your hand, and put the rest of the cards into the
+     *       Break Zone." — Cloud of Darkness 10-140S</li>
+     * </ul>
+     * Group {@code all} is set for the "all the cards" form; {@code rest} for the "put the rest into
+     * the Break Zone" tail; {@code name} is checked against the ability's own source.
+     */
+    private static final Pattern ADD_REMOVED_BY_SOURCE_ABILITY_TO_HAND = Pattern.compile(
+        "(?i)^add\\s+(?:(?<all>all\\s+the)|1)\\s+cards?\\s+removed\\s+by\\s+(?<name>.+?)'s?\\s+ability\\s+" +
+        "to\\s+your\\s+hand(?<rest>\\s*,?\\s*and\\s+put\\s+the\\s+rest\\s+of\\s+the\\s+cards?\\s+into\\s+" +
+        "the\\s+Break\\s+Zone)?[.!]?$",
+        Pattern.DOTALL
+    );
+
+    /**
+     * Matches Anima 19-123H's end-of-turn compound: "remove the top card of your deck from the game.
+     * Then, if there are N or more cards removed by [Self]'s ability, add them to your hand and break
+     * all the Forwards opponent controls."  Parsed as one unit because the threshold counts the pile
+     * <em>after</em> this turn's removal, and the payoff is gated on it.
+     * <ul>
+     *   <li>Group {@code removed} — how many cards this turn's removal takes off the deck</li>
+     *   <li>Group {@code threshold} — the pile size that triggers the payoff</li>
+     * </ul>
+     */
+    private static final Pattern REMOVE_TOP_THEN_IF_PILE_AT_LEAST = Pattern.compile(
+        "(?i)^remove\\s+the\\s+top\\s+(?:(?<removed>\\d+)\\s+cards?|card)\\s+of\\s+your\\s+deck\\s+from\\s+" +
+        "(?:the\\s+)?game[.!]?\\s*Then[,.]?\\s+if\\s+there\\s+(?:are|is)\\s+(?<threshold>\\d+)\\s+or\\s+more\\s+" +
+        "cards?\\s+removed\\s+by\\s+(?<name>.+?)'s?\\s+ability[,.]?\\s+add\\s+them\\s+to\\s+your\\s+hand\\s+and\\s+" +
+        "break\\s+all\\s+the\\s+Forwards\\s+opponent\\s+controls[.!]?$",
+        Pattern.DOTALL
+    );
+
+    /** Parses the "cards removed by [CardName]'s ability" retrieval wordings. */
+    private static Consumer<GameContext> tryParseAddRemovedBySourceAbilityToHand(String text, CardData source) {
+        if (source == null) return null;
+        Matcher m = ADD_REMOVED_BY_SOURCE_ABILITY_TO_HAND.matcher(text.trim());
+        if (!m.matches()) return null;
+        String named = m.group("name").trim();
+        if (!named.equalsIgnoreCase(source.name()) && !isSelfReference(named)) return null;
+        boolean all      = m.group("all")  != null;
+        boolean restToBz = m.group("rest") != null;
+        return ctx -> {
+            ctx.logEntry("Effect: Add " + (all ? "all cards" : "1 card") + " removed by "
+                    + source.name() + "'s ability to hand" + (restToBz ? ", rest to Break Zone" : ""));
+            ctx.addCardsRemovedBySourceToHand(source, all ? Integer.MAX_VALUE : 1);
+            if (restToBz) ctx.putCardsRemovedBySourceIntoBreakZone(source);
+        };
+    }
+
+    /** Parses Anima 19-123H's "remove the top card… Then, if there are N or more removed…" compound. */
+    private static Consumer<GameContext> tryParseRemoveTopThenPileThreshold(String text, CardData source) {
+        if (source == null) return null;
+        Matcher m = REMOVE_TOP_THEN_IF_PILE_AT_LEAST.matcher(text.trim());
+        if (!m.matches()) return null;
+        String named = m.group("name").trim();
+        if (!named.equalsIgnoreCase(source.name()) && !isSelfReference(named)) return null;
+        String removedStr = m.group("removed");
+        int removeCount = removedStr != null ? Integer.parseInt(removedStr) : 1;
+        int threshold   = Integer.parseInt(m.group("threshold"));
+        return ctx -> {
+            ctx.logEntry("Effect: Remove top " + removeCount + " card(s) of deck from game, then check for "
+                    + threshold + "+ removed by " + source.name());
+            ctx.removeTopCardsOfDeckFromGame(removeCount, source);
+            int pile = ctx.cardsRemovedBySourceCount(source);
+            if (pile < threshold) {
+                ctx.logEntry("Effect: only " + pile + " card(s) removed by " + source.name()
+                        + " (need " + threshold + ") — no payoff");
+                return;
+            }
+            ctx.logEntry("Effect: " + pile + " cards removed by " + source.name()
+                    + " — adding them to hand and breaking all opposing Forwards");
+            ctx.addCardsRemovedBySourceToHand(source, Integer.MAX_VALUE);
+            ctx.applyMassFieldEffect(GameContext.MassAction.BREAK, true, false, false,
+                    true, false, null, -1, null, -1, null, null);
+        };
+    }
 
     /** Parses "add N card(s) removed by the previous effect to your hand. [Then, …]" (Libroarian 8-084R). */
     private static Consumer<GameContext> tryParseAddRemovedByPreviousEffectToHand(String text, CardData source) {

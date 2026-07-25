@@ -3457,6 +3457,16 @@ final class GameContextImpl implements GameContext {
 			}
 
 			@Override public void removeTargetFromGame(ForwardTarget t) {
+				// Credit the removal to the ability resolving right now, so wordings like "cards
+				// removed by Anima's ability" (19-123H, whose enter-the-field effect removes Break
+				// Zone cards) can call them back later. Resolved per zone because the field-card
+				// lookup does not cover the Break Zone.
+				if (mw.currentAbilitySource != null) {
+					CardData removedCard = cardAtTarget(t);
+					if (removedCard != null)
+						mw.cardsRemovedBySource.computeIfAbsent(mw.currentAbilitySource, k -> new ArrayList<>())
+								.add(removedCard);
+				}
 				switch (t.zone()) {
 					case FORWARD -> { if (t.isP1()) removeP1ForwardFromGame(t.idx()); else removeP2ForwardFromGame(t.idx()); }
 					case BACKUP  -> {
@@ -3511,6 +3521,49 @@ final class GameContextImpl implements GameContext {
 				}
 				if (isP1) { mw.refreshP1DeckLabel(); mw.refreshP1WarpZoneUI(); }
 				else      { mw.refreshP2DeckLabel(); mw.refreshP2WarpZoneUI(); }
+			}
+
+			/** The card {@code t} currently points at, in any zone including the Break Zone; null if none. */
+			private CardData cardAtTarget(ForwardTarget t) {
+				if (t == null) return null;
+				int i = t.idx();
+				switch (t.zone()) {
+					case FORWARD -> {
+						List<CardData> l = t.isP1() ? mw.p1ForwardCards : mw.p2ForwardCards;
+						return i >= 0 && i < l.size() ? l.get(i) : null;
+					}
+					case BACKUP -> {
+						CardData[] a = t.isP1() ? mw.p1BackupCards : mw.p2BackupCards;
+						return i >= 0 && i < a.length ? a[i] : null;
+					}
+					case MONSTER -> {
+						List<CardData> l = t.isP1() ? mw.p1MonsterCards : mw.p2MonsterCards;
+						return i >= 0 && i < l.size() ? l.get(i) : null;
+					}
+					case BREAK_ZONE -> {
+						List<CardData> l = t.isP1() ? mw.gameState.getP1BreakZone() : mw.gameState.getP2BreakZone();
+						return i >= 0 && i < l.size() ? l.get(i) : null;
+					}
+					default -> { return null; }
+				}
+			}
+
+			@Override public int cardsRemovedBySourceCount(CardData source) {
+				List<CardData> removed = source == null ? null : mw.cardsRemovedBySource.get(source);
+				return removed == null ? 0 : removed.size();
+			}
+
+			@Override public void putCardsRemovedBySourceIntoBreakZone(CardData source) {
+				List<CardData> removed = source == null ? null : mw.cardsRemovedBySource.remove(source);
+				if (removed == null || removed.isEmpty()) return;
+				for (CardData c : removed) {
+					mw.gameState.removeFromPermanentRfp(c);
+					mw.addToBreakZone(c, false);
+					logEntry(c.name() + " → Break Zone (was removed by " + source.name() + ")");
+				}
+				if (isP1) mw.refreshP1WarpZoneUI(); else mw.refreshP2WarpZoneUI();
+				mw.refreshP1BreakLabel();
+				mw.refreshP2BreakLabel();
 			}
 
 			@Override public int addCardsRemovedBySourceToHand(CardData source, int count) {

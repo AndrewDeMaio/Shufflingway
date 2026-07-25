@@ -3470,6 +3470,12 @@ public record CardData(
         "(?<subject>.+?)\\s+gains?\\s+\\+(?<power>\\d+)\\s+power[.!]?$"
     );
 
+    /** "[Name] gains +N power for each card removed by [Name]'s ability." (Cloud of Darkness 10-140S) */
+    private static final Pattern SCALING_SELF_REMOVED_BY_OWN_ABILITY_PATTERN = Pattern.compile(
+        "(?i)^(?<target>.+?)\\s+gains?\\s+\\+(?<power>\\d+)\\s+power\\s+for\\s+each\\s+card\\s+removed\\s+" +
+        "by\\s+(?<subject>.+?)'s?\\s+ability[.!]?$"
+    );
+
     /** "For every N Summons in your Break Zone, [target] gains +P power." */
     private static final Pattern SCALING_SELF_BZ_SUMMON_EVERY_N_PATTERN = Pattern.compile(
         "(?i)^For\\s+every\\s+(?<n>\\d+)\\s+Summons?\\s+in\\s+your\\s+Break\\s+Zone,\\s+" +
@@ -3661,6 +3667,16 @@ public record CardData(
                 result.add(new ScalingSelfPowerBoost(
                         ScalingSelfPowerBoost.Source.COUNTERS_ON_SELF, perUnit,
                         null, null, cc.group("counter").trim(), null, null, false));
+                continue;
+            }
+            Matcher rmOwn = SCALING_SELF_REMOVED_BY_OWN_ABILITY_PATTERN.matcher(seg);
+            if (rmOwn.find()) {
+                if (!rmOwn.group("target").trim().equalsIgnoreCase(cardName)) continue;
+                if (!rmOwn.group("subject").trim().equalsIgnoreCase(cardName)) continue;
+                int perUnit = Integer.parseInt(rmOwn.group("power"));
+                if (perUnit <= 0) continue;
+                result.add(new ScalingSelfPowerBoost(
+                        ScalingSelfPowerBoost.Source.CARDS_REMOVED_BY_OWN_ABILITY, perUnit));
                 continue;
             }
             Matcher bzSummon = SCALING_SELF_BZ_SUMMON_EVERY_N_PATTERN.matcher(seg);
@@ -4641,6 +4657,7 @@ public record CardData(
             if (SCALING_SELF_BZ_CARD_NAME_PATTERN.matcher(seg).find())        continue;
             // Scaling self power boost ("For each X Counter placed on Self, Self gains +N power")
             if (SCALING_SELF_COUNTER_PATTERN.matcher(seg).find())             continue;
+            if (SCALING_SELF_REMOVED_BY_OWN_ABILITY_PATTERN.matcher(seg).find()) continue;
             // Scaling self power boost ("For every N Summons in your Break Zone, X gains +P power")
             if (SCALING_SELF_BZ_SUMMON_EVERY_N_PATTERN.matcher(seg).find())   continue;
             // Scaling self power boost ("For each card in your hand, X gains +N power")

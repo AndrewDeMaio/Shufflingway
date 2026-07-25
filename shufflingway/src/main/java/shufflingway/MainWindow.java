@@ -9372,6 +9372,10 @@ public class MainWindow {
 						(isP1 ? gameState.getP1Hand() : gameState.getP2Hand()).size();
 					case COUNTERS_ON_SELF ->
 						ssb.cardNameFilter() == null ? 0 : gameState.getCounters(src, ssb.cardNameFilter());
+					case CARDS_REMOVED_BY_OWN_ABILITY -> {
+						List<CardData> removed = cardsRemovedBySource.get(src);
+						yield removed == null ? 0 : removed.size();
+					}
 				};
 				boost += ssb.perUnit() * (count / ssb.groupSize());
 			}

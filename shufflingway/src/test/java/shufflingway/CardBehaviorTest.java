@@ -4926,6 +4926,153 @@ public class CardBehaviorTest {
     }
 
     // =========================================================================================
+    // "Cards removed by [CardName]'s ability" — the same pile Libroarian tracks, called back by
+    // name: Gutsco 14-010H and Cloud of Darkness B-012 take all of it on leaving the field,
+    // Cloud of Darkness 10-140S takes 1 and bins the rest, and Anima 19-123H pays off at 5+.
+    // The Cloud of Darkness cards also scale their power off the pile.
+    // =========================================================================================
+
+    private static final String GUTSCO_LEAVES =
+            "add all the cards removed by Gutsco's ability to your hand.";
+    private static final String COD_LEAVES_ONE =
+            "add 1 card removed by Cloud of Darkness' ability to your hand, and put the rest of the "
+            + "cards into the Break Zone.";
+    private static final String ANIMA_END_OF_TURN =
+            "remove the top card of your deck from the game. Then, if there are 5 or more cards removed "
+            + "by Anima's ability, add them to your hand and break all the Forwards opponent controls.";
+
+    /** Stocks P2's deck with {@code n} identified cards and returns them in deck order. */
+    private static List<CardData> stockP2Deck(MainWindow mw, int n) {
+        List<CardData> cards = new ArrayList<>();
+        for (int i = 1; i <= n; i++) {
+            CardData c = makeForward("Deck" + i, "Dark", 1, 3000);
+            mw.gameState.getIdentity().put(c, false);
+            mw.gameState.getP2MainDeck().add(c);
+            cards.add(c);
+        }
+        return cards;
+    }
+
+    @Test
+    void gutscoTakesItsWholePileBackOnLeavingTheField() {
+        MainWindow mw = new MainWindow();
+        CardData gutsco = makeAutoAbilityForward("Gutsco", "");
+        mw.gameState.getIdentity().put(gutsco, false);
+        stockP2Deck(mw, 5);
+        GameContext ctx = mw.buildGameContext(false);
+
+        // Three separate removals build one pile.
+        for (int i = 0; i < 3; i++) ctx.removeTopCardsOfDeckFromGame(1, gutsco);
+        assertEquals(3, mw.cardsRemovedBySource.get(gutsco).size());
+
+        ActionResolver.parse(GUTSCO_LEAVES, gutsco).accept(ctx);
+        assertEquals(3, mw.gameState.getP2Hand().size(), "all three came back");
+        assertEquals(0, mw.gameState.getP2PermanentRfp().size());
+        assertFalse(mw.cardsRemovedBySource.containsKey(gutsco));
+    }
+
+    @Test
+    void cloudOfDarknessKeepsOneAndBinsTheRest() {
+        MainWindow mw = new MainWindow();
+        CardData cod = makeAutoAbilityForward("Cloud of Darkness", "");
+        mw.gameState.getIdentity().put(cod, false);
+        stockP2Deck(mw, 5);
+        GameContext ctx = mw.buildGameContext(false);
+        for (int i = 0; i < 4; i++) ctx.removeTopCardsOfDeckFromGame(1, cod);
+
+        ActionResolver.parse(COD_LEAVES_ONE, cod).accept(ctx);
+
+        assertEquals(1, mw.gameState.getP2Hand().size(), "one card to hand");
+        assertEquals(3, mw.gameState.getP2BreakZone().size(), "the other three to the Break Zone");
+        assertEquals(0, mw.gameState.getP2PermanentRfp().size(), "none left out of the game");
+    }
+
+    @Test
+    void cloudOfDarknessPowerScalesWithItsPile() {
+        String codText = "At the end of each of your turns, remove the top card of your deck from the game.[[br]] "
+                + "Cloud of Darkness gains +1000 power for each card removed by Cloud of Darkness' ability.";
+        List<ScalingSelfPowerBoost> boosts =
+                CardData.parseScalingSelfPowerBoosts(codText, "Forward", "Cloud of Darkness");
+        assertEquals(1, boosts.size());
+        assertEquals(ScalingSelfPowerBoost.Source.CARDS_REMOVED_BY_OWN_ABILITY, boosts.get(0).source());
+        assertEquals(1000, boosts.get(0).perUnit());
+
+        MainWindow mw = new MainWindow();
+        CardData cod = new CardData(null, "Cloud of Darkness", "Dark", 3, 7000, "Forward", false, 0, false, false,
+                Set.of(), 0, List.of(), null, List.of(),
+                List.of(), List.of(), List.of(), List.of(), List.of(), boosts,
+                List.of(), List.of(), List.of(), List.of(),
+                false, false, null, false, false, false, false, false, false,
+                null, null, null, codText);
+        mw.placeCardInForwardZone(cod);
+        mw.gameState.getIdentity().put(cod, true);
+        assertEquals(7000, mw.effectiveP1ForwardPower(0), "empty pile — base power");
+
+        for (int i = 1; i <= 3; i++) {
+            CardData c = makeForward("Deck" + i, "Dark", 1, 3000);
+            mw.gameState.getIdentity().put(c, true);
+            mw.gameState.getP1MainDeck().add(c);
+        }
+        mw.buildGameContext(true).removeTopCardsOfDeckFromGame(3, cod);
+        assertEquals(10000, mw.effectiveP1ForwardPower(0), "+1000 per card removed by its own ability");
+    }
+
+    @Test
+    void animaPaysOffOnlyOnceFiveCardsAreRemoved() {
+        MainWindow mw = new MainWindow();
+        CardData anima = makeAutoAbilityForward("Anima", "");
+        mw.gameState.getIdentity().put(anima, false);
+        stockP2Deck(mw, 8);
+        CardData victim = makeForward("Victim", "Fire", 3, 7000);
+        mw.placeCardInForwardZone(victim);
+        mw.gameState.getIdentity().put(victim, true);
+
+        Consumer<GameContext> endOfTurn = ActionResolver.parse(ANIMA_END_OF_TURN, anima);
+        assertNotNull(endOfTurn);
+
+        // Turns 1-4: one card leaves the deck each turn and the payoff stays locked.
+        for (int turn = 1; turn <= 4; turn++) {
+            endOfTurn.accept(mw.buildGameContext(false));
+            assertEquals(turn, mw.gameState.getP2PermanentRfp().size(), "pile grows on turn " + turn);
+            assertEquals(List.of(victim), mw.p1ForwardCards, "no mass break below the threshold");
+            assertTrue(mw.gameState.getP2Hand().isEmpty());
+        }
+
+        // Turn 5 reaches five removed cards: they all come back and the opponent's board is swept.
+        endOfTurn.accept(mw.buildGameContext(false));
+        assertEquals(5, mw.gameState.getP2Hand().size(), "all five returned to hand");
+        assertEquals(0, mw.gameState.getP2PermanentRfp().size());
+        assertTrue(mw.p1ForwardCards.isEmpty(), "all opposing Forwards broken");
+    }
+
+    @Test
+    void animaCountsTheCardsItsEnterFieldAbilityRemovedToo() {
+        // "cards removed by Anima's ability" covers the 2 Break Zone cards its ETF removes, not just
+        // the deck cards — so the removal is credited to whichever ability is resolving.
+        MainWindow mw = new MainWindow();
+        CardData anima = makeAutoAbilityForward("Anima", "");
+        mw.gameState.getIdentity().put(anima, false);
+        CardData bz1 = makeForward("BzOne", "Dark", 2, 5000);
+        CardData bz2 = makeForward("BzTwo", "Dark", 2, 5000);
+        mw.gameState.getP2BreakZone().add(bz1);
+        mw.gameState.getP2BreakZone().add(bz2);
+        mw.gameState.getIdentity().put(bz1, false);
+        mw.gameState.getIdentity().put(bz2, false);
+
+        GameContext ctx = mw.buildGameContext(false);
+        mw.currentAbilitySource = anima;                 // as the stack sets while an ability resolves
+        try {
+            ctx.removeTargetFromGame(new ForwardTarget(false, 1, ForwardTarget.CardZone.BREAK_ZONE));
+            ctx.removeTargetFromGame(new ForwardTarget(false, 0, ForwardTarget.CardZone.BREAK_ZONE));
+        } finally {
+            mw.currentAbilitySource = null;
+        }
+
+        assertEquals(2, ctx.cardsRemovedBySourceCount(anima),
+                "Break Zone removals join the same pile as deck-top removals");
+    }
+
+    // =========================================================================================
     // Vayne 9-022L: All the Forwards opponent controls gain "At the end of your turn, if you don't
     // pay 《1》, break this Forward."  A continuous field grant, so it is read off Vayne at the
     // moment it fires; each granted Forward resolves its own copy, and "this Forward" means the

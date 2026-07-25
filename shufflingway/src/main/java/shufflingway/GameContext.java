@@ -580,6 +580,15 @@ public interface GameContext {
      */
     int addCardsRemovedBySourceToHand(CardData source, int count);
 
+    /** How many cards {@code source} has removed from the game and not yet retrieved. */
+    int cardsRemovedBySourceCount(CardData source);
+
+    /**
+     * Puts every card {@code source} still has removed from the game into its owner's Break Zone —
+     * "put the rest of the cards into the Break Zone" (Cloud of Darkness 10-140S).
+     */
+    void putCardsRemovedBySourceIntoBreakZone(CardData source);
+
     /**
      * Removes the top card of the active player's deck from the game and returns its CP cost.
      * Returns 0 if the deck is empty.
