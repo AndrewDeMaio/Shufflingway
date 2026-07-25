@@ -1332,6 +1332,16 @@ public interface GameContext {
     int effectiveTargetPower(ForwardTarget t);
 
     /**
+     * The card currently occupying {@code t}, or {@code null} if the slot is empty. Useful for
+     * holding on to a chosen card across an effect that moves it — a target's side and index go
+     * stale the moment control of it changes.
+     */
+    CardData targetCard(ForwardTarget t);
+
+    /** True when the ability user currently controls {@code card} (by identity, any field zone). */
+    boolean selfControlsCard(CardData card);
+
+    /**
      * Forces the ability-user's opponent to discard {@code count} cards from hand
      * to their Break Zone.  No CP is generated.
      * When P1 is the ability user, P2 AI discards automatically (worst cards first).
@@ -1561,6 +1571,12 @@ public interface GameContext {
      * @param crystals Crystals required (《C》), or 0
      */
     void mayPayCostOrElse(int cp, String element, int crystals, Runnable onNotPaid);
+
+    /**
+     * Vincent 2-078R: {@code source} deals no damage for the rest of the battle it is in, and is
+     * broken once that battle finishes — whether it was blocked, went unblocked, or survived.
+     */
+    void breakAfterCombatAndDealNoDamage(CardData source);
 
     /**
      * Offers the player the option to dull an active card named {@code cardName} to replay

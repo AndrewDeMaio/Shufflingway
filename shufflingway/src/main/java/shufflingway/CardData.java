@@ -1841,6 +1841,13 @@ public record CardData(
         return sb.toString();
     }
 
+    /** True when {@code pattern} matches somewhere in {@code text} outside every quoted span. */
+    private static boolean matchesOutsideQuotes(Pattern pattern, String text) {
+        Matcher m = pattern.matcher(text);
+        while (m.find()) if (!isInsideQuotes(text, m.start())) return true;
+        return false;
+    }
+
     /** True when {@code index} falls inside a double-quoted span of {@code text}. */
     private static boolean isInsideQuotes(String text, int index) {
         int quotes = 0;
@@ -2088,9 +2095,12 @@ public record CardData(
             if (fa != null) result.add(fa);
         }
 
-        // Sixth pass: "At the end of each of your turns, [effect]"
+        // Sixth pass: "At the end of [each of your turns | your turn], [effect]"
         Matcher eotm = ActionResolver.AT_END_OF_EACH_TURN_PATTERN.matcher(textForSearch);
         while (eotm.find()) {
+            // Vayne 9-022L prints this trigger inside the ability it grants to the opponent's
+            // Forwards; a match starting inside quotes is not the printing card's own ability.
+            if (isInsideQuotes(textForSearch, eotm.start())) continue;
             String effect = SUMMON_MARKUP.matcher(eotm.group("inner").trim()).replaceAll("").trim();
             if (effect.isEmpty()) continue;
             AutoAbility aa = parseAutoAbilityRestrictions("", "end of your turn", false, false, false, false, effect, 0);
@@ -2230,6 +2240,10 @@ public record CardData(
         }
 
         if (effect.isEmpty()) return null;
+        // "You may pay 《X》. If you don't pay 《X》, …" — the "you may" belongs to the cost, not to the
+        // ability: the gate itself asks whether to pay, and the consequence lands either way. Left as
+        // an optional ability, declining the prompt would skip the consequence too.
+        if (youMay && ActionResolver.isPayOrElseGate(effect)) youMay = false;
         return new AutoAbility(card, trigger, youMay, opponentMay, effect,
                 oncePerTurn, yourTurnOnly, rfpConditionCard, bzConditionCard, bzConditionJob, castPaymentMinElements, castOnly, warpOnly, damageThreshold,
                 partyMinCount, partyCategory, partyJob, partyCardName);
@@ -4589,7 +4603,9 @@ public record CardData(
             if (FA_AUTO_PREFIX.matcher(seg).find()) continue;
             if (AT_BEGINNING_OF_ATTACK_PHASE_PATTERN.matcher(seg).find()) continue;
             if (AT_BEGINNING_OF_ATTACK_PHASE_EACH_TURN_PATTERN.matcher(seg).find()) continue;
-            if (ActionResolver.AT_END_OF_EACH_TURN_PATTERN.matcher(seg).find()) continue;
+            // Quote-aware: Vayne 9-022L's grant prints this trigger inside quotes, and that segment
+            // must stay a field ability — it is the grant, not an end-of-turn ability of Vayne's own.
+            if (matchesOutsideQuotes(ActionResolver.AT_END_OF_EACH_TURN_PATTERN, seg)) continue;
             if (ActionResolver.AT_BEGINNING_OF_MAIN_PHASE_1_PATTERN.matcher(seg).find()) continue;
             if (ActionResolver.AT_BEGINNING_OF_MAIN_PHASE_2_PATTERN.matcher(seg).find()) continue;
             if (ActionResolver.AT_BEGINNING_OF_MAIN_PHASE_1_EACH_TURN_PATTERN.matcher(seg).find()) continue;

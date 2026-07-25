@@ -1536,8 +1536,14 @@ public class ActionResolver {
      *   <li>Group {@code inner} — the effect text that fires each end phase</li>
      * </ul>
      */
+    /**
+     * Matches "At the end of [each of your turns | your turn], &lt;inner&gt;" — both wordings name the
+     * same trigger, the controller's own end phase. The shorter form appears on Libroarian 8-084R,
+     * Death Machine 8-102R and Rem 9-059R, and inside Vayne 9-022L's granted ability (which callers
+     * must skip, since text quoted on a card is not that card's own ability).
+     */
     static final Pattern AT_END_OF_EACH_TURN_PATTERN = Pattern.compile(
-        "(?i)At\\s+the\\s+end\\s+of\\s+each\\s+of\\s+your\\s+turns?\\s*,\\s+" +
+        "(?i)At\\s+the\\s+end\\s+of\\s+(?:each\\s+of\\s+your\\s+turns?|your\\s+turn)\\s*,\\s+" +
         "(?<inner>.+?)\\s*" + GLOBAL_TRIGGER_INNER_BOUNDARY,
         Pattern.DOTALL
     );
@@ -4197,6 +4203,18 @@ public class ActionResolver {
     );
 
     /**
+     * Matches "[primary action]. Then, if you don't pay 《1》 for each CP required to cast chosen
+     * [type], put it into the Break Zone." (Ultimecia 27-092H) — a followup whose cost is the
+     * chosen card's own cost, so it can only be priced once the target is known.
+     * Group {@code primary} — the action applied to the target before the cost is demanded.
+     */
+    static final Pattern FOLLOWUP_THEN_PAY_PER_TARGET_COST_OR_BREAK = Pattern.compile(
+        "(?i)^(?<primary>.+?)[.!]\\s*Then[,.]?\\s+if\\s+you\\s+don'?t\\s+pay\\s+《1》\\s+for\\s+each\\s+CP\\s+" +
+        "required\\s+to\\s+cast\\s+(?:the\\s+)?chosen\\s+\\w+\\s*,\\s+put\\s+it\\s+into\\s+the\\s+Break\\s+Zone[.!]?$",
+        Pattern.DOTALL
+    );
+
+    /**
      * Matches "If your opponent doesn't pay 《N》, [target action]." — the followup inside
      * {@link #tryParseChooseCharacter} (e.g. Arkasodara: "choose 1 dull Forward. If your opponent
      * doesn't pay 《3》, break it."). The opponent may pay {@code cost} CP in full to prevent the
@@ -5350,6 +5368,9 @@ public class ActionResolver {
         result = tryParsePutSourceIntoBreakZone(effectText, source);
         if (result != null) return result;
 
+        result = tryParseBreaksAfterCombatNoDamage(effectText, source);
+        if (result != null) return result;
+
         result = tryParseYouMayPutSelfToBZWhenDoSo(effectText, source);
         if (result != null) return result;
 
@@ -5893,6 +5914,7 @@ public class ActionResolver {
         if (tryParseRemoveNamedFromGame(effectText, source)   != null) return "RemoveNamedFromGame";
         if (tryParseBreakSourceCard(effectText, source)        != null) return "BreakSourceCard";
         if (tryParsePutSourceIntoBreakZone(effectText, source) != null) return "PutSourceIntoBreakZone";
+        if (tryParseBreaksAfterCombatNoDamage(effectText, source) != null) return "BreaksAfterCombatNoDamage";
         if (tryParseYouMayPutSelfToBZWhenDoSo(effectText, source)    != null) return "YouMayPutSelfToBZWhenDoSo";
         if (tryParseIfOppNoForwardsPutToBreakZone(effectText, source)          != null) return "IfOppNoForwardsPutToBreakZone";
         if (tryParseIfEitherPlayerNoForwardsPutSourceToBz(effectText, source)  != null) return "IfEitherPlayerNoForwardsPutSourceToBz";
@@ -8768,6 +8790,48 @@ public class ActionResolver {
                                 jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
                         if (ts.isEmpty()) return;
                         ctx.opponentMayPayToPreventAction(notPayCost, () -> notPayAction.accept(ctx, ts));
+                    };
+                }
+            }
+        }
+
+        // --- "[action]. Then, if you don't pay 《1》 per CP of the chosen card's cost, break it." ---
+        // Checked against the full followup before the primary/secondary split, since the split
+        // would drop the trailing clause and leave the primary action unconditional.
+        {
+            Matcher perCpM = FOLLOWUP_THEN_PAY_PER_TARGET_COST_OR_BREAK.matcher(followup);
+            if (perCpM.matches()) {
+                String primaryText = perCpM.group("primary").trim();
+                java.util.function.BiConsumer<GameContext, List<ForwardTarget>> primaryAction =
+                        parseTargetAction(primaryText, xValue);
+                // "You gain control of it" is not one of parseTargetAction's verbs, and it is the
+                // primary the only printed card (Ultimecia 27-092H) uses.
+                if (primaryAction == null && FOLLOWUP_GAIN_CONTROL.matcher(primaryText).find())
+                    primaryAction = (c2, ts2) -> ts2.forEach(t -> c2.gainControlOfForward(t, "permanent", false));
+                if (primaryAction != null) {
+                    final java.util.function.BiConsumer<GameContext, List<ForwardTarget>> fPrimary = primaryAction;
+                    return ctx -> {
+                        ctx.logEntry(choosePrefix + " — " + primaryText
+                                + ", then pay 《1》 per CP of its cost or put it into the Break Zone");
+                        List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                                opponentOnly, selfOnly, condition, element, zone, opponentZone,
+                                costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
+                                jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
+                        if (ts.isEmpty()) return;
+                        // Resolve the cards up front: the primary action may change control of them,
+                        // which invalidates the side/index a ForwardTarget carries.
+                        List<CardData> chosen = new ArrayList<>();
+                        for (ForwardTarget t : ts) {
+                            CardData c = ctx.targetCard(t);
+                            if (c != null) chosen.add(c);
+                        }
+                        fPrimary.accept(ctx, ts);
+                        for (CardData c : chosen) {
+                            // Only charge for a card the primary actually handed over — a steal that
+                            // did not go through leaves nothing to pay for or break.
+                            if (!ctx.selfControlsCard(c)) continue;
+                            ctx.mayPayCostOrElse(c.cost(), null, 0, () -> ctx.breakSourceCard(c));
+                        }
                     };
                 }
             }
@@ -12507,6 +12571,81 @@ public class ActionResolver {
     }
 
     /**
+     * Matches "[Name] breaks after the attack or the block and doesn't deal any damage."
+     * (Vincent 2-078R) — the source deals no damage for the rest of the battle and is broken once
+     * that battle ends. Group {@code name} is checked against the ability's own source.
+     */
+    private static final Pattern SOURCE_BREAKS_AFTER_COMBAT_NO_DAMAGE = Pattern.compile(
+        "(?i)^(?<name>.+?)\\s+breaks?\\s+after\\s+the\\s+attack(?:\\s+or\\s+the\\s+block)?\\s+and\\s+" +
+        "doesn'?t\\s+deal\\s+any\\s+damage[.!]?$"
+    );
+
+    /** Parses "[Self] breaks after the attack or the block and doesn't deal any damage." */
+    private static Consumer<GameContext> tryParseBreaksAfterCombatNoDamage(String text, CardData source) {
+        if (source == null) return null;
+        Matcher m = SOURCE_BREAKS_AFTER_COMBAT_NO_DAMAGE.matcher(text.trim());
+        if (!m.matches()) return null;
+        if (!m.group("name").trim().equalsIgnoreCase(source.name())) return null;
+        return ctx -> {
+            ctx.logEntry("Effect: " + source.name() + " breaks after the battle and deals no damage");
+            ctx.breakAfterCombatAndDealNoDamage(source);
+        };
+    }
+
+    /**
+     * A field ability that continuously grants a quoted ability to Forwards while its own card is
+     * on the field (Vayne 9-022L).
+     *
+     * @param affectsOpponent {@code true} for "Forwards opponent controls", {@code false} for
+     *                        "Forwards you control" — relative to the granting card's controller
+     * @param abilityText     the granted ability, exactly as quoted on the card
+     */
+    record ForwardAbilityGrant(boolean affectsOpponent, String abilityText) {}
+
+    /** Matches "All the Forwards [you control|opponent controls] gain "[ability]"." (Vayne 9-022L) */
+    private static final Pattern FIELD_GRANT_ABILITY_TO_FORWARDS = Pattern.compile(
+        "(?i)^All\\s+the\\s+Forwards\\s+(?<who>opponent\\s+controls|you\\s+control)\\s+gains?\\s+" +
+        "\"(?<ability>[^\"]+)\"[.!]?$"
+    );
+
+    /** Matches the granted ability's own trigger: "At the end of your turn, [effect]". */
+    private static final Pattern GRANTED_AT_END_OF_YOUR_TURN = Pattern.compile(
+        "(?i)^At\\s+the\\s+end\\s+of\\s+your\\s+turn\\s*,\\s+(?<effect>.+)$",
+        Pattern.DOTALL
+    );
+
+    /** Reads a Forward-ability grant out of a field-ability text, or {@code null} if it is not one. */
+    static ForwardAbilityGrant tryParseForwardAbilityGrant(String fieldText) {
+        if (fieldText == null) return null;
+        Matcher m = FIELD_GRANT_ABILITY_TO_FORWARDS.matcher(fieldText.trim());
+        if (!m.matches()) return null;
+        boolean affectsOpponent = m.group("who").toLowerCase(java.util.Locale.ROOT).startsWith("opponent");
+        return new ForwardAbilityGrant(affectsOpponent, m.group("ability").trim());
+    }
+
+    /**
+     * Parses the "At the end of your turn, …" half of a granted ability into an effect that runs for
+     * {@code grantee} — the Forward that received it, which is what self-references like "this
+     * Forward" resolve to. Returns {@code null} when the grant is not an end-of-turn ability or its
+     * effect is not supported.
+     */
+    static Consumer<GameContext> tryParseGrantedEndOfTurnEffect(String abilityText, CardData grantee) {
+        if (abilityText == null || grantee == null) return null;
+        Matcher m = GRANTED_AT_END_OF_YOUR_TURN.matcher(abilityText.trim());
+        if (!m.matches()) return null;
+        return parse(m.group("effect").trim(), grantee);
+    }
+
+    /**
+     * True when {@code effectText} is an "if you don't pay 《…》" gate. Such text carries its own
+     * pay-or-decline choice, so callers must not also treat a printed "you may" as an offer to skip
+     * the ability outright.
+     */
+    public static boolean isPayOrElseGate(String effectText) {
+        return effectText != null && IF_NOT_PAY_OR_ELSE.matcher(effectText.trim()).matches();
+    }
+
+    /**
      * Parses "[you may pay 《X》.] if you don't pay 《X》, [consequence]". The consequence must itself
      * be a supported effect — otherwise the whole ability stays unparsed rather than silently
      * resolving as an unconditional consequence, which is what the bare consequence patterns would
@@ -13091,11 +13230,22 @@ public class ActionResolver {
         return ctx -> ctx.addEndOfOpponentTurnEffect(ctx2 -> ctx2.playNamedFromRfpOntoField(name));
     }
 
+    /**
+     * True for wording that points back at the card carrying the ability rather than naming it —
+     * "this Forward", "this Character". Granted abilities are written this way, since the text is
+     * printed on the granting card but resolves for whichever card received it.
+     */
+    private static boolean isSelfReference(String name) {
+        return name.matches("(?i)this\\s+(?:Forward|Backup|Monster|Character|card)");
+    }
+
     /** Parses "Break [CardName]." when CardName is the source card — breaks the source forward/monster. */
     private static Consumer<GameContext> tryParseBreakSourceCard(String text, CardData source) {
+        if (source == null) return null;   // the pattern is keyed to the source card
         Matcher m = BREAK_SOURCE_CARD.matcher(text.trim());
         if (!m.matches()) return null;
-        if (!m.group("name").trim().equalsIgnoreCase(source.name())) return null;
+        String name = m.group("name").trim();
+        if (!name.equalsIgnoreCase(source.name()) && !isSelfReference(name)) return null;
         return ctx -> {
             ctx.logEntry("Effect: Break " + source.name());
             ctx.breakSourceCard(source);

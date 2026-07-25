@@ -1330,9 +1330,13 @@ final class AutoAbilityTriggers {
 		triggerAutoAbilitiesForEvent("beginning of attack phase each turn", !activeIsP1);
 	}
 
-	/** Fires "end of your turn" auto-abilities for all cards controlled by {@code isP1}. */
+	/**
+	 * Fires "end of your turn" auto-abilities for all cards controlled by {@code isP1}, including
+	 * any granted to their Forwards by a card on the field (Vayne 9-022L).
+	 */
 	void triggerAutoAbilitiesForEndOfYourTurn(boolean isP1) {
 		triggerAutoAbilitiesForEvent("end of your turn", isP1);
+		mw.fireGrantedEndOfTurnForwardAbilities(isP1);
 	}
 
 	/** Fires "end of each player's turn" auto-abilities for all cards on both sides. */

@@ -623,9 +623,9 @@ final class GameContextImpl implements GameContext {
 			}
 
 			@Override public void gainControlOfForward(ForwardTarget t, String condition, boolean activate) {
-				// Only supported for P1 stealing from P2 in the current implementation
-				if (!isP1 || t.isP1() || t.zone() != ForwardTarget.CardZone.FORWARD) return;
-				mw.stealForwardFromP2ToP1(t.idx(), condition, activate);
+				// Only a Forward the other player controls can be taken.
+				if (t == null || t.isP1() == isP1 || t.zone() != ForwardTarget.CardZone.FORWARD) return;
+				mw.stealForwardControl(isP1, t.idx(), condition, activate);
 			}
 
 			@Override public void giveSourceControlToOpponent(CardData source) {
@@ -4785,6 +4785,14 @@ final class GameContextImpl implements GameContext {
 				}
 			}
 
+			@Override public void breakAfterCombatAndDealNoDamage(CardData source) {
+				if (source == null) return;
+				mw.dealsNoCombatDamageSet.add(source);
+				mw.breakAfterCombatSet.add(source);
+				logEntry((isP1 ? "" : "[P2] ") + source.name()
+						+ " deals no damage this battle and breaks once it ends");
+			}
+
 			@Override public void opponentMayPayToPreventAction(int cost, Runnable onNotPaid) {
 				String src = mw.currentAbilitySource != null ? mw.currentAbilitySource.name() : "Ability";
 				String label = src + " — pay 《" + cost + "》 to prevent its effect";
@@ -6182,6 +6190,19 @@ final class GameContextImpl implements GameContext {
 					mw.gameState.pushStack(new StackEntry(chosen, false, true));
 					mw.showStackWindowIfNeeded();
 				}
+			}
+
+			@Override public CardData targetCard(ForwardTarget t) {
+				return t == null ? null : mw.autoAbilityTriggers.fieldCardData(t);
+			}
+
+			@Override public boolean selfControlsCard(CardData card) {
+				if (card == null) return false;
+				// Identity, not equals: a second copy of the same card is a different permanent.
+				for (CardData c : isP1 ? mw.p1ForwardCards : mw.p2ForwardCards) if (c == card) return true;
+				for (CardData c : isP1 ? mw.p1MonsterCards : mw.p2MonsterCards) if (c == card) return true;
+				for (CardData b : isP1 ? mw.p1BackupCards  : mw.p2BackupCards)  if (b == card) return true;
+				return false;
 			}
 
 			@Override public void breakSourceCard(CardData source) {

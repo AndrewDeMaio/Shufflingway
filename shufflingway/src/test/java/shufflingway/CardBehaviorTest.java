@@ -4710,6 +4710,58 @@ public class CardBehaviorTest {
         verify(ctx2).selfDiscard(1);
     }
 
+    // Vincent 2-078R: "When Vincent attacks or blocks, you may pay 《2》. If you don't pay 《2》,
+    // Vincent breaks after the attack or the block and doesn't deal any damage."
+    private static final String VINCENT_TEXT =
+            "When Vincent attacks or blocks, you may pay 《2》. If you don't pay 《2》, Vincent breaks "
+            + "after the attack or the block and doesn't deal any damage. [[br]]"
+            + "When Vincent attacks or blocks, choose 1 Forward. Deal it 4000 damage.";
+    private static final String VINCENT_GATE =
+            "pay 《2》. If you don't pay 《2》, Vincent breaks after the attack or the block and doesn't deal any damage.";
+
+    @Test
+    void vincentsPrintedYouMayIsThePaymentNotAnOptionalAbility() {
+        List<AutoAbility> abilities = CardData.parseAutoAbilities(VINCENT_TEXT);
+        AutoAbility gate = abilities.stream()
+                .filter(a -> a.effectText().startsWith("pay")).findFirst().orElseThrow();
+        assertFalse(gate.youMay(),
+                "declining an optional ability would skip the consequence — the gate asks about the cost itself");
+        assertEquals("IfNotPayOrElse",
+                ActionResolver.matchedPatternName(gate.effectText(), makeForward("Vincent", "Dark", 3, 7000)));
+    }
+
+    @Test
+    void vincentUnpaidDealsNoCombatDamageAndBreaksAfterTheBattle() {
+        MainWindow mw = new MainWindow();
+        CardData vincent = makeForward("Vincent", "Dark", 3, 7000);
+        mw.placeCardInForwardZone(vincent);
+        mw.gameState.getIdentity().put(vincent, true);
+
+        // P1 cannot assemble 《2》, so the consequence lands as soon as the trigger resolves.
+        ActionResolver.parse(VINCENT_GATE, vincent).accept(mw.buildGameContext(true));
+        assertTrue(mw.dealsNoCombatDamageSet.contains(vincent), "deals no damage for this battle");
+        assertTrue(mw.breakAfterCombatSet.contains(vincent), "queued to break once the battle ends");
+
+        // Damage he would deal in the battle is zeroed while the mark is up.
+        assertEquals(0, mw.modifyOutgoingCombatDamage(true, 0, 7000, makeForward("Blocker", "Ice", 3, 9000)));
+
+        mw.resolvePostCombatBreaks();
+        assertTrue(mw.p1ForwardCards.isEmpty(), "broken once the battle finished");
+        assertTrue(mw.gameState.getP1BreakZone().contains(vincent));
+        assertTrue(mw.dealsNoCombatDamageSet.isEmpty(), "battle-scoped marks are cleared");
+        assertTrue(mw.breakAfterCombatSet.isEmpty());
+    }
+
+    @Test
+    void aVincentThatAlreadyDiedInCombatIsNotBrokenTwice() {
+        MainWindow mw = new MainWindow();
+        CardData vincent = makeForward("Vincent", "Dark", 3, 7000);
+        mw.breakAfterCombatSet.add(vincent);   // marked, but the battle already killed him
+        mw.resolvePostCombatBreaks();          // must not throw looking for a card that is gone
+        assertTrue(mw.gameState.getP1BreakZone().isEmpty());
+        assertTrue(mw.breakAfterCombatSet.isEmpty());
+    }
+
     @Test
     void theAiPaysACrystalWhenItHasOneAndBreaksWhenItDoesNot() {
         // No Crystal — nothing to choose, so the consequence applies.
@@ -4729,6 +4781,271 @@ public class CardBehaviorTest {
         ActionResolver.parse(UMARO_BZ_ETB, umaro2).accept(paid.buildGameContext(false));
         assertEquals(List.of(umaro2), paid.p2ForwardCards, "paid — Umaro stayed");
         assertEquals(0, paid.gameState.getP2Crystals(), "the Crystal was spent");
+    }
+
+    // =========================================================================================
+    // Ultimecia 27-092H: "…choose 1 Forward. You gain control of it. Then, if you don't pay 《1》 for
+    // each CP required to cast chosen Forward, put it into the Break Zone."  The cost is the stolen
+    // card's own cost, so it can only be priced once the target is picked — and the card must be
+    // tracked by identity, because gaining control moves it to the other side of the board.
+    // =========================================================================================
+
+    private static final String ULTIMECIA_STEAL =
+            "choose 1 Forward. You gain control of it. Then, if you don't pay 《1》 for each CP "
+            + "required to cast chosen Forward, put it into the Break Zone.";
+
+    @Test
+    void ultimeciaBreaksTheStolenForwardWhenItsCostGoesUnpaid() {
+        MainWindow mw = new MainWindow();
+        CardData ultimecia = makeForward("Ultimecia", "Dark", 5, 9000);
+        CardData victim    = makeForward("Victim", "Dark", 4, 8000);
+        mw.placeP2CardInForwardZone(victim);
+        mw.gameState.getIdentity().put(victim, false);   // P2 owns it
+
+        GameContext ctx = mw.buildGameContext(true);
+        ctx.preloadTargets(List.of(new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD)));
+        ActionResolver.parse(ULTIMECIA_STEAL, ultimecia).accept(ctx);
+
+        // P1 has no CP source, so the 《4》 cannot be paid and the Forward it just took is broken.
+        assertTrue(mw.p1ForwardCards.isEmpty(), "the stolen Forward did not stay");
+        assertTrue(mw.p2ForwardCards.isEmpty());
+        assertTrue(mw.gameState.getP2BreakZone().contains(victim),
+                "a broken card goes to its owner's Break Zone, not its controller's");
+    }
+
+    // =========================================================================================
+    // Vayne 9-022L: All the Forwards opponent controls gain "At the end of your turn, if you don't
+    // pay 《1》, break this Forward."  A continuous field grant, so it is read off Vayne at the
+    // moment it fires; each granted Forward resolves its own copy, and "this Forward" means the
+    // Forward that received the ability — not Vayne.
+    // =========================================================================================
+
+    private static final String VAYNE_9_022L_TEXT =
+            "All the Forwards opponent controls gain \"At the end of your turn, if you don't pay 《1》, "
+            + "break this Forward.\"";
+
+    private static CardData makeVayne() {
+        return makeFieldAbilityCard("Vayne", "Ice", "Forward", VAYNE_9_022L_TEXT);
+    }
+
+    @Test
+    void vaynesGrantIsReadOffItsFieldAbility() {
+        CardData vayne = makeVayne();
+        ActionResolver.ForwardAbilityGrant grant =
+                ActionResolver.tryParseForwardAbilityGrant(vayne.fieldAbilities().get(0).effectText());
+        assertNotNull(grant, "the field ability is recognised as a grant");
+        assertTrue(grant.affectsOpponent(), "it hits the Forwards the opponent controls");
+
+        // "this Forward" resolves to the grantee, so the granted effect is built per Forward.
+        CardData grantee = makeForward("Grantee", "Fire", 3, 7000);
+        assertNotNull(ActionResolver.tryParseGrantedEndOfTurnEffect(grant.abilityText(), grantee));
+        assertNull(ActionResolver.tryParseGrantedEndOfTurnEffect("At the beginning of your turn, draw 1 card.", grantee),
+                "only end-of-turn grants fire from this path");
+    }
+
+    @Test
+    void theBareEndOfYourTurnWordingIsTheSameTriggerAsEachOfYourTurns() {
+        // Rem 9-059R and Death Machine 8-102R print the short form; both mean the controller's
+        // own end phase, which is the trigger key "end of your turn".
+        List<AutoAbility> rem = CardData.parseAutoAbilities("At the end of your turn, activate Rem.");
+        assertEquals(1, rem.size());
+        assertEquals("end of your turn", rem.get(0).trigger());
+        assertEquals("activate Rem.", rem.get(0).effectText());
+
+        List<AutoAbility> deathMachine = CardData.parseAutoAbilities(
+                "At the end of your turn, choose 1 Forward opponent controls. Break it.");
+        assertEquals(1, deathMachine.size());
+        assertEquals("end of your turn", deathMachine.get(0).trigger());
+        assertNotNull(ActionResolver.parse(deathMachine.get(0).effectText(),
+                makeForward("Death Machine", "Fire", 5, 9000)));
+    }
+
+    @Test
+    void vaynesQuotedTriggerDoesNotBecomeVaynesOwnAbility() {
+        // The grant prints "At the end of your turn, …" inside quotes. Read as Vayne's own ability
+        // it would charge Vayne's controller and break Vayne — it belongs to the Forwards it grants.
+        assertTrue(CardData.parseAutoAbilities(VAYNE_9_022L_TEXT).isEmpty(),
+                "quoted text is not the printing card's own auto ability");
+        assertEquals(1, CardData.parseFieldAbilities(VAYNE_9_022L_TEXT, "Forward").size(),
+                "the segment stays a field ability so the grant can be read off it");
+    }
+
+    @Test
+    void vayneBreaksEachUnpaidOpposingForwardAtTheEndOfTheirTurn() {
+        MainWindow mw = new MainWindow();
+        CardData vayne = makeVayne();
+        mw.placeP2CardInForwardZone(vayne);
+        mw.gameState.getIdentity().put(vayne, false);
+        CardData a = makeForward("VictimA", "Fire", 3, 7000);
+        CardData b = makeForward("VictimB", "Fire", 2, 5000);
+        mw.placeCardInForwardZone(a); mw.gameState.getIdentity().put(a, true);
+        mw.placeCardInForwardZone(b); mw.gameState.getIdentity().put(b, true);
+
+        mw.autoAbilityTriggers.triggerAutoAbilitiesForEndOfYourTurn(true);
+
+        assertTrue(mw.p1ForwardCards.isEmpty(), "P1 could pay for neither Forward");
+        assertTrue(mw.gameState.getP1BreakZone().containsAll(List.of(a, b)),
+                "each Forward broke on its own copy of the ability");
+        assertEquals(List.of(vayne), mw.p2ForwardCards, "Vayne is not affected by its own grant");
+    }
+
+    @Test
+    void vaynesGrantDoesNotFireOnItsControllersOwnTurn() {
+        MainWindow mw = new MainWindow();
+        CardData vayne = makeVayne();
+        mw.placeP2CardInForwardZone(vayne);
+        mw.gameState.getIdentity().put(vayne, false);
+        CardData victim = makeForward("Victim", "Fire", 3, 7000);
+        mw.placeCardInForwardZone(victim);
+        mw.gameState.getIdentity().put(victim, true);
+
+        mw.autoAbilityTriggers.triggerAutoAbilitiesForEndOfYourTurn(false);   // end of P2's turn
+
+        assertEquals(List.of(victim), mw.p1ForwardCards,
+                "\"your turn\" is the granted Forward's controller's turn, not Vayne's");
+    }
+
+    @Test
+    void theAiPaysVaynesTollOutOfItsBackups() {
+        MainWindow mw = new MainWindow();
+        CardData vayne = makeVayne();
+        mw.placeCardInForwardZone(vayne);              // P1 controls Vayne this time
+        mw.gameState.getIdentity().put(vayne, true);
+        CardData aiForward = makeForward("Survivor", "Fire", 3, 7000);
+        mw.placeP2CardInForwardZone(aiForward);
+        mw.gameState.getIdentity().put(aiForward, false);
+        CardData backup = makeFieldAbilityCard("Chocobo Rider", "Fire", "Backup", "");
+        mw.p2BackupCards[0]  = backup;
+        mw.p2BackupStates[0] = CardState.ACTIVE;
+
+        mw.autoAbilityTriggers.triggerAutoAbilitiesForEndOfYourTurn(false);
+
+        assertEquals(List.of(aiForward), mw.p2ForwardCards, "the AI paid rather than lose the Forward");
+        assertEquals(CardState.DULL, mw.p2BackupStates[0], "it dulled a Backup for the 《1》");
+    }
+
+    @Test
+    void aVayneThatHasLeftTheFieldGrantsNothing() {
+        MainWindow mw = new MainWindow();
+        CardData victim = makeForward("Victim", "Fire", 3, 7000);
+        mw.placeCardInForwardZone(victim);
+        mw.gameState.getIdentity().put(victim, true);
+
+        mw.autoAbilityTriggers.triggerAutoAbilitiesForEndOfYourTurn(true);
+
+        assertEquals(List.of(victim), mw.p1ForwardCards, "no granter on the field, no toll");
+    }
+
+    // =========================================================================================
+    // Control transfer runs in both directions off one primitive: whichever side holds the card
+    // gives it up to the other. Stealing, handing a card over, and returning a borrowed card at
+    // end of turn are the same move, so P2 taking from P1 works exactly as P1 taking from P2.
+    // =========================================================================================
+
+    private static final String GAIN_CONTROL = "choose 1 Forward. You gain control of it.";
+    private static final String BORROW_EOT =
+            "choose 1 Forward. You gain control of it until the end of the turn.";
+
+    /** Runs a "gain control" effect for {@code thiefIsP1} against the opponent's Forward at index 0. */
+    private static void resolveSteal(MainWindow mw, boolean thiefIsP1, String effectText) {
+        GameContext ctx = mw.buildGameContext(thiefIsP1);
+        ctx.preloadTargets(List.of(new ForwardTarget(!thiefIsP1, 0, ForwardTarget.CardZone.FORWARD)));
+        ActionResolver.parse(effectText, makeForward("Thief", "Dark", 5, 9000)).accept(ctx);
+    }
+
+    @Test
+    void eitherPlayerCanTakeControlOfTheOpponentsForward() {
+        MainWindow p2Steals = new MainWindow();
+        CardData victim1 = makeForward("Victim", "Dark", 4, 8000);
+        p2Steals.placeCardInForwardZone(victim1);
+        p2Steals.gameState.getIdentity().put(victim1, true);
+        resolveSteal(p2Steals, false, GAIN_CONTROL);
+        assertEquals(List.of(victim1), p2Steals.p2ForwardCards, "P2 took P1's Forward");
+        assertTrue(p2Steals.p1ForwardCards.isEmpty());
+        // The parallel per-slot lists must stay the same length as the card list on arrival.
+        assertEquals(1, p2Steals.p2ForwardStates.size());
+        assertEquals(1, p2Steals.p2ForwardDamage.size());
+        assertEquals(1, p2Steals.p2ForwardPrimedTop.size());
+
+        MainWindow p1Steals = new MainWindow();
+        CardData victim2 = makeForward("Victim", "Dark", 4, 8000);
+        p1Steals.placeP2CardInForwardZone(victim2);
+        p1Steals.gameState.getIdentity().put(victim2, false);
+        resolveSteal(p1Steals, true, GAIN_CONTROL);
+        assertEquals(List.of(victim2), p1Steals.p1ForwardCards, "the original direction still works");
+        assertTrue(p1Steals.p2ForwardCards.isEmpty());
+    }
+
+    @Test
+    void stealingIntoADuplicateSendsBothCopiesToTheirOwnersBreakZones() {
+        MainWindow mw = new MainWindow();
+        CardData p1Copy = makeForward("Victim", "Dark", 4, 8000);
+        CardData p2Copy = makeForward("Victim", "Dark", 4, 8000);
+        mw.placeCardInForwardZone(p1Copy);
+        mw.gameState.getIdentity().put(p1Copy, true);
+        mw.placeP2CardInForwardZone(p2Copy);
+        mw.gameState.getIdentity().put(p2Copy, false);
+
+        resolveSteal(mw, false, GAIN_CONTROL);   // P2 already controls a Victim
+
+        assertTrue(mw.p1ForwardCards.isEmpty());
+        assertTrue(mw.p2ForwardCards.isEmpty());
+        assertTrue(mw.gameState.getP1BreakZone().contains(p1Copy), "each copy went to its own owner");
+        assertTrue(mw.gameState.getP2BreakZone().contains(p2Copy));
+    }
+
+    @Test
+    void aForwardP2BorrowedUntilEndOfTurnGoesBackToP1() {
+        MainWindow mw = new MainWindow();
+        CardData loaner = makeForward("Loaner", "Dark", 3, 6000);
+        mw.placeCardInForwardZone(loaner);
+        mw.gameState.getIdentity().put(loaner, true);
+
+        resolveSteal(mw, false, BORROW_EOT);
+        assertEquals(List.of(loaner), mw.p2ForwardCards, "borrowed by P2");
+
+        mw.fireEndOfTurnEffects(false);
+        assertEquals(List.of(loaner), mw.p1ForwardCards, "returned to P1 at end of turn");
+        assertTrue(mw.p2ForwardCards.isEmpty());
+    }
+
+    @Test
+    void ultimeciaWorksForTheAiNowThatP2CanTakeControl() {
+        MainWindow mw = new MainWindow();
+        CardData ultimecia = makeForward("Ultimecia", "Dark", 5, 9000);
+        CardData victim    = makeForward("Victim", "Dark", 4, 8000);
+        mw.placeCardInForwardZone(victim);
+        mw.gameState.getIdentity().put(victim, true);   // P1 owns it
+
+        GameContext ctx = mw.buildGameContext(false);   // the AI resolves Ultimecia
+        ctx.preloadTargets(List.of(new ForwardTarget(true, 0, ForwardTarget.CardZone.FORWARD)));
+        ActionResolver.parse(ULTIMECIA_STEAL, ultimecia).accept(ctx);
+
+        assertTrue(mw.p1ForwardCards.isEmpty(), "the AI took it");
+        assertTrue(mw.p2ForwardCards.isEmpty(), "and could not pay 《4》, so it broke");
+        assertTrue(mw.gameState.getP1BreakZone().contains(victim),
+                "it goes to P1's Break Zone — P1 still owns it");
+    }
+
+    @Test
+    void ultimeciaChargesTheStolenForwardsOwnCost() {
+        CardData ultimecia = makeForward("Ultimecia", "Dark", 5, 9000);
+        Consumer<GameContext> steal = ActionResolver.parse(ULTIMECIA_STEAL, ultimecia);
+        assertNotNull(steal);
+        ForwardTarget target = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+
+        for (int cost : new int[]{4, 1}) {
+            CardData victim = makeForward("Victim", "Dark", cost, 8000);
+            GameContext ctx = mock(GameContext.class);
+            when(ctx.consumePreloadedTargets()).thenReturn(List.of(target));
+            when(ctx.targetCard(target)).thenReturn(victim);
+            when(ctx.selfControlsCard(victim)).thenReturn(true);
+
+            steal.accept(ctx);
+
+            verify(ctx).gainControlOfForward(target, "permanent", false);
+            verify(ctx).mayPayCostOrElse(eq(cost), isNull(), eq(0), any(Runnable.class));
+        }
     }
 
     // =========================================================================================

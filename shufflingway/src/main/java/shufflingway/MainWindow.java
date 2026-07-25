@@ -657,6 +657,10 @@ public class MainWindow {
 	final Set<CardData> breaktouchBattleSet       = new HashSet<>();
 	/** Cards that have escaped from the current Battle via an Escape ability — combat is skipped for their pairing. */
 	final Set<CardData> escapedFromBattle         = new HashSet<>();
+	/** Cards that deal no damage in the battle they are currently in (Vincent 2-078R). */
+	final Set<CardData> dealsNoCombatDamageSet    = new HashSet<>();
+	/** Cards to break once the battle they are in finishes, whether or not it broke them (Vincent 2-078R). */
+	final Set<CardData> breakAfterCombatSet       = new HashSet<>();
 	/** The Summon card currently resolving (from the stack or as an EX Burst); null otherwise. */
 	CardData currentSummonSource    = null;
 	/** {@code true} if {@link #currentSummonSource} belongs to P1. */
@@ -3390,60 +3394,130 @@ public class MainWindow {
 		for (int i = 0; i < p2ForwardCards.size(); i++) refreshP2ForwardSlot(i);
 	}
 
+	/** Identity (not {@code equals}) index of {@code card} in {@code list}; two copies of a card are distinct. */
+	private static int identityIndexOf(List<CardData> list, CardData card) {
+		for (int i = 0; i < list.size(); i++) if (list.get(i) == card) return i;
+		return -1;
+	}
+
 	/**
-	 * Moves P2's forward at {@code p2Idx} to P1's field without triggering ETF or break-zone
-	 * auto-abilities, and registers the restoration condition in {@link #stolenForwards}.
+	 * Strips the Forward slot at {@code idx} out of {@code isP1}'s parallel per-slot lists and
+	 * rebuilds that side's panel. The card goes nowhere — callers place it themselves — so no zone
+	 * change happens and no auto-ability fires.
 	 */
-	void stealForwardFromP2ToP1(int p2Idx, String condition, boolean activate) {
-		if (p2Idx < 0 || p2Idx >= p2ForwardCards.size()) return;
-		CardData   card       = p2ForwardCards.get(p2Idx);
-		int        savedDmg   = p2ForwardDamage.get(p2Idx);
-		CardState  savedState = p2ForwardStates.get(p2Idx);
+	private void removeForwardSlotForTransfer(boolean isP1, int idx) {
+		if (isP1) {
+			p1ForwardCards.remove(idx);
+			p1ForwardUrls.remove(idx);
+			p1ForwardStates.remove(idx);
+			p1ForwardPlayedOnTurn.remove(idx);
+			p1ForwardDamage.remove(idx);
+			p1ForwardPowerBoost.remove(idx);
+			p1ForwardPowerReduction.remove(idx);
+			p1ForwardTempTraits.remove(idx);
+			p1ForwardRemovedTraits.remove(idx);
+			p1ForwardTempJobs.remove(idx);
+			p1ForwardPrimedTop.remove(idx);
+			p1ForwardFrozen.remove(idx);
+			p1ForwardLabels.remove(idx);
+			shiftBlockSet(p1ForwardCannotBlock,            idx);
+			shiftBlockSet(p1ForwardMustBlock,              idx);
+			shiftBlockSet(p1ForwardCannotAttack,           idx);
+			shiftBlockSet(p1ForwardMustAttack,             idx);
+			shiftBlockSet(p1ForwardCannotAttackPersistent, idx);
+			shiftBlockSet(p1ForwardCannotBlockPersistent,  idx);
+			shiftBlockSet(p1ForwardCannotBeBlocked,        idx);
+			shiftBlockMap(p1ForwardCannotBeBlockedByCost,  idx);
+			rebuildP1ForwardPanel();
+		} else {
+			p2ForwardCards.remove(idx);
+			p2ForwardUrls.remove(idx);
+			p2ForwardStates.remove(idx);
+			p2ForwardPlayedOnTurn.remove(idx);
+			p2ForwardDamage.remove(idx);
+			p2ForwardPowerBoost.remove(idx);
+			p2ForwardPowerReduction.remove(idx);
+			p2ForwardTempTraits.remove(idx);
+			p2ForwardRemovedTraits.remove(idx);
+			p2ForwardTempJobs.remove(idx);
+			p2ForwardPrimedTop.remove(idx);
+			p2ForwardFrozen.remove(idx);
+			p2ForwardLabels.remove(idx);
+			shiftBlockSet(p2ForwardCannotBlock,            idx);
+			shiftBlockSet(p2ForwardMustBlock,              idx);
+			shiftBlockSet(p2ForwardCannotAttack,           idx);
+			shiftBlockSet(p2ForwardMustAttack,             idx);
+			shiftBlockSet(p2ForwardCannotAttackPersistent, idx);
+			shiftBlockSet(p2ForwardCannotBlockPersistent,  idx);
+			shiftBlockSet(p2ForwardCannotBeBlocked,        idx);
+			shiftBlockMap(p2ForwardCannotBeBlockedByCost,  idx);
+			rebuildP2ForwardPanel();
+		}
+	}
+
+	/**
+	 * Hands {@code card} across the table: it leaves whichever field it is on and joins the other
+	 * player's Forward zone, keeping its accumulated damage and its state (unless {@code forceState}
+	 * overrides it). Control changes are not zone changes, so no ETF, leave-field or break
+	 * auto-abilities fire — the one exception is the uniqueness rule, where a non-multicard meeting
+	 * another copy of itself sends both to their owners' Break Zones instead.
+	 *
+	 * <p>The direction is implied by where the card currently sits, which is what every caller
+	 * wants: stealing takes it from the opponent, giving hands it over, and restoring sends a
+	 * stolen card back the way it came.
+	 *
+	 * @return {@code true} if the card changed sides
+	 */
+	private boolean transferForwardControl(CardData card, CardState forceState) {
+		int  idx    = identityIndexOf(p1ForwardCards, card);
+		boolean fromP1 = idx >= 0;
+		if (!fromP1) {
+			idx = identityIndexOf(p2ForwardCards, card);
+			if (idx < 0) {
+				logEntry(card.name() + " — not currently a Forward on the field, cannot transfer control");
+				return false;
+			}
+		}
 
 		// Uniqueness rule: a non-multicard cannot coexist with another copy of itself.
-		// If P1 already controls a Forward with this name, both copies go to their owner's Break Zones.
+		List<CardData> destCards = fromP1 ? p2ForwardCards : p1ForwardCards;
 		if (!card.multicard()) {
-			for (int i = 0; i < p1ForwardCards.size(); i++) {
-				if (p1ForwardCards.get(i).name().equalsIgnoreCase(card.name())) {
+			for (int i = 0; i < destCards.size(); i++) {
+				if (destCards.get(i).name().equalsIgnoreCase(card.name())) {
 					logEntry(card.name() + " — uniqueness rule: both copies sent to their owner's Break Zone");
-					breakP2Forward(p2Idx);  // P2's copy → P2's Break Zone (triggers leave/break abilities)
-					breakP1Forward(i);       // P1's copy → P1's Break Zone (triggers leave/break abilities)
-					return;
+					// Break the arriving copy first so the resident copy's index stays valid.
+					if (fromP1) { breakP1Forward(idx); breakP2Forward(i); }
+					else        { breakP2Forward(idx); breakP1Forward(i); }
+					return false;
 				}
 			}
 		}
 
-		// Remove from P2 (no break zone, no auto-ability trigger)
-		p2ForwardCards.remove(p2Idx);
-		p2ForwardUrls.remove(p2Idx);
-		p2ForwardStates.remove(p2Idx);
-		p2ForwardPlayedOnTurn.remove(p2Idx);
-		p2ForwardDamage.remove(p2Idx);
-		p2ForwardPowerBoost.remove(p2Idx);
-		p2ForwardPowerReduction.remove(p2Idx);
-		p2ForwardTempTraits.remove(p2Idx);
-		p2ForwardRemovedTraits.remove(p2Idx);
-		p2ForwardTempJobs.remove(p2Idx);
-		p2ForwardPrimedTop.remove(p2Idx);
-		p2ForwardFrozen.remove(p2Idx);
-		p2ForwardLabels.remove(p2Idx);
-		shiftBlockSet(p2ForwardCannotBlock,            p2Idx);
-		shiftBlockSet(p2ForwardMustBlock,              p2Idx);
-		shiftBlockSet(p2ForwardCannotAttack,           p2Idx);
-		shiftBlockSet(p2ForwardMustAttack,             p2Idx);
-		shiftBlockSet(p2ForwardCannotAttackPersistent, p2Idx);
-		shiftBlockSet(p2ForwardCannotBlockPersistent,  p2Idx);
-		shiftBlockSet(p2ForwardCannotBeBlocked,        p2Idx);
-		shiftBlockMap(p2ForwardCannotBeBlockedByCost,  p2Idx);
-		rebuildP2ForwardPanel();
+		int       savedDmg   = (fromP1 ? p1ForwardDamage : p2ForwardDamage).get(idx);
+		CardState savedState = (fromP1 ? p1ForwardStates : p2ForwardStates).get(idx);
+		removeForwardSlotForTransfer(fromP1, idx);
+		CardState arrivalState = forceState != null ? forceState : savedState;
+		if (fromP1) addStolenForwardToP2Field(card, savedDmg, arrivalState);
+		else        addStolenForwardToP1Field(card, savedDmg, arrivalState);
+		return true;
+	}
 
-		// Add to P1 with preserved damage; state forced ACTIVE if requested
-		addStolenForwardToP1Field(card, savedDmg, activate ? CardState.ACTIVE : savedState);
+	/**
+	 * Moves the Forward at {@code victimIdx} on the opponent's field to {@code thiefIsP1}'s field
+	 * and registers the restoration condition in {@link #stolenForwards}. Works in either
+	 * direction — {@code thiefIsP1} names the player gaining control.
+	 */
+	void stealForwardControl(boolean thiefIsP1, int victimIdx, String condition, boolean activate) {
+		List<CardData> victimCards = thiefIsP1 ? p2ForwardCards : p1ForwardCards;
+		if (victimIdx < 0 || victimIdx >= victimCards.size()) return;
+		CardData card = victimCards.get(victimIdx);
+
+		if (!transferForwardControl(card, activate ? CardState.ACTIVE : null)) return;
 
 		String condLabel = condition.equals("permanent") ? " (permanent)"
 				: condition.equals("endOfTurn") ? " (until EOT)"
 				: " (while " + condition.substring("whileCardOnField:".length()) + " on field)";
-		logEntry(card.name() + " — control stolen by P1" + condLabel);
+		logEntry(card.name() + " — control stolen by " + (thiefIsP1 ? "P1" : "P2") + condLabel);
 
 		if (!condition.equals("permanent")) {
 			stolenForwards.put(card, condition);
@@ -3554,101 +3628,18 @@ public class MainWindow {
 	}
 
 	/**
-	 * Removes a stolen forward from P1's field (without sending it to any zone) and returns
-	 * it to P2's field with its current state.  If the card is no longer on P1's field
-	 * (already broken), this is a no-op except for a log entry.
+	 * Hands a stolen forward back to the player it was taken from, keeping its current damage and
+	 * state. If the card has already left the field, this is a no-op except for a log entry.
 	 */
 	private void restoreStolenForward(CardData card) {
-		int p1Idx = -1;
-		for (int i = 0; i < p1ForwardCards.size(); i++) {
-			if (p1ForwardCards.get(i) == card) { p1Idx = i; break; }
-		}
-		if (p1Idx < 0) {
-			logEntry(card.name() + " — already left field, P2 control restored implicitly");
+		boolean onP1 = identityIndexOf(p1ForwardCards, card) >= 0;
+		boolean onP2 = identityIndexOf(p2ForwardCards, card) >= 0;
+		if (!onP1 && !onP2) {
+			logEntry(card.name() + " — already left field, control restored implicitly");
 			return;
 		}
-
-		int       dmg   = p1ForwardDamage.get(p1Idx);
-		CardState state = p1ForwardStates.get(p1Idx);
-
-		// Remove from P1 arrays (no break zone)
-		p1ForwardCards.remove(p1Idx);
-		p1ForwardUrls.remove(p1Idx);
-		p1ForwardStates.remove(p1Idx);
-		p1ForwardPlayedOnTurn.remove(p1Idx);
-		p1ForwardDamage.remove(p1Idx);
-		p1ForwardPowerBoost.remove(p1Idx);
-		p1ForwardPowerReduction.remove(p1Idx);
-		p1ForwardTempTraits.remove(p1Idx);
-		p1ForwardRemovedTraits.remove(p1Idx);
-		p1ForwardTempJobs.remove(p1Idx);
-		p1ForwardPrimedTop.remove(p1Idx);
-		p1ForwardFrozen.remove(p1Idx);
-		p1ForwardLabels.remove(p1Idx);
-		shiftBlockSet(p1ForwardCannotBlock,            p1Idx);
-		shiftBlockSet(p1ForwardMustBlock,              p1Idx);
-		shiftBlockSet(p1ForwardCannotAttack,           p1Idx);
-		shiftBlockSet(p1ForwardMustAttack,             p1Idx);
-		shiftBlockSet(p1ForwardCannotAttackPersistent, p1Idx);
-		shiftBlockSet(p1ForwardCannotBlockPersistent,  p1Idx);
-		shiftBlockSet(p1ForwardCannotBeBlocked,        p1Idx);
-		shiftBlockMap(p1ForwardCannotBeBlockedByCost,  p1Idx);
-
-		// Rebuild P1 panel
-		if (p1ForwardPanel != null) {
-			p1ForwardPanel.removeAll();
-			p1ForwardLabels.clear();
-			for (int i = 0; i < p1ForwardCards.size(); i++) {
-				final int fi = i;
-				JLabel lbl = new JLabel("", SwingConstants.CENTER);
-				lbl.setPreferredSize(new Dimension(CARD_H, CARD_H));
-				lbl.setMinimumSize(new Dimension(CARD_H, CARD_H));
-				lbl.setOpaque(false);
-				lbl.setForeground(Color.DARK_GRAY);
-				lbl.setFont(FontLoader.loadPixelFont(11));
-				lbl.setBorder(BorderFactory.createEmptyBorder());
-				lbl.addMouseListener(new MouseAdapter() {
-					@Override public void mousePressed(MouseEvent e) {
-						if (lbl.getIcon() == null) return;
-						if (SwingUtilities.isLeftMouseButton(e)
-								&& p1ForwardClickSelectsCombat()) {
-							handleP1ForwardLeftClick(fi);
-						} else {
-							showForwardContextMenu(fi, lbl, e);
-						}
-					}
-					@Override public void mouseEntered(MouseEvent e) {
-						if (lbl.getIcon() == null) return;
-						CardData top = p1ForwardPrimedTop.get(fi);
-						showZoomAt(top != null ? top.imageUrl() : p1ForwardUrls.get(fi));
-					}
-					@Override public void mouseExited(MouseEvent e) { hideZoom(); }
-				});
-				p1ForwardLabels.add(lbl);
-				p1ForwardPanel.add(lbl);
-			}
-			p1ForwardPanel.revalidate();
-			p1ForwardPanel.repaint();
-			for (int i = 0; i < p1ForwardCards.size(); i++) refreshP1ForwardSlot(i);
-		}
-
-		// Return to P2's field with current damage/state
-		p2ForwardUrls.add(card.imageUrl());
-		p2ForwardCards.add(card);
-		p2ForwardStates.add(state);
-		p2ForwardPlayedOnTurn.add(gameState.getTurnNumber());
-		p2ForwardDamage.add(dmg);
-		p2ForwardPowerBoost.add(0);
-		p2ForwardPowerReduction.add(0);
-		p2ForwardTempTraits.add(EnumSet.noneOf(CardData.Trait.class));
-		p2ForwardRemovedTraits.add(EnumSet.noneOf(CardData.Trait.class));
-		p2ForwardTempJobs.add(null);
-		p2ForwardFrozen.add(false);
-		rebuildP2ForwardPanel();
-		if (!card.fieldPowerGrants().isEmpty()) refreshFieldGrantDependents(false);
-		if (!card.fieldCostReductions().isEmpty() || p1HandHasSelfCostModifiers()) refreshHandPopupIfVisible();
-
-		logEntry(card.name() + " — control returned to P2");
+		if (transferForwardControl(card, null))
+			logEntry(card.name() + " — control returned to " + (onP1 ? "P2" : "P1"));
 	}
 
 	/**
@@ -3660,101 +3651,9 @@ public class MainWindow {
 	 * No-op (with a log entry) if {@code source} is not currently a Forward on either field.
 	 */
 	void giveForwardControlToOpponent(CardData source) {
-		int p1Idx = -1;
-		for (int i = 0; i < p1ForwardCards.size(); i++) {
-			if (p1ForwardCards.get(i) == source) { p1Idx = i; break; }
-		}
-		if (p1Idx >= 0) {
-			int       savedDmg   = p1ForwardDamage.get(p1Idx);
-			CardState savedState = p1ForwardStates.get(p1Idx);
-
-			if (!source.multicard()) {
-				for (int i = 0; i < p2ForwardCards.size(); i++) {
-					if (p2ForwardCards.get(i).name().equalsIgnoreCase(source.name())) {
-						logEntry(source.name() + " — uniqueness rule: both copies sent to their owner's Break Zone");
-						breakP1Forward(p1Idx);
-						breakP2Forward(i);
-						return;
-					}
-				}
-			}
-
-			p1ForwardCards.remove(p1Idx);
-			p1ForwardUrls.remove(p1Idx);
-			p1ForwardStates.remove(p1Idx);
-			p1ForwardPlayedOnTurn.remove(p1Idx);
-			p1ForwardDamage.remove(p1Idx);
-			p1ForwardPowerBoost.remove(p1Idx);
-			p1ForwardPowerReduction.remove(p1Idx);
-			p1ForwardTempTraits.remove(p1Idx);
-			p1ForwardRemovedTraits.remove(p1Idx);
-			p1ForwardTempJobs.remove(p1Idx);
-			p1ForwardPrimedTop.remove(p1Idx);
-			p1ForwardFrozen.remove(p1Idx);
-			p1ForwardLabels.remove(p1Idx);
-			shiftBlockSet(p1ForwardCannotBlock,            p1Idx);
-			shiftBlockSet(p1ForwardMustBlock,              p1Idx);
-			shiftBlockSet(p1ForwardCannotAttack,           p1Idx);
-			shiftBlockSet(p1ForwardMustAttack,             p1Idx);
-			shiftBlockSet(p1ForwardCannotAttackPersistent, p1Idx);
-			shiftBlockSet(p1ForwardCannotBlockPersistent,  p1Idx);
-			shiftBlockSet(p1ForwardCannotBeBlocked,        p1Idx);
-			shiftBlockMap(p1ForwardCannotBeBlockedByCost,  p1Idx);
-			rebuildP1ForwardPanel();
-
-			addStolenForwardToP2Field(source, savedDmg, savedState);
-			logEntry(source.name() + " — control given to opponent (P2)");
-			return;
-		}
-
-		int p2Idx = -1;
-		for (int i = 0; i < p2ForwardCards.size(); i++) {
-			if (p2ForwardCards.get(i) == source) { p2Idx = i; break; }
-		}
-		if (p2Idx >= 0) {
-			int       savedDmg   = p2ForwardDamage.get(p2Idx);
-			CardState savedState = p2ForwardStates.get(p2Idx);
-
-			if (!source.multicard()) {
-				for (int i = 0; i < p1ForwardCards.size(); i++) {
-					if (p1ForwardCards.get(i).name().equalsIgnoreCase(source.name())) {
-						logEntry(source.name() + " — uniqueness rule: both copies sent to their owner's Break Zone");
-						breakP2Forward(p2Idx);
-						breakP1Forward(i);
-						return;
-					}
-				}
-			}
-
-			p2ForwardCards.remove(p2Idx);
-			p2ForwardUrls.remove(p2Idx);
-			p2ForwardStates.remove(p2Idx);
-			p2ForwardPlayedOnTurn.remove(p2Idx);
-			p2ForwardDamage.remove(p2Idx);
-			p2ForwardPowerBoost.remove(p2Idx);
-			p2ForwardPowerReduction.remove(p2Idx);
-			p2ForwardTempTraits.remove(p2Idx);
-			p2ForwardRemovedTraits.remove(p2Idx);
-			p2ForwardTempJobs.remove(p2Idx);
-			p2ForwardPrimedTop.remove(p2Idx);
-			p2ForwardFrozen.remove(p2Idx);
-			p2ForwardLabels.remove(p2Idx);
-			shiftBlockSet(p2ForwardCannotBlock,            p2Idx);
-			shiftBlockSet(p2ForwardMustBlock,              p2Idx);
-			shiftBlockSet(p2ForwardCannotAttack,           p2Idx);
-			shiftBlockSet(p2ForwardMustAttack,             p2Idx);
-			shiftBlockSet(p2ForwardCannotAttackPersistent, p2Idx);
-			shiftBlockSet(p2ForwardCannotBlockPersistent,  p2Idx);
-			shiftBlockSet(p2ForwardCannotBeBlocked,        p2Idx);
-			shiftBlockMap(p2ForwardCannotBeBlockedByCost,  p2Idx);
-			rebuildP2ForwardPanel();
-
-			addStolenForwardToP1Field(source, savedDmg, savedState);
-			logEntry(source.name() + " — control given to opponent (P1)");
-			return;
-		}
-
-		logEntry(source.name() + " — not currently a Forward on the field, cannot transfer control");
+		boolean wasP1 = identityIndexOf(p1ForwardCards, source) >= 0;
+		if (transferForwardControl(source, null))
+			logEntry(source.name() + " — control given to opponent (" + (wasP1 ? "P2" : "P1") + ")");
 	}
 
 	/**
@@ -4958,7 +4857,7 @@ public class MainWindow {
 		// priority checkpoint — so it is cleared by finish, which every exit path below runs.
 		p2DeclaredAttackers.clear();
 		p2DeclaredAttackers.add(attacker);
-		Runnable finish = () -> { p2DeclaredAttackers.clear(); onDone.run(); };
+		Runnable finish = () -> { p2DeclaredAttackers.clear(); resolvePostCombatBreaks(); onDone.run(); };
 
 		// Compute eligible blockers
 		boolean anyEligible = false;
@@ -5011,7 +4910,7 @@ public class MainWindow {
 		p2DeclaredAttackers.clear();
 		for (int idx : attackerIndices)
 			if (idx < p2ForwardCards.size()) p2DeclaredAttackers.add(effectiveP2Forward(idx));
-		Runnable finish = () -> { p2DeclaredAttackers.clear(); onDone.run(); };
+		Runnable finish = () -> { p2DeclaredAttackers.clear(); resolvePostCombatBreaks(); onDone.run(); };
 
 		boolean anyEligible = false;
 		for (int i = 0; i < p1ForwardStates.size(); i++) {
@@ -9607,6 +9506,52 @@ public class MainWindow {
 		}
 	}
 
+	/**
+	 * Fires the end-of-turn ability that a card on the field grants to {@code isP1}'s Forwards —
+	 * Vayne 9-022L: All the Forwards opponent controls gain "At the end of your turn, if you don't
+	 * pay 《1》, break this Forward."
+	 *
+	 * <p>The grant is continuous, so it is read off the granting card's field abilities at the
+	 * moment it fires rather than stamped onto the Forwards: a Forward that arrived this turn is
+	 * covered, and one that arrives after the granter leaves is not. Each Forward resolves its own
+	 * copy — with three Forwards on the field the cost is asked three times, once per card, which is
+	 * what having the ability three times means.
+	 */
+	void fireGrantedEndOfTurnForwardAbilities(boolean isP1) {
+		List<CardData> forwards = new ArrayList<>(isP1 ? p1ForwardCards : p2ForwardCards);
+		if (forwards.isEmpty()) return;
+		for (boolean granterIsP1 : new boolean[]{ true, false }) {
+			List<CardData> granters = new ArrayList<>(granterIsP1 ? p1ForwardCards : p2ForwardCards);
+			granters.addAll(granterIsP1 ? p1MonsterCards : p2MonsterCards);
+			for (CardData b : granterIsP1 ? p1BackupCards : p2BackupCards) if (b != null) granters.add(b);
+
+			for (CardData granter : granters) {
+				if (lostAbilitiesCards.contains(granter)) continue;
+				for (FieldAbility fa : granter.fieldAbilities()) {
+					ActionResolver.ForwardAbilityGrant grant =
+							ActionResolver.tryParseForwardAbilityGrant(fa.effectText());
+					if (grant == null) continue;
+					boolean granteeIsP1 = grant.affectsOpponent() ? !granterIsP1 : granterIsP1;
+					if (granteeIsP1 != isP1) continue;
+
+					for (CardData fwd : forwards) {
+						// Re-check each time: an earlier Forward's copy may already have broken this one.
+						if (identityIndexOf(isP1 ? p1ForwardCards : p2ForwardCards, fwd) < 0) continue;
+						Consumer<GameContext> effect =
+								ActionResolver.tryParseGrantedEndOfTurnEffect(grant.abilityText(), fwd);
+						if (effect == null) continue;
+						logEntry((isP1 ? "" : "[P2] ") + fwd.name() + " — granted by " + granter.name()
+								+ ": " + grant.abilityText());
+						CardData prevSource = currentAbilitySource;
+						currentAbilitySource = fwd;
+						try { effect.accept(buildGameContext(isP1)); }
+						finally { currentAbilitySource = prevSource; }
+					}
+				}
+			}
+		}
+	}
+
 	/** Fires all queued end-of-turn effects using a context for {@code isP1}, then clears the queue. */
 	void fireEndOfTurnEffects(boolean isP1) {
 		List<Consumer<GameContext>> scheduled = isP1 ? scheduledForP1EndTurn : scheduledForP2EndTurn;
@@ -10090,6 +10035,7 @@ public class MainWindow {
 		CardData card = fieldCombatant(isP1, zone, idx);
 		if (card == null) return rawAmount;
 		if (nextOutgoingDmgZeroSet.remove(card)) return 0;
+		if (dealsNoCombatDamageSet.contains(card)) return 0;   // deals no damage for the whole battle
 		int mult = outgoingDmgMultiplierMap.getOrDefault(card, 1);
 		if (nextOutgoingDmgDoublerSet.remove(card)) mult *= 2;
 		if (target != null) mult *= fieldAbilityCombatOutgoingMult(card, target);
@@ -10220,6 +10166,11 @@ public class MainWindow {
 	/** Deals 1 (or 2 if the attacker has the outgoing-damage doubler FA) combat damage to the opponent,
 	 *  calling {@code afterDamage} after all damage points and any EX bursts have resolved. */
 	private void dealCombatDamageToOpponent(CardData attacker, boolean attackerIsP1, Runnable afterDamage) {
+		if (dealsNoCombatDamageSet.contains(attacker)) {
+			logEntry((attackerIsP1 ? "" : "[P2] ") + attacker.name() + " deals no damage this battle");
+			afterDamage.run();
+			return;
+		}
 		boolean doubled = sourceHasOutgoingDmgToOpponentDoubler(attacker);
 		// Each point re-credits the attacker: the source is consumed per call, and the second
 		// point of doubled damage is dealt from the first one's completion callback.
@@ -11987,10 +11938,31 @@ public class MainWindow {
 	}
 
 	/**
+	 * Ends the battle-scoped state set up by "breaks after the attack or the block and doesn't deal
+	 * any damage" (Vincent 2-078R): every card still marked is broken now, whether or not the battle
+	 * itself broke it, and the damage suppression is lifted.  Safe to call after any battle — it is
+	 * a no-op when nothing was marked.
+	 */
+	void resolvePostCombatBreaks() {
+		dealsNoCombatDamageSet.clear();
+		if (breakAfterCombatSet.isEmpty()) return;
+		List<CardData> pending = new ArrayList<>(breakAfterCombatSet);
+		breakAfterCombatSet.clear();
+		for (CardData card : pending) {
+			int p1Idx = p1ForwardCards.indexOf(card);
+			int p2Idx = p2ForwardCards.indexOf(card);
+			if (p1Idx < 0 && p2Idx < 0) continue;   // already broken or otherwise gone
+			logEntry((p1Idx >= 0 ? "" : "[P2] ") + card.name() + " breaks after the battle");
+			if (p1Idx >= 0) breakP1Forward(p1Idx); else breakP2Forward(p2Idx);
+		}
+	}
+
+	/**
 	 * After combat damage resolves, checks whether P1 has more eligible attackers.
 	 * If yes, returns to sub-step 1 (Declare). If no, ends the attack phase.
 	 */
 	private void continueAttackPhase() {
+		resolvePostCombatBreaks();
 		p1AttackSelection.clear();
 		p1DeclaredAttackers.clear();
 		p1MonsterAttackIdx = -1;
