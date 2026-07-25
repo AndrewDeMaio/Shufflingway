@@ -345,6 +345,15 @@ public class MainWindow {
 	private JButton              attackButton;
 	private JButton              skipAttackButton;
 	final List<Integer>  p1AttackSelection = new ArrayList<>();
+	/**
+	 * The cards P1 has actually declared as attackers for the combat in progress — set when the
+	 * attack is declared and cleared when it resolves. {@link #p1AttackSelection} is emptied at
+	 * declaration time, so this is what "while [card] is attacking" abilities must consult while
+	 * P1 holds priority after declaring.
+	 */
+	final List<CardData> p1DeclaredAttackers = new ArrayList<>();
+	/** Same as {@link #p1DeclaredAttackers}, for the attack P2 has declared against P1. */
+	final List<CardData> p2DeclaredAttackers = new ArrayList<>();
 	int                  p1BlockingIdx     = -1;
 
 	// In-place field targeting: while active, the normal field-card click handlers
@@ -401,6 +410,12 @@ public class MainWindow {
 	private Timer         p2AutoPassTimer;
 	/** Non-null while P1 holds priority during P2's main phase; callback advances to the next phase. */
 	private Runnable      p1PriorityInP2MainOnDone = null;
+	/**
+	 * Non-null while P1 holds priority at a combat checkpoint on their own turn (currently: right
+	 * after declaring an attacker). P1 may cast Summons or use action abilities; clicking Next
+	 * runs this callback, which passes priority to P2 and continues the combat step.
+	 */
+	private Runnable      p1CombatPriorityOnPass = null;
 
 	// Damage-shield / damage-modifier state (keyed by CardData identity; cleared at end of turn)
 	final Set<CardData>          nextIncomingDmgZeroSet        = new HashSet<>();
@@ -1441,6 +1456,7 @@ public class MainWindow {
 		suppressAutoAbilityForNextCard = false;
 		// Per-game callback/priority state.
 		p1PriorityInP2MainOnDone = null;
+		p1CombatPriorityOnPass   = null;
 		// Per-game / per-turn collections that are not covered by gameState.reset() or clearUIZones().
 		cancelledStackEntries.clear();
 		usedOncePerTurnAbilities.clear();
@@ -2084,6 +2100,12 @@ public class MainWindow {
 			}
 			return;
 		}
+		// P1 holds priority at a combat checkpoint on their own turn: Next passes priority rather
+		// than changing phase. Ignored while the stack is still resolving, same as the P2-turn case.
+		if (p1CombatPriorityOnPass != null) {
+			if (gameState.getStack().isEmpty()) passP1CombatPriority();
+			return;
+		}
 		GameState.GamePhase current = gameState.getCurrentPhase();
 		if (current == null) return;
 
@@ -2126,6 +2148,7 @@ public class MainWindow {
 
 			case MAIN_1 -> {
                             p1AttackSelection.clear();
+                            p1DeclaredAttackers.clear();
                             p1MonsterAttackIdx = -1;
                             logEntry("[Priority] P1 passes — P2 may respond.");
                             if (nextPhaseButton != null) nextPhaseButton.setEnabled(false);
@@ -2133,6 +2156,7 @@ public class MainWindow {
                                 gameState.advancePhase();   // MAIN_1 → ATTACK
                                 logEntry("Attack Phase");
                                 autoAbilityTriggers.triggerAutoAbilitiesForBeginningOfAttackPhase(true);
+                                autoAbilityTriggers.triggerAutoAbilitiesForBeginningOfAttackPhaseEachTurn(true);
                                 refreshAllForwardSlots();
                                 if (!hasAttackableForward() && !hasBackAttackInHand()) {
                                     logEntry("No attackers available — skipping to Main Phase 2");
@@ -2168,6 +2192,7 @@ public class MainWindow {
 
                             // ATTACK → MAIN_2 (all attacks finished or skipped)
                             p1AttackSelection.clear();
+                            p1DeclaredAttackers.clear();
                             attackSubStep = -1;
                             if (skipAttackButton != null) skipAttackButton.setEnabled(false);
                             if (nextPhaseButton != null) nextPhaseButton.setEnabled(true);
@@ -2327,6 +2352,8 @@ public class MainWindow {
 		p1ForwardFrozen.clear();
 		p1MonsterFrozen.clear();
 		p1AttackSelection.clear();
+		p1DeclaredAttackers.clear();
+		p2DeclaredAttackers.clear();
 		Arrays.fill(p1BackupPlayedOnTurn, 0);
 		Arrays.fill(p1BackupFrozen, false);
 		lastCastPaymentDistinctElements = 0;
@@ -3158,7 +3185,7 @@ public class MainWindow {
 					@Override public void mousePressed(MouseEvent e) {
 						if (lbl.getIcon() == null) return;
 						if (SwingUtilities.isLeftMouseButton(e)
-								&& gameState.getCurrentPhase() == GameState.GamePhase.ATTACK && attackSubStep != 0) {
+								&& p1ForwardClickSelectsCombat()) {
 							handleP1ForwardLeftClick(fi);
 						} else {
 							showForwardContextMenu(fi, lbl, e);
@@ -3316,7 +3343,7 @@ public class MainWindow {
 				@Override public void mousePressed(MouseEvent e) {
 					if (lbl.getIcon() == null) return;
 					if (SwingUtilities.isLeftMouseButton(e)
-							&& gameState.getCurrentPhase() == GameState.GamePhase.ATTACK && attackSubStep != 0) {
+							&& p1ForwardClickSelectsCombat()) {
 						handleP1ForwardLeftClick(fi);
 					} else {
 						showForwardContextMenu(fi, lbl, e);
@@ -3444,7 +3471,7 @@ public class MainWindow {
 			@Override public void mousePressed(MouseEvent e) {
 				if (lbl.getIcon() == null) return;
 				if (SwingUtilities.isLeftMouseButton(e)
-						&& gameState.getCurrentPhase() == GameState.GamePhase.ATTACK && attackSubStep != 0) {
+						&& p1ForwardClickSelectsCombat()) {
 					handleP1ForwardLeftClick(idx);
 				} else {
 					showForwardContextMenu(idx, lbl, e);
@@ -3584,7 +3611,7 @@ public class MainWindow {
 					@Override public void mousePressed(MouseEvent e) {
 						if (lbl.getIcon() == null) return;
 						if (SwingUtilities.isLeftMouseButton(e)
-								&& gameState.getCurrentPhase() == GameState.GamePhase.ATTACK && attackSubStep != 0) {
+								&& p1ForwardClickSelectsCombat()) {
 							handleP1ForwardLeftClick(fi);
 						} else {
 							showForwardContextMenu(fi, lbl, e);
@@ -3818,7 +3845,7 @@ public class MainWindow {
 					@Override public void mousePressed(MouseEvent e) {
 						if (lbl.getIcon() == null) return;
 						if (SwingUtilities.isLeftMouseButton(e)
-								&& gameState.getCurrentPhase() == GameState.GamePhase.ATTACK && attackSubStep != 0) {
+								&& p1ForwardClickSelectsCombat()) {
 							handleP1ForwardLeftClick(fi);
 						} else {
 							showForwardContextMenu(fi, lbl, e);
@@ -3967,7 +3994,7 @@ public class MainWindow {
 					@Override public void mousePressed(MouseEvent e) {
 						if (lbl.getIcon() == null) return;
 						if (SwingUtilities.isLeftMouseButton(e)
-								&& gameState.getCurrentPhase() == GameState.GamePhase.ATTACK && attackSubStep != 0) {
+								&& p1ForwardClickSelectsCombat()) {
 							handleP1ForwardLeftClick(fi);
 						} else {
 							showForwardContextMenu(fi, lbl, e);
@@ -4501,7 +4528,7 @@ public class MainWindow {
 					@Override public void mousePressed(MouseEvent e) {
 						if (lbl.getIcon() == null) return;
 						if (SwingUtilities.isLeftMouseButton(e)
-								&& gameState.getCurrentPhase() == GameState.GamePhase.ATTACK && attackSubStep != 0) {
+								&& p1ForwardClickSelectsCombat()) {
 							handleP1ForwardLeftClick(fi);
 						} else {
 							showForwardContextMenu(fi, lbl, e);
@@ -4927,6 +4954,12 @@ public class MainWindow {
 	 * {@code onDone} is called asynchronously after combat or damage resolves.
 	 */
 	void initP1BlockDeclaration(CardData attacker, int attackerIdx, Runnable onDone) {
+		// P2's attacker stays "attacking" for the whole combat — including the blocker-declared
+		// priority checkpoint — so it is cleared by finish, which every exit path below runs.
+		p2DeclaredAttackers.clear();
+		p2DeclaredAttackers.add(attacker);
+		Runnable finish = () -> { p2DeclaredAttackers.clear(); onDone.run(); };
+
 		// Compute eligible blockers
 		boolean anyEligible = false;
 		for (int i = 0; i < p1ForwardStates.size(); i++) {
@@ -4943,7 +4976,7 @@ public class MainWindow {
 			// No eligible blockers — auto-take damage
 			dealCombatDamageToOpponent(attacker, false, () -> {
 				autoAbilityTriggers.triggerAutoAbilitiesForDealsDamageToOpponent(attacker, false);
-				onDone.run();
+				finish.run();
 			});
 			return;
 		}
@@ -4956,7 +4989,7 @@ public class MainWindow {
 		// Store pending state so the attack button and forward clicks know what to do
 		pendingP2Attacker    = attacker;
 		pendingP2AttackerIdx = attackerIdx;
-		pendingP2BlockDone   = onDone;
+		pendingP2BlockDone   = finish;
 		p1BlockerSelection   = -1;
 		p1BlockerMonsterIdx  = -1;
 		p1BlockerBackupIdx   = -1;
@@ -4975,6 +5008,11 @@ public class MainWindow {
 	}
 
 	void initP1BlockDeclarationVsParty(List<Integer> attackerIndices, int combinedPower, Runnable onDone) {
+		p2DeclaredAttackers.clear();
+		for (int idx : attackerIndices)
+			if (idx < p2ForwardCards.size()) p2DeclaredAttackers.add(effectiveP2Forward(idx));
+		Runnable finish = () -> { p2DeclaredAttackers.clear(); onDone.run(); };
+
 		boolean anyEligible = false;
 		for (int i = 0; i < p1ForwardStates.size(); i++) {
 			CardState s = p1ForwardStates.get(i);
@@ -4991,7 +5029,7 @@ public class MainWindow {
 			p1TakeDamage();
 			for (int idx : attackerIndices)
 				autoAbilityTriggers.triggerAutoAbilitiesForDealsDamageToOpponent(p2ForwardCards.get(idx), false);
-			onDone.run();
+			finish.run();
 			return;
 		}
 
@@ -5463,8 +5501,8 @@ public class MainWindow {
 
 			GameState.GamePhase handPhase = gameState.getCurrentPhase();
 			boolean handIsMainPhase = handPhase == GameState.GamePhase.MAIN_1 || handPhase == GameState.GamePhase.MAIN_2;
-			boolean handIsAttackPrep = handPhase == GameState.GamePhase.ATTACK && attackSubStep == 0;
-			boolean handCanPlayAction = ((handIsMainPhase || (handIsAttackPrep && card.isSummon())) && gameState.getStack().isEmpty()
+			boolean handIsAttackCastWindow = p1MayActInAttackPhase();
+			boolean handCanPlayAction = ((handIsMainPhase || (handIsAttackCastWindow && card.isSummon())) && gameState.getStack().isEmpty()
 					&& (phaseTracker.isMyTurn() || (p1PriorityInP2MainOnDone != null && card.isSummon())))
 					|| (p1IsRespondingToStack && card.isSummon());
 			boolean handIsCharacter = card.isForward() || card.isBackup() || card.isMonster();
@@ -5564,8 +5602,8 @@ public class MainWindow {
 		JMenuItem playItem = new JMenuItem("Play");
 		GameState.GamePhase phase = gameState.getCurrentPhase();
 		boolean isMainPhase = phase == GameState.GamePhase.MAIN_1 || phase == GameState.GamePhase.MAIN_2;
-		boolean isAttackPrep = phase == GameState.GamePhase.ATTACK && attackSubStep == 0;
-		boolean canPlaySpecialAction = ((isMainPhase || (isAttackPrep && card.isSummon())) && gameState.getStack().isEmpty()
+		boolean isAttackCastWindow = p1MayActInAttackPhase();
+		boolean canPlaySpecialAction = ((isMainPhase || (isAttackCastWindow && card.isSummon())) && gameState.getStack().isEmpty()
 				&& (phaseTracker.isMyTurn() || (p1PriorityInP2MainOnDone != null && card.isSummon())))
 				|| (p1IsRespondingToStack && card.isSummon());
 		boolean isCharacter = card.isForward() || card.isBackup() || card.isMonster();
@@ -8824,6 +8862,36 @@ public class MainWindow {
 	}
 
 	/**
+	 * The cards currently attacking on {@code isP1}'s side.
+	 *
+	 * <p>Either side's list is held for the whole combat — declaration, the priority checkpoints on
+	 * both sides of block declaration, and damage — and emptied once that combat resolves. While P1
+	 * is still picking attackers (sub-step 1) the P1 list falls back to the in-progress selection,
+	 * so "while [card] is attacking" abilities can be lined up before pressing Attack as they
+	 * always could.
+	 */
+	private List<CardData> declaredAttackers(boolean isP1) {
+		if (!isP1) return p2DeclaredAttackers;
+		if (!p1DeclaredAttackers.isEmpty()) return p1DeclaredAttackers;
+		return p1AttackSelection.stream()
+				.filter(i -> i < p1ForwardCards.size())
+				.map(this::effectiveP1Forward)
+				.collect(Collectors.toList());
+	}
+
+	/** The card acting at P1 Forward slot {@code idx} — the primed top card when one is stacked. */
+	private CardData effectiveP1Forward(int idx) {
+		CardData top = p1ForwardPrimedTop.get(idx);
+		return top != null ? top : p1ForwardCards.get(idx);
+	}
+
+	/** The card acting at P2 Forward slot {@code idx} — the primed top card when one is stacked. */
+	private CardData effectiveP2Forward(int idx) {
+		CardData top = p2ForwardPrimedTop.get(idx);
+		return top != null ? top : p2ForwardCards.get(idx);
+	}
+
+	/**
 	 * Returns {@code true} if {@code ability} can currently be activated by the
 	 * card at the given slot.
 	 *
@@ -8866,16 +8934,15 @@ public class MainWindow {
 			if (gameState.getCurrentPhase() != GameState.GamePhase.ATTACK) return false;
 		}
 		if (ability.whileCardAttacking() != null) {
-			boolean found = p1AttackSelection.stream()
-					.anyMatch(i -> i < p1ForwardCards.size()
-							&& p1ForwardCards.get(i).name().equalsIgnoreCase(ability.whileCardAttacking()));
+			boolean found = declaredAttackers(isP1).stream()
+					.anyMatch(c -> c.name().equalsIgnoreCase(ability.whileCardAttacking()));
 			if (!found) return false;
 		}
 		if (ability.whileCardBlocking() != null) {
 			if (p1BlockingIdx < 0 || p1BlockingIdx >= p1ForwardCards.size()) return false;
 			if (!p1ForwardCards.get(p1BlockingIdx).name().equalsIgnoreCase(ability.whileCardBlocking())) return false;
 		}
-		if (ability.whilePartyAttacking() && p1AttackSelection.size() < 2) return false;
+		if (ability.whilePartyAttacking() && declaredAttackers(isP1).size() < 2) return false;
 		if (ability.hasBlockingTargetEffect()) {
 			if (gameState.getCurrentPhase() != GameState.GamePhase.ATTACK) return false;
 			if (attackSubStep != 3) return false;
@@ -10835,7 +10902,7 @@ public class MainWindow {
 			@Override public void mousePressed(MouseEvent e) {
 				if (lbl.getIcon() == null) return;
 				if (SwingUtilities.isLeftMouseButton(e)
-						&& gameState.getCurrentPhase() == GameState.GamePhase.ATTACK && attackSubStep != 0) {
+						&& p1ForwardClickSelectsCombat()) {
 					handleP1ForwardLeftClick(idx);
 				} else {
 					showForwardContextMenu(idx, lbl, e);
@@ -11803,6 +11870,57 @@ public class MainWindow {
 	}
 
 	/**
+	 * Combat checkpoint on P1's turn where P1 holds priority first — used after P1 declares an
+	 * attacker. Instead of a pass-only popup, P1 keeps the board: they may cast a Summon or use an
+	 * action ability and then click Next to pass, after which P2 responds (auto-pass) and
+	 * {@code onBothDone} continues the combat step. When P1 has no action ability on the field and
+	 * no Summon in hand there is nothing priority could be used for, so it passes automatically —
+	 * the log says so, since the attack otherwise appears to skip the checkpoint.
+	 *
+	 * @param declaration the game-log line announcing the declaration, e.g. "Cloud attacks!"
+	 */
+	private void p1DeclarationPriority(String declaration, Runnable onBothDone) {
+		if (!p1HasActivatableAbilities()) {
+			logEntry(declaration + " No abilities or summons to use — passing priority automatically.");
+			p2AutoPass(onBothDone);
+			return;
+		}
+		logEntry(declaration + " Use an ability or summon, or pass priority with 'Next'");
+		p1CombatPriorityOnPass = () -> p2AutoPass(onBothDone);
+		if (nextPhaseButton != null) nextPhaseButton.setEnabled(true);
+	}
+
+	/** P1 clicked Next while holding combat priority: pass to P2 and continue the combat step. */
+	private void passP1CombatPriority() {
+		Runnable onPass = p1CombatPriorityOnPass;
+		p1CombatPriorityOnPass = null;
+		if (nextPhaseButton != null) nextPhaseButton.setEnabled(false);
+		logEntry("[Priority] P1 passes — P2 may respond.");
+		onPass.run();
+	}
+
+	/**
+	 * True when a left-click on a P1 Forward slot means combat selection (declaring an attacker, or
+	 * choosing a blocker on P2's turn) rather than opening the card's ability menu.  Attack
+	 * Preparation and the post-declaration priority checkpoint are both "act with your cards"
+	 * windows, so clicks there open the menu instead.
+	 */
+	private boolean p1ForwardClickSelectsCombat() {
+		return gameState.getCurrentPhase() == GameState.GamePhase.ATTACK
+				&& attackSubStep != 0 && p1CombatPriorityOnPass == null;
+	}
+
+	/**
+	 * True while P1 may act during their Attack Phase — cast a Summon or use an action ability that
+	 * carries no attack-specific restriction: either the Attack Preparation sub-step, or a combat
+	 * checkpoint where they currently hold priority.
+	 */
+	boolean p1MayActInAttackPhase() {
+		return gameState.getCurrentPhase() == GameState.GamePhase.ATTACK
+				&& (attackSubStep == 0 || p1CombatPriorityOnPass != null);
+	}
+
+	/**
 	 * Runs a full two-player priority sequence for a combat checkpoint.
 	 * {@code p1IsAttacker} == true: P1 goes first (interactive window), then P2 auto-passes.
 	 * {@code p1IsAttacker} == false: P2 auto-passes first, then P1 gets an interactive window
@@ -11834,6 +11952,7 @@ public class MainWindow {
 	 */
 	private void continueAttackPhase() {
 		p1AttackSelection.clear();
+		p1DeclaredAttackers.clear();
 		p1MonsterAttackIdx = -1;
 		p1BackupAttackIdx = -1;
 		refreshAllForwardSlots();
@@ -11943,8 +12062,9 @@ public class MainWindow {
 		setAttackSubStep(2);
 		refreshAttackButton();
 
-		logEntry(attacker.name() + " attacks! (Forward — " + attackerPower + ")");
-		combatPriority("Attacker Declared", true, () -> {
+		p1DeclaredAttackers.clear();
+		p1DeclaredAttackers.add(attacker);
+		p1DeclarationPriority(attacker.name() + " attacks! (Forward — " + attackerPower + ")", () -> {
 			ForwardTarget blk = computerPlayer.chooseBlocker(attackerPower,
 					new ForwardTarget(true, monIdx, ForwardTarget.CardZone.MONSTER));
 			if (blk != null) {
@@ -12272,8 +12392,9 @@ public class MainWindow {
 		setAttackSubStep(2);
 		refreshAttackButton();
 
-		logEntry(attacker.name() + " attacks! (Forward — " + attackerPower + ")");
-		combatPriority("Attacker Declared", true, () -> {
+		p1DeclaredAttackers.clear();
+		p1DeclaredAttackers.add(attacker);
+		p1DeclarationPriority(attacker.name() + " attacks! (Forward — " + attackerPower + ")", () -> {
 			ForwardTarget blk = computerPlayer.chooseBlocker(attackerPower,
 					new ForwardTarget(true, bIdx, ForwardTarget.CardZone.BACKUP));
 			if (blk != null) {
@@ -12382,12 +12503,16 @@ public class MainWindow {
 		setAttackSubStep(2); // moving to block-declaration sub-step
 		refreshAttackButton();
 
+		// The button emptied p1AttackSelection when it fired the declaration; record who is actually
+		// attacking so attack-conditional abilities stay usable while P1 holds priority.
+		p1DeclaredAttackers.clear();
+		for (int idx : selection) p1DeclaredAttackers.add(effectiveP1Forward(idx));
+
 		if (selection.size() == 1) {
 			int idx = selection.get(0);
-			CardData attacker = p1ForwardPrimedTop.get(idx) != null ? p1ForwardPrimedTop.get(idx) : p1ForwardCards.get(idx);
-			logEntry(attacker.name() + " attacks!");
-			// Priority window after attacker declared (P1 attacks → P1 priority first)
-			combatPriority("Attacker Declared", true, () -> {
+			CardData attacker = effectiveP1Forward(idx);
+			// P1 attacks → P1 holds priority first (may act, then passes with Next)
+			p1DeclarationPriority(attacker.name() + " attacks!", () -> {
 				ForwardTarget blk = computerPlayer.chooseBlocker(effectiveP1ForwardPower(idx),
 						new ForwardTarget(true, idx, ForwardTarget.CardZone.FORWARD));
 				if (blk != null) {
@@ -12423,13 +12548,12 @@ public class MainWindow {
 				if (names.length() > 0) names.append(", ");
 				names.append(p1ForwardCards.get(idx).name());
 			}
-			logEntry("Party Attack! " + names + " (" + combinedPower + " combined)");
 			p1FormedPartyThisTurn = true;
 			List<CardData> p1PartyMembers = selection.stream()
 					.map(p1ForwardCards::get).collect(Collectors.toList());
 			autoAbilityTriggers.triggerAutoAbilitiesForPartyAttack(true, p1PartyMembers);
 			final int fCombined = combinedPower;
-			combatPriority("Party Attacker Declared", true, () ->
+			p1DeclarationPriority("Party Attack! " + names + " (" + combinedPower + " combined)", () ->
 				p2OfferBlockParty(selection, fCombined, this::continueAttackPhase));
 		}
 	}

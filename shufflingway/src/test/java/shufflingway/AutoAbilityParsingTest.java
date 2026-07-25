@@ -170,6 +170,7 @@ public class AutoAbilityParsingTest {
     private static String phaseTriggerDisplayText(String trigger) {
         return switch (trigger) {
             case "beginning of attack phase"           -> "At the beginning of the Attack Phase during each of your turns";
+            case "beginning of attack phase each turn" -> "At the beginning of the Attack Phase during each player's turn";
             case "end of your turn"                     -> "At the end of each of your turns";
             case "beginning of main phase 1"            -> "At the beginning of your Main Phase 1";
             case "beginning of main phase 2"            -> "At the beginning of your Main Phase 2";

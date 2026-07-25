@@ -1650,6 +1650,20 @@ public record CardData(
     );
 
     /**
+     * Matches "At the beginning of the Attack Phase during each player's turn, [effect]" — the
+     * both-turns variant of {@link #AT_BEGINNING_OF_ATTACK_PHASE_PATTERN} (The Crystal Exarch
+     * 13-133S, Sanctuary Keeper 19-094R, Sol 18-106H).  Named group {@code effect} captures the
+     * effect text.
+     */
+    private static final Pattern AT_BEGINNING_OF_ATTACK_PHASE_EACH_TURN_PATTERN = Pattern.compile(
+        "(?i)At\\s+the\\s+beginning\\s+of\\s+the\\s+Attack\\s+Phase\\s+during\\s+each\\s+player'?s\\s+turns?,\\s+" +
+        "(?<effect>.+?)\\s*" +
+        "(?=\\s*\\[\\[br\\]\\]|\\s*At\\s+the\\s+beginning|\\s*When\\s+[^,]+?\\s+" +
+        "(?:attacks?|blocks?|enters?|leaves?|is\\s+(?:put|removed))|\\s*$)",
+        Pattern.DOTALL
+    );
+
+    /**
      * Separate pattern for "When a Warp Counter is removed from [CardName], [effect]".
      * Uses {@code target} for the card whose counter is decremented.
      */
@@ -1825,6 +1839,13 @@ public record CardData(
         }
         m.appendTail(sb);
         return sb.toString();
+    }
+
+    /** True when {@code index} falls inside a double-quoted span of {@code text}. */
+    private static boolean isInsideQuotes(String text, int index) {
+        int quotes = 0;
+        for (int i = 0; i < index; i++) if (text.charAt(i) == '"') quotes++;
+        return quotes % 2 == 1;
     }
 
     public static List<AutoAbility> parseAutoAbilities(String textEn) {
@@ -2127,6 +2148,20 @@ public record CardData(
             String effect = SUMMON_MARKUP.matcher(eptm.group("inner").trim()).replaceAll("").trim();
             if (effect.isEmpty()) continue;
             AutoAbility aa = parseAutoAbilityRestrictions("", "end of each player's turn", false, false, false, false, effect, 0);
+            if (aa != null) result.add(aa);
+        }
+
+        // Thirteenth pass: "At the beginning of the Attack Phase during each player's turn, [effect]"
+        // (fires on both players' turns)
+        Matcher baem = AT_BEGINNING_OF_ATTACK_PHASE_EACH_TURN_PATTERN.matcher(textForSearch);
+        while (baem.find()) {
+            // Lann 16-102R / Reynn 16-105R carry this wording inside an ability their enter-the-field
+            // effect conditionally grants, so a match starting inside quotes is not the card's own.
+            if (isInsideQuotes(textForSearch, baem.start())) continue;
+            String effect = SUMMON_MARKUP.matcher(baem.group("effect").trim()).replaceAll("").trim();
+            if (effect.isEmpty()) continue;
+            AutoAbility aa = parseAutoAbilityRestrictions("", "beginning of attack phase each turn",
+                    false, false, false, false, effect, 0);
             if (aa != null) result.add(aa);
         }
 
@@ -4553,6 +4588,7 @@ public record CardData(
             // Auto abilities: "When [card/event] [trigger], [effect]" and phase-trigger patterns
             if (FA_AUTO_PREFIX.matcher(seg).find()) continue;
             if (AT_BEGINNING_OF_ATTACK_PHASE_PATTERN.matcher(seg).find()) continue;
+            if (AT_BEGINNING_OF_ATTACK_PHASE_EACH_TURN_PATTERN.matcher(seg).find()) continue;
             if (ActionResolver.AT_END_OF_EACH_TURN_PATTERN.matcher(seg).find()) continue;
             if (ActionResolver.AT_BEGINNING_OF_MAIN_PHASE_1_PATTERN.matcher(seg).find()) continue;
             if (ActionResolver.AT_BEGINNING_OF_MAIN_PHASE_2_PATTERN.matcher(seg).find()) continue;

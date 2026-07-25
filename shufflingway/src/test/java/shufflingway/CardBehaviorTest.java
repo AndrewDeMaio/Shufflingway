@@ -4648,4 +4648,185 @@ public class CardBehaviorTest {
                 "All the Forwards you control gain +1000 power until the end of the turn."),
                 "a board-wide pump does act on the Forwards standing right now");
     }
+
+    // =========================================================================================
+    // Attack-conditional action abilities ("...while X is attacking", "...while a party you control
+    // is attacking") must stay usable after the attack is declared, while P1 holds priority before
+    // passing with Next. The Attack button empties p1AttackSelection when it fires the declaration,
+    // so the gate reads the declared attackers instead.
+    // =========================================================================================
+
+    private static final String WHILE_ATTACKING_ABILITY =
+            "《Dull》: Choose 1 Forward. Deal it 4000 damage. "
+            + "You can only use this ability while Vaan is attacking.";
+
+    private static final String WHILE_PARTY_ATTACKING_ABILITY =
+            "《Dull》: Choose 1 Forward. Deal it 4000 damage. "
+            + "You can only use this ability while a party you control is attacking.";
+
+    /** Puts {@code mw} in P1's Attack Phase (ACTIVE → DRAW → MAIN_1 → ATTACK). */
+    private static void enterP1AttackPhase(MainWindow mw) {
+        mw.gameState.startFirstTurn(GameState.Player.P1);
+        mw.gameState.advancePhase();
+        mw.gameState.advancePhase();
+        mw.gameState.advancePhase();
+        assertEquals(GameState.GamePhase.ATTACK, mw.gameState.getCurrentPhase());
+    }
+
+    @Test
+    void whileAttackingAbilityIsUsableOnceTheAttackIsDeclared() {
+        MainWindow mw = new MainWindow();
+        enterP1AttackPhase(mw);
+        ActionAbility ab = CardData.parseActionAbilities(WHILE_ATTACKING_ABILITY).get(0);
+        CardData vaan = makeForward("Vaan", "Wind", 3, 7000, List.of(ab));
+        mw.placeCardInForwardZone(vaan); // P1 idx 0
+
+        assertFalse(mw.canActivateAbility(ab, false, CardState.ACTIVE, 0, vaan, true),
+                "nothing declared yet — Vaan is not attacking");
+
+        // Sub-step 1: Vaan is picked but not yet declared; lining the ability up still works.
+        mw.p1AttackSelection.add(0);
+        assertTrue(mw.canActivateAbility(ab, false, CardState.ACTIVE, 0, vaan, true),
+                "selected as an attacker");
+
+        // The Attack button clears the selection as it declares — the ability must survive that.
+        mw.p1AttackSelection.clear();
+        mw.p1DeclaredAttackers.add(vaan);
+        assertTrue(mw.canActivateAbility(ab, false, CardState.ACTIVE, 0, vaan, true),
+                "declared attacker — usable while P1 holds priority");
+    }
+
+    @Test
+    void whilePartyAttackingAbilityNeedsTwoDeclaredAttackers() {
+        MainWindow mw = new MainWindow();
+        enterP1AttackPhase(mw);
+        ActionAbility ab = CardData.parseActionAbilities(WHILE_PARTY_ATTACKING_ABILITY).get(0);
+        CardData firion = makeForward("Firion", "Fire", 2, 7000, List.of(ab));
+        CardData ally   = makeForward("Ally", "Fire", 3, 7000);
+        mw.placeCardInForwardZone(firion); // P1 idx 0
+        mw.placeCardInForwardZone(ally);   // P1 idx 1
+
+        mw.p1DeclaredAttackers.add(firion);
+        assertFalse(mw.canActivateAbility(ab, false, CardState.ACTIVE, 0, firion, true),
+                "a lone attacker is not a party");
+
+        mw.p1DeclaredAttackers.add(ally);
+        assertTrue(mw.canActivateAbility(ab, false, CardState.ACTIVE, 0, firion, true),
+                "two declared attackers form the party");
+    }
+
+    @Test
+    void p1AttackersDoNotEnableTheOpponentsAttackConditionalAbilities() {
+        MainWindow mw = new MainWindow();
+        enterP1AttackPhase(mw);
+        ActionAbility ab = CardData.parseActionAbilities(WHILE_ATTACKING_ABILITY).get(0);
+        CardData p2Vaan = makeForward("Vaan", "Wind", 3, 7000, List.of(ab));
+        mw.placeP2CardInForwardZone(p2Vaan);
+
+        CardData p1Vaan = makeForward("Vaan", "Wind", 3, 7000, List.of(ab));
+        mw.placeCardInForwardZone(p1Vaan);
+        mw.p1DeclaredAttackers.add(p1Vaan);
+
+        assertTrue(mw.canActivateAbility(ab, false, CardState.ACTIVE, 0, p1Vaan, true),
+                "P1's Vaan is the one attacking");
+        assertFalse(mw.canActivateAbility(ab, false, CardState.ACTIVE, 0, p2Vaan, false),
+                "the check is per side — P2 has declared no attackers");
+    }
+
+    @Test
+    void p2sAttackerStaysAttackingAfterTheBlockIsCommitted() {
+        MainWindow mw = new MainWindow();
+        enterP1AttackPhase(mw);
+        ActionAbility ab = CardData.parseActionAbilities(WHILE_ATTACKING_ABILITY).get(0);
+        CardData p2Vaan = makeForward("Vaan", "Wind", 3, 7000, List.of(ab));
+        mw.placeP2CardInForwardZone(p2Vaan);
+
+        // P2 declared the attack. The engine drops its pending-blocker state the moment P1 commits
+        // a block, so the ability must ride on the declared-attacker list, which lives until the
+        // combat resolves — otherwise it goes dead at the blocker-declared checkpoint.
+        mw.p2DeclaredAttackers.add(p2Vaan);
+        assertTrue(mw.canActivateAbility(ab, false, CardState.ACTIVE, 0, p2Vaan, false),
+                "still attacking through blocker declaration and damage");
+
+        mw.p2DeclaredAttackers.clear(); // combat resolved
+        assertFalse(mw.canActivateAbility(ab, false, CardState.ACTIVE, 0, p2Vaan, false),
+                "no longer attacking once the combat is over");
+    }
+
+    // =========================================================================================
+    // The Crystal Exarch 13-133S: "At the beginning of the Attack Phase during each player's
+    // turn, choose 1 Forward. It gains +2000 power until the end of the turn."
+    //
+    // "during each player's turn" is the both-turns variant of the "during each of your turns"
+    // wording, so it needs its own trigger key ("beginning of attack phase each turn") that the
+    // Attack Phase fires for BOTH sides' cards, no matter whose turn it is.
+    // =========================================================================================
+
+    private static final String CRYSTAL_EXARCH_TEXT =
+            "At the beginning of the Attack Phase during each player's turn, choose 1 Forward. "
+            + "It gains +2000 power until the end of the turn.[[br]]"
+            + "Damage 5 -- The Crystal Exarch gains \"When The Crystal Exarch attacks, choose 1 Forward. "
+            + "If its power is less than The Crystal Exarch's power, break it.\"[[br]]";
+
+    private static final String CRYSTAL_EXARCH_ATTACK_PHASE_EFFECT =
+            "choose 1 Forward. It gains +2000 power until the end of the turn.";
+
+    private static CardData makeCrystalExarch() {
+        return new CardData(null, "The Crystal Exarch", "Earth", 5, 8000, "Forward", false, 0, false, false,
+                Set.of(), 0, List.of(), null, List.of(),
+                List.of(), CardData.parseAutoAbilities(CRYSTAL_EXARCH_TEXT), List.of(), List.of(), List.of(),
+                List.of(), List.of(), List.of(), List.of(), List.of(),
+                false, false, null, false, false, false, false, false, false,
+                null, null, null, CRYSTAL_EXARCH_TEXT);
+    }
+
+    @Test
+    void crystalExarchAttackPhaseAbilityUsesTheEachPlayersTurnTrigger() {
+        List<AutoAbility> abilities = CardData.parseAutoAbilities(CRYSTAL_EXARCH_TEXT);
+        List<AutoAbility> attackPhase = abilities.stream()
+                .filter(a -> "beginning of attack phase each turn".equals(a.trigger()))
+                .toList();
+        assertEquals(1, attackPhase.size(), "exactly one both-turns Attack Phase trigger");
+        assertEquals(CRYSTAL_EXARCH_ATTACK_PHASE_EFFECT, attackPhase.get(0).effectText());
+        assertTrue(abilities.stream().noneMatch(a -> "beginning of attack phase".equals(a.trigger())),
+                "the your-turns-only trigger must not also match this wording");
+        assertNotNull(ActionResolver.parse(attackPhase.get(0).effectText(), null),
+                "the choose-and-boost effect resolves");
+    }
+
+    @Test
+    void crystalExarchAttackPhaseAbilityIsNotLeftAsAnUnhandledFieldAbility() {
+        assertTrue(CardData.parseFieldAbilities(CRYSTAL_EXARCH_TEXT, "Forward").stream()
+                        .noneMatch(f -> f.effectText().contains("At the beginning of the Attack Phase")),
+                "the auto-ability pass claims the segment, so it must not fall through to field abilities");
+    }
+
+    @Test
+    void aGrantedEachPlayersTurnTriggerIsNotTheGrantingCardsOwnAbility() {
+        // Lann 16-102R only grants this ability when its enter-the-field cost is paid, so the
+        // quoted wording must not register as an unconditional trigger on Lann itself.
+        String lannText = "When Lann enters the field, choose 1 Monster in your Break Zone. You may remove "
+                + "it from the game. If you do so, Lann gains +2000 power and \"At the beginning of the "
+                + "Attack Phase during each player's turn, choose 1 Forward opponent controls. Dull it.\" "
+                + "(This effect does not end at the end of the turn.)";
+        assertTrue(CardData.parseAutoAbilities(lannText).stream()
+                        .noneMatch(a -> "beginning of attack phase each turn".equals(a.trigger())),
+                "a quoted grant is not the card's own trigger");
+    }
+
+    @Test
+    void crystalExarchBoostsTheChosenForwardBy2000() {
+        MainWindow mw = new MainWindow();
+        CardData exarch = makeCrystalExarch();
+        mw.placeCardInForwardZone(exarch);                                  // P1 idx 0
+        mw.placeP2CardInForwardZone(makeForward("Ally", "Earth", 3, 7000)); // P2 idx 0
+
+        // Either side's Forward is a legal choice — here the opponent's is picked.
+        GameContext ctx = mw.buildGameContext(true);
+        ctx.preloadTargets(List.of(new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD)));
+        ActionResolver.parse(CRYSTAL_EXARCH_ATTACK_PHASE_EFFECT, exarch).accept(ctx);
+
+        assertEquals(9000, mw.effectiveP2ForwardPower(0), "the chosen Forward gains +2000");
+        assertEquals(8000, mw.effectiveP1ForwardPower(0), "The Crystal Exarch itself is unchanged");
+    }
 }

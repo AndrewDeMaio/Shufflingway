@@ -1317,6 +1317,19 @@ final class AutoAbilityTriggers {
 		triggerAutoAbilitiesForEvent("beginning of attack phase", isP1);
 	}
 
+	/**
+	 * Fires "beginning of attack phase each turn" auto-abilities for all field cards on both sides —
+	 * the "during each player's turn" wording triggers regardless of whose turn it is.  The active
+	 * player's abilities are dispatched first, matching {@link #dispatchSimultaneous}'s AP-then-NAP
+	 * order.
+	 *
+	 * @param activeIsP1 whether the player whose Attack Phase is beginning is P1
+	 */
+	void triggerAutoAbilitiesForBeginningOfAttackPhaseEachTurn(boolean activeIsP1) {
+		triggerAutoAbilitiesForEvent("beginning of attack phase each turn", activeIsP1);
+		triggerAutoAbilitiesForEvent("beginning of attack phase each turn", !activeIsP1);
+	}
+
 	/** Fires "end of your turn" auto-abilities for all cards controlled by {@code isP1}. */
 	void triggerAutoAbilitiesForEndOfYourTurn(boolean isP1) {
 		triggerAutoAbilitiesForEvent("end of your turn", isP1);
@@ -3121,7 +3134,7 @@ final class AutoAbilityTriggers {
 			boolean hasAttackRestriction = ability.whileCardAttacking() != null
 					|| ability.whileCardBlocking() != null || ability.whilePartyAttacking()
 					|| ability.hasBlockingTargetEffect() || ability.blockerForAttacker() != null;
-			boolean phaseOk = hasAttackRestriction ? isAttackPhase : (isMainPhase || (isAttackPhase && mw.attackSubStep == 0));
+			boolean phaseOk = hasAttackRestriction ? isAttackPhase : (isMainPhase || mw.p1MayActInAttackPhase());
 
 			// "Each player can use this ability." — P1 (the human) is always the one driving this
 			// menu, so when the card belongs to P2 (the CPU), let P1 activate it too, paying costs

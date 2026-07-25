@@ -165,6 +165,7 @@ class ComputerPlayer {
 			} else {
 				mw.logEntry("[P2] Attack Phase");
 				mw.autoAbilityTriggers.triggerAutoAbilitiesForBeginningOfAttackPhase(false);
+				mw.autoAbilityTriggers.triggerAutoAbilitiesForBeginningOfAttackPhaseEachTurn(false);
 				mw.refreshAllP2ForwardSlots();
 				step(() -> doAttackPhase(() -> {
 					mw.gameState.advancePhase(); // ATTACK → MAIN_2

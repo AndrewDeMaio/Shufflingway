@@ -57,9 +57,9 @@ public record ActionAbility(
         boolean                 opponentTurnOnly,      // "can only use this ability during your opponent's turn" restriction
         boolean                 oncePerTurn,           // "can only use this ability once per turn" restriction
         boolean                 mainPhaseOnly,         // "can only use this ability during your Main Phase" restriction
-        String                  whileCardAttacking,    // non-null = named card must be in P1's attack selection
+        String                  whileCardAttacking,    // non-null = named card must be among the declared attackers
         String                  whileCardBlocking,     // non-null = named P1 forward must be the declared blocker
-        boolean                 whilePartyAttacking,   // true = P1's attack selection must have ≥ 2 forwards
+        boolean                 whilePartyAttacking,   // true = the declared attackers must number ≥ 2
         boolean                 whileCardInHand,       // true = ability can only be activated while this card is in hand
         boolean                 hasBlockingTargetEffect, // true = effect targets a Forward blocking a named card/job
         String                  effectText,            // raw effect text — future work will parse this further
