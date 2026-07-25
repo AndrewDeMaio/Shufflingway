@@ -2409,11 +2409,17 @@ public class ActionResolver {
     );
 
     /**
-     * Matches "Each player selects N card(s) from their Break Zone and adds it/them to their hand."
-     * Group {@code count} = N.
+     * Matches "Each player selects N [card|Forward|Backup|Monster|Character](s) from their Break
+     * Zone and adds it/them to their hand." — Cu Chaspel 18-021R (any card), Serafie 1-109R
+     * (Forwards only).
+     * <ul>
+     *   <li>Group {@code count} — N</li>
+     *   <li>Group {@code type}  — the card-type filter; "card" means no restriction</li>
+     * </ul>
      */
     private static final Pattern EACH_PLAYER_SALVAGE_FROM_BREAK_ZONE = Pattern.compile(
-        "(?i)each\\s+player\\s+selects?\\s+(?<count>\\d+)\\s+cards?\\s+from\\s+" +
+        "(?i)each\\s+player\\s+selects?\\s+(?<count>\\d+)\\s+" +
+        "(?<type>card|Forward|Backup|Monster|Character)s?\\s+from\\s+" +
         "(?:their|his/her|his|her)\\s+Break\\s+Zone\\s+and\\s+adds?\\s+(?:it|them)\\s+to\\s+" +
         "(?:their|his/her|his|her)\\s+hand[.!]?"
     );
@@ -12740,14 +12746,22 @@ public class ActionResolver {
         };
     }
 
-    /** Parses "Each player selects N card(s) from their Break Zone and adds it/them to their hand." */
+    /** Parses "Each player selects N [type](s) from their Break Zone and adds it/them to their hand." */
     private static Consumer<GameContext> tryParseEachPlayerSalvageFromBreakZone(String text) {
         Matcher m = EACH_PLAYER_SALVAGE_FROM_BREAK_ZONE.matcher(text);
         if (!m.find()) return null;
-        int count = Integer.parseInt(m.group("count"));
+        int count   = Integer.parseInt(m.group("count"));
+        String type = m.group("type");
+        String tl   = type.toLowerCase(java.util.Locale.ROOT);
+        boolean anyCard = tl.equals("card");
+        boolean fwds = anyCard || tl.equals("forward") || tl.equals("character");
+        boolean bkps = anyCard || tl.equals("backup")  || tl.equals("character");
+        boolean mons = anyCard || tl.equals("monster") || tl.equals("character");
+        boolean smns = anyCard;   // "1 card" is unrestricted; every named type excludes Summons
         return ctx -> {
-            ctx.logEntry("Effect: Each player salvages " + count + " card(s) from their Break Zone to hand");
-            ctx.eachPlayerSalvageFromBreakZone(count);
+            ctx.logEntry("Effect: Each player salvages " + count + " " + type
+                    + "(s) from their Break Zone to hand");
+            ctx.eachPlayerSalvageFromBreakZone(count, fwds, bkps, mons, smns);
         };
     }
 

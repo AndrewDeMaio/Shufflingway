@@ -3103,15 +3103,24 @@ final class GameContextImpl implements GameContext {
 				}
 			}
 
-			@Override public void eachPlayerSalvageFromBreakZone(int count) {
+			@Override public void eachPlayerSalvageFromBreakZone(int count, boolean fwds, boolean bkps,
+					boolean mons, boolean smns) {
 				List<CardData> p1Bz = mw.gameState.getP1BreakZone();
 				List<CardData> p2Bz = mw.gameState.getP2BreakZone();
+				java.util.function.Predicate<CardData> eligibleCard = c ->
+						  c.isForward() ? fwds
+						: c.isBackup()  ? bkps
+						: c.isMonster() ? mons
+						:                 smns;
+				String what = (fwds && bkps && mons && smns) ? "card" : "eligible card";
 
 				// P1 picks via dialog
 				List<ForwardTarget> p1Picks = List.of();
-				if (!p1Bz.isEmpty()) {
+				List<Integer> p1Eligible = new ArrayList<>();
+				for (int i = 0; i < p1Bz.size(); i++) if (eligibleCard.test(p1Bz.get(i))) p1Eligible.add(i);
+				if (!p1Eligible.isEmpty()) {
 					List<ForwardTarget> eligible = new ArrayList<>();
-					for (int i = 0; i < p1Bz.size(); i++) {
+					for (int i : p1Eligible) {
 						CardData c = p1Bz.get(i);
 						ForwardTarget.CardZone cz = c.isBackup() ? ForwardTarget.CardZone.BACKUP
 								: c.isMonster() ? ForwardTarget.CardZone.MONSTER
@@ -3119,16 +3128,16 @@ final class GameContextImpl implements GameContext {
 						eligible.add(new ForwardTarget(true, i, cz));
 					}
 					p1Picks = mw.showBreakZoneSelectDialog(eligible, p1Bz, count, false,
-							"Each player salvages " + count + " card(s) — choose from your Break Zone");
+							"Each player salvages " + count + " " + what + "(s) — choose from your Break Zone");
 				} else {
-					logEntry("P1 Break Zone is empty — skipping salvage");
+					logEntry("P1 Break Zone holds no " + what + " — skipping salvage");
 				}
 
-				// P2 (AI) auto-picks highest-cost cards
+				// P2 (AI) auto-picks highest-cost eligible cards
 				List<ForwardTarget> p2Picks = new ArrayList<>();
-				if (!p2Bz.isEmpty()) {
-					List<Integer> idxs = new ArrayList<>();
-					for (int i = 0; i < p2Bz.size(); i++) idxs.add(i);
+				List<Integer> idxs = new ArrayList<>();
+				for (int i = 0; i < p2Bz.size(); i++) if (eligibleCard.test(p2Bz.get(i))) idxs.add(i);
+				if (!idxs.isEmpty()) {
 					idxs.sort((a, b) -> Integer.compare(p2Bz.get(b).cost(), p2Bz.get(a).cost()));
 					for (int i = 0; i < Math.min(count, idxs.size()); i++) {
 						int idx = idxs.get(i);
@@ -3136,7 +3145,7 @@ final class GameContextImpl implements GameContext {
 						logEntry("[AI] salvaged " + p2Bz.get(idx).name() + " from P2 Break Zone");
 					}
 				} else {
-					logEntry("[P2] Break Zone is empty — skipping salvage");
+					logEntry("[P2] Break Zone holds no " + what + " — skipping salvage");
 				}
 
 				// Apply picks in reverse-index order to preserve indices during removal

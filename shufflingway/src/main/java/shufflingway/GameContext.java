@@ -472,9 +472,15 @@ public interface GameContext {
 
     /**
      * Each player selects {@code count} card(s) from their own Break Zone and adds them to their hand.
-     * P1 picks via dialog; P2 (AI) picks automatically (highest-cost first).
+     * P1 picks via dialog; P2 (AI) picks automatically (highest-cost first). Each player is limited
+     * by the size of their own Break Zone, so one side retrieving nothing does not stop the other.
+     *
+     * @param fwds include Forwards as eligible cards
+     * @param bkps include Backups as eligible cards
+     * @param mons include Monsters as eligible cards
+     * @param smns include Summons as eligible cards — only "1 card" wording is that unrestricted
      */
-    void eachPlayerSalvageFromBreakZone(int count);
+    void eachPlayerSalvageFromBreakZone(int count, boolean fwds, boolean bkps, boolean mons, boolean smns);
 
     /**
      * The ability user selects {@code count} Character(s) from their own Break Zone and adds them to their hand.

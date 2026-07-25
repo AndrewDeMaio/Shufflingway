@@ -4650,6 +4650,66 @@ public class CardBehaviorTest {
     }
 
     // =========================================================================================
+    // Serafie 1-109R: "EX BURST When Serafie enters the field, each player selects 1 Forward from
+    // his/her Break Zone and adds it to his/her hand."  Shares the both-players salvage effect with
+    // Cu Chaspel 18-021R ("1 card"), which is unrestricted — Serafie's names a type, so Backups,
+    // Monsters and Summons sitting in either Break Zone are not eligible.
+    // =========================================================================================
+
+    private static final String SERAFIE_TEXT =
+            "[[ex]]EX BURST[[/]] When Serafie enters the field, each player selects 1 Forward "
+            + "from his/her Break Zone and adds it to his/her hand.";
+
+    private static final String SERAFIE_ETB =
+            "each player selects 1 Forward from his/her Break Zone and adds it to his/her hand.";
+
+    @Test
+    void serafieEnterFieldAbilityParsesAsAnEachPlayerSalvage() {
+        List<AutoAbility> abilities = CardData.parseAutoAbilities(SERAFIE_TEXT);
+        assertEquals(1, abilities.size(), "one enter-the-field trigger");
+        assertEquals("enters the field", abilities.get(0).trigger());
+        assertEquals(SERAFIE_ETB, abilities.get(0).effectText());
+        assertEquals("EachPlayerSalvageFromBreakZone",
+                ActionResolver.matchedPatternName(abilities.get(0).effectText(), null));
+    }
+
+    @Test
+    void serafieSalvagesForwardsOnlyWhileCuChaspelTakesAnyCard() {
+        Consumer<GameContext> serafie = ActionResolver.parse(SERAFIE_ETB, null);
+        assertNotNull(serafie, "Serafie's enter-the-field ability resolves");
+        GameContext ctx = mock(GameContext.class);
+        serafie.accept(ctx);
+        verify(ctx).eachPlayerSalvageFromBreakZone(1, true, false, false, false);
+
+        Consumer<GameContext> cuChaspel = ActionResolver.parse(
+                "each player selects 1 card from their Break Zone and adds it to their hand.", null);
+        assertNotNull(cuChaspel);
+        GameContext ctx2 = mock(GameContext.class);
+        cuChaspel.accept(ctx2);
+        verify(ctx2).eachPlayerSalvageFromBreakZone(1, true, true, true, true);
+    }
+
+    @Test
+    void serafieRetrievesEachPlayersOwnForwardAndSkipsOtherCardTypes() {
+        MainWindow mw = new MainWindow();
+        // P1's Break Zone holds nothing eligible, so no dialog is raised for P1.
+        mw.gameState.getP1BreakZone().add(makeJobCard("Ifrit", "Fire", "Summon", "Eikon"));
+        // P2 must skip the Summon and the Backup and take the one Forward.
+        mw.gameState.getP2BreakZone().add(makeJobCard("Shiva", "Ice", "Summon", "Eikon"));
+        mw.gameState.getP2BreakZone().add(makeJobCard("Sage", "Earth", "Backup", "Scholar"));
+        CardData p2Forward = makeForward("Zidane", "Wind", 3, 7000);
+        mw.gameState.getP2BreakZone().add(p2Forward);
+
+        ActionResolver.parse(SERAFIE_ETB, null).accept(mw.buildGameContext(true));
+
+        assertEquals(List.of(p2Forward), mw.gameState.getP2Hand(),
+                "the AI salvaged its only eligible Forward");
+        assertEquals(2, mw.gameState.getP2BreakZone().size(), "Summon and Backup stayed behind");
+        assertTrue(mw.gameState.getP1Hand().isEmpty(), "P1 had no eligible Forward to take");
+        assertEquals(1, mw.gameState.getP1BreakZone().size(), "P1's Summon stayed behind");
+    }
+
+    // =========================================================================================
     // Attack-conditional action abilities ("...while X is attacking", "...while a party you control
     // is attacking") must stay usable after the attack is declared, while P1 holds priority before
     // passing with Next. The Attack button empties p1AttackSelection when it fires the declaration,
