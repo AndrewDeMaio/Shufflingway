@@ -564,7 +564,21 @@ public interface GameContext {
     void removeTargetFromGame(ForwardTarget t);
 
     /** Removes the top {@code count} cards of the active player's deck from the game. */
-    void removeTopCardsOfDeckFromGame(int count);
+    /**
+     * @param source the card whose ability is removing them, recorded so a later ability on that
+     *               same card can retrieve them via {@link #addCardsRemovedBySourceToHand}; may be
+     *               {@code null} when nothing refers back to them
+     */
+    void removeTopCardsOfDeckFromGame(int count, CardData source);
+
+    /**
+     * Moves up to {@code count} of the cards {@code source} removed from the game into the ability
+     * user's hand — "cards removed by the previous effect" (Libroarian 8-084R). P1 picks which when
+     * there is a choice; the AI takes the costliest.
+     *
+     * @return how many of {@code source}'s removed cards are still out of the game afterwards
+     */
+    int addCardsRemovedBySourceToHand(CardData source, int count);
 
     /**
      * Removes the top card of the active player's deck from the game and returns its CP cost.

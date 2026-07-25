@@ -719,6 +719,13 @@ public class MainWindow {
 	 * the card into the Break Zone) never return. Owner side is resolved via the identity map.
 	 */
 	final IdentityHashMap<CardData, CardData> tempExiledCards = new IdentityHashMap<>();
+	/**
+	 * Cards each source removed from the game with its own effect, keyed by that source card
+	 * (identity — two copies track their own). Lets a later ability refer back to them as "cards
+	 * removed by the previous effect" (Libroarian 8-084R). Entries are dropped once the last card
+	 * has been retrieved.
+	 */
+	final IdentityHashMap<CardData, List<CardData>> cardsRemovedBySource = new IdentityHashMap<>();
 	/** Distinct element types used to pay the most recent card's CP cost; checked by castPaymentMinElements conditions. */
 	int lastCastPaymentDistinctElements = 0;
 	/** Specific element types used to pay the most recent card's CP cost; checked by castPaymentElement conditions. */
@@ -1469,6 +1476,7 @@ public class MainWindow {
 		permanentExtraJobMap.clear();
 		stolenForwards.clear();
 		tempExiledCards.clear();
+		cardsRemovedBySource.clear();
 		cannotBeChosenBySummons.clear();
 		cannotBeChosenByAbilities.clear();
 		cannotBeChosenBySummonsAnyone.clear();

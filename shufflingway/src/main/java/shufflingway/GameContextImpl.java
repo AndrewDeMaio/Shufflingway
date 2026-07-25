@@ -3500,14 +3500,48 @@ final class GameContextImpl implements GameContext {
 				}
 			}
 
-			@Override public void removeTopCardsOfDeckFromGame(int count) {
+			@Override public void removeTopCardsOfDeckFromGame(int count, CardData source) {
 				Deque<CardData> deck = isP1 ? mw.gameState.getP1MainDeck() : mw.gameState.getP2MainDeck();
 				for (int i = 0; i < count && !deck.isEmpty(); i++) {
 					CardData c = deck.pollFirst();
 					mw.gameState.addToPermanentRfp(c);
+					if (source != null)
+						mw.cardsRemovedBySource.computeIfAbsent(source, k -> new ArrayList<>()).add(c);
 					logEntry(c.name() + " → Removed From Game (top of deck)");
 				}
-				if (isP1) mw.refreshP1DeckLabel(); else mw.refreshP2DeckLabel();
+				if (isP1) { mw.refreshP1DeckLabel(); mw.refreshP1WarpZoneUI(); }
+				else      { mw.refreshP2DeckLabel(); mw.refreshP2WarpZoneUI(); }
+			}
+
+			@Override public int addCardsRemovedBySourceToHand(CardData source, int count) {
+				List<CardData> removed = source == null ? null : mw.cardsRemovedBySource.get(source);
+				if (removed == null || removed.isEmpty()) {
+					logEntry((source != null ? source.name() : "Effect")
+							+ " — no cards left removed by its earlier effect");
+					return 0;
+				}
+				String title = (source.name() + " — add 1 removed card to your hand");
+				for (int i = 0; i < count && !removed.isEmpty(); i++) {
+					int pick;
+					if (removed.size() == 1) {
+						pick = 0;
+					} else if (isP1) {
+						pick = mw.cardPickerDialog.pickCardImage(removed, title, false);
+						if (pick < 0) pick = 0;   // dialog dismissed — take the first rather than stall
+					} else {
+						pick = 0;                  // AI takes the costliest of what it set aside
+						for (int j = 1; j < removed.size(); j++)
+							if (removed.get(j).cost() > removed.get(pick).cost()) pick = j;
+					}
+					CardData c = removed.remove(pick);
+					mw.gameState.removeFromPermanentRfp(c);
+					(isP1 ? mw.gameState.getP1Hand() : mw.gameState.getP2Hand()).add(c);
+					logEntry((isP1 ? "" : "[P2] ") + c.name() + " → hand (removed by " + source.name() + ")");
+				}
+				if (isP1) { mw.refreshP1HandLabel();      mw.refreshP1WarpZoneUI(); }
+				else      { mw.refreshP2HandCountLabel(); mw.refreshP2WarpZoneUI(); }
+				if (removed.isEmpty()) mw.cardsRemovedBySource.remove(source);
+				return removed.size();
 			}
 
 			@Override public int removeTopCardOfDeckFromGameAndGetCost() {

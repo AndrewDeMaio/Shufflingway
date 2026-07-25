@@ -832,8 +832,14 @@ public class ActionResolver {
      * Matches "Remove [CardName] from the game." as a standalone sentence.
      * Group {@code named} — the card name.  Does NOT match "Remove it/them …" (pronouns).
      */
+    /**
+     * Matches "Remove [CardName] from the game." The {@code the top …} guard keeps deck-top removals
+     * ("Remove the top 4 cards of your deck from the game", Libroarian 8-084R) out: this pattern is
+     * loose enough to read that phrase as a card name and would otherwise claim it first, quietly
+     * removing nothing.
+     */
     private static final Pattern REMOVE_NAMED_FROM_GAME = Pattern.compile(
-        "(?i)Remove\\s+(?!(?:it|them)\\b)(?<named>.+?)\\s+from\\s+(?:the\\s+)?game[.!]?"
+        "(?i)Remove\\s+(?!(?:it|them)\\b)(?!the\\s+top\\b)(?<named>.+?)\\s+from\\s+(?:the\\s+)?game[.!]?"
     );
 
     /** Matches "You may remove [CardName] from the game." — optional self-RFP. */
@@ -5653,7 +5659,10 @@ public class ActionResolver {
         result = tryParseLookTopDeckPeek(effectText);
         if (result != null) return result;
 
-        result = tryParseRemoveTopOfDeckFromGame(effectText);
+        result = tryParseRemoveTopOfDeckFromGame(effectText, source);
+        if (result != null) return result;
+
+        result = tryParseAddRemovedByPreviousEffectToHand(effectText, source);
         if (result != null) return result;
 
         result = tryParseRevealPlayNamedWithMaxCostRestBottom(effectText);
@@ -6014,7 +6023,8 @@ public class ActionResolver {
         if (tryParseLookTopDeckPickOneTopRestBottom(effectText)              != null) return "LookTopDeckPickOneTopRestBottom";
         if (tryParseLookTopDeckCastSummonFreeRestBottom(effectText, 0)       != null) return "LookTopDeckCastSummonFreeRestBottom";
         if (tryParseLookTopDeckPeek(effectText)                              != null) return "LookTopDeckPeek";
-        if (tryParseRemoveTopOfDeckFromGame(effectText)                      != null) return "RemoveTopOfDeckFromGame";
+        if (tryParseAddRemovedByPreviousEffectToHand(effectText, source)    != null) return "AddRemovedByPreviousEffectToHand";
+        if (tryParseRemoveTopOfDeckFromGame(effectText, source)             != null) return "RemoveTopOfDeckFromGame";
         if (tryParseRevealPlayNamedWithMaxCostRestBottom(effectText)         != null) return "RevealPlayNamedWithMaxCostRestBottom";
         if (tryParseRevealPlayNamedOrJobMaxCostRestBottom(effectText)        != null) return "RevealPlayNamedOrJobMaxCostRestBottom";
         if (tryParseFlipUntilTypeToHandRestShuffleBottom(effectText)         != null) return "FlipUntilTypeToHandRestShuffleBottom";
@@ -6547,7 +6557,8 @@ public class ActionResolver {
         if (tryParseLookTopDeckPickOneTopRestBottom(effectText)              != null) return "LookTopDeckPickOneTopRestBottom";
         if (tryParseLookTopDeckCastSummonFreeRestBottom(effectText, 0)       != null) return "LookTopDeckCastSummonFreeRestBottom";
         if (tryParseLookTopDeckPeek(effectText)                              != null) return "LookTopDeckPeek";
-        if (tryParseRemoveTopOfDeckFromGame(effectText)                      != null) return "RemoveTopOfDeckFromGame";
+        if (tryParseAddRemovedByPreviousEffectToHand(effectText, source)    != null) return "AddRemovedByPreviousEffectToHand";
+        if (tryParseRemoveTopOfDeckFromGame(effectText, source)             != null) return "RemoveTopOfDeckFromGame";
         if (tryParseRevealPlayNamedWithMaxCostRestBottom(effectText)           != null) return "RevealPlayNamedWithMaxCostRestBottom";
         if (tryParseRevealPlayNamedOrJobMaxCostRestBottom(effectText)          != null) return "RevealPlayNamedOrJobMaxCostRestBottom";
         if (tryParseFlipUntilTypeToHandRestShuffleBottom(effectText)           != null) return "FlipUntilTypeToHandRestShuffleBottom";
@@ -6902,7 +6913,7 @@ public class ActionResolver {
             int deckRfp = toRemove.size() * 2;
             if (deckRfp > 0) {
                 ctx.logEntry("Effect: Remove top " + deckRfp + " card(s) of deck from game (2 × " + toRemove.size() + " removed)");
-                ctx.removeTopCardsOfDeckFromGame(deckRfp);
+                ctx.removeTopCardsOfDeckFromGame(deckRfp, null);   // nothing refers back to these
             }
         };
     }
@@ -16488,14 +16499,54 @@ public class ActionResolver {
         };
     }
 
-    private static Consumer<GameContext> tryParseRemoveTopOfDeckFromGame(String text) {
+    private static Consumer<GameContext> tryParseRemoveTopOfDeckFromGame(String text, CardData source) {
         Matcher m = REMOVE_TOP_OF_DECK_FROM_GAME.matcher(text);
         if (!m.find()) return null;
         String countStr = m.group("count");
         int count = (countStr != null) ? Integer.parseInt(countStr) : 1;
         return ctx -> {
             ctx.logEntry("Effect: Remove top " + count + " card(s) of deck from game");
-            ctx.removeTopCardsOfDeckFromGame(count);
+            // Recorded against the source so a later ability on the same card can call them back
+            // ("cards removed by the previous effect" — Libroarian 8-084R).
+            ctx.removeTopCardsOfDeckFromGame(count, source);
+        };
+    }
+
+    /**
+     * Matches Libroarian 8-084R's end-of-turn ability: "add N card(s) removed by the previous effect
+     * to your hand." optionally followed by "Then, if there are no more cards removed by the previous
+     * effect left, put [Self] into the Break Zone."
+     * <ul>
+     *   <li>Group {@code count} — how many removed cards to take back</li>
+     *   <li>Group {@code name}  — the card broken once none are left; absent when there is no such clause</li>
+     * </ul>
+     */
+    private static final Pattern ADD_REMOVED_BY_PREVIOUS_EFFECT_TO_HAND = Pattern.compile(
+        "(?i)^add\\s+(?<count>\\d+)\\s+cards?\\s+removed\\s+by\\s+the\\s+previous\\s+effect\\s+to\\s+your\\s+hand[.!]?" +
+        "(?:\\s*Then[,.]?\\s+if\\s+there\\s+(?:are|is)\\s+no\\s+more\\s+cards?\\s+removed\\s+by\\s+the\\s+previous\\s+" +
+        "effect\\s+left[,.]?\\s+put\\s+(?<name>.+?)\\s+into\\s+the\\s+Break\\s+Zone[.!]?)?$",
+        Pattern.DOTALL
+    );
+
+    /** Parses "add N card(s) removed by the previous effect to your hand. [Then, …]" (Libroarian 8-084R). */
+    private static Consumer<GameContext> tryParseAddRemovedByPreviousEffectToHand(String text, CardData source) {
+        if (source == null) return null;   // "the previous effect" is this card's own earlier ability
+        Matcher m = ADD_REMOVED_BY_PREVIOUS_EFFECT_TO_HAND.matcher(text.trim());
+        if (!m.matches()) return null;
+        int count = Integer.parseInt(m.group("count"));
+        String breakName = m.group("name");
+        if (breakName != null) {
+            String n = breakName.trim();
+            if (!n.equalsIgnoreCase(source.name()) && !isSelfReference(n)) return null;
+        }
+        boolean breakWhenEmpty = breakName != null;
+        return ctx -> {
+            ctx.logEntry("Effect: Add " + count + " card(s) removed by " + source.name() + " to hand");
+            int remaining = ctx.addCardsRemovedBySourceToHand(source, count);
+            if (breakWhenEmpty && remaining == 0) {
+                ctx.logEntry("Effect: no removed cards left — " + source.name() + " is broken");
+                ctx.breakSourceCard(source);
+            }
         };
     }
 

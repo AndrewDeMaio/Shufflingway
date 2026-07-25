@@ -4814,6 +4814,118 @@ public class CardBehaviorTest {
     }
 
     // =========================================================================================
+    // Libroarian 8-084R: "When Libroarian enters the field, remove the top 4 cards of your deck
+    // from the game. / At the end of your turn, add 1 card removed by the previous effect to your
+    // hand. Then, if there are no more cards removed by the previous effect left, put Libroarian
+    // into the Break Zone."  The second ability refers back to what the first removed, so the
+    // removal is recorded against the source card.
+    // =========================================================================================
+
+    private static final String LIBROARIAN_TEXT =
+            "When Libroarian enters the field, remove the top 4 cards of your deck from the game.[[br]] "
+            + "At the end of your turn, add 1 card removed by the previous effect to your hand. Then, if "
+            + "there are no more cards removed by the previous effect left, put Libroarian into the Break Zone.";
+
+    private static CardData makeLibroarian() {
+        return makeAutoAbilityForward("Libroarian", LIBROARIAN_TEXT);
+    }
+
+    @Test
+    void aBareDeckTopRemovalIsNotReadAsACardName() {
+        // "Remove [CardName] from the game" is loose enough to swallow "the top 4 cards of your
+        // deck", which removed nothing at all. Every bare deck-top removal was affected.
+        CardData lib = makeLibroarian();
+        assertEquals("RemoveTopOfDeckFromGame",
+                ActionResolver.matchedPatternName("remove the top 4 cards of your deck from the game.", lib));
+        assertEquals("RemoveTopOfDeckFromGame",
+                ActionResolver.matchedPatternName("remove the top 10 cards of your deck from the game.", lib));
+        // Genuine named removals still resolve as such.
+        assertEquals("RemoveNamedFromGame",
+                ActionResolver.matchedPatternName("Remove Libroarian from the game.", lib));
+    }
+
+    /** Puts Libroarian on P2's field without firing its enter-the-field trigger through the stack. */
+    private static CardData placeLibroarianForP2(MainWindow mw) {
+        CardData lib = makeLibroarian();
+        mw.gameState.getIdentity().put(lib, false);
+        mw.suppressAutoAbilityForNextCard = true;
+        mw.placeP2CardInForwardZone(lib);
+        return lib;
+    }
+
+    private static Consumer<GameContext> libroarianAbility(CardData lib, String trigger) {
+        AutoAbility a = lib.autoAbilities().stream()
+                .filter(x -> trigger.equals(x.trigger())).findFirst().orElseThrow();
+        return ActionResolver.parse(a.effectText(), lib);
+    }
+
+    @Test
+    void libroarianHandsBackOneRemovedCardPerTurnThenBreaks() {
+        MainWindow mw = new MainWindow();
+        CardData lib = placeLibroarianForP2(mw);
+        for (int i = 1; i <= 6; i++) {
+            CardData deckCard = makeForward("Deck" + i, "Wind", i, 5000);
+            mw.gameState.getIdentity().put(deckCard, false);   // owner, as a real deck registers
+            mw.gameState.getP2MainDeck().add(deckCard);
+        }
+
+        libroarianAbility(lib, "enters the field").accept(mw.buildGameContext(false));
+        assertEquals(2, mw.gameState.getP2MainDeck().size(), "4 of the 6 deck cards left the deck");
+        assertEquals(4, mw.gameState.getP2PermanentRfp().size());
+        assertEquals(4, mw.cardsRemovedBySource.get(lib).size(), "and were recorded against Libroarian");
+
+        // One comes back per end phase; on the fourth the pile is empty and Libroarian breaks.
+        Consumer<GameContext> endOfTurn = libroarianAbility(lib, "end of your turn");
+        for (int turn = 1; turn <= 4; turn++) {
+            endOfTurn.accept(mw.buildGameContext(false));
+            assertEquals(turn, mw.gameState.getP2Hand().size(), "one card retrieved on turn " + turn);
+            assertEquals(4 - turn, mw.gameState.getP2PermanentRfp().size());
+        }
+        assertTrue(mw.p2ForwardCards.isEmpty(), "the last retrieval empties the pile and breaks Libroarian");
+        assertTrue(mw.gameState.getP2BreakZone().contains(lib));
+        assertFalse(mw.cardsRemovedBySource.containsKey(lib), "the tracking entry is dropped when empty");
+    }
+
+    @Test
+    void libroarianWithNothingRemovedBreaksImmediately() {
+        MainWindow mw = new MainWindow();
+        CardData lib = placeLibroarianForP2(mw);
+
+        // Nothing was ever removed (an empty deck on entry), so there is nothing to hand back.
+        libroarianAbility(lib, "end of your turn").accept(mw.buildGameContext(false));
+
+        assertTrue(mw.p2ForwardCards.isEmpty(), "no cards left removed — Libroarian goes to the Break Zone");
+        assertTrue(mw.gameState.getP2Hand().isEmpty());
+    }
+
+    @Test
+    void eachLibroarianTracksItsOwnRemovedCards() {
+        // One per side — the uniqueness rule forbids two on the same field.
+        MainWindow mw = new MainWindow();
+        CardData p2Lib = placeLibroarianForP2(mw);
+        CardData p1Lib = makeLibroarian();
+        mw.gameState.getIdentity().put(p1Lib, true);
+        mw.suppressAutoAbilityForNextCard = true;
+        mw.placeCardInForwardZone(p1Lib);
+        for (int i = 1; i <= 6; i++) {
+            CardData deckCard = makeForward("Deck" + i, "Wind", i, 5000);
+            mw.gameState.getIdentity().put(deckCard, false);   // owner, as a real deck registers
+            mw.gameState.getP2MainDeck().add(deckCard);
+        }
+
+        libroarianAbility(p2Lib, "enters the field").accept(mw.buildGameContext(false));
+        assertEquals(4, mw.cardsRemovedBySource.get(p2Lib).size());
+        assertNull(mw.cardsRemovedBySource.get(p1Lib),
+                "the piles are keyed by card identity, not by card name");
+
+        // P1's copy removed nothing, so its end-of-turn ability breaks it — P2's pile is untouched.
+        libroarianAbility(p1Lib, "end of your turn").accept(mw.buildGameContext(true));
+        assertTrue(mw.p1ForwardCards.isEmpty(), "P1's copy broke with an empty pile");
+        assertEquals(1, mw.p2ForwardCards.size(), "P2's copy is unaffected");
+        assertEquals(4, mw.gameState.getP2PermanentRfp().size(), "and keeps its four removed cards");
+    }
+
+    // =========================================================================================
     // Vayne 9-022L: All the Forwards opponent controls gain "At the end of your turn, if you don't
     // pay 《1》, break this Forward."  A continuous field grant, so it is read off Vayne at the
     // moment it fires; each granted Forward resolves its own copy, and "this Forward" means the
