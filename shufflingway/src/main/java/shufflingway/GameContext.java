@@ -1235,6 +1235,15 @@ public interface GameContext {
     void suppressExBurstsThisAbility();
 
     /**
+     * Grants {@code source} "EX Bursts of cards put into the Damage Zone due to [source] cannot be
+     * used" until the end of the turn (Shadow Lord 12-071R).  Broader than
+     * {@link #suppressExBurstsThisAbility}: it follows the card, so every point of player damage
+     * credited to it for the rest of the turn — combat or ability — suppresses the revealed
+     * card's EX Burst, not just the damage from this one resolution.
+     */
+    void grantSelfExBurstSuppression(CardData source);
+
+    /**
      * Returns the name of the card most recently discarded by a self-discard effect in the
      * current ability chain, or {@code null} when no card has been discarded yet.
      */

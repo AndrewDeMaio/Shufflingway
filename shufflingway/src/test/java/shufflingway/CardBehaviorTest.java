@@ -4221,4 +4221,213 @@ public class CardBehaviorTest {
 
         assertTrue(mw.p1ForwardCards.isEmpty(), "damage 5000 ≥ power 1000 — Victim must break");
     }
+
+    // =========================================================================================
+    // Shadow Lord 12-071R, 《Earth》: "Until the end of the turn, Shadow Lord gains Brave and
+    // \"EX Bursts of cards put into the Damage Zone due to Shadow Lord cannot be used.\""
+    //
+    // The quoted clause is source-scoped, not resolution-scoped: it follows Shadow Lord for the
+    // rest of the turn, so it needs its own primitive rather than the existing per-ability
+    // suppressExBurstsThisAbility flag.
+    // =========================================================================================
+
+    private static final String SHADOW_LORD_TEXT =
+            "Until the end of the turn, Shadow Lord gains Brave and \"EX Bursts of cards put "
+            + "into the Damage Zone due to Shadow Lord cannot be used.\"";
+
+    @Test
+    void shadowLordGrantsBraveAndSourceScopedExBurstSuppression() {
+        CardData shadowLord = mock(CardData.class);
+        when(shadowLord.name()).thenReturn("Shadow Lord");
+
+        Consumer<GameContext> fn = ActionResolver.parse(SHADOW_LORD_TEXT, shadowLord);
+        assertNotNull(fn, "Expected Shadow Lord's 《Earth》 ability to parse");
+
+        GameContext ctx = mock(GameContext.class);
+        fn.accept(ctx);
+
+        verify(ctx).boostSourceForward(shadowLord, 0, EnumSet.of(CardData.Trait.BRAVE));
+        verify(ctx).grantSelfExBurstSuppression(shadowLord);
+        verify(ctx, never()).suppressExBurstsThisAbility();
+    }
+
+    @Test
+    void shadowLordDoesNotFireWhenSourceNameDoesNotMatch() {
+        CardData other = mock(CardData.class);
+        when(other.name()).thenReturn("Not Shadow Lord");
+
+        assertNull(ActionResolver.parse(SHADOW_LORD_TEXT, other),
+                "the quoted clause names Shadow Lord — it must not resolve for another card");
+    }
+
+    @Test
+    void grantedSuppressionIsRecordedAndExpiresAtEndOfTurn() {
+        MainWindow mw = new MainWindow();
+        CardData shadowLord = makeForward("Shadow Lord", "Earth", 2, 9000);
+        placeDamagedP1Forward(mw, shadowLord, 0);
+
+        ActionResolver.parse(SHADOW_LORD_TEXT, shadowLord).accept(mw.buildGameContext(true));
+
+        assertTrue(mw.exBurstSuppressingSources.containsKey(shadowLord));
+        assertTrue(mw.effectiveP1HasTrait(0, CardData.Trait.BRAVE), "Brave is granted alongside");
+
+        mw.fireEndOfTurnEffects(true);
+
+        assertFalse(mw.exBurstSuppressingSources.containsKey(shadowLord),
+                "the suppression lasts only for the turn");
+    }
+
+    @Test
+    void damageCreditedToTheSuppressorSuppressesTheExBurst() {
+        MainWindow mw = new MainWindow();
+        CardData shadowLord = makeForward("Shadow Lord", "Earth", 2, 9000);
+        placeDamagedP1Forward(mw, shadowLord, 0);
+        ActionResolver.parse(SHADOW_LORD_TEXT, shadowLord).accept(mw.buildGameContext(true));
+
+        assertTrue(mw.exBurstSuppressedBy(shadowLord, makeForward("Burst", "Fire", 5, 7000)),
+                "damage dealt by Shadow Lord suppresses the revealed card's EX Burst");
+    }
+
+    @Test
+    void damageCreditedToAnotherCardStillTriggersTheExBurst() {
+        MainWindow mw = new MainWindow();
+        CardData shadowLord = makeForward("Shadow Lord", "Earth", 2, 9000);
+        CardData bystander  = makeForward("Bystander", "Earth", 2, 5000);
+        placeDamagedP1Forward(mw, shadowLord, 0);
+        ActionResolver.parse(SHADOW_LORD_TEXT, shadowLord).accept(mw.buildGameContext(true));
+
+        CardData burst = makeForward("Burst", "Fire", 5, 7000);
+        assertFalse(mw.exBurstSuppressedBy(bystander, burst), "another attacker's damage is unaffected");
+        assertFalse(mw.exBurstSuppressedBy(null, burst), "sourceless damage is unaffected");
+    }
+
+    @Test
+    void theDamageSourceIsConsumedSoItCannotLeakIntoTheNextPoint() {
+        MainWindow mw = new MainWindow();
+        CardData shadowLord = makeForward("Shadow Lord", "Earth", 2, 9000);
+        placeDamagedP1Forward(mw, shadowLord, 0);
+
+        mw.setPlayerDamageSource(shadowLord);
+        assertEquals(shadowLord, mw.consumePlayerDamageSource());
+        assertNull(mw.consumePlayerDamageSource(),
+                "a second point with no source re-declared must not inherit the first's");
+    }
+
+    @Test
+    void anUnblockedPartyIsCreditedToItsSuppressingMember() {
+        MainWindow mw = new MainWindow();
+        CardData ally       = makeForward("Ally", "Earth", 2, 5000);
+        CardData shadowLord = makeForward("Shadow Lord", "Earth", 2, 9000);
+        placeDamagedP1Forward(mw, ally, 0);
+        placeDamagedP1Forward(mw, shadowLord, 0);
+        ActionResolver.parse(SHADOW_LORD_TEXT, shadowLord).accept(mw.buildGameContext(true));
+
+        assertEquals(shadowLord, mw.partyExBurstSuppressor(List.of(0, 1), true),
+                "one suppressing member is enough to credit the party's damage to it");
+        assertNull(mw.partyExBurstSuppressor(List.of(0), true),
+                "a party without Shadow Lord credits nobody");
+    }
+
+    // =========================================================================================
+    // Printed source-scoped EX Burst suppression, the permanent counterpart to Shadow Lord
+    // 12-071R's granted clause:
+    //   Exdeath 1-122H            "Any card put in the Damage Zone due to Exdeath cannot use its EX Burst."
+    //   Arborous Simulacrum 2-118C  same, restricted to cards "of cost 2 or less"
+    //   Shadow Lord B-007         the "EX Bursts of cards … cannot be used" wording, printed
+    // These are read straight off the source's field abilities — nothing is registered up front.
+    // =========================================================================================
+
+    /** Builds a Forward whose field abilities are parsed from {@code text}. */
+    private static CardData makeForwardWithFieldAbility(String name, int cost, String text) {
+        return new CardData(null, name, "Dark", cost, 7000, "Forward", false, 0, false, false,
+                Set.of(), 0, List.of(), null, List.of(),
+                List.of(), List.of(), CardData.parseFieldAbilities(text, "Forward"),
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                false, false, null, false, false, false, false, false, false,
+                null, null, null, text);
+    }
+
+    private static final String EXDEATH_TEXT =
+            "Any card put in the Damage Zone due to Exdeath cannot use its EX Burst.";
+    private static final String ARBOROUS_TEXT =
+            "Any card of cost 2 or less put in the Damage Zone due to Arborous Simulacrum "
+            + "cannot use its EX Burst.";
+    private static final String SHADOW_LORD_PRINTED_TEXT =
+            "EX Bursts of cards put into the Damage Zone due to Shadow Lord cannot be used.";
+
+    @Test
+    void bothPrintedWordingsAreRecognizedForTheirOwnCard() {
+        assertEquals(Integer.MAX_VALUE,
+                ActionResolver.exBurstSuppressionMaxCost(EXDEATH_TEXT, "Exdeath"),
+                "Exdeath suppresses regardless of cost");
+        assertEquals(2,
+                ActionResolver.exBurstSuppressionMaxCost(ARBOROUS_TEXT, "Arborous Simulacrum"),
+                "Arborous Simulacrum only suppresses cost 2 or less");
+        assertEquals(Integer.MAX_VALUE,
+                ActionResolver.exBurstSuppressionMaxCost(SHADOW_LORD_PRINTED_TEXT, "Shadow Lord"),
+                "the printed Shadow Lord wording is the same rule");
+    }
+
+    @Test
+    void suppressionDoesNotApplyToADifferentlyNamedSource() {
+        assertNull(ActionResolver.exBurstSuppressionMaxCost(EXDEATH_TEXT, "Bartz"),
+                "the text names Exdeath — another card's damage is unaffected");
+        assertNull(ActionResolver.exBurstSuppressionMaxCost(
+                "Any card put in the Damage Zone cannot use its EX Burst.", "Exdeath"),
+                "text with no \"due to [Name]\" clause is not a source-scoped suppression");
+    }
+
+    @Test
+    void exdeathSuppressesTheExBurstOfAnyCostCard() {
+        MainWindow mw = new MainWindow();
+        CardData exdeath = makeForwardWithFieldAbility("Exdeath", 5, EXDEATH_TEXT);
+
+        assertTrue(mw.exBurstSuppressedBy(exdeath, makeForward("Cheap", "Fire", 1, 2000)));
+        assertTrue(mw.exBurstSuppressedBy(exdeath, makeForward("Pricey", "Fire", 9, 9000)));
+    }
+
+    @Test
+    void arborousSimulacrumOnlySuppressesCheapCards() {
+        MainWindow mw = new MainWindow();
+        CardData arborous = makeForwardWithFieldAbility("Arborous Simulacrum", 3, ARBOROUS_TEXT);
+
+        assertTrue(mw.exBurstSuppressedBy(arborous, makeForward("Two", "Fire", 2, 3000)),
+                "cost 2 is within \"cost 2 or less\"");
+        assertFalse(mw.exBurstSuppressedBy(arborous, makeForward("Three", "Fire", 3, 5000)),
+                "cost 3 is outside the filter — its EX Burst still fires");
+    }
+
+    @Test
+    void printedShadowLordWordingWorksWithoutTheGrant() {
+        MainWindow mw = new MainWindow();
+        CardData printed = makeForwardWithFieldAbility("Shadow Lord", 2, SHADOW_LORD_PRINTED_TEXT);
+
+        assertTrue(mw.exBurstSuppressedBy(printed, makeForward("Burst", "Fire", 5, 7000)));
+        assertTrue(mw.exBurstSuppressingSources.isEmpty(),
+                "the printed form is read off field abilities, not registered as a grant");
+    }
+
+    @Test
+    void aSuppressorThatHasLostItsAbilitiesStopsSuppressing() {
+        MainWindow mw = new MainWindow();
+        CardData exdeath = makeForwardWithFieldAbility("Exdeath", 5, EXDEATH_TEXT);
+        CardData burst   = makeForward("Burst", "Fire", 5, 7000);
+        assertTrue(mw.exBurstSuppressedBy(exdeath, burst));
+
+        mw.lostAbilitiesCards.add(exdeath);
+
+        assertFalse(mw.exBurstSuppressedBy(exdeath, burst),
+                "\"loses all abilities\" takes the printed suppression with it");
+    }
+
+    @Test
+    void aPrintedSuppressorIsFoundInAnUnblockedParty() {
+        MainWindow mw = new MainWindow();
+        CardData ally    = makeForward("Ally", "Earth", 2, 5000);
+        CardData exdeath = makeForwardWithFieldAbility("Exdeath", 5, EXDEATH_TEXT);
+        placeDamagedP1Forward(mw, ally, 0);
+        placeDamagedP1Forward(mw, exdeath, 0);
+
+        assertEquals(exdeath, mw.partyExBurstSuppressor(List.of(0, 1), true));
+    }
 }

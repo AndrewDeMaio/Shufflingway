@@ -528,6 +528,23 @@ public class MainWindow {
 	final Set<CardData> lostAbilitiesCards = Collections.newSetFromMap(new IdentityHashMap<>());
 
 	/**
+	 * Cards <em>granted</em> "EX Bursts of cards put into the Damage Zone due to [this card] cannot
+	 * be used" until end of turn (Shadow Lord 12-071R), mapped to the highest card cost they
+	 * suppress ({@link Integer#MAX_VALUE} = any cost).  Printed versions of the same ability are
+	 * not listed here — {@link #exBurstSuppressedBy} reads those off the source's field abilities.
+	 * Unlike {@link #suppressExBurstsThisAbility}, which covers a single ability resolution, this
+	 * follows the source card, so its combat damage is covered too.
+	 */
+	final Map<CardData, Integer> exBurstSuppressingSources = new IdentityHashMap<>();
+
+	/**
+	 * Card credited with the single point of player damage currently being dealt, or {@code null}
+	 * when the damage has no card source.  Consumed by {@link #p1TakeDamage}/{@link #p2TakeDamage};
+	 * callers set it immediately before each point.
+	 */
+	private CardData playerDamageSource = null;
+
+	/**
 	 * Replacement base powers from "[Name]'s power becomes N" effects, keyed by card identity.
 	 * Unlike {@link #p1ForwardPowerBoost}/{@link #p1ForwardPowerReduction}, this substitutes the
 	 * card's printed power, so temporary boosts and reductions still apply on top of it.
@@ -1458,6 +1475,8 @@ public class MainWindow {
 		pendingMainPhase1Effects.clear();
 		activeCostReductions.clear();
 		lostAbilitiesCards.clear();
+		exBurstSuppressingSources.clear();
+		playerDamageSource = null;
 		basePowerOverrides.clear();
 		bzPlayableP1.clear();
 		bzPlayableP2.clear();
@@ -2804,9 +2823,75 @@ public class MainWindow {
 		logEntry(name + " is not on the field — redirected damage not dealt");
 	}
 
+	/**
+	 * Credits the next single point of player damage to {@code source}, so a source-scoped EX Burst
+	 * suppression can be applied when the damage card is revealed.  Set immediately before each
+	 * {@link #p1TakeDamage}/{@link #p2TakeDamage} call; each call consumes it.
+	 */
+	void setPlayerDamageSource(CardData source) { playerDamageSource = source; }
+
+	/**
+	 * Returns the first Forward among {@code attackerIndices} carrying any source-scoped EX Burst
+	 * suppression, or {@code null} if none does.  An unblocked party deals its single point of
+	 * damage collectively, so one suppressing member is enough to credit the damage to it.
+	 */
+	CardData partyExBurstSuppressor(List<Integer> attackerIndices, boolean attackersAreP1) {
+		List<CardData> fwds = attackersAreP1 ? p1ForwardCards : p2ForwardCards;
+		for (int idx : attackerIndices) {
+			if (idx < 0 || idx >= fwds.size()) continue;
+			if (exBurstSuppressionCostCap(fwds.get(idx)) != null) return fwds.get(idx);
+		}
+		return null;
+	}
+
+	/**
+	 * Consumes the pending damage source and returns it, so the take-damage methods can evaluate
+	 * suppression against the card they are about to reveal.
+	 *
+	 * <p>Consumed at the top of those methods rather than inside their reveal timers: the timer
+	 * fires long after the caller has moved on and set the source for the next point.
+	 */
+	CardData consumePlayerDamageSource() {
+		CardData source = playerDamageSource;
+		playerDamageSource = null;
+		return source;
+	}
+
+	/**
+	 * Returns the highest card cost whose EX Burst {@code source} suppresses, or {@code null} when
+	 * it carries no such ability.  Covers both the until-end-of-turn grant (Shadow Lord 12-071R)
+	 * and the printed field ability (Exdeath 1-122H, Arborous Simulacrum 2-118C, Shadow Lord B-007).
+	 */
+	private Integer exBurstSuppressionCostCap(CardData source) {
+		if (source == null) return null;
+		Integer granted = exBurstSuppressingSources.get(source);
+		if (granted != null) return granted;
+		if (lostAbilitiesCards.contains(source)) return null;
+		for (FieldAbility fa : source.fieldAbilities()) {
+			Integer cap = ActionResolver.exBurstSuppressionMaxCost(fa.effectText(), source.name());
+			if (cap != null) return cap;
+		}
+		return null;
+	}
+
+	/**
+	 * True when {@code revealed} may not use its EX Burst because the damage that put it into the
+	 * Damage Zone was credited to {@code source}.  Arborous Simulacrum 2-118C only suppresses
+	 * cards of cost 2 or less, so the revealed card's cost is part of the test.
+	 */
+	boolean exBurstSuppressedBy(CardData source, CardData revealed) {
+		if (source == null || revealed == null) return false;
+		Integer cap = exBurstSuppressionCostCap(source);
+		if (cap == null || revealed.cost() > cap) return false;
+		logEntry(revealed.name() + " — EX Burst cannot be used (damage dealt by " + source.name() + ")");
+		return true;
+	}
+
 	void p1TakeDamage() { p1TakeDamage(null); }
 
 	void p1TakeDamage(Runnable onDone) {
+		final CardData dmgSource       = consumePlayerDamageSource();
+		final boolean  abilitySuppress = suppressExBurstsThisAbility;
 		if (gameState.isP1GameOver()) { if (onDone != null) onDone.run(); return; }
 		if (p1NextDamageZero) {
 			p1NextDamageZero = false;
@@ -2879,7 +2964,8 @@ public class MainWindow {
 				triggerGameOver("7 Damage Taken - You Lose!");
 				return;
 			}
-			if (isEx && !suppressExBurstsThisAbility) autoAbilityTriggers.triggerExBurst(drawn, true);
+			if (isEx && !abilitySuppress && !exBurstSuppressedBy(dmgSource, drawn))
+				autoAbilityTriggers.triggerExBurst(drawn, true);
 			if (onDone != null) onDone.run();
 		});
 		revealTimer.setRepeats(false);
@@ -2889,6 +2975,8 @@ public class MainWindow {
 	void p2TakeDamage() { p2TakeDamage(null); }
 
 	void p2TakeDamage(Runnable onDone) {
+		final CardData dmgSource       = consumePlayerDamageSource();
+		final boolean  abilitySuppress = suppressExBurstsThisAbility;
 		if (p2NextDamageZero) {
 			p2NextDamageZero = false;
 			logEntry("[P2] damage negated (shield active).");
@@ -2962,7 +3050,8 @@ public class MainWindow {
 				triggerGameOver("Player 2 Defeated - You Win!");
 				return;
 			}
-			if (isEx && drawn != null && !suppressExBurstsThisAbility) autoAbilityTriggers.triggerExBurst(drawn, false);
+			if (isEx && drawn != null && !abilitySuppress && !exBurstSuppressedBy(dmgSource, drawn))
+				autoAbilityTriggers.triggerExBurst(drawn, false);
 			if (onDone != null) onDone.run();
 		});
 		revealTimer.setRepeats(false);
@@ -4887,6 +4976,7 @@ public class MainWindow {
 		}
 
 		if (!anyEligible) {
+			setPlayerDamageSource(partyExBurstSuppressor(attackerIndices, false));
 			p1TakeDamage();
 			for (int idx : attackerIndices)
 				autoAbilityTriggers.triggerAutoAbilitiesForDealsDamageToOpponent(p2ForwardCards.get(idx), false);
@@ -10012,11 +10102,17 @@ public class MainWindow {
 	 *  calling {@code afterDamage} after all damage points and any EX bursts have resolved. */
 	private void dealCombatDamageToOpponent(CardData attacker, boolean attackerIsP1, Runnable afterDamage) {
 		boolean doubled = sourceHasOutgoingDmgToOpponentDoubler(attacker);
+		// Each point re-credits the attacker: the source is consumed per call, and the second
+		// point of doubled damage is dealt from the first one's completion callback.
+		Runnable takeOne = attackerIsP1
+				? () -> { setPlayerDamageSource(attacker); p2TakeDamage(afterDamage); }
+				: () -> { setPlayerDamageSource(attacker); p1TakeDamage(afterDamage); };
+		setPlayerDamageSource(attacker);
 		if (attackerIsP1) {
-			if (doubled) p2TakeDamage(() -> p2TakeDamage(afterDamage));
+			if (doubled) p2TakeDamage(takeOne);
 			else         p2TakeDamage(afterDamage);
 		} else {
-			if (doubled) p1TakeDamage(() -> p1TakeDamage(afterDamage));
+			if (doubled) p1TakeDamage(takeOne);
 			else         p1TakeDamage(afterDamage);
 		}
 	}
@@ -11526,6 +11622,7 @@ public class MainWindow {
 				onDone.run();
 			});
 		} else {
+			setPlayerDamageSource(partyExBurstSuppressor(attackerIndices, false));
 			p1TakeDamage();
 			for (int idx : attackerIndices)
 				autoAbilityTriggers.triggerAutoAbilitiesForDealsDamageToOpponent(p2ForwardCards.get(idx), false);
@@ -12358,6 +12455,7 @@ public class MainWindow {
 			}
 			if (onDone != null) onDone.run();
 		} else {
+			setPlayerDamageSource(partyExBurstSuppressor(attackerIndices, true));
 			p2TakeDamage(onDone);
 		}
 	}

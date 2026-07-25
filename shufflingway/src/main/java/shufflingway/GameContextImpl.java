@@ -4022,6 +4022,15 @@ final class GameContextImpl implements GameContext {
 			@Override public int lastDiscardedForwardPower() { return mw.lastDiscardedForwardPower; }
 			@Override public int bzCostForwardPower() { return mw.lastBzCostForwardPower; }
 			@Override public void suppressExBurstsThisAbility() { mw.suppressExBurstsThisAbility = true; }
+			@Override public void grantSelfExBurstSuppression(CardData source) {
+				if (source == null) return;
+				// No printed grant wording carries a cost filter, so the grant covers any cost.
+				if (mw.exBurstSuppressingSources.put(source, Integer.MAX_VALUE) == null) {
+					mw.endOfTurnEffects.add(ctx -> mw.exBurstSuppressingSources.remove(source));
+				}
+				logEntry(source.name() + " — EX Bursts of cards it puts into the Damage Zone "
+						+ "cannot be used until end of turn");
+			}
 			@Override public String lastDiscardedCardName() { return mw.lastDiscardedCardName; }
 			@Override public String lastDiscardedCostCardElement() {
 				return mw.lastDiscardedCostCard == null ? null : mw.lastDiscardedCostCard.elements()[0];
@@ -4898,6 +4907,7 @@ final class GameContextImpl implements GameContext {
 					}
 				}
 				for (int i = 0; i < amount; i++) {
+					mw.setPlayerDamageSource(mw.currentAbilitySource);
 					if (isP1) mw.p2TakeDamage(); else mw.p1TakeDamage();
 				}
 			}

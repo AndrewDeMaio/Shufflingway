@@ -11212,7 +11212,47 @@ public class ActionResolver {
             boolean more = "more".equalsIgnoreCase(nb.group("cmp"));
             return ctx -> ctx.grantSelfCannotBeBlockedByCost(source, cost, more);
         }
+        if (exBurstSuppressionMaxCost(quoted, source.name()) != null)
+            return ctx -> ctx.grantSelfExBurstSuppression(source);
         return null;
+    }
+
+    /**
+     * Matches both printed wordings of source-scoped EX Burst suppression:
+     * <ul>
+     *   <li>"Any card [of cost N or less] put in the Damage Zone due to [Name] cannot use its
+     *       EX Burst." — Exdeath 1-122H, Arborous Simulacrum 2-118C</li>
+     *   <li>"EX Bursts of cards [of cost N or less] put into the Damage Zone due to [Name] cannot
+     *       be used." — Shadow Lord B-007 as a printed field ability, and the clause Shadow Lord
+     *       12-071R grants itself until end of turn</li>
+     * </ul>
+     *
+     * <p>Distinct from {@link #EX_BURST_SUPPRESSION_PATTERN}, whose "due to this ability" wording
+     * spans only one resolution — here the suppression is keyed to the named card, so it applies
+     * to that card's combat damage too.
+     */
+    private static final Pattern EX_BURST_SUPPRESSION_BY_SOURCE = Pattern.compile(
+        "(?i)(?:" +
+            "Any\\s+cards?(?:\\s+of\\s+cost\\s+(?<cost1>\\d+)\\s+or\\s+less)?\\s+put\\s+in(?:to)?\\s+" +
+            "the\\s+Damage\\s+Zone\\s+due\\s+to\\s+(?<subj1>.+?)\\s+cannot\\s+use\\s+(?:its|their)\\s+EX\\s+Bursts?" +
+        "|" +
+            "EX\\s+Bursts?\\s+of\\s+cards?(?:\\s+of\\s+cost\\s+(?<cost2>\\d+)\\s+or\\s+less)?\\s+put\\s+in(?:to)?\\s+" +
+            "the\\s+Damage\\s+Zone\\s+due\\s+to\\s+(?<subj2>.+?)\\s+cannot\\s+be\\s+used" +
+        ")[.!]?");
+
+    /**
+     * Returns the highest card cost whose EX Burst {@code text} suppresses when the damage is
+     * credited to {@code sourceName}, or {@code null} when {@code text} is not a source-scoped
+     * EX Burst suppression naming that card.  {@link Integer#MAX_VALUE} means "any cost".
+     */
+    static Integer exBurstSuppressionMaxCost(String text, String sourceName) {
+        if (text == null || sourceName == null) return null;
+        Matcher m = EX_BURST_SUPPRESSION_BY_SOURCE.matcher(text.trim());
+        if (!m.matches()) return null;
+        String subj = m.group("subj1") != null ? m.group("subj1") : m.group("subj2");
+        if (subj == null || !subj.trim().equalsIgnoreCase(sourceName)) return null;
+        String cost = m.group("cost1") != null ? m.group("cost1") : m.group("cost2");
+        return cost == null ? Integer.MAX_VALUE : Integer.parseInt(cost);
     }
 
     /** "[Self] gains \"[quoted field ability]\" until the end of the turn." (e.g. Tsukinowa). */
