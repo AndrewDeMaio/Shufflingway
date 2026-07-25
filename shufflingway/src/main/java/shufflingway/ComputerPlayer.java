@@ -1270,6 +1270,13 @@ class ComputerPlayer {
 				if (!mw.autoAbilityTriggers.canActivateBzAbility(ability, card, false)) continue;
 				if (ActionResolver.parse(ability.effectText(), card) == null) continue;
 				if (abilityHarmsChosenTarget(ability) && !p1HasAnyForward()) continue;
+				// Mirror of the above for the other side: an ability that can only choose a Forward P2
+				// controls does nothing while P2 has none, so paying its cost is pure waste.
+				if (ActionResolver.targetsOnlyOwnForwards(ability.effectText()) && !p2HasAnyForward()) continue;
+				// A shield against the opponent's own Summons/abilities (Krile (XIV) 6-071H) gains
+				// nothing when it resolves — it only pays off while their effect is already on the
+				// stack, and P2 passes priority rather than responding.
+				if (ActionResolver.isOwnForwardProtectionEffect(ability.effectText())) continue;
 				// "Opponent cannot search" (e.g. Mog (VI)) only matters if P1 actually has a
 				// search option available this turn — otherwise it's a wasted Break Zone activation.
 				if (ActionResolver.isOpponentCannotSearchAbility(ability.effectText()) && !p1HasSearchOption()) continue;
@@ -1385,6 +1392,14 @@ class ComputerPlayer {
 			if (!mw.canActivateAbility(ability, isFrozen, state, playedTurn, card, false)) continue;
 			if (ActionResolver.parse(ability.effectText(), card) == null) continue;
 			if (abilityHarmsChosenTarget(ability) && !p1HasAnyForward()) continue;
+			// Mirror of the above for the other side: an ability that can only choose a Forward P2
+			// controls does nothing while P2 has none, so paying its cost is pure waste.
+			if (ActionResolver.targetsOnlyOwnForwards(ability.effectText()) && !p2HasAnyForward()) continue;
+			// A shield against the opponent's own Summons/abilities (Krile (XIV) 6-071H) gains
+			// nothing when it resolves — it only pays off while their effect is already on the
+			// stack, and P2 passes priority rather than responding. Same reasoning as the
+			// self-bounce skip below.
+			if (ActionResolver.isOwnForwardProtectionEffect(ability.effectText())) continue;
 			// A "return Forward to hand" bounce paid by sacrificing your own card(s) to the Break
 			// Zone is only worth it when it removes an opponent's Forward. A self-only bounce
 			// ("Forward you control") is never a proactive gain — it's a defensive save best left for
@@ -1526,6 +1541,15 @@ class ComputerPlayer {
 			if (mw.p1ForwardCards.get(i) != null) return true;
 		for (int i = 0; i < mw.p1MonsterCards.size(); i++)
 			if (mw.p1MonsterCards.get(i) != null && mw.isP1MonsterTemporarilyForward(i)) return true;
+		return false;
+	}
+
+	/** Mirror of {@link #p1HasAnyForward} for P2's own side, counting Monsters acting as Forwards. */
+	private boolean p2HasAnyForward() {
+		for (int i = 0; i < mw.p2ForwardCards.size(); i++)
+			if (mw.p2ForwardCards.get(i) != null) return true;
+		for (int i = 0; i < mw.p2MonsterCards.size(); i++)
+			if (mw.p2MonsterCards.get(i) != null && mw.isP2MonsterTemporarilyForward(i)) return true;
 		return false;
 	}
 

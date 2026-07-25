@@ -1235,6 +1235,12 @@ public interface GameContext {
     void suppressExBurstsThisAbility();
 
     /**
+     * Marks the effect being resolved as one whose chosen targets only benefit from it, so an AI
+     * controller aims an unqualified selection at its own cards.  No effect on a human's choice.
+     */
+    void setAiPrefersOwnTargets(boolean preferOwn);
+
+    /**
      * Grants {@code source} "EX Bursts of cards put into the Damage Zone due to [source] cannot be
      * used" until the end of the turn (Shadow Lord 12-071R).  Broader than
      * {@link #suppressExBurstsThisAbility}: it follows the card, so every point of player damage

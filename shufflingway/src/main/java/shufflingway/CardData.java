@@ -68,7 +68,21 @@ public record CardData(
         CANNOT_BE_BROKEN_BY_NON_DMG,
         CANNOT_BE_DULLED_BY_OPP,
         CANNOT_BE_RETURNED_TO_HAND_BY_OPP,
-        POWER_CANNOT_BE_DECREASED_BY_OPP
+        POWER_CANNOT_BE_DECREASED_BY_OPP;
+
+        /**
+         * Human-readable name for the game log — {@code FIRST_STRIKE} becomes {@code "First Strike"}.
+         * Title-cases every underscore-separated word, so multi-word traits do not leak the
+         * enum's underscores into player-facing text.
+         */
+        public String displayName() {
+            StringBuilder sb = new StringBuilder();
+            for (String word : name().split("_")) {
+                if (sb.length() > 0) sb.append(' ');
+                sb.append(word.charAt(0)).append(word.substring(1).toLowerCase(java.util.Locale.ROOT));
+            }
+            return sb.toString();
+        }
     }
 
     /** Defensive copy — collection fields are always immutable after construction. */

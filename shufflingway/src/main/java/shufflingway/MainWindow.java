@@ -386,6 +386,13 @@ public class MainWindow {
 	// Set by an EX burst suppression clause; cleared at the start of each new ability context.
 	boolean  suppressExBurstsThisAbility = false;
 
+	/**
+	 * Set while resolving an effect whose "choose" targets only benefit from it, so an AI
+	 * controller aims an unqualified selection at its own cards instead of the opponent's.
+	 * Consumed by the next auto-selection and reset with each new ability context.
+	 */
+	boolean  aiPrefersOwnTargets = false;
+
 	boolean  effectProgress = true;
 
 	// Separate JWindow for combat priority checkpoints (kept apart from summonStackWindow)
@@ -4731,7 +4738,7 @@ public class MainWindow {
 	 * First Strike: if one side has it and the other doesn't, that side strikes first;
 	 * if the strike kills the opponent, the survivor takes no damage.
 	 */
-	private void resolveCombat(CardData attacker, boolean attackerIsP1, int attackerIdx,
+	void resolveCombat(CardData attacker, boolean attackerIsP1, int attackerIdx,
 			CardData blocker, boolean blockerIsP1, int blockerIdx) {
 		if (escapedFromBattle.contains(attacker)) {
 			logEntry(attacker.name() + " escaped from the Battle — combat skipped");
@@ -4777,10 +4784,14 @@ public class MainWindow {
 			dmgToBlocker  = 0; // blocker takes no return strike
 		}
 
+		// First Strike is already fully accounted for above: the side that strikes first has had the
+		// return damage zeroed when its blow was lethal.  A surviving Forward still takes the damage
+		// it was dealt, so these branches must not re-test attackerFirst/blockerFirst — doing so
+		// dropped the damage entirely whenever the first strike failed to break its target.
 		if (attackerBroken) {
 			if (attackerIsP1) breakP1Forward(attackerIdx);
 			else              breakP2Forward(attackerIdx);
-		} else if (!blockerFirst && dmgToAttacker > 0) {
+		} else if (dmgToAttacker > 0) {
 			List<Integer> dmgList = attackerIsP1 ? p1ForwardDamage : p2ForwardDamage;
 			dmgList.set(attackerIdx, dmgList.get(attackerIdx) + dmgToAttacker);
 			if (attackerIsP1) refreshP1ForwardSlot(attackerIdx); else refreshP2ForwardSlot(attackerIdx);
@@ -4788,7 +4799,7 @@ public class MainWindow {
 		if (blockerBroken) {
 			if (blockerIsP1) breakP1Forward(blockerIdx);
 			else             breakP2Forward(blockerIdx);
-		} else if (!attackerFirst && dmgToBlocker > 0) {
+		} else if (dmgToBlocker > 0) {
 			List<Integer> dmgList = blockerIsP1 ? p1ForwardDamage : p2ForwardDamage;
 			dmgList.set(blockerIdx, dmgList.get(blockerIdx) + dmgToBlocker);
 			if (blockerIsP1) refreshP1ForwardSlot(blockerIdx); else refreshP2ForwardSlot(blockerIdx);
@@ -9418,6 +9429,7 @@ public class MainWindow {
 
 	GameContext buildGameContext(boolean isP1, boolean exBurst) {
 		suppressExBurstsThisAbility = false;
+		aiPrefersOwnTargets         = false;
 		return new GameContextImpl(this, isP1, exBurst);
 	}
 

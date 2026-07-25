@@ -4430,4 +4430,222 @@ public class CardBehaviorTest {
 
         assertEquals(exdeath, mw.partyExBurstSuppressor(List.of(0, 1), true));
     }
+
+    // =========================================================================================
+    // Dragoon 6-104C: "When Dragoon enters the field, choose 1 Forward. It gains First Strike
+    // until the end of the turn."  Three defects surfaced from one game log:
+    //   1. the AI aimed the buff at the human's Forward (unqualified "choose 1 Forward" made it
+    //      prefer the opponent, which is only right for harmful effects);
+    //   2. the log printed the raw enum ("First_strike");
+    //   3. a First Strike blow that failed to break its target dropped the return damage entirely.
+    // =========================================================================================
+
+    private static final String DRAGOON_ETF_TEXT =
+            "choose 1 Forward. It gains First Strike until the end of the turn.";
+
+    @Test
+    void traitNamesAreFormattedForTheLog() {
+        assertEquals("First Strike", CardData.Trait.FIRST_STRIKE.displayName());
+        assertEquals("Brave", CardData.Trait.BRAVE.displayName());
+        assertEquals("Back Attack", CardData.Trait.BACK_ATTACK.displayName());
+        assertEquals("Cannot Be Broken", CardData.Trait.CANNOT_BE_BROKEN.displayName());
+    }
+
+    @Test
+    void aPureBuffIsRecognizedAsBenefitingItsTarget() {
+        assertTrue(ActionResolver.chooseEffectBenefitsTarget(DRAGOON_ETF_TEXT));
+        assertTrue(ActionResolver.chooseEffectBenefitsTarget(
+                "Choose 1 Forward. It gains +2000 power until the end of the turn."));
+        assertTrue(ActionResolver.chooseEffectBenefitsTarget(
+                "Choose up to 2 Category V Characters. Activate them."));
+    }
+
+    @Test
+    void harmfulAndMixedEffectsAreNotTreatedAsBuffs() {
+        assertFalse(ActionResolver.chooseEffectBenefitsTarget(
+                "Choose 1 Forward. Deal it 5000 damage."));
+        assertFalse(ActionResolver.chooseEffectBenefitsTarget(
+                "Choose 1 Forward. Its power becomes 4000 until the end of the turn."));
+        assertFalse(ActionResolver.chooseEffectBenefitsTarget(
+                "Choose 1 Forward. Break it."),
+                "a break must never be pointed at the AI's own board");
+        assertFalse(ActionResolver.chooseEffectBenefitsTarget(
+                "Choose 1 Forward. Deal it 3000 damage. It gains Brave until the end of the turn."),
+                "a mixed effect is not a pure buff");
+    }
+
+    @Test
+    void dragoonMarksItsBuffAsSelfPreferredWhenResolved() {
+        Consumer<GameContext> fn = ActionResolver.parse(DRAGOON_ETF_TEXT, null);
+        assertNotNull(fn, "Expected Dragoon's enter-the-field ability to parse");
+
+        GameContext ctx = mock(GameContext.class);
+        when(ctx.consumePreloadedTargets())
+                .thenReturn(List.of(new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD)));
+
+        fn.accept(ctx);
+
+        verify(ctx).setAiPrefersOwnTargets(true);
+    }
+
+    @Test
+    void aDamageEffectDoesNotMarkItselfAsSelfPreferred() {
+        Consumer<GameContext> fn = ActionResolver.parse(
+                "Choose 1 Forward. Deal it 5000 damage.", null);
+        assertNotNull(fn);
+
+        GameContext ctx = mock(GameContext.class);
+        when(ctx.consumePreloadedTargets())
+                .thenReturn(List.of(new ForwardTarget(true, 0, ForwardTarget.CardZone.FORWARD)));
+
+        fn.accept(ctx);
+
+        verify(ctx, never()).setAiPrefersOwnTargets(anyBoolean());
+    }
+
+    /** Places a Forward on P2's field carrying {@code damage} already accumulated on it. */
+    private static void placeDamagedP2Forward(MainWindow mw, CardData fwd, int damage) {
+        mw.gameState.getIdentity().put(fwd, false);
+        mw.placeP2CardInForwardZone(fwd);
+        mw.p2ForwardDamage.set(mw.p2ForwardCards.indexOf(fwd), damage);
+    }
+
+    @Test
+    void aSurvivingAttackerStillTakesDamageFromAFirstStrikeBlocker() {
+        MainWindow mw = new MainWindow();
+        CardData thancred = makeForward("Thancred", "Water", 4, 8000);          // P2, attacker
+        CardData gaius    = makeForwardWithTraits("Gaius", "Earth", 6000,
+                Set.of(CardData.Trait.FIRST_STRIKE));                            // P1, blocker
+        placeDamagedP2Forward(mw, thancred, 0);
+        placeDamagedP1Forward(mw, gaius, 0);
+
+        mw.resolveCombat(thancred, false, 0, gaius, true, 0);
+
+        assertEquals(1, mw.p2ForwardCards.size(), "6000 damage vs 8000 power — Thancred survives");
+        assertEquals(6000, mw.p2ForwardDamage.get(0),
+                "Gaius struck first but did not break Thancred, so the damage still lands");
+        assertTrue(mw.p1ForwardCards.isEmpty(), "Thancred strikes back for 8000 and breaks Gaius");
+    }
+
+    @Test
+    void aFirstStrikeBlockerThatBreaksTheAttackerTakesNoReturnDamage() {
+        MainWindow mw = new MainWindow();
+        CardData weak  = makeForward("Weak", "Water", 2, 3000);                  // P2, attacker
+        CardData gaius = makeForwardWithTraits("Gaius", "Earth", 8000,
+                Set.of(CardData.Trait.FIRST_STRIKE));                            // P1, blocker
+        placeDamagedP2Forward(mw, weak, 0);
+        placeDamagedP1Forward(mw, gaius, 0);
+
+        mw.resolveCombat(weak, false, 0, gaius, true, 0);
+
+        assertTrue(mw.p2ForwardCards.isEmpty(), "8000 ≥ 3000 — the attacker breaks");
+        assertEquals(0, mw.p1ForwardDamage.get(0),
+                "First Strike broke the attacker before it could strike back");
+    }
+
+    @Test
+    void aSurvivingBlockerStillTakesDamageFromAFirstStrikeAttacker() {
+        MainWindow mw = new MainWindow();
+        CardData striker = makeForwardWithTraits("Striker", "Water", 5000,
+                Set.of(CardData.Trait.FIRST_STRIKE));                            // P1, attacker
+        CardData wall    = makeForward("Wall", "Earth", 4, 9000);                // P2, blocker
+        placeDamagedP1Forward(mw, striker, 0);
+        placeDamagedP2Forward(mw, wall, 0);
+
+        mw.resolveCombat(striker, true, 0, wall, false, 0);
+
+        assertEquals(5000, mw.p2ForwardDamage.get(0),
+                "the first strike did not break the 9000-power blocker, so its damage lands");
+        assertTrue(mw.p1ForwardCards.isEmpty(), "and the surviving blocker strikes back for 9000");
+    }
+
+    // =========================================================================================
+    // Krile (XIV) 6-071H: "《Earth》《1》《Dull》: Choose 1 Forward you control. During this turn,
+    // it cannot be returned to its owner's hand by your opponent's Summons or abilities."
+    //
+    // The CPU was dulling Krile for this while controlling no Forwards at all. Two separate
+    // reasons it should not: nothing to target, and the shield only pays off while an opponent's
+    // effect is on the stack — a window the CPU never uses, since it passes priority.
+    // =========================================================================================
+
+    private static final String KRILE_XIV_TEXT =
+            "Choose 1 Forward you control. During this turn, it cannot be returned to its "
+            + "owner's hand by your opponent's Summons or abilities.";
+
+    @Test
+    void krilesShieldIsRecognizedAsAnOwnForwardProtection() {
+        assertTrue(ActionResolver.targetsOnlyOwnForwards(KRILE_XIV_TEXT));
+        assertTrue(ActionResolver.isOwnForwardProtectionEffect(KRILE_XIV_TEXT));
+    }
+
+    @Test
+    void otherOpponentFacingShieldsAreRecognizedToo() {
+        assertTrue(ActionResolver.isOwnForwardProtectionEffect(
+                "Choose 1 Forward you control. It cannot be chosen by your opponent's Summons "
+                + "or abilities this turn."));
+        assertTrue(ActionResolver.isOwnForwardProtectionEffect(
+                "Choose 1 Forward you control. It cannot be broken by your opponent's abilities "
+                + "this turn."));
+    }
+
+    @Test
+    void proactivelyUsefulOwnForwardBuffsAreNotTreatedAsShields() {
+        assertTrue(ActionResolver.targetsOnlyOwnForwards(
+                "Choose 1 Fire Forward you control. It gains +1000 power until the end of the turn."),
+                "a buff still no-ops with no Forwards, so it is worth gating on an empty board");
+        assertFalse(ActionResolver.isOwnForwardProtectionEffect(
+                "Choose 1 Fire Forward you control. It gains +1000 power until the end of the turn."),
+                "a power buff pays off immediately — it is not a reactive shield");
+        assertFalse(ActionResolver.isOwnForwardProtectionEffect(
+                "Choose 1 Forward you control. Activate it."));
+    }
+
+    @Test
+    void effectsReachingTheOpponentsBoardAreNotOwnForwardOnly() {
+        assertFalse(ActionResolver.targetsOnlyOwnForwards(
+                "Choose 1 Forward you control and 1 Forward opponent controls. Break them."),
+                "an effect that also reaches the opponent's board still does something");
+        assertFalse(ActionResolver.targetsOnlyOwnForwards(
+                "Choose 1 Forward. Deal it 5000 damage."),
+                "unqualified targeting is not own-side only");
+        assertFalse(ActionResolver.isOwnForwardProtectionEffect(
+                "Choose 1 Forward opponent controls. It cannot be chosen by your opponent's "
+                + "abilities this turn."),
+                "the shield must protect the controller's own Forward to be reactive-only");
+    }
+
+    @Test
+    void aShieldAgainstNobodyInParticularIsNotGated() {
+        assertFalse(ActionResolver.isOwnForwardProtectionEffect(
+                "Choose 1 Forward you control. During this turn, the next damage dealt to it is "
+                + "reduced by 2000 instead."),
+                "damage reduction pays off in combat the CPU initiates — not opponent-gated");
+    }
+
+    @Test
+    void aShieldBundledWithAnImmediateBenefitIsStillWorthUsing() {
+        // 20-109H — the power boost pays off on its own, so the whole ability must not be gated.
+        assertFalse(ActionResolver.isOwnForwardProtectionEffect(
+                "Choose 1 Category IV Forward you control. Until the end of the turn, it gains "
+                + "+1000 power and \"This Forward cannot be chosen by your opponent's abilities.\""),
+                "a shield packaged with +1000 power is not reactive-only");
+        // 10-045C — activating your own Forwards is a real tempo gain regardless of the shield.
+        assertFalse(ActionResolver.isOwnForwardProtectionEffect(
+                "Activate all the Forwards you control. They cannot be chosen by your opponent's "
+                + "Summons or abilities this turn."),
+                "activation is an immediate benefit");
+    }
+
+    @Test
+    void turnLongConditionalsAreNotGatedOnAnEmptyBoard() {
+        // A Forward played later the same turn would still benefit, so an empty board now is not
+        // proof the ability does nothing.
+        assertFalse(ActionResolver.targetsOnlyOwnForwards(
+                "During this turn, if a Forward you control is dealt damage, reduce the damage "
+                + "by 2000 instead."),
+                "no immediate target — the effect waits for whatever P2 plays next");
+        assertTrue(ActionResolver.targetsOnlyOwnForwards(
+                "All the Forwards you control gain +1000 power until the end of the turn."),
+                "a board-wide pump does act on the Forwards standing right now");
+    }
 }

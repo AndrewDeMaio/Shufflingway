@@ -5002,7 +5002,7 @@ public class ActionResolver {
         if (result != null) return result;
 
         result = tryParseChooseCharacter(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return withAiTargetPreference(effectText, result);
 
         result = tryParseIfSelfFwdReceivedDamageDraw(effectText, source);
         if (result != null) return result;
@@ -8396,6 +8396,48 @@ public class ActionResolver {
             all.addAll(ts2);
             all.addAll(ts3);
             action.accept(ctx, all);
+        };
+    }
+
+    /**
+     * Followup wordings that only help the chosen target — power and keyword grants, and
+     * activation.  Dragoon 6-104C ("It gains First Strike until the end of the turn") is the
+     * motivating case: an AI controller pointing that at the human's Forward is never right.
+     */
+    private static final Pattern CHOOSE_FOLLOWUP_BENEFITS_TARGET = Pattern.compile(
+        "(?i)\\b(?:it|they)\\s+(?:gains?\\s+(?:\\+\\d+\\s+power|Haste|First\\s+Strike|Brave)"
+        + "|becomes?\\s+active)\\b|\\bActivate\\s+(?:it|them)\\b");
+
+    /**
+     * Followup wordings that harm the chosen target.  Checked first so a mixed effect
+     * ("Deal it 5000 damage … it gains …") is never treated as a pure buff.
+     */
+    private static final Pattern CHOOSE_FOLLOWUP_HARMS_TARGET = Pattern.compile(
+        "(?i)\\b(?:deal|break|dull|freeze|discard|loses?|cannot|removes?\\s+it|return\\s+it"
+        + "|power\\s+becomes?|put\\s+it\\s+into)\\b");
+
+    /**
+     * True when a "choose …" effect's followup only benefits the cards it picks, so an AI
+     * controller should aim it at its own side.  A deliberately conservative heuristic: it must
+     * match a known buff wording and contain no harmful verb, otherwise the existing
+     * prefer-the-opponent behaviour stands.
+     */
+    static boolean chooseEffectBenefitsTarget(String effectText) {
+        if (effectText == null) return false;
+        if (CHOOSE_FOLLOWUP_HARMS_TARGET.matcher(effectText).find()) return false;
+        return CHOOSE_FOLLOWUP_BENEFITS_TARGET.matcher(effectText).find();
+    }
+
+    /**
+     * Wraps a "choose …" effect so an AI controller prefers its own cards when the effect is a
+     * pure buff.  The flag is advisory and is read only by the AI's auto-selection branch; a
+     * human player still picks freely.
+     */
+    private static Consumer<GameContext> withAiTargetPreference(String effectText, Consumer<GameContext> fn) {
+        if (!chooseEffectBenefitsTarget(effectText)) return fn;
+        return ctx -> {
+            ctx.setAiPrefersOwnTargets(true);
+            fn.accept(ctx);
         };
     }
 
@@ -16330,6 +16372,57 @@ public class ActionResolver {
         if (!isReturnForwardToHandEffect(text)) return false;
         String t = text.toLowerCase(java.util.Locale.ROOT);
         return t.contains("forward you control") || t.contains("forwards you control");
+    }
+
+    /**
+     * Returns {@code true} when every character {@code text} can choose is a Forward its controller
+     * controls, so the whole effect no-ops while that player has none on the field.  Lets the CPU
+     * avoid paying an activation cost for nothing.
+     */
+    static boolean targetsOnlyOwnForwards(String text) {
+        if (text == null) return false;
+        String t = text.toLowerCase(java.util.Locale.ROOT);
+        if (!t.contains("forward you control") && !t.contains("forwards you control")) return false;
+        if (t.contains("opponent controls") || t.contains("opponent's field")) return false;
+        // Must act on the Forwards standing right now.  A turn-long conditional ("During this turn,
+        // if a Forward you control is dealt damage…") can still pay off for a Forward played later
+        // in the same turn, so an empty board is not proof it will do nothing.
+        return t.contains("choose") || t.contains("all the forwards you control")
+                || t.contains("all forwards you control");
+    }
+
+    /**
+     * Matches a shield granted against the opponent's own effects — "cannot be returned to its
+     * owner's hand / chosen / broken / dulled … by your opponent's Summons or abilities".
+     */
+    private static final Pattern OWN_FORWARD_PROTECTION = Pattern.compile(
+        "(?i)cannot\\s+be\\s+(?:returned\\s+to\\s+its\\s+owner's\\s+hand|chosen|broken|dulled" +
+        "|removed\\s+from\\s+the\\s+game)[^.]*?\\bby\\s+your\\s+opponent's\\b");
+
+    /**
+     * Returns {@code true} when {@code text}'s only benefit is shielding a Forward its controller
+     * controls from the opponent's interaction (Krile (XIV) 6-071H: "Choose 1 Forward you control.
+     * During this turn, it cannot be returned to its owner's hand by your opponent's Summons or
+     * abilities.").
+     *
+     * <p>Such a shield gains nothing at the moment it resolves — it only pays off while an
+     * opponent's effect is already on the stack.  The CPU passes priority rather than responding,
+     * so activating one proactively is a wasted cost.  Same reasoning as
+     * {@link #isReturnOwnForwardToHandEffect}.
+     */
+    /**
+     * Wordings that pay off the moment the ability resolves, independently of anything the
+     * opponent does — a power boost, a keyword grant, or an activation.
+     */
+    private static final Pattern IMMEDIATE_OWN_BENEFIT = Pattern.compile(
+        "(?i)\\+\\d+\\s+power|\\bgains?\\s+(?:Haste|First\\s+Strike|Brave)\\b|\\bActivate\\b");
+
+    static boolean isOwnForwardProtectionEffect(String text) {
+        if (!targetsOnlyOwnForwards(text)) return false;
+        // A shield bundled with an immediate benefit (20-109H's "+1000 power and …") is still
+        // worth using proactively — only a pure shield is reactive-only.
+        if (IMMEDIATE_OWN_BENEFIT.matcher(text).find()) return false;
+        return OWN_FORWARD_PROTECTION.matcher(text).find();
     }
 
     private static Consumer<GameContext> tryParseGainCrystalPerX(String text, int xValue) {

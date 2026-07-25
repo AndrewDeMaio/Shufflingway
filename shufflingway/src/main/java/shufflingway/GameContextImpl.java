@@ -958,12 +958,16 @@ final class GameContextImpl implements GameContext {
 				if (!isP1) {
 					// AI (P2 controls the effect): auto-select rather than prompting the human.
 					if (eligible.isEmpty()) return List.of();
-					// For unqualified targeting, prefer opponent (P1) targets over own cards.
+					// For unqualified targeting, prefer whichever side the effect actually helps or
+					// hurts: buffs go to the AI's own cards, everything else to the opponent's.
+					// Only a preference — if the preferred side has nothing eligible, the AI still
+					// picks from the full pool rather than declining to resolve the effect.
 					List<ForwardTarget> pool = eligible;
 					if (!opponentOnly && !selfOnly) {
-						List<ForwardTarget> oppTargets = eligible.stream()
-								.filter(ForwardTarget::isP1).toList();
-						if (!oppTargets.isEmpty()) pool = oppTargets;
+						boolean preferOwn = mw.aiPrefersOwnTargets;
+						List<ForwardTarget> preferred = eligible.stream()
+								.filter(t -> t.isP1() != preferOwn).toList();
+						if (!preferred.isEmpty()) pool = preferred;
 					}
 					List<ForwardTarget> copy = new ArrayList<>(pool);
 					java.util.Collections.shuffle(copy);
@@ -3643,8 +3647,7 @@ final class GameContextImpl implements GameContext {
 					}
 					StringBuilder bsb = new StringBuilder();
 					if (!bGranted.isEmpty())
-						bsb.append(bGranted.stream().map(Enum::name)
-								.map(s -> s.substring(0, 1).toUpperCase() + s.substring(1).toLowerCase())
+						bsb.append(bGranted.stream().map(CardData.Trait::displayName)
 								.collect(Collectors.joining(" and ")));
 					if (amount != 0) {
 						if (bsb.length() > 0) bsb.append(" and ");
@@ -3693,8 +3696,7 @@ final class GameContextImpl implements GameContext {
 
 				StringBuilder sb = new StringBuilder();
 				if (!grantedTraits.isEmpty()) {
-					sb.append(grantedTraits.stream().map(Enum::name)
-							.map(s -> s.substring(0, 1).toUpperCase() + s.substring(1).toLowerCase())
+					sb.append(grantedTraits.stream().map(CardData.Trait::displayName)
 							.collect(Collectors.joining(" and ")));
 				}
 				if (amount != 0) {
@@ -4022,6 +4024,7 @@ final class GameContextImpl implements GameContext {
 			@Override public int lastDiscardedForwardPower() { return mw.lastDiscardedForwardPower; }
 			@Override public int bzCostForwardPower() { return mw.lastBzCostForwardPower; }
 			@Override public void suppressExBurstsThisAbility() { mw.suppressExBurstsThisAbility = true; }
+			@Override public void setAiPrefersOwnTargets(boolean preferOwn) { mw.aiPrefersOwnTargets = preferOwn; }
 			@Override public void grantSelfExBurstSuppression(CardData source) {
 				if (source == null) return;
 				// No printed grant wording carries a cost filter, so the grant covers any cost.
