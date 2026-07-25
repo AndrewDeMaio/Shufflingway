@@ -630,11 +630,12 @@ public interface GameContext {
     void boostSourceForward(CardData source, int amount, EnumSet<CardData.Trait> traits);
 
     /**
-     * Sets the source card's power to {@code power} until the end of the turn by zeroing
-     * existing boosts/reductions and applying the required offset from the card's base power.
-     * No-op if the source card is not found on the field.
+     * Replaces the source card's base power with {@code power} until the end of the turn and
+     * grants it {@code traits} for the same duration — the self-targeted form of
+     * {@link #setTargetBasePower}.  Pass an empty set for wordings with no keyword clause
+     * (e.g. Mime 4-141C).  No-op if the source card is not found on the field.
      */
-    void setSourceForwardPower(CardData source, int power);
+    void setSourceForwardBasePower(CardData source, int power, EnumSet<CardData.Trait> traits);
 
     /**
      * Finds {@code source} on the field and doubles its power (and optionally grants
@@ -643,10 +644,13 @@ public interface GameContext {
     void doubleSourceForwardPower(CardData source, java.util.EnumSet<CardData.Trait> traits);
 
     /**
-     * Sets the target's effective power to exactly {@code power} until the end of the turn,
-     * overriding any existing temporary boosts or reductions.
+     * Replaces the target's base power with {@code power} until the end of the turn — the
+     * "its power becomes N" wording (Barbariccia, Diablos, Matoya, Yagudo, …).  This substitutes
+     * the card's printed power rather than its effective power, so temporary boosts and
+     * reductions — whether already applied or applied later this turn — stack on top of it.
+     * No-op unless {@code t} names a card in a Forward zone.
      */
-    void setTargetPower(ForwardTarget t, int power);
+    void setTargetBasePower(ForwardTarget t, int power);
 
     /** Places {@code count} counters named {@code counterName} on {@code card}. */
     void placeCounters(CardData card, String counterName, int count);

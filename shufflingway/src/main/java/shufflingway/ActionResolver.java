@@ -730,6 +730,25 @@ public class ActionResolver {
         "(?i)It\\s+loses\\s+all\\s+(?:its\\s+)?abilities\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn[.!]?"
     );
 
+    /**
+     * Matches both word orders of "it loses all its abilities and its power becomes N until the
+     * end of the turn" — Wakka 1-216S's Status Reels, which wipes abilities and replaces base
+     * power in one clause.
+     *
+     * <p>Must be tried before {@link #FOLLOWUP_LOSE_ALL_ABILITIES_EOT} and
+     * {@link #FOLLOWUP_POWER_REDUCE_UNTIL}: with the duration clause leading, the former's
+     * "abilities until end of turn" adjacency fails while the latter matches "Until …, it loses"
+     * with empty amount and trait groups, so the ability wipe and the power change are both lost.
+     *
+     * <p>Group {@code power} — the new base power.
+     */
+    private static final Pattern FOLLOWUP_LOSE_ABILITIES_AND_POWER_BECOMES = Pattern.compile(
+        "(?i)(?:Until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn\\s*,\\s+)?" +
+        "(?:it|they)\\s+loses?\\s+all\\s+(?:(?:its|their)\\s+)?abilities\\s+and\\s+" +
+        "(?:its|their)\\s+power\\s+becomes?\\s+(?<power>\\d+)" +
+        "(?:\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn)?[.!]?"
+    );
+
     /** Matches "Remove it/them from the game". */
     private static final Pattern FOLLOWUP_REMOVE_FROM_GAME = Pattern.compile(
         "(?i)Remove\\s+(?:it|them)\\s+from\\s+(?:the\\s+)?game"
@@ -3414,6 +3433,28 @@ public class ActionResolver {
     );
 
     /**
+     * Matches "Until the end of the turn, &lt;subject&gt;['s power becomes N | gains traits and
+     * &lt;subject&gt;'s power becomes N]" — e.g. Bartz 7-059L's Dual-Wield:
+     * "Until the end of the turn, Bartz gains First Strike and Bartz's power becomes 10000."
+     *
+     * <p>Unlike the "its power becomes N" wording handled by {@link #FOLLOWUP_POWER_BECOMES},
+     * this form replaces the card's <em>base</em> power, so boosts and reductions from other
+     * effects still apply on top of the new value.
+     * <ul>
+     *   <li>Group {@code subject} — the card named before "gains" (absent when there is no trait clause)</li>
+     *   <li>Group {@code traits}  — the granted keywords (absent when there is no trait clause)</li>
+     *   <li>Group {@code powersubject} — the card whose power is set</li>
+     *   <li>Group {@code power}   — the new base power</li>
+     * </ul>
+     */
+    private static final Pattern STANDALONE_SELF_BASE_POWER_BECOMES_UNTIL = Pattern.compile(
+        "(?i)Until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn\\s*,\\s+" +
+        "(?:(?<subject>.+?)\\s+gains?\\s+" +
+        "(?<traits>(?:\\s*,?\\s*(?:and\\s+)?(?:Haste|First\\s+Strike|Brave))+)\\s+and\\s+)?" +
+        "(?<powersubject>.+?)'s\\s+power\\s+becomes\\s+(?<power>\\d+)[.!]?\\s*$"
+    );
+
+    /**
      * Matches "Double the power of &lt;subject&gt; until [the] end of [the] turn".
      * <ul>
      *   <li>Group {@code subject} — card name before "until"</li>
@@ -5095,6 +5136,9 @@ public class ActionResolver {
         result = tryParseStandaloneGainsCannotBeBlocked(effectText, source);
         if (result != null) return result;
 
+        result = tryParseSelfBasePowerBecomesUntil(effectText, source);
+        if (result != null) return result;
+
         result = tryParseStandalonePowerBoostUntil(effectText, source);
         if (result != null) return result;
 
@@ -5751,6 +5795,7 @@ public class ActionResolver {
         if (tryParseStandaloneGainsTraitsAndCannotBeBlocked(effectText, source) != null) return "StandaloneGainsTraitsAndCannotBeBlocked";
         if (tryParseStandaloneGainsTraitsAndCannotBeBlockedTrailing(effectText, source) != null) return "StandaloneGainsTraitsAndCannotBeBlockedTrailing";
         if (tryParseStandaloneGainsCannotBeBlocked(effectText, source) != null) return "StandaloneGainsCannotBeBlocked";
+        if (tryParseSelfBasePowerBecomesUntil(effectText, source) != null) return "SelfBasePowerBecomesUntil";
         if (tryParseStandalonePowerBoostUntil(effectText, source) != null) return "StandalonePowerBoostUntil";
         if (tryParseStandaloneDoublePowerUntil(effectText, source) != null) return "StandaloneDoublePowerUntil";
         if (tryParseStandaloneDoublesItsPowerUntil(effectText, source) != null) return "StandaloneDoublesItsPowerUntil";
@@ -5973,6 +6018,7 @@ public class ActionResolver {
         if (FOLLOWUP_DULL_AND_FREEZE.matcher(followupText).find())                    return "DullAndFreeze";
         if (FOLLOWUP_FREEZE.matcher(followupText).find())                             return "Freeze";
         if (FOLLOWUP_BREAK.matcher(followupText).find())                              return "Break";
+        if (FOLLOWUP_LOSE_ABILITIES_AND_POWER_BECOMES.matcher(followupText).find())    return "LoseAllAbilitiesAndPowerBecomes";
         if (FOLLOWUP_LOSE_ALL_ABILITIES_EOT.matcher(followupText).find())              return "LoseAllAbilitiesEot";
         if (FOLLOWUP_REMOVE_FROM_GAME_AND_NAMED.matcher(followupText).find())          return "RemoveFromGameAndNamed";
         if (FOLLOWUP_REMOVE_FROM_GAME.matcher(followupText).find())                   return "RemoveFromGame";
@@ -6278,6 +6324,7 @@ public class ActionResolver {
         if (tryParseStandalonePowerBoostAndCannotBeChosen(effectText, source) != null) return "StandalonePowerBoostAndCannotBeChosen";
         if (tryParseStandaloneGainsTraitsAndCannotBeBlocked(effectText, source) != null) return "StandaloneGainsTraitsAndCannotBeBlocked";
         if (tryParseStandaloneGainsCannotBeBlocked(effectText, source) != null) return "StandaloneGainsCannotBeBlocked";
+        if (tryParseSelfBasePowerBecomesUntil(effectText, source) != null)  return "SelfBasePowerBecomesUntil";
         if (tryParseStandalonePowerBoostUntil(effectText, source) != null)  return "StandalonePowerBoostUntil";
         if (tryParseStandaloneDoublePowerUntil(effectText, source) != null) return "StandaloneDoublePowerUntil";
         if (tryParseStandaloneDoublesItsPowerUntil(effectText, source) != null) return "StandaloneDoublesItsPowerUntil";
@@ -9499,6 +9546,26 @@ public class ActionResolver {
             };
         }
 
+        // --- "Loses all its abilities and its power becomes N until end of turn" (Wakka 1-216S) ---
+        Matcher loseAndBecomeM = FOLLOWUP_LOSE_ABILITIES_AND_POWER_BECOMES.matcher(primaryFollowup);
+        if (loseAndBecomeM.find()) {
+            int targetPower = Integer.parseInt(loseAndBecomeM.group("power"));
+            return ctx -> {
+                ctx.logEntry(choosePrefix + " — Lose all abilities, base power becomes "
+                        + targetPower + " until end of turn");
+                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
+                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
+                sortedByIdxDesc(ts, true) .forEach(ctx::targetLoseAllAbilitiesUntilEndOfTurn);
+                sortedByIdxDesc(ts, false).forEach(ctx::targetLoseAllAbilitiesUntilEndOfTurn);
+                // Descending order: dropping to the new power can break a Forward, which shifts
+                // the indices of every target above it in the same zone.
+                sortedByIdxDesc(ts, true) .forEach(t -> ctx.setTargetBasePower(t, targetPower));
+                sortedByIdxDesc(ts, false).forEach(t -> ctx.setTargetBasePower(t, targetPower));
+                if (secondary != null) secondary.accept(ctx);
+            };
+        }
+
         // --- Lose all abilities until end of turn followup ---
         if (FOLLOWUP_LOSE_ALL_ABILITIES_EOT.matcher(primaryFollowup).find()) {
             return ctx -> {
@@ -10076,11 +10143,14 @@ public class ActionResolver {
         if (becomesM.find()) {
             int targetPower = Integer.parseInt(becomesM.group(1));
             return ctx -> {
-                ctx.logEntry(choosePrefix + " → power becomes " + targetPower);
+                ctx.logEntry(choosePrefix + " → base power becomes " + targetPower);
                 List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
                         opponentOnly, selfOnly, condition, element, zone, opponentZone,
                         costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                ts.forEach(t -> ctx.setTargetPower(t, targetPower));
+                // Descending order: dropping to the new power can break a Forward, which shifts
+                // the indices of every target above it in the same zone.
+                sortedByIdxDesc(ts, true) .forEach(t -> ctx.setTargetBasePower(t, targetPower));
+                sortedByIdxDesc(ts, false).forEach(t -> ctx.setTargetBasePower(t, targetPower));
                 if (secondary != null) secondary.accept(ctx);
             };
         }
@@ -10792,7 +10862,7 @@ public class ActionResolver {
         "(?i)\\b(?:divide\\s+\\d+\\s+damage\\s+among\\s+them|split\\s+(?:it\\s+)?as\\s+you\\s+(?:like|wish))\\b"
     );
 
-    private static String traitNamesOnly(EnumSet<CardData.Trait> traits) {
+    static String traitNamesOnly(EnumSet<CardData.Trait> traits) {
         List<String> names = new ArrayList<>();
         if (traits.contains(CardData.Trait.HASTE))        names.add("Haste");
         if (traits.contains(CardData.Trait.FIRST_STRIKE)) names.add("First Strike");
@@ -11440,8 +11510,8 @@ public class ActionResolver {
         if (!m.group("name").trim().equalsIgnoreCase(source.name())) return null;
         return ctx -> {
             int power = ctx.lastRemovedFromGameCardPower();
-            ctx.logEntry(source.name() + " — power becomes " + power + " (removed Forward's power) until end of turn");
-            ctx.setSourceForwardPower(source, power);
+            ctx.logEntry(source.name() + " — base power becomes " + power + " (removed Forward's power) until end of turn");
+            ctx.setSourceForwardBasePower(source, power, EnumSet.noneOf(CardData.Trait.class));
         };
     }
 
@@ -11458,9 +11528,27 @@ public class ActionResolver {
         if (!m.group("name").trim().equalsIgnoreCase(source.name())) return null;
         return ctx -> {
             int power = ctx.opponentLowestForwardPower();
-            ctx.logEntry(source.name() + " — power becomes " + power + " (opponent's weakest Forward) until end of turn");
-            ctx.setSourceForwardPower(source, power);
+            ctx.logEntry(source.name() + " — base power becomes " + power + " (opponent's weakest Forward) until end of turn");
+            ctx.setSourceForwardBasePower(source, power, EnumSet.noneOf(CardData.Trait.class));
         };
+    }
+
+    /**
+     * Parses "Until the end of the turn, [CardName] gains [traits] and [CardName]'s power becomes N."
+     * (and the trait-less "Until the end of the turn, [CardName]'s power becomes N.").  The power
+     * clause replaces the source card's base power rather than its effective power, so temporary
+     * boosts and reductions — whether already applied or applied later this turn — stack on top of it.
+     */
+    private static Consumer<GameContext> tryParseSelfBasePowerBecomesUntil(String text, CardData source) {
+        if (source == null) return null;
+        Matcher m = STANDALONE_SELF_BASE_POWER_BECOMES_UNTIL.matcher(text.trim());
+        if (!m.matches()) return null;
+        if (!m.group("powersubject").trim().equalsIgnoreCase(source.name())) return null;
+        String subject = m.group("subject");
+        if (subject != null && !subject.trim().equalsIgnoreCase(source.name())) return null;
+        int power = Integer.parseInt(m.group("power"));
+        EnumSet<CardData.Trait> traits = parseTraits(m.group("traits"));
+        return ctx -> ctx.setSourceForwardBasePower(source, power, traits);
     }
 
     /**

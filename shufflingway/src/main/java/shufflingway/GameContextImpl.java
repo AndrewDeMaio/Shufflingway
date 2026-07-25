@@ -3780,45 +3780,52 @@ final class GameContextImpl implements GameContext {
 				}
 			}
 
-			@Override public void setSourceForwardPower(CardData source, int power) {
+			@Override public void setSourceForwardBasePower(CardData source, int power,
+					EnumSet<CardData.Trait> traits) {
 				List<CardData> fwds = isP1 ? mw.p1ForwardCards : mw.p2ForwardCards;
-				List<Integer> powerBoost = isP1 ? mw.p1ForwardPowerBoost : mw.p2ForwardPowerBoost;
-				List<Integer> powerReduction = isP1 ? mw.p1ForwardPowerReduction : mw.p2ForwardPowerReduction;
+				List<EnumSet<CardData.Trait>> tempTraits = isP1 ? mw.p1ForwardTempTraits : mw.p2ForwardTempTraits;
 				for (int i = 0; i < fwds.size(); i++) {
-					if (fwds.get(i).name().equals(source.name())) {
-						int base = fwds.get(i).power();
-						powerReduction.set(i, 0);
-						powerBoost.set(i, power - base);
-						logEntry(source.name() + " — power becomes " + power + " until end of turn");
-						if (isP1) mw.refreshP1ForwardSlot(i); else mw.refreshP2ForwardSlot(i);
-						mw.enforceForwardBreakRuleProcess();
-						return;
-					}
+					CardData card = fwds.get(i);
+					if (!card.name().equals(source.name())) continue;
+					applyBasePowerOverride(card, power);
+					tempTraits.get(i).addAll(traits);
+					String traitList = ActionResolver.traitNamesOnly(traits);
+					logEntry(source.name() + " — base power becomes " + power
+							+ (traitList.isEmpty() ? "" : ", gains " + traitList)
+							+ " until end of turn");
+					if (isP1) mw.refreshP1ForwardSlot(i); else mw.refreshP2ForwardSlot(i);
+					mw.enforceForwardBreakRuleProcess();
+					return;
 				}
+			}
+
+			/**
+			 * Records a base-power override for {@code card} and queues its removal at the end of
+			 * the turn.  Boosts and reductions are deliberately left alone — they layer on top of
+			 * the new base rather than being replaced by it.
+			 */
+			private void applyBasePowerOverride(CardData card, int power) {
+				mw.basePowerOverrides.put(card, power);
+				mw.endOfTurnEffects.add(ctx -> {
+					mw.basePowerOverrides.remove(card);
+					refreshSlotFor(card);
+				});
 			}
 
 			@Override public void addPendingMainPhase1Effect(Consumer<GameContext> effect) {
 				mw.pendingMainPhase1Effects.add(effect);
 			}
 
-			@Override public void setTargetPower(ForwardTarget t, int power) {
+			@Override public void setTargetBasePower(ForwardTarget t, int power) {
 				if (t.zone() != ForwardTarget.CardZone.FORWARD) return;
+				List<CardData> fwds = t.isP1() ? mw.p1ForwardCards : mw.p2ForwardCards;
 				int idx = t.idx();
-				if (t.isP1()) {
-					if (idx >= mw.p1ForwardCards.size()) return;
-					int base = mw.p1ForwardCards.get(idx).power();
-					mw.p1ForwardPowerReduction.set(idx, 0);
-					mw.p1ForwardPowerBoost.set(idx, power - base);
-					logEntry(p1Forward(idx).name() + " power becomes " + power + " until end of turn");
-					mw.refreshP1ForwardSlot(idx);
-				} else {
-					if (idx >= mw.p2ForwardCards.size()) return;
-					int base = mw.p2ForwardCards.get(idx).power();
-					mw.p2ForwardPowerReduction.set(idx, 0);
-					mw.p2ForwardPowerBoost.set(idx, power - base);
-					logEntry("[P2] " + mw.p2ForwardCards.get(idx).name() + " power becomes " + power + " until end of turn");
-					mw.refreshP2ForwardSlot(idx);
-				}
+				if (idx < 0 || idx >= fwds.size()) return;
+				CardData card = fwds.get(idx);
+				applyBasePowerOverride(card, power);
+				logEntry((t.isP1() ? "" : "[P2] ") + card.name()
+						+ " — base power becomes " + power + " until end of turn");
+				if (t.isP1()) mw.refreshP1ForwardSlot(idx); else mw.refreshP2ForwardSlot(idx);
 				mw.enforceForwardBreakRuleProcess();
 			}
 
@@ -3827,7 +3834,7 @@ final class GameContextImpl implements GameContext {
 				Map<String, Integer> all = mw.gameState.getCountersMap(card);
 				logEntry(card.name() + " — placed " + count + " " + counterName
 						+ " Counter(s)  [now: " + all + "]");
-				refreshCounterOwnerSlot(card);
+				refreshSlotFor(card);
 			}
 
 			@Override public int getCounters(CardData card, String counterName) {
@@ -3855,11 +3862,11 @@ final class GameContextImpl implements GameContext {
 				Map<String, Integer> all = mw.gameState.getCountersMap(card);
 				logEntry(card.name() + " — removed " + removed + " " + counterName
 						+ " Counter(s)  [now: " + all + "]");
-				refreshCounterOwnerSlot(card);
+				refreshSlotFor(card);
 			}
 
-			/** Refreshes whichever field slot currently holds {@code card}, if any (updates the on-screen counter badge). */
-			private void refreshCounterOwnerSlot(CardData card) {
+			/** Refreshes whichever field slot currently holds {@code card}, if any. */
+			private void refreshSlotFor(CardData card) {
 				for (int i = 0; i < mw.p1ForwardCards.size(); i++) {
 					if (mw.p1ForwardCards.get(i) == card) { mw.refreshP1ForwardSlot(i); return; }
 				}

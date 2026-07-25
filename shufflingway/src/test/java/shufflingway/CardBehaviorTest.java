@@ -428,7 +428,7 @@ public class CardBehaviorTest {
 
         fn.accept(ctx);
 
-        verify(ctx).setSourceForwardPower(mime, 3000);
+        verify(ctx).setSourceForwardBasePower(mime, 3000, EnumSet.noneOf(CardData.Trait.class));
     }
 
     @Test
@@ -3725,7 +3725,7 @@ public class CardBehaviorTest {
     // its already-accumulated damage, not only when fresh damage lands on it.
     //
     // applyDamageToForward compares damage against power at the moment damage is dealt, so every
-    // path that lowers power instead had to gain a check: reduceTarget, setTargetPower, and the
+    // path that lowers power instead had to gain a check: reduceTarget, setTargetBasePower, and the
     // withdrawal of a field power grant when the granting card leaves the field.
     // =========================================================================================
 
@@ -3766,13 +3766,13 @@ public class CardBehaviorTest {
     }
 
     @Test
-    void setTargetPowerBreaksForwardWhoseExistingDamageIsNowLethal() {
+    void setTargetBasePowerBreaksForwardWhoseExistingDamageIsNowLethal() {
         MainWindow mw = new MainWindow();
         CardData victim = makeForward("Victim", "Fire", 3, 9000);
         placeDamagedP1Forward(mw, victim, 5000);
 
         // "Its power becomes 4000 until the end of the turn" against 5000 accumulated damage.
-        mw.buildGameContext(true).setTargetPower(
+        mw.buildGameContext(true).setTargetBasePower(
                 new ForwardTarget(true, 0, ForwardTarget.CardZone.FORWARD), 4000);
 
         assertTrue(mw.p1ForwardCards.isEmpty(), "damage 5000 ≥ power 4000 — Victim must break");
@@ -3878,5 +3878,347 @@ public class CardBehaviorTest {
         when(theirs.opponentHandSize()).thenReturn(3);
         fn.accept(theirs);
         verify(theirs, never()).dealDamageToOpponent(anyInt());
+    }
+
+    // =========================================================================================
+    // Bartz 7-059L, Dual-Wield 《S》: "Until the end of the turn, Bartz gains First Strike and
+    // Bartz's power becomes 10000." — the power clause replaces Bartz's BASE power, so other
+    // boosts and reductions stack on top of it rather than being wiped out by it.
+    // =========================================================================================
+
+    private static final String BARTZ_DUAL_WIELD_TEXT =
+            "Until the end of the turn, Bartz gains First Strike and Bartz's power becomes 10000.";
+
+    @Test
+    void bartzDualWieldSetsBasePowerAndGrantsFirstStrike() {
+        CardData bartz = mock(CardData.class);
+        when(bartz.name()).thenReturn("Bartz");
+
+        Consumer<GameContext> fn = ActionResolver.parse(BARTZ_DUAL_WIELD_TEXT, bartz);
+        assertNotNull(fn, "Expected Dual-Wield's effect text to parse");
+
+        GameContext ctx = mock(GameContext.class);
+        fn.accept(ctx);
+
+        verify(ctx).setSourceForwardBasePower(bartz, 10000,
+                EnumSet.of(CardData.Trait.FIRST_STRIKE));
+    }
+
+    @Test
+    void bartzDualWieldDoesNotFireWhenSourceNameDoesNotMatch() {
+        CardData other = mock(CardData.class);
+        when(other.name()).thenReturn("Not Bartz");
+
+        assertNull(ActionResolver.parse(BARTZ_DUAL_WIELD_TEXT, other),
+                "Ability text naming Bartz should not resolve for a differently-named source");
+    }
+
+    @Test
+    void dualWieldIsParsedOffTheFullCardTextAsASpecialAbility() {
+        String cardText =
+                "When Bartz enters the field, choose up to 2 Category V Characters. Activate them.[[br]]"
+                + "[[s]]Spellblade [[/]]《S》: Choose 1 Forward. Deal it 5000 damage.[[br]]"
+                + "[[s]]Dual-Wield[[/]] 《S》: " + BARTZ_DUAL_WIELD_TEXT;
+
+        ActionAbility dualWield = CardData.parseActionAbilities(cardText).stream()
+                .filter(a -> "Dual-Wield".equals(a.abilityName()))
+                .findFirst().orElse(null);
+
+        assertNotNull(dualWield, "Dual-Wield should be picked up as a named Special Ability");
+        assertTrue(dualWield.isSpecial(), "《S》 makes Dual-Wield a Special Ability");
+        assertEquals(BARTZ_DUAL_WIELD_TEXT, dualWield.effectText());
+    }
+
+    @Test
+    void baseWordingWithoutATraitClauseAlsoParses() {
+        CardData bartz = mock(CardData.class);
+        when(bartz.name()).thenReturn("Bartz");
+
+        Consumer<GameContext> fn = ActionResolver.parse(
+                "Until the end of the turn, Bartz's power becomes 10000.", bartz);
+        assertNotNull(fn, "the trait-less wording should parse too");
+
+        GameContext ctx = mock(GameContext.class);
+        fn.accept(ctx);
+
+        verify(ctx).setSourceForwardBasePower(bartz, 10000,
+                EnumSet.noneOf(CardData.Trait.class));
+    }
+
+    @Test
+    void dualWieldRaisesBartzToTenThousandAndGrantsFirstStrike() {
+        MainWindow mw = new MainWindow();
+        CardData bartz = makeForward("Bartz", "Wind", 5, 7000);
+        placeDamagedP1Forward(mw, bartz, 0);
+
+        ActionResolver.parse(BARTZ_DUAL_WIELD_TEXT, bartz).accept(mw.buildGameContext(true));
+
+        assertEquals(10000, mw.effectiveP1ForwardPower(0));
+        assertTrue(mw.effectiveP1HasTrait(0, CardData.Trait.FIRST_STRIKE));
+    }
+
+    @Test
+    void boostsAppliedAfterDualWieldStackOnTopOfTheNewBasePower() {
+        MainWindow mw = new MainWindow();
+        CardData bartz = makeForward("Bartz", "Wind", 5, 7000);
+        placeDamagedP1Forward(mw, bartz, 0);
+
+        ActionResolver.parse(BARTZ_DUAL_WIELD_TEXT, bartz).accept(mw.buildGameContext(true));
+        mw.buildGameContext(true).boostTarget(
+                new ForwardTarget(true, 0, ForwardTarget.CardZone.FORWARD),
+                2000, EnumSet.noneOf(CardData.Trait.class));
+
+        assertEquals(12000, mw.effectiveP1ForwardPower(0), "the +2000 stacks on the 10000 base");
+    }
+
+    @Test
+    void boostsAppliedBeforeDualWieldSurviveTheBasePowerChange() {
+        MainWindow mw = new MainWindow();
+        CardData bartz = makeForward("Bartz", "Wind", 5, 7000);
+        placeDamagedP1Forward(mw, bartz, 0);
+
+        mw.buildGameContext(true).boostTarget(
+                new ForwardTarget(true, 0, ForwardTarget.CardZone.FORWARD),
+                2000, EnumSet.noneOf(CardData.Trait.class));
+        ActionResolver.parse(BARTZ_DUAL_WIELD_TEXT, bartz).accept(mw.buildGameContext(true));
+
+        assertEquals(12000, mw.effectiveP1ForwardPower(0),
+                "an earlier boost is not wiped out by the base-power change");
+    }
+
+    @Test
+    void reductionsAppliedAfterDualWieldStillApplyToTheNewBasePower() {
+        MainWindow mw = new MainWindow();
+        CardData bartz = makeForward("Bartz", "Wind", 5, 7000);
+        placeDamagedP1Forward(mw, bartz, 0);
+
+        ActionResolver.parse(BARTZ_DUAL_WIELD_TEXT, bartz).accept(mw.buildGameContext(true));
+        mw.buildGameContext(true).reduceTarget(
+                new ForwardTarget(true, 0, ForwardTarget.CardZone.FORWARD),
+                3000, EnumSet.noneOf(CardData.Trait.class));
+
+        assertEquals(7000, mw.effectiveP1ForwardPower(0), "the −3000 applies to the 10000 base");
+    }
+
+    @Test
+    void basePowerOverrideExpiresAtEndOfTurn() {
+        MainWindow mw = new MainWindow();
+        CardData bartz = makeForward("Bartz", "Wind", 5, 7000);
+        placeDamagedP1Forward(mw, bartz, 0);
+
+        ActionResolver.parse(BARTZ_DUAL_WIELD_TEXT, bartz).accept(mw.buildGameContext(true));
+        assertEquals(10000, mw.effectiveP1ForwardPower(0));
+
+        mw.fireEndOfTurnEffects(true);
+
+        assertEquals(7000, mw.effectiveP1ForwardPower(0), "the override lasts only for the turn");
+        assertTrue(mw.basePowerOverrides.isEmpty(), "the override entry is dropped, not left to leak");
+    }
+
+    // =========================================================================================
+    // "Its power becomes N until the end of the turn." (Barbariccia, Diablos, Lulu, Matoya,
+    // Penelo, Yagudo) and the self-targeted "[Name]'s power becomes …" (Blue Mage, Mime) both
+    // replace the card's BASE power, so boosts and reductions layer on top instead of being
+    // wiped out — the same rule Bartz's Dual-Wield follows.
+    // =========================================================================================
+
+    private static final String MATOYA_ETF_TEXT =
+            "Choose 1 Forward. Its power becomes 4000 until the end of the turn.";
+
+    @Test
+    void itsPowerBecomesRoutesThroughTheBasePowerLayer() {
+        Consumer<GameContext> fn = ActionResolver.parse(MATOYA_ETF_TEXT, null);
+        assertNotNull(fn, "Expected the \"its power becomes N\" wording to parse");
+
+        GameContext ctx = mock(GameContext.class);
+        ForwardTarget t = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+        when(ctx.consumePreloadedTargets()).thenReturn(List.of(t));
+
+        fn.accept(ctx);
+
+        verify(ctx).setTargetBasePower(t, 4000);
+    }
+
+    @Test
+    void boostsAppliedAfterItsPowerBecomesStackOnTheNewBase() {
+        MainWindow mw = new MainWindow();
+        CardData victim = makeForward("Victim", "Fire", 3, 9000);
+        placeDamagedP1Forward(mw, victim, 0);
+        ForwardTarget t = new ForwardTarget(true, 0, ForwardTarget.CardZone.FORWARD);
+
+        mw.buildGameContext(true).setTargetBasePower(t, 4000);
+        mw.buildGameContext(true).boostTarget(t, 2000, EnumSet.noneOf(CardData.Trait.class));
+
+        assertEquals(6000, mw.effectiveP1ForwardPower(0), "the +2000 stacks on the 4000 base");
+    }
+
+    @Test
+    void boostsAppliedBeforeItsPowerBecomesSurviveIt() {
+        MainWindow mw = new MainWindow();
+        CardData victim = makeForward("Victim", "Fire", 3, 9000);
+        placeDamagedP1Forward(mw, victim, 0);
+        ForwardTarget t = new ForwardTarget(true, 0, ForwardTarget.CardZone.FORWARD);
+
+        mw.buildGameContext(true).boostTarget(t, 2000, EnumSet.noneOf(CardData.Trait.class));
+        mw.buildGameContext(true).setTargetBasePower(t, 4000);
+
+        assertEquals(6000, mw.effectiveP1ForwardPower(0),
+                "the earlier +2000 is no longer wiped out by the power-becomes effect");
+    }
+
+    @Test
+    void reductionsAppliedBeforeItsPowerBecomesSurviveIt() {
+        MainWindow mw = new MainWindow();
+        CardData victim = makeForward("Victim", "Fire", 3, 9000);
+        placeDamagedP1Forward(mw, victim, 0);
+        ForwardTarget t = new ForwardTarget(true, 0, ForwardTarget.CardZone.FORWARD);
+
+        mw.buildGameContext(true).reduceTarget(t, 1000, EnumSet.noneOf(CardData.Trait.class));
+        mw.buildGameContext(true).setTargetBasePower(t, 4000);
+
+        assertEquals(3000, mw.effectiveP1ForwardPower(0), "the earlier −1000 still applies");
+    }
+
+    @Test
+    void itsPowerBecomesAppliesToAnOpponentForwardToo() {
+        MainWindow mw = new MainWindow();
+        CardData victim = makeForward("Victim", "Fire", 3, 9000);
+        mw.gameState.getIdentity().put(victim, false);
+        mw.placeP2CardInForwardZone(victim);
+        ForwardTarget t = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+
+        mw.buildGameContext(true).setTargetBasePower(t, 4000);
+
+        assertEquals(4000, mw.effectiveP2ForwardPower(0));
+    }
+
+    @Test
+    void itsPowerBecomesExpiresAtEndOfTurn() {
+        MainWindow mw = new MainWindow();
+        CardData victim = makeForward("Victim", "Fire", 3, 9000);
+        placeDamagedP1Forward(mw, victim, 0);
+
+        mw.buildGameContext(true).setTargetBasePower(
+                new ForwardTarget(true, 0, ForwardTarget.CardZone.FORWARD), 4000);
+        assertEquals(4000, mw.effectiveP1ForwardPower(0));
+
+        mw.fireEndOfTurnEffects(true);
+
+        assertEquals(9000, mw.effectiveP1ForwardPower(0), "the override lasts only for the turn");
+        assertTrue(mw.basePowerOverrides.isEmpty(), "the override entry is dropped, not left to leak");
+    }
+
+    @Test
+    void sourcePowerBecomesAlsoLeavesEarlierBoostsInPlace() {
+        MainWindow mw = new MainWindow();
+        CardData mime = makeForward("Mime", "Earth", 2, 4000);
+        placeDamagedP1Forward(mw, mime, 0);
+
+        mw.buildGameContext(true).boostTarget(
+                new ForwardTarget(true, 0, ForwardTarget.CardZone.FORWARD),
+                1000, EnumSet.noneOf(CardData.Trait.class));
+        mw.buildGameContext(true).setSourceForwardBasePower(mime, 3000,
+                EnumSet.noneOf(CardData.Trait.class));
+
+        assertEquals(4000, mw.effectiveP1ForwardPower(0),
+                "Mime copies a 3000 base and keeps the +1000 it was already carrying");
+    }
+
+    // =========================================================================================
+    // Wakka 1-216S, Status Reels 《S》《Water》: "Choose 1 Forward. Until the end of the turn, it
+    // loses all its abilities and its power becomes 1000."
+    //
+    // With the duration clause leading, FOLLOWUP_LOSE_ALL_ABILITIES_EOT's "abilities until end of
+    // turn" adjacency fails and FOLLOWUP_POWER_REDUCE_UNTIL matched "Until …, it loses" with empty
+    // amount and trait groups — so the ability wipe AND the power change were both silently
+    // dropped, leaving a no-op reduction.
+    // =========================================================================================
+
+    private static final String WAKKA_STATUS_REELS_TEXT =
+            "Choose 1 Forward. Until the end of the turn, it loses all its abilities "
+            + "and its power becomes 1000.";
+
+    @Test
+    void statusReelsWipesAbilitiesAndSetsBasePower() {
+        Consumer<GameContext> fn = ActionResolver.parse(WAKKA_STATUS_REELS_TEXT, null);
+        assertNotNull(fn, "Expected Status Reels to parse");
+
+        GameContext ctx = mock(GameContext.class);
+        ForwardTarget t = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+        when(ctx.consumePreloadedTargets()).thenReturn(List.of(t));
+
+        fn.accept(ctx);
+
+        verify(ctx).targetLoseAllAbilitiesUntilEndOfTurn(t);
+        verify(ctx).setTargetBasePower(t, 1000);
+    }
+
+    @Test
+    void statusReelsIsNoLongerMisreadAsABarePowerReduction() {
+        assertEquals("ChooseCharacter / LoseAllAbilitiesAndPowerBecomes",
+                ActionResolver.fullDescription(WAKKA_STATUS_REELS_TEXT, null),
+                "the combined clause must win over the bare power-reduction pattern");
+    }
+
+    @Test
+    void trailingDurationWordOrderParsesTheSameWay() {
+        Consumer<GameContext> fn = ActionResolver.parse(
+                "Choose 1 Forward. It loses all its abilities and its power becomes 1000 "
+                + "until the end of the turn.", null);
+        assertNotNull(fn);
+
+        GameContext ctx = mock(GameContext.class);
+        ForwardTarget t = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+        when(ctx.consumePreloadedTargets()).thenReturn(List.of(t));
+
+        fn.accept(ctx);
+
+        verify(ctx).targetLoseAllAbilitiesUntilEndOfTurn(t);
+        verify(ctx).setTargetBasePower(t, 1000);
+    }
+
+    @Test
+    void plainLoseAllAbilitiesFollowupStillParsesOnItsOwn() {
+        Consumer<GameContext> fn = ActionResolver.parse(
+                "Choose 1 Forward. It loses all its abilities until the end of the turn.", null);
+        assertNotNull(fn);
+
+        GameContext ctx = mock(GameContext.class);
+        ForwardTarget t = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+        when(ctx.consumePreloadedTargets()).thenReturn(List.of(t));
+
+        fn.accept(ctx);
+
+        verify(ctx).targetLoseAllAbilitiesUntilEndOfTurn(t);
+        verify(ctx, never()).setTargetBasePower(any(), anyInt());
+    }
+
+    @Test
+    void statusReelsAppliesBothHalvesOnTheField() {
+        MainWindow mw = new MainWindow();
+        CardData victim = makeForwardWithTraits("Victim", "Fire", 9000,
+                Set.of(CardData.Trait.BRAVE));
+        mw.gameState.getIdentity().put(victim, false);
+        mw.placeP2CardInForwardZone(victim);
+        ForwardTarget t = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+
+        GameContext ctx = mw.buildGameContext(true);
+        ctx.targetLoseAllAbilitiesUntilEndOfTurn(t);
+        ctx.setTargetBasePower(t, 1000);
+
+        assertEquals(1000, mw.effectiveP2ForwardPower(0));
+        assertFalse(mw.effectiveP2HasTrait(0, CardData.Trait.BRAVE), "Brave is suppressed with the rest");
+    }
+
+    @Test
+    void statusReelsPowerDropBreaksAnAlreadyDamagedForward() {
+        MainWindow mw = new MainWindow();
+        CardData victim = makeForward("Victim", "Fire", 3, 9000);
+        placeDamagedP1Forward(mw, victim, 5000);
+
+        mw.buildGameContext(true).setTargetBasePower(
+                new ForwardTarget(true, 0, ForwardTarget.CardZone.FORWARD), 1000);
+
+        assertTrue(mw.p1ForwardCards.isEmpty(), "damage 5000 ≥ power 1000 — Victim must break");
     }
 }

@@ -95,7 +95,6 @@ import static shufflingway.CpPaymentUtils.matchesAnyElement;
 import shufflingway.dialog.AltCostPaymentDialog;
 import shufflingway.dialog.ExtraCostBzSelectDialog;
 import shufflingway.dialog.BreakZoneDialog;
-import shufflingway.dialog.DamageZoneDialog;
 import shufflingway.dialog.HandPickDialog;
 import shufflingway.dialog.LbDialog;
 import shufflingway.dialog.LbPaymentDialog;
@@ -527,6 +526,14 @@ public class MainWindow {
 
 	/** Cards whose printed abilities are suppressed until end of turn ("lose all abilities"). */
 	final Set<CardData> lostAbilitiesCards = Collections.newSetFromMap(new IdentityHashMap<>());
+
+	/**
+	 * Replacement base powers from "[Name]'s power becomes N" effects, keyed by card identity.
+	 * Unlike {@link #p1ForwardPowerBoost}/{@link #p1ForwardPowerReduction}, this substitutes the
+	 * card's printed power, so temporary boosts and reductions still apply on top of it.
+	 * Entries are removed by an end-of-turn effect queued when the override is set.
+	 */
+	final Map<CardData, Integer> basePowerOverrides = new IdentityHashMap<>();
 
 	final FieldGrantCalculator fieldGrantCalculator = new FieldGrantCalculator(this);
 
@@ -1451,6 +1458,7 @@ public class MainWindow {
 		pendingMainPhase1Effects.clear();
 		activeCostReductions.clear();
 		lostAbilitiesCards.clear();
+		basePowerOverrides.clear();
 		bzPlayableP1.clear();
 		bzPlayableP2.clear();
 		bzForwardFaP1.clear();
@@ -4582,14 +4590,15 @@ public class MainWindow {
 	int effectiveP1ForwardPower(int idx) {
 		CardData top  = p1ForwardPrimedTop.get(idx);
 		CardData card = p1ForwardCards.get(idx);
-		int base = top != null ? top.power() : card.power();
+		int base = basePowerOverrides.getOrDefault(card, top != null ? top.power() : card.power());
 		return base + p1ForwardPowerBoost.get(idx) - p1ForwardPowerReduction.get(idx)
 				+ computeConditionalBoostForTarget(card, true);
 	}
 
 	int effectiveP2ForwardPower(int idx) {
 		CardData card = p2ForwardCards.get(idx);
-		return card.power() + p2ForwardPowerBoost.get(idx) - p2ForwardPowerReduction.get(idx)
+		return basePowerOverrides.getOrDefault(card, card.power())
+				+ p2ForwardPowerBoost.get(idx) - p2ForwardPowerReduction.get(idx)
 				+ computeConditionalBoostForTarget(card, false);
 	}
 
@@ -4909,12 +4918,32 @@ public class MainWindow {
 	}
 
 
-	private void showP2DamageZoneDialog() {
-		DamageZoneDialog.show(frame, gameState.getP2DamageZone(), "P2 Damage Zone", this::showZoomAt, this::hideZoom);
+	/**
+	 * Previews the damage-zone card sitting in slot {@code slotIdx} in the side panel.
+	 * No-op for the empty slots below the current damage count.
+	 */
+	private void previewDamageZoneCard(boolean isP1, int slotIdx) {
+		List<CardData> dz = isP1 ? gameState.getP1DamageZone() : gameState.getP2DamageZone();
+		if (slotIdx < dz.size()) showZoomAt(dz.get(slotIdx).imageUrl());
 	}
 
-	private void showDamageZoneDialog() {
-		DamageZoneDialog.show(frame, gameState.getP1DamageZone(), "Damage Zone", this::showZoomAt, this::hideZoom);
+	/**
+	 * Offers "Dismiss EX" on a right-click anywhere on P1's damage-zone stack while an EX Burst is
+	 * pending.  {@code invoker} is the component the popup is anchored to (the slot under the
+	 * cursor, or the stack itself).
+	 */
+	private void showP1DamageZoneContextMenu(JPanel slotsPanel, JPanel invoker, MouseEvent e) {
+		if (!SwingUtilities.isRightMouseButton(e)) return;
+		if (slotsPanel.getClientProperty("exBurst") != Boolean.TRUE) return;
+		JPopupMenu menu = new JPopupMenu();
+		JMenuItem clearEx = new JMenuItem("Dismiss EX");
+		clearEx.addActionListener(ae -> {
+			slotsPanel.putClientProperty("exBurst", Boolean.FALSE);
+			for (JPanel s : p1DamageSlots) { if (s != null) s.repaint(); }
+			slotsPanel.repaint();
+		});
+		menu.add(clearEx);
+		menu.show(invoker, e.getX(), e.getY());
 	}
 
 	private void showLbDialog() {
@@ -13158,28 +13187,27 @@ public class MainWindow {
 				};
 				slot.setOpaque(true);
 				slot.setBorder(BorderFactory.createLineBorder(new Color(80, 80, 80), 1));
+				// Per-slot listener: hovering a filled slot previews that damage card in the side
+				// panel.  It also has to repeat the stack-level context menu, because a child with
+				// its own MouseListener becomes the event target and the parent no longer sees it.
+				final int slotIdx = i;
+				slot.addMouseListener(new MouseAdapter() {
+					@Override public void mouseEntered(MouseEvent e) {
+						previewDamageZoneCard(true, slotIdx);
+					}
+					@Override public void mouseExited(MouseEvent e) { hideZoom(); }
+					@Override public void mousePressed(MouseEvent e) {
+						showP1DamageZoneContextMenu(slotsPanel, slot, e);
+					}
+				});
 				slotsPanel.add(slot);
 				p1DamageSlots[i] = slot;
 			}
 
+			// Covers the gaps between slots, which are not part of any slot's bounds.
 			slotsPanel.addMouseListener(new MouseAdapter() {
 				@Override public void mousePressed(MouseEvent e) {
-					if (javax.swing.SwingUtilities.isRightMouseButton(e)) {
-						JPopupMenu menu = new JPopupMenu();
-						boolean ex = slotsPanel.getClientProperty("exBurst") == Boolean.TRUE;
-						if (ex) {
-							JMenuItem clearEx = new JMenuItem("Dismiss EX");
-							clearEx.addActionListener(ae -> {
-								slotsPanel.putClientProperty("exBurst", Boolean.FALSE);
-								for (JPanel s : p1DamageSlots) { if (s != null) s.repaint(); }
-								slotsPanel.repaint();
-							});
-							menu.add(clearEx);
-						}
-						if (menu.getComponentCount() > 0) menu.show(slotsPanel, e.getX(), e.getY());
-					} else {
-						if (!gameState.getP1DamageZone().isEmpty()) showDamageZoneDialog();
-					}
+					showP1DamageZoneContextMenu(slotsPanel, slotsPanel, e);
 				}
 			});
 
@@ -13239,14 +13267,16 @@ public class MainWindow {
 				};
 				slot.setOpaque(true);
 				slot.setBorder(BorderFactory.createLineBorder(new Color(80, 80, 80), 1));
+				final int slotIdx = i;
+				slot.addMouseListener(new MouseAdapter() {
+					@Override public void mouseEntered(MouseEvent e) {
+						previewDamageZoneCard(false, slotIdx);
+					}
+					@Override public void mouseExited(MouseEvent e) { hideZoom(); }
+				});
 				slotsPanel.add(slot);
 				p2DamageSlots[i] = slot;
 			}
-			slotsPanel.addMouseListener(new MouseAdapter() {
-				@Override public void mousePressed(MouseEvent e) {
-					if (!gameState.getP2DamageZone().isEmpty()) showP2DamageZoneDialog();
-				}
-			});
 			p2ShieldIcon = new ShieldIcon();
 		}
 
