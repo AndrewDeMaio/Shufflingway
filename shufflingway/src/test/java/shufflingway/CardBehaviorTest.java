@@ -4650,6 +4650,153 @@ public class CardBehaviorTest {
     }
 
     // =========================================================================================
+    // "If you don't pay 《…》, [consequence]" — an optional cost the controller may pay to avert a
+    // consequence: Umaro 15-107H and Cecil 15-073H (《C》), Umaro 8-024C (《Ice》), Leon 28-056C (《2》,
+    // behind a control check).  Before this gate existed the consequence patterns matched the text
+    // on their own, so Cecil dealt itself damage and Leon broke with no chance to pay.
+    // =========================================================================================
+
+    private static final String UMARO_BZ_TEXT =
+            "When Umaro enters the field, if you don't pay 《C》, put Umaro into the Break Zone.";
+    private static final String UMARO_BZ_ETB =
+            "if you don't pay 《C》, put Umaro into the Break Zone.";
+    private static final String UMARO_DISCARD_ETB =
+            "if you don't pay 《Ice》, discard 1 card from your hand.";
+    private static final String CECIL_ETB =
+            "if you don't pay 《C》, Cecil deals you 1 point of damage.";
+    private static final String LEON_ETB =
+            "if you don't control a Card Name Maria and if you don't pay 《2》, put Leon into the Break Zone.";
+
+    private static CardData makeUmaro() {
+        return makeForward("Umaro", "Ice", 3, 7000);
+    }
+
+    @Test
+    void payOrElseAbilitiesParseAsAGateRatherThanTheBareConsequence() {
+        List<AutoAbility> umaro = CardData.parseAutoAbilities(UMARO_BZ_TEXT);
+        assertEquals(1, umaro.size());
+        assertEquals("enters the field", umaro.get(0).trigger());
+        assertEquals(UMARO_BZ_ETB, umaro.get(0).effectText());
+
+        CardData src = makeUmaro();
+        assertEquals("IfNotPayOrElse", ActionResolver.matchedPatternName(UMARO_BZ_ETB, src));
+        assertEquals("IfNotPayOrElse", ActionResolver.matchedPatternName(UMARO_DISCARD_ETB, src));
+        assertEquals("IfNotPayOrElse", ActionResolver.matchedPatternName(CECIL_ETB, makeForward("Cecil", "Dark", 3, 7000)));
+        assertNotNull(ActionResolver.parse(LEON_ETB, makeForward("Leon", "Dark", 2, 5000)),
+                "Leon resolves through the control gate into the pay gate");
+    }
+
+    @Test
+    void payOrElseOffersTheRightCostAndRunsTheConsequenceOnlyWhenUnpaid() {
+        CardData umaro = makeUmaro();
+        Consumer<GameContext> crystalGate = ActionResolver.parse(UMARO_BZ_ETB, umaro);
+        assertNotNull(crystalGate);
+
+        // 《C》 is a Crystal cost, not CP.
+        GameContext ctx = mock(GameContext.class);
+        crystalGate.accept(ctx);
+        ArgumentCaptor<Runnable> notPaid = ArgumentCaptor.forClass(Runnable.class);
+        verify(ctx).mayPayCostOrElse(eq(0), isNull(), eq(1), notPaid.capture());
+        verify(ctx, never()).breakSourceCard(any());   // nothing happens until the cost goes unpaid
+        notPaid.getValue().run();
+        verify(ctx).breakSourceCard(umaro);
+
+        // 《Ice》 is one CP of an element; the consequence is the discard.
+        GameContext ctx2 = mock(GameContext.class);
+        ActionResolver.parse(UMARO_DISCARD_ETB, umaro).accept(ctx2);
+        ArgumentCaptor<Runnable> notPaid2 = ArgumentCaptor.forClass(Runnable.class);
+        verify(ctx2).mayPayCostOrElse(eq(0), eq("Ice"), eq(0), notPaid2.capture());
+        notPaid2.getValue().run();
+        verify(ctx2).selfDiscard(1);
+    }
+
+    @Test
+    void theAiPaysACrystalWhenItHasOneAndBreaksWhenItDoesNot() {
+        // No Crystal — nothing to choose, so the consequence applies.
+        MainWindow broke = new MainWindow();
+        CardData umaro1 = makeUmaro();
+        broke.placeP2CardInForwardZone(umaro1);
+        broke.gameState.getIdentity().put(umaro1, false);   // owner, needed once it hits the Break Zone
+        ActionResolver.parse(UMARO_BZ_ETB, umaro1).accept(broke.buildGameContext(false));
+        assertTrue(broke.p2ForwardCards.isEmpty(), "unpaid — Umaro was broken");
+        assertTrue(broke.gameState.getP2BreakZone().contains(umaro1));
+
+        // Holding a Crystal — the AI pays it and stays on the field.
+        MainWindow paid = new MainWindow();
+        CardData umaro2 = makeUmaro();
+        paid.placeP2CardInForwardZone(umaro2);
+        paid.gameState.addP2Crystals(1);
+        ActionResolver.parse(UMARO_BZ_ETB, umaro2).accept(paid.buildGameContext(false));
+        assertEquals(List.of(umaro2), paid.p2ForwardCards, "paid — Umaro stayed");
+        assertEquals(0, paid.gameState.getP2Crystals(), "the Crystal was spent");
+    }
+
+    // =========================================================================================
+    // Waltrill 8-047C: "When Waltrill enters the field, place up to 2 cards from your hand at the
+    // bottom of your deck in any order. Then, draw the same number of cards as were returned to
+    // your deck."  The redraw is sized by what was actually returned, and returning nothing is a
+    // legal choice — so the count cannot be baked into the parsed effect.
+    // =========================================================================================
+
+    private static final String WALTRILL_TEXT =
+            "When Waltrill enters the field, place up to 2 cards from your hand at the bottom of your "
+            + "deck in any order. Then, draw the same number of cards as were returned to your deck.";
+
+    private static final String WALTRILL_ETB =
+            "place up to 2 cards from your hand at the bottom of your deck in any order. "
+            + "Then, draw the same number of cards as were returned to your deck.";
+
+    @Test
+    void waltrillEnterFieldAbilityParsesAsAnUpToCycle() {
+        List<AutoAbility> abilities = CardData.parseAutoAbilities(WALTRILL_TEXT);
+        assertEquals(1, abilities.size());
+        assertEquals("enters the field", abilities.get(0).trigger());
+        assertEquals(WALTRILL_ETB, abilities.get(0).effectText());
+        assertEquals("PlaceUpToHandToBottomThenRedraw",
+                ActionResolver.matchedPatternName(abilities.get(0).effectText(), null));
+    }
+
+    @Test
+    void waltrillDrawsExactlyAsManyCardsAsWereReturned() {
+        Consumer<GameContext> fn = ActionResolver.parse(WALTRILL_ETB, null);
+        assertNotNull(fn);
+
+        // Returned 1 of the allowed 2 → draw 1.
+        GameContext ctx = mock(GameContext.class);
+        when(ctx.placeUpToFromHandToBottomOfDeck(2)).thenReturn(1);
+        fn.accept(ctx);
+        verify(ctx).drawCards(1);
+
+        // Returned nothing → draw nothing.
+        GameContext none = mock(GameContext.class);
+        when(none.placeUpToFromHandToBottomOfDeck(2)).thenReturn(0);
+        fn.accept(none);
+        verify(none, never()).drawCards(anyInt());
+    }
+
+    @Test
+    void waltrillCyclesTheAiHandWithoutChangingItsSize() {
+        MainWindow mw = new MainWindow();
+        CardData a = makeForward("A", "Wind", 2, 5000);
+        CardData b = makeForward("B", "Wind", 3, 7000);
+        mw.gameState.getP2Hand().add(a);
+        mw.gameState.getP2Hand().add(b);
+        CardData top1 = makeForward("Top1", "Wind", 1, 3000);
+        CardData top2 = makeForward("Top2", "Wind", 1, 3000);
+        mw.gameState.getP2MainDeck().add(top1);
+        mw.gameState.getP2MainDeck().add(top2);
+
+        ActionResolver.parse(WALTRILL_ETB, null).accept(mw.buildGameContext(false));
+
+        assertEquals(2, mw.gameState.getP2Hand().size(), "returned 2, drew 2");
+        assertEquals(List.of(top1, top2), mw.gameState.getP2Hand(),
+                "the AI drew the two cards that were on top");
+        assertEquals(2, mw.gameState.getP2MainDeck().size(), "deck size is unchanged by a cycle");
+        assertTrue(mw.gameState.getP2MainDeck().containsAll(List.of(a, b)),
+                "the returned cards went under the deck");
+    }
+
+    // =========================================================================================
     // Serafie 1-109R: "EX BURST When Serafie enters the field, each player selects 1 Forward from
     // his/her Break Zone and adds it to his/her hand."  Shares the both-players salvage effect with
     // Cu Chaspel 18-021R ("1 card"), which is unrestricted — Serafie's names a type, so Backups,

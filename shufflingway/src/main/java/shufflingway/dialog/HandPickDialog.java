@@ -361,17 +361,22 @@ public class HandPickDialog {
     // Place N cards at bottom of deck
     // -------------------------------------------------------------------------
 
-    public static void showPlaceToBottom(JFrame owner, List<CardData> hand, int mustPlace,
+    /**
+     * @param upTo when {@code true} any number of cards from 0 to {@code mustPlace} may be
+     *             confirmed ("place up to N"); otherwise exactly {@code mustPlace} is required
+     */
+    public static void showPlaceToBottom(JFrame owner, List<CardData> hand, int mustPlace, boolean upTo,
                                           Consumer<String> onZoom, Runnable onZoomHide,
                                           Consumer<List<Integer>> onConfirm) {
-        JDialog dlg = new JDialog(owner, "Place " + mustPlace + " Card(s) at Bottom of Deck", true);
+        JDialog dlg = new JDialog(owner,
+                "Place " + (upTo ? "up to " : "") + mustPlace + " Card(s) at Bottom of Deck", true);
         dlg.setResizable(false);
         dlg.setDefaultCloseOperation(JDialog.DO_NOTHING_ON_CLOSE);
 
         Set<Integer> selected = new HashSet<>();
 
-        JLabel statusLabel = new JLabel("Select " + mustPlace + " card(s) to place at the bottom of your deck.",
-                SwingConstants.CENTER);
+        JLabel statusLabel = new JLabel("Select " + (upTo ? "up to " : "") + mustPlace
+                + " card(s) to place at the bottom of your deck.", SwingConstants.CENTER);
         statusLabel.setFont(FontLoader.loadPixelFont(10));
 
         List<JLabel> cardLabels = new ArrayList<>();
@@ -379,14 +384,14 @@ public class HandPickDialog {
 
         JButton confirmBtn = new JButton("Place");
         confirmBtn.setFont(FontLoader.loadPixelFont(11));
-        confirmBtn.setEnabled(false);
+        confirmBtn.setEnabled(upTo);   // "up to" allows confirming with nothing selected
 
         Runnable refresh = () -> {
             int remaining = mustPlace - selected.size();
-            statusLabel.setText(remaining > 0
+            statusLabel.setText(remaining > 0 && !upTo
                     ? "Select " + remaining + " more card(s)."
-                    : "Ready — click Place to confirm.");
-            confirmBtn.setEnabled(selected.size() == mustPlace);
+                    : "Ready — click Place to confirm" + (upTo ? " (" + selected.size() + " selected)." : "."));
+            confirmBtn.setEnabled(upTo || selected.size() == mustPlace);
             for (int i = 0; i < cardLabels.size(); i++) {
                 cardLabels.get(i).setBorder(BorderFactory.createLineBorder(
                         selected.contains(i) ? Color.BLUE : Color.LIGHT_GRAY,

@@ -2130,7 +2130,7 @@ final class AutoAbilityTriggers {
 	 * Has the AI pay up to {@code target} CP by dulling active backups then discarding hand cards.
 	 * Returns the amount actually paid.
 	 */
-	private int aiPayCp(boolean payerIsP1, int target) {
+	int aiPayCp(boolean payerIsP1, int target) {
 		if (target <= 0) return 0;
 		CardData[]  bkpCards  = mw.playerBackupCards(payerIsP1);
 		CardState[] bkpStates = mw.playerBackupStates(payerIsP1);

@@ -5281,19 +5281,33 @@ public class MainWindow {
 	}
 
 	void showPlaceToBottomOfDeckDialog(int count) {
+		showPlaceToBottomOfDeckDialog(count, false);
+	}
+
+	/**
+	 * Lets P1 place cards from their hand at the bottom of their deck.
+	 *
+	 * @param upTo when {@code true} P1 may place any number from 0 to {@code count}; otherwise
+	 *             exactly {@code count} (capped by hand size) must be placed
+	 * @return how many cards were actually placed
+	 */
+	int showPlaceToBottomOfDeckDialog(int count, boolean upTo) {
 		List<CardData> hand = gameState.getP1Hand();
 		int mustPlace = Math.min(count, hand.size());
-		if (mustPlace == 0) return;
-		HandPickDialog.showPlaceToBottom(frame, hand, mustPlace, this::showZoomAt, this::hideZoom, selected -> {
+		if (mustPlace == 0) return 0;
+		int[] placed = { 0 };
+		HandPickDialog.showPlaceToBottom(frame, hand, mustPlace, upTo, this::showZoomAt, this::hideZoom, selected -> {
 			selected.sort(Collections.reverseOrder());
 			for (int pi : selected) {
 				CardData d = gameState.getP1Hand().remove(pi);
 				gameState.getP1MainDeck().addLast(d);
 				logEntry("Places " + d.name() + " at bottom of deck");
 			}
+			placed[0] = selected.size();
 			refreshP1HandLabel();
 			refreshP1DeckLabel();
 		});
+		return placed[0];
 	}
 
 	/**
@@ -8684,6 +8698,18 @@ public class MainWindow {
 	}
 
 	/**
+	 * True when {@code isP1} can currently pay an optional "if you don't pay 《…》" cost. Exactly one
+	 * of the three forms applies: {@code crystals} Crystals, one CP of {@code element}, or
+	 * {@code cp} generic CP.
+	 */
+	boolean canPayOptionalCost(boolean isP1, int cp, String element, int crystals) {
+		if (crystals > 0)      return playerCrystals(isP1) >= crystals;
+		if (element != null)   return canAffordCpTokens(List.of(element), 1, isP1);
+		if (cp > 0)            return canAffordCpTokens(Collections.nCopies(cp, ""), cp, isP1);
+		return true;
+	}
+
+	/**
 	 * Returns {@code true} if the player can afford the CP portion of an action
 	 * ability's cost (element and generic CP only; Dull/S requirements are checked
 	 * separately in the context-menu enable logic).
@@ -8691,14 +8717,28 @@ public class MainWindow {
 	boolean canAffordAbilityCost(ActionAbility ability, boolean isP1) {
 		List<String> cost = ability.cpCost();
 		if (cost.isEmpty()) return true;
+		int total = cost.size();
+		if (ability.inlineCostReductionJob() != null)
+			total = Math.max(0, total - computeInlineReduction(ability.inlineCostReductionJob(),
+					ability.inlineCostReductionExcludeName(), isP1));
+		return canAffordCpTokens(cost, total, isP1);
+	}
+
+	/**
+	 * True when {@code isP1} could currently assemble a CP payment described by {@code cost} — one
+	 * token per CP, {@code ""} for generic CP and an element name for element-specific CP. Counts
+	 * active Backups and hand cards that could be discarded for 2 CP, and requires at least one
+	 * source for every element named in the cost.
+	 *
+	 * @param total the number of CP actually owed, which cost reductions may drop below {@code cost.size()}
+	 */
+	boolean canAffordCpTokens(List<String> cost, int total, boolean isP1) {
+		if (cost.isEmpty()) return true;
 
 		boolean hasGeneric = cost.contains("");
 		LinkedHashMap<String, Integer> needed = new LinkedHashMap<>();
 		for (String e : cost) if (!e.isEmpty()) needed.merge(e, 1, Integer::sum);
 		String[] elems = needed.keySet().toArray(String[]::new);
-		int total = cost.size();
-		if (ability.inlineCostReductionJob() != null)
-			total = Math.max(0, total - computeInlineReduction(ability.inlineCostReductionJob(), ability.inlineCostReductionExcludeName(), isP1));
 
 		boolean[] hasSrc = new boolean[elems.length];
 		int available = 0;

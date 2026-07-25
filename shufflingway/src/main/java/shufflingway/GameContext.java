@@ -1489,6 +1489,14 @@ public interface GameContext {
     void placeFromHandToBottomOfDeck(int count);
 
     /**
+     * Prompts the ability user to place <em>up to</em> {@code max} card(s) from their hand at the
+     * bottom of their deck — placing none is a legal choice. The AI cycles its worst cards.
+     *
+     * @return how many cards were actually placed, for effects that pay out per card returned
+     */
+    int placeUpToFromHandToBottomOfDeck(int max);
+
+    /**
      * Prompts the ability user to optionally discard exactly 1 card of the given type
      * (e.g. "Summon") from their hand to their Break Zone. No CP is generated.
      * The player may choose to pass (discard nothing). Sets effectMadeProgress only when
@@ -1540,6 +1548,19 @@ public interface GameContext {
      * full, it does not. Pay-in-full-or-decline — there is no partial payment that still prevents it.
      */
     void opponentMayPayToPreventAction(int cost, Runnable onNotPaid);
+
+    /**
+     * Offers the ability user the chance to pay an optional cost that averts a consequence — the
+     * "if you don't pay 《…》, [consequence]" wording (Umaro 15-107H, Cecil 15-073H, Leon 28-056C).
+     * Exactly one cost form applies. When the player cannot afford it there is no choice to make,
+     * so no prompt is shown and {@code onNotPaid} runs straight away; the same happens when they
+     * decline or back out of the payment. The AI pays whenever it can afford to.
+     *
+     * @param cp       generic CP required (《2》), or 0
+     * @param element  element whose single CP is required (《Ice》), or {@code null}
+     * @param crystals Crystals required (《C》), or 0
+     */
+    void mayPayCostOrElse(int cp, String element, int crystals, Runnable onNotPaid);
 
     /**
      * Offers the player the option to dull an active card named {@code cardName} to replay

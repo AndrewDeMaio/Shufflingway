@@ -4144,6 +4144,18 @@ public class ActionResolver {
     );
 
     /**
+     * Matches "place up to N cards from your hand at the bottom of your deck [in any order]. Then,
+     * draw the same number of cards as were returned to your deck." (Waltrill 8-047C) — the redraw
+     * is sized by how many cards the player actually returned, which may be none.
+     * Group {@code max} = the cap on cards returned.
+     */
+    private static final Pattern PLACE_UP_TO_HAND_TO_BOTTOM_THEN_REDRAW = Pattern.compile(
+        "(?i)place\\s+up\\s+to\\s+(?<max>\\d+)\\s+cards?\\s+from\\s+your\\s+hand\\s+at\\s+the\\s+bottom\\s+" +
+        "of\\s+your\\s+deck(?:\\s+in\\s+any\\s+order)?[.,]?\\s+Then[,.]?\\s+draw\\s+the\\s+same\\s+number\\s+" +
+        "of\\s+cards?\\s+as\\s+(?:were|was)\\s+returned\\s+to\\s+your\\s+deck[.!]?"
+    );
+
+    /**
      * Matches "pay 《Element》[…]. When you do so, [followup]."
      * Used when an auto-ability's effect text begins with an explicit CP payment followed by
      * a conditional effect clause.
@@ -4151,6 +4163,26 @@ public class ActionResolver {
      */
     private static final Pattern PAY_CP_WHEN_DO_SO = Pattern.compile(
         "(?i)^\\s*pay\\s+(?<cost>(?:《[^》]+》\\s*)+)[.!]?\\s+When\\s+you\\s+do\\s+so[,.]?\\s+(?<followup>.+)$",
+        Pattern.DOTALL
+    );
+
+    /**
+     * Matches "[you may pay 《X》.] if you don't pay 《X》, [consequence]" — an optional cost the
+     * ability's controller may pay to avert a consequence: Umaro 15-107H and Cecil 15-073H (《C》),
+     * Umaro 8-024C (《Ice》), Leon 28-056C and Vincent 2-078R (《N》). An offer clause printed ahead
+     * of the gate is absorbed, since it names the same cost the gate then tests.
+     *
+     * <p>The comma after the cost is required: it separates this gate from Ultimecia 27-092H's
+     * "if you don't pay 《1》 for each CP required to cast chosen Forward…", whose per-CP cost this
+     * pattern must not claim.
+     * <ul>
+     *   <li>Group {@code cost}        — the token inside 《》: a number, an element name, or "C"</li>
+     *   <li>Group {@code consequence} — what happens when the cost goes unpaid</li>
+     * </ul>
+     */
+    private static final Pattern IF_NOT_PAY_OR_ELSE = Pattern.compile(
+        "(?i)^(?:you\\s+may\\s+)?(?:pay\\s+《[^》]+》[.!]?\\s+)?" +
+        "if\\s+you\\s+don'?t\\s+pay\\s+《(?<cost>[^》]+)》\\s*,\\s+(?<consequence>.+)$",
         Pattern.DOTALL
     );
 
@@ -4821,6 +4853,11 @@ public class ActionResolver {
         result = tryParseWhenYouDoSoSequence(effectText, source, xValue);
         if (result != null) return result;
 
+        // Must precede every consequence pattern: those match with find(), so left alone they would
+        // claim the text after the gate and resolve the consequence unconditionally.
+        result = tryParseIfNotPayOrElse(effectText, source, xValue);
+        if (result != null) return result;
+
         result = tryParseIfOwnForwardFormedParty(effectText, source, xValue);
         if (result != null) return result;
 
@@ -5391,6 +5428,9 @@ public class ActionResolver {
         result = tryParseDrawThenPlaceHandToBottom(effectText);
         if (result != null) return result;
 
+        result = tryParsePlaceUpToHandToBottomThenRedraw(effectText);
+        if (result != null) return result;
+
         result = tryParsePayCpWhenDoSo(effectText, source);
         if (result != null) return result;
 
@@ -5725,6 +5765,8 @@ public class ActionResolver {
 
     /** Returns the name of the first pattern that matches {@code effectText}, or {@code null}. */
     public static String matchedPatternName(String effectText, CardData source) {
+        // Mirrors parse(): the pay-or-else gate is reported ahead of its consequence's own pattern.
+        if (tryParseIfNotPayOrElse(effectText, source, 0)               != null) return "IfNotPayOrElse";
         if (tryParseOppRfpTopDeckCastable(effectText)                   != null) return "OppRfpTopDeckCastable";
         if (tryParseChooseFromOppBzCastable(effectText)                 != null) return "ChooseFromOppBzCastable";
         if (tryParseChooseSummonsFromBzCastable(effectText)             != null) return "ChooseSummonsFromBzCastable";
@@ -5881,6 +5923,7 @@ public class ActionResolver {
         if (tryParseOpponentDiscard(effectText)               != null) return "OpponentDiscard";
         if (tryParseDiscardHandThenDraw(effectText)           != null) return "DiscardHandThenDraw";
         if (tryParseDrawThenPlaceHandToBottom(effectText)     != null) return "DrawThenPlaceHandToBottom";
+        if (tryParsePlaceUpToHandToBottomThenRedraw(effectText) != null) return "PlaceUpToHandToBottomThenRedraw";
         if (tryParsePayCpWhenDoSo(effectText, source)         != null) return "PayCpWhenDoSo";
         if (tryParseDrawDiscardRetriggerIfCardName(effectText, source) != null) return "DrawDiscardRetriggerIfCardName";
         if (tryParseDrawCards(effectText)                     != null) return "DrawCards";
@@ -6124,6 +6167,7 @@ public class ActionResolver {
         if (CardData.CONTROL_IF_NOT_ANY_PATTERN.matcher(effectText).find())        return "UseRestriction";
         if (CardData.OPPONENT_CONTROLS_N_OR_MORE_PATTERN.matcher(effectText).find()) return "UseRestriction";
         if (tryParseWhenYouDoSoSequence(effectText, source, 0)          != null) return "WhenYouDoSo";
+        if (tryParseIfNotPayOrElse(effectText, source, 0)               != null) return "IfNotPayOrElse";
         if (tryParseIfCastAtLeast(effectText, source, 0)                != null) return "IfCastAtLeast";
         if (tryParseIfControlCondOtherThan(effectText, source, 0)      != null) return "IfControlCondOtherThan";
         if (tryParseIfOppControlsNOrMoreCondTypeGate(effectText, source, 0) != null) return "IfOppControlsNOrMoreCondTypeDraw";
@@ -6415,6 +6459,7 @@ public class ActionResolver {
         if (tryParseOpponentDiscard(effectText) != null)                    return "OpponentDiscard";
         if (tryParseDiscardHandThenDraw(effectText) != null)                return "DiscardHandThenDraw";
         if (tryParseDrawDiscardRetriggerIfCardName(effectText, source) != null) return "DrawDiscardRetriggerIfCardName";
+        if (tryParsePlaceUpToHandToBottomThenRedraw(effectText) != null)    return "PlaceUpToHandToBottomThenRedraw";
         if (tryParseDrawCards(effectText) != null)                          return "DrawCards";
         if (tryParseYouMayDiscardType(effectText) != null)                  return "YouMayDiscardType";
         if (tryParseMayRevealElementFromHand(effectText) != null)           return "MayRevealElementFromHand";
@@ -12431,6 +12476,24 @@ public class ActionResolver {
         };
     }
 
+    /**
+     * Parses "place up to N cards from your hand at the bottom of your deck in any order. Then, draw
+     * the same number of cards as were returned to your deck." Returning nothing is a legal choice,
+     * in which case no cards are drawn.
+     */
+    private static Consumer<GameContext> tryParsePlaceUpToHandToBottomThenRedraw(String text) {
+        Matcher m = PLACE_UP_TO_HAND_TO_BOTTOM_THEN_REDRAW.matcher(text);
+        if (!m.find()) return null;
+        int max = Integer.parseInt(m.group("max"));
+        return ctx -> {
+            ctx.logEntry("Effect: Place up to " + max
+                    + " card(s) at bottom of deck, then draw that many");
+            int placed = ctx.placeUpToFromHandToBottomOfDeck(max);
+            if (placed > 0) ctx.drawCards(placed);
+            else            ctx.logEntry("Effect: No cards returned — no cards drawn");
+        };
+    }
+
     private static Consumer<GameContext> tryParseDrawThenPlaceHandToBottom(String text) {
         Matcher m = DRAW_THEN_PLACE_HAND_TO_BOTTOM.matcher(text);
         if (!m.find()) return null;
@@ -12440,6 +12503,35 @@ public class ActionResolver {
             ctx.logEntry("Effect: Draw " + drawCount + " card(s), then place " + placeCount + " card(s) at bottom of deck");
             ctx.drawCards(drawCount);
             ctx.placeFromHandToBottomOfDeck(placeCount);
+        };
+    }
+
+    /**
+     * Parses "[you may pay 《X》.] if you don't pay 《X》, [consequence]". The consequence must itself
+     * be a supported effect — otherwise the whole ability stays unparsed rather than silently
+     * resolving as an unconditional consequence, which is what the bare consequence patterns would
+     * do if this gate let the text through.
+     */
+    private static Consumer<GameContext> tryParseIfNotPayOrElse(String text, CardData source, int xValue) {
+        Matcher m = IF_NOT_PAY_OR_ELSE.matcher(text.trim());
+        if (!m.matches()) return null;
+        String cost            = m.group("cost").trim();
+        String consequenceText = m.group("consequence").trim();
+        Consumer<GameContext> consequence = parse(consequenceText, source, xValue);
+        if (consequence == null) return null;
+
+        int    cp       = 0;
+        int    crystals = 0;
+        String element  = null;
+        if (cost.equalsIgnoreCase("C"))        crystals = 1;
+        else if (cost.matches("\\d+"))         cp = Integer.parseInt(cost);
+        else                                   element = cost;
+
+        final int    fCp = cp, fCrystals = crystals;
+        final String fElement = element;
+        return ctx -> {
+            ctx.logEntry("Effect: Pay 《" + cost + "》, or else: " + consequenceText);
+            ctx.mayPayCostOrElse(fCp, fElement, fCrystals, () -> consequence.accept(ctx));
         };
     }
 
@@ -13029,6 +13121,7 @@ public class ActionResolver {
     }
 
     private static Consumer<GameContext> tryParsePutSourceIntoBreakZone(String text, CardData source) {
+        if (source == null) return null;   // the pattern is keyed to the source card's own name
         Matcher m = PUT_SOURCE_INTO_BREAK_ZONE.matcher(text.trim());
         if (!m.matches()) return null;
         if (!m.group("name").trim().equalsIgnoreCase(source.name())) return null;

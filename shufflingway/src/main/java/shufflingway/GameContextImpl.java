@@ -4732,6 +4732,59 @@ final class GameContextImpl implements GameContext {
 				}, null);
 			}
 
+			@Override public void mayPayCostOrElse(int cp, String element, int crystals, Runnable onNotPaid) {
+				String src  = mw.currentAbilitySource != null ? mw.currentAbilitySource.name() : "Ability";
+				String cost = crystals > 0 ? "《C》" + (crystals > 1 ? " ×" + crystals : "")
+						: element != null ? "《" + element + "》" : "《" + cp + "》";
+
+				if (!mw.canPayOptionalCost(isP1, cp, element, crystals)) {
+					logEntry((isP1 ? "" : "[P2] ") + src + " — cannot pay " + cost + "; effect applies");
+					onNotPaid.run();
+					return;
+				}
+
+				if (!isP1) {
+					// Every printed consequence (self-break, self-damage, discard) costs the AI more
+					// than the cost itself, so it pays whenever it can.
+					if (crystals > 0) {
+						mw.playerSpendCrystals(false, crystals);
+						mw.refreshCrystalDisplays();
+						logEntry("[P2] " + src + " — pays " + cost);
+						return;
+					}
+					int need = element != null ? 1 : cp;
+					int paid = mw.autoAbilityTriggers.aiPayCp(false, need);
+					if (paid >= need) { logEntry("[P2] " + src + " — pays " + cost); return; }
+					logEntry("[P2] " + src + " — did not pay " + cost + "; effect applies");
+					onNotPaid.run();
+					return;
+				}
+
+				int choice = mw.showEffectOptionDialog(src + " — pay " + cost + "?",
+						"Optional Cost", new Object[]{"Pay", "Decline"});
+				if (choice != 0) {
+					logEntry(src + " — declined to pay " + cost + "; effect applies");
+					onNotPaid.run();
+					return;
+				}
+				if (crystals > 0) {
+					mw.playerSpendCrystals(true, crystals);
+					mw.refreshCrystalDisplays();
+					logEntry(src + " — paid " + cost);
+					return;
+				}
+				int need = element != null ? 1 : cp;
+				boolean[] paidInFull = { false };
+				mw.autoAbilityTriggers.showAutoAbilityPaymentDialog(src, need, need, true, 0,
+						paid -> paidInFull[0] = paid >= need, null);
+				if (paidInFull[0]) {
+					logEntry(src + " — paid " + cost);
+				} else {
+					logEntry(src + " — did not pay " + cost + "; effect applies");
+					onNotPaid.run();
+				}
+			}
+
 			@Override public void opponentMayPayToPreventAction(int cost, Runnable onNotPaid) {
 				String src = mw.currentAbilitySource != null ? mw.currentAbilitySource.name() : "Ability";
 				String label = src + " — pay 《" + cost + "》 to prevent its effect";
@@ -4861,6 +4914,21 @@ final class GameContextImpl implements GameContext {
 				int choice = mw.showEffectOptionDialog(src + " — " + prompt, "You May", new Object[]{"OK", "Decline"});
 				if (choice != 0) { logEntry("[Effect] Declined: " + prompt); return; }
 				effect.accept(this);
+			}
+
+			@Override public int placeUpToFromHandToBottomOfDeck(int max) {
+				if (isP1) return mw.showPlaceToBottomOfDeckDialog(max, true);
+				// The AI always cycles as many of its worst cards as it can: the returned cards go
+				// under the deck before the redraw, so the deck never gets shorter.
+				List<CardData> hand = mw.gameState.getP2Hand();
+				int actual = Math.min(max, hand.size());
+				for (int i = 0; i < actual; i++) {
+					CardData d = hand.remove(MainWindow.pickWorstHandCard0(hand));
+					mw.gameState.getP2MainDeck().addLast(d);
+					logEntry("[P2] Places " + d.name() + " at bottom of deck");
+				}
+				if (actual > 0) { mw.refreshP2HandCountLabel(); mw.refreshP2DeckLabel(); }
+				return actual;
 			}
 
 			@Override public void placeFromHandToBottomOfDeck(int count) {
