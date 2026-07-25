@@ -4814,6 +4814,54 @@ public class CardBehaviorTest {
     }
 
     // =========================================================================================
+    // Combat sub-steps track priority, not declarations. Declaring an attacker does not advance to
+    // Declare Blockers — that only happens once both players have passed on the declaration, and
+    // the same holds for the block: turn player, then opponent, then damage.
+    // =========================================================================================
+
+    /** Puts {@code mw} in the Attack Phase with {@code turnPlayerIsP1} to move, at Declare Attackers. */
+    private static void enterAttackDeclarationStep(MainWindow mw, boolean turnPlayerIsP1) {
+        mw.gameState.startFirstTurn(turnPlayerIsP1 ? GameState.Player.P1 : GameState.Player.P2);
+        mw.gameState.advancePhase();   // DRAW
+        mw.gameState.advancePhase();   // MAIN_1
+        mw.gameState.advancePhase();   // ATTACK
+        assertEquals(GameState.GamePhase.ATTACK, mw.gameState.getCurrentPhase());
+    }
+
+    @Test
+    void declaringAnAttackerHoldsOnTheDeclareAttackersStep() {
+        MainWindow mw = new MainWindow();
+        enterAttackDeclarationStep(mw, true);
+        CardData attacker = makeForward("Attacker", "Fire", 3, 7000);
+        mw.placeCardInForwardZone(attacker);
+        mw.gameState.getIdentity().put(attacker, true);
+        mw.attackSubStep = 1;
+
+        mw.executeP1Attack(List.of(0));
+
+        assertEquals(1, mw.attackSubStep,
+                "the tracker stays on Declare Attackers until priority has been passed");
+        assertEquals(List.of(attacker), mw.p1DeclaredAttackers, "the attacker is on record either way");
+    }
+
+    @Test
+    void p2sDeclarationAlsoHoldsOnTheDeclareAttackersStep() {
+        MainWindow mw = new MainWindow();
+        enterAttackDeclarationStep(mw, false);
+        CardData attacker = makeForward("P2 Attacker", "Fire", 3, 7000);
+        mw.placeP2CardInForwardZone(attacker);
+        mw.gameState.getIdentity().put(attacker, false);
+        CardData blocker = makeForward("Blocker", "Ice", 3, 7000);
+        mw.placeCardInForwardZone(blocker);
+        mw.gameState.getIdentity().put(blocker, true);
+
+        mw.initP1BlockDeclaration(attacker, 0, () -> { });
+
+        assertEquals(1, mw.attackSubStep,
+                "P2's declaration does not open the block step until both players have passed");
+    }
+
+    // =========================================================================================
     // Louisoix 5-120C: "…you may search for 1 Card Name Alisaie or Card Name Alphinaud and add it
     // to your hand."  The name capture ran to the trailing "and", so the filter became the single
     // unmatchable name "Alisaie or Card Name Alphinaud" and the search found nothing. Names are now

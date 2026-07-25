@@ -167,13 +167,15 @@ class ComputerPlayer {
 				mw.autoAbilityTriggers.triggerAutoAbilitiesForBeginningOfAttackPhase(false);
 				mw.autoAbilityTriggers.triggerAutoAbilitiesForBeginningOfAttackPhaseEachTurn(false);
 				mw.refreshAllP2ForwardSlots();
-				step(() -> doAttackPhase(() -> {
+				// Attack Preparation: P2 (turn player) has acted, so P1 holds priority before P2
+				// may declare an attacker.
+				mw.offerP1AttackPrepPriority(() -> step(() -> doAttackPhase(() -> {
 					mw.gameState.advancePhase(); // ATTACK → MAIN_2
 					mw.refreshPhaseTracker();
 					mw.logEntry("[P2] Main Phase 2");
 					mw.autoAbilityTriggers.triggerAutoAbilitiesForBeginningOfMainPhase2(false);
 					step(() -> doMainPhase(this::doEndPhase));
-				}));
+				})));
 			}
 		}));
 	}
