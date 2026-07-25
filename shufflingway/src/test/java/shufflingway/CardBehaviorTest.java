@@ -4814,6 +4814,73 @@ public class CardBehaviorTest {
     }
 
     // =========================================================================================
+    // Louisoix 5-120C: "…you may search for 1 Card Name Alisaie or Card Name Alphinaud and add it
+    // to your hand."  The name capture ran to the trailing "and", so the filter became the single
+    // unmatchable name "Alisaie or Card Name Alphinaud" and the search found nothing. Names are now
+    // split into the pipe-separated form the card-name filter already understood.
+    // =========================================================================================
+
+    /** Runs a deck-search effect against a mock and returns the card-name filter it asked for. */
+    private static String searchNameFilterFor(String effectText, String sourceName) {
+        Consumer<GameContext> fn = ActionResolver.parse(effectText, makeForward(sourceName, "Ice", 3, 7000));
+        assertNotNull(fn, "search effect should parse: " + effectText);
+        GameContext ctx = mock(GameContext.class);
+        fn.accept(ctx);
+        ArgumentCaptor<String> nameFilter = ArgumentCaptor.forClass(String.class);
+        verify(ctx).searchDeckForCard(anyBoolean(), anyBoolean(), anyBoolean(), anyBoolean(),
+                anyInt(), any(), nameFilter.capture(), any(), any(), any(), any(), any(),
+                any(), anyInt(), anyBoolean(), anyBoolean());
+        return nameFilter.getValue();
+    }
+
+    @Test
+    void aTwoNameSearchLooksForEitherName() {
+        assertEquals("Alisaie|Alphinaud", searchNameFilterFor(
+                "search for 1 Card Name Alisaie or Card Name Alphinaud and add it to your hand.", "Louisoix"));
+        // The filter format is the one the matcher already splits on.
+        CardData alphinaud = makeForward("Alphinaud", "Ice", 2, 5000);
+        assertTrue(CardFilters.meetsCardNameFilter(alphinaud, "Alisaie|Alphinaud"));
+        assertFalse(CardFilters.meetsCardNameFilter(alphinaud, "Alisaie or Card Name Alphinaud"),
+                "the old single-name filter could never match either card");
+    }
+
+    @Test
+    void longerNameListsSplitOnEveryPrintedJoiner() {
+        // Comma with no space, comma then "or" (Refia 10-128L).
+        assertEquals("Arc|Ingus|Luneth", searchNameFilterFor(
+                "search for 1 Card Name Arc,Card Name Ingus, or Card Name Luneth of cost 4 or less "
+                + "and play it onto the field.", "Refia"));
+        // Comma then plain "or", with a parenthesised name (Nero (XIV), 9-007H).
+        assertEquals("Nero (XIV)|Livia|Rhitahtyn", searchNameFilterFor(
+                "search for 1 Card Name Nero (XIV), Card Name Livia, or Card Name Rhitahtyn "
+                + "and add it to your hand.", "Gaius"));
+        // Repeated "or" with no commas (Minwu 6-103H).
+        assertEquals("Scott|Minwu|Josef", searchNameFilterFor(
+                "search for 1 Card Name Scott or Card Name Minwu or Card Name Josef and add it to your hand.", "Hilda"));
+    }
+
+    @Test
+    void aNameListMixedWithAJobKeepsBothFilters() {
+        // 26-058H — two names OR a job; the names must still split.
+        assertEquals("Ashe|Basch", searchNameFilterFor(
+                "search for 1 Card Name Ashe, Card Name Basch or Job Judge and add it to your hand.", "Larsa"));
+    }
+
+    @Test
+    void anOtherThanClauseEndsTheNameRatherThanJoiningIt() {
+        // Cyan 11-003R — "other than Card Name Cyan" is an exclusion, not part of the name.
+        assertEquals("Samurai", searchNameFilterFor(
+                "search for 1 Job Samurai or Card Name Samurai other than Card Name Cyan and add it to your hand.",
+                "Cyan"));
+    }
+
+    @Test
+    void singleNameSearchesAreUnchanged() {
+        assertEquals("Ovjang", searchNameFilterFor(
+                "search for 1 Card Name Ovjang and add it to your hand.", "Aphmau"));
+    }
+
+    // =========================================================================================
     // Libroarian 8-084R: "When Libroarian enters the field, remove the top 4 cards of your deck
     // from the game. / At the end of your turn, add 1 card removed by the previous effect to your
     // hand. Then, if there are no more cards removed by the previous effect left, put Libroarian

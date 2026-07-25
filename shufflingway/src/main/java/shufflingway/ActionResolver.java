@@ -2888,11 +2888,18 @@ public class ActionResolver {
             "Card\\s+Name\\s+(?<cnamejobnmor>.+?)" +
             "(?:\\s+(?:Forwards?|Backups?|Monsters?|Summons?|Characters?|card))?" +
             "\\s+(?:and/)?or\\s+Job\\s+(?<jobnmcnameor>.+?)" +
-            "(?=\\s+of\\s+cost|\\s+(?:Forwards?|Backups?|Monsters?|Summons?|Characters?|card)\\b|\\s+and\\b)\\s*" +
+            "(?=\\s+of\\s+cost|\\s+(?:Forwards?|Backups?|Monsters?|Summons?|Characters?|card)\\b|\\s+other\\b|\\s+and\\b)\\s*" +
+        "|" +
+            // "Card Name A[, Card Name B][, or Card Name C]" — several names, OR'd together. Must
+            // precede the single-name alternative, whose lazy group would otherwise run to the
+            // trailing "and" and take the whole list as one (unmatchable) name.
+            "Card\\s+Name\\s+(?<cardnames>.+?(?:\\s*,\\s*|\\s+(?:and/)?or\\s+)Card\\s+Name\\s+.+?)" +
+            "(?=\\s+of\\s+cost|\\s+(?:Forwards?|Backups?|Monsters?|Summons?|Characters?|card)\\b|\\s+other\\b|\\s+and\\b)" +
+            "\\s+" +
         "|" +
             // Written card name without brackets — ends at type word, "of cost", or "and"
             "Card\\s+Name\\s+(?<cardname>.+?)" +
-            "(?=\\s+of\\s+cost|\\s+(?:Forwards?|Backups?|Monsters?|Summons?|Characters?|card)\\b|\\s+and\\b)" +
+            "(?=\\s+of\\s+cost|\\s+(?:Forwards?|Backups?|Monsters?|Summons?|Characters?|card)\\b|\\s+other\\b|\\s+and\\b)" +
             "\\s+" +
         "|" +
             // Category filter — lookahead keeps the type word in the targets group
@@ -2903,7 +2910,7 @@ public class ActionResolver {
             "Job\\s+(?<jobnmor>.+?)" +
             "(?:\\s+(?:Forwards?|Backups?|Monsters?|Summons?|Characters?|card))?" +
             "\\s+(?:and/)?or\\s+Card\\s+Name\\s+(?<cnameor>.+?)" +
-            "(?=\\s+of\\s+cost|\\s+(?:Forwards?|Backups?|Monsters?|Summons?|Characters?|card)\\b|\\s+and\\b)\\s*" +
+            "(?=\\s+of\\s+cost|\\s+(?:Forwards?|Backups?|Monsters?|Summons?|Characters?|card)\\b|\\s+other\\b|\\s+and\\b)\\s*" +
         "|" +
             // Written job — lookahead keeps element, type word, "of cost", "other than", Category, or "and" ahead
             "Job\\s+(?<jobnm>.+?)(?=\\s+(?:Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\b" +
@@ -17164,6 +17171,16 @@ public class ActionResolver {
      * Supported destinations: "add it to your hand", "play it onto the field",
      * "put it under the top card of your/its owner's deck".
      */
+    /**
+     * Turns a printed card-name list into the pipe-separated form the filters use downstream:
+     * "Alisaie or Card Name Alphinaud" → {@code "Alisaie|Alphinaud"}. One separator covers every
+     * printed joiner — ", ", ", or ", " or ", " and/or " — and a single name passes through unchanged.
+     */
+    private static String splitCardNameList(String printedNames) {
+        return String.join("|",
+                printedNames.trim().split("(?i)\\s*,?\\s*(?:(?:and/)?or\\s+)?Card\\s+Name\\s+"));
+    }
+
     private static Consumer<GameContext> tryParseSearchDeck(String text, CardData source, int xValue) {
         Matcher m = SEARCH_DECK_PATTERN.matcher(text);
         if (!m.find()) return null;
@@ -17175,8 +17192,13 @@ public class ActionResolver {
             Matcher nm = CARD_NAME_BRACKET_PATTERN.matcher(bracketName);
             if (nm.find()) cardNameFilter = nm.group(1).trim();
         } else {
-            String written = m.group("cardname");
-            if (written != null) cardNameFilter = written.trim();
+            String writtenNames = m.group("cardnames");
+            if (writtenNames != null) {
+                cardNameFilter = splitCardNameList(writtenNames);
+            } else {
+                String written = m.group("cardname");
+                if (written != null) cardNameFilter = written.trim();
+            }
         }
 
         // --- Job filter ---
@@ -17199,13 +17221,13 @@ public class ActionResolver {
         if (jobnmOr != null) {
             jobFilter = jobnmOr.trim();
             String cnameOr = m.group("cnameor");
-            if (cnameOr != null) cardNameFilter = cnameOr.trim();
+            if (cnameOr != null) cardNameFilter = splitCardNameList(cnameOr);
         }
 
-        // --- "Card Name X or Job Y" — sets both filters; OR logic applied at match time ---
+        // --- "Card Name X [, Card Name Y] or Job Z" — sets both filters; OR logic at match time ---
         String cnameJobnmOr = m.group("cnamejobnmor");
         if (cnameJobnmOr != null) {
-            cardNameFilter = cnameJobnmOr.trim();
+            cardNameFilter = splitCardNameList(cnameJobnmOr);
             String jobNmCnameOr = m.group("jobnmcnameor");
             if (jobNmCnameOr != null) jobFilter = jobNmCnameOr.trim();
         }
