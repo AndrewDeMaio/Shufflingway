@@ -7046,10 +7046,12 @@ public class MainWindow {
 		List<String> warpCost = card.warpCost();
 		if (warpCost.isEmpty()) return true;
 
-		// Separate element-specific requirements from generic CP (empty-string entries)
-		boolean hasGeneric = warpCost.contains("");
+		// Separate element-specific requirements from generic CP (empty-string entries).
+		// A Fina-style grant collapses the whole cost to generic: no element requirement survives.
+		boolean anyElem    = warpCostAnyElement(true);
+		boolean hasGeneric = anyElem || warpCost.contains("");
 		LinkedHashMap<String, Integer> needed = new LinkedHashMap<>();
-		for (String e : warpCost) if (!e.isEmpty()) needed.merge(e, 1, Integer::sum);
+		if (!anyElem) for (String e : warpCost) if (!e.isEmpty()) needed.merge(e, 1, Integer::sum);
 		String[] elems = needed.keySet().toArray(String[]::new);
 		int total = warpCost.size();
 
@@ -7197,7 +7199,7 @@ public class MainWindow {
 				gameState.getP1Hand(), p1BackupCards, p1BackupStates, p1BackupUrls,
 				p1ForwardCards,
 				this::showZoomAt, this::hideZoom,
-				lightDarkDiscardGrants(true),
+				lightDarkDiscardGrants(true), warpCostAnyElement(true),
 				(discards, backups, overrides) -> executeWarpPlay(card, handIdx, discards, backups, overrides))
 			.show();
 	}
@@ -7425,6 +7427,20 @@ public class MainWindow {
 		for (CardData c : playerMonsterCards(isP1))
 			if (!lostAbilitiesCards.contains(c)) out.addAll(c.grantsLightDarkDiscardCp());
 		return out;
+	}
+
+	/**
+	 * Returns true if the given player controls a card granting "Your Warp cost can be paid with
+	 * CP of any Element." (Fina), which makes every element of the Warp cost payable by any CP.
+	 */
+	boolean warpCostAnyElement(boolean isP1) {
+		for (CardData c : playerForwardCards(isP1))
+			if (c.warpCostAnyElement() && !lostAbilitiesCards.contains(c)) return true;
+		for (CardData c : playerBackupCards(isP1))
+			if (c != null && c.warpCostAnyElement() && !lostAbilitiesCards.contains(c)) return true;
+		for (CardData c : playerMonsterCards(isP1))
+			if (c.warpCostAnyElement() && !lostAbilitiesCards.contains(c)) return true;
+		return false;
 	}
 
 	boolean hasAvailableBackupSlot() {

@@ -60,16 +60,19 @@ public class WarpPaymentDialog {
     private final Runnable         onZoomHide;
     private final ConfirmCallback  onConfirm;
     private final java.util.Set<String> ldDiscardGrants;
+    private final boolean          anyElement;
 
     /**
      * @param ldDiscardGrants Light/Dark elements the player may discard from hand for CP via a
      *     field grant (see {@code MainWindow.lightDarkDiscardGrants}); empty when none apply.
+     * @param anyElement true when a field grant ("Your Warp cost can be paid with CP of any
+     *     Element.") lets any CP satisfy every element of the cost
      */
     public WarpPaymentDialog(JFrame owner, CardData card, int handIdx,
             List<CardData> hand, CardData[] backupCards, CardState[] backupStates,
             String[] backupUrls, List<CardData> controlledForwards,
             Consumer<String> onZoom, Runnable onZoomHide,
-            java.util.Set<String> ldDiscardGrants,
+            java.util.Set<String> ldDiscardGrants, boolean anyElement,
             ConfirmCallback onConfirm) {
         this.owner              = owner;
         this.card               = card;
@@ -82,16 +85,19 @@ public class WarpPaymentDialog {
         this.onZoom             = onZoom;
         this.onZoomHide         = onZoomHide;
         this.ldDiscardGrants    = ldDiscardGrants;
+        this.anyElement         = anyElement;
         this.onConfirm          = onConfirm;
     }
 
     public void show() {
         List<String> rawCost   = card.warpCost();
-        long genericNeeded     = rawCost.stream().filter(String::isEmpty).count();
-        LinkedHashMap<String, Integer> costByElem = new LinkedHashMap<>();
-        for (String e : rawCost) if (!e.isEmpty()) costByElem.merge(e, 1, Integer::sum);
-        String[] elems     = costByElem.keySet().toArray(String[]::new);
         int      totalCost = rawCost.size();
+        // An any-element grant turns every element requirement into a generic one, so the cost
+        // collapses to a plain CP total and no per-element bucket is tracked.
+        long genericNeeded = anyElement ? totalCost : rawCost.stream().filter(String::isEmpty).count();
+        LinkedHashMap<String, Integer> costByElem = new LinkedHashMap<>();
+        if (!anyElement) for (String e : rawCost) if (!e.isEmpty()) costByElem.merge(e, 1, Integer::sum);
+        String[] elems     = costByElem.keySet().toArray(String[]::new);
 
         JDialog dlg = new JDialog(owner, "Warp: " + card.name(), true);
         dlg.setResizable(false);
@@ -213,7 +219,9 @@ public class WarpPaymentDialog {
                                 && !controlledForwards.isEmpty();
                         java.util.List<String> grantedSpecific = getGrantedSpecificElements(bkp);
                         boolean hasGrantedSpecific = !grantedSpecific.isEmpty();
-                        if (isAnyElem || isAnyElemOfFwds || hasGrantedSpecific) {
+                        // Under an any-element grant the produced element is irrelevant, so skip the
+                        // picker rather than recording an override the cost can't consume.
+                        if (!anyElement && (isAnyElem || isAnyElemOfFwds || hasGrantedSpecific)) {
                             String[] available;
                             if (isAnyElemOfFwds && !isAnyElem) {
                                 java.util.LinkedHashSet<String> fwdElems = new java.util.LinkedHashSet<>();
@@ -309,6 +317,13 @@ public class WarpPaymentDialog {
         topPanel.setBorder(BorderFactory.createEmptyBorder(8, 8, 4, 8));
         topPanel.add(titleLabel, java.awt.BorderLayout.NORTH);
         topPanel.add(cpLabel,    java.awt.BorderLayout.CENTER);
+        if (anyElement) {
+            JLabel grantNote = new JLabel(
+                    "Your Warp cost can be paid with CP of any Element.", SwingConstants.CENTER);
+            grantNote.setFont(FontLoader.loadPixelFont(9));
+            grantNote.setForeground(new Color(255, 200, 80));
+            topPanel.add(grantNote, java.awt.BorderLayout.SOUTH);
+        }
 
         JPanel mainPanel = new JPanel(new java.awt.BorderLayout(0, 4));
         mainPanel.setBorder(BorderFactory.createEmptyBorder(0, 8, 8, 8));
