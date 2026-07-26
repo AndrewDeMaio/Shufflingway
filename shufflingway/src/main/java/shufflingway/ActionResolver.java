@@ -11459,6 +11459,14 @@ public class ActionResolver {
         }
         if (exBurstSuppressionMaxCost(quoted, source.name()) != null)
             return ctx -> ctx.grantSelfExBurstSuppression(source);
+        // "If [Self] deals damage to a Forward or your opponent, double the damage instead."
+        // (Caius 18-108H). Granted verbatim — the damage paths already recognise this wording on a
+        // printed field ability, and read granted ones through the same effective-abilities view.
+        Matcher dd = AutoAbilityTriggers.FA_OUTGOING_DAMAGE_DOUBLER.matcher(quoted);
+        if (dd.matches() && dd.group("card").trim().equalsIgnoreCase(source.name())) {
+            final String granted = quoted;
+            return ctx -> ctx.grantSelfFieldAbilityUntilEndOfTurn(source, granted);
+        }
         return null;
     }
 
@@ -11500,9 +11508,15 @@ public class ActionResolver {
         return cost == null ? Integer.MAX_VALUE : Integer.parseInt(cost);
     }
 
-    /** "[Self] gains \"[quoted field ability]\" until the end of the turn." (e.g. Tsukinowa). */
+    /**
+     * "[Self] gains \"[quoted field ability]\" until the end of the turn." (e.g. Tsukinowa).
+     *
+     * <p>Either quote character is accepted: when this wording is itself nested inside a
+     * "select 1 of the 2 following actions" option, the printed text uses single quotes for the
+     * inner ability because the option already spent the double quotes (Caius 18-108H).
+     */
     private static final Pattern GAINS_QUOTED_FIELD_ABILITY_UNTIL_EOT = Pattern.compile(
-        "(?i)^(?<subject>.+?)\\s+gains\\s+\"(?<quoted>.+?)\"\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn[.!]?$");
+        "(?i)^(?<subject>.+?)\\s+gains\\s+(?<q>[\"'])(?<quoted>.+?)\\k<q>\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn[.!]?$");
 
     private static Consumer<GameContext> tryParseGainsQuotedFieldAbilityUntilEot(String text, CardData source) {
         if (source == null) return null;

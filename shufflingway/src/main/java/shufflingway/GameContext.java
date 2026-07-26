@@ -1715,6 +1715,14 @@ public interface GameContext {
      */
     void grantCanAttackTwiceUntilEndOfTurn(CardData source);
 
+    /**
+     * Hands {@code source} the field ability {@code abilityText} until end of turn, for the
+     * "[Self] gains '&lt;ability&gt;' until the end of the turn" wording. The text is stored verbatim
+     * so the checks that read printed field abilities match it the same way — callers must only
+     * grant text those checks actually recognise.
+     */
+    void grantSelfFieldAbilityUntilEndOfTurn(CardData source, String abilityText);
+
     /** Marks all opponent Forwards as unable to block Forwards with power inferior to their own this turn. */
     void setOppForwardsCannotBlockInferiorPowerThisTurn();
 

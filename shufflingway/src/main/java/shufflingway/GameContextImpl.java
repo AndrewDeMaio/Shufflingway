@@ -1094,6 +1094,16 @@ final class GameContextImpl implements GameContext {
 				mw.endOfTurnEffects.add(ctx -> mw.grantedCanAttackTwice.remove(source));
 				logEntry(source.name() + " gains \"can attack twice in the same turn\" until end of turn");
 			}
+			@Override public void grantSelfFieldAbilityUntilEndOfTurn(CardData source, String abilityText) {
+				FieldAbility granted = new FieldAbility(abilityText, 0);
+				mw.grantedFieldAbilities.computeIfAbsent(source, k -> new ArrayList<>()).add(granted);
+				mw.endOfTurnEffects.add(ctx -> {
+					List<FieldAbility> list = mw.grantedFieldAbilities.get(source);
+					if (list != null && list.remove(granted) && list.isEmpty())
+						mw.grantedFieldAbilities.remove(source);
+				});
+				logEntry(source.name() + " gains \"" + abilityText + "\" until end of turn");
+			}
 			@Override public void setOppForwardsCannotBlockInferiorPowerThisTurn() {
 				if (isP1()) mw.p2ForwardCannotBlockInferiorPower = true;
 				else        mw.p1ForwardCannotBlockInferiorPower = true;
@@ -5070,7 +5080,7 @@ final class GameContextImpl implements GameContext {
 			@Override public void dealDamageToOpponent(int amount) {
 				if (mw.currentAbilitySource != null
 						&& !mw.lostAbilitiesCards.contains(mw.currentAbilitySource)) {
-					for (FieldAbility fa : mw.currentAbilitySource.fieldAbilities()) {
+					for (FieldAbility fa : mw.effectiveFieldAbilities(mw.currentAbilitySource)) {
 						Matcher m = AutoAbilityTriggers.FA_OUTGOING_DAMAGE_DOUBLER.matcher(fa.effectText());
 						if (!m.find()) continue;
 						if (!m.group("card").trim().equalsIgnoreCase(mw.currentAbilitySource.name())) continue;

@@ -108,6 +108,91 @@ public class CardBehaviorTest {
     }
 
     // =========================================================================================
+    // Caius 18-108H: "When Caius attacks, select 1 of the 2 following actions. / 'Your opponent
+    // discards 1 card.' / 'Caius gains "If Caius deals damage to a Forward or your opponent,
+    // double the damage instead." until the end of the turn.'"
+    //
+    // The damage paths already understood that field ability when printed on a card, but a granted
+    // one landed nowhere they looked, and the grant itself did not even parse: the quoted-ability
+    // grant handled only three specific abilities, and its pattern required double quotes while
+    // the nested wording inside a "select 1 of 2" option is printed with single ones. So picking
+    // the second option silently did nothing and Caius kept dealing 1 damage.
+    // =========================================================================================
+
+    private static final String CAIUS_DOUBLER_OPTION =
+            "Caius gains 'If Caius deals damage to a Forward or your opponent, "
+            + "double the damage instead.' until the end of the turn.";
+
+    /** Puts Caius on P1's field and resolves his damage-doubler option, returning the window. */
+    private static MainWindow caiusGrantsDoubler() {
+        MainWindow mw = new MainWindow();
+        CardData caius = makeForward("Caius", "Fire", 2, 9000);
+        mw.placeCardInForwardZone(caius);
+        Consumer<GameContext> fn = ActionResolver.parse(CAIUS_DOUBLER_OPTION, caius);
+        assertNotNull(fn, "the granted-doubler option should parse");
+        fn.accept(mw.buildGameContext(true));
+        return mw;
+    }
+
+    @Test
+    void caiusDealsDoubleDamageToTheOpponentOnceGranted() {
+        MainWindow mw = new MainWindow();
+        CardData caius = makeForward("Caius", "Fire", 2, 9000);
+        mw.placeCardInForwardZone(caius);
+
+        assertFalse(mw.sourceHasOutgoingDmgToOpponentDoubler(caius),
+                "no doubler before the option is taken — this is the 1-damage case");
+
+        ActionResolver.parse(CAIUS_DOUBLER_OPTION, caius).accept(mw.buildGameContext(true));
+
+        assertTrue(mw.sourceHasOutgoingDmgToOpponentDoubler(mw.p1ForwardCards.get(0)),
+                "after the grant his combat damage to the opponent doubles");
+    }
+
+    @Test
+    void caiusDealsDoubleCombatDamageToAForwardOnceGranted() {
+        MainWindow mw = caiusGrantsDoubler();
+        CardData caius  = mw.p1ForwardCards.get(0);
+        CardData victim = makeForward("Victim", "Ice", 3, 7000);
+
+        assertEquals(2, mw.fieldAbilityCombatOutgoingMult(caius, victim),
+                "the same granted ability covers damage dealt to a Forward");
+    }
+
+    @Test
+    void aGrantedFieldAbilityReadsBackThroughTheEffectiveView() {
+        MainWindow mw = caiusGrantsDoubler();
+        CardData caius = mw.p1ForwardCards.get(0);
+
+        assertTrue(caius.fieldAbilities().isEmpty(), "nothing is printed on the card itself");
+        assertEquals(1, mw.effectiveFieldAbilities(caius).size(),
+                "the grant is only visible through the effective-abilities view");
+    }
+
+    @Test
+    void caiusDamageDoublerExpiresAtEndOfTurn() {
+        MainWindow mw = caiusGrantsDoubler();
+        CardData caius = mw.p1ForwardCards.get(0);
+
+        for (Consumer<GameContext> eot : new ArrayList<>(mw.endOfTurnEffects))
+            eot.accept(mw.buildGameContext(true));
+
+        assertFalse(mw.sourceHasOutgoingDmgToOpponentDoubler(caius),
+                "\"until the end of the turn\" — the grant does not carry into the next turn");
+        assertTrue(mw.effectiveFieldAbilities(caius).isEmpty());
+    }
+
+    @Test
+    void theDoublerGrantIsNotHandedToAnUnrelatedCard() {
+        MainWindow mw = caiusGrantsDoubler();
+        CardData other = makeForward("Other", "Fire", 2, 5000);
+        mw.placeCardInForwardZone(other);
+
+        assertFalse(mw.sourceHasOutgoingDmgToOpponentDoubler(other),
+                "the grant is keyed to the instance that gained it");
+    }
+
+    // =========================================================================================
     // Cissnei 22-028H: "When 1 or more Job Member of the Turks Forwards other than Cissnei you
     // control attack, activate Cissnei. Cissnei can attack once more this turn."
     //

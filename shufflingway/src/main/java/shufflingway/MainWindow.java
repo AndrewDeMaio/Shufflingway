@@ -252,6 +252,12 @@ public class MainWindow {
 	final Set<Integer> p2ForwardCanDoSecondAttack = new HashSet<>();
 	/** Cards granted "can attack twice in the same turn" until end of turn (via an ability), keyed by instance. */
 	final Set<CardData> grantedCanAttackTwice = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+	/**
+	 * Field abilities handed to a card until end of turn by a "[Self] gains '&lt;ability&gt;' until the
+	 * end of the turn" effect (e.g. Caius 18-108H's damage doubler), keyed by instance. Read through
+	 * {@link #effectiveFieldAbilities} so a granted ability behaves exactly like a printed one.
+	 */
+	final Map<CardData, List<FieldAbility>> grantedFieldAbilities = new IdentityHashMap<>();
 	/** Forwards restricted from blocking until the end of their owner's turn (survives one end-phase). */
 	final Set<Integer> p1ForwardCannotBlockPersistent  = new HashSet<>();
 	final Set<Integer> p2ForwardCannotBlockPersistent  = new HashSet<>();
@@ -2247,6 +2253,7 @@ public class MainWindow {
                                 p1ForwardMustAttack.clear();            p2ForwardMustAttack.clear();
                                 p1ForwardCannotAttackPersistent.clear(); p1ForwardCannotBlockPersistent.clear();
                                 p1ForwardCanDoSecondAttack.clear();     p2ForwardCanDoSecondAttack.clear();
+                                grantedFieldAbilities.clear();          grantedCanAttackTwice.clear();
                                 p1TempAttackTriggers.clear();           p2TempAttackTriggers.clear();
                                 p1TempBlockTriggers.clear();            p2TempBlockTriggers.clear();
                                 nextIncomingDmgZeroSet.clear();   nextIncomingDmgRedirectMap.clear();   nextIncomingDmgReduceMap.clear();   nextAbilityDmgReduceMap.clear();
@@ -9638,7 +9645,7 @@ public class MainWindow {
 		// Outgoing damage doubler from the source card's own field ability (ability damage to opponent's Forward)
 		if (fromAbility && currentAbilitySource != null && currentAbilitySourceIsP1 != isP1
 				&& !lostAbilitiesCards.contains(currentAbilitySource)) {
-			for (FieldAbility fa : currentAbilitySource.fieldAbilities()) {
+			for (FieldAbility fa : effectiveFieldAbilities(currentAbilitySource)) {
 				Matcher fam = AutoAbilityTriggers.FA_OUTGOING_DAMAGE_DOUBLER.matcher(fa.effectText());
 				if (!fam.find() || !fam.group("card").trim().equalsIgnoreCase(currentAbilitySource.name())) continue;
 				if (!fam.group("target").toLowerCase().contains("forward")) continue;
@@ -10154,9 +10161,22 @@ public class MainWindow {
 		return boost;
 	}
 
-	private int fieldAbilityCombatOutgoingMult(CardData attacker, CardData target) {
+	/**
+	 * A card's printed field abilities plus any granted to it until end of turn. Every field-ability
+	 * check that a grant should be able to satisfy must read this rather than
+	 * {@link CardData#fieldAbilities()} directly.
+	 */
+	List<FieldAbility> effectiveFieldAbilities(CardData card) {
+		List<FieldAbility> granted = grantedFieldAbilities.get(card);
+		if (granted == null || granted.isEmpty()) return card.fieldAbilities();
+		List<FieldAbility> all = new ArrayList<>(card.fieldAbilities());
+		all.addAll(granted);
+		return all;
+	}
+
+	int fieldAbilityCombatOutgoingMult(CardData attacker, CardData target) {
 		int mult = 1;
-		for (FieldAbility fa : attacker.fieldAbilities()) {
+		for (FieldAbility fa : effectiveFieldAbilities(attacker)) {
 			Matcher m = AutoAbilityTriggers.FA_DOUBLE_DAMAGE_VS_COST_THRESHOLD.matcher(fa.effectText());
 			if (m.find() && m.group("name").trim().equalsIgnoreCase(attacker.name())
 					&& target.cost() >= Integer.parseInt(m.group("cost")))
@@ -10169,9 +10189,9 @@ public class MainWindow {
 		return mult;
 	}
 
-	private boolean sourceHasOutgoingDmgToOpponentDoubler(CardData attacker) {
+	boolean sourceHasOutgoingDmgToOpponentDoubler(CardData attacker) {
 		if (attacker == null || lostAbilitiesCards.contains(attacker)) return false;
-		for (FieldAbility fa : attacker.fieldAbilities()) {
+		for (FieldAbility fa : effectiveFieldAbilities(attacker)) {
 			Matcher m = AutoAbilityTriggers.FA_OUTGOING_DAMAGE_DOUBLER.matcher(fa.effectText());
 			if (m.find() && m.group("card").trim().equalsIgnoreCase(attacker.name())
 					&& m.group("target").toLowerCase().contains("opponent"))
