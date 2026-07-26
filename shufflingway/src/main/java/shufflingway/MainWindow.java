@@ -10200,7 +10200,30 @@ public class MainWindow {
 		return false;
 	}
 
-	/** Deals 1 (or 2 if the attacker has the outgoing-damage doubler FA) combat damage to the opponent,
+	/**
+	 * The fixed number of damage points {@code attacker}'s "If [card] deals damage to your opponent,
+	 * the damage becomes N instead" ability replaces its damage with, or {@code null} when it has no
+	 * such ability. Reads granted abilities too, so an until-end-of-turn grant counts.
+	 */
+	Integer outgoingDamageToOpponentOverride(CardData attacker) {
+		if (attacker == null || lostAbilitiesCards.contains(attacker)) return null;
+		for (FieldAbility fa : effectiveFieldAbilities(attacker)) {
+			Matcher m = AutoAbilityTriggers.FA_OUTGOING_DAMAGE_TO_OPPONENT_SETS_TO.matcher(fa.effectText());
+			if (m.find() && m.group("card").trim().equalsIgnoreCase(attacker.name()))
+				return Integer.valueOf(m.group("amount"));
+		}
+		return null;
+	}
+
+	/** The points of combat damage {@code attacker} deals to the opposing player. */
+	int combatDamagePointsToOpponent(CardData attacker) {
+		Integer override = outgoingDamageToOpponentOverride(attacker);
+		if (override != null) return override;
+		return sourceHasOutgoingDmgToOpponentDoubler(attacker) ? 2 : 1;
+	}
+
+	/** Deals combat damage to the opponent — normally 1 point, but an outgoing-damage doubler or
+	 *  "the damage becomes N instead" ability on the attacker changes the count (N may be 0) —
 	 *  calling {@code afterDamage} after all damage points and any EX bursts have resolved. */
 	private void dealCombatDamageToOpponent(CardData attacker, boolean attackerIsP1, Runnable afterDamage) {
 		if (dealsNoCombatDamageSet.contains(attacker)) {
@@ -10208,20 +10231,24 @@ public class MainWindow {
 			afterDamage.run();
 			return;
 		}
-		boolean doubled = sourceHasOutgoingDmgToOpponentDoubler(attacker);
-		// Each point re-credits the attacker: the source is consumed per call, and the second
-		// point of doubled damage is dealt from the first one's completion callback.
-		Runnable takeOne = attackerIsP1
-				? () -> { setPlayerDamageSource(attacker); p2TakeDamage(afterDamage); }
-				: () -> { setPlayerDamageSource(attacker); p1TakeDamage(afterDamage); };
+		int points = combatDamagePointsToOpponent(attacker);
+		if (points != 1)
+			logEntry((attackerIsP1 ? "" : "[P2] ") + attacker.name()
+					+ " — combat damage to opponent is " + points + " instead of 1");
+		dealOpponentDamagePoints(attacker, attackerIsP1, points, afterDamage);
+	}
+
+	/**
+	 * Deals {@code remaining} points of damage to the opposing player one at a time, each point
+	 * re-crediting {@code attacker} as the damage source (it is consumed per call) and the next
+	 * point dealt from the previous one's completion callback so EX Bursts resolve in order.
+	 */
+	private void dealOpponentDamagePoints(CardData attacker, boolean attackerIsP1, int remaining,
+			Runnable afterDamage) {
+		if (remaining <= 0) { afterDamage.run(); return; }
 		setPlayerDamageSource(attacker);
-		if (attackerIsP1) {
-			if (doubled) p2TakeDamage(takeOne);
-			else         p2TakeDamage(afterDamage);
-		} else {
-			if (doubled) p1TakeDamage(takeOne);
-			else         p1TakeDamage(afterDamage);
-		}
+		Runnable next = () -> dealOpponentDamagePoints(attacker, attackerIsP1, remaining - 1, afterDamage);
+		if (attackerIsP1) p2TakeDamage(next); else p1TakeDamage(next);
 	}
 
 	/**

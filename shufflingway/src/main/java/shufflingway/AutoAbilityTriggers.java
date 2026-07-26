@@ -272,6 +272,26 @@ final class AutoAbilityTriggers {
 	);
 
 	/**
+	 * Outgoing damage replacement on the dealing card:
+	 * "If [card] deals damage to your opponent, the damage becomes N instead."
+	 * Printed on Ba'Gamnan 2-088C ({@code N} = 0) and granted until end of turn by Ramada 17-125R,
+	 * Cecil 15-073H and Fang 19-131S ({@code N} = 2).
+	 *
+	 * <p>A replacement, not a multiplier — the result is exactly {@code amount}, so it overrides
+	 * {@link #FA_OUTGOING_DAMAGE_DOUBLER} rather than stacking with it, and {@code N} = 0 means the
+	 * card deals no damage to the opponent at all.
+	 *
+	 * <p>Deliberately does not match the qualified variants ("other than by its ability" on
+	 * Behemoth 24-084R, "forming a party" on Lightning 26-098L) — those carry extra conditions this
+	 * unconditional form must not silently apply.
+	 * Groups: {@code card}, {@code amount}.
+	 */
+	static final Pattern FA_OUTGOING_DAMAGE_TO_OPPONENT_SETS_TO = Pattern.compile(
+		"(?i)^If\\s+(?<card>.+?)\\s+deals\\s+damage\\s+to\\s+your\\s+opponent,\\s+" +
+		"the\\s+damage\\s+becomes\\s+(?<amount>\\d+)\\s+instead\\.?$"
+	);
+
+	/**
 	 * Outgoing damage boost: "If a Forward is dealt damage by your [Element] Summon,
 	 * the damage increases by N instead."
 	 * Checked on the CASTER's side field cards (not the target's side).

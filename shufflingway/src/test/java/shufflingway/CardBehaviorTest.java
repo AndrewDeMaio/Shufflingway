@@ -108,6 +108,98 @@ public class CardBehaviorTest {
     }
 
     // =========================================================================================
+    // Ramada 17-125R: "[Sharp Spear] 《S》: Until the end of the turn, Ramada gains +2000 power,
+    // Haste and 'If Ramada deals damage to your opponent, the damage becomes 2 instead.'"
+    //
+    // The power/traits half already worked; the quoted ability did not, so the whole effect failed
+    // to parse. "the damage becomes N instead" was only ever modelled for damage coming IN to a
+    // card — there was no outgoing form, so nothing set the damage a card deals to a player.
+    // It is a replacement, not a multiplier: N may be 0 (Ba'Gamnan 2-088C prints exactly this
+    // ability with N = 0, and was dealing 1 damage).
+    // =========================================================================================
+
+    private static final String RAMADA_SHARP_SPEAR =
+            "Until the end of the turn, Ramada gains +2000 power, Haste and "
+            + "\"If Ramada deals damage to your opponent, the damage becomes 2 instead.\"";
+
+    /** Puts a Forward on P1's field and resolves {@code effect} with it as the source. */
+    private static MainWindow resolveSelfEffect(CardData self, String effect) {
+        MainWindow mw = new MainWindow();
+        mw.placeCardInForwardZone(self);
+        Consumer<GameContext> fn = ActionResolver.parse(effect, self);
+        assertNotNull(fn, "effect should parse: " + effect);
+        fn.accept(mw.buildGameContext(true));
+        return mw;
+    }
+
+    @Test
+    void ramadasSharpSpearSetsHisCombatDamageToTwo() {
+        CardData ramada = makeForward("Ramada", "Water", 4, 7000);
+        MainWindow mw = new MainWindow();
+        mw.placeCardInForwardZone(ramada);
+
+        assertEquals(1, mw.combatDamagePointsToOpponent(ramada), "1 point before the ability is used");
+
+        ActionResolver.parse(RAMADA_SHARP_SPEAR, ramada).accept(mw.buildGameContext(true));
+
+        assertEquals(2, mw.combatDamagePointsToOpponent(mw.p1ForwardCards.get(0)),
+                "Sharp Spear replaces his damage to the opponent with 2");
+    }
+
+    @Test
+    void ramadasSharpSpearAlsoGrantsThePowerAndHaste() {
+        CardData ramada = makeForward("Ramada", "Water", 4, 7000);
+        MainWindow mw = resolveSelfEffect(ramada, RAMADA_SHARP_SPEAR);
+
+        assertEquals(9000, mw.effectiveP1ForwardPower(0), "+2000 power still applies alongside the grant");
+        assertTrue(mw.effectiveP1HasTrait(0, CardData.Trait.HASTE), "and Haste");
+    }
+
+    @Test
+    void ramadasDamageOverrideExpiresAtEndOfTurn() {
+        CardData ramada = makeForward("Ramada", "Water", 4, 7000);
+        MainWindow mw = resolveSelfEffect(ramada, RAMADA_SHARP_SPEAR);
+        CardData onField = mw.p1ForwardCards.get(0);
+
+        for (Consumer<GameContext> eot : new ArrayList<>(mw.endOfTurnEffects))
+            eot.accept(mw.buildGameContext(true));
+
+        assertEquals(1, mw.combatDamagePointsToOpponent(onField),
+                "\"until the end of the turn\" — back to 1 point next turn");
+    }
+
+    @Test
+    void baGamnanPrintsTheSameAbilityWithZeroAndDealsNoDamage() {
+        // 2-088C prints it rather than granting it, so the printed path must honour N = 0 too.
+        String printed = "If Ba'Gamnan deals damage to your opponent, the damage becomes 0 instead.";
+        CardData baGamnan = new CardData(null, "Ba'Gamnan", "Wind", 3, 7000, "Forward", false, 0, false, false,
+                Set.of(), 0, List.of(), null, List.of(),
+                List.of(), List.of(), CardData.parseFieldAbilities(printed, "Forward"),
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                false, false, null, false, false, false, false, false, false,
+                null, null, null, printed);
+        MainWindow mw = new MainWindow();
+        mw.placeCardInForwardZone(baGamnan);
+
+        assertEquals(0, mw.combatDamagePointsToOpponent(baGamnan),
+                "the replacement sets the damage to 0 — it is not a multiplier");
+    }
+
+    @Test
+    void aDamageReplacementOverridesTheDoubler() {
+        // Whichever order they are acquired in, "becomes N" replaces rather than stacks.
+        CardData ramada = makeForward("Ramada", "Water", 4, 7000);
+        MainWindow mw = resolveSelfEffect(ramada, RAMADA_SHARP_SPEAR);
+        CardData onField = mw.p1ForwardCards.get(0);
+        ActionResolver.parse("Ramada gains \"If Ramada deals damage to a Forward or your opponent, "
+                + "double the damage instead.\" until the end of the turn.", onField)
+                .accept(mw.buildGameContext(true));
+
+        assertEquals(2, mw.combatDamagePointsToOpponent(onField),
+                "still 2 — the replacement wins over doubling rather than yielding 4");
+    }
+
+    // =========================================================================================
     // Caius 18-108H: "When Caius attacks, select 1 of the 2 following actions. / 'Your opponent
     // discards 1 card.' / 'Caius gains "If Caius deals damage to a Forward or your opponent,
     // double the damage instead." until the end of the turn.'"

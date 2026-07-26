@@ -5090,6 +5090,14 @@ final class GameContextImpl implements GameContext {
 						amount *= 2;
 						break;
 					}
+					// A "becomes N instead" replacement wins over the doubler — it sets the damage
+					// rather than scaling it, and the wording covers ability damage as well as combat.
+					Integer override = mw.outgoingDamageToOpponentOverride(mw.currentAbilitySource);
+					if (override != null && override != amount) {
+						logEntry(mw.currentAbilitySource.name() + " — damage to opponent becomes "
+								+ override + " instead of " + amount);
+						amount = override;
+					}
 				}
 				for (int i = 0; i < amount; i++) {
 					mw.setPlayerDamageSource(mw.currentAbilitySource);

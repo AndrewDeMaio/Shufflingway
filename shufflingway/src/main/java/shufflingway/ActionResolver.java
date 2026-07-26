@@ -11467,6 +11467,13 @@ public class ActionResolver {
             final String granted = quoted;
             return ctx -> ctx.grantSelfFieldAbilityUntilEndOfTurn(source, granted);
         }
+        // "If [Self] deals damage to your opponent, the damage becomes N instead."
+        // (Ramada 17-125R, Cecil 15-073H, Fang 19-131S) — granted verbatim, same as the doubler.
+        Matcher setTo = AutoAbilityTriggers.FA_OUTGOING_DAMAGE_TO_OPPONENT_SETS_TO.matcher(quoted);
+        if (setTo.matches() && setTo.group("card").trim().equalsIgnoreCase(source.name())) {
+            final String granted = quoted;
+            return ctx -> ctx.grantSelfFieldAbilityUntilEndOfTurn(source, granted);
+        }
         return null;
     }
 
