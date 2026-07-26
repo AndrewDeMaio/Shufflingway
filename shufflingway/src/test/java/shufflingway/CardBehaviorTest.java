@@ -81,6 +81,17 @@ public class CardBehaviorTest {
                 job, null, null, "");
     }
 
+    /** Builds a Forward carrying {@code job} and the auto abilities parsed from {@code text}. */
+    private static CardData makeJobForwardWithAutos(String name, String element, int power,
+            String job, String text) {
+        return new CardData(null, name, element, 2, power, "Forward", false, 0, false, false,
+                Set.of(), 0, List.of(), null, List.of(),
+                List.of(), CardData.parseAutoAbilities(text), List.of(), List.of(), List.of(),
+                List.of(), List.of(), List.of(), List.of(), List.of(),
+                false, false, null, false, false, false, false, false, false,
+                job, null, null, text);
+    }
+
     private static CardData makeFirion(int power) {
         return makeForward("Firion", "Fire", 2, power, CardData.parseActionAbilities(FIRION_TEXT));
     }
@@ -94,6 +105,107 @@ public class CardBehaviorTest {
         mw.p2ForwardStates.set(0, firionState);
         mw.gameState.getP2Hand().addAll(p2HandCards);
         return mw;
+    }
+
+    // =========================================================================================
+    // Cissnei 22-028H: "When 1 or more Job Member of the Turks Forwards other than Cissnei you
+    // control attack, activate Cissnei. Cissnei can attack once more this turn."
+    //
+    // The subject combines a Job filter with an "other than <self>" exclusion and a count form,
+    // which no existing trigger subject covered — it fell through to the plain "attacks" trigger,
+    // whose triggerCard must equal the card's own name, so the ability never fired at all.
+    // The count form ("1 or more …") describes the declaration, so a party of qualifying Turks
+    // fires it once rather than once per member.
+    // =========================================================================================
+
+    private static final String CISSNEI_TEXT =
+            "Haste[[br]]   Cissnei enters the field dull.[[br]]   When 1 or more Job Member of the Turks "
+            + "Forwards other than Cissnei you control attack, activate Cissnei. "
+            + "Cissnei can attack once more this turn.";
+
+    private static final String TURK = "Member of the Turks";
+
+    /** P1 field with a dull Cissnei in slot 0, then {@code allies} in the following slots. */
+    private static MainWindow cissneiSetUp(CardData... allies) {
+        MainWindow mw = new MainWindow();
+        mw.placeCardInForwardZone(makeJobForwardWithAutos("Cissnei", "Ice", 6000, TURK, CISSNEI_TEXT));
+        mw.p1ForwardStates.set(0, CardState.DULL);
+        for (CardData ally : allies) mw.placeCardInForwardZone(ally);
+        return mw;
+    }
+
+    @Test
+    void cissneiActivatesWhenAnotherTurkAttacks() {
+        CardData reno = makeJobCard("Reno", "Ice", "Forward", TURK);
+        MainWindow mw = cissneiSetUp(reno);
+
+        mw.autoAbilityTriggers.triggerAutoAbilitiesForAttack(reno, true);
+
+        assertEquals(CardState.ACTIVE, mw.p1ForwardStates.get(0),
+                "a fellow Turk attacking activates Cissnei");
+    }
+
+    @Test
+    void cissneiDoesNotActivateOnHerOwnAttack() {
+        MainWindow mw = cissneiSetUp();
+        CardData cissnei = mw.p1ForwardCards.get(0);
+
+        mw.autoAbilityTriggers.triggerAutoAbilitiesForAttack(cissnei, true);
+
+        assertEquals(CardState.DULL, mw.p1ForwardStates.get(0),
+                "\"other than Cissnei\" excludes her own attack");
+    }
+
+    @Test
+    void cissneiDoesNotActivateWhenANonTurkAttacks() {
+        CardData cloud = makeJobCard("Cloud", "Ice", "Forward", "SOLDIER");
+        MainWindow mw = cissneiSetUp(cloud);
+
+        mw.autoAbilityTriggers.triggerAutoAbilitiesForAttack(cloud, true);
+
+        assertEquals(CardState.DULL, mw.p1ForwardStates.get(0),
+                "the Job filter keeps non-Turks from triggering it");
+    }
+
+    @Test
+    void cissneiDoesNotActivateForAnOpposingTurk() {
+        MainWindow mw = cissneiSetUp();
+        CardData rude = makeJobCard("Rude", "Ice", "Forward", TURK);
+        mw.placeP2CardInForwardZone(rude);
+
+        mw.autoAbilityTriggers.triggerAutoAbilitiesForAttack(rude, false);
+
+        assertEquals(CardState.DULL, mw.p1ForwardStates.get(0),
+                "the subject is \"you control\" — an opponent's Turk does not count");
+    }
+
+    @Test
+    void aPartyOfTurksFiresCissneiOnlyOnce() {
+        CardData reno = makeJobCard("Reno", "Ice", "Forward", TURK);
+        CardData rude = makeJobCard("Rude", "Ice", "Forward", TURK);
+        MainWindow mw = cissneiSetUp(reno, rude);
+        mw.p1AttackDeclarationsThisTurn = 1;   // one declaration covering both attackers
+
+        mw.autoAbilityTriggers.triggerAutoAbilitiesForAttack(reno, true);
+        mw.autoAbilityTriggers.triggerAutoAbilitiesForAttack(rude, true);
+
+        assertEquals(1, mw.autoAbilityTriggers.firedThisDeclaration.size(),
+                "\"1 or more … attack\" is one event for the declaration, not one per attacker");
+    }
+
+    @Test
+    void aSecondAttackDeclarationFiresCissneiAgain() {
+        CardData reno = makeJobCard("Reno", "Ice", "Forward", TURK);
+        MainWindow mw = cissneiSetUp(reno);
+
+        mw.p1AttackDeclarationsThisTurn = 1;
+        mw.autoAbilityTriggers.triggerAutoAbilitiesForAttack(reno, true);
+        mw.p1ForwardStates.set(0, CardState.DULL);   // Cissnei attacked, so she is dull again
+        mw.p1AttackDeclarationsThisTurn = 2;
+        mw.autoAbilityTriggers.triggerAutoAbilitiesForAttack(reno, true);
+
+        assertEquals(CardState.ACTIVE, mw.p1ForwardStates.get(0),
+                "the once-per-declaration guard resets for a new attack declaration");
     }
 
     // =========================================================================================

@@ -905,12 +905,6 @@ final class AutoAbilityTriggers {
 			java.util.regex.Pattern.compile(
 				"(?i)^a\\s+Forward\\s+other\\s+than\\s+(?<name>.+?)\\s+you\\s+control$");
 
-	private static final java.util.regex.Pattern FILTERED_FORWARD_SUBJECT_PATTERN =
-			java.util.regex.Pattern.compile(
-				"(?i)^a\\s+(?<type1>Job|Card\\s+Name)\\s+(?<val1>.+?)" +
-				"(?:\\s+or\\s+a\\s+(?<type2>Job|Card\\s+Name)\\s+(?<val2>.+?))?" +
-				"\\s+you\\s+control$");
-
 	/**
 	 * Returns true when {@code attacker} matches "a Forward other than [excluded] you control".
 	 */
@@ -922,11 +916,17 @@ final class AutoAbilityTriggers {
 	}
 
 	/**
-	 * Returns true when {@code attacker} matches "a Job X [or a Card Name Y] you control".
+	 * Returns true when {@code attacker} satisfies a {@link CardData#FILTER_FORWARD_SUBJECT}
+	 * subject — "[a | N or more] Job X [or a Card Name Y] [Forward(s)] [other than Z] you control".
 	 */
 	private boolean matchesFilteredForwardSubject(String triggerCard, CardData attacker) {
-		java.util.regex.Matcher m = FILTERED_FORWARD_SUBJECT_PATTERN.matcher(triggerCard);
+		java.util.regex.Matcher m = CardData.FILTER_FORWARD_SUBJECT.matcher(triggerCard);
 		if (!m.matches()) return false;
+		// "…Forwards…" restricts the trigger to actual Forwards; without the noun any attacking
+		// card type qualifies, which is what the plain "a Job X you control" subjects expect.
+		if (m.group("fwdnoun") != null && !attacker.isForward()) return false;
+		String exclude = m.group("exclude");
+		if (exclude != null && CardFilters.meetsCardNameFilter(attacker, exclude.trim())) return false;
 		String type1 = m.group("type1").trim();
 		String val1  = m.group("val1").trim();
 		String type2 = m.group("type2") != null ? m.group("type2").trim() : null;
@@ -940,6 +940,36 @@ final class AutoAbilityTriggers {
 					: CardFilters.meetsCardNameFilter(attacker, val2);
 		}
 		return matches;
+	}
+
+	/**
+	 * True when {@code triggerCard} uses the "N or more …" count form, which describes the attack
+	 * declaration as a whole rather than an individual attacker.
+	 */
+	private static boolean isCountFormSubject(String triggerCard) {
+		java.util.regex.Matcher m = CardData.FILTER_FORWARD_SUBJECT.matcher(triggerCard);
+		return m.matches() && m.group("count") != null;
+	}
+
+	/** One count-form watcher ability that has already fired for the current attack declaration. */
+	private record DeclarationFire(CardData watcher, AutoAbility ability) {}
+
+	final Set<DeclarationFire> firedThisDeclaration = new HashSet<>();
+	private int     lastDeclarationSeen   = -1;
+	private boolean lastDeclarationWasP1;
+
+	/**
+	 * Resets the once-per-declaration guard when a new attack declaration begins. Attack triggers
+	 * fire once per attacker, so the declaration counter (bumped at each declaration site before
+	 * any trigger runs) is what distinguishes "next member of the same party" from "a new attack".
+	 */
+	private void startAttackDeclarationScope(boolean isP1) {
+		int decl = isP1 ? mw.p1AttackDeclarationsThisTurn : mw.p2AttackDeclarationsThisTurn;
+		if (decl != lastDeclarationSeen || isP1 != lastDeclarationWasP1) {
+			firedThisDeclaration.clear();
+			lastDeclarationSeen  = decl;
+			lastDeclarationWasP1 = isP1;
+		}
 	}
 
 	void triggerAutoAbilitiesForDealsDamageToOpponent(CardData attacker, boolean attackerIsP1) {
@@ -1002,6 +1032,7 @@ final class AutoAbilityTriggers {
 			}
 			// "When a Job X or Card Name Y you control attacks" — filtered watcher on all same-side cards
 			{
+				startAttackDeclarationScope(isP1);
 				List<CardData> allWatchers = new ArrayList<>();
 				for (CardData c : isP1 ? mw.p1ForwardCards : mw.p2ForwardCards) allWatchers.add(c);
 				for (CardData c : isP1 ? mw.p1BackupCards  : mw.p2BackupCards)  if (c != null) allWatchers.add(c);
@@ -1011,6 +1042,12 @@ final class AutoAbilityTriggers {
 					for (AutoAbility fa : watcherCard.autoAbilities()) {
 						if (!fa.trigger().equals("filtered forward attacks")) continue;
 						if (!matchesFilteredForwardSubject(fa.triggerCard(), card)) continue;
+						// A count-form subject ("1 or more …") is one event for the whole declaration:
+						// a party of three qualifying attackers still fires it once. This method runs
+						// per attacker, so the second and later members must be dropped here.
+						if (isCountFormSubject(fa.triggerCard())
+								&& !firedThisDeclaration.add(new DeclarationFire(watcherCard, fa)))
+							continue;
 						Consumer<GameContext> effect = ActionResolver.parse(fa.effectText(), watcherCard);
 						if (effect == null) {
 							mw.logEntry("[AutoAbility] Unrecognized 'filtered forward attacks' effect: " + fa.effectText());

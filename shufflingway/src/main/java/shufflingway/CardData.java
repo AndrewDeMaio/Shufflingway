@@ -1737,9 +1737,26 @@ public record CardData(
         "(?i)^a\\s+Forward\\s+other\\s+than\\s+.+?\\s+you\\s+control$"
     );
 
-    /** "a Job X [or a Card Name Y] you control" — subject of a filtered-forward attack trigger. */
+    /**
+     * "[a | N or more] Job X [or a Card Name Y] [Forward(s)] [other than Z] you control" — subject
+     * of a filtered-forward attack trigger.
+     *
+     * <p>The plain "a Job X you control" form fires once per qualifying attacker. The count form
+     * ("1 or more Job Member of the Turks Forwards other than Cissnei you control", Cissnei
+     * 22-028H) describes the whole declaration, so it fires once no matter how many members of the
+     * attacking party qualify — {@code count} is what tells the trigger code which it is.
+     *
+     * <p>Groups: {@code count}, {@code type1}/{@code val1}, {@code type2}/{@code val2},
+     * {@code fwdnoun}, {@code exclude}. This is the single definition — {@code AutoAbilityTriggers}
+     * matches against it too, so the classifier and the runtime check cannot drift apart.
+     */
     static final Pattern FILTER_FORWARD_SUBJECT = Pattern.compile(
-        "(?i)^a\\s+(?:Job\\s+|Card\\s+Name\\s+).+?(?:\\s+or\\s+a\\s+(?:Job\\s+|Card\\s+Name\\s+).+?)?\\s+you\\s+control$"
+        "(?i)^(?:a|(?<count>\\d+)\\s+or\\s+more)\\s+" +
+        "(?<type1>Job|Card\\s+Name)\\s+(?<val1>.+?)" +
+        "(?:\\s+or\\s+a\\s+(?<type2>Job|Card\\s+Name)\\s+(?<val2>.+?))?" +
+        "(?<fwdnoun>\\s+Forwards?)?" +
+        "(?:\\s+other\\s+than\\s+(?<exclude>.+?))?" +
+        "\\s+you\\s+control$"
     );
 
     /** Matches the restriction sentence appended to a auto-ability effect, capturing flags. */
