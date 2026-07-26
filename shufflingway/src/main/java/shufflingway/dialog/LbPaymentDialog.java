@@ -228,9 +228,8 @@ public class LbPaymentDialog {
         centerPanel.add(discHdr); centerPanel.add(dp);
 
         JLabel hint = new JLabel(
-                "<html><center>Backups: dull for 1 CP. Hand cards (" + elem
-                + ", non-Light/Dark"
-                + (ldDiscardGrants.isEmpty() ? "" : " or " + String.join("/", ldDiscardGrants))
+                "<html><center>Backups: dull for 1 CP. Hand cards ("
+                + CpPaymentUtils.discardEligibility(elem, isLD, false, ldDiscardGrants)
                 + "): discard for 2 CP.</center></html>",
                 SwingConstants.CENTER);
         hint.setFont(FontLoader.loadPixelFont(9));

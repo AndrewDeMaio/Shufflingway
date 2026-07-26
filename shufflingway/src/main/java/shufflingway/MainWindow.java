@@ -2281,8 +2281,13 @@ public class MainWindow {
                                 p1AttackDeclarationLimit = Integer.MAX_VALUE;       p1AttackDeclarationsThisTurn = 0;
                                 p1CannotSearchThisTurn = false; p2CannotSearchThisTurn = false;
                                 for (int i = 0; i < p2ForwardCards.size(); i++) refreshP2ForwardSlot(i);
-                                showEndPhaseDiscardDialog();
-                                onNextPhase();             // END → ACTIVE (auto-advance)
+                                // An end-of-turn trigger may still be arriving/resolving (a card
+                                // returning from the RFG zone and its abilities) — the turn may not
+                                // advance until the player has resolved it and the stack is empty.
+                                runWhenBoardSettled(() -> {
+                                    showEndPhaseDiscardDialog();
+                                    onNextPhase();         // END → ACTIVE (auto-advance)
+                                });
                             });
             }
 
@@ -8347,6 +8352,35 @@ public class MainWindow {
 	/** Calls {@link #showStackWindow()} only when we are not already inside a stack resolution chain. */
 	void showStackWindowIfNeeded() {
 		if (!isResolvingStack && !gameState.getStack().isEmpty()) showStackWindow();
+	}
+
+	/** How often {@link #runWhenBoardSettled} re-checks whether the board has settled. */
+	private static final int BOARD_SETTLE_POLL_MS = 100;
+
+	/**
+	 * True when nothing is left to resolve: no card is still arriving on the field, the stack is
+	 * empty, and no stack entry is mid-resolution.  The last check matters because
+	 * {@link #resolveTopOfStack} pops its entry before running it, so an ability waiting on a modal
+	 * dialog leaves the stack empty while the player has yet to choose.
+	 */
+	boolean isBoardSettled() {
+		return !fieldEntryAnimator.isBusy() && gameState.getStack().isEmpty() && !isResolvingStack;
+	}
+
+	/**
+	 * Runs {@code after} as soon as {@link #isBoardSettled()} holds — immediately when it already
+	 * does, otherwise polling on the EDT.  Holds the end step open until abilities that triggered
+	 * during it have been resolved (Kadaj returning at the end of the opponent's turn).
+	 */
+	void runWhenBoardSettled(Runnable after) {
+		if (isBoardSettled()) { after.run(); return; }
+		Timer poll = new Timer(BOARD_SETTLE_POLL_MS, null);
+		poll.addActionListener(e -> {
+			if (!isBoardSettled()) return;
+			((Timer) e.getSource()).stop();
+			after.run();
+		});
+		poll.start();
 	}
 
 	/**

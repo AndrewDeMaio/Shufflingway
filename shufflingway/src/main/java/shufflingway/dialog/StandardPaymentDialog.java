@@ -357,8 +357,8 @@ public class StandardPaymentDialog {
         JLabel hint = new JLabel(
                 backupCpOnly
                 ? "<html><center>Backups only: dull for 1 CP each.<br>Hand discards are not allowed for this card.</center></html>"
-                : "<html><center>Backups: dull for 1 CP. Hand cards (" + elem + ", non-Light/Dark"
-                        + (ldDiscardGrants.isEmpty() ? "" : " or " + String.join("/", ldDiscardGrants))
+                : "<html><center>Backups: dull for 1 CP. Hand cards ("
+                        + CpPaymentUtils.discardEligibility(elem, isLD, castElemOnly != null, ldDiscardGrants)
                         + "): discard for 2 CP.</center></html>",
                 SwingConstants.CENTER);
         hint.setFont(FontLoader.loadPixelFont(9));

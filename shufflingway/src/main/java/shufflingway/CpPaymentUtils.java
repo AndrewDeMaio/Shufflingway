@@ -1,6 +1,7 @@
 package shufflingway;
 
 import java.util.Map;
+import java.util.Set;
 
 /** Pure static utilities for CP element-assignment during card payment. */
 public class CpPaymentUtils {
@@ -49,10 +50,43 @@ public class CpPaymentUtils {
 	 * @param ldDiscardGrants the Light/Dark elements granted by the player's field cards
 	 *                        (see {@code MainWindow.lightDarkDiscardGrants})
 	 */
-	public static boolean canDiscardForCp(CardData handCard, java.util.Set<String> ldDiscardGrants) {
+	public static boolean canDiscardForCp(CardData handCard, Set<String> ldDiscardGrants) {
 		if (!handCard.isLightOrDark()) return true;
 		for (String e : handCard.elements())
 			if (ldDiscardGrants.contains(e)) return true;
+		return false;
+	}
+
+	/**
+	 * Returns the parenthetical text for a payment dialog's hint, listing which hand cards may be
+	 * discarded for CP.
+	 *
+	 * @param elem            the element being paid
+	 * @param isLD            true when the cost is element-agnostic (Light/Dark card, or a cast that
+	 *                        accepts any element). {@code elem} is then omitted from the list: it is
+	 *                        irrelevant to eligibility, and naming Light or Dark there would wrongly
+	 *                        imply those cards are discardable
+	 * @param elemOnly        true when only cards of {@code elem} may be discarded ("you can only pay
+	 *                        with [Element] CP")
+	 * @param ldDiscardGrants the Light/Dark elements a field grant makes discardable. A grant is
+	 *                        stated as the exclusion it lifts rather than appended as an extra
+	 *                        clause: Spiritus (Dark only) narrows the text to "non-Light", and
+	 *                        Tilika (both) removes the exclusion entirely
+	 */
+	public static String discardEligibility(String elem, boolean isLD, boolean elemOnly,
+			Set<String> ldDiscardGrants) {
+		if (elemOnly) return elem + " only";
+		boolean light = containsIgnoreCase(ldDiscardGrants, "Light");
+		boolean dark  = containsIgnoreCase(ldDiscardGrants, "Dark");
+		if (light && dark) return (isLD ? "" : elem + ", ") + "including Light/Dark";
+		String excluded = light ? "non-Dark" : dark ? "non-Light" : "non-Light/Dark";
+		return (isLD ? "" : elem + ", ") + excluded;
+	}
+
+	/** Returns true if {@code values} holds {@code target}, ignoring case. */
+	private static boolean containsIgnoreCase(Set<String> values, String target) {
+		for (String v : values)
+			if (v.equalsIgnoreCase(target)) return true;
 		return false;
 	}
 }

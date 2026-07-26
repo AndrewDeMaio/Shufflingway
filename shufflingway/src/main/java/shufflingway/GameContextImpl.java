@@ -1021,12 +1021,16 @@ final class GameContextImpl implements GameContext {
 					logEntry(c.name() + " cannot become dull by opponent's effects");
 					return;
 				}
-				CardState before = mw.p1ForwardStates.get(idx);
+				// A dull Forward does not "become dull" again: no rotation to replay, and no
+				// becomes-dull abilities to fire.
+				if (mw.p1ForwardStates.get(idx) == CardState.DULL) {
+					logEntry(c.name() + " is already dull");
+					return;
+				}
 				mw.p1ForwardStates.set(idx, CardState.DULL);
 				logEntry(c.name() + " is dulled");
 				mw.animateDullForward(idx, null);
-				if (before == CardState.ACTIVE)
-					mw.autoAbilityTriggers.triggerAutoAbilitiesForBecomesDull(c, true);
+				mw.autoAbilityTriggers.triggerAutoAbilitiesForBecomesDull(c, true);
 			}
 
 			@Override public void dullP2Forward(int idx) {
@@ -1037,12 +1041,16 @@ final class GameContextImpl implements GameContext {
 					logEntry("[P2] " + c.name() + " cannot become dull by opponent's effects");
 					return;
 				}
-				CardState before = mw.p2ForwardStates.get(idx);
+				// A dull Forward does not "become dull" again: no rotation to replay, and no
+				// becomes-dull abilities to fire.
+				if (mw.p2ForwardStates.get(idx) == CardState.DULL) {
+					logEntry("[P2] " + c.name() + " is already dull");
+					return;
+				}
 				mw.p2ForwardStates.set(idx, CardState.DULL);
 				logEntry("[P2] " + c.name() + " is dulled");
 				mw.animateDullP2Forward(idx, null);
-				if (before == CardState.ACTIVE)
-					mw.autoAbilityTriggers.triggerAutoAbilitiesForBecomesDull(c, false);
+				mw.autoAbilityTriggers.triggerAutoAbilitiesForBecomesDull(c, false);
 			}
 
 			@Override public void freezeP1Forward(int idx) {

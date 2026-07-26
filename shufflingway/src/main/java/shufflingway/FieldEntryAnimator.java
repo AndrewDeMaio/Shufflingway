@@ -59,6 +59,13 @@ final class FieldEntryAnimator {
 	 */
 	private final Map<CardData, List<Runnable>> pending = new IdentityHashMap<>();
 
+	/**
+	 * Arrivals not yet finished with.  Unlike {@link #pending}, a card is still counted here while
+	 * its held-back triggers run, so {@link #isBusy} stays true across any dialog they open — the
+	 * end step must not advance the turn out from under an ability the player is still resolving.
+	 */
+	private int inFlight;
+
 	/** Fully transparent slot icon: reserves an occupied slot without drawing its card yet. */
 	private static ImageIcon blankIcon;
 
@@ -75,6 +82,7 @@ final class FieldEntryAnimator {
 		// Already mid-animation (re-entrant arrival of the same instance) — just place it.
 		if (pending.containsKey(card)) { placement.run(); return; }
 		pending.put(card, new ArrayList<>());
+		inFlight++;
 		boolean placed = false;
 		try {
 			placement.run();
@@ -184,8 +192,18 @@ final class FieldEntryAnimator {
 			if (slot != null) { slot.setIcon(new ImageIcon(rendered)); slot.setText(null); }
 		}
 		mw.refreshFieldSlotFor(card, isP1);
-		if (queued != null) for (Runnable r : queued) r.run();
+		try {
+			if (queued != null) for (Runnable r : queued) r.run();
+		} finally {
+			inFlight--;
+		}
 	}
+
+	/**
+	 * True while any card is still arriving — mid-animation, or resolving the abilities that
+	 * arrival triggered. Callers that end a turn or hand over priority must wait for this to clear.
+	 */
+	boolean isBusy() { return inFlight > 0; }
 
 	private static ImageIcon blankIcon() {
 		if (blankIcon == null)

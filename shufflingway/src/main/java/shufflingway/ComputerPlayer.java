@@ -31,12 +31,16 @@ class ComputerPlayer {
 	/** Permanently stops this ComputerPlayer; all pending and future steps become no-ops. */
 	void cancel() { cancelled = true; }
 
-	/** Schedules {@code r} to run after {@link #PAUSE_MS} ms on the EDT, but waits for the stack to be empty first. */
+	/**
+	 * Schedules {@code r} to run after {@link #PAUSE_MS} ms on the EDT, but waits for the board to
+	 * settle first — an empty stack, nothing mid-resolution, and no card still arriving on the
+	 * field (see {@link MainWindow#isBoardSettled}).
+	 */
 	private void step(Runnable r) {
 		Timer t = new Timer(PAUSE_MS, e -> {
 			if (cancelled) return;
 			if (mw.gameState.isP1GameOver()) return;
-			if (!mw.gameState.getStack().isEmpty()) { step(r); return; }
+			if (!mw.isBoardSettled()) { step(r); return; }
 			r.run();
 		});
 		t.setRepeats(false);
