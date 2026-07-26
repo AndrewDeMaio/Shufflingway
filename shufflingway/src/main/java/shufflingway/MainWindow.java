@@ -9049,29 +9049,64 @@ public class MainWindow {
 			return true;
 		}
 
-		// Count mode: collect field cards that match the type filter
-		String type = cond.cardType() != null ? cond.cardType().toLowerCase() : null;
+		// Count mode: collect field cards matching the type filter — plus the types any "and/or"
+		// alternative asks for, since those may name a different type ("Forwards and/or Backups").
 		List<CardData> pool = new ArrayList<>();
-		if (type == null || type.equals("forward") || type.equals("character")) pool.addAll(fwds);
-		if (type == null || type.equals("monster")  || type.equals("character")) pool.addAll(mons);
-		if (type == null || type.equals("backup")   || type.equals("character")) {
+		if (countPoolIncludes(cond, "forward")) pool.addAll(fwds);
+		if (countPoolIncludes(cond, "monster")) pool.addAll(mons);
+		if (countPoolIncludes(cond, "backup")) {
 			for (CardData bkp : bkps) if (bkp != null) pool.add(bkp);
 		}
 
 		int count = 0;
 		for (CardData card : pool) {
-			boolean matchesAltName = !cond.orCardNames().isEmpty()
-					&& cond.orCardNames().stream().anyMatch(n -> n.equalsIgnoreCase(card.name()));
-			if (matchesAltName) { count++; continue; }
-			if (cond.element()        != null && !card.containsElement(cond.element()))        continue;
-			if (cond.excludeElement() != null &&  card.containsElement(cond.excludeElement())) continue;
-			if (cond.job()            != null && !meetsJobFilterEffective(card, cond.job()))   continue;
-			if (cond.category() != null && !meetsCategoryFilter(card, cond.category())) continue;
-			if (cond.minPower() > 0     && card.power() < cond.minPower())         continue;
-			if (cond.minCost()  > 0     && card.cost()  < cond.minCost())          continue;
-			count++;
+			// With alternatives present the parent carries only the count — its own filters are all
+			// null and would match everything — so the alternatives ARE the filter set. A card
+			// satisfying several of them still counts once.
+			boolean matches;
+			if (cond.orAlternatives().isEmpty()) {
+				matches = matchesCountFilter(cond, card);
+			} else {
+				matches = false;
+				for (ControlCondition alt : cond.orAlternatives())
+					if (matchesCountFilter(alt, card)) { matches = true; break; }
+			}
+			if (matches) count++;
 		}
 		return cond.exactCount() ? count == cond.minCount() : count >= cond.minCount();
+	}
+
+	/** True when {@code cond}'s effective filter set can be satisfied by a card from {@code zone}. */
+	private static boolean countPoolIncludes(ControlCondition cond, String zone) {
+		if (cond.orAlternatives().isEmpty()) return typeAdmits(cond.cardType(), zone);
+		for (ControlCondition alt : cond.orAlternatives())
+			if (typeAdmits(alt.cardType(), zone)) return true;
+		return false;
+	}
+
+	/** True when the card-type filter {@code type} (null = any) admits cards from {@code zone}. */
+	private static boolean typeAdmits(String type, String zone) {
+		if (type == null) return true;
+		String t = type.toLowerCase();
+		return t.equals(zone) || t.equals("character");
+	}
+
+	/**
+	 * True when a single card satisfies {@code cond}'s count-mode filters — including its card-type
+	 * filter, which the pool alone no longer guarantees once alternatives widen it.
+	 */
+	private boolean matchesCountFilter(ControlCondition cond, CardData card) {
+		String zone = card.isForward() ? "forward" : card.isBackup() ? "backup" : card.isMonster() ? "monster" : null;
+		if (zone == null || !typeAdmits(cond.cardType(), zone)) return false;
+		if (!cond.orCardNames().isEmpty()
+				&& cond.orCardNames().stream().anyMatch(n -> n.equalsIgnoreCase(card.name()))) return true;
+		if (cond.element()        != null && !card.containsElement(cond.element()))        return false;
+		if (cond.excludeElement() != null &&  card.containsElement(cond.excludeElement())) return false;
+		if (cond.job()            != null && !meetsJobFilterEffective(card, cond.job()))   return false;
+		if (cond.category() != null && !meetsCategoryFilter(card, cond.category())) return false;
+		if (cond.minPower() > 0     && card.power() < cond.minPower())         return false;
+		if (cond.minCost()  > 0     && card.cost()  < cond.minCost())          return false;
+		return true;
 	}
 
 	/**

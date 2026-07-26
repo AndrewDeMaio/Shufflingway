@@ -37,11 +37,34 @@ public record ControlCondition(
         boolean      requiresCrystal,   // true: condition requires the player to have ≥1 Crystal
         boolean      allHave,           // true: ALL controlled cards of cardType must satisfy element/job (not "N or more")
         boolean      opponentControls,  // true: check opponent's field instead of activating player's field
-        int          minCost            // 0 = no cost filter; > 0 = card cost must be ≥ this
+        int          minCost,           // 0 = no cost filter; > 0 = card cost must be ≥ this
+        List<ControlCondition> orAlternatives // per-card OR filters; a card counts if it matches ANY
 ) {
     public ControlCondition {
         requiredCardNames = List.copyOf(requiredCardNames);
         orCardNames       = List.copyOf(orCardNames);
+        orAlternatives    = List.copyOf(orAlternatives);
+    }
+
+    /** Compatibility constructor preserving the prior 16-arg signature; defaults {@code orAlternatives} to empty. */
+    public ControlCondition(List<String> requiredCardNames, int minCount, boolean exactCount,
+            String cardType, String element, String job, String category, int minPower,
+            List<String> orCardNames, boolean anyOf, String excludeElement, String dullCardName,
+            boolean requiresCrystal, boolean allHave, boolean opponentControls, int minCost) {
+        this(requiredCardNames, minCount, exactCount, cardType, element, job, category, minPower,
+                orCardNames, anyOf, excludeElement, dullCardName, requiresCrystal, allHave,
+                opponentControls, minCost, List.of());
+    }
+
+    /**
+     * Count-mode condition whose members may satisfy any one of {@code alternatives} — the
+     * "N or more X and/or Y" wording (Hien 17-016L: "5 or more Fire Characters and/or Category XIV
+     * Characters"). It is a union over a single pool, so a card matching several alternatives is
+     * still only counted once.
+     */
+    public static ControlCondition forAnyOfFilters(int minCount, List<ControlCondition> alternatives) {
+        return new ControlCondition(List.of(), minCount, false, null, null, null, null, 0,
+                List.of(), false, null, null, false, false, false, 0, alternatives);
     }
 
     /** Compatibility constructor preserving the prior 15-arg signature; defaults {@code minCost} to 0. */

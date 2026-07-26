@@ -2871,6 +2871,7 @@ public record CardData(
                     condText = part.trim();
                 }
                 ControlCondition cond = parseControlCondition(condText);
+                if (cond == null) cond = parseUnionControlCondition(condText);
                 if (cond != null) conditions.add(cond);
             }
             if (conditions.isEmpty()) continue;
@@ -4861,6 +4862,35 @@ public record CardData(
      */
     private static String stripTrailingType(String name) {
         return name.trim().replaceAll("(?i)\\s+(Forwards?|Backups?|Monsters?|Characters?)$", "").trim();
+    }
+
+    /** "N or more &lt;filter&gt; and/or &lt;filter&gt;[ and/or …]" — the count applies to the union. */
+    private static final Pattern CTRL_COND_UNION = Pattern.compile(
+        "(?i)^(?<count>\\d+)\\s+or\\s+more\\s+(?<filters>.+?\\s+and/or\\s+.+)$"
+    );
+
+    /**
+     * Parses the "and/or" union form of a control condition — "5 or more Fire Characters and/or
+     * Category XIV Characters" (Hien 17-016L) — into a count condition whose members may satisfy
+     * any one of the listed filters.
+     *
+     * <p>Only reached when {@link #parseControlCondition} cannot handle the text on its own, so the
+     * "Job X and/or Card Name Y" wording keeps using the existing {@code orCardNames} handling.
+     * Returns {@code null} unless every alternative parses as a filter.
+     */
+    static ControlCondition parseUnionControlCondition(String raw) {
+        Matcher m = CTRL_COND_UNION.matcher(raw.trim());
+        if (!m.matches()) return null;
+        int minCount = Integer.parseInt(m.group("count"));
+        List<ControlCondition> alternatives = new ArrayList<>();
+        for (String part : m.group("filters").split("(?i)\\s+and/or\\s+")) {
+            // Each alternative is a bare filter phrase; "a " makes it a singular condition the
+            // existing parser understands, and only its filter fields are used from here on.
+            ControlCondition alt = parseControlCondition("a " + part.trim());
+            if (alt == null) return null;
+            alternatives.add(alt);
+        }
+        return alternatives.size() < 2 ? null : ControlCondition.forAnyOfFilters(minCount, alternatives);
     }
 
     static ControlCondition parseControlCondition(String raw) {

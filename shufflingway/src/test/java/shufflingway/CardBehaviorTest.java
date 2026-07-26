@@ -108,6 +108,90 @@ public class CardBehaviorTest {
     }
 
     // =========================================================================================
+    // Hien 17-016L: "If you control 5 or more Fire Characters and/or Category XIV Characters,
+    // Hien gains Haste."
+    //
+    // A count condition could only AND its filters together, so there was no way to express
+    // "Fire OR Category XIV" — the text produced no IfControlBoost at all and Hien never gained
+    // Haste. Count conditions now carry a list of alternatives, and the count is a union over one
+    // pool: a card that is both Fire and Category XIV still only counts once.
+    // =========================================================================================
+
+    private static final String HIEN_HASTE =
+            "If you control 5 or more Fire Characters and/or Category XIV Characters, Hien gains Haste.";
+
+    /** Builds a Forward with an element and a category (no job). */
+    private static CardData makeCategoryForward(String name, String element, String category) {
+        return new CardData(null, name, element, 3, 7000, "Forward", false, 0, false, false,
+                Set.of(), 0, List.of(), null, List.of(),
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of(), List.of(), List.of(),
+                false, false, null, false, false, false, false, false, false,
+                null, category, null, "");
+    }
+
+    /** Puts Hien plus {@code allies} on P1's field and reports whether Hien has Haste. */
+    private static boolean hienHasHaste(CardData... allies) {
+        MainWindow mw = new MainWindow();
+        CardData hien = new CardData(null, "Hien", "Fire", 4, 8000, "Forward", false, 0, false, false,
+                Set.of(), 0, List.of(), null, List.of(),
+                List.of(), List.of(), CardData.parseFieldAbilities(HIEN_HASTE, "Forward"),
+                CardData.parseIfControlBoosts(HIEN_HASTE, "Hien"),
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                false, false, null, false, false, false, false, false, false,
+                null, "XIV", null, HIEN_HASTE);
+        mw.placeCardInForwardZone(hien);
+        for (CardData ally : allies) mw.placeCardInForwardZone(ally);
+        return mw.effectiveP1HasTrait(0, CardData.Trait.HASTE);
+    }
+
+    @Test
+    void hienGainsHasteFromAMixedFireAndCategoryXivBoard() {
+        // Hien himself is Fire and Category XIV, so 4 more qualifying Characters reach 5.
+        assertTrue(hienHasHaste(
+                makeForward("Ally A", "Fire", 2, 5000),                 // Fire only
+                makeForward("Ally B", "Fire", 2, 5000),                 // Fire only
+                makeCategoryForward("Ally C", "Ice", "XIV"),            // Category only
+                makeCategoryForward("Ally D", "Wind", "XIV")),          // Category only
+                "the count is a union of the two filters, not an intersection");
+    }
+
+    @Test
+    void hienDoesNotGainHasteBelowFiveQualifyingCharacters() {
+        assertFalse(hienHasHaste(
+                makeForward("Ally A", "Fire", 2, 5000),
+                makeCategoryForward("Ally C", "Ice", "XIV")),
+                "3 qualifying Characters is short of the 5 required");
+    }
+
+    @Test
+    void charactersMatchingNeitherFilterDoNotCountTowardHiensHaste() {
+        assertFalse(hienHasHaste(
+                makeForward("Ally A", "Fire", 2, 5000),
+                makeCategoryForward("Ally C", "Ice", "XIV"),
+                makeForward("Stranger A", "Water", 2, 5000),
+                makeForward("Stranger B", "Water", 2, 5000),
+                makeForward("Stranger C", "Water", 2, 5000)),
+                "6 Characters on the field but only 3 satisfy either filter");
+    }
+
+    @Test
+    void aCardMatchingBothOfHiensFiltersIsCountedOnce() {
+        // Four Fire Category-XIV Characters (plus Hien, also both) is 5 cards, not 10.
+        assertTrue(hienHasHaste(
+                makeCategoryForward("Ally A", "Fire", "XIV"),
+                makeCategoryForward("Ally B", "Fire", "XIV"),
+                makeCategoryForward("Ally C", "Fire", "XIV"),
+                makeCategoryForward("Ally D", "Fire", "XIV")),
+                "5 dual-matching Characters is exactly the threshold");
+        assertFalse(hienHasHaste(
+                makeCategoryForward("Ally A", "Fire", "XIV"),
+                makeCategoryForward("Ally B", "Fire", "XIV"),
+                makeCategoryForward("Ally C", "Fire", "XIV")),
+                "4 of them is still 4 — matching both filters must not count twice");
+    }
+
+    // =========================================================================================
     // Ramada 17-125R: "[Sharp Spear] 《S》: Until the end of the turn, Ramada gains +2000 power,
     // Haste and 'If Ramada deals damage to your opponent, the damage becomes 2 instead.'"
     //
