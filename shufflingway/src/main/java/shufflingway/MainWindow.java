@@ -123,6 +123,8 @@ public class MainWindow {
 	shufflingway.dialog.CardPickerDialog cardPickerDialog;
 
 	final AutoAbilityTriggers autoAbilityTriggers = new AutoAbilityTriggers(this);
+	/** Sequences card arrivals on the field: animation, then the card, then its auto abilities. */
+	final FieldEntryAnimator  fieldEntryAnimator  = new FieldEntryAnimator(this);
 
 	// Side info panel dimensions.
 	// The panel is sized to the native card-image width on the first hover;
@@ -171,7 +173,7 @@ public class MainWindow {
 	private Timer fadeTimer;      // drives fade-in / fade-out animation
 	CardSlideAnimator cardSlideAnimator;
 	private CardBreakAnimator breakAnimator;
-	private CardRfpAnimator   rfpAnimator;
+	CardRfpAnimator           rfpAnimator;
 	/** Non-null when the next startBreakAnim call should slide to the break zone instead of slashing. */
 	JLabel pendingCostBreakDestLabel;
 	/** When true, the next startBreakAnim call is suppressed (e.g. RFP goes through breakP*Forward but needs no animation). */
@@ -2684,27 +2686,28 @@ public class MainWindow {
 	void resolveWarpCard(CardData card, boolean isP1) {
 		String tag = isP1 ? "Warp: " : "[P2] Warp: ";
 		logEntry(tag + "\"" + card.name() + "\" enters play");
-		lastCardWarpedIn = true;
-		try {
-			if (card.isForward()) {
-				if (isP1) { placeCardInForwardZone(card);   p1ForwardEnteredViaWarpThisTurn = true; }
-				else       { placeP2CardInForwardZone(card); p2ForwardEnteredViaWarpThisTurn = true; }
-			} else if (card.isBackup()) {
-				if (isP1) {
-					if (hasAvailableBackupSlot()) placeCardInFirstBackupSlot(card);
-					else { addToBreakZone(card); logEntry("  No backup slot — \"" + card.name() + "\" → Break Zone"); }
-				} else {
-					if (hasAvailableP2BackupSlot()) placeP2CardInFirstBackupSlot(card);
-					else { addToBreakZone(card); logEntry("  No backup slot — \"" + card.name() + "\" → Break Zone"); }
+		fieldEntryAnimator.placeWithAnim(card, isP1, FieldEntryAnimator.Style.WARP_IN, () -> {
+			lastCardWarpedIn = true;
+			try {
+				if (card.isForward()) {
+					if (isP1) { placeCardInForwardZone(card);   p1ForwardEnteredViaWarpThisTurn = true; }
+					else       { placeP2CardInForwardZone(card); p2ForwardEnteredViaWarpThisTurn = true; }
+				} else if (card.isBackup()) {
+					if (isP1) {
+						if (hasAvailableBackupSlot()) placeCardInFirstBackupSlot(card);
+						else { addToBreakZone(card); logEntry("  No backup slot — \"" + card.name() + "\" → Break Zone"); }
+					} else {
+						if (hasAvailableP2BackupSlot()) placeP2CardInFirstBackupSlot(card);
+						else { addToBreakZone(card); logEntry("  No backup slot — \"" + card.name() + "\" → Break Zone"); }
+					}
+				} else if (card.isMonster()) {
+					if (isP1) placeCardInMonsterZone(card);
+					else      placeP2CardInMonsterZone(card);
 				}
-			} else if (card.isMonster()) {
-				if (isP1) placeCardInMonsterZone(card);
-				else      placeP2CardInMonsterZone(card);
+			} finally {
+				lastCardWarpedIn = false;
 			}
-		} finally {
-			lastCardWarpedIn = false;
-		}
-		SwingUtilities.invokeLater(() -> startWarpInAnimForCard(card, isP1));
+		});
 	}
 
 	private void showRemovedFromPlayDialog(GrayscaleLabel removeLabel, String player) {
@@ -3681,7 +3684,8 @@ public class MainWindow {
 			if (!gameState.removeFromPermanentRfp(c)) continue;
 			boolean ownerP1 = Boolean.TRUE.equals(gameState.getIdentity().get(c));
 			logEntry(c.name() + " re-enters the field — " + departing.name() + " left the field");
-			if (ownerP1) placeCardInForwardZone(c); else placeP2CardInForwardZone(c);
+			placeFromRfgWithAnim(c, ownerP1,
+					() -> { if (ownerP1) placeCardInForwardZone(c); else placeP2CardInForwardZone(c); });
 		}
 	}
 
@@ -5914,45 +5918,74 @@ public class MainWindow {
 		rfpAnimator.startRfp(img, center);
 	}
 
-	/** Plays the warp-in (reversed RFP) animation on whichever field slot the card just entered. */
-	void startWarpInAnimForCard(CardData card, boolean isP1) {
-		JLabel label = null;
-		// Forward zone
-		List<CardData> fwds = isP1 ? p1ForwardCards : p2ForwardCards;
-		int fIdx = fwds.indexOf(card);
-		if (fIdx >= 0) {
-			List<JLabel> fLabels = isP1 ? p1ForwardLabels : p2ForwardLabels;
-			if (fIdx < fLabels.size()) label = fLabels.get(fIdx);
-		}
-		// Backup zone
-		if (label == null) {
-			CardData[] backups = isP1 ? p1BackupCards : p2BackupCards;
-			JLabel[]   bLabels = isP1 ? p1BackupLabels : p2BackupLabels;
-			for (int i = 0; i < backups.length; i++) {
-				if (backups[i] == card) { label = bLabels[i]; break; }
+	// -------------------------------------------------------------------------
+	// Field arrivals — animation first, then the card, then its auto abilities
+	// -------------------------------------------------------------------------
+
+	/**
+	 * Places a card that is coming back out of the removed-from-game zone (Kadaj, Emet-Selch,
+	 * Necron's returning cards, casts made from the RFG zone) and bursts it onto the field with the
+	 * reversed-RFP animation. {@code placement} runs right away so game state is never left stale;
+	 * see {@link FieldEntryAnimator} for what the animation holds back.
+	 */
+	void placeFromRfgWithAnim(CardData card, boolean isP1, Runnable placement) {
+		fieldEntryAnimator.placeWithAnim(card, isP1, FieldEntryAnimator.Style.RFG_RETURN, placement);
+	}
+
+	/** Locates {@code card} on {@code isP1}'s field by identity; {@code null} when it is not there. */
+	private ForwardTarget findFieldSlot(CardData card, boolean isP1) {
+		int fIdx = identityIndexOf(isP1 ? p1ForwardCards : p2ForwardCards, card);
+		if (fIdx >= 0) return new ForwardTarget(isP1, fIdx, ForwardTarget.CardZone.FORWARD);
+		CardData[] backups = isP1 ? p1BackupCards : p2BackupCards;
+		for (int i = 0; i < backups.length; i++)
+			if (backups[i] == card) return new ForwardTarget(isP1, i, ForwardTarget.CardZone.BACKUP);
+		int mIdx = identityIndexOf(isP1 ? p1MonsterCards : p2MonsterCards, card);
+		if (mIdx >= 0) return new ForwardTarget(isP1, mIdx, ForwardTarget.CardZone.MONSTER);
+		return null;
+	}
+
+	/** The slot label {@code card} occupies on {@code isP1}'s field, or {@code null}. */
+	JLabel findFieldSlotLabel(CardData card, boolean isP1) {
+		ForwardTarget slot = findFieldSlot(card, isP1);
+		if (slot == null) return null;
+		switch (slot.zone()) {
+			case FORWARD: {
+				List<JLabel> labels = isP1 ? p1ForwardLabels : p2ForwardLabels;
+				return slot.idx() < labels.size() ? labels.get(slot.idx()) : null;
 			}
-		}
-		// Monster zone
-		if (label == null) {
-			List<CardData> monsters = isP1 ? p1MonsterCards : p2MonsterCards;
-			int mIdx = monsters.indexOf(card);
-			if (mIdx >= 0) {
-				List<JLabel> mLabels = isP1 ? p1MonsterLabels : p2MonsterLabels;
-				if (mIdx < mLabels.size()) label = mLabels.get(mIdx);
+			case BACKUP:
+				return (isP1 ? p1BackupLabels : p2BackupLabels)[slot.idx()];
+			case MONSTER: {
+				List<JLabel> labels = isP1 ? p1MonsterLabels : p2MonsterLabels;
+				return slot.idx() < labels.size() ? labels.get(slot.idx()) : null;
 			}
+			default:
+				return null;
 		}
-		if (label == null) return;
-		Icon icon = label.getIcon();
-		if (!(icon instanceof ImageIcon ii)) return;
-		JLayeredPane lp = frame.getRootPane().getLayeredPane();
-		Point center = SwingUtilities.convertPoint(label, label.getWidth() / 2, label.getHeight() / 2, lp);
-		java.awt.image.BufferedImage img = CardAnimation.toARGB(ii.getImage(), ii.getIconWidth(), ii.getIconHeight());
-		label.setVisible(false);
-		rfpAnimator.startWarpIn(img, center);
-		JLabel reveal = label;
-		Timer t = new Timer(CardRfpAnimator.TOTAL_FRAMES * CardRfpAnimator.FRAME_MS, e -> reveal.setVisible(true));
-		t.setRepeats(false);
-		t.start();
+	}
+
+	/** The display state of the slot {@code card} occupies, {@code ACTIVE} when it has none. */
+	CardState fieldSlotState(CardData card, boolean isP1) {
+		ForwardTarget slot = findFieldSlot(card, isP1);
+		if (slot == null) return CardState.ACTIVE;
+		return switch (slot.zone()) {
+			case FORWARD -> (isP1 ? p1ForwardStates : p2ForwardStates).get(slot.idx());
+			case BACKUP  -> (isP1 ? p1BackupStates  : p2BackupStates)[slot.idx()];
+			case MONSTER -> (isP1 ? p1MonsterStates : p2MonsterStates).get(slot.idx());
+			default      -> CardState.ACTIVE;
+		};
+	}
+
+	/** Re-renders whichever slot {@code card} occupies on {@code isP1}'s field; no-op if it has none. */
+	void refreshFieldSlotFor(CardData card, boolean isP1) {
+		ForwardTarget slot = findFieldSlot(card, isP1);
+		if (slot == null) return;
+		switch (slot.zone()) {
+			case FORWARD -> { if (isP1) refreshP1ForwardSlot(slot.idx()); else refreshP2ForwardSlot(slot.idx()); }
+			case BACKUP  -> { if (isP1) refreshP1BackupSlot(slot.idx());  else refreshP2BackupSlot(slot.idx()); }
+			case MONSTER -> { if (isP1) refreshP1MonsterSlot(slot.idx()); else refreshP2MonsterSlot(slot.idx()); }
+			default      -> { }
+		}
 	}
 
 	void startBreakAnim(JLabel label) {
@@ -7761,6 +7794,7 @@ public class MainWindow {
 		// Remove the borrowed card from its source zone (by identity — duplicate-named copies may exist).
 		PlayableEntry borrowEntry = bzPlayableP1.get(card);
 		String sourceLabel = removeBorrowedSourceCard(card, borrowEntry);
+		boolean fromRfg = BORROW_SOURCE_RFG.equals(sourceLabel);
 		bzPlayableP1.remove(card);
 		bzForwardFaP1.remove(card);
 		bzSelfCastFaP1.remove(card);
@@ -7789,12 +7823,21 @@ public class MainWindow {
 		// Borrowed casts are NOT cast from hand: leave lastCardWasCast false so "due to your cast"
 		// (castOnly) abilities are skipped and "enters other than from your hand" abilities fire.
 		lastCardWasCast = false;
-		if (card.isBackup())       placeCardInFirstBackupSlot(card);
-		else if (card.isForward()) placeCardInForwardZone(card);
-		else if (card.isMonster()) placeCardInMonsterZone(card);
-		else if (card.isSummon())  showSummonOnStack(card, true);
+		Runnable placement = () -> {
+			if (card.isBackup())       placeCardInFirstBackupSlot(card);
+			else if (card.isForward()) placeCardInForwardZone(card);
+			else if (card.isMonster()) placeCardInMonsterZone(card);
+			else if (card.isSummon())  showSummonOnStack(card, true);
+		};
+		// Cards coming out of the RFG zone animate in before they are drawn and before their
+		// enter-the-field abilities fire; everything else is placed outright.
+		if (fromRfg) placeFromRfgWithAnim(card, true, placement);
+		else         placement.run();
 		lastCardWasCast = false;
 	}
+
+	/** Source label {@link #removeBorrowedSourceCard} returns for a card taken out of an RFG zone. */
+	private static final String BORROW_SOURCE_RFG = "Removed From Game";
 
 	/**
 	 * Removes a borrowed {@code card} from whichever zone it currently sits in, per {@code entry}'s
@@ -7805,7 +7848,7 @@ public class MainWindow {
 	private String removeBorrowedSourceCard(CardData card, PlayableEntry entry) {
 		if (entry != null && entry.source() == PlayableEntry.SourceZone.RFP) {
 			if (gameState.removeFromPermanentRfp(card))
-				return "Removed From Game";
+				return BORROW_SOURCE_RFG;
 		}
 		List<CardData> p1bz = gameState.getP1BreakZone();
 		for (int i = 0; i < p1bz.size(); i++) if (p1bz.get(i) == card) { p1bz.remove(i); return "Break Zone"; }
@@ -7813,7 +7856,7 @@ public class MainWindow {
 		for (int i = 0; i < p2bz.size(); i++) if (p2bz.get(i) == card) { p2bz.remove(i); return "Break Zone"; }
 		// Fallback: also sweep RFP zones if the entry was missing/mislabeled.
 		if (gameState.removeFromPermanentRfp(card))
-			return "Removed From Game";
+			return BORROW_SOURCE_RFG;
 		return "outside hand";
 	}
 
@@ -7896,6 +7939,7 @@ public class MainWindow {
 		// Remove the borrowed card from its source zone (Break Zone or removed-from-game, either player).
 		PlayableEntry borrowEntry = bzPlayableP2.get(card);
 		String sourceLabel = removeBorrowedSourceCard(card, borrowEntry);
+		boolean fromRfg = BORROW_SOURCE_RFG.equals(sourceLabel);
 		bzPlayableP2.remove(card);
 		bzForwardFaP2.remove(card);
 		bzSelfCastFaP2.remove(card);
@@ -7917,10 +7961,16 @@ public class MainWindow {
 		// Borrowed casts are NOT cast from hand: leave lastCardWasCast false so "due to your cast"
 		// (castOnly) abilities are skipped and "enters other than from your hand" abilities fire.
 		lastCardWasCast = false;
-		if (card.isBackup())       placeP2CardInFirstBackupSlot(card);
-		else if (card.isForward()) placeP2CardInForwardZone(card);
-		else if (card.isMonster()) placeP2CardInMonsterZone(card);
-		else if (card.isSummon())  showSummonOnStack(card, false);
+		Runnable placement = () -> {
+			if (card.isBackup())       placeP2CardInFirstBackupSlot(card);
+			else if (card.isForward()) placeP2CardInForwardZone(card);
+			else if (card.isMonster()) placeP2CardInMonsterZone(card);
+			else if (card.isSummon())  showSummonOnStack(card, false);
+		};
+		// Cards coming out of the RFG zone animate in before they are drawn and before their
+		// enter-the-field abilities fire; everything else is placed outright.
+		if (fromRfg) placeFromRfgWithAnim(card, false, placement);
+		else         placement.run();
 		lastCardWasCast = false;
 	}
 
@@ -7946,6 +7996,11 @@ public class MainWindow {
 		gameState.pushStack(StackEntry.forSummonWithExtraCost(card, isP1, extraCostRemovedCardPower, xValue));
 		logEntry("[Stack] \"" + card.name() + "\" — Summon on the stack (Extra Cost paid)");
 		showStackWindow();
+	}
+
+	/** Escapes card text for display inside an HTML-rendered {@link JLabel}. */
+	private static String escapeForHtmlLabel(String text) {
+		return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
 	}
 
 	/**
@@ -8000,11 +8055,30 @@ public class MainWindow {
 		JLabel nameLabel = new JLabel(entry.source().name(), SwingConstants.CENTER);
 		nameLabel.setFont(FontLoader.loadPixelFont(10));
 		nameLabel.setForeground(Color.WHITE);
+		nameLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+
+		JPanel textPanel = new JPanel();
+		textPanel.setLayout(new BoxLayout(textPanel, BoxLayout.Y_AXIS));
+		textPanel.setOpaque(false);
+		textPanel.add(nameLabel);
+
+		// Spell out the triggering auto ability so the player knows what they are responding to
+		if (entry.isAutoAbility()) {
+			JLabel effectLabel = new JLabel("<html><div style='text-align:center;width:"
+					+ UiScale.scale(230) + "px'>"
+					+ escapeForHtmlLabel(entry.autoAbility().effectText()) + "</div></html>",
+					SwingConstants.CENTER);
+			effectLabel.setFont(FontLoader.loadPixelFont(9));
+			effectLabel.setForeground(new Color(205, 195, 220));
+			effectLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+			effectLabel.setBorder(BorderFactory.createEmptyBorder(3, 0, 0, 0));
+			textPanel.add(effectLabel);
+		}
 
 		JPanel imagePanel = new JPanel(new BorderLayout(3, 3));
 		imagePanel.setOpaque(false);
 		imagePanel.add(cardImg,   BorderLayout.CENTER);
-		imagePanel.add(nameLabel, BorderLayout.SOUTH);
+		imagePanel.add(textPanel, BorderLayout.SOUTH);
 		panel.add(imagePanel, BorderLayout.CENTER);
 
 		int[] countdown = { 10 };
@@ -8346,7 +8420,7 @@ public class MainWindow {
 			p1BackupStates[i]        = CardState.DULL;
 			p1BackupPlayedOnTurn[i]  = gameState.getTurnNumber();
 			refreshP1BackupSlot(i);
-			autoAbilityTriggers.triggerAutoAbilitiesForEntersField(card, true);
+			fieldEntryAnimator.fireEntersField(card, true, false);
 			syncBzForwardPlayables(true);
 			sendToBreakZoneByUniquenessRule(card, true);
 			break;
@@ -8478,6 +8552,7 @@ public class MainWindow {
 		if (slot == null) return;
 		refreshPlayerDamageShieldIcon(true);
 		if (url == null) { slot.setIcon(null); slot.setText(null); slot.setToolTipText(null); return; }
+		if (fieldEntryAnimator.holdSlotBlank(slot, p1BackupCards[idx])) return;
 		CardData card = p1BackupCards[idx];
 		boolean actingForward = isP1BackupTemporarilyForward(idx);
 		boolean canAttack = attackSubStep == 1 && isBackupSelectableAsForward(idx);
@@ -11028,7 +11103,7 @@ public class MainWindow {
 		refreshP1ForwardSlot(idx);
 		if (!card.fieldPowerGrants().isEmpty()) refreshFieldGrantDependents(true);
 		if (!card.fieldCostReductions().isEmpty() || p1HandHasSelfCostModifiers()) refreshHandPopupIfVisible();
-		autoAbilityTriggers.triggerAutoAbilitiesForEntersField(card, true, paidExtraCost);
+		fieldEntryAnimator.fireEntersField(card, true, paidExtraCost);
 		syncBzForwardPlayables(true);
 		sendToBreakZoneByUniquenessRule(card, true);
 		fireOppNoForwardsFieldAbilitiesForCard(card, true);
@@ -11086,7 +11161,7 @@ public class MainWindow {
 		refreshP1MonsterSlot(idx);
 		// Monster entering the field may satisfy a condition for a forward's boost
 		refreshAllForwardSlots();
-		autoAbilityTriggers.triggerAutoAbilitiesForEntersField(card, true);
+		fieldEntryAnimator.fireEntersField(card, true, false);
 		syncBzForwardPlayables(true);
 		sendToBreakZoneByUniquenessRule(card, true);
 	}
@@ -11097,6 +11172,7 @@ public class MainWindow {
 		CardState state = p1MonsterStates.get(idx);
 		JLabel slot  = p1MonsterLabels.get(idx);
 		if (url == null) return;
+		if (fieldEntryAnimator.holdSlotBlank(slot, p1MonsterCards.get(idx))) return;
 		CardData card     = p1MonsterCards.get(idx);
 		int power         = effectiveP1MonsterPower(idx);
 		int basePower     = card.power();
@@ -11181,7 +11257,7 @@ public class MainWindow {
 		p2MonsterPanel.repaint();
 
 		refreshP2MonsterSlot(idx);
-		autoAbilityTriggers.triggerAutoAbilitiesForEntersField(card, false);
+		fieldEntryAnimator.fireEntersField(card, false, false);
 		syncBzForwardPlayables(false);
 		sendToBreakZoneByUniquenessRule(card, false);
 	}
@@ -11192,6 +11268,7 @@ public class MainWindow {
 		CardState state = p2MonsterStates.get(idx);
 		JLabel slot = p2MonsterLabels.get(idx);
 		if (url == null) return;
+		if (fieldEntryAnimator.holdSlotBlank(slot, p2MonsterCards.get(idx))) return;
 		CardData card     = p2MonsterCards.get(idx);
 		int power         = effectiveP2MonsterPower(idx);
 		int basePower     = card.power();
@@ -11262,6 +11339,7 @@ public class MainWindow {
 	/** Reloads and re-renders a single P1 forward slot using its stored URL and state. */
 	void refreshP1ForwardSlot(int idx) {
 		refreshPlayerDamageShieldIcon(true);
+		if (fieldEntryAnimator.holdSlotBlank(p1ForwardLabels.get(idx), p1ForwardCards.get(idx))) return;
 		CardData topCard = p1ForwardPrimedTop.get(idx);
 		boolean  primed  = topCard != null;
 		// Primed: display and stats come from the top card
@@ -13833,7 +13911,7 @@ public class MainWindow {
 		refreshP2ForwardSlot(idx);
 		if (!card.fieldPowerGrants().isEmpty()) refreshFieldGrantDependents(false);
 		if (!card.fieldCostReductions().isEmpty() || p1HandHasSelfCostModifiers()) refreshHandPopupIfVisible();
-		autoAbilityTriggers.triggerAutoAbilitiesForEntersField(card, false);
+		fieldEntryAnimator.fireEntersField(card, false, false);
 		syncBzForwardPlayables(false);
 		sendToBreakZoneByUniquenessRule(card, false);
 		fireOppNoForwardsFieldAbilitiesForCard(card, false);
@@ -13846,7 +13924,7 @@ public class MainWindow {
 			p2BackupCards[i]  = card;
 			p2BackupStates[i] = CardState.DULL;
 			refreshP2BackupSlot(i);
-			autoAbilityTriggers.triggerAutoAbilitiesForEntersField(card, false);
+			fieldEntryAnimator.fireEntersField(card, false, false);
 			syncBzForwardPlayables(false);
 			sendToBreakZoneByUniquenessRule(card, false);
 			return;
@@ -13860,6 +13938,7 @@ public class MainWindow {
 		if (slot == null) return;
 		refreshPlayerDamageShieldIcon(false);
 		if (url == null) { slot.setIcon(null); slot.setText(null); slot.setToolTipText(null); return; }
+		if (fieldEntryAnimator.holdSlotBlank(slot, p2BackupCards[idx])) return;
 		CardData card = p2BackupCards[idx];
 		boolean actingForward = isP2BackupTemporarilyForward(idx);
 		int fwdPower = actingForward ? p2BackupForwardPower(idx) : 0;
@@ -13892,6 +13971,7 @@ public class MainWindow {
 
 	void refreshP2ForwardSlot(int idx) {
 		refreshPlayerDamageShieldIcon(false);
+		if (fieldEntryAnimator.holdSlotBlank(p2ForwardLabels.get(idx), p2ForwardCards.get(idx))) return;
 		CardData topCard = p2ForwardPrimedTop.get(idx);
 		String url      = topCard != null ? topCard.imageUrl() : p2ForwardUrls.get(idx);
 		CardState state = p2ForwardStates.get(idx);

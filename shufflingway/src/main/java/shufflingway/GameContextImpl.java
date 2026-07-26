@@ -4511,7 +4511,7 @@ final class GameContextImpl implements GameContext {
 					if (card.name().equalsIgnoreCase(cardName)) {
 						mw.gameState.removeFromPermanentRfp(card);
 						logEntry(card.name() + " returns from RFP → P1 field");
-						mw.placeCardInForwardZone(card);
+						mw.placeFromRfgWithAnim(card, true, () -> mw.placeCardInForwardZone(card));
 						return;
 					}
 				}
@@ -4519,7 +4519,7 @@ final class GameContextImpl implements GameContext {
 					if (card.name().equalsIgnoreCase(cardName)) {
 						mw.gameState.removeFromPermanentRfp(card);
 						logEntry(card.name() + " returns from RFP → P2 field");
-						mw.placeP2CardInForwardZone(card);
+						mw.placeFromRfgWithAnim(card, false, () -> mw.placeP2CardInForwardZone(card));
 						return;
 					}
 				}
@@ -4536,21 +4536,25 @@ final class GameContextImpl implements GameContext {
 				if (isP1) {
 					mw.gameState.removeFromPermanentRfp(card);
 					logEntry(card.name() + " returns from RFP → P1 field" + (dull ? " (dull)" : ""));
-					mw.placeCardInForwardZone(card);
-					if (dull) {
-						int newIdx = mw.p1ForwardCards.size() - 1;
-						mw.p1ForwardStates.set(newIdx, CardState.DULL);
-						mw.refreshP1ForwardSlot(newIdx);
-					}
+					mw.placeFromRfgWithAnim(card, true, () -> {
+						mw.placeCardInForwardZone(card);
+						if (dull) {
+							int newIdx = mw.p1ForwardCards.size() - 1;
+							mw.p1ForwardStates.set(newIdx, CardState.DULL);
+							mw.refreshP1ForwardSlot(newIdx);
+						}
+					});
 				} else {
 					mw.gameState.removeFromPermanentRfp(card);
 					logEntry(card.name() + " returns from RFP → P2 field" + (dull ? " (dull)" : ""));
-					mw.placeP2CardInForwardZone(card);
-					if (dull) {
-						int newIdx = mw.p2ForwardCards.size() - 1;
-						mw.p2ForwardStates.set(newIdx, CardState.DULL);
-						mw.refreshP2ForwardSlot(newIdx);
-					}
+					mw.placeFromRfgWithAnim(card, false, () -> {
+						mw.placeP2CardInForwardZone(card);
+						if (dull) {
+							int newIdx = mw.p2ForwardCards.size() - 1;
+							mw.p2ForwardStates.set(newIdx, CardState.DULL);
+							mw.refreshP2ForwardSlot(newIdx);
+						}
+					});
 				}
 			}
 
