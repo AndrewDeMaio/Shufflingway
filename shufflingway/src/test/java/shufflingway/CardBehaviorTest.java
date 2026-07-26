@@ -96,6 +96,46 @@ public class CardBehaviorTest {
         return mw;
     }
 
+    // =========================================================================================
+    // Cocytus 8-031R: "When Cocytus enters the field, choose up to 2 Forwards. If you control 4 or
+    // more Ice Characters, Freeze them."  The "if you control" clause gates the Freeze, not the
+    // choosing — the targets are picked either way, but they are only frozen when the condition
+    // holds. Only the "deal it X damage" form of this followup was condition-aware, so every other
+    // action (Freeze here) fell through to a matcher that scanned for the verb and ignored the
+    // condition entirely.
+    // =========================================================================================
+
+    private static final String COCYTUS_EFFECT =
+            "choose up to 2 Forwards. If you control 4 or more Ice Characters, Freeze them.";
+
+    /** Resolves Cocytus's enters-the-field effect with {@code iceCount} Ice Characters controlled. */
+    private static GameContext resolveCocytus(ForwardTarget chosen, int iceCount) {
+        Consumer<GameContext> fn = ActionResolver.parse(COCYTUS_EFFECT, makeForward("Cocytus", "Ice", 4, 8000));
+        assertNotNull(fn, "Cocytus's conditional-freeze effect should parse");
+        GameContext ctx = mock(GameContext.class);
+        // A mock returns an empty list here, which selectTargets reads as "targets were preloaded"
+        // and short-circuits on — null is what an ordinary choose-your-own-target effect sees.
+        when(ctx.consumePreloadedTargets()).thenReturn(null);
+        when(ctx.selectCharacters(anyInt(), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(),
+                anyInt(), any(), anyInt(), any(), anyBoolean(), anyBoolean(), anyBoolean(),
+                any(), any(), any(), any(), anyBoolean(), any(), anyBoolean())).thenReturn(List.of(chosen));
+        when(ctx.selfFieldCount(eq("Ice"), anyBoolean(), anyBoolean(), anyBoolean())).thenReturn(iceCount);
+        fn.accept(ctx);
+        return ctx;
+    }
+
+    @Test
+    void cocytusFreezesTheChosenForwardsWithFourIceCharacters() {
+        ForwardTarget t = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+        verify(resolveCocytus(t, 4)).freezeTarget(t);
+    }
+
+    @Test
+    void cocytusDoesNotFreezeWithFewerThanFourIceCharacters() {
+        ForwardTarget t = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+        verify(resolveCocytus(t, 3), never()).freezeTarget(any());
+    }
+
     @Test
     void firionDiscardConditionalElementBranchesParsesCorrectly() {
         List<ActionAbility> abilities = CardData.parseActionAbilities(FIRION_TEXT);
@@ -108,6 +148,83 @@ public class CardBehaviorTest {
         assertTrue(branches.get(0).effectText().toLowerCase().contains("first strike"));
         assertEquals("Water", branches.get(1).element());
         assertTrue(branches.get(1).effectText().toLowerCase().contains("activate"));
+    }
+
+    // =========================================================================================
+    // The two "If the discarded card is of X Element" clauses are independent conditions, not an
+    // if/else. Discarding a multi-element card such as a Water/Fire Forward satisfies both, so
+    // both effects apply. The resolver used to read only the discarded card's *primary* element
+    // and then run at most one branch, so a Water/Fire discard silently lost the other half.
+    // =========================================================================================
+
+    /** Resolves Firion's discard ability against a mock, with the given discarded-card elements. */
+    private static GameContext resolveFirionDiscard(CardData firion, List<String> discardedElements) {
+        ActionAbility ab = CardData.parseActionAbilities(FIRION_TEXT).get(0);
+        Consumer<GameContext> fn = ActionResolver.parse(ab.effectText(), firion);
+        assertNotNull(fn, "Firion's discard-conditional ability should parse");
+        GameContext ctx = mock(GameContext.class);
+        when(ctx.lastDiscardedCostCardElements()).thenReturn(discardedElements);
+        fn.accept(ctx);
+        return ctx;
+    }
+
+    /** The trait sets Firion was boosted with, in call order. */
+    private static List<EnumSet<CardData.Trait>> capturedBoostTraits(GameContext ctx, CardData firion, int times) {
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<EnumSet<CardData.Trait>> traits = ArgumentCaptor.forClass(EnumSet.class);
+        verify(ctx, times(times)).boostSourceForward(eq(firion), eq(2000), traits.capture());
+        return traits.getAllValues();
+    }
+
+    @Test
+    void aWaterFireDiscardTriggersBothOfFirionsBranches() {
+        CardData firion = makeFirion(7000);
+        GameContext ctx = resolveFirionDiscard(firion, List.of("Water", "Fire"));
+
+        List<EnumSet<CardData.Trait>> traits = capturedBoostTraits(ctx, firion, 2);
+        assertTrue(traits.stream().anyMatch(t -> t.contains(CardData.Trait.FIRST_STRIKE)),
+                "the Fire branch grants First Strike");
+        verify(ctx).logEntry("Effect: Activate Firion");
+    }
+
+    @Test
+    void aFireOnlyDiscardTriggersOnlyFirionsFireBranch() {
+        CardData firion = makeFirion(7000);
+        GameContext ctx = resolveFirionDiscard(firion, List.of("Fire"));
+
+        List<EnumSet<CardData.Trait>> traits = capturedBoostTraits(ctx, firion, 1);
+        assertTrue(traits.get(0).contains(CardData.Trait.FIRST_STRIKE));
+        verify(ctx, never()).logEntry("Effect: Activate Firion");
+    }
+
+    @Test
+    void aWaterOnlyDiscardTriggersOnlyFirionsWaterBranch() {
+        CardData firion = makeFirion(7000);
+        GameContext ctx = resolveFirionDiscard(firion, List.of("Water"));
+
+        List<EnumSet<CardData.Trait>> traits = capturedBoostTraits(ctx, firion, 1);
+        assertFalse(traits.get(0).contains(CardData.Trait.FIRST_STRIKE),
+                "the Water branch is a plain boost — First Strike belongs to the Fire branch");
+        verify(ctx).logEntry("Effect: Activate Firion");
+    }
+
+    @Test
+    void anUnmatchedDiscardTriggersNeitherOfFirionsBranches() {
+        CardData firion = makeFirion(7000);
+        GameContext ctx = resolveFirionDiscard(firion, List.of("Earth"));
+
+        verify(ctx, never()).boostSourceForward(any(), anyInt(), any());
+        verify(ctx, never()).logEntry("Effect: Activate Firion");
+    }
+
+    @Test
+    void firionsWaterBranchLogsItsPowerBoostOnlyOnce() {
+        // boostSourceForward is what actually reports the boost (and reports suppression instead
+        // when it does not land), so the resolver must not announce the same sentence itself.
+        CardData firion = makeFirion(7000);
+        GameContext ctx = resolveFirionDiscard(firion, List.of("Water"));
+
+        verify(ctx, never()).logEntry("Firion gains +2000 power until end of turn");
     }
 
     @Test
@@ -469,7 +586,7 @@ public class CardBehaviorTest {
         ForwardTarget t1 = new ForwardTarget(false, 1, ForwardTarget.CardZone.BREAK_ZONE);
         ForwardTarget t2 = new ForwardTarget(false, 2, ForwardTarget.CardZone.BREAK_ZONE);
         stubOpponentBzTargets(ctx, List.of(t0, t1, t2));
-        when(ctx.lastDiscardedCostCardElement()).thenReturn("Fire");
+        when(ctx.lastDiscardedCostCardElements()).thenReturn(List.of("Fire"));
 
         Consumer<GameContext> fn = ActionResolver.parse(DISCARD_RFG_EFFECT_TEXT, null);
         assertNotNull(fn);
@@ -487,7 +604,7 @@ public class CardBehaviorTest {
         GameContext ctx = mock(GameContext.class);
         ForwardTarget t0 = new ForwardTarget(false, 0, ForwardTarget.CardZone.BREAK_ZONE);
         stubOpponentBzTargets(ctx, List.of(t0));
-        when(ctx.lastDiscardedCostCardElement()).thenReturn("Water");
+        when(ctx.lastDiscardedCostCardElements()).thenReturn(List.of("Water"));
 
         Consumer<GameContext> fn = ActionResolver.parse(DISCARD_RFG_EFFECT_TEXT, null);
         assertNotNull(fn);
@@ -720,7 +837,7 @@ public class CardBehaviorTest {
         GameContext ctx = mock(GameContext.class);
         ForwardTarget t = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
         when(ctx.lastChosenTargets()).thenReturn(List.of(t));
-        when(ctx.lastDiscardedCostCardElement()).thenReturn("Wind");
+        when(ctx.lastDiscardedCostCardElements()).thenReturn(List.of("Wind"));
         fn.accept(ctx);
         verify(ctx).targetLoseAllAbilitiesUntilEndOfTurn(t);
     }
@@ -730,7 +847,7 @@ public class CardBehaviorTest {
         Consumer<GameContext> fn = ActionResolver.parse(DISCARD_COND_LOSE_ABILITIES, null);
         assertNotNull(fn);
         GameContext ctx = mock(GameContext.class);
-        when(ctx.lastDiscardedCostCardElement()).thenReturn("Fire");
+        when(ctx.lastDiscardedCostCardElements()).thenReturn(List.of("Fire"));
         fn.accept(ctx);
         verify(ctx, never()).targetLoseAllAbilitiesUntilEndOfTurn(org.mockito.ArgumentMatchers.any());
     }
@@ -747,7 +864,7 @@ public class CardBehaviorTest {
                 anyInt(), any(), anyInt(), any(), anyBoolean(), anyBoolean(), anyBoolean(),
                 any(), any(), any(), any(), anyBoolean(), any(), anyBoolean())).thenReturn(List.of(t));
         when(ctx.lastChosenTargets()).thenReturn(List.of(t));
-        when(ctx.lastDiscardedCostCardElement()).thenReturn("Wind");
+        when(ctx.lastDiscardedCostCardElements()).thenReturn(List.of("Wind"));
         fn.accept(ctx);
         verify(ctx).targetLoseAllAbilitiesUntilEndOfTurn(t);
     }

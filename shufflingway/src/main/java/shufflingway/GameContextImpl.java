@@ -4131,8 +4131,8 @@ final class GameContextImpl implements GameContext {
 						+ "cannot be used until end of turn");
 			}
 			@Override public String lastDiscardedCardName() { return mw.lastDiscardedCardName; }
-			@Override public String lastDiscardedCostCardElement() {
-				return mw.lastDiscardedCostCard == null ? null : mw.lastDiscardedCostCard.elements()[0];
+			@Override public List<String> lastDiscardedCostCardElements() {
+				return mw.lastDiscardedCostCard == null ? List.of() : List.of(mw.lastDiscardedCostCard.elements());
 			}
 			@Override public String lastDiscardedCostCardName() {
 				return mw.lastDiscardedCostCard == null ? null : mw.lastDiscardedCostCard.name();

@@ -1164,11 +1164,15 @@ class ComputerPlayer {
 					if (handIdx < 0) continue; // no matching card to discard — no benefit possible
 
 					CardData discarded = mw.playerBreakFromHand(false, handIdx);
+					mw.lastDiscardedCostCard = discarded;
 					mw.logEntry("[P2] " + card.name() + " — Discard cost: \""
 							+ (discarded != null ? discarded.name() : "?") + "\" discarded");
 					mw.refreshP2HandCountLabel();
 					GameContext ctx = mw.buildGameContext(false);
-					Consumer<GameContext> effect = ActionResolver.parse(branch.effectText(), card);
+					// The branch above only decided whether the trick is worth paying for; resolve the
+					// whole ability so a multi-element discard gets every branch it satisfies, not just
+					// the one that motivated the discard.
+					Consumer<GameContext> effect = ActionResolver.parse(ability.effectText(), card);
 					if (effect != null) {
 						mw.logEntry("[P2] " + card.name() + " — " + branch.element() + " branch: " + branch.effectText());
 						effect.accept(ctx);

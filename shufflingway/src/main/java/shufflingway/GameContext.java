@@ -1285,10 +1285,12 @@ public interface GameContext {
     String lastDiscardedCardName();
 
     /**
-     * Returns the primary element of the card most recently discarded as a cost payment,
-     * or {@code null} if no card has been discarded as a cost yet in the current ability chain.
+     * Returns every element of the card most recently discarded as a cost payment, or an empty
+     * list if no card has been discarded as a cost yet in the current ability chain. A
+     * multi-element card (e.g. Water/Fire) reports both, since it counts as a card "of Water
+     * Element" <em>and</em> "of Fire Element" for the conditionals that read this.
      */
-    String lastDiscardedCostCardElement();
+    List<String> lastDiscardedCostCardElements();
 
     /**
      * Returns the name of the card most recently discarded as a cost payment in the current ability

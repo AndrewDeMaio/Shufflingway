@@ -4761,6 +4761,22 @@ public class ActionResolver {
         "deal\\s+(?:it|them)\\s+(?<amount>\\d+)\\s+damage[.!]?$"
     );
 
+    /**
+     * The general form of {@link #FOLLOWUP_IF_SELF_CONTROLS_N_ELEMENT_TYPE_DAMAGE}: the same
+     * "If you control N or more [Element] [Type]" gate in front of any target action rather than
+     * only "deal it X damage" — e.g. Cocytus 8-031R's "choose up to 2 Forwards. If you control 4
+     * or more Ice Characters, Freeze them."  The condition gates the <em>action</em>, not the
+     * choosing: the targets are picked either way.
+     * <p>{@code action} is handed to {@link #parseTargetAction}, so this only takes effect for
+     * actions that machinery recognises; anything else falls through to the handlers below.
+     */
+    private static final Pattern FOLLOWUP_IF_SELF_CONTROLS_N_ELEMENT_TYPE_ACTION = Pattern.compile(
+        "(?i)^If\\s+you\\s+control\\s+(?<count>\\d+)\\s+or\\s+more\\s+" +
+        "(?:(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?" +
+        "(?<type>Forwards?|Backups?|Monsters?|Characters?|Summons?),?\\s+" +
+        "(?<action>.+?)[.!]?$"
+    );
+
     // -------------------------------------------------------------------------
     // Public API
     // -------------------------------------------------------------------------
@@ -6089,6 +6105,14 @@ public class ActionResolver {
         if (FOLLOWUP_DAMAGE_EXPR.matcher(followupText).find())                        return "DamageExpr";
         if (FOLLOWUP_DIVIDE_DAMAGE_AMONG_CHOSEN.matcher(followupText).find())         return "DivideDamageAmongChosen";
         if (FOLLOWUP_ACTIVATE_AND_GAIN_CONTROL_EOT.matcher(followupText).find())        return "ActivateAndGainControlEOT";
+        // The "If you control N or more …, <action>" gate comes before the plain action checks
+        // below, which scan for their verb with find() and would otherwise claim the gated form as
+        // unconditional. Guarded on parseTargetAction exactly as the dispatch is, so texts whose
+        // action is not a recognised target action still fall through to their own handler.
+        Matcher selfCondActionM = FOLLOWUP_IF_SELF_CONTROLS_N_ELEMENT_TYPE_ACTION.matcher(followupText);
+        if (selfCondActionM.matches()
+                && parseTargetAction(selfCondActionM.group("action").trim(), 0) != null)
+            return "IfSelfControlsNElementTypeAction";
         if (FOLLOWUP_ACTIVATE_AND_NEGATE_DAMAGE.matcher(followupText).find())          return "ActivateAndNegateDamage";
         if (FOLLOWUP_NEGATE_DAMAGE.matcher(followupText).find())                      return "NegateDamage";
         if (FOLLOWUP_GAIN_CONTROL_WHILE_CARD.matcher(followupText).find())            return "GainControlWhileCard";
@@ -9276,6 +9300,40 @@ public class ActionResolver {
             };
         }
 
+        // --- "If you control N or more [Element] [Type], <action> it/them" followup ---
+        // Must precede the plain action handlers below: those scan for their verb with find(), so
+        // they would match straight through this condition and apply the action unconditionally.
+        Matcher selfFieldActionM = FOLLOWUP_IF_SELF_CONTROLS_N_ELEMENT_TYPE_ACTION.matcher(primaryFollowup);
+        if (selfFieldActionM.matches()) {
+            String actionText = selfFieldActionM.group("action").trim();
+            java.util.function.BiConsumer<GameContext, List<ForwardTarget>> condAction =
+                    parseTargetAction(actionText, xValue);
+            if (condAction != null) {
+                int    minCount    = Integer.parseInt(selfFieldActionM.group("count"));
+                String condElement = selfFieldActionM.group("element");  // null if absent
+                String condTypeRaw = selfFieldActionM.group("type");
+                String condType    = condTypeRaw.toLowerCase();
+                boolean cFwd = condType.startsWith("forward") || condType.startsWith("character");
+                boolean cBkp = condType.startsWith("backup")  || condType.startsWith("character");
+                boolean cMon = condType.startsWith("monster") || condType.startsWith("character");
+                return ctx -> {
+                    String label = "If you control ≥" + minCount + " "
+                            + (condElement != null ? condElement + " " : "")
+                            + condTypeRaw + ", " + actionText;
+                    ctx.logEntry(choosePrefix + " — " + label);
+                    List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                            opponentOnly, selfOnly, condition, element, zone, opponentZone,
+                            costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
+                            jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
+                    if (ctx.selfFieldCount(condElement, cFwd, cBkp, cMon) >= minCount)
+                        condAction.accept(ctx, ts);
+                    else
+                        ctx.logEntry("Condition not met — " + actionText + " skipped");
+                    if (secondary != null) secondary.accept(ctx);
+                };
+            }
+        }
+
         // --- Split effect: [action A] the first [type] … and [action B] the other ---
         Matcher foM = FOLLOWUP_FIRST_AND_OTHER.matcher(primaryFollowup);
         if (foM.find()) {
@@ -11715,7 +11773,8 @@ public class ActionResolver {
         int boost = Integer.parseInt(m.group("amount"));
         String activateName = m.group("activateName").trim();
         return ctx -> {
-            ctx.logEntry(source.name() + " gains +" + boost + " power until end of turn");
+            // boostSourceForward logs the boost itself (and logs the suppressed case instead when
+            // the opponent is blocking power gains), so announcing it here just duplicates the line.
             ctx.boostSourceForward(source, boost, EnumSet.noneOf(CardData.Trait.class));
             ctx.logEntry("Effect: Activate " + activateName);
             List<ForwardTarget> ts = ctx.selectCharacters(
@@ -12218,21 +12277,37 @@ public class ActionResolver {
         final Consumer<GameContext> e1 = effect1;
         final Consumer<GameContext> e2 = effect2;
         return ctx -> {
-            String discardedElem = ctx.lastDiscardedCostCardElement();
-            if (discardedElem == null) {
+            List<String> discarded = ctx.lastDiscardedCostCardElements();
+            if (discarded.isEmpty()) {
                 ctx.logEntry("Discard conditional: no cost card recorded");
                 return;
             }
-            if (discardedElem.equalsIgnoreCase(elem1)) {
+            // The two branches are independent conditions, not an if/else: a multi-element discard
+            // (e.g. Water/Fire) is a card of both elements, so it satisfies — and triggers — both.
+            boolean matched = false;
+            if (discardedIsOfElement(discarded, elem1)) {
+                matched = true;
                 if (e1 != null) e1.accept(ctx);
                 else ctx.logEntry("Discard conditional: " + elem1 + " branch not implemented");
-            } else if (discardedElem.equalsIgnoreCase(elem2)) {
+            }
+            if (discardedIsOfElement(discarded, elem2)) {
+                matched = true;
                 if (e2 != null) e2.accept(ctx);
                 else ctx.logEntry("Discard conditional: " + elem2 + " branch not implemented");
-            } else {
-                ctx.logEntry("Discard conditional: element " + discardedElem + " matches neither branch");
             }
+            if (!matched)
+                ctx.logEntry("Discard conditional: element " + String.join("/", discarded) + " matches neither branch");
         };
+    }
+
+    /**
+     * Returns {@code true} when a card whose elements are {@code discarded} counts as a card "of
+     * {@code elem} Element". Every element of a multi-element card qualifies it independently.
+     */
+    private static boolean discardedIsOfElement(List<String> discarded, String elem) {
+        for (String e : discarded)
+            if (e.trim().equalsIgnoreCase(elem)) return true;
+        return false;
     }
 
     private static Consumer<GameContext> tryParseDiscardConditionalElementSingle(String text, CardData source, int xValue) {
@@ -12243,12 +12318,13 @@ public class ActionResolver {
         Consumer<GameContext> effect = parse(effTxt, source, xValue);
         if (effect == null) return null;
         return ctx -> {
-            String discardedElem = ctx.lastDiscardedCostCardElement();
-            if (discardedElem == null) {
+            List<String> discarded = ctx.lastDiscardedCostCardElements();
+            if (discarded.isEmpty()) {
                 ctx.logEntry("Discard conditional: no cost card recorded");
                 return;
             }
-            if (discardedElem.equalsIgnoreCase(elem)) {
+            String discardedElem = String.join("/", discarded);
+            if (discardedIsOfElement(discarded, elem)) {
                 ctx.logEntry("Discard conditional: discarded " + discardedElem + " card — bonus applies");
                 effect.accept(ctx);
             } else {
@@ -12273,9 +12349,10 @@ public class ActionResolver {
         if (!m.matches()) return null;
         final String needElem = m.group("elem").trim();
         return ctx -> {
-            String de = ctx.lastDiscardedCostCardElement();
-            if (de == null) { ctx.logEntry("Discard conditional: no cost card recorded"); return; }
-            if (de.equalsIgnoreCase(needElem)) {
+            List<String> discarded = ctx.lastDiscardedCostCardElements();
+            if (discarded.isEmpty()) { ctx.logEntry("Discard conditional: no cost card recorded"); return; }
+            String de = String.join("/", discarded);
+            if (discardedIsOfElement(discarded, needElem)) {
                 ctx.logEntry("Discard conditional: discarded " + de
                         + " card — chosen Forward loses all abilities until end of turn");
                 for (ForwardTarget t : ctx.lastChosenTargets()) ctx.targetLoseAllAbilitiesUntilEndOfTurn(t);
