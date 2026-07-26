@@ -110,6 +110,7 @@ import shufflingway.graphics.CardSlideAnimator;
 import shufflingway.graphics.CrystalDisplay;
 import shufflingway.graphics.GradientPanel;
 import shufflingway.graphics.GrayscaleLabel;
+import shufflingway.graphics.TraitTab;
 import shufflingway.menu.DebugMenu;
 import shufflingway.menu.FileMenu;
 import shufflingway.menu.HelpMenu;
@@ -4663,6 +4664,27 @@ public class MainWindow {
 
 	private boolean effectiveHasTrait(boolean isP1, int idx, CardData.Trait trait) {
 		return isP1 ? effectiveP1HasTrait(idx, trait) : effectiveP2HasTrait(idx, trait);
+	}
+
+	/**
+	 * Returns the traits the forward at {@code idx} should show a {@link TraitTab} for, in a
+	 * stable display order. Only traits {@link TraitTab#hasGlyph} can draw are considered, and
+	 * each is resolved through {@code effectiveHasTrait} so granted, temporary and suppressed
+	 * traits all show correctly.
+	 */
+	private List<CardData.Trait> visibleTraitTabs(boolean isP1, int idx) {
+		List<CardData.Trait> out = new ArrayList<>();
+		for (CardData.Trait t : CardData.Trait.values())
+			if (TraitTab.hasGlyph(t) && effectiveHasTrait(isP1, idx, t)) out.add(t);
+		return out;
+	}
+
+	/** Monster equivalent of {@link #visibleTraitTabs}, resolved through {@code effectiveMonsterHasTrait}. */
+	private List<CardData.Trait> visibleMonsterTraitTabs(boolean isP1, int idx) {
+		List<CardData.Trait> out = new ArrayList<>();
+		for (CardData.Trait t : CardData.Trait.values())
+			if (TraitTab.hasGlyph(t) && effectiveMonsterHasTrait(isP1, idx, t)) out.add(t);
+		return out;
 	}
 
 	/** True when the monster at {@code idx} has {@code trait} innately or granted while acting as a Forward. */
@@ -11240,6 +11262,7 @@ public class MainWindow {
 		int fwdPow = p1MonsterForwardPower(idx);
 		Map<String, Integer> countersMap = gameState.getCountersMap(card);
 		int totalCounters = countersMap.values().stream().mapToInt(c -> c == null ? 0 : c.intValue()).sum();
+		List<CardData.Trait> traitTabs = visibleMonsterTraitTabs(true, idx);
 		if (slot.getIcon() == null) slot.setIcon(new ImageIcon(CardAnimation.renderPlaceholder(state)));
 		new SwingWorker<ImageIcon, Void>() {
 			@Override protected ImageIcon doInBackground() throws Exception {
@@ -11247,6 +11270,7 @@ public class MainWindow {
 				if (raw == null) return new ImageIcon(CardAnimation.renderPlaceholder(state));
 				BufferedImage canvas = CardAnimation.renderBackupCard(
 						CardAnimation.toARGB(raw, CARD_W, CARD_H), state, canAttack || canBlock, selected, p1MonsterFrozen.get(idx));
+				TraitTab.renderTraitTabs(canvas, state, traitTabs);
 				if (damage > 0)
 					CardAnimation.renderDamageOverlay(canvas, damage, state);
 				if (actingForward)
@@ -11333,6 +11357,7 @@ public class MainWindow {
 		int fwdPow = p2MonsterForwardPower(idx);
 		Map<String, Integer> countersMap = gameState.getCountersMap(card);
 		int totalCounters = countersMap.values().stream().mapToInt(c -> c == null ? 0 : c.intValue()).sum();
+		List<CardData.Trait> traitTabs = visibleMonsterTraitTabs(false, idx);
 		if (slot.getIcon() == null) slot.setIcon(new ImageIcon(CardAnimation.renderPlaceholder(state)));
 		new SwingWorker<ImageIcon, Void>() {
 			@Override protected ImageIcon doInBackground() throws Exception {
@@ -11340,6 +11365,7 @@ public class MainWindow {
 				if (raw == null) return new ImageIcon(CardAnimation.renderPlaceholder(state));
 				BufferedImage canvas = CardAnimation.toARGB(raw, CARD_W, CARD_H);
 				canvas = CardAnimation.renderBackupCard(canvas, state, false, false, p2MonsterFrozen.get(idx));
+				TraitTab.renderTraitTabs(canvas, state, traitTabs);
 				if (damage > 0)
 					CardAnimation.renderDamageOverlay(canvas, damage, state);
 				if (actingForward)
@@ -11415,12 +11441,14 @@ public class MainWindow {
 		boolean selected = p1AttackSelection.contains(idx) || p1BlockerSelection == idx;
 		Map<String, Integer> countersMap = gameState.getCountersMap(fwdCard);
 		int totalCounters = countersMap.values().stream().mapToInt(c -> c == null ? 0 : c.intValue()).sum();
+		List<CardData.Trait> traitTabs = visibleTraitTabs(true, idx);
 		if (slot.getIcon() == null) slot.setIcon(new ImageIcon(CardAnimation.renderPlaceholder(state)));
 		new SwingWorker<ImageIcon, Void>() {
 			@Override protected ImageIcon doInBackground() throws Exception {
 				Image raw = ImageCache.load(url);
 				if (raw == null) return new ImageIcon(CardAnimation.renderPlaceholder(state));
 				BufferedImage canvas = CardAnimation.renderBackupCard(CardAnimation.toARGB(raw, CARD_W, CARD_H), state, canAttack || canBlock, selected, Boolean.TRUE.equals(p1ForwardFrozen.get(idx)));
+				TraitTab.renderTraitTabs(canvas, state, traitTabs);
 				if (damage > 0) {
 					CardAnimation.renderDamageOverlay(canvas, damage, state);
 				}
@@ -14033,12 +14061,14 @@ public class MainWindow {
 		int basePower = (topCard != null ? topCard : fwdCard).power();
 		Map<String, Integer> countersMap = gameState.getCountersMap(fwdCard);
 		int totalCounters = countersMap.values().stream().mapToInt(c -> c == null ? 0 : c.intValue()).sum();
+		List<CardData.Trait> traitTabs = visibleTraitTabs(false, idx);
 		if (slot.getIcon() == null) slot.setIcon(new ImageIcon(CardAnimation.renderPlaceholder(state)));
 		new SwingWorker<ImageIcon, Void>() {
 			@Override protected ImageIcon doInBackground() throws Exception {
 				Image raw = ImageCache.load(url);
 				if (raw == null) return new ImageIcon(CardAnimation.renderPlaceholder(state));
 				BufferedImage canvas = CardAnimation.renderBackupCard(CardAnimation.toARGB(raw, CARD_W, CARD_H), state, false, false, p2ForwardFrozen.get(idx));
+				TraitTab.renderTraitTabs(canvas, state, traitTabs);
 				if (damage > 0) {
 					CardAnimation.renderDamageOverlay(canvas, damage, state);
 				}
