@@ -4862,6 +4862,69 @@ public class CardBehaviorTest {
     }
 
     // =========================================================================================
+    // A party attack sets pendingP2PartyIndices and leaves pendingP2AttackerIdx at -1, so every
+    // attacker-side blocking restriction has to read the party rather than that single index —
+    // otherwise the checks blew up on p2ForwardCards.get(-1) and no Forward ever came back as a
+    // legal blocker, leaving "Take Damage" as P1's only move against a party.
+    // =========================================================================================
+
+    /** Opens the block step against a P2 party made of every P2 Forward on the field. */
+    private static void openPartyBlockStep(MainWindow mw) {
+        List<Integer> party = new ArrayList<>();
+        for (int i = 0; i < mw.p2ForwardCards.size(); i++) party.add(i);
+        mw.pendingP2PartyIndices = party;
+    }
+
+    @Test
+    void aForwardCanBeChosenAsBlockerAgainstAPartyAttack() {
+        MainWindow mw = new MainWindow();
+        enterAttackDeclarationStep(mw, false);
+        mw.placeP2CardInForwardZone(makeForward("Party A", "Fire", 3, 7000));
+        mw.placeP2CardInForwardZone(makeForward("Party B", "Fire", 3, 5000));
+        CardData blocker = makeForward("Blocker", "Ice", 3, 8000);
+        mw.placeCardInForwardZone(blocker);
+        mw.gameState.getIdentity().put(blocker, true);
+
+        openPartyBlockStep(mw);
+
+        assertTrue(mw.isForwardBlockSelectable(0),
+                "an active, unrestricted Forward may block a party attack");
+    }
+
+    @Test
+    void aPartyMemberThatCannotBeBlockedGatesTheWholeParty() {
+        MainWindow mw = new MainWindow();
+        enterAttackDeclarationStep(mw, false);
+        mw.placeP2CardInForwardZone(makeForward("Party A", "Fire", 3, 7000));
+        mw.placeP2CardInForwardZone(makeForward("Party B", "Fire", 3, 5000));
+        CardData blocker = makeForward("Blocker", "Ice", 3, 8000);
+        mw.placeCardInForwardZone(blocker);
+        mw.gameState.getIdentity().put(blocker, true);
+
+        openPartyBlockStep(mw);
+        mw.p2ForwardCannotBeBlocked.add(1);
+
+        assertFalse(mw.isForwardBlockSelectable(0),
+                "blocking the party means blocking every member, so one unblockable member stops it");
+    }
+
+    @Test
+    void aDullForwardStillCannotBlockAParty() {
+        MainWindow mw = new MainWindow();
+        enterAttackDeclarationStep(mw, false);
+        mw.placeP2CardInForwardZone(makeForward("Party A", "Fire", 3, 7000));
+        mw.placeP2CardInForwardZone(makeForward("Party B", "Fire", 3, 5000));
+        CardData blocker = makeForward("Blocker", "Ice", 3, 8000);
+        mw.placeCardInForwardZone(blocker);
+        mw.gameState.getIdentity().put(blocker, true);
+        mw.p1ForwardStates.set(0, CardState.DULL);
+
+        openPartyBlockStep(mw);
+
+        assertFalse(mw.isForwardBlockSelectable(0), "a dull Forward cannot block, party or not");
+    }
+
+    // =========================================================================================
     // Louisoix 5-120C: "…you may search for 1 Card Name Alisaie or Card Name Alphinaud and add it
     // to your hand."  The name capture ran to the trailing "and", so the filter became the single
     // unmatchable name "Alisaie or Card Name Alphinaud" and the search found nothing. Names are now

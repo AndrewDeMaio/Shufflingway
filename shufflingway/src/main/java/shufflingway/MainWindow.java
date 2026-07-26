@@ -379,7 +379,7 @@ public class MainWindow {
 	private int           p1BlockerSelection      = -1;   // index of forward P1 clicked to block with
 	private int           p1BlockerMonsterIdx     = -1;   // P1 monster acting as Forward chosen to block
 	private int           p1BlockerBackupIdx      = -1;   // P1 backup acting as Forward chosen to block
-	private List<Integer> pendingP2PartyIndices   = null; // set while P1 declares blocker vs P2 party
+	List<Integer>         pendingP2PartyIndices   = null; // set while P1 declares blocker vs P2 party
 	private int           pendingP2PartyCombined  = 0;
 
 	// Blocking-target tracking: set between "Blocker Declared" and resolveCombat so that
@@ -11260,7 +11260,7 @@ public class MainWindow {
 	}
 
 	/** Returns true if {@code idx} is a valid P1 blocker choice during block declaration. */
-	private boolean isForwardBlockSelectable(int idx) {
+	boolean isForwardBlockSelectable(int idx) {
 		if (!p1InBlockDeclaration()) return false;
 		if (idx < 0 || idx >= p1ForwardStates.size()) return false;
 		CardState s = p1ForwardStates.get(idx);
@@ -11274,10 +11274,9 @@ public class MainWindow {
 		if (blocker.cannotBlockHigherPower() && attackerPowerExceedsBlocker(ForwardTarget.CardZone.FORWARD, idx)) return false;
 		if (p1ForwardCannotBlockInferiorPower && blockerPowerExceedsAttacker(ForwardTarget.CardZone.FORWARD, idx)) return false;
 		// Check attacker-side unblockability
-		if (p2ForwardCannotBeBlocked.contains(pendingP2AttackerIdx)) return false;
-		if (attackerConditionallyUnblockable()) return false;
-		if (attackerBlockCostFiltersExclude(p1ForwardCards.get(idx).cost())) return false;
-		if (attackerCannotBeBlockedByHigherPower() && blockerPowerExceedsAttacker(ForwardTarget.CardZone.FORWARD, idx)) return false;
+		if (attackerUnblockable()) return false;
+		if (attackerBlockCostFiltersExclude(blocker.cost())) return false;
+		if (attackerHigherPowerFilterExcludes(ForwardTarget.CardZone.FORWARD, idx)) return false;
 		// If any forward must block, restrict choices to those
 		if (!p1ForwardMustBlock.isEmpty() && !p1ForwardMustBlock.contains(idx)) return false;
 		return true;
@@ -11431,57 +11430,83 @@ public class MainWindow {
 		for (int i = 0; i < p1BackupCards.length; i++) refreshP1BackupSlot(i);
 	}
 
-	/** Only Forward attackers track cannot-be-blocked; acting-as-Forwards don't. */
-	private boolean attackerUnblockable() {
-		if (pendingP2AttackerIsMonster || pendingP2AttackerIsBackup) return false;
-		return p2ForwardCannotBeBlocked.contains(pendingP2AttackerIdx)
-				|| attackerConditionallyUnblockable();
+	/**
+	 * The P2 Forward-zone indices currently attacking: every party member during a party attack, the
+	 * lone attacker otherwise.  Empty when a Monster or Backup is acting as the Forward, since
+	 * {@code pendingP2AttackerIdx} then indexes that zone rather than the Forward zone and none of
+	 * the attacker-side blocking restrictions below apply to it.
+	 *
+	 * <p>Every attacker-side check runs over this list, so they all read the whole party rather than
+	 * a single {@code pendingP2AttackerIdx} — which a party attack never sets.
+	 */
+	private List<Integer> pendingP2AttackerForwardIndices() {
+		if (pendingP2PartyIndices != null) {
+			// A member can be broken during the priority round before the block is declared.
+			List<Integer> live = new ArrayList<>();
+			for (int i : pendingP2PartyIndices)
+				if (i >= 0 && i < p2ForwardCards.size()) live.add(i);
+			return live;
+		}
+		if (pendingP2AttackerIsMonster || pendingP2AttackerIsBackup) return List.of();
+		if (pendingP2AttackerIdx < 0 || pendingP2AttackerIdx >= p2ForwardCards.size()) return List.of();
+		return List.of(pendingP2AttackerIdx);
 	}
 
-	/** Returns true if any IfControlBoost on P2's field grants cannot-be-blocked to the attacker
+	/** Every card on P2's field that can carry an IfControlBoost. */
+	private List<CardData> p2FieldCards() {
+		List<CardData> all = new ArrayList<>(p2ForwardCards);
+		for (CardData bkp : p2BackupCards) if (bkp != null) all.add(bkp);
+		all.addAll(p2MonsterCards);
+		return all;
+	}
+
+	/** Only Forward attackers track cannot-be-blocked; acting-as-Forwards don't. */
+	private boolean attackerUnblockable() {
+		for (int i : pendingP2AttackerForwardIndices())
+			if (p2ForwardCannotBeBlocked.contains(i)) return true;
+		return attackerConditionallyUnblockable();
+	}
+
+	/** Returns true if any IfControlBoost on P2's field grants cannot-be-blocked to an attacker
 	 *  and all of that boost's conditions are currently met. */
 	private boolean attackerConditionallyUnblockable() {
-		if (pendingP2AttackerIsMonster || pendingP2AttackerIsBackup) return false;
-		CardData attacker = p2ForwardCards.get(pendingP2AttackerIdx);
-		for (CardData src : p2ForwardCards)
-			for (IfControlBoost icb : src.ifControlBoosts())
-				if (icb.cannotBeBlocked() && icb.appliesToCard(attacker) && icbConditionsMet(icb, false))
-					return true;
-		for (CardData bkp : p2BackupCards)
-			if (bkp != null)
-				for (IfControlBoost icb : bkp.ifControlBoosts())
+		for (int i : pendingP2AttackerForwardIndices()) {
+			CardData attacker = p2ForwardCards.get(i);
+			for (CardData src : p2FieldCards())
+				for (IfControlBoost icb : src.ifControlBoosts())
 					if (icb.cannotBeBlocked() && icb.appliesToCard(attacker) && icbConditionsMet(icb, false))
 						return true;
-		for (CardData mon : p2MonsterCards)
-			for (IfControlBoost icb : mon.ifControlBoosts())
-				if (icb.cannotBeBlocked() && icb.appliesToCard(attacker) && icbConditionsMet(icb, false))
-					return true;
+		}
 		return false;
 	}
 
-	/** True when the current P2 attacker cannot be blocked by a Forward with greater power. */
-	private boolean attackerCannotBeBlockedByHigherPower() {
-		if (pendingP2AttackerIsMonster || pendingP2AttackerIsBackup) return false;
-		return p2ForwardCards.get(pendingP2AttackerIdx).cannotBeBlockedByHigherPower();
+	/**
+	 * True when an attacker's "cannot be blocked by a Forward with greater power" restriction rules
+	 * this blocker out.  Power is compared against the restricted attacker itself, so within a party
+	 * only the members actually carrying the restriction gate the block.
+	 */
+	private boolean attackerHigherPowerFilterExcludes(ForwardTarget.CardZone blockerZone, int blockerIdx) {
+		int blockerPower = fieldForwardPower(true, blockerZone, blockerIdx);
+		for (int i : pendingP2AttackerForwardIndices())
+			if (p2ForwardCards.get(i).cannotBeBlockedByHigherPower() && blockerPower > effectiveP2ForwardPower(i))
+				return true;
+		return false;
 	}
 
-	/** True when the potential P1 blocker (given zone/idx) has strictly greater power than the attacker. */
+	/** True when the potential P1 blocker (given zone/idx) has strictly greater power than ANY attacker. */
 	private boolean blockerPowerExceedsAttacker(ForwardTarget.CardZone blockerZone, int blockerIdx) {
-		int attackerPower = fieldForwardPower(false, ForwardTarget.CardZone.FORWARD, pendingP2AttackerIdx);
-		int blockerPower  = fieldForwardPower(true, blockerZone, blockerIdx);
-		return blockerPower > attackerPower;
+		int blockerPower = fieldForwardPower(true, blockerZone, blockerIdx);
+		for (int i : pendingP2AttackerForwardIndices())
+			if (blockerPower > effectiveP2ForwardPower(i)) return true;
+		return false;
 	}
 
 	/** True when ANY attacker (single or every party member) has strictly greater power than the blocker. */
 	private boolean attackerPowerExceedsBlocker(ForwardTarget.CardZone blockerZone, int blockerIdx) {
 		int blockerPower = fieldForwardPower(true, blockerZone, blockerIdx);
-		if (pendingP2PartyIndices != null) {
-			for (int pi : pendingP2PartyIndices)
-				if (effectiveP2ForwardPower(pi) > blockerPower) return true;
-			return false;
-		}
-		if (pendingP2AttackerIsMonster || pendingP2AttackerIsBackup) return false;
-		return fieldForwardPower(false, ForwardTarget.CardZone.FORWARD, pendingP2AttackerIdx) > blockerPower;
+		for (int i : pendingP2AttackerForwardIndices())
+			if (effectiveP2ForwardPower(i) > blockerPower) return true;
+		return false;
 	}
 
 	/**
@@ -11490,33 +11515,20 @@ public class MainWindow {
 	 * conditional (IfControlBoost) filters.
 	 */
 	private boolean attackerBlockCostFiltersExclude(int blockerCost) {
-		if (pendingP2AttackerIsMonster || pendingP2AttackerIsBackup) return false;
-		if (allForwardsCannotBeBlockedByHigherCostThisTurn
-				&& blockerCost > p2ForwardCards.get(pendingP2AttackerIdx).cost()) return true;
-		int[] dyn = p2ForwardCannotBeBlockedByCost.get(pendingP2AttackerIdx);
-		if (dyn != null && blockerCostExcluded(blockerCost, dyn)) return true;
-		int[] intr = p2ForwardCards.get(pendingP2AttackerIdx).fieldCannotBeBlockedByCost();
-		if (intr != null && blockerCostExcluded(blockerCost, intr)) return true;
-		CardData attacker = p2ForwardCards.get(pendingP2AttackerIdx);
-		for (CardData src : p2ForwardCards)
-			for (IfControlBoost icb : src.ifControlBoosts())
-				if (icb.cannotBeBlockedByCost() != null && icb.appliesToCard(attacker)
-						&& icbConditionsMet(icb, false)
-						&& blockerCostExcluded(blockerCost, icb.cannotBeBlockedByCost()))
-					return true;
-		for (CardData bkp : p2BackupCards)
-			if (bkp != null)
-				for (IfControlBoost icb : bkp.ifControlBoosts())
+		for (int i : pendingP2AttackerForwardIndices()) {
+			CardData attacker = p2ForwardCards.get(i);
+			if (allForwardsCannotBeBlockedByHigherCostThisTurn && blockerCost > attacker.cost()) return true;
+			int[] dyn = p2ForwardCannotBeBlockedByCost.get(i);
+			if (dyn != null && blockerCostExcluded(blockerCost, dyn)) return true;
+			int[] intr = attacker.fieldCannotBeBlockedByCost();
+			if (intr != null && blockerCostExcluded(blockerCost, intr)) return true;
+			for (CardData src : p2FieldCards())
+				for (IfControlBoost icb : src.ifControlBoosts())
 					if (icb.cannotBeBlockedByCost() != null && icb.appliesToCard(attacker)
 							&& icbConditionsMet(icb, false)
 							&& blockerCostExcluded(blockerCost, icb.cannotBeBlockedByCost()))
 						return true;
-		for (CardData mon : p2MonsterCards)
-			for (IfControlBoost icb : mon.ifControlBoosts())
-				if (icb.cannotBeBlockedByCost() != null && icb.appliesToCard(attacker)
-						&& icbConditionsMet(icb, false)
-						&& blockerCostExcluded(blockerCost, icb.cannotBeBlockedByCost()))
-					return true;
+		}
 		return false;
 	}
 
@@ -11537,7 +11549,7 @@ public class MainWindow {
 		if (monsterBlocker.cannotBlockHigherPower() && attackerPowerExceedsBlocker(ForwardTarget.CardZone.MONSTER, idx)) return false;
 		if (p1ForwardCannotBlockInferiorPower && blockerPowerExceedsAttacker(ForwardTarget.CardZone.MONSTER, idx)) return false;
 		if (attackerBlockCostFiltersExclude(monsterBlocker.cost())) return false;
-		if (attackerCannotBeBlockedByHigherPower() && blockerPowerExceedsAttacker(ForwardTarget.CardZone.MONSTER, idx)) return false;
+		if (attackerHigherPowerFilterExcludes(ForwardTarget.CardZone.MONSTER, idx)) return false;
 		return true;
 	}
 
@@ -11558,7 +11570,7 @@ public class MainWindow {
 		if (backupBlocker.cannotBlockHigherPower() && attackerPowerExceedsBlocker(ForwardTarget.CardZone.BACKUP, idx)) return false;
 		if (p1ForwardCannotBlockInferiorPower && blockerPowerExceedsAttacker(ForwardTarget.CardZone.BACKUP, idx)) return false;
 		if (attackerBlockCostFiltersExclude(backupBlocker.cost())) return false;
-		if (attackerCannotBeBlockedByHigherPower() && blockerPowerExceedsAttacker(ForwardTarget.CardZone.BACKUP, idx)) return false;
+		if (attackerHigherPowerFilterExcludes(ForwardTarget.CardZone.BACKUP, idx)) return false;
 		return true;
 	}
 
