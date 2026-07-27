@@ -2919,6 +2919,63 @@ public class CardBehaviorTest {
     }
 
     // =========================================================================================
+    // Odin 21-084H: "Choose 1 Forward or Monster of cost 4 or less. Break it. If you control 5 or
+    // more Lightning Characters, also draw 1 card." — the gate and its condition both parsed
+    // already; the sole blocker was the additive "also" in front of the inner effect, which no
+    // pattern starts with. parse() now strips it like the "Then, " connective it sits alongside.
+    // =========================================================================================
+
+    private static final String ODIN_TEXT =
+            "Choose 1 Forward or Monster of cost 4 or less. Break it. "
+            + "If you control 5 or more Lightning Characters, also draw 1 card.";
+
+    @Test
+    void odinConditionalDrawParses() {
+        assertNotNull(ActionResolver.parse(ODIN_TEXT, null), "the whole effect should parse");
+        assertNotNull(ActionResolver.parse("If you control 5 or more Lightning Characters, also draw 1 card.", null),
+                "the 'also'-prefixed gate should parse on its own");
+        assertEquals("DrawCards", ActionResolver.fullDescription("also draw 1 card.", null),
+                "a leading 'also' is stripped like any other additive connective");
+    }
+
+    /** P1 casts Odin at P2's lone cost-3 Forward, with {@code lightningAllies} Lightning Forwards out. */
+    private static MainWindow castOdinWith(int lightningAllies) {
+        MainWindow mw = new MainWindow();
+        mw.gameState.initializeDeck(List.of(
+                makeForward("Deck Card A", "Lightning", 2, 5000),
+                makeForward("Deck Card B", "Lightning", 2, 5000)), List.of());
+        mw.gameState.getP1Hand().clear();
+
+        for (int i = 0; i < lightningAllies; i++) {
+            CardData ally = makeForward("Bolt " + i, "Lightning", 2, 5000);
+            mw.gameState.getIdentity().put(ally, true);
+            mw.placeCardInForwardZone(ally);
+        }
+        CardData victim = makeForward("Victim", "Ice", 3, 7000);
+        mw.gameState.getIdentity().put(victim, false);
+        mw.placeP2CardInForwardZone(victim);
+
+        GameContext ctx = mw.buildGameContext(true);
+        ctx.preloadTargets(List.of(new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD)));
+        ActionResolver.parse(ODIN_TEXT, null).accept(ctx);
+        return mw;
+    }
+
+    @Test
+    void odinDrawsWhenFiveLightningCharactersAreControlled() {
+        MainWindow mw = castOdinWith(5);
+        assertTrue(mw.p2ForwardCards.isEmpty(), "the cost 3 Forward is broken either way");
+        assertEquals(1, mw.gameState.getP1Hand().size(), "5 Lightning Characters — the draw fires");
+    }
+
+    @Test
+    void odinSkipsTheDrawBelowFiveLightningCharacters() {
+        MainWindow mw = castOdinWith(4);
+        assertTrue(mw.p2ForwardCards.isEmpty(), "the break is unconditional");
+        assertTrue(mw.gameState.getP1Hand().isEmpty(), "only 4 Lightning Characters — no draw");
+    }
+
+    // =========================================================================================
     // Brynhildr 15-014H: "EX BURST Choose 1 Forward. Deal it 5000 damage. When it is put from the
     // field into the Break Zone this turn, draw 1 card." — the trailing sentence is a delayed
     // trigger marked onto the chosen Forward, firing for the caster whenever that Forward later

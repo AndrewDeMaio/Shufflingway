@@ -4921,6 +4921,9 @@ public class ActionResolver {
         effectText = effectText.replaceFirst("(?i)^(?:\\[\\[ex\\]\\])?\\s*EX\\s+BURST(?:\\[\\[/\\]\\])?\\s*", "").trim();
         // Strip leading "Then, " connector that appears when this text is a secondary clause.
         effectText = effectText.replaceFirst("(?i)^Then,?\\s+", "").trim();
+        // Strip a leading "also" the same way — purely additive phrasing carried over from the
+        // clause this text follows ("…, also draw 1 card." — Odin 21-084H), never a verb of its own.
+        effectText = effectText.replaceFirst("(?i)^also\\s+", "").trim();
         Consumer<GameContext> result;
 
         // "Cast it as though you owned it" family — matched early because the highly specific
@@ -6271,6 +6274,7 @@ public class ActionResolver {
     public static String fullDescription(String effectText, CardData source) {
         effectText = effectText.replaceFirst("(?i)^(?:\\[\\[ex\\]\\])?\\s*EX\\s+BURST(?:\\[\\[/\\]\\])?\\s*", "").trim();
         effectText = effectText.replaceFirst("(?i)^Then,?\\s+", "").trim();
+        effectText = effectText.replaceFirst("(?i)^also\\s+", "").trim();
         // Strip trailing use-restriction sentences so they don't short-circuit before effect patterns match
         String noRestriction = stripRestrictionSentences(effectText);
         if (!noRestriction.isEmpty()) effectText = noRestriction;
@@ -6304,6 +6308,18 @@ public class ActionResolver {
         if (tryParseIfCastAtLeast(effectText, source, 0)                != null) return "IfCastAtLeast";
         if (tryParseIfControlCondOtherThan(effectText, source, 0)      != null) return "IfControlCondOtherThan";
         if (tryParseControlGatedInsteadUpgrade(effectText, source, 0)  != null) return "ControlGatedInsteadUpgrade";
+        if (tryParseControlConditionGate(effectText, source, 0)        != null) {
+            Matcher ccg = CONTROL_CONDITION_GATE.matcher(effectText.trim());
+            if (!ccg.matches()) return "ControlConditionGate";
+            String innerTxt  = ccg.group("effect").trim();
+            String innerDesc = fullDescription(innerTxt, source);
+            if (innerDesc == null) innerDesc = matchedPatternName(innerTxt, source);
+            // Plain ASCII separator: "?" is this report's marker for an undescribed layer, and a
+            // "→" degrades to "?" on a cp1252 console, which would read as exactly that.
+            return "IfControl(" + (ccg.group("neg") != null ? "not " : "")
+                    + CardData.parseControlCondition(ccg.group("cond").trim())
+                    + ": " + (innerDesc != null ? innerDesc : "?") + ")";
+        }
         if (tryParseIfOppControlsNOrMoreCondTypeGate(effectText, source, 0) != null) return "IfOppControlsNOrMoreCondTypeDraw";
         if (tryParseDiscardConditionalElement(effectText, source, 0)    != null) return "DiscardConditionalElement";
         if (tryParseDiscardConditionalElementSingle(effectText, source, 0) != null) return "DiscardConditionalElementSingle";
