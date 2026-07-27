@@ -2919,6 +2919,92 @@ public class CardBehaviorTest {
     }
 
     // =========================================================================================
+    // Black Mage 27-097C: "When Black Mage enters the field, your opponent selects 1 Forward of
+    // cost 2 or less they control. Put it into the Break Zone. If you control a Multi-Element
+    // Forward, your opponent selects 1 Forward of cost 4 or less they control instead. Put it into
+    // the Break Zone." — the "instead" clause replaces the whole base effect (it does not stack),
+    // so exactly one of the two cost thresholds applies.
+    // =========================================================================================
+
+    private static final String BLACK_MAGE_TEXT =
+            "When Black Mage enters the field, your opponent selects 1 Forward of cost 2 or less they control. "
+            + "Put it into the Break Zone. If you control a Multi-Element Forward, your opponent selects 1 Forward "
+            + "of cost 4 or less they control instead. Put it into the Break Zone.";
+
+    private static CardData makeBlackMage() {
+        return new CardData(null, "Black Mage", "Water", 3, 7000, "Forward", false, 0, false, false,
+                Set.of(), 0, List.of(), null, List.of(),
+                List.of(), CardData.parseAutoAbilities(BLACK_MAGE_TEXT),
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                false, false, null, false, false, false, false, false, false,
+                null, null, null, BLACK_MAGE_TEXT);
+    }
+
+    @Test
+    void blackMageParsesAsEntersFieldTriggerWithControlGatedUpgrade() {
+        CardData blackMage = makeBlackMage();
+        List<AutoAbility> autos = blackMage.autoAbilities();
+        assertEquals(1, autos.size(), "Black Mage has one auto-ability");
+        AutoAbility fa = autos.get(0);
+        assertEquals("enters the field", fa.trigger());
+        assertEquals("Black Mage", fa.triggerCard());
+        assertNotNull(ActionResolver.parse(fa.effectText(), blackMage),
+                "the cost-gated opponent-break effect with its 'instead' upgrade should parse");
+    }
+
+    /**
+     * Drives the parsed ETF effect against a P1-activated context. P2 controls a single Forward of
+     * {@code oppForwardCost}; P1 additionally controls a Multi-Element Forward when
+     * {@code withMultiElement} is set. With one eligible target the selection resolves without a
+     * dialog, so the cost filter alone decides whether anything is broken.
+     */
+    private static MainWindow runBlackMageEffect(int oppForwardCost, boolean withMultiElement) {
+        MainWindow mw = new MainWindow();
+        CardData blackMage = makeBlackMage();
+        mw.gameState.getIdentity().put(blackMage, true);        // Black Mage owned/controlled by P1
+
+        if (withMultiElement) {
+            CardData multi = makeForward("Multi Forward", "Fire/Water", 3, 5000);
+            mw.gameState.getIdentity().put(multi, true);
+            mw.placeCardInForwardZone(multi);                   // P1 idx 0
+        }
+
+        CardData oppForward = makeForward("Opp Forward", "Fire", oppForwardCost, 5000);
+        mw.gameState.getIdentity().put(oppForward, false);
+        mw.placeP2CardInForwardZone(oppForward);                // P2 idx 0
+
+        GameContext ctx = mw.buildGameContext(true);            // P1 activates (opponent = P2)
+        AutoAbility fa = blackMage.autoAbilities().get(0);
+        ActionResolver.parse(fa.effectText(), blackMage).accept(ctx);
+        return mw;
+    }
+
+    @Test
+    void blackMageBreaksCheapForwardWithoutMultiElement() {
+        MainWindow mw = runBlackMageEffect(2, false);
+        assertTrue(mw.p2ForwardCards.isEmpty(), "the cost 2 Forward is within the base threshold");
+        assertEquals(1, mw.gameState.getP2BreakZone().size(),
+                "the opponent's Forward should be in their Break Zone");
+    }
+
+    @Test
+    void blackMageSparesExpensiveForwardWithoutMultiElement() {
+        MainWindow mw = runBlackMageEffect(4, false);
+        assertEquals(1, mw.p2ForwardCards.size(),
+                "cost 4 exceeds the base threshold of 2 — the Forward should remain");
+        assertTrue(mw.gameState.getP2BreakZone().isEmpty(), "nothing should be put into the Break Zone");
+    }
+
+    @Test
+    void blackMageBreaksExpensiveForwardWithMultiElement() {
+        MainWindow mw = runBlackMageEffect(4, true);
+        assertTrue(mw.p2ForwardCards.isEmpty(),
+                "the Multi-Element upgrade raises the threshold to cost 4");
+        assertEquals(1, mw.gameState.getP2BreakZone().size(),
+                "the opponent's Forward should be in their Break Zone");
+    }
+
+    // =========================================================================================
     // Physalis: "When Physalis enters the field or attacks, if your opponent has 3 cards or less
     // in their hand, select 1 of the 2 following actions. If your opponent has no cards in their
     // hand, select up to 2 of the 2 following actions instead. "Choose 1 Character. Dull it and

@@ -2596,12 +2596,15 @@ public class ActionResolver {
     );
 
     /**
-     * Matches "Your opponent selects N [condition] [element] [type] they control [sep] followup".
+     * Matches "Your opponent selects N [condition] [element] [type] [of cost C or less/more]
+     * they control [sep] followup".
      * <ul>
      *   <li>Group {@code count}     — number of cards the opponent must select</li>
      *   <li>Group {@code condition} — optional state filter</li>
      *   <li>Group {@code element}   — optional element filter</li>
      *   <li>Group {@code targets}   — card type(s)</li>
+     *   <li>Group {@code cost}      — optional cost threshold</li>
+     *   <li>Group {@code costcmp}   — {@code less} or {@code more}; both are inclusive of {@code cost}</li>
      *   <li>Group {@code followup}  — action applied to the selected card(s)</li>
      * </ul>
      */
@@ -2610,6 +2613,7 @@ public class ActionResolver {
         "(?:(?<condition>dull|damaged|attacking|blocking|active)\\s+)?" +
         "(?:(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?" +
         "(?<targets>(?:Forwards?|Backups?|Characters?|Monsters?)(?:\\s+(?:and/or|or|and)\\s+(?:Forwards?|Backups?|Characters?|Monsters?))?)" +
+        "(?:\\s+of\\s+cost\\s+(?<cost>\\d+)\\s+or\\s+(?<costcmp>less|more))?" +
         "\\s+(?:they|he/she|he|she)\\s+controls?" +
         "(?:[.]\\s*|\\s+and\\s+)" +
         "(?<followup>.+)",
@@ -4965,6 +4969,9 @@ public class ActionResolver {
         result = tryParseControlConditionGate(effectText, source, xValue);
         if (result != null) return result;
 
+        result = tryParseControlGatedInsteadUpgrade(effectText, source, xValue);
+        if (result != null) return result;
+
         result = tryParseOpponentControlsCardGate(effectText, source, xValue);
         if (result != null) return result;
 
@@ -6035,6 +6042,9 @@ public class ActionResolver {
         if (tryParseSearchAndCastSummonFree(effectText)       != null) return "SearchAndCastSummonFree";
         if (tryParsePlayAnyNumberFromHand(effectText, source) != null) return "PlayAnyNumberFromHand";
         if (tryParsePlayFromHand(effectText, source, 0)       != null) return "PlayFromHand";
+        // Checked ahead of OpponentSelects: an "…, X instead." upgrade wraps a base clause the
+        // OpponentSelects matcher would otherwise claim on its own, dropping the replacement.
+        if (tryParseControlGatedInsteadUpgrade(effectText, source, 0) != null) return "ControlGatedInsteadUpgrade";
         if (tryParseOpponentSelects(effectText)               != null) return "OpponentSelects";
         if (tryParseBzFwdToHandOppFwdToBzByDamage(effectText)  != null) return "BzFwdToHandOppFwdToBzByDamage";
         if (tryParseOpponentPutsForwardToBreakZone(effectText) != null) return "OpponentPutsForwardToBreakZone";
@@ -6278,6 +6288,7 @@ public class ActionResolver {
         if (tryParseAddRemovedBySourceAbilityToHand(effectText, source)     != null) return "AddRemovedBySourceAbilityToHand";
         if (tryParseIfCastAtLeast(effectText, source, 0)                != null) return "IfCastAtLeast";
         if (tryParseIfControlCondOtherThan(effectText, source, 0)      != null) return "IfControlCondOtherThan";
+        if (tryParseControlGatedInsteadUpgrade(effectText, source, 0)  != null) return "ControlGatedInsteadUpgrade";
         if (tryParseIfOppControlsNOrMoreCondTypeGate(effectText, source, 0) != null) return "IfOppControlsNOrMoreCondTypeDraw";
         if (tryParseDiscardConditionalElement(effectText, source, 0)    != null) return "DiscardConditionalElement";
         if (tryParseDiscardConditionalElementSingle(effectText, source, 0) != null) return "DiscardConditionalElementSingle";
@@ -12252,6 +12263,26 @@ public class ActionResolver {
     );
 
     /**
+     * Matches "&lt;base&gt;. If you control &lt;condition&gt;, &lt;alternative&gt; instead. [&lt;rest&gt;]" —
+     * a replacement clause that swaps the whole base effect for a stronger one when the controller
+     * meets a board condition (Black Mage 27-097C: the opponent breaks one of their Forwards of cost
+     * 2 or less, or cost 4 or less while you control a Multi-Element Forward).
+     *
+     * <p>"instead" sits inside the alternative's first sentence, so any sentence after it
+     * ({@code rest}) still belongs to the alternative and is re-joined before the branch is parsed.
+     * <ul>
+     *   <li>Group {@code base} — the effect that applies when the condition is not met</li>
+     *   <li>Group {@code cond} — the "you control …" condition</li>
+     *   <li>Group {@code alt}  — the replacement effect, up to the word "instead"</li>
+     *   <li>Group {@code rest} — further sentences belonging to the replacement effect</li>
+     * </ul>
+     */
+    private static final Pattern CONTROL_GATED_INSTEAD_UPGRADE = Pattern.compile(
+        "(?is)^(?<base>.+?[.!])\\s+If\\s+you\\s+control\\s+(?<cond>[^,]+?),\\s+" +
+        "(?<alt>.+?)\\s+instead[.!]\\s*(?<rest>.*)$"
+    );
+
+    /**
      * Matches "if you control [cond] other than [name], [effect]."
      * Used for abilities like "if you control a Category FFCC Forward other than Bel Dat, draw 1 card."
      * Tried before {@link #CONTROL_CONDITION_GATE} because it is more specific.
@@ -12623,6 +12654,41 @@ public class ActionResolver {
                 inner.accept(ctx);
             } else {
                 ctx.logEntry("Effect: control condition not met — skipped");
+            }
+        };
+    }
+
+    /**
+     * Parses "&lt;base&gt;. If you control X, &lt;alternative&gt; instead." — resolves exactly one of the
+     * two branches, never both. Returns {@code null} when the condition or either branch cannot be
+     * parsed, so the text falls through to the regular matchers.
+     */
+    private static Consumer<GameContext> tryParseControlGatedInsteadUpgrade(String text, CardData source, int xValue) {
+        Matcher m = CONTROL_GATED_INSTEAD_UPGRADE.matcher(text.trim());
+        if (!m.matches()) return null;
+        ControlCondition cc = CardData.parseControlCondition(m.group("cond").trim());
+        if (cc == null) return null;
+        // A bare count carries no filters and would be tested against every field card. It means the
+        // wording elided the noun from the preceding clause ("… if you control 3 or more Category
+        // FFTA Characters, draw 1 card. If you control 5 or more, draw 2 cards instead." — Marche
+        // 16-122R), which this parser cannot recover, so leave such text to the other matchers.
+        if (!cc.isNamedMode() && !cc.requiresCrystal() && cc.orAlternatives().isEmpty()
+                && cc.cardType() == null && cc.element() == null
+                && cc.job() == null && cc.category() == null && cc.orCardNames().isEmpty())
+            return null;
+
+        String rest    = m.group("rest").trim();
+        String altText = m.group("alt").trim() + "." + (rest.isEmpty() ? "" : " " + rest);
+        Consumer<GameContext> baseFn = parse(m.group("base").trim(), source, xValue);
+        Consumer<GameContext> altFn  = parse(altText, source, xValue);
+        if (baseFn == null || altFn == null) return null;
+
+        return ctx -> {
+            if (ctx.controlConditionMet(cc)) {
+                ctx.logEntry("Effect: you control " + cc + " — replacement effect applies instead");
+                altFn.accept(ctx);
+            } else {
+                baseFn.accept(ctx);
             }
         };
     }
@@ -14854,8 +14920,8 @@ public class ActionResolver {
     }
 
     /**
-     * Parses "Your opponent selects N [condition] [type] they control [sep] followup".
-     * Supported followups: "Put it into the Break Zone" and "dull/dulls it".
+     * Parses "Your opponent selects N [condition] [type] [of cost C or less/more] they control
+     * [sep] followup". Supported followups: "Put it into the Break Zone" and "dull/dulls it".
      */
     private static Consumer<GameContext> tryParseOpponentSelects(String text) {
         Matcher m = OPPONENT_SELECTS_PATTERN.matcher(text);
@@ -14870,17 +14936,21 @@ public class ActionResolver {
         boolean inclBackups  = tgtLower.contains("backup")  || tgtLower.contains("character");
         boolean inclMonsters = tgtLower.contains("monster") || tgtLower.contains("character");
         String  followup  = m.group("followup").trim();
+        int     costVal   = m.group("cost") != null ? Integer.parseInt(m.group("cost")) : -1;
+        String  costCmp   = m.group("costcmp") != null ? m.group("costcmp").toLowerCase() : null;
 
         String prefix = "Opponent selects " + count
                 + (condition != null ? " " + condition : "")
                 + (element   != null ? " " + element   : "")
-                + " " + targets + " (opponent)";
+                + " " + targets
+                + (costVal >= 0 ? " of cost " + costVal + " or " + costCmp : "")
+                + " (opponent)";
 
         if (FOLLOWUP_PUT_TO_BREAK_ZONE.matcher(followup).find()) {
             return ctx -> {
                 ctx.logEntry(prefix + " — Force to Break Zone");
                 List<ForwardTarget> ts = ctx.selectCharacters(count, false, true, false,
-                        condition, element, -1, null, -1, null,
+                        condition, element, costVal, costCmp, -1, null,
                         inclForwards, inclBackups, inclMonsters, null, null, null, null, false, null, false);
                 sortedByIdxDesc(ts, false).forEach(ctx::forceTargetToBreakZone);
             };
@@ -14890,7 +14960,7 @@ public class ActionResolver {
             return ctx -> {
                 ctx.logEntry(prefix + " — Dull");
                 List<ForwardTarget> ts = ctx.selectCharacters(count, false, true, false,
-                        condition, element, -1, null, -1, null,
+                        condition, element, costVal, costCmp, -1, null,
                         inclForwards, inclBackups, inclMonsters, null, null, null, null, false, null, false);
                 sortedByIdxDesc(ts, false).forEach(ctx::dullTarget);
             };
@@ -14900,7 +14970,7 @@ public class ActionResolver {
             return ctx -> {
                 ctx.logEntry(prefix + " — Return to owner's hand");
                 List<ForwardTarget> ts = ctx.selectCharacters(count, false, true, false,
-                        condition, element, -1, null, -1, null,
+                        condition, element, costVal, costCmp, -1, null,
                         inclForwards, inclBackups, inclMonsters, null, null, null, null, false, null, false);
                 sortedByIdxDesc(ts, false).forEach(t -> {
                     switch (t.zone()) {
