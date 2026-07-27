@@ -25,17 +25,18 @@ import static shufflingway.graphics.CardAnimation.CARD_W;
  *
  * <p>Tabs are composited onto the square {@code CARD_H x CARD_H} field-card canvas built by
  * {@link CardAnimation#renderBackupCard}, the same way the damage, power and counter overlays
- * are. That canvas always leaves one empty strip beside the art, and which strip depends on
- * the card's state:
+ * are. They always attach to the same edge of the card — its left — but that edge lands
+ * somewhere different on the canvas depending on the card's state:
  * <ul>
- *   <li>{@link CardState#ACTIVE} — art is pinned top-left at {@code CARD_W x CARD_H}, so the
- *       free strip is to the RIGHT: tabs poke rightwards and stack downwards.</li>
- *   <li>{@link CardState#DULL} — art is rotated and pinned bottom-left at
- *       {@code CARD_H x CARD_W}, so the free strip is ABOVE: tabs poke upwards and stack
- *       rightwards.</li>
+ *   <li>{@link CardState#ACTIVE} — art is inset by {@link CardAnimation#LEFT_GUTTER}, so the
+ *       card's left edge is at {@code LEFT_GUTTER} and tabs poke leftwards into the gutter,
+ *       stacking downwards.</li>
+ *   <li>{@link CardState#DULL} — art is rotated 90° CW and pinned bottom-left, which puts the
+ *       card's left edge along the TOP of the art: tabs poke upwards into the strip above,
+ *       stacking rightwards (mirrored, since the rotation reverses that axis, so a given trait
+ *       keeps its position relative to the card).</li>
  * </ul>
- * No card edge has clearance in both states, which is why the tabs change edge when a card
- * dulls rather than rotating with it. The glyph is drawn upright either way.
+ * The glyph is drawn upright in both cases.
  *
  * <p>Drawing is clipped to the free strip, so the half of each tab that would cover the art is
  * hidden and the tab reads as sitting behind the card — no reordering of the render pipeline
@@ -110,17 +111,21 @@ public final class TraitTab {
         // Centre the stack on the card edge; the axis is CARD_H long in both orientations.
         float lead     = (CARD_H - (slots * tabShort + (slots - 1) * TAB_GAP * s)) / 2f;
         boolean dull   = state == CardState.DULL;
-        int strip      = CARD_H - CARD_W;   // thickness of the free strip, both orientations
+        // Free space outside the card's left edge: the gutter when active, the strip above the
+        // rotated art when dull (the same card edge, since a CW rotation sends left to top).
+        int room       = dull ? CARD_H - CARD_W : CardAnimation.LEFT_GUTTER;
 
         Graphics2D g = canvas.createGraphics();
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-        g.setClip(dull ? new Rectangle(0, 0, CARD_H, strip)
-                       : new Rectangle(CARD_W, 0, strip, CARD_H));
+        g.setClip(dull ? new Rectangle(0, 0, CARD_H, room)
+                       : new Rectangle(0, 0, room, CARD_H));
         for (int i = 0; i < slots; i++) {
-            float along = lead + i * step;
-            // Straddle the art edge: half the tab lands in the strip, half is clipped away.
-            float x = dull ? along : CARD_W - tabLong / 2f;
-            float y = dull ? strip - tabLong / 2f : along;
+            // The rotation reverses the along-edge axis, so mirror the dull stack to keep each
+            // trait at the same spot on the card.
+            float along = dull ? CARD_H - (lead + i * step) - tabShort : lead + i * step;
+            // Straddle the art edge: half the tab lands in the free space, half is clipped away.
+            float x = dull ? along : room - tabLong / 2f;
+            float y = dull ? room - tabLong / 2f : along;
             float w = dull ? tabShort : tabLong;
             float h = dull ? tabLong  : tabShort;
             drawTab(g, i < glyphs ? drawable.get(i) : null, x, y, w, h, s, dull);
@@ -143,11 +148,11 @@ public final class TraitTab {
         g.setColor(BEZEL);
         g.draw(rr);
 
-        // Keep the glyph in the half that survives the clip: the outer (top) half when the tab
-        // pokes up from a dull card, the outer (right) half when it pokes out from an active one.
+        // Keep the glyph in the half that survives the clip — the outer one either way: the top
+        // half when the tab pokes up from a dull card, the left half when it pokes out to the side.
         float icon = ICON_SIZE * s;
         float inset = ICON_INSET * s;
-        float ix = dull ? x + (w - icon) / 2f : x + w - icon - inset;
+        float ix = dull ? x + (w - icon) / 2f : x + inset;
         float iy = dull ? y + inset           : y + (h - icon) / 2f;
         if (trait == null) drawOverflowDots(g, ix, iy, icon);
         else               drawGlyph(g, trait, ix, iy, icon);

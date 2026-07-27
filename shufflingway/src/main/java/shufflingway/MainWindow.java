@@ -2105,6 +2105,10 @@ public class MainWindow {
 	 */
 	private void onNextPhase() {
 		if (gameState.isP1GameOver()) return;
+		// A field-target selection is outstanding. Its secondary loop leaves the UI live, and turn
+		// flow may have re-enabled the Next button underneath it, so ignore the click rather than
+		// advancing the phase or passing priority on top of an unresolved choice.
+		if (fieldTargetingActive) return;
 		// P1 holds priority at a combat checkpoint — on either player's turn, since P1 also responds
 		// to P2's attacks. Checked before the P2-turn branch, which returns early.
 		if (p1CombatPriorityOnPass != null) {
@@ -10933,7 +10937,13 @@ public class MainWindow {
 				labels.get(i).removeMouseListener(listeners.get(i));
 			}
 			fieldTargetingActive = false;
-			if (nextPhaseButton != null) nextPhaseButton.setEnabled(nextWasEnabled);
+			// The secondary loop below keeps pumping the event queue, so turn flow can run — and
+			// enable the Next button — while the player is still choosing (e.g. an EX Burst target
+			// chosen during P2's turn, with offerP1MainPhasePriority firing meanwhile). Restoring
+			// the pre-selection snapshot would clobber that enable and strand whoever gained
+			// priority with nothing to click, so only restore when nothing re-enabled it.
+			if (nextPhaseButton != null && !nextPhaseButton.isEnabled())
+				nextPhaseButton.setEnabled(nextWasEnabled);
 			for (Integer si : sel) result.add(eligible.get(si));
 			bar.dispose();
 			if (loop != null) loop.exit();

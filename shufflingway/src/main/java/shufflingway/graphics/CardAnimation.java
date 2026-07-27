@@ -22,19 +22,43 @@ public class CardAnimation {
 	public static int CARD_W = UiScale.scale(140);
 	public static int CARD_H = UiScale.scale(205);
 
+	/**
+	 * Empty canvas kept to the left of an ACTIVE card's art, so {@link TraitTab} has somewhere to
+	 * poke into on the card's left edge. A DULL card is {@code CARD_H} wide and therefore fills the
+	 * canvas — its tabs use the strip above it instead, which is the same card edge once rotated.
+	 * The consequence is that a card's left edge sits {@code LEFT_GUTTER} further left when dull;
+	 * {@link #renderBackupCardAtAngle} slides between the two so the rotation stays continuous.
+	 */
+	public static int LEFT_GUTTER = UiScale.scale(30);
+
 	private CardAnimation() {}
 
+	/**
+	 * Renders a rotation frame, {@code angle} running 0 (active, upright) to {@code PI/2} (dull).
+	 * The card's centre is interpolated between the anchors {@link #renderBackupCard} uses for the
+	 * two end states, so frame 0 and the final frame land exactly on the static renders instead of
+	 * popping, and the art visibly slides left out of {@link #LEFT_GUTTER} as it dulls.
+	 */
 	public static BufferedImage renderBackupCardAtAngle(BufferedImage card, double angle) {
 		BufferedImage canvas = new BufferedImage(CARD_H, CARD_H, BufferedImage.TYPE_INT_ARGB);
 		Graphics2D g = canvas.createGraphics();
 		g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
 		g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
-		g.translate(CARD_H / 2.0, CARD_H / 2.0);
+		double t = Math.max(0.0, Math.min(1.0, angle / (Math.PI / 2)));
+		// Active: art at (LEFT_GUTTER, 0) -> centre (LEFT_GUTTER + CARD_W/2, CARD_H/2).
+		// Dull:   art at (0, CARD_H - CARD_W) spanning CARD_H x CARD_W -> centre (CARD_H/2, CARD_H - CARD_W/2).
+		double cx = lerp(LEFT_GUTTER + CARD_W / 2.0, CARD_H / 2.0, t);
+		double cy = lerp(CARD_H / 2.0, CARD_H - CARD_W / 2.0, t);
+		g.translate(cx, cy);
 		g.rotate(angle);
 		g.translate(-CARD_W / 2.0, -CARD_H / 2.0);
 		g.drawImage(card, 0, 0, null);
 		g.dispose();
 		return canvas;
+	}
+
+	private static double lerp(double from, double to, double t) {
+		return from + (to - from) * t;
 	}
 
 	/**
@@ -66,12 +90,12 @@ public class CardAnimation {
 				BufferedImage rotated = rotateCW90(card);          // now CARD_H × CARD_W
 				g.drawImage(rotated, 0, CARD_H - CARD_W, null);   // pinned to bottom-left
 			}
-			default -> g.drawImage(card, 0, 0, null);             // pinned to top-left
+			default -> g.drawImage(card, LEFT_GUTTER, 0, null);   // pinned to top, past the tab gutter
 		}
 
 		// Card bounds within the square canvas depend on orientation
 		boolean dull = (state == CardState.DULL);
-		int cx = 0,  cy = dull ? CARD_H - CARD_W : 0;
+		int cx = dull ? 0 : LEFT_GUTTER,  cy = dull ? CARD_H - CARD_W : 0;
 		int cw = dull ? CARD_H : CARD_W;
 		int ch = dull ? CARD_W : CARD_H;
 
@@ -150,6 +174,8 @@ public class CardAnimation {
 			// original (CARD_W, CARD_H) → canvas (0, CARD_H).
 			g.translate(CARD_H, CARD_H - CARD_W);
 			g.rotate(Math.PI / 2);
+		} else {
+			g.translate(LEFT_GUTTER, 0);   // active art starts past the tab gutter
 		}
 		String text = String.valueOf(value);
 		Font font = FontLoader.loadPixelFont(14);
@@ -181,6 +207,8 @@ public class CardAnimation {
 		if (state == CardState.DULL) {
 			g.translate(CARD_H, CARD_H - CARD_W);
 			g.rotate(Math.PI / 2);
+		} else {
+			g.translate(LEFT_GUTTER, 0);   // active art starts past the tab gutter
 		}
 		int x = (CARD_W - orbW) / 2, y = (CARD_H - orbH) / 2;
 		g.drawImage(orb, x, y, null);
@@ -211,7 +239,7 @@ public class CardAnimation {
 			// rotated 90° CW: CARD_H wide × CARD_W tall, pinned bottom-left
 			cx = 0; cy = CARD_H - CARD_W; rw = CARD_H; rh = CARD_W;
 		} else {
-			cx = 0; cy = 0; rw = CARD_W; rh = CARD_H;
+			cx = LEFT_GUTTER; cy = 0; rw = CARD_W; rh = CARD_H;
 		}
 
 		g.setColor(new Color(30, 30, 30, 200));
