@@ -45,7 +45,9 @@ import static shufflingway.CardFilters.discardTypeKey;
 import shufflingway.FontLoader;
 import shufflingway.ForwardTarget;
 import shufflingway.ImageCache;
+import shufflingway.UiScale;
 import shufflingway.graphics.CardAnimation;
+import shufflingway.graphics.TriangleIcon;
 import static shufflingway.graphics.CardAnimation.CARD_H;
 import static shufflingway.graphics.CardAnimation.CARD_W;
 
@@ -1146,7 +1148,8 @@ public class CardPickerDialog {
             valueLabel.setAlignmentX(0.5f);
             valueLabels[i] = valueLabel;
 
-            JButton leftBtn = new JButton("◄");
+            // Drawn rather than typed: ◄/► have no glyph on macOS (see TriangleIcon).
+            JButton leftBtn = new JButton(new TriangleIcon(TriangleIcon.Direction.LEFT, UiScale.scale(8)));
             leftBtn.setFont(FontLoader.loadPixelFont(11));
             leftBtn.setFocusPainted(false);
             leftBtn.addActionListener(ae -> {
@@ -1157,7 +1160,7 @@ public class CardPickerDialog {
                 }
             });
 
-            JButton rightBtn = new JButton("►");
+            JButton rightBtn = new JButton(new TriangleIcon(TriangleIcon.Direction.RIGHT, UiScale.scale(8)));
             rightBtn.setFont(FontLoader.loadPixelFont(11));
             rightBtn.setFocusPainted(false);
             rightBtn.addActionListener(ae -> {
@@ -1226,7 +1229,7 @@ public class CardPickerDialog {
                 BorderFactory.createLineBorder(Color.DARK_GRAY, 2),
                 BorderFactory.createEmptyBorder(2, 8, 2, 8)));
 
-        JButton leftBtn = new JButton("◄");
+        JButton leftBtn = new JButton(new TriangleIcon(TriangleIcon.Direction.LEFT, UiScale.scale(8)));
         leftBtn.setFocusPainted(false);
         leftBtn.addActionListener(ae -> {
             if (value[0] > min) {
@@ -1235,7 +1238,7 @@ public class CardPickerDialog {
             }
         });
 
-        JButton rightBtn = new JButton("►");
+        JButton rightBtn = new JButton(new TriangleIcon(TriangleIcon.Direction.RIGHT, UiScale.scale(8)));
         rightBtn.setFocusPainted(false);
         rightBtn.addActionListener(ae -> {
             if (value[0] < max) {

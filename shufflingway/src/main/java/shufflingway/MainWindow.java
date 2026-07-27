@@ -111,6 +111,7 @@ import shufflingway.graphics.CrystalDisplay;
 import shufflingway.graphics.GradientPanel;
 import shufflingway.graphics.GrayscaleLabel;
 import shufflingway.graphics.TraitTab;
+import shufflingway.graphics.TriangleIcon;
 import shufflingway.menu.DebugMenu;
 import shufflingway.menu.FileMenu;
 import shufflingway.menu.HelpMenu;
@@ -706,6 +707,8 @@ public class MainWindow {
 	boolean lastChosenSelectionCancelled = false;
 	/** True while {@link #resolveTopOfStack} or EX Burst execution is running; suppresses {@link #showStackWindowIfNeeded}. */
 	private boolean isResolvingStack      = false;
+	/** Outstanding player choices and queued triggers; keeps {@link #isBoardSettled} false until they clear. */
+	final TurnFlowGate turnFlowGate       = new TurnFlowGate();
 	/** True while P1 has clicked "Respond" in the stack window and not yet cast or passed. */
 	private boolean p1IsRespondingToStack = false;
 	/** Set to {@code true} before placing a card whose ETF auto-ability should not fire (consumed on first trigger check). */
@@ -1135,8 +1138,15 @@ public class MainWindow {
 		JScrollPane p1ForwardZone = buildForwardZonePanel(true);
 
 		// --- Next Phase Button ---
-		nextPhaseButton = new JButton("<html><center>Next<br>&#9658;</center></html>");
+		// The ► this used to spell out as &#9658; has no glyph on macOS, so the pointer is drawn
+		// rather than typed. Icon below the text reproduces the old <center>Next<br>►</center>.
+		nextPhaseButton = new JButton("Next");
 		nextPhaseButton.setFont(FontLoader.loadPixelFont(14));
+		nextPhaseButton.setIcon(new TriangleIcon(
+				TriangleIcon.Direction.RIGHT, UiScale.scale(9), UiScale.scale(11)));
+		nextPhaseButton.setHorizontalTextPosition(SwingConstants.CENTER);
+		nextPhaseButton.setVerticalTextPosition(SwingConstants.TOP);
+		nextPhaseButton.setIconTextGap(UiScale.scale(3));
 		nextPhaseButton.setEnabled(false);
 		nextPhaseButton.setFocusPainted(false);
 		nextPhaseButton.addActionListener(e -> onNextPhase());
@@ -1146,8 +1156,8 @@ public class MainWindow {
 			if (nextPhaseButton == null || !nextPhaseButton.isEnabled()) return;
 			glowAngle[0] += 0.09f;
 			float t = (float)(0.5 + 0.5 * Math.sin(glowAngle[0]));
-			int r = (int)(180 + t * 75);   // 180â€“255
-			int g = (int)(110 + t * 80);   // 110â€“190
+			int r = (int)(180 + t * 75);   // 180-255
+			int g = (int)(110 + t * 80);   // 110-190
 			nextPhaseButton.setBorder(BorderFactory.createLineBorder(
 					new Color(Math.min(r, 255), Math.min(g, 255), 20), 3, true));
 		});
@@ -1463,6 +1473,7 @@ public class MainWindow {
 		if (openingHandPopup     != null) { openingHandPopup.dispose();     openingHandPopup     = null; }
 		// Reset stack-resolution flags so new abilities can reach the stack window.
 		isResolvingStack         = false;
+		turnFlowGate.reset();
 		currentResolutionIsSummon = false;
 		pendingSummonReturnToHand = false;
 		currentSummonSource      = null;
@@ -2996,36 +3007,43 @@ public class MainWindow {
 		animateCardToDamage(true, idx);
 
 		int animDelay = CardSlideAnimator.TOTAL_FRAMES * CardSlideAnimator.FRAME_MS;
+		// An EX Burst on the drawn card does not reach the stack until this reveal fires, so without
+		// marking it pending the board looks settled and turn flow runs past a burst still owed.
+		turnFlowGate.beginPendingTrigger();
 		Timer revealTimer = new Timer(animDelay, e -> {
-			if (p1DamageSlotPanel != null) {
-				p1DamageSlotPanel.putClientProperty("exBurst", isEx ? Boolean.TRUE : Boolean.FALSE);
-				for (JPanel s : p1DamageSlots) { if (s != null) s.repaint(); }
-				p1DamageSlotPanel.repaint();
+			try {
+				if (p1DamageSlotPanel != null) {
+					p1DamageSlotPanel.putClientProperty("exBurst", isEx ? Boolean.TRUE : Boolean.FALSE);
+					for (JPanel s : p1DamageSlots) { if (s != null) s.repaint(); }
+					p1DamageSlotPanel.repaint();
+				}
+				if (idx < 7 && p1DamageSlots[idx] != null) {
+					JPanel slot = p1DamageSlots[idx];
+					slot.putClientProperty("isExBurst", isEx ? Boolean.TRUE : Boolean.FALSE);
+					slot.repaint();
+					String url = drawn.imageUrl();
+					new SwingWorker<Image, Void>() {
+						@Override protected Image doInBackground() throws Exception {
+							return ImageCache.load(url);
+						}
+						@Override protected void done() {
+							try {
+								Image img = get();
+								if (img != null) { slot.putClientProperty("cardImg", img); slot.repaint(); }
+							} catch (InterruptedException | ExecutionException ignored) {}
+						}
+					}.execute();
+				}
+				if (gameState.getP1DamageZone().size() >= 7) {
+					triggerGameOver("7 Damage Taken - You Lose!");
+					return;
+				}
+				if (isEx && !abilitySuppress && !exBurstSuppressedBy(dmgSource, drawn))
+					autoAbilityTriggers.triggerExBurst(drawn, true);
+				if (onDone != null) onDone.run();
+			} finally {
+				turnFlowGate.endPendingTrigger();
 			}
-			if (idx < 7 && p1DamageSlots[idx] != null) {
-				JPanel slot = p1DamageSlots[idx];
-				slot.putClientProperty("isExBurst", isEx ? Boolean.TRUE : Boolean.FALSE);
-				slot.repaint();
-				String url = drawn.imageUrl();
-				new SwingWorker<Image, Void>() {
-					@Override protected Image doInBackground() throws Exception {
-						return ImageCache.load(url);
-					}
-					@Override protected void done() {
-						try {
-							Image img = get();
-							if (img != null) { slot.putClientProperty("cardImg", img); slot.repaint(); }
-						} catch (InterruptedException | ExecutionException ignored) {}
-					}
-				}.execute();
-			}
-			if (gameState.getP1DamageZone().size() >= 7) {
-				triggerGameOver("7 Damage Taken - You Lose!");
-				return;
-			}
-			if (isEx && !abilitySuppress && !exBurstSuppressedBy(dmgSource, drawn))
-				autoAbilityTriggers.triggerExBurst(drawn, true);
-			if (onDone != null) onDone.run();
 		});
 		revealTimer.setRepeats(false);
 		revealTimer.start();
@@ -3085,33 +3103,39 @@ public class MainWindow {
 		refreshP2DeckLabel();
 
 		int animDelay = CardSlideAnimator.TOTAL_FRAMES * CardSlideAnimator.FRAME_MS;
+		// See p1TakeDamage: the EX Burst is owed but unstacked until this reveal fires.
+		turnFlowGate.beginPendingTrigger();
 		Timer revealTimer = new Timer(animDelay, e -> {
-			if (slotIdx >= 0 && slotIdx < p2DamageSlots.length && p2DamageSlots[slotIdx] != null) {
-				JPanel slot = p2DamageSlots[slotIdx];
-				slot.putClientProperty("isExBurst", isEx ? Boolean.TRUE : Boolean.FALSE);
-				slot.repaint();
-				if (drawn != null) {
-					String url = drawn.imageUrl();
-					new SwingWorker<Image, Void>() {
-						@Override protected Image doInBackground() throws Exception {
-							return ImageCache.load(url);
-						}
-						@Override protected void done() {
-							try {
-								Image img = get();
-								if (img != null) { slot.putClientProperty("cardImg", img); slot.repaint(); }
-							} catch (InterruptedException | ExecutionException ignored) {}
-						}
-					}.execute();
+			try {
+				if (slotIdx >= 0 && slotIdx < p2DamageSlots.length && p2DamageSlots[slotIdx] != null) {
+					JPanel slot = p2DamageSlots[slotIdx];
+					slot.putClientProperty("isExBurst", isEx ? Boolean.TRUE : Boolean.FALSE);
+					slot.repaint();
+					if (drawn != null) {
+						String url = drawn.imageUrl();
+						new SwingWorker<Image, Void>() {
+							@Override protected Image doInBackground() throws Exception {
+								return ImageCache.load(url);
+							}
+							@Override protected void done() {
+								try {
+									Image img = get();
+									if (img != null) { slot.putClientProperty("cardImg", img); slot.repaint(); }
+								} catch (InterruptedException | ExecutionException ignored) {}
+							}
+						}.execute();
+					}
 				}
+				if (p2DamageCount >= 7) {
+					triggerGameOver("Player 2 Defeated - You Win!");
+					return;
+				}
+				if (isEx && drawn != null && !abilitySuppress && !exBurstSuppressedBy(dmgSource, drawn))
+					autoAbilityTriggers.triggerExBurst(drawn, false);
+				if (onDone != null) onDone.run();
+			} finally {
+				turnFlowGate.endPendingTrigger();
 			}
-			if (p2DamageCount >= 7) {
-				triggerGameOver("Player 2 Defeated - You Win!");
-				return;
-			}
-			if (isEx && drawn != null && !abilitySuppress && !exBurstSuppressedBy(dmgSource, drawn))
-				autoAbilityTriggers.triggerExBurst(drawn, false);
-			if (onDone != null) onDone.run();
 		});
 		revealTimer.setRepeats(false);
 		revealTimer.start();
@@ -8045,7 +8069,12 @@ public class MainWindow {
 		showStackWindow();
 	}
 
-	/** Escapes card text for display inside an HTML-rendered {@link JLabel}. */
+	/**
+	 * Escapes card text for display inside an HTML-rendered {@link JLabel}. No glyph fallback is
+	 * needed here: Swing's HTML renderer substitutes a font for missing glyphs on its own, which is
+	 * why the 《》 CP-cost brackets in ability text already render. Plain-text components get no such
+	 * treatment — those go through {@link FontLoader#htmlWithFallback}.
+	 */
 	private static String escapeForHtmlLabel(String text) {
 		return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
 	}
@@ -8401,12 +8430,35 @@ public class MainWindow {
 
 	/**
 	 * True when nothing is left to resolve: no card is still arriving on the field, the stack is
-	 * empty, and no stack entry is mid-resolution.  The last check matters because
+	 * empty, no stack entry is mid-resolution, and {@link #turnFlowGate} reports no outstanding
+	 * player choice or queued trigger.  The {@code isResolvingStack} check matters because
 	 * {@link #resolveTopOfStack} pops its entry before running it, so an ability waiting on a modal
-	 * dialog leaves the stack empty while the player has yet to choose.
+	 * dialog leaves the stack empty while the player has yet to choose.  The gate covers the two
+	 * windows that check still misses: a blocking selection open outside a stack resolution, and a
+	 * trigger queued behind an animation that has not reached the stack yet.
 	 */
 	boolean isBoardSettled() {
-		return !fieldEntryAnimator.isBusy() && gameState.getStack().isEmpty() && !isResolvingStack;
+		return !fieldEntryAnimator.isBusy() && gameState.getStack().isEmpty() && !isResolvingStack
+				&& turnFlowGate.isClear() && !anyModalDialogShowing();
+	}
+
+	/**
+	 * True while any modal dialog is on screen.  Every blocking choice the effect resolver opens —
+	 * the {@code CardPickerDialog} family, hand picks, deck looks, name selections, stack ordering,
+	 * cost payment — is a modal {@code JDialog}, and showing one runs a nested event pump that keeps
+	 * Swing timers firing.  Asking AWT covers all of them at once, including ones added later, which
+	 * bracketing each of the ~29 call sites by hand would not.
+	 *
+	 * <p>Deliberately not limited to game dialogs: pausing turn flow because the player opened
+	 * Preferences mid-game is harmless and self-correcting when they close it, whereas maintaining a
+	 * whitelist would silently miss whatever is added next.  Complements {@link #turnFlowGate},
+	 * which covers the one blocking choice that is <em>not</em> modal — the in-place field targeting
+	 * in {@link #selectFieldTargetsInPlace}, whose bar is non-modal so the board stays clickable.
+	 */
+	private static boolean anyModalDialogShowing() {
+		for (java.awt.Window w : java.awt.Window.getWindows())
+			if (w instanceof java.awt.Dialog d && d.isModal() && d.isShowing()) return true;
+		return false;
 	}
 
 	/**
@@ -10937,6 +10989,7 @@ public class MainWindow {
 				labels.get(i).removeMouseListener(listeners.get(i));
 			}
 			fieldTargetingActive = false;
+			turnFlowGate.endChoice();
 			// The secondary loop below keeps pumping the event queue, so turn flow can run — and
 			// enable the Next button — while the player is still choosing (e.g. an EX Burst target
 			// chosen during P2's turn, with offerP1MainPhasePriority firing meanwhile). Restoring
@@ -10950,6 +11003,7 @@ public class MainWindow {
 		};
 
 		fieldTargetingActive = true;
+		turnFlowGate.beginChoice();   // paired in finish, which is guarded to run exactly once
 		if (nextPhaseButton != null) nextPhaseButton.setEnabled(false);
 		for (int i = 0; i < eligible.size(); i++) {
 			final int fi = i;
@@ -12025,6 +12079,11 @@ public class MainWindow {
 	/**
 	 * Auto-pass for the AI opponent: briefly flips the phase tracker to red (P2's priority),
 	 * waits ~1.5 s, then restores blue and calls {@code onDone}.
+	 *
+	 * <p>The wait is deliberately not the only gate. Blocking choices pump the event queue, so this
+	 * timer can fire while the player is still mid-decision — which is how a priority handoff once
+	 * landed on top of an unresolved EX Burst target choice. {@link #runWhenBoardSettled} holds the
+	 * handoff until the board is actually quiet.
 	 */
 	void p2AutoPass(Runnable onDone) {
 		if (p2AutoPassTimer != null) { p2AutoPassTimer.stop(); p2AutoPassTimer = null; }
@@ -12032,16 +12091,18 @@ public class MainWindow {
 		p2AutoPassTimer = new Timer(1500, e -> {
 			((Timer) e.getSource()).stop();
 			p2AutoPassTimer = null;
-			// On P1's turn: let the CPU activate any reactive shields before passing.
-			if (gameState.getCurrentPlayer() == GameState.Player.P1) {
-				computerPlayer.tryP2ReactiveShieldAbilities(() -> {
+			runWhenBoardSettled(() -> {
+				// On P1's turn: let the CPU activate any reactive shields before passing.
+				if (gameState.getCurrentPlayer() == GameState.Player.P1) {
+					computerPlayer.tryP2ReactiveShieldAbilities(() -> {
+						phaseTracker.setHasPriority(true);
+						onDone.run();
+					});
+				} else {
 					phaseTracker.setHasPriority(true);
 					onDone.run();
-				});
-			} else {
-				phaseTracker.setHasPriority(true);
-				onDone.run();
-			}
+				}
+			});
 		});
 		p2AutoPassTimer.setRepeats(false);
 		p2AutoPassTimer.start();

@@ -708,8 +708,19 @@ public interface GameContext {
     /**
      * General "look at the top N cards" effect.  The {@link LookConfig} specifies how
      * many cards to look at and what the player may do with them afterward.
+     *
+     * <p>The card this puts into hand, if any, is remembered for
+     * {@link #triggerExBurstOfCardAddedToHand}.
      */
     void lookAtTopDeck(LookConfig config);
+
+    /**
+     * Offers the EX Burst of the card the preceding {@link #lookAtTopDeck} put into hand, placing
+     * it on the stack when the player accepts (Lunafreya 23-129H).  The card itself stays in hand
+     * — only its effect goes on the stack, as with {@link #triggerExBurstFromDamageZone}.  Does
+     * nothing when that look added no card or the added card has no EX Burst.
+     */
+    void triggerExBurstOfCardAddedToHand();
 
     /**
      * Looks at the top {@code count} cards of the player's deck, lets the player reveal and

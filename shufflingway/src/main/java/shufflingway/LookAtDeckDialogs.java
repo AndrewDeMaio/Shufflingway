@@ -5,6 +5,7 @@ import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
+import java.awt.Font;
 import java.awt.FontMetrics;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
@@ -92,44 +93,89 @@ class LookAtDeckDialogs {
     // ── Convenience forwarders ──────────────────────────────────────────────────
 
     private void log(String msg)      { cb.log().accept(msg); }
+
+    /**
+     * Component text with any glyph the pixel font lacks — the "→" on the destination toggles —
+     * drawn from a fallback font. Plain text is returned untouched, so only the arrow-bearing
+     * labels pay for Swing's HTML rendering.
+     */
+    private static String txt(String s) { return FontLoader.htmlWithFallback(s); }
+
+    /**
+     * A centred label that draws its text over a 1px black shadow, so light colours stay legible
+     * against the dialog's default background.
+     */
+    private static JLabel shadowedLabel(String text, float fontSize, Color fg) {
+        JLabel label = new JLabel(text, SwingConstants.CENTER) {
+            @Override protected void paintComponent(Graphics g) {
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING,
+                        RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+                g2.setFont(getFont());
+                FontMetrics fm = g2.getFontMetrics();
+                String s = getText();
+                int x = (getWidth() - fm.stringWidth(s)) / 2;
+                int y = (getHeight() - fm.getHeight()) / 2 + fm.getAscent();
+                g2.setColor(new Color(0, 0, 0, 190));
+                g2.drawString(s, x + 1, y + 1);
+                g2.setColor(getForeground());
+                g2.drawString(s, x, y);
+                g2.dispose();
+            }
+        };
+        label.setFont(FontLoader.loadPixelFont(fontSize));
+        label.setForeground(fg);
+        return label;
+    }
     private void showZoom(String url) { cb.showZoom().accept(url); }
     private void hideZoom()           { cb.hideZoom().run(); }
 
     // ── Public entry point ──────────────────────────────────────────────────────
 
-    void show(LookConfig config, boolean isP1, boolean p2IsCpu) {
+    /**
+     * Runs the dialog described by {@code config} and returns the card it put into the acting
+     * player's hand, or {@code null} when the effect adds none (and when the deck was empty).
+     * Riders that act on what was taken — Lunafreya 23-129H's "if the card added to your hand
+     * has an EX Burst" — need to know which card that was.
+     */
+    CardData show(LookConfig config, boolean isP1, boolean p2IsCpu) {
         Deque<CardData> deck = isP1 ? gameState.getP1MainDeck() : gameState.getP2MainDeck();
         int n = Math.min(config.count(), deck.size());
-        if (n == 0) { log("Look at top: deck is empty."); return; }
+        if (n == 0) { log("Look at top: deck is empty."); return null; }
 
         List<CardData> peeked = new ArrayList<>();
         for (CardData c : deck) { peeked.add(c); if (peeked.size() >= n) break; }
 
+        // "Reveal" is public — both players are entitled to see the cards, so they go to the
+        // shared log whoever is looking. "Look at" is private to the controller, so P2's cards
+        // never reach the log the human at P1's seat reads.
+        if (isP1 || config.reveal())
+            log((config.reveal() ? "Reveal" : "Look at") + " top " + n + " card(s): " +
+                    peeked.stream().map(CardData::name)
+                          .collect(java.util.stream.Collectors.joining(", ")));
+
         // P2 controls the effect, so the choice belongs to P2, never P1 — never prompt the human
-        // sitting at P1's seat, and never reveal the peeked cards to the shared log.
-        if (!isP1) { resolveForP2(config, peeked, deck, p2IsCpu); return; }
+        // sitting at P1's seat.
+        if (!isP1) return resolveForP2(config, peeked, deck, p2IsCpu);
 
-        log("Look at top " + n + " card(s): " +
-                peeked.stream().map(CardData::name)
-                      .collect(java.util.stream.Collectors.joining(", ")));
-
-        switch (config.action()) {
-            case PEEK               -> showPeek(peeked, deck, isP1);
-            case BREAK_OR_KEEP      -> showBreakOrKeep(peeked.get(0), deck, isP1);
-            case BOTTOM_OR_KEEP     -> showBottomOrKeep(peeked.get(0), deck, isP1);
-            case RETURN_TOP_ORDERED -> showReturnTopOrdered(peeked, deck, isP1);
+        return switch (config.action()) {
+            case PEEK               -> { showPeek(peeked, deck, isP1);              yield null; }
+            case BREAK_OR_KEEP      -> { showBreakOrKeep(peeked.get(0), deck, isP1); yield null; }
+            case BOTTOM_OR_KEEP     -> { showBottomOrKeep(peeked.get(0), deck, isP1); yield null; }
+            case RETURN_TOP_ORDERED -> { showReturnTopOrdered(peeked, deck, isP1);   yield null; }
             case ADD_TO_HAND_REST_BOTTOM         -> showAddToHandRestBottom(peeked, deck, isP1);
             case ADD_TO_HAND_ONE_TO_BREAK_REST_BOTTOM -> showAddToHandOneToBreakRestBottom(peeked, deck, isP1);
             case ADD_TO_HAND_REST_BREAK          -> showAddToHandRestBreak(peeked, deck, isP1);
-            case TOP_OR_BOTTOM_ORDERED           -> showTopOrBottom(peeked, deck, isP1);
-            case PICK_ONE_TOP_REST_BOTTOM        -> showPickOneTopRestBottom(peeked, deck, isP1);
-        }
+            case TOP_OR_BOTTOM_ORDERED           -> { showTopOrBottom(peeked, deck, isP1, !p2IsCpu); yield null; }
+            case PICK_ONE_TOP_REST_BOTTOM        -> { showPickOneTopRestBottom(peeked, deck, isP1); yield null; }
+        };
     }
 
     /**
      * Resolves a "look at the top of your deck" effect that P2 controls, without ever prompting the
      * human at P1's seat. The peeked cards stay private (only public zone changes — hand/Break Zone —
-     * are logged), and the deck mutations mirror the human dialogs.
+     * are logged), and the deck mutations mirror the human dialogs. A "Reveal" is public, so its
+     * cards are named in the log by the caller before this runs.
      *
      * <p>When P2 is the built-in computer ({@code p2IsCpu}), the AI genuinely makes the choice using
      * simple, safe defaults: keep private looks on top in their current order, and for effects that
@@ -138,8 +184,10 @@ class LookAtDeckDialogs {
      * placeholder — matching the existing multiplayer fallbacks elsewhere in the engine.
      *
      * <p>The {@code peeked} cards are the current top {@code n} of {@code deck}, in top-first order.
+     *
+     * @return the card added to P2's hand, or {@code null} when the action adds none
      */
-    private void resolveForP2(LookConfig config, List<CardData> peeked, Deque<CardData> deck, boolean p2IsCpu) {
+    private CardData resolveForP2(LookConfig config, List<CardData> peeked, Deque<CardData> deck, boolean p2IsCpu) {
         int n = peeked.size();
 
         if (!p2IsCpu) {
@@ -149,9 +197,10 @@ class LookAtDeckDialogs {
             log("[P2] looks at the top " + n + " card(s) of their deck — remote player choice not yet "
                     + "implemented; cards left on top.");
             cb.refreshP2Deck().run();
-            return;
+            return null;
         }
 
+        CardData added = null;
         switch (config.action()) {
             case PEEK, RETURN_TOP_ORDERED, TOP_OR_BOTTOM_ORDERED ->
                 // Keep the cards on top in their current order — no deck change.
@@ -171,7 +220,8 @@ class LookAtDeckDialogs {
 
             case ADD_TO_HAND_REST_BOTTOM -> {
                 for (int i = 0; i < n; i++) deck.pollFirst();
-                gameState.getP2Hand().add(peeked.get(0));
+                added = peeked.get(0);
+                gameState.getP2Hand().add(added);
                 cb.refreshP2Hand().run();
                 for (int i = 1; i < n; i++) deck.addLast(peeked.get(i));
                 log("[P2] adds a card to hand and returns " + (n - 1)
@@ -180,7 +230,8 @@ class LookAtDeckDialogs {
 
             case ADD_TO_HAND_REST_BREAK -> {
                 for (int i = 0; i < n; i++) deck.pollFirst();
-                gameState.getP2Hand().add(peeked.get(0));
+                added = peeked.get(0);
+                gameState.getP2Hand().add(added);
                 cb.refreshP2Hand().run();
                 for (int i = 1; i < n; i++) gameState.getP2BreakZone().add(peeked.get(i));
                 cb.refreshP2Break().run();
@@ -189,7 +240,8 @@ class LookAtDeckDialogs {
 
             case ADD_TO_HAND_ONE_TO_BREAK_REST_BOTTOM -> {
                 for (int i = 0; i < n; i++) deck.pollFirst();
-                gameState.getP2Hand().add(peeked.get(0));
+                added = peeked.get(0);
+                gameState.getP2Hand().add(added);
                 cb.refreshP2Hand().run();
                 if (n > 1) { gameState.getP2BreakZone().add(peeked.get(1)); cb.refreshP2Break().run(); }
                 for (int i = 2; i < n; i++) deck.addLast(peeked.get(i));
@@ -197,6 +249,7 @@ class LookAtDeckDialogs {
             }
         }
         cb.refreshP2Deck().run();
+        return added;
     }
 
     // ── Dialog implementations ──────────────────────────────────────────────────
@@ -395,7 +448,8 @@ class LookAtDeckDialogs {
         if (isP1) cb.refreshP1Deck().run(); else cb.refreshP2Deck().run();
     }
 
-    private void showAddToHandRestBottom(List<CardData> cards, Deque<CardData> deck, boolean isP1) {
+    /** @return the card put into hand */
+    private CardData showAddToHandRestBottom(List<CardData> cards, Deque<CardData> deck, boolean isP1) {
         int n = cards.size();
         JDialog dlg = new JDialog(frame, "Look — Add to Hand, Return Rest to Bottom", true);
         dlg.setResizable(false);
@@ -454,7 +508,7 @@ class LookAtDeckDialogs {
             });
             cardLabels[i] = lbl;
 
-            JToggleButton handBtn = new JToggleButton("→ Hand");
+            JToggleButton handBtn = new JToggleButton(txt("→ Hand"));
             handBtn.setFont(FontLoader.loadPixelFont(9));
             handBtns[i] = handBtn;
             handBtn.addItemListener(ie -> {
@@ -492,7 +546,7 @@ class LookAtDeckDialogs {
         }
 
         JLabel instructions = new JLabel(
-                "Click '→ Hand' to pick the card for your hand. Swap the rest to order them (left = first at bottom).",
+                txt("Click '→ Hand' to pick the card for your hand. Swap the rest to order them (left = first at bottom)."),
                 SwingConstants.CENTER);
         instructions.setFont(FontLoader.loadPixelFont(9));
         confirmBtn.addActionListener(ae -> { hideZoom(); dlg.dispose(); });
@@ -519,9 +573,11 @@ class LookAtDeckDialogs {
             if (c != handCard) { deck.addLast(c); log(c.name() + " → bottom of deck"); }
         }
         if (isP1) cb.refreshP1Deck().run(); else cb.refreshP2Deck().run();
+        return handCard;
     }
 
-    private void showAddToHandOneToBreakRestBottom(List<CardData> cards, Deque<CardData> deck, boolean isP1) {
+    /** @return the card put into hand, or {@code null} when the player placed none there */
+    private CardData showAddToHandOneToBreakRestBottom(List<CardData> cards, Deque<CardData> deck, boolean isP1) {
         int n = cards.size();
         // dest slot 0 = Hand, slot 1 = Break Zone, slots 2..n-1 = Deck Bottom (left = placed first = deeper)
         String[] destLabels = new String[n];
@@ -711,9 +767,11 @@ class LookAtDeckDialogs {
         if (handCard  != null) cb.animateDraw().accept(isP1);
         if (breakCard != null) cb.animateMill().accept(isP1);
         if (isP1) cb.refreshP1Deck().run(); else cb.refreshP2Deck().run();
+        return handCard;
     }
 
-    private void showAddToHandRestBreak(List<CardData> cards, Deque<CardData> deck, boolean isP1) {
+    /** @return the card put into hand */
+    private CardData showAddToHandRestBreak(List<CardData> cards, Deque<CardData> deck, boolean isP1) {
         int n = cards.size();
         JDialog dlg = new JDialog(frame, "Look — Add to Hand, Rest to Break Zone", true);
         dlg.setResizable(false);
@@ -737,7 +795,7 @@ class LookAtDeckDialogs {
             });
             cardLabels[i] = lbl;
 
-            JToggleButton handBtn = new JToggleButton("→ Hand");
+            JToggleButton handBtn = new JToggleButton(txt("→ Hand"));
             handBtn.setFont(FontLoader.loadPixelFont(9));
             handBtns[i] = handBtn;
             handBtn.addItemListener(ie -> {
@@ -764,7 +822,7 @@ class LookAtDeckDialogs {
         }
 
         JLabel instructions = new JLabel(
-                "Click '→ Hand' to choose a card. The rest go to the Break Zone.", SwingConstants.CENTER);
+                txt("Click '→ Hand' to choose a card. The rest go to the Break Zone."), SwingConstants.CENTER);
         instructions.setFont(FontLoader.loadPixelFont(9));
         confirmBtn.addActionListener(ae -> { hideZoom(); dlg.dispose(); });
 
@@ -797,10 +855,17 @@ class LookAtDeckDialogs {
         }
         if (isP1) { cb.refreshP1Break().run(); cb.refreshP1Deck().run(); }
         else      { cb.refreshP2Break().run(); cb.refreshP2Deck().run(); }
+        return handCard;
     }
 
-    /** Top/bottom ordering dialog — custom drag-and-drop canvas with 20-second countdown. */
-    private void showTopOrBottom(List<CardData> cards, Deque<CardData> deck, boolean isP1) {
+    /**
+     * Top/bottom ordering dialog — custom drag-and-drop canvas.
+     *
+     * @param timed when true, a 20-second countdown auto-resolves any cards still unassigned to the
+     *              top of the deck. It exists so a live opponent is not left waiting, so it is off
+     *              against the CPU, which has nothing to wait for
+     */
+    private void showTopOrBottom(List<CardData> cards, Deque<CardData> deck, boolean isP1, boolean timed) {
         final int TW = 80, TH = 117, GAP = 8, SEP_H = 30;
         final int n      = cards.size();
         final int panelW = Math.max(600, 2 * n * (TW + GAP) + TW + 4 * GAP);
@@ -852,9 +917,9 @@ class LookAtDeckDialogs {
         confirmBtn.setFont(FontLoader.loadPixelFont(11));
         confirmBtn.setEnabled(false);
 
-        JLabel timerLabel = new JLabel("20s", SwingConstants.CENTER);
-        timerLabel.setFont(FontLoader.loadPixelFont(12));
-        timerLabel.setForeground(new Color(255, 220, 0));
+        // Shadowed so the yellow stays readable against the dialog's default background.
+        JLabel timerLabel = shadowedLabel("20s", 12, new Color(255, 220, 0));
+        timerLabel.setVisible(timed);
 
         JDialog dlg = new JDialog(frame, "Order Cards — Top or Bottom of Deck", true);
         dlg.setResizable(false);
@@ -879,21 +944,30 @@ class LookAtDeckDialogs {
                 g2.setColor(new Color(45, 25, 25));
                 g2.fillRect(deckX + TW + GAP / 2, zoneY - 4, panelW - deckX - TW - GAP / 2, TH + 8);
 
-                g2.setFont(FontLoader.loadPixelFont(9));
-                FontMetrics fm = g2.getFontMetrics();
+                // The arrows below have no glyph in the pixel fonts, so these labels are drawn and
+                // measured with a per-character fallback rather than through FontMetrics.
+                Font lblFont  = FontLoader.loadPixelFont(9);
+                Font lblAlt   = FontLoader.fallbackFont(9);
+                g2.setFont(lblFont);
 
                 g2.setColor(Color.LIGHT_GRAY);
                 String stageLbl = stagingList.isEmpty() ? "All cards placed!" : "Drag cards to the Top or Bottom zone";
-                g2.drawString(stageLbl, (panelW - fm.stringWidth(stageLbl)) / 2, TH + GAP * 2 + SEP_H / 2);
+                float stageW = FontLoader.widthWithFallback(g2, stageLbl, lblFont, lblAlt);
+                FontLoader.drawWithFallback(g2, stageLbl, (panelW - stageW) / 2,
+                        TH + GAP * 2 + SEP_H / 2, lblFont, lblAlt);
 
                 g2.setColor(new Color(140, 210, 140));
                 String topLbl = "← Top of Deck (left = topmost)";
-                g2.drawString(topLbl, Math.max(4, (deckX - fm.stringWidth(topLbl)) / 2), zoneY - 6);
+                float topW = FontLoader.widthWithFallback(g2, topLbl, lblFont, lblAlt);
+                FontLoader.drawWithFallback(g2, topLbl, Math.max(4, (deckX - topW) / 2),
+                        zoneY - 6, lblFont, lblAlt);
 
                 g2.setColor(new Color(210, 140, 140));
                 String botLbl = "Bottom of Deck (left = first below) →";
                 int bZoneX = deckX + TW + GAP;
-                g2.drawString(botLbl, bZoneX + (panelW - bZoneX - fm.stringWidth(botLbl)) / 2, zoneY - 6);
+                float botW = FontLoader.widthWithFallback(g2, botLbl, lblFont, lblAlt);
+                FontLoader.drawWithFallback(g2, botLbl, bZoneX + (panelW - bZoneX - botW) / 2,
+                        zoneY - 6, lblFont, lblAlt);
 
                 if (deckBack != null) {
                     g2.drawImage(deckBack, deckX, zoneY, TW, TH, null);
@@ -1008,7 +1082,7 @@ class LookAtDeckDialogs {
 
         int[] timeLeft = { 20 };
         javax.swing.Timer[] timerHolder = { null };
-        javax.swing.Timer countdown = new javax.swing.Timer(1000, ae -> {
+        javax.swing.Timer countdown = !timed ? null : new javax.swing.Timer(1000, ae -> {
             int t = --timeLeft[0];
             timerLabel.setText(t + "s");
             if (t <= 5) timerLabel.setForeground(Color.RED);
@@ -1022,7 +1096,11 @@ class LookAtDeckDialogs {
         });
         timerHolder[0] = countdown;
 
-        confirmBtn.addActionListener(ae -> { countdown.stop(); hideZoom(); dlg.dispose(); });
+        confirmBtn.addActionListener(ae -> {
+            if (countdown != null) countdown.stop();
+            hideZoom();
+            dlg.dispose();
+        });
 
         JPanel south = new JPanel(new FlowLayout(FlowLayout.CENTER, 16, 6));
         south.add(timerLabel);
@@ -1033,9 +1111,9 @@ class LookAtDeckDialogs {
         dlg.getContentPane().add(south,  BorderLayout.SOUTH);
         dlg.pack();
         dlg.setLocationRelativeTo(frame);
-        countdown.start();
+        if (countdown != null) countdown.start();
         dlg.setVisible(true);
-        countdown.stop();
+        if (countdown != null) countdown.stop();
 
         for (int i = 0; i < n; i++) deck.pollFirst();
         for (int i = topCards.size() - 1; i >= 0; i--) deck.addFirst(topCards.get(i));
@@ -1141,7 +1219,7 @@ class LookAtDeckDialogs {
             });
             cardLabels[i] = lbl;
 
-            JToggleButton handBtn = new JToggleButton("→ Hand");
+            JToggleButton handBtn = new JToggleButton(txt("→ Hand"));
             handBtn.setFont(FontLoader.loadPixelFont(9));
             handBtns[i] = handBtn;
             handBtn.addItemListener(ie -> {
@@ -1189,7 +1267,8 @@ class LookAtDeckDialogs {
         if (orElementFilter != null) filterDesc = orElementFilter + " or " + filterDesc;
         if (maxCost >= 0) filterDesc += " of cost " + maxCost + " or less";
         JLabel instructions = new JLabel(
-                "Toggle '→ Hand' on " + filterDesc + " (up to " + maxAdd + "). Swap the rest to order (left = first at bottom).",
+                txt("Toggle '→ Hand' on " + filterDesc + " (up to " + maxAdd
+                        + "). Swap the rest to order (left = first at bottom)."),
                 SwingConstants.CENTER);
         instructions.setFont(FontLoader.loadPixelFont(9));
         confirmBtn.addActionListener(ae -> { hideZoom(); dlg.dispose(); });
@@ -1279,7 +1358,7 @@ class LookAtDeckDialogs {
             });
             cardLabels[i] = lbl;
 
-            JToggleButton handBtn = new JToggleButton("→ Hand");
+            JToggleButton handBtn = new JToggleButton(txt("→ Hand"));
             handBtn.setFont(FontLoader.loadPixelFont(9));
             handBtns[i] = handBtn;
             handBtn.addItemListener(ie -> {
@@ -1318,8 +1397,8 @@ class LookAtDeckDialogs {
         }
 
         JLabel instructions = new JLabel(
-                "Toggle '→ Hand' to add cards (up to " + maxAdd
-                        + "). Card Name " + excludeName + " (red) must go to Break Zone.",
+                txt("Toggle '→ Hand' to add cards (up to " + maxAdd
+                        + "). Card Name " + excludeName + " (red) must go to Break Zone."),
                 SwingConstants.CENTER);
         instructions.setFont(FontLoader.loadPixelFont(9));
         confirmBtn.addActionListener(ae -> { hideZoom(); dlg.dispose(); });
@@ -1483,7 +1562,7 @@ class LookAtDeckDialogs {
             });
             cardLabels[i] = lbl;
 
-            JToggleButton fieldBtn = new JToggleButton("→ Field");
+            JToggleButton fieldBtn = new JToggleButton(txt("→ Field"));
             fieldBtn.setFont(FontLoader.loadPixelFont(9));
             fieldBtns[i] = fieldBtn;
             fieldBtn.addItemListener(ie -> {
@@ -1523,7 +1602,8 @@ class LookAtDeckDialogs {
         }
 
         JLabel instructions = new JLabel(
-                "Click '→ Field' on up to " + maxPlay + " " + typeLabel + "(s) to play. Swap the rest to set bottom-of-deck order (left = first).",
+                txt("Click '→ Field' on up to " + maxPlay + " " + typeLabel
+                        + "(s) to play. Swap the rest to set bottom-of-deck order (left = first)."),
                 SwingConstants.CENTER);
         instructions.setFont(FontLoader.loadPixelFont(9));
         confirmBtn.addActionListener(ae -> { hideZoom(); dlg.dispose(); });
@@ -1652,8 +1732,8 @@ class LookAtDeckDialogs {
             });
             cardLabels[i] = lbl;
 
-            JToggleButton handBtn  = new JToggleButton("→ Hand");
-            JToggleButton fieldBtn = new JToggleButton("→ Field");
+            JToggleButton handBtn  = new JToggleButton(txt("→ Hand"));
+            JToggleButton fieldBtn = new JToggleButton(txt("→ Field"));
             handBtn.setFont(FontLoader.loadPixelFont(9));
             fieldBtn.setFont(FontLoader.loadPixelFont(9));
             handBtns[i]  = handBtn;
@@ -1714,9 +1794,9 @@ class LookAtDeckDialogs {
         }
 
         JLabel instructions = new JLabel(
-                "Select 1 card: '→ Hand' (" + handTypeFilter + ") or '→ Field' ("
+                txt("Select 1 card: '→ Hand' (" + handTypeFilter + ") or '→ Field' ("
                 + (fieldJobFilter != null ? "Job " + fieldJobFilter + " " : "") + fieldTypeFilter
-                + "). Swap others to set bottom-of-deck order (left = first).",
+                + "). Swap others to set bottom-of-deck order (left = first)."),
                 SwingConstants.CENTER);
         instructions.setFont(FontLoader.loadPixelFont(9));
         confirmBtn.addActionListener(ae -> { hideZoom(); dlg.dispose(); });
@@ -1833,7 +1913,7 @@ class LookAtDeckDialogs {
             });
             cardLabels[i] = lbl;
 
-            JToggleButton fieldBtn = new JToggleButton("→ Field");
+            JToggleButton fieldBtn = new JToggleButton(txt("→ Field"));
             fieldBtn.setFont(FontLoader.loadPixelFont(9));
             fieldBtns[i] = fieldBtn;
             fieldBtn.addItemListener(ie -> {
@@ -1873,7 +1953,8 @@ class LookAtDeckDialogs {
         }
 
         JLabel instructions = new JLabel(
-                "Click '→ Field' on 1 Card Name " + cardName + costSuffix + " to play. Swap the rest to order (left = first at bottom).",
+                txt("Click '→ Field' on 1 Card Name " + cardName + costSuffix
+                        + " to play. Swap the rest to order (left = first at bottom)."),
                 SwingConstants.CENTER);
         instructions.setFont(FontLoader.loadPixelFont(9));
         confirmBtn.addActionListener(ae -> { hideZoom(); dlg.dispose(); });
@@ -1951,7 +2032,7 @@ class LookAtDeckDialogs {
             });
             cardLabels[i] = lbl;
 
-            JToggleButton btn = new JToggleButton("→ Top");
+            JToggleButton btn = new JToggleButton(txt("→ Top"));
             btn.setFont(FontLoader.loadPixelFont(9));
             topBtns[i] = btn;
             btn.addItemListener(ie -> {

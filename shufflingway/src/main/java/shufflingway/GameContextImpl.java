@@ -66,6 +66,8 @@ final class GameContextImpl implements GameContext {
 	private final boolean exBurst;
 	private List<ForwardTarget> lastChosenTargets = List.of();
 	private List<ForwardTarget> preloadedTargets  = null;
+	/** Card the most recent {@link #lookAtTopDeck} put into hand; read by riders on that look. */
+	private CardData lastLookAddedToHand = null;
 
 	GameContextImpl(MainWindow mw, boolean isP1, boolean exBurst) {
 		this.mw = mw;
@@ -4035,7 +4037,37 @@ final class GameContextImpl implements GameContext {
 			}
 
 			@Override public void lookAtTopDeck(LookConfig config) {
-				mw.lookDialogs().show(config, isP1, mw.isP2Cpu());
+				lastLookAddedToHand = mw.lookDialogs().show(config, isP1, mw.isP2Cpu());
+			}
+
+			@Override public void triggerExBurstOfCardAddedToHand() {
+				CardData added = lastLookAddedToHand;
+				if (added == null) {
+					logEntry("[EX Burst] No card was added to hand");
+					return;
+				}
+				if (!added.exBurst() || added.exBurstEffect().isEmpty()) {
+					logEntry("[EX Burst] " + added.name() + " has no EX Burst to trigger");
+					return;
+				}
+				// The card stays in hand — only its EX Burst effect goes on the stack, as with
+				// Akstar's Damage Zone version.
+				if (isP1) {
+					int choice = JOptionPane.showConfirmDialog(mw.frame,
+							"Trigger " + added.name() + "'s EX Burst effect?",
+							"EX Burst", JOptionPane.YES_NO_OPTION);
+					if (choice != JOptionPane.YES_OPTION) {
+						logEntry("[EX Burst] " + added.name() + " — declined");
+						return;
+					}
+					logEntry("[EX Burst] " + added.name() + " — placed on stack");
+					mw.gameState.pushStack(new StackEntry(added, true, true));
+					mw.showStackWindow();
+				} else {
+					logEntry("[AI EX Burst] " + added.name() + " — placed on stack");
+					mw.gameState.pushStack(new StackEntry(added, false, true));
+					mw.showStackWindowIfNeeded();
+				}
 			}
 
 			@Override public void lookAtTopDeckCastSummonFreeRestBottom(int count, int maxCost) {

@@ -277,6 +277,7 @@ public final class TraitTab {
      * Draws the "First Strike" glyph — a white sword-point triangle breaking through a jagged
      * horizontal bar — into the box {@code [x, y, x + size, y + size]}. Same 24x24 logical
      * grid as {@link #drawHasteIcon}.
+     * NOTE: I don't like this one, gonna redesign it at some point.
      */
     public static void drawFirstStrikeIcon(Graphics2D g0, float x, float y, float size) {
         Graphics2D g = (Graphics2D) g0.create();

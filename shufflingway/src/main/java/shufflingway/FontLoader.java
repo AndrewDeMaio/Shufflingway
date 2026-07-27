@@ -1,6 +1,7 @@
 package shufflingway;
 
 import java.awt.Font;
+import java.awt.Graphics2D;
 import java.awt.GraphicsEnvironment;
 import java.awt.font.FontRenderContext;
 import java.awt.font.GlyphVector;
@@ -67,6 +68,113 @@ public class FontLoader {
     public static void setBaseFontFile(String fileName) {
         Font f = loadRegistered(fileName);
         if (f != null) { baseFont = f; fontScale = scaleFor(f); }
+    }
+
+    // -------------------------------------------------------------------------
+    // Glyph fallback
+    // -------------------------------------------------------------------------
+
+    /**
+     * Stand-in for characters the bundled fonts have no glyph for. Both bundled fonts cover ASCII
+     * and Latin-1 only, so arrows (← →) and the CP-cost brackets (《 》) would otherwise render as
+     * missing-glyph boxes. {@code Font.DIALOG} is a JVM logical font, so it is always present.
+     */
+    private static final Font FALLBACK_BASE = new Font(Font.DIALOG, Font.PLAIN, 1);
+
+    /** Cap-height multiplier that sizes {@link #FALLBACK_BASE} to sit alongside the base font. */
+    private static final double FALLBACK_SCALE = scaleFor(FALLBACK_BASE);
+
+    /**
+     * The fallback font at the same requested size as {@link #loadPixelFont}, cap-height matched so
+     * substituted glyphs sit at the same visual size as the pixel text around them.
+     */
+    public static Font fallbackFont(float size) {
+        float scaled = UiScale.scale(size);
+        return FALLBACK_BASE.deriveFont((float) (scaled * FALLBACK_SCALE));
+    }
+
+    /** True when the base UI font has a glyph for every character in {@code text}. */
+    public static boolean canDisplayAll(String text) {
+        return baseFont == null || text == null || baseFont.canDisplayUpTo(text) < 0;
+    }
+
+    /**
+     * Draws {@code text} with its baseline at ({@code x}, {@code y}), rendering each character in
+     * {@code base} and falling back to {@code fallback} only for the ones {@code base} cannot
+     * display. Leaves {@code g2}'s font set to {@code base}.
+     *
+     * @return the total advance width, so callers can lay out what follows
+     */
+    public static float drawWithFallback(Graphics2D g2, String text, float x, float y,
+                                         Font base, Font fallback) {
+        float cursor = x;
+        for (int i = 0; i < text.length(); ) {
+            Font run = fontFor(text.charAt(i), base, fallback);
+            int end = i + 1;
+            while (end < text.length() && fontFor(text.charAt(end), base, fallback) == run) end++;
+            String chunk = text.substring(i, end);
+            g2.setFont(run);
+            g2.drawString(chunk, cursor, y);
+            cursor += (float) run.getStringBounds(chunk, g2.getFontRenderContext()).getWidth();
+            i = end;
+        }
+        g2.setFont(base);
+        return cursor - x;
+    }
+
+    /**
+     * Advance width {@link #drawWithFallback} would produce for {@code text} — use this instead of
+     * {@code FontMetrics.stringWidth} when centring text that may contain substituted glyphs.
+     */
+    public static float widthWithFallback(Graphics2D g2, String text, Font base, Font fallback) {
+        float w = 0;
+        for (int i = 0; i < text.length(); ) {
+            Font run = fontFor(text.charAt(i), base, fallback);
+            int end = i + 1;
+            while (end < text.length() && fontFor(text.charAt(end), base, fallback) == run) end++;
+            w += (float) run.getStringBounds(text.substring(i, end), g2.getFontRenderContext()).getWidth();
+            i = end;
+        }
+        return w;
+    }
+
+    private static Font fontFor(char c, Font base, Font fallback) {
+        return base.canDisplay(c) ? base : fallback;
+    }
+
+    /**
+     * Wraps {@code text} in HTML so the characters the base UI font lacks render in the fallback
+     * family, for Swing components ({@code JLabel}, {@code AbstractButton}) that take a single
+     * {@link Font} and so cannot mix runs the way {@link #drawWithFallback} does. Everything else
+     * keeps the component's own font.
+     *
+     * <p>Returns {@code text} unchanged when nothing needs substituting, so the common case keeps
+     * plain-text layout rather than paying for Swing's HTML view.
+     */
+    public static String htmlWithFallback(String text) {
+        if (text == null || canDisplayAll(text)) return text;
+        StringBuilder sb = new StringBuilder("<html>");
+        boolean inFallback = false;
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            boolean needs = baseFont != null && !baseFont.canDisplay(c);
+            if (needs != inFallback) {
+                sb.append(needs ? "<span style='font-family:" + FALLBACK_BASE.getFamily() + "'>"
+                                : "</span>");
+                inFallback = needs;
+            }
+            switch (c) {
+                case '&' -> sb.append("&amp;");
+                case '<' -> sb.append("&lt;");
+                case '>' -> sb.append("&gt;");
+                default  -> {
+                    if (c > 127) sb.append("&#").append((int) c).append(';');
+                    else         sb.append(c);
+                }
+            }
+        }
+        if (inFallback) sb.append("</span>");
+        return sb.append("</html>").toString();
     }
 
     /**

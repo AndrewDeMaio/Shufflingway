@@ -1268,9 +1268,15 @@ public class ActionResolver {
         "(?i)Return\\s+(?!(?:it|them)\\b)(?<named>.+?)\\s+to\\s+its\\s+owner(?:'s|s')?\\s+hand[.!]?"
     );
 
-    /** Matches "Return [name] to your hand." — named card, not a pronoun. */
+    /**
+     * Matches "Return [name] to your hand." — named card, not a pronoun.  The name is limited to
+     * 1–5 words ("Good King Moggle Mog XII" is the longest there is); an unbounded name lets a
+     * single "Return" swallow whole sentences up to a later "… to your hand", which is how
+     * Schultz 27-100R's "Return these to the top and/or bottom … add it to your hand" used to be
+     * claimed here instead of by the look-at-deck parsers.
+     */
     private static final Pattern RETURN_NAMED_TO_YOUR_HAND_STANDALONE = Pattern.compile(
-        "(?i)Return\\s+(?!(?:it|them)\\b)(?<named>.+?)\\s+to\\s+your\\s+hand[.!]?"
+        "(?i)Return\\s+(?!(?:it|them)\\b)(?<named>\\S+(?:\\s+\\S+){0,4})\\s+to\\s+your\\s+hand[.!]?"
     );
 
     /** Matches "Add [name] to your hand." — named card, not a pronoun or a count. Used for break-zone-origin abilities. */
@@ -3870,16 +3876,28 @@ public class ActionResolver {
     );
 
     /**
-     * Matches "Look at the top N cards of your deck. Add 1 card among them to your hand and
-     * return the other cards to the bottom of your deck in any order."
+     * Matches "Look at / Reveal the top N cards of your deck. Add 1 card among them to your hand
+     * and return the other cards to the bottom of your deck in any order."  Cards that continue
+     * past this clause are handled by {@link #ADDED_CARD_EX_BURST_RIDER}.
      * <ul>
-     *   <li>Group {@code count} — number of cards to look at</li>
+     *   <li>Group {@code count} — number of cards to look at / reveal</li>
+     *   <li>Group {@code verb}  — which wording was used; "Reveal" makes the cards public</li>
      * </ul>
      */
     private static final Pattern LOOK_TOP_DECK_ADD_TO_HAND_REST_BOTTOM = Pattern.compile(
-        "(?i)Look\\s+at\\s+the\\s+top\\s+(?<count>\\d+)\\s+cards?\\s+of\\s+your\\s+deck[.!]?\\s*" +
+        "(?i)(?<verb>Look\\s+at|Reveal)\\s+the\\s+top\\s+(?<count>\\d+)\\s+cards?\\s+of\\s+your\\s+deck[.!]?\\s*" +
         "Add\\s+1\\s+card\\s+among\\s+them\\s+to\\s+your\\s+hand\\s+and\\s+" +
         "return\\s+the\\s+other\\s+cards?\\s+to\\s+the\\s+bottom\\s+of\\s+your\\s+deck\\s+in\\s+any\\s+order[.!]?"
+    );
+
+    /**
+     * Matches Lunafreya 23-129H's rider on the clause above: "If the card added to your hand has
+     * an EX Burst, you may trigger its EX Burst effect." plus its parenthetical rules note.
+     */
+    private static final Pattern ADDED_CARD_EX_BURST_RIDER = Pattern.compile(
+        "(?i)^[\\s.!]*If\\s+the\\s+card\\s+added\\s+to\\s+your\\s+hand\\s+has\\s+an\\s+EX\\s+Burst,\\s*" +
+        "you\\s+may\\s+trigger\\s+its\\s+EX\\s+Burst\\s+effect[.!]?" +
+        "(?:\\s*\\([^)]*\\))?\\s*$"
     );
 
     /**
@@ -3902,18 +3920,20 @@ public class ActionResolver {
      * to your hand and put the rest of the cards into the Break Zone."
      * <ul>
      *   <li>Group {@code count}   — number of cards to look at / reveal</li>
+     *   <li>Group {@code verb}    — which wording was used; "Reveal" makes the cards public</li>
      *   <li>Group {@code element} — optional element filter on the card added to hand</li>
      * </ul>
      */
     private static final Pattern LOOK_TOP_DECK_ADD_TO_HAND_REST_BREAK = Pattern.compile(
-        "(?i)(?:Look\\s+at|Reveal)\\s+the\\s+top\\s+(?<count>\\d+)\\s+cards?\\s+of\\s+your\\s+deck[.!]?\\s*" +
+        "(?i)(?<verb>Look\\s+at|Reveal)\\s+the\\s+top\\s+(?<count>\\d+)\\s+cards?\\s+of\\s+your\\s+deck[.!]?\\s*" +
         "Add\\s+1\\s+(?:(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?card\\s+among\\s+them\\s+to\\s+your\\s+hand[,]?\\s+and\\s+" +
         "put\\s+the\\s+rest\\s+(?:of\\s+the\\s+cards?\\s+)?into\\s+the\\s+Break\\s+Zone[.!]?"
     );
 
     /**
      * Matches "Look at the top N cards of your deck. Return these to the top and/or bottom of
-     * your deck in any order."
+     * your deck in any order."  Anything the card adds after this clause is picked up separately
+     * via {@link #TRAILING_THEN_CLAUSE} (Schultz 27-100R chains a reveal onto it).
      * <ul>
      *   <li>Group {@code count} — number of cards to look at</li>
      * </ul>
@@ -3921,6 +3941,15 @@ public class ActionResolver {
     private static final Pattern LOOK_TOP_DECK_TOP_OR_BOTTOM = Pattern.compile(
         "(?i)Look\\s+at\\s+the\\s+top\\s+(?<count>\\d+)\\s+cards?\\s+of\\s+your\\s+deck[.!]?\\s*" +
         "Return\\s+(?:them|these)\\s+to\\s+the\\s+top\\s+and[/\\s]?(?:or\\s+)?bottom\\s+of\\s+your\\s+deck\\s+in\\s+any\\s+order[.!]?"
+    );
+
+    /**
+     * Matches the text left over after a primary clause when the card continues with a
+     * "Then, [effect]" sentence.  Group {@code rest} is the follow-on effect text, ready to be
+     * handed back to {@link #parse}.
+     */
+    private static final Pattern TRAILING_THEN_CLAUSE = Pattern.compile(
+        "(?i)^[\\s.!]*Then,?\\s+(?<rest>\\S.*)$", Pattern.DOTALL
     );
 
     /**
@@ -5675,7 +5704,7 @@ public class ActionResolver {
         result = tryParseLookTopDeckAddToHandRestBreak(effectText);
         if (result != null) return result;
 
-        result = tryParseLookTopDeckTopOrBottom(effectText);
+        result = tryParseLookTopDeckTopOrBottom(effectText, source);
         if (result != null) return result;
 
         result = tryParseLookTopDeckReturnTopOrdered(effectText);
@@ -6048,10 +6077,14 @@ public class ActionResolver {
         if (tryParseLookTopDeckOptionallyBreak(effectText)        != null) return "LookTopDeckOptionallyBreak";
         if (tryParseLookTopDeckBottomOrKeep(effectText)           != null) return "LookTopDeckBottomOrKeep";
         if (tryParseCounterScaleLookAddToHand(effectText, 1)               != null) return "CounterScaleLookAddToHand";
-        if (tryParseLookTopDeckAddToHandRestBottom(effectText)          != null) return "LookTopDeckAddToHandRestBottom";
+        if (tryParseLookTopDeckAddToHandRestBottom(effectText)          != null) return lookAddToHandRestBottomPatternName(effectText);
         if (tryParseLookTopDeckAddToHandOneToBreakRestBottom(effectText) != null) return "LookTopDeckAddToHandOneToBreakRestBottom";
         if (tryParseLookTopDeckAddToHandRestBreak(effectText)           != null) return "LookTopDeckAddToHandRestBreak";
-        if (tryParseLookTopDeckTopOrBottom(effectText)                  != null) return "LookTopDeckTopOrBottom";
+        if (tryParseLookTopDeckTopOrBottom(effectText, source)          != null) {
+            String then = trailingThenText(effectText, LOOK_TOP_DECK_TOP_OR_BOTTOM);
+            return then == null ? "LookTopDeckTopOrBottom"
+                    : "LookTopDeckTopOrBottom + " + matchedPatternName(then, source);
+        }
         if (tryParseLookTopDeckReturnTopOrdered(effectText)             != null) return "LookTopDeckReturnTopOrdered";
         if (tryParseLookTopDeckPickOneTopRestBottom(effectText)              != null) return "LookTopDeckPickOneTopRestBottom";
         if (tryParseLookTopDeckCastSummonFreeRestBottom(effectText, 0)       != null) return "LookTopDeckCastSummonFreeRestBottom";
@@ -6592,10 +6625,14 @@ public class ActionResolver {
         if (tryParseChooseAsManyAsBzRfgJobCount(effectText)               != null) return "ChooseAsManyAsBzRfgJobCount";
         if (tryParseChooseCounterScaleCharsActivate(effectText, 1)         != null) return "ChooseCounterScaleCharsActivate";
         if (tryParseCounterScaleLookAddToHand(effectText, 1)               != null) return "CounterScaleLookAddToHand";
-        if (tryParseLookTopDeckAddToHandRestBottom(effectText)          != null) return "LookTopDeckAddToHandRestBottom";
+        if (tryParseLookTopDeckAddToHandRestBottom(effectText)          != null) return lookAddToHandRestBottomPatternName(effectText);
         if (tryParseLookTopDeckAddToHandOneToBreakRestBottom(effectText) != null) return "LookTopDeckAddToHandOneToBreakRestBottom";
         if (tryParseLookTopDeckAddToHandRestBreak(effectText)           != null) return "LookTopDeckAddToHandRestBreak";
-        if (tryParseLookTopDeckTopOrBottom(effectText)                  != null) return "LookTopDeckTopOrBottom";
+        if (tryParseLookTopDeckTopOrBottom(effectText, source)          != null) {
+            String then = trailingThenText(effectText, LOOK_TOP_DECK_TOP_OR_BOTTOM);
+            return then == null ? "LookTopDeckTopOrBottom"
+                    : "LookTopDeckTopOrBottom + " + fullDescription(then, source);
+        }
         if (tryParseLookTopDeckReturnTopOrdered(effectText)             != null) return "LookTopDeckReturnTopOrdered";
         if (tryParseLookTopDeckPickOneTopRestBottom(effectText)              != null) return "LookTopDeckPickOneTopRestBottom";
         if (tryParseLookTopDeckCastSummonFreeRestBottom(effectText, 0)       != null) return "LookTopDeckCastSummonFreeRestBottom";
@@ -16536,10 +16573,41 @@ public class ActionResolver {
         Matcher m = LOOK_TOP_DECK_ADD_TO_HAND_REST_BOTTOM.matcher(text);
         if (!m.find()) return null;
         int count = Integer.parseInt(m.group("count"));
-        return ctx -> {
-            ctx.logEntry("Effect: Look at top " + count + " card(s) — add 1 to hand, return rest to bottom");
-            ctx.lookAtTopDeck(new LookConfig(count, LookConfig.LookAction.ADD_TO_HAND_REST_BOTTOM));
+        boolean reveal = isRevealWording(m.group("verb"));
+        Consumer<GameContext> look = ctx -> {
+            ctx.logEntry("Effect: " + (reveal ? "Reveal" : "Look at") + " top " + count
+                    + " card(s) — add 1 to hand, return rest to bottom");
+            ctx.lookAtTopDeck(new LookConfig(
+                    count, LookConfig.LookAction.ADD_TO_HAND_REST_BOTTOM, null, reveal));
         };
+        String tail = text.substring(m.end()).trim();
+        if (tail.isEmpty()) return look;
+        // Golem 23-064R also continues past this clause, with a rider that is not understood yet;
+        // reporting the whole ability as unparsed beats running half of it.
+        if (!ADDED_CARD_EX_BURST_RIDER.matcher(tail).matches()) return null;
+        return look.andThen(ctx -> {
+            ctx.logEntry("Effect: added card's EX Burst may be put on the stack");
+            ctx.triggerExBurstOfCardAddedToHand();
+        });
+    }
+
+    /**
+     * True when a captured {@code verb} group is the "Reveal" wording rather than "Look at".
+     * Reveal shows the cards to both players; look at keeps them private to the controller.
+     */
+    private static boolean isRevealWording(String verb) {
+        return verb != null && verb.trim().toLowerCase(java.util.Locale.ROOT).startsWith("reveal");
+    }
+
+    /**
+     * Names the add-1-to-hand look for the pattern-reporting helpers.  Callers check the parser
+     * first, so any text left after the clause is the EX Burst rider it accepted.
+     */
+    private static String lookAddToHandRestBottomPatternName(String text) {
+        Matcher m = LOOK_TOP_DECK_ADD_TO_HAND_REST_BOTTOM.matcher(text);
+        return m.find() && !text.substring(m.end()).trim().isEmpty()
+                ? "LookTopDeckAddToHandRestBottom + AddedCardExBurst"
+                : "LookTopDeckAddToHandRestBottom";
     }
 
     private static Consumer<GameContext> tryParseLookTopDeckAddToHandOneToBreakRestBottom(String text) {
@@ -16555,23 +16623,60 @@ public class ActionResolver {
     private static Consumer<GameContext> tryParseLookTopDeckAddToHandRestBreak(String text) {
         Matcher m = LOOK_TOP_DECK_ADD_TO_HAND_REST_BREAK.matcher(text);
         if (!m.find()) return null;
-        int    count   = Integer.parseInt(m.group("count"));
-        String element = m.group("element");
+        int     count   = Integer.parseInt(m.group("count"));
+        String  element = m.group("element");
+        boolean reveal  = isRevealWording(m.group("verb"));
         String elemLabel = element != null ? " (" + element + ")" : "";
         return ctx -> {
-            ctx.logEntry("Effect: Look/Reveal top " + count + " card(s) — add 1" + elemLabel + " to hand, rest to Break Zone");
-            ctx.lookAtTopDeck(new LookConfig(count, LookConfig.LookAction.ADD_TO_HAND_REST_BREAK, element));
+            ctx.logEntry("Effect: " + (reveal ? "Reveal" : "Look at") + " top " + count
+                    + " card(s) — add 1" + elemLabel + " to hand, rest to Break Zone");
+            ctx.lookAtTopDeck(new LookConfig(
+                    count, LookConfig.LookAction.ADD_TO_HAND_REST_BREAK, element, reveal));
         };
     }
 
-    private static Consumer<GameContext> tryParseLookTopDeckTopOrBottom(String text) {
+    private static Consumer<GameContext> tryParseLookTopDeckTopOrBottom(String text, CardData source) {
         Matcher m = LOOK_TOP_DECK_TOP_OR_BOTTOM.matcher(text);
         if (!m.find()) return null;
         int count = Integer.parseInt(m.group("count"));
-        return ctx -> {
+        Consumer<GameContext> look = ctx -> {
             ctx.logEntry("Effect: Look at top " + count + " card(s) — return to top or bottom in any order");
             ctx.lookAtTopDeck(new LookConfig(count, LookConfig.LookAction.TOP_OR_BOTTOM_ORDERED));
         };
+        return appendThenClause(look, text.substring(m.end()), source);
+    }
+
+    /**
+     * Chains a trailing "Then, [effect]" sentence onto an already-parsed primary effect.
+     * The ordering dialogs this follows are modal, so the follow-on effect runs only once the
+     * player has finished with the primary one.
+     *
+     * @param base   the parsed primary effect
+     * @param tail   the text following the primary clause's match
+     * @param source the card that owns the ability
+     * @return {@code base} when {@code tail} holds no "Then," sentence; {@code base} followed by
+     *         the parsed sentence when it is understood; {@code null} when it is not — a
+     *         half-understood ability is reported as unparsed rather than silently dropping half
+     *         of what the card does
+     */
+    private static Consumer<GameContext> appendThenClause(
+            Consumer<GameContext> base, String tail, CardData source) {
+        Matcher m = TRAILING_THEN_CLAUSE.matcher(tail);
+        if (!m.matches()) return base;
+        Consumer<GameContext> then = parse(m.group("rest").trim(), source);
+        return then == null ? null : base.andThen(then);
+    }
+
+    /**
+     * Returns the effect text of a "Then, [effect]" sentence trailing {@code primary}'s match
+     * within {@code text}, or {@code null} when {@code primary} does not match or nothing follows
+     * it.  Used by the pattern-reporting helpers to name both halves of a chained ability.
+     */
+    private static String trailingThenText(String text, Pattern primary) {
+        Matcher m = primary.matcher(text);
+        if (!m.find()) return null;
+        Matcher then = TRAILING_THEN_CLAUSE.matcher(text.substring(m.end()));
+        return then.matches() ? then.group("rest").trim() : null;
     }
 
     private static Consumer<GameContext> tryParseLookTopDeckPickOneTopRestBottom(String text) {

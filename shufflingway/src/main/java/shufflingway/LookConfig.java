@@ -6,11 +6,21 @@ package shufflingway;
  * @param count         how many cards from the top of the deck to look at
  * @param action        what the player may do with those cards after looking
  * @param elementFilter null = no filter; non-null = only cards of this element may be added to hand
+ * @param reveal        {@code true} for "Reveal …", which shows the cards to both players;
+ *                      {@code false} for "Look at …", which keeps them private to the controller.
+ *                      Only the wording differs — the cards move the same way either way — so this
+ *                      controls solely whether the card names reach the shared game log when the
+ *                      opponent is the one looking
  */
-public record LookConfig(int count, LookConfig.LookAction action, String elementFilter) {
+public record LookConfig(int count, LookConfig.LookAction action, String elementFilter, boolean reveal) {
 
-    /** Convenience constructor for abilities with no element filter on the hand-add. */
-    public LookConfig(int count, LookAction action) { this(count, action, null); }
+    /** Convenience constructor for a private "look at" with no element filter on the hand-add. */
+    public LookConfig(int count, LookAction action) { this(count, action, null, false); }
+
+    /** Convenience constructor for a private "look at" with an element filter on the hand-add. */
+    public LookConfig(int count, LookAction action, String elementFilter) {
+        this(count, action, elementFilter, false);
+    }
 
     public enum LookAction {
         /** Just view the card(s); they remain on top of the deck in original order. */
@@ -46,8 +56,9 @@ public record LookConfig(int count, LookConfig.LookAction action, String element
         /**
          * View N cards; the player drags each card to either a "Top of Deck" zone
          * (left of the deck icon) or a "Bottom of Deck" zone (right of the deck icon)
-         * and orders each zone independently.  A 20-second countdown auto-resolves
-         * any unassigned cards to the top when it expires.
+         * and orders each zone independently.  Against a live opponent a 20-second
+         * countdown auto-resolves any unassigned cards to the top when it expires;
+         * against the CPU there is nobody waiting, so no countdown runs.
          */
         TOP_OR_BOTTOM_ORDERED,
 

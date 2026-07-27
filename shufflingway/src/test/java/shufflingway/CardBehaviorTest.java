@@ -15,6 +15,7 @@ import java.util.function.Predicate;
 
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 
 /**
  * Consolidated behavioral tests for one-off card-specific action-ability logic — each section
@@ -6279,5 +6280,183 @@ public class CardBehaviorTest {
 
         assertEquals(9000, mw.effectiveP2ForwardPower(0), "the chosen Forward gains +2000");
         assertEquals(8000, mw.effectiveP1ForwardPower(0), "The Crystal Exarch itself is unchanged");
+    }
+
+    // =========================================================================================
+    // Schultz 27-100R: "[[ex]]EX BURST[[/]] When Schultz enters the field, look at the top 3
+    // cards of your deck. Return these to the top and/or bottom of your deck in any order.
+    // Then, reveal the top card of your deck. If it is a Water card, add it to your hand."
+    //
+    // Two effects chained by "Then," — the look-at-deck clause used to be all that ran, and
+    // before that the greedy "Return [name] to your hand" matcher claimed the whole text.
+    // =========================================================================================
+
+    private static final String SCHULTZ_TEXT =
+            "[[ex]]EX BURST[[/]] When Schultz enters the field, look at the top 3 cards of your deck. "
+            + "Return these to the top and/or bottom of your deck in any order. Then, reveal the top "
+            + "card of your deck. If it is a Water card, add it to your hand.";
+
+    @Test
+    void schultzEntersTheFieldTriggerCarriesBothClauses() {
+        List<AutoAbility> abilities = CardData.parseAutoAbilities(SCHULTZ_TEXT);
+        assertEquals(1, abilities.size(), "one enter-the-field trigger");
+        AutoAbility etf = abilities.get(0);
+        assertEquals("enters the field", etf.trigger());
+        assertEquals("Schultz", etf.triggerCard());
+        assertTrue(etf.effectText().contains("Then, reveal the top card"),
+                "the chained reveal stays in the effect text");
+        assertEquals("LookTopDeckTopOrBottom + RevealTopDeck",
+                ActionResolver.matchedPatternName(etf.effectText(), null));
+    }
+
+    @Test
+    void schultzLooksAtTopThreeThenRevealsForAWaterCard() {
+        AutoAbility etf = CardData.parseAutoAbilities(SCHULTZ_TEXT).get(0);
+        Consumer<GameContext> fn = ActionResolver.parse(etf.effectText(), null);
+        assertNotNull(fn);
+
+        GameContext ctx = mock(GameContext.class);
+        fn.accept(ctx);
+
+        verify(ctx).lookAtTopDeck(new LookConfig(3, LookConfig.LookAction.TOP_OR_BOTTOM_ORDERED));
+
+        ArgumentCaptor<List<RevealClause>> clauses = ArgumentCaptor.forClass(List.class);
+        verify(ctx).revealTopDeckCard(clauses.capture(), eq(false));
+        assertEquals(1, clauses.getValue().size());
+        RevealClause clause = clauses.getValue().get(0);
+        assertEquals("addToHand", clause.cardOp());
+        assertTrue(clause.condition().test(makeForward("Leviathan", "Water", 3, 7000)),
+                "a Water card satisfies the reveal condition");
+        assertFalse(clause.condition().test(makeForward("Ifrit", "Fire", 3, 7000)),
+                "a non-Water card does not");
+    }
+
+    @Test
+    void schultzOrdersTheLookBeforeTheReveal() {
+        AutoAbility etf = CardData.parseAutoAbilities(SCHULTZ_TEXT).get(0);
+        GameContext ctx = mock(GameContext.class);
+        ActionResolver.parse(etf.effectText(), null).accept(ctx);
+
+        // The ordering dialog is modal, so the reveal must be queued behind it, not before it.
+        InOrder order = inOrder(ctx);
+        order.verify(ctx).lookAtTopDeck(any(LookConfig.class));
+        order.verify(ctx).revealTopDeckCard(anyList(), anyBoolean());
+    }
+
+    @Test
+    void returnNamedToHandDoesNotSwallowAWholeSentence() {
+        // "Return [name] to your hand" must not stretch from an unrelated "Return" all the way to
+        // a later "… to your hand" — that is what hijacked Schultz's ability.
+        GameContext ctx = mock(GameContext.class);
+        Consumer<GameContext> fn = ActionResolver.parse(
+                "look at the top 3 cards of your deck. Return these to the top and/or bottom of your "
+                + "deck in any order. Then, reveal the top card of your deck. If it is a Water card, "
+                + "add it to your hand.", null);
+        assertNotNull(fn);
+        fn.accept(ctx);
+        verify(ctx, never()).returnNamedCardToYourHand(anyString());
+    }
+
+    @Test
+    void returnNamedToHandStillMatchesRealCardNames() {
+        GameContext ctx = mock(GameContext.class);
+        ActionResolver.parse("Return Good King Moggle Mog XII to your hand.", null).accept(ctx);
+        verify(ctx).returnNamedCardToYourHand("Good King Moggle Mog XII");
+    }
+
+    // =========================================================================================
+    // Lunafreya 23-129H: "Limit Break -- 2[[br]] When Lunafreya enters the field, reveal the top
+    // 5 cards of your deck. Add 1 card among them to your hand and return the other cards to the
+    // bottom of your deck in any order. If the card added to your hand has an EX Burst, you may
+    // trigger its EX Burst effect. (This effect is put on the stack.)"
+    //
+    // The look clause says "reveal", not "look at", and carries a rider that acts on whichever
+    // card was taken.
+    // =========================================================================================
+
+    private static final String LUNAFREYA_TEXT =
+            "Limit Break -- 2[[br]]   When Lunafreya enters the field, reveal the top 5 cards of your "
+            + "deck. Add 1 card among them to your hand and return the other cards to the bottom of "
+            + "your deck in any order. If the card added to your hand has an EX Burst, you may trigger "
+            + "its EX Burst effect. (This effect is put on the stack.)";
+
+    @Test
+    void lunafreyaRevealsFiveAndOffersTheAddedCardsExBurst() {
+        List<AutoAbility> abilities = CardData.parseAutoAbilities(LUNAFREYA_TEXT);
+        assertEquals(1, abilities.size());
+        AutoAbility etf = abilities.get(0);
+        assertEquals("enters the field", etf.trigger());
+        assertEquals("LookTopDeckAddToHandRestBottom + AddedCardExBurst",
+                ActionResolver.matchedPatternName(etf.effectText(), null));
+
+        Consumer<GameContext> fn = ActionResolver.parse(etf.effectText(), null);
+        assertNotNull(fn);
+        GameContext ctx = mock(GameContext.class);
+        fn.accept(ctx);
+
+        // The rider can only know what was taken after the look has resolved.
+        InOrder order = inOrder(ctx);
+        order.verify(ctx).lookAtTopDeck(
+                new LookConfig(5, LookConfig.LookAction.ADD_TO_HAND_REST_BOTTOM, null, true));
+        order.verify(ctx).triggerExBurstOfCardAddedToHand();
+    }
+
+    @Test
+    void lunafreyaRevealsRatherThanLooksSoTheCardsArePublic() {
+        // "Reveal" shows the cards to both players; a "look at" would keep them private to the
+        // controller. Same card movement either way, so only this flag carries the difference.
+        AutoAbility etf = CardData.parseAutoAbilities(LUNAFREYA_TEXT).get(0);
+        GameContext ctx = mock(GameContext.class);
+        ActionResolver.parse(etf.effectText(), null).accept(ctx);
+
+        ArgumentCaptor<LookConfig> cfg = ArgumentCaptor.forClass(LookConfig.class);
+        verify(ctx).lookAtTopDeck(cfg.capture());
+        assertTrue(cfg.getValue().reveal(), "Lunafreya reveals, so both players see the cards");
+    }
+
+    @Test
+    void theElementalCycleRevealsRatherThanLooks() {
+        // Kojin 14-012C and its set-14 siblings (Devout, Vanu Vanu, Paladin, Gnath, Ananta) all
+        // reveal, so the opponent is entitled to see what was turned over.
+        GameContext ctx = mock(GameContext.class);
+        ActionResolver.parse(
+                "reveal the top 2 cards of your deck. Add 1 Fire card among them to your hand and "
+                + "put the rest into the Break Zone.", null).accept(ctx);
+        verify(ctx).lookAtTopDeck(
+                new LookConfig(2, LookConfig.LookAction.ADD_TO_HAND_REST_BREAK, "Fire", true));
+    }
+
+    @Test
+    void aLookAtStaysPrivateToItsController() {
+        GameContext ctx = mock(GameContext.class);
+        ActionResolver.parse(
+                "Look at the top 2 cards of your deck. Add 1 Water card among them to your hand and "
+                + "put the rest into the Break Zone.", null).accept(ctx);
+        verify(ctx).lookAtTopDeck(
+                new LookConfig(2, LookConfig.LookAction.ADD_TO_HAND_REST_BREAK, "Water", false));
+    }
+
+    @Test
+    void aPlainAddToHandLookGainsNoExBurstRider() {
+        // Baderon 5-132R — same clause, nothing after it.
+        GameContext ctx = mock(GameContext.class);
+        Consumer<GameContext> fn = ActionResolver.parse(
+                "look at the top 3 cards of your deck. Add 1 card among them to your hand and return "
+                + "the other cards to the bottom of your deck in any order.", null);
+        assertNotNull(fn);
+        fn.accept(ctx);
+        verify(ctx).lookAtTopDeck(new LookConfig(3, LookConfig.LookAction.ADD_TO_HAND_REST_BOTTOM));
+        verify(ctx, never()).triggerExBurstOfCardAddedToHand();
+    }
+
+    @Test
+    void anUnrecognisedRiderOnTheAddToHandLookLeavesTheAbilityUnparsed() {
+        // Golem 23-064R's rider ("deal the chosen Forward damage equal to the power of the added
+        // Forward") is not supported; running just the look half would quietly drop it.
+        assertNull(ActionResolver.parse(
+                "reveal the top 3 cards of your deck. Add 1 card among them to your hand and return "
+                + "the other cards to the bottom of your deck in any order. If you added a Forward to "
+                + "your hand, deal the chosen Forward damage equal to the power of the added Forward.",
+                null));
     }
 }
