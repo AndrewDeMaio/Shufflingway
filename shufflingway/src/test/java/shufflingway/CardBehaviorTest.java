@@ -2919,6 +2919,60 @@ public class CardBehaviorTest {
     }
 
     // =========================================================================================
+    // Cu Sith 10-068C: "EX BURST Choose 1 Forward or Backup in your Break Zone. Add it to your
+    // hand." — "your" is the resolving player's, so the salvaged card must land in the hand of
+    // whoever cast it. GameContext#addTargetToHand used to append to P1's hand unconditionally,
+    // which handed P2's own Break Zone card to P1 whenever the CPU cast this.
+    // =========================================================================================
+
+    private static final String CU_SITH_TEXT =
+            "[[ex]]EX BURST [[/]]Choose 1 Forward or Backup in your Break Zone. Add it to your hand.";
+
+    private static CardData makeCuSith() {
+        return new CardData(null, "Cu Sith", "Earth", 2, 0, "Summon", false, 0, true, false,
+                Set.of(), 0, List.of(), null, List.of(),
+                List.of(), List.of(),
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                false, false, null, false, false, false, false, false, false,
+                null, null, null, CU_SITH_TEXT);
+    }
+
+    /**
+     * Resolves Cu Sith's salvage for {@code casterIsP1}, with a single Forward sitting in that
+     * player's Break Zone. One eligible card makes the choice deterministic on both sides.
+     */
+    private static MainWindow runCuSithSalvage(boolean casterIsP1) {
+        MainWindow mw = new MainWindow();
+        CardData cuSith = makeCuSith();
+
+        CardData salvaged = makeForward("Salvage Me", "Earth", 3, 5000);
+        mw.gameState.getIdentity().put(salvaged, casterIsP1);
+        (casterIsP1 ? mw.gameState.getP1BreakZone() : mw.gameState.getP2BreakZone()).add(salvaged);
+
+        GameContext ctx = mw.buildGameContext(casterIsP1);
+        ActionResolver.parse(cuSith.summonEffect(), cuSith).accept(ctx);
+        return mw;
+    }
+
+    @Test
+    void cuSithReturnsToTheCastingPlayersHandForP2() {
+        MainWindow mw = runCuSithSalvage(false);
+        assertEquals(1, mw.gameState.getP2Hand().size(), "the CPU salvages into its own hand");
+        assertEquals("Salvage Me", mw.gameState.getP2Hand().get(0).name());
+        assertTrue(mw.gameState.getP1Hand().isEmpty(), "P1 must not receive the CPU's Break Zone card");
+        assertTrue(mw.gameState.getP2BreakZone().isEmpty(), "the card leaves the CPU's Break Zone");
+    }
+
+    @Test
+    void cuSithReturnsToTheCastingPlayersHandForP1() {
+        MainWindow mw = runCuSithSalvage(true);
+        assertEquals(1, mw.gameState.getP1Hand().size(), "P1 salvages into their own hand");
+        assertEquals("Salvage Me", mw.gameState.getP1Hand().get(0).name());
+        assertTrue(mw.gameState.getP2Hand().isEmpty(), "P2 must not receive P1's Break Zone card");
+        assertTrue(mw.gameState.getP1BreakZone().isEmpty(), "the card leaves P1's Break Zone");
+    }
+
+    // =========================================================================================
     // Black Mage 27-097C: "When Black Mage enters the field, your opponent selects 1 Forward of
     // cost 2 or less they control. Put it into the Break Zone. If you control a Multi-Element
     // Forward, your opponent selects 1 Forward of cost 4 or less they control instead. Put it into

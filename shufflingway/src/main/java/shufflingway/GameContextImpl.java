@@ -3725,10 +3725,15 @@ final class GameContextImpl implements GameContext {
 				List<CardData> bz = t.isP1() ? mw.gameState.getP1BreakZone() : mw.gameState.getP2BreakZone();
 				if (t.idx() >= bz.size()) return;
 				CardData card = bz.remove(t.idx());
-				mw.gameState.getP1Hand().add(card);
-				logEntry(card.name() + (t.isP1() ? " returned from Break Zone to hand" : " taken from opponent's Break Zone to hand"));
+				// "Add it to your hand" — the hand belongs to whoever is resolving the effect, which
+				// is the target's own side for a salvage but the other side when the effect reaches
+				// into the opponent's Break Zone.
+				(isP1 ? mw.gameState.getP1Hand() : mw.gameState.getP2Hand()).add(card);
+				logEntry((isP1 ? "" : "[P2] ") + card.name()
+						+ (t.isP1() == isP1 ? " returned from Break Zone to hand"
+						                    : " taken from opponent's Break Zone to hand"));
 				if (t.isP1()) mw.refreshP1BreakLabel(); else mw.refreshP2BreakLabel();
-				mw.refreshP1HandLabel();
+				if (isP1) mw.refreshP1HandLabel(); else mw.refreshP2HandCountLabel();
 			}
 
 			@Override public CardData p1BreakZoneCard(int idx) {

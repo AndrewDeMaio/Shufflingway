@@ -630,7 +630,10 @@ public interface GameContext {
      */
     void playTargetOntoFieldDull(ForwardTarget t);
 
-    /** Moves the target (chosen from a Break Zone) to P1's hand. */
+    /**
+     * Moves the target (chosen from either Break Zone) to the resolving player's hand — P1's on a
+     * {@link #isP1()} context, P2's otherwise — regardless of which Break Zone it came from.
+     */
     void addTargetToHand(ForwardTarget t);
 
     /**
