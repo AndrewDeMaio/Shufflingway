@@ -315,22 +315,34 @@ final class AutoAbilityTriggers {
 	);
 
 	/**
-	 * Field-wide incoming-damage modifier: "If a [Category X | Job Y] Forward [of cost N or less/more]
-	 * [other than Z] you control [other than Z] is dealt damage [less than its power | by a Backup],
+	 * Field-wide incoming-damage modifier: "If a [Category X | Job Y | Element] Forward
+	 * [of cost N or less/more] [other than Z] you control [other than Z] is dealt damage
+	 * [less than its power | by a Backup | by [your opponent's] Summons/abilities],
 	 * [reduce the damage by N | the damage becomes N] instead."
-	 * Groups: {@code category}, {@code job}, {@code cost}, {@code costcmp},
+	 *
+	 * <p>The element qualifier is matched against the damaged Forward's effective elements, so a
+	 * Multi-Element Forward satisfies every clause naming one of its elements — Yuzuki 13-125R
+	 * protects Fire and Water Forwards separately and is itself Water/Fire.
+	 * Groups: {@code category}, {@code job}, {@code element}, {@code cost}, {@code costcmp},
 	 * {@code except1} (before "you control"), {@code except2} (after "you control"),
 	 * {@code sourceclause}, {@code reduceby}, {@code setsto}.
 	 */
 	static final Pattern FA_FIELD_DAMAGE_MODIFIER = Pattern.compile(
 		"(?i)^If\\s+a\\s+" +
-		"(?:Category\\s+(?<category>\\S+)\\s+|Job\\s+(?<job>.+?)\\s+(?=Forward))?" +
+		"(?:Category\\s+(?<category>\\S+)\\s+" +
+			"|Job\\s+(?<job>.+?)\\s+(?=Forward)" +
+			"|(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?" +
 		"Forward(?:\\s+of\\s+cost\\s+(?<cost>\\d+)\\s+or\\s+(?<costcmp>less|more))?" +
 		"(?:\\s+other\\s+than\\s+(?<except1>.+?))?" +
 		"\\s+you\\s+control" +
 		"(?:\\s+other\\s+than\\s+(?<except2>.+?))?" +
 		"\\s+is\\s+dealt\\s+damage" +
-		"(?<sourceclause>\\s+less\\s+than\\s+its\\s+power|\\s+by\\s+a\\s+Backup)?" +
+		"(?<sourceclause>" +
+			"\\s+less\\s+than\\s+its\\s+power" +
+			"|\\s+by\\s+a\\s+Backup" +
+			"|\\s+by\\s+(?:your\\s+opponent's\\s+)?(?:a\\s+)?Summons?(?:\\s+or\\s+(?:an?\\s+)?abilit(?:y|ies))?" +
+			"|\\s+by\\s+(?:your\\s+opponent's\\s+)?(?:a\\s+Summon\\s+or\\s+)?(?:an?\\s+)?abilit(?:y|ies)" +
+		")?" +
 		"\\s*,\\s+" +
 		"(?:reduce\\s+the\\s+damage\\s+by\\s+(?<reduceby>\\d+)|the\\s+damage\\s+becomes\\s+(?<setsto>\\d+))" +
 		"\\s+instead\\.?$"

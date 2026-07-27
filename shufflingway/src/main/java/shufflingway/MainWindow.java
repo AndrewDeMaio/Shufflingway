@@ -10171,6 +10171,7 @@ public class MainWindow {
 				// Target filter
 				String category = m.group("category");
 				String job      = m.group("job");
+				String element  = m.group("element");
 				String costStr  = m.group("cost");
 				String costcmp  = m.group("costcmp");
 				String except   = m.group("except1") != null ? m.group("except1").trim()
@@ -10178,6 +10179,7 @@ public class MainWindow {
 
 				if (category != null && !CardFilters.meetsCategoryFilter(damaged, category)) continue;
 				if (job      != null && !CardFilters.meetsJobFilter(damaged, job))            continue;
+				if (element  != null && !effectiveElements(damaged).contains(element))        continue;
 				if (costStr  != null) {
 					int costVal = Integer.parseInt(costStr);
 					boolean orMore = "more".equalsIgnoreCase(costcmp);
@@ -10191,6 +10193,20 @@ public class MainWindow {
 					String srcN = src.trim().toLowerCase();
 					if (srcN.contains("less than its power") && amount >= effectivePower) continue;
 					if (srcN.contains("by a backup") && !attackerIsBackup) continue;
+					if (srcN.contains("abilit") || srcN.contains("summon")) {
+						if (!fromAbility) continue;
+						boolean namesSummon  = srcN.contains("summon");
+						boolean namesAbility = srcN.contains("abilit");
+						if (namesSummon && !namesAbility && !currentResolutionIsSummon) continue;
+						if (namesAbility && !namesSummon &&  currentResolutionIsSummon) continue;
+						// "by your opponent's …" — the damage has to originate on the other side of
+						// the board, so a friendly Summon or ability is not covered.
+						if (srcN.contains("opponent")) {
+							CardData resCard = currentResolutionIsSummon ? currentSummonSource : currentAbilitySource;
+							boolean  resIsP1 = currentResolutionIsSummon ? currentSummonSourceIsP1 : currentAbilitySourceIsP1;
+							if (resCard == null || resIsP1 == isP1) continue;
+						}
+					}
 				}
 
 				// Apply effect

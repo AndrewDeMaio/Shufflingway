@@ -2919,6 +2919,72 @@ public class CardBehaviorTest {
     }
 
     // =========================================================================================
+    // Yuzuki 13-125R: "If a Fire Forward you control is dealt damage by your opponent's abilities,
+    // the damage becomes 0 instead. / If a Water Forward you control is dealt damage, reduce the
+    // damage by 2000 instead." — two field-wide protections keyed on the damaged Forward's element.
+    // FA_FIELD_DAMAGE_MODIFIER had no element qualifier and no ability source clause, so neither
+    // clause matched and Yuzuki reduced nothing. Yuzuki is itself Water/Fire, so it satisfies both:
+    // against opponent ability damage the Fire clause zeroes it, which subsumes the Water clause.
+    // =========================================================================================
+
+    private static final String YUZUKI_TEXT =
+            "If a Fire Forward you control is dealt damage by your opponent's abilities, the damage becomes 0 instead."
+            + "[[br]]   If a Water Forward you control is dealt damage, reduce the damage by 2000 instead.";
+
+    /** Yuzuki on P1 idx 0, plus {@code others} from idx 1 up, with a P2-owned ability resolving. */
+    private static MainWindow boardWithYuzuki(CardData... others) {
+        MainWindow mw = new MainWindow();
+        mw.placeCardInForwardZone(makeFieldAbilityCard("Yuzuki", "Water/Fire", "Forward", YUZUKI_TEXT));
+        for (CardData c : others) mw.placeCardInForwardZone(c);
+        // currentAbilitySourceIsP1 defaults to false, so this stands in for an opponent's ability
+        // resolving against P1's board.
+        mw.currentAbilitySource = makeForward("Opp Caster", "Wind", 3, 5000);
+        return mw;
+    }
+
+    @Test
+    void yuzukiZeroesOpponentAbilityDamageToAFireForward() {
+        MainWindow mw = boardWithYuzuki(makeForward("Fire Ally", "Fire", 3, 8000));
+        assertEquals(0, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 1, 5000, true, false),
+                "Fire Forward, opponent's ability — damage becomes 0");
+    }
+
+    @Test
+    void yuzukiOnlyReducesOpponentAbilityDamageToAWaterForward() {
+        MainWindow mw = boardWithYuzuki(makeForward("Water Ally", "Water", 3, 8000));
+        assertEquals(3000, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 1, 5000, true, false),
+                "Water Forward — only the 2000 reduction applies, not the Fire nullification");
+    }
+
+    @Test
+    void yuzukiProtectsItselfAsAWaterFireForward() {
+        MainWindow mw = boardWithYuzuki();
+        assertEquals(0, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 0, 5000, true, false),
+                "Yuzuki is Water/Fire — the Fire clause wins against opponent ability damage");
+        assertEquals(3000, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 0, 5000, false, false),
+                "battle damage is not ability damage — only the Water reduction applies");
+    }
+
+    @Test
+    void yuzukiIgnoresForwardsOfOtherElements() {
+        MainWindow mw = boardWithYuzuki(makeForward("Wind Ally", "Wind", 3, 8000));
+        assertEquals(5000, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 1, 5000, true, false),
+                "neither clause covers a Wind Forward");
+    }
+
+    @Test
+    void yuzukiFireClauseSkipsItsControllersOwnAbilities() {
+        // Mirror board: Yuzuki and the damaged Forward belong to P2, and the resolving ability
+        // source is P2's too, so "your opponent's abilities" is not satisfied.
+        MainWindow mw = new MainWindow();
+        mw.placeP2CardInForwardZone(makeFieldAbilityCard("Yuzuki", "Water/Fire", "Forward", YUZUKI_TEXT));
+        mw.placeP2CardInForwardZone(makeForward("Fire Ally", "Fire/Water", 3, 8000));
+        mw.currentAbilitySource = makeForward("Own Caster", "Wind", 3, 5000);
+        assertEquals(3000, mw.modifyIncomingDamage(false, ForwardTarget.CardZone.FORWARD, 1, 5000, true, false),
+                "a friendly ability does not trigger the Fire nullification; the Water clause still applies");
+    }
+
+    // =========================================================================================
     // Cu Sith 10-068C: "EX BURST Choose 1 Forward or Backup in your Break Zone. Add it to your
     // hand." — "your" is the resolving player's, so the salvaged card must land in the hand of
     // whoever cast it. GameContext#addTargetToHand used to append to P1's hand unconditionally,
