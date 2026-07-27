@@ -112,6 +112,14 @@ public class FieldAbilityParsingTest {
         if (CardData.LIGHT_DARK_DISCARD_CP_PATTERN.matcher(fa.effectText()).matches()) return true;
         if (CardData.COUNTER_GRANT_PATTERN.matcher(fa.effectText()).matches()) return true;
         if (AutoAbilityTriggers.FA_CAST_SELF_FROM_BZ.matcher(fa.effectText().trim()).matches()) return true;
+        // Passives the engine reads straight off the card rather than routing through ActionResolver.
+        // Each is matched exactly as its AutoAbilityTriggers.has* counterpart does, so the report
+        // cannot claim recognition for text the engine would reject.
+        if (AutoAbilityTriggers.FA_SELF_CAST_LIMIT.matcher(fa.effectText().trim()).matches()) return true;
+        if (AutoAbilityTriggers.FA_BOTH_CAST_LIMIT.matcher(fa.effectText().trim()).matches()) return true;
+        if (AutoAbilityTriggers.FA_BZ_TO_RFG_ANY_SITUATION.matcher(fa.effectText()).find()) return true;
+        if (AutoAbilityTriggers.FA_CHARACTER_FIELD_TO_BZ_MAY_RFG.matcher(fa.effectText()).find()) return true;
+        if (AutoAbilityTriggers.FA_OPP_DAMAGED_FORWARD_FIELD_TO_BZ_RFG.matcher(fa.effectText()).find()) return true;
         if (AutoAbilityTriggers.FA_DAMAGE_MODIFIER.matcher(fa.effectText()).find()) return true;
         if (AutoAbilityTriggers.FA_FIELD_DAMAGE_MODIFIER.matcher(fa.effectText()).find()) return true;
         if (AutoAbilityTriggers.FA_FIELD_DAMAGE_EXACT_NULLIFY.matcher(fa.effectText()).find()) return true;
@@ -236,6 +244,16 @@ public class FieldAbilityParsingTest {
         }
         m = AutoAbilityTriggers.FA_CAST_SELF_FROM_BZ.matcher(fa.effectText().trim());
         if (m.matches()) return "CastFromBreakZone[" + m.group("name").trim() + "]";
+        if (AutoAbilityTriggers.FA_SELF_CAST_LIMIT.matcher(fa.effectText().trim()).matches())
+            return "SelfCastLimit[2 per turn]";
+        if (AutoAbilityTriggers.FA_BOTH_CAST_LIMIT.matcher(fa.effectText().trim()).matches())
+            return "BothCastLimit[2 per turn]";
+        if (AutoAbilityTriggers.FA_BZ_TO_RFG_ANY_SITUATION.matcher(fa.effectText()).find())
+            return "BzToRfgAnySituation";
+        if (AutoAbilityTriggers.FA_CHARACTER_FIELD_TO_BZ_MAY_RFG.matcher(fa.effectText()).find())
+            return "CharacterFieldToBzMayRfg";
+        if (AutoAbilityTriggers.FA_OPP_DAMAGED_FORWARD_FIELD_TO_BZ_RFG.matcher(fa.effectText()).find())
+            return "OppDamagedFwdFieldToBzRfg";
         m = AutoAbilityTriggers.FA_DAMAGE_MODIFIER.matcher(fa.effectText());
         if (m.find()) {
             String src      = m.group("sourceclause");
