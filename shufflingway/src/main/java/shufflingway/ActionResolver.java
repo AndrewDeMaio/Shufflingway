@@ -2051,6 +2051,21 @@ public class ActionResolver {
         "remove\\s+(?:it|them)\\s+from\\s+the\\s+game\\s+instead\\.?"
     );
 
+    /**
+     * "&lt;choose + primary&gt;. When it is put from the field into the Break Zone this turn, draw
+     * N card(s)." (Brynhildr 15-014H, Ritz 20-062R) — a delayed trigger placed on the chosen
+     * target, firing for the player who resolved the ability whenever that Forward later leaves
+     * the field for the Break Zone, by combat or by any effect.
+     *
+     * <p>{@code head} is greedy so it runs up to the <em>last</em> occurrence of the trigger
+     * clause, keeping the whole "Choose … . &lt;primary&gt;." prefix intact for the normal parser.
+     * Groups: {@code head} — the choose-and-act text; {@code count} — cards drawn.
+     */
+    private static final Pattern CHOOSE_THEN_WHEN_PUT_TO_BZ_DRAW = Pattern.compile(
+        "(?is)^(?<head>.+)\\s+When\\s+(?:it|they)\\s+(?:is|are)\\s+put\\s+from\\s+the\\s+field\\s+" +
+        "into\\s+the\\s+Break\\s+Zone\\s+this\\s+turn,\\s+draw\\s+(?<count>\\d+)\\s+cards?[.!]?$"
+    );
+
     /** Standalone: "[CardName] gains '[...] cannot be broken.' until end of turn." */
     private static final Pattern STANDALONE_SELF_SHIELD_CANNOT_BE_BROKEN = Pattern.compile(
         "(?i)(?<subject>.+?)\\s+gains?\\s+['\"][^'\"]*?cannot\\s+be\\s+broken\\.?['\"]" +
@@ -8616,7 +8631,29 @@ public class ActionResolver {
         };
     }
 
+    /**
+     * Strips a trailing "When it is put from the field into the Break Zone this turn, draw N"
+     * delayed trigger, parses the rest as an ordinary choose-and-act effect, and arms the mark so
+     * {@link #selectTargets} applies it to the chosen targets. Arming before the inner effect runs
+     * is what makes the trigger survive a lethal primary: the mark is on the Forward before the
+     * damage that breaks it.
+     */
     private static Consumer<GameContext> tryParseChooseCharacter(String text, CardData source, int xValue) {
+        Matcher bzDrawM = CHOOSE_THEN_WHEN_PUT_TO_BZ_DRAW.matcher(text.trim());
+        if (bzDrawM.matches()) {
+            int drawCount = Integer.parseInt(bzDrawM.group("count"));
+            Consumer<GameContext> inner = tryParseChooseCharacterInner(bzDrawM.group("head").trim(), source, xValue);
+            if (inner == null) return null;
+            return ctx -> {
+                ctx.armDrawOnFieldToBzMark(drawCount);
+                inner.accept(ctx);
+                ctx.consumeDrawOnFieldToBzMark();   // clear if the effect never selected a target
+            };
+        }
+        return tryParseChooseCharacterInner(text, source, xValue);
+    }
+
+    private static Consumer<GameContext> tryParseChooseCharacterInner(String text, CardData source, int xValue) {
         text = ELEM_TYPE_OR_ELEM_TYPE.matcher(text).replaceAll("$1 or $3 $2");
         text = escapePeriodInName(text, source);
         Matcher m = CHOOSE_CHARACTER_PATTERN.matcher(text);
@@ -17900,7 +17937,7 @@ public class ActionResolver {
         List<ForwardTarget> preloaded = ctx.consumePreloadedTargets();
         if (preloaded != null) {
             ctx.recordChosenTargets(preloaded);
-            return preloaded;
+            return applyArmedMarks(ctx, preloaded);
         }
         List<ForwardTarget> result = zone != null
                 ? ctx.selectCharactersFromBreakZone(maxCount, upTo, opponentZone, bothZones, condition, element,
@@ -17908,6 +17945,18 @@ public class ActionResolver {
                 : ctx.selectCharacters(maxCount, upTo, opponentOnly, selfOnly, condition, element,
                         costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, excludeElement, withoutMulticard);
         ctx.recordChosenTargets(result);
-        return result;
+        return applyArmedMarks(ctx, result);
+    }
+
+    /**
+     * Applies any delayed-trigger mark armed for this selection to {@code targets}, then returns
+     * them unchanged. Applying it here — between choosing the targets and the ability acting on
+     * them — is what lets "When it is put from the field into the Break Zone this turn, …" survive
+     * a primary that breaks the target outright.
+     */
+    private static List<ForwardTarget> applyArmedMarks(GameContext ctx, List<ForwardTarget> targets) {
+        int bzDraw = ctx.consumeDrawOnFieldToBzMark();
+        if (bzDraw > 0) targets.forEach(t -> ctx.markTargetDrawOnFieldToBzThisTurn(t, bzDraw));
+        return targets;
     }
 }

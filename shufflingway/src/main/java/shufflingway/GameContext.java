@@ -934,6 +934,23 @@ public interface GameContext {
      */
     void markTargetRfgInsteadOfBzThisTurn(ForwardTarget t);
 
+    /**
+     * Marks {@code t} so that the player resolving this ability draws {@code count} card(s) when
+     * {@code t} is put from the field into the Break Zone during this turn — a delayed trigger,
+     * regardless of what later breaks it. Does not fire if the card is removed from the game
+     * instead of reaching the Break Zone.
+     */
+    void markTargetDrawOnFieldToBzThisTurn(ForwardTarget t, int count);
+
+    /**
+     * Arms {@link #markTargetDrawOnFieldToBzThisTurn} to be applied to the next set of targets
+     * chosen through this context, so the mark lands between choosing a target and acting on it.
+     */
+    void armDrawOnFieldToBzMark(int count);
+
+    /** Returns and clears the count armed by {@link #armDrawOnFieldToBzMark}; {@code 0} when none. */
+    int consumeDrawOnFieldToBzMark();
+
     /** Finds {@code source} on the field by name and dulls it. No-op if not found. */
     void dullSourceForward(CardData source);
 

@@ -656,6 +656,14 @@ public class MainWindow {
 	final Map<CardData, String> nullifyElementDamageAbilityOnlyMap = new HashMap<>();
 	/** Cards marked (by a targeted ability) to be removed from the game instead of put into the Break Zone, if that happens from the field this turn. */
 	final Set<CardData> rfgInsteadOfBzThisTurn = new HashSet<>();
+	/** One pending "draw when the marked card leaves the field for the Break Zone" trigger. */
+	record PendingBzDraw(boolean drawerIsP1, int count) {}
+	/**
+	 * Cards marked (by a targeted ability) to make a player draw when they are put from the field
+	 * into the Break Zone this turn — Brynhildr 15-014H. Keyed by card because the mark rides the
+	 * specific card instance, and holding a list keeps two marks on the same card from cancelling.
+	 */
+	final Map<CardData, List<PendingBzDraw>> drawOnFieldToBzThisTurn = new HashMap<>();
 	/** Maps a card to a permanent element override (Kam'lanaut ability); persists across turns. */
 	final Map<CardData, String> elementOverrideMap      = new HashMap<>();
 	/** Maps a card to a permanently-granted extra job (e.g. Bartz ability); persists across turns. */
@@ -2287,7 +2295,7 @@ public class MainWindow {
                                 perCardIncomingDmgMultiplierMap.clear();
                                 p1ForwardIncomingDmgMult = 1;      p2ForwardIncomingDmgMult = 1;
                                 p1AbilityOutgoingDmgMult = 1;      p2AbilityOutgoingDmgMult = 1;
-                                cannotBeChosenBySummons.clear();  cannotBeChosenByAbilities.clear();  cannotBeChosenBySummonsAnyone.clear();  cannotBeChosenByElement.clear();  nullifyElementDamageMap.clear();  nullifyElementDamageAbilityOnlyMap.clear();  rfgInsteadOfBzThisTurn.clear();
+                                cannotBeChosenBySummons.clear();  cannotBeChosenByAbilities.clear();  cannotBeChosenBySummonsAnyone.clear();  cannotBeChosenByElement.clear();  nullifyElementDamageMap.clear();  nullifyElementDamageAbilityOnlyMap.clear();  rfgInsteadOfBzThisTurn.clear();  drawOnFieldToBzThisTurn.clear();
                                 breaktouchBattleSet.clear();
                                 p1NonLethalProtection = false;    p2NonLethalProtection = false;
                                 p1DmgReductionDisabled = false;   p2DmgReductionDisabled = false;
@@ -5775,6 +5783,45 @@ public class MainWindow {
 		if (card.isLb()) zone.remove(card);
 		if (player1) refreshP1BreakLabel(); else refreshP2BreakLabel();
 		syncBzForwardPlayables(player1);
+		if (fromField) fireFieldToBzDrawTriggers(card);
+	}
+
+	/**
+	 * Resolves any "When it is put from the field into the Break Zone this turn, draw N card(s)"
+	 * marks on {@code card} (Brynhildr 15-014H). Called once the card has actually reached the
+	 * Break Zone, so the RFG redirects earlier in {@link #addToBreakZone} pre-empt the trigger —
+	 * a card removed from the game was never put into the Break Zone. The mark is consumed on the
+	 * way through: the card can only leave the field for the Break Zone once.
+	 */
+	private void fireFieldToBzDrawTriggers(CardData card) {
+		List<PendingBzDraw> pending = drawOnFieldToBzThisTurn.remove(card);
+		if (pending == null) return;
+		for (PendingBzDraw p : pending) {
+			logEntry((p.drawerIsP1() ? "" : "[P2] ") + card.name()
+					+ " was put from the field into the Break Zone — draw " + p.count());
+			drawCardsForPlayer(p.drawerIsP1(), p.count());
+		}
+	}
+
+	/**
+	 * Draws {@code count} cards for the given player, animating and refreshing the affected labels.
+	 * A mandatory draw the deck cannot satisfy loses the game for the drawer; "draw up to N" effects
+	 * protect the player by requesting a {@code count} no larger than their deck.
+	 */
+	void drawCardsForPlayer(boolean isP1, int count) {
+		if (isP1) {
+			int drew = drawP1Cards(count).size();
+			animateCardDraw(true, drew);
+			refreshP1HandLabel();
+			refreshP1DeckLabel();
+			if (drew < count) triggerGameOver("Milled Out - You Lose!");
+		} else {
+			int drew = drawP2Cards(count).size();
+			animateCardDraw(false, drew);
+			refreshP2DeckLabel();
+			refreshP2HandCountLabel();
+			if (drew < count) triggerGameOver("P2 milled out — You Win!");
+		}
 	}
 
 	private boolean playerHasBzToRfgAnySituation(boolean isP1) {

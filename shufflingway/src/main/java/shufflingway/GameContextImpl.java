@@ -66,6 +66,8 @@ final class GameContextImpl implements GameContext {
 	private final boolean exBurst;
 	private List<ForwardTarget> lastChosenTargets = List.of();
 	private List<ForwardTarget> preloadedTargets  = null;
+	/** Pending "draw N when it leaves the field for the Break Zone" mark, applied at target selection. */
+	private int armedBzDrawMark = 0;
 	/** Card the most recent {@link #lookAtTopDeck} put into hand; read by riders on that look. */
 	private CardData lastLookAddedToHand = null;
 
@@ -469,6 +471,26 @@ final class GameContextImpl implements GameContext {
 				mw.rfgInsteadOfBzThisTurn.add(c);
 				logEntry((t.isP1() ? "" : "[P2] ") + c.name()
 						+ " — if put from the field into the Break Zone this turn, removed from the game instead");
+			}
+
+			@Override public void armDrawOnFieldToBzMark(int count) { armedBzDrawMark = count; }
+
+			@Override public int consumeDrawOnFieldToBzMark() {
+				int c = armedBzDrawMark; armedBzDrawMark = 0; return c;
+			}
+
+			@Override public void markTargetDrawOnFieldToBzThisTurn(ForwardTarget t, int count) {
+				if (t.zone() != ForwardTarget.CardZone.FORWARD) return;
+				CardData c = mw.autoAbilityTriggers.fieldCardData(t);
+				if (c == null) return;
+				// isP1, not t.isP1(): the draw belongs to whoever resolved the ability, while the
+				// marked Forward is usually the opponent's.
+				mw.drawOnFieldToBzThisTurn
+						.computeIfAbsent(c, k -> new ArrayList<>())
+						.add(new MainWindow.PendingBzDraw(isP1, count));
+				logEntry((t.isP1() ? "" : "[P2] ") + c.name()
+						+ " — when put from the field into the Break Zone this turn, "
+						+ (isP1 ? "P1" : "P2") + " draws " + count);
 			}
 
 			@Override public void dullSourceForward(CardData source) {
@@ -4727,21 +4749,7 @@ final class GameContextImpl implements GameContext {
 			}
 
 			@Override public void drawCards(int count) {
-				if (isP1) {
-					int drew = mw.drawP1Cards(count).size();
-					mw.animateCardDraw(true, drew);
-					mw.refreshP1HandLabel();
-					mw.refreshP1DeckLabel();
-					// A mandatory "draw N" the deck can't satisfy loses the game for the drawer.
-					// ("Draw up to N" effects protect the player by requesting count ≤ deck size.)
-					if (drew < count) mw.triggerGameOver("Milled Out - You Lose!");
-				} else {
-					int drew = mw.drawP2Cards(count).size();
-					mw.animateCardDraw(false, drew);
-					mw.refreshP2DeckLabel();
-					mw.refreshP2HandCountLabel();
-					if (drew < count) mw.triggerGameOver("P2 milled out — You Win!");
-				}
+				mw.drawCardsForPlayer(isP1, count);
 			}
 
 			@Override public void selfDiscard(int count) {

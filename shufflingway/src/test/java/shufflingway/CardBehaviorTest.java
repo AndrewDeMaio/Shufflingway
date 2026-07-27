@@ -2919,6 +2919,68 @@ public class CardBehaviorTest {
     }
 
     // =========================================================================================
+    // Brynhildr 15-014H: "EX BURST Choose 1 Forward. Deal it 5000 damage. When it is put from the
+    // field into the Break Zone this turn, draw 1 card." — the trailing sentence is a delayed
+    // trigger marked onto the chosen Forward, firing for the caster whenever that Forward later
+    // leaves the field for the Break Zone. The mark has to be applied before the damage, or the
+    // common case (5000 is lethal) would break the Forward before anything was watching it.
+    // =========================================================================================
+
+    private static final String BRYNHILDR_TEXT =
+            "Choose 1 Forward. Deal it 5000 damage. "
+            + "When it is put from the field into the Break Zone this turn, draw 1 card.";
+
+    /** P1 casts Brynhildr at P2's only Forward, which has {@code oppPower} power. */
+    private static MainWindow castBrynhildrAt(int oppPower) {
+        MainWindow mw = new MainWindow();
+        mw.gameState.initializeDeck(List.of(
+                makeForward("Deck Card A", "Fire", 2, 5000),
+                makeForward("Deck Card B", "Fire", 2, 5000)), List.of());
+        mw.gameState.getP1Hand().clear();
+
+        CardData victim = makeForward("Victim", "Ice", 3, oppPower);
+        mw.gameState.getIdentity().put(victim, false);
+        mw.placeP2CardInForwardZone(victim);
+
+        GameContext ctx = mw.buildGameContext(true);
+        ctx.preloadTargets(List.of(new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD)));
+        ActionResolver.parse(BRYNHILDR_TEXT, null).accept(ctx);
+        return mw;
+    }
+
+    @Test
+    void brynhildrDrawsWhenItsOwnDamageIsLethal() {
+        MainWindow mw = castBrynhildrAt(5000);
+        assertTrue(mw.p2ForwardCards.isEmpty(), "5000 damage to a 5000-power Forward breaks it");
+        assertEquals(1, mw.gameState.getP2BreakZone().size(), "the Forward reached the Break Zone");
+        assertEquals(1, mw.gameState.getP1Hand().size(),
+                "the mark is set before the damage, so a lethal hit still draws");
+        assertTrue(mw.gameState.getP2Hand().isEmpty(),
+                "the caster draws, not the broken Forward's controller");
+    }
+
+    @Test
+    void brynhildrDrawsLaterWhenTheMarkedForwardSurvivesTheDamage() {
+        MainWindow mw = castBrynhildrAt(9000);
+        assertEquals(1, mw.p2ForwardCards.size(), "5000 damage does not break a 9000-power Forward");
+        assertTrue(mw.gameState.getP1Hand().isEmpty(), "nothing drawn while it is still on the field");
+
+        mw.breakP2Forward(0);   // broken later in the turn by something else
+        assertEquals(1, mw.gameState.getP1Hand().size(),
+                "the delayed trigger fires whatever puts it into the Break Zone");
+    }
+
+    @Test
+    void brynhildrDrawTriggerFiresOnlyOnce() {
+        MainWindow mw = castBrynhildrAt(5000);
+        assertEquals(1, mw.gameState.getP1Hand().size());
+        // A second trip through the Break Zone (e.g. replayed from the Break Zone and broken again)
+        // must not re-fire a mark that was already consumed.
+        mw.addToBreakZone(mw.gameState.getP2BreakZone().get(0), true);
+        assertEquals(1, mw.gameState.getP1Hand().size(), "the mark is consumed when it fires");
+    }
+
+    // =========================================================================================
     // Yuzuki 13-125R: "If a Fire Forward you control is dealt damage by your opponent's abilities,
     // the damage becomes 0 instead. / If a Water Forward you control is dealt damage, reduce the
     // damage by 2000 instead." — two field-wide protections keyed on the damaged Forward's element.
