@@ -10905,11 +10905,6 @@ public class MainWindow {
 		};
 	}
 
-	/**
-	 * Border that paints the card-selection glow over the actual card rectangle within a
-	 * {@code CARD_H}×{@code CARD_H} slot (matching {@link CardAnimation#renderBackupCard}),
-	 * rather than the full label bounds, so the highlight hugs the art.
-	 */
 	private static Color pulseColor(Color base, float t) {
 		float f = 0.5f + 0.5f * t;
 		return new Color(
@@ -10918,12 +10913,22 @@ public class MainWindow {
 				Math.round(base.getBlue()  * f));
 	}
 
+	/**
+	 * Border that paints the card-selection glow over the actual card rectangle within a
+	 * {@code CARD_H}×{@code CARD_H} slot (matching {@link CardAnimation#renderBackupCard}),
+	 * rather than the full label bounds, so the highlight hugs the art.
+	 *
+	 * <p>The two orientations anchor differently, exactly as {@code renderBackupCard} composites
+	 * them: an ACTIVE card is inset by {@link CardAnimation#LEFT_GUTTER} to leave the trait tabs
+	 * their strip, while a DULL card spans the full width and is pinned to the bottom instead.
+	 */
 	private static javax.swing.border.Border cardBoundsGlowBorder(Color color, boolean dull) {
 		return new javax.swing.border.AbstractBorder() {
 			@Override public void paintBorder(java.awt.Component c, java.awt.Graphics g0,
 					int x, int y, int w, int h) {
 				int cw = dull ? CARD_H : CARD_W;
 				int ch = dull ? CARD_W : CARD_H;
+				int cx = dull ? x : x + CardAnimation.LEFT_GUTTER;
 				int cy = dull ? y + (CARD_H - CARD_W) : y;
 				java.awt.Graphics2D g = (java.awt.Graphics2D) g0.create();
 				g.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING,
@@ -10938,11 +10943,11 @@ public class MainWindow {
 					g.setStroke(new java.awt.BasicStroke(2.5f));
 					int off = layers - layer;
 					int layerArc = Math.max(0, arc - 2 * off);
-					g.drawRoundRect(x + off, cy + off, cw - 1 - 2 * off, ch - 1 - 2 * off, layerArc, layerArc);
+					g.drawRoundRect(cx + off, cy + off, cw - 1 - 2 * off, ch - 1 - 2 * off, layerArc, layerArc);
 				}
 				g.setColor(color);
 				g.setStroke(new java.awt.BasicStroke(3f));
-				g.drawRoundRect(x + 1, cy + 1, cw - 3, ch - 3, Math.max(0, arc - 2), Math.max(0, arc - 2));
+				g.drawRoundRect(cx + 1, cy + 1, cw - 3, ch - 3, Math.max(0, arc - 2), Math.max(0, arc - 2));
 				g.dispose();
 			}
 		};
