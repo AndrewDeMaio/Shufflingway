@@ -381,8 +381,8 @@ public class CardDatabase implements AutoCloseable {
     /**
      * First-print serials whose card text should be replaced by the cleaner wording
      * of their reprint. A reprint is stored under a combined serial of the form
-     * {@code "Re-XXX/<firstPrint>"} — i.e. the reprint's own code plus the first
-     * print's serial after a slash — so the first-print serial listed here is all
+     * "Re-{code}/firstPrint" - i.e. the reprint's own code plus the first
+     * print's serial after a slash - so the first-print serial listed here is all
      * that's needed to locate the matching reprint row.
      *
      * Only add a serial here after confirming the reprint reproduces the same

@@ -5551,6 +5551,23 @@ public class CardBehaviorTest {
             "choose 1 Forward. It gains First Strike until the end of the turn.";
 
     @Test
+    void cannotBeBrokenGetsATraitTabOnTheField() {
+        // The tab feed is data-driven: MainWindow filters Trait.values() through hasGlyph, so a
+        // trait is on every slot type (both players' Forwards and Monsters) or none of them.
+        assertTrue(shufflingway.graphics.TraitTab.hasGlyph(CardData.Trait.CANNOT_BE_BROKEN));
+        assertEquals("Cannot Be Broken", CardData.Trait.CANNOT_BE_BROKEN.displayName());
+
+        // And the trait reaches the feed from ordinary printed card text.
+        CardData ardyn = makeTraitCard("Ardyn", "Dark", "Forward",
+                "Ardyn cannot be broken.");
+        assertTrue(ardyn.hasTrait(CardData.Trait.CANNOT_BE_BROKEN));
+
+        // The damage-only variant is a separate trait and deliberately has no glyph yet — it must
+        // not borrow this one, which would overstate the protection on the card.
+        assertFalse(shufflingway.graphics.TraitTab.hasGlyph(CardData.Trait.CANNOT_BE_BROKEN_BY_NON_DMG));
+    }
+
+    @Test
     void traitNamesAreFormattedForTheLog() {
         assertEquals("First Strike", CardData.Trait.FIRST_STRIKE.displayName());
         assertEquals("Brave", CardData.Trait.BRAVE.displayName());
@@ -5980,6 +5997,119 @@ public class CardBehaviorTest {
         List<Integer> party = new ArrayList<>();
         for (int i = 0; i < mw.p2ForwardCards.size(); i++) party.add(i);
         mw.pendingP2PartyIndices = party;
+    }
+
+    // =========================================================================================
+    // A Forward leaving the field shifts every survivor above it down one slot, and all of P1's
+    // per-slot state is keyed by that slot index.  Six removal paths each maintained their own
+    // hand-written copy of the update list and had drifted apart: p1ForwardTempJobs was dropped by
+    // only two of them (leaving that list a slot longer than its siblings, so every Forward above
+    // the hole read the wrong entry), the uniqueness-rule path skipped the two "cannot be blocked"
+    // collections, and p1ForwardCanDoSecondAttack was re-indexed by none of them — so after any
+    // break the second attack was credited to whichever Forward inherited the departed slot.
+    // All six now route through removeP1ForwardSlotState.
+    // =========================================================================================
+
+    /** Every P1 per-slot list, so a test can assert they stay the same length as each other. */
+    private static Map<String, Integer> p1SlotListSizes(MainWindow mw) {
+        Map<String, Integer> sizes = new LinkedHashMap<>();
+        sizes.put("cards",         mw.p1ForwardCards.size());
+        sizes.put("states",        mw.p1ForwardStates.size());
+        sizes.put("playedOnTurn",  mw.p1ForwardPlayedOnTurn.size());
+        sizes.put("damage",        mw.p1ForwardDamage.size());
+        sizes.put("powerBoost",    mw.p1ForwardPowerBoost.size());
+        sizes.put("powerReduce",   mw.p1ForwardPowerReduction.size());
+        sizes.put("tempTraits",    mw.p1ForwardTempTraits.size());
+        sizes.put("removedTraits", mw.p1ForwardRemovedTraits.size());
+        sizes.put("tempJobs",      mw.p1ForwardTempJobs.size());
+        sizes.put("primedTop",     mw.p1ForwardPrimedTop.size());
+        sizes.put("frozen",        mw.p1ForwardFrozen.size());
+        return sizes;
+    }
+
+    private static void assertP1SlotListsAligned(MainWindow mw, int expected, String after) {
+        p1SlotListSizes(mw).forEach((name, size) ->
+                assertEquals(expected, size, name + " is out of step with the Forward zone after " + after));
+    }
+
+    private static MainWindow sixForwardBoard() {
+        MainWindow mw = new MainWindow();
+        enterAttackDeclarationStep(mw, false);
+        for (int i = 0; i < 2; i++) {
+            CardData f = makeForward("P2-" + i, "Fire", 3, 7000);
+            mw.placeP2CardInForwardZone(f);
+            mw.gameState.getIdentity().put(f, false);
+        }
+        for (int i = 0; i < 6; i++) {
+            CardData f = makeForward("P1-" + i, "Ice", 3, 7000);
+            mw.placeCardInForwardZone(f);
+            mw.gameState.getIdentity().put(f, true);
+        }
+        return mw;
+    }
+
+    @Test
+    void everyPathThatRemovesAForwardKeepsThePerSlotListsAligned() {
+        // The bounce, deck-return and under-deck paths used to leave tempJobs one entry long.
+        MainWindow mw = sixForwardBoard();
+        mw.returnP1ForwardToHand(2);
+        assertP1SlotListsAligned(mw, 5, "a return to hand");
+
+        mw.returnP1ForwardToDeck(1, false);
+        assertP1SlotListsAligned(mw, 4, "a return to the deck");
+
+        mw.returnP1ForwardUnderDeckTop(0, 2);
+        assertP1SlotListsAligned(mw, 3, "a return under the top of the deck");
+
+        mw.breakP1Forward(1);
+        assertP1SlotListsAligned(mw, 2, "a break");
+    }
+
+    @Test
+    void breakingAForwardReindexesTheSurvivorsRestrictions() {
+        MainWindow mw = sixForwardBoard();
+        // Restrict the Forwards above the one about to break.
+        mw.p1ForwardCannotBlock.add(4);
+        mw.p1ForwardCannotBeBlocked.add(5);
+        mw.p1ForwardCanDoSecondAttack.add(3);
+
+        CardData survivor4 = mw.p1ForwardCards.get(4);
+        CardData survivor5 = mw.p1ForwardCards.get(5);
+        CardData survivor3 = mw.p1ForwardCards.get(3);
+
+        mw.breakP1Forward(2);
+
+        assertSame(survivor4, mw.p1ForwardCards.get(3));
+        assertTrue(mw.p1ForwardCannotBlock.contains(3),
+                "the restriction follows its Forward down into slot 3");
+        assertFalse(mw.p1ForwardCannotBlock.contains(4),
+                "and no longer lands on the Forward that moved into slot 4");
+
+        assertSame(survivor5, mw.p1ForwardCards.get(4));
+        assertTrue(mw.p1ForwardCannotBeBlocked.contains(4));
+
+        assertSame(survivor3, mw.p1ForwardCards.get(2));
+        assertTrue(mw.p1ForwardCanDoSecondAttack.contains(2),
+                "a pending second attack must follow its Forward, not stay on the slot number");
+        assertFalse(mw.p1ForwardCanDoSecondAttack.contains(3));
+    }
+
+    @Test
+    void everySurvivingForwardCanStillBeChosenAsABlockerAfterACombatBreak() {
+        MainWindow mw = sixForwardBoard();
+        openPartyBlockStep(mw);
+        for (int i = 0; i < 6; i++) assertTrue(mw.isForwardBlockSelectable(i));
+
+        // P2's attacker and P1's blocker trade lethal damage; both leave the field.
+        mw.p1BlockingIdx = 2;
+        mw.resolveCombat(mw.p2ForwardCards.get(0), false, 0, mw.p1ForwardCards.get(2), true, 2);
+        mw.p1BlockingIdx = -1;
+        assertEquals(5, mw.p1ForwardCards.size());
+        assertEquals(1, mw.p2ForwardCards.size());
+
+        for (int i = 0; i < 5; i++)
+            assertTrue(mw.isForwardBlockSelectable(i),
+                    mw.p1ForwardCards.get(i).name() + " must still be a legal blocker for the next attack");
     }
 
     @Test

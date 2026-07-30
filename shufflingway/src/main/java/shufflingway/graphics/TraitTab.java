@@ -21,7 +21,8 @@ import static shufflingway.graphics.CardAnimation.CARD_W;
 
 /**
  * Small rectangular tabs that peek out from behind a field card, one per trait the card
- * currently has, each carrying a vector-drawn glyph (Haste, Brave, First Strike).
+ * currently has, each carrying a vector-drawn glyph (Haste, Brave, First Strike, Cannot Be
+ * Broken).
  *
  * <p>Tabs are composited onto the square {@code CARD_H x CARD_H} field-card canvas built by
  * {@link CardAnimation#renderBackupCard}, the same way the damage, power and counter overlays
@@ -60,6 +61,7 @@ public final class TraitTab {
     private static final Color ARROW_STROKE = Color.BLACK;
     private static final Color HEART_FILL   = new Color(0xe8, 0x45, 0x5a);
     private static final Color BAR_FILL     = new Color(0xb6, 0xb6, 0xbc);
+    private static final Color GEM_FILL     = new Color(0xe8, 0xb4, 0x4a);
 
     /** Card width the tab geometry below was authored against; everything scales off it. */
     private static final int DESIGN_CARD_W = 140;
@@ -82,7 +84,8 @@ public final class TraitTab {
     public static boolean hasGlyph(CardData.Trait trait) {
         return trait == CardData.Trait.HASTE
             || trait == CardData.Trait.BRAVE
-            || trait == CardData.Trait.FIRST_STRIKE;
+            || trait == CardData.Trait.FIRST_STRIKE
+            || trait == CardData.Trait.CANNOT_BE_BROKEN;
     }
 
     /**
@@ -161,10 +164,11 @@ public final class TraitTab {
     /** Dispatches to the vector drawing for {@code trait}; silent for traits without a glyph. */
     private static void drawGlyph(Graphics2D g, CardData.Trait trait, float x, float y, float size) {
         switch (trait) {
-            case HASTE        -> drawHasteIcon(g, x, y, size);
-            case BRAVE        -> drawBraveIcon(g, x, y, size);
-            case FIRST_STRIKE -> drawFirstStrikeIcon(g, x, y, size);
-            default           -> { }
+            case HASTE            -> drawHasteIcon(g, x, y, size);
+            case BRAVE            -> drawBraveIcon(g, x, y, size);
+            case FIRST_STRIKE     -> drawFirstStrikeIcon(g, x, y, size);
+            case CANNOT_BE_BROKEN -> drawCannotBeBrokenIcon(g, x, y, size);
+            default               -> { }
         }
     }
 
@@ -269,6 +273,56 @@ public final class TraitTab {
         g.setStroke(new BasicStroke(0.6f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
         g.setColor(Color.BLACK);
         g.draw(heart);
+
+        g.dispose();
+    }
+
+    /**
+     * Draws the "Cannot Be Broken" glyph — a shield outline with a cut gem at its centre — into
+     * the box {@code [x, y, x + size, y + size]}. Same 24x24 logical grid as
+     * {@link #drawHasteIcon}, and the same two-part construction as {@link #drawBraveIcon}: a
+     * white line-art shape with one filled, black-stroked accent inside it.
+     *
+     * <p>The gem carries the meaning — a shield alone reads as generic protection, while the
+     * hardest thing there is reads as "cannot be broken" specifically.
+     */
+    public static void drawCannotBeBrokenIcon(Graphics2D g0, float x, float y, float size) {
+        Graphics2D g = (Graphics2D) g0.create();
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        float s = size / 24f;
+        g.translate(x, y);
+        g.scale(s, s);
+
+        // Heater shield: flat shoulders, straight sides, curving to a point at the bottom.
+        Path2D.Float shield = new Path2D.Float();
+        shield.moveTo(12, 3.2f);
+        shield.lineTo(20, 5.8f);
+        shield.lineTo(20, 12);
+        shield.curveTo(20, 17, 16.2f, 20.2f, 12, 21.6f);
+        shield.curveTo(7.8f, 20.2f, 4, 17, 4, 12);
+        shield.lineTo(4, 5.8f);
+        shield.closePath();
+        g.setStroke(new BasicStroke(1.4f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+        g.setColor(ICON_LINE);
+        g.draw(shield);
+
+        // Cut gem, centred on the shield's visual mass rather than its bounding box.
+        Path2D.Float gem = new Path2D.Float();
+        gem.moveTo(12, 7.8f);
+        gem.lineTo(15.5f, 11.4f);
+        gem.lineTo(12, 16.4f);
+        gem.lineTo(8.5f, 11.4f);
+        gem.closePath();
+        g.setColor(GEM_FILL);
+        g.fill(gem);
+        g.setStroke(new BasicStroke(0.6f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+        g.setColor(Color.BLACK);
+        g.draw(gem);
+
+        // Girdle facet: one line is enough to read as cut stone rather than a plain lozenge.
+        g.setStroke(new BasicStroke(0.5f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+        g.setColor(ICON_LINE);
+        g.draw(new Line2D.Float(8.5f, 11.4f, 15.5f, 11.4f));
 
         g.dispose();
     }

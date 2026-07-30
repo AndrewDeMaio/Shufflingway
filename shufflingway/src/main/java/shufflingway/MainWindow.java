@@ -3184,6 +3184,72 @@ public class MainWindow {
 		map.putAll(updated);
 	}
 
+	/**
+	 * Drops every piece of slot-indexed state for the P1 Forward leaving position {@code idx}: each
+	 * parallel per-slot list loses its entry, and each index-keyed set/map is re-indexed so entries
+	 * above the hole move down with the Forwards they describe.
+	 *
+	 * <p><strong>Every</strong> path that removes a P1 Forward must call this — a combat break, a
+	 * bounce to hand or deck, the uniqueness rule, a transfer to the other side.  These collections
+	 * are only meaningful as a set: a path that updates some but not others leaves the survivors'
+	 * indexes pointing at the wrong Forward, which surfaces as the wrong card being flagged unable
+	 * to attack or block, or as a second attack granted to a Forward that never attacked.  Keeping
+	 * the list in one place is the point — six hand-maintained copies had already drifted apart.
+	 *
+	 * <p>Callers rebuild the panel themselves afterwards, since some of them place the card
+	 * elsewhere first and want a single relayout.
+	 */
+	private void removeP1ForwardSlotState(int idx) {
+		p1ForwardCards.remove(idx);
+		p1ForwardUrls.remove(idx);
+		p1ForwardStates.remove(idx);
+		p1ForwardPlayedOnTurn.remove(idx);
+		p1ForwardDamage.remove(idx);
+		p1ForwardPowerBoost.remove(idx);
+		p1ForwardPowerReduction.remove(idx);
+		p1ForwardTempTraits.remove(idx);
+		p1ForwardRemovedTraits.remove(idx);
+		p1ForwardTempJobs.remove(idx);
+		p1ForwardPrimedTop.remove(idx);
+		p1ForwardFrozen.remove(idx);
+		p1ForwardLabels.remove(idx);
+		shiftBlockSet(p1ForwardCannotBlock,            idx);
+		shiftBlockSet(p1ForwardMustBlock,              idx);
+		shiftBlockSet(p1ForwardCannotAttack,           idx);
+		shiftBlockSet(p1ForwardMustAttack,             idx);
+		shiftBlockSet(p1ForwardCannotAttackPersistent, idx);
+		shiftBlockSet(p1ForwardCannotBlockPersistent,  idx);
+		shiftBlockSet(p1ForwardCannotBeBlocked,        idx);
+		shiftBlockSet(p1ForwardCanDoSecondAttack,      idx);
+		shiftBlockMap(p1ForwardCannotBeBlockedByCost,  idx);
+	}
+
+	/** P2's counterpart to {@link #removeP1ForwardSlotState(int)}; the same contract applies. */
+	private void removeP2ForwardSlotState(int idx) {
+		p2ForwardCards.remove(idx);
+		p2ForwardUrls.remove(idx);
+		p2ForwardStates.remove(idx);
+		p2ForwardPlayedOnTurn.remove(idx);
+		p2ForwardDamage.remove(idx);
+		p2ForwardPowerBoost.remove(idx);
+		p2ForwardPowerReduction.remove(idx);
+		p2ForwardTempTraits.remove(idx);
+		p2ForwardRemovedTraits.remove(idx);
+		p2ForwardTempJobs.remove(idx);
+		p2ForwardPrimedTop.remove(idx);
+		p2ForwardFrozen.remove(idx);
+		p2ForwardLabels.remove(idx);
+		shiftBlockSet(p2ForwardCannotBlock,            idx);
+		shiftBlockSet(p2ForwardMustBlock,              idx);
+		shiftBlockSet(p2ForwardCannotAttack,           idx);
+		shiftBlockSet(p2ForwardMustAttack,             idx);
+		shiftBlockSet(p2ForwardCannotAttackPersistent, idx);
+		shiftBlockSet(p2ForwardCannotBlockPersistent,  idx);
+		shiftBlockSet(p2ForwardCannotBeBlocked,        idx);
+		shiftBlockSet(p2ForwardCanDoSecondAttack,      idx);
+		shiftBlockMap(p2ForwardCannotBeBlockedByCost,  idx);
+	}
+
 	void breakP1Forward(int idx) {
 		if (idx < 0 || idx >= p1ForwardCards.size()) return;
 		startBreakAnim(p1ForwardLabels.get(idx));
@@ -3212,27 +3278,7 @@ public class MainWindow {
 			logEntry(card.name() + " → Break Zone");
 		}
 
-		p1ForwardCards.remove(idx);
-		p1ForwardUrls.remove(idx);
-		p1ForwardStates.remove(idx);
-		p1ForwardPlayedOnTurn.remove(idx);
-		p1ForwardDamage.remove(idx);
-		p1ForwardPowerBoost.remove(idx);
-		p1ForwardPowerReduction.remove(idx);
-		p1ForwardTempTraits.remove(idx);
-		p1ForwardRemovedTraits.remove(idx);
-		p1ForwardTempJobs.remove(idx);
-		p1ForwardPrimedTop.remove(idx);
-		p1ForwardFrozen.remove(idx);
-		p1ForwardLabels.remove(idx);
-		shiftBlockSet(p1ForwardCannotBlock,              idx);
-		shiftBlockSet(p1ForwardMustBlock,                idx);
-		shiftBlockSet(p1ForwardCannotAttack,             idx);
-		shiftBlockSet(p1ForwardMustAttack,               idx);
-		shiftBlockSet(p1ForwardCannotAttackPersistent,   idx);
-		shiftBlockSet(p1ForwardCannotBlockPersistent,    idx);
-		shiftBlockSet(p1ForwardCannotBeBlocked,          idx);
-		shiftBlockMap(p1ForwardCannotBeBlockedByCost,    idx);
+		removeP1ForwardSlotState(idx);
 
 		if (p1ForwardPanel != null) {
 			p1ForwardPanel.removeAll();
@@ -3320,27 +3366,7 @@ public class MainWindow {
 			logEntry("[P2] " + card.name() + " → Break Zone");
 		}
 
-		p2ForwardCards.remove(idx);
-		p2ForwardUrls.remove(idx);
-		p2ForwardStates.remove(idx);
-		p2ForwardPlayedOnTurn.remove(idx);
-		p2ForwardDamage.remove(idx);
-		p2ForwardPowerBoost.remove(idx);
-		p2ForwardPowerReduction.remove(idx);
-		p2ForwardTempTraits.remove(idx);
-		p2ForwardRemovedTraits.remove(idx);
-		p2ForwardTempJobs.remove(idx);
-		p2ForwardPrimedTop.remove(idx);
-		p2ForwardFrozen.remove(idx);
-		p2ForwardLabels.remove(idx);
-		shiftBlockSet(p2ForwardCannotBlock,              idx);
-		shiftBlockSet(p2ForwardMustBlock,                idx);
-		shiftBlockSet(p2ForwardCannotAttack,             idx);
-		shiftBlockSet(p2ForwardMustAttack,               idx);
-		shiftBlockSet(p2ForwardCannotAttackPersistent,   idx);
-		shiftBlockSet(p2ForwardCannotBlockPersistent,    idx);
-		shiftBlockSet(p2ForwardCannotBeBlocked,          idx);
-		shiftBlockMap(p2ForwardCannotBeBlockedByCost,    idx);
+		removeP2ForwardSlotState(idx);
 
 		if (p2ForwardPanel != null) {
 			p2ForwardPanel.removeAll();
@@ -3468,50 +3494,10 @@ public class MainWindow {
 	 */
 	private void removeForwardSlotForTransfer(boolean isP1, int idx) {
 		if (isP1) {
-			p1ForwardCards.remove(idx);
-			p1ForwardUrls.remove(idx);
-			p1ForwardStates.remove(idx);
-			p1ForwardPlayedOnTurn.remove(idx);
-			p1ForwardDamage.remove(idx);
-			p1ForwardPowerBoost.remove(idx);
-			p1ForwardPowerReduction.remove(idx);
-			p1ForwardTempTraits.remove(idx);
-			p1ForwardRemovedTraits.remove(idx);
-			p1ForwardTempJobs.remove(idx);
-			p1ForwardPrimedTop.remove(idx);
-			p1ForwardFrozen.remove(idx);
-			p1ForwardLabels.remove(idx);
-			shiftBlockSet(p1ForwardCannotBlock,            idx);
-			shiftBlockSet(p1ForwardMustBlock,              idx);
-			shiftBlockSet(p1ForwardCannotAttack,           idx);
-			shiftBlockSet(p1ForwardMustAttack,             idx);
-			shiftBlockSet(p1ForwardCannotAttackPersistent, idx);
-			shiftBlockSet(p1ForwardCannotBlockPersistent,  idx);
-			shiftBlockSet(p1ForwardCannotBeBlocked,        idx);
-			shiftBlockMap(p1ForwardCannotBeBlockedByCost,  idx);
+			removeP1ForwardSlotState(idx);
 			rebuildP1ForwardPanel();
 		} else {
-			p2ForwardCards.remove(idx);
-			p2ForwardUrls.remove(idx);
-			p2ForwardStates.remove(idx);
-			p2ForwardPlayedOnTurn.remove(idx);
-			p2ForwardDamage.remove(idx);
-			p2ForwardPowerBoost.remove(idx);
-			p2ForwardPowerReduction.remove(idx);
-			p2ForwardTempTraits.remove(idx);
-			p2ForwardRemovedTraits.remove(idx);
-			p2ForwardTempJobs.remove(idx);
-			p2ForwardPrimedTop.remove(idx);
-			p2ForwardFrozen.remove(idx);
-			p2ForwardLabels.remove(idx);
-			shiftBlockSet(p2ForwardCannotBlock,            idx);
-			shiftBlockSet(p2ForwardMustBlock,              idx);
-			shiftBlockSet(p2ForwardCannotAttack,           idx);
-			shiftBlockSet(p2ForwardMustAttack,             idx);
-			shiftBlockSet(p2ForwardCannotAttackPersistent, idx);
-			shiftBlockSet(p2ForwardCannotBlockPersistent,  idx);
-			shiftBlockSet(p2ForwardCannotBeBlocked,        idx);
-			shiftBlockMap(p2ForwardCannotBeBlockedByCost,  idx);
+			removeP2ForwardSlotState(idx);
 			rebuildP2ForwardPanel();
 		}
 	}
@@ -3769,26 +3755,7 @@ public class MainWindow {
 		else          zone.addFirst(card);
 		logEntry(card.name() + " → " + pos + " of deck");
 
-		p1ForwardCards.remove(idx);
-		p1ForwardUrls.remove(idx);
-		p1ForwardStates.remove(idx);
-		p1ForwardPlayedOnTurn.remove(idx);
-		p1ForwardDamage.remove(idx);
-		p1ForwardPowerBoost.remove(idx);
-		p1ForwardPowerReduction.remove(idx);
-		p1ForwardTempTraits.remove(idx);
-		p1ForwardRemovedTraits.remove(idx);
-		p1ForwardPrimedTop.remove(idx);
-		p1ForwardFrozen.remove(idx);
-		p1ForwardLabels.remove(idx);
-		shiftBlockSet(p1ForwardCannotBlock,            idx);
-		shiftBlockSet(p1ForwardMustBlock,              idx);
-		shiftBlockSet(p1ForwardCannotAttack,           idx);
-		shiftBlockSet(p1ForwardMustAttack,             idx);
-		shiftBlockSet(p1ForwardCannotAttackPersistent, idx);
-		shiftBlockSet(p1ForwardCannotBlockPersistent,  idx);
-		shiftBlockSet(p1ForwardCannotBeBlocked,        idx);
-		shiftBlockMap(p1ForwardCannotBeBlockedByCost,  idx);
+		removeP1ForwardSlotState(idx);
 
 		if (p1ForwardPanel != null) {
 			p1ForwardPanel.removeAll();
@@ -3849,26 +3816,7 @@ public class MainWindow {
 		else          zone.addFirst(card);
 		logEntry("[P2] " + card.name() + " → " + pos + " of deck");
 
-		p2ForwardCards.remove(idx);
-		p2ForwardUrls.remove(idx);
-		p2ForwardStates.remove(idx);
-		p2ForwardPlayedOnTurn.remove(idx);
-		p2ForwardDamage.remove(idx);
-		p2ForwardPowerBoost.remove(idx);
-		p2ForwardPowerReduction.remove(idx);
-		p2ForwardTempTraits.remove(idx);
-		p2ForwardRemovedTraits.remove(idx);
-		p2ForwardPrimedTop.remove(idx);
-		p2ForwardFrozen.remove(idx);
-		p2ForwardLabels.remove(idx);
-		shiftBlockSet(p2ForwardCannotBlock,            idx);
-		shiftBlockSet(p2ForwardMustBlock,              idx);
-		shiftBlockSet(p2ForwardCannotAttack,           idx);
-		shiftBlockSet(p2ForwardMustAttack,             idx);
-		shiftBlockSet(p2ForwardCannotAttackPersistent, idx);
-		shiftBlockSet(p2ForwardCannotBlockPersistent,  idx);
-		shiftBlockSet(p2ForwardCannotBeBlocked,        idx);
-		shiftBlockMap(p2ForwardCannotBeBlockedByCost,  idx);
+		removeP2ForwardSlotState(idx);
 
 		if (p2ForwardPanel != null) {
 			p2ForwardPanel.removeAll();
@@ -3918,26 +3866,7 @@ public class MainWindow {
 		for (int i = preserved.size() - 1; i >= 0; i--) deck.addFirst(preserved.get(i));
 		logEntry(card.name() + " → under top " + position + " card(s) of deck");
 
-		p1ForwardCards.remove(idx);
-		p1ForwardUrls.remove(idx);
-		p1ForwardStates.remove(idx);
-		p1ForwardPlayedOnTurn.remove(idx);
-		p1ForwardDamage.remove(idx);
-		p1ForwardPowerBoost.remove(idx);
-		p1ForwardPowerReduction.remove(idx);
-		p1ForwardTempTraits.remove(idx);
-		p1ForwardRemovedTraits.remove(idx);
-		p1ForwardPrimedTop.remove(idx);
-		p1ForwardFrozen.remove(idx);
-		p1ForwardLabels.remove(idx);
-		shiftBlockSet(p1ForwardCannotBlock,            idx);
-		shiftBlockSet(p1ForwardMustBlock,              idx);
-		shiftBlockSet(p1ForwardCannotAttack,           idx);
-		shiftBlockSet(p1ForwardMustAttack,             idx);
-		shiftBlockSet(p1ForwardCannotAttackPersistent, idx);
-		shiftBlockSet(p1ForwardCannotBlockPersistent,  idx);
-		shiftBlockSet(p1ForwardCannotBeBlocked,        idx);
-		shiftBlockMap(p1ForwardCannotBeBlockedByCost,  idx);
+		removeP1ForwardSlotState(idx);
 
 		if (p1ForwardPanel != null) {
 			p1ForwardPanel.removeAll();
@@ -4000,26 +3929,7 @@ public class MainWindow {
 		for (int i = preserved.size() - 1; i >= 0; i--) deck.addFirst(preserved.get(i));
 		logEntry("[P2] " + card.name() + " → under top " + position + " card(s) of deck");
 
-		p2ForwardCards.remove(idx);
-		p2ForwardUrls.remove(idx);
-		p2ForwardStates.remove(idx);
-		p2ForwardPlayedOnTurn.remove(idx);
-		p2ForwardDamage.remove(idx);
-		p2ForwardPowerBoost.remove(idx);
-		p2ForwardPowerReduction.remove(idx);
-		p2ForwardTempTraits.remove(idx);
-		p2ForwardRemovedTraits.remove(idx);
-		p2ForwardPrimedTop.remove(idx);
-		p2ForwardFrozen.remove(idx);
-		p2ForwardLabels.remove(idx);
-		shiftBlockSet(p2ForwardCannotBlock,            idx);
-		shiftBlockSet(p2ForwardMustBlock,              idx);
-		shiftBlockSet(p2ForwardCannotAttack,           idx);
-		shiftBlockSet(p2ForwardMustAttack,             idx);
-		shiftBlockSet(p2ForwardCannotAttackPersistent, idx);
-		shiftBlockSet(p2ForwardCannotBlockPersistent,  idx);
-		shiftBlockSet(p2ForwardCannotBeBlocked,        idx);
-		shiftBlockMap(p2ForwardCannotBeBlockedByCost,  idx);
+		removeP2ForwardSlotState(idx);
 
 		if (p2ForwardPanel != null) {
 			p2ForwardPanel.removeAll();
@@ -4452,26 +4362,7 @@ public class MainWindow {
 		zone.add(card);
 		logEntry(card.name() + " → returned to hand");
 
-		p1ForwardCards.remove(idx);
-		p1ForwardUrls.remove(idx);
-		p1ForwardStates.remove(idx);
-		p1ForwardPlayedOnTurn.remove(idx);
-		p1ForwardDamage.remove(idx);
-		p1ForwardPowerBoost.remove(idx);
-		p1ForwardPowerReduction.remove(idx);
-		p1ForwardTempTraits.remove(idx);
-		p1ForwardRemovedTraits.remove(idx);
-		p1ForwardPrimedTop.remove(idx);
-		p1ForwardFrozen.remove(idx);
-		p1ForwardLabels.remove(idx);
-		shiftBlockSet(p1ForwardCannotBlock,            idx);
-		shiftBlockSet(p1ForwardMustBlock,              idx);
-		shiftBlockSet(p1ForwardCannotAttack,           idx);
-		shiftBlockSet(p1ForwardMustAttack,             idx);
-		shiftBlockSet(p1ForwardCannotAttackPersistent, idx);
-		shiftBlockSet(p1ForwardCannotBlockPersistent,  idx);
-		shiftBlockSet(p1ForwardCannotBeBlocked,        idx);
-		shiftBlockMap(p1ForwardCannotBeBlockedByCost,  idx);
+		removeP1ForwardSlotState(idx);
 
 		if (p1ForwardPanel != null) {
 			p1ForwardPanel.removeAll();
@@ -4532,26 +4423,7 @@ public class MainWindow {
 		zone.add(card);
 		logEntry("[P2] " + card.name() + " → returned to hand");
 
-		p2ForwardCards.remove(idx);
-		p2ForwardUrls.remove(idx);
-		p2ForwardStates.remove(idx);
-		p2ForwardPlayedOnTurn.remove(idx);
-		p2ForwardDamage.remove(idx);
-		p2ForwardPowerBoost.remove(idx);
-		p2ForwardPowerReduction.remove(idx);
-		p2ForwardTempTraits.remove(idx);
-		p2ForwardRemovedTraits.remove(idx);
-		p2ForwardPrimedTop.remove(idx);
-		p2ForwardFrozen.remove(idx);
-		p2ForwardLabels.remove(idx);
-		shiftBlockSet(p2ForwardCannotBlock,            idx);
-		shiftBlockSet(p2ForwardMustBlock,              idx);
-		shiftBlockSet(p2ForwardCannotAttack,           idx);
-		shiftBlockSet(p2ForwardMustAttack,             idx);
-		shiftBlockSet(p2ForwardCannotAttackPersistent, idx);
-		shiftBlockSet(p2ForwardCannotBlockPersistent,  idx);
-		shiftBlockSet(p2ForwardCannotBeBlocked,        idx);
-		shiftBlockMap(p2ForwardCannotBeBlockedByCost,  idx);
+		removeP2ForwardSlotState(idx);
 
 		if (p2ForwardPanel != null) {
 			p2ForwardPanel.removeAll();
@@ -10831,15 +10703,7 @@ public class MainWindow {
 				} else {
 					addToBreakZone(c, true);
 				}
-				p1ForwardCards.remove(i); p1ForwardUrls.remove(i);
-				p1ForwardStates.remove(i); p1ForwardPlayedOnTurn.remove(i);
-				p1ForwardDamage.remove(i); p1ForwardPowerBoost.remove(i);
-				p1ForwardPowerReduction.remove(i); p1ForwardTempTraits.remove(i);
-				p1ForwardRemovedTraits.remove(i); p1ForwardPrimedTop.remove(i);
-				p1ForwardFrozen.remove(i); p1ForwardLabels.remove(i);
-				shiftBlockSet(p1ForwardCannotBlock, i); shiftBlockSet(p1ForwardMustBlock, i);
-				shiftBlockSet(p1ForwardCannotAttack, i); shiftBlockSet(p1ForwardMustAttack, i);
-				shiftBlockSet(p1ForwardCannotAttackPersistent, i); shiftBlockSet(p1ForwardCannotBlockPersistent, i);
+				removeP1ForwardSlotState(i);
 				stolenForwards.remove(c);
 				checkAndRestoreStolenOnLeave(c.name());
 				refreshP1BreakLabel();
@@ -10886,15 +10750,7 @@ public class MainWindow {
 				logEntry("[Uniqueness] [P2] " + c.name() + " — sent to Break Zone");
 				animateUniquenessSlide(p2ForwardLabels.get(i), false);
 				addToBreakZone(c, true);
-				p2ForwardCards.remove(i); p2ForwardUrls.remove(i);
-				p2ForwardStates.remove(i); p2ForwardPlayedOnTurn.remove(i);
-				p2ForwardDamage.remove(i); p2ForwardPowerBoost.remove(i);
-				p2ForwardPowerReduction.remove(i); p2ForwardTempTraits.remove(i);
-				p2ForwardRemovedTraits.remove(i); p2ForwardPrimedTop.remove(i); p2ForwardFrozen.remove(i);
-				p2ForwardLabels.remove(i);
-				shiftBlockSet(p2ForwardCannotBlock, i); shiftBlockSet(p2ForwardMustBlock, i);
-				shiftBlockSet(p2ForwardCannotAttack, i); shiftBlockSet(p2ForwardMustAttack, i);
-				shiftBlockSet(p2ForwardCannotAttackPersistent, i); shiftBlockSet(p2ForwardCannotBlockPersistent, i);
+				removeP2ForwardSlotState(i);
 				refreshP2BreakLabel();
 				rebuildP2ForwardPanel();
 				autoAbilityTriggers.triggerAutoAbilitiesForLeavesField(c, false);
