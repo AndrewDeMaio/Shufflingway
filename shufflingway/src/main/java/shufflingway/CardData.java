@@ -499,6 +499,19 @@ public record CardData(
             || BACKUP_CP_GRANT_SPECIFIC_ELEMS.matcher(text).find();
     }
 
+    /**
+     * "You cannot cast X." — an absolute prohibition covering every zone a cast can be
+     * declared from (hand, Break Zone, removed-from-game).  Forza 12-015H is the only
+     * printing: it can still reach the field via effects that <em>put</em> it there.
+     *
+     * <p>The lookahead rejects the unrelated "…you cannot cast any cards/copies…" and
+     * "Players cannot cast Summons." wordings, which are duration-scoped or global rather
+     * than a property of the card carrying the sentence.
+     */
+    private static final Pattern CAST_PROHIBITED = Pattern.compile(
+        "(?i)\\bYou\\s+cannot\\s+cast\\s+(?!any\\b|cards?\\b|Summons\\b)\\S[^.]*[.!]"
+    );
+
     /** "You can only cast X during your turn." */
     private static final Pattern CAST_YOUR_TURN_ONLY = Pattern.compile(
         "(?i)You\\s+can\\s+only\\s+cast\\s+\\S[^.]+?\\s+during\\s+your\\s+turn[.!]?"
@@ -582,10 +595,25 @@ public record CardData(
     );
 
     /**
-     * Returns a {@link CastRestriction} describing any "You can only cast …" constraint on this
-     * card, or {@code null} if no such restriction is present.
+     * Returns {@code true} for a card printing "You cannot cast [Name]." — it can never be cast,
+     * from hand or from any borrowed-cast zone, and may only reach the field through effects that
+     * put it there.
+     */
+    public boolean castProhibited() {
+        return CAST_PROHIBITED.matcher(textEn).find();
+    }
+
+    /**
+     * Returns a {@link CastRestriction} describing any "You cannot cast …" / "You can only cast …"
+     * constraint on this card, or {@code null} if no such restriction is present.
      */
     public CastRestriction castRestriction() {
+        // An outright prohibition subsumes every conditional restriction — no need to parse further.
+        if (castProhibited()) {
+            return new CastRestriction(true, false, false, false, false, false,
+                    java.util.Set.of(), 0, -1, null);
+        }
+
         boolean yourTurnOnly     = CAST_YOUR_TURN_ONLY.matcher(textEn).find();
         boolean mainPhaseOnly    = CAST_MAIN_PHASE_ONLY.matcher(textEn).find();
         boolean opponentTurnOnly = CAST_OPPONENT_TURN_ONLY.matcher(textEn).find();
@@ -652,7 +680,7 @@ public record CardData(
                 && minBZAndRfpSummons == 0 && maxOpponentHand < 0 && mustControl == null) {
             return null;
         }
-        return new CastRestriction(yourTurnOnly, mainPhaseOnly, opponentTurnOnly,
+        return new CastRestriction(false, yourTurnOnly, mainPhaseOnly, opponentTurnOnly,
                 requiresNoFwds, requiresAFwd, requiredBZTypes, minBZAndRfpSummons,
                 maxOpponentHand, mustControl);
     }
@@ -4689,6 +4717,7 @@ public record CardData(
             if (FIELD_GRANT_DAMAGE_THRESHOLD_PATTERN.matcher(seg).matches())       continue;
 
             // Cast/play restrictions — handled as static properties via castRestriction()
+            if (CAST_PROHIBITED.matcher(seg).find())                          continue;
             if (CAST_REQUIRES_NO_FORWARDS.matcher(seg).find())                continue;
             if (CAST_MUST_CONTROL.matcher(seg).find())                        continue;
             if (CAST_MUST_CONTROL_CATEGORY_FWD.matcher(seg).find())          continue;
@@ -5104,6 +5133,21 @@ public record CardData(
 
     /** Returns {@code true} if this card has the given Special Trait. */
     public boolean hasTrait(Trait t) { return traits.contains(t); }
+
+    /**
+     * Returns {@code true} if this card may be cast at the timing Summons and abilities use —
+     * during either player's Main Phase or Attack Phase, at any point its controller holds
+     * priority — rather than only in its controller's own Main Phase.
+     *
+     * <p>Summons have that timing by card type.  The Back Attack trait grants it to a Character,
+     * as its reminder text says: "Like Summons and abilities, this card can be played during
+     * either player's Attack Phase or Main Phase."  Everything else about the cast is unchanged —
+     * a Back Attack Character still enters the field directly rather than using the stack, and is
+     * still subject to name conflicts, backup slots, cast limits, and its own cast restrictions.
+     */
+    public boolean castsAtSummonSpeed() {
+        return isSummon() || hasTrait(Trait.BACK_ATTACK);
+    }
 
     /** Returns {@code true} if this card has the Warp trait (warpValue &gt; 0). */
     public boolean hasWarp() { return warpValue > 0; }

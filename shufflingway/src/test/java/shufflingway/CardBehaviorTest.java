@@ -4435,6 +4435,86 @@ public class CardBehaviorTest {
     }
 
     // =========================================================================================
+    // Forza (12-015H): "You cannot cast Forza." — an absolute cast prohibition. Forza may never be
+    // cast from hand, from the Break Zone, or from removed-from-game; only effects that *put* it
+    // onto the field can bring it in, at which point its enters-the-field auto ability fires.
+    // =========================================================================================
+
+    private static final String FORZA_TEXT =
+            "You cannot cast Forza.[[br]]   "
+            + "When Forza enters the field, choose 1 Forward opponent controls. Deal it 7000 damage.";
+
+    private static CardData makeForza() {
+        return new CardData(null, "Forza", "Fire", 3, 9000, "Forward", false, 0, false, false,
+                Set.of(), 0, List.of(), null, List.of(),
+                List.of(), CardData.parseAutoAbilities(FORZA_TEXT),
+                CardData.parseFieldAbilities(FORZA_TEXT, "Forward"),
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                false, false, null, false, false, false, false, false, false,
+                null, null, null, FORZA_TEXT);
+    }
+
+    @Test
+    void forzaCastProhibitionParsesAsAStaticRestrictionNotAFieldAbility() {
+        CardData forza = makeForza();
+
+        assertTrue(forza.castProhibited(), "\"You cannot cast Forza.\" is an absolute cast prohibition");
+        CastRestriction cr = forza.castRestriction();
+        assertNotNull(cr);
+        assertTrue(cr.castProhibited());
+
+        // The sentence is consumed as a static property, so it must not surface as a field ability.
+        assertTrue(forza.fieldAbilities().isEmpty(),
+                "the prohibition is a static property, not an unrecognized field ability");
+
+        // The enters-the-field half still parses and resolves.
+        assertEquals(1, forza.autoAbilities().size());
+        AutoAbility etf = forza.autoAbilities().get(0);
+        assertEquals("enters the field", etf.trigger());
+        assertNotNull(ActionResolver.parse(etf.effectText(), forza),
+                "the ETF damage effect is unaffected by the cast prohibition");
+    }
+
+    @Test
+    void forzaCastProhibitionDoesNotLeakToSimilarWordings() {
+        // Duration-scoped and global "cannot cast" wordings are not properties of their own card.
+        CardData vayne = makeForwardWithText("Vayne", "Dark", 5, 9000,
+                "When Vayne is put from the field into the Break Zone, during this turn, "
+                + "your opponent cannot cast any cards.");
+        assertFalse(vayne.castProhibited(), "an opponent-facing, turn-scoped prohibition is not a self-restriction");
+        assertNull(vayne.castRestriction());
+
+        CardData shantotto = makeForwardWithText("Shantotto", "Wind", 4, 8000,
+                "Players cannot cast Summons.");
+        assertFalse(shantotto.castProhibited(), "the global Summon lock is not a self-restriction");
+    }
+
+    @Test
+    void forzaCannotBeCastFromHandBreakZoneOrRemovedFromGame() {
+        MainWindow mw = new MainWindow();
+        CardData forza = makeForza();
+
+        assertFalse(mw.castRestrictionMet(forza), "Forza is never castable from hand");
+
+        // "You can cast Forwards from your Break Zone" (Ace) must skip Forza.
+        mw.placeCardInForwardZone(makeFieldAbilityCard("Ace", "Light", "Forward", ACE_BZ_TEXT));
+        CardData castable = makeForward("Grunt", "Fire", 2, 5000);
+        mw.gameState.getP1BreakZone().add(forza);
+        mw.gameState.getP1BreakZone().add(castable);
+        mw.syncBzForwardPlayables(true);
+
+        assertFalse(mw.bzPlayableP1.containsKey(forza), "Forza is not registered as a Break-Zone cast");
+        assertTrue(mw.bzPlayableP1.containsKey(castable), "an ordinary Forward still is");
+
+        // Nor by an explicit borrowed-cast grant from either zone.
+        mw.registerBorrowedPlayable(true, forza,
+                new PlayableEntry(PlayableEntry.SourceZone.BREAK_ZONE, 0, false, true, false, true));
+        mw.registerBorrowedPlayable(true, forza,
+                new PlayableEntry(PlayableEntry.SourceZone.RFP, 0, false, true, false, true));
+        assertFalse(mw.bzPlayableP1.containsKey(forza), "a borrowed-cast grant cannot override the prohibition");
+    }
+
+    // =========================================================================================
     // Palom / Porom: "For each EXP Counter placed on [self], [self] gains +1000 power." — a
     // self power boost scaling by the count of a named counter on the card itself.
     // =========================================================================================
@@ -5245,6 +5325,217 @@ public class CardBehaviorTest {
         placeDamagedP1Forward(mw, exdeath, 0);
 
         assertEquals(exdeath, mw.partyExBurstSuppressor(List.of(0, 1), true));
+    }
+
+    // =========================================================================================
+    // Back Attack — "Like Summons and abilities, this card can be played during either player's
+    // Attack Phase or Main Phase."  The trait was parsed but inert: a Back Attack Character was
+    // still restricted to its controller's own Main Phase, like any other Character.  It must now
+    // share the Summons' cast timing — every priority window in either player's Main or Attack
+    // Phase — while keeping every other cast requirement (cost, name conflict, slot, cast limit).
+    // =========================================================================================
+
+    private static final String JINNAI_TEXT =
+            "Back Attack[[br]] First Strike[[br]] "
+            + "When Jinnai enters the field, choose 1 Forward opponent controls. Deal it 4000 damage.";
+
+    private static final String CARBUNCLE_TEXT =
+            "Back Attack (Like Summons and abilities, this card can be played during either "
+            + "player's Attack Phase or Main Phase.)";
+
+    private static final String GOGO_BACK_ATTACK_TEXT =
+            "Back Attack[[br]]You can only cast Gogo during your opponent's turn.[[br]]"
+            + "When Gogo enters the field due to your cast, choose 1 auto-ability triggered from "
+            + "your opponent's Forward of cost 4 or less. Gogo triggers the same auto-ability.";
+
+    /** Builds a card of any type with its Special Traits parsed from {@code text}, as the real ETL does. */
+    private static CardData makeTraitCard(String name, String element, String type, String text) {
+        return new CardData(null, name, element, 3, 7000, type, false, 0, false, false,
+                CardData.parseTraits(text), 0, List.of(), null, List.of(),
+                CardData.parseActionAbilities(text), CardData.parseAutoAbilities(text),
+                CardData.parseFieldAbilities(text, type),
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                false, false, null, false, false, false, false, false, false,
+                null, null, null, text);
+    }
+
+    /** Drives the game to {@code phase} on {@code player}'s turn and syncs the phase tracker. */
+    private static void advanceTo(MainWindow mw, GameState.Player player, GameState.GamePhase phase) {
+        mw.gameState.startFirstTurn(GameState.Player.P1);
+        while (mw.gameState.getCurrentPlayer() != player || mw.gameState.getCurrentPhase() != phase) {
+            mw.gameState.advancePhase();
+        }
+        mw.refreshPhaseTracker();
+    }
+
+    @Test
+    void backAttackGrantsSummonCastTimingToACharacter() {
+        assertTrue(makeTraitCard("Jinnai", "Wind", "Forward", JINNAI_TEXT).castsAtSummonSpeed());
+        assertTrue(makeTraitCard("Carbuncle", "Earth", "Backup", CARBUNCLE_TEXT).castsAtSummonSpeed(),
+                "the reminder-text-only printing carries the trait too");
+        assertTrue(makeTraitCard("Wicked Mask", "Earth", "Monster", "Back Attack").castsAtSummonSpeed(),
+                "Back Attack appears on Monsters as well as Forwards and Backups");
+
+        assertTrue(makeForward("Grunt", "Fire", 2, 5000).isSummon() == false);
+        assertFalse(makeForward("Grunt", "Fire", 2, 5000).castsAtSummonSpeed(),
+                "an ordinary Character is Main-Phase-only");
+        assertTrue(makeTraitCard("Ifrit", "Fire", "Summon", "Choose 1 Forward. Deal it 7000 damage.")
+                .castsAtSummonSpeed(), "Summons have the timing by card type");
+    }
+
+    @Test
+    void backAttackCharacterIsCastableDuringOpponentsMainPhase() {
+        MainWindow mw = new MainWindow();
+        CardData jinnai = makeTraitCard("Jinnai", "Wind", "Forward", JINNAI_TEXT);
+        CardData grunt  = makeForward("Grunt", "Fire", 2, 5000);
+
+        advanceTo(mw, GameState.Player.P2, GameState.GamePhase.MAIN_1);
+        // P2 has not yet passed, so nobody may act.
+        assertFalse(mw.castTimingWindowOpen(jinnai), "no window before P2 passes priority");
+
+        mw.offerP1MainPhasePriority(() -> {});
+        assertTrue(mw.castTimingWindowOpen(jinnai), "Back Attack may be cast in P2's Main Phase");
+        assertFalse(mw.castTimingWindowOpen(grunt),  "an ordinary Forward may not");
+    }
+
+    @Test
+    void backAttackCharacterIsCastableAtAnAttackPhasePriorityWindow() {
+        MainWindow mw = new MainWindow();
+        CardData jinnai = makeTraitCard("Jinnai", "Wind", "Forward", JINNAI_TEXT);
+        CardData grunt  = makeForward("Grunt", "Fire", 2, 5000);
+
+        // P1's own Attack Preparation.
+        advanceTo(mw, GameState.Player.P1, GameState.GamePhase.ATTACK);
+        mw.attackSubStep = 0;
+        assertTrue(mw.p1MayActInAttackPhase());
+        assertTrue(mw.castTimingWindowOpen(jinnai), "Back Attack may be cast in the Attack Phase");
+        assertFalse(mw.castTimingWindowOpen(grunt),  "an ordinary Forward may not");
+
+        // P2's Attack Phase, with P1 holding the Attack Preparation priority window.
+        advanceTo(mw, GameState.Player.P2, GameState.GamePhase.ATTACK);
+        mw.gameState.getP1Hand().add(jinnai);
+        mw.offerP1AttackPrepPriority(() -> {});
+        assertTrue(mw.castTimingWindowOpen(jinnai), "Back Attack may be cast during P2's Attack Phase");
+        assertFalse(mw.castTimingWindowOpen(grunt));
+    }
+
+    @Test
+    void ordinaryCastTimingIsUnchanged() {
+        MainWindow mw = new MainWindow();
+        CardData jinnai = makeTraitCard("Jinnai", "Wind", "Forward", JINNAI_TEXT);
+        CardData grunt  = makeForward("Grunt", "Fire", 2, 5000);
+
+        advanceTo(mw, GameState.Player.P1, GameState.GamePhase.MAIN_1);
+        assertTrue(mw.castTimingWindowOpen(grunt),  "P1's own Main Phase is open to everything");
+        assertTrue(mw.castTimingWindowOpen(jinnai));
+
+        advanceTo(mw, GameState.Player.P1, GameState.GamePhase.END);
+        assertFalse(mw.castTimingWindowOpen(grunt),  "the End Phase is not a cast window");
+        assertFalse(mw.castTimingWindowOpen(jinnai), "not even for Back Attack — it is neither Main nor Attack");
+    }
+
+    @Test
+    void aBackAttackCardInHandEarnsAPriorityStopInsteadOfAnAutoPass() {
+        MainWindow mw = new MainWindow();
+        advanceTo(mw, GameState.Player.P2, GameState.GamePhase.ATTACK);
+
+        // Nothing to act with: the checkpoint passes itself so combat does not stall.
+        boolean[] passed = { false };
+        mw.offerP1AttackPrepPriority(() -> passed[0] = true);
+        assertTrue(passed[0], "an empty board and hand auto-passes the priority window");
+
+        // A Back Attack card in hand is now something the window could be spent on.
+        mw.gameState.getP1Hand().add(makeTraitCard("Jinnai", "Wind", "Forward", JINNAI_TEXT));
+        boolean[] passedAgain = { false };
+        mw.offerP1AttackPrepPriority(() -> passedAgain[0] = true);
+        assertFalse(passedAgain[0], "P1 keeps the window to consider casting the Back Attack card");
+    }
+
+    @Test
+    void gogoCombinesBackAttackTimingWithItsOpponentTurnOnlyRestriction() {
+        CardData gogo = makeTraitCard("Gogo", "Water", "Forward", GOGO_BACK_ATTACK_TEXT);
+        assertTrue(gogo.castsAtSummonSpeed());
+        CastRestriction cr = gogo.castRestriction();
+        assertNotNull(cr);
+        assertTrue(cr.opponentTurnOnly(), "\"only cast Gogo during your opponent's turn\"");
+
+        MainWindow mw = new MainWindow();
+
+        // P1's own Main Phase: the timing window is open, but the card's own restriction shuts it.
+        advanceTo(mw, GameState.Player.P1, GameState.GamePhase.MAIN_1);
+        assertTrue(mw.castTimingWindowOpen(gogo));
+        assertFalse(mw.castRestrictionMet(gogo), "Gogo may not be cast on P1's own turn");
+
+        // P2's Main Phase with priority: both halves agree, which is the only time Gogo is castable.
+        advanceTo(mw, GameState.Player.P2, GameState.GamePhase.MAIN_1);
+        mw.offerP1MainPhasePriority(() -> {});
+        assertTrue(mw.castTimingWindowOpen(gogo));
+        assertTrue(mw.castRestrictionMet(gogo));
+    }
+
+    // =========================================================================================
+    // "Per turn" cast tracking is scoped to a single turn, and each player gets a fresh allowance
+    // on every turn — not only their own.  P1's counters were cleared just once, at the start of
+    // P1's turn, so casts made on P1's own turn carried across the boundary and were still counted
+    // while P1 held priority during P2's turn: after casting 2 cards under Ace 12-118L, P1 could
+    // not cast a Summon or a Back Attack Character on the opponent's turn at all.
+    // =========================================================================================
+
+    private static final String ACE_CAST_LIMIT_TEXT = "You can only cast up to 2 cards per turn.";
+
+    @Test
+    void castTrackingIsClearedWhenP1sTurnEnds() {
+        MainWindow mw = new MainWindow();
+        advanceTo(mw, GameState.Player.P1, GameState.GamePhase.END);
+
+        mw.p1CardsCastThisTurn = 2;
+        mw.p1SummonCastThisTurn = true;
+        mw.p1CastJobsThisTurn.add("dragoon");
+        mw.p1CastNamesThisTurn.add("kain");
+        mw.p1CastCountByNameThisTurn.put("kain", 1);
+
+        mw.computerPlayer = new ComputerPlayer(mw);
+        mw.onNextPhase();                    // END → P2's turn
+        mw.gameState.setP1GameOver(true);    // parks the CPU's queued turn timer before it can fire
+
+        assertEquals(0, mw.p1CardsCastThisTurn, "the count refreshes for the turn now beginning");
+        assertFalse(mw.p1SummonCastThisTurn);
+        assertTrue(mw.p1CastJobsThisTurn.isEmpty());
+        assertTrue(mw.p1CastNamesThisTurn.isEmpty());
+        assertTrue(mw.p1CastCountByNameThisTurn.isEmpty());
+    }
+
+    @Test
+    void aceCastLimitDoesNotFollowP1IntoTheOpponentsTurn() {
+        MainWindow mw = new MainWindow();
+        mw.placeCardInForwardZone(makeFieldAbilityCard("Ace", "Light", "Forward", ACE_CAST_LIMIT_TEXT));
+        advanceTo(mw, GameState.Player.P1, GameState.GamePhase.END);
+
+        mw.p1CardsCastThisTurn = 2;
+        assertTrue(mw.p1CastLimitReached(), "two casts on P1's own turn exhausts Ace's limit for that turn");
+
+        mw.computerPlayer = new ComputerPlayer(mw);
+        mw.onNextPhase();                    // END → P2's turn
+        mw.gameState.setP1GameOver(true);
+
+        assertFalse(mw.p1CastLimitReached(),
+                "P2's turn is a new turn — P1 may again cast Summons and Back Attack Characters");
+    }
+
+    @Test
+    void castTrackingIsClearedAgainWhenP1sNextTurnBegins() {
+        // The start-of-turn reset still matters in the other direction: casts P1 made while holding
+        // priority during P2's turn belong to that turn, not to P1's.
+        MainWindow mw = new MainWindow();
+        mw.p1CardsCastThisTurn = 2;
+        mw.p1SummonCastThisTurn = true;
+        mw.p1CastNamesThisTurn.add("jinnai");
+
+        mw.resetP1CastTracking();
+
+        assertEquals(0, mw.p1CardsCastThisTurn);
+        assertFalse(mw.p1SummonCastThisTurn);
+        assertTrue(mw.p1CastNamesThisTurn.isEmpty());
     }
 
     // =========================================================================================

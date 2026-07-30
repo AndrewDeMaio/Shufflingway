@@ -56,11 +56,7 @@ class ComputerPlayer {
 
 	private void doActivePhase() {
 		mw.p2ReceivedDamageThisTurn = false;
-		mw.p2CardsCastThisTurn = 0;
-		mw.p2SummonCastThisTurn = false;
-		mw.p2CastJobsThisTurn.clear();
-		mw.p2CastNamesThisTurn.clear();
-		mw.p2CastCountByNameThisTurn.clear();
+		mw.resetP2CastTracking();
 		mw.p2TurnOpponentFwdBroken = false;
 		mw.p2BrokenJobsThisTurn.clear();
 		mw.p2BrokenElementsThisTurn.clear();
@@ -541,6 +537,9 @@ class ComputerPlayer {
 		mw.logEntry("[P2] End Phase");
 		// Wait for any end-of-turn auto abilities on the stack to resolve before returning priority to P1.
 		step(() -> {
+			// P2's turn is over — refresh their cast allowance for the turn now beginning, the
+			// mirror of what MainWindow's End Phase does for P1.
+			mw.resetP2CastTracking();
 			mw.gameState.advancePhase(); // END → ACTIVE (switches to P1, increments turn)
 			mw.refreshPhaseTracker();
 			step(this::startP1Turn);  // startP1Turn expects phase == ACTIVE
@@ -551,11 +550,9 @@ class ComputerPlayer {
 
 	private void startP1Turn() {
 		mw.p1ReceivedDamageThisTurn = false;
-		mw.p1CardsCastThisTurn = 0;
-		mw.p1SummonCastThisTurn = false;
-		mw.p1CastJobsThisTurn.clear();
-		mw.p1CastNamesThisTurn.clear();
-		mw.p1CastCountByNameThisTurn.clear();
+		// Cleared again here, not only at the end of P1's own turn: anything P1 cast while holding
+		// priority during P2's turn belonged to that turn, not to the one starting now.
+		mw.resetP1CastTracking();
 		mw.p1TurnOpponentFwdBroken = false;
 		mw.p1BrokenJobsThisTurn.clear();
 		mw.p1BrokenElementsThisTurn.clear();

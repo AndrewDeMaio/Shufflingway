@@ -9,6 +9,7 @@ import java.util.Set;
  *
  * <p>Covered restriction forms:
  * <ul>
+ *   <li>{@link #castProhibited}        — "You cannot cast [Name]." (never castable from any zone)</li>
  *   <li>{@link #yourTurnOnly}          — "during your turn"</li>
  *   <li>{@link #mainPhaseOnly}         — "during your Main Phase"</li>
  *   <li>{@link #opponentTurnOnly}      — "during your opponent's turn" (Back Attack cards)</li>
@@ -21,6 +22,7 @@ import java.util.Set;
  * </ul>
  */
 public record CastRestriction(
+        boolean          castProhibited,
         boolean          yourTurnOnly,
         boolean          mainPhaseOnly,
         boolean          opponentTurnOnly,

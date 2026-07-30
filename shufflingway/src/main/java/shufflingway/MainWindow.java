@@ -2065,8 +2065,12 @@ public class MainWindow {
 	 * Registers {@code card} as castable by P1 from outside hand under {@code entry}.  The card must
 	 * already have been moved into its source zone (Break Zone or removed-from-game).  "This turn"
 	 * entries are auto-removed at end of turn; "during this game" / "at any time" entries persist.
+	 *
+	 * <p>Cards printing "You cannot cast [Name]." are never registered — the prohibition applies to
+	 * every zone a cast could be declared from, not just the hand.
 	 */
 	void registerBorrowedPlayable(boolean casterIsP1, CardData card, PlayableEntry entry) {
+		if (card.castProhibited()) return;
 		IdentityHashMap<CardData, PlayableEntry> reg = casterIsP1 ? bzPlayableP1 : bzPlayableP2;
 		reg.put(card, entry);
 		if (entry.expiresThisTurn()) endOfTurnEffects.add(ctx -> reg.remove(card));
@@ -2122,7 +2126,7 @@ public class MainWindow {
 	 *   <li>END     → ACTIVE : increment turn, immediately activate cards</li>
 	 * </ul>
 	 */
-	private void onNextPhase() {
+	void onNextPhase() {
 		if (gameState.isP1GameOver()) return;
 		// A field-target selection is outstanding. Its secondary loop leaves the UI live, and turn
 		// flow may have re-enabled the Next button underneath it, so ignore the click rather than
@@ -2316,6 +2320,10 @@ public class MainWindow {
             }
 
 			case END ->  {
+				// P1's turn is over: their cast allowance refreshes for the turn now beginning,
+				// which they may spend on Summons and Back Attack Characters while holding
+				// priority.  Done before control is handed over, on both branches below.
+				resetP1CastTracking();
 				if (p1ExtraTurnThenLose) {
 					p1ExtraTurnThenLose = false;
 					logEntry("Extra Turn — P1 takes one additional turn");
@@ -5497,13 +5505,7 @@ public class MainWindow {
 			int effectiveCost = effectiveCastCost(card);
 			int delta = card.cost() - effectiveCost;
 
-			GameState.GamePhase handPhase = gameState.getCurrentPhase();
-			boolean handIsMainPhase = handPhase == GameState.GamePhase.MAIN_1 || handPhase == GameState.GamePhase.MAIN_2;
-			boolean handIsAttackCastWindow = p1MayActInAttackPhase();
-			boolean handCanPlayAction = ((handIsMainPhase || (handIsAttackCastWindow && card.isSummon())) && gameState.getStack().isEmpty()
-					&& (phaseTracker.isMyTurn() || ((p1PriorityInP2MainOnDone != null
-						|| p1IsHoldingCombatPriority()) && card.isSummon())))
-					|| (p1IsRespondingToStack && card.isSummon());
+			boolean handCanPlayAction = castTimingWindowOpen(card);
 			boolean handIsCharacter = card.isForward() || card.isBackup() || card.isMonster();
 			boolean handNameConflict = handIsCharacter && !card.multicard() && hasCharacterNameOnField(card.name()) && !isMultiNameExceptionActive(card.name());
 			boolean handLightDarkConflict = handIsCharacter && isLightDarkConflict(card);
@@ -5599,13 +5601,7 @@ public class MainWindow {
 		JPopupMenu menu = new JPopupMenu();
 
 		JMenuItem playItem = new JMenuItem("Play");
-		GameState.GamePhase phase = gameState.getCurrentPhase();
-		boolean isMainPhase = phase == GameState.GamePhase.MAIN_1 || phase == GameState.GamePhase.MAIN_2;
-		boolean isAttackCastWindow = p1MayActInAttackPhase();
-		boolean canPlaySpecialAction = ((isMainPhase || (isAttackCastWindow && card.isSummon())) && gameState.getStack().isEmpty()
-				&& (phaseTracker.isMyTurn() || ((p1PriorityInP2MainOnDone != null
-						|| p1IsHoldingCombatPriority()) && card.isSummon())))
-				|| (p1IsRespondingToStack && card.isSummon());
+		boolean canPlaySpecialAction = castTimingWindowOpen(card);
 		boolean isCharacter = card.isForward() || card.isBackup() || card.isMonster();
 		boolean nameConflict = isCharacter && !card.multicard() && hasCharacterNameOnField(card.name()) && !isMultiNameExceptionActive(card.name());
 		boolean lightDarkConflict = isCharacter && isLightDarkConflict(card);
@@ -6728,6 +6724,7 @@ public class MainWindow {
 		boolean added = false;
 		for (CardData card : bz) {
 			if (!card.isForward()) continue;
+			if (card.castProhibited()) continue;
 			if (faSet.contains(card) || reg.containsKey(card)) continue;
 			reg.put(card, new PlayableEntry(PlayableEntry.SourceZone.BREAK_ZONE, 0, false, false, false, false));
 			faSet.add(card);
@@ -6755,12 +6752,42 @@ public class MainWindow {
 		// Register Break Zone cards whose own ability lets them be cast from there.
 		for (CardData card : bz) {
 			if (faSet.contains(card) || reg.containsKey(card)) continue;
+			if (card.castProhibited()) continue;
 			if (!AutoAbilityTriggers.canCastSelfFromBz(card)) continue;
 			reg.put(card, new PlayableEntry(PlayableEntry.SourceZone.BREAK_ZONE, 0, false, false, false, false));
 			faSet.add(card);
 			changed = true;
 		}
 		if (changed) refreshPlayableCardsButton();
+	}
+
+	/**
+	 * Clears P1's cast tracking at a turn boundary.
+	 *
+	 * <p>Every "this turn" cast condition — Ace's "You can only cast up to 2 cards per turn",
+	 * "if you have cast a Summon this turn", cost modifiers scaling by cards/jobs/names cast — is
+	 * scoped to a single turn, and each player gets a fresh allowance on <em>every</em> turn, not
+	 * just their own.  So this is called at both ends of P1's turn: when it finishes, so casts made
+	 * on it do not eat into what P1 may cast while holding priority during P2's turn, and again
+	 * when P1's next turn begins, so casts made during P2's turn do not eat into that turn.
+	 *
+	 * <p>Casting off-turn used to mean Summons only; Back Attack Characters made it routine.
+	 */
+	void resetP1CastTracking() {
+		p1CardsCastThisTurn  = 0;
+		p1SummonCastThisTurn = false;
+		p1CastJobsThisTurn.clear();
+		p1CastNamesThisTurn.clear();
+		p1CastCountByNameThisTurn.clear();
+	}
+
+	/** P2's counterpart to {@link #resetP1CastTracking()}, cleared at both ends of P2's turn. */
+	void resetP2CastTracking() {
+		p2CardsCastThisTurn  = 0;
+		p2SummonCastThisTurn = false;
+		p2CastJobsThisTurn.clear();
+		p2CastNamesThisTurn.clear();
+		p2CastCountByNameThisTurn.clear();
 	}
 
 	/** Returns {@code true} if P1 has already cast 2 cards this turn and a field ability caps them at 2. */
@@ -6858,9 +6885,12 @@ public class MainWindow {
 	 * Returns {@code true} if the card's "You can only cast X …" restriction (if any) is
 	 * satisfied by the current game state from P1's perspective.
 	 */
-	private boolean castRestrictionMet(CardData card) {
+	boolean castRestrictionMet(CardData card) {
 		CastRestriction cr = card.castRestriction();
 		if (cr == null) return true;
+
+		// "You cannot cast X." — never castable; only effects that put it onto the field work.
+		if (cr.castProhibited()) return false;
 
 		boolean isP1Turn = gameState.getCurrentPlayer() == GameState.Player.P1;
 
@@ -12118,7 +12148,12 @@ public class MainWindow {
 		if (nextPhaseButton != null && step == 1) nextPhaseButton.setEnabled(false);
 	}
 
-	/** Returns true if any P1 field card has at least one action ability. */
+	/**
+	 * Returns true if P1 has anything a priority window could be spent on: an action ability on the
+	 * field, or a card in hand castable at Summon speed (a Summon, or a Back Attack Character).
+	 * When this is false {@link #p1HoldPriority} passes automatically rather than stopping on a
+	 * checkpoint the player could not act at.
+	 */
 	private boolean p1HasActivatableAbilities() {
 		for (CardData c : p1ForwardCards)
 			if (!c.actionAbilities().isEmpty()) return true;
@@ -12127,7 +12162,7 @@ public class MainWindow {
 		for (CardData c : p1MonsterCards)
 			if (!c.actionAbilities().isEmpty()) return true;
 		for (CardData c : gameState.getP1Hand())
-			if (c.isSummon()) return true;
+			if (c.castsAtSummonSpeed()) return true;
 		return false;
 	}
 
@@ -12184,6 +12219,8 @@ public class MainWindow {
 	void offerP1MainPhasePriority(Runnable onPass) {
 		p1PriorityInP2MainOnDone = onPass;
 		if (nextPhaseButton != null) nextPhaseButton.setEnabled(true);
+		// P2 passes on a timer, so the hand popover may already be open — restate what is castable now.
+		refreshHandPopupIfVisible();
 		logEntry("[Priority] P2 passes — you may cast Summons or use abilities. Click Next Phase to pass.");
 	}
 
@@ -12207,6 +12244,7 @@ public class MainWindow {
 		logEntry(lead + "Use an ability or summon, or pass priority with 'Next'");
 		p1CombatPriorityOnPass = onPass;
 		if (nextPhaseButton != null) nextPhaseButton.setEnabled(true);
+		refreshHandPopupIfVisible();   // the window just opened — recolour what is castable
 		refreshAttackButton();   // Skip is not a legal action while holding priority mid-combat
 	}
 
@@ -12294,6 +12332,26 @@ public class MainWindow {
 	private boolean p1ForwardClickSelectsCombat() {
 		return gameState.getCurrentPhase() == GameState.GamePhase.ATTACK
 				&& attackSubStep != 0 && p1CombatPriorityOnPass == null;
+	}
+
+	/**
+	 * True when P1 currently holds a window in which {@code card} may be cast from hand.  This is
+	 * the timing half of cast legality only — affordability, name conflicts, backup slots, cast
+	 * limits and {@link #castRestrictionMet} are checked separately by each caller.
+	 *
+	 * <p>An ordinary Character may only be cast during P1's own Main Phase with the stack empty.
+	 * A card that {@linkplain CardData#castsAtSummonSpeed() casts at Summon speed} — a Summon, or
+	 * a Character with Back Attack — may also be cast at any priority window P1 holds: P2's Main
+	 * Phase, either player's Attack Phase, and in response to an entry on the stack.
+	 */
+	boolean castTimingWindowOpen(CardData card) {
+		boolean summonSpeed = card.castsAtSummonSpeed();
+		GameState.GamePhase phase = gameState.getCurrentPhase();
+		boolean isMainPhase = phase == GameState.GamePhase.MAIN_1 || phase == GameState.GamePhase.MAIN_2;
+		return ((isMainPhase || (p1MayActInAttackPhase() && summonSpeed)) && gameState.getStack().isEmpty()
+					&& (phaseTracker.isMyTurn() || ((p1PriorityInP2MainOnDone != null
+							|| p1IsHoldingCombatPriority()) && summonSpeed)))
+				|| (p1IsRespondingToStack && summonSpeed);
 	}
 
 	/**
