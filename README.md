@@ -21,11 +21,11 @@ The ultimate goal for this application will be to play against someone else with
 
 Current card coverage (estimate):
 
-* Action/Special Abilities: (97.3%)
+* Action/Special Abilities: (97.2%)
 
-* Auto Abilities: (93.0%)
+* Auto Abilities: (92.9%)
 
-* Field Abilities: (71.8%)
+* Field Abilities: (72.4%)
 
 # Installation Guide
 
@@ -45,3 +45,12 @@ Once the application has been installed, you can update to any new releases from
 * After this completes, create a deck in the Deck Manager. Various preconstructed decks can be loaded via a button at the top.
 * Once a 50-card deck has been created, you can either create another 50-card deck for the CPU, or do a mirror match.
 * NOTE: Multiplayer is a work-in-progress!
+
+# Notes:
+
+* Opus 29 is now live! Cards can be fetched via the Card Browser card update button.
+* New overpayment rules will be added soon (prior to the official rollout date)
+* Next features (aside from parsing additions and bugfixes):
+  1. Relocating the hands to fan-outs at the top/bottom of the board.
+  2. Additional animations for better gameplay context
+  3. More trait icons for various card states (Shielded, primed, must attack, cannot block, etc.)
