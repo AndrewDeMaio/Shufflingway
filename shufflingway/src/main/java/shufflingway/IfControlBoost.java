@@ -1,5 +1,7 @@
 package shufflingway;
 
+import java.util.Collections;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Set;
 
@@ -41,7 +43,9 @@ public record IfControlBoost(
 ) {
     public IfControlBoost {
         conditions    = List.copyOf(conditions);
-        grantedTraits = Set.copyOf(grantedTraits);
+        EnumSet<CardData.Trait> traitSet = EnumSet.noneOf(CardData.Trait.class);
+        traitSet.addAll(grantedTraits);
+        grantedTraits = Collections.unmodifiableSet(traitSet);
         if (exceptCardName == null) exceptCardName = "";
         if (specialText    == null) specialText    = "";
     }

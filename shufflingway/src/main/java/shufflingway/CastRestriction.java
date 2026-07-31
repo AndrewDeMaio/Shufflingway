@@ -1,6 +1,8 @@
 package shufflingway;
 
+import java.util.Collections;
 import java.util.Set;
+import java.util.TreeSet;
 
 /**
  * Parsed cast-time restrictions for a card, derived from "You can only cast [Name] …" sentences.
@@ -34,6 +36,8 @@ public record CastRestriction(
         ControlCondition mustControlCondition
 ) {
     public CastRestriction {
-        requiredBZTypes = Set.copyOf(requiredBZTypes);
+        // Sorted, not Set.copyOf: the latter randomises iteration order per JVM run
+        // (ImmutableCollections.SALT). Sorting is stable regardless of what the caller passes.
+        requiredBZTypes = Collections.unmodifiableSet(new TreeSet<>(requiredBZTypes));
     }
 }

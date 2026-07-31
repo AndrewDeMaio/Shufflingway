@@ -36,6 +36,11 @@ target/
 *.db-shm
 *.db-wal
 
+# Generated from the card database, so it carries card names and numbers we keep out of
+# the repo for the same reason the database itself is ignored. Regenerate locally with:
+#   mvn test -Dtest=ActionResolverCharacterizationTest -Dcharacterization.regenerate=true
+src/test/resources/actionresolver-characterization.txt
+
 # IDE specific files
 .vscode/
 CLAUDE.md

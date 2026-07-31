@@ -1,5 +1,7 @@
 package shufflingway;
 
+import java.util.Collections;
+import java.util.EnumSet;
 import java.util.Set;
 
 /**
@@ -39,7 +41,11 @@ public record FieldPowerGrant(
         int     maxDamageThreshold   // 0 = no restriction; >0 = grant applies only when controller's damage zone has < this many cards
 ) {
     public FieldPowerGrant {
-        grantedTraits = Set.copyOf(grantedTraits);
+        // EnumSet, not Set.copyOf: the latter randomises iteration order per JVM run
+        // (ImmutableCollections.SALT), which leaks into rendered trait lists.
+        EnumSet<CardData.Trait> traitSet = EnumSet.noneOf(CardData.Trait.class);
+        traitSet.addAll(grantedTraits);
+        grantedTraits = Collections.unmodifiableSet(traitSet);
         if (exceptCardName == null) exceptCardName = "";
     }
 

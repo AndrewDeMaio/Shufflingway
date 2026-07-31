@@ -1,6 +1,7 @@
 package shufflingway;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.List;
@@ -87,7 +88,11 @@ public record CardData(
 
     /** Defensive copy — collection fields are always immutable after construction. */
     public CardData {
-        traits          = Set.copyOf(traits);
+        // EnumSet, not Set.copyOf: the latter randomises iteration order per JVM run
+        // (ImmutableCollections.SALT), which leaks into rendered trait lists.
+        EnumSet<Trait> traitSet = EnumSet.noneOf(Trait.class);
+        traitSet.addAll(traits);
+        traits          = Collections.unmodifiableSet(traitSet);
         warpCost        = List.copyOf(warpCost);
         primingCost     = List.copyOf(primingCost);
         actionAbilities  = List.copyOf(actionAbilities);
