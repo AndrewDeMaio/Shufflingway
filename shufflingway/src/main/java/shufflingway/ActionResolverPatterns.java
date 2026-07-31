@@ -1614,6 +1614,8 @@ final class ActionResolverPatterns {
         "and\\s+return\\s+the\\s+other\\s+cards?\\s+to\\s+the\\s+bottom\\s+of\\s+(?:your|the)\\s+deck" +
         "(?:\\s+in\\s+any\\s+order)?[.!]?\\s*$"
     );
+
+    // ---- Damage-shield followup patterns (apply to selected "it/them" targets) --------
     /** Matches "During this turn, the next damage dealt to it/him becomes 0 instead." */
     static final Pattern FOLLOWUP_SHIELD_NEXT_DMG_ZERO = Pattern.compile(
         "(?i)During\\s+this\\s+turn,\\s+the\\s+next\\s+damage\\s+dealt\\s+to\\s+(?:it|him)\\s+becomes\\s+0\\s+instead\\.?"
@@ -1680,6 +1682,8 @@ final class ActionResolverPatterns {
     static final Pattern FOLLOWUP_ACTIVATE_AND_NEGATE_DAMAGE = Pattern.compile(
         "(?i)Activate\\s+(?:it|them)\\s+and\\s+negate\\s+all\\s+(?:the\\s+)?damage\\s+dealt\\s+to\\s+(?:it|them)\\.?"
     );
+
+    // ---- Gain-control followup patterns -----------------------------------------------
     /**
      * "Activate it/them and gain control of it/them until the end of the turn."
      * Checked before {@link #FOLLOWUP_ACTIVATE} and {@link #FOLLOWUP_GAIN_CONTROL_EOT}
@@ -1716,6 +1720,8 @@ final class ActionResolverPatterns {
     static final Pattern STANDALONE_OPPONENT_GAINS_CONTROL = Pattern.compile(
         "(?i)^Your\\s+opponent\\s+gains?\\s+control\\s+of\\s+(?<name>[A-Z][A-Za-z''\\-\\s]+?)\\.?\\s*$"
     );
+
+    // ---- Cannot-be-chosen followup patterns -----------------------------------------
     /**
      * "It/They gains 'This Forward/Character cannot be chosen by your opponent's [Summons/abilities].'
      * until the end of the turn."  The grant form is semantically identical to a direct EOT shield.
@@ -1885,6 +1891,8 @@ final class ActionResolverPatterns {
         "(?i)(?:it|they)\\s+gains?\\s+['\"]When\\s+this\\s+Forward\\s+deals\\s+battle\\s+damage\\s+to\\s+a\\s+Forward,\\s+break\\s+that\\s+Forward\\.?['\"]" +
         "\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn\\.?"
     );
+
+    // ---- Standalone cannot-be-chosen patterns ---------------------------------------
     /**
      * "Activate all [the] Forwards/Characters you control. They cannot be chosen by
      * [your opponent's] Summons [or abilities] [this turn]."
@@ -3013,6 +3021,15 @@ final class ActionResolverPatterns {
         "(?i)(?<subject>.+?)\\s+gains?\\s+\".+?\\s+cannot\\s+be\\s+blocked\\.?\"" +
         "\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn[.!]?"
     );
+    /**
+     * Matches standalone "Until the end of the turn, &lt;subject&gt; gains +N power [and traits]".
+     * Used when the subject is a specific card name rather than "it"/"they".
+     * <ul>
+     *   <li>Group {@code subject} — card name or pronoun before "gains"</li>
+     *   <li>Group {@code amount}  — numeric power amount</li>
+     *   <li>Group {@code traits}  — optional traits string</li>
+     * </ul>
+     */
     static final Pattern STANDALONE_POWER_BOOST_UNTIL = Pattern.compile(
         "(?i)Until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn\\s*,\\s+" +
         "(?<subject>.+?)\\s+gains?\\s+" +
@@ -3335,6 +3352,8 @@ final class ActionResolverPatterns {
         "(?:\\s+(?<control2>(?:your\\s+)?opponent\\s+controls?|you\\s+control))?" +
         "\\s+loses?\\s+\\+?(?<amount2>\\d+)\\s+[Pp]ower[.!]?"
     );
+
+    // ---- "Select 1 number" patterns -------------------------------------------
     /** Matches the "Select 1 number." opening of an ability that lets the active player pick a cost. */
     static final Pattern SELECT_NUMBER_HEADER = Pattern.compile(
         "(?i)^Select\\s+1\\s+number\\.\\s*"

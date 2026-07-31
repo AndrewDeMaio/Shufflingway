@@ -3,27 +3,10 @@ package shufflingway;
 import static shufflingway.ActionResolverPatterns.*;
 
 import static shufflingway.ActionResolver.*;
-import static shufflingway.ActionResolverBreak.*;
-import static shufflingway.ActionResolverChoose.*;
-import static shufflingway.ActionResolverCost.*;
-import static shufflingway.ActionResolverDamage.*;
-import static shufflingway.ActionResolverHand.*;
-import static shufflingway.ActionResolverPlay.*;
-import static shufflingway.ActionResolverPower.*;
-import static shufflingway.ActionResolverRestriction.*;
-import static shufflingway.ActionResolverSearch.*;
-import static shufflingway.ActionResolverState.*;
 
-import java.util.ArrayList;
 import java.util.EnumSet;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.function.BiConsumer;
 import java.util.function.Consumer;
-import java.util.function.Predicate;
 import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * FieldAbility parsers split out of {@link ActionResolver}.

@@ -1,41 +1,27 @@
 package shufflingway;
 
-import static shufflingway.ActionResolverPatterns.*;
-
-import static shufflingway.ActionResolverGate.*;
-
-import static shufflingway.ActionResolverFieldAbility.*;
-
-import static shufflingway.ActionResolverChoose.*;
-
-import static shufflingway.ActionResolverState.*;
-
-import static shufflingway.ActionResolverRestriction.*;
-
-import static shufflingway.ActionResolverPlay.*;
-
-import static shufflingway.ActionResolverCost.*;
-
-import static shufflingway.ActionResolverHand.*;
-
-import static shufflingway.ActionResolverBreak.*;
-
-import static shufflingway.ActionResolverSearch.*;
-
-import static shufflingway.ActionResolverPower.*;
-
-import static shufflingway.ActionResolverDamage.*;
-
 import java.util.ArrayList;
 import java.util.EnumSet;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+import static shufflingway.ActionResolverBreak.*;
+import static shufflingway.ActionResolverChoose.*;
+import static shufflingway.ActionResolverCost.*;
+import static shufflingway.ActionResolverDamage.*;
+import static shufflingway.ActionResolverFieldAbility.*;
+import static shufflingway.ActionResolverGate.*;
+import static shufflingway.ActionResolverHand.*;
+import static shufflingway.ActionResolverPatterns.*;
+import static shufflingway.ActionResolverPlay.*;
+import static shufflingway.ActionResolverPower.*;
+import static shufflingway.ActionResolverRestriction.*;
+import static shufflingway.ActionResolverSearch.*;
+import static shufflingway.ActionResolverState.*;
 
 /**
  * Parses Action Ability effect text into executable game effects and resolves
@@ -55,97 +41,6 @@ public class ActionResolver {
     // Patterns
     // -------------------------------------------------------------------------
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    /** Matches "deal it/them N damage". */
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    /**
-     * Matches "Remove [CardName] from the game." as a standalone sentence.
-     * Group {@code named} — the card name.  Does NOT match "Remove it/them …" (pronouns).
-     */
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     /**
      * Number of top-of-deck cards {@code effectText} removes from the game (1 for "the top card…",
      * N for "the top N cards…"), or {@code 0} if it has no such removal. Used to gate activation:
@@ -159,179 +54,7 @@ public class ActionResolver {
         return c != null ? Integer.parseInt(c) : 1;
     }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    /**
-     * Matches "At the end of each of your turns, &lt;inner&gt;" — a recurring end-of-turn
-     * field-ability trigger.
-     * <ul>
-     *   <li>Group {@code inner} — the effect text that fires each end phase</li>
-     * </ul>
-     */
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    /**
-     * Matches "reveal the top N cards of your deck. Add 1 Job X [or Card Name Y] [or Job Z ...]
-     * among them to your hand and return the other cards to the bottom of your deck in any order."
-     * Groups: {@code n} (card count); {@code first}/{@code second} each {@code "Job …"} or
-     * {@code "Card Name …"} filter terms. The captured terms are split into a job filter and a
-     * card-name filter at parse time.
-     */
-
-
-
-
-
-    // ---- Damage-shield followup patterns (apply to selected "it/them" targets) --------
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    // ---- Gain-control followup patterns -----------------------------------------------
-
-
-
-
-
-
-    // ---- Cannot-be-chosen followup patterns -----------------------------------------
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    // ---- Standalone cannot-be-chosen patterns ---------------------------------------
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     // ---- Standalone damage-shield patterns (apply globally or to a named card) --------
-
-
-
-
-
 
     /**
      * Returns {@code true} if the effect grants the source card itself immunity to ability/summon
@@ -345,284 +68,10 @@ public class ActionResolver {
         return m.find() && m.group("card").trim().equalsIgnoreCase(source.name());
     }
 
-
-
-
-
-
-
-
-
     /** Returns {@code true} if the effect is "During this turn, your opponent cannot search." */
     public static boolean isOpponentCannotSearchAbility(String effectText) {
         return effectText != null && OPPONENT_CANNOT_SEARCH_THIS_TURN.matcher(effectText).find();
     }
-
-
-
-    /**
-     * Matches "Your opponent discards N card(s) [from his/her/their hand]".
-     * <ul>
-     *   <li>Group 1 — number of cards to discard</li>
-     * </ul>
-     */
-
-
-
-
-
-
-
-
-
-
-
-    /** Matches "select 1 [Forward|Backup|Monster|Character] you control. Put it into the Break Zone." */
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    /**
-     * Matches "Play 1 [elements] [filter] [type] of cost … from your hand onto the field [dull]".
-     * <ul>
-     *   <li>{@code preelems}   — element(s) appearing BEFORE the job/name filter (e.g. "Ice" in "Play 1 Ice Forward")</li>
-     *   <li>Filter alternatives (all optional): {@code f1}/{@code f2} bracket filters,
-     *       {@code cardname} written card name, {@code category}, {@code jobnm}</li>
-     *   <li>{@code targets}    — card type (optional when {@code cardname} is set)</li>
-     *   <li>Cost alternatives (all optional):
-     *       {@code dynfilter} — "equal to or less than the number of X you control";
-     *       {@code cost}/{@code costalt} — numeric cost with optional "less", "more", or a second value</li>
-     *   <li>{@code excludename} — card name to exclude ("other than Card Name X")</li>
-     *   <li>{@code dull}      — present when the card enters the field dulled</li>
-     * </ul>
-     */
-
-
-
-
-
-
-
-    /**
-     * Matches "Search for [up to] 1 [elements] [filter] [elements] [type] [other than Card Name X] [of cost N [or less|more]] and [destination]".
-     * <ul>
-     *   <li>Group {@code bracketname} — {@code [Card Name (name)]} bracket notation (older cards)</li>
-     *   <li>Group {@code bracketjob}  — {@code [Job (name)]} bracket notation</li>
-     *   <li>Group {@code cardname}    — written card name without brackets, e.g. {@code "Cait Sith"}</li>
-     *   <li>Group {@code category}   — category substring, e.g. {@code "XV"}</li>
-     *   <li>Group {@code jobnmor}    — job part of {@code "Job X or Card Name Y"} (OR logic with {@code cnameor})</li>
-     *   <li>Group {@code cnameor}    — card name part of {@code "Job X or Card Name Y"}</li>
-     *   <li>Group {@code jobnm}      — written job name without brackets, e.g. {@code "King"}</li>
-     *   <li>Group {@code preelems}   — element(s) appearing BEFORE the job/name filter, e.g. {@code "Fire"} in {@code "Search for 1 Fire Job Knight"}</li>
-     *   <li>Group {@code elements}   — element(s) appearing AFTER the job/name filter; {@code preelems} takes priority when both could apply</li>
-     *   <li>Group {@code targets}    — card type word; absent or {@code "card"} means any type</li>
-     *   <li>Group {@code withwarp}   — present for {@code "card with Warp"}; restricts results to cards with the Warp trait</li>
-     *   <li>Group {@code excludename}— card name to exclude, from {@code "other than Card Name X"}</li>
-     *   <li>Group {@code cost}       — optional cost number</li>
-     *   <li>Group {@code costcmp}    — optional {@code "less"} or {@code "more"}</li>
-     *   <li>Group {@code destination}— full destination phrase</li>
-     * </ul>
-     */
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    /**
-     * Matches "Until the end of the turn, it/they gains/gain +N power [and traits]".
-     * <ul>
-     *   <li>Group 1 — numeric power amount</li>
-     *   <li>Group 2 — optional traits string</li>
-     * </ul>
-     */
-
-
-
-
-
-
-
-
-
-
-
-    /**
-     * Matches standalone "Until the end of the turn, &lt;subject&gt; gains +N power [and traits]".
-     * Used when the subject is a specific card name rather than "it"/"they".
-     * <ul>
-     *   <li>Group {@code subject} — card name or pronoun before "gains"</li>
-     *   <li>Group {@code amount}  — numeric power amount</li>
-     *   <li>Group {@code traits}  — optional traits string</li>
-     * </ul>
-     */
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    /**
-     * Matches "Draw N card(s)[, then discard M card(s)]".
-     * <ul>
-     *   <li>Group 1 — number of cards to draw</li>
-     *   <li>Group 2 — optional discard count afterward (absent = draw only)</li>
-     * </ul>
-     */
-    // ---- "Select 1 number" patterns -------------------------------------------
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     // -------------------------------------------------------------------------
     // Public API
@@ -1645,8 +1094,6 @@ public class ActionResolver {
         return null;
     }
 
-
-
     /** Returns the name of the first pattern that matches {@code effectText}, or {@code null}. */
     public static String matchedPatternName(String effectText, CardData source) {
         // Mirrors parse(): the pay-or-else gate is reported ahead of its consequence's own pattern.
@@ -2566,15 +2013,6 @@ public class ActionResolver {
      * subsequent indices.
      */
 
-
-
-
-
-
-
-
-
-
     private static Consumer<GameContext> tryParseDealNForEachJobOrNameToOppForwards(String text) {
         Matcher m = DEAL_N_FOR_EACH_JOB_OR_NAME_TO_OPP_FORWARDS.matcher(text.trim());
         if (!m.matches()) return null;
@@ -2598,7 +2036,6 @@ public class ActionResolver {
         };
     }
 
-
     private static Consumer<GameContext> tryParseSelfGainsWhenAttacksEOT(String text, CardData source) {
         if (source == null) return null;
         Matcher m = SELF_GAINS_WHEN_ATTACKS_EOT.matcher(text);
@@ -2611,10 +2048,6 @@ public class ActionResolver {
             ctx.addTempAttackTrigger(source, innerEffect);
         };
     }
-
-
-
-
 
     static int halfPowerDamage(int power) {
         return (int)(Math.ceil(power / 2.0 / 1000) * 1000);
@@ -2924,7 +2357,6 @@ public class ActionResolver {
     // Choose-character effect parser
     // -------------------------------------------------------------------------
 
-
     // -------------------------------------------------------------------------
     // Former/Latter dual-selection parser
     // -------------------------------------------------------------------------
@@ -3076,13 +2508,6 @@ public class ActionResolver {
         return null;
     }
 
-
-
-
-
-
-
-
     /**
      * True when a "choose …" effect's followup only benefits the cards it picks, so an AI
      * controller should aim it at its own side.  A deliberately conservative heuristic: it must
@@ -3107,8 +2532,6 @@ public class ActionResolver {
             fn.accept(ctx);
         };
     }
-
-
 
     /** Returns targets belonging to {@code isP1} sorted by descending index (safe for list removal). */
     static java.util.stream.Stream<ForwardTarget> sortedByIdxDesc(
@@ -3177,7 +2600,6 @@ public class ActionResolver {
         return sb.toString();
     }
 
-    /** Returns a human-readable list of trait names, e.g. {@code "First Strike and Brave"}, or {@code ""}. */
     /**
      * Replaces literal periods in {@code source}'s name with the middle-dot character (·) so that
      * lazy regex quantifiers inside CHOOSE_CHARACTER_PATTERN do not mistake a mid-name period-space
@@ -3251,8 +2673,6 @@ public class ActionResolver {
         return s;
     }
 
-
-
     static String traitNamesOnly(EnumSet<CardData.Trait> traits) {
         List<String> names = new ArrayList<>();
         if (traits.contains(CardData.Trait.HASTE))        names.add("Haste");
@@ -3278,22 +2698,6 @@ public class ActionResolver {
     }
 
     /**
-     * Parses "Until the end of the turn, &lt;cardName&gt; gains +N power [and traits]" as a
-     * standalone self-buff.  The subject must match {@code source.name()} (case-insensitive);
-     * pronoun subjects ("it", "they") are ignored here — they are handled as Choose followups.
-     */
-
-
-
-
-
-
-
-
-
-
-
-    /**
      * Builds a log suffix like " — Lose 1000 power, Haste, and First Strike until end of turn".
      * Power and traits are listed in order; either may be absent.
      */
@@ -3315,16 +2719,7 @@ public class ActionResolver {
         return sb.append(" until end of turn").toString();
     }
 
-
-
-
-
-
-
-
     // ---- Granted field abilities (self "gains \"…\" until the end of the turn") --------------------
-
-
 
     /**
      * Routes a quoted field-ability text (the contents of {@code "…"} in a "gains" grant) to the
@@ -3363,7 +2758,6 @@ public class ActionResolver {
         return null;
     }
 
-
     /**
      * Returns the highest card cost whose EX Burst {@code text} suppresses when the damage is
      * credited to {@code sourceName}, or {@code null} when {@code text} is not a source-scoped
@@ -3378,9 +2772,6 @@ public class ActionResolver {
         String cost = m.group("cost1") != null ? m.group("cost1") : m.group("cost2");
         return cost == null ? Integer.MAX_VALUE : Integer.parseInt(cost);
     }
-
-
-
 
     /**
      * Builds the permanent counterpart of {@link #grantedSelfFieldAbilityEffect} for one quoted
@@ -3400,27 +2791,6 @@ public class ActionResolver {
         return ctx -> ctx.grantSelfAutoAbilityPermanently(source, granted);
     }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     /**
      * Parses "Your opponent gains control of [CardName]." — permanently transfers the source
      * card itself to its controller's opponent.
@@ -3436,15 +2806,6 @@ public class ActionResolver {
         };
     }
 
-
-
-
-
-
-
-
-
-
     /**
      * Returns {@code true} if {@code text} is the Doublecast free-Summons field effect.
      * Used by the AI to gate activation on actually having a Summon chain to exploit.
@@ -3452,10 +2813,6 @@ public class ActionResolver {
     static boolean isDoublecastFreeSummonsEffect(String text) {
         return DOUBLECAST_FREE_SUMMONS_PATTERN.matcher(text.trim()).matches();
     }
-
-
-
-
 
     private static Consumer<GameContext> tryParseEndOfNextTurnIfCardOnFieldOppLoses(String text) {
         Matcher m = END_OF_NEXT_TURN_IF_CARD_ON_FIELD_OPP_LOSES.matcher(text);
@@ -3473,16 +2830,6 @@ public class ActionResolver {
             });
         };
     }
-
-
-
-
-
-
-
-
-
-
 
     /**
      * Tallies a run of 《…》 cost tokens into the {cp, crystals} pair plus a single element, the
@@ -3511,7 +2858,6 @@ public class ActionResolver {
         return new Object[]{ cp, element, crystals };
     }
 
-
     /**
      * Parses "X. When/If you do so, Y." into a sequence: resolve X, then resolve Y only if
      * X made progress (see {@link GameContext#effectMadeProgress()}). Returns {@code null} if
@@ -3530,20 +2876,6 @@ public class ActionResolver {
         };
     }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     /**
      * Returns {@code true} when a card whose elements are {@code discarded} counts as a card "of
      * {@code elem} Element". Every element of a multi-element card qualifies it independently.
@@ -3553,13 +2885,6 @@ public class ActionResolver {
             if (e.trim().equalsIgnoreCase(elem)) return true;
         return false;
     }
-
-
-
-
-
-
-
 
     /**
      * One branch of a "discard conditional element" ability, e.g. {@code element="Fire"},
@@ -3596,20 +2921,6 @@ public class ActionResolver {
         };
     }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     /**
      * A field ability that continuously grants a quoted ability to Forwards while its own card is
      * on the field (Vayne 9-022L).
@@ -3620,10 +2931,6 @@ public class ActionResolver {
      */
     record ForwardAbilityGrant(boolean affectsOpponent, String abilityText) {}
 
-
-
-
-
     /**
      * True when {@code effectText} is an "if you don't pay 《…》" gate. Such text carries its own
      * pay-or-decline choice, so callers must not also treat a printed "you may" as an offer to skip
@@ -3632,19 +2939,6 @@ public class ActionResolver {
     public static boolean isPayOrElseGate(String effectText) {
         return effectText != null && IF_NOT_PAY_OR_ELSE.matcher(effectText.trim()).matches();
     }
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     /**
      * Returns the card type (e.g. "Summon") when the effect text begins with a
@@ -3658,9 +2952,6 @@ public class ActionResolver {
         return m.group("type");
     }
 
-
-
-
     /**
      * Returns the discard count when the effect text begins with "discard N cards",
      * or -1 if it doesn't match.
@@ -3672,26 +2963,6 @@ public class ActionResolver {
         if (!m.find()) return -1;
         return Integer.parseInt(m.group("count"));
     }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     /** Parses "Remove all the cards in your opponent's Break Zone from the game." */
     private static Consumer<GameContext> tryParseRemoveAllOppBzFromGame(String text) {
@@ -3734,7 +3005,6 @@ public class ActionResolver {
         };
     }
 
-
     /**
      * True for wording that points back at the card carrying the ability rather than naming it —
      * "this Forward", "this Character". Granted abilities are written this way, since the text is
@@ -3743,10 +3013,6 @@ public class ActionResolver {
     static boolean isSelfReference(String name) {
         return name.matches("(?i)this\\s+(?:Forward|Backup|Monster|Character|card)");
     }
-
-
-
-
 
     private static Consumer<GameContext> tryParseYouMayPutSelfToBZWhenDoSo(String text, CardData source) {
         if (source == null) return null;
@@ -3759,32 +3025,9 @@ public class ActionResolver {
         return ctx -> ctx.mayBreakSourceWhenDoSo(source, followup);
     }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     // -------------------------------------------------------------------------
     // Delayed ("at the end of this turn") and recurring end-of-turn field parsers
     // -------------------------------------------------------------------------
-
-
-
-
-
 
     /**
      * Parses "At the end of this turn, &lt;effect&gt;" — wraps any supported mass-field
@@ -3805,11 +3048,6 @@ public class ActionResolver {
     // -------------------------------------------------------------------------
     // All-field-cards effect parser
     // -------------------------------------------------------------------------
-
-
-
-
-
 
     /**
      * Parses "Choose 1 Summon or auto-ability. Cancel its effect." (Y'shtola).
@@ -3842,10 +3080,6 @@ public class ActionResolver {
         };
     }
 
-
-
-
-
     /**
      * True if {@code text} is a standalone "If your opponent doesn't pay 《N》, [target action]."
      * whose action is a recognised target action — the reactive "enters opponent's field not from
@@ -3855,9 +3089,6 @@ public class ActionResolver {
     static boolean isIfOppNotPayAction(String text) {
         return tryParseIfOppNotPayAction(text) != null;
     }
-
-
-
 
     /**
      * Returns {@code true} if {@code text} is one of the reactive "chosen by opponent's Summons or
@@ -3873,7 +3104,6 @@ public class ActionResolver {
             || tryParseCancelChosenRevealTopIfType(text)      != null
             || tryParseCancelChosenMillTopIfNotType(text)     != null;
     }
-
 
     /**
      * Converts an ability-type string captured by {@link #CANCEL_ABILITY_ON_STACK} or
@@ -3900,32 +3130,6 @@ public class ActionResolver {
                  || (wantsAction  && e.isActionAbility());
     }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     /**
      * Parses "Your opponent puts the top N card(s) of his/her deck into the Break Zone
      * [. Draw M card(s)]".
@@ -3948,7 +3152,6 @@ public class ActionResolver {
         };
     }
 
-
     /** Parses "Put the top N card(s) of your deck into the Break Zone." */
     private static Consumer<GameContext> tryParseSelfMill(String text) {
         Matcher m = SELF_MILL_PATTERN.matcher(text);
@@ -3962,17 +3165,6 @@ public class ActionResolver {
             ctx.millCards(mill);
         };
     }
-
-
-
-
-
-
-
-
-
-
-
 
     /**
      * Builds a single {@link RevealClause} from a parsed condition string and
@@ -4116,8 +3308,6 @@ public class ActionResolver {
         return null;
     }
 
-
-
     /**
      * Returns {@code true} if the card has a permanent field ability of the form
      * "[CardName] cannot become dull by your opponent's Summons or abilities."
@@ -4129,9 +3319,6 @@ public class ActionResolver {
         }
         return false;
     }
-
-
-
 
     /**
      * Returns {@code true} if the card has a permanent field ability of the form
@@ -4169,9 +3356,6 @@ public class ActionResolver {
         return false;
     }
 
-
-
-
     /**
      * Maps a quoted granted-ability string to the trait that enforces it, or {@code null}
      * when the quote is not a recognized protection grant.
@@ -4199,14 +3383,6 @@ public class ActionResolver {
         return true;
     }
 
-
-
-
-
-    /**
-     * Returns {@code true} if the given card has a "Players cannot cast Summons." field ability,
-     * meaning all Summon casting (hand or break zone) is prohibited while it is on the field.
-     */
     /** Returns {@code true} if the effect text matches a "cancel 1 auto-ability" summon effect. */
     public static boolean cancelsAutoAbility(String effectText) {
         return CANCEL_AUTO_ABILITY_DAMAGE_IF_FORWARD.matcher(effectText.trim()).find();
@@ -4252,21 +3428,6 @@ public class ActionResolver {
         return false;
     }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     static String cap(String s) {
         if (s == null || s.isEmpty()) return s;
         return Character.toUpperCase(s.charAt(0)) + s.substring(1).toLowerCase();
@@ -4296,9 +3457,6 @@ public class ActionResolver {
         };
     }
 
-
-
-
     static java.util.Set<String> parseExcludeElements(String excludeStr) {
         if (excludeStr == null || excludeStr.isBlank()) return java.util.Collections.emptySet();
         java.util.Set<String> out = new java.util.LinkedHashSet<>();
@@ -4306,14 +3464,6 @@ public class ActionResolver {
             out.add(part.trim());
         return out;
     }
-
-
-
-
-
-
-
-
 
     /**
      * Parses Gogo's "Mimic" — delegates to {@link GameContext#useSpecialAbilityUsedThisTurn}, which
@@ -4331,18 +3481,6 @@ public class ActionResolver {
     static boolean isUseSpecialAbilityUsedThisTurnEffect(String text) {
         return text != null && USE_SPECIAL_ABILITY_USED_THIS_TURN.matcher(text.trim()).matches();
     }
-
-
-
-
-
-
-
-
-
-
-
-
 
     /**
      * True when a captured {@code verb} group is the "Reveal" wording rather than "Look at".
@@ -4362,9 +3500,6 @@ public class ActionResolver {
                 ? "LookTopDeckAddToHandRestBottom + AddedCardExBurst"
                 : "LookTopDeckAddToHandRestBottom";
     }
-
-
-
 
     /**
      * Chains a trailing "Then, [effect]" sentence onto an already-parsed primary effect.
@@ -4399,15 +3534,6 @@ public class ActionResolver {
         return then.matches() ? then.group("rest").trim() : null;
     }
 
-
-
-
-
-
-
-
-
-
     /** Parses Anima 19-123H's "remove the top card… Then, if there are N or more removed…" compound. */
     private static Consumer<GameContext> tryParseRemoveTopThenPileThreshold(String text, CardData source) {
         if (source == null) return null;
@@ -4435,9 +3561,6 @@ public class ActionResolver {
                     true, false, null, -1, null, -1, null, null);
         };
     }
-
-
-
 
     private static Consumer<GameContext> tryParseAllMonstersTemporaryForward(String text) {
         Matcher m = ALL_MONSTERS_BECOME_FORWARDS_UNTIL_EOT_PATTERN.matcher(text.trim());
@@ -4571,7 +3694,6 @@ public class ActionResolver {
                 || t.contains("all forwards you control");
     }
 
-
     /**
      * Returns {@code true} when {@code text}'s only benefit is shielding a Forward its controller
      * controls from the opponent's interaction (Krile (XIV) 6-071H: "Choose 1 Forward you control.
@@ -4592,16 +3714,6 @@ public class ActionResolver {
         return OWN_FORWARD_PROTECTION.matcher(text).find();
     }
 
-
-
-
-
-
-
-
-
-
-
     private static Consumer<GameContext> tryParseExtraTurnThenLose(String text) {
         if (!EXTRA_TURN_THEN_LOSE.matcher(text).find()) return null;
         return ctx -> {
@@ -4609,7 +3721,6 @@ public class ActionResolver {
             ctx.takeExtraTurnThenLose();
         };
     }
-
 
     /** Parses "[name] can attack once more this turn." */
     private static Consumer<GameContext> tryParseAttackOnceMore(String text) {
@@ -4628,7 +3739,6 @@ public class ActionResolver {
         return ctx -> ctx.limitOpponentAttackDeclarationsThisTurn(1);
     }
 
-
     /**
      * Parses "Remove &lt;cardName&gt; from [the] Battle." — removes the named card from the current
      * combat before damage resolves (Escape-type ability).
@@ -4643,14 +3753,6 @@ public class ActionResolver {
         };
     }
 
-
-
-
-    /**
-     * Parses "Search for 1 [filter] [elements] [type] [other than Card Name X] [of cost N] and [destination]".
-     * Supported destinations: "add it to your hand", "play it onto the field",
-     * "put it under the top card of your/its owner's deck".
-     */
     /**
      * Turns a printed card-name list into the pipe-separated form the filters use downstream:
      * "Alisaie or Card Name Alphinaud" → {@code "Alisaie|Alphinaud"}. One separator covers every
@@ -4661,16 +3763,6 @@ public class ActionResolver {
                 printedNames.trim().split("(?i)\\s*,?\\s*(?:(?:and/)?or\\s+)?Card\\s+Name\\s+"));
     }
 
-
-
-
-
-
-
-    /**
-     * Routes target selection to either the field or a Break Zone depending on
-     * whether {@code zone} is non-null, and forwards all filter parameters.
-     */
     /**
      * Returns the cost value that appears most frequently among P1's current Forwards.
      * Used by the opponent AI in dual-number selection to target the ability user's cards.
@@ -4685,8 +3777,6 @@ public class ActionResolver {
                 .map(java.util.Map.Entry::getKey)
                 .orElse(0);
     }
-
-
 
     /**
      * Prompts the activating player to choose targets for a "Choose N [targets]…" effect

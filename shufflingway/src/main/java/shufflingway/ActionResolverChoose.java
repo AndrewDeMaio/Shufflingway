@@ -3,15 +3,6 @@ package shufflingway;
 import static shufflingway.ActionResolverPatterns.*;
 
 import static shufflingway.ActionResolver.*;
-import static shufflingway.ActionResolverBreak.*;
-import static shufflingway.ActionResolverCost.*;
-import static shufflingway.ActionResolverDamage.*;
-import static shufflingway.ActionResolverHand.*;
-import static shufflingway.ActionResolverPlay.*;
-import static shufflingway.ActionResolverPower.*;
-import static shufflingway.ActionResolverRestriction.*;
-import static shufflingway.ActionResolverSearch.*;
-import static shufflingway.ActionResolverState.*;
 
 import java.util.ArrayList;
 import java.util.EnumSet;
