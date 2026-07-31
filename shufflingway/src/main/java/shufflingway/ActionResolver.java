@@ -5,6 +5,7 @@ import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
 import java.util.regex.Matcher;
@@ -7519,7 +7520,7 @@ public class ActionResolver {
      * Handles: Freeze, Dull+Freeze, Break, Return-to-hand (+draw), Reduce power,
      * and "Deal N damage for each [Category X] Type you control".
      */
-    private static java.util.function.BiConsumer<GameContext, List<ForwardTarget>>
+    private static BiConsumer<GameContext, List<ForwardTarget>>
             parseTargetAction(String text, int xValue) {
         String t = text.trim();
 
@@ -7864,7 +7865,7 @@ public class ActionResolver {
                 fromBz, opponentBz);
     }
 
-    private static java.util.function.BiConsumer<GameContext, List<ForwardTarget>>
+    private static BiConsumer<GameContext, List<ForwardTarget>>
             parseFormerLatterGroupAction(String text) {
         String t = text.trim();
 
@@ -8017,13 +8018,13 @@ public class ActionResolver {
                         .replaceAll("(?i)\\bthe\\s+former\\b", "it").replaceAll("\\.$", "").trim();
                 String kLtrEff = effects.substring(kAndIdx + 5).trim()
                         .replaceAll("(?i)\\bthe\\s+latter\\b", "it").replaceAll("\\.$", "").trim();
-                java.util.function.BiConsumer<GameContext, List<ForwardTarget>> kFmrAct =
+                BiConsumer<GameContext, List<ForwardTarget>> kFmrAct =
                         parseFormerLatterGroupAction(kFmrEff);
-                java.util.function.BiConsumer<GameContext, List<ForwardTarget>> kLtrAct =
+                BiConsumer<GameContext, List<ForwardTarget>> kLtrAct =
                         parseFormerLatterGroupAction(kLtrEff);
                 if (kFmrAct != null && kLtrAct != null) {
                     final TargetDesc kTd1 = td1;
-                    final java.util.function.BiConsumer<GameContext, List<ForwardTarget>>
+                    final BiConsumer<GameContext, List<ForwardTarget>>
                             fkFmr = kFmrAct, fkLtr = kLtrAct;
                     return ctx -> {
                         ctx.logEntry(kLabel);
@@ -8410,14 +8411,14 @@ public class ActionResolver {
         String formerEff = formerRaw.replaceAll("(?i)\\bthe\\s+former\\b", "it").replaceAll("\\.$", "").trim();
         String latterEff = latterRaw.replaceAll("(?i)\\bthe\\s+latter\\b", "it").replaceAll("\\.$", "").trim();
 
-        java.util.function.BiConsumer<GameContext, List<ForwardTarget>> formerAction =
+        BiConsumer<GameContext, List<ForwardTarget>> formerAction =
                 parseFormerLatterGroupAction(formerEff);
-        java.util.function.BiConsumer<GameContext, List<ForwardTarget>> latterAction =
+        BiConsumer<GameContext, List<ForwardTarget>> latterAction =
                 parseFormerLatterGroupAction(latterEff);
         if (formerAction == null || latterAction == null) return null;
 
-        java.util.function.BiConsumer<GameContext, List<ForwardTarget>> fFormerAction = formerAction;
-        java.util.function.BiConsumer<GameContext, List<ForwardTarget>> fLatterAction = latterAction;
+        BiConsumer<GameContext, List<ForwardTarget>> fFormerAction = formerAction;
+        BiConsumer<GameContext, List<ForwardTarget>> fLatterAction = latterAction;
 
         return ctx -> {
             ctx.logEntry(label);
@@ -8509,7 +8510,7 @@ public class ActionResolver {
         boolean selfOnly     = control != null &&  control.toLowerCase().contains("you control");
 
         String followup = m.group("followup").trim();
-        java.util.function.BiConsumer<GameContext, List<ForwardTarget>> action = parseTargetAction(followup, 0);
+        BiConsumer<GameContext, List<ForwardTarget>> action = parseTargetAction(followup, 0);
         if (action == null) return null;
 
         String label = "Choose " + count1 + " " + m.group("type1") + " and " + count2 + " " + m.group("type2");
@@ -8605,7 +8606,7 @@ public class ActionResolver {
             };
         }
 
-        java.util.function.BiConsumer<GameContext, List<ForwardTarget>> action = parseTargetAction(followup, 0);
+        BiConsumer<GameContext, List<ForwardTarget>> action = parseTargetAction(followup, 0);
         if (action == null) return null;
 
         return ctx -> {
@@ -8933,7 +8934,7 @@ public class ActionResolver {
             if (youMayPayM.matches()) {
                 String cpElem    = youMayPayM.group("element").trim();
                 String cpEffText = youMayPayM.group("effect").trim();
-                java.util.function.BiConsumer<GameContext, List<ForwardTarget>> cpAction =
+                BiConsumer<GameContext, List<ForwardTarget>> cpAction =
                         parseTargetAction(cpEffText, xValue);
                 if (cpAction != null) {
                     return ctx -> {
@@ -8955,7 +8956,7 @@ public class ActionResolver {
             if (notPayM.matches()) {
                 int notPayCost = Integer.parseInt(notPayM.group("cost").trim());
                 String notPayEffText = notPayM.group("effect").trim();
-                java.util.function.BiConsumer<GameContext, List<ForwardTarget>> notPayAction =
+                BiConsumer<GameContext, List<ForwardTarget>> notPayAction =
                         parseTargetAction(notPayEffText, xValue);
                 if (notPayAction != null) {
                     return ctx -> {
@@ -8978,14 +8979,14 @@ public class ActionResolver {
             Matcher perCpM = FOLLOWUP_THEN_PAY_PER_TARGET_COST_OR_BREAK.matcher(followup);
             if (perCpM.matches()) {
                 String primaryText = perCpM.group("primary").trim();
-                java.util.function.BiConsumer<GameContext, List<ForwardTarget>> primaryAction =
+                BiConsumer<GameContext, List<ForwardTarget>> primaryAction =
                         parseTargetAction(primaryText, xValue);
                 // "You gain control of it" is not one of parseTargetAction's verbs, and it is the
                 // primary the only printed card (Ultimecia 27-092H) uses.
                 if (primaryAction == null && FOLLOWUP_GAIN_CONTROL.matcher(primaryText).find())
                     primaryAction = (c2, ts2) -> ts2.forEach(t -> c2.gainControlOfForward(t, "permanent", false));
                 if (primaryAction != null) {
-                    final java.util.function.BiConsumer<GameContext, List<ForwardTarget>> fPrimary = primaryAction;
+                    final BiConsumer<GameContext, List<ForwardTarget>> fPrimary = primaryAction;
                     return ctx -> {
                         ctx.logEntry(choosePrefix + " — " + primaryText
                                 + ", then pay 《1》 per CP of its cost or put it into the Break Zone");
@@ -9118,9 +9119,9 @@ public class ActionResolver {
         if (exBurstM.find()) {
             String primaryText = exBurstM.group("primary").trim();
             String altText     = exBurstM.group("alt").trim();
-            java.util.function.BiConsumer<GameContext, List<ForwardTarget>> primaryAction =
+            BiConsumer<GameContext, List<ForwardTarget>> primaryAction =
                     parseTargetAction(primaryText, xValue);
-            java.util.function.BiConsumer<GameContext, List<ForwardTarget>> altAction =
+            BiConsumer<GameContext, List<ForwardTarget>> altAction =
                     parseTargetAction(altText, xValue);
             if (primaryAction != null && altAction != null) {
                 return ctx -> {
@@ -9140,8 +9141,8 @@ public class ActionResolver {
             int    threshold  = Integer.parseInt(dblHandM.group("n"));
             String eff1Text   = dblHandM.group("effect1").trim();
             String eff2Text   = dblHandM.group("effect2").trim();
-            java.util.function.BiConsumer<GameContext, List<ForwardTarget>> action1 = parseTargetAction(eff1Text, xValue);
-            java.util.function.BiConsumer<GameContext, List<ForwardTarget>> action2 = parseTargetAction(eff2Text, xValue);
+            BiConsumer<GameContext, List<ForwardTarget>> action1 = parseTargetAction(eff1Text, xValue);
+            BiConsumer<GameContext, List<ForwardTarget>> action2 = parseTargetAction(eff2Text, xValue);
             if (action1 != null && action2 != null) {
                 return ctx -> {
                     ctx.logEntry(choosePrefix + " — hand condition (≤" + threshold + "/0)");
@@ -9162,7 +9163,7 @@ public class ActionResolver {
             String nStr      = handM.group("n");
             int    threshold = nStr != null ? Integer.parseInt(nStr) : 0;
             String effText   = handM.group("effect").trim();
-            java.util.function.BiConsumer<GameContext, List<ForwardTarget>> action = parseTargetAction(effText, xValue);
+            BiConsumer<GameContext, List<ForwardTarget>> action = parseTargetAction(effText, xValue);
             if (action != null) {
                 return ctx -> {
                     ctx.logEntry(choosePrefix + " — hand condition");
@@ -9428,7 +9429,7 @@ public class ActionResolver {
         Matcher selfFieldActionM = FOLLOWUP_IF_SELF_CONTROLS_N_ELEMENT_TYPE_ACTION.matcher(primaryFollowup);
         if (selfFieldActionM.matches()) {
             String actionText = selfFieldActionM.group("action").trim();
-            java.util.function.BiConsumer<GameContext, List<ForwardTarget>> condAction =
+            BiConsumer<GameContext, List<ForwardTarget>> condAction =
                     parseTargetAction(actionText, xValue);
             if (condAction != null) {
                 int    minCount    = Integer.parseInt(selfFieldActionM.group("count"));
@@ -14312,7 +14313,7 @@ public class ActionResolver {
         if (!m.find()) return null;
         int cost = Integer.parseInt(m.group("cost"));
         String effText = m.group("effect").trim();
-        java.util.function.BiConsumer<GameContext, List<ForwardTarget>> action = parseTargetAction(effText, 0);
+        BiConsumer<GameContext, List<ForwardTarget>> action = parseTargetAction(effText, 0);
         if (action == null) return null;
         return ctx -> {
             List<ForwardTarget> ts = ctx.consumePreloadedTargets();

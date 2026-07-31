@@ -42,7 +42,6 @@ import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
-import java.util.function.Predicate;
 import java.util.regex.Matcher;
 import java.util.stream.Collectors;
 
@@ -9681,6 +9680,23 @@ public class MainWindow {
 		monsterInner.setOpaque(false);
 		if (isP1) p1MonsterPanel = monsterInner;
 		else      p2MonsterPanel = monsterInner;
+
+		// Seat P2's cards against the centre-facing edge of the zone.
+		//
+		// The zone is FORWARD_ZONE_H tall but a card is only CARD_H, and FlowLayout packs its
+		// single row against the top of the container. P1's zone is the NORTH child of the bottom
+		// band, so its top edge faces the centre and top-packed cards already sit against it.
+		// P2's zone is the SOUTH child of the top band, so its *bottom* edge faces the centre and
+		// the spare height lands between P2's cards and the centre line — seating them further out
+		// than P1's by exactly that amount. Pushing P2's rows down by the spare height mirrors P1.
+		//
+		// The overridden getPreferredSize() above ignores insets, so this shifts the rows without
+		// changing the zone's height.
+		if (!isP1) {
+			int seat = FORWARD_ZONE_H - CARD_H;
+			forwardInner.setBorder(BorderFactory.createEmptyBorder(seat, 0, 0, 0));
+			monsterInner.setBorder(BorderFactory.createEmptyBorder(seat, 0, 0, 0));
+		}
 
 		// Monster panel sits at the bottom of the EAST area for "lower-right" appearance
 		JPanel monsterContainer = new JPanel(new BorderLayout());
