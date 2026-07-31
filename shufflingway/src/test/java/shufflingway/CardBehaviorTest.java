@@ -5550,6 +5550,87 @@ public class CardBehaviorTest {
     private static final String DRAGOON_ETF_TEXT =
             "choose 1 Forward. It gains First Strike until the end of the turn.";
 
+    // =========================================================================================
+    // Titania 13-132S: "You can only cast Titania if you have a Forward, Backup, Monster and a
+    // Summon in your Break Zone."  castRestrictionMet only ever read P1's zones, and the CPU's
+    // planner never called it at all — so P2 could cast Titania (and every other restricted card)
+    // with an empty Break Zone, while P1 was correctly held to the condition.
+    // =========================================================================================
+
+    private static final String TITANIA_TEXT =
+            "You can only cast Titania if you have a Forward, Backup, Monster and a Summon in your "
+            + "Break Zone (before paying the cost for Titania).[[br]]When Titania enters the field, "
+            + "choose up to 2 Characters opponent controls. Dull them and Freeze them.";
+
+    private static CardData makeTitania() {
+        return makeTraitCard("Titania", "Water", "Forward", TITANIA_TEXT);
+    }
+
+    /** Fills {@code bz} with one card of each named type. */
+    private static void stockBreakZone(List<CardData> bz, String... types) {
+        for (String t : types) bz.add(makeTraitCard("BZ " + t, "Fire", t, ""));
+    }
+
+    @Test
+    void titaniaBreakZoneRequirementIsReadFromTheCastersOwnZones() {
+        MainWindow mw = new MainWindow();
+        CardData titania = makeTitania();
+
+        CastRestriction cr = titania.castRestriction();
+        assertNotNull(cr);
+        assertEquals(Set.of("Forward", "Backup", "Monster", "Summon"), cr.requiredBZTypes());
+
+        // Neither player qualifies on an empty board.
+        assertFalse(mw.castRestrictionMet(titania, true));
+        assertFalse(mw.castRestrictionMet(titania, false));
+
+        // Stocking P1's Break Zone must not let P2 cast it — the bug was reading P1's zones
+        // regardless of who was casting.
+        stockBreakZone(mw.gameState.getP1BreakZone(), "Forward", "Backup", "Monster", "Summon");
+        assertTrue(mw.castRestrictionMet(titania, true));
+        assertFalse(mw.castRestrictionMet(titania, false),
+                "P2's requirement is P2's Break Zone, not P1's");
+
+        // P2 with three of the four types still falls short — the reported case was a missing Monster.
+        stockBreakZone(mw.gameState.getP2BreakZone(), "Forward", "Backup", "Summon");
+        assertFalse(mw.castRestrictionMet(titania, false), "no Monster in P2's Break Zone");
+
+        stockBreakZone(mw.gameState.getP2BreakZone(), "Monster");
+        assertTrue(mw.castRestrictionMet(titania, false));
+    }
+
+    @Test
+    void turnRelativeCastRestrictionsAreRelativeToTheCaster() {
+        MainWindow mw = new MainWindow();
+        // Gogo 27-099H — "You can only cast Gogo during your opponent's turn."
+        CardData gogo = makeTraitCard("Gogo", "Water", "Forward", GOGO_BACK_ATTACK_TEXT);
+
+        advanceTo(mw, GameState.Player.P1, GameState.GamePhase.MAIN_1);
+        assertFalse(mw.castRestrictionMet(gogo, true),  "P1 may not cast it on P1's own turn");
+        assertTrue(mw.castRestrictionMet(gogo, false),  "but P2 may, since it is P2's opponent's turn");
+
+        advanceTo(mw, GameState.Player.P2, GameState.GamePhase.MAIN_1);
+        assertTrue(mw.castRestrictionMet(gogo, true));
+        assertFalse(mw.castRestrictionMet(gogo, false));
+    }
+
+    @Test
+    void theCpuWillNotPlanACastItCannotLegallyMake() {
+        MainWindow mw = new MainWindow();
+        CardData titania = makeTitania();
+        mw.gameState.getP2Hand().add(titania);
+        // Enough CP that affordability is never what blocks the plan.
+        for (String e : ActionResolver.ELEMENT_NAMES) mw.gameState.addP2Cp(e, 10);
+
+        ComputerPlayer cpu = new ComputerPlayer(mw);
+        assertFalse(cpu.hasLegalHandCast(),
+                "P2's Break Zone is empty, so Titania is not a legal cast");
+
+        stockBreakZone(mw.gameState.getP2BreakZone(), "Forward", "Backup", "Monster", "Summon");
+        assertTrue(cpu.hasLegalHandCast(),
+                "with all four types in the Break Zone the CPU may plan it");
+    }
+
     @Test
     void cannotBeBrokenGetsATraitTabOnTheField() {
         // The tab feed is data-driven: MainWindow filters Trait.values() through hasGlyph, so a

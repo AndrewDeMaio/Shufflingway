@@ -668,6 +668,7 @@ class ComputerPlayer {
 			if (!card.multicard() && mw.p2HasCharacterNameOnField(card.name())) continue;
 			if (card.isLightOrDark() && p2HasLD) continue;
 			if (card.isBackup() && !mw.p2HasAvailableBackupSlot()) continue;
+			if (!mw.castRestrictionMet(card, false)) continue;
 			// Count unspent LB cards available as payment (excluding this card)
 			List<Integer> available = new ArrayList<>();
 			for (int j = 0; j < lbDeck.size(); j++) {
@@ -700,6 +701,14 @@ class ComputerPlayer {
 			Map<Integer, String>   discardElements        // hand idx → element of CP contributed
 	) {}
 
+	/**
+	 * Whether P2 currently has any legal hand-cast available. Exposed for tests, which need to
+	 * assert on the planner's legality filtering without naming the private plan record.
+	 */
+	boolean hasLegalHandCast() {
+		return findPlayPlan() != null;
+	}
+
 	private P2Plan findPlayPlan() {
 		if (mw.p2CastLimitReached()) return null;
 		List<CardData> hand = mw.gameState.getP2Hand();
@@ -714,6 +723,7 @@ class ComputerPlayer {
 			if (!c.isForward() && !c.isMonster()) continue;
 			if (!c.multicard() && mw.p2HasCharacterNameOnField(c.name())) continue;
 			if (c.isLightOrDark() && p2HasLD) continue;
+			if (!mw.castRestrictionMet(c, false)) continue;
 			fieldCands.add(i);
 		}
 		fieldCands.sort((a, b) -> hand.get(b).cost() - hand.get(a).cost());
@@ -727,6 +737,7 @@ class ComputerPlayer {
 				CardData c = hand.get(i);
 				if (!c.isSummon()) continue;
 				if (ActionResolver.cancelsAutoAbility(c.summonEffect()) && !p1HasAutoAbilityOnStack) continue;
+				if (!mw.castRestrictionMet(c, false)) continue;
 				summonCands.add(i);
 			}
 			summonCands.sort((a, b) -> hand.get(b).cost() - hand.get(a).cost());
@@ -739,6 +750,7 @@ class ComputerPlayer {
 			if (!c.isBackup() || !mw.p2HasAvailableBackupSlot()) continue;
 			if (!c.multicard() && mw.p2HasCharacterNameOnField(c.name())) continue;
 			if (c.isLightOrDark() && p2HasLD) continue;
+			if (!mw.castRestrictionMet(c, false)) continue;
 			backupCands.add(i);
 		}
 		backupCands.sort((a, b) -> hand.get(b).cost() - hand.get(a).cost());

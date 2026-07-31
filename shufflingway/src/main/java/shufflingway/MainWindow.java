@@ -6753,30 +6753,42 @@ public class MainWindow {
 		return false;
 	}
 
-	/**
-	 * Returns {@code true} if the card's "You can only cast X …" restriction (if any) is
-	 * satisfied by the current game state from P1's perspective.
-	 */
+	/** {@link #castRestrictionMet(CardData, boolean)} from P1's perspective. */
 	boolean castRestrictionMet(CardData card) {
+		return castRestrictionMet(card, true);
+	}
+
+	/**
+	 * Returns {@code true} if the card's "You cannot cast X." / "You can only cast X …" restriction
+	 * (if any) is satisfied by the current game state for the player casting it.
+	 *
+	 * <p>Every zone this reads — Forwards controlled, Break Zone contents, removed-from-game
+	 * Summons, the <em>opponent's</em> hand — is taken from {@code isP1}'s side, so the CPU is held
+	 * to the same conditions the player is.  The turn checks are likewise relative: "during your
+	 * turn" means the caster's own turn, not P1's.
+	 */
+	boolean castRestrictionMet(CardData card, boolean isP1) {
 		CastRestriction cr = card.castRestriction();
 		if (cr == null) return true;
 
 		// "You cannot cast X." — never castable; only effects that put it onto the field work.
 		if (cr.castProhibited()) return false;
 
-		boolean isP1Turn = gameState.getCurrentPlayer() == GameState.Player.P1;
+		boolean ownTurn = (gameState.getCurrentPlayer() == GameState.Player.P1) == isP1;
 
-		if (cr.opponentTurnOnly() && isP1Turn)  return false;
-		if ((cr.yourTurnOnly() || cr.mainPhaseOnly()) && !isP1Turn) return false;
+		if (cr.opponentTurnOnly() && ownTurn)  return false;
+		if ((cr.yourTurnOnly() || cr.mainPhaseOnly()) && !ownTurn) return false;
 
-		if (cr.requiresNoForwards() && !p1ForwardCards.isEmpty()) return false;
-		if (cr.requiresAForward()   &&  p1ForwardCards.isEmpty()) return false;
+		List<CardData> ownForwards = isP1 ? p1ForwardCards : p2ForwardCards;
+		if (cr.requiresNoForwards() && !ownForwards.isEmpty()) return false;
+		if (cr.requiresAForward()   &&  ownForwards.isEmpty()) return false;
 
+		List<CardData> opponentHand = isP1 ? gameState.getP2Hand() : gameState.getP1Hand();
 		if (cr.maxOpponentHandSize() >= 0
-				&& gameState.getP2Hand().size() > cr.maxOpponentHandSize()) return false;
+				&& opponentHand.size() > cr.maxOpponentHandSize()) return false;
 
+		List<CardData> bz = isP1 ? gameState.getP1BreakZone() : gameState.getP2BreakZone();
 		if (!cr.requiredBZTypes().isEmpty()) {
-			List<CardData> bz = gameState.getP1BreakZone();
 			for (String requiredType : cr.requiredBZTypes()) {
 				boolean found = switch (requiredType) {
 					case "Forward" -> bz.stream().anyMatch(CardData::isForward);
@@ -6790,12 +6802,13 @@ public class MainWindow {
 		}
 
 		if (cr.minBZAndRfpSummons() > 0) {
-			long bzSummons  = gameState.getP1BreakZone().stream().filter(CardData::isSummon).count();
-			long rfpSummons = gameState.getP1PermanentRfp().stream().filter(CardData::isSummon).count();
+			long bzSummons  = bz.stream().filter(CardData::isSummon).count();
+			long rfpSummons = (isP1 ? gameState.getP1PermanentRfp() : gameState.getP2PermanentRfp())
+					.stream().filter(CardData::isSummon).count();
 			if (bzSummons + rfpSummons < cr.minBZAndRfpSummons()) return false;
 		}
 
-		if (cr.mustControlCondition() != null && !controlConditionMet(cr.mustControlCondition(), true))
+		if (cr.mustControlCondition() != null && !controlConditionMet(cr.mustControlCondition(), isP1))
 			return false;
 
 		return true;
