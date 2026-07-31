@@ -845,7 +845,7 @@ class ComputerPlayer {
 			List<Integer> outBackups, Map<Integer, String> outBackupElems,
 			List<Integer> outDiscards, Map<Integer, String> outDiscardElems) {
 		int total = 0;
-		for (String e : ActionResolver.ELEMENT_NAMES) total += mw.gameState.getP2CpForElement(e);
+		for (String e : ActionResolverPatterns.ELEMENT_NAMES) total += mw.gameState.getP2CpForElement(e);
 		if (total >= cost) return true;
 
 		for (int bi = 0; bi < mw.p2BackupCards.length && total < cost; bi++) {

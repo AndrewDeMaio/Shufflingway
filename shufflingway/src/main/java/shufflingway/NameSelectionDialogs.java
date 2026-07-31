@@ -58,9 +58,9 @@ class NameSelectionDialogs {
                                 boolean interactive, Consumer<String> log) {
         if (!interactive) {
             List<String> available = new ArrayList<>();
-            for (String e : ActionResolver.ELEMENT_NAMES)
+            for (String e : ActionResolverPatterns.ELEMENT_NAMES)
                 if (excluded.stream().noneMatch(e::equalsIgnoreCase)) available.add(e);
-            if (available.isEmpty()) available = List.of(ActionResolver.ELEMENT_NAMES);
+            if (available.isEmpty()) available = List.of(ActionResolverPatterns.ELEMENT_NAMES);
             String picked = available.get((int) (Math.random() * available.size()));
             log.accept("[AI] selected Element: " + picked);
             return picked;
@@ -102,9 +102,9 @@ class NameSelectionDialogs {
                                         boolean interactive, Consumer<String> log) {
         if (!interactive) {
             List<String> available = new ArrayList<>();
-            for (String e : ActionResolver.ELEMENT_NAMES)
+            for (String e : ActionResolverPatterns.ELEMENT_NAMES)
                 if (excluded.stream().noneMatch(e::equalsIgnoreCase)) available.add(e);
-            if (available.isEmpty()) available = List.of(ActionResolver.ELEMENT_NAMES);
+            if (available.isEmpty()) available = List.of(ActionResolverPatterns.ELEMENT_NAMES);
             String elem = available.get((int) (Math.random() * available.size()));
             List<String> jobs = loadJobs(log);
             String job = jobs.isEmpty() ? "Warrior" : jobs.get((int) (Math.random() * jobs.size()));
@@ -131,7 +131,7 @@ class NameSelectionDialogs {
     static String[] selectJobOrElement(JFrame frame, String prompt, boolean interactive, Consumer<String> log) {
         if (!interactive) {
             if (Math.random() < 0.5) {
-                String elem = ActionResolver.ELEMENT_NAMES[(int) (Math.random() * ActionResolver.ELEMENT_NAMES.length)];
+                String elem = ActionResolverPatterns.ELEMENT_NAMES[(int) (Math.random() * ActionResolverPatterns.ELEMENT_NAMES.length)];
                 log.accept("[AI] named Element: " + elem);
                 return new String[]{"element", elem};
             } else {
@@ -221,7 +221,7 @@ class NameSelectionDialogs {
         dialog.setDefaultCloseOperation(JDialog.DO_NOTHING_ON_CLOSE);
 
         DefaultListModel<String> listModel = new DefaultListModel<>();
-        for (String e : ActionResolver.ELEMENT_NAMES)
+        for (String e : ActionResolverPatterns.ELEMENT_NAMES)
             if (excluded.stream().noneMatch(e::equalsIgnoreCase)) listModel.addElement(e);
         JList<String> elemList = new JList<>(listModel);
         elemList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
@@ -317,7 +317,7 @@ class NameSelectionDialogs {
     private static String[] showElementAndJobDialog(JFrame frame, String prompt, List<String> jobs,
                                                     Set<String> excluded) {
         List<String> available = new ArrayList<>();
-        for (String e : ActionResolver.ELEMENT_NAMES)
+        for (String e : ActionResolverPatterns.ELEMENT_NAMES)
             if (excluded.stream().noneMatch(e::equalsIgnoreCase)) available.add(e);
         String[] elemItems = new String[available.size() + 1];
         elemItems[0] = "— Element —";
@@ -434,7 +434,7 @@ class NameSelectionDialogs {
 
         // --- Element panel (right) ---
         DefaultListModel<String> elemModel = new DefaultListModel<>();
-        for (String e : ActionResolver.ELEMENT_NAMES) elemModel.addElement(e);
+        for (String e : ActionResolverPatterns.ELEMENT_NAMES) elemModel.addElement(e);
         JList<String> elemList = new JList<>(elemModel);
         elemList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         elemList.setSelectedIndex(0);

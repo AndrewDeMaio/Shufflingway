@@ -5620,7 +5620,7 @@ public class CardBehaviorTest {
         CardData titania = makeTitania();
         mw.gameState.getP2Hand().add(titania);
         // Enough CP that affordability is never what blocks the plan.
-        for (String e : ActionResolver.ELEMENT_NAMES) mw.gameState.addP2Cp(e, 10);
+        for (String e : ActionResolverPatterns.ELEMENT_NAMES) mw.gameState.addP2Cp(e, 10);
 
         ComputerPlayer cpu = new ComputerPlayer(mw);
         assertFalse(cpu.hasLegalHandCast(),

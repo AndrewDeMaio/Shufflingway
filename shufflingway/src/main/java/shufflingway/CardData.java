@@ -2187,7 +2187,7 @@ public record CardData(
         }
 
         // Sixth pass: "At the end of [each of your turns | your turn], [effect]"
-        Matcher eotm = ActionResolver.AT_END_OF_EACH_TURN_PATTERN.matcher(textForSearch);
+        Matcher eotm = ActionResolverPatterns.AT_END_OF_EACH_TURN_PATTERN.matcher(textForSearch);
         while (eotm.find()) {
             // Vayne 9-022L prints this trigger inside the ability it grants to the opponent's
             // Forwards; a match starting inside quotes is not the printing card's own ability.
@@ -2199,7 +2199,7 @@ public record CardData(
         }
 
         // Seventh pass: "At the beginning of your Main Phase 1, [effect]"
-        Matcher mp1m = ActionResolver.AT_BEGINNING_OF_MAIN_PHASE_1_PATTERN.matcher(textForSearch);
+        Matcher mp1m = ActionResolverPatterns.AT_BEGINNING_OF_MAIN_PHASE_1_PATTERN.matcher(textForSearch);
         while (mp1m.find()) {
             String effect = SUMMON_MARKUP.matcher(mp1m.group("inner").trim()).replaceAll("").trim();
             if (effect.isEmpty()) continue;
@@ -2208,7 +2208,7 @@ public record CardData(
         }
 
         // Eighth pass: "At the beginning of your Main Phase 2, [effect]"
-        Matcher mp2m = ActionResolver.AT_BEGINNING_OF_MAIN_PHASE_2_PATTERN.matcher(textForSearch);
+        Matcher mp2m = ActionResolverPatterns.AT_BEGINNING_OF_MAIN_PHASE_2_PATTERN.matcher(textForSearch);
         while (mp2m.find()) {
             String effect = SUMMON_MARKUP.matcher(mp2m.group("inner").trim()).replaceAll("").trim();
             if (effect.isEmpty()) continue;
@@ -2217,7 +2217,7 @@ public record CardData(
         }
 
         // Ninth pass: "Each turn, at the beginning of Main Phase 1, [effect]" (fires both players)
-        Matcher mp1et = ActionResolver.AT_BEGINNING_OF_MAIN_PHASE_1_EACH_TURN_PATTERN.matcher(textForSearch);
+        Matcher mp1et = ActionResolverPatterns.AT_BEGINNING_OF_MAIN_PHASE_1_EACH_TURN_PATTERN.matcher(textForSearch);
         while (mp1et.find()) {
             String effect = SUMMON_MARKUP.matcher(mp1et.group("inner").trim()).replaceAll("").trim();
             if (effect.isEmpty()) continue;
@@ -2226,7 +2226,7 @@ public record CardData(
         }
 
         // Tenth pass: "At the beginning of your opponent's Main Phase 1, [effect]"
-        Matcher ompm = ActionResolver.AT_BEGINNING_OF_OPP_MAIN_PHASE_1_PATTERN.matcher(textForSearch);
+        Matcher ompm = ActionResolverPatterns.AT_BEGINNING_OF_OPP_MAIN_PHASE_1_PATTERN.matcher(textForSearch);
         while (ompm.find()) {
             String effect = SUMMON_MARKUP.matcher(ompm.group("inner").trim()).replaceAll("").trim();
             if (effect.isEmpty()) continue;
@@ -2235,7 +2235,7 @@ public record CardData(
         }
 
         // Eleventh pass: "At the end of your opponent's turn(s), [effect]"
-        Matcher ootm = ActionResolver.AT_END_OF_OPP_TURN_PATTERN.matcher(textForSearch);
+        Matcher ootm = ActionResolverPatterns.AT_END_OF_OPP_TURN_PATTERN.matcher(textForSearch);
         while (ootm.find()) {
             String effect = SUMMON_MARKUP.matcher(ootm.group("inner").trim()).replaceAll("").trim();
             if (effect.isEmpty()) continue;
@@ -2244,7 +2244,7 @@ public record CardData(
         }
 
         // Twelfth pass: "At the end of each player's turn, [effect]" (fires both players)
-        Matcher eptm = ActionResolver.AT_END_OF_EACH_PLAYERS_TURN_PATTERN.matcher(textForSearch);
+        Matcher eptm = ActionResolverPatterns.AT_END_OF_EACH_PLAYERS_TURN_PATTERN.matcher(textForSearch);
         while (eptm.find()) {
             String effect = SUMMON_MARKUP.matcher(eptm.group("inner").trim()).replaceAll("").trim();
             if (effect.isEmpty()) continue;
@@ -4721,13 +4721,13 @@ public record CardData(
             if (AT_BEGINNING_OF_ATTACK_PHASE_EACH_TURN_PATTERN.matcher(seg).find()) continue;
             // Quote-aware: Vayne 9-022L's grant prints this trigger inside quotes, and that segment
             // must stay a field ability — it is the grant, not an end-of-turn ability of Vayne's own.
-            if (matchesOutsideQuotes(ActionResolver.AT_END_OF_EACH_TURN_PATTERN, seg)) continue;
-            if (ActionResolver.AT_BEGINNING_OF_MAIN_PHASE_1_PATTERN.matcher(seg).find()) continue;
-            if (ActionResolver.AT_BEGINNING_OF_MAIN_PHASE_2_PATTERN.matcher(seg).find()) continue;
-            if (ActionResolver.AT_BEGINNING_OF_MAIN_PHASE_1_EACH_TURN_PATTERN.matcher(seg).find()) continue;
-            if (ActionResolver.AT_BEGINNING_OF_OPP_MAIN_PHASE_1_PATTERN.matcher(seg).find()) continue;
-            if (ActionResolver.AT_END_OF_OPP_TURN_PATTERN.matcher(seg).find()) continue;
-            if (ActionResolver.AT_END_OF_EACH_PLAYERS_TURN_PATTERN.matcher(seg).find()) continue;
+            if (matchesOutsideQuotes(ActionResolverPatterns.AT_END_OF_EACH_TURN_PATTERN, seg)) continue;
+            if (ActionResolverPatterns.AT_BEGINNING_OF_MAIN_PHASE_1_PATTERN.matcher(seg).find()) continue;
+            if (ActionResolverPatterns.AT_BEGINNING_OF_MAIN_PHASE_2_PATTERN.matcher(seg).find()) continue;
+            if (ActionResolverPatterns.AT_BEGINNING_OF_MAIN_PHASE_1_EACH_TURN_PATTERN.matcher(seg).find()) continue;
+            if (ActionResolverPatterns.AT_BEGINNING_OF_OPP_MAIN_PHASE_1_PATTERN.matcher(seg).find()) continue;
+            if (ActionResolverPatterns.AT_END_OF_OPP_TURN_PATTERN.matcher(seg).find()) continue;
+            if (ActionResolverPatterns.AT_END_OF_EACH_PLAYERS_TURN_PATTERN.matcher(seg).find()) continue;
 
             // Quoted sub-action lines from "select the following actions" auto-abilities
             if (seg.startsWith("\"")) continue;

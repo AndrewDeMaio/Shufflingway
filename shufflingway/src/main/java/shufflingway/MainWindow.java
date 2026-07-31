@@ -7135,16 +7135,16 @@ public class MainWindow {
 
 		if (freeCast) {
 			// "without paying the cost" — clear any CP generated for payment and spend nothing.
-			for (String e : ActionResolver.ELEMENT_NAMES) gameState.clearP2Cp(e);
+			for (String e : ActionResolverPatterns.ELEMENT_NAMES) gameState.clearP2Cp(e);
 		} else if (anyElement) {
 			// Cost may be paid using CP of any Element — drain across all elements, no per-element minimum.
 			int remaining = reducedCost;
-			for (String e : ActionResolver.ELEMENT_NAMES) {
+			for (String e : ActionResolverPatterns.ELEMENT_NAMES) {
 				if (remaining <= 0) break;
 				int toSpend = Math.min(remaining, gameState.getP2CpForElement(e));
 				if (toSpend > 0) { gameState.spendP2Cp(e, toSpend); remaining -= toSpend; }
 			}
-			for (String e : ActionResolver.ELEMENT_NAMES) gameState.clearP2Cp(e);
+			for (String e : ActionResolverPatterns.ELEMENT_NAMES) gameState.clearP2Cp(e);
 		} else {
 			// Pay reducedCost: per-element minimum first if multi-element, then drain CP.
 			int remaining = reducedCost;
@@ -10137,13 +10137,13 @@ public class MainWindow {
 		// attack or block." — driven off the counter itself (Medusa is the only source of them).
 		if (gameState.getCounters(card, "Petrification") > 0) return true;
 		for (FieldAbility fa : card.fieldAbilities()) {
-			Matcher m2 = ActionResolver.IF_DONT_CONTROL_CARD_NAME_FWD_CANNOT_ATTACK_OR_BLOCK.matcher(fa.effectText());
+			Matcher m2 = ActionResolverPatterns.IF_DONT_CONTROL_CARD_NAME_FWD_CANNOT_ATTACK_OR_BLOCK.matcher(fa.effectText());
 			if (m2.find() && m2.group("subject").trim().equalsIgnoreCase(card.name())) {
 				String required = m2.group("required").trim();
 				List<CardData> fwds = isP1 ? p1ForwardCards : p2ForwardCards;
 				if (fwds.stream().noneMatch(f -> f.name().equalsIgnoreCase(required))) return true;
 			}
-			Matcher m3 = ActionResolver.IF_COUNTER_LIMIT_CANNOT_ATTACK_OR_BLOCK.matcher(fa.effectText());
+			Matcher m3 = ActionResolverPatterns.IF_COUNTER_LIMIT_CANNOT_ATTACK_OR_BLOCK.matcher(fa.effectText());
 			if (m3.find() && m3.group("subject").trim().equalsIgnoreCase(card.name())) {
 				int    limit       = Integer.parseInt(m3.group("count"));
 				String counterName = m3.group("countername").trim();
@@ -10160,11 +10160,11 @@ public class MainWindow {
 	boolean isFieldAbilityCannotAttack(CardData card, boolean isP1) {
 		for (FieldAbility fa : card.fieldAbilities()) {
 			// Unconditional: "[CardName] cannot attack."
-			Matcher mStandalone = ActionResolver.STANDALONE_CANNOT_ATTACK.matcher(fa.effectText());
+			Matcher mStandalone = ActionResolverPatterns.STANDALONE_CANNOT_ATTACK.matcher(fa.effectText());
 			if (mStandalone.find() && mStandalone.group("cardname").trim().equalsIgnoreCase(card.name()))
 				return true;
 			// Conditional: "If your opponent doesn't control any Forwards, [CardName] cannot attack."
-			Matcher mOppNoFwds = ActionResolver.IF_OPP_NO_FORWARDS_CANNOT_ATTACK.matcher(fa.effectText());
+			Matcher mOppNoFwds = ActionResolverPatterns.IF_OPP_NO_FORWARDS_CANNOT_ATTACK.matcher(fa.effectText());
 			if (mOppNoFwds.find() && mOppNoFwds.group("subject").trim().equalsIgnoreCase(card.name())) {
 				List<CardData> oppFwds = isP1 ? p2ForwardCards : p1ForwardCards;
 				if (oppFwds.isEmpty()) return true;

@@ -1,5 +1,7 @@
 package shufflingway;
 
+import static shufflingway.ActionResolverPatterns.*;
+
 import static shufflingway.ActionResolver.*;
 import static shufflingway.ActionResolverDamage.*;
 import static shufflingway.ActionResolverPower.*;
