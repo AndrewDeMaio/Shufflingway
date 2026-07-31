@@ -125,6 +125,8 @@ public class MainWindow {
 	shufflingway.dialog.CardPickerDialog cardPickerDialog;
 
 	final AutoAbilityTriggers autoAbilityTriggers = new AutoAbilityTriggers(this);
+	/** Cost and affordability rules; MainWindow keeps thin delegators to these. */
+	final CostCalculator      costs               = new CostCalculator(this);
 	/** Sequences card arrivals on the field: animation, then the card, then its auto abilities. */
 	final FieldEntryAnimator  fieldEntryAnimator  = new FieldEntryAnimator(this);
 
@@ -5959,36 +5961,8 @@ public class MainWindow {
 	// Play / Payment
 	// -------------------------------------------------------------------------
 
-	/**
-	 * Returns the effective cast cost of {@code card} after applying any active
-	 * cost-reduction modifier that matches it.  Only the first matching modifier
-	 * is applied (modifiers stack only when multiple fire independently).
-	 */
-	int effectiveCastCost(CardData card) {
-		// Doublecast (Yuna): Summons with printed cost lower than the last Summon cast this turn cast free
-		if (card.isSummon() && p1DoublecastFreeSummons
-				&& p1DoublecastLastSummonCost >= 0 && card.cost() < p1DoublecastLastSummonCost)
-			return 0;
-		int selfRed = 0;
-		int selfInc = 0;
-		int selfFloor = 0;
-		for (SelfCostModifier mod : card.selfCostModifiers()) {
-			int units = computeSelfCostUnits(mod, true);
-			int delta = mod.amountPerUnit() * units;
-			if (mod.isIncrease()) selfInc += delta;
-			else {
-				selfRed += delta;
-				selfFloor = Math.max(selfFloor, mod.minCost());
-			}
-		}
-		int cost = card.cost() + selfInc - selfRed;
-		cost = Math.max(selfFloor, cost);
-		cost = applyFieldReductions(cost, card, true);
-		for (CostReductionModifier m : activeCostReductions) {
-			if (m.matches(card)) return m.apply(cost);
-		}
-		return cost;
-	}
+	/** @see CostCalculator#effectiveCastCost */
+	int effectiveCastCost(CardData card) { return costs.effectiveCastCost(card); }
 
 	/**
 	 * Doublecast (Yuna): records the printed cost of a Summon just cast by {@code isP1} so that
@@ -6017,442 +5991,13 @@ public class MainWindow {
 		return drawn;
 	}
 
-	/** Returns {@code true} if any card in P1's hand has self-cost modifiers that vary with game state. */
-	private boolean p1HandHasSelfCostModifiers() {
-		for (CardData c : gameState.getP1Hand())
-			if (!c.selfCostModifiers().isEmpty()) return true;
-		return false;
-	}
+	/** @see CostCalculator#p1HandHasSelfCostModifiers */
+	private boolean p1HandHasSelfCostModifiers() { return costs.p1HandHasSelfCostModifiers(); }
 
-	private int computeSelfCostUnits(SelfCostModifier mod, boolean isP1) {
-		List<CardData>   fwds  = isP1 ? p1ForwardCards : p2ForwardCards;
-		CardData[]       bkps  = isP1 ? p1BackupCards  : p2BackupCards;
-		List<CardData>   bz    = isP1 ? gameState.getP1BreakZone() : gameState.getP2BreakZone();
-		List<CardData>   dmg   = isP1 ? gameState.getP1DamageZone() : gameState.getP2DamageZone();
-		boolean summonCastFlag = turn(isP1).summonCastThisTurn;
+	/** @see CostCalculator#computeSelfCostUnits */
+	private int computeSelfCostUnits(SelfCostModifier mod, boolean isP1) { return costs.computeSelfCostUnits(mod, isP1); }
 
-		return switch (mod.scalingType()) {
-			case IF_CAST_SUMMON_THIS_TURN ->
-				summonCastFlag ? 1 : 0;
-			case IF_CAST_JOB_OR_NAME_THIS_TURN -> {
-				Set<String> castJobs  = turn(isP1).castJobsThisTurn;
-				Set<String> castNames = turn(isP1).castNamesThisTurn;
-				yield (castJobs.contains(mod.param1().toLowerCase())
-						|| castNames.contains(mod.param2().toLowerCase())) ? 1 : 0;
-			}
-			case IF_CONTROL_NAME -> {
-				String name = mod.param1();
-				yield fwds.stream().anyMatch(f -> f.name().equalsIgnoreCase(name))
-					|| Arrays.stream(bkps).filter(b -> b != null)
-					         .anyMatch(b -> b.name().equalsIgnoreCase(name))
-					? 1 : 0;
-			}
-			case EACH_FORWARD ->
-				fwds.size();
-			case EACH_BACKUP ->
-				(int) Arrays.stream(bkps).filter(b -> b != null).count();
-			case EACH_FORWARD_WITH_CATEGORY -> {
-				String cat = mod.param1();
-				yield (int) fwds.stream()
-						.filter(f -> cat.equalsIgnoreCase(f.category1()) || cat.equalsIgnoreCase(f.category2()))
-						.count();
-			}
-			case EACH_FORWARD_WITH_JOB -> {
-				String job = mod.param1();
-				yield (int) (fwds.stream().filter(f -> f.hasJob(job)).count()
-						+ Arrays.stream(bkps).filter(b -> b != null && b.hasJob(job)).count());
-			}
-			case EACH_FORWARD_WITH_JOB_OR_NAME -> {
-				String job  = mod.param1();
-				String name = mod.param2();
-				yield (int) (fwds.stream().filter(f -> f.hasJob(job) || name.equalsIgnoreCase(f.name())).count()
-						+ Arrays.stream(bkps).filter(b -> b != null
-								&& (b.hasJob(job) || name.equalsIgnoreCase(b.name()))).count());
-			}
-			case EACH_DAMAGE_RECEIVED ->
-				dmg.size();
-			case EACH_NAME_IN_BZ -> {
-				String name = mod.param1();
-				yield (int) bz.stream()
-						.filter(c -> c.name().equalsIgnoreCase(name))
-						.count();
-			}
-			case PER_N_BZ_CARDS -> {
-				int n = Integer.parseInt(mod.param1());
-				yield bz.size() / n;
-			}
-			case EACH_OPPONENT_HAND_CARD ->
-				(isP1 ? gameState.getP2Hand() : gameState.getP1Hand()).size();
-		case IF_RECEIVED_N_DAMAGE_OR_MORE -> {
-				int threshold = Integer.parseInt(mod.param1());
-				yield dmg.size() >= threshold ? 1 : 0;
-			}
-		case IF_OPPONENT_FORWARD_BROKEN_THIS_TURN ->
-				(turn(isP1).turnOpponentFwdBroken) ? 1 : 0;
-		case IF_CONTROL_N_OR_MORE_CATEGORY_TYPE -> {
-				int n = Integer.parseInt(mod.param1());
-				String[] parts = mod.param2().split("\\|", 2);
-				String cat  = parts[0];
-				String type = parts.length > 1 ? parts[1] : "Forward";
-				long fwdCount = 0, bkpCount = 0;
-				if ("Forward".equalsIgnoreCase(type) || "Character".equalsIgnoreCase(type))
-					fwdCount = fwds.stream()
-							.filter(f -> cat.equalsIgnoreCase(f.category1()) || cat.equalsIgnoreCase(f.category2()))
-							.count();
-				if ("Backup".equalsIgnoreCase(type) || "Character".equalsIgnoreCase(type))
-					bkpCount = Arrays.stream(bkps)
-							.filter(b -> b != null && (cat.equalsIgnoreCase(b.category1()) || cat.equalsIgnoreCase(b.category2())))
-							.count();
-				yield (fwdCount + bkpCount) >= n ? 1 : 0;
-			}
-		case EACH_CATEGORY_TYPE_CONTROLLED -> {
-				String cat  = mod.param1();
-				String type = mod.param2() == null || mod.param2().isBlank() ? "Forward" : mod.param2();
-				long fwdCount = fwds.stream()
-						.filter(f -> cat.equalsIgnoreCase(f.category1()) || cat.equalsIgnoreCase(f.category2()))
-						.count();
-				long bkpCount = 0;
-				if ("Character".equalsIgnoreCase(type)) {
-					bkpCount = Arrays.stream(bkps)
-							.filter(b -> b != null)
-							.filter(b -> cat.equalsIgnoreCase(b.category1()) || cat.equalsIgnoreCase(b.category2()))
-							.count();
-				}
-				yield (int) (fwdCount + bkpCount);
-			}
-		case EACH_NAME_OR_NAME_CONTROLLED -> {
-				String name1 = mod.param1();
-				String name2 = mod.param2();
-				yield (int) fwds.stream()
-						.filter(f -> f.name().equalsIgnoreCase(name1) || f.name().equalsIgnoreCase(name2))
-						.count();
-			}
-		case PER_N_FILTERED_BZ_CARDS -> {
-				int n = Integer.parseInt(mod.param1());
-				String spec = mod.param2() == null ? "" : mod.param2();
-				String[] parts = spec.split("\\|", 2);
-				String elemFilter = parts.length > 0 ? parts[0].trim() : "";
-				String typeFilter = parts.length > 1 ? parts[1].trim() : "";
-				long filtered = bz.stream().filter(c -> {
-					if (!elemFilter.isEmpty() && !elemFilter.equalsIgnoreCase(c.element())) return false;
-					if (!typeFilter.isEmpty() && !typeFilter.equalsIgnoreCase(c.type()))   return false;
-					return true;
-				}).count();
-				yield (int) (filtered / n);
-			}
-		case EACH_CARD_CAST_THIS_TURN ->
-				turn(isP1).cardsCastThisTurn;
-		case IF_OWN_JOB_BROKEN_THIS_TURN ->
-				(turn(isP1).brokenJobsThisTurn)
-						.contains(mod.param1().toLowerCase()) ? 1 : 0;
-		case IF_CONTROL_NONE_OF_TYPE -> {
-				String type = mod.param1() == null ? "Forward" : mod.param1();
-				long fwdCount = 0, bkpCount = 0, monCount = 0;
-				List<CardData> mons = isP1 ? p1MonsterCards : p2MonsterCards;
-				if ("Forward".equalsIgnoreCase(type) || "Character".equalsIgnoreCase(type))
-					fwdCount = fwds.size();
-				if ("Backup".equalsIgnoreCase(type) || "Character".equalsIgnoreCase(type))
-					bkpCount = Arrays.stream(bkps).filter(b -> b != null).count();
-				if ("Monster".equalsIgnoreCase(type) || "Character".equalsIgnoreCase(type))
-					monCount = mons.size();
-				yield (fwdCount + bkpCount + monCount) == 0 ? 1 : 0;
-			}
-		case IF_OPPONENT_DISCARDED_THIS_TURN ->
-				(oppTurn(isP1).discardedByEffectThisTurn) ? 1 : 0;
-		case IF_DRAWN_N_OR_MORE_THIS_TURN -> {
-				int n = Integer.parseInt(mod.param1());
-				yield (turn(isP1).cardsDrawnThisTurn) >= n ? 1 : 0;
-			}
-		case IF_OPPONENT_DISCARDED_BY_ME_THIS_TURN ->
-				(turn(isP1).causedOpponentDiscardThisTurn) ? 1 : 0;
-		case IF_OWN_FORWARD_FORMED_PARTY_THIS_TURN ->
-				(turn(isP1).formedPartyThisTurn) ? 1 : 0;
-		case IF_OPPONENT_HAND_N_OR_LESS -> {
-				int n = Integer.parseInt(mod.param1());
-				yield (isP1 ? gameState.getP2Hand() : gameState.getP1Hand()).size() <= n ? 1 : 0;
-			}
-		case EACH_TYPE_WITH_MIN_COST -> {
-				int minCostVal = Integer.parseInt(mod.param1());
-				String type = mod.param2() == null ? "Character" : mod.param2();
-				long fwdCount = 0, bkpCount = 0;
-				if ("Forward".equalsIgnoreCase(type) || "Character".equalsIgnoreCase(type))
-					fwdCount = fwds.stream().filter(f -> f.cost() >= minCostVal).count();
-				if ("Backup".equalsIgnoreCase(type) || "Character".equalsIgnoreCase(type))
-					bkpCount = Arrays.stream(bkps)
-							.filter(b -> b != null && b.cost() >= minCostVal).count();
-				yield (int) (fwdCount + bkpCount);
-			}
-		case IF_OPPONENT_CONTROLS_MORE_TYPE -> {
-				String type = mod.param1() == null ? "Forward" : mod.param1();
-				List<CardData> oppFwds = isP1 ? p2ForwardCards : p1ForwardCards;
-				CardData[]     oppBkps = isP1 ? p2BackupCards  : p1BackupCards;
-				List<CardData> oppMons = isP1 ? p2MonsterCards  : p1MonsterCards;
-				long selfCount = 0, oppCount = 0;
-				if ("Forward".equalsIgnoreCase(type) || "Character".equalsIgnoreCase(type)) {
-					selfCount += fwds.size();
-					oppCount  += oppFwds.size();
-				}
-				if ("Backup".equalsIgnoreCase(type) || "Character".equalsIgnoreCase(type)) {
-					selfCount += Arrays.stream(bkps).filter(b -> b != null).count();
-					oppCount  += Arrays.stream(oppBkps).filter(b -> b != null).count();
-				}
-				if ("Monster".equalsIgnoreCase(type)) {
-					List<CardData> selfMons = isP1 ? p1MonsterCards : p2MonsterCards;
-					selfCount += selfMons.size();
-					oppCount  += oppMons.size();
-				}
-				yield oppCount > selfCount ? 1 : 0;
-			}
-		case EACH_DISTINCT_OPPONENT_TYPE_ELEMENT -> {
-				String type = mod.param1() == null ? "Character" : mod.param1();
-				List<CardData> oppFwds = isP1 ? p2ForwardCards : p1ForwardCards;
-				CardData[]     oppBkps = isP1 ? p2BackupCards  : p1BackupCards;
-				Set<String> elems = new HashSet<>();
-				if ("Forward".equalsIgnoreCase(type) || "Character".equalsIgnoreCase(type))
-					for (CardData f : oppFwds)
-						for (String e : f.element().split("/")) elems.add(e.trim().toLowerCase());
-				if ("Backup".equalsIgnoreCase(type) || "Character".equalsIgnoreCase(type))
-					for (CardData b : oppBkps)
-						if (b != null) for (String e : b.element().split("/")) elems.add(e.trim().toLowerCase());
-				yield elems.size();
-			}
-		case EACH_CRYSTAL_YOU_HAVE ->
-				isP1 ? gameState.getP1Crystals() : gameState.getP2Crystals();
-		case IF_CONTROL_CATEGORY_TYPE_NOT_ELEMENT -> {
-				String[] catType = mod.param1().split("\\|", 2);
-				String cat      = catType[0];
-				String type     = catType.length > 1 ? catType[1] : "Forward";
-				String excluded = mod.param2();
-				Predicate<CardData> matches = c ->
-						(cat.equalsIgnoreCase(c.category1()) || cat.equalsIgnoreCase(c.category2()))
-						&& !c.containsElement(excluded);
-				boolean found = false;
-				if ("Forward".equalsIgnoreCase(type) || "Character".equalsIgnoreCase(type))
-					found = fwds.stream().anyMatch(matches);
-				if (!found && ("Backup".equalsIgnoreCase(type) || "Character".equalsIgnoreCase(type)))
-					found = Arrays.stream(bkps).filter(b -> b != null).anyMatch(matches);
-				yield found ? 1 : 0;
-			}
-		case EACH_DISTINCT_BACKUP_ELEMENT -> {
-				Set<String> distinctElems = new HashSet<>();
-				for (CardData b : bkps) {
-					if (b != null && b.element() != null && !b.element().contains("/"))
-						distinctElems.add(b.element().toLowerCase());
-				}
-				yield distinctElems.size();
-			}
-		case EACH_ELEMENT_TYPE_CONTROLLED -> {
-				String elem = mod.param1();
-				String type = mod.param2() == null ? "Forward" : mod.param2();
-				long fwdCount = 0, bkpCount = 0, monCount = 0;
-				if ("Forward".equalsIgnoreCase(type) || "Character".equalsIgnoreCase(type))
-					fwdCount = fwds.stream().filter(f -> elem.equalsIgnoreCase(f.element())).count();
-				if ("Backup".equalsIgnoreCase(type) || "Character".equalsIgnoreCase(type))
-					bkpCount = Arrays.stream(bkps).filter(b -> b != null && elem.equalsIgnoreCase(b.element())).count();
-				if ("Monster".equalsIgnoreCase(type)) {
-					List<CardData> mons = isP1 ? p1MonsterCards : p2MonsterCards;
-					monCount = mons.stream().filter(mn -> elem.equalsIgnoreCase(mn.element())).count();
-				}
-				yield (int) (fwdCount + bkpCount + monCount);
-			}
-		case IF_N_OR_MORE_FORWARDS_LEFT_FIELD_THIS_TURN -> {
-				int n = Integer.parseInt(mod.param1());
-				yield (turn(isP1).forwardsLeftFieldThisTurn) >= n ? 1 : 0;
-			}
-		case IF_CONTROL_N_OR_MORE_JOB -> {
-				int n    = Integer.parseInt(mod.param1());
-				String job = mod.param2();
-				long count = fwds.stream().filter(f -> f.hasJob(job)).count()
-						+ Arrays.stream(bkps).filter(b -> b != null && b.hasJob(job)).count();
-				yield count >= n ? 1 : 0;
-			}
-		case IF_ELEMENT_FORWARD_ENTERED_FIELD_THIS_TURN -> {
-				String elem = mod.param1();
-				yield (turn(isP1).elementForwardsEnteredThisTurn)
-						.stream().anyMatch(e -> elem.equalsIgnoreCase(e)) ? 1 : 0;
-			}
-		case IF_OPPONENT_CONTROLS_N_OR_MORE_TYPE -> {
-				int n = Integer.parseInt(mod.param1());
-				String type = mod.param2() == null ? "Forward" : mod.param2();
-				List<CardData> oppFwds = isP1 ? p2ForwardCards : p1ForwardCards;
-				CardData[]     oppBkps = isP1 ? p2BackupCards  : p1BackupCards;
-				List<CardData> oppMons = isP1 ? p2MonsterCards : p1MonsterCards;
-				long count = 0;
-				if ("Forward".equalsIgnoreCase(type) || "Character".equalsIgnoreCase(type))
-					count += oppFwds.size();
-				if ("Backup".equalsIgnoreCase(type) || "Character".equalsIgnoreCase(type))
-					count += Arrays.stream(oppBkps).filter(b -> b != null).count();
-				if ("Monster".equalsIgnoreCase(type))
-					count += oppMons.size();
-				yield count >= n ? 1 : 0;
-			}
-		case IF_FORWARD_ENTERED_VIA_WARP_THIS_TURN ->
-				(turn(isP1).forwardEnteredViaWarpThisTurn) ? 1 : 0;
-		case IF_N_OR_MORE_JOB_IN_BZ -> {
-				int n    = Integer.parseInt(mod.param1());
-				String job = mod.param2();
-				long count = bz.stream().filter(c -> c.hasJob(job)).count();
-				yield count >= n ? 1 : 0;
-			}
-		case IF_RECEIVED_EXACTLY_N_DAMAGE -> {
-				int n = Integer.parseInt(mod.param1());
-				yield dmg.size() == n ? 1 : 0;
-			}
-		case HIGHEST_COST_ELEMENT_FORWARD -> {
-				String elem = mod.param1();
-				yield fwds.stream()
-						.filter(f -> elem.equalsIgnoreCase(f.element()))
-						.mapToInt(CardData::cost)
-						.max()
-						.orElse(0);
-			}
-		case IF_CONTROL_N_OR_MORE_TYPE -> {
-				int n = Integer.parseInt(mod.param1());
-				String type = mod.param2() == null ? "Forward" : mod.param2();
-				long fwdCount = 0, bkpCount = 0, monCount = 0;
-				if ("Forward".equalsIgnoreCase(type) || "Character".equalsIgnoreCase(type))
-					fwdCount = fwds.size();
-				if ("Backup".equalsIgnoreCase(type) || "Character".equalsIgnoreCase(type))
-					bkpCount = Arrays.stream(bkps).filter(b -> b != null).count();
-				if ("Monster".equalsIgnoreCase(type)) {
-					List<CardData> mons = isP1 ? p1MonsterCards : p2MonsterCards;
-					monCount = mons.size();
-				}
-				yield (fwdCount + bkpCount + monCount) >= n ? 1 : 0;
-			}
-		case IF_CONTROL_N_OR_MORE_ELEMENT_TYPE -> {
-				int n = Integer.parseInt(mod.param1());
-				String[] parts = mod.param2().split("\\|", 2);
-				String elem = parts[0];
-				String type = parts.length > 1 ? parts[1] : "Forward";
-				long fwdCount = 0, bkpCount = 0, monCount = 0;
-				if ("Forward".equalsIgnoreCase(type) || "Character".equalsIgnoreCase(type))
-					fwdCount = fwds.stream().filter(f -> elem.equalsIgnoreCase(f.element())).count();
-				if ("Backup".equalsIgnoreCase(type) || "Character".equalsIgnoreCase(type))
-					bkpCount = Arrays.stream(bkps)
-							.filter(b -> b != null && elem.equalsIgnoreCase(b.element())).count();
-				if ("Monster".equalsIgnoreCase(type)) {
-					List<CardData> mons = isP1 ? p1MonsterCards : p2MonsterCards;
-					monCount = mons.stream().filter(mn -> elem.equalsIgnoreCase(mn.element())).count();
-				}
-				yield (fwdCount + bkpCount + monCount) >= n ? 1 : 0;
-			}
-		case IF_BOTH_NAMES_IN_BZ -> {
-				String name1 = mod.param1();
-				String name2 = mod.param2();
-				boolean has1 = bz.stream().anyMatch(c -> c.name().equalsIgnoreCase(name1));
-				boolean has2 = bz.stream().anyMatch(c -> c.name().equalsIgnoreCase(name2));
-				yield (has1 && has2) ? 1 : 0;
-			}
-		case PER_N_ELEMENT_TYPE_CONTROLLED -> {
-				int n = Integer.parseInt(mod.param1());
-				String[] parts = mod.param2().split("\\|", 2);
-				String elem = parts[0];
-				String type = parts.length > 1 ? parts[1] : "Forward";
-				long fwdCount = 0, bkpCount = 0, monCount = 0;
-				if ("Forward".equalsIgnoreCase(type) || "Character".equalsIgnoreCase(type))
-					fwdCount = fwds.stream().filter(f -> elem.equalsIgnoreCase(f.element())).count();
-				if ("Backup".equalsIgnoreCase(type) || "Character".equalsIgnoreCase(type))
-					bkpCount = Arrays.stream(bkps)
-							.filter(b -> b != null && elem.equalsIgnoreCase(b.element())).count();
-				if ("Monster".equalsIgnoreCase(type)) {
-					List<CardData> mons = isP1 ? p1MonsterCards : p2MonsterCards;
-					monCount = mons.stream().filter(mn -> elem.equalsIgnoreCase(mn.element())).count();
-				}
-				yield (int) ((fwdCount + bkpCount + monCount) / n);
-			}
-		case IF_IS_YOUR_TURN ->
-				(isP1 == (gameState.getCurrentPlayer() == GameState.Player.P1)) ? 1 : 0;
-		case IF_CONTROL_JOB_OR_NAME -> {
-				String job  = mod.param1();
-				String name = mod.param2();
-				boolean found = fwds.stream().anyMatch(f -> f.hasJob(job) || name.equalsIgnoreCase(f.name()))
-						|| Arrays.stream(bkps).filter(b -> b != null)
-								.anyMatch(b -> b.hasJob(job) || name.equalsIgnoreCase(b.name()));
-				yield found ? 1 : 0;
-			}
-		case EACH_MONSTER -> {
-				List<CardData> mons = isP1 ? p1MonsterCards : p2MonsterCards;
-				yield mons.size();
-			}
-		case IF_OPPONENT_CHARACTER_RETURNED_TO_HAND_THIS_TURN ->
-				(turn(isP1).turnOpponentCharReturnedToHand) ? 1 : 0;
-		case IF_CONTROL_N_OR_MORE_JOB_OR_NAME -> {
-				int n = Integer.parseInt(mod.param1());
-				String[] parts = mod.param2().split("\\|", 2);
-				String job  = parts[0];
-				String name = parts.length > 1 ? parts[1] : "";
-				long count = fwds.stream()
-								.filter(f -> f.hasJob(job) || name.equalsIgnoreCase(f.name())).count()
-						+ Arrays.stream(bkps).filter(b -> b != null
-								&& (b.hasJob(job) || name.equalsIgnoreCase(b.name()))).count();
-				yield count >= n ? 1 : 0;
-			}
-		case EACH_CARD_DRAWN_THIS_TURN ->
-				turn(isP1).cardsDrawnThisTurn;
-		case IF_N_OR_MORE_CATEGORY_IN_BZ_AND_RFP -> {
-				int n    = Integer.parseInt(mod.param1());
-				String cat = mod.param2();
-				Predicate<CardData> hasCat = c ->
-						cat.equalsIgnoreCase(c.category1()) || cat.equalsIgnoreCase(c.category2());
-				long bzCount  = bz.stream().filter(hasCat).count();
-				List<CardData> rfp = isP1 ? gameState.getP1PermanentRfp() : gameState.getP2PermanentRfp();
-				long rfpCount = rfp.stream().filter(hasCat).count();
-				yield (bzCount + rfpCount) >= n ? 1 : 0;
-			}
-		case IF_OWN_ELEMENT_OR_CATEGORY_BROKEN_THIS_TURN -> {
-				String elem = mod.param1();
-				String cat  = mod.param2();
-				Set<String> elems = turn(isP1).brokenElementsThisTurn;
-				Set<String> cats  = turn(isP1).brokenCategoriesThisTurn;
-				yield (elem != null && elems.contains(elem.toLowerCase()))
-					|| (cat  != null && cats.contains(cat.toLowerCase())) ? 1 : 0;
-			}
-		case IF_OPPONENT_CONTROLS_N_MORE_THAN_ME -> {
-				int n = Integer.parseInt(mod.param1());
-				String type = mod.param2() == null ? "Forward" : mod.param2();
-				List<CardData> oppFwds = isP1 ? p2ForwardCards : p1ForwardCards;
-				CardData[]     oppBkps = isP1 ? p2BackupCards  : p1BackupCards;
-				List<CardData> oppMons = isP1 ? p2MonsterCards : p1MonsterCards;
-				long selfCount = 0, oppCount = 0;
-				if ("Forward".equalsIgnoreCase(type) || "Character".equalsIgnoreCase(type)) {
-					selfCount += fwds.size();
-					oppCount  += oppFwds.size();
-				}
-				if ("Backup".equalsIgnoreCase(type) || "Character".equalsIgnoreCase(type)) {
-					selfCount += Arrays.stream(bkps).filter(b -> b != null).count();
-					oppCount  += Arrays.stream(oppBkps).filter(b -> b != null).count();
-				}
-				if ("Monster".equalsIgnoreCase(type)) {
-					List<CardData> selfMons = isP1 ? p1MonsterCards : p2MonsterCards;
-					selfCount += selfMons.size();
-					oppCount  += oppMons.size();
-				}
-				yield (oppCount - selfCount) >= n ? 1 : 0;
-			}
-		case EACH_JOB_OR_ELEMENT_TYPE_CONTROLLED -> {
-				String job = mod.param1();
-				String[] parts = mod.param2().split("\\|", 2);
-				String elem = parts[0];
-				String type = parts.length > 1 ? parts[1] : "Character";
-				List<CardData> mons = isP1 ? p1MonsterCards : p2MonsterCards;
-				Predicate<CardData> fwdPred = f ->
-						f.hasJob(job)
-						|| (("Forward".equalsIgnoreCase(type) || "Character".equalsIgnoreCase(type))
-							&& elem.equalsIgnoreCase(f.element()));
-				Predicate<CardData> bkpPred = b ->
-						b.hasJob(job)
-						|| (("Backup".equalsIgnoreCase(type) || "Character".equalsIgnoreCase(type))
-							&& elem.equalsIgnoreCase(b.element()));
-				yield (int) (fwds.stream().filter(fwdPred).count()
-						+ Arrays.stream(bkps).filter(b -> b != null).filter(bkpPred).count()
-						+ mons.stream().filter(mn -> mn.hasJob(job)
-								|| ("Monster".equalsIgnoreCase(type) && elem.equalsIgnoreCase(mn.element()))).count());
-			}
-		};
-	}
-
-	private int applyFieldReductions(int cost, CardData card, boolean isP1) {
+	int applyFieldReductions(int cost, CardData card, boolean isP1) {
 		for (int s = 0; s < 2; s++) {
 			boolean sIsP1 = s == 0;
 			List<CardData> fwds = sIsP1 ? p1ForwardCards : p2ForwardCards;
@@ -6663,69 +6208,14 @@ public class MainWindow {
 		return false;
 	}
 
-	/** {@link #castRestrictionMet(CardData, boolean)} from P1's perspective. */
-	boolean castRestrictionMet(CardData card) {
-		return castRestrictionMet(card, true);
-	}
+	/** @see CostCalculator#castRestrictionMet */
+	boolean castRestrictionMet(CardData card) { return costs.castRestrictionMet(card); }
 
-	/**
-	 * Returns {@code true} if the card's "You cannot cast X." / "You can only cast X …" restriction
-	 * (if any) is satisfied by the current game state for the player casting it.
-	 *
-	 * <p>Every zone this reads — Forwards controlled, Break Zone contents, removed-from-game
-	 * Summons, the <em>opponent's</em> hand — is taken from {@code isP1}'s side, so the CPU is held
-	 * to the same conditions the player is.  The turn checks are likewise relative: "during your
-	 * turn" means the caster's own turn, not P1's.
-	 */
-	boolean castRestrictionMet(CardData card, boolean isP1) {
-		CastRestriction cr = card.castRestriction();
-		if (cr == null) return true;
-
-		// "You cannot cast X." — never castable; only effects that put it onto the field work.
-		if (cr.castProhibited()) return false;
-
-		boolean ownTurn = (gameState.getCurrentPlayer() == GameState.Player.P1) == isP1;
-
-		if (cr.opponentTurnOnly() && ownTurn)  return false;
-		if ((cr.yourTurnOnly() || cr.mainPhaseOnly()) && !ownTurn) return false;
-
-		List<CardData> ownForwards = isP1 ? p1ForwardCards : p2ForwardCards;
-		if (cr.requiresNoForwards() && !ownForwards.isEmpty()) return false;
-		if (cr.requiresAForward()   &&  ownForwards.isEmpty()) return false;
-
-		List<CardData> opponentHand = isP1 ? gameState.getP2Hand() : gameState.getP1Hand();
-		if (cr.maxOpponentHandSize() >= 0
-				&& opponentHand.size() > cr.maxOpponentHandSize()) return false;
-
-		List<CardData> bz = isP1 ? gameState.getP1BreakZone() : gameState.getP2BreakZone();
-		if (!cr.requiredBZTypes().isEmpty()) {
-			for (String requiredType : cr.requiredBZTypes()) {
-				boolean found = switch (requiredType) {
-					case "Forward" -> bz.stream().anyMatch(CardData::isForward);
-					case "Backup"  -> bz.stream().anyMatch(CardData::isBackup);
-					case "Monster" -> bz.stream().anyMatch(CardData::isMonster);
-					case "Summon"  -> bz.stream().anyMatch(CardData::isSummon);
-					default        -> false;
-				};
-				if (!found) return false;
-			}
-		}
-
-		if (cr.minBZAndRfpSummons() > 0) {
-			long bzSummons  = bz.stream().filter(CardData::isSummon).count();
-			long rfpSummons = (isP1 ? gameState.getP1PermanentRfp() : gameState.getP2PermanentRfp())
-					.stream().filter(CardData::isSummon).count();
-			if (bzSummons + rfpSummons < cr.minBZAndRfpSummons()) return false;
-		}
-
-		if (cr.mustControlCondition() != null && !controlConditionMet(cr.mustControlCondition(), isP1))
-			return false;
-
-		return true;
-	}
+	/** @see CostCalculator#castRestrictionMet */
+	boolean castRestrictionMet(CardData card, boolean isP1) { return costs.castRestrictionMet(card, isP1); }
 
 	/** Returns true if any on-field card grants {@code backup} any-element CP. */
-	private boolean isGrantedAnyElementCp(CardData backup) {
+	boolean isGrantedAnyElementCp(CardData backup) {
 		for (CardData b : p1BackupCards) {
 			if (b != null) {
 				BackupCpGrant grant = b.backupCpGrant();
@@ -6740,7 +6230,7 @@ public class MainWindow {
 	}
 
 	/** Returns the union of specific elements granted to {@code backup} by field cards (empty = no specific grant). */
-	private List<String> getGrantedSpecificElementsCp(CardData backup) {
+	List<String> getGrantedSpecificElementsCp(CardData backup) {
 		List<String> result = null;
 		for (CardData b : p1BackupCards) {
 			if (b != null) {
@@ -6761,98 +6251,14 @@ public class MainWindow {
 		return result != null ? result : List.of();
 	}
 
-	boolean canAffordCard(CardData card, int excludeHandIdx) {
-		return canAffordCard(card, excludeHandIdx, null, 0);
-	}
+	/** @see CostCalculator#canAffordCard */
+	boolean canAffordCard(CardData card, int excludeHandIdx) { return costs.canAffordCard(card, excludeHandIdx); }
 
-	/**
-	 * Like {@link #canAffordCard(CardData, int)} but adds {@code extraGenericCost} to the CP
-	 * total needed and {@code extraRequiredElems} to the set of elements that must have at
-	 * least one available source — used to pre-check a fixed-CP extra cost (e.g. "pay 《Wind》《2》
-	 * as an extra cost") on top of the card's own casting cost.
-	 */
-	private boolean canAffordCard(CardData card, int excludeHandIdx, String[] extraRequiredElems, int extraGenericCost) {
-		String[] elems = (extraRequiredElems == null || extraRequiredElems.length == 0) ? card.elements()
-				: java.util.stream.Stream.concat(Arrays.stream(card.elements()), Arrays.stream(extraRequiredElems))
-						.distinct().toArray(String[]::new);
-		List<CardData> hand  = gameState.getP1Hand();
-		Set<String> ldGrants = lightDarkDiscardGrants(true);
-		int totalGenerate = 0;
-		int totalCostNeeded = effectiveCastCost(card) + extraGenericCost;
+	/** @see CostCalculator#canAffordCard */
+	private boolean canAffordCard(CardData card, int excludeHandIdx, String[] extraRequiredElems, int extraGenericCost) { return costs.canAffordCard(card, excludeHandIdx, extraRequiredElems, extraGenericCost); }
 
-		if (card.isLightOrDark()) {
-			// L/D cards accept any element — sum all banked CP and all available sources
-			int totalExisting = gameState.getP1CpByElement().values().stream().mapToInt(Integer::intValue).sum();
-			for (int i = 0; i < hand.size(); i++) {
-				if (i == excludeHandIdx) continue;
-				if (CpPaymentUtils.canDiscardForCp(hand.get(i), ldGrants)) totalGenerate += 2;
-			}
-			for (int i = 0; i < p1BackupCards.length; i++) {
-				if (p1BackupCards[i] != null && p1BackupStates[i] == CardState.ACTIVE)
-					totalGenerate += 1;
-			}
-			return totalExisting + totalGenerate >= totalCostNeeded;
-		}
-
-		boolean[] hasElemSource = new boolean[elems.length];
-		int totalExisting = 0;
-		for (int ei = 0; ei < elems.length; ei++) {
-			int ex = gameState.getP1CpForElement(elems[ei]);
-			totalExisting += ex;
-			if (ex > 0) hasElemSource[ei] = true;
-		}
-		for (int i = 0; i < hand.size(); i++) {
-			if (i == excludeHandIdx) continue;
-			CardData h = hand.get(i);
-			if (!CpPaymentUtils.canDiscardForCp(h, ldGrants)) continue;
-			totalGenerate += 2;
-			for (int ei = 0; ei < elems.length; ei++) {
-				if (h.containsElement(elems[ei])) hasElemSource[ei] = true;
-			}
-		}
-		for (int i = 0; i < p1BackupCards.length; i++) {
-			if (p1BackupCards[i] != null && p1BackupStates[i] == CardState.ACTIVE) {
-				CardData bkp = p1BackupCards[i];
-				String anyElemCat = bkp.backupCpAnyElementCategory();
-				boolean isAnyElem = bkp.backupCpAnyElement()
-						|| (bkp.backupCpAnyElementOfForwards() && !p1ForwardCards.isEmpty())
-						|| (!anyElemCat.isEmpty()
-							&& (anyElemCat.equalsIgnoreCase(card.category1())
-								|| anyElemCat.equalsIgnoreCase(card.category2())))
-						|| isGrantedAnyElementCp(bkp);
-				if (isAnyElem) {
-					totalGenerate += 1;
-					for (int ei = 0; ei < elems.length; ei++) hasElemSource[ei] = true;
-				} else {
-					List<String> grantedSpecific = getGrantedSpecificElementsCp(bkp);
-					for (int ei = 0; ei < elems.length; ei++) {
-						if (bkp.containsElement(elems[ei]) || grantedSpecific.contains(elems[ei])) {
-							totalGenerate += 1;
-							hasElemSource[ei] = true;
-							break;
-						}
-					}
-				}
-			}
-		}
-		for (boolean hs : hasElemSource) if (!hs) return false;
-		return totalExisting + totalGenerate >= totalCostNeeded;
-	}
-
-	/** Returns {@code true} when P1 can pay the extra cost. */
-	private boolean canAffordExtraCost(CardData card, int handIdx, ExtraCost ec) {
-		return switch (ec.type()) {
-			case BZ_REMOVE    -> gameState.getP1BreakZone().stream().filter(ec::matches).count() >= ec.count();
-			case DISCARD_HAND -> gameState.getP1Hand().size() > ec.count(); // must have cards beyond the one being cast
-			case CP_X         -> true;
-			case CP_FIXED     -> {
-				String[] extraElems = ec.cpElements().stream().filter(e -> !e.isEmpty())
-						.distinct().toArray(String[]::new);
-				int extraGeneric = (int) ec.cpElements().stream().filter(String::isEmpty).count();
-				yield canAffordCard(card, handIdx, extraElems, extraGeneric);
-			}
-		};
-	}
+	/** @see CostCalculator#canAffordExtraCost */
+	private boolean canAffordExtraCost(CardData card, int handIdx, ExtraCost ec) { return costs.canAffordExtraCost(card, handIdx, ec); }
 
 	/**
 	 * Opens the appropriate extra-cost selection dialog (BZ removal, hand discard, or X spinner),
@@ -6905,126 +6311,11 @@ public class MainWindow {
 		}
 	}
 
-	/**
-	 * Returns true when the player can pay the alternate cast cost for {@code card},
-	 * including satisfying any field-presence condition.
-	 */
-	private boolean canAffordAltCost(CardData card, int handIdx) {
-		// Condition check: "If you control a Card Name X or a Card Name Y"
-		List<String> condNames = card.altConditionCardNames();
-		if (!condNames.isEmpty() && condNames.stream().noneMatch(this::hasCharacterNameOnField)) return false;
+	/** @see CostCalculator#canAffordAltCost */
+	private boolean canAffordAltCost(CardData card, int handIdx) { return costs.canAffordAltCost(card, handIdx); }
 
-		if (playerCrystals(true) < card.altCrystalCost()) return false;
-
-		// Break Zone removal check
-		List<String> bzReqs = card.altBzRemovals();
-		if (!bzReqs.isEmpty()) {
-			List<CardData> available = new ArrayList<>(gameState.getP1BreakZone());
-			for (String req : bzReqs) {
-				String[] parts = req.split(" ", 2);
-				String elem = parts[0], type = parts.length > 1 ? parts[1] : "";
-				boolean found = false;
-				for (int i = 0; i < available.size(); i++) {
-					CardData c = available.get(i);
-					if (c.containsElement(elem) && matchesAltBzType(c, type)) {
-						available.remove(i); found = true; break;
-					}
-				}
-				if (!found) return false;
-			}
-		}
-
-		List<String> altElems = card.altCpElements();
-		if (altElems.isEmpty()) return true;
-
-		// Count available CP sources (backup-only restriction respected)
-		LinkedHashMap<String, Integer> needed = new LinkedHashMap<>();
-		long genericNeeded = 0;
-		for (String e : altElems) { if (e.isEmpty()) genericNeeded++; else needed.merge(e, 1, Integer::sum); }
-		String[] elems = needed.keySet().toArray(String[]::new);
-
-		int totalSources = 0;
-		for (String e : elems) totalSources += gameState.getP1CpForElement(e);
-		for (int i = 0; i < p1BackupCards.length; i++)
-			if (p1BackupCards[i] != null && p1BackupStates[i] == CardState.ACTIVE
-					&& (genericNeeded > 0 || matchesAnyElement(p1BackupCards[i], elems))) totalSources++;
-		if (!card.altBackupOnlyCp()) {
-			Set<String> ldGrants = lightDarkDiscardGrants(true);
-			for (int i = 0; i < gameState.getP1Hand().size(); i++) {
-				if (i == handIdx) continue;
-				CardData h = gameState.getP1Hand().get(i);
-				if (CpPaymentUtils.canDiscardForCp(h, ldGrants)
-						&& (genericNeeded > 0 || matchesAnyElement(h, elems))) totalSources += 2;
-			}
-		}
-		return totalSources >= altElems.size();
-	}
-
-	/**
-	 * Returns true if the player can afford the Warp alternate cost of {@code card}.
-	 * Warp cost is a list of element CP requirements (e.g. ["Lightning"] = 1 Lightning CP).
-	 */
-	private boolean canAffordWarpCost(CardData card, int handIdx) {
-		List<String> warpCost = card.warpCost();
-		if (warpCost.isEmpty()) return true;
-
-		// Separate element-specific requirements from generic CP (empty-string entries).
-		// A Fina-style grant collapses the whole cost to generic: no element requirement survives.
-		boolean anyElem    = warpCostAnyElement(true);
-		boolean hasGeneric = anyElem || warpCost.contains("");
-		LinkedHashMap<String, Integer> needed = new LinkedHashMap<>();
-		if (!anyElem) for (String e : warpCost) if (!e.isEmpty()) needed.merge(e, 1, Integer::sum);
-		String[] elems = needed.keySet().toArray(String[]::new);
-		int total = warpCost.size();
-
-		boolean[] hasSrc = new boolean[elems.length];
-		int available = 0;
-
-		// Banked CP (element-specific)
-		for (int ei = 0; ei < elems.length; ei++) {
-			int b = gameState.getP1CpForElement(elems[ei]);
-			available += b;
-			if (b > 0) hasSrc[ei] = true;
-		}
-		// Banked CP of any element counts toward generic
-		if (hasGeneric) {
-			available += gameState.getP1CpByElement().values().stream().mapToInt(Integer::intValue).sum();
-			for (int ei = 0; ei < elems.length; ei++)
-				available -= gameState.getP1CpForElement(elems[ei]); // avoid double-counting
-		}
-
-		// Undulled backups: matching backups satisfy element requirements;
-		// any backup can cover generic CP
-		for (int i = 0; i < p1BackupCards.length; i++) {
-			if (p1BackupCards[i] == null || p1BackupStates[i] != CardState.ACTIVE) continue;
-			boolean matched = false;
-			for (int ei = 0; ei < elems.length; ei++) {
-				if (p1BackupCards[i].containsElement(elems[ei])) {
-					available++;
-					hasSrc[ei] = true;
-					matched = true;
-					break;
-				}
-			}
-			if (!matched && hasGeneric) available++;
-		}
-
-		// Non-L/D (or grant-covered L/D) hand cards always contribute 2 CP toward total
-		List<CardData> hand = gameState.getP1Hand();
-		Set<String> ldGrants = lightDarkDiscardGrants(true);
-		for (int i = 0; i < hand.size(); i++) {
-			if (i == handIdx) continue;
-			CardData h = hand.get(i);
-			if (!CpPaymentUtils.canDiscardForCp(h, ldGrants)) continue;
-			available += 2;
-			for (int ei = 0; ei < elems.length; ei++) {
-				if (h.containsElement(elems[ei])) hasSrc[ei] = true;
-			}
-		}
-
-		for (boolean s : hasSrc) if (!s) return false;
-		return available >= total;
-	}
+	/** @see CostCalculator#canAffordWarpCost */
+	private boolean canAffordWarpCost(CardData card, int handIdx) { return costs.canAffordWarpCost(card, handIdx); }
 
 	/**
 	 * Opens a payment dialog for the Warp alternate cost and, on confirm,
@@ -7220,7 +6511,7 @@ public class MainWindow {
 	}
 
 	/** Returns true if at least one P1 backup slot is currently empty. */
-	private boolean hasCharacterNameOnField(String name) {
+	boolean hasCharacterNameOnField(String name) {
 		for (CardData c : p1ForwardCards)
 			if (name.equalsIgnoreCase(c.name())) return true;
 		for (CardData c : p1MonsterCards)
@@ -7351,19 +6642,8 @@ public class MainWindow {
 		return out;
 	}
 
-	/**
-	 * Returns true if the given player controls a card granting "Your Warp cost can be paid with
-	 * CP of any Element." (Fina), which makes every element of the Warp cost payable by any CP.
-	 */
-	boolean warpCostAnyElement(boolean isP1) {
-		for (CardData c : playerForwardCards(isP1))
-			if (c.warpCostAnyElement() && !lostAbilitiesCards.contains(c)) return true;
-		for (CardData c : playerBackupCards(isP1))
-			if (c != null && c.warpCostAnyElement() && !lostAbilitiesCards.contains(c)) return true;
-		for (CardData c : playerMonsterCards(isP1))
-			if (c.warpCostAnyElement() && !lostAbilitiesCards.contains(c)) return true;
-		return false;
-	}
+	/** @see CostCalculator#warpCostAnyElement */
+	boolean warpCostAnyElement(boolean isP1) { return costs.warpCostAnyElement(isP1); }
 
 	boolean hasAvailableBackupSlot() {
 		if (p1BackupLabels == null) return false;
@@ -8691,92 +7971,14 @@ public class MainWindow {
 		return "<html>" + plain;
 	}
 
-	/**
-	 * True when {@code isP1} can currently pay an optional "if you don't pay 《…》" cost. Exactly one
-	 * of the three forms applies: {@code crystals} Crystals, one CP of {@code element}, or
-	 * {@code cp} generic CP.
-	 */
-	boolean canPayOptionalCost(boolean isP1, int cp, String element, int crystals) {
-		if (crystals > 0)      return playerCrystals(isP1) >= crystals;
-		if (element != null)   return canAffordCpTokens(List.of(element), 1, isP1);
-		if (cp > 0)            return canAffordCpTokens(Collections.nCopies(cp, ""), cp, isP1);
-		return true;
-	}
+	/** @see CostCalculator#canPayOptionalCost */
+	boolean canPayOptionalCost(boolean isP1, int cp, String element, int crystals) { return costs.canPayOptionalCost(isP1, cp, element, crystals); }
 
-	/**
-	 * Returns {@code true} if the player can afford the CP portion of an action
-	 * ability's cost (element and generic CP only; Dull/S requirements are checked
-	 * separately in the context-menu enable logic).
-	 */
-	boolean canAffordAbilityCost(ActionAbility ability, boolean isP1) {
-		List<String> cost = ability.cpCost();
-		if (cost.isEmpty()) return true;
-		int total = cost.size();
-		if (ability.inlineCostReductionJob() != null)
-			total = Math.max(0, total - computeInlineReduction(ability.inlineCostReductionJob(),
-					ability.inlineCostReductionExcludeName(), isP1));
-		return canAffordCpTokens(cost, total, isP1);
-	}
+	/** @see CostCalculator#canAffordAbilityCost */
+	boolean canAffordAbilityCost(ActionAbility ability, boolean isP1) { return costs.canAffordAbilityCost(ability, isP1); }
 
-	/**
-	 * True when {@code isP1} could currently assemble a CP payment described by {@code cost} — one
-	 * token per CP, {@code ""} for generic CP and an element name for element-specific CP. Counts
-	 * active Backups and hand cards that could be discarded for 2 CP, and requires at least one
-	 * source for every element named in the cost.
-	 *
-	 * @param total the number of CP actually owed, which cost reductions may drop below {@code cost.size()}
-	 */
-	boolean canAffordCpTokens(List<String> cost, int total, boolean isP1) {
-		if (cost.isEmpty()) return true;
-
-		boolean hasGeneric = cost.contains("");
-		LinkedHashMap<String, Integer> needed = new LinkedHashMap<>();
-		for (String e : cost) if (!e.isEmpty()) needed.merge(e, 1, Integer::sum);
-		String[] elems = needed.keySet().toArray(String[]::new);
-
-		boolean[] hasSrc = new boolean[elems.length];
-		int available = 0;
-
-		for (int ei = 0; ei < elems.length; ei++) {
-			int b = playerCpForElem(isP1, elems[ei]);
-			available += b;
-			if (b > 0) hasSrc[ei] = true;
-		}
-		if (hasGeneric) {
-			available += playerCpByElem(isP1).values().stream().mapToInt(Integer::intValue).sum();
-			for (int ei = 0; ei < elems.length; ei++) available -= playerCpForElem(isP1, elems[ei]);
-		}
-		CardData[]  bkpCards  = playerBackupCards(isP1);
-		CardState[] bkpStates = playerBackupStates(isP1);
-		for (int i = 0; i < bkpCards.length; i++) {
-			if (bkpCards[i] == null || bkpStates[i] != CardState.ACTIVE) continue;
-			CardData bkp = bkpCards[i];
-			boolean isAnyElem = bkp.backupCpAnyElement()
-					|| (bkp.backupCpAnyElementOfForwards() && !playerForwardCards(isP1).isEmpty())
-					|| isGrantedAnyElementCp(bkp);
-			if (isAnyElem) {
-				available++;
-				for (int ei = 0; ei < elems.length; ei++) hasSrc[ei] = true;
-			} else {
-				List<String> grantedSpecific = getGrantedSpecificElementsCp(bkp);
-				boolean matched = false;
-				for (int ei = 0; ei < elems.length; ei++) {
-					if (bkp.containsElement(elems[ei]) || grantedSpecific.contains(elems[ei])) {
-						available++; hasSrc[ei] = true; matched = true; break;
-					}
-				}
-				if (!matched && hasGeneric) available++;
-			}
-		}
-		Set<String> ldGrants = lightDarkDiscardGrants(isP1);
-		for (CardData h : playerHand(isP1)) {
-			if (!CpPaymentUtils.canDiscardForCp(h, ldGrants)) continue;
-			available += 2;
-			for (int ei = 0; ei < elems.length; ei++) if (h.containsElement(elems[ei])) hasSrc[ei] = true;
-		}
-		for (boolean s : hasSrc) if (!s) return false;
-		return available >= total;
-	}
+	/** @see CostCalculator#canAffordCpTokens */
+	boolean canAffordCpTokens(List<String> cost, int total, boolean isP1) { return costs.canAffordCpTokens(cost, total, isP1); }
 
 	/** Counts field cards (forwards + backups) with the given job, excluding any named {@code excludeName}. */
 	int computeInlineReduction(String job, String excludeName, boolean isP1) {
@@ -8824,7 +8026,7 @@ public class MainWindow {
 	List<CardData> playerMonsterCards(boolean isP1){ return isP1 ? p1MonsterCards              : p2MonsterCards; }
 	int  playerCrystals(boolean isP1)              { return isP1 ? gameState.getP1Crystals()   : gameState.getP2Crystals(); }
 	int  playerCpForElem(boolean isP1, String e)   { return isP1 ? gameState.getP1CpForElement(e) : gameState.getP2CpForElement(e); }
-	private Map<String, Integer> playerCpByElem(boolean isP1) { return isP1 ? gameState.getP1CpByElement() : gameState.getP2CpByElement(); }
+	Map<String, Integer> playerCpByElem(boolean isP1) { return isP1 ? gameState.getP1CpByElement() : gameState.getP2CpByElement(); }
 	void playerAddCp(boolean isP1, String e, int n)    { if (isP1) gameState.addP1Cp(e, n);   else gameState.addP2Cp(e, n); }
 	void playerSpendCp(boolean isP1, String e, int n)  { if (isP1) gameState.spendP1Cp(e, n); else gameState.spendP2Cp(e, n); }
 	void playerClearCp(boolean isP1, String e)         { if (isP1) gameState.clearP1Cp(e);    else gameState.clearP2Cp(e); }
@@ -13205,47 +12407,8 @@ public class MainWindow {
 		return false;
 	}
 
-	/** Returns true if the player can afford the Priming cost of {@code card} (card is on the field, not in hand). */
-	private boolean canAffordPrimingCost(CardData card) {
-		List<String> cost = card.primingCost();
-		if (cost.isEmpty()) return true;
-
-		boolean hasGeneric = cost.contains("");
-		LinkedHashMap<String, Integer> needed = new LinkedHashMap<>();
-		for (String e : cost) if (!e.isEmpty()) needed.merge(e, 1, Integer::sum);
-		String[] elems = needed.keySet().toArray(String[]::new);
-		int total = cost.size();
-
-		boolean[] hasSrc = new boolean[elems.length];
-		int available = 0;
-
-		for (int ei = 0; ei < elems.length; ei++) {
-			int b = gameState.getP1CpForElement(elems[ei]);
-			available += b;
-			if (b > 0) hasSrc[ei] = true;
-		}
-		if (hasGeneric) {
-			available += gameState.getP1CpByElement().values().stream().mapToInt(Integer::intValue).sum();
-			for (int ei = 0; ei < elems.length; ei++) available -= gameState.getP1CpForElement(elems[ei]);
-		}
-		for (int i = 0; i < p1BackupCards.length; i++) {
-			if (p1BackupCards[i] == null || p1BackupStates[i] != CardState.ACTIVE) continue;
-			boolean matched = false;
-			for (int ei = 0; ei < elems.length; ei++) {
-				if (p1BackupCards[i].containsElement(elems[ei])) { available++; hasSrc[ei] = true; matched = true; break; }
-			}
-			if (!matched && hasGeneric) available++;
-		}
-		List<CardData> hand = gameState.getP1Hand();
-		Set<String> ldGrants = lightDarkDiscardGrants(true);
-		for (CardData h : hand) {
-			if (!CpPaymentUtils.canDiscardForCp(h, ldGrants)) continue;
-			available += 2;
-			for (int ei = 0; ei < elems.length; ei++) if (h.containsElement(elems[ei])) hasSrc[ei] = true;
-		}
-		for (boolean s : hasSrc) if (!s) return false;
-		return available >= total;
-	}
+	/** @see CostCalculator#canAffordPrimingCost */
+	private boolean canAffordPrimingCost(CardData card) { return costs.canAffordPrimingCost(card); }
 
 	/**
 	 * Payment dialog for the Priming ability cost. On confirm, searches the
