@@ -8791,7 +8791,7 @@ public class MainWindow {
 		GameContext ctx = buildGameContext(isP1);
 		for (FieldAbility fa : card.fieldAbilities()) {
 			Consumer<GameContext> effect =
-					ActionResolver.tryParseIfOppNoForwardsPutToBreakZone(fa.effectText(), card);
+					ActionResolverBreak.tryParseIfOppNoForwardsPutToBreakZone(fa.effectText(), card);
 			if (effect != null) {
 				logEntry("[Field] " + card.name() + ": " + fa.effectText());
 				effect.accept(ctx);
@@ -8834,7 +8834,7 @@ public class MainWindow {
 	private void fireFieldSelfDamagePointsAbilitiesForCard(CardData card, GameContext ctx) {
 		for (FieldAbility fa : card.fieldAbilities()) {
 			Consumer<GameContext> effect =
-					ActionResolver.tryParseIfSelfDamagePointsPutToBreakZone(fa.effectText(), card);
+					ActionResolverDamage.tryParseIfSelfDamagePointsPutToBreakZone(fa.effectText(), card);
 			if (effect != null) {
 				logEntry("[Field] " + card.name() + ": " + fa.effectText());
 				effect.accept(ctx);
@@ -8866,7 +8866,7 @@ public class MainWindow {
 				if (lostAbilitiesCards.contains(granter)) continue;
 				for (FieldAbility fa : granter.fieldAbilities()) {
 					ActionResolver.ForwardAbilityGrant grant =
-							ActionResolver.tryParseForwardAbilityGrant(fa.effectText());
+							ActionResolverFieldAbility.tryParseForwardAbilityGrant(fa.effectText());
 					if (grant == null) continue;
 					boolean granteeIsP1 = grant.affectsOpponent() ? !granterIsP1 : granterIsP1;
 					if (granteeIsP1 != isP1) continue;
@@ -8875,7 +8875,7 @@ public class MainWindow {
 						// Re-check each time: an earlier Forward's copy may already have broken this one.
 						if (identityIndexOf(isP1 ? p1ForwardCards : p2ForwardCards, fwd) < 0) continue;
 						Consumer<GameContext> effect =
-								ActionResolver.tryParseGrantedEndOfTurnEffect(grant.abilityText(), fwd);
+								ActionResolverFieldAbility.tryParseGrantedEndOfTurnEffect(grant.abilityText(), fwd);
 						if (effect == null) continue;
 						logEntry((isP1 ? "" : "[P2] ") + fwd.name() + " — granted by " + granter.name()
 								+ ": " + grant.abilityText());

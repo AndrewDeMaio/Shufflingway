@@ -1,5 +1,29 @@
 package shufflingway;
 
+import static shufflingway.ActionResolverGate.*;
+
+import static shufflingway.ActionResolverFieldAbility.*;
+
+import static shufflingway.ActionResolverChoose.*;
+
+import static shufflingway.ActionResolverState.*;
+
+import static shufflingway.ActionResolverRestriction.*;
+
+import static shufflingway.ActionResolverPlay.*;
+
+import static shufflingway.ActionResolverCost.*;
+
+import static shufflingway.ActionResolverHand.*;
+
+import static shufflingway.ActionResolverBreak.*;
+
+import static shufflingway.ActionResolverSearch.*;
+
+import static shufflingway.ActionResolverPower.*;
+
+import static shufflingway.ActionResolverDamage.*;
+
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.HashMap;
@@ -55,7 +79,7 @@ public class ActionResolver {
      *   <li>Group {@code followup}  — the action to apply to chosen targets</li>
      * </ul>
      */
-    private static final Pattern CHOOSE_CHARACTER_PATTERN = Pattern.compile(
+    static final Pattern CHOOSE_CHARACTER_PATTERN = Pattern.compile(
             "(?i)Choose\\s+" +
                     "(?:(?<anycount>any\\s+number)|(?<upto>up\\s+to\\s+)?(?<count>\\d+))\\s+(?:of\\s+)?" +
                     "(?:(?<condition>dull|damaged|attacking|blocking|active)\\s+)?" +
@@ -94,7 +118,7 @@ public class ActionResolver {
      * Matches "Choose N [targets] you control and N [targets] opponent controls. [followup]"
      * — one selection from the active player's side and one from the opponent's side.
      */
-    private static final Pattern CHOOSE_ONE_EACH_PATTERN = Pattern.compile(
+    static final Pattern CHOOSE_ONE_EACH_PATTERN = Pattern.compile(
         "(?i)Choose\\s+(?<count1>\\d+)\\s+" +
         "(?<targets1>Forwards?|Backups?|Characters?|Monsters?)\\s+" +
         "you\\s+control\\s+and\\s+(?<count2>\\d+)\\s+" +
@@ -108,7 +132,7 @@ public class ActionResolver {
      * to its power to the latter." — boost the former, then deal the (post-boost) power as damage to the latter.
      * Group {@code boost} = numeric power amount.
      */
-    private static final Pattern FORMER_BOOST_THEN_POWER_DAMAGE_TO_LATTER = Pattern.compile(
+    static final Pattern FORMER_BOOST_THEN_POWER_DAMAGE_TO_LATTER = Pattern.compile(
         "(?i)The\\s+former\\s+gains?\\s+\\+(?<boost>\\d+)\\s+power\\s+until\\s+(?:the\\s+)?end\\s+of\\s+" +
         "(?:(?:the|your)\\s+)?turn[.]\\s+Then[,]?\\s+the\\s+former\\s+deals?\\s+damage\\s+equal\\s+to\\s+" +
         "its\\s+power\\s+to\\s+the\\s+latter[.!]?"
@@ -120,7 +144,7 @@ public class ActionResolver {
      * Groups: {@code shield} = excluded/redirect card name (first occurrence);
      *         {@code redirect} = redirect target name (second occurrence, should match {@code shield}).
      */
-    private static final Pattern CHOOSE_FORWARD_REDIRECT_TO_NAMED = Pattern.compile(
+    static final Pattern CHOOSE_FORWARD_REDIRECT_TO_NAMED = Pattern.compile(
         "(?i)Choose\\s+1\\s+Forward\\s+you\\s+control\\s+other\\s+than\\s+(?<shield>[A-Za-z][^.]+?)[.!]\\s+" +
         "During\\s+this\\s+turn[,.]?\\s+the\\s+next\\s+damage\\s+dealt\\s+to\\s+it\\s+" +
         "is\\s+(?:received\\s+by|dealt\\s+to)\\s+(?<redirect>[A-Za-z][^.!]+?)\\s+instead[.!]?"
@@ -131,7 +155,7 @@ public class ActionResolver {
      * — one-shot damage redirect from former to latter, with an optional trailing bonus clause.
      * Group {@code suffix} = optional bonus text (e.g. BACKUP_CP_DRAW).
      */
-    private static final Pattern FORMER_LATTER_DAMAGE_REDIRECT = Pattern.compile(
+    static final Pattern FORMER_LATTER_DAMAGE_REDIRECT = Pattern.compile(
         "(?i)During\\s+this\\s+turn[,.]?\\s+the\\s+next\\s+damage\\s+dealt\\s+to\\s+the\\s+former\\s+" +
         "is\\s+(?:received\\s+by|dealt\\s+to)\\s+the\\s+latter\\s+instead[.!]?" +
         "(?<suffix>(?:\\s+.+)?)$",
@@ -144,7 +168,7 @@ public class ActionResolver {
      * Groups: {@code boost} = power amount; {@code traits} = optional trait string;
      * {@code damage} = damage amount; {@code suffix} = optional trailing bonus text.
      */
-    private static final Pattern FORMER_BOOST_TRAITS_LATTER_DIRECT_DAMAGE = Pattern.compile(
+    static final Pattern FORMER_BOOST_TRAITS_LATTER_DIRECT_DAMAGE = Pattern.compile(
         "(?i)Until\\s+the\\s+end\\s+of\\s+the\\s+turn[,.]?\\s+the\\s+former\\s+gains?\\s+" +
         "\\+(?<boost>\\d+)\\s+[Pp]ower" +
         "(?<traits>(?:\\s*(?:and|,)\\s*(?:Haste|First\\s+Strike|Brave))*)\\s*[.]\\s+" +
@@ -158,7 +182,7 @@ public class ActionResolver {
      * the abilities lost by the previous effect until the end of the turn."
      * Group {@code traits} = the comma/and-separated trait list (Haste, First Strike, Brave, etc.).
      */
-    private static final Pattern FORMER_LOSES_TRAITS_LATTER_GAINS = Pattern.compile(
+    static final Pattern FORMER_LOSES_TRAITS_LATTER_GAINS = Pattern.compile(
         "(?i)Until\\s+the\\s+end\\s+of\\s+the\\s+turn[,.]?\\s+the\\s+former\\s+loses\\s+" +
         "(?<traits>[^.]+?)[.]\\s+Then[,.]?\\s+the\\s+latter\\s+gains\\s+all\\s+the\\s+abilities\\s+" +
         "lost\\s+by\\s+the\\s+previous\\s+effect\\s+until\\s+the\\s+end\\s+of\\s+the\\s+turn[.!]?"
@@ -168,7 +192,7 @@ public class ActionResolver {
      * Matches escalating BZ-count conditionals for former/latter: always dull former; if ≥N1
      * Card Name X in BZ dull latter; if ≥N2 freeze both; if ≥N3 opponent discards.
      */
-    private static final Pattern FORMER_DULL_LATTER_BZ_NAME_ESCALATE = Pattern.compile(
+    static final Pattern FORMER_DULL_LATTER_BZ_NAME_ESCALATE = Pattern.compile(
         "(?i)Dull\\s+the\\s+former[.]\\s+If\\s+you\\s+have\\s+(?<n1>\\d+)\\s+or\\s+more\\s+Card\\s+Name\\s+" +
         "(?<cardname>.+?)\\s+in\\s+your\\s+Break\\s+Zone[,.]?\\s+also\\s+dull\\s+the\\s+latter[.]\\s+" +
         "If\\s+you\\s+have\\s+(?<n2>\\d+)\\s+or\\s+more[,.]?\\s+also\\s+Freeze\\s+them[.]\\s+" +
@@ -181,7 +205,7 @@ public class ActionResolver {
      * become dull by your opponent's Summons or abilities.' If you have received N damage or more,
      * also deal the latter damage equal to the highest power Forward you control."
      */
-    private static final Pattern FORMER_BOOST_DULL_IMMUNITY_COND_DAMAGE_LATTER = Pattern.compile(
+    static final Pattern FORMER_BOOST_DULL_IMMUNITY_COND_DAMAGE_LATTER = Pattern.compile(
         "(?i)Until\\s+the\\s+end\\s+of\\s+the\\s+turn[,.]?\\s+the\\s+former\\s+gains\\s+" +
         "\\+(?<boost>\\d+)\\s+power\\s+and\\s+\\W?This\\s+Forward\\s+cannot\\s+become\\s+dull\\s+" +
         "by\\s+your\\s+opponent.s\\s+Summons?\\s+or\\s+abilities\\W?\\s+" +
@@ -194,7 +218,7 @@ public class ActionResolver {
      * Matches "The former deals damage equal to its power to the latter."
      * — former deals its current power as damage to the latter (no boost).
      */
-    private static final Pattern FORMER_DEALS_POWER_DAMAGE_TO_LATTER = Pattern.compile(
+    static final Pattern FORMER_DEALS_POWER_DAMAGE_TO_LATTER = Pattern.compile(
         "(?i)The\\s+former\\s+deals?\\s+damage\\s+equal\\s+to\\s+its\\s+power\\s+to\\s+the\\s+latter[.!]?"
     );
 
@@ -202,7 +226,7 @@ public class ActionResolver {
      * Matches "Break the former. If [card] enters the field due to Warp, also break the latter."
      * — always break the former; break the latter only when the source entered via Warp.
      */
-    private static final Pattern FORMER_BREAK_COND_WARP_LATTER_BREAK = Pattern.compile(
+    static final Pattern FORMER_BREAK_COND_WARP_LATTER_BREAK = Pattern.compile(
         "(?i)Break\\s+the\\s+former[.!]?\\s+If\\s+.+?\\s+enters\\s+the\\s+field\\s+due\\s+to\\s+Warp[,.]?\\s+" +
         "also\\s+break\\s+the\\s+latter[.!]?"
     );
@@ -211,7 +235,7 @@ public class ActionResolver {
      * Matches "Deal the former N damage. If you control M or more Backups, also deal the latter N damage."
      * Groups: {@code dmg1} = former damage; {@code n} = backup threshold; {@code dmg2} = latter damage.
      */
-    private static final Pattern FORMER_DAMAGE_COND_BACKUP_COUNT_LATTER_DAMAGE = Pattern.compile(
+    static final Pattern FORMER_DAMAGE_COND_BACKUP_COUNT_LATTER_DAMAGE = Pattern.compile(
         "(?i)Deal\\s+the\\s+former\\s+(?<dmg1>\\d+)\\s+damage[.!]?\\s+" +
         "If\\s+you\\s+control\\s+(?<n>\\d+)\\s+or\\s+more\\s+Backups?[,.]?\\s+" +
         "also\\s+deal\\s+the\\s+latter\\s+(?<dmg2>\\d+)\\s+damage[.!]?"
@@ -221,7 +245,7 @@ public class ActionResolver {
      * Matches desc2 text "Backup with a cost equal to or less than that Forward in your Break Zone"
      * — a relative cost constraint that depends on the first chosen target at execution time.
      */
-    private static final Pattern DESC_BZ_BACKUP_COST_RELATIVE = Pattern.compile(
+    static final Pattern DESC_BZ_BACKUP_COST_RELATIVE = Pattern.compile(
         "(?i)Backup\\s+with\\s+a\\s+cost\\s+equal\\s+to\\s+or\\s+less\\s+than\\s+" +
         "(?:that\\s+Forward|the\\s+former)\\s+in\\s+(?:your|the)\\s+Break\\s+Zone"
     );
@@ -240,7 +264,7 @@ public class ActionResolver {
      * Matches "Choose [up to] N [desc1] and [up to] N [desc2]. [effects]"
      * where the effects text uses "the former" and "the latter" as pronouns for the two target groups.
      */
-    private static final Pattern CHOOSE_FORMER_LATTER_PATTERN = Pattern.compile(
+    static final Pattern CHOOSE_FORMER_LATTER_PATTERN = Pattern.compile(
         "(?i)^Choose\\s+(?<upTo1>up\\s+to\\s+)?(?<count1>\\d+)\\s+(?<desc1>.+?)" +
         "\\s+and\\s+(?<upTo2>up\\s+to\\s+)?(?<count2>\\d+)\\s+(?<desc2>.+?)[.]\\s*" +
         "(?<effects>.+)$",
@@ -251,7 +275,7 @@ public class ActionResolver {
      * Parses a single target description in a CHOOSE_FORMER_LATTER clause:
      * "[condition] [element] CardType [of cost N [or less|more]] [control] [zone]"
      */
-    private static final Pattern TARGET_DESC_PATTERN = Pattern.compile(
+    static final Pattern TARGET_DESC_PATTERN = Pattern.compile(
         "(?i)^" +
         "(?:(?<condition>dull|damaged|attacking|blocking|active)\\s+)?" +
         "(?:(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?" +
@@ -268,7 +292,7 @@ public class ActionResolver {
      * — two cards of different types from the same pool.
      * Optional control qualifier ("opponent controls" / "you control"); if absent, any side is valid.
      */
-    private static final Pattern CHOOSE_TWO_MIXED_TYPES_PATTERN = Pattern.compile(
+    static final Pattern CHOOSE_TWO_MIXED_TYPES_PATTERN = Pattern.compile(
         "(?i)Choose\\s+(?<count1>\\d+)\\s+(?<type1>Forwards?|Backups?|Characters?|Monsters?)\\s+" +
         "and\\s+(?<count2>\\d+)\\s+(?<type2>Forwards?|Backups?|Characters?|Monsters?)" +
         "(?:\\s+(?<control>(?:your\\s+)?opponent\\s+controls?|you\\s+controls?))?[.]?\\s+" +
@@ -279,7 +303,7 @@ public class ActionResolver {
      * Matches "Choose up to N [type1], up to N [type2], and up to N [type3]. [followup]"
      * — up to one card of each of three different types.
      */
-    private static final Pattern CHOOSE_THREE_MIXED_TYPES_PATTERN = Pattern.compile(
+    static final Pattern CHOOSE_THREE_MIXED_TYPES_PATTERN = Pattern.compile(
         "(?i)Choose\\s+up\\s+to\\s+(?<count1>\\d+)\\s+(?<type1>Forwards?|Backups?|Characters?|Monsters?),\\s+" +
         "up\\s+to\\s+(?<count2>\\d+)\\s+(?<type2>Forwards?|Backups?|Characters?|Monsters?),\\s+and\\s+" +
         "up\\s+to\\s+(?<count3>\\d+)\\s+(?<type3>Forwards?|Backups?|Characters?|Monsters?)[.]?\\s+" +
@@ -291,7 +315,7 @@ public class ActionResolver {
      * If the cost of the Forward is equal to or less than the damage you have received, break it."
      * Groups: {@code name} — the card dealing the damage; {@code amount} — damage dealt.
      */
-    private static final Pattern CHOOSE_FORWARD_DEAL_SELF_DAMAGE_BREAK_IF_COST_LE_DAMAGE = Pattern.compile(
+    static final Pattern CHOOSE_FORWARD_DEAL_SELF_DAMAGE_BREAK_IF_COST_LE_DAMAGE = Pattern.compile(
         "(?i)^Choose\\s+1\\s+Forward\\." +
         "\\s+(?<name>.+?)\\s+deals?\\s+you\\s+(?<amount>\\d+)\\s+points?\\s+of\\s+damage\\." +
         "\\s+If\\s+the\\s+cost\\s+of\\s+the\\s+Forward\\s+is\\s+equal\\s+to\\s+or\\s+less\\s+than\\s+" +
@@ -304,7 +328,7 @@ public class ActionResolver {
      * (Units must be 1000.)"
      * Groups: {@code card} — the named card (must match in all three positions).
      */
-    private static final Pattern CHOOSE_FORWARD_SHARED_POWER_LOSS_PATTERN = Pattern.compile(
+    static final Pattern CHOOSE_FORWARD_SHARED_POWER_LOSS_PATTERN = Pattern.compile(
         "(?i)^Choose\\s+1\\s+Forward\\s+other\\s+than\\s+(?<card>[^.]+?)\\." +
         "\\s+Until\\s+the\\s+end\\s+of\\s+(?:the\\s+)?turn,?\\s+" +
         "(?<card2>[^.]+?)\\s+and\\s+the\\s+chosen\\s+Forward\\s+lose\\s+power\\s+of\\s+any\\s+value\\s+" +
@@ -317,28 +341,28 @@ public class ActionResolver {
      * CHOOSE_CHARACTER_PATTERN's element group can capture both elements.
      * E.g. "Light Character or Dark Character" → "Light or Dark Character".
      */
-    private static final Pattern ELEM_TYPE_OR_ELEM_TYPE = Pattern.compile(
+    static final Pattern ELEM_TYPE_OR_ELEM_TYPE = Pattern.compile(
         "(?i)(Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+(Forwards?|Backups?|Monsters?|Characters?)" +
         "\\s+or\\s+(Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+\\2"
     );
 
     /** Matches {@code [Job (name)]} bracket notation; group 1 is the job name. */
-    private static final Pattern JOB_BRACKET_PATTERN = Pattern.compile(
+    static final Pattern JOB_BRACKET_PATTERN = Pattern.compile(
         "(?i)\\[Job\\s+\\(([^)]+)\\)\\]"
     );
 
     /** Matches {@code [Card Name (name)]} bracket notation; group 1 is the card name. */
-    private static final Pattern CARD_NAME_BRACKET_PATTERN = Pattern.compile(
+    static final Pattern CARD_NAME_BRACKET_PATTERN = Pattern.compile(
         "(?i)\\[Card\\s+Name\\s+\\(([^)]+)\\)\\]"
     );
 
     /** Matches one {@code Job name Forward(s)} segment in the written job-filter form; group 1 is the job name. */
-    private static final Pattern JOB_WRITTEN_SEGMENT = Pattern.compile(
+    static final Pattern JOB_WRITTEN_SEGMENT = Pattern.compile(
         "(?i)Job\\s+(.+?)\\s+Forwards?"
     );
 
     /** Matches "Cancel its effect." — used to counter a Summon on the stack. */
-    private static final Pattern FOLLOWUP_CANCEL_EFFECT = Pattern.compile(
+    static final Pattern FOLLOWUP_CANCEL_EFFECT = Pattern.compile(
         "(?i)Cancel\\s+its\\s+effect\\.?"
     );
 
@@ -354,7 +378,7 @@ public class ActionResolver {
      * {@code requiresControllerTarget} flag only restricts to Summons whose stored targets include a
      * card the canceller controls.
      */
-    private static final Pattern CANCEL_SUMMON_TARGETING_MY_CHARACTER = Pattern.compile(
+    static final Pattern CANCEL_SUMMON_TARGETING_MY_CHARACTER = Pattern.compile(
         "(?i)Choose\\s+1\\s+Summon\\s+(?:targeting|choosing)\\s+an?\\s+(?:Character|Forward)\\s+you\\s+control\\.\\s+Cancel\\s+its\\s+effect\\.?"
     );
 
@@ -379,7 +403,7 @@ public class ActionResolver {
      * You may choose another target to become the new target (...)."
      * Group {@code types} — the raw ability-type string.
      */
-    private static final Pattern REDIRECT_ABILITY_TARGET = Pattern.compile(
+    static final Pattern REDIRECT_ABILITY_TARGET = Pattern.compile(
         "(?i)Choose\\s+1\\s+" +
         "(?<types>(?:auto[- ]ability|action\\s+ability|special\\s+ability|ability)" +
         "(?:\\s+or\\s+(?:auto[- ]ability|action\\s+ability|special\\s+ability))?)" +
@@ -397,7 +421,7 @@ public class ActionResolver {
      * vocabulary as {@link #CANCEL_ABILITY_ON_STACK} plus {@code Summon}. Group {@code cost} — the
      * CP amount that must be paid in full to prevent the cancellation.
      */
-    private static final Pattern CANCEL_STACK_ENTRY_UNLESS_PAY = Pattern.compile(
+    static final Pattern CANCEL_STACK_ENTRY_UNLESS_PAY = Pattern.compile(
         "(?i)Choose\\s+(?:1\\s+|an?\\s+)?" +
         "(?<opponents>opponent's\\s+)?" +
         "(?<types>(?:Summon|auto[- ]ability|action\\s+ability|special\\s+ability|ability)" +
@@ -415,7 +439,7 @@ public class ActionResolver {
      * {@code crystal} — the optional Crystal alternative (one 《C》 per Crystal, e.g. Zeromus's
      * "pay 《4》 or 《C》"); when present the opponent may instead pay that many Crystals.
      */
-    private static final Pattern CANCEL_CHOSEN_TARGET_UNLESS_PAY = Pattern.compile(
+    static final Pattern CANCEL_CHOSEN_TARGET_UNLESS_PAY = Pattern.compile(
         "(?i)^If\\s+your\\s+opponent\\s+doesn'?t\\s+pay\\s*《\\s*(?<cost>\\d+)\\s*》" +
         "(?:\\s+or\\s+(?<crystal>(?:《\\s*C\\s*》)+))?,?\\s*" +
         "cancel\\s+(?:its|their)\\s+effects?[.!]?$"
@@ -427,7 +451,7 @@ public class ActionResolver {
      * "First Strike[[br]] When 1 or more Forwards you control are chosen by your opponent's Summon,
      * its effect is cancelled if your opponent doesn't pay 《3》.").
      */
-    private static final Pattern CANCEL_CHOSEN_TARGET_UNLESS_PAY_REVERSED = Pattern.compile(
+    static final Pattern CANCEL_CHOSEN_TARGET_UNLESS_PAY_REVERSED = Pattern.compile(
         "(?i)^(?:its|their)\\s+effects?\\s+(?:is|are)\\s+cancelled\\s+if\\s+your\\s+opponent\\s+" +
         "doesn'?t\\s+pay\\s*《\\s*(?<cost>\\d+)\\s*》[.!]?$"
     );
@@ -438,7 +462,7 @@ public class ActionResolver {
      * cancel mechanic, but the opponent must discard from hand instead of paying CP to prevent it.
      * Group {@code count} — the number of cards that must be discarded in full.
      */
-    private static final Pattern CANCEL_CHOSEN_TARGET_UNLESS_DISCARD = Pattern.compile(
+    static final Pattern CANCEL_CHOSEN_TARGET_UNLESS_DISCARD = Pattern.compile(
         "(?i)^If\\s+your\\s+opponent\\s+doesn'?t\\s+discard\\s+(?<count>\\d+)\\s+cards?,?\\s*" +
         "cancel\\s+(?:its|their)\\s+effects?[.!]?$"
     );
@@ -451,7 +475,7 @@ public class ActionResolver {
      * unconditionally cancels the in-progress selection. Anchored to the whole string so it never
      * matches the "Choose 1 Summon…" stack-cancel forms.
      */
-    private static final Pattern CANCEL_CHOSEN_TARGET_BARE = Pattern.compile(
+    static final Pattern CANCEL_CHOSEN_TARGET_BARE = Pattern.compile(
         "(?i)^Cancel\\s+(?:its|their)\\s+effects?[.!]?$"
     );
 
@@ -463,7 +487,7 @@ public class ActionResolver {
      * "Freeze it", …) runs against the preloaded target(s) — parsed by {@link #parseTargetAction}.
      * Groups: {@code cost} — CP amount; {@code effect} — the target action text.
      */
-    private static final Pattern IF_OPP_NOT_PAY_ACTION = Pattern.compile(
+    static final Pattern IF_OPP_NOT_PAY_ACTION = Pattern.compile(
         "(?i)^If\\s+your\\s+opponent\\s+doesn'?t\\s+pay\\s+《\\s*(?<cost>\\d+)\\s*》,?\\s+(?<effect>.+)$",
         Pattern.DOTALL
     );
@@ -473,7 +497,7 @@ public class ActionResolver {
      * Reveals (peeks) the top card of the controller's deck; if it is of the captured {@code type},
      * the in-progress selection is cancelled. Group {@code type} — Forward / Backup / Monster / Summon.
      */
-    private static final Pattern CANCEL_CHOSEN_REVEAL_TOP_IF_TYPE = Pattern.compile(
+    static final Pattern CANCEL_CHOSEN_REVEAL_TOP_IF_TYPE = Pattern.compile(
         "(?i)^Reveal\\s+the\\s+top\\s+card\\s+of\\s+your\\s+deck[.!]?\\s+" +
         "If\\s+it\\s+is\\s+an?\\s+(?<type>Forward|Backup|Monster|Summon)s?,\\s*" +
         "cancel\\s+all\\s+effects?\\s+choosing\\s+.+?[.!]?$"
@@ -485,7 +509,7 @@ public class ActionResolver {
      * if that card is NOT of the captured {@code type}, the in-progress selection is cancelled.
      * Group {@code type} — Forward / Backup / Monster / Summon.
      */
-    private static final Pattern CANCEL_CHOSEN_MILL_TOP_IF_NOT_TYPE = Pattern.compile(
+    static final Pattern CANCEL_CHOSEN_MILL_TOP_IF_NOT_TYPE = Pattern.compile(
         "(?i)^Put\\s+the\\s+top\\s+card\\s+of\\s+your\\s+deck\\s+into\\s+the\\s+Break\\s+Zone[.!]?\\s+" +
         "If\\s+the\\s+card\\s+put\\s+into\\s+the\\s+Break\\s+Zone\\s+is\\s+not\\s+an?\\s+" +
         "(?<type>Forward|Backup|Monster|Summon)s?,\\s*cancel\\s+(?:its|their)\\s+effects?[.!]?$"
@@ -496,7 +520,7 @@ public class ActionResolver {
      * from a Forward, deal that Forward N damage."
      * Group {@code amount} — damage to deal if the source was a Forward.
      */
-    private static final Pattern CANCEL_AUTO_ABILITY_DAMAGE_IF_FORWARD = Pattern.compile(
+    static final Pattern CANCEL_AUTO_ABILITY_DAMAGE_IF_FORWARD = Pattern.compile(
         "(?i)^Choose\\s+1\\s+auto-ability\\.\\s+Cancel\\s+its\\s+effect\\.\\s+" +
         "If\\s+the\\s+cancelled\\s+auto-ability\\s+triggered\\s+from\\s+a\\s+Forward,\\s+" +
         "deal\\s+that\\s+Forward\\s+(?<amount>\\d+)\\s+damage\\.?$"
@@ -510,7 +534,7 @@ public class ActionResolver {
      *   <li>{@code amount} — fixed damage value</li>
      * </ul>
      */
-    private static final Pattern FOLLOWUP_DAMAGE = Pattern.compile(
+    static final Pattern FOLLOWUP_DAMAGE = Pattern.compile(
         "(?i)deal\\s+(?:it|them)(?:\\s+and\\s+(?<also>.+?))?\\s+(?<amount>\\d+)\\s+damage"
     );
 
@@ -536,7 +560,7 @@ public class ActionResolver {
      * Matches "Deal it/them N damage and M point(s) of damage to that Forward's controller."
      * Groups: {@code amount} — damage to the chosen Forward; {@code controllerdmg} — card damage dealt to its controller.
      */
-    private static final Pattern FOLLOWUP_DAMAGE_AND_CONTROLLER_DAMAGE = Pattern.compile(
+    static final Pattern FOLLOWUP_DAMAGE_AND_CONTROLLER_DAMAGE = Pattern.compile(
         "(?i)deal\\s+(?:it|them)\\s+(?<amount>\\d+)\\s+damage\\s+and\\s+(?<controllerdmg>\\d+)\\s+points?\\s+of\\s+damage\\s+to\\s+that\\s+(?:Forward|Character|Monster|Backup)'?s?\\s+controller\\.?"
     );
 
@@ -546,7 +570,7 @@ public class ActionResolver {
      * is resolved at runtime from {@link GameContext#lastChosenTargets()}.
      * Group {@code count} — number of cards to discard.
      */
-    private static final Pattern FOLLOWUP_TARGET_CONTROLLER_DISCARDS = Pattern.compile(
+    static final Pattern FOLLOWUP_TARGET_CONTROLLER_DISCARDS = Pattern.compile(
         "(?i)^That\\s+Forward(?:'s|s)?\\s+controller\\s+discards?\\s+(?<count>\\d+)\\s+cards?\\s+" +
         "from\\s+(?:their|his/her|his|her)\\s+hand\\.?$"
     );
@@ -555,7 +579,7 @@ public class ActionResolver {
      * Matches "You may discard 1 Card Name X from your hand. If you do so, deal it N damage."
      * Groups: {@code cardname}, {@code amount}.
      */
-    private static final Pattern FOLLOWUP_MAY_DISCARD_NAMED_DEAL_DAMAGE = Pattern.compile(
+    static final Pattern FOLLOWUP_MAY_DISCARD_NAMED_DEAL_DAMAGE = Pattern.compile(
         "(?i)^you\\s+may\\s+discard\\s+1\\s+Card\\s+Name\\s+(?<cardname>.+?)\\s+from\\s+your\\s+hand\\.\\s+If\\s+you\\s+do\\s+so,\\s+deal\\s+it\\s+(?<amount>\\d+)\\s+damage\\.?$"
     );
 
@@ -563,7 +587,7 @@ public class ActionResolver {
      * Matches "Deal it/them N damage. If &lt;condition&gt;, deal it/them M damage instead."
      * Groups: {@code base}, {@code cond}, {@code alt}.
      */
-    private static final Pattern FOLLOWUP_DAMAGE_INSTEAD = Pattern.compile(
+    static final Pattern FOLLOWUP_DAMAGE_INSTEAD = Pattern.compile(
         "(?i)deal\\s+(?:it|them)\\s+(?<base>\\d+)\\s+damage\\.\\s+If\\s+(?<cond>.+?),\\s+deal\\s+(?:it|them)\\s+(?<alt>\\d+)\\s+damage\\s+instead\\.?"
     );
 
@@ -572,7 +596,7 @@ public class ActionResolver {
      * Groups: {@code primary} (text before the period), {@code alt} (alternate action text).
      * The card name before "results from an EX Burst" is intentionally not captured.
      */
-    private static final Pattern FOLLOWUP_INSTEAD_EXBURST = Pattern.compile(
+    static final Pattern FOLLOWUP_INSTEAD_EXBURST = Pattern.compile(
         "(?i)(?<primary>.+?)\\.\\s+If\\s+\\S+(?:\\s+\\S+)*?\\s+results\\s+from\\s+an\\s+EX\\s+Burst,\\s+(?<alt>.+?)\\s+instead[.!]?"
     );
 
@@ -588,7 +612,7 @@ public class ActionResolver {
      * </ul>
      * Group {@code minus} is set alongside {@code itspower} when a subtraction is present.
      */
-    private static final Pattern FOLLOWUP_DAMAGE_EXPR = Pattern.compile(
+    static final Pattern FOLLOWUP_DAMAGE_EXPR = Pattern.compile(
         "(?i)deal\\s+(?:it|them)\\s+damage\\s+equal\\s+to\\s+" +
         "(?:" +
             "(?<highest>the\\s+highest(?:\\s+power)?\\s+Forward(?:\\s+you\\s+control)?(?:'s\\s+power)?)" +
@@ -611,12 +635,12 @@ public class ActionResolver {
      *       against the ability's source card at match time.</li>
      * </ul>
      */
-    private static final Pattern FOLLOWUP_MUTUAL_POWER_DAMAGE = Pattern.compile(
+    static final Pattern FOLLOWUP_MUTUAL_POWER_DAMAGE = Pattern.compile(
         "(?i)(?<srcname>.+?)\\s+and\\s+the\\s+chosen\\s+Forward\\s+deal\\s+damage\\s+equal\\s+to\\s+their\\s+respective\\s+power\\s+to\\s+the\\s+other[.!]?"
     );
 
     /** Matches "Each Forward deals damage equal to its power to the other." (used in choose-one-each contexts). */
-    private static final Pattern FOLLOWUP_EACH_FORWARD_MUTUAL_POWER_DAMAGE = Pattern.compile(
+    static final Pattern FOLLOWUP_EACH_FORWARD_MUTUAL_POWER_DAMAGE = Pattern.compile(
         "(?i)Each\\s+Forward\\s+deals\\s+damage\\s+equal\\s+to\\s+its\\s+power\\s+to\\s+the\\s+other[.!]?"
     );
 
@@ -635,7 +659,7 @@ public class ActionResolver {
      *   <li>{@code xpaid}      — source is the X CP value paid for this ability</li>
      * </ul>
      */
-    private static final Pattern FOLLOWUP_DAMAGE_FOR_EACH = Pattern.compile(
+    static final Pattern FOLLOWUP_DAMAGE_FOR_EACH = Pattern.compile(
         "(?i)deal\\s+(?:it|them)\\s+(?<base>\\d+)\\s+damage" +
         "(?:\\s+(?<op>and|minus)\\s+(?<per>\\d+)\\s+(?:more\\s+)?damage)?" +
         "\\s+for\\s+each\\s+" +
@@ -654,12 +678,12 @@ public class ActionResolver {
     );
 
     /** Matches "Activate it" or "Activate them". */
-    private static final Pattern FOLLOWUP_ACTIVATE = Pattern.compile(
+    static final Pattern FOLLOWUP_ACTIVATE = Pattern.compile(
         "(?i)Activate\\s+(?:it|them)\\.?"
     );
 
     /** Matches "Dull it or activate it." / "Dull them or activate them." — toggle dull/active. */
-    private static final Pattern FOLLOWUP_DULL_OR_ACTIVATE = Pattern.compile(
+    static final Pattern FOLLOWUP_DULL_OR_ACTIVATE = Pattern.compile(
         "(?i)Dulls?\\s+(?:it|them)\\s+or\\s+activates?\\s+(?:it|them)[.!]?"
     );
 
@@ -667,7 +691,7 @@ public class ActionResolver {
      * Matches "Dull it or freeze it." / "Dull them or freeze them." — dull if active,
      * freeze if already dulled. (Order-of-words variants like "dull or freeze it" are not used in card text.)
      */
-    private static final Pattern FOLLOWUP_DULL_OR_FREEZE = Pattern.compile(
+    static final Pattern FOLLOWUP_DULL_OR_FREEZE = Pattern.compile(
         "(?i)Dulls?\\s+(?:it|them)\\s+or\\s+freezes?\\s+(?:it|them)[.!]?"
     );
 
@@ -677,12 +701,12 @@ public class ActionResolver {
     );
 
     /** Matches "dull it/them" or "dulls it/them" (third-person form used in opponent-selects effects). */
-    private static final Pattern FOLLOWUP_DULL = Pattern.compile(
+    static final Pattern FOLLOWUP_DULL = Pattern.compile(
         "(?i)dulls?\\s+(?:it|them)"
     );
 
     /** Matches "freeze it" or "freeze them". */
-    private static final Pattern FOLLOWUP_FREEZE = Pattern.compile(
+    static final Pattern FOLLOWUP_FREEZE = Pattern.compile(
         "(?i)freeze\\s+(?:it|them)"
     );
 
@@ -690,12 +714,12 @@ public class ActionResolver {
      * Matches "dull it/them and freeze it/them" or compact "dull and freeze it/them"
      * (former/latter effects use a shared pronoun at the end).
      */
-    private static final Pattern FOLLOWUP_DULL_AND_FREEZE = Pattern.compile(
+    static final Pattern FOLLOWUP_DULL_AND_FREEZE = Pattern.compile(
         "(?i)(?:dull\\s+(?:it|them)\\s+and\\s+freeze|dull\\s+and\\s+freeze)\\s+(?:it|them)"
     );
 
     /** Matches "Dull it/them and deal it/them N damage". Group {@code amount} is the damage value. */
-    private static final Pattern FOLLOWUP_DULL_AND_DAMAGE = Pattern.compile(
+    static final Pattern FOLLOWUP_DULL_AND_DAMAGE = Pattern.compile(
         "(?i)dull\\s+(?:it|them)\\s+and\\s+deal\\s+(?:it|them)\\s+(?<amount>\\d+)\\s+damage"
     );
 
@@ -713,7 +737,7 @@ public class ActionResolver {
      *                              remove from the game, return to its owner's hand)</li>
      * </ul>
      */
-    private static final Pattern FOLLOWUP_FIRST_AND_OTHER = Pattern.compile(
+    static final Pattern FOLLOWUP_FIRST_AND_OTHER = Pattern.compile(
         "(?i)(?<firstpfx>.+?)\\s+the\\s+first\\s+(?:Forward|Backup|Character|Monster|one)" +
         "(?<firstsfx>[^,]*?)[,.]?\\s+(?:and\\s+)?" +
         "(?<othereffect>dull\\s+and\\s+freeze|activate|break|dull|freeze" +
@@ -722,12 +746,12 @@ public class ActionResolver {
     );
 
     /** Matches "Break it" or "Break them". */
-    private static final Pattern FOLLOWUP_BREAK = Pattern.compile(
+    static final Pattern FOLLOWUP_BREAK = Pattern.compile(
         "(?i)Break\\s+(?:it|them)"
     );
 
     /** Matches "It loses all [its] abilities until the end of the turn." */
-    private static final Pattern FOLLOWUP_LOSE_ALL_ABILITIES_EOT = Pattern.compile(
+    static final Pattern FOLLOWUP_LOSE_ALL_ABILITIES_EOT = Pattern.compile(
         "(?i)It\\s+loses\\s+all\\s+(?:its\\s+)?abilities\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn[.!]?"
     );
 
@@ -743,7 +767,7 @@ public class ActionResolver {
      *
      * <p>Group {@code power} — the new base power.
      */
-    private static final Pattern FOLLOWUP_LOSE_ABILITIES_AND_POWER_BECOMES = Pattern.compile(
+    static final Pattern FOLLOWUP_LOSE_ABILITIES_AND_POWER_BECOMES = Pattern.compile(
         "(?i)(?:Until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn\\s*,\\s+)?" +
         "(?:it|they)\\s+loses?\\s+all\\s+(?:(?:its|their)\\s+)?abilities\\s+and\\s+" +
         "(?:its|their)\\s+power\\s+becomes?\\s+(?<power>\\d+)" +
@@ -751,7 +775,7 @@ public class ActionResolver {
     );
 
     /** Matches "Remove it/them from the game". */
-    private static final Pattern FOLLOWUP_REMOVE_FROM_GAME = Pattern.compile(
+    static final Pattern FOLLOWUP_REMOVE_FROM_GAME = Pattern.compile(
         "(?i)Remove\\s+(?:it|them)\\s+from\\s+(?:the\\s+)?game"
     );
 
@@ -760,7 +784,7 @@ public class ActionResolver {
      * Used after a RemoveFromGame primary to play the just-removed card back onto the field.
      * Group {@code dull} — present if the card enters dull.
      */
-    private static final Pattern SECONDARY_PLAY_REMOVED_ONTO_FIELD = Pattern.compile(
+    static final Pattern SECONDARY_PLAY_REMOVED_ONTO_FIELD = Pattern.compile(
         "(?i)^(?:Then,?\\s+)?play\\s+the\\s+removed\\s+(?:Forward|Character)" +
         "\\s+onto\\s+(?:the\\s+)?field(?:\\s+(?<dull>dull))?[.!]?\\s*$"
     );
@@ -769,7 +793,7 @@ public class ActionResolver {
      * Matches "Remove it/them and [CardName] from the game" — chosen target(s) plus a named card.
      * Group {@code named} — the additional card name to remove.
      */
-    private static final Pattern FOLLOWUP_REMOVE_FROM_GAME_AND_NAMED = Pattern.compile(
+    static final Pattern FOLLOWUP_REMOVE_FROM_GAME_AND_NAMED = Pattern.compile(
         "(?i)Remove\\s+(?:it|them)\\s+and\\s+(?<named>.+?)\\s+from\\s+(?:the\\s+)?game[.!]?"
     );
 
@@ -777,7 +801,7 @@ public class ActionResolver {
      * Matches "Your opponent randomly removes N card(s) in his/her/their hand from the game."
      * Group 1 — count.
      */
-    private static final Pattern OPPONENT_RANDOM_HAND_RFP = Pattern.compile(
+    static final Pattern OPPONENT_RANDOM_HAND_RFP = Pattern.compile(
         "(?i)Your\\s+opponent\\s+randomly\\s+removes?\\s+(\\d+)\\s+cards?\\s+in\\s+" +
         "(?:his/her|his|her|their)\\s+hand\\s+from\\s+(?:the\\s+)?game[.!]?"
     );
@@ -786,7 +810,7 @@ public class ActionResolver {
      * Matches "Your opponent randomly places N card(s) from their hand at the bottom of their deck."
      * Group 1 — count.
      */
-    private static final Pattern OPPONENT_RANDOM_HAND_TO_BOTTOM_DECK = Pattern.compile(
+    static final Pattern OPPONENT_RANDOM_HAND_TO_BOTTOM_DECK = Pattern.compile(
         "(?i)Your\\s+opponent\\s+randomly\\s+places?\\s+(\\d+)\\s+cards?\\s+from\\s+" +
         "(?:his/her|his|her|their)\\s+hand\\s+at\\s+the\\s+bottom\\s+of\\s+(?:his/her|his|her|their)\\s+deck[.!]?"
     );
@@ -797,7 +821,7 @@ public class ActionResolver {
      *  Your opponent removes it/them from the game."
      * Group 1 — count of cards to select.
      */
-    private static final Pattern REVEAL_SELECT_HAND_RFP = Pattern.compile(
+    static final Pattern REVEAL_SELECT_HAND_RFP = Pattern.compile(
         "(?i)Your\\s+opponent\\s+reveals?\\s+(?:his/her|his|her|their)\\s+hand[.!]\\s+" +
         "Select\\s+(\\d+)\\s+cards?\\s+in\\s+(?:his/her|his|her|their)\\s+hand[.!]\\s+" +
         "Your\\s+opponent\\s+removes?\\s+(?:it|them)\\s+from\\s+(?:the\\s+)?game[.!]?"
@@ -808,7 +832,7 @@ public class ActionResolver {
      * If you do so, remove it from the game and your opponent draws 1 card."
      * (Zidane-style: optional select, you remove it, opponent draws.)
      */
-    private static final Pattern REVEAL_HAND_OPT_PICK_RFP_OPP_DRAW = Pattern.compile(
+    static final Pattern REVEAL_HAND_OPT_PICK_RFP_OPP_DRAW = Pattern.compile(
         "(?i)Your\\s+opponent\\s+reveals?\\s+(?:his/her|his|her|their)\\s+hand[.!]\\s+" +
         "You\\s+may\\s+select\\s+1\\s+card\\s+from\\s+(?:his/her|his|her|their)\\s+hand[.!]\\s+" +
         "If\\s+you\\s+do\\s+so,\\s+remove\\s+it\\s+from\\s+(?:the\\s+)?game\\s+" +
@@ -819,7 +843,7 @@ public class ActionResolver {
      * Matches "Your opponent removes N card(s) in his/her/their hand from the game."
      * (opponent chooses which cards — not random).  Group 1 — count.
      */
-    private static final Pattern OPPONENT_HAND_RFP = Pattern.compile(
+    static final Pattern OPPONENT_HAND_RFP = Pattern.compile(
         "(?i)Your\\s+opponent\\s+removes?\\s+(\\d+)\\s+cards?\\s+in\\s+" +
         "(?:his/her|his|her|their)\\s+hand\\s+from\\s+(?:the\\s+)?game[.!]?"
     );
@@ -852,23 +876,23 @@ public class ActionResolver {
      * Matches "You may reveal 1 [Element] card from your hand."
      * Group {@code element} — the required element name.
      */
-    private static final Pattern YOU_MAY_REVEAL_ELEMENT_FROM_HAND = Pattern.compile(
+    static final Pattern YOU_MAY_REVEAL_ELEMENT_FROM_HAND = Pattern.compile(
         "(?i)^You\\s+may\\s+reveal\\s+1\\s+(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)" +
         "\\s+card\\s+from\\s+your\\s+hand[.!]?\\s*$"
     );
 
     /** Matches "At the end of your opponent's turn, play [CardName] onto the field." */
-    private static final Pattern AT_END_OF_OPP_TURN_PLAY_NAMED_ONTO_FIELD = Pattern.compile(
+    static final Pattern AT_END_OF_OPP_TURN_PLAY_NAMED_ONTO_FIELD = Pattern.compile(
         "(?i)^at\\s+the\\s+end\\s+of\\s+your\\s+opponent'?s\\s+turn,?\\s+play\\s+(?<name>.+?)\\s+onto\\s+the\\s+field[.!]?\\s*$"
     );
 
     /** Matches "Break [CardName]." — used when the source card breaks itself. */
-    private static final Pattern BREAK_SOURCE_CARD = Pattern.compile(
+    static final Pattern BREAK_SOURCE_CARD = Pattern.compile(
         "(?i)^break\\s+(?<name>.+?)[.!]?$"
     );
 
     /** Matches "put [CardName] into the Break Zone[.!]?" where CardName is the source card. */
-    private static final Pattern PUT_SOURCE_INTO_BREAK_ZONE = Pattern.compile(
+    static final Pattern PUT_SOURCE_INTO_BREAK_ZONE = Pattern.compile(
         "(?i)^put\\s+(?<name>.+?)\\s+into\\s+the\\s+Break\\s+Zone[.!]?$"
     );
 
@@ -887,7 +911,7 @@ public class ActionResolver {
      * Matches "If your opponent doesn't control [any] Forwards, put [CardName] into the Break Zone."
      * Group {@code name} — the card name that goes to the Break Zone (must equal source name).
      */
-    private static final Pattern IF_OPP_NO_FORWARDS_PUT_TO_BREAK_ZONE = Pattern.compile(
+    static final Pattern IF_OPP_NO_FORWARDS_PUT_TO_BREAK_ZONE = Pattern.compile(
         "(?i)^If\\s+your\\s+opponent\\s+(?:doesn'?t|does\\s+not)\\s+control\\s+(?:any\\s+)?Forwards?," +
         "\\s+put\\s+(?<name>.+?)\\s+into\\s+the\\s+Break\\s+Zone[.!]?$"
     );
@@ -897,7 +921,7 @@ public class ActionResolver {
      * Fires if either the controller or their opponent has zero Forwards.
      * Group {@code name} — the card name that goes to the Break Zone (must equal source name).
      */
-    private static final Pattern IF_EITHER_PLAYER_NO_FORWARDS_PUT_SOURCE_TO_BZ = Pattern.compile(
+    static final Pattern IF_EITHER_PLAYER_NO_FORWARDS_PUT_SOURCE_TO_BZ = Pattern.compile(
         "(?i)^If\\s+either\\s+player\\s+(?:doesn'?t|does\\s+not)\\s+control\\s+(?:any\\s+)?Forwards?," +
         "\\s+put\\s+(?<name>.+?)\\s+into\\s+the\\s+Break\\s+Zone[.!]?$"
     );
@@ -913,12 +937,12 @@ public class ActionResolver {
     );
 
     /** Matches "break the blocking Forward[.!]?" — fires during "is blocked" triggers. */
-    private static final Pattern BREAK_BLOCKING_FORWARD = Pattern.compile(
+    static final Pattern BREAK_BLOCKING_FORWARD = Pattern.compile(
         "(?i)^break\\s+the\\s+blocking\\s+Forward[.!]?$"
     );
 
     /** Matches "Break the Forward that blocks [Name][.!]?" — group {@code name}. */
-    private static final Pattern BREAK_FORWARD_THAT_BLOCKS_CARD = Pattern.compile(
+    static final Pattern BREAK_FORWARD_THAT_BLOCKS_CARD = Pattern.compile(
         "(?i)^Break\\s+the\\s+Forward\\s+that\\s+blocks?\\s+(?<name>[^.!]+?)[.!]?$"
     );
 
@@ -926,7 +950,7 @@ public class ActionResolver {
      * Matches "Choose 1 card with EX Burst in your Damage Zone. You may trigger its EX Burst effect."
      * with an optional trailing parenthetical rules note.
      */
-    private static final Pattern CHOOSE_EX_BURST_FROM_DAMAGE_ZONE = Pattern.compile(
+    static final Pattern CHOOSE_EX_BURST_FROM_DAMAGE_ZONE = Pattern.compile(
         "(?i)choose\\s+1\\s+card\\s+with\\s+EX\\s+Burst\\s+in\\s+your\\s+Damage\\s+Zone[.,]?\\s+" +
         "You\\s+may\\s+trigger\\s+its\\s+EX\\s+Burst\\s+effect[.!]?" +
         "(?:\\s*\\([^)]+\\))?"
@@ -938,7 +962,7 @@ public class ActionResolver {
      *  Put 1 card from your hand into the Damage Zone (its EX Burst effect will not trigger)."
      * Group {@code draw} — present when the variant draws 1 card between the two halves.
      */
-    private static final Pattern DAMAGE_ZONE_SWAP_PATTERN = Pattern.compile(
+    static final Pattern DAMAGE_ZONE_SWAP_PATTERN = Pattern.compile(
         "(?i)^choose\\s+1\\s+card\\s+in\\s+your\\s+Damage\\s+Zone\\.\\s+" +
         "Add\\s+it\\s+to\\s+your\\s+hand(?<draw>\\s+and\\s+draw\\s+1\\s+card)?\\.\\s+" +
         "(?:Then,?\\s+)?Put\\s+1\\s+card\\s+from\\s+your\\s+hand\\s+into\\s+the\\s+Damage\\s+Zone" +
@@ -949,7 +973,7 @@ public class ActionResolver {
      * Matches "Remove the top [N cards / card] of your deck from the game."
      * Group {@code count} — number of cards (absent means 1).
      */
-    private static final Pattern REMOVE_TOP_OF_DECK_FROM_GAME = Pattern.compile(
+    static final Pattern REMOVE_TOP_OF_DECK_FROM_GAME = Pattern.compile(
         "(?i)Remove\\s+the\\s+top\\s+(?:(?<count>\\d+)\\s+cards?|card)\\s+of\\s+your\\s+deck\\s+from\\s+(?:the\\s+)?game\\.?"
     );
 
@@ -971,7 +995,7 @@ public class ActionResolver {
      * Deal it/them N damage for each CP required to play/cast the removed card."
      * Group {@code base} — damage per CP.
      */
-    private static final Pattern FOLLOWUP_RFP_TOP_DECK_AND_DAMAGE_PER_CP = Pattern.compile(
+    static final Pattern FOLLOWUP_RFP_TOP_DECK_AND_DAMAGE_PER_CP = Pattern.compile(
         "(?i)Remove\\s+the\\s+top\\s+card\\s+of\\s+your\\s+deck\\s+from\\s+(?:the\\s+)?game\\.\\s+" +
         "Deal\\s+(?:it|them)\\s+(?<base>\\d+)\\s+damage\\s+for\\s+each\\s+CP\\s+required\\s+to\\s+(?:play|cast)\\s+the\\s+removed\\s+card[.!]?"
     );
@@ -982,7 +1006,7 @@ public class ActionResolver {
      * Forward chosen by the preceding "Choose 1 Forward" header ({@code it}).
      * Group {@code dmg} — damage dealt when the removed card is not a Forward.
      */
-    private static final Pattern FOLLOWUP_RFP_TOP_DECK_IF_FORWARD_BREAK_ELSE_DAMAGE = Pattern.compile(
+    static final Pattern FOLLOWUP_RFP_TOP_DECK_IF_FORWARD_BREAK_ELSE_DAMAGE = Pattern.compile(
         "(?i)Remove\\s+the\\s+top\\s+card\\s+of\\s+your\\s+deck\\s+from\\s+(?:the\\s+)?game\\.\\s+" +
         "If\\s+the\\s+removed\\s+card\\s+is\\s+a\\s+Forward,?\\s+break\\s+it\\.\\s+" +
         "If\\s+not,?\\s+deal\\s+it\\s+(?<dmg>\\d+)\\s+damage[.!]?"
@@ -994,7 +1018,7 @@ public class ActionResolver {
      * Add all the revealed cards to your hand."
      * Groups: {@code n} — card count, {@code base} — damage per CP.
      */
-    private static final Pattern FOLLOWUP_REVEAL_TOP_N_DAMAGE_PER_CP_ADD_ALL_TO_HAND = Pattern.compile(
+    static final Pattern FOLLOWUP_REVEAL_TOP_N_DAMAGE_PER_CP_ADD_ALL_TO_HAND = Pattern.compile(
         "(?i)Reveal\\s+the\\s+top\\s+(?<n>\\d+)\\s+cards?\\s+of\\s+your\\s+deck\\.\\s+" +
         "Deal\\s+(?:it|them)\\s+(?<base>\\d+)\\s+damage\\s+for\\s+each\\s+CP\\s+required\\s+to\\s+(?:play|cast)\\s+the\\s+revealed\\s+cards?\\.\\s+" +
         "Add\\s+all\\s+(?:the\\s+)?revealed\\s+cards?\\s+to\\s+your\\s+hand[.!]?"
@@ -1005,7 +1029,7 @@ public class ActionResolver {
      * same card type, also draw N card(s)."
      * Group {@code count} — number of cards to draw.
      */
-    private static final Pattern FOLLOWUP_RFP_IF_SAME_TYPE_DRAW = Pattern.compile(
+    static final Pattern FOLLOWUP_RFP_IF_SAME_TYPE_DRAW = Pattern.compile(
         "(?i)Remove\\s+them\\s+from\\s+(?:the\\s+)?game[.!]?\\s+" +
         "If\\s+these\\s+cards?\\s+are\\s+of\\s+the\\s+same\\s+card\\s+type,?\\s+" +
         "(?:also\\s+)?draw\\s+(?<count>\\d+)\\s+cards?[.!]?"
@@ -1017,7 +1041,7 @@ public class ActionResolver {
      * Then, place the revealed cards at the bottom of your deck in any order."
      * Groups: {@code n} — card count, {@code job} — job name, {@code dmg} — damage per match.
      */
-    private static final Pattern FOLLOWUP_REVEAL_TOP_N_JOB_DEAL_DMG_PLACE_BOTTOM = Pattern.compile(
+    static final Pattern FOLLOWUP_REVEAL_TOP_N_JOB_DEAL_DMG_PLACE_BOTTOM = Pattern.compile(
         "(?i)Reveal\\s+the\\s+top\\s+(?<n>\\d+)\\s+cards?\\s+of\\s+your\\s+deck[.!]?\\s+" +
         "For\\s+each\\s+(?:Job\\s+)?(?<job>.+?)\\s+revealed\\s+this\\s+way,?\\s+" +
         "deal\\s+it\\s+(?<dmg>\\d+)\\s+damage[.!]?\\s+" +
@@ -1026,17 +1050,17 @@ public class ActionResolver {
     );
 
     /** Matches "Shuffle your deck." */
-    private static final Pattern SHUFFLE_DECK = Pattern.compile(
+    static final Pattern SHUFFLE_DECK = Pattern.compile(
         "(?i)Shuffle\\s+your\\s+deck\\.?"
     );
 
     /** Matches "Its auto-ability will not trigger." — suppresses ETF auto-abilities for the played card. */
-    private static final Pattern ITS_AUTO_ABILITY_WILL_NOT_TRIGGER = Pattern.compile(
+    static final Pattern ITS_AUTO_ABILITY_WILL_NOT_TRIGGER = Pattern.compile(
         "(?i)Its\\s+auto-ability\\s+will\\s+not\\s+trigger\\.?"
     );
 
     /** Matches "Play it onto the field" or "Play them onto the field". */
-    private static final Pattern FOLLOWUP_PLAY_ONTO_FIELD = Pattern.compile(
+    static final Pattern FOLLOWUP_PLAY_ONTO_FIELD = Pattern.compile(
         "(?i)Play\\s+(?:it|them)\\s+onto\\s+(?:the\\s+)?field"
     );
 
@@ -1051,7 +1075,7 @@ public class ActionResolver {
      * Group {@code cond} is fed to {@link #parseRevealCondition}; group {@code inner}
      * is parsed as a standalone effect via {@link #parse}.
      */
-    private static final Pattern FOLLOWUP_PLAY_ONTO_FIELD_WHEN_ENTERS_CONDITIONAL = Pattern.compile(
+    static final Pattern FOLLOWUP_PLAY_ONTO_FIELD_WHEN_ENTERS_CONDITIONAL = Pattern.compile(
         "(?i)^When\\s+it\\s+enters\\s+(?:the\\s+)?field,?\\s+if\\s+it\\s+is\\s+(?<cond>.+?),\\s*(?<inner>.+?)[.!]?$",
         Pattern.DOTALL
     );
@@ -1060,7 +1084,7 @@ public class ActionResolver {
      * Matches "If its cost is equal to or less than the number of Job [job] you control, play it onto the field."
      * Group {@code job} captures the job name (without "Job " prefix).
      */
-    private static final Pattern FOLLOWUP_PLAY_IF_COST_LE_JOB_COUNT = Pattern.compile(
+    static final Pattern FOLLOWUP_PLAY_IF_COST_LE_JOB_COUNT = Pattern.compile(
         "(?i)If\\s+its\\s+cost\\s+is\\s+equal\\s+to\\s+or\\s+less\\s+than\\s+the\\s+number\\s+of\\s+" +
         "Job\\s+(?<job>.+?)\\s+you\\s+control[,.]\\s+play\\s+it\\s+onto\\s+(?:the\\s+)?field[.!]?"
     );
@@ -1069,13 +1093,13 @@ public class ActionResolver {
      * Matches "If its cost is equal to or less than the number of cards in your hand, return it to its owner's hand."
      * Used by Leviathan (5-139C) EX Burst.
      */
-    private static final Pattern FOLLOWUP_RETURN_IF_COST_LE_HAND = Pattern.compile(
+    static final Pattern FOLLOWUP_RETURN_IF_COST_LE_HAND = Pattern.compile(
         "(?i)If\\s+its\\s+cost\\s+is\\s+equal\\s+to\\s+or\\s+less\\s+than\\s+the\\s+number\\s+of\\s+" +
         "cards?\\s+in\\s+your\\s+hand,?\\s+return\\s+it\\s+to\\s+its\\s+owner'?s?\\s+hand[.!]?"
     );
 
     /** Matches "Add it to your hand" or "Add them to your hand". */
-    private static final Pattern FOLLOWUP_ADD_TO_HAND = Pattern.compile(
+    static final Pattern FOLLOWUP_ADD_TO_HAND = Pattern.compile(
         "(?i)Add\\s+(?:it|them)\\s+to\\s+your\\s+hand"
     );
 
@@ -1085,7 +1109,7 @@ public class ActionResolver {
      * Group {@code cond} is fed to {@link #parseRevealCondition}; group {@code inner}
      * is parsed as a standalone effect via {@link #parse}.
      */
-    private static final Pattern FOLLOWUP_ADD_TO_HAND_CONDITIONAL_SECONDARY = Pattern.compile(
+    static final Pattern FOLLOWUP_ADD_TO_HAND_CONDITIONAL_SECONDARY = Pattern.compile(
         "(?i)^If\\s+(?:it|the\\s+added\\s+card)\\s+(?:is|has)\\s+(?<cond>[^,]+?)" +
         ",\\s*(?<inner>.+?)[.!]?$",
         Pattern.DOTALL
@@ -1095,7 +1119,7 @@ public class ActionResolver {
      * Matches "it cannot block this turn" or
      * "It gains 'This Forward cannot block.' until the end of the turn."
      */
-    private static final Pattern FOLLOWUP_CANNOT_BLOCK = Pattern.compile(
+    static final Pattern FOLLOWUP_CANNOT_BLOCK = Pattern.compile(
         "(?i)(?:" +
             "(?:it|they)\\s+cannot\\s+block\\s+this\\s+turn" +
         "|" +
@@ -1108,7 +1132,7 @@ public class ActionResolver {
      * Matches "It cannot be blocked [by a Forward of cost N or more/less] this turn."
      * Groups: {@code costval} (optional), {@code costcmp} (optional: "more" or "less")
      */
-    private static final Pattern FOLLOWUP_CANNOT_BE_BLOCKED = Pattern.compile(
+    static final Pattern FOLLOWUP_CANNOT_BE_BLOCKED = Pattern.compile(
         "(?i)it\\s+cannot\\s+be\\s+blocked" +
         "(?:\\s+by\\s+a\\s+Forward\\s+of\\s+cost\\s+(?<costval>\\d+)(?:\\s+or\\s+(?<costcmp>less|more))?)?" +
         "\\s+this\\s+turn\\.?"
@@ -1117,19 +1141,19 @@ public class ActionResolver {
     /**
      * Matches "It can only be blocked by a Forward of cost equal or inferior to its own this turn."
      */
-    private static final Pattern FOLLOWUP_ONLY_BLOCKED_BY_COST_LE_OWN = Pattern.compile(
+    static final Pattern FOLLOWUP_ONLY_BLOCKED_BY_COST_LE_OWN = Pattern.compile(
         "(?i)it\\s+can\\s+only\\s+be\\s+blocked\\s+by\\s+a\\s+Forward\\s+of\\s+cost\\s+" +
         "(?:equal\\s+or\\s+inferior\\s+to|inferior\\s+or\\s+equal\\s+to|equal\\s+to\\s+or\\s+less\\s+than)\\s+" +
         "its\\s+own\\s+this\\s+turn[.!]?"
     );
 
     /** Matches "All Forwards cannot block this turn." — global block-prevention. */
-    private static final Pattern STANDALONE_ALL_FORWARDS_CANNOT_BLOCK = Pattern.compile(
+    static final Pattern STANDALONE_ALL_FORWARDS_CANNOT_BLOCK = Pattern.compile(
         "(?i)All\\s+Forwards?\\s+cannot\\s+block\\s+this\\s+turn[.!]?"
     );
 
     /** Matches "All Forwards of cost N or less/more cannot block this turn." */
-    private static final Pattern STANDALONE_FORWARDS_OF_COST_CANNOT_BLOCK = Pattern.compile(
+    static final Pattern STANDALONE_FORWARDS_OF_COST_CANNOT_BLOCK = Pattern.compile(
         "(?i)All\\s+Forwards?\\s+of\\s+cost\\s+(?<costval>\\d+)\\s+or\\s+(?<cmp>less|more)\\s+cannot\\s+block\\s+this\\s+turn[.!]?"
     );
 
@@ -1144,7 +1168,7 @@ public class ActionResolver {
     /**
      * Matches "All the Forwards opponent controls lose all abilities until the end of the turn."
      */
-    private static final Pattern OPP_FWDS_LOSE_ALL_ABILITIES_EOT = Pattern.compile(
+    static final Pattern OPP_FWDS_LOSE_ALL_ABILITIES_EOT = Pattern.compile(
         "(?i)All\\s+(?:the\\s+)?Forwards?\\s+(?:(?:your\\s+)?opponent\\s+controls?)\\s+" +
         "lose\\s+all\\s+abilities\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn[.!]?"
     );
@@ -1154,7 +1178,7 @@ public class ActionResolver {
      * until the end of the turn." (Flare Star / Ozma).
      * Group {@code amount} — power lost per CP of cost.
      */
-    private static final Pattern OPP_FWDS_LOSE_POWER_PER_PLAY_COST = Pattern.compile(
+    static final Pattern OPP_FWDS_LOSE_POWER_PER_PLAY_COST = Pattern.compile(
         "(?i)All\\s+(?:the\\s+)?Forwards?\\s+(?:(?:your\\s+)?opponent\\s+controls?)\\s+" +
         "lose\\s+(?<amount>\\d+)\\s+power\\s+for\\s+each\\s+CP\\s+required\\s+to\\s+play\\s+them\\s+" +
         "until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn[.!]?"
@@ -1163,7 +1187,7 @@ public class ActionResolver {
     /**
      * Matches "All the Forwards opponent controls cannot block Forwards with a power inferior to their own this turn."
      */
-    private static final Pattern OPP_FWDS_CANNOT_BLOCK_INFERIOR_POWER_THIS_TURN = Pattern.compile(
+    static final Pattern OPP_FWDS_CANNOT_BLOCK_INFERIOR_POWER_THIS_TURN = Pattern.compile(
         "(?i)All\\s+(?:the\\s+)?Forwards?\\s+(?:(?:your\\s+)?opponent\\s+controls?)\\s+" +
         "cannot\\s+block\\s+Forwards?\\s+with\\s+a\\s+power\\s+inferior\\s+to\\s+their\\s+own\\s+this\\s+turn[.!]?"
     );
@@ -1172,7 +1196,7 @@ public class ActionResolver {
      * Matches "Each Forward can only be blocked by a Forward with a cost inferior or equal to
      * its own this turn." — global rule applying to all attackers on both sides.
      */
-    private static final Pattern ALL_FWDS_BLOCKED_ONLY_BY_LOWER_COST_THIS_TURN = Pattern.compile(
+    static final Pattern ALL_FWDS_BLOCKED_ONLY_BY_LOWER_COST_THIS_TURN = Pattern.compile(
         "(?i)Each\\s+Forward\\s+can\\s+only\\s+be\\s+blocked\\s+by\\s+a\\s+Forward\\s+with\\s+a\\s+cost\\s+" +
         "inferior\\s+or\\s+equal\\s+to\\s+its\\s+own\\s+this\\s+turn[.!]?"
     );
@@ -1181,13 +1205,13 @@ public class ActionResolver {
      * Matches "During this turn, the power of Forwards opponent controls cannot be increased by Summons or abilities."
      * Action-ability counterpart to the persistent field effect FA_OPP_FORWARD_POWER_BOOST_SUPPRESSED.
      */
-    private static final Pattern OPP_FWD_POWER_BOOST_SUPPRESSED_THIS_TURN = Pattern.compile(
+    static final Pattern OPP_FWD_POWER_BOOST_SUPPRESSED_THIS_TURN = Pattern.compile(
         "(?i)During\\s+this\\s+turn,?\\s+the\\s+power\\s+of\\s+Forwards?\\s+(?:your\\s+)?opponent\\s+controls?\\s+" +
         "cannot\\s+be\\s+increased\\s+by\\s+Summons?\\s+or\\s+abilit(?:y|ies)[.!]?"
     );
 
     /** Matches "[CardName] cannot be blocked this turn." — self-referential standalone form. */
-    private static final Pattern STANDALONE_SELF_CANNOT_BE_BLOCKED = Pattern.compile(
+    static final Pattern STANDALONE_SELF_CANNOT_BE_BLOCKED = Pattern.compile(
         "(?i)(?<subject>.+?)\\s+cannot\\s+be\\s+blocked" +
         "(?:\\s+by\\s+a\\s+Forward\\s+of\\s+cost\\s+(?<costval>\\d+)(?:\\s+or\\s+(?<costcmp>less|more))?)?" +
         "\\s+this\\s+turn[.!]?"
@@ -1198,7 +1222,7 @@ public class ActionResolver {
      * [by a Forward of cost N or more/less] this turn."
      * Groups: {@code element}, optional {@code costval}/{@code costcmp}
      */
-    private static final Pattern FOLLOWUP_CANNOT_BE_BLOCKED_IF_ELEMENT_CP = Pattern.compile(
+    static final Pattern FOLLOWUP_CANNOT_BE_BLOCKED_IF_ELEMENT_CP = Pattern.compile(
         "(?i)if\\s+the\\s+cost\\s+paid\\s+to\\s+play\\s+.+?\\s+included\\s+" +
         "(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+CP,?\\s+" +
         "it\\s+cannot\\s+be\\s+blocked" +
@@ -1207,7 +1231,7 @@ public class ActionResolver {
     );
 
     /** Matches "if possible, it must block this turn" or the gains-until-EOT equivalent. */
-    private static final Pattern FOLLOWUP_MUST_BLOCK = Pattern.compile(
+    static final Pattern FOLLOWUP_MUST_BLOCK = Pattern.compile(
         "(?i)(?:" +
             "if\\s+possible[,]?\\s+it\\s+must\\s+block\\s+this\\s+turn" +
             "|it\\s+gains\\s+[\"']If\\s+possible[,]?\\s+this\\s+Forward\\s+must\\s+block\\.?[\"']\\s+until\\s+the\\s+end\\s+of\\s+the\\s+turn" +
@@ -1223,17 +1247,17 @@ public class ActionResolver {
      * Matches "Return it and [CardName] to their owners' hand(s)." — chosen target plus a named card.
      * Group {@code named} — the additional card name to return.
      */
-    private static final Pattern FOLLOWUP_RETURN_AND_NAMED_TO_OWNERS_HAND = Pattern.compile(
+    static final Pattern FOLLOWUP_RETURN_AND_NAMED_TO_OWNERS_HAND = Pattern.compile(
         "(?i)Return\\s+it\\s+and\\s+(?<named>.+?)\\s+to\\s+their\\s+owners?'s?\\s+hands?[.!]?"
     );
 
     /** Matches "Return it/them to its/their owner's/owners' hand/hands." */
-    private static final Pattern FOLLOWUP_RETURN_TO_OWNERS_HAND = Pattern.compile(
+    static final Pattern FOLLOWUP_RETURN_TO_OWNERS_HAND = Pattern.compile(
         "(?i)Return\\s+(?:it|them)\\s+to\\s+(?:its|their)\\s+owners?'s?\\s+hands?\\.?"
     );
 
     /** Matches "Return it/them to your hand/hands." */
-    private static final Pattern FOLLOWUP_RETURN_TO_YOUR_HAND = Pattern.compile(
+    static final Pattern FOLLOWUP_RETURN_TO_YOUR_HAND = Pattern.compile(
         "(?i)Return\\s+(?:it|them)\\s+to\\s+your\\s+hands?\\.?"
     );
 
@@ -1241,7 +1265,7 @@ public class ActionResolver {
      * Matches "Return all [the] [element] [targets] [control] to their owners' hands."
      * Named groups: {@code element}, {@code targets}, {@code control}.
      */
-    private static final Pattern ALL_RETURN_TO_HAND_PATTERN = Pattern.compile(
+    static final Pattern ALL_RETURN_TO_HAND_PATTERN = Pattern.compile(
         "(?i)Return\\s+all\\s+(?:the\\s+)?" +
         "(?:(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?" +
         "(?<targets>Forwards?(?:\\s+and\\s+Monsters?)?|Backups?|Characters?)?" +
@@ -1257,7 +1281,7 @@ public class ActionResolver {
      * <p>The control clause and the return sentence are both optional so the pattern covers
      * abbreviated forms (e.g. Zell/Vivi ETF) as well as the full explicit version.
      */
-    private static final Pattern CHOOSE_ANY_NUMBER_RETURN_TO_HAND = Pattern.compile(
+    static final Pattern CHOOSE_ANY_NUMBER_RETURN_TO_HAND = Pattern.compile(
         "(?i)Choose\\s+any\\s+number\\s+of\\s+" +
         "(?<types>Forwards?(?:\\s+and\\s+Monsters?)?|Monsters?(?:\\s+and\\s+Forwards?)?|Backups?|Characters?)" +
         "(?:\\s+(?<control>(?:your\\s+)?opponent\\s+controls?|you\\s+control))?" +
@@ -1265,7 +1289,7 @@ public class ActionResolver {
     );
 
     /** Matches "Return [name] to its owner's hand." — named card, not a pronoun. */
-    private static final Pattern RETURN_NAMED_TO_OWNERS_HAND = Pattern.compile(
+    static final Pattern RETURN_NAMED_TO_OWNERS_HAND = Pattern.compile(
         "(?i)Return\\s+(?!(?:it|them)\\b)(?<named>.+?)\\s+to\\s+its\\s+owner(?:'s|s')?\\s+hand[.!]?"
     );
 
@@ -1276,12 +1300,12 @@ public class ActionResolver {
      * Schultz 27-100R's "Return these to the top and/or bottom … add it to your hand" used to be
      * claimed here instead of by the look-at-deck parsers.
      */
-    private static final Pattern RETURN_NAMED_TO_YOUR_HAND_STANDALONE = Pattern.compile(
+    static final Pattern RETURN_NAMED_TO_YOUR_HAND_STANDALONE = Pattern.compile(
         "(?i)Return\\s+(?!(?:it|them)\\b)(?<named>\\S+(?:\\s+\\S+){0,4})\\s+to\\s+your\\s+hand[.!]?"
     );
 
     /** Matches "Add [name] to your hand." — named card, not a pronoun or a count. Used for break-zone-origin abilities. */
-    private static final Pattern ADD_NAMED_TO_YOUR_HAND = Pattern.compile(
+    static final Pattern ADD_NAMED_TO_YOUR_HAND = Pattern.compile(
         "(?i)\\bAdd\\s+(?!(?:it|them|\\d)\\b)(?<named>.+?)\\s+to\\s+your\\s+hand[.!]?"
     );
 
@@ -1290,7 +1314,7 @@ public class ActionResolver {
      * Used for break-zone-origin abilities where the card plays itself from the BZ.
      * The name is limited to 1–3 words to avoid matching non-source cards.
      */
-    private static final Pattern PLAY_SOURCE_ONTO_FIELD_PATTERN = Pattern.compile(
+    static final Pattern PLAY_SOURCE_ONTO_FIELD_PATTERN = Pattern.compile(
         "(?i)\\bPlay\\s+(?<name>\\S+(?:\\s+\\S+){0,2})\\s+onto\\s+(?:the\\s+)?field(?:\\s+(?<dull>dull))?[.!]?"
     );
 
@@ -1299,7 +1323,7 @@ public class ActionResolver {
      * Groups: {@code threshold} — power value; {@code cmp} — "less" or "more";
      * {@code name} — card name; {@code toowner} — non-null when "its owner's hand".
      */
-    private static final Pattern CONDITIONAL_POWER_RETURN = Pattern.compile(
+    static final Pattern CONDITIONAL_POWER_RETURN = Pattern.compile(
         "(?i)If\\s+its?\\s+power\\s+has\\s+become\\s+(?<threshold>\\d+)\\s+or\\s+(?<cmp>less|more),\\s+" +
         "return\\s+(?<name>.+?)\\s+to\\s+(?:(?<toowner>its\\s+owner(?:'s|s')?)\\s+|your\\s+)hand[.!]?"
     );
@@ -1309,7 +1333,7 @@ public class ActionResolver {
      * used when a card sends itself to the bottom of the deck as part of an ability chain.
      * Group: {@code name} — the card name (must equal source.name()).
      */
-    private static final Pattern PUT_SOURCE_TO_BOTTOM_OF_DECK = Pattern.compile(
+    static final Pattern PUT_SOURCE_TO_BOTTOM_OF_DECK = Pattern.compile(
         "(?i)Put\\s+(?<name>.+?)\\s+at\\s+the\\s+bottom\\s+of\\s+its\\s+owner's\\s+deck[.!]?"
     );
 
@@ -1318,7 +1342,7 @@ public class ActionResolver {
      * them onto the field and return the other cards to the bottom of your deck in any order."
      * Groups: {@code n}, {@code cardname}, {@code maxcost}.
      */
-    private static final Pattern REVEAL_PLAY_NAMED_MAX_COST_REST_BOTTOM = Pattern.compile(
+    static final Pattern REVEAL_PLAY_NAMED_MAX_COST_REST_BOTTOM = Pattern.compile(
         "(?i)reveal\\s+the\\s+top\\s+(?<n>\\d+)\\s+cards?\\s+of\\s+your\\s+deck[.!]?\\s+" +
         "Play\\s+1\\s+Card\\s+Name\\s+(?<cardname>.+?)\\s+of\\s+cost\\s+(?<maxcost>\\d+)\\s+or\\s+less\\s+" +
         "among\\s+them\\s+onto\\s+(?:the\\s+)?field\\s+" +
@@ -1332,7 +1356,7 @@ public class ActionResolver {
      * any order." — combined Card-Name-or-Job filter with a cost ceiling (e.g. Moogle (XIV)).
      * Groups: {@code n}, {@code max}, {@code cardname}, {@code job}, {@code maxcost}.
      */
-    private static final Pattern REVEAL_PLAY_NAMED_OR_JOB_MAX_COST_REST_BOTTOM = Pattern.compile(
+    static final Pattern REVEAL_PLAY_NAMED_OR_JOB_MAX_COST_REST_BOTTOM = Pattern.compile(
         "(?i)reveal\\s+the\\s+top\\s+(?<n>\\d+)\\s+cards?\\s+of\\s+your\\s+deck[.!]?\\s+" +
         "Play\\s+(?:up\\s+to\\s+)?(?<max>\\d+)\\s+Card\\s+Name\\s+(?<cardname>.+?)\\s+or\\s+Job\\s+(?<job>.+?)\\s+" +
         "of\\s+cost\\s+(?<maxcost>\\d+)\\s+or\\s+less\\s+" +
@@ -1346,7 +1370,7 @@ public class ActionResolver {
      * a selected type is revealed. Add it to your hand. Then, shuffle the other cards revealed
      * and return them to the bottom of your deck."
      */
-    private static final Pattern FLIP_UNTIL_TYPE_TO_HAND_REST_SHUFFLE_BOTTOM = Pattern.compile(
+    static final Pattern FLIP_UNTIL_TYPE_TO_HAND_REST_SHUFFLE_BOTTOM = Pattern.compile(
         "(?i)select\\s+1\\s+card\\s+type[.]?\\s+" +
         "Turn\\s+over\\s+one\\s+card\\s+at\\s+a\\s+time\\s+from\\s+the\\s+top\\s+of\\s+your\\s+deck\\s+" +
         "until\\s+a\\s+selected\\s+type\\s+is\\s+revealed[.]?\\s+" +
@@ -1361,7 +1385,7 @@ public class ActionResolver {
      * abilities that search for a named card.
      * Groups: {@code n} (reveal count), {@code cardname} (card name to play).
      */
-    private static final Pattern SHUFFLE_THEN_REVEAL_PLAY_NAMED_REST_BOTTOM = Pattern.compile(
+    static final Pattern SHUFFLE_THEN_REVEAL_PLAY_NAMED_REST_BOTTOM = Pattern.compile(
         "(?i)shuffle\\s+your\\s+deck[.]?\\s+Then,?\\s+" +
         "reveal\\s+the\\s+top\\s+(?<n>\\d+)\\s+cards?\\s+of\\s+your\\s+deck[.]?\\s+" +
         "Play\\s+1\\s+Card\\s+Name\\s+(?<cardname>.+?)\\s+among\\s+them\\s+onto\\s+(?:the\\s+)?field\\s+" +
@@ -1378,7 +1402,7 @@ public class ActionResolver {
      *   <li>{@code type} — card type filter: Forward, Backup, Monster, or Character</li>
      * </ul>
      */
-    private static final Pattern REVEAL_PLAY_TYPE_ONTO_FIELD_REST_BOTTOM = Pattern.compile(
+    static final Pattern REVEAL_PLAY_TYPE_ONTO_FIELD_REST_BOTTOM = Pattern.compile(
         "(?i)reveal\\s+the\\s+top\\s+(?<n>\\d+)\\s+cards?\\s+of\\s+your\\s+deck[.!]?\\s+" +
         "Play\\s+(?:up\\s+to\\s+)?(?<max>\\d+)\\s+" +
         "(?:Category\\s+(?<category>\\S+)\\s+)?" +
@@ -1389,12 +1413,12 @@ public class ActionResolver {
     );
 
     /** Matches "reveal 1 &lt;Element&gt; card from your hand. If you do so, draw N card(s)." */
-    private static final Pattern REVEAL_ELEMENT_CARD_FROM_HAND_IF_SO_DRAW = Pattern.compile(
+    static final Pattern REVEAL_ELEMENT_CARD_FROM_HAND_IF_SO_DRAW = Pattern.compile(
         "(?i)^\\s*reveal\\s+1\\s+(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+card\\s+from\\s+your\\s+hand[.]?\\s+" +
         "If\\s+you\\s+do\\s+so,?\\s+draw\\s+(?<draw>\\d+)\\s+cards?[.]?\\s*$"
     );
 
-    private static final Pattern REVEAL_PLAY_ELEMENT_TYPE_COST_ONTO_FIELD_REST_BOTTOM = Pattern.compile(
+    static final Pattern REVEAL_PLAY_ELEMENT_TYPE_COST_ONTO_FIELD_REST_BOTTOM = Pattern.compile(
         "(?i)^\\s*reveal\\s+the\\s+top\\s+(?<n>\\d+)\\s+cards?\\s+of\\s+your\\s+deck[.!]?\\s+" +
         "Play\\s+(?:up\\s+to\\s+)?(?<max>\\d+)\\s+" +
         "(?:(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?" +
@@ -1406,17 +1430,17 @@ public class ActionResolver {
     );
 
     /** Matches "Put it at the top or bottom of its owner's deck." — player chooses placement. Also handles "Your opponent puts it…" */
-    private static final Pattern FOLLOWUP_PUT_TOP_OR_BOTTOM_OF_DECK = Pattern.compile(
+    static final Pattern FOLLOWUP_PUT_TOP_OR_BOTTOM_OF_DECK = Pattern.compile(
         "(?i)(?:Your\\s+opponent\\s+puts?\\s+it|Put\\s+it)\\s+at\\s+the\\s+top\\s+or\\s+bottom\\s+of\\s+its\\s+owner's\\s+deck\\.?"
     );
 
     /** Matches "Put it at the bottom of its owner's deck." Also handles "Your opponent puts it…" */
-    private static final Pattern FOLLOWUP_PUT_BOTTOM_OF_DECK = Pattern.compile(
+    static final Pattern FOLLOWUP_PUT_BOTTOM_OF_DECK = Pattern.compile(
         "(?i)(?:Your\\s+opponent\\s+puts?\\s+it|Put\\s+it)\\s+at\\s+the\\s+bottom\\s+of\\s+its\\s+owner's\\s+deck\\.?"
     );
 
     /** Matches "Put it on top of its owner's deck." Also handles "Your opponent puts it…" */
-    private static final Pattern FOLLOWUP_PUT_TOP_OF_DECK = Pattern.compile(
+    static final Pattern FOLLOWUP_PUT_TOP_OF_DECK = Pattern.compile(
         "(?i)(?:Your\\s+opponent\\s+puts?\\s+it|Put\\s+it)\\s+on\\s+top\\s+of\\s+its\\s+owner's\\s+deck\\.?"
     );
 
@@ -1426,7 +1450,7 @@ public class ActionResolver {
      * Groups: {@code sourcename} — name of the card providing the power threshold;
      *         {@code cmp} — "less" or "more".
      */
-    private static final Pattern FOLLOWUP_IF_POWER_CMP_SOURCE_PUT_ON_DECK_TOP = Pattern.compile(
+    static final Pattern FOLLOWUP_IF_POWER_CMP_SOURCE_PUT_ON_DECK_TOP = Pattern.compile(
         "(?i)If\\s+its?\\s+power\\s+is\\s+equal\\s+to\\s+or\\s+(?<cmp>less|more)\\s+than\\s+" +
         "(?<sourcename>.+?)'s\\s+power[,.]?\\s+put\\s+it\\s+on\\s+top\\s+of\\s+its\\s+owner's\\s+deck[.!]?"
     );
@@ -1435,22 +1459,22 @@ public class ActionResolver {
      * Matches "Put it under the top [N] card(s) of its owner's/your deck."
      * Group {@code numword} — present only when a number word precedes "cards" (currently only "four").
      */
-    private static final Pattern FOLLOWUP_PUT_UNDER_TOP_OF_DECK = Pattern.compile(
+    static final Pattern FOLLOWUP_PUT_UNDER_TOP_OF_DECK = Pattern.compile(
         "(?i)Put\\s+it\\s+under\\s+the\\s+top\\s+(?<numword>four\\s+)?cards?\\s+of\\s+(?:its\\s+owner's|your)\\s+deck\\.?"
     );
 
     /** Matches "it cannot attack this turn" or "they cannot attack this turn". */
-    private static final Pattern FOLLOWUP_CANNOT_ATTACK = Pattern.compile(
+    static final Pattern FOLLOWUP_CANNOT_ATTACK = Pattern.compile(
         "(?i)(?:it|they)\\s+cannot\\s+attack\\s+this\\s+turn\\.?"
     );
 
     /** Matches "it must attack this turn if possible". */
-    private static final Pattern FOLLOWUP_MUST_ATTACK = Pattern.compile(
+    static final Pattern FOLLOWUP_MUST_ATTACK = Pattern.compile(
         "(?i)it\\s+must\\s+attack\\s+this\\s+turn\\s+if\\s+possible\\.?"
     );
 
     /** Matches "it/they cannot attack or block this turn". */
-    private static final Pattern FOLLOWUP_CANNOT_ATTACK_OR_BLOCK = Pattern.compile(
+    static final Pattern FOLLOWUP_CANNOT_ATTACK_OR_BLOCK = Pattern.compile(
         "(?i)(?:it|they)\\s+cannot\\s+attack\\s+or\\s+block\\s+this\\s+turn\\.?"
     );
 
@@ -1458,7 +1482,7 @@ public class ActionResolver {
      * Matches "it cannot attack or block until the end of your opponent's turn" or
      * "…until the end of the next turn".
      */
-    private static final Pattern FOLLOWUP_CANNOT_ATTACK_OR_BLOCK_PERSISTENT = Pattern.compile(
+    static final Pattern FOLLOWUP_CANNOT_ATTACK_OR_BLOCK_PERSISTENT = Pattern.compile(
         "(?i)(?:it|they)\\s+cannot\\s+attack\\s+or\\s+block\\s+until\\s+the\\s+end\\s+of\\s+" +
         "(?:your\\s+opponent's|the\\s+next)\\s+turn\\.?"
     );
@@ -1515,7 +1539,7 @@ public class ActionResolver {
      *   <li>Group {@code damage}   — fixed damage amount</li>
      * </ul>
      */
-    private static final Pattern FOLLOWUP_END_OF_TURN_COND_DAMAGE = Pattern.compile(
+    static final Pattern FOLLOWUP_END_OF_TURN_COND_DAMAGE = Pattern.compile(
         "(?i)At\\s+the\\s+end\\s+of\\s+this\\s+turn,\\s+if\\s+you\\s+control\\s+(?<cardName>.+?),\\s+deal\\s+it\\s+(?<damage>\\d+)\\s+damage\\.?"
     );
 
@@ -1584,7 +1608,7 @@ public class ActionResolver {
      * "If there are N or more cards removed from the game, &lt;effect&gt;"
      * Group {@code count} is the threshold; {@code inner} is the conditional effect text.
      */
-    private static final Pattern IF_RFP_COUNT_INNER = Pattern.compile(
+    static final Pattern IF_RFP_COUNT_INNER = Pattern.compile(
         "(?i)^If\\s+there\\s+are\\s+(?<count>\\d+)\\s+or\\s+more\\s+cards?\\s+removed\\s+from\\s+the\\s+game,\\s+(?<inner>.+)",
         Pattern.DOTALL
     );
@@ -1662,7 +1686,7 @@ public class ActionResolver {
      * Identical to the field-ability form in {@link CardData#FIELD_PARTY_ANY_ELEMENT_PATTERN}
      * except it requires "this turn" at the end.
      */
-    private static final Pattern GRANT_PARTY_ANY_ELEMENT_THIS_TURN = Pattern.compile(
+    static final Pattern GRANT_PARTY_ANY_ELEMENT_THIS_TURN = Pattern.compile(
         "(?i)The\\s+" +
         "(?:Job\\s+(?<job>.+?)\\s+|Category\\s+(?<category>\\S+)\\s+|Card\\s+Name\\s+(?<cardname>\\S+)\\s+)?" +
         "Forwards?\\s+you\\s+control\\s+can\\s+form\\s+a\\s+party\\s+with\\s+" +
@@ -1673,7 +1697,7 @@ public class ActionResolver {
      * Matches "Name 1 Element[ other than X[ or Y]]. [CardName] becomes the named Element until the end of the turn."
      * — element-only self-becomes with optional exclusion.
      */
-    private static final Pattern NAME_ELEMENT_ONLY_SELF_BECOMES = Pattern.compile(
+    static final Pattern NAME_ELEMENT_ONLY_SELF_BECOMES = Pattern.compile(
         "(?i)Name\\s+1\\s+Element" +
         "(?:\\s+other\\s+than\\s+(?<exclude>[^.]+))?" +
         "[.!]?\\s+" +
@@ -1686,7 +1710,7 @@ public class ActionResolver {
      * "other than X[ or Y]" element exclusion, where the source card becomes the named Element
      * and Job until end of turn.
      */
-    private static final Pattern NAME_ELEMENT_AND_JOB_SELF_BECOMES = Pattern.compile(
+    static final Pattern NAME_ELEMENT_AND_JOB_SELF_BECOMES = Pattern.compile(
         "(?i)Name\\s+1\\s+(?:Element\\s+and\\s+1\\s+Job|Job\\s+and\\s+1\\s+Element)" +
         "(?:\\s+other\\s+than\\s+(?<exclude>[^.]+))?" +
         "[.!]?\\s+" +
@@ -1699,7 +1723,7 @@ public class ActionResolver {
      * Element. [(This effect does not end at the end of the turn.)]" — a permanent element and job
      * grant (no EOT revert).
      */
-    private static final Pattern NAME_JOB_AND_ELEMENT_SELF_GAINS_PERMANENT = Pattern.compile(
+    static final Pattern NAME_JOB_AND_ELEMENT_SELF_GAINS_PERMANENT = Pattern.compile(
         "(?i)Name\\s+1\\s+(?:Job\\s+and\\s+1\\s+Element|Element\\s+and\\s+1\\s+Job)" +
         "(?:\\s+other\\s+than\\s+(?<exclude>[^.]+))?" +
         "[.!]?\\s+" +
@@ -1711,7 +1735,7 @@ public class ActionResolver {
      * Matches "Name 1 Job or 1 Element. Until the end of the turn, all Forwards you control
      * gain +N power and the named Job or Element."
      */
-    private static final Pattern NAME_JOB_OR_ELEMENT_ALL_FORWARDS_BOOST = Pattern.compile(
+    static final Pattern NAME_JOB_OR_ELEMENT_ALL_FORWARDS_BOOST = Pattern.compile(
         "(?i)Name\\s+1\\s+(?:Job\\s+or\\s+1\\s+Element|Element\\s+or\\s+1\\s+Job)[.!]?\\s+" +
         "Until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn,?\\s+" +
         "all\\s+(?:the\\s+)?Forwards?\\s+you\\s+control\\s+gains?\\s+\\+?(?<amount>\\d+)\\s+[Pp]ower\\s+" +
@@ -1728,7 +1752,7 @@ public class ActionResolver {
      * Add up to M Characters of the named Job or Category among them to your hand
      * and return the other cards to the bottom of your deck in any order."
      */
-    private static final Pattern NAME_JOB_OR_CATEGORY_REVEAL_ADD_TO_HAND = Pattern.compile(
+    static final Pattern NAME_JOB_OR_CATEGORY_REVEAL_ADD_TO_HAND = Pattern.compile(
         "(?i)Name\\s+1\\s+(?:Job\\s+or\\s+Category|Category\\s+or\\s+Job)[.!]?\\s+" +
         "Reveal\\s+the\\s+top\\s+(?<reveal>\\d+)\\s+cards?\\s+of\\s+your\\s+deck[.!]?\\s+" +
         "Add\\s+up\\s+to\\s+(?<maxAdd>\\d+)\\s+Characters?\\s+of\\s+the\\s+named\\s+" +
@@ -1742,7 +1766,7 @@ public class ActionResolver {
      * and return the other cards to the bottom of your deck in any order."
      * Groups: {@code n} (card count), {@code cat} (category identifier, e.g. "MBM").
      */
-    private static final Pattern REVEAL_TOP_N_CATEGORY_TO_HAND = Pattern.compile(
+    static final Pattern REVEAL_TOP_N_CATEGORY_TO_HAND = Pattern.compile(
         "(?i)^\\s*(?:you\\s+may\\s+)?reveal\\s+the\\s+top\\s+(?<n>\\d+)\\s+cards?\\s+of\\s+your\\s+deck[.!]?\\s+" +
         "Add\\s+1\\s+Category\\s+(?<cat>\\S+)(?:\\s+(?:Forward|Backup|Character|Monster|card))?\\s+among\\s+them\\s+to\\s+your\\s+hand\\s+" +
         "and\\s+return\\s+the\\s+other\\s+cards?\\s+to\\s+the\\s+bottom\\s+of\\s+(?:your|the)\\s+deck(?:\\s+in\\s+any\\s+order)?[.!]?\\s*$"
@@ -1762,14 +1786,14 @@ public class ActionResolver {
      * Groups: {@code n} (reveal count), {@code max} (max to add), {@code type} (card type),
      * {@code cost} (max cost; {@code null} when the clause is absent).
      */
-    private static final Pattern REVEAL_TOP_N_TYPE_TO_HAND = Pattern.compile(
+    static final Pattern REVEAL_TOP_N_TYPE_TO_HAND = Pattern.compile(
         "(?i)^\\s*(?:you\\s+may\\s+)?reveal\\s+the\\s+top\\s+(?<n>\\d+)\\s+cards?\\s+of\\s+your\\s+deck[.!]?\\s+" +
         "Add\\s+(?<max>\\d+)\\s+(?<type>Forwards?|Backups?|Monsters?|Characters?|Summons?)" +
         "(?:\\s+of\\s+cost\\s+(?<cost>\\d+)\\s+or\\s+less)?\\s+among\\s+them\\s+to\\s+your\\s+hand\\s+" +
         "and\\s+return\\s+the\\s+other\\s+cards?\\s+to\\s+the\\s+bottom\\s+of\\s+(?:your|the)\\s+deck(?:\\s+in\\s+any\\s+order)?[.!]?\\s*$"
     );
 
-    private static final Pattern REVEAL_TOP_N_JOB_OR_NAME_TO_HAND = Pattern.compile(
+    static final Pattern REVEAL_TOP_N_JOB_OR_NAME_TO_HAND = Pattern.compile(
         "(?i)^\\s*(?:you\\s+may\\s+)?reveal\\s+the\\s+top\\s+(?<n>\\d+)\\s+cards?\\s+of\\s+your\\s+deck[.!]?\\s+" +
         "Add\\s+1\\s+" +
         "(?<first>(?:Job|Card\\s+Name)\\s+.+?)" +
@@ -1787,7 +1811,7 @@ public class ActionResolver {
      * Groups: {@code n} (reveal count), {@code max} (max to add), {@code element} (element name),
      * {@code type} (card type; only in the plain form), {@code cat} (category; only in the "or Category" form).
      */
-    private static final Pattern REVEAL_TOP_N_ELEMENT_TO_HAND = Pattern.compile(
+    static final Pattern REVEAL_TOP_N_ELEMENT_TO_HAND = Pattern.compile(
         "(?i)^\\s*(?:you\\s+may\\s+)?reveal\\s+the\\s+top\\s+(?<n>\\d+)\\s+cards?\\s+of\\s+your\\s+deck[.!]?\\s+" +
         "Add\\s+(?<max>\\d+)\\s+(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark|Multi-Element)\\s+" +
         "(?:" +
@@ -1804,7 +1828,7 @@ public class ActionResolver {
      * among them to your hand, and put the rest of the cards into the Break Zone."
      * Groups: {@code n}, {@code max}, {@code name}.
      */
-    private static final Pattern REVEAL_TOP_N_ADD_UP_TO_EXCLUDING_NAME_REST_BZ = Pattern.compile(
+    static final Pattern REVEAL_TOP_N_ADD_UP_TO_EXCLUDING_NAME_REST_BZ = Pattern.compile(
         "(?i)^\\s*reveal\\s+the\\s+top\\s+(?<n>\\d+)\\s+cards?\\s+of\\s+your\\s+deck[.!]?\\s+" +
         "Add\\s+up\\s+to\\s+(?<max>\\d+)\\s+cards?\\s+other\\s+than\\s+Card\\s+Name\\s+(?<name>.+?)\\s+" +
         "among\\s+them\\s+to\\s+your\\s+hand,?\\s+" +
@@ -1824,7 +1848,7 @@ public class ActionResolver {
      *   <li>{@code fieldtype}— type filter for the field branch</li>
      * </ul>
      */
-    private static final Pattern REVEAL_ADD_TYPE_TO_HAND_OR_PLAY_JOB_TYPE_ONTO_FIELD_REST_BOTTOM = Pattern.compile(
+    static final Pattern REVEAL_ADD_TYPE_TO_HAND_OR_PLAY_JOB_TYPE_ONTO_FIELD_REST_BOTTOM = Pattern.compile(
         "(?i)^\\s*reveal\\s+the\\s+top\\s+(?<n>\\d+)\\s+cards?\\s+of\\s+your\\s+deck[.!]?\\s+" +
         "Add\\s+(?<handmax>\\d+)\\s+(?<handtype>Forward|Backup|Monster|Character)s?\\s+among\\s+them\\s+to\\s+your\\s+hand\\s+" +
         "or\\s+play\\s+(?<fieldmax>\\d+)\\s+" +
@@ -1837,12 +1861,12 @@ public class ActionResolver {
     // ---- Damage-shield followup patterns (apply to selected "it/them" targets) --------
 
     /** Matches "During this turn, the next damage dealt to it/him becomes 0 instead." */
-    private static final Pattern FOLLOWUP_SHIELD_NEXT_DMG_ZERO = Pattern.compile(
+    static final Pattern FOLLOWUP_SHIELD_NEXT_DMG_ZERO = Pattern.compile(
         "(?i)During\\s+this\\s+turn,\\s+the\\s+next\\s+damage\\s+dealt\\s+to\\s+(?:it|him)\\s+becomes\\s+0\\s+instead\\.?"
     );
 
     /** Matches "During this turn, the next damage dealt to you becomes 0 instead." */
-    private static final Pattern PLAYER_NEXT_DAMAGE_ZERO = Pattern.compile(
+    static final Pattern PLAYER_NEXT_DAMAGE_ZERO = Pattern.compile(
         "(?i)During\\s+this\\s+turn,\\s+the\\s+next\\s+damage\\s+dealt\\s+to\\s+you\\s+becomes\\s+0\\s+instead\\.?"
     );
 
@@ -1850,45 +1874,45 @@ public class ActionResolver {
      * Matches "During this turn, the next damage dealt to you becomes 0 and deal [Name] N damage
      * instead." (Auron) — the player shield plus a redirect to the named Forward on consumption.
      */
-    private static final Pattern PLAYER_NEXT_DAMAGE_ZERO_REDIRECT = Pattern.compile(
+    static final Pattern PLAYER_NEXT_DAMAGE_ZERO_REDIRECT = Pattern.compile(
         "(?i)During\\s+this\\s+turn,\\s+the\\s+next\\s+damage\\s+dealt\\s+to\\s+you\\s+becomes\\s+0\\s+" +
         "and\\s+deal\\s+(?<name>.+?)\\s+(?<dmg>\\d+)\\s+damage\\s+instead\\.?"
     );
 
     /** Matches "During this turn, the next damage dealt to it by Summons or abilities is reduced by N instead." */
-    private static final Pattern FOLLOWUP_SHIELD_NEXT_ABILITY_DMG_REDUCTION = Pattern.compile(
+    static final Pattern FOLLOWUP_SHIELD_NEXT_ABILITY_DMG_REDUCTION = Pattern.compile(
         "(?i)During\\s+this\\s+turn,\\s+the\\s+next\\s+damage\\s+dealt\\s+to\\s+it\\s+by\\s+Summons?\\s+or\\s+abilities\\s+is\\s+reduced\\s+by\\s+(?<reduction>\\d+)\\s+instead\\.?"
     );
 
     /** Matches "During this turn, the next damage dealt to it is reduced by N instead." or "Reduce the next damage dealt to it this turn by N." */
-    private static final Pattern FOLLOWUP_SHIELD_NEXT_DMG_REDUCTION = Pattern.compile(
+    static final Pattern FOLLOWUP_SHIELD_NEXT_DMG_REDUCTION = Pattern.compile(
         "(?i)(?:During\\s+this\\s+turn,\\s+the\\s+next\\s+damage\\s+dealt\\s+to\\s+(?:it|him)\\s+is\\s+reduced\\s+by|Reduce\\s+the\\s+next\\s+damage\\s+dealt\\s+to\\s+(?:it|him)\\s+this\\s+turn\\s+by)\\s+(?<reduction>\\d+)(?:\\s+instead)?\\.?"
     );
 
     /** Matches "During this turn, the damage dealt to it is increased by N instead." */
-    private static final Pattern FOLLOWUP_DEBUFF_INCOMING_DMG_INCREASE = Pattern.compile(
+    static final Pattern FOLLOWUP_DEBUFF_INCOMING_DMG_INCREASE = Pattern.compile(
         "(?i)During\\s+this\\s+turn,\\s+the\\s+damage\\s+dealt\\s+to\\s+it\\s+is\\s+increased\\s+by\\s+(?<amount>\\d+)\\s+instead\\.?"
     );
 
     /** Matches "During this turn, the next damage it deals to a Forward becomes 0 instead." */
-    private static final Pattern FOLLOWUP_SHIELD_NEXT_OUTGOING_ZERO = Pattern.compile(
+    static final Pattern FOLLOWUP_SHIELD_NEXT_OUTGOING_ZERO = Pattern.compile(
         "(?i)During\\s+this\\s+turn,\\s+the\\s+next\\s+damage\\s+it\\s+deals\\s+to\\s+a\\s+Forward\\s+becomes\\s+0\\s+instead\\.?"
     );
 
     /** Matches "If it deals damage to a Forward [opponent controls] this turn, the damage increases by N instead." */
-    private static final Pattern FOLLOWUP_OUTGOING_DMG_BOOST_THIS_TURN = Pattern.compile(
+    static final Pattern FOLLOWUP_OUTGOING_DMG_BOOST_THIS_TURN = Pattern.compile(
         "(?i)If\\s+it\\s+deals\\s+damage\\s+to\\s+a\\s+Forward(?:\\s+opponent\\s+controls?)?\\s+this\\s+turn,?\\s+" +
         "(?:the\\s+damage\\s+increases?|increase\\s+the\\s+damage)\\s+by\\s+(?<amount>\\d+)(?:\\s+instead)?[.!]?"
     );
 
     /** Matches "If [CardName] deals damage to a Forward this turn, the damage increases by N instead." */
-    private static final Pattern SELF_OUTGOING_DMG_BOOST_THIS_TURN = Pattern.compile(
+    static final Pattern SELF_OUTGOING_DMG_BOOST_THIS_TURN = Pattern.compile(
         "(?i)If\\s+(?<subject>.+?)\\s+deals\\s+damage\\s+to\\s+a\\s+Forward\\s+this\\s+turn,?\\s+" +
         "the\\s+damage\\s+increases?\\s+by\\s+(?<amount>\\d+)(?:\\s+instead)?[.!]?$"
     );
 
     /** Matches "During this turn, if it is dealt damage less than its power, the damage becomes 0 instead." */
-    private static final Pattern FOLLOWUP_SHIELD_NONLETHAL = Pattern.compile(
+    static final Pattern FOLLOWUP_SHIELD_NONLETHAL = Pattern.compile(
         "(?i)During\\s+this\\s+turn,\\s+if\\s+it\\s+is\\s+dealt\\s+damage\\s+less\\s+than\\s+its\\s+power,\\s+the\\s+damage\\s+becomes\\s+0\\s+instead\\.?"
     );
 
@@ -1896,13 +1920,13 @@ public class ActionResolver {
      * "It gains 'If this Forward is dealt damage by your opponent's abilities, the damage becomes
      * 0 instead.' until the end of the turn."
      */
-    private static final Pattern FOLLOWUP_GAINS_SHIELD_ABILITY_ONLY = Pattern.compile(
+    static final Pattern FOLLOWUP_GAINS_SHIELD_ABILITY_ONLY = Pattern.compile(
         "(?i)(?:it|they)\\s+gains?\\s+['\"]If\\s+this\\s+Forward\\s+is\\s+dealt\\s+damage\\s+by\\s+your\\s+opponent's\\s+abilities,\\s+the\\s+damage\\s+becomes\\s+0\\s+instead\\.?['\"]" +
         "\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn\\.?"
     );
 
     /** Matches "Negate all [the] damage dealt to it/them." — removes all existing damage immediately. */
-    private static final Pattern FOLLOWUP_NEGATE_DAMAGE = Pattern.compile(
+    static final Pattern FOLLOWUP_NEGATE_DAMAGE = Pattern.compile(
         "(?i)Negate\\s+all\\s+(?:the\\s+)?damage\\s+dealt\\s+to\\s+(?:it|them)\\.?"
     );
 
@@ -1911,7 +1935,7 @@ public class ActionResolver {
      * Checked before {@link #FOLLOWUP_ACTIVATE} to prevent the simpler pattern from
      * consuming only the "Activate it" prefix.
      */
-    private static final Pattern FOLLOWUP_ACTIVATE_AND_NEGATE_DAMAGE = Pattern.compile(
+    static final Pattern FOLLOWUP_ACTIVATE_AND_NEGATE_DAMAGE = Pattern.compile(
         "(?i)Activate\\s+(?:it|them)\\s+and\\s+negate\\s+all\\s+(?:the\\s+)?damage\\s+dealt\\s+to\\s+(?:it|them)\\.?"
     );
 
@@ -1922,7 +1946,7 @@ public class ActionResolver {
      * Checked before {@link #FOLLOWUP_ACTIVATE} and {@link #FOLLOWUP_GAIN_CONTROL_EOT}
      * to avoid partial matches on the "Activate" or plain "gain control" prefixes.
      */
-    private static final Pattern FOLLOWUP_ACTIVATE_AND_GAIN_CONTROL_EOT = Pattern.compile(
+    static final Pattern FOLLOWUP_ACTIVATE_AND_GAIN_CONTROL_EOT = Pattern.compile(
         "(?i)Activate\\s+(?:it|them)\\s+and\\s+(?:you\\s+)?gain\\s+control\\s+of\\s+(?:it|them)" +
         "\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn\\.?"
     );
@@ -1932,19 +1956,19 @@ public class ActionResolver {
      * Checked before {@link #FOLLOWUP_GAIN_CONTROL} to avoid the shorter pattern matching first.
      * Group {@code condCard} captures the card name that must remain on the field.
      */
-    private static final Pattern FOLLOWUP_GAIN_CONTROL_WHILE_CARD = Pattern.compile(
+    static final Pattern FOLLOWUP_GAIN_CONTROL_WHILE_CARD = Pattern.compile(
         "(?i)(?:you\\s+)?gain\\s+control\\s+of\\s+(?:it|them)" +
         "\\s+for\\s+as\\s+long\\s+as\\s+(?<condCard>.+?)\\s+is\\s+on\\s+the\\s+field\\.?"
     );
 
     /** "gain control of it/them until the end of the turn." */
-    private static final Pattern FOLLOWUP_GAIN_CONTROL_EOT = Pattern.compile(
+    static final Pattern FOLLOWUP_GAIN_CONTROL_EOT = Pattern.compile(
         "(?i)(?:you\\s+)?gain\\s+control\\s+of\\s+(?:it|them)" +
         "\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn\\.?"
     );
 
     /** "you gain control of it/them." — permanent, no duration qualifier. */
-    private static final Pattern FOLLOWUP_GAIN_CONTROL = Pattern.compile(
+    static final Pattern FOLLOWUP_GAIN_CONTROL = Pattern.compile(
         "(?i)(?:you\\s+)?gain\\s+control\\s+of\\s+(?:it|them)\\.?"
     );
 
@@ -1966,7 +1990,7 @@ public class ActionResolver {
      * Checked first so the simpler cannot-be-chosen patterns do not match inside the quoted text.
      * Group {@code scope} captures the scope string.
      */
-    private static final Pattern FOLLOWUP_GAINS_CANNOT_BE_CHOSEN = Pattern.compile(
+    static final Pattern FOLLOWUP_GAINS_CANNOT_BE_CHOSEN = Pattern.compile(
         "(?i)(?:it|they)\\s+gains?\\s+['\"]This\\s+(?:Forward|Character)\\s+cannot\\s+be\\s+chosen" +
         "\\s+by\\s+your\\s+opponent's\\s+(?<scope>Summons?(?:\\s+or\\s+abilities)?|abilities)\\.?['\"]" +
         "\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn\\.?"
@@ -1998,18 +2022,18 @@ public class ActionResolver {
      * "It/They cannot be chosen by your opponent's Summons or abilities [this turn]."
      * More specific than the Summons-only and abilities-only forms; checked first.
      */
-    private static final Pattern FOLLOWUP_CANNOT_BE_CHOSEN_BOTH = Pattern.compile(
+    static final Pattern FOLLOWUP_CANNOT_BE_CHOSEN_BOTH = Pattern.compile(
         "(?i)(?:it|they)\\s+cannot\\s+be\\s+chosen\\s+by\\s+your\\s+opponent's\\s+" +
         "Summons?\\s+or\\s+abilities\\.?"
     );
 
     /** "It/They cannot be chosen by your opponent's Summons [this turn]." */
-    private static final Pattern FOLLOWUP_CANNOT_BE_CHOSEN_SUMMONS = Pattern.compile(
+    static final Pattern FOLLOWUP_CANNOT_BE_CHOSEN_SUMMONS = Pattern.compile(
         "(?i)(?:it|they)\\s+cannot\\s+be\\s+chosen\\s+by\\s+your\\s+opponent's\\s+Summons?\\.?"
     );
 
     /** "It/They cannot be chosen by your opponent's abilities [this turn]." */
-    private static final Pattern FOLLOWUP_CANNOT_BE_CHOSEN_ABILITIES = Pattern.compile(
+    static final Pattern FOLLOWUP_CANNOT_BE_CHOSEN_ABILITIES = Pattern.compile(
         "(?i)(?:it|they)\\s+cannot\\s+be\\s+chosen\\s+by\\s+your\\s+opponent's\\s+abilities\\.?"
     );
 
@@ -2018,26 +2042,26 @@ public class ActionResolver {
      * opponent's Summons or abilities [this turn]." — EOT return-to-hand protection for the
      * chosen target(s), enforced via {@link CardData.Trait#CANNOT_BE_RETURNED_TO_HAND_BY_OPP}.
      */
-    private static final Pattern FOLLOWUP_CANNOT_BE_RETURNED_TO_HAND = Pattern.compile(
+    static final Pattern FOLLOWUP_CANNOT_BE_RETURNED_TO_HAND = Pattern.compile(
         "(?i)(?:During\\s+this\\s+turn,\\s+)?(?:it|they)\\s+cannot\\s+be\\s+returned\\s+to\\s+" +
         "(?:its|their)\\s+owner's\\s+hand\\s+by\\s+(?:your\\s+)?opponent's\\s+" +
         "(?:Summons?(?:\\s+or\\s+abilities)?|abilities)\\.?"
     );
 
     /** "It gains 'This Character/Forward/Monster cannot be broken.' until the end of the turn." Also matches the leading-Until form: "Until the end of the turn, it gains '...'." */
-    private static final Pattern FOLLOWUP_CANNOT_BE_BROKEN = Pattern.compile(
+    static final Pattern FOLLOWUP_CANNOT_BE_BROKEN = Pattern.compile(
         "(?i)(?:Until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn,\\s+)?" +
         "(?:it|they)\\s+gains?\\s+['\"]This\\s+(?:Forward|Character|Monster)\\s+cannot\\s+be\\s+broken\\.?['\"]" +
         "(?:\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn\\.?)?"
     );
 
     /** "It cannot be broken this turn." */
-    private static final Pattern FOLLOWUP_CANNOT_BE_BROKEN_SIMPLE = Pattern.compile(
+    static final Pattern FOLLOWUP_CANNOT_BE_BROKEN_SIMPLE = Pattern.compile(
         "(?i)(?:it|they)\\s+cannot\\s+be\\s+broken\\s+this\\s+turn\\.?"
     );
 
     /** "During this turn, it cannot be broken by opposing Summons or abilities that don't deal damage." */
-    private static final Pattern FOLLOWUP_CANNOT_BE_BROKEN_BY_NON_DMG = Pattern.compile(
+    static final Pattern FOLLOWUP_CANNOT_BE_BROKEN_BY_NON_DMG = Pattern.compile(
         "(?i)(?:During\\s+this\\s+turn,\\s+)?(?:it|they)\\s+cannot\\s+be\\s+broken\\s+by\\s+" +
         "(?:opposing|your\\s+opponent's)\\s+Summons\\s+or\\s+abilities\\s+that\\s+don'?t\\s+deal\\s+damage\\.?"
     );
@@ -2047,7 +2071,7 @@ public class ActionResolver {
      * instead." (Jet Bahamut-style) — marks the chosen target for redirect-to-RFG for the rest
      * of the turn, regardless of what later effect breaks it.
      */
-    private static final Pattern FOLLOWUP_IF_PUT_TO_BZ_THIS_TURN_RFG_INSTEAD = Pattern.compile(
+    static final Pattern FOLLOWUP_IF_PUT_TO_BZ_THIS_TURN_RFG_INSTEAD = Pattern.compile(
         "(?i)If\\s+(?:it|they)\\s+(?:is|are)\\s+put\\s+from\\s+the\\s+field\\s+into\\s+the\\s+Break\\s+Zone\\s+this\\s+turn,\\s+" +
         "remove\\s+(?:it|them)\\s+from\\s+the\\s+game\\s+instead\\.?"
     );
@@ -2062,19 +2086,19 @@ public class ActionResolver {
      * clause, keeping the whole "Choose … . &lt;primary&gt;." prefix intact for the normal parser.
      * Groups: {@code head} — the choose-and-act text; {@code count} — cards drawn.
      */
-    private static final Pattern CHOOSE_THEN_WHEN_PUT_TO_BZ_DRAW = Pattern.compile(
+    static final Pattern CHOOSE_THEN_WHEN_PUT_TO_BZ_DRAW = Pattern.compile(
         "(?is)^(?<head>.+)\\s+When\\s+(?:it|they)\\s+(?:is|are)\\s+put\\s+from\\s+the\\s+field\\s+" +
         "into\\s+the\\s+Break\\s+Zone\\s+this\\s+turn,\\s+draw\\s+(?<count>\\d+)\\s+cards?[.!]?$"
     );
 
     /** Standalone: "[CardName] gains '[...] cannot be broken.' until end of turn." */
-    private static final Pattern STANDALONE_SELF_SHIELD_CANNOT_BE_BROKEN = Pattern.compile(
+    static final Pattern STANDALONE_SELF_SHIELD_CANNOT_BE_BROKEN = Pattern.compile(
         "(?i)(?<subject>.+?)\\s+gains?\\s+['\"][^'\"]*?cannot\\s+be\\s+broken\\.?['\"]" +
         "\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn\\.?"
     );
 
     /** Standalone: "[CardName] cannot be broken this turn." — bare form without 'gains' quoting. */
-    private static final Pattern STANDALONE_SELF_SHIELD_CANNOT_BE_BROKEN_SIMPLE = Pattern.compile(
+    static final Pattern STANDALONE_SELF_SHIELD_CANNOT_BE_BROKEN_SIMPLE = Pattern.compile(
         "(?i)(?<subject>.+?)\\s+cannot\\s+be\\s+broken\\s+this\\s+turn\\.?"
     );
 
@@ -2083,7 +2107,7 @@ public class ActionResolver {
      * that don't deal damage." until the end of the turn." — self-shield limited to non-damage
      * breaks (Maat-style), the quoted-gains form of {@link #FOLLOWUP_CANNOT_BE_BROKEN_BY_NON_DMG}.
      */
-    private static final Pattern STANDALONE_SELF_SHIELD_CANNOT_BE_BROKEN_BY_NON_DMG = Pattern.compile(
+    static final Pattern STANDALONE_SELF_SHIELD_CANNOT_BE_BROKEN_BY_NON_DMG = Pattern.compile(
         "(?i)(?<subject>.+?)\\s+gains?\\s+['\"].+?\\s+cannot\\s+be\\s+broken\\s+by\\s+" +
         "(?:opposing|your\\s+opponent's)\\s+Summons\\s+or\\s+abilities\\s+that\\s+don'?t\\s+deal\\s+damage\\.?['\"]" +
         "\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn\\.?"
@@ -2094,7 +2118,7 @@ public class ActionResolver {
      * Must be tried after {@link #STANDALONE_SELF_DULL_AND_SHIELD_CANNOT_BE_BROKEN} so the
      * compound case is not shadowed.
      */
-    private static final Pattern STANDALONE_SELF_DULL = Pattern.compile(
+    static final Pattern STANDALONE_SELF_DULL = Pattern.compile(
         "(?i)^dull\\s+(?<subject>.+?)\\.?\\s*$"
     );
 
@@ -2103,13 +2127,13 @@ public class ActionResolver {
      * Must be tried before the plain {@link #STANDALONE_SELF_SHIELD_CANNOT_BE_BROKEN} matcher so
      * the dull step is not silently dropped.
      */
-    private static final Pattern STANDALONE_SELF_DULL_AND_SHIELD_CANNOT_BE_BROKEN = Pattern.compile(
+    static final Pattern STANDALONE_SELF_DULL_AND_SHIELD_CANNOT_BE_BROKEN = Pattern.compile(
         "(?i)Dull\\s+(?<subject>.+?)\\.\\s+.+?\\s+gains?\\s+['\"][^'\"]*?cannot\\s+be\\s+broken\\.?['\"]" +
         "\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn\\.?"
     );
 
     /** Standalone: "All [the] Forwards you control gain '[...] cannot be broken.' until end of turn." */
-    private static final Pattern STANDALONE_ALL_FORWARDS_SHIELD_CANNOT_BE_BROKEN = Pattern.compile(
+    static final Pattern STANDALONE_ALL_FORWARDS_SHIELD_CANNOT_BE_BROKEN = Pattern.compile(
         "(?i)All\\s+(?:the\\s+)?Forwards?\\s+you\\s+control\\s+gains?\\s+" +
         "['\"][^'\"]*?cannot\\s+be\\s+broken\\.?['\"]" +
         "\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn\\.?"
@@ -2119,7 +2143,7 @@ public class ActionResolver {
      * "During this turn, if a Forward you control is dealt damage by a Summon or an ability,
      *  the damage becomes 0 instead."
      */
-    private static final Pattern ALL_OWN_FORWARDS_NULLIFY_ABILITY_DAMAGE_PATTERN = Pattern.compile(
+    static final Pattern ALL_OWN_FORWARDS_NULLIFY_ABILITY_DAMAGE_PATTERN = Pattern.compile(
         "(?i)During\\s+this\\s+turn,?\\s+if\\s+(?:a\\s+)?Forwards?\\s+you\\s+control\\s+(?:is|are)\\s+dealt\\s+damage" +
         "\\s+by\\s+(?:a\\s+)?Summons?\\s+or\\s+an?\\s+abilit(?:y|ies),?\\s+the\\s+damage\\s+becomes?\\s+0\\s+instead[.!]?"
     );
@@ -2129,7 +2153,7 @@ public class ActionResolver {
      * with a cost inferior to that of the Summon you cast without paying its cost." — turn-long
      * field effect; the free-cast threshold follows the printed cost of the last Summon cast.
      */
-    private static final Pattern DOUBLECAST_FREE_SUMMONS_PATTERN = Pattern.compile(
+    static final Pattern DOUBLECAST_FREE_SUMMONS_PATTERN = Pattern.compile(
         "(?i)When\\s+you\\s+cast\\s+a\\s+Summon\\s+this\\s+turn,?\\s+you\\s+may\\s+cast\\s+1\\s+Summon\\s+" +
         "from\\s+your\\s+hand\\s+with\\s+a\\s+cost\\s+inferior\\s+to\\s+that\\s+of\\s+the\\s+Summon\\s+" +
         "you\\s+cast\\s+without\\s+paying\\s+its\\s+cost[.!]?"
@@ -2140,14 +2164,14 @@ public class ActionResolver {
      *  or an ability, the damage becomes 0 instead." — job/card-name-filtered variant of
      * {@link #ALL_OWN_FORWARDS_NULLIFY_ABILITY_DAMAGE_PATTERN}.
      */
-    private static final Pattern OWN_JOB_OR_NAME_NULLIFY_ABILITY_DAMAGE_PATTERN = Pattern.compile(
+    static final Pattern OWN_JOB_OR_NAME_NULLIFY_ABILITY_DAMAGE_PATTERN = Pattern.compile(
         "(?i)During\\s+this\\s+turn,?\\s+if\\s+a\\s+Job\\s+(?<job>.+?)\\s+or\\s+(?:a\\s+)?Card\\s+Name\\s+(?<cardname>.+?)" +
         "\\s+you\\s+control\\s+(?:is|are)\\s+dealt\\s+damage" +
         "\\s+by\\s+(?:a\\s+)?Summons?\\s+or\\s+an?\\s+abilit(?:y|ies),?\\s+the\\s+damage\\s+becomes?\\s+0\\s+instead[.!]?"
     );
 
     /** "It gains 'When this Forward deals battle damage to a Forward, break that Forward.' until the end of the turn." */
-    private static final Pattern FOLLOWUP_GAINS_BREAKTOUCH_BATTLE = Pattern.compile(
+    static final Pattern FOLLOWUP_GAINS_BREAKTOUCH_BATTLE = Pattern.compile(
         "(?i)(?:it|they)\\s+gains?\\s+['\"]When\\s+this\\s+Forward\\s+deals\\s+battle\\s+damage\\s+to\\s+a\\s+Forward,\\s+break\\s+that\\s+Forward\\.?['\"]" +
         "\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn\\.?"
     );
@@ -2161,7 +2185,7 @@ public class ActionResolver {
      * Registered before {@link #tryParseAllFieldEffect} to prevent the activate-all part
      * from consuming the text without the cannot-be-chosen clause.
      */
-    private static final Pattern STANDALONE_ACTIVATE_AND_CANNOT_BE_CHOSEN = Pattern.compile(
+    static final Pattern STANDALONE_ACTIVATE_AND_CANNOT_BE_CHOSEN = Pattern.compile(
         "(?i)Activate\\s+all\\s+(?:the\\s+)?(?:Forwards?|Characters?)\\s+you\\s+control\\." +
         "\\s*They\\s+cannot\\s+be\\s+chosen\\s+by\\s+(?:your\\s+opponent's\\s+)?" +
         "(?<scope>Summons?(?:\\s+or\\s+abilities)?|abilities)\\s*(?:this\\s+turn)?\\s*\\.?"
@@ -2171,7 +2195,7 @@ public class ActionResolver {
      * "This Forward/Character cannot be chosen by your opponent's Summons/abilities."
      * Self-referential: applies protection to the {@code source} card itself.
      */
-    private static final Pattern STANDALONE_SELF_CANNOT_BE_CHOSEN = Pattern.compile(
+    static final Pattern STANDALONE_SELF_CANNOT_BE_CHOSEN = Pattern.compile(
         "(?i)This\\s+(?:Forward|Character)\\s+cannot\\s+be\\s+chosen\\s+by\\s+your\\s+opponent's\\s+" +
         "(?<scope>Summons?(?:\\s+or\\s+abilities)?|abilities)\\s*\\.?"
     );
@@ -2180,7 +2204,7 @@ public class ActionResolver {
      * "[CardName] cannot be chosen by your opponent's Summons/abilities."
      * Only matches when {@code cardName} equals the {@code source} card's name.
      */
-    private static final Pattern STANDALONE_NAMED_CANNOT_BE_CHOSEN = Pattern.compile(
+    static final Pattern STANDALONE_NAMED_CANNOT_BE_CHOSEN = Pattern.compile(
         "(?i)(?<name>[A-Z][A-Za-z''\\-\\s]+?)\\s+cannot\\s+be\\s+chosen\\s+by\\s+your\\s+opponent's\\s+" +
         "(?<scope>Summons?(?:\\s+or\\s+abilities)?|abilities)\\s*\\.?"
     );
@@ -2190,7 +2214,7 @@ public class ActionResolver {
      * meaning the protection applies to Summons from either player.
      * Only matches when {@code cardName} equals the {@code source} card's name.
      */
-    private static final Pattern STANDALONE_NAMED_CANNOT_BE_CHOSEN_ANY_SUMMON = Pattern.compile(
+    static final Pattern STANDALONE_NAMED_CANNOT_BE_CHOSEN_ANY_SUMMON = Pattern.compile(
         "(?i)(?<name>[A-Z][A-Za-z''\\-\\s]+?)\\s+cannot\\s+be\\s+chosen\\s+by\\s+(?!your\\s)Summons?" +
         "(?:\\s+during\\s+this\\s+turn)?\\s*\\.?"
     );
@@ -2200,7 +2224,7 @@ public class ActionResolver {
      * Element and if [CardName] is dealt damage by a Summon or an ability of the named Element, the damage
      * becomes 0 instead." — targeting immunity AND damage nullification for the named element.
      */
-    private static final Pattern STANDALONE_NAME_ELEMENT_IMMUNE_AND_NULLIFY_DAMAGE = Pattern.compile(
+    static final Pattern STANDALONE_NAME_ELEMENT_IMMUNE_AND_NULLIFY_DAMAGE = Pattern.compile(
         "(?i)Name\\s+1\\s+Element\\.\\s+During\\s+this\\s+turn,\\s+" +
         "(?<name>[A-Z][A-Za-z''\\-\\s]+?)\\s+cannot\\s+be\\s+chosen\\s+by\\s+Summons?\\s+or\\s+abilities\\s+of\\s+the\\s+named\\s+Element" +
         "\\s+and\\s+if\\s+[A-Za-z''\\-\\s]+?is\\s+dealt\\s+damage\\s+by\\s+a\\s+Summon\\s+or\\s+an\\s+ability\\s+of\\s+the\\s+named\\s+Element,\\s+" +
@@ -2212,7 +2236,7 @@ public class ActionResolver {
      * Element, the damage becomes 0 instead." — (Rubicante-style) damage-only nullification,
      * scoped to abilities alone (Summons are not covered), with no targeting immunity.
      */
-    private static final Pattern STANDALONE_NAME_ELEMENT_NULLIFY_ABILITY_DAMAGE_ONLY = Pattern.compile(
+    static final Pattern STANDALONE_NAME_ELEMENT_NULLIFY_ABILITY_DAMAGE_ONLY = Pattern.compile(
         "(?i)Name\\s+1\\s+Element\\.\\s+During\\s+this\\s+turn,\\s+if\\s+" +
         "(?<name>[A-Z][A-Za-z''\\-\\s]+?)\\s+is\\s+dealt\\s+damage\\s+by\\s+abilities\\s+of\\s+the\\s+named\\s+Element,\\s+" +
         "the\\s+damage\\s+becomes\\s+0\\s+instead\\s*\\.?"
@@ -2222,7 +2246,7 @@ public class ActionResolver {
      * "Name 1 Element. [CardName] cannot be chosen by Summons or abilities of the named Element this turn."
      * Action ability: the player names an element, and the card gains immunity to that element this turn.
      */
-    private static final Pattern STANDALONE_NAME_ELEMENT_AND_IMMUNE = Pattern.compile(
+    static final Pattern STANDALONE_NAME_ELEMENT_AND_IMMUNE = Pattern.compile(
         "(?i)Name\\s+1\\s+Element\\.\\s+" +
         "(?<name>[A-Z][A-Za-z''\\-\\s]+?)\\s+cannot\\s+be\\s+chosen\\s+by\\s+Summons?\\s+or\\s+abilities\\s+of\\s+the\\s+named\\s+Element\\s+this\\s+turn\\s*\\.?"
     );
@@ -2240,7 +2264,7 @@ public class ActionResolver {
      * your opponent's Summons/abilities."
      * Group {@code job} is the job name; {@code excl} is the optional excluded card name.
      */
-    private static final Pattern STANDALONE_JOB_CANNOT_BE_CHOSEN = Pattern.compile(
+    static final Pattern STANDALONE_JOB_CANNOT_BE_CHOSEN = Pattern.compile(
         "(?i)The\\s+Job\\s+(?<job>[^.]+?)(?:\\s+other\\s+than\\s+(?<excl>[^.]+?))?" +
         "\\s+(?:Forwards?|Characters?)\\s+you\\s+control\\s+cannot\\s+be\\s+chosen\\s+by\\s+your\\s+opponent's\\s+" +
         "(?<scope>Summons?(?:\\s+or\\s+abilities)?|abilities)\\s*\\.?"
@@ -2250,7 +2274,7 @@ public class ActionResolver {
      * "Players cannot cast Summons." — global static restriction while this card is on the field.
      * Both players are prevented from casting Summons from hand or break zone.
      */
-    private static final Pattern PLAYERS_CANNOT_CAST_SUMMONS = Pattern.compile(
+    static final Pattern PLAYERS_CANNOT_CAST_SUMMONS = Pattern.compile(
         "(?i)^Players?\\s+cannot\\s+cast\\s+Summons?\\.?$"
     );
 
@@ -2267,7 +2291,7 @@ public class ActionResolver {
      * "[CardName] cannot become dull by your opponent's Summons or abilities."
      * Permanent self-protection while this card is on the field.
      */
-    private static final Pattern STANDALONE_NAMED_CANNOT_BECOME_DULL_OPP = Pattern.compile(
+    static final Pattern STANDALONE_NAMED_CANNOT_BECOME_DULL_OPP = Pattern.compile(
         "(?i)(?<name>[A-Z][A-Za-z''\\-\\s]+?)\\s+cannot\\s+become\\s+dull\\s+by\\s+your\\s+opponent's\\s+" +
         "(?:Summons?(?:\\s+or\\s+abilities)?|abilities)\\s*\\.?"
     );
@@ -2276,7 +2300,7 @@ public class ActionResolver {
      * "[CardName] cannot be returned to its owner's hand by [your] opponent's Summons or abilities."
      * Permanent self-protection while this card is on the field (Gilgamesh).
      */
-    private static final Pattern STANDALONE_NAMED_CANNOT_BE_RETURNED_TO_HAND_OPP = Pattern.compile(
+    static final Pattern STANDALONE_NAMED_CANNOT_BE_RETURNED_TO_HAND_OPP = Pattern.compile(
         "(?i)(?<name>[A-Z][A-Za-z''\\-\\s]+?)\\s+cannot\\s+be\\s+returned\\s+to\\s+(?:its|their)\\s+owner's\\s+hand" +
         "\\s+by\\s+(?:your\\s+)?opponent's\\s+(?:Summons?(?:\\s+or\\s+abilities)?|abilities)\\s*\\.?"
     );
@@ -2286,7 +2310,7 @@ public class ActionResolver {
      * Summons or abilities." — blanket protection for every character the controller controls
      * while this card is on the field.
      */
-    private static final Pattern STANDALONE_CHARACTERS_CANNOT_BE_RETURNED_TO_HAND_OPP = Pattern.compile(
+    static final Pattern STANDALONE_CHARACTERS_CANNOT_BE_RETURNED_TO_HAND_OPP = Pattern.compile(
         "(?i)Characters\\s+you\\s+control\\s+cannot\\s+be\\s+returned\\s+to\\s+their\\s+owner's\\s+hand" +
         "\\s+by\\s+(?:your\\s+)?opponent's\\s+(?:Summons?(?:\\s+or\\s+abilities)?|abilities)\\s*\\.?"
     );
@@ -2295,7 +2319,7 @@ public class ActionResolver {
      * "[CardName] cannot be put into the Break Zone by [your] opponent's Summons or abilities."
      * Permanent self-protection while this card is on the field (Black Tortoise l'Cie Gilgamesh).
      */
-    private static final Pattern STANDALONE_NAMED_CANNOT_BE_PUT_INTO_BZ_OPP = Pattern.compile(
+    static final Pattern STANDALONE_NAMED_CANNOT_BE_PUT_INTO_BZ_OPP = Pattern.compile(
         "(?i)(?<name>[A-Z][A-Za-z''\\-\\s]+?)\\s+cannot\\s+be\\s+put\\s+into\\s+the\\s+Break\\s+Zone" +
         "\\s+by\\s+(?:your\\s+)?opponent's\\s+(?:Summons?(?:\\s+or\\s+abilities)?|abilities)\\s*\\.?"
     );
@@ -2303,7 +2327,7 @@ public class ActionResolver {
     // ---- Standalone damage-shield patterns (apply globally or to a named card) --------
 
     /** "Negate all [the] damage dealt to all the Forwards/Characters you control." */
-    private static final Pattern STANDALONE_NEGATE_DAMAGE_OWN = Pattern.compile(
+    static final Pattern STANDALONE_NEGATE_DAMAGE_OWN = Pattern.compile(
         "(?i)Negate\\s+all\\s+(?:the\\s+)?damage\\s+dealt\\s+to\\s+all\\s+the\\s+" +
         "(?:Forwards?|Characters?)\\s+you\\s+control\\.?"
     );
@@ -2313,18 +2337,18 @@ public class ActionResolver {
      * Handled by {@link #tryParseNegateAllDamage} before {@link #tryParseAllFieldEffect}
      * so that the "activate all" part does not consume the full text without the negate clause.
      */
-    private static final Pattern STANDALONE_ACTIVATE_AND_NEGATE_DAMAGE_OWN = Pattern.compile(
+    static final Pattern STANDALONE_ACTIVATE_AND_NEGATE_DAMAGE_OWN = Pattern.compile(
         "(?i)Activate\\s+all\\s+the\\s+(?:Forwards?|Characters?)\\s+you\\s+control" +
         "\\s+and\\s+negate\\s+all\\s+(?:the\\s+)?damage\\s+dealt\\s+to\\s+them\\.?"
     );
 
     /** "During this turn, if a Forward you control is dealt damage less than its power, the damage becomes 0 instead." */
-    private static final Pattern STANDALONE_NONLETHAL_PROTECTION = Pattern.compile(
+    static final Pattern STANDALONE_NONLETHAL_PROTECTION = Pattern.compile(
         "(?i)During\\s+this\\s+turn,\\s+if\\s+a\\s+Forward\\s+you\\s+control\\s+is\\s+dealt\\s+damage\\s+less\\s+than\\s+its\\s+power,\\s+the\\s+damage\\s+becomes\\s+0\\s+instead\\.?"
     );
 
     /** "During this turn, if a Forward you control is dealt damage, reduce the damage by N instead." */
-    private static final Pattern STANDALONE_GLOBAL_DMG_REDUCTION = Pattern.compile(
+    static final Pattern STANDALONE_GLOBAL_DMG_REDUCTION = Pattern.compile(
         "(?i)During\\s+this\\s+turn,\\s+if\\s+a\\s+Forward\\s+you\\s+control\\s+is\\s+dealt\\s+damage,\\s+reduce\\s+the\\s+damage\\s+by\\s+(?<reduction>\\d+)\\s+instead\\.?"
     );
 
@@ -2332,7 +2356,7 @@ public class ActionResolver {
      * "During this turn, if &lt;cardName&gt; is dealt damage by your opponent's Summons or abilities,
      * the damage becomes 0 instead."
      */
-    private static final Pattern STANDALONE_NULLIFY_ABILITY_DAMAGE = Pattern.compile(
+    static final Pattern STANDALONE_NULLIFY_ABILITY_DAMAGE = Pattern.compile(
         "(?i)During\\s+this\\s+turn,\\s+if\\s+(?<card>.+?)\\s+is\\s+dealt\\s+damage\\s+by\\s+your\\s+opponent's\\s+Summons?\\s+or\\s+abilities,\\s+the\\s+damage\\s+becomes\\s+0\\s+instead\\.?"
     );
 
@@ -2352,22 +2376,22 @@ public class ActionResolver {
      * "During this turn, the next damage dealt to [name] becomes 0 instead."
      * "The next damage dealt to Card Name [name] becomes 0 this turn."
      */
-    private static final Pattern STANDALONE_SHIELD_NEXT_DMG_ZERO_NAMED = Pattern.compile(
+    static final Pattern STANDALONE_SHIELD_NEXT_DMG_ZERO_NAMED = Pattern.compile(
         "(?i)(?:During\\s+this\\s+turn,\\s+)?the\\s+next\\s+damage\\s+dealt\\s+to\\s+(?!(?:it|him|them)\\b)(?:Card\\s+Name\\s+)?(?<name>[A-Za-z][^.]+?)\\s+becomes\\s+0\\s+(?:instead|this\\s+turn)[.!]?"
     );
 
     /** "During this turn, the next damage dealt to [name] is reduced by N instead." — named card, not pronoun. */
-    private static final Pattern STANDALONE_SHIELD_NEXT_DMG_REDUCTION_NAMED = Pattern.compile(
+    static final Pattern STANDALONE_SHIELD_NEXT_DMG_REDUCTION_NAMED = Pattern.compile(
         "(?i)During\\s+this\\s+turn,\\s+the\\s+next\\s+damage\\s+dealt\\s+to\\s+(?!(?:it|them)\\b)(?<name>[A-Za-z][^.]+?)\\s+is\\s+reduced\\s+by\\s+(?<reduction>\\d+)\\s+instead[.!]?"
     );
 
     /** "The damage dealt to Forwards opponent controls cannot be reduced this turn." */
-    private static final Pattern STANDALONE_DISABLE_OPPONENT_DMG_REDUCTION = Pattern.compile(
+    static final Pattern STANDALONE_DISABLE_OPPONENT_DMG_REDUCTION = Pattern.compile(
         "(?i)The\\s+damage\\s+dealt\\s+to\\s+Forwards?\\s+(?:your\\s+)?opponent\\s+controls\\s+cannot\\s+be\\s+reduced\\s+this\\s+turn\\.?"
     );
 
     /** "This damage cannot be reduced." — modifier on a preceding damage sentence. */
-    private static final Pattern CANNOT_BE_REDUCED_PATTERN = Pattern.compile(
+    static final Pattern CANNOT_BE_REDUCED_PATTERN = Pattern.compile(
         "(?i)This\\s+damage\\s+cannot\\s+be\\s+reduced[.!]?"
     );
 
@@ -2378,7 +2402,7 @@ public class ActionResolver {
      * Excludes the pronoun forms ("Activate it/them") and the mass form ("Activate all …"),
      * which are handled separately.
      */
-    private static final Pattern ACTIVATE_NAMED_CARD = Pattern.compile(
+    static final Pattern ACTIVATE_NAMED_CARD = Pattern.compile(
         "(?i)Activate\\s+(?!(?:it|them|all)\\b)(?<card>[A-Za-z][^.]+?)\\.?\\s*$"
     );
 
@@ -2392,7 +2416,7 @@ public class ActionResolver {
         "(?i)During\\s+this\\s+turn,?\\s+your\\s+opponent\\s+may\\s+only\\s+declare\\s+attack\\s+once\\.?"
     );
 
-    private static final Pattern OPPONENT_CANNOT_SEARCH_THIS_TURN = Pattern.compile(
+    static final Pattern OPPONENT_CANNOT_SEARCH_THIS_TURN = Pattern.compile(
         "(?i)During\\s+this\\s+turn,?\\s+your\\s+opponent\\s+cannot\\s+search\\.?"
     );
 
@@ -2402,7 +2426,7 @@ public class ActionResolver {
     }
 
     /** Splits "and Card Name" within an activate target list. */
-    private static final Pattern ACTIVATE_AND_CARD_NAME_SPLIT = Pattern.compile(
+    static final Pattern ACTIVATE_AND_CARD_NAME_SPLIT = Pattern.compile(
         "(?i)\\s+and\\s+Card\\s+Name\\s+"
     );
 
@@ -2421,24 +2445,24 @@ public class ActionResolver {
      * Matches "name 1 card type. Then, your opponent discard 1 card.
      * If the discarded card is the named card type, you draw 1 card."
      */
-    private static final Pattern NAME_CARD_TYPE_OPP_DISCARD_DRAW_IF_MATCH = Pattern.compile(
+    static final Pattern NAME_CARD_TYPE_OPP_DISCARD_DRAW_IF_MATCH = Pattern.compile(
         "(?i)name\\s+1\\s+card\\s+type[.!]?\\s+Then,?\\s+your\\s+opponent\\s+discards?\\s+1\\s+card[.!]?\\s+" +
         "If\\s+the\\s+discarded\\s+card\\s+is\\s+the\\s+named\\s+card\\s+type,\\s+you\\s+draw\\s+1\\s+card[.!]?"
     );
 
-    private static final Pattern OPPONENT_DISCARD = Pattern.compile(
+    static final Pattern OPPONENT_DISCARD = Pattern.compile(
         "(?i)Your\\s+opponent\\s+discards?\\s+(\\d+)\\s+cards?" +
         "(?:\\s+from\\s+(?:his/her|his|her|their)\\s+hand)?[.!]?"
     );
 
     /** Matches "Each player discards N card(s) [from his/her/their hand]". Group {@code count} = N. */
-    private static final Pattern EACH_PLAYER_DISCARD = Pattern.compile(
+    static final Pattern EACH_PLAYER_DISCARD = Pattern.compile(
         "(?i)each\\s+player\\s+discards?\\s+(?<count>\\d+)\\s+cards?" +
         "(?:\\s+from\\s+(?:his/her|his|her|their)\\s+hand)?[.!]?"
     );
 
     /** Matches "Each player draws N card(s)." Group {@code count} = N. */
-    private static final Pattern EACH_PLAYER_DRAW = Pattern.compile(
+    static final Pattern EACH_PLAYER_DRAW = Pattern.compile(
         "(?i)each\\s+player\\s+draws?\\s+(?<count>\\d+)\\s+cards?[.!]?"
     );
 
@@ -2451,7 +2475,7 @@ public class ActionResolver {
      *   <li>Group {@code type}  — the card-type filter; "card" means no restriction</li>
      * </ul>
      */
-    private static final Pattern EACH_PLAYER_SALVAGE_FROM_BREAK_ZONE = Pattern.compile(
+    static final Pattern EACH_PLAYER_SALVAGE_FROM_BREAK_ZONE = Pattern.compile(
         "(?i)each\\s+player\\s+selects?\\s+(?<count>\\d+)\\s+" +
         "(?<type>card|Forward|Backup|Monster|Character)s?\\s+from\\s+" +
         "(?:their|his/her|his|her)\\s+Break\\s+Zone\\s+and\\s+adds?\\s+(?:it|them)\\s+to\\s+" +
@@ -2462,13 +2486,13 @@ public class ActionResolver {
      * Matches "select N [Forward|Backup|Monster|Character] in/from your Break Zone and add it to your hand."
      * Group {@code count} = N; {@code type} = card type word.
      */
-    private static final Pattern SELECT_CHARACTER_FROM_BZ_TO_HAND = Pattern.compile(
+    static final Pattern SELECT_CHARACTER_FROM_BZ_TO_HAND = Pattern.compile(
         "(?i)^select\\s+(?<count>\\d+)\\s+(?<type>Forward|Backup|Monster|Character)s?" +
         "\\s+(?:in|from)\\s+your\\s+Break\\s+Zone\\s+and\\s+add\\s+it\\s+to\\s+your\\s+hand[.!]?$"
     );
 
     /** Ceodore: "Choose 1 Card with Warp in your Break Zone. Add it to your hand." */
-    private static final Pattern CHOOSE_WARP_CARD_FROM_BZ_TO_HAND = Pattern.compile(
+    static final Pattern CHOOSE_WARP_CARD_FROM_BZ_TO_HAND = Pattern.compile(
         "(?i)^choose\\s+1\\s+Card\\s+with\\s+Warp\\s+(?:in|from)\\s+your\\s+Break\\s+Zone[.!]?\\s+" +
         "Add\\s+it\\s+to\\s+your\\s+hand[.!]?$"
     );
@@ -2477,7 +2501,7 @@ public class ActionResolver {
      * Matches "Each player who doesn't control N or more Forwards discards M card(s) [from their hand]."
      * Groups: {@code min} — forward threshold; {@code count} — cards to discard.
      */
-    private static final Pattern EACH_PLAYER_WHO_DOESNT_CONTROL_FORWARDS_DISCARD = Pattern.compile(
+    static final Pattern EACH_PLAYER_WHO_DOESNT_CONTROL_FORWARDS_DISCARD = Pattern.compile(
         "(?i)each\\s+player\\s+who\\s+doesn't\\s+control\\s+(?<min>\\d+)\\s+or\\s+more\\s+Forwards?" +
         "\\s+discards?\\s+(?<count>\\d+)\\s+cards?" +
         "(?:\\s+from\\s+(?:his/her|his|her|their)\\s+hand)?[.!]?"
@@ -2488,7 +2512,7 @@ public class ActionResolver {
      * Card Name X, your opponent discards M more cards [from his/her/their hand]".
      * Groups: {@code count}, {@code bracketname} or {@code plainname}, {@code extra}.
      */
-    private static final Pattern EACH_PLAYER_DISCARD_WITH_CONDITIONAL = Pattern.compile(
+    static final Pattern EACH_PLAYER_DISCARD_WITH_CONDITIONAL = Pattern.compile(
         "(?i)each\\s+player\\s+discards?\\s+(?<count>\\d+)\\s+cards?" +
         "(?:\\s+from\\s+(?:his/her|his|her|their)\\s+hand)?[.!]?\\s+" +
         "if\\s+you\\s+control\\s+" +
@@ -2501,7 +2525,7 @@ public class ActionResolver {
      * Matches "Each player selects 1 Forward they control. Deal them N damage."
      * Group {@code amount} — damage dealt to each selected Forward.
      */
-    private static final Pattern EACH_PLAYER_SELECT_FORWARD_DAMAGE = Pattern.compile(
+    static final Pattern EACH_PLAYER_SELECT_FORWARD_DAMAGE = Pattern.compile(
         "(?i)each\\s+player\\s+selects?\\s+1\\s+Forward\\s+they\\s+control[.!]?\\s+" +
         "Deal\\s+them\\s+(?<amount>\\d+)\\s+damage[.!]?"
     );
@@ -2510,7 +2534,7 @@ public class ActionResolver {
      * Matches "Both players select 1 Forward they control and put it into the Break Zone."
      * Used for Famfrit-style EX Burst effects where each side simultaneously sends one Forward to the Break Zone.
      */
-    private static final Pattern BOTH_PLAYERS_SELECT_FORWARD_TO_BREAK_ZONE = Pattern.compile(
+    static final Pattern BOTH_PLAYERS_SELECT_FORWARD_TO_BREAK_ZONE = Pattern.compile(
         "(?i)(?:Both|Each)\\s+players?\\s+selects?\\s+1\\s+Forward\\s+they\\s+control" +
         "\\s+and\\s+puts?\\s+it\\s+into\\s+the\\s+Break\\s+Zone[.!]?"
     );
@@ -2520,12 +2544,12 @@ public class ActionResolver {
      * Matches "select 1 [type] of cost N or less other than [name] you control. Put it into the Break Zone."
      * Groups: {@code type}, {@code costval}, {@code excludename}.
      */
-    private static final Pattern SELECT_1_CHAR_COST_LE_EXCL_TO_BZ = Pattern.compile(
+    static final Pattern SELECT_1_CHAR_COST_LE_EXCL_TO_BZ = Pattern.compile(
         "(?i)^[Ss]elect\\s+1\\s+(?<type>Forward|Backup|Monster|Character)\\s+of\\s+cost\\s+(?<costval>\\d+)\\s+or\\s+less\\s+" +
         "other\\s+than\\s+(?<excludename>.+?)\\s+you\\s+control[.!]?\\s+Put\\s+it\\s+into\\s+the\\s+Break\\s+Zone[.!]?$"
     );
 
-    private static final Pattern SELECT_1_CHARACTER_YOU_CONTROL_TO_BZ = Pattern.compile(
+    static final Pattern SELECT_1_CHARACTER_YOU_CONTROL_TO_BZ = Pattern.compile(
         "(?i)^[Ss]elect\\s+1\\s+(?<type>Forward|Backup|Monster|Character)\\s+you\\s+control[.!]?\\s+Put\\s+it\\s+into\\s+the\\s+Break\\s+Zone[.!]?$"
     );
 
@@ -2534,7 +2558,7 @@ public class ActionResolver {
      * (select as many as possible). Put them into the Break Zone."
      * Groups: {@code count} — max per player; {@code targets} — card type(s).
      */
-    private static final Pattern EACH_PLAYER_SELECT_UP_TO_N_TO_BREAK_ZONE = Pattern.compile(
+    static final Pattern EACH_PLAYER_SELECT_UP_TO_N_TO_BREAK_ZONE = Pattern.compile(
         "(?i)Each\\s+player\\s+selects?\\s+up\\s+to\\s+(?<count>\\d+)\\s+" +
         "(?<targets>Forwards?(?:\\s+(?:and/or|or)\\s+(?:Monsters?|Backups?))?|Monsters?|Characters?)\\s+" +
         "(?:he/she|they)\\s+controls?\\s*" +
@@ -2546,7 +2570,7 @@ public class ActionResolver {
      * Matches "Each player reveals the top card of his/her deck. Each player who revealed a
      * [type] may play it onto the field." Group {@code type} = card type condition.
      */
-    private static final Pattern EACH_PLAYER_REVEAL_CHARACTER_MAY_PLAY = Pattern.compile(
+    static final Pattern EACH_PLAYER_REVEAL_CHARACTER_MAY_PLAY = Pattern.compile(
         "(?i)^\\s*Each\\s+player\\s+reveals?\\s+the\\s+top\\s+card\\s+of\\s+" +
         "(?:his/her|his|her|their)\\s+deck[.!]?\\s+" +
         "Each\\s+player\\s+who\\s+revealed\\s+(?:a\\s+)?(?<type>Forward|Backup|Character|Monster)\\s+" +
@@ -2557,19 +2581,19 @@ public class ActionResolver {
      * Matches "each player may search for N Forward(s) of power X or more and add it/them to his/her hand."
      * Groups: {@code count}, {@code power}.
      */
-    private static final Pattern EACH_PLAYER_MAY_SEARCH_FORWARD_MIN_POWER = Pattern.compile(
+    static final Pattern EACH_PLAYER_MAY_SEARCH_FORWARD_MIN_POWER = Pattern.compile(
         "(?i)^\\s*each\\s+player\\s+may\\s+search\\s+for\\s+(?<count>\\d+)\\s+Forwards?\\s+" +
         "of\\s+power\\s+(?<power>\\d+)\\s+or\\s+more\\s+and\\s+add\\s+it(?:/them|s)?\\s+to\\s+" +
         "(?:his/her|his|her|their)\\s+hand[.!]?\\s*$"
     );
 
     /** Matches "Discard your hand. Then, draw N card(s)." Group 1 = draw count. */
-    private static final Pattern DISCARD_HAND_THEN_DRAW = Pattern.compile(
+    static final Pattern DISCARD_HAND_THEN_DRAW = Pattern.compile(
         "(?i)Discard\\s+your\\s+hand[.,]?\\s+[Tt]hen[,]?\\s+draw\\s+(\\d+)\\s+cards?[.!]?\\s*$"
     );
 
     /** Matches "Discard your hand." as a standalone effect. */
-    private static final Pattern DISCARD_HAND = Pattern.compile(
+    static final Pattern DISCARD_HAND = Pattern.compile(
         "(?i)Discard\\s+your\\s+hand[.!]?\\s*$"
     );
 
@@ -2578,22 +2602,22 @@ public class ActionResolver {
      * Used as the primary clause in "discard 1 X. When you do so, Y." sequences.
      * The "you may" qualifier is stripped by the AutoAbility parser before this is reached.
      */
-    private static final Pattern DISCARD_TYPE = Pattern.compile(
+    static final Pattern DISCARD_TYPE = Pattern.compile(
         "(?i)discard\\s+1\\s+(?<type>Summon|Forward|Backup|Monster|Character)[.!]?"
     );
 
     /** Matches "Discard 1 Job [X] from your hand[.]" — player discards a card with the named job. */
-    private static final Pattern DISCARD_JOB_FROM_HAND = Pattern.compile(
+    static final Pattern DISCARD_JOB_FROM_HAND = Pattern.compile(
         "(?i)^discard\\s+1\\s+Job\\s+(?<job>.+?)\\s+from\\s+your\\s+hand[.!]?$"
     );
 
     /** Matches "You may discard 1 &lt;element&gt; card" — player may optionally discard a card matching the element. */
-    private static final Pattern DISCARD_ELEMENT_FROM_HAND = Pattern.compile(
+    static final Pattern DISCARD_ELEMENT_FROM_HAND = Pattern.compile(
         "(?i)^(?:you\\s+may\\s+)?discard\\s+1\\s+(?<element>Multi-Element|Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+card(?:\\s+from\\s+your\\s+hand)?[.!]?$"
     );
 
     /** Matches "Your opponent randomly discards N card(s) [from his/her/their hand]". Group 1 = count. */
-    private static final Pattern OPPONENT_RANDOM_DISCARD = Pattern.compile(
+    static final Pattern OPPONENT_RANDOM_DISCARD = Pattern.compile(
         "(?i)Your\\s+opponent\\s+randomly\\s+discards?\\s+(\\d+)\\s+cards?" +
         "(?:\\s+from\\s+(?:his/her|his|her|their)\\s+hand)?[.!]?"
     );
@@ -2602,12 +2626,12 @@ public class ActionResolver {
      * Matches "Your opponent draws N card(s), then randomly discards M card(s)".
      * Group 1 = draw count, Group 2 = discard count.
      */
-    private static final Pattern OPPONENT_DRAW_THEN_RANDOM_DISCARD = Pattern.compile(
+    static final Pattern OPPONENT_DRAW_THEN_RANDOM_DISCARD = Pattern.compile(
         "(?i)Your\\s+opponent\\s+draws?\\s+(\\d+)\\s+cards?[,.]?\\s+then\\s+randomly\\s+discards?\\s+(\\d+)\\s+cards?[.!]?"
     );
 
     /** Matches "Your opponent draws N card(s)." — simple opponent draw with no followup. */
-    private static final Pattern OPPONENT_DRAW = Pattern.compile(
+    static final Pattern OPPONENT_DRAW = Pattern.compile(
         "(?i)Your\\s+opponent\\s+draws?\\s+(\\d+)\\s+cards?[.!]?$"
     );
 
@@ -2624,7 +2648,7 @@ public class ActionResolver {
      *   <li>Group {@code followup}  — action applied to the selected card(s)</li>
      * </ul>
      */
-    private static final Pattern OPPONENT_SELECTS_PATTERN = Pattern.compile(
+    static final Pattern OPPONENT_SELECTS_PATTERN = Pattern.compile(
         "(?i)^Your\\s+opponent\\s+selects?\\s+(?<count>\\d+)\\s+" +
         "(?:(?<condition>dull|damaged|attacking|blocking|active)\\s+)?" +
         "(?:(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?" +
@@ -2645,7 +2669,7 @@ public class ActionResolver {
      * The second variant is the precise reprint; both resolve identically — the opponent
      * chooses one of their own matching Forwards and sends it to the Break Zone.
      */
-    private static final Pattern OPPONENT_PUTS_FORWARD_TO_BREAK_ZONE_PATTERN = Pattern.compile(
+    static final Pattern OPPONENT_PUTS_FORWARD_TO_BREAK_ZONE_PATTERN = Pattern.compile(
         "(?i)(?:Your\\s+)?[Oo]pponent\\s+puts?\\s+(?<count>\\d+)\\s+" +
         "(?:(?<condition>dull|damaged|attacking|blocking|active)\\s+)?" +
         "(?<targets>Forwards?|Characters?)" +
@@ -2659,7 +2683,7 @@ public class ActionResolver {
      *  have been dealt. Return it to your hand. Your opponent selects 1 Forward of cost equal to
      *  or less than the damage you have been dealt and puts it into the Break Zone."
      */
-    private static final Pattern BZ_FWD_TO_HAND_OPP_FWD_TO_BZ_BY_DAMAGE = Pattern.compile(
+    static final Pattern BZ_FWD_TO_HAND_OPP_FWD_TO_BZ_BY_DAMAGE = Pattern.compile(
         "(?i)Choose\\s+up\\s+to\\s+1\\s+Forward\\s+from\\s+your\\s+Break\\s+Zone\\s+of\\s+cost\\s+" +
         "equal\\s+to\\s+or\\s+less\\s+than\\s+the\\s+damage\\s+you\\s+have\\s+been\\s+dealt\\.\\s*" +
         "Return\\s+it\\s+to\\s+your\\s+hand\\.\\s*" +
@@ -2683,7 +2707,7 @@ public class ActionResolver {
         "(?:[.!]?\\s*(?:You\\s+)?[Dd]raw\\s+(?<draw>\\d+)\\s+cards?[.!]?)?"
     );
 
-    private static final Pattern DIVIDE_DAMAGE_PATTERN = Pattern.compile(
+    static final Pattern DIVIDE_DAMAGE_PATTERN = Pattern.compile(
             "(?i)Divide\\s+(?<amount>\\d+)\\s+damage\\b(?:.*?\\b(?<mode>equally)\\b)?"
     );
 
@@ -2692,7 +2716,7 @@ public class ActionResolver {
      * equally] instead." — captures just {@code cond}; the alt amount is re-extracted separately
      * via {@link #DIVIDE_DAMAGE_PATTERN} against the same substring.
      */
-    private static final Pattern DIVIDE_DAMAGE_INSTEAD_COND = Pattern.compile(
+    static final Pattern DIVIDE_DAMAGE_INSTEAD_COND = Pattern.compile(
             "(?i)^If\\s+(?<cond>.+?),\\s*(?=[Dd]ivide\\s+\\d+\\s+damage)"
     );
 
@@ -2702,7 +2726,7 @@ public class ActionResolver {
      * the "Choose ... Divide N damage" pattern (e.g. Strago's "Grand Delta").
      * Groups: {@code amount}, {@code type}, {@code control}.
      */
-    private static final Pattern DIVIDE_DAMAGE_EQUALLY_AMONG_ALL = Pattern.compile(
+    static final Pattern DIVIDE_DAMAGE_EQUALLY_AMONG_ALL = Pattern.compile(
             "(?i)^Divide\\s+(?<amount>\\d+)\\s+damage\\s+equally\\s+among\\s+all\\s+(?:the\\s+)?" +
             "(?<type>Forwards?|Backups?|Characters?)" +
             "(?:\\s+(?<control>(?:your\\s+)?opponent\\s+controls|you\\s+control))?" +
@@ -2714,7 +2738,7 @@ public class ActionResolver {
      * If both [all] cards are of the same Element, draw M card(s)."
      * Groups: {@code count}, {@code draw}.
      */
-    private static final Pattern OPPONENT_MILL_IF_SAME_ELEMENT_DRAW = Pattern.compile(
+    static final Pattern OPPONENT_MILL_IF_SAME_ELEMENT_DRAW = Pattern.compile(
         "(?i)Your\\s+opponent\\s+puts?\\s+" +
         "(?:the\\s+top\\s+(?<count>\\d+)\\s+cards?\\s+of|(?<count2>\\d+)\\s+cards?\\s+from\\s+the\\s+top\\s+of)\\s+" +
         "(?:his/her|his|her|their)\\s+deck\\s+into\\s+the\\s+Break\\s+Zone[.!]?\\s+" +
@@ -2748,7 +2772,7 @@ public class ActionResolver {
      * Groups: {@code cost} — numeric cost cap or "X"; {@code returnToHand} — present for the
      * "return to hand after use" variant.
      */
-    private static final Pattern CAST_SUMMON_FROM_HAND_FREE = Pattern.compile(
+    static final Pattern CAST_SUMMON_FROM_HAND_FREE = Pattern.compile(
         "(?i)Cast\\s+1\\s+Summon" +
         "(?:\\s+of\\s+cost\\s+(?<cost>\\d+|X)\\s+or\\s+less)?" +
         "(?:\\s+other\\s+than\\s+(?<excludeelems>(?:Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)" +
@@ -2761,7 +2785,7 @@ public class ActionResolver {
     /**
      * "Randomly reveal 1 card from your hand. If it is a Summon, you may cast it without paying the cost."
      */
-    private static final Pattern RANDOM_REVEAL_HAND_CAST_IF_SUMMON_FREE = Pattern.compile(
+    static final Pattern RANDOM_REVEAL_HAND_CAST_IF_SUMMON_FREE = Pattern.compile(
         "(?i)Randomly\\s+reveal\\s+1\\s+card\\s+from\\s+your\\s+hand[.!]?\\s+" +
         "If\\s+it\\s+is\\s+a\\s+Summon,?\\s+you\\s+may\\s+cast\\s+it\\s+without\\s+paying\\s+(?:its|the)\\s+cost[.!]?"
     );
@@ -2770,7 +2794,7 @@ public class ActionResolver {
      * "Cast a Summon from your hand. The cost required to cast it is reduced by N (it cannot become 0)."
      * Group {@code amount} — the reduction amount.
      */
-    private static final Pattern CAST_SUMMON_FROM_HAND_DISCOUNTED = Pattern.compile(
+    static final Pattern CAST_SUMMON_FROM_HAND_DISCOUNTED = Pattern.compile(
         "(?i)Cast\\s+a\\s+Summon\\s+from\\s+your\\s+hand[.!]?\\s+" +
         "The\\s+cost\\s+required\\s+to\\s+cast\\s+it\\s+is\\s+reduced\\s+by\\s+(?<amount>\\d+)" +
         "(?:\\s*\\(it\\s+cannot\\s+become\\s+0\\))?[.!]?"
@@ -2781,14 +2805,14 @@ public class ActionResolver {
      * If you do not cast it, put the Summon into the Break Zone."
      * Groups: {@code element} — element name; {@code cost} — optional numeric cost cap.
      */
-    private static final Pattern SEARCH_AND_CAST_SUMMON_FREE_PATTERN = Pattern.compile(
+    static final Pattern SEARCH_AND_CAST_SUMMON_FREE_PATTERN = Pattern.compile(
         "(?i)search\\s+for\\s+1\\s+(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+Summon" +
         "(?:\\s+of\\s+cost\\s+(?<cost>\\d+)\\s+or\\s+less)?" +
         "\\s+and\\s+cast\\s+it\\s+without\\s+paying\\s+(?:its|the)\\s+cost[.!]?" +
         "(?:\\s+If\\s+you\\s+do\\s+not\\s+cast\\s+it,\\s+put\\s+the\\s+Summon\\s+into\\s+the\\s+Break\\s+Zone[.!]?)?"
     );
 
-    private static final Pattern PLAY_FROM_HAND_PATTERN = Pattern.compile(
+    static final Pattern PLAY_FROM_HAND_PATTERN = Pattern.compile(
         "(?i)Play\\s+1\\s+" +
         // Element(s) before any filter (e.g. "Ice" in "Play 1 Ice Forward")
         "(?:(?<preelems>(?:Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)" +
@@ -2840,7 +2864,7 @@ public class ActionResolver {
     );
 
     /** Matches "play any number of [Job X] [type] from your hand onto [the] field". */
-    private static final Pattern PLAY_ANY_NUMBER_FROM_HAND_PATTERN = Pattern.compile(
+    static final Pattern PLAY_ANY_NUMBER_FROM_HAND_PATTERN = Pattern.compile(
         "(?i)(?:Then,?\\s+)?(?:you\\s+may\\s+)?[Pp]lay\\s+any\\s+number\\s+of\\s+" +
         "(?:Job\\s+(?<jobnm>.+?)\\s+)?" +
         "(?<targets>Forwards?|Backups?|Monsters?|Characters?)?" +
@@ -2871,7 +2895,7 @@ public class ActionResolver {
      * Matches "Search for up to 1 Job [job] and up to 1 [Type] that don't share Elements, and add them to your hand."
      * Used by cards like Rydia that fetch one card from each of two overlapping pools with an element-disjointness constraint.
      */
-    private static final Pattern DUAL_SEARCH_JOB_AND_TYPE_DONT_SHARE_ELEMENTS = Pattern.compile(
+    static final Pattern DUAL_SEARCH_JOB_AND_TYPE_DONT_SHARE_ELEMENTS = Pattern.compile(
         "(?i)search\\s+for\\s+up\\s+to\\s+1\\s+Job\\s+(?<job>.+?)(?=\\s+and\\s+up\\s+to\\b)" +
         "\\s+and\\s+up\\s+to\\s+1\\s+(?<type>Summon|Forward|Backup|Monster|Character)" +
         "\\s+that\\s+don.t\\s+share\\s+[Ee]lements,?\\s+and\\s+add\\s+them\\s+to\\s+your\\s+hand[.!]?"
@@ -2882,7 +2906,7 @@ public class ActionResolver {
      * each with a different cost, and add them to your hand."
      * Groups: {@code element}, {@code category}.
      */
-    private static final Pattern SEARCH_ELEMENT_OR_CATEGORY_CHARS_DIFF_COST = Pattern.compile(
+    static final Pattern SEARCH_ELEMENT_OR_CATEGORY_CHARS_DIFF_COST = Pattern.compile(
         "(?i)Search\\s+for\\s+2\\s+(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+Characters?,\\s+" +
         "2\\s+Category\\s+(?<category>\\S+)\\s+Characters?,\\s+or\\s+1\\s+of\\s+each,\\s+" +
         "each\\s+with\\s+a\\s+different\\s+cost,?\\s+and\\s+add\\s+them\\s+to\\s+your\\s+hand[.!]?"
@@ -2892,13 +2916,13 @@ public class ActionResolver {
      * Matches "Search for N [Element] Summons each with a different cost and add them to your hand."
      * Groups: {@code count}, {@code element}.
      */
-    private static final Pattern SEARCH_N_ELEM_SUMMONS_DIFF_COST = Pattern.compile(
+    static final Pattern SEARCH_N_ELEM_SUMMONS_DIFF_COST = Pattern.compile(
         "(?i)Search\\s+for\\s+(?<count>\\d+)\\s+" +
         "(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+Summons?" +
         "\\s+each\\s+with\\s+a\\s+different\\s+cost\\s+and\\s+add\\s+them\\s+to\\s+your\\s+hand[.!]?"
     );
 
-    private static final Pattern SEARCH_DECK_PATTERN = Pattern.compile(
+    static final Pattern SEARCH_DECK_PATTERN = Pattern.compile(
         "(?i)Search\\s+for\\s+(?:up\\s+to\\s+)?(?<count>\\d+)\\s+" +
         // Element(s) that precede the job/name filter (e.g. "Fire Job Knight")
         "(?:(?<preelems>(?:Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)" +
@@ -2969,7 +2993,7 @@ public class ActionResolver {
     );
 
     /** Matches "Your opponent shows/reveals his/her/their hand". */
-    private static final Pattern OPPONENT_REVEAL_HAND_PATTERN = Pattern.compile(
+    static final Pattern OPPONENT_REVEAL_HAND_PATTERN = Pattern.compile(
         "(?i)Your\\s+opponent\\s+(?:shows?|reveals?)\\s+(?:his/her|his|her|their)\\s+hand[.!]?"
     );
 
@@ -2978,7 +3002,7 @@ public class ActionResolver {
      * CP cost is an even number, [eveneffect]. Add the revealed card to your hand.
      * If the revealed card's CP cost is an odd number, [oddeffect]. Add the revealed card to your hand."
      */
-    private static final Pattern CHOOSE_FWD_REVEAL_COST_PARITY_PATTERN = Pattern.compile(
+    static final Pattern CHOOSE_FWD_REVEAL_COST_PARITY_PATTERN = Pattern.compile(
         "(?i)^Choose\\s+1\\s+Forward[.!]?\\s+" +
         "Reveal\\s+the\\s+top\\s+card\\s+of\\s+your\\s+deck[.!]?\\s+" +
         "If\\s+the\\s+revealed\\s+card's\\s+CP\\s+cost\\s+is\\s+an?\\s+even\\s+number,\\s+" +
@@ -2994,7 +3018,7 @@ public class ActionResolver {
      * whether it is the ability user's own deck or the opponent's.
      * The clauses themselves are iterated with {@link #REVEAL_CLAUSE_PATTERN}.
      */
-    private static final Pattern REVEAL_TOP_DECK_HEADER = Pattern.compile(
+    static final Pattern REVEAL_TOP_DECK_HEADER = Pattern.compile(
         "(?i)^\\s*Reveal\\s+the\\s+top\\s+card\\s+of\\s+" +
         "(?<who>opponent's|your)\\s+deck[.!]?"
     );
@@ -3008,7 +3032,7 @@ public class ActionResolver {
      * </ul>
      * The lookahead stops each {@code action} capture before the next clause or end of text.
      */
-    private static final Pattern REVEAL_CLAUSE_PATTERN = Pattern.compile(
+    static final Pattern REVEAL_CLAUSE_PATTERN = Pattern.compile(
         "If\\s+it\\s+(?:is|has)\\s+(?<cond>[^,]+?)\\s*,\\s*(?<action>.+?)" +
         "(?=[.!]?\\s+If\\s+it\\s+(?:is|has)\\b|[.!]?\\s*$)",
         Pattern.CASE_INSENSITIVE | Pattern.DOTALL
@@ -3018,7 +3042,7 @@ public class ActionResolver {
      * Matches "Put it into the Break Zone" — a forced send that bypasses
      * "cannot be broken" protections, unlike {@code FOLLOWUP_BREAK}.
      */
-    private static final Pattern FOLLOWUP_PUT_TO_BREAK_ZONE = Pattern.compile(
+    static final Pattern FOLLOWUP_PUT_TO_BREAK_ZONE = Pattern.compile(
         "(?i)Put\\s+it\\s+into\\s+the\\s+Break\\s+Zone[.!]?"
     );
 
@@ -3031,7 +3055,7 @@ public class ActionResolver {
      *   <li>Group {@code selftraits}  — optional traits string</li>
      * </ul>
      */
-    private static final Pattern SELF_POWER_BOOST = Pattern.compile(
+    static final Pattern SELF_POWER_BOOST = Pattern.compile(
         "(?i)(?<selfsubject>.+?)\\s+gains?\\s+" +
         "(?:\\+(?<selfamount>\\d+)\\s+[Pp]ower)?" +
         "(?<selftraits>(?:\\s*,?\\s*(?:and\\s+)?(?:Haste|First\\s+Strike|Brave))*)" +
@@ -3043,7 +3067,7 @@ public class ActionResolver {
      * the inner effect extracted from "At the end of each player's turn, …".
      * Groups: {@code cardname}, {@code damage}, {@code draw}.
      */
-    private static final Pattern IF_SELF_FWD_RECEIVED_DAMAGE_DRAW = Pattern.compile(
+    static final Pattern IF_SELF_FWD_RECEIVED_DAMAGE_DRAW = Pattern.compile(
         "(?i)^if\\s+(?<cardname>.+?)\\s+has\\s+received\\s+(?<damage>\\d+)\\s+damage\\s+or\\s+more,\\s+" +
         "draw\\s+(?<draw>\\d+)\\s+cards?[.!]?\\s*$"
     );
@@ -3053,7 +3077,7 @@ public class ActionResolver {
      * until end of turn[. If you have M or more cards, [subject] also gains +Q power until end of turn]."
      * Groups: {@code min1}, {@code subject}, {@code amount1}, {@code traits1}, {@code min2}, {@code amount2}.
      */
-    private static final Pattern IF_HAND_SIZE_SELF_BOOST = Pattern.compile(
+    static final Pattern IF_HAND_SIZE_SELF_BOOST = Pattern.compile(
         "(?i)if\\s+you\\s+have\\s+(?<min1>\\d+)\\s+or\\s+more\\s+cards?\\s+in\\s+your\\s+hand,\\s+" +
         "(?<subject>.+?)\\s+gains?\\s+" +
         "(?:\\+(?<amount1>\\d+)\\s+[Pp]ower)?" +
@@ -3068,7 +3092,7 @@ public class ActionResolver {
      * Matches "CardName gains +N power for each 《C》 you have until end of turn."
      * Groups: {@code subject}, {@code amount}.
      */
-    private static final Pattern SELF_POWER_BOOST_FOR_EACH_CRYSTAL = Pattern.compile(
+    static final Pattern SELF_POWER_BOOST_FOR_EACH_CRYSTAL = Pattern.compile(
         "(?i)(?<subject>.+?)\\s+gains?\\s+\\+(?<amount>\\d+)\\s+[Pp]ower\\s+" +
         "for\\s+each\\s+《C》\\s+you\\s+have" +
         "\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn[.!]?"
@@ -3078,7 +3102,7 @@ public class ActionResolver {
      * Matches "[subject] gains +N power until the end of the turn and activate [activateName]."
      * Groups: {@code subject}, {@code amount}, {@code activateName}.
      */
-    private static final Pattern SELF_POWER_BOOST_AND_ACTIVATE = Pattern.compile(
+    static final Pattern SELF_POWER_BOOST_AND_ACTIVATE = Pattern.compile(
         "(?i)(?<subject>.+?)\\s+gains?\\s+\\+(?<amount>\\d+)\\s+[Pp]ower\\s+" +
         "until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn\\s+and\\s+activate\\s+" +
         "(?<activateName>.+?)[.!]?\\s*$"
@@ -3089,7 +3113,7 @@ public class ActionResolver {
      * Used as a secondary effect after choosing and removing a Forward from the Break Zone.
      * Group {@code name} — the card whose power is set (should match the source card).
      */
-    private static final Pattern SOURCE_POWER_BECOMES_SAME_AS_REMOVED_FORWARD = Pattern.compile(
+    static final Pattern SOURCE_POWER_BECOMES_SAME_AS_REMOVED_FORWARD = Pattern.compile(
         "(?i)(?<name>.+?)'s\\s+power\\s+becomes\\s+the\\s+same\\s+as\\s+that\\s+Forward's\\s+power" +
         "\\s+until\\s+the\\s+end\\s+of\\s+(?:the\\s+)?turn[.!]?\\s*$"
     );
@@ -3098,7 +3122,7 @@ public class ActionResolver {
      * Matches "[CardName]'s power becomes the same as your opponent's weakest Forward until the
      * end of the turn." Group {@code name} — the card whose power is set (should match the source card).
      */
-    private static final Pattern SOURCE_POWER_BECOMES_OPPONENT_WEAKEST_FORWARD = Pattern.compile(
+    static final Pattern SOURCE_POWER_BECOMES_OPPONENT_WEAKEST_FORWARD = Pattern.compile(
         "(?i)(?<name>.+?)'s\\s+power\\s+becomes\\s+the\\s+same\\s+as\\s+your\\s+opponent's\\s+weakest\\s+Forward" +
         "\\s+until\\s+the\\s+end\\s+of\\s+(?:the\\s+)?turn[.!]?\\s*$"
     );
@@ -3107,7 +3131,7 @@ public class ActionResolver {
      * Matches "During this turn, if [CardName] deals damage to a Forward, double the damage instead."
      * Groups: {@code subject} — the card name.
      */
-    private static final Pattern DOUBLE_OUTGOING_DAMAGE_THIS_TURN = Pattern.compile(
+    static final Pattern DOUBLE_OUTGOING_DAMAGE_THIS_TURN = Pattern.compile(
         "(?i)During\\s+this\\s+turn,\\s+if\\s+(?<subject>.+?)\\s+deals?\\s+damage\\s+to\\s+a\\s+Forward," +
         "\\s+double\\s+the\\s+damage\\s+instead[.!]?"
     );
@@ -3115,7 +3139,7 @@ public class ActionResolver {
     /**
      * Matches "During this turn, if a Forward opponent controls is dealt damage, double the damage instead."
      */
-    private static final Pattern DOUBLE_OPPONENT_INCOMING_DAMAGE_THIS_TURN = Pattern.compile(
+    static final Pattern DOUBLE_OPPONENT_INCOMING_DAMAGE_THIS_TURN = Pattern.compile(
         "(?i)During\\s+this\\s+turn,\\s+if\\s+a\\s+Forward\\s+(?:your\\s+)?opponent\\s+controls\\s+" +
         "is\\s+dealt\\s+damage,\\s+double\\s+the\\s+damage\\s+instead[.!]?"
     );
@@ -3123,7 +3147,7 @@ public class ActionResolver {
     /**
      * Matches "If a Forward receives damage this turn, the damage increases by N instead."
      */
-    private static final Pattern ALL_FORWARD_INCOMING_DMG_INCREASE_THIS_TURN = Pattern.compile(
+    static final Pattern ALL_FORWARD_INCOMING_DMG_INCREASE_THIS_TURN = Pattern.compile(
         "(?i)If\\s+a\\s+Forward\\s+receives\\s+damage\\s+this\\s+turn,\\s+the\\s+damage\\s+increases?\\s+by\\s+(?<amount>\\d+)(?:\\s+instead)?[.!]?"
     );
 
@@ -3131,7 +3155,7 @@ public class ActionResolver {
      * Matches "If [subject] deals damage to a Forward this turn, double the damage instead."
      * (Ninja-style variant — "this turn" appears at the end rather than "During this turn" at the start.)
      */
-    private static final Pattern DOUBLE_OUTGOING_DAMAGE_THIS_TURN_ALT = Pattern.compile(
+    static final Pattern DOUBLE_OUTGOING_DAMAGE_THIS_TURN_ALT = Pattern.compile(
         "(?i)If\\s+(?<subject>.+?)\\s+deals?\\s+damage\\s+to\\s+a\\s+Forward\\s+this\\s+turn,\\s+double\\s+the\\s+damage\\s+instead[.!]?"
     );
 
@@ -3141,7 +3165,7 @@ public class ActionResolver {
      * Groups: {@code element} — element name; {@code cardtype} — "Backups" or "Forwards";
      *         {@code followup} — effect sentence(s) to apply to the chosen targets.
      */
-    private static final Pattern CHOOSE_OPP_FWD_DYN_COST_BREAK = Pattern.compile(
+    static final Pattern CHOOSE_OPP_FWD_DYN_COST_BREAK = Pattern.compile(
         "(?i)Choose\\s+1\\s+Forward\\s+(?:your\\s+)?opponent\\s+controls\\s+with\\s+a\\s+cost\\s+" +
         "(?:inferior\\s+or\\s+equal\\s+to|equal\\s+or\\s+inferior\\s+to|equal\\s+to\\s+or\\s+(?:less\\s+than|inferior))\\s+" +
         "the\\s+number\\s+of\\s+(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+" +
@@ -3154,7 +3178,7 @@ public class ActionResolver {
      *         {@code sourcename} — name of the card whose power sets the ceiling;
      *         {@code followup} — effect sentence(s) to apply to the chosen targets.
      */
-    private static final Pattern CHOOSE_FWD_POWER_INFERIOR_TO_SOURCE = Pattern.compile(
+    static final Pattern CHOOSE_FWD_POWER_INFERIOR_TO_SOURCE = Pattern.compile(
         "(?i)Choose\\s+1\\s+Forward\\s+" +
         "(?:(?<control>(?:your\\s+)?opponent\\s+controls?|you\\s+control)\\s+)?" +
         "with\\s+a\\s+power\\s+inferior\\s+to\\s+(?<sourcename>.+?)'s(?:\\s+power)?[.,]?\\s+(?<followup>.+)"
@@ -3165,7 +3189,7 @@ public class ActionResolver {
      * equal to or less than] to [CardName]'s [your] opponent controls."
      * Groups: {@code sourcename} — name of the card whose power is the ceiling.
      */
-    private static final Pattern DULL_ALL_OPP_FWDS_POWER_LE_SOURCE = Pattern.compile(
+    static final Pattern DULL_ALL_OPP_FWDS_POWER_LE_SOURCE = Pattern.compile(
         "(?i)Dull\\s+all\\s+(?:the\\s+)?Forwards?\\s+with\\s+a\\s+power\\s+" +
         "(?:equal\\s+or\\s+inferior\\s+to|inferior\\s+or\\s+equal\\s+to|equal\\s+to\\s+or\\s+less\\s+than)\\s+" +
         "(?<sourcename>.+?)'s\\s+(?:(?:your\\s+)?opponent\\s+controls?)[.!]?"
@@ -3175,7 +3199,7 @@ public class ActionResolver {
      * Matches "Choose 1 Forward in your Break Zone with a cost inferior to that of the removed
      * Forward. Play it onto the field." — the follow-up half of a Hojo-style remove-then-play chain.
      */
-    private static final Pattern CHOOSE_FWD_BZ_COST_INFERIOR_TO_REMOVED_PLAY = Pattern.compile(
+    static final Pattern CHOOSE_FWD_BZ_COST_INFERIOR_TO_REMOVED_PLAY = Pattern.compile(
         "(?i)Choose\\s+1\\s+Forward\\s+in\\s+your\\s+Break\\s+Zone\\s+with\\s+a\\s+cost\\s+" +
         "inferior\\s+to\\s+that\\s+of\\s+the\\s+removed\\s+Forward[.,]?\\s+" +
         "Play\\s+it\\s+onto\\s+(?:the\\s+)?field[.!]?"
@@ -3184,7 +3208,7 @@ public class ActionResolver {
     /**
      * Matches "Choose 1 Forward. During this turn, if it is dealt damage, double the damage instead."
      */
-    private static final Pattern CHOOSE_FORWARD_DOUBLE_INCOMING_THIS_TURN = Pattern.compile(
+    static final Pattern CHOOSE_FORWARD_DOUBLE_INCOMING_THIS_TURN = Pattern.compile(
         "(?i)Choose\\s+1\\s+Forward[.,]?\\s+During\\s+this\\s+turn,\\s+if\\s+it\\s+is\\s+dealt\\s+damage,\\s+double\\s+the\\s+damage\\s+instead[.!]?"
     );
 
@@ -3195,7 +3219,7 @@ public class ActionResolver {
      *   <li>Group {@code job} — optional job filter (e.g. {@code "Headhunter"})</li>
      * </ul>
      */
-    private static final Pattern CHOOSE_FORWARD_DOUBLE_NEXT_OUTGOING = Pattern.compile(
+    static final Pattern CHOOSE_FORWARD_DOUBLE_NEXT_OUTGOING = Pattern.compile(
         "(?i)Choose\\s+1\\s+(?:Job\\s+(?<job>.+?)\\s+)?Forward[.,]?\\s+" +
         "During\\s+this\\s+turn,\\s+the\\s+next\\s+damage\\s+it\\s+deals\\s+to\\s+a\\s+Forward\\s+" +
         "becomes\\s+double\\s+the\\s+damage\\s+instead[.!]?" +
@@ -3205,7 +3229,7 @@ public class ActionResolver {
     /**
      * Matches "During this turn, if your ability deals damage to a Forward, double the damage instead."
      */
-    private static final Pattern DOUBLE_PLAYER_ABILITY_OUTGOING_THIS_TURN = Pattern.compile(
+    static final Pattern DOUBLE_PLAYER_ABILITY_OUTGOING_THIS_TURN = Pattern.compile(
         "(?i)During\\s+this\\s+turn,\\s+if\\s+your\\s+ability\\s+deals?\\s+damage\\s+to\\s+a\\s+Forward,\\s+double\\s+the\\s+damage\\s+instead[.!]?"
     );
 
@@ -3219,7 +3243,7 @@ public class ActionResolver {
      *   <li>Group {@code traits}  — optional traits string (e.g. "and First Strike")</li>
      * </ul>
      */
-    private static final Pattern FIELD_SELF_POWER_BOOST = Pattern.compile(
+    static final Pattern FIELD_SELF_POWER_BOOST = Pattern.compile(
         "(?i)(?<subject>.+?)\\s+gains?\\s+\\+(?<amount>\\d+)\\s+[Pp]ower" +
         "(?<traits>(?:\\s*(?:and\\s+)?(?:Haste|First\\s+Strike|Brave))*)" +
         "[.!]?\\s*$"
@@ -3232,7 +3256,7 @@ public class ActionResolver {
      *   <li>Group 2 — optional traits string, e.g. {@code ", Haste, and First Strike"}</li>
      * </ul>
      */
-    private static final Pattern FOLLOWUP_POWER_BOOST = Pattern.compile(
+    static final Pattern FOLLOWUP_POWER_BOOST = Pattern.compile(
         "(?i)(?:it|they)\\s+gains?\\s+\\+(\\d+)\\s+[Pp]ower" +
         "((?:\\s*,?\\s*(?:and\\s+)?(?:Haste|First\\s+Strike|Brave))*)" +
         "\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:(?:the|your)\\s+)?turn"
@@ -3253,7 +3277,7 @@ public class ActionResolver {
      * </ul>
      * Groups: 1 = per-unit amount, {@code element} = optional element, {@code chartype} = card type.
      */
-    private static final Pattern FOLLOWUP_POWER_BOOST_UNTIL_FOR_EACH = Pattern.compile(
+    static final Pattern FOLLOWUP_POWER_BOOST_UNTIL_FOR_EACH = Pattern.compile(
         "(?i)(?:" +
             "Until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn\\s*,\\s+" +
             "(?:it|they)\\s+gains?\\s+\\+(\\d+)\\s+[Pp]ower\\s+for\\s+each\\s+" +
@@ -3273,7 +3297,7 @@ public class ActionResolver {
      * Uses {@code xValue} captured before any BZ-cost payment cleared the counters.
      * Must be checked before {@link #FOLLOWUP_POWER_BOOST_UNTIL}, which would match only the +N.
      */
-    private static final Pattern FOLLOWUP_POWER_BOOST_UNTIL_FOR_EACH_COUNTER = Pattern.compile(
+    static final Pattern FOLLOWUP_POWER_BOOST_UNTIL_FOR_EACH_COUNTER = Pattern.compile(
         "(?i)Until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn\\s*,\\s+" +
         "(?:it|they)\\s+gains?\\s+\\+(?<perunit>\\d+)\\s+[Pp]ower\\s+" +
         "for\\s+each\\s+(?<counterName>.+?)\\s+Counters?\\s+placed\\s+on\\s+.+?[.!]?$",
@@ -3303,7 +3327,7 @@ public class ActionResolver {
      * Uses {@code xValue} captured before any BZ-cost payment cleared the counters.
      * Must be checked before {@link #FOLLOWUP_DAMAGE_FOR_EACH}, which would match only the flat N damage.
      */
-    private static final Pattern FOLLOWUP_DAMAGE_FOR_EACH_COUNTER = Pattern.compile(
+    static final Pattern FOLLOWUP_DAMAGE_FOR_EACH_COUNTER = Pattern.compile(
         "(?i)Deal\\s+it\\s+(?<perunit>\\d+)\\s+damage\\s+" +
         "for\\s+each\\s+(?<counterName>.+?)\\s+Counters?\\s+placed\\s+on\\s+.+?[.!]?$",
         Pattern.DOTALL
@@ -3316,7 +3340,7 @@ public class ActionResolver {
      * {@code jobw}/{@code jobw2} = written job name; {@code jobt}/{@code jobt2} = optional type qualifier.
      * Must be checked before {@link #FOLLOWUP_POWER_BOOST_UNTIL}, which would match the +N and drop the rest.
      */
-    private static final Pattern FOLLOWUP_POWER_BOOST_UNTIL_FOR_EACH_JOB = Pattern.compile(
+    static final Pattern FOLLOWUP_POWER_BOOST_UNTIL_FOR_EACH_JOB = Pattern.compile(
         "(?i)(?:" +
             "Until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn\\s*,\\s+" +
             "(?:it|they)\\s+gains?\\s+\\+(?<amount>\\d+)\\s+[Pp]ower\\s+for\\s+each\\s+" +
@@ -3335,12 +3359,12 @@ public class ActionResolver {
      * Group {@code perunit} = per-damage power amount.
      * Must be checked before {@link #FOLLOWUP_POWER_BOOST_UNTIL}, which would match the +N and drop the rest.
      */
-    private static final Pattern FOLLOWUP_POWER_BOOST_UNTIL_FOR_EACH_SELF_DMG = Pattern.compile(
+    static final Pattern FOLLOWUP_POWER_BOOST_UNTIL_FOR_EACH_SELF_DMG = Pattern.compile(
         "(?i)Until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn\\s*,\\s+" +
         "(?:it|they)\\s+gains?\\s+\\+(?<perunit>\\d+)\\s+[Pp]ower\\s+for\\s+each\\s+point\\s+of\\s+damage\\s+you\\s+have\\s+received[.!]?"
     );
 
-    private static final Pattern FOLLOWUP_POWER_BOOST_UNTIL = Pattern.compile(
+    static final Pattern FOLLOWUP_POWER_BOOST_UNTIL = Pattern.compile(
         "(?i)Until\\s+(?:the\\s+)?end\\s+of\\s+(?:(?:the|your)\\s+)?turn\\s*,\\s+" +
         "(?:it|they)\\s+gains?\\s+\\+(\\d+)\\s+[Pp]ower" +
         "((?:\\s*,?\\s*(?:and\\s+)?(?:Haste|First\\s+Strike|Brave))*)"
@@ -3351,7 +3375,7 @@ public class ActionResolver {
      * Groups {@code t1} and {@code t2} are the two trait names.  Must be checked before
      * {@link #FOLLOWUP_KEYWORD_GRANT} since the latter doesn't handle the "or" separator.
      */
-    private static final Pattern FOLLOWUP_KEYWORD_GRANT_CHOICE = Pattern.compile(
+    static final Pattern FOLLOWUP_KEYWORD_GRANT_CHOICE = Pattern.compile(
         "(?i)(?:it|they)\\s+gains?\\s+" +
         "(?<t1>Haste|First\\s+Strike|Brave)\\s+or\\s+(?<t2>Haste|First\\s+Strike|Brave)" +
         "\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn"
@@ -3363,7 +3387,7 @@ public class ActionResolver {
      *   <li>Group 1 — traits string, e.g. {@code "Haste"} or {@code "Haste and First Strike"}</li>
      * </ul>
      */
-    private static final Pattern FOLLOWUP_KEYWORD_GRANT = Pattern.compile(
+    static final Pattern FOLLOWUP_KEYWORD_GRANT = Pattern.compile(
         "(?i)(?:it|they)\\s+gains?\\s+" +
         "((?:\\s*,?\\s*(?:and\\s+)?(?:Haste|First\\s+Strike|Brave))+)" +
         "\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn"
@@ -3376,7 +3400,7 @@ public class ActionResolver {
      *   <li>Group 1 — traits string, e.g. {@code "Haste and First Strike"}</li>
      * </ul>
      */
-    private static final Pattern FOLLOWUP_KEYWORD_GRANT_UNTIL = Pattern.compile(
+    static final Pattern FOLLOWUP_KEYWORD_GRANT_UNTIL = Pattern.compile(
         "(?i)Until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn\\s*,\\s+" +
         "(?:it|they)\\s+gains?\\s+" +
         "((?:\\s*,?\\s*(?:and\\s+)?(?:Haste|First\\s+Strike|Brave))+)" +
@@ -3403,7 +3427,7 @@ public class ActionResolver {
      *   <li>Group {@code attackEffect} — the effect text that fires when the card attacks</li>
      * </ul>
      */
-    private static final Pattern STANDALONE_POWER_BOOST_AND_ATTACK_TRIGGER = Pattern.compile(
+    static final Pattern STANDALONE_POWER_BOOST_AND_ATTACK_TRIGGER = Pattern.compile(
         "(?i)Until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn\\s*,\\s+" +
         "(?<subject>.+?)\\s+gains?\\s+\\+(?<amount>\\d+)\\s+[Pp]ower\\s+and\\s+" +
         "\"When\\s+[^\"]+?\\s+attacks?\\s*,\\s+(?<attackEffect>[^\"]+?)\"\\s*[.!]?\\s*$",
@@ -3421,7 +3445,7 @@ public class ActionResolver {
      *   <li>Group {@code scope}    — "Summons", "abilities", or "Summons or abilities"</li>
      * </ul>
      */
-    private static final Pattern STANDALONE_POWER_BOOST_AND_CANNOT_BE_CHOSEN = Pattern.compile(
+    static final Pattern STANDALONE_POWER_BOOST_AND_CANNOT_BE_CHOSEN = Pattern.compile(
         "(?i)Until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn\\s*,\\s+" +
         "(?<subject>.+?)\\s+gains?\\s+\\+(?<amount>\\d+)\\s+[Pp]ower\\s+and\\s+" +
         "(?<subject2>.+?)\\s+cannot\\s+be\\s+chosen\\s+by\\s+your\\s+opponent's\\s+" +
@@ -3433,7 +3457,7 @@ public class ActionResolver {
      * Used when a self-buff grants keyword traits AND unblockable status simultaneously.
      * Groups: {@code subject} — card name; {@code traits} — keyword list.
      */
-    private static final Pattern STANDALONE_GAINS_TRAITS_AND_CANNOT_BE_BLOCKED = Pattern.compile(
+    static final Pattern STANDALONE_GAINS_TRAITS_AND_CANNOT_BE_BLOCKED = Pattern.compile(
         "(?i)Until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn\\s*,\\s+" +
         "(?<subject>.+?)\\s+gains?\\s+" +
         "(?<traits>(?:Haste|First\\s+Strike|Brave)(?:\\s+and\\s+(?:Haste|First\\s+Strike|Brave))*)" +
@@ -3446,7 +3470,7 @@ public class ActionResolver {
      * Queen's Speedrush: {@code Queen gains Haste and "Queen cannot be blocked" until the end of
      * the turn.}). Groups: {@code subject} — card name; {@code traits} — keyword list.
      */
-    private static final Pattern STANDALONE_GAINS_TRAITS_AND_CANNOT_BE_BLOCKED_TRAILING = Pattern.compile(
+    static final Pattern STANDALONE_GAINS_TRAITS_AND_CANNOT_BE_BLOCKED_TRAILING = Pattern.compile(
         "(?i)(?<subject>.+?)\\s+gains?\\s+" +
         "(?<traits>(?:Haste|First\\s+Strike|Brave)(?:\\s+and\\s+(?:Haste|First\\s+Strike|Brave))*)" +
         "\\s+and\\s+\".+?\\s+cannot\\s+be\\s+blocked\\.?\"" +
@@ -3454,7 +3478,7 @@ public class ActionResolver {
     );
 
     /** Matches "Choose 1 card removed from the game. Remove 1 Warp Counter from it." */
-    private static final Pattern CHOOSE_WARP_CARD_REMOVE_COUNTER = Pattern.compile(
+    static final Pattern CHOOSE_WARP_CARD_REMOVE_COUNTER = Pattern.compile(
         "(?i)^Choose\\s+1\\s+card\\s+removed\\s+from\\s+the\\s+game\\.\\s*" +
         "Remove\\s+1\\s+Warp\\s+Counter\\s+from\\s+it[.!]?"
     );
@@ -3464,18 +3488,18 @@ public class ActionResolver {
      * Warp Counter from it." (Vayne) — the optional-removal variant: choosing the target is
      * mandatory, but the removal itself is a "you may" decision.
      */
-    private static final Pattern CHOOSE_WARP_CARD_MAY_REMOVE_COUNTER = Pattern.compile(
+    static final Pattern CHOOSE_WARP_CARD_MAY_REMOVE_COUNTER = Pattern.compile(
         "(?i)^Choose\\s+1\\s+card\\s+removed\\s+from\\s+the\\s+game\\s+with\\s+a\\s+Warp\\s+Counter\\s+on\\s+it\\.\\s*" +
         "You\\s+may\\s+remove\\s+1\\s+Warp\\s+Counter\\s+from\\s+it[.!]?"
     );
 
     /** Matches "[Name] gains '[Name] cannot be blocked.' until the end of the turn." */
-    private static final Pattern STANDALONE_GAINS_CANNOT_BE_BLOCKED = Pattern.compile(
+    static final Pattern STANDALONE_GAINS_CANNOT_BE_BLOCKED = Pattern.compile(
         "(?i)(?<subject>.+?)\\s+gains?\\s+\".+?\\s+cannot\\s+be\\s+blocked\\.?\"" +
         "\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn[.!]?"
     );
 
-    private static final Pattern STANDALONE_POWER_BOOST_UNTIL = Pattern.compile(
+    static final Pattern STANDALONE_POWER_BOOST_UNTIL = Pattern.compile(
         "(?i)Until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn\\s*,\\s+" +
         "(?<subject>.+?)\\s+gains?\\s+" +
         "(?:\\+(?<amount>\\d+)\\s+[Pp]ower)?" +
@@ -3498,7 +3522,7 @@ public class ActionResolver {
      *   <li>Group {@code power}   — the new base power</li>
      * </ul>
      */
-    private static final Pattern STANDALONE_SELF_BASE_POWER_BECOMES_UNTIL = Pattern.compile(
+    static final Pattern STANDALONE_SELF_BASE_POWER_BECOMES_UNTIL = Pattern.compile(
         "(?i)Until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn\\s*,\\s+" +
         "(?:(?<subject>.+?)\\s+gains?\\s+" +
         "(?<traits>(?:\\s*,?\\s*(?:and\\s+)?(?:Haste|First\\s+Strike|Brave))+)\\s+and\\s+)?" +
@@ -3511,7 +3535,7 @@ public class ActionResolver {
      *   <li>Group {@code subject} — card name before "until"</li>
      * </ul>
      */
-    private static final Pattern STANDALONE_DOUBLE_POWER_UNTIL = Pattern.compile(
+    static final Pattern STANDALONE_DOUBLE_POWER_UNTIL = Pattern.compile(
         "(?i)Double\\s+the\\s+power\\s+of\\s+(?<subject>.+?)\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn[.!]?"
     );
 
@@ -3522,7 +3546,7 @@ public class ActionResolver {
      *   <li>Group {@code traits}  — optional trailing text (e.g. "and gains First Strike and Brave")</li>
      * </ul>
      */
-    private static final Pattern STANDALONE_DOUBLES_ITS_POWER_UNTIL = Pattern.compile(
+    static final Pattern STANDALONE_DOUBLES_ITS_POWER_UNTIL = Pattern.compile(
         "(?i)Until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn\\s*,\\s+" +
         "(?<subject>.+?)\\s+doubles?\\s+its\\s+power(?<traits>[^.!]*)"
     );
@@ -3534,7 +3558,7 @@ public class ActionResolver {
      *   <li>Group {@code subject} — card name before "'s power will double"</li>
      * </ul>
      */
-    private static final Pattern STANDALONE_DOUBLE_POWER_MAIN_PHASE_NEXT_TURN = Pattern.compile(
+    static final Pattern STANDALONE_DOUBLE_POWER_MAIN_PHASE_NEXT_TURN = Pattern.compile(
         "(?i)At\\s+the\\s+beginning\\s+of\\s+your\\s+next\\s+turn's\\s+Main\\s+Phase\\s+1" +
         "\\s+and\\s+until\\s+the\\s+end\\s+of\\s+the\\s+same\\s+turn\\s*,\\s+" +
         "(?<subject>.+?)'s\\s+power\\s+will\\s+double[.!]?"
@@ -3548,7 +3572,7 @@ public class ActionResolver {
      *   <li>Group 2 — optional traits string</li>
      * </ul>
      */
-    private static final Pattern FOLLOWUP_POWER_REDUCE = Pattern.compile(
+    static final Pattern FOLLOWUP_POWER_REDUCE = Pattern.compile(
         "(?i)(?:it|they)\\s+loses?\\s+" +
         "(?:(\\d+)\\s+[Pp]ower)?" +
         "((?:\\s*,?\\s*(?:and\\s+)?(?:Haste|First\\s+Strike|Brave))*)" +
@@ -3556,7 +3580,7 @@ public class ActionResolver {
     );
 
     /** Matches "Its/Their power becomes N until the end of the turn." — group 1 is the target power. */
-    private static final Pattern FOLLOWUP_POWER_BECOMES = Pattern.compile(
+    static final Pattern FOLLOWUP_POWER_BECOMES = Pattern.compile(
         "(?i)(?:its?|their)\\s+power\\s+becomes?\\s+(\\d+)\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn[.!]?"
     );
 
@@ -3567,7 +3591,7 @@ public class ActionResolver {
      *   <li>Group 2 — optional traits string</li>
      * </ul>
      */
-    private static final Pattern FOLLOWUP_POWER_REDUCE_UNTIL = Pattern.compile(
+    static final Pattern FOLLOWUP_POWER_REDUCE_UNTIL = Pattern.compile(
         "(?i)Until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn\\s*,\\s+" +
         "(?:it|they)\\s+loses?\\s+" +
         "(?:(\\d+)\\s+[Pp]ower)?" +
@@ -3575,7 +3599,7 @@ public class ActionResolver {
     );
 
     /** Matches "Until [of] the end of [the] turn, it/they loses N power for each card in your hand." */
-    private static final Pattern FOLLOWUP_POWER_REDUCE_UNTIL_FOR_EACH_HAND = Pattern.compile(
+    static final Pattern FOLLOWUP_POWER_REDUCE_UNTIL_FOR_EACH_HAND = Pattern.compile(
         "(?i)Until\\s+(?:of\\s+)?(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn\\s*,\\s+" +
         "(?:it|they)\\s+loses?\\s+(\\d+)\\s+[Pp]ower\\s+for\\s+each\\s+card\\s+in\\s+your\\s+hand[.!]?"
     );
@@ -3590,7 +3614,7 @@ public class ActionResolver {
      * Groups: 1 = per-unit amount (until-prefix order), 4 = per-unit amount (suffix order);
      * {@code element}/{@code chartype} (until-prefix) or {@code element2}/{@code chartype2} (suffix).
      */
-    private static final Pattern FOLLOWUP_POWER_REDUCE_UNTIL_FOR_EACH = Pattern.compile(
+    static final Pattern FOLLOWUP_POWER_REDUCE_UNTIL_FOR_EACH = Pattern.compile(
         "(?i)(?:" +
             "Until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn\\s*,\\s+" +
             "(?:it|they)\\s+loses?\\s+(\\d+)\\s+[Pp]ower\\s+for\\s+each\\s+" +
@@ -3617,7 +3641,7 @@ public class ActionResolver {
      *   <li>Group {@code traits}  — optional traits string</li>
      * </ul>
      */
-    private static final Pattern STANDALONE_POWER_REDUCE_UNTIL = Pattern.compile(
+    static final Pattern STANDALONE_POWER_REDUCE_UNTIL = Pattern.compile(
         "(?i)Until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn\\s*,\\s+" +
         "(?<subject>.+?)\\s+loses?\\s+" +
         "(?:(?<amount>\\d+)\\s+[Pp]ower)?" +
@@ -3638,7 +3662,7 @@ public class ActionResolver {
      *   <li>Group {@code control}     — optional: "opponent controls" or "you control"</li>
      * </ul>
      */
-    private static final Pattern ALL_FIELD_EFFECT_PATTERN = Pattern.compile(
+    static final Pattern ALL_FIELD_EFFECT_PATTERN = Pattern.compile(
         "(?i)(?<action>Break|Activate|dull\\s+and\\s+freeze|dull|freeze)\\s+" +
         "all\\s+(?:the\\s+)?" +
         "(?:(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?" +
@@ -3664,7 +3688,7 @@ public class ActionResolver {
      *   <li>Group {@code amount}   — power amount to add</li>
      * </ul>
      */
-    private static final Pattern ALL_FIELD_POWER_BOOST_PATTERN = Pattern.compile(
+    static final Pattern ALL_FIELD_POWER_BOOST_PATTERN = Pattern.compile(
         "(?i)All\\s+(?:the\\s+)?" +
         "(?:(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?" +
         "(?:Category\\s+(?<category>\\S+)\\s+)?" +
@@ -3692,7 +3716,7 @@ public class ActionResolver {
      * no longer matches; the trigger has already established whose party attacked.
      * Groups: {@code verb}, {@code amount}.
      */
-    private static final Pattern PARTY_FORWARDS_POWER_BOOST_PATTERN = Pattern.compile(
+    static final Pattern PARTY_FORWARDS_POWER_BOOST_PATTERN = Pattern.compile(
         "(?i)(?:all\\s+Forwards?\\s+in\\s+that\\s+party" +
         "|[A-Za-z][^.,]*?\\s+and\\s+all\\s+the\\s+Forwards?\\s+forming\\s+a\\s+party\\s+with\\s+it)\\s+" +
         "(?<verb>gains?|loses?)\\s+\\+?(?<amount>\\d+)\\s+[Pp]ower" +
@@ -3704,7 +3728,7 @@ public class ActionResolver {
      * gain +N power until [the] end of [the] turn."
      * Groups: {@code name}, {@code control}, {@code verb}, {@code amount}.
      */
-    private static final Pattern ALL_FORWARDS_SAME_ELEMENT_AS_NAMED_POWER_BOOST = Pattern.compile(
+    static final Pattern ALL_FORWARDS_SAME_ELEMENT_AS_NAMED_POWER_BOOST = Pattern.compile(
         "(?i)All\\s+(?:the\\s+)?Forwards?\\s+of\\s+the\\s+same\\s+Element\\s+as\\s+" +
         "(?:Card\\s+Name\\s+)?(?<name>[A-Za-z][A-Za-z0-9\\s''\\-]*?)\\s+" +
         "(?<control>(?:your\\s+)?opponent\\s+controls?|you\\s+control)\\s+" +
@@ -3717,7 +3741,7 @@ public class ActionResolver {
      * gain +N power until [the] end of [the] turn."
      * Groups: {@code job}, {@code cardname}, {@code control}, {@code verb}, {@code amount}.
      */
-    private static final Pattern ALL_FIELD_JOB_CARDNAME_POWER_BOOST_PATTERN = Pattern.compile(
+    static final Pattern ALL_FIELD_JOB_CARDNAME_POWER_BOOST_PATTERN = Pattern.compile(
         "(?i)All\\s+Job\\s+(?<job>[\\w][\\w\\s]*?)\\s+and\\s+Card\\s+Name\\s+(?<cardname>[\\w][\\w\\s]*?)\\s+" +
         "(?<control>(?:your\\s+)?opponent\\s+controls?|you\\s+control)\\s+" +
         "(?<verb>gains?|loses?)\\s+\\+?(?<amount>\\d+)\\s+[Pp]ower" +
@@ -3729,7 +3753,7 @@ public class ActionResolver {
      * gain +N power until [the] end of [the] turn."
      * Groups: {@code name1}, {@code name2}, {@code control}, {@code verb}, {@code amount}.
      */
-    private static final Pattern TWO_CARD_NAMES_POWER_BOOST_PATTERN = Pattern.compile(
+    static final Pattern TWO_CARD_NAMES_POWER_BOOST_PATTERN = Pattern.compile(
         "(?i)(?:The\\s+)?Card\\s+Name\\s+(?<name1>[\\w][\\w\\s''\\-]*?)" +
         "(?:\\s+(?:Forwards?|Backups?|Monsters?|Characters?))?" +
         "\\s+and\\s+Card\\s+Name\\s+(?<name2>[\\w][\\w\\s''\\-]*?)" +
@@ -3744,7 +3768,7 @@ public class ActionResolver {
      * gain +N power until [the] end of [the] turn."
      * Groups: {@code job}, {@code targets}, {@code control}, {@code verb}, {@code amount}.
      */
-    private static final Pattern ALL_FIELD_JOB_POWER_BOOST_PATTERN = Pattern.compile(
+    static final Pattern ALL_FIELD_JOB_POWER_BOOST_PATTERN = Pattern.compile(
         "(?i)All\\s+(?:the\\s+)?Job\\s+(?<job>[A-Za-z][A-Za-z\\s''\\-]*?)\\s+" +
         "(?<targets>Forwards?(?:\\s+and\\s+Monsters?)?|Backups?|Characters?)" +
         "(?:\\s+(?<control>(?:your\\s+)?opponent\\s+controls?|you\\s+control))?" +
@@ -3757,7 +3781,7 @@ public class ActionResolver {
      * gain Keyword[, ...] until end of turn."
      * Groups: {@code job}, {@code targets} (optional), {@code control}, {@code keywords}.
      */
-    private static final Pattern ALL_FIELD_JOB_KEYWORD_GRANT_PATTERN = Pattern.compile(
+    static final Pattern ALL_FIELD_JOB_KEYWORD_GRANT_PATTERN = Pattern.compile(
         "(?i)All\\s+(?:the\\s+)?Job\\s+(?<job>[A-Za-z][A-Za-z\\s''\\-]*?)" +
         "(?:\\s+(?<targets>Forwards?(?:\\s+and\\s+Monsters?)?|Backups?|Characters?))?" +
         "(?:\\s+(?<control>(?:your\\s+)?opponent\\s+controls?|you\\s+control))?" +
@@ -3771,7 +3795,7 @@ public class ActionResolver {
      * Groups: {@code element}, {@code category}, {@code targets}, {@code cost}, {@code costcmp},
      * {@code control}, {@code keywords}.
      */
-    private static final Pattern ALL_FIELD_KEYWORD_GRANT_PATTERN = Pattern.compile(
+    static final Pattern ALL_FIELD_KEYWORD_GRANT_PATTERN = Pattern.compile(
         "(?i)All\\s+(?:the\\s+)?" +
         "(?:(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?" +
         "(?:Category\\s+(?<category>\\S+)\\s+)?" +
@@ -3788,7 +3812,7 @@ public class ActionResolver {
      * Groups: {@code element}, {@code category}, {@code targets}, {@code cost}, {@code costcmp},
      * {@code control}, {@code verb}, {@code amount}, {@code keywords}.
      */
-    private static final Pattern UNTIL_EOT_ALL_FIELD_POWER_BOOST_PATTERN = Pattern.compile(
+    static final Pattern UNTIL_EOT_ALL_FIELD_POWER_BOOST_PATTERN = Pattern.compile(
         "(?i)Until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn,?\\s+" +
         "all\\s+(?:the\\s+)?" +
         "(?:(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?" +
@@ -3806,7 +3830,7 @@ public class ActionResolver {
      * Groups: {@code targets1}, {@code control1}, {@code amount1},
      *         {@code targets2}, {@code control2}, {@code amount2}.
      */
-    private static final Pattern UNTIL_EOT_DUAL_POWER_SHIFT_PATTERN = Pattern.compile(
+    static final Pattern UNTIL_EOT_DUAL_POWER_SHIFT_PATTERN = Pattern.compile(
         "(?i)Until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn,?\\s+" +
         "all\\s+(?:the\\s+)?" +
         "(?:(?<element1>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?" +
@@ -3830,12 +3854,12 @@ public class ActionResolver {
     // ---- "Select 1 number" patterns -------------------------------------------
 
     /** Matches the "Select 1 number." opening of an ability that lets the active player pick a cost. */
-    private static final Pattern SELECT_NUMBER_HEADER = Pattern.compile(
+    static final Pattern SELECT_NUMBER_HEADER = Pattern.compile(
         "(?i)^Select\\s+1\\s+number\\.\\s*"
     );
 
     /** Matches "Your opponent selects 1 number." — appears as a second header in dual-selection abilities. */
-    private static final Pattern SELECT_NUMBER_OPPONENT_ALSO = Pattern.compile(
+    static final Pattern SELECT_NUMBER_OPPONENT_ALSO = Pattern.compile(
         "(?i)^Your\\s+opponent\\s+selects\\s+1\\s+number\\.\\s*"
     );
 
@@ -3844,7 +3868,7 @@ public class ActionResolver {
      * Cannot be handled by the general substitution path since "cannot attack" is not
      * a MassAction in {@link GameContext.MassAction}.
      */
-    private static final Pattern SELECT_NUMBER_INNER_CANNOT_ATTACK = Pattern.compile(
+    static final Pattern SELECT_NUMBER_INNER_CANNOT_ATTACK = Pattern.compile(
         "(?i)All\\s+(?:the\\s+)?Forwards?\\s+of\\s+that\\s+cost\\s+cannot\\s+attack\\s+this\\s+turn\\.?"
     );
 
@@ -3852,7 +3876,7 @@ public class ActionResolver {
      * Inner effect for the dual-number case: "Break all Forwards of cost equal to either number."
      * Both P1's and P2's chosen numbers are used as cost filters.
      */
-    private static final Pattern SELECT_NUMBER_INNER_EITHER_BREAK = Pattern.compile(
+    static final Pattern SELECT_NUMBER_INNER_EITHER_BREAK = Pattern.compile(
         "(?i)Break\\s+all\\s+Forwards?\\s+of\\s+cost\\s+equal\\s+to\\s+either\\s+number\\.?"
     );
 
@@ -3862,7 +3886,7 @@ public class ActionResolver {
      *  If the revealed card is of the same cost as the selected number, break it."
      * "It" refers to the previously chosen Forward, not the revealed card.
      */
-    private static final Pattern FOLLOWUP_SELECT_NUMBER_REVEAL_BREAK = Pattern.compile(
+    static final Pattern FOLLOWUP_SELECT_NUMBER_REVEAL_BREAK = Pattern.compile(
         "(?i)Select\\s+1\\s+number\\s+and\\s+reveal\\s+the\\s+top\\s+card\\s+of\\s+your\\s+deck\\.\\s+" +
         "If\\s+the\\s+revealed\\s+card\\s+is\\s+of\\s+the\\s+same\\s+cost\\s+as\\s+the\\s+selected\\s+number,\\s+break\\s+it\\.?"
     );
@@ -3873,7 +3897,7 @@ public class ActionResolver {
      * "Name 1 Job. It gains the named Job until the end of the turn."
      * Matched against the full followup (before the dot-split) so both sentences are seen together.
      */
-    private static final Pattern FOLLOWUP_SELECT_JOB_GRANT = Pattern.compile(
+    static final Pattern FOLLOWUP_SELECT_JOB_GRANT = Pattern.compile(
         "(?i)^(?:Select\\s+a|Name\\s+1)\\s+Job[.!]?\\s+" +
         "It\\s+gains?\\s+(?:that|the\\s+named)\\s+Job\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn[.!]?$"
     );
@@ -3881,7 +3905,7 @@ public class ActionResolver {
     /**
      * Matches "Look at the top card of your deck. You may put it into the Break Zone."
      */
-    private static final Pattern LOOK_TOP_DECK_OPTIONALLY_BREAK = Pattern.compile(
+    static final Pattern LOOK_TOP_DECK_OPTIONALLY_BREAK = Pattern.compile(
         "(?i)Look\\s+at\\s+the\\s+top\\s+card\\s+of\\s+your\\s+deck[.!]?\\s*" +
         "You\\s+may\\s+put\\s+it\\s+into\\s+the\\s+Break\\s+Zone[.!]?"
     );
@@ -3889,7 +3913,7 @@ public class ActionResolver {
     /**
      * Matches "Look at the top card of your deck. You may place the card at the bottom of your deck."
      */
-    private static final Pattern LOOK_TOP_DECK_BOTTOM_OR_KEEP = Pattern.compile(
+    static final Pattern LOOK_TOP_DECK_BOTTOM_OR_KEEP = Pattern.compile(
         "(?i)Look\\s+at\\s+the\\s+top\\s+card\\s+of\\s+your\\s+deck[.!]?\\s*" +
         "You\\s+may\\s+place\\s+(?:the\\s+)?card\\s+at\\s+the\\s+bottom\\s+of\\s+your\\s+deck[.!]?"
     );
@@ -3900,7 +3924,7 @@ public class ActionResolver {
      *   <li>Group {@code count} — number of cards to look at</li>
      * </ul>
      */
-    private static final Pattern LOOK_TOP_DECK_RETURN_TOP_ORDERED = Pattern.compile(
+    static final Pattern LOOK_TOP_DECK_RETURN_TOP_ORDERED = Pattern.compile(
         "(?i)Look\\s+at\\s+the\\s+top\\s+(?<count>\\d+)\\s+cards?\\s+of\\s+your\\s+deck[.!]?\\s*" +
         "Return\\s+them\\s+to\\s+the\\s+top\\s+of\\s+your\\s+deck\\s+in\\s+any\\s+order[.!]?"
     );
@@ -3914,7 +3938,7 @@ public class ActionResolver {
      *   <li>Group {@code verb}  — which wording was used; "Reveal" makes the cards public</li>
      * </ul>
      */
-    private static final Pattern LOOK_TOP_DECK_ADD_TO_HAND_REST_BOTTOM = Pattern.compile(
+    static final Pattern LOOK_TOP_DECK_ADD_TO_HAND_REST_BOTTOM = Pattern.compile(
         "(?i)(?<verb>Look\\s+at|Reveal)\\s+the\\s+top\\s+(?<count>\\d+)\\s+cards?\\s+of\\s+your\\s+deck[.!]?\\s*" +
         "Add\\s+1\\s+card\\s+among\\s+them\\s+to\\s+your\\s+hand\\s+and\\s+" +
         "return\\s+the\\s+other\\s+cards?\\s+to\\s+the\\s+bottom\\s+of\\s+your\\s+deck\\s+in\\s+any\\s+order[.!]?"
@@ -3924,7 +3948,7 @@ public class ActionResolver {
      * Matches Lunafreya 23-129H's rider on the clause above: "If the card added to your hand has
      * an EX Burst, you may trigger its EX Burst effect." plus its parenthetical rules note.
      */
-    private static final Pattern ADDED_CARD_EX_BURST_RIDER = Pattern.compile(
+    static final Pattern ADDED_CARD_EX_BURST_RIDER = Pattern.compile(
         "(?i)^[\\s.!]*If\\s+the\\s+card\\s+added\\s+to\\s+your\\s+hand\\s+has\\s+an\\s+EX\\s+Burst,\\s*" +
         "you\\s+may\\s+trigger\\s+its\\s+EX\\s+Burst\\s+effect[.!]?" +
         "(?:\\s*\\([^)]*\\))?\\s*$"
@@ -3938,7 +3962,7 @@ public class ActionResolver {
      *   <li>Group {@code count} — number of cards to look at</li>
      * </ul>
      */
-    private static final Pattern LOOK_TOP_DECK_ADD_TO_HAND_ONE_TO_BREAK_REST_BOTTOM = Pattern.compile(
+    static final Pattern LOOK_TOP_DECK_ADD_TO_HAND_ONE_TO_BREAK_REST_BOTTOM = Pattern.compile(
         "(?i)Look\\s+at\\s+the\\s+top\\s+(?<count>\\d+)\\s+cards?\\s+of\\s+your\\s+deck[.!]?\\s*" +
         "Add\\s+1\\s+card\\s+among\\s+them\\s+to\\s+your\\s+hand[,.]?\\s*" +
         "put\\s+1\\s+card\\s+into\\s+the\\s+Break\\s+Zone\\s+and\\s+" +
@@ -3954,7 +3978,7 @@ public class ActionResolver {
      *   <li>Group {@code element} — optional element filter on the card added to hand</li>
      * </ul>
      */
-    private static final Pattern LOOK_TOP_DECK_ADD_TO_HAND_REST_BREAK = Pattern.compile(
+    static final Pattern LOOK_TOP_DECK_ADD_TO_HAND_REST_BREAK = Pattern.compile(
         "(?i)(?<verb>Look\\s+at|Reveal)\\s+the\\s+top\\s+(?<count>\\d+)\\s+cards?\\s+of\\s+your\\s+deck[.!]?\\s*" +
         "Add\\s+1\\s+(?:(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?card\\s+among\\s+them\\s+to\\s+your\\s+hand[,]?\\s+and\\s+" +
         "put\\s+the\\s+rest\\s+(?:of\\s+the\\s+cards?\\s+)?into\\s+the\\s+Break\\s+Zone[.!]?"
@@ -3968,7 +3992,7 @@ public class ActionResolver {
      *   <li>Group {@code count} — number of cards to look at</li>
      * </ul>
      */
-    private static final Pattern LOOK_TOP_DECK_TOP_OR_BOTTOM = Pattern.compile(
+    static final Pattern LOOK_TOP_DECK_TOP_OR_BOTTOM = Pattern.compile(
         "(?i)Look\\s+at\\s+the\\s+top\\s+(?<count>\\d+)\\s+cards?\\s+of\\s+your\\s+deck[.!]?\\s*" +
         "Return\\s+(?:them|these)\\s+to\\s+the\\s+top\\s+and[/\\s]?(?:or\\s+)?bottom\\s+of\\s+your\\s+deck\\s+in\\s+any\\s+order[.!]?"
     );
@@ -3990,7 +4014,7 @@ public class ActionResolver {
      *   <li>Group {@code count} — number of cards to look at</li>
      * </ul>
      */
-    private static final Pattern LOOK_TOP_DECK_PICK_ONE_TOP_REST_BOTTOM = Pattern.compile(
+    static final Pattern LOOK_TOP_DECK_PICK_ONE_TOP_REST_BOTTOM = Pattern.compile(
         "(?i)Look\\s+at\\s+the\\s+top\\s+(?<count>\\d+)\\s+cards?\\s+of\\s+your\\s+deck[.!]?\\s*" +
         "Put\\s+1\\s+card\\s+among\\s+them\\s+on\\s+top\\s+of\\s+your\\s+deck\\s+and\\s+" +
         "the\\s+others?\\s+to\\s+the\\s+bottom\\s+of\\s+your\\s+deck[.!]?"
@@ -4003,7 +4027,7 @@ public class ActionResolver {
      *   <li>Group {@code count} — number of cards, or absent for the singular "top card" form</li>
      * </ul>
      */
-    private static final Pattern LOOK_TOP_DECK_PEEK = Pattern.compile(
+    static final Pattern LOOK_TOP_DECK_PEEK = Pattern.compile(
         "(?i)Look\\s+at\\s+the\\s+top\\s+(?:(?<count>\\d+)\\s+cards?|card)\\s+of\\s+your\\s+deck[.!]?"
     );
 
@@ -4014,7 +4038,7 @@ public class ActionResolver {
      * Groups: {@code count} — card count (numeric or {@code X});
      *         {@code cost}  — cost cap (numeric or {@code X}).
      */
-    private static final Pattern LOOK_TOP_DECK_CAST_SUMMON_FREE_REST_BOTTOM = Pattern.compile(
+    static final Pattern LOOK_TOP_DECK_CAST_SUMMON_FREE_REST_BOTTOM = Pattern.compile(
         "(?i)Look\\s+at\\s+the\\s+top\\s+(?<count>\\d+|X)\\s+cards?\\s+of\\s+your\\s+deck[.!]?\\s+" +
         "Reveal\\s+1\\s+Summon\\s+of\\s+cost\\s+(?<cost>\\d+|X)\\s+or\\s+less\\s+among\\s+them\\s+" +
         "and\\s+cast\\s+it\\s+without\\s+paying\\s+(?:its|the)\\s+cost[.!]?\\s+" +
@@ -4026,7 +4050,7 @@ public class ActionResolver {
      * "Reveal the top card of your deck. Break all Forwards opponent controls with the same cost
      * as the revealed card. Add the revealed card to your hand."
      */
-    private static final Pattern REVEAL_TOP_BREAK_SAME_COST_ADD_TO_HAND = Pattern.compile(
+    static final Pattern REVEAL_TOP_BREAK_SAME_COST_ADD_TO_HAND = Pattern.compile(
         "(?i)Reveal\\s+the\\s+top\\s+card\\s+of\\s+your\\s+deck[.!]?\\s+" +
         "Break\\s+all\\s+Forwards?\\s+(?:your\\s+)?opponent\\s+controls?\\s+with\\s+the\\s+same\\s+cost\\s+" +
         "as\\s+the\\s+revealed\\s+card[.!]?\\s+" +
@@ -4064,7 +4088,7 @@ public class ActionResolver {
      * Groups: {@code condCount}, {@code condElement} (optional), {@code condType},
      *         {@code condUpTo} (optional), {@code condSelect}.
      */
-    private static final Pattern SELECT_FOLLOWING_ACTIONS_CONDITIONAL_UPGRADE = Pattern.compile(
+    static final Pattern SELECT_FOLLOWING_ACTIONS_CONDITIONAL_UPGRADE = Pattern.compile(
         "(?i)^If\\s+you\\s+control\\s+(?<condCount>\\d+)\\s+or\\s+more\\s+" +
         "(?:(?<condElement>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?" +
         "(?<condType>Forwards?|Backups?|Monsters?|Characters?|Summons?),\\s+" +
@@ -4080,7 +4104,7 @@ public class ActionResolver {
      * Groups: {@code handCount} (absent means "no cards" = 0), {@code handUpTo} (optional),
      *         {@code handSelect}.
      */
-    private static final Pattern SELECT_FOLLOWING_ACTIONS_HAND_UPGRADE = Pattern.compile(
+    static final Pattern SELECT_FOLLOWING_ACTIONS_HAND_UPGRADE = Pattern.compile(
         "(?i)^If\\s+your\\s+opponent\\s+has\\s+" +
         "(?:no\\s+cards?|(?<handCount>\\d+)\\s+cards?\\s+or\\s+less)\\s+in\\s+" +
         "(?:his/her|his|her|their)\\s+hand,\\s+" +
@@ -4097,7 +4121,7 @@ public class ActionResolver {
      *   <li>Group {@code target} — card name the counters are placed on</li>
      * </ul>
      */
-    private static final Pattern PLACE_COUNTERS = Pattern.compile(
+    static final Pattern PLACE_COUNTERS = Pattern.compile(
         "(?i)Place\\s+(?<count>\\d+)\\s+(?<name>.+?)\\s+Counters?\\s+on\\s+(?<target>[^.!,]+)\\s*[.!]?"
     );
 
@@ -4108,7 +4132,7 @@ public class ActionResolver {
      *   <li>Group {@code target} — card name the counters are removed from</li>
      * </ul>
      */
-    private static final Pattern REMOVE_ALL_COUNTERS = Pattern.compile(
+    static final Pattern REMOVE_ALL_COUNTERS = Pattern.compile(
         "(?i)Remove\\s+all\\s+(?<name>.+?)\\s+Counters?\\s+from\\s+(?<target>[^.!,]+)\\s*[.!]?"
     );
 
@@ -4116,7 +4140,7 @@ public class ActionResolver {
      * Matches "Place N [Name] Counter(s) on [CardName] for each [Type] you control."
      * Groups: {@code count}, {@code name}, {@code target}, {@code type}.
      */
-    private static final Pattern PLACE_COUNTERS_FOR_EACH = Pattern.compile(
+    static final Pattern PLACE_COUNTERS_FOR_EACH = Pattern.compile(
         "(?i)^[Pp]lace\\s+(?<count>\\d+)\\s+(?<name>.+?)\\s+Counters?\\s+on\\s+(?<target>.+?)" +
         "\\s+for\\s+each\\s+(?<type>Forwards?|Backups?|Monsters?|Characters?)\\s+you\\s+control[.!]?$"
     );
@@ -4126,7 +4150,7 @@ public class ActionResolver {
      * You can use this ability without paying any cost but only once."
      * Group {@code sourceName} — card name that gains the ability (used for logging).
      */
-    private static final Pattern CHOOSE_OPP_FWD_GAINS_SPECIAL_ABILITY_FREE_ONCE = Pattern.compile(
+    static final Pattern CHOOSE_OPP_FWD_GAINS_SPECIAL_ABILITY_FREE_ONCE = Pattern.compile(
         "(?i)^Choose\\s+1\\s+Forward\\s+(?:your\\s+)?opponent\\s+controls[,.]?\\s+" +
         "(?<sourceName>.+?)\\s+gains\\s+its\\s+Special\\s+Abilit(?:y|ies)\\s+until\\s+the\\s+end\\s+of\\s+the\\s+turn[.!]?\\s+" +
         "You\\s+can\\s+use\\s+this\\s+ability\\s+without\\s+paying\\s+any\\s+cost\\s+but\\s+only\\s+once[.!]?\\s*$"
@@ -4136,7 +4160,7 @@ public class ActionResolver {
      * Matches "Choose 1 Forward opponent controls which has been dealt damage this turn.
      * If that Forward has a special ability or an action ability, break it."
      */
-    private static final Pattern CHOOSE_OPP_DAMAGED_FWD_IF_HAS_ABILITY_BREAK = Pattern.compile(
+    static final Pattern CHOOSE_OPP_DAMAGED_FWD_IF_HAS_ABILITY_BREAK = Pattern.compile(
         "(?i)^Choose\\s+1\\s+Forward\\s+(?:your\\s+)?opponent\\s+controls\\s+" +
         "which\\s+has\\s+been\\s+dealt\\s+damage\\s+this\\s+turn[,.]?\\s+" +
         "If\\s+that\\s+Forward\\s+has\\s+(?:a\\s+special\\s+ability|an?\\s+action\\s+ability)" +
@@ -4151,7 +4175,7 @@ public class ActionResolver {
      * Group {@code countSrc} — job-bracket, "Category X Type", "Job X", or plain card-type count source.
      * Group {@code followup} — effect to apply (Dull/Activate/Freeze).
      */
-    private static final Pattern CHOOSE_AS_MANY_AS_FIELD_COUNT = Pattern.compile(
+    static final Pattern CHOOSE_AS_MANY_AS_FIELD_COUNT = Pattern.compile(
         "(?i)^Choose\\s+(?:as\\s+many|up\\s+to\\s+the\\s+same\\s+number\\s+of)\\s+" +
         "(?<targetType>Forwards?|Characters?|Backups?|Monsters?)(?:\\s+Cards?)?\\s+" +
         "(?:(?<targetSide>(?:your\\s+)?opponent\\s+controls|you\\s+control)\\s+)?" +
@@ -4167,7 +4191,7 @@ public class ActionResolver {
      * The count is computed at resolution time as (Job X in own Break Zone) + (Job X the acting
      * player owns removed from the game). Group {@code targetType}, {@code job}, {@code followup}.
      */
-    private static final Pattern CHOOSE_AS_MANY_AS_BZ_RFG_JOB = Pattern.compile(
+    static final Pattern CHOOSE_AS_MANY_AS_BZ_RFG_JOB = Pattern.compile(
         "(?i)^Choose\\s+(?:as\\s+many|up\\s+to\\s+the\\s+same\\s+number\\s+of)\\s+" +
         "(?<targetType>Forwards?|Characters?|Backups?|Monsters?)(?:\\s+Cards?)?\\s+" +
         "as\\s+(?:the\\s+)?Job\\s+(?<job>.+?)\\s+in\\s+your\\s+Break\\s+Zone\\s+and/or\\s+" +
@@ -4180,7 +4204,7 @@ public class ActionResolver {
      * At resolution time {@code xValue} holds the counter count captured before the card was put into the Break Zone.
      * Group {@code counterName} — counter type (e.g. "Monster"); group {@code card} — source card name.
      */
-    private static final Pattern CHOOSE_COUNTER_SCALE_CHARS_ACTIVATE = Pattern.compile(
+    static final Pattern CHOOSE_COUNTER_SCALE_CHARS_ACTIVATE = Pattern.compile(
         "(?i)Choose\\s+up\\s+to\\s+the\\s+same\\s+number\\s+of\\s+Characters?\\s+as\\s+the\\s+(?<counterName>.+?)\\s+Counters?\\s+placed\\s+on\\s+(?<card>.+?)[,.]\\s*Activate\\s+them[.!]?"
     );
 
@@ -4190,18 +4214,18 @@ public class ActionResolver {
      * At resolution time {@code xValue} holds the counter count captured before the card was put into the Break Zone.
      * Group {@code counterName} — counter type (e.g. "Monster"); group {@code card} — source card name.
      */
-    private static final Pattern LOOK_COUNTER_SCALE_ADD_TO_HAND_REST_BOTTOM = Pattern.compile(
+    static final Pattern LOOK_COUNTER_SCALE_ADD_TO_HAND_REST_BOTTOM = Pattern.compile(
         "(?i)Look\\s+at\\s+the\\s+same\\s+number\\s+of\\s+cards?\\s+from\\s+the\\s+top\\s+of\\s+your\\s+deck\\s+as\\s+the\\s+(?<counterName>.+?)\\s+Counters?\\s+placed\\s+on\\s+(?<card>.+?)[,.]" +
         ".+?Add\\s+1\\s+card.+?to\\s+your\\s+hand.+?(?:shuffle|return).+?bottom.+?deck[.!]?"
     );
 
     /** Matches "Gain 《C》[《C》...]." — captures one or more consecutive Crystal symbols. */
-    private static final Pattern GAIN_CRYSTAL = Pattern.compile(
+    static final Pattern GAIN_CRYSTAL = Pattern.compile(
         "(?i)Gain\\s+(?<crystals>(?:《C》)+)[.!]?"
     );
 
     /** Matches "Gain 《C》 for each CP paid as X." — crystal count equals the X value paid. */
-    private static final Pattern GAIN_CRYSTAL_PER_X = Pattern.compile(
+    static final Pattern GAIN_CRYSTAL_PER_X = Pattern.compile(
         "(?i)Gain\\s+《C》\\s+for\\s+each\\s+CP\\s+paid\\s+as\\s+X[.!]?"
     );
 
@@ -4209,7 +4233,7 @@ public class ActionResolver {
      * Matches "If your opponent has a 《C》, [also] gain 《C》."
      * Grants 1 Crystal only when the opponent currently holds at least one Crystal.
      */
-    private static final Pattern GAIN_CRYSTAL_IF_OPPONENT_HAS = Pattern.compile(
+    static final Pattern GAIN_CRYSTAL_IF_OPPONENT_HAS = Pattern.compile(
         "(?i)If\\s+your\\s+opponent\\s+has\\s+a\\s+《C》,\\s+(?:also\\s+)?gain\\s+《C》[.!]?"
     );
 
@@ -4217,7 +4241,7 @@ public class ActionResolver {
      * Matches "Draw N card(s), then place M card(s) from your hand at the bottom of your deck."
      * Group 1 = draw count, Group 2 = place count.
      */
-    private static final Pattern DRAW_THEN_PLACE_HAND_TO_BOTTOM = Pattern.compile(
+    static final Pattern DRAW_THEN_PLACE_HAND_TO_BOTTOM = Pattern.compile(
         "(?i)Draw\\s+(\\d+)\\s+cards?[,.]?\\s+then\\s+place\\s+(\\d+)\\s+cards?\\s+from\\s+your\\s+hand\\s+at\\s+the\\s+bottom\\s+of\\s+your\\s+deck[.!]?"
     );
 
@@ -4227,7 +4251,7 @@ public class ActionResolver {
      * is sized by how many cards the player actually returned, which may be none.
      * Group {@code max} = the cap on cards returned.
      */
-    private static final Pattern PLACE_UP_TO_HAND_TO_BOTTOM_THEN_REDRAW = Pattern.compile(
+    static final Pattern PLACE_UP_TO_HAND_TO_BOTTOM_THEN_REDRAW = Pattern.compile(
         "(?i)place\\s+up\\s+to\\s+(?<max>\\d+)\\s+cards?\\s+from\\s+your\\s+hand\\s+at\\s+the\\s+bottom\\s+" +
         "of\\s+your\\s+deck(?:\\s+in\\s+any\\s+order)?[.,]?\\s+Then[,.]?\\s+draw\\s+the\\s+same\\s+number\\s+" +
         "of\\s+cards?\\s+as\\s+(?:were|was)\\s+returned\\s+to\\s+your\\s+deck[.!]?"
@@ -4239,7 +4263,7 @@ public class ActionResolver {
      * a conditional effect clause.
      * Groups: {@code cost} — the raw CP token(s); {@code followup} — the effect text after the condition.
      */
-    private static final Pattern PAY_CP_WHEN_DO_SO = Pattern.compile(
+    static final Pattern PAY_CP_WHEN_DO_SO = Pattern.compile(
         "(?i)^\\s*pay\\s+(?<cost>(?:《[^》]+》\\s*)+)[.!]?\\s+When\\s+you\\s+do\\s+so[,.]?\\s+(?<followup>.+)$",
         Pattern.DOTALL
     );
@@ -4258,7 +4282,7 @@ public class ActionResolver {
      *   <li>Group {@code consequence} — what happens when the cost goes unpaid</li>
      * </ul>
      */
-    private static final Pattern IF_NOT_PAY_OR_ELSE = Pattern.compile(
+    static final Pattern IF_NOT_PAY_OR_ELSE = Pattern.compile(
         "(?i)^(?:you\\s+may\\s+)?(?:pay\\s+《[^》]+》[.!]?\\s+)?" +
         "if\\s+you\\s+don'?t\\s+pay\\s+《(?<cost>[^》]+)》\\s*,\\s+(?<consequence>.+)$",
         Pattern.DOTALL
@@ -4298,13 +4322,13 @@ public class ActionResolver {
         Pattern.DOTALL
     );
 
-    private static final Pattern DRAW_DISCARD_RETRIGGER_IF_CARD_NAME = Pattern.compile(
+    static final Pattern DRAW_DISCARD_RETRIGGER_IF_CARD_NAME = Pattern.compile(
         "(?i)^Draw\\s+(?<draw>\\d+)\\s+cards?\\s+then\\s+discard\\s+(?<discard>\\d+)\\s+cards?[.!]?\\s+" +
         "If\\s+you\\s+discard\\s+a\\s+Card\\s+Name\\s+(?<name>.+?)\\s+by\\s+this\\s+effect,\\s+" +
         "trigger\\s+this\\s+auto-ability\\s+again[.!]?\\s*$"
     );
 
-    private static final Pattern DRAW_CARDS = Pattern.compile(
+    static final Pattern DRAW_CARDS = Pattern.compile(
         "(?i)^Draw\\s+(\\d+)\\s+cards?(?:\\s*[,.]?\\s*then\\s+discard\\s+(\\d+)\\s+cards?)?[.!]?"
     );
 
@@ -4315,7 +4339,7 @@ public class ActionResolver {
      *   <li>Group 2 — number of cards to draw afterward</li>
      * </ul>
      */
-    private static final Pattern DISCARD_THEN_DRAW = Pattern.compile(
+    static final Pattern DISCARD_THEN_DRAW = Pattern.compile(
         "(?i)^Discard\\s+(\\d+)\\s+cards?[,.]?\\s+then\\s+draw\\s+(\\d+)\\s+cards?[.!]?"
     );
 
@@ -4325,7 +4349,7 @@ public class ActionResolver {
      *   <li>Group {@code amount} — number of damage points dealt to the opponent player</li>
      * </ul>
      */
-    private static final Pattern DEAL_PLAYER_DAMAGE_TO_OPPONENT = Pattern.compile(
+    static final Pattern DEAL_PLAYER_DAMAGE_TO_OPPONENT = Pattern.compile(
         "(?i).+?\\s+deals?\\s+your\\s+opponent\\s+(?<amount>\\d+)\\s+points?\\s+of\\s+damage[.!]?"
     );
 
@@ -4335,7 +4359,7 @@ public class ActionResolver {
      *   <li>Group {@code amount} — number of damage points dealt to the ability user</li>
      * </ul>
      */
-    private static final Pattern DEAL_PLAYER_DAMAGE_TO_SELF = Pattern.compile(
+    static final Pattern DEAL_PLAYER_DAMAGE_TO_SELF = Pattern.compile(
         "(?i)(?:.+?\\s+deals?\\s+you|receive)\\s+(?<amount>\\d+)\\s+points?\\s+of\\s+damage[.!]?"
     );
 
@@ -4350,7 +4374,7 @@ public class ActionResolver {
      *   <li>Group {@code opponent}   — present when "opponent controls" appears</li>
      * </ul>
      */
-    private static final Pattern DEAL_DAMAGE_TO_FORWARDS = Pattern.compile(
+    static final Pattern DEAL_DAMAGE_TO_FORWARDS = Pattern.compile(
         "(?i)Deal\\s+(?<amount>\\d+)\\s+damage\\s+to\\s+all(?:\\s+the)?\\s+" +
         "(?:(?<condition>damaged|dull|attacking|blocking|active)\\s+)?" +
         "Forwards?" +
@@ -4361,7 +4385,7 @@ public class ActionResolver {
     );
 
     /** Matches "Deal N damage to [all] Forwards of all Elements except [Element]." */
-    private static final Pattern DEAL_DAMAGE_TO_FORWARDS_EXCEPT_ELEMENT = Pattern.compile(
+    static final Pattern DEAL_DAMAGE_TO_FORWARDS_EXCEPT_ELEMENT = Pattern.compile(
         "(?i)Deal\\s+(?<amount>\\d+)\\s+damage\\s+to\\s+(?:all(?:\\s+the)?\\s+)?Forwards?\\s+" +
         "of\\s+all\\s+Elements?\\s+except\\s+(?<excludeelem>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)[.!]?"
     );
@@ -4371,24 +4395,24 @@ public class ActionResolver {
      * Then, remove from the top of your deck twice the number of cards removed by the previous effect."
      * Groups: {@code elem1}, {@code elem2}.
      */
-    private static final Pattern RFP_ALL_FWD_EXCEPT_ELEMENTS_THEN_TWICE_DECK = Pattern.compile(
+    static final Pattern RFP_ALL_FWD_EXCEPT_ELEMENTS_THEN_TWICE_DECK = Pattern.compile(
         "(?i)Remove\\s+from\\s+(?:the\\s+)?game\\s+all\\s+(?:the\\s+)?Forwards?\\s+on\\s+(?:the\\s+)?field\\s+" +
         "other\\s+than\\s+(?<elem1>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+and\\s+(?<elem2>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)[.!]?\\s*" +
         "Then,?\\s+remove\\s+from\\s+the\\s+top\\s+of\\s+your\\s+deck\\s+twice\\s+the\\s+number\\s+of\\s+cards\\s+removed\\s+by\\s+(?:the\\s+)?previous\\s+effect[.!]?"
     );
 
     /** Matches "No Forward of cost N or less/more can attack this turn." */
-    private static final Pattern NO_FORWARD_COST_CANNOT_ATTACK = Pattern.compile(
+    static final Pattern NO_FORWARD_COST_CANNOT_ATTACK = Pattern.compile(
         "(?i)No\\s+Forward(?:\\s+of\\s+cost\\s+(?<cost>\\d+)(?:\\s+or\\s+(?<costcmp>less|more))?)?\\s+can\\s+attack\\s+this\\s+turn[.!]?"
     );
 
     /** Matches "During this turn, the Forwards you control cannot be chosen by EX Bursts." */
-    private static final Pattern OWN_FORWARDS_CANNOT_BE_CHOSEN_BY_EX_BURST = Pattern.compile(
+    static final Pattern OWN_FORWARDS_CANNOT_BE_CHOSEN_BY_EX_BURST = Pattern.compile(
         "(?i)During\\s+this\\s+turn,?\\s+the\\s+Forwards?\\s+you\\s+control\\s+cannot\\s+be\\s+chosen\\s+by\\s+EX\\s+Bursts?[.!]?"
     );
 
     /** Matches "EX Bursts of cards put into the Damage Zone due to this ability cannot be used." */
-    private static final Pattern EX_BURST_SUPPRESSION_PATTERN = Pattern.compile(
+    static final Pattern EX_BURST_SUPPRESSION_PATTERN = Pattern.compile(
         "(?i)EX\\s+Bursts?\\s+of\\s+cards?\\s+put\\s+into\\s+the\\s+Damage\\s+Zone\\s+due\\s+to\\s+this\\s+ability\\s+cannot\\s+be\\s+used[.!]?"
     );
 
@@ -4396,7 +4420,7 @@ public class ActionResolver {
      * Alternate word order: "Deal all [the] [condition] Forwards [of cost N] [other than Job Y] [opponent controls] X damage."
      * Same named groups as {@link #DEAL_DAMAGE_TO_FORWARDS} so {@link #tryParseDealDamageToForwards} can share extraction logic.
      */
-    private static final Pattern DEAL_DAMAGE_TO_FORWARDS_ALT = Pattern.compile(
+    static final Pattern DEAL_DAMAGE_TO_FORWARDS_ALT = Pattern.compile(
         "(?i)Deal\\s+all(?:\\s+the)?\\s+" +
         "(?:(?<condition>damaged|dull|attacking|blocking|active)\\s+)?" +
         "Forwards?" +
@@ -4417,7 +4441,7 @@ public class ActionResolver {
      *   <li>Group {@code opponent}  — present when "opponent controls" appears</li>
      * </ul>
      */
-    private static final Pattern DEAL_DAMAGE_TO_FORWARDS_FOR_EACH = Pattern.compile(
+    static final Pattern DEAL_DAMAGE_TO_FORWARDS_FOR_EACH = Pattern.compile(
         "(?i)Deal\\s+(?<base>\\d+)\\s+damage\\s+for\\s+each\\s+" +
         "(?:(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?" +
         "(?:Category\\s+(?<category>\\S+)\\s+)?" +
@@ -4434,7 +4458,7 @@ public class ActionResolver {
      * Matches "For each Job [job] and[/or] Card [Nn]ame [name] you control, deal N damage to all Forwards [opponent controls]."
      * Groups: {@code job}, {@code cardname}, {@code amount}, {@code opponent}.
      */
-    private static final Pattern FOR_EACH_JOB_AND_NAME_DEAL_DAMAGE_TO_FORWARDS = Pattern.compile(
+    static final Pattern FOR_EACH_JOB_AND_NAME_DEAL_DAMAGE_TO_FORWARDS = Pattern.compile(
         "(?i)^For\\s+each\\s+Job\\s+(?<job>.+?)\\s+and(?:/or)?\\s+Card\\s+[Nn]ame\\s+(?<cardname>.+?)\\s+you\\s+control,?\\s+" +
         "deal\\s+(?<amount>\\d+)\\s+damage\\s+to\\s+all(?:\\s+the)?\\s+Forwards?" +
         "(?:\\s+(?<opponent>(?:your\\s+)?opponent\\s+controls))?[.!]?$"
@@ -4456,7 +4480,7 @@ public class ActionResolver {
      * Groups: {@code base} — fixed base damage; {@code per} — additional per copy; {@code cardname} — name filter;
      * {@code opponent} — present when "opponent controls" appears.
      */
-    private static final Pattern DEAL_BASE_PLUS_BZ_NAME_DAMAGE_TO_FORWARDS = Pattern.compile(
+    static final Pattern DEAL_BASE_PLUS_BZ_NAME_DAMAGE_TO_FORWARDS = Pattern.compile(
         "(?i)^deal\\s+(?<base>\\d+)\\s+damage\\s+and\\s+(?<per>\\d+)\\s+more\\s+damage\\s+" +
         "for\\s+each\\s+Card\\s+Name\\s+(?<cardname>.+?)\\s+in\\s+your\\s+Break\\s+Zone\\s+" +
         "to\\s+all(?:\\s+the)?\\s+Forwards?" +
@@ -4480,7 +4504,7 @@ public class ActionResolver {
      *   <li>Group {@code name}   — name of the card being blocked</li>
      * </ul>
      */
-    private static final Pattern DAMAGE_TO_COMBAT_BLOCKER = Pattern.compile(
+    static final Pattern DAMAGE_TO_COMBAT_BLOCKER = Pattern.compile(
         "(?i)Deal\\s+(?<amount>\\d+)\\s+damage\\s+to\\s+the\\s+Forward\\s+that\\s+blocks?\\s+(?<name>.+?)[.!]?$"
     );
 
@@ -4492,7 +4516,7 @@ public class ActionResolver {
      *   <li>Group {@code opponent}  — present when "opponent controls" appears</li>
      * </ul>
      */
-    private static final Pattern DEAL_HALF_POWER_DAMAGE_TO_FORWARDS = Pattern.compile(
+    static final Pattern DEAL_HALF_POWER_DAMAGE_TO_FORWARDS = Pattern.compile(
         "(?i)Deal\\s+each(?:\\s+the)?\\s+" +
         "(?:(?<condition>damaged|dull|attacking|blocking)\\s+)?" +
         "Forwards?\\s+" +
@@ -4506,7 +4530,7 @@ public class ActionResolver {
      * Matches "Deal each [condition] Forward[s] [opponent controls] damage equal to its power minus N."
      * Groups: {@code condition}, {@code opponent}, {@code amount}.
      */
-    private static final Pattern DEAL_POWER_MINUS_N_DAMAGE_TO_FORWARDS = Pattern.compile(
+    static final Pattern DEAL_POWER_MINUS_N_DAMAGE_TO_FORWARDS = Pattern.compile(
         "(?i)Deal\\s+each(?:\\s+the)?\\s+" +
         "(?:(?<condition>damaged|dull|attacking|blocking)\\s+)?" +
         "Forwards?\\s+" +
@@ -4525,7 +4549,7 @@ public class ActionResolver {
      *   <li>Group {@code rounding}   — "up" or "down" (absent defaults to round down)</li>
      * </ul>
      */
-    private static final Pattern DEAL_HALF_SOURCE_POWER_DAMAGE_TO_FORWARDS = Pattern.compile(
+    static final Pattern DEAL_HALF_SOURCE_POWER_DAMAGE_TO_FORWARDS = Pattern.compile(
         "(?i)Deal\\s+damage\\s+equal\\s+to\\s+half\\s+of\\s+(?<sourcename>.+?)'s\\s+power\\s+" +
         "to\\s+all(?:\\s+the)?\\s+" +
         "(?:(?<condition>damaged|dull|attacking|blocking)\\s+)?" +
@@ -4548,7 +4572,7 @@ public class ActionResolver {
      *   <li>{@code floorone} — present when "(it cannot become 0)" clause is present</li>
      * </ul>
      */
-    private static final Pattern COST_REDUCTION_THIS_TURN = Pattern.compile(
+    static final Pattern COST_REDUCTION_THIS_TURN = Pattern.compile(
         "(?i)During\\s+this\\s+turn,\\s+the\\s+cost\\s+required\\s+to\\s+cast\\s+your\\s+next\\s+" +
         "(?:(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?" +
         "(?:Category\\s+(?<category>\\S+)\\s+)?" +
@@ -4566,7 +4590,7 @@ public class ActionResolver {
      * Matches "The cost required to play your [filter] onto the field this turn is reduced by N
      * [(it cannot become 0)][.]" — applies to all matching plays this turn (not consumed on use).
      */
-    private static final Pattern PLAY_COST_REDUCTION_THIS_TURN = Pattern.compile(
+    static final Pattern PLAY_COST_REDUCTION_THIS_TURN = Pattern.compile(
         "(?i)The\\s+cost\\s+required\\s+to\\s+(?:play|cast)\\s+your\\s+" +
         "(?:(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?" +
         "(?:Category\\s+(?<category>\\S+)\\s+)?" +
@@ -4584,7 +4608,7 @@ public class ActionResolver {
      *   <li>Group {@code floorone} — present when "(it cannot become 0)" clause appears</li>
      * </ul>
      */
-    private static final Pattern CHOOSE_SUMMON_FROM_BZ_TO_HAND_WITH_COST_REDUCTION = Pattern.compile(
+    static final Pattern CHOOSE_SUMMON_FROM_BZ_TO_HAND_WITH_COST_REDUCTION = Pattern.compile(
         "(?i)Choose\\s+1\\s+Summon\\s+in\\s+your\\s+Break\\s+Zone[.!]?\\s+" +
         "Add\\s+it\\s+to\\s+your\\s+hand[.!]?\\s+" +
         "During\\s+this\\s+turn,?\\s+the\\s+cost\\s+required\\s+to\\s+cast\\s+your\\s+next\\s+Summon\\s+" +
@@ -4596,7 +4620,7 @@ public class ActionResolver {
      * Matches "Choose N Summons in your Break Zone. Add 1 of them to your hand, and remove the rest from the game."
      * Group {@code total} — number of Summons to choose.
      */
-    private static final Pattern CHOOSE_N_SUMMONS_BZ_PICK_ONE_HAND_REST_RFG = Pattern.compile(
+    static final Pattern CHOOSE_N_SUMMONS_BZ_PICK_ONE_HAND_REST_RFG = Pattern.compile(
         "(?i)Choose\\s+(?<total>\\d+)\\s+Summons?\\s+in\\s+your\\s+Break\\s+Zone[.!]?\\s+" +
         "Add\\s+1\\s+of\\s+them\\s+to\\s+your\\s+hand[,.]?(?:\\s+and)?\\s+remove\\s+the\\s+rest\\s+from\\s+the\\s+game[.!]?\\s*$"
     );
@@ -4610,7 +4634,7 @@ public class ActionResolver {
      *   <li>Group {@code amount}  — cost reduction applied to that Summon's next cast</li>
      * </ul>
      */
-    private static final Pattern CHOOSE_SUMMON_IN_BZ_CASTABLE = Pattern.compile(
+    static final Pattern CHOOSE_SUMMON_IN_BZ_CASTABLE = Pattern.compile(
         "(?i)Choose\\s+1\\s+(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+Summon\\s+in\\s+your\\s+Break\\s+Zone[.!]?\\s+" +
         "You\\s+can\\s+cast\\s+it\\s+at\\s+any\\s+time\\s+you\\s+could\\s+normally\\s+cast\\s+it\\s+this\\s+turn[.!]?\\s+" +
         "The\\s+cost\\s+required\\s+to\\s+cast\\s+it\\s+is\\s+reduced\\s+by\\s+(?<amount>\\d+)[.!]?"
@@ -4621,7 +4645,7 @@ public class ActionResolver {
      * it and/or] cast it as though you owned it at any time you could normally cast it. The cost for
      * casting it [is reduced by N and] can be paid using CP of any Element." (Lani 12-018H, Zidane 16-048H)
      */
-    private static final Pattern OPP_RFP_TOPDECK_CASTABLE = Pattern.compile(
+    static final Pattern OPP_RFP_TOPDECK_CASTABLE = Pattern.compile(
         "(?is)your\\s+opponent\\s+removes\\s+the\\s+top\\s+card\\s+of\\s+their\\s+deck\\s+from\\s+the\\s+game(?:\\s+face\\s+down)?[.!]?\\s+" +
         "You\\s+can\\s+(?:look\\s+at\\s+it\\s+and/or\\s+)?cast\\s+it\\s+as\\s+though\\s+you\\s+owned\\s+it\\s+at\\s+any\\s+time\\s+you\\s+could\\s+normally\\s+cast\\s+it[.!]?" +
         "(?<cost>.*)$"
@@ -4632,7 +4656,7 @@ public class ActionResolver {
      * game. [During this game,] you can cast it as though you owned it at any time you could normally
      * cast it." (Bel Dat 20-056H — Forward; Zidane 24-044H — Character)
      */
-    private static final Pattern CHOOSE_FROM_OPP_BZ_CASTABLE = Pattern.compile(
+    static final Pattern CHOOSE_FROM_OPP_BZ_CASTABLE = Pattern.compile(
         "(?is)Choose\\s+1\\s+(?<type>Forwards?|Backups?|Monsters?|Characters?)\\s+in\\s+your\\s+opponent'?s\\s+Break\\s+Zone[.!]?\\s+" +
         "Remove\\s+it\\s+from\\s+the\\s+game[.!]?\\s+" +
         "(?:During\\s+this\\s+game,?\\s+)?[Yy]ou\\s+can\\s+cast\\s+it\\s+as\\s+though\\s+you\\s+owned\\s+it\\s+at\\s+any\\s+time\\s+you\\s+could\\s+normally\\s+cast\\s+it[.!]?"
@@ -4644,7 +4668,7 @@ public class ActionResolver {
      * it/them ]at any time you could normally cast it/them ..." (Shantotto 23-067R; also the plain
      * "you can cast it at any time you could normally cast it" phrasing without "as though you owned it").
      */
-    private static final Pattern CHOOSE_SUMMONS_FROM_BZ_GAME = Pattern.compile(
+    static final Pattern CHOOSE_SUMMONS_FROM_BZ_GAME = Pattern.compile(
         "(?is)[Cc]hoose\\s+(?<count>\\d+)\\s+Summons?\\s+(?:in|from)\\s+(?<scope>your\\s+and/or\\s+your\\s+opponent'?s|either\\s+player'?s|your\\s+opponent'?s|your)\\s+Break\\s+Zone[.!]?\\s+" +
         "Remove\\s+(?:it|them)\\s+from\\s+the\\s+game[.!]?\\s+" +
         "During\\s+this\\s+game,?\\s+you\\s+can\\s+cast\\s+(?:it|them)\\s+" +
@@ -4656,7 +4680,7 @@ public class ActionResolver {
      * cast it as though you owned it this turn. [If you cast it, remove that Summon from the game after
      * use instead of putting it in the Break Zone.]" (Krile 12-061L)
      */
-    private static final Pattern CHOOSE_SUMMONS_FROM_BZ_TURN = Pattern.compile(
+    static final Pattern CHOOSE_SUMMONS_FROM_BZ_TURN = Pattern.compile(
         "(?is)[Cc]hoose\\s+(?<count>\\d+)\\s+Summons?\\s+from\\s+(?<scope>your\\s+and/or\\s+your\\s+opponent'?s|either\\s+player'?s|your\\s+opponent'?s|your)\\s+Break\\s+Zone[.!]?\\s+" +
         "You\\s+can\\s+cast\\s+(?:it|them)\\s+as\\s+though\\s+you\\s+owned\\s+(?:it|them)\\s+this\\s+turn[.!]?" +
         "(?<rfg>.*)$"
@@ -4666,7 +4690,7 @@ public class ActionResolver {
      * "Choose 1 Summon of cost N or less in your Break Zone. Cast it without paying the cost.
      * Remove that Summon from the game after use instead of putting it in the Break Zone."
      */
-    private static final Pattern CHOOSE_SUMMON_IN_BZ_MAX_COST_FREE_CAST_RFG = Pattern.compile(
+    static final Pattern CHOOSE_SUMMON_IN_BZ_MAX_COST_FREE_CAST_RFG = Pattern.compile(
         "(?is)Choose\\s+1\\s+Summon\\s+of\\s+cost\\s+(?<cost>\\d+)\\s+or\\s+less\\s+in\\s+your\\s+Break\\s+Zone[.!]?\\s+" +
         "Cast\\s+it\\s+without\\s+paying\\s+the\\s+cost[.!]?\\s+" +
         "Remove\\s+that\\s+Summon\\s+from\\s+the\\s+game\\s+after\\s+use\\s+instead\\s+of\\s+putting\\s+it\\s+in\\s+the\\s+Break\\s+Zone[.!]?"
@@ -4676,7 +4700,7 @@ public class ActionResolver {
      * "Choose 1 Forward with N power or less and up to 1 Forward in your opponent's Break Zone.
      * Remove them from the game."
      */
-    private static final Pattern CHOOSE_FWD_POWER_LE_AND_OPT_OPP_BZ_FWD_RFP = Pattern.compile(
+    static final Pattern CHOOSE_FWD_POWER_LE_AND_OPT_OPP_BZ_FWD_RFP = Pattern.compile(
         "(?i)Choose\\s+1\\s+Forward\\s+with\\s+(?<power>\\d+)\\s+power\\s+or\\s+less" +
         "\\s+and\\s+up\\s+to\\s+1\\s+Forward\\s+in\\s+your\\s+opponent(?:'s)?\\s+Break\\s+Zone[.!]?\\s+" +
         "Remove\\s+them\\s+from\\s+(?:the\\s+)?game[.!]?"
@@ -4701,7 +4725,7 @@ public class ActionResolver {
      * Matches "Until the end of the turn, [CardName] also becomes a Forward with N power."
      * Used for action abilities on Monsters.  Group {@code power} captures the power value.
      */
-    private static final Pattern BECOME_FORWARD_UNTIL_EOT_PATTERN = Pattern.compile(
+    static final Pattern BECOME_FORWARD_UNTIL_EOT_PATTERN = Pattern.compile(
         "(?i)^Until\\s+the\\s+end\\s+of\\s+the\\s+turn,\\s+.+?\\s+also\\s+becomes?\\s+a\\s+Forward\\s+with\\s+(?<power>\\d+)\\s+power"
     );
 
@@ -4739,7 +4763,7 @@ public class ActionResolver {
      * Matches "If the CP paid to cast [Name] was only produced by Backups, [also] draw N card(s)."
      * Group {@code count} — number of cards to draw.
      */
-    private static final Pattern BACKUP_CP_DRAW = Pattern.compile(
+    static final Pattern BACKUP_CP_DRAW = Pattern.compile(
         "(?i)If\\s+the\\s+CP\\s+paid\\s+to\\s+cast\\s+.+?\\s+was\\s+only\\s+produced\\s+by\\s+Backups?," +
         "\\s+(?:also\\s+)?draw\\s+(?<count>\\d+)\\s+cards?[.!]?"
     );
@@ -4752,7 +4776,7 @@ public class ActionResolver {
      *   <li>{@code instead} — present when "instead" immediately follows the effect</li>
      * </ul>
      */
-    private static final Pattern OPPONENT_HAND_CONDITION_PATTERN = Pattern.compile(
+    static final Pattern OPPONENT_HAND_CONDITION_PATTERN = Pattern.compile(
         "(?i)^If\\s+your\\s+opponent\\s+has\\s+" +
         // Each branch carries its own trailing noun: the "no" branch ("no cards in their hand")
         // needs it, while "N cards or less" already consumes one "cards" and the real card wording
@@ -4768,7 +4792,7 @@ public class ActionResolver {
      * Fires the inner effect only when the opponent's hand meets the minimum threshold.
      * Groups: {@code n} — minimum hand size; {@code effect} — the conditional effect text.
      */
-    private static final Pattern OPPONENT_HAND_MIN_CONDITION_PATTERN = Pattern.compile(
+    static final Pattern OPPONENT_HAND_MIN_CONDITION_PATTERN = Pattern.compile(
         "(?i)^If\\s+your\\s+opponent\\s+has\\s+(?<n>\\d+)\\s+cards?\\s+or\\s+more\\s+in\\s+" +
         "(?:his/her|his|her|their)\\s+hand,?\\s*" +
         "(?<effect>.+?)\\s*[.!]?$"
@@ -4783,7 +4807,7 @@ public class ActionResolver {
      *   <li>{@code effect2} — action applied when handSize == 0 (overrides effect1)</li>
      * </ul>
      */
-    private static final Pattern OPPONENT_HAND_DOUBLE_CONDITION_PATTERN = Pattern.compile(
+    static final Pattern OPPONENT_HAND_DOUBLE_CONDITION_PATTERN = Pattern.compile(
         "(?i)^If\\s+your\\s+opponent\\s+has\\s+(?<n>\\d+)\\s+cards?\\s+or\\s+less\\s+cards?\\s+in\\s+" +
         "(?:his/her|his|her|their)\\s+hand,?\\s*(?<effect1>.+?)[.!]\\s+" +
         "If\\s+your\\s+opponent\\s+has\\s+no\\s+cards?\\s+in\\s+" +
@@ -4798,7 +4822,7 @@ public class ActionResolver {
      *   <li>{@code amount} — damage to deal when the condition is met</li>
      * </ul>
      */
-    private static final Pattern FOLLOWUP_IF_OPPONENT_CONTROLS_FORWARDS_DAMAGE = Pattern.compile(
+    static final Pattern FOLLOWUP_IF_OPPONENT_CONTROLS_FORWARDS_DAMAGE = Pattern.compile(
         "(?i)^If\\s+your\\s+opponent\\s+controls\\s+(?<count>\\d+)\\s+or\\s+more\\s+Forwards?,\\s+" +
         "deal\\s+(?:it|them)\\s+(?<amount>\\d+)\\s+damage[.!]?$"
     );
@@ -4813,7 +4837,7 @@ public class ActionResolver {
      *   <li>{@code amount}  — damage to deal when the condition is met</li>
      * </ul>
      */
-    private static final Pattern FOLLOWUP_IF_SELF_CONTROLS_N_ELEMENT_TYPE_DAMAGE = Pattern.compile(
+    static final Pattern FOLLOWUP_IF_SELF_CONTROLS_N_ELEMENT_TYPE_DAMAGE = Pattern.compile(
         "(?i)^If\\s+you\\s+control\\s+(?<count>\\d+)\\s+or\\s+more\\s+" +
         "(?:(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?" +
         "(?<type>Forwards?|Backups?|Monsters?|Characters?|Summons?),?\\s+" +
@@ -4829,7 +4853,7 @@ public class ActionResolver {
      * <p>{@code action} is handed to {@link #parseTargetAction}, so this only takes effect for
      * actions that machinery recognises; anything else falls through to the handlers below.
      */
-    private static final Pattern FOLLOWUP_IF_SELF_CONTROLS_N_ELEMENT_TYPE_ACTION = Pattern.compile(
+    static final Pattern FOLLOWUP_IF_SELF_CONTROLS_N_ELEMENT_TYPE_ACTION = Pattern.compile(
         "(?i)^If\\s+you\\s+control\\s+(?<count>\\d+)\\s+or\\s+more\\s+" +
         "(?:(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?" +
         "(?<type>Forwards?|Backups?|Monsters?|Characters?|Summons?),?\\s+" +
@@ -5857,45 +5881,7 @@ public class ActionResolver {
         return null;
     }
 
-    /**
-     * Parses "If your opponent has [no | N cards or less] cards in his/her hand, [effect]."
-     * The inner effect is parsed recursively; returns {@code null} if the inner effect is
-     * not yet supported.
-     */
-    private static Consumer<GameContext> tryParseConditionalOpponentHand(
-            String text, CardData source, int xValue) {
-        Matcher m = OPPONENT_HAND_CONDITION_PATTERN.matcher(text.trim());
-        if (!m.matches()) return null;
-        String nStr      = m.group("n");
-        int    threshold = nStr != null ? Integer.parseInt(nStr) : 0;
-        String innerText = m.group("effect").trim();
-        Consumer<GameContext> inner = parse(innerText, source, xValue);
-        if (inner == null) return null;
-        return ctx -> {
-            int hs = ctx.opponentHandSize();
-            boolean condMet = (nStr != null) ? hs <= threshold : hs == 0;
-            if (!condMet) return;
-            ctx.logEntry("[Hand condition] opponent has " + hs
-                    + " card(s) — " + innerText);
-            inner.accept(ctx);
-        };
-    }
 
-    private static Consumer<GameContext> tryParseConditionalOpponentHandMin(
-            String text, CardData source, int xValue) {
-        Matcher m = OPPONENT_HAND_MIN_CONDITION_PATTERN.matcher(text.trim());
-        if (!m.matches()) return null;
-        int minThreshold = Integer.parseInt(m.group("n"));
-        String innerText = m.group("effect").trim();
-        Consumer<GameContext> inner = parse(innerText, source, xValue);
-        if (inner == null) return null;
-        return ctx -> {
-            int hs = ctx.opponentHandSize();
-            if (hs < minThreshold) return;
-            ctx.logEntry("[Hand condition] opponent has " + hs + " card(s) — " + innerText);
-            inner.accept(ctx);
-        };
-    }
 
     /** Returns the name of the first pattern that matches {@code effectText}, or {@code null}. */
     public static String matchedPatternName(String effectText, CardData source) {
@@ -6815,381 +6801,15 @@ public class ActionResolver {
      * reverse-index order so that breaks (which shift the list) do not corrupt
      * subsequent indices.
      */
-    /**
-     * Parses "[if cond,] Select N of the M following actions. "a" "b" ...".
-     * Returns an effect that asks the player to choose {@code select} of the quoted
-     * sub-actions (via {@link GameContext#chooseActions}), then re-parses and applies
-     * each chosen sub-action. Returns {@code null} if the text is not this shape.
-     */
-    private static Consumer<GameContext> tryParseSelectFollowingActions(String text, CardData source) {
-        Matcher m = SELECT_FOLLOWING_ACTIONS.matcher(text);
-        if (!m.find()) return null;
 
-        final boolean baseUpTo      = m.group("upTo") != null;
-        final int     baseSelect    = Integer.parseInt(m.group("select"));
-        String actionsRaw = m.group("actions");
 
-        // Detect inline conditional upgrade:
-        // "If you control N or more [E] [T], select [up to] M of the K following actions instead."
-        final boolean hasCondUpgrade;
-        final int     condMinCount;
-        final String  condElem;
-        final boolean condInclFwd, condInclBkp, condInclMon;
-        final boolean condUpTo;
-        final int     condSelect;
 
-        Matcher upgradeM = SELECT_FOLLOWING_ACTIONS_CONDITIONAL_UPGRADE.matcher(actionsRaw);
-        if (upgradeM.find()) {
-            hasCondUpgrade = true;
-            condMinCount   = Integer.parseInt(upgradeM.group("condCount"));
-            condElem       = upgradeM.group("condElement");
-            String ct      = upgradeM.group("condType").toLowerCase();
-            condInclFwd    = ct.startsWith("forward") || ct.startsWith("character");
-            condInclBkp    = ct.startsWith("backup")  || ct.startsWith("character");
-            condInclMon    = ct.startsWith("monster")  || ct.startsWith("character");
-            condUpTo       = upgradeM.group("condUpTo") != null;
-            condSelect     = Integer.parseInt(upgradeM.group("condSelect"));
-            actionsRaw     = actionsRaw.substring(upgradeM.end());
-        } else {
-            hasCondUpgrade = false;
-            condMinCount   = 0; condElem = null;
-            condInclFwd    = false; condInclBkp = false; condInclMon = false;
-            condUpTo       = false; condSelect   = 0;
-        }
 
-        // Detect an opponent-hand-size upgrade:
-        // "If your opponent has [no|N cards or less] cards in their hand, select [up to] M ... instead."
-        final boolean hasHandUpgrade;
-        final int     handUpgThreshold;
-        final boolean handUpgUpTo;
-        final int     handUpgSelect;
 
-        Matcher handUpM = SELECT_FOLLOWING_ACTIONS_HAND_UPGRADE.matcher(actionsRaw);
-        if (handUpM.find()) {
-            hasHandUpgrade   = true;
-            handUpgThreshold = handUpM.group("handCount") != null ? Integer.parseInt(handUpM.group("handCount")) : 0;
-            handUpgUpTo      = handUpM.group("handUpTo") != null;
-            handUpgSelect    = Integer.parseInt(handUpM.group("handSelect"));
-            actionsRaw       = actionsRaw.substring(handUpM.end());
-        } else {
-            hasHandUpgrade   = false;
-            handUpgThreshold = 0; handUpgUpTo = false; handUpgSelect = 0;
-        }
 
-        Matcher qm = SELECT_FOLLOWING_QUOTED_ACTION.matcher(actionsRaw);
-        List<String> actions = new ArrayList<>();
-        while (qm.find()) actions.add(qm.group(1).trim());
-        if (actions.isEmpty()) return null;
 
-        return ctx -> {
-            int     effSelect = baseSelect;
-            boolean effUpTo   = baseUpTo;
-            if (hasCondUpgrade
-                    && ctx.selfFieldCount(condElem, condInclFwd, condInclBkp, condInclMon) >= condMinCount) {
-                effSelect = condSelect;
-                effUpTo   = condUpTo;
-            }
-            if (hasHandUpgrade && ctx.opponentHandSize() <= handUpgThreshold) {
-                effSelect = handUpgSelect;
-                effUpTo   = handUpgUpTo;
-            }
-            List<String> chosen = ctx.chooseActions(source, actions, effSelect, effUpTo);
-            if (chosen == null || chosen.isEmpty()) {
-                ctx.logEntry("Select actions — none chosen");
-                return;
-            }
-            for (String actionText : chosen) {
-                Consumer<GameContext> effect = parse(actionText, source);
-                if (effect == null) {
-                    ctx.logEntry("Select actions — unrecognized: " + actionText);
-                } else {
-                    ctx.logEntry((ctx.isP1() ? "Selected: " : "AI selected ") + actionText);
-                    effect.accept(ctx);
-                }
-            }
-        };
-    }
 
-    /** Parses "Divide N damage equally among all the [type] [you control|opponent controls]." — no target choice. */
-    private static Consumer<GameContext> tryParseDivideDamageEquallyAmongAll(String text) {
-        Matcher m = DIVIDE_DAMAGE_EQUALLY_AMONG_ALL.matcher(text.trim());
-        if (!m.find()) return null;
 
-        int    damage    = Integer.parseInt(m.group("amount"));
-        String control    = m.group("control");
-        boolean opponentOnly = control != null && !control.equalsIgnoreCase("you control");
-        boolean selfOnly     = control != null && control.equalsIgnoreCase("you control");
-        boolean unreduced    = CANNOT_BE_REDUCED_PATTERN.matcher(text).find();
-
-        return ctx -> {
-            boolean oppIsP2  = opponentOnly && ctx.isP1();
-            boolean oppIsP1  = opponentOnly && !ctx.isP1();
-            boolean selfIsP1 = selfOnly && ctx.isP1();
-            boolean selfIsP2 = selfOnly && !ctx.isP1();
-            boolean inclP2   = (!opponentOnly && !selfOnly) || oppIsP2 || selfIsP2;
-            boolean inclP1   = (!opponentOnly && !selfOnly) || oppIsP1 || selfIsP1;
-
-            List<ForwardTarget> ts = new ArrayList<>();
-            if (inclP2) for (int i = 0; i < ctx.p2ForwardCount(); i++) ts.add(new ForwardTarget(false, i, ForwardTarget.CardZone.FORWARD));
-            if (inclP1) for (int i = 0; i < ctx.p1ForwardCount(); i++) ts.add(new ForwardTarget(true, i, ForwardTarget.CardZone.FORWARD));
-            if (ts.isEmpty()) return;
-
-            int perTarget = roundUpToThousand(damage, ts.size());
-            ctx.logEntry("Effect: Divide " + damage + " damage equally among all Forwards ("
-                    + perTarget + " each, rounded up to the nearest 1000)");
-            sortedByIdxDesc(ts, true) .forEach(t -> damageTargetMaybeUnreduced(ctx, t, perTarget, unreduced));
-            sortedByIdxDesc(ts, false).forEach(t -> damageTargetMaybeUnreduced(ctx, t, perTarget, unreduced));
-        };
-    }
-
-    private static Consumer<GameContext> tryParseDealDamageToForwards(String text) {
-        Matcher m = DEAL_DAMAGE_TO_FORWARDS.matcher(text);
-        if (!m.find() || m.start() != 0) {
-            m = DEAL_DAMAGE_TO_FORWARDS_ALT.matcher(text);
-            if (!m.find() || m.start() != 0) return null;
-        }
-
-        int    damage        = Integer.parseInt(m.group("amount"));
-        String condition     = m.group("condition");   // nullable
-        String costStr       = m.group("cost");
-        int    costVal       = costStr != null ? Integer.parseInt(costStr) : -1;
-        String costCmp       = m.group("costcmp");
-        String excludeJob    = m.group("excludejob") != null ? m.group("excludejob").trim() : null;
-        boolean opponentOnly = m.group("opponent") != null;
-        boolean unreduced    = CANNOT_BE_REDUCED_PATTERN.matcher(text).find();
-
-        // Chain any text after the damage clause (e.g. "Philia deals you 1 point of damage.")
-        String remainingText = text.substring(m.end()).trim();
-        Consumer<GameContext> afterDamage = remainingText.isEmpty() ? null : parse(remainingText, null);
-
-        return ctx -> {
-            String condLabel   = condition  != null ? (condition + " ")   : "";
-            String costLabel   = costVal >= 0 ? " of cost " + costVal + (costCmp != null ? " or " + costCmp : "") : "";
-            String exclLabel   = excludeJob != null ? " [not Job " + excludeJob + "]" : "";
-            boolean oppIsP2    = opponentOnly && ctx.isP1();   // ability owner is P1 → opponent is P2
-            boolean oppIsP1    = opponentOnly && !ctx.isP1();  // ability owner is P2 → opponent is P1
-            String scopeLabel  = opponentOnly ? "opponent's " : "all ";
-            String unredLabel  = unreduced ? " (cannot be reduced)" : "";
-            ctx.logEntry("Effect: Deal " + damage + " damage to "
-                    + scopeLabel + condLabel + "Forwards" + costLabel + exclLabel + unredLabel);
-
-            // --- P2 forwards (included when not opponent-only, or when opponent IS P2) ---
-            if (!opponentOnly || oppIsP2) {
-                List<Integer> p2Targets = new ArrayList<>();
-                for (int i = 0; i < ctx.p2ForwardCount(); i++) {
-                    CardData c = ctx.p2Forward(i);
-                    if (!meetsCostFilter(c.cost(), costVal, costCmp)) continue;
-                    if (excludeJob != null && c.hasJob(excludeJob)) continue;
-                    if (meetsCondition(ctx.p2ForwardState(i), ctx.p2ForwardCurrentDamage(i),
-                            ctx.isP2ForwardAttacking(i), ctx.isP2ForwardBlocking(i), condition))
-                        p2Targets.add(i);
-                }
-                for (int i = p2Targets.size() - 1; i >= 0; i--) {
-                    int idx = p2Targets.get(i);
-                    if (idx < ctx.p2ForwardCount()) {
-                        if (unreduced) ctx.damageP2ForwardUnreduced(idx, damage);
-                        else           ctx.damageP2Forward(idx, damage);
-                    }
-                }
-            }
-
-            // --- P1 forwards (included when not opponent-only, or when opponent IS P1) ---
-            if (!opponentOnly || oppIsP1) {
-                List<Integer> p1Targets = new ArrayList<>();
-                for (int i = 0; i < ctx.p1ForwardCount(); i++) {
-                    CardData c = ctx.p1Forward(i);
-                    if (!meetsCostFilter(c.cost(), costVal, costCmp)) continue;
-                    if (excludeJob != null && c.hasJob(excludeJob)) continue;
-                    if (meetsCondition(ctx.p1ForwardState(i), ctx.p1ForwardCurrentDamage(i),
-                            ctx.isP1ForwardAttacking(i), ctx.isP1ForwardBlocking(i), condition))
-                        p1Targets.add(i);
-                }
-                for (int i = p1Targets.size() - 1; i >= 0; i--) {
-                    int idx = p1Targets.get(i);
-                    if (idx < ctx.p1ForwardCount()) {
-                        if (unreduced) ctx.damageP1ForwardUnreduced(idx, damage);
-                        else           ctx.damageP1Forward(idx, damage);
-                    }
-                }
-            }
-            if (afterDamage != null) afterDamage.accept(ctx);
-        };
-    }
-
-    private static Consumer<GameContext> tryParseDealDamageToForwardsExceptElement(String text) {
-        Matcher m = DEAL_DAMAGE_TO_FORWARDS_EXCEPT_ELEMENT.matcher(text);
-        if (!m.find() || m.start() != 0) return null;
-        int    damage      = Integer.parseInt(m.group("amount"));
-        String excludeElem = m.group("excludeelem").trim();
-        return ctx -> {
-            ctx.logEntry("Effect: Deal " + damage + " damage to all Forwards of all Elements except " + excludeElem);
-            for (int i = ctx.p2ForwardCount() - 1; i >= 0; i--) {
-                if (ctx.p2Forward(i).containsElement(excludeElem)) continue;
-                ctx.damageP2Forward(i, damage);
-            }
-            for (int i = ctx.p1ForwardCount() - 1; i >= 0; i--) {
-                if (ctx.p1Forward(i).containsElement(excludeElem)) continue;
-                ctx.damageP1Forward(i, damage);
-            }
-        };
-    }
-
-    private static Consumer<GameContext> tryParseRfpAllFwdExceptElementsThenTwiceDeck(String text) {
-        Matcher m = RFP_ALL_FWD_EXCEPT_ELEMENTS_THEN_TWICE_DECK.matcher(text);
-        if (!m.find()) return null;
-        String elem1 = m.group("elem1");
-        String elem2 = m.group("elem2");
-        return ctx -> {
-            ctx.logEntry("Effect: Remove from game all Forwards other than " + elem1 + " and " + elem2);
-            List<ForwardTarget> toRemove = new ArrayList<>();
-            for (int i = 0; i < ctx.p1ForwardCount(); i++) {
-                CardData fwd = ctx.p1Forward(i);
-                if (!fwd.containsElement(elem1) && !fwd.containsElement(elem2))
-                    toRemove.add(new ForwardTarget(true, i, ForwardTarget.CardZone.FORWARD));
-            }
-            for (int i = 0; i < ctx.p2ForwardCount(); i++) {
-                CardData fwd = ctx.p2Forward(i);
-                if (!fwd.containsElement(elem1) && !fwd.containsElement(elem2))
-                    toRemove.add(new ForwardTarget(false, i, ForwardTarget.CardZone.FORWARD));
-            }
-            sortedByIdxDesc(toRemove, true) .forEach(ctx::removeTargetFromGame);
-            sortedByIdxDesc(toRemove, false).forEach(ctx::removeTargetFromGame);
-            int deckRfp = toRemove.size() * 2;
-            if (deckRfp > 0) {
-                ctx.logEntry("Effect: Remove top " + deckRfp + " card(s) of deck from game (2 × " + toRemove.size() + " removed)");
-                ctx.removeTopCardsOfDeckFromGame(deckRfp, null);   // nothing refers back to these
-            }
-        };
-    }
-
-    private static Consumer<GameContext> tryParseNoForwardCostCannotAttack(String text) {
-        Matcher m = NO_FORWARD_COST_CANNOT_ATTACK.matcher(text.trim());
-        if (!m.matches()) return null;
-        String costStr = m.group("cost");
-        int    costVal = costStr != null ? Integer.parseInt(costStr) : -1;
-        String costCmp = m.group("costcmp");
-        return ctx -> {
-            String label = costVal >= 0
-                    ? "cost " + costVal + (costCmp != null ? " or " + costCmp : "")
-                    : "any cost";
-            ctx.logEntry("Effect: No Forward of " + label + " can attack this turn");
-            for (int i = 0; i < ctx.p1ForwardCount(); i++)
-                if (meetsCostFilter(ctx.p1Forward(i).cost(), costVal, costCmp)) ctx.setP1ForwardCannotAttack(i);
-            for (int i = 0; i < ctx.p2ForwardCount(); i++)
-                if (meetsCostFilter(ctx.p2Forward(i).cost(), costVal, costCmp)) ctx.setP2ForwardCannotAttack(i);
-        };
-    }
-
-    private static Consumer<GameContext> tryParseOwnForwardsCannotBeChosenByExBurst(String text) {
-        if (!OWN_FORWARDS_CANNOT_BE_CHOSEN_BY_EX_BURST.matcher(text.trim()).matches()) return null;
-        return ctx -> ctx.shieldAllOwnForwardsCannotBeChosen(true, false);
-    }
-
-    private static Consumer<GameContext> tryParseExBurstSuppression(String text) {
-        if (!EX_BURST_SUPPRESSION_PATTERN.matcher(text.trim()).matches()) return null;
-        return ctx -> {
-            ctx.logEntry("Effect: EX Bursts due to this ability are suppressed");
-            ctx.suppressExBurstsThisAbility();
-        };
-    }
-
-    private static Consumer<GameContext> tryParseDealDamageToForwardsForEach(String text) {
-        Matcher m = DEAL_DAMAGE_TO_FORWARDS_FOR_EACH.matcher(text);
-        if (!m.find()) return null;
-
-        int    baseDmg       = Integer.parseInt(m.group("base"));
-        String element       = m.group("element");
-        String category      = m.group("category");
-        String charType      = m.group("chartype");
-        String condition     = m.group("condition");
-        boolean countOpp     = m.group("oppcount") != null;
-        boolean opponentOnly = m.group("opponent") != null;
-        boolean unreduced    = CANNOT_BE_REDUCED_PATTERN.matcher(text).find();
-
-        boolean fwd = charType.matches("(?i)Forwards?|Characters?");
-        boolean bkp = charType.matches("(?i)Backups?|Characters?");
-        boolean mon = charType.matches("(?i)Monsters?|Characters?");
-        String elementFilter = element != null ? element.toLowerCase(java.util.Locale.ROOT) : null;
-
-        return ctx -> {
-            int n = countOpp
-                    ? ctx.countOppFieldCards(fwd, bkp, mon, null, null, category, elementFilter)
-                    : ctx.countSelfFieldCards(fwd, bkp, mon, null, null, category, elementFilter);
-            int damage = baseDmg * n;
-            String controller = countOpp ? "opponent controls" : "you control";
-            String multLabel = (element != null ? element + " " : "")
-                    + (category != null ? "Category " + category + " " : "")
-                    + charType + " " + controller;
-            String condLabel = condition != null ? (condition + " ") : "";
-            String scopeLabel = opponentOnly ? "opponent's " : "all ";
-            String unredLabel = unreduced ? " (cannot be reduced)" : "";
-            ctx.logEntry("Effect: Deal " + damage + " damage (" + baseDmg + " x " + n + " "
-                    + multLabel + ") to " + scopeLabel + condLabel + "Forwards" + unredLabel);
-            if (damage <= 0) return;
-
-            boolean oppIsP2 = opponentOnly && ctx.isP1();
-            boolean oppIsP1 = opponentOnly && !ctx.isP1();
-
-            if (!opponentOnly || oppIsP2) {
-                List<Integer> p2Targets = new ArrayList<>();
-                for (int i = 0; i < ctx.p2ForwardCount(); i++) {
-                    if (meetsCondition(ctx.p2ForwardState(i), ctx.p2ForwardCurrentDamage(i),
-                            ctx.isP2ForwardAttacking(i), ctx.isP2ForwardBlocking(i), condition))
-                        p2Targets.add(i);
-                }
-                for (int i = p2Targets.size() - 1; i >= 0; i--) {
-                    int idx = p2Targets.get(i);
-                    if (idx < ctx.p2ForwardCount()) {
-                        if (unreduced) ctx.damageP2ForwardUnreduced(idx, damage);
-                        else           ctx.damageP2Forward(idx, damage);
-                    }
-                }
-            }
-            if (!opponentOnly || oppIsP1) {
-                List<Integer> p1Targets = new ArrayList<>();
-                for (int i = 0; i < ctx.p1ForwardCount(); i++) {
-                    if (meetsCondition(ctx.p1ForwardState(i), ctx.p1ForwardCurrentDamage(i),
-                            ctx.isP1ForwardAttacking(i), ctx.isP1ForwardBlocking(i), condition))
-                        p1Targets.add(i);
-                }
-                for (int i = p1Targets.size() - 1; i >= 0; i--) {
-                    int idx = p1Targets.get(i);
-                    if (idx < ctx.p1ForwardCount()) {
-                        if (unreduced) ctx.damageP1ForwardUnreduced(idx, damage);
-                        else           ctx.damageP1Forward(idx, damage);
-                    }
-                }
-            }
-        };
-    }
-
-    private static Consumer<GameContext> tryParseForEachJobAndNameDealDamageToForwards(String text) {
-        Matcher m = FOR_EACH_JOB_AND_NAME_DEAL_DAMAGE_TO_FORWARDS.matcher(text);
-        if (!m.matches()) return null;
-        String job           = m.group("job").trim();
-        String cardName      = m.group("cardname").trim();
-        int    baseDmg       = Integer.parseInt(m.group("amount"));
-        boolean opponentOnly = m.group("opponent") != null;
-        return ctx -> {
-            int count = ctx.countSelfFieldCards(true, true, true, job, null)
-                      + ctx.countSelfFieldCards(true, true, true, null, cardName);
-            int damage = baseDmg * count;
-            boolean oppIsP2 = opponentOnly && ctx.isP1();
-            boolean oppIsP1 = opponentOnly && !ctx.isP1();
-            String scopeLabel = opponentOnly ? "opponent's " : "all ";
-            ctx.logEntry("Effect: For each Job " + job + " and Card name " + cardName
-                    + " (" + count + "), deal " + damage + " damage to " + scopeLabel + "Forwards");
-            if (damage <= 0) return;
-            if (!opponentOnly || oppIsP2) {
-                for (int i = ctx.p2ForwardCount() - 1; i >= 0; i--)
-                    if (i < ctx.p2ForwardCount()) ctx.damageP2Forward(i, damage);
-            }
-            if (!opponentOnly || oppIsP1) {
-                for (int i = ctx.p1ForwardCount() - 1; i >= 0; i--)
-                    if (i < ctx.p1ForwardCount()) ctx.damageP1Forward(i, damage);
-            }
-        };
-    }
 
     private static Consumer<GameContext> tryParseDealNForEachJobOrNameToOppForwards(String text) {
         Matcher m = DEAL_N_FOR_EACH_JOB_OR_NAME_TO_OPP_FORWARDS.matcher(text.trim());
@@ -7214,32 +6834,6 @@ public class ActionResolver {
         };
     }
 
-    private static Consumer<GameContext> tryParseDealBasePlusBzNameDamageToForwards(String text) {
-        Matcher m = DEAL_BASE_PLUS_BZ_NAME_DAMAGE_TO_FORWARDS.matcher(text);
-        if (!m.matches()) return null;
-        int    base          = Integer.parseInt(m.group("base"));
-        int    per           = Integer.parseInt(m.group("per"));
-        String cardName      = m.group("cardname").trim();
-        boolean opponentOnly = m.group("opponent") != null;
-        return ctx -> {
-            int count  = ctx.countSelfBreakZoneCards(cardName, null);
-            int damage = base + per * count;
-            boolean oppIsP2 = opponentOnly && ctx.isP1();
-            boolean oppIsP1 = opponentOnly && !ctx.isP1();
-            String scopeLabel = opponentOnly ? "opponent's " : "all ";
-            ctx.logEntry("Effect: Deal " + damage + " damage (" + base + " + " + per + "×" + count
-                    + " [" + cardName + "] in BZ) to " + scopeLabel + "Forwards");
-            if (damage <= 0) return;
-            if (!opponentOnly || oppIsP2) {
-                for (int i = ctx.p2ForwardCount() - 1; i >= 0; i--)
-                    if (i < ctx.p2ForwardCount()) ctx.damageP2Forward(i, damage);
-            }
-            if (!opponentOnly || oppIsP1) {
-                for (int i = ctx.p1ForwardCount() - 1; i >= 0; i--)
-                    if (i < ctx.p1ForwardCount()) ctx.damageP1Forward(i, damage);
-            }
-        };
-    }
 
     private static Consumer<GameContext> tryParseSelfGainsWhenAttacksEOT(String text, CardData source) {
         if (source == null) return null;
@@ -7254,165 +6848,11 @@ public class ActionResolver {
         };
     }
 
-    private static Consumer<GameContext> tryParseDealHalfPowerDamageToForwards(String text) {
-        Matcher m = DEAL_HALF_POWER_DAMAGE_TO_FORWARDS.matcher(text);
-        if (!m.find()) return null;
 
-        String  condition    = m.group("condition");
-        boolean opponentOnly = m.group("opponent") != null;
 
-        return ctx -> {
-            String  condLabel  = condition   != null ? (condition + " ")  : "";
-            boolean oppIsP2    = opponentOnly && ctx.isP1();
-            boolean oppIsP1    = opponentOnly && !ctx.isP1();
-            String  scopeLabel = opponentOnly ? "opponent's " : "all ";
-            ctx.logEntry("Effect: Deal each " + scopeLabel + condLabel
-                    + "Forward damage equal to half power (round up to nearest 1000)");
 
-            if (!opponentOnly || oppIsP2) {
-                List<Integer> p2Targets = new ArrayList<>();
-                for (int i = 0; i < ctx.p2ForwardCount(); i++) {
-                    if (meetsCondition(ctx.p2ForwardState(i), ctx.p2ForwardCurrentDamage(i),
-                            ctx.isP2ForwardAttacking(i), ctx.isP2ForwardBlocking(i), condition))
-                        p2Targets.add(i);
-                }
-                for (int i = p2Targets.size() - 1; i >= 0; i--) {
-                    int idx = p2Targets.get(i);
-                    if (idx < ctx.p2ForwardCount())
-                        ctx.damageP2Forward(idx, halfPowerDamage(ctx.p2Forward(idx).power()));
-                }
-            }
 
-            if (!opponentOnly || oppIsP1) {
-                List<Integer> p1Targets = new ArrayList<>();
-                for (int i = 0; i < ctx.p1ForwardCount(); i++) {
-                    if (meetsCondition(ctx.p1ForwardState(i), ctx.p1ForwardCurrentDamage(i),
-                            ctx.isP1ForwardAttacking(i), ctx.isP1ForwardBlocking(i), condition))
-                        p1Targets.add(i);
-                }
-                for (int i = p1Targets.size() - 1; i >= 0; i--) {
-                    int idx = p1Targets.get(i);
-                    if (idx < ctx.p1ForwardCount())
-                        ctx.damageP1Forward(idx, halfPowerDamage(ctx.p1Forward(idx).power()));
-                }
-            }
-        };
-    }
-
-    private static Consumer<GameContext> tryParseDealPowerMinusNDamageToForwards(String text) {
-        Matcher m = DEAL_POWER_MINUS_N_DAMAGE_TO_FORWARDS.matcher(text);
-        if (!m.find()) return null;
-
-        String  condition    = m.group("condition");
-        boolean opponentOnly = m.group("opponent") != null;
-        int     reduction    = Integer.parseInt(m.group("amount"));
-
-        return ctx -> {
-            String  condLabel  = condition != null ? (condition + " ") : "";
-            boolean oppIsP2    = opponentOnly && ctx.isP1();
-            boolean oppIsP1    = opponentOnly && !ctx.isP1();
-            String  scopeLabel = opponentOnly ? "opponent's " : "all ";
-            ctx.logEntry("Effect: Deal each " + scopeLabel + condLabel
-                    + "Forward damage equal to its power minus " + reduction);
-
-            if (!opponentOnly || oppIsP2) {
-                List<Integer> targets = new ArrayList<>();
-                for (int i = 0; i < ctx.p2ForwardCount(); i++) {
-                    if (meetsCondition(ctx.p2ForwardState(i), ctx.p2ForwardCurrentDamage(i),
-                            ctx.isP2ForwardAttacking(i), ctx.isP2ForwardBlocking(i), condition))
-                        targets.add(i);
-                }
-                for (int i = targets.size() - 1; i >= 0; i--) {
-                    int idx = targets.get(i);
-                    if (idx < ctx.p2ForwardCount())
-                        ctx.damageP2Forward(idx, Math.max(0, ctx.p2Forward(idx).power() - reduction));
-                }
-            }
-
-            if (!opponentOnly || oppIsP1) {
-                List<Integer> targets = new ArrayList<>();
-                for (int i = 0; i < ctx.p1ForwardCount(); i++) {
-                    if (meetsCondition(ctx.p1ForwardState(i), ctx.p1ForwardCurrentDamage(i),
-                            ctx.isP1ForwardAttacking(i), ctx.isP1ForwardBlocking(i), condition))
-                        targets.add(i);
-                }
-                for (int i = targets.size() - 1; i >= 0; i--) {
-                    int idx = targets.get(i);
-                    if (idx < ctx.p1ForwardCount())
-                        ctx.damageP1Forward(idx, Math.max(0, ctx.p1Forward(idx).power() - reduction));
-                }
-            }
-        };
-    }
-
-    private static Consumer<GameContext> tryParseDealHalfSourcePowerDamageToForwards(String text) {
-        Matcher m = DEAL_HALF_SOURCE_POWER_DAMAGE_TO_FORWARDS.matcher(text);
-        if (!m.find()) return null;
-
-        String  sourceName   = m.group("sourcename").trim();
-        String  condition    = m.group("condition");
-        boolean opponentOnly = m.group("opponent") != null;
-        boolean roundUp      = "up".equalsIgnoreCase(m.group("rounding"));
-
-        return ctx -> {
-            int raw       = Math.max(0, ctx.fieldForwardPowerByName(sourceName));
-            int damage    = roundUp ? halfPowerDamage(raw) : (raw / 2 / 1000) * 1000;
-            String condLabel  = condition   != null ? (condition + " ")   : "";
-            boolean oppIsP2   = opponentOnly && ctx.isP1();
-            boolean oppIsP1   = opponentOnly && !ctx.isP1();
-            String  scopeLabel = opponentOnly ? "opponent's " : "all ";
-            String  dir        = roundUp ? "up" : "down";
-            ctx.logEntry("Effect: Deal " + damage + " damage (half of " + sourceName
-                    + "'s power, round " + dir + ") to " + scopeLabel + condLabel + "Forwards");
-
-            if (!opponentOnly || oppIsP2) {
-                List<Integer> p2Targets = new ArrayList<>();
-                for (int i = 0; i < ctx.p2ForwardCount(); i++) {
-                    if (meetsCondition(ctx.p2ForwardState(i), ctx.p2ForwardCurrentDamage(i),
-                            ctx.isP2ForwardAttacking(i), ctx.isP2ForwardBlocking(i), condition))
-                        p2Targets.add(i);
-                }
-                for (int i = p2Targets.size() - 1; i >= 0; i--) {
-                    int idx = p2Targets.get(i);
-                    if (idx < ctx.p2ForwardCount())
-                        ctx.damageP2Forward(idx, damage);
-                }
-            }
-
-            if (!opponentOnly || oppIsP1) {
-                List<Integer> p1Targets = new ArrayList<>();
-                for (int i = 0; i < ctx.p1ForwardCount(); i++) {
-                    if (meetsCondition(ctx.p1ForwardState(i), ctx.p1ForwardCurrentDamage(i),
-                            ctx.isP1ForwardAttacking(i), ctx.isP1ForwardBlocking(i), condition))
-                        p1Targets.add(i);
-                }
-                for (int i = p1Targets.size() - 1; i >= 0; i--) {
-                    int idx = p1Targets.get(i);
-                    if (idx < ctx.p1ForwardCount())
-                        ctx.damageP1Forward(idx, damage);
-                }
-            }
-        };
-    }
-
-    private static Consumer<GameContext> tryParseDamageToCombatBlocker(String text) {
-        Matcher m = DAMAGE_TO_COMBAT_BLOCKER.matcher(text);
-        if (!m.find()) return null;
-        int    damage = Integer.parseInt(m.group("amount"));
-        String name   = m.group("name").trim();
-        return ctx -> {
-            int blockerIdx = ctx.combatBlockerIdxForAttacker(name, ctx.isP1());
-            if (blockerIdx < 0) {
-                ctx.logEntry("Effect: Deal " + damage + " damage to blocker of " + name + " — no blocker");
-                return;
-            }
-            ctx.logEntry("Effect: Deal " + damage + " damage to Forward blocking " + name);
-            if (ctx.isP1()) ctx.damageP2Forward(blockerIdx, damage);
-            else            ctx.damageP1Forward(blockerIdx, damage);
-        };
-    }
-
-    private static int halfPowerDamage(int power) {
+    static int halfPowerDamage(int power) {
         return (int)(Math.ceil(power / 2.0 / 1000) * 1000);
     }
 
@@ -7421,7 +6861,7 @@ public class ActionResolver {
     // -------------------------------------------------------------------------
 
     /** Returns {@code true} if {@code cardCost} satisfies the cost constraint, or if {@code costVal < 0} (no filter). */
-    private static boolean meetsCostFilter(int cardCost, int costVal, String costCmp) {
+    static boolean meetsCostFilter(int cardCost, int costVal, String costCmp) {
         if (costVal < 0) return true;
         if (costCmp == null) return cardCost == costVal;
         return costCmp.equalsIgnoreCase("less") ? cardCost <= costVal : cardCost >= costVal;
@@ -7433,7 +6873,7 @@ public class ActionResolver {
      * @param condition {@code "active"}, {@code "dull"}, {@code "damaged"},
      *                  {@code "attacking"}, {@code "blocking"}, or {@code null} (any)
      */
-    private static boolean meetsCondition(CardState state, int currentDamage,
+    static boolean meetsCondition(CardState state, int currentDamage,
             boolean isAttacking, boolean isBlocking, String condition) {
         if (condition == null) return true;
         return switch (condition.toLowerCase()) {
@@ -7450,7 +6890,7 @@ public class ActionResolver {
     // Damage-instead condition helpers
     // -------------------------------------------------------------------------
 
-    private static DamageInsteadCondition parseDamageInsteadCondition(String cond) {
+    static DamageInsteadCondition parseDamageInsteadCondition(String cond) {
         String s = cond.trim();
 
         // Target-state conditions
@@ -7520,7 +6960,7 @@ public class ActionResolver {
      * Handles: Freeze, Dull+Freeze, Break, Return-to-hand (+draw), Reduce power,
      * and "Deal N damage for each [Category X] Type you control".
      */
-    private static BiConsumer<GameContext, List<ForwardTarget>>
+    static BiConsumer<GameContext, List<ForwardTarget>>
             parseTargetAction(String text, int xValue) {
         String t = text.trim();
 
@@ -7672,7 +7112,7 @@ public class ActionResolver {
         return null;
     }
 
-    private static int resolveInsteadDamage(GameContext ctx, ForwardTarget t,
+    static int resolveInsteadDamage(GameContext ctx, ForwardTarget t,
             DamageInsteadCondition cond, int base, int alt) {
         boolean condMet = switch (cond) {
             case DamageInsteadCondition.TargetIsActive() ->
@@ -7689,7 +7129,7 @@ public class ActionResolver {
      * (i.e. every variant except {@code TargetIsActive}/{@code TargetIsMultiElement}, which
      * require a {@link ForwardTarget} and must go through {@link #resolveInsteadDamage}).
      */
-    private static boolean insteadConditionMet(GameContext ctx, DamageInsteadCondition cond) {
+    static boolean insteadConditionMet(GameContext ctx, DamageInsteadCondition cond) {
         return switch (cond) {
             case DamageInsteadCondition.TargetIsActive() ->
                 throw new IllegalArgumentException("TargetIsActive requires resolveInsteadDamage(ctx, target, ...)");
@@ -7720,118 +7160,12 @@ public class ActionResolver {
     // Choose-character effect parser
     // -------------------------------------------------------------------------
 
-    /**
-     * Parses "Choose [up to] N [condition] [element] [targets] [of cost X] [control] [zone]
-     * [sep] followup".
-     *
-     * <p>Supported target types: Forward(s), Forward(s) or Monster(s), Backup(s), Character(s).
-     * <p>Supported followup actions:
-     * <ul>
-     *   <li>"Deal [it|them] N damage"                        — fixed damage to each chosen target</li>
-     *   <li>"Deal it damage equal to the highest power Forward you control" — damage = highest P1 forward power</li>
-     *   <li>"Deal it damage equal to &lt;name&gt;'s power"          — damage = named field card's power</li>
-     *   <li>"Deal it damage equal to half of &lt;name&gt;'s power"  — damage = floor(named power / 2) to nearest 1000</li>
-     *   <li>"Deal it damage equal to its power [minus N]"    — damage = target's own power (minus N)</li>
-     *   <li>"Dull it/them"                 — dulls each chosen target</li>
-     *   <li>"Freeze it/them"               — freezes each chosen target</li>
-     *   <li>"Dull it/them and freeze…"     — dulls and freezes each chosen target</li>
-     *   <li>"Break it/them"                — breaks each chosen target</li>
-     *   <li>"Remove it/them from the game" — removes each chosen target from the game</li>
-     *   <li>"Play it/them onto the field"  — moves chosen targets from their zone onto the field</li>
-     *   <li>"Add it/them to your hand"     — moves chosen targets to P1's hand</li>
-     *   <li>"Return it to its owner's hand" — returns chosen forward to its owner's hand</li>
-     *   <li>"Return it to your hand"        — returns chosen forward to P1's hand</li>
-     *   <li>"it cannot block this turn"    — marks chosen forward as ineligible to block this turn</li>
-     *   <li>"If possible, it must block this turn" — marks chosen forward as required to block if eligible</li>
-     *   <li>"Put it at the top or bottom of its owner's deck" — player chooses placement</li>
-     * </ul>
-     */
-    private static Consumer<GameContext> tryParseChooseOneEach(String text, CardData source) {
-        Matcher m = CHOOSE_ONE_EACH_PATTERN.matcher(text);
-        if (!m.find()) return null;
-
-        int    count1     = Integer.parseInt(m.group("count1"));
-        String targets1   = m.group("targets1");
-        String tgt1Lower  = targets1.toLowerCase();
-        boolean fwd1 = tgt1Lower.contains("forward") || tgt1Lower.contains("character");
-        boolean bak1 = tgt1Lower.contains("backup")  || tgt1Lower.contains("character");
-        boolean mon1 = tgt1Lower.contains("monster") || tgt1Lower.contains("character");
-
-        int    count2     = Integer.parseInt(m.group("count2"));
-        String targets2   = m.group("targets2");
-        String tgt2Lower  = targets2.toLowerCase();
-        boolean fwd2 = tgt2Lower.contains("forward") || tgt2Lower.contains("character");
-        boolean bak2 = tgt2Lower.contains("backup")  || tgt2Lower.contains("character");
-        boolean mon2 = tgt2Lower.contains("monster") || tgt2Lower.contains("character");
-
-        String followup  = m.group("followup").trim();
-        String logPrefix = "Choose " + count1 + " " + targets1 + " (yours) and "
-                + count2 + " " + targets2 + " (opponent)";
-
-        if (FOLLOWUP_RETURN_TO_OWNERS_HAND.matcher(followup).find()) {
-            return ctx -> {
-                ctx.logEntry(logPrefix + " — Return to owner's hand");
-                List<ForwardTarget> selfTs = selectTargets(ctx, count1, false,
-                        false, true, null, null, null, false, -1, null, -1, null,
-                        fwd1, bak1, mon1, null, null, null, null, false, null, false);
-                List<ForwardTarget> oppTs = selectTargets(ctx, count2, false,
-                        true, false, null, null, null, false, -1, null, -1, null,
-                        fwd2, bak2, mon2, null, null, null, null, false, null, false);
-                List<ForwardTarget> all = new ArrayList<>(selfTs);
-                all.addAll(oppTs);
-                returnTargetsToOwnersHand(ctx, all);
-            };
-        }
-
-        if (FOLLOWUP_EACH_FORWARD_MUTUAL_POWER_DAMAGE.matcher(followup).find()) {
-            return ctx -> {
-                ctx.logEntry(logPrefix + " — Each deals damage equal to its power to the other");
-                List<ForwardTarget> selfTs = selectTargets(ctx, count1, false,
-                        false, true, null, null, null, false, -1, null, -1, null,
-                        fwd1, bak1, mon1, null, null, null, null, false, null, false);
-                List<ForwardTarget> oppTs = selectTargets(ctx, count2, false,
-                        true, false, null, null, null, false, -1, null, -1, null,
-                        fwd2, bak2, mon2, null, null, null, null, false, null, false);
-                if (selfTs.isEmpty() || oppTs.isEmpty()) return;
-                ForwardTarget selfT = selfTs.get(0);
-                ForwardTarget oppT  = oppTs.get(0);
-                // Snapshot both powers before either damage is applied
-                int selfPower = Math.max(0, ctx.effectiveTargetPower(selfT));
-                int oppPower  = Math.max(0, ctx.effectiveTargetPower(oppT));
-                ctx.logEntry("Mutual damage: self Forward (" + selfPower + ") ↔ opp Forward (" + oppPower + ")");
-                ctx.damageTarget(selfT, oppPower);
-                ctx.damageTarget(oppT,  selfPower);
-            };
-        }
-
-        Matcher btpM = FORMER_BOOST_THEN_POWER_DAMAGE_TO_LATTER.matcher(followup);
-        if (btpM.find()) {
-            int boost = Integer.parseInt(btpM.group("boost"));
-            EnumSet<CardData.Trait> noTraits = EnumSet.noneOf(CardData.Trait.class);
-            return ctx -> {
-                ctx.logEntry(logPrefix + " — boost former +" + boost + ", deal its power to latter");
-                List<ForwardTarget> selfTs = selectTargets(ctx, count1, false,
-                        false, true, null, null, null, false, -1, null, -1, null,
-                        fwd1, bak1, mon1, null, null, null, null, false, null, false);
-                List<ForwardTarget> oppTs = selectTargets(ctx, count2, false,
-                        true, false, null, null, null, false, -1, null, -1, null,
-                        fwd2, bak2, mon2, null, null, null, null, false, null, false);
-                if (selfTs.isEmpty() || oppTs.isEmpty()) return;
-                ctx.boostTarget(selfTs.get(0), boost, noTraits);
-                int power = Math.max(0, ctx.effectiveTargetPower(selfTs.get(0)));
-                ctx.logEntry("Former power after boost: " + power + " → dealing to latter");
-                ctx.damageTarget(oppTs.get(0), power);
-            };
-        }
-
-        return null;
-    }
 
     // -------------------------------------------------------------------------
     // Former/Latter dual-selection parser
     // -------------------------------------------------------------------------
 
-    private record TargetDesc(
+    record TargetDesc(
             boolean fwd, boolean bkp, boolean mon,
             boolean opponentOnly, boolean selfOnly,
             String condition, String element,
@@ -7839,7 +7173,7 @@ public class ActionResolver {
             String excludeName,
             boolean fromBreakZone, boolean opponentBz) {}
 
-    private static TargetDesc parseTargetDesc(String desc) {
+    static TargetDesc parseTargetDesc(String desc) {
         Matcher m = TARGET_DESC_PATTERN.matcher(desc.trim());
         if (!m.matches()) return null;
 
@@ -7865,7 +7199,7 @@ public class ActionResolver {
                 fromBz, opponentBz);
     }
 
-    private static BiConsumer<GameContext, List<ForwardTarget>>
+    static BiConsumer<GameContext, List<ForwardTarget>>
             parseFormerLatterGroupAction(String text) {
         String t = text.trim();
 
@@ -7972,660 +7306,16 @@ public class ActionResolver {
         };
     }
 
-    private static String getTargetCardName(GameContext ctx, ForwardTarget t) {
+    static String getTargetCardName(GameContext ctx, ForwardTarget t) {
         if (t.zone() == ForwardTarget.CardZone.FORWARD)
             return (t.isP1() ? ctx.p1Forward(t.idx()) : ctx.p2Forward(t.idx())).name();
         return null;
     }
 
-    private static Consumer<GameContext> tryParseChooseFormerLatter(String text, CardData source) {
-        Matcher m = CHOOSE_FORMER_LATTER_PATTERN.matcher(text);
-        if (!m.find()) return null;
 
-        String effects      = m.group("effects").trim();
-        String effectsLower = effects.toLowerCase(java.util.Locale.ROOT);
-        if (!effectsLower.contains("the former") || !effectsLower.contains("the latter")) return null;
 
-        // Parse target descriptors (shared for all effect paths below)
-        boolean upTo1  = m.group("upTo1") != null;
-        int     count1 = Integer.parseInt(m.group("count1"));
-        String  desc1  = m.group("desc1").trim();
 
-        boolean upTo2    = m.group("upTo2") != null;
-        int     count2   = Integer.parseInt(m.group("count2"));
-        String  desc2Raw = m.group("desc2").trim();
 
-        boolean excludeFirstChosen = false;
-        String  desc2 = desc2Raw;
-        if (desc2Raw.toLowerCase(java.util.Locale.ROOT).startsWith("other ")) {
-            excludeFirstChosen = true;
-            desc2 = desc2Raw.substring(6).trim();
-        }
-
-        TargetDesc td1 = parseTargetDesc(desc1);
-        TargetDesc td2 = parseTargetDesc(desc2);
-
-        // Special case: desc2 has a dynamic cost constraint on a BZ Backup that TARGET_DESC_PATTERN
-        // cannot represent (e.g. "Backup with a cost equal to or less than that Forward in your BZ").
-        // Parse effects normally and supply the cost filter at execution time.
-        if (td2 == null && td1 != null && DESC_BZ_BACKUP_COST_RELATIVE.matcher(desc2).matches()) {
-            String kLabel = "Choose " + (upTo1 ? "up to " : "") + count1 + " " + desc1
-                          + " and " + (upTo2 ? "up to " : "") + count2 + " " + desc2Raw;
-            int kLatterIdx = effectsLower.indexOf("the latter");
-            int kAndIdx    = effects.lastIndexOf(" and ", kLatterIdx);
-            if (kAndIdx >= 0) {
-                String kFmrEff = effects.substring(0, kAndIdx).trim()
-                        .replaceAll("(?i)\\bthe\\s+former\\b", "it").replaceAll("\\.$", "").trim();
-                String kLtrEff = effects.substring(kAndIdx + 5).trim()
-                        .replaceAll("(?i)\\bthe\\s+latter\\b", "it").replaceAll("\\.$", "").trim();
-                BiConsumer<GameContext, List<ForwardTarget>> kFmrAct =
-                        parseFormerLatterGroupAction(kFmrEff);
-                BiConsumer<GameContext, List<ForwardTarget>> kLtrAct =
-                        parseFormerLatterGroupAction(kLtrEff);
-                if (kFmrAct != null && kLtrAct != null) {
-                    final TargetDesc kTd1 = td1;
-                    final BiConsumer<GameContext, List<ForwardTarget>>
-                            fkFmr = kFmrAct, fkLtr = kLtrAct;
-                    return ctx -> {
-                        ctx.logEntry(kLabel);
-                        List<ForwardTarget> ts1 = selectTargets(ctx, count1, upTo1,
-                                kTd1.opponentOnly(), kTd1.selfOnly(),
-                                kTd1.condition(), kTd1.element(), null, false,
-                                kTd1.costVal(), kTd1.costCmp(), -1, null,
-                                kTd1.fwd(), kTd1.bkp(), kTd1.mon(),
-                                null, null, null, kTd1.excludeName(), false, null, false);
-                        if (ts1.isEmpty()) return;
-                        ForwardTarget fwdTgt = ts1.get(0);
-                        CardData fwdCard = fwdTgt.isP1()
-                                ? ctx.p1Forward(fwdTgt.idx()) : ctx.p2Forward(fwdTgt.idx());
-                        int formerCost = fwdCard.cost();
-                        List<ForwardTarget> ts2 = selectTargets(ctx, count2, upTo2,
-                                false, true, null, null, "in your Break Zone", false,
-                                formerCost, "less", -1, null,
-                                false, true, false,
-                                null, null, null, null, false, null, false);
-                        fkFmr.accept(ctx, ts1);
-                        fkLtr.accept(ctx, ts2);
-                    };
-                }
-            }
-            return null;
-        }
-
-        if (td1 == null || td2 == null) return null;
-
-        boolean fExcludeFirst = excludeFirstChosen;
-        String  fDesc2Static  = td2.excludeName();
-        String label = "Choose " + (upTo1 ? "up to " : "") + count1 + " " + desc1
-                     + " and " + (upTo2 ? "up to " : "") + count2 + " " + desc2Raw;
-
-        // Special case: "The former gains +N power until end of turn. Then, the former deals
-        // damage equal to its power to the latter." — boost, then deal boosted power as damage.
-        Matcher btpM = FORMER_BOOST_THEN_POWER_DAMAGE_TO_LATTER.matcher(effects);
-        if (btpM.find()) {
-            int boost = Integer.parseInt(btpM.group("boost"));
-            EnumSet<CardData.Trait> noTraits = EnumSet.noneOf(CardData.Trait.class);
-            return ctx -> {
-                ctx.logEntry(label);
-                String zone1 = td1.fromBreakZone()
-                        ? "in " + (td1.opponentBz() ? "your opponent's" : "your") + " Break Zone" : null;
-                List<ForwardTarget> ts1 = selectTargets(ctx, count1, upTo1,
-                        td1.opponentOnly(), td1.selfOnly(),
-                        td1.condition(), td1.element(), zone1, td1.opponentBz(),
-                        td1.costVal(), td1.costCmp(), -1, null,
-                        td1.fwd(), td1.bkp(), td1.mon(),
-                        null, null, null, td1.excludeName(), false, null, false);
-
-                String excludeForTs2a = fExcludeFirst && !ts1.isEmpty()
-                        ? getTargetCardName(ctx, ts1.get(0)) : fDesc2Static;
-                String zone2 = td2.fromBreakZone()
-                        ? "in " + (td2.opponentBz() ? "your opponent's" : "your") + " Break Zone" : null;
-                List<ForwardTarget> ts2 = selectTargets(ctx, count2, upTo2,
-                        td2.opponentOnly(), td2.selfOnly(),
-                        td2.condition(), td2.element(), zone2, td2.opponentBz(),
-                        td2.costVal(), td2.costCmp(), -1, null,
-                        td2.fwd(), td2.bkp(), td2.mon(),
-                        null, null, null, excludeForTs2a, false, null, false);
-
-                ts1.forEach(t -> ctx.boostTarget(t, boost, noTraits));
-                if (!ts1.isEmpty() && !ts2.isEmpty()) {
-                    int formerPower = ctx.effectiveTargetPower(ts1.get(0));
-                    ts2.forEach(t -> ctx.damageTarget(t, formerPower));
-                }
-            };
-        }
-
-        // Special case: "During this turn, the next damage dealt to the former is [received by|dealt to] the latter instead."
-        Matcher redirectM = FORMER_LATTER_DAMAGE_REDIRECT.matcher(effects);
-        if (redirectM.find()) {
-            String redirectSuffix = redirectM.group("suffix").trim();
-            Consumer<GameContext> redirectBonus = redirectSuffix.isEmpty() ? null : parse(redirectSuffix, source);
-            return ctx -> {
-                ctx.logEntry(label);
-                String zone1 = td1.fromBreakZone()
-                        ? "in " + (td1.opponentBz() ? "your opponent's" : "your") + " Break Zone" : null;
-                List<ForwardTarget> ts1 = selectTargets(ctx, count1, upTo1,
-                        td1.opponentOnly(), td1.selfOnly(),
-                        td1.condition(), td1.element(), zone1, td1.opponentBz(),
-                        td1.costVal(), td1.costCmp(), -1, null,
-                        td1.fwd(), td1.bkp(), td1.mon(),
-                        null, null, null, td1.excludeName(), false, null, false);
-
-                String excludeForTs2r = fExcludeFirst && !ts1.isEmpty()
-                        ? getTargetCardName(ctx, ts1.get(0)) : fDesc2Static;
-                String zone2 = td2.fromBreakZone()
-                        ? "in " + (td2.opponentBz() ? "your opponent's" : "your") + " Break Zone" : null;
-                List<ForwardTarget> ts2 = selectTargets(ctx, count2, upTo2,
-                        td2.opponentOnly(), td2.selfOnly(),
-                        td2.condition(), td2.element(), zone2, td2.opponentBz(),
-                        td2.costVal(), td2.costCmp(), -1, null,
-                        td2.fwd(), td2.bkp(), td2.mon(),
-                        null, null, null, excludeForTs2r, false, null, false);
-
-                if (!ts1.isEmpty() && !ts2.isEmpty())
-                    ctx.redirectNextIncomingDamage(ts1.get(0), ts2.get(0));
-                if (redirectBonus != null) redirectBonus.accept(ctx);
-            };
-        }
-
-        // Special case: "Until the end of the turn, the former gains +N power [and Traits]. Deal the latter N damage."
-        Matcher fbtldM = FORMER_BOOST_TRAITS_LATTER_DIRECT_DAMAGE.matcher(effects);
-        if (fbtldM.matches()) {
-            int boost = Integer.parseInt(fbtldM.group("boost"));
-            EnumSet<CardData.Trait> boostTraits = parseTraits(fbtldM.group("traits"));
-            int damage = Integer.parseInt(fbtldM.group("damage"));
-            String fbtldSuffix = fbtldM.group("suffix").trim();
-            Consumer<GameContext> fbtldBonus = fbtldSuffix.isEmpty() ? null : parse(fbtldSuffix, source);
-            return ctx -> {
-                ctx.logEntry(label);
-                String zone1 = td1.fromBreakZone()
-                        ? "in " + (td1.opponentBz() ? "your opponent's" : "your") + " Break Zone" : null;
-                List<ForwardTarget> ts1 = selectTargets(ctx, count1, upTo1,
-                        td1.opponentOnly(), td1.selfOnly(),
-                        td1.condition(), td1.element(), zone1, td1.opponentBz(),
-                        td1.costVal(), td1.costCmp(), -1, null,
-                        td1.fwd(), td1.bkp(), td1.mon(),
-                        null, null, null, td1.excludeName(), false, null, false);
-
-                String excl2fbtld = fExcludeFirst && !ts1.isEmpty()
-                        ? getTargetCardName(ctx, ts1.get(0)) : fDesc2Static;
-                String zone2 = td2.fromBreakZone()
-                        ? "in " + (td2.opponentBz() ? "your opponent's" : "your") + " Break Zone" : null;
-                List<ForwardTarget> ts2 = selectTargets(ctx, count2, upTo2,
-                        td2.opponentOnly(), td2.selfOnly(),
-                        td2.condition(), td2.element(), zone2, td2.opponentBz(),
-                        td2.costVal(), td2.costCmp(), -1, null,
-                        td2.fwd(), td2.bkp(), td2.mon(),
-                        null, null, null, excl2fbtld, false, null, false);
-
-                ts1.forEach(t -> ctx.boostTarget(t, boost, boostTraits));
-                ts2.forEach(t -> ctx.damageTarget(t, damage));
-                if (fbtldBonus != null) fbtldBonus.accept(ctx);
-            };
-        }
-
-        // Special case: "Until the end of the turn, the former loses [traits]. Then, the latter
-        // gains all the abilities lost by the previous effect until the end of the turn."
-        Matcher fltgM = FORMER_LOSES_TRAITS_LATTER_GAINS.matcher(effects);
-        if (fltgM.matches()) {
-            EnumSet<CardData.Trait> traitsToLose = parseTraits(fltgM.group("traits"));
-            if (!traitsToLose.isEmpty()) {
-                return ctx -> {
-                    ctx.logEntry(label);
-                    String zone1 = td1.fromBreakZone()
-                            ? "in " + (td1.opponentBz() ? "your opponent's" : "your") + " Break Zone" : null;
-                    List<ForwardTarget> ts1 = selectTargets(ctx, count1, upTo1,
-                            td1.opponentOnly(), td1.selfOnly(),
-                            td1.condition(), td1.element(), zone1, td1.opponentBz(),
-                            td1.costVal(), td1.costCmp(), -1, null,
-                            td1.fwd(), td1.bkp(), td1.mon(),
-                            null, null, null, td1.excludeName(), false, null, false);
-
-                    String excl2flt = fExcludeFirst && !ts1.isEmpty()
-                            ? getTargetCardName(ctx, ts1.get(0)) : fDesc2Static;
-                    String zone2 = td2.fromBreakZone()
-                            ? "in " + (td2.opponentBz() ? "your opponent's" : "your") + " Break Zone" : null;
-                    List<ForwardTarget> ts2 = selectTargets(ctx, count2, upTo2,
-                            td2.opponentOnly(), td2.selfOnly(),
-                            td2.condition(), td2.element(), zone2, td2.opponentBz(),
-                            td2.costVal(), td2.costCmp(), -1, null,
-                            td2.fwd(), td2.bkp(), td2.mon(),
-                            null, null, null, excl2flt, false, null, false);
-
-                    if (!ts1.isEmpty()) {
-                        ForwardTarget former = ts1.get(0);
-                        EnumSet<CardData.Trait> actuallyLost = EnumSet.noneOf(CardData.Trait.class);
-                        for (CardData.Trait tr : traitsToLose)
-                            if (ctx.effectiveTargetHasTrait(former, tr)) actuallyLost.add(tr);
-                        ctx.removeTraitsUntilEotFromTarget(former, traitsToLose);
-                        if (!ts2.isEmpty() && !actuallyLost.isEmpty())
-                            ctx.boostTarget(ts2.get(0), 0, actuallyLost);
-                    }
-                };
-            }
-        }
-
-        // Special case: escalating BZ-count conditionals (dull former; ≥N1 dull latter; ≥N2 freeze; ≥N3 discard).
-        Matcher bzEscM = FORMER_DULL_LATTER_BZ_NAME_ESCALATE.matcher(effects);
-        if (bzEscM.matches()) {
-            int n1 = Integer.parseInt(bzEscM.group("n1"));
-            String bzCardName = bzEscM.group("cardname").trim();
-            int n2 = Integer.parseInt(bzEscM.group("n2"));
-            int n3 = Integer.parseInt(bzEscM.group("n3"));
-            int discardN = Integer.parseInt(bzEscM.group("discardN"));
-            return ctx -> {
-                ctx.logEntry(label);
-                String zone1 = td1.fromBreakZone()
-                        ? "in " + (td1.opponentBz() ? "your opponent's" : "your") + " Break Zone" : null;
-                List<ForwardTarget> ts1 = selectTargets(ctx, count1, upTo1,
-                        td1.opponentOnly(), td1.selfOnly(),
-                        td1.condition(), td1.element(), zone1, td1.opponentBz(),
-                        td1.costVal(), td1.costCmp(), -1, null,
-                        td1.fwd(), td1.bkp(), td1.mon(),
-                        null, null, null, td1.excludeName(), false, null, false);
-
-                String excl2bz = fExcludeFirst && !ts1.isEmpty()
-                        ? getTargetCardName(ctx, ts1.get(0)) : fDesc2Static;
-                String zone2 = td2.fromBreakZone()
-                        ? "in " + (td2.opponentBz() ? "your opponent's" : "your") + " Break Zone" : null;
-                List<ForwardTarget> ts2 = selectTargets(ctx, count2, upTo2,
-                        td2.opponentOnly(), td2.selfOnly(),
-                        td2.condition(), td2.element(), zone2, td2.opponentBz(),
-                        td2.costVal(), td2.costCmp(), -1, null,
-                        td2.fwd(), td2.bkp(), td2.mon(),
-                        null, null, null, excl2bz, false, null, false);
-
-                ts1.forEach(ctx::dullTarget);
-                int bzCount = ctx.countSelfBreakZoneCards(bzCardName, null);
-                if (bzCount >= n1) ts2.forEach(ctx::dullTarget);
-                if (bzCount >= n2) {
-                    ts1.forEach(ctx::freezeTarget);
-                    ts2.forEach(ctx::freezeTarget);
-                }
-                if (bzCount >= n3) ctx.forceOpponentDiscard(discardN);
-            };
-        }
-
-        // Special case: "+N power and cannot-dull-by-opp; conditional damage to latter = highest own Forward power."
-        Matcher bdicM = FORMER_BOOST_DULL_IMMUNITY_COND_DAMAGE_LATTER.matcher(effects);
-        if (bdicM.matches()) {
-            int boost = Integer.parseInt(bdicM.group("boost"));
-            int dmgThresh = Integer.parseInt(bdicM.group("dmgthresh"));
-            EnumSet<CardData.Trait> dullImmunity = EnumSet.of(CardData.Trait.CANNOT_BE_DULLED_BY_OPP);
-            return ctx -> {
-                ctx.logEntry(label);
-                String zone1 = td1.fromBreakZone()
-                        ? "in " + (td1.opponentBz() ? "your opponent's" : "your") + " Break Zone" : null;
-                List<ForwardTarget> ts1 = selectTargets(ctx, count1, upTo1,
-                        td1.opponentOnly(), td1.selfOnly(),
-                        td1.condition(), td1.element(), zone1, td1.opponentBz(),
-                        td1.costVal(), td1.costCmp(), -1, null,
-                        td1.fwd(), td1.bkp(), td1.mon(),
-                        null, null, null, td1.excludeName(), false, null, false);
-
-                String excl2di = fExcludeFirst && !ts1.isEmpty()
-                        ? getTargetCardName(ctx, ts1.get(0)) : fDesc2Static;
-                String zone2 = td2.fromBreakZone()
-                        ? "in " + (td2.opponentBz() ? "your opponent's" : "your") + " Break Zone" : null;
-                List<ForwardTarget> ts2 = selectTargets(ctx, count2, upTo2,
-                        td2.opponentOnly(), td2.selfOnly(),
-                        td2.condition(), td2.element(), zone2, td2.opponentBz(),
-                        td2.costVal(), td2.costCmp(), -1, null,
-                        td2.fwd(), td2.bkp(), td2.mon(),
-                        null, null, null, excl2di, false, null, false);
-
-                ts1.forEach(t -> ctx.boostTarget(t, boost, dullImmunity));
-                if (ctx.selfDamageCount() >= dmgThresh && !ts2.isEmpty()) {
-                    int highestPower = ctx.selfHighestForwardPower();
-                    ctx.damageTarget(ts2.get(0), highestPower);
-                }
-            };
-        }
-
-        // Special case: "Break the former. If [card] enters the field due to Warp, also break the latter."
-        if (FORMER_BREAK_COND_WARP_LATTER_BREAK.matcher(effects).matches()) {
-            return ctx -> {
-                ctx.logEntry(label);
-                String zone1 = td1.fromBreakZone()
-                        ? "in " + (td1.opponentBz() ? "your opponent's" : "your") + " Break Zone" : null;
-                List<ForwardTarget> ts1 = selectTargets(ctx, count1, upTo1,
-                        td1.opponentOnly(), td1.selfOnly(),
-                        td1.condition(), td1.element(), zone1, td1.opponentBz(),
-                        td1.costVal(), td1.costCmp(), -1, null,
-                        td1.fwd(), td1.bkp(), td1.mon(),
-                        null, null, null, td1.excludeName(), false, null, false);
-
-                String excl2bw = fExcludeFirst && !ts1.isEmpty()
-                        ? getTargetCardName(ctx, ts1.get(0)) : fDesc2Static;
-                String zone2 = td2.fromBreakZone()
-                        ? "in " + (td2.opponentBz() ? "your opponent's" : "your") + " Break Zone" : null;
-                List<ForwardTarget> ts2 = selectTargets(ctx, count2, upTo2,
-                        td2.opponentOnly(), td2.selfOnly(),
-                        td2.condition(), td2.element(), zone2, td2.opponentBz(),
-                        td2.costVal(), td2.costCmp(), -1, null,
-                        td2.fwd(), td2.bkp(), td2.mon(),
-                        null, null, null, excl2bw, false, null, false);
-
-                sortedByIdxDesc(ts1, true) .forEach(ctx::breakTarget);
-                sortedByIdxDesc(ts1, false).forEach(ctx::breakTarget);
-                if (ctx.sourceEnteredViaWarp()) {
-                    sortedByIdxDesc(ts2, true) .forEach(ctx::breakTarget);
-                    sortedByIdxDesc(ts2, false).forEach(ctx::breakTarget);
-                }
-            };
-        }
-
-        // Special case: "Deal the former N damage. If you control M or more Backups, also deal the latter N damage."
-        Matcher bkpDmgM = FORMER_DAMAGE_COND_BACKUP_COUNT_LATTER_DAMAGE.matcher(effects);
-        if (bkpDmgM.matches()) {
-            int dmg1 = Integer.parseInt(bkpDmgM.group("dmg1"));
-            int bkpThresh = Integer.parseInt(bkpDmgM.group("n"));
-            int dmg2 = Integer.parseInt(bkpDmgM.group("dmg2"));
-            return ctx -> {
-                ctx.logEntry(label);
-                String zone1 = td1.fromBreakZone()
-                        ? "in " + (td1.opponentBz() ? "your opponent's" : "your") + " Break Zone" : null;
-                List<ForwardTarget> ts1 = selectTargets(ctx, count1, upTo1,
-                        td1.opponentOnly(), td1.selfOnly(),
-                        td1.condition(), td1.element(), zone1, td1.opponentBz(),
-                        td1.costVal(), td1.costCmp(), -1, null,
-                        td1.fwd(), td1.bkp(), td1.mon(),
-                        null, null, null, td1.excludeName(), false, null, false);
-
-                String excl2bd = fExcludeFirst && !ts1.isEmpty()
-                        ? getTargetCardName(ctx, ts1.get(0)) : fDesc2Static;
-                String zone2 = td2.fromBreakZone()
-                        ? "in " + (td2.opponentBz() ? "your opponent's" : "your") + " Break Zone" : null;
-                List<ForwardTarget> ts2 = selectTargets(ctx, count2, upTo2,
-                        td2.opponentOnly(), td2.selfOnly(),
-                        td2.condition(), td2.element(), zone2, td2.opponentBz(),
-                        td2.costVal(), td2.costCmp(), -1, null,
-                        td2.fwd(), td2.bkp(), td2.mon(),
-                        null, null, null, excl2bd, false, null, false);
-
-                ts1.forEach(t -> ctx.damageTarget(t, dmg1));
-                if (ctx.countSelfFieldCards(false, true, false, null, null) >= bkpThresh)
-                    ts2.forEach(t -> ctx.damageTarget(t, dmg2));
-            };
-        }
-
-        // Special case: "The former deals damage equal to its power to the latter."
-        if (FORMER_DEALS_POWER_DAMAGE_TO_LATTER.matcher(effects).matches()) {
-            return ctx -> {
-                ctx.logEntry(label);
-                String zone1 = td1.fromBreakZone()
-                        ? "in " + (td1.opponentBz() ? "your opponent's" : "your") + " Break Zone" : null;
-                List<ForwardTarget> ts1 = selectTargets(ctx, count1, upTo1,
-                        td1.opponentOnly(), td1.selfOnly(),
-                        td1.condition(), td1.element(), zone1, td1.opponentBz(),
-                        td1.costVal(), td1.costCmp(), -1, null,
-                        td1.fwd(), td1.bkp(), td1.mon(),
-                        null, null, null, td1.excludeName(), false, null, false);
-
-                String excl2fp = fExcludeFirst && !ts1.isEmpty()
-                        ? getTargetCardName(ctx, ts1.get(0)) : fDesc2Static;
-                String zone2 = td2.fromBreakZone()
-                        ? "in " + (td2.opponentBz() ? "your opponent's" : "your") + " Break Zone" : null;
-                List<ForwardTarget> ts2 = selectTargets(ctx, count2, upTo2,
-                        td2.opponentOnly(), td2.selfOnly(),
-                        td2.condition(), td2.element(), zone2, td2.opponentBz(),
-                        td2.costVal(), td2.costCmp(), -1, null,
-                        td2.fwd(), td2.bkp(), td2.mon(),
-                        null, null, null, excl2fp, false, null, false);
-
-                if (!ts1.isEmpty() && !ts2.isEmpty()) {
-                    int formerPower = ctx.effectiveTargetPower(ts1.get(0));
-                    ctx.damageTarget(ts2.get(0), formerPower);
-                }
-            };
-        }
-
-        // Generic split: prefer comma-after-former when it precedes the " and " split point,
-        // since some cards use ", Action the latter" instead of "and Action the latter".
-        // (e.g. "Break the former, dull and Freeze the latter.")
-        int latterIdx = effectsLower.indexOf("the latter");
-        int andIdx    = effects.lastIndexOf(" and ", latterIdx);
-        int formerIdx = effectsLower.indexOf("the former");
-
-        int splitIdx = andIdx, splitLen = 5;
-        if (formerIdx >= 0) {
-            // Look for ", " after the end of the "the former" phrase
-            int commaAfterFormer = effects.indexOf(", ", formerIdx + 10);
-            if (commaAfterFormer >= 0 && commaAfterFormer < latterIdx
-                    && (andIdx < 0 || commaAfterFormer < andIdx)) {
-                // Guard: don't use comma split if the latter portion starts with "and "
-                // (that's an Oxford comma before the real "and", not a true split point)
-                String afterComma = effects.substring(commaAfterFormer + 2).trim().toLowerCase(java.util.Locale.ROOT);
-                if (!afterComma.startsWith("and ")) {
-                    splitIdx = commaAfterFormer;
-                    splitLen = 2;
-                }
-            }
-        }
-        if (splitIdx < 0) return null;
-
-        String formerRaw = effects.substring(0, splitIdx).trim();
-        String latterRaw = effects.substring(splitIdx + splitLen).trim();
-
-        // Substitute pronouns and strip any trailing period
-        String formerEff = formerRaw.replaceAll("(?i)\\bthe\\s+former\\b", "it").replaceAll("\\.$", "").trim();
-        String latterEff = latterRaw.replaceAll("(?i)\\bthe\\s+latter\\b", "it").replaceAll("\\.$", "").trim();
-
-        BiConsumer<GameContext, List<ForwardTarget>> formerAction =
-                parseFormerLatterGroupAction(formerEff);
-        BiConsumer<GameContext, List<ForwardTarget>> latterAction =
-                parseFormerLatterGroupAction(latterEff);
-        if (formerAction == null || latterAction == null) return null;
-
-        BiConsumer<GameContext, List<ForwardTarget>> fFormerAction = formerAction;
-        BiConsumer<GameContext, List<ForwardTarget>> fLatterAction = latterAction;
-
-        return ctx -> {
-            ctx.logEntry(label);
-            String zone1 = td1.fromBreakZone()
-                    ? "in " + (td1.opponentBz() ? "your opponent's" : "your") + " Break Zone" : null;
-            List<ForwardTarget> ts1 = selectTargets(ctx, count1, upTo1,
-                    td1.opponentOnly(), td1.selfOnly(),
-                    td1.condition(), td1.element(), zone1, td1.opponentBz(),
-                    td1.costVal(), td1.costCmp(), -1, null,
-                    td1.fwd(), td1.bkp(), td1.mon(),
-                    null, null, null, td1.excludeName(), false, null, false);
-
-            String excludeForTs2 = fExcludeFirst && !ts1.isEmpty()
-                    ? getTargetCardName(ctx, ts1.get(0))
-                    : fDesc2Static;
-
-            String zone2 = td2.fromBreakZone()
-                    ? "in " + (td2.opponentBz() ? "your opponent's" : "your") + " Break Zone" : null;
-            List<ForwardTarget> ts2 = selectTargets(ctx, count2, upTo2,
-                    td2.opponentOnly(), td2.selfOnly(),
-                    td2.condition(), td2.element(), zone2, td2.opponentBz(),
-                    td2.costVal(), td2.costCmp(), -1, null,
-                    td2.fwd(), td2.bkp(), td2.mon(),
-                    null, null, null, excludeForTs2, false, null, false);
-
-            fFormerAction.accept(ctx, ts1);
-            fLatterAction.accept(ctx, ts2);
-        };
-    }
-
-    /**
-     * Parses "Choose 1 Forward you control other than [CardName]. During this turn, the next
-     * damage dealt to it is dealt to [CardName] instead." — one-shot damage redirect where the
-     * player picks a Forward to shield and a named card on the field absorbs the damage.
-     */
-    private static Consumer<GameContext> tryParseChooseForwardRedirectToNamed(String text) {
-        Matcher m = CHOOSE_FORWARD_REDIRECT_TO_NAMED.matcher(text);
-        if (!m.find()) return null;
-
-        String shieldName   = m.group("shield").trim();
-        String redirectName = m.group("redirect").trim();
-        if (!shieldName.equalsIgnoreCase(redirectName)) return null;
-
-        String logMsg = "Choose 1 Forward you control other than " + shieldName
-                + " → redirect next incoming damage to " + shieldName;
-
-        return ctx -> {
-            ctx.logEntry("Effect: " + logMsg);
-            List<ForwardTarget> targets = selectTargets(ctx, 1, false,
-                    false, true,
-                    null, null, null, false,
-                    -1, null, -1, null,
-                    true, false, false,
-                    null, null, null, shieldName,
-                    false, null, false);
-            if (targets.isEmpty()) return;
-
-            List<ForwardTarget> redirectTargets = selectTargets(ctx, 1, false,
-                    false, true,
-                    null, null, null, false,
-                    -1, null, -1, null,
-                    true, false, false,
-                    null, redirectName, null, null,
-                    false, null, false);
-            if (redirectTargets.isEmpty()) return;
-
-            ctx.redirectNextIncomingDamage(targets.get(0), redirectTargets.get(0));
-        };
-    }
-
-    private static Consumer<GameContext> tryParseChooseTwoMixedTypes(String text, CardData source) {
-        Matcher m = CHOOSE_TWO_MIXED_TYPES_PATTERN.matcher(text);
-        if (!m.find()) return null;
-
-        int count1 = Integer.parseInt(m.group("count1"));
-        String tgt1 = m.group("type1").toLowerCase();
-        boolean fwd1 = tgt1.contains("forward") || tgt1.contains("character");
-        boolean bak1 = tgt1.contains("backup")  || tgt1.contains("character");
-        boolean mon1 = tgt1.contains("monster") || tgt1.contains("character");
-
-        int count2 = Integer.parseInt(m.group("count2"));
-        String tgt2 = m.group("type2").toLowerCase();
-        boolean fwd2 = tgt2.contains("forward") || tgt2.contains("character");
-        boolean bak2 = tgt2.contains("backup")  || tgt2.contains("character");
-        boolean mon2 = tgt2.contains("monster") || tgt2.contains("character");
-
-        String control = m.group("control");
-        boolean opponentOnly = control != null && !control.toLowerCase().contains("you control");
-        boolean selfOnly     = control != null &&  control.toLowerCase().contains("you control");
-
-        String followup = m.group("followup").trim();
-        BiConsumer<GameContext, List<ForwardTarget>> action = parseTargetAction(followup, 0);
-        if (action == null) return null;
-
-        String label = "Choose " + count1 + " " + m.group("type1") + " and " + count2 + " " + m.group("type2");
-        return ctx -> {
-            ctx.logEntry(label);
-            List<ForwardTarget> ts1 = selectTargets(ctx, count1, false, opponentOnly, selfOnly,
-                    null, null, null, false, -1, null, -1, null,
-                    fwd1, bak1, mon1, null, null, null, null, false, null, false);
-            List<ForwardTarget> ts2 = selectTargets(ctx, count2, false, opponentOnly, selfOnly,
-                    null, null, null, false, -1, null, -1, null,
-                    fwd2, bak2, mon2, null, null, null, null, false, null, false);
-            List<ForwardTarget> all = new ArrayList<>(ts1);
-            all.addAll(ts2);
-            action.accept(ctx, all);
-        };
-    }
-
-    /**
-     * Parses "Choose 1 Forward with N power or less and up to 1 Forward in your opponent's
-     * Break Zone. Remove them from the game."
-     * <p>
-     * Selects one field Forward (either player) with power ≤ N, plus optionally one Forward
-     * from the opponent's Break Zone, then removes both from the game.
-     */
-    private static Consumer<GameContext> tryParseChooseFwdPowerLeAndOptOppBzFwdRfp(String text) {
-        Matcher m = CHOOSE_FWD_POWER_LE_AND_OPT_OPP_BZ_FWD_RFP.matcher(text);
-        if (!m.find()) return null;
-
-        final int powerCeil = Integer.parseInt(m.group("power"));
-
-        return ctx -> {
-            ctx.logEntry("Choose 1 Forward with power ≤ " + powerCeil
-                    + " and up to 1 Forward from opponent's Break Zone — Remove from game");
-            List<ForwardTarget> fieldTs = selectTargets(ctx, 1, false, false, false,
-                    null, null, null, false,
-                    -1, null, powerCeil, "less",
-                    true, false, false, null, null, null, null, false, null, false);
-            List<ForwardTarget> bzTs = selectTargets(ctx, 1, true, false, false,
-                    null, null, "in your opponent's Break Zone", true,
-                    -1, null, -1, null,
-                    true, false, false, null, null, null, null, false, null, false);
-            List<ForwardTarget> all = new ArrayList<>(fieldTs);
-            all.addAll(bzTs);
-            sortedByIdxDesc(all, true) .forEach(t -> ctx.removeTargetFromGame(t));
-            sortedByIdxDesc(all, false).forEach(t -> ctx.removeTargetFromGame(t));
-        };
-    }
-
-    private static Consumer<GameContext> tryParseChooseThreeMixedTypes(String text, CardData source) {
-        Matcher m = CHOOSE_THREE_MIXED_TYPES_PATTERN.matcher(text);
-        if (!m.find()) return null;
-
-        int count1 = Integer.parseInt(m.group("count1"));
-        String tgt1 = m.group("type1").toLowerCase();
-        boolean fwd1 = tgt1.contains("forward") || tgt1.contains("character");
-        boolean bak1 = tgt1.contains("backup")  || tgt1.contains("character");
-        boolean mon1 = tgt1.contains("monster") || tgt1.contains("character");
-
-        int count2 = Integer.parseInt(m.group("count2"));
-        String tgt2 = m.group("type2").toLowerCase();
-        boolean fwd2 = tgt2.contains("forward") || tgt2.contains("character");
-        boolean bak2 = tgt2.contains("backup")  || tgt2.contains("character");
-        boolean mon2 = tgt2.contains("monster") || tgt2.contains("character");
-
-        int count3 = Integer.parseInt(m.group("count3"));
-        String tgt3 = m.group("type3").toLowerCase();
-        boolean fwd3 = tgt3.contains("forward") || tgt3.contains("character");
-        boolean bak3 = tgt3.contains("backup")  || tgt3.contains("character");
-        boolean mon3 = tgt3.contains("monster") || tgt3.contains("character");
-
-        String followup = m.group("followup").trim();
-        String label = "Choose up to " + count1 + " " + m.group("type1")
-                + ", up to " + count2 + " " + m.group("type2")
-                + ", and up to " + count3 + " " + m.group("type3");
-
-        if (FOLLOWUP_REMOVE_FROM_GAME.matcher(followup).find()) {
-            return ctx -> {
-                ctx.logEntry(label + " — Remove From Game");
-                List<ForwardTarget> ts1 = selectTargets(ctx, count1, true, false, false,
-                        null, null, null, false, -1, null, -1, null,
-                        fwd1, bak1, mon1, null, null, null, null, false, null, false);
-                List<ForwardTarget> ts2 = selectTargets(ctx, count2, true, false, false,
-                        null, null, null, false, -1, null, -1, null,
-                        fwd2, bak2, mon2, null, null, null, null, false, null, false);
-                List<ForwardTarget> ts3 = selectTargets(ctx, count3, true, false, false,
-                        null, null, null, false, -1, null, -1, null,
-                        fwd3, bak3, mon3, null, null, null, null, false, null, false);
-                List<ForwardTarget> all = new ArrayList<>(ts1);
-                all.addAll(ts2);
-                all.addAll(ts3);
-                sortedByIdxDesc(all, true) .forEach(t -> ctx.removeTargetFromGame(t));
-                sortedByIdxDesc(all, false).forEach(t -> ctx.removeTargetFromGame(t));
-            };
-        }
-
-        BiConsumer<GameContext, List<ForwardTarget>> action = parseTargetAction(followup, 0);
-        if (action == null) return null;
-
-        return ctx -> {
-            ctx.logEntry(label);
-            List<ForwardTarget> ts1 = selectTargets(ctx, count1, true, false, false,
-                    null, null, null, false, -1, null, -1, null,
-                    fwd1, bak1, mon1, null, null, null, null, false, null, false);
-            List<ForwardTarget> ts2 = selectTargets(ctx, count2, true, false, false,
-                    null, null, null, false, -1, null, -1, null,
-                    fwd2, bak2, mon2, null, null, null, null, false, null, false);
-            List<ForwardTarget> ts3 = selectTargets(ctx, count3, true, false, false,
-                    null, null, null, false, -1, null, -1, null,
-                    fwd3, bak3, mon3, null, null, null, null, false, null, false);
-            List<ForwardTarget> all = new ArrayList<>(ts1);
-            all.addAll(ts2);
-            all.addAll(ts3);
-            action.accept(ctx, all);
-        };
-    }
 
     /**
      * Followup wordings that only help the chosen target — power and keyword grants, and
@@ -8669,2409 +7359,10 @@ public class ActionResolver {
         };
     }
 
-    /**
-     * Strips a trailing "When it is put from the field into the Break Zone this turn, draw N"
-     * delayed trigger, parses the rest as an ordinary choose-and-act effect, and arms the mark so
-     * {@link #selectTargets} applies it to the chosen targets. Arming before the inner effect runs
-     * is what makes the trigger survive a lethal primary: the mark is on the Forward before the
-     * damage that breaks it.
-     */
-    private static Consumer<GameContext> tryParseChooseCharacter(String text, CardData source, int xValue) {
-        Matcher bzDrawM = CHOOSE_THEN_WHEN_PUT_TO_BZ_DRAW.matcher(text.trim());
-        if (bzDrawM.matches()) {
-            int drawCount = Integer.parseInt(bzDrawM.group("count"));
-            Consumer<GameContext> inner = tryParseChooseCharacterInner(bzDrawM.group("head").trim(), source, xValue);
-            if (inner == null) return null;
-            return ctx -> {
-                ctx.armDrawOnFieldToBzMark(drawCount);
-                inner.accept(ctx);
-                ctx.consumeDrawOnFieldToBzMark();   // clear if the effect never selected a target
-            };
-        }
-        return tryParseChooseCharacterInner(text, source, xValue);
-    }
 
-    private static Consumer<GameContext> tryParseChooseCharacterInner(String text, CardData source, int xValue) {
-        text = ELEM_TYPE_OR_ELEM_TYPE.matcher(text).replaceAll("$1 or $3 $2");
-        text = escapePeriodInName(text, source);
-        Matcher m = CHOOSE_CHARACTER_PATTERN.matcher(text);
-        if (!m.find()) return null;
-
-        boolean any          = m.group("anycount") != null;
-        boolean upTo         = m.group("upto") != null;
-        int     maxCount     = any ? Integer.MAX_VALUE : Integer.parseInt(m.group("count"));
-        String  rawElement   = m.group("element");
-        String  element      = rawElement != null && rawElement.contains(" or ")
-                ? rawElement.replaceAll("(?i)\\s+or\\s+", "|") : rawElement;
-        // Resolve condition: "blocking [Name]"/"blocking a Job [Job]" overrides the standard condition.
-        // Post-target qualifiers ("that entered the field this turn") are normalized to the same string.
-        String  rawCondition  = m.group("condition");
-        String  postCondition = m.group("postcondition");
-        String  blockingName  = m.group("blockingname");
-        String  blockingJob   = m.group("blockingjob");
-        String  traitGroup    = m.group("trait");
-        String  condition     = blockingName  != null ? "blocking:"     + blockingName.trim()
-                              : blockingJob   != null ? "blocking-job:" + blockingJob.trim()
-                              : postCondition != null ? "entered the field this turn"
-                              : traitGroup    != null ? "trait:"        + traitGroup.trim().replace(" ", "_").toUpperCase(java.util.Locale.ROOT)
-                              : rawCondition;
-        String  targets      = m.group("targets");
-        String  tgtLower = targets.toLowerCase();
-        String  jobFilter;
-        String  cardNameFilter;
-        boolean inclForwards;
-        boolean inclBackups;
-        boolean inclMonsters;
-
-        if (tgtLower.startsWith("[job ")) {
-            Matcher jm = JOB_BRACKET_PATTERN.matcher(targets);
-            jobFilter      = jm.find() ? jm.group(1).trim() : null;
-            cardNameFilter = null;
-            inclForwards   = true;
-            inclBackups    = false;
-            inclMonsters   = false;
-        } else if (tgtLower.startsWith("[card name ")) {
-            Matcher nm = CARD_NAME_BRACKET_PATTERN.matcher(targets);
-            cardNameFilter = nm.find() ? nm.group(1).trim() : null;
-            jobFilter      = null;
-            inclForwards   = true;
-            inclBackups    = true;
-            inclMonsters   = true;
-        } else if (tgtLower.startsWith("card name ") && tgtLower.contains(" or job ")) {
-            // "Card Name X Forward or Job Y Forward" — mixed card-name + job filter, both typed
-            int orJobIdx = tgtLower.indexOf(" or job ");
-            String cardNamePart = targets.substring("Card Name ".length(), orJobIdx).trim();
-            cardNameFilter = cardNamePart.replaceAll("(?i)\\s+(?:Forwards?|Backups?|Monsters?|Characters?)$", "").trim();
-            String jobPart = targets.substring(orJobIdx + " or job ".length()).trim();
-            jobFilter    = jobPart.replaceAll("(?i)\\s+(?:Forwards?|Backups?|Monsters?|Characters?)$", "").trim();
-            inclForwards = tgtLower.contains("forward");
-            inclBackups  = tgtLower.contains("backup");
-            inclMonsters = tgtLower.contains("monster");
-        } else if (tgtLower.startsWith("card name ")) {
-            // Support "Card Name X" and "Card Name X or Card Name Y [or …]"
-            String rest = targets.substring("Card Name ".length());
-            String[] nameParts = rest.split("(?i)\\s+or\\s+Card\\s+Name\\s+");
-            cardNameFilter = String.join("|", nameParts).trim();
-            jobFilter      = null;
-            inclForwards   = true;
-            inclBackups    = true;
-            inclMonsters   = true;
-        } else if (tgtLower.startsWith("job ") && tgtLower.contains("or card name ")) {
-            int orCnIdx    = tgtLower.indexOf("or card name ");
-            String rawJob  = targets.substring("Job ".length(), orCnIdx)
-                                    .trim().replaceAll("(?i)\\s*and\\s*/\\s*$", "").trim();
-            List<String> jobParts = new ArrayList<>();
-            for (String p : rawJob.split("(?i)\\s+or\\s+Job\\s+")) jobParts.add(p.trim());
-            jobFilter      = String.join("|", jobParts);
-            cardNameFilter = targets.substring(orCnIdx + "or card name ".length()).trim();
-            inclForwards   = true;
-            inclBackups    = true;
-            inclMonsters   = true;
-        } else if (tgtLower.startsWith("job ")) {
-            List<String> jobs = new ArrayList<>();
-            Matcher wm = JOB_WRITTEN_SEGMENT.matcher(targets);
-            while (wm.find()) jobs.add(wm.group(1).trim());
-            boolean bareJob = jobs.isEmpty();
-            if (bareJob)
-                for (String p : targets.substring("Job ".length()).trim().split("(?i)\\s+or\\s+Job\\s+"))
-                    jobs.add(p.trim());
-            jobFilter      = String.join("|", jobs);
-            cardNameFilter = null;
-            inclForwards   = true;
-            inclBackups    = bareJob;
-            inclMonsters   = bareJob;
-        } else {
-            jobFilter      = null;
-            cardNameFilter = null;
-            boolean isGenericCard = tgtLower.equals("card") || tgtLower.equals("cards");
-            inclForwards   = isGenericCard || tgtLower.contains("forward") || tgtLower.contains("character");
-            inclBackups    = isGenericCard || tgtLower.contains("backup")  || tgtLower.contains("character");
-            inclMonsters   = isGenericCard || tgtLower.contains("monster") || tgtLower.contains("character");
-        }
-        boolean inclSummons  = tgtLower.contains("summon")
-                           || tgtLower.equals("card") || tgtLower.equals("cards");
-        String  categoryFilter = m.group("category");
-        String  excludeName      = restorePeriodInName(m.group("excludename") != null ? m.group("excludename").trim() : null, source);
-        String  rawExcludeKw     = m.group("excludekw");
-        boolean withoutMulticard = "Multicard".equalsIgnoreCase(rawExcludeKw != null ? rawExcludeKw.trim() : null);
-        String  rawExcludeElem = m.group("excludeelem");
-        final String fExcludeElem = rawExcludeElem != null ? rawExcludeElem.trim() : null;
-        String  costStr      = m.group("cost");
-        String  costListStr  = m.group("costlist");
-        String  rawCostCmp   = m.group("costcmp");
-        int     costVal      = costStr != null ? Integer.parseInt(costStr) : -1;
-        // Convert digit-valued costcmp into the "or_…" sentinel understood by meetsCostConstraint.
-        // Supports single ("cost N or M") and list ("cost A, B, … or Z") forms.
-        String  costCmp;
-        if (rawCostCmp != null && rawCostCmp.matches("\\d+")) {
-            String tail = costListStr != null
-                    ? costListStr.replaceAll("\\s+", "") + "," + rawCostCmp
-                    : rawCostCmp;
-            costCmp = "or_" + tail;
-        } else {
-            costCmp = rawCostCmp;
-        }
-        String  powerStr     = m.group("power");
-        String  powerCmp     = m.group("powercmp");
-        int     powerVal     = powerStr != null ? Integer.parseInt(powerStr) : -1;
-        String  control      = m.group("control");
-        boolean opponentOnly = control != null && !control.equalsIgnoreCase("you control");
-        boolean selfOnly     = "you control".equalsIgnoreCase(control);
-        String  zone         = m.group("zone");
-        boolean bothZones    = zone != null && (zone.toLowerCase(java.util.Locale.ROOT).contains("either player")
-                                             || zone.toLowerCase(java.util.Locale.ROOT).contains("any player"));
-        boolean opponentZone = zone != null && !bothZones && zone.toLowerCase(java.util.Locale.ROOT).contains("opponent");
-
-        String  followup     = restorePeriodInName(m.group("followup").trim(), source);
-        boolean unreduced    = CANNOT_BE_REDUCED_PATTERN.matcher(followup).find();
-
-        // If the followup contains ". " (sentence boundary), split into a primary effect
-        // (applied to selected targets) and a secondary standalone effect that follows.
-        // E.g. "Break it. <name> deals you 1 damage." → primary="Break it", secondary parsed separately.
-        final String primaryFollowup;
-        final String secondaryText;
-        final Consumer<GameContext> secondary;
-        {
-            int dotSpaceIdx = followup.indexOf(". ");
-            if (dotSpaceIdx >= 0) {
-                primaryFollowup = followup.substring(0, dotSpaceIdx).trim();
-                String stripped = stripRestrictionSentences(followup.substring(dotSpaceIdx + 2).trim());
-                secondaryText = stripped.isEmpty() ? null : stripped;
-                if (secondaryText == null) {
-                    secondary = null;
-                } else {
-                    // Special case: "You may [cost]. When/If you do so, use this ability again."
-                    // Captured here so the replay Consumer closes over the full original effect text.
-                    Matcher replayM = MAY_COST_REPLAY_ABILITY.matcher(secondaryText);
-                    if (replayM.find()) {
-                        String payCost     = replayM.group("payCost");
-                        String dullName    = replayM.group("dullName");
-                        String discardName = replayM.group("discardName");
-                        final String capturedText = text;
-                        Consumer<GameContext> replayEffect =
-                                ctx2 -> { Consumer<GameContext> inner = parse(capturedText, source, 0); if (inner != null) inner.accept(ctx2); };
-                        if (payCost != null) {
-                            final String elem = payCost.trim();
-                            secondary = ctx -> ctx.mayPayToReplayAbility(elem, replayEffect);
-                        } else if (dullName != null) {
-                            final String name = dullName.trim();
-                            secondary = ctx -> ctx.mayDullActiveCardToReplayAbility(name, replayEffect);
-                        } else {
-                            final String name = discardName.trim();
-                            secondary = ctx -> ctx.mayDiscardCardNameToReplayAbility(name, replayEffect);
-                        }
-                    } else {
-                        // Special case: "That Forward's controller discards N card(s) from their hand."
-                        // The discarder depends on the chosen target's controller, which is read back
-                        // from GameContext.lastChosenTargets() (populated by selectTargets).
-                        Matcher ctrlDiscM = FOLLOWUP_TARGET_CONTROLLER_DISCARDS.matcher(secondaryText);
-                        if (ctrlDiscM.matches()) {
-                            final int discardCount = Integer.parseInt(ctrlDiscM.group("count"));
-                            secondary = ctx -> {
-                                List<ForwardTarget> chosen = ctx.lastChosenTargets();
-                                for (ForwardTarget t : chosen) {
-                                    if (t.isP1() == ctx.isP1()) ctx.selfDiscard(discardCount);
-                                    else                        ctx.forceOpponentDiscard(discardCount);
-                                }
-                            };
-                        } else if (FOLLOWUP_BREAK.matcher(secondaryText).find()) {
-                            // "Break it." as a secondary applies to the same targets chosen for the primary.
-                            secondary = ctx -> {
-                                List<ForwardTarget> chosen = ctx.lastChosenTargets();
-                                sortedByIdxDesc(chosen, true) .forEach(ctx::breakTarget);
-                                sortedByIdxDesc(chosen, false).forEach(ctx::breakTarget);
-                            };
-                        } else if (FOLLOWUP_CANNOT_BE_BROKEN.matcher(secondaryText).find()
-                                || FOLLOWUP_CANNOT_BE_BROKEN_SIMPLE.matcher(secondaryText).find()) {
-                            secondary = ctx -> ctx.lastChosenTargets().forEach(ctx::shieldCannotBeBroken);
-                        } else if (FOLLOWUP_CANNOT_BE_BROKEN_BY_NON_DMG.matcher(secondaryText).find()) {
-                            secondary = ctx -> ctx.lastChosenTargets().forEach(ctx::shieldCannotBeBrokenByNonDmg);
-                        } else if (FOLLOWUP_IF_PUT_TO_BZ_THIS_TURN_RFG_INSTEAD.matcher(secondaryText).find()) {
-                            secondary = ctx -> ctx.lastChosenTargets().forEach(ctx::markTargetRfgInsteadOfBzThisTurn);
-                        } else {
-                            Matcher rfpM = SECONDARY_PLAY_REMOVED_ONTO_FIELD.matcher(secondaryText);
-                            if (rfpM.find()) {
-                                boolean dullIt = rfpM.group("dull") != null;
-                                secondary = ctx -> ctx.playLastRemovedFromRfpOntoField(dullIt);
-                            } else {
-                                Consumer<GameContext> parsed = parse(secondaryText, source);
-                                secondary = (parsed != null) ? parsed
-                                        : ctx -> ctx.logEntry("[ActionResolver] Secondary followup not yet implemented: " + secondaryText);
-                            }
-                        }
-                    }
-                }
-            } else {
-                primaryFollowup = followup;
-                secondaryText   = null;
-                secondary = null;
-            }
-        }
-
-        // Detect "You may [followup]" — followup is optional; player may decline the action after choosing the target
-        final boolean followupIsOptional = primaryFollowup.toLowerCase(java.util.Locale.ROOT).startsWith("you may ");
-        final String strippedPrimaryFollowup = followupIsOptional
-                ? primaryFollowup.substring("You may ".length()).trim() : primaryFollowup;
-
-        // Shared log prefix helper (captured once, reused in all lambdas)
-        String costLabel     = CardFilters.formatCostFilterLabel(costVal, costCmp);
-        String powerLabel    = powerVal >= 0
-                ? " of power " + powerVal + (powerCmp != null ? " or " + powerCmp : "") : "";
-        String controlLabel  = opponentOnly ? " (opponent)" : selfOnly ? " (yours)" : "";
-        String categoryLabel = categoryFilter != null ? " Category " + categoryFilter : "";
-        String excludeLabel  = excludeName != null ? " (excl. " + excludeName + ")" : "";
-        String zoneLabel     = zone != null
-                ? " in " + (bothZones ? "either player's" : opponentZone ? "opponent's" : "your") + " Break Zone" : "";
-        String choosePrefix = "Choose " + (upTo ? "up to " : any ? "any number of " : "") + (maxCount < Integer.MAX_VALUE ? maxCount : "")
-                + (condition != null ? " " + condition : "")
-                + (element   != null ? " " + element   : "")
-                + categoryLabel + " " + targets + costLabel + powerLabel + controlLabel + excludeLabel + zoneLabel;
-
-        // --- "You may pay 《Element》. If you do so, [target action]." ---
-        // Checked against the full followup before the primary/secondary split so the conditional is not lost.
-        {
-            Matcher youMayPayM = FOLLOWUP_YOU_MAY_PAY_ELEMENT_IF_DO_SO.matcher(followup);
-            if (youMayPayM.matches()) {
-                String cpElem    = youMayPayM.group("element").trim();
-                String cpEffText = youMayPayM.group("effect").trim();
-                BiConsumer<GameContext, List<ForwardTarget>> cpAction =
-                        parseTargetAction(cpEffText, xValue);
-                if (cpAction != null) {
-                    return ctx -> {
-                        ctx.logEntry(choosePrefix + " — You may pay 《" + cpElem + "》; if so: " + cpEffText);
-                        List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                                opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                                costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
-                                jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                        ctx.mayPayElementCpToEffect(cpElem, ctx2 -> cpAction.accept(ctx2, ts));
-                    };
-                }
-            }
-        }
-
-        // --- "If your opponent doesn't pay 《N》, [target action]." (Arkasodara) ---
-        // The opponent may pay to prevent the action against the chosen target(s).
-        {
-            Matcher notPayM = FOLLOWUP_IF_OPP_NOT_PAY_ACTION.matcher(followup);
-            if (notPayM.matches()) {
-                int notPayCost = Integer.parseInt(notPayM.group("cost").trim());
-                String notPayEffText = notPayM.group("effect").trim();
-                BiConsumer<GameContext, List<ForwardTarget>> notPayAction =
-                        parseTargetAction(notPayEffText, xValue);
-                if (notPayAction != null) {
-                    return ctx -> {
-                        ctx.logEntry(choosePrefix + " — unless opponent pays 《" + notPayCost + "》: " + notPayEffText);
-                        List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                                opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                                costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
-                                jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                        if (ts.isEmpty()) return;
-                        ctx.opponentMayPayToPreventAction(notPayCost, () -> notPayAction.accept(ctx, ts));
-                    };
-                }
-            }
-        }
-
-        // --- "[action]. Then, if you don't pay 《1》 per CP of the chosen card's cost, break it." ---
-        // Checked against the full followup before the primary/secondary split, since the split
-        // would drop the trailing clause and leave the primary action unconditional.
-        {
-            Matcher perCpM = FOLLOWUP_THEN_PAY_PER_TARGET_COST_OR_BREAK.matcher(followup);
-            if (perCpM.matches()) {
-                String primaryText = perCpM.group("primary").trim();
-                BiConsumer<GameContext, List<ForwardTarget>> primaryAction =
-                        parseTargetAction(primaryText, xValue);
-                // "You gain control of it" is not one of parseTargetAction's verbs, and it is the
-                // primary the only printed card (Ultimecia 27-092H) uses.
-                if (primaryAction == null && FOLLOWUP_GAIN_CONTROL.matcher(primaryText).find())
-                    primaryAction = (c2, ts2) -> ts2.forEach(t -> c2.gainControlOfForward(t, "permanent", false));
-                if (primaryAction != null) {
-                    final BiConsumer<GameContext, List<ForwardTarget>> fPrimary = primaryAction;
-                    return ctx -> {
-                        ctx.logEntry(choosePrefix + " — " + primaryText
-                                + ", then pay 《1》 per CP of its cost or put it into the Break Zone");
-                        List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                                opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                                costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
-                                jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                        if (ts.isEmpty()) return;
-                        // Resolve the cards up front: the primary action may change control of them,
-                        // which invalidates the side/index a ForwardTarget carries.
-                        List<CardData> chosen = new ArrayList<>();
-                        for (ForwardTarget t : ts) {
-                            CardData c = ctx.targetCard(t);
-                            if (c != null) chosen.add(c);
-                        }
-                        fPrimary.accept(ctx, ts);
-                        for (CardData c : chosen) {
-                            // Only charge for a card the primary actually handed over — a steal that
-                            // did not go through leaves nothing to pay for or break.
-                            if (!ctx.selfControlsCard(c)) continue;
-                            ctx.mayPayCostOrElse(c.cost(), null, 0, () -> ctx.breakSourceCard(c));
-                        }
-                    };
-                }
-            }
-        }
-
-        // --- "You may discard 1 Card Name X from your hand. If you do so, deal it N damage." ---
-        // Checked against the full followup before the primary/secondary split.
-        Matcher mayDiscardNamedM = FOLLOWUP_MAY_DISCARD_NAMED_DEAL_DAMAGE.matcher(followup);
-        if (mayDiscardNamedM.matches()) {
-            String discardName = mayDiscardNamedM.group("cardname").trim();
-            int    damage      = Integer.parseInt(mayDiscardNamedM.group("amount"));
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — May discard Card Name " + discardName + ", if so deal " + damage + " damage");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
-                        jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                ctx.mayDiscardCardNameFromHand(discardName, ctx2 -> {
-                    sortedByIdxDesc(ts, true) .forEach(t -> ctx2.damageTarget(t, damage));
-                    sortedByIdxDesc(ts, false).forEach(t -> ctx2.damageTarget(t, damage));
-                });
-            };
-        }
-
-        // --- "Divide N damage" ---
-        Matcher divideM = DIVIDE_DAMAGE_PATTERN.matcher(followup);
-        if (divideM.find())
-        {
-            int baseDamage = Integer.parseInt(divideM.group("amount"));
-            final boolean equally = divideM.group("mode") != null;
-
-            int dotSpaceIdxCond = followup.indexOf(". ");
-            String followup_cond = dotSpaceIdxCond >= 0 ? followup.substring(dotSpaceIdxCond + 2) : "";
-            Matcher divideCondM = DIVIDE_DAMAGE_INSTEAD_COND.matcher(followup_cond);
-            final DamageInsteadCondition insteadCond;
-            final int altDamage;
-            if (divideCondM.find()) {
-                DamageInsteadCondition parsedCond = parseDamageInsteadCondition(divideCondM.group("cond").trim());
-                // Anchored to "divide N damage" specifically — a bare \d+ search would wrongly
-                // grab a digit embedded in the condition text itself (e.g. "Category FFTA2").
-                Matcher mAmp = DIVIDE_DAMAGE_PATTERN.matcher(followup_cond);
-                insteadCond = parsedCond;
-                altDamage   = (parsedCond != null && mAmp.find()) ? Integer.parseInt(mAmp.group("amount")) : baseDamage;
-            } else {
-                insteadCond = null;
-                altDamage   = baseDamage;
-            }
-
-            final boolean fUnreduced = unreduced;
-            final int fBaseDamage = baseDamage;
-            return ctx -> {
-                int fDamage = fBaseDamage;
-                if (insteadCond != null && insteadConditionMet(ctx, insteadCond)) fDamage = altDamage;
-
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, any || upTo,
-                        opponentOnly, selfOnly, null, null, null, false,
-                        -1, null, -1, null,
-                        true, false, false,
-                        null, null, null, null, false, null, false);
-                if (ts.isEmpty()) return;
-
-                if (equally) {
-                    int perTarget = roundUpToThousand(fDamage, ts.size());
-                    sortedByIdxDesc(ts, true) .forEach(t -> damageTargetMaybeUnreduced(ctx, t, perTarget, fUnreduced));
-                    sortedByIdxDesc(ts, false).forEach(t -> damageTargetMaybeUnreduced(ctx, t, perTarget, fUnreduced));
-                } else if (ts.size() == 1) {
-                    // Nothing to divide — skip the allocation dialog and deal it all.
-                    damageTargetMaybeUnreduced(ctx, ts.get(0), fDamage, fUnreduced);
-                } else {
-                    List<CardData> cards = new ArrayList<>();
-                    for (ForwardTarget t : ts) {
-                        cards.add(t.isP1() ? ctx.p1Forward(t.idx()) : ctx.p2Forward(t.idx()));
-                    }
-                    List<Integer> allocation = ctx.divideDamageAmount(fDamage, "Divide Damage: ", cards);
-                    Map<ForwardTarget, Integer> amountByTarget = new HashMap<>();
-                    for (int i = 0; i < ts.size(); i++) amountByTarget.put(ts.get(i), allocation.get(i));
-                    sortedByIdxDesc(ts, true) .forEach(t -> { int amt = amountByTarget.get(t); if (amt > 0) damageTargetMaybeUnreduced(ctx, t, amt, fUnreduced); });
-                    sortedByIdxDesc(ts, false).forEach(t -> { int amt = amountByTarget.get(t); if (amt > 0) damageTargetMaybeUnreduced(ctx, t, amt, fUnreduced); });
-                }
-            };
-        }
-
-        // --- "Deal it N damage. If <cond>, deal it M damage instead." ---
-        // Matched against the full followup before the primary/secondary split to avoid losing the condition.
-        Matcher insteadM = FOLLOWUP_DAMAGE_INSTEAD.matcher(followup);
-        if (insteadM.find()) {
-            int    baseDmg   = Integer.parseInt(insteadM.group("base"));
-            int    altDmg    = Integer.parseInt(insteadM.group("alt"));
-            String condText  = insteadM.group("cond").trim();
-            DamageInsteadCondition insteadCond = parseDamageInsteadCondition(condText);
-            if (insteadCond != null) {
-                return ctx -> {
-                    ctx.logEntry(choosePrefix + " — Deal " + baseDmg + "/" + altDmg + " damage (if " + condText + ")");
-                    List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                            opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                            costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                    sortedByIdxDesc(ts, true) .forEach(t -> ctx.damageTarget(t, resolveInsteadDamage(ctx, t, insteadCond, baseDmg, altDmg)));
-                    sortedByIdxDesc(ts, false).forEach(t -> ctx.damageTarget(t, resolveInsteadDamage(ctx, t, insteadCond, baseDmg, altDmg)));
-                };
-            }
-        }
-
-        // --- General EX Burst instead ("P. If [name] results from an EX Burst, A instead.") ---
-        // Checked before the for-each and fixed-damage handlers so the condition isn't lost.
-        // FOLLOWUP_DAMAGE_INSTEAD already covers fixed-damage EX burst cases above; this handles
-        // the for-each damage and non-damage EX burst instead variants.
-        Matcher exBurstM = FOLLOWUP_INSTEAD_EXBURST.matcher(followup);
-        if (exBurstM.find()) {
-            String primaryText = exBurstM.group("primary").trim();
-            String altText     = exBurstM.group("alt").trim();
-            BiConsumer<GameContext, List<ForwardTarget>> primaryAction =
-                    parseTargetAction(primaryText, xValue);
-            BiConsumer<GameContext, List<ForwardTarget>> altAction =
-                    parseTargetAction(altText, xValue);
-            if (primaryAction != null && altAction != null) {
-                return ctx -> {
-                    ctx.logEntry(choosePrefix + " — EX Burst: " + primaryText + " / " + altText);
-                    List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                            opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                            costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                    (ctx.isExBurst() ? altAction : primaryAction).accept(ctx, ts);
-                };
-            }
-        }
-
-        // --- "If opponent has N cards or less…, [action1]. If no cards…, [action2] instead." ---
-        // Two-tier hand condition — checked against the full followup before the dot-split.
-        Matcher dblHandM = OPPONENT_HAND_DOUBLE_CONDITION_PATTERN.matcher(followup);
-        if (dblHandM.matches()) {
-            int    threshold  = Integer.parseInt(dblHandM.group("n"));
-            String eff1Text   = dblHandM.group("effect1").trim();
-            String eff2Text   = dblHandM.group("effect2").trim();
-            BiConsumer<GameContext, List<ForwardTarget>> action1 = parseTargetAction(eff1Text, xValue);
-            BiConsumer<GameContext, List<ForwardTarget>> action2 = parseTargetAction(eff2Text, xValue);
-            if (action1 != null && action2 != null) {
-                return ctx -> {
-                    ctx.logEntry(choosePrefix + " — hand condition (≤" + threshold + "/0)");
-                    List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                            opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                            costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
-                            jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                    int hs = ctx.opponentHandSize();
-                    if (hs == 0)           action2.accept(ctx, ts);
-                    else if (hs <= threshold) action1.accept(ctx, ts);
-                };
-            }
-        }
-
-        // --- "If opponent has [no|N cards or less] cards in hand, [action]" as single followup ---
-        Matcher handM = OPPONENT_HAND_CONDITION_PATTERN.matcher(primaryFollowup);
-        if (handM.matches()) {
-            String nStr      = handM.group("n");
-            int    threshold = nStr != null ? Integer.parseInt(nStr) : 0;
-            String effText   = handM.group("effect").trim();
-            BiConsumer<GameContext, List<ForwardTarget>> action = parseTargetAction(effText, xValue);
-            if (action != null) {
-                return ctx -> {
-                    ctx.logEntry(choosePrefix + " — hand condition");
-                    List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                            opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                            costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
-                            jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                    int hs = ctx.opponentHandSize();
-                    boolean condMet = (nStr != null) ? hs <= threshold : hs == 0;
-                    if (condMet) action.accept(ctx, ts);
-                    if (secondary != null) secondary.accept(ctx);
-                };
-            }
-        }
-
-        // --- "Select 1 number and reveal the top card of your deck.
-        //      If the revealed card is of the same cost as the selected number, break it." ---
-        // "it" = the chosen Forward selected in the choose step, not the revealed card.
-        // Checked against the full followup (not primaryFollowup) so the compound text isn't split.
-        if (FOLLOWUP_SELECT_NUMBER_REVEAL_BREAK.matcher(followup).find()) {
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Select number + reveal, break if cost matches");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
-                        jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                if (ts.isEmpty()) return;
-                ForwardTarget target = ts.get(0);
-                int n = ctx.selectNumber(0, 11, "Select a number:");
-                ctx.logEntry("Selected number: " + n);
-                ctx.revealTopDeckCard(java.util.List.of(
-                        new RevealClause(card -> card.cost() == n, null,
-                                rCtx -> rCtx.breakTarget(target))), false);
-            };
-        }
-
-        // --- "Remove the top card of your deck from the game. Deal it N damage for each CP required to play the removed card." ---
-        Matcher rfpTopDeckPerCpM = FOLLOWUP_RFP_TOP_DECK_AND_DAMAGE_PER_CP.matcher(followup);
-        if (rfpTopDeckPerCpM.find()) {
-            int baseDmg = Integer.parseInt(rfpTopDeckPerCpM.group("base"));
-            return ctx -> {
-                int cpCost = ctx.removeTopCardOfDeckFromGameAndGetCost();
-                int damage = baseDmg * cpCost;
-                ctx.logEntry(choosePrefix + " — Deal " + damage + " damage (RFP top of deck, " + baseDmg + "×CP=" + cpCost + ")");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                sortedByIdxDesc(ts, true) .forEach(t -> ctx.damageTarget(t, damage));
-                sortedByIdxDesc(ts, false).forEach(t -> ctx.damageTarget(t, damage));
-            };
-        }
-
-        // --- "Remove the top card of your deck from the game. If the removed card is a Forward, break it. If not, deal it N damage." ---
-        Matcher rfpTopDeckIfFwdM = FOLLOWUP_RFP_TOP_DECK_IF_FORWARD_BREAK_ELSE_DAMAGE.matcher(followup);
-        if (rfpTopDeckIfFwdM.find()) {
-            int dmg = Integer.parseInt(rfpTopDeckIfFwdM.group("dmg"));
-            return ctx -> {
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                if (ctx.removeTopCardOfDeckFromGameIsForward()) {
-                    ctx.logEntry(choosePrefix + " — removed card is a Forward: break the chosen Forward");
-                    sortedByIdxDesc(ts, true) .forEach(ctx::breakTarget);
-                    sortedByIdxDesc(ts, false).forEach(ctx::breakTarget);
-                } else {
-                    ctx.logEntry(choosePrefix + " — removed card is not a Forward: deal the chosen Forward " + dmg + " damage");
-                    sortedByIdxDesc(ts, true) .forEach(t -> ctx.damageTarget(t, dmg));
-                    sortedByIdxDesc(ts, false).forEach(t -> ctx.damageTarget(t, dmg));
-                }
-            };
-        }
-
-        // --- "Reveal the top N cards of your deck. Deal it M damage for each CP required to play the revealed cards. Add all the revealed cards to your hand." ---
-        Matcher revealDmgPerCpM = FOLLOWUP_REVEAL_TOP_N_DAMAGE_PER_CP_ADD_ALL_TO_HAND.matcher(followup);
-        if (revealDmgPerCpM.find()) {
-            int revealCount = Integer.parseInt(revealDmgPerCpM.group("n"));
-            int baseDmg     = Integer.parseInt(revealDmgPerCpM.group("base"));
-            return ctx -> {
-                int totalCp = ctx.revealTopNAndAddAllToHandGetTotalCP(revealCount);
-                int damage  = baseDmg * totalCp;
-                ctx.logEntry(choosePrefix + " — Deal " + damage + " damage (reveal top " + revealCount + ", " + baseDmg + "×totalCP=" + totalCp + ")");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                sortedByIdxDesc(ts, true) .forEach(t -> ctx.damageTarget(t, damage));
-                sortedByIdxDesc(ts, false).forEach(t -> ctx.damageTarget(t, damage));
-            };
-        }
-
-        // --- "Reveal the top N cards of your deck. For each Job [Job] revealed this way, deal it M damage. Then, place the revealed cards at the bottom of your deck in any order." ---
-        Matcher revealJobDmgM = FOLLOWUP_REVEAL_TOP_N_JOB_DEAL_DMG_PLACE_BOTTOM.matcher(followup);
-        if (revealJobDmgM.find()) {
-            int    revealCount  = Integer.parseInt(revealJobDmgM.group("n"));
-            String revealJob    = revealJobDmgM.group("job").trim();
-            int    dmgPerMatch  = Integer.parseInt(revealJobDmgM.group("dmg"));
-            return ctx -> {
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
-                        jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                int matchCount = ctx.revealTopNCountJobPlaceAllAtBottom(revealCount, revealJob);
-                if (ts.isEmpty() || matchCount == 0) {
-                    ctx.logEntry(choosePrefix + " — 0 Job " + revealJob + " revealed, no damage");
-                    return;
-                }
-                int totalDmg = matchCount * dmgPerMatch;
-                ctx.logEntry(choosePrefix + " — Deal " + totalDmg + " damage (" + matchCount + "×" + dmgPerMatch + " for Job " + revealJob + ")");
-                sortedByIdxDesc(ts, true) .forEach(t -> ctx.damageTarget(t, totalDmg));
-                sortedByIdxDesc(ts, false).forEach(t -> ctx.damageTarget(t, totalDmg));
-            };
-        }
-
-        // --- "Deal it N damage for each [Name] Counter placed on [card]." (counter-scaled xValue) ---
-        // Must be checked before FOLLOWUP_DAMAGE_FOR_EACH, which would match on the flat N and drop the for-each.
-        Matcher dmgForEachCounterM = FOLLOWUP_DAMAGE_FOR_EACH_COUNTER.matcher(primaryFollowup);
-        if (dmgForEachCounterM.find()) {
-            int perUnit = Integer.parseInt(dmgForEachCounterM.group("perunit"));
-            String counterName = dmgForEachCounterM.group("counterName").trim();
-            return ctx -> {
-                int damage = perUnit * xValue;
-                ctx.logEntry(choosePrefix + " — " + perUnit + " damage ×" + xValue + " " + counterName + " Counter(s) = " + damage + " damage");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
-                        jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                sortedByIdxDesc(ts, true) .forEach(t -> ctx.damageTarget(t, damage));
-                sortedByIdxDesc(ts, false).forEach(t -> ctx.damageTarget(t, damage));
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- "Deal it N damage for each [source]" followup ---
-        Matcher forEachM = FOLLOWUP_DAMAGE_FOR_EACH.matcher(primaryFollowup);
-        if (forEachM.find()) {
-            int    baseDmg        = Integer.parseInt(forEachM.group("base"));
-            String perStr         = forEachM.group("per");
-            int    perDmg         = perStr != null ? Integer.parseInt(perStr) : 0;
-            boolean subtract      = "minus".equalsIgnoreCase(forEachM.group("op"));
-            boolean srcSelfDmg    = forEachM.group("selfdmg")  != null;
-            String  srcJobBracket = forEachM.group("jobbname") != null ? forEachM.group("jobbname").trim() : null;
-            String  srcJobWritten = forEachM.group("jobwname") != null ? forEachM.group("jobwname").trim() : null;
-            String  srcJobWType   = forEachM.group("jobwtype") != null ? forEachM.group("jobwtype").trim() : null;
-            String  srcCharType   = forEachM.group("chartype");
-            String  srcCategory   = srcCharType != null && forEachM.group("category") != null ? forEachM.group("category").trim() : null;
-            String  srcElement    = srcCharType != null && forEachM.group("element")  != null ? forEachM.group("element").toLowerCase(java.util.Locale.ROOT) : null;
-            int     srcCostFilter = srcCharType != null && forEachM.group("costfilter") != null ? Integer.parseInt(forEachM.group("costfilter")) : -1;
-            String  srcBzName     = forEachM.group("bzname")   != null ? forEachM.group("bzname").trim()   : null;
-            boolean srcOppHand    = forEachM.group("opphand")   != null;
-            boolean srcCrystal    = forEachM.group("crystal")   != null;
-            boolean srcCpDiffElem = forEachM.group("cpDiffElem") != null;
-            // if none of the above → xpaid
-            boolean charFwd = srcCharType != null && (srcCharType.equalsIgnoreCase("forward")   || srcCharType.equalsIgnoreCase("forwards")   || srcCharType.equalsIgnoreCase("character") || srcCharType.equalsIgnoreCase("characters"));
-            boolean charBkp = srcCharType != null && (srcCharType.equalsIgnoreCase("backup")    || srcCharType.equalsIgnoreCase("backups")    || srcCharType.equalsIgnoreCase("character") || srcCharType.equalsIgnoreCase("characters"));
-            boolean charMon = srcCharType != null && (srcCharType.equalsIgnoreCase("monster")   || srcCharType.equalsIgnoreCase("monsters")   || srcCharType.equalsIgnoreCase("character") || srcCharType.equalsIgnoreCase("characters"));
-            String sourceLabel;
-            if      (srcSelfDmg)           sourceLabel = "P1 damage";
-            else if (srcJobBracket != null) sourceLabel = "[Job (" + srcJobBracket + ")] you control";
-            else if (srcJobWritten != null) sourceLabel = "Job " + srcJobWritten + (srcJobWType != null ? " " + srcJobWType : "") + " you control";
-            else if (srcCharType   != null) sourceLabel = (srcCategory != null ? "Category " + srcCategory + " " : "") + (srcElement != null ? srcElement + " " : "") + srcCharType + (srcCostFilter != -1 ? " of cost " + srcCostFilter : "") + " you control";
-            else if (srcBzName     != null) sourceLabel = "Card Name " + srcBzName + " in BZ";
-            else if (srcOppHand)           sourceLabel = "opponent hand";
-            else if (srcCrystal)           sourceLabel = "《C》 you have";
-            else if (srcCpDiffElem)        sourceLabel = "CP of a different Element paid to cast";
-            else                            sourceLabel = "X CP paid";
-            String op = subtract ? " - " : " + ";
-            String logLabel = perDmg > 0
-                    ? baseDmg + op + perDmg + "×[" + sourceLabel + "]"
-                    : baseDmg + "×[" + sourceLabel + "]";
-            return ctx -> {
-                int n;
-                if      (srcSelfDmg)           n = ctx.p1DamageCount();
-                else if (srcJobBracket != null) n = ctx.countSelfFieldCards(true, true, true, srcJobBracket, null);
-                else if (srcJobWritten != null) {
-                    boolean jwFwd = srcJobWType == null || srcJobWType.matches("(?i)Forwards?");
-                    boolean jwBkp = srcJobWType == null || srcJobWType.matches("(?i)Backups?");
-                    boolean jwMon = srcJobWType == null || srcJobWType.matches("(?i)Monsters?");
-                    n = ctx.countSelfFieldCards(jwFwd, jwBkp, jwMon, srcJobWritten, null);
-                }
-                else if (srcCharType   != null) n = ctx.countSelfFieldCards(charFwd, charBkp, charMon, null, null, srcCategory, srcElement, srcCostFilter);
-                else if (srcBzName     != null) n = ctx.countSelfBreakZoneCards(srcBzName, null);
-                else if (srcOppHand)           n = ctx.opponentHandSize();
-                else if (srcCrystal)           n = ctx.crystalCount();
-                else if (srcCpDiffElem)        n = ctx.castPaymentDistinctElements();
-                else                            n = xValue;
-                int damage = perDmg > 0
-                        ? (subtract ? Math.max(0, baseDmg - perDmg * n) : baseDmg + perDmg * n)
-                        : baseDmg * n;
-                ctx.logEntry(choosePrefix + " — Deal " + damage + " damage (" + logLabel + ", n=" + n + ")");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                sortedByIdxDesc(ts, true) .forEach(t -> ctx.damageTarget(t, damage));
-                sortedByIdxDesc(ts, false).forEach(t -> ctx.damageTarget(t, damage));
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Dull + Damage followup ---
-        Matcher dullDmgM = FOLLOWUP_DULL_AND_DAMAGE.matcher(primaryFollowup);
-        if (dullDmgM.find()) {
-            int damage = Integer.parseInt(dullDmgM.group("amount"));
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Dull & Deal " + damage + " damage");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                sortedByIdxDesc(ts, true) .forEach(t -> { ctx.dullTarget(t); ctx.damageTarget(t, damage); });
-                sortedByIdxDesc(ts, false).forEach(t -> { ctx.dullTarget(t); ctx.damageTarget(t, damage); });
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- "If your opponent controls N or more Forwards, deal it X damage" followup ---
-        Matcher oppFwdCondM = FOLLOWUP_IF_OPPONENT_CONTROLS_FORWARDS_DAMAGE.matcher(primaryFollowup);
-        if (oppFwdCondM.matches()) {
-            int minCount = Integer.parseInt(oppFwdCondM.group("count"));
-            int damage   = Integer.parseInt(oppFwdCondM.group("amount"));
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — If opponent controls ≥" + minCount + " Forwards, deal " + damage + " damage");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
-                        jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                if (ctx.opponentForwardCount() >= minCount) {
-                    sortedByIdxDesc(ts, true) .forEach(t -> ctx.damageTarget(t, damage));
-                    sortedByIdxDesc(ts, false).forEach(t -> ctx.damageTarget(t, damage));
-                }
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- "If you control N or more [Element] [Type], deal it X damage" followup ---
-        Matcher selfFieldCondM = FOLLOWUP_IF_SELF_CONTROLS_N_ELEMENT_TYPE_DAMAGE.matcher(primaryFollowup);
-        if (selfFieldCondM.matches()) {
-            int    minCount    = Integer.parseInt(selfFieldCondM.group("count"));
-            int    damage      = Integer.parseInt(selfFieldCondM.group("amount"));
-            String condElement  = selfFieldCondM.group("element");  // null if absent
-            String condTypeRaw  = selfFieldCondM.group("type");
-            String condType     = condTypeRaw.toLowerCase();
-            boolean cFwd = condType.startsWith("forward") || condType.startsWith("character");
-            boolean cBkp = condType.startsWith("backup")  || condType.startsWith("character");
-            boolean cMon = condType.startsWith("monster")  || condType.startsWith("character");
-            return ctx -> {
-                String label = "If you control ≥" + minCount + " "
-                        + (condElement != null ? condElement + " " : "")
-                        + condTypeRaw + ", deal " + damage + " damage";
-                ctx.logEntry(choosePrefix + " — " + label);
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
-                        jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                if (ctx.selfFieldCount(condElement, cFwd, cBkp, cMon) >= minCount) {
-                    sortedByIdxDesc(ts, true) .forEach(t -> ctx.damageTarget(t, damage));
-                    sortedByIdxDesc(ts, false).forEach(t -> ctx.damageTarget(t, damage));
-                }
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- "If you control N or more [Element] [Type], <action> it/them" followup ---
-        // Must precede the plain action handlers below: those scan for their verb with find(), so
-        // they would match straight through this condition and apply the action unconditionally.
-        Matcher selfFieldActionM = FOLLOWUP_IF_SELF_CONTROLS_N_ELEMENT_TYPE_ACTION.matcher(primaryFollowup);
-        if (selfFieldActionM.matches()) {
-            String actionText = selfFieldActionM.group("action").trim();
-            BiConsumer<GameContext, List<ForwardTarget>> condAction =
-                    parseTargetAction(actionText, xValue);
-            if (condAction != null) {
-                int    minCount    = Integer.parseInt(selfFieldActionM.group("count"));
-                String condElement = selfFieldActionM.group("element");  // null if absent
-                String condTypeRaw = selfFieldActionM.group("type");
-                String condType    = condTypeRaw.toLowerCase();
-                boolean cFwd = condType.startsWith("forward") || condType.startsWith("character");
-                boolean cBkp = condType.startsWith("backup")  || condType.startsWith("character");
-                boolean cMon = condType.startsWith("monster") || condType.startsWith("character");
-                return ctx -> {
-                    String label = "If you control ≥" + minCount + " "
-                            + (condElement != null ? condElement + " " : "")
-                            + condTypeRaw + ", " + actionText;
-                    ctx.logEntry(choosePrefix + " — " + label);
-                    List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                            opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                            costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
-                            jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                    if (ctx.selfFieldCount(condElement, cFwd, cBkp, cMon) >= minCount)
-                        condAction.accept(ctx, ts);
-                    else
-                        ctx.logEntry("Condition not met — " + actionText + " skipped");
-                    if (secondary != null) secondary.accept(ctx);
-                };
-            }
-        }
-
-        // --- Split effect: [action A] the first [type] … and [action B] the other ---
-        Matcher foM = FOLLOWUP_FIRST_AND_OTHER.matcher(primaryFollowup);
-        if (foM.find()) {
-            final String firstpfx    = foM.group("firstpfx").trim();
-            final String firstsfx    = foM.group("firstsfx").trim().toLowerCase();
-            final String othereffect = foM.group("othereffect").trim().toLowerCase();
-            Matcher dmgAmt = Pattern.compile("(?i)deal\\s+(?<n>\\d+)\\s+damage").matcher(firstpfx);
-            final int firstDamage = dmgAmt.find() ? Integer.parseInt(dmgAmt.group("n")) : 0;
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — " + firstpfx + " first; " + othereffect + " other");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
-                        jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                if (!ts.isEmpty()) {
-                    ForwardTarget first = ts.get(0);
-                    if      (firstsfx.contains("from the game"))  ctx.removeTargetFromGame(first);
-                    else if (firstsfx.contains("to its owner")) {
-                        if (first.zone() == ForwardTarget.CardZone.FORWARD) {
-                            if (first.isP1()) ctx.returnP1ForwardToHand(first.idx());
-                            else              ctx.returnP2ForwardToHand(first.idx());
-                        }
-                    }
-                    else if (firstDamage > 0)                          ctx.damageTarget(first, firstDamage);
-                    else if (firstpfx.equalsIgnoreCase("dull"))        ctx.dullTarget(first);
-                    else if (firstpfx.equalsIgnoreCase("break"))       ctx.breakTarget(first);
-                    else if (firstpfx.equalsIgnoreCase("freeze"))      ctx.freezeTarget(first);
-                    else if (firstpfx.equalsIgnoreCase("activate"))    ctx.activateTarget(first);
-                }
-                if (ts.size() > 1) {
-                    ForwardTarget other = ts.get(1);
-                    if      (othereffect.contains("freeze") && othereffect.contains("dull")) ctx.dullAndFreezeTarget(other);
-                    else if (othereffect.equals("activate"))                                  ctx.activateTarget(other);
-                    else if (othereffect.equals("break"))                                     ctx.breakTarget(other);
-                    else if (othereffect.equals("dull"))                                      ctx.dullTarget(other);
-                    else if (othereffect.equals("freeze"))                                    ctx.freezeTarget(other);
-                    else if (othereffect.contains("from the game"))                           ctx.removeTargetFromGame(other);
-                    else if (othereffect.contains("to its owner")) {
-                        if (other.zone() == ForwardTarget.CardZone.FORWARD) {
-                            if (other.isP1()) ctx.returnP1ForwardToHand(other.idx());
-                            else              ctx.returnP2ForwardToHand(other.idx());
-                        }
-                    }
-                }
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Damage + controller damage followup ("Deal it N damage and M point(s) of damage to that Forward's controller") ---
-        Matcher ctrlDmgM = FOLLOWUP_DAMAGE_AND_CONTROLLER_DAMAGE.matcher(strippedPrimaryFollowup);
-        if (ctrlDmgM.find()) {
-            int damage        = Integer.parseInt(ctrlDmgM.group("amount"));
-            int controllerDmg = Integer.parseInt(ctrlDmgM.group("controllerdmg"));
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Deal " + damage + " damage + " + controllerDmg + " to controller");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                sortedByIdxDesc(ts, true) .forEach(t -> ctx.damageTarget(t, damage));
-                sortedByIdxDesc(ts, false).forEach(t -> ctx.damageTarget(t, damage));
-                for (ForwardTarget t : ts) {
-                    if (t.isP1()) ctx.dealDamageToSelf(controllerDmg);
-                    else          ctx.dealDamageToOpponent(controllerDmg);
-                }
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Damage followup (fixed amount) ---
-        Matcher dmgM = FOLLOWUP_DAMAGE.matcher(strippedPrimaryFollowup);
-        if (dmgM.find()) {
-            int damage = Integer.parseInt(dmgM.group("amount"));
-            String alsoCard = dmgM.group("also") != null ? dmgM.group("also").trim() : null;
-            return ctx -> {
-                String unredSuffix = unreduced ? " (cannot be reduced)" : "";
-                ctx.logEntry(alsoCard != null
-                        ? choosePrefix + " — Deal " + damage + " damage (and to " + alsoCard + ")" + unredSuffix
-                        : choosePrefix + " — Deal " + damage + " damage" + unredSuffix);
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                Consumer<GameContext> doDamage = ctx2 -> {
-                    if (unreduced) {
-                        sortedByIdxDesc(ts, true) .forEach(t -> ctx2.damageTargetUnreduced(t, damage));
-                        sortedByIdxDesc(ts, false).forEach(t -> ctx2.damageTargetUnreduced(t, damage));
-                    } else {
-                        sortedByIdxDesc(ts, true) .forEach(t -> ctx2.damageTarget(t, damage));
-                        sortedByIdxDesc(ts, false).forEach(t -> ctx2.damageTarget(t, damage));
-                    }
-                    if (alsoCard != null) ctx2.damageFieldForwardByName(alsoCard, damage);
-                    if (secondary != null) secondary.accept(ctx2);
-                };
-                if (followupIsOptional && !ts.isEmpty()) ctx.playerMayDoEffect("Deal it " + damage + " damage?", doDamage);
-                else if (!followupIsOptional) doDamage.accept(ctx);
-            };
-        }
-
-        // --- Mutual power-as-damage between source and chosen Forward ---
-        if (source != null) {
-            Matcher mutM = FOLLOWUP_MUTUAL_POWER_DAMAGE.matcher(primaryFollowup);
-            if (mutM.find() && mutM.group("srcname").trim().equalsIgnoreCase(source.name())) {
-                String srcName = source.name();
-                return ctx -> {
-                    List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                            opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                            costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                    if (ts.isEmpty()) { if (secondary != null) secondary.accept(ctx); return; }
-                    int srcPower = Math.max(0, ctx.fieldForwardPowerByName(srcName));
-                    for (ForwardTarget t : ts) {
-                        int tgtPower = Math.max(0, ctx.effectiveTargetPower(t));
-                        ctx.logEntry(choosePrefix + " — Mutual power damage: " + srcName + " (" + srcPower
-                                + ") ↔ chosen Forward (" + tgtPower + ")");
-                        ctx.damageTarget(t, srcPower);
-                        ctx.damageFieldForwardByName(srcName, tgtPower);
-                    }
-                    if (secondary != null) secondary.accept(ctx);
-                };
-            }
-        }
-
-        // --- Damage followup (computed amount) ---
-        Matcher exprM = FOLLOWUP_DAMAGE_EXPR.matcher(primaryFollowup);
-        if (exprM.find()) {
-            if (exprM.group("highest") != null) {
-                return ctx -> {
-                    int damage = ctx.highestP1ForwardPower();
-                    ctx.logEntry(choosePrefix + " — Deal " + damage + " damage (highest Forward power)");
-                    List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                            opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                            costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                    sortedByIdxDesc(ts, true) .forEach(t -> ctx.damageTarget(t, damage));
-                    sortedByIdxDesc(ts, false).forEach(t -> ctx.damageTarget(t, damage));
-                    if (secondary != null) secondary.accept(ctx);
-                };
-            } else if (exprM.group("halfcard") != null) {
-                String  cardName = exprM.group("halfcard").trim();
-                boolean roundUp  = "up".equalsIgnoreCase(exprM.group("halfrounding"));
-                return ctx -> {
-                    int raw    = Math.max(0, ctx.fieldForwardPowerByName(cardName));
-                    int damage = roundUp ? halfPowerDamage(raw) : (raw / 2 / 1000) * 1000;
-                    String dir = roundUp ? "up" : "down";
-                    ctx.logEntry(choosePrefix + " — Deal " + damage + " damage (half of " + cardName + "'s power, round " + dir + ")");
-                    List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                            opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                            costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                    sortedByIdxDesc(ts, true) .forEach(t -> ctx.damageTarget(t, damage));
-                    sortedByIdxDesc(ts, false).forEach(t -> ctx.damageTarget(t, damage));
-                    if (secondary != null) secondary.accept(ctx);
-                };
-            } else if (exprM.group("halfitspower") != null) {
-                boolean roundUp = "up".equalsIgnoreCase(exprM.group("halfitsrounding"));
-                String dir = roundUp ? "up" : "down";
-                return ctx -> {
-                    ctx.logEntry(choosePrefix + " — Deal damage equal to half of its power (round " + dir + ")");
-                    List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                            opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                            costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                    sortedByIdxDesc(ts, true) .forEach(t -> {
-                        int raw = Math.max(0, ctx.effectiveTargetPower(t));
-                        ctx.damageTarget(t, roundUp ? halfPowerDamage(raw) : (raw / 2 / 1000) * 1000);
-                    });
-                    sortedByIdxDesc(ts, false).forEach(t -> {
-                        int raw = Math.max(0, ctx.effectiveTargetPower(t));
-                        ctx.damageTarget(t, roundUp ? halfPowerDamage(raw) : (raw / 2 / 1000) * 1000);
-                    });
-                    if (secondary != null) secondary.accept(ctx);
-                };
-            } else if (exprM.group("itspower") != null) {
-                int subtract = exprM.group("minus") != null ? Integer.parseInt(exprM.group("minus")) : 0;
-                String logSuffix = subtract > 0 ? " — Deal damage equal to its power minus " + subtract
-                                                 : " — Deal damage equal to its power";
-                return ctx -> {
-                    ctx.logEntry(choosePrefix + logSuffix);
-                    List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                            opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                            costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                    sortedByIdxDesc(ts, true) .forEach(t -> ctx.damageTarget(t, Math.max(0, ctx.effectiveTargetPower(t) - subtract)));
-                    sortedByIdxDesc(ts, false).forEach(t -> ctx.damageTarget(t, Math.max(0, ctx.effectiveTargetPower(t) - subtract)));
-                    if (secondary != null) secondary.accept(ctx);
-                };
-            } else if (exprM.group("dullforward") != null) {
-                return ctx -> {
-                    int damage = Math.max(0, ctx.dullForwardCostPower());
-                    ctx.logEntry(choosePrefix + " — Deal " + damage + " damage (dull Forward cost power)");
-                    List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                            opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                            costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                    sortedByIdxDesc(ts, true) .forEach(t -> ctx.damageTarget(t, damage));
-                    sortedByIdxDesc(ts, false).forEach(t -> ctx.damageTarget(t, damage));
-                    if (secondary != null) secondary.accept(ctx);
-                };
-            } else if (exprM.group("discardedfwd") != null) {
-                return ctx -> {
-                    int damage = Math.max(0, ctx.lastDiscardedForwardPower());
-                    ctx.logEntry(choosePrefix + " — Deal " + damage + " damage (discarded Forward's power)");
-                    List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                            opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                            costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                    sortedByIdxDesc(ts, true) .forEach(t -> ctx.damageTarget(t, damage));
-                    sortedByIdxDesc(ts, false).forEach(t -> ctx.damageTarget(t, damage));
-                    if (secondary != null) secondary.accept(ctx);
-                };
-            } else if (exprM.group("bzcostfwd") != null) {
-                return ctx -> {
-                    int damage = Math.max(0, ctx.bzCostForwardPower());
-                    ctx.logEntry(choosePrefix + " — Deal " + damage + " damage (BZ-cost Forward's power)");
-                    List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                            opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                            costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                    sortedByIdxDesc(ts, true) .forEach(t -> ctx.damageTarget(t, damage));
-                    sortedByIdxDesc(ts, false).forEach(t -> ctx.damageTarget(t, damage));
-                    if (secondary != null) secondary.accept(ctx);
-                };
-            } else if (exprM.group("card") != null) {
-                String cardName = exprM.group("card").trim();
-                return ctx -> {
-                    int damage = Math.max(0, ctx.fieldForwardPowerByName(cardName));
-                    ctx.logEntry(choosePrefix + " — Deal " + damage + " damage (" + cardName + "'s power)");
-                    List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                            opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                            costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                    sortedByIdxDesc(ts, true) .forEach(t -> ctx.damageTarget(t, damage));
-                    sortedByIdxDesc(ts, false).forEach(t -> ctx.damageTarget(t, damage));
-                    if (secondary != null) secondary.accept(ctx);
-                };
-            }
-        }
-
-        // --- Activate + Gain control (EOT) followup (must precede plain Activate) ---
-        if (FOLLOWUP_ACTIVATE_AND_GAIN_CONTROL_EOT.matcher(primaryFollowup).find()) {
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Activate & Gain control until EOT");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                sortedByIdxDesc(ts, true) .forEach(t -> ctx.activateTarget(t));
-                sortedByIdxDesc(ts, false).forEach(t -> ctx.activateTarget(t));
-                ts.forEach(t -> ctx.gainControlOfForward(t, "endOfTurn", true));
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Gain control while named card on field ---
-        Matcher gcWhileM = FOLLOWUP_GAIN_CONTROL_WHILE_CARD.matcher(primaryFollowup);
-        if (gcWhileM.find()) {
-            String condCard = gcWhileM.group("condCard").trim();
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Gain control while " + condCard + " is on field");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                ts.forEach(t -> ctx.gainControlOfForward(t, "whileCardOnField:" + condCard, false));
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Gain control until EOT ---
-        if (FOLLOWUP_GAIN_CONTROL_EOT.matcher(primaryFollowup).find()) {
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Gain control until EOT");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                ts.forEach(t -> ctx.gainControlOfForward(t, "endOfTurn", false));
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Gain control (permanent) ---
-        if (FOLLOWUP_GAIN_CONTROL.matcher(primaryFollowup).find()) {
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Gain control");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                ts.forEach(t -> ctx.gainControlOfForward(t, "permanent", false));
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Cannot-be-chosen followups (gains form, then both, Summons, abilities) ---
-        {   // scoped block so scope-parsing locals don't leak
-            String fp = primaryFollowup;
-            Matcher gcM = FOLLOWUP_GAINS_CANNOT_BE_CHOSEN.matcher(fp);
-            if (!gcM.find()) gcM = null;
-            boolean chosenBoth      = gcM != null || FOLLOWUP_CANNOT_BE_CHOSEN_BOTH.matcher(fp).find();
-            boolean chosenSummons   = chosenBoth  || (gcM == null && FOLLOWUP_CANNOT_BE_CHOSEN_SUMMONS.matcher(fp).find());
-            boolean chosenAbilities = chosenBoth  || (gcM == null && FOLLOWUP_CANNOT_BE_CHOSEN_ABILITIES.matcher(fp).find());
-            if (chosenSummons || chosenAbilities) {
-                final boolean bs = chosenSummons, ba = chosenAbilities;
-                return ctx -> {
-                    ctx.logEntry(choosePrefix + " — Cannot be chosen by opponent's"
-                            + (bs && ba ? " Summons or abilities" : bs ? " Summons" : " abilities"));
-                    List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                            opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                            costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                    ts.forEach(t -> ctx.shieldCannotBeChosen(t, bs, ba));
-                    if (secondary != null) secondary.accept(ctx);
-                };
-            }
-        }
-
-        // --- Cannot-be-returned-to-hand followup ("During this turn, it cannot be returned…") ---
-        if (FOLLOWUP_CANNOT_BE_RETURNED_TO_HAND.matcher(primaryFollowup).find()) {
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Cannot be returned to owner's hand by opponent this turn");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                ts.forEach(t -> ctx.boostTarget(t, 0,
-                        EnumSet.of(CardData.Trait.CANNOT_BE_RETURNED_TO_HAND_BY_OPP)));
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Activate + Negate damage followup (must precede plain Activate to avoid partial match) ---
-        if (FOLLOWUP_ACTIVATE_AND_NEGATE_DAMAGE.matcher(primaryFollowup).find()) {
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Activate & Negate damage");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                sortedByIdxDesc(ts, true) .forEach(t -> ctx.activateTarget(t));
-                sortedByIdxDesc(ts, false).forEach(t -> ctx.activateTarget(t));
-                ts.forEach(ctx::negateAllDamage);
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Negate all damage followup ---
-        if (FOLLOWUP_NEGATE_DAMAGE.matcher(primaryFollowup).find()) {
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Negate damage");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                ts.forEach(ctx::negateAllDamage);
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Dull-or-Activate toggle followup (must precede FOLLOWUP_ACTIVATE/DULL since it contains both) ---
-        if (FOLLOWUP_DULL_OR_ACTIVATE.matcher(primaryFollowup).find()) {
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Dull or Activate (toggle)");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                sortedByIdxDesc(ts, true) .forEach(t -> ctx.toggleTargetDullActivate(t));
-                sortedByIdxDesc(ts, false).forEach(t -> ctx.toggleTargetDullActivate(t));
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Activate followup ---
-        if (FOLLOWUP_ACTIVATE.matcher(primaryFollowup).find()) {
-            // Detect "It gains +N power [traits] until end of turn" secondary and apply inline.
-            final int activateBoost;
-            final EnumSet<CardData.Trait> activateTraits;
-            final Consumer<GameContext> activateSecondary;
-            {
-                Matcher bm = secondaryText != null ? FOLLOWUP_POWER_BOOST.matcher(secondaryText) : null;
-                if (bm == null) { bm = secondaryText != null ? FOLLOWUP_POWER_BOOST_UNTIL.matcher(secondaryText) : null; }
-                if (bm != null && bm.find()) {
-                    activateBoost      = Integer.parseInt(bm.group(1));
-                    activateTraits     = parseTraits(bm.group(2));
-                    activateSecondary  = null;
-                } else {
-                    activateBoost      = 0;
-                    activateTraits     = EnumSet.noneOf(CardData.Trait.class);
-                    activateSecondary  = secondary;
-                }
-            }
-            String activateLogSuffix = activateBoost > 0 ? boostLogSuffix(activateBoost, activateTraits) : "";
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Activate" + activateLogSuffix);
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                sortedByIdxDesc(ts, true) .forEach(t -> ctx.activateTarget(t));
-                sortedByIdxDesc(ts, false).forEach(t -> ctx.activateTarget(t));
-                if (activateBoost > 0) {
-                    sortedByIdxDesc(ts, true) .forEach(t -> ctx.boostTarget(t, activateBoost, activateTraits));
-                    sortedByIdxDesc(ts, false).forEach(t -> ctx.boostTarget(t, activateBoost, activateTraits));
-                } else if (activateSecondary != null) {
-                    activateSecondary.accept(ctx);
-                }
-            };
-        }
-
-        // --- Dull-or-Freeze followup (must precede FOLLOWUP_DULL since it contains "Dull it") ---
-        if (FOLLOWUP_DULL_OR_FREEZE.matcher(primaryFollowup).find()) {
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Dull or Freeze");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                sortedByIdxDesc(ts, true) .forEach(t -> ctx.dullOrFreezeTarget(t));
-                sortedByIdxDesc(ts, false).forEach(t -> ctx.dullOrFreezeTarget(t));
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Dull followup ---
-        if (FOLLOWUP_DULL.matcher(primaryFollowup).find()
-                && !FOLLOWUP_DULL_AND_FREEZE.matcher(primaryFollowup).find()
-                && !FOLLOWUP_DULL_OR_FREEZE.matcher(primaryFollowup).find()) {
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Dull");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                sortedByIdxDesc(ts, true) .forEach(t -> ctx.dullTarget(t));
-                sortedByIdxDesc(ts, false).forEach(t -> ctx.dullTarget(t));
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Dull + Freeze followup ---
-        if (FOLLOWUP_DULL_AND_FREEZE.matcher(primaryFollowup).find()) {
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Dull & Freeze");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                sortedByIdxDesc(ts, true) .forEach(t -> ctx.dullAndFreezeTarget(t));
-                sortedByIdxDesc(ts, false).forEach(t -> ctx.dullAndFreezeTarget(t));
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Freeze followup ---
-        if (FOLLOWUP_FREEZE.matcher(primaryFollowup).find()) {
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Freeze");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                sortedByIdxDesc(ts, true) .forEach(t -> ctx.freezeTarget(t));
-                sortedByIdxDesc(ts, false).forEach(t -> ctx.freezeTarget(t));
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Break followup ---
-        if (FOLLOWUP_BREAK.matcher(primaryFollowup).find()) {
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Break");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                sortedByIdxDesc(ts, true) .forEach(t -> ctx.breakTarget(t));
-                sortedByIdxDesc(ts, false).forEach(t -> ctx.breakTarget(t));
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- "Loses all its abilities and its power becomes N until end of turn" (Wakka 1-216S) ---
-        Matcher loseAndBecomeM = FOLLOWUP_LOSE_ABILITIES_AND_POWER_BECOMES.matcher(primaryFollowup);
-        if (loseAndBecomeM.find()) {
-            int targetPower = Integer.parseInt(loseAndBecomeM.group("power"));
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Lose all abilities, base power becomes "
-                        + targetPower + " until end of turn");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                sortedByIdxDesc(ts, true) .forEach(ctx::targetLoseAllAbilitiesUntilEndOfTurn);
-                sortedByIdxDesc(ts, false).forEach(ctx::targetLoseAllAbilitiesUntilEndOfTurn);
-                // Descending order: dropping to the new power can break a Forward, which shifts
-                // the indices of every target above it in the same zone.
-                sortedByIdxDesc(ts, true) .forEach(t -> ctx.setTargetBasePower(t, targetPower));
-                sortedByIdxDesc(ts, false).forEach(t -> ctx.setTargetBasePower(t, targetPower));
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Lose all abilities until end of turn followup ---
-        if (FOLLOWUP_LOSE_ALL_ABILITIES_EOT.matcher(primaryFollowup).find()) {
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Lose all abilities until end of turn");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                sortedByIdxDesc(ts, true) .forEach(ctx::targetLoseAllAbilitiesUntilEndOfTurn);
-                sortedByIdxDesc(ts, false).forEach(ctx::targetLoseAllAbilitiesUntilEndOfTurn);
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- "Remove them from the game. If these cards are of the same card type, also draw N card(s)." ---
-        Matcher rfpSameTypeDrawM = FOLLOWUP_RFP_IF_SAME_TYPE_DRAW.matcher(followup);
-        if (rfpSameTypeDrawM.find()) {
-            int drawCount = Integer.parseInt(rfpSameTypeDrawM.group("count"));
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Remove From Game (if same type, draw " + drawCount + ")");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
-                        jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                java.util.Set<String> typesSeen = new java.util.HashSet<>();
-                for (ForwardTarget t : ts) {
-                    CardData card = t.isP1() ? ctx.p1BreakZoneCard(t.idx()) : ctx.p2BreakZoneCard(t.idx());
-                    if (card != null) typesSeen.add(card.type().toLowerCase(java.util.Locale.ROOT));
-                }
-                sortedByIdxDesc(ts, true) .forEach(ctx::removeTargetFromGame);
-                sortedByIdxDesc(ts, false).forEach(ctx::removeTargetFromGame);
-                if (!ts.isEmpty() && typesSeen.size() == 1) ctx.drawCards(drawCount);
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Remove from game + named card followup (e.g. "Remove it and Shuyin from the game") ---
-        Matcher rfgNamedM = FOLLOWUP_REMOVE_FROM_GAME_AND_NAMED.matcher(primaryFollowup);
-        if (rfgNamedM.find()) {
-            String alsoNamed = rfgNamedM.group("named").trim();
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Remove From Game (+ " + alsoNamed + ")");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                sortedByIdxDesc(ts, true) .forEach(t -> ctx.removeTargetFromGame(t));
-                sortedByIdxDesc(ts, false).forEach(t -> ctx.removeTargetFromGame(t));
-                ctx.removeNamedCardFromGame(alsoNamed);
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- "Remove it from the game for as long as [Name] is on the field." (Necron) ---
-        // Must precede the plain remove-from-game followup, whose pattern is a prefix of this one.
-        Matcher rfgWhileM = FOLLOWUP_REMOVE_FROM_GAME_WHILE_ON_FIELD.matcher(primaryFollowup);
-        if (rfgWhileM.find()) {
-            String watcherName = rfgWhileM.group("name").trim();
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Remove from game while " + watcherName + " is on the field");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                sortedByIdxDesc(ts, true) .forEach(t -> ctx.removeTargetFromGameWhileNamedCardOnField(t, watcherName));
-                sortedByIdxDesc(ts, false).forEach(t -> ctx.removeTargetFromGameWhileNamedCardOnField(t, watcherName));
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Remove from game followup ---
-        if (FOLLOWUP_REMOVE_FROM_GAME.matcher(primaryFollowup).find()) {
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Remove From Game");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone, bothZones,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                sortedByIdxDesc(ts, true) .forEach(t -> ctx.removeTargetFromGame(t));
-                sortedByIdxDesc(ts, false).forEach(t -> ctx.removeTargetFromGame(t));
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Play onto field followup ---
-        // --- "If its cost is equal to or less than the number of Job X you control, play it onto the field." ---
-        // Must be checked before the generic PlayOntoField handler so the condition is enforced.
-        Matcher costLeJobM = FOLLOWUP_PLAY_IF_COST_LE_JOB_COUNT.matcher(primaryFollowup);
-        if (costLeJobM.matches()) {
-            String condJob = costLeJobM.group("job").trim();
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Play onto Field if cost ≤ count of Job " + condJob + " you control");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
-                        jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                int jobCount = ctx.countSelfFieldCards(true, true, true, condJob, null);
-                for (ForwardTarget t : sortedByIdxDesc(ts, true) .collect(java.util.stream.Collectors.toList())) {
-                    CardData card = t.isP1() ? ctx.p1BreakZoneCard(t.idx()) : ctx.p2BreakZoneCard(t.idx());
-                    if (card != null && card.cost() <= jobCount) ctx.playTargetOntoField(t);
-                }
-                for (ForwardTarget t : sortedByIdxDesc(ts, false).collect(java.util.stream.Collectors.toList())) {
-                    CardData card = t.isP1() ? ctx.p1BreakZoneCard(t.idx()) : ctx.p2BreakZoneCard(t.idx());
-                    if (card != null && card.cost() <= jobCount) ctx.playTargetOntoField(t);
-                }
-            };
-        }
-
-        if (FOLLOWUP_PLAY_ONTO_FIELD.matcher(primaryFollowup).find()) {
-            // Check for "When it enters the field, if it is [cond], [inner]" conditional secondary.
-            // Peek at the chosen card's data before playing so we can evaluate the condition after.
-            final Predicate<CardData> etfCond;
-            final Consumer<GameContext> etfInner;
-            final String etfInnerText;
-            if (secondaryText != null) {
-                Matcher etfM = FOLLOWUP_PLAY_ONTO_FIELD_WHEN_ENTERS_CONDITIONAL.matcher(secondaryText);
-                if (etfM.matches()) {
-                    Predicate<CardData> parsedCond = parseRevealCondition(etfM.group("cond").trim());
-                    String innerTxt = etfM.group("inner").trim();
-                    Consumer<GameContext> inner = parsedCond != null ? parse(innerTxt, source) : null;
-                    etfCond      = (parsedCond != null && inner != null) ? parsedCond : null;
-                    etfInner     = (parsedCond != null && inner != null) ? inner      : null;
-                    etfInnerText = (parsedCond != null && inner != null) ? innerTxt   : null;
-                } else {
-                    etfCond = null; etfInner = null; etfInnerText = null;
-                }
-            } else {
-                etfCond = null; etfInner = null; etfInnerText = null;
-            }
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Play onto Field");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                List<CardData> chosenCards = new ArrayList<>();
-                if (etfCond != null) {
-                    for (ForwardTarget t : ts) {
-                        CardData c = zone != null
-                                ? (t.isP1() ? ctx.p1BreakZoneCard(t.idx()) : ctx.p2BreakZoneCard(t.idx()))
-                                : null;
-                        if (c != null) chosenCards.add(c);
-                    }
-                }
-                sortedByIdxDesc(ts, true) .forEach(t -> ctx.playTargetOntoField(t));
-                sortedByIdxDesc(ts, false).forEach(t -> ctx.playTargetOntoField(t));
-                if (etfCond != null && etfInner != null) {
-                    boolean anyMatched = chosenCards.stream().anyMatch(etfCond);
-                    if (anyMatched) {
-                        ctx.logEntry("ETF Condition met — " + etfInnerText);
-                        etfInner.accept(ctx);
-                    }
-                } else if (secondary != null) {
-                    secondary.accept(ctx);
-                }
-            };
-        }
-
-        // --- Add to hand followup ---
-        if (FOLLOWUP_ADD_TO_HAND.matcher(primaryFollowup).find()) {
-            // Detect a conditional secondary that depends on the added card, e.g.
-            // "If it is a Card Name Tifa, …" or "If the added card is not a Category II card, …".
-            // When matched, the inner effect runs only if the chosen card satisfies the condition,
-            // and the generic secondary parse is suppressed.
-            final Predicate<CardData> addedCardCond;
-            final Consumer<GameContext> conditionalInner;
-            final String conditionalInnerText;
-            if (secondaryText != null) {
-                Matcher condM = FOLLOWUP_ADD_TO_HAND_CONDITIONAL_SECONDARY.matcher(secondaryText);
-                if (condM.matches()) {
-                    Predicate<CardData> cond = parseRevealCondition(condM.group("cond").trim());
-                    String innerTxt = condM.group("inner").trim();
-                    Consumer<GameContext> inner = cond != null ? parse(innerTxt, source) : null;
-                    addedCardCond       = (cond != null && inner != null) ? cond  : null;
-                    conditionalInner    = (cond != null && inner != null) ? inner : null;
-                    conditionalInnerText = (cond != null && inner != null) ? innerTxt : null;
-                } else {
-                    addedCardCond        = null;
-                    conditionalInner     = null;
-                    conditionalInnerText = null;
-                }
-            } else {
-                addedCardCond        = null;
-                conditionalInner     = null;
-                conditionalInnerText = null;
-            }
-
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Add to Hand");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                // Peek at chosen cards before they leave the Break Zone so the conditional
-                // secondary can inspect them.
-                List<CardData> chosenCards = new ArrayList<>();
-                if (addedCardCond != null) {
-                    for (ForwardTarget t : ts) {
-                        CardData c = t.isP1() ? ctx.p1BreakZoneCard(t.idx()) : ctx.p2BreakZoneCard(t.idx());
-                        if (c != null) chosenCards.add(c);
-                    }
-                }
-                sortedByIdxDesc(ts, true) .forEach(t -> ctx.addTargetToHand(t));
-                sortedByIdxDesc(ts, false).forEach(t -> ctx.addTargetToHand(t));
-
-                if (addedCardCond != null && conditionalInner != null) {
-                    boolean anyMatched = chosenCards.stream().anyMatch(addedCardCond);
-                    if (anyMatched) {
-                        ctx.logEntry("Condition met (added card) — " + conditionalInnerText);
-                        conditionalInner.accept(ctx);
-                    }
-                } else if (secondary != null) {
-                    secondary.accept(ctx);
-                }
-            };
-        }
-
-        // --- Return it and [NamedCard] to their owners' hands ---
-        Matcher retNamedM = FOLLOWUP_RETURN_AND_NAMED_TO_OWNERS_HAND.matcher(primaryFollowup);
-        if (retNamedM.find()) {
-            String alsoNamed = retNamedM.group("named").trim();
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Return to owner's hand (+ " + alsoNamed + ")");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                returnTargetsToOwnersHand(ctx, ts);
-                ctx.returnNamedCardToOwnersHand(alsoNamed);
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- "If its cost ≤ number of cards in your hand, return to owner's hand" (Leviathan EX Burst) ---
-        if (FOLLOWUP_RETURN_IF_COST_LE_HAND.matcher(strippedPrimaryFollowup).matches()) {
-            return ctx -> {
-                int handSize = ctx.yourHandSize();
-                ctx.logEntry(choosePrefix + " — Return to owner's hand if cost ≤ hand size (" + handSize + ")");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
-                        jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                // Filter to eligible-by-cost targets first (indices are still valid here, before any
-                // removal), then return them highest-index-first per side to avoid index shifting.
-                List<ForwardTarget> toReturn = new ArrayList<>();
-                for (ForwardTarget t : ts) {
-                    if (t.zone() != ForwardTarget.CardZone.FORWARD) continue;
-                    CardData card = t.isP1() ? ctx.p1Forward(t.idx()) : ctx.p2Forward(t.idx());
-                    if (card == null || card.cost() > handSize) {
-                        if (card != null) ctx.logEntry("Cost " + card.cost() + " > hand size " + handSize + " — condition not met");
-                        continue;
-                    }
-                    ctx.logEntry("Cost " + card.cost() + " ≤ hand size " + handSize + " — returning to hand");
-                    toReturn.add(t);
-                }
-                returnTargetsToOwnersHand(ctx, toReturn);
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Return to owner's hand followup ---
-        if (FOLLOWUP_RETURN_TO_OWNERS_HAND.matcher(strippedPrimaryFollowup).find()) {
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Return to owner's hand");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                Consumer<GameContext> doReturn = ctx2 -> {
-                    returnTargetsToOwnersHand(ctx2, ts);
-                    if (secondary != null) secondary.accept(ctx2);
-                };
-                if (followupIsOptional && !ts.isEmpty()) ctx.playerMayDoEffect("Return it to its owner's hand?", doReturn);
-                else if (!followupIsOptional) doReturn.accept(ctx);
-            };
-        }
-
-        // --- Return to your hand followup ---
-        if (FOLLOWUP_RETURN_TO_YOUR_HAND.matcher(primaryFollowup).find()) {
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Return to your hand");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                sortedByIdxDesc(ts, true)
-                        .filter(t -> t.zone() == ForwardTarget.CardZone.FORWARD)
-                        .forEach(t -> ctx.returnP1ForwardToHand(t.idx()));
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Put at top or bottom of owner's deck followup (player chooses) ---
-        if (FOLLOWUP_PUT_TOP_OR_BOTTOM_OF_DECK.matcher(primaryFollowup).find()) {
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Put at top or bottom of owner's deck (player chooses)");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                for (ForwardTarget t : ts) {
-                    if (t.zone() != ForwardTarget.CardZone.FORWARD) continue;
-                    if (t.isP1()) {
-                        String cardName = ctx.p1Forward(t.idx()).name();
-                        boolean toTop = ctx.askTopOrBottom(cardName);
-                        if (toTop) ctx.returnP1ForwardToDeckTop(t.idx());
-                        else       ctx.returnP1ForwardToDeckBottom(t.idx());
-                    } else {
-                        String cardName = ctx.p2Forward(t.idx()).name();
-                        boolean toTop = ctx.askTopOrBottom(cardName);
-                        if (toTop) ctx.returnP2ForwardToDeckTop(t.idx());
-                        else       ctx.returnP2ForwardToDeckBottom(t.idx());
-                    }
-                }
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Put at bottom of owner's deck followup ---
-        if (FOLLOWUP_PUT_BOTTOM_OF_DECK.matcher(primaryFollowup).find()) {
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Put at bottom of owner's deck");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                for (ForwardTarget t : ts) {
-                    if (t.zone() != ForwardTarget.CardZone.FORWARD) continue;
-                    if (t.isP1()) ctx.returnP1ForwardToDeckBottom(t.idx());
-                    else          ctx.returnP2ForwardToDeckBottom(t.idx());
-                }
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Conditional power-vs-source "put on top of deck" followup (e.g. Wakka) ---
-        Matcher ifPowerCmpSourceM = FOLLOWUP_IF_POWER_CMP_SOURCE_PUT_ON_DECK_TOP.matcher(primaryFollowup);
-        if (ifPowerCmpSourceM.find()) {
-            boolean wantLessOrEqual = "less".equalsIgnoreCase(ifPowerCmpSourceM.group("cmp"));
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Conditional power check vs source, put on top of owner's deck");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                // Find source card's current effective power on the field
-                int sourcePower = source.power();
-                outer:
-                for (int pi = 0; pi <= 1; pi++) {
-                    boolean p1 = pi == 0;
-                    int cnt = p1 ? ctx.p1ForwardCount() : ctx.p2ForwardCount();
-                    for (int i = 0; i < cnt; i++) {
-                        if ((p1 ? ctx.p1Forward(i) : ctx.p2Forward(i)) == source) {
-                            sourcePower = ctx.effectiveTargetPower(
-                                    new ForwardTarget(p1, i, ForwardTarget.CardZone.FORWARD));
-                            break outer;
-                        }
-                    }
-                }
-                final int sp = sourcePower;
-                for (ForwardTarget t : ts) {
-                    if (t.zone() != ForwardTarget.CardZone.FORWARD) continue;
-                    int targetPower = ctx.effectiveTargetPower(t);
-                    boolean condMet = wantLessOrEqual ? targetPower <= sp : targetPower >= sp;
-                    if (condMet) {
-                        ctx.logEntry("  power " + targetPower + (wantLessOrEqual ? " ≤ " : " ≥ ") + sp + " — bounced to deck top");
-                        if (t.isP1()) ctx.returnP1ForwardToDeckTop(t.idx());
-                        else          ctx.returnP2ForwardToDeckTop(t.idx());
-                    } else {
-                        ctx.logEntry("  power " + targetPower + (wantLessOrEqual ? " > " : " < ") + sp + " — condition not met, no effect");
-                    }
-                }
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Put on top of owner's deck followup ---
-        if (FOLLOWUP_PUT_TOP_OF_DECK.matcher(primaryFollowup).find()) {
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Put on top of owner's deck");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                for (ForwardTarget t : ts) {
-                    if (t.zone() != ForwardTarget.CardZone.FORWARD) continue;
-                    if (t.isP1()) ctx.returnP1ForwardToDeckTop(t.idx());
-                    else          ctx.returnP2ForwardToDeckTop(t.idx());
-                }
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Put under top N cards of owner's deck followup ---
-        Matcher underTopM = FOLLOWUP_PUT_UNDER_TOP_OF_DECK.matcher(primaryFollowup);
-        if (underTopM.find()) {
-            int underPos = underTopM.group("numword") != null ? 4 : 1;
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Put under top " + underPos + " card(s) of owner's deck");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                for (ForwardTarget t : ts) {
-                    if (t.zone() != ForwardTarget.CardZone.FORWARD) continue;
-                    if (t.isP1()) ctx.returnP1ForwardUnderDeckTop(t.idx(), underPos);
-                    else          ctx.returnP2ForwardUnderDeckTop(t.idx(), underPos);
-                }
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Cannot block followup ---
-        if (FOLLOWUP_CANNOT_BLOCK.matcher(primaryFollowup).find()) {
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Cannot block this turn");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                for (ForwardTarget t : ts) {
-                    if (t.zone() != ForwardTarget.CardZone.FORWARD) continue;
-                    if (t.isP1()) ctx.setP1ForwardCannotBlock(t.idx());
-                    else          ctx.setP2ForwardCannotBlock(t.idx());
-                }
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Cannot be blocked followup ---
-        if (FOLLOWUP_CANNOT_BE_BLOCKED.matcher(primaryFollowup).find()) {
-            Matcher bm = FOLLOWUP_CANNOT_BE_BLOCKED.matcher(primaryFollowup);
-            bm.find();
-            String bCostStr  = bm.group("costval");
-            String bCostCmp  = bm.group("costcmp");
-            final int   bCostVal = bCostStr != null ? Integer.parseInt(bCostStr) : -1;
-            final boolean bIsMore = "more".equalsIgnoreCase(bCostCmp);
-            String bCostLabel = bCostVal >= 0 ? " by cost " + bCostVal + " or " + bCostCmp : "";
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Cannot be blocked" + bCostLabel + " this turn");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                for (ForwardTarget t : ts) {
-                    if (t.zone() != ForwardTarget.CardZone.FORWARD) continue;
-                    if (bCostVal >= 0) {
-                        if (t.isP1()) ctx.setP1ForwardCannotBeBlockedByCost(t.idx(), bCostVal, bIsMore);
-                        else          ctx.setP2ForwardCannotBeBlockedByCost(t.idx(), bCostVal, bIsMore);
-                    } else {
-                        if (t.isP1()) ctx.setP1ForwardCannotBeBlocked(t.idx());
-                        else          ctx.setP2ForwardCannotBeBlocked(t.idx());
-                    }
-                }
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Only blocked by Forward of cost ≤ own cost followup ---
-        if (FOLLOWUP_ONLY_BLOCKED_BY_COST_LE_OWN.matcher(primaryFollowup).find()) {
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Can only be blocked by a Forward of cost ≤ its own this turn");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                for (ForwardTarget t : ts) {
-                    if (t.zone() != ForwardTarget.CardZone.FORWARD) continue;
-                    int ownCost = (t.isP1() ? ctx.p1Forward(t.idx()) : ctx.p2Forward(t.idx())).cost();
-                    if (t.isP1()) ctx.setP1ForwardCannotBeBlockedByCost(t.idx(), ownCost + 1, true);
-                    else          ctx.setP2ForwardCannotBeBlockedByCost(t.idx(), ownCost + 1, true);
-                }
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Cannot be blocked if element CP was paid followup ---
-        if (FOLLOWUP_CANNOT_BE_BLOCKED_IF_ELEMENT_CP.matcher(primaryFollowup).find()) {
-            Matcher bm = FOLLOWUP_CANNOT_BE_BLOCKED_IF_ELEMENT_CP.matcher(primaryFollowup);
-            bm.find();
-            final String elem    = bm.group("element");
-            String eCostStr      = bm.group("costval");
-            String eCostCmp      = bm.group("costcmp");
-            final int   bCostVal = eCostStr != null ? Integer.parseInt(eCostStr) : -1;
-            final boolean bIsMore = "more".equalsIgnoreCase(eCostCmp);
-            String bCostLabel    = bCostVal >= 0 ? " by cost " + bCostVal + " or " + eCostCmp : "";
-            return ctx -> {
-                if (!ctx.wasElementCpPaid(elem)) {
-                    ctx.logEntry(choosePrefix + " — " + elem + " CP not paid, skipping cannot-be-blocked bonus");
-                    return;
-                }
-                ctx.logEntry(choosePrefix + " — Cannot be blocked" + bCostLabel + " this turn (" + elem + " CP paid)");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                for (ForwardTarget t : ts) {
-                    if (t.zone() != ForwardTarget.CardZone.FORWARD) continue;
-                    if (bCostVal >= 0) {
-                        if (t.isP1()) ctx.setP1ForwardCannotBeBlockedByCost(t.idx(), bCostVal, bIsMore);
-                        else          ctx.setP2ForwardCannotBeBlockedByCost(t.idx(), bCostVal, bIsMore);
-                    } else {
-                        if (t.isP1()) ctx.setP1ForwardCannotBeBlocked(t.idx());
-                        else          ctx.setP2ForwardCannotBeBlocked(t.idx());
-                    }
-                }
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Must block followup ---
-        if (FOLLOWUP_MUST_BLOCK.matcher(primaryFollowup).find()) {
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Must block if possible this turn");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                for (ForwardTarget t : ts) {
-                    if (t.zone() != ForwardTarget.CardZone.FORWARD) continue;
-                    if (t.isP1()) ctx.setP1ForwardMustBlock(t.idx());
-                    else          ctx.setP2ForwardMustBlock(t.idx());
-                }
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Cannot attack (this turn) followup ---
-        if (FOLLOWUP_CANNOT_ATTACK.matcher(primaryFollowup).find()) {
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Cannot attack this turn");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                for (ForwardTarget t : ts) {
-                    if (t.zone() != ForwardTarget.CardZone.FORWARD) continue;
-                    if (t.isP1()) ctx.setP1ForwardCannotAttack(t.idx());
-                    else          ctx.setP2ForwardCannotAttack(t.idx());
-                }
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Must attack (this turn) followup ---
-        if (FOLLOWUP_MUST_ATTACK.matcher(primaryFollowup).find()) {
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Must attack if possible this turn");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                for (ForwardTarget t : ts) {
-                    if (t.zone() != ForwardTarget.CardZone.FORWARD) continue;
-                    if (t.isP1()) ctx.setP1ForwardMustAttack(t.idx());
-                    else          ctx.setP2ForwardMustAttack(t.idx());
-                }
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Cannot attack or block (this turn) followup ---
-        if (FOLLOWUP_CANNOT_ATTACK_OR_BLOCK.matcher(primaryFollowup).find()) {
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Cannot attack or block this turn");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                for (ForwardTarget t : ts) {
-                    if (t.zone() != ForwardTarget.CardZone.FORWARD) continue;
-                    if (t.isP1()) { ctx.setP1ForwardCannotAttack(t.idx()); ctx.setP1ForwardCannotBlock(t.idx()); }
-                    else          { ctx.setP2ForwardCannotAttack(t.idx()); ctx.setP2ForwardCannotBlock(t.idx()); }
-                }
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Cannot attack or block until end of opponent's/next turn (persistent) followup ---
-        if (FOLLOWUP_CANNOT_ATTACK_OR_BLOCK_PERSISTENT.matcher(primaryFollowup).find()) {
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Cannot attack or block until end of next turn");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                for (ForwardTarget t : ts) {
-                    if (t.zone() != ForwardTarget.CardZone.FORWARD) continue;
-                    if (t.isP1()) ctx.setP1ForwardCannotAttackOrBlockPersistent(t.idx());
-                    else          ctx.setP2ForwardCannotAttackOrBlockPersistent(t.idx());
-                }
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Power-becomes followup: "Its power becomes N until end of turn" ---
-        Matcher becomesM = FOLLOWUP_POWER_BECOMES.matcher(primaryFollowup);
-        if (becomesM.find()) {
-            int targetPower = Integer.parseInt(becomesM.group(1));
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " → base power becomes " + targetPower);
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                // Descending order: dropping to the new power can break a Forward, which shifts
-                // the indices of every target above it in the same zone.
-                sortedByIdxDesc(ts, true) .forEach(t -> ctx.setTargetBasePower(t, targetPower));
-                sortedByIdxDesc(ts, false).forEach(t -> ctx.setTargetBasePower(t, targetPower));
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Power boost followup (standard order: "it/they gains +N power [, traits] until…") ---
-        Matcher boostM = FOLLOWUP_POWER_BOOST.matcher(primaryFollowup);
-        if (boostM.find()) {
-            int boost = Integer.parseInt(boostM.group(1));
-            EnumSet<CardData.Trait> traits = parseTraits(boostM.group(2));
-            String logSuffix = boostLogSuffix(boost, traits);
-            return ctx -> {
-                ctx.logEntry(choosePrefix + logSuffix);
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                sortedByIdxDesc(ts, true) .forEach(t -> ctx.boostTarget(t, boost, traits));
-                sortedByIdxDesc(ts, false).forEach(t -> ctx.boostTarget(t, boost, traits));
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Power boost for each [element] [type] you control (must precede plain UNTIL boost) ---
-        Matcher boostForEachM = FOLLOWUP_POWER_BOOST_UNTIL_FOR_EACH.matcher(primaryFollowup);
-        if (boostForEachM.find()) {
-            boolean untilPrefix = boostForEachM.group(1) != null;
-            int    perUnit    = Integer.parseInt(untilPrefix ? boostForEachM.group(1) : boostForEachM.group(4));
-            String srcElem    = untilPrefix ? boostForEachM.group("element") : boostForEachM.group("element2");
-            String srcType    = (untilPrefix ? boostForEachM.group("chartype") : boostForEachM.group("chartype2")).toLowerCase();
-            boolean cntFwd    = srcType.startsWith("forward") || srcType.startsWith("character");
-            boolean cntBkp    = srcType.startsWith("backup")  || srcType.startsWith("character");
-            boolean cntMon    = srcType.startsWith("monster")  || srcType.startsWith("character");
-            String logSuffix  = " +" + perUnit + "×[" + (srcElem != null ? srcElem + " " : "") + boostForEachM.group("chartype") + " you control] until EOT";
-            return ctx -> {
-                int n      = ctx.countSelfFieldCards(cntFwd, cntBkp, cntMon, null, null, null, srcElem);
-                int boost  = perUnit * n;
-                ctx.logEntry(choosePrefix + logSuffix + " (n=" + n + ", boost=" + boost + ")");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                EnumSet<CardData.Trait> noTraits = EnumSet.noneOf(CardData.Trait.class);
-                sortedByIdxDesc(ts, true) .forEach(t -> ctx.boostTarget(t, boost, noTraits));
-                sortedByIdxDesc(ts, false).forEach(t -> ctx.boostTarget(t, boost, noTraits));
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Power boost for each Job [name] you control (must precede plain UNTIL boost) ---
-        Matcher boostForEachJobM = FOLLOWUP_POWER_BOOST_UNTIL_FOR_EACH_JOB.matcher(primaryFollowup);
-        if (boostForEachJobM.find()) {
-            boolean untilPrefixJ = boostForEachJobM.group("amount") != null;
-            int    perUnitJ  = Integer.parseInt(untilPrefixJ ? boostForEachJobM.group("amount") : boostForEachJobM.group("amount2"));
-            String jobBracket = untilPrefixJ ? boostForEachJobM.group("jobb") : boostForEachJobM.group("jobb2");
-            String jobWritten = untilPrefixJ ? boostForEachJobM.group("jobw") : boostForEachJobM.group("jobw2");
-            String jobTypeStr = untilPrefixJ ? boostForEachJobM.group("jobt") : boostForEachJobM.group("jobt2");
-            String jobNameJ   = (jobBracket != null ? jobBracket : jobWritten).trim();
-            boolean jwFwd = jobTypeStr == null || jobTypeStr.matches("(?i)Forwards?");
-            boolean jwBkp = jobTypeStr == null || jobTypeStr.matches("(?i)Backups?");
-            boolean jwMon = jobTypeStr == null || jobTypeStr.matches("(?i)Monsters?");
-            String logSuffixJ = " +" + perUnitJ + "×[Job " + jobNameJ + " you control] until EOT";
-            return ctx -> {
-                int n     = ctx.countSelfFieldCards(jwFwd, jwBkp, jwMon, jobNameJ, null);
-                int boost = perUnitJ * n;
-                ctx.logEntry(choosePrefix + logSuffixJ + " (n=" + n + ", boost=" + boost + ")");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                EnumSet<CardData.Trait> noTraits = EnumSet.noneOf(CardData.Trait.class);
-                sortedByIdxDesc(ts, true) .forEach(t -> ctx.boostTarget(t, boost, noTraits));
-                sortedByIdxDesc(ts, false).forEach(t -> ctx.boostTarget(t, boost, noTraits));
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- "Until…, it gains +N power for each [Name] Counter placed on [card]." (counter-scaled xValue) ---
-        // Must be checked before FOLLOWUP_POWER_BOOST_UNTIL, which would match only the +N and drop the for-each.
-        Matcher boostForEachCounterM = FOLLOWUP_POWER_BOOST_UNTIL_FOR_EACH_COUNTER.matcher(primaryFollowup);
-        if (boostForEachCounterM.find()) {
-            int perUnit = Integer.parseInt(boostForEachCounterM.group("perunit"));
-            String counterName = boostForEachCounterM.group("counterName").trim();
-            return ctx -> {
-                int boost = perUnit * xValue;
-                ctx.logEntry(choosePrefix + " — +" + perUnit + " power ×" + xValue + " " + counterName + " Counter(s) = +" + boost + " until EOT");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
-                        jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                EnumSet<CardData.Trait> noTraits = EnumSet.noneOf(CardData.Trait.class);
-                sortedByIdxDesc(ts, true) .forEach(t -> ctx.boostTarget(t, boost, noTraits));
-                sortedByIdxDesc(ts, false).forEach(t -> ctx.boostTarget(t, boost, noTraits));
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- "Until…, it gains +N power for each point of damage you have received." ---
-        // Must be checked before FOLLOWUP_POWER_BOOST_UNTIL, which matches on the +N and drops the for-each.
-        Matcher boostUntilSelfDmgM = FOLLOWUP_POWER_BOOST_UNTIL_FOR_EACH_SELF_DMG.matcher(primaryFollowup);
-        if (boostUntilSelfDmgM.find()) {
-            int perUnit = Integer.parseInt(boostUntilSelfDmgM.group("perunit"));
-            return ctx -> {
-                int dmgCount = ctx.p1DamageCount();
-                int boost    = perUnit * dmgCount;
-                ctx.logEntry(choosePrefix + " — +"+perUnit+" power ×" + dmgCount + " damage = +" + boost + " power until EOT");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
-                        jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                EnumSet<CardData.Trait> noTraits = EnumSet.noneOf(CardData.Trait.class);
-                sortedByIdxDesc(ts, true) .forEach(t -> ctx.boostTarget(t, boost, noTraits));
-                sortedByIdxDesc(ts, false).forEach(t -> ctx.boostTarget(t, boost, noTraits));
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Power boost followup (until-prefix order: "Until…, it/they gains +N power [and traits]") ---
-        Matcher boostUntilM = FOLLOWUP_POWER_BOOST_UNTIL.matcher(primaryFollowup);
-        if (boostUntilM.find()) {
-            int boost = Integer.parseInt(boostUntilM.group(1));
-            EnumSet<CardData.Trait> traits = parseTraits(boostUntilM.group(2));
-            String logSuffix = boostLogSuffix(boost, traits);
-
-            // Detect "If its power has become N or less/more, return [name] to hand" secondary
-            // and handle it inline so we have access to the target list for the power check.
-            final String    crCard;
-            final int       crThreshold;
-            final boolean   crOrLess;
-            final boolean   crToOwner;
-            final Consumer<GameContext> boostSecondary;
-            {
-                Matcher crM = secondaryText != null ? CONDITIONAL_POWER_RETURN.matcher(secondaryText) : null;
-                if (crM != null && crM.find()) {
-                    crCard       = crM.group("name").trim();
-                    crThreshold  = Integer.parseInt(crM.group("threshold"));
-                    crOrLess     = "less".equalsIgnoreCase(crM.group("cmp"));
-                    crToOwner    = crM.group("toowner") != null;
-                    boostSecondary = null;
-                } else {
-                    crCard       = null;
-                    crThreshold  = 0;
-                    crOrLess     = false;
-                    crToOwner    = false;
-                    boostSecondary = secondary;
-                }
-            }
-
-            return ctx -> {
-                ctx.logEntry(choosePrefix + logSuffix);
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                sortedByIdxDesc(ts, true) .forEach(t -> ctx.boostTarget(t, boost, traits));
-                sortedByIdxDesc(ts, false).forEach(t -> ctx.boostTarget(t, boost, traits));
-                if (crCard != null) {
-                    boolean condMet = ts.stream().anyMatch(t -> {
-                        int p = ctx.effectiveTargetPower(t);
-                        return crOrLess ? p <= crThreshold : p >= crThreshold;
-                    });
-                    if (condMet) {
-                        ctx.logEntry("Condition met (power " + (crOrLess ? "≤ " : "≥ ") + crThreshold + "): return " + crCard + " to " + (crToOwner ? "owner's" : "your") + " hand");
-                        if (crToOwner) ctx.returnNamedCardToOwnersHand(crCard);
-                        else           ctx.returnNamedCardToYourHand(crCard);
-                    } else {
-                        ctx.logEntry("Condition not met: " + crCard + " stays (power " + (crOrLess ? "> " : "< ") + crThreshold + ")");
-                    }
-                } else if (boostSecondary != null) {
-                    boostSecondary.accept(ctx);
-                }
-            };
-        }
-
-        // --- Trait-choice grant followup: "it gains [T1] or [T2] until end of turn" ---
-        Matcher choiceM = FOLLOWUP_KEYWORD_GRANT_CHOICE.matcher(primaryFollowup);
-        if (choiceM.find()) {
-            String t1Name = choiceM.group("t1").trim();
-            String t2Name = choiceM.group("t2").trim();
-            EnumSet<CardData.Trait> t1Traits = parseTraits(t1Name);
-            EnumSet<CardData.Trait> t2Traits = parseTraits(t2Name);
-            return ctx -> {
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
-                        jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                if (ts.isEmpty()) return;
-                String chosen = ctx.selectOption("Grant " + t1Name + " or " + t2Name + "?",
-                        new String[]{t1Name, t2Name});
-                EnumSet<CardData.Trait> traits = (chosen != null && chosen.equalsIgnoreCase(t2Name)) ? t2Traits : t1Traits;
-                String logLabel = chosen != null ? chosen : t1Name;
-                ctx.logEntry(choosePrefix + " — grants " + logLabel);
-                sortedByIdxDesc(ts, true) .forEach(t -> ctx.boostTarget(t, 0, traits));
-                sortedByIdxDesc(ts, false).forEach(t -> ctx.boostTarget(t, 0, traits));
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Keyword-only grant followup: "it/they gains Haste [and …] until end of turn" ---
-        Matcher keywordM = FOLLOWUP_KEYWORD_GRANT.matcher(primaryFollowup);
-        if (keywordM.find()) {
-            EnumSet<CardData.Trait> traits = parseTraits(keywordM.group(1));
-            String logSuffix = boostLogSuffix(0, traits);
-            return ctx -> {
-                ctx.logEntry(choosePrefix + logSuffix);
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                sortedByIdxDesc(ts, true) .forEach(t -> ctx.boostTarget(t, 0, traits));
-                sortedByIdxDesc(ts, false).forEach(t -> ctx.boostTarget(t, 0, traits));
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Keyword-only grant followup (EOT prefix: "Until end of turn, it gains Haste [and …]") ---
-        Matcher keywordUntilM = FOLLOWUP_KEYWORD_GRANT_UNTIL.matcher(primaryFollowup);
-        if (keywordUntilM.find()) {
-            EnumSet<CardData.Trait> traits = parseTraits(keywordUntilM.group(1));
-            String logSuffix = boostLogSuffix(0, traits);
-            return ctx -> {
-                ctx.logEntry(choosePrefix + logSuffix);
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                sortedByIdxDesc(ts, true) .forEach(t -> ctx.boostTarget(t, 0, traits));
-                sortedByIdxDesc(ts, false).forEach(t -> ctx.boostTarget(t, 0, traits));
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Power / trait reduce followup (standard order: "it/they loses N power [, traits] until…") ---
-        Matcher reduceM = FOLLOWUP_POWER_REDUCE.matcher(primaryFollowup);
-        if (reduceM.find()) {
-            int reduction = reduceM.group(1) != null ? Integer.parseInt(reduceM.group(1)) : 0;
-            EnumSet<CardData.Trait> traits = parseTraits(reduceM.group(2));
-            String logSuffix = reduceLogSuffix(reduction, traits);
-            return ctx -> {
-                ctx.logEntry(choosePrefix + logSuffix);
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                sortedByIdxDesc(ts, true) .forEach(t -> ctx.reduceTarget(t, reduction, traits));
-                sortedByIdxDesc(ts, false).forEach(t -> ctx.reduceTarget(t, reduction, traits));
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Power reduce for each card in your hand ("Until…, it/they loses N power for each card in your hand") ---
-        Matcher reduceForEachHandM = FOLLOWUP_POWER_REDUCE_UNTIL_FOR_EACH_HAND.matcher(primaryFollowup);
-        if (reduceForEachHandM.find()) {
-            int perCard = Integer.parseInt(reduceForEachHandM.group(1));
-            return ctx -> {
-                int n = ctx.yourHandSize();
-                int reduction = perCard * n;
-                ctx.logEntry(choosePrefix + " -" + perCard + "×[your hand] until EOT (n=" + n + ", reduction=" + reduction + ")");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                EnumSet<CardData.Trait> noTraits = EnumSet.noneOf(CardData.Trait.class);
-                sortedByIdxDesc(ts, true) .forEach(t -> ctx.reduceTarget(t, reduction, noTraits));
-                sortedByIdxDesc(ts, false).forEach(t -> ctx.reduceTarget(t, reduction, noTraits));
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Power reduce for each [element] [type] you control (must precede plain UNTIL reduce) ---
-        Matcher reduceForEachM = FOLLOWUP_POWER_REDUCE_UNTIL_FOR_EACH.matcher(primaryFollowup);
-        if (reduceForEachM.find()) {
-            boolean untilPrefix = reduceForEachM.group(1) != null;
-            int    perUnit    = Integer.parseInt(untilPrefix ? reduceForEachM.group(1) : reduceForEachM.group(4));
-            String srcElem    = untilPrefix ? reduceForEachM.group("element") : reduceForEachM.group("element2");
-            String srcType    = (untilPrefix ? reduceForEachM.group("chartype") : reduceForEachM.group("chartype2")).toLowerCase();
-            boolean cntFwd    = srcType.startsWith("forward") || srcType.startsWith("character");
-            boolean cntBkp    = srcType.startsWith("backup")  || srcType.startsWith("character");
-            boolean cntMon    = srcType.startsWith("monster")  || srcType.startsWith("character");
-            String typeLabel  = untilPrefix ? reduceForEachM.group("chartype") : reduceForEachM.group("chartype2");
-            String logSuffix  = " -" + perUnit + "×[" + (srcElem != null ? srcElem + " " : "") + typeLabel + " you control] until EOT";
-            return ctx -> {
-                int n         = ctx.countSelfFieldCards(cntFwd, cntBkp, cntMon, null, null, null, srcElem);
-                int reduction = perUnit * n;
-                ctx.logEntry(choosePrefix + logSuffix + " (n=" + n + ", reduction=" + reduction + ")");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                EnumSet<CardData.Trait> noTraits = EnumSet.noneOf(CardData.Trait.class);
-                sortedByIdxDesc(ts, true) .forEach(t -> ctx.reduceTarget(t, reduction, noTraits));
-                sortedByIdxDesc(ts, false).forEach(t -> ctx.reduceTarget(t, reduction, noTraits));
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Power / trait reduce followup (until-prefix order: "Until…, it/they loses N power [and traits]") ---
-        Matcher reduceUntilM = FOLLOWUP_POWER_REDUCE_UNTIL.matcher(primaryFollowup);
-        if (reduceUntilM.find()) {
-            int reduction = reduceUntilM.group(1) != null ? Integer.parseInt(reduceUntilM.group(1)) : 0;
-            EnumSet<CardData.Trait> traits = parseTraits(reduceUntilM.group(2));
-            String logSuffix = reduceLogSuffix(reduction, traits);
-            return ctx -> {
-                ctx.logEntry(choosePrefix + logSuffix);
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                sortedByIdxDesc(ts, true) .forEach(t -> ctx.reduceTarget(t, reduction, traits));
-                sortedByIdxDesc(ts, false).forEach(t -> ctx.reduceTarget(t, reduction, traits));
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Opponent discard followup ---
-        Matcher discardM = OPPONENT_DISCARD.matcher(primaryFollowup);
-        if (discardM.find()) {
-            int count = Integer.parseInt(discardM.group(1));
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Opponent discards " + count);
-                ctx.forceOpponentDiscard(count);
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Self-referential boost followup: "<cardName> gains [+N power] [traits] until end of turn" ---
-        if (source != null) {
-            Matcher selfM = SELF_POWER_BOOST.matcher(primaryFollowup);
-            if (selfM.find() && selfM.group("selfsubject").trim().equalsIgnoreCase(source.name())) {
-                int boost = selfM.group("selfamount") != null ? Integer.parseInt(selfM.group("selfamount")) : 0;
-                EnumSet<CardData.Trait> traits = parseTraits(selfM.group("selftraits"));
-                String logSuffix = boostLogSuffix(boost, traits);
-                return ctx -> {
-                    ctx.logEntry(choosePrefix + " — " + source.name() + logSuffix);
-                    ctx.boostSourceForward(source, boost, traits);
-                    if (secondary != null) secondary.accept(ctx);
-                };
-            }
-        }
-
-        // --- Cancel effect followup (counters a Summon on the stack) ---
-        if (FOLLOWUP_CANCEL_EFFECT.matcher(primaryFollowup).find()) {
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Cancel its effect");
-                ctx.cancelStackEntry();
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Next incoming damage = 0 followup ---
-        if (FOLLOWUP_SHIELD_NEXT_DMG_ZERO.matcher(primaryFollowup).find()) {
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Shield: next damage becomes 0");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                ts.forEach(ctx::shieldNextIncomingDamage);
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Next ability/summon damage reduced by N followup ---
-        Matcher shieldAbilRedM = FOLLOWUP_SHIELD_NEXT_ABILITY_DMG_REDUCTION.matcher(primaryFollowup);
-        if (shieldAbilRedM.find()) {
-            int reduction = Integer.parseInt(shieldAbilRedM.group("reduction"));
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Shield: next ability/summon damage reduced by " + reduction);
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                ts.forEach(t -> ctx.shieldNextAbilityIncomingDamageReduction(t, reduction));
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Next incoming damage reduced by N followup ---
-        Matcher shieldRedM = FOLLOWUP_SHIELD_NEXT_DMG_REDUCTION.matcher(primaryFollowup);
-        if (shieldRedM.find()) {
-            int reduction = Integer.parseInt(shieldRedM.group("reduction"));
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Shield: next damage reduced by " + reduction);
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                ts.forEach(t -> ctx.shieldNextIncomingDamageReduction(t, reduction));
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Incoming damage increased by N followup ---
-        Matcher dmgIncM = FOLLOWUP_DEBUFF_INCOMING_DMG_INCREASE.matcher(primaryFollowup);
-        if (dmgIncM.find()) {
-            int amount = Integer.parseInt(dmgIncM.group("amount"));
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Debuff: incoming damage increased by " + amount);
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                ts.forEach(t -> ctx.debuffIncomingDamageIncrease(t, amount));
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Next outgoing damage = 0 followup ---
-        if (FOLLOWUP_SHIELD_NEXT_OUTGOING_ZERO.matcher(primaryFollowup).find()) {
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Shield: next outgoing damage becomes 0");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                ts.forEach(ctx::shieldNextOutgoingDamage);
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Per-card non-lethal protection followup ---
-        if (FOLLOWUP_SHIELD_NONLETHAL.matcher(primaryFollowup).find()) {
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Shield: damage less than power becomes 0 this turn");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                ts.forEach(ctx::shieldNonLethal);
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- "It gains ability-damage shield" followup ---
-        if (FOLLOWUP_GAINS_SHIELD_ABILITY_ONLY.matcher(primaryFollowup).find()) {
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Shield: gains ability-damage nullification until end of turn");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                ts.forEach(ctx::shieldAbilityOnlyDamage);
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- "Cannot be broken" until end of turn ---
-        if (FOLLOWUP_CANNOT_BE_BROKEN.matcher(primaryFollowup).find()) {
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Shield: cannot be broken until end of turn");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                ts.forEach(ctx::shieldCannotBeBroken);
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- "It cannot be broken this turn." (simple form) ---
-        if (FOLLOWUP_CANNOT_BE_BROKEN_SIMPLE.matcher(primaryFollowup).find()) {
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Shield: cannot be broken this turn");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                ts.forEach(ctx::shieldCannotBeBroken);
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- "Cannot be broken by opposing Summons or abilities that don't deal damage" ---
-        if (FOLLOWUP_CANNOT_BE_BROKEN_BY_NON_DMG.matcher(primaryFollowup).find()) {
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Shield: cannot be broken by opposing non-damage effects this turn");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                ts.forEach(ctx::shieldCannotBeBrokenByNonDmg);
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- Breaktouch battle: "When this Forward deals battle damage to a Forward, break that Forward" until EOT ---
-        if (FOLLOWUP_GAINS_BREAKTOUCH_BATTLE.matcher(primaryFollowup).find()) {
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Breaktouch (battle damage) until end of turn");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                ts.forEach(ctx::shieldBreaktouchBattle);
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- End-of-turn conditional damage followup ---
-        // e.g. "At the end of this turn, if you control <name>, deal it N damage."
-        Matcher eotDmgM = FOLLOWUP_END_OF_TURN_COND_DAMAGE.matcher(primaryFollowup);
-        if (eotDmgM.find()) {
-            String condCard = eotDmgM.group("cardName").trim();
-            int damage      = Integer.parseInt(eotDmgM.group("damage"));
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — End of turn: if you control " + condCard + ", deal " + damage + " damage");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                if (!ts.isEmpty()) {
-                    ctx.addEndOfTurnEffect(endCtx -> {
-                        if (endCtx.abilityUserControlsCard(condCard)) {
-                            sortedByIdxDesc(ts, true) .forEach(t -> endCtx.damageTarget(t, damage));
-                            sortedByIdxDesc(ts, false).forEach(t -> endCtx.damageTarget(t, damage));
-                        } else {
-                            endCtx.logEntry("End-of-turn damage skipped: " + condCard + " not on field");
-                        }
-                    });
-                }
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- "Select a Job. It gains that Job until the end of the turn." ---
-        // Checked against the full followup (before dot-split) so both sentences are seen together.
-        if (FOLLOWUP_SELECT_JOB_GRANT.matcher(followup).find()) {
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Select a Job, grant until end of turn");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
-                        jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                if (ts.isEmpty()) return;
-                String job = ctx.selectJobFromDatabase();
-                if (job == null || job.isBlank()) return;
-                ts.forEach(t -> ctx.grantJobUntilEndOfTurn(t, job));
-            };
-        }
-
-        // --- "If it deals damage to a Forward this turn, the damage increases by N instead." ---
-        Matcher outBoostM = FOLLOWUP_OUTGOING_DMG_BOOST_THIS_TURN.matcher(primaryFollowup);
-        if (outBoostM.find()) {
-            int amount = Integer.parseInt(outBoostM.group("amount"));
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — Outgoing damage +" + amount + " to Forwards this turn");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                ts.forEach(t -> ctx.boostForwardOutgoingDamageThisTurn(t, amount));
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // --- "Until the end of the turn, it also becomes a Forward with N power." (Gau) ---
-        Matcher becomeFwdM = BECOME_FORWARD_UNTIL_EOT_PATTERN.matcher(primaryFollowup);
-        if (becomeFwdM.find()) {
-            int power = Integer.parseInt(becomeFwdM.group("power"));
-            return ctx -> {
-                ctx.logEntry(choosePrefix + " — becomes a Forward with " + power + " power until end of turn");
-                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
-                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
-                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                ts.forEach(t -> ctx.makeTargetTemporaryForward(t, power));
-                if (secondary != null) secondary.accept(ctx);
-            };
-        }
-
-        // Recognised "Choose" header but followup not yet implemented
-        Consumer<GameContext> warnEffect = ctx -> ctx.logEntry(
-                "[ActionResolver] Choose effect — followup not yet implemented: " + followup);
-        return secondary == null ? warnEffect : warnEffect.andThen(secondary);
-    }
 
     /** Returns targets belonging to {@code isP1} sorted by descending index (safe for list removal). */
-    private static java.util.stream.Stream<ForwardTarget> sortedByIdxDesc(
+    static java.util.stream.Stream<ForwardTarget> sortedByIdxDesc(
             List<ForwardTarget> targets, boolean isP1) {
         return targets.stream()
                 .filter(t -> t.isP1() == isP1)
@@ -11095,13 +7386,13 @@ public class ActionResolver {
      * within each side, because returning one card compacts its zone list and would otherwise
      * invalidate a later same-zone target's index (so a second same-controller card is missed).
      */
-    private static void returnTargetsToOwnersHand(GameContext ctx, List<ForwardTarget> ts) {
+    static void returnTargetsToOwnersHand(GameContext ctx, List<ForwardTarget> ts) {
         sortedByIdxDesc(ts, true) .forEach(t -> returnTargetToOwnersHand(ctx, t));
         sortedByIdxDesc(ts, false).forEach(t -> returnTargetToOwnersHand(ctx, t));
     }
 
     /** Deals {@code amount} damage to {@code t}, bypassing reduction effects when {@code unreduced}. */
-    private static void damageTargetMaybeUnreduced(GameContext ctx, ForwardTarget t, int amount, boolean unreduced) {
+    static void damageTargetMaybeUnreduced(GameContext ctx, ForwardTarget t, int amount, boolean unreduced) {
         if (unreduced) ctx.damageTargetUnreduced(t, amount);
         else           ctx.damageTarget(t, amount);
     }
@@ -11112,13 +7403,13 @@ public class ActionResolver {
      * round up to the nearest 1000") — the total dealt may exceed {@code damage} when it doesn't
      * divide evenly.
      */
-    private static int roundUpToThousand(int damage, int count) {
+    static int roundUpToThousand(int damage, int count) {
         if (count <= 0) return 0;
         return ((damage + count * 1000 - 1) / (count * 1000)) * 1000;
     }
 
     /** Builds a log suffix like " — Gain +1000 power, Haste, and First Strike until end of turn". */
-    private static String boostLogSuffix(int amount, EnumSet<CardData.Trait> traits) {
+    static String boostLogSuffix(int amount, EnumSet<CardData.Trait> traits) {
         List<String> parts = new ArrayList<>();
         if (amount != 0)                                  parts.add("+" + amount + " power");
         if (traits.contains(CardData.Trait.HASTE))        parts.add("Haste");
@@ -11144,13 +7435,13 @@ public class ActionResolver {
      * sequence (e.g. "Dr. Mog") for the sentence delimiter ". ".  Restore with
      * {@link #restorePeriodInName}.
      */
-    private static String escapePeriodInName(String text, CardData source) {
+    static String escapePeriodInName(String text, CardData source) {
         if (source == null || !source.name().contains(".")) return text;
         return text.replace(source.name(), source.name().replace('.', '·'));
     }
 
     /** Inverse of {@link #escapePeriodInName}: restores middle-dots back to periods. */
-    private static String restorePeriodInName(String text, CardData source) {
+    static String restorePeriodInName(String text, CardData source) {
         if (source == null || !source.name().contains(".")) return text;
         return text.replace(source.name().replace('.', '·'), source.name());
     }
@@ -11161,7 +7452,7 @@ public class ActionResolver {
      * then strips leftover leading/trailing punctuation.  Returns an empty string if nothing
      * remains after stripping.
      */
-    private static String stripRestrictionSentences(String text) {
+    static String stripRestrictionSentences(String text) {
         if (text == null || text.isBlank()) return "";
         String s = text;
         s = CardData.ONCE_PER_TURN_PATTERN               .matcher(s).replaceAll("").trim();
@@ -11244,7 +7535,7 @@ public class ActionResolver {
     }
 
     /** Parses a traits string (e.g. {@code ", Haste, and First Strike"}) into a set of traits. */
-    private static EnumSet<CardData.Trait> parseTraits(String traitStr) {
+    static EnumSet<CardData.Trait> parseTraits(String traitStr) {
         EnumSet<CardData.Trait> traits = EnumSet.noneOf(CardData.Trait.class);
         if (traitStr == null || traitStr.isEmpty()) return traits;
         String s = traitStr.toLowerCase();
@@ -11259,193 +7550,22 @@ public class ActionResolver {
      * standalone self-buff.  The subject must match {@code source.name()} (case-insensitive);
      * pronoun subjects ("it", "they") are ignored here — they are handled as Choose followups.
      */
-    /**
-     * Parses "Until end of turn, &lt;subject&gt; gains +N power and
-     * 'When &lt;subject&gt; attacks, &lt;effect&gt;.'"
-     * Applies the power boost and registers a temporary one-turn attack trigger.
-     * Must be tried before {@link #tryParseStandalonePowerBoostUntil} because it is more specific.
-     */
-    private static Consumer<GameContext> tryParseStandalonePowerBoostAndAttackTrigger(
-            String text, CardData source) {
-        if (source == null) return null;
-        Matcher m = STANDALONE_POWER_BOOST_AND_ATTACK_TRIGGER.matcher(text);
-        if (!m.find()) return null;
-        String subject = m.group("subject").trim();
-        if (!subject.equalsIgnoreCase(source.name())) return null;
-        int boost = Integer.parseInt(m.group("amount"));
-        String attackEffectText = m.group("attackEffect").trim();
-        Consumer<GameContext> attackEffect = parse(attackEffectText, source);
-        if (attackEffect == null) return null;
-        return ctx -> {
-            ctx.logEntry(source.name() + " — +" + boost + " power until end of turn"
-                    + " and gains 'When attacks: " + attackEffectText + "'");
-            ctx.boostSourceForward(source, boost, EnumSet.noneOf(CardData.Trait.class));
-            ctx.addTempAttackTrigger(source, attackEffect);
-        };
-    }
 
-    /**
-     * Parses "Until the end of the turn, [Name] gains +N power and [Name]/it cannot be chosen
-     * by your opponent's Summons/abilities." (Quina) — applies an EOT power boost plus
-     * opponent-targeting protection to the source card.
-     */
-    private static Consumer<GameContext> tryParseStandalonePowerBoostAndCannotBeChosen(
-            String text, CardData source) {
-        if (source == null) return null;
-        Matcher m = STANDALONE_POWER_BOOST_AND_CANNOT_BE_CHOSEN.matcher(text);
-        if (!m.find()) return null;
-        if (!m.group("subject").trim().equalsIgnoreCase(source.name())) return null;
-        String second = m.group("subject2").trim();
-        if (!second.equalsIgnoreCase(source.name()) && !second.equalsIgnoreCase("it")) return null;
-        int boost = Integer.parseInt(m.group("amount"));
-        String scope = m.group("scope").toLowerCase(java.util.Locale.ROOT);
-        boolean bySummons   = scope.contains("summon");
-        boolean byAbilities = scope.contains("abilit");
-        String scopeDesc = bySummons && byAbilities ? "Summons or abilities"
-                         : bySummons ? "Summons" : "abilities";
-        return ctx -> {
-            ctx.logEntry(source.name() + " — +" + boost + " power and cannot be chosen by opponent's "
-                    + scopeDesc + " until end of turn");
-            ctx.boostSourceForward(source, boost, EnumSet.noneOf(CardData.Trait.class));
-            ctx.shieldNamedCardCannotBeChosen(source.name(), bySummons, byAbilities);
-        };
-    }
 
-    private static Consumer<GameContext> tryParseStandaloneGainsTraitsAndCannotBeBlocked(
-            String text, CardData source) {
-        if (source == null) return null;
-        Matcher m = STANDALONE_GAINS_TRAITS_AND_CANNOT_BE_BLOCKED.matcher(text);
-        if (!m.find()) return null;
-        String subject = m.group("subject").trim();
-        if (!subject.equalsIgnoreCase(source.name())) return null;
-        EnumSet<CardData.Trait> traits = parseTraits(m.group("traits"));
-        String logSuffix = boostLogSuffix(0, traits) + " and cannot be blocked until end of turn";
-        return ctx -> {
-            ctx.logEntry(source.name() + logSuffix);
-            ctx.boostSourceForward(source, 0, traits);
-            ctx.setSourceForwardCannotBeBlocked(source);
-        };
-    }
 
-    private static Consumer<GameContext> tryParseStandaloneGainsTraitsAndCannotBeBlockedTrailing(
-            String text, CardData source) {
-        if (source == null) return null;
-        Matcher m = STANDALONE_GAINS_TRAITS_AND_CANNOT_BE_BLOCKED_TRAILING.matcher(text);
-        if (!m.find()) return null;
-        String subject = m.group("subject").trim();
-        if (!subject.equalsIgnoreCase(source.name())) return null;
-        EnumSet<CardData.Trait> traits = parseTraits(m.group("traits"));
-        String logSuffix = boostLogSuffix(0, traits) + " and cannot be blocked until end of turn";
-        return ctx -> {
-            ctx.logEntry(source.name() + logSuffix);
-            ctx.boostSourceForward(source, 0, traits);
-            ctx.setSourceForwardCannotBeBlocked(source);
-        };
-    }
 
-    private static Consumer<GameContext> tryParseChooseWarpCardRemoveCounter(String text) {
-        if (!CHOOSE_WARP_CARD_REMOVE_COUNTER.matcher(text).find()) return null;
-        return GameContext::chooseAndRemoveWarpCounter;
-    }
 
-    private static Consumer<GameContext> tryParseChooseWarpCardMayRemoveCounter(String text) {
-        if (!CHOOSE_WARP_CARD_MAY_REMOVE_COUNTER.matcher(text).find()) return null;
-        return GameContext::chooseAndMayRemoveWarpCounter;
-    }
 
-    private static Consumer<GameContext> tryParseStandaloneGainsCannotBeBlocked(
-            String text, CardData source) {
-        if (source == null) return null;
-        Matcher m = STANDALONE_GAINS_CANNOT_BE_BLOCKED.matcher(text.trim());
-        if (!m.matches()) return null;
-        if (!m.group("subject").trim().equalsIgnoreCase(source.name())) return null;
-        return ctx -> {
-            ctx.logEntry(source.name() + " cannot be blocked until end of turn");
-            ctx.setSourceForwardCannotBeBlocked(source);
-        };
-    }
 
-    private static Consumer<GameContext> tryParseStandalonePowerBoostUntil(
-            String text, CardData source) {
-        if (source == null) return null;
-        Matcher m = STANDALONE_POWER_BOOST_UNTIL.matcher(text);
-        if (!m.find()) return null;
-        String subject = m.group("subject").trim();
-        if (subject.equalsIgnoreCase("it") || subject.equalsIgnoreCase("they")) return null;
-        if (!subject.equalsIgnoreCase(source.name())) return null;
-        int boost = m.group("amount") != null ? Integer.parseInt(m.group("amount")) : 0;
-        EnumSet<CardData.Trait> traits = parseTraits(m.group("traits"));
-        if (boost == 0 && traits.isEmpty()) return null;
-        String logSuffix = boostLogSuffix(boost, traits);
-        return ctx -> {
-            ctx.logEntry(source.name() + logSuffix);
-            ctx.boostSourceForward(source, boost, traits);
-        };
-    }
 
-    /**
-     * Parses "Double the power of &lt;cardName&gt; until end of turn" as a standalone self-buff.
-     * The subject must match {@code source.name()} (case-insensitive).
-     */
-    private static Consumer<GameContext> tryParseStandaloneDoublePowerUntil(
-            String text, CardData source) {
-        if (source == null) return null;
-        Matcher m = STANDALONE_DOUBLE_POWER_UNTIL.matcher(text);
-        if (!m.find()) return null;
-        String subject = m.group("subject").trim();
-        if (!subject.equalsIgnoreCase(source.name())) return null;
-        return ctx -> {
-            ctx.logEntry(source.name() + " — power doubled until end of turn");
-            ctx.doubleSourceForwardPower(source, EnumSet.noneOf(CardData.Trait.class));
-        };
-    }
 
-    /**
-     * Parses "Until the end of the turn, &lt;cardName&gt; doubles its power [and gains traits]".
-     * Subject must match {@code source.name()}.
-     */
-    private static Consumer<GameContext> tryParseStandaloneDoublesItsPowerUntil(
-            String text, CardData source) {
-        if (source == null) return null;
-        Matcher m = STANDALONE_DOUBLES_ITS_POWER_UNTIL.matcher(text);
-        if (!m.find()) return null;
-        String subject = m.group("subject").trim();
-        if (!subject.equalsIgnoreCase(source.name())) return null;
-        EnumSet<CardData.Trait> traits = parseTraits(m.group("traits"));
-        String trailPart = traitNamesOnly(traits);
-        String logSuffix = " — power doubled" + (trailPart.isEmpty() ? "" : ", gains " + trailPart) + " until end of turn";
-        return ctx -> {
-            ctx.logEntry(source.name() + logSuffix);
-            ctx.doubleSourceForwardPower(source, traits);
-        };
-    }
 
-    /**
-     * Parses "At the beginning of your next turn's Main Phase 1 and until the end of the same
-     * turn, &lt;cardName&gt;'s power will double." — defers doubling to the start of next Main Phase 1.
-     * Subject must match {@code source.name()}.
-     */
-    private static Consumer<GameContext> tryParseStandaloneDoublePowerMainPhaseNextTurn(
-            String text, CardData source) {
-        if (source == null) return null;
-        Matcher m = STANDALONE_DOUBLE_POWER_MAIN_PHASE_NEXT_TURN.matcher(text);
-        if (!m.find()) return null;
-        String subject = m.group("subject").trim();
-        if (!subject.equalsIgnoreCase(source.name())) return null;
-        return ctx -> {
-            ctx.logEntry(source.name() + " — power will double at the start of next Main Phase 1");
-            ctx.addPendingMainPhase1Effect(innerCtx -> {
-                innerCtx.logEntry(source.name() + " — power doubled until end of turn (deferred)");
-                innerCtx.doubleSourceForwardPower(source, EnumSet.noneOf(CardData.Trait.class));
-            });
-        };
-    }
 
     /**
      * Builds a log suffix like " — Lose 1000 power, Haste, and First Strike until end of turn".
      * Power and traits are listed in order; either may be absent.
      */
-    private static String reduceLogSuffix(int amount, EnumSet<CardData.Trait> traits) {
+    static String reduceLogSuffix(int amount, EnumSet<CardData.Trait> traits) {
         List<String> parts = new ArrayList<>();
         if (amount > 0) parts.add(amount + " power");
         if (traits.contains(CardData.Trait.HASTE))        parts.add("Haste");
@@ -11463,68 +7583,10 @@ public class ActionResolver {
         return sb.append(" until end of turn").toString();
     }
 
-    /**
-     * Parses "Until the end of the turn, &lt;cardName&gt; loses [N power] [and traits]" as a
-     * standalone self-debuff on the source card.  Pronoun subjects are ignored here.
-     */
-    private static Consumer<GameContext> tryParseStandalonePowerReduceUntil(
-            String text, CardData source) {
-        if (source == null) return null;
-        Matcher m = STANDALONE_POWER_REDUCE_UNTIL.matcher(text);
-        if (!m.find()) return null;
-        String subject = m.group("subject").trim();
-        if (subject.equalsIgnoreCase("it") || subject.equalsIgnoreCase("they")) return null;
-        if (!subject.equalsIgnoreCase(source.name())) return null;
-        String amountStr = m.group("amount");
-        int reduction = amountStr != null ? Integer.parseInt(amountStr) : 0;
-        EnumSet<CardData.Trait> traits = parseTraits(m.group("traits"));
-        String logSuffix = reduceLogSuffix(reduction, traits);
-        return ctx -> {
-            ctx.logEntry(source.name() + logSuffix);
-            ctx.reduceSourceForward(source, reduction, traits);
-        };
-    }
 
-    /**
-     * Parses "&lt;cardName&gt; gains +N power." (no duration clause) as a permanent passive
-     * field-ability self-boost.  Subject must match {@code source.name()}.
-     */
-    private static Consumer<GameContext> tryParseFieldSelfPowerBoost(String text, CardData source) {
-        if (source == null) return null;
-        Matcher m = FIELD_SELF_POWER_BOOST.matcher(text);
-        if (!m.find()) return null;
-        String subject = m.group("subject").trim();
-        if (!subject.equalsIgnoreCase(source.name())) return null;
-        int boost = Integer.parseInt(m.group("amount"));
-        EnumSet<CardData.Trait> traits = parseTraits(m.group("traits"));
-        return ctx -> {
-            String traitDesc = traits.isEmpty() ? "" : " and " + traitNamesOnly(traits);
-            ctx.logEntry(source.name() + " — Gain +" + boost + " power" + traitDesc + " (field)");
-            ctx.boostSourceForward(source, boost, traits);
-        };
-    }
 
-    private static Consumer<GameContext> tryParseDoubleOutgoingDamageThisTurn(String text, CardData source) {
-        if (source == null) return null;
-        Matcher m = DOUBLE_OUTGOING_DAMAGE_THIS_TURN.matcher(text);
-        if (!m.find()) return null;
-        if (!m.group("subject").trim().equalsIgnoreCase(source.name())) return null;
-        return ctx -> ctx.doubleOutgoingDamage(source);
-    }
 
-    private static Consumer<GameContext> tryParseDoubleOpponentIncomingDamageThisTurn(String text) {
-        if (!DOUBLE_OPPONENT_INCOMING_DAMAGE_THIS_TURN.matcher(text).find()) return null;
-        return ctx -> ctx.doubleOpponentForwardIncomingDamage();
-    }
 
-    private static Consumer<GameContext> tryParseSelfOutgoingDmgBoostThisTurn(String text, CardData source) {
-        if (source == null) return null;
-        Matcher m = SELF_OUTGOING_DMG_BOOST_THIS_TURN.matcher(text.trim());
-        if (!m.matches()) return null;
-        if (!m.group("subject").trim().equalsIgnoreCase(source.name())) return null;
-        int amount = Integer.parseInt(m.group("amount"));
-        return ctx -> ctx.boostSelfOutgoingDamageThisTurn(source, amount);
-    }
 
     /**
      * Matches an action ability that temporarily grants the source card its own "deals damage to a
@@ -11534,24 +7596,11 @@ public class ActionResolver {
      * subject named inside the quoted ability must be the source card. The granted ability lasts the
      * turn, which is exactly a self outgoing-flat-boost this turn.
      */
-    private static final Pattern GAINS_OUTGOING_DMG_BOOST_UNTIL_EOT = Pattern.compile(
+    static final Pattern GAINS_OUTGOING_DMG_BOOST_UNTIL_EOT = Pattern.compile(
         "(?i)^(?<subject>.+?)\\s+gains\\s+\"If\\s+(?<inner>.+?)\\s+deals\\s+damage\\s+to\\s+a\\s+Forward" +
         "(?:\\s+opponent\\s+controls?)?,?\\s+the\\s+damage\\s+increases?\\s+by\\s+(?<amount>\\d+)(?:\\s+instead)?\\.\"\\s+" +
         "until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn[.!]?$");
 
-    private static Consumer<GameContext> tryParseGainOutgoingDmgBoostUntilEot(String text, CardData source) {
-        if (source == null) return null;
-        Matcher m = GAINS_OUTGOING_DMG_BOOST_UNTIL_EOT.matcher(text.trim());
-        if (!m.matches()) return null;
-        if (!m.group("subject").trim().equalsIgnoreCase(source.name())) return null;
-        if (!m.group("inner").trim().equalsIgnoreCase(source.name())) return null;
-        int amount = Integer.parseInt(m.group("amount"));
-        return ctx -> {
-            ctx.logEntry(source.name() + " gains \"deals damage to a Forward — damage +" + amount
-                    + "\" until end of turn");
-            ctx.boostSelfOutgoingDamageThisTurn(source, amount);
-        };
-    }
 
     // ---- Granted field abilities (self "gains \"…\" until the end of the turn") --------------------
 
@@ -11569,7 +7618,7 @@ public class ActionResolver {
      * quoted ability isn't a supported self-grant (letting other parsers try). The subject named
      * inside the quotes must be the source card.
      */
-    private static Consumer<GameContext> grantedSelfFieldAbilityEffect(String quoted, CardData source) {
+    static Consumer<GameContext> grantedSelfFieldAbilityEffect(String quoted, CardData source) {
         if (source == null) return null;
         Matcher at = GRANTED_CAN_ATTACK_TWICE.matcher(quoted);
         if (at.matches() && at.group("subj").trim().equalsIgnoreCase(source.name()))
@@ -11645,16 +7694,9 @@ public class ActionResolver {
      * "select 1 of the 2 following actions" option, the printed text uses single quotes for the
      * inner ability because the option already spent the double quotes (Caius 18-108H).
      */
-    private static final Pattern GAINS_QUOTED_FIELD_ABILITY_UNTIL_EOT = Pattern.compile(
+    static final Pattern GAINS_QUOTED_FIELD_ABILITY_UNTIL_EOT = Pattern.compile(
         "(?i)^(?<subject>.+?)\\s+gains\\s+(?<q>[\"'])(?<quoted>.+?)\\k<q>\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn[.!]?$");
 
-    private static Consumer<GameContext> tryParseGainsQuotedFieldAbilityUntilEot(String text, CardData source) {
-        if (source == null) return null;
-        Matcher m = GAINS_QUOTED_FIELD_ABILITY_UNTIL_EOT.matcher(text.trim());
-        if (!m.matches()) return null;
-        if (!m.group("subject").trim().equalsIgnoreCase(source.name())) return null;
-        return grantedSelfFieldAbilityEffect(m.group("quoted").trim(), source);
-    }
 
     /**
      * "[Self] gains \"[ability]\"[ and \"[ability]\"] (This effect does not end at the end of the
@@ -11665,7 +7707,7 @@ public class ActionResolver {
      * the permanent grant primitives rather than the end-of-turn ones. Up to two quoted abilities
      * may be joined by "and" (24-112L grants an attack trigger and a second-attack permission).
      */
-    private static final Pattern GAINS_QUOTED_ABILITIES_PERMANENT = Pattern.compile(
+    static final Pattern GAINS_QUOTED_ABILITIES_PERMANENT = Pattern.compile(
         "(?i)^(?<subject>.+?)\\s+gains\\s+\"(?<q1>.+?)\"(?:\\s+and\\s+\"(?<q2>.+?)\")?\\s*" +
         "\\(This\\s+effect\\s+does\\s+not\\s+end\\s+at\\s+the\\s+end\\s+of\\s+the\\s+turn\\.?\\)[.!]?$");
 
@@ -11676,7 +7718,7 @@ public class ActionResolver {
      * <p>A clause is either a complete "When … , …" auto ability — granted by parsing it exactly as
      * the card's own text is parsed — or the "can attack twice in the same turn" permission.
      */
-    private static Consumer<GameContext> permanentGrantForClause(String quoted, CardData source) {
+    static Consumer<GameContext> permanentGrantForClause(String quoted, CardData source) {
         Matcher at = GRANTED_CAN_ATTACK_TWICE.matcher(quoted);
         if (at.matches() && at.group("subj").trim().equalsIgnoreCase(source.name()))
             return ctx -> ctx.grantCanAttackTwicePermanently(source);
@@ -11687,21 +7729,6 @@ public class ActionResolver {
         return ctx -> ctx.grantSelfAutoAbilityPermanently(source, granted);
     }
 
-    private static Consumer<GameContext> tryParseGainsQuotedAbilitiesPermanent(String text, CardData source) {
-        if (source == null) return null;
-        Matcher m = GAINS_QUOTED_ABILITIES_PERMANENT.matcher(text.trim());
-        if (!m.matches()) return null;
-        if (!m.group("subject").trim().equalsIgnoreCase(source.name())) return null;
-
-        Consumer<GameContext> first = permanentGrantForClause(m.group("q1").trim(), source);
-        if (first == null) return null;
-        String second = m.group("q2");
-        if (second == null) return first;
-        Consumer<GameContext> rest = permanentGrantForClause(second.trim(), source);
-        // Both halves or neither — a half-applied grant is worse than an unrecognised one.
-        if (rest == null) return null;
-        return ctx -> { first.accept(ctx); rest.accept(ctx); };
-    }
 
     /**
      * "Until the end of the turn, [Self] gains [+N power][, traits] and \"[quoted field ability]\"."
@@ -11709,324 +7736,29 @@ public class ActionResolver {
      * routes the quoted ability to its grant primitive; returns {@code null} when the quoted ability
      * isn't a supported self-grant.
      */
-    private static final Pattern UNTIL_EOT_GAINS_POWER_TRAITS_AND_QUOTED = Pattern.compile(
+    static final Pattern UNTIL_EOT_GAINS_POWER_TRAITS_AND_QUOTED = Pattern.compile(
         "(?i)^Until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn,\\s+(?<subject>.+?)\\s+gains\\s+" +
         "(?<boosts>.+?)\\s+and\\s+\"(?<quoted>.+?)\"[.!]?$");
 
-    private static final Pattern POWER_AMOUNT_PLUS = Pattern.compile("(?i)\\+(\\d+)\\s+power");
+    static final Pattern POWER_AMOUNT_PLUS = Pattern.compile("(?i)\\+(\\d+)\\s+power");
 
-    private static Consumer<GameContext> tryParseUntilEotGainsPowerTraitsAndQuoted(String text, CardData source) {
-        if (source == null) return null;
-        Matcher m = UNTIL_EOT_GAINS_POWER_TRAITS_AND_QUOTED.matcher(text.trim());
-        if (!m.matches()) return null;
-        if (!m.group("subject").trim().equalsIgnoreCase(source.name())) return null;
-        Consumer<GameContext> abilityGrant = grantedSelfFieldAbilityEffect(m.group("quoted").trim(), source);
-        if (abilityGrant == null) return null;
-        String boosts = m.group("boosts").trim();
-        Matcher pm = POWER_AMOUNT_PLUS.matcher(boosts);
-        int amount = pm.find() ? Integer.parseInt(pm.group(1)) : 0;
-        EnumSet<CardData.Trait> traits = parseTraits(boosts);
-        return ctx -> {
-            if (amount > 0 || !traits.isEmpty()) ctx.boostSourceForward(source, amount, traits);
-            abilityGrant.accept(ctx);
-        };
-    }
 
-    /**
-     * Edea: "Choose 1 Forward opponent controls with a cost inferior or equal to the number
-     * of [Element] [Backups/Forwards] you control. Break it."
-     */
-    private static Consumer<GameContext> tryParseChooseOppFwdDynCostBreak(String text) {
-        Matcher m = CHOOSE_OPP_FWD_DYN_COST_BREAK.matcher(text);
-        if (!m.find()) return null;
-        String element  = m.group("element");
-        String cardtype = m.group("cardtype").toLowerCase();
-        boolean inclFwd = cardtype.startsWith("forward");
-        boolean inclBkp = !inclFwd;
-        String followupText = m.group("followup").trim();
-        if (!followupText.toLowerCase().contains("break it")) return null;
-        return ctx -> {
-            int ceiling = ctx.selfFieldCount(element, inclFwd, inclBkp, false);
-            ctx.logEntry("Choose 1 Forward opponent controls with cost ≤ " + ceiling
-                    + " (# " + element + " " + cardtype + " you control)");
-            List<ForwardTarget> ts = ctx.selectCharacters(1, false, true, false,
-                    null, null, ceiling, "less", -1, null,
-                    true, false, false, null, null, null, null, false, null, false);
-            ts.forEach(ctx::breakTarget);
-        };
-    }
 
-    /**
-     * Shuyin: "Choose 1 Forward [control?] with a power inferior to [source]'s. [followup]"
-     * The power ceiling is computed at runtime as sourcePower − 1000 (strictly inferior,
-     * and FFTCG powers step in multiples of 1000).
-     */
-    private static Consumer<GameContext> tryParseChooseFwdPowerInferiorToSource(String text, CardData source) {
-        if (source == null) return null;
-        Matcher m = CHOOSE_FWD_POWER_INFERIOR_TO_SOURCE.matcher(text);
-        if (!m.find()) return null;
-        if (!m.group("sourcename").trim().equalsIgnoreCase(source.name())) return null;
-        String control   = m.group("control");
-        boolean oppOnly  = control != null && !control.equalsIgnoreCase("you control");
-        boolean selfOnly = "you control".equalsIgnoreCase(control);
-        String followupText = m.group("followup").trim();
-        // Detect gain-control-EOT as the followup (handles "this Forward" phrasing)
-        boolean gainControlEot = followupText.toLowerCase().contains("gain control")
-                && followupText.toLowerCase().contains("end of");
-        Consumer<GameContext> parsedFollowup = gainControlEot ? null : parse(followupText, source);
-        if (!gainControlEot && parsedFollowup == null) return null;
-        return ctx -> {
-            int sp = ctx.fieldForwardPowerByName(source.name());
-            if (sp <= 0) sp = source.power();
-            int powerCeiling = sp - 1000;
-            ctx.logEntry("Choose 1 Forward with power < " + sp);
-            if (powerCeiling <= 0) { ctx.logEntry("No eligible targets — source power too low."); return; }
-            List<ForwardTarget> ts = ctx.selectCharacters(1, false, oppOnly, selfOnly,
-                    null, null, -1, null, powerCeiling, "less",
-                    true, false, false, null, null, null, null, false, null, false);
-            if (gainControlEot) ts.forEach(t -> ctx.gainControlOfForward(t, "endOfTurn", true));
-            else { ctx.recordChosenTargets(ts); parsedFollowup.accept(ctx); }
-        };
-    }
 
-    /**
-     * Alphinaud: "Dull all the Forwards with a power equal or inferior to [source]'s
-     * opponent controls."
-     */
-    private static Consumer<GameContext> tryParseDullAllOppFwdsPowerLeSource(String text, CardData source) {
-        if (source == null) return null;
-        Matcher m = DULL_ALL_OPP_FWDS_POWER_LE_SOURCE.matcher(text);
-        if (!m.find()) return null;
-        if (!m.group("sourcename").trim().equalsIgnoreCase(source.name())) return null;
-        return ctx -> ctx.dullOpponentForwardsByPowerAtMost(source);
-    }
 
-    /**
-     * Hojo followup: "Choose 1 Forward in your Break Zone with a cost inferior to that of the
-     * removed Forward. Play it onto the field."
-     * Reads {@link GameContext#lastRemovedFromGameCardCost()} to determine the cost ceiling.
-     */
-    private static Consumer<GameContext> tryParseChooseFwdBzCostInferiorToRemovedPlay(String text) {
-        if (!CHOOSE_FWD_BZ_COST_INFERIOR_TO_REMOVED_PLAY.matcher(text).find()) return null;
-        return ctx -> {
-            int removedCost = ctx.lastRemovedFromGameCardCost();
-            if (removedCost <= 0) { ctx.logEntry("No removed Forward cost tracked — cannot play from BZ"); return; }
-            int costCeiling = removedCost - 1; // "inferior to N" = cost ≤ N-1
-            ctx.logEntry("Choose 1 Forward from own Break Zone with cost < " + removedCost);
-            List<ForwardTarget> ts = ctx.selectCharactersFromBreakZone(1, false, false, false,
-                    null, null, costCeiling, "less", -1, null,
-                    true, false, false, null, null, null, null, false, null, false);
-            ts.forEach(ctx::playTargetOntoField);
-        };
-    }
 
-    private static Consumer<GameContext> tryParseAllForwardIncomingDmgIncreaseThisTurn(String text) {
-        Matcher m = ALL_FORWARD_INCOMING_DMG_INCREASE_THIS_TURN.matcher(text);
-        if (!m.find()) return null;
-        int amount = Integer.parseInt(m.group("amount"));
-        return ctx -> ctx.increaseAllForwardIncomingDamage(amount);
-    }
 
-    private static Consumer<GameContext> tryParseDoubleOutgoingDamageThisTurnAlt(String text, CardData source) {
-        if (source == null) return null;
-        Matcher m = DOUBLE_OUTGOING_DAMAGE_THIS_TURN_ALT.matcher(text);
-        if (!m.find()) return null;
-        if (!m.group("subject").trim().equalsIgnoreCase(source.name())) return null;
-        return ctx -> ctx.doubleOutgoingDamage(source);
-    }
 
-    private static Consumer<GameContext> tryParseChooseForwardDoubleIncomingThisTurn(String text) {
-        if (!CHOOSE_FORWARD_DOUBLE_INCOMING_THIS_TURN.matcher(text).find()) return null;
-        return ctx -> {
-            ctx.logEntry("Choose 1 Forward — incoming damage doubled this turn");
-            List<ForwardTarget> ts = ctx.selectCharacters(1, false, false, false,
-                    null, null, -1, null, -1, null, true, false, false,
-                    null, null, null, null, false, null, false);
-            if (!ts.isEmpty()) ctx.doubleForwardIncomingDamageThisTurn(ts.get(0));
-        };
-    }
 
-    private static Consumer<GameContext> tryParseChooseForwardDoubleNextOutgoing(String text) {
-        Matcher m = CHOOSE_FORWARD_DOUBLE_NEXT_OUTGOING.matcher(text);
-        if (!m.find()) return null;
-        String rawJob = m.group("job");
-        final String jobFilter = rawJob != null ? rawJob.trim() : null;
-        return ctx -> {
-            String label = jobFilter != null ? "Job " + jobFilter + " " : "";
-            ctx.logEntry("Choose 1 " + label + "Forward — next outgoing damage doubled this turn");
-            List<ForwardTarget> ts = ctx.selectCharacters(1, false, false, false,
-                    null, null, -1, null, -1, null, true, false, false,
-                    jobFilter, null, null, null, false, null, false);
-            if (!ts.isEmpty()) ctx.doubleForwardNextOutgoingDamage(ts.get(0));
-        };
-    }
 
-    private static Consumer<GameContext> tryParseDoublePlayerAbilityOutgoingThisTurn(String text) {
-        if (!DOUBLE_PLAYER_ABILITY_OUTGOING_THIS_TURN.matcher(text).find()) return null;
-        return ctx -> ctx.doublePlayerAbilityOutgoingDamage();
-    }
 
-    /**
-     * Parses "it [gains +N power] [traits] until end of turn" as a standalone boost applied to
-     * {@code source}. Used when "it" refers to the source card — e.g. in watcher attack abilities
-     * where the source is the attacking Forward, not the card that owns the ability.
-     */
-    private static Consumer<GameContext> tryParseStandaloneItPowerBoostUntil(String text, CardData source) {
-        if (source == null) return null;
-        Matcher m = SELF_POWER_BOOST.matcher(text);
-        if (!m.find()) return null;
-        String subject = m.group("selfsubject").trim();
-        if (!subject.equalsIgnoreCase("it") && !subject.equalsIgnoreCase("they")) return null;
-        int boost = m.group("selfamount") != null ? Integer.parseInt(m.group("selfamount")) : 0;
-        EnumSet<CardData.Trait> traits = parseTraits(m.group("selftraits"));
-        if (boost == 0 && traits.isEmpty()) return null;
-        String logSuffix = boostLogSuffix(boost, traits);
-        return ctx -> {
-            ctx.logEntry(source.name() + logSuffix);
-            ctx.boostSourceForward(source, boost, traits);
-        };
-    }
 
-    /**
-     * Parses "&lt;cardName&gt; gains [+N power] [, traits] until end of turn" as a standalone
-     * self-boost on the source card (standard order, no "Until" prefix).
-     * Pronoun subjects ("it", "they") are skipped — they are followup pronouns.
-     */
-    private static Consumer<GameContext> tryParseStandaloneSelfBoost(String text, CardData source) {
-        if (source == null) return null;
-        Matcher m = SELF_POWER_BOOST.matcher(text);
-        if (!m.find()) return null;
-        String subject = m.group("selfsubject").trim();
-        if (subject.equalsIgnoreCase("it") || subject.equalsIgnoreCase("they")) return null;
-        if (!subject.equalsIgnoreCase(source.name())) return null;
-        int boost = m.group("selfamount") != null ? Integer.parseInt(m.group("selfamount")) : 0;
-        EnumSet<CardData.Trait> traits = parseTraits(m.group("selftraits"));
-        String logSuffix = boostLogSuffix(boost, traits);
-        return ctx -> {
-            ctx.logEntry(source.name() + logSuffix);
-            ctx.boostSourceForward(source, boost, traits);
-        };
-    }
 
-    /**
-     * Parses "if you have N or more cards in your hand, [subject] gains [traits/power] until end of turn"
-     * with an optional higher-threshold power boost clause for the same subject.
-     */
-    private static Consumer<GameContext> tryParseIfHandSizeSelfBoost(String text, CardData source) {
-        if (source == null) return null;
-        Matcher m = IF_HAND_SIZE_SELF_BOOST.matcher(text.trim());
-        if (!m.find()) return null;
-        String subject = m.group("subject").trim();
-        if (!subject.equalsIgnoreCase(source.name())) return null;
-        int min1 = Integer.parseInt(m.group("min1"));
-        int amount1 = m.group("amount1") != null ? Integer.parseInt(m.group("amount1")) : 0;
-        EnumSet<CardData.Trait> traits1 = parseTraits(m.group("traits1"));
-        if (amount1 == 0 && traits1.isEmpty()) return null;
-        int min2   = m.group("min2")   != null ? Integer.parseInt(m.group("min2"))   : -1;
-        int amount2 = m.group("amount2") != null ? Integer.parseInt(m.group("amount2")) : 0;
-        String logSuffix1 = boostLogSuffix(amount1, traits1);
-        String logSuffix2 = min2 > 0 ? boostLogSuffix(amount2, EnumSet.noneOf(CardData.Trait.class)) : "";
-        return ctx -> {
-            int handSize = ctx.yourHandSize();
-            if (handSize >= min1) {
-                ctx.logEntry(source.name() + logSuffix1 + " (hand ≥ " + min1 + ")");
-                ctx.boostSourceForward(source, amount1, traits1);
-            }
-            if (min2 > 0 && handSize >= min2) {
-                ctx.logEntry(source.name() + logSuffix2 + " (hand ≥ " + min2 + ")");
-                ctx.boostSourceForward(source, amount2, EnumSet.noneOf(CardData.Trait.class));
-            }
-        };
-    }
 
-    private static Consumer<GameContext> tryParseStandaloneSelfBoostForEachCrystal(String text, CardData source) {
-        if (source == null) return null;
-        Matcher m = SELF_POWER_BOOST_FOR_EACH_CRYSTAL.matcher(text);
-        if (!m.find()) return null;
-        String subject = m.group("subject").trim();
-        if (!subject.equalsIgnoreCase(source.name())) return null;
-        int perCrystal = Integer.parseInt(m.group("amount"));
-        return ctx -> {
-            int n = ctx.crystalCount();
-            int boost = perCrystal * n;
-            ctx.logEntry(source.name() + " gains +" + boost + " power (" + perCrystal + "×" + n + " 《C》) until end of turn");
-            ctx.boostSourceForward(source, boost, EnumSet.noneOf(CardData.Trait.class));
-        };
-    }
 
-    /** Parses "[subject] gains +N power until the end of the turn and activate [name]." */
-    private static Consumer<GameContext> tryParseSelfPowerBoostAndActivate(String text, CardData source) {
-        if (source == null) return null;
-        Matcher m = SELF_POWER_BOOST_AND_ACTIVATE.matcher(text.trim());
-        if (!m.find()) return null;
-        String subject = m.group("subject").trim();
-        if (!subject.equalsIgnoreCase(source.name())) return null;
-        int boost = Integer.parseInt(m.group("amount"));
-        String activateName = m.group("activateName").trim();
-        return ctx -> {
-            // boostSourceForward logs the boost itself (and logs the suppressed case instead when
-            // the opponent is blocking power gains), so announcing it here just duplicates the line.
-            ctx.boostSourceForward(source, boost, EnumSet.noneOf(CardData.Trait.class));
-            ctx.logEntry("Effect: Activate " + activateName);
-            List<ForwardTarget> ts = ctx.selectCharacters(
-                    1, false, false, true, null, null, -1, null, -1, null,
-                    true, true, true, null, activateName, null, null, false, null, false);
-            ts.forEach(ctx::activateTarget);
-        };
-    }
 
-    /**
-     * Parses "[CardName]'s power becomes the same as that Forward's power until the end of the turn."
-     * Sets the source card's power to the power of the Forward most recently removed from the game.
-     */
-    private static Consumer<GameContext> tryParseSourcePowerBecomesRemovedForwardPower(
-            String text, CardData source) {
-        if (source == null) return null;
-        Matcher m = SOURCE_POWER_BECOMES_SAME_AS_REMOVED_FORWARD.matcher(text.trim());
-        if (!m.matches()) return null;
-        if (!m.group("name").trim().equalsIgnoreCase(source.name())) return null;
-        return ctx -> {
-            int power = ctx.lastRemovedFromGameCardPower();
-            ctx.logEntry(source.name() + " — base power becomes " + power + " (removed Forward's power) until end of turn");
-            ctx.setSourceForwardBasePower(source, power, EnumSet.noneOf(CardData.Trait.class));
-        };
-    }
 
-    /**
-     * Parses "[CardName]'s power becomes the same as your opponent's weakest Forward until the
-     * end of the turn." Sets the source card's power to the lowest effective power among the
-     * opponent's Forwards on the field.
-     */
-    private static Consumer<GameContext> tryParseSourcePowerBecomesOpponentWeakestForward(
-            String text, CardData source) {
-        if (source == null) return null;
-        Matcher m = SOURCE_POWER_BECOMES_OPPONENT_WEAKEST_FORWARD.matcher(text.trim());
-        if (!m.matches()) return null;
-        if (!m.group("name").trim().equalsIgnoreCase(source.name())) return null;
-        return ctx -> {
-            int power = ctx.opponentLowestForwardPower();
-            ctx.logEntry(source.name() + " — base power becomes " + power + " (opponent's weakest Forward) until end of turn");
-            ctx.setSourceForwardBasePower(source, power, EnumSet.noneOf(CardData.Trait.class));
-        };
-    }
 
-    /**
-     * Parses "Until the end of the turn, [CardName] gains [traits] and [CardName]'s power becomes N."
-     * (and the trait-less "Until the end of the turn, [CardName]'s power becomes N.").  The power
-     * clause replaces the source card's base power rather than its effective power, so temporary
-     * boosts and reductions — whether already applied or applied later this turn — stack on top of it.
-     */
-    private static Consumer<GameContext> tryParseSelfBasePowerBecomesUntil(String text, CardData source) {
-        if (source == null) return null;
-        Matcher m = STANDALONE_SELF_BASE_POWER_BECOMES_UNTIL.matcher(text.trim());
-        if (!m.matches()) return null;
-        if (!m.group("powersubject").trim().equalsIgnoreCase(source.name())) return null;
-        String subject = m.group("subject");
-        if (subject != null && !subject.trim().equalsIgnoreCase(source.name())) return null;
-        int power = Integer.parseInt(m.group("power"));
-        EnumSet<CardData.Trait> traits = parseTraits(m.group("traits"));
-        return ctx -> ctx.setSourceForwardBasePower(source, power, traits);
-    }
 
     /**
      * Parses "Your opponent gains control of [CardName]." — permanently transfers the source
@@ -12043,100 +7775,15 @@ public class ActionResolver {
         };
     }
 
-    /** Parses "Dull [CardName]." — dulls the source card with no other effect. */
-    private static Consumer<GameContext> tryParseStandaloneSelfDull(String text, CardData source) {
-        if (source == null) return null;
-        Matcher m = STANDALONE_SELF_DULL.matcher(text.trim());
-        if (!m.find()) return null;
-        String subject = m.group("subject").trim();
-        if (!subject.equalsIgnoreCase(source.name())) return null;
-        return ctx -> {
-            ctx.logEntry(source.name() + " — dulled");
-            ctx.dullSourceForward(source);
-        };
-    }
 
-    /**
-     * Parses "Dull [CardName]. [CardName] gains '[...] cannot be broken.' until end of turn."
-     * Dulls the source then shields it. Must be tried before {@link #tryParseStandaloneShieldCannotBeBroken}
-     * so the dull step is not silently dropped.
-     */
-    private static Consumer<GameContext> tryParseStandaloneSelfDullAndShield(String text, CardData source) {
-        if (source == null) return null;
-        Matcher m = STANDALONE_SELF_DULL_AND_SHIELD_CANNOT_BE_BROKEN.matcher(text);
-        if (!m.find()) return null;
-        String subject = m.group("subject").trim();
-        if (!subject.equalsIgnoreCase(source.name())) return null;
-        return ctx -> {
-            ctx.logEntry(source.name() + " — Dull self and cannot be broken until end of turn");
-            ctx.dullSourceForward(source);
-            ctx.shieldSourceForward(source);
-        };
-    }
 
-    /**
-     * Parses standalone "cannot be broken until end of turn" grants:
-     * <ul>
-     *   <li>"[CardName] gains '[...] cannot be broken.' until end of turn." — self-shield</li>
-     *   <li>"[CardName] gains '[...] cannot be broken by opposing Summons or abilities that
-     *       don't deal damage.' until the end of the turn." — self-shield vs non-damage breaks</li>
-     *   <li>"All [the] Forwards you control gain '[...] cannot be broken.' until end of turn." — all own</li>
-     * </ul>
-     */
-    private static Consumer<GameContext> tryParseStandaloneShieldCannotBeBroken(
-            String text, CardData source) {
-        if (STANDALONE_ALL_FORWARDS_SHIELD_CANNOT_BE_BROKEN.matcher(text).find()) {
-            return ctx -> {
-                ctx.logEntry("Effect: All own Forwards cannot be broken until end of turn");
-                ctx.shieldAllOwnForwards();
-            };
-        }
-        if (source == null) return null;
-        // Non-damage-only variant first: its quoted body would not satisfy the plain pattern,
-        // but checking it first keeps the two from ever competing.
-        Matcher nd = STANDALONE_SELF_SHIELD_CANNOT_BE_BROKEN_BY_NON_DMG.matcher(text);
-        if (nd.find() && nd.group("subject").trim().equalsIgnoreCase(source.name())) {
-            return ctx -> {
-                boolean p1 = ctx.isP1();
-                int count = p1 ? ctx.p1ForwardCount() : ctx.p2ForwardCount();
-                for (int i = 0; i < count; i++) {
-                    CardData c = p1 ? ctx.p1Forward(i) : ctx.p2Forward(i);
-                    if (c.name().equalsIgnoreCase(source.name())) {
-                        ctx.shieldCannotBeBrokenByNonDmg(new ForwardTarget(p1, i, ForwardTarget.CardZone.FORWARD));
-                        return;
-                    }
-                }
-            };
-        }
-        Matcher m = STANDALONE_SELF_SHIELD_CANNOT_BE_BROKEN.matcher(text);
-        if (!m.find()) {
-            m = STANDALONE_SELF_SHIELD_CANNOT_BE_BROKEN_SIMPLE.matcher(text);
-            if (!m.find()) return null;
-        }
-        String subject = m.group("subject").trim();
-        if (!subject.equalsIgnoreCase(source.name())) return null;
-        return ctx -> {
-            ctx.logEntry(source.name() + " cannot be broken until end of turn");
-            ctx.shieldSourceForward(source);
-        };
-    }
 
-    private static Consumer<GameContext> tryParseAllOwnForwardsNullifyAbilityDamage(String text) {
-        if (!ALL_OWN_FORWARDS_NULLIFY_ABILITY_DAMAGE_PATTERN.matcher(text.trim()).matches()) return null;
-        return ctx -> {
-            ctx.logEntry("Effect: All own Forwards — damage from Summons/abilities becomes 0 this turn");
-            boolean p1 = ctx.isP1();
-            int count = p1 ? ctx.p1ForwardCount() : ctx.p2ForwardCount();
-            for (int i = 0; i < count; i++)
-                ctx.shieldAbilityDamage(new ForwardTarget(p1, i, ForwardTarget.CardZone.FORWARD));
-        };
-    }
 
     /**
      * "Remove it/them from the game for as long as [Name] is on the field." (Necron ETB) —
      * temporary exile that ends when the named watcher leaves the field.
      */
-    private static final Pattern FOLLOWUP_REMOVE_FROM_GAME_WHILE_ON_FIELD = Pattern.compile(
+    static final Pattern FOLLOWUP_REMOVE_FROM_GAME_WHILE_ON_FIELD = Pattern.compile(
         "(?i)Remove\\s+(?:it|them)\\s+from\\s+the\\s+game\\s+for\\s+as\\s+long\\s+as\\s+" +
         "(?<name>.+?)\\s+is\\s+on\\s+the\\s+field\\.?"
     );
@@ -12146,44 +7793,22 @@ public class ActionResolver {
      * ability) — only targets cards exiled by this specific source instance's ETB ability;
      * moving one to the Break Zone cancels its pending return to the field.
      */
-    private static final Pattern CHOOSE_CARD_REMOVED_BY_SOURCE_TO_BZ = Pattern.compile(
+    static final Pattern CHOOSE_CARD_REMOVED_BY_SOURCE_TO_BZ = Pattern.compile(
         "(?i)Choose\\s+1\\s+card\\s+removed\\s+by\\s+(?<name>.+?)'s\\s+ability\\.\\s*" +
         "Put\\s+it\\s+into\\s+the\\s+Break\\s+Zone\\.?"
     );
 
-    /**
-     * Parses "Choose 1 card removed by [SourceName]'s ability. Put it into the Break Zone." —
-     * requires the named card to be the ability source so the exile tracking can be looked up
-     * by instance identity.
-     */
-    private static Consumer<GameContext> tryParseChooseCardRemovedBySourceToBz(String text, CardData source) {
-        Matcher m = CHOOSE_CARD_REMOVED_BY_SOURCE_TO_BZ.matcher(text.trim());
-        if (!m.matches()) return null;
-        if (source == null || !m.group("name").trim().equalsIgnoreCase(source.name())) return null;
-        return ctx -> ctx.putCardRemovedBySourceIntoBreakZone(source);
-    }
 
     /**
      * "Until the end of your turn, you can cast [CardName] removed by this ability's cost."
      * (Sephiroth) — registers the card instance(s) removed from the game while paying this
      * ability's costs as castable from the RFP zone for the rest of the turn.
      */
-    private static final Pattern CAST_RFG_COST_CARD_THIS_TURN = Pattern.compile(
+    static final Pattern CAST_RFG_COST_CARD_THIS_TURN = Pattern.compile(
         "(?i)Until\\s+the\\s+end\\s+of\\s+(?:your|the)\\s+turn,?\\s+you\\s+(?:can|may)\\s+cast\\s+" +
         "(?<name>.+?)\\s+removed\\s+by\\s+this\\s+ability(?:'s\\s+cost)?[.!]?"
     );
 
-    /**
-     * Parses "Until the end of your turn, you can cast [CardName] removed by this ability's
-     * cost." — reachable both standalone and as a choose-effect secondary (the secondary
-     * fallback re-enters {@link #parse}).
-     */
-    private static Consumer<GameContext> tryParseCastRfgCostCardThisTurn(String text) {
-        Matcher m = CAST_RFG_COST_CARD_THIS_TURN.matcher(text.trim());
-        if (!m.matches()) return null;
-        String name = m.group("name").trim();
-        return ctx -> ctx.makeRfgCostCardCastableThisTurn(name);
-    }
 
     /**
      * Returns {@code true} if {@code text} is the Doublecast free-Summons field effect.
@@ -12193,61 +7818,9 @@ public class ActionResolver {
         return DOUBLECAST_FREE_SUMMONS_PATTERN.matcher(text.trim()).matches();
     }
 
-    /**
-     * Parses Doublecast (Yuna): "When you cast a Summon this turn, you may cast 1 Summon from
-     * your hand with a cost inferior to that of the Summon you cast without paying its cost."
-     */
-    private static Consumer<GameContext> tryParseDoublecastFreeSummons(String text) {
-        if (!DOUBLECAST_FREE_SUMMONS_PATTERN.matcher(text.trim()).matches()) return null;
-        return ctx -> {
-            ctx.logEntry("Effect: Doublecast — after each Summon cast this turn, "
-                + "lower-cost hand Summons cast free");
-            ctx.activateDoublecastFreeSummons();
-        };
-    }
 
-    /**
-     * Parses "During this turn, if a Job [X] or Card Name [Y] you control is dealt damage by a
-     * Summon or an ability, the damage becomes 0 instead." — a persistent turn-scoped filter, so
-     * it also covers matching Forwards that enter the field after resolution.
-     */
-    private static Consumer<GameContext> tryParseOwnJobOrNameNullifyAbilityDamage(String text) {
-        Matcher m = OWN_JOB_OR_NAME_NULLIFY_ABILITY_DAMAGE_PATTERN.matcher(text.trim());
-        if (!m.matches()) return null;
-        String job = m.group("job").trim();
-        String cardName = m.group("cardname").trim();
-        return ctx -> {
-            ctx.logEntry("Effect: Own Job " + job + " / Card Name " + cardName
-                + " — damage from Summons/abilities becomes 0 this turn");
-            ctx.shieldOwnForwardsAbilityDamageFilter(
-                c -> c.hasJob(job) || c.name().equalsIgnoreCase(cardName));
-        };
-    }
 
-    private static Consumer<GameContext> tryParseAllForwardsCannotBlock(String text) {
-        if (!STANDALONE_ALL_FORWARDS_CANNOT_BLOCK.matcher(text).matches()) return null;
-        return ctx -> {
-            ctx.logEntry("Effect: All Forwards cannot block this turn");
-            for (int i = 0; i < ctx.p1ForwardCount(); i++) ctx.setP1ForwardCannotBlock(i);
-            for (int i = 0; i < ctx.p2ForwardCount(); i++) ctx.setP2ForwardCannotBlock(i);
-        };
-    }
 
-    private static Consumer<GameContext> tryParseForwardsOfCostCannotBlock(String text) {
-        Matcher m = STANDALONE_FORWARDS_OF_COST_CANNOT_BLOCK.matcher(text);
-        if (!m.matches()) return null;
-        int costVal = Integer.parseInt(m.group("costval"));
-        boolean orLess = m.group("cmp").equalsIgnoreCase("less");
-        return ctx -> {
-            ctx.logEntry("Effect: All Forwards of cost " + costVal + " or " + (orLess ? "less" : "more") + " cannot block this turn");
-            for (int i = 0; i < ctx.p1ForwardCount(); i++)
-                if (orLess ? ctx.p1Forward(i).cost() <= costVal : ctx.p1Forward(i).cost() >= costVal)
-                    ctx.setP1ForwardCannotBlock(i);
-            for (int i = 0; i < ctx.p2ForwardCount(); i++)
-                if (orLess ? ctx.p2Forward(i).cost() <= costVal : ctx.p2Forward(i).cost() >= costVal)
-                    ctx.setP2ForwardCannotBlock(i);
-        };
-    }
 
     private static Consumer<GameContext> tryParseEndOfNextTurnIfCardOnFieldOppLoses(String text) {
         Matcher m = END_OF_NEXT_TURN_IF_CARD_ON_FIELD_OPP_LOSES.matcher(text);
@@ -12266,51 +7839,11 @@ public class ActionResolver {
         };
     }
 
-    private static Consumer<GameContext> tryParseOppFwdsCannotBlockInferiorPower(String text) {
-        if (!OPP_FWDS_CANNOT_BLOCK_INFERIOR_POWER_THIS_TURN.matcher(text).matches()) return null;
-        return ctx -> ctx.setOppForwardsCannotBlockInferiorPowerThisTurn();
-    }
 
-    private static Consumer<GameContext> tryParseAllFwdsBlockedOnlyByLowerCostThisTurn(String text) {
-        if (!ALL_FWDS_BLOCKED_ONLY_BY_LOWER_COST_THIS_TURN.matcher(text).matches()) return null;
-        return ctx -> {
-            ctx.logEntry("Effect: Each Forward can only be blocked by a Forward with cost ≤ its own this turn");
-            ctx.setAllForwardsCannotBeBlockedByHigherCostThisTurn();
-        };
-    }
 
-    private static Consumer<GameContext> tryParseOppFwdsLoseAllAbilitiesEot(String text) {
-        if (!OPP_FWDS_LOSE_ALL_ABILITIES_EOT.matcher(text).matches()) return null;
-        return ctx -> ctx.oppForwardsLoseAllAbilitiesUntilEndOfTurn();
-    }
 
-    private static Consumer<GameContext> tryParseOppFwdPowerBoostSuppressedThisTurn(String text) {
-        if (!OPP_FWD_POWER_BOOST_SUPPRESSED_THIS_TURN.matcher(text).matches()) return null;
-        return ctx -> ctx.setOppFwdPowerBoostSuppressedThisTurn();
-    }
 
-    private static Consumer<GameContext> tryParseOppFwdsLosePowerPerPlayCost(String text) {
-        Matcher m = OPP_FWDS_LOSE_POWER_PER_PLAY_COST.matcher(text);
-        if (!m.find()) return null;
-        int powerPerCp = Integer.parseInt(m.group("amount"));
-        return ctx -> {
-            ctx.logEntry("Effect: All opponent Forwards lose " + powerPerCp + "×cost power until end of turn");
-            ctx.applyOppFwdsCostScaledPowerDebuff(powerPerCp);
-        };
-    }
 
-    private static Consumer<GameContext> tryParseStandaloneCannotBeBlocked(String text, CardData source) {
-        if (source == null) return null;
-        Matcher m = STANDALONE_SELF_CANNOT_BE_BLOCKED.matcher(text);
-        if (!m.find()) return null;
-        String subject = m.group("subject").trim();
-        if (subject.equalsIgnoreCase("it") || subject.equalsIgnoreCase("they")) return null;
-        if (!subject.equalsIgnoreCase(source.name())) return null;
-        return ctx -> {
-            ctx.logEntry(source.name() + " cannot be blocked this turn");
-            ctx.setSourceForwardCannotBeBlocked(source);
-        };
-    }
 
     /** Parses "Draw N card(s)[, then discard M card(s)]" as a standalone effect. */
     private static final Pattern WHEN_YOU_DO_SO_SEQUENCE = Pattern.compile(
@@ -12327,7 +7860,7 @@ public class ActionResolver {
      *   <li>{@code discardName} — card name from "discard 1 Card Name &lt;cardName&gt;"</li>
      * </ul>
      */
-    private static final Pattern MAY_COST_REPLAY_ABILITY = Pattern.compile(
+    static final Pattern MAY_COST_REPLAY_ABILITY = Pattern.compile(
         "(?i)You\\s+may\\s+(?:" +
             "pay\\s+《(?<payCost>[^》]+)》" +
             "|dull\\s+active\\s+(?<dullName>[^.,]+)" +
@@ -12347,7 +7880,7 @@ public class ActionResolver {
      * <em>after</em> a "Choose 1 …" primary and so applies to the chosen targets.
      * Groups: {@code costs} — the run of 《…》 tokens; {@code effect} — what paying buys.
      */
-    private static final Pattern MAY_PAY_COST_THEN_EFFECT = Pattern.compile(
+    static final Pattern MAY_PAY_COST_THEN_EFFECT = Pattern.compile(
         "(?is)^(?:you\\s+may\\s+)?pay\\s+(?<costs>(?:《[^》]+》)+)\\s*[.!]?\\s+" +
         "(?:If|When)\\s+you\\s+do\\s+so[,.]?\\s+(?<effect>.+)$"
     );
@@ -12361,7 +7894,7 @@ public class ActionResolver {
      * engine cannot price — an 《X》 variable, or more than one distinct element, neither of which
      * the payment primitive can express.
      */
-    private static Object[] tallyCostRun(String costs) {
+    static Object[] tallyCostRun(String costs) {
         int cp = 0, crystals = 0;
         String element = null;
         Matcher t = COST_TOKEN.matcher(costs);
@@ -12382,19 +7915,6 @@ public class ActionResolver {
         return new Object[]{ cp, element, crystals };
     }
 
-    private static Consumer<GameContext> tryParseMayPayCostThenEffect(String text, CardData source, int xValue) {
-        Matcher m = MAY_PAY_COST_THEN_EFFECT.matcher(text.trim());
-        if (!m.matches()) return null;
-        Object[] tally = tallyCostRun(m.group("costs"));
-        if (tally == null) return null;
-        final int    cp       = (Integer) tally[0];
-        final String element  = (String)  tally[1];
-        final int    crystals = (Integer) tally[2];
-        final String effectText = m.group("effect").trim();
-        Consumer<GameContext> effect = parse(effectText, source, xValue);
-        if (effect == null) return null;
-        return ctx -> ctx.mayPayCostToEffect(cp, element, crystals, effect);
-    }
 
     /**
      * Parses "X. When/If you do so, Y." into a sequence: resolve X, then resolve Y only if
@@ -12423,7 +7943,7 @@ public class ActionResolver {
      * Matches "if you control N or less/fewer [Forwards/Backups/Monsters/Characters], [effect]."
      * Groups: {@code max} — the maximum count; {@code type} — card type; {@code effect} — inner effect.
      */
-    private static final Pattern IF_CONTROL_AT_MOST = Pattern.compile(
+    static final Pattern IF_CONTROL_AT_MOST = Pattern.compile(
         "(?is)^if\\s+you\\s+control\\s+(?<max>\\d+)\\s+or\\s+(?:less|fewer)\\s+" +
         "(?:Category\\s+(?<category>\\S+)\\s+)?" +
         "(?<type>Forwards?|Backups?|Monsters?|Characters?),\\s+(?<effect>.+)$"
@@ -12433,14 +7953,14 @@ public class ActionResolver {
      * Matches "If all the [Type] you control have [Element] Element, [effect]."
      * Groups: {@code type}, {@code element}, {@code effect}.
      */
-    private static final Pattern IF_ALL_HAVE_ELEMENT_GATE = Pattern.compile(
+    static final Pattern IF_ALL_HAVE_ELEMENT_GATE = Pattern.compile(
         "(?is)^if\\s+all\\s+the\\s+(?<type>Forwards?|Backups?|Characters?|Monsters?)\\s+" +
         "you\\s+control\\s+have\\s+(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)(?:\\s+Element)?,\\s+" +
         "(?<effect>.+)$"
     );
 
     /** Matches a leading "If you [do not] control &lt;condition&gt;, &lt;effect&gt;" gate. */
-    private static final Pattern CONTROL_CONDITION_GATE = Pattern.compile(
+    static final Pattern CONTROL_CONDITION_GATE = Pattern.compile(
         "(?is)^if\\s+you\\s+(?<neg>do\\s+not\\s+|don't\\s+)?control\\s+(?<cond>.+?),\\s+(?<effect>.+)$"
     );
 
@@ -12459,7 +7979,7 @@ public class ActionResolver {
      *   <li>Group {@code rest} — further sentences belonging to the replacement effect</li>
      * </ul>
      */
-    private static final Pattern CONTROL_GATED_INSTEAD_UPGRADE = Pattern.compile(
+    static final Pattern CONTROL_GATED_INSTEAD_UPGRADE = Pattern.compile(
         "(?is)^(?<base>.+?[.!])\\s+If\\s+you\\s+control\\s+(?<cond>[^,]+?),\\s+" +
         "(?<alt>.+?)\\s+instead[.!]\\s*(?<rest>.*)$"
     );
@@ -12469,12 +7989,12 @@ public class ActionResolver {
      * Used for abilities like "if you control a Category FFCC Forward other than Bel Dat, draw 1 card."
      * Tried before {@link #CONTROL_CONDITION_GATE} because it is more specific.
      */
-    private static final Pattern IF_CONTROL_COND_OTHER_THAN = Pattern.compile(
+    static final Pattern IF_CONTROL_COND_OTHER_THAN = Pattern.compile(
         "(?is)^if\\s+you\\s+(?<neg>don't\\s+|do\\s+not\\s+)?control\\s+(?<cond>.+?)\\s+other\\s+than\\s+(?<exclude>[^,]+?),\\s+(?<effect>.+)$"
     );
 
     /** Matches "If your opponent controls a(n) [cond] [type], [effect]" — e.g. "a damaged Forward". */
-    private static final Pattern OPP_CONTROL_CARD_GATE = Pattern.compile(
+    static final Pattern OPP_CONTROL_CARD_GATE = Pattern.compile(
         "(?is)^if\\s+your\\s+opponent\\s+controls\\s+a(?:n)?\\s+" +
         "(?<cond>damaged|dull|active|attacking|blocking)\\s+" +
         "(?<type>Forwards?|Monsters?|Backups?|Characters?),\\s+" +
@@ -12482,7 +8002,7 @@ public class ActionResolver {
     );
 
     /** Matches "If your opponent controls N or more [cond] [type], [effect]." */
-    private static final Pattern IF_OPP_CONTROLS_N_OR_MORE_COND_TYPE_GATE = Pattern.compile(
+    static final Pattern IF_OPP_CONTROLS_N_OR_MORE_COND_TYPE_GATE = Pattern.compile(
         "(?i)^[Ii]f\\s+your\\s+opponent\\s+controls\\s+(?<count>\\d+)\\s+or\\s+more\\s+" +
         "(?<cond>dull|damaged|active|attacking|blocking)\\s+" +
         "(?<type>Forwards?|Monsters?|Backups?|Characters?),\\s+" +
@@ -12490,20 +8010,20 @@ public class ActionResolver {
     );
 
     /** Matches "if each player has no cards in their hand(s), [effect]." — both hands must be empty. */
-    private static final Pattern IF_EACH_PLAYER_EMPTY_HAND_GATE = Pattern.compile(
+    static final Pattern IF_EACH_PLAYER_EMPTY_HAND_GATE = Pattern.compile(
         "(?i)^[Ii]f\\s+each\\s+player\\s+has\\s+no\\s+cards?\\s+in\\s+" +
         "(?:their|his/her|his\\s+or\\s+her)\\s+hands?,\\s*(?<effect>.+)$",
         Pattern.DOTALL
     );
 
     /** Matches "if there are N or more different Elements among [type] you control, [effect]." */
-    private static final Pattern IF_N_DIFF_ELEMENTS_AMONG = Pattern.compile(
+    static final Pattern IF_N_DIFF_ELEMENTS_AMONG = Pattern.compile(
         "(?is)^if\\s+there\\s+are\\s+(?<min>\\d+)\\s+or\\s+more\\s+different\\s+Elements?\\s+among\\s+" +
         "(?<type>Forwards?|Backups?|Characters?|Monsters?)\\s+you\\s+control[,.]?\\s+(?<effect>.+)$"
     );
 
     /** Matches "If you have cast N or more cards this turn, &lt;effect&gt;". */
-    private static final Pattern IF_CAST_AT_LEAST = Pattern.compile(
+    static final Pattern IF_CAST_AT_LEAST = Pattern.compile(
         "(?is)^if\\s+you\\s+have\\s+cast\\s+(?<min>\\d+)\\s+or\\s+more\\s+cards?\\s+this\\s+turn,\\s+(?<effect>.+)$"
     );
 
@@ -12512,7 +8032,7 @@ public class ActionResolver {
      * "If the discarded card is of Elem1 Element, [eff1]. If the discarded card is of Elem2 Element, [eff2]."
      * Groups: {@code elem1}, {@code eff1}, {@code elem2}, {@code eff2}.
      */
-    private static final Pattern DISCARD_CONDITIONAL_ELEMENT = Pattern.compile(
+    static final Pattern DISCARD_CONDITIONAL_ELEMENT = Pattern.compile(
         "(?i)If\\s+the\\s+discarded\\s+card\\s+is\\s+of\\s+(?<elem1>\\w+)\\s+Element\\s*,\\s*" +
         "(?<eff1>.+?)\\s+" +
         "If\\s+the\\s+discarded\\s+card\\s+is\\s+of\\s+(?<elem2>\\w+)\\s+Element\\s*,\\s*" +
@@ -12529,80 +8049,23 @@ public class ActionResolver {
      * card is of Water Element, also draw 1 card, then discard 1 card.") and only ever grants a
      * bonus — there is no "otherwise" branch.
      */
-    private static final Pattern DISCARD_CONDITIONAL_ELEMENT_SINGLE = Pattern.compile(
+    static final Pattern DISCARD_CONDITIONAL_ELEMENT_SINGLE = Pattern.compile(
         "(?i)^If\\s+the\\s+discarded\\s+card\\s+is\\s+of\\s+(?<elem>\\w+)\\s+Element\\s*,\\s*" +
         "also\\s+(?<effect>.+)$",
         Pattern.DOTALL
     );
 
-    private static Consumer<GameContext> tryParseDiscardConditionalElement(String text, CardData source, int xValue) {
-        Matcher m = DISCARD_CONDITIONAL_ELEMENT.matcher(text.trim());
-        if (!m.find()) return null;
-        String elem1 = m.group("elem1").trim();
-        String eff1  = m.group("eff1").trim();
-        String elem2 = m.group("elem2").trim();
-        String eff2  = m.group("eff2").trim();
-        Consumer<GameContext> effect1 = parse(eff1, source, xValue);
-        Consumer<GameContext> effect2 = parse(eff2, source, xValue);
-        if (effect1 == null && effect2 == null) return null;
-        final Consumer<GameContext> e1 = effect1;
-        final Consumer<GameContext> e2 = effect2;
-        return ctx -> {
-            List<String> discarded = ctx.lastDiscardedCostCardElements();
-            if (discarded.isEmpty()) {
-                ctx.logEntry("Discard conditional: no cost card recorded");
-                return;
-            }
-            // The two branches are independent conditions, not an if/else: a multi-element discard
-            // (e.g. Water/Fire) is a card of both elements, so it satisfies — and triggers — both.
-            boolean matched = false;
-            if (discardedIsOfElement(discarded, elem1)) {
-                matched = true;
-                if (e1 != null) e1.accept(ctx);
-                else ctx.logEntry("Discard conditional: " + elem1 + " branch not implemented");
-            }
-            if (discardedIsOfElement(discarded, elem2)) {
-                matched = true;
-                if (e2 != null) e2.accept(ctx);
-                else ctx.logEntry("Discard conditional: " + elem2 + " branch not implemented");
-            }
-            if (!matched)
-                ctx.logEntry("Discard conditional: element " + String.join("/", discarded) + " matches neither branch");
-        };
-    }
 
     /**
      * Returns {@code true} when a card whose elements are {@code discarded} counts as a card "of
      * {@code elem} Element". Every element of a multi-element card qualifies it independently.
      */
-    private static boolean discardedIsOfElement(List<String> discarded, String elem) {
+    static boolean discardedIsOfElement(List<String> discarded, String elem) {
         for (String e : discarded)
             if (e.trim().equalsIgnoreCase(elem)) return true;
         return false;
     }
 
-    private static Consumer<GameContext> tryParseDiscardConditionalElementSingle(String text, CardData source, int xValue) {
-        Matcher m = DISCARD_CONDITIONAL_ELEMENT_SINGLE.matcher(text.trim());
-        if (!m.matches()) return null;
-        String elem   = m.group("elem").trim();
-        String effTxt = m.group("effect").trim();
-        Consumer<GameContext> effect = parse(effTxt, source, xValue);
-        if (effect == null) return null;
-        return ctx -> {
-            List<String> discarded = ctx.lastDiscardedCostCardElements();
-            if (discarded.isEmpty()) {
-                ctx.logEntry("Discard conditional: no cost card recorded");
-                return;
-            }
-            String discardedElem = String.join("/", discarded);
-            if (discardedIsOfElement(discarded, elem)) {
-                ctx.logEntry("Discard conditional: discarded " + discardedElem + " card — bonus applies");
-                effect.accept(ctx);
-            } else {
-                ctx.logEntry("Discard conditional: discarded card is " + discardedElem + ", not " + elem + " — no bonus");
-            }
-        };
-    }
 
     /**
      * Matches the target-additive discard conditional that tacks an extra effect onto the Forward
@@ -12610,28 +8073,11 @@ public class ActionResolver {
      * abilities until the end of the turn." (The "it/they" pronoun refers back to the chosen target,
      * so the effect is applied to {@link GameContext#lastChosenTargets()} rather than re-selected.)
      */
-    private static final Pattern DISCARD_CONDITIONAL_TARGET_LOSE_ABILITIES = Pattern.compile(
+    static final Pattern DISCARD_CONDITIONAL_TARGET_LOSE_ABILITIES = Pattern.compile(
         "(?i)^If\\s+the\\s+discarded\\s+card\\s+is\\s+of\\s+(?<elem>\\w+)\\s+Element\\s*,\\s*" +
         "(?:it|they)\\s+(?:also\\s+)?loses?\\s+all\\s+(?:its|their)\\s+abilities\\s+" +
         "until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn[.!]?$");
 
-    private static Consumer<GameContext> tryParseDiscardConditionalTargetLoseAbilities(String text) {
-        Matcher m = DISCARD_CONDITIONAL_TARGET_LOSE_ABILITIES.matcher(text.trim());
-        if (!m.matches()) return null;
-        final String needElem = m.group("elem").trim();
-        return ctx -> {
-            List<String> discarded = ctx.lastDiscardedCostCardElements();
-            if (discarded.isEmpty()) { ctx.logEntry("Discard conditional: no cost card recorded"); return; }
-            String de = String.join("/", discarded);
-            if (discardedIsOfElement(discarded, needElem)) {
-                ctx.logEntry("Discard conditional: discarded " + de
-                        + " card — chosen Forward loses all abilities until end of turn");
-                for (ForwardTarget t : ctx.lastChosenTargets()) ctx.targetLoseAllAbilitiesUntilEndOfTurn(t);
-            } else {
-                ctx.logEntry("Discard conditional: discarded card is " + de + ", not " + needElem + " — no ability loss");
-            }
-        };
-    }
 
     /**
      * Matches the "instead" (replacement) discard conditional on a self power boost:
@@ -12639,28 +8085,11 @@ public class ActionResolver {
      * [Self] gains +B power until the end of the turn instead." Applies the boosted (alt) branch
      * when the cost-discarded card is named X, otherwise the base branch — never both.
      */
-    private static final Pattern DISCARD_CONDITIONAL_SELF_BOOST_INSTEAD = Pattern.compile(
+    static final Pattern DISCARD_CONDITIONAL_SELF_BOOST_INSTEAD = Pattern.compile(
         "(?is)^(?<primary>.+?\\s+gains?\\s+\\+\\d+\\s+power\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn)\\.\\s+" +
         "If\\s+the\\s+discarded\\s+card\\s+is\\s+(?:a\\s+)?Card\\s+Name\\s+(?<name>.+?)\\s*,\\s*" +
         "(?<alt>.+?\\s+gains?\\s+\\+\\d+\\s+power\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn)\\s+instead[.!]?$");
 
-    private static Consumer<GameContext> tryParseDiscardConditionalSelfBoostInstead(String text, CardData source, int xValue) {
-        Matcher m = DISCARD_CONDITIONAL_SELF_BOOST_INSTEAD.matcher(text.trim());
-        if (!m.matches()) return null;
-        Consumer<GameContext> primary = parse(m.group("primary").trim(), source, xValue);
-        Consumer<GameContext> alt     = parse(m.group("alt").trim(), source, xValue);
-        if (primary == null || alt == null) return null;
-        final String needName = m.group("name").trim();
-        return ctx -> {
-            String dn = ctx.lastDiscardedCostCardName();
-            if (dn != null && dn.equalsIgnoreCase(needName)) {
-                ctx.logEntry("Discard conditional: discarded Card Name " + needName + " — applying the \"instead\" effect");
-                alt.accept(ctx);
-            } else {
-                primary.accept(ctx);
-            }
-        };
-    }
 
     /**
      * Matches the no-target additive discard conditional gated on a Multi-Element discard:
@@ -12668,31 +8097,11 @@ public class ActionResolver {
      * Multi-Element card, draw C card(s), then discard D card(s) from your hand." (Corsair) —
      * repeats the draw/discard only when the first discard was a Multi-Element card.
      */
-    private static final Pattern DRAW_DISCARD_IF_MULTI_ELEMENT = Pattern.compile(
+    static final Pattern DRAW_DISCARD_IF_MULTI_ELEMENT = Pattern.compile(
         "(?i)^draw\\s+(?<d1>\\d+)\\s+cards?,\\s+then\\s+discard\\s+(?<x1>\\d+)\\s+cards?\\s+from\\s+your\\s+hand\\.\\s+" +
         "If\\s+the\\s+discarded\\s+card\\s+is\\s+a\\s+Multi-Element\\s+card,\\s+" +
         "draw\\s+(?<d2>\\d+)\\s+cards?,\\s+then\\s+discard\\s+(?<x2>\\d+)\\s+cards?\\s+from\\s+your\\s+hand[.!]?$");
 
-    private static Consumer<GameContext> tryParseDrawDiscardIfMultiElement(String text) {
-        Matcher m = DRAW_DISCARD_IF_MULTI_ELEMENT.matcher(text.trim());
-        if (!m.matches()) return null;
-        int d1 = Integer.parseInt(m.group("d1"));
-        int x1 = Integer.parseInt(m.group("x1"));
-        int d2 = Integer.parseInt(m.group("d2"));
-        int x2 = Integer.parseInt(m.group("x2"));
-        return ctx -> {
-            ctx.logEntry("Effect: Draw " + d1 + ", then discard " + x1);
-            ctx.drawCards(d1);
-            ctx.selfDiscard(x1);
-            if (ctx.lastDiscardedCardIsMultiElement()) {
-                ctx.logEntry("Effect: discarded a Multi-Element card — Draw " + d2 + ", then discard " + x2 + " again");
-                ctx.drawCards(d2);
-                ctx.selfDiscard(x2);
-            } else {
-                ctx.logEntry("Effect: discarded card is not Multi-Element — no repeat");
-            }
-        };
-    }
 
     /**
      * One branch of a "discard conditional element" ability, e.g. {@code element="Fire"},
@@ -12729,281 +8138,28 @@ public class ActionResolver {
         };
     }
 
-    /**
-     * Parses "If all the [Type] you control have [Element] Element, [effect]." —
-     * resolves the inner effect only when every controlled card of that type has the element.
-     */
-    private static Consumer<GameContext> tryParseIfAllHaveElement(String text, CardData source, int xValue) {
-        Matcher m = IF_ALL_HAVE_ELEMENT_GATE.matcher(text.trim());
-        if (!m.matches()) return null;
-        String typeRaw  = m.group("type").trim();
-        String element  = m.group("element").trim();
-        String normType = typeRaw.replaceAll("(?i)s$", "");
-        normType = Character.toUpperCase(normType.charAt(0)) + normType.substring(1).toLowerCase();
-        Consumer<GameContext> inner = parse(m.group("effect").trim(), source, xValue);
-        if (inner == null) return null;
-        ControlCondition cc = ControlCondition.forAllHave(normType, element, null);
-        String logType = typeRaw;
-        String logElem = element;
-        return ctx -> {
-            if (ctx.controlConditionMet(cc)) {
-                ctx.logEntry("Effect: all " + logType + " have " + logElem + " Element — condition met");
-                inner.accept(ctx);
-            } else {
-                ctx.logEntry("Effect: not all " + logType + " have " + logElem + " Element — skipped");
-            }
-        };
-    }
 
-    /**
-     * Parses "if each player has no cards in their hand(s), [effect]." — the inner effect resolves
-     * only when both the controller's and the opponent's hands are empty at resolution time.
-     */
-    private static Consumer<GameContext> tryParseIfEachPlayerEmptyHand(String text, CardData source, int xValue) {
-        Matcher m = IF_EACH_PLAYER_EMPTY_HAND_GATE.matcher(text.trim());
-        if (!m.matches()) return null;
-        Consumer<GameContext> inner = parse(m.group("effect").trim(), source, xValue);
-        if (inner == null) return null;
-        return ctx -> {
-            int yours = ctx.yourHandSize();
-            int theirs = ctx.opponentHandSize();
-            if (yours == 0 && theirs == 0) {
-                ctx.logEntry("Effect: both players have empty hands — condition met");
-                inner.accept(ctx);
-            } else {
-                ctx.logEntry("Effect: hands not empty (you " + yours + ", opponent " + theirs + ") — skipped");
-            }
-        };
-    }
 
-    /** Parses "if there are N or more different Elements among [type] you control, [effect]." */
-    private static Consumer<GameContext> tryParseIfNDiffElements(String text, CardData source, int xValue) {
-        Matcher m = IF_N_DIFF_ELEMENTS_AMONG.matcher(text.trim());
-        if (!m.matches()) return null;
-        int    min     = Integer.parseInt(m.group("min"));
-        String typeRaw = m.group("type").trim();
-        String typeLow = typeRaw.toLowerCase(java.util.Locale.ROOT);
-        boolean inclFwd = typeLow.startsWith("forward") || typeLow.startsWith("character");
-        boolean inclBkp = typeLow.startsWith("backup")  || typeLow.startsWith("character");
-        boolean inclMon = typeLow.startsWith("monster")  || typeLow.startsWith("character");
-        Consumer<GameContext> inner = parse(m.group("effect").trim(), source, xValue);
-        if (inner == null) return null;
-        return ctx -> {
-            int distinct = ctx.selfDistinctElementCount(inclFwd, inclBkp, inclMon);
-            if (distinct >= min) {
-                ctx.logEntry("Effect: " + distinct + " distinct element(s) among " + typeRaw + "s — condition met");
-                inner.accept(ctx);
-            } else {
-                ctx.logEntry("Effect: only " + distinct + " distinct element(s) among " + typeRaw + "s (need " + min + ") — skipped");
-            }
-        };
-    }
 
-    /**
-     * Parses "If you [do not] control X, Y" — resolves Y only when the control condition is
-     * (un)met at resolution time. Returns {@code null} when the condition or inner effect cannot
-     * be parsed so the text falls through to the regular matchers (preserving prior behaviour).
-     */
-    private static Consumer<GameContext> tryParseIfControlCondOtherThan(String text, CardData source, int xValue) {
-        Matcher m = IF_CONTROL_COND_OTHER_THAN.matcher(text.trim());
-        if (!m.matches()) return null;
-        ControlCondition cc = CardData.parseControlCondition(m.group("cond").trim());
-        if (cc == null) return null;
-        boolean negated    = m.group("neg") != null;
-        String excludeName = m.group("exclude").trim();
-        Consumer<GameContext> inner = parse(m.group("effect").trim(), source, xValue);
-        if (inner == null) return null;
-        return ctx -> {
-            boolean met = ctx.controlConditionMetExcluding(cc, excludeName);
-            if (met != negated) {
-                inner.accept(ctx);
-            } else {
-                ctx.logEntry("Effect: control condition (excl. " + excludeName + ") not met — skipped");
-            }
-        };
-    }
 
-    private static Consumer<GameContext> tryParseControlConditionGate(String text, CardData source, int xValue) {
-        Matcher m = CONTROL_CONDITION_GATE.matcher(text.trim());
-        if (!m.matches()) return null;
-        ControlCondition cc = CardData.parseControlCondition(m.group("cond").trim());
-        if (cc == null) return null;
-        boolean negated = m.group("neg") != null;
-        Consumer<GameContext> inner = parse(m.group("effect").trim(), source, xValue);
-        if (inner == null) return null;
-        return ctx -> {
-            if (ctx.controlConditionMet(cc) != negated) {
-                inner.accept(ctx);
-            } else {
-                ctx.logEntry("Effect: control condition not met — skipped");
-            }
-        };
-    }
 
-    /**
-     * Parses "&lt;base&gt;. If you control X, &lt;alternative&gt; instead." — resolves exactly one of the
-     * two branches, never both. Returns {@code null} when the condition or either branch cannot be
-     * parsed, so the text falls through to the regular matchers.
-     */
-    private static Consumer<GameContext> tryParseControlGatedInsteadUpgrade(String text, CardData source, int xValue) {
-        Matcher m = CONTROL_GATED_INSTEAD_UPGRADE.matcher(text.trim());
-        if (!m.matches()) return null;
-        ControlCondition cc = CardData.parseControlCondition(m.group("cond").trim());
-        if (cc == null) return null;
-        // A bare count carries no filters and would be tested against every field card. It means the
-        // wording elided the noun from the preceding clause ("… if you control 3 or more Category
-        // FFTA Characters, draw 1 card. If you control 5 or more, draw 2 cards instead." — Marche
-        // 16-122R), which this parser cannot recover, so leave such text to the other matchers.
-        if (!cc.isNamedMode() && !cc.requiresCrystal() && cc.orAlternatives().isEmpty()
-                && cc.cardType() == null && cc.element() == null
-                && cc.job() == null && cc.category() == null && cc.orCardNames().isEmpty())
-            return null;
 
-        String rest    = m.group("rest").trim();
-        String altText = m.group("alt").trim() + "." + (rest.isEmpty() ? "" : " " + rest);
-        Consumer<GameContext> baseFn = parse(m.group("base").trim(), source, xValue);
-        Consumer<GameContext> altFn  = parse(altText, source, xValue);
-        if (baseFn == null || altFn == null) return null;
 
-        return ctx -> {
-            if (ctx.controlConditionMet(cc)) {
-                ctx.logEntry("Effect: you control " + cc + " — replacement effect applies instead");
-                altFn.accept(ctx);
-            } else {
-                baseFn.accept(ctx);
-            }
-        };
-    }
 
-    private static Consumer<GameContext> tryParseOpponentControlsCardGate(String text, CardData source, int xValue) {
-        Matcher m = OPP_CONTROL_CARD_GATE.matcher(text.trim());
-        if (!m.matches()) return null;
-        String cond    = m.group("cond").toLowerCase();
-        String typeRaw = m.group("type");
-        String normType = Character.toUpperCase(typeRaw.charAt(0))
-                + typeRaw.substring(1).toLowerCase().replaceAll("s$", "");
-        Consumer<GameContext> inner = parse(m.group("effect").trim(), source, xValue);
-        if (inner == null) return null;
-        return ctx -> {
-            if (ctx.opponentControlsCard(normType, cond)) {
-                inner.accept(ctx);
-            } else {
-                ctx.logEntry("Effect: opponent has no " + cond + " " + normType + " — skipped");
-            }
-        };
-    }
 
-    private static Consumer<GameContext> tryParseIfOppControlsNOrMoreCondTypeGate(String text, CardData source, int xValue) {
-        Matcher m = IF_OPP_CONTROLS_N_OR_MORE_COND_TYPE_GATE.matcher(text.trim());
-        if (!m.matches()) return null;
-        int    threshold = Integer.parseInt(m.group("count"));
-        String cond      = m.group("cond").toLowerCase();
-        String typeRaw   = m.group("type");
-        String normType  = Character.toUpperCase(typeRaw.charAt(0))
-                + typeRaw.substring(1).toLowerCase().replaceAll("s$", "");
-        boolean inclFwds = normType.equals("Forward")   || normType.equals("Character");
-        boolean inclBkps = normType.equals("Backup")    || normType.equals("Character");
-        boolean inclMons = normType.equals("Monster")   || normType.equals("Character");
-        Consumer<GameContext> inner = parse(m.group("effect").trim(), source, xValue);
-        if (inner == null) return null;
-        return ctx -> {
-            int cnt = ctx.countOppFieldCardsWithCondition(inclFwds, inclBkps, inclMons, cond);
-            if (cnt >= threshold) {
-                inner.accept(ctx);
-            } else {
-                ctx.logEntry("Effect: " + threshold + "+ " + cond + " " + normType + "(s) required, opponent has " + cnt + " — skipped");
-            }
-        };
-    }
 
-    private static Consumer<GameContext> tryParseIfControlAtMost(String text, CardData source, int xValue) {
-        Matcher m = IF_CONTROL_AT_MOST.matcher(text.trim());
-        if (!m.matches()) return null;
-        int max          = Integer.parseInt(m.group("max"));
-        String category  = m.group("category");
-        String type      = m.group("type").trim();
-        Consumer<GameContext> inner = parse(m.group("effect").trim(), source, xValue);
-        if (inner == null) return null;
-        String label = (category != null ? "Category " + category + " " : "") + type;
-        return ctx -> {
-            int count = category != null
-                    ? ctx.ownFieldCountByCategory(category, type)
-                    : ctx.ownFieldCount(type);
-            if (count <= max) {
-                inner.accept(ctx);
-            } else {
-                ctx.logEntry("Effect: control " + count + " " + label + " (max " + max + ") — skipped");
-            }
-        };
-    }
 
-    private static Consumer<GameContext> tryParseIfCastAtLeast(String text, CardData source, int xValue) {
-        Matcher m = IF_CAST_AT_LEAST.matcher(text.trim());
-        if (!m.matches()) return null;
-        int min = Integer.parseInt(m.group("min"));
-        Consumer<GameContext> inner = parse(m.group("effect").trim(), source, xValue);
-        if (inner == null) return null;
-        return ctx -> {
-            int cast = ctx.selfCardsCastThisTurn();
-            if (cast >= min) {
-                inner.accept(ctx);
-            } else {
-                ctx.logEntry("Effect: only cast " + cast + " card(s) this turn (need " + min + ") — skipped");
-            }
-        };
-    }
-
-    /**
-     * Parses "place up to N cards from your hand at the bottom of your deck in any order. Then, draw
-     * the same number of cards as were returned to your deck." Returning nothing is a legal choice,
-     * in which case no cards are drawn.
-     */
-    private static Consumer<GameContext> tryParsePlaceUpToHandToBottomThenRedraw(String text) {
-        Matcher m = PLACE_UP_TO_HAND_TO_BOTTOM_THEN_REDRAW.matcher(text);
-        if (!m.find()) return null;
-        int max = Integer.parseInt(m.group("max"));
-        return ctx -> {
-            ctx.logEntry("Effect: Place up to " + max
-                    + " card(s) at bottom of deck, then draw that many");
-            int placed = ctx.placeUpToFromHandToBottomOfDeck(max);
-            if (placed > 0) ctx.drawCards(placed);
-            else            ctx.logEntry("Effect: No cards returned — no cards drawn");
-        };
-    }
-
-    private static Consumer<GameContext> tryParseDrawThenPlaceHandToBottom(String text) {
-        Matcher m = DRAW_THEN_PLACE_HAND_TO_BOTTOM.matcher(text);
-        if (!m.find()) return null;
-        int drawCount  = Integer.parseInt(m.group(1));
-        int placeCount = Integer.parseInt(m.group(2));
-        return ctx -> {
-            ctx.logEntry("Effect: Draw " + drawCount + " card(s), then place " + placeCount + " card(s) at bottom of deck");
-            ctx.drawCards(drawCount);
-            ctx.placeFromHandToBottomOfDeck(placeCount);
-        };
-    }
 
     /**
      * Matches "[Name] breaks after the attack or the block and doesn't deal any damage."
      * (Vincent 2-078R) — the source deals no damage for the rest of the battle and is broken once
      * that battle ends. Group {@code name} is checked against the ability's own source.
      */
-    private static final Pattern SOURCE_BREAKS_AFTER_COMBAT_NO_DAMAGE = Pattern.compile(
+    static final Pattern SOURCE_BREAKS_AFTER_COMBAT_NO_DAMAGE = Pattern.compile(
         "(?i)^(?<name>.+?)\\s+breaks?\\s+after\\s+the\\s+attack(?:\\s+or\\s+the\\s+block)?\\s+and\\s+" +
         "doesn'?t\\s+deal\\s+any\\s+damage[.!]?$"
     );
 
-    /** Parses "[Self] breaks after the attack or the block and doesn't deal any damage." */
-    private static Consumer<GameContext> tryParseBreaksAfterCombatNoDamage(String text, CardData source) {
-        if (source == null) return null;
-        Matcher m = SOURCE_BREAKS_AFTER_COMBAT_NO_DAMAGE.matcher(text.trim());
-        if (!m.matches()) return null;
-        if (!m.group("name").trim().equalsIgnoreCase(source.name())) return null;
-        return ctx -> {
-            ctx.logEntry("Effect: " + source.name() + " breaks after the battle and deals no damage");
-            ctx.breakAfterCombatAndDealNoDamage(source);
-        };
-    }
 
     /**
      * A field ability that continuously grants a quoted ability to Forwards while its own card is
@@ -13016,38 +8172,18 @@ public class ActionResolver {
     record ForwardAbilityGrant(boolean affectsOpponent, String abilityText) {}
 
     /** Matches "All the Forwards [you control|opponent controls] gain "[ability]"." (Vayne 9-022L) */
-    private static final Pattern FIELD_GRANT_ABILITY_TO_FORWARDS = Pattern.compile(
+    static final Pattern FIELD_GRANT_ABILITY_TO_FORWARDS = Pattern.compile(
         "(?i)^All\\s+the\\s+Forwards\\s+(?<who>opponent\\s+controls|you\\s+control)\\s+gains?\\s+" +
         "\"(?<ability>[^\"]+)\"[.!]?$"
     );
 
     /** Matches the granted ability's own trigger: "At the end of your turn, [effect]". */
-    private static final Pattern GRANTED_AT_END_OF_YOUR_TURN = Pattern.compile(
+    static final Pattern GRANTED_AT_END_OF_YOUR_TURN = Pattern.compile(
         "(?i)^At\\s+the\\s+end\\s+of\\s+your\\s+turn\\s*,\\s+(?<effect>.+)$",
         Pattern.DOTALL
     );
 
-    /** Reads a Forward-ability grant out of a field-ability text, or {@code null} if it is not one. */
-    static ForwardAbilityGrant tryParseForwardAbilityGrant(String fieldText) {
-        if (fieldText == null) return null;
-        Matcher m = FIELD_GRANT_ABILITY_TO_FORWARDS.matcher(fieldText.trim());
-        if (!m.matches()) return null;
-        boolean affectsOpponent = m.group("who").toLowerCase(java.util.Locale.ROOT).startsWith("opponent");
-        return new ForwardAbilityGrant(affectsOpponent, m.group("ability").trim());
-    }
 
-    /**
-     * Parses the "At the end of your turn, …" half of a granted ability into an effect that runs for
-     * {@code grantee} — the Forward that received it, which is what self-references like "this
-     * Forward" resolve to. Returns {@code null} when the grant is not an end-of-turn ability or its
-     * effect is not supported.
-     */
-    static Consumer<GameContext> tryParseGrantedEndOfTurnEffect(String abilityText, CardData grantee) {
-        if (abilityText == null || grantee == null) return null;
-        Matcher m = GRANTED_AT_END_OF_YOUR_TURN.matcher(abilityText.trim());
-        if (!m.matches()) return null;
-        return parse(m.group("effect").trim(), grantee);
-    }
 
     /**
      * True when {@code effectText} is an "if you don't pay 《…》" gate. Such text carries its own
@@ -13058,187 +8194,26 @@ public class ActionResolver {
         return effectText != null && IF_NOT_PAY_OR_ELSE.matcher(effectText.trim()).matches();
     }
 
-    /**
-     * Parses "[you may pay 《X》.] if you don't pay 《X》, [consequence]". The consequence must itself
-     * be a supported effect — otherwise the whole ability stays unparsed rather than silently
-     * resolving as an unconditional consequence, which is what the bare consequence patterns would
-     * do if this gate let the text through.
-     */
-    private static Consumer<GameContext> tryParseIfNotPayOrElse(String text, CardData source, int xValue) {
-        Matcher m = IF_NOT_PAY_OR_ELSE.matcher(text.trim());
-        if (!m.matches()) return null;
-        String cost            = m.group("cost").trim();
-        String consequenceText = m.group("consequence").trim();
-        Consumer<GameContext> consequence = parse(consequenceText, source, xValue);
-        if (consequence == null) return null;
 
-        int    cp       = 0;
-        int    crystals = 0;
-        String element  = null;
-        if (cost.equalsIgnoreCase("C"))        crystals = 1;
-        else if (cost.matches("\\d+"))         cp = Integer.parseInt(cost);
-        else                                   element = cost;
 
-        final int    fCp = cp, fCrystals = crystals;
-        final String fElement = element;
-        return ctx -> {
-            ctx.logEntry("Effect: Pay 《" + cost + "》, or else: " + consequenceText);
-            ctx.mayPayCostOrElse(fCp, fElement, fCrystals, () -> consequence.accept(ctx));
-        };
-    }
-
-    private static Consumer<GameContext> tryParsePayCpWhenDoSo(String text, CardData source) {
-        Matcher m = PAY_CP_WHEN_DO_SO.matcher(text);
-        if (!m.find()) return null;
-        String costDesc    = m.group("cost").trim();
-        String followupText = m.group("followup").trim();
-        Consumer<GameContext> followup = parse(followupText, source);
-        if (followup == null) return null;
-        return ctx -> {
-            ctx.logEntry("Effect: Pay " + costDesc + " CP, then: " + followupText);
-            followup.accept(ctx);
-        };
-    }
-
-    private static Consumer<GameContext> tryParseDrawDiscardRetriggerIfCardName(String text, CardData source) {
-        Matcher m = DRAW_DISCARD_RETRIGGER_IF_CARD_NAME.matcher(text);
-        if (!m.find()) return null;
-        int drawCount    = Integer.parseInt(m.group("draw"));
-        int discardCount = Integer.parseInt(m.group("discard"));
-        String cardName  = m.group("name").trim();
-        return ctx -> {
-            ctx.logEntry("Effect: Draw " + drawCount + ", then discard " + discardCount);
-            ctx.drawCards(drawCount);
-            ctx.selfDiscard(discardCount);
-            if (cardName.equalsIgnoreCase(ctx.lastDiscardedCardName())) {
-                ctx.logEntry("Effect: Discarded Card Name " + cardName + " — triggering auto-ability again");
-                ctx.retriggerAutoAbility(source, "beginning of attack phase");
-            }
-        };
-    }
 
     /**
      * Matches "draw 1 card for each Forward you control. You can only draw up to N cards with this
      * ability." (Hilda 6-122H). Draws {@code min(Forwards you control, N)} — the cap is a hard limit
      * on the ability, not deck protection, so a too-small deck still mills the drawer out.
      */
-    private static final Pattern DRAW_ONE_PER_FORWARD_CAPPED = Pattern.compile(
+    static final Pattern DRAW_ONE_PER_FORWARD_CAPPED = Pattern.compile(
         "(?i)^draw\\s+1\\s+card\\s+for\\s+each\\s+Forward\\s+you\\s+control\\.\\s+" +
         "You\\s+can\\s+only\\s+draw\\s+up\\s+to\\s+(?<cap>\\d+)\\s+cards?\\s+with\\s+this\\s+ability[.!]?$");
 
-    private static Consumer<GameContext> tryParseDrawOnePerForwardCapped(String text) {
-        Matcher m = DRAW_ONE_PER_FORWARD_CAPPED.matcher(text.trim());
-        if (!m.matches()) return null;
-        int cap = Integer.parseInt(m.group("cap"));
-        return ctx -> {
-            int forwards = ctx.selfForwardCount();
-            int draws = Math.min(forwards, cap);
-            ctx.logEntry("Effect: Draw 1 per Forward you control (" + forwards + "), up to " + cap
-                    + " → draw " + draws);
-            if (draws > 0) ctx.drawCards(draws);
-        };
-    }
 
-    private static Consumer<GameContext> tryParseDrawCards(String text) {
-        Matcher m = DRAW_CARDS.matcher(text);
-        if (!m.find()) return null;
-        int drawCount = Integer.parseInt(m.group(1));
-        String discardStr = m.group(2);
-        if (discardStr == null) {
-            return ctx -> {
-                ctx.logEntry("Effect: Draw " + drawCount + " card(s)");
-                ctx.drawCards(drawCount);
-            };
-        }
-        int discardCount = Integer.parseInt(discardStr);
-        return ctx -> {
-            ctx.logEntry("Effect: Draw " + drawCount + ", then discard " + discardCount);
-            ctx.drawCards(drawCount);
-            ctx.selfDiscard(discardCount);
-        };
-    }
 
-    /** Parses "Discard N card(s), then draw M card(s)" as a standalone effect. */
-    private static Consumer<GameContext> tryParseDiscardThenDraw(String text) {
-        Matcher m = DISCARD_THEN_DRAW.matcher(text);
-        if (!m.find()) return null;
-        int discardCount = Integer.parseInt(m.group(1));
-        int drawCount    = Integer.parseInt(m.group(2));
-        return ctx -> {
-            ctx.logEntry("Effect: Discard " + discardCount + ", then draw " + drawCount);
-            ctx.selfDiscard(discardCount);
-            ctx.drawCards(drawCount);
-        };
-    }
 
-    /** Parses "Discard your hand. Then, draw N card(s)" as a standalone effect. */
-    private static Consumer<GameContext> tryParseDiscardHandThenDraw(String text) {
-        Matcher m = DISCARD_HAND_THEN_DRAW.matcher(text);
-        if (!m.find()) return null;
-        int drawCount = Integer.parseInt(m.group(1));
-        return ctx -> {
-            ctx.logEntry("Effect: Discard hand, then draw " + drawCount);
-            ctx.selfDiscardEntireHand();
-            ctx.drawCards(drawCount);
-        };
-    }
 
-    /** Parses "Discard your hand." as a standalone effect. */
-    private static Consumer<GameContext> tryParseDiscardHand(String text) {
-        if (!DISCARD_HAND.matcher(text).find()) return null;
-        return ctx -> {
-            ctx.logEntry("Effect: Discard hand");
-            ctx.selfDiscardEntireHand();
-        };
-    }
 
-    /**
-     * Parses "discard 1 &lt;Type&gt;." — player must discard one card of that type from hand.
-     * Fizzles (marks no progress) when no eligible card is available.
-     * The "you may" qualifier is handled at the AutoAbility layer before this is reached.
-     */
-    private static Consumer<GameContext> tryParseYouMayDiscardType(String text) {
-        Matcher m = DISCARD_TYPE.matcher(text);
-        if (!m.find()) return null;
-        String type = m.group("type");
-        return ctx -> {
-            ctx.logEntry("Effect: Discard 1 " + type);
-            ctx.selfDiscardByType(type);
-        };
-    }
 
-    /** Parses "Discard 1 Job [X] from your hand." — player must discard one card of that job. */
-    private static Consumer<GameContext> tryParseDiscardJobFromHand(String text) {
-        Matcher m = DISCARD_JOB_FROM_HAND.matcher(text.trim());
-        if (!m.matches()) return null;
-        String job = m.group("job").trim();
-        return ctx -> {
-            ctx.logEntry("Effect: Discard 1 Job " + job + " from hand");
-            ctx.selfDiscardByJob(job);
-        };
-    }
 
-    /** Parses "You may discard 1 &lt;element&gt; card" — player may optionally discard a card matching the element. */
-    private static Consumer<GameContext> tryParseDiscardElementFromHand(String text) {
-        Matcher m = DISCARD_ELEMENT_FROM_HAND.matcher(text.trim());
-        if (!m.matches()) return null;
-        String element = m.group("element");
-        return ctx -> {
-            ctx.logEntry("Effect: May discard 1 " + element + " card from hand");
-            ctx.selfDiscardByElement(element);
-        };
-    }
 
-    /** Parses "You may reveal 1 [Element] card from your hand." */
-    private static Consumer<GameContext> tryParseMayRevealElementFromHand(String text) {
-        Matcher m = YOU_MAY_REVEAL_ELEMENT_FROM_HAND.matcher(text.trim());
-        if (!m.matches()) return null;
-        String element = m.group("element");
-        return ctx -> {
-            ctx.logEntry("Effect: May reveal 1 " + element + " card from hand");
-            ctx.mayRevealCardByElementFromHand(element);
-        };
-    }
 
     /**
      * Returns the card type (e.g. "Summon") when the effect text begins with a
@@ -13252,20 +8227,10 @@ public class ActionResolver {
         return m.group("type");
     }
 
-    private static final Pattern DISCARD_N_CARDS = Pattern.compile(
+    static final Pattern DISCARD_N_CARDS = Pattern.compile(
         "(?i)^discard\\s+(?<count>\\d+)\\s+cards?(?:\\s+from\\s+your\\s+hand)?[.!]?$"
     );
 
-    /** Parses "Discard N cards." as a standalone effect. */
-    private static Consumer<GameContext> tryParseDiscardNCards(String text) {
-        Matcher m = DISCARD_N_CARDS.matcher(text.trim());
-        if (!m.matches()) return null;
-        int count = Integer.parseInt(m.group("count"));
-        return ctx -> {
-            ctx.logEntry("Effect: Discard " + count + " card(s)");
-            ctx.selfDiscard(count);
-        };
-    }
 
     /** Matches "discard N cards" at the start of an effect text (may have more text after). */
     private static final Pattern DISCARD_N_CARDS_PREFIX = Pattern.compile(
@@ -13284,312 +8249,25 @@ public class ActionResolver {
         return Integer.parseInt(m.group("count"));
     }
 
-    /** Parses "&lt;name&gt; deals your opponent N point(s) of damage." — flips from opponent's deck to their damage zone. */
-    private static Consumer<GameContext> tryParseDealPlayerDamageToOpponent(String text) {
-        Matcher m = DEAL_PLAYER_DAMAGE_TO_OPPONENT.matcher(text);
-        if (!m.matches()) return null;
-        int amount = Integer.parseInt(m.group("amount"));
-        return ctx -> {
-            ctx.logEntry("Effect: Deal " + amount + " damage to opponent");
-            ctx.dealDamageToOpponent(amount);
-        };
-    }
 
-    /** Parses "&lt;name&gt; deals you N point(s) of damage." — flips from ability user's deck to their damage zone. */
-    private static Consumer<GameContext> tryParseDealPlayerDamageToSelf(String text) {
-        Matcher m = DEAL_PLAYER_DAMAGE_TO_SELF.matcher(text);
-        if (!m.matches()) return null;
-        int amount = Integer.parseInt(m.group("amount"));
-        return ctx -> {
-            ctx.logEntry("Effect: Deal " + amount + " damage to self");
-            ctx.dealDamageToSelf(amount);
-        };
-    }
 
-    /** Parses "Your opponent discards N card(s) [from his/her/their hand]" as a standalone effect. */
-    private static Consumer<GameContext> tryParseNameCardTypeOpponentDiscardDrawIfMatch(String text) {
-        if (!NAME_CARD_TYPE_OPP_DISCARD_DRAW_IF_MATCH.matcher(text).find()) return null;
-        return ctx -> {
-            ctx.logEntry("Effect: Name 1 card type, opponent discards 1, draw 1 if type matches");
-            ctx.nameCardTypeOpponentDiscardDrawIfMatch();
-        };
-    }
 
-    private static Consumer<GameContext> tryParseOpponentDiscard(String text) {
-        Matcher m = OPPONENT_DISCARD.matcher(text);
-        if (!m.find()) return null;
-        int count = Integer.parseInt(m.group(1));
-        return ctx -> {
-            ctx.logEntry("Effect: Opponent discards " + count + " card(s)");
-            ctx.forceOpponentDiscard(count);
-        };
-    }
 
-    /** Parses "Each player discards N card(s) [from his/her/their hand]" — both players discard. */
-    private static Consumer<GameContext> tryParseEachPlayerDiscard(String text) {
-        String stripped = stripRestrictionSentences(text);
-        if (stripped.isEmpty()) return null;
 
-        // Conditional per-player form: "each player who doesn't control N or more Forwards discards M card(s)"
-        Matcher condFwdM = EACH_PLAYER_WHO_DOESNT_CONTROL_FORWARDS_DISCARD.matcher(stripped);
-        if (condFwdM.matches()) {
-            int min   = Integer.parseInt(condFwdM.group("min"));
-            int count = Integer.parseInt(condFwdM.group("count"));
-            return ctx -> {
-                if (ctx.selfForwardCount() < min) {
-                    ctx.logEntry("Effect: Self discards " + count + " (controls fewer than " + min + " Forwards)");
-                    ctx.selfDiscard(count);
-                }
-                if (ctx.opponentForwardCount() < min) {
-                    ctx.logEntry("Effect: Opponent discards " + count + " (controls fewer than " + min + " Forwards)");
-                    ctx.forceOpponentDiscard(count);
-                }
-            };
-        }
 
-        // Compound form: "each player discards N. If you control [Card Name (X)], opponent discards M more."
-        Matcher compM = EACH_PLAYER_DISCARD_WITH_CONDITIONAL.matcher(stripped);
-        if (compM.matches()) {
-            int count        = Integer.parseInt(compM.group("count"));
-            String cardName  = compM.group("bracketname") != null
-                               ? compM.group("bracketname") : compM.group("plainname");
-            ControlCondition cc = new ControlCondition(
-                    List.of(cardName), 0, false, null, null, null, null, 0, List.of());
-            int extra = Integer.parseInt(compM.group("extra"));
-            return ctx -> {
-                ctx.logEntry("Effect: Each player discards " + count + " card(s)");
-                ctx.selfDiscard(count);
-                ctx.forceOpponentDiscard(count);
-                if (ctx.controlConditionMet(cc)) {
-                    ctx.logEntry("Effect: Opponent discards " + extra + " more (controlling " + cardName + ")");
-                    ctx.forceOpponentDiscard(extra);
-                }
-            };
-        }
 
-        // Simple form: "each player discards N card(s) [from his/her/their hand]"
-        Matcher m = EACH_PLAYER_DISCARD.matcher(stripped);
-        if (!m.matches()) return null;
-        int count = Integer.parseInt(m.group("count"));
-        return ctx -> {
-            ctx.logEntry("Effect: Each player discards " + count + " card(s)");
-            ctx.selfDiscard(count);
-            ctx.forceOpponentDiscard(count);
-        };
-    }
 
-    /** Parses "Each player draws N card(s)." — both players draw. */
-    private static Consumer<GameContext> tryParseEachPlayerDraw(String text) {
-        Matcher m = EACH_PLAYER_DRAW.matcher(text);
-        if (!m.find()) return null;
-        int count = Integer.parseInt(m.group("count"));
-        return ctx -> {
-            ctx.logEntry("Effect: Each player draws " + count + " card(s)");
-            ctx.drawCards(count);
-            ctx.drawCardsForOpponent(count);
-        };
-    }
 
-    /** Parses "Each player selects N [type](s) from their Break Zone and adds it/them to their hand." */
-    private static Consumer<GameContext> tryParseEachPlayerSalvageFromBreakZone(String text) {
-        Matcher m = EACH_PLAYER_SALVAGE_FROM_BREAK_ZONE.matcher(text);
-        if (!m.find()) return null;
-        int count   = Integer.parseInt(m.group("count"));
-        String type = m.group("type");
-        String tl   = type.toLowerCase(java.util.Locale.ROOT);
-        boolean anyCard = tl.equals("card");
-        boolean fwds = anyCard || tl.equals("forward") || tl.equals("character");
-        boolean bkps = anyCard || tl.equals("backup")  || tl.equals("character");
-        boolean mons = anyCard || tl.equals("monster") || tl.equals("character");
-        boolean smns = anyCard;   // "1 card" is unrestricted; every named type excludes Summons
-        return ctx -> {
-            ctx.logEntry("Effect: Each player salvages " + count + " " + type
-                    + "(s) from their Break Zone to hand");
-            ctx.eachPlayerSalvageFromBreakZone(count, fwds, bkps, mons, smns);
-        };
-    }
 
-    /** Parses "select N [type] in/from your Break Zone and add it to your hand." */
-    private static Consumer<GameContext> tryParseSelectCharacterFromBzToHand(String text) {
-        Matcher m = SELECT_CHARACTER_FROM_BZ_TO_HAND.matcher(text);
-        if (!m.find()) return null;
-        int count = Integer.parseInt(m.group("count"));
-        String tl = m.group("type").toLowerCase(java.util.Locale.ROOT);
-        boolean fwds = tl.contains("forward")   || tl.contains("character");
-        boolean bkps = tl.contains("backup")    || tl.contains("character");
-        boolean mons = tl.contains("monster")   || tl.contains("character");
-        return ctx -> {
-            ctx.logEntry("Effect: Select " + count + " " + m.group("type") + "(s) from own Break Zone → hand");
-            ctx.salvageCharacterFromOwnBreakZone(count, fwds, bkps, mons);
-        };
-    }
 
-    /** Ceodore: "Choose 1 Card with Warp in your Break Zone. Add it to your hand." */
-    private static Consumer<GameContext> tryParseChooseWarpCardFromBzToHand(String text) {
-        if (!CHOOSE_WARP_CARD_FROM_BZ_TO_HAND.matcher(text.trim()).find()) return null;
-        return ctx -> {
-            ctx.logEntry("Effect: Choose 1 Card with Warp from own Break Zone → hand");
-            ctx.chooseWarpCardFromBreakZoneToHand();
-        };
-    }
 
-    /** Parses "Each player selects 1 Forward they control. Deal them N damage." */
-    private static Consumer<GameContext> tryParseEachPlayerSelectForwardDamage(String text) {
-        Matcher m = EACH_PLAYER_SELECT_FORWARD_DAMAGE.matcher(text);
-        if (!m.find()) return null;
-        int amount = Integer.parseInt(m.group("amount"));
-        return ctx -> {
-            ctx.logEntry("Effect: Each player selects 1 Forward they control. Deal them " + amount + " damage");
-            ctx.eachPlayerSelectForwardAndDamage(amount);
-        };
-    }
 
-    /** Parses "select 1 [type] of cost N or less other than [name] you control. Put it into the Break Zone." */
-    private static Consumer<GameContext> tryParseSelectCharCostLeExclToBz(String text) {
-        Matcher m = SELECT_1_CHAR_COST_LE_EXCL_TO_BZ.matcher(text.trim());
-        if (!m.matches()) return null;
-        String type        = m.group("type");
-        int    costVal     = Integer.parseInt(m.group("costval"));
-        String excludeName = m.group("excludename").trim();
-        boolean inclFwd = type.matches("(?i)Forward|Character");
-        boolean inclBkp = type.matches("(?i)Backup|Character");
-        boolean inclMon = type.matches("(?i)Monster|Character");
-        return ctx -> {
-            ctx.logEntry("Effect: select 1 " + type + " of cost ≤ " + costVal + " other than " + excludeName + " you control → Break Zone");
-            List<ForwardTarget> targets = ctx.selectCharacters(1, false, false, true,
-                    null, null, costVal, "less", -1, null,
-                    inclFwd, inclBkp, inclMon,
-                    null, null, null, excludeName, false, null, false);
-            for (ForwardTarget t : targets) ctx.breakTarget(t);
-        };
-    }
 
-    /** Parses "select 1 [Forward|Backup|Monster|Character] you control. Put it into the Break Zone." */
-    private static Consumer<GameContext> tryParseSelectControlledCharacterToBz(String text) {
-        Matcher m = SELECT_1_CHARACTER_YOU_CONTROL_TO_BZ.matcher(text.trim());
-        if (!m.matches()) return null;
-        String type    = m.group("type");
-        boolean inclFwd = type.matches("(?i)Forward|Character");
-        boolean inclBkp = type.matches("(?i)Backup|Character");
-        boolean inclMon = type.matches("(?i)Monster|Character");
-        return ctx -> {
-            ctx.logEntry("Effect: select 1 " + type + " you control → Break Zone");
-            ctx.selectControlledTypeAndBreak(inclFwd, inclBkp, inclMon);
-        };
-    }
 
-    /** Parses "Both players select 1 Forward they control and put it into the Break Zone." */
-    private static Consumer<GameContext> tryParseBothPlayersSelectForwardToBreakZone(String text) {
-        Matcher m = BOTH_PLAYERS_SELECT_FORWARD_TO_BREAK_ZONE.matcher(text);
-        if (!m.find()) return null;
-        return ctx -> {
-            ctx.logEntry("Effect: Both players select 1 Forward they control and put it into the Break Zone");
-            ctx.eachPlayerSelectForwardAndBreak();
-        };
-    }
 
-    /** Parses "Each player selects up to N Forwards or Monsters they control (select as many as possible). Put them into the Break Zone." */
-    private static Consumer<GameContext> tryParseEachPlayerSelectUpToNToBreakZone(String text) {
-        Matcher m = EACH_PLAYER_SELECT_UP_TO_N_TO_BREAK_ZONE.matcher(text);
-        if (!m.find()) return null;
-        int    count    = Integer.parseInt(m.group("count"));
-        String tgtLower = m.group("targets").toLowerCase();
-        boolean inclForwards = tgtLower.contains("forward") || tgtLower.contains("character");
-        boolean inclMonsters = tgtLower.contains("monster") || tgtLower.contains("character");
-        return ctx -> {
-            ctx.logEntry("Effect: Each player selects up to " + count + " Forwards/Monsters and puts them in Break Zone");
-            ctx.eachPlayerSelectUpToNAndBreak(count, inclForwards, inclMonsters);
-        };
-    }
 
-    /** Parses "Your opponent randomly removes N card(s) in their hand from the game." */
-    private static Consumer<GameContext> tryParseOpponentRandomHandRfp(String text) {
-        Matcher m = OPPONENT_RANDOM_HAND_RFP.matcher(text);
-        if (!m.find()) return null;
-        int count = Integer.parseInt(m.group(1));
-        return ctx -> {
-            ctx.logEntry("Effect: Opponent randomly removes " + count + " hand card(s) from the game");
-            ctx.forceOpponentRandomHandRfp(count);
-        };
-    }
 
-    /** Parses "Your opponent randomly places N card(s) from their hand at the bottom of their deck." */
-    private static Consumer<GameContext> tryParseOpponentRandomHandToBottomDeck(String text) {
-        Matcher m = OPPONENT_RANDOM_HAND_TO_BOTTOM_DECK.matcher(text);
-        if (!m.find()) return null;
-        int count = Integer.parseInt(m.group(1));
-        return ctx -> {
-            ctx.logEntry("Effect: Opponent randomly places " + count + " hand card(s) at bottom of their deck");
-            ctx.forceOpponentRandomHandToBottomOfDeck(count);
-        };
-    }
 
-    /**
-     * Parses "Your opponent reveals their hand. Select N card(s) in their hand.
-     * Your opponent removes it from the game."
-     */
-    private static Consumer<GameContext> tryParseRevealSelectHandRfp(String text) {
-        Matcher m = REVEAL_SELECT_HAND_RFP.matcher(text);
-        if (!m.find()) return null;
-        int count = Integer.parseInt(m.group(1));
-        return ctx -> {
-            ctx.logEntry("Effect: Opponent reveals hand — select " + count + " to remove from game");
-            ctx.selectFromOpponentHandAndRfp(count);
-        };
-    }
-
-    /** Parses "Opponent reveals hand. You may select 1 → remove from game, opponent draws 1." */
-    private static Consumer<GameContext> tryParseRevealHandOptPickRfpOppDraw(String text) {
-        if (!REVEAL_HAND_OPT_PICK_RFP_OPP_DRAW.matcher(text).find()) return null;
-        return ctx -> {
-            ctx.logEntry("Effect: Opponent reveals hand — optionally select 1 to RFP, opponent draws 1");
-            ctx.revealHandOptPickRfpOpponentDraws();
-        };
-    }
-
-    /**
-     * Parses "Your opponent removes N card(s) in their hand from the game."
-     * (opponent chooses which cards, not random).
-     */
-    private static Consumer<GameContext> tryParseOpponentHandRfp(String text) {
-        Matcher m = OPPONENT_HAND_RFP.matcher(text);
-        if (!m.find()) return null;
-        int count = Integer.parseInt(m.group(1));
-        return ctx -> {
-            ctx.logEntry("Effect: Opponent removes " + count + " hand card(s) from the game");
-            ctx.forceOpponentHandRfp(count);
-        };
-    }
-
-    /** Parses "Return [name] to its owner's hand." or "Return [name] to your hand." */
-    private static Consumer<GameContext> tryParseReturnNamedToHand(String text) {
-        Matcher m = RETURN_NAMED_TO_OWNERS_HAND.matcher(text);
-        if (m.find()) {
-            String named = m.group("named").trim();
-            return ctx -> {
-                ctx.logEntry("Effect: Return " + named + " to its owner's hand");
-                ctx.returnNamedCardToOwnersHand(named);
-            };
-        }
-        m = RETURN_NAMED_TO_YOUR_HAND_STANDALONE.matcher(text);
-        if (m.find()) {
-            String named = m.group("named").trim();
-            return ctx -> {
-                ctx.logEntry("Effect: Return " + named + " to your hand");
-                ctx.returnNamedCardToYourHand(named);
-            };
-        }
-        // Also handle "Add [name] to your hand" — used by break-zone-origin abilities.
-        m = ADD_NAMED_TO_YOUR_HAND.matcher(text);
-        if (m.find()) {
-            String named = m.group("named").trim();
-            return ctx -> {
-                ctx.logEntry("Effect: Add " + named + " to your hand");
-                ctx.returnNamedCardToYourHand(named);
-            };
-        }
-        return null;
-    }
 
     /** Parses "Remove all the cards in your opponent's Break Zone from the game." */
     private static Consumer<GameContext> tryParseRemoveAllOppBzFromGame(String text) {
@@ -13632,67 +8310,19 @@ public class ActionResolver {
         };
     }
 
-    /**
-     * Parses "At the end of your opponent's turn, play [CardName] onto the field." — schedules
-     * {@link GameContext#playNamedFromRfpOntoField} to fire at the end of the opponent's next turn.
-     */
-    private static Consumer<GameContext> tryParseEndOfOppTurnPlayNamedOntoField(String text) {
-        Matcher m = AT_END_OF_OPP_TURN_PLAY_NAMED_ONTO_FIELD.matcher(text.trim());
-        if (!m.matches()) return null;
-        String name = m.group("name").trim();
-        return ctx -> ctx.addEndOfOpponentTurnEffect(ctx2 -> ctx2.playNamedFromRfpOntoField(name));
-    }
 
     /**
      * True for wording that points back at the card carrying the ability rather than naming it —
      * "this Forward", "this Character". Granted abilities are written this way, since the text is
      * printed on the granting card but resolves for whichever card received it.
      */
-    private static boolean isSelfReference(String name) {
+    static boolean isSelfReference(String name) {
         return name.matches("(?i)this\\s+(?:Forward|Backup|Monster|Character|card)");
     }
 
-    /** Parses "Break [CardName]." when CardName is the source card — breaks the source forward/monster. */
-    private static Consumer<GameContext> tryParseBreakSourceCard(String text, CardData source) {
-        if (source == null) return null;   // the pattern is keyed to the source card
-        Matcher m = BREAK_SOURCE_CARD.matcher(text.trim());
-        if (!m.matches()) return null;
-        String name = m.group("name").trim();
-        if (!name.equalsIgnoreCase(source.name()) && !isSelfReference(name)) return null;
-        return ctx -> {
-            ctx.logEntry("Effect: Break " + source.name());
-            ctx.breakSourceCard(source);
-        };
-    }
 
-    private static Consumer<GameContext> tryParseBreakBlockingForward(String text) {
-        if (!BREAK_BLOCKING_FORWARD.matcher(text.trim()).matches()) return null;
-        return ctx -> {
-            ctx.logEntry("Effect: Break the blocking Forward");
-            ctx.breakBlockingForward();
-        };
-    }
 
-    private static Consumer<GameContext> tryParseBreakForwardThatBlocksCard(String text) {
-        Matcher m = BREAK_FORWARD_THAT_BLOCKS_CARD.matcher(text.trim());
-        if (!m.matches()) return null;
-        String attackerName = m.group("name").trim();
-        return ctx -> {
-            ctx.logEntry("Effect: Break the Forward that blocks " + attackerName);
-            ctx.breakForwardBlockingAttacker(attackerName);
-        };
-    }
 
-    private static Consumer<GameContext> tryParsePutSourceIntoBreakZone(String text, CardData source) {
-        if (source == null) return null;   // the pattern is keyed to the source card's own name
-        Matcher m = PUT_SOURCE_INTO_BREAK_ZONE.matcher(text.trim());
-        if (!m.matches()) return null;
-        if (!m.group("name").trim().equalsIgnoreCase(source.name())) return null;
-        return ctx -> {
-            ctx.logEntry("Effect: Break " + source.name());
-            ctx.breakSourceCard(source);
-        };
-    }
 
     private static Consumer<GameContext> tryParseYouMayPutSelfToBZWhenDoSo(String text, CardData source) {
         if (source == null) return null;
@@ -13705,305 +8335,32 @@ public class ActionResolver {
         return ctx -> ctx.mayBreakSourceWhenDoSo(source, followup);
     }
 
-    static Consumer<GameContext> tryParseIfOppNoForwardsPutToBreakZone(String text, CardData source) {
-        if (source == null) return null;
-        Matcher m = IF_OPP_NO_FORWARDS_PUT_TO_BREAK_ZONE.matcher(text.trim());
-        if (!m.matches()) return null;
-        if (!m.group("name").trim().equalsIgnoreCase(source.name())) return null;
-        return ctx -> {
-            if (ctx.opponentForwardCount() > 0) return;
-            ctx.logEntry("Effect: opponent controls no Forwards — Break " + source.name());
-            ctx.breakSourceCard(source);
-        };
-    }
 
-    static Consumer<GameContext> tryParseIfEitherPlayerNoForwardsPutSourceToBz(String text, CardData source) {
-        if (source == null) return null;
-        Matcher m = IF_EITHER_PLAYER_NO_FORWARDS_PUT_SOURCE_TO_BZ.matcher(text.trim());
-        if (!m.matches()) return null;
-        if (!m.group("name").trim().equalsIgnoreCase(source.name())) return null;
-        return ctx -> {
-            if (ctx.selfForwardCount() > 0 && ctx.opponentForwardCount() > 0) return;
-            ctx.logEntry("Effect: a player controls no Forwards — Break " + source.name());
-            ctx.breakSourceCard(source);
-        };
-    }
 
-    private static Consumer<GameContext> tryParsePutSourceToBottomOfDeck(String text, CardData source) {
-        if (source == null) return null;
-        Matcher m = PUT_SOURCE_TO_BOTTOM_OF_DECK.matcher(text.trim());
-        if (!m.matches()) return null;
-        if (!m.group("name").trim().equalsIgnoreCase(source.name())) return null;
-        return ctx -> {
-            ctx.logEntry("Effect: " + source.name() + " → bottom of its owner's deck");
-            ctx.putSourceToBottomOfDeck(source);
-        };
-    }
 
-    private static Consumer<GameContext> tryParseShuffleThenRevealPlayNamedRestBottom(String text, CardData source) {
-        Matcher m = SHUFFLE_THEN_REVEAL_PLAY_NAMED_REST_BOTTOM.matcher(text.trim());
-        if (!m.matches()) return null;
-        int n           = Integer.parseInt(m.group("n"));
-        String cardName = m.group("cardname").trim();
-        if (source != null && !cardName.equalsIgnoreCase(source.name())) return null;
-        return ctx -> {
-            ctx.shuffleDeck();
-            ctx.revealTopNPlayNamedOntoFieldRestBottom(n, cardName);
-        };
-    }
 
-    private static Consumer<GameContext> tryParseRevealPlayNamedWithMaxCostRestBottom(String text) {
-        Matcher m = REVEAL_PLAY_NAMED_MAX_COST_REST_BOTTOM.matcher(text.trim());
-        if (!m.matches()) return null;
-        int n           = Integer.parseInt(m.group("n"));
-        String cardName = m.group("cardname").trim();
-        int maxCost     = Integer.parseInt(m.group("maxcost"));
-        return ctx -> ctx.revealTopNPlayNamedWithMaxCostOntoFieldRestBottom(n, cardName, maxCost);
-    }
 
-    private static Consumer<GameContext> tryParseRevealPlayNamedOrJobMaxCostRestBottom(String text) {
-        Matcher m = REVEAL_PLAY_NAMED_OR_JOB_MAX_COST_REST_BOTTOM.matcher(text.trim());
-        if (!m.matches()) return null;
-        int n           = Integer.parseInt(m.group("n"));
-        int max         = Integer.parseInt(m.group("max"));
-        String cardName = m.group("cardname").trim();
-        String job      = m.group("job").trim();
-        int maxCost     = Integer.parseInt(m.group("maxcost"));
-        return ctx -> ctx.revealTopNPlayUpToNamedOrJobWithMaxCostOntoFieldRestBottom(n, max, cardName, job, maxCost);
-    }
 
-    private static Consumer<GameContext> tryParseFlipUntilTypeToHandRestShuffleBottom(String text) {
-        if (!FLIP_UNTIL_TYPE_TO_HAND_REST_SHUFFLE_BOTTOM.matcher(text.trim()).matches()) return null;
-        return GameContext::flipUntilTypeToHandRestShuffleBottom;
-    }
 
-    private static Consumer<GameContext> tryParseRevealPlayTypeOntoFieldRestBottom(String text) {
-        String s = stripRestrictionSentences(text);
-        Matcher m = REVEAL_PLAY_TYPE_ONTO_FIELD_REST_BOTTOM.matcher((s.isEmpty() ? text : s).trim());
-        if (!m.matches()) return null;
-        int n      = Integer.parseInt(m.group("n"));
-        int max    = Integer.parseInt(m.group("max"));
-        String typeRaw  = m.group("type");
-        String normType = Character.toUpperCase(typeRaw.charAt(0))
-                + typeRaw.substring(1).toLowerCase();
-        String category = m.group("category");
-        return ctx -> ctx.revealTopNPlayUpToTypeOntoFieldRestBottom(n, max, normType, category);
-    }
 
-    private static Consumer<GameContext> tryParseRevealElementCardFromHandIfSoDraw(String text) {
-        Matcher m = REVEAL_ELEMENT_CARD_FROM_HAND_IF_SO_DRAW.matcher(text.trim());
-        if (!m.matches()) return null;
-        String elementRaw = m.group("element");
-        String element    = Character.toUpperCase(elementRaw.charAt(0)) + elementRaw.substring(1).toLowerCase();
-        int drawCount     = Integer.parseInt(m.group("draw"));
-        return ctx -> ctx.revealElementCardFromHandDraw(element, drawCount);
-    }
 
-    private static Consumer<GameContext> tryParseRevealPlayElementTypeCostOntoFieldRestBottom(String text) {
-        return tryParseRevealPlayElementTypeCostOntoFieldRestBottom(text, 0);
-    }
 
-    private static Consumer<GameContext> tryParseRevealPlayElementTypeCostOntoFieldRestBottom(String text, int xValue) {
-        // Strip "You can only cast [CardName] during your Main Phase." restriction prefix.
-        String stripped = text.trim().replaceFirst(
-                "(?i)You\\s+can\\s+only\\s+cast\\s+[^.]+?during\\s+your\\s+Main\\s+Phase[.!]?\\s*", "").trim();
-        Matcher m = REVEAL_PLAY_ELEMENT_TYPE_COST_ONTO_FIELD_REST_BOTTOM.matcher(stripped);
-        if (!m.matches()) return null;
-        int n           = Integer.parseInt(m.group("n"));
-        int max         = Integer.parseInt(m.group("max"));
-        String elementRaw = m.group("element");
-        String element    = elementRaw != null ? Character.toUpperCase(elementRaw.charAt(0)) + elementRaw.substring(1).toLowerCase() : null;
-        String typeRaw  = m.group("type");
-        String normType = Character.toUpperCase(typeRaw.charAt(0)) + typeRaw.substring(1).toLowerCase();
-        String costStr  = m.group("cost");
-        int maxCost     = "X".equalsIgnoreCase(costStr) ? xValue : Integer.parseInt(costStr);
-        return ctx -> ctx.revealTopNPlayUpToElementTypeCostOntoFieldRestBottom(n, max, element, normType, maxCost);
-    }
 
-    /** Parses "Choose 1 card with EX Burst in your Damage Zone. You may trigger its EX Burst effect." */
-    private static Consumer<GameContext> tryParseChooseExBurstFromDamageZone(String text) {
-        if (!CHOOSE_EX_BURST_FROM_DAMAGE_ZONE.matcher(text.trim()).find()) return null;
-        return ctx -> {
-            ctx.logEntry("Effect: Choose EX Burst from Damage Zone — trigger on stack");
-            ctx.triggerExBurstFromDamageZone();
-        };
-    }
 
-    /**
-     * Parses the Leviathan/Larsa/Strago Damage-Zone-swap pattern. Pulls one card from the ability
-     * user's Damage Zone to their hand, optionally draws 1 (Leviathan), then returns one card
-     * from hand to the Damage Zone with its EX Burst suppressed.
-     */
-    private static Consumer<GameContext> tryParseDamageZoneSwap(String text) {
-        Matcher m = DAMAGE_ZONE_SWAP_PATTERN.matcher(text.trim());
-        if (!m.matches()) return null;
-        boolean drawBetween = m.group("draw") != null;
-        return ctx -> {
-            ctx.logEntry("Effect: Damage Zone swap" + (drawBetween ? " (+ draw 1)" : ""));
-            ctx.swapDamageZoneCardWithHandCard(drawBetween);
-        };
-    }
 
-    /** Parses "Your opponent randomly discards N card(s)" as a standalone effect. */
-    private static Consumer<GameContext> tryParseOpponentRandomDiscard(String text) {
-        Matcher m = OPPONENT_RANDOM_DISCARD.matcher(text);
-        if (!m.find()) return null;
-        int count = Integer.parseInt(m.group(1));
-        return ctx -> {
-            ctx.logEntry("Effect: Opponent randomly discards " + count + " card(s)");
-            ctx.forceOpponentRandomDiscard(count);
-        };
-    }
 
-    /** Parses "Your opponent draws N card(s), then randomly discards M card(s)" as a standalone effect. */
-    private static Consumer<GameContext> tryParseOpponentDrawThenRandomDiscard(String text) {
-        Matcher m = OPPONENT_DRAW_THEN_RANDOM_DISCARD.matcher(text);
-        if (!m.find()) return null;
-        int drawCount    = Integer.parseInt(m.group(1));
-        int discardCount = Integer.parseInt(m.group(2));
-        return ctx -> {
-            ctx.logEntry("Effect: Opponent draws " + drawCount + ", then randomly discards " + discardCount);
-            ctx.drawCardsForOpponent(drawCount);
-            ctx.forceOpponentRandomDiscard(discardCount);
-        };
-    }
 
-    /** Parses "Your opponent draws N card(s)." as a standalone effect. */
-    private static Consumer<GameContext> tryParseOpponentDraw(String text) {
-        Matcher m = OPPONENT_DRAW.matcher(text);
-        if (!m.find()) return null;
-        int count = Integer.parseInt(m.group(1));
-        return ctx -> {
-            ctx.logEntry("Effect: Opponent draws " + count);
-            ctx.drawCardsForOpponent(count);
-        };
-    }
 
-    /** No-op recogniser for multi-play grant field abilities handled as static card properties. */
-    private static Consumer<GameContext> tryParseMultiPlayGrant(String text) {
-        if (CardData.MULTI_LIGHT_DARK_PLAY_PATTERN.matcher(text).matches()) return ctx -> {};
-        if (CardData.MULTI_NAME_PLAY_PATTERN.matcher(text).matches())       return ctx -> {};
-        return null;
-    }
 
-    /** No-op recogniser for the Light/Dark hand-discard CP grant handled as a static card property. */
-    private static Consumer<GameContext> tryParseLightDarkDiscardCpGrant(String text) {
-        if (CardData.LIGHT_DARK_DISCARD_CP_PATTERN.matcher(text).matches()) return ctx -> {};
-        return null;
-    }
 
     // -------------------------------------------------------------------------
     // Delayed ("at the end of this turn") and recurring end-of-turn field parsers
     // -------------------------------------------------------------------------
 
-    /**
-     * Parses "At the end of each of your turns, &lt;effect&gt;" — a recurring field-ability
-     * trigger.  Returns a consumer that executes the inner effect directly; the caller
-     * ({@code fireFieldEndOfTurnAbilities}) is responsible for invoking it each end phase.
-     * The inner effect is resolved via the full {@link #parse} dispatcher so all supported
-     * effect types work.
-     */
-    static Consumer<GameContext> tryParseEndOfEachTurnFieldAbility(String text, CardData source) {
-        Matcher m = AT_END_OF_EACH_TURN_PATTERN.matcher(text);
-        if (!m.find()) return null;
-        String inner = m.group("inner").trim();
-        Consumer<GameContext> innerEffect = parse(inner, source);
-        if (innerEffect == null) return null;
-        return innerEffect;
-    }
 
-    /**
-     * Parses "At the end of each player's turn, if [CardName] has received N damage or more, draw M card(s)."
-     * Fires at the end of every player's turn (both P1's and P2's end phase).
-     * The source card must be on the field; the check is against accumulated combat damage on that forward.
-     */
-    static Consumer<GameContext> tryParseEndOfEachPlayersTurnIfSelfFwdDamage(String text, CardData source) {
-        if (source == null) return null;
-        Matcher m = AT_END_OF_EACH_PLAYERS_TURN_IF_SELF_FWD_DAMAGE_DRAW.matcher(text.trim());
-        if (!m.matches()) return null;
-        String targetName = m.group("cardname").trim();
-        if (!targetName.equalsIgnoreCase(source.name())) return null;
-        int minDamage = Integer.parseInt(m.group("damage"));
-        int drawCount = Integer.parseInt(m.group("draw"));
-        return ctx -> {
-            int fwdCount = ctx.isP1() ? ctx.p1ForwardCount() : ctx.p2ForwardCount();
-            for (int i = 0; i < fwdCount; i++) {
-                CardData fwd = ctx.isP1() ? ctx.p1Forward(i) : ctx.p2Forward(i);
-                if (fwd.name().equalsIgnoreCase(targetName)) {
-                    int dmg = ctx.isP1() ? ctx.p1ForwardCurrentDamage(i) : ctx.p2ForwardCurrentDamage(i);
-                    if (dmg >= minDamage) {
-                        ctx.logEntry("Field: " + source.name() + " — draw " + drawCount + " (" + dmg + " damage)");
-                        ctx.drawCards(drawCount);
-                    }
-                    return;
-                }
-            }
-        };
-    }
 
-    /**
-     * Parses "if [CardName] has received N damage or more, draw M card(s)." —
-     * the inner effect of "At the end of each player's turn, …" auto abilities.
-     */
-    private static Consumer<GameContext> tryParseIfSelfFwdReceivedDamageDraw(String text, CardData source) {
-        if (source == null) return null;
-        Matcher m = IF_SELF_FWD_RECEIVED_DAMAGE_DRAW.matcher(text.trim());
-        if (!m.matches()) return null;
-        String targetName = m.group("cardname").trim();
-        if (!targetName.equalsIgnoreCase(source.name())) return null;
-        int minDamage = Integer.parseInt(m.group("damage"));
-        int drawCount = Integer.parseInt(m.group("draw"));
-        return ctx -> {
-            int fwdCount = ctx.isP1() ? ctx.p1ForwardCount() : ctx.p2ForwardCount();
-            for (int i = 0; i < fwdCount; i++) {
-                CardData fwd = ctx.isP1() ? ctx.p1Forward(i) : ctx.p2Forward(i);
-                if (fwd.name().equalsIgnoreCase(targetName)) {
-                    int dmg = ctx.isP1() ? ctx.p1ForwardCurrentDamage(i) : ctx.p2ForwardCurrentDamage(i);
-                    if (dmg >= minDamage) {
-                        ctx.logEntry(source.name() + " — draw " + drawCount + " (" + dmg + " damage)");
-                        ctx.drawCards(drawCount);
-                    }
-                    return;
-                }
-            }
-        };
-    }
 
-    /**
-     * Parses "If you have received N points of damage, put [CardName] into the Break Zone."
-     * The returned consumer checks {@link GameContext#selfDamageCount()} at fire time against the threshold;
-     * callers should invoke it whenever the controlling player's damage zone grows.
-     */
-    static Consumer<GameContext> tryParseIfSelfDamagePointsPutToBreakZone(String text, CardData source) {
-        if (source == null) return null;
-        Matcher m = IF_SELF_DAMAGE_POINTS_PUT_TO_BREAK_ZONE.matcher(text.trim());
-        if (!m.matches()) return null;
-        if (!m.group("name").trim().equalsIgnoreCase(source.name())) return null;
-        int threshold = Integer.parseInt(m.group("points"));
-        return ctx -> {
-            if (ctx.selfDamageCount() < threshold) return;
-            ctx.logEntry("Effect: " + source.name() + " — Break Zone (received " + threshold + " damage)");
-            ctx.breakSourceCard(source);
-        };
-    }
 
-    /**
-     * Parses "If there are N or more cards removed from the game, &lt;effect&gt;".
-     * The inner effect only fires when the combined permanent-RFP count of both players meets the threshold.
-     */
-    private static Consumer<GameContext> tryParseIfRfpCount(String text, CardData source) {
-        Matcher m = IF_RFP_COUNT_INNER.matcher(text.trim());
-        if (!m.find()) return null;
-        int minRfp = Integer.parseInt(m.group("count"));
-        String innerText = m.group("inner").trim();
-        Consumer<GameContext> innerEffect = parse(innerText, source);
-        if (innerEffect == null) return null;
-        return ctx -> {
-            int totalRfp = ctx.countRemovedFromGame();
-            if (totalRfp >= minRfp) innerEffect.accept(ctx);
-            else ctx.logEntry("Condition not met: need " + minRfp + "+ cards RFP, have " + totalRfp);
-        };
-    }
 
     /**
      * Parses "At the end of this turn, &lt;effect&gt;" — wraps any supported mass-field
@@ -14025,159 +8382,10 @@ public class ActionResolver {
     // All-field-cards effect parser
     // -------------------------------------------------------------------------
 
-    /**
-     * Parses "[action] all [the] [element] [targets] [of cost X] [control]".
-     *
-     * <p>Supported actions: Break, dull, freeze, dull and freeze, Activate.
-     * <p>Supported targets: Forwards, Backups, Forwards and Monsters, Characters.
-     */
-    private static Consumer<GameContext> tryParseAllFieldEffect(String text) {
-        Matcher m = ALL_FIELD_EFFECT_PATTERN.matcher(text);
-        if (!m.find()) return null;
 
-        String rawAction = m.group("action").toLowerCase().replaceAll("\\s+", " ");
-        GameContext.MassAction action = switch (rawAction) {
-            case "break"          -> GameContext.MassAction.BREAK;
-            case "dull"           -> GameContext.MassAction.DULL;
-            case "freeze"         -> GameContext.MassAction.FREEZE;
-            case "dull and freeze"-> GameContext.MassAction.DULL_AND_FREEZE;
-            case "activate"       -> GameContext.MassAction.ACTIVATE;
-            default               -> null;
-        };
-        if (action == null) return null;
 
-        String element   = m.group("element");
-        String job       = m.group("job") != null ? m.group("job").trim() : null;
-        String category  = m.group("category");
-        String targets   = m.group("targets");
-        // When no explicit type is given (job-only or category-only), sweep all card types
-        boolean inclForwards, inclBackups, inclMonsters;
-        if (targets == null) {
-            inclForwards = true; inclBackups = true; inclMonsters = (job == null && category == null);
-        } else {
-            String tgtLower  = targets.toLowerCase();
-            inclForwards = tgtLower.contains("forward") || tgtLower.contains("character");
-            inclBackups  = tgtLower.contains("backup")  || tgtLower.contains("character");
-            inclMonsters = tgtLower.contains("monster") || tgtLower.contains("character");
-        }
 
-        String costStr = m.group("cost");
-        String costCmp = m.group("costcmp");
-        int    costVal = costStr != null ? Integer.parseInt(costStr) : -1;
 
-        String excludeCostStr = m.group("excludecost");
-        int    excludeCostVal = excludeCostStr != null ? Integer.parseInt(excludeCostStr) : -1;
-
-        String control      = m.group("control");
-        boolean opponentOnly = control != null && !control.toLowerCase().contains("you control");
-        boolean selfOnly     = control != null && control.toLowerCase().contains("you control");
-
-        String traitStr     = m.group("trait");
-        EnumSet<CardData.Trait> traitFilter = parseTraits(traitStr);
-
-        String actionLabel = switch (action) {
-            case BREAK           -> "Break";
-            case DULL            -> "Dull";
-            case FREEZE          -> "Freeze";
-            case DULL_AND_FREEZE -> "Dull & Freeze";
-            case ACTIVATE        -> "Activate";
-            case RETURN_TO_HAND  -> "Return to hand";
-        };
-        String tgtLabel     = targets != null ? targets : (job != null ? "Job " + job : category != null ? "Cat " + category : "all");
-        String costLabel    = costVal >= 0
-                ? " of cost " + costVal + (costCmp != null ? " or " + costCmp : "") : "";
-        String exclLabel    = excludeCostVal >= 0 ? " [not cost " + excludeCostVal + "]" : "";
-        String controlLabel = opponentOnly ? " (opponent)" : selfOnly ? " (yours)" : "";
-        String traitLabel   = traitStr != null ? " with " + traitStr.trim() : "";
-        String logMsg = actionLabel + " all " + tgtLabel + traitLabel + costLabel + exclLabel + controlLabel;
-
-        return ctx -> {
-            ctx.logEntry("Effect: " + logMsg);
-            ctx.applyMassFieldEffect(action, inclForwards, inclBackups, inclMonsters,
-                    opponentOnly, selfOnly, element, costVal, costCmp, excludeCostVal, job, category, traitFilter);
-        };
-    }
-
-    /**
-     * Parses "Return all [the] [element] [targets] [control] to their owners' hands."
-     */
-    private static Consumer<GameContext> tryParseReturnAllToHand(String text) {
-        Matcher m = ALL_RETURN_TO_HAND_PATTERN.matcher(text);
-        if (!m.find()) return null;
-
-        String element  = m.group("element");
-        String targets  = m.group("targets");
-        boolean inclForwards, inclBackups, inclMonsters;
-        if (targets == null) {
-            inclForwards = true; inclBackups = true; inclMonsters = true;
-        } else {
-            String tgtLower = targets.toLowerCase();
-            inclForwards = tgtLower.contains("forward") || tgtLower.contains("character");
-            inclBackups  = tgtLower.contains("backup")  || tgtLower.contains("character");
-            inclMonsters = tgtLower.contains("monster") || tgtLower.contains("character");
-        }
-
-        String control       = m.group("control");
-        boolean opponentOnly = control != null && !control.toLowerCase().contains("you control");
-        boolean selfOnly     = control != null && control.toLowerCase().contains("you control");
-
-        String elemLabel    = element != null ? element + " " : "";
-        String tgtLabel     = targets != null ? targets : "all";
-        String controlLabel = opponentOnly ? " (opponent)" : selfOnly ? " (yours)" : "";
-        String logMsg       = "Return all " + elemLabel + tgtLabel + controlLabel + " to hand";
-
-        return ctx -> {
-            ctx.logEntry("Effect: " + logMsg);
-            ctx.applyMassFieldEffect(GameContext.MassAction.RETURN_TO_HAND,
-                    inclForwards, inclBackups, inclMonsters,
-                    opponentOnly, selfOnly, element, -1, null, -1, null, null);
-        };
-    }
-
-    private static Consumer<GameContext> tryParseChooseAnyNumberReturnToHand(String text) {
-        Matcher m = CHOOSE_ANY_NUMBER_RETURN_TO_HAND.matcher(text);
-        if (!m.matches()) return null;
-        String typesRaw = m.group("types").toLowerCase(java.util.Locale.ROOT);
-        boolean inclForwards = typesRaw.contains("forward") || typesRaw.contains("character");
-        boolean inclBackups  = typesRaw.contains("backup")  || typesRaw.contains("character");
-        boolean inclMonsters = typesRaw.contains("monster") || typesRaw.contains("character");
-        String controlRaw    = m.group("control");
-        boolean opponentOnly = controlRaw != null && !controlRaw.toLowerCase(java.util.Locale.ROOT).contains("you control");
-        boolean selfOnly     = controlRaw != null &&  controlRaw.toLowerCase(java.util.Locale.ROOT).contains("you control");
-        String typeLabel     = m.group("types");
-        String controlLabel  = opponentOnly ? " (opponent's)" : selfOnly ? " (yours)" : "";
-        return ctx -> {
-            ctx.logEntry("Effect: Choose any number of " + typeLabel + controlLabel + " — return to hand");
-            ctx.chooseAnyNumberReturnToHand(inclForwards, inclBackups, inclMonsters, opponentOnly, selfOnly);
-        };
-    }
-
-    /**
-     * Parses "Choose 1 auto-ability. Cancel its effect. If the cancelled auto-ability triggered
-     * from a Forward, deal that Forward N damage."
-     */
-    private static Consumer<GameContext> tryParseCancelAutoAbilityAndDamageIfForward(String text) {
-        Matcher m = CANCEL_AUTO_ABILITY_DAMAGE_IF_FORWARD.matcher(text);
-        if (!m.find()) return null;
-        int damage = Integer.parseInt(m.group("amount"));
-        return ctx -> {
-            ctx.logEntry("Effect: Choose 1 auto-ability — cancel it; if triggered from a Forward, deal " + damage + " damage");
-            ctx.cancelAutoAbilityAndDamageSourceIfForward(damage);
-        };
-    }
-
-    /**
-     * Parses "Choose 1 Summon targeting/choosing a Character/Forward you control. Cancel its effect."
-     * Only Summons whose pre-selected targets include a card the canceler controls are eligible.
-     */
-    private static Consumer<GameContext> tryParseCancelSummonTargetingMyCharacter(String text) {
-        if (!CANCEL_SUMMON_TARGETING_MY_CHARACTER.matcher(text).find()) return null;
-        java.util.function.Predicate<StackEntry> filter = StackEntry::isSummon;
-        return ctx -> {
-            ctx.logEntry("Effect: Choose 1 Summon choosing your Character — cancel its effect");
-            ctx.cancelFilteredAbilityOnStack(filter, "Choose 1 Summon choosing your Character to cancel:", true);
-        };
-    }
 
     /**
      * Parses "Choose 1 Summon or auto-ability. Cancel its effect." (Y'shtola).
@@ -14210,87 +8418,9 @@ public class ActionResolver {
         };
     }
 
-    /**
-     * Parses the "Choose 1 [Summon/ability type(s)] [optional 'opponent's']. If your opponent
-     * doesn't pay 《N》, cancel its effect." family (Dull's active/action-ability cost form). Builds
-     * the target filter the same way as {@link #tryParseCancelAbilityOnStack}, additionally
-     * restricting to the opponent's entries when "opponent's" qualifies the type — composed at
-     * resolution time since the canceller's side is only known once the effect actually runs.
-     */
-    private static Consumer<GameContext> tryParseCancelStackEntryUnlessPay(String text) {
-        Matcher m = CANCEL_STACK_ENTRY_UNLESS_PAY.matcher(text.trim());
-        if (!m.find()) return null;
-        String types = m.group("types").trim();
-        boolean opponentsOnly = m.group("opponents") != null;
-        int cost = Integer.parseInt(m.group("cost"));
-        java.util.function.Predicate<StackEntry> baseFilter = parseAbilityTypeFilter(types);
-        String prompt = "Choose 1 " + (opponentsOnly ? "opponent's " : "") + types + " to threaten:";
-        return ctx -> {
-            java.util.function.Predicate<StackEntry> filter = opponentsOnly
-                    ? baseFilter.and(e -> e.isP1() != ctx.isP1())
-                    : baseFilter;
-            ctx.logEntry("Effect: Choose 1 " + types + " — cancel unless opponent pays 《" + cost + "》");
-            ctx.cancelFilteredAbilityOnStackUnlessOpponentPays(filter, prompt, cost);
-        };
-    }
 
-    /**
-     * Parses the standalone "If your opponent doesn't pay 《N》[ or 《C》…], cancel its/their effect(s)."
-     * body of a "chosen by opponent's Summons or abilities" auto-ability. The target is implicit —
-     * whatever Summon/ability just triggered this reaction — so it just cancels that in-progress
-     * selection. When a Crystal alternative is present (Zeromus), the opponent may pay CP or Crystals.
-     */
-    private static Consumer<GameContext> tryParseCancelChosenTargetUnlessPay(String text) {
-        String trimmed = text.trim();
-        Matcher m = CANCEL_CHOSEN_TARGET_UNLESS_PAY.matcher(trimmed);
-        boolean forward = m.find();
-        if (!forward) {
-            m = CANCEL_CHOSEN_TARGET_UNLESS_PAY_REVERSED.matcher(trimmed);
-            if (!m.find()) return null;
-        }
-        int cost = Integer.parseInt(m.group("cost"));
-        // Only the forward pattern captures the optional Crystal alternative.
-        String crystalGroup = forward ? m.group("crystal") : null;
-        int crystalCost = crystalGroup == null ? 0 : (int) crystalGroup.chars().filter(c -> c == 'C' || c == 'c').count();
-        if (crystalCost > 0) {
-            return ctx -> {
-                ctx.logEntry("Effect: cancel unless opponent pays 《" + cost + "》 or 《C》×" + crystalCost);
-                ctx.cancelChosenSelectionUnlessOpponentPaysOrCrystal(cost, crystalCost);
-            };
-        }
-        return ctx -> {
-            ctx.logEntry("Effect: cancel unless opponent pays 《" + cost + "》");
-            ctx.cancelChosenSelectionUnlessOpponentPays(cost);
-        };
-    }
 
-    /**
-     * Discard-cost sibling of {@link #tryParseCancelChosenTargetUnlessPay}: parses "If your opponent
-     * doesn't discard N card(s), cancel its/their effect(s)." and cancels the in-progress selection
-     * unless the opponent discards the full number of cards from hand.
-     */
-    private static Consumer<GameContext> tryParseCancelChosenTargetUnlessDiscard(String text) {
-        Matcher m = CANCEL_CHOSEN_TARGET_UNLESS_DISCARD.matcher(text.trim());
-        if (!m.find()) return null;
-        int count = Integer.parseInt(m.group("count"));
-        return ctx -> {
-            ctx.logEntry("Effect: cancel unless opponent discards " + count + " card(s)");
-            ctx.cancelChosenSelectionUnlessOpponentDiscards(count);
-        };
-    }
 
-    /**
-     * Parses a bare "Cancel its/their effect(s)." — the consequent of a reactive "chosen by opponent's
-     * Summons or abilities" auto-ability whose optional cost was already paid upstream (Phantasmal
-     * Girl, Regis, Tama, Yuna). Unconditionally cancels the in-progress selection.
-     */
-    private static Consumer<GameContext> tryParseCancelChosenTargetBare(String text) {
-        if (!CANCEL_CHOSEN_TARGET_BARE.matcher(text.trim()).find()) return null;
-        return ctx -> {
-            ctx.logEntry("Effect: cancel the effect choosing your Character(s)");
-            ctx.cancelChosenSelection();
-        };
-    }
 
     /**
      * True if {@code text} is a standalone "If your opponent doesn't pay 《N》, [target action]."
@@ -14302,56 +8432,8 @@ public class ActionResolver {
         return tryParseIfOppNotPayAction(text) != null;
     }
 
-    /**
-     * Parses a standalone "If your opponent doesn't pay 《N》, [target action]." (e.g. Remedi's
-     * "break it") into an effect that applies the action to the preloaded target(s) — the entering
-     * card — unless the opponent pays {@code cost} in full. The inner action is resolved via
-     * {@link #parseTargetAction}, so any standard action ("break it", "dull it", "Freeze it", …) works.
-     */
-    private static Consumer<GameContext> tryParseIfOppNotPayAction(String text) {
-        Matcher m = IF_OPP_NOT_PAY_ACTION.matcher(text.trim());
-        if (!m.find()) return null;
-        int cost = Integer.parseInt(m.group("cost"));
-        String effText = m.group("effect").trim();
-        BiConsumer<GameContext, List<ForwardTarget>> action = parseTargetAction(effText, 0);
-        if (action == null) return null;
-        return ctx -> {
-            List<ForwardTarget> ts = ctx.consumePreloadedTargets();
-            if (ts == null || ts.isEmpty()) { ctx.logEntry("If-opp-not-pay: no preloaded target — skipped"); return; }
-            ctx.logEntry("Effect: unless opponent pays 《" + cost + "》: " + effText);
-            ctx.opponentMayPayToPreventAction(cost, () -> action.accept(ctx, ts));
-        };
-    }
 
-    /**
-     * Parses Banon's "Reveal the top card of your deck. If it is a [Type], cancel all effects
-     * choosing [Name]." — reveals the top deck card and cancels the in-progress selection when it
-     * is of the given type.
-     */
-    private static Consumer<GameContext> tryParseCancelChosenRevealTopIfType(String text) {
-        Matcher m = CANCEL_CHOSEN_REVEAL_TOP_IF_TYPE.matcher(text.trim());
-        if (!m.find()) return null;
-        String type = m.group("type");
-        return ctx -> {
-            ctx.logEntry("Effect: reveal top of deck; if a " + type + ", cancel the effect choosing your Character");
-            ctx.revealTopDeckCancelChosenIfType(type);
-        };
-    }
 
-    /**
-     * Parses Siren (V)'s "Put the top card of your deck into the Break Zone. If the card put into
-     * the Break Zone is not a [Type], cancel its/their effect(s)." — mills the top deck card and
-     * cancels the in-progress selection when it is not of the given type.
-     */
-    private static Consumer<GameContext> tryParseCancelChosenMillTopIfNotType(String text) {
-        Matcher m = CANCEL_CHOSEN_MILL_TOP_IF_NOT_TYPE.matcher(text.trim());
-        if (!m.find()) return null;
-        String type = m.group("type");
-        return ctx -> {
-            ctx.logEntry("Effect: mill top of deck; if not a " + type + ", cancel the effect choosing your Character(s)");
-            ctx.millTopDeckCancelChosenIfNotType(type);
-        };
-    }
 
     /**
      * Returns {@code true} if {@code text} is one of the reactive "chosen by opponent's Summons or
@@ -14368,21 +8450,6 @@ public class ActionResolver {
             || tryParseCancelChosenMillTopIfNotType(text)     != null;
     }
 
-    /**
-     * Parses "Choose 1 [ability type(s)] [optional 'that has only one target']. You may choose
-     * another target to become the new target (...)."
-     */
-    private static Consumer<GameContext> tryParseRedirectAbilityTarget(String text) {
-        Matcher m = REDIRECT_ABILITY_TARGET.matcher(text.trim());
-        if (!m.find()) return null;
-        String types = m.group("types").trim();
-        java.util.function.Predicate<StackEntry> filter = parseAbilityTypeFilter(types);
-        String prompt = "Choose 1 " + types + " to redirect:";
-        return ctx -> {
-            ctx.logEntry("Effect: Redirect target of " + types + " on stack");
-            ctx.redirectAbilityTarget(filter, prompt);
-        };
-    }
 
     /**
      * Converts an ability-type string captured by {@link #CANCEL_ABILITY_ON_STACK} or
@@ -14396,7 +8463,7 @@ public class ActionResolver {
      *   <li>Two types joined by " or " → union of the two individual predicates</li>
      * </ul>
      */
-    private static java.util.function.Predicate<StackEntry> parseAbilityTypeFilter(String types) {
+    static java.util.function.Predicate<StackEntry> parseAbilityTypeFilter(String types) {
         String t = types.trim().toLowerCase(java.util.Locale.ROOT);
         if (t.equals("ability")) return e -> !e.isSummon() && !e.isExBurstEntry();
         boolean wantsSummon  = t.contains("summon");
@@ -14410,13 +8477,13 @@ public class ActionResolver {
     }
 
     /** "The [targets] you control gain +N power." — companion to CardData's bare-grant pattern. */
-    private static final Pattern FIELD_GRANT_BARE_PASSIVE = Pattern.compile(
+    static final Pattern FIELD_GRANT_BARE_PASSIVE = Pattern.compile(
         "(?i)^The\\s+(?:Forwards?(?:\\s+and\\s+Monsters?)?|Backups?|Monsters?|Characters?)\\s+" +
         "you\\s+control\\s+gains?\\s+\\+\\d+\\s+power[.!]?$"
     );
 
     /** "The [Job (X)] / Job X / Category Y Forwards you control gain +N power." — bracket or plain form. */
-    private static final Pattern FIELD_GRANT_JOB_CAT_PASSIVE = Pattern.compile(
+    static final Pattern FIELD_GRANT_JOB_CAT_PASSIVE = Pattern.compile(
         "(?i)^The\\s+" +
         "(?:\\[Job\\s*\\([^)]+\\)\\]|Job\\s+[A-Za-z][A-Za-z\\s''\\-]+?|" +
         "\\[Category\\s*\\([^)]+\\)\\]|Category\\s+\\S+)\\s+" +
@@ -14425,796 +8492,42 @@ public class ActionResolver {
     );
 
     /** "The [targets] opponent controls lose N power." — companion to CardData's opponent-debuff pattern. */
-    private static final Pattern FIELD_OPPONENT_DEBUFF_PASSIVE = Pattern.compile(
+    static final Pattern FIELD_OPPONENT_DEBUFF_PASSIVE = Pattern.compile(
         "(?i)^The\\s+(?:Forwards?(?:\\s+and\\s+Monsters?)?|Backups?|Monsters?|Characters?)\\s+" +
         "(?:your\\s+)?opponent\\s+controls?\\s+loses?\\s+\\d+\\s+power[.!]?$"
     );
 
     /** "If there are N or more cards in your Break Zone, ..." or "If you have N or more Job X ... in your Break Zone, ..." */
-    private static final Pattern FIELD_GRANT_BZ_COND_PASSIVE = Pattern.compile(
+    static final Pattern FIELD_GRANT_BZ_COND_PASSIVE = Pattern.compile(
         "(?i)^If\\s+(?:there\\s+are|you\\s+have)\\s+\\d+\\s+or\\s+more\\s+.+?\\s+in\\s+your\\s+Break\\s+Zone,"
     );
 
     /** "If there are N or more different Elements among [type] you control, [grant]." */
-    private static final Pattern FIELD_GRANT_DIFF_ELEM_COND_PASSIVE = Pattern.compile(
+    static final Pattern FIELD_GRANT_DIFF_ELEM_COND_PASSIVE = Pattern.compile(
         "(?i)^If\\s+there\\s+are\\s+\\d+\\s+or\\s+more\\s+different\\s+Elements?\\s+among\\s+" +
         "(?:Forwards?|Backups?|Characters?|Monsters?)\\s+you\\s+control[,.]"
     );
 
-    /**
-     * Recognises passive field grants applied by the engine via {@link CardData#fieldPowerGrants()};
-     * returns a no-op lambda so that {@link #parse} does not report these as unrecognised.
-     */
-    private static Consumer<GameContext> tryParseFieldPowerGrantPassive(String text) {
-        String trimmed = text.trim();
-        if (FIELD_GRANT_BARE_PASSIVE.matcher(trimmed).matches()
-                || FIELD_GRANT_JOB_CAT_PASSIVE.matcher(trimmed).matches()
-                || FIELD_OPPONENT_DEBUFF_PASSIVE.matcher(trimmed).matches()
-                || FIELD_GRANT_BZ_COND_PASSIVE.matcher(trimmed).find()
-                || FIELD_GRANT_DIFF_ELEM_COND_PASSIVE.matcher(trimmed).find()) {
-            return ctx -> { /* passive field grant — applied via fieldPowerGrants() */ };
-        }
-        return null;
-    }
 
-    /**
-     * Parses "all Forwards in that party gain/lose +N power until end of turn." — the party-attack
-     * followup that boosts every Forward in the party that just formed and attacked.
-     */
-    private static Consumer<GameContext> tryParsePartyForwardsPowerBoost(String text) {
-        Matcher m = PARTY_FORWARDS_POWER_BOOST_PATTERN.matcher(text);
-        if (!m.find()) return null;
-        boolean isLose = m.group("verb").toLowerCase().startsWith("lose");
-        int amount = Integer.parseInt(m.group("amount")) * (isLose ? -1 : 1);
-        return ctx -> {
-            ctx.logEntry("Effect: All Forwards in that party " + (isLose ? "-" : "+") + Math.abs(amount)
-                    + " power until end of turn");
-            ctx.applyCurrentPartyForwardsPowerBoost(amount);
-        };
-    }
 
-    /**
-     * Parses "All [the] [element] [targets] [of cost N] [control] gain +N power until end of turn."
-     */
-    private static Consumer<GameContext> tryParseAllFieldPowerBoost(String text) {
-        Matcher m = ALL_FIELD_POWER_BOOST_PATTERN.matcher(text);
-        if (!m.find()) return null;
 
-        String element  = m.group("element");
-        String category = m.group("category");
-        String targets  = m.group("targets");
-        String tgtLower = targets.toLowerCase();
-        boolean inclForwards = tgtLower.contains("forward") || tgtLower.contains("character");
-        boolean inclMonsters = tgtLower.contains("monster") || tgtLower.contains("character");
 
-        String costStr = m.group("cost");
-        String costCmp = m.group("costcmp");
-        int    costVal = costStr != null ? Integer.parseInt(costStr) : -1;
 
-        String control       = m.group("control");
-        boolean opponentOnly = control != null && !control.toLowerCase().contains("you control");
-        boolean selfOnly     = control != null && control.toLowerCase().contains("you control");
 
-        boolean isLose = m.group("verb").toLowerCase().startsWith("lose");
-        int amount = Integer.parseInt(m.group("amount")) * (isLose ? -1 : 1);
 
-        String elemLabel    = element != null ? element + " " : "";
-        String catLabel     = category != null ? "Category " + category + " " : "";
-        String costLabel    = costVal >= 0 ? " of cost " + costVal + (costCmp != null ? " or " + costCmp : "") : "";
-        String controlLabel = opponentOnly ? " (opponent)" : selfOnly ? " (yours)" : "";
-        String change       = isLose ? "-" + Math.abs(amount) : "+" + amount;
-        String excludeName = m.group("excludename") != null ? m.group("excludename").trim() : null;
-        String excludeLabel = excludeName != null ? " other than " + excludeName : "";
 
-        String trailingRaw = text.substring(m.end()).trim().replaceAll("^[.!,]+\\s*", "").trim();
-        Consumer<GameContext> secondary = trailingRaw.isEmpty() ? null : parse(trailingRaw, null);
 
-        String logMsg = "All " + elemLabel + catLabel + targets + costLabel + excludeLabel + controlLabel
-                + " " + change + " power until end of turn";
 
-        return ctx -> {
-            ctx.logEntry("Effect: " + logMsg);
-            ctx.applyMassFieldPowerBoost(amount, inclForwards, inclMonsters,
-                    opponentOnly, selfOnly, element, costVal, costCmp, category, excludeName);
-            if (secondary != null) secondary.accept(ctx);
-        };
-    }
 
-    private static Consumer<GameContext> tryParseAllForwardsSameElementAsNamedPowerBoost(String text) {
-        Matcher m = ALL_FORWARDS_SAME_ELEMENT_AS_NAMED_POWER_BOOST.matcher(text);
-        if (!m.find()) return null;
-        String name    = m.group("name").trim();
-        boolean isLose = m.group("verb").toLowerCase().startsWith("lose");
-        int amount     = Integer.parseInt(m.group("amount")) * (isLose ? -1 : 1);
-        String control = m.group("control");
-        boolean opponentOnly = control != null && !control.toLowerCase().contains("you control");
-        boolean selfOnly     = control != null &&  control.toLowerCase().contains("you control");
-        return ctx -> {
-            ctx.logEntry("Effect: All Forwards same element as " + name
-                    + (selfOnly ? " (yours)" : opponentOnly ? " (opponent's)" : "")
-                    + " " + (isLose ? "-" : "+") + Math.abs(amount) + " power until end of turn");
-            ctx.allForwardsSameElementAsNamedGainPowerUntilEOT(name, amount, opponentOnly, selfOnly);
-        };
-    }
 
-    /**
-     * Parses "All Job X and Card Name Y [you control | opponent controls] gain +N power
-     * until end of turn." — matches cards that have Job X OR are Card Name Y.
-     */
-    private static Consumer<GameContext> tryParseAllFieldJobCardNamePowerBoost(String text) {
-        Matcher m = ALL_FIELD_JOB_CARDNAME_POWER_BOOST_PATTERN.matcher(text);
-        if (!m.find()) return null;
 
-        String job      = m.group("job").trim();
-        String cardName = m.group("cardname").trim();
-        String control  = m.group("control");
-        boolean opponentOnly = control != null && !control.toLowerCase().contains("you control");
-        boolean selfOnly     = control != null &&  control.toLowerCase().contains("you control");
 
-        boolean isLose = m.group("verb").toLowerCase().startsWith("lose");
-        int amount = Integer.parseInt(m.group("amount")) * (isLose ? -1 : 1);
-        String change = isLose ? "-" + Math.abs(amount) : "+" + amount;
-        String controlLabel = opponentOnly ? " (opponent)" : selfOnly ? " (yours)" : "";
-        String logMsg = "All Job " + job + " and Card Name " + cardName + controlLabel
-                + " " + change + " power until end of turn";
 
-        String trailingRaw = text.substring(m.end()).trim().replaceAll("^[.!,]+\\s*", "").trim();
-        Consumer<GameContext> secondary = trailingRaw.isEmpty() ? null : parse(trailingRaw, null);
 
-        return ctx -> {
-            ctx.logEntry("Effect: " + logMsg);
-            ctx.applyMassFieldJobCardNamePowerBoost(amount, true, true,
-                    opponentOnly, selfOnly, job, cardName);
-            if (secondary != null) secondary.accept(ctx);
-        };
-    }
 
-    /**
-     * Parses "[The] Card Name X [Forward] and Card Name Y [Forward] [you control] gain +N power
-     * until end of turn." — boosts both named cards (OR logic via pipe-separated filter).
-     */
-    private static Consumer<GameContext> tryParseTwoCardNamesPowerBoost(String text) {
-        Matcher m = TWO_CARD_NAMES_POWER_BOOST_PATTERN.matcher(text.trim());
-        if (!m.find()) return null;
 
-        String name1   = m.group("name1").trim();
-        String name2   = m.group("name2").trim();
-        String cardNameFilter = name1 + "|" + name2;
-        String control = m.group("control");
-        boolean opponentOnly = control != null && !control.toLowerCase().contains("you control");
-        boolean selfOnly     = control != null &&  control.toLowerCase().contains("you control");
-        boolean isLose = m.group("verb").toLowerCase().startsWith("lose");
-        int amount = Integer.parseInt(m.group("amount")) * (isLose ? -1 : 1);
-        String change = isLose ? "-" + Math.abs(amount) : "+" + amount;
-        String controlLabel = opponentOnly ? " (opponent)" : selfOnly ? " (yours)" : "";
-        String logMsg = "Card Name " + name1 + " and Card Name " + name2 + controlLabel
-                + " " + change + " power until end of turn";
 
-        return ctx -> {
-            ctx.logEntry("Effect: " + logMsg);
-            ctx.applyMassFieldJobCardNamePowerBoost(amount, true, true,
-                    opponentOnly, selfOnly, null, cardNameFilter);
-        };
-    }
 
-    /**
-     * Parses "All [the] Job X Forwards [you control] gain +N power until end of turn."
-     */
-    private static Consumer<GameContext> tryParseAllFieldJobPowerBoost(String text) {
-        Matcher m = ALL_FIELD_JOB_POWER_BOOST_PATTERN.matcher(text);
-        if (!m.find()) return null;
-
-        String job      = m.group("job").trim();
-        String targets  = m.group("targets");
-        String tgtLower = targets.toLowerCase();
-        boolean inclForwards = tgtLower.contains("forward") || tgtLower.contains("character");
-        boolean inclMonsters = tgtLower.contains("monster") || tgtLower.contains("character");
-
-        String control       = m.group("control");
-        boolean opponentOnly = control != null && !control.toLowerCase().contains("you control");
-        boolean selfOnly     = control != null &&  control.toLowerCase().contains("you control");
-
-        boolean isLose = m.group("verb").toLowerCase().startsWith("lose");
-        int amount = Integer.parseInt(m.group("amount")) * (isLose ? -1 : 1);
-
-        String controlLabel = opponentOnly ? " (opponent)" : selfOnly ? " (yours)" : "";
-        String change       = isLose ? "-" + Math.abs(amount) : "+" + amount;
-        String logMsg       = "All Job " + job + " " + targets + controlLabel + " " + change + " power until end of turn";
-
-        String trailingRaw = text.substring(m.end()).trim().replaceAll("^[.!,]+\\s*", "").trim();
-        Consumer<GameContext> secondary = trailingRaw.isEmpty() ? null : parse(trailingRaw, null);
-
-        return ctx -> {
-            ctx.logEntry("Effect: " + logMsg);
-            ctx.applyMassFieldJobCardNamePowerBoost(amount, inclForwards, inclMonsters,
-                    opponentOnly, selfOnly, job, null);
-            if (secondary != null) secondary.accept(ctx);
-        };
-    }
-
-    /**
-     * Parses "All [the] Job X [targets] [you control] gain Keyword[, ...] until end of turn."
-     */
-    private static Consumer<GameContext> tryParseAllFieldJobKeywordGrant(String text) {
-        Matcher m = ALL_FIELD_JOB_KEYWORD_GRANT_PATTERN.matcher(text);
-        if (!m.find()) return null;
-
-        String job      = m.group("job").trim();
-        String targets  = m.group("targets");
-        boolean inclForwards = targets == null || targets.toLowerCase().contains("forward")
-                            || targets.toLowerCase().contains("character");
-        boolean inclMonsters = targets == null || targets.toLowerCase().contains("monster")
-                            || targets.toLowerCase().contains("character");
-
-        String control       = m.group("control");
-        boolean opponentOnly = control != null && !control.toLowerCase().contains("you control");
-        boolean selfOnly     = control != null &&  control.toLowerCase().contains("you control");
-
-        EnumSet<CardData.Trait> traits = parseTraits(m.group("keywords"));
-        if (traits.isEmpty()) return null;
-
-        String traitNames = traitNamesOnly(traits);
-        String typeLabel  = targets != null ? " " + targets : "";
-        String controlLabel = opponentOnly ? " (opponent)" : selfOnly ? " (yours)" : "";
-        String logMsg = "All Job " + job + typeLabel + controlLabel + " gain " + traitNames + " until end of turn";
-
-        return ctx -> {
-            ctx.logEntry("Effect: " + logMsg);
-            ctx.applyMassFieldJobKeywordGrant(traits, inclForwards, inclMonsters,
-                    opponentOnly, selfOnly, job);
-        };
-    }
-
-    /**
-     * Parses "All [the] [element] [targets] [of cost N or less/more] [you control] gain
-     * Keyword[, Keyword2, ...] until end of turn."
-     */
-    private static Consumer<GameContext> tryParseAllFieldKeywordGrant(String text) {
-        Matcher m = ALL_FIELD_KEYWORD_GRANT_PATTERN.matcher(text);
-        if (!m.find()) return null;
-
-        String element  = m.group("element");
-        String category = m.group("category");
-        String targets  = m.group("targets");
-        String tgtLower = targets.toLowerCase();
-        boolean inclForwards = tgtLower.contains("forward") || tgtLower.contains("character");
-        boolean inclMonsters = tgtLower.contains("monster") || tgtLower.contains("character");
-
-        String costStr = m.group("cost");
-        String costCmp = m.group("costcmp");
-        int    costVal = costStr != null ? Integer.parseInt(costStr) : -1;
-
-        String control       = m.group("control");
-        boolean opponentOnly = control != null && !control.toLowerCase().contains("you control");
-        boolean selfOnly     = control != null && control.toLowerCase().contains("you control");
-
-        EnumSet<CardData.Trait> traits = parseTraits(m.group("keywords"));
-        if (traits.isEmpty()) return null;
-
-        String elemLabel    = element != null ? element + " " : "";
-        String catLabel     = category != null ? "Category " + category + " " : "";
-        String costLabel    = costVal >= 0 ? " of cost " + costVal + (costCmp != null ? " or " + costCmp : "") : "";
-        String controlLabel = opponentOnly ? " (opponent)" : selfOnly ? " (yours)" : "";
-        String traitNames   = traitNamesOnly(traits);
-        String logMsg = "All " + elemLabel + catLabel + targets + costLabel + controlLabel + " gain " + traitNames + " until end of turn";
-
-        return ctx -> {
-            ctx.logEntry("Effect: " + logMsg);
-            ctx.applyMassFieldKeywordGrant(traits, inclForwards, inclMonsters,
-                    opponentOnly, selfOnly, element, costVal, costCmp, category);
-        };
-    }
-
-    /**
-     * Parses "Until end of turn, all [the] [element] [Category X] [targets] [you control]
-     * gain +N power [and Keywords]."
-     * Must be tried AFTER {@link #tryParseUntilEotDualPowerShift} to avoid partial matches.
-     */
-    private static Consumer<GameContext> tryParseUntilEotAllFieldPowerBoost(String text) {
-        if (UNTIL_EOT_DUAL_POWER_SHIFT_PATTERN.matcher(text).find()) return null;
-
-        Matcher m = UNTIL_EOT_ALL_FIELD_POWER_BOOST_PATTERN.matcher(text);
-        if (!m.find()) return null;
-
-        String element  = m.group("element");
-        String category = m.group("category");
-        String targets  = m.group("targets");
-        String tgtLower = targets.toLowerCase();
-        boolean inclForwards = tgtLower.contains("forward") || tgtLower.contains("character");
-        boolean inclMonsters = tgtLower.contains("monster") || tgtLower.contains("character");
-
-        String costStr = m.group("cost");
-        String costCmp = m.group("costcmp");
-        int    costVal = costStr != null ? Integer.parseInt(costStr) : -1;
-
-        String control       = m.group("control");
-        boolean opponentOnly = control != null && !control.toLowerCase().contains("you control");
-        boolean selfOnly     = control != null && control.toLowerCase().contains("you control");
-
-        String verb = m.group("verb");
-        boolean isLoss = verb != null && verb.toLowerCase().startsWith("lose");
-        int amount = Integer.parseInt(m.group("amount"));
-        int signedAmount = isLoss ? -amount : amount;
-
-        String keywordsStr = m.group("keywords");
-        EnumSet<CardData.Trait> traits = keywordsStr != null
-                ? parseTraits(keywordsStr) : EnumSet.noneOf(CardData.Trait.class);
-
-        String elemLabel    = element != null ? element + " " : "";
-        String catLabel     = category != null ? "Category " + category + " " : "";
-        String costLabel    = costVal >= 0 ? " of cost " + costVal + (costCmp != null ? " or " + costCmp : "") : "";
-        String controlLabel = opponentOnly ? " (opponent)" : selfOnly ? " (yours)" : "";
-        String traitStr     = traits.isEmpty() ? "" : " and " + traitNamesOnly(traits);
-        String sign         = isLoss ? "-" : "+";
-        String logMsg = "Until EOT all " + elemLabel + catLabel + targets + costLabel
-                + controlLabel + " " + sign + amount + " power" + traitStr;
-
-        return ctx -> {
-            ctx.logEntry("Effect: " + logMsg);
-            ctx.applyMassFieldPowerBoost(signedAmount, inclForwards, inclMonsters,
-                    opponentOnly, selfOnly, element, costVal, costCmp, category, null);
-            if (!traits.isEmpty())
-                ctx.applyMassFieldKeywordGrant(traits, inclForwards, inclMonsters,
-                        opponentOnly, selfOnly, element, costVal, costCmp, category);
-        };
-    }
-
-    /**
-     * Parses "Until end of turn, all [the] [targets] [you control] gain +N power
-     * and all [the] [targets] [opponent controls] lose N power."
-     */
-    private static Consumer<GameContext> tryParseUntilEotDualPowerShift(String text) {
-        Matcher m = UNTIL_EOT_DUAL_POWER_SHIFT_PATTERN.matcher(text);
-        if (!m.find()) return null;
-
-        String targets1  = m.group("targets1");
-        String tgt1Lower = targets1.toLowerCase();
-        boolean inclFwd1 = tgt1Lower.contains("forward") || tgt1Lower.contains("character");
-        boolean inclMon1 = tgt1Lower.contains("monster") || tgt1Lower.contains("character");
-
-        String control1  = m.group("control1");
-        boolean opp1     = control1 != null && !control1.toLowerCase().contains("you control");
-        boolean self1    = control1 != null && control1.toLowerCase().contains("you control");
-        int amount1      = Integer.parseInt(m.group("amount1"));
-
-        String targets2  = m.group("targets2");
-        String tgt2Lower = targets2.toLowerCase();
-        boolean inclFwd2 = tgt2Lower.contains("forward") || tgt2Lower.contains("character");
-        boolean inclMon2 = tgt2Lower.contains("monster") || tgt2Lower.contains("character");
-
-        String control2  = m.group("control2");
-        boolean opp2     = control2 != null && !control2.toLowerCase().contains("you control");
-        boolean self2    = control2 != null && control2.toLowerCase().contains("you control");
-        int amount2      = Integer.parseInt(m.group("amount2"));
-
-        String ctrl1Label = opp1 ? " (opponent)" : self1 ? " (yours)" : "";
-        String ctrl2Label = opp2 ? " (opponent)" : self2 ? " (yours)" : "";
-        String logMsg = "Until EOT all " + targets1 + ctrl1Label + " +" + amount1
-                + " power, all " + targets2 + ctrl2Label + " -" + amount2 + " power";
-
-        return ctx -> {
-            ctx.logEntry("Effect: " + logMsg);
-            ctx.applyMassFieldPowerBoost( amount1, inclFwd1, inclMon1, opp1, self1, null, -1, null, null, null);
-            ctx.applyMassFieldPowerBoost(-amount2, inclFwd2, inclMon2, opp2, self2, null, -1, null, null, null);
-        };
-    }
-
-    /**
-     * Parses "Select 1 number." abilities where the selected number is used as a cost filter
-     * for a follow-on mass-field effect, damage sweep, or attack restriction.
-     *
-     * <p>Supported inner effects (appearing after "Select 1 number."):
-     * <ul>
-     *   <li>Any mass field action (Break/Dull/Freeze/Dull and Freeze) "of that cost" or
-     *       "of the same cost as the selected number" — delegates to
-     *       {@link GameContext#applyMassFieldEffect} with the chosen number as {@code costVal}.</li>
-     *   <li>"All Forwards of that cost cannot attack this turn."</li>
-     *   <li>"Deal N damage to all the Forwards of the same cost as the selected number [opponent controls]."</li>
-     * </ul>
-     * <p>Dual-selection variant: when "Your opponent selects 1 number." follows immediately,
-     * both P1's and P2's numbers are obtained and the inner "Break all Forwards of cost equal
-     * to either number." is applied for each.
-     */
-    private static Consumer<GameContext> tryParseSelectNumber(String text, CardData source) {
-        Matcher hm = SELECT_NUMBER_HEADER.matcher(text);
-        if (!hm.find()) return null;
-
-        String rest = text.substring(hm.end()).trim();
-
-        // Dual-selection variant: "Your opponent selects 1 number."
-        Matcher om = SELECT_NUMBER_OPPONENT_ALSO.matcher(rest);
-        boolean dualSelect = om.find();
-        if (dualSelect) rest = rest.substring(om.end()).trim();
-
-        final String innerText = rest;
-
-        // --- Dual variant: "Break all Forwards of cost equal to either number." ---
-        // P1 selects via dialog; the opponent AI picks the cost most common among P1's forwards.
-        if (dualSelect && SELECT_NUMBER_INNER_EITHER_BREAK.matcher(innerText).find()) {
-            return ctx -> {
-                int n1 = ctx.selectNumber(0, 11, "Select a number:");
-                ctx.logEntry("Effect: Player selects number " + n1);
-                int n2 = aiMostCommonP1ForwardCost(ctx);
-                ctx.logEntry("Effect: Opponent selects number " + n2 + " (AI)");
-                ctx.logEntry("Effect: Break all Forwards of cost " + n1
-                        + (n1 != n2 ? " or " + n2 : ""));
-                ctx.applyMassFieldEffect(GameContext.MassAction.BREAK,
-                        true, false, false, false, false, null, n1, null, -1, null, null);
-                if (n1 != n2)
-                    ctx.applyMassFieldEffect(GameContext.MassAction.BREAK,
-                            true, false, false, false, false, null, n2, null, -1, null, null);
-            };
-        }
-
-        // --- "All Forwards of that cost cannot attack this turn." ---
-        if (SELECT_NUMBER_INNER_CANNOT_ATTACK.matcher(innerText).find()) {
-            return ctx -> {
-                int n = ctx.selectNumber(0, 11, "Select a number:");
-                ctx.logEntry("Effect: Select number " + n
-                        + " — all Forwards of cost " + n + " cannot attack this turn");
-                for (int i = 0; i < ctx.p1ForwardCount(); i++)
-                    if (ctx.p1Forward(i).cost() == n) ctx.setP1ForwardCannotAttack(i);
-                for (int i = 0; i < ctx.p2ForwardCount(); i++)
-                    if (ctx.p2Forward(i).cost() == n) ctx.setP2ForwardCannotAttack(i);
-            };
-        }
-
-        // --- General case: substitute the selected number into the inner text and re-parse. ---
-        // Supported placeholders:
-        //   "of that cost"                         → "of cost N"
-        //   "the same cost as the selected number" → "cost N"  (e.g. inside DEAL_DAMAGE_TO_FORWARDS)
-        String probeText = innerText
-                .replaceAll("(?i)of\\s+that\\s+cost\\b", "of cost 3")
-                .replaceAll("(?i)the\\s+same\\s+cost\\s+as\\s+the\\s+selected\\s+number", "cost 3");
-        if (parse(probeText, source) == null) return null;  // inner effect not yet supported
-
-        return ctx -> {
-            int n = ctx.selectNumber(0, 11, "Select a number:");
-            ctx.logEntry("Effect: Select number " + n);
-            String resolved = innerText
-                    .replaceAll("(?i)of\\s+that\\s+cost\\b", "of cost " + n)
-                    .replaceAll("(?i)the\\s+same\\s+cost\\s+as\\s+the\\s+selected\\s+number",
-                            "cost " + n);
-            Consumer<GameContext> effect = parse(resolved, source);
-            if (effect != null) {
-                effect.accept(ctx);
-            } else {
-                ctx.logEntry("[ActionResolver] SelectNumber: inner effect not parseable: " + resolved);
-            }
-        };
-    }
-
-    private static Consumer<GameContext> tryParseRandomRevealHandCastIfSummonFree(String text) {
-        if (!RANDOM_REVEAL_HAND_CAST_IF_SUMMON_FREE.matcher(text.trim()).find()) return null;
-        return ctx -> {
-            ctx.logEntry("Effect: Randomly reveal 1 card from hand — cast it for free if it is a Summon");
-            ctx.randomRevealHandCastIfSummonFree();
-        };
-    }
-
-    private static Consumer<GameContext> tryParseCastSummonFromHandDiscounted(String text) {
-        Matcher m = CAST_SUMMON_FROM_HAND_DISCOUNTED.matcher(text.trim());
-        if (!m.find()) return null;
-        final int amount = Integer.parseInt(m.group("amount"));
-        return ctx -> {
-            ctx.logEntry("Effect: Cast a Summon from hand (cost reduced by " + amount + ", floor 1)");
-            ctx.castSummonFromHandDiscounted(amount);
-        };
-    }
-
-    private static Consumer<GameContext> tryParseCastSummonFromHandFree(String text, int xValue) {
-        Matcher m = CAST_SUMMON_FROM_HAND_FREE.matcher(text.trim());
-        if (!m.find()) return null;
-        String costStr = m.group("cost");
-        boolean returnToHand = m.group("returnToHand") != null;
-        final int maxCost;
-        if (costStr == null) {
-            maxCost = -1;
-        } else if (costStr.equalsIgnoreCase("X")) {
-            maxCost = xValue;
-        } else {
-            maxCost = Integer.parseInt(costStr);
-        }
-        String excludeRaw = m.group("excludeelems");
-        String excludeElements = excludeRaw != null
-                ? excludeRaw.trim().replaceAll("(?i)\\s+or\\s+", "|") : null;
-        return ctx -> {
-            String costDesc = maxCost < 0 ? "any cost" : "cost " + maxCost + " or less";
-            ctx.logEntry("Effect: Cast 1 Summon (" + costDesc + ") from hand for free"
-                    + (excludeElements != null ? " (not " + excludeElements + ")" : "")
-                    + (returnToHand ? " (return to hand after use)" : ""));
-            ctx.castSummonFromHandFree(maxCost, returnToHand, excludeElements);
-        };
-    }
-
-    private static Consumer<GameContext> tryParseSearchAndCastSummonFree(String text) {
-        Matcher m = SEARCH_AND_CAST_SUMMON_FREE_PATTERN.matcher(text.trim());
-        if (!m.find()) return null;
-        String element = m.group("element");
-        String costStr = m.group("cost");
-        int maxCost = costStr != null ? Integer.parseInt(costStr) : -1;
-        return ctx -> {
-            ctx.logEntry("Effect: Search deck for " + element + " Summon"
-                    + (maxCost >= 0 ? " (cost " + maxCost + " or less)" : "") + ", cast for free or Break Zone");
-            ctx.searchAndCastSummonFreeFromDeck(maxCost, element);
-        };
-    }
-
-    /**
-     * Parses "play any number of Job X from your hand onto the field".
-     */
-    private static Consumer<GameContext> tryParsePlayAnyNumberFromHand(String text, CardData source) {
-        Matcher m = PLAY_ANY_NUMBER_FROM_HAND_PATTERN.matcher(text.trim());
-        if (!m.find()) return null;
-
-        String jobFilter = m.group("jobnm") != null ? m.group("jobnm").trim() : null;
-        String targets   = m.group("targets");
-        boolean anyType  = targets == null;
-        String tgtLower  = anyType ? "" : targets.toLowerCase();
-        boolean inclForwards = anyType || tgtLower.contains("forward") || tgtLower.contains("character");
-        boolean inclBackups  = anyType || tgtLower.contains("backup")  || tgtLower.contains("character");
-        boolean inclMonsters = anyType || tgtLower.contains("monster") || tgtLower.contains("character");
-
-        final String fJob = jobFilter;
-        return ctx -> {
-            ctx.logEntry("Effect: Play any number of" + (fJob != null ? " Job " + fJob : "") + " from hand → field");
-            ctx.playAnyNumberFromHand(inclForwards, inclBackups, inclMonsters, fJob, null, null, null);
-        };
-    }
-
-    /**
-     * Parses "Play 1 [type] of cost N [or less|more] from your hand onto the field".
-     */
-    private static Consumer<GameContext> tryParsePlayFromHand(String text, CardData source, int xValue) {
-        Matcher m = PLAY_FROM_HAND_PATTERN.matcher(text);
-        if (!m.find()) return null;
-
-        // --- Resolve filter groups ---
-        String jobFilter      = null;
-        String cardNameFilter = null;
-        String categoryFilter = m.group("category") != null ? m.group("category").trim() : null;
-
-        String writtenCardName = m.group("cardname");
-        String writtenJob      = m.group("jobnm");
-        String writtenJobOnly  = m.group("jobnmonly");
-        String writtenJobOr    = m.group("jobnmor");
-        String writtenCnameOr  = m.group("cnameor");
-        if (writtenCardName != null) {
-            cardNameFilter = writtenCardName.trim();
-        } else if (writtenJobOr != null) {
-            jobFilter      = writtenJobOr.trim();
-            cardNameFilter = writtenCnameOr != null ? writtenCnameOr.trim() : null;
-        } else if (writtenJob != null) {
-            jobFilter = writtenJob.trim();
-        } else if (writtenJobOnly != null) {
-            jobFilter = writtenJobOnly.trim();
-        } else {
-            String f1 = m.group("f1");
-            String f2 = m.group("f2");
-            if (f1 != null) {
-                Matcher jm = JOB_BRACKET_PATTERN.matcher(f1);
-                Matcher nm = CARD_NAME_BRACKET_PATTERN.matcher(f1);
-                if      (jm.find()) jobFilter      = jm.group(1).trim();
-                else if (nm.find()) cardNameFilter = nm.group(1).trim();
-            }
-            if (f2 != null) {
-                Matcher jm = JOB_BRACKET_PATTERN.matcher(f2);
-                Matcher nm = CARD_NAME_BRACKET_PATTERN.matcher(f2);
-                if (jm.find()) {
-                    String j2 = jm.group(1).trim();
-                    jobFilter = jobFilter != null ? jobFilter + "|" + j2 : j2;
-                } else if (nm.find()) {
-                    cardNameFilter = nm.group(1).trim();
-                }
-            }
-        }
-
-        // --- Resolve type ---
-        String  targets      = m.group("targets");
-        boolean hasFilter    = jobFilter != null || cardNameFilter != null || categoryFilter != null;
-        if (targets == null && !hasFilter) return null;
-        String  tgtLower     = targets != null ? targets.toLowerCase() : "";
-        boolean inclForwards = tgtLower.isEmpty() || tgtLower.contains("forward") || tgtLower.contains("character");
-        boolean inclBackups  = tgtLower.isEmpty() || tgtLower.contains("backup")  || tgtLower.contains("character");
-        boolean inclMonsters = tgtLower.isEmpty() || tgtLower.contains("monster") || tgtLower.contains("character");
-
-        // --- Resolve cost ---
-        String dynFilterRaw = m.group("dynfilter");
-        boolean isDynamic   = dynFilterRaw != null;
-        String dynJob = null, dynName = null;
-        if (isDynamic) {
-            Matcher djm = java.util.regex.Pattern.compile(
-                "(?i)Job\\s+(.+?)(?:\\s+and/or\\s+|$)").matcher(dynFilterRaw);
-            Matcher dnm = java.util.regex.Pattern.compile(
-                "(?i)Card\\s+Name\\s+(\\S+(?:\\s+\\([^)]+\\))?)").matcher(dynFilterRaw);
-            if (djm.find()) dynJob  = djm.group(1).trim();
-            if (dnm.find()) dynName = dnm.group(1).trim();
-        }
-
-        String costStr  = m.group("cost");
-        String costAlt  = m.group("costalt");
-        int    costVal  = -1;
-        String costCmp  = null;
-        int    costVal2 = -1;
-        if (!isDynamic && costStr != null) {
-            costVal = costStr.equalsIgnoreCase("X") ? xValue : Integer.parseInt(costStr);
-            if (costAlt != null) {
-                if (costAlt.equalsIgnoreCase("less") || costAlt.equalsIgnoreCase("more"))
-                    costCmp = costAlt.toLowerCase();
-                else
-                    costVal2 = Integer.parseInt(costAlt);  // "cost 3 or 4"
-            }
-        }
-
-        String  excludeName = m.group("excludename") != null ? m.group("excludename").trim() : null;
-        boolean entersDull  = m.group("dull") != null;
-
-        // --- Element filter ---
-        String elemsRaw     = m.group("preelems");
-        String elementFilter = elemsRaw != null
-                ? elemsRaw.trim().replaceAll("(?i)\\s+or\\s+", "|") : null;
-
-        // Build log label
-        StringBuilder filterDesc = new StringBuilder();
-        if (elementFilter  != null) filterDesc.append(" [").append(elemsRaw).append("]");
-        if (jobFilter      != null) filterDesc.append(" [Job ").append(jobFilter).append("]");
-        if (cardNameFilter != null) filterDesc.append(" [Name ").append(cardNameFilter).append("]");
-        if (categoryFilter != null) filterDesc.append(" [Cat ").append(categoryFilter).append("]");
-        String tgtLabel  = targets != null ? " " + targets : "";
-        String costLabel = isDynamic ? " of cost ≤count[" + dynFilterRaw + "]"
-                         : costVal2 >= 0 ? " of cost " + costVal + " or " + costVal2
-                         : costVal >= 0  ? " of cost " + costVal + (costCmp != null ? " or " + costCmp : "") : "";
-        String exclLabel = excludeName != null ? " excl." + excludeName : "";
-        String dullLabel = entersDull ? " dull" : "";
-
-        final String fJob = jobFilter, fName = cardNameFilter, fCat = categoryFilter;
-        final String fElem = elementFilter;
-        final String fExclude = excludeName, fDynJob = dynJob, fDynName = dynName;
-        final int fCostVal = costVal, fCostVal2 = costVal2;
-        final String fCostCmp = costCmp;
-        final boolean fEntersDull = entersDull;
-        String rawExcludeElem = m.group("excludeelem");
-        final String fExcludeElem = rawExcludeElem != null ? rawExcludeElem.trim() : null;
-        final boolean fSuppressAuto = ITS_AUTO_ABILITY_WILL_NOT_TRIGGER.matcher(text).find();
-        final String fWithTrait = m.group("trait");
-
-        return ctx -> {
-            int resolvedCost = fCostVal;
-            String resolvedCmp = fCostCmp;
-            if (isDynamic) {
-                int n;
-                if (fDynJob != null && fDynName != null) {
-                    n = ctx.countSelfFieldCards(true, true, true, fDynJob, null)
-                      + ctx.countSelfFieldCards(true, true, true, null, fDynName)
-                      - ctx.countSelfFieldCards(true, true, true, fDynJob, fDynName);
-                } else {
-                    n = ctx.countSelfFieldCards(true, true, true, fDynJob, fDynName);
-                }
-                resolvedCost = n;
-                resolvedCmp  = "less";
-            }
-            ctx.logEntry("Effect: Play 1" + filterDesc + tgtLabel + costLabel + exclLabel + dullLabel + " from hand"
-                    + (fSuppressAuto ? " (no ETF auto-ability)" : ""));
-            ctx.playCharacterFromHand(inclForwards, inclBackups, inclMonsters,
-                    resolvedCost, resolvedCmp, fCostVal2,
-                    fJob, fName, fCat, fElem, fExclude, fEntersDull, fExcludeElem, fSuppressAuto, fWithTrait);
-        };
-    }
-
-    /**
-     * Parses "Your opponent selects N [condition] [type] [of cost C or less/more] they control
-     * [sep] followup". Supported followups: "Put it into the Break Zone" and "dull/dulls it".
-     */
-    private static Consumer<GameContext> tryParseOpponentSelects(String text) {
-        Matcher m = OPPONENT_SELECTS_PATTERN.matcher(text);
-        if (!m.find()) return null;
-
-        int     count     = Integer.parseInt(m.group("count"));
-        String  condition = m.group("condition");
-        String  element   = m.group("element");
-        String  targets   = m.group("targets");
-        String  tgtLower  = targets.toLowerCase();
-        boolean inclForwards = tgtLower.contains("forward") || tgtLower.contains("character");
-        boolean inclBackups  = tgtLower.contains("backup")  || tgtLower.contains("character");
-        boolean inclMonsters = tgtLower.contains("monster") || tgtLower.contains("character");
-        String  followup  = m.group("followup").trim();
-        int     costVal   = m.group("cost") != null ? Integer.parseInt(m.group("cost")) : -1;
-        String  costCmp   = m.group("costcmp") != null ? m.group("costcmp").toLowerCase() : null;
-
-        String prefix = "Opponent selects " + count
-                + (condition != null ? " " + condition : "")
-                + (element   != null ? " " + element   : "")
-                + " " + targets
-                + (costVal >= 0 ? " of cost " + costVal + " or " + costCmp : "")
-                + " (opponent)";
-
-        if (FOLLOWUP_PUT_TO_BREAK_ZONE.matcher(followup).find()) {
-            return ctx -> {
-                ctx.logEntry(prefix + " — Force to Break Zone");
-                List<ForwardTarget> ts = ctx.selectCharacters(count, false, true, false,
-                        condition, element, costVal, costCmp, -1, null,
-                        inclForwards, inclBackups, inclMonsters, null, null, null, null, false, null, false);
-                sortedByIdxDesc(ts, false).forEach(ctx::forceTargetToBreakZone);
-            };
-        }
-
-        if (FOLLOWUP_DULL.matcher(followup).find()) {
-            return ctx -> {
-                ctx.logEntry(prefix + " — Dull");
-                List<ForwardTarget> ts = ctx.selectCharacters(count, false, true, false,
-                        condition, element, costVal, costCmp, -1, null,
-                        inclForwards, inclBackups, inclMonsters, null, null, null, null, false, null, false);
-                sortedByIdxDesc(ts, false).forEach(ctx::dullTarget);
-            };
-        }
-
-        if (FOLLOWUP_RETURN_TO_OWNERS_HAND.matcher(followup).find()) {
-            return ctx -> {
-                ctx.logEntry(prefix + " — Return to owner's hand");
-                List<ForwardTarget> ts = ctx.selectCharacters(count, false, true, false,
-                        condition, element, costVal, costCmp, -1, null,
-                        inclForwards, inclBackups, inclMonsters, null, null, null, null, false, null, false);
-                sortedByIdxDesc(ts, false).forEach(t -> {
-                    switch (t.zone()) {
-                        case FORWARD -> { if (t.isP1()) ctx.returnP1ForwardToHand(t.idx());
-                                          else          ctx.returnP2ForwardToHand(t.idx()); }
-                        case BACKUP  -> { if (t.isP1()) ctx.returnP1BackupToHand(t.idx());
-                                          else          ctx.returnP2BackupToHand(t.idx()); }
-                        case MONSTER -> { if (t.isP1()) ctx.returnP1MonsterToHand(t.idx());
-                                          else          ctx.returnP2MonsterToHand(t.idx()); }
-                    }
-                });
-            };
-        }
-
-        return ctx -> ctx.logEntry(
-                "[ActionResolver] Opponent selects — followup not yet implemented: " + followup);
-    }
-
-    /**
-     * Parses the EX Burst compound effect:
-     * "Choose up to 1 Forward from your Break Zone of cost ≤ damage dealt → hand;
-     *  opponent selects 1 Forward of cost ≤ damage dealt → Break Zone."
-     */
-    private static Consumer<GameContext> tryParseBzFwdToHandOppFwdToBzByDamage(String text) {
-        if (!BZ_FWD_TO_HAND_OPP_FWD_TO_BZ_BY_DAMAGE.matcher(text).find()) return null;
-        return ctx -> {
-            int dmg = ctx.selfDamageCount();
-            ctx.logEntry("Effect: own BZ Forward cost ≤ " + dmg + " → hand; opponent Forward cost ≤ " + dmg + " → BZ");
-            List<ForwardTarget> bzTs = ctx.selectCharactersFromBreakZone(
-                    1, true, false, false, null, null, dmg, "less", -1, null,
-                    true, false, false, null, null, null, null, false, null, false);
-            sortedByIdxDesc(bzTs, true).forEach(ctx::addTargetToHand);
-            List<ForwardTarget> oppTs = ctx.selectCharacters(
-                    1, false, true, false, null, null, dmg, "less", -1, null,
-                    true, false, false, null, null, null, null, false, null, false);
-            sortedByIdxDesc(oppTs, false).forEach(ctx::forceTargetToBreakZone);
-        };
-    }
-
-    private static Consumer<GameContext> tryParseOpponentPutsForwardToBreakZone(String text) {
-        Matcher m = OPPONENT_PUTS_FORWARD_TO_BREAK_ZONE_PATTERN.matcher(text);
-        if (!m.find()) return null;
-
-        int     count     = Integer.parseInt(m.group("count"));
-        String  condition = m.group("condition");
-        String  targets   = m.group("targets");
-        String  tgtLower  = targets.toLowerCase();
-        boolean inclForwards = tgtLower.contains("forward") || tgtLower.contains("character");
-        boolean inclMonsters = tgtLower.contains("character");
-
-        String condLabel = condition != null ? " " + condition : "";
-        String logLabel  = "Opponent puts " + count + condLabel + " " + targets
-                         + " they control → Break Zone";
-
-        return ctx -> {
-            ctx.logEntry("Effect: " + logLabel);
-            List<ForwardTarget> ts = ctx.selectCharacters(count, false, true, false,
-                    condition, null, -1, null, -1, null,
-                    inclForwards, false, inclMonsters, null, null, null, null, false, null, false);
-            sortedByIdxDesc(ts, false).forEach(ctx::forceTargetToBreakZone);
-        };
-    }
 
     /**
      * Parses "Your opponent puts the top N card(s) of his/her deck into the Break Zone
@@ -15238,18 +8551,6 @@ public class ActionResolver {
         };
     }
 
-    private static Consumer<GameContext> tryParseOpponentMillIfSameElementDraw(String text) {
-        Matcher m = OPPONENT_MILL_IF_SAME_ELEMENT_DRAW.matcher(text);
-        if (!m.find()) return null;
-        String countStr = m.group("count");
-        if (countStr == null) countStr = m.group("count2");
-        int mill = countStr != null ? Integer.parseInt(countStr) : 2;
-        int draw = Integer.parseInt(m.group("draw"));
-        return ctx -> {
-            ctx.logEntry("Effect: Opponent mills " + mill + " — draw " + draw + " if all same element");
-            ctx.opponentMillIfSameElementDraw(mill, draw);
-        };
-    }
 
     /** Parses "Put the top N card(s) of your deck into the Break Zone." */
     private static Consumer<GameContext> tryParseSelfMill(String text) {
@@ -15265,72 +8566,20 @@ public class ActionResolver {
         };
     }
 
-    /** Parses "Your opponent shows/reveals his/her hand". */
-    private static Consumer<GameContext> tryParseOpponentRevealHand(String text) {
-        Matcher m = OPPONENT_REVEAL_HAND_PATTERN.matcher(text);
-        if (!m.find()) return null;
-        return ctx -> {
-            ctx.logEntry("Effect: Opponent reveals hand");
-            ctx.revealOpponentHand();
-        };
-    }
 
-    /**
-     * Parses one or more "If it is/has [cond], [action]" clauses following a
-     * "Reveal the top card of your deck" header.
-     * Each action is either a card-referencing op code or a standalone effect
-     * parsed by {@link #parse}.
-     */
-    private static Consumer<GameContext> tryParseChooseFwdRevealCostParity(String text) {
-        Matcher m = CHOOSE_FWD_REVEAL_COST_PARITY_PATTERN.matcher(text.trim());
-        if (!m.matches()) return null;
-        return ctx -> {
-            ctx.logEntry("Effect: Choose 1 Forward, reveal top card — even cost→bounce, odd cost→4000 damage + dull + freeze");
-            List<ForwardTarget> ts = selectTargets(ctx, 1, false, false, false, null, null, null, false,
-                    -1, null, -1, null, true, false, false, null, null, null, null, false, null, false);
-            if (ts.isEmpty()) return;
-            ForwardTarget t = ts.get(0);
-            ctx.revealTopDeckCostParityEffect(
-                ctx2 -> {
-                    ctx2.logEntry("Even cost — returning chosen Forward to owner's hand");
-                    if (t.isP1()) ctx2.returnP1ForwardToHand(t.idx());
-                    else          ctx2.returnP2ForwardToHand(t.idx());
-                },
-                ctx2 -> {
-                    ctx2.logEntry("Odd cost — dealing 4000 damage, dulling and freezing chosen Forward");
-                    ctx2.damageTarget(t, 4000);
-                    ctx2.dullAndFreezeTarget(t);
-                }
-            );
-        };
-    }
 
     /**
      * Matches "choose [up to] N Forwards. Until the end of the turn, they gain "&lt;ability&gt;"."
      * (Machinist) — grants the quoted action ability to each chosen Forward until end of turn.
      * Group {@code upto} present when "up to"; {@code count}; {@code ability} — the quoted grant text.
      */
-    private static final Pattern CHOOSE_FORWARDS_GAIN_ABILITY_EOT = Pattern.compile(
+    static final Pattern CHOOSE_FORWARDS_GAIN_ABILITY_EOT = Pattern.compile(
         "(?i)^choose\\s+(?<upto>up\\s+to\\s+)?(?<count>\\d+)\\s+Forwards?[.!]?\\s+" +
         "Until\\s+the\\s+end\\s+of\\s+the\\s+turn,?\\s+(?:they|it)\\s+gains?\\s+" +
         "\"(?<ability>[^\"]+)\"[.!]?\\s*$",
         Pattern.DOTALL
     );
 
-    private static Consumer<GameContext> tryParseChooseForwardsGainAbilityEot(String text) {
-        Matcher m = CHOOSE_FORWARDS_GAIN_ABILITY_EOT.matcher(text.trim());
-        if (!m.matches()) return null;
-        boolean upTo  = m.group("upto") != null;
-        int     count = Integer.parseInt(m.group("count"));
-        String  ability = m.group("ability").trim();
-        return ctx -> {
-            ctx.logEntry("Effect: choose " + (upTo ? "up to " : "") + count
-                    + " Forward(s) — grant until end of turn: " + ability);
-            List<ForwardTarget> ts = selectTargets(ctx, count, upTo, false, false, null, null, null, false,
-                    -1, null, -1, null, true, false, false, null, null, null, null, false, null, false);
-            for (ForwardTarget t : ts) ctx.grantEotActionAbility(t, ability);
-        };
-    }
 
     /**
      * Matches "choose 1 Forward. Place 1 Petrification Counter on it …" (Medusa). The chosen Forward
@@ -15338,90 +8587,30 @@ public class ActionResolver {
      * the "《5》: Remove all Petrification Counters" ability are driven off the counter's presence
      * (see {@code MainWindow#isFieldAbilityCannotAttackOrBlock} and {@code addAbilityMenuItems}).
      */
-    private static final Pattern CHOOSE_FORWARD_PLACE_PETRIFICATION = Pattern.compile(
+    static final Pattern CHOOSE_FORWARD_PLACE_PETRIFICATION = Pattern.compile(
         "(?i)^choose\\s+1\\s+Forward[.!]?\\s+Place\\s+1\\s+Petrification\\s+Counter\\s+on\\s+it\\b.*",
         Pattern.DOTALL
     );
 
-    private static Consumer<GameContext> tryParseChooseForwardPlacePetrification(String text) {
-        if (!CHOOSE_FORWARD_PLACE_PETRIFICATION.matcher(text.trim()).matches()) return null;
-        return ctx -> {
-            ctx.logEntry("Effect: choose 1 Forward — place 1 Petrification Counter (cannot attack/block; 《5》 to remove)");
-            List<ForwardTarget> ts = selectTargets(ctx, 1, false, false, false, null, null, null, false,
-                    -1, null, -1, null, true, false, false, null, null, null, null, false, null, false);
-            if (ts.isEmpty()) return;
-            ForwardTarget t = ts.get(0);
-            CardData fwd = t.isP1() ? ctx.p1Forward(t.idx()) : ctx.p2Forward(t.idx());
-            if (fwd != null) ctx.placeCounters(fwd, "Petrification", 1);
-        };
-    }
 
     /**
      * Matches "Remove all &lt;Name&gt; Counters from this Forward." — removes every counter of the
      * named kind from the ability's own source card (used by Medusa's granted "《5》:" ability).
      */
-    private static final Pattern REMOVE_ALL_COUNTERS_FROM_SELF = Pattern.compile(
+    static final Pattern REMOVE_ALL_COUNTERS_FROM_SELF = Pattern.compile(
         "(?i)^Remove\\s+all\\s+(?<name>.+?)\\s+Counters\\s+from\\s+this\\s+Forward[.!]?\\s*$"
     );
 
-    private static Consumer<GameContext> tryParseRemoveAllCountersFromSelf(String text, CardData source) {
-        Matcher m = REMOVE_ALL_COUNTERS_FROM_SELF.matcher(text.trim());
-        if (!m.matches() || source == null) return null;
-        String counterName = m.group("name").trim();
-        return ctx -> {
-            int n = ctx.getCounters(source, counterName);
-            if (n > 0) ctx.removeCounters(source, counterName, n);
-        };
-    }
 
-    private static Consumer<GameContext> tryParseRevealTopDeck(String text, CardData source) {
-        Matcher header = REVEAL_TOP_DECK_HEADER.matcher(text);
-        if (!header.find()) return null;
-        boolean opponentDeck = header.group("who").toLowerCase(java.util.Locale.ROOT).contains("opponent");
-        List<RevealClause> clauses = new ArrayList<>();
-        Matcher m = REVEAL_CLAUSE_PATTERN.matcher(text);
-        while (m.find()) {
-            RevealClause clause = buildRevealClause(
-                m.group("cond").trim(), m.group("action").trim(), source);
-            if (clause == null) return null;
-            clauses.add(clause);
-        }
-        if (clauses.isEmpty()) return null;
-        String whose = opponentDeck ? "opponent's" : "your";
-        return ctx -> {
-            ctx.logEntry("Effect: Reveal top card of " + whose + " deck (" + clauses.size() + " clause(s))");
-            ctx.revealTopDeckCard(clauses, opponentDeck);
-        };
-    }
 
-    private static Consumer<GameContext> tryParseEachPlayerRevealCharacterMayPlay(String text) {
-        Matcher m = EACH_PLAYER_REVEAL_CHARACTER_MAY_PLAY.matcher(text);
-        if (!m.find()) return null;
-        String typeStr = m.group("type").trim();
-        java.util.function.Predicate<CardData> eligible = card -> meetsTypeCheck(card, typeStr);
-        return ctx -> {
-            ctx.logEntry("Effect: Each player reveals top card, may play if " + typeStr);
-            ctx.revealEachPlayerTopDeckMayPlay(eligible);
-        };
-    }
 
-    private static Consumer<GameContext> tryParseEachPlayerMaySearchForwardMinPower(String text) {
-        Matcher m = EACH_PLAYER_MAY_SEARCH_FORWARD_MIN_POWER.matcher(text.trim());
-        if (!m.matches()) return null;
-        int count    = Integer.parseInt(m.group("count"));
-        int minPower = Integer.parseInt(m.group("power"));
-        return ctx -> {
-            ctx.logEntry("Effect: Each player may search for " + count + " Forward(s) power " + minPower + "+");
-            ctx.eachPlayerMaySearchForwardMinPowerToHand(count, minPower);
-        };
-    }
 
     /**
      * Builds a single {@link RevealClause} from a parsed condition string and
      * action string.  Returns {@code null} if either the condition or the action
      * is not recognised.
      */
-    private static RevealClause buildRevealClause(String condText, String actionText, CardData source) {
+    static RevealClause buildRevealClause(String condText, String actionText, CardData source) {
         Predicate<CardData> condition = parseRevealCondition(condText);
         if (condition == null) return null;
         String cardOp = normalizeRevealOp(actionText);
@@ -15444,7 +8633,7 @@ public class ActionResolver {
      * </ul>
      * Returns {@code null} for unrecognised patterns.
      */
-    private static Predicate<CardData> parseRevealCondition(String cond) {
+    static Predicate<CardData> parseRevealCondition(String cond) {
         cond = cond.trim();
         boolean negated = false;
 
@@ -15526,7 +8715,7 @@ public class ActionResolver {
         return null;
     }
 
-    private static boolean meetsTypeCheck(CardData card, String type) {
+    static boolean meetsTypeCheck(CardData card, String type) {
         return switch (type.toLowerCase(java.util.Locale.ROOT)) {
             case "forward"   -> card.isForward();
             case "backup"    -> card.isBackup();
@@ -15558,136 +8747,7 @@ public class ActionResolver {
         return null;
     }
 
-    /**
-     * Parses standalone "cannot be chosen" protection effects:
-     * <ul>
-     *   <li>"Activate all the Forwards you control. They cannot be chosen by your opponent's Summons."</li>
-     *   <li>"This Forward/Character cannot be chosen by your opponent's Summons or abilities."</li>
-     *   <li>"[CardName] cannot be chosen by your opponent's Summons." (name must match {@code source})</li>
-     *   <li>"The Job X [other than Y] Forwards you control cannot be chosen by your opponent's Summons."</li>
-     * </ul>
-     * Registered before {@link #tryParseNegateAllDamage} and {@link #tryParseAllFieldEffect}.
-     */
-    private static Consumer<GameContext> tryParseCannotBeChosenStandalone(String text, CardData source) {
-        // 1. Compound: "Activate all Forwards + They cannot be chosen"
-        Matcher actM = STANDALONE_ACTIVATE_AND_CANNOT_BE_CHOSEN.matcher(text);
-        if (actM.find()) {
-            boolean bs = actM.group("scope").toLowerCase(java.util.Locale.ROOT).contains("summon");
-            boolean ba = actM.group("scope").toLowerCase(java.util.Locale.ROOT).contains("abilit");
-            return ctx -> {
-                ctx.logEntry("Effect: Activate all own Forwards + cannot be chosen by opponent");
-                ctx.applyMassFieldEffect(GameContext.MassAction.ACTIVATE, true, false, false, false, true, null, -1, null, -1, null, null);
-                ctx.shieldAllOwnForwardsCannotBeChosen(bs, ba);
-            };
-        }
 
-        // 2. Job filter: "The Job X [other than Y] Forwards cannot be chosen"
-        Matcher jobM = STANDALONE_JOB_CANNOT_BE_CHOSEN.matcher(text);
-        if (jobM.find()) {
-            String job  = jobM.group("job").trim();
-            String excl = jobM.group("excl") != null ? jobM.group("excl").trim() : null;
-            boolean bs  = jobM.group("scope").toLowerCase(java.util.Locale.ROOT).contains("summon");
-            boolean ba  = jobM.group("scope").toLowerCase(java.util.Locale.ROOT).contains("abilit");
-            return ctx -> {
-                ctx.logEntry("Effect: Job " + job + " Forwards cannot be chosen by opponent");
-                ctx.shieldJobForwardsCannotBeChosen(job, excl, bs, ba);
-            };
-        }
-
-        // 3. Self-referential: "This Forward/Character cannot be chosen"
-        Matcher selfM = STANDALONE_SELF_CANNOT_BE_CHOSEN.matcher(text);
-        if (selfM.find() && source != null) {
-            boolean bs = selfM.group("scope").toLowerCase(java.util.Locale.ROOT).contains("summon");
-            boolean ba = selfM.group("scope").toLowerCase(java.util.Locale.ROOT).contains("abilit");
-            String  nm = source.name();
-            return ctx -> {
-                ctx.logEntry("Effect: " + nm + " cannot be chosen by opponent");
-                ctx.shieldNamedCardCannotBeChosen(nm, bs, ba);
-            };
-        }
-
-        // 4. Named card: "[Name] cannot be chosen by your opponent's Summons/abilities"
-        Matcher nameM = STANDALONE_NAMED_CANNOT_BE_CHOSEN.matcher(text);
-        if (nameM.find() && source != null) {
-            String nm   = nameM.group("name").trim();
-            boolean bs  = nameM.group("scope").toLowerCase(java.util.Locale.ROOT).contains("summon");
-            boolean ba  = nameM.group("scope").toLowerCase(java.util.Locale.ROOT).contains("abilit");
-            if (nm.equalsIgnoreCase(source.name()))
-                return ctx -> {
-                    ctx.logEntry("Effect: " + nm + " cannot be chosen by opponent");
-                    ctx.shieldNamedCardCannotBeChosen(nm, bs, ba);
-                };
-        }
-
-        // 5. Named card, no "your opponent's" qualifier: "[Name] cannot be chosen by Summons" — either player
-        Matcher anyM = STANDALONE_NAMED_CANNOT_BE_CHOSEN_ANY_SUMMON.matcher(text);
-        if (anyM.find() && source != null) {
-            String nm = anyM.group("name").trim();
-            if (nm.equalsIgnoreCase(source.name()))
-                return ctx -> ctx.shieldNamedCardCannotBeChosenByAnySummon(nm);
-        }
-
-        // 6. "Name 1 Element. [Name] cannot be chosen … and if [Name] is dealt damage … becomes 0."
-        //    (Hein-style: targeting immunity + damage nullification for the named element)
-        Matcher heinM = STANDALONE_NAME_ELEMENT_IMMUNE_AND_NULLIFY_DAMAGE.matcher(text);
-        if (heinM.find() && source != null) {
-            String nm = heinM.group("name").trim();
-            if (nm.equalsIgnoreCase(source.name()))
-                return ctx -> {
-                    String elem = ctx.selectElement("Name 1 Element (" + nm + " full protection):");
-                    if (elem != null) {
-                        ctx.logEntry("Effect: " + nm + " cannot be chosen by " + elem + " Summons/abilities; damage from them → 0 this turn");
-                        ctx.shieldNamedCardCannotBeChosenByElement(nm, elem);
-                        ctx.nullifyNamedCardDamageByElement(nm, elem);
-                    }
-                };
-        }
-
-        // 6b. "Name 1 Element. During this turn, if [Name] is dealt damage by abilities of the named
-        //     Element, the damage becomes 0 instead." (Rubicante-style: ability-only damage
-        //     nullification, no targeting immunity — unlike Hein's combined block above.)
-        Matcher rubiM = STANDALONE_NAME_ELEMENT_NULLIFY_ABILITY_DAMAGE_ONLY.matcher(text);
-        if (rubiM.find() && source != null) {
-            String nm = rubiM.group("name").trim();
-            if (nm.equalsIgnoreCase(source.name()))
-                return ctx -> {
-                    String elem = ctx.selectElement("Name 1 Element (" + nm + " damage nullification):");
-                    if (elem != null) {
-                        ctx.logEntry("Effect: " + nm + " — damage from " + elem + " abilities becomes 0 this turn");
-                        ctx.nullifyNamedCardDamageByElementAbilityOnly(nm, elem);
-                    }
-                };
-        }
-
-        // 7. "Name 1 Element. [Name] cannot be chosen by Summons or abilities of the named Element this turn."
-        Matcher elemM = STANDALONE_NAME_ELEMENT_AND_IMMUNE.matcher(text);
-        if (elemM.find() && source != null) {
-            String nm = elemM.group("name").trim();
-            if (nm.equalsIgnoreCase(source.name()))
-                return ctx -> {
-                    String elem = ctx.selectElement("Name 1 Element (" + nm + " immunity):");
-                    if (elem != null) {
-                        ctx.logEntry("Effect: " + nm + " cannot be chosen by " + elem + " Summons/abilities this turn");
-                        ctx.shieldNamedCardCannotBeChosenByElement(nm, elem);
-                    }
-                };
-        }
-
-        return null;
-    }
-
-    /**
-     * Parses "[CardName] cannot become dull by your opponent's Summons or abilities."
-     * Enforcement is handled in {@link GameContextImpl#dullP1Forward} / {@code dullP2Forward}
-     * via {@link #hasCannotBeDulledByOppFieldAbility}.
-     */
-    private static Consumer<GameContext> tryParseCannotBecomeDullOpp(String text, CardData source) {
-        Matcher m = STANDALONE_NAMED_CANNOT_BECOME_DULL_OPP.matcher(text);
-        if (!m.find() || source == null) return null;
-        String nm = m.group("name").trim();
-        if (!nm.equalsIgnoreCase(source.name())) return null;
-        return ctx -> ctx.logEntry("Field ability: " + nm + " cannot become dull by opponent's Summons or abilities");
-    }
 
     /**
      * Returns {@code true} if the card has a permanent field ability of the form
@@ -15701,41 +8761,8 @@ public class ActionResolver {
         return false;
     }
 
-    /**
-     * Parses "[CardName] cannot be returned to its owner's hand by [your] opponent's Summons or
-     * abilities." Enforcement is handled in the {@link GameContextImpl} return-to-hand wrappers
-     * via {@link #hasCannotBeReturnedToHandByOppFieldAbility}.
-     */
-    private static Consumer<GameContext> tryParseCannotBeReturnedToHandOpp(String text, CardData source) {
-        Matcher m = STANDALONE_NAMED_CANNOT_BE_RETURNED_TO_HAND_OPP.matcher(text);
-        if (!m.find() || source == null) return null;
-        String nm = m.group("name").trim();
-        if (!nm.equalsIgnoreCase(source.name())) return null;
-        return ctx -> ctx.logEntry("Field ability: " + nm + " cannot be returned to its owner's hand by opponent's Summons or abilities");
-    }
 
-    /**
-     * Parses "Characters you control cannot be returned to their owner's hand by your opponent's
-     * Summons or abilities." Enforcement is handled in the {@link GameContextImpl} return-to-hand
-     * wrappers via {@link #hasCharactersCannotBeReturnedFieldAbility}.
-     */
-    private static Consumer<GameContext> tryParseCharactersCannotBeReturnedToHandOpp(String text) {
-        if (!STANDALONE_CHARACTERS_CANNOT_BE_RETURNED_TO_HAND_OPP.matcher(text).find()) return null;
-        return ctx -> ctx.logEntry("Field ability: Characters you control cannot be returned to their owner's hand by opponent's Summons or abilities");
-    }
 
-    /**
-     * Parses "[CardName] cannot be put into the Break Zone by [your] opponent's Summons or
-     * abilities." Enforcement is handled in the {@link GameContextImpl} break wrappers via
-     * {@link #hasCannotBePutIntoBzByOppFieldAbility}.
-     */
-    private static Consumer<GameContext> tryParseCannotBePutIntoBzOpp(String text, CardData source) {
-        Matcher m = STANDALONE_NAMED_CANNOT_BE_PUT_INTO_BZ_OPP.matcher(text);
-        if (!m.find() || source == null) return null;
-        String nm = m.group("name").trim();
-        if (!nm.equalsIgnoreCase(source.name())) return null;
-        return ctx -> ctx.logEntry("Field ability: " + nm + " cannot be put into the Break Zone by opponent's Summons or abilities");
-    }
 
     /**
      * Returns {@code true} if the card has a permanent field ability of the form
@@ -15779,7 +8806,7 @@ public class ActionResolver {
      * received M points of damage or more, all the Forwards you control gain all previous
      * effects instead."
      */
-    private static final Pattern CHOOSE_OWN_FWD_BOOST_PROTECTIONS_OR_ALL_IF_DMG = Pattern.compile(
+    static final Pattern CHOOSE_OWN_FWD_BOOST_PROTECTIONS_OR_ALL_IF_DMG = Pattern.compile(
         "(?i)^Choose\\s+1\\s+Forward\\s+you\\s+control\\.\\s+" +
         "Until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn,\\s+it\\s+gains\\s+\\+(?<amount>\\d+)\\s+power" +
         "(?:,\\s*(?<traits>(?:Haste|First\\s+Strike|Brave)(?:\\s*,\\s*(?:Haste|First\\s+Strike|Brave))*))?" +
@@ -15792,7 +8819,7 @@ public class ActionResolver {
      * Matches "Activate all the Forwards you control. Until the end of the turn, all the
      * Forwards you control gain "&lt;quoted grant&gt;" [and "&lt;quoted grant&gt;"…]."
      */
-    private static final Pattern ACTIVATE_ALL_OWN_FWDS_GAIN_PROTECTIONS = Pattern.compile(
+    static final Pattern ACTIVATE_ALL_OWN_FWDS_GAIN_PROTECTIONS = Pattern.compile(
         "(?i)^Activate\\s+all\\s+(?:the\\s+)?Forwards\\s+you\\s+control\\.\\s+" +
         "Until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn,\\s+all\\s+(?:the\\s+)?Forwards\\s+you\\s+control\\s+gain\\s+" +
         "(?<quotes>\"[^\"]*\"(?:\\s+and\\s+\"[^\"]*\")*)\\s*\\.?\\s*$"
@@ -15818,7 +8845,7 @@ public class ActionResolver {
      * {@code traits}. Returns {@code false} (leaving the text unparsed) when any quote
      * is not a recognized protection grant.
      */
-    private static boolean addQuotedProtectionTraits(String quotesRaw, EnumSet<CardData.Trait> traits) {
+    static boolean addQuotedProtectionTraits(String quotesRaw, EnumSet<CardData.Trait> traits) {
         Matcher qm = QUOTED_GRANT.matcher(quotesRaw);
         while (qm.find()) {
             CardData.Trait tr = quotedProtectionTrait(qm.group(1));
@@ -15828,117 +8855,9 @@ public class ActionResolver {
         return true;
     }
 
-    /**
-     * Parses "Choose 1 Forward you control. Until the end of the turn, it gains +N power[,
-     * keywords] and "&lt;protection&gt;"…. If your opponent has received M points of damage or
-     * more, all the Forwards you control gain all previous effects instead." (Black Tortoise
-     * EX Burst) — single-target buff that upgrades to all own Forwards at the damage threshold.
-     */
-    private static Consumer<GameContext> tryParseChooseOwnFwdBoostProtectionsOrAllIfDmg(String text) {
-        Matcher m = CHOOSE_OWN_FWD_BOOST_PROTECTIONS_OR_ALL_IF_DMG.matcher(text.trim());
-        if (!m.matches()) return null;
-        int amount    = Integer.parseInt(m.group("amount"));
-        int dmgThresh = Integer.parseInt(m.group("dmg"));
-        EnumSet<CardData.Trait> traits = m.group("traits") != null
-                ? parseTraits(m.group("traits")) : EnumSet.noneOf(CardData.Trait.class);
-        if (!addQuotedProtectionTraits(m.group("quotes"), traits)) return null;
-        final EnumSet<CardData.Trait> grant = traits;
-        return ctx -> {
-            if (ctx.opponentDamageCount() >= dmgThresh) {
-                ctx.logEntry("Effect: opponent has received " + dmgThresh + "+ damage — all own Forwards gain +"
-                        + amount + " power and protections until end of turn");
-                ctx.applyMassFieldPowerBoost(amount, true, false, false, true, null, -1, null, null, null);
-                ctx.applyMassFieldKeywordGrant(grant, true, false, false, true, null, -1, null, null);
-            } else {
-                ctx.logEntry("Effect: Choose 1 own Forward — +" + amount + " power and protections until end of turn");
-                List<ForwardTarget> ts = selectTargets(ctx, 1, false, false, true, null, null, null, false,
-                        -1, null, -1, null, true, false, false, null, null, null, null, false, null, false);
-                ts.forEach(t -> ctx.boostTarget(t, amount, grant));
-            }
-        };
-    }
 
-    /**
-     * Parses "Activate all the Forwards you control. Until the end of the turn, all the
-     * Forwards you control gain "&lt;protection&gt;" and "&lt;protection&gt;"." — mass activate
-     * plus EOT protection grants for every own Forward.
-     */
-    private static Consumer<GameContext> tryParseActivateAllOwnFwdsGainProtections(String text) {
-        Matcher m = ACTIVATE_ALL_OWN_FWDS_GAIN_PROTECTIONS.matcher(text.trim());
-        if (!m.matches()) return null;
-        EnumSet<CardData.Trait> traits = EnumSet.noneOf(CardData.Trait.class);
-        if (!addQuotedProtectionTraits(m.group("quotes"), traits)) return null;
-        final EnumSet<CardData.Trait> grant = traits;
-        return ctx -> {
-            ctx.logEntry("Effect: Activate all own Forwards + protections until end of turn");
-            ctx.applyMassFieldEffect(GameContext.MassAction.ACTIVATE, true, false, false, false, true,
-                    null, -1, null, -1, null, null);
-            ctx.applyMassFieldKeywordGrant(grant, true, false, false, true, null, -1, null, null);
-        };
-    }
 
-    /**
-     * Parses permanent and conditional "cannot attack or block" field ability texts:
-     * <ol>
-     *   <li>"[CardName] cannot attack or block." — unconditional; enforced via
-     *       {@link CardData#cannotAttackOrBlock()}.</li>
-     *   <li>"[CardName] cannot attack." — unconditional attack-only; enforced via field-ability check.</li>
-     *   <li>"If you don't control a Card Name [X] Forward, [CardName] cannot attack or block."</li>
-     *   <li>"If [N] or less [Name] Counter(s) are placed on [CardName], [CardName] cannot attack or block."</li>
-     * </ol>
-     * The consumer only logs; enforcement for cases 2–5 is handled in the game loop.
-     */
-    private static Consumer<GameContext> tryParseStandaloneCannotAttackOrBlock(String text, CardData source) {
-        if (source == null) return null;
-        // 1. Simple: "[CardName] cannot attack or block."
-        Matcher m1 = STANDALONE_CANNOT_ATTACK_OR_BLOCK.matcher(text);
-        if (m1.find()) {
-            String nm = m1.group("cardname").trim();
-            if (nm.equalsIgnoreCase(source.name()))
-                return ctx -> ctx.logEntry(nm + " — cannot attack or block (permanent field restriction)");
-        }
-        // 1b. Attack-only: "[CardName] cannot attack."
-        Matcher m1b = STANDALONE_CANNOT_ATTACK.matcher(text);
-        if (m1b.find()) {
-            String nm = m1b.group("cardname").trim();
-            if (nm.equalsIgnoreCase(source.name()))
-                return ctx -> ctx.logEntry(nm + " — cannot attack (permanent field restriction)");
-        }
-        // 2. Conditional: "If you don't control Card Name X Forward, [subject] cannot attack or block."
-        Matcher m2 = IF_DONT_CONTROL_CARD_NAME_FWD_CANNOT_ATTACK_OR_BLOCK.matcher(text);
-        if (m2.find()) {
-            String subject  = m2.group("subject").trim();
-            String required = m2.group("required").trim();
-            if (subject.equalsIgnoreCase(source.name()))
-                return ctx -> ctx.logEntry(subject + " — cannot attack or block unless you control Card Name " + required + " Forward");
-        }
-        // 3. Counter-conditional: "If N or less [Name] Counters are placed on [target], [subject] cannot attack or block."
-        Matcher m3 = IF_COUNTER_LIMIT_CANNOT_ATTACK_OR_BLOCK.matcher(text);
-        if (m3.find()) {
-            String subject     = m3.group("subject").trim();
-            String counterName = m3.group("countername").trim();
-            int    limit       = Integer.parseInt(m3.group("count"));
-            if (subject.equalsIgnoreCase(source.name()))
-                return ctx -> ctx.logEntry(subject + " — cannot attack or block if " + counterName + " Counters ≤ " + limit);
-        }
-        // 4. Opponent-no-forwards: "If your opponent doesn't control any Forwards, [CardName] cannot attack."
-        Matcher m4 = IF_OPP_NO_FORWARDS_CANNOT_ATTACK.matcher(text);
-        if (m4.find()) {
-            String subject = m4.group("subject").trim();
-            if (subject.equalsIgnoreCase(source.name()))
-                return ctx -> ctx.logEntry(subject + " — cannot attack if opponent controls no Forwards");
-        }
-        return null;
-    }
 
-    /**
-     * Recognizes "Players cannot cast Summons." as a known passive field ability.
-     * Returns a no-op consumer (the restriction is enforced statically by {@link MainWindow}).
-     */
-    private static Consumer<GameContext> tryParsePlayerCannotCastSummons(String text) {
-        if (!PLAYERS_CANNOT_CAST_SUMMONS.matcher(text.trim()).matches()) return null;
-        return ctx -> ctx.logEntry("Static: Players cannot cast Summons");
-    }
 
     /**
      * Returns {@code true} if the given card has a "Players cannot cast Summons." field ability,
@@ -15989,240 +8908,28 @@ public class ActionResolver {
         return false;
     }
 
-    /**
-     * Parses "At the beginning of your Main Phase 1, &lt;effect&gt;" — a recurring
-     * field-ability trigger.  Strips the trigger prefix and dispatches the inner effect
-     * through the full {@link #parse} chain so any supported effect can follow.
-     * {@code fireFieldMainPhase1Abilities} is responsible for invoking it each Main Phase 1 start.
-     */
-    static Consumer<GameContext> tryParseBeginningOfMainPhase1FieldAbility(String text, CardData source) {
-        Matcher m = AT_BEGINNING_OF_MAIN_PHASE_1_PATTERN.matcher(text);
-        if (!m.find()) return null;
-        return parse(m.group("inner").trim(), source);
-    }
 
-    /**
-     * Parses "At the beginning of your Main Phase 2, &lt;effect&gt;" — same as
-     * {@link #tryParseBeginningOfMainPhase1FieldAbility} but for Main Phase 2.
-     */
-    static Consumer<GameContext> tryParseBeginningOfMainPhase2FieldAbility(String text, CardData source) {
-        Matcher m = AT_BEGINNING_OF_MAIN_PHASE_2_PATTERN.matcher(text);
-        if (!m.find()) return null;
-        return parse(m.group("inner").trim(), source);
-    }
 
-    /**
-     * Parses "Each turn, at the beginning of Main Phase 1, &lt;effect&gt;" — fires at the start of
-     * BOTH players' Main Phase 1 for all cards the controller has on the field.
-     * {@code fireFieldMainPhase1EachTurnAbilities} is responsible for invoking it.
-     */
-    static Consumer<GameContext> tryParseBeginningOfMainPhase1EachTurnFieldAbility(String text, CardData source) {
-        Matcher m = AT_BEGINNING_OF_MAIN_PHASE_1_EACH_TURN_PATTERN.matcher(text);
-        if (!m.find()) return null;
-        return parse(m.group("inner").trim(), source);
-    }
 
-    /**
-     * Parses "At the beginning of your opponent's Main Phase 1, &lt;effect&gt;" — fires at the start of
-     * the controller's opponent's Main Phase 1.
-     * {@code fireFieldOppMainPhase1Abilities} is responsible for invoking it.
-     */
-    static Consumer<GameContext> tryParseBeginningOfOppMainPhase1FieldAbility(String text, CardData source) {
-        Matcher m = AT_BEGINNING_OF_OPP_MAIN_PHASE_1_PATTERN.matcher(text);
-        if (!m.find()) return null;
-        return parse(m.group("inner").trim(), source);
-    }
 
-    /**
-     * Parses "At the end of your opponent's turn, &lt;effect&gt;" — fires when the controlling
-     * player's opponent ends their turn.
-     * {@code fireFieldEndOfOpponentTurnAbilities} is responsible for invoking it.
-     */
-    static Consumer<GameContext> tryParseEndOfOpponentTurnFieldAbility(String text, CardData source) {
-        Matcher m = AT_END_OF_OPP_TURN_PATTERN.matcher(text);
-        if (!m.find()) return null;
-        return parse(m.group("inner").trim(), source);
-    }
 
-    /**
-     * Parses "select 1 Element. &lt;CardName&gt; becomes that Element[.]" — the named card's
-     * element is permanently overridden via {@link GameContext#setCardElement}.  Returns
-     * {@code null} unless {@code source} is non-null and its name equals the captured name,
-     * preventing accidental matches when this parser appears in the general {@link #parse} chain.
-     */
-    static Consumer<GameContext> tryParseElementChange(String text, CardData source) {
-        Matcher m = ELEMENT_CHANGE_PATTERN.matcher(text);
-        if (!m.find()) return null;
-        String cardName = m.group("name").trim();
-        if (source == null || !cardName.equalsIgnoreCase(source.name())) return null;
-        return ctx -> {
-            String elem = ctx.selectElement("Select 1 Element (" + cardName + " becomes that Element):");
-            if (elem != null) ctx.setCardElement(cardName, elem);
-        };
-    }
 
-    private static Consumer<GameContext> tryParseGrantPartyAnyElementThisTurn(String text) {
-        if (!GRANT_PARTY_ANY_ELEMENT_THIS_TURN.matcher(text).find()) return null;
-        return ctx -> {
-            ctx.logEntry("Effect: Forwards you control can form a party with Forwards of any Element this turn");
-            ctx.grantForwardsPartyAnyElementThisTurn();
-        };
-    }
 
-    private static Consumer<GameContext> tryParseNameJobOrElementAllForwardsBoost(String text) {
-        Matcher m = NAME_JOB_OR_ELEMENT_ALL_FORWARDS_BOOST.matcher(text);
-        if (!m.find()) return null;
-        int amount = Integer.parseInt(m.group("amount"));
-        return ctx -> {
-            ctx.logEntry("Effect: Name 1 Job or Element — all controlled Forwards +" + amount + " power and named until EOT");
-            String[] choice = ctx.selectJobOrElement("Name 1 Job or 1 Element:");
-            if (choice == null || choice[1] == null) return;
-            ctx.applyMassFieldPowerBoost(amount, true, false, false, true, null, -1, null, null, null);
-            if ("job".equalsIgnoreCase(choice[0]))
-                ctx.grantAllControlledForwardsJobUntilEOT(choice[1]);
-            else
-                ctx.grantAllControlledForwardsElementUntilEOT(choice[1]);
-        };
-    }
 
-    private static Consumer<GameContext> tryParseNameJobOrCategoryRevealAddToHand(String text) {
-        Matcher m = NAME_JOB_OR_CATEGORY_REVEAL_ADD_TO_HAND.matcher(text);
-        if (!m.find()) return null;
-        int reveal = Integer.parseInt(m.group("reveal"));
-        int maxAdd = Integer.parseInt(m.group("maxAdd"));
-        return ctx -> {
-            ctx.logEntry("Effect: Name 1 Job or Category — reveal top " + reveal + ", add up to " + maxAdd + " matching Characters to hand");
-            String[] choice = ctx.selectJobOrCategory("Name 1 Job or Category:");
-            if (choice == null || choice[1] == null || choice[1].isBlank()) return;
-            ctx.logEntry("Named " + choice[0] + ": " + choice[1]);
-            String jobFilter = "job".equalsIgnoreCase(choice[0]) ? choice[1] : null;
-            String catFilter = "category".equalsIgnoreCase(choice[0]) ? choice[1] : null;
-            ctx.revealTopAddUpToMatchingRestBottom(reveal, maxAdd, jobFilter, catFilter, null, null);
-        };
-    }
 
-    private static Consumer<GameContext> tryParseRevealTopNCategoryToHand(String text) {
-        String s = stripRestrictionSentences(text);
-        Matcher m = REVEAL_TOP_N_CATEGORY_TO_HAND.matcher(s.isEmpty() ? text : s);
-        if (!m.find()) return null;
-        int n = Integer.parseInt(m.group("n"));
-        String cat = m.group("cat");
-        return ctx -> {
-            ctx.logEntry("Effect: Reveal top " + n + " — add 1 Category " + cat + " to hand, rest to bottom");
-            ctx.revealTopAddUpToMatchingRestBottom(n, 1, null, cat, null, null);
-        };
-    }
 
-    /**
-     * Parses "reveal the top N cards … Add 1 Job X [or Card Name Y] … bottom of your deck."
-     * Splits the captured filter terms into a job filter and a card-name filter (each
-     * bar-separated when multiple terms of the same kind appear) and forwards them to
-     * {@link GameContext#revealTopAddUpToMatchingRestBottom}.
-     */
-    private static Consumer<GameContext> tryParseRevealTopNJobOrNameToHand(String text) {
-        String s = stripRestrictionSentences(text);
-        Matcher m = REVEAL_TOP_N_JOB_OR_NAME_TO_HAND.matcher(s.isEmpty() ? text : s);
-        if (!m.find()) return null;
-        int n = Integer.parseInt(m.group("n"));
-        StringBuilder jobs  = new StringBuilder();
-        StringBuilder names = new StringBuilder();
-        appendFilterTerm(jobs, names, m.group("first"));
-        appendFilterTerm(jobs, names, m.group("second"));
-        String jobFilter      = jobs.length()  > 0 ? jobs.toString()  : null;
-        String cardNameFilter = names.length() > 0 ? names.toString() : null;
-        if (jobFilter == null && cardNameFilter == null) return null;
-        return ctx -> {
-            ctx.logEntry("Effect: Reveal top " + n + " — add 1 ("
-                    + (jobFilter      != null ? "Job " + jobFilter           : "")
-                    + (jobFilter != null && cardNameFilter != null ? " | " : "")
-                    + (cardNameFilter != null ? "Card Name " + cardNameFilter : "")
-                    + ") to hand, rest to bottom");
-            ctx.revealTopAddUpToMatchingRestBottom(n, 1, jobFilter, null, cardNameFilter, null);
-        };
-    }
 
-    private static Consumer<GameContext> tryParseRevealTopNTypeToHand(String text) {
-        String s = stripRestrictionSentences(text);
-        Matcher m = REVEAL_TOP_N_TYPE_TO_HAND.matcher(s.isEmpty() ? text : s);
-        if (!m.find()) return null;
-        int n = Integer.parseInt(m.group("n"));
-        int max = Integer.parseInt(m.group("max"));
-        // Normalise plural → singular (e.g. "Monsters" → "Monster")
-        String typeFilter = m.group("type").replaceAll("(?i)s$", "");
-        String costRaw = m.group("cost");
-        int maxCost = costRaw != null ? Integer.parseInt(costRaw) : -1;
-        return ctx -> {
-            ctx.logEntry("Effect: Reveal top " + n + " — add up to " + max + " " + typeFilter
-                    + (maxCost >= 0 ? " of cost " + maxCost + " or less" : "") + " to hand, rest to bottom");
-            ctx.revealTopAddUpToMatchingRestBottom(n, max, null, null, null, typeFilter, maxCost);
-        };
-    }
 
-    private static Consumer<GameContext> tryParseRevealTopNElementToHand(String text) {
-        String s = stripRestrictionSentences(text);
-        Matcher m = REVEAL_TOP_N_ELEMENT_TO_HAND.matcher(s.isEmpty() ? text : s);
-        if (!m.find()) return null;
-        int n = Integer.parseInt(m.group("n"));
-        int max = Integer.parseInt(m.group("max"));
-        String normElement = cap(m.group("element"));
-        String cat = m.group("cat");
-        if (cat != null) {
-            // "Add M [Element] or Category [X] card" — element and category are alternatives.
-            // The element is a disjunct (orElementFilter), not an AND-gate — "Water OR Category X".
-            return ctx -> {
-                ctx.logEntry("Effect: Reveal top " + n + " — add up to " + max + " " + normElement
-                        + " or Category " + cat + " to hand, rest to bottom");
-                ctx.revealTopAddUpToMatchingRestBottom(n, max, null, cat, null, null, -1, null, normElement);
-            };
-        }
-        String typeRaw = m.group("type");
-        String typeFilter = typeRaw != null ? cap(typeRaw.replaceAll("(?i)s$", "")) : null;
-        // "Add M [Element] [Type]" — the element is an AND-gate on the type (e.g. "Fire Forward").
-        return ctx -> {
-            ctx.logEntry("Effect: Reveal top " + n + " — add up to " + max + " " + normElement
-                    + (typeFilter != null ? " " + typeFilter : " card") + "(s) to hand, rest to bottom");
-            ctx.revealTopAddUpToMatchingRestBottom(n, max, null, null, null, typeFilter, -1, normElement);
-        };
-    }
 
-    private static Consumer<GameContext> tryParseRevealTopNAddUpToExcludingNameRestBz(String text) {
-        Matcher m = REVEAL_TOP_N_ADD_UP_TO_EXCLUDING_NAME_REST_BZ.matcher(text.trim());
-        if (!m.find()) return null;
-        int n = Integer.parseInt(m.group("n"));
-        int max = Integer.parseInt(m.group("max"));
-        String name = m.group("name").trim();
-        return ctx -> {
-            ctx.logEntry("Effect: Reveal top " + n + " — add up to " + max
-                    + " (excl. Card Name " + name + ") to hand, rest to Break Zone");
-            ctx.revealTopAddUpToExcludingNameRestBz(n, max, name);
-        };
-    }
 
-    private static Consumer<GameContext> tryParseRevealAddTypeToHandOrPlayJobTypeOntoFieldRestBottom(String text) {
-        Matcher m = REVEAL_ADD_TYPE_TO_HAND_OR_PLAY_JOB_TYPE_ONTO_FIELD_REST_BOTTOM.matcher(text.trim());
-        if (!m.matches()) return null;
-        int n        = Integer.parseInt(m.group("n"));
-        int handMax  = Integer.parseInt(m.group("handmax"));
-        String handType  = cap(m.group("handtype"));
-        int fieldMax = Integer.parseInt(m.group("fieldmax"));
-        String fieldJob  = m.group("fieldjob") != null ? m.group("fieldjob").trim() : null;
-        String fieldType = cap(m.group("fieldtype"));
-        String logDesc = "Reveal top " + n + " — add up to " + handMax + " " + handType
-                + " to hand OR play up to " + fieldMax
-                + (fieldJob != null ? " Job " + fieldJob + " " : " ") + fieldType + " onto field; rest to bottom";
-        return ctx -> {
-            ctx.logEntry("Effect: " + logDesc);
-            ctx.revealTopNAddTypeToHandOrPlayJobTypeOntoFieldRestBottom(n, handMax, handType, fieldMax, fieldJob, fieldType);
-        };
-    }
 
-    private static String cap(String s) {
+    static String cap(String s) {
         if (s == null || s.isEmpty()) return s;
         return Character.toUpperCase(s.charAt(0)) + s.substring(1).toLowerCase();
     }
 
     /** Appends {@code term} ("Job X" or "Card Name X") to the appropriate pipe-separated list. */
-    private static void appendFilterTerm(StringBuilder jobs, StringBuilder names, String term) {
+    static void appendFilterTerm(StringBuilder jobs, StringBuilder names, String term) {
         if (term == null || term.isBlank()) return;
         String trimmed = term.trim();
         Matcher jm = Pattern.compile("(?i)^Job\\s+(?<val>.+)$").matcher(trimmed);
@@ -16245,50 +8952,10 @@ public class ActionResolver {
         };
     }
 
-    private static Consumer<GameContext> tryParseNameElementOnlySelfBecomes(String text, CardData source) {
-        if (source == null) return null;
-        Matcher m = NAME_ELEMENT_ONLY_SELF_BECOMES.matcher(text);
-        if (!m.find()) return null;
-        if (!m.group("name").trim().equalsIgnoreCase(source.name())) return null;
-        java.util.Set<String> excluded = parseExcludeElements(m.group("exclude"));
-        return ctx -> {
-            ctx.logEntry("Effect: Name 1 Element — " + source.name() + " becomes named Element until end of turn");
-            String elem = ctx.selectElement("Name 1 Element (" + source.name() + " becomes it):", excluded);
-            if (elem == null) return;
-            ctx.changeSourceCardElementUntilEOT(source, elem);
-        };
-    }
 
-    private static Consumer<GameContext> tryParseNameElementAndJobSelfBecomes(String text, CardData source) {
-        if (source == null) return null;
-        Matcher m = NAME_ELEMENT_AND_JOB_SELF_BECOMES.matcher(text);
-        if (!m.find()) return null;
-        if (!m.group("name").trim().equalsIgnoreCase(source.name())) return null;
-        java.util.Set<String> excluded = parseExcludeElements(m.group("exclude"));
-        return ctx -> {
-            ctx.logEntry("Effect: Name 1 Element and 1 Job — " + source.name() + " becomes both until end of turn");
-            String[] choice = ctx.selectElementAndJob("Name 1 Element and 1 Job (" + source.name() + " becomes both):", excluded);
-            if (choice == null || choice[0] == null || choice[1] == null) return;
-            ctx.changeSourceCardElementAndJobUntilEOT(source, choice[0], choice[1]);
-        };
-    }
 
-    private static Consumer<GameContext> tryParseNameJobAndElementSelfGainsPermanent(String text, CardData source) {
-        if (source == null) return null;
-        Matcher m = NAME_JOB_AND_ELEMENT_SELF_GAINS_PERMANENT.matcher(text);
-        if (!m.find()) return null;
-        if (!m.group("name").trim().equalsIgnoreCase(source.name())) return null;
-        java.util.Set<String> excluded = parseExcludeElements(m.group("exclude"));
-        return ctx -> {
-            ctx.logEntry("Effect: Name 1 Job and 1 Element — " + source.name() + " gains both permanently");
-            String[] choice = ctx.selectElementAndJob("Name 1 Job and 1 Element (" + source.name() + " gains both):", excluded);
-            if (choice == null || choice[0] == null || choice[1] == null) return;
-            ctx.setCardElement(source.name(), choice[0]);
-            ctx.addCardJobPermanently(source.name(), choice[1]);
-        };
-    }
 
-    private static java.util.Set<String> parseExcludeElements(String excludeStr) {
+    static java.util.Set<String> parseExcludeElements(String excludeStr) {
         if (excludeStr == null || excludeStr.isBlank()) return java.util.Collections.emptySet();
         java.util.Set<String> out = new java.util.LinkedHashSet<>();
         for (String part : excludeStr.split("(?i)\\s+(?:or|and)\\s+|,\\s*"))
@@ -16296,225 +8963,12 @@ public class ActionResolver {
         return out;
     }
 
-    /**
-     * Parses standalone "negate all damage" effects:
-     * <ul>
-     *   <li>"Negate all damage dealt to all the Forwards you control."</li>
-     *   <li>"Activate all the Forwards you control and negate all damage dealt to them."</li>
-     * </ul>
-     * Must be tried before {@link #tryParseAllFieldEffect} so the compound activate+negate form
-     * is not swallowed by the simpler activate-all matcher.
-     */
-    private static Consumer<GameContext> tryParseNegateAllDamage(String text) {
-        if (STANDALONE_ACTIVATE_AND_NEGATE_DAMAGE_OWN.matcher(text).find()) {
-            return ctx -> {
-                ctx.logEntry("Effect: Activate all own Forwards and negate their damage");
-                ctx.applyMassFieldEffect(GameContext.MassAction.ACTIVATE,
-                        true, false, false, false, true, null, -1, null, -1, null, null);
-                ctx.negateAllDamageOwnForwards();
-            };
-        }
-        if (STANDALONE_NEGATE_DAMAGE_OWN.matcher(text).find()) {
-            return ctx -> {
-                ctx.logEntry("Effect: Negate all damage on own Forwards");
-                ctx.negateAllDamageOwnForwards();
-            };
-        }
-        return null;
-    }
 
-    private static Consumer<GameContext> tryParsePlayerNextDamageZero(String text) {
-        if (!PLAYER_NEXT_DAMAGE_ZERO.matcher(text).find()) return null;
-        return ctx -> {
-            ctx.logEntry("Effect: next damage to you becomes 0 this turn");
-            ctx.shieldPlayerNextDamage();
-        };
-    }
 
-    /**
-     * Parses "During this turn, the next damage dealt to you becomes 0 and deal [Name] N damage
-     * instead." (Auron) — player shield whose consumption redirects the damage to the named Forward.
-     */
-    private static Consumer<GameContext> tryParsePlayerNextDamageZeroRedirect(String text) {
-        Matcher m = PLAYER_NEXT_DAMAGE_ZERO_REDIRECT.matcher(text);
-        if (!m.find()) return null;
-        String name = m.group("name").trim();
-        int    dmg  = Integer.parseInt(m.group("dmg"));
-        return ctx -> {
-            ctx.logEntry("Effect: next damage to you becomes 0 this turn — " + name
-                + " takes " + dmg + " damage instead");
-            ctx.shieldPlayerNextDamageRedirect(name, dmg);
-        };
-    }
 
-    /**
-     * Parses the three standalone damage-shield effects that apply globally or to a named card:
-     * <ul>
-     *   <li>Non-lethal protection for all active-player Forwards.</li>
-     *   <li>Global incoming-damage reduction for all active-player Forwards.</li>
-     *   <li>Nullify ability/Summon damage for a specific named Forward.</li>
-     * </ul>
-     */
-    private static Consumer<GameContext> tryParseStandaloneDamageShields(String text, CardData source) {
-        // "During this turn, if a Forward you control is dealt damage less than its power, the damage becomes 0 instead."
-        if (STANDALONE_NONLETHAL_PROTECTION.matcher(text).find()) {
-            return ctx -> {
-                ctx.logEntry("Effect: Non-lethal protection for your Forwards this turn");
-                ctx.shieldActivePlayerNonLethal();
-            };
-        }
 
-        // "During this turn, if a Forward you control is dealt damage, reduce the damage by N instead."
-        Matcher globalRedM = STANDALONE_GLOBAL_DMG_REDUCTION.matcher(text);
-        if (globalRedM.find()) {
-            int reduction = Integer.parseInt(globalRedM.group("reduction"));
-            return ctx -> {
-                ctx.logEntry("Effect: All your Forwards take " + reduction + " less damage this turn");
-                ctx.shieldActivePlayerDamageReduction(reduction);
-            };
-        }
 
-        // "During this turn, if <cardName> is dealt damage by your opponent's Summons or abilities, the damage becomes 0 instead."
-        Matcher nullifyM = STANDALONE_NULLIFY_ABILITY_DAMAGE.matcher(text);
-        if (nullifyM.find()) {
-            String cardName = nullifyM.group("card").trim();
-            return ctx -> {
-                ctx.logEntry("Effect: " + cardName + " — ability damage nullified this turn");
-                // Find the named forward on the active player's field
-                for (int i = 0; i < ctx.p1ForwardCount(); i++) {
-                    if (ctx.p1Forward(i).name().equalsIgnoreCase(cardName))
-                        ctx.shieldAbilityDamage(new ForwardTarget(true, i, ForwardTarget.CardZone.FORWARD));
-                }
-            };
-        }
 
-        // "The damage dealt to Forwards opponent controls cannot be reduced this turn."
-        if (STANDALONE_DISABLE_OPPONENT_DMG_REDUCTION.matcher(text).find()) {
-            return ctx -> {
-                ctx.logEntry("Effect: Opponent's Forwards cannot benefit from damage reduction this turn");
-                ctx.disableOpponentDamageReduction();
-            };
-        }
-
-        // "This damage cannot be reduced." — modifier on a preceding damage sentence.
-        // The actual unreduced routing is handled at the damage call site; this entry
-        // prevents the "not yet implemented" log when it appears as a secondary followup.
-        if (CANNOT_BE_REDUCED_PATTERN.matcher(text).find()) {
-            return ctx -> {};
-        }
-
-        // "During this turn, the next damage dealt to [name] becomes 0 instead."
-        Matcher namedZeroM = STANDALONE_SHIELD_NEXT_DMG_ZERO_NAMED.matcher(text);
-        if (namedZeroM.find()) {
-            String cardName = namedZeroM.group("name").trim();
-            return ctx -> {
-                ctx.logEntry("Effect: " + cardName + " — next damage becomes 0");
-                boolean actorIsP1 = ctx.isP1();
-                int ownCount = actorIsP1 ? ctx.p1ForwardCount() : ctx.p2ForwardCount();
-                int oppCount = actorIsP1 ? ctx.p2ForwardCount() : ctx.p1ForwardCount();
-                for (int i = 0; i < ownCount; i++) {
-                    CardData c = actorIsP1 ? ctx.p1Forward(i) : ctx.p2Forward(i);
-                    if (c.name().equalsIgnoreCase(cardName)) {
-                        ctx.shieldNextIncomingDamage(new ForwardTarget(actorIsP1, i, ForwardTarget.CardZone.FORWARD));
-                        return;
-                    }
-                }
-                for (int i = 0; i < oppCount; i++) {
-                    CardData c = actorIsP1 ? ctx.p2Forward(i) : ctx.p1Forward(i);
-                    if (c.name().equalsIgnoreCase(cardName)) {
-                        ctx.shieldNextIncomingDamage(new ForwardTarget(!actorIsP1, i, ForwardTarget.CardZone.FORWARD));
-                        return;
-                    }
-                }
-                ctx.logEntry("[Warning] " + cardName + " not found on field for next-damage-zero shield");
-            };
-        }
-
-        // "During this turn, the next damage dealt to [name] is reduced by N instead."
-        Matcher namedRedM = STANDALONE_SHIELD_NEXT_DMG_REDUCTION_NAMED.matcher(text);
-        if (namedRedM.find()) {
-            String cardName = namedRedM.group("name").trim();
-            int reduction   = Integer.parseInt(namedRedM.group("reduction"));
-            return ctx -> {
-                ctx.logEntry("Effect: " + cardName + " — next damage reduced by " + reduction);
-                boolean actorIsP1 = ctx.isP1();
-                int ownCount  = actorIsP1 ? ctx.p1ForwardCount() : ctx.p2ForwardCount();
-                int oppCount  = actorIsP1 ? ctx.p2ForwardCount() : ctx.p1ForwardCount();
-                for (int i = 0; i < ownCount; i++) {
-                    CardData c = actorIsP1 ? ctx.p1Forward(i) : ctx.p2Forward(i);
-                    if (c.name().equalsIgnoreCase(cardName)) {
-                        ctx.shieldNextIncomingDamageReduction(
-                                new ForwardTarget(actorIsP1, i, ForwardTarget.CardZone.FORWARD), reduction);
-                        return;
-                    }
-                }
-                for (int i = 0; i < oppCount; i++) {
-                    CardData c = actorIsP1 ? ctx.p2Forward(i) : ctx.p1Forward(i);
-                    if (c.name().equalsIgnoreCase(cardName)) {
-                        ctx.shieldNextIncomingDamageReduction(
-                                new ForwardTarget(!actorIsP1, i, ForwardTarget.CardZone.FORWARD), reduction);
-                        return;
-                    }
-                }
-                ctx.logEntry("[Warning] " + cardName + " not found on field for damage reduction");
-            };
-        }
-
-        return null;
-    }
-
-    private static Consumer<GameContext> tryParseGainCrystal(String text) {
-        Matcher m = GAIN_CRYSTAL.matcher(text);
-        if (!m.find()) return null;
-        String crystalRun = m.group("crystals");
-        int count = (crystalRun.length()) / "《C》".length();
-        return ctx -> {
-            ctx.logEntry("Effect: Gain " + count + " Crystal(s)");
-            ctx.gainCrystal(count);
-        };
-    }
-
-    private static Consumer<GameContext> tryParseGainCrystalIfOpponentHas(String text) {
-        if (!GAIN_CRYSTAL_IF_OPPONENT_HAS.matcher(text).find()) return null;
-        return ctx -> {
-            int opp = ctx.opponentCrystalCount();
-            if (opp <= 0) return;
-            ctx.logEntry("Effect: Opponent has " + opp + " 《C》 — gain 1 Crystal");
-            ctx.gainCrystal(1);
-        };
-    }
-
-    /**
-     * Parses "Choose 1 Forward opponent controls. [Name] gains its Special Ability until the end of the turn.
-     * You can use this ability without paying any cost but only once."
-     * Copies every isSpecial() ability from the chosen Forward to {@code source} as a free, once-per-turn
-     * temp ability (all costs removed) that expires at end of turn.
-     */
-    private static Consumer<GameContext> tryParseChooseOppFwdGainsSpecialAbilityFreeOnce(
-            String text, CardData source) {
-        Matcher m = CHOOSE_OPP_FWD_GAINS_SPECIAL_ABILITY_FREE_ONCE.matcher(text.trim());
-        if (!m.matches()) return null;
-        String logName = m.group("sourceName");
-        return ctx -> {
-            ctx.logEntry(logName + " — Choose 1 Forward opponent controls to copy its Special Ability");
-            List<ForwardTarget> ts = selectTargets(ctx, 1, false, true, false,
-                    null, null, null, false, -1, null, -1, null,
-                    true, false, false, null, null, null, null, false, null, false);
-            if (ts.isEmpty()) return;
-            ForwardTarget t = ts.get(0);
-            CardData chosen = t.isP1() ? ctx.p1Forward(t.idx()) : ctx.p2Forward(t.idx());
-            if (chosen == null) return;
-            List<ActionAbility> specials = chosen.actionAbilities().stream()
-                    .filter(ActionAbility::isSpecial)
-                    .collect(java.util.stream.Collectors.toList());
-            if (specials.isEmpty()) {
-                ctx.logEntry(chosen.name() + " has no Special Ability to copy");
-                return;
-            }
-            for (ActionAbility original : specials)
-                ctx.grantCopiedSpecialAbilityFreeOnce(source, original);
-        };
-    }
 
     /**
      * Matches Gogo's "Mimic": "Use 1 special ability that a Character has used this turn
@@ -16542,312 +8996,23 @@ public class ActionResolver {
         return text != null && USE_SPECIAL_ABILITY_USED_THIS_TURN.matcher(text.trim()).matches();
     }
 
-    /**
-     * Parses "Choose 1 Forward opponent controls which has been dealt damage this turn.
-     * If that Forward has a special ability or an action ability, break it."
-     */
-    private static Consumer<GameContext> tryParseChooseOppDamagedFwdIfHasAbilityBreak(String text) {
-        if (!CHOOSE_OPP_DAMAGED_FWD_IF_HAS_ABILITY_BREAK.matcher(text.trim()).matches()) return null;
-        return ctx -> {
-            ctx.logEntry("Choose 1 damaged opponent Forward — break if has special/action ability");
-            List<ForwardTarget> ts = selectTargets(ctx, 1, false, true, false,
-                    "damaged", null, null, false, -1, null, -1, null,
-                    true, false, false, null, null, null, null, false, null, false);
-            if (ts.isEmpty()) return;
-            ForwardTarget t = ts.get(0);
-            CardData chosen = t.isP1() ? ctx.p1Forward(t.idx()) : ctx.p2Forward(t.idx());
-            if (chosen == null) return;
-            if (chosen.actionAbilities().isEmpty()) {
-                ctx.logEntry(chosen.name() + " has no special/action ability — not broken");
-            } else {
-                ctx.breakTarget(t);
-            }
-        };
-    }
 
-    /**
-     * Parses "Choose as many [Type] [opponent controls] as [the] [CountSource] you control. [Dull/Activate] them."
-     * The count is computed at resolution time from the acting player's field cards matching the count source.
-     */
-    private static Consumer<GameContext> tryParseChooseAsManyAsFieldCount(String text, CardData source) {
-        Matcher m = CHOOSE_AS_MANY_AS_FIELD_COUNT.matcher(text.trim());
-        if (!m.matches()) return null;
 
-        String targetTypeRaw = m.group("targetType").trim();
-        String targetSide    = m.group("targetSide");
-        String countSrc      = m.group("countSrc").trim();
-        String followupText  = m.group("followup").trim();
 
-        String tgtLow = targetTypeRaw.toLowerCase();
-        boolean inclForwards = tgtLow.startsWith("forward") || tgtLow.startsWith("character");
-        boolean inclBackups  = tgtLow.startsWith("backup")  || tgtLow.startsWith("character");
-        boolean inclMonsters = tgtLow.startsWith("monster") || tgtLow.startsWith("character");
 
-        boolean opponentOnly = targetSide != null && targetSide.toLowerCase().contains("opponent");
-        boolean selfOnly     = !opponentOnly;
 
-        String  countJobFilter = null;
-        String  countCatFilter = null;
-        boolean countFwds = true, countBkps = true, countMons = true;
 
-        Matcher jbm = JOB_BRACKET_PATTERN.matcher(countSrc);
-        if (jbm.find()) {
-            countJobFilter = jbm.group(1).trim();
-        } else if (countSrc.toLowerCase().startsWith("category ")) {
-            String rest = countSrc.substring("category ".length()).trim();
-            int sp = rest.indexOf(' ');
-            if (sp >= 0) {
-                countCatFilter = rest.substring(0, sp);
-                String csType = rest.substring(sp + 1).trim().toLowerCase();
-                countFwds = csType.startsWith("forward") || csType.startsWith("character");
-                countBkps = csType.startsWith("backup")  || csType.startsWith("character");
-                countMons = csType.startsWith("monster") || csType.startsWith("character");
-            } else {
-                countCatFilter = rest;
-            }
-        } else if (countSrc.toLowerCase().startsWith("job ")) {
-            String rest = countSrc.substring("job ".length()).trim();
-            countJobFilter = rest.replaceAll("(?i)\\s+(Forwards?|Backups?|Monsters?|Characters?)\\s*$", "").trim();
-        } else {
-            String csTypeLow = countSrc.toLowerCase().replaceAll("s$", "");
-            if (csTypeLow.equals("forward") || csTypeLow.equals("backup")
-                    || csTypeLow.equals("monster") || csTypeLow.equals("character")) {
-                countFwds = csTypeLow.equals("forward") || csTypeLow.equals("character");
-                countBkps = csTypeLow.equals("backup")  || csTypeLow.equals("character");
-                countMons = csTypeLow.equals("monster") || csTypeLow.equals("character");
-            } else {
-                return null;
-            }
-        }
 
-        boolean doActivate = FOLLOWUP_ACTIVATE.matcher(followupText).find();
-        boolean doDull     = FOLLOWUP_DULL.matcher(followupText).find();
-        boolean doFreeze   = !doActivate && !doDull && FOLLOWUP_FREEZE.matcher(followupText).find();
-        if (!doActivate && !doDull && !doFreeze) return null;
 
-        final String  fJob = countJobFilter, fCat = countCatFilter;
-        final boolean fCFwds = countFwds, fCBkps = countBkps, fCMons = countMons;
-        final boolean fOppOnly = opponentOnly, fSelfOnly = selfOnly;
-        final boolean fFwds = inclForwards, fBkps = inclBackups, fMons = inclMonsters;
-        final String  action = doActivate ? "Activate" : doDull ? "Dull" : "Freeze";
-        final String  logPfx = "Choose up to as many " + targetTypeRaw
-                + (targetSide != null ? " " + targetSide : " you control")
-                + " as " + countSrc + " you control";
 
-        return ctx -> {
-            int count = ctx.countSelfFieldCards(fCFwds, fCBkps, fCMons, fJob, null, fCat);
-            if (count <= 0) {
-                ctx.logEntry(logPfx + " — count=0, nothing to choose");
-                ctx.markEffectFizzled();
-                return;
-            }
-            ctx.logEntry(logPfx + " (count=" + count + ") — " + action);
-            List<ForwardTarget> ts = selectTargets(ctx, count, true,
-                    fOppOnly, fSelfOnly, null, null, null, false,
-                    -1, null, -1, null,
-                    fFwds, fBkps, fMons, null, null, null, null, false, null, false);
-            if (doActivate) {
-                sortedByIdxDesc(ts, true) .forEach(ctx::activateTarget);
-                sortedByIdxDesc(ts, false).forEach(ctx::activateTarget);
-            } else if (doDull) {
-                sortedByIdxDesc(ts, true) .forEach(ctx::dullTarget);
-                sortedByIdxDesc(ts, false).forEach(ctx::dullTarget);
-            } else {
-                sortedByIdxDesc(ts, true) .forEach(ctx::freezeTarget);
-                sortedByIdxDesc(ts, false).forEach(ctx::freezeTarget);
-            }
-        };
-    }
 
-    /**
-     * Parses "Choose up to the same number of Characters as the Job X in your Break Zone and/or
-     * Job X you own removed from the game. [Dull/Activate/Freeze] them." (Jill 26-034L). The count
-     * is computed at resolution time from the acting player's Break Zone and removed-from-game zone.
-     */
-    private static Consumer<GameContext> tryParseChooseAsManyAsBzRfgJobCount(String text) {
-        Matcher m = CHOOSE_AS_MANY_AS_BZ_RFG_JOB.matcher(text.trim());
-        if (!m.matches()) return null;
 
-        String targetTypeRaw = m.group("targetType").trim();
-        String job           = m.group("job").trim();
-        String followupText  = m.group("followup").trim();
-
-        String tgtLow = targetTypeRaw.toLowerCase();
-        final boolean inclForwards = tgtLow.startsWith("forward") || tgtLow.startsWith("character");
-        final boolean inclBackups  = tgtLow.startsWith("backup")  || tgtLow.startsWith("character");
-        final boolean inclMonsters = tgtLow.startsWith("monster") || tgtLow.startsWith("character");
-
-        boolean doActivate = FOLLOWUP_ACTIVATE.matcher(followupText).find();
-        boolean doDull     = FOLLOWUP_DULL.matcher(followupText).find();
-        boolean doFreeze   = !doActivate && !doDull && FOLLOWUP_FREEZE.matcher(followupText).find();
-        if (!doActivate && !doDull && !doFreeze) return null;
-
-        final String  action = doActivate ? "Activate" : doDull ? "Dull" : "Freeze";
-        final boolean fActivate = doActivate, fDull = doDull;
-        final String  logPfx = "Choose up to as many " + targetTypeRaw
-                + " as Job " + job + " in your Break Zone and/or removed from the game";
-        return ctx -> {
-            int count = ctx.countSelfBreakZoneAndRfgCards(null, job);
-            if (count <= 0) {
-                ctx.logEntry(logPfx + " — count=0, nothing to choose");
-                ctx.markEffectFizzled();
-                return;
-            }
-            ctx.logEntry(logPfx + " (count=" + count + ") — " + action);
-            List<ForwardTarget> ts = selectTargets(ctx, count, true,
-                    false, false, null, null, null, false,
-                    -1, null, -1, null,
-                    inclForwards, inclBackups, inclMonsters, null, null, null, null, false, null, false);
-            if (fActivate) {
-                sortedByIdxDesc(ts, true) .forEach(ctx::activateTarget);
-                sortedByIdxDesc(ts, false).forEach(ctx::activateTarget);
-            } else if (fDull) {
-                sortedByIdxDesc(ts, true) .forEach(ctx::dullTarget);
-                sortedByIdxDesc(ts, false).forEach(ctx::dullTarget);
-            } else {
-                sortedByIdxDesc(ts, true) .forEach(ctx::freezeTarget);
-                sortedByIdxDesc(ts, false).forEach(ctx::freezeTarget);
-            }
-        };
-    }
-
-    private static Consumer<GameContext> tryParseChooseCounterScaleCharsActivate(String text, int xValue) {
-        Matcher m = CHOOSE_COUNTER_SCALE_CHARS_ACTIVATE.matcher(text);
-        if (!m.find()) return null;
-        final int    count       = xValue;
-        final String counterName = m.group("counterName").trim();
-        return ctx -> {
-            if (count <= 0) {
-                ctx.logEntry("Effect: " + counterName + " Counter choose/activate — 0 counters, nothing to do");
-                return;
-            }
-            ctx.logEntry("Effect: Choose up to " + count + " Characters (" + counterName + " Counters) — Activate");
-            List<ForwardTarget> ts = selectTargets(ctx, count, true,
-                    false, true, null, null, null, false,
-                    -1, null, -1, null,
-                    true, true, true, null, null, null, null, false, null, false);
-            sortedByIdxDesc(ts, true) .forEach(t -> ctx.activateTarget(t));
-            sortedByIdxDesc(ts, false).forEach(t -> ctx.activateTarget(t));
-        };
-    }
-
-    private static Consumer<GameContext> tryParseCounterScaleLookAddToHand(String text, int xValue) {
-        Matcher m = LOOK_COUNTER_SCALE_ADD_TO_HAND_REST_BOTTOM.matcher(text);
-        if (!m.find()) return null;
-        final int    count       = xValue;
-        final String counterName = m.group("counterName").trim();
-        return ctx -> {
-            if (count <= 0) {
-                ctx.logEntry("Effect: " + counterName + " Counter look — 0 counters, nothing to do");
-                return;
-            }
-            ctx.logEntry("Effect: Look at top " + count + " card(s) (" + counterName + " Counters) — add 1 to hand, shuffle rest to bottom");
-            ctx.lookAtTopDeck(new LookConfig(count, LookConfig.LookAction.ADD_TO_HAND_REST_BOTTOM));
-        };
-    }
-
-    private static Consumer<GameContext> tryParseRemoveAllCounters(String text, CardData source) {
-        Matcher m = REMOVE_ALL_COUNTERS.matcher(text);
-        if (!m.find()) return null;
-        String name   = m.group("name").trim();
-        String target = m.group("target").trim();
-        // Only handle self-removal (target matches the source card's name)
-        if (source == null || !source.name().equalsIgnoreCase(target)) return null;
-        return ctx -> {
-            int current = ctx.getCounters(source, name);
-            if (current <= 0) {
-                ctx.logEntry("Effect: Remove all " + name + " Counters from " + source.name() + " — none present");
-                return;
-            }
-            ctx.removeCounters(source, name, current);
-        };
-    }
-
-    private static Consumer<GameContext> tryParsePlaceCounters(String text, CardData source) {
-        Matcher m = PLACE_COUNTERS.matcher(text);
-        if (!m.find()) return null;
-        int    count      = Integer.parseInt(m.group("count"));
-        String name       = m.group("name").trim();
-        String target     = m.group("target").trim();
-        // Only handle self-placement (target matches the source card's name)
-        if (source == null || !source.name().equalsIgnoreCase(target)) return null;
-        return ctx -> {
-            ctx.logEntry("Effect: Place " + count + " " + name + " Counter(s) on " + source.name());
-            ctx.placeCounters(source, name, count);
-        };
-    }
-
-    private static Consumer<GameContext> tryParsePlaceCountersForEach(String text, CardData source) {
-        Matcher m = PLACE_COUNTERS_FOR_EACH.matcher(text.trim());
-        if (!m.matches()) return null;
-        int    baseCount  = Integer.parseInt(m.group("count"));
-        String name       = m.group("name").trim();
-        String target     = m.group("target").trim();
-        if (source == null || !source.name().equalsIgnoreCase(target)) return null;
-        String typeRaw    = m.group("type");
-        String cardType   = Character.toUpperCase(typeRaw.charAt(0))
-                + typeRaw.substring(1).toLowerCase().replaceAll("s$", "");
-        return ctx -> {
-            int total = baseCount * ctx.ownFieldCount(cardType);
-            ctx.logEntry("Effect: Place " + baseCount + " " + name + " Counter(s) per " + cardType
-                    + " you control (" + total + " total) on " + source.name());
-            if (total > 0) ctx.placeCounters(source, name, total);
-        };
-    }
-
-    private static Consumer<GameContext> tryParseLookTopDeckOptionallyBreak(String text) {
-        if (!LOOK_TOP_DECK_OPTIONALLY_BREAK.matcher(text).find()) return null;
-        return ctx -> {
-            ctx.logEntry("Effect: Look at top of deck — may put into Break Zone");
-            ctx.lookAtTopDeck(new LookConfig(1, LookConfig.LookAction.BREAK_OR_KEEP));
-        };
-    }
-
-    private static Consumer<GameContext> tryParseLookTopDeckBottomOrKeep(String text) {
-        if (!LOOK_TOP_DECK_BOTTOM_OR_KEEP.matcher(text).find()) return null;
-        return ctx -> {
-            ctx.logEntry("Effect: Look at top of deck — may place at bottom");
-            ctx.lookAtTopDeck(new LookConfig(1, LookConfig.LookAction.BOTTOM_OR_KEEP));
-        };
-    }
-
-    private static Consumer<GameContext> tryParseLookTopDeckReturnTopOrdered(String text) {
-        Matcher m = LOOK_TOP_DECK_RETURN_TOP_ORDERED.matcher(text);
-        if (!m.find()) return null;
-        int count = Integer.parseInt(m.group("count"));
-        return ctx -> {
-            ctx.logEntry("Effect: Look at top " + count + " card(s) — return to top in any order");
-            ctx.lookAtTopDeck(new LookConfig(count, LookConfig.LookAction.RETURN_TOP_ORDERED));
-        };
-    }
-
-    private static Consumer<GameContext> tryParseLookTopDeckAddToHandRestBottom(String text) {
-        Matcher m = LOOK_TOP_DECK_ADD_TO_HAND_REST_BOTTOM.matcher(text);
-        if (!m.find()) return null;
-        int count = Integer.parseInt(m.group("count"));
-        boolean reveal = isRevealWording(m.group("verb"));
-        Consumer<GameContext> look = ctx -> {
-            ctx.logEntry("Effect: " + (reveal ? "Reveal" : "Look at") + " top " + count
-                    + " card(s) — add 1 to hand, return rest to bottom");
-            ctx.lookAtTopDeck(new LookConfig(
-                    count, LookConfig.LookAction.ADD_TO_HAND_REST_BOTTOM, null, reveal));
-        };
-        String tail = text.substring(m.end()).trim();
-        if (tail.isEmpty()) return look;
-        // Golem 23-064R also continues past this clause, with a rider that is not understood yet;
-        // reporting the whole ability as unparsed beats running half of it.
-        if (!ADDED_CARD_EX_BURST_RIDER.matcher(tail).matches()) return null;
-        return look.andThen(ctx -> {
-            ctx.logEntry("Effect: added card's EX Burst may be put on the stack");
-            ctx.triggerExBurstOfCardAddedToHand();
-        });
-    }
 
     /**
      * True when a captured {@code verb} group is the "Reveal" wording rather than "Look at".
      * Reveal shows the cards to both players; look at keeps them private to the controller.
      */
-    private static boolean isRevealWording(String verb) {
+    static boolean isRevealWording(String verb) {
         return verb != null && verb.trim().toLowerCase(java.util.Locale.ROOT).startsWith("reveal");
     }
 
@@ -16862,41 +9027,8 @@ public class ActionResolver {
                 : "LookTopDeckAddToHandRestBottom";
     }
 
-    private static Consumer<GameContext> tryParseLookTopDeckAddToHandOneToBreakRestBottom(String text) {
-        Matcher m = LOOK_TOP_DECK_ADD_TO_HAND_ONE_TO_BREAK_REST_BOTTOM.matcher(text);
-        if (!m.find()) return null;
-        int count = Integer.parseInt(m.group("count"));
-        return ctx -> {
-            ctx.logEntry("Effect: Look at top " + count + " card(s) — add 1 to hand, 1 to Break Zone, return rest to bottom");
-            ctx.lookAtTopDeck(new LookConfig(count, LookConfig.LookAction.ADD_TO_HAND_ONE_TO_BREAK_REST_BOTTOM));
-        };
-    }
 
-    private static Consumer<GameContext> tryParseLookTopDeckAddToHandRestBreak(String text) {
-        Matcher m = LOOK_TOP_DECK_ADD_TO_HAND_REST_BREAK.matcher(text);
-        if (!m.find()) return null;
-        int     count   = Integer.parseInt(m.group("count"));
-        String  element = m.group("element");
-        boolean reveal  = isRevealWording(m.group("verb"));
-        String elemLabel = element != null ? " (" + element + ")" : "";
-        return ctx -> {
-            ctx.logEntry("Effect: " + (reveal ? "Reveal" : "Look at") + " top " + count
-                    + " card(s) — add 1" + elemLabel + " to hand, rest to Break Zone");
-            ctx.lookAtTopDeck(new LookConfig(
-                    count, LookConfig.LookAction.ADD_TO_HAND_REST_BREAK, element, reveal));
-        };
-    }
 
-    private static Consumer<GameContext> tryParseLookTopDeckTopOrBottom(String text, CardData source) {
-        Matcher m = LOOK_TOP_DECK_TOP_OR_BOTTOM.matcher(text);
-        if (!m.find()) return null;
-        int count = Integer.parseInt(m.group("count"));
-        Consumer<GameContext> look = ctx -> {
-            ctx.logEntry("Effect: Look at top " + count + " card(s) — return to top or bottom in any order");
-            ctx.lookAtTopDeck(new LookConfig(count, LookConfig.LookAction.TOP_OR_BOTTOM_ORDERED));
-        };
-        return appendThenClause(look, text.substring(m.end()), source);
-    }
 
     /**
      * Chains a trailing "Then, [effect]" sentence onto an already-parsed primary effect.
@@ -16911,7 +9043,7 @@ public class ActionResolver {
      *         half-understood ability is reported as unparsed rather than silently dropping half
      *         of what the card does
      */
-    private static Consumer<GameContext> appendThenClause(
+    static Consumer<GameContext> appendThenClause(
             Consumer<GameContext> base, String tail, CardData source) {
         Matcher m = TRAILING_THEN_CLAUSE.matcher(tail);
         if (!m.matches()) return base;
@@ -16931,60 +9063,10 @@ public class ActionResolver {
         return then.matches() ? then.group("rest").trim() : null;
     }
 
-    private static Consumer<GameContext> tryParseLookTopDeckPickOneTopRestBottom(String text) {
-        Matcher m = LOOK_TOP_DECK_PICK_ONE_TOP_REST_BOTTOM.matcher(text);
-        if (!m.find()) return null;
-        int count = Integer.parseInt(m.group("count"));
-        return ctx -> {
-            ctx.logEntry("Effect: Look at top " + count + " card(s) — pick 1 on top, rest to bottom");
-            ctx.lookAtTopDeck(new LookConfig(count, LookConfig.LookAction.PICK_ONE_TOP_REST_BOTTOM));
-        };
-    }
 
-    private static Consumer<GameContext> tryParseLookTopDeckPeek(String text) {
-        Matcher m = LOOK_TOP_DECK_PEEK.matcher(text);
-        if (!m.find()) return null;
-        String countStr = m.group("count");
-        int count = (countStr != null) ? Integer.parseInt(countStr) : 1;
-        return ctx -> {
-            ctx.logEntry("Effect: Look at top " + count + " card(s) of deck");
-            ctx.lookAtTopDeck(new LookConfig(count, LookConfig.LookAction.PEEK));
-        };
-    }
 
-    private static Consumer<GameContext> tryParseRevealTopBreakSameCostAddToHand(String text) {
-        if (!REVEAL_TOP_BREAK_SAME_COST_ADD_TO_HAND.matcher(text.trim()).find()) return null;
-        return ctx -> {
-            ctx.logEntry("Effect: Reveal top of deck — break all opponent Forwards with same cost, add revealed card to hand");
-            ctx.revealTopBreakSameCostAddToHand();
-        };
-    }
 
-    private static Consumer<GameContext> tryParseLookTopDeckCastSummonFreeRestBottom(String text, int xValue) {
-        Matcher m = LOOK_TOP_DECK_CAST_SUMMON_FREE_REST_BOTTOM.matcher(text.trim());
-        if (!m.find()) return null;
-        String countStr = m.group("count");
-        String costStr  = m.group("cost");
-        final int count   = countStr.equalsIgnoreCase("X") ? xValue : Integer.parseInt(countStr);
-        final int maxCost = costStr.equalsIgnoreCase("X")  ? xValue : Integer.parseInt(costStr);
-        return ctx -> {
-            ctx.logEntry("Effect: Look at top " + count + " card(s) — reveal/cast 1 Summon (cost " + maxCost + " or less) for free, shuffle rest to bottom");
-            ctx.lookAtTopDeckCastSummonFreeRestBottom(count, maxCost);
-        };
-    }
 
-    private static Consumer<GameContext> tryParseRemoveTopOfDeckFromGame(String text, CardData source) {
-        Matcher m = REMOVE_TOP_OF_DECK_FROM_GAME.matcher(text);
-        if (!m.find()) return null;
-        String countStr = m.group("count");
-        int count = (countStr != null) ? Integer.parseInt(countStr) : 1;
-        return ctx -> {
-            ctx.logEntry("Effect: Remove top " + count + " card(s) of deck from game");
-            // Recorded against the source so a later ability on the same card can call them back
-            // ("cards removed by the previous effect" — Libroarian 8-084R).
-            ctx.removeTopCardsOfDeckFromGame(count, source);
-        };
-    }
 
     /**
      * Matches Libroarian 8-084R's end-of-turn ability: "add N card(s) removed by the previous effect
@@ -16995,7 +9077,7 @@ public class ActionResolver {
      *   <li>Group {@code name}  — the card broken once none are left; absent when there is no such clause</li>
      * </ul>
      */
-    private static final Pattern ADD_REMOVED_BY_PREVIOUS_EFFECT_TO_HAND = Pattern.compile(
+    static final Pattern ADD_REMOVED_BY_PREVIOUS_EFFECT_TO_HAND = Pattern.compile(
         "(?i)^add\\s+(?<count>\\d+)\\s+cards?\\s+removed\\s+by\\s+the\\s+previous\\s+effect\\s+to\\s+your\\s+hand[.!]?" +
         "(?:\\s*Then[,.]?\\s+if\\s+there\\s+(?:are|is)\\s+no\\s+more\\s+cards?\\s+removed\\s+by\\s+the\\s+previous\\s+" +
         "effect\\s+left[,.]?\\s+put\\s+(?<name>.+?)\\s+into\\s+the\\s+Break\\s+Zone[.!]?)?$",
@@ -17013,7 +9095,7 @@ public class ActionResolver {
      * Group {@code all} is set for the "all the cards" form; {@code rest} for the "put the rest into
      * the Break Zone" tail; {@code name} is checked against the ability's own source.
      */
-    private static final Pattern ADD_REMOVED_BY_SOURCE_ABILITY_TO_HAND = Pattern.compile(
+    static final Pattern ADD_REMOVED_BY_SOURCE_ABILITY_TO_HAND = Pattern.compile(
         "(?i)^add\\s+(?:(?<all>all\\s+the)|1)\\s+cards?\\s+removed\\s+by\\s+(?<name>.+?)'s?\\s+ability\\s+" +
         "to\\s+your\\s+hand(?<rest>\\s*,?\\s*and\\s+put\\s+the\\s+rest\\s+of\\s+the\\s+cards?\\s+into\\s+" +
         "the\\s+Break\\s+Zone)?[.!]?$",
@@ -17038,22 +9120,6 @@ public class ActionResolver {
         Pattern.DOTALL
     );
 
-    /** Parses the "cards removed by [CardName]'s ability" retrieval wordings. */
-    private static Consumer<GameContext> tryParseAddRemovedBySourceAbilityToHand(String text, CardData source) {
-        if (source == null) return null;
-        Matcher m = ADD_REMOVED_BY_SOURCE_ABILITY_TO_HAND.matcher(text.trim());
-        if (!m.matches()) return null;
-        String named = m.group("name").trim();
-        if (!named.equalsIgnoreCase(source.name()) && !isSelfReference(named)) return null;
-        boolean all      = m.group("all")  != null;
-        boolean restToBz = m.group("rest") != null;
-        return ctx -> {
-            ctx.logEntry("Effect: Add " + (all ? "all cards" : "1 card") + " removed by "
-                    + source.name() + "'s ability to hand" + (restToBz ? ", rest to Break Zone" : ""));
-            ctx.addCardsRemovedBySourceToHand(source, all ? Integer.MAX_VALUE : 1);
-            if (restToBz) ctx.putCardsRemovedBySourceIntoBreakZone(source);
-        };
-    }
 
     /** Parses Anima 19-123H's "remove the top card… Then, if there are N or more removed…" compound. */
     private static Consumer<GameContext> tryParseRemoveTopThenPileThreshold(String text, CardData source) {
@@ -17083,44 +9149,8 @@ public class ActionResolver {
         };
     }
 
-    /** Parses "add N card(s) removed by the previous effect to your hand. [Then, …]" (Libroarian 8-084R). */
-    private static Consumer<GameContext> tryParseAddRemovedByPreviousEffectToHand(String text, CardData source) {
-        if (source == null) return null;   // "the previous effect" is this card's own earlier ability
-        Matcher m = ADD_REMOVED_BY_PREVIOUS_EFFECT_TO_HAND.matcher(text.trim());
-        if (!m.matches()) return null;
-        int count = Integer.parseInt(m.group("count"));
-        String breakName = m.group("name");
-        if (breakName != null) {
-            String n = breakName.trim();
-            if (!n.equalsIgnoreCase(source.name()) && !isSelfReference(n)) return null;
-        }
-        boolean breakWhenEmpty = breakName != null;
-        return ctx -> {
-            ctx.logEntry("Effect: Add " + count + " card(s) removed by " + source.name() + " to hand");
-            int remaining = ctx.addCardsRemovedBySourceToHand(source, count);
-            if (breakWhenEmpty && remaining == 0) {
-                ctx.logEntry("Effect: no removed cards left — " + source.name() + " is broken");
-                ctx.breakSourceCard(source);
-            }
-        };
-    }
 
-    private static Consumer<GameContext> tryParseShuffleDeck(String text) {
-        if (!SHUFFLE_DECK.matcher(text).find()) return null;
-        return ctx -> ctx.shuffleDeck();
-    }
 
-    private static Consumer<GameContext> tryParseBackupCpDraw(String text) {
-        Matcher m = BACKUP_CP_DRAW.matcher(text);
-        if (!m.find()) return null;
-        int count = Integer.parseInt(m.group("count"));
-        return ctx -> {
-            if (ctx.castWasPaidByBackupsOnly()) {
-                ctx.logEntry("BackupCpDraw — CP was only from Backups, draw " + count);
-                ctx.drawCards(count);
-            }
-        };
-    }
 
     private static Consumer<GameContext> tryParseAllMonstersTemporaryForward(String text) {
         Matcher m = ALL_MONSTERS_BECOME_FORWARDS_UNTIL_EOT_PATTERN.matcher(text.trim());
@@ -17288,225 +9318,15 @@ public class ActionResolver {
         return OWN_FORWARD_PROTECTION.matcher(text).find();
     }
 
-    private static Consumer<GameContext> tryParseGainCrystalPerX(String text, int xValue) {
-        if (!GAIN_CRYSTAL_PER_X.matcher(text).find()) return null;
-        return ctx -> {
-            ctx.logEntry("Effect: Gain " + xValue + " Crystal(s) (for each CP paid as X)");
-            ctx.gainCrystal(xValue);
-        };
-    }
 
-    /**
-     * Parses "Choose 1 Summon in your Break Zone. Add it to your hand. During this turn,
-     * the cost required to cast your next Summon is reduced by N [(it cannot become 0)]."
-     */
-    private static Consumer<GameContext> tryParseChooseSummonFromBzToHandWithCostReduction(String text) {
-        Matcher m = CHOOSE_SUMMON_FROM_BZ_TO_HAND_WITH_COST_REDUCTION.matcher(text);
-        if (!m.find()) return null;
-        int amount = Integer.parseInt(m.group("amount"));
-        boolean floorAtOne = m.group("floorone") != null;
-        CostReductionModifier modifier = new CostReductionModifier(
-                amount, floorAtOne, true,
-                false, false, false, true,
-                null, null, null, null, false);
-        String logDesc = "Choose 1 Summon from own Break Zone → hand; next Summon costs "
-                + amount + " less" + (floorAtOne ? " (min 1)" : "");
-        return ctx -> {
-            ctx.logEntry("Effect: " + logDesc);
-            ctx.chooseSummonFromOwnBzToHand();
-            ctx.applyNextCastCostReduction(modifier);
-        };
-    }
 
-    /** Parses "Choose N Summons in your Break Zone. Add 1 of them to your hand, and remove the rest from the game." */
-    private static Consumer<GameContext> tryParseChooseNSummonsBzPickOneHandRestRfg(String text) {
-        Matcher m = CHOOSE_N_SUMMONS_BZ_PICK_ONE_HAND_REST_RFG.matcher(text);
-        if (!m.find()) return null;
-        int total = Integer.parseInt(m.group("total"));
-        return ctx -> {
-            ctx.logEntry("Effect: Choose " + total + " Summons from own BZ — add 1 to hand, remove rest");
-            ctx.chooseSummonsFromBzPickOneToHandRestRfg(total);
-        };
-    }
 
-    /**
-     * Parses "Choose 1 [Element] Summon in your Break Zone. You can cast it at any time
-     * you could normally cast it this turn. The cost required to cast it is reduced by N."
-     * At resolution: shows a chooser, moves the picked Summon BZ→hand, and registers a
-     * cardname-targeted CostReductionModifier so the existing hand-cast path discounts it.
-     */
-    private static Consumer<GameContext> tryParseChooseSummonInBzCastable(String text) {
-        Matcher m = CHOOSE_SUMMON_IN_BZ_CASTABLE.matcher(text);
-        if (!m.find()) return null;
-        final String element = m.group("element").trim();
-        final int    amount  = Integer.parseInt(m.group("amount"));
-        return ctx -> {
-            ctx.logEntry("Effect: Choose 1 " + element + " Summon in BZ — castable this turn (cost -" + amount + ")");
-            ctx.chooseSummonInBzMakeCastable(element, amount);
-        };
-    }
 
-    private static Consumer<GameContext> tryParseOppRfpTopDeckCastable(String text) {
-        Matcher m = OPP_RFP_TOPDECK_CASTABLE.matcher(text);
-        if (!m.find()) return null;
-        String costClause = m.group("cost") != null ? m.group("cost") : "";
-        Matcher r = Pattern.compile("(?i)reduced\\s+by\\s+(\\d+)").matcher(costClause);
-        final int reduction = r.find() ? Integer.parseInt(r.group(1)) : 0;
-        final boolean anyElement = costClause.toLowerCase(java.util.Locale.ROOT).contains("any element");
-        return ctx -> {
-            ctx.logEntry("Effect: Opponent removes top deck card from game — you may cast it as your own"
-                    + (reduction > 0 ? " (cost -" + reduction + ")" : "")
-                    + (anyElement ? " [any Element]" : ""));
-            ctx.opponentRfpTopDeckMakeCastable(reduction, anyElement);
-        };
-    }
 
-    private static Consumer<GameContext> tryParseChooseFromOppBzCastable(String text) {
-        Matcher m = CHOOSE_FROM_OPP_BZ_CASTABLE.matcher(text);
-        if (!m.find()) return null;
-        String t = m.group("type").toLowerCase(java.util.Locale.ROOT);
-        final boolean inclForwards = t.startsWith("forward") || t.startsWith("character");
-        final boolean inclBackups  = t.startsWith("backup")  || t.startsWith("character");
-        final boolean inclMonsters = t.startsWith("monster") || t.startsWith("character");
-        return ctx -> {
-            ctx.logEntry("Effect: Choose 1 " + t + " in opponent's BZ, remove from game — castable as your own");
-            ctx.chooseFromOpponentBzMakeCastable(inclForwards, inclBackups, inclMonsters);
-        };
-    }
 
-    private static Consumer<GameContext> tryParseChooseSummonsFromBzCastable(String text) {
-        Matcher mg = CHOOSE_SUMMONS_FROM_BZ_GAME.matcher(text);
-        if (mg.find()) {
-            final int count = Integer.parseInt(mg.group("count"));
-            final boolean eitherBz = !mg.group("scope").toLowerCase(java.util.Locale.ROOT).equals("your");
-            return ctx -> {
-                ctx.logEntry("Effect: Choose " + count + " Summon(s) from BZ, remove from game — castable as your own this game");
-                ctx.chooseSummonsFromBzMakeCastable(count, eitherBz, false, false, false);
-            };
-        }
-        Matcher mt = CHOOSE_SUMMONS_FROM_BZ_TURN.matcher(text);
-        if (mt.find()) {
-            final int count = Integer.parseInt(mt.group("count"));
-            final boolean eitherBz = !mt.group("scope").toLowerCase(java.util.Locale.ROOT).equals("your");
-            String rfgClause = mt.group("rfg") != null ? mt.group("rfg").toLowerCase(java.util.Locale.ROOT) : "";
-            final boolean rfgAfterUse = rfgClause.contains("after use");
-            return ctx -> {
-                ctx.logEntry("Effect: Choose " + count + " Summon(s) from BZ — castable as your own this turn"
-                        + (rfgAfterUse ? " (removed from game after use)" : ""));
-                ctx.chooseSummonsFromBzMakeCastable(count, eitherBz, true, rfgAfterUse, false);
-            };
-        }
-        return null;
-    }
 
-    private static Consumer<GameContext> tryParseChooseSummonInBzMaxCostFreeCastRfg(String text) {
-        Matcher m = CHOOSE_SUMMON_IN_BZ_MAX_COST_FREE_CAST_RFG.matcher(text);
-        if (!m.find()) return null;
-        final int maxCost = Integer.parseInt(m.group("cost"));
-        return ctx -> {
-            ctx.logEntry("Effect: Choose Summon (cost ≤ " + maxCost + ") from BZ — cast free, RFG after use");
-            ctx.chooseSummonInBzByMaxCostFreeCastRfgAfterUse(maxCost);
-        };
-    }
 
-    private static Consumer<GameContext> tryParseCostReductionThisTurn(String text) {
-        Matcher m = COST_REDUCTION_THIS_TURN.matcher(text);
-        if (!m.find()) return null;
 
-        String elementRaw  = m.group("element");
-        String categoryRaw = m.group("category");
-        // Combined "Job X or Card Name Y" case
-        String jobOrRaw    = m.group("joborg");
-        String cnameOrRaw  = m.group("cnameborg");
-        boolean jobOrName  = jobOrRaw != null;
-        String jobRaw      = jobOrName ? jobOrRaw    : m.group("job");
-        String cardnameRaw = jobOrName ? cnameOrRaw  : m.group("cardname");
-        String typeRaw     = m.group("type");
-        int    amount      = Integer.parseInt(m.group("amount"));
-        boolean floorAtOne = m.group("floorone") != null;
-
-        boolean inclForwards, inclBackups, inclMonsters, inclSummons;
-        if (cardnameRaw != null) {
-            inclForwards = inclBackups = inclMonsters = inclSummons = true;
-        } else {
-            String t = typeRaw != null ? typeRaw.toLowerCase(java.util.Locale.ROOT) : "card";
-            inclForwards = t.matches("forwards?|characters?|card");
-            inclBackups  = t.matches("backups?|characters?|card");
-            inclMonsters = t.matches("monsters?|characters?|card");
-            inclSummons  = t.matches("summons?|card");
-        }
-
-        final String element  = elementRaw  != null ? elementRaw.trim()  : null;
-        final String category = categoryRaw != null ? categoryRaw.trim() : null;
-        final String job      = jobRaw      != null ? jobRaw.trim()      : null;
-        final String cardname = cardnameRaw != null ? cardnameRaw.trim() : null;
-        final String typeDesc = jobOrName   ? "or Card Name " + cardname
-                              : cardname    != null ? "Card Name " + cardname
-                              : typeRaw     != null ? typeRaw : "card";
-
-        CostReductionModifier modifier = new CostReductionModifier(
-                amount, floorAtOne, true,
-                inclForwards, inclBackups, inclMonsters, inclSummons,
-                element, job, cardname, category, jobOrName);
-
-        String logDesc = "During this turn, next "
-                + (element  != null ? element + " " : "")
-                + (category != null ? "Category " + category + " " : "")
-                + (job      != null ? "Job " + job + " " : "")
-                + typeDesc + " costs " + amount + " less" + (floorAtOne ? " (min 1)" : "");
-
-        return ctx -> {
-            ctx.logEntry("Effect: " + logDesc);
-            ctx.applyNextCastCostReduction(modifier);
-        };
-    }
-
-    private static Consumer<GameContext> tryParsePlayCostReductionThisTurn(String text) {
-        Matcher m = PLAY_COST_REDUCTION_THIS_TURN.matcher(text);
-        if (!m.find()) return null;
-
-        String elementRaw  = m.group("element");
-        String categoryRaw = m.group("category");
-        String jobRaw      = m.group("job");
-        String cardnameRaw = m.group("cardname");
-        String typeRaw     = m.group("type");
-        int    amount      = Integer.parseInt(m.group("amount"));
-        boolean floorAtOne = m.group("floorone") != null;
-
-        boolean inclForwards, inclBackups, inclMonsters;
-        if (cardnameRaw != null) {
-            inclForwards = inclBackups = inclMonsters = true;
-        } else {
-            String t = typeRaw != null ? typeRaw.toLowerCase(java.util.Locale.ROOT) : "characters";
-            inclForwards = t.matches("forwards?|characters?");
-            inclBackups  = t.matches("backups?|characters?");
-            inclMonsters = t.matches("monsters?|characters?");
-        }
-
-        final String element  = elementRaw  != null ? elementRaw.trim()  : null;
-        final String category = categoryRaw != null ? categoryRaw.trim() : null;
-        final String job      = jobRaw      != null ? jobRaw.trim()      : null;
-        final String cardname = cardnameRaw != null ? cardnameRaw.trim() : null;
-        final String typeDesc = cardname != null ? "Card Name " + cardname
-                              : typeRaw  != null ? typeRaw : "Characters";
-
-        CostReductionModifier modifier = new CostReductionModifier(
-                amount, floorAtOne, false,
-                inclForwards, inclBackups, inclMonsters, false,
-                element, job, cardname, category, false);
-
-        String logDesc = "This turn, your "
-                + (element  != null ? element + " " : "")
-                + (category != null ? "Category " + category + " " : "")
-                + (job      != null ? "Job " + job + " " : "")
-                + typeDesc + " cost " + amount + " less to play onto the field"
-                + (floorAtOne ? " (min 1)" : "");
-
-        return ctx -> {
-            ctx.logEntry("Effect: " + logDesc);
-            ctx.applyNextCastCostReduction(modifier);
-        };
-    }
 
     private static Consumer<GameContext> tryParseExtraTurnThenLose(String text) {
         if (!EXTRA_TURN_THEN_LOSE.matcher(text).find()) return null;
@@ -17516,39 +9336,6 @@ public class ActionResolver {
         };
     }
 
-    /**
-     * Parses "Activate &lt;cardName&gt;[.]" — activates named card(s) the ability user controls.
-     * Handles single plain names ("Activate <cardName>"), "Card Name X" notation, and
-     * "Card Name X and Card Name Y [you control]" multi-target form.
-     */
-    private static Consumer<GameContext> tryParseActivateNamedCard(String text) {
-        Matcher m = ACTIVATE_NAMED_CARD.matcher(text);
-        if (!m.find()) return null;
-
-        String raw = m.group("card").trim();
-        // Strip optional trailing "you control"
-        raw = raw.replaceAll("(?i)\\s+you\\s+control$", "").trim();
-
-        // Build list of card names, handling "Card Name X [and Card Name Y]" form
-        List<String> names = new ArrayList<>();
-        if (raw.matches("(?i)Card\\s+Name.*")) {
-            String[] parts = ACTIVATE_AND_CARD_NAME_SPLIT.split(raw);
-            for (String part : parts)
-                names.add(part.replaceAll("(?i)^Card\\s+Name\\s+", "").trim());
-        } else {
-            names.add(raw);
-        }
-
-        return ctx -> {
-            ctx.logEntry("Effect: Activate " + String.join(", ", names));
-            for (String name : names) {
-                List<ForwardTarget> ts = ctx.selectCharacters(
-                        1, false, false, true, null, null, -1, null, -1, null,
-                        true, true, true, null, name, null, null, false, null, false);
-                ts.forEach(ctx::activateTarget);
-            }
-        };
-    }
 
     /** Parses "[name] can attack once more this turn." */
     private static Consumer<GameContext> tryParseAttackOnceMore(String text) {
@@ -17567,10 +9354,6 @@ public class ActionResolver {
         return ctx -> ctx.limitOpponentAttackDeclarationsThisTurn(1);
     }
 
-    private static Consumer<GameContext> tryParseOpponentCannotSearchThisTurn(String text) {
-        if (!OPPONENT_CANNOT_SEARCH_THIS_TURN.matcher(text).find()) return null;
-        return ctx -> ctx.setOpponentCannotSearchThisTurn();
-    }
 
     /**
      * Parses "Remove &lt;cardName&gt; from [the] Battle." — removes the named card from the current
@@ -17586,40 +9369,8 @@ public class ActionResolver {
         };
     }
 
-    private static Consumer<GameContext> tryParseDualSearchJobAndTypeDontShareElements(String text) {
-        Matcher m = DUAL_SEARCH_JOB_AND_TYPE_DONT_SHARE_ELEMENTS.matcher(text);
-        if (!m.find()) return null;
-        String job  = m.group("job").trim();
-        String type = m.group("type").trim();
-        return ctx -> {
-            ctx.logEntry("Effect: Dual search — Job " + job + " and " + type + " (don't share elements) → hand");
-            ctx.searchDeckJobAndTypeDontShareElements(job, type);
-        };
-    }
 
-    private static Consumer<GameContext> tryParseSearchElementOrCategoryCharsDiffCost(String text) {
-        Matcher m = SEARCH_ELEMENT_OR_CATEGORY_CHARS_DIFF_COST.matcher(text);
-        if (!m.find()) return null;
-        String element  = m.group("element").trim();
-        String category = m.group("category").trim();
-        return ctx -> {
-            ctx.logEntry("Effect: Search — 2 " + element + " Characters, 2 Category " + category
-                    + " Characters, or 1 of each, each with a different cost → hand");
-            ctx.searchDeckElementOrCategoryCharsDifferentCost(element, category);
-        };
-    }
 
-    /** Parses "Search for N [Element] Summons each with a different cost and add them to your hand." */
-    private static Consumer<GameContext> tryParseSearchNElementSummonsDiffCost(String text) {
-        Matcher m = SEARCH_N_ELEM_SUMMONS_DIFF_COST.matcher(text);
-        if (!m.find()) return null;
-        int    count   = Integer.parseInt(m.group("count"));
-        String element = m.group("element").trim();
-        return ctx -> {
-            ctx.logEntry("Effect: Search — " + count + " " + element + " Summons, each different cost → hand");
-            ctx.searchDeckNElementSummonsDifferentCost(count, element);
-        };
-    }
 
     /**
      * Parses "Search for 1 [filter] [elements] [type] [other than Card Name X] [of cost N] and [destination]".
@@ -17631,210 +9382,24 @@ public class ActionResolver {
      * "Alisaie or Card Name Alphinaud" → {@code "Alisaie|Alphinaud"}. One separator covers every
      * printed joiner — ", ", ", or ", " or ", " and/or " — and a single name passes through unchanged.
      */
-    private static String splitCardNameList(String printedNames) {
+    static String splitCardNameList(String printedNames) {
         return String.join("|",
                 printedNames.trim().split("(?i)\\s*,?\\s*(?:(?:and/)?or\\s+)?Card\\s+Name\\s+"));
     }
 
-    private static Consumer<GameContext> tryParseSearchDeck(String text, CardData source, int xValue) {
-        Matcher m = SEARCH_DECK_PATTERN.matcher(text);
-        if (!m.find()) return null;
-
-        // --- Card name filter ---
-        String cardNameFilter = null;
-        String bracketName = m.group("bracketname");
-        if (bracketName != null) {
-            Matcher nm = CARD_NAME_BRACKET_PATTERN.matcher(bracketName);
-            if (nm.find()) cardNameFilter = nm.group(1).trim();
-        } else {
-            String writtenNames = m.group("cardnames");
-            if (writtenNames != null) {
-                cardNameFilter = splitCardNameList(writtenNames);
-            } else {
-                String written = m.group("cardname");
-                if (written != null) cardNameFilter = written.trim();
-            }
-        }
-
-        // --- Job filter ---
-        String jobFilter = null;
-        String bracketJob = m.group("bracketjob");
-        if (bracketJob != null) {
-            Matcher jm = JOB_BRACKET_PATTERN.matcher(bracketJob);
-            if (jm.find()) jobFilter = jm.group(1).trim();
-        } else {
-            String writtenJob = m.group("jobnm");
-            if (writtenJob != null) {
-                // "Chocobo or Job Moogle or Job Ninja" → "Chocobo|Moogle|Ninja"
-                String[] parts = writtenJob.trim().split("(?i)\\s+or\\s+Job\\s+");
-                jobFilter = String.join("|", parts);
-            }
-        }
-
-        // --- "Job X or Card Name Y" — sets both filters; OR logic applied at match time ---
-        String jobnmOr = m.group("jobnmor");
-        if (jobnmOr != null) {
-            jobFilter = jobnmOr.trim();
-            String cnameOr = m.group("cnameor");
-            if (cnameOr != null) cardNameFilter = splitCardNameList(cnameOr);
-        }
-
-        // --- "Card Name X [, Card Name Y] or Job Z" — sets both filters; OR logic at match time ---
-        String cnameJobnmOr = m.group("cnamejobnmor");
-        if (cnameJobnmOr != null) {
-            cardNameFilter = splitCardNameList(cnameJobnmOr);
-            String jobNmCnameOr = m.group("jobnmcnameor");
-            if (jobNmCnameOr != null) jobFilter = jobNmCnameOr.trim();
-        }
-
-        // --- Category filter ---
-        String categoryFilter = m.group("category") != null ? m.group("category").trim() : null;
-        String catAfterJob = m.group("catafterjob");
-        if (catAfterJob != null && categoryFilter == null) categoryFilter = catAfterJob.trim();
-
-        // --- Element filter (e.g. "Fire or Earth" → "Fire|Earth") ---
-        // preelems captures elements that precede a Job/Name filter (e.g. "Fire Job Knight");
-        // elements captures elements that follow the filter (classic ordering).
-        String preElemsRaw = m.group("preelems");
-        String postElemsRaw = m.group("elements");
-        String elementsRaw = preElemsRaw != null ? preElemsRaw : postElemsRaw;
-        String elementFilter = elementsRaw != null
-                ? elementsRaw.trim().replaceAll("(?i)\\s+or\\s+", "|") : null;
-
-        // --- Exclude name (other than Card Name X) ---
-        String excludeName = m.group("excludename") != null ? m.group("excludename").trim() : null;
-
-        // --- Exclude element (other than Light or Dark) ---
-        String excludeElemRaw = m.group("excludeelem");
-        String excludeElem = excludeElemRaw != null ? excludeElemRaw.trim() : null;
-
-        // --- Type flags ---
-        String  targets  = m.group("targets");
-        boolean anyType  = targets == null || targets.toLowerCase().startsWith("card");
-        String  tgtLower;
-        if (anyType || targets == null) { tgtLower = ""; }
-        else                            { tgtLower = targets.toLowerCase(); }
-        boolean inclForwards = anyType || tgtLower.contains("forward") || tgtLower.contains("character");
-        boolean inclBackups  = anyType || tgtLower.contains("backup")  || tgtLower.contains("character");
-        boolean inclMonsters = anyType || tgtLower.contains("monster") || tgtLower.contains("character");
-        boolean inclSummons  = anyType || tgtLower.contains("summon");
-
-        // --- Type exclusion (e.g. "card other than a Backup") ---
-        String excludeTypeRaw = m.group("excludetype");
-        if (excludeTypeRaw != null) {
-            String etl = excludeTypeRaw.toLowerCase();
-            if (etl.equals("forward")   || etl.equals("character")) inclForwards = false;
-            if (etl.equals("backup")    || etl.equals("character")) inclBackups  = false;
-            if (etl.equals("monster")   || etl.equals("character")) inclMonsters = false;
-            if (etl.equals("summon"))                                inclSummons  = false;
-        }
-
-        // --- Cost filter ---
-        String costStr = m.group("cost");
-        int    costVal = costStr == null ? -1 : Integer.parseInt(costStr);
-        String costCmpRaw = m.group("costcmp");
-        // "of cost 5 or 6" — numeric second value → encode as "or_6" for meetsCostConstraint
-        String costCmp = (costCmpRaw != null && costCmpRaw.matches("\\d+"))
-                ? "or_" + costCmpRaw : costCmpRaw;
-
-        // --- Count ---
-        String countStr = m.group("count");
-        int count = (countStr != null) ? Integer.parseInt(countStr) : 1;
-
-        // --- Destination ---
-        String destText   = m.group("destination").toLowerCase();
-        boolean entersDull = destText.contains("dull");
-        String destination = destText.contains("hand")     ? "hand"
-                           : destText.contains("field")    ? "field"
-                           : destText.contains("break")    ? "breakZone"
-                           : destText.contains("on top")   ? "deckTop"
-                           :                                 "underTop";
-
-        // --- Warp trait filter ("card with Warp") ---
-        boolean requireWarp = m.group("withwarp") != null;
-
-        // Build log label
-        StringBuilder filterDesc = new StringBuilder();
-        if (cardNameFilter  != null) filterDesc.append(" [Name ").append(cardNameFilter).append("]");
-        if (jobFilter       != null) filterDesc.append(" [Job ").append(jobFilter).append("]");
-        if (categoryFilter  != null) filterDesc.append(" [Cat ").append(categoryFilter).append("]");
-        if (elementFilter   != null) filterDesc.append(" [").append(elementsRaw).append("]");
-        if (excludeName     != null) filterDesc.append(" [not ").append(excludeName).append("]");
-        if (excludeElem     != null) filterDesc.append(" [not ").append(excludeElem).append("]");
-        if (requireWarp     )        filterDesc.append(" [with Warp]");
-        String typeDesc  = (targets != null && !anyType) ? " " + targets : "";
-        String costLabel = CardFilters.formatCostFilterLabel(costVal, costCmp);
-
-        // Secondary effect: text following this search clause (e.g. ". Gain 《C》.")
-        String afterSearch = text.substring(m.end()).trim().replaceAll("^[.!,]+\\s*", "").trim();
-        Consumer<GameContext> secondary = afterSearch.isEmpty() ? null : parse(afterSearch, source, xValue);
-
-        final String fName = cardNameFilter, fJob = jobFilter, fCat = categoryFilter;
-        final String fElem = elementFilter, fExclude = excludeName, fExclElem = excludeElem;
-        final boolean fwd = inclForwards, bk = inclBackups, mn = inclMonsters, sm = inclSummons;
-        final int fCount = count;
-        final boolean fDull = entersDull;
-        final boolean fWarp = requireWarp;
-        return ctx -> {
-            ctx.logEntry("Effect: Search deck for " + fCount + filterDesc + typeDesc + costLabel + " → " + destination + (fDull ? " dull" : ""));
-            ctx.searchDeckForCard(fwd, bk, mn, sm, costVal, costCmp, fName, fJob, fCat, fElem, fExclude, fExclElem, destination, fCount, fDull, fWarp);
-            if (secondary != null) secondary.accept(ctx);
-        };
-    }
 
     /** Matches "play all the Card Name X from your Break Zone onto [the] field [dull]." */
-    private static final Pattern PLAY_ALL_FROM_BREAK_ZONE_PATTERN = Pattern.compile(
+    static final Pattern PLAY_ALL_FROM_BREAK_ZONE_PATTERN = Pattern.compile(
         "(?i)^play\\s+all\\s+the\\s+Card\\s+Name\\s+(?<cardname>.+?)\\s+from\\s+your\\s+Break\\s+Zone\\s+onto\\s+(?:the\\s+)?field(?:\\s+(?<dull>dull))?[.!]?$"
     );
 
-    private static Consumer<GameContext> tryParsePlayAllByNameFromBreakZone(String text) {
-        Matcher m = PLAY_ALL_FROM_BREAK_ZONE_PATTERN.matcher(text.trim());
-        if (!m.find()) return null;
-        String cardName = m.group("cardname").trim();
-        boolean dull = m.group("dull") != null;
-        return ctx -> {
-            ctx.logEntry("Effect: Play all Card Name " + cardName + " from Break Zone → field" + (dull ? " dull" : ""));
-            ctx.playAllByNameFromOwnBreakZoneDull(cardName, dull);
-        };
-    }
 
     /** Matches "play [source card name] from [your/the] Break Zone onto [the] field [dull]." */
-    private static final Pattern PLAY_SOURCE_FROM_BREAK_ZONE = Pattern.compile(
+    static final Pattern PLAY_SOURCE_FROM_BREAK_ZONE = Pattern.compile(
         "(?i)^play\\s+(?<name>.+?)\\s+from\\s+(?:your\\s+|the\\s+)?Break\\s+Zone\\s+onto\\s+(?:the\\s+)?field(?:\\s+(?<dull>dull))?[.!]?$"
     );
 
-    private static Consumer<GameContext> tryParsePlaySourceFromBreakZone(String text, CardData source) {
-        if (source == null) return null;
-        Matcher m = PLAY_SOURCE_FROM_BREAK_ZONE.matcher(text.trim());
-        if (!m.matches()) return null;
-        String name = m.group("name").trim();
-        if (!name.equalsIgnoreCase(source.name())) return null;
-        boolean dull = m.group("dull") != null;
-        return ctx -> {
-            ctx.logEntry("Effect: Play " + name + " from Break Zone → field" + (dull ? " dull" : ""));
-            ctx.playAllByNameFromOwnBreakZoneDull(name, dull);
-        };
-    }
 
-    /**
-     * Parses "Play [name] onto [the] field [dull]" for break-zone-origin abilities where
-     * the card name matches the source.  Does not require a "from Break Zone" qualifier —
-     * BZ-origin abilities say "Play [itself] onto the field" knowing they start in the BZ.
-     */
-    private static Consumer<GameContext> tryParsePlaySourceOntoField(String text, CardData source) {
-        if (source == null) return null;
-        Matcher m = PLAY_SOURCE_ONTO_FIELD_PATTERN.matcher(text);
-        if (!m.find()) return null;
-        String name = m.group("name").trim();
-        // "it" is a self-referential pronoun (e.g. "play it onto the field" in pay-cost abilities)
-        String resolvedName = name.equalsIgnoreCase("it") ? source.name() : name;
-        if (!resolvedName.equalsIgnoreCase(source.name())) return null;
-        boolean dull = m.group("dull") != null;
-        return ctx -> {
-            ctx.logEntry("Effect: Play " + resolvedName + " from Break Zone → field" + (dull ? " dull" : ""));
-            ctx.playAllByNameFromOwnBreakZoneDull(resolvedName, dull);
-        };
-    }
 
     /**
      * Routes target selection to either the field or a Break Zone depending on
@@ -17845,7 +9410,7 @@ public class ActionResolver {
      * Used by the opponent AI in dual-number selection to target the ability user's cards.
      * Returns 0 when P1 has no Forwards on the field.
      */
-    private static int aiMostCommonP1ForwardCost(GameContext ctx) {
+    static int aiMostCommonP1ForwardCost(GameContext ctx) {
         java.util.Map<Integer, Integer> freq = new java.util.HashMap<>();
         for (int i = 0; i < ctx.p1ForwardCount(); i++)
             freq.merge(ctx.p1Forward(i).cost(), 1, Integer::sum);
@@ -17855,74 +9420,7 @@ public class ActionResolver {
                 .orElse(0);
     }
 
-    /**
-     * Parses "Choose 1 Forward. [CardName] deals you N point(s) of damage.
-     * If the cost of the Forward is equal to or less than the damage you have received, break it."
-     *
-     * <p>Chooses any Forward, deals N self-damage, then breaks the chosen Forward if its cost
-     * is ≤ the ability user's damage count (measured after the damage is dealt).
-     */
-    private static Consumer<GameContext> tryParseChooseForwardDealSelfDamageBreakIfCostLeDamage(String text) {
-        Matcher m = CHOOSE_FORWARD_DEAL_SELF_DAMAGE_BREAK_IF_COST_LE_DAMAGE.matcher(text.trim());
-        if (!m.find()) return null;
-        final String dealerName = m.group("name").trim();
-        final int damageAmount  = Integer.parseInt(m.group("amount"));
-        return ctx -> {
-            ctx.logEntry("Effect: Choose 1 Forward — " + dealerName + " deals you " + damageAmount + " damage, then break it if cost ≤ damage");
-            List<ForwardTarget> ts = selectTargets(ctx, 1, false,
-                    false, false, null, null, null, false,
-                    -1, null, -1, null,
-                    true, false, false,
-                    null, null, null, null, false, null, false);
-            if (ts.isEmpty()) return;
-            ForwardTarget target = ts.get(0);
-            ctx.dealDamageToSelf(damageAmount);
-            CardData chosen = target.isP1() ? ctx.p1Forward(target.idx()) : ctx.p2Forward(target.idx());
-            int chosenCost = chosen != null ? chosen.cost() : -1;
-            int dmgCount   = ctx.p1DamageCount();
-            ctx.logEntry(dealerName + " damage dealt — own damage zone: " + dmgCount
-                    + ", chosen Forward cost: " + chosenCost);
-            if (chosenCost >= 0 && chosenCost <= dmgCount) {
-                ctx.breakTarget(target);
-            }
-        };
-    }
 
-    /**
-     * Parses "Choose 1 Forward other than [CardName]. Until the end of the turn, [CardName]
-     * and the chosen Forward lose power of any value less than [CardName]'s power. (Units must be 1000.)"
-     *
-     * <p>Shows a Forward picker (excluding the named card), then a power-amount picker
-     * (0 … named card's current power − 1000, in 1000 steps, defaulting to the max).
-     * Both the named card and the chosen Forward lose the selected amount until EOT.
-     */
-    private static Consumer<GameContext> tryParseChooseForwardSharedPowerLoss(String text, CardData source) {
-        Matcher m = CHOOSE_FORWARD_SHARED_POWER_LOSS_PATTERN.matcher(text.trim());
-        if (!m.find()) return null;
-        String card1 = m.group("card").trim();
-        String card2 = m.group("card2").trim();
-        String card3 = m.group("card3").trim();
-        if (!card1.equalsIgnoreCase(card2) || !card1.equalsIgnoreCase(card3)) return null;
-        final String cardName = card1;
-        final EnumSet<CardData.Trait> noTraits = EnumSet.noneOf(CardData.Trait.class);
-        return ctx -> {
-            ctx.logEntry("Effect: Choose 1 Forward other than " + cardName + ", then choose shared power loss");
-            List<ForwardTarget> ts = selectTargets(ctx, 1, false,
-                    false, false, null, null, null, false,
-                    -1, null, -1, null,
-                    true, false, false,
-                    null, null, null, cardName, false, null, false);
-            if (ts.isEmpty()) return;
-            int sourcePower = ctx.fieldForwardPowerByName(cardName);
-            int maxLoss = sourcePower > 0 ? ((sourcePower - 1) / 1000) * 1000 : 0;
-            int amount = ctx.selectPowerAmount(maxLoss,
-                    "Power loss (0–" + maxLoss + ") for " + cardName + " and chosen Forward:");
-            if (amount <= 0) return;
-            ctx.reduceTarget(ts.get(0), amount, noTraits);
-            if (source != null && source.name().equalsIgnoreCase(cardName))
-                ctx.reduceSourceForward(source, amount, noTraits);
-        };
-    }
 
     /**
      * Prompts the activating player to choose targets for a "Choose N [targets]…" effect
@@ -18060,7 +9558,7 @@ public class ActionResolver {
                 jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, excludeElem, withoutMulticard);
     }
 
-    private static List<ForwardTarget> selectTargets(GameContext ctx,
+    static List<ForwardTarget> selectTargets(GameContext ctx,
             int maxCount, boolean upTo, boolean opponentOnly, boolean selfOnly,
             String condition, String element, String zone, boolean opponentZone,
             int costVal, String costCmp, int powerVal, String powerCmp,
@@ -18072,7 +9570,7 @@ public class ActionResolver {
                 jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, excludeElement, withoutMulticard);
     }
 
-    private static List<ForwardTarget> selectTargets(GameContext ctx,
+    static List<ForwardTarget> selectTargets(GameContext ctx,
             int maxCount, boolean upTo, boolean opponentOnly, boolean selfOnly,
             String condition, String element, String zone, boolean opponentZone, boolean bothZones,
             int costVal, String costCmp, int powerVal, String powerCmp,

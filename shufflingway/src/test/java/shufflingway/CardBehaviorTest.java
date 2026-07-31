@@ -6790,14 +6790,14 @@ public class CardBehaviorTest {
     void vaynesGrantIsReadOffItsFieldAbility() {
         CardData vayne = makeVayne();
         ActionResolver.ForwardAbilityGrant grant =
-                ActionResolver.tryParseForwardAbilityGrant(vayne.fieldAbilities().get(0).effectText());
+                ActionResolverFieldAbility.tryParseForwardAbilityGrant(vayne.fieldAbilities().get(0).effectText());
         assertNotNull(grant, "the field ability is recognised as a grant");
         assertTrue(grant.affectsOpponent(), "it hits the Forwards the opponent controls");
 
         // "this Forward" resolves to the grantee, so the granted effect is built per Forward.
         CardData grantee = makeForward("Grantee", "Fire", 3, 7000);
-        assertNotNull(ActionResolver.tryParseGrantedEndOfTurnEffect(grant.abilityText(), grantee));
-        assertNull(ActionResolver.tryParseGrantedEndOfTurnEffect("At the beginning of your turn, draw 1 card.", grantee),
+        assertNotNull(ActionResolverFieldAbility.tryParseGrantedEndOfTurnEffect(grant.abilityText(), grantee));
+        assertNull(ActionResolverFieldAbility.tryParseGrantedEndOfTurnEffect("At the beginning of your turn, draw 1 card.", grantee),
                 "only end-of-turn grants fire from this path");
     }
 

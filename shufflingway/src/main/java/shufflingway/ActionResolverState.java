@@ -1,0 +1,281 @@
+package shufflingway;
+
+import static shufflingway.ActionResolver.*;
+import static shufflingway.ActionResolverBreak.*;
+import static shufflingway.ActionResolverCost.*;
+import static shufflingway.ActionResolverDamage.*;
+import static shufflingway.ActionResolverHand.*;
+import static shufflingway.ActionResolverPlay.*;
+import static shufflingway.ActionResolverPower.*;
+import static shufflingway.ActionResolverRestriction.*;
+import static shufflingway.ActionResolverSearch.*;
+
+import java.util.ArrayList;
+import java.util.EnumSet;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.function.BiConsumer;
+import java.util.function.Consumer;
+import java.util.function.Predicate;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+/**
+ * State parsers split out of {@link ActionResolver}.
+ *
+ * <p>Bodies only: {@code ActionResolver} keeps every dispatch chain and calls these
+ * through a wildcard static import, so call order -- which is load-bearing, because
+ * matchers use {@code find()} -- is unchanged.
+ */
+final class ActionResolverState {
+
+	private ActionResolverState() {}
+
+    /** Parses "Dull [CardName]." — dulls the source card with no other effect. */
+    static Consumer<GameContext> tryParseStandaloneSelfDull(String text, CardData source) {
+        if (source == null) return null;
+        Matcher m = STANDALONE_SELF_DULL.matcher(text.trim());
+        if (!m.find()) return null;
+        String subject = m.group("subject").trim();
+        if (!subject.equalsIgnoreCase(source.name())) return null;
+        return ctx -> {
+            ctx.logEntry(source.name() + " — dulled");
+            ctx.dullSourceForward(source);
+        };
+    }
+    /**
+     * Parses "Dull [CardName]. [CardName] gains '[...] cannot be broken.' until end of turn."
+     * Dulls the source then shields it. Must be tried before {@link #tryParseStandaloneShieldCannotBeBroken}
+     * so the dull step is not silently dropped.
+     */
+    static Consumer<GameContext> tryParseStandaloneSelfDullAndShield(String text, CardData source) {
+        if (source == null) return null;
+        Matcher m = STANDALONE_SELF_DULL_AND_SHIELD_CANNOT_BE_BROKEN.matcher(text);
+        if (!m.find()) return null;
+        String subject = m.group("subject").trim();
+        if (!subject.equalsIgnoreCase(source.name())) return null;
+        return ctx -> {
+            ctx.logEntry(source.name() + " — Dull self and cannot be broken until end of turn");
+            ctx.dullSourceForward(source);
+            ctx.shieldSourceForward(source);
+        };
+    }
+    /**
+     * Parses "If all the [Type] you control have [Element] Element, [effect]." —
+     * resolves the inner effect only when every controlled card of that type has the element.
+     */
+    static Consumer<GameContext> tryParseIfAllHaveElement(String text, CardData source, int xValue) {
+        Matcher m = IF_ALL_HAVE_ELEMENT_GATE.matcher(text.trim());
+        if (!m.matches()) return null;
+        String typeRaw  = m.group("type").trim();
+        String element  = m.group("element").trim();
+        String normType = typeRaw.replaceAll("(?i)s$", "");
+        normType = Character.toUpperCase(normType.charAt(0)) + normType.substring(1).toLowerCase();
+        Consumer<GameContext> inner = parse(m.group("effect").trim(), source, xValue);
+        if (inner == null) return null;
+        ControlCondition cc = ControlCondition.forAllHave(normType, element, null);
+        String logType = typeRaw;
+        String logElem = element;
+        return ctx -> {
+            if (ctx.controlConditionMet(cc)) {
+                ctx.logEntry("Effect: all " + logType + " have " + logElem + " Element — condition met");
+                inner.accept(ctx);
+            } else {
+                ctx.logEntry("Effect: not all " + logType + " have " + logElem + " Element — skipped");
+            }
+        };
+    }
+    /** Parses "if there are N or more different Elements among [type] you control, [effect]." */
+    static Consumer<GameContext> tryParseIfNDiffElements(String text, CardData source, int xValue) {
+        Matcher m = IF_N_DIFF_ELEMENTS_AMONG.matcher(text.trim());
+        if (!m.matches()) return null;
+        int    min     = Integer.parseInt(m.group("min"));
+        String typeRaw = m.group("type").trim();
+        String typeLow = typeRaw.toLowerCase(java.util.Locale.ROOT);
+        boolean inclFwd = typeLow.startsWith("forward") || typeLow.startsWith("character");
+        boolean inclBkp = typeLow.startsWith("backup")  || typeLow.startsWith("character");
+        boolean inclMon = typeLow.startsWith("monster")  || typeLow.startsWith("character");
+        Consumer<GameContext> inner = parse(m.group("effect").trim(), source, xValue);
+        if (inner == null) return null;
+        return ctx -> {
+            int distinct = ctx.selfDistinctElementCount(inclFwd, inclBkp, inclMon);
+            if (distinct >= min) {
+                ctx.logEntry("Effect: " + distinct + " distinct element(s) among " + typeRaw + "s — condition met");
+                inner.accept(ctx);
+            } else {
+                ctx.logEntry("Effect: only " + distinct + " distinct element(s) among " + typeRaw + "s (need " + min + ") — skipped");
+            }
+        };
+    }
+    static Consumer<GameContext> tryParseRemoveAllCountersFromSelf(String text, CardData source) {
+        Matcher m = REMOVE_ALL_COUNTERS_FROM_SELF.matcher(text.trim());
+        if (!m.matches() || source == null) return null;
+        String counterName = m.group("name").trim();
+        return ctx -> {
+            int n = ctx.getCounters(source, counterName);
+            if (n > 0) ctx.removeCounters(source, counterName, n);
+        };
+    }
+    /**
+     * Parses "select 1 Element. &lt;CardName&gt; becomes that Element[.]" — the named card's
+     * element is permanently overridden via {@link GameContext#setCardElement}.  Returns
+     * {@code null} unless {@code source} is non-null and its name equals the captured name,
+     * preventing accidental matches when this parser appears in the general {@link #parse} chain.
+     */
+    static Consumer<GameContext> tryParseElementChange(String text, CardData source) {
+        Matcher m = ELEMENT_CHANGE_PATTERN.matcher(text);
+        if (!m.find()) return null;
+        String cardName = m.group("name").trim();
+        if (source == null || !cardName.equalsIgnoreCase(source.name())) return null;
+        return ctx -> {
+            String elem = ctx.selectElement("Select 1 Element (" + cardName + " becomes that Element):");
+            if (elem != null) ctx.setCardElement(cardName, elem);
+        };
+    }
+    static Consumer<GameContext> tryParseGrantPartyAnyElementThisTurn(String text) {
+        if (!GRANT_PARTY_ANY_ELEMENT_THIS_TURN.matcher(text).find()) return null;
+        return ctx -> {
+            ctx.logEntry("Effect: Forwards you control can form a party with Forwards of any Element this turn");
+            ctx.grantForwardsPartyAnyElementThisTurn();
+        };
+    }
+    static Consumer<GameContext> tryParseNameElementOnlySelfBecomes(String text, CardData source) {
+        if (source == null) return null;
+        Matcher m = NAME_ELEMENT_ONLY_SELF_BECOMES.matcher(text);
+        if (!m.find()) return null;
+        if (!m.group("name").trim().equalsIgnoreCase(source.name())) return null;
+        java.util.Set<String> excluded = parseExcludeElements(m.group("exclude"));
+        return ctx -> {
+            ctx.logEntry("Effect: Name 1 Element — " + source.name() + " becomes named Element until end of turn");
+            String elem = ctx.selectElement("Name 1 Element (" + source.name() + " becomes it):", excluded);
+            if (elem == null) return;
+            ctx.changeSourceCardElementUntilEOT(source, elem);
+        };
+    }
+    static Consumer<GameContext> tryParseNameElementAndJobSelfBecomes(String text, CardData source) {
+        if (source == null) return null;
+        Matcher m = NAME_ELEMENT_AND_JOB_SELF_BECOMES.matcher(text);
+        if (!m.find()) return null;
+        if (!m.group("name").trim().equalsIgnoreCase(source.name())) return null;
+        java.util.Set<String> excluded = parseExcludeElements(m.group("exclude"));
+        return ctx -> {
+            ctx.logEntry("Effect: Name 1 Element and 1 Job — " + source.name() + " becomes both until end of turn");
+            String[] choice = ctx.selectElementAndJob("Name 1 Element and 1 Job (" + source.name() + " becomes both):", excluded);
+            if (choice == null || choice[0] == null || choice[1] == null) return;
+            ctx.changeSourceCardElementAndJobUntilEOT(source, choice[0], choice[1]);
+        };
+    }
+    static Consumer<GameContext> tryParseNameJobAndElementSelfGainsPermanent(String text, CardData source) {
+        if (source == null) return null;
+        Matcher m = NAME_JOB_AND_ELEMENT_SELF_GAINS_PERMANENT.matcher(text);
+        if (!m.find()) return null;
+        if (!m.group("name").trim().equalsIgnoreCase(source.name())) return null;
+        java.util.Set<String> excluded = parseExcludeElements(m.group("exclude"));
+        return ctx -> {
+            ctx.logEntry("Effect: Name 1 Job and 1 Element — " + source.name() + " gains both permanently");
+            String[] choice = ctx.selectElementAndJob("Name 1 Job and 1 Element (" + source.name() + " gains both):", excluded);
+            if (choice == null || choice[0] == null || choice[1] == null) return;
+            ctx.setCardElement(source.name(), choice[0]);
+            ctx.addCardJobPermanently(source.name(), choice[1]);
+        };
+    }
+    static Consumer<GameContext> tryParseChooseCounterScaleCharsActivate(String text, int xValue) {
+        Matcher m = CHOOSE_COUNTER_SCALE_CHARS_ACTIVATE.matcher(text);
+        if (!m.find()) return null;
+        final int    count       = xValue;
+        final String counterName = m.group("counterName").trim();
+        return ctx -> {
+            if (count <= 0) {
+                ctx.logEntry("Effect: " + counterName + " Counter choose/activate — 0 counters, nothing to do");
+                return;
+            }
+            ctx.logEntry("Effect: Choose up to " + count + " Characters (" + counterName + " Counters) — Activate");
+            List<ForwardTarget> ts = selectTargets(ctx, count, true,
+                    false, true, null, null, null, false,
+                    -1, null, -1, null,
+                    true, true, true, null, null, null, null, false, null, false);
+            sortedByIdxDesc(ts, true) .forEach(t -> ctx.activateTarget(t));
+            sortedByIdxDesc(ts, false).forEach(t -> ctx.activateTarget(t));
+        };
+    }
+    static Consumer<GameContext> tryParseRemoveAllCounters(String text, CardData source) {
+        Matcher m = REMOVE_ALL_COUNTERS.matcher(text);
+        if (!m.find()) return null;
+        String name   = m.group("name").trim();
+        String target = m.group("target").trim();
+        // Only handle self-removal (target matches the source card's name)
+        if (source == null || !source.name().equalsIgnoreCase(target)) return null;
+        return ctx -> {
+            int current = ctx.getCounters(source, name);
+            if (current <= 0) {
+                ctx.logEntry("Effect: Remove all " + name + " Counters from " + source.name() + " — none present");
+                return;
+            }
+            ctx.removeCounters(source, name, current);
+        };
+    }
+    static Consumer<GameContext> tryParsePlaceCounters(String text, CardData source) {
+        Matcher m = PLACE_COUNTERS.matcher(text);
+        if (!m.find()) return null;
+        int    count      = Integer.parseInt(m.group("count"));
+        String name       = m.group("name").trim();
+        String target     = m.group("target").trim();
+        // Only handle self-placement (target matches the source card's name)
+        if (source == null || !source.name().equalsIgnoreCase(target)) return null;
+        return ctx -> {
+            ctx.logEntry("Effect: Place " + count + " " + name + " Counter(s) on " + source.name());
+            ctx.placeCounters(source, name, count);
+        };
+    }
+    static Consumer<GameContext> tryParsePlaceCountersForEach(String text, CardData source) {
+        Matcher m = PLACE_COUNTERS_FOR_EACH.matcher(text.trim());
+        if (!m.matches()) return null;
+        int    baseCount  = Integer.parseInt(m.group("count"));
+        String name       = m.group("name").trim();
+        String target     = m.group("target").trim();
+        if (source == null || !source.name().equalsIgnoreCase(target)) return null;
+        String typeRaw    = m.group("type");
+        String cardType   = Character.toUpperCase(typeRaw.charAt(0))
+                + typeRaw.substring(1).toLowerCase().replaceAll("s$", "");
+        return ctx -> {
+            int total = baseCount * ctx.ownFieldCount(cardType);
+            ctx.logEntry("Effect: Place " + baseCount + " " + name + " Counter(s) per " + cardType
+                    + " you control (" + total + " total) on " + source.name());
+            if (total > 0) ctx.placeCounters(source, name, total);
+        };
+    }
+    /**
+     * Parses "Activate &lt;cardName&gt;[.]" — activates named card(s) the ability user controls.
+     * Handles single plain names ("Activate <cardName>"), "Card Name X" notation, and
+     * "Card Name X and Card Name Y [you control]" multi-target form.
+     */
+    static Consumer<GameContext> tryParseActivateNamedCard(String text) {
+        Matcher m = ACTIVATE_NAMED_CARD.matcher(text);
+        if (!m.find()) return null;
+
+        String raw = m.group("card").trim();
+        // Strip optional trailing "you control"
+        raw = raw.replaceAll("(?i)\\s+you\\s+control$", "").trim();
+
+        // Build list of card names, handling "Card Name X [and Card Name Y]" form
+        List<String> names = new ArrayList<>();
+        if (raw.matches("(?i)Card\\s+Name.*")) {
+            String[] parts = ACTIVATE_AND_CARD_NAME_SPLIT.split(raw);
+            for (String part : parts)
+                names.add(part.replaceAll("(?i)^Card\\s+Name\\s+", "").trim());
+        } else {
+            names.add(raw);
+        }
+
+        return ctx -> {
+            ctx.logEntry("Effect: Activate " + String.join(", ", names));
+            for (String name : names) {
+                List<ForwardTarget> ts = ctx.selectCharacters(
+                        1, false, false, true, null, null, -1, null, -1, null,
+                        true, true, true, null, name, null, null, false, null, false);
+                ts.forEach(ctx::activateTarget);
+            }
+        };
+    }
+}
