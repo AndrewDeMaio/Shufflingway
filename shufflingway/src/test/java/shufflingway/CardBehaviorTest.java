@@ -446,7 +446,7 @@ public class CardBehaviorTest {
         CardData reno = makeJobCard("Reno", "Ice", "Forward", TURK);
         CardData rude = makeJobCard("Rude", "Ice", "Forward", TURK);
         MainWindow mw = cissneiSetUp(reno, rude);
-        mw.p1AttackDeclarationsThisTurn = 1;   // one declaration covering both attackers
+        mw.p1Turn.attackDeclarationsThisTurn = 1;   // one declaration covering both attackers
 
         mw.autoAbilityTriggers.triggerAutoAbilitiesForAttack(reno, true);
         mw.autoAbilityTriggers.triggerAutoAbilitiesForAttack(rude, true);
@@ -460,10 +460,10 @@ public class CardBehaviorTest {
         CardData reno = makeJobCard("Reno", "Ice", "Forward", TURK);
         MainWindow mw = cissneiSetUp(reno);
 
-        mw.p1AttackDeclarationsThisTurn = 1;
+        mw.p1Turn.attackDeclarationsThisTurn = 1;
         mw.autoAbilityTriggers.triggerAutoAbilitiesForAttack(reno, true);
         mw.p1ForwardStates.set(0, CardState.DULL);   // Cissnei attacked, so she is dull again
-        mw.p1AttackDeclarationsThisTurn = 2;
+        mw.p1Turn.attackDeclarationsThisTurn = 2;
         mw.autoAbilityTriggers.triggerAutoAbilitiesForAttack(reno, true);
 
         assertEquals(CardState.ACTIVE, mw.p1ForwardStates.get(0),
@@ -2462,7 +2462,7 @@ public class CardBehaviorTest {
         assertFalse(mw.canActivateAbility(ability, false, CardState.ACTIVE, 0, source, true),
                 "must not be usable when no Job AVALANCHE Operative has broken this turn");
 
-        mw.p1BrokenJobsThisTurn.add("avalanche operative");
+        mw.p1Turn.brokenJobsThisTurn.add("avalanche operative");
         assertTrue(mw.canActivateAbility(ability, false, CardState.ACTIVE, 0, source, true),
                 "must be usable once a Job AVALANCHE Operative was put from the field into the BZ this turn");
     }
@@ -3485,7 +3485,7 @@ public class CardBehaviorTest {
         mw.autoAbilityTriggers.triggerAutoAbilitiesForPartyAttack(true, party);
 
         // The attacking party is recorded, and every Forward in it gained +5000 power.
-        assertEquals(party, mw.p1CurrentPartyAttackers);
+        assertEquals(party, mw.p1Turn.currentPartyAttackers);
         assertEquals(14000, mw.effectiveP1ForwardPower(0), "Gippal (in party) should be +5000");
         assertEquals(12000, mw.effectiveP1ForwardPower(1), "Ally (in party) should be +5000");
         assertEquals(5000,  mw.effectiveP1ForwardPower(2), "Bench (not in party) should be unchanged");
@@ -5488,21 +5488,21 @@ public class CardBehaviorTest {
         MainWindow mw = new MainWindow();
         advanceTo(mw, GameState.Player.P1, GameState.GamePhase.END);
 
-        mw.p1CardsCastThisTurn = 2;
-        mw.p1SummonCastThisTurn = true;
-        mw.p1CastJobsThisTurn.add("dragoon");
-        mw.p1CastNamesThisTurn.add("kain");
-        mw.p1CastCountByNameThisTurn.put("kain", 1);
+        mw.p1Turn.cardsCastThisTurn = 2;
+        mw.p1Turn.summonCastThisTurn = true;
+        mw.p1Turn.castJobsThisTurn.add("dragoon");
+        mw.p1Turn.castNamesThisTurn.add("kain");
+        mw.p1Turn.castCountByNameThisTurn.put("kain", 1);
 
         mw.computerPlayer = new ComputerPlayer(mw);
         mw.onNextPhase();                    // END → P2's turn
         mw.gameState.setP1GameOver(true);    // parks the CPU's queued turn timer before it can fire
 
-        assertEquals(0, mw.p1CardsCastThisTurn, "the count refreshes for the turn now beginning");
-        assertFalse(mw.p1SummonCastThisTurn);
-        assertTrue(mw.p1CastJobsThisTurn.isEmpty());
-        assertTrue(mw.p1CastNamesThisTurn.isEmpty());
-        assertTrue(mw.p1CastCountByNameThisTurn.isEmpty());
+        assertEquals(0, mw.p1Turn.cardsCastThisTurn, "the count refreshes for the turn now beginning");
+        assertFalse(mw.p1Turn.summonCastThisTurn);
+        assertTrue(mw.p1Turn.castJobsThisTurn.isEmpty());
+        assertTrue(mw.p1Turn.castNamesThisTurn.isEmpty());
+        assertTrue(mw.p1Turn.castCountByNameThisTurn.isEmpty());
     }
 
     @Test
@@ -5511,7 +5511,7 @@ public class CardBehaviorTest {
         mw.placeCardInForwardZone(makeFieldAbilityCard("Ace", "Light", "Forward", ACE_CAST_LIMIT_TEXT));
         advanceTo(mw, GameState.Player.P1, GameState.GamePhase.END);
 
-        mw.p1CardsCastThisTurn = 2;
+        mw.p1Turn.cardsCastThisTurn = 2;
         assertTrue(mw.p1CastLimitReached(), "two casts on P1's own turn exhausts Ace's limit for that turn");
 
         mw.computerPlayer = new ComputerPlayer(mw);
@@ -5527,15 +5527,15 @@ public class CardBehaviorTest {
         // The start-of-turn reset still matters in the other direction: casts P1 made while holding
         // priority during P2's turn belong to that turn, not to P1's.
         MainWindow mw = new MainWindow();
-        mw.p1CardsCastThisTurn = 2;
-        mw.p1SummonCastThisTurn = true;
-        mw.p1CastNamesThisTurn.add("jinnai");
+        mw.p1Turn.cardsCastThisTurn = 2;
+        mw.p1Turn.summonCastThisTurn = true;
+        mw.p1Turn.castNamesThisTurn.add("jinnai");
 
-        mw.resetP1CastTracking();
+        mw.p1Turn.resetCastTracking();
 
-        assertEquals(0, mw.p1CardsCastThisTurn);
-        assertFalse(mw.p1SummonCastThisTurn);
-        assertTrue(mw.p1CastNamesThisTurn.isEmpty());
+        assertEquals(0, mw.p1Turn.cardsCastThisTurn);
+        assertFalse(mw.p1Turn.summonCastThisTurn);
+        assertTrue(mw.p1Turn.castNamesThisTurn.isEmpty());
     }
 
     // =========================================================================================

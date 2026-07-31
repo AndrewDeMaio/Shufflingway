@@ -55,22 +55,22 @@ class ComputerPlayer {
 	// ── Active Phase ─────────────────────────────────────────────────────
 
 	private void doActivePhase() {
-		mw.p2ReceivedDamageThisTurn = false;
-		mw.resetP2CastTracking();
-		mw.p2TurnOpponentFwdBroken = false;
-		mw.p2BrokenJobsThisTurn.clear();
-		mw.p2BrokenElementsThisTurn.clear();
-		mw.p2BrokenCategoriesThisTurn.clear();
-		mw.p2CardsDrawnThisTurn = 0;
-		mw.p2DiscardedByEffectThisTurn = false;
-		mw.p2CausedOpponentDiscardThisTurn = false;
-		mw.p2FormedPartyThisTurn = false;
-		mw.p2ForwardsLeftFieldThisTurn = 0;
-		mw.p2ForwardPutToBZThisTurn = false;
-		mw.p2ElementForwardsEnteredThisTurn.clear();
-		mw.p2CardsTookDamageThisTurn.clear();
-		mw.p2ForwardEnteredViaWarpThisTurn = false;
-		mw.p2TurnOpponentCharReturnedToHand = false;
+		mw.p2Turn.receivedDamageThisTurn = false;
+		mw.p2Turn.resetCastTracking();
+		mw.p2Turn.turnOpponentFwdBroken = false;
+		mw.p2Turn.brokenJobsThisTurn.clear();
+		mw.p2Turn.brokenElementsThisTurn.clear();
+		mw.p2Turn.brokenCategoriesThisTurn.clear();
+		mw.p2Turn.cardsDrawnThisTurn = 0;
+		mw.p2Turn.discardedByEffectThisTurn = false;
+		mw.p2Turn.causedOpponentDiscardThisTurn = false;
+		mw.p2Turn.formedPartyThisTurn = false;
+		mw.p2Turn.forwardsLeftFieldThisTurn = 0;
+		mw.p2Turn.forwardPutToBZThisTurn = false;
+		mw.p2Turn.elementForwardsEnteredThisTurn.clear();
+		mw.p2Turn.cardsTookDamageThisTurn.clear();
+		mw.p2Turn.forwardEnteredViaWarpThisTurn = false;
+		mw.p2Turn.turnOpponentCharReturnedToHand = false;
 		int activated = 0, thawed = 0;
 
 		// Pass 1: activate DULL/BRAVE_ATTACKED cards; frozen cards are skipped
@@ -201,11 +201,11 @@ class ComputerPlayer {
 			mw.lastCastPaymentElements.add(element);
 			mw.lastCastActualPaymentElements.add(element);
 			mw.lastCardWasCast = true;
-			mw.p2CardsCastThisTurn++;
-			for (String j : card.jobs()) mw.p2CastJobsThisTurn.add(j.toLowerCase());
-			mw.p2CastNamesThisTurn.add(card.name().toLowerCase());
-			mw.p2CastCountByNameThisTurn.merge(card.name().toLowerCase(), 1, Integer::sum);
-			if (card.isSummon()) { mw.p2SummonCastThisTurn = true; mw.noteDoublecastSummonCast(false, card); }
+			mw.p2Turn.cardsCastThisTurn++;
+			for (String j : card.jobs()) mw.p2Turn.castJobsThisTurn.add(j.toLowerCase());
+			mw.p2Turn.castNamesThisTurn.add(card.name().toLowerCase());
+			mw.p2Turn.castCountByNameThisTurn.merge(card.name().toLowerCase(), 1, Integer::sum);
+			if (card.isSummon()) { mw.p2Turn.summonCastThisTurn = true; mw.noteDoublecastSummonCast(false, card); }
 			if (card.isForward())      mw.placeP2CardInForwardZone(card);
 			else if (card.isBackup())  mw.placeP2CardInFirstBackupSlot(card);
 			else if (card.isMonster()) mw.placeP2CardInMonsterZone(card);
@@ -274,11 +274,11 @@ class ComputerPlayer {
 		mw.logEntry("[P2] Plays " + toPlay.name()
 				+ (freeCast && mw.p2DoublecastFreeSummons ? " (free — Doublecast)" : ""));
 		mw.lastCardWasCast = true;
-		mw.p2CardsCastThisTurn++;
-		for (String j : toPlay.jobs()) mw.p2CastJobsThisTurn.add(j.toLowerCase());
-		mw.p2CastNamesThisTurn.add(toPlay.name().toLowerCase());
-		mw.p2CastCountByNameThisTurn.merge(toPlay.name().toLowerCase(), 1, Integer::sum);
-		if (toPlay.isSummon()) { mw.p2SummonCastThisTurn = true; mw.noteDoublecastSummonCast(false, toPlay); }
+		mw.p2Turn.cardsCastThisTurn++;
+		for (String j : toPlay.jobs()) mw.p2Turn.castJobsThisTurn.add(j.toLowerCase());
+		mw.p2Turn.castNamesThisTurn.add(toPlay.name().toLowerCase());
+		mw.p2Turn.castCountByNameThisTurn.merge(toPlay.name().toLowerCase(), 1, Integer::sum);
+		if (toPlay.isSummon()) { mw.p2Turn.summonCastThisTurn = true; mw.noteDoublecastSummonCast(false, toPlay); }
 		if (toPlay.isForward())      mw.placeP2CardInForwardZone(toPlay);
 		else if (toPlay.isBackup())  mw.placeP2CardInFirstBackupSlot(toPlay);
 		else if (toPlay.isMonster()) mw.placeP2CardInMonsterZone(toPlay);
@@ -355,7 +355,7 @@ class ComputerPlayer {
 			names.append(mw.p2ForwardCards.get(idx).name());
 		}
 		mw.logEntry("[P2] Party Attack! " + names + " (" + combinedPower + " combined)");
-		mw.p2FormedPartyThisTurn = true;
+		mw.p2Turn.formedPartyThisTurn = true;
 		for (int idx : partyIndices)
 			mw.autoAbilityTriggers.triggerAutoAbilitiesForAttack(
 					mw.p2ForwardPrimedTop.get(idx) != null ? mw.p2ForwardPrimedTop.get(idx) : mw.p2ForwardCards.get(idx), false);
@@ -368,7 +368,7 @@ class ComputerPlayer {
 
 	private void doAttackPhase(Runnable onDone) {
 		if (mw.gameState.isP1GameOver()) return;
-		if (mw.p2AttackDeclarationsThisTurn >= mw.opponentAttackDeclarationLimit) {
+		if (mw.p2Turn.attackDeclarationsThisTurn >= mw.p2Turn.attackDeclarationLimit) {
 			mw.logEntry("[P2] Attack declaration limit reached — ending attack phase.");
 			onDone.run();
 			return;
@@ -391,7 +391,7 @@ class ComputerPlayer {
 
 		List<Integer> party = p2ChoosePartyAttack();
 		if (party != null) {
-			mw.p2AttackDeclarationsThisTurn++;
+			mw.p2Turn.attackDeclarationsThisTurn++;
 			executeP2PartyAttack(party, () -> {
 				if (!mw.gameState.isP1GameOver()) step(() -> doAttackPhase(onDone));
 			});
@@ -400,7 +400,7 @@ class ComputerPlayer {
 
 		for (int i = 0; i < mw.p2ForwardStates.size(); i++) {
 			if (!p2ForwardCanAttack(i)) continue;
-			mw.p2AttackDeclarationsThisTurn++;
+			mw.p2Turn.attackDeclarationsThisTurn++;
 			CardData attacker = mw.p2ForwardPrimedTop.get(i) != null ? mw.p2ForwardPrimedTop.get(i) : mw.p2ForwardCards.get(i);
 			mw.logEntry("[P2] " + attacker.name() + " attacks!");
 			if (mw.effectiveP2HasTrait(i, CardData.Trait.BRAVE)) {
@@ -426,7 +426,7 @@ class ComputerPlayer {
 		}
 		for (int i = 0; i < mw.p2MonsterStates.size(); i++) {
 			if (!mw.p2MonsterCanAttackAsForward(i)) continue;
-			mw.p2AttackDeclarationsThisTurn++;
+			mw.p2Turn.attackDeclarationsThisTurn++;
 			CardData attacker = mw.p2MonsterCards.get(i);
 			int power = mw.p2MonsterForwardPower(i);
 			if (mw.effectiveMonsterHasTrait(false, i, CardData.Trait.BRAVE)) {
@@ -448,7 +448,7 @@ class ComputerPlayer {
 		}
 		for (int i = 0; i < mw.p2BackupCards.length; i++) {
 			if (!mw.p2BackupCanAttackAsForward(i)) continue;
-			mw.p2AttackDeclarationsThisTurn++;
+			mw.p2Turn.attackDeclarationsThisTurn++;
 			CardData attacker = mw.p2BackupCards[i];
 			int power = mw.p2BackupForwardPower(i);
 			if (mw.effectiveBackupHasTrait(false, i, CardData.Trait.BRAVE)) {
@@ -515,7 +515,7 @@ class ComputerPlayer {
 		mw.p1TempBlockTriggers.clear();            mw.p2TempBlockTriggers.clear();
 		mw.nextIncomingDmgZeroSet.clear();   mw.nextIncomingDmgReduceMap.clear();   mw.nextAbilityDmgReduceMap.clear();
 		mw.incomingDmgIncreaseMap.clear();   mw.globalForwardIncomingDmgIncrease = 0;   mw.nullifyAbilityDmgSet.clear();
-		mw.p1NullifyAbilityDmgFilters.clear(); mw.p2NullifyAbilityDmgFilters.clear();
+		mw.p1Turn.nullifyAbilityDmgFilters.clear(); mw.p2Turn.nullifyAbilityDmgFilters.clear();
 		mw.p1DoublecastFreeSummons = false;  mw.p2DoublecastFreeSummons = false;
 		mw.p1DoublecastLastSummonCost = -1;  mw.p2DoublecastLastSummonCost = -1;
 		mw.nullifyAbilityOnlyDmgSet.clear(); mw.perCardNonLethalDmgSet.clear();
@@ -523,15 +523,15 @@ class ComputerPlayer {
 		mw.nextOutgoingDmgZeroSet.clear();    mw.outgoingDmgMultiplierMap.clear();
 		mw.nextOutgoingDmgDoublerSet.clear(); mw.outgoingDmgFlatBoostMap.clear();
 		mw.perCardIncomingDmgMultiplierMap.clear();
-		mw.p1ForwardIncomingDmgMult = 1;      mw.p2ForwardIncomingDmgMult = 1;
-		mw.p1AbilityOutgoingDmgMult = 1;      mw.p2AbilityOutgoingDmgMult = 1;
-		mw.p1NonLethalProtection = false;    mw.p2NonLethalProtection = false;
-		mw.p1DmgReductionDisabled = false;   mw.p2DmgReductionDisabled = false;
-		mw.p1ForwardCannotBlockInferiorPower = false; mw.p2ForwardCannotBlockInferiorPower = false;
-		mw.p1GlobalDmgReduction  = 0;        mw.p2GlobalDmgReduction  = 0;
-		mw.opponentAttackDeclarationLimit = Integer.MAX_VALUE; mw.p2AttackDeclarationsThisTurn = 0;
-		mw.p1AttackDeclarationLimit = Integer.MAX_VALUE;       mw.p1AttackDeclarationsThisTurn = 0;
-		mw.p1CannotSearchThisTurn = false; mw.p2CannotSearchThisTurn = false;
+		mw.p1Turn.forwardIncomingDmgMult = 1;      mw.p2Turn.forwardIncomingDmgMult = 1;
+		mw.p1Turn.abilityOutgoingDmgMult = 1;      mw.p2Turn.abilityOutgoingDmgMult = 1;
+		mw.p1Turn.nonLethalProtection = false;    mw.p2Turn.nonLethalProtection = false;
+		mw.p1Turn.dmgReductionDisabled = false;   mw.p2Turn.dmgReductionDisabled = false;
+		mw.p1Turn.forwardCannotBlockInferiorPower = false; mw.p2Turn.forwardCannotBlockInferiorPower = false;
+		mw.p1Turn.globalDmgReduction  = 0;        mw.p2Turn.globalDmgReduction  = 0;
+		mw.p2Turn.attackDeclarationLimit = Integer.MAX_VALUE; mw.p2Turn.attackDeclarationsThisTurn = 0;
+		mw.p1Turn.attackDeclarationLimit = Integer.MAX_VALUE;       mw.p1Turn.attackDeclarationsThisTurn = 0;
+		mw.p1Turn.cannotSearchThisTurn = false; mw.p2Turn.cannotSearchThisTurn = false;
 		mw.gameState.advancePhase(); // MAIN_2 → END
 		mw.refreshPhaseTracker();
 		mw.logEntry("[P2] End Phase");
@@ -539,7 +539,7 @@ class ComputerPlayer {
 		step(() -> {
 			// P2's turn is over — refresh their cast allowance for the turn now beginning, the
 			// mirror of what MainWindow's End Phase does for P1.
-			mw.resetP2CastTracking();
+			mw.p2Turn.resetCastTracking();
 			mw.gameState.advancePhase(); // END → ACTIVE (switches to P1, increments turn)
 			mw.refreshPhaseTracker();
 			step(this::startP1Turn);  // startP1Turn expects phase == ACTIVE
@@ -549,26 +549,26 @@ class ComputerPlayer {
 	// ── P1 turn start (Active + Draw, then hand control back to player) ──
 
 	private void startP1Turn() {
-		mw.p1ReceivedDamageThisTurn = false;
+		mw.p1Turn.receivedDamageThisTurn = false;
 		// Cleared again here, not only at the end of P1's own turn: anything P1 cast while holding
 		// priority during P2's turn belonged to that turn, not to the one starting now.
-		mw.resetP1CastTracking();
-		mw.p1TurnOpponentFwdBroken = false;
-		mw.p1BrokenJobsThisTurn.clear();
-		mw.p1BrokenElementsThisTurn.clear();
-		mw.p1BrokenCategoriesThisTurn.clear();
-		mw.p1CardsDrawnThisTurn = 0;
-		mw.p1DiscardedByEffectThisTurn = false;
-		mw.p1CausedOpponentDiscardThisTurn = false;
-		mw.p1FormedPartyThisTurn = false;
-		mw.p1PartyAnyElementThisTurn = false;
-		mw.p2PartyAnyElementThisTurn = false;
-		mw.p1ForwardsLeftFieldThisTurn = 0;
-		mw.p1ForwardPutToBZThisTurn = false;
-		mw.p1ElementForwardsEnteredThisTurn.clear();
-		mw.p1CardsTookDamageThisTurn.clear();
-		mw.p1ForwardEnteredViaWarpThisTurn = false;
-		mw.p1TurnOpponentCharReturnedToHand = false;
+		mw.p1Turn.resetCastTracking();
+		mw.p1Turn.turnOpponentFwdBroken = false;
+		mw.p1Turn.brokenJobsThisTurn.clear();
+		mw.p1Turn.brokenElementsThisTurn.clear();
+		mw.p1Turn.brokenCategoriesThisTurn.clear();
+		mw.p1Turn.cardsDrawnThisTurn = 0;
+		mw.p1Turn.discardedByEffectThisTurn = false;
+		mw.p1Turn.causedOpponentDiscardThisTurn = false;
+		mw.p1Turn.formedPartyThisTurn = false;
+		mw.p1Turn.partyAnyElementThisTurn = false;
+		mw.p2Turn.partyAnyElementThisTurn = false;
+		mw.p1Turn.forwardsLeftFieldThisTurn = 0;
+		mw.p1Turn.forwardPutToBZThisTurn = false;
+		mw.p1Turn.elementForwardsEnteredThisTurn.clear();
+		mw.p1Turn.cardsTookDamageThisTurn.clear();
+		mw.p1Turn.forwardEnteredViaWarpThisTurn = false;
+		mw.p1Turn.turnOpponentCharReturnedToHand = false;
 		for (int i = 0; i < mw.p1MonsterCards.size(); i++) mw.refreshP1MonsterSlot(i);
 		for (int i = 0; i < mw.p2MonsterCards.size(); i++) mw.refreshP2MonsterSlot(i);
 		int activated = 0, thawed = 0;
@@ -1035,7 +1035,7 @@ class ComputerPlayer {
 			if (mw.p2ForwardStates.get(i) != CardState.ACTIVE) continue;
 			if (p1AttackerIdx >= 0 && mw.p1AttackerCostFiltersExclude(p1AttackerIdx, mw.p2ForwardCards.get(i).cost())) continue;
 			if (p1AttackerHigherPower && mw.fieldForwardPower(false, ForwardTarget.CardZone.FORWARD, i) > p1AttackerPower) continue;
-			if (mw.p2ForwardCannotBlockInferiorPower && p1AttackerIdx >= 0 &&
+			if (mw.p2Turn.forwardCannotBlockInferiorPower && p1AttackerIdx >= 0 &&
 				mw.fieldForwardPower(false, ForwardTarget.CardZone.FORWARD, i) > mw.fieldForwardPower(true, ForwardTarget.CardZone.FORWARD, p1AttackerIdx)) continue;
 			cands.add(new ForwardTarget(false, i, ForwardTarget.CardZone.FORWARD));
 		}
@@ -1043,7 +1043,7 @@ class ComputerPlayer {
 			if (!mw.p2MonsterCanBlockAsForward(i)) continue;
 			if (p1AttackerIdx >= 0 && mw.p1AttackerCostFiltersExclude(p1AttackerIdx, mw.p2MonsterCards.get(i).cost())) continue;
 			if (p1AttackerHigherPower && mw.fieldForwardPower(false, ForwardTarget.CardZone.MONSTER, i) > p1AttackerPower) continue;
-			if (mw.p2ForwardCannotBlockInferiorPower && p1AttackerIdx >= 0 &&
+			if (mw.p2Turn.forwardCannotBlockInferiorPower && p1AttackerIdx >= 0 &&
 				mw.fieldForwardPower(false, ForwardTarget.CardZone.MONSTER, i) > mw.fieldForwardPower(true, ForwardTarget.CardZone.FORWARD, p1AttackerIdx)) continue;
 			cands.add(new ForwardTarget(false, i, ForwardTarget.CardZone.MONSTER));
 		}
@@ -1051,7 +1051,7 @@ class ComputerPlayer {
 			if (!mw.p2BackupCanBlockAsForward(i)) continue;
 			if (p1AttackerIdx >= 0 && mw.p1AttackerCostFiltersExclude(p1AttackerIdx, mw.p2BackupCards[i].cost())) continue;
 			if (p1AttackerHigherPower && mw.fieldForwardPower(false, ForwardTarget.CardZone.BACKUP, i) > p1AttackerPower) continue;
-			if (mw.p2ForwardCannotBlockInferiorPower && p1AttackerIdx >= 0 &&
+			if (mw.p2Turn.forwardCannotBlockInferiorPower && p1AttackerIdx >= 0 &&
 				mw.fieldForwardPower(false, ForwardTarget.CardZone.BACKUP, i) > mw.fieldForwardPower(true, ForwardTarget.CardZone.FORWARD, p1AttackerIdx)) continue;
 			cands.add(new ForwardTarget(false, i, ForwardTarget.CardZone.BACKUP));
 		}
@@ -1162,7 +1162,7 @@ class ComputerPlayer {
 					int basePower = mw.effectiveP2ForwardPower(i);
 					int postPower = basePower + branchPowerBoost(branch.effectText());
 					if (p1AttackerHigherPower && postPower > p1AttackerPower) continue;
-					if (mw.p2ForwardCannotBlockInferiorPower && p1AttackerIdx >= 0
+					if (mw.p2Turn.forwardCannotBlockInferiorPower && p1AttackerIdx >= 0
 							&& postPower > p1AttackerPower) continue;
 					// Equal power breaks BOTH characters — not "survives" per the user's ask — unless
 					// First Strike breaks the attacker before it can deal damage back, in which

@@ -54,7 +54,7 @@ public class AutoAbilityParsingTest {
 
                 int parsed = 0;
                 for (AutoAbility fa : abilities)
-                    if (ActionResolver.parse(fa.effectText(), source) != null) parsed++;
+                    if ("OK".equals(abilityStatus(fa, source))) parsed++;
 
                 String example = formatCardExample(source.name(), abilities, source);
                 if (parsed == abilities.size()) {
@@ -132,13 +132,37 @@ public class AutoAbilityParsingTest {
         StringBuilder sb = new StringBuilder();
         sb.append("  Card: ").append(name).append('\n');
         for (AutoAbility fa : abilities) {
-            boolean ok   = ActionResolver.parse(fa.effectText(), source) != null;
-            String  desc = ActionResolver.fullDescription(fa.effectText(), source);
-            sb.append("  [").append(ok ? "OK" : "--").append("] ").append(autoAbilityText(fa, source)).append('\n');
+            String desc = ActionResolver.fullDescription(fa.effectText(), source);
+            sb.append("  [").append(abilityStatus(fa, source)).append("] ")
+              .append(autoAbilityText(fa, source)).append('\n');
             sb.append("       [").append(fa.trigger()).append("] ")
               .append(desc != null ? desc : "(none)").append('\n');
         }
         return sb.toString();
+    }
+
+    /**
+     * How completely this ability is covered, as a two-character tag:
+     * <ul>
+     *   <li>{@code OK} — every layer of the effect is accounted for.</li>
+     *   <li>{@code ??} — the effect resolves, but at least one layer of it has no implementation.
+     *       {@link ActionResolver#parse} hands back a runnable effect as soon as the <em>primary</em>
+     *       pattern matches, so a card whose followup is unimplemented still "parses": Scholar
+     *       15-065C chooses a card in your Break Zone and then has no idea what to do with it.
+     *       {@link ActionResolver#fullDescription} marks such a layer with {@code "?"}, and only
+     *       {@code OK} counts toward the fully-parsed tally — a half-recognised card is not parsed.</li>
+     *   <li>{@code --} — no pattern matches at all.</li>
+     * </ul>
+     *
+     * <p>A {@code null} description is deliberately <em>not</em> treated as a gap. It means
+     * {@code fullDescription}'s own dispatch has no entry for a route {@code parse} does handle —
+     * a blind spot in this report rather than a missing effect, and demoting on it would understate
+     * coverage instead of overstating it.
+     */
+    private static String abilityStatus(AutoAbility fa, CardData source) {
+        if (ActionResolver.parse(fa.effectText(), source) == null) return "--";
+        String desc = ActionResolver.fullDescription(fa.effectText(), source);
+        return (desc != null && desc.contains("?")) ? "??" : "OK";
     }
 
     /** Reconstructs the original trigger line for display. */

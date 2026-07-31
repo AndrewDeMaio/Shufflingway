@@ -143,7 +143,7 @@ final class GameContextImpl implements GameContext {
 				if (mw.currentAbilitySource == null) return amount;
 				int mult = mw.outgoingDmgMultiplierMap.getOrDefault(mw.currentAbilitySource, 1);
 				if (mw.nextOutgoingDmgDoublerSet.remove(mw.currentAbilitySource)) mult *= 2;
-				mult *= (isP1 ? mw.p1AbilityOutgoingDmgMult : mw.p2AbilityOutgoingDmgMult);
+				mult *= (mw.turn(isP1).abilityOutgoingDmgMult);
 				int flat = mw.outgoingDmgFlatBoostMap.getOrDefault(mw.currentAbilitySource, 0);
 				return amount * mult + flat;
 			}
@@ -251,11 +251,11 @@ final class GameContextImpl implements GameContext {
 
 			@Override public void doubleOpponentForwardIncomingDamage() {
 				if (isP1) {
-					mw.p2ForwardIncomingDmgMult *= 2;
-					logEntry("Opponent's Forwards — incoming damage ×" + mw.p2ForwardIncomingDmgMult + " until end of turn");
+					mw.p2Turn.forwardIncomingDmgMult *= 2;
+					logEntry("Opponent's Forwards — incoming damage ×" + mw.p2Turn.forwardIncomingDmgMult + " until end of turn");
 				} else {
-					mw.p1ForwardIncomingDmgMult *= 2;
-					logEntry("Opponent's Forwards — incoming damage ×" + mw.p1ForwardIncomingDmgMult + " until end of turn");
+					mw.p1Turn.forwardIncomingDmgMult *= 2;
+					logEntry("Opponent's Forwards — incoming damage ×" + mw.p1Turn.forwardIncomingDmgMult + " until end of turn");
 				}
 			}
 			@Override public void increaseAllForwardIncomingDamage(int amount) {
@@ -277,11 +277,11 @@ final class GameContextImpl implements GameContext {
 			}
 			@Override public void doublePlayerAbilityOutgoingDamage() {
 				if (isP1) {
-					mw.p1AbilityOutgoingDmgMult *= 2;
-					logEntry("P1 abilities — outgoing damage ×" + mw.p1AbilityOutgoingDmgMult + " until end of turn");
+					mw.p1Turn.abilityOutgoingDmgMult *= 2;
+					logEntry("P1 abilities — outgoing damage ×" + mw.p1Turn.abilityOutgoingDmgMult + " until end of turn");
 				} else {
-					mw.p2AbilityOutgoingDmgMult *= 2;
-					logEntry("P2 abilities — outgoing damage ×" + mw.p2AbilityOutgoingDmgMult + " until end of turn");
+					mw.p2Turn.abilityOutgoingDmgMult *= 2;
+					logEntry("P2 abilities — outgoing damage ×" + mw.p2Turn.abilityOutgoingDmgMult + " until end of turn");
 				}
 			}
 			@Override public boolean wasExtraCostPaid()          { return mw.currentSummonPaidExtraCost; }
@@ -315,7 +315,7 @@ final class GameContextImpl implements GameContext {
 				CardData c = mw.autoAbilityTriggers.fieldCardData(t); if (c != null) mw.nullifyAbilityDmgSet.add(c);
 			}
 			@Override public void shieldOwnForwardsAbilityDamageFilter(Predicate<CardData> filter) {
-				(isP1 ? mw.p1NullifyAbilityDmgFilters : mw.p2NullifyAbilityDmgFilters).add(filter);
+				(mw.turn(isP1).nullifyAbilityDmgFilters).add(filter);
 			}
 			@Override public void activateDoublecastFreeSummons() {
 				if (isP1) { mw.p1DoublecastFreeSummons = true; mw.p1DoublecastLastSummonCost = -1; }
@@ -386,25 +386,25 @@ final class GameContextImpl implements GameContext {
 				CardData c = mw.autoAbilityTriggers.fieldCardData(t); if (c != null) mw.perCardNonLethalDmgSet.add(c);
 			}
 			@Override public void shieldPlayerNextDamage() {
-				if (isP1) { mw.p1NextDamageZero = true; if (mw.p1ShieldIcon != null) mw.p1ShieldIcon.reset(); }
-				else       { mw.p2NextDamageZero = true; if (mw.p2ShieldIcon != null) mw.p2ShieldIcon.reset(); }
+				if (isP1) { mw.p1Turn.nextDamageZero = true; if (mw.p1ShieldIcon != null) mw.p1ShieldIcon.reset(); }
+				else       { mw.p2Turn.nextDamageZero = true; if (mw.p2ShieldIcon != null) mw.p2ShieldIcon.reset(); }
 			}
 			@Override public void shieldPlayerNextDamageRedirect(String cardName, int damage) {
 				shieldPlayerNextDamage();
-				if (isP1) { mw.p1NextDamageZeroRedirectName = cardName; mw.p1NextDamageZeroRedirectDmg = damage; }
-				else      { mw.p2NextDamageZeroRedirectName = cardName; mw.p2NextDamageZeroRedirectDmg = damage; }
+				if (isP1) { mw.p1Turn.nextDamageZeroRedirectName = cardName; mw.p1Turn.nextDamageZeroRedirectDmg = damage; }
+				else      { mw.p2Turn.nextDamageZeroRedirectName = cardName; mw.p2Turn.nextDamageZeroRedirectDmg = damage; }
 			}
 			@Override public void disableOpponentDamageReduction() {
-				if (isP1) mw.p2DmgReductionDisabled = true; else mw.p1DmgReductionDisabled = true;
+				if (isP1) mw.p2Turn.dmgReductionDisabled = true; else mw.p1Turn.dmgReductionDisabled = true;
 			}
 			@Override public void shieldNextOutgoingDamage(ForwardTarget t) {
 				CardData c = mw.autoAbilityTriggers.fieldCardData(t); if (c != null) mw.nextOutgoingDmgZeroSet.add(c);
 			}
 			@Override public void shieldActivePlayerNonLethal() {
-				if (isP1) mw.p1NonLethalProtection = true; else mw.p2NonLethalProtection = true;
+				if (isP1) mw.p1Turn.nonLethalProtection = true; else mw.p2Turn.nonLethalProtection = true;
 			}
 			@Override public void shieldActivePlayerDamageReduction(int reduction) {
-				if (isP1) mw.p1GlobalDmgReduction += reduction; else mw.p2GlobalDmgReduction += reduction;
+				if (isP1) mw.p1Turn.globalDmgReduction += reduction; else mw.p2Turn.globalDmgReduction += reduction;
 			}
 
 			@Override public void negateAllDamage(ForwardTarget t) {
@@ -1148,16 +1148,16 @@ final class GameContextImpl implements GameContext {
 				logEntry(source.name() + " gains \"" + abilityText + "\" until end of turn");
 			}
 			@Override public void setOppForwardsCannotBlockInferiorPowerThisTurn() {
-				if (isP1()) mw.p2ForwardCannotBlockInferiorPower = true;
-				else        mw.p1ForwardCannotBlockInferiorPower = true;
+				if (isP1()) mw.p2Turn.forwardCannotBlockInferiorPower = true;
+				else        mw.p1Turn.forwardCannotBlockInferiorPower = true;
 				logEntry("Effect: Opponent Forwards cannot block Forwards with power inferior to their own this turn");
 			}
 			@Override public void setAllForwardsCannotBeBlockedByHigherCostThisTurn() {
 				mw.allForwardsCannotBeBlockedByHigherCostThisTurn = true;
 			}
 			@Override public void setOppFwdPowerBoostSuppressedThisTurn() {
-				if (isP1()) mw.p2FwdBoostSuppressedThisTurn = true;
-				else        mw.p1FwdBoostSuppressedThisTurn = true;
+				if (isP1()) mw.p2Turn.fwdBoostSuppressedThisTurn = true;
+				else        mw.p1Turn.fwdBoostSuppressedThisTurn = true;
 				logEntry("Effect: Opponent Forwards cannot have their power increased this turn");
 			}
 			@Override public void oppForwardsLoseAllAbilitiesUntilEndOfTurn() {
@@ -2761,17 +2761,17 @@ final class GameContextImpl implements GameContext {
 				if (isP1) mw.refreshP1HandLabel(); else mw.refreshP2HandCountLabel();
 				if (returnToHandAfterUse) mw.returnToHandAfterUseSummons.add(card);
 				if (isP1) {
-					mw.p1CardsCastThisTurn++;
-					mw.p1SummonCastThisTurn = true;
-					for (String j : card.jobs()) mw.p1CastJobsThisTurn.add(j.toLowerCase());
-					mw.p1CastNamesThisTurn.add(card.name().toLowerCase());
-					mw.p1CastCountByNameThisTurn.merge(card.name().toLowerCase(), 1, Integer::sum);
+					mw.p1Turn.cardsCastThisTurn++;
+					mw.p1Turn.summonCastThisTurn = true;
+					for (String j : card.jobs()) mw.p1Turn.castJobsThisTurn.add(j.toLowerCase());
+					mw.p1Turn.castNamesThisTurn.add(card.name().toLowerCase());
+					mw.p1Turn.castCountByNameThisTurn.merge(card.name().toLowerCase(), 1, Integer::sum);
 				} else {
-					mw.p2CardsCastThisTurn++;
-					mw.p2SummonCastThisTurn = true;
-					for (String j : card.jobs()) mw.p2CastJobsThisTurn.add(j.toLowerCase());
-					mw.p2CastNamesThisTurn.add(card.name().toLowerCase());
-					mw.p2CastCountByNameThisTurn.merge(card.name().toLowerCase(), 1, Integer::sum);
+					mw.p2Turn.cardsCastThisTurn++;
+					mw.p2Turn.summonCastThisTurn = true;
+					for (String j : card.jobs()) mw.p2Turn.castJobsThisTurn.add(j.toLowerCase());
+					mw.p2Turn.castNamesThisTurn.add(card.name().toLowerCase());
+					mw.p2Turn.castCountByNameThisTurn.merge(card.name().toLowerCase(), 1, Integer::sum);
 				}
 				mw.noteDoublecastSummonCast(isP1, card);
 				mw.lastCardWasCast = true;
@@ -2812,17 +2812,17 @@ final class GameContextImpl implements GameContext {
 				hand.remove(idx);
 				if (isP1) mw.refreshP1HandLabel(); else mw.refreshP2HandCountLabel();
 				if (isP1) {
-					mw.p1CardsCastThisTurn++;
-					mw.p1SummonCastThisTurn = true;
-					for (String j : revealed.jobs()) mw.p1CastJobsThisTurn.add(j.toLowerCase());
-					mw.p1CastNamesThisTurn.add(revealed.name().toLowerCase());
-					mw.p1CastCountByNameThisTurn.merge(revealed.name().toLowerCase(), 1, Integer::sum);
+					mw.p1Turn.cardsCastThisTurn++;
+					mw.p1Turn.summonCastThisTurn = true;
+					for (String j : revealed.jobs()) mw.p1Turn.castJobsThisTurn.add(j.toLowerCase());
+					mw.p1Turn.castNamesThisTurn.add(revealed.name().toLowerCase());
+					mw.p1Turn.castCountByNameThisTurn.merge(revealed.name().toLowerCase(), 1, Integer::sum);
 				} else {
-					mw.p2CardsCastThisTurn++;
-					mw.p2SummonCastThisTurn = true;
-					for (String j : revealed.jobs()) mw.p2CastJobsThisTurn.add(j.toLowerCase());
-					mw.p2CastNamesThisTurn.add(revealed.name().toLowerCase());
-					mw.p2CastCountByNameThisTurn.merge(revealed.name().toLowerCase(), 1, Integer::sum);
+					mw.p2Turn.cardsCastThisTurn++;
+					mw.p2Turn.summonCastThisTurn = true;
+					for (String j : revealed.jobs()) mw.p2Turn.castJobsThisTurn.add(j.toLowerCase());
+					mw.p2Turn.castNamesThisTurn.add(revealed.name().toLowerCase());
+					mw.p2Turn.castCountByNameThisTurn.merge(revealed.name().toLowerCase(), 1, Integer::sum);
 				}
 				mw.noteDoublecastSummonCast(isP1, revealed);
 				mw.lastCardWasCast = true;
@@ -2865,11 +2865,11 @@ final class GameContextImpl implements GameContext {
 				} else {
 					hand.remove(handIdx);
 					mw.refreshP2HandCountLabel();
-					mw.p2CardsCastThisTurn++;
-					mw.p2SummonCastThisTurn = true;
-					for (String j : card.jobs()) mw.p2CastJobsThisTurn.add(j.toLowerCase());
-					mw.p2CastNamesThisTurn.add(card.name().toLowerCase());
-					mw.p2CastCountByNameThisTurn.merge(card.name().toLowerCase(), 1, Integer::sum);
+					mw.p2Turn.cardsCastThisTurn++;
+					mw.p2Turn.summonCastThisTurn = true;
+					for (String j : card.jobs()) mw.p2Turn.castJobsThisTurn.add(j.toLowerCase());
+					mw.p2Turn.castNamesThisTurn.add(card.name().toLowerCase());
+					mw.p2Turn.castCountByNameThisTurn.merge(card.name().toLowerCase(), 1, Integer::sum);
 					mw.noteDoublecastSummonCast(false, card);
 					mw.activeCostReductions.remove(mod);
 					logEntry("[P2] Cast \"" + card.name() + "\" from hand (cost -" + discount + ")");
@@ -2922,17 +2922,17 @@ final class GameContextImpl implements GameContext {
 
 				if (castIt) {
 					if (isP1) {
-						mw.p1CardsCastThisTurn++;
-						mw.p1SummonCastThisTurn = true;
-						for (String j : picked.jobs()) mw.p1CastJobsThisTurn.add(j.toLowerCase());
-						mw.p1CastNamesThisTurn.add(picked.name().toLowerCase());
-						mw.p1CastCountByNameThisTurn.merge(picked.name().toLowerCase(), 1, Integer::sum);
+						mw.p1Turn.cardsCastThisTurn++;
+						mw.p1Turn.summonCastThisTurn = true;
+						for (String j : picked.jobs()) mw.p1Turn.castJobsThisTurn.add(j.toLowerCase());
+						mw.p1Turn.castNamesThisTurn.add(picked.name().toLowerCase());
+						mw.p1Turn.castCountByNameThisTurn.merge(picked.name().toLowerCase(), 1, Integer::sum);
 					} else {
-						mw.p2CardsCastThisTurn++;
-						mw.p2SummonCastThisTurn = true;
-						for (String j : picked.jobs()) mw.p2CastJobsThisTurn.add(j.toLowerCase());
-						mw.p2CastNamesThisTurn.add(picked.name().toLowerCase());
-						mw.p2CastCountByNameThisTurn.merge(picked.name().toLowerCase(), 1, Integer::sum);
+						mw.p2Turn.cardsCastThisTurn++;
+						mw.p2Turn.summonCastThisTurn = true;
+						for (String j : picked.jobs()) mw.p2Turn.castJobsThisTurn.add(j.toLowerCase());
+						mw.p2Turn.castNamesThisTurn.add(picked.name().toLowerCase());
+						mw.p2Turn.castCountByNameThisTurn.merge(picked.name().toLowerCase(), 1, Integer::sum);
 					}
 					mw.noteDoublecastSummonCast(isP1, picked);
 					mw.lastCardWasCast = true;
@@ -4139,17 +4139,17 @@ final class GameContextImpl implements GameContext {
 
 				if (picked != null) {
 					if (isP1) {
-						mw.p1CardsCastThisTurn++;
-						mw.p1SummonCastThisTurn = true;
-						for (String j : picked.jobs()) mw.p1CastJobsThisTurn.add(j.toLowerCase());
-						mw.p1CastNamesThisTurn.add(picked.name().toLowerCase());
-						mw.p1CastCountByNameThisTurn.merge(picked.name().toLowerCase(), 1, Integer::sum);
+						mw.p1Turn.cardsCastThisTurn++;
+						mw.p1Turn.summonCastThisTurn = true;
+						for (String j : picked.jobs()) mw.p1Turn.castJobsThisTurn.add(j.toLowerCase());
+						mw.p1Turn.castNamesThisTurn.add(picked.name().toLowerCase());
+						mw.p1Turn.castCountByNameThisTurn.merge(picked.name().toLowerCase(), 1, Integer::sum);
 					} else {
-						mw.p2CardsCastThisTurn++;
-						mw.p2SummonCastThisTurn = true;
-						for (String j : picked.jobs()) mw.p2CastJobsThisTurn.add(j.toLowerCase());
-						mw.p2CastNamesThisTurn.add(picked.name().toLowerCase());
-						mw.p2CastCountByNameThisTurn.merge(picked.name().toLowerCase(), 1, Integer::sum);
+						mw.p2Turn.cardsCastThisTurn++;
+						mw.p2Turn.summonCastThisTurn = true;
+						for (String j : picked.jobs()) mw.p2Turn.castJobsThisTurn.add(j.toLowerCase());
+						mw.p2Turn.castNamesThisTurn.add(picked.name().toLowerCase());
+						mw.p2Turn.castCountByNameThisTurn.merge(picked.name().toLowerCase(), 1, Integer::sum);
 					}
 					mw.noteDoublecastSummonCast(isP1, picked);
 					mw.lastCardWasCast = true;
@@ -4347,15 +4347,15 @@ final class GameContextImpl implements GameContext {
 						CardData d = mw.playerBreakFromHand(false,idx);
 						if (d != null) {
 							logEntry("[P2] Discards " + d.name() + " (forced)");
-							mw.p2DiscardedByEffectThisTurn = true;
-							mw.p1CausedOpponentDiscardThisTurn = true;
+							mw.p2Turn.discardedByEffectThisTurn = true;
+							mw.p1Turn.causedOpponentDiscardThisTurn = true;
 						}
 					}
 					mw.refreshP2HandCountLabel();
 					mw.refreshP2BreakLabel();
 				} else {
 					mw.showForcedDiscardDialog(count, true);
-					mw.p2CausedOpponentDiscardThisTurn = true;
+					mw.p2Turn.causedOpponentDiscardThisTurn = true;
 				}
 			}
 
@@ -4368,8 +4368,8 @@ final class GameContextImpl implements GameContext {
 						CardData d = mw.playerBreakFromHand(false,idx);
 						if (d != null) {
 							logEntry("[P2] Randomly discards " + d.name());
-							mw.p2DiscardedByEffectThisTurn = true;
-							mw.p1CausedOpponentDiscardThisTurn = true;
+							mw.p2Turn.discardedByEffectThisTurn = true;
+							mw.p1Turn.causedOpponentDiscardThisTurn = true;
 						}
 					}
 					mw.refreshP2HandCountLabel();
@@ -4382,8 +4382,8 @@ final class GameContextImpl implements GameContext {
 						CardData d = mw.playerBreakFromHand(true,idx);
 						if (d != null) {
 							logEntry("[P1] Randomly discards " + d.name());
-							mw.p1DiscardedByEffectThisTurn = true;
-							mw.p2CausedOpponentDiscardThisTurn = true;
+							mw.p1Turn.discardedByEffectThisTurn = true;
+							mw.p2Turn.causedOpponentDiscardThisTurn = true;
 						}
 					}
 					mw.refreshP1HandLabel();
@@ -4676,15 +4676,15 @@ final class GameContextImpl implements GameContext {
 
 			@Override public void limitOpponentAttackDeclarationsThisTurn(int max) {
 				if (isP1) {
-					mw.opponentAttackDeclarationLimit = max;
+					mw.p2Turn.attackDeclarationLimit = max;
 				} else {
-					mw.p1AttackDeclarationLimit = max;
+					mw.p1Turn.attackDeclarationLimit = max;
 				}
 				logEntry("Effect: Opponent may only declare attack " + max + " time(s) this turn");
 			}
 
 			@Override public void setOpponentCannotSearchThisTurn() {
-				if (isP1) mw.p2CannotSearchThisTurn = true; else mw.p1CannotSearchThisTurn = true;
+				if (isP1) mw.p2Turn.cannotSearchThisTurn = true; else mw.p1Turn.cannotSearchThisTurn = true;
 				logEntry("Effect: Opponent cannot search this turn");
 			}
 
@@ -4772,7 +4772,7 @@ final class GameContextImpl implements GameContext {
 					for (int i = 0; i < actual; i++) {
 						int idx = MainWindow.pickWorstHandCard0(hand);
 						CardData d = mw.playerBreakFromHand(false,idx);
-						if (d != null) { logEntry("[P2] Discards " + d.name()); mw.p2DiscardedByEffectThisTurn = true; mw.lastDiscardedCardName = d.name(); mw.lastDiscardedCard = d; }
+						if (d != null) { logEntry("[P2] Discards " + d.name()); mw.p2Turn.discardedByEffectThisTurn = true; mw.lastDiscardedCardName = d.name(); mw.lastDiscardedCard = d; }
 					}
 					mw.refreshP2HandCountLabel();
 					mw.refreshP2BreakLabel();
@@ -4796,7 +4796,7 @@ final class GameContextImpl implements GameContext {
 					CardData d = mw.playerBreakFromHand(false, idx);
 					if (d != null) {
 						logEntry("[P2] Discards " + d.name());
-						mw.p2DiscardedByEffectThisTurn = true;
+						mw.p2Turn.discardedByEffectThisTurn = true;
 						if (d.isForward()) mw.lastDiscardedForwardPower = d.power();
 					}
 					mw.refreshP2HandCountLabel();
@@ -4821,7 +4821,7 @@ final class GameContextImpl implements GameContext {
 					CardData d = mw.playerBreakFromHand(false, idx);
 					if (d != null) {
 						logEntry("[P2] Discards " + d.name());
-						mw.p2DiscardedByEffectThisTurn = true;
+						mw.p2Turn.discardedByEffectThisTurn = true;
 						if (d.isForward()) mw.lastDiscardedForwardPower = d.power();
 					}
 					mw.refreshP2HandCountLabel();
@@ -4846,7 +4846,7 @@ final class GameContextImpl implements GameContext {
 					CardData d = mw.playerBreakFromHand(false, idx);
 					if (d != null) {
 						logEntry("[P2] Discards " + d.name());
-						mw.p2DiscardedByEffectThisTurn = true;
+						mw.p2Turn.discardedByEffectThisTurn = true;
 						if (d.isForward()) mw.lastDiscardedForwardPower = d.power();
 					}
 					mw.refreshP2HandCountLabel();
@@ -5068,7 +5068,7 @@ final class GameContextImpl implements GameContext {
 						"Replay Ability", new Object[]{"Discard", "Pass"});
 				if (choice != 0) { logEntry("Replay: declined to discard " + cardName); return; }
 				CardData d = mw.playerBreakFromHand(true,handIdx);
-				if (d != null) { logEntry("Replay: discarded " + d.name()); mw.p1DiscardedByEffectThisTurn = true; }
+				if (d != null) { logEntry("Replay: discarded " + d.name()); mw.p1Turn.discardedByEffectThisTurn = true; }
 				mw.refreshP1HandLabel();
 				mw.refreshP1BreakLabel();
 				logEntry("Replay: using ability again");
@@ -5090,7 +5090,7 @@ final class GameContextImpl implements GameContext {
 				if (choice != 0) { logEntry("[Effect] Declined to discard " + cardName); return; }
 				final int idx = handIdx;
 				CardData d = mw.playerBreakFromHand(true,idx);
-				if (d != null) { logEntry("[Effect] Discarded " + d.name()); mw.p1DiscardedByEffectThisTurn = true; }
+				if (d != null) { logEntry("[Effect] Discarded " + d.name()); mw.p1Turn.discardedByEffectThisTurn = true; }
 				mw.refreshP1HandLabel();
 				mw.refreshP1BreakLabel();
 				ifDiscarded.accept(this);
@@ -5176,7 +5176,7 @@ final class GameContextImpl implements GameContext {
 						CardData d = hand.remove(i);
 						mw.animateCardDiscard(true, d);
 						logEntry("Discards " + d.name());
-						mw.p1DiscardedByEffectThisTurn = true;
+						mw.p1Turn.discardedByEffectThisTurn = true;
 						mw.addToBreakZone(d, false);
 					}
 					mw.refreshP1HandLabel();
@@ -5186,7 +5186,7 @@ final class GameContextImpl implements GameContext {
 						CardData d = hand.remove(i);
 						mw.animateCardDiscard(false, d);
 						logEntry("[P2] Discards " + d.name());
-						mw.p2DiscardedByEffectThisTurn = true;
+						mw.p2Turn.discardedByEffectThisTurn = true;
 						mw.addToBreakZone(d, false);
 					}
 					mw.refreshP2HandCountLabel();
@@ -5481,7 +5481,7 @@ final class GameContextImpl implements GameContext {
 			}
 
 			@Override public void applyCurrentPartyForwardsPowerBoost(int amount) {
-				List<CardData> party = isP1 ? mw.p1CurrentPartyAttackers : mw.p2CurrentPartyAttackers;
+				List<CardData> party = mw.turn(isP1).currentPartyAttackers;
 				List<CardData> fwds  = isP1 ? mw.p1ForwardCards : mw.p2ForwardCards;
 				// The booster is always the party controller, so self-boost suppression applies too.
 				boolean suppressed = amount > 0
@@ -6122,11 +6122,11 @@ final class GameContextImpl implements GameContext {
 			}
 
 			@Override public boolean selfReceivedDamageThisTurn() {
-				return isP1 ? mw.p1ReceivedDamageThisTurn : mw.p2ReceivedDamageThisTurn;
+				return mw.turn(isP1).receivedDamageThisTurn;
 			}
 
 			@Override public boolean ownForwardFormedPartyThisTurn() {
-				return isP1 ? mw.p1FormedPartyThisTurn : mw.p2FormedPartyThisTurn;
+				return mw.turn(isP1).formedPartyThisTurn;
 			}
 
 			@Override public int ownFieldCount(String cardType) {
@@ -6162,14 +6162,14 @@ final class GameContextImpl implements GameContext {
 				return (isP1 ? mw.gameState.getP2DamageZone() : mw.gameState.getP1DamageZone()).size();
 			}
 
-			@Override public int selfCardsCastThisTurn() { return isP1 ? mw.p1CardsCastThisTurn : mw.p2CardsCastThisTurn; }
+			@Override public int selfCardsCastThisTurn() { return mw.turn(isP1).cardsCastThisTurn; }
 
 			@Override public int countCardsNamedCastThisTurn(String name) {
-				Map<String, Integer> counts = isP1 ? mw.p1CastCountByNameThisTurn : mw.p2CastCountByNameThisTurn;
+				Map<String, Integer> counts = mw.turn(isP1).castCountByNameThisTurn;
 				return counts.getOrDefault(name.toLowerCase(java.util.Locale.ROOT), 0);
 			}
 
-			@Override public boolean selfSummonCastThisTurn() { return isP1 ? mw.p1SummonCastThisTurn : mw.p2SummonCastThisTurn; }
+			@Override public boolean selfSummonCastThisTurn() { return mw.turn(isP1).summonCastThisTurn; }
 
 			@Override public int selfForwardCount() {
 				return isP1 ? mw.p1ForwardCards.size() : mw.p2ForwardCards.size();
@@ -6913,8 +6913,8 @@ final class GameContextImpl implements GameContext {
 					discarded = mw.playerBreakFromHand(false, idx);
 					if (discarded != null) {
 						logEntry("[P2] Discards " + discarded.name() + " (forced)");
-						mw.p2DiscardedByEffectThisTurn = true;
-						mw.p1CausedOpponentDiscardThisTurn = true;
+						mw.p2Turn.discardedByEffectThisTurn = true;
+						mw.p1Turn.causedOpponentDiscardThisTurn = true;
 					}
 					mw.refreshP2HandCountLabel();
 					mw.refreshP2BreakLabel();
@@ -6928,8 +6928,8 @@ final class GameContextImpl implements GameContext {
 					discarded = mw.playerBreakFromHand(true, idx);
 					if (discarded != null) {
 						logEntry("[P1] Discards " + discarded.name() + " (forced)");
-						mw.p1DiscardedByEffectThisTurn = true;
-						mw.p2CausedOpponentDiscardThisTurn = true;
+						mw.p1Turn.discardedByEffectThisTurn = true;
+						mw.p2Turn.causedOpponentDiscardThisTurn = true;
 					}
 					mw.refreshP1HandLabel();
 					mw.refreshP1BreakLabel();
@@ -7015,11 +7015,11 @@ final class GameContextImpl implements GameContext {
 
 			@Override public void grantForwardsPartyAnyElementThisTurn() {
 				if (isP1) {
-					mw.p1PartyAnyElementThisTurn = true;
-					mw.endOfTurnEffects.add(x -> mw.p1PartyAnyElementThisTurn = false);
+					mw.p1Turn.partyAnyElementThisTurn = true;
+					mw.endOfTurnEffects.add(x -> mw.p1Turn.partyAnyElementThisTurn = false);
 				} else {
-					mw.p2PartyAnyElementThisTurn = true;
-					mw.endOfTurnEffects.add(x -> mw.p2PartyAnyElementThisTurn = false);
+					mw.p2Turn.partyAnyElementThisTurn = true;
+					mw.endOfTurnEffects.add(x -> mw.p2Turn.partyAnyElementThisTurn = false);
 				}
 				logEntry((isP1 ? "P1" : "[P2]") + " Forwards can form a party with Forwards of any Element this turn");
 			}

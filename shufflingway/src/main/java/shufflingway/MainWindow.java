@@ -445,57 +445,20 @@ public class MainWindow {
 	final Map<CardData, Integer> incomingDmgIncreaseMap   = new HashMap<>();
 	int globalForwardIncomingDmgIncrease = 0; // flat increase applied to ALL Forwards' incoming damage this turn
 	boolean allForwardsCannotBeBlockedByHigherCostThisTurn = false;
-	boolean p1FwdBoostSuppressedThisTurn = false; // P1's Forwards cannot have power increased this turn
-	boolean p2FwdBoostSuppressedThisTurn = false; // P2's Forwards cannot have power increased this turn
 	final Set<CardData>          nullifyAbilityDmgSet     = new HashSet<>();
-	// Turn-scoped filter variants of nullifyAbilityDmgSet: a Forward on the given side matching any
-	// filter takes 0 damage from Summons/abilities — also covers Forwards entering the field later this turn.
-	final List<Predicate<CardData>> p1NullifyAbilityDmgFilters = new ArrayList<>();
-	final List<Predicate<CardData>> p2NullifyAbilityDmgFilters = new ArrayList<>();
 	final Set<CardData>          nullifyAbilityOnlyDmgSet = new HashSet<>();
 	final Set<CardData>          nextOutgoingDmgZeroSet      = new HashSet<>();
 	final Map<CardData, Integer> outgoingDmgMultiplierMap    = new IdentityHashMap<>();
 	final Map<CardData, Integer> outgoingDmgFlatBoostMap     = new IdentityHashMap<>();
 	final Set<CardData>          nextOutgoingDmgDoublerSet   = new HashSet<>();
 	final Map<CardData, Integer> perCardIncomingDmgMultiplierMap = new IdentityHashMap<>();
-	int p1ForwardIncomingDmgMult = 1; // multiplier applied when any P1 Forward receives damage
-	int p2ForwardIncomingDmgMult = 1; // multiplier applied when any P2 Forward receives damage
 	// Set by resolveCombat before modifyIncomingDamage so field abilities can inspect the attacker's traits
 	private CardData currentBattleAttacker      = null;
 	private boolean  currentBattleAttackerIsP1  = false;
 	private int      currentBattleAttackerIdx   = -1;
 	// Zone of the current battle attacker so trait checks work when it is a Monster/Backup acting as a Forward
 	private ForwardTarget.CardZone currentBattleAttackerZone = ForwardTarget.CardZone.FORWARD;
-	int p1AbilityOutgoingDmgMult = 1; // player-wide ability outgoing damage multiplier
-	int p2AbilityOutgoingDmgMult = 1;
 	final Set<CardData>          perCardNonLethalDmgSet      = new HashSet<>();
-	boolean p1ReceivedDamageThisTurn = false;
-	boolean p2ReceivedDamageThisTurn = false;
-	boolean p1NextDamageZero = false;
-	boolean p2NextDamageZero = false;
-	// Companion to pXNextDamageZero (Auron): when the player shield consumes, deal this much
-	// damage to the named Forward on the shield owner's field instead
-	// ("the next damage dealt to you becomes 0 and deal Auron 8000 damage instead").
-	String p1NextDamageZeroRedirectName = null;
-	String p2NextDamageZeroRedirectName = null;
-	int p1NextDamageZeroRedirectDmg = 0;
-	int p2NextDamageZeroRedirectDmg = 0;
-	boolean p1ForwardPutToBZThisTurn = false;
-	boolean p2ForwardPutToBZThisTurn = false;
-	boolean p1ForwardCannotBlockInferiorPower = false; // set by P2 action: P1 Forwards cannot block targets with power < their own
-	boolean p2ForwardCannotBlockInferiorPower = false; // set by P1 action: P2 Forwards cannot block targets with power < their own
-	int     p1CardsCastThisTurn          = 0;
-	boolean p1SummonCastThisTurn         = false;
-	final Set<String>           p1CastJobsThisTurn        = new HashSet<>();
-	final Set<String>           p1CastNamesThisTurn       = new HashSet<>();
-	final Map<String, Integer>  p1CastCountByNameThisTurn = new HashMap<>();
-	boolean p1TurnOpponentFwdBroken      = false;
-	final Set<String> p1BrokenJobsThisTurn      = new HashSet<>();
-	final Set<String> p1BrokenElementsThisTurn  = new HashSet<>();
-	final Set<String> p1BrokenCategoriesThisTurn = new HashSet<>();
-	int     p1CardsDrawnThisTurn         = 0;
-	boolean p1DiscardedByEffectThisTurn  = false;
-	boolean p1CausedOpponentDiscardThisTurn = false;
 	// Power and name of the card most recently discarded as part of resolving an ability.
 	int      lastDiscardedForwardPower    = 0;
 	String   lastDiscardedCardName        = null;
@@ -506,57 +469,20 @@ public class MainWindow {
 	// Cost/power of the Forward most recently removed from the game by a "remove it from the game" effect.
 	int     lastRemovedFromGameCardCost  = 0;
 	int     lastRemovedFromGameCardPower = 0;
-	boolean p1FormedPartyThisTurn        = false;
-	/**
-	 * The Forwards in the party that most recently formed and attacked this turn, per side.
-	 * Set when a party attack fires; read by party-attack auto-ability followups that act on
-	 * "all Forwards in that party" (e.g. Gippal's +5000 power boost).
-	 */
-	List<CardData> p1CurrentPartyAttackers = new ArrayList<>();
-	List<CardData> p2CurrentPartyAttackers = new ArrayList<>();
-	boolean p1PartyAnyElementThisTurn   = false;
-	boolean p2PartyAnyElementThisTurn   = false;
-	int     p2CardsCastThisTurn          = 0;
-	boolean p2SummonCastThisTurn         = false;
-	final Set<String>           p2CastJobsThisTurn        = new HashSet<>();
-	final Set<String>           p2CastNamesThisTurn       = new HashSet<>();
-	final Map<String, Integer>  p2CastCountByNameThisTurn = new HashMap<>();
-	boolean p2TurnOpponentFwdBroken      = false;
-	final Set<String> p2BrokenJobsThisTurn      = new HashSet<>();
-	final Set<String> p2BrokenElementsThisTurn  = new HashSet<>();
-	final Set<String> p2BrokenCategoriesThisTurn = new HashSet<>();
-	int     p2CardsDrawnThisTurn         = 0;
-	boolean p2DiscardedByEffectThisTurn  = false;
-	boolean p2CausedOpponentDiscardThisTurn = false;
-	boolean p2FormedPartyThisTurn        = false;
-	int     p1ForwardsLeftFieldThisTurn  = 0;
-	int     p2ForwardsLeftFieldThisTurn  = 0;
-	final Set<String> p1ElementForwardsEnteredThisTurn = new HashSet<>();
-	final Set<String> p2ElementForwardsEnteredThisTurn = new HashSet<>();
-	final Set<String> p1CardsTookDamageThisTurn = new HashSet<>();
-	final Set<String> p2CardsTookDamageThisTurn = new HashSet<>();
-	boolean p1ForwardEnteredViaWarpThisTurn = false;
-	boolean p2ForwardEnteredViaWarpThisTurn = false;
-	boolean p1TurnOpponentCharReturnedToHand = false;
-	boolean p2TurnOpponentCharReturnedToHand = false;
-	boolean p1NonLethalProtection   = false;
-	boolean p2NonLethalProtection   = false;
-	boolean p1DmgReductionDisabled  = false;
-	boolean p2DmgReductionDisabled  = false;
-	int     p1GlobalDmgReduction    = 0;
-	int     p2GlobalDmgReduction    = 0;
-	/** Max attack declarations P2 may make this turn; {@code Integer.MAX_VALUE} = unlimited. */
-	int opponentAttackDeclarationLimit  = Integer.MAX_VALUE;
-	/** Number of attack declarations made by P2 in the current turn (cleared at end of each turn). */
-	int p2AttackDeclarationsThisTurn    = 0;
-	/** Max attack declarations P1 may make this turn; {@code Integer.MAX_VALUE} = unlimited. */
-	int p1AttackDeclarationLimit        = Integer.MAX_VALUE;
-	/** Number of attack declarations made by P1 in the current turn (cleared at end of each turn). */
-	int p1AttackDeclarationsThisTurn    = 0;
-	/** Set when an ability forbids P1 from searching this turn. */
-	boolean p1CannotSearchThisTurn      = false;
-	/** Set when an ability forbids P2 from searching this turn. */
-	boolean p2CannotSearchThisTurn      = false;
+
+	/** Per-player turn-scoped rules state. Prefer {@link #turn(boolean)} over these directly. */
+	final PlayerTurnState p1Turn = new PlayerTurnState();
+	final PlayerTurnState p2Turn = new PlayerTurnState();
+
+	/** The turn-scoped state of the given player. */
+	PlayerTurnState turn(boolean isP1) {
+		return isP1 ? p1Turn : p2Turn;
+	}
+
+	/** The turn-scoped state of the given player's opponent. */
+	PlayerTurnState oppTurn(boolean isP1) {
+		return isP1 ? p2Turn : p1Turn;
+	}
 
 	/** End-of-turn effects queued this turn; fired at the beginning of the END phase. */
 	final List<Consumer<GameContext>> endOfTurnEffects = new ArrayList<>();
@@ -1524,18 +1450,18 @@ public class MainWindow {
 		p1ForwardCannotBlock.clear();
 		p2ForwardCannotBlock.clear();
 		// Per-turn tracking flags.
-		p1ReceivedDamageThisTurn = false;
-		p2ReceivedDamageThisTurn = false;
-		if (p1NextDamageZero && p1ShieldIcon != null) p1ShieldIcon.triggerFade();
-		if (p2NextDamageZero && p2ShieldIcon != null) p2ShieldIcon.triggerFade();
-		p1NextDamageZero = false;
-		p2NextDamageZero = false;
-		p1NextDamageZeroRedirectName = null; p2NextDamageZeroRedirectName = null;
-		p1NextDamageZeroRedirectDmg = 0;     p2NextDamageZeroRedirectDmg = 0;
-		p1ForwardPutToBZThisTurn = false;
-		p2ForwardPutToBZThisTurn = false;
-		p1PartyAnyElementThisTurn = false;
-		p2PartyAnyElementThisTurn = false;
+		p1Turn.receivedDamageThisTurn = false;
+		p2Turn.receivedDamageThisTurn = false;
+		if (p1Turn.nextDamageZero && p1ShieldIcon != null) p1ShieldIcon.triggerFade();
+		if (p2Turn.nextDamageZero && p2ShieldIcon != null) p2ShieldIcon.triggerFade();
+		p1Turn.nextDamageZero = false;
+		p2Turn.nextDamageZero = false;
+		p1Turn.nextDamageZeroRedirectName = null; p2Turn.nextDamageZeroRedirectName = null;
+		p1Turn.nextDamageZeroRedirectDmg = 0;     p2Turn.nextDamageZeroRedirectDmg = 0;
+		p1Turn.forwardPutToBZThisTurn = false;
+		p2Turn.forwardPutToBZThisTurn = false;
+		p1Turn.partyAnyElementThisTurn = false;
+		p2Turn.partyAnyElementThisTurn = false;
 		lastCardWasCast   = false;
 		lastCardWarpedIn  = false;
 
@@ -2301,26 +2227,26 @@ public class MainWindow {
                                 p1TempBlockTriggers.clear();            p2TempBlockTriggers.clear();
                                 nextIncomingDmgZeroSet.clear();   nextIncomingDmgRedirectMap.clear();   nextIncomingDmgReduceMap.clear();   nextAbilityDmgReduceMap.clear();
                                 incomingDmgIncreaseMap.clear();   globalForwardIncomingDmgIncrease = 0;   nullifyAbilityDmgSet.clear();
-                                p1NullifyAbilityDmgFilters.clear(); p2NullifyAbilityDmgFilters.clear();
+                                p1Turn.nullifyAbilityDmgFilters.clear(); p2Turn.nullifyAbilityDmgFilters.clear();
                                 p1DoublecastFreeSummons = false;  p2DoublecastFreeSummons = false;
                                 p1DoublecastLastSummonCost = -1;  p2DoublecastLastSummonCost = -1;
                                 allForwardsCannotBeBlockedByHigherCostThisTurn = false;
-                                p1FwdBoostSuppressedThisTurn = false; p2FwdBoostSuppressedThisTurn = false;
+                                p1Turn.fwdBoostSuppressedThisTurn = false; p2Turn.fwdBoostSuppressedThisTurn = false;
                                 nullifyAbilityOnlyDmgSet.clear(); perCardNonLethalDmgSet.clear();
                                 nextOutgoingDmgZeroSet.clear();    outgoingDmgMultiplierMap.clear();
                                 nextOutgoingDmgDoublerSet.clear(); outgoingDmgFlatBoostMap.clear();
                                 perCardIncomingDmgMultiplierMap.clear();
-                                p1ForwardIncomingDmgMult = 1;      p2ForwardIncomingDmgMult = 1;
-                                p1AbilityOutgoingDmgMult = 1;      p2AbilityOutgoingDmgMult = 1;
+                                p1Turn.forwardIncomingDmgMult = 1;      p2Turn.forwardIncomingDmgMult = 1;
+                                p1Turn.abilityOutgoingDmgMult = 1;      p2Turn.abilityOutgoingDmgMult = 1;
                                 cannotBeChosenBySummons.clear();  cannotBeChosenByAbilities.clear();  cannotBeChosenBySummonsAnyone.clear();  cannotBeChosenByElement.clear();  nullifyElementDamageMap.clear();  nullifyElementDamageAbilityOnlyMap.clear();  rfgInsteadOfBzThisTurn.clear();  drawOnFieldToBzThisTurn.clear();
                                 breaktouchBattleSet.clear();
-                                p1NonLethalProtection = false;    p2NonLethalProtection = false;
-                                p1DmgReductionDisabled = false;   p2DmgReductionDisabled = false;
-                                p1ForwardCannotBlockInferiorPower = false; p2ForwardCannotBlockInferiorPower = false;
-                                p1GlobalDmgReduction  = 0;        p2GlobalDmgReduction  = 0;
-                                opponentAttackDeclarationLimit = Integer.MAX_VALUE; p2AttackDeclarationsThisTurn = 0;
-                                p1AttackDeclarationLimit = Integer.MAX_VALUE;       p1AttackDeclarationsThisTurn = 0;
-                                p1CannotSearchThisTurn = false; p2CannotSearchThisTurn = false;
+                                p1Turn.nonLethalProtection = false;    p2Turn.nonLethalProtection = false;
+                                p1Turn.dmgReductionDisabled = false;   p2Turn.dmgReductionDisabled = false;
+                                p1Turn.forwardCannotBlockInferiorPower = false; p2Turn.forwardCannotBlockInferiorPower = false;
+                                p1Turn.globalDmgReduction  = 0;        p2Turn.globalDmgReduction  = 0;
+                                p2Turn.attackDeclarationLimit = Integer.MAX_VALUE; p2Turn.attackDeclarationsThisTurn = 0;
+                                p1Turn.attackDeclarationLimit = Integer.MAX_VALUE;       p1Turn.attackDeclarationsThisTurn = 0;
+                                p1Turn.cannotSearchThisTurn = false; p2Turn.cannotSearchThisTurn = false;
                                 for (int i = 0; i < p2ForwardCards.size(); i++) refreshP2ForwardSlot(i);
                                 // An end-of-turn trigger may still be arriving/resolving (a card
                                 // returning from the RFG zone and its abilities) — the turn may not
@@ -2336,7 +2262,7 @@ public class MainWindow {
 				// P1's turn is over: their cast allowance refreshes for the turn now beginning,
 				// which they may spend on Summons and Back Attack Characters while holding
 				// priority.  Done before control is handed over, on both branches below.
-				resetP1CastTracking();
+				p1Turn.resetCastTracking();
 				if (p1ExtraTurnThenLose) {
 					p1ExtraTurnThenLose = false;
 					logEntry("Extra Turn — P1 takes one additional turn");
@@ -2740,8 +2666,8 @@ public class MainWindow {
 			lastCardWarpedIn = true;
 			try {
 				if (card.isForward()) {
-					if (isP1) { placeCardInForwardZone(card);   p1ForwardEnteredViaWarpThisTurn = true; }
-					else       { placeP2CardInForwardZone(card); p2ForwardEnteredViaWarpThisTurn = true; }
+					if (isP1) { placeCardInForwardZone(card);   p1Turn.forwardEnteredViaWarpThisTurn = true; }
+					else       { placeP2CardInForwardZone(card); p2Turn.forwardEnteredViaWarpThisTurn = true; }
 				} else if (card.isBackup()) {
 					if (isP1) {
 						if (hasAvailableBackupSlot()) placeCardInFirstBackupSlot(card);
@@ -2906,10 +2832,10 @@ public class MainWindow {
 	 * the shield had no redirect attached.
 	 */
 	private void consumeNextDamageZeroRedirect(boolean isP1) {
-		String name = isP1 ? p1NextDamageZeroRedirectName : p2NextDamageZeroRedirectName;
-		int    dmg  = isP1 ? p1NextDamageZeroRedirectDmg  : p2NextDamageZeroRedirectDmg;
-		if (isP1) { p1NextDamageZeroRedirectName = null; p1NextDamageZeroRedirectDmg = 0; }
-		else      { p2NextDamageZeroRedirectName = null; p2NextDamageZeroRedirectDmg = 0; }
+		String name = turn(isP1).nextDamageZeroRedirectName;
+		int    dmg  = turn(isP1).nextDamageZeroRedirectDmg;
+		if (isP1) { p1Turn.nextDamageZeroRedirectName = null; p1Turn.nextDamageZeroRedirectDmg = 0; }
+		else      { p2Turn.nextDamageZeroRedirectName = null; p2Turn.nextDamageZeroRedirectDmg = 0; }
 		if (name == null || dmg <= 0) return;
 		List<CardData> fwds = isP1 ? p1ForwardCards : p2ForwardCards;
 		for (int i = 0; i < fwds.size(); i++) {
@@ -2992,8 +2918,8 @@ public class MainWindow {
 		final CardData dmgSource       = consumePlayerDamageSource();
 		final boolean  abilitySuppress = suppressExBurstsThisAbility;
 		if (gameState.isP1GameOver()) { if (onDone != null) onDone.run(); return; }
-		if (p1NextDamageZero) {
-			p1NextDamageZero = false;
+		if (p1Turn.nextDamageZero) {
+			p1Turn.nextDamageZero = false;
 			logEntry("P1 damage negated (shield active).");
 			if (p1ShieldIcon != null) p1ShieldIcon.triggerShatter();
 			consumeNextDamageZeroRedirect(true);
@@ -3018,7 +2944,7 @@ public class MainWindow {
 			if (onDone != null) onDone.run();
 			return;
 		}
-		p1ReceivedDamageThisTurn = true;
+		p1Turn.receivedDamageThisTurn = true;
 		CardData drawn = gameState.drawToDamageZone();
 		if (drawn == null) {
 			triggerGameOver("P1 milled out — You Lose!");
@@ -3083,8 +3009,8 @@ public class MainWindow {
 	void p2TakeDamage(Runnable onDone) {
 		final CardData dmgSource       = consumePlayerDamageSource();
 		final boolean  abilitySuppress = suppressExBurstsThisAbility;
-		if (p2NextDamageZero) {
-			p2NextDamageZero = false;
+		if (p2Turn.nextDamageZero) {
+			p2Turn.nextDamageZero = false;
 			logEntry("[P2] damage negated (shield active).");
 			if (p2ShieldIcon != null) p2ShieldIcon.triggerShatter();
 			consumeNextDamageZeroRedirect(false);
@@ -3110,7 +3036,7 @@ public class MainWindow {
 			if (onDone != null) onDone.run();
 			return;
 		}
-		p2ReceivedDamageThisTurn = true;
+		p2Turn.receivedDamageThisTurn = true;
 		CardData drawn = gameState.drawToP2DamageZone();
 		if (drawn == null) {
 			// Deck is empty — P2 cannot flip a card into their Damage Zone, so they lose immediately
@@ -3331,14 +3257,14 @@ public class MainWindow {
 		}
 		if (hadGrants) for (int i = 0; i < p1MonsterCards.size(); i++) refreshP1MonsterSlot(i);
 		if (hadCostReduces) refreshHandPopupIfVisible();
-		p2TurnOpponentFwdBroken = true;
-		for (String j : card.jobs()) p1BrokenJobsThisTurn.add(j.toLowerCase());
-		if (card.element() != null && !card.element().isBlank()) p1BrokenElementsThisTurn.add(card.element().toLowerCase());
-		if (card.category1() != null && !card.category1().isBlank()) p1BrokenCategoriesThisTurn.add(card.category1().toLowerCase());
-		if (card.category2() != null && !card.category2().isBlank()) p1BrokenCategoriesThisTurn.add(card.category2().toLowerCase());
-		if (gameState.getCurrentPlayer() == GameState.Player.P1) p1ForwardsLeftFieldThisTurn++;
-		else p2ForwardsLeftFieldThisTurn++;
-		p1ForwardPutToBZThisTurn = true;
+		p2Turn.turnOpponentFwdBroken = true;
+		for (String j : card.jobs()) p1Turn.brokenJobsThisTurn.add(j.toLowerCase());
+		if (card.element() != null && !card.element().isBlank()) p1Turn.brokenElementsThisTurn.add(card.element().toLowerCase());
+		if (card.category1() != null && !card.category1().isBlank()) p1Turn.brokenCategoriesThisTurn.add(card.category1().toLowerCase());
+		if (card.category2() != null && !card.category2().isBlank()) p1Turn.brokenCategoriesThisTurn.add(card.category2().toLowerCase());
+		if (gameState.getCurrentPlayer() == GameState.Player.P1) p1Turn.forwardsLeftFieldThisTurn++;
+		else p2Turn.forwardsLeftFieldThisTurn++;
+		p1Turn.forwardPutToBZThisTurn = true;
 		// If the broken card was itself stolen from P2, drop its tracking entry
 		stolenForwards.remove(card);
 		// Restore any forwards that were conditioned on this card remaining on the field
@@ -3407,14 +3333,14 @@ public class MainWindow {
 		}
 		if (hadGrants) for (int i = 0; i < p2MonsterCards.size(); i++) refreshP2MonsterSlot(i);
 		if (hadCostReduces) refreshHandPopupIfVisible();
-		p1TurnOpponentFwdBroken = true;
-		for (String j : card.jobs()) p2BrokenJobsThisTurn.add(j.toLowerCase());
-		if (card.element() != null && !card.element().isBlank()) p2BrokenElementsThisTurn.add(card.element().toLowerCase());
-		if (card.category1() != null && !card.category1().isBlank()) p2BrokenCategoriesThisTurn.add(card.category1().toLowerCase());
-		if (card.category2() != null && !card.category2().isBlank()) p2BrokenCategoriesThisTurn.add(card.category2().toLowerCase());
-		if (gameState.getCurrentPlayer() == GameState.Player.P1) p1ForwardsLeftFieldThisTurn++;
-		else p2ForwardsLeftFieldThisTurn++;
-		p2ForwardPutToBZThisTurn = true;
+		p1Turn.turnOpponentFwdBroken = true;
+		for (String j : card.jobs()) p2Turn.brokenJobsThisTurn.add(j.toLowerCase());
+		if (card.element() != null && !card.element().isBlank()) p2Turn.brokenElementsThisTurn.add(card.element().toLowerCase());
+		if (card.category1() != null && !card.category1().isBlank()) p2Turn.brokenCategoriesThisTurn.add(card.category1().toLowerCase());
+		if (card.category2() != null && !card.category2().isBlank()) p2Turn.brokenCategoriesThisTurn.add(card.category2().toLowerCase());
+		if (gameState.getCurrentPlayer() == GameState.Player.P1) p1Turn.forwardsLeftFieldThisTurn++;
+		else p2Turn.forwardsLeftFieldThisTurn++;
+		p2Turn.forwardPutToBZThisTurn = true;
 		syncBzForwardPlayables(false);
 		refreshP2BreakLabel();
 		autoAbilityTriggers.triggerAutoAbilitiesForLeavesField(card, false);
@@ -3978,7 +3904,7 @@ public class MainWindow {
 			int costVal, String costCmp, String cardNameFilter, String jobFilter,
 			String categoryFilter, String elementFilter, String excludeName, String excludeElem,
 			String destination, int count, boolean entersDull, boolean requireWarp) {
-		if (isP1 ? p1CannotSearchThisTurn : p2CannotSearchThisTurn) {
+		if (turn(isP1).cannotSearchThisTurn) {
 			logEntry("Search blocked — opponent cannot search this turn");
 			return;
 		}
@@ -4204,7 +4130,7 @@ public class MainWindow {
 	}
 
 	void searchDeckJobAndTypeDontShareElements(boolean isP1, String jobFilter, String typeName) {
-		if (isP1 ? p1CannotSearchThisTurn : p2CannotSearchThisTurn) {
+		if (turn(isP1).cannotSearchThisTurn) {
 			logEntry("Search blocked — opponent cannot search this turn");
 			return;
 		}
@@ -4260,7 +4186,7 @@ public class MainWindow {
 	}
 
 	void searchDeckElementOrCategoryCharsDifferentCost(boolean isP1, String element, String category) {
-		if (isP1 ? p1CannotSearchThisTurn : p2CannotSearchThisTurn) {
+		if (turn(isP1).cannotSearchThisTurn) {
 			logEntry("Search blocked — opponent cannot search this turn");
 			return;
 		}
@@ -4305,7 +4231,7 @@ public class MainWindow {
 	}
 
 	void searchDeckNElementSummonsDifferentCost(boolean isP1, int count, String element) {
-		if (isP1 ? p1CannotSearchThisTurn : p2CannotSearchThisTurn) {
+		if (turn(isP1).cannotSearchThisTurn) {
 			logEntry("Search blocked — opponent cannot search this turn");
 			return;
 		}
@@ -4416,9 +4342,9 @@ public class MainWindow {
 		if (hadGrants) for (int i = 0; i < p1MonsterCards.size(); i++) refreshP1MonsterSlot(i);
 		if (player1) refreshP1HandLabel(); else refreshP2HandCountLabel();
 		if (topCard != null) refreshP1WarpZoneUI();
-		if (gameState.getCurrentPlayer() == GameState.Player.P1) p1ForwardsLeftFieldThisTurn++;
-		else p2ForwardsLeftFieldThisTurn++;
-		p2TurnOpponentCharReturnedToHand = true;
+		if (gameState.getCurrentPlayer() == GameState.Player.P1) p1Turn.forwardsLeftFieldThisTurn++;
+		else p2Turn.forwardsLeftFieldThisTurn++;
+		p2Turn.turnOpponentCharReturnedToHand = true;
 		autoAbilityTriggers.triggerAutoAbilitiesForLeavesField(card, true);
 	}
 
@@ -4464,9 +4390,9 @@ public class MainWindow {
 		}
 		if (hadGrants) for (int i = 0; i < p2MonsterCards.size(); i++) refreshP2MonsterSlot(i);
 		if (player1) refreshP1HandLabel(); else refreshP2HandCountLabel();
-		if (gameState.getCurrentPlayer() == GameState.Player.P1) p1ForwardsLeftFieldThisTurn++;
-		else p2ForwardsLeftFieldThisTurn++;
-		p1TurnOpponentCharReturnedToHand = true;
+		if (gameState.getCurrentPlayer() == GameState.Player.P1) p1Turn.forwardsLeftFieldThisTurn++;
+		else p2Turn.forwardsLeftFieldThisTurn++;
+		p1Turn.turnOpponentCharReturnedToHand = true;
 		autoAbilityTriggers.triggerAutoAbilitiesForLeavesField(card, false);
 	}
 
@@ -4488,7 +4414,7 @@ public class MainWindow {
 		p1BackupFrozen[idx] = false;
 		if (p1BackupLabels[idx] != null) { p1BackupLabels[idx].setIcon(null); p1BackupLabels[idx].setText(null); }
 		if (player1) refreshP1HandLabel(); else refreshP2HandCountLabel();
-		p2TurnOpponentCharReturnedToHand = true;
+		p2Turn.turnOpponentCharReturnedToHand = true;
 		autoAbilityTriggers.triggerAutoAbilitiesForLeavesField(c, true);
 	}
 
@@ -4510,7 +4436,7 @@ public class MainWindow {
 		p2BackupFrozen[idx] = false;
 		if (p2BackupLabels[idx] != null) { p2BackupLabels[idx].setIcon(null); p2BackupLabels[idx].setText(null); }
 		if (player1) refreshP1HandLabel(); else refreshP2HandCountLabel();
-		p1TurnOpponentCharReturnedToHand = true;
+		p1Turn.turnOpponentCharReturnedToHand = true;
 		autoAbilityTriggers.triggerAutoAbilitiesForLeavesField(c, false);
 	}
 
@@ -5019,7 +4945,7 @@ public class MainWindow {
 					lastDiscardedCardName = d.name();
 				}
 			}
-			if (!selected.isEmpty()) p1DiscardedByEffectThisTurn = true;
+			if (!selected.isEmpty()) p1Turn.discardedByEffectThisTurn = true;
 			refreshP1HandLabel();
 			refreshP1BreakLabel();
 		});
@@ -5042,7 +4968,7 @@ public class MainWindow {
 					CardData d = playerBreakFromHand(true, idx);
 					if (d != null) {
 						logEntry("Discards " + d.name());
-						p1DiscardedByEffectThisTurn = true;
+						p1Turn.discardedByEffectThisTurn = true;
 						lastDiscardedCardName = d.name();
 						if (d.isForward()) lastDiscardedForwardPower = d.power();
 					}
@@ -5063,7 +4989,7 @@ public class MainWindow {
 					CardData d = playerBreakFromHand(true, idx);
 					if (d != null) {
 						logEntry("Discards " + d.name());
-						p1DiscardedByEffectThisTurn = true;
+						p1Turn.discardedByEffectThisTurn = true;
 						lastDiscardedCardName = d.name();
 						if (d.isForward()) lastDiscardedForwardPower = d.power();
 					}
@@ -5084,7 +5010,7 @@ public class MainWindow {
 					CardData d = playerBreakFromHand(true, idx);
 					if (d != null) {
 						logEntry("Discards " + d.name());
-						p1DiscardedByEffectThisTurn = true;
+						p1Turn.discardedByEffectThisTurn = true;
 						lastDiscardedCardName = d.name();
 						if (d.isForward()) lastDiscardedForwardPower = d.power();
 					}
@@ -6081,13 +6007,13 @@ public class MainWindow {
 
 	List<CardData> drawP1Cards(int count) {
 		List<CardData> drawn = gameState.drawToHand(count);
-		p1CardsDrawnThisTurn += drawn.size();
+		p1Turn.cardsDrawnThisTurn += drawn.size();
 		return drawn;
 	}
 
 	List<CardData> drawP2Cards(int count) {
 		List<CardData> drawn = gameState.drawP2ToHand(count);
-		p2CardsDrawnThisTurn += drawn.size();
+		p2Turn.cardsDrawnThisTurn += drawn.size();
 		return drawn;
 	}
 
@@ -6103,14 +6029,14 @@ public class MainWindow {
 		CardData[]       bkps  = isP1 ? p1BackupCards  : p2BackupCards;
 		List<CardData>   bz    = isP1 ? gameState.getP1BreakZone() : gameState.getP2BreakZone();
 		List<CardData>   dmg   = isP1 ? gameState.getP1DamageZone() : gameState.getP2DamageZone();
-		boolean summonCastFlag = isP1 ? p1SummonCastThisTurn : p2SummonCastThisTurn;
+		boolean summonCastFlag = turn(isP1).summonCastThisTurn;
 
 		return switch (mod.scalingType()) {
 			case IF_CAST_SUMMON_THIS_TURN ->
 				summonCastFlag ? 1 : 0;
 			case IF_CAST_JOB_OR_NAME_THIS_TURN -> {
-				Set<String> castJobs  = isP1 ? p1CastJobsThisTurn  : p2CastJobsThisTurn;
-				Set<String> castNames = isP1 ? p1CastNamesThisTurn : p2CastNamesThisTurn;
+				Set<String> castJobs  = turn(isP1).castJobsThisTurn;
+				Set<String> castNames = turn(isP1).castNamesThisTurn;
 				yield (castJobs.contains(mod.param1().toLowerCase())
 						|| castNames.contains(mod.param2().toLowerCase())) ? 1 : 0;
 			}
@@ -6162,7 +6088,7 @@ public class MainWindow {
 				yield dmg.size() >= threshold ? 1 : 0;
 			}
 		case IF_OPPONENT_FORWARD_BROKEN_THIS_TURN ->
-				(isP1 ? p1TurnOpponentFwdBroken : p2TurnOpponentFwdBroken) ? 1 : 0;
+				(turn(isP1).turnOpponentFwdBroken) ? 1 : 0;
 		case IF_CONTROL_N_OR_MORE_CATEGORY_TYPE -> {
 				int n = Integer.parseInt(mod.param1());
 				String[] parts = mod.param2().split("\\|", 2);
@@ -6215,9 +6141,9 @@ public class MainWindow {
 				yield (int) (filtered / n);
 			}
 		case EACH_CARD_CAST_THIS_TURN ->
-				isP1 ? p1CardsCastThisTurn : p2CardsCastThisTurn;
+				turn(isP1).cardsCastThisTurn;
 		case IF_OWN_JOB_BROKEN_THIS_TURN ->
-				(isP1 ? p1BrokenJobsThisTurn : p2BrokenJobsThisTurn)
+				(turn(isP1).brokenJobsThisTurn)
 						.contains(mod.param1().toLowerCase()) ? 1 : 0;
 		case IF_CONTROL_NONE_OF_TYPE -> {
 				String type = mod.param1() == null ? "Forward" : mod.param1();
@@ -6232,15 +6158,15 @@ public class MainWindow {
 				yield (fwdCount + bkpCount + monCount) == 0 ? 1 : 0;
 			}
 		case IF_OPPONENT_DISCARDED_THIS_TURN ->
-				(isP1 ? p2DiscardedByEffectThisTurn : p1DiscardedByEffectThisTurn) ? 1 : 0;
+				(oppTurn(isP1).discardedByEffectThisTurn) ? 1 : 0;
 		case IF_DRAWN_N_OR_MORE_THIS_TURN -> {
 				int n = Integer.parseInt(mod.param1());
-				yield (isP1 ? p1CardsDrawnThisTurn : p2CardsDrawnThisTurn) >= n ? 1 : 0;
+				yield (turn(isP1).cardsDrawnThisTurn) >= n ? 1 : 0;
 			}
 		case IF_OPPONENT_DISCARDED_BY_ME_THIS_TURN ->
-				(isP1 ? p1CausedOpponentDiscardThisTurn : p2CausedOpponentDiscardThisTurn) ? 1 : 0;
+				(turn(isP1).causedOpponentDiscardThisTurn) ? 1 : 0;
 		case IF_OWN_FORWARD_FORMED_PARTY_THIS_TURN ->
-				(isP1 ? p1FormedPartyThisTurn : p2FormedPartyThisTurn) ? 1 : 0;
+				(turn(isP1).formedPartyThisTurn) ? 1 : 0;
 		case IF_OPPONENT_HAND_N_OR_LESS -> {
 				int n = Integer.parseInt(mod.param1());
 				yield (isP1 ? gameState.getP2Hand() : gameState.getP1Hand()).size() <= n ? 1 : 0;
@@ -6331,7 +6257,7 @@ public class MainWindow {
 			}
 		case IF_N_OR_MORE_FORWARDS_LEFT_FIELD_THIS_TURN -> {
 				int n = Integer.parseInt(mod.param1());
-				yield (isP1 ? p1ForwardsLeftFieldThisTurn : p2ForwardsLeftFieldThisTurn) >= n ? 1 : 0;
+				yield (turn(isP1).forwardsLeftFieldThisTurn) >= n ? 1 : 0;
 			}
 		case IF_CONTROL_N_OR_MORE_JOB -> {
 				int n    = Integer.parseInt(mod.param1());
@@ -6342,7 +6268,7 @@ public class MainWindow {
 			}
 		case IF_ELEMENT_FORWARD_ENTERED_FIELD_THIS_TURN -> {
 				String elem = mod.param1();
-				yield (isP1 ? p1ElementForwardsEnteredThisTurn : p2ElementForwardsEnteredThisTurn)
+				yield (turn(isP1).elementForwardsEnteredThisTurn)
 						.stream().anyMatch(e -> elem.equalsIgnoreCase(e)) ? 1 : 0;
 			}
 		case IF_OPPONENT_CONTROLS_N_OR_MORE_TYPE -> {
@@ -6361,7 +6287,7 @@ public class MainWindow {
 				yield count >= n ? 1 : 0;
 			}
 		case IF_FORWARD_ENTERED_VIA_WARP_THIS_TURN ->
-				(isP1 ? p1ForwardEnteredViaWarpThisTurn : p2ForwardEnteredViaWarpThisTurn) ? 1 : 0;
+				(turn(isP1).forwardEnteredViaWarpThisTurn) ? 1 : 0;
 		case IF_N_OR_MORE_JOB_IN_BZ -> {
 				int n    = Integer.parseInt(mod.param1());
 				String job = mod.param2();
@@ -6450,7 +6376,7 @@ public class MainWindow {
 				yield mons.size();
 			}
 		case IF_OPPONENT_CHARACTER_RETURNED_TO_HAND_THIS_TURN ->
-				(isP1 ? p1TurnOpponentCharReturnedToHand : p2TurnOpponentCharReturnedToHand) ? 1 : 0;
+				(turn(isP1).turnOpponentCharReturnedToHand) ? 1 : 0;
 		case IF_CONTROL_N_OR_MORE_JOB_OR_NAME -> {
 				int n = Integer.parseInt(mod.param1());
 				String[] parts = mod.param2().split("\\|", 2);
@@ -6463,7 +6389,7 @@ public class MainWindow {
 				yield count >= n ? 1 : 0;
 			}
 		case EACH_CARD_DRAWN_THIS_TURN ->
-				isP1 ? p1CardsDrawnThisTurn : p2CardsDrawnThisTurn;
+				turn(isP1).cardsDrawnThisTurn;
 		case IF_N_OR_MORE_CATEGORY_IN_BZ_AND_RFP -> {
 				int n    = Integer.parseInt(mod.param1());
 				String cat = mod.param2();
@@ -6477,8 +6403,8 @@ public class MainWindow {
 		case IF_OWN_ELEMENT_OR_CATEGORY_BROKEN_THIS_TURN -> {
 				String elem = mod.param1();
 				String cat  = mod.param2();
-				Set<String> elems = isP1 ? p1BrokenElementsThisTurn : p2BrokenElementsThisTurn;
-				Set<String> cats  = isP1 ? p1BrokenCategoriesThisTurn : p2BrokenCategoriesThisTurn;
+				Set<String> elems = turn(isP1).brokenElementsThisTurn;
+				Set<String> cats  = turn(isP1).brokenCategoriesThisTurn;
 				yield (elem != null && elems.contains(elem.toLowerCase()))
 					|| (cat  != null && cats.contains(cat.toLowerCase())) ? 1 : 0;
 			}
@@ -6646,38 +6572,9 @@ public class MainWindow {
 		if (changed) refreshPlayableCardsButton();
 	}
 
-	/**
-	 * Clears P1's cast tracking at a turn boundary.
-	 *
-	 * <p>Every "this turn" cast condition — Ace's "You can only cast up to 2 cards per turn",
-	 * "if you have cast a Summon this turn", cost modifiers scaling by cards/jobs/names cast — is
-	 * scoped to a single turn, and each player gets a fresh allowance on <em>every</em> turn, not
-	 * just their own.  So this is called at both ends of P1's turn: when it finishes, so casts made
-	 * on it do not eat into what P1 may cast while holding priority during P2's turn, and again
-	 * when P1's next turn begins, so casts made during P2's turn do not eat into that turn.
-	 *
-	 * <p>Casting off-turn used to mean Summons only; Back Attack Characters made it routine.
-	 */
-	void resetP1CastTracking() {
-		p1CardsCastThisTurn  = 0;
-		p1SummonCastThisTurn = false;
-		p1CastJobsThisTurn.clear();
-		p1CastNamesThisTurn.clear();
-		p1CastCountByNameThisTurn.clear();
-	}
-
-	/** P2's counterpart to {@link #resetP1CastTracking()}, cleared at both ends of P2's turn. */
-	void resetP2CastTracking() {
-		p2CardsCastThisTurn  = 0;
-		p2SummonCastThisTurn = false;
-		p2CastJobsThisTurn.clear();
-		p2CastNamesThisTurn.clear();
-		p2CastCountByNameThisTurn.clear();
-	}
-
 	/** Returns {@code true} if P1 has already cast 2 cards this turn and a field ability caps them at 2. */
 	boolean p1CastLimitReached() {
-		if (p1CardsCastThisTurn < 2) return false;
+		if (p1Turn.cardsCastThisTurn < 2) return false;
 		for (CardData c : p1ForwardCards) if (!lostAbilitiesCards.contains(c) && AutoAbilityTriggers.hasSelfCastLimit(c)) return true;
 		for (CardData c : p1BackupCards)  if (c != null && !lostAbilitiesCards.contains(c) && AutoAbilityTriggers.hasSelfCastLimit(c)) return true;
 		for (CardData c : p1MonsterCards) if (!lostAbilitiesCards.contains(c) && AutoAbilityTriggers.hasSelfCastLimit(c)) return true;
@@ -6686,7 +6583,7 @@ public class MainWindow {
 
 	/** Returns {@code true} if P2 has already cast 2 cards this turn and a field ability caps them at 2. */
 	boolean p2CastLimitReached() {
-		if (p2CardsCastThisTurn < 2) return false;
+		if (p2Turn.cardsCastThisTurn < 2) return false;
 		for (CardData c : p2ForwardCards) if (!lostAbilitiesCards.contains(c) && AutoAbilityTriggers.hasSelfCastLimit(c)) return true;
 		for (CardData c : p2BackupCards)  if (c != null && !lostAbilitiesCards.contains(c) && AutoAbilityTriggers.hasSelfCastLimit(c)) return true;
 		for (CardData c : p2MonsterCards) if (!lostAbilitiesCards.contains(c) && AutoAbilityTriggers.hasSelfCastLimit(c)) return true;
@@ -6731,8 +6628,8 @@ public class MainWindow {
 		for (CardData c : fwds) if (!lostAbilitiesCards.contains(c) && AutoAbilityTriggers.hasOppForwardPowerBoostSuppression(c)) return true;
 		for (CardData c : bkps) if (c != null && !lostAbilitiesCards.contains(c) && AutoAbilityTriggers.hasOppForwardPowerBoostSuppression(c)) return true;
 		for (CardData c : mons) if (!lostAbilitiesCards.contains(c) && AutoAbilityTriggers.hasOppForwardPowerBoostSuppression(c)) return true;
-		if (targetIsP1 && p1FwdBoostSuppressedThisTurn) return true;
-		if (!targetIsP1 && p2FwdBoostSuppressedThisTurn) return true;
+		if (targetIsP1 && p1Turn.fwdBoostSuppressedThisTurn) return true;
+		if (!targetIsP1 && p2Turn.fwdBoostSuppressedThisTurn) return true;
 		return false;
 	}
 
@@ -7580,7 +7477,7 @@ public class MainWindow {
 					CardData d = playerBreakFromHand(true, discardIdx);
 					if (d != null) {
 						logEntry("Discards " + d.name() + " (alt cost — casting " + card.name() + " for free)");
-						p1DiscardedByEffectThisTurn = true;
+						p1Turn.discardedByEffectThisTurn = true;
 					}
 					refreshP1HandLabel();
 					refreshP1BreakLabel();
@@ -7696,12 +7593,12 @@ public class MainWindow {
 		gameState.removeFromHand(cardHandIdx);
 		refreshP1HandLabel();
 		activeCostReductions.removeIf(m -> m.consumeOnUse() && m.matches(card));
-		p1CardsCastThisTurn++;
-		for (String j : card.jobs()) p1CastJobsThisTurn.add(j.toLowerCase());
-		p1CastNamesThisTurn.add(card.name().toLowerCase());
-		p1CastCountByNameThisTurn.merge(card.name().toLowerCase(), 1, Integer::sum);
+		p1Turn.cardsCastThisTurn++;
+		for (String j : card.jobs()) p1Turn.castJobsThisTurn.add(j.toLowerCase());
+		p1Turn.castNamesThisTurn.add(card.name().toLowerCase());
+		p1Turn.castCountByNameThisTurn.merge(card.name().toLowerCase(), 1, Integer::sum);
 		if (card.isSummon()) {
-			p1SummonCastThisTurn = true;
+			p1Turn.summonCastThisTurn = true;
 			noteDoublecastSummonCast(true, card);
 			refreshHandPopupIfVisible();
 		}
@@ -7850,12 +7747,12 @@ public class MainWindow {
 		refreshPlayableCardsButton();
 
 		activeCostReductions.removeIf(m -> m.consumeOnUse() && m.matches(card));
-		p1CardsCastThisTurn++;
-		for (String j : card.jobs()) p1CastJobsThisTurn.add(j.toLowerCase());
-		p1CastNamesThisTurn.add(card.name().toLowerCase());
-		p1CastCountByNameThisTurn.merge(card.name().toLowerCase(), 1, Integer::sum);
+		p1Turn.cardsCastThisTurn++;
+		for (String j : card.jobs()) p1Turn.castJobsThisTurn.add(j.toLowerCase());
+		p1Turn.castNamesThisTurn.add(card.name().toLowerCase());
+		p1Turn.castCountByNameThisTurn.merge(card.name().toLowerCase(), 1, Integer::sum);
 		if (card.isSummon()) {
-			p1SummonCastThisTurn = true;
+			p1Turn.summonCastThisTurn = true;
 			noteDoublecastSummonCast(true, card);
 			refreshHandPopupIfVisible();
 		}
@@ -7997,11 +7894,11 @@ public class MainWindow {
 		if (card.isSummon() && borrowEntry != null && borrowEntry.rfgAfterUse())
 			rfgAfterUseSummons.add(card);
 
-		p2CardsCastThisTurn++;
-		for (String j : card.jobs()) p2CastJobsThisTurn.add(j.toLowerCase());
-		p2CastNamesThisTurn.add(card.name().toLowerCase());
-		p2CastCountByNameThisTurn.merge(card.name().toLowerCase(), 1, Integer::sum);
-		if (card.isSummon()) { p2SummonCastThisTurn = true; noteDoublecastSummonCast(false, card); }
+		p2Turn.cardsCastThisTurn++;
+		for (String j : card.jobs()) p2Turn.castJobsThisTurn.add(j.toLowerCase());
+		p2Turn.castNamesThisTurn.add(card.name().toLowerCase());
+		p2Turn.castCountByNameThisTurn.merge(card.name().toLowerCase(), 1, Integer::sum);
+		if (card.isSummon()) { p2Turn.summonCastThisTurn = true; noteDoublecastSummonCast(false, card); }
 		logEntry("[P2] Played \"" + card.name() + "\" from " + sourceLabel);
 
 		// Borrowed casts are NOT cast from hand: leave lastCardWasCast false so "due to your cast"
@@ -9121,11 +9018,11 @@ public class MainWindow {
 			if (gameState.getCounters(source, ability.maxCounterType()) > ability.maxCounterAllowed()) return false;
 		}
 		if (ability.requiresOppDiscardedThisTurn()) {
-			boolean caused = isP1 ? p1CausedOpponentDiscardThisTurn : p2CausedOpponentDiscardThisTurn;
+			boolean caused = turn(isP1).causedOpponentDiscardThisTurn;
 			if (!caused) return false;
 		}
 		if (ability.requiresCastSummonThisTurn()) {
-			if (!(isP1 ? p1SummonCastThisTurn : p2SummonCastThisTurn)) return false;
+			if (!(turn(isP1).summonCastThisTurn)) return false;
 		}
 		if (ability.requiresOpponentEmptyHand()) {
 			List<CardData> oppHand = isP1 ? gameState.getP2Hand() : gameState.getP1Hand();
@@ -9144,21 +9041,21 @@ public class MainWindow {
 			if (!selfHand.isEmpty()) return false;
 		}
 		if (ability.requiresNamedCardTookDamageThisTurn() != null) {
-			Set<String> damaged = isP1 ? p1CardsTookDamageThisTurn : p2CardsTookDamageThisTurn;
+			Set<String> damaged = turn(isP1).cardsTookDamageThisTurn;
 			if (!damaged.contains(ability.requiresNamedCardTookDamageThisTurn())) return false;
 		}
 		if (ability.requiresSelfReceivedDamageThisTurn()) {
-			if (!(isP1 ? p1ReceivedDamageThisTurn : p2ReceivedDamageThisTurn)) return false;
+			if (!(turn(isP1).receivedDamageThisTurn)) return false;
 		}
 		if (ability.requiresForwardPutToBZThisTurn()) {
-			if (!(isP1 ? p1ForwardPutToBZThisTurn : p2ForwardPutToBZThisTurn)) return false;
+			if (!(turn(isP1).forwardPutToBZThisTurn)) return false;
 		}
 		if (ability.requiresJobPutToBZThisTurn() != null) {
-			Set<String> brokenJobs = isP1 ? p1BrokenJobsThisTurn : p2BrokenJobsThisTurn;
+			Set<String> brokenJobs = turn(isP1).brokenJobsThisTurn;
 			if (!brokenJobs.contains(ability.requiresJobPutToBZThisTurn())) return false;
 		}
 		if (ability.requiresElementForwardEnteredThisTurn() != null) {
-			Set<String> entered = isP1 ? p1ElementForwardsEnteredThisTurn : p2ElementForwardsEnteredThisTurn;
+			Set<String> entered = turn(isP1).elementForwardsEnteredThisTurn;
 			if (!entered.contains(ability.requiresElementForwardEnteredThisTurn())) return false;
 		}
 		if (ability.requiresSourceIsForward()) {
@@ -9841,7 +9738,7 @@ public class MainWindow {
 			boolean fromAbility, boolean unreduced) {
 		CardData card = fieldCombatant(isP1, zone, idx);
 		if (card == null) return rawAmount;
-		int amount = rawAmount * (isP1 ? p1ForwardIncomingDmgMult : p2ForwardIncomingDmgMult)
+		int amount = rawAmount * (turn(isP1).forwardIncomingDmgMult)
 		                       * perCardIncomingDmgMultiplierMap.getOrDefault(card, 1);
 
 		// Incoming damage increase (debuff) — applied regardless of reduction-disabled flag
@@ -9886,7 +9783,7 @@ public class MainWindow {
 			// Nullify all ability/summon damage
 			if (nullifyAbilityDmgSet.contains(card)) return 0;
 			// Filter-based nullification: covers Forwards that entered the field after the shield resolved
-			for (Predicate<CardData> f : (isP1 ? p1NullifyAbilityDmgFilters : p2NullifyAbilityDmgFilters))
+			for (Predicate<CardData> f : (turn(isP1).nullifyAbilityDmgFilters))
 				if (f.test(card)) return 0;
 			// Nullify ability-only damage (not Summons)
 			if (!currentResolutionIsSummon && nullifyAbilityOnlyDmgSet.contains(card)) return 0;
@@ -9977,7 +9874,7 @@ public class MainWindow {
 		}
 
 		// If damage reductions are disabled for this side, skip all target-side protections
-		if (isP1 ? p1DmgReductionDisabled : p2DmgReductionDisabled) return amount;
+		if (turn(isP1).dmgReductionDisabled) return amount;
 
 		// One-time: next incoming damage = 0
 		if (nextIncomingDmgZeroSet.remove(card)) return 0;
@@ -10023,7 +9920,7 @@ public class MainWindow {
 		amount = applyFieldWideDamageModifiers(amount, card, isP1, zone, idx, fromAbility);
 
 		// Global per-player damage reduction
-		int globalRed = isP1 ? p1GlobalDmgReduction : p2GlobalDmgReduction;
+		int globalRed = turn(isP1).globalDmgReduction;
 		if (globalRed > 0) amount = Math.max(0, amount - globalRed);
 
 		// Per-card non-lethal protection: damage < this card's effective power → becomes 0
@@ -10033,7 +9930,7 @@ public class MainWindow {
 		}
 
 		// Global non-lethal protection: damage < forward's effective power → becomes 0
-		boolean nonLethal = isP1 ? p1NonLethalProtection : p2NonLethalProtection;
+		boolean nonLethal = turn(isP1).nonLethalProtection;
 		if (nonLethal) {
 			int power = fieldForwardPower(isP1, zone, idx);
 			if (amount < power) return 0;
@@ -10555,7 +10452,7 @@ public class MainWindow {
 		}
 		int accum  = dmgList.get(idx) + amount;
 		dmgList.set(idx, accum);
-		(isP1 ? p1CardsTookDamageThisTurn : p2CardsTookDamageThisTurn).add(fwds.get(idx).name());
+		(turn(isP1).cardsTookDamageThisTurn).add(fwds.get(idx).name());
 		int effPow = isP1 ? effectiveP1ForwardPower(idx) : effectiveP2ForwardPower(idx);
 		logEntry((isP1 ? "" : "[P2] ") + fwds.get(idx).name() + " takes " + amount + " damage"
 				+ (effPow > 0 ? " (" + (effPow - accum) + " remaining)" : ""));
@@ -11227,7 +11124,7 @@ public class MainWindow {
 		p1ForwardCards.add(card);
 		p1ForwardStates.add((card.entersFieldDull() || opponentForcesForwardDull(true)) ? CardState.DULL : CardState.ACTIVE);
 		p1ForwardPlayedOnTurn.add(gameState.getTurnNumber());
-		if (card.element() != null) p1ElementForwardsEnteredThisTurn.add(card.element().toLowerCase());
+		if (card.element() != null) p1Turn.elementForwardsEnteredThisTurn.add(card.element().toLowerCase());
 		p1ForwardDamage.add(0);
 		p1ForwardPowerBoost.add(0);
 		p1ForwardPowerReduction.add(0);
@@ -11580,7 +11477,7 @@ public class MainWindow {
 		if (isFieldAbilityCannotAttackOrBlock(blocker, true)) return false;
 		if (blocker.cannotBlockParty() && pendingP2PartyIndices != null) return false;
 		if (blocker.cannotBlockHigherPower() && attackerPowerExceedsBlocker(ForwardTarget.CardZone.FORWARD, idx)) return false;
-		if (p1ForwardCannotBlockInferiorPower && blockerPowerExceedsAttacker(ForwardTarget.CardZone.FORWARD, idx)) return false;
+		if (p1Turn.forwardCannotBlockInferiorPower && blockerPowerExceedsAttacker(ForwardTarget.CardZone.FORWARD, idx)) return false;
 		// Check attacker-side unblockability
 		if (attackerUnblockable()) return false;
 		if (attackerBlockCostFiltersExclude(blocker.cost())) return false;
@@ -11646,7 +11543,7 @@ public class MainWindow {
 		if (idx < 0 || idx >= fwds.size()) return false;
 		CardData fwd = fwds.get(idx);
 		if (fwd.canFormPartyAnyElement()) return true;
-		if (isP1 ? p1PartyAnyElementThisTurn : p2PartyAnyElementThisTurn) return true;
+		if (turn(isP1).partyAnyElementThisTurn) return true;
 		// Check permanent field-ability grants from any card on the same player's field
 		List<CardData> srcFwds = isP1 ? p1ForwardCards : p2ForwardCards;
 		CardData[] srcBkps     = isP1 ? p1BackupCards  : p2BackupCards;
@@ -11855,7 +11752,7 @@ public class MainWindow {
 		if (isFieldAbilityCannotAttackOrBlock(monsterBlocker, true)) return false;
 		if (monsterBlocker.cannotBlockParty() && pendingP2PartyIndices != null) return false;
 		if (monsterBlocker.cannotBlockHigherPower() && attackerPowerExceedsBlocker(ForwardTarget.CardZone.MONSTER, idx)) return false;
-		if (p1ForwardCannotBlockInferiorPower && blockerPowerExceedsAttacker(ForwardTarget.CardZone.MONSTER, idx)) return false;
+		if (p1Turn.forwardCannotBlockInferiorPower && blockerPowerExceedsAttacker(ForwardTarget.CardZone.MONSTER, idx)) return false;
 		if (attackerBlockCostFiltersExclude(monsterBlocker.cost())) return false;
 		if (attackerHigherPowerFilterExcludes(ForwardTarget.CardZone.MONSTER, idx)) return false;
 		return true;
@@ -11876,7 +11773,7 @@ public class MainWindow {
 		if (isFieldAbilityCannotAttackOrBlock(backupBlocker, true)) return false;
 		if (backupBlocker.cannotBlockParty() && pendingP2PartyIndices != null) return false;
 		if (backupBlocker.cannotBlockHigherPower() && attackerPowerExceedsBlocker(ForwardTarget.CardZone.BACKUP, idx)) return false;
-		if (p1ForwardCannotBlockInferiorPower && blockerPowerExceedsAttacker(ForwardTarget.CardZone.BACKUP, idx)) return false;
+		if (p1Turn.forwardCannotBlockInferiorPower && blockerPowerExceedsAttacker(ForwardTarget.CardZone.BACKUP, idx)) return false;
 		if (attackerBlockCostFiltersExclude(backupBlocker.cost())) return false;
 		if (attackerHigherPowerFilterExcludes(ForwardTarget.CardZone.BACKUP, idx)) return false;
 		return true;
@@ -12306,7 +12203,7 @@ public class MainWindow {
 		p1BackupAttackIdx = -1;
 		refreshAllForwardSlots();
 		for (int i = 0; i < p1BackupCards.length; i++) refreshP1BackupSlot(i);
-		if (p1AttackDeclarationsThisTurn >= p1AttackDeclarationLimit) {
+		if (p1Turn.attackDeclarationsThisTurn >= p1Turn.attackDeclarationLimit) {
 			logEntry("Attack declaration limit reached — ending attack phase.");
 			onNextPhase();
 			return;
@@ -12395,7 +12292,7 @@ public class MainWindow {
 	 * Forward would.
 	 */
 	private void executeP1MonsterAttack(int monIdx) {
-		p1AttackDeclarationsThisTurn++;
+		p1Turn.attackDeclarationsThisTurn++;
 		CardData attacker = p1MonsterCards.get(monIdx);
 		int attackerPower = p1MonsterForwardPower(monIdx);
 
@@ -12730,7 +12627,7 @@ public class MainWindow {
 	}
 
 	private void executeP1BackupAttack(int bIdx) {
-		p1AttackDeclarationsThisTurn++;
+		p1Turn.attackDeclarationsThisTurn++;
 		CardData attacker = p1BackupCards[bIdx];
 		if (attacker == null) return;
 		int attackerPower = p1BackupForwardPower(bIdx);
@@ -12837,7 +12734,7 @@ public class MainWindow {
 
 	void executeP1Attack(List<Integer> selection) {
 		if (selection.isEmpty()) return;
-		p1AttackDeclarationsThisTurn++;
+		p1Turn.attackDeclarationsThisTurn++;
 
 		// Dull / BRAVE_ATTACKED attackers and trigger their attack auto-abilities
 		for (int idx : selection) {
@@ -12915,7 +12812,7 @@ public class MainWindow {
 				if (names.length() > 0) names.append(", ");
 				names.append(p1ForwardCards.get(idx).name());
 			}
-			p1FormedPartyThisTurn = true;
+			p1Turn.formedPartyThisTurn = true;
 			List<CardData> p1PartyMembers = selection.stream()
 					.map(p1ForwardCards::get).collect(Collectors.toList());
 			autoAbilityTriggers.triggerAutoAbilitiesForPartyAttack(true, p1PartyMembers);
@@ -14076,7 +13973,7 @@ public class MainWindow {
 		p2ForwardCards.add(card);
 		p2ForwardStates.add((card.entersFieldDull() || opponentForcesForwardDull(false)) ? CardState.DULL : CardState.ACTIVE);
 		p2ForwardPlayedOnTurn.add(gameState.getTurnNumber());
-		if (card.element() != null) p2ElementForwardsEnteredThisTurn.add(card.element().toLowerCase());
+		if (card.element() != null) p2Turn.elementForwardsEnteredThisTurn.add(card.element().toLowerCase());
 		p2ForwardDamage.add(0);
 		p2ForwardPowerBoost.add(0);
 		p2ForwardPowerReduction.add(0);

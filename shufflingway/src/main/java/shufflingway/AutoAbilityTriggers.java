@@ -1000,7 +1000,7 @@ final class AutoAbilityTriggers {
 	 * any trigger runs) is what distinguishes "next member of the same party" from "a new attack".
 	 */
 	private void startAttackDeclarationScope(boolean isP1) {
-		int decl = isP1 ? mw.p1AttackDeclarationsThisTurn : mw.p2AttackDeclarationsThisTurn;
+		int decl = mw.turn(isP1).attackDeclarationsThisTurn;
 		if (decl != lastDeclarationSeen || isP1 != lastDeclarationWasP1) {
 			firedThisDeclaration.clear();
 			lastDeclarationSeen  = decl;
@@ -1171,8 +1171,8 @@ final class AutoAbilityTriggers {
 	void triggerAutoAbilitiesForPartyAttack(boolean isP1, List<CardData> partyMembers) {
 		// Record the attacking party so "all Forwards in that party" followups can act on it
 		// when their auto-ability resolves off the stack (see applyCurrentPartyForwardsPowerBoost).
-		if (isP1) mw.p1CurrentPartyAttackers = new ArrayList<>(partyMembers);
-		else      mw.p2CurrentPartyAttackers = new ArrayList<>(partyMembers);
+		if (isP1) mw.p1Turn.currentPartyAttackers = new ArrayList<>(partyMembers);
+		else      mw.p2Turn.currentPartyAttackers = new ArrayList<>(partyMembers);
 		withBatch(() -> {
 			List<CardData> fwds = new ArrayList<>(isP1 ? mw.p1ForwardCards : mw.p2ForwardCards);
 			for (CardData card : fwds) {
