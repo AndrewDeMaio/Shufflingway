@@ -134,7 +134,7 @@ public class AutoAbilityParsingTest {
         for (AutoAbility fa : abilities) {
             boolean ok   = ActionResolver.parse(fa.effectText(), source) != null;
             String  desc = ActionResolver.fullDescription(fa.effectText(), source);
-            sb.append("  [").append(ok ? "OK" : "--").append("] ").append(autoAbilityText(fa)).append('\n');
+            sb.append("  [").append(ok ? "OK" : "--").append("] ").append(autoAbilityText(fa, source)).append('\n');
             sb.append("       [").append(fa.trigger()).append("] ")
               .append(desc != null ? desc : "(none)").append('\n');
         }
@@ -142,7 +142,7 @@ public class AutoAbilityParsingTest {
     }
 
     /** Reconstructs the original trigger line for display. */
-    private static String autoAbilityText(AutoAbility fa) {
+    private static String autoAbilityText(AutoAbility fa, CardData source) {
         StringBuilder sb = new StringBuilder();
         String phaseTrigger = phaseTriggerDisplayText(fa.trigger());
         if (phaseTrigger != null && fa.triggerCard().isEmpty()) {
@@ -154,6 +154,11 @@ public class AutoAbilityParsingTest {
                 trigger = "enters the field due to Warp";
             else if (fa.castOnly() && trigger.equals("enters the field"))
                 trigger = "enters the field due to your cast";
+            // "primed into" is stored from the primer's side — triggerCard is the card that primes
+            // in, and the target is the card that owns the ability. Naming the target restores the
+            // printed wording, "When Barnabas (XVI) primes into Odin (XVI), …".
+            else if (fa.trigger().equals("primed into"))
+                trigger = "primes into " + source.name();
             sb.append(fa.triggerCard()).append(' ').append(trigger).append(", ");
         }
         if (fa.youMay())       sb.append("you may ");

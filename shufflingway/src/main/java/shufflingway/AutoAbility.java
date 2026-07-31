@@ -77,4 +77,16 @@ public record AutoAbility(
         String  partyCategory,    // non-null: qualifying members must have this category
         String  partyJob,         // non-null: qualifying members must have this job
         String  partyCardName     // non-null: party must include a member with this exact name
-) {}
+) {
+    /**
+     * A copy of this ability carrying {@code newEffectText} in place of {@link #effectText()}.
+     * Used to restore quoted granted-ability text that was masked out while the card's text was
+     * being scanned for triggers of its own.
+     */
+    public AutoAbility withEffectText(String newEffectText) {
+        return new AutoAbility(triggerCard, trigger, youMay, opponentMay, newEffectText,
+                oncePerTurn, yourTurnOnly, rfpConditionCard, bzConditionCard, bzConditionJob,
+                castPaymentMinElements, castOnly, warpOnly, damageThreshold,
+                partyMinCount, partyCategory, partyJob, partyCardName);
+    }
+}

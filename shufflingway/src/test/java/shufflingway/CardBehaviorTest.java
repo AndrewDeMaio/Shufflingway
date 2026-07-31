@@ -5631,6 +5631,209 @@ public class CardBehaviorTest {
                 "with all four types in the Break Zone the CPU may plan it");
     }
 
+    // =========================================================================================
+    // Chocobo 1-075C / 4-062C (+3000) and 1-076C (+2000): "When Chocobo forms a party and
+    // attacks, Chocobo and all the Forwards forming a party with it gain +N power until the end
+    // of the turn."  The "party attacks" trigger already parsed and fired; what did not resolve
+    // was this phrasing of the effect.  It names the same set as the "all Forwards in that party"
+    // wording already handled (Gippal, Celestia, Chocobo 9-050C) — the card forming the party is
+    // itself in it — so both now route to applyCurrentPartyForwardsPowerBoost.
+    // =========================================================================================
+
+    private static final String CHOCOBO_PARTY_TEXT =
+            "When Chocobo forms a party and attacks, Chocobo and all the Forwards forming a party "
+            + "with it gain +3000 power until the end of the turn.";
+
+    @Test
+    void chocoboPartyBoostParsesAsAPartyAttackTrigger() {
+        CardData chocobo = makeTraitCard("Chocobo", "Wind", "Forward", CHOCOBO_PARTY_TEXT);
+        assertEquals(1, chocobo.autoAbilities().size());
+        AutoAbility aa = chocobo.autoAbilities().get(0);
+        assertEquals("party attacks", aa.trigger());
+        assertEquals("Chocobo", aa.triggerCard());
+        assertNotNull(ActionResolver.parse(aa.effectText(), chocobo),
+                "the \"[self] and all the Forwards forming a party with it\" effect must resolve");
+    }
+
+    @Test
+    void chocoboPartyBoostLiftsEveryMemberOfTheAttackingParty() {
+        MainWindow mw = new MainWindow();
+        CardData chocobo = makeTraitCard("Chocobo", "Wind", "Forward", CHOCOBO_PARTY_TEXT);
+        CardData ally    = makeForward("Ally", "Wind", 3, 7000);
+        CardData bystander = makeForward("Bystander", "Wind", 3, 7000);
+        mw.placeCardInForwardZone(chocobo);   // idx 0
+        mw.placeCardInForwardZone(ally);      // idx 1
+        mw.placeCardInForwardZone(bystander); // idx 2
+        for (CardData c : List.of(chocobo, ally, bystander)) mw.gameState.getIdentity().put(c, true);
+
+        int chocoboBase   = mw.effectiveP1ForwardPower(0);
+        int allyBase      = mw.effectiveP1ForwardPower(1);
+        int bystanderBase = mw.effectiveP1ForwardPower(2);
+
+        mw.autoAbilityTriggers.triggerAutoAbilitiesForPartyAttack(true, List.of(chocobo, ally));
+
+        assertEquals(chocoboBase + 3000, mw.effectiveP1ForwardPower(0),
+                "Chocobo boosts itself — it is a member of the party it formed");
+        assertEquals(allyBase + 3000, mw.effectiveP1ForwardPower(1),
+                "and every Forward forming the party with it");
+        assertEquals(bystanderBase, mw.effectiveP1ForwardPower(2),
+                "a Forward outside the party is untouched");
+    }
+
+    // =========================================================================================
+    // Odin (XVI) 29-118L / 24-112L: "When Barnabas (XVI) primes into Odin (XVI), Odin (XVI) gains
+    // "<ability>" (This effect does not end at the end of the turn.)"  Two things were wrong:
+    // parseAutoAbilities deleted quoted trigger-bearing spans outright, so the grant read
+    // "Odin (XVI) gains  (This effect…)" with the granted ability missing; and the engine only had
+    // an until-end-of-turn grant primitive, so the permanent wording resolved to nothing.
+    // =========================================================================================
+
+    private static final String ODIN_29_118L_TEXT =
+            "First Strike[[br]]When Odin (XVI) enters the field or when Barnabas (XVI) primes into "
+            + "Odin (XVI), choose 1 Forward opponent controls. Break it.[[br]]When Barnabas (XVI) "
+            + "primes into Odin (XVI), Odin (XVI) gains \"When a Character enters your opponent's "
+            + "field, dull it and Freeze it.\" (This effect does not end at the end of the turn.)";
+
+    private static final String ODIN_24_112L_TEXT =
+            "Haste First Strike[[br]]When Barnabas (XVI) primes into Odin (XVI), Odin (XVI) gains "
+            + "\"When Odin (XVI) attacks, activate Odin (XVI).\" and \"Odin (XVI) can attack twice "
+            + "in the same turn.\" (This effect does not end at the end of the turn.)";
+
+    @Test
+    void aGrantKeepsTheQuotedAbilityItConfers() {
+        // The quoted span must survive parsing — deleting it lost the whole point of the grant.
+        List<AutoAbility> odin29 = CardData.parseAutoAbilities(ODIN_29_118L_TEXT);
+        AutoAbility grant29 = odin29.stream()
+                .filter(a -> a.effectText().contains("gains")).findFirst().orElseThrow();
+        assertEquals("primed into", grant29.trigger());
+        assertEquals("Barnabas (XVI)", grant29.triggerCard());
+        assertTrue(grant29.effectText().contains(
+                "\"When a Character enters your opponent's field, dull it and Freeze it.\""),
+                "the granted ability is part of the effect, not a hole where the quote was");
+
+        // Two quoted clauses joined by "and" both survive.
+        AutoAbility grant24 = CardData.parseAutoAbilities(ODIN_24_112L_TEXT).get(0);
+        assertTrue(grant24.effectText().contains("\"When Odin (XVI) attacks, activate Odin (XVI).\""));
+        assertTrue(grant24.effectText().contains("\"Odin (XVI) can attack twice in the same turn.\""));
+    }
+
+    @Test
+    void primingGrantResolvesAndOutlastsTheTurn() {
+        CardData odin = makeTraitCard("Odin (XVI)", "Lightning", "Forward", ODIN_29_118L_TEXT);
+        AutoAbility grant = odin.autoAbilities().stream()
+                .filter(a -> a.effectText().contains("gains")).findFirst().orElseThrow();
+        assertNotNull(ActionResolver.parse(grant.effectText(), odin),
+                "the permanent grant wording must resolve");
+
+        MainWindow mw = new MainWindow();
+        mw.placeCardInForwardZone(odin);
+        mw.gameState.getIdentity().put(odin, true);
+        assertTrue(mw.effectiveAutoAbilities(odin).stream()
+                .noneMatch(a -> a.trigger().equals("enters opponent's field")),
+                "not granted until the priming happens");
+
+        ActionResolver.parse(grant.effectText(), odin).accept(mw.buildGameContext(true));
+
+        assertTrue(mw.effectiveAutoAbilities(odin).stream()
+                .anyMatch(a -> a.trigger().equals("enters opponent's field")),
+                "the granted trigger joins Odin's effective abilities");
+
+        // "Does not end at the end of the turn" — an end-of-turn sweep must not take it away.
+        mw.grantedFieldAbilities.clear();
+        mw.grantedCanAttackTwice.clear();
+        assertTrue(mw.effectiveAutoAbilities(odin).stream()
+                .anyMatch(a -> a.trigger().equals("enters opponent's field")),
+                "the grant survives the end-of-turn clear-down");
+
+        // Leaving the field does end it.
+        mw.breakP1Forward(0);
+        assertTrue(mw.effectiveAutoAbilities(odin).stream()
+                .noneMatch(a -> a.trigger().equals("enters opponent's field")),
+                "a Character that leaves the field loses what was granted to it");
+    }
+
+    @Test
+    void aTwoClauseGrantAppliesBothHalves() {
+        CardData odin = makeTraitCard("Odin (XVI)", "Lightning", "Forward", ODIN_24_112L_TEXT);
+        AutoAbility grant = odin.autoAbilities().get(0);
+        Consumer<GameContext> effect = ActionResolver.parse(grant.effectText(), odin);
+        assertNotNull(effect, "both clauses are supported, so the grant resolves");
+
+        MainWindow mw = new MainWindow();
+        mw.placeCardInForwardZone(odin);
+        mw.gameState.getIdentity().put(odin, true);
+        assertFalse(mw.canAttackTwice(odin));
+
+        effect.accept(mw.buildGameContext(true));
+
+        assertTrue(mw.effectiveAutoAbilities(odin).stream().anyMatch(a -> a.trigger().equals("attacks")),
+                "first clause — the attack trigger");
+        assertTrue(mw.canAttackTwice(odin), "second clause — the second-attack permission");
+    }
+
+    // =========================================================================================
+    // Jed 24-096R: "When Jed attacks, you may pay 《C》. If you do so, draw 1 card."  The optional
+    // cost had no standalone parser — only a variant that applies after a "Choose 1 …" primary —
+    // so the whole effect went unresolved. Cards whose payoff happened to be a search or a
+    // play-from-hand looked fine only because those parsers match with find(): they located the
+    // payoff inside the longer string and ran it without ever charging the cost.
+    // =========================================================================================
+
+    private static final String JED_TEXT =
+            "If you have a 《C》, Jed gains +1000 power and Brave.[[br]]"
+            + "When Jed attacks, you may pay 《C》. If you do so, draw 1 card.";
+
+    @Test
+    void jedsOptionalCrystalCostParses() {
+        CardData jed = makeTraitCard("Jed", "Water", "Forward", JED_TEXT);
+        AutoAbility aa = jed.autoAbilities().stream()
+                .filter(a -> a.trigger().equals("attacks")).findFirst().orElseThrow();
+        assertTrue(aa.youMay(), "\"you may\" is lifted onto the ability");
+        assertEquals("pay 《C》. If you do so, draw 1 card.", aa.effectText());
+        assertNotNull(ActionResolver.parse(aa.effectText(), jed));
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    void theOptionalCostIsChargedAndOnlyThenDoesTheEffectRun() {
+        CardData jed = makeTraitCard("Jed", "Water", "Forward", JED_TEXT);
+        AutoAbility aa = jed.autoAbilities().stream()
+                .filter(a -> a.trigger().equals("attacks")).findFirst().orElseThrow();
+        Consumer<GameContext> effect = ActionResolver.parse(aa.effectText(), jed);
+
+        GameContext ctx = mock(GameContext.class);
+        ArgumentCaptor<Consumer<GameContext>> onPay = ArgumentCaptor.forClass(Consumer.class);
+        effect.accept(ctx);
+
+        // One Crystal, no CP and no element — and nothing drawn until the cost is actually paid.
+        verify(ctx).mayPayCostToEffect(eq(0), isNull(), eq(1), onPay.capture());
+        verify(ctx, never()).drawCards(anyInt());
+
+        onPay.getValue().accept(ctx);
+        verify(ctx).drawCards(1);
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    void theSameWordingIsPricedForCpAndElementCostsToo() {
+        CardData src = makeForward("Src", "Ice", 3, 7000);
+        ArgumentCaptor<Consumer<GameContext>> onPay = ArgumentCaptor.forClass(Consumer.class);
+
+        GameContext generic = mock(GameContext.class);
+        ActionResolver.parse("pay 《4》. If you do so, draw 1 card.", src).accept(generic);
+        verify(generic).mayPayCostToEffect(eq(4), isNull(), eq(0), onPay.capture());
+
+        GameContext elemental = mock(GameContext.class);
+        ActionResolver.parse("pay 《Fire》. If you do so, draw 1 card.", src).accept(elemental);
+        verify(elemental).mayPayCostToEffect(eq(0), eq("Fire"), eq(0), onPay.capture());
+
+        // A cost the payment primitive cannot express is declined outright rather than under-charged.
+        assertNull(ActionResolver.parse("pay 《X》. If you do so, draw 1 card.", src),
+                "an X cost has no fixed price");
+        assertNull(ActionResolver.parse("pay 《Fire》《1》. If you do so, draw 1 card.", src),
+                "a mixed element-plus-generic cost is not a single payment");
+    }
+
     @Test
     void cannotBeBrokenGetsATraitTabOnTheField() {
         // The tab feed is data-driven: MainWindow filters Trait.values() through hasGlyph, so a

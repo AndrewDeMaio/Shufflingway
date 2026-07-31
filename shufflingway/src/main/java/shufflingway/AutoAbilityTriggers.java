@@ -646,7 +646,11 @@ final class AutoAbilityTriggers {
 		"(?i)^When\\s+.+?\\s+attacks?,\\s*(?<effect>.+)$", Pattern.DOTALL
 	);
 
-	/** Returns true if {@code card} has an ETF auto-ability with the reveal-summons-conditional pattern. */
+	/**
+	 * Returns true if {@code card} has an ETF auto-ability with the reveal-summons-conditional
+	 * pattern. Static, so it reads the printed abilities only — granted ones are never of this
+	 * shape, and its callers are asking about the card itself rather than a board state.
+	 */
 	static boolean hasRevealSummonsConditionalEtf(CardData card) {
 		for (AutoAbility fa : card.autoAbilities()) {
 			if (!fa.trigger().contains("enter")) continue;
@@ -674,7 +678,7 @@ final class AutoAbilityTriggers {
 		boolean ownEtfSuppressed = card.isForward() && oppSuppressesForwardEtf(!isP1);
 		withBatch(() -> {
 			if (!ownEtfSuppressed) {
-				for (AutoAbility fa : card.autoAbilities()) {
+				for (AutoAbility fa : mw.effectiveAutoAbilities(card)) {
 					if (!fa.triggerCard().equalsIgnoreCase(card.name())) continue;
 					if (!fa.trigger().contains("enter")) continue;
 					// "enters your field other than from your hand" — skip when played normally from hand
@@ -737,7 +741,7 @@ final class AutoAbilityTriggers {
 	private void fireEntersOppNotFromHandWatcher(CardData watcher, CardData enteringCard,
 			boolean watcherIsP1, ForwardTarget enteringTarget) {
 		if (mw.lostAbilitiesCards.contains(watcher)) return;
-		for (AutoAbility fa : watcher.autoAbilities()) {
+		for (AutoAbility fa : mw.effectiveAutoAbilities(watcher)) {
 			if (!fa.trigger().equals("enters opponent's field not from hand")) continue;
 			if (!matchesEntersFieldSubject(fa.triggerCard(), enteringCard, watcher)) continue;
 			// Only the "if your opponent doesn't pay 《N》, [action]" form (Remedi) is wired for inline
@@ -797,7 +801,7 @@ final class AutoAbilityTriggers {
 	}
 
 	private void fireEntersYourFieldWatcher(CardData watcher, CardData enteringCard, boolean enteringIsP1) {
-		for (AutoAbility fa : watcher.autoAbilities()) {
+		for (AutoAbility fa : mw.effectiveAutoAbilities(watcher)) {
 			if (!fa.trigger().equals("enters your field")) continue;
 			if (!matchesEntersFieldSubject(fa.triggerCard(), enteringCard, watcher)) continue;
 			executeAutoAbility(fa, watcher, enteringIsP1);
@@ -812,7 +816,7 @@ final class AutoAbilityTriggers {
 	private void fireEntersYourFieldBreakZoneWatchers(CardData enteringCard, boolean enteringIsP1) {
 		List<CardData> bz = new ArrayList<>(enteringIsP1 ? mw.gameState.getP1BreakZone() : mw.gameState.getP2BreakZone());
 		for (CardData c : bz) {
-			for (AutoAbility fa : c.autoAbilities()) {
+			for (AutoAbility fa : mw.effectiveAutoAbilities(c)) {
 				if (!fa.trigger().equals("enters your field")) continue;
 				if (fa.bzConditionCard().isEmpty()) continue;
 				if (!matchesEntersFieldSubject(fa.triggerCard(), enteringCard, c)) continue;
@@ -837,7 +841,7 @@ final class AutoAbilityTriggers {
 	}
 
 	private void fireEntersOpponentFieldWatcher(CardData watcher, CardData enteringCard, boolean watcherIsP1) {
-		for (AutoAbility fa : watcher.autoAbilities()) {
+		for (AutoAbility fa : mw.effectiveAutoAbilities(watcher)) {
 			if (!fa.trigger().equals("enters opponent's field")) continue;
 			if (!matchesEntersFieldSubject(fa.triggerCard(), enteringCard, watcher)) continue;
 			executeAutoAbility(fa, watcher, watcherIsP1);
@@ -1006,7 +1010,7 @@ final class AutoAbilityTriggers {
 
 	void triggerAutoAbilitiesForDealsDamageToOpponent(CardData attacker, boolean attackerIsP1) {
 		withBatch(() -> {
-			for (AutoAbility fa : attacker.autoAbilities()) {
+			for (AutoAbility fa : mw.effectiveAutoAbilities(attacker)) {
 				if (!fa.triggerCard().equalsIgnoreCase(attacker.name())) continue;
 				if (fa.trigger().equals("deals damage to opponent")) executeAutoAbility(fa, attacker, attackerIsP1);
 			}
@@ -1016,7 +1020,7 @@ final class AutoAbilityTriggers {
 
 	void triggerAutoAbilitiesForPrimedInto(CardData primingCard, CardData primedCard, boolean primedCardIsP1) {
 		withBatch(() -> {
-			for (AutoAbility fa : primedCard.autoAbilities()) {
+			for (AutoAbility fa : mw.effectiveAutoAbilities(primedCard)) {
 				if (!fa.triggerCard().equalsIgnoreCase(primingCard.name())) continue;
 				if (fa.trigger().equals("primed into")) executeAutoAbility(fa, primedCard, primedCardIsP1);
 			}
@@ -1026,30 +1030,30 @@ final class AutoAbilityTriggers {
 
 	void triggerAutoAbilitiesForAttack(CardData card, boolean isP1) {
 		withBatch(() -> {
-			for (AutoAbility fa : card.autoAbilities()) {
+			for (AutoAbility fa : mw.effectiveAutoAbilities(card)) {
 				if (!fa.triggerCard().equalsIgnoreCase(card.name())) continue;
 				if (fa.trigger().contains("attack")) executeAutoAbility(fa, card, isP1);
 			}
 			// "When 1 or more Forwards you control attack" — fires on any controller field card
 			List<CardData> fwds = new ArrayList<>(isP1 ? mw.p1ForwardCards : mw.p2ForwardCards);
 			for (CardData c : fwds)
-				for (AutoAbility fa : c.autoAbilities())
+				for (AutoAbility fa : mw.effectiveAutoAbilities(c))
 					if (fa.trigger().equals("attack")) executeAutoAbility(fa, c, isP1);
 			List<CardData> monsters = new ArrayList<>(isP1 ? mw.p1MonsterCards : mw.p2MonsterCards);
 			for (CardData c : monsters)
-				for (AutoAbility fa : c.autoAbilities())
+				for (AutoAbility fa : mw.effectiveAutoAbilities(c))
 					if (fa.trigger().equals("attack")) executeAutoAbility(fa, c, isP1);
 			CardData[] bkps = isP1 ? mw.p1BackupCards : mw.p2BackupCards;
 			for (CardData c : bkps)
 				if (c != null)
-					for (AutoAbility fa : c.autoAbilities())
+					for (AutoAbility fa : mw.effectiveAutoAbilities(c))
 						if (fa.trigger().equals("attack")) executeAutoAbility(fa, c, isP1);
 			// "When a Forward other than [watcherCard] you control attacks" — watcher on same-side field cards
 			if (card.isForward()) {
 				List<CardData> watchFwds = new ArrayList<>(isP1 ? mw.p1ForwardCards : mw.p2ForwardCards);
 				for (CardData watcherCard : watchFwds) {
 					if (mw.lostAbilitiesCards.contains(watcherCard)) continue;
-					for (AutoAbility fa : watcherCard.autoAbilities()) {
+					for (AutoAbility fa : mw.effectiveAutoAbilities(watcherCard)) {
 						if (!fa.trigger().equals("other forward attacks")) continue;
 						if (!matchesOtherForwardSubject(fa.triggerCard(), card)) continue;
 						Consumer<GameContext> effect = ActionResolver.parse(fa.effectText(), card);
@@ -1071,7 +1075,7 @@ final class AutoAbilityTriggers {
 				for (CardData c : isP1 ? mw.p1MonsterCards : mw.p2MonsterCards) allWatchers.add(c);
 				for (CardData watcherCard : allWatchers) {
 					if (mw.lostAbilitiesCards.contains(watcherCard)) continue;
-					for (AutoAbility fa : watcherCard.autoAbilities()) {
+					for (AutoAbility fa : mw.effectiveAutoAbilities(watcherCard)) {
 						if (!fa.trigger().equals("filtered forward attacks")) continue;
 						if (!matchesFilteredForwardSubject(fa.triggerCard(), card)) continue;
 						// A count-form subject ("1 or more …") is one event for the whole declaration:
@@ -1128,7 +1132,7 @@ final class AutoAbilityTriggers {
 
 	void triggerAutoAbilitiesForBlock(CardData card, boolean isP1) {
 		withBatch(() -> {
-			for (AutoAbility fa : card.autoAbilities()) {
+			for (AutoAbility fa : mw.effectiveAutoAbilities(card)) {
 				if (!fa.triggerCard().equalsIgnoreCase(card.name())) continue;
 				String t = fa.trigger();
 				if (t.equals("blocks") || t.equals("attacks or blocks") || t.equals("blocks or is blocked"))
@@ -1148,7 +1152,7 @@ final class AutoAbilityTriggers {
 
 	void triggerAutoAbilitiesForIsBlocked(CardData card, boolean isP1) {
 		withBatch(() -> {
-			for (AutoAbility fa : card.autoAbilities()) {
+			for (AutoAbility fa : mw.effectiveAutoAbilities(card)) {
 				if (!fa.triggerCard().equalsIgnoreCase(card.name())) continue;
 				String t = fa.trigger();
 				if (t.equals("is blocked") || t.equals("blocks or is blocked"))
@@ -1172,7 +1176,7 @@ final class AutoAbilityTriggers {
 		withBatch(() -> {
 			List<CardData> fwds = new ArrayList<>(isP1 ? mw.p1ForwardCards : mw.p2ForwardCards);
 			for (CardData card : fwds) {
-				for (AutoAbility fa : card.autoAbilities()) {
+				for (AutoAbility fa : mw.effectiveAutoAbilities(card)) {
 					if (!fa.trigger().equals("party attacks")) continue;
 					if (!partyAttackMatchesFilter(fa, partyMembers)) continue;
 					executeAutoAbility(fa, card, isP1);
@@ -1181,7 +1185,7 @@ final class AutoAbilityTriggers {
 			CardData[] bkps = isP1 ? mw.p1BackupCards : mw.p2BackupCards;
 			for (CardData card : bkps) {
 				if (card == null) continue;
-				for (AutoAbility fa : card.autoAbilities()) {
+				for (AutoAbility fa : mw.effectiveAutoAbilities(card)) {
 					if (!fa.trigger().equals("party attacks")) continue;
 					if (!partyAttackMatchesFilter(fa, partyMembers)) continue;
 					executeAutoAbility(fa, card, isP1);
@@ -1307,7 +1311,7 @@ final class AutoAbilityTriggers {
 			}
 			// Fire self-break triggers on the broken card itself
 			// (handles "When [card] enters the field or is put from the field into the Break Zone")
-			for (AutoAbility fa : broken.autoAbilities()) {
+			for (AutoAbility fa : mw.effectiveAutoAbilities(broken)) {
 				if (!fa.trigger().equals("enters the field or put into break zone")) continue;
 				if (!fa.triggerCard().equalsIgnoreCase(broken.name())) continue;
 				executeAutoAbility(fa, broken, brokenIsP1);
@@ -1318,7 +1322,7 @@ final class AutoAbilityTriggers {
 
 	private void fireBreakZoneTriggers(CardData card, boolean ownerIsP1, CardData broken,
 			boolean brokenIsP1, Set<CardData> partyMembers) {
-		for (AutoAbility fa : card.autoAbilities()) {
+		for (AutoAbility fa : mw.effectiveAutoAbilities(card)) {
 			if (!fa.trigger().equals("put into break zone")) continue;
 			if (!matchesBreakZoneSubject(fa, card, broken, brokenIsP1, ownerIsP1, partyMembers)) continue;
 			executeAutoAbility(fa, card, ownerIsP1);
@@ -1330,13 +1334,16 @@ final class AutoAbilityTriggers {
 	 * Call this after the card has been removed from all field tracking lists.
 	 */
 	void triggerAutoAbilitiesForLeavesField(CardData departing, boolean isP1) {
+		// Fire the departing card's own triggers first — a granted one is still its ability while it
+		// is leaving — then drop everything an outlasts-the-turn effect had handed it.
 		withBatch(() -> {
-			for (AutoAbility fa : departing.autoAbilities()) {
+			for (AutoAbility fa : mw.effectiveAutoAbilities(departing)) {
 				if (!fa.trigger().equals("leaves the field")) continue;
 				if (!fa.triggerCard().equalsIgnoreCase(departing.name())) continue;
 				executeAutoAbility(fa, departing, isP1);
 			}
 		});
+		mw.clearPermanentGrants(departing);
 		// Necron: cards the departing card had removed "for as long as it is on the field"
 		// re-enter their owner's field.
 		mw.returnTempExiledOnLeave(departing);
@@ -1465,7 +1472,7 @@ final class AutoAbilityTriggers {
 	 */
 	void triggerAutoAbilitiesForBecomesDull(CardData card, boolean isP1) {
 		withBatch(() -> {
-			for (AutoAbility fa : card.autoAbilities()) {
+			for (AutoAbility fa : mw.effectiveAutoAbilities(card)) {
 				if (!fa.trigger().equals("becomes dull")) continue;
 				if (!fa.triggerCard().equalsIgnoreCase(card.name())) continue;
 				executeAutoAbility(fa, card, isP1);
@@ -1594,7 +1601,7 @@ final class AutoAbilityTriggers {
 			for (CardData c : (isP1 ? mw.p1BackupCards : mw.p2BackupCards)) if (c != null) all.add(c);
 			all.addAll(isP1 ? mw.p1MonsterCards : mw.p2MonsterCards);
 			for (CardData card : all)
-				for (AutoAbility fa : card.autoAbilities())
+				for (AutoAbility fa : mw.effectiveAutoAbilities(card))
 					if (fa.trigger().equals("warp placed")
 							&& fa.triggerCard().equalsIgnoreCase(warped.name()))
 						executeAutoAbility(fa, card, isP1);
@@ -1617,7 +1624,7 @@ final class AutoAbilityTriggers {
 			for (GameState.WarpEntry we : warpZone) if (we != null) all.add(we.card);
 			all.addAll(isP1 ? mw.p1MonsterCards : mw.p2MonsterCards);
 			for (CardData card : all)
-				for (AutoAbility fa : card.autoAbilities())
+				for (AutoAbility fa : mw.effectiveAutoAbilities(card))
 					if (fa.trigger().equals("warp counter removed")
 							&& (fa.triggerCard().equalsIgnoreCase("any player's card") || fa.triggerCard().equalsIgnoreCase(target.name())))
 						executeAutoAbility(fa, card, isP1);
@@ -1638,7 +1645,7 @@ final class AutoAbilityTriggers {
 	}
 
 	private void fireEventTriggers(CardData card, boolean isP1, String triggerType) {
-		for (AutoAbility fa : card.autoAbilities())
+		for (AutoAbility fa : mw.effectiveAutoAbilities(card))
 			if (fa.trigger().equals(triggerType))
 				executeAutoAbility(fa, card, isP1);
 	}

@@ -262,6 +262,19 @@ public class MainWindow {
 	 * {@link #effectiveFieldAbilities} so a granted ability behaves exactly like a printed one.
 	 */
 	final Map<CardData, List<FieldAbility>> grantedFieldAbilities = new IdentityHashMap<>();
+	/**
+	 * Auto abilities handed to a card by a grant that explicitly outlasts the turn — "[Self] gains
+	 * '&lt;ability&gt;' (This effect does not end at the end of the turn.)", the priming payoff on
+	 * Odin (XVI) 29-118L / 24-112L — keyed by instance. Read through
+	 * {@link #effectiveAutoAbilities} so a granted trigger fires exactly like a printed one.
+	 *
+	 * <p>Deliberately <em>not</em> cleared with the end-of-turn grants: that wording is the whole
+	 * point of the ability. It is dropped when the card leaves the field, since a Character that
+	 * leaves loses everything granted to it and comes back as a new object anyway.
+	 */
+	final Map<CardData, List<AutoAbility>> grantedAutoAbilities = new IdentityHashMap<>();
+	/** Cards granted "can attack twice in the same turn" by an effect that outlasts the turn. */
+	final Set<CardData> permanentCanAttackTwice = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
 	/** Forwards restricted from blocking until the end of their owner's turn (survives one end-phase). */
 	final Set<Integer> p1ForwardCannotBlockPersistent  = new HashSet<>();
 	final Set<Integer> p2ForwardCannotBlockPersistent  = new HashSet<>();
@@ -10390,6 +10403,32 @@ public class MainWindow {
 		return all;
 	}
 
+	/**
+	 * A card's printed auto abilities plus any granted to it by an effect that outlasts the turn.
+	 * Every trigger dispatcher reads this rather than {@link CardData#autoAbilities()} directly, so
+	 * a granted trigger fires on exactly the same events as a printed one.
+	 */
+	List<AutoAbility> effectiveAutoAbilities(CardData card) {
+		List<AutoAbility> granted = grantedAutoAbilities.get(card);
+		if (granted == null || granted.isEmpty()) return card.autoAbilities();
+		List<AutoAbility> all = new ArrayList<>(card.autoAbilities());
+		all.addAll(granted);
+		return all;
+	}
+
+	/** Drops everything granted to {@code card} by an outlasts-the-turn effect, as it leaves the field. */
+	void clearPermanentGrants(CardData card) {
+		grantedAutoAbilities.remove(card);
+		permanentCanAttackTwice.remove(card);
+	}
+
+	/** True when {@code card} may attack twice — printed, granted for the turn, or granted for good. */
+	boolean canAttackTwice(CardData card) {
+		return card.canAttackTwice()
+				|| grantedCanAttackTwice.contains(card)
+				|| permanentCanAttackTwice.contains(card);
+	}
+
 	int fieldAbilityCombatOutgoingMult(CardData attacker, CardData target) {
 		int mult = 1;
 		for (FieldAbility fa : effectiveFieldAbilities(attacker)) {
@@ -12812,8 +12851,8 @@ public class MainWindow {
 				if (p1AttackFwdBefore == CardState.ACTIVE)
 					autoAbilityTriggers.triggerAutoAbilitiesForBecomesDull(p1ForwardCards.get(idx), true);
 			}
-			// Track second-attack eligibility for "can attack twice" forwards (printed or granted this turn)
-			if (p1ForwardCards.get(idx).canAttackTwice() || grantedCanAttackTwice.contains(p1ForwardCards.get(idx))) {
+			// Track second-attack eligibility for "can attack twice" forwards (printed or granted)
+			if (canAttackTwice(p1ForwardCards.get(idx))) {
 				if (!p1ForwardCanDoSecondAttack.remove(idx))
 					p1ForwardCanDoSecondAttack.add(idx);
 			}

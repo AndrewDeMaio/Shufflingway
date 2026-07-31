@@ -1126,6 +1126,17 @@ final class GameContextImpl implements GameContext {
 				mw.endOfTurnEffects.add(ctx -> mw.grantedCanAttackTwice.remove(source));
 				logEntry(source.name() + " gains \"can attack twice in the same turn\" until end of turn");
 			}
+			@Override public boolean grantSelfAutoAbilityPermanently(CardData source, String abilityText) {
+				List<AutoAbility> granted = CardData.parseAutoAbilities(abilityText);
+				if (granted.isEmpty()) return false;
+				mw.grantedAutoAbilities.computeIfAbsent(source, k -> new ArrayList<>()).addAll(granted);
+				logEntry(source.name() + " gains \"" + abilityText + "\" (does not end at end of turn)");
+				return true;
+			}
+			@Override public void grantCanAttackTwicePermanently(CardData source) {
+				mw.permanentCanAttackTwice.add(source);
+				logEntry(source.name() + " gains \"can attack twice in the same turn\" (does not end at end of turn)");
+			}
 			@Override public void grantSelfFieldAbilityUntilEndOfTurn(CardData source, String abilityText) {
 				FieldAbility granted = new FieldAbility(abilityText, 0);
 				mw.grantedFieldAbilities.computeIfAbsent(source, k -> new ArrayList<>()).add(granted);
@@ -4937,6 +4948,54 @@ final class GameContextImpl implements GameContext {
 					logEntry(src + " — did not pay " + cost + "; effect applies");
 					onNotPaid.run();
 				}
+			}
+
+			@Override public void mayPayCostToEffect(int cp, String element, int crystals,
+					java.util.function.Consumer<GameContext> onPay) {
+				String src  = mw.currentAbilitySource != null ? mw.currentAbilitySource.name() : "Ability";
+				String cost = crystals > 0 ? "《C》" + (crystals > 1 ? " ×" + crystals : "")
+						: element != null ? "《" + element + "》" : "《" + cp + "》";
+
+				if (!mw.canPayOptionalCost(isP1, cp, element, crystals)) {
+					logEntry((isP1 ? "" : "[P2] ") + src + " — cannot pay " + cost + "; effect skipped");
+					return;
+				}
+
+				if (!isP1) {
+					// The payment buys a strictly positive effect, so the AI takes it when it can.
+					if (crystals > 0) {
+						mw.playerSpendCrystals(false, crystals);
+						mw.refreshCrystalDisplays();
+						logEntry("[P2] " + src + " — pays " + cost);
+						onPay.accept(this);
+						return;
+					}
+					int need = element != null ? 1 : cp;
+					int paid = mw.autoAbilityTriggers.aiPayCp(false, need);
+					if (paid >= need) { logEntry("[P2] " + src + " — pays " + cost); onPay.accept(this); }
+					else               logEntry("[P2] " + src + " — did not pay " + cost + "; effect skipped");
+					return;
+				}
+
+				int choice = mw.showEffectOptionDialog(src + " — pay " + cost + "?",
+						"Optional Cost", new Object[]{"Pay", "Decline"});
+				if (choice != 0) {
+					logEntry(src + " — declined to pay " + cost + "; effect skipped");
+					return;
+				}
+				if (crystals > 0) {
+					mw.playerSpendCrystals(true, crystals);
+					mw.refreshCrystalDisplays();
+					logEntry(src + " — paid " + cost);
+					onPay.accept(this);
+					return;
+				}
+				int need = element != null ? 1 : cp;
+				boolean[] paidInFull = { false };
+				mw.autoAbilityTriggers.showAutoAbilityPaymentDialog(src, need, need, true, 0,
+						paid -> paidInFull[0] = paid >= need, null);
+				if (paidInFull[0]) { logEntry(src + " — paid " + cost); onPay.accept(this); }
+				else                 logEntry(src + " — did not pay " + cost + "; effect skipped");
 			}
 
 			@Override public void breakAfterCombatAndDealNoDamage(CardData source) {

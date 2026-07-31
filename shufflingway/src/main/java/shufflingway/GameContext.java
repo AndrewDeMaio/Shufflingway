@@ -1629,6 +1629,20 @@ public interface GameContext {
     void mayPayCostOrElse(int cp, String element, int crystals, Runnable onNotPaid);
 
     /**
+     * Offers the ability user an optional cost that unlocks an extra effect — the "you may pay
+     * 《…》. If you do so, [effect]" wording (Jed 24-096R). The positive-form counterpart of
+     * {@link #mayPayCostOrElse}: exactly one cost form applies, and {@code onPay} runs only when
+     * the cost is actually paid in full. When the player cannot afford it there is no choice to
+     * make, so no prompt is shown and nothing happens.
+     *
+     * @param cp       generic CP required (《2》), or 0
+     * @param element  element whose single CP is required (《Ice》), or {@code null}
+     * @param crystals Crystals required (《C》), or 0
+     */
+    void mayPayCostToEffect(int cp, String element, int crystals,
+            java.util.function.Consumer<GameContext> onPay);
+
+    /**
      * Vincent 2-078R: {@code source} deals no damage for the rest of the battle it is in, and is
      * broken once that battle finishes — whether it was blocked, went unblocked, or survived.
      */
@@ -1753,6 +1767,25 @@ public interface GameContext {
      * grant text those checks actually recognise.
      */
     void grantSelfFieldAbilityUntilEndOfTurn(CardData source, String abilityText);
+
+    /**
+     * Grants {@code source} the auto ability written in {@code abilityText} for as long as it stays
+     * on the field — the "(This effect does not end at the end of the turn.)" wording, as printed on
+     * Odin (XVI) 29-118L / 24-112L's priming payoff.
+     *
+     * <p>{@code abilityText} is a complete "When … , …" sentence; it is parsed the same way the
+     * card's own text is, so the granted trigger fires on exactly the events a printed one would.
+     * Returns {@code false} when the text does not parse into any auto ability, leaving the card
+     * untouched, so a caller can decline to claim an effect it could not actually apply.
+     */
+    boolean grantSelfAutoAbilityPermanently(CardData source, String abilityText);
+
+    /**
+     * Grants {@code source} "can attack twice in the same turn" for as long as it stays on the
+     * field — the outlasts-the-turn counterpart of
+     * {@link #grantCanAttackTwiceUntilEndOfTurn(CardData)}.
+     */
+    void grantCanAttackTwicePermanently(CardData source);
 
     /** Marks all opponent Forwards as unable to block Forwards with power inferior to their own this turn. */
     void setOppForwardsCannotBlockInferiorPowerThisTurn();

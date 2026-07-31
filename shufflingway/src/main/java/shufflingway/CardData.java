@@ -1900,16 +1900,57 @@ public record CardData(
         return quotes % 2 == 1;
     }
 
+    /** A quoted granted ability that carries a trigger word of its own. */
+    private static final Pattern QUOTED_TRIGGER_SPAN =
+            Pattern.compile("(?i)\"(?=[^\"]*\\bWhen\\b)[^\"]+\"");
+
+    /**
+     * Token standing in for a masked quoted ability. Deliberately bare letters and digits: it has
+     * to survive every rewrite {@link #parseAutoAbilities} performs without looking like a trigger,
+     * a subject, a sentence break, or a cost marker to any of the patterns those rewrites use.
+     */
+    private static final String QUOTE_MASK_PREFIX = "QUOTEDABILITY";
+
+    /**
+     * Replaces each quoted trigger-bearing span of {@code text} with an inert token, appending the
+     * spans to {@code out} in the order their tokens are numbered.
+     */
+    private static String maskQuotedTriggerSpans(String text, List<String> out) {
+        Matcher m = QUOTED_TRIGGER_SPAN.matcher(text);
+        StringBuffer sb = new StringBuffer();
+        while (m.find()) {
+            m.appendReplacement(sb, QUOTE_MASK_PREFIX + out.size());
+            out.add(m.group());
+        }
+        m.appendTail(sb);
+        return sb.toString();
+    }
+
+    /** Puts the spans {@link #maskQuotedTriggerSpans} took out back into an extracted effect. */
+    private static String unmaskQuotedTriggerSpans(String text, List<String> masked) {
+        for (int i = 0; i < masked.size(); i++) {
+            String token = QUOTE_MASK_PREFIX + i;
+            if (text.contains(token)) text = text.replace(token, masked.get(i));
+        }
+        return text;
+    }
+
     public static List<AutoAbility> parseAutoAbilities(String textEn) {
         if (textEn == null || textEn.isBlank()) return List.of();
         textEn = joinSelectActions(textEn);
         List<AutoAbility> result = new ArrayList<>();
-        // Strip double-quoted substrings that contain a trigger word ("When") so that
-        // quoted ability text inside action-ability grants (e.g. "When X attacks, ...")
-        // is never incorrectly registered as a permanent auto-ability.
+        // Hide double-quoted substrings that contain a trigger word ("When") so that quoted
+        // ability text inside a grant (e.g. "When X attacks, ...") is never incorrectly
+        // registered as a permanent auto-ability of this card.
         // We intentionally leave bare quoted status text (e.g. "X cannot be blocked.")
         // in place so the surrounding ability effect is captured in full.
-        String textForSearch = textEn.replaceAll("(?i)\"(?=[^\"]*\\bWhen\\b)[^\"]+\"", "");
+        //
+        // Masked with an inert token rather than deleted: when the quoted ability is the *object*
+        // of a grant ("Odin (XVI) gains "When a Character enters your opponent's field, dull it
+        // and Freeze it."") deleting it left the grant reading "Odin (XVI) gains  (This effect…)",
+        // losing the very ability being granted. The tokens are swapped back before returning.
+        List<String> maskedQuotes = new ArrayList<>();
+        String textForSearch = maskQuotedTriggerSpans(textEn, maskedQuotes);
 
         // First pass: "when [PrimerCard] primes into [TargetCard], [effect]"
         // Also handles "When [Target] [trigger] [, extra] or when [Primer] primes into [Target], [effect]"
@@ -2220,6 +2261,14 @@ public record CardData(
             if (aa != null) result.add(aa);
         }
 
+        // Put back any quoted granted ability that was masked while scanning for triggers, so a
+        // grant reports the ability it confers rather than a hole where the quote used to be.
+        if (!maskedQuotes.isEmpty()) {
+            result.replaceAll(aa -> {
+                String restored = unmaskQuotedTriggerSpans(aa.effectText(), maskedQuotes);
+                return restored.equals(aa.effectText()) ? aa : aa.withEffectText(restored);
+            });
+        }
         return List.copyOf(result);
     }
 

@@ -3676,14 +3676,24 @@ public class ActionResolver {
     );
 
     /**
-     * Matches "all Forwards in that party gain/lose +N power until [the] end of [the] turn."
-     * The party-attack followup that boosts every Forward in the party that just formed and
-     * attacked (Gippal +5000, Celestia / Chocobo +1000). "That party" resolves at run time to
-     * the recorded attacking party via {@link GameContext#applyCurrentPartyForwardsPowerBoost}.
+     * Matches the party-attack followup that boosts every Forward in the party that just formed
+     * and attacked, in either of the two printed phrasings:
+     * <ul>
+     *   <li>"all Forwards in that party gain/lose +N power until [the] end of [the] turn."
+     *       (Gippal +5000, Celestia / Chocobo 9-050C +1000)</li>
+     *   <li>"[Self] and all the Forwards forming a party with it gain/lose +N power until [the]
+     *       end of [the] turn." (Chocobo 1-075C / 4-062C +3000, Chocobo 1-076C +2000)</li>
+     * </ul>
+     * The two name the same set — the card forming the party is itself a member of it — so both
+     * resolve through {@link GameContext#applyCurrentPartyForwardsPowerBoost} against the
+     * recorded attacking party.  The subject of the second form is left unanchored rather than
+     * matched against the card's name, so reprints and aliases are not excluded by a name that
+     * no longer matches; the trigger has already established whose party attacked.
      * Groups: {@code verb}, {@code amount}.
      */
     private static final Pattern PARTY_FORWARDS_POWER_BOOST_PATTERN = Pattern.compile(
-        "(?i)all\\s+Forwards?\\s+in\\s+that\\s+party\\s+" +
+        "(?i)(?:all\\s+Forwards?\\s+in\\s+that\\s+party" +
+        "|[A-Za-z][^.,]*?\\s+and\\s+all\\s+the\\s+Forwards?\\s+forming\\s+a\\s+party\\s+with\\s+it)\\s+" +
         "(?<verb>gains?|loses?)\\s+\\+?(?<amount>\\d+)\\s+[Pp]ower" +
         "\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn[.!]?"
     );
@@ -4948,6 +4958,11 @@ public class ActionResolver {
         result = tryParseRevealHandOptPickRfpOppDraw(effectText);
         if (result != null) return result;
 
+        // Must precede tryParseWhenYouDoSoSequence: that parser resolves both halves independently,
+        // and a bare "pay 《…》" is not an effect it can resolve, so the optional cost would be lost.
+        result = tryParseMayPayCostThenEffect(effectText, source, xValue);
+        if (result != null) return result;
+
         result = tryParseWhenYouDoSoSequence(effectText, source, xValue);
         if (result != null) return result;
 
@@ -5322,6 +5337,9 @@ public class ActionResolver {
         if (result != null) return result;
 
         result = tryParseGainsQuotedFieldAbilityUntilEot(effectText, source);
+        if (result != null) return result;
+
+        result = tryParseGainsQuotedAbilitiesPermanent(effectText, source);
         if (result != null) return result;
 
         result = tryParseUntilEotGainsPowerTraitsAndQuoted(effectText, source);
@@ -5972,6 +5990,7 @@ public class ActionResolver {
         if (tryParseSelfOutgoingDmgBoostThisTurn(effectText, source) != null)   return "SelfOutgoingDmgBoostThisTurn";
         if (tryParseGainOutgoingDmgBoostUntilEot(effectText, source) != null)   return "GainOutgoingDmgBoostUntilEot";
         if (tryParseGainsQuotedFieldAbilityUntilEot(effectText, source) != null) return "GainsQuotedFieldAbilityUntilEot";
+        if (tryParseGainsQuotedAbilitiesPermanent(effectText, source) != null)  return "GainsQuotedAbilitiesPermanent";
         if (tryParseUntilEotGainsPowerTraitsAndQuoted(effectText, source) != null) return "UntilEotGainsPowerTraitsAndQuoted";
         if (tryParseDoubleOpponentIncomingDamageThisTurn(effectText) != null)   return "DoubleOpponentIncomingDamageThisTurn";
         if (tryParseAllForwardIncomingDmgIncreaseThisTurn(effectText) != null)  return "AllForwardIncomingDmgIncreaseThisTurn";
@@ -6301,6 +6320,7 @@ public class ActionResolver {
         if (CardData.YOUR_TURN_AND_CONTROL_IF_PATTERN.matcher(effectText).find())  return "UseRestriction";
         if (CardData.CONTROL_IF_NOT_ANY_PATTERN.matcher(effectText).find())        return "UseRestriction";
         if (CardData.OPPONENT_CONTROLS_N_OR_MORE_PATTERN.matcher(effectText).find()) return "UseRestriction";
+        if (tryParseMayPayCostThenEffect(effectText, source, 0)         != null) return "MayPayCostThenEffect";
         if (tryParseWhenYouDoSoSequence(effectText, source, 0)          != null) return "WhenYouDoSo";
         if (tryParseIfNotPayOrElse(effectText, source, 0)               != null) return "IfNotPayOrElse";
         if (tryParseRemoveTopThenPileThreshold(effectText, source)          != null) return "RemoveTopThenPileThreshold";
@@ -6535,6 +6555,7 @@ public class ActionResolver {
         if (tryParseSelfOutgoingDmgBoostThisTurn(effectText, source) != null)   return "SelfOutgoingDmgBoostThisTurn";
         if (tryParseGainOutgoingDmgBoostUntilEot(effectText, source) != null)   return "GainOutgoingDmgBoostUntilEot";
         if (tryParseGainsQuotedFieldAbilityUntilEot(effectText, source) != null) return "GainsQuotedFieldAbilityUntilEot";
+        if (tryParseGainsQuotedAbilitiesPermanent(effectText, source) != null)  return "GainsQuotedAbilitiesPermanent";
         if (tryParseUntilEotGainsPowerTraitsAndQuoted(effectText, source) != null) return "UntilEotGainsPowerTraitsAndQuoted";
         if (tryParseDoubleOpponentIncomingDamageThisTurn(effectText) != null)   return "DoubleOpponentIncomingDamageThisTurn";
         if (tryParseAllForwardIncomingDmgIncreaseThisTurn(effectText) != null)  return "AllForwardIncomingDmgIncreaseThisTurn";
@@ -11635,6 +11656,53 @@ public class ActionResolver {
     }
 
     /**
+     * "[Self] gains \"[ability]\"[ and \"[ability]\"] (This effect does not end at the end of the
+     * turn.)" — the priming payoff on Odin (XVI) 29-118L and 24-112L.
+     *
+     * <p>The parenthetical is what separates this from
+     * {@link #GAINS_QUOTED_FIELD_ABILITY_UNTIL_EOT}: the grant outlasts the turn, so it routes to
+     * the permanent grant primitives rather than the end-of-turn ones. Up to two quoted abilities
+     * may be joined by "and" (24-112L grants an attack trigger and a second-attack permission).
+     */
+    private static final Pattern GAINS_QUOTED_ABILITIES_PERMANENT = Pattern.compile(
+        "(?i)^(?<subject>.+?)\\s+gains\\s+\"(?<q1>.+?)\"(?:\\s+and\\s+\"(?<q2>.+?)\")?\\s*" +
+        "\\(This\\s+effect\\s+does\\s+not\\s+end\\s+at\\s+the\\s+end\\s+of\\s+the\\s+turn\\.?\\)[.!]?$");
+
+    /**
+     * Builds the permanent counterpart of {@link #grantedSelfFieldAbilityEffect} for one quoted
+     * clause, or {@code null} when the clause is not a grant this engine can apply.
+     *
+     * <p>A clause is either a complete "When … , …" auto ability — granted by parsing it exactly as
+     * the card's own text is parsed — or the "can attack twice in the same turn" permission.
+     */
+    private static Consumer<GameContext> permanentGrantForClause(String quoted, CardData source) {
+        Matcher at = GRANTED_CAN_ATTACK_TWICE.matcher(quoted);
+        if (at.matches() && at.group("subj").trim().equalsIgnoreCase(source.name()))
+            return ctx -> ctx.grantCanAttackTwicePermanently(source);
+        // A trigger-bearing clause is granted whole; parseAutoAbilities is the authority on whether
+        // it is one, so an unrecognised sentence declines here rather than being silently dropped.
+        if (CardData.parseAutoAbilities(quoted).isEmpty()) return null;
+        final String granted = quoted;
+        return ctx -> ctx.grantSelfAutoAbilityPermanently(source, granted);
+    }
+
+    private static Consumer<GameContext> tryParseGainsQuotedAbilitiesPermanent(String text, CardData source) {
+        if (source == null) return null;
+        Matcher m = GAINS_QUOTED_ABILITIES_PERMANENT.matcher(text.trim());
+        if (!m.matches()) return null;
+        if (!m.group("subject").trim().equalsIgnoreCase(source.name())) return null;
+
+        Consumer<GameContext> first = permanentGrantForClause(m.group("q1").trim(), source);
+        if (first == null) return null;
+        String second = m.group("q2");
+        if (second == null) return first;
+        Consumer<GameContext> rest = permanentGrantForClause(second.trim(), source);
+        // Both halves or neither — a half-applied grant is worse than an unrecognised one.
+        if (rest == null) return null;
+        return ctx -> { first.accept(ctx); rest.accept(ctx); };
+    }
+
+    /**
      * "Until the end of the turn, [Self] gains [+N power][, traits] and \"[quoted field ability]\"."
      * (e.g. Ace, Tifa). Applies the power/trait boost via {@link GameContext#boostSourceForward} and
      * routes the quoted ability to its grant primitive; returns {@code null} when the quoted ability
@@ -12266,6 +12334,66 @@ public class ActionResolver {
         ")\\s*[.,]?\\s+(?:When|If)\\s+you\\s+do\\s+so,?\\s+" +
         "use\\s+this\\s+(?:special\\s+)?ability\\s+again\\s+without\\s+paying\\s+the\\s+cost[.!]?"
     );
+
+    /**
+     * Matches "[You may] pay 《cost》[《cost》…]. If/When you do so, [effect]." as a whole effect —
+     * an optional cost that unlocks something, with no target selection in front of it
+     * (Jed 24-096R: "When Jed attacks, you may pay 《C》. If you do so, draw 1 card.").
+     *
+     * <p>The "you may" is optional because an auto ability's parser lifts it into
+     * {@link AutoAbility#youMay()} and hands the effect over starting at "pay". Distinct from
+     * {@link #FOLLOWUP_YOU_MAY_PAY_ELEMENT_IF_DO_SO}, which is the same wording appearing
+     * <em>after</em> a "Choose 1 …" primary and so applies to the chosen targets.
+     * Groups: {@code costs} — the run of 《…》 tokens; {@code effect} — what paying buys.
+     */
+    private static final Pattern MAY_PAY_COST_THEN_EFFECT = Pattern.compile(
+        "(?is)^(?:you\\s+may\\s+)?pay\\s+(?<costs>(?:《[^》]+》)+)\\s*[.!]?\\s+" +
+        "(?:If|When)\\s+you\\s+do\\s+so[,.]?\\s+(?<effect>.+)$"
+    );
+
+    /** One 《…》 token of a cost run. */
+    private static final Pattern COST_TOKEN = Pattern.compile("《([^》]+)》");
+
+    /**
+     * Tallies a run of 《…》 cost tokens into the {cp, crystals} pair plus a single element, the
+     * shape {@link GameContext#mayPayCostToEffect} takes. Returns {@code null} for a run this
+     * engine cannot price — an 《X》 variable, or more than one distinct element, neither of which
+     * the payment primitive can express.
+     */
+    private static Object[] tallyCostRun(String costs) {
+        int cp = 0, crystals = 0;
+        String element = null;
+        Matcher t = COST_TOKEN.matcher(costs);
+        while (t.find()) {
+            String tok = t.group(1).trim();
+            if (tok.equalsIgnoreCase("C"))      crystals++;
+            else if (tok.matches("\\d+"))       cp += Integer.parseInt(tok);
+            else if (tok.equalsIgnoreCase("X")) return null;
+            else if (element == null)           element = tok;
+            else if (element.equalsIgnoreCase(tok)) return null;  // 《Wind》《Wind》 — two of one element
+            else                                return null;      // mixed elements
+        }
+        // Elements and generic CP together (《Fire》《1》) would need a compound payment the
+        // primitive does not model, so decline rather than under-charge.
+        if (element != null && (cp > 0 || crystals > 0)) return null;
+        if (crystals > 0 && cp > 0) return null;
+        if (cp == 0 && crystals == 0 && element == null) return null;
+        return new Object[]{ cp, element, crystals };
+    }
+
+    private static Consumer<GameContext> tryParseMayPayCostThenEffect(String text, CardData source, int xValue) {
+        Matcher m = MAY_PAY_COST_THEN_EFFECT.matcher(text.trim());
+        if (!m.matches()) return null;
+        Object[] tally = tallyCostRun(m.group("costs"));
+        if (tally == null) return null;
+        final int    cp       = (Integer) tally[0];
+        final String element  = (String)  tally[1];
+        final int    crystals = (Integer) tally[2];
+        final String effectText = m.group("effect").trim();
+        Consumer<GameContext> effect = parse(effectText, source, xValue);
+        if (effect == null) return null;
+        return ctx -> ctx.mayPayCostToEffect(cp, element, crystals, effect);
+    }
 
     /**
      * Parses "X. When/If you do so, Y." into a sequence: resolve X, then resolve Y only if
