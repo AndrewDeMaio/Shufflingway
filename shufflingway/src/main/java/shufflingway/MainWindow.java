@@ -127,6 +127,8 @@ public class MainWindow {
 	final AutoAbilityTriggers autoAbilityTriggers = new AutoAbilityTriggers(this);
 	/** Cost and affordability rules; MainWindow keeps thin delegators to these. */
 	final CostCalculator      costs               = new CostCalculator(this);
+	/** Damage resolution rules; MainWindow keeps thin delegators to these. */
+	final DamageResolver      damageResolver      = new DamageResolver(this);
 	/** Sequences card arrivals on the field: animation, then the card, then its auto abilities. */
 	final FieldEntryAnimator  fieldEntryAnimator  = new FieldEntryAnimator(this);
 
@@ -304,7 +306,7 @@ public class MainWindow {
 	final Map<CardData, EnumSet<CardData.Trait>> p1BackupTempTraits = new HashMap<>();
 	final Map<CardData, EnumSet<CardData.Trait>> p2BackupTempTraits = new HashMap<>();
 	final Map<CardData, Integer> p1BackupForwardDamage    = new HashMap<>();
-	private final Map<CardData, Integer> p2BackupForwardDamage    = new HashMap<>();
+	final Map<CardData, Integer> p2BackupForwardDamage    = new HashMap<>();
 	int p1BackupAttackIdx = -1;
 	private int p2BackupAttackIdx = -1;
 
@@ -326,7 +328,7 @@ public class MainWindow {
 	final List<CardData>  p2MonsterCards         = new ArrayList<>();
 	final List<CardState> p2MonsterStates        = new ArrayList<>();
 	final List<Integer>   p2MonsterPlayedOnTurn  = new ArrayList<>();
-	private final List<Integer>   p2MonsterDamage        = new ArrayList<>();
+	final List<Integer>   p2MonsterDamage        = new ArrayList<>();
 	final Map<CardData, Integer> p2MonsterTempForwardPower = new HashMap<>();
 	final Map<CardData, Integer> p2MonsterPowerBoost = new HashMap<>();
 	final Map<CardData, EnumSet<CardData.Trait>> p2MonsterTempTraits = new HashMap<>();
@@ -455,11 +457,11 @@ public class MainWindow {
 	final Set<CardData>          nextOutgoingDmgDoublerSet   = new HashSet<>();
 	final Map<CardData, Integer> perCardIncomingDmgMultiplierMap = new IdentityHashMap<>();
 	// Set by resolveCombat before modifyIncomingDamage so field abilities can inspect the attacker's traits
-	private CardData currentBattleAttacker      = null;
-	private boolean  currentBattleAttackerIsP1  = false;
-	private int      currentBattleAttackerIdx   = -1;
+	CardData currentBattleAttacker      = null;
+	boolean  currentBattleAttackerIsP1  = false;
+	int      currentBattleAttackerIdx   = -1;
 	// Zone of the current battle attacker so trait checks work when it is a Monster/Backup acting as a Forward
-	private ForwardTarget.CardZone currentBattleAttackerZone = ForwardTarget.CardZone.FORWARD;
+	ForwardTarget.CardZone currentBattleAttackerZone = ForwardTarget.CardZone.FORWARD;
 	final Set<CardData>          perCardNonLethalDmgSet      = new HashSet<>();
 	// Power and name of the card most recently discarded as part of resolving an ability.
 	int      lastDiscardedForwardPower    = 0;
@@ -620,7 +622,7 @@ public class MainWindow {
 	/** The Summon card currently resolving (from the stack or as an EX Burst); null otherwise. */
 	CardData currentSummonSource    = null;
 	/** {@code true} if {@link #currentSummonSource} belongs to P1. */
-	private boolean  currentSummonSourceIsP1 = false;
+	boolean  currentSummonSourceIsP1 = false;
 	/** {@code true} when the summon currently resolving was cast with its extra cost paid. */
 	boolean currentSummonPaidExtraCost = false;
 	/** Power of the Forward removed by the extra cost (Titan); 0 otherwise. */
@@ -640,7 +642,7 @@ public class MainWindow {
 	/** The source card of the action ability currently resolving off the stack (null otherwise). */
 	CardData currentAbilitySource       = null;
 	/** {@code true} if {@link #currentAbilitySource} belongs to P1. */
-	private boolean currentAbilitySourceIsP1 = false;
+	boolean currentAbilitySourceIsP1 = false;
 	/** Set to {@code true} while a Summon effect is resolving so {@link #selectCharacters} applies the correct protection set. */
 	boolean currentResolutionIsSummon = false;
 	/** Set to {@code true} by {@code returnNamedCardToYourHand} when the Summon itself is being returned to hand. */
@@ -8749,7 +8751,7 @@ public class MainWindow {
 	 * boosts. A temp-map entry (an effect that made it a Forward this turn, e.g. Gau) is applied
 	 * later than the printed become-Forward ability, so it takes precedence while it lasts.
 	 */
-	private int p1MonsterForwardPower(int idx) {
+	int p1MonsterForwardPower(int idx) {
 		CardData card = p1MonsterCards.get(idx);
 		CardData.BecomeForwardAbility bfa = card.becomeForwardAbility();
 		Integer tempPower = p1MonsterTempForwardPower.get(card);
@@ -8909,7 +8911,7 @@ public class MainWindow {
 	// Damage modifier helpers
 	// -------------------------------------------------------------------------
 
-	private static CardData.Trait traitFromName(String name) {
+	static CardData.Trait traitFromName(String name) {
 		return switch (name.trim().toLowerCase().replace(" ", "_").replace("-", "_")) {
 			case "haste"        -> CardData.Trait.HASTE;
 			case "brave"        -> CardData.Trait.BRAVE;
@@ -8920,279 +8922,14 @@ public class MainWindow {
 		};
 	}
 
-	/**
-	 * Applies all incoming-damage modifiers for {@code idx} and returns the final amount.
-	 * One-time shields (next-damage-zero, next-damage-reduction) are consumed here.
-	 * {@code fromAbility} is true when the damage source is an effect/summon, false for combat.
-	 * {@code unreduced} bypasses all reductions: one-shot shields are still consumed but
-	 * their reduction is not applied; persistent shields stay up and also do not reduce.
-	 */
-	private int modifyIncomingDamage(boolean isP1, int idx, int rawAmount, boolean fromAbility, boolean unreduced) {
-		return modifyIncomingDamage(isP1, ForwardTarget.CardZone.FORWARD, idx, rawAmount, fromAbility, unreduced);
-	}
+	/** @see DamageResolver#modifyIncomingDamage */
+	private int modifyIncomingDamage(boolean isP1, int idx, int rawAmount, boolean fromAbility, boolean unreduced) { return damageResolver.modifyIncomingDamage(isP1, idx, rawAmount, fromAbility, unreduced); }
 
-	/**
-	 * Zone-aware variant: applies incoming-damage modifiers to a card acting as a Forward from any
-	 * zone (a real Forward, or a Monster/Backup temporarily a Forward). A card acting as a Forward
-	 * is a Forward for every eligible purpose, so the self- and field-wide protections apply to it.
-	 */
-	int modifyIncomingDamage(boolean isP1, ForwardTarget.CardZone zone, int idx, int rawAmount,
-			boolean fromAbility, boolean unreduced) {
-		CardData card = fieldCombatant(isP1, zone, idx);
-		if (card == null) return rawAmount;
-		int amount = rawAmount * (turn(isP1).forwardIncomingDmgMult)
-		                       * perCardIncomingDmgMultiplierMap.getOrDefault(card, 1);
+	/** @see DamageResolver#modifyIncomingDamage */
+	int modifyIncomingDamage(boolean isP1, ForwardTarget.CardZone zone, int idx, int rawAmount, boolean fromAbility, boolean unreduced) { return damageResolver.modifyIncomingDamage(isP1, zone, idx, rawAmount, fromAbility, unreduced); }
 
-		// Incoming damage increase (debuff) — applied regardless of reduction-disabled flag
-		if (incomingDmgIncreaseMap.containsKey(card))
-			amount += incomingDmgIncreaseMap.get(card);
-		if (globalForwardIncomingDmgIncrease > 0)
-			amount += globalForwardIncomingDmgIncrease;
-
-		// Outgoing damage boost from caster's side field cards (e.g. Caetuna — Fire Summon +1000)
-		if (fromAbility) amount = applyCasterSideElementSummonDamageBoosts(amount, isP1);
-		// Outgoing damage boost from caster's side field cards when source is an Element Forward
-		if (fromAbility) amount = applyCasterSideElementForwardDamageBoosts(amount, isP1);
-
-		// Outgoing damage doubler from the source card's own field ability (ability damage to opponent's Forward)
-		if (fromAbility && currentAbilitySource != null && currentAbilitySourceIsP1 != isP1
-				&& !lostAbilitiesCards.contains(currentAbilitySource)) {
-			for (FieldAbility fa : effectiveFieldAbilities(currentAbilitySource)) {
-				Matcher fam = AutoAbilityTriggers.FA_OUTGOING_DAMAGE_DOUBLER.matcher(fa.effectText());
-				if (!fam.find() || !fam.group("card").trim().equalsIgnoreCase(currentAbilitySource.name())) continue;
-				if (!fam.group("target").toLowerCase().contains("forward")) continue;
-				int before = amount;
-				amount *= 2;
-				logEntry(currentAbilitySource.name() + " — outgoing damage doubled (" + before + " → " + amount + ")");
-			}
-		}
-
-		// Self unconditional outgoing flat boost from the source card's own field ability
-		// (ability damage to a Forward), e.g. Foulander's attack-trigger damage.
-		if (fromAbility && card.isForward() && currentAbilitySource != null
-				&& currentAbilitySourceIsP1 != isP1) {
-			int boost = selfOutgoingFlatBoostVsForward(currentAbilitySource, currentAbilitySourceIsP1);
-			if (boost > 0) {
-				int before = amount;
-				amount += boost;
-				logEntry(currentAbilitySource.name() + " — outgoing damage +" + boost
-						+ " to Forward (" + before + " → " + amount + ")");
-			}
-		}
-
-		// Source-based nullification (these block damage by type of source, not by reducing amount)
-		if (fromAbility) {
-			// Nullify all ability/summon damage
-			if (nullifyAbilityDmgSet.contains(card)) return 0;
-			// Filter-based nullification: covers Forwards that entered the field after the shield resolved
-			for (Predicate<CardData> f : (turn(isP1).nullifyAbilityDmgFilters))
-				if (f.test(card)) return 0;
-			// Nullify ability-only damage (not Summons)
-			if (!currentResolutionIsSummon && nullifyAbilityOnlyDmgSet.contains(card)) return 0;
-			// Element-scoped nullification (Hein ability): covers both targeted and AoE damage
-			String nullifyElem = nullifyElementDamageMap.get(card);
-			if (nullifyElem != null) {
-				CardData resCard = currentResolutionIsSummon ? currentSummonSource : currentAbilitySource;
-				if (resCard != null && effectiveElements(resCard).contains(nullifyElem)) return 0;
-			}
-			// Element-scoped, ability-only nullification (Rubicante ability): Summons are not covered
-			if (!currentResolutionIsSummon) {
-				String nullifyAbilityElem = nullifyElementDamageAbilityOnlyMap.get(card);
-				if (nullifyAbilityElem != null && currentAbilitySource != null
-						&& effectiveElements(currentAbilitySource).contains(nullifyAbilityElem)) return 0;
-			}
-			// Passive field ability: nullify Summon-only damage
-			if (currentResolutionIsSummon) {
-				for (FieldAbility fa : card.fieldAbilities()) {
-					Matcher m = AutoAbilityTriggers.FA_NULLIFY_SUMMON_DAMAGE.matcher(fa.effectText());
-					if (m.find() && m.group("card").trim().equalsIgnoreCase(card.name())) return 0;
-				}
-			}
-
-			// Passive field ability: nullify ability-source damage entirely (not Summons) — e.g. Philia
-			if (!currentResolutionIsSummon) {
-				for (FieldAbility fa : card.fieldAbilities()) {
-					Matcher m = AutoAbilityTriggers.FA_NULLIFY_ABILITY_DAMAGE.matcher(fa.effectText());
-					if (m.find() && m.group("card").trim().equalsIgnoreCase(card.name())) {
-						logEntry(card.name() + " — ability damage nullified by field ability (→ 0)");
-						return 0;
-					}
-				}
-			}
-
-			// Passive field ability: nullify opponent's non-Summon ability damage
-			if (!currentResolutionIsSummon && currentAbilitySourceIsP1 != isP1) {
-				for (FieldAbility fa : card.fieldAbilities()) {
-					Matcher m = AutoAbilityTriggers.FA_NULLIFY_OPPONENT_ABILITY_DAMAGE.matcher(fa.effectText());
-					if (m.find() && m.group("card").trim().equalsIgnoreCase(card.name())) {
-						logEntry(card.name() + " — opponent ability damage nullified by field ability (→ 0)");
-						return 0;
-					}
-				}
-			}
-
-			// Passive field ability: reduce ability-source damage by N (gated on damage threshold)
-			if (!currentResolutionIsSummon) {
-				int dmgInZone = isP1 ? gameState.getP1DamageZone().size() : gameState.getP2DamageZone().size();
-				for (FieldAbility fa : card.fieldAbilities()) {
-					if (fa.damageThreshold() > 0 && dmgInZone < fa.damageThreshold()) continue;
-					Matcher m = AutoAbilityTriggers.FA_REDUCE_ABILITY_DAMAGE.matcher(fa.effectText());
-					if (m.find() && m.group("card").trim().equalsIgnoreCase(card.name())) {
-						int reduction = Integer.parseInt(m.group("reduction"));
-						int before = amount;
-						amount = Math.max(0, amount - reduction);
-						logEntry(card.name() + " — ability damage reduced by " + reduction + " (" + before + " → " + amount + ")");
-					}
-				}
-			}
-		}
-
-		// Passive field ability: nullify battle damage from a Forward with specific traits (e.g. Haste, First Strike)
-		if (!fromAbility && currentBattleAttacker != null) {
-			for (FieldAbility fa : card.fieldAbilities()) {
-				Matcher fam = AutoAbilityTriggers.FA_NULLIFY_TRAIT_FORWARD_DAMAGE.matcher(fa.effectText());
-				if (!fam.find() || !fam.group("card").trim().equalsIgnoreCase(card.name())) continue;
-				String t1 = fam.group("trait1").trim();
-				String t2raw = fam.group("trait2");
-				String t2 = t2raw != null ? t2raw.trim() : null;
-				CardData.Trait trait1 = traitFromName(t1);
-				CardData.Trait trait2 = t2 != null ? traitFromName(t2) : null;
-				boolean t1Match = trait1 != null && fieldForwardTrait(currentBattleAttackerIsP1, currentBattleAttackerZone, currentBattleAttackerIdx, trait1);
-				boolean t2Match = trait2 != null && fieldForwardTrait(currentBattleAttackerIsP1, currentBattleAttackerZone, currentBattleAttackerIdx, trait2);
-				if (t1Match || t2Match) {
-					logEntry(card.name() + " — battle damage nullified (attacker has " + (t1Match ? t1 : t2) + ")");
-					return 0;
-				}
-			}
-		}
-
-		if (unreduced) {
-			// Consume one-shot shields so they are spent, but do not apply any reduction.
-			// Persistent shields ("until end of turn") remain in place unchanged.
-			nextIncomingDmgZeroSet.remove(card);
-			nextIncomingDmgReduceMap.remove(card);
-			if (fromAbility) nextAbilityDmgReduceMap.remove(card);
-			return amount;
-		}
-
-		// If damage reductions are disabled for this side, skip all target-side protections
-		if (turn(isP1).dmgReductionDisabled) return amount;
-
-		// One-time: next incoming damage = 0
-		if (nextIncomingDmgZeroSet.remove(card)) return 0;
-
-		// One-time: next incoming damage reduced by N
-		if (nextIncomingDmgReduceMap.containsKey(card))
-			amount = Math.max(0, amount - nextIncomingDmgReduceMap.remove(card));
-
-		// One-time: next ability/summon damage reduced by N
-		if (fromAbility && nextAbilityDmgReduceMap.containsKey(card))
-			amount = Math.max(0, amount - nextAbilityDmgReduceMap.remove(card));
-
-		// Passive field ability: self-targeted incoming damage modifier
-		// ("by a Forward / by Summon or ability / other than battle damage / less than power / any source")
-		for (FieldAbility fa : card.fieldAbilities()) {
-			Matcher fam = AutoAbilityTriggers.FA_DAMAGE_MODIFIER.matcher(fa.effectText());
-			if (!fam.find() || !fam.group("card").trim().equalsIgnoreCase(card.name())) continue;
-			amount = applyDamageModifierMatch(fam, amount, isP1, zone, idx, fromAbility, card.name());
-		}
-
-		// Incoming damage modifier granted to this Forward by a counter grant (e.g. Kimahri's
-		// Ronso Counter, Tidus's Guardian Counter). "If this Forward is dealt damage …" — the
-		// subject is implicit, so no card-name match is required.
-		for (String granted : counterGrantedAbilities(card, isP1)) {
-			Matcher fam = AutoAbilityTriggers.FA_DAMAGE_MODIFIER.matcher(granted);
-			if (fam.find()) amount = applyDamageModifierMatch(fam, amount, isP1, zone, idx, fromAbility, card.name());
-		}
-
-		// Passive field ability: self-targeted incoming damage reduction while dull
-		for (FieldAbility fa : card.fieldAbilities()) {
-			Matcher m = AutoAbilityTriggers.FA_DAMAGE_WHILE_DULL_REDUCTION.matcher(fa.effectText());
-			if (!m.find() || !m.group("card").trim().equalsIgnoreCase(card.name())) continue;
-			CardState state = fieldTargetState(new ForwardTarget(isP1, idx, zone));
-			if (state == CardState.DULL) {
-				int reduction = Integer.parseInt(m.group("amount"));
-				int before = amount;
-				amount = Math.max(0, amount - reduction);
-				logEntry(card.name() + " — damage while dull reduced by " + reduction + " (" + before + " → " + amount + ")");
-			}
-		}
-
-		// Passive field ability on other friendly cards: field-wide incoming damage modifier
-		amount = applyFieldWideDamageModifiers(amount, card, isP1, zone, idx, fromAbility);
-
-		// Global per-player damage reduction
-		int globalRed = turn(isP1).globalDmgReduction;
-		if (globalRed > 0) amount = Math.max(0, amount - globalRed);
-
-		// Per-card non-lethal protection: damage < this card's effective power → becomes 0
-		if (perCardNonLethalDmgSet.contains(card)) {
-			int power = fieldForwardPower(isP1, zone, idx);
-			if (amount < power) return 0;
-		}
-
-		// Global non-lethal protection: damage < forward's effective power → becomes 0
-		boolean nonLethal = turn(isP1).nonLethalProtection;
-		if (nonLethal) {
-			int power = fieldForwardPower(isP1, zone, idx);
-			if (amount < power) return 0;
-		}
-
-		return amount;
-	}
-
-	/**
-	 * Applies one matched {@link AutoAbilityTriggers#FA_DAMAGE_MODIFIER} effect (reduce/set/increase/
-	 * double) to {@code amount}, honoring its optional damage threshold and source clause. Shared by
-	 * a Forward's own field ability and abilities granted to it via a counter grant. {@code subjectName}
-	 * is used only for the log line. Returns the (possibly modified) amount.
-	 */
-	private int applyDamageModifierMatch(Matcher fam, int amount, boolean isP1,
-			ForwardTarget.CardZone zone, int idx, boolean fromAbility, String subjectName) {
-		String threshStr = fam.group("threshold");
-		if (threshStr != null && amount < Integer.parseInt(threshStr)) return amount;
-		String src = fam.group("sourceclause");
-		boolean applies;
-		if (src == null || src.isBlank()) {
-			applies = true;
-		} else {
-			String srcN = src.trim().toLowerCase();
-			if (srcN.startsWith("less than") && srcN.endsWith("power")) {
-				int power = fieldForwardPower(isP1, zone, idx);
-				applies = amount < power;
-			} else if (srcN.startsWith("by a forward")) {
-				applies = !fromAbility;
-			} else if (srcN.contains("summon") && !srcN.contains("abilit")) {
-				applies = fromAbility && currentResolutionIsSummon;
-			} else if (!srcN.contains("summon") && !srcN.startsWith("other")) {
-				applies = fromAbility && !currentResolutionIsSummon;
-			} else {
-				applies = fromAbility;
-			}
-		}
-		if (!applies) return amount;
-		String reduceStr   = fam.group("reduceby");
-		String setstoStr   = fam.group("setsto");
-		String increaseStr = fam.group("increaseby");
-		if (reduceStr != null) {
-			int before = amount;
-			amount = Math.max(0, amount - Integer.parseInt(reduceStr));
-			logEntry(subjectName + " — damage reduced by " + reduceStr + " (" + before + " → " + amount + ")");
-		} else if (setstoStr != null) {
-			int fixed = Integer.parseInt(setstoStr);
-			logEntry(subjectName + " — damage set to " + fixed + " instead");
-			amount = fixed;
-		} else if (increaseStr != null) {
-			int before = amount;
-			amount = amount + Integer.parseInt(increaseStr);
-			logEntry(subjectName + " — damage increased by " + increaseStr + " (" + before + " → " + amount + ")");
-		} else if (fam.group("double") != null) {
-			int before = amount;
-			amount = amount * 2;
-			logEntry(subjectName + " — damage doubled (" + before + " → " + amount + ")");
-		}
-		return amount;
-	}
+	/** @see DamageResolver#applyDamageModifierMatch */
+	private int applyDamageModifierMatch(Matcher fam, int amount, boolean isP1, ForwardTarget.CardZone zone, int idx, boolean fromAbility, String subjectName) { return damageResolver.applyDamageModifierMatch(fam, amount, isP1, zone, idx, fromAbility, subjectName); }
 
 	/**
 	 * Ability texts granted to {@code target} (a Forward on the given side) by "Each Forward you
@@ -9200,7 +8937,7 @@ public class MainWindow {
 	 * unless {@code target} is a Forward with at least one matching counter and a granting source
 	 * is on its controller's field.
 	 */
-	private List<String> counterGrantedAbilities(CardData target, boolean isP1) {
+	List<String> counterGrantedAbilities(CardData target, boolean isP1) {
 		if (!target.isForward()) return List.of();
 		List<String> out = null;
 		List<CardData> fwds = isP1 ? p1ForwardCards : p2ForwardCards;
@@ -9223,189 +8960,26 @@ public class MainWindow {
 		return out;
 	}
 
-	/**
-	 * Scans all friendly Forwards and Backups for {@link AutoAbilityTriggers#FA_FIELD_DAMAGE_MODIFIER}
-	 * abilities and applies any that target the damaged Forward.
-	 * Returns the (possibly modified) damage amount.
-	 */
-	private int applyFieldWideDamageModifiers(int amount, CardData damaged, boolean isP1,
-			ForwardTarget.CardZone zone, int idx, boolean fromAbility) {
-		int effectivePower = fieldForwardPower(isP1, zone, idx);
-		boolean attackerIsBackup = !fromAbility && (isP1 ? pendingP2AttackerIsBackup : p1BackupAttackIdx >= 0);
+	/** @see DamageResolver#applyFieldWideDamageModifiers */
+	private int applyFieldWideDamageModifiers(int amount, CardData damaged, boolean isP1, ForwardTarget.CardZone zone, int idx, boolean fromAbility) { return damageResolver.applyFieldWideDamageModifiers(amount, damaged, isP1, zone, idx, fromAbility); }
 
-		List<CardData> sources = new ArrayList<>(isP1 ? p1ForwardCards : p2ForwardCards);
-		for (CardData bkp : isP1 ? p1BackupCards : p2BackupCards)
-			if (bkp != null) sources.add(bkp);
+	/** @see DamageResolver#applyCasterSideElementSummonDamageBoosts */
+	private int applyCasterSideElementSummonDamageBoosts(int amount, boolean targetIsP1) { return damageResolver.applyCasterSideElementSummonDamageBoosts(amount, targetIsP1); }
 
-		for (CardData protector : sources) {
-			for (FieldAbility fa : protector.fieldAbilities()) {
-				Matcher m = AutoAbilityTriggers.FA_FIELD_DAMAGE_MODIFIER.matcher(fa.effectText());
-				if (!m.find()) continue;
+	/** @see DamageResolver#applyCasterSideElementForwardDamageBoosts */
+	private int applyCasterSideElementForwardDamageBoosts(int amount, boolean targetIsP1) { return damageResolver.applyCasterSideElementForwardDamageBoosts(amount, targetIsP1); }
 
-				// Target filter
-				String category = m.group("category");
-				String job      = m.group("job");
-				String element  = m.group("element");
-				String costStr  = m.group("cost");
-				String costcmp  = m.group("costcmp");
-				String except   = m.group("except1") != null ? m.group("except1").trim()
-				                                             : (m.group("except2") != null ? m.group("except2").trim() : null);
+	/** @see DamageResolver#modifyOutgoingCombatDamage */
+	int modifyOutgoingCombatDamage(boolean isP1, int idx, int rawAmount, CardData target) { return damageResolver.modifyOutgoingCombatDamage(isP1, idx, rawAmount, target); }
 
-				if (category != null && !CardFilters.meetsCategoryFilter(damaged, category)) continue;
-				if (job      != null && !CardFilters.meetsJobFilter(damaged, job))            continue;
-				if (element  != null && !effectiveElements(damaged).contains(element))        continue;
-				if (costStr  != null) {
-					int costVal = Integer.parseInt(costStr);
-					boolean orMore = "more".equalsIgnoreCase(costcmp);
-					if (orMore ? damaged.cost() < costVal : damaged.cost() > costVal) continue;
-				}
-				if (except != null && except.equalsIgnoreCase(damaged.name())) continue;
-
-				// Source clause
-				String src = m.group("sourceclause");
-				if (src != null && !src.isBlank()) {
-					String srcN = src.trim().toLowerCase();
-					if (srcN.contains("less than its power") && amount >= effectivePower) continue;
-					if (srcN.contains("by a backup") && !attackerIsBackup) continue;
-					if (srcN.contains("abilit") || srcN.contains("summon")) {
-						if (!fromAbility) continue;
-						boolean namesSummon  = srcN.contains("summon");
-						boolean namesAbility = srcN.contains("abilit");
-						if (namesSummon && !namesAbility && !currentResolutionIsSummon) continue;
-						if (namesAbility && !namesSummon &&  currentResolutionIsSummon) continue;
-						// "by your opponent's …" — the damage has to originate on the other side of
-						// the board, so a friendly Summon or ability is not covered.
-						if (srcN.contains("opponent")) {
-							CardData resCard = currentResolutionIsSummon ? currentSummonSource : currentAbilitySource;
-							boolean  resIsP1 = currentResolutionIsSummon ? currentSummonSourceIsP1 : currentAbilitySourceIsP1;
-							if (resCard == null || resIsP1 == isP1) continue;
-						}
-					}
-				}
-
-				// Apply effect
-				String reduceStr = m.group("reduceby");
-				String setstoStr = m.group("setsto");
-				if (reduceStr != null) {
-					int before = amount;
-					amount = Math.max(0, amount - Integer.parseInt(reduceStr));
-					logEntry(damaged.name() + " — damage reduced by " + reduceStr
-							+ " (" + before + " → " + amount + ") [" + protector.name() + "]");
-				} else if (setstoStr != null) {
-					int fixed = Integer.parseInt(setstoStr);
-					logEntry(damaged.name() + " — damage set to " + fixed + " instead [" + protector.name() + "]");
-					amount = fixed;
-				}
-			}
-
-			// Exact-amount nullification: "If a Forward you control receives N damage, the damage becomes 0 instead."
-			if (!lostAbilitiesCards.contains(protector)) {
-				for (FieldAbility fa : protector.fieldAbilities()) {
-					Matcher m = AutoAbilityTriggers.FA_FIELD_DAMAGE_EXACT_NULLIFY.matcher(fa.effectText());
-					if (!m.find()) continue;
-					int exactAmt = Integer.parseInt(m.group("amount"));
-					if (amount == exactAmt) {
-						logEntry(damaged.name() + " — " + exactAmt + " damage becomes 0 [" + protector.name() + "]");
-						amount = 0;
-					}
-				}
-			}
-		}
-		return amount;
-	}
-
-	/**
-	 * Scans the CASTER's side field cards for {@link AutoAbilityTriggers#FA_ELEMENT_SUMMON_DAMAGE_BOOST}
-	 * abilities (e.g. Caetuna: "Fire Summon damage +1000") and applies any that match the current
-	 * resolving Summon's element.  {@code targetIsP1} is the owner of the Forward being damaged.
-	 */
-	private int applyCasterSideElementSummonDamageBoosts(int amount, boolean targetIsP1) {
-		if (!currentResolutionIsSummon || currentSummonSource == null) return amount;
-		boolean casterIsP1 = currentSummonSourceIsP1;
-		if (casterIsP1 == targetIsP1) return amount;  // Only boosts damage to the opposing side
-		List<CardData> casterField = new ArrayList<>(casterIsP1 ? p1ForwardCards : p2ForwardCards);
-		for (CardData bkp : casterIsP1 ? p1BackupCards : p2BackupCards)
-			if (bkp != null) casterField.add(bkp);
-		for (CardData booster : casterField) {
-			for (FieldAbility fa : booster.fieldAbilities()) {
-				java.util.regex.Matcher m = AutoAbilityTriggers.FA_ELEMENT_SUMMON_DAMAGE_BOOST.matcher(fa.effectText());
-				if (!m.find()) continue;
-				String elem = m.group("element");
-				if (!currentSummonSource.containsElement(elem)) continue;
-				int boost = Integer.parseInt(m.group("amount"));
-				int before = amount;
-				amount += boost;
-				logEntry(booster.name() + " — " + elem + " Summon damage increased by " + boost
-						+ " (" + before + " → " + amount + ")");
-			}
-		}
-		return amount;
-	}
-
-	/**
-	 * Scans the caster's side field cards for {@link AutoAbilityTriggers#FA_ELEMENT_FORWARD_DAMAGE_BOOST}
-	 * abilities and applies any that match when the resolving ability source is an Element Forward
-	 * dealing damage to a Forward on the opposing side.
-	 */
-	private int applyCasterSideElementForwardDamageBoosts(int amount, boolean targetIsP1) {
-		if (currentAbilitySource == null || !currentAbilitySource.isForward()) return amount;
-		if (currentAbilitySourceIsP1 == targetIsP1) return amount;
-		boolean casterIsP1 = currentAbilitySourceIsP1;
-		List<CardData> casterField = new ArrayList<>(casterIsP1 ? p1ForwardCards : p2ForwardCards);
-		for (CardData bkp : casterIsP1 ? p1BackupCards : p2BackupCards)
-			if (bkp != null) casterField.add(bkp);
-		for (CardData booster : casterField) {
-			for (FieldAbility fa : booster.fieldAbilities()) {
-				Matcher m = AutoAbilityTriggers.FA_ELEMENT_FORWARD_DAMAGE_BOOST.matcher(fa.effectText());
-				if (!m.find()) continue;
-				if (!currentAbilitySource.containsElement(m.group("element"))) continue;
-				int boost = Integer.parseInt(m.group("amount"));
-				int before = amount;
-				amount += boost;
-				logEntry(booster.name() + " — " + m.group("element") + " Forward ability damage increased by "
-						+ boost + " (" + before + " → " + amount + ")");
-			}
-		}
-		return amount;
-	}
-
-	/** Forward-zone overload — see {@link #modifyOutgoingCombatDamage(boolean, ForwardTarget.CardZone, int, int, CardData)}. */
-	int modifyOutgoingCombatDamage(boolean isP1, int idx, int rawAmount, CardData target) {
-		return modifyOutgoingCombatDamage(isP1, ForwardTarget.CardZone.FORWARD, idx, rawAmount, target);
-	}
-
-	/**
-	 * Applies outgoing-damage modifiers for a card that is about to deal combat damage while
-	 * acting as a Forward — from any zone (a real Forward, or a Monster/Backup temporarily a
-	 * Forward). Checks and consumes the one-time "next outgoing damage = 0" shield.
-	 *
-	 * <p>The dealing card and its {@code target} are both combatants and so are Forwards for
-	 * every eligible purpose; the friendly-element, cost-based, and self "deals damage to a
-	 * Forward" boosts therefore apply regardless of the cards' printed card types.
-	 */
-	int modifyOutgoingCombatDamage(boolean isP1, ForwardTarget.CardZone zone, int idx, int rawAmount, CardData target) {
-		CardData card = fieldCombatant(isP1, zone, idx);
-		if (card == null) return rawAmount;
-		if (nextOutgoingDmgZeroSet.remove(card)) return 0;
-		if (dealsNoCombatDamageSet.contains(card)) return 0;   // deals no damage for the whole battle
-		int mult = outgoingDmgMultiplierMap.getOrDefault(card, 1);
-		if (nextOutgoingDmgDoublerSet.remove(card)) mult *= 2;
-		if (target != null) mult *= fieldAbilityCombatOutgoingMult(card, target);
-		int flat = (target != null) ? outgoingDmgFlatBoostMap.getOrDefault(card, 0) : 0;
-
-		if (target != null) {
-			flat += friendlyElementForwardCombatBoost(card, isP1);
-			flat += costBasedCombatFlatAdjustments(card, target);
-			flat += selfOutgoingFlatBoostVsForward(card, isP1);
-		}
-		return rawAmount * mult + flat;
-	}
+	/** @see DamageResolver#modifyOutgoingCombatDamage */
+	int modifyOutgoingCombatDamage(boolean isP1, ForwardTarget.CardZone zone, int idx, int rawAmount, CardData target) { return damageResolver.modifyOutgoingCombatDamage(isP1, zone, idx, rawAmount, target); }
 
 	/**
 	 * Returns the CardData of the card acting as a Forward at {@code idx} in {@code zone} on the
 	 * given player's side, or {@code null} if the index is out of range or the slot is empty.
 	 */
-	private CardData fieldCombatant(boolean isP1, ForwardTarget.CardZone zone, int idx) {
+	CardData fieldCombatant(boolean isP1, ForwardTarget.CardZone zone, int idx) {
 		switch (zone) {
 			case FORWARD -> {
 				List<CardData> l = isP1 ? p1ForwardCards : p2ForwardCards;
@@ -9442,7 +9016,7 @@ public class MainWindow {
 		return boost;
 	}
 
-	private int costBasedCombatFlatAdjustments(CardData attacker, CardData target) {
+	int costBasedCombatFlatAdjustments(CardData attacker, CardData target) {
 		int adj = 0;
 		if (!lostAbilitiesCards.contains(attacker)) {
 			for (FieldAbility fa : attacker.fieldAbilities()) {
@@ -9471,7 +9045,7 @@ public class MainWindow {
 		return adj;
 	}
 
-	private int friendlyElementForwardCombatBoost(CardData attacker, boolean isP1) {
+	int friendlyElementForwardCombatBoost(CardData attacker, boolean isP1) {
 		int boost = 0;
 		List<CardData> sources = new ArrayList<>(isP1 ? p1ForwardCards : p2ForwardCards);
 		for (CardData bkp : isP1 ? p1BackupCards : p2BackupCards)
@@ -9543,139 +9117,26 @@ public class MainWindow {
 		return mult;
 	}
 
-	boolean sourceHasOutgoingDmgToOpponentDoubler(CardData attacker) {
-		if (attacker == null || lostAbilitiesCards.contains(attacker)) return false;
-		for (FieldAbility fa : effectiveFieldAbilities(attacker)) {
-			Matcher m = AutoAbilityTriggers.FA_OUTGOING_DAMAGE_DOUBLER.matcher(fa.effectText());
-			if (m.find() && m.group("card").trim().equalsIgnoreCase(attacker.name())
-					&& m.group("target").toLowerCase().contains("opponent"))
-				return true;
-		}
-		return false;
-	}
+	/** @see DamageResolver#sourceHasOutgoingDmgToOpponentDoubler */
+	boolean sourceHasOutgoingDmgToOpponentDoubler(CardData attacker) { return damageResolver.sourceHasOutgoingDmgToOpponentDoubler(attacker); }
 
-	/**
-	 * The fixed number of damage points {@code attacker}'s "If [card] deals damage to your opponent,
-	 * the damage becomes N instead" ability replaces its damage with, or {@code null} when it has no
-	 * such ability. Reads granted abilities too, so an until-end-of-turn grant counts.
-	 */
-	Integer outgoingDamageToOpponentOverride(CardData attacker) {
-		if (attacker == null || lostAbilitiesCards.contains(attacker)) return null;
-		for (FieldAbility fa : effectiveFieldAbilities(attacker)) {
-			Matcher m = AutoAbilityTriggers.FA_OUTGOING_DAMAGE_TO_OPPONENT_SETS_TO.matcher(fa.effectText());
-			if (m.find() && m.group("card").trim().equalsIgnoreCase(attacker.name()))
-				return Integer.valueOf(m.group("amount"));
-		}
-		return null;
-	}
+	/** @see DamageResolver#outgoingDamageToOpponentOverride */
+	Integer outgoingDamageToOpponentOverride(CardData attacker) { return damageResolver.outgoingDamageToOpponentOverride(attacker); }
 
-	/** The points of combat damage {@code attacker} deals to the opposing player. */
-	int combatDamagePointsToOpponent(CardData attacker) {
-		Integer override = outgoingDamageToOpponentOverride(attacker);
-		if (override != null) return override;
-		return sourceHasOutgoingDmgToOpponentDoubler(attacker) ? 2 : 1;
-	}
+	/** @see DamageResolver#combatDamagePointsToOpponent */
+	int combatDamagePointsToOpponent(CardData attacker) { return damageResolver.combatDamagePointsToOpponent(attacker); }
 
-	/** Deals combat damage to the opponent — normally 1 point, but an outgoing-damage doubler or
-	 *  "the damage becomes N instead" ability on the attacker changes the count (N may be 0) —
-	 *  calling {@code afterDamage} after all damage points and any EX bursts have resolved. */
-	private void dealCombatDamageToOpponent(CardData attacker, boolean attackerIsP1, Runnable afterDamage) {
-		if (dealsNoCombatDamageSet.contains(attacker)) {
-			logEntry((attackerIsP1 ? "" : "[P2] ") + attacker.name() + " deals no damage this battle");
-			afterDamage.run();
-			return;
-		}
-		int points = combatDamagePointsToOpponent(attacker);
-		if (points != 1)
-			logEntry((attackerIsP1 ? "" : "[P2] ") + attacker.name()
-					+ " — combat damage to opponent is " + points + " instead of 1");
-		dealOpponentDamagePoints(attacker, attackerIsP1, points, afterDamage);
-	}
+	/** @see DamageResolver#dealCombatDamageToOpponent */
+	private void dealCombatDamageToOpponent(CardData attacker, boolean attackerIsP1, Runnable afterDamage) { damageResolver.dealCombatDamageToOpponent(attacker, attackerIsP1, afterDamage); }
 
-	/**
-	 * Deals {@code remaining} points of damage to the opposing player one at a time, each point
-	 * re-crediting {@code attacker} as the damage source (it is consumed per call) and the next
-	 * point dealt from the previous one's completion callback so EX Bursts resolve in order.
-	 */
-	private void dealOpponentDamagePoints(CardData attacker, boolean attackerIsP1, int remaining,
-			Runnable afterDamage) {
-		if (remaining <= 0) { afterDamage.run(); return; }
-		setPlayerDamageSource(attacker);
-		Runnable next = () -> dealOpponentDamagePoints(attacker, attackerIsP1, remaining - 1, afterDamage);
-		if (attackerIsP1) p2TakeDamage(next); else p1TakeDamage(next);
-	}
+	/** @see DamageResolver#dealOpponentDamagePoints */
+	private void dealOpponentDamagePoints(CardData attacker, boolean attackerIsP1, int remaining, Runnable afterDamage) { damageResolver.dealOpponentDamagePoints(attacker, attackerIsP1, remaining, afterDamage); }
 
-	/**
-	 * Applies incoming-damage modifiers, writes the result to the damage accumulator,
-	 * and breaks the forward if accumulated damage reaches its effective power.
-	 */
-	void applyDamageToMonster(boolean isP1, int idx, int amount) {
-		List<CardData> mons    = isP1 ? p1MonsterCards  : p2MonsterCards;
-		List<Integer>  dmgList = isP1 ? p1MonsterDamage : p2MonsterDamage;
-		if (idx >= mons.size() || amount <= 0) return;
-		int accum  = dmgList.get(idx) + amount;
-		dmgList.set(idx, accum);
-		boolean asFwd = isP1 ? isP1MonsterTemporarilyForward(idx) : isP2MonsterTemporarilyForward(idx);
-		int effPow = asFwd ? (isP1 ? p1MonsterForwardPower(idx) : p2MonsterForwardPower(idx))
-		                   : (isP1 ? effectiveP1MonsterPower(idx) : effectiveP2MonsterPower(idx));
-		logEntry((isP1 ? "" : "[P2] ") + mons.get(idx).name() + " takes " + amount + " damage"
-				+ (effPow > 0 ? " (" + (effPow - accum) + " remaining)" : ""));
-		if (effPow > 0 && accum >= effPow) {
-			if (isP1) autoAbilityTriggers.breakP1MonsterSlot(idx); else breakP2MonsterSlot(idx);
-		} else {
-			if (isP1) refreshP1MonsterSlot(idx); else refreshP2MonsterSlot(idx);
-		}
-	}
+	/** @see DamageResolver#applyDamageToMonster */
+	void applyDamageToMonster(boolean isP1, int idx, int amount) { damageResolver.applyDamageToMonster(isP1, idx, amount); }
 
-	void applyDamageToForward(boolean isP1, int idx, int rawAmount, boolean fromAbility, boolean unreduced) {
-		List<CardData>  fwds   = isP1 ? p1ForwardCards   : p2ForwardCards;
-		List<Integer>   dmgList = isP1 ? p1ForwardDamage  : p2ForwardDamage;
-		if (idx >= fwds.size()) return;
-		// One-time damage redirect: "the next damage dealt to A is received by B instead"
-		CardData redirectTarget = nextIncomingDmgRedirectMap.remove(fwds.get(idx));
-		if (redirectTarget != null) {
-			int p1RedirIdx = p1ForwardCards.indexOf(redirectTarget);
-			int p2RedirIdx = p2ForwardCards.indexOf(redirectTarget);
-			if (p1RedirIdx >= 0) {
-				logEntry(fwds.get(idx).name() + " — damage redirected to " + redirectTarget.name());
-				applyDamageToForward(true, p1RedirIdx, rawAmount, fromAbility, unreduced);
-				return;
-			} else if (p2RedirIdx >= 0) {
-				logEntry(fwds.get(idx).name() + " — damage redirected to " + redirectTarget.name());
-				applyDamageToForward(false, p2RedirIdx, rawAmount, fromAbility, unreduced);
-				return;
-			}
-			// redirect target no longer on field — fall through to normal damage
-		}
-		int amount = modifyIncomingDamage(isP1, idx, rawAmount, fromAbility, unreduced);
-		if (amount <= 0) {
-			logEntry((isP1 ? "" : "[P2] ") + fwds.get(idx).name() + " — damage blocked");
-			return;
-		}
-		int accum  = dmgList.get(idx) + amount;
-		dmgList.set(idx, accum);
-		(turn(isP1).cardsTookDamageThisTurn).add(fwds.get(idx).name());
-		int effPow = isP1 ? effectiveP1ForwardPower(idx) : effectiveP2ForwardPower(idx);
-		logEntry((isP1 ? "" : "[P2] ") + fwds.get(idx).name() + " takes " + amount + " damage"
-				+ (effPow > 0 ? " (" + (effPow - accum) + " remaining)" : ""));
-		if (effPow > 0 && accum >= effPow) {
-			CardData fwd = fwds.get(idx);
-			if (isP1 ? effectiveP1HasTrait(idx, CardData.Trait.CANNOT_BE_BROKEN)
-			         : effectiveP2HasTrait(idx, CardData.Trait.CANNOT_BE_BROKEN)) {
-				logEntry((isP1 ? "" : "[P2] ") + fwd.name() + " survives lethal damage (cannot be broken — damage clears at end of turn)");
-				if (isP1) refreshP1ForwardSlot(idx); else refreshP2ForwardSlot(idx);
-				if (currentSummonSource != null)
-					fireBreaktouchForDamage(currentSummonSource, currentSummonSourceIsP1, isP1, idx);
-			} else {
-				if (isP1) breakP1Forward(idx); else breakP2Forward(idx);
-			}
-		} else {
-			if (isP1) refreshP1ForwardSlot(idx); else refreshP2ForwardSlot(idx);
-			// Fire "deals damage to forward" triggers from tracked ability source (e.g. Ramuh + Lightning Summon)
-			if (currentSummonSource != null)
-				fireBreaktouchForDamage(currentSummonSource, currentSummonSourceIsP1, isP1, idx);
-		}
-	}
+	/** @see DamageResolver#applyDamageToForward */
+	void applyDamageToForward(boolean isP1, int idx, int rawAmount, boolean fromAbility, boolean unreduced) { damageResolver.applyDamageToForward(isP1, idx, rawAmount, fromAbility, unreduced); }
 
 	/**
 	 * Rule process: breaks every Forward whose effective power has dropped to 0 or less, or whose
@@ -9749,50 +9210,11 @@ public class MainWindow {
 	 *       "lightning summon deals damage to forward" (e.g. Ramuh, Lord of Levin)</li>
 	 * </ul>
 	 */
-	/** Forward-zone overload — see {@link #fireBreaktouchForDamage(CardData, boolean, boolean, ForwardTarget.CardZone, int)}. */
-	private boolean fireBreaktouchForDamage(CardData source, boolean sourceIsP1,
-			boolean damagedIsP1, int damagedIdx) {
-		return fireBreaktouchForDamage(source, sourceIsP1, damagedIsP1, ForwardTarget.CardZone.FORWARD, damagedIdx);
-	}
+	/** @see DamageResolver#fireBreaktouchForDamage */
+	private boolean fireBreaktouchForDamage(CardData source, boolean sourceIsP1, boolean damagedIsP1, int damagedIdx) { return damageResolver.fireBreaktouchForDamage(source, sourceIsP1, damagedIsP1, damagedIdx); }
 
-	boolean fireBreaktouchForDamage(CardData source, boolean sourceIsP1,
-			boolean damagedIsP1, ForwardTarget.CardZone damagedZone, int damagedIdx) {
-		CardData damaged = fieldCombatant(damagedIsP1, damagedZone, damagedIdx);
-		if (damaged == null) return false;
-
-		// Case 1: source card itself has "deals damage to forward" auto-ability
-		for (AutoAbility fa : source.autoAbilities()) {
-			if (!fa.trigger().equals("deals damage to forward")) continue;
-			if (!fa.triggerCard().equalsIgnoreCase(source.name())) continue;
-			logEntry((sourceIsP1 ? "" : "[P2] ") + source.name() + " — Breaktouch! "
-					+ (damagedIsP1 ? "" : "[P2] ") + damaged.name() + " is broken.");
-			breakFieldCard(damagedIsP1, damagedZone, damagedIdx);
-			return true;
-		}
-
-		// Case 2: source is a Summon of matching element; check caster's field for the Summon trigger
-		if (source.isSummon()) {
-			String[] sourceElems = source.elements();
-			List<CardData> casterFwds = new ArrayList<>(sourceIsP1 ? p1ForwardCards : p2ForwardCards);
-			for (CardData fieldCard : casterFwds) {
-				for (AutoAbility fa : fieldCard.autoAbilities()) {
-					String trig = fa.trigger();
-					if (!trig.endsWith(" summon deals damage to forward")) continue;
-					String elemPrefix = trig.substring(0, trig.indexOf(" summon")).toLowerCase(java.util.Locale.ROOT);
-					boolean elemMatch = false;
-					for (String e : sourceElems) {
-						if (e.toLowerCase(java.util.Locale.ROOT).equals(elemPrefix)) { elemMatch = true; break; }
-					}
-					if (!elemMatch) continue;
-					logEntry((sourceIsP1 ? "" : "[P2] ") + fieldCard.name() + " — Breaktouch (Summon)! "
-							+ (damagedIsP1 ? "" : "[P2] ") + damaged.name() + " is broken.");
-					breakFieldCard(damagedIsP1, damagedZone, damagedIdx);
-					return true;
-				}
-			}
-		}
-		return false;
-	}
+	/** @see DamageResolver#fireBreaktouchForDamage */
+	boolean fireBreaktouchForDamage(CardData source, boolean sourceIsP1, boolean damagedIsP1, ForwardTarget.CardZone damagedZone, int damagedIdx) { return damageResolver.fireBreaktouchForDamage(source, sourceIsP1, damagedIsP1, damagedZone, damagedIdx); }
 
 	/**
 	 * Returns true when a forward at {@code (cardIsP1, cardIdx)} is the current blocker
@@ -9996,7 +9418,7 @@ public class MainWindow {
 	}
 
 	/** Current {@link CardState} of a field {@link ForwardTarget}, used to glow at the right card bounds. */
-	private CardState fieldTargetState(ForwardTarget t) {
+	CardState fieldTargetState(ForwardTarget t) {
 		return switch (t.zone()) {
 			case FORWARD -> t.isP1() ? p1ForwardStates.get(t.idx()) : p2ForwardStates.get(t.idx());
 			case BACKUP  -> t.isP1() ? p1BackupStates[t.idx()]      : p2BackupStates[t.idx()];
@@ -11587,7 +11009,7 @@ public class MainWindow {
 		}
 	}
 
-	private void breakFieldCard(boolean isP1, ForwardTarget.CardZone zone, int idx) {
+	void breakFieldCard(boolean isP1, ForwardTarget.CardZone zone, int idx) {
 		switch (zone) {
 			case FORWARD -> { if (isP1) breakP1Forward(idx);     else breakP2Forward(idx); }
 			case MONSTER -> { if (isP1) autoAbilityTriggers.breakP1MonsterSlot(idx); else breakP2MonsterSlot(idx); }
@@ -11595,7 +11017,7 @@ public class MainWindow {
 		}
 	}
 
-	private boolean fieldForwardTrait(boolean isP1, ForwardTarget.CardZone zone, int idx, CardData.Trait trait) {
+	boolean fieldForwardTrait(boolean isP1, ForwardTarget.CardZone zone, int idx, CardData.Trait trait) {
 		return switch (zone) {
 			case FORWARD -> isP1 ? effectiveP1HasTrait(idx, trait) : effectiveP2HasTrait(idx, trait);
 			case MONSTER -> effectiveMonsterHasTrait(isP1, idx, trait);
@@ -11735,7 +11157,7 @@ public class MainWindow {
 	}
 
 	/** Power a P1 backup uses while acting as a Forward (become-Forward/temp base + boosts). */
-	private int p1BackupForwardPower(int idx) {
+	int p1BackupForwardPower(int idx) {
 		CardData c = p1BackupCards[idx];
 		if (c == null) return 0;
 		CardData.BecomeForwardAbility bfa = c.becomeForwardAbility();
@@ -11880,25 +11302,8 @@ public class MainWindow {
 		});
 	}
 
-	/** Applies ability/combat damage to a backup that is currently acting as a Forward. */
-	void applyDamageToBackup(boolean isP1, int idx, int amount) {
-		CardData[] backs = isP1 ? p1BackupCards : p2BackupCards;
-		if (idx < 0 || idx >= backs.length || backs[idx] == null || amount <= 0) return;
-		boolean asFwd = isP1 ? isP1BackupTemporarilyForward(idx) : isP2BackupTemporarilyForward(idx);
-		if (!asFwd) return;
-		CardData c = backs[idx];
-		Map<CardData, Integer> dmgMap = isP1 ? p1BackupForwardDamage : p2BackupForwardDamage;
-		int accum = dmgMap.getOrDefault(c, 0) + amount;
-		dmgMap.put(c, accum);
-		int effPow = isP1 ? p1BackupForwardPower(idx) : p2BackupForwardPower(idx);
-		logEntry((isP1 ? "" : "[P2] ") + c.name() + " takes " + amount + " damage"
-				+ (effPow > 0 ? " (" + (effPow - accum) + " remaining)" : ""));
-		if (effPow > 0 && accum >= effPow) {
-			if (isP1) autoAbilityTriggers.breakP1BackupSlot(idx); else breakP2BackupSlot(idx);
-		} else {
-			if (isP1) refreshP1BackupSlot(idx); else refreshP2BackupSlot(idx);
-		}
-	}
+	/** @see DamageResolver#applyDamageToBackup */
+	void applyDamageToBackup(boolean isP1, int idx, int amount) { damageResolver.applyDamageToBackup(isP1, idx, amount); }
 
 	/** Clears all "Backup acting as Forward" state for both players (end of turn / reset). */
 	void clearBackupForwardState() {
