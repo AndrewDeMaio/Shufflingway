@@ -102,25 +102,19 @@ public class PhaseTracker extends JPanel {
     private float progress  = 1f;
     private final Timer animTimer;
 
-    private Font pixelFont;
-    private Font pixelFontSmall;
+    /** Top strip ("TURN N" and the turn pill) — body face. */
+    private Font stripFont;
+    /** Phase labels under the diamonds — pixel face, they are short and sit in a 10px slot. */
+    private Font labelFont;
 
     public PhaseTracker() {
         setOpaque(true);
         setBackground(BG);
         setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, new Color(0x888888)));
 
-        Font base;
-        try {
-            base = new Font("Press Start 2P", Font.PLAIN, 7);
-            if (!base.getFamily().toLowerCase().contains("press")) {
-                base = new Font(Font.MONOSPACED, Font.BOLD, 9);
-            }
-        } catch (Exception e) {
-            base = new Font(Font.MONOSPACED, Font.BOLD, 9);
-        }
-        pixelFont      = base.deriveFont(13f);
-        pixelFontSmall = base.deriveFont(12f);
+        // Unscaled: this component's geometry is in raw pixels, so its text must be too.
+        stripFont = FontLoader.uiFontUnscaled(13f);
+        labelFont = FontLoader.overlayFontUnscaled(12f);
 
         int h = PAD_TOP + TOP_STRIP_H + 8 + DIAMOND + LABEL_GAP + LABEL_H + PAD_BOTTOM;
         setPreferredSize(new Dimension(Short.MAX_VALUE, h));
@@ -271,7 +265,7 @@ public class PhaseTracker extends JPanel {
 
     /** "TURN N"  |  [ YOUR TURN ] row. */
     private void drawTopStrip(Graphics2D g, int w, Color pillBg) {
-        g.setFont(pixelFont);
+        g.setFont(stripFont);
         g.setColor(new Color(0x333333));
         FontMetrics fm = g.getFontMetrics();
         int stripY = PAD_TOP + fm.getAscent();
@@ -391,7 +385,7 @@ public class PhaseTracker extends JPanel {
     }
 
     private void drawLabel(Graphics2D g, String label, int cx, int trackY, Color color) {
-        g.setFont(pixelFontSmall);
+        g.setFont(labelFont);
         FontMetrics lfm = g.getFontMetrics();
         int labelW = lfm.stringWidth(label);
         int labelX = cx - labelW / 2;

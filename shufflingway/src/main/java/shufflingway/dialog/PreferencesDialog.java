@@ -17,7 +17,6 @@ import java.nio.file.StandardCopyOption;
 
 import javax.swing.BorderFactory;
 import javax.swing.BoxLayout;
-import javax.swing.DefaultListCellRenderer;
 import javax.swing.JButton;
 import javax.swing.JCheckBox;
 import javax.swing.JColorChooser;
@@ -26,7 +25,6 @@ import javax.swing.JComponent;
 import javax.swing.JDialog;
 import javax.swing.JFileChooser;
 import javax.swing.JLabel;
-import javax.swing.JList;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.KeyStroke;
@@ -37,7 +35,6 @@ import javax.swing.filechooser.FileNameExtensionFilter;
 
 import shufflingway.AppSettings;
 import shufflingway.ElementColor;
-import shufflingway.FontLoader;
 import shufflingway.graphics.Counter;
 
 
@@ -110,72 +107,8 @@ public class PreferencesDialog extends JDialog {
 		contentPanel.add(layoutPanel);
 		contentPanel.add(javax.swing.Box.createVerticalStrut(8));
 
-		// ── Font ─────────────────────────────────────────────────────────────
-		JPanel fontPanel = new JPanel();
-		fontPanel.setLayout(new BoxLayout(fontPanel, BoxLayout.Y_AXIS));
-		fontPanel.setBorder(BorderFactory.createTitledBorder(
-				BorderFactory.createEtchedBorder(), "Font",
-				TitledBorder.LEFT, TitledBorder.TOP));
-
-		java.util.List<FontLoader.FontChoice> fontChoices = FontLoader.availableFonts();
-		JComboBox<FontLoader.FontChoice> fontCombo =
-				new JComboBox<>(fontChoices.toArray(new FontLoader.FontChoice[0]));
-		String currentFontFile = AppSettings.getFontFile();
-		for (FontLoader.FontChoice fc : fontChoices)
-			if (fc.fileName().equals(currentFontFile)) { fontCombo.setSelectedItem(fc); break; }
-		fontCombo.setFocusable(false);
-		// Render each entry in its own font so the list previews the typeface.
-		fontCombo.setRenderer(new DefaultListCellRenderer() {
-			@Override public Component getListCellRendererComponent(JList<?> list, Object value,
-					int index, boolean isSelected, boolean cellHasFocus) {
-				super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
-				if (value instanceof FontLoader.FontChoice fc) {
-					setText(fc.displayName());
-					setFont(fc.font().deriveFont(14f));
-				}
-				return this;
-			}
-		});
-
-		JLabel fontPreview = new JLabel("Shufflingway 0123456789");
-		JLabel fontHint = new JLabel(
-				"<html><font color='gray' size='2'>Applies after restart.</font></html>");
-		fontHint.setBorder(new EmptyBorder(0, 4, 2, 4));
-		fontHint.setAlignmentX(Component.LEFT_ALIGNMENT);
-		fontHint.setVisible(false);
-
-		Runnable refreshFontPreview = () -> {
-			FontLoader.FontChoice fc = (FontLoader.FontChoice) fontCombo.getSelectedItem();
-			if (fc != null) fontPreview.setFont(fc.font().deriveFont(18f));
-		};
-		refreshFontPreview.run();
-
-		fontCombo.addActionListener(e -> {
-			FontLoader.FontChoice fc = (FontLoader.FontChoice) fontCombo.getSelectedItem();
-			if (fc == null) return;
-			refreshFontPreview.run();
-			if (fc.fileName().equals(AppSettings.getFontFile())) return;
-			AppSettings.setFontFile(fc.fileName());
-			AppSettings.save();
-			FontLoader.setBaseFontFile(fc.fileName());
-			fontHint.setVisible(true);
-		});
-
-		JPanel fontRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
-		fontRow.add(new JLabel("Font:"));
-		fontRow.add(fontCombo);
-		fontRow.setAlignmentX(Component.LEFT_ALIGNMENT);
-		fontPanel.add(fontRow);
-
-		JPanel fontPreviewRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
-		fontPreviewRow.add(fontPreview);
-		fontPreviewRow.setAlignmentX(Component.LEFT_ALIGNMENT);
-		fontPanel.add(fontPreviewRow);
-		fontPanel.add(fontHint);
-
-		fontPanel.setAlignmentX(Component.LEFT_ALIGNMENT);
-		contentPanel.add(fontPanel);
-		contentPanel.add(javax.swing.Box.createVerticalStrut(8));
+		// No font picker: typeface is fixed per role in FontLoader — Pixel NES for the numeric card
+		// overlays, FF36 for everything else — because a single user-chosen face cannot serve both.
 
 		// ── Field Color ──────────────────────────────────────────────────────
 		JPanel fieldColorPanel = new JPanel();

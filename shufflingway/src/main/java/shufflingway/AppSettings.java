@@ -154,21 +154,8 @@ public final class AppSettings {
         props.setProperty("cardback.custom.path", path);
     }
 
-    /** The bundled font used when none has been chosen (matches the app's original UI font). */
-    public static final String DEFAULT_FONT_FILE = "Pixel_NES.otf";
-
-    /**
-     * Returns the chosen UI font's resource filename (e.g. {@code "Pixel_NES.otf"}), drawn from
-     * {@code src/main/resources/resources/fonts}. Falls back to {@link #DEFAULT_FONT_FILE} if unset.
-     */
-    public static String getFontFile() {
-        return props.getProperty("ui.font.file", DEFAULT_FONT_FILE);
-    }
-
-    /** Saves the chosen UI font file (call {@link #save()} to persist). Applies fully on next launch. */
-    public static void setFontFile(String fileName) {
-        props.setProperty("ui.font.file", fileName);
-    }
+    // No ui.font.file setting: the typeface is fixed per role in FontLoader. A stale entry left in
+    // an existing preferences file is simply ignored.
 
     /** Returns the counter tint color as a hex string (e.g. {@code "#36b06a"}). Defaults to green. */
     public static String getCounterColor() {

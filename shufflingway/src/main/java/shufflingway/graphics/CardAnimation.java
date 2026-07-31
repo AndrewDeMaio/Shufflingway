@@ -178,7 +178,7 @@ public class CardAnimation {
 			g.translate(LEFT_GUTTER, 0);   // active art starts past the tab gutter
 		}
 		String text = String.valueOf(value);
-		Font font = FontLoader.loadPixelFont(14);
+		Font font = FontLoader.loadOverlayFont(14);
 		g.setFont(font);
 		FontMetrics fm = g.getFontMetrics();
 		int tw = fm.stringWidth(text);
@@ -213,7 +213,7 @@ public class CardAnimation {
 		int x = (CARD_W - orbW) / 2, y = (CARD_H - orbH) / 2;
 		g.drawImage(orb, x, y, null);
 		String text = String.valueOf(totalCount);
-		Font font = FontLoader.loadPixelFont(10);
+		Font font = FontLoader.loadOverlayFont(10);
 		g.setFont(font);
 		FontMetrics fm = g.getFontMetrics();
 		int tx = x + (orbW - fm.stringWidth(text)) / 2;

@@ -5338,7 +5338,7 @@ public class MainWindow {
 						g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
 						if (delta != 0) {
 							String text = String.valueOf(effectiveCost);
-							g2.setFont(FontLoader.loadPixelFont(15));
+							g2.setFont(FontLoader.loadOverlayFont(15));
 							FontMetrics fm = g2.getFontMetrics();
 							int x = 8, y = fm.getAscent() + 7;
 							g2.setColor(Color.BLACK);
@@ -12443,7 +12443,7 @@ public class MainWindow {
 		g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
 		g.drawImage(base, 0, 0, size.width, size.height, null);
 		String text = String.valueOf(count);
-		g.setFont(FontLoader.loadPixelFont(12));
+		g.setFont(FontLoader.loadOverlayFont(12));
 		int textW = g.getFontMetrics().stringWidth(text);
 		int textH = g.getFontMetrics().getAscent();
 		int x = size.width - textW - 4;
