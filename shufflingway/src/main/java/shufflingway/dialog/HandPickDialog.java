@@ -435,28 +435,44 @@ public class HandPickDialog {
     public static void showHandRfp(JFrame owner, List<CardData> targetHand, int mustSelect,
                                     Consumer<String> onZoom, Runnable onZoomHide,
                                     Consumer<List<Integer>> onConfirm) {
-        JDialog dlg = new JDialog(owner, "Remove " + mustSelect + " Card(s) From Game", true);
+        showHandSelect(owner, targetHand, mustSelect, "remove from the game", "Remove From Game",
+                onZoom, onZoomHide, onConfirm);
+    }
+
+    /**
+     * Generalisation of {@link #showHandRfp}: lets the player select exactly {@code mustSelect}
+     * of {@code targetHand}, wording the prompt and the confirm button for whatever the caller
+     * intends to do with them.  {@code verbPhrase} completes "Select N card(s) to …", so it reads
+     * as an infinitive ("remove from the game", "discard").
+     *
+     * <p>Any filtering is the caller's job — pass only the cards that may legally be chosen.
+     */
+    public static void showHandSelect(JFrame owner, List<CardData> targetHand, int mustSelect,
+                                       String verbPhrase, String buttonLabel,
+                                       Consumer<String> onZoom, Runnable onZoomHide,
+                                       Consumer<List<Integer>> onConfirm) {
+        JDialog dlg = new JDialog(owner, buttonLabel + " — " + mustSelect + " Card(s)", true);
         dlg.setResizable(false);
         dlg.setDefaultCloseOperation(JDialog.DO_NOTHING_ON_CLOSE);
 
         Set<Integer> selected = new HashSet<>();
 
-        JLabel statusLabel = new JLabel("Select " + mustSelect + " card(s) to remove from the game.",
+        JLabel statusLabel = new JLabel("Select " + mustSelect + " card(s) to " + verbPhrase + ".",
                 SwingConstants.CENTER);
         statusLabel.setFont(FontLoader.loadPixelFont(10));
 
         List<JLabel> cardLabels = new ArrayList<>();
         JPanel cardsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 8));
 
-        JButton confirmBtn = new JButton("Remove From Game");
+        JButton confirmBtn = new JButton(buttonLabel);
         confirmBtn.setFont(FontLoader.loadPixelFont(11));
         confirmBtn.setEnabled(false);
 
         Runnable refresh = () -> {
             int remaining = mustSelect - selected.size();
             statusLabel.setText(remaining > 0
-                    ? "Select " + remaining + " more card(s) to remove."
-                    : "Ready — click Remove From Game to confirm.");
+                    ? "Select " + remaining + " more card(s) to " + verbPhrase + "."
+                    : "Ready — click " + buttonLabel + " to confirm.");
             confirmBtn.setEnabled(selected.size() == mustSelect);
             for (int i = 0; i < cardLabels.size(); i++) {
                 cardLabels.get(i).setBorder(BorderFactory.createLineBorder(

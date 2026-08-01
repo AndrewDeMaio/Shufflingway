@@ -769,6 +769,54 @@ final class ActionResolverPatterns {
         "Your\\s+opponent\\s+removes?\\s+(?:it|them)\\s+from\\s+(?:the\\s+)?game[.!]?"
     );
     /**
+     * Matches "Your opponent reveals their hand. Select up to N card(s) in their hand.
+     * Your opponent removes them from the game. At the end of your opponent's turn, add them
+     * to their owner's hand." — 29-054R Great Malboro.
+     *
+     * <p>The removal is temporary, which is what separates this from
+     * {@link #REVEAL_SELECT_HAND_RFP}: the two share a three-sentence prefix, so this must be
+     * tried first or the delayed return is silently dropped. Group {@code count} — how many.
+     */
+    static final Pattern REVEAL_SELECT_HAND_RFP_UNTIL_END_OF_OPP_TURN = Pattern.compile(
+        "(?i)Your\\s+opponent\\s+reveals?\\s+(?:his/her|his|her|their)\\s+hand[.!]\\s+" +
+        "Select\\s+(?:up\\s+to\\s+)?(?<count>\\d+)\\s+cards?\\s+(?:from|in)\\s+" +
+        "(?:his/her|his|her|their)\\s+hand[.!]\\s+" +
+        "Your\\s+opponent\\s+removes?\\s+(?:it|them)\\s+from\\s+(?:the\\s+)?game[.!]\\s+" +
+        "At\\s+the\\s+end\\s+of\\s+your\\s+opponent's\\s+turn,?\\s+add\\s+(?:it|them)\\s+to\\s+" +
+        "(?:its|their)\\s+owner's\\s+hand[.!]?"
+    );
+    /**
+     * Matches "Your opponent reveals their hand. Select 1 [restriction] card from/in their hand.
+     * Your opponent discards this card." — the discard sibling of {@link #REVEAL_SELECT_HAND_RFP}.
+     *
+     * <p>Group {@code count} — how many. The restriction on what may be selected appears in one
+     * of three shapes across the corpus, at most one at a time:
+     * {@code cardtype} ("Select 1 <b>Forward</b> from their hand", "1 <b>Character</b> card"),
+     * {@code cost} ("Select 1 card <b>of cost 4 or more</b> in their hand") and
+     * {@code excl} ("Select 1 card in their hand <b>other than a Backup</b>"). All three are
+     * absent for the plain "Select 1 card from their hand".
+     */
+    static final Pattern REVEAL_SELECT_HAND_DISCARD = Pattern.compile(
+        "(?i)Your\\s+opponent\\s+reveals?\\s+(?:his/her|his|her|their)\\s+hand[.!]\\s+" +
+        "Select\\s+(?<count>\\d+)\\s+" +
+        "(?:(?<cardtype>Forwards?|Backups?|Monsters?|Summons?|Characters?)(?:\\s+cards?)?" +
+        "|cards?(?:\\s+of\\s+cost\\s+(?<cost>\\d+)\\s+or\\s+more)?)" +
+        "\\s+(?:from|in)\\s+(?:his/her|his|her|their)\\s+hand" +
+        "(?:\\s+other\\s+than\\s+an?\\s+(?<excl>Forward|Backup|Monster|Summon))?[.!]\\s+" +
+        "Your\\s+opponent\\s+discards?\\s+(?:this|that|the\\s+selected)\\s+cards?[.!]?"
+    );
+    /**
+     * Matches "Your opponent reveals their hand. You may select 1 card from their hand.
+     * If you do so, your opponent discards it and draws 1 card."
+     * (24-046R Leech Bat, 25-042C Zidane — the discard sibling of
+     * {@link #REVEAL_HAND_OPT_PICK_RFP_OPP_DRAW}, which removes the card from the game instead.)
+     */
+    static final Pattern REVEAL_HAND_OPT_PICK_DISCARD_OPP_DRAW = Pattern.compile(
+        "(?i)Your\\s+opponent\\s+reveals?\\s+(?:his/her|his|her|their)\\s+hand[.!]\\s+" +
+        "You\\s+may\\s+select\\s+1\\s+card\\s+(?:from|in)\\s+(?:his/her|his|her|their)\\s+hand[.!]\\s+" +
+        "If\\s+you\\s+do\\s+so,\\s+your\\s+opponent\\s+discards?\\s+it\\s+and\\s+draws\\s+1\\s+card[.!]?"
+    );
+    /**
      * Matches "Your opponent reveals their hand. You may select 1 card from their hand.
      * If you do so, remove it from the game and your opponent draws 1 card."
      * (Zidane-style: optional select, you remove it, opponent draws.)
@@ -1299,6 +1347,19 @@ final class ActionResolverPatterns {
     /** Matches "Put it on top of its owner's deck." Also handles "Your opponent puts it…" */
     static final Pattern FOLLOWUP_PUT_TOP_OF_DECK = Pattern.compile(
         "(?i)(?:Your\\s+opponent\\s+puts?\\s+it|Put\\s+it)\\s+on\\s+top\\s+of\\s+its\\s+owner's\\s+deck\\.?"
+    );
+    /**
+     * Matches "Put it/them on (the) top of your deck[ in any order]." — the followup of a choose
+     * that reaches into a Break Zone, where "your deck" rather than "its owner's deck" is the
+     * destination (26-077R Noctis, 3-118H Odin, 26-067H).
+     *
+     * <p>Distinct from {@link #FOLLOWUP_PUT_TOP_OF_DECK}, which returns a card already on the
+     * field to whichever player owns it.  Group {@code may} is present for the optional form
+     * ("You may put it on top of your deck").
+     */
+    static final Pattern FOLLOWUP_PUT_TOP_OF_YOUR_DECK = Pattern.compile(
+        "(?i)(?<may>You\\s+may\\s+)?Put\\s+(?:it|them)\\s+on\\s+(?:the\\s+)?top\\s+of\\s+your\\s+deck" +
+        "(?:\\s+in\\s+any\\s+order)?\\.?"
     );
     /**
      * Matches "If its power is equal to or less/more than [SourceName]'s power, put it on top of
@@ -4459,6 +4520,40 @@ final class ActionResolverPatterns {
     static final Pattern GAINS_QUOTED_ABILITIES_PERMANENT = Pattern.compile(
         "(?i)^(?<subject>.+?)\\s+gains\\s+\"(?<q1>.+?)\"(?:\\s+and\\s+\"(?<q2>.+?)\")?\\s*" +
         "\\(This\\s+effect\\s+does\\s+not\\s+end\\s+at\\s+the\\s+end\\s+of\\s+the\\s+turn\\.?\\)[.!]?$");
+    /**
+     * "[Self] gains [+N power][, Haste[, First Strike][ and Brave]] (This effect does not end at
+     * the end of the turn.)" — 8-147S Fordola's payoff.
+     *
+     * <p>The parenthetical is what separates this from {@link #SELF_POWER_BOOST}, whose otherwise
+     * identical wording ends in "until the end of the turn" and routes to the end-of-turn boost
+     * primitive.  Carries no quoted clause on purpose: a grant that also hands over a quoted
+     * ability is {@link #GAINS_QUOTED_ABILITIES_PERMANENT}'s business, and the {@code [^"]} guard
+     * on the trait run keeps this pattern from claiming half of one.
+     */
+    static final Pattern SELF_POWER_BOOST_PERMANENT = Pattern.compile(
+        "(?i)^(?<subject>[^\"]+?)\\s+gains?\\s+" +
+        "(?:\\+(?<amount>\\d+)\\s+power)?" +
+        "(?<traits>(?:\\s*,?\\s*(?:and\\s+)?(?:Haste|First\\s+Strike|Brave))*)" +
+        "\\s*[.!]?\\s*" +
+        "\\(This\\s+effect\\s+does\\s+not\\s+end\\s+at\\s+the\\s+end\\s+of\\s+the\\s+turn\\.?\\)[.!]?$");
+    /**
+     * Matches "You may remove it/them from the game" — the optional form of
+     * {@link #FOLLOWUP_REMOVE_FROM_GAME}, whose pattern is a suffix of this one and would
+     * otherwise claim it and remove the card without asking.
+     */
+    static final Pattern FOLLOWUP_MAY_REMOVE_FROM_GAME = Pattern.compile(
+        "(?i)You\\s+may\\s+remove\\s+(?:it|them)\\s+from\\s+(?:the\\s+)?game[.!]?");
+    /**
+     * Matches a sentence opening with "When/If you do so, …" — one whose effect is contingent on
+     * the step described before it.
+     *
+     * <p>Used by the compound-sentence fallback in {@code parse()}: that fallback drops sentences
+     * it cannot resolve, which is safe only while the sentences are independent. A dropped
+     * conditional means the surviving ones are the payoff of an unresolved step, and running them
+     * grants the payoff for free.
+     */
+    static final Pattern DO_SO_CONDITIONAL_SENTENCE = Pattern.compile(
+        "(?i)^(?:When|If)\\s+you\\s+do\\s+so,");
     /**
      * "Until the end of the turn, [Self] gains [+N power][, traits] and \"[quoted field ability]\"."
      * (e.g. Ace, Tifa). Applies the power/trait boost via {@link GameContext#boostSourceForward} and

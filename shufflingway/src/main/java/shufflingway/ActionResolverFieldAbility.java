@@ -41,6 +41,24 @@ final class ActionResolverFieldAbility {
         if (rest == null) return null;
         return ctx -> { first.accept(ctx); rest.accept(ctx); };
     }
+    /**
+     * Parses "[Self] gains +N power[, traits] (This effect does not end at the end of the turn.)"
+     * — 8-147S Fordola's payoff, the outlasts-the-turn twin of the {@code SELF_POWER_BOOST}
+     * followup handled inside the choose chain.
+     *
+     * <p>Rejects a match that grants neither power nor a trait, which the all-optional groups
+     * would otherwise allow for a bare "X gains (This effect …)".
+     */
+    static Consumer<GameContext> tryParseSelfPowerBoostPermanent(String text, CardData source) {
+        if (source == null) return null;
+        Matcher m = SELF_POWER_BOOST_PERMANENT.matcher(text.trim());
+        if (!m.matches()) return null;
+        if (!m.group("subject").trim().equalsIgnoreCase(source.name())) return null;
+        int amount = m.group("amount") != null ? Integer.parseInt(m.group("amount")) : 0;
+        EnumSet<CardData.Trait> traits = parseTraits(m.group("traits"));
+        if (amount == 0 && traits.isEmpty()) return null;
+        return ctx -> ctx.boostSourceForwardPermanently(source, amount, traits);
+    }
     static Consumer<GameContext> tryParseOppFwdsLoseAllAbilitiesEot(String text) {
         if (!OPP_FWDS_LOSE_ALL_ABILITIES_EOT.matcher(text).matches()) return null;
         return ctx -> ctx.oppForwardsLoseAllAbilitiesUntilEndOfTurn();

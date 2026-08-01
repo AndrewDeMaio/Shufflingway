@@ -2171,6 +2171,27 @@ final class ActionResolverChoose {
             };
         }
 
+        // --- Optional remove from game followup ---
+        // Must precede the plain remove-from-game followup, whose pattern is a suffix of this one
+        // and would remove the card without asking. Declining fizzles the effect so that an
+        // enclosing "If you do so, …" sequence correctly skips its payoff (8-147S Fordola).
+        if (FOLLOWUP_MAY_REMOVE_FROM_GAME.matcher(primaryFollowup).find()) {
+            return ctx -> {
+                ctx.logEntry(choosePrefix + " — You may Remove From Game");
+                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                        opponentOnly, selfOnly, condition, element, zone, opponentZone, bothZones,
+                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
+                if (ts.isEmpty() || !ctx.promptYouMay("Remove the chosen card from the game?")) {
+                    ctx.logEntry("  declined — nothing removed");
+                    ctx.markEffectFizzled();
+                    return;
+                }
+                sortedByIdxDesc(ts, true) .forEach(t -> ctx.removeTargetFromGame(t));
+                sortedByIdxDesc(ts, false).forEach(t -> ctx.removeTargetFromGame(t));
+                if (secondary != null) secondary.accept(ctx);
+            };
+        }
+
         // --- Remove from game followup ---
         if (FOLLOWUP_REMOVE_FROM_GAME.matcher(primaryFollowup).find()) {
             return ctx -> {
@@ -2463,6 +2484,30 @@ final class ActionResolverChoose {
                     } else {
                         ctx.logEntry("  power " + targetPower + (wantLessOrEqual ? " > " : " < ") + sp + " — condition not met, no effect");
                     }
+                }
+                if (secondary != null) secondary.accept(ctx);
+            };
+        }
+
+        // --- Put on top of your own deck followup (Break Zone salvage) ---
+        // Must precede the owner's-deck followup below only in spirit — the two phrasings are
+        // disjoint ("your deck" vs "its owner's deck") — but they are kept adjacent so the pair
+        // stays visible as one decision.
+        Matcher topOwnDeckM = FOLLOWUP_PUT_TOP_OF_YOUR_DECK.matcher(primaryFollowup);
+        if (topOwnDeckM.find()) {
+            boolean optional = topOwnDeckM.group("may") != null;
+            return ctx -> {
+                ctx.logEntry(choosePrefix + " — Put on top of your deck");
+                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
+                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
+                if (!ts.isEmpty() && optional
+                        && !ctx.promptYouMay("Put the chosen card on top of your deck?")) {
+                    ctx.logEntry("  declined — card stays in the Break Zone");
+                } else {
+                    // Descending index order: each removal shifts the Break Zone entries after it.
+                    sortedByIdxDesc(ts, true).forEach(ctx::putBreakZoneTargetOnTopOfDeck);
+                    sortedByIdxDesc(ts, false).forEach(ctx::putBreakZoneTargetOnTopOfDeck);
                 }
                 if (secondary != null) secondary.accept(ctx);
             };

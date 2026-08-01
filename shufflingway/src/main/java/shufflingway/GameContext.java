@@ -662,6 +662,18 @@ public interface GameContext {
     void boostSourceForward(CardData source, int amount, EnumSet<CardData.Trait> traits);
 
     /**
+     * Adds {@code amount} power and grants {@code traits} to {@code source} for as long as it
+     * stays on the field — the "(This effect does not end at the end of the turn.)" wording, as
+     * printed on 8-147S Fordola.  The outlasts-the-turn counterpart of
+     * {@link #boostSourceForward(CardData, EnumSet)}'s end-of-turn boost.
+     *
+     * <p>Like the end-of-turn version this is a no-op when the source is not on the field, and it
+     * respects the same opponent-side power-boost suppression.  The grant is dropped when the card
+     * leaves the field, alongside the other permanent grants.
+     */
+    void boostSourceForwardPermanently(CardData source, int amount, EnumSet<CardData.Trait> traits);
+
+    /**
      * Replaces the source card's base power with {@code power} until the end of the turn and
      * grants it {@code traits} for the same duration — the self-targeted form of
      * {@link #setTargetBasePower}.  Pass an empty set for wordings with no keyword clause
@@ -1442,6 +1454,38 @@ public interface GameContext {
     void selectFromOpponentHandAndRfp(int count);
 
     /**
+     * Reveals the ability-user's opponent's hand, then lets the ability user select {@code count}
+     * cards from it for the opponent to discard to their Break Zone.  The discard is forced but
+     * the choice is the ability user's, which is what separates this from
+     * {@link #forceOpponentDiscard(int)}.
+     *
+     * <p>{@code eligible} narrows what may be selected — "1 Forward from their hand", "1 card of
+     * cost 4 or more" — and is {@code null} when any card qualifies.  {@code eligibleDesc} names
+     * that restriction for the log and the selection prompt.  When no card in hand qualifies,
+     * nothing is discarded.
+     *
+     * <p>When P1 is the ability user, P1 is shown a dialog with the qualifying cards from P2's
+     * hand.  When P2 is the ability user, the AI picks the highest-cost qualifying card.
+     */
+    void selectFromOpponentHandAndDiscard(int count, Predicate<CardData> eligible, String eligibleDesc);
+
+    /**
+     * Reveals the ability-user's opponent's hand, then lets the ability user select up to
+     * {@code count} cards to remove from the game <em>until the end of the opponent's next
+     * turn</em>, at which point they return to their owner's hand.  The temporary removal is
+     * what separates this from {@link #selectFromOpponentHandAndRfp(int)}.
+     */
+    void selectFromOpponentHandRfpUntilEndOfOpponentTurn(int count);
+
+    /**
+     * Reveals the opponent's hand, lets the ability user optionally select 1 card; if one is
+     * selected, the opponent discards it and then draws 1 card.
+     * (24-046R Leech Bat, 25-042C Zidane — the discard sibling of
+     * {@link #revealHandOptPickRfpOpponentDraws()}.)
+     */
+    void revealHandOptPickDiscardOpponentDraws();
+
+    /**
      * Reveals the opponent's hand, lets the ability user optionally select 1 card to remove from
      * the game permanently; if a card is removed, the opponent then draws 1 card.
      * (Zidane-style: "You may select 1 card. If you do so, remove it from the game and your
@@ -1919,6 +1963,17 @@ public interface GameContext {
 
     /** Removes P2's forward at {@code idx} from the field and places it at the bottom of P2's deck. */
     void returnP2ForwardToDeckBottom(int idx);
+
+    /**
+     * Moves {@code t}, a card in a Break Zone, to the top of the ability user's deck.
+     * Mirrors {@link #addTargetToHand(ForwardTarget)}: the target names the Break Zone the card
+     * is taken from, while the destination deck is the ability user's, matching the card text
+     * this serves ("Put it on top of <em>your</em> deck").
+     *
+     * <p>Callers moving more than one card must supply the targets in descending index order —
+     * see {@code ActionResolver.sortedByIdxDesc} — since each removal shifts the ones after it.
+     */
+    void putBreakZoneTargetOnTopOfDeck(ForwardTarget t);
 
     /** Removes P1's forward at {@code idx} from the field and places it on top of P1's deck. */
     void returnP1ForwardToDeckTop(int idx);

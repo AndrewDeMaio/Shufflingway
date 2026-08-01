@@ -208,6 +208,9 @@ public class ActionResolver {
 
         // Must precede tryParseWhenYouDoSoSequence: Zidane-style text contains "If you do so"
         // which that parser would split, causing it to match first via OPPONENT_DRAW on the tail.
+        result = tryParseRevealHandOptPickDiscardOppDraw(effectText);
+        if (result != null) return result;
+
         result = tryParseRevealHandOptPickRfpOppDraw(effectText);
         if (result != null) return result;
 
@@ -605,6 +608,9 @@ public class ActionResolver {
         result = tryParseGainsQuotedAbilitiesPermanent(effectText, source);
         if (result != null) return result;
 
+        result = tryParseSelfPowerBoostPermanent(effectText, source);
+        if (result != null) return result;
+
         result = tryParseUntilEotGainsPowerTraitsAndQuoted(effectText, source);
         if (result != null) return result;
 
@@ -689,7 +695,15 @@ public class ActionResolver {
         result = tryParseStandaloneCannotBeBlocked(effectText, source);
         if (result != null) return result;
 
+        // Must precede tryParseRevealSelectHandRfp: shares its three-sentence prefix and adds the
+        // delayed return that makes the removal temporary.
+        result = tryParseRevealSelectHandRfpUntilEndOfOppTurn(effectText);
+        if (result != null) return result;
+
         result = tryParseRevealSelectHandRfp(effectText);
+        if (result != null) return result;
+
+        result = tryParseRevealSelectHandDiscard(effectText);
         if (result != null) return result;
 
         result = tryParseOpponentRandomHandRfp(effectText);
@@ -1102,7 +1116,12 @@ public class ActionResolver {
                 // ability report as handled — worse than leaving it unparsed.
                 if (isTriggeredTargetAction(trimmed)) continue;
                 Consumer<GameContext> c = parse(trimmed, source, xValue);
-                if (c != null) consumers.add(c);
+                if (c != null) { consumers.add(c); continue; }
+                // Dropping an unparsed sentence is safe while the sentences are independent, but
+                // an unresolved "When you do so, …" gates everything after it. Composing past it
+                // would grant that payoff for free — 20-078H Noctis would take +2000 power without
+                // paying the cost in the sentence before. Stop here and keep only what came first.
+                if (DO_SO_CONDITIONAL_SENTENCE.matcher(trimmed).find()) break;
             }
             if (!consumers.isEmpty()) return ctx -> consumers.forEach(c -> c.accept(ctx));
         }
@@ -1265,6 +1284,7 @@ public class ActionResolver {
         if (tryParseSelectFollowingActions(effectText, source)          != null) return "SelectFollowingActions";
         // Must precede tryParseWhenYouDoSoSequence: Zidane-style text contains "If you do so",
         // which that parser would otherwise claim. Mirrors parse().
+        if (tryParseRevealHandOptPickDiscardOppDraw(effectText) != null) return "RevealHandOptPickDiscardOppDraw";
         if (tryParseRevealHandOptPickRfpOppDraw(effectText)    != null) return "RevealHandOptPickRfpOppDraw";
         // Must precede tryParseWhenYouDoSoSequence: that parser resolves both halves
         // independently, so it would claim the pay-then-effect shape first. Mirrors parse().
@@ -1372,6 +1392,7 @@ public class ActionResolver {
         if (tryParseGainOutgoingDmgBoostUntilEot(effectText, source) != null)   return "GainOutgoingDmgBoostUntilEot";
         if (tryParseGainsQuotedFieldAbilityUntilEot(effectText, source) != null) return "GainsQuotedFieldAbilityUntilEot";
         if (tryParseGainsQuotedAbilitiesPermanent(effectText, source) != null)  return "GainsQuotedAbilitiesPermanent";
+        if (tryParseSelfPowerBoostPermanent(effectText, source) != null)        return "SelfPowerBoostPermanent";
         if (tryParseUntilEotGainsPowerTraitsAndQuoted(effectText, source) != null) return "UntilEotGainsPowerTraitsAndQuoted";
         if (tryParseDoubleOpponentIncomingDamageThisTurn(effectText) != null)   return "DoubleOpponentIncomingDamageThisTurn";
         if (tryParseAllForwardIncomingDmgIncreaseThisTurn(effectText) != null)  return "AllForwardIncomingDmgIncreaseThisTurn";
@@ -1399,7 +1420,10 @@ public class ActionResolver {
         if (tryParseOppFwdsLosePowerPerPlayCost(effectText)        != null) return "OppFwdsLosePowerPerPlayCost";
         if (tryParseStandaloneGainsCannotBeBlocked(effectText, source) != null) return "StandaloneGainsCannotBeBlocked";
         if (tryParseStandaloneCannotBeBlocked(effectText, source) != null) return "StandaloneCannotBeBlocked";
+        // Must precede RevealSelectHandRfp — see the same guard in parse().
+        if (tryParseRevealSelectHandRfpUntilEndOfOppTurn(effectText) != null) return "RevealSelectHandRfpUntilEndOfOppTurn";
         if (tryParseRevealSelectHandRfp(effectText)            != null) return "RevealSelectHandRfp";
+        if (tryParseRevealSelectHandDiscard(effectText)        != null) return "RevealSelectHandDiscard";
         if (tryParseOpponentRandomHandRfp(effectText)            != null) return "OpponentRandomHandRfp";
         if (tryParseOpponentRandomHandToBottomDeck(effectText)   != null) return "OpponentRandomHandToBottomDeck";
         if (tryParseOpponentHandRfp(effectText)               != null) return "OpponentHandRfp";
@@ -1976,6 +2000,7 @@ public class ActionResolver {
         if (tryParseGainOutgoingDmgBoostUntilEot(effectText, source) != null)   return "GainOutgoingDmgBoostUntilEot";
         if (tryParseGainsQuotedFieldAbilityUntilEot(effectText, source) != null) return "GainsQuotedFieldAbilityUntilEot";
         if (tryParseGainsQuotedAbilitiesPermanent(effectText, source) != null)  return "GainsQuotedAbilitiesPermanent";
+        if (tryParseSelfPowerBoostPermanent(effectText, source) != null)        return "SelfPowerBoostPermanent";
         if (tryParseUntilEotGainsPowerTraitsAndQuoted(effectText, source) != null) return "UntilEotGainsPowerTraitsAndQuoted";
         if (tryParseDoubleOpponentIncomingDamageThisTurn(effectText) != null)   return "DoubleOpponentIncomingDamageThisTurn";
         if (tryParseAllForwardIncomingDmgIncreaseThisTurn(effectText) != null)  return "AllForwardIncomingDmgIncreaseThisTurn";
@@ -2004,8 +2029,12 @@ public class ActionResolver {
         if (tryParseOppFwdsLosePowerPerPlayCost(effectText)        != null) return "OppFwdsLosePowerPerPlayCost";
         if (tryParseStandaloneGainsCannotBeBlocked(effectText, source) != null) return "StandaloneGainsCannotBeBlocked";
         if (tryParseStandaloneCannotBeBlocked(effectText, source) != null) return "StandaloneCannotBeBlocked";
+        if (tryParseRevealHandOptPickDiscardOppDraw(effectText) != null)    return "RevealHandOptPickDiscardOppDraw";
         if (tryParseRevealHandOptPickRfpOppDraw(effectText) != null)        return "RevealHandOptPickRfpOppDraw";
+        // Must precede RevealSelectHandRfp — see the same guard in parse().
+        if (tryParseRevealSelectHandRfpUntilEndOfOppTurn(effectText) != null) return "RevealSelectHandRfpUntilEndOfOppTurn";
         if (tryParseRevealSelectHandRfp(effectText) != null)               return "RevealSelectHandRfp";
+        if (tryParseRevealSelectHandDiscard(effectText) != null)           return "RevealSelectHandDiscard";
         if (tryParseOpponentRandomHandRfp(effectText) != null)              return "OpponentRandomHandRfp";
         if (tryParseOpponentRandomHandToBottomDeck(effectText) != null)     return "OpponentRandomHandToBottomDeck";
         if (tryParseOpponentHandRfp(effectText) != null)                   return "OpponentHandRfp";

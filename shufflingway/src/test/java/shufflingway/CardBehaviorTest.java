@@ -7748,4 +7748,392 @@ public class CardBehaviorTest {
 		assertTrue(autos.stream().anyMatch(x -> x.trigger().equals("end of opponent's turn")),
 				"a clause naming its own targets is not orphaned and must survive");
 	}
+
+	// -------------------------------------------------------------------------
+	// "Your opponent reveals their hand. Select …" — 10 cards whose text used to be
+	// claimed by the bare OPPONENT_REVEAL_HAND_PATTERN, which reveals the hand and
+	// discards everything after it.
+	// -------------------------------------------------------------------------
+
+	// 3-056H Zidane: the plain, unrestricted form. Before, only the reveal happened.
+	@Test
+	void revealHandSelectAndDiscardActuallyDiscards() {
+		GameContext ctx = mock(GameContext.class);
+		Consumer<GameContext> fn = ActionResolver.parse(
+				"Your opponent reveals his/her hand. Select 1 card from their hand. "
+				+ "Your opponent discards this card.", null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+		verify(ctx).selectFromOpponentHandAndDiscard(eq(1), isNull(), any());
+	}
+
+	// 6-044L Zidane / 5-055C Thief: the selection is restricted to a card type, so the
+	// filter must actually reject the others rather than being decorative.
+	@Test
+	void revealHandSelectAndDiscardRestrictsToNamedCardType() {
+		GameContext ctx = mock(GameContext.class);
+		Consumer<GameContext> fn = ActionResolver.parse(
+				"Your opponent reveals his/her hand. Select 1 Forward from their hand. "
+				+ "Your opponent discards this card.", null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+
+		ArgumentCaptor<Predicate<CardData>> filter = ArgumentCaptor.forClass(Predicate.class);
+		verify(ctx).selectFromOpponentHandAndDiscard(eq(1), filter.capture(), any());
+		assertTrue(filter.getValue().test(cardOfType("Forward")));
+		assertFalse(filter.getValue().test(cardOfType("Backup")));
+	}
+
+	// 5-055C Thief says "Character", which is not a card type of its own but the
+	// Forward/Backup/Monster union — everything except a Summon.
+	@Test
+	void revealHandSelectAndDiscardTreatsCharacterAsEveryNonSummon() {
+		GameContext ctx = mock(GameContext.class);
+		Consumer<GameContext> fn = ActionResolver.parse(
+				"Your opponent reveals his/her hand. Select 1 Character card from their hand. "
+				+ "Your opponent discards this card.", null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+
+		ArgumentCaptor<Predicate<CardData>> filter = ArgumentCaptor.forClass(Predicate.class);
+		verify(ctx).selectFromOpponentHandAndDiscard(eq(1), filter.capture(), any());
+		assertTrue(filter.getValue().test(cardOfType("Forward")));
+		assertTrue(filter.getValue().test(cardOfType("Backup")));
+		assertTrue(filter.getValue().test(cardOfType("Monster")));
+		assertFalse(filter.getValue().test(cardOfType("Summon")));
+	}
+
+	// 12-035C Belle restricts by cost instead of type.
+	@Test
+	void revealHandSelectAndDiscardRestrictsByCostFloor() {
+		GameContext ctx = mock(GameContext.class);
+		Consumer<GameContext> fn = ActionResolver.parse(
+				"Your opponent reveals their hand. Select 1 card of cost 4 or more in their hand. "
+				+ "Your opponent discards this card.", null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+
+		ArgumentCaptor<Predicate<CardData>> filter = ArgumentCaptor.forClass(Predicate.class);
+		verify(ctx).selectFromOpponentHandAndDiscard(eq(1), filter.capture(), any());
+		assertTrue(filter.getValue().test(cardOfCost(4)));
+		assertTrue(filter.getValue().test(cardOfCost(7)));
+		assertFalse(filter.getValue().test(cardOfCost(3)));
+	}
+
+	// 17-029L Xezat states the restriction as an exclusion, and puts it after "in their hand"
+	// rather than before, so the pattern has to accept it in that trailing position.
+	@Test
+	void revealHandSelectAndDiscardHonoursTrailingExclusion() {
+		GameContext ctx = mock(GameContext.class);
+		Consumer<GameContext> fn = ActionResolver.parse(
+				"Your opponent reveals their hand. Select 1 card in their hand other than a Backup. "
+				+ "Your opponent discards this card.", null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+
+		ArgumentCaptor<Predicate<CardData>> filter = ArgumentCaptor.forClass(Predicate.class);
+		verify(ctx).selectFromOpponentHandAndDiscard(eq(1), filter.capture(), any());
+		assertFalse(filter.getValue().test(cardOfType("Backup")));
+		assertTrue(filter.getValue().test(cardOfType("Forward")));
+	}
+
+	// 24-046R Leech Bat / 25-042C Zidane: optional pick, then discard AND draw. Must not be
+	// confused with the RFP-and-draw sibling, which removes the card from the game instead.
+	@Test
+	void revealHandOptionalPickDiscardsAndDrawsRatherThanRemovingFromGame() {
+		GameContext ctx = mock(GameContext.class);
+		Consumer<GameContext> fn = ActionResolver.parse(
+				"Your opponent reveals their hand. You may select 1 card from their hand. "
+				+ "If you do so, your opponent discards it and draws 1 card.", null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+		verify(ctx).revealHandOptPickDiscardOpponentDraws();
+		verify(ctx, never()).revealHandOptPickRfpOpponentDraws();
+	}
+
+	// 29-054R Great Malboro: the removal is temporary. The three-sentence prefix is shared with
+	// the permanent-RFP pattern, so the wrong one claiming it would silently make it permanent.
+	@Test
+	void greatMalboroRemovalIsTemporaryNotPermanent() {
+		GameContext ctx = mock(GameContext.class);
+		Consumer<GameContext> fn = ActionResolver.parse(
+				"your opponent reveals their hand. Select up to 2 cards in their hand. "
+				+ "Your opponent removes them from the game. "
+				+ "At the end of your opponent's turn, add them to their owner's hand.", null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+		verify(ctx).selectFromOpponentHandRfpUntilEndOfOpponentTurn(2);
+		verify(ctx, never()).selectFromOpponentHandAndRfp(anyInt());
+	}
+
+	// The permanent form must keep working — the new guard sits in front of it.
+	@Test
+	void revealHandSelectRfpWithoutAReturnClauseStaysPermanent() {
+		GameContext ctx = mock(GameContext.class);
+		Consumer<GameContext> fn = ActionResolver.parse(
+				"Your opponent reveals their hand. Select 1 card in their hand. "
+				+ "Your opponent removes it from the game.", null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+		verify(ctx).selectFromOpponentHandAndRfp(1);
+		verify(ctx, never()).selectFromOpponentHandRfpUntilEndOfOpponentTurn(anyInt());
+	}
+
+	// Great Malboro's delayed clause must not also be lifted out as a standalone auto ability:
+	// "add them to their owner's hand" has no antecedent once detached from the selection.
+	@Test
+	void greatMalboroParsesAsOneEntersFieldAbility() {
+		List<AutoAbility> autos = CardData.parseAutoAbilities(
+				"If you control 5 or more Backups, Great Malboro also becomes a Forward with 8000 power."
+				+ "[[br]]When Great Malboro enters the field, your opponent reveals their hand. "
+				+ "Select up to 2 cards in their hand. Your opponent removes them from the game. "
+				+ "At the end of your opponent's turn, add them to their owner's hand.");
+		assertEquals(1, autos.size(), "the delayed return must stay with its trigger");
+		assertEquals("enters the field", autos.get(0).trigger());
+	}
+
+	// -------------------------------------------------------------------------
+	// "Choose 1 … in your Break Zone. Put it on top of your deck."
+	// The choose header was recognised but this followup was not, so the whole
+	// ability resolved to a "followup not yet implemented" log line and did nothing.
+	// -------------------------------------------------------------------------
+
+	/** Stubs a single own-Break-Zone hit at index 0. */
+	private static ForwardTarget stubOwnBzHit(GameContext ctx) {
+		ForwardTarget hit = new ForwardTarget(true, 0, ForwardTarget.CardZone.BREAK_ZONE);
+		when(ctx.consumePreloadedTargets()).thenReturn(null);
+		when(ctx.selectCharactersFromBreakZone(
+				anyInt(), anyBoolean(), anyBoolean(), anyBoolean(),
+				any(), any(), anyInt(), any(), anyInt(), any(),
+				anyBoolean(), anyBoolean(), anyBoolean(),
+				any(), any(), any(), any(), anyBoolean(), any(), anyBoolean()
+		)).thenReturn(new ArrayList<>(List.of(hit)));
+		return hit;
+	}
+
+	// 26-077R Noctis. The Category filter has to reach the Break Zone selection, and all three
+	// Character types must be eligible — "Character" is not just Forwards.
+	@Test
+	void noctisPutsChosenCategoryCharacterFromBreakZoneOnTopOfDeck() {
+		GameContext ctx = mock(GameContext.class);
+		ForwardTarget hit = stubOwnBzHit(ctx);
+
+		Consumer<GameContext> fn = ActionResolver.parse(
+				"choose 1 Category XV Character in your Break Zone. Put it on top of your deck.", null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+
+		verify(ctx).selectCharactersFromBreakZone(
+				eq(1), anyBoolean(), anyBoolean(), anyBoolean(),
+				any(), any(), anyInt(), any(), anyInt(), any(),
+				eq(true), eq(true), eq(true),              // Forwards, Backups, Monsters
+				any(), any(), eq("XV"), any(), anyBoolean(), any(), anyBoolean());
+		verify(ctx).putBreakZoneTargetOnTopOfDeck(hit);
+	}
+
+	// 3-118H Odin words the same followup as optional, so it must ask before acting.
+	@Test
+	void optionalPutOnTopOfDeckIsSkippedWhenDeclined() {
+		GameContext ctx = mock(GameContext.class);
+		stubOwnBzHit(ctx);
+		when(ctx.promptYouMay(any())).thenReturn(false);
+
+		Consumer<GameContext> fn = ActionResolver.parse(
+				"choose 1 Card Name Odin in your Break Zone. You may put it on top of your deck.", null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+
+		verify(ctx).promptYouMay(any());
+		verify(ctx, never()).putBreakZoneTargetOnTopOfDeck(any());
+	}
+
+	@Test
+	void optionalPutOnTopOfDeckActsWhenAccepted() {
+		GameContext ctx = mock(GameContext.class);
+		ForwardTarget hit = stubOwnBzHit(ctx);
+		when(ctx.promptYouMay(any())).thenReturn(true);
+
+		Consumer<GameContext> fn = ActionResolver.parse(
+				"choose 1 Card Name Odin in your Break Zone. You may put it on top of your deck.", null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+
+		verify(ctx).putBreakZoneTargetOnTopOfDeck(hit);
+	}
+
+	// The mandatory form must not ask.
+	@Test
+	void mandatoryPutOnTopOfDeckDoesNotPrompt() {
+		GameContext ctx = mock(GameContext.class);
+		stubOwnBzHit(ctx);
+
+		Consumer<GameContext> fn = ActionResolver.parse(
+				"choose 1 Category XV Character in your Break Zone. Put it on top of your deck.", null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+
+		verify(ctx, never()).promptYouMay(any());
+	}
+
+	// -------------------------------------------------------------------------
+	// 8-147S Fordola: "choose 1 Backup you control. You may remove it from the game.
+	// If you do so, Fordola gains +1000 power, Haste, First Strike and Brave.
+	// (This effect does not end at the end of the turn.)"
+	// The "You may" used to be ignored (the Backup was removed unconditionally) and the
+	// payoff was dropped, because the permanent self-buff had no parser.
+	// -------------------------------------------------------------------------
+
+	private static final String FORDOLA_TEXT =
+			"choose 1 Backup you control. You may remove it from the game. If you do so, Fordola "
+			+ "gains +1000 power, Haste, First Strike and Brave. (This effect does not end at the end of the turn.)";
+
+	private static final EnumSet<CardData.Trait> FORDOLA_TRAITS =
+			EnumSet.of(CardData.Trait.HASTE, CardData.Trait.FIRST_STRIKE, CardData.Trait.BRAVE);
+
+	/** Stubs a single own-Backup hit plus the progress flag the "If you do so" wrapper reads. */
+	private static ForwardTarget stubOwnBackupHit(GameContext ctx, boolean accepts) {
+		ForwardTarget hit = new ForwardTarget(true, 0, ForwardTarget.CardZone.BACKUP);
+		when(ctx.consumePreloadedTargets()).thenReturn(null);
+		when(ctx.selectCharacters(anyInt(), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(),
+				anyInt(), any(), anyInt(), any(), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(),
+				any(), any(), anyBoolean(), any(), anyBoolean()))
+				.thenReturn(new ArrayList<>(List.of(hit)));
+		when(ctx.promptYouMay(any())).thenReturn(accepts);
+		when(ctx.effectMadeProgress()).thenReturn(accepts);
+		return hit;
+	}
+
+	@Test
+	void fordolaRemovesTheBackupAndTakesThePermanentBuffWhenAccepted() {
+		CardData fordola = makeForward("Fordola", "Lightning", 4, 8000);
+		GameContext ctx = mock(GameContext.class);
+		ForwardTarget hit = stubOwnBackupHit(ctx, true);
+
+		Consumer<GameContext> fn = ActionResolver.parse(FORDOLA_TEXT, fordola);
+		assertNotNull(fn);
+		fn.accept(ctx);
+
+		verify(ctx).removeTargetFromGame(hit);
+		verify(ctx).boostSourceForwardPermanently(fordola, 1000, FORDOLA_TRAITS);
+		// Permanent, not the end-of-turn primitive.
+		verify(ctx, never()).boostSourceForward(any(), anyInt(), any());
+	}
+
+	@Test
+	void fordolaRemovesNothingAndSkipsTheBuffWhenDeclined() {
+		CardData fordola = makeForward("Fordola", "Lightning", 4, 8000);
+		GameContext ctx = mock(GameContext.class);
+		stubOwnBackupHit(ctx, false);
+
+		Consumer<GameContext> fn = ActionResolver.parse(FORDOLA_TEXT, fordola);
+		assertNotNull(fn);
+		fn.accept(ctx);
+
+		verify(ctx).promptYouMay(any());
+		verify(ctx).markEffectFizzled();
+		verify(ctx, never()).removeTargetFromGame(any());
+		verify(ctx, never()).boostSourceForwardPermanently(any(), anyInt(), any());
+	}
+
+	// A "Remove it from the game" with no "You may" must still act without asking.
+	@Test
+	void mandatoryRemoveFromGameFollowupDoesNotPrompt() {
+		GameContext ctx = mock(GameContext.class);
+		ForwardTarget hit = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+		when(ctx.consumePreloadedTargets()).thenReturn(null);
+		when(ctx.selectCharacters(anyInt(), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(),
+				anyInt(), any(), anyInt(), any(), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(),
+				any(), any(), anyBoolean(), any(), anyBoolean()))
+				.thenReturn(new ArrayList<>(List.of(hit)));
+
+		Consumer<GameContext> fn = ActionResolver.parse(
+				"choose 1 Forward opponent controls. Remove it from the game.", null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+
+		verify(ctx).removeTargetFromGame(hit);
+		verify(ctx, never()).promptYouMay(any());
+	}
+
+	// The parenthetical is the only thing separating the permanent buff from the
+	// otherwise identically worded end-of-turn one.
+	@Test
+	void selfBuffRoutesToPermanentOnlyWithTheParenthetical() {
+		CardData fordola = makeForward("Fordola", "Lightning", 4, 8000);
+
+		GameContext perm = mock(GameContext.class);
+		Consumer<GameContext> permFn = ActionResolver.parse(
+				"Fordola gains +1000 power, Haste, First Strike and Brave. "
+				+ "(This effect does not end at the end of the turn.)", fordola);
+		assertNotNull(permFn);
+		permFn.accept(perm);
+		verify(perm).boostSourceForwardPermanently(fordola, 1000, FORDOLA_TRAITS);
+
+		// Same wording ending "until the end of the turn" is a different effect and must not
+		// reach the permanent primitive.
+		GameContext eot = mock(GameContext.class);
+		Consumer<GameContext> eotFn = ActionResolver.parse(
+				"Fordola gains +1000 power, Haste, First Strike and Brave until the end of the turn.", fordola);
+		if (eotFn != null) {
+			eotFn.accept(eot);
+			verify(eot, never()).boostSourceForwardPermanently(any(), anyInt(), any());
+		}
+	}
+
+	// 20-078H Noctis: "put 1 Character you control into the Break Zone. When you do so, play
+	// Noctis from the Break Zone onto the field dull. Noctis gains +2000 power. (…)"
+	// Only the last sentence parses. The compound-sentence fallback drops what it cannot resolve,
+	// which would hand Noctis the buff without paying the cost that gates it.
+	@Test
+	void compoundFallbackStopsAtAnUnresolvedDoSoConditional() {
+		CardData noctis = makeForward("Noctis", "Light", 3, 7000);
+		GameContext ctx = mock(GameContext.class);
+
+		Consumer<GameContext> fn = ActionResolver.parse(
+				"put 1 Character you control into the Break Zone. "
+				+ "When you do so, play Noctis from the Break Zone onto the field dull. "
+				+ "Noctis gains +2000 power. (This effect does not end at the end of the turn.)", noctis);
+
+		// Better unparsed than silently granting the payoff of a step that never ran.
+		if (fn != null) {
+			fn.accept(ctx);
+			verify(ctx, never()).boostSourceForwardPermanently(any(), anyInt(), any());
+		}
+	}
+
+	// Sentences before the conditional are still composed — the guard truncates, it does not
+	// discard the whole ability.
+	@Test
+	void compoundFallbackKeepsSentencesBeforeTheConditional() {
+		CardData firion = makeForward("Firion", "Fire", 3, 7000);
+		GameContext ctx = mock(GameContext.class);
+
+		Consumer<GameContext> fn = ActionResolver.parse(
+				"Draw 1 card. When you do so, some effect that does not parse at all.", firion);
+		assertNotNull(fn, "the resolvable leading sentence must still fire");
+		fn.accept(ctx);
+		verify(ctx).drawCards(1);
+	}
+
+	// The permanent buff belongs to the source card only — a different card's name must not match.
+	@Test
+	void permanentSelfBuffRejectsAnotherCardsName() {
+		CardData other = makeForward("Vincent", "Dark", 5, 9000);
+		assertNull(ActionResolver.parse(
+				"Fordola gains +1000 power, Haste, First Strike and Brave. "
+				+ "(This effect does not end at the end of the turn.)", other));
+	}
+
+	/** A bare hand card carrying only the two fields the reveal-hand filters read. */
+	private static CardData handCard(String type, int cost) {
+		return new CardData(null, "X", "Fire", cost, 7000, type, false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, false,
+				null, null, null, "");
+	}
+
+	private static CardData cardOfType(String type) { return handCard(type, 3); }
+
+	private static CardData cardOfCost(int cost)    { return handCard("Forward", cost); }
 }

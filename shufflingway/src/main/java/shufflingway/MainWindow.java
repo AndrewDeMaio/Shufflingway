@@ -278,6 +278,16 @@ public class MainWindow {
 	final Map<CardData, List<AutoAbility>> grantedAutoAbilities = new IdentityHashMap<>();
 	/** Cards granted "can attack twice in the same turn" by an effect that outlasts the turn. */
 	final Set<CardData> permanentCanAttackTwice = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+	/**
+	 * Power added by an effect that outlasts the turn, and so is not zeroed by the end phase the
+	 * way {@link #p1ForwardPowerBoost} is. Keyed by card identity because the boost belongs to the
+	 * instance on the field, not to every copy of the card.
+	 */
+	final Map<CardData, Integer> permanentPowerBoost = new IdentityHashMap<>();
+	/** Traits granted by an effect that outlasts the turn — the counterpart of {@link #p1ForwardTempTraits}. */
+	final Map<CardData, EnumSet<CardData.Trait>> permanentTraits = new IdentityHashMap<>();
+	/** Shared empty lookup default, so the trait reads do not allocate an EnumSet per call. */
+	private static final EnumSet<CardData.Trait> NO_TRAITS = EnumSet.noneOf(CardData.Trait.class);
 	/** Forwards restricted from blocking until the end of their owner's turn (survives one end-phase). */
 	final Set<Integer> p1ForwardCannotBlockPersistent  = new HashSet<>();
 	final Set<Integer> p2ForwardCannotBlockPersistent  = new HashSet<>();
@@ -1478,6 +1488,8 @@ public class MainWindow {
 		exBurstSuppressingSources.clear();
 		playerDamageSource = null;
 		basePowerOverrides.clear();
+		permanentPowerBoost.clear();
+		permanentTraits.clear();
 		bzPlayableP1.clear();
 		bzPlayableP2.clear();
 		bzForwardFaP1.clear();
@@ -4490,6 +4502,7 @@ public class MainWindow {
 		CardData card = p1ForwardCards.get(idx);
 		int base = basePowerOverrides.getOrDefault(card, top != null ? top.power() : card.power());
 		return base + p1ForwardPowerBoost.get(idx) - p1ForwardPowerReduction.get(idx)
+				+ permanentPowerBoost.getOrDefault(card, 0)
 				+ computeConditionalBoostForTarget(card, true);
 	}
 
@@ -4497,6 +4510,7 @@ public class MainWindow {
 		CardData card = p2ForwardCards.get(idx);
 		return basePowerOverrides.getOrDefault(card, card.power())
 				+ p2ForwardPowerBoost.get(idx) - p2ForwardPowerReduction.get(idx)
+				+ permanentPowerBoost.getOrDefault(card, 0)
 				+ computeConditionalBoostForTarget(card, false);
 	}
 
@@ -4506,6 +4520,7 @@ public class MainWindow {
 		if (lostAbilitiesCards.contains(card)) return false;
 		boolean has = card.hasTrait(trait)
 		           || p1ForwardTempTraits.get(idx).contains(trait)
+		           || permanentTraits.getOrDefault(card, NO_TRAITS).contains(trait)
 		           || fieldGrantCalculator.computeConditionalTraitsForTarget(card, true).contains(trait);
 		return has && !(trait == CardData.Trait.HASTE && fieldGrantCalculator.isHasteSuppressedGlobally());
 	}
@@ -4516,6 +4531,7 @@ public class MainWindow {
 		if (lostAbilitiesCards.contains(card)) return false;
 		boolean has = card.hasTrait(trait)
 		           || p2ForwardTempTraits.get(idx).contains(trait)
+		           || permanentTraits.getOrDefault(card, NO_TRAITS).contains(trait)
 		           || fieldGrantCalculator.computeConditionalTraitsForTarget(card, false).contains(trait);
 		return has && !(trait == CardData.Trait.HASTE && fieldGrantCalculator.isHasteSuppressedGlobally());
 	}
@@ -5141,6 +5157,24 @@ public class MainWindow {
 			if (rfpIsP1) { refreshP1HandLabel(); refreshP1WarpZoneUI(); }
 			else          { refreshP2HandCountLabel(); }
 		});
+	}
+
+	/**
+	 * Shows {@code choices} — already narrowed by the caller to the cards that may legally be
+	 * picked — and lets P1 select {@code count} of them.  Returns the selected cards so the
+	 * caller can apply whatever effect the ability calls for; this method moves nothing itself.
+	 * {@code verbPhrase} and {@code buttonLabel} word the dialog (see
+	 * {@link HandPickDialog#showHandSelect}).
+	 */
+	List<CardData> showHandSelectionDialog(List<CardData> choices, int count,
+	                                        String verbPhrase, String buttonLabel) {
+		int mustSelect = Math.min(count, choices.size());
+		if (mustSelect == 0) return List.of();
+		List<CardData> picked = new ArrayList<>();
+		HandPickDialog.showHandSelect(frame, choices, mustSelect, verbPhrase, buttonLabel,
+				this::showZoomAt, this::hideZoom,
+				selected -> { for (int ri : selected) if (ri < choices.size()) picked.add(choices.get(ri)); });
+		return picked;
 	}
 
 	/**
@@ -9104,6 +9138,8 @@ public class MainWindow {
 	void clearPermanentGrants(CardData card) {
 		grantedAutoAbilities.remove(card);
 		permanentCanAttackTwice.remove(card);
+		permanentPowerBoost.remove(card);
+		permanentTraits.remove(card);
 	}
 
 	/** True when {@code card} may attack twice — printed, granted for the turn, or granted for good. */

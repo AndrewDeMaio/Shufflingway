@@ -3769,6 +3769,16 @@ final class GameContextImpl implements GameContext {
 				if (isP1) mw.refreshP1HandLabel(); else mw.refreshP2HandCountLabel();
 			}
 
+			@Override public void putBreakZoneTargetOnTopOfDeck(ForwardTarget t) {
+				List<CardData> bz = t.isP1() ? mw.gameState.getP1BreakZone() : mw.gameState.getP2BreakZone();
+				if (t.idx() < 0 || t.idx() >= bz.size()) return;
+				CardData card = bz.remove(t.idx());
+				(isP1 ? mw.gameState.getP1MainDeck() : mw.gameState.getP2MainDeck()).addFirst(card);
+				logEntry((isP1 ? "" : "[P2] ") + card.name() + " → Break Zone to top of deck");
+				if (t.isP1()) mw.refreshP1BreakLabel(); else mw.refreshP2BreakLabel();
+				if (isP1) mw.refreshP1DeckLabel(); else mw.refreshP2DeckLabel();
+			}
+
 			@Override public CardData p1BreakZoneCard(int idx) {
 				List<CardData> bz = mw.gameState.getP1BreakZone();
 				return (idx >= 0 && idx < bz.size()) ? bz.get(idx) : null;
@@ -3912,6 +3922,29 @@ final class GameContextImpl implements GameContext {
 						if (isP1) mw.refreshP1ForwardSlot(i); else mw.refreshP2ForwardSlot(i);
 						return;
 					}
+				}
+			}
+
+			@Override public void boostSourceForwardPermanently(CardData source, int amount,
+					EnumSet<CardData.Trait> traits) {
+				List<CardData> fwds = isP1 ? mw.p1ForwardCards : mw.p2ForwardCards;
+				for (int i = 0; i < fwds.size(); i++) {
+					CardData card = fwds.get(i);
+					if (!card.name().equals(source.name())) continue;
+					if (amount > 0 && (mw.oppForwardPowerBoostSuppressedFor(isP1) || mw.oppForwardSelfBoostSuppressedFor(isP1))) {
+						logEntry(source.name() + " — power boost suppressed (opponent's field ability)");
+						return;
+					}
+					if (amount > 0) mw.permanentPowerBoost.merge(card, amount, Integer::sum);
+					if (!traits.isEmpty())
+						mw.permanentTraits.computeIfAbsent(card, k -> EnumSet.noneOf(CardData.Trait.class)).addAll(traits);
+					logEntry(source.name() + " gains "
+							+ (amount > 0 ? "+" + amount + " power" : "")
+							+ (amount > 0 && !traits.isEmpty() ? " and " : "")
+							+ (traits.isEmpty() ? "" : traits.toString())
+							+ " (does not end at end of turn)");
+					if (isP1) mw.refreshP1ForwardSlot(i); else mw.refreshP2ForwardSlot(i);
+					return;
 				}
 			}
 
@@ -4482,6 +4515,103 @@ final class GameContextImpl implements GameContext {
 					mw.refreshP1HandLabel();
 					mw.refreshP1WarpZoneUI();
 				}
+			}
+
+			@Override public void selectFromOpponentHandAndDiscard(int count, Predicate<CardData> eligible, String eligibleDesc) {
+				List<CardData> hand = isP1 ? mw.gameState.getP2Hand() : mw.gameState.getP1Hand();
+				List<CardData> choices = new ArrayList<>();
+				for (CardData c : hand) if (eligible == null || eligible.test(c)) choices.add(c);
+				if (choices.isEmpty()) {
+					logEntry("Opponent's hand holds no " + eligibleDesc + " — nothing discarded.");
+					return;
+				}
+				List<CardData> picked;
+				if (isP1) {
+					picked = mw.showHandSelectionDialog(choices, count, "discard", "Discard");
+				} else {
+					// AI picks the highest-cost qualifying cards from P1's hand.
+					choices.sort((x, y) -> y.cost() - x.cost());
+					picked = new ArrayList<>(choices.subList(0, Math.min(count, choices.size())));
+				}
+				for (CardData d : picked) {
+					int idx = indexByIdentity(hand, d);
+					if (idx < 0) continue;
+					// playerBreakFromHand takes whose hand, which is the opponent's — not the user's.
+					if (mw.playerBreakFromHand(!isP1, idx) == null) continue;
+					logEntry("[Opponent] Discards " + d.name() + " (selected from revealed hand)");
+					mw.turn(!isP1).discardedByEffectThisTurn = true;
+					mw.turn(isP1).causedOpponentDiscardThisTurn = true;
+				}
+				if (isP1) { mw.refreshP2HandCountLabel(); mw.refreshP2BreakLabel(); }
+				else      { mw.refreshP1HandLabel();      mw.refreshP1BreakLabel(); }
+			}
+
+			@Override public void selectFromOpponentHandRfpUntilEndOfOpponentTurn(int count) {
+				List<CardData> hand = isP1 ? mw.gameState.getP2Hand() : mw.gameState.getP1Hand();
+				if (hand.isEmpty()) { logEntry("Opponent's hand is empty."); return; }
+				List<CardData> picked;
+				if (isP1) {
+					picked = mw.showHandSelectionDialog(new ArrayList<>(hand), count,
+							"remove from the game", "Remove From Game");
+				} else {
+					List<CardData> byCost = new ArrayList<>(hand);
+					byCost.sort((x, y) -> y.cost() - x.cost());
+					picked = new ArrayList<>(byCost.subList(0, Math.min(count, byCost.size())));
+				}
+				List<CardData> removed = new ArrayList<>();
+				for (CardData d : picked) {
+					int idx = indexByIdentity(hand, d);
+					if (idx < 0) continue;
+					hand.remove(idx);
+					mw.gameState.addToPermanentRfp(d);
+					removed.add(d);
+					logEntry("[Opponent] " + d.name() + " removed from game until the end of their turn");
+				}
+				if (isP1) { mw.refreshP2HandCountLabel(); mw.refreshP2WarpZoneUI(); }
+				else      { mw.refreshP1HandLabel();      mw.refreshP1WarpZoneUI(); }
+				if (removed.isEmpty()) return;
+				addEndOfOpponentTurnEffect(ctx -> {
+					for (CardData d : removed) {
+						if (!mw.gameState.removeFromPermanentRfp(d)) continue;
+						Boolean ownerIsP1 = mw.gameState.getIdentity().get(d);
+						if (ownerIsP1 == null) continue;
+						(ownerIsP1 ? mw.gameState.getP1Hand() : mw.gameState.getP2Hand()).add(d);
+						ctx.logEntry(d.name() + " returns to its owner's hand");
+					}
+					mw.refreshP1HandLabel();
+					mw.refreshP2HandCountLabel();
+					mw.refreshP1WarpZoneUI();
+					mw.refreshP2WarpZoneUI();
+				});
+			}
+
+			@Override public void revealHandOptPickDiscardOpponentDraws() {
+				List<CardData> hand = isP1 ? mw.gameState.getP2Hand() : mw.gameState.getP1Hand();
+				if (hand.isEmpty()) { logEntry("Opponent's hand is empty."); return; }
+				CardData picked;
+				if (isP1) {
+					picked = mw.showRevealHandOptPickDialog(hand);
+				} else {
+					int best = 0;
+					for (int j = 1; j < hand.size(); j++)
+						if (hand.get(j).cost() > hand.get(best).cost()) best = j;
+					picked = hand.get(best);
+				}
+				if (picked == null) return;
+				int idx = indexByIdentity(hand, picked);
+				if (idx < 0 || mw.playerBreakFromHand(!isP1, idx) == null) return;
+				logEntry("[Opponent] Discards " + picked.name() + " (selected from revealed hand)");
+				mw.turn(!isP1).discardedByEffectThisTurn = true;
+				mw.turn(isP1).causedOpponentDiscardThisTurn = true;
+				if (isP1) { mw.refreshP2HandCountLabel(); mw.refreshP2BreakLabel(); }
+				else      { mw.refreshP1HandLabel();      mw.refreshP1BreakLabel(); }
+				drawCardsForOpponent(1);
+			}
+
+			/** Index of {@code card} in {@code list} by identity, or -1. Hands can hold duplicates. */
+			private int indexByIdentity(List<CardData> list, CardData card) {
+				for (int i = 0; i < list.size(); i++) if (list.get(i) == card) return i;
+				return -1;
 			}
 
 			@Override public void revealHandOptPickRfpOpponentDraws() {

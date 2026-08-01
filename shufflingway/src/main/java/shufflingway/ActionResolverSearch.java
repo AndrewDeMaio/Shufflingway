@@ -7,6 +7,7 @@ import static shufflingway.ActionResolver.*;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -79,6 +80,70 @@ final class ActionResolverSearch {
         return ctx -> {
             ctx.logEntry("Effect: Opponent reveals hand — select " + count + " to remove from game");
             ctx.selectFromOpponentHandAndRfp(count);
+        };
+    }
+    /**
+     * Parses "Your opponent reveals their hand. Select up to N card(s) in their hand.
+     * Your opponent removes them from the game. At the end of your opponent's turn, add them
+     * to their owner's hand." (29-054R Great Malboro).
+     *
+     * <p>Must precede {@link #tryParseRevealSelectHandRfp}: the two share a prefix and that one
+     * would claim the text, dropping the delayed return and making the removal permanent.
+     */
+    static Consumer<GameContext> tryParseRevealSelectHandRfpUntilEndOfOppTurn(String text) {
+        Matcher m = REVEAL_SELECT_HAND_RFP_UNTIL_END_OF_OPP_TURN.matcher(text);
+        if (!m.find()) return null;
+        int count = Integer.parseInt(m.group("count"));
+        return ctx -> {
+            ctx.logEntry("Effect: Opponent reveals hand — select up to " + count
+                    + " to remove from game until the end of their turn");
+            ctx.selectFromOpponentHandRfpUntilEndOfOpponentTurn(count);
+        };
+    }
+    /**
+     * Parses "Your opponent reveals their hand. Select N [restriction] card(s) from their hand.
+     * Your opponent discards this card." — the discard sibling of
+     * {@link #tryParseRevealSelectHandRfp}.
+     */
+    static Consumer<GameContext> tryParseRevealSelectHandDiscard(String text) {
+        Matcher m = REVEAL_SELECT_HAND_DISCARD.matcher(text);
+        if (!m.find()) return null;
+        int count = Integer.parseInt(m.group("count"));
+        String cardType = m.group("cardtype");
+        String costStr  = m.group("cost");
+        String excluded = m.group("excl");
+
+        Predicate<CardData> eligible = null;
+        String desc = "card";
+        if (cardType != null) {
+            String type = cardType.replaceFirst("(?i)s$", "");
+            // "Character" is not a card type of its own — it is the Forward/Backup/Monster union.
+            eligible = type.equalsIgnoreCase("Character")
+                    ? c -> !"Summon".equalsIgnoreCase(c.type())
+                    : c -> type.equalsIgnoreCase(c.type());
+            desc = type;
+        } else if (costStr != null) {
+            int minCost = Integer.parseInt(costStr);
+            eligible = c -> c.cost() >= minCost;
+            desc = "card of cost " + minCost + " or more";
+        } else if (excluded != null) {
+            eligible = c -> !excluded.equalsIgnoreCase(c.type());
+            desc = "card other than a " + excluded;
+        }
+        final Predicate<CardData> filter = eligible;
+        final String filterDesc = desc;
+        return ctx -> {
+            ctx.logEntry("Effect: Opponent reveals hand — select " + count + " " + filterDesc
+                    + " to discard");
+            ctx.selectFromOpponentHandAndDiscard(count, filter, filterDesc);
+        };
+    }
+    /** Parses "Opponent reveals hand. You may select 1 → opponent discards it and draws 1." */
+    static Consumer<GameContext> tryParseRevealHandOptPickDiscardOppDraw(String text) {
+        if (!REVEAL_HAND_OPT_PICK_DISCARD_OPP_DRAW.matcher(text).find()) return null;
+        return ctx -> {
+            ctx.logEntry("Effect: Opponent reveals hand — optionally select 1 to discard, opponent draws 1");
+            ctx.revealHandOptPickDiscardOpponentDraws();
         };
     }
     /** Parses "Opponent reveals hand. You may select 1 → remove from game, opponent draws 1." */
