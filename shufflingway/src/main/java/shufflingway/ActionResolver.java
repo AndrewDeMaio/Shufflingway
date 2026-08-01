@@ -1309,7 +1309,10 @@ public class ActionResolver {
         if (tryParseChooseSummonInBzMaxCostFreeCastRfg(effectText)    != null) return "ChooseSummonInBzMaxCostFreeCastRfg";
         if (tryParseCostReductionThisTurn(effectText)                 != null) return "CostReductionThisTurn";
         if (tryParsePlayCostReductionThisTurn(effectText)        != null) return "PlayCostReductionThisTurn";
-        if (CardData.isSelfCostModifierText(effectText))                  return "SelfCostModifier";
+        // Strict form on purpose: genuine self-cost text is a card-level property stripped in
+        // parseFieldAbilities, so it never reaches here as an ability. The loose predicate only
+        // ever fired on abilities that merely end in a cost-reduction clause.
+        if (CardData.yieldsSelfCostModifier(effectText))                  return "SelfCostModifier";
         if (CardData.FIELD_OPP_CAST_COST_INCREASE_PATTERN.matcher(effectText).find()) return "OppCastCostIncrease";
         if (AutoAbilityTriggers.FA_DISCARD_JOB_TO_CAST.matcher(effectText).find()) return "DiscardJobToCast";
         if (tryParseExtraTurnThenLose(effectText)               != null) return "ExtraTurnThenLose";
@@ -1502,7 +1505,10 @@ public class ActionResolver {
         if (tryParseChooseFromOppBzCastable(effectText)              != null) return "ChooseFromOppBzCastable";
         if (tryParseChooseSummonsFromBzCastable(effectText)          != null) return "ChooseSummonsFromBzCastable";
         if (tryParseChooseSummonInBzMaxCostFreeCastRfg(effectText)   != null) return "ChooseSummonInBzMaxCostFreeCastRfg";
-        if (CardData.isSelfCostModifierText(effectText))                        return "SelfCostModifier";
+        // Strict form: see the matching guard in matchedPatternName(). Sitting this early in the
+        // chain, the loose predicate claimed the description of any ability whose text ends in a
+        // cost-reduction clause, masking the real one.
+        if (CardData.yieldsSelfCostModifier(effectText))                        return "SelfCostModifier";
         if (CardData.FIELD_OPP_CAST_COST_INCREASE_PATTERN.matcher(effectText).find()) return "OppCastCostIncrease";
         if (AutoAbilityTriggers.FA_DISCARD_JOB_TO_CAST.matcher(effectText).find()) return "DiscardJobToCast";
         if (CardData.YOUR_TURN_ONLY_PATTERN.matcher(effectText).matches())  return "YourTurnOnly";
@@ -1925,6 +1931,13 @@ public class ActionResolver {
         if (CardData.HAS_ALL_ELEMENTS_PATTERN.matcher(effectText.trim()).matches()) return "HasAllElements";
         if (tryParseMultiPlayGrant(effectText) != null)                     return "MultiPlayGrant";
         if (tryParseLightDarkDiscardCpGrant(effectText) != null)            return "LightDarkDiscardCpGrant";
+        // Must follow every pattern above: a trailing "during this turn, the cost required to cast
+        // your next X is reduced by N" clause rides along with a primary effect on many cards, so
+        // placing these earlier claims descriptions belonging to SearchDeck, ChooseCharacter and
+        // the RemoveFromGame family. Until the self-cost guard above was tightened it matched the
+        // same texts and stood in for these two, which is why they were never needed here before.
+        if (tryParseCostReductionThisTurn(effectText)                != null) return "CostReductionThisTurn";
+        if (tryParsePlayCostReductionThisTurn(effectText)            != null) return "PlayCostReductionThisTurn";
         return null;
     }
 

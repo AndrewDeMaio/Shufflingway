@@ -5809,6 +5809,23 @@ public record CardData(
     }
 
     /**
+     * Returns true if {@code seg} actually yields a self-cost modifier — that is, if
+     * {@link #parseSelfCostModifiers} builds one from it.
+     *
+     * <p>Prefer this over {@link #isSelfCostModifierText} wherever a true answer is taken to mean
+     * "handled by the self-cost system, so no other handler need claim it". That predicate only
+     * asks whether {@code SELF_COST_MAIN} matches <em>somewhere</em> in the segment, via
+     * {@code find()}, so any larger ability ending in a cost-reduction clause trips it — "you may
+     * cast 1 Summon from your hand. The cost required to cast <em>it</em> is reduced by 1" matches
+     * with the name group capturing the pronoun. {@code parseSelfCostModifiers} correctly declines
+     * to build a modifier from that, so the loose predicate reports a card as handled while nothing
+     * handles it.
+     */
+    public static boolean yieldsSelfCostModifier(String seg) {
+        return !parseSelfCostModifiers(seg).isEmpty();
+    }
+
+    /**
      * Parses self-referential cost modifiers from a card's own text.
      * These adjust the card's own play/cast cost based on game state at the time of play.
      */

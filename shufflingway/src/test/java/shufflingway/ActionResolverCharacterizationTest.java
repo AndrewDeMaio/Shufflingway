@@ -7,7 +7,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 
@@ -27,6 +29,23 @@ import org.junit.jupiter.api.Test;
  * description — the three observable outputs — including thrown exceptions, so current
  * failure behaviour is pinned too.
  *
+ * <h2>Two assertions, not one</h2>
+ *
+ * <p>The three columns are not equally stable, and collapsing them into a single equality check
+ * made the test useless during the ongoing work to close the naming gaps: every intended fix
+ * produced a diff, so accepting a regeneration meant eyeballing hundreds of lines and hoping.
+ * They are therefore checked separately:
+ *
+ * <ul>
+ *   <li><b>Parse outcome is invariant.</b> Naming work only edits {@code matchedPatternName()}
+ *       and {@code fullDescription()}, neither of which {@code parse()} consults, so this column
+ *       cannot legitimately move. Any change here is a regression and fails on its own terms.</li>
+ *   <li><b>Name and description may churn.</b> Diffs are classified as FILLED (null to a value,
+ *       what closing a gap looks like), LOST (a value to null, always a regression) or CHANGED
+ *       (one value to another, usually an ordering mistake where a new guard stole a name from
+ *       an earlier pattern). A regeneration is safe to accept when every diff is FILLED.</li>
+ * </ul>
+ *
  * <p>Regenerate deliberately, after reviewing the diff, with:
  * <pre>  mvn test -Dtest=ActionResolverCharacterizationTest -Dcharacterization.regenerate=true</pre>
  *
@@ -42,6 +61,8 @@ public class ActionResolverCharacterizationTest {
 			Path.of("target", "actionresolver-characterization.actual.txt");
 
 	private static final int MAX_REPORTED_DIFFS = 25;
+
+	private static final String NULL = "(null)";
 
 	@Test
 	void resolverBehaviourMatchesGoldenFile() throws Exception {
@@ -67,8 +88,17 @@ public class ActionResolverCharacterizationTest {
 
 		Files.createDirectories(ACTUAL.getParent());
 		Files.write(ACTUAL, actual, StandardCharsets.UTF_8);
-		fail(describeDiff(expected, actual));
+
+		Map<String, Rec> before = index(expected);
+		Map<String, Rec> after = index(actual);
+
+		String parseDiff = describeParseOutcomeDiff(before, after);
+		if (parseDiff != null) fail(parseDiff);
+
+		fail(describeNamingDiff(before, after));
 	}
+
+	// ---------------------------------------------------------------- recording
 
 	/** One line per ability, plus a leading header so a truncated file is obvious. */
 	private static List<String> record(List<CardCorpus.Entry> corpus) {
@@ -130,7 +160,7 @@ public class ActionResolverCharacterizationTest {
 	private static String call(ThrowingSupplier body) {
 		try {
 			String v = body.get();
-			return v == null ? "(null)" : v;
+			return v == null ? NULL : v;
 		} catch (Exception | StackOverflowError e) {
 			return "!!" + e.getClass().getSimpleName();
 		}
@@ -138,32 +168,106 @@ public class ActionResolverCharacterizationTest {
 
 	/** Collapses whitespace so every record stays on one tab-separated line. */
 	private static String norm(String s) {
-		if (s == null) return "(null)";
+		if (s == null) return NULL;
 		String v = s.replaceAll("\\s+", " ").trim();
 		return v.isEmpty() ? "(empty)" : v;
 	}
 
-	private static String describeDiff(List<String> expected, List<String> actual) {
-		StringBuilder sb = new StringBuilder();
-		sb.append("ActionResolver behaviour changed against ").append(GOLDEN).append('\n');
-		sb.append("  expected ").append(expected.size())
-		  .append(" records, actual ").append(actual.size()).append('\n');
-		sb.append("  full output written to ").append(ACTUAL).append('\n');
+	// ---------------------------------------------------------------- diffing
 
-		int shown = 0;
-		for (int i = 0; i < Math.max(expected.size(), actual.size()); i++) {
-			String e = i < expected.size() ? expected.get(i) : "(missing)";
-			String a = i < actual.size() ? actual.get(i) : "(missing)";
-			if (e.equals(a)) continue;
-			if (shown++ >= MAX_REPORTED_DIFFS) {
-				sb.append("  ... further differences suppressed\n");
-				break;
-			}
-			sb.append("  line ").append(i + 1).append('\n')
-			  .append("    expected: ").append(e).append('\n')
-			  .append("    actual  : ").append(a).append('\n');
+	/** One recorded ability, keyed by serial and slot so records match up across a reordering. */
+	private record Rec(String key, String parsed, String name, String desc) {}
+
+	private static Map<String, Rec> index(List<String> lines) {
+		Map<String, Rec> out = new LinkedHashMap<>();
+		for (String l : lines) {
+			if (l.startsWith("#")) continue;
+			String[] f = l.split("\t", -1);
+			if (f.length < 5) continue;
+			String key = f[0] + "\t" + f[1];
+			out.put(key, new Rec(key, f[2], f[3], f[4]));
 		}
+		return out;
+	}
+
+	/**
+	 * Fails if the parse-outcome column moved. Naming work edits only {@code matchedPatternName()}
+	 * and {@code fullDescription()}, so this column is invariant under it — a diff here means a
+	 * real behaviour change and is reported before any naming churn, which would otherwise bury it.
+	 */
+	private static String describeParseOutcomeDiff(Map<String, Rec> before, Map<String, Rec> after) {
+		List<String> moved = new ArrayList<>();
+		for (Rec e : before.values()) {
+			Rec a = after.get(e.key());
+			if (a == null) moved.add("  " + e.key() + "\tRECORD DISAPPEARED (was " + e.parsed() + ")");
+			else if (!e.parsed().equals(a.parsed()))
+				moved.add("  " + e.key() + "\t" + e.parsed() + " -> " + a.parsed());
+		}
+		for (Rec a : after.values()) {
+			if (!before.containsKey(a.key()))
+				moved.add("  " + a.key() + "\tRECORD APPEARED (" + a.parsed() + ")");
+		}
+		if (moved.isEmpty()) return null;
+
+		StringBuilder sb = new StringBuilder();
+		sb.append("PARSE OUTCOME CHANGED — this is a regression, not a naming fix.\n");
+		sb.append("  ").append(moved.size()).append(" record(s) changed parse outcome.\n");
+		sb.append("  Only matchedPatternName() and fullDescription() should be edited by naming\n");
+		sb.append("  work, and parse() consults neither. Fix this before regenerating ")
+		  .append(GOLDEN).append(".\n");
+		sb.append("  full output written to ").append(ACTUAL).append('\n');
+		moved.stream().limit(MAX_REPORTED_DIFFS).forEach(m -> sb.append(m).append('\n'));
+		if (moved.size() > MAX_REPORTED_DIFFS) sb.append("  ... further differences suppressed\n");
 		return sb.toString();
+	}
+
+	/**
+	 * Reports name/description churn, classified so an intended gap-closing pass is
+	 * distinguishable at a glance from an ordering mistake.
+	 */
+	private static String describeNamingDiff(Map<String, Rec> before, Map<String, Rec> after) {
+		List<String> filled = new ArrayList<>();
+		List<String> lost = new ArrayList<>();
+		List<String> changed = new ArrayList<>();
+
+		for (Rec e : before.values()) {
+			Rec a = after.get(e.key());
+			if (a == null) continue; // already reported by the parse-outcome check
+			classify(e.key(), "name", e.name(), a.name(), filled, lost, changed);
+			classify(e.key(), "desc", e.desc(), a.desc(), filled, lost, changed);
+		}
+
+		StringBuilder sb = new StringBuilder();
+		sb.append("ActionResolver naming/description changed against ").append(GOLDEN).append('\n');
+		sb.append("  parse outcome unchanged for every record — no behaviour regression.\n");
+		sb.append("  FILLED  ").append(filled.size()).append("  (null -> value; closing a gap)\n");
+		sb.append("  LOST    ").append(lost.size()).append("  (value -> null; REGRESSION)\n");
+		sb.append("  CHANGED ").append(changed.size())
+		  .append("  (value -> other value; usually a guard inserted at the wrong position)\n");
+		sb.append("  full output written to ").append(ACTUAL).append('\n');
+		if (lost.isEmpty() && changed.isEmpty()) {
+			sb.append("  Every diff is FILLED — safe to regenerate.\n");
+		}
+		appendSection(sb, "LOST", lost);
+		appendSection(sb, "CHANGED", changed);
+		appendSection(sb, "FILLED", filled);
+		return sb.toString();
+	}
+
+	private static void classify(String key, String column, String was, String now,
+	                             List<String> filled, List<String> lost, List<String> changed) {
+		if (was.equals(now)) return;
+		String entry = "  " + key + "\t" + column + ": " + was + " -> " + now;
+		if (NULL.equals(was))      filled.add(entry);
+		else if (NULL.equals(now)) lost.add(entry);
+		else                       changed.add(entry);
+	}
+
+	private static void appendSection(StringBuilder sb, String label, List<String> entries) {
+		if (entries.isEmpty()) return;
+		sb.append("--- ").append(label).append(" (").append(entries.size()).append(")\n");
+		entries.stream().limit(MAX_REPORTED_DIFFS).forEach(e -> sb.append(e).append('\n'));
+		if (entries.size() > MAX_REPORTED_DIFFS) sb.append("  ... further entries suppressed\n");
 	}
 
 	@FunctionalInterface

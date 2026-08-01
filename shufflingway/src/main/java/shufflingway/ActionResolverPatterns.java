@@ -2402,10 +2402,19 @@ final class ActionResolverPatterns {
     /**
      * "Cast a Summon from your hand. The cost required to cast it is reduced by N (it cannot become 0)."
      * Group {@code amount} — the reduction amount.
+     *
+     * <p>Both quantifier wordings appear: action abilities say "Cast a Summon", while the auto
+     * ability on 5-047C says "cast 1 Summon" (its "you may" is consumed by the trigger parse).
+     *
+     * <p>The lookahead after {@code amount} keeps this off abilities that qualify the reduction
+     * further — "reduced by 3 <em>and can be paid using CP of any Element</em>" is a distinct
+     * effect with its own handling. Since this matcher runs with {@code find()}, without the
+     * lookahead it would match those texts too and silently drop the extra clause.
      */
     static final Pattern CAST_SUMMON_FROM_HAND_DISCOUNTED = Pattern.compile(
-        "(?i)Cast\\s+a\\s+Summon\\s+from\\s+your\\s+hand[.!]?\\s+" +
+        "(?i)Cast\\s+(?:a|1)\\s+Summon\\s+from\\s+your\\s+hand[.!]?\\s+" +
         "The\\s+cost\\s+required\\s+to\\s+cast\\s+it\\s+is\\s+reduced\\s+by\\s+(?<amount>\\d+)" +
+        "(?!\\s+and\\b)" +
         "(?:\\s*\\(it\\s+cannot\\s+become\\s+0\\))?[.!]?"
     );
     /**

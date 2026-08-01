@@ -44,3 +44,6 @@ src/test/resources/actionresolver-characterization.txt
 # IDE specific files
 .vscode/
 CLAUDE.md
+
+# Directory for tools related to card db parsing 
+tools/
