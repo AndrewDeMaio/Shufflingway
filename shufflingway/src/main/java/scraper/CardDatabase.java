@@ -155,6 +155,7 @@ public class CardDatabase implements AutoCloseable {
                                  .replace("1Card", "1 Card") //"Search for 1Card Name..."
                                  .replace("2card", "2 card") // "FFTA2card"
                                 .replace("1Job", "1 Job") // "Search for 1Job..."
+                                .replace("1Category", "1 Category") // "search for 1Category..."
                                 .replace("eachJob", "each Job") // "on eachJob Apprentice Mage..."
                                 .replace("\"\"", "\"") // Alexander has doubled quotes around choice text
                                 .replaceAll("\\[Category\\s+\\(([^)]+)\\)\\]", "Category $1") // [Category (XII)] → Category XII
