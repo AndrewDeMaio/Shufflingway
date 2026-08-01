@@ -832,19 +832,49 @@ final class AutoAbilityTriggers {
 	 */
 	private void fireEntersOpponentFieldWatchers(CardData enteringCard, boolean enteringIsP1) {
 		boolean watcherIsP1 = !enteringIsP1;
+		ForwardTarget enteringTarget = enteringCardTarget(enteringCard, enteringIsP1);
 		List<CardData> fwds = new ArrayList<>(watcherIsP1 ? mw.p1ForwardCards : mw.p2ForwardCards);
 		CardData[]     bkps = watcherIsP1 ? mw.p1BackupCards : mw.p2BackupCards;
 		List<CardData> mons = new ArrayList<>(watcherIsP1 ? mw.p1MonsterCards : mw.p2MonsterCards);
-		for (CardData c : fwds) fireEntersOpponentFieldWatcher(c, enteringCard, watcherIsP1);
-		for (CardData c : bkps) if (c != null) fireEntersOpponentFieldWatcher(c, enteringCard, watcherIsP1);
-		for (CardData c : mons) fireEntersOpponentFieldWatcher(c, enteringCard, watcherIsP1);
+		for (CardData c : fwds) fireEntersOpponentFieldWatcher(c, enteringCard, watcherIsP1, enteringTarget);
+		for (CardData c : bkps) if (c != null) fireEntersOpponentFieldWatcher(c, enteringCard, watcherIsP1, enteringTarget);
+		for (CardData c : mons) fireEntersOpponentFieldWatcher(c, enteringCard, watcherIsP1, enteringTarget);
 	}
 
-	private void fireEntersOpponentFieldWatcher(CardData watcher, CardData enteringCard, boolean watcherIsP1) {
+	private void fireEntersOpponentFieldWatcher(CardData watcher, CardData enteringCard,
+			boolean watcherIsP1, ForwardTarget enteringTarget) {
 		for (AutoAbility fa : mw.effectiveAutoAbilities(watcher)) {
 			if (!fa.trigger().equals("enters opponent's field")) continue;
 			if (!matchesEntersFieldSubject(fa.triggerCard(), enteringCard, watcher)) continue;
+			// "dull it and Freeze it" (26-032L Charlotte) names no target of its own — "it" is the
+			// card that entered. Run it inline with that card preloaded, as the Remedi-style
+			// not-from-hand watchers do; everything else keeps the normal stack path.
+			if (ActionResolver.isTriggeredTargetAction(fa.effectText())) {
+				runWithEnteringCardAsTarget(fa, watcher, watcherIsP1, enteringTarget);
+				continue;
+			}
 			executeAutoAbility(fa, watcher, watcherIsP1);
+		}
+	}
+
+	/** Resolves {@code fa} immediately with {@code enteringTarget} preloaded as its target. */
+	private void runWithEnteringCardAsTarget(AutoAbility fa, CardData watcher,
+			boolean watcherIsP1, ForwardTarget enteringTarget) {
+		Consumer<GameContext> effect = ActionResolver.parse(fa.effectText(), watcher);
+		if (effect == null) return;
+		if (enteringTarget == null) {
+			mw.logEntry("[AutoAbility] " + watcher.name() + " — entering card no longer on field; skipped");
+			return;
+		}
+		GameContext ctx = mw.buildGameContext(watcherIsP1);
+		ctx.preloadTargets(List.of(enteringTarget));
+		CardData prevSource = mw.currentAbilitySource;
+		mw.currentAbilitySource = watcher;
+		try {
+			mw.logEntry("[AutoAbility] " + watcher.name() + " — " + fa.effectText());
+			effect.accept(ctx);
+		} finally {
+			mw.currentAbilitySource = prevSource;
 		}
 	}
 
@@ -1419,6 +1449,45 @@ final class AutoAbilityTriggers {
 	void triggerAutoAbilitiesForEndOfEachPlayersTurn() {
 		triggerAutoAbilitiesForEvent("end of each player's turn", true);
 		triggerAutoAbilitiesForEvent("end of each player's turn", false);
+	}
+
+	/**
+	 * Fires "When &lt;this card&gt; is dealt damage, …" auto-abilities on the card that just took
+	 * damage. Called from {@code DamageResolver} once the damage has been recorded, and before any
+	 * break check — the trigger is on being dealt damage, not on surviving it.
+	 *
+	 * <p>Only self-subject wordings fire here ("When Gi Nattak is dealt damage", "When this Forward
+	 * is dealt damage"). The watcher form, where one card reacts to damage dealt to another
+	 * (18-012L Faris), needs its own dispatch over the controller's field and is not wired.
+	 */
+	void fireIsDealtDamageTriggers(CardData damaged, boolean damagedIsP1) {
+		if (damaged == null || mw.lostAbilitiesCards.contains(damaged)) return;
+		for (AutoAbility fa : mw.effectiveAutoAbilities(damaged)) {
+			if (!fa.trigger().equals("is dealt damage")) continue;
+			if (!isSelfSubject(fa.triggerCard(), damaged)) continue;
+			executeAutoAbility(fa, damaged, damagedIsP1);
+		}
+	}
+
+	/**
+	 * True if {@code subject} names the damaged card itself rather than some other card.
+	 *
+	 * <p>Split on " or " because the subject may be compound — 18-012L Faris reads "When Faris or a
+	 * Job Warrior of Light Forward you control is dealt damage". Only the self branch is honoured
+	 * here; the other branch is a watcher over the controller's field, which this dispatch does not
+	 * cover.
+	 */
+	private static boolean isSelfSubject(String subject, CardData self) {
+		if (subject == null) return false;
+		for (String part : subject.split("(?i)\\s+or\\s+")) {
+			String s = part.trim();
+			if (s.equalsIgnoreCase(self.name())
+					|| s.equalsIgnoreCase("this Forward")
+					|| s.equalsIgnoreCase("this Character")
+					|| s.equalsIgnoreCase("this Monster")
+					|| s.equalsIgnoreCase("this Backup")) return true;
+		}
+		return false;
 	}
 
 	/** Fires "end of opponent's turn" auto-abilities for all cards controlled by {@code isP1}. */

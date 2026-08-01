@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
+import java.util.function.UnaryOperator;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -173,6 +174,20 @@ public class ActionResolver {
         // clause this text follows ("…, also draw 1 card." — Odin 21-084H), never a verb of its own.
         effectText = effectText.replaceFirst("(?i)^also\\s+", "").trim();
         Consumer<GameContext> result;
+
+        // Must precede every effect pattern: a trailing "Draw 1 card." rides along behind a
+        // complete effect, and whichever pattern matches the leading sentences claims the whole
+        // text with find() and returns, so the sentence-splitting fallback at the end of this
+        // method is never reached and the draw is dropped. Recurses for the head, so the leading
+        // effect still resolves through the normal chain below.
+        result = tryParseTrailingDraw(effectText, source, xValue);
+        if (result != null) return result;
+
+        // Same reason, generalised: whichever sentence a pattern happens to match claims the whole
+        // ability and the rest is discarded. Where every sentence stands alone, resolve them all.
+        // Must stay ahead of the effect patterns for the same reason tryParseTrailingDraw does.
+        result = tryParseIndependentSentences(effectText, source, xValue);
+        if (result != null) return result;
 
         // "Cast it as though you owned it" family — matched early because the highly specific
         // borrowed-cast phrasing would otherwise be intercepted by generic Choose/Remove matchers.
@@ -406,6 +421,11 @@ public class ActionResolver {
         result = tryParseRemoveAllCountersFromSelf(effectText, source);
         if (result != null) return result;
 
+        // Must precede tryParseChooseCharacter: that parser matches the choose half alone and
+        // returns, silently discarding the "At the end of your opponent's turn, …" clause.
+        result = tryParseChooseThenEndOfOppTurnAction(effectText, source, xValue);
+        if (result != null) return result;
+
         result = tryParseChooseCharacter(effectText, source, xValue);
         if (result != null) return withAiTargetPreference(effectText, result);
 
@@ -461,6 +481,11 @@ public class ActionResolver {
         if (result != null) return result;
 
         result = tryParseCancelChosenTargetUnlessDiscard(effectText);
+        if (result != null) return result;
+
+        // Anchored, so it only claims an ability that is nothing but the action; the target is
+        // the triggering card, preloaded by AutoAbilityTriggers.
+        result = tryParseTriggeredTargetAction(effectText, xValue);
         if (result != null) return result;
 
         result = tryParseCancelChosenTargetBare(effectText);
@@ -1071,6 +1096,11 @@ public class ActionResolver {
             List<Consumer<GameContext>> consumers = new ArrayList<>();
             for (String s : sentences) {
                 String trimmed = s.trim().replaceAll("(?i)^Then\\s+", "");
+                // A bare "Break it." reached here is the followup of a Choose in an earlier
+                // sentence (7-057R Gnash, 2-099L Edea), not an action on a trigger's preloaded
+                // target. Resolving it standalone would act on nothing while making the whole
+                // ability report as handled — worse than leaving it unparsed.
+                if (isTriggeredTargetAction(trimmed)) continue;
                 Consumer<GameContext> c = parse(trimmed, source, xValue);
                 if (c != null) consumers.add(c);
             }
@@ -1094,8 +1124,131 @@ public class ActionResolver {
         return null;
     }
 
+    /**
+     * Resolves an ability as the sum of its sentences, when every sentence resolves on its own and
+     * none of them refers back to another.
+     *
+     * <p>Fixes the general form of a bug that otherwise needs a bespoke pattern per shape: matchers
+     * run with {@code find()}, so a pattern anchored on one sentence claims the entire ability and
+     * {@code parse()} returns, discarding every other sentence. 16-036C Devout — "gain 《C》. Your
+     * opponent discards 1 card." — gained no crystal, because the discard pattern matched the back
+     * half and the front was thrown away. {@code parse()} already composes sentences this way, but
+     * only as a last resort once nothing at all has matched, which is exactly the case that does
+     * not arise here.
+     *
+     * <p>Two conditions keep this off text that is genuinely one effect:
+     * <ul>
+     *   <li><b>Every sentence must parse alone.</b> A pattern that legitimately spans sentences
+     *       leaves at least one of them unresolvable in isolation — the second half of
+     *       CastSummonFromHandDiscounted is a cost clause, not an effect — so the rule declines.</li>
+     *   <li><b>No sentence may refer to another.</b> "Choose 1 Forward. Deal it 3000 damage." would
+     *       otherwise split into two unlinked effects and the damage would miss its target. See
+     *       {@link ActionResolverPatterns#DEPENDS_ON_PREVIOUS_SENTENCE}.</li>
+     * </ul>
+     *
+     * <p>Recursion terminates: each sentence is passed back through {@code parse()}, where a
+     * single-sentence text fails the length check immediately.
+     */
+    /**
+     * The sentences of {@code text} when it qualifies for independent composition, else
+     * {@code null}. Shared so {@code parse()} and both reporting chains split identically —
+     * the conditions are documented on {@link #tryParseIndependentSentences}.
+     *
+     * <p>Only the structural conditions are checked here: two or more sentences, none after the
+     * first referring backwards. Whether each sentence actually resolves is left to the caller,
+     * since the reporting chains ask for a name or a description rather than a {@code Consumer}.
+     */
+    private static List<String> independentSentencesOf(String text) {
+        String core = stripRestrictionSentences(text);
+        if (core.isEmpty()) core = text;
+
+        String[] sentences = core.trim().split("(?<=\\.)\\s+(?=[A-Z])");
+        if (sentences.length < 2) return null;
+
+        List<String> out = new ArrayList<>();
+        for (int i = 0; i < sentences.length; i++) {
+            String s = sentences[i].trim();
+            if (s.isEmpty()) return null;
+            // The first sentence has nothing to refer back to; a later one carrying a reference
+            // means the ability is a linked whole and must stay with the normal chain.
+            if (i > 0 && DEPENDS_ON_PREVIOUS_SENTENCE.matcher(s).find()) return null;
+            out.add(s);
+        }
+        return out;
+    }
+
+    /**
+     * Applies {@code describe} to each sentence of an independently-composed ability and joins the
+     * results with {@code " + "}, matching the composite form the description layer already uses.
+     * A sentence the caller cannot label becomes {@code "?"}, as elsewhere.
+     */
+    private static String composeOverSentences(String text, UnaryOperator<String> describe) {
+        List<String> sentences = independentSentencesOf(text);
+        if (sentences == null) return null;
+
+        List<String> parts = new ArrayList<>();
+        for (String s : sentences) {
+            String part = describe.apply(s);
+            parts.add(part != null && !part.isBlank() ? part : "?");
+        }
+        return String.join(" + ", parts);
+    }
+
+    private static Consumer<GameContext> tryParseIndependentSentences(
+            String text, CardData source, int xValue) {
+        List<String> sentences = independentSentencesOf(text);
+        if (sentences == null) return null;
+
+        List<Consumer<GameContext>> parts = new ArrayList<>();
+        for (String s : sentences) {
+            Consumer<GameContext> part = parse(s, source, xValue);
+            if (part == null) return null;
+            parts.add(part);
+        }
+        return ctx -> parts.forEach(p -> p.accept(ctx));
+    }
+
     /** Returns the name of the first pattern that matches {@code effectText}, or {@code null}. */
     public static String matchedPatternName(String effectText, CardData source) {
+        // Leading normalisations parse() applies before dispatching. This method had no preamble
+        // at all, so it decided the name from different text than parse() matched against.
+        // parse()'s EX BURST strip is deliberately not mirrored: fullDescription() calls this
+        // method on sub-clauses, and stripping the marker there costs the ExBurstSuppression name.
+        effectText = effectText.replaceFirst("(?i)^Then,?\\s+", "").trim();
+        effectText = effectText.replaceFirst("(?i)^also\\s+", "").trim();
+
+        String name = matchedPatternNameOn(effectText, source);
+        if (name != null) return name;
+
+        // Retry without trailing use-restriction sentences — "You can only use this ability during
+        // your turn." and friends, which defeat the anchored parsers. Deliberately a fallback and
+        // not a preamble: parse() does not strip them, so stripping up front lets an earlier
+        // pattern claim text parse() resolves differently, and the reported name stops naming the
+        // parser that actually ran. Restricting the retry to texts nothing matched mirrors how
+        // parse() reaches these itself — through its own trailing sentence-split fallback.
+        String noRestriction = stripRestrictionSentences(effectText);
+        if (!noRestriction.isEmpty() && !noRestriction.equals(effectText))
+            return matchedPatternNameOn(noRestriction, source);
+        return null;
+    }
+
+    /** One ordered pass of the name chain over {@code effectText} exactly as given. */
+    private static String matchedPatternNameOn(String effectText, CardData source) {
+        // Mirrors parse()'s first dispatch. Reported as a composite so the leading effect still
+        // names itself rather than being hidden behind a "TrailingDraw" label.
+        if (tryParseTrailingDraw(effectText, source, 0) != null) {
+            String tdHead = trailingDrawHead(effectText);
+            if (tdHead != null) {
+                String headName = matchedPatternName(tdHead, source);
+                return (headName != null ? headName : "?") + " + DrawCards";
+            }
+        }
+        // Mirrors parse()'s independent-sentence composition, so a composed ability is named for
+        // every sentence that runs rather than for whichever single pattern this chain finds first.
+        if (tryParseIndependentSentences(effectText, source, 0) != null) {
+            String composed = composeOverSentences(effectText, s -> matchedPatternName(s, source));
+            if (composed != null) return composed;
+        }
         // Mirrors parse(): the pay-or-else gate is reported ahead of its consequence's own pattern.
         if (tryParseIfNotPayOrElse(effectText, source, 0)               != null) return "IfNotPayOrElse";
         if (tryParseRemoveTopThenPileThreshold(effectText, source)          != null) return "RemoveTopThenPileThreshold";
@@ -1104,7 +1257,22 @@ public class ActionResolver {
         if (tryParseChooseFromOppBzCastable(effectText)                 != null) return "ChooseFromOppBzCastable";
         if (tryParseChooseSummonsFromBzCastable(effectText)             != null) return "ChooseSummonsFromBzCastable";
         if (tryParseChooseSummonInBzMaxCostFreeCastRfg(effectText)      != null) return "ChooseSummonInBzMaxCostFreeCastRfg";
+        // Mirrors parse(), where this is the 5th call site. It must precede the ChooseCharacter
+        // family: a modal "select 1 of the 3 following actions" carries its options as quoted text,
+        // and those match the general choose/search patterns, so left to the late
+        // SELECT_FOLLOWING_ACTIONS_DETECT fallback the ability is reported as whichever option
+        // happens to match first rather than as the choice it is.
+        if (tryParseSelectFollowingActions(effectText, source)          != null) return "SelectFollowingActions";
+        // Must precede tryParseWhenYouDoSoSequence: Zidane-style text contains "If you do so",
+        // which that parser would otherwise claim. Mirrors parse().
+        if (tryParseRevealHandOptPickRfpOppDraw(effectText)    != null) return "RevealHandOptPickRfpOppDraw";
+        // Must precede tryParseWhenYouDoSoSequence: that parser resolves both halves
+        // independently, so it would claim the pay-then-effect shape first. Mirrors parse().
+        if (tryParseMayPayCostThenEffect(effectText, source, 0) != null) return "MayPayCostThenEffect";
+        if (tryParseWhenYouDoSoSequence(effectText, source, 0) != null) return "WhenYouDoSo";
         if (tryParseSelectNumber(effectText, source)                    != null) return "SelectNumber";
+        if (tryParseAllMonstersTemporaryForward(effectText) != null) return "AllMonstersTemporaryForward";
+        if (tryParseBecomeForwardUntilEot(effectText, source) != null) return "BecomeForwardUntilEot";
         if (tryParseForEachJobAndNameDealDamageToForwards(effectText)   != null) return "ForEachJobAndNameDealDamageToForwards";
         if (tryParseDealNForEachJobOrNameToOppForwards(effectText)      != null) return "DealNForEachJobOrNameToOppForwards";
         if (tryParseSelfGainsWhenAttacksEOT(effectText, source)        != null) return "SelfGainsWhenAttacksEOT";
@@ -1134,6 +1302,10 @@ public class ActionResolver {
         if (tryParseChooseForwardsGainAbilityEot(effectText)          != null) return "ChooseForwardsGainAbilityEot";
         if (tryParseChooseForwardPlacePetrification(effectText)       != null) return "ChooseForwardPlacePetrification";
         if (tryParseRemoveAllCountersFromSelf(effectText, source)     != null) return "RemoveAllCountersFromSelf";
+        // Must precede ChooseCharacter: it matches the choose half alone and returns, dropping
+        // the delayed action that the rest of the ability consists of.
+        if (tryParseChooseThenEndOfOppTurnAction(effectText, source, 0) != null)
+            return "ChooseThenEndOfOppTurnAction";
         if (tryParseChooseCharacter(effectText, source, 0)              != null) return "ChooseCharacter";
         if (tryParseIfSelfFwdReceivedDamageDraw(effectText, source)          != null) return "IfSelfFwdReceivedDamageDraw";
         if (tryParseIfRfpCount(effectText, source)               != null) return "IfRfpCount";
@@ -1157,6 +1329,7 @@ public class ActionResolver {
         if (tryParseCancelAbilityOnStack(effectText)           != null) return "CancelAbilityOnStack";
         if (tryParseCancelChosenTargetUnlessPay(effectText)    != null) return "CancelChosenTargetUnlessPay";
         if (tryParseCancelChosenTargetUnlessDiscard(effectText) != null) return "CancelChosenTargetUnlessDiscard";
+        if (tryParseTriggeredTargetAction(effectText, 0)      != null) return "TriggeredTargetAction";
         if (tryParseCancelChosenTargetBare(effectText)         != null) return "CancelChosenTargetBare";
         if (tryParseIfOppNotPayAction(effectText)             != null) return "IfOppNotPayAction";
         if (tryParseCancelChosenRevealTopIfType(effectText)    != null) return "CancelChosenRevealTopIfType";
@@ -1171,6 +1344,16 @@ public class ActionResolver {
             return FIELD_OPPONENT_DEBUFF_PASSIVE.matcher(trimmed).matches()
                     ? "FieldOpponentPowerDebuff" : "FieldPowerGrant";
         }
+        if (tryParseAllForwardsSameElementAsNamedPowerBoost(effectText) != null) return "AllForwardsSameElementAsNamedPowerBoost";
+        if (tryParsePartyForwardsPowerBoost(effectText) != null) return "PartyForwardsPowerBoost";
+        if (tryParseAllFieldPowerBoost(effectText) != null) return "AllFieldPowerBoost";
+        if (tryParseAllFieldJobCardNamePowerBoost(effectText) != null) return "AllFieldJobCardNamePowerBoost";
+        if (tryParseTwoCardNamesPowerBoost(effectText) != null) return "TwoCardNamesPowerBoost";
+        if (tryParseAllFieldJobPowerBoost(effectText) != null) return "AllFieldJobPowerBoost";
+        if (tryParseAllFieldJobKeywordGrant(effectText) != null) return "AllFieldJobKeywordGrant";
+        if (tryParseAllFieldKeywordGrant(effectText) != null) return "AllFieldKeywordGrant";
+        if (tryParseUntilEotDualPowerShift(effectText) != null) return "UntilEotDualPowerShift";
+        if (tryParseUntilEotAllFieldPowerBoost(effectText) != null) return "UntilEotAllFieldPowerBoost";
         if (tryParseStandalonePowerBoostAndAttackTrigger(effectText, source) != null) return "StandalonePowerBoostAndAttackTrigger";
         if (tryParseStandalonePowerBoostAndCannotBeChosen(effectText, source) != null) return "StandalonePowerBoostAndCannotBeChosen";
         if (tryParseStandaloneGainsTraitsAndCannotBeBlocked(effectText, source) != null) return "StandaloneGainsTraitsAndCannotBeBlocked";
@@ -1216,11 +1399,17 @@ public class ActionResolver {
         if (tryParseOppFwdsLosePowerPerPlayCost(effectText)        != null) return "OppFwdsLosePowerPerPlayCost";
         if (tryParseStandaloneGainsCannotBeBlocked(effectText, source) != null) return "StandaloneGainsCannotBeBlocked";
         if (tryParseStandaloneCannotBeBlocked(effectText, source) != null) return "StandaloneCannotBeBlocked";
-        if (tryParseRevealHandOptPickRfpOppDraw(effectText)    != null) return "RevealHandOptPickRfpOppDraw";
         if (tryParseRevealSelectHandRfp(effectText)            != null) return "RevealSelectHandRfp";
         if (tryParseOpponentRandomHandRfp(effectText)            != null) return "OpponentRandomHandRfp";
         if (tryParseOpponentRandomHandToBottomDeck(effectText)   != null) return "OpponentRandomHandToBottomDeck";
         if (tryParseOpponentHandRfp(effectText)               != null) return "OpponentHandRfp";
+        if (tryParseRevealTopNAddUpToExcludingNameRestBz(effectText) != null) return "RevealTopNAddUpToExcludingNameRestBz";
+        if (tryParseRevealTopNTypeToHand(effectText) != null) return "RevealTopNTypeToHand";
+        if (tryParseRevealTopNCategoryToHand(effectText) != null) return "RevealTopNCategoryToHand";
+        if (tryParseRevealTopNJobOrNameToHand(effectText) != null) return "RevealTopNJobOrNameToHand";
+        if (tryParseRevealTopNElementToHand(effectText) != null) return "RevealTopNElementToHand";
+        if (tryParseRevealAddTypeToHandOrPlayJobTypeOntoFieldRestBottom(effectText) != null) return "RevealAddTypeToHandOrPlayJobTypeOntoFieldRestBottom";
+        if (tryParseReturnNamedToHand(effectText) != null) return "ReturnNamedToHand";
         if (tryParseYouMayRemoveNamedFromGame(effectText, source) != null) return "YouMayRemoveNamedFromGame";
         if (tryParseEndOfOppTurnPlayNamedOntoField(effectText) != null) return "EndOfOppTurnPlayNamedOntoField";
         if (tryParseRemoveAllOppBzFromGame(effectText)         != null) return "RemoveAllOppBzFromGame";
@@ -1342,7 +1531,16 @@ public class ActionResolver {
         if (tryParseRevealPlayNamedWithMaxCostRestBottom(effectText)         != null) return "RevealPlayNamedWithMaxCostRestBottom";
         if (tryParseRevealPlayNamedOrJobMaxCostRestBottom(effectText)        != null) return "RevealPlayNamedOrJobMaxCostRestBottom";
         if (tryParseFlipUntilTypeToHandRestShuffleBottom(effectText)         != null) return "FlipUntilTypeToHandRestShuffleBottom";
+        if (tryParseRevealPlayTypeOntoFieldRestBottom(effectText) != null) return "RevealPlayTypeOntoFieldRestBottom";
+        if (tryParseRevealElementCardFromHandIfSoDraw(effectText) != null) return "RevealElementCardFromHandIfSoDraw";
+        if (tryParseRevealPlayElementTypeCostOntoFieldRestBottom(effectText, 0) != null) return "RevealPlayElementTypeCostOntoFieldRestBottom";
         if (tryParseShuffleDeck(effectText)                                  != null) return "ShuffleDeck";
+        if (tryParseNameElementOnlySelfBecomes(effectText, source) != null) return "NameElementOnlySelfBecomes";
+        if (tryParseNameElementAndJobSelfBecomes(effectText, source) != null) return "NameElementAndJobSelfBecomes";
+        if (tryParseGrantPartyAnyElementThisTurn(effectText) != null) return "GrantPartyAnyElementThisTurn";
+        if (tryParseSourcePowerBecomesRemovedForwardPower(effectText, source) != null) return "SourcePowerBecomesRemovedPower";
+        if (tryParseSourcePowerBecomesOpponentWeakestForward(effectText, source) != null) return "SourcePowerBecomesOpponentWeakestForward";
+        if (tryParseOpponentGainsControlOfSource(effectText, source) != null) return "OpponentGainsControlOfSource";
         if (tryParseIfOwnForwardFormedParty(effectText, source, 0)       != null) return "IfOwnForwardFormedParty";
         if (tryParseIfControlAtMost(effectText, source, 0)             != null) return "IfControlAtMost";
         if (tryParseIfCastAtLeast(effectText, source, 0)               != null) return "IfCastAtLeast";
@@ -1498,6 +1696,19 @@ public class ActionResolver {
         // Strip trailing use-restriction sentences so they don't short-circuit before effect patterns match
         String noRestriction = stripRestrictionSentences(effectText);
         if (!noRestriction.isEmpty()) effectText = noRestriction;
+        // Mirrors parse()'s first dispatch; see the matching guard in matchedPatternNameOn().
+        if (tryParseTrailingDraw(effectText, source, 0) != null) {
+            String tdHead = trailingDrawHead(effectText);
+            if (tdHead != null) {
+                String headDesc = fullDescription(tdHead, source);
+                return (headDesc != null ? headDesc : "?") + " + DrawCards";
+            }
+        }
+        // Mirrors parse(); see the matching guard in matchedPatternNameOn().
+        if (tryParseIndependentSentences(effectText, source, 0) != null) {
+            String composed = composeOverSentences(effectText, s -> fullDescription(s, source));
+            if (composed != null) return composed;
+        }
         if (tryParseChooseSummonInBzCastable(effectText)              != null) return "ChooseSummonInBzCastable";
         if (tryParseChooseSummonFromBzToHandWithCostReduction(effectText) != null) return "ChooseSummonFromBzToHandWithCostReduction";
         if (tryParseChooseNSummonsBzPickOneHandRestRfg(effectText)    != null) return "ChooseNSummonsBzPickOneHandRestRfg";
@@ -1505,6 +1716,10 @@ public class ActionResolver {
         if (tryParseChooseFromOppBzCastable(effectText)              != null) return "ChooseFromOppBzCastable";
         if (tryParseChooseSummonsFromBzCastable(effectText)          != null) return "ChooseSummonsFromBzCastable";
         if (tryParseChooseSummonInBzMaxCostFreeCastRfg(effectText)   != null) return "ChooseSummonInBzMaxCostFreeCastRfg";
+        // See the matching guard in matchedPatternName(): ahead of the choose/search families so a
+        // modal ability is described as the choice it is, not as one of its quoted options.
+        if (tryParseSelectFollowingActions(effectText, source)       != null)
+            return selectFollowingActionsDescription(effectText, source);
         // Strict form: see the matching guard in matchedPatternName(). Sitting this early in the
         // chain, the loose predicate claimed the description of any ability whose text ends in a
         // cost-reduction clause, masking the real one.
@@ -1705,6 +1920,7 @@ public class ActionResolver {
         if (tryParseCancelStackEntryUnlessPay(effectText)     != null) return "CancelStackEntryUnlessPay";
         if (tryParseCancelChosenTargetUnlessPay(effectText)   != null) return "CancelChosenTargetUnlessPay";
         if (tryParseCancelChosenTargetUnlessDiscard(effectText) != null) return "CancelChosenTargetUnlessDiscard";
+        if (tryParseTriggeredTargetAction(effectText, 0)      != null) return "TriggeredTargetAction";
         if (tryParseCancelChosenTargetBare(effectText)         != null) return "CancelChosenTargetBare";
         if (tryParseIfOppNotPayAction(effectText)             != null) return "IfOppNotPayAction";
         if (tryParseCancelChosenRevealTopIfType(effectText)    != null) return "CancelChosenRevealTopIfType";
@@ -1939,6 +2155,33 @@ public class ActionResolver {
         if (tryParseCostReductionThisTurn(effectText)                != null) return "CostReductionThisTurn";
         if (tryParsePlayCostReductionThisTurn(effectText)            != null) return "PlayCostReductionThisTurn";
         return null;
+    }
+
+    /**
+     * Describes a modal "select N of the M following actions" ability by enumerating its options,
+     * e.g. {@code SelectFollowingActions(1 of 3: ChooseCharacter / Dull | DrawCards | ?)}.
+     *
+     * <p>A bare "SelectFollowingActions" would say less than the pre-existing behaviour did: before
+     * this pattern was reported at all, the chain fell through to whichever option matched first and
+     * at least named that one. Recursing into each quoted option keeps that detail while making the
+     * modal structure explicit. An option the resolver cannot describe shows as {@code ?}, the same
+     * placeholder the compound descriptions use.
+     */
+    private static String selectFollowingActionsDescription(String text, CardData source) {
+        Matcher m = SELECT_FOLLOWING_ACTIONS.matcher(text);
+        if (!m.find()) return "SelectFollowingActions";
+
+        List<String> options = new ArrayList<>();
+        Matcher q = SELECT_FOLLOWING_QUOTED_ACTION.matcher(m.group("actions"));
+        while (q.find()) {
+            String desc = fullDescription(q.group(1).trim(), source);
+            options.add(desc != null && !desc.isBlank() ? desc : "?");
+        }
+        if (options.isEmpty()) return "SelectFollowingActions";
+
+        String upTo = m.group("upTo") != null ? "up to " : "";
+        return "SelectFollowingActions(" + upTo + m.group("select") + " of " + m.group("total")
+                + ": " + String.join(" | ", options) + ")";
     }
 
     private static String revealTopDeckDescription(String text, CardData source) {
@@ -2648,6 +2891,9 @@ public class ActionResolver {
         // which must go before YOUR_TURN_ONLY_PATTERN for the same reason.
         s = CardData.YOUR_TURN_AND_BZ_RESTRICTION      .matcher(s).replaceAll("").trim();
         s = CardData.MAIN_PHASE_ONLY_PATTERN              .matcher(s).replaceAll("").trim();
+        // Captured as a ControlCondition on the ability, so it must not be left in the effect text
+        // — 23-053R Meteion's trailing draw is stranded behind it otherwise.
+        s = CardData.CONTROL_IF_NEITHER_PLAYER_PATTERN    .matcher(s).replaceAll("").trim();
         s = CardData.YOUR_TURN_AND_CONTROL_IF_PATTERN    .matcher(s).replaceAll("").trim();
         // Strip "during your turn and if X is in your hand" before YOUR_TURN_ONLY_PATTERN so the
         // whole sentence is removed as a unit rather than leaving "and if X is in your hand." as a fragment.
@@ -3101,6 +3347,15 @@ public class ActionResolver {
      */
     static boolean isIfOppNotPayAction(String text) {
         return tryParseIfOppNotPayAction(text) != null;
+    }
+
+    /**
+     * True if {@code text} is a bare target action applied to the card that fired the trigger —
+     * the form {@code AutoAbilityTriggers} must run inline with that card preloaded as the target,
+     * since the effect names no target of its own.
+     */
+    static boolean isTriggeredTargetAction(String text) {
+        return tryParseTriggeredTargetAction(text, 0) != null;
     }
 
     /**

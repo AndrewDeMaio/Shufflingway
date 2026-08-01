@@ -3,6 +3,7 @@ package shufflingway;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 import java.util.function.Predicate;
 import java.util.regex.Matcher;
 
@@ -589,6 +590,9 @@ class DamageResolver {
 		int effPow = isP1 ? mw.effectiveP1ForwardPower(idx) : mw.effectiveP2ForwardPower(idx);
 		mw.logEntry((isP1 ? "" : "[P2] ") + fwds.get(idx).name() + " takes " + amount + " damage"
 				+ (effPow > 0 ? " (" + (effPow - accum) + " remaining)" : ""));
+		// Fires on being dealt damage, so before the break check below — 28-043R Gi Nattak's
+		// trigger still resolves when the damage is lethal.
+		mw.autoAbilityTriggers.fireIsDealtDamageTriggers(fwds.get(idx), isP1);
 		if (effPow > 0 && accum >= effPow) {
 			CardData fwd = fwds.get(idx);
 			if (isP1 ? mw.effectiveP1HasTrait(idx, CardData.Trait.CANNOT_BE_BROKEN)
@@ -623,6 +627,14 @@ class DamageResolver {
 		for (AutoAbility fa : source.autoAbilities()) {
 			if (!fa.trigger().equals("deals damage to forward")) continue;
 			if (!fa.triggerCard().equalsIgnoreCase(source.name())) continue;
+			// Not every trigger of this shape is Breaktouch. 4-039R Rogue dulls and Freezes the
+			// damaged Forward instead, and breaking it here would be plainly wrong rather than
+			// merely incomplete. Such effects name no target of their own — "it" is the card just
+			// damaged — so they resolve with it preloaded.
+			if (ActionResolver.isTriggeredTargetAction(fa.effectText())) {
+				runOnDamagedCard(fa, source, sourceIsP1, damagedIsP1, damagedZone, damagedIdx);
+				return false;
+			}
 			mw.logEntry((sourceIsP1 ? "" : "[P2] ") + source.name() + " — Breaktouch! "
 					+ (damagedIsP1 ? "" : "[P2] ") + damaged.name() + " is broken.");
 			mw.breakFieldCard(damagedIsP1, damagedZone, damagedIdx);
@@ -651,6 +663,28 @@ class DamageResolver {
 			}
 		}
 		return false;
+	}
+
+	/**
+	 * Resolves a "deals damage to a Forward" ability whose target is the card just damaged, with
+	 * that card preloaded — the same route {@code AutoAbilityTriggers} uses for the watchers whose
+	 * effects say "it" rather than naming a target.
+	 */
+	private void runOnDamagedCard(AutoAbility fa, CardData source, boolean sourceIsP1,
+			boolean damagedIsP1, ForwardTarget.CardZone damagedZone, int damagedIdx) {
+		Consumer<GameContext> effect = ActionResolver.parse(fa.effectText(), source);
+		if (effect == null) return;
+
+		GameContext ctx = mw.buildGameContext(sourceIsP1);
+		ctx.preloadTargets(List.of(new ForwardTarget(damagedIsP1, damagedIdx, damagedZone)));
+		CardData prevSource = mw.currentAbilitySource;
+		mw.currentAbilitySource = source;
+		try {
+			mw.logEntry((sourceIsP1 ? "" : "[P2] ") + source.name() + " — " + fa.effectText());
+			effect.accept(ctx);
+		} finally {
+			mw.currentAbilitySource = prevSource;
+		}
 	}
 
 	/** Applies ability/combat damage to a backup that is currently acting as a Forward. */

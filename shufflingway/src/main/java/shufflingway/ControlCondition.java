@@ -38,7 +38,8 @@ public record ControlCondition(
         boolean      allHave,           // true: ALL controlled cards of cardType must satisfy element/job (not "N or more")
         boolean      opponentControls,  // true: check opponent's field instead of activating player's field
         int          minCost,           // 0 = no cost filter; > 0 = card cost must be ≥ this
-        List<ControlCondition> orAlternatives // per-card OR filters; a card counts if it matches ANY
+        List<ControlCondition> orAlternatives, // per-card OR filters; a card counts if it matches ANY
+        boolean      bothFields         // true: count across BOTH players' fields ("neither player controls…")
 ) {
     public ControlCondition {
         requiredCardNames = List.copyOf(requiredCardNames);
@@ -53,7 +54,7 @@ public record ControlCondition(
             boolean requiresCrystal, boolean allHave, boolean opponentControls, int minCost) {
         this(requiredCardNames, minCount, exactCount, cardType, element, job, category, minPower,
                 orCardNames, anyOf, excludeElement, dullCardName, requiresCrystal, allHave,
-                opponentControls, minCost, List.of());
+                opponentControls, minCost, List.of(), false);
     }
 
     /**
@@ -64,7 +65,18 @@ public record ControlCondition(
      */
     public static ControlCondition forAnyOfFilters(int minCount, List<ControlCondition> alternatives) {
         return new ControlCondition(List.of(), minCount, false, null, null, null, null, 0,
-                List.of(), false, null, null, false, false, false, 0, alternatives);
+                List.of(), false, null, null, false, false, false, 0, alternatives, false);
+    }
+
+    /**
+     * "Neither player controls [type]" — exactly zero of {@code cardType} across both fields.
+     *
+     * <p>Distinct from a plain exact-zero condition, which only inspects one player's field:
+     * {@link #opponentControls} chooses a side, and this condition has to hold on both at once.
+     */
+    public static ControlCondition forNeitherPlayerControls(String cardType) {
+        return new ControlCondition(List.of(), 0, true, cardType, null, null, null, 0,
+                List.of(), false, null, null, false, false, false, 0, List.of(), true);
     }
 
     /** Compatibility constructor preserving the prior 15-arg signature; defaults {@code minCost} to 0. */

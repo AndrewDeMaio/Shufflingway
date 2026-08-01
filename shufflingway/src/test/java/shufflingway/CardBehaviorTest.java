@@ -7489,4 +7489,263 @@ public class CardBehaviorTest {
                 + "your hand, deal the chosen Forward damage equal to the power of the added Forward.",
                 null));
     }
+
+	// ---------------------------------------------------------------- trailing draw
+
+	// A trailing "Draw 1 card." rides behind a complete effect. Whichever pattern matches the
+	// leading sentences claims the whole text with find() and parse() returns, so its
+	// sentence-splitting fallback never runs and the draw used to be discarded silently.
+
+	// 19-126C Shadow Lord.
+	@Test
+	void trailingDrawRunsAfterOpponentDiscard() {
+		GameContext ctx = mock(GameContext.class);
+		Consumer<GameContext> fn = ActionResolver.parse(
+				"your opponent discards 1 card. Draw 1 card.", null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+
+		verify(ctx).forceOpponentDiscard(1);
+		verify(ctx).drawCards(1);
+	}
+
+	// 28-102R phrasing: the connector is kept out of the draw clause.
+	@Test
+	void trailingDrawAcceptsThenConnector() {
+		GameContext ctx = mock(GameContext.class);
+		Consumer<GameContext> fn = ActionResolver.parse(
+				"your opponent discards 1 card. Then, draw 1 card.", null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+
+		verify(ctx).forceOpponentDiscard(1);
+		verify(ctx).drawCards(1);
+	}
+
+	// "draw N, then discard M" is one effect, not a trailing addition: it must keep resolving
+	// through tryParseDrawCards so the discard is not lost.
+	@Test
+	void drawThenDiscardIsNotTreatedAsATrailingDraw() {
+		GameContext ctx = mock(GameContext.class);
+		Consumer<GameContext> fn = ActionResolver.parse("draw 1 card, then discard 1 card.", null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+
+		verify(ctx).drawCards(1);
+	}
+
+	// The composer declines when the leading effect does not resolve, rather than half-resolving
+	// it. parse() as a whole may still draw for such text, via the sentence-splitting fallback it
+	// has always had — that path is unchanged and is what handles a head no pattern covers.
+	@Test
+	void trailingDrawComposerDeclinesWhenLeadingEffectDoesNotParse() {
+		assertNull(ActionResolverHand.tryParseTrailingDraw(
+				"Xyzzy the plugh into the frobnitz. Draw 1 card.", null, 0));
+	}
+
+	// ------------------------------------------------- independent-sentence composition
+
+	// A pattern anchored on one sentence claims the whole ability via find(), so every other
+	// sentence used to be discarded. Where the sentences are independent, all of them resolve.
+
+	// 16-036C Devout: the crystal was lost because the discard pattern matched the back half.
+	@Test
+	void independentSentencesBothResolve() {
+		GameContext ctx = mock(GameContext.class);
+		Consumer<GameContext> fn = ActionResolver.parse(
+				"gain 《C》. Your opponent discards 1 card from their hand.", null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+
+		verify(ctx).gainCrystal(1);
+		verify(ctx).forceOpponentDiscard(1);
+	}
+
+	// 26-022C Undead Princess, same shape with the shorter discard phrasing.
+	@Test
+	void independentSentencesBothResolveShortForm() {
+		GameContext ctx = mock(GameContext.class);
+		Consumer<GameContext> fn = ActionResolver.parse(
+				"gain 《C》. Your opponent discards 1 card.", null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+
+		verify(ctx).gainCrystal(1);
+		verify(ctx).forceOpponentDiscard(1);
+	}
+
+	// The guard that keeps composition off linked text. Splitting "Choose 1 Forward. Deal it
+	// 3000 damage." would leave the damage with no target, so a backward reference in any
+	// sentence after the first must block the whole ability from being composed.
+	@Test
+	void sentencesReferringBackwardsAreNotIndependent() {
+		assertTrue(ActionResolverPatterns.DEPENDS_ON_PREVIOUS_SENTENCE
+				.matcher("Deal it 3000 damage.").find());
+		assertTrue(ActionResolverPatterns.DEPENDS_ON_PREVIOUS_SENTENCE
+				.matcher("Return them to their owners' hands.").find());
+		assertTrue(ActionResolverPatterns.DEPENDS_ON_PREVIOUS_SENTENCE
+				.matcher("If you do so, draw 1 card.").find());
+		assertTrue(ActionResolverPatterns.DEPENDS_ON_PREVIOUS_SENTENCE
+				.matcher("Break that Forward.").find());
+
+		assertFalse(ActionResolverPatterns.DEPENDS_ON_PREVIOUS_SENTENCE
+				.matcher("Your opponent discards 1 card.").find());
+		assertFalse(ActionResolverPatterns.DEPENDS_ON_PREVIOUS_SENTENCE
+				.matcher("Draw 1 card.").find());
+	}
+
+	// A linked ability keeps resolving through the normal chain: the chosen Forward still takes
+	// the damage, rather than the two sentences running as unrelated effects. Composition would
+	// log each sentence separately; staying linked logs the choose and the damage as one effect.
+	@Test
+	void linkedChooseAndDamageStillResolvesAsOneEffect() {
+		GameContext ctx = mock(GameContext.class);
+		Consumer<GameContext> fn = ActionResolver.parse("Choose 1 Forward. Deal it 3000 damage.", null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+
+		verify(ctx).logEntry(argThat(s ->
+				s.contains("Choose 1 Forward") && s.contains("Deal 3000 damage")));
+	}
+
+	// ------------------------------------------------- conditional use restriction
+
+	// 23-053R Meteion: "You can only use this ability if neither player controls Forwards."
+	// The condition spans both fields, unlike "if you don't control any Forwards", which
+	// inspects only the activating player's side.
+	@Test
+	void neitherPlayerControlsBecomesABothFieldsCondition() {
+		List<ActionAbility> abilities = CardData.parseActionAbilities(
+				"《Dull》, put Meteion into the Break Zone: Activate all the Backups you "
+				+ "control. Draw 1 card. You can only use this ability if neither player controls Forwards.");
+		assertEquals(1, abilities.size());
+
+		ControlCondition cond = abilities.get(0).controlCondition();
+		assertNotNull(cond, "the use restriction should be captured as a control condition");
+		assertTrue(cond.bothFields(), "must be checked across both players' fields");
+		assertTrue(cond.exactCount());
+		assertEquals(0, cond.minCount());
+		assertEquals("Forward", cond.cardType());
+	}
+
+	// The restriction sentence must not remain in the effect text, or it strands what follows it.
+	@Test
+	void neitherPlayerRestrictionIsStrippedFromTheEffect() {
+		GameContext ctx = mock(GameContext.class);
+		Consumer<GameContext> fn = ActionResolver.parse(
+				"Activate all the Backups you control. Draw 1 card. "
+				+ "You can only use this ability if neither player controls Forwards.", null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+
+		verify(ctx).drawCards(1);
+	}
+
+	// ------------------------------------------------- triggered target action
+
+	// 26-032L Charlotte: "When a Character enters your opponent's field, dull it and Freeze it."
+	// "it" is the card that fired the trigger, so the effect names no target of its own and the
+	// followup pattern it matches is only ever reached behind a Choose primary.
+	@Test
+	void triggeredTargetActionDullsAndFreezesThePreloadedCard() {
+		GameContext ctx = mock(GameContext.class);
+		ForwardTarget entering = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+		when(ctx.consumePreloadedTargets()).thenReturn(List.of(entering));
+
+		Consumer<GameContext> fn = ActionResolver.parse("dull it and Freeze it.", null);
+		assertNotNull(fn, "a bare triggered target action should parse");
+		fn.accept(ctx);
+
+		verify(ctx).dullAndFreezeTarget(entering);
+	}
+
+	// With no preloaded target the effect must do nothing rather than act on an arbitrary card.
+	@Test
+	void triggeredTargetActionDoesNothingWithoutAPreloadedTarget() {
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.consumePreloadedTargets()).thenReturn(List.of());
+
+		Consumer<GameContext> fn = ActionResolver.parse("dull it and Freeze it.", null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+
+		verify(ctx, never()).dullAndFreezeTarget(any());
+	}
+
+	// The standalone hook is anchored: it must not claim the tail of a Choose ability, which
+	// carries the same wording as a followup and already resolves through the Choose family.
+	@Test
+	void triggeredTargetActionDoesNotClaimAChooseFollowup() {
+		assertEquals("ChooseCharacter", ActionResolver.matchedPatternName(
+				"Choose 1 Forward opponent controls. Dull it and Freeze it.", null));
+	}
+
+	// 4-039R Rogue: "When Rogue deals damage to a Forward, dull it and Freeze it." The
+	// "deals damage to forward" trigger used to break the damaged Forward unconditionally, so
+	// Rogue broke it instead of dulling and freezing it. DamageResolver now keys the Breaktouch
+	// shortcut off this predicate, so it must separate the two wordings exactly.
+	@Test
+	void rogueDamageTriggerIsNotBreaktouch() {
+		assertTrue(ActionResolver.isTriggeredTargetAction("dull it and Freeze it."),
+				"Rogue's effect must resolve as an action on the damaged card");
+
+		// The genuine Breaktouch wordings must keep the dedicated break path.
+		assertFalse(ActionResolver.isTriggeredTargetAction("break it."));
+		assertFalse(ActionResolver.isTriggeredTargetAction("break that Forward."));
+	}
+
+	// The bare-action hook stays off text that only contains such a clause as a followup, which
+	// is what every other corpus occurrence of these wordings actually is.
+	@Test
+	void bareActionHookIgnoresChooseFollowupsAndPlurals() {
+		assertFalse(ActionResolver.isTriggeredTargetAction(
+				"Choose 1 Forward opponent controls. Dull it and Freeze it."));
+		assertFalse(ActionResolver.isTriggeredTargetAction("Dull them and Freeze them."));
+		assertFalse(ActionResolver.isTriggeredTargetAction("If you do so, dull it."));
+	}
+
+	// ------------------------------------------------- is-dealt-damage trigger
+
+	// 28-043R Gi Nattak: "When Gi Nattak is dealt damage, choose 1 Forward opponent controls.
+	// At the end of your opponent's turn, break it." The whole-text scan for delayed clauses used
+	// to lift the second half out as its own ability, orphaning "break it" from the choose.
+	@Test
+	void giNattakParsesAsOneDamageTriggeredAbility() {
+		List<AutoAbility> autos = CardData.parseAutoAbilities(
+				"When Gi Nattak is dealt damage, choose 1 Forward opponent controls. "
+				+ "At the end of your opponent's turn, break it. This effect will trigger only once per turn.");
+		assertEquals(1, autos.size(), "the delayed clause must stay with its trigger");
+		assertEquals("is dealt damage", autos.get(0).trigger());
+		assertEquals("Gi Nattak", autos.get(0).triggerCard());
+		assertTrue(autos.get(0).oncePerTurn());
+	}
+
+	// The chosen Forward is picked now and broken later, not broken immediately.
+	@Test
+	void chooseThenEndOfOpponentTurnQueuesTheActionOnTheChosenCard() {
+		GameContext ctx = mock(GameContext.class);
+		ForwardTarget chosen = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+		when(ctx.selectCharacters(anyInt(), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(),
+				anyInt(), any(), anyInt(), any(), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(),
+				any(), any(), anyBoolean(), any(), anyBoolean())).thenReturn(List.of(chosen));
+
+		Consumer<GameContext> fn = ActionResolver.parse(
+				"choose 1 Forward opponent controls. At the end of your opponent's turn, break it", null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+
+		verify(ctx).addEndOfOpponentTurnEffect(any());
+		verify(ctx, never()).breakTarget(any());   // deferred, not applied now
+	}
+
+	// A delayed clause that names its own targets still stands alone: 20-057L The Goddess breaks
+	// every Doom-Countered Forward at end of turn and must keep working as its own ability.
+	@Test
+	void selfContainedDelayedClauseRemainsItsOwnAbility() {
+		List<AutoAbility> autos = CardData.parseAutoAbilities(
+				"When The Goddess enters the field, at the end of your opponent's turn, break all the "
+				+ "Forwards opponent controls with a Doom Counter on them.");
+		assertTrue(autos.stream().anyMatch(x -> x.trigger().equals("end of opponent's turn")),
+				"a clause naming its own targets is not orphaned and must survive");
+	}
 }

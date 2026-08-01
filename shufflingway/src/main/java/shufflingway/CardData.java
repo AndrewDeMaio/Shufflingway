@@ -1171,11 +1171,17 @@ public record CardData(
                         controlCondition = parseControlCondition(ctrlM.group("condition"));
                     } else {
                         Matcher notM = CONTROL_IF_NOT_ANY_PATTERN.matcher(effectRaw);
+                        Matcher neitherM = CONTROL_IF_NEITHER_PLAYER_PATTERN.matcher(effectRaw);
                         if (notM.find()) {
                             String rawType = notM.group("type");
                             String cardType = rawType.replaceAll("(?i)s$", "").trim();
                             cardType = Character.toUpperCase(cardType.charAt(0)) + cardType.substring(1).toLowerCase();
                             controlCondition = new ControlCondition(List.of(), 0, true, cardType, null, null, null, 0, List.of());
+                        } else if (neitherM.find()) {
+                            String rawType = neitherM.group("type");
+                            String cardType = rawType.replaceAll("(?i)s$", "").trim();
+                            cardType = Character.toUpperCase(cardType.charAt(0)) + cardType.substring(1).toLowerCase();
+                            controlCondition = ControlCondition.forNeitherPlayerControls(cardType);
                         } else {
                             Matcher oppM = OPPONENT_CONTROLS_N_OR_MORE_PATTERN.matcher(effectRaw);
                             if (oppM.find()) {
@@ -1537,6 +1543,18 @@ public record CardData(
         "(?i)You\\s+can\\s+only\\s+use\\s+this\\s+ability\\s+if\\s+you\\s+don't\\s+control\\s+any\\s+(?<type>Forwards?|Monsters?|Backups?|Characters?)\\s*[.!]?\\s*$"
     );
 
+    /**
+     * "You can only use this ability if neither player controls [type]" — 23-053R Meteion.
+     *
+     * <p>Unlike {@link #CONTROL_IF_NOT_ANY_PATTERN} the condition spans both fields, so it becomes
+     * a {@link ControlCondition#forNeitherPlayerControls} rather than an exact-zero on the
+     * controller's side alone.
+     */
+    static final Pattern CONTROL_IF_NEITHER_PLAYER_PATTERN = Pattern.compile(
+        "(?i)You\\s+can\\s+only\\s+use\\s+this\\s+ability\\s+if\\s+neither\\s+player\\s+controls\\s+" +
+        "(?:any\\s+)?(?<type>Forwards?|Monsters?|Backups?|Characters?)\\s*[.!]?\\s*$"
+    );
+
     /** Captures count and type from "You can only use this ability if your opponent controls N or more [type]". */
     static final Pattern OPPONENT_CONTROLS_N_OR_MORE_PATTERN = Pattern.compile(
         "(?i)You\\s+can\\s+only\\s+use\\s+this\\s+ability\\s+if\\s+your\\s+opponent\\s+controls?\\s+" +
@@ -1624,6 +1642,8 @@ public record CardData(
             "|is\\s+removed\\s+from\\s+the\\s+game\\s+due\\s+to\\s+Warp" +
             "|deals?\\s+damage\\s+to\\s+your\\s+opponent" +
             "|deals?\\s+damage\\s+to\\s+a\\s+Forward" +
+            // Distinct from "deals damage": the source is the card being damaged, not the dealer.
+            "|is\\s+dealt\\s+damage" +
             "|receives?\\s+a\\s+point\\s+of\\s+damage" +
             "|(?:is|are)\\s+chosen\\s+by\\s+your\\s+opponent's\\s+Summons?(?:\\s+or\\s+abilit(?:y|ies))?" +
             "|uses?\\s+an\\s+EX\\s+Burst" +
@@ -1634,7 +1654,7 @@ public record CardData(
         // Effect ends at: a [[br]], the next "When …" trigger, a card's own 《cost》: special-ability
         // marker, or end of text. The (?<!\") guard keeps a 《cost》: that sits INSIDE a quoted granted
         // ability (e.g. Machinist's "《Dull》: …", Medusa's "《5》: …") from prematurely ending the effect.
-        "(?=\\s*\\[\\[br\\]\\]|\\s*When\\s+[^,]+?\\s+(?:forms?\\s+a\\s+party\\s+and\\s+attacks?|attacks?|blocks?|enters?|leaves?|is\\s+(?:put|removed|blocked)|deals?|uses?|becomes?)|\\s*(?<!\")(?:《[^》]+》)+\\s*:|\\s*$)",
+        "(?=\\s*\\[\\[br\\]\\]|\\s*When\\s+[^,]+?\\s+(?:forms?\\s+a\\s+party\\s+and\\s+attacks?|attacks?|blocks?|enters?|leaves?|is\\s+(?:put|removed|blocked|dealt)|deals?|uses?|becomes?)|\\s*(?<!\")(?:《[^》]+》)+\\s*:|\\s*$)",
         Pattern.DOTALL
     );
 
@@ -1651,7 +1671,7 @@ public record CardData(
     private static final Pattern MULTI_SUBJECT_TRIGGER = Pattern.compile(
         "(?i)(?<prefix>When\\s+)(?<head>[^,]+?)" +
         "(?<rest>(?:,\\s+an?\\s+[^,]+?)+\\s+or\\s+an?\\s+[^,]+?)" +
-        "\\s+(?=enters?|attacks?|blocks?|leaves?|is\\s+(?:put|blocked|removed)|deals?|forms?|casts?|receives?|primes?)"
+        "\\s+(?=enters?|attacks?|blocks?|leaves?|is\\s+(?:put|blocked|removed|dealt)|deals?|forms?|casts?|receives?|primes?)"
     );
 
     /**
@@ -1659,6 +1679,13 @@ public record CardData(
      * action strings so that {@link #AUTO_ABILITY_PATTERN} captures the full effect as one unit.
      * Input: {@code ...select 1 of the 2 following actions.[[br]] "A."[[br]] "B."...}
      * Output: {@code ...select 1 of the 2 following actions. "A." "B."...}
+     *
+     * <p>A restriction sentence may sit between the header and the quoted list — 15-115H Penelo
+     * reads "Select 1 of the 3 following actions. You can only use this ability once per turn."
+     * before its options. It is absorbed into the joined effect rather than terminating the join;
+     * without that the options are lost and the ability parses to nothing. The run is bounded by
+     * {@code [^"\[]} so it can never cross a quote or a {@code [[br]]} and swallow a neighbouring
+     * ability.
      */
     private static final Pattern SELECT_ACTIONS_JOINER = Pattern.compile(
         "(?i)((?:[^.!?]*,\\s+)?select\\s+" +
@@ -1666,7 +1693,7 @@ public record CardData(
           "(?:up\\s+to\\s+)?\\d+\\s+of\\s+the\\s+\\d+\\s+following\\s+actions?" +  // "select N of the M following actions"
           "|the\\s+following\\s+actions?[^.!?]*" +                                   // "select the following actions..."
         ")" +
-        "[.!]?)((?:\\s*\\[\\[br\\]\\]\\s*\"[^\"]+\")+)",
+        "[.!]?)([^\"\\[]*?(?:\\s*\\[\\[br\\]\\]\\s*\"[^\"]+\")+)",
         Pattern.DOTALL
     );
 
@@ -1879,6 +1906,35 @@ public record CardData(
         return sb.toString();
     }
 
+    /**
+     * True if {@code index} falls inside a sentence opened by a "When …, " trigger.
+     *
+     * <p>Used to tell a standalone timing ability ("At the end of your opponent's turn, …" as its
+     * own line) from the delayed half of a triggered one, which the whole-text passes would
+     * otherwise lift out and strip of the context that gives it meaning. Scope is the current
+     * {@code [[br]]} segment, since a segment break always ends an ability.
+     */
+    private static boolean isInsideTriggeredSentence(String text, int index) {
+        int segStart = text.lastIndexOf("[[br]]", index);
+        String segment = text.substring(segStart < 0 ? 0 : segStart, index);
+        return TRIGGER_CLAUSE_OPENER.matcher(segment).find();
+    }
+
+    /**
+     * An action whose only target is a pronoun — "break it", "add them to their owner's hand".
+     * Such a clause carries no target of its own and is meaningless detached from the text that
+     * supplied one, unlike "break all the Forwards opponent controls …" which names its targets.
+     */
+    private static final Pattern BARE_PRONOUN_ACTION = Pattern.compile(
+        "(?i)^\\w+\\s+(?:it|them)\\b"
+    );
+
+    /** A "When &lt;subject&gt; &lt;trigger verb&gt;," clause opening a triggered ability. */
+    private static final Pattern TRIGGER_CLAUSE_OPENER = Pattern.compile(
+        "(?i)\\bWhen(?:ever)?\\s+[^,]+?\\s+(?:attacks?|blocks?|enters?|leaves?|casts?|uses?|becomes?" +
+        "|deals?\\s+damage|is\\s+(?:put|removed|blocked|dealt|chosen))[^,]*,"
+    );
+
     private static String joinSelectActions(String text) {
         Matcher m = SELECT_ACTIONS_JOINER.matcher(text);
         StringBuffer sb = new StringBuffer();
@@ -2082,6 +2138,8 @@ public record CardData(
             else if (triggerRaw.contains("warp"))                                                           trigger = "warp placed";
             else if (triggerRaw.contains("deals damage") && triggerRaw.contains("opponent"))                trigger = "deals damage to opponent";
             else if (triggerRaw.contains("deals damage"))                                                   trigger = "deals damage to forward";
+            // The subject here is the card receiving the damage, not the one dealing it.
+            else if (triggerRaw.contains("dealt damage"))                                                   trigger = "is dealt damage";
             else if (triggerRaw.contains("receive") && triggerRaw.contains("a point of damage")) {
                 if (card.equalsIgnoreCase("you"))   trigger = "you receive damage";
                 else                                trigger = "either player receives damage";
@@ -2239,6 +2297,18 @@ public record CardData(
         while (ootm.find()) {
             String effect = SUMMON_MARKUP.matcher(ootm.group("inner").trim()).replaceAll("").trim();
             if (effect.isEmpty()) continue;
+            // Skip a clause that cannot stand on its own because it belongs to an enclosing
+            // triggered ability. 28-043R Gi Nattak reads "When Gi Nattak is dealt damage, choose 1
+            // Forward opponent controls. At the end of your opponent's turn, break it." — lifting
+            // the delayed half out orphans "break it" from the choose that gives it a target.
+            //
+            // Both conditions are needed. Being inside a trigger is not enough: 20-057L The
+            // Goddess's "When … enters the field, at the end of your opponent's turn, break all the
+            // Forwards opponent controls with a Doom Counter on them" names its own targets and
+            // works as a standalone ability. Only a clause whose target is a bare pronoun depends
+            // on the text around it.
+            if (isInsideTriggeredSentence(textForSearch, ootm.start())
+                    && BARE_PRONOUN_ACTION.matcher(effect).find()) continue;
             AutoAbility aa = parseAutoAbilityRestrictions("", "end of opponent's turn", false, false, false, false, effect, 0);
             if (aa != null) result.add(aa);
         }

@@ -8290,6 +8290,18 @@ public class MainWindow {
 	 * ability is met.  When {@code cond.opponentControls()} is true, checks the opponent's field.
 	 */
 	boolean controlConditionMet(ControlCondition cond, boolean isP1) {
+		// "Neither player controls X" is one condition over the combined board, not two conditions
+		// over two boards, so the pools are merged rather than the sides being checked separately.
+		if (cond.bothFields()) {
+			List<CardData> fwds = new ArrayList<>(p1ForwardCards);
+			fwds.addAll(p2ForwardCards);
+			List<CardData> mons = new ArrayList<>(p1MonsterCards);
+			mons.addAll(p2MonsterCards);
+			CardData[] bkps = new CardData[p1BackupCards.length + p2BackupCards.length];
+			System.arraycopy(p1BackupCards, 0, bkps, 0, p1BackupCards.length);
+			System.arraycopy(p2BackupCards, 0, bkps, p1BackupCards.length, p2BackupCards.length);
+			return controlConditionMetWithPools(cond, fwds, bkps, mons);
+		}
 		boolean checkP1 = cond.opponentControls() ? !isP1 : isP1;
 		return controlConditionMetWithPools(cond,
 				checkP1 ? p1ForwardCards : p2ForwardCards,

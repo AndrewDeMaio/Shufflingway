@@ -2,6 +2,7 @@ package shufflingway;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
 
@@ -263,6 +264,34 @@ final class ActionResolverState {
                         true, true, true, null, name, null, null, false, null, false);
                 ts.forEach(ctx::activateTarget);
             }
+        };
+    }
+
+    /**
+     * A bare followup action whose target is the card that fired the trigger, not one the player
+     * chooses — 26-032L Charlotte, "When a Character enters your opponent's field, dull it and
+     * Freeze it."
+     *
+     * <p>The action itself is resolved by {@link ActionResolver#parseTargetAction}, the same
+     * builder the Choose family uses for its followups; only the target differs. The trigger side
+     * supplies it via {@link GameContext#preloadTargets}, exactly as the Remedi-style
+     * "enters opponent's field not from hand" watchers already do.
+     */
+    static Consumer<GameContext> tryParseTriggeredTargetAction(String text, int xValue) {
+        String t = text.trim();
+        if (!TRIGGERED_TARGET_ACTION_BARE.matcher(t).matches()) return null;
+
+        BiConsumer<GameContext, List<ForwardTarget>> action = parseTargetAction(t, xValue);
+        if (action == null) return null;
+
+        return ctx -> {
+            List<ForwardTarget> ts = ctx.consumePreloadedTargets();
+            if (ts == null || ts.isEmpty()) {
+                ctx.logEntry("Triggered action: no preloaded target — skipped");
+                return;
+            }
+            ctx.logEntry("Effect: " + t + " (on the triggering card)");
+            action.accept(ctx, ts);
         };
     }
 }

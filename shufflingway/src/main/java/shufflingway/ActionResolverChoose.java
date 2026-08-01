@@ -3668,4 +3668,42 @@ final class ActionResolverChoose {
             }
         };
     }
+
+    /**
+     * Parses "Choose &lt;target&gt;. At the end of your opponent's turn, &lt;action&gt; it."
+     * (28-043R Gi Nattak) — the target is picked when the ability resolves, the action lands at
+     * the end of the opponent's next turn.
+     *
+     * <p>Neither half stands alone: the choose clause on its own silently drops the delayed
+     * action, which is how this card used to resolve, and the delayed clause on its own has no
+     * target. The chosen targets are captured from {@link GameContext#lastChosenTargets} and
+     * closed over, so the queued effect acts on the cards picked now rather than re-selecting
+     * later.
+     */
+    static Consumer<GameContext> tryParseChooseThenEndOfOppTurnAction(
+            String text, CardData source, int xValue) {
+        Matcher m = CHOOSE_THEN_END_OF_OPP_TURN_ACTION.matcher(text.trim());
+        if (!m.find()) return null;
+
+        final boolean upTo = m.group("upto") != null;
+        final int count = Integer.parseInt(m.group("count"));
+        final String actionText = m.group("action").trim();
+
+        BiConsumer<GameContext, List<ForwardTarget>> action = parseTargetAction(actionText, xValue);
+        if (action == null) return null;
+
+        return ctx -> {
+            ctx.logEntry("Choose " + (upTo ? "up to " : "") + count
+                    + " Forward(s) opponent controls — " + actionText
+                    + " at the end of your opponent's turn");
+            List<ForwardTarget> chosen = List.copyOf(ctx.selectCharacters(count, upTo, true, false,
+                    null, null, -1, null, -1, null,
+                    true, false, false, null, null, null, null, false, null, false));
+            if (chosen.isEmpty()) {
+                ctx.logEntry("End-of-opponent-turn effect: nothing chosen — not queued");
+                return;
+            }
+            ctx.addEndOfOpponentTurnEffect(later -> action.accept(later, chosen));
+        };
+    }
 }

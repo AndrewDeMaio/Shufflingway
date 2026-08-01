@@ -623,6 +623,53 @@ final class ActionResolverPatterns {
     static final Pattern FOLLOWUP_DULL_AND_FREEZE = Pattern.compile(
         "(?i)(?:dull\\s+(?:it|them)\\s+and\\s+freeze|dull\\s+and\\s+freeze)\\s+(?:it|them)"
     );
+    /**
+     * A followup action standing alone as an entire ability, where "it" is the card that fired the
+     * trigger rather than one the player chooses — 26-032L Charlotte, "When a Character enters your
+     * opponent's field, dull it and Freeze it."
+     *
+     * <p>{@link #FOLLOWUP_DULL_AND_FREEZE} matches this text, but only ever runs as the followup of
+     * a Choose primary, so nothing in the dispatch chains reaches it and the ability resolves to
+     * nothing. Anchored with {@code ^...$} on purpose: the followup patterns match with
+     * {@code find()}, and a standalone hook on them would claim the tail of every Choose ability.
+     *
+     * <p>Singular "it" only, for every action listed. The plural "Dull them and Freeze them."
+     * always refers to a set chosen in an earlier sentence (10-028L, 15-037L), and {@code parse()}'s
+     * sentence-split fallback would otherwise reach this parser with that sentence in isolation —
+     * leaving the ability reported as handled while it resolves against a target that was never
+     * preloaded. Every action admitted here must be one {@link ActionResolver#parseTargetAction}
+     * can build, since that is what actually applies it.
+     *
+     * <p>Deliberately limited to dull-and-freeze. Sweeping the corpus for a bare singular followup
+     * used as an entire ability turns up exactly three: 26-032L Charlotte and 4-039R Rogue, both
+     * this wording, and 28-043R Gi Nattak's "break it" — which is a delayed effect on a Forward
+     * chosen by an earlier trigger, with nothing preloaded when it runs. Every other occurrence of
+     * "break it", "freeze it" and the rest is a Choose followup, Breaktouch (handled in
+     * {@code DamageResolver}) or a Remedi-style pay-or-else watcher, all already resolved
+     * elsewhere. Admitting them here gains no card and costs accuracy: the shorter forms are
+     * sub-clauses of larger abilities, and claiming them changed which parser won for 3-030L Kuja
+     * and 26-096C Mini Fighter, degrading both descriptions.
+     */
+    /**
+     * "Choose &lt;target&gt;. At the end of your opponent's turn, &lt;action&gt; it." — 28-043R Gi Nattak.
+     *
+     * <p>The choice happens now and the action lands later, so the two halves cannot be resolved
+     * independently: the delayed clause has no target of its own, and the choose clause alone does
+     * not parse — a choose with no action is not an effect. The target spec is therefore captured
+     * here rather than delegated, and {@code action} goes through
+     * {@link ActionResolver#parseTargetAction}.
+     *
+     * <p>Scoped to "[up to] N Forward(s) opponent controls", which is the whole of this family in
+     * the corpus (Gi Nattak, both Azuls, Antlion, Dadaluma, Faris).
+     */
+    static final Pattern CHOOSE_THEN_END_OF_OPP_TURN_ACTION = Pattern.compile(
+        "(?is)^choose\\s+(?<upto>up\\s+to\\s+)?(?<count>\\d+)\\s+Forwards?\\s+" +
+        "(?:your\\s+)?opponent\\s+controls[.!]\\s+" +
+        "At\\s+the\\s+end\\s+of\\s+your\\s+opponent'?s?\\s+turn,\\s*(?<action>.+?)\\s*[.!]?$"
+    );
+    static final Pattern TRIGGERED_TARGET_ACTION_BARE = Pattern.compile(
+        "(?i)^(?:dull\\s+it\\s+and\\s+freeze\\s+it|dull\\s+and\\s+freeze\\s+it)\\s*[.!]?$"
+    );
     /** Matches "Dull it/them and deal it/them N damage". Group {@code amount} is the damage value. */
     static final Pattern FOLLOWUP_DULL_AND_DAMAGE = Pattern.compile(
         "(?i)dull\\s+(?:it|them)\\s+and\\s+deal\\s+(?:it|them)\\s+(?<amount>\\d+)\\s+damage"
@@ -3793,6 +3840,43 @@ final class ActionResolverPatterns {
         "(?i)^Draw\\s+(?<draw>\\d+)\\s+cards?\\s+then\\s+discard\\s+(?<discard>\\d+)\\s+cards?[.!]?\\s+" +
         "If\\s+you\\s+discard\\s+a\\s+Card\\s+Name\\s+(?<name>.+?)\\s+by\\s+this\\s+effect,\\s+" +
         "trigger\\s+this\\s+auto-ability\\s+again[.!]?\\s*$"
+    );
+    /**
+     * An ability ending in a standalone "[Then,] draw N card(s)." sentence, split into the leading
+     * effect ({@code head}) and the draw ({@code draw}).
+     *
+     * <p>Exists because a pattern matching only the leading sentences claims the whole ability —
+     * matchers run with {@code find()} — and {@code parse()} then returns without ever reaching its
+     * sentence-splitting fallback, so the draw is silently discarded. 19-126C Shadow Lord's "your
+     * opponent discards 1 card. Draw 1 card." draws nothing today.
+     *
+     * <p>{@code head} is greedy so the split is taken at the <em>last</em> sentence boundary. The
+     * draw group is anchored to the end and admits nothing after the count, which keeps this off
+     * "draw 1 card, then discard 1 card." and off conditional forms like "…, also draw 1 card."
+     * — both are single effects with their own handling, not a trailing addition.
+     */
+    /**
+     * A sentence that depends on the one before it, and so must never be resolved on its own.
+     *
+     * <p>Sentence-level composition is only sound for independent clauses. "Choose 1 Forward. Deal
+     * it 3000 damage." parses as two sentences that each match a pattern, but splitting them loses
+     * the link — the damage would no longer land on the chosen Forward. Anything matching this is
+     * carrying a reference backwards, whether a pronoun ("it", "them", "those"), a demonstrative
+     * ("that Forward"), a conditional callback ("if you do so", "by this effect") or an override
+     * ("instead"), and blocks composition for the whole ability.
+     */
+    static final Pattern DEPENDS_ON_PREVIOUS_SENTENCE = Pattern.compile(
+        // "their" is deliberately absent: it is usually a within-sentence possessive ("your
+        // opponent discards 1 card from their hand"), so treating it as a backward reference
+        // blocks composition on independent text. A genuine backward "their" is nearly always
+        // paired with "them" or "they" ("Return them to their owners' hands"), which are listed.
+        "(?i)\\b(?:it|its|them|they|those|these|this\\s+way|instead" +
+        "|that\\s+(?:Forward|Backup|Monster|Character|Summon|card|player)" +
+        "|if\\s+you\\s+do(?:\\s+so)?|when\\s+you\\s+do(?:\\s+so)?|by\\s+this\\s+effect" +
+        "|the\\s+(?:chosen|revealed|added|removed|discarded|selected))\\b"
+    );
+    static final Pattern TRAILING_DRAW_SUFFIX = Pattern.compile(
+        "(?is)^(?<head>.*[.!])\\s+(?:Then,?\\s+)?(?<draw>draw\\s+\\d+\\s+cards?)[.!]?\\s*$"
     );
     static final Pattern DRAW_CARDS = Pattern.compile(
         "(?i)^Draw\\s+(\\d+)\\s+cards?(?:\\s*[,.]?\\s*then\\s+discard\\s+(\\d+)\\s+cards?)?[.!]?"

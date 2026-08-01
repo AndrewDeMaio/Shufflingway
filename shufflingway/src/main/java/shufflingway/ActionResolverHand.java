@@ -227,6 +227,59 @@ final class ActionResolverHand {
             if (draws > 0) ctx.drawCards(draws);
         };
     }
+    /**
+     * Composes "&lt;effect&gt;. [Then,] draw N card(s)." from the leading effect plus the draw.
+     *
+     * <p>Without this the trailing draw is lost: some pattern matches the leading sentences, and
+     * because it matched, {@code parse()} returns before reaching the sentence-splitting fallback
+     * that would have picked the draw up. Recursing through {@code parse()} for the head keeps the
+     * leading effect resolving exactly as it does on its own, so this only ever adds the draw.
+     *
+     * <p>Returns {@code null} when the head does not parse, leaving such texts to the existing
+     * chain rather than half-resolving them.
+     */
+    /**
+     * The leading effect of "&lt;effect&gt;. [Then,] draw N card(s).", or {@code null} if the text
+     * is not that shape. Shared so parse() and both reporting chains split it identically.
+     *
+     * <p>A use-restriction sentence often sits after the draw ("… Draw 1 card. You can only use
+     * this ability once per turn." — 26-123L Zodiark), which would defeat the end-anchor.
+     * Restrictions are captured as flags on the ability rather than executed here, so matching
+     * against the stripped text loses nothing.
+     */
+    static String trailingDrawHead(String text) {
+        String matchOn = stripRestrictionSentences(text);
+        if (matchOn.isEmpty()) matchOn = text;
+
+        Matcher m = TRAILING_DRAW_SUFFIX.matcher(matchOn.trim());
+        if (!m.find()) return null;
+
+        String head = m.group("head").trim();
+        return head.isEmpty() ? null : head;
+    }
+
+    static Consumer<GameContext> tryParseTrailingDraw(String text, CardData source, int xValue) {
+        String matchOn = stripRestrictionSentences(text);
+        if (matchOn.isEmpty()) matchOn = text;
+
+        Matcher m = TRAILING_DRAW_SUFFIX.matcher(matchOn.trim());
+        if (!m.find()) return null;
+
+        String head = m.group("head").trim();
+        if (head.isEmpty()) return null;
+
+        Consumer<GameContext> headEffect = parse(head, source, xValue);
+        if (headEffect == null) return null;
+
+        Consumer<GameContext> draw = tryParseDrawCards(m.group("draw"));
+        if (draw == null) return null;
+
+        return ctx -> {
+            headEffect.accept(ctx);
+            draw.accept(ctx);
+        };
+    }
+
     static Consumer<GameContext> tryParseDrawCards(String text) {
         Matcher m = DRAW_CARDS.matcher(text);
         if (!m.find()) return null;
