@@ -131,4 +131,77 @@ class MultiplayerSetupTest {
                      names(dealFor(hostSetup(99L, true)).getP1MainDeck()),
                      "the same seed must deal the same game every run");
     }
+
+    // ── Opening hand replication ─────────────────────────────────────────
+    //
+    // The sending client settles its own hand through keepHand/mulligan; the receiving client
+    // applies the permutation to its P2 copy. These assert the two land in the same place.
+
+    /** Deals both clients and draws each side's opening five, as game start does. */
+    private static GameState[] dealtPair(long seed) {
+        GameState host   = dealFor(hostSetup(seed, true));
+        GameState joiner = dealFor(joinerSetup(seed, true));
+        host.drawP2OpeningHand();
+        joiner.drawP2OpeningHand();
+        return new GameState[] { host, joiner };
+    }
+
+    @Test
+    void keepingAReorderedHandLeavesBothClientsAgreeingOnIt() {
+        GameState[] pair = dealtPair(5L);
+        GameState host = pair[0], joiner = pair[1];
+
+        // The host arranges their opening five and keeps it.
+        List<CardData> drawn = host.drawOpeningHand();
+        List<Integer> order = List.of(3, 0, 4, 1, 2);
+        List<CardData> arranged = order.stream().map(drawn::get).toList();
+        host.keepHand(arranged);
+
+        // The joiner's client holds that same hand as P2 and applies the permutation.
+        assertTrue(joiner.reorderP2Hand(order));
+        assertEquals(names(host.getP1Hand()), names(joiner.getP2Hand()),
+                "hand order must agree, since later actions address cards by index");
+    }
+
+    @Test
+    void mulliganLeavesBothClientsWithTheSameHandAndDeck() {
+        GameState[] pair = dealtPair(11L);
+        GameState host = pair[0], joiner = pair[1];
+
+        List<CardData> drawn = host.drawOpeningHand();
+        List<Integer> bottomOrder = List.of(2, 4, 0, 3, 1);
+        host.mulligan(bottomOrder.stream().map(drawn::get).toList());
+
+        assertTrue(joiner.mulliganP2(bottomOrder));
+
+        assertEquals(names(host.getP1MainDeck()), names(joiner.getP2MainDeck()),
+                "the mulliganed cards must go to the bottom in the same order on both clients");
+    }
+
+    @Test
+    void mulliganWithoutReplicationDesyncsTheDeck() {
+        // Guards the reason MULLIGAN is on the wire at all: it reorders the deck.
+        GameState[] pair = dealtPair(11L);
+        GameState host = pair[0], joiner = pair[1];
+
+        List<CardData> drawn = host.drawOpeningHand();
+        host.mulligan(new ArrayList<>(drawn));
+
+        assertNotEquals(names(host.getP1MainDeck()), names(joiner.getP2MainDeck()),
+                "an unreplicated mulligan must not silently look like agreement");
+    }
+
+    @Test
+    void aMalformedHandOrderIsRejectedRatherThanApplied() {
+        GameState joiner = dealtPair(3L)[1];
+        List<String> before = names(joiner.getP2Hand());
+
+        assertFalse(joiner.reorderP2Hand(List.of(0, 0, 1, 2, 3)), "duplicate index");
+        assertFalse(joiner.reorderP2Hand(List.of(0, 1, 2, 3)),    "wrong length");
+        assertFalse(joiner.reorderP2Hand(List.of(0, 1, 2, 3, 9)), "out of range");
+        assertFalse(joiner.mulliganP2(List.of(0, 1, 2, 3, 9)),    "out of range");
+
+        assertEquals(before, names(joiner.getP2Hand()),
+                "a rejected order must leave the hand untouched so the desync can be reported");
+    }
 }

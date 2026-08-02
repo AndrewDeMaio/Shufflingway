@@ -454,6 +454,50 @@ public class GameState {
         }
     }
 
+    /**
+     * Reorders P2's hand into {@code order}, a permutation of its current indices.
+     *
+     * <p>Multiplayer only: a remote opponent settles their opening hand in an order of their
+     * choosing, and later actions address it by index, so the two clients have to agree on it.
+     *
+     * @return false if {@code order} is not a permutation of the hand, leaving it untouched
+     */
+    public boolean reorderP2Hand(List<Integer> order) {
+        if (!isPermutationOf(order, p2Hand.size())) return false;
+        List<CardData> reordered = new ArrayList<>(order.size());
+        for (int idx : order) reordered.add(p2Hand.get(idx));
+        p2Hand.clear();
+        p2Hand.addAll(reordered);
+        return true;
+    }
+
+    /**
+     * P2's mulligan: places the cards at {@code bottomOrder} on the bottom of P2's main deck in
+     * that order, then draws a fresh opening hand. Mirrors {@link #mulligan(List)} for the
+     * opponent's side of a networked game.
+     *
+     * @param bottomOrder indices into P2's current hand, deepest first
+     * @return false if {@code bottomOrder} is not a permutation of the hand, leaving it untouched
+     */
+    public boolean mulliganP2(List<Integer> bottomOrder) {
+        if (!isPermutationOf(bottomOrder, p2Hand.size())) return false;
+        for (int idx : bottomOrder) p2MainDeck.addLast(p2Hand.get(idx));
+        p2Hand.clear();
+        drawP2OpeningHand();
+        return true;
+    }
+
+    /** True when {@code order} contains each index in [0, size) exactly once. */
+    private static boolean isPermutationOf(List<Integer> order, int size) {
+        if (order == null || order.size() != size) return false;
+        boolean[] seen = new boolean[size];
+        for (Integer idx : order) {
+            if (idx == null || idx < 0 || idx >= size || seen[idx]) return false;
+            seen[idx] = true;
+        }
+        return true;
+    }
+
     // -------------------------------------------------------------------------
     // Hand actions
     // -------------------------------------------------------------------------

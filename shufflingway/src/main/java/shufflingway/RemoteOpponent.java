@@ -1,23 +1,29 @@
 package shufflingway;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
 
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+import shufflingway.net.ActionType;
+import shufflingway.net.GameAction;
 import shufflingway.net.GameConnection;
 import shufflingway.net.MatchSetup;
 
 /**
  * The opponent seat when P2 is a human on another client.
  *
- * <p><b>Phase 1 scope.</b> The lobby now agrees on decks, shuffle seed and first player, so both
- * clients deal an identical game — that is what this phase delivers. Replicating <em>actions</em>
- * over the wire is the next phase, so every decision below is still a stub: it declines, logs
- * what it was asked for, and lets the local game continue rather than stalling it.
+ * <p>Where {@link ComputerPlayer} computes P2's turn, this replays it: the remote client sends
+ * what its player did, and this applies the same state changes to P2's side of the local board.
+ * Both clients run the same engine over the same seeded decks, so the opponent's draws do not
+ * have to be transmitted — drawing two cards here pulls the same two cards it did there.
  *
- * <p>The important thing it already does is refuse to play for the remote player. Before this
- * existed, connecting left {@link ComputerPlayer} driving P2 — the AI would take the human
- * opponent's turn on both clients at once.
+ * <p><b>Phase 2 scope.</b> Turn flow is replicated: opening hands, phase advance, draws, and
+ * end-of-turn cleanup, in both directions. Card plays (Phase 3) and combat (Phase 4) are not,
+ * so the decision callbacks below still decline rather than asking the remote player.
  */
 class RemoteOpponent implements OpponentController {
 
@@ -32,8 +38,7 @@ class RemoteOpponent implements OpponentController {
 		this.setup      = setup;
 	}
 
-	MatchSetup setup()          { return setup; }
-	GameConnection connection() { return connection; }
+	MatchSetup setup() { return setup; }
 
 	@Override
 	public void cancel() { cancelled = true; }
@@ -41,10 +46,146 @@ class RemoteOpponent implements OpponentController {
 	@Override
 	public boolean isCpu() { return false; }
 
+	// ── Outbound ─────────────────────────────────────────────────────────
+
+	void send(GameAction action) {
+		if (cancelled || !connection.isConnected()) return;
+		connection.send(action);
+	}
+
+	// ── Inbound ──────────────────────────────────────────────────────────
+
+	/**
+	 * Applies one action from the remote player. Always called on the EDT.
+	 *
+	 * @return true if the action was consumed here
+	 */
+	boolean onActionReceived(GameAction action) {
+		if (cancelled || mw.gameState.isP1GameOver()) return false;
+		switch (action.type()) {
+			case KEEP_HAND      -> applyKeepHand(action.payload());
+			case MULLIGAN       -> applyMulligan(action.payload());
+			case ADVANCE_PHASE  -> applyPhaseAdvance(action.payload());
+			default             -> { return false; }
+		}
+		return true;
+	}
+
+	/** The opponent settled on an opening hand order; mirror it so hand indices line up. */
+	private void applyKeepHand(JSONObject payload) {
+		if (!mw.gameState.reorderP2Hand(indices(payload, "order"))) {
+			mw.reportDesync("opponent's opening hand order did not match the hand we dealt them");
+			return;
+		}
+		mw.refreshP2HandCountLabel();
+		mw.logEntry("[P2] Opponent keeps their hand.");
+		mw.noteRemoteHandKept();
+	}
+
+	/** The opponent mulliganed: put those cards on the bottom of their deck and redraw. */
+	private void applyMulligan(JSONObject payload) {
+		if (!mw.gameState.mulliganP2(indices(payload, "bottomOrder"))) {
+			mw.reportDesync("opponent's mulligan order did not match the hand we dealt them");
+			return;
+		}
+		mw.refreshP2DeckLabel();
+		mw.refreshP2HandCountLabel();
+		mw.logEntry("[P2] Opponent takes a mulligan.");
+	}
+
+	/**
+	 * The opponent's phase advanced. Applying the same transition locally lands on the mirrored
+	 * state — same phase and turn, with the players swapped — so a disagreement afterwards is a
+	 * desync and is reported as one.
+	 */
+	private void applyPhaseAdvance(JSONObject payload) {
+		String  expectedPhase = payload.optString("phase", "");
+		int     expectedTurn  = payload.optInt("turn", -1);
+		boolean extraTurn     = payload.optBoolean("extraTurn", false);
+		if (mw.gameState.getCurrentPhase() == null) {
+			mw.reportDesync("opponent advanced a phase before this client's game had begun");
+			return;
+		}
+
+		// An extra turn wraps END to ACTIVE without handing the turn over, so it takes the
+		// matching transition here — otherwise this client would think the turn had come back.
+		GameState.GamePhase entered = extraTurn
+				? mw.gameState.advancePhaseExtraTurn()
+				: mw.gameState.advancePhase();
+		mw.refreshPhaseTracker();
+
+		if (!entered.name().equals(expectedPhase) || mw.gameState.getTurnNumber() != expectedTurn) {
+			mw.reportDesync("phase drift — opponent is in " + expectedPhase + " on turn "
+					+ expectedTurn + ", this client reached " + entered.name() + " on turn "
+					+ mw.gameState.getTurnNumber());
+			return;
+		}
+
+		if (mw.gameState.getCurrentPlayer() == GameState.Player.P1) {
+			// END wrapped to ACTIVE, so the turn has come back to the local player.
+			mw.turnPhases().runP1TurnStart();
+		} else {
+			enterOpponentPhase(entered);
+		}
+	}
+
+	/** Runs the mechanical work for a phase the opponent has just entered. */
+	private void enterOpponentPhase(GameState.GamePhase phase) {
+		switch (phase) {
+			case ACTIVE -> mw.turnPhases().runP2ActivePhase();
+
+			case DRAW -> {
+				int drawCount = mw.gameState.getTurnNumber() == 1 ? 1 : 2;
+				List<CardData> drawn = mw.turnPhases().runP2DrawPhase(drawCount);
+				mw.logEntry("[P2] Draw Phase — Drew " + drawn.size() + " card(s)");
+				if (drawn.size() < drawCount) mw.triggerGameOver("P2 milled out — You Win!");
+			}
+
+			case MAIN_1 -> {
+				mw.logEntry("[P2] Main Phase 1");
+				mw.processWarpCounters(false);
+				mw.autoAbilityTriggers.triggerAutoAbilitiesForBeginningOfMainPhase1(false);
+				mw.autoAbilityTriggers.triggerAutoAbilitiesForBeginningOfMainPhase1EachTurn();
+				mw.autoAbilityTriggers.triggerAutoAbilitiesForBeginningOfOppMainPhase1(true);
+			}
+
+			case ATTACK -> {
+				mw.logEntry("[P2] Attack Phase");
+				mw.autoAbilityTriggers.triggerAutoAbilitiesForBeginningOfAttackPhase(false);
+				mw.autoAbilityTriggers.triggerAutoAbilitiesForBeginningOfAttackPhaseEachTurn(false);
+				mw.refreshAllP2ForwardSlots();
+			}
+
+			case MAIN_2 -> {
+				mw.logEntry("[P2] Main Phase 2");
+				mw.autoAbilityTriggers.triggerAutoAbilitiesForBeginningOfMainPhase2(false);
+			}
+
+			case END -> {
+				mw.logEntry("[P2] End Phase");
+				mw.turnPhases().runP2EndOfTurnCleanup();
+				mw.p2Turn.resetCastTracking();
+			}
+		}
+	}
+
+	private static List<Integer> indices(JSONObject payload, String key) {
+		JSONArray arr = payload.optJSONArray(key);
+		if (arr == null) return List.of();
+		List<Integer> out = new ArrayList<>(arr.length());
+		for (int i = 0; i < arr.length(); i++) out.add(arr.getInt(i));
+		return out;
+	}
+
+	// ── OpponentController: decision requests ────────────────────────────
+
 	@Override
 	public void runTurn() {
 		if (cancelled) return;
-		mw.logEntry("[P2] Opponent's turn — waiting for them to act (turn replication not yet wired up).");
+		// The local client already advanced into the opponent's Active Phase; run its mechanical
+		// half so their board activates here too, then wait for them to drive the rest.
+		mw.turnPhases().runP2ActivePhase();
+		mw.logEntry("[P2] Opponent's turn.");
 	}
 
 	@Override
@@ -71,5 +212,13 @@ class RemoteOpponent implements OpponentController {
 	public void requestReactiveShields(Runnable onDone) {
 		// Nothing to offer yet; pass priority straight on so the local game keeps moving.
 		onDone.run();
+	}
+
+	/** Builds an ADVANCE_PHASE for a phase the local player has just entered. */
+	static GameAction phaseAdvanceAction(GameState.GamePhase phase, int turn, boolean extraTurn) {
+		return GameAction.of(ActionType.ADVANCE_PHASE, new JSONObject()
+				.put("phase", phase.name())
+				.put("turn", turn)
+				.put("extraTurn", extraTurn));
 	}
 }

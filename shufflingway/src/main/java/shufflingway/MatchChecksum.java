@@ -43,6 +43,37 @@ final class MatchChecksum {
 		return sha256(sb.toString());
 	}
 
+	/**
+	 * Digests the whole board at the start of a turn: zone sizes on both sides plus the actual
+	 * contents of the field. Cheap enough to run every turn, and catches drift as soon as it
+	 * appears rather than at whatever later point it first becomes visible.
+	 *
+	 * @param localIsHost whether P1 on this client is the host
+	 */
+	static String ofTurnStart(MainWindow mw, boolean localIsHost, int turn) {
+		StringBuilder sb = new StringBuilder();
+		sb.append("turn=").append(turn).append('\n');
+		appendSide(sb, "host",   mw, localIsHost);
+		appendSide(sb, "joiner", mw, !localIsHost);
+		return sha256(sb.toString());
+	}
+
+	/** Appends one player's zones, chosen by whether they sit in the P1 or P2 seat here. */
+	private static void appendSide(StringBuilder sb, String label, MainWindow mw, boolean isP1Seat) {
+		GameState state = mw.gameState;
+		sb.append(label)
+		  .append(" deck=").append(isP1Seat ? state.getP1MainDeck().size()  : state.getP2MainDeck().size())
+		  .append(" hand=").append(isP1Seat ? state.getP1Hand().size()      : state.getP2Hand().size())
+		  .append(" break=").append(isP1Seat ? state.getP1BreakZone().size(): state.getP2BreakZone().size())
+		  .append(" damage=").append(isP1Seat ? state.getP1DamageZone().size() : state.getP2DamageZone().size())
+		  .append('\n');
+		appendZone(sb, label + "Forwards", isP1Seat ? mw.p1ForwardCards : mw.p2ForwardCards);
+		appendZone(sb, label + "Monsters", isP1Seat ? mw.p1MonsterCards : mw.p2MonsterCards);
+		CardData[] backups = isP1Seat ? mw.p1BackupCards : mw.p2BackupCards;
+		sb.append(label).append("Backups\n");
+		for (CardData c : backups) sb.append(c == null ? "-" : c.name()).append('\n');
+	}
+
 	private static void appendZone(StringBuilder sb, String label, Collection<CardData> cards) {
 		sb.append(label).append('[').append(cards.size()).append("]\n");
 		for (CardData c : cards) {

@@ -116,6 +116,7 @@ import shufflingway.menu.DebugMenu;
 import shufflingway.menu.FileMenu;
 import shufflingway.menu.HelpMenu;
 import shufflingway.menu.MultiplayerMenu;
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import shufflingway.net.ActionType;
@@ -178,6 +179,11 @@ public class MainWindow {
 	// Opening-deal digests, ours and the opponent's, compared once both exist.
 	private String localDealChecksum;
 	private String remoteDealChecksum;
+	// Turn 1 waits for both players to settle an opening hand.
+	private boolean localHandKept;
+	private boolean remoteHandKept;
+	// A desync cascades, so only the first one raises a dialog.
+	private boolean desyncReported;
 	// Side info panel (card preview + Next button + game log)
 	private JPanel        sidePanel;
 	private JPanel        sideWrapper;        // contains resizeHandle + sidePanel
@@ -380,8 +386,12 @@ public class MainWindow {
 	final List<CardState> p2ForwardStates       = new ArrayList<>();
 	final List<Integer>   p2ForwardPlayedOnTurn = new ArrayList<>();
 	final List<Integer>   p2ForwardDamage       = new ArrayList<>();
-	/** Drives every P2 decision — the local AI today, a remote human once multiplayer lands. */
+	/** Drives every P2 decision — the local AI, or a remote human in a networked game. */
 	OpponentController    opponent;
+	/** The mechanical turn steps both opponent drivers share. */
+	private final TurnPhases turnPhases = new TurnPhases(this);
+
+	TurnPhases turnPhases() { return turnPhases; }
 
 	final Set<Integer> spentLbIndices   = new HashSet<>();
 	final Set<Integer> p2SpentLbIndices = new HashSet<>();
@@ -799,8 +809,11 @@ public class MainWindow {
 						String msg = action.payload().optString("msg", "");
 						if (!msg.isEmpty()) logEntry("[Opponent] " + msg);
 					} else if (action.type() == ActionType.STATE_CHECKSUM) {
-						remoteDealChecksum = action.payload().optString("checksum", "");
-						compareDealChecksums();
+						onRemoteChecksum(action.payload());
+					} else if (opponent instanceof RemoteOpponent remote) {
+						// Everything else is the opponent playing; they own its interpretation.
+						if (!remote.onActionReceived(action))
+							logEntry("[Net] Ignored unsupported action: " + action.type());
 					}
 				});
 		menuBar.add(multiplayerMenu);
@@ -1466,6 +1479,9 @@ public class MainWindow {
 		matchSetup         = setup;
 		localDealChecksum  = null;
 		remoteDealChecksum = null;
+		localHandKept      = false;
+		remoteHandKept     = false;
+		desyncReported     = false;
 		resetForNewGame();
 		loadMultiplayerDecks(setup);
 	}
@@ -1719,14 +1735,132 @@ public class MainWindow {
 		if (localDealChecksum.equals(remoteDealChecksum)) {
 			logEntry("[Sync] Opening deal matches the opponent's client.");
 		} else {
-			logEntry("[Sync] DESYNC — the two clients dealt different games. This game is not playable.");
-			JOptionPane.showMessageDialog(frame,
-					"""
-					The two clients dealt different games, so play would diverge.
+			reportDesync("the two clients dealt different games — this usually means the decks "
+					+ "or card databases differ between the two installations");
+		}
+	}
 
-					This usually means the decks or card databases differ between \
-					the two installations.""",
-					"Multiplayer desync", JOptionPane.ERROR_MESSAGE);
+	/**
+	 * Reports that the two clients no longer agree on the game state, once per game.
+	 *
+	 * <p>Says so loudly rather than limping on: past this point the two players are looking at
+	 * different games, and every later symptom would be a confusing consequence of this one
+	 * cause. Only the first report raises a dialog — a desync tends to cascade.
+	 */
+	void reportDesync(String detail) {
+		logEntry("[Sync] DESYNC — " + detail);
+		if (desyncReported) return;
+		desyncReported = true;
+		JOptionPane.showMessageDialog(frame,
+				"The two clients no longer agree on the game state, so play has diverged:\n\n"
+						+ detail + "\n\nThis game can no longer be played out.",
+				"Multiplayer desync", JOptionPane.ERROR_MESSAGE);
+	}
+
+	/**
+	 * Advances the local player's phase and tells the opponent, so their copy of this board
+	 * follows. Every phase transition on the local player's own turn goes through here.
+	 */
+	GameState.GamePhase advanceLocalPhase() {
+		GameState.GamePhase entered = gameState.advancePhase();
+		sendToOpponent(RemoteOpponent.phaseAdvanceAction(entered, gameState.getTurnNumber(), false));
+		return entered;
+	}
+
+	/**
+	 * As {@link #advanceLocalPhase()} for an extra turn. Flagged on the wire because it wraps
+	 * END to ACTIVE <em>without</em> passing the turn — the opponent's client has to make the
+	 * same distinction or the two would disagree about whose turn it is.
+	 */
+	GameState.GamePhase advanceLocalPhaseExtraTurn() {
+		GameState.GamePhase entered = gameState.advancePhaseExtraTurn();
+		sendToOpponent(RemoteOpponent.phaseAdvanceAction(entered, gameState.getTurnNumber(), true));
+		return entered;
+	}
+
+	/** Sends an action to the remote player; a no-op in a game against the AI. */
+	private void sendToOpponent(GameAction action) {
+		if (opponent instanceof RemoteOpponent remote) remote.send(action);
+	}
+
+	/**
+	 * Publishes a board digest at the start of the local player's turn.
+	 *
+	 * <p>Sent after the phase advances that precede it, so TCP ordering puts it in the
+	 * opponent's hands only once they have applied those advances — both clients are then at
+	 * the same point in the game and their digests are comparable.
+	 */
+	void sendTurnStartChecksum() {
+		if (matchSetup == null) return;
+		int turn = gameState.getTurnNumber();
+		sendToOpponent(GameAction.of(ActionType.STATE_CHECKSUM, new JSONObject()
+				.put("label", TURN_START_CHECKSUM + turn)
+				.put("checksum", MatchChecksum.ofTurnStart(this, matchSetup.localIsHost(), turn))));
+	}
+
+	private static final String TURN_START_CHECKSUM = "turnStart:";
+
+	/** Handles an inbound digest, whose label says which moment in the game it describes. */
+	private void onRemoteChecksum(JSONObject payload) {
+		String label  = payload.optString("label", "");
+		String remote = payload.optString("checksum", "");
+		if (label.startsWith(TURN_START_CHECKSUM)) {
+			if (matchSetup == null) return;
+			int turn = gameState.getTurnNumber();
+			String local = MatchChecksum.ofTurnStart(this, matchSetup.localIsHost(), turn);
+			if (!local.equals(remote))
+				reportDesync("board state differs from the opponent's at the start of turn " + turn);
+			return;
+		}
+		remoteDealChecksum = remote;
+		compareDealChecksums();
+	}
+
+	/**
+	 * Expresses {@code arranged} as positions in {@code original}, so a hand order can be sent
+	 * as a permutation rather than as cards. Matched by identity: the deck holds a distinct
+	 * {@link CardData} per copy, and two copies of one card are equal but not interchangeable
+	 * here.
+	 */
+	private static List<Integer> permutationOf(List<CardData> original, List<CardData> arranged) {
+		List<Integer> order = new ArrayList<>(arranged.size());
+		boolean[] taken = new boolean[original.size()];
+		for (CardData card : arranged) {
+			for (int i = 0; i < original.size(); i++) {
+				if (!taken[i] && original.get(i) == card) { order.add(i); taken[i] = true; break; }
+			}
+		}
+		return order;
+	}
+
+	/** The opponent has settled their opening hand; turn 1 waits for both players. */
+	void noteRemoteHandKept() {
+		remoteHandKept = true;
+		beginFirstTurnWhenBothKept();
+	}
+
+	/**
+	 * Starts turn 1 once both players have kept an opening hand.
+	 *
+	 * <p>Both halves must be in before either client moves: a player who kept quickly would
+	 * otherwise start advancing phases against an opponent whose game had not begun, and the
+	 * phase messages would arrive with nothing to apply them to.
+	 */
+	private void beginFirstTurnWhenBothKept() {
+		if (!localHandKept || !remoteHandKept || gameState.getCurrentPhase() != null) return;
+		boolean p1GoesFirst = matchSetup.localGoesFirst();
+		gameState.startFirstTurn(p1GoesFirst ? GameState.Player.P1 : GameState.Player.P2);
+		refreshPhaseTracker();
+		refreshP1HandLabel();
+		if (p1GoesFirst) {
+			logEntry("Coin flip: You go first!");
+			logEntry("Turn 1 — Active Phase");
+			if (nextPhaseButton != null) nextPhaseButton.setEnabled(true);
+			onNextPhase();
+		} else {
+			logEntry("Coin flip: Opponent goes first!");
+			if (nextPhaseButton != null) nextPhaseButton.setEnabled(false);
+			opponent.runTurn();
 		}
 	}
 
@@ -1908,12 +2042,18 @@ public class MainWindow {
 			openingHandPopup.dispose();
 			openingHandPopup = null;
 			if (mulliganAvailable) logEntry("Kept opening hand");
+			List<Integer> order = permutationOf(cards, handOrder);
 			gameState.keepHand(handOrder);
-			// In a networked game the flip was settled by the host and shipped in the setup;
-			// flipping again locally would have the two clients disagree about who moves.
-			boolean p1GoesFirst = matchSetup != null
-					? matchSetup.localGoesFirst()
-					: AppSettings.isDebugAlwaysWinCoinFlip() || Math.random() < 0.5;
+			if (matchSetup != null) {
+				// The opponent's client holds this hand as P2's; tell it the order we settled on
+				// so both sides address the same card by the same index from here on.
+				sendToOpponent(GameAction.of(ActionType.KEEP_HAND,
+						new JSONObject().put("order", new JSONArray(order))));
+				localHandKept = true;
+				beginFirstTurnWhenBothKept();
+				return;
+			}
+			boolean p1GoesFirst = AppSettings.isDebugAlwaysWinCoinFlip() || Math.random() < 0.5;
 			GameState.Player firstPlayer = p1GoesFirst
 					? GameState.Player.P1 : GameState.Player.P2;
 			gameState.startFirstTurn(firstPlayer);
@@ -1940,6 +2080,11 @@ public class MainWindow {
 		mulliganBtn.addActionListener(e -> {
 			hideZoom();
 			logEntry("Took mulligan");
+			// A mulligan reorders the deck, so the opponent's copy of it has to follow.
+			if (matchSetup != null) {
+				sendToOpponent(GameAction.of(ActionType.MULLIGAN, new JSONObject()
+						.put("bottomOrder", new JSONArray(permutationOf(cards, handOrder)))));
+			}
 			// handOrder is the player's chosen bottom-of-deck order
 			List<CardData> newCards = gameState.mulligan(new ArrayList<>(handOrder));
 			refreshP1DeckLabel();
@@ -2277,7 +2422,7 @@ public class MainWindow {
 		switch (current) {
 			case ACTIVE ->  {
 				// Advance first so getTurnNumber() still reflects the current turn
-				gameState.advancePhase();   // ACTIVE → DRAW
+				advanceLocalPhase();   // ACTIVE → DRAW
 				refreshPhaseTracker();
 				int drawCount = gameState.getTurnNumber() == 1 ? 1 : 2;
 				List<CardData> drawn = drawP1Cards(drawCount);
@@ -2295,7 +2440,7 @@ public class MainWindow {
 			}
 
 			case DRAW -> {
-                            gameState.advancePhase();   // DRAW → MAIN_1
+                            advanceLocalPhase();   // DRAW → MAIN_1
                             refreshPhaseTracker();
                             logEntry("Main Phase 1");
                             processWarpCounters(true);
@@ -2318,7 +2463,7 @@ public class MainWindow {
                             logEntry("[Priority] P1 passes — P2 may respond.");
                             if (nextPhaseButton != null) nextPhaseButton.setEnabled(false);
                             p2AutoPass(() -> {
-                                gameState.advancePhase();   // MAIN_1 → ATTACK
+                                advanceLocalPhase();   // MAIN_1 → ATTACK
                                 logEntry("Attack Phase");
                                 autoAbilityTriggers.triggerAutoAbilitiesForBeginningOfAttackPhase(true);
                                 autoAbilityTriggers.triggerAutoAbilitiesForBeginningOfAttackPhaseEachTurn(true);
@@ -2360,7 +2505,7 @@ public class MainWindow {
                             if (skipAttackButton != null) skipAttackButton.setEnabled(false);
                             if (nextPhaseButton != null) nextPhaseButton.setEnabled(true);
                             refreshAttackButton();
-                            gameState.advancePhase();   // ATTACK → MAIN_2
+                            advanceLocalPhase();   // ATTACK → MAIN_2
                             refreshPhaseTracker();
                             refreshAllForwardSlots();
                             logEntry("Main Phase 2");
@@ -2372,7 +2517,7 @@ public class MainWindow {
                             logEntry("[Priority] P1 passes — P2 may respond.");
                             if (nextPhaseButton != null) nextPhaseButton.setEnabled(false);
                             p2AutoPass(() -> {
-                                gameState.advancePhase();   // MAIN_2 → END
+                                advanceLocalPhase();   // MAIN_2 → END
                                 refreshPhaseTracker();
                                 logEntry("End Phase");
                                 autoAbilityTriggers.triggerAutoAbilitiesForEndOfYourTurn(true);
@@ -2449,14 +2594,14 @@ public class MainWindow {
 				if (p1ExtraTurnThenLose) {
 					p1ExtraTurnThenLose = false;
 					logEntry("Extra Turn — P1 takes one additional turn");
-					gameState.advancePhaseExtraTurn(); // END → ACTIVE, same player
+					advanceLocalPhaseExtraTurn(); // END → ACTIVE, same player
 					refreshPhaseTracker();
 					nextPhaseButton.setEnabled(true);
 					endOfTurnEffects.add(ctx -> triggerGameOver("Extra Turn ended — You Lose!"));
 					onNextPhase(); // begin ACTIVE → DRAW automatically
 				} else {
 					// END → ACTIVE: increments turn number and switches to P2
-					gameState.advancePhase();
+					advanceLocalPhase();
 					refreshPhaseTracker();
 					for (int i = 0; i < p1MonsterCards.size(); i++) refreshP1MonsterSlot(i);
 					for (int i = 0; i < p2MonsterCards.size(); i++) refreshP2MonsterSlot(i);
