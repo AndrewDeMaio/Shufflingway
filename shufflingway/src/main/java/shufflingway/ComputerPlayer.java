@@ -16,8 +16,11 @@ import javax.swing.Timer;
 /**
  * AI controller for Player 2 (the computer opponent).
  * Package-private; instantiated by {@link MainWindow} via {@code new ComputerPlayer(this)}.
+ *
+ * <p>Implements {@link OpponentController}, the seam a networked opponent will also sit behind.
+ * The {@code request…} methods answer synchronously — see {@link #requestBlocker}.
  */
-class ComputerPlayer {
+class ComputerPlayer implements OpponentController {
 
 	final MainWindow mw;
 
@@ -29,7 +32,11 @@ class ComputerPlayer {
 	private boolean cancelled = false;
 
 	/** Permanently stops this ComputerPlayer; all pending and future steps become no-ops. */
-	void cancel() { cancelled = true; }
+	@Override
+	public void cancel() { cancelled = true; }
+
+	@Override
+	public boolean isCpu() { return true; }
 
 	/**
 	 * Schedules {@code r} to run after {@link #PAUSE_MS} ms on the EDT, but waits for the board to
@@ -48,7 +55,8 @@ class ComputerPlayer {
 	}
 
 	/** Entry point: called when P2's ACTIVE phase begins. */
-	void runTurn() {
+	@Override
+	public void runTurn() {
 		step(this::doActivePhase);
 	}
 
@@ -990,7 +998,58 @@ class ComputerPlayer {
 		return bestEi >= 0 ? bestEi : 0;
 	}
 
+	// ── OpponentController: decision requests ────────────────────────────
+	//
+	// The AI knows its answer immediately, so each of these runs its callback before returning.
+	// A networked opponent will answer these same calls later, off a socket read.
+
+	@Override
+	public void requestBlocker(int effectiveAttackerPower, ForwardTarget attacker, boolean forcedBlock,
+	                           Consumer<ForwardTarget> onChosen) {
+		onChosen.accept(chooseBlocker(effectiveAttackerPower, attacker, forcedBlock));
+	}
+
+	@Override
+	public void requestPartyBlocker(List<Integer> attackerIndices, int combinedPower,
+	                                Consumer<Integer> onChosen) {
+		onChosen.accept(choosePartyBlocker(attackerIndices));
+	}
+
+	@Override
+	public void requestPartyBlockerDamage(List<Integer> attackerIndices, int blockerPower,
+	                                      Consumer<Map<Integer, Integer>> onAssigned) {
+		onAssigned.accept(mw.p2AiBuildDamageMap(attackerIndices, blockerPower));
+	}
+
+	@Override
+	public void requestReactiveShields(Runnable onDone) {
+		tryP2ReactiveShieldAbilities(onDone);
+	}
+
 	// ── Blocking AI ──────────────────────────────────────────────────────
+
+	/**
+	 * Picks the P2 Forward that blocks a party attack: the highest-power active Forward that
+	 * survives the weakest attacker's damage. Returns {@code null} when none qualifies.
+	 */
+	private Integer choosePartyBlocker(List<Integer> attackerIndices) {
+		int minAttackerPower = Integer.MAX_VALUE;
+		for (int idx : attackerIndices) {
+			if (idx < mw.p1ForwardCards.size())
+				minAttackerPower = Math.min(minAttackerPower,
+						mw.effectiveP1ForwardPower(idx) - mw.p1ForwardDamage.get(idx));
+		}
+		int bestBlockerIdx = -1, bestBlockerPower = 0;
+		for (int i = 0; i < mw.p2ForwardStates.size(); i++) {
+			if (mw.p2ForwardStates.get(i) != CardState.ACTIVE) continue;
+			int pw = mw.effectiveP2ForwardPower(i);
+			if (pw >= minAttackerPower && pw > bestBlockerPower) {
+				bestBlockerPower = pw;
+				bestBlockerIdx   = i;
+			}
+		}
+		return bestBlockerIdx >= 0 ? bestBlockerIdx : null;
+	}
 
 	ForwardTarget chooseBlocker(int effectiveAttackerPower, ForwardTarget attacker) {
 		return chooseBlocker(effectiveAttackerPower, attacker, false);

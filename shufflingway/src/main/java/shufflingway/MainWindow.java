@@ -371,7 +371,8 @@ public class MainWindow {
 	final List<CardState> p2ForwardStates       = new ArrayList<>();
 	final List<Integer>   p2ForwardPlayedOnTurn = new ArrayList<>();
 	final List<Integer>   p2ForwardDamage       = new ArrayList<>();
-	ComputerPlayer        computerPlayer;
+	/** Drives every P2 decision — the local AI today, a remote human once multiplayer lands. */
+	OpponentController    opponent;
 
 	final Set<Integer> spentLbIndices   = new HashSet<>();
 	final Set<Integer> p2SpentLbIndices = new HashSet<>();
@@ -1511,8 +1512,8 @@ public class MainWindow {
 		bzSelfCastFaP2.clear();
 		rfgAfterUseSummons.clear();
 		returnToHandAfterUseSummons.clear();
-		if (computerPlayer != null) computerPlayer.cancel();
-		computerPlayer = new ComputerPlayer(this);
+		if (opponent != null) opponent.cancel();
+		opponent = createOpponent();
 		clearUIZones();
 		if (nextPhaseButton != null) nextPhaseButton.setEnabled(false);
 		if (gameLog != null) gameLog.setText("");
@@ -1772,7 +1773,7 @@ public class MainWindow {
 			} else {
 				logEntry("Coin flip: Opponent goes first!");
 				if (nextPhaseButton != null) nextPhaseButton.setEnabled(false);
-				computerPlayer.runTurn();
+				opponent.runTurn();
 			}
 		});
 
@@ -2306,7 +2307,7 @@ public class MainWindow {
 					for (int i = 0; i < p1MonsterCards.size(); i++) refreshP1MonsterSlot(i);
 					for (int i = 0; i < p2MonsterCards.size(); i++) refreshP2MonsterSlot(i);
 					nextPhaseButton.setEnabled(false);
-					computerPlayer.runTurn();
+					opponent.runTurn();
 				}
 				usedOncePerTurnAbilities.clear();
 				specialAbilitiesUsedThisTurn.clear();
@@ -4770,29 +4771,6 @@ public class MainWindow {
 
 	private static boolean blockerCostExcluded(int blockerCost, int[] costFilter) {
 		return costFilter[1] == 1 ? blockerCost >= costFilter[0] : blockerCost <= costFilter[0];
-	}
-
-	/** Called after P1 attacks: gives P2 AI a chance to declare a blocker. */
-	private void p2OfferBlock(CardData attacker, int attackerIdx) {
-		ForwardTarget blk = computerPlayer.chooseBlocker(effectiveP1ForwardPower(attackerIdx),
-				new ForwardTarget(true, attackerIdx, ForwardTarget.CardZone.FORWARD),
-				attackerMustBeBlocked(attacker));
-		if (blk != null) {
-			CardData blocker = autoAbilityTriggers.fieldCardData(blk);
-			logEntry("[P2] " + blocker.name() + " blocks!");
-			autoAbilityTriggers.triggerAutoAbilitiesForBlock(blocker, false);
-			if (blk.zone() == ForwardTarget.CardZone.FORWARD) { p2BlockingIdx = blk.idx(); p2BlockedByAttacker = attacker; }
-			autoAbilityTriggers.triggerAutoAbilitiesForIsBlocked(attacker, true);
-			if (blk.zone() == ForwardTarget.CardZone.FORWARD)
-				resolveCombat(attacker, true, attackerIdx, blocker, false, blk.idx());
-			else
-				resolveActingCombat(true, ForwardTarget.CardZone.FORWARD, attackerIdx, false, blk.zone(), blk.idx());
-			p2BlockingIdx       = -1;
-			p2BlockedByAttacker = null;
-		} else {
-			dealCombatDamageToOpponent(attacker, true,
-				() -> autoAbilityTriggers.triggerAutoAbilitiesForDealsDamageToOpponent(attacker, true));
-		}
 	}
 
 	/**
@@ -7267,9 +7245,22 @@ public class MainWindow {
 		lastCardWasCast = false;
 	}
 
-	/** True when P2 is the built-in computer player (no active multiplayer connection). */
+	/**
+	 * Builds the controller that will make P2's decisions for the game being started.
+	 * Today that is always the local AI; once the networked opponent exists, this is where
+	 * a live {@link GameConnection} selects it instead.
+	 */
+	private OpponentController createOpponent() {
+		return new ComputerPlayer(this);
+	}
+
+	/** True when P2 is the built-in computer player rather than a remote human. */
 	boolean isP2Cpu() {
-		return multiplayerMenu == null || multiplayerMenu.getActiveConnection() == null;
+		// Falls back to the connection state for the window between construction and the first
+		// startGame(), when no controller exists yet.
+		return opponent == null
+				? multiplayerMenu == null || multiplayerMenu.getActiveConnection() == null
+				: opponent.isCpu();
 	}
 
 	/** Pushes a Summon onto the stack and opens the stack overlay. */
@@ -10773,9 +10764,9 @@ public class MainWindow {
 			((Timer) e.getSource()).stop();
 			p2AutoPassTimer = null;
 			runWhenBoardSettled(() -> {
-				// On P1's turn: let the CPU activate any reactive shields before passing.
+				// On P1's turn: let the opponent activate any reactive shields before passing.
 				if (gameState.getCurrentPlayer() == GameState.Player.P1) {
-					computerPlayer.tryP2ReactiveShieldAbilities(() -> {
+					opponent.requestReactiveShields(() -> {
 						phaseTracker.setHasPriority(true);
 						onDone.run();
 					});
@@ -11085,31 +11076,32 @@ public class MainWindow {
 			if (survivingDeclaredAttackers(true).isEmpty()) { skipBlockStepNoAttackers(); return; }
 			setAttackSubStep(2);
 			refreshAttackButton();
-			ForwardTarget blk = computerPlayer.chooseBlocker(attackerPower,
-					new ForwardTarget(true, monIdx, ForwardTarget.CardZone.MONSTER));
-			if (blk != null) {
-				CardData blocker = autoAbilityTriggers.fieldCardData(blk);
-				logEntry("[P2] " + blocker.name() + " blocks!");
-				autoAbilityTriggers.triggerAutoAbilitiesForBlock(blocker, false);
-				if (blk.zone() == ForwardTarget.CardZone.FORWARD) { p2BlockingIdx = blk.idx(); p2BlockedByAttacker = attacker; }
-				autoAbilityTriggers.triggerAutoAbilitiesForIsBlocked(attacker, true);
-				combatPriorityRound(true, null, () -> {
-					setAttackSubStep(3);
-					resolveActingCombat(true, ForwardTarget.CardZone.MONSTER, monIdx, false, blk.zone(), blk.idx());
-					p2BlockingIdx       = -1;
-					p2BlockedByAttacker = null;
-					continueAttackPhase();
-				});
-			} else {
-				logEntry("[P2] declares no blocker.");
-				combatPriorityRound(true, null, () -> {
-					setAttackSubStep(3);
-					dealCombatDamageToOpponent(attacker, true, () -> {
-						autoAbilityTriggers.triggerAutoAbilitiesForDealsDamageToOpponent(attacker, true);
+			opponent.requestBlocker(attackerPower,
+					new ForwardTarget(true, monIdx, ForwardTarget.CardZone.MONSTER), blk -> {
+				if (blk != null) {
+					CardData blocker = autoAbilityTriggers.fieldCardData(blk);
+					logEntry("[P2] " + blocker.name() + " blocks!");
+					autoAbilityTriggers.triggerAutoAbilitiesForBlock(blocker, false);
+					if (blk.zone() == ForwardTarget.CardZone.FORWARD) { p2BlockingIdx = blk.idx(); p2BlockedByAttacker = attacker; }
+					autoAbilityTriggers.triggerAutoAbilitiesForIsBlocked(attacker, true);
+					combatPriorityRound(true, null, () -> {
+						setAttackSubStep(3);
+						resolveActingCombat(true, ForwardTarget.CardZone.MONSTER, monIdx, false, blk.zone(), blk.idx());
+						p2BlockingIdx       = -1;
+						p2BlockedByAttacker = null;
 						continueAttackPhase();
 					});
-				});
-			}
+				} else {
+					logEntry("[P2] declares no blocker.");
+					combatPriorityRound(true, null, () -> {
+						setAttackSubStep(3);
+						dealCombatDamageToOpponent(attacker, true, () -> {
+							autoAbilityTriggers.triggerAutoAbilitiesForDealsDamageToOpponent(attacker, true);
+							continueAttackPhase();
+						});
+					});
+				}
+			});
 		});
 	}
 
@@ -11419,31 +11411,32 @@ public class MainWindow {
 			if (survivingDeclaredAttackers(true).isEmpty()) { skipBlockStepNoAttackers(); return; }
 			setAttackSubStep(2);
 			refreshAttackButton();
-			ForwardTarget blk = computerPlayer.chooseBlocker(attackerPower,
-					new ForwardTarget(true, bIdx, ForwardTarget.CardZone.BACKUP));
-			if (blk != null) {
-				CardData blocker = autoAbilityTriggers.fieldCardData(blk);
-				logEntry("[P2] " + blocker.name() + " blocks!");
-				autoAbilityTriggers.triggerAutoAbilitiesForBlock(blocker, false);
-				if (blk.zone() == ForwardTarget.CardZone.FORWARD) { p2BlockingIdx = blk.idx(); p2BlockedByAttacker = attacker; }
-				autoAbilityTriggers.triggerAutoAbilitiesForIsBlocked(attacker, true);
-				combatPriorityRound(true, null, () -> {
-					setAttackSubStep(3);
-					resolveActingCombat(true, ForwardTarget.CardZone.BACKUP, bIdx, false, blk.zone(), blk.idx());
-					p2BlockingIdx       = -1;
-					p2BlockedByAttacker = null;
-					continueAttackPhase();
-				});
-			} else {
-				logEntry("[P2] declares no blocker.");
-				combatPriorityRound(true, null, () -> {
-					setAttackSubStep(3);
-					dealCombatDamageToOpponent(attacker, true, () -> {
-						autoAbilityTriggers.triggerAutoAbilitiesForDealsDamageToOpponent(attacker, true);
+			opponent.requestBlocker(attackerPower,
+					new ForwardTarget(true, bIdx, ForwardTarget.CardZone.BACKUP), blk -> {
+				if (blk != null) {
+					CardData blocker = autoAbilityTriggers.fieldCardData(blk);
+					logEntry("[P2] " + blocker.name() + " blocks!");
+					autoAbilityTriggers.triggerAutoAbilitiesForBlock(blocker, false);
+					if (blk.zone() == ForwardTarget.CardZone.FORWARD) { p2BlockingIdx = blk.idx(); p2BlockedByAttacker = attacker; }
+					autoAbilityTriggers.triggerAutoAbilitiesForIsBlocked(attacker, true);
+					combatPriorityRound(true, null, () -> {
+						setAttackSubStep(3);
+						resolveActingCombat(true, ForwardTarget.CardZone.BACKUP, bIdx, false, blk.zone(), blk.idx());
+						p2BlockingIdx       = -1;
+						p2BlockedByAttacker = null;
 						continueAttackPhase();
 					});
-				});
-			}
+				} else {
+					logEntry("[P2] declares no blocker.");
+					combatPriorityRound(true, null, () -> {
+						setAttackSubStep(3);
+						dealCombatDamageToOpponent(attacker, true, () -> {
+							autoAbilityTriggers.triggerAutoAbilitiesForDealsDamageToOpponent(attacker, true);
+							continueAttackPhase();
+						});
+					});
+				}
+			});
 		});
 	}
 
@@ -11519,35 +11512,36 @@ public class MainWindow {
 				if (survivingDeclaredAttackers(true).isEmpty()) { skipBlockStepNoAttackers(); return; }
 				setAttackSubStep(2);
 				refreshAttackButton();
-				ForwardTarget blk = computerPlayer.chooseBlocker(effectiveP1ForwardPower(idx),
-						new ForwardTarget(true, idx, ForwardTarget.CardZone.FORWARD));
-				if (blk != null) {
-					CardData blocker = autoAbilityTriggers.fieldCardData(blk);
-					logEntry("[P2] " + blocker.name() + " blocks!");
-					autoAbilityTriggers.triggerAutoAbilitiesForBlock(blocker, false);
-					if (blk.zone() == ForwardTarget.CardZone.FORWARD) { p2BlockingIdx = blk.idx(); p2BlockedByAttacker = attacker; }
-					autoAbilityTriggers.triggerAutoAbilitiesForIsBlocked(attacker, true);
-					// Second round: both players may respond to the block before damage.
-					combatPriorityRound(true, null, () -> {
-						setAttackSubStep(3);
-						if (blk.zone() == ForwardTarget.CardZone.FORWARD)
-							resolveCombat(attacker, true, idx, blocker, false, blk.idx());
-						else
-							resolveActingCombat(true, ForwardTarget.CardZone.FORWARD, idx, false, blk.zone(), blk.idx());
-						p2BlockingIdx       = -1;
-						p2BlockedByAttacker = null;
-						continueAttackPhase();
-					});
-				} else {
-					logEntry("[P2] declares no blocker.");
-					combatPriorityRound(true, null, () -> {
-						setAttackSubStep(3);
-						dealCombatDamageToOpponent(attacker, true, () -> {
-							autoAbilityTriggers.triggerAutoAbilitiesForDealsDamageToOpponent(attacker, true);
+				opponent.requestBlocker(effectiveP1ForwardPower(idx),
+						new ForwardTarget(true, idx, ForwardTarget.CardZone.FORWARD), blk -> {
+					if (blk != null) {
+						CardData blocker = autoAbilityTriggers.fieldCardData(blk);
+						logEntry("[P2] " + blocker.name() + " blocks!");
+						autoAbilityTriggers.triggerAutoAbilitiesForBlock(blocker, false);
+						if (blk.zone() == ForwardTarget.CardZone.FORWARD) { p2BlockingIdx = blk.idx(); p2BlockedByAttacker = attacker; }
+						autoAbilityTriggers.triggerAutoAbilitiesForIsBlocked(attacker, true);
+						// Second round: both players may respond to the block before damage.
+						combatPriorityRound(true, null, () -> {
+							setAttackSubStep(3);
+							if (blk.zone() == ForwardTarget.CardZone.FORWARD)
+								resolveCombat(attacker, true, idx, blocker, false, blk.idx());
+							else
+								resolveActingCombat(true, ForwardTarget.CardZone.FORWARD, idx, false, blk.zone(), blk.idx());
+							p2BlockingIdx       = -1;
+							p2BlockedByAttacker = null;
 							continueAttackPhase();
 						});
-					});
-				}
+					} else {
+						logEntry("[P2] declares no blocker.");
+						combatPriorityRound(true, null, () -> {
+							setAttackSubStep(3);
+							dealCombatDamageToOpponent(attacker, true, () -> {
+								autoAbilityTriggers.triggerAutoAbilitiesForDealsDamageToOpponent(attacker, true);
+								continueAttackPhase();
+							});
+						});
+					}
+				});
 			});
 		} else {
 			int combinedPower = 0;
@@ -11572,54 +11566,49 @@ public class MainWindow {
 	}
 
 	private void p2OfferBlockParty(List<Integer> attackerIndices, int combinedPower, Runnable onDone) {
-		int bestBlockerIdx = -1, bestBlockerPower = 0;
-		int minAttackerPower = Integer.MAX_VALUE;
-		for (int idx : attackerIndices) {
-			if (idx < p1ForwardCards.size())
-				minAttackerPower = Math.min(minAttackerPower,
-						effectiveP1ForwardPower(idx) - p1ForwardDamage.get(idx));
-		}
-		for (int i = 0; i < p2ForwardStates.size(); i++) {
-			if (p2ForwardStates.get(i) != CardState.ACTIVE) continue;
-			int pw = effectiveP2ForwardPower(i);
-			if (pw >= minAttackerPower && pw > bestBlockerPower) {
-				bestBlockerPower = pw;
-				bestBlockerIdx = i;
+		opponent.requestPartyBlocker(attackerIndices, combinedPower, chosenIdx -> {
+			if (chosenIdx != null) {
+				final int blockerIdx   = chosenIdx;
+				CardData  blocker      = p2ForwardCards.get(blockerIdx);
+				final int blockerPower = effectiveP2ForwardPower(blockerIdx);
+				logEntry("[P2] " + blocker.name() + " blocks the party!");
+				// Both players may respond to the block before damage is worked out.
+				combatPriorityRound(true, null, () -> {
+					setAttackSubStep(3);
+					// Party has First Strike only if every attacker has it and the blocker does not
+					boolean partyFirst = attackerIndices.stream()
+							.allMatch(i -> effectiveHasTrait(true, i, CardData.Trait.FIRST_STRIKE))
+							&& !effectiveHasTrait(false, blockerIdx, CardData.Trait.FIRST_STRIKE);
+					boolean blockerBroken = combinedPower >= blockerPower;
+					if (blockerBroken) breakP2Forward(blockerIdx);
+					if (!partyFirst || !blockerBroken) {
+						// How the blocker spreads its damage is the opponent's call.
+						opponent.requestPartyBlockerDamage(attackerIndices, blockerPower, damageMap -> {
+							applyPartyBlockerDamage(damageMap);
+							if (onDone != null) onDone.run();
+						});
+					} else {
+						logEntry("First Strike — party takes no return damage");
+						if (onDone != null) onDone.run();
+					}
+				});
+			} else {
+				logEntry("[P2] declares no blocker.");
+				combatPriorityRound(true, null, () -> {
+					setAttackSubStep(3);
+					setPlayerDamageSource(partyExBurstSuppressor(attackerIndices, true));
+					p2TakeDamage(onDone);
+				});
 			}
-		}
-		if (bestBlockerIdx >= 0) {
-			CardData blocker = p2ForwardCards.get(bestBlockerIdx);
-			final int blockerIdx   = bestBlockerIdx;
-			final int blockerPower = effectiveP2ForwardPower(bestBlockerIdx);
-			logEntry("[P2] " + blocker.name() + " blocks the party!");
-			// Both players may respond to the block before damage is worked out.
-			combatPriorityRound(true, null, () -> {
-				setAttackSubStep(3);
-				// Party has First Strike only if every attacker has it and the blocker does not
-				boolean partyFirst = attackerIndices.stream()
-						.allMatch(i -> effectiveHasTrait(true, i, CardData.Trait.FIRST_STRIKE))
-						&& !effectiveHasTrait(false, blockerIdx, CardData.Trait.FIRST_STRIKE);
-				boolean blockerBroken = combinedPower >= blockerPower;
-				if (blockerBroken) breakP2Forward(blockerIdx);
-				if (!partyFirst || !blockerBroken) {
-					applyPartyBlockerDamage(p2AiBuildDamageMap(attackerIndices, blockerPower));
-				} else {
-					logEntry("First Strike — party takes no return damage");
-				}
-				if (onDone != null) onDone.run();
-			});
-		} else {
-			logEntry("[P2] declares no blocker.");
-			combatPriorityRound(true, null, () -> {
-				setAttackSubStep(3);
-				setPlayerDamageSource(partyExBurstSuppressor(attackerIndices, true));
-				p2TakeDamage(onDone);
-			});
-		}
+		});
 	}
 
-	/** Builds the AI's optimal damage assignment for a party-attack block. */
-	private Map<Integer, Integer> p2AiBuildDamageMap(List<Integer> attackerIndices, int blockerPower) {
+	/**
+	 * Builds the AI's optimal damage assignment for a party-attack block.
+	 * Package-private: {@link ComputerPlayer} delegates to it, and it is also P1's fallback
+	 * when the party-damage dialog is dismissed without an assignment.
+	 */
+	Map<Integer, Integer> p2AiBuildDamageMap(List<Integer> attackerIndices, int blockerPower) {
 		List<int[]> targets = new ArrayList<>();
 		for (int idx : attackerIndices) {
 			if (idx < p1ForwardCards.size()) {

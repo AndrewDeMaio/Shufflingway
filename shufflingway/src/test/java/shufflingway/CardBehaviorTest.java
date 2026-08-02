@@ -5693,7 +5693,7 @@ public class CardBehaviorTest {
         mw.p1Turn.castNamesThisTurn.add("kain");
         mw.p1Turn.castCountByNameThisTurn.put("kain", 1);
 
-        mw.computerPlayer = new ComputerPlayer(mw);
+        mw.opponent = new ComputerPlayer(mw);
         mw.onNextPhase();                    // END → P2's turn
         mw.gameState.setP1GameOver(true);    // parks the CPU's queued turn timer before it can fire
 
@@ -5713,7 +5713,7 @@ public class CardBehaviorTest {
         mw.p1Turn.cardsCastThisTurn = 2;
         assertTrue(mw.p1CastLimitReached(), "two casts on P1's own turn exhausts Ace's limit for that turn");
 
-        mw.computerPlayer = new ComputerPlayer(mw);
+        mw.opponent = new ComputerPlayer(mw);
         mw.onNextPhase();                    // END → P2's turn
         mw.gameState.setP1GameOver(true);
 
