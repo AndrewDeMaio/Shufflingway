@@ -130,12 +130,26 @@ public class ActionAbilityParsingTest {
         sb.append("  Card: ").append(name).append('\n');
         for (ActionAbility ab : abilities) {
             String desc = ActionResolver.fullDescription(ab.effectText(), source);
-            boolean ok = ActionResolver.parse(ab.effectText(), source) != null;
-            sb.append("  [").append(ok ? "OK" : "--").append("] ")
+            sb.append("  [").append(abilityStatus(ab, source)).append("] ")
               .append(ab.effectText()).append(dmgTag(ab.damageThreshold())).append('\n');
             sb.append("       ").append(desc != null ? desc : "(none)").append(restrictionTags(ab)).append('\n');
         }
         return sb.toString();
+    }
+
+    /**
+     * Per-ability status, matching {@code AutoAbilityParsingTest}: {@code --} when nothing parses,
+     * {@code ??} when it parses but the description still carries an unresolved {@code ?}, and
+     * {@code OK} otherwise.
+     *
+     * <p>Without the middle state an ability listed under "Partially parsed" showed {@code OK},
+     * contradicting the section it sat in — the card-level bucket has always accounted for the
+     * {@code ?}, only the per-line tag did not.
+     */
+    private static String abilityStatus(ActionAbility ab, CardData source) {
+        if (ActionResolver.parse(ab.effectText(), source) == null) return "--";
+        String desc = ActionResolver.fullDescription(ab.effectText(), source);
+        return (desc != null && desc.contains("?")) ? "??" : "OK";
     }
 
     private static String dmgTag(int threshold) {
