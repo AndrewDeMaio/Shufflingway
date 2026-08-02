@@ -48,7 +48,11 @@ public class AbilityPaymentDialog {
 
     @FunctionalInterface
     public interface Callback {
-        void onConfirm(List<Integer> discards, List<Integer> backups, int xValue);
+        /**
+         * @param sCostIdx hand index of the card committed to the Special (S) cost slot,
+         *                 or {@code -1} when the ability has no S cost.
+         */
+        void onConfirm(List<Integer> discards, List<Integer> backups, int xValue, int sCostIdx);
     }
 
     private final JFrame         owner;
@@ -61,17 +65,22 @@ public class AbilityPaymentDialog {
     private final Consumer<String> onZoom;
     private final Runnable         onZoomHide;
     private final CardData.SpecialAbilityProxy proxy;
+    private final String           primerName;
     private final Callback         onConfirm;
     private final java.util.Set<String> ldDiscardGrants;
 
     /**
+     * @param primerName      name of the primer card beneath {@code source} when the source is a
+     *     primed top card, else {@code null}.  A primed Forward counts as having both names, so a
+     *     card of either name in hand can pay its Special (S) cost.
      * @param ldDiscardGrants Light/Dark elements the player may discard from hand for CP via a
      *     field grant (see {@code MainWindow.lightDarkDiscardGrants}); empty when none apply.
      */
     public AbilityPaymentDialog(JFrame owner, ActionAbility ability, CardData source,
             List<CardData> hand, CardData[] backupCards, CardState[] backupStates,
             String[] backupUrls, Consumer<String> onZoom, Runnable onZoomHide,
-            CardData.SpecialAbilityProxy proxy, java.util.Set<String> ldDiscardGrants,
+            CardData.SpecialAbilityProxy proxy, String primerName,
+            java.util.Set<String> ldDiscardGrants,
             Callback onConfirm) {
         this.owner        = owner;
         this.ability      = ability;
@@ -83,6 +92,7 @@ public class AbilityPaymentDialog {
         this.onZoom       = onZoom;
         this.onZoomHide   = onZoomHide;
         this.proxy        = proxy;
+        this.primerName   = primerName;
         this.ldDiscardGrants = ldDiscardGrants;
         this.onConfirm    = onConfirm;
     }
@@ -273,8 +283,7 @@ public class AbilityPaymentDialog {
         // S cost slot — only shown for special abilities. The player clicks a same-named card
         // (or a valid substitute via a proxy) from the hand row to commit it here.
         if (ability.isSpecial()) {
-            String sCostDesc = source.name() + (proxy != null ? " or " + proxy.substituteDescription() : "");
-            JLabel sHdr = new JLabel("S Cost — click a " + sCostDesc + " below to commit:");
+            JLabel sHdr = new JLabel("S Cost — click a " + sCostDescription() + " below to commit:");
             sHdr.setFont(FontLoader.loadPixelFont(9));
             sHdr.setAlignmentX(Component.LEFT_ALIGNMENT);
 
@@ -318,8 +327,7 @@ public class AbilityPaymentDialog {
             final int hi = i;
             CardData hc = hand.get(i);
             // Same-named or proxy-substitute cards go to the S slot, not to CP payment.
-            boolean sameNamed = ability.isSpecial() && (source.name().equalsIgnoreCase(hc.name())
-                    || (proxy != null && proxy.meetsSubstitute(hc)));
+            boolean sameNamed = ability.isSpecial() && paysSCost(hc);
             boolean payable   = !sameNamed && CpPaymentUtils.canDiscardForCp(hc, ldDiscardGrants) && hc != source;
             JLabel lbl = makeCardLabel();
             lbl.setBackground(payable || sameNamed ? Color.DARK_GRAY : new Color(50, 50, 50));
@@ -386,7 +394,8 @@ public class AbilityPaymentDialog {
         cancelBtn.addActionListener(ev -> dlg.dispose());
         confirmBtn.addActionListener(ev -> {
             dlg.dispose();
-            onConfirm.onConfirm(new ArrayList<>(selectedDiscards), new ArrayList<>(selectedBackups), xValueHolder[0]);
+            onConfirm.onConfirm(new ArrayList<>(selectedDiscards), new ArrayList<>(selectedBackups),
+                    xValueHolder[0], ability.isSpecial() ? sCostIdx[0] : -1);
         });
 
         JPanel south = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 6));
@@ -396,7 +405,7 @@ public class AbilityPaymentDialog {
         StringBuilder costDesc = new StringBuilder();
         boolean cf = true;
         if (ability.requiresDull())    { costDesc.append("Dull"); cf = false; }
-        if (ability.isSpecial())       { if (!cf) costDesc.append(" + "); costDesc.append("S (discard ").append(proxy != null ? source.name() + " or " + proxy.substituteDescription() : source.name()).append(")"); cf = false; }
+        if (ability.isSpecial())       { if (!cf) costDesc.append(" + "); costDesc.append("S (discard ").append(sCostDescription()).append(")"); cf = false; }
         if (ability.hasXCost())        { if (!cf) costDesc.append(" + "); costDesc.append("X CP"); cf = false; }
         if (ability.crystalCost() > 0) { if (!cf) costDesc.append(" + "); costDesc.append(ability.crystalCost()).append(" Crystal"); cf = false; }
         if (ability.selfMillCost() > 0) { if (!cf) costDesc.append(" + "); costDesc.append("mill ").append(ability.selfMillCost()); cf = false; }
@@ -460,6 +469,26 @@ public class AbilityPaymentDialog {
         dlg.getContentPane().add(topPanel,  java.awt.BorderLayout.NORTH);
         dlg.getContentPane().add(mainPanel, java.awt.BorderLayout.CENTER);
         dlg.pack(); dlg.setLocationRelativeTo(owner); dlg.setVisible(true);
+    }
+
+    /**
+     * Returns {@code true} if {@code handCard} may be committed to the S cost slot: it shares the
+     * source's name, shares the primer's name (a primed Forward counts as having both), or meets
+     * the source's proxy substitute.
+     */
+    private boolean paysSCost(CardData handCard) {
+        return source.name().equalsIgnoreCase(handCard.name())
+                || (primerName != null && primerName.equalsIgnoreCase(handCard.name()))
+                || (proxy != null && proxy.meetsSubstitute(handCard));
+    }
+
+    /** Human-readable list of the card names/descriptions that can pay the S cost. */
+    private String sCostDescription() {
+        StringBuilder sb = new StringBuilder(source.name());
+        if (primerName != null && !primerName.equalsIgnoreCase(source.name()))
+            sb.append(" or ").append(primerName);
+        if (proxy != null) sb.append(" or ").append(proxy.substituteDescription());
+        return sb.toString();
     }
 
     private static JLabel makeCardLabel() {

@@ -12206,9 +12206,10 @@ public class MainWindow {
 		}
 		for (String e : elems) { gameState.spendP1Cp(e, gameState.getP1CpForElement(e)); gameState.clearP1Cp(e); }
 
-		// Search deck — find all versions of the target card
+		// Search deck — find all versions of the target card.  Multiple copies of the same
+		// printing are one choice, not several, so only distinct versions reach the dialog.
 		String target = card.primingTarget();
-		List<CardData> matches = gameState.findMatchingNamesInP1MainDeck(target);
+		List<CardData> matches = distinctVersions(gameState.findMatchingNamesInP1MainDeck(target));
 
 		if (matches.isEmpty()) {
 			shuffleP1MainDeck();
@@ -12225,6 +12226,17 @@ public class MainWindow {
 			// Multiple printings found — let the player choose; shuffle and refresh happen inside the dialog
 			showPrimingVersionSelectDialog(matches, card, slotIdx);
 		}
+	}
+
+	/**
+	 * Collapses duplicate copies of the same printing down to one representative, keeping the
+	 * order of first appearance.  Printings are identified by image URL — one image per card
+	 * serial — so genuinely different versions of a card name are all preserved.
+	 */
+	private static List<CardData> distinctVersions(List<CardData> cards) {
+		LinkedHashMap<String, CardData> byPrinting = new LinkedHashMap<>();
+		for (CardData c : cards) byPrinting.putIfAbsent(c.imageUrl(), c);
+		return new ArrayList<>(byPrinting.values());
 	}
 
 	/** Shuffles P1's main deck in-place and refreshes the deck label. */

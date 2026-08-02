@@ -11,6 +11,7 @@ import java.awt.Image;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -3001,17 +3002,17 @@ final class AutoAbilityTriggers {
 		if (rawCost.isEmpty() && !eff.hasXCost()) {
 			List<ForwardTarget> bzTargets = resolveBzCostTargetsForBzAbility(bzCosts, isP1);
 			if (bzTargets == null) return;
-			executeAbilityPayment(eff, source, () -> {}, new ArrayList<>(), new ArrayList<>(), bzTargets, isP1, 0);
+			executeAbilityPayment(eff, source, () -> {}, new ArrayList<>(), new ArrayList<>(), bzTargets, isP1, 0, -1);
 			return;
 		}
 
 		new AbilityPaymentDialog(mw.frame, eff, source,
 				mw.playerHand(isP1), mw.playerBackupCards(isP1), mw.playerBackupStates(isP1), mw.playerBackupUrls(isP1),
-				mw::showZoomAt, mw::hideZoom, null, mw.lightDarkDiscardGrants(isP1),
-				(discards, backups, xValue) -> {
+				mw::showZoomAt, mw::hideZoom, null, null, mw.lightDarkDiscardGrants(isP1),
+				(discards, backups, xValue, sCostIdx) -> {
 					List<ForwardTarget> bzTargets = resolveBzCostTargetsForBzAbility(bzCosts, isP1);
 					if (bzTargets == null) return;
-					executeAbilityPayment(eff, source, () -> {}, discards, backups, bzTargets, isP1, xValue);
+					executeAbilityPayment(eff, source, () -> {}, discards, backups, bzTargets, isP1, xValue, sCostIdx);
 				})
 			.show();
 	}
@@ -3460,19 +3461,21 @@ final class AutoAbilityTriggers {
 		List<String> rawCost = eff.cpCost();
 		List<BreakZoneCost> bzCosts = eff.breakZoneCosts();
 
-		// Zero CP + no X: confirm immediately
+		// Zero CP + no X: confirm immediately.  Any S cost is resolved inside executeAbilityPayment,
+		// which prompts when more than one hand card can pay it.
 		if (rawCost.isEmpty() && !eff.hasXCost()) {
 			executeAbilityPayment(eff, source, applyDull, new ArrayList<>(), new ArrayList<>(),
-					autoResolveBzTargets(source, bzCosts, isP1), isP1, 0);
+					autoResolveBzTargets(source, bzCosts, isP1), isP1, 0, -1);
 			return;
 		}
 
 		CardData.SpecialAbilityProxy proxy = eff.isSpecial() ? source.specialAbilityProxy() : null;
+		String primerName = eff.isSpecial() ? mw.getPrimerCardName(source, isP1) : null;
 		new AbilityPaymentDialog(mw.frame, eff, source,
 				mw.playerHand(isP1), mw.playerBackupCards(isP1), mw.playerBackupStates(isP1), mw.playerBackupUrls(isP1),
-				mw::showZoomAt, mw::hideZoom, proxy, mw.lightDarkDiscardGrants(isP1),
-				(discards, backups, xValue) -> executeAbilityPayment(eff, source, applyDull,
-						discards, backups, autoResolveBzTargets(source, bzCosts, isP1), isP1, xValue))
+				mw::showZoomAt, mw::hideZoom, proxy, primerName, mw.lightDarkDiscardGrants(isP1),
+				(discards, backups, xValue, sCostIdx) -> executeAbilityPayment(eff, source, applyDull,
+						discards, backups, autoResolveBzTargets(source, bzCosts, isP1), isP1, xValue, sCostIdx))
 			.show();
 	}
 
@@ -3486,21 +3489,78 @@ final class AutoAbilityTriggers {
 	void executeP2AbilityActivation(ActionAbility ability, CardData source,
 			Runnable applyDull, List<Integer> backupDullIndices, List<Integer> discardIndices, int xValue) {
 		List<ForwardTarget> bzTargets = autoResolveBzTargets(source, ability.breakZoneCosts(), false);
-		executeAbilityPayment(ability, source, applyDull, discardIndices, backupDullIndices, bzTargets, false, xValue);
+		executeAbilityPayment(ability, source, applyDull, discardIndices, backupDullIndices, bzTargets, false, xValue, -1);
+	}
+
+	/**
+	 * Hand cards that can pay a Special ability's S cost: those sharing the source's name, those
+	 * sharing the name of the primer beneath it (a primed Forward counts as having both names, so
+	 * a primed Ifrit (XVI) accepts a Clive as well), and those meeting the source's proxy
+	 * substitute.  Indices in {@code excludedIdxs} are already committed to CP payment.
+	 */
+	private List<CardData> specialCostCandidates(CardData source, List<CardData> hand,
+			Collection<Integer> excludedIdxs, boolean isP1) {
+		String primerName = mw.getPrimerCardName(source, isP1);
+		CardData.SpecialAbilityProxy proxy = source.specialAbilityProxy();
+		List<CardData> eligible = new ArrayList<>();
+		for (int i = 0; i < hand.size(); i++) {
+			if (excludedIdxs.contains(i)) continue;
+			CardData hc = hand.get(i);
+			boolean isSameName = source.name().equalsIgnoreCase(hc.name())
+					|| (primerName != null && primerName.equalsIgnoreCase(hc.name()));
+			if (isSameName || (proxy != null && proxy.meetsSubstitute(hc))) eligible.add(hc);
+		}
+		return eligible;
+	}
+
+	/** Names accepted for {@code source}'s S cost, for the chooser title. */
+	private String specialCostDescription(CardData source, boolean isP1) {
+		String primerName = mw.getPrimerCardName(source, isP1);
+		StringBuilder sb = new StringBuilder(source.name());
+		if (primerName != null && !primerName.equalsIgnoreCase(source.name()))
+			sb.append(" or ").append(primerName);
+		CardData.SpecialAbilityProxy proxy = source.specialAbilityProxy();
+		if (proxy != null) sb.append(" or ").append(proxy.substituteDescription());
+		return sb.toString();
 	}
 
 	/**
 	 * Executes the full payment for an action ability: dulls selected backups,
 	 * discards hand cards for CP, optionally dulls the source card, optionally
 	 * discards a same-name card (Special), then calls {@link ActionResolver#resolve}.
+	 *
+	 * @param sCostHandIdx hand index the player already committed to the S cost slot in
+	 *     {@link AbilityPaymentDialog}, or {@code -1} when the choice has not been made yet
+	 *     (the zero-CP fast path and the CPU path both pass {@code -1}).
 	 */
 	private void executeAbilityPayment(ActionAbility ability, CardData source,
 			Runnable applyDull, List<Integer> discardIndices, List<Integer> backupDullIndices,
-			List<ForwardTarget> bzTargets, boolean isP1, int xValue) {
+			List<ForwardTarget> bzTargets, boolean isP1, int xValue, int sCostHandIdx) {
 		List<String> rawCost = ability.cpCost();
 		LinkedHashMap<String, Integer> costByElem = new LinkedHashMap<>();
 		for (String e : rawCost) if (!e.isEmpty()) costByElem.merge(e, 1, Integer::sum);
 		String[] elems = costByElem.keySet().toArray(String[]::new);
+
+		// Special (S) cost: settle which hand card pays it before anything is committed, so a
+		// cancelled choice backs out of the whole activation.  Held as a CardData rather than an
+		// index because the CP discards below shift the hand.
+		CardData sCostCard = null;
+		if (ability.isSpecial()) {
+			List<CardData> hand = mw.playerHand(isP1);
+			if (sCostHandIdx >= 0 && sCostHandIdx < hand.size()) {
+				sCostCard = hand.get(sCostHandIdx);
+			} else {
+				List<CardData> eligible = specialCostCandidates(source, hand, discardIndices, isP1);
+				if (eligible.size() > 1 && isP1) {
+					int pick = mw.showCardImageChooser(eligible,
+							"S Cost — discard 1 " + specialCostDescription(source, isP1), true);
+					if (pick < 0) return; // cancelled — nothing committed yet
+					sCostCard = eligible.get(pick);
+				} else if (!eligible.isEmpty()) {
+					sCostCard = eligible.get(0);
+				}
+			}
+		}
 
 		// Pre-select discard-cost cards before committing any payment.
 		// This lets the player cancel the discard dialog and back out of the entire activation.
@@ -3508,20 +3568,9 @@ final class AutoAbilityTriggers {
 		List<List<CardData>> discardCostPicks = Collections.emptyList();
 		if (isP1 && !ability.discardCosts().isEmpty()) {
 			Set<Integer> reservedIdxs = new HashSet<>(discardIndices);
-			if (ability.isSpecial()) {
-				String primerName = mw.getPrimerCardName(source, isP1);
-				CardData.SpecialAbilityProxy proxy = source.specialAbilityProxy();
-				List<CardData> hand = mw.playerHand(isP1);
-				for (int i = 0; i < hand.size(); i++) {
-					if (reservedIdxs.contains(i)) continue;
-					CardData hc = hand.get(i);
-					boolean isSameName = source.name().equalsIgnoreCase(hc.name())
-							|| (primerName != null && primerName.equalsIgnoreCase(hc.name()));
-					if (isSameName || (proxy != null && proxy.meetsSubstitute(hc))) {
-						reservedIdxs.add(i);
-						break;
-					}
-				}
+			if (sCostCard != null) {
+				int sIdx = mw.playerHand(isP1).indexOf(sCostCard);
+				if (sIdx >= 0) reservedIdxs.add(sIdx);
 			}
 			List<List<CardData>> picks = new ArrayList<>();
 			for (DiscardCost dc : ability.discardCosts()) {
@@ -3587,20 +3636,13 @@ final class AutoAbilityTriggers {
 		// Dull source card
 		if (ability.requiresDull()) applyDull.run();
 
-		// Special: discard first same-name, primer, or proxy-substitute card from hand
-		if (ability.isSpecial()) {
-			String primerName = mw.getPrimerCardName(source, isP1);
-			CardData.SpecialAbilityProxy proxy = source.specialAbilityProxy();
-			List<CardData> hand = mw.playerHand(isP1);
-			for (int i = 0; i < hand.size(); i++) {
-				CardData hc = hand.get(i);
-				boolean isSameName = source.name().equalsIgnoreCase(hc.name())
-						|| (primerName != null && primerName.equalsIgnoreCase(hc.name()));
-				if (isSameName || (proxy != null && proxy.meetsSubstitute(hc))) {
-					mw.playerBreakFromHand(isP1, i);
-					mw.logEntry("Special: discarded \"" + hc.name() + "\" from hand");
-					break;
-				}
+		// Special: discard the card settled on above (looked up by identity — the CP discards
+		// may have shifted the hand since).
+		if (sCostCard != null) {
+			int sIdx = mw.playerHand(isP1).indexOf(sCostCard);
+			if (sIdx >= 0) {
+				mw.playerBreakFromHand(isP1, sIdx);
+				mw.logEntry("Special: discarded \"" + sCostCard.name() + "\" from hand");
 			}
 		}
 
