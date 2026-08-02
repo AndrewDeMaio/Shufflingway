@@ -3920,9 +3920,31 @@ public class MainWindow {
 			String categoryFilter, String elementFilter, String excludeName, String excludeElem,
 			String destination, int count, boolean entersDull, boolean requireWarp) {
 		if (turn(isP1).cannotSearchThisTurn) {
+			// No search took place, so nothing that watches for one should fire.
 			logEntry("Search blocked — opponent cannot search this turn");
 			return;
 		}
+		// The Character whose ability is searching, when there is one — a Summon or a game action
+		// searching leaves this null, and "a Character opponent controls searches" must not fire.
+		CardData searcher = (currentAbilitySource != null && currentAbilitySourceIsP1 == isP1)
+				? currentAbilitySource : null;
+		try {
+			searchDeckForCardImpl(isP1, inclForwards, inclBackups, inclMonsters, inclSummons,
+					costVal, costCmp, cardNameFilter, jobFilter, categoryFilter, elementFilter,
+					excludeName, excludeElem, destination, count, entersDull, requireWarp);
+		} finally {
+			// Fires on the act of searching, not on finding something: the deck was looked
+			// through either way, which is the event opponents' abilities react to.
+			autoAbilityTriggers.triggerAutoAbilitiesForSearch(searcher, isP1);
+		}
+	}
+
+	private void searchDeckForCardImpl(boolean isP1,
+			boolean inclForwards, boolean inclBackups,
+			boolean inclMonsters, boolean inclSummons,
+			int costVal, String costCmp, String cardNameFilter, String jobFilter,
+			String categoryFilter, String elementFilter, String excludeName, String excludeElem,
+			String destination, int count, boolean entersDull, boolean requireWarp) {
 		Deque<CardData> deck = isP1 ? gameState.getP1MainDeck() : gameState.getP2MainDeck();
 		boolean anyType = !inclForwards && !inclBackups && !inclMonsters && !inclSummons;
 		List<CardData> matches = new ArrayList<>();
@@ -8068,8 +8090,24 @@ public class MainWindow {
 	void playerSpendCrystals(boolean isP1, int n)      { if (isP1) gameState.spendP1Crystals(n); else gameState.spendP2Crystals(n); }
 	CardData playerBreakFromHand(boolean isP1, int i)  {
 		CardData d = isP1 ? gameState.breakFromHand(i) : gameState.breakP2FromHand(i);
-		if (d != null) animateCardDiscard(isP1, d);
+		if (d != null) {
+			animateCardDiscard(isP1, d);
+			// "due to your Summons or abilities" — an effect is mid-resolution and the hand that
+			// lost the card belongs to the other player. A discard paid as a cost or taken at the
+			// end-phase hand limit has no ability resolving, so it correctly fires nothing.
+			if (currentAbilitySource != null && currentAbilitySourceIsP1 != isP1)
+				autoAbilityTriggers.triggerAutoAbilitiesForDiscardByEffect(d, currentAbilitySourceIsP1);
+		}
 		return d;
+	}
+
+	/**
+	 * Announces that {@code handOwnerIsP1} moved one or more cards from a Break Zone into their
+	 * hand, so their opponent's watchers (25-111H The Emperor) can react. Call once per effect
+	 * rather than per card: the trigger reads "1 or more cards".
+	 */
+	void notifyCardsAddedToHandFromBreakZone(boolean handOwnerIsP1) {
+		autoAbilityTriggers.triggerAutoAbilitiesForBreakZoneToHand(handOwnerIsP1);
 	}
 	void playerDullBackupSlot(boolean isP1, int idx) {
 		if (isP1) animateDullBackup(idx, true); else animateDullP2Backup(idx, true);

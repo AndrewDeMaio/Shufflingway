@@ -527,9 +527,14 @@ final class ActionResolverPatterns {
      *   <li>{@code card}     — card name in "&lt;name&gt;'s power"</li>
      * </ul>
      * Group {@code minus} is set alongside {@code itspower} when a subtraction is present.
+     *
+     * <p>"deal each of them damage …" is the same effect distributed over a multi-target choose
+     * (11-037L Barthandelus, the only card in the corpus wording it that way); every branch below
+     * already applies its amount per selected target, and {@code itspower} recomputes the power
+     * for each, so the plural reading needs nothing beyond the subject alternation.
      */
     static final Pattern FOLLOWUP_DAMAGE_EXPR = Pattern.compile(
-        "(?i)deal\\s+(?:it|them)\\s+damage\\s+equal\\s+to\\s+" +
+        "(?i)deal\\s+(?:it|them|each\\s+of\\s+them)\\s+damage\\s+equal\\s+to\\s+" +
         "(?:" +
             "(?<highest>the\\s+highest(?:\\s+power)?\\s+Forward(?:\\s+you\\s+control)?(?:'s\\s+power)?)" +
             "|half\\s+of\\s+(?<halfcard>.+?)'s\\s+power(?:\\s*\\(\\s*round\\s+(?<halfrounding>up|down)[^)]*\\))?" +
@@ -667,8 +672,18 @@ final class ActionResolverPatterns {
         "(?:your\\s+)?opponent\\s+controls[.!]\\s+" +
         "At\\s+the\\s+end\\s+of\\s+your\\s+opponent'?s?\\s+turn,\\s*(?<action>.+?)\\s*[.!]?$"
     );
+    /**
+     * <p>"Break that Character" is admitted alongside the dull-and-freeze forms despite the
+     * caution above, because the demonstrative is not the ambiguous "it" that made the earlier
+     * widening unsafe: a corpus sweep finds no other bare "break that Character" sentence, and
+     * every "that Forward" that does appear (20-102L, 28-010R, 4-035R, 14-038H) carries a
+     * "When/If you do so" prefix binding it to a card named earlier in its own ability. The
+     * anchors on both this pattern and {@link #FOLLOWUP_BREAK_DEMONSTRATIVE} keep those out, and
+     * the Forward wording stays out entirely because it is Breaktouch's.
+     */
     static final Pattern TRIGGERED_TARGET_ACTION_BARE = Pattern.compile(
-        "(?i)^(?:dull\\s+it\\s+and\\s+freeze\\s+it|dull\\s+and\\s+freeze\\s+it)\\s*[.!]?$"
+        "(?i)^(?:dull\\s+it\\s+and\\s+freeze\\s+it|dull\\s+and\\s+freeze\\s+it" +
+        "|break\\s+that\\s+Character)\\s*[.!]?$"
     );
     /** Matches "Dull it/them and deal it/them N damage". Group {@code amount} is the damage value. */
     static final Pattern FOLLOWUP_DULL_AND_DAMAGE = Pattern.compile(
@@ -698,6 +713,22 @@ final class ActionResolverPatterns {
     /** Matches "Break it" or "Break them". */
     static final Pattern FOLLOWUP_BREAK = Pattern.compile(
         "(?i)Break\\s+(?:it|them)"
+    );
+    /**
+     * Matches "Break that Character." — the demonstrative form, 5-130R Tonberry.
+     *
+     * <p>"Character" only, deliberately. "Break that <b>Forward</b>" is Breaktouch's printed
+     * wording, and {@code DamageResolver} keys its dedicated break path off
+     * {@link ActionResolver#isTriggeredTargetAction}; admitting the Forward form here diverts
+     * Breaktouch into the preloaded-target path and breaks it.
+     *
+     * <p>Anchored, unlike {@link #FOLLOWUP_BREAK}, because it feeds
+     * {@link #TRIGGERED_TARGET_ACTION_BARE}: the corpus also carries "When you do so, break that
+     * Forward" (20-102L) and similar, whose antecedent is a card named earlier in the same
+     * ability rather than the one that fired the trigger.
+     */
+    static final Pattern FOLLOWUP_BREAK_DEMONSTRATIVE = Pattern.compile(
+        "(?i)^Break\\s+that\\s+Character\\s*[.!]?$"
     );
     /** Matches "It loses all [its] abilities until the end of the turn." */
     static final Pattern FOLLOWUP_LOSE_ALL_ABILITIES_EOT = Pattern.compile(
@@ -1505,6 +1536,30 @@ final class ActionResolverPatterns {
         Pattern.DOTALL
     );
     /**
+     * The owner-scoped counterpart of {@link #IF_RFP_COUNT_INNER}: "If N or more of <b>your</b>
+     * cards have been removed from the game, &lt;effect&gt;" and its relatives.
+     *
+     * <p>Disjoint from that pattern, which needs a literal "there are" and counts both players'
+     * RFP zones. This one counts only the cards the ability user owns, and covers the three
+     * printed wordings:
+     * <ul>
+     *   <li>"If 1 or more of your cards have been removed from the game, …" (20-107H Urianger)</li>
+     *   <li>"If you have 2 or more Job Remnant you own removed from the game, …" (28-022L)</li>
+     *   <li>"If any Job Eikon you own are removed from the game, …" (29-053R)</li>
+     * </ul>
+     * Groups: {@code count} — the threshold, absent when {@code any} is set (which means 1);
+     * {@code job} — an optional Job restriction; {@code inner} — the gated effect.
+     */
+    static final Pattern IF_SELF_RFG_COUNT_INNER = Pattern.compile(
+        "(?i)^If\\s+(?:you\\s+have\\s+)?" +
+        "(?:(?<count>\\d+)\\s+or\\s+more|(?<any>any))\\s+" +
+        "(?:of\\s+your\\s+)?" +
+        "(?:Job\\s+(?<job>[^,]+?)|cards?)\\s+" +
+        "(?:you\\s+own\\s+)?" +
+        "(?:have\\s+been\\s+|are\\s+|is\\s+)?removed\\s+from\\s+the\\s+game,\\s+(?<inner>.+)",
+        Pattern.DOTALL
+    );
+    /**
      * "At the beginning of your Main Phase 1[ each turn etc.], &lt;effect&gt;"
      * Group {@code inner} captures the effect text after the trigger comma.  Modeled on
      * {@link #AT_END_OF_EACH_TURN_PATTERN} — the inner effect is dispatched through
@@ -1654,11 +1709,20 @@ final class ActionResolverPatterns {
      * The "of cost C or less" clause is optional.
      * Groups: {@code n} (reveal count), {@code max} (max to add), {@code type} (card type),
      * {@code cost} (max cost; {@code null} when the clause is absent).
+     *
+     * <p>An untyped "Add M card(s) of cost C or less" (28-046C Zidane) selects on cost alone and
+     * sets {@code anycard}/{@code anycost} instead of {@code type}/{@code cost}. The cost clause is
+     * mandatory in that arm on purpose: a bare "Add 1 card among them …" restricts nothing and
+     * belongs to {@code tryParseLookTopDeckAddToHandRestBottom}, which sits later in the chain and
+     * would be shadowed if this pattern accepted it.
      */
     static final Pattern REVEAL_TOP_N_TYPE_TO_HAND = Pattern.compile(
         "(?i)^\\s*(?:you\\s+may\\s+)?reveal\\s+the\\s+top\\s+(?<n>\\d+)\\s+cards?\\s+of\\s+your\\s+deck[.!]?\\s+" +
-        "Add\\s+(?<max>\\d+)\\s+(?<type>Forwards?|Backups?|Monsters?|Characters?|Summons?)" +
-        "(?:\\s+of\\s+cost\\s+(?<cost>\\d+)\\s+or\\s+less)?\\s+among\\s+them\\s+to\\s+your\\s+hand\\s+" +
+        "Add\\s+(?<max>\\d+)\\s+" +
+        "(?:(?<type>Forwards?|Backups?|Monsters?|Characters?|Summons?)" +
+            "(?:\\s+of\\s+cost\\s+(?<cost>\\d+)\\s+or\\s+less)?" +
+        "|(?<anycard>cards?)\\s+of\\s+cost\\s+(?<anycost>\\d+)\\s+or\\s+less)" +
+        "\\s+among\\s+them\\s+to\\s+your\\s+hand\\s+" +
         "and\\s+return\\s+the\\s+other\\s+cards?\\s+to\\s+the\\s+bottom\\s+of\\s+(?:your|the)\\s+deck(?:\\s+in\\s+any\\s+order)?[.!]?\\s*$"
     );
     static final Pattern REVEAL_TOP_N_JOB_OR_NAME_TO_HAND = Pattern.compile(
@@ -2621,6 +2685,16 @@ final class ActionResolverPatterns {
         "(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+Summons?" +
         "\\s+each\\s+with\\s+a\\s+different\\s+cost\\s+and\\s+add\\s+them\\s+to\\s+your\\s+hand[.!]?"
     );
+    /**
+     * Matches a "You may" sitting at the very end of the text preceding a match — i.e. immediately
+     * before the clause it makes optional.
+     *
+     * <p>Anchored with {@code $} on purpose. A search is optional only when the "you may" attaches
+     * to the search itself; 12-106R Relm's "choose 1 Character … You may search for …" has one, but
+     * an ability whose "you may" governs an earlier clause must not make a later mandatory search
+     * skippable.
+     */
+    static final Pattern YOU_MAY_IMMEDIATELY_BEFORE = Pattern.compile("(?i)\\byou\\s+may\\s+$");
     static final Pattern SEARCH_DECK_PATTERN = Pattern.compile(
         "(?i)Search\\s+for\\s+(?:up\\s+to\\s+)?(?<count>\\d+)\\s+" +
         // Element(s) that precede the job/name filter (e.g. "Fire Job Knight")

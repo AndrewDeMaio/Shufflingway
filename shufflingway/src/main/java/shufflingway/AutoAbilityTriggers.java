@@ -1413,6 +1413,116 @@ final class AutoAbilityTriggers {
 		triggerAutoAbilitiesForEvent("chosen by opponent's summon or ability", chosenSideIsP1);
 	}
 
+	/**
+	 * Fires "opponent searches" auto abilities when {@code searcherIsP1} searches their deck.
+	 * The watchers are the searcher's opponent, so the abilities fire on the other side.
+	 *
+	 * <p>{@code searchingCard} is the card whose ability performed the search, or {@code null}
+	 * when the search came from something else (a cast Summon, a game action). It matters for two
+	 * reasons: 5-130R Tonberry only triggers on "a Character opponent controls" searching — a
+	 * search with no Character behind it is not that — and its effect breaks that same Character,
+	 * so the card has to be carried through to the effect as a preloaded target.
+	 */
+	void triggerAutoAbilitiesForSearch(CardData searchingCard, boolean searcherIsP1) {
+		boolean watcherIsP1 = !searcherIsP1;
+		ForwardTarget searcherTarget = searchingCard == null
+				? null : findFieldTarget(searchingCard, searcherIsP1);
+		withBatch(() -> {
+			List<CardData> fwds = new ArrayList<>(watcherIsP1 ? mw.p1ForwardCards : mw.p2ForwardCards);
+			CardData[]     bkps = watcherIsP1 ? mw.p1BackupCards : mw.p2BackupCards;
+			List<CardData> mons = new ArrayList<>(watcherIsP1 ? mw.p1MonsterCards : mw.p2MonsterCards);
+			List<CardData> watchers = new ArrayList<>(fwds);
+			for (CardData c : bkps) if (c != null) watchers.add(c);
+			watchers.addAll(mons);
+			for (CardData watcher : watchers) fireSearchTriggers(watcher, watcherIsP1, searchingCard, searcherTarget);
+		});
+		mw.showStackWindowIfNeeded();
+	}
+
+	private void fireSearchTriggers(CardData watcher, boolean watcherIsP1,
+			CardData searchingCard, ForwardTarget searcherTarget) {
+		for (AutoAbility fa : mw.effectiveAutoAbilities(watcher)) {
+			if (!fa.trigger().equals("opponent searches")) continue;
+			// "a Character opponent controls searches" needs a Character behind the search;
+			// "your opponent searches" is satisfied by the player searching at all.
+			boolean needsCharacter = SEARCH_SUBJECT_IS_CHARACTER.matcher(fa.triggerCard()).find();
+			if (needsCharacter && searchingCard == null) continue;
+			// Only an effect that points back at the searcher needs it preloaded. Preloading
+			// unconditionally would hand a target to any unrelated selection the effect makes.
+			if (searcherTarget != null && REFERS_TO_TRIGGERING_CARD.matcher(fa.effectText()).find()) {
+				runWithPreloadedTarget(fa, watcher, watcherIsP1, searcherTarget);
+				continue;
+			}
+			executeAutoAbility(fa, watcher, watcherIsP1);
+		}
+	}
+
+	/** Subject phrases that require a Character to have done the searching, not just the player. */
+	private static final Pattern SEARCH_SUBJECT_IS_CHARACTER = Pattern.compile(
+			"(?i)\\b(Character|Forward|Backup|Monster)\\b");
+
+	/** An effect that points back at the card which fired the trigger. */
+	private static final Pattern REFERS_TO_TRIGGERING_CARD = Pattern.compile(
+			"(?i)\\bthat\\s+(?:Character|Forward)\\b");
+
+	/** Resolves {@code fa} immediately with {@code target} preloaded, for effects naming it. */
+	private void runWithPreloadedTarget(AutoAbility fa, CardData watcher,
+			boolean watcherIsP1, ForwardTarget target) {
+		Consumer<GameContext> effect = ActionResolver.parse(fa.effectText(), watcher);
+		if (effect == null) return;
+		GameContext ctx = mw.buildGameContext(watcherIsP1);
+		ctx.preloadTargets(List.of(target));
+		CardData prevSource = mw.currentAbilitySource;
+		mw.currentAbilitySource = watcher;
+		try {
+			mw.logEntry("[AutoAbility] " + watcher.name() + " — " + fa.effectText());
+			effect.accept(ctx);
+		} finally {
+			mw.currentAbilitySource = prevSource;
+		}
+	}
+
+	/** Locates {@code card} in {@code isP1}'s field zones, or {@code null} if it has left. */
+	private ForwardTarget findFieldTarget(CardData card, boolean isP1) {
+		List<CardData> fwds = isP1 ? mw.p1ForwardCards : mw.p2ForwardCards;
+		for (int i = 0; i < fwds.size(); i++)
+			if (fwds.get(i) == card) return new ForwardTarget(isP1, i, ForwardTarget.CardZone.FORWARD);
+		CardData[] bkps = isP1 ? mw.p1BackupCards : mw.p2BackupCards;
+		for (int i = 0; i < bkps.length; i++)
+			if (bkps[i] == card) return new ForwardTarget(isP1, i, ForwardTarget.CardZone.BACKUP);
+		List<CardData> mons = isP1 ? mw.p1MonsterCards : mw.p2MonsterCards;
+		for (int i = 0; i < mons.size(); i++)
+			if (mons.get(i) == card) return new ForwardTarget(isP1, i, ForwardTarget.CardZone.MONSTER);
+		return null;
+	}
+
+	/**
+	 * Fires "opponent discards … due to your Summons or abilities" abilities on {@code causerIsP1}'s
+	 * field cards, for the card their effect just made the opponent discard.
+	 *
+	 * <p>Three trigger labels share this path because the printings differ in what they watch for:
+	 * any card, a Character, or a Summon (27-036L Locke carries the last two simultaneously). The
+	 * discarded card decides which fire.
+	 */
+	void triggerAutoAbilitiesForDiscardByEffect(CardData discarded, boolean causerIsP1) {
+		if (discarded == null) return;
+		List<String> labels = new ArrayList<>();
+		labels.add("opponent discards by effect");
+		if (discarded.isForward() || discarded.isBackup() || discarded.isMonster())
+			labels.add("opponent discards character by effect");
+		if (discarded.isSummon())
+			labels.add("opponent discards summon by effect");
+		for (String label : labels) triggerAutoAbilitiesForEvent(label, causerIsP1);
+	}
+
+	/**
+	 * Fires "1 or more cards are added to your opponent's hand from the Break Zone" abilities.
+	 * {@code handOwnerIsP1} is the player who salvaged, so the watchers are on the other side.
+	 */
+	void triggerAutoAbilitiesForBreakZoneToHand(boolean handOwnerIsP1) {
+		triggerAutoAbilitiesForEvent("opponent salvages from break zone", !handOwnerIsP1);
+	}
+
 	/** Fires "damage zone" field abilities for all field cards belonging to the player who took damage. */
 	void triggerAutoAbilitiesForDamageZone(boolean isP1) {
 		triggerAutoAbilitiesForEvent("damage zone", isP1);

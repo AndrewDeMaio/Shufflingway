@@ -826,6 +826,14 @@ public class ActionResolver {
         result = tryParseNameCardTypeOpponentDiscardDrawIfMatch(effectText);
         if (result != null) return result;
 
+        // Must precede tryParseOpponentDiscard and the other inner-effect parsers below: this
+        // is a gate wrapping an arbitrary effect, and those match with find(), so one of them
+        // would claim the gated tail (28-022L's "your opponent discards 2 cards") and run it
+        // unconditionally. Disjoint from tryParseIfRfpCount, which needs a literal "there are"
+        // and counts both players' RFP zones rather than only the ability user's.
+        result = tryParseIfSelfRfgCount(effectText, source);
+        if (result != null) return result;
+
         result = tryParseOpponentDiscard(effectText);
         if (result != null) return result;
 
@@ -895,13 +903,14 @@ public class ActionResolver {
         result = tryParsePlayFromHand(effectText, source, xValue);
         if (result != null) return result;
 
-        result = tryParseIfRfpCount(effectText, source);
-        if (result != null) return result;
 
         result = tryParseOpponentSelects(effectText);
         if (result != null) return result;
 
         result = tryParseBzFwdToHandOppFwdToBzByDamage(effectText);
+        if (result != null) return result;
+
+        result = tryParseIfRfpCount(effectText, source);
         if (result != null) return result;
 
         result = tryParseOpponentPutsForwardToBreakZone(effectText);
@@ -1329,6 +1338,7 @@ public class ActionResolver {
         if (tryParseChooseCharacter(effectText, source, 0)              != null) return "ChooseCharacter";
         if (tryParseIfSelfFwdReceivedDamageDraw(effectText, source)          != null) return "IfSelfFwdReceivedDamageDraw";
         if (tryParseIfRfpCount(effectText, source)               != null) return "IfRfpCount";
+        if (tryParseIfSelfRfgCount(effectText, source)           != null) return "IfSelfRfgCount";
         if (tryParseElementChange(effectText, source) != null) return "ElementChange";
         if (tryParseDelayedEffect(effectText)                 != null) return "DelayedEffect";
         if (tryParsePlayerCannotCastSummons(effectText)                != null) return "PlayerCannotCastSummons";
@@ -1958,6 +1968,7 @@ public class ActionResolver {
         if (tryParseRevealTopBreakSameCostAddToHand(effectText)       != null) return "RevealTopBreakSameCostAddToHand";
         if (tryParseIfSelfFwdReceivedDamageDraw(effectText, source)            != null) return "IfSelfFwdReceivedDamageDraw";
         if (tryParseIfRfpCount(effectText, source)                     != null) return "IfRfpCount";
+        if (tryParseIfSelfRfgCount(effectText, source)                 != null) return "IfSelfRfgCount";
         if (tryParseAllFieldEffect(effectText) != null)                     return "AllFieldEffect";
         if (tryParseFieldPowerGrantPassive(effectText) != null) {
             String trimmed = effectText.trim();
@@ -2459,7 +2470,7 @@ public class ActionResolver {
                 sortedByIdxDesc(ts, false).forEach(ctx::freezeTarget);
             };
 
-        if (FOLLOWUP_BREAK.matcher(t).find())
+        if (FOLLOWUP_BREAK.matcher(t).find() || FOLLOWUP_BREAK_DEMONSTRATIVE.matcher(t).matches())
             return (ctx, ts) -> {
                 sortedByIdxDesc(ts, true) .forEach(ctx::breakTarget);
                 sortedByIdxDesc(ts, false).forEach(ctx::breakTarget);

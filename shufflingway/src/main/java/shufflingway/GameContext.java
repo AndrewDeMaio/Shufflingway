@@ -1219,6 +1219,18 @@ public interface GameContext {
     int countP2RfgCards(String cardNameFilter, String jobFilter);
 
     /**
+     * Counts the cards the ability user owns that are removed from the game — their own RFP zone
+     * only.  Routes to P1 or P2 based on {@link #isP1()}, which is what separates it from
+     * {@link #countRemovedFromGame()}: card text saying "<em>your</em> cards have been removed
+     * from the game" is scoped to the owner, not to both players' zones combined.
+     */
+    default int countSelfRfgCards(String cardNameFilter, String jobFilter) {
+        return isP1()
+                ? countP1RfgCards(cardNameFilter, jobFilter)
+                : countP2RfgCards(cardNameFilter, jobFilter);
+    }
+
+    /**
      * Counts the ability user's own cards in their Break Zone plus the ones they own that are
      * removed from the game (e.g. Jill: "the Job Eikon in your Break Zone and/or Job Eikon you
      * own removed from the game"). Routes to P1 or P2 based on {@link #isP1()}.

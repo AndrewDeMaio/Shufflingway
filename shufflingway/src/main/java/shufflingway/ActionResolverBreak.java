@@ -171,6 +171,37 @@ final class ActionResolverBreak {
             else ctx.logEntry("Condition not met: need " + minRfp + "+ cards RFP, have " + totalRfp);
         };
     }
+    /**
+     * Parses "If N or more of your cards have been removed from the game, &lt;effect&gt;" and its
+     * relatives — the owner-scoped counterpart of {@link #tryParseIfRfpCount}.
+     *
+     * <p>The two are disjoint on their wording, but they differ in what they count: this one reads
+     * only the ability user's own RFP zone, so an opponent filling theirs does not satisfy it.
+     */
+    static Consumer<GameContext> tryParseIfSelfRfgCount(String text, CardData source) {
+        Matcher m = IF_SELF_RFG_COUNT_INNER.matcher(text.trim());
+        if (!m.find()) return null;
+        // "any …" is the same test with a threshold of 1.
+        int threshold = m.group("count") != null ? Integer.parseInt(m.group("count")) : 1;
+        String rawJob = m.group("job");
+        // "Job Eikon or Job Dominant" (24-006C Clive) is a disjunction; meetsJobFilter reads it
+        // bar-separated, so the printed "or [Job] " joiners have to be rewritten.
+        final String jobFilter = rawJob != null
+                ? rawJob.trim().replaceAll("(?i)\\s+or\\s+(?:Job\\s+)?", "|")
+                : null;
+        Consumer<GameContext> innerEffect = parse(m.group("inner").trim(), source);
+        if (innerEffect == null) return null;
+        return ctx -> {
+            int owned = ctx.countSelfRfgCards(null, jobFilter);
+            if (owned >= threshold) {
+                innerEffect.accept(ctx);
+            } else {
+                ctx.logEntry("Condition not met: need " + threshold + "+ "
+                        + (jobFilter != null ? "Job " + jobFilter + " " : "")
+                        + "of your cards removed from the game, have " + owned);
+            }
+        };
+    }
     static Consumer<GameContext> tryParseOpponentPutsForwardToBreakZone(String text) {
         Matcher m = OPPONENT_PUTS_FORWARD_TO_BREAK_ZONE_PATTERN.matcher(text);
         if (!m.find()) return null;

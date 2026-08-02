@@ -1648,13 +1648,23 @@ public record CardData(
             "|(?:is|are)\\s+chosen\\s+by\\s+your\\s+opponent's\\s+Summons?(?:\\s+or\\s+abilit(?:y|ies))?" +
             "|uses?\\s+an\\s+EX\\s+Burst" +
             "|becomes?\\s+dull" +
+            // "searches for 1 or more cards" (5-130R Tonberry, 13-034H Remedi) and the "for"-less
+            // printing on 25-111H The Emperor. Searching is a public event other cards punish.
+            "|searches?\\s+(?:for\\s+)?1\\s+or\\s+more\\s+cards?" +
+            // "discards [1 or more Characters|a card from their hand|…] due to your Summons or
+            // abilities" — an 11-card family whose printings vary in count, in whether "from their
+            // hand" appears, and in the discarded type. The middle is left loose because the
+            // "due to your …" tail is what identifies the trigger.
+            "|discards?\\s+[^,]*?due\\s+to\\s+your\\s+Summons?\\s+or\\s+abilit(?:y|ies)" +
+            // "are added to your opponent's hand from the Break Zone" — 25-111H The Emperor.
+            "|(?:is|are)\\s+added\\s+to\\s+your\\s+opponent's\\s+hand\\s+from\\s+the\\s+Break\\s+Zone" +
         ")\\s*,\\s+" +
         "(?<youmay>(?:you|your\\s+opponent)\\s+may\\s+)?" +
         "(?<effect>.+?)\\s*" +
         // Effect ends at: a [[br]], the next "When …" trigger, a card's own 《cost》: special-ability
         // marker, or end of text. The (?<!\") guard keeps a 《cost》: that sits INSIDE a quoted granted
         // ability (e.g. Machinist's "《Dull》: …", Medusa's "《5》: …") from prematurely ending the effect.
-        "(?=\\s*\\[\\[br\\]\\]|\\s*When\\s+[^,]+?\\s+(?:forms?\\s+a\\s+party\\s+and\\s+attacks?|attacks?|blocks?|enters?|leaves?|is\\s+(?:put|removed|blocked|dealt)|deals?|uses?|becomes?)|\\s*(?<!\")(?:《[^》]+》)+\\s*:|\\s*$)",
+        "(?=\\s*\\[\\[br\\]\\]|\\s*When\\s+[^,]+?\\s+(?:forms?\\s+a\\s+party\\s+and\\s+attacks?|attacks?|blocks?|enters?|leaves?|is\\s+(?:put|removed|blocked|dealt)|(?:is|are)\\s+added|deals?|uses?|becomes?|searches?|discards?)|\\s*(?<!\")(?:《[^》]+》)+\\s*:|\\s*$)",
         Pattern.DOTALL
     );
 
@@ -1907,6 +1917,22 @@ public record CardData(
     }
 
     /**
+     * Classifies a "discards … due to your Summons or abilities" trigger by what was discarded.
+     *
+     * <p>27-036L Locke carries two of these at once — one for Characters and one for Summons — so
+     * the discarded type has to survive into the trigger label or both would fire on any discard.
+     * Only the text before "due to" is inspected: the tail names the <em>cause</em> and always
+     * contains "Summons", which would otherwise read as a Summon being discarded.
+     */
+    private static String discardByEffectTrigger(String triggerRaw) {
+        int dueTo = triggerRaw.indexOf("due to");
+        String discarded = dueTo < 0 ? triggerRaw : triggerRaw.substring(0, dueTo);
+        if (discarded.contains("character")) return "opponent discards character by effect";
+        if (discarded.contains("summon"))    return "opponent discards summon by effect";
+        return "opponent discards by effect";
+    }
+
+    /**
      * True if {@code index} falls inside a sentence opened by a "When …, " trigger.
      *
      * <p>Used to tell a standalone timing ability ("At the end of your opponent's turn, …" as its
@@ -2128,6 +2154,11 @@ public record CardData(
             else if (triggerRaw.equals("is blocked"))                                                       trigger = "is blocked";
             else if (triggerRaw.contains("block") && triggerRaw.contains("is blocked"))                    trigger = "blocks or is blocked";
             else if (triggerRaw.contains("block"))                                                          trigger = "blocks";
+            // Both of these must precede the "break zone" and "summon" branches below, which would
+            // otherwise claim them: "added to your opponent's hand from the Break Zone" contains
+            // "break zone", and "due to your Summons or abilities" contains "summon".
+            else if (triggerRaw.contains("added to your opponent's hand"))                                  trigger = "opponent salvages from break zone";
+            else if (triggerRaw.contains("discard") && triggerRaw.contains("due to your"))                  trigger = discardByEffectTrigger(triggerRaw);
             else if (triggerRaw.contains("break zone"))                                                     trigger = "put into break zone";
             else if (triggerRaw.contains("chosen") && triggerRaw.contains("abilit"))                        trigger = "chosen by opponent's summon or ability";
             else if (triggerRaw.contains("chosen"))                                                         trigger = "chosen by opponent's summon";
@@ -2146,6 +2177,10 @@ public record CardData(
             }
             else if (triggerRaw.contains("uses") && triggerRaw.contains("ex burst"))                        trigger = "opponent uses ex burst";
             else if (triggerRaw.contains("dull"))                                                            trigger = "becomes dull";
+            // Every printing of this trigger watches the opponent searching — either "your opponent
+            // searches" or "a Character opponent controls searches" — so the side is implied by the
+            // trigger itself and the subject only narrows which of their cards counts.
+            else if (triggerRaw.contains("search"))                                                          trigger = "opponent searches";
             else                                                                                             trigger = "enters the field";
 
             // For "becomes dull", strip optional "active " state qualifier from the card name

@@ -3219,6 +3219,8 @@ final class GameContextImpl implements GameContext {
 
 				if (!p1Picks.isEmpty()) { mw.refreshP1BreakLabel(); mw.refreshP1HandLabel(); }
 				if (!p2Picks.isEmpty()) { mw.refreshP2BreakLabel(); mw.refreshP2HandCountLabel(); }
+				if (!p1Picks.isEmpty()) mw.notifyCardsAddedToHandFromBreakZone(true);
+				if (!p2Picks.isEmpty()) mw.notifyCardsAddedToHandFromBreakZone(false);
 			}
 
 			@Override public void salvageCharacterFromOwnBreakZone(int count, boolean fwds, boolean bkps, boolean mons) {
@@ -3258,6 +3260,7 @@ final class GameContextImpl implements GameContext {
 				}
 				if (isP1) { mw.refreshP1BreakLabel(); mw.refreshP1HandLabel(); }
 				else       { mw.refreshP2BreakLabel(); mw.refreshP2HandCountLabel(); }
+				if (!sorted.isEmpty()) mw.notifyCardsAddedToHandFromBreakZone(isP1);
 			}
 
 			@Override public void chooseWarpCardFromBreakZoneToHand() {
@@ -3293,6 +3296,7 @@ final class GameContextImpl implements GameContext {
 				logEntry(card.name() + " → " + (isP1 ? "P1" : "P2") + " hand from Break Zone");
 				if (isP1) { mw.refreshP1BreakLabel(); mw.refreshP1HandLabel(); }
 				else       { mw.refreshP2BreakLabel(); mw.refreshP2HandCountLabel(); }
+				mw.notifyCardsAddedToHandFromBreakZone(isP1);
 			}
 
 			@Override public void eachPlayerSelectUpToNAndBreak(int count, boolean inclForwards, boolean inclMonsters) {
@@ -3767,6 +3771,7 @@ final class GameContextImpl implements GameContext {
 						                    : " taken from opponent's Break Zone to hand"));
 				if (t.isP1()) mw.refreshP1BreakLabel(); else mw.refreshP2BreakLabel();
 				if (isP1) mw.refreshP1HandLabel(); else mw.refreshP2HandCountLabel();
+				mw.notifyCardsAddedToHandFromBreakZone(isP1);
 			}
 
 			@Override public void putBreakZoneTargetOnTopOfDeck(ForwardTarget t) {
@@ -4842,6 +4847,7 @@ final class GameContextImpl implements GameContext {
 						logEntry(cardName + " Break Zone → P1 Hand");
 						mw.refreshP1BreakLabel();
 						mw.refreshP1HandLabel();
+						mw.notifyCardsAddedToHandFromBreakZone(true);
 						return;
 					}
 				}

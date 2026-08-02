@@ -395,12 +395,16 @@ final class ActionResolverSearch {
         if (!m.find()) return null;
         int n = Integer.parseInt(m.group("n"));
         int max = Integer.parseInt(m.group("max"));
+        // The untyped arm restricts on cost alone, so it passes no type filter at all — every
+        // filter null means "any card" downstream, with maxCost doing the selecting.
+        boolean anyCard = m.group("anycard") != null;
         // Normalise plural → singular (e.g. "Monsters" → "Monster")
-        String typeFilter = m.group("type").replaceAll("(?i)s$", "");
-        String costRaw = m.group("cost");
+        String typeFilter = anyCard ? null : m.group("type").replaceAll("(?i)s$", "");
+        String costRaw = anyCard ? m.group("anycost") : m.group("cost");
         int maxCost = costRaw != null ? Integer.parseInt(costRaw) : -1;
         return ctx -> {
-            ctx.logEntry("Effect: Reveal top " + n + " — add up to " + max + " " + typeFilter
+            ctx.logEntry("Effect: Reveal top " + n + " — add up to " + max + " "
+                    + (typeFilter != null ? typeFilter : "card")
                     + (maxCost >= 0 ? " of cost " + maxCost + " or less" : "") + " to hand, rest to bottom");
             ctx.revealTopAddUpToMatchingRestBottom(n, max, null, null, null, typeFilter, maxCost);
         };
@@ -780,10 +784,29 @@ final class ActionResolverSearch {
         final int fCount = count;
         final boolean fDull = entersDull;
         final boolean fWarp = requireWarp;
-        return ctx -> {
+        Consumer<GameContext> search = ctx -> {
             ctx.logEntry("Effect: Search deck for " + fCount + filterDesc + typeDesc + costLabel + " → " + destination + (fDull ? " dull" : ""));
             ctx.searchDeckForCard(fwd, bk, mn, sm, costVal, costCmp, fName, fJob, fCat, fElem, fExclude, fExclElem, destination, fCount, fDull, fWarp);
             if (secondary != null) secondary.accept(ctx);
+        };
+
+        // A "You may" immediately before this "Search for …" makes the search optional.
+        //
+        // The prompt must come before the search runs, not after: searching is a public event
+        // that opponents' abilities react to (5-130R Tonberry, 13-034H Remedi, 25-111H The
+        // Emperor all punish a search), so a player who declines has to not have searched at
+        // all. Declining also fizzles the effect, suppressing any "If you do so" payoff.
+        //
+        // Anchored to the text right before the match rather than looked for anywhere in the
+        // ability: a "you may" attached to some other clause must not make this search optional.
+        if (!YOU_MAY_IMMEDIATELY_BEFORE.matcher(text.substring(0, m.start())).find()) return search;
+        return ctx -> {
+            if (!ctx.promptYouMay("Search your deck? Declining means you did not search.")) {
+                ctx.logEntry("Declined to search — no search takes place");
+                ctx.markEffectFizzled();
+                return;
+            }
+            search.accept(ctx);
         };
     }
 }

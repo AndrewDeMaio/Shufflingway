@@ -8115,6 +8115,525 @@ public class CardBehaviorTest {
 		verify(ctx).drawCards(1);
 	}
 
+	// 11-037L Barthandelus: "choose up to 2 Forwards opponent controls. Deal each of them damage
+	// equal to its power minus 2000." The damage-expression followup only accepted "deal it/them",
+	// so the plural wording fell through to the choose chain's not-implemented warning.
+	// The amount is per target, not one amount shared across them.
+	@Test
+	void barthandelusDamagesEachChosenForwardByItsOwnPower() {
+		GameContext ctx = mock(GameContext.class);
+		ForwardTarget big   = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+		ForwardTarget small = new ForwardTarget(false, 1, ForwardTarget.CardZone.FORWARD);
+		when(ctx.consumePreloadedTargets()).thenReturn(null);
+		when(ctx.selectCharacters(anyInt(), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(),
+				anyInt(), any(), anyInt(), any(), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(),
+				any(), any(), anyBoolean(), any(), anyBoolean()))
+				.thenReturn(new ArrayList<>(List.of(big, small)));
+		when(ctx.effectiveTargetPower(big)).thenReturn(9000);
+		when(ctx.effectiveTargetPower(small)).thenReturn(3000);
+
+		Consumer<GameContext> fn = ActionResolver.parse(
+				"choose up to 2 Forwards opponent controls. "
+				+ "Deal each of them damage equal to its power minus 2000.", null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+
+		// up to 2 (upTo=true), opponent's side only
+		verify(ctx).selectCharacters(eq(2), eq(true), eq(true), anyBoolean(), any(), any(),
+				anyInt(), any(), anyInt(), any(), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(),
+				any(), any(), anyBoolean(), any(), anyBoolean());
+		verify(ctx).damageTarget(big, 7000);
+		verify(ctx).damageTarget(small, 1000);
+	}
+
+	// Power below the subtrahend must floor at 0 rather than healing the Forward.
+	@Test
+	void powerMinusDamageFloorsAtZero() {
+		GameContext ctx = mock(GameContext.class);
+		ForwardTarget weak = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+		when(ctx.consumePreloadedTargets()).thenReturn(null);
+		when(ctx.selectCharacters(anyInt(), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(),
+				anyInt(), any(), anyInt(), any(), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(),
+				any(), any(), anyBoolean(), any(), anyBoolean()))
+				.thenReturn(new ArrayList<>(List.of(weak)));
+		when(ctx.effectiveTargetPower(weak)).thenReturn(1000);
+
+		Consumer<GameContext> fn = ActionResolver.parse(
+				"choose up to 2 Forwards opponent controls. "
+				+ "Deal each of them damage equal to its power minus 2000.", null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+
+		verify(ctx).damageTarget(weak, 0);
+	}
+
+	// 28-046C Zidane: "reveal the top 5 cards of your deck. Add 1 card of cost 2 or less among
+	// them to your hand and return the other cards to the bottom of your deck in any order."
+	// The reveal-top-N family required a card type, so the untyped cost-only form did not parse.
+	@Test
+	void zidaneAddsAnyCardOfCostTwoOrLessFromTheRevealedFive() {
+		GameContext ctx = mock(GameContext.class);
+		Consumer<GameContext> fn = ActionResolver.parse(
+				"reveal the top 5 cards of your deck. Add 1 card of cost 2 or less among them "
+				+ "to your hand and return the other cards to the bottom of your deck in any order.", null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+
+		// No type/job/category/name filter — cost alone selects. reveal 5, add up to 1, cost <= 2.
+		verify(ctx).revealTopAddUpToMatchingRestBottom(5, 1, null, null, null, null, 2);
+	}
+
+	// The typed forms keep their filter — the untyped arm must not swallow them.
+	@Test
+	void typedRevealTopNStillPassesItsTypeFilter() {
+		GameContext ctx = mock(GameContext.class);
+		Consumer<GameContext> fn = ActionResolver.parse(
+				"reveal the top 5 cards of your deck. Add 1 Character of cost 2 or less among them "
+				+ "to your hand and return the other cards to the bottom of your deck in any order.", null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+		verify(ctx).revealTopAddUpToMatchingRestBottom(5, 1, null, null, null, "Character", 2);
+	}
+
+	// A bare "Add 1 card among them" restricts nothing and belongs to the later, more general
+	// parser. This one must not claim it, or that parser is shadowed.
+	@Test
+	void untypedRevealTopNWithoutACostClauseIsNotClaimedHere() {
+		GameContext ctx = mock(GameContext.class);
+		Consumer<GameContext> fn = ActionResolver.parse(
+				"reveal the top 5 cards of your deck. Add 1 card among them to your hand "
+				+ "and return the other cards to the bottom of your deck in any order.", null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+		// Whatever handles it, it must not be the cost-filtered reveal-top-N path.
+		verify(ctx, never()).revealTopAddUpToMatchingRestBottom(anyInt(), anyInt(),
+				any(), any(), any(), any(), eq(2));
+	}
+
+	// -------------------------------------------------------------------------
+	// 20-107H Urianger: "if 1 or more of your cards have been removed from the game,
+	// you may search for 1 Category XIV Forward and add it to your hand."
+	// The search parsed but the gate did not, so it searched unconditionally.
+	// -------------------------------------------------------------------------
+
+	private static final String URIANGER_TEXT =
+			"if 1 or more of your cards have been removed from the game, "
+			+ "you may search for 1 Category XIV Forward and add it to your hand.";
+
+	@Test
+	void uriangerDoesNotSearchWithAnEmptyRemovedFromGameZone() {
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.isP1()).thenReturn(true);
+		// countSelfRfgCards is a default method, so a plain mock would stub it out and never
+		// reach the per-owner counts. Call it for real — the isP1 routing is what is under test.
+		when(ctx.countSelfRfgCards(any(), any())).thenCallRealMethod();
+		when(ctx.countP1RfgCards(any(), any())).thenReturn(0);
+
+		Consumer<GameContext> fn = ActionResolver.parse(URIANGER_TEXT, null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+
+		verify(ctx, never()).searchDeckForCard(anyBoolean(), anyBoolean(), anyBoolean(), anyBoolean(),
+				anyInt(), any(), any(), any(), any(), any(), any(), any(), any(), anyInt(),
+				anyBoolean(), anyBoolean());
+	}
+
+	@Test
+	void uriangerSearchesOnceAnyOwnedCardIsRemovedFromTheGame() {
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.promptYouMay(any())).thenReturn(true);   // the search is optional; accept it
+		when(ctx.isP1()).thenReturn(true);
+		// countSelfRfgCards is a default method, so a plain mock would stub it out and never
+		// reach the per-owner counts. Call it for real — the isP1 routing is what is under test.
+		when(ctx.countSelfRfgCards(any(), any())).thenCallRealMethod();
+		when(ctx.countP1RfgCards(any(), any())).thenReturn(1);
+
+		Consumer<GameContext> fn = ActionResolver.parse(URIANGER_TEXT, null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+
+		verify(ctx).searchDeckForCard(eq(true), anyBoolean(), anyBoolean(), anyBoolean(),
+				anyInt(), any(), any(), any(), eq("XIV"), any(), any(), any(), eq("hand"), eq(1),
+				anyBoolean(), anyBoolean());
+	}
+
+	// The zone is the ability user's own — the opponent filling theirs must not satisfy it.
+	@Test
+	void uriangerIgnoresTheOpponentsRemovedFromGameZone() {
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.isP1()).thenReturn(true);
+		// countSelfRfgCards is a default method, so a plain mock would stub it out and never
+		// reach the per-owner counts. Call it for real — the isP1 routing is what is under test.
+		when(ctx.countSelfRfgCards(any(), any())).thenCallRealMethod();
+		when(ctx.countP1RfgCards(any(), any())).thenReturn(0);
+		when(ctx.countP2RfgCards(any(), any())).thenReturn(5);
+
+		Consumer<GameContext> fn = ActionResolver.parse(URIANGER_TEXT, null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+
+		verify(ctx, never()).searchDeckForCard(anyBoolean(), anyBoolean(), anyBoolean(), anyBoolean(),
+				anyInt(), any(), any(), any(), any(), any(), any(), any(), any(), anyInt(),
+				anyBoolean(), anyBoolean());
+	}
+
+	// As P2 the same text must read P2's zone, not P1's.
+	@Test
+	void selfRfgGateReadsTheAbilityUsersOwnZoneAsP2() {
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.isP1()).thenReturn(false);
+		// countSelfRfgCards is a default method, so a plain mock would stub it out and never
+		// reach the per-owner counts. Call it for real — the isP1 routing is what is under test.
+		when(ctx.countSelfRfgCards(any(), any())).thenCallRealMethod();
+		when(ctx.countP1RfgCards(any(), any())).thenReturn(9);
+		when(ctx.countP2RfgCards(any(), any())).thenReturn(0);
+
+		Consumer<GameContext> fn = ActionResolver.parse(URIANGER_TEXT, null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+
+		verify(ctx, never()).searchDeckForCard(anyBoolean(), anyBoolean(), anyBoolean(), anyBoolean(),
+				anyInt(), any(), any(), any(), any(), any(), any(), any(), any(), anyInt(),
+				anyBoolean(), anyBoolean());
+	}
+
+	// 28-022L states the same gate with a threshold and a Job restriction, which must reach the count.
+	@Test
+	void selfRfgGateAppliesItsJobFilterAndThreshold() {
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.isP1()).thenReturn(true);
+		// countSelfRfgCards is a default method, so a plain mock would stub it out and never
+		// reach the per-owner counts. Call it for real — the isP1 routing is what is under test.
+		when(ctx.countSelfRfgCards(any(), any())).thenCallRealMethod();
+		when(ctx.countP1RfgCards(null, "Remnant")).thenReturn(1);   // one short of the threshold
+
+		Consumer<GameContext> fn = ActionResolver.parse(
+				"if you have 2 or more Job Remnant you own removed from the game, "
+				+ "your opponent discards 2 cards.", null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+
+		verify(ctx).countP1RfgCards(null, "Remnant");
+		verify(ctx, never()).forceOpponentDiscard(anyInt());
+	}
+
+	// -------------------------------------------------------------------------
+	// "You may search …" — searching is a public event that opponents' abilities react to
+	// (5-130R Tonberry, 13-034H Remedi, 25-111H The Emperor), so declining has to mean the
+	// search never happened, not that it happened and found nothing.
+	// -------------------------------------------------------------------------
+
+	private static void verifyNoSearch(GameContext ctx) {
+		verify(ctx, never()).searchDeckForCard(anyBoolean(), anyBoolean(), anyBoolean(), anyBoolean(),
+				anyInt(), any(), any(), any(), any(), any(), any(), any(), any(), anyInt(),
+				anyBoolean(), anyBoolean());
+	}
+
+	@Test
+	void decliningAnOptionalSearchPerformsNoSearchAtAll() {
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.promptYouMay(any())).thenReturn(false);
+
+		Consumer<GameContext> fn = ActionResolver.parse(
+				"you may search for 1 Category XIV Forward and add it to your hand.", null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+
+		verify(ctx).promptYouMay(any());
+		verifyNoSearch(ctx);
+		verify(ctx).markEffectFizzled();
+	}
+
+	// The prompt must come BEFORE the search, or the opponent's search triggers have already
+	// fired by the time the player is asked.
+	@Test
+	void optionalSearchAsksBeforeItSearches() {
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.promptYouMay(any())).thenReturn(true);
+
+		Consumer<GameContext> fn = ActionResolver.parse(
+				"you may search for 1 Category XIV Forward and add it to your hand.", null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+
+		InOrder order = inOrder(ctx);
+		order.verify(ctx).promptYouMay(any());
+		order.verify(ctx).searchDeckForCard(anyBoolean(), anyBoolean(), anyBoolean(), anyBoolean(),
+				anyInt(), any(), any(), any(), any(), any(), any(), any(), any(), anyInt(),
+				anyBoolean(), anyBoolean());
+	}
+
+	// A search with no "you may" is mandatory and must not ask.
+	@Test
+	void mandatorySearchDoesNotPrompt() {
+		GameContext ctx = mock(GameContext.class);
+
+		Consumer<GameContext> fn = ActionResolver.parse(
+				"search for 1 Category XIV Forward and add it to your hand.", null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+
+		verify(ctx, never()).promptYouMay(any());
+		verify(ctx).searchDeckForCard(anyBoolean(), anyBoolean(), anyBoolean(), anyBoolean(),
+				anyInt(), any(), any(), any(), eq("XIV"), any(), any(), any(), eq("hand"), eq(1),
+				anyBoolean(), anyBoolean());
+	}
+
+	// Urianger gates on the RFG zone first: a failed condition must not even offer the search.
+	@Test
+	void uriangerDoesNotOfferTheSearchWhenItsConditionFails() {
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.isP1()).thenReturn(true);
+		when(ctx.countSelfRfgCards(any(), any())).thenCallRealMethod();
+		when(ctx.countP1RfgCards(any(), any())).thenReturn(0);
+
+		Consumer<GameContext> fn = ActionResolver.parse(URIANGER_TEXT, null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+
+		verify(ctx, never()).promptYouMay(any());
+		verifyNoSearch(ctx);
+	}
+
+	// …and when it holds, the player still gets the choice.
+	@Test
+	void uriangerOffersTheSearchOnceItsConditionHolds() {
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.isP1()).thenReturn(true);
+		when(ctx.countSelfRfgCards(any(), any())).thenCallRealMethod();
+		when(ctx.countP1RfgCards(any(), any())).thenReturn(1);
+		when(ctx.promptYouMay(any())).thenReturn(false);
+
+		Consumer<GameContext> fn = ActionResolver.parse(URIANGER_TEXT, null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+
+		verify(ctx).promptYouMay(any());
+		verifyNoSearch(ctx);
+	}
+
+	// -------------------------------------------------------------------------
+	// Searching is a public event. 5-130R Tonberry, 13-034H Remedi and 25-111H The Emperor
+	// all watch for it; none of them parsed a single auto ability before.
+	// -------------------------------------------------------------------------
+
+	@Test
+	void opponentSearchTriggerIsRecognisedInAllThreePrintings() {
+		// "searches for 1 or more cards" (Tonberry, Remedi) and the "for"-less Emperor wording.
+		List<AutoAbility> tonberry = CardData.parseAutoAbilities(
+				"When a Character opponent controls searches for 1 or more cards, "
+				+ "put Tonberry into the Break Zone. If you do so, break that Character.");
+		assertEquals(1, tonberry.size());
+		assertEquals("opponent searches", tonberry.get(0).trigger());
+		assertEquals("a Character opponent controls", tonberry.get(0).triggerCard());
+
+		List<AutoAbility> remedi = CardData.parseAutoAbilities(
+				"When your opponent searches for 1 or more cards, "
+				+ "your opponent discards 1 card from their hand.");
+		assertEquals(1, remedi.size());
+		assertEquals("opponent searches", remedi.get(0).trigger());
+		assertEquals("your opponent", remedi.get(0).triggerCard());
+
+		List<AutoAbility> emperor = CardData.parseAutoAbilities(
+				"When your opponent searches 1 or more cards, draw 1 card.");
+		assertEquals(1, emperor.size());
+		assertEquals("opponent searches", emperor.get(0).trigger());
+	}
+
+	// A second "When …" trigger after a search trigger must start its own ability rather than
+	// being swallowed into the search ability's effect text.
+	@Test
+	void aTriggerFollowingASearchTriggerStartsItsOwnAbility() {
+		List<AutoAbility> autos = CardData.parseAutoAbilities(
+				"When your opponent searches 1 or more cards, draw 1 card. "
+				+ "When Someone enters the field, draw 1 card.");
+		assertEquals(2, autos.size(), "the search effect must end where the next trigger begins");
+		assertEquals("opponent searches", autos.get(0).trigger());
+		assertEquals("draw 1 card.", autos.get(0).effectText().trim());
+	}
+
+	// Tonberry sacrifices itself first and only then breaks the searcher, which the trigger
+	// supplies as a preloaded target ("that Character").
+	@Test
+	void tonberryBreaksTheSearchingCharacterAfterSacrificingItself() {
+		CardData tonberry = makeForward("Tonberry", "Dark", 2, 3000);
+		GameContext ctx = mock(GameContext.class);
+		ForwardTarget searcher = new ForwardTarget(false, 2, ForwardTarget.CardZone.FORWARD);
+		when(ctx.consumePreloadedTargets()).thenReturn(new ArrayList<>(List.of(searcher)));
+		when(ctx.effectMadeProgress()).thenReturn(true);
+
+		Consumer<GameContext> fn = ActionResolver.parse(
+				"put Tonberry into the Break Zone. If you do so, break that Character.", tonberry);
+		assertNotNull(fn);
+		fn.accept(ctx);
+
+		InOrder order = inOrder(ctx);
+		order.verify(ctx).breakSourceCard(tonberry);
+		order.verify(ctx).breakTarget(searcher);
+	}
+
+	// If Tonberry could not be put into the Break Zone, the searcher survives.
+	@Test
+	void tonberryDoesNotBreakTheSearcherIfItCouldNotSacrificeItself() {
+		CardData tonberry = makeForward("Tonberry", "Dark", 2, 3000);
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.consumePreloadedTargets())
+				.thenReturn(new ArrayList<>(List.of(new ForwardTarget(false, 2, ForwardTarget.CardZone.FORWARD))));
+		when(ctx.effectMadeProgress()).thenReturn(false);
+
+		Consumer<GameContext> fn = ActionResolver.parse(
+				"put Tonberry into the Break Zone. If you do so, break that Character.", tonberry);
+		assertNotNull(fn);
+		fn.accept(ctx);
+
+		verify(ctx, never()).breakTarget(any());
+	}
+
+	// With nothing preloaded the action has no target and must do nothing rather than guess.
+	@Test
+	void demonstrativeBreakDoesNothingWithoutAPreloadedTarget() {
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.consumePreloadedTargets()).thenReturn(null);
+
+		Consumer<GameContext> fn = ActionResolver.parse("break that Character.", null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+
+		verify(ctx, never()).breakTarget(any());
+	}
+
+	// "When you do so, break that Forward" (20-102L) binds to a card named earlier in its own
+	// ability, not to a trigger's card. The anchored demonstrative must not claim it.
+	@Test
+	void demonstrativeBreakDoesNotClaimADoSoFollowup() {
+		assertNotNull(ActionResolverState.tryParseTriggeredTargetAction("break that Character.", 0),
+				"the bare demonstrative is the form Tonberry needs");
+		assertNull(ActionResolverState.tryParseTriggeredTargetAction("When you do so, break that Forward.", 0),
+				"a do-so followup binds to a card named earlier, not to the trigger's card");
+		assertNull(ActionResolverState.tryParseTriggeredTargetAction("break it.", 0),
+				"the ambiguous pronoun form stays out — see TRIGGERED_TARGET_ACTION_BARE");
+		// Breaktouch's own wording. DamageResolver keys its dedicated break path off this
+		// predicate, so admitting the Forward form here would divert Breaktouch.
+		assertNull(ActionResolverState.tryParseTriggeredTargetAction("break that Forward.", 0),
+				"\"that Forward\" is Breaktouch and must keep the damage path");
+	}
+
+	// -------------------------------------------------------------------------
+	// "discards … due to your Summons or abilities" (an 11-card family) and
+	// "1 or more cards are added to your opponent's hand from the Break Zone".
+	// -------------------------------------------------------------------------
+
+	@Test
+	void discardByEffectTriggerAcceptsEveryPrintedWording() {
+		// count and "from their hand" both vary across printings
+		for (String text : List.of(
+				"When your opponent discards a card from their hand due to your Summons or abilities, draw 1 card.",
+				"When your opponent discards 1 or more cards from their hand due to your Summons or abilities, draw 1 card.",
+				"When your opponent discards 1 or more cards due to your Summons or abilities, draw 1 card.",
+				"When your opponent discards a card from his/her hand due to your Summons or abilities, draw 1 card.")) {
+			List<AutoAbility> autos = CardData.parseAutoAbilities(text);
+			assertEquals(1, autos.size(), text);
+			assertEquals("opponent discards by effect", autos.get(0).trigger(), text);
+		}
+	}
+
+	// 27-036L Locke watches Characters and Summons separately, so the discarded type has to
+	// reach the trigger label — otherwise both of its abilities fire on any discard.
+	@Test
+	void discardByEffectTriggerSeparatesCharacterAndSummonWatchers() {
+		List<AutoAbility> autos = CardData.parseAutoAbilities(
+				"When your opponent discards 1 or more Characters due to your Summons or abilities, "
+				+ "choose 1 Character. Dull it and Freeze it.[[br]]"
+				+ "When your opponent discards 1 or more Summons due to your Summons or abilities, draw 1 card.");
+		assertEquals(2, autos.size());
+		assertEquals("opponent discards character by effect", autos.get(0).trigger());
+		assertEquals("opponent discards summon by effect",    autos.get(1).trigger());
+	}
+
+	// The cause clause always says "Summons", so classifying on the whole trigger would read
+	// every one of these as watching for a discarded Summon.
+	@Test
+	void discardByEffectClassifiesOnWhatWasDiscardedNotOnTheCause() {
+		List<AutoAbility> autos = CardData.parseAutoAbilities(
+				"When your opponent discards 1 or more cards due to your Summons or abilities, draw 1 card.");
+		assertEquals(1, autos.size());
+		assertEquals("opponent discards by effect", autos.get(0).trigger(),
+				"\"due to your Summons\" names the cause, not the discarded card");
+	}
+
+	// 13-034H Remedi's second ability is optional and once per turn; both must survive.
+	@Test
+	void remediSecondAbilityKeepsItsOptionalAndOncePerTurnFlags() {
+		List<AutoAbility> autos = CardData.parseAutoAbilities(
+				"When your opponent discards a card from their hand due to your Summons or abilities, "
+				+ "you may search for 1 Card Name Cid Randell and add it to your hand. "
+				+ "This effect will trigger only once per turn.");
+		assertEquals(1, autos.size());
+		assertEquals("opponent discards by effect", autos.get(0).trigger());
+		assertTrue(autos.get(0).youMay(),      "the search is optional");
+		assertTrue(autos.get(0).oncePerTurn(), "and limited to once per turn");
+	}
+
+	// 25-111H The Emperor: both of its triggers, and neither swallowing the other's text.
+	@Test
+	void emperorParsesBothSalvageAndSearchTriggers() {
+		List<AutoAbility> autos = CardData.parseAutoAbilities(
+				"When 1 or more cards are added to your opponent's hand from the Break Zone, draw 1 card.[[br]]"
+				+ "When your opponent searches 1 or more cards, draw 1 card.");
+		assertEquals(2, autos.size());
+		assertEquals("opponent salvages from break zone", autos.get(0).trigger());
+		assertEquals("opponent searches", autos.get(1).trigger());
+	}
+
+	// "added to your opponent's hand from the Break Zone" contains "Break Zone", which the
+	// put-into-break-zone branch would otherwise claim.
+	@Test
+	void salvageTriggerIsNotMistakenForPutIntoBreakZone() {
+		List<AutoAbility> autos = CardData.parseAutoAbilities(
+				"When 1 or more cards are added to your opponent's hand from the Break Zone, draw 1 card.");
+		assertEquals(1, autos.size());
+		assertNotEquals("put into break zone", autos.get(0).trigger());
+		assertEquals("opponent salvages from break zone", autos.get(0).trigger());
+	}
+
+	// 24-006C Clive states two Jobs. meetsJobFilter reads bar-separated names, so the printed
+	// "Job Eikon or Job Dominant" has to be rewritten or the condition can never be satisfied.
+	@Test
+	void selfRfgGateNormalisesADisjunctiveJobList() {
+		CardData clive = makeForward("Clive", "Fire", 5, 9000);
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.isP1()).thenReturn(true);
+		when(ctx.countSelfRfgCards(any(), any())).thenCallRealMethod();
+		when(ctx.countP1RfgCards(null, "Eikon|Dominant")).thenReturn(1);
+
+		Consumer<GameContext> fn = ActionResolver.parse(
+				"If any Job Eikon or Job Dominant you own are removed from the game, "
+				+ "Clive gains +4000 power and Brave.", clive);
+		assertNotNull(fn);
+		fn.accept(ctx);
+
+		verify(ctx).countP1RfgCards(null, "Eikon|Dominant");
+		verify(ctx).boostSourceForward(eq(clive), eq(4000), any());
+	}
+
+	// 17-091L Exdeath's gate counts BOTH players' removed-from-game zones. The new owner-scoped
+	// gate must not claim it — the two wordings mean different things and read different zones.
+	@Test
+	void combinedRfgGateStillCountsBothPlayersZones() {
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.consumePreloadedTargets()).thenReturn(null);
+		when(ctx.countRemovedFromGame()).thenReturn(5);   // below the threshold
+
+		Consumer<GameContext> fn = ActionResolver.parse(
+				"If there are 20 or more cards removed from the game, "
+				+ "your opponent selects 1 Character they control. Remove it from the game.", null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+
+		verify(ctx).countRemovedFromGame();
+		verify(ctx, never()).countSelfRfgCards(any(), any());
+	}
+
 	// The permanent buff belongs to the source card only — a different card's name must not match.
 	@Test
 	void permanentSelfBuffRejectsAnotherCardsName() {
