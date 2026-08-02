@@ -255,11 +255,23 @@ public class MainWindow {
 	/** Forwards restricted from attacking until the end of their owner's turn (survives one end-phase). */
 	final Set<Integer> p1ForwardCannotAttackPersistent = new HashSet<>();
 	final Set<Integer> p2ForwardCannotAttackPersistent = new HashSet<>();
-	/** Forwards eligible to attack a second time this turn (have attacked once and have "can attack twice"). */
-	final Set<Integer> p1ForwardCanDoSecondAttack = new HashSet<>();
-	final Set<Integer> p2ForwardCanDoSecondAttack = new HashSet<>();
-	/** Cards granted "can attack twice in the same turn" until end of turn (via an ability), keyed by instance. */
-	final Set<CardData> grantedCanAttackTwice = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+	/**
+	 * Attack declarations each Character has made this turn, keyed by card instance.
+	 *
+	 * <p>Only an active Character may declare an attack, so this is what stops one attacking again
+	 * once it is back to active — whether Brave kept it active or an effect re-activated it. A
+	 * permission ("can attack twice", "can attack once more this turn") raises the allowance this
+	 * is compared against; see {@link #hasAttackRemaining}.
+	 *
+	 * <p>Keyed by instance rather than slot index because a Monster or Backup that temporarily
+	 * became a Forward can be handed a multi-attack permission too (Chelinka 11-049R grants to
+	 * "1 Forward"), and because an instance key needs no re-indexing when a slot is vacated.
+	 */
+	final Map<CardData, Integer> attacksMadeThisTurn = new IdentityHashMap<>();
+	/** One-shot extra attacks granted this turn by "[X] can attack once more this turn.", by instance. */
+	final Map<CardData, Integer> extraAttacksThisTurn = new IdentityHashMap<>();
+	/** Cards granted a multi-attack permission until end of turn, instance to permitted count. */
+	final Map<CardData, Integer> grantedMaxAttacks = new IdentityHashMap<>();
 	/**
 	 * Field abilities handed to a card until end of turn by a "[Self] gains '&lt;ability&gt;' until the
 	 * end of the turn" effect (e.g. Caius 18-108H's damage doubler), keyed by instance. Read through
@@ -277,8 +289,8 @@ public class MainWindow {
 	 * leaves loses everything granted to it and comes back as a new object anyway.
 	 */
 	final Map<CardData, List<AutoAbility>> grantedAutoAbilities = new IdentityHashMap<>();
-	/** Cards granted "can attack twice in the same turn" by an effect that outlasts the turn. */
-	final Set<CardData> permanentCanAttackTwice = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+	/** Cards granted a multi-attack permission by an effect that outlasts the turn, instance to count. */
+	final Map<CardData, Integer> permanentMaxAttacks = new IdentityHashMap<>();
 	/**
 	 * Power added by an effect that outlasts the turn, and so is not zeroed by the end phase the
 	 * way {@link #p1ForwardPowerBoost} is. Keyed by card identity because the boost belongs to the
@@ -1595,7 +1607,7 @@ public class MainWindow {
 				CardData.parseCannotBlockHigherPower(tx, card.name()),
 				CardData.parseCannotBlockParty(tx, card.name()),
 				CardData.parseCannotAttackOrBlock(tx, card.name()),
-				CardData.parseCanAttackTwice(tx, card.name()),
+				CardData.parseMaxAttacksPerTurn(tx, card.name()),
 				card.job(), card.category1(), card.category2(), tx);
 	}
 
@@ -2237,8 +2249,8 @@ public class MainWindow {
                                 p1ForwardCannotAttack.clear();          p2ForwardCannotAttack.clear();
                                 p1ForwardMustAttack.clear();            p2ForwardMustAttack.clear();
                                 p1ForwardCannotAttackPersistent.clear(); p1ForwardCannotBlockPersistent.clear();
-                                p1ForwardCanDoSecondAttack.clear();     p2ForwardCanDoSecondAttack.clear();
-                                grantedFieldAbilities.clear();          grantedCanAttackTwice.clear();
+                                attacksMadeThisTurn.clear();            extraAttacksThisTurn.clear();
+                                grantedFieldAbilities.clear();          grantedMaxAttacks.clear();
                                 p1TempAttackTriggers.clear();           p2TempAttackTriggers.clear();
                                 p1TempBlockTriggers.clear();            p2TempBlockTriggers.clear();
                                 nextIncomingDmgZeroSet.clear();   nextIncomingDmgRedirectMap.clear();   nextIncomingDmgReduceMap.clear();   nextAbilityDmgReduceMap.clear();
@@ -3175,7 +3187,7 @@ public class MainWindow {
 		shiftBlockSet(p1ForwardCannotAttackPersistent, idx);
 		shiftBlockSet(p1ForwardCannotBlockPersistent,  idx);
 		shiftBlockSet(p1ForwardCannotBeBlocked,        idx);
-		shiftBlockSet(p1ForwardCanDoSecondAttack,      idx);
+
 		shiftBlockMap(p1ForwardCannotBeBlockedByCost,  idx);
 	}
 
@@ -3201,7 +3213,7 @@ public class MainWindow {
 		shiftBlockSet(p2ForwardCannotAttackPersistent, idx);
 		shiftBlockSet(p2ForwardCannotBlockPersistent,  idx);
 		shiftBlockSet(p2ForwardCannotBeBlocked,        idx);
-		shiftBlockSet(p2ForwardCanDoSecondAttack,      idx);
+
 		shiftBlockMap(p2ForwardCannotBeBlockedByCost,  idx);
 	}
 
@@ -4844,7 +4856,7 @@ public class MainWindow {
 	private boolean hasEligibleP1Blocker() {
 		for (int i = 0; i < p1ForwardStates.size(); i++) {
 			CardState s = p1ForwardStates.get(i);
-			if ((s == CardState.ACTIVE || s == CardState.BRAVE_ATTACKED)
+			if (s == CardState.ACTIVE
 					&& !p1ForwardCannotBlock.contains(i)
 					&& !p1ForwardCannotBlockPersistent.contains(i)) return true;
 		}
@@ -8190,13 +8202,13 @@ public class MainWindow {
 	}
 
 	/** The card acting at P1 Forward slot {@code idx} — the primed top card when one is stacked. */
-	private CardData effectiveP1Forward(int idx) {
+	CardData effectiveP1Forward(int idx) {
 		CardData top = p1ForwardPrimedTop.get(idx);
 		return top != null ? top : p1ForwardCards.get(idx);
 	}
 
 	/** The card acting at P2 Forward slot {@code idx} — the primed top card when one is stacked. */
-	private CardData effectiveP2Forward(int idx) {
+	CardData effectiveP2Forward(int idx) {
 		CardData top = p2ForwardPrimedTop.get(idx);
 		return top != null ? top : p2ForwardCards.get(idx);
 	}
@@ -8205,7 +8217,7 @@ public class MainWindow {
 	 * Returns {@code true} if {@code ability} can currently be activated by the
 	 * card at the given slot.
 	 *
-	 * @param state       current card state (ACTIVE / DULL / BRAVE_ATTACKED)
+	 * @param state       current card state (ACTIVE / DULL)
 	 * @param playedTurn  turn the card entered the field (0 = unknown)
 	 * @param sourceName  card name, needed for special-ability hand check
 	 */
@@ -9180,16 +9192,46 @@ public class MainWindow {
 	/** Drops everything granted to {@code card} by an outlasts-the-turn effect, as it leaves the field. */
 	void clearPermanentGrants(CardData card) {
 		grantedAutoAbilities.remove(card);
-		permanentCanAttackTwice.remove(card);
+		permanentMaxAttacks.remove(card);
 		permanentPowerBoost.remove(card);
 		permanentTraits.remove(card);
 	}
 
-	/** True when {@code card} may attack twice — printed, granted for the turn, or granted for good. */
-	boolean canAttackTwice(CardData card) {
-		return card.canAttackTwice()
-				|| grantedCanAttackTwice.contains(card)
-				|| permanentCanAttackTwice.contains(card);
+	/**
+	 * How many attacks {@code card}'s multi-attack permission allows it in a turn — printed,
+	 * granted for the turn, or granted for good — and 1 when it has none. The strongest permission
+	 * wins rather than the sum: two sources of "can attack twice" still mean twice.
+	 */
+	int maxAttacksPerTurn(CardData card) {
+		int max = card.maxAttacksPerTurn();
+		Integer granted = grantedMaxAttacks.get(card);
+		if (granted != null)   max = Math.max(max, granted);
+		Integer permanent = permanentMaxAttacks.get(card);
+		if (permanent != null) max = Math.max(max, permanent);
+		return max;
+	}
+
+	/**
+	 * Total attack declarations {@code card} may make this turn: its permission's allowance plus any
+	 * one-shot "can attack once more this turn" grants, which do stack.
+	 */
+	int attacksAllowed(CardData card) {
+		return maxAttacksPerTurn(card) + extraAttacksThisTurn.getOrDefault(card, 0);
+	}
+
+	/** True when {@code card} has an attack declaration left this turn. */
+	boolean hasAttackRemaining(CardData card) {
+		return attacksMadeThisTurn.getOrDefault(card, 0) < attacksAllowed(card);
+	}
+
+	/** Records one attack declaration by {@code card}. */
+	void recordAttackDeclared(CardData card) {
+		attacksMadeThisTurn.merge(card, 1, Integer::sum);
+	}
+
+	/** Adds one one-shot "can attack once more this turn" grant to {@code card}. */
+	void grantExtraAttack(CardData card) {
+		extraAttacksThisTurn.merge(card, 1, Integer::sum);
 	}
 
 	int fieldAbilityCombatOutgoingMult(CardData attacker, CardData target) {
@@ -10123,10 +10165,10 @@ public class MainWindow {
 		if (url == null) return;
 		boolean hasHaste  = effectiveP1HasTrait(idx, CardData.Trait.HASTE);
 		CardData fwdCard  = p1ForwardCards.get(idx);
-		boolean secondAttackReady = state == CardState.DULL && p1ForwardCanDoSecondAttack.contains(idx);
 		boolean canAttack = gameState.getCurrentPhase() == GameState.GamePhase.ATTACK
 				&& attackSubStep == 1
-				&& (state == CardState.ACTIVE || secondAttackReady)
+				&& state == CardState.ACTIVE
+				&& hasAttackRemaining(effectiveP1Forward(idx))
 				&& !p1ForwardCannotAttack.contains(idx)
 				&& !p1ForwardCannotAttackPersistent.contains(idx)
 				&& !fwdCard.cannotAttackOrBlock()
@@ -10179,8 +10221,8 @@ public class MainWindow {
 		if (attackSubStep != 1) return false;
 		if (idx < 0 || idx >= p1ForwardStates.size()) return false;
 		CardState state = p1ForwardStates.get(idx);
-		boolean secondAttackEligible = state == CardState.DULL && p1ForwardCanDoSecondAttack.contains(idx);
-		if (state != CardState.ACTIVE && !secondAttackEligible) return false;
+		if (state != CardState.ACTIVE) return false;
+		if (!hasAttackRemaining(effectiveP1Forward(idx))) return false;
 		if (p1ForwardCannotAttack.contains(idx)) return false;
 		if (p1ForwardCannotAttackPersistent.contains(idx)) return false;
 		CardData fwd = p1ForwardCards.get(idx);
@@ -10200,7 +10242,7 @@ public class MainWindow {
 		if (!p1InBlockDeclaration()) return false;
 		if (idx < 0 || idx >= p1ForwardStates.size()) return false;
 		CardState s = p1ForwardStates.get(idx);
-		if (s != CardState.ACTIVE && s != CardState.BRAVE_ATTACKED) return false;
+		if (s != CardState.ACTIVE) return false;
 		if (p1ForwardCannotBlock.contains(idx)) return false;
 		if (p1ForwardCannotBlockPersistent.contains(idx)) return false;
 		CardData blocker = p1ForwardCards.get(idx);
@@ -10474,7 +10516,7 @@ public class MainWindow {
 		if (idx < 0 || idx >= p1MonsterStates.size()) return false;
 		if (Boolean.TRUE.equals(p1MonsterFrozen.get(idx))) return false;
 		CardState s = p1MonsterStates.get(idx);
-		if (s != CardState.ACTIVE && s != CardState.BRAVE_ATTACKED) return false;
+		if (s != CardState.ACTIVE) return false;
 		if (!isP1MonsterTemporarilyForward(idx)) return false;
 		if (!p1ForwardMustBlock.isEmpty()) return false;   // a Forward is forced to block
 		if (attackerUnblockable()) return false;
@@ -10495,7 +10537,7 @@ public class MainWindow {
 		if (idx < 0 || idx >= p1BackupCards.length || p1BackupCards[idx] == null) return false;
 		if (p1BackupFrozen[idx]) return false;
 		CardState s = p1BackupStates[idx];
-		if (s != CardState.ACTIVE && s != CardState.BRAVE_ATTACKED) return false;
+		if (s != CardState.ACTIVE) return false;
 		if (!isP1BackupTemporarilyForward(idx)) return false;
 		if (!p1ForwardMustBlock.isEmpty()) return false;
 		if (attackerUnblockable()) return false;
@@ -11027,13 +11069,11 @@ public class MainWindow {
 		CardData attacker = p1MonsterCards.get(monIdx);
 		int attackerPower = p1MonsterForwardPower(monIdx);
 
-		if (effectiveMonsterHasTrait(true, monIdx, CardData.Trait.BRAVE)) {
-			p1MonsterStates.set(monIdx, CardState.BRAVE_ATTACKED);
-			refreshP1MonsterSlot(monIdx);
-		} else {
+		if (!effectiveMonsterHasTrait(true, monIdx, CardData.Trait.BRAVE)) {
 			p1MonsterStates.set(monIdx, CardState.DULL);
 			animateDullMonster(monIdx);
 		}
+		recordAttackDeclared(attacker);
 		autoAbilityTriggers.triggerAutoAbilitiesForAttack(attacker, true);
 
 		// Combat stays on Declare Attackers until both players have passed on the declaration.
@@ -11363,13 +11403,11 @@ public class MainWindow {
 		if (attacker == null) return;
 		int attackerPower = p1BackupForwardPower(bIdx);
 
-		if (effectiveBackupHasTrait(true, bIdx, CardData.Trait.BRAVE)) {
-			p1BackupStates[bIdx] = CardState.BRAVE_ATTACKED;
-			refreshP1BackupSlot(bIdx);
-		} else {
+		if (!effectiveBackupHasTrait(true, bIdx, CardData.Trait.BRAVE)) {
 			p1BackupStates[bIdx] = CardState.DULL;
 			animateDullBackup(bIdx, true);
 		}
+		recordAttackDeclared(attacker);
 		autoAbilityTriggers.triggerAutoAbilitiesForAttack(attacker, true);
 
 		// Combat stays on Declare Attackers until both players have passed on the declaration.
@@ -11450,23 +11488,16 @@ public class MainWindow {
 		if (selection.isEmpty()) return;
 		p1Turn.attackDeclarationsThisTurn++;
 
-		// Dull / BRAVE_ATTACKED attackers and trigger their attack auto-abilities
+		// Dull the attackers (Brave ones stay active) and trigger their attack auto-abilities
 		for (int idx : selection) {
-			if (effectiveP1HasTrait(idx, CardData.Trait.BRAVE)) {
-				p1ForwardStates.set(idx, CardState.BRAVE_ATTACKED);
-				refreshP1ForwardSlot(idx);
-			} else {
-				CardState p1AttackFwdBefore = p1ForwardStates.get(idx);
+			CardState stateBefore = p1ForwardStates.get(idx);
+			if (!effectiveP1HasTrait(idx, CardData.Trait.BRAVE)) {
 				p1ForwardStates.set(idx, CardState.DULL);
 				animateDullForward(idx, null);
-				if (p1AttackFwdBefore == CardState.ACTIVE)
+				if (stateBefore == CardState.ACTIVE)
 					autoAbilityTriggers.triggerAutoAbilitiesForBecomesDull(p1ForwardCards.get(idx), true);
 			}
-			// Track second-attack eligibility for "can attack twice" forwards (printed or granted)
-			if (canAttackTwice(p1ForwardCards.get(idx))) {
-				if (!p1ForwardCanDoSecondAttack.remove(idx))
-					p1ForwardCanDoSecondAttack.add(idx);
-			}
+			recordAttackDeclared(effectiveP1Forward(idx));
 		}
 		for (int idx : selection)
 			autoAbilityTriggers.triggerAutoAbilitiesForAttack(

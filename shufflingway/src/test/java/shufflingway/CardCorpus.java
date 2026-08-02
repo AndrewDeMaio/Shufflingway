@@ -86,7 +86,7 @@ final class CardCorpus {
 				CardData.parseCannotBlockHigherPower(textEn, nameEn),
 				CardData.parseCannotBlockParty(textEn, nameEn),
 				CardData.parseCannotAttackOrBlock(textEn, nameEn),
-				CardData.parseCanAttackTwice(textEn, nameEn),
+				CardData.parseMaxAttacksPerTurn(textEn, nameEn),
 				rs.getString("job_en"),
 				rs.getString("category_1"),
 				rs.getString("category_2"),

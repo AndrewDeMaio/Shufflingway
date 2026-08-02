@@ -48,7 +48,7 @@ public record CardData(
         boolean cannotBlockHigherPower,           // "cardName cannot block a Forward with a power greater than its."
         boolean cannotBlockParty,                 // "cardName cannot block Forwards forming a party."
         boolean cannotAttackOrBlock,              // "cardName cannot attack or block."
-        boolean canAttackTwice,                   // "cardName can attack twice in the same turn."
+        int     maxAttacksPerTurn,                // "cardName can attack twice/N times in the same turn."; 1 = no permission
         String job,
         String category1,
         String category2,
@@ -4431,20 +4431,36 @@ public record CardData(
         "(?i)^(?<cardname>.+?)\\s+cannot\\s+attack\\s+or\\s+block[.!]?\\s*$"
     );
 
+    /**
+     * "[CardName] can attack twice/N times in the same turn." — also accepts "twice per turn"
+     * (Prompto 27-068R) and the "3 times"/"4 times" forms (Gilgamesh (FFBE) 14-023L,
+     * Ravana 14-087L). Group {@code count} is absent for the "twice" wording.
+     *
+     * <p>Tidus 29-105L's "as many times … as the points of damage you have received" is
+     * deliberately not matched: its permitted count varies during the turn, which
+     * {@link #parseMaxAttacksPerTurn}'s static int cannot carry.
+     */
     static final Pattern FIELD_CAN_ATTACK_TWICE = Pattern.compile(
-        "(?i)^(?<cardname>.+?)\\s+can\\s+attack\\s+twice\\s+in\\s+the\\s+same\\s+turn[.!]?\\s*$"
+        "(?i)^(?<cardname>.+?)\\s+can\\s+attack\\s+(?:twice|(?<count>\\d+)\\s+times)\\s+" +
+        "(?:in\\s+the\\s+same\\s+turn|per\\s+turn)[.!]?\\s*$"
     );
 
-    public static boolean parseCanAttackTwice(String textEn, String cardName) {
-        if (textEn == null || textEn.isBlank()) return false;
+    /**
+     * The number of times {@code cardName} may attack in a turn per its printed text, or 1 when it
+     * carries no multi-attack permission. Every Forward may attack once; a permission replaces that
+     * allowance rather than adding to it.
+     */
+    public static int parseMaxAttacksPerTurn(String textEn, String cardName) {
+        if (textEn == null || textEn.isBlank()) return 1;
         for (String raw : textEn.split("(?i)\\[\\[br\\]\\]")) {
             String seg = SUMMON_MARKUP.matcher(raw.trim()).replaceAll("").trim();
             if (seg.isEmpty()) continue;
             Matcher m = FIELD_CAN_ATTACK_TWICE.matcher(seg);
             if (!m.matches()) continue;
-            if (m.group("cardname").trim().equalsIgnoreCase(cardName)) return true;
+            if (!m.group("cardname").trim().equalsIgnoreCase(cardName)) continue;
+            return m.group("count") != null ? Integer.parseInt(m.group("count")) : 2;
         }
-        return false;
+        return 1;
     }
 
     public static boolean parseCannotAttackOrBlock(String textEn, String cardName) {

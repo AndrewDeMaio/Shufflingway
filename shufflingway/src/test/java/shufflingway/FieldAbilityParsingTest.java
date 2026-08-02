@@ -156,7 +156,7 @@ public class FieldAbilityParsingTest {
         if (CardData.parseCannotBlockHigherPower(fa.effectText(), source.name())) return true;
         if (CardData.parseCannotBlockParty(fa.effectText(), source.name())) return true;
         if (CardData.parseCannotAttackOrBlock(fa.effectText(), source.name())) return true;
-        if (CardData.parseCanAttackTwice(fa.effectText(), source.name())) return true;
+        if (CardData.parseMaxAttacksPerTurn(fa.effectText(), source.name()) > 1) return true;
         if (CardData.isHasJobsOfForwardsAbility(fa.effectText())) return true;
         if (CardData.parseIfSelfJobCountTraitGrantThreshold(fa.effectText(), source.name()) >= 0) return true;
         if (CardData.parseIfSelfLbFaceUpCountTraitGrantThreshold(fa.effectText(), source.name()) >= 0) return true;
@@ -198,7 +198,7 @@ public class FieldAbilityParsingTest {
                 CardData.parseCannotBlockHigherPower(textEn, rs.getString("name_en")),
                 CardData.parseCannotBlockParty(textEn, rs.getString("name_en")),
                 CardData.parseCannotAttackOrBlock(textEn, rs.getString("name_en")),
-                CardData.parseCanAttackTwice(textEn, rs.getString("name_en")),
+                CardData.parseMaxAttacksPerTurn(textEn, rs.getString("name_en")),
                 rs.getString("job_en"),
                 rs.getString("category_1"), rs.getString("category_2"), textEn);
     }

@@ -4565,9 +4565,15 @@ final class ActionResolverPatterns {
         "(?i)^(?<subject>.+?)\\s+gains\\s+\"If\\s+(?<inner>.+?)\\s+deals\\s+damage\\s+to\\s+a\\s+Forward" +
         "(?:\\s+opponent\\s+controls?)?,?\\s+the\\s+damage\\s+increases?\\s+by\\s+(?<amount>\\d+)(?:\\s+instead)?\\.\"\\s+" +
         "until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn[.!]?$");
-    /** A quoted "[Self] can attack twice in the same turn." field ability being granted. */
+    /**
+     * A quoted "[Self] can attack twice/N times in the same turn." field ability being granted.
+     * Group {@code count} is absent for the "twice" wording; "3 times" appears on Bartz Re-078H's
+     * Rapid Fire and Gilgamesh (FFBE) 14-023L. Mirrors {@code CardData.FIELD_CAN_ATTACK_TWICE},
+     * which reads the same sentence when it is printed rather than granted.
+     */
     static final Pattern GRANTED_CAN_ATTACK_TWICE = Pattern.compile(
-        "(?i)^(?<subj>.+?)\\s+can\\s+attack\\s+twice\\s+in\\s+the\\s+same\\s+turn[.!]?$");
+        "(?i)^(?<subj>.+?)\\s+can\\s+attack\\s+(?:twice|(?<count>\\d+)\\s+times)\\s+" +
+        "(?:in\\s+the\\s+same\\s+turn|per\\s+turn)[.!]?$");
     /** A quoted "[Self] cannot be blocked by a Forward of cost N or more/less." field ability being granted. */
     static final Pattern GRANTED_CANNOT_BE_BLOCKED_BY_COST = Pattern.compile(
         "(?i)^(?<subj>.+?)\\s+cannot\\s+be\\s+blocked\\s+by\\s+a\\s+Forward\\s+of\\s+cost\\s+(?<cost>\\d+)\\s+or\\s+(?<cmp>more|less)[.!]?$");

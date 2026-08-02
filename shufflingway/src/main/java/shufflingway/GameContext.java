@@ -63,7 +63,7 @@ public interface GameContext {
     /** Accumulated damage on P1's forward at {@code idx}. */
     int p1ForwardCurrentDamage(int idx);
 
-    /** Field state (ACTIVE / DULL / BRAVE_ATTACKED) of P1's forward at {@code idx}. */
+    /** Field state (ACTIVE / DULL) of P1's forward at {@code idx}. */
     CardState p1ForwardState(int idx);
 
     /**
@@ -1830,10 +1830,11 @@ public interface GameContext {
     void grantSelfCannotBlockUntilEndOfTurn(CardData source);
 
     /**
-     * Grants {@code source} "can attack twice in the same turn" until end of turn (a temporarily-
-     * granted field ability). The attack code treats the card as if it printed {@code canAttackTwice}.
+     * Grants {@code source} "can attack {@code maxAttacks} times in the same turn" until end of turn
+     * (a temporarily-granted field ability). The attack code treats the card as if it printed the
+     * permission. Raising an existing allowance wins; grants do not stack into a larger total.
      */
-    void grantCanAttackTwiceUntilEndOfTurn(CardData source);
+    void grantMaxAttacksUntilEndOfTurn(CardData source, int maxAttacks);
 
     /**
      * Hands {@code source} the field ability {@code abilityText} until end of turn, for the
@@ -1856,11 +1857,11 @@ public interface GameContext {
     boolean grantSelfAutoAbilityPermanently(CardData source, String abilityText);
 
     /**
-     * Grants {@code source} "can attack twice in the same turn" for as long as it stays on the
-     * field — the outlasts-the-turn counterpart of
-     * {@link #grantCanAttackTwiceUntilEndOfTurn(CardData)}.
+     * Grants {@code source} "can attack {@code maxAttacks} times in the same turn" for as long as it
+     * stays on the field — the outlasts-the-turn counterpart of
+     * {@link #grantMaxAttacksUntilEndOfTurn(CardData, int)}.
      */
-    void grantCanAttackTwicePermanently(CardData source);
+    void grantMaxAttacksPermanently(CardData source, int maxAttacks);
 
     /** Marks all opponent Forwards as unable to block Forwards with power inferior to their own this turn. */
     void setOppForwardsCannotBlockInferiorPowerThisTurn();

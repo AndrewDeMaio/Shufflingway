@@ -2140,6 +2140,7 @@ public class ActionResolver {
         if (tryParsePlayAllByNameFromBreakZone(effectText) != null)         return "PlayAllByNameFromBreakZone";
         if (tryParsePlaySourceFromBreakZone(effectText, source) != null)    return "PlaySourceFromBreakZone";
         if (tryParseActivateNamedCard(effectText) != null)                  return "ActivateNamedCard";
+        if (tryParseAttackOnceMore(effectText) != null)                     return "AttackOnceMore";
         if (tryParseOpponentCannotSearchThisTurn(effectText) != null)       return "OpponentCannotSearch";
         if (tryParseExtraTurnThenLose(effectText) != null)                  return "ExtraTurnThenLose";
         if (tryParseGainCrystalPerX(effectText, 0) != null)                 return "GainCrystalPerX";
@@ -3035,11 +3036,18 @@ public class ActionResolver {
      * quoted ability isn't a supported self-grant (letting other parsers try). The subject named
      * inside the quotes must be the source card.
      */
+    /** The permitted attack count from a matched {@link ActionResolverPatterns#GRANTED_CAN_ATTACK_TWICE}. */
+    private static int grantedAttackCount(Matcher m) {
+        return m.group("count") != null ? Integer.parseInt(m.group("count")) : 2;
+    }
+
     static Consumer<GameContext> grantedSelfFieldAbilityEffect(String quoted, CardData source) {
         if (source == null) return null;
         Matcher at = GRANTED_CAN_ATTACK_TWICE.matcher(quoted);
-        if (at.matches() && at.group("subj").trim().equalsIgnoreCase(source.name()))
-            return ctx -> ctx.grantCanAttackTwiceUntilEndOfTurn(source);
+        if (at.matches() && at.group("subj").trim().equalsIgnoreCase(source.name())) {
+            int max = grantedAttackCount(at);
+            return ctx -> ctx.grantMaxAttacksUntilEndOfTurn(source, max);
+        }
         Matcher nb = GRANTED_CANNOT_BE_BLOCKED_BY_COST.matcher(quoted);
         if (nb.matches() && nb.group("subj").trim().equalsIgnoreCase(source.name())) {
             int cost = Integer.parseInt(nb.group("cost"));
@@ -3096,8 +3104,10 @@ public class ActionResolver {
      */
     static Consumer<GameContext> permanentGrantForClause(String quoted, CardData source) {
         Matcher at = GRANTED_CAN_ATTACK_TWICE.matcher(quoted);
-        if (at.matches() && at.group("subj").trim().equalsIgnoreCase(source.name()))
-            return ctx -> ctx.grantCanAttackTwicePermanently(source);
+        if (at.matches() && at.group("subj").trim().equalsIgnoreCase(source.name())) {
+            int max = grantedAttackCount(at);
+            return ctx -> ctx.grantMaxAttacksPermanently(source, max);
+        }
         // A trigger-bearing clause is granted whole; parseAutoAbilities is the authority on whether
         // it is one, so an unrecognised sentence declines here rather than being silently dropped.
         if (CardData.parseAutoAbilities(quoted).isEmpty()) return null;

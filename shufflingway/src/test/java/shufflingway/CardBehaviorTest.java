@@ -48,7 +48,7 @@ public class CardBehaviorTest {
         return new CardData(null, name, element, cost, power, "Forward", false, 0, false, false,
                 Set.of(), 0, List.of(), null, List.of(),
                 abilities, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
-                false, false, null, false, false, false, false, false, false,
+                false, false, null, false, false, false, false, false, 1,
                 null, null, null, "");
     }
 
@@ -58,7 +58,17 @@ public class CardBehaviorTest {
         return new CardData(null, name, element, 3, power, "Forward", false, 0, false, false,
                 traits, 0, List.of(), null, List.of(),
                 List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
-                false, false, null, false, false, false, false, false, false,
+                false, false, null, false, false, false, false, false, 1,
+                null, null, null, "");
+    }
+
+    /** A Forward carrying {@code traits}, for the combat paths that read Brave / Haste. */
+    private static CardData makeTraitForward(String name, String element, int cost, int power,
+            CardData.Trait... traits) {
+        return new CardData(null, name, element, cost, power, "Forward", false, 0, false, false,
+                Set.of(traits), 0, List.of(), null, List.of(),
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                false, false, null, false, false, false, false, false, 1,
                 null, null, null, "");
     }
 
@@ -69,7 +79,7 @@ public class CardBehaviorTest {
                 List.of(), List.of(), List.of(), List.of(),
                 CardData.parseFieldPowerGrants(text, "Backup"),
                 List.of(), List.of(), List.of(), List.of(), List.of(),
-                false, false, null, false, false, false, false, false, false,
+                false, false, null, false, false, false, false, false, 1,
                 null, null, null, text);
     }
 
@@ -78,7 +88,7 @@ public class CardBehaviorTest {
         return new CardData(null, name, element, 3, 7000, type, false, 0, false, false,
                 Set.of(), 0, List.of(), null, List.of(),
                 List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
-                false, false, null, false, false, false, false, false, false,
+                false, false, null, false, false, false, false, false, 1,
                 job, null, null, "");
     }
 
@@ -89,7 +99,7 @@ public class CardBehaviorTest {
                 Set.of(), 0, List.of(), null, List.of(),
                 List.of(), CardData.parseAutoAbilities(text), List.of(), List.of(), List.of(),
                 List.of(), List.of(), List.of(), List.of(), List.of(),
-                false, false, null, false, false, false, false, false, false,
+                false, false, null, false, false, false, false, false, 1,
                 job, null, null, text);
     }
 
@@ -127,7 +137,7 @@ public class CardBehaviorTest {
                 Set.of(), 0, List.of(), null, List.of(),
                 List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
                 List.of(), List.of(), List.of(),
-                false, false, null, false, false, false, false, false, false,
+                false, false, null, false, false, false, false, false, 1,
                 null, category, null, "");
     }
 
@@ -139,7 +149,7 @@ public class CardBehaviorTest {
                 List.of(), List.of(), CardData.parseFieldAbilities(HIEN_HASTE, "Forward"),
                 CardData.parseIfControlBoosts(HIEN_HASTE, "Hien"),
                 List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
-                false, false, null, false, false, false, false, false, false,
+                false, false, null, false, false, false, false, false, 1,
                 null, "XIV", null, HIEN_HASTE);
         mw.placeCardInForwardZone(hien);
         for (CardData ally : allies) mw.placeCardInForwardZone(ally);
@@ -261,7 +271,7 @@ public class CardBehaviorTest {
                 Set.of(), 0, List.of(), null, List.of(),
                 List.of(), List.of(), CardData.parseFieldAbilities(printed, "Forward"),
                 List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
-                false, false, null, false, false, false, false, false, false,
+                false, false, null, false, false, false, false, false, 1,
                 null, null, null, printed);
         MainWindow mw = new MainWindow();
         mw.placeCardInForwardZone(baGamnan);
@@ -468,6 +478,120 @@ public class CardBehaviorTest {
 
         assertEquals(CardState.ACTIVE, mw.p1ForwardStates.get(0),
                 "the once-per-declaration guard resets for a new attack declaration");
+    }
+
+    // Cissnei carries no "This effect will trigger only once per turn." clause (contrast Noel
+    // 10-097R, which does), so every separate declaration by another Turk hands her another attack.
+    // Three attacks off two allies is the intended reading, not a bug.
+    @Test
+    void chainedTurkDeclarationsEachGiveCissneiAnotherAttack() {
+        CardData elena = makeJobCard("Elena", "Ice", "Forward", TURK);
+        CardData reeve = makeJobCard("Reeve", "Ice", "Forward", TURK);
+        MainWindow mw = cissneiSetUp(elena, reeve);
+        CardData cissnei = mw.p1ForwardCards.get(0);
+        assertFalse(cissnei.autoAbilities().get(0).oncePerTurn(),
+                "no once-per-turn clause is what allows the chain");
+
+        // Cissnei attacks on her own declaration and dulls.
+        mw.p1Turn.attackDeclarationsThisTurn = 1;
+        mw.recordAttackDeclared(cissnei);
+        mw.p1ForwardStates.set(0, CardState.DULL);
+        assertFalse(mw.hasAttackRemaining(cissnei), "one attack is all she gets unaided");
+
+        // Elena declares separately — Cissnei is activated and handed a second attack.
+        mw.p1Turn.attackDeclarationsThisTurn = 2;
+        mw.autoAbilityTriggers.triggerAutoAbilitiesForAttack(elena, true);
+        assertEquals(CardState.ACTIVE, mw.p1ForwardStates.get(0), "activated for the second attack");
+        assertTrue(mw.hasAttackRemaining(cissnei), "and permitted to take it");
+
+        // She takes it and dulls again.
+        mw.recordAttackDeclared(cissnei);
+        mw.p1ForwardStates.set(0, CardState.DULL);
+        mw.p1Turn.attackDeclarationsThisTurn = 3;
+        assertFalse(mw.hasAttackRemaining(cissnei), "the second grant is spent");
+
+        // Reeve declares separately — a third attack.
+        mw.p1Turn.attackDeclarationsThisTurn = 4;
+        mw.autoAbilityTriggers.triggerAutoAbilitiesForAttack(reeve, true);
+        assertEquals(CardState.ACTIVE, mw.p1ForwardStates.get(0), "activated again");
+        assertTrue(mw.hasAttackRemaining(cissnei), "third attack granted");
+        assertEquals(3, mw.attacksAllowed(cissnei), "one base attack plus one grant per declaration");
+    }
+
+    // Both halves of Cissnei's trigger matter: "activate Cissnei" satisfies the active requirement,
+    // and "can attack once more" raises the count. Neither alone lets her attack again.
+    @Test
+    void activatingCissneiWithoutTheGrantWouldNotBeEnough() {
+        CardData reno = makeJobCard("Reno", "Ice", "Forward", TURK);
+        MainWindow mw = cissneiSetUp(reno);
+        CardData cissnei = mw.p1ForwardCards.get(0);
+        mw.recordAttackDeclared(cissnei);
+
+        // Activation alone — the state is right but the count is spent.
+        mw.p1ForwardStates.set(0, CardState.ACTIVE);
+        assertFalse(mw.hasAttackRemaining(cissnei),
+                "re-activating an attacked Forward must not by itself buy another attack");
+
+        // The trigger supplies both halves.
+        mw.p1Turn.attackDeclarationsThisTurn = 1;
+        mw.autoAbilityTriggers.triggerAutoAbilitiesForAttack(reno, true);
+        assertTrue(mw.hasAttackRemaining(cissnei));
+    }
+
+    // Odin (XVI) 24-112L Iron Flash, the action-ability twin of Cissnei's trigger.
+    @Test
+    void odinIronFlashActivatesAndReportsBothHalves() {
+        CardData odin = makeForward("Odin (XVI)", "Lightning", 5, 9000);
+        String effect = "Activate Odin (XVI). Odin (XVI) can attack once more this turn.";
+        // Both halves must be named AND described; the description chain was missing AttackOnceMore,
+        // which is what reported this ability as only partially parsed.
+        assertEquals("ActivateNamedCard + AttackOnceMore",
+                ActionResolver.matchedPatternName(effect, odin));
+        assertEquals("ActivateNamedCard + AttackOnceMore",
+                ActionResolver.fullDescription(effect, odin));
+
+        Consumer<GameContext> fn = ActionResolver.parse(effect, odin);
+        assertNotNull(fn);
+        GameContext ctx = mock(GameContext.class);
+        fn.accept(ctx);
+        // The activate half resolves through selectCharacters/activateTarget; that route is covered
+        // end to end against a real board by the Cissnei tests above.
+        verify(ctx).grantAttackOnceMore("Odin (XVI)");
+    }
+
+    // A Brave Forward does not dull when it attacks, so it stays active. What stops it attacking
+    // again is the attack count — and a multi-attack permission is what lifts that. Before attacks
+    // were counted this was gated on being DULL, so Brave attackers could never use one at all.
+    @Test
+    void aBraveForwardStaysActiveAndAttacksAgainOnlyWithAPermission() {
+        MainWindow mw = new MainWindow();
+        CardData gilgamesh = makeTraitForward("Gilgamesh", "Wind", 5, 9000, CardData.Trait.BRAVE);
+        mw.placeCardInForwardZone(gilgamesh);
+        mw.gameState.getIdentity().put(gilgamesh, true);
+
+        mw.executeP1Attack(List.of(0));
+        assertEquals(CardState.ACTIVE, mw.p1ForwardStates.get(0), "Brave does not dull on attack");
+        assertFalse(mw.hasAttackRemaining(gilgamesh), "but one attack per turn is still the limit");
+
+        mw.buildGameContext(true).grantMaxAttacksUntilEndOfTurn(gilgamesh, 2);
+        assertTrue(mw.hasAttackRemaining(gilgamesh), "\"can attack twice\" now actually applies");
+
+        mw.executeP1Attack(List.of(0));
+        assertFalse(mw.hasAttackRemaining(gilgamesh), "and stops after the second");
+    }
+
+    // Ravana 14-087L: "can attack 4 times in the same turn" — the count form the old boolean
+    // could not express at all.
+    @Test
+    void aFourAttackPermissionIsReadAsFour() {
+        assertEquals(4, CardData.parseMaxAttacksPerTurn(
+                "Ravana, Savior of the Gnath can attack 4 times in the same turn.",
+                "Ravana, Savior of the Gnath"));
+        assertEquals(2, CardData.parseMaxAttacksPerTurn(
+                "Tifa can attack twice in the same turn.", "Tifa"));
+        assertEquals(2, CardData.parseMaxAttacksPerTurn(
+                "This Forward can attack twice per turn.", "This Forward"));
+        assertEquals(1, CardData.parseMaxAttacksPerTurn("Tifa gains Haste.", "Tifa"));
     }
 
     // =========================================================================================
@@ -744,7 +868,7 @@ public class CardBehaviorTest {
         return new CardData(null, name, element, 1, 4000, "Forward", false, 0, false, false,
                 Set.of(), 0, List.of(), null, List.of(),
                 List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
-                false, false, null, false, false, false, false, false, false,
+                false, false, null, false, false, false, false, false, 1,
                 null, null, null, textEn);
     }
 
@@ -850,7 +974,7 @@ public class CardBehaviorTest {
         return new CardData(null, name, "Wind", 3, 6000, "Forward", false, 0, false, false,
                 Set.of(), 0, List.of(), null, List.of(),
                 List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
-                false, false, null, false, false, false, false, false, false,
+                false, false, null, false, false, false, false, false, 1,
                 null, null, null, "");
     }
 
@@ -1178,7 +1302,7 @@ public class CardBehaviorTest {
         GameContext ctx = mock(GameContext.class);
         fn.accept(ctx);
         verify(ctx).boostSourceForward(eq(ace), eq(0), eq(java.util.EnumSet.of(CardData.Trait.BRAVE)));
-        verify(ctx).grantCanAttackTwiceUntilEndOfTurn(ace);
+        verify(ctx).grantMaxAttacksUntilEndOfTurn(ace, 2);
     }
 
     @Test
@@ -1191,7 +1315,7 @@ public class CardBehaviorTest {
         GameContext ctx = mock(GameContext.class);
         fn.accept(ctx);
         verify(ctx).boostSourceForward(eq(tifa), eq(2000), eq(java.util.EnumSet.of(CardData.Trait.HASTE)));
-        verify(ctx).grantCanAttackTwiceUntilEndOfTurn(tifa);
+        verify(ctx).grantMaxAttacksUntilEndOfTurn(tifa, 2);
     }
 
     // Gladiolus: "Choose 1 Forward. Deal it damage equal to Gladiolus' power." — the card's own
@@ -2077,7 +2201,7 @@ public class CardBehaviorTest {
                 Set.of(), 0, List.of(), null, List.of(),
                 CardData.parseActionAbilities(SAHAGIN_CHIEF_TEXT), CardData.parseAutoAbilities(SAHAGIN_CHIEF_TEXT),
                 List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
-                false, false, null, false, false, false, false, false, false,
+                false, false, null, false, false, false, false, false, 1,
                 null, null, null, SAHAGIN_CHIEF_TEXT);
     }
 
@@ -2148,7 +2272,7 @@ public class CardBehaviorTest {
         CardData monster = new CardData(null, "Water Beast", "Water", 2, 5000, "Monster",
                 false, 0, false, false, Set.of(), 0, List.of(), null, List.of(),
                 List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
-                List.of(), List.of(), false, false, null, false, false, false, false, false, false,
+                List.of(), List.of(), false, false, null, false, false, false, false, false, 1,
                 null, null, null, "");
         mw.gameState.getIdentity().put(monster, true);  // owned by P1
         mw.placeCardInMonsterZone(monster);             // P1 monster idx 0
@@ -2241,7 +2365,7 @@ public class CardBehaviorTest {
         return new CardData(null, "Wakka", "Water", 4, 7000, "Forward", false, 0, true, false,
                 Set.of(), 0, List.of(), null, List.of(),
                 List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
-                false, false, null, false, false, false, false, false, false,
+                false, false, null, false, false, false, false, false, 1,
                 null, null, null, WAKKA_TEXT);
     }
 
@@ -2411,7 +2535,7 @@ public class CardBehaviorTest {
         return new CardData(null, name, element, cost, power, "Forward", false, 0, false, false,
                 Set.of(), warpValue, List.of(), null, List.of(),
                 List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
-                false, false, null, false, false, false, false, false, false,
+                false, false, null, false, false, false, false, false, 1,
                 null, null, null, "");
     }
 
@@ -2937,7 +3061,7 @@ public class CardBehaviorTest {
                 Set.of(), 0, List.of(), null, List.of(),
                 List.of(), CardData.parseAutoAbilities(CLOUD_OF_DARKNESS_TEXT),
                 List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
-                false, false, null, false, false, false, false, false, false,
+                false, false, null, false, false, false, false, false, 1,
                 null, null, null, CLOUD_OF_DARKNESS_TEXT);
     }
 
@@ -3193,7 +3317,7 @@ public class CardBehaviorTest {
                 Set.of(), 0, List.of(), null, List.of(),
                 List.of(), List.of(),
                 List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
-                false, false, null, false, false, false, false, false, false,
+                false, false, null, false, false, false, false, false, 1,
                 null, null, null, CU_SITH_TEXT);
     }
 
@@ -3250,7 +3374,7 @@ public class CardBehaviorTest {
                 Set.of(), 0, List.of(), null, List.of(),
                 List.of(), CardData.parseAutoAbilities(BLACK_MAGE_TEXT),
                 List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
-                false, false, null, false, false, false, false, false, false,
+                false, false, null, false, false, false, false, false, 1,
                 null, null, null, BLACK_MAGE_TEXT);
     }
 
@@ -3540,7 +3664,7 @@ public class CardBehaviorTest {
                 Set.of(), 0, List.of(), null, List.of(),
                 List.of(), CardData.parseAutoAbilities(GIPPAL_TEXT), List.of(), List.of(), List.of(),
                 List.of(), List.of(), List.of(), List.of(), List.of(),
-                false, false, null, false, false, false, false, false, false,
+                false, false, null, false, false, false, false, false, 1,
                 null, null, null, GIPPAL_TEXT);
     }
 
@@ -3581,7 +3705,7 @@ public class CardBehaviorTest {
                 Set.of(), 0, List.of(), null, List.of(),
                 List.of(), CardData.parseAutoAbilities(CHOCOBO_TEXT), List.of(), List.of(), List.of(),
                 List.of(), List.of(), List.of(), List.of(), List.of(),
-                false, false, null, false, false, false, false, false, false,
+                false, false, null, false, false, false, false, false, 1,
                 null, null, null, CHOCOBO_TEXT);
     }
 
@@ -3626,7 +3750,7 @@ public class CardBehaviorTest {
                 CardData.parseActionAbilities(textEn), CardData.parseAutoAbilities(textEn),
                 CardData.parseFieldAbilities(textEn, "Forward"),
                 List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
-                false, false, null, false, false, false, false, false, false,
+                false, false, null, false, false, false, false, false, 1,
                 null, null, null, textEn);
     }
 
@@ -3930,7 +4054,7 @@ public class CardBehaviorTest {
                 Set.of(), 0, List.of(), null, List.of(),
                 List.of(), List.of(), CardData.parseFieldAbilities(text, type),
                 List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
-                false, false, null, false, false, false, false, false, false,
+                false, false, null, false, false, false, false, false, 1,
                 null, null, null, text);
     }
 
@@ -3941,7 +4065,7 @@ public class CardBehaviorTest {
                 List.of(), List.of(), CardData.parseFieldAbilities(text, "Forward"),
                 List.of(), List.of(), CardData.parseScalingSelfPowerBoosts(text, "Forward", name),
                 List.of(), List.of(), List.of(), List.of(),
-                false, false, null, false, false, false, false, false, false,
+                false, false, null, false, false, false, false, false, 1,
                 null, null, null, text);
     }
 
@@ -4328,7 +4452,7 @@ public class CardBehaviorTest {
                 Set.of(), 0, List.of(), null, List.of(),
                 List.of(), CardData.parseAutoAbilities(text), List.of(), List.of(), List.of(),
                 List.of(), List.of(), List.of(), List.of(), List.of(),
-                false, false, null, false, false, false, false, false, false,
+                false, false, null, false, false, false, false, false, 1,
                 null, null, null, text);
     }
 
@@ -4525,7 +4649,7 @@ public class CardBehaviorTest {
                 List.of(), CardData.parseAutoAbilities(FORZA_TEXT),
                 CardData.parseFieldAbilities(FORZA_TEXT, "Forward"),
                 List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
-                false, false, null, false, false, false, false, false, false,
+                false, false, null, false, false, false, false, false, 1,
                 null, null, null, FORZA_TEXT);
     }
 
@@ -5314,7 +5438,7 @@ public class CardBehaviorTest {
                 Set.of(), 0, List.of(), null, List.of(),
                 List.of(), List.of(), CardData.parseFieldAbilities(text, "Forward"),
                 List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
-                false, false, null, false, false, false, false, false, false,
+                false, false, null, false, false, false, false, false, 1,
                 null, null, null, text);
     }
 
@@ -5430,7 +5554,7 @@ public class CardBehaviorTest {
                 CardData.parseActionAbilities(text), CardData.parseAutoAbilities(text),
                 CardData.parseFieldAbilities(text, type),
                 List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
-                false, false, null, false, false, false, false, false, false,
+                false, false, null, false, false, false, false, false, 1,
                 null, null, null, text);
     }
 
@@ -5815,7 +5939,7 @@ public class CardBehaviorTest {
 
         // "Does not end at the end of the turn" — an end-of-turn sweep must not take it away.
         mw.grantedFieldAbilities.clear();
-        mw.grantedCanAttackTwice.clear();
+        mw.grantedMaxAttacks.clear();
         assertTrue(mw.effectiveAutoAbilities(odin).stream()
                 .anyMatch(a -> a.trigger().equals("enters opponent's field")),
                 "the grant survives the end-of-turn clear-down");
@@ -5837,13 +5961,13 @@ public class CardBehaviorTest {
         MainWindow mw = new MainWindow();
         mw.placeCardInForwardZone(odin);
         mw.gameState.getIdentity().put(odin, true);
-        assertFalse(mw.canAttackTwice(odin));
+        assertEquals(1, mw.maxAttacksPerTurn(odin));
 
         effect.accept(mw.buildGameContext(true));
 
         assertTrue(mw.effectiveAutoAbilities(odin).stream().anyMatch(a -> a.trigger().equals("attacks")),
                 "first clause — the attack trigger");
-        assertTrue(mw.canAttackTwice(odin), "second clause — the second-attack permission");
+        assertEquals(2, mw.maxAttacksPerTurn(odin), "second clause — the second-attack permission");
     }
 
     // =========================================================================================
@@ -6364,9 +6488,9 @@ public class CardBehaviorTest {
     // hand-written copy of the update list and had drifted apart: p1ForwardTempJobs was dropped by
     // only two of them (leaving that list a slot longer than its siblings, so every Forward above
     // the hole read the wrong entry), the uniqueness-rule path skipped the two "cannot be blocked"
-    // collections, and p1ForwardCanDoSecondAttack was re-indexed by none of them — so after any
-    // break the second attack was credited to whichever Forward inherited the departed slot.
-    // All six now route through removeP1ForwardSlotState.
+    // collections. All six now route through removeP1ForwardSlotState. (Attack counts used to be
+    // slot-keyed and belonged on this list too; they are keyed by card instance now, so a break
+    // cannot misattribute them at all.)
     // =========================================================================================
 
     /** Every P1 per-slot list, so a test can assert they stay the same length as each other. */
@@ -6430,7 +6554,7 @@ public class CardBehaviorTest {
         // Restrict the Forwards above the one about to break.
         mw.p1ForwardCannotBlock.add(4);
         mw.p1ForwardCannotBeBlocked.add(5);
-        mw.p1ForwardCanDoSecondAttack.add(3);
+        mw.grantExtraAttack(mw.p1ForwardCards.get(3));
 
         CardData survivor4 = mw.p1ForwardCards.get(4);
         CardData survivor5 = mw.p1ForwardCards.get(5);
@@ -6448,9 +6572,10 @@ public class CardBehaviorTest {
         assertTrue(mw.p1ForwardCannotBeBlocked.contains(4));
 
         assertSame(survivor3, mw.p1ForwardCards.get(2));
-        assertTrue(mw.p1ForwardCanDoSecondAttack.contains(2),
-                "a pending second attack must follow its Forward, not stay on the slot number");
-        assertFalse(mw.p1ForwardCanDoSecondAttack.contains(3));
+        assertEquals(2, mw.attacksAllowed(survivor3),
+                "a pending extra attack follows its Forward — it is keyed by card, not by slot");
+        assertEquals(1, mw.attacksAllowed(mw.p1ForwardCards.get(3)),
+                "and does not land on whoever moved into the vacated slot");
     }
 
     @Test
@@ -6809,7 +6934,7 @@ public class CardBehaviorTest {
                 Set.of(), 0, List.of(), null, List.of(),
                 List.of(), List.of(), List.of(), List.of(), List.of(), boosts,
                 List.of(), List.of(), List.of(), List.of(),
-                false, false, null, false, false, false, false, false, false,
+                false, false, null, false, false, false, false, false, 1,
                 null, null, null, codText);
         mw.placeCardInForwardZone(cod);
         mw.gameState.getIdentity().put(cod, true);
@@ -7366,7 +7491,7 @@ public class CardBehaviorTest {
                 Set.of(), 0, List.of(), null, List.of(),
                 List.of(), CardData.parseAutoAbilities(CRYSTAL_EXARCH_TEXT), List.of(), List.of(), List.of(),
                 List.of(), List.of(), List.of(), List.of(), List.of(),
-                false, false, null, false, false, false, false, false, false,
+                false, false, null, false, false, false, false, false, 1,
                 null, null, null, CRYSTAL_EXARCH_TEXT);
     }
 
@@ -8756,7 +8881,7 @@ public class CardBehaviorTest {
 		return new CardData(null, "X", "Fire", cost, 7000, type, false, 0, false, false,
 				Set.of(), 0, List.of(), null, List.of(),
 				List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
-				false, false, null, false, false, false, false, false, false,
+				false, false, null, false, false, false, false, false, 1,
 				null, null, null, "");
 	}
 

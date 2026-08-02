@@ -73,7 +73,7 @@ class ComputerPlayer {
 		mw.p2Turn.turnOpponentCharReturnedToHand = false;
 		int activated = 0, thawed = 0;
 
-		// Pass 1: activate DULL/BRAVE_ATTACKED cards; frozen cards are skipped
+		// Pass 1: activate DULL cards; frozen cards are skipped
 		for (int i = 0; i < mw.p2BackupStates.length; i++) {
 			if (mw.p2BackupCards[i] == null) continue;
 			if (mw.p2BackupStates[i] == CardState.DULL && !mw.p2BackupFrozen[i]) {
@@ -83,7 +83,7 @@ class ComputerPlayer {
 		for (int i = 0; i < mw.p2ForwardStates.size(); i++) {
 			mw.p2ForwardDamage.set(i, 0);
 			CardState fs = mw.p2ForwardStates.get(i);
-			if ((fs == CardState.DULL || fs == CardState.BRAVE_ATTACKED) && !mw.p2ForwardFrozen.get(i)) {
+			if (fs == CardState.DULL && !mw.p2ForwardFrozen.get(i)) {
 				mw.p2ForwardStates.set(i, CardState.ACTIVE); mw.animateActivateP2Forward(i); activated++;
 			} else {
 				mw.refreshP2ForwardSlot(i);
@@ -93,9 +93,6 @@ class ComputerPlayer {
 			CardState ms = mw.p2MonsterStates.get(i);
 			if (ms == CardState.DULL && !mw.p2MonsterFrozen.get(i)) {
 				mw.p2MonsterStates.set(i, CardState.ACTIVE); mw.animateActivateP2Monster(i); activated++;
-			} else if (ms == CardState.BRAVE_ATTACKED && !mw.p2MonsterFrozen.get(i)) {
-				// Already upright (Brave attacked without dulling) — no rotation to animate.
-				mw.p2MonsterStates.set(i, CardState.ACTIVE); mw.refreshP2MonsterSlot(i); activated++;
 			} else {
 				mw.refreshP2MonsterSlot(i);
 			}
@@ -301,7 +298,7 @@ class ComputerPlayer {
 
 		for (int p1 = 0; p1 < mw.p1ForwardStates.size(); p1++) {
 			CardState s = mw.p1ForwardStates.get(p1);
-			if (s != CardState.ACTIVE && s != CardState.BRAVE_ATTACKED) continue;
+			if (s != CardState.ACTIVE) continue;
 			int p1Hp = mw.effectiveP1ForwardPower(p1) - mw.p1ForwardDamage.get(p1);
 
 			boolean canKillAlone = false;
@@ -340,16 +337,14 @@ class ComputerPlayer {
 		int combinedPower = 0;
 		StringBuilder names = new StringBuilder();
 		for (int idx : partyIndices) {
-			if (mw.effectiveP2HasTrait(idx, CardData.Trait.BRAVE)) {
-				mw.p2ForwardStates.set(idx, CardState.BRAVE_ATTACKED);
-				mw.refreshP2ForwardSlot(idx);
-			} else {
+			if (!mw.effectiveP2HasTrait(idx, CardData.Trait.BRAVE)) {
 				CardState p2PartyBefore = mw.p2ForwardStates.get(idx);
 				mw.p2ForwardStates.set(idx, CardState.DULL);
 				mw.animateDullP2Forward(idx, null);
 				if (p2PartyBefore == CardState.ACTIVE)
 					mw.autoAbilityTriggers.triggerAutoAbilitiesForBecomesDull(mw.p2ForwardCards.get(idx), false);
 			}
+			mw.recordAttackDeclared(mw.effectiveP2Forward(idx));
 			combinedPower += mw.effectiveP2ForwardPower(idx);
 			if (names.length() > 0) names.append(", ");
 			names.append(mw.p2ForwardCards.get(idx).name());
@@ -403,20 +398,14 @@ class ComputerPlayer {
 			mw.p2Turn.attackDeclarationsThisTurn++;
 			CardData attacker = mw.p2ForwardPrimedTop.get(i) != null ? mw.p2ForwardPrimedTop.get(i) : mw.p2ForwardCards.get(i);
 			mw.logEntry("[P2] " + attacker.name() + " attacks!");
-			if (mw.effectiveP2HasTrait(i, CardData.Trait.BRAVE)) {
-				mw.p2ForwardStates.set(i, CardState.BRAVE_ATTACKED);
-				mw.refreshP2ForwardSlot(i);
-			} else {
-				CardState p2SingleBefore = mw.p2ForwardStates.get(i);
+			CardState p2SingleBefore = mw.p2ForwardStates.get(i);
+			if (!mw.effectiveP2HasTrait(i, CardData.Trait.BRAVE)) {
 				mw.p2ForwardStates.set(i, CardState.DULL);
 				mw.animateDullP2Forward(i, null);
 				if (p2SingleBefore == CardState.ACTIVE)
 					mw.autoAbilityTriggers.triggerAutoAbilitiesForBecomesDull(mw.p2ForwardCards.get(i), false);
 			}
-			if (mw.canAttackTwice(attacker)) {
-				if (!mw.p2ForwardCanDoSecondAttack.remove(i))
-					mw.p2ForwardCanDoSecondAttack.add(i);
-			}
+			mw.recordAttackDeclared(attacker);
 			mw.autoAbilityTriggers.triggerAutoAbilitiesForAttack(attacker, false);
 			final int fi = i;
 			mw.initP1BlockDeclaration(attacker, fi, () -> {
@@ -429,13 +418,11 @@ class ComputerPlayer {
 			mw.p2Turn.attackDeclarationsThisTurn++;
 			CardData attacker = mw.p2MonsterCards.get(i);
 			int power = mw.p2MonsterForwardPower(i);
-			if (mw.effectiveMonsterHasTrait(false, i, CardData.Trait.BRAVE)) {
-				mw.p2MonsterStates.set(i, CardState.BRAVE_ATTACKED);
-				mw.refreshP2MonsterSlot(i);
-			} else {
+			if (!mw.effectiveMonsterHasTrait(false, i, CardData.Trait.BRAVE)) {
 				mw.p2MonsterStates.set(i, CardState.DULL);
 				mw.animateDullP2Monster(i);
 			}
+			mw.recordAttackDeclared(attacker);
 			mw.autoAbilityTriggers.triggerAutoAbilitiesForAttack(attacker, false);
 			mw.logEntry("[P2] " + attacker.name() + " attacks! (Forward — " + power + ")");
 			mw.pendingP2AttackerIsMonster = true;
@@ -451,13 +438,11 @@ class ComputerPlayer {
 			mw.p2Turn.attackDeclarationsThisTurn++;
 			CardData attacker = mw.p2BackupCards[i];
 			int power = mw.p2BackupForwardPower(i);
-			if (mw.effectiveBackupHasTrait(false, i, CardData.Trait.BRAVE)) {
-				mw.p2BackupStates[i] = CardState.BRAVE_ATTACKED;
-				mw.refreshP2BackupSlot(i);
-			} else {
+			if (!mw.effectiveBackupHasTrait(false, i, CardData.Trait.BRAVE)) {
 				mw.p2BackupStates[i] = CardState.DULL;
 				mw.animateDullP2Backup(i, true);
 			}
+			mw.recordAttackDeclared(attacker);
 			mw.autoAbilityTriggers.triggerAutoAbilitiesForAttack(attacker, false);
 			mw.logEntry("[P2] " + attacker.name() + " attacks! (Forward — " + power + ")");
 			mw.pendingP2AttackerIsBackup = true;
@@ -510,7 +495,7 @@ class ComputerPlayer {
 		mw.p1ForwardCannotAttack.clear();          mw.p2ForwardCannotAttack.clear();
 		mw.p1ForwardMustAttack.clear();            mw.p2ForwardMustAttack.clear();
 		mw.p2ForwardCannotAttackPersistent.clear(); mw.p2ForwardCannotBlockPersistent.clear();
-		mw.p1ForwardCanDoSecondAttack.clear();     mw.p2ForwardCanDoSecondAttack.clear();
+		mw.attacksMadeThisTurn.clear();            mw.extraAttacksThisTurn.clear();
 		mw.p1TempAttackTriggers.clear();           mw.p2TempAttackTriggers.clear();
 		mw.p1TempBlockTriggers.clear();            mw.p2TempBlockTriggers.clear();
 		mw.nextIncomingDmgZeroSet.clear();   mw.nextIncomingDmgReduceMap.clear();   mw.nextAbilityDmgReduceMap.clear();
@@ -573,7 +558,7 @@ class ComputerPlayer {
 		for (int i = 0; i < mw.p2MonsterCards.size(); i++) mw.refreshP2MonsterSlot(i);
 		int activated = 0, thawed = 0;
 
-		// Pass 1: activate DULL/BRAVE_ATTACKED cards; frozen cards are skipped
+		// Pass 1: activate DULL cards; frozen cards are skipped
 		for (int i = 0; i < mw.p1BackupStates.length; i++) {
 			if (mw.p1BackupStates[i] == CardState.DULL && !mw.p1BackupFrozen[i]) {
 				mw.p1BackupStates[i] = CardState.ACTIVE; mw.animateDullBackup(i, false); activated++;
@@ -581,7 +566,7 @@ class ComputerPlayer {
 		}
 		for (int i = 0; i < mw.p1ForwardStates.size(); i++) {
 			CardState fs = mw.p1ForwardStates.get(i);
-			if ((fs == CardState.DULL || fs == CardState.BRAVE_ATTACKED) && !mw.p1ForwardFrozen.get(i)) {
+			if (fs == CardState.DULL && !mw.p1ForwardFrozen.get(i)) {
 				mw.p1ForwardStates.set(i, CardState.ACTIVE); mw.animateActivateForward(i); activated++;
 			}
 		}
@@ -590,8 +575,6 @@ class ComputerPlayer {
 			if (mw.p1MonsterFrozen.get(i)) continue;
 			if (fs == CardState.DULL) {
 				mw.p1MonsterStates.set(i, CardState.ACTIVE); mw.animateActivateMonster(i); activated++;
-			} else if (fs == CardState.BRAVE_ATTACKED) {
-				mw.p1MonsterStates.set(i, CardState.ACTIVE); mw.refreshP1MonsterSlot(i); activated++;
 			}
 		}
 
@@ -640,9 +623,8 @@ class ComputerPlayer {
 		if (fwd.cannotAttackOrBlock()) return false;
 		if (mw.isFieldAbilityCannotAttackOrBlock(fwd, false)) return false;
 		CardState state = mw.p2ForwardStates.get(idx);
-		boolean activeOk = state == CardState.ACTIVE;
-		boolean secondOk = state == CardState.DULL && mw.p2ForwardCanDoSecondAttack.contains(idx);
-		if (!activeOk && !secondOk) return false;
+		if (state != CardState.ACTIVE) return false;
+		if (!mw.hasAttackRemaining(mw.effectiveP2Forward(idx))) return false;
 		return mw.effectiveP2HasTrait(idx, CardData.Trait.HASTE)
 			|| mw.p2ForwardPlayedOnTurn.get(idx) != mw.gameState.getTurnNumber();
 	}

@@ -77,6 +77,11 @@ final class GameContextImpl implements GameContext {
 		this.exBurst = exBurst;
 	}
 
+	/** "twice" / "3 times" — how a permitted attack count reads inside a granted ability's text. */
+	private static String attackCountPhrase(int maxAttacks) {
+		return maxAttacks == 2 ? "twice" : maxAttacks + " times";
+	}
+
 	/**
 	 * True if a modal sub-action removes cards from a Break Zone that can include the
 	 * opponent's (i.e. "either/any player's" or "your opponent's" Break Zone). Used by the
@@ -1130,10 +1135,11 @@ final class GameContextImpl implements GameContext {
 				if (applied)
 					logEntry(source.name() + " gains \"" + source.name() + " cannot block.\" until end of turn");
 			}
-			@Override public void grantCanAttackTwiceUntilEndOfTurn(CardData source) {
-				mw.grantedCanAttackTwice.add(source);
-				mw.endOfTurnEffects.add(ctx -> mw.grantedCanAttackTwice.remove(source));
-				logEntry(source.name() + " gains \"can attack twice in the same turn\" until end of turn");
+			@Override public void grantMaxAttacksUntilEndOfTurn(CardData source, int maxAttacks) {
+				mw.grantedMaxAttacks.merge(source, maxAttacks, Math::max);
+				mw.endOfTurnEffects.add(ctx -> mw.grantedMaxAttacks.remove(source));
+				logEntry(source.name() + " gains \"can attack " + attackCountPhrase(maxAttacks)
+						+ " in the same turn\" until end of turn");
 			}
 			@Override public boolean grantSelfAutoAbilityPermanently(CardData source, String abilityText) {
 				List<AutoAbility> granted = CardData.parseAutoAbilities(abilityText);
@@ -1142,9 +1148,10 @@ final class GameContextImpl implements GameContext {
 				logEntry(source.name() + " gains \"" + abilityText + "\" (does not end at end of turn)");
 				return true;
 			}
-			@Override public void grantCanAttackTwicePermanently(CardData source) {
-				mw.permanentCanAttackTwice.add(source);
-				logEntry(source.name() + " gains \"can attack twice in the same turn\" (does not end at end of turn)");
+			@Override public void grantMaxAttacksPermanently(CardData source, int maxAttacks) {
+				mw.permanentMaxAttacks.merge(source, maxAttacks, Math::max);
+				logEntry(source.name() + " gains \"can attack " + attackCountPhrase(maxAttacks)
+						+ " in the same turn\" (does not end at end of turn)");
 			}
 			@Override public void grantSelfFieldAbilityUntilEndOfTurn(CardData source, String abilityText) {
 				FieldAbility granted = new FieldAbility(abilityText, 0);
@@ -4812,19 +4819,21 @@ final class GameContextImpl implements GameContext {
 			}
 
 			@Override public void grantAttackOnceMore(String cardName) {
-				for (int i = 0; i < mw.p1ForwardCards.size(); i++) {
-					if (mw.p1ForwardCards.get(i).name().equalsIgnoreCase(cardName)) {
-						mw.p1ForwardCannotAttack.remove(i);
-						mw.refreshP1ForwardSlot(i);
-						return;
-					}
+				List<CardData> fwds    = isP1 ? mw.p1ForwardCards : mw.p2ForwardCards;
+				Set<Integer>   blocked = isP1 ? mw.p1ForwardCannotAttack : mw.p2ForwardCannotAttack;
+				for (int i = 0; i < fwds.size(); i++) {
+					if (!fwds.get(i).name().equalsIgnoreCase(cardName)) continue;
+					blocked.remove(i);
+					mw.grantExtraAttack(isP1 ? mw.effectiveP1Forward(i) : mw.effectiveP2Forward(i));
+					logEntry(cardName + " may attack once more this turn");
+					if (isP1) mw.refreshP1ForwardSlot(i); else mw.refreshP2ForwardSlot(i);
+					return;
 				}
-				for (int i = 0; i < mw.p1MonsterCards.size(); i++) {
-					if (mw.p1MonsterCards.get(i).name().equalsIgnoreCase(cardName)) {
-						return;
-					}
-				}
-				logEntry("[Warning] grantAttackOnceMore: \"" + cardName + "\" not found on P1's field");
+				List<CardData> mons = isP1 ? mw.p1MonsterCards : mw.p2MonsterCards;
+				for (CardData m : mons)
+					if (m.name().equalsIgnoreCase(cardName)) { mw.grantExtraAttack(m); return; }
+				logEntry("[Warning] grantAttackOnceMore: \"" + cardName + "\" not found on "
+						+ (isP1 ? "P1" : "P2") + "'s field");
 			}
 
 			@Override public void limitOpponentAttackDeclarationsThisTurn(int max) {
