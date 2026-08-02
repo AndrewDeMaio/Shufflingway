@@ -4,6 +4,7 @@ import org.json.JSONObject;
 import scraper.AppPaths;
 import scraper.CardDatabase;
 import shufflingway.UpdateChecker;
+import shufflingway.dialog.DeckChooserPanel;
 
 import javax.swing.*;
 import java.awt.*;
@@ -13,17 +14,23 @@ import java.sql.SQLException;
 
 /**
  * Modal dialog that connects to a host's IP:port.
- * On success, exposes a live {@link GameConnection} via {@link #getConnection()}.
- * Cancelling or failing returns {@code null}.
+ *
+ * <p>Connecting sends this player's deck, then blocks for the host's deck and the host-authored
+ * seed and coin flip — so the dialog stays open, showing "waiting for host", until the host
+ * presses Start. On success it exposes a live {@link GameConnection} via
+ * {@link #getConnection()} and the agreed {@link MatchSetup} via {@link #getSetup()}.
+ * Cancelling or failing returns {@code null} from both.
  */
 public class JoinLobbyDialog extends JDialog {
 
     private GameConnection connection;
+    private MatchSetup     setup;
 
     private final JTextField hostField;
     private final JTextField portField;
     private final JLabel statusLabel;
     private final JButton connectBtn;
+    private final DeckChooserPanel deckChooser;
 
     public JoinLobbyDialog(Frame owner) {
         super(owner, "Join Game", true);
@@ -54,9 +61,16 @@ public class JoinLobbyDialog extends JDialog {
 
         statusLabel = new JLabel(" ", SwingConstants.CENTER);
         statusLabel.setFont(new Font("Dialog", Font.PLAIN, 12));
-        content.add(statusLabel, BorderLayout.CENTER);
+
+        deckChooser = new DeckChooserPanel("Your Deck", this::refreshConnectButton);
+
+        JPanel centre = new JPanel(new BorderLayout(0, 6));
+        centre.add(deckChooser, BorderLayout.CENTER);
+        centre.add(statusLabel, BorderLayout.SOUTH);
+        content.add(centre, BorderLayout.CENTER);
 
         connectBtn = new JButton("Connect");
+        connectBtn.setEnabled(false);
         connectBtn.addActionListener(e -> attemptConnect());
 
         JButton cancelBtn = new JButton("Cancel");
@@ -69,10 +83,15 @@ public class JoinLobbyDialog extends JDialog {
 
         setContentPane(content);
         pack();
-        setMinimumSize(new Dimension(300, 170));
+        setMinimumSize(new Dimension(320, 360));
         setLocationRelativeTo(owner);
 
         getRootPane().setDefaultButton(connectBtn);
+    }
+
+    /** Connecting without a deck would only fail at the exchange, so gate the button instead. */
+    private void refreshConnectButton() {
+        connectBtn.setEnabled(deckChooser.getSelectedDeckId() >= 0);
     }
 
     private void attemptConnect() {
@@ -85,6 +104,9 @@ public class JoinLobbyDialog extends JDialog {
             statusLabel.setText("Invalid port number.");
             return;
         }
+        int    deckId   = deckChooser.getSelectedDeckId();
+        String deckName = deckChooser.getSelectedDeckName();
+        if (deckId < 0) { statusLabel.setText("Choose a deck first."); return; }
 
         connectBtn.setEnabled(false);
         statusLabel.setText("Connecting…");
@@ -124,11 +146,25 @@ public class JoinLobbyDialog extends JDialog {
                 }
 
                 connection = conn;
+
+                // Send our deck immediately; the host reads it when they press Start.
+                conn.send(LobbyExchange.deckListAction(deckId, deckName));
+                SwingUtilities.invokeLater(() ->
+                        statusLabel.setText("Waiting for host to start…"));
+
+                LobbyExchange.RemoteDeck remote = LobbyExchange.awaitDeckList(conn);
+                GameAction setupAction = LobbyExchange.awaitGameSetup(conn);
+
+                setup = new MatchSetup(deckId, remote.serials(), remote.name(),
+                        setupAction.payload().getLong("seed"),
+                        false,
+                        setupAction.payload().getBoolean("hostGoesFirst"));
                 SwingUtilities.invokeLater(this::dispose);
             } catch (IOException | SQLException ex) {
+                if (connection != null) { connection.close(); connection = null; }
                 SwingUtilities.invokeLater(() -> {
                     statusLabel.setText("Failed: " + ex.getMessage());
-                    connectBtn.setEnabled(true);
+                    refreshConnectButton();
                 });
             }
         }, "JoinLobby-connect").start();
@@ -136,4 +172,7 @@ public class JoinLobbyDialog extends JDialog {
 
     /** Returns the live connection, or {@code null} if cancelled or failed. */
     public GameConnection getConnection() { return connection; }
+
+    /** The agreed match parameters, or {@code null} if setup did not complete. */
+    public MatchSetup getSetup() { return setup; }
 }

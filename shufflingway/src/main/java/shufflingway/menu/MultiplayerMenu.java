@@ -4,21 +4,27 @@ import shufflingway.net.GameAction;
 import shufflingway.net.GameConnection;
 import shufflingway.net.HostLobbyDialog;
 import shufflingway.net.JoinLobbyDialog;
+import shufflingway.net.MatchSetup;
 
 import javax.swing.*;
 import java.util.function.Consumer;
 
 /**
  * Multiplayer menu — lets P1 host or join a game over a direct TCP connection.
- * Once connected, the active {@link GameConnection} is stored and actions
- * received from the opponent are logged until full game-sync is implemented.
+ * Once the lobby has agreed on decks, shuffle seed and first player, the active
+ * {@link GameConnection} is stored and the resulting {@link MatchSetup} is handed to the
+ * main window, which starts the game from it.
  */
 public class MultiplayerMenu extends JMenu {
 
     private GameConnection activeConnection;
     private final JMenuItem disconnectItem;
 
-    public MultiplayerMenu(JFrame owner, Runnable onConnected,
+    /**
+     * @param onConnected receives the agreed match parameters; the main window starts the
+     *                    networked game from them
+     */
+    public MultiplayerMenu(JFrame owner, Consumer<MatchSetup> onConnected,
                            Runnable onDisconnected, Consumer<GameAction> onActionReceived) {
         super("Multiplayer");
 
@@ -30,15 +36,18 @@ public class MultiplayerMenu extends JMenu {
         hostItem.addActionListener(e -> {
             HostLobbyDialog dlg = new HostLobbyDialog(owner);
             dlg.setVisible(true);
-            GameConnection conn = dlg.getConnection();
-            if (conn != null) activate(conn, owner, onConnected, onDisconnected, onActionReceived);
+            // A connection without a setup means the lobby was cancelled after connecting.
+            if (dlg.getConnection() != null && dlg.getSetup() != null)
+                activate(dlg.getConnection(), dlg.getSetup(), owner,
+                        onConnected, onDisconnected, onActionReceived);
         });
 
         joinItem.addActionListener(e -> {
             JoinLobbyDialog dlg = new JoinLobbyDialog(owner);
             dlg.setVisible(true);
-            GameConnection conn = dlg.getConnection();
-            if (conn != null) activate(conn, owner, onConnected, onDisconnected, onActionReceived);
+            if (dlg.getConnection() != null && dlg.getSetup() != null)
+                activate(dlg.getConnection(), dlg.getSetup(), owner,
+                        onConnected, onDisconnected, onActionReceived);
         });
 
         disconnectItem.addActionListener(e -> disconnect(owner, onDisconnected));
@@ -49,8 +58,8 @@ public class MultiplayerMenu extends JMenu {
         add(disconnectItem);
     }
 
-    private void activate(GameConnection conn, JFrame owner,
-                          Runnable onConnected, Runnable onDisconnected,
+    private void activate(GameConnection conn, MatchSetup setup, JFrame owner,
+                          Consumer<MatchSetup> onConnected, Runnable onDisconnected,
                           Consumer<GameAction> onActionReceived) {
         if (activeConnection != null) activeConnection.close();
         activeConnection = conn;
@@ -74,8 +83,12 @@ public class MultiplayerMenu extends JMenu {
             }
         });
 
+        // Hand the setup over before starting the reader: onConnected only queues the game
+        // start on the EDT, and queuing it first guarantees it runs ahead of any inbound action.
+        // Started the other way round, a fast peer's first message could be processed against a
+        // game that had not been built yet.
+        onConnected.accept(setup);
         conn.start();
-        onConnected.run();
     }
 
     private void disconnect(JFrame owner, Runnable onDisconnected) {

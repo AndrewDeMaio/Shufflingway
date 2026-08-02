@@ -116,8 +116,12 @@ import shufflingway.menu.DebugMenu;
 import shufflingway.menu.FileMenu;
 import shufflingway.menu.HelpMenu;
 import shufflingway.menu.MultiplayerMenu;
+import org.json.JSONObject;
+
 import shufflingway.net.ActionType;
+import shufflingway.net.GameAction;
 import shufflingway.net.GameConnection;
+import shufflingway.net.MatchSetup;
 
 public class MainWindow {
 
@@ -169,6 +173,11 @@ public class MainWindow {
 	private JButton    chatSendBtn;
 	// Multiplayer menu reference (to access active connection)
 	private MultiplayerMenu multiplayerMenu;
+	// Non-null for the duration of a networked game; null for a game against the AI.
+	private MatchSetup matchSetup;
+	// Opening-deal digests, ours and the opponent's, compared once both exist.
+	private String localDealChecksum;
+	private String remoteDealChecksum;
 	// Side info panel (card preview + Next button + game log)
 	private JPanel        sidePanel;
 	private JPanel        sideWrapper;        // contains resizeHandle + sidePanel
@@ -774,11 +783,11 @@ public class MainWindow {
 				() -> applySidePanelSide(AppSettings.getSidePanelSide()),
 				this::applyBoardColor));
 		multiplayerMenu = new MultiplayerMenu(frame,
-				() -> {
-					logEntry("Multiplayer connection established");
+				setup -> {
 					SwingUtilities.invokeLater(() -> {
 						chatInput.setEnabled(true);
 						chatSendBtn.setEnabled(true);
+						startMultiplayerGame(setup);
 					});
 				},
 				() -> SwingUtilities.invokeLater(() -> {
@@ -789,6 +798,9 @@ public class MainWindow {
 					if (action.type() == ActionType.CHAT) {
 						String msg = action.payload().optString("msg", "");
 						if (!msg.isEmpty()) logEntry("[Opponent] " + msg);
+					} else if (action.type() == ActionType.STATE_CHECKSUM) {
+						remoteDealChecksum = action.payload().optString("checksum", "");
+						compareDealChecksums();
 					}
 				});
 		menuBar.add(multiplayerMenu);
@@ -1302,7 +1314,7 @@ public class MainWindow {
 			if (text.isEmpty()) return;
 			GameConnection conn = multiplayerMenu == null ? null : multiplayerMenu.getActiveConnection();
 			if (conn == null) return;
-			conn.send(shufflingway.net.GameAction.of(ActionType.CHAT, new org.json.JSONObject().put("msg", text)));
+			conn.send(GameAction.of(ActionType.CHAT, new JSONObject().put("msg", text)));
 			logEntry("[You] " + text);
 			chatInput.setText("");
 		};
@@ -1437,6 +1449,29 @@ public class MainWindow {
 	// -------------------------------------------------------------------------
 
 	private void startGame(int deckId, int p2DeckId) {
+		matchSetup = null;              // a local game against the AI
+		resetForNewGame();
+		loadCpuGameDecks(deckId, p2DeckId);
+	}
+
+	/**
+	 * Starts a networked game from the parameters the lobby agreed on.
+	 *
+	 * <p>Both clients run this against the same {@link MatchSetup} and each seats itself as P1,
+	 * so the two boards come out as mirror images. Deck order is identical on both sides because
+	 * the shuffles are driven by seeded streams keyed to the deck's owner — see
+	 * {@link MatchSetup#hostDeckRandom()} — and {@link MatchChecksum} verifies that immediately.
+	 */
+	void startMultiplayerGame(MatchSetup setup) {
+		matchSetup         = setup;
+		localDealChecksum  = null;
+		remoteDealChecksum = null;
+		resetForNewGame();
+		loadMultiplayerDecks(setup);
+	}
+
+	/** Tears down any in-progress game and clears every piece of per-game state. */
+	private void resetForNewGame() {
 		// --- Tear down any in-progress game before resetting state ---
 		// Stop timers first so they cannot fire callbacks after state is cleared.
 		stackWindowGeneration++;
@@ -1519,7 +1554,10 @@ public class MainWindow {
 		if (gameLog != null) gameLog.setText("");
 		logEntry("Game Start");
 		refreshP1HandLabel();
+	}
 
+	/** Loads both decks from the local deck database, for a game against the AI. */
+	private void loadCpuGameDecks(int deckId, int p2DeckId) {
 		new SwingWorker<Void, Void>() {
 			List<DeckCardDetail> p1Cards;
 			List<DeckCardDetail> p2Cards;
@@ -1578,6 +1616,118 @@ public class MainWindow {
 				logEntry("P2 deck: " + p2DeckName);
 			}
 		}.execute();
+	}
+
+	/**
+	 * Loads a networked game's decks: the local player's from the local deck database, the
+	 * opponent's by resolving the serials the lobby received. Both sides run this and both
+	 * resolve the same two decks; the shuffle streams then put them in the same order.
+	 */
+	private void loadMultiplayerDecks(MatchSetup setup) {
+		new SwingWorker<Void, Void>() {
+			List<DeckCardDetail> localCards;
+			List<DeckCardDetail> remoteCards;
+			String               unknownSerial;
+
+			@Override
+			protected Void doInBackground() throws Exception {
+				try (DeckDatabase db = new DeckDatabase()) {
+					localCards  = db.getDeckCardsDetailed(setup.localDeckId());
+					remoteCards = new ArrayList<>(setup.remoteSerials().size());
+					for (String serial : setup.remoteSerials()) {
+						DeckCardDetail detail = db.getCardDetailBySerial(serial);
+						// The lobby's card-database checksum should make this unreachable.
+						if (detail == null) { unknownSerial = serial; return null; }
+						remoteCards.add(detail);
+					}
+				}
+				return null;
+			}
+
+			@Override
+			protected void done() {
+				try {
+					get(); // surface any exception
+				} catch (InterruptedException | ExecutionException ex) {
+					JOptionPane.showMessageDialog(frame, "Error loading deck:\n" + ex.getMessage(),
+							"Error", JOptionPane.ERROR_MESSAGE);
+					return;
+				}
+				if (unknownSerial != null) {
+					JOptionPane.showMessageDialog(frame,
+							"Opponent's deck contains a card this client does not have: " + unknownSerial,
+							"Multiplayer", JOptionPane.ERROR_MESSAGE);
+					return;
+				}
+
+				List<CardData> main = new ArrayList<>();
+				List<CardData> lb   = new ArrayList<>();
+				for (DeckCardDetail card : localCards) {
+					CardData cd = buildCardData(card);
+					if (card.isLb()) lb.add(cd);
+					else             main.add(cd);
+				}
+				gameState.initializeDeck(main, lb, setup.localDeckRandom());
+
+				List<CardData> p2Main = new ArrayList<>();
+				List<CardData> p2Lb   = new ArrayList<>();
+				for (DeckCardDetail card : remoteCards) {
+					CardData cd = buildCardData(card);
+					if (card.isLb()) p2Lb.add(cd);
+					else             p2Main.add(cd);
+				}
+				gameState.initializeP2MainDeck(p2Main, setup.remoteDeckRandom());
+				gameState.initializeP2LbDeck(p2Lb);
+
+				// Both decks are shuffled and untouched — the one moment the two clients can be
+				// compared card-for-card. Do it before anything draws.
+				sendOpeningDealChecksum();
+
+				gameState.drawP2OpeningHand();
+
+				refreshP1DeckLabel();
+				refreshP1LimitLabel();
+				refreshP2DeckLabel();
+				refreshP2HandCountLabel();
+				refreshP2LimitButton();
+				logEntry("Opponent's deck: " + setup.remoteDeckName());
+				drawOpeningHand();
+			}
+		}.execute();
+	}
+
+	/**
+	 * Digests the freshly dealt game, sends it to the opponent, and compares against theirs.
+	 * A mismatch means the two clients are already playing different games.
+	 */
+	private void sendOpeningDealChecksum() {
+		if (matchSetup == null) return;
+		localDealChecksum = MatchChecksum.ofOpeningDeal(
+				gameState, matchSetup.localIsHost(), matchSetup.hostGoesFirst());
+		GameConnection conn = multiplayerMenu == null ? null : multiplayerMenu.getActiveConnection();
+		if (conn != null) {
+			conn.send(GameAction.of(ActionType.STATE_CHECKSUM, new JSONObject()
+					.put("label", "openingDeal")
+					.put("checksum", localDealChecksum)));
+		}
+		compareDealChecksums();
+	}
+
+	/** Reports the opening-deal comparison once both halves have arrived. */
+	private void compareDealChecksums() {
+		if (localDealChecksum == null || remoteDealChecksum == null) return;
+		if (localDealChecksum.equals(remoteDealChecksum)) {
+			logEntry("[Sync] Opening deal matches the opponent's client.");
+		} else {
+			logEntry("[Sync] DESYNC — the two clients dealt different games. This game is not playable.");
+			JOptionPane.showMessageDialog(frame,
+					"""
+					The two clients dealt different games, so play would diverge.
+
+					This usually means the decks or card databases differ between \
+					the two installations.""",
+					"Multiplayer desync", JOptionPane.ERROR_MESSAGE);
+		}
 	}
 
 	/**
@@ -1759,7 +1909,11 @@ public class MainWindow {
 			openingHandPopup = null;
 			if (mulliganAvailable) logEntry("Kept opening hand");
 			gameState.keepHand(handOrder);
-			boolean p1GoesFirst = AppSettings.isDebugAlwaysWinCoinFlip() || Math.random() < 0.5;
+			// In a networked game the flip was settled by the host and shipped in the setup;
+			// flipping again locally would have the two clients disagree about who moves.
+			boolean p1GoesFirst = matchSetup != null
+					? matchSetup.localGoesFirst()
+					: AppSettings.isDebugAlwaysWinCoinFlip() || Math.random() < 0.5;
 			GameState.Player firstPlayer = p1GoesFirst
 					? GameState.Player.P1 : GameState.Player.P2;
 			gameState.startFirstTurn(firstPlayer);
@@ -7246,11 +7400,12 @@ public class MainWindow {
 	}
 
 	/**
-	 * Builds the controller that will make P2's decisions for the game being started.
-	 * Today that is always the local AI; once the networked opponent exists, this is where
-	 * a live {@link GameConnection} selects it instead.
+	 * Builds the controller that will make P2's decisions for the game being started:
+	 * the remote human when the lobby handed us a {@link MatchSetup}, the local AI otherwise.
 	 */
 	private OpponentController createOpponent() {
+		GameConnection conn = multiplayerMenu == null ? null : multiplayerMenu.getActiveConnection();
+		if (matchSetup != null && conn != null) return new RemoteOpponent(this, conn, matchSetup);
 		return new ComputerPlayer(this);
 	}
 

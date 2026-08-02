@@ -317,8 +317,16 @@ public class GameState {
      * Shuffles the main deck before loading it.
      */
     public void initializeDeck(List<CardData> mainCards, List<CardData> lbCards) {
+        initializeDeck(mainCards, lbCards, new Random());
+    }
+
+    /**
+     * As {@link #initializeDeck(List, List)} but shuffling from {@code rng}.
+     * Multiplayer passes a seeded stream so both clients deal the same deck order.
+     */
+    public void initializeDeck(List<CardData> mainCards, List<CardData> lbCards, Random rng) {
         List<CardData> shuffled = new ArrayList<>(mainCards);
-        Collections.shuffle(shuffled);
+        Collections.shuffle(shuffled, rng);
         for (CardData c : shuffled) identity.put(c, true);
         for (CardData c : lbCards) identity.put(c, true);
         p1MainDeck.addAll(shuffled);
@@ -423,10 +431,24 @@ public class GameState {
 
     /** Shuffles {@code mainCards}, loads them as P2's main deck, and draws P2's 5-card opening hand. */
     public void initializeP2Deck(List<CardData> mainCards) {
+        initializeP2MainDeck(mainCards, new Random());
+        drawP2OpeningHand();
+    }
+
+    /**
+     * Shuffles {@code mainCards} from {@code rng} and loads them as P2's main deck, without
+     * drawing. Split from {@link #initializeP2Deck(List)} so multiplayer can compare both decks'
+     * shuffled order across clients before any card leaves a deck.
+     */
+    public void initializeP2MainDeck(List<CardData> mainCards, Random rng) {
         List<CardData> shuffled = new ArrayList<>(mainCards);
-        Collections.shuffle(shuffled);
+        Collections.shuffle(shuffled, rng);
         for (CardData c : shuffled) identity.put(c, false);
         p2MainDeck.addAll(shuffled);
+    }
+
+    /** Draws P2's 5-card opening hand off the top of their main deck. */
+    public void drawP2OpeningHand() {
         for (int i = 0; i < 5 && !p2MainDeck.isEmpty(); i++) {
             p2Hand.add(p2MainDeck.poll());
         }

@@ -224,6 +224,36 @@ public class DeckDatabase implements AutoCloseable {
     }
 
     /**
+     * Returns the serials of every copy of every card in the deck, in exactly the order
+     * {@link #getDeckCardsDetailed(int)} returns the matching rows.
+     *
+     * <p>That correspondence is what lets multiplayer ship a deck as a serial list: the
+     * receiving client resolves each serial through {@link #getCardDetailBySerial(String)} and
+     * ends up with the same list the owning client built locally.
+     */
+    public List<String> getDeckSerials(int deckId) throws SQLException {
+        List<String> result = new ArrayList<>();
+        String sql = """
+            SELECT dc.count, dc.serial
+            FROM deck_cards dc
+            LEFT JOIN cards c ON dc.serial = c.serial
+            WHERE dc.deck_id = ?
+            ORDER BY dc.serial
+            """;
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, deckId);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    String serial = rs.getString("serial");
+                    int    count  = rs.getInt("count");
+                    for (int i = 0; i < count; i++) result.add(serial);
+                }
+            }
+        }
+        return result;
+    }
+
+    /**
      * Returns the {@link DeckCardDetail} for a single card by serial (independent of any deck),
      * or {@code null} if the serial is not in the {@code cards} table. Used by the debug
      * "spawn card to CPU" tooling to build a {@link shufflingway.CardData} from any card.
