@@ -4552,6 +4552,15 @@ final class ActionResolverPatterns {
     static final Pattern GRANTED_CANNOT_BE_BLOCKED_BY_COST = Pattern.compile(
         "(?i)^(?<subj>.+?)\\s+cannot\\s+be\\s+blocked\\s+by\\s+a\\s+Forward\\s+of\\s+cost\\s+(?<cost>\\d+)\\s+or\\s+(?<cmp>more|less)[.!]?$");
     /**
+     * A quoted "[Self] cannot block." field ability being granted — the printed form of the same
+     * sentence is {@code CardData.FIELD_CANNOT_BLOCK}, read there into {@code cannotBlockAtAll()}.
+     *
+     * <p>Anchored, so it cannot be reached by the "cannot be blocked" wordings above: "be blocked"
+     * never leaves the subject group ending immediately before "cannot block".
+     */
+    static final Pattern GRANTED_CANNOT_BLOCK = Pattern.compile(
+        "(?i)^(?<subj>.+?)\\s+cannot\\s+block[.!]?$");
+    /**
      * Matches both printed wordings of source-scoped EX Burst suppression:
      * <ul>
      *   <li>"Any card [of cost N or less] put in the Damage Zone due to [Name] cannot use its

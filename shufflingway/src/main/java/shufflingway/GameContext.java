@@ -1811,6 +1811,14 @@ public interface GameContext {
     void grantSelfCannotBeBlockedByCost(CardData source, int costVal, boolean isMore);
 
     /**
+     * Grants {@code source} "[Self] cannot block." until end of turn (a temporarily-granted field
+     * ability), reusing the per-Forward this-turn block-restriction set that
+     * {@link #setP1ForwardCannotBlock(int)} writes. Locates the source by identity on either
+     * field; no-op if it isn't on the field.
+     */
+    void grantSelfCannotBlockUntilEndOfTurn(CardData source);
+
+    /**
      * Grants {@code source} "can attack twice in the same turn" until end of turn (a temporarily-
      * granted field ability). The attack code treats the card as if it printed {@code canAttackTwice}.
      */

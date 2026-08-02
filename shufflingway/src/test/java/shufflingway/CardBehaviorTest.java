@@ -1140,6 +1140,35 @@ public class CardBehaviorTest {
         verify(ctx).grantSelfCannotBeBlockedByCost(tsukinowa, 5, true);
     }
 
+    // Layle 28-076C: the grant is followed by "Each player can use this ability.", a restriction
+    // sentence captured as a flag on the ability — it must not defeat the end-anchored grant pattern.
+    @Test
+    void layleGrantsSelfCannotBlockDespiteTrailingEachPlayerSentence() {
+        CardData layle = makeForward("Layle", "Wind", 1, 3000);
+        String effect = "Layle gains \"Layle cannot block.\" until the end of the turn. "
+                + "Each player can use this ability.";
+        assertEquals("GainsQuotedFieldAbilityUntilEot", ActionResolver.matchedPatternName(effect, layle));
+        Consumer<GameContext> fn = ActionResolver.parse(effect, layle);
+        assertNotNull(fn);
+        GameContext ctx = mock(GameContext.class);
+        fn.accept(ctx);
+        verify(ctx).grantSelfCannotBlockUntilEndOfTurn(layle);
+    }
+
+    @Test
+    void layleActionAbilityIsUsableByEitherPlayer() {
+        String text = "If Layle is dealt damage, the damage becomes 0 instead.[[br]]"
+                + "《1》: Layle gains \"Layle cannot block.\" until the end of the turn. "
+                + "Each player can use this ability.";
+        List<ActionAbility> abilities = CardData.parseActionAbilities(text);
+        assertEquals(1, abilities.size());
+        ActionAbility ability = abilities.get(0);
+        assertTrue(ability.usableByEitherPlayer());
+        CardData layle = makeForward("Layle", "Wind", 1, 3000);
+        assertNotNull(ActionResolver.parse(ability.effectText(), layle),
+                "Layle's action ability effect should resolve");
+    }
+
     @Test
     void aceGrantsBraveAndAttackTwice() {
         CardData ace = makeForward("Ace", "Fire", 3, 7000);

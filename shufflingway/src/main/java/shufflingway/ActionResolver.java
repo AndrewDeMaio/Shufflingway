@@ -3037,6 +3037,12 @@ public class ActionResolver {
             boolean more = "more".equalsIgnoreCase(nb.group("cmp"));
             return ctx -> ctx.grantSelfCannotBeBlockedByCost(source, cost, more);
         }
+        // Must follow GRANTED_CANNOT_BE_BLOCKED_BY_COST: both are anchored, but a "cannot be
+        // blocked by …" text would only reach here on a wording that one does not cover, and
+        // "cannot block" must not claim it.
+        Matcher cb = GRANTED_CANNOT_BLOCK.matcher(quoted);
+        if (cb.matches() && cb.group("subj").trim().equalsIgnoreCase(source.name()))
+            return ctx -> ctx.grantSelfCannotBlockUntilEndOfTurn(source);
         if (exBurstSuppressionMaxCost(quoted, source.name()) != null)
             return ctx -> ctx.grantSelfExBurstSuppression(source);
         // "If [Self] deals damage to a Forward or your opponent, double the damage instead."

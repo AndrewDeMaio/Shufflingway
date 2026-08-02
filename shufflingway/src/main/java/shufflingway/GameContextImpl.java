@@ -1121,6 +1121,15 @@ final class GameContextImpl implements GameContext {
 					logEntry(source.name() + " gains \"cannot be blocked by a Forward of cost " + costVal
 							+ " or " + (isMore ? "more" : "less") + "\" until end of turn");
 			}
+			@Override public void grantSelfCannotBlockUntilEndOfTurn(CardData source) {
+				boolean applied = false;
+				for (int i = 0; i < mw.p1ForwardCards.size() && !applied; i++)
+					if (mw.p1ForwardCards.get(i) == source) { setP1ForwardCannotBlock(i); applied = true; }
+				for (int i = 0; i < mw.p2ForwardCards.size() && !applied; i++)
+					if (mw.p2ForwardCards.get(i) == source) { setP2ForwardCannotBlock(i); applied = true; }
+				if (applied)
+					logEntry(source.name() + " gains \"" + source.name() + " cannot block.\" until end of turn");
+			}
 			@Override public void grantCanAttackTwiceUntilEndOfTurn(CardData source) {
 				mw.grantedCanAttackTwice.add(source);
 				mw.endOfTurnEffects.add(ctx -> mw.grantedCanAttackTwice.remove(source));

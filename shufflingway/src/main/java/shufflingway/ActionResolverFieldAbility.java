@@ -19,9 +19,18 @@ final class ActionResolverFieldAbility {
 
 	private ActionResolverFieldAbility() {}
 
+    /**
+     * The pattern is end-anchored, so a trailing use-restriction sentence would defeat it — Layle
+     * 28-076C's grant is followed by "Each player can use this ability.".  Restrictions are
+     * captured as flags on the ability rather than executed here, so matching against the stripped
+     * text loses nothing.  {@code fullDescription}/{@code matchedPatternName} already strip before
+     * dispatching; {@code parse()} does not, which is why it happens here.
+     */
     static Consumer<GameContext> tryParseGainsQuotedFieldAbilityUntilEot(String text, CardData source) {
         if (source == null) return null;
-        Matcher m = GAINS_QUOTED_FIELD_ABILITY_UNTIL_EOT.matcher(text.trim());
+        String matchOn = stripRestrictionSentences(text);
+        if (matchOn.isEmpty()) matchOn = text;
+        Matcher m = GAINS_QUOTED_FIELD_ABILITY_UNTIL_EOT.matcher(matchOn.trim());
         if (!m.matches()) return null;
         if (!m.group("subject").trim().equalsIgnoreCase(source.name())) return null;
         return grantedSelfFieldAbilityEffect(m.group("quoted").trim(), source);
