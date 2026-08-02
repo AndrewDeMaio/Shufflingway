@@ -1,6 +1,7 @@
 package shufflingway;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
@@ -66,9 +67,61 @@ class RemoteOpponent implements OpponentController {
 			case KEEP_HAND      -> applyKeepHand(action.payload());
 			case MULLIGAN       -> applyMulligan(action.payload());
 			case ADVANCE_PHASE  -> applyPhaseAdvance(action.payload());
+			case PLAY_CARD      -> applyPlayCard(action.payload());
+			case DISCARD_HAND   -> applyDiscard(action.payload());
 			default             -> { return false; }
 		}
 		return true;
+	}
+
+	/** The opponent discarded from hand without generating CP (the end-phase trim to five). */
+	private void applyDiscard(JSONObject payload) {
+		List<Integer> selected = new ArrayList<>(indices(payload, "indices"));
+		List<CardData> hand = mw.gameState.getP2Hand();
+		for (int idx : selected) {
+			if (idx < 0 || idx >= hand.size()) {
+				mw.reportDesync("opponent discarded hand card " + idx + ", but their hand holds "
+						+ hand.size() + " cards here");
+				return;
+			}
+		}
+		selected.sort(java.util.Collections.reverseOrder());
+		for (int idx : selected) mw.playerBreakFromHand(false, idx);
+		mw.logEntry("[P2] Discarded " + selected.size() + " card(s) — hand reduced to 5");
+		mw.refreshP2HandCountLabel();
+		mw.refreshP2BreakLabel();
+	}
+
+	/**
+	 * The opponent played a card from hand. Their hand lives here as P2's, in the same order,
+	 * so the index identifies the same card — but it is checked against the name they sent
+	 * before anything is spent, because acting on the wrong card would corrupt the board
+	 * silently while a rejected play is merely a reported desync.
+	 */
+	private void applyPlayCard(JSONObject payload) {
+		int handIdx = payload.optInt("handIdx", -1);
+		List<CardData> hand = mw.gameState.getP2Hand();
+		if (handIdx < 0 || handIdx >= hand.size()) {
+			mw.reportDesync("opponent played hand card " + handIdx + ", but their hand holds "
+					+ hand.size() + " cards here");
+			return;
+		}
+		CardData card     = hand.get(handIdx);
+		String   expected = payload.optString("card", "");
+		if (!card.name().equals(expected)) {
+			mw.reportDesync("opponent played \"" + expected + "\" from hand slot " + handIdx
+					+ ", which holds \"" + card.name() + "\" here");
+			return;
+		}
+
+		Map<Integer, String> overrides = new LinkedHashMap<>();
+		JSONObject rawOverrides = payload.optJSONObject("backupElements");
+		if (rawOverrides != null)
+			for (String key : rawOverrides.keySet())
+				overrides.put(Integer.valueOf(key), rawOverrides.getString(key));
+
+		mw.executePlay(false, card, handIdx,
+				indices(payload, "discards"), indices(payload, "backups"), overrides);
 	}
 
 	/** The opponent settled on an opening hand order; mirror it so hand indices line up. */
@@ -212,6 +265,31 @@ class RemoteOpponent implements OpponentController {
 	public void requestReactiveShields(Runnable onDone) {
 		// Nothing to offer yet; pass priority straight on so the local game keeps moving.
 		onDone.run();
+	}
+
+	/**
+	 * Builds a PLAY_CARD for a card the local player is playing.
+	 *
+	 * <p>Everything travels as an index — hand slot, discard slots, backup slots — because both
+	 * clients hold these zones in the same order. The card name rides along only so the
+	 * receiver can check the indices still line up before acting on them.
+	 */
+	static GameAction playCardAction(CardData card, int handIdx, List<Integer> discards,
+	                                 List<Integer> backupDulls, Map<Integer, String> backupElements) {
+		JSONObject overrides = new JSONObject();
+		backupElements.forEach((slot, element) -> overrides.put(String.valueOf(slot), element));
+		return GameAction.of(ActionType.PLAY_CARD, new JSONObject()
+				.put("handIdx", handIdx)
+				.put("card", card.name())
+				.put("discards", new JSONArray(discards))
+				.put("backups", new JSONArray(backupDulls))
+				.put("backupElements", overrides));
+	}
+
+	/** Builds a DISCARD_HAND for hand cards the local player is discarding without payment. */
+	static GameAction discardAction(List<Integer> indices) {
+		return GameAction.of(ActionType.DISCARD_HAND, new JSONObject()
+				.put("indices", new JSONArray(indices)));
 	}
 
 	/** Builds an ADVANCE_PHASE for a phase the local player has just entered. */

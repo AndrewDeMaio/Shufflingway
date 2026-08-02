@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import org.junit.jupiter.api.Test;
@@ -189,6 +190,69 @@ class MultiplayerSetupTest {
 
         assertNotEquals(names(host.getP1MainDeck()), names(joiner.getP2MainDeck()),
                 "an unreplicated mulligan must not silently look like agreement");
+    }
+
+    // ── Card play replication ────────────────────────────────────────────
+    //
+    // executePlay is parameterised by player, so the opponent's play runs the same code against
+    // P2's zones. These assert the two seats really do produce the same result, which is the
+    // whole reason there is one implementation instead of a P1 copy and a P2 copy.
+
+    private static CardData backup(String name, String element, int cost) {
+        return new CardData(null, name, element, cost, 0, "Backup", false, 0, false, false,
+                Set.of(), 0, List.of(), null, List.of(),
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of(), List.of(), List.of(),
+                false, false, null, false, false, false, false, false, 1,
+                null, null, null, "");
+    }
+
+    @Test
+    void aPlayCostsTheSameInEitherSeat() {
+        // One Backup cast for 2, paid by discarding two same-element cards from hand.
+        MainWindow p1Seat = new MainWindow();
+        MainWindow p2Seat = new MainWindow();
+        for (MainWindow mw : List.of(p1Seat, p2Seat)) {
+            List<CardData> hand = mw == p1Seat ? mw.gameState.getP1Hand() : mw.gameState.getP2Hand();
+            hand.add(backup("Cast Me", "Fire", 2));
+            hand.add(backup("Pay A", "Fire", 3));
+            hand.add(backup("Pay B", "Fire", 3));
+        }
+
+        p1Seat.executePlay(true,  p1Seat.gameState.getP1Hand().get(0), 0,
+                List.of(1, 2), List.of(), Map.of());
+        p2Seat.executePlay(false, p2Seat.gameState.getP2Hand().get(0), 0,
+                List.of(1, 2), List.of(), Map.of());
+
+        assertEquals(0, p1Seat.gameState.getP1Hand().size(), "hand is emptied by the cast and its payment");
+        assertEquals(p1Seat.gameState.getP1Hand().size(), p2Seat.gameState.getP2Hand().size());
+        assertEquals(names(p1Seat.gameState.getP1BreakZone()), names(p2Seat.gameState.getP2BreakZone()),
+                "the same cards must reach the Break Zone in the same order");
+        assertEquals(p1Seat.p1BackupCards[0].name(), p2Seat.p2BackupCards[0].name(),
+                "the cast card must land in the same backup slot on both boards");
+        assertEquals(0, p1Seat.gameState.getP1CpForElement("Fire"),
+                "CP generated for payment is cleared once the cost is paid");
+        assertEquals(p1Seat.gameState.getP1CpForElement("Fire"),
+                     p2Seat.gameState.getP2CpForElement("Fire"));
+    }
+
+    @Test
+    void discardIndicesBelowThePlayedCardShiftItCorrectly() {
+        // The played card sits above its payment in hand, so removing the payment first moves it.
+        MainWindow mw = new MainWindow();
+        List<CardData> hand = mw.gameState.getP2Hand();
+        hand.add(backup("Pay A", "Ice", 3));
+        hand.add(backup("Pay B", "Ice", 3));
+        hand.add(backup("Cast Me", "Ice", 2));
+
+        mw.executePlay(false, hand.get(2), 2, List.of(0, 1), List.of(), Map.of());
+
+        assertTrue(mw.gameState.getP2Hand().isEmpty(),
+                "the played card must be removed, not left behind by a stale index");
+        assertEquals("Cast Me", mw.p2BackupCards[0].name());
+        // Discards are applied high-index-first so the lower indices stay valid, which puts the
+        // later card in the Break Zone first. Deterministic, so both clients agree on it.
+        assertEquals(List.of("Pay B", "Pay A"), names(mw.gameState.getP2BreakZone()));
     }
 
     @Test

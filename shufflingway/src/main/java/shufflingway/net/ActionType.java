@@ -23,7 +23,11 @@ public enum ActionType {
     ADVANCE_PHASE,  // payload: {}
 
     // ── Card actions ──────────────────────────────────────────────────────────
-    PLAY_CARD,      // payload: { "handIdx": n, "discards": [idx, ...], "backups": [slot, ...] }
+    PLAY_CARD,      // payload: { "handIdx": n, "card": "...", "discards": [idx, ...],
+                    //            "backups": [slot, ...], "backupElements": { "slot": "Fire" } }
+                    //   Indices address zones both clients hold in the same order.
+    DISCARD_HAND,   // payload: { "indices": [idx, ...] } — a discard with no CP, e.g. the
+                    //   end-phase trim to five. Replicated because it renumbers the hand.
     ATTACK,         // payload: { "forwardIdx": n }
     RESOLVE_STACK,  // payload: {}
 

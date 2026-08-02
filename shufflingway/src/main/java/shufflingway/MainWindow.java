@@ -530,6 +530,23 @@ public class MainWindow {
 		return isP1 ? p2Turn : p1Turn;
 	}
 
+	// CP bank accessors, so rules that apply to either player can be written once.
+	void addCp(boolean isP1, String element, int amount) {
+		if (isP1) gameState.addP1Cp(element, amount); else gameState.addP2Cp(element, amount);
+	}
+
+	boolean spendCp(boolean isP1, String element, int amount) {
+		return isP1 ? gameState.spendP1Cp(element, amount) : gameState.spendP2Cp(element, amount);
+	}
+
+	void clearCp(boolean isP1, String element) {
+		if (isP1) gameState.clearP1Cp(element); else gameState.clearP2Cp(element);
+	}
+
+	int cpForElement(boolean isP1, String element) {
+		return isP1 ? gameState.getP1CpForElement(element) : gameState.getP2CpForElement(element);
+	}
+
 	/** End-of-turn effects queued this turn; fired at the beginning of the END phase. */
 	final List<Consumer<GameContext>> endOfTurnEffects = new ArrayList<>();
 
@@ -5249,6 +5266,9 @@ public class MainWindow {
 		if (hand.size() <= 5) return;
 		int mustDiscard = hand.size() - 5;
 		HandPickDialog.showEndPhaseDiscard(frame, hand, mustDiscard, this::showZoomAt, this::hideZoom, selected -> {
+			// Replicated because it changes which card sits at which hand index, and every later
+			// play addresses the hand by index.
+			sendToOpponent(RemoteOpponent.discardAction(selected));
 			selected.sort(Collections.reverseOrder());
 			for (int di : selected) playerBreakFromHand(true, di);
 			logEntry("Discarded " + selected.size() + " card(s) — hand reduced to 5");
@@ -7142,16 +7162,34 @@ public class MainWindow {
 		return false;
 	}
 
+	/** The local player's play, which a networked opponent also has to see. */
+	private void executePlay(CardData card, int cardHandIdx,
+			List<Integer> discardIndices, List<Integer> backupDullIndices,
+			Map<Integer, String> backupElementOverrides) {
+		sendToOpponent(RemoteOpponent.playCardAction(
+				card, cardHandIdx, discardIndices, backupDullIndices, backupElementOverrides));
+		executePlay(true, card, cardHandIdx, discardIndices, backupDullIndices, backupElementOverrides);
+	}
+
 	/**
 	 * Executes the play: dulls selected backups, discards payment cards (high-index
 	 * first to preserve indices), adds the generated CP to the bank, spends the cost,
 	 * removes the played card from hand, and places it in the appropriate zone.
+	 *
+	 * <p>Parameterised by player so a networked opponent's play runs this exact code against
+	 * P2's zones. The alternative — a hand-written P2 mirror — would be two implementations of
+	 * one rule, and the moment they drifted the two clients would disagree about the board.
+	 * Every input here is an index or a slot, so the same arguments produce the same result on
+	 * both clients.
 	 */
-	private void executePlay(CardData card, int cardHandIdx,
+	void executePlay(boolean isP1, CardData card, int cardHandIdx,
 			List<Integer> discardIndices, List<Integer> backupDullIndices,
 			Map<Integer, String> backupElementOverrides) {
 		String[] elems = card.elements();
 		boolean  isLD  = card.isLightOrDark();
+		CardData[]     backupCards = isP1 ? p1BackupCards  : p2BackupCards;
+		CardState[]    backupStates= isP1 ? p1BackupStates : p2BackupStates;
+		List<CardData> hand        = isP1 ? gameState.getP1Hand() : gameState.getP2Hand();
 		Map<String, Integer> execCostByElem = new LinkedHashMap<>();
 		if (!isLD) for (String e : elems) execCostByElem.put(e, 1);
 		Map<String, Integer> execCpAccum = new LinkedHashMap<>();
@@ -7161,22 +7199,22 @@ public class MainWindow {
 		List<Integer> sortedBackups = new ArrayList<>(backupDullIndices);
 		if (!isLD) sortedBackups.sort(Comparator.comparingInt(s ->
 				(int) Arrays.stream(elems)
-						.filter(e -> p1BackupCards[s].containsElement(e)).count()));
+						.filter(e -> backupCards[s].containsElement(e)).count()));
 		for (int bi : sortedBackups) {
-			p1BackupStates[bi] = CardState.DULL;
-			animateDullBackup(bi, true);
+			backupStates[bi] = CardState.DULL;
+			if (isP1) animateDullBackup(bi, true); else animateDullP2Backup(bi, true);
 			String cpElem;
 			if (backupElementOverrides.containsKey(bi)) {
 				cpElem = backupElementOverrides.get(bi);
 			} else if (isLD) {
-				cpElem = p1BackupCards[bi].elements()[0];
+				cpElem = backupCards[bi].elements()[0];
 			} else {
-				cpElem = contributingElement(p1BackupCards[bi], elems, execCpAccum, execCostByElem);
+				cpElem = contributingElement(backupCards[bi], elems, execCpAccum, execCostByElem);
 			}
-			gameState.addP1Cp(cpElem, 1);
+			addCp(isP1, cpElem, 1);
 			execCpAccum.merge(cpElem, 1, Integer::sum);
 			String actualElem = backupElementOverrides.containsKey(bi)
-					? backupElementOverrides.get(bi) : p1BackupCards[bi].elements()[0];
+					? backupElementOverrides.get(bi) : backupCards[bi].elements()[0];
 			if (!actualElem.isEmpty()) lastCastActualPaymentElements.add(actualElem);
 		}
 
@@ -7185,10 +7223,10 @@ public class MainWindow {
 		List<Integer> assignOrder = new ArrayList<>(discardIndices);
 		if (!isLD) assignOrder.sort(Comparator.comparingInt(i ->
 				(int) Arrays.stream(elems)
-						.filter(e -> gameState.getP1Hand().get(i).containsElement(e)).count()));
+						.filter(e -> hand.get(i).containsElement(e)).count()));
 		Map<Integer, String> cpAssignments = new LinkedHashMap<>();
 		for (int i : assignOrder) {
-			CardData d = gameState.getP1Hand().get(i);
+			CardData d = hand.get(i);
 			String cpElem = isLD ? d.elements()[0]
 					: contributingElement(d, elems, execCpAccum, execCostByElem);
 			cpAssignments.put(i, cpElem);
@@ -7199,8 +7237,8 @@ public class MainWindow {
 		List<Integer> discardRemovalOrder = new ArrayList<>(discardIndices);
 		discardRemovalOrder.sort(Collections.reverseOrder());
 		for (int di : discardRemovalOrder) {
-			gameState.addP1Cp(cpAssignments.get(di), 2);
-			playerBreakFromHand(true,di);
+			addCp(isP1, cpAssignments.get(di), 2);
+			playerBreakFromHand(isP1, di);
 			if (di < cardHandIdx) cardHandIdx--;
 		}
 		// Clear all CP generated during payment — includes off-element CP from L/D card discards
@@ -7208,8 +7246,8 @@ public class MainWindow {
 		Set<String> cpToClear = new java.util.LinkedHashSet<>(Arrays.asList(elems));
 		cpToClear.addAll(execCpAccum.keySet());
 		for (String e : cpToClear) {
-			gameState.spendP1Cp(e, gameState.getP1CpForElement(e));
-			gameState.clearP1Cp(e);
+			spendCp(isP1, e, cpForElement(isP1, e));
+			clearCp(isP1, e);
 		}
 		// Record distinct element types used for payment (checked by castPaymentMinElements field abilities)
 		lastCastPaymentDistinctElements = (int) execCpAccum.keySet().stream()
@@ -7217,25 +7255,27 @@ public class MainWindow {
 		lastCastPaymentElements.clear();
 		execCpAccum.keySet().stream().filter(e -> !e.isEmpty()).forEach(lastCastPaymentElements::add);
 		lastCastWasPaidByBackupsOnly = discardIndices.isEmpty() && !backupDullIndices.isEmpty();
-		gameState.removeFromHand(cardHandIdx);
-		refreshP1HandLabel();
+		if (isP1) { gameState.removeFromHand(cardHandIdx);   refreshP1HandLabel(); }
+		else      { gameState.removeP2FromHand(cardHandIdx); refreshP2HandCountLabel(); }
 		activeCostReductions.removeIf(m -> m.consumeOnUse() && m.matches(card));
-		p1Turn.cardsCastThisTurn++;
-		for (String j : card.jobs()) p1Turn.castJobsThisTurn.add(j.toLowerCase());
-		p1Turn.castNamesThisTurn.add(card.name().toLowerCase());
-		p1Turn.castCountByNameThisTurn.merge(card.name().toLowerCase(), 1, Integer::sum);
+		PlayerTurnState playerTurn = turn(isP1);
+		playerTurn.cardsCastThisTurn++;
+		for (String j : card.jobs()) playerTurn.castJobsThisTurn.add(j.toLowerCase());
+		playerTurn.castNamesThisTurn.add(card.name().toLowerCase());
+		playerTurn.castCountByNameThisTurn.merge(card.name().toLowerCase(), 1, Integer::sum);
 		if (card.isSummon()) {
-			p1Turn.summonCastThisTurn = true;
-			noteDoublecastSummonCast(true, card);
-			refreshHandPopupIfVisible();
+			playerTurn.summonCastThisTurn = true;
+			noteDoublecastSummonCast(isP1, card);
+			if (isP1) refreshHandPopupIfVisible();
 		}
-		logEntry("Played \"" + card.name() + "\"");
+		logEntry((isP1 ? "Played \"" : "[P2] Played \"") + card.name() + "\"");
 
-		// Process pending extra cost payments (set by showExtraCostPlayDialog).
+		// Process pending extra cost payments (set by showExtraCostPlayDialog). These come from
+		// the local player's own payment dialogs, so a replayed opponent play never has any.
 		boolean paidExtraCost = false;
 		int extraCostRemovedPower = 0;
 		int extraCostXVal = 0;
-		if (pendingExtraCostBzRemovals != null) {
+		if (isP1 && pendingExtraCostBzRemovals != null) {
 			paidExtraCost = true;
 			List<CardData> removed = pendingExtraCostBzRemovals;
 			pendingExtraCostBzRemovals = null;
@@ -7248,7 +7288,7 @@ public class MainWindow {
 				}
 			}
 		}
-		if (pendingExtraCostHandDiscards != null) {
+		if (isP1 && pendingExtraCostHandDiscards != null) {
 			paidExtraCost = true;
 			List<CardData> discards = pendingExtraCostHandDiscards;
 			pendingExtraCostHandDiscards = null;
@@ -7260,13 +7300,13 @@ public class MainWindow {
 			}
 			refreshP1HandLabel();
 		}
-		if (pendingExtraCostXValue > 0) {
+		if (isP1 && pendingExtraCostXValue > 0) {
 			paidExtraCost = true;
 			extraCostXVal = pendingExtraCostXValue;
 			pendingExtraCostXValue = 0;
 			logEntry("Extra Cost: paid 《" + extraCostXVal + "》 extra CP");
 		}
-		if (pendingExtraCostCpElements != null) {
+		if (isP1 && pendingExtraCostCpElements != null) {
 			paidExtraCost = true;
 			logEntry("Extra Cost: paid " + ExtraCost.cpFixed(pendingExtraCostCpElements).description());
 			pendingExtraCostCpElements = null;
@@ -7274,20 +7314,20 @@ public class MainWindow {
 
 		lastCardWasCast = true;
 		if (card.isBackup()) {
-			placeCardInFirstBackupSlot(card);
+			if (isP1) placeCardInFirstBackupSlot(card); else placeP2CardInFirstBackupSlot(card);
 		} else if (card.isForward()) {
-			placeCardInForwardZone(card, paidExtraCost);
+			if (isP1) placeCardInForwardZone(card, paidExtraCost); else placeP2CardInForwardZone(card);
 		} else if (card.isMonster()) {
-			placeCardInMonsterZone(card);
+			if (isP1) placeCardInMonsterZone(card); else placeP2CardInMonsterZone(card);
 		} else if (card.isSummon()) {
 			if (paidExtraCost)
-				showSummonOnStack(card, true, extraCostRemovedPower, extraCostXVal);
+				showSummonOnStack(card, isP1, extraCostRemovedPower, extraCostXVal);
 			else
-				showSummonOnStack(card, true);
+				showSummonOnStack(card, isP1);
 		}
 		lastCardWasCast = false;
 
-		refreshP1BreakLabel();
+		if (isP1) refreshP1BreakLabel(); else refreshP2BreakLabel();
 	}
 
 	/**
