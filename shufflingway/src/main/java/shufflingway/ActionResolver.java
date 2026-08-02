@@ -1668,6 +1668,10 @@ public class ActionResolver {
         if (SECONDARY_PLAY_REMOVED_ONTO_FIELD.matcher(followupText).find())           return "PlayRemovedOntoField";
         if (FOLLOWUP_PLAY_IF_COST_LE_JOB_COUNT.matcher(followupText).matches())       return "PlayIfCostLeJobCount";
         if (FOLLOWUP_RETURN_IF_COST_LE_HAND.matcher(followupText).matches())          return "ReturnIfCostLeHand";
+        // Must precede PlayOntoField and AddToHand: this followup ends in the destination they
+        // scan for, and both use find(), so either would claim it and report a search of the deck
+        // as an action taken on the chosen target.
+        if (FOLLOWUP_SEARCH_MATCHING_CHOSEN.matcher(followupText).matches())          return "SearchMatchingChosen";
         if (FOLLOWUP_PLAY_ONTO_FIELD.matcher(followupText).find())                    return "PlayOntoField";
         if (FOLLOWUP_ADD_TO_HAND.matcher(followupText).find())                        return "AddToHand";
         if (FOLLOWUP_RETURN_AND_NAMED_TO_OWNERS_HAND.matcher(followupText).find())    return "ReturnAndNamedToOwnersHand";

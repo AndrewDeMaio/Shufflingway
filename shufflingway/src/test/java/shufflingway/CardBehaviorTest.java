@@ -8646,6 +8646,129 @@ public class CardBehaviorTest {
 	}
 
 	// -------------------------------------------------------------------------
+	// Searches whose filter comes off the card the player just chose:
+	//   23-130H Luso    — "…search for 1 Job Standard Unit of the same Element as the chosen
+	//                      Character and add it to your hand."
+	//   12-106R Relm    — "…search for 1 Character with the same name and add it to your hand."
+	//   23-078C Alisaie — same, choosing from the Break Zone instead of the field.
+	//
+	// None of these filters is written in the text. Before this followup existed, ChooseCharacter's
+	// generic dispatch matched the trailing "add it to your hand" and returned the chosen Character
+	// to hand — the wrong zone, the wrong card, and no search at all.
+	// -------------------------------------------------------------------------
+
+	private static final String LUSO_TEXT =
+			"choose 1 Character you control. You may search for 1 Job Standard Unit "
+			+ "of the same Element as the chosen Character and add it to your hand.";
+	private static final String RELM_TEXT =
+			"choose 1 Character without 《Multicard》 other than Relm. "
+			+ "You may search for 1 Character with the same name and add it to your hand.";
+	private static final String ALISAIE_TEXT =
+			"choose 1 Character without 《Multicard》 in your Break Zone. "
+			+ "You may search for 1 Character with the same name and add it to your hand.";
+
+	/**
+	 * Resolves a choose-then-search effect with {@code chosenCard} as the card the player picks.
+	 * {@code fromBreakZone} routes the pick through the Break Zone accessor, as Alisaie needs.
+	 */
+	private static GameContext resolveChooseThenSearch(String text, CardData source,
+			CardData chosenCard, boolean fromBreakZone, boolean acceptSearch) {
+		Consumer<GameContext> fn = ActionResolver.parse(text, source);
+		assertNotNull(fn, "choose-then-search effect should parse");
+		ForwardTarget chosen = new ForwardTarget(true, 0,
+				fromBreakZone ? ForwardTarget.CardZone.BREAK_ZONE : ForwardTarget.CardZone.FORWARD);
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.consumePreloadedTargets()).thenReturn(null);
+		when(ctx.selectCharacters(anyInt(), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(),
+				anyInt(), any(), anyInt(), any(), anyBoolean(), anyBoolean(), anyBoolean(),
+				any(), any(), any(), any(), anyBoolean(), any(), anyBoolean())).thenReturn(List.of(chosen));
+		when(ctx.selectCharactersFromBreakZone(anyInt(), anyBoolean(), anyBoolean(), anyBoolean(),
+				any(), any(), anyInt(), any(), anyInt(), any(), anyBoolean(), anyBoolean(), anyBoolean(),
+				any(), any(), any(), any(), anyBoolean(), any(), anyBoolean())).thenReturn(List.of(chosen));
+		when(ctx.targetCard(chosen)).thenReturn(chosenCard);
+		when(ctx.p1BreakZoneCard(0)).thenReturn(chosenCard);
+		when(ctx.promptYouMay(any())).thenReturn(acceptSearch);
+		fn.accept(ctx);
+		return ctx;
+	}
+
+	private static GameContext resolveLuso(CardData chosenCard, boolean acceptSearch) {
+		return resolveChooseThenSearch(LUSO_TEXT, makeForward("Luso", "Light", 5, 5000),
+				chosenCard, false, acceptSearch);
+	}
+
+	@Test
+	void lusoSearchesForAStandardUnitOfTheChosenCharactersElement() {
+		GameContext ctx = resolveLuso(makeForward("Shantotto", "Lightning", 3, 7000), true);
+
+		verify(ctx).searchDeckForCard(anyBoolean(), anyBoolean(), anyBoolean(), anyBoolean(),
+				anyInt(), any(), any(), eq("Standard Unit"), any(), eq("Lightning"),
+				any(), any(), eq("hand"), eq(1), anyBoolean(), anyBoolean());
+	}
+
+	// A Character with two Elements is each of them, so either satisfies "of the same Element as".
+	@Test
+	void lusoAcceptsEitherElementOfAMultiElementCharacter() {
+		GameContext ctx = resolveLuso(makeForward("Y'shtola", "Water/Wind", 4, 7000), true);
+
+		verify(ctx).searchDeckForCard(anyBoolean(), anyBoolean(), anyBoolean(), anyBoolean(),
+				anyInt(), any(), any(), any(), any(), eq("Water|Wind"),
+				any(), any(), eq("hand"), eq(1), anyBoolean(), anyBoolean());
+	}
+
+	// The choose is mandatory but the search is not: declining must leave the deck unsearched,
+	// since opponents' abilities react to the act of searching.
+	@Test
+	void lusoDoesNotSearchWhenThePlayerDeclines() {
+		GameContext ctx = resolveLuso(makeForward("Shantotto", "Lightning", 3, 7000), false);
+
+		verify(ctx).promptYouMay(any());
+		verifyNoSearch(ctx);
+	}
+
+	// The chosen Character stays where it is — the trailing "add it to your hand" belongs to the
+	// searched card, not to the target.
+	@Test
+	void lusoDoesNotReturnTheChosenCharacterToHand() {
+		GameContext ctx = resolveLuso(makeForward("Shantotto", "Lightning", 3, 7000), true);
+
+		verify(ctx, never()).addTargetToHand(any());
+	}
+
+	// Relm copies the chosen Character's name, not its Element.
+	@Test
+	void relmSearchesForACardSharingTheChosenCharactersName() {
+		GameContext ctx = resolveChooseThenSearch(RELM_TEXT, makeForward("Relm", "Wind", 3, 5000),
+				makeForward("Shantotto", "Lightning", 3, 7000), false, true);
+
+		verify(ctx).searchDeckForCard(anyBoolean(), anyBoolean(), anyBoolean(), anyBoolean(),
+				anyInt(), any(), eq("Shantotto"), any(), any(), isNull(),
+				any(), any(), eq("hand"), eq(1), anyBoolean(), anyBoolean());
+	}
+
+	// Alisaie chooses from the Break Zone, where targetCard() cannot reach — the card has to be
+	// read through the Break Zone accessor instead.
+	@Test
+	void alisaieReadsTheChosenNameFromTheBreakZone() {
+		GameContext ctx = resolveChooseThenSearch(ALISAIE_TEXT, makeForward("Alisaie", "Fire", 2, 5000),
+				makeForward("Shantotto", "Lightning", 3, 7000), true, true);
+
+		verify(ctx).searchDeckForCard(anyBoolean(), anyBoolean(), anyBoolean(), anyBoolean(),
+				anyInt(), any(), eq("Shantotto"), any(), any(), isNull(),
+				any(), any(), eq("hand"), eq(1), anyBoolean(), anyBoolean());
+	}
+
+	@Test
+	void chooseThenSearchIsAttributedToItsOwnFollowup() {
+		assertEquals("ChooseCharacter / SearchMatchingChosen",
+				ActionResolver.fullDescription(LUSO_TEXT, makeForward("Luso", "Light", 5, 5000)));
+		assertEquals("ChooseCharacter / SearchMatchingChosen",
+				ActionResolver.fullDescription(RELM_TEXT, makeForward("Relm", "Wind", 3, 5000)));
+		assertEquals("ChooseCharacter / SearchMatchingChosen",
+				ActionResolver.fullDescription(ALISAIE_TEXT, makeForward("Alisaie", "Fire", 2, 5000)));
+	}
+
+	// -------------------------------------------------------------------------
 	// Searching is a public event. 5-130R Tonberry, 13-034H Remedi and 25-111H The Emperor
 	// all watch for it; none of them parsed a single auto ability before.
 	// -------------------------------------------------------------------------

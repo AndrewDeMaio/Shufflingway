@@ -1119,6 +1119,79 @@ final class ActionResolverChoose {
             }
         }
 
+        // --- "[You may] search for N … (with the same name | of the same Element as the chosen
+        //      Character) and add it to your hand." ---
+        // 12-106R Relm, 23-078C Alisaie, 23-130H Luso. The search's filter is not written in the
+        // text: it is a property of whatever the player just chose, so it can only be built while
+        // resolving. Placed ahead of every other followup branch because those all act on the
+        // chosen target, and this one does not — the destination clause it ends with is where the
+        // *searched* card goes. Left to the generic dispatch, FOLLOWUP_ADD_TO_HAND finds the
+        // trailing "add it to your hand" and returns the chosen Character from the field to hand,
+        // searching nothing.
+        {
+            Matcher searchMatchM = FOLLOWUP_SEARCH_MATCHING_CHOSEN.matcher(strippedPrimaryFollowup);
+            if (searchMatchM.matches()) {
+                int    count       = Integer.parseInt(searchMatchM.group("count"));
+                String searchJob   = searchMatchM.group("job")      != null ? searchMatchM.group("job").trim()      : null;
+                String searchCat   = searchMatchM.group("category") != null ? searchMatchM.group("category").trim() : null;
+                boolean bySameName = searchMatchM.group("samename") != null;
+
+                String  searchType = searchMatchM.group("searchtype") != null
+                        ? searchMatchM.group("searchtype").toLowerCase(java.util.Locale.ROOT) : "";
+                boolean anyType = searchType.isEmpty() || searchType.startsWith("card");
+                boolean srchFwd = anyType || searchType.startsWith("forward") || searchType.startsWith("character");
+                boolean srchBk  = anyType || searchType.startsWith("backup")  || searchType.startsWith("character");
+                boolean srchMn  = anyType || searchType.startsWith("monster") || searchType.startsWith("character");
+                boolean srchSm  = anyType || searchType.startsWith("summon");
+
+                String destination = searchMatchM.group("destination")
+                        .toLowerCase(java.util.Locale.ROOT).contains("hand") ? "hand" : "field";
+
+                String filterLabel = (searchJob != null ? " [Job " + searchJob + "]" : "")
+                        + (searchCat != null ? " [Cat " + searchCat + "]" : "");
+                return ctx -> {
+                    ctx.logEntry(choosePrefix + " — then search deck for " + count + filterLabel
+                            + " of the same " + (bySameName ? "name" : "Element") + " → " + destination);
+                    List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                            opponentOnly, selfOnly, condition, element, zone, opponentZone,
+                            costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
+                            jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
+                    if (ts.isEmpty()) {
+                        ctx.logEntry("Nothing chosen — no search takes place");
+                        ctx.markEffectFizzled();
+                        return;
+                    }
+                    ForwardTarget t = ts.get(0);
+                    // Break-zone targets are not on the field, so targetCard cannot resolve them.
+                    CardData picked = zone != null
+                            ? (t.isP1() ? ctx.p1BreakZoneCard(t.idx()) : ctx.p2BreakZoneCard(t.idx()))
+                            : ctx.targetCard(t);
+                    if (picked == null) { ctx.markEffectFizzled(); return; }
+
+                    // "of the same Element as" — a multi-element card is each of its Elements, so
+                    // sharing any one of them qualifies.
+                    String nameFilter = bySameName ? picked.name() : null;
+                    String elemFilter = bySameName ? null : picked.element().replace("/", "|");
+
+                    // The prompt comes before the search, not after: searching is a public event
+                    // opponents' abilities react to, so a player who declines must not have searched.
+                    if (followupIsOptional && !ctx.promptYouMay("Search your deck for a "
+                            + (bySameName ? "card named " + picked.name()
+                                          : picked.element() + " card")
+                            + "? Declining means you did not search.")) {
+                        ctx.logEntry("Declined to search — no search takes place");
+                        ctx.markEffectFizzled();
+                        return;
+                    }
+                    ctx.logEntry("Chosen: " + picked.name() + " (" + picked.element() + ")");
+                    ctx.searchDeckForCard(srchFwd, srchBk, srchMn, srchSm, -1, null,
+                            nameFilter, searchJob, searchCat, elemFilter, null, null,
+                            destination, count, false, false);
+                    if (secondary != null) secondary.accept(ctx);
+                };
+            }
+        }
+
         // --- "If your opponent doesn't pay 《N》, [target action]." (Arkasodara) ---
         // The opponent may pay to prevent the action against the chosen target(s).
         {

@@ -2715,6 +2715,35 @@ final class ActionResolverPatterns {
      * skippable.
      */
     static final Pattern YOU_MAY_IMMEDIATELY_BEFORE = Pattern.compile("(?i)\\byou\\s+may\\s+$");
+    /**
+     * Followup used inside {@code tryParseChooseCharacter}: a deck search whose filter comes from
+     * the card the player just chose rather than from the text.
+     *
+     * <ul>
+     *   <li>12-106R Relm / 23-078C Alisaie — "search for 1 Character with the same name and add
+     *       it to your hand" (filter: the chosen card's name)</li>
+     *   <li>23-130H Luso — "search for 1 Job Standard Unit of the same Element as the chosen
+     *       Character and add it to your hand" (filter: the chosen card's Element)</li>
+     * </ul>
+     *
+     * <p>Cannot go through {@link #SEARCH_DECK_PATTERN}: every filter that pattern captures is
+     * written in the text, but these are only known once a target has been chosen.
+     *
+     * <p>Groups: {@code count}, {@code job}, {@code category}, {@code searchtype},
+     * {@code samename} / {@code sameelem} (exactly one is present, selecting which property is
+     * copied off the chosen card), {@code destination}. Anchored end-to-end.
+     */
+    static final Pattern FOLLOWUP_SEARCH_MATCHING_CHOSEN = Pattern.compile(
+        "(?i)^search\\s+for\\s+(?<count>\\d+)\\s+" +
+        "(?:Job\\s+(?<job>[A-Za-z][A-Za-z\\s'\\-]*?)\\s+)?" +
+        "(?:Category\\s+(?<category>\\S+)\\s+)?" +
+        "(?<searchtype>Forwards?|Backups?|Monsters?|Characters?|Summons?|cards?)?\\s*" +
+        "(?:with\\s+the\\s+same\\s+(?<samename>name)" +
+        "|of\\s+the\\s+same\\s+(?<sameelem>Element)\\s+as\\s+the\\s+chosen\\s+" +
+        "(?:Character|Forward|Backup|Monster))" +
+        "\\s+and\\s+(?<destination>add\\s+(?:it|them)\\s+to\\s+your\\s+hand" +
+        "|play\\s+(?:it|them)\\s+onto\\s+the\\s+field)[.!]?$"
+    );
     static final Pattern SEARCH_DECK_PATTERN = Pattern.compile(
         "(?i)Search\\s+for\\s+(?:up\\s+to\\s+)?(?<count>\\d+)\\s+" +
         // Element(s) that precede the job/name filter (e.g. "Fire Job Knight")
