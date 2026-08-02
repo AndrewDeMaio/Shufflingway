@@ -1531,6 +1531,17 @@ public interface GameContext {
     void playNamedFromRfpOntoField(String cardName);
 
     /**
+     * Plays the card named {@code cardName} onto the field from whichever holding zone currently
+     * holds it — the RFG zone first, then the controller's Break Zone.
+     *
+     * <p>"Play [Name] onto the field at the end of the turn." names no zone, and by the time the
+     * delayed effect fires the card's whereabouts depend on what put it there: Lightning 16-124H
+     * removed itself from the game in the preceding sentence, while Ardyn B-024 triggers on being
+     * put into the Break Zone. Logs a warning and does nothing when neither zone holds it.
+     */
+    void playNamedFromHoldingZoneOntoField(String cardName);
+
+    /**
      * Plays the most recently removed card from the active player's permanent RFP zone back onto
      * the field. If {@code dull} is true, the card enters dull.
      */

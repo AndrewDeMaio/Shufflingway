@@ -5,6 +5,7 @@ import static shufflingway.ActionResolverPatterns.*;
 import static shufflingway.ActionResolver.*;
 
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 import java.util.regex.Matcher;
 
 /**
@@ -67,6 +68,26 @@ final class ActionResolverPlay {
         String name = m.group("name").trim();
         return ctx -> ctx.addEndOfOpponentTurnEffect(ctx2 -> ctx2.playNamedFromRfpOntoField(name));
     }
+    /**
+     * Parses "Play [CardName] onto the field at the end of the turn." — the delayed half of
+     * Lightning 16-124H's Switch Schemata, whose preceding sentence removed the card from the
+     * game, and of Ardyn B-024's put-into-the-Break-Zone trigger. The wording names no zone, so
+     * this queues {@link GameContext#playNamedFromHoldingZoneOntoField} for the current turn's
+     * end phase and lets it find the card wherever the ability's earlier half left it.
+     */
+    static Consumer<GameContext> tryParseEndOfTurnPlayNamedOntoField(String text) {
+        Matcher m = PLAY_NAMED_ONTO_FIELD_AT_END_OF_TURN.matcher(text.trim());
+        if (!m.matches()) return null;
+        String name = m.group("name").trim();
+        // "it"/"them" points at a card chosen earlier in the same ability (Kytes 15-047R,
+        // Ghost (VII) 20-046C, Cactuar Conductor 26-049R), not at a name the RFG lookup could
+        // find. That form is the choose chain's followup, and must be left to it.
+        if (name.equalsIgnoreCase("it") || name.equalsIgnoreCase("them")) return null;
+        return ctx -> {
+            ctx.logEntry("Effect: Play " + name + " onto the field at the end of the turn");
+            ctx.addEndOfTurnEffect(ctx2 -> ctx2.playNamedFromHoldingZoneOntoField(name));
+        };
+    }
     static Consumer<GameContext> tryParseIfEitherPlayerNoForwardsPutSourceToBz(String text, CardData source) {
         if (source == null) return null;
         Matcher m = IF_EITHER_PLAYER_NO_FORWARDS_PUT_SOURCE_TO_BZ.matcher(text.trim());
@@ -85,15 +106,23 @@ final class ActionResolverPlay {
         return null;
     }
     /**
-     * Parses "Choose 1 Summon targeting/choosing a Character/Forward you control. Cancel its effect."
-     * Only Summons whose pre-selected targets include a card the canceler controls are eligible.
+     * Parses "Choose 1 Summon [or ability] targeting/choosing a Character/Forward/Backup you
+     * control. Cancel its effect." Only entries whose pre-selected targets include a card the
+     * canceler controls are eligible.
      */
     static Consumer<GameContext> tryParseCancelSummonTargetingMyCharacter(String text) {
-        if (!CANCEL_SUMMON_TARGETING_MY_CHARACTER.matcher(text).find()) return null;
-        java.util.function.Predicate<StackEntry> filter = StackEntry::isSummon;
+        Matcher m = CANCEL_SUMMON_TARGETING_MY_CHARACTER.matcher(text);
+        if (!m.find()) return null;
+        boolean orAbility = m.group("orability") != null;
+        // "ability" here is the same union parseAbilityTypeFilter builds for the bare word: any
+        // non-Summon entry that is not an EX Burst.
+        Predicate<StackEntry> filter = orAbility
+                ? e -> !e.isExBurstEntry()
+                : StackEntry::isSummon;
+        String what = orAbility ? "Summon or ability" : "Summon";
         return ctx -> {
-            ctx.logEntry("Effect: Choose 1 Summon choosing your Character — cancel its effect");
-            ctx.cancelFilteredAbilityOnStack(filter, "Choose 1 Summon choosing your Character to cancel:", true);
+            ctx.logEntry("Effect: Choose 1 " + what + " choosing your Character — cancel its effect");
+            ctx.cancelFilteredAbilityOnStack(filter, "Choose 1 " + what + " choosing your Character to cancel:", true);
         };
     }
     /**

@@ -309,14 +309,18 @@ final class ActionResolverPatterns {
         "(?i)Choose\\s+1\\s+Summon\\s+or\\s+auto-ability\\.\\s+Cancel\\s+its\\s+effect\\.?"
     );
     /**
-     * Matches "Choose 1 Summon targeting/choosing a Character/Forward you control. Cancel its effect."
-     * The zone/type noun ("Character" or "Forward") is captured but not enforced in code — like the
-     * ability-on-stack family, {@link GameContext#cancelFilteredAbilityOnStack}'s
-     * {@code requiresControllerTarget} flag only restricts to Summons whose stored targets include a
-     * card the canceller controls.
+     * Matches "Choose 1 Summon [or ability] targeting/choosing a Character/Forward/Backup you
+     * control. Cancel its effect."
+     *
+     * <p>The zone/type noun is captured but not enforced in code — like the ability-on-stack
+     * family, {@link GameContext#cancelFilteredAbilityOnStack}'s {@code requiresControllerTarget}
+     * flag only restricts to entries whose stored targets include a card the canceller controls.
+     * Group {@code orability} is present when non-Summon abilities are eligible too
+     * (Y'shtola 10-063C); absent, only Summons are.
      */
     static final Pattern CANCEL_SUMMON_TARGETING_MY_CHARACTER = Pattern.compile(
-        "(?i)Choose\\s+1\\s+Summon\\s+(?:targeting|choosing)\\s+an?\\s+(?:Character|Forward)\\s+you\\s+control\\.\\s+Cancel\\s+its\\s+effect\\.?"
+        "(?i)Choose\\s+1\\s+Summon(?<orability>\\s+or\\s+ability)?\\s+(?:targeting|choosing)\\s+an?\\s+" +
+        "(?:Character|Forward|Backup)\\s+you\\s+control\\.\\s+Cancel\\s+its\\s+effect\\.?"
     );
     /**
      * Matches the general "Choose 1 [ability type(s)] [optional target filter]. Cancel its effect."
@@ -895,6 +899,16 @@ final class ActionResolverPatterns {
     static final Pattern AT_END_OF_OPP_TURN_PLAY_NAMED_ONTO_FIELD = Pattern.compile(
         "(?i)^at\\s+the\\s+end\\s+of\\s+your\\s+opponent'?s\\s+turn,?\\s+play\\s+(?<name>.+?)\\s+onto\\s+the\\s+field[.!]?\\s*$"
     );
+    /**
+     * Matches "Play [CardName] onto the field at the end of the turn." — the delayed half of a
+     * self-blink, where the card removed itself from the game in the preceding sentence
+     * (Lightning 16-124H's Switch Schemata). The card is played back from the RFG zone, so this
+     * must be reached ahead of {@link #PLAY_SOURCE_ONTO_FIELD_PATTERN}, whose Break-Zone-origin
+     * reading would fire immediately and from the wrong zone.
+     */
+    static final Pattern PLAY_NAMED_ONTO_FIELD_AT_END_OF_TURN = Pattern.compile(
+        "(?i)^play\\s+(?<name>.+?)\\s+onto\\s+the\\s+field\\s+at\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn[.!]?\\s*$"
+    );
     /** Matches "Break [CardName]." — used when the source card breaks itself. */
     static final Pattern BREAK_SOURCE_CARD = Pattern.compile(
         "(?i)^break\\s+(?<name>.+?)[.!]?$"
@@ -1261,9 +1275,15 @@ final class ActionResolverPatterns {
      * Matches "Play [name] onto [the] field [dull]" without requiring a "from Break Zone" qualifier.
      * Used for break-zone-origin abilities where the card plays itself from the BZ.
      * The name is limited to 1–3 words to avoid matching non-source cards.
+     *
+     * <p>The trailing lookahead is what keeps this from claiming
+     * {@link #PLAY_NAMED_ONTO_FIELD_AT_END_OF_TURN}: matched with {@code find()}, the expression
+     * ends before "at the end of the turn" and would resolve a delayed RFG-origin play as an
+     * immediate Break-Zone one — both the timing and the zone wrong, silently.
      */
     static final Pattern PLAY_SOURCE_ONTO_FIELD_PATTERN = Pattern.compile(
-        "(?i)\\bPlay\\s+(?<name>\\S+(?:\\s+\\S+){0,2})\\s+onto\\s+(?:the\\s+)?field(?:\\s+(?<dull>dull))?[.!]?"
+        "(?i)\\bPlay\\s+(?<name>\\S+(?:\\s+\\S+){0,2})\\s+onto\\s+(?:the\\s+)?field(?:\\s+(?<dull>dull))?" +
+        "(?!\\s+at\\s+(?:the\\s+)?end\\s+of)[.!]?"
     );
     /**
      * Matches "If its power has become N or less/more, return [name] to your/its owner's hand."

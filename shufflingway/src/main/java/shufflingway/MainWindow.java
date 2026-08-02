@@ -42,6 +42,7 @@ import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 import java.util.regex.Matcher;
 import java.util.stream.Collectors;
 
@@ -8232,6 +8233,10 @@ public class MainWindow {
 		if (topDeckNeeded > 0
 				&& (isP1 ? gameState.getP1MainDeck() : gameState.getP2MainDeck()).size() < topDeckNeeded)
 			return false;
+		// A cancel has nothing to do without an eligible entry on the stack, and activating it
+		// anyway pays the cost — for most of this family, the source card itself — for no effect.
+		Predicate<StackEntry> cancelFilter = ActionResolver.stackCancelFilter(ability.effectText(), isP1);
+		if (cancelFilter != null && gameState.getStack().stream().noneMatch(cancelFilter)) return false;
 		if (ability.mainPhaseOnly()) {
 			GameState.Player activePlayer = isP1 ? GameState.Player.P1 : GameState.Player.P2;
 			if (gameState.getCurrentPlayer() != activePlayer) return false;

@@ -2587,6 +2587,52 @@ public class CardBehaviorTest {
         verify(ctx).cancelFilteredAbilityOnStack(any(), any(), eq(true));
     }
 
+    // Y'shtola 10-063C: "Summon or ability" widens the eligible stack entries beyond Summons, and
+    // "a Backup you control" is a third target noun alongside Character/Forward.
+    @Test
+    void yshtolaCancelSummonOrAbilityChoosingMyBackupParses() {
+        String effect = "Choose 1 Summon or ability choosing a Backup you control. "
+                + "Cancel its effect. Draw 1 card.";
+        assertEquals("CancelSummonTargetingMyCharacter + DrawCards",
+                ActionResolver.matchedPatternName(effect, null));
+        Consumer<GameContext> fn = ActionResolver.parse(effect, null);
+        assertNotNull(fn);
+
+        GameContext ctx = mock(GameContext.class);
+        fn.accept(ctx);
+        verify(ctx).cancelFilteredAbilityOnStack(any(), any(), eq(true));
+        verify(ctx).drawCards(1);
+    }
+
+    // The gate that keeps the ability off the menu with nothing eligible on the stack. The filter
+    // reported here is the same one the resolution applies, so the two cannot disagree.
+    @Test
+    void yshtolaCancelFilterAcceptsSummonsAndAbilitiesButNotExBursts() {
+        Predicate<StackEntry> filter = ActionResolver.stackCancelFilter(
+                "Choose 1 Summon or ability choosing a Backup you control. Cancel its effect. Draw 1 card.",
+                true);
+        assertNotNull(filter, "a stack-cancel effect must report a filter so activation can be gated");
+        assertTrue(filter.test(stackEntry(true, true, false, false)),  "a Summon is eligible");
+        assertTrue(filter.test(stackEntry(false, false, true, false)), "an auto-ability is eligible");
+        assertFalse(filter.test(stackEntry(false, false, false, true)), "an EX Burst entry is not");
+    }
+
+    @Test
+    void nonCancelEffectReportsNoStackFilterSoActivationIsUngated() {
+        assertNull(ActionResolver.stackCancelFilter("Draw 1 card.", true));
+    }
+
+    /** A stack entry with no recorded targets, so controller-target filters leave it eligible. */
+    private static StackEntry stackEntry(boolean summon, boolean p1, boolean auto, boolean exBurst) {
+        StackEntry e = mock(StackEntry.class);
+        when(e.isSummon()).thenReturn(summon);
+        when(e.isAutoAbility()).thenReturn(auto);
+        when(e.isExBurstEntry()).thenReturn(exBurst);
+        when(e.isP1()).thenReturn(p1);
+        when(e.preSelectedTargets()).thenReturn(null);
+        return e;
+    }
+
     @Test
     void cancelUnlessPaySummonParsesAndDelegatesToGameContext() {
         Consumer<GameContext> fn = ActionResolver.parse(
@@ -6570,6 +6616,39 @@ public class CardBehaviorTest {
         // Genuine named removals still resolve as such.
         assertEquals("RemoveNamedFromGame",
                 ActionResolver.matchedPatternName("Remove Libroarian from the game.", lib));
+    }
+
+    // Lightning 16-124H (Switch Schemata): a self-blink. The two sentences resolve independently —
+    // the first removes Lightning from the game, the second schedules it back for the end phase.
+    @Test
+    void lightningSwitchSchemataRemovesItselfAndSchedulesItsReturn() {
+        CardData lightning = makeForward("Lightning", "Lightning", 3, 7000);
+        String effect = "Remove Lightning from the game. Play Lightning onto the field at the end of the turn.";
+        assertEquals("RemoveNamedFromGame + EndOfTurnPlayNamedOntoField",
+                ActionResolver.matchedPatternName(effect, lightning));
+
+        Consumer<GameContext> fn = ActionResolver.parse(effect, lightning);
+        assertNotNull(fn);
+        GameContext ctx = mock(GameContext.class);
+        fn.accept(ctx);
+        verify(ctx).removeNamedCardFromGame("Lightning");
+        // The return is queued, not immediate, and must not go through the Break Zone route.
+        verify(ctx, never()).playAllByNameFromOwnBreakZoneDull(any(), anyBoolean());
+        ArgumentCaptor<Consumer<GameContext>> delayed = ArgumentCaptor.forClass(Consumer.class);
+        verify(ctx).addEndOfTurnEffect(delayed.capture());
+
+        GameContext endPhase = mock(GameContext.class);
+        delayed.getValue().accept(endPhase);
+        verify(endPhase).playNamedFromHoldingZoneOntoField("Lightning");
+    }
+
+    // The same wording with a pronoun (Kytes 15-047R, Ghost (VII) 20-046C) points at a card chosen
+    // earlier in the ability, not at a name any holding zone could be searched for.
+    @Test
+    void playItOntoFieldAtEndOfTurnIsNotClaimedAsANamedPlay() {
+        CardData kytes = makeForward("Kytes", "Wind", 2, 5000);
+        assertNull(ActionResolver.parse("Play it onto the field at the end of the turn.", kytes),
+                "\"it\" is not a card name the holding-zone lookup could resolve");
     }
 
     /** Puts Libroarian on P2's field without firing its enter-the-field trigger through the stack. */

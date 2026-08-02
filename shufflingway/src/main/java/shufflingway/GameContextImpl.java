@@ -1656,13 +1656,8 @@ final class GameContextImpl implements GameContext {
 			}
 
 			@Override public void cancelFilteredAbilityOnStack(java.util.function.Predicate<StackEntry> filter, String prompt, boolean requiresControllerTarget) {
-				boolean cancellerIsP1 = isP1;
 				java.util.function.Predicate<StackEntry> fullFilter = requiresControllerTarget
-						? filter.and(e -> {
-							java.util.List<ForwardTarget> stored = e.preSelectedTargets();
-							if (stored == null || stored.isEmpty()) return true;
-							return stored.stream().anyMatch(t -> t.isP1() == cancellerIsP1);
-						})
+						? ActionResolver.withControllerTargetRequirement(filter, isP1)
 						: filter;
 				List<StackEntry> targets = mw.gameState.getStack().stream()
 						.filter(fullFilter)
@@ -4746,6 +4741,20 @@ final class GameContextImpl implements GameContext {
 					}
 				}
 				logEntry("[Warning] playNamedFromRfpOntoField: \"" + cardName + "\" not found in RFP");
+			}
+
+			@Override public void playNamedFromHoldingZoneOntoField(String cardName) {
+				for (CardData card : mw.gameState.getP1PermanentRfp())
+					if (card.name().equalsIgnoreCase(cardName)) { playNamedFromRfpOntoField(cardName); return; }
+				for (CardData card : mw.gameState.getP2PermanentRfp())
+					if (card.name().equalsIgnoreCase(cardName)) { playNamedFromRfpOntoField(cardName); return; }
+				List<CardData> bz = isP1 ? mw.gameState.getP1BreakZone() : mw.gameState.getP2BreakZone();
+				if (bz.stream().anyMatch(c -> c.name().equalsIgnoreCase(cardName))) {
+					playAllByNameFromOwnBreakZoneDull(cardName, false);
+					return;
+				}
+				logEntry("[Warning] playNamedFromHoldingZoneOntoField: \"" + cardName
+						+ "\" is in neither the RFG zone nor the Break Zone");
 			}
 
 			@Override public void playLastRemovedFromRfpOntoField(boolean dull) {

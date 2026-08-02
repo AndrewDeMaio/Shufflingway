@@ -3,6 +3,7 @@ package shufflingway;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
@@ -742,6 +743,12 @@ public class ActionResolver {
         result = tryParseEndOfOppTurnPlayNamedOntoField(effectText);
         if (result != null) return result;
 
+        // Must precede tryParsePlaySourceOntoField: that parser matches with find() and its
+        // expression ends at "onto the field", so it would claim this text as an immediate
+        // Break-Zone play. Its pattern also carries a lookahead against the same wording.
+        result = tryParseEndOfTurnPlayNamedOntoField(effectText);
+        if (result != null) return result;
+
         result = tryParseRemoveAllOppBzFromGame(effectText);
         if (result != null) return result;
 
@@ -1446,6 +1453,7 @@ public class ActionResolver {
         if (tryParseReturnNamedToHand(effectText) != null) return "ReturnNamedToHand";
         if (tryParseYouMayRemoveNamedFromGame(effectText, source) != null) return "YouMayRemoveNamedFromGame";
         if (tryParseEndOfOppTurnPlayNamedOntoField(effectText) != null) return "EndOfOppTurnPlayNamedOntoField";
+        if (tryParseEndOfTurnPlayNamedOntoField(effectText)    != null) return "EndOfTurnPlayNamedOntoField";
         if (tryParseRemoveAllOppBzFromGame(effectText)         != null) return "RemoveAllOppBzFromGame";
         if (tryParseRemoveNamedFromGame(effectText, source)   != null) return "RemoveNamedFromGame";
         if (tryParseBreakSourceCard(effectText, source)        != null) return "BreakSourceCard";
@@ -2058,6 +2066,7 @@ public class ActionResolver {
         if (tryParseReturnNamedToHand(effectText) != null)                   return "ReturnNamedToHand";
         if (tryParseYouMayRemoveNamedFromGame(effectText, source) != null)   return "YouMayRemoveNamedFromGame";
         if (tryParseEndOfOppTurnPlayNamedOntoField(effectText) != null)     return "EndOfOppTurnPlayNamedOntoField";
+        if (tryParseEndOfTurnPlayNamedOntoField(effectText)  != null)      return "EndOfTurnPlayNamedOntoField";
         if (tryParseRemoveAllOppBzFromGame(effectText)       != null)      return "RemoveAllOppBzFromGame";
         if (tryParseRemoveNamedFromGame(effectText, source) != null)        return "RemoveNamedFromGame";
         if (tryParseBreakSourceCard(effectText, source)        != null)     return "BreakSourceCard";
@@ -3442,6 +3451,69 @@ public class ActionResolver {
                  || (wantsAuto    && e.isAutoAbility())
                  || (wantsSpecial && e.isSpecialAbility())
                  || (wantsAction  && e.isActionAbility());
+    }
+
+    /**
+     * Restricts {@code filter} to entries whose recorded targets include a card the canceller
+     * controls — the "choosing a Character you control" qualifier.
+     *
+     * <p>An entry that recorded no targets stays eligible: target pre-selection is not modelled
+     * for every effect, so excluding those would make the qualifier stricter than the engine can
+     * actually verify.
+     */
+    static Predicate<StackEntry> withControllerTargetRequirement(Predicate<StackEntry> filter,
+            boolean cancellerIsP1) {
+        return filter.and(e -> {
+            List<ForwardTarget> stored = e.preSelectedTargets();
+            if (stored == null || stored.isEmpty()) return true;
+            return stored.stream().anyMatch(t -> t.isP1() == cancellerIsP1);
+        });
+    }
+
+    /**
+     * The stack entries {@code effectText} could legally cancel, or {@code null} when it is not a
+     * "choose an entry on the stack and cancel it" effect.
+     *
+     * <p>Used to gate activation: an ability whose only effect is a cancel has nothing to do with
+     * an empty or type-mismatched stack, and activating it anyway pays its cost — often putting
+     * the card itself into the Break Zone — for no effect at all.
+     *
+     * <p>Each branch returns the filter its own resolution path applies, so the gate and the
+     * resolution can never disagree about what is eligible. Branch order mirrors {@code parse()}'s
+     * among these parsers; the final branch is the choose-chain's "Cancel its effect." followup,
+     * which resolves through {@link GameContext#cancelStackEntry()} and is therefore always
+     * Summons and auto-abilities regardless of any cost or element wording in the choose clause.
+     */
+    static Predicate<StackEntry> stackCancelFilter(String effectText, boolean cancellerIsP1) {
+        if (effectText == null || effectText.isBlank()) return null;
+        String text = effectText.trim();
+
+        Matcher unlessPay = CANCEL_STACK_ENTRY_UNLESS_PAY.matcher(text);
+        if (unlessPay.find()) {
+            Predicate<StackEntry> filter = parseAbilityTypeFilter(unlessPay.group("types").trim());
+            return unlessPay.group("opponents") != null
+                    ? filter.and(e -> e.isP1() != cancellerIsP1)
+                    : filter;
+        }
+        Matcher onStack = CANCEL_ABILITY_ON_STACK.matcher(text);
+        if (onStack.find()) {
+            Predicate<StackEntry> filter = parseAbilityTypeFilter(onStack.group("types").trim());
+            String tgtFilter = onStack.group("tgtFilter");
+            return tgtFilter != null && tgtFilter.toLowerCase(Locale.ROOT).contains("you control")
+                    ? withControllerTargetRequirement(filter, cancellerIsP1)
+                    : filter;
+        }
+        Matcher targeting = CANCEL_SUMMON_TARGETING_MY_CHARACTER.matcher(text);
+        if (targeting.find()) {
+            Predicate<StackEntry> filter = targeting.group("orability") != null
+                    ? e -> !e.isExBurstEntry()
+                    : StackEntry::isSummon;
+            return withControllerTargetRequirement(filter, cancellerIsP1);
+        }
+        if (STANDALONE_CANCEL_STACK_ENTRY_PATTERN.matcher(text).find()
+                || FOLLOWUP_CANCEL_EFFECT.matcher(text).find())
+            return e -> e.isSummon() || e.isAutoAbility();
+        return null;
     }
 
     /**
