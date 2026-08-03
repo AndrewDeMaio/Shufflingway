@@ -9477,6 +9477,89 @@ public class CardBehaviorTest {
 				+ "(This effect does not end at the end of the turn.)", other));
 	}
 
+	// =========================================================================================
+	// Emet-Selch (12-024H): "When Emet-Selch is chosen by your opponent's Summons or abilities,
+	// remove Emet-Selch from the game. If you do so, play Emet-Selch onto the field at the end of
+	// the turn."
+	//
+	// The subject names the card itself, so only the copy actually chosen may react. Dispatch used
+	// to fire every "chosen by opponent's Summon or ability" ability across the chosen player's
+	// whole field without consulting the subject, so targeting any friendly Character removed
+	// Emet-Selch. The subject-driven cards ("a Forward you control") must keep firing field-wide.
+	// =========================================================================================
+
+	private static final String EMET_SELCH_TEXT =
+			"When Emet-Selch is chosen by your opponent's Summons or abilities, "
+			+ "remove Emet-Selch from the game. "
+			+ "If you do so, play Emet-Selch onto the field at the end of the turn.";
+
+	/** A Forward whose auto-abilities are parsed from {@code text}. */
+	private static CardData makeAutoAbilityForward(String name, String element, int power, String text) {
+		return new CardData(null, name, element, 5, power, "Forward", false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				List.of(), CardData.parseAutoAbilities(text), List.of(), List.of(), List.of(),
+				List.of(), List.of(), List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				null, null, null, text);
+	}
+
+	/** Seats {@code card} on P1's Forward row with its owner recorded, as a real game would. */
+	private static void placeP1Forward(MainWindow mw, CardData card) {
+		mw.gameState.getIdentity().put(card, true);
+		mw.placeCardInForwardZone(card);
+	}
+
+	@Test
+	void emetSelchDoesNotReactToAnotherFriendlyForwardBeingChosen() {
+		MainWindow mw = new MainWindow();
+		CardData emet = makeAutoAbilityForward("Emet-Selch", "Ice", 9000, EMET_SELCH_TEXT);
+		CardData ally = makeForward("Ally", "Ice", 3, 7000);
+		placeP1Forward(mw, emet);
+		placeP1Forward(mw, ally);
+
+		// The opponent's ability chooses Ally. Emet-Selch's subject names itself, so it sees nothing.
+		mw.autoAbilityTriggers.triggerAutoAbilitiesForChosenByOpponentSummonOrAbility(true, List.of(ally));
+
+		assertTrue(mw.p1ForwardCards.contains(emet),
+				"Emet-Selch must stay put when a different Forward is the chosen card");
+	}
+
+	@Test
+	void emetSelchReactsWhenItIsItselfChosen() {
+		MainWindow mw = new MainWindow();
+		CardData emet = makeAutoAbilityForward("Emet-Selch", "Ice", 9000, EMET_SELCH_TEXT);
+		CardData ally = makeForward("Ally", "Ice", 3, 7000);
+		placeP1Forward(mw, emet);
+		placeP1Forward(mw, ally);
+
+		mw.autoAbilityTriggers.triggerAutoAbilitiesForChosenByOpponentSummonOrAbility(true, List.of(emet));
+
+		assertFalse(mw.p1ForwardCards.contains(emet),
+				"Emet-Selch is the chosen card — it removes itself from the game");
+		assertTrue(mw.p1ForwardCards.contains(ally), "the untargeted Forward is unaffected");
+	}
+
+	@Test
+	void filterSubjectChosenTriggerStillFiresForAnyMatchingForward() {
+		// Tama (18-059R) shape: "a Forward you control" is a filter, not a self-reference, so the
+		// watcher reacts to any of its controller's Forwards being chosen — including another card.
+		String text = "When a Forward you control is chosen by your opponent's Summon or ability, "
+				+ "draw 1 card.";
+		MainWindow mw = new MainWindow();
+		mw.gameState.initializeDeck(List.of(makeForward("Deck Card", "Ice", 2, 5000)), List.of());
+		mw.gameState.getP1Hand().clear();
+
+		CardData watcher = makeAutoAbilityForward("Tama", "Ice", 7000, text);
+		CardData ally    = makeForward("Ally", "Ice", 3, 7000);
+		placeP1Forward(mw, watcher);
+		placeP1Forward(mw, ally);
+
+		mw.autoAbilityTriggers.triggerAutoAbilitiesForChosenByOpponentSummonOrAbility(true, List.of(ally));
+
+		assertEquals(1, mw.gameState.getP1Hand().size(),
+				"a filter subject is satisfied by any matching Forward, not just the watcher itself");
+	}
+
 	/** A bare hand card carrying only the two fields the reveal-hand filters read. */
 	private static CardData handCard(String type, int cost) {
 		return new CardData(null, "X", "Fire", cost, 7000, type, false, 0, false, false,

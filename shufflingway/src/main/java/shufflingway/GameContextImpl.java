@@ -15,6 +15,7 @@ import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.function.Consumer;
@@ -1048,15 +1049,27 @@ final class GameContextImpl implements GameContext {
 			 * handling.
 			 */
 			private List<ForwardTarget> fireChosenByOpponentTriggers(List<ForwardTarget> selected) {
-				boolean anyOppForwardChosen = selected.stream()
-						.anyMatch(t -> t.zone() == ForwardTarget.CardZone.FORWARD && t.isP1() != isP1);
-				boolean anyOppCharacterChosen = selected.stream()
-						.anyMatch(t -> t.isP1() != isP1);
-				if (mw.currentResolutionIsSummon && anyOppForwardChosen)
-					mw.autoAbilityTriggers.triggerAutoAbilitiesForChosenByOpponentSummon(!isP1);
-				if (anyOppCharacterChosen) {
+				// Only cards on the *other* side are events these triggers can see — they all read
+				// "when [something of mine] is chosen by your opponent's …". The cards themselves,
+				// not just a yes/no, are handed down: which of them was chosen decides whether a
+				// given watcher's subject is satisfied.
+				List<CardData> oppCharactersChosen = selected.stream()
+						.filter(t -> t.isP1() != isP1)
+						.map(this::cardAtTarget)
+						.filter(Objects::nonNull)
+						.toList();
+				List<CardData> oppForwardsChosen = selected.stream()
+						.filter(t -> t.zone() == ForwardTarget.CardZone.FORWARD && t.isP1() != isP1)
+						.map(this::cardAtTarget)
+						.filter(Objects::nonNull)
+						.toList();
+				if (mw.currentResolutionIsSummon && !oppForwardsChosen.isEmpty())
+					mw.autoAbilityTriggers.triggerAutoAbilitiesForChosenByOpponentSummon(
+							!isP1, oppForwardsChosen);
+				if (!oppCharactersChosen.isEmpty()) {
 					mw.lastChosenSelectionCancelled = false;
-					mw.autoAbilityTriggers.triggerAutoAbilitiesForChosenByOpponentSummonOrAbility(!isP1);
+					mw.autoAbilityTriggers.triggerAutoAbilitiesForChosenByOpponentSummonOrAbility(
+							!isP1, oppCharactersChosen);
 					if (mw.lastChosenSelectionCancelled) {
 						logEntry("Selection cancelled — opponent declined to pay");
 						return List.of();

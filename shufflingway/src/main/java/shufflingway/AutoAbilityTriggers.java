@@ -1402,22 +1402,101 @@ final class AutoAbilityTriggers {
 	}
 
 	/**
-	 * Fires "chosen by opponent's summon" field abilities for all field cards belonging to
-	 * {@code chosenSideIsP1}'s side — called when that player's Forward was selected as a
-	 * target by the opponent's Summon.
+	 * Fires "chosen by opponent's summon" field abilities on {@code chosenSideIsP1}'s side — called
+	 * when that player's Forward was selected as a target by the opponent's Summon.
+	 *
+	 * @param chosen the Forwards actually selected, all on {@code chosenSideIsP1}'s side
 	 */
-	void triggerAutoAbilitiesForChosenByOpponentSummon(boolean chosenSideIsP1) {
-		triggerAutoAbilitiesForEvent("chosen by opponent's summon", chosenSideIsP1);
+	void triggerAutoAbilitiesForChosenByOpponentSummon(boolean chosenSideIsP1, List<CardData> chosen) {
+		triggerChosenByOpponentEvent("chosen by opponent's summon", chosenSideIsP1, chosen);
 	}
 
 	/**
-	 * Fires "chosen by opponent's summon or ability" field abilities for all field cards belonging
-	 * to {@code chosenSideIsP1}'s side — called when that player's Character was selected as a
-	 * target by the opponent's Summon *or* action/auto-ability (broader than
+	 * Fires "chosen by opponent's summon or ability" field abilities on {@code chosenSideIsP1}'s
+	 * side — called when that player's Character was selected as a target by the opponent's Summon
+	 * *or* action/auto-ability (broader than
 	 * {@link #triggerAutoAbilitiesForChosenByOpponentSummon}, which only covers Summons).
+	 *
+	 * @param chosen the Characters actually selected, all on {@code chosenSideIsP1}'s side
 	 */
-	void triggerAutoAbilitiesForChosenByOpponentSummonOrAbility(boolean chosenSideIsP1) {
-		triggerAutoAbilitiesForEvent("chosen by opponent's summon or ability", chosenSideIsP1);
+	void triggerAutoAbilitiesForChosenByOpponentSummonOrAbility(boolean chosenSideIsP1,
+			List<CardData> chosen) {
+		triggerChosenByOpponentEvent("chosen by opponent's summon or ability", chosenSideIsP1, chosen);
+	}
+
+	/**
+	 * Walks the chosen player's field and fires {@code triggerType} abilities whose subject the
+	 * selection actually satisfies.
+	 *
+	 * <p>Unlike most event triggers, these are not "something happened to my side, everyone
+	 * reacts": the subject decides which cards being chosen count. Two printings exist — a card
+	 * naming itself ("When Emet-Selch is chosen…"), which fires only for the copy that was chosen,
+	 * and a filter ("When a Forward you control is chosen…"), which fires on every watcher whenever
+	 * a matching card was chosen. Dispatching field-wide regardless of subject made every
+	 * self-naming card fire on any friendly Character being targeted.
+	 */
+	private void triggerChosenByOpponentEvent(String triggerType, boolean isP1, List<CardData> chosen) {
+		if (chosen.isEmpty()) return;
+		withBatch(() -> {
+			List<CardData> fwds = new ArrayList<>(isP1 ? mw.p1ForwardCards : mw.p2ForwardCards);
+			CardData[]     bkps = isP1 ? mw.p1BackupCards : mw.p2BackupCards;
+			List<CardData> mons = new ArrayList<>(isP1 ? mw.p1MonsterCards : mw.p2MonsterCards);
+			for (CardData c : fwds) fireChosenByOpponentTriggers(c, isP1, triggerType, chosen);
+			for (CardData c : bkps) if (c != null) fireChosenByOpponentTriggers(c, isP1, triggerType, chosen);
+			for (CardData c : mons) fireChosenByOpponentTriggers(c, isP1, triggerType, chosen);
+		});
+		mw.showStackWindowIfNeeded();
+	}
+
+	private void fireChosenByOpponentTriggers(CardData watcher, boolean isP1, String triggerType,
+			List<CardData> chosen) {
+		for (AutoAbility fa : mw.effectiveAutoAbilities(watcher))
+			if (fa.trigger().equals(triggerType)
+					&& matchesChosenSubject(fa.triggerCard(), watcher, chosen))
+				executeAutoAbility(fa, watcher, isP1);
+	}
+
+	/** "1 or more Forwards you control" — the count prefix, stripped before splitting on " or ". */
+	private static final Pattern CHOSEN_SUBJECT_COUNT = Pattern.compile("(?i)^\\d+\\s+or\\s+more\\s+");
+	/** Trailing controller clause; the dispatch side already establishes the controller. */
+	private static final Pattern CHOSEN_SUBJECT_CTRL =
+			Pattern.compile("(?i)\\s+(?:you\\s+control|opponent\\s+controls?)$");
+	/** "this Forward" and friends — a self-reference spelled without the card's name. */
+	private static final Pattern CHOSEN_SUBJECT_SELF =
+			Pattern.compile("(?i)^this\\s+(?:forward|backup|monster|character)$");
+
+	/**
+	 * Returns true when {@code chosen} satisfies a chosen-by-opponent trigger's subject.
+	 *
+	 * <p>A subject naming the watcher itself — by card name, or as "this Forward" — is matched by
+	 * <em>identity</em>, not by name, following the rule that a card naming itself refers to that
+	 * specific copy. Every other subject is a filter, satisfied by any chosen card matching it.
+	 *
+	 * <p>The count prefix comes off before the disjunction is split, because "1 or more" itself
+	 * contains an " or ".
+	 */
+	private boolean matchesChosenSubject(String subject, CardData watcher, List<CardData> chosen) {
+		// A subject-less printing can only be about the watcher, so fall back to identity rather
+		// than to firing unconditionally — the latter is the bug this method exists to prevent.
+		if (subject == null || subject.isBlank())
+			return chosen.stream().anyMatch(c -> c == watcher);
+
+		String stripped = CHOSEN_SUBJECT_COUNT.matcher(subject.trim()).replaceFirst("");
+		for (String rawPart : stripped.split("(?i)\\s+or\\s+")) {
+			String part = CHOSEN_SUBJECT_CTRL.matcher(rawPart.trim()).replaceFirst("").trim();
+			// "the Card Name Palom" — normalise the article so the shared subject matcher, which
+			// expects "a"/"an", recognises it.
+			part = part.replaceAll("(?i)^the\\s+", "a ");
+			if (part.isEmpty()) continue;
+			if (CHOSEN_SUBJECT_SELF.matcher(part).matches()
+					|| CardFilters.meetsCardNameFilter(watcher, part)) {
+				if (chosen.stream().anyMatch(c -> c == watcher)) return true;
+				continue;
+			}
+			for (CardData c : chosen)
+				if (matchesSingleSubject(part, c, watcher)) return true;
+		}
+		return false;
 	}
 
 	/**
