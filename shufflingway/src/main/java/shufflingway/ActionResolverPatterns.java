@@ -579,7 +579,8 @@ final class ActionResolverPatterns {
      *   <li>{@code chartype}   — type filter: "Forwards/Characters/etc. you control"</li>
      *   <li>{@code costfilter} — optional exact cost: "of cost N" appended to chartype</li>
      *   <li>{@code bzname}     — card name in P1's Break Zone</li>
-     *   <li>{@code bztype}     — card type in P1's Break Zone: "Forwards in your Break Zone"</li>
+     *   <li>{@code bztype}     — card type in P1's Break Zone: "Forwards in your Break Zone";
+     *       the value "card" means the whole zone regardless of type</li>
      *   <li>{@code opphand}    — source is the opponent's hand size</li>
      *   <li>{@code xpaid}      — source is the X CP value paid for this ability</li>
      * </ul>
@@ -596,7 +597,8 @@ final class ActionResolverPatterns {
             "|Card\\s+Name\\s+(?<bzname>\\S+(?:\\s+\\([^)]+\\))?)\\s+in\\s+your\\s+Break\\s+Zone" +
             // Must follow the Card Name branch: a bare type noun would not match "Card Name X",
             // but keeping the specific zone phrasing first mirrors how the field branches are ordered.
-            "|(?<bztype>Forwards?|Characters?|Backups?|Monsters?|Summons?)\\s+in\\s+your\\s+Break\\s+Zone" +
+            // "card" is the untyped whole-zone count (Atomos, Cyan), not another card type.
+            "|(?<bztype>Forwards?|Characters?|Backups?|Monsters?|Summons?|Cards?)\\s+in\\s+your\\s+Break\\s+Zone" +
             "|(?<opphand>card\\s+in\\s+your\\s+opponent'?s?\\s+hand)" +
             "|(?<xpaid>CP\\s+paid\\s+as\\s+X)" +
             "|(?<crystal>《C》)\\s+you\\s+have" +

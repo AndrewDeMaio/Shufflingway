@@ -133,6 +133,30 @@ public record CardData(
     );
 
     /**
+     * Matches the alternate summon cost paid by removing a field card rather than Crystals:
+     * "Before paying the cost to cast X, you can remove N [Element] Backup you control from the
+     * game to reduce the cost required to cast X by M." (Ifrit 25-004H and its five element
+     * counterparts.)
+     *
+     * <p>The card name is matched with a reluctant {@code .+?} rather than {@link
+     * #ALT_COST_SUMMON}'s {@code [^,]+}, because names in this family contain commas
+     * ("Mateus, the Corrupt", "Famfrit, the Darkening Cloud").
+     *
+     * <p>Requiring the "Before paying the cost to cast" prefix and a numeric count is what keeps
+     * this off the other "you can remove … from the game" costs: the Break Zone family removes
+     * "… in your Break Zone" rather than "… you control", Vayne 15-088H removes "any number of"
+     * with no digit, and Sonon 18-123L's is an instead-of-paying cost with no prefix.
+     */
+    private static final Pattern ALT_COST_SUMMON_REMOVE_FIELD = Pattern.compile(
+        "(?i)Before\\s+paying\\s+the\\s+cost\\s+to\\s+cast\\s+.+?,\\s+" +
+        "you\\s+can\\s+remove\\s+(?<count>\\d+)\\s+" +
+        "(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+" +
+        "(?<type>Forwards?|Backups?|Monsters?|Characters?)\\s+you\\s+control\\s+" +
+        "from\\s+the\\s+game\\s+to\\s+reduce\\s+the\\s+cost\\s+required\\s+to\\s+cast\\s+.+?\\s+" +
+        "by\\s+(?<reduction>\\d+)\\."
+    );
+
+    /**
      * Matches the alternate non-summon cost prefix.  Optional groups:
      * <ul>
      *   <li>{@code condition}  — "If you control …, " prefix</li>
@@ -248,15 +272,46 @@ public record CardData(
         Matcher m = ALT_COST_SUMMON.matcher(textEn);
         if (m.find()) {
             parseCostTokens(m.group("costs"), crystals);
-            int altCp = Math.max(0, cost - Integer.parseInt(m.group("reduction")));
-            List<String> elems = new ArrayList<>();
-            String[] cardElems = elements();
-            for (int i = 0; i < altCp; i++) elems.add(cardElems.length > 0 ? cardElems[i % cardElems.length] : "");
-            return List.copyOf(elems);
+            return reducedCastCpElements(Integer.parseInt(m.group("reduction")));
         }
+        m = ALT_COST_SUMMON_REMOVE_FIELD.matcher(textEn);
+        if (m.find()) return reducedCastCpElements(Integer.parseInt(m.group("reduction")));
         m = ALT_COST_NONSUMMON.matcher(textEn);
         if (m.find()) return List.copyOf(parseCostTokens(m.group("costs"), crystals));
         return List.of();
+    }
+
+    /**
+     * The CP still owed after a cast cost reduction of {@code reduction}, expressed as one
+     * element string per CP and drawn from the card's own elements (multi-element cards
+     * alternate). Shared by the Crystal and field-removal alternate costs, which differ only in
+     * what is handed over to earn the reduction.
+     */
+    private List<String> reducedCastCpElements(int reduction) {
+        int altCp = Math.max(0, cost - reduction);
+        List<String> elems = new ArrayList<>();
+        String[] cardElems = elements();
+        for (int i = 0; i < altCp; i++) elems.add(cardElems.length > 0 ? cardElems[i % cardElems.length] : "");
+        return List.copyOf(elems);
+    }
+
+    /**
+     * A field card the alternate cast cost hands over: "remove 1 Fire Backup you control from the
+     * game". {@code type} is the printed card type as written ("Backup"), {@code element} the
+     * required element.
+     */
+    public record AltFieldRemoval(int count, String element, String type) {}
+
+    /**
+     * The field cards this card's alternate cast cost removes from the game, or {@code null} when
+     * its alternate cost is not of that kind. The reduction itself is reported through
+     * {@link #altCpElements()}, the same way the Crystal alternate cost reports its own.
+     */
+    public AltFieldRemoval altFieldRemoval() {
+        Matcher m = ALT_COST_SUMMON_REMOVE_FIELD.matcher(textEn);
+        if (!m.find()) return null;
+        return new AltFieldRemoval(Integer.parseInt(m.group("count")),
+                m.group("element").trim(), m.group("type").trim());
     }
 
     /** Convenience: total CP to pay for the alternate cast ({@code altCpElements().size()}). */
@@ -698,13 +753,14 @@ public record CardData(
      */
     public String summonEffect() {
         String t = SUMMON_EX_PREFIX.matcher(textEn).replaceFirst("");
-        if (altCrystalCost() > 0 || extraCost() != null) {
+        if (altCrystalCost() > 0 || extraCost() != null || altFieldRemoval() != null) {
             String[] parts = SUMMON_BR.split(t);
             StringBuilder sb = new StringBuilder();
             for (String part : parts) {
                 String trimmed = part.trim();
                 if (trimmed.isEmpty()) continue;
                 if (ALT_COST_SUMMON.matcher(trimmed).find())    continue;
+                if (ALT_COST_SUMMON_REMOVE_FIELD.matcher(trimmed).find()) continue;
                 if (ALT_COST_NONSUMMON.matcher(trimmed).find()) continue;
                 if (EXTRA_COST_SUMMON.matcher(trimmed).find())  continue; // extra-cost clause
                 if (TRAIT_ONLY_SEGMENT.matcher(trimmed).matches()) continue;
@@ -4834,6 +4890,7 @@ public record CardData(
 
             // Alternate-cost declarations
             if (ALT_COST_SUMMON.matcher(seg).find())    continue;
+            if (ALT_COST_SUMMON_REMOVE_FIELD.matcher(seg).find()) continue;
             if (ALT_COST_NONSUMMON.matcher(seg).find()) continue;
 
             // Auto abilities: "When [card/event] [trigger], [effect]" and phase-trigger patterns

@@ -659,6 +659,11 @@ class CostCalculator {
 
 		if (mw.playerCrystals(true) < card.altCrystalCost()) return false;
 
+		// Field removal check ("remove 1 Fire Backup you control from the game")
+		CardData.AltFieldRemoval fieldRemoval = card.altFieldRemoval();
+		if (fieldRemoval != null
+				&& mw.altFieldRemovalCandidates(fieldRemoval).size() < fieldRemoval.count()) return false;
+
 		// Break Zone removal check
 		List<String> bzReqs = card.altBzRemovals();
 		if (!bzReqs.isEmpty()) {

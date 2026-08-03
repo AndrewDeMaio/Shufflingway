@@ -1565,6 +1565,9 @@ final class ActionResolverChoose {
             boolean charBkp = srcCharType != null && (srcCharType.equalsIgnoreCase("backup")    || srcCharType.equalsIgnoreCase("backups")    || srcCharType.equalsIgnoreCase("character") || srcCharType.equalsIgnoreCase("characters"));
             boolean charMon = srcCharType != null && (srcCharType.equalsIgnoreCase("monster")   || srcCharType.equalsIgnoreCase("monsters")   || srcCharType.equalsIgnoreCase("character") || srcCharType.equalsIgnoreCase("characters"));
             // Break Zone type counts use the printed type; "Characters" spans Forward/Backup/Monster.
+            // "card" is not a type at all — it counts the whole zone, so it takes the unfiltered
+            // count rather than asking for every type by name.
+            boolean bzAll   = srcBzType != null && srcBzType.matches("(?i)Cards?");
             boolean bzChar  = srcBzType != null && srcBzType.matches("(?i)Characters?");
             boolean bzFwd   = srcBzType != null && (bzChar || srcBzType.matches("(?i)Forwards?"));
             boolean bzBkp   = srcBzType != null && (bzChar || srcBzType.matches("(?i)Backups?"));
@@ -1598,7 +1601,8 @@ final class ActionResolverChoose {
                 }
                 else if (srcCharType   != null) n = ctx.countSelfFieldCards(charFwd, charBkp, charMon, null, null, srcCategory, srcElement, srcCostFilter);
                 else if (srcBzName     != null) n = ctx.countSelfBreakZoneCards(srcBzName, null);
-                else if (srcBzType     != null) n = ctx.countSelfBreakZoneCardsByType(bzFwd, bzBkp, bzMon, bzSmn);
+                else if (srcBzType     != null) n = bzAll ? ctx.countSelfBreakZoneCards(null, null)
+                                                          : ctx.countSelfBreakZoneCardsByType(bzFwd, bzBkp, bzMon, bzSmn);
                 else if (srcOppHand)           n = ctx.opponentHandSize();
                 else if (srcCrystal)           n = ctx.crystalCount();
                 else if (srcCpDiffElem)        n = ctx.castPaymentDistinctElements();

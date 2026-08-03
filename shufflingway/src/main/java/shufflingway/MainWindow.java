@@ -37,6 +37,7 @@ import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
@@ -5823,16 +5824,20 @@ public class MainWindow {
 			menu.add(ecItem);
 		}
 
-		if (card.altCrystalCost() > 0 || card.altCpCost() > 0) {
+		if (card.altCrystalCost() > 0 || card.altCpCost() > 0 || card.altFieldRemoval() != null) {
 			int ac = card.altCrystalCost();
 			List<String> altElems = card.altCpElements();
+			CardData.AltFieldRemoval afr = card.altFieldRemoval();
+			String removalStr = afr == null ? ""
+					: "remove " + afr.count() + " " + afr.element() + " " + afr.type()
+					  + (altElems.isEmpty() ? "" : " + ");
 			String crystalStr = ac > 0 ? "《C》".repeat(ac) : "";
 			String cpStr = altElems.isEmpty() ? "" : (ac > 0 ? " + " : "") + altElems.stream()
 					.collect(Collectors.groupingBy(elem -> elem.isEmpty() ? "generic" : elem, LinkedHashMap::new, Collectors.counting()))
 					.entrySet().stream().map(en -> (en.getKey().equals("generic") ? en.getValue() + " CP" : en.getValue() + " " + en.getKey() + " CP")).collect(Collectors.joining(" + "));
 			List<String> cond = card.altConditionCardNames();
 			String condStr = cond.isEmpty() ? "" : " [req: " + String.join("/", cond) + "]";
-			String altLabel = "Play (Alt: " + crystalStr + cpStr + condStr + ")";
+			String altLabel = "Play (Alt: " + removalStr + crystalStr + cpStr + condStr + ")";
 			JMenuItem altItem = new JMenuItem(altLabel);
 			altItem.setEnabled(canPlaySpecialAction && !nameConflict && !lightDarkConflict
 					&& canAffordAltCost(card, handIdx)
@@ -6705,6 +6710,18 @@ public class MainWindow {
 		List<String> bzRemovals   = card.altBzRemovals();
 		boolean backupOnly        = card.altBackupOnlyCp();
 
+		// The card text pays this cost before the CP cost, so the Backup is chosen up front. It is
+		// only reserved here: cancelling the payment must leave the board untouched, so the actual
+		// removal waits until payment is confirmed below.
+		CardData.AltFieldRemoval fieldRemoval = card.altFieldRemoval();
+		final List<Integer> removalSlots;
+		if (fieldRemoval != null) {
+			removalSlots = selectAltFieldRemoval(card, fieldRemoval);
+			if (removalSlots == null) return;
+		} else {
+			removalSlots = List.of();
+		}
+
 		if (altElemsList.isEmpty()) {
 			int choice = JOptionPane.showOptionDialog(frame,
 					card.name() + " — Pay " + "《C》".repeat(altC) + (altCp > 0 ? " + " + altCp + " CP" : "") + " to cast?",
@@ -6713,6 +6730,7 @@ public class MainWindow {
 					new Object[]{"Confirm", "Cancel"}, "Confirm");
 			if (choice != 0) return;
 			if (altC > 0) { playerSpendCrystals(true, altC); refreshCrystalDisplays(); }
+			executeAltFieldRemoval(removalSlots);
 			executePlay(card, handIdx, Collections.emptyList(), Collections.emptyList(), Map.of());
 			executeAltFollowup(followupText, card);
 			return;
@@ -6726,18 +6744,77 @@ public class MainWindow {
 		}
 		String[] elems = costByElem.keySet().toArray(String[]::new);
 
+		// A reserved Backup is being handed over, so it cannot also be dulled for CP. Hiding it
+		// from the payment dialog is what keeps the deferred removal from letting it be spent twice.
+		CardData[]  payBackups = playerBackupCards(true);
+		CardState[] payStates  = playerBackupStates(true);
+		String[]    payUrls    = playerBackupUrls(true);
+		if (!removalSlots.isEmpty()) {
+			payBackups = payBackups.clone();
+			payStates  = payStates.clone();
+			payUrls    = payUrls.clone();
+			for (int slot : removalSlots) payBackups[slot] = null;
+		}
+
 		new AltCostPaymentDialog(frame, card, handIdx, altCp, genericNeeded, elems, costByElem,
-				backupOnly, gameState.getP1Hand(), playerBackupCards(true), playerBackupStates(true),
-				playerBackupUrls(true), this::showZoomAt, this::hideZoom,
+				backupOnly, gameState.getP1Hand(), payBackups, payStates,
+				payUrls, this::showZoomAt, this::hideZoom,
 				lightDarkDiscardGrants(true),
 				(discards, backups) -> {
 					if (altC > 0) { playerSpendCrystals(true, altC); refreshCrystalDisplays(); }
+					executeAltFieldRemoval(removalSlots);
 					executeAltBzRemovals(bzRemovals);
 					executePlay(card, handIdx, discards, backups, Map.of());
 					executeAltFollowup(followupText, card);
 				}).show();
 	}
 
+
+	/**
+	 * P1 backup slot indices that could pay {@code removal} — the cards the player may hand over
+	 * for the alternate cast cost.
+	 *
+	 * <p>Only Backups are offered. Every card printed with this cost removes a Backup, and the
+	 * other types would each need their own removal path; returning nothing for them leaves the
+	 * alternate cost simply unavailable rather than half-working.
+	 */
+	List<Integer> altFieldRemovalCandidates(CardData.AltFieldRemoval removal) {
+		List<Integer> out = new ArrayList<>();
+		if (removal == null || !removal.type().toLowerCase(Locale.ROOT).startsWith("backup")) return out;
+		for (int i = 0; i < p1BackupCards.length; i++)
+			if (p1BackupCards[i] != null && p1BackupCards[i].containsElement(removal.element())) out.add(i);
+		return out;
+	}
+
+	/**
+	 * Asks the player which Backups to hand over for {@code removal}, returning the chosen slot
+	 * indices, or {@code null} if they cancelled. Nothing is removed here — the cards are only
+	 * reserved, and {@link #executeAltFieldRemoval} takes them once payment is confirmed.
+	 */
+	private List<Integer> selectAltFieldRemoval(CardData card, CardData.AltFieldRemoval removal) {
+		List<Integer> candidates = altFieldRemovalCandidates(removal);
+		List<Integer> chosen = new ArrayList<>();
+		for (int n = 0; n < removal.count(); n++) {
+			List<Integer> remaining = new ArrayList<>(candidates);
+			remaining.removeAll(chosen);
+			if (remaining.isEmpty()) return null;
+			List<CardData> options = remaining.stream().map(i -> p1BackupCards[i]).toList();
+			String title = card.name() + " — remove " + removal.element() + " " + removal.type()
+					+ " from the game" + (removal.count() > 1 ? " (" + (n + 1) + " of " + removal.count() + ")" : "");
+			int pick = cardPickerDialog.pickCardImage(options, title, true);
+			if (pick < 0) return null;
+			chosen.add(remaining.get(pick));
+		}
+		return chosen;
+	}
+
+	/** Removes the Backups reserved by {@link #selectAltFieldRemoval} from the game. */
+	private void executeAltFieldRemoval(List<Integer> slots) {
+		if (slots == null || slots.isEmpty()) return;
+		GameContext ctx = buildGameContext(true);
+		for (int slot : slots)
+			ctx.removeTargetFromGame(new ForwardTarget(true, slot, ForwardTarget.CardZone.BACKUP));
+	}
 
 	/**
 	 * Removes one BZ card matching each entry in {@code removals} from P1's Break Zone and

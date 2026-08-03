@@ -1457,6 +1457,22 @@ public class CardBehaviorTest {
         verify(ctx).damageTarget(t, 9000);
     }
 
+    // Atomos 25-053H and Cyan 24-003H: "Deal it 1000 damage for each card in your Break Zone."
+    // "card" means the whole zone, so it must reach the unfiltered count rather than the
+    // type-filtered one that backs "Forwards in your Break Zone".
+    @Test
+    void damageForEachBreakZoneCardCountsTheWholeZone() {
+        Consumer<GameContext> fn = ActionResolver.parse(
+                "Choose 1 Forward. Deal it 1000 damage for each card in your Break Zone.", null);
+        assertNotNull(fn, "\"for each card in your Break Zone\" should parse");
+        GameContext ctx = mock(GameContext.class);
+        ForwardTarget t = stubChooseOneTarget(ctx);
+        when(ctx.countSelfBreakZoneCards(null, null)).thenReturn(6);
+        fn.accept(ctx);
+        verify(ctx).damageTarget(t, 6000);
+        verify(ctx, never()).countSelfBreakZoneCardsByType(anyBoolean(), anyBoolean(), anyBoolean(), anyBoolean());
+    }
+
     // "Card Name X in your Break Zone" must still reach the name-filtered count, not the type one.
     @Test
     void damageForEachNamedBreakZoneCardStillUsesNameFilter() {
@@ -3485,6 +3501,147 @@ public class CardBehaviorTest {
         assertEquals("Salvage Me", mw.gameState.getP1Hand().get(0).name());
         assertTrue(mw.gameState.getP2Hand().isEmpty(), "P2 must not receive P1's Break Zone card");
         assertTrue(mw.gameState.getP1BreakZone().isEmpty(), "the card leaves P1's Break Zone");
+    }
+
+    // =========================================================================================
+    // Ifrit 25-004H: an alternate cast cost paid by removing a Backup from the game rather than
+    // by Crystals. The cost sentence has to be recognised for its own sake AND so summonEffect()
+    // strips it — while it stayed in the effect text the resolver matched the combined string and
+    // the actual summon effect never ran.
+    // =========================================================================================
+
+    private static final String IFRIT_TEXT =
+            "Before paying the cost to cast Ifrit, you can remove 1 Fire Backup you control from the game "
+            + "to reduce the cost required to cast Ifrit by 2.[[br]]"
+            + "Choose 1 Forward and up to 1 other Forward. Deal the former 9000 damage and deal the latter 4000 damage.";
+
+    private static CardData makePlainBackup(String name, String element, int cost) {
+        return new CardData(null, name, element, cost, 0, "Backup", false, 0, false, false,
+                Set.of(), 0, List.of(), null, List.of(),
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                false, false, null, false, false, false, false, false, 1,
+                null, null, null, "");
+    }
+
+    private static CardData makeSummon(String name, String element, int cost, String text) {
+        return new CardData(null, name, element, cost, 0, "Summon", false, 0, false, false,
+                Set.of(), 0, List.of(), null, List.of(),
+                List.of(), List.of(),
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                false, false, null, false, false, false, false, false, 1,
+                null, null, null, text);
+    }
+
+    @Test
+    void ifritAlternateCostRemovesAFireBackupAndReducesTheCost() {
+        CardData ifrit = makeSummon("Ifrit", "Fire", 4, IFRIT_TEXT);
+        CardData.AltFieldRemoval removal = ifrit.altFieldRemoval();
+        assertNotNull(removal, "the remove-from-game alternate cost should parse");
+        assertEquals(1, removal.count());
+        assertEquals("Fire", removal.element());
+        assertEquals("Backup", removal.type());
+        assertEquals(0, ifrit.altCrystalCost(), "this cost is paid with a Backup, not Crystals");
+        assertEquals(List.of("Fire", "Fire"), ifrit.altCpElements(), "cost 4 reduced by 2");
+    }
+
+    // A name containing a comma is why this pattern cannot reuse the Crystal variant's [^,]+.
+    @Test
+    void alternateRemovalCostParsesThroughCommasInTheCardName() {
+        String text = "Before paying the cost to cast Mateus, the Corrupt, you can remove 1 Ice Backup you control "
+                + "from the game to reduce the cost required to cast Mateus, the Corrupt by 2.[[br]]"
+                + "Choose 1 dull Forward and up to 1 other Forward. Break the former, dull and Freeze the latter.";
+        CardData mateus = makeSummon("Mateus, the Corrupt", "Ice", 4, text);
+        assertNotNull(mateus.altFieldRemoval(), "a comma in the card name must not break the match");
+        assertEquals("Ice", mateus.altFieldRemoval().element());
+        assertEquals(List.of("Ice", "Ice"), mateus.altCpElements());
+    }
+
+    @Test
+    void ifritSummonEffectDropsTheCostSentence() {
+        CardData ifrit = makeSummon("Ifrit", "Fire", 4, IFRIT_TEXT);
+        String effect = ifrit.summonEffect();
+        assertFalse(effect.contains("Before paying"), "the cost sentence is not part of the effect");
+        assertEquals("Choose 1 Forward and up to 1 other Forward. "
+                + "Deal the former 9000 damage and deal the latter 4000 damage.", effect);
+        assertNotNull(ActionResolver.parse(effect, ifrit), "the remaining effect should parse");
+        assertEquals("ChooseFormerLatter", ActionResolver.fullDescription(effect, ifrit));
+    }
+
+    // The neighbouring "remove … from the game" costs are deliberately out of this pattern's reach:
+    // each removes from a different place or with a different shape, and claiming them here would
+    // report a Backup removal the player never agreed to.
+    @Test
+    void alternateRemovalCostIgnoresTheBreakZoneAndInsteadOfPayingForms() {
+        CardData odin = makeSummon("Odin", "Lightning", 6,
+                "Before paying the cost to cast Odin, you can remove 5 Lightning cards in your Break Zone "
+                + "from the game to reduce the cost required to cast Odin by 4.");
+        assertNull(odin.altFieldRemoval(), "Break Zone removal is a different cost");
+
+        CardData vayne = makeSummon("Vayne", "Lightning", 5,
+                "Before paying the cost to cast Vayne, you can remove any number of active Backups you control "
+                + "from the game to reduce the cost required to cast Vayne by 1 for each Backup removed.");
+        assertNull(vayne.altFieldRemoval(), "a variable count is not this fixed-count cost");
+
+        CardData sonon = makeSummon("Sonon", "Earth", 3,
+                "You can remove 1 Earth Backup you control and 1 Lightning Backup you control from the game "
+                + "(instead of paying the CP cost) to cast Sonon.");
+        assertNull(sonon.altFieldRemoval(), "instead-of-paying is not a cost reduction");
+    }
+
+    @Test
+    void ifritDealsNineThousandToTheFormerAndFourThousandToTheLatter() {
+        CardData ifrit = makeSummon("Ifrit", "Fire", 4, IFRIT_TEXT);
+        Consumer<GameContext> fn = ActionResolver.parse(ifrit.summonEffect(), ifrit);
+        assertNotNull(fn);
+
+        GameContext ctx = mock(GameContext.class);
+        when(ctx.consumePreloadedTargets()).thenReturn(null);
+        ForwardTarget former = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+        ForwardTarget latter = new ForwardTarget(false, 1, ForwardTarget.CardZone.FORWARD);
+        // "up to 1 OTHER Forward" excludes the first by name, so the former must be resolvable.
+        when(ctx.p2Forward(0)).thenReturn(makeForward("Former", "Fire", 3, 7000));
+        when(ctx.selectCharacters(anyInt(), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(),
+                anyInt(), any(), anyInt(), any(), anyBoolean(), anyBoolean(), anyBoolean(),
+                any(), any(), any(), any(), anyBoolean(), any(), anyBoolean()))
+                .thenReturn(List.of(former)).thenReturn(List.of(latter));
+
+        fn.accept(ctx);
+        verify(ctx).damageTarget(former, 9000);
+        verify(ctx).damageTarget(latter, 4000);
+    }
+
+    // The second target is "up to 1", so declining it must still resolve the first.
+    @Test
+    void ifritStillDamagesTheFormerWhenNoSecondForwardIsChosen() {
+        CardData ifrit = makeSummon("Ifrit", "Fire", 4, IFRIT_TEXT);
+        Consumer<GameContext> fn = ActionResolver.parse(ifrit.summonEffect(), ifrit);
+        assertNotNull(fn);
+
+        GameContext ctx = mock(GameContext.class);
+        when(ctx.consumePreloadedTargets()).thenReturn(null);
+        ForwardTarget former = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+        when(ctx.p2Forward(0)).thenReturn(makeForward("Former", "Fire", 3, 7000));
+        when(ctx.selectCharacters(anyInt(), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(),
+                anyInt(), any(), anyInt(), any(), anyBoolean(), anyBoolean(), anyBoolean(),
+                any(), any(), any(), any(), anyBoolean(), any(), anyBoolean()))
+                .thenReturn(List.of(former)).thenReturn(List.of());
+
+        fn.accept(ctx);
+        verify(ctx).damageTarget(former, 9000);
+        verify(ctx, never()).damageTarget(any(), eq(4000));
+    }
+
+    @Test
+    void altFieldRemovalCandidatesOffersOnlyMatchingElementBackups() {
+        MainWindow mw = new MainWindow();
+        CardData ifrit = makeSummon("Ifrit", "Fire", 4, IFRIT_TEXT);
+
+        mw.p1BackupCards[0] = makePlainBackup("Fire Guy", "Fire", 2);
+        mw.p1BackupCards[1] = makePlainBackup("Ice Guy", "Ice", 2);
+        mw.p1BackupCards[2] = makePlainBackup("Other Fire Guy", "Fire", 3);
+
+        assertEquals(List.of(0, 2), mw.altFieldRemovalCandidates(ifrit.altFieldRemoval()),
+                "only Fire Backups can pay this cost");
     }
 
     // =========================================================================================
