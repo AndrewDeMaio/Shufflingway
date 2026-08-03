@@ -1212,6 +1212,28 @@ public interface GameContext {
                 : countP2BreakZoneCards(cardNameFilter, jobFilter);
     }
 
+    /**
+     * Counts cards of the named types in P1's Break Zone (e.g. Tonberry's "for every 2 Forwards in
+     * your Break Zone"). Unlike the field, a Break Zone holds every card type, so each type a count
+     * accepts has to be named — including Summons, which have no field equivalent.
+     *
+     * <p>Types are the card's printed type. A Monster whose field ability makes it "also become a
+     * Forward" is a Monster once it is in the Break Zone, so it is not counted as a Forward.
+     */
+    int countP1BreakZoneCardsByType(boolean inclForwards, boolean inclBackups,
+            boolean inclMonsters, boolean inclSummons);
+
+    int countP2BreakZoneCardsByType(boolean inclForwards, boolean inclBackups,
+            boolean inclMonsters, boolean inclSummons);
+
+    /** Counts the ability user's own Break Zone cards by type — routes to P1 or P2 based on {@link #isP1()}. */
+    default int countSelfBreakZoneCardsByType(boolean inclForwards, boolean inclBackups,
+            boolean inclMonsters, boolean inclSummons) {
+        return isP1()
+                ? countP1BreakZoneCardsByType(inclForwards, inclBackups, inclMonsters, inclSummons)
+                : countP2BreakZoneCardsByType(inclForwards, inclBackups, inclMonsters, inclSummons);
+    }
+
     /** Counts cards owned by P1 that are removed from the game (P1's RFP zone), by name/job filter. */
     int countP1RfgCards(String cardNameFilter, String jobFilter);
 

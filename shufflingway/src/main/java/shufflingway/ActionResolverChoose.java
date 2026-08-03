@@ -1545,6 +1545,8 @@ final class ActionResolverChoose {
             String perStr         = forEachM.group("per");
             int    perDmg         = perStr != null ? Integer.parseInt(perStr) : 0;
             boolean subtract      = "minus".equalsIgnoreCase(forEachM.group("op"));
+            // "for every N" counts groups of N, rounding down; "for each" is group size 1.
+            int    groupSize      = forEachM.group("group") != null ? Integer.parseInt(forEachM.group("group")) : 1;
             boolean srcSelfDmg    = forEachM.group("selfdmg")  != null;
             String  srcJobBracket = forEachM.group("jobbname") != null ? forEachM.group("jobbname").trim() : null;
             String  srcJobWritten = forEachM.group("jobwname") != null ? forEachM.group("jobwname").trim() : null;
@@ -1554,6 +1556,7 @@ final class ActionResolverChoose {
             String  srcElement    = srcCharType != null && forEachM.group("element")  != null ? forEachM.group("element").toLowerCase(java.util.Locale.ROOT) : null;
             int     srcCostFilter = srcCharType != null && forEachM.group("costfilter") != null ? Integer.parseInt(forEachM.group("costfilter")) : -1;
             String  srcBzName     = forEachM.group("bzname")   != null ? forEachM.group("bzname").trim()   : null;
+            String  srcBzType     = forEachM.group("bztype")   != null ? forEachM.group("bztype").trim()   : null;
             boolean srcOppHand    = forEachM.group("opphand")   != null;
             boolean srcCrystal    = forEachM.group("crystal")   != null;
             boolean srcCpDiffElem = forEachM.group("cpDiffElem") != null;
@@ -1561,20 +1564,28 @@ final class ActionResolverChoose {
             boolean charFwd = srcCharType != null && (srcCharType.equalsIgnoreCase("forward")   || srcCharType.equalsIgnoreCase("forwards")   || srcCharType.equalsIgnoreCase("character") || srcCharType.equalsIgnoreCase("characters"));
             boolean charBkp = srcCharType != null && (srcCharType.equalsIgnoreCase("backup")    || srcCharType.equalsIgnoreCase("backups")    || srcCharType.equalsIgnoreCase("character") || srcCharType.equalsIgnoreCase("characters"));
             boolean charMon = srcCharType != null && (srcCharType.equalsIgnoreCase("monster")   || srcCharType.equalsIgnoreCase("monsters")   || srcCharType.equalsIgnoreCase("character") || srcCharType.equalsIgnoreCase("characters"));
+            // Break Zone type counts use the printed type; "Characters" spans Forward/Backup/Monster.
+            boolean bzChar  = srcBzType != null && srcBzType.matches("(?i)Characters?");
+            boolean bzFwd   = srcBzType != null && (bzChar || srcBzType.matches("(?i)Forwards?"));
+            boolean bzBkp   = srcBzType != null && (bzChar || srcBzType.matches("(?i)Backups?"));
+            boolean bzMon   = srcBzType != null && (bzChar || srcBzType.matches("(?i)Monsters?"));
+            boolean bzSmn   = srcBzType != null && srcBzType.matches("(?i)Summons?");
             String sourceLabel;
             if      (srcSelfDmg)           sourceLabel = "P1 damage";
             else if (srcJobBracket != null) sourceLabel = "[Job (" + srcJobBracket + ")] you control";
             else if (srcJobWritten != null) sourceLabel = "Job " + srcJobWritten + (srcJobWType != null ? " " + srcJobWType : "") + " you control";
             else if (srcCharType   != null) sourceLabel = (srcCategory != null ? "Category " + srcCategory + " " : "") + (srcElement != null ? srcElement + " " : "") + srcCharType + (srcCostFilter != -1 ? " of cost " + srcCostFilter : "") + " you control";
             else if (srcBzName     != null) sourceLabel = "Card Name " + srcBzName + " in BZ";
+            else if (srcBzType     != null) sourceLabel = srcBzType + " in BZ";
             else if (srcOppHand)           sourceLabel = "opponent hand";
             else if (srcCrystal)           sourceLabel = "《C》 you have";
             else if (srcCpDiffElem)        sourceLabel = "CP of a different Element paid to cast";
             else                            sourceLabel = "X CP paid";
             String op = subtract ? " - " : " + ";
+            String unitLabel = groupSize > 1 ? "every " + groupSize + " " + sourceLabel : sourceLabel;
             String logLabel = perDmg > 0
-                    ? baseDmg + op + perDmg + "×[" + sourceLabel + "]"
-                    : baseDmg + "×[" + sourceLabel + "]";
+                    ? baseDmg + op + perDmg + "×[" + unitLabel + "]"
+                    : baseDmg + "×[" + unitLabel + "]";
             return ctx -> {
                 int n;
                 if      (srcSelfDmg)           n = ctx.p1DamageCount();
@@ -1587,14 +1598,17 @@ final class ActionResolverChoose {
                 }
                 else if (srcCharType   != null) n = ctx.countSelfFieldCards(charFwd, charBkp, charMon, null, null, srcCategory, srcElement, srcCostFilter);
                 else if (srcBzName     != null) n = ctx.countSelfBreakZoneCards(srcBzName, null);
+                else if (srcBzType     != null) n = ctx.countSelfBreakZoneCardsByType(bzFwd, bzBkp, bzMon, bzSmn);
                 else if (srcOppHand)           n = ctx.opponentHandSize();
                 else if (srcCrystal)           n = ctx.crystalCount();
                 else if (srcCpDiffElem)        n = ctx.castPaymentDistinctElements();
                 else                            n = xValue;
+                int units = n / groupSize;
                 int damage = perDmg > 0
-                        ? (subtract ? Math.max(0, baseDmg - perDmg * n) : baseDmg + perDmg * n)
-                        : baseDmg * n;
-                ctx.logEntry(choosePrefix + " — Deal " + damage + " damage (" + logLabel + ", n=" + n + ")");
+                        ? (subtract ? Math.max(0, baseDmg - perDmg * units) : baseDmg + perDmg * units)
+                        : baseDmg * units;
+                String countNote = groupSize > 1 ? ", n=" + n + "→" + units : ", n=" + n;
+                ctx.logEntry(choosePrefix + " — Deal " + damage + " damage (" + logLabel + countNote + ")");
                 List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
                         opponentOnly, selfOnly, condition, element, zone, opponentZone,
                         costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);

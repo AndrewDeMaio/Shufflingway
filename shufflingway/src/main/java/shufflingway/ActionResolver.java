@@ -2592,13 +2592,15 @@ public class ActionResolver {
             return (ctx, ts) -> ts.forEach(ctx::removeOneCounterFromTarget);
         }
 
-        // Deal N damage [and/minus M [more] damage] for each [Category X] [Element] Type [of cost N] you control
+        // Deal N damage [and/minus M [more] damage] for each/every M [Category X] [Element] Type [of cost N] you control
         Matcher forEachM = FOLLOWUP_DAMAGE_FOR_EACH.matcher(t);
         if (forEachM.find() && forEachM.group("chartype") != null) {
             int    baseDmg  = Integer.parseInt(forEachM.group("base"));
             String perStr   = forEachM.group("per");
             int    perDmg   = perStr != null ? Integer.parseInt(perStr) : 0;
             boolean subtract = "minus".equalsIgnoreCase(forEachM.group("op"));
+            // "for every N" counts groups of N, rounding down; "for each" is group size 1.
+            int    groupSize = forEachM.group("group") != null ? Integer.parseInt(forEachM.group("group")) : 1;
             String charType = forEachM.group("chartype");
             String category = forEachM.group("category") != null ? forEachM.group("category").trim() : null;
             String element  = forEachM.group("element") != null ? forEachM.group("element").toLowerCase(java.util.Locale.ROOT) : null;
@@ -2607,10 +2609,10 @@ public class ActionResolver {
             boolean bkp = charType.matches("(?i)Backups?|Characters?");
             boolean mon = charType.matches("(?i)Monsters?|Characters?");
             return (ctx, ts) -> {
-                int n = ctx.countSelfFieldCards(fwd, bkp, mon, null, null, category, element, costFilter);
+                int units = ctx.countSelfFieldCards(fwd, bkp, mon, null, null, category, element, costFilter) / groupSize;
                 int damage = perDmg > 0
-                        ? (subtract ? Math.max(0, baseDmg - perDmg * n) : baseDmg + perDmg * n)
-                        : baseDmg * n;
+                        ? (subtract ? Math.max(0, baseDmg - perDmg * units) : baseDmg + perDmg * units)
+                        : baseDmg * units;
                 sortedByIdxDesc(ts, true) .forEach(ft -> ctx.damageTarget(ft, damage));
                 sortedByIdxDesc(ts, false).forEach(ft -> ctx.damageTarget(ft, damage));
             };

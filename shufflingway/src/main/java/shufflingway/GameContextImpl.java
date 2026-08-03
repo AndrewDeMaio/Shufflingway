@@ -93,6 +93,23 @@ final class GameContextImpl implements GameContext {
 		return a.contains("either player") || a.contains("any player") || a.contains("opponent");
 	}
 
+	/**
+	 * Counts the cards in {@code breakZone} whose printed type is one of the enabled ones.
+	 * Backs {@link GameContext#countP1BreakZoneCardsByType}.
+	 */
+	private static int countBreakZoneByType(List<CardData> breakZone, boolean inclForwards,
+			boolean inclBackups, boolean inclMonsters, boolean inclSummons) {
+		int count = 0;
+		for (CardData c : breakZone) {
+			if (c == null) continue;
+			if ((inclForwards && c.isForward())
+					|| (inclBackups  && c.isBackup())
+					|| (inclMonsters && c.isMonster())
+					|| (inclSummons  && c.isSummon())) count++;
+		}
+		return count;
+	}
+
 			@Override public void logEntry(String msg) { mw.logEntry(msg); }
 			@Override public boolean isP1() { return isP1; }
 
@@ -6148,6 +6165,16 @@ final class GameContextImpl implements GameContext {
 					count++;
 				}
 				return count;
+			}
+
+			@Override public int countP1BreakZoneCardsByType(boolean inclForwards, boolean inclBackups,
+					boolean inclMonsters, boolean inclSummons) {
+				return countBreakZoneByType(mw.gameState.getP1BreakZone(), inclForwards, inclBackups, inclMonsters, inclSummons);
+			}
+
+			@Override public int countP2BreakZoneCardsByType(boolean inclForwards, boolean inclBackups,
+					boolean inclMonsters, boolean inclSummons) {
+				return countBreakZoneByType(mw.gameState.getP2BreakZone(), inclForwards, inclBackups, inclMonsters, inclSummons);
 			}
 
 			@Override public int countP1RfgCards(String cardNameFilter, String jobFilter) {

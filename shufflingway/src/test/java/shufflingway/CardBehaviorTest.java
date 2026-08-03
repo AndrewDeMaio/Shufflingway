@@ -1352,6 +1352,137 @@ public class CardBehaviorTest {
         verify(ctx).damageTarget(t, 9000);
     }
 
+    // Amarant: "When Amarant enters the field, choose 1 Forward. Deal it 3000 damage for every
+    // 2 Fire Characters you control." — "for every N" scales by groups of N, rounding down, and
+    // must not be claimed by the flat-damage followup (which would drop the scaling entirely).
+    private static final String AMARANT_DAMAGE_PER_TWO_FIRE =
+            "Choose 1 Forward. Deal it 3000 damage for every 2 Fire Characters you control.";
+
+    /** Stubs a single chosen Forward and the Fire-Character count Amarant scales off. */
+    private static ForwardTarget stubChooseWithFireCharacterCount(GameContext ctx, int fireCharacters) {
+        when(ctx.consumePreloadedTargets()).thenReturn(null);
+        ForwardTarget t = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+        when(ctx.selectCharacters(anyInt(), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(),
+                anyInt(), any(), anyInt(), any(), anyBoolean(), anyBoolean(), anyBoolean(),
+                any(), any(), any(), any(), anyBoolean(), any(), anyBoolean())).thenReturn(List.of(t));
+        when(ctx.countSelfFieldCards(true, true, true, null, null, null, "fire", -1))
+                .thenReturn(fireCharacters);
+        return t;
+    }
+
+    @Test
+    void damageForEveryTwoScalesByGroupCount() {
+        Consumer<GameContext> fn = ActionResolver.parse(AMARANT_DAMAGE_PER_TWO_FIRE, null);
+        assertNotNull(fn, "\"for every 2 Fire Characters you control\" should parse");
+        GameContext ctx = mock(GameContext.class);
+        ForwardTarget t = stubChooseWithFireCharacterCount(ctx, 4);
+        fn.accept(ctx);
+        verify(ctx).damageTarget(t, 6000);
+    }
+
+    @Test
+    void damageForEveryTwoRoundsGroupCountDown() {
+        Consumer<GameContext> fn = ActionResolver.parse(AMARANT_DAMAGE_PER_TWO_FIRE, null);
+        assertNotNull(fn);
+        GameContext ctx = mock(GameContext.class);
+        ForwardTarget t = stubChooseWithFireCharacterCount(ctx, 5);
+        fn.accept(ctx);
+        verify(ctx).damageTarget(t, 6000);
+    }
+
+    @Test
+    void damageForEveryTwoDealsNothingBelowOneFullGroup() {
+        Consumer<GameContext> fn = ActionResolver.parse(AMARANT_DAMAGE_PER_TWO_FIRE, null);
+        assertNotNull(fn);
+        GameContext ctx = mock(GameContext.class);
+        ForwardTarget t = stubChooseWithFireCharacterCount(ctx, 1);
+        fn.accept(ctx);
+        verify(ctx).damageTarget(t, 0);
+    }
+
+    // Tonberry: "When Tonberry is put from the field into the Break Zone, choose 1 Forward opponent
+    // controls. Deal it 1000 damage for every 2 Forwards in your Break Zone." — a Break Zone count
+    // filtered by card type, which the Card-Name-only Break Zone branch could not express.
+    private static final String TONBERRY_DAMAGE_PER_TWO_BZ_FORWARDS =
+            "Choose 1 Forward opponent controls. Deal it 1000 damage for every 2 Forwards in your Break Zone.";
+
+    /** Stubs a single chosen Forward; Break Zone counts are stubbed per test. */
+    private static ForwardTarget stubChooseOneTarget(GameContext ctx) {
+        when(ctx.consumePreloadedTargets()).thenReturn(null);
+        ForwardTarget t = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+        when(ctx.selectCharacters(anyInt(), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(),
+                anyInt(), any(), anyInt(), any(), anyBoolean(), anyBoolean(), anyBoolean(),
+                any(), any(), any(), any(), anyBoolean(), any(), anyBoolean())).thenReturn(List.of(t));
+        return t;
+    }
+
+    @Test
+    void damageForEveryTwoBreakZoneForwardsScalesByGroupCount() {
+        Consumer<GameContext> fn = ActionResolver.parse(TONBERRY_DAMAGE_PER_TWO_BZ_FORWARDS, null);
+        assertNotNull(fn, "\"for every 2 Forwards in your Break Zone\" should parse");
+        GameContext ctx = mock(GameContext.class);
+        ForwardTarget t = stubChooseOneTarget(ctx);
+        when(ctx.countSelfBreakZoneCardsByType(true, false, false, false)).thenReturn(7);
+        fn.accept(ctx);
+        verify(ctx).damageTarget(t, 3000);
+    }
+
+    // The Break Zone count is type-filtered, so Backups/Monsters/Summons sharing the zone must not
+    // inflate it — Tonberry itself is a Monster and lands there before its own ability resolves.
+    @Test
+    void damageForEveryTwoBreakZoneForwardsCountsForwardsOnly() {
+        Consumer<GameContext> fn = ActionResolver.parse(TONBERRY_DAMAGE_PER_TWO_BZ_FORWARDS, null);
+        assertNotNull(fn);
+        GameContext ctx = mock(GameContext.class);
+        ForwardTarget t = stubChooseOneTarget(ctx);
+        when(ctx.countSelfBreakZoneCardsByType(anyBoolean(), anyBoolean(), anyBoolean(), anyBoolean()))
+                .thenReturn(0);
+        when(ctx.countSelfBreakZoneCardsByType(true, false, false, false)).thenReturn(4);
+        fn.accept(ctx);
+        verify(ctx).damageTarget(t, 2000);
+        verify(ctx, never()).countSelfBreakZoneCards(any(), any());
+    }
+
+    // Yuna 20-117L (Holy): "Deal it 3000 damage for each Summon in your Break Zone." — the same
+    // Break-Zone-by-type source, ungrouped, over the Summon type.
+    @Test
+    void damageForEachBreakZoneSummonScalesPerSummon() {
+        Consumer<GameContext> fn = ActionResolver.parse(
+                "Choose 1 Forward. Deal it 3000 damage for each Summon in your Break Zone.", null);
+        assertNotNull(fn, "\"for each Summon in your Break Zone\" should parse");
+        GameContext ctx = mock(GameContext.class);
+        ForwardTarget t = stubChooseOneTarget(ctx);
+        when(ctx.countSelfBreakZoneCardsByType(false, false, false, true)).thenReturn(3);
+        fn.accept(ctx);
+        verify(ctx).damageTarget(t, 9000);
+    }
+
+    // "Card Name X in your Break Zone" must still reach the name-filtered count, not the type one.
+    @Test
+    void damageForEachNamedBreakZoneCardStillUsesNameFilter() {
+        Consumer<GameContext> fn = ActionResolver.parse(
+                "Choose 1 Forward. Deal it 1000 damage for each Card Name Shiva in your Break Zone.", null);
+        assertNotNull(fn);
+        GameContext ctx = mock(GameContext.class);
+        ForwardTarget t = stubChooseOneTarget(ctx);
+        when(ctx.countSelfBreakZoneCards("Shiva", null)).thenReturn(2);
+        fn.accept(ctx);
+        verify(ctx).damageTarget(t, 2000);
+        verify(ctx, never()).countSelfBreakZoneCardsByType(anyBoolean(), anyBoolean(), anyBoolean(), anyBoolean());
+    }
+
+    // "for each" stays group size 1 — the widened pattern must not change the ungrouped form.
+    @Test
+    void damageForEachStillScalesOnePerCharacter() {
+        Consumer<GameContext> fn = ActionResolver.parse(
+                "Choose 1 Forward. Deal it 1000 damage for each Fire Character you control.", null);
+        assertNotNull(fn);
+        GameContext ctx = mock(GameContext.class);
+        ForwardTarget t = stubChooseWithFireCharacterCount(ctx, 3);
+        fn.accept(ctx);
+        verify(ctx).damageTarget(t, 3000);
+    }
+
     // "If the discarded card is of Wind Element, it also loses all its abilities until the end of the
     // turn." — the target-additive discard conditional tacked onto a "Choose 1 Forward" primary.
     private static final String DISCARD_COND_LOSE_ABILITIES =

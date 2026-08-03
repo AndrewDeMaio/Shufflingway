@@ -567,16 +567,19 @@ final class ActionResolverPatterns {
         "(?i)Each\\s+Forward\\s+deals\\s+damage\\s+equal\\s+to\\s+its\\s+power\\s+to\\s+the\\s+other[.!]?"
     );
     /**
-     * Matches "Deal it/them [base] damage [and [per] more damage] for each [source]".
+     * Matches "Deal it/them [base] damage [and [per] more damage] for each/every N [source]".
      * <ul>
      *   <li>{@code base}       — base damage per unit (or fixed base when {@code per} is set)</li>
      *   <li>{@code per}        — additional damage per each unit (the "and N more" form)</li>
+     *   <li>{@code group}      — group size from the "for every N" form; absent for "for each",
+     *       which is group size 1. The source count is divided by it, rounding down.</li>
      *   <li>{@code selfdmg}    — source is P1's damage-zone count</li>
      *   <li>{@code jobbname}   — bracket job: "[Job (name)] you control"</li>
      *   <li>{@code jobwname}   — written job: "Job Name you control"</li>
      *   <li>{@code chartype}   — type filter: "Forwards/Characters/etc. you control"</li>
      *   <li>{@code costfilter} — optional exact cost: "of cost N" appended to chartype</li>
      *   <li>{@code bzname}     — card name in P1's Break Zone</li>
+     *   <li>{@code bztype}     — card type in P1's Break Zone: "Forwards in your Break Zone"</li>
      *   <li>{@code opphand}    — source is the opponent's hand size</li>
      *   <li>{@code xpaid}      — source is the X CP value paid for this ability</li>
      * </ul>
@@ -584,13 +587,16 @@ final class ActionResolverPatterns {
     static final Pattern FOLLOWUP_DAMAGE_FOR_EACH = Pattern.compile(
         "(?i)deal\\s+(?:it|them)\\s+(?<base>\\d+)\\s+damage" +
         "(?:\\s+(?<op>and|minus)\\s+(?<per>\\d+)\\s+(?:more\\s+)?damage)?" +
-        "\\s+for\\s+each\\s+" +
+        "\\s+for\\s+(?:each|every\\s+(?<group>\\d+))\\s+" +
         "(?:" +
             "(?<selfdmg>point\\s+of\\s+damage\\s+you\\s+have\\s+received)" +
             "|\\[Job\\s+\\((?<jobbname>[^)]+)\\)\\]\\s+you\\s+control" +
             "|Job\\s+(?<jobwname>.+?)(?:\\s+(?<jobwtype>Forwards?|Backups?|Monsters?))?\\s+you\\s+control" +
             "|(?:Category\\s+(?<category>\\S+)\\s+)?(?:(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?(?<chartype>Forwards?|Characters?|Backups?|Monsters?)(?:\\s+of\\s+cost\\s+(?<costfilter>\\d+))?\\s+you\\s+control" +
             "|Card\\s+Name\\s+(?<bzname>\\S+(?:\\s+\\([^)]+\\))?)\\s+in\\s+your\\s+Break\\s+Zone" +
+            // Must follow the Card Name branch: a bare type noun would not match "Card Name X",
+            // but keeping the specific zone phrasing first mirrors how the field branches are ordered.
+            "|(?<bztype>Forwards?|Characters?|Backups?|Monsters?|Summons?)\\s+in\\s+your\\s+Break\\s+Zone" +
             "|(?<opphand>card\\s+in\\s+your\\s+opponent'?s?\\s+hand)" +
             "|(?<xpaid>CP\\s+paid\\s+as\\s+X)" +
             "|(?<crystal>《C》)\\s+you\\s+have" +
