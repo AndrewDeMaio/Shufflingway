@@ -118,7 +118,7 @@ public class HostLobbyDialog extends JDialog {
                 boolean hostGoesFirst = new Random().nextBoolean();
                 long    seed          = LobbyExchange.sendGameSetup(connection, hostGoesFirst);
 
-                setup = new MatchSetup(deckId, remote.serials(), remote.name(),
+                setup = new MatchSetup(deckId, remote.serials(), remote.name(), remote.username(),
                         seed, true, hostGoesFirst);
                 SwingUtilities.invokeLater(this::dispose);
             } catch (IOException | SQLException ex) {

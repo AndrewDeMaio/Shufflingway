@@ -1483,6 +1483,7 @@ public class MainWindow {
 	private void startGame(int deckId, int p2DeckId) {
 		matchSetup = null;              // a local game against the AI
 		resetForNewGame();
+		applyTurnPillNames();
 		loadCpuGameDecks(deckId, p2DeckId);
 	}
 
@@ -1502,7 +1503,20 @@ public class MainWindow {
 		remoteHandKept     = false;
 		desyncReported     = false;
 		resetForNewGame();
+		applyTurnPillNames();
 		loadMultiplayerDecks(setup);
+	}
+
+	/**
+	 * Labels the turn pill with the two usernames for a networked match, and with nothing at all
+	 * for a local game against the AI — the pill then falls back to "YOUR TURN" / "OPPONENT'S
+	 * TURN". Either name may be blank when that player set no username; the pill handles each
+	 * side independently, so a named player still gets named against an anonymous one.
+	 */
+	private void applyTurnPillNames() {
+		if (phaseTracker == null) return;
+		if (matchSetup == null) phaseTracker.setPlayerNames(null, null);
+		else phaseTracker.setPlayerNames(AppSettings.getUsername(), matchSetup.remoteUsername());
 	}
 
 	/** Tears down any in-progress game and clears every piece of per-game state. */

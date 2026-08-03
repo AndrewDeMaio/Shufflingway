@@ -47,11 +47,11 @@ class MultiplayerSetupTest {
     }
 
     private static MatchSetup hostSetup(long seed, boolean hostGoesFirst) {
-        return new MatchSetup(1, JOINER_SERIALS, "Joiner Deck", seed, true, hostGoesFirst);
+        return new MatchSetup(1, JOINER_SERIALS, "Joiner Deck", "Joiner", seed, true, hostGoesFirst);
     }
 
     private static MatchSetup joinerSetup(long seed, boolean hostGoesFirst) {
-        return new MatchSetup(2, HOST_SERIALS, "Host Deck", seed, false, hostGoesFirst);
+        return new MatchSetup(2, HOST_SERIALS, "Host Deck", "Host", seed, false, hostGoesFirst);
     }
 
     /**

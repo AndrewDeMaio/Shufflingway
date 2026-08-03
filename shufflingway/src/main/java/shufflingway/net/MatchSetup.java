@@ -13,12 +13,14 @@ import java.util.Random;
  * @param localDeckId    the local player's chosen deck, read from the local deck database
  * @param remoteSerials  the opponent's deck, one entry per copy, ordered by serial
  * @param remoteDeckName the opponent's deck name, for the game log
+ * @param remoteUsername the opponent's chosen username, or {@code ""} if they set none
  * @param seed           shared shuffle seed; see {@link #hostDeckRandom()}
  * @param localIsHost    true on the client that hosted the lobby
  * @param hostGoesFirst  whether the host takes the first turn (the host's coin flip)
  */
 public record MatchSetup(int localDeckId, List<String> remoteSerials, String remoteDeckName,
-                         long seed, boolean localIsHost, boolean hostGoesFirst) {
+                         String remoteUsername, long seed, boolean localIsHost,
+                         boolean hostGoesFirst) {
 
 	public MatchSetup {
 		remoteSerials = List.copyOf(remoteSerials);

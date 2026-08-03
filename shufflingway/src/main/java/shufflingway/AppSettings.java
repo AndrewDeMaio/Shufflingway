@@ -168,6 +168,38 @@ public final class AppSettings {
     }
 
     /**
+     * The maximum length of a multiplayer username, in characters. Kept short because the name
+     * is rendered into fixed-width furniture (the turn pill) that cannot grow to fit it.
+     */
+    public static final int USERNAME_MAX_LENGTH = 8;
+
+    /**
+     * Returns the multiplayer username, trimmed and clamped to {@link #USERNAME_MAX_LENGTH}, or
+     * {@code ""} if the user has not chosen one. Callers that display it supply their own fallback
+     * wording — "no name set" means different things for the local player and the opponent.
+     */
+    public static String getUsername() {
+        return clampUsername(props.getProperty("multiplayer.username", ""));
+    }
+
+    /**
+     * Sets the multiplayer username (call {@link #save()} to persist). The value is trimmed and
+     * truncated to {@link #USERNAME_MAX_LENGTH}; a blank value clears the setting.
+     */
+    public static void setUsername(String name) {
+        props.setProperty("multiplayer.username", clampUsername(name));
+    }
+
+    /**
+     * Normalises a username from any source — the settings file or the wire — by trimming it and
+     * truncating to {@link #USERNAME_MAX_LENGTH}. Returns {@code ""} for a null or blank name.
+     */
+    public static String clampUsername(String name) {
+        String v = name == null ? "" : name.trim();
+        return v.length() > USERNAME_MAX_LENGTH ? v.substring(0, USERNAME_MAX_LENGTH) : v;
+    }
+
+    /**
      * Master switch for the Debug section in the Preferences dialog. The Debug section (and any
      * individual debug toggles) are hidden unless {@code settings.ini} contains {@code debug=1}.
      * There is intentionally no setter — users opt in by editing the file by hand.

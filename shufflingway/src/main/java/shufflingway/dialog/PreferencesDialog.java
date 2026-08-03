@@ -27,11 +27,18 @@ import javax.swing.JFileChooser;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
+import javax.swing.JTextField;
 import javax.swing.KeyStroke;
 import javax.swing.border.EmptyBorder;
 import javax.swing.border.TitledBorder;
 import javax.swing.colorchooser.AbstractColorChooserPanel;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
 import javax.swing.filechooser.FileNameExtensionFilter;
+import javax.swing.text.AbstractDocument;
+import javax.swing.text.AttributeSet;
+import javax.swing.text.BadLocationException;
+import javax.swing.text.DocumentFilter;
 
 import shufflingway.AppSettings;
 import shufflingway.ElementColor;
@@ -288,6 +295,44 @@ public class PreferencesDialog extends JDialog {
 		counterSection.setAlignmentX(Component.LEFT_ALIGNMENT);
 		contentPanel.add(counterSection);
 
+		// ── Multiplayer ──────────────────────────────────────────────────────
+		contentPanel.add(javax.swing.Box.createVerticalStrut(8));
+
+		JPanel multiplayerPanel = new JPanel();
+		multiplayerPanel.setLayout(new BoxLayout(multiplayerPanel, BoxLayout.Y_AXIS));
+		multiplayerPanel.setBorder(BorderFactory.createTitledBorder(
+				BorderFactory.createEtchedBorder(), "Multiplayer",
+				TitledBorder.LEFT, TitledBorder.TOP));
+
+		JPanel usernameRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+		usernameRow.add(new JLabel("Username:"));
+		JTextField usernameField = new JTextField(AppSettings.USERNAME_MAX_LENGTH);
+		usernameField.setText(AppSettings.getUsername());
+		((AbstractDocument) usernameField.getDocument())
+				.setDocumentFilter(new LengthLimitFilter(AppSettings.USERNAME_MAX_LENGTH));
+		usernameField.getDocument().addDocumentListener(new DocumentListener() {
+			@Override public void insertUpdate(DocumentEvent e)  { persist(); }
+			@Override public void removeUpdate(DocumentEvent e)  { persist(); }
+			@Override public void changedUpdate(DocumentEvent e) { persist(); }
+			private void persist() {
+				AppSettings.setUsername(usernameField.getText());
+				AppSettings.save();
+			}
+		});
+		usernameRow.add(usernameField);
+		usernameRow.setAlignmentX(Component.LEFT_ALIGNMENT);
+		multiplayerPanel.add(usernameRow);
+
+		JLabel usernameHint = new JLabel("<html><font color='gray' size='2'>Up to "
+				+ AppSettings.USERNAME_MAX_LENGTH
+				+ " characters. Shown to your opponent; applies to the next match.</font></html>");
+		usernameHint.setBorder(new EmptyBorder(2, 4, 2, 4));
+		usernameHint.setAlignmentX(Component.LEFT_ALIGNMENT);
+		multiplayerPanel.add(usernameHint);
+
+		multiplayerPanel.setAlignmentX(Component.LEFT_ALIGNMENT);
+		contentPanel.add(multiplayerPanel);
+
 		// ── Debug ────────────────────────────────────────────────────────────
 		// Hidden unless `debug=1` is set manually in settings.ini.
 		if (AppSettings.isDebugEnabled()) {
@@ -368,6 +413,33 @@ public class PreferencesDialog extends JDialog {
 		row.add(combo);
 		row.setAlignmentX(Component.LEFT_ALIGNMENT);
 		return row;
+	}
+
+	/**
+	 * Caps a text field at {@code limit} characters. Rejects the overflowing part of an insert or
+	 * paste rather than the whole edit, so pasting a long name fills the field instead of being
+	 * silently dropped.
+	 */
+	private static final class LengthLimitFilter extends DocumentFilter {
+		private final int limit;
+
+		LengthLimitFilter(int limit) { this.limit = limit; }
+
+		@Override
+		public void insertString(FilterBypass fb, int offset, String text, AttributeSet attr)
+				throws BadLocationException {
+			replace(fb, offset, 0, text, attr);
+		}
+
+		@Override
+		public void replace(FilterBypass fb, int offset, int length, String text, AttributeSet attr)
+				throws BadLocationException {
+			String insert = text == null ? "" : text;
+			int room = limit - (fb.getDocument().getLength() - length);
+			if (room <= 0) return;
+			if (insert.length() > room) insert = insert.substring(0, room);
+			super.replace(fb, offset, length, insert, attr);
+		}
 	}
 
 	private static Color hexToColor(String hex) {

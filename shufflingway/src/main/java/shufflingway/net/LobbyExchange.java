@@ -10,6 +10,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import scraper.DeckDatabase;
+import shufflingway.AppSettings;
 
 /**
  * The post-handshake half of the lobby: swapping decks and agreeing on the shuffle seed and
@@ -31,7 +32,10 @@ public final class LobbyExchange {
 
 	private LobbyExchange() {}
 
-	/** Reads {@code deckId} out of the local deck database as a wire-ready serial list. */
+	/**
+	 * Reads {@code deckId} out of the local deck database as a wire-ready serial list, tagged with
+	 * the local player's username so the peer can label us on their board.
+	 */
 	public static GameAction deckListAction(int deckId, String deckName) throws SQLException {
 		List<String> serials;
 		try (DeckDatabase db = new DeckDatabase()) {
@@ -39,11 +43,17 @@ public final class LobbyExchange {
 		}
 		return GameAction.of(ActionType.DECK_LIST, new JSONObject()
 				.put("deckName", deckName == null ? "Opponent's deck" : deckName)
+				.put("username", AppSettings.getUsername())
 				.put("serials", new JSONArray(serials)));
 	}
 
-	/** The opponent's deck as received off the wire. */
-	public record RemoteDeck(String name, List<String> serials) {}
+	/**
+	 * The opponent's deck as received off the wire.
+	 *
+	 * @param username the peer's chosen name, trimmed and length-clamped on arrival; {@code ""}
+	 *                 when they set none, or when the peer is an older client that sends no name
+	 */
+	public record RemoteDeck(String name, String username, List<String> serials) {}
 
 	/**
 	 * Blocks for the peer's DECK_LIST.
@@ -65,7 +75,8 @@ public final class LobbyExchange {
 		}
 		List<String> serials = new ArrayList<>(arr.length());
 		for (int i = 0; i < arr.length(); i++) serials.add(arr.getString(i));
-		return new RemoteDeck(action.payload().optString("deckName", "Opponent's deck"), serials);
+		return new RemoteDeck(action.payload().optString("deckName", "Opponent's deck"),
+				AppSettings.clampUsername(action.payload().optString("username", "")), serials);
 	}
 
 	/** Host side: picks the seed and the coin flip, and tells the joiner. */

@@ -155,7 +155,7 @@ public class JoinLobbyDialog extends JDialog {
                 LobbyExchange.RemoteDeck remote = LobbyExchange.awaitDeckList(conn);
                 GameAction setupAction = LobbyExchange.awaitGameSetup(conn);
 
-                setup = new MatchSetup(deckId, remote.serials(), remote.name(),
+                setup = new MatchSetup(deckId, remote.serials(), remote.name(), remote.username(),
                         setupAction.payload().getLong("seed"),
                         false,
                         setupAction.payload().getBoolean("hostGoesFirst"));

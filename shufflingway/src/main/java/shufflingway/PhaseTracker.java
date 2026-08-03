@@ -12,6 +12,7 @@ import java.awt.RadialGradientPaint;
 import java.awt.RenderingHints;
 import java.awt.geom.Path2D;
 import java.awt.geom.Point2D;
+import java.util.Locale;
 
 import javax.swing.BorderFactory;
 import javax.swing.JPanel;
@@ -97,6 +98,10 @@ public class PhaseTracker extends JPanel {
     private boolean isMyTurn       = true;  // whose turn it is (controls the banner)
     private boolean hasPriority    = true;  // who currently holds priority (controls diamond color)
 
+    /** Turn-pill names for a networked match; blank falls back to "YOUR" / "OPPONENT'S". */
+    private String myName       = "";
+    private String opponentName = "";
+
     private static final int ANIM_MS = 240;
     private long  animStart = 0L;
     private float progress  = 1f;
@@ -178,6 +183,17 @@ public class PhaseTracker extends JPanel {
     public void setHasPriority(boolean hasPriority) {
         if (this.hasPriority == hasPriority) return;
         this.hasPriority = hasPriority;
+        repaint();
+    }
+
+    /**
+     * Names the two players in the turn pill, which otherwise reads "YOUR TURN" /
+     * "OPPONENT'S TURN". Either side may be {@code null} or blank to keep the generic wording —
+     * that is the single-player case, and also a networked opponent who set no username.
+     */
+    public void setPlayerNames(String mine, String opponent) {
+        myName       = mine     == null ? "" : mine.trim();
+        opponentName = opponent == null ? "" : opponent.trim();
         repaint();
     }
 
@@ -271,7 +287,7 @@ public class PhaseTracker extends JPanel {
         int stripY = PAD_TOP + fm.getAscent();
         g.drawString("TURN " + turn, PAD_X, stripY);
 
-        String pillText  = isMyTurn ? "YOUR TURN" : "OPPONENT'S TURN";
+        String pillText  = pillText();
         int    pillTextW = fm.stringWidth(pillText);
         int    pillPadX  = 5, pillPadY = 2;
         int    pillW     = pillTextW + pillPadX * 2;
@@ -282,6 +298,17 @@ public class PhaseTracker extends JPanel {
         g.fillRect(pillX, pillY, pillW, pillH);
         g.setColor(Color.WHITE);
         g.drawString(pillText, pillX + pillPadX, pillY + pillPadY + fm.getAscent());
+    }
+
+    /**
+     * The turn pill's caption: the named player's possessive when a name is set for whoever is
+     * taking the turn, otherwise the generic wording.
+     */
+    private String pillText() {
+        String name = isMyTurn ? myName : opponentName;
+        if (name.isEmpty()) return isMyTurn ? "YOUR TURN" : "OPPONENT'S TURN";
+        String upper = name.toUpperCase(Locale.ROOT);
+        return upper + (upper.endsWith("S") ? "' TURN" : "'S TURN");
     }
 
     /** Render a regular main-phase diamond + its label. */
