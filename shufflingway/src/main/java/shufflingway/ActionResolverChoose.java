@@ -27,6 +27,93 @@ final class ActionResolverChoose {
 	private ActionResolverChoose() {}
 
     /**
+     * Parses Mont Leonis 22-113L's Break Zone recursion — see
+     * {@link ActionResolverPatterns#CHOOSE_TWO_BZ_FWD_PLAY_IF_CONTROL}.
+     *
+     * <p>Two rulings shape this, both from the official FAQ:
+     * <ul>
+     *   <li>Unless <em>both</em> Forwards can be chosen the auto-ability is never placed on the
+     *       stack, so the effect checks the Break Zone up front and does nothing at all rather
+     *       than opening a dialog for a single target.</li>
+     *   <li>The control condition governs the whole tail: too few Backups means no play, no trait
+     *       grant, and no sacrifice either.</li>
+     * </ul>
+     *
+     * <p>Targets are still chosen before the condition is tested, which is the printed order —
+     * the condition sits in a later sentence than the choose.
+     */
+    static Consumer<GameContext> tryParseChooseTwoBzFwdPlayIfControl(String text, CardData source) {
+        Matcher m = CHOOSE_TWO_BZ_FWD_PLAY_IF_CONTROL.matcher(text.trim());
+        if (!m.find()) return null;
+
+        ControlCondition cc = CardData.parseControlCondition(m.group("cond").trim());
+        if (cc == null) return null;
+
+        CardData.Trait trait = switch (m.group("trait").toLowerCase(java.util.Locale.ROOT).replace(" ", "_")) {
+            case "haste"        -> CardData.Trait.HASTE;
+            case "brave"        -> CardData.Trait.BRAVE;
+            case "first_strike" -> CardData.Trait.FIRST_STRIKE;
+            default             -> null;
+        };
+        if (trait == null) return null;
+
+        String elem1 = m.group("elem1").toLowerCase(java.util.Locale.ROOT);
+        String elem2 = m.group("elem2").toLowerCase(java.util.Locale.ROOT);
+        int    cost1 = Integer.parseInt(m.group("cost1"));
+        int    cost2 = Integer.parseInt(m.group("cost2"));
+
+        int     sacCount = m.group("sacn") != null ? Integer.parseInt(m.group("sacn")) : 0;
+        String  sacType  = m.group("sactype") != null ? m.group("sactype") : null;
+        boolean sacFwd = sacType != null && sacType.matches("(?i)Forwards?|Characters?");
+        boolean sacBkp = sacType != null && sacType.matches("(?i)Backups?|Characters?");
+        boolean sacMon = sacType != null && sacType.matches("(?i)Monsters?|Characters?");
+
+        String label = "Choose 1 " + m.group("elem1") + " Forward of cost " + cost1 + " or less and 1 "
+                + m.group("elem2") + " Forward of cost " + cost2 + " or less in your Break Zone";
+
+        return ctx -> {
+            // The ability only goes on the stack when both Forwards are available, so a Break Zone
+            // that cannot supply both produces no dialog at all.
+            int narrowPool = ctx.countSelfBreakZoneMatching(true, false, false, false, elem1, cost1);
+            int widePool   = ctx.countSelfBreakZoneMatching(true, false, false, false, elem2, cost2);
+            // With cost1 <= cost2 on the same element the narrow pool is a subset of the wide one,
+            // so two distinct cards need the wide pool to hold at least two.
+            if (narrowPool == 0 || widePool < 2) {
+                ctx.logEntry(label + " — cannot choose both, ability does not trigger");
+                return;
+            }
+
+            ctx.logEntry(label);
+            List<ForwardTarget> chosen = ctx.selectTwoOwnBreakZoneForwards(elem1, cost1, cost2);
+            if (chosen.size() < 2) return;
+
+            if (!ctx.controlConditionMet(cc)) {
+                ctx.logEntry("Effect: control condition not met — no play, no "
+                        + trait.displayName() + ", and no Break Zone cost");
+                return;
+            }
+
+            // Play the higher Break Zone index first: playing removes the card, which would shift
+            // any lower index that had not been played yet.
+            List<ForwardTarget> order = new ArrayList<>(chosen);
+            order.sort((a, b) -> Integer.compare(b.idx(), a.idx()));
+            EnumSet<CardData.Trait> granted = EnumSet.of(trait);
+            for (ForwardTarget t : order) {
+                ForwardTarget landed = ctx.playTargetOntoField(t);
+                if (landed != null) ctx.boostTarget(landed, 0, granted);
+            }
+
+            if (sacCount > 0) {
+                List<ForwardTarget> sacrifice = selectTargets(ctx, sacCount, false, false, true,
+                        null, null, null, false, -1, null, -1, null,
+                        sacFwd, sacBkp, sacMon, null, null, null, null, false, null, false);
+                sortedByIdxDesc(sacrifice, true) .forEach(ctx::forceTargetToBreakZone);
+                sortedByIdxDesc(sacrifice, false).forEach(ctx::forceTargetToBreakZone);
+            }
+        };
+    }
+
+    /**
      * Parses "[if cond,] Select N of the M following actions. "a" "b" ...".
      * Returns an effect that asks the player to choose {@code select} of the quoted
      * sub-actions (via {@link GameContext#chooseActions}), then re-parses and applies

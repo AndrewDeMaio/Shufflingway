@@ -3645,6 +3645,150 @@ public class CardBehaviorTest {
     }
 
     // =========================================================================================
+    // Mont Leonis 22-113L: "When Mont Leonis enters the field, choose 1 Fire Forward of cost 3 or
+    // less in your Break Zone and 1 Fire Forward of cost 5 or less in your Break Zone. If you
+    // control 5 or more Fire Backups, play them onto the field. They gain Haste until the end of
+    // the turn. Then, put 1 Backup you control into the Break Zone."
+    //
+    // Two official FAQ rulings drive the shape:
+    //   - unless both Forwards can be chosen the ability is not placed on the stack;
+    //   - with too few Backups you "also do not put a Backup into the Break Zone" — the control
+    //     condition governs the sacrifice as well as the play.
+    // =========================================================================================
+
+    private static final String MONT_LEONIS_TEXT =
+            "Limit Break -- 3[[br]]   When Mont Leonis enters the field, choose 1 Fire Forward of cost 3 or less "
+            + "in your Break Zone and 1 Fire Forward of cost 5 or less in your Break Zone. If you control 5 or "
+            + "more Fire Backups, play them onto the field. They gain Haste until the end of the turn. "
+            + "Then, put 1 Backup you control into the Break Zone.";
+
+    private static CardData makeMontLeonis() {
+        return new CardData(null, "Mont Leonis", "Fire", 8, 9000, "Forward", true, 3, false, false,
+                Set.of(), 0, List.of(), null, List.of(),
+                List.of(), CardData.parseAutoAbilities(MONT_LEONIS_TEXT),
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                false, false, null, false, false, false, false, false, 1,
+                "Archlord", "FFBE", null, MONT_LEONIS_TEXT);
+    }
+
+    /** The card's enters-the-field ability text, as CardData extracts it. */
+    private static String montLeonisEffect() {
+        CardData mont = makeMontLeonis();
+        assertEquals(1, mont.autoAbilities().size(), "the ETB ability should be extracted");
+        return mont.autoAbilities().get(0).effectText();
+    }
+
+    private static final ForwardTarget BZ_LOW  = new ForwardTarget(true, 1, ForwardTarget.CardZone.BREAK_ZONE);
+    private static final ForwardTarget BZ_HIGH = new ForwardTarget(true, 4, ForwardTarget.CardZone.BREAK_ZONE);
+
+    /** A context with a Break Zone deep enough to supply both Forwards. */
+    private static GameContext montLeonisContext(boolean conditionMet) {
+        GameContext ctx = mock(GameContext.class);
+        when(ctx.isP1()).thenReturn(true);
+        // Unstubbed this returns an empty list, not null, which makes selectTargets treat the
+        // sacrifice as already-targeted and skip the selection entirely.
+        when(ctx.consumePreloadedTargets()).thenReturn(null);
+        when(ctx.countSelfBreakZoneMatching(true, false, false, false, "fire", 3)).thenReturn(1);
+        when(ctx.countSelfBreakZoneMatching(true, false, false, false, "fire", 5)).thenReturn(3);
+        when(ctx.selectTwoOwnBreakZoneForwards("fire", 3, 5)).thenReturn(List.of(BZ_LOW, BZ_HIGH));
+        when(ctx.controlConditionMet(any())).thenReturn(conditionMet);
+        return ctx;
+    }
+
+    @Test
+    void montLeonisPlaysBothForwardsWithHasteAndTakesTheBackupCost() {
+        Consumer<GameContext> fn = ActionResolver.parse(montLeonisEffect(), makeMontLeonis());
+        assertNotNull(fn, "Mont Leonis' enters-the-field ability should parse");
+
+        GameContext ctx = montLeonisContext(true);
+        ForwardTarget landedLow  = new ForwardTarget(true, 2, ForwardTarget.CardZone.FORWARD);
+        ForwardTarget landedHigh = new ForwardTarget(true, 3, ForwardTarget.CardZone.FORWARD);
+        when(ctx.playTargetOntoField(BZ_LOW)).thenReturn(landedLow);
+        when(ctx.playTargetOntoField(BZ_HIGH)).thenReturn(landedHigh);
+        ForwardTarget sacrificed = new ForwardTarget(true, 0, ForwardTarget.CardZone.BACKUP);
+        when(ctx.selectCharacters(anyInt(), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(),
+                anyInt(), any(), anyInt(), any(), anyBoolean(), anyBoolean(), anyBoolean(),
+                any(), any(), any(), any(), anyBoolean(), any(), anyBoolean()))
+                .thenReturn(List.of(sacrificed));
+
+        fn.accept(ctx);
+
+        verify(ctx).playTargetOntoField(BZ_LOW);
+        verify(ctx).playTargetOntoField(BZ_HIGH);
+        EnumSet<CardData.Trait> haste = EnumSet.of(CardData.Trait.HASTE);
+        verify(ctx).boostTarget(landedLow, 0, haste);
+        verify(ctx).boostTarget(landedHigh, 0, haste);
+        verify(ctx).forceTargetToBreakZone(sacrificed);
+    }
+
+    // Playing removes the card from the Break Zone, so the deeper index has to go first or the
+    // shallower target would slide out from under the second play.
+    @Test
+    void montLeonisPlaysTheDeeperBreakZoneIndexFirst() {
+        Consumer<GameContext> fn = ActionResolver.parse(montLeonisEffect(), makeMontLeonis());
+        GameContext ctx = montLeonisContext(true);
+        when(ctx.playTargetOntoField(any())).thenReturn(null);
+
+        fn.accept(ctx);
+
+        InOrder order = inOrder(ctx);
+        order.verify(ctx).playTargetOntoField(BZ_HIGH);
+        order.verify(ctx).playTargetOntoField(BZ_LOW);
+    }
+
+    // FAQ: "If you control 4 or less Backups, you also do not put a Backup into the Break Zone."
+    @Test
+    void montLeonisTakesNoBackupCostWhenTheControlConditionFails() {
+        Consumer<GameContext> fn = ActionResolver.parse(montLeonisEffect(), makeMontLeonis());
+        GameContext ctx = montLeonisContext(false);
+
+        fn.accept(ctx);
+
+        verify(ctx, never()).playTargetOntoField(any());
+        verify(ctx, never()).boostTarget(any(), anyInt(), any());
+        verify(ctx, never()).forceTargetToBreakZone(any());
+    }
+
+    // FAQ: unless both Forwards can be chosen the auto-ability is never placed on the stack, so
+    // the player is not asked to pick anything.
+    @Test
+    void montLeonisDoesNotTriggerWhenTheBreakZoneCannotSupplyBoth() {
+        Consumer<GameContext> fn = ActionResolver.parse(montLeonisEffect(), makeMontLeonis());
+        GameContext ctx = mock(GameContext.class);
+        when(ctx.countSelfBreakZoneMatching(true, false, false, false, "fire", 3)).thenReturn(1);
+        when(ctx.countSelfBreakZoneMatching(true, false, false, false, "fire", 5)).thenReturn(1);
+
+        fn.accept(ctx);
+
+        verify(ctx, never()).selectTwoOwnBreakZoneForwards(any(), anyInt(), anyInt());
+        verify(ctx, never()).controlConditionMet(any());
+        verify(ctx, never()).playTargetOntoField(any());
+        verify(ctx, never()).forceTargetToBreakZone(any());
+    }
+
+    @Test
+    void montLeonisDoesNotTriggerWithNoCheapEnoughForward() {
+        Consumer<GameContext> fn = ActionResolver.parse(montLeonisEffect(), makeMontLeonis());
+        GameContext ctx = mock(GameContext.class);
+        // Plenty of cost-5 Forwards, but nothing at cost 3 or less to fill the first slot.
+        when(ctx.countSelfBreakZoneMatching(true, false, false, false, "fire", 3)).thenReturn(0);
+        when(ctx.countSelfBreakZoneMatching(true, false, false, false, "fire", 5)).thenReturn(4);
+
+        fn.accept(ctx);
+
+        verify(ctx, never()).selectTwoOwnBreakZoneForwards(any(), anyInt(), anyInt());
+        verify(ctx, never()).playTargetOntoField(any());
+    }
+
+    @Test
+    void montLeonisReportsItsOwnPatternName() {
+        CardData mont = makeMontLeonis();
+        String effect = montLeonisEffect();
+        assertEquals("ChooseTwoBzFwdPlayIfControl", ActionResolver.matchedPatternName(effect, mont));
+        assertEquals("ChooseTwoBzFwdPlayIfControl", ActionResolver.fullDescription(effect, mont));
+    }
+
+    // =========================================================================================
     // Black Mage 27-097C: "When Black Mage enters the field, your opponent selects 1 Forward of
     // cost 2 or less they control. Put it into the Break Zone. If you control a Multi-Element
     // Forward, your opponent selects 1 Forward of cost 4 or less they control instead. Put it into

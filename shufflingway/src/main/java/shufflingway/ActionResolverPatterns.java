@@ -246,6 +246,31 @@ final class ActionResolverPatterns {
         "(?<followup>.+)"
     );
     /**
+     * Matches Mont Leonis 22-113L's Break Zone recursion:
+     * "Choose 1 [Elem] Forward of cost N or less in your Break Zone and 1 [Elem] Forward of cost M
+     * or less in your Break Zone. If you control [cond], play them onto the field. They gain
+     * [trait] until the end of the turn. Then, put K [type] you control into the Break Zone."
+     *
+     * <p>The control condition governs the whole tail — the play, the trait grant and the
+     * sacrifice alike (official FAQ: with too few Backups "you also do not put a Backup into the
+     * Break Zone"). The closing sacrifice sentence is optional so the pattern still describes the
+     * shape without it.
+     *
+     * <p>Deliberately narrow. Only one card in the corpus has this text, and the pieces it is
+     * built from ("choose … and …", a control gate, "play them onto the field") each already have
+     * their own parsers that would otherwise claim fragments of it.
+     */
+    static final Pattern CHOOSE_TWO_BZ_FWD_PLAY_IF_CONTROL = Pattern.compile(
+        "(?i)Choose\\s+1\\s+(?<elem1>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+Forward\\s+" +
+        "of\\s+cost\\s+(?<cost1>\\d+)\\s+or\\s+less\\s+in\\s+your\\s+Break\\s+Zone\\s+and\\s+" +
+        "1\\s+(?<elem2>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+Forward\\s+" +
+        "of\\s+cost\\s+(?<cost2>\\d+)\\s+or\\s+less\\s+in\\s+your\\s+Break\\s+Zone\\.\\s+" +
+        "If\\s+you\\s+control\\s+(?<cond>[^,]+),\\s+play\\s+them\\s+onto\\s+the\\s+field\\.\\s+" +
+        "They\\s+gain\\s+(?<trait>Haste|Brave|First\\s+Strike)\\s+until\\s+the\\s+end\\s+of\\s+the\\s+turn\\.?" +
+        "(?:\\s+Then,\\s+put\\s+(?<sacn>\\d+)\\s+(?<sactype>Forwards?|Backups?|Monsters?|Characters?)\\s+" +
+        "you\\s+control\\s+into\\s+the\\s+Break\\s+Zone\\.?)?"
+    );
+    /**
      * Matches "Choose up to N [type1], up to N [type2], and up to N [type3]. [followup]"
      * — up to one card of each of three different types.
      */

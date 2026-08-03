@@ -621,8 +621,23 @@ public interface GameContext {
      * Plays the target (chosen from a Break Zone) onto the field without
      * paying costs.  Forwards go to the forward zone, Backups to a backup
      * slot, Monsters to the monster zone.
+     *
+     * @return where the card landed, so a follow-on effect can act on it ("play them onto the
+     *         field. They gain Haste until the end of the turn."), or {@code null} if it could
+     *         not be played. Callers that only need the move may ignore it.
      */
-    void playTargetOntoField(ForwardTarget t);
+    ForwardTarget playTargetOntoField(ForwardTarget t);
+
+    /**
+     * Asks for two distinct Forwards of {@code element} in the ability user's own Break Zone, the
+     * first costing at most {@code maxCost1} and the second at most {@code maxCost2}. Returns both
+     * targets in choice order, or an empty list if either choice could not be made.
+     *
+     * <p>Its own method because the two picks must be distinct <em>cards</em>. A Break Zone
+     * routinely holds several copies of a name, and the general selection can only exclude by
+     * name — which would wrongly bar the first pick's twin from the second choice.
+     */
+    List<ForwardTarget> selectTwoOwnBreakZoneForwards(String element, int maxCost1, int maxCost2);
 
     /**
      * Like {@link #playTargetOntoField} but the card enters the field in a dulled state.
@@ -1232,6 +1247,28 @@ public interface GameContext {
         return isP1()
                 ? countP1BreakZoneCardsByType(inclForwards, inclBackups, inclMonsters, inclSummons)
                 : countP2BreakZoneCardsByType(inclForwards, inclBackups, inclMonsters, inclSummons);
+    }
+
+    /**
+     * Counts Break Zone cards matching a type, element and cost ceiling — what an effect needs to
+     * know before offering a Break Zone target ("1 Fire Forward of cost 3 or less in your Break
+     * Zone"), without opening the selection dialog to find out.
+     *
+     * @param elementFilter element the card must contain; {@code null} = any
+     * @param maxCost       highest cost accepted; {@code -1} = any
+     */
+    int countP1BreakZoneMatching(boolean inclForwards, boolean inclBackups, boolean inclMonsters,
+            boolean inclSummons, String elementFilter, int maxCost);
+
+    int countP2BreakZoneMatching(boolean inclForwards, boolean inclBackups, boolean inclMonsters,
+            boolean inclSummons, String elementFilter, int maxCost);
+
+    /** Counts the ability user's own matching Break Zone cards — routes on {@link #isP1()}. */
+    default int countSelfBreakZoneMatching(boolean inclForwards, boolean inclBackups,
+            boolean inclMonsters, boolean inclSummons, String elementFilter, int maxCost) {
+        return isP1()
+                ? countP1BreakZoneMatching(inclForwards, inclBackups, inclMonsters, inclSummons, elementFilter, maxCost)
+                : countP2BreakZoneMatching(inclForwards, inclBackups, inclMonsters, inclSummons, elementFilter, maxCost);
     }
 
     /** Counts cards owned by P1 that are removed from the game (P1's RFP zone), by name/job filter. */

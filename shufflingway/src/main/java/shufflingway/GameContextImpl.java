@@ -94,18 +94,24 @@ final class GameContextImpl implements GameContext {
 	}
 
 	/**
-	 * Counts the cards in {@code breakZone} whose printed type is one of the enabled ones.
-	 * Backs {@link GameContext#countP1BreakZoneCardsByType}.
+	 * Counts the cards in {@code breakZone} whose printed type is one of the enabled ones and that
+	 * pass the optional element and cost-ceiling filters. Backs both
+	 * {@link GameContext#countP1BreakZoneCardsByType} and {@link GameContext#countP1BreakZoneMatching}.
 	 */
 	private static int countBreakZoneByType(List<CardData> breakZone, boolean inclForwards,
-			boolean inclBackups, boolean inclMonsters, boolean inclSummons) {
+			boolean inclBackups, boolean inclMonsters, boolean inclSummons,
+			String elementFilter, int maxCost) {
 		int count = 0;
 		for (CardData c : breakZone) {
 			if (c == null) continue;
-			if ((inclForwards && c.isForward())
+			boolean typeOk = (inclForwards && c.isForward())
 					|| (inclBackups  && c.isBackup())
 					|| (inclMonsters && c.isMonster())
-					|| (inclSummons  && c.isSummon())) count++;
+					|| (inclSummons  && c.isSummon());
+			if (!typeOk) continue;
+			if (elementFilter != null && !c.containsElement(elementFilter)) continue;
+			if (maxCost != -1 && c.cost() > maxCost) continue;
+			count++;
 		}
 		return count;
 	}
@@ -3748,22 +3754,68 @@ final class GameContextImpl implements GameContext {
 				logEntry("Shuffled deck");
 			}
 
-			@Override public void playTargetOntoField(ForwardTarget t) {
+			@Override public ForwardTarget playTargetOntoField(ForwardTarget t) {
 				List<CardData> bz = t.isP1() ? mw.gameState.getP1BreakZone() : mw.gameState.getP2BreakZone();
-				if (t.idx() >= bz.size()) return;
+				if (t.idx() >= bz.size()) return null;
 				CardData card = bz.remove(t.idx());
 				String src = t.isP1() ? "Break Zone" : "opponent's Break Zone";
 				logEntry(card.name() + " played from " + src + " onto field");
+				ForwardTarget landed;
 				if (t.isP1()) {
-					if (card.isBackup())       mw.placeCardInFirstBackupSlot(card);
-					else if (card.isMonster()) mw.placeCardInMonsterZone(card);
-					else                       mw.placeCardInForwardZone(card);
+					if (card.isBackup())       { mw.placeCardInFirstBackupSlot(card); landed = ownBackupTargetOf(true, card); }
+					else if (card.isMonster()) { mw.placeCardInMonsterZone(card);     landed = new ForwardTarget(true, mw.p1MonsterCards.size() - 1, ForwardTarget.CardZone.MONSTER); }
+					else                       { mw.placeCardInForwardZone(card);     landed = new ForwardTarget(true, mw.p1ForwardCards.size() - 1, ForwardTarget.CardZone.FORWARD); }
 				} else {
-					if (card.isBackup())       mw.placeP2CardInFirstBackupSlot(card);
-					else if (card.isMonster()) mw.placeP2CardInMonsterZone(card);
-					else                       mw.placeP2CardInForwardZone(card);
+					if (card.isBackup())       { mw.placeP2CardInFirstBackupSlot(card); landed = ownBackupTargetOf(false, card); }
+					else if (card.isMonster()) { mw.placeP2CardInMonsterZone(card);     landed = new ForwardTarget(false, mw.p2MonsterCards.size() - 1, ForwardTarget.CardZone.MONSTER); }
+					else                       { mw.placeP2CardInForwardZone(card);     landed = new ForwardTarget(false, mw.p2ForwardCards.size() - 1, ForwardTarget.CardZone.FORWARD); }
 				}
 				if (t.isP1()) mw.refreshP1BreakLabel(); else mw.refreshP2BreakLabel();
+				return landed;
+			}
+
+			/** The backup slot {@code card} occupies after being placed, or {@code null} if not found. */
+			private ForwardTarget ownBackupTargetOf(boolean p1, CardData card) {
+				CardData[] slots = p1 ? mw.p1BackupCards : mw.p2BackupCards;
+				for (int i = 0; i < slots.length; i++)
+					if (slots[i] == card) return new ForwardTarget(p1, i, ForwardTarget.CardZone.BACKUP);
+				return null;
+			}
+
+			@Override public List<ForwardTarget> selectTwoOwnBreakZoneForwards(
+					String element, int maxCost1, int maxCost2) {
+				List<CardData> bz = isP1 ? mw.gameState.getP1BreakZone() : mw.gameState.getP2BreakZone();
+				ForwardTarget first = pickOwnBzForward(bz, element, maxCost1, -1);
+				if (first == null) return List.of();
+				ForwardTarget second = pickOwnBzForward(bz, element, maxCost2, first.idx());
+				if (second == null) return List.of();
+				return List.of(first, second);
+			}
+
+			/**
+			 * Picks one Break Zone Forward of {@code element} costing at most {@code maxCost},
+			 * skipping Break Zone index {@code excludeIdx} ({@code -1} to skip nothing).
+			 */
+			private ForwardTarget pickOwnBzForward(List<CardData> bz, String element, int maxCost, int excludeIdx) {
+				List<ForwardTarget> eligible = new ArrayList<>();
+				for (int i = 0; i < bz.size(); i++) {
+					if (i == excludeIdx) continue;
+					CardData card = bz.get(i);
+					if (!card.isForward()) continue;
+					if (element != null && !card.containsElement(element)) continue;
+					if (card.cost() > maxCost) continue;
+					eligible.add(new ForwardTarget(isP1, i, ForwardTarget.CardZone.BREAK_ZONE));
+				}
+				if (eligible.isEmpty()) return null;
+				if (!isP1) {
+					ForwardTarget pick = eligible.get(new java.util.Random().nextInt(eligible.size()));
+					logEntry("[AI] chose " + bz.get(pick.idx()).name());
+					return pick;
+				}
+				String title = "Choose 1 " + element + " Forward of cost " + maxCost
+						+ " or less in your Break Zone";
+				List<ForwardTarget> chosen = mw.showBreakZoneSelectDialog(eligible, bz, 1, false, title);
+				return chosen.isEmpty() ? null : chosen.get(0);
 			}
 
 			@Override public void playTargetOntoFieldDull(ForwardTarget t) {
@@ -6169,12 +6221,22 @@ final class GameContextImpl implements GameContext {
 
 			@Override public int countP1BreakZoneCardsByType(boolean inclForwards, boolean inclBackups,
 					boolean inclMonsters, boolean inclSummons) {
-				return countBreakZoneByType(mw.gameState.getP1BreakZone(), inclForwards, inclBackups, inclMonsters, inclSummons);
+				return countBreakZoneByType(mw.gameState.getP1BreakZone(), inclForwards, inclBackups, inclMonsters, inclSummons, null, -1);
 			}
 
 			@Override public int countP2BreakZoneCardsByType(boolean inclForwards, boolean inclBackups,
 					boolean inclMonsters, boolean inclSummons) {
-				return countBreakZoneByType(mw.gameState.getP2BreakZone(), inclForwards, inclBackups, inclMonsters, inclSummons);
+				return countBreakZoneByType(mw.gameState.getP2BreakZone(), inclForwards, inclBackups, inclMonsters, inclSummons, null, -1);
+			}
+
+			@Override public int countP1BreakZoneMatching(boolean inclForwards, boolean inclBackups,
+					boolean inclMonsters, boolean inclSummons, String elementFilter, int maxCost) {
+				return countBreakZoneByType(mw.gameState.getP1BreakZone(), inclForwards, inclBackups, inclMonsters, inclSummons, elementFilter, maxCost);
+			}
+
+			@Override public int countP2BreakZoneMatching(boolean inclForwards, boolean inclBackups,
+					boolean inclMonsters, boolean inclSummons, String elementFilter, int maxCost) {
+				return countBreakZoneByType(mw.gameState.getP2BreakZone(), inclForwards, inclBackups, inclMonsters, inclSummons, elementFilter, maxCost);
 			}
 
 			@Override public int countP1RfgCards(String cardNameFilter, String jobFilter) {

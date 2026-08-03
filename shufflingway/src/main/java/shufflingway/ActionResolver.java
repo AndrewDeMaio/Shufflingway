@@ -425,6 +425,12 @@ public class ActionResolver {
         result = tryParseRemoveAllCountersFromSelf(effectText, source);
         if (result != null) return result;
 
+        // Must precede tryParseChooseCharacter: that parser matches the choose half and treats the
+        // control gate as a detached secondary, which leaves both the play and the sacrifice
+        // unresolved (it described this card as "ChooseCharacter / ? + IfControl(…: ?)").
+        result = tryParseChooseTwoBzFwdPlayIfControl(effectText, source);
+        if (result != null) return result;
+
         // Must precede tryParseChooseCharacter: that parser matches the choose half alone and
         // returns, silently discarding the "At the end of your opponent's turn, …" clause.
         result = tryParseChooseThenEndOfOppTurnAction(effectText, source, xValue);
@@ -1338,6 +1344,10 @@ public class ActionResolver {
         if (tryParseChooseForwardsGainAbilityEot(effectText)          != null) return "ChooseForwardsGainAbilityEot";
         if (tryParseChooseForwardPlacePetrification(effectText)       != null) return "ChooseForwardPlacePetrification";
         if (tryParseRemoveAllCountersFromSelf(effectText, source)     != null) return "RemoveAllCountersFromSelf";
+        // Must precede ChooseCharacter, mirroring parse(): it claims the choose half and leaves
+        // the control-gated play and sacrifice undescribed.
+        if (tryParseChooseTwoBzFwdPlayIfControl(effectText, source) != null)
+            return "ChooseTwoBzFwdPlayIfControl";
         // Must precede ChooseCharacter: it matches the choose half alone and returns, dropping
         // the delayed action that the rest of the ability consists of.
         if (tryParseChooseThenEndOfOppTurnAction(effectText, source, 0) != null)
@@ -1863,6 +1873,10 @@ public class ActionResolver {
         if (tryParseChooseForwardsGainAbilityEot(effectText) != null) return "ChooseForwardsGainAbilityEot";
         if (tryParseChooseForwardPlacePetrification(effectText) != null) return "ChooseForwardPlacePetrification";
         if (tryParseRemoveAllCountersFromSelf(effectText, source) != null) return "RemoveAllCountersFromSelf";
+        // Mirrors parse() and matchedPatternName(): must precede the ChooseCharacter block, which
+        // describes this as "ChooseCharacter / ? + IfControl(…: ?)".
+        if (tryParseChooseTwoBzFwdPlayIfControl(effectText, source) != null)
+            return "ChooseTwoBzFwdPlayIfControl";
         Matcher chooseM = CHOOSE_CHARACTER_PATTERN.matcher(escapedEffectText);
         if (chooseM.find()) {
             String followup      = restorePeriodInName(chooseM.group("followup").trim(), source);
