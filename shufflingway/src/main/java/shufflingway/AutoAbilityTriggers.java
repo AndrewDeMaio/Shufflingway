@@ -171,10 +171,15 @@ final class AutoAbilityTriggers {
 			);
 
 	/**
-	 * Matches "put N [Job jobname / Card Name name / type] you control into the Break Zone.
+	 * Matches "put N [Job jobname / Card Name name / [Element] type] you control into the Break Zone.
 	 * When/If you do so, sub-effect."
+	 *
+	 * <p>The element qualifier is optional (Vincent: "put 1 Fire Backup you control into the Break
+	 * Zone"). It has to be part of this pattern rather than left to a later one: an unmatched
+	 * qualifier here falls through to {@link #FA_PUT_SELF_INTO_BZ_IF_DO_SO}, whose {@code .+?}
+	 * card-name group swallows the whole phrase and then rejects it for not naming the source.
 	 */
-	private static final Pattern FA_PUT_INTO_BZ_WHEN_DO_SO =
+	static final Pattern FA_PUT_INTO_BZ_WHEN_DO_SO =
 			Pattern.compile(
 				"(?i)^put\\s+(?<count>\\d+)\\s+" +
 				"(?:" +
@@ -182,6 +187,7 @@ final class AutoAbilityTriggers {
 				"|" +
 					"Card\\s+Name\\s+(?<cardname>\\S+(?:\\s+\\([^)]+\\))?)\\s+you\\s+control" +
 				"|" +
+					"(?:(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?" +
 					"(?<type>Forwards?|Backups?|Monsters?|Characters?)\\s+you\\s+control" +
 				")" +
 				"\\s+into\\s+the\\s+Break\\s+Zone[.,]?\\s+" +
@@ -195,7 +201,7 @@ final class AutoAbilityTriggers {
 	 * where [CardName] is the source card itself (self-break with conditional follow-up).
 	 * Distinct from {@link #FA_PUT_INTO_BZ_WHEN_DO_SO} which requires a numeric count and "you control".
 	 */
-	private static final Pattern FA_PUT_SELF_INTO_BZ_IF_DO_SO = Pattern.compile(
+	static final Pattern FA_PUT_SELF_INTO_BZ_IF_DO_SO = Pattern.compile(
 			"(?i)^put\\s+(?<cardname>.+?)\\s+into\\s+the\\s+Break\\s+Zone[.,]?\\s+" +
 			"(?:When|If)\\s+you\\s+do\\s+so[,.]?\\s+(?<sub>.+?)$",
 			Pattern.DOTALL
@@ -2133,10 +2139,12 @@ final class AutoAbilityTriggers {
 		String jobRaw        = m.group("job");
 		String cardNameRaw   = m.group("cardname");
 		String typeRaw       = m.group("type");
+		String elementRaw    = m.group("element");
 		String subEffect     = m.group("sub").trim();
 
 		String jobFilter      = jobRaw      != null ? jobRaw.trim()      : null;
 		String cardNameFilter = cardNameRaw != null ? cardNameRaw.trim() : null;
+		String elementFilter  = elementRaw  != null ? elementRaw.trim()  : null;
 		boolean inclForwards, inclBackups, inclMonsters;
 		if (jobFilter != null || cardNameFilter != null) {
 			inclForwards = inclBackups = inclMonsters = true;
@@ -2166,7 +2174,7 @@ final class AutoAbilityTriggers {
 		// Select the card(s) to put into the Break Zone
 		GameContext ctx = mw.buildGameContext(effectIsP1);
 		java.util.List<ForwardTarget> targets = ctx.selectCharacters(count, false,
-				false, true, null, null, -1, null, -1, null,
+				false, true, null, elementFilter, -1, null, -1, null,
 				inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, null, null, false, null, false);
 		if (targets.isEmpty()) {
 			mw.logEntry("[AutoAbility] " + source.name() + " — no eligible target to put into Break Zone, sub-effect skipped");

@@ -4469,6 +4469,52 @@ public class CardBehaviorTest {
                 "cost-qualified variant belongs to FA_OUTGOING_FLAT_BOOST_VS_COST");
     }
 
+    // Vincent 23-119R: "you may put 1 Fire Backup you control into the Break Zone. When you do so,
+    // choose 1 Forward opponent controls. Deal it 9000 damage." The element qualifier used to leave
+    // FA_PUT_INTO_BZ_WHEN_DO_SO unmatched, so dispatch fell through to the self-break pattern, whose
+    // card-name group swallowed "1 Fire Backup you control" and then rejected it for not naming Vincent.
+    private static final String VINCENT_PUT_FIRE_BACKUP =
+            "put 1 Fire Backup you control into the Break Zone. When you do so, "
+            + "choose 1 Forward opponent controls. Deal it 9000 damage.";
+
+    @Test
+    void putIntoBreakZoneAcceptsElementQualifiedType() {
+        java.util.regex.Matcher m = AutoAbilityTriggers.FA_PUT_INTO_BZ_WHEN_DO_SO.matcher(VINCENT_PUT_FIRE_BACKUP);
+        assertTrue(m.find(), "\"1 Fire Backup you control\" should match the put-into-Break-Zone pattern");
+        assertEquals("1", m.group("count"));
+        assertEquals("Fire", m.group("element"));
+        assertEquals("Backup", m.group("type"));
+        assertEquals("choose 1 Forward opponent controls. Deal it 9000 damage.", m.group("sub").trim());
+    }
+
+    // The bug was a misdispatch, so the ordering that produced it has to stay pinned: the generic
+    // pattern must claim this text before the self-break pattern is ever consulted.
+    @Test
+    void elementQualifiedPutIntoBreakZoneIsNotClaimedBySelfBreak() {
+        assertTrue(AutoAbilityTriggers.FA_PUT_INTO_BZ_WHEN_DO_SO.matcher(VINCENT_PUT_FIRE_BACKUP).find(),
+                "generic put-into-BZ is checked first and must match");
+        java.util.regex.Matcher selfM =
+                AutoAbilityTriggers.FA_PUT_SELF_INTO_BZ_IF_DO_SO.matcher(VINCENT_PUT_FIRE_BACKUP);
+        assertTrue(selfM.find(), "the self-break pattern still matches this shape — hence the ordering");
+        assertEquals("1 Fire Backup you control", selfM.group("cardname"),
+                "documents the wrong-handler capture the ordering exists to prevent");
+    }
+
+    @Test
+    void putIntoBreakZoneStillMatchesUnqualifiedAndJobForms() {
+        java.util.regex.Matcher plain = AutoAbilityTriggers.FA_PUT_INTO_BZ_WHEN_DO_SO.matcher(
+                "put 1 Character you control into the Break Zone. When you do so, draw 1 card.");
+        assertTrue(plain.find(), "the optional element must not break the unqualified form");
+        assertNull(plain.group("element"));
+        assertEquals("Character", plain.group("type"));
+
+        java.util.regex.Matcher job = AutoAbilityTriggers.FA_PUT_INTO_BZ_WHEN_DO_SO.matcher(
+                "put 1 Job Kingsglaive you control into the Break Zone. When you do so, draw 1 card.");
+        assertTrue(job.find(), "the Job branch must still win over the element-qualified type branch");
+        assertEquals("Kingsglaive", job.group("job").trim());
+        assertNull(job.group("type"));
+    }
+
     @Test
     void selfOutgoingBoostHelperRespectsNameLostAbilitiesAndThreshold() {
         MainWindow mw = new MainWindow();

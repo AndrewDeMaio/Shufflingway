@@ -73,6 +73,7 @@ import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
 import javax.swing.SwingWorker;
 import javax.swing.Timer;
+import javax.swing.ToolTipManager;
 import javax.swing.UIManager;
 import shufflingway.graphics.ShieldIcon;
 import javax.swing.border.BevelBorder;
@@ -8225,6 +8226,76 @@ public class MainWindow {
 		return sb.toString();
 	}
 
+	// Per-slot state the trait-tab tooltip needs at hover time. Held as client properties rather
+	// than fields because the slots live in four parallel label lists, and the values are replaced
+	// on every re-render.
+	private static final String SLOT_TIP_STATE   = "shufflingway.slotTipState";    // CardState
+	private static final String SLOT_TIP_TRAITS  = "shufflingway.slotTipTraits";   // List<CardData.Trait>
+	private static final String SLOT_TIP_BASE    = "shufflingway.slotTipBase";     // counter tooltip, or null
+	private static final String SLOT_TIP_WIRED   = "shufflingway.slotTipWired";    // listener installed?
+
+	/**
+	 * Points {@code slot}'s tooltip at whatever the pointer is over: a trait tab's meaning while
+	 * the pointer is on one, and the counter list otherwise. Call from a slot's render callback in
+	 * place of a bare {@code setToolTipText}.
+	 *
+	 * <p>The pointer-tracking listener is installed once per label and must go on <em>before</em>
+	 * the {@code setToolTipText} below. {@code setToolTipText} re-registers the label with
+	 * {@link ToolTipManager}, which appends its own listeners; installing ours first is what keeps
+	 * it ahead of the manager's in the dispatch order, so a tooltip that is already showing sees
+	 * the text for the tab the pointer just moved onto rather than the one it left.
+	 */
+	void applyFieldSlotTooltip(JLabel slot, CardState state,
+			List<CardData.Trait> traitTabs, Map<String, Integer> countersMap) {
+		String base = buildCounterTooltip(countersMap);
+		slot.putClientProperty(SLOT_TIP_STATE,  state);
+		slot.putClientProperty(SLOT_TIP_TRAITS, List.copyOf(traitTabs));
+		slot.putClientProperty(SLOT_TIP_BASE,   base);
+
+		if (!Boolean.TRUE.equals(slot.getClientProperty(SLOT_TIP_WIRED))) {
+			slot.putClientProperty(SLOT_TIP_WIRED, Boolean.TRUE);
+			MouseAdapter tracker = new MouseAdapter() {
+				@Override public void mouseMoved(MouseEvent e) {
+					slot.setToolTipText(fieldSlotTooltipAt(slot, e.getX(), e.getY()));
+				}
+				@Override public void mouseExited(MouseEvent e) {
+					slot.setToolTipText((String) slot.getClientProperty(SLOT_TIP_BASE));
+				}
+			};
+			slot.addMouseMotionListener(tracker);
+			slot.addMouseListener(tracker);
+		}
+		// Slots re-render constantly. Resolving against the pointer's current position keeps a
+		// tooltip the player is already reading from snapping back to the counter text mid-hover;
+		// getMousePosition is null whenever the pointer is elsewhere or the slot is not showing.
+		Point hover = slot.getMousePosition();
+		slot.setToolTipText(hover != null ? fieldSlotTooltipAt(slot, hover.x, hover.y) : base);
+	}
+
+	/**
+	 * The tooltip for {@code slot} at label point {@code (x, y)} — a trait tab's description when
+	 * the pointer is over one, otherwise the slot's counter tooltip (possibly {@code null}).
+	 *
+	 * <p>The point is shifted into the tab renderer's canvas space first: the icon is a square
+	 * canvas centred in the label, so hit-testing against raw label coordinates would be off by
+	 * the centring offset whenever the layout gives the slot more room than the card needs.
+	 */
+	String fieldSlotTooltipAt(JLabel slot, int x, int y) {
+		String base = (String) slot.getClientProperty(SLOT_TIP_BASE);
+		Icon icon = slot.getIcon();
+		@SuppressWarnings("unchecked")
+		List<CardData.Trait> traits = (List<CardData.Trait>) slot.getClientProperty(SLOT_TIP_TRAITS);
+		CardState state = (CardState) slot.getClientProperty(SLOT_TIP_STATE);
+		if (icon == null || traits == null || traits.isEmpty() || state == null) return base;
+
+		int cx = x - (slot.getWidth()  - icon.getIconWidth())  / 2;
+		int cy = y - (slot.getHeight() - icon.getIconHeight()) / 2;
+		CardData.Trait hit = TraitTab.traitAt(state, traits, cx, cy);
+		if (hit == null) return base;
+		return "<html><b>" + hit.displayName() + "</b><br>"
+				+ TraitTab.description(hit) + "</html>";
+	}
+
 	/** Reloads and re-renders a single P1 backup slot using its stored URL and state. */
 	void refreshP1BackupSlot(int idx) {
 		String url  = p1BackupUrls[idx];
@@ -10356,7 +10427,7 @@ public class MainWindow {
 				try {
 					ImageIcon icon = get();
 					if (icon != null) { slot.setIcon(icon); slot.setText(null); }
-					slot.setToolTipText(buildCounterTooltip(countersMap));
+					applyFieldSlotTooltip(slot, state, traitTabs, countersMap);
 				} catch (InterruptedException | ExecutionException ignored) {}
 			}
 		}.execute();
@@ -10451,7 +10522,7 @@ public class MainWindow {
 				try {
 					ImageIcon icon = get();
 					if (icon != null) { slot.setIcon(icon); slot.setText(null); }
-					slot.setToolTipText(buildCounterTooltip(countersMap));
+					applyFieldSlotTooltip(slot, state, traitTabs, countersMap);
 				} catch (InterruptedException | ExecutionException ignored) {}
 			}
 		}.execute();
@@ -10536,7 +10607,7 @@ public class MainWindow {
 				try {
 					ImageIcon icon = get();
 					if (icon != null) { slot.setIcon(icon); slot.setText(null); }
-					slot.setToolTipText(buildCounterTooltip(countersMap));
+					applyFieldSlotTooltip(slot, state, traitTabs, countersMap);
 				} catch (InterruptedException | ExecutionException ignored) {}
 			}
 		}.execute();
@@ -13134,7 +13205,7 @@ public class MainWindow {
 				try {
 					ImageIcon icon = get();
 					if (icon != null) { slot.setIcon(icon); slot.setText(null); }
-					slot.setToolTipText(buildCounterTooltip(countersMap));
+					applyFieldSlotTooltip(slot, state, traitTabs, countersMap);
 				} catch (InterruptedException | ExecutionException ignored) {}
 			}
 		}.execute();

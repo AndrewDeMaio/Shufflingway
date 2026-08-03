@@ -9,6 +9,7 @@ import java.awt.geom.Arc2D;
 import java.awt.geom.Ellipse2D;
 import java.awt.geom.Line2D;
 import java.awt.geom.Path2D;
+import java.awt.geom.Rectangle2D;
 import java.awt.geom.RoundRectangle2D;
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
@@ -89,19 +90,57 @@ public final class TraitTab {
     }
 
     /**
-     * Composites a tab onto {@code canvas} for each of {@code traits} that {@link #hasGlyph}
-     * can draw, in the given order, centred on the card edge. A no-op when none are drawable.
-     * Beyond {@link #MAX_TABS} drawable traits the last slot shows the overflow dots instead
-     * of a glyph, so the count of hidden traits is at least visible.
+     * What a trait's tab means, in the terms this engine actually implements — the tooltip text
+     * players get on hover. Returns {@code null} for traits without a tab.
      *
-     * @param canvas the square field-card canvas from {@link CardAnimation#renderBackupCard}
-     * @param state  the card's state, which decides where the free strip is
+     * <p>These describe Shufflingway's behaviour, not the comprehensive rules verbatim: First
+     * Strike here resolves inside one atomic combat step, with no priority window between the
+     * first blow and the return strike, so the text promises only what the engine delivers.
      */
-    public static void renderTraitTabs(BufferedImage canvas, CardState state,
-            List<CardData.Trait> traits) {
+    public static String description(CardData.Trait trait) {
+        if (trait == null) return null;
+        return switch (trait) {
+            case HASTE            -> "Can attack and use abilities that require dulling "
+                                   + "on the turn it enters the field.";
+            case BRAVE            -> "Does not dull when it attacks.";
+            case FIRST_STRIKE     -> "Deals its combat damage first. If that breaks the other "
+                                   + "Forward, this one takes no damage back.";
+            case CANNOT_BE_BROKEN -> "Survives damage that would break it. The damage stays on "
+                                   + "it and clears at end of turn.";
+            default               -> null;
+        };
+    }
+
+    /**
+     * One tab's placement on the card canvas: the trait it shows and the rectangle it occupies.
+     * A {@code null} trait is the overflow indicator rather than a glyph.
+     */
+    public record Tab(CardData.Trait trait, Rectangle2D.Float bounds) {}
+
+    /**
+     * The strip of canvas the tabs are clipped to. Only the half of a tab inside this strip is
+     * on screen — the rest sits behind the card art — so it is also the only part that should
+     * answer to the pointer.
+     */
+    public static Rectangle visibleStrip(CardState state) {
+        boolean dull = state == CardState.DULL;
+        int room     = dull ? CARD_H - CARD_W : CardAnimation.LEFT_GUTTER;
+        return dull ? new Rectangle(0, 0, CARD_H, room)
+                    : new Rectangle(0, 0, room, CARD_H);
+    }
+
+    /**
+     * Places a tab for each of {@code traits} that {@link #hasGlyph} can draw, in the given
+     * order, centred on the card edge. Beyond {@link #MAX_TABS} drawable traits the last slot
+     * becomes the overflow indicator, so the count of hidden traits is at least visible.
+     *
+     * <p>Shared by {@link #renderTraitTabs} and {@link #traitAt} so a tab's hit area cannot
+     * drift away from where it was drawn.
+     */
+    public static List<Tab> layout(CardState state, List<CardData.Trait> traits) {
         List<CardData.Trait> drawable = new ArrayList<>();
         for (CardData.Trait t : traits) if (hasGlyph(t)) drawable.add(t);
-        if (drawable.isEmpty()) return;
+        if (drawable.isEmpty()) return List.of();
 
         boolean overflow = drawable.size() > MAX_TABS;
         int slots  = Math.min(drawable.size(), MAX_TABS);
@@ -118,10 +157,7 @@ public final class TraitTab {
         // rotated art when dull (the same card edge, since a CW rotation sends left to top).
         int room       = dull ? CARD_H - CARD_W : CardAnimation.LEFT_GUTTER;
 
-        Graphics2D g = canvas.createGraphics();
-        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-        g.setClip(dull ? new Rectangle(0, 0, CARD_H, room)
-                       : new Rectangle(0, 0, room, CARD_H));
+        List<Tab> out = new ArrayList<>(slots);
         for (int i = 0; i < slots; i++) {
             // The rotation reverses the along-edge axis, so mirror the dull stack to keep each
             // trait at the same spot on the card.
@@ -131,7 +167,46 @@ public final class TraitTab {
             float y = dull ? room - tabLong / 2f : along;
             float w = dull ? tabShort : tabLong;
             float h = dull ? tabLong  : tabShort;
-            drawTab(g, i < glyphs ? drawable.get(i) : null, x, y, w, h, s, dull);
+            out.add(new Tab(i < glyphs ? drawable.get(i) : null, new Rectangle2D.Float(x, y, w, h)));
+        }
+        return out;
+    }
+
+    /**
+     * The trait whose on-screen tab covers the canvas point {@code (x, y)}, or {@code null} when
+     * the point is off every tab, on the clipped-away half of one, or on the overflow indicator.
+     *
+     * @param state the state the card was rendered in, which decides where the tabs sit
+     */
+    public static CardData.Trait traitAt(CardState state, List<CardData.Trait> traits, int x, int y) {
+        Rectangle strip = visibleStrip(state);
+        if (!strip.contains(x, y)) return null;
+        for (Tab tab : layout(state, traits))
+            if (tab.trait() != null && tab.bounds().contains(x, y)) return tab.trait();
+        return null;
+    }
+
+    /**
+     * Composites the {@link #layout} onto {@code canvas}, clipped to the {@link #visibleStrip}.
+     * A no-op when no trait is drawable.
+     *
+     * @param canvas the square field-card canvas from {@link CardAnimation#renderBackupCard}
+     * @param state  the card's state, which decides where the free strip is
+     */
+    public static void renderTraitTabs(BufferedImage canvas, CardState state,
+            List<CardData.Trait> traits) {
+        List<Tab> tabs = layout(state, traits);
+        if (tabs.isEmpty()) return;
+
+        float s      = CARD_W / (float) DESIGN_CARD_W;
+        boolean dull = state == CardState.DULL;
+
+        Graphics2D g = canvas.createGraphics();
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        g.setClip(visibleStrip(state));
+        for (Tab tab : tabs) {
+            Rectangle2D.Float b = tab.bounds();
+            drawTab(g, tab.trait(), b.x, b.y, b.width, b.height, s, dull);
         }
         g.dispose();
     }
