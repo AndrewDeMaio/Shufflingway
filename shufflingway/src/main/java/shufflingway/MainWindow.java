@@ -1296,7 +1296,8 @@ public class MainWindow {
 		skipAttackButton.addActionListener(e -> {
 			if (attackSubStep == 1
 					&& gameState.getCurrentPhase() == GameState.GamePhase.ATTACK
-					&& gameState.getCurrentPlayer() == GameState.Player.P1) {
+					&& gameState.getCurrentPlayer() == GameState.Player.P1
+					&& !p1AttackDeclarationInFlight()) {
 				onNextPhase();
 			}
 		});
@@ -10889,7 +10890,7 @@ public class MainWindow {
 		if (gameState.getCurrentPhase() != GameState.GamePhase.ATTACK) return;
 		if (p1InBlockDeclaration()) {
 			toggleP1BlockerSelection(idx);
-		} else {
+		} else if (!p1AttackDeclarationInFlight()) {
 			toggleAttackSelection(idx);
 		}
 	}
@@ -11350,6 +11351,18 @@ public class MainWindow {
 	}
 
 	/**
+	 * True from the moment P1 declares an attack until {@link #continueAttackPhase()} clears it.
+	 * Combat deliberately stays on Declare Attackers for the whole declaration priority round, so
+	 * {@code attackSubStep == 1} alone cannot tell a fresh Declare step from one whose attack is
+	 * already resolving — and P1 no longer holds priority once they have passed it to P2. Skipping
+	 * the phase or declaring a second attacker in that window would abandon the battle in progress,
+	 * leaving the attacker dulled for nothing.
+	 */
+	private boolean p1AttackDeclarationInFlight() {
+		return !p1DeclaredAttackers.isEmpty();
+	}
+
+	/**
 	 * Attack Preparation on P2's turn: P2 has taken its actions, so P1 holds priority before P2 may
 	 * declare an attacker. P1 passes with Next, which runs {@code onPassed}. The mirror of P1's own
 	 * Attack Preparation, where P1 clicks Next and P2 auto-passes.
@@ -11532,7 +11545,7 @@ public class MainWindow {
 	private void handleP1MonsterLeftClick(int idx) {
 		if (fieldTargetingActive) return;
 		if (p1InBlockDeclaration()) { toggleP1MonsterBlocker(idx); return; }
-		if (attackSubStep != 1 || p1IsHoldingCombatPriority()) return;
+		if (attackSubStep != 1 || p1IsHoldingCombatPriority() || p1AttackDeclarationInFlight()) return;
 		if (!isMonsterSelectableAsForward(idx)) return;
 		if (!p1AttackSelection.isEmpty()) {
 			logEntry("Deselect the Forward first before selecting a Monster attacker.");
@@ -11573,11 +11586,12 @@ public class MainWindow {
 		recordAttackDeclared(attacker);
 		autoAbilityTriggers.triggerAutoAbilitiesForAttack(attacker, true);
 
+		p1DeclaredAttackers.clear();
+		p1DeclaredAttackers.add(attacker);
+
 		// Combat stays on Declare Attackers until both players have passed on the declaration.
 		refreshAttackButton();
 
-		p1DeclaredAttackers.clear();
-		p1DeclaredAttackers.add(attacker);
 		combatPriorityRound(true, attacker.name() + " attacks! (Forward — " + attackerPower + ")", () -> {
 			if (survivingDeclaredAttackers(true).isEmpty()) { skipBlockStepNoAttackers(); return; }
 			setAttackSubStep(2);
@@ -11871,7 +11885,7 @@ public class MainWindow {
 	private void handleP1BackupLeftClick(int idx) {
 		if (fieldTargetingActive) return;
 		if (p1InBlockDeclaration()) { toggleP1BackupBlocker(idx); return; }
-		if (attackSubStep != 1 || p1IsHoldingCombatPriority()) return;
+		if (attackSubStep != 1 || p1IsHoldingCombatPriority() || p1AttackDeclarationInFlight()) return;
 		if (!isBackupSelectableAsForward(idx)) return;
 		if (!p1AttackSelection.isEmpty()) {
 			logEntry("Deselect the Forward first before selecting a Backup attacker.");
@@ -11908,11 +11922,12 @@ public class MainWindow {
 		recordAttackDeclared(attacker);
 		autoAbilityTriggers.triggerAutoAbilitiesForAttack(attacker, true);
 
+		p1DeclaredAttackers.clear();
+		p1DeclaredAttackers.add(attacker);
+
 		// Combat stays on Declare Attackers until both players have passed on the declaration.
 		refreshAttackButton();
 
-		p1DeclaredAttackers.clear();
-		p1DeclaredAttackers.add(attacker);
 		combatPriorityRound(true, attacker.name() + " attacks! (Forward — " + attackerPower + ")", () -> {
 			if (survivingDeclaredAttackers(true).isEmpty()) { skipBlockStepNoAttackers(); return; }
 			setAttackSubStep(2);
@@ -11974,13 +11989,15 @@ public class MainWindow {
 		} else {
 			int n = p1AttackSelection.size();
 			boolean hasAnyAttacker = n > 0 || p1MonsterAttackIdx >= 0 || p1BackupAttackIdx >= 0;
-			attackButton.setEnabled(inAttack && p1Turn && hasAnyAttacker && attackSubStep == 1);
+			attackButton.setEnabled(inAttack && p1Turn && hasAnyAttacker && attackSubStep == 1
+					&& !p1AttackDeclarationInFlight());
 			attackButton.setText(n > 1 ? "Party Attack" : "Attack");
 		}
 
 		if (skipAttackButton != null)
 			skipAttackButton.setEnabled(inAttack && p1Turn && attackSubStep == 1
-					&& !p1InBlockDeclaration() && !p1IsHoldingCombatPriority());
+					&& !p1InBlockDeclaration() && !p1IsHoldingCombatPriority()
+					&& !p1AttackDeclarationInFlight());
 	}
 
 	void executeP1Attack(List<Integer> selection) {
@@ -12002,13 +12019,13 @@ public class MainWindow {
 			autoAbilityTriggers.triggerAutoAbilitiesForAttack(
 					p1ForwardPrimedTop.get(idx) != null ? p1ForwardPrimedTop.get(idx) : p1ForwardCards.get(idx), true);
 
-		// Combat stays on Declare Attackers until both players have passed on the declaration.
-		refreshAttackButton();
-
 		// The button emptied p1AttackSelection when it fired the declaration; record who is actually
 		// attacking so attack-conditional abilities stay usable while P1 holds priority.
 		p1DeclaredAttackers.clear();
 		for (int idx : selection) p1DeclaredAttackers.add(effectiveP1Forward(idx));
+
+		// Combat stays on Declare Attackers until both players have passed on the declaration.
+		refreshAttackButton();
 
 		if (selection.size() == 1) {
 			int idx = selection.get(0);
