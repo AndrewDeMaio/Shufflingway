@@ -1,9 +1,5 @@
 package shufflingway.menu;
 
-import shufflingway.UpdateChecker;
-
-import scraper.AppPaths;
-
 import java.awt.BorderLayout;
 import java.awt.Desktop;
 import java.awt.FlowLayout;
@@ -29,6 +25,9 @@ import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
 import javax.swing.SwingWorker;
 import javax.swing.Timer;
+
+import scraper.AppPaths;
+import shufflingway.UpdateChecker;
 
 /**
  * Help menu for the main window.
@@ -230,7 +229,7 @@ public class HelpMenu extends JMenu {
     private static void openGuidePdf(int guide) {
         switch (guide) {
             case 0 -> openInBrowser("https://fftcg.cdn.sewest.net/2024-03/fftcgrulesheet-en.pdf");
-            case 1 -> openInBrowser("https://fftcg.cdn.sewest.net/2025-09/fftcg-comprules-v3.2.1.pdf");
+            case 1 -> openInBrowser("https://fftcg.cdn.sewest.net/2026-08/fftcg-comprules-v3.3.pdf");
             case 2 -> openInBrowser("https://fftcg.cdn.sewest.net/2024-03/lb-rule-explanation-eg.pdf");
             case 3 -> openInBrowser("https://fftcg.cdn.sewest.net/2024-11/priming-rules-explanation-en.pdf");
             case 4 -> openInBrowser("https://fftcg.cdn.sewest.net/2024-11/priming-supplementary-rules-en.pdf");
