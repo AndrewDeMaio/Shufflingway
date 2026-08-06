@@ -619,22 +619,30 @@ final class ActionResolverHand {
     static Consumer<GameContext> tryParseCastSummonFromHandFree(String text, int xValue) {
         Matcher m = CAST_SUMMON_FROM_HAND_FREE.matcher(text.trim());
         if (!m.find()) return null;
-        String costStr = m.group("cost");
+        String costStr    = m.group("cost");
+        String counterRaw = m.group("counterName");
         boolean returnToHand = m.group("returnToHand") != null;
+        // A counter-scaled ceiling arrives the same way a literal "X" does: the activation path
+        // reads the counter count off the source card into xValue before the effect resolves.
         final int maxCost;
-        if (costStr == null) {
+        if (counterRaw != null) {
+            maxCost = xValue;
+        } else if (costStr == null) {
             maxCost = -1;
         } else if (costStr.equalsIgnoreCase("X")) {
             maxCost = xValue;
         } else {
             maxCost = Integer.parseInt(costStr);
         }
+        final String counterName = counterRaw != null ? counterRaw.trim() : null;
         String excludeRaw = m.group("excludeelems");
         String excludeElements = excludeRaw != null
                 ? excludeRaw.trim().replaceAll("(?i)\\s+or\\s+", "|") : null;
         return ctx -> {
             String costDesc = maxCost < 0 ? "any cost" : "cost " + maxCost + " or less";
-            ctx.logEntry("Effect: Cast 1 Summon (" + costDesc + ") from hand for free"
+            ctx.logEntry("Effect: Cast 1 Summon (" + costDesc
+                    + (counterName != null ? ", from " + counterName + " Counters" : "")
+                    + ") from hand for free"
                     + (excludeElements != null ? " (not " + excludeElements + ")" : "")
                     + (returnToHand ? " (return to hand after use)" : ""));
             ctx.castSummonFromHandFree(maxCost, returnToHand, excludeElements);

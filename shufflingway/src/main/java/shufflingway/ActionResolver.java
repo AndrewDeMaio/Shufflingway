@@ -1707,6 +1707,9 @@ public class ActionResolver {
         if (FOLLOWUP_POWER_BOOST_UNTIL_FOR_EACH_COUNTER.matcher(followupText).find())      return "PowerBoostUntilForEachCounter";
         if (FOLLOWUP_POWER_BOOST_UNTIL_FOR_EACH_SELF_DMG.matcher(followupText).find())    return "PowerBoostUntilForEachSelfDmg";
         if (FOLLOWUP_POWER_BOOST_UNTIL.matcher(followupText).find())                      return "PowerBoostUntil";
+        // Must precede the two plain keyword grants, mirroring the parse order in
+        // ActionResolverChoose — "First Strike or Brave" is a choice, not a pair.
+        if (FOLLOWUP_KEYWORD_GRANT_CHOICE.matcher(followupText).find())               return "KeywordGrantChoice";
         if (FOLLOWUP_KEYWORD_GRANT.matcher(followupText).find())                      return "KeywordGrant";
         if (FOLLOWUP_KEYWORD_GRANT_UNTIL.matcher(followupText).find())               return "KeywordGrant";
         if (FOLLOWUP_POWER_REDUCE.matcher(followupText).find())                       return "PowerReduce";

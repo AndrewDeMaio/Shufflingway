@@ -2607,10 +2607,18 @@ final class ActionResolverPatterns {
      * Then, return that Summon to your hand after use instead of putting it in the Break Zone.]"
      * Groups: {@code cost} — numeric cost cap or "X"; {@code returnToHand} — present for the
      * "return to hand after use" variant.
+     *
+     * <p>The cost cap also takes the counter-scaled wording "of cost equal to or less than the
+     * number of [Name] Counters placed on [card]" (15-083L Rydia), captured as
+     * {@code counterName}. That ceiling is only known at activation, so it resolves through the
+     * same {@code xValue} channel as a literal "X" — {@code CardData.COST_AT_MOST_COUNTER_PATTERN}
+     * is what makes the ability read its counter count into {@code xValue}.
      */
     static final Pattern CAST_SUMMON_FROM_HAND_FREE = Pattern.compile(
         "(?i)Cast\\s+1\\s+Summon" +
-        "(?:\\s+of\\s+cost\\s+(?<cost>\\d+|X)\\s+or\\s+less)?" +
+        "(?:\\s+of\\s+cost\\s+(?:(?<cost>\\d+|X)\\s+or\\s+less" +
+            "|equal\\s+to\\s+or\\s+less\\s+than\\s+the\\s+number\\s+of\\s+" +
+            "(?<counterName>.+?)\\s+Counters?\\s+placed\\s+on\\s+[^,.]+?))?" +
         "(?:\\s+other\\s+than\\s+(?<excludeelems>(?:Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)" +
             "(?:\\s+or\\s+(?:Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark))*))?" +
         "\\s+from\\s+your\\s+hand\\s+without\\s+paying\\s+(?:its|the)\\s+cost[.!]?" +

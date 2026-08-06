@@ -658,10 +658,10 @@ final class GameContextImpl implements GameContext {
 					logEntry("[AI] chose: " + picked);
 					return picked;
 				}
-				return (String) javax.swing.JOptionPane.showInputDialog(
-						mw.frame, prompt, "Choose",
-						javax.swing.JOptionPane.PLAIN_MESSAGE,
-						null, choices, choices[0]);
+				// One button per option rather than a dropdown: these choice lists are short
+				// (a pair of traits), and a button apiece is one click instead of three.
+				int idx = mw.showEffectOptionDialog(prompt, "Choose", (Object[]) choices);
+				return idx >= 0 && idx < choices.length ? choices[idx] : null;
 			}
 
 			@Override public void shieldJobForwardsCannotBeChosen(String job, String excludeName,

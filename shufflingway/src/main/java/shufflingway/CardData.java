@@ -1266,8 +1266,10 @@ public record CardData(
             }
             Matcher csrM = COUNTER_SCALE_REF_PATTERN.matcher(effectRaw);
             Matcher cfeM = FOR_EACH_COUNTER_PLACED_ON_PATTERN.matcher(effectRaw);
+            Matcher camM = COST_AT_MOST_COUNTER_PATTERN.matcher(effectRaw);
             String counterScaleName = csrM.find() ? csrM.group("counterName").trim()
-                                    : cfeM.find() ? cfeM.group("counterName").trim() : null;
+                                    : cfeM.find() ? cfeM.group("counterName").trim()
+                                    : camM.find() ? camM.group("counterName").trim() : null;
             Matcher cminM = COUNTER_MINIMUM_RESTRICTION.matcher(effectRaw);
             int    minCounterRequired = 0;
             String minCounterType     = null;
@@ -1582,6 +1584,18 @@ public record CardData(
     /** Captures the counter type name from "for each [Name] Counter(s) placed on [card]". */
     static final Pattern FOR_EACH_COUNTER_PLACED_ON_PATTERN = Pattern.compile(
         "(?i)for\\s+each\\s+(?<counterName>.+?)\\s+Counters?\\s+placed\\s+on\\s+.+?(?:[,.]|\\s*$)"
+    );
+
+    /**
+     * Captures the counter type name from "of cost equal to or less than the number of [Name]
+     * Counter(s) placed on [card]" (15-083L Rydia), where the counter count is a cost ceiling
+     * rather than a repetition count.  Kept distinct from
+     * {@link #FOR_EACH_COUNTER_PLACED_ON_PATTERN} because the "number of X you control" wording
+     * this shares its opening with is far more common and must not be read as a counter scale.
+     */
+    static final Pattern COST_AT_MOST_COUNTER_PATTERN = Pattern.compile(
+        "(?i)cost\\s+equal\\s+to\\s+or\\s+less\\s+than\\s+the\\s+number\\s+of\\s+" +
+        "(?<counterName>.+?)\\s+Counters?\\s+placed\\s+on\\s+.+?(?:[,.]|\\s*$)"
     );
 
     /** Captures the condition from "You can only use this ability during your turn and if you control [X]". */

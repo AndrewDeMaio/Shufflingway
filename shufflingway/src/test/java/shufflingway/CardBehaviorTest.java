@@ -9560,6 +9560,184 @@ public class CardBehaviorTest {
 				"a filter subject is satisfied by any matching Forward, not just the watcher itself");
 	}
 
+	// =========================================================================================
+	// Rydia (15-083L): "《0》: Cast 1 Summon of cost equal to or less than the number of Growth
+	// Counters placed on Rydia from your hand without paying the cost. You can only use this
+	// ability once per turn."
+	//
+	// The cost ceiling is not a literal, and is not known until the ability is activated, so it
+	// travels the same xValue channel a printed "X" does: the ability carries counterScaleName
+	// "Growth", the activation path reads that counter off the source card into xValue, and the
+	// effect uses it as the cap. The counter itself comes from Rydia's own enters-field trigger,
+	// so the two abilities have to agree on the counter's name for either to be worth anything.
+	// =========================================================================================
+
+	private static final String RYDIA_TEXT =
+			"If Rydia is dealt damage by your opponent's Summons or abilities, the damage becomes 0 instead.[[br]]   "
+			+ "When Rydia or a Category IV Character enters your field, place 2 Growth Counters on Rydia.[[br]]   "
+			+ "《0》: Cast 1 Summon of cost equal to or less than the number of Growth Counters placed on Rydia "
+			+ "from your hand without paying the cost. You can only use this ability once per turn.";
+
+	private static CardData makeRydia() {
+		return new CardData(null, "Rydia", "Earth", 2, 5000, "Forward", false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				CardData.parseActionAbilities(RYDIA_TEXT), CardData.parseAutoAbilities(RYDIA_TEXT),
+				CardData.parseFieldAbilities(RYDIA_TEXT, "Forward"),
+				List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				"Summoner", "IV", null, RYDIA_TEXT);
+	}
+
+	@Test
+	void rydiaActionAbilityCostsNothingAndScalesOffGrowthCounters() {
+		List<ActionAbility> abilities = CardData.parseActionAbilities(RYDIA_TEXT);
+		assertEquals(1, abilities.size(), "only the 《0》 segment is an action ability");
+		ActionAbility ab = abilities.get(0);
+		assertTrue(ab.cpCost().isEmpty(), "《0》 is a real ability with no CP cost");
+		assertFalse(ab.requiresDull(), "no 《Dull》 in the cost");
+		assertTrue(ab.oncePerTurn(), "\"only once per turn\" gates re-activation");
+		assertFalse(ab.hasXCost(), "the ceiling comes from counters, not from CP paid as X");
+		assertEquals("Growth", ab.counterScaleName(),
+				"activation must read Growth Counters off Rydia into xValue");
+	}
+
+	@Test
+	void rydiaCastsASummonCappedAtItsGrowthCounterCount() {
+		CardData rydia = makeRydia();
+		String effect = rydia.actionAbilities().get(0).effectText();
+		assertEquals("CastSummonFromHandFree", ActionResolver.matchedPatternName(effect, rydia));
+
+		GameContext ctx = mock(GameContext.class);
+		ActionResolver.parse(effect, rydia, 4).accept(ctx);
+		verify(ctx).castSummonFromHandFree(4, false, null);
+
+		// With no counters placed the cap is 0, not "any cost" — the absent-cost-clause reading
+		// of this pattern would let Rydia cast anything in hand for free on turn one.
+		GameContext noCounters = mock(GameContext.class);
+		ActionResolver.parse(effect, rydia, 0).accept(noCounters);
+		verify(noCounters).castSummonFromHandFree(0, false, null);
+	}
+
+	@Test
+	void rydiaEnterFieldTriggerPlacesTheCountersHerActionAbilityReads() {
+		MainWindow mw = new MainWindow();
+		CardData rydia = makeRydia();
+		placeP1Forward(mw, rydia);
+		assertEquals(2, mw.gameState.getCounters(rydia, "Growth"),
+				"Rydia's own entry satisfies the first half of the trigger's subject");
+
+		placeP1Forward(mw, makeCategoryForward("Edge", "Earth", "IV"));
+		assertEquals(4, mw.gameState.getCounters(rydia, "Growth"),
+				"any Category IV Character entering adds 2 more");
+
+		placeP1Forward(mw, makeCategoryForward("Vaan", "Wind", "XII"));
+		assertEquals(4, mw.gameState.getCounters(rydia, "Growth"),
+				"a Character of another Category does not feed Growth Counters");
+
+		assertEquals("Growth", rydia.actionAbilities().get(0).counterScaleName(),
+				"the action ability reads the counter name this trigger writes");
+	}
+
+	// =========================================================================================
+	// Mog (XIII-2) (5-153S): "《Dull》: Choose 1 Card Name Serah or Card Name Noel. It gains
+	// First Strike or Brave until the end of the turn."
+	//
+	// The only card in the corpus that offers a *choice* of trait rather than granting a fixed
+	// set, so the followup has to be read as a disjunction — "First Strike and Brave" would be
+	// two grants, "First Strike or Brave" is one grant the player picks. The pick happens after
+	// the target is chosen, which is the printed order and also the useful one: which trait helps
+	// depends on which Character got picked.
+	// =========================================================================================
+
+	private static final String MOG_XIII2_TEXT =
+			"《Dull》: Choose 1 Card Name Serah or Card Name Noel. "
+			+ "It gains First Strike or Brave until the end of the turn.";
+
+	private static CardData makeMogXiii2() {
+		return new CardData(null, "Mog (XIII-2)", "Ice", 2, 0, "Backup", false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				CardData.parseActionAbilities(MOG_XIII2_TEXT), List.of(), List.of(),
+				List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				"Moogle", "XIII", null, MOG_XIII2_TEXT);
+	}
+
+	/** Stubs the target picker to return {@code chosen} and the option prompt to answer {@code pick}. */
+	private static GameContext mogContext(ForwardTarget chosen, String pick) {
+		GameContext ctx = mock(GameContext.class);
+		// Unstubbed this returns an empty list, which selectTargets treats as a real preloaded
+		// selection and the whole effect silently no-ops.
+		when(ctx.consumePreloadedTargets()).thenReturn(null);
+		when(ctx.selectCharacters(anyInt(), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(),
+				anyInt(), any(), anyInt(), any(), anyBoolean(), anyBoolean(), anyBoolean(),
+				any(), any(), any(), any(), anyBoolean(), any(), anyBoolean()))
+			.thenReturn(new ArrayList<>(List.of(chosen)));
+		when(ctx.selectOption(any(), any())).thenReturn(pick);
+		return ctx;
+	}
+
+	@Test
+	void mogTraitChoiceAbilityIsFullyDescribed() {
+		CardData mog = makeMogXiii2();
+		List<ActionAbility> abilities = mog.actionAbilities();
+		assertEquals(1, abilities.size());
+		assertTrue(abilities.get(0).requiresDull(), "《Dull》 is the whole cost");
+
+		String effect = abilities.get(0).effectText();
+		// The description chain used to report "ChooseCharacter / ?" — the choice followup
+		// resolved but had no name, so the ability read as only partially understood.
+		assertEquals("ChooseCharacter / KeywordGrantChoice",
+				ActionResolver.fullDescription(effect, mog));
+	}
+
+	@Test
+	void mogOffersOnlySerahAndNoelThenAsksWhichTrait() {
+		CardData mog = makeMogXiii2();
+		ForwardTarget serah = new ForwardTarget(true, 0, ForwardTarget.CardZone.FORWARD);
+		GameContext ctx = mogContext(serah, "Brave");
+
+		ActionResolver.parse(mog.actionAbilities().get(0).effectText(), mog).accept(ctx);
+
+		// Eligibility is a name filter over both printed names, not "any Forward".
+		verify(ctx).selectCharacters(eq(1), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(),
+				anyInt(), any(), anyInt(), any(), anyBoolean(), anyBoolean(), anyBoolean(),
+				any(), eq("Serah|Noel"), any(), any(), anyBoolean(), any(), anyBoolean());
+
+		ArgumentCaptor<String[]> choices = ArgumentCaptor.forClass(String[].class);
+		verify(ctx).selectOption(any(), choices.capture());
+		assertArrayEquals(new String[]{"First Strike", "Brave"}, choices.getValue(),
+				"both traits are offered, each as its own option");
+
+		// The target is settled before the trait is asked for — the printed order.
+		InOrder order = inOrder(ctx);
+		order.verify(ctx).selectCharacters(anyInt(), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(),
+				anyInt(), any(), anyInt(), any(), anyBoolean(), anyBoolean(), anyBoolean(),
+				any(), any(), any(), any(), anyBoolean(), any(), anyBoolean());
+		order.verify(ctx).selectOption(any(), any());
+		order.verify(ctx).boostTarget(eq(serah), eq(0), any());
+	}
+
+	@Test
+	void mogGrantsWhicheverTraitWasPicked() {
+		CardData mog = makeMogXiii2();
+		String effect = mog.actionAbilities().get(0).effectText();
+		ForwardTarget noel = new ForwardTarget(true, 1, ForwardTarget.CardZone.FORWARD);
+
+		GameContext brave = mogContext(noel, "Brave");
+		ActionResolver.parse(effect, mog).accept(brave);
+		verify(brave).boostTarget(noel, 0, EnumSet.of(CardData.Trait.BRAVE));
+
+		GameContext firstStrike = mogContext(noel, "First Strike");
+		ActionResolver.parse(effect, mog).accept(firstStrike);
+		verify(firstStrike).boostTarget(noel, 0, EnumSet.of(CardData.Trait.FIRST_STRIKE));
+
+		// Dismissing the picker still resolves the grant — the ability is already on the stack,
+		// and the first printed trait is the standing default.
+		GameContext dismissed = mogContext(noel, null);
+		ActionResolver.parse(effect, mog).accept(dismissed);
+		verify(dismissed).boostTarget(noel, 0, EnumSet.of(CardData.Trait.FIRST_STRIKE));
+	}
+
 	/** A bare hand card carrying only the two fields the reveal-hand filters read. */
 	private static CardData handCard(String type, int cost) {
 		return new CardData(null, "X", "Fire", cost, 7000, type, false, 0, false, false,
