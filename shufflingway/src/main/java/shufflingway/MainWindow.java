@@ -7124,8 +7124,9 @@ public class MainWindow {
 	 * and/or hand cards to discard (2 CP each) to cover the cost of {@code card}.
 	 *
 	 * Constraints enforced:
-	 *   - Backups may not cause total CP to exceed the cost (no overpay via backups).
-	 *   - Discards may overpay by 1 per element (total <= cost + elems.length - 1 after adding).
+	 *   - A player may produce any amount of CP when paying a cost, so neither backups nor
+	 *     discards are capped at the cost; CP produced beyond it is simply wasted.
+	 *   - A multi-element card still needs at least 1 CP of each of its elements.
 	 */
 	/**
 	 * Opens the standard payment dialog for a card being cast from P1's Break Zone (via
@@ -12508,11 +12509,9 @@ public class MainWindow {
 				else extraCp += 2;
 			}
 			int total      = cpByElem.values().stream().mapToInt(Integer::intValue).sum() + extraCp;
-			int unsatisfied = (int) java.util.stream.IntStream.range(0, elems.length)
-					.filter(ei -> cpByElem.getOrDefault(elems[ei], 0) < costByElem.get(elems[ei])).count();
-			int maxAllowed  = totalCost + elems.length + (totalCost % 2);
-			boolean canAddBackup = total < totalCost;
-			canAddDiscard[0] = (total + 2 <= maxAllowed) && (total < totalCost || unsatisfied > 0);
+			// Any amount of CP may be produced when paying a cost; excess beyond the cost is wasted.
+			boolean canAddBackup = true;
+			canAddDiscard[0] = true;
 			boolean satisfied = cpByElem.entrySet().stream()
 					.allMatch(en -> en.getValue() >= costByElem.getOrDefault(en.getKey(), 0));
 			confirmBtn.setEnabled(total >= totalCost && satisfied);
@@ -12563,8 +12562,7 @@ public class MainWindow {
 				final String url = p1BackupUrls[slot];
 				lbl.addMouseListener(new MouseAdapter() {
 					@Override public void mousePressed(MouseEvent ev) {
-						int tot = bankCpByElem.values().stream().mapToInt(Integer::intValue).sum() + selectedBackups.size() + selectedDiscards.size() * 2;
-						if (selectedBackups.remove(Integer.valueOf(slot))) { /* deselect */ } else if (tot < totalCost) selectedBackups.add(slot);
+						if (!selectedBackups.remove(Integer.valueOf(slot))) selectedBackups.add(slot);
 						updateAll.run();
 					}
 					@Override public void mouseEntered(MouseEvent ev) { if (lbl.getIcon() != null) showZoomAt(url); }

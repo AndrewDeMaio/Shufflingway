@@ -2821,13 +2821,13 @@ final class AutoAbilityTriggers {
 		Runnable updateAll = () -> {
 			int total  = selectedBackups.size() + selectedDiscards.size() * 2;
 			if (minCp == maxCp) {
-				// Fixed cost: mirrors showActionAbilityPaymentDialog overpayment rules.
-				// Allow up to 1 extra CP if cost is odd (a 2-CP discard can't be split).
-				int maxAllowed = maxCp + (maxCp % 2);
-				canAddBackup[0]  = total < maxCp;
-				canAddDiscard[0] = total < maxCp && total + 2 <= maxAllowed;
+				// Fixed cost: any amount of CP may be produced when paying it, and CP produced
+				// beyond the cost is wasted rather than counted as paid (see the Confirm handler).
+				canAddBackup[0]  = true;
+				canAddDiscard[0] = true;
 			} else {
-				// Variable X cost: strict cap at maxCp.
+				// Variable X cost: maxCp is the effect's own "up to N" bound on X, not the
+				// overpayment rule, so it still caps what can be produced here.
 				boolean atMax = maxCp != Integer.MAX_VALUE && total >= maxCp;
 				canAddBackup[0]  = !atMax;
 				canAddDiscard[0] = maxCp == Integer.MAX_VALUE || total + 2 <= maxCp;
@@ -2835,7 +2835,7 @@ final class AutoAbilityTriggers {
 			confirmBtn.setEnabled(total >= minCp);
 
 			String cap = maxCp == Integer.MAX_VALUE ? "∞" : String.valueOf(maxCp);
-			cpLabel.setText("CP paid: " + total + " / " + cap
+			cpLabel.setText("CP produced: " + total + " / " + cap
 					+ (minCp > 0 ? "  (min " + minCp + ")" : ""));
 
 			for (int i = 0; i < backupLbls.size(); i++) {
@@ -2959,8 +2959,12 @@ final class AutoAbilityTriggers {
 			List<Integer> sortedDiscards = new ArrayList<>(selectedDiscards);
 			sortedDiscards.sort(Collections.reverseOrder());
 			for (int di : sortedDiscards) mw.playerBreakFromHand(isP1, di);
-			int paid = selectedBackups.size() + selectedDiscards.size() * 2;
-			mw.logEntry("[AutoAbility] " + cardName + " — paid " + paid + " CP");
+			// Producing CP beyond the cost is legal but the surplus is not part of the payment:
+			// clamp so an odd fixed cost paid with a 2-CP discard can't inflate X.
+			int produced = selectedBackups.size() + selectedDiscards.size() * 2;
+			int paid     = maxCp == Integer.MAX_VALUE ? produced : Math.min(produced, maxCp);
+			mw.logEntry("[AutoAbility] " + cardName + " — paid " + paid + " CP"
+					+ (produced > paid ? " (" + (produced - paid) + " excess CP wasted)" : ""));
 			mw.refreshP1HandLabel();
 			mw.refreshP1BreakLabel();
 			onConfirm.accept(paid);

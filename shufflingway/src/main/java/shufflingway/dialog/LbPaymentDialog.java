@@ -132,10 +132,9 @@ public class LbPaymentDialog {
                     extraCp += 2;
             }
             int total       = cpByElem.values().stream().mapToInt(Integer::intValue).sum() + extraCp;
-            int unsatisfied = isLD ? 0 : (int) cpByElem.values().stream().filter(v -> v < 1).count();
-            boolean canAddBkp = total < cost;
-            canAddDiscard[0]  = isLD ? total < cost
-                    : (total < cost) || (extraCp == 0 && unsatisfied > 0 && total + 2 <= cost + 2 * unsatisfied);
+            // Any amount of CP may be produced when paying a cost; excess beyond the cost is wasted.
+            boolean canAddBkp = true;
+            canAddDiscard[0]  = true;
             boolean allElems  = isLD || cpByElem.values().stream().allMatch(v -> v >= 1);
             confirmBtn.setEnabled(total >= cost && allElems);
             if (elems.length == 1) {
@@ -179,9 +178,7 @@ public class LbPaymentDialog {
                 final String url = backupUrls[slot];
                 lbl.addMouseListener(new MouseAdapter() {
                     @Override public void mousePressed(MouseEvent e) {
-                        int tot = bankCpByElem.values().stream().mapToInt(Integer::intValue).sum()
-                                + selectedBackups.size() + selectedDiscards.size() * 2;
-                        if (!selectedBackups.remove(Integer.valueOf(slot)) && tot < cost)
+                        if (!selectedBackups.remove(Integer.valueOf(slot)))
                             selectedBackups.add(slot);
                         updateAll.run();
                     }

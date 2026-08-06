@@ -148,10 +148,9 @@ public class WarpPaymentDialog {
                 else extraCp += 2;
             }
             int total       = cpByElem.values().stream().mapToInt(Integer::intValue).sum() + extraCp;
-            int unsatisfied = (int) java.util.stream.IntStream.range(0, elems.length)
-                    .filter(ei -> cpByElem.getOrDefault(elems[ei], 0) < costByElem.get(elems[ei])).count();
-            boolean canAddBkp = total < totalCost;
-            canAddDiscard[0]  = (total < totalCost) || (unsatisfied > 0 && total + 2 <= totalCost + 2 * unsatisfied);
+            // Any amount of CP may be produced when paying a cost; excess beyond the cost is wasted.
+            boolean canAddBkp = true;
+            canAddDiscard[0]  = true;
             boolean satisfied = cpByElem.entrySet().stream()
                     .allMatch(e -> e.getValue() >= costByElem.getOrDefault(e.getKey(), 0));
             confirmBtn.setEnabled(total >= totalCost && satisfied);
@@ -205,9 +204,6 @@ public class WarpPaymentDialog {
                             updateAll.run();
                             return;
                         }
-                        int tot = bankCpByElem.values().stream().mapToInt(Integer::intValue).sum()
-                                + selectedBackups.size() + selectedDiscards.size() * 2;
-                        if (tot >= totalCost) return;
                         CardData bkp = backupCards[slot];
                         String anyElemCat = bkp.backupCpAnyElementCategory();
                         boolean isAnyElem = bkp.backupCpAnyElement()

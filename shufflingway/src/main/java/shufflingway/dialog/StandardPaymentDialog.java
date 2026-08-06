@@ -206,11 +206,10 @@ public class StandardPaymentDialog {
                     extraCp += 2;
             }
             int total          = cpByElem.values().stream().mapToInt(Integer::intValue).sum() + extraCp;
-            int unsatisfied    = isLD ? 0 : (int) cpByElem.values().stream().filter(v -> v < 1).count();
-            boolean canAddBkp  = total < cost;
-            canAddDiscard[0]   = !backupCpOnly && (isLD
-                    ? total < cost
-                    : (total < cost) || (extraCp == 0 && unsatisfied > 0 && total + 2 <= cost + 2 * unsatisfied));
+            // A player may produce any amount of CP when paying a cost; only the per-element
+            // minimums below constrain the payment.  CP produced beyond the cost is wasted.
+            boolean canAddBkp  = true;
+            canAddDiscard[0]   = !backupCpOnly;
             boolean allElems   = isLD || cpByElem.values().stream().allMatch(v -> v >= 1);
             confirmBtn.setEnabled(total >= cost && allElems);
             if (elems.length == 1) {
@@ -259,9 +258,6 @@ public class StandardPaymentDialog {
                             updateAll.run();
                             return;
                         }
-                        int tot = bankCpByElem.values().stream().mapToInt(Integer::intValue).sum()
-                                + selectedBackups.size() + selectedDiscards.size() * 2;
-                        if (tot >= cost) return;
                         CardData bkp = backupCards[slot];
                         String anyElemCat = bkp.backupCpAnyElementCategory();
                         boolean isAnyElem = bkp.backupCpAnyElement()

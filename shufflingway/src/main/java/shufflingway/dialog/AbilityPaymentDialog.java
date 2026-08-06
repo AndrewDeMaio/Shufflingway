@@ -159,21 +159,18 @@ public class AbilityPaymentDialog {
                 else extraCp += 2;
             }
             int total       = cpByElem.values().stream().mapToInt(Integer::intValue).sum() + extraCp;
-            int unsatisfied = (int) java.util.stream.IntStream.range(0, elems.length)
-                    .filter(ei -> cpByElem.getOrDefault(elems[ei], 0) < costByElem.get(elems[ei])).count();
             boolean satisfied = cpByElem.entrySet().stream()
                     .allMatch(en -> en.getValue() >= costByElem.getOrDefault(en.getKey(), 0));
 
+            // Any amount of CP may be produced when paying a cost; only the per-element minimums
+            // below constrain the payment, and CP produced beyond the cost is wasted.
             boolean sSlotOk = !ability.isSpecial() || sCostIdx[0] != -1;
+            canAddBackup[0]  = true;
+            canAddDiscard[0] = true;
             if (ability.hasXCost()) {
                 xValueHolder[0]  = Math.max(0, total - totalCost);
-                canAddBackup[0]  = true;
-                canAddDiscard[0] = true;
                 confirmBtn.setEnabled(satisfied && sSlotOk);
             } else {
-                int maxAllowed   = totalCost + elems.length + (totalCost % 2);
-                canAddBackup[0]  = total < totalCost;
-                canAddDiscard[0] = (total + 2 <= maxAllowed) && (total < totalCost || unsatisfied > 0);
                 confirmBtn.setEnabled(total >= totalCost && satisfied && sSlotOk);
             }
 

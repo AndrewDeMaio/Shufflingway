@@ -126,9 +126,9 @@ public class AltCostPaymentDialog {
                 else extra += 2;
             }
             int total      = cp.values().stream().mapToInt(Integer::intValue).sum() + extra;
-            int maxAllowed = altCp + elems.length + (altCp % 2);
-            canAddBackup[0]  = total < altCp;
-            canAddDiscard[0] = !backupOnly && (total + 2 <= maxAllowed) && (total < altCp);
+            // Any amount of CP may be produced when paying a cost; excess beyond the cost is wasted.
+            canAddBackup[0]  = true;
+            canAddDiscard[0] = !backupOnly;
             boolean satisfied = cp.entrySet().stream()
                     .allMatch(en -> en.getValue() >= costByElem.getOrDefault(en.getKey(), 0));
             confirmBtn.setEnabled(total >= altCp && satisfied);
