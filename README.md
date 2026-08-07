@@ -21,11 +21,11 @@ The ultimate goal for this application will be to play against someone else with
 
 Current card coverage (estimate):
 
-* Action/Special Abilities: (97.2%)
+* Action/Special Abilities: (97.4%)
 
-* Auto Abilities: (92.9%)
+* Auto Abilities: (90.0%)
 
-* Field Abilities: (72.4%)
+* Field Abilities: (72.7%)
 
 # Installation Guide
 
@@ -48,8 +48,7 @@ Once the application has been installed, you can update to any new releases from
 
 # Notes:
 
-* Opus 29 is now live! Cards can be fetched via the Card Browser card update button.
-* New overpayment rules will be added soon (prior to the official rollout date)
+* Opus 29 is now live! Cards can be fetched via the Card Browser card update button. New overpayment rules have been implemented.
 * Next features (aside from parsing additions and bugfixes):
   1. Relocating the hands to fan-outs at the top/bottom of the board.
   2. Additional animations for better gameplay context
