@@ -3523,19 +3523,17 @@ final class ActionResolverChoose {
         };
     }
     /**
-     * Parses "Choose 1 [ability type(s)] [optional 'that has only one target']. You may choose
-     * another target to become the new target (...)."
+     * Parses the two abilities that move a Stack entry's chosen target onto a different
+     * permanent — Faris 21-114L and Edge 15-045H. See {@link TargetRedirect} for the two shapes.
+     *
+     * <p>All the deciding happens in {@link GameContext#redirectChosenTarget}: which entries
+     * qualify and which replacements are legal both depend on resolving stored targets back to
+     * cards, which only the board can do.
      */
-    static Consumer<GameContext> tryParseRedirectAbilityTarget(String text) {
-        Matcher m = REDIRECT_ABILITY_TARGET.matcher(text.trim());
-        if (!m.find()) return null;
-        String types = m.group("types").trim();
-        java.util.function.Predicate<StackEntry> filter = parseAbilityTypeFilter(types);
-        String prompt = "Choose 1 " + types + " to redirect:";
-        return ctx -> {
-            ctx.logEntry("Effect: Redirect target of " + types + " on stack");
-            ctx.redirectAbilityTarget(filter, prompt);
-        };
+    static Consumer<GameContext> tryParseRedirectChosenTarget(String text, CardData source) {
+        TargetRedirect spec = targetRedirect(text, source);
+        if (spec == null) return null;
+        return ctx -> ctx.redirectChosenTarget(spec, source);
     }
     /**
      * Parses "Select 1 number." abilities where the selected number is used as a cost filter

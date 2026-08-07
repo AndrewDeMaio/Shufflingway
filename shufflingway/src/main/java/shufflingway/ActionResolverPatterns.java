@@ -363,18 +363,75 @@ final class ActionResolverPatterns {
         "\\.\\s*Cancel\\s+its\\s+effect[.!]?"
     );
     /**
-     * Matches "Choose 1 [ability type(s)] [optional 'that has only one target'].
-     * You may choose another target to become the new target (...)."
-     * Group {@code types} — the raw ability-type string.
+     * Matches Faris 21-114L: "Choose 1 Summon or ability that is choosing only [Self].
+     * You may choose another [Element] Forward you control to become the new target
+     * (The newly chosen Forward must be a valid choice)."
+     *
+     * <p>Group {@code self} — the card the entry must be choosing, always the source's own name;
+     * {@code newelem} — the Element the replacement Forward must be.
+     *
+     * <p>Distinct from {@link #REDIRECT_SINGLE_TARGET_TO_CHOSEN} (Aemo 11-109R), whose
+     * eligibility is "has only one target" with no restriction on what that target is, and whose
+     * replacement is any Character rather than one of your own Forwards of a named Element.
      */
-    static final Pattern REDIRECT_ABILITY_TARGET = Pattern.compile(
-        "(?i)Choose\\s+1\\s+" +
-        "(?<types>(?:auto[- ]ability|action\\s+ability|special\\s+ability|ability)" +
-        "(?:\\s+or\\s+(?:auto[- ]ability|action\\s+ability|special\\s+ability))?)" +
-        "(?:\\s+that\\s+has\\s+only\\s+one\\s+target)?" +
-        "\\.\\s*You\\s+may\\s+choose\\s+another\\s+target\\s+to\\s+become\\s+the\\s+new\\s+target" +
-        "(?:\\s*\\([^)]*\\))?" +
-        "[.!]?"
+    static final Pattern REDIRECT_CHOOSING_ONLY_SELF = Pattern.compile(
+        "(?i)Choose\\s+1\\s+Summon(?:\\s+or\\s+ability)?\\s+that\\s+is\\s+choosing\\s+only\\s+" +
+        "(?<self>[^.]+?)\\.\\s*" +
+        "You\\s+may\\s+choose\\s+another\\s+" +
+        "(?<newelem>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+Forward\\s+you\\s+control" +
+        "\\s+to\\s+become\\s+the\\s+new\\s+target(?:\\s*\\([^)]*\\))?[.!]?"
+    );
+    /**
+     * Matches Edge 15-045H: "Choose 1 Summon or ability that is choosing only 1 [Element] Forward
+     * you control. The Summon or ability is now choosing [Self] instead, if possible."
+     *
+     * <p>Group {@code elem} — the Element the currently chosen Forward must be; {@code newtarget}
+     * — the card the entry is redirected onto, always the source's own name.
+     *
+     * <p>Kept separate from {@link #REDIRECT_ON_FIELD_TO_SELF} (Calbrena 20-024H) even though the
+     * second sentence is identical: the eligibility clauses select genuinely different pools, and
+     * folding both into one alternation would put two optional Element captures in a pattern
+     * where exactly one must be present.
+     */
+    static final Pattern REDIRECT_MY_FORWARD_TO_SELF = Pattern.compile(
+        "(?i)Choose\\s+1\\s+Summon(?:\\s+or\\s+ability)?\\s+that\\s+is\\s+choosing\\s+only\\s+1\\s+" +
+        "(?<elem>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+Forward\\s+you\\s+control\\.\\s*" +
+        "The\\s+Summon\\s+or\\s+ability\\s+is\\s+now\\s+choosing\\s+(?<newtarget>[^.,]+?)" +
+        "\\s+instead(?:,\\s*if\\s+possible)?[.!]?"
+    );
+    /**
+     * Matches Calbrena 20-024H's enters-field trigger: "choose 1 ability that is choosing only 1
+     * Character either player controls. The ability is now choosing [Self] instead, if possible."
+     *
+     * <p>Group {@code newtarget} — the card the entry is redirected onto, always the source.
+     * Unanchored at the front because an auto-ability's effect text arrives with its trigger
+     * clause already stripped, leaving a lower-case "choose".
+     */
+    static final Pattern REDIRECT_ON_FIELD_TO_SELF = Pattern.compile(
+        "(?i)choose\\s+1\\s+(?:auto[- ]|action\\s+|special\\s+)?ability\\s+that\\s+is\\s+choosing\\s+" +
+        "only\\s+1\\s+Character\\s+either\\s+player\\s+controls\\.\\s*" +
+        "The\\s+ability\\s+is\\s+now\\s+choosing\\s+(?<newtarget>[^.,]+?)" +
+        "\\s+instead(?:,\\s*if\\s+possible)?[.!]?"
+    );
+    /**
+     * Matches the two "you pick the replacement freely" members of the redirect family:
+     * Aemo 11-109R ("Choose 1 auto-ability or action ability that has only one target. You may
+     * choose another target…") and Wicked Mask 20-038H ("choose 1 Summon that is choosing only 1
+     * Character in any zone. You may choose another Character…").
+     *
+     * <p>Group {@code types} — the entry type(s) the effect may touch, which is the only thing
+     * separating the two: Aemo is abilities-only, Wicked Mask is Summons-only. The differing
+     * eligibility clauses ("has only one target" vs "is choosing only 1 Character in any zone")
+     * mean the same thing once targets are stored per entry, so they share one alternation.
+     */
+    static final Pattern REDIRECT_SINGLE_TARGET_TO_CHOSEN = Pattern.compile(
+        "(?i)choose\\s+1\\s+" +
+        "(?<types>(?:Summon|auto[- ]ability|action\\s+ability|special\\s+ability|ability)" +
+        "(?:\\s+or\\s+(?:auto[- ]ability|action\\s+ability|special\\s+ability|ability))?)" +
+        "\\s+that\\s+(?:has\\s+only\\s+one\\s+target" +
+            "|is\\s+choosing\\s+only\\s+1\\s+Character\\s+in\\s+any\\s+zone)\\.\\s*" +
+        "You\\s+may\\s+choose\\s+another\\s+(?:target|Character)\\s+to\\s+become\\s+the\\s+new\\s+target" +
+        "(?:\\s*\\([^)]*\\))?[.!]?"
     );
     /**
      * Matches the "Choose 1 [Summon/ability type(s)] [optional 'opponent's']. If your opponent

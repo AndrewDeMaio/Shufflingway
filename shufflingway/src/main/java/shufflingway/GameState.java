@@ -617,6 +617,23 @@ public class GameState {
     /** Returns an unmodifiable view of the Stack (index 0 = bottom, last = top). */
     public List<StackEntry> getStack()              { return Collections.unmodifiableList(stack); }
 
+    /**
+     * Swaps {@code oldEntry} for {@code newEntry} in place, keeping its position in the
+     * resolution order, and returns whether it was found.  Matching is by identity: two entries
+     * for the same card and ability are distinct effects and only the one handed in is replaced.
+     *
+     * <p>Exists for target redirection, which has to alter an entry already on the Stack.
+     * {@link StackEntry} is a record, so "altering" it means substituting a copy — callers
+     * holding the old instance in an identity-keyed collection must re-key it themselves (see
+     * {@code MainWindow.redirectStackEntryTargets}).
+     */
+    public boolean replaceStackEntry(StackEntry oldEntry, StackEntry newEntry) {
+        for (int i = 0; i < stack.size(); i++) {
+            if (stack.get(i) == oldEntry) { stack.set(i, newEntry); return true; }
+        }
+        return false;
+    }
+
     /** Returns IdentityHashMap, Boolean = True: Belongs to P1, False: Belongs to P2/CPU */
     public IdentityHashMap<CardData, Boolean> getIdentity() { return identity; }
 

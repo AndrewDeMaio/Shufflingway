@@ -9738,6 +9738,396 @@ public class CardBehaviorTest {
 		verify(dismissed).boostTarget(noel, 0, EnumSet.of(CardData.Trait.FIRST_STRIKE));
 	}
 
+	// =========================================================================================
+	// Target redirection — Faris 21-114L and Edge 15-045H.
+	//
+	// Faris: "《0》: Choose 1 Summon or ability that is choosing only Faris. You may choose
+	//        another Water Forward you control to become the new target (…)."
+	// Edge:  "《0》: Choose 1 Summon or ability that is choosing only 1 Wind Forward you control.
+	//        The Summon or ability is now choosing Edge instead, if possible."
+	//
+	// Mirror images: Faris is eligible on entries pointed at *her* and sends them elsewhere;
+	// Edge is eligible on entries pointed at his side and pulls them onto *himself*. Both act on
+	// an entry already on the Stack, which is why the redirect rewrites StackEntry rather than
+	// doing anything at resolution time.
+	// =========================================================================================
+
+	private static final String FARIS_REDIRECT =
+			"Choose 1 Summon or ability that is choosing only Faris. You may choose another Water "
+			+ "Forward you control to become the new target (The newly chosen Forward must be a valid choice).";
+	private static final String EDGE_REDIRECT =
+			"Choose 1 Summon or ability that is choosing only 1 Wind Forward you control. "
+			+ "The Summon or ability is now choosing Edge instead, if possible.";
+
+	private static CardData makeFaris() {
+		return makeForward("Faris", "Water", 4, 8000, CardData.parseActionAbilities("《0》: " + FARIS_REDIRECT));
+	}
+
+	private static CardData makeEdge() {
+		return makeForward("Edge", "Wind", 2, 5000, CardData.parseActionAbilities("《0》: " + EDGE_REDIRECT));
+	}
+
+	/** A Summon entry belonging to {@code isP1} that has chosen exactly {@code targets}. */
+	private static StackEntry summonChoosing(CardData summon, boolean isP1, ForwardTarget... targets) {
+		return new StackEntry(summon, null, isP1, 0, List.of(targets));
+	}
+
+	private static ForwardTarget fwd(boolean isP1, int idx) {
+		return new ForwardTarget(isP1, idx, ForwardTarget.CardZone.FORWARD);
+	}
+
+	@Test
+	void eachRedirectSpecIsAnchoredToItsOwnCardsName() {
+		TargetRedirect faris = ActionResolver.targetRedirect(FARIS_REDIRECT, makeFaris());
+		assertNotNull(faris);
+		assertTrue(faris.eligibleOnSourceItself(), "eligible on entries choosing Faris herself");
+		assertEquals("Water", faris.newTargetElement());
+		assertFalse(faris.toSource());
+		assertTrue(faris.optional(), "\"You may choose\" — declining is legal");
+
+		TargetRedirect edge = ActionResolver.targetRedirect(EDGE_REDIRECT, makeEdge());
+		assertNotNull(edge);
+		assertEquals("Wind", edge.eligibleElement());
+		assertTrue(edge.toSource(), "the entry ends up choosing Edge");
+		assertNull(edge.newTargetElement(), "no player pick — the destination is fixed");
+
+		// The card named in the text has to *be* the source. Otherwise a future card quoting
+		// this wording would redirect onto a permanent its own text never mentions.
+		assertNull(ActionResolver.targetRedirect(FARIS_REDIRECT, makeForward("Lenna", "Water", 4, 8000)));
+		assertNull(ActionResolver.targetRedirect(EDGE_REDIRECT, makeForward("Rydia", "Wind", 2, 5000)));
+	}
+
+	@Test
+	void edgeIsEligibleOnlyForEntriesChoosingExactlyOneOfYourWindForwards() {
+		MainWindow mw = new MainWindow();
+		CardData edge   = makeEdge();
+		CardData yuffie = makeForward("Yuffie", "Wind", 3, 7000);
+		CardData vivi    = makeForward("Vivi", "Fire", 3, 7000);
+		placeP1Forward(mw, edge);    // P1 idx 0
+		placeP1Forward(mw, yuffie);  // P1 idx 1
+		placeP1Forward(mw, vivi);    // P1 idx 2
+		mw.placeP2CardInForwardZone(makeForward("Shantotto", "Wind", 3, 7000)); // P2 idx 0
+
+		CardData summon = makeForward("Ramuh", "Wind", 3, 0);
+		Predicate<StackEntry> eligible =
+				mw.redirectEligibility(ActionResolver.targetRedirect(EDGE_REDIRECT, edge), edge, true);
+
+		assertTrue(eligible.test(summonChoosing(summon, false, fwd(true, 1))),
+				"an opponent's Summon choosing your Wind Forward is the whole point");
+		assertFalse(eligible.test(summonChoosing(summon, false, fwd(true, 2))),
+				"a Fire Forward is not a Wind Forward");
+		assertFalse(eligible.test(summonChoosing(summon, false, fwd(false, 0))),
+				"a Wind Forward the opponent controls is not one you control");
+		assertFalse(eligible.test(summonChoosing(summon, false, fwd(true, 1), fwd(true, 2))),
+				"\"choosing only 1\" excludes an entry choosing two");
+		assertFalse(eligible.test(new StackEntry(summon, null, false)),
+				"an entry that chose nothing has no target to move");
+	}
+
+	@Test
+	void edgePullsTheChosenTargetOntoHimself() {
+		MainWindow mw = new MainWindow();
+		CardData edge   = makeEdge();
+		CardData yuffie = makeForward("Yuffie", "Wind", 3, 7000);
+		placeP1Forward(mw, edge);    // P1 idx 0
+		placeP1Forward(mw, yuffie);  // P1 idx 1
+
+		StackEntry entry = summonChoosing(makeForward("Ramuh", "Wind", 3, 0), false, fwd(true, 1));
+		mw.gameState.pushStack(entry);
+
+		ActionResolver.parse(edge.actionAbilities().get(0).effectText(), edge)
+				.accept(mw.buildGameContext(true));
+
+		assertEquals(1, mw.gameState.getStack().size(), "the entry still resolves — this is not a cancel");
+		assertEquals(List.of(fwd(true, 0)), mw.gameState.getStack().get(0).preSelectedTargets(),
+				"Ramuh is now choosing Edge instead of Yuffie");
+	}
+
+	@Test
+	void edgeDoesNothingWhenHeIsNotAValidChoice() {
+		MainWindow mw = new MainWindow();
+		CardData edge   = makeEdge();
+		CardData yuffie = makeForward("Yuffie", "Wind", 3, 7000);
+		placeP1Forward(mw, edge);
+		placeP1Forward(mw, yuffie);
+		// "if possible" — Edge is shielded from the opponent's Summons, so he cannot be chosen.
+		mw.cannotBeChosenBySummons.add(edge);
+
+		StackEntry entry = summonChoosing(makeForward("Ramuh", "Wind", 3, 0), false, fwd(true, 1));
+		mw.gameState.pushStack(entry);
+
+		ActionResolver.parse(edge.actionAbilities().get(0).effectText(), edge)
+				.accept(mw.buildGameContext(true));
+
+		assertEquals(List.of(fwd(true, 1)), mw.gameState.getStack().get(0).preSelectedTargets(),
+				"the Summon keeps its original target");
+	}
+
+	@Test
+	void farisPushesTheEffectOntoAnotherWaterForwardSheControls() {
+		MainWindow mw = new MainWindow();
+		// Run this from P2's side: the human's pick is a modal dialog, while the AI path takes
+		// the first legal candidate and exercises the same eligibility and rewrite code.
+		CardData faris = makeFaris();
+		mw.placeP2CardInForwardZone(faris);                                  // P2 idx 0
+		mw.placeP2CardInForwardZone(makeForward("Syldra", "Fire", 3, 7000)); // P2 idx 1 — wrong Element
+		mw.placeP2CardInForwardZone(makeForward("Lenna", "Water", 3, 7000)); // P2 idx 2
+
+		StackEntry entry = summonChoosing(makeForward("Shiva", "Ice", 2, 0), true, fwd(false, 0));
+		mw.gameState.pushStack(entry);
+
+		ActionResolver.parse(faris.actionAbilities().get(0).effectText(), faris)
+				.accept(mw.buildGameContext(false));
+
+		assertEquals(List.of(fwd(false, 2)), mw.gameState.getStack().get(0).preSelectedTargets(),
+				"Shiva now chooses Lenna — Faris herself is excluded by \"another\", Syldra by Element");
+	}
+
+	@Test
+	void aPendingCancellationSurvivesTheRedirectRewrite() {
+		MainWindow mw = new MainWindow();
+		CardData edge = makeEdge();
+		placeP1Forward(mw, edge);
+		placeP1Forward(mw, makeForward("Yuffie", "Wind", 3, 7000));
+
+		StackEntry entry = summonChoosing(makeForward("Ramuh", "Wind", 3, 0), false, fwd(true, 1));
+		mw.gameState.pushStack(entry);
+		mw.cancelledStackEntries.add(entry);
+
+		mw.redirectStackEntryTargets(entry, List.of(fwd(true, 0)));
+
+		StackEntry updated = mw.gameState.getStack().get(0);
+		assertNotSame(entry, updated, "StackEntry is a record, so the redirect substitutes a copy");
+		assertTrue(mw.cancelledStackEntries.contains(updated),
+				"the cancellation has to move to the copy or the entry quietly un-cancels");
+		assertFalse(mw.cancelledStackEntries.contains(entry), "and must not linger on the stale instance");
+	}
+
+	private static final String CALBRENA_REDIRECT =
+			"choose 1 ability that is choosing only 1 Character either player controls. "
+			+ "The ability is now choosing Calbrena instead, if possible.";
+	private static final String WICKED_MASK_REDIRECT =
+			"choose 1 Summon that is choosing only 1 Character in any zone. You may choose another "
+			+ "Character to become the new target (The newly chosen Character must be a valid choice).";
+	private static final String AEMO_REDIRECT =
+			"Choose 1 auto-ability or action ability that has only one target. You may choose "
+			+ "another target to become the new target (The newly chosen target must be a valid choice).";
+
+	/** An ability entry belonging to {@code isP1} that has chosen exactly {@code targets}. */
+	private static StackEntry abilityChoosing(CardData src, boolean isP1, ForwardTarget... targets) {
+		return new StackEntry(src,
+				CardData.parseActionAbilities("《Dull》: Choose 1 Forward. Break it.").get(0),
+				isP1, 0, List.of(targets));
+	}
+
+	@Test
+	void theWholeRedirectFamilyIsRecognised() {
+		assertNotNull(ActionResolver.targetRedirect(CALBRENA_REDIRECT, makeForward("Calbrena", "Ice", 3, 7000)));
+		assertNotNull(ActionResolver.targetRedirect(WICKED_MASK_REDIRECT, makeForward("Wicked Mask", "Ice", 3, 6000)));
+		// Aemo names no card, so any source will do — its eligibility is "has only one target".
+		TargetRedirect aemo = ActionResolver.targetRedirect(AEMO_REDIRECT, makeForward("Aemo", "Water", 2, 0));
+		assertNotNull(aemo);
+
+		// Entry kind is the axis that separates the two free-pick cards.
+		assertEquals(TargetRedirect.EntryKind.ABILITY, aemo.entryKind(), "Aemo cannot touch Summons");
+		assertEquals(TargetRedirect.EntryKind.SUMMON,
+				ActionResolver.targetRedirect(WICKED_MASK_REDIRECT, makeForward("Wicked Mask", "Ice", 3, 6000)).entryKind(),
+				"Wicked Mask only touches Summons");
+		assertEquals(TargetRedirect.EntryKind.ABILITY,
+				ActionResolver.targetRedirect(CALBRENA_REDIRECT, makeForward("Calbrena", "Ice", 3, 7000)).entryKind());
+
+		// Calbrena still has to name itself, like Edge does.
+		assertNull(ActionResolver.targetRedirect(CALBRENA_REDIRECT, makeForward("Cid", "Ice", 3, 7000)));
+	}
+
+	@Test
+	void entryKindDecidesWhichStackEntriesEachCardCanTouch() {
+		MainWindow mw = new MainWindow();
+		CardData calbrena = makeForward("Calbrena", "Ice", 3, 7000);
+		CardData victim   = makeForward("Victim", "Fire", 3, 7000);
+		placeP1Forward(mw, calbrena); // P1 idx 0
+		placeP1Forward(mw, victim);   // P1 idx 1
+		mw.placeP2CardInForwardZone(makeForward("Golbez", "Dark", 4, 8000)); // P2 idx 0
+
+		CardData other = makeForward("Other", "Ice", 3, 0);
+		Predicate<StackEntry> calbrenaCan = mw.redirectEligibility(
+				ActionResolver.targetRedirect(CALBRENA_REDIRECT, calbrena), calbrena, true);
+		Predicate<StackEntry> maskCan = mw.redirectEligibility(
+				ActionResolver.targetRedirect(WICKED_MASK_REDIRECT, makeForward("Wicked Mask", "Ice", 3, 6000)),
+				calbrena, true);
+
+		assertTrue(calbrenaCan.test(abilityChoosing(other, false, fwd(true, 1))),
+				"Calbrena redirects abilities");
+		assertFalse(calbrenaCan.test(summonChoosing(other, false, fwd(true, 1))),
+				"but never a Summon — its text says \"ability\"");
+		assertTrue(maskCan.test(summonChoosing(other, false, fwd(true, 1))),
+				"Wicked Mask redirects Summons");
+		assertFalse(maskCan.test(abilityChoosing(other, false, fwd(true, 1))),
+				"but never an ability");
+
+		// Calbrena's pool is "either player controls" — a Break Zone selection is not on a field.
+		assertTrue(calbrenaCan.test(abilityChoosing(other, false, fwd(false, 0))),
+				"a Character the opponent controls still counts");
+		assertFalse(calbrenaCan.test(new StackEntry(other, null, null, false, 0, false,
+				List.of(new ForwardTarget(true, 0, ForwardTarget.CardZone.BREAK_ZONE)), false, false, 0)),
+				"\"either player controls\" excludes a Break Zone target");
+	}
+
+	@Test
+	void calbrenaPullsAnAbilityOntoHerself() {
+		MainWindow mw = new MainWindow();
+		CardData calbrena = makeForward("Calbrena", "Ice", 3, 7000);
+		placeP1Forward(mw, calbrena);                            // P1 idx 0
+		placeP1Forward(mw, makeForward("Ally", "Ice", 3, 7000));  // P1 idx 1
+
+		StackEntry entry = abilityChoosing(makeForward("Sephiroth", "Dark", 5, 9000), false, fwd(true, 1));
+		mw.gameState.pushStack(entry);
+
+		ActionResolver.parse(CALBRENA_REDIRECT, calbrena).accept(mw.buildGameContext(true));
+
+		assertEquals(List.of(fwd(true, 0)), mw.gameState.getStack().get(0).preSelectedTargets(),
+				"the ability now points at Calbrena");
+	}
+
+	@Test
+	void aemoCanPushAnAbilityOntoTheOpponentsOwnCharacter() {
+		MainWindow mw = new MainWindow();
+		CardData aemo = makeForward("Aemo", "Water", 2, 0);
+		// Driven from P2's side so the pick resolves without the modal chooser; the AI takes the
+		// first legal candidate, which is P1's Forward at index 0.
+		mw.placeP2CardInForwardZone(aemo);
+		placeP1Forward(mw, makeForward("Zidane", "Wind", 2, 5000)); // P1 idx 0
+		mw.placeP2CardInForwardZone(makeForward("Kuja", "Dark", 4, 8000)); // P2 idx 1 — currently chosen
+
+		StackEntry entry = abilityChoosing(makeForward("Bahamut", "Fire", 5, 9000), true, fwd(false, 1));
+		mw.gameState.pushStack(entry);
+
+		ActionResolver.parse(AEMO_REDIRECT, aemo).accept(mw.buildGameContext(false));
+
+		List<ForwardTarget> after = mw.gameState.getStack().get(0).preSelectedTargets();
+		assertEquals(List.of(fwd(true, 0)), after,
+				"\"another target\" reaches either field — the pool is not limited to your own side");
+	}
+
+	@Test
+	void aemoLeavesAnEntryAloneWhenNoOtherTargetIsAValidChoice() {
+		MainWindow mw = new MainWindow();
+		CardData aemo = makeForward("Aemo", "Water", 2, 0);
+		CardData kuja = makeForward("Kuja", "Dark", 4, 8000);
+		mw.placeP2CardInForwardZone(aemo); // P2 idx 0
+		mw.placeP2CardInForwardZone(kuja); // P2 idx 1
+		placeP1Forward(mw, makeForward("Zidane", "Wind", 2, 5000)); // P1 idx 0 — currently chosen
+
+		// The entry is P1's own ability, so P1's field offers nothing but the card it already
+		// chose. Shielding P2's two Characters from the opponent's abilities empties the pool.
+		mw.cannotBeChosenByAbilities.add(aemo);
+		mw.cannotBeChosenByAbilities.add(kuja);
+
+		StackEntry entry = abilityChoosing(makeForward("Bahamut", "Fire", 5, 9000), true, fwd(true, 0));
+		mw.gameState.pushStack(entry);
+
+		ActionResolver.parse(AEMO_REDIRECT, aemo).accept(mw.buildGameContext(false));
+
+		assertEquals(List.of(fwd(true, 0)), mw.gameState.getStack().get(0).preSelectedTargets(),
+				"no valid replacement — the entry keeps its original target");
+	}
+
+	@Test
+	void protectionOnlyBlocksARedirectOntoTheEntryOwnersOpponent() {
+		MainWindow mw = new MainWindow();
+		CardData aemo     = makeForward("Aemo", "Water", 2, 0);
+		CardData ownShield = makeForward("Warded", "Wind", 2, 5000);
+		mw.placeP2CardInForwardZone(aemo);                          // P2 idx 0
+		placeP1Forward(mw, ownShield);                              // P1 idx 0
+		placeP1Forward(mw, makeForward("Zidane", "Wind", 2, 5000));  // P1 idx 1 — currently chosen
+		// "Cannot be chosen by your opponent's abilities" does not stop its own controller's
+		// ability, so P1's own ability may still be pointed at it.
+		mw.cannotBeChosenByAbilities.add(ownShield);
+
+		StackEntry entry = abilityChoosing(makeForward("Bahamut", "Fire", 5, 9000), true, fwd(true, 1));
+		mw.gameState.pushStack(entry);
+
+		ActionResolver.parse(AEMO_REDIRECT, aemo).accept(mw.buildGameContext(false));
+
+		assertEquals(List.of(fwd(true, 0)), mw.gameState.getStack().get(0).preSelectedTargets(),
+				"the shield is against the opponent's abilities, and this ability is its controller's own");
+	}
+
+	// =========================================================================================
+	// Targets are chosen when an effect goes on the Stack, not when it resolves.
+	//
+	// This is the rule the whole redirect family depends on: "choose 1 Summon that is choosing
+	// only X" can only mean anything if a Summon on the Stack has already chosen. Action
+	// abilities always worked this way; Summons and auto-abilities used to choose at resolution,
+	// which left Wicked Mask inert and Faris/Edge unable to catch the Summons they exist for.
+	// =========================================================================================
+
+	/** P2 casts {@code summon}: it chooses its targets and goes on the Stack, minus the overlay. */
+	private static void castSummon(MainWindow mw, CardData summon) {
+		mw.pushSummonOnStack(summon, false, 0, 0, false, null, false);
+	}
+
+	@Test
+	void aCastSummonRecordsItsTargetOnTheStackEntry() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForward("Zidane", "Wind", 2, 5000)); // P1 idx 0 — the only Forward
+
+		castSummon(mw, makeSummon("Shiva", "Ice", 2,
+				"Choose 1 Forward. Deal it 7000 damage."));
+
+		List<ForwardTarget> chosen = mw.gameState.getStack().get(0).preSelectedTargets();
+		assertNotNull(chosen, "a Summon that chooses has to record the choice, or nothing can respond to it");
+		assertEquals(List.of(fwd(true, 0)), chosen);
+	}
+
+	@Test
+	void aSummonThatChoosesNothingUpFrontStoresNoTargets() {
+		MainWindow mw = new MainWindow();
+		castSummon(mw, makeSummon("Cure", "Water", 1, "Draw 1 card."));
+		assertNull(mw.gameState.getStack().get(0).preSelectedTargets(),
+				"nothing to choose means nothing preloaded — resolution behaves exactly as before");
+	}
+
+	@Test
+	void edgeRedirectsASummonThatWasActuallyCast() {
+		MainWindow mw = new MainWindow();
+		CardData edge = makeEdge();
+		placeP1Forward(mw, edge);                                   // P1 idx 0, cost 2
+		placeP1Forward(mw, makeForward("Yuffie", "Wind", 3, 7000)); // P1 idx 1, cost 3
+
+		// Cost-restricted so the cast's own choice is deterministic: only Yuffie qualifies.
+		castSummon(mw, makeSummon("Ramuh", "Wind", 3,
+				"Choose 1 Forward of cost 3 or more. Deal it 7000 damage."));
+		assertEquals(List.of(fwd(true, 1)), mw.gameState.getStack().get(0).preSelectedTargets(),
+				"the Summon chose Yuffie as it was cast");
+
+		ActionResolver.parse(edge.actionAbilities().get(0).effectText(), edge)
+				.accept(mw.buildGameContext(true));
+
+		assertEquals(List.of(fwd(true, 0)), mw.gameState.getStack().get(0).preSelectedTargets(),
+				"Edge pulls a genuinely cast Summon onto himself — the case that was unreachable "
+				+ "while Summons chose at resolution time");
+	}
+
+	@Test
+	void wickedMaskCanRedirectACastSummon() {
+		MainWindow mw = new MainWindow();
+		CardData mask = makeForward("Wicked Mask", "Ice", 3, 6000);
+		mw.placeP2CardInForwardZone(mask);                          // P2 idx 0
+		mw.placeP2CardInForwardZone(makeForward("Kuja", "Dark", 4, 8000)); // P2 idx 1
+		placeP1Forward(mw, makeForward("Zidane", "Wind", 2, 5000)); // P1 idx 0 — the cast's target
+
+		castSummon(mw, makeSummon("Shiva", "Ice", 2,
+				"Choose 1 Forward. Deal it 7000 damage."));
+		assertEquals(List.of(fwd(true, 0)), mw.gameState.getStack().get(0).preSelectedTargets());
+
+		// Driven from P2's side so the pick resolves without the modal chooser.
+		ActionResolver.parse(WICKED_MASK_REDIRECT, mask).accept(mw.buildGameContext(false));
+
+		assertNotEquals(List.of(fwd(true, 0)), mw.gameState.getStack().get(0).preSelectedTargets(),
+				"Wicked Mask only ever touches Summons, so it was completely inert before this");
+	}
+
 	/** A bare hand card carrying only the two fields the reveal-hand filters read. */
 	private static CardData handCard(String type, int cost) {
 		return new CardData(null, "X", "Fire", cost, 7000, type, false, 0, false, false,

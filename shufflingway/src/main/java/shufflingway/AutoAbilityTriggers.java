@@ -2115,7 +2115,16 @@ final class AutoAbilityTriggers {
 		}
 
 		mw.logEntry("[AutoAbility] " + source.name() + " — pushed to stack");
-		mw.gameState.pushStack(new StackEntry(source, null, fa, effectIsP1, 0, false, null, false, paidExtraCost, 0));
+		// An ability chooses its targets as it goes on the Stack, not when it resolves, so the
+		// opponent can respond to what it is pointed at. The text is transformed the same way
+		// resolution will transform it, or a conditional clause could change the eligible set.
+		String effectText = paidExtraCost
+				? ActionResolver.applyExtraCostPaid(fa.effectText())
+				: ActionResolver.stripExtraCostClause(fa.effectText());
+		List<ForwardTarget> preTargets = effectText.isBlank() ? null
+				: ActionResolver.preSelectTargets(effectText, source, 0, mw.buildGameContext(effectIsP1));
+		if (preTargets != null && preTargets.isEmpty()) preTargets = null;
+		mw.gameState.pushStack(new StackEntry(source, null, fa, effectIsP1, 0, false, preTargets, false, paidExtraCost, 0));
 	}
 
 	private void executeCounterRemovalWhenDoSoAutoAbility(AutoAbility fa, CardData source,

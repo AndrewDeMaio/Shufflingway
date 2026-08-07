@@ -7255,13 +7255,21 @@ public class MainWindow {
 		return false;
 	}
 
-	/** The local player's play, which a networked opponent also has to see. */
+	/**
+	 * The local player's play, which a networked opponent also has to see.
+	 *
+	 * <p>The play runs before the action is sent, because a Summon chooses its targets while it
+	 * goes on the Stack and those choices have to travel with it — the other client must not make
+	 * them a second time. Nothing else in {@code executePlay} emits a network action, so no
+	 * message can overtake this one by running first.
+	 */
 	private void executePlay(CardData card, int cardHandIdx,
 			List<Integer> discardIndices, List<Integer> backupDullIndices,
 			Map<Integer, String> backupElementOverrides) {
-		sendToOpponent(RemoteOpponent.playCardAction(
-				card, cardHandIdx, discardIndices, backupDullIndices, backupElementOverrides));
+		lastSummonPreTargets = null;
 		executePlay(true, card, cardHandIdx, discardIndices, backupDullIndices, backupElementOverrides);
+		sendToOpponent(RemoteOpponent.playCardAction(card, cardHandIdx, discardIndices,
+				backupDullIndices, backupElementOverrides, lastSummonPreTargets));
 	}
 
 	/**
@@ -7278,6 +7286,20 @@ public class MainWindow {
 	void executePlay(boolean isP1, CardData card, int cardHandIdx,
 			List<Integer> discardIndices, List<Integer> backupDullIndices,
 			Map<Integer, String> backupElementOverrides) {
+		executePlay(isP1, card, cardHandIdx, discardIndices, backupDullIndices,
+				backupElementOverrides, null, false);
+	}
+
+	/**
+	 * @param replayedSummonTargets the targets a Summon already chose on the other client
+	 * @param targetsAreReplayed    {@code true} when {@code replayedSummonTargets} is the choice
+	 *                              made by this play's owner and must be used as-is; {@code false}
+	 *                              when this client owns the play and chooses now
+	 */
+	void executePlay(boolean isP1, CardData card, int cardHandIdx,
+			List<Integer> discardIndices, List<Integer> backupDullIndices,
+			Map<Integer, String> backupElementOverrides,
+			List<ForwardTarget> replayedSummonTargets, boolean targetsAreReplayed) {
 		String[] elems = card.elements();
 		boolean  isLD  = card.isLightOrDark();
 		CardData[]     backupCards = isP1 ? p1BackupCards  : p2BackupCards;
@@ -7413,10 +7435,8 @@ public class MainWindow {
 		} else if (card.isMonster()) {
 			if (isP1) placeCardInMonsterZone(card); else placeP2CardInMonsterZone(card);
 		} else if (card.isSummon()) {
-			if (paidExtraCost)
-				showSummonOnStack(card, isP1, extraCostRemovedPower, extraCostXVal);
-			else
-				showSummonOnStack(card, isP1);
+			showSummonOnStack(card, isP1, extraCostRemovedPower, extraCostXVal, paidExtraCost,
+					replayedSummonTargets, targetsAreReplayed);
 		}
 		lastCardWasCast = false;
 
@@ -7696,11 +7716,43 @@ public class MainWindow {
 				: opponent.isCpu();
 	}
 
-	/** Pushes a Summon onto the stack and opens the stack overlay. */
+	/**
+	 * Targets chosen by the most recent {@link #showSummonOnStack} that picked any — read by the
+	 * local player's play so they can travel to the other client with the PLAY_CARD action.
+	 */
+	List<ForwardTarget> lastSummonPreTargets;
+
+	/**
+	 * The Summon effect text that will actually resolve, after the extra-cost transforms
+	 * {@link #resolveTopOfStack} applies.  Targets are chosen when the Summon goes on the Stack,
+	 * so the pre-selection has to read the same text the resolution will — otherwise a
+	 * conditional clause could widen or narrow the eligible set between the two.
+	 */
+	private static String resolvedSummonEffectText(CardData card, boolean paidExtraCost, int xValue) {
+		String text = card.summonEffect();
+		if (!paidExtraCost) return ActionResolver.stripExtraCostClause(text);
+		text = ActionResolver.applyExtraCostPaid(text);
+		return xValue > 0 ? text.replace("《X》", String.valueOf(xValue)) : text;
+	}
+
+	/**
+	 * Has {@code isP1} choose the Summon's targets now, as the rules require — a Summon chooses
+	 * when it is cast, not when it resolves, which is what lets the opponent respond to what it
+	 * is pointed at.  Returns {@code null} when the effect names no targets to choose up front.
+	 */
+	private List<ForwardTarget> chooseSummonTargets(CardData card, boolean isP1,
+			boolean paidExtraCost, int xValue) {
+		List<ForwardTarget> chosen = ActionResolver.preSelectTargets(
+				resolvedSummonEffectText(card, paidExtraCost, xValue), card, xValue, buildGameContext(isP1));
+		// Normalise "chose nothing" to "nothing to choose": both mean the resolution selects as
+		// it always did, and keeping them distinct would make an empty selection preload an empty
+		// list and silently fizzle the effect.
+		return chosen == null || chosen.isEmpty() ? null : chosen;
+	}
+
+	/** Pushes a Summon onto the stack and opens the stack overlay, choosing its targets first. */
 	void showSummonOnStack(CardData card, boolean isP1) {
-		gameState.pushStack(new StackEntry(card, null, isP1));
-		logEntry("[Stack] \"" + card.name() + "\" — Summon on the stack");
-		showStackWindow();
+		showSummonOnStack(card, isP1, 0, 0, false, null, false);
 	}
 
 	/** Pushes a Summon cast with extra cost onto the stack (no X value). */
@@ -7710,9 +7762,39 @@ public class MainWindow {
 
 	/** Pushes a Summon cast with extra cost onto the stack, including an X value for 《X》 costs (e.g. Valefor). */
 	void showSummonOnStack(CardData card, boolean isP1, int extraCostRemovedCardPower, int xValue) {
-		gameState.pushStack(StackEntry.forSummonWithExtraCost(card, isP1, extraCostRemovedCardPower, xValue));
-		logEntry("[Stack] \"" + card.name() + "\" — Summon on the stack (Extra Cost paid)");
+		showSummonOnStack(card, isP1, extraCostRemovedCardPower, xValue, true, null, false);
+	}
+
+	/**
+	 * Pushes a Summon onto the Stack with the targets it has chosen.
+	 *
+	 * @param targetsKnown {@code true} when {@code preTargets} is authoritative — a replay of the
+	 *                     other client's play, where the choice was already made by its owner and
+	 *                     must not be made again here. {@code false} means choose now.
+	 */
+	private void showSummonOnStack(CardData card, boolean isP1, int extraCostRemovedCardPower,
+			int xValue, boolean paidExtraCost, List<ForwardTarget> preTargets, boolean targetsKnown) {
+		pushSummonOnStack(card, isP1, extraCostRemovedCardPower, xValue, paidExtraCost,
+				preTargets, targetsKnown);
 		showStackWindow();
+	}
+
+	/**
+	 * The state half of {@link #showSummonOnStack} — chooses the Summon's targets and pushes the
+	 * entry, without opening the Stack overlay. Split out so the rule can be exercised without a
+	 * realised window.
+	 */
+	void pushSummonOnStack(CardData card, boolean isP1, int extraCostRemovedCardPower,
+			int xValue, boolean paidExtraCost, List<ForwardTarget> preTargets, boolean targetsKnown) {
+		List<ForwardTarget> targets = targetsKnown
+				? (preTargets == null || preTargets.isEmpty() ? null : preTargets)
+				: chooseSummonTargets(card, isP1, paidExtraCost, xValue);
+		lastSummonPreTargets = targets;
+		gameState.pushStack(paidExtraCost
+				? new StackEntry(card, null, null, isP1, xValue, false, targets, false, true, extraCostRemovedCardPower)
+				: new StackEntry(card, null, null, isP1, xValue, false, targets, false, false, 0));
+		logEntry("[Stack] \"" + card.name() + "\" — Summon on the stack"
+				+ (paidExtraCost ? " (Extra Cost paid)" : ""));
 	}
 
 	/**
@@ -7961,6 +8043,9 @@ public class MainWindow {
 				logEntry("[Summon] Resolving \"" + entry.source().name() + "\": " + effectText);
 				Consumer<GameContext> effect = ActionResolver.parse(effectText, entry.source(), entry.xValue());
 				if (effect != null) {
+					// Targets were chosen when the Summon went on the Stack, so the opponent could
+					// respond to them; resolution uses that choice rather than asking again.
+					if (entry.preSelectedTargets() != null) ctx.preloadTargets(entry.preSelectedTargets());
 					currentResolutionIsSummon   = true;
 					currentSummonSource     = entry.source();
 					currentSummonSourceIsP1 = entry.isP1();
@@ -8029,6 +8114,8 @@ public class MainWindow {
 				Consumer<GameContext> effect = effectText.isBlank() ? null : ActionResolver.parse(effectText, entry.source());
 				if (effect != null) {
 					logEntry("[AutoAbility] Resolving \"" + entry.source().name() + "\": " + effectText);
+					// As with Summons: an auto-ability chooses when it goes on the Stack.
+					if (entry.preSelectedTargets() != null) ctx.preloadTargets(entry.preSelectedTargets());
 					currentAbilitySource     = entry.source();
 					currentAbilitySourceIsP1 = entry.isP1();
 					try { effect.accept(ctx); } finally { currentAbilitySource = null; }
@@ -8708,6 +8795,163 @@ public class MainWindow {
 	}
 
 	/**
+	 * The Stack entries {@code spec} may redirect, as a predicate — shared by the activation gate
+	 * in {@link #canActivateAbility} and by the resolution in {@code GameContextImpl}, so the two
+	 * can never disagree about what qualifies.
+	 *
+	 * <p>Both shapes require the entry to be choosing exactly one card ("choosing <em>only</em>
+	 * …"): an entry with no stored selection has not chosen anything to redirect, and one with
+	 * several is not choosing "only" anything. EX Bursts are excluded for the same reason the
+	 * cancel family excludes them — they carry no stored selection to rewrite.
+	 *
+	 * @param userIsP1 the player activating the redirect, which is whose field "you control" means
+	 */
+	Predicate<StackEntry> redirectEligibility(TargetRedirect spec, CardData source, boolean userIsP1) {
+		return entry -> {
+			if (entry.isExBurstEntry() || entry.isWarpResolve()) return false;
+			switch (spec.entryKind()) {
+				case SUMMON  -> { if (!entry.isSummon()) return false; }
+				case ABILITY -> { if (entry.isSummon())  return false; }
+				case ANY     -> { }
+			}
+			List<ForwardTarget> chosen = entry.preSelectedTargets();
+			if (chosen == null || chosen.size() != 1) return false;
+			ForwardTarget only = chosen.get(0);
+			CardData card = fieldCardDataOrNull(only);
+			return switch (spec.eligibility()) {
+				case SOURCE_ITSELF -> card == source;
+				case OWN_FORWARD_OF_ELEMENT -> card != null
+						&& only.isP1() == userIsP1
+						&& only.zone() == ForwardTarget.CardZone.FORWARD
+						&& card.containsElement(spec.eligibleElement());
+				// "either player controls" — on a field, so a Break Zone selection does not qualify.
+				case ON_FIELD -> card != null && only.zone() != ForwardTarget.CardZone.BREAK_ZONE;
+				case ANY_ZONE -> true;
+			};
+		};
+	}
+
+	/**
+	 * The Forwards {@code userIsP1} controls that could legally become {@code entry}'s new target.
+	 *
+	 * <p>{@code element} narrows to one Element; {@code exclude} drops a card the text puts out of
+	 * reach ("another …", i.e. not the source). When the entry being redirected belongs to the
+	 * opponent, "cannot be chosen by your opponent's Summons/abilities" protection applies and
+	 * those Forwards are dropped too — redirecting onto a permanent the effect could not have
+	 * chosen in the first place is exactly what "must be a valid choice" rules out.
+	 */
+	List<ForwardTarget> redirectCandidates(StackEntry entry, boolean userIsP1,
+			String element, CardData exclude) {
+		List<ForwardTarget> out = new ArrayList<>();
+		List<CardData> fwds = userIsP1 ? p1ForwardCards : p2ForwardCards;
+		Predicate<CardData> legal = redirectLegality(entry, userIsP1, element, exclude);
+		for (int i = 0; i < fwds.size(); i++)
+			if (legal.test(fwds.get(i))) out.add(new ForwardTarget(userIsP1, i, ForwardTarget.CardZone.FORWARD));
+		return out;
+	}
+
+	/**
+	 * Every Character on either field that could legally become {@code entry}'s new target — the
+	 * pool for the two effects that let you point the entry anywhere ("You may choose another
+	 * Character/target") rather than at a Forward of a named Element.
+	 *
+	 * <p>Both sides are offered because neither Aemo nor Wicked Mask restricts the replacement to
+	 * your own field. {@code exclude} drops the card the entry already chose — "<em>another</em>".
+	 */
+	List<ForwardTarget> redirectCandidatesAnywhere(StackEntry entry, CardData exclude) {
+		List<ForwardTarget> out = new ArrayList<>();
+		for (boolean sideIsP1 : new boolean[]{true, false}) {
+			Predicate<CardData> legal = redirectLegality(entry, sideIsP1, null, exclude);
+			List<CardData> fwds = sideIsP1 ? p1ForwardCards : p2ForwardCards;
+			for (int i = 0; i < fwds.size(); i++)
+				if (legal.test(fwds.get(i))) out.add(new ForwardTarget(sideIsP1, i, ForwardTarget.CardZone.FORWARD));
+			CardData[] bkps = sideIsP1 ? p1BackupCards : p2BackupCards;
+			for (int i = 0; i < bkps.length; i++)
+				if (legal.test(bkps[i])) out.add(new ForwardTarget(sideIsP1, i, ForwardTarget.CardZone.BACKUP));
+			List<CardData> mons = sideIsP1 ? p1MonsterCards : p2MonsterCards;
+			for (int i = 0; i < mons.size(); i++)
+				if (legal.test(mons.get(i))) out.add(new ForwardTarget(sideIsP1, i, ForwardTarget.CardZone.MONSTER));
+		}
+		return out;
+	}
+
+	/**
+	 * {@code t}'s card, or {@code null} when that slot no longer holds one.
+	 *
+	 * <p>{@link AutoAbilityTriggers#fieldCardData} indexes the zone lists directly and throws once
+	 * a slot is gone. A Stack entry outlives the board it chose against — the card it picked can
+	 * be broken, bounced or stolen before the entry resolves — so anything reading a stored target
+	 * has to tolerate the index being stale.
+	 */
+	CardData fieldCardDataOrNull(ForwardTarget t) {
+		if (t == null) return null;
+		return switch (t.zone()) {
+			case FORWARD -> {
+				List<CardData> fwds = t.isP1() ? p1ForwardCards : p2ForwardCards;
+				yield t.idx() >= 0 && t.idx() < fwds.size() ? fwds.get(t.idx()) : null;
+			}
+			case BACKUP -> {
+				CardData[] bkps = t.isP1() ? p1BackupCards : p2BackupCards;
+				yield t.idx() >= 0 && t.idx() < bkps.length ? bkps[t.idx()] : null;
+			}
+			case MONSTER -> {
+				List<CardData> mons = t.isP1() ? p1MonsterCards : p2MonsterCards;
+				yield t.idx() >= 0 && t.idx() < mons.size() ? mons.get(t.idx()) : null;
+			}
+			case BREAK_ZONE -> null;
+		};
+	}
+
+	/** {@code source}'s own slot when {@code entry} could legally choose it, else {@code null}. */
+	ForwardTarget redirectSourceSlot(StackEntry entry, CardData source, boolean sourceIsP1) {
+		Predicate<CardData> legal = redirectLegality(entry, sourceIsP1, null, null);
+		if (!legal.test(source)) return null;
+		List<CardData> fwds = sourceIsP1 ? p1ForwardCards : p2ForwardCards;
+		for (int i = 0; i < fwds.size(); i++)
+			if (fwds.get(i) == source) return new ForwardTarget(sourceIsP1, i, ForwardTarget.CardZone.FORWARD);
+		CardData[] bkps = sourceIsP1 ? p1BackupCards : p2BackupCards;
+		for (int i = 0; i < bkps.length; i++)
+			if (bkps[i] == source) return new ForwardTarget(sourceIsP1, i, ForwardTarget.CardZone.BACKUP);
+		List<CardData> mons = sourceIsP1 ? p1MonsterCards : p2MonsterCards;
+		for (int i = 0; i < mons.size(); i++)
+			if (mons.get(i) == source) return new ForwardTarget(sourceIsP1, i, ForwardTarget.CardZone.MONSTER);
+		return null;
+	}
+
+	/**
+	 * Whether a card on {@code sideIsP1}'s field is something {@code entry} could legally choose.
+	 *
+	 * <p>"Cannot be chosen" protection is judged from the redirected entry's point of view, not
+	 * the redirecting player's: what matters is whether <em>that</em> Summon or ability could have
+	 * picked the card unaided. Pointing it at a permanent it could never have chosen is exactly
+	 * what "the newly chosen target must be a valid choice" rules out.
+	 */
+	private Predicate<CardData> redirectLegality(StackEntry entry, boolean sideIsP1,
+			String element, CardData exclude) {
+		boolean entryIsOpponents = entry.isP1() != sideIsP1;
+		Set<CardData> protectedFromEntry = !entryIsOpponents ? Set.of()
+				: entry.isSummon() ? cannotBeChosenBySummons : cannotBeChosenByAbilities;
+		return c -> c != null && c != exclude
+				&& (element == null || c.containsElement(element))
+				&& !protectedFromEntry.contains(c)
+				&& !(entryIsOpponents && cannotBeChosenBySummonsAnyone.contains(c));
+	}
+
+	/**
+	 * Points {@code entry} at {@code newTargets}, keeping its place in the resolution order.
+	 *
+	 * <p>{@link StackEntry} is a record, so the entry is replaced by a copy — which means any
+	 * identity-keyed state referring to the old instance has to move with it. A pending
+	 * cancellation is the one such case: cancel and redirect can both be applied to the same
+	 * entry before it resolves, and losing the cancellation here would quietly un-cancel it.
+	 */
+	void redirectStackEntryTargets(StackEntry entry, List<ForwardTarget> newTargets) {
+		StackEntry updated = entry.withPreSelectedTargets(newTargets);
+		if (!gameState.replaceStackEntry(entry, updated)) return;
+		if (cancelledStackEntries.remove(entry)) cancelledStackEntries.add(updated);
+	}
+
+	/**
 	 * Returns {@code true} if {@code ability} can currently be activated by the
 	 * card at the given slot.
 	 *
@@ -8743,6 +8987,12 @@ public class MainWindow {
 		// anyway pays the cost — for most of this family, the source card itself — for no effect.
 		Predicate<StackEntry> cancelFilter = ActionResolver.stackCancelFilter(ability.effectText(), isP1);
 		if (cancelFilter != null && gameState.getStack().stream().noneMatch(cancelFilter)) return false;
+		// Same reasoning for a redirect: with nothing on the stack choosing what the text names,
+		// activating only pays the cost.
+		TargetRedirect redirect = ActionResolver.targetRedirect(ability.effectText(), source);
+		if (redirect != null
+				&& gameState.getStack().stream().noneMatch(redirectEligibility(redirect, source, isP1)))
+			return false;
 		if (ability.mainPhaseOnly()) {
 			GameState.Player activePlayer = isP1 ? GameState.Player.P1 : GameState.Player.P2;
 			if (gameState.getCurrentPlayer() != activePlayer) return false;

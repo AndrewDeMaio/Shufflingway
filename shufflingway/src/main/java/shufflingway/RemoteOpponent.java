@@ -120,8 +120,27 @@ class RemoteOpponent implements OpponentController {
 			for (String key : rawOverrides.keySet())
 				overrides.put(Integer.valueOf(key), rawOverrides.getString(key));
 
+		// The caster already chose any Summon targets — replay that choice rather than making one
+		// here, where "P2" is the AI branch and would pick something else entirely.
+		//
+		// The side flips on the way across: the two clients sit on opposite sides of the same
+		// board, so what the caster recorded as their own field is this client's P2, and what they
+		// recorded as their opponent's is this client's P1. Slot indices need no such adjustment —
+		// both clients hold each zone in the same order.
+		JSONArray rawTargets = payload.optJSONArray("summonTargets");
+		List<ForwardTarget> summonTargets = new ArrayList<>();
+		boolean targetsAreReplayed = rawTargets != null;
+		if (rawTargets != null) {
+			for (int i = 0; i < rawTargets.length(); i++) {
+				JSONObject t = rawTargets.getJSONObject(i);
+				summonTargets.add(new ForwardTarget(!t.getBoolean("p1"), t.getInt("idx"),
+						ForwardTarget.CardZone.valueOf(t.getString("zone"))));
+			}
+		}
+
 		mw.executePlay(false, card, handIdx,
-				indices(payload, "discards"), indices(payload, "backups"), overrides);
+				indices(payload, "discards"), indices(payload, "backups"), overrides,
+				summonTargets, targetsAreReplayed);
 	}
 
 	/** The opponent settled on an opening hand order; mirror it so hand indices line up. */
@@ -275,15 +294,29 @@ class RemoteOpponent implements OpponentController {
 	 * receiver can check the indices still line up before acting on them.
 	 */
 	static GameAction playCardAction(CardData card, int handIdx, List<Integer> discards,
-	                                 List<Integer> backupDulls, Map<Integer, String> backupElements) {
+	                                 List<Integer> backupDulls, Map<Integer, String> backupElements,
+	                                 List<ForwardTarget> summonTargets) {
 		JSONObject overrides = new JSONObject();
 		backupElements.forEach((slot, element) -> overrides.put(String.valueOf(slot), element));
+		JSONArray targets = new JSONArray();
+		if (summonTargets != null) {
+			for (ForwardTarget t : summonTargets) {
+				targets.put(new JSONObject()
+						.put("p1", t.isP1())
+						.put("idx", t.idx())
+						.put("zone", t.zone().name()));
+			}
+		}
 		return GameAction.of(ActionType.PLAY_CARD, new JSONObject()
 				.put("handIdx", handIdx)
 				.put("card", card.name())
 				.put("discards", new JSONArray(discards))
 				.put("backups", new JSONArray(backupDulls))
-				.put("backupElements", overrides));
+				.put("backupElements", overrides)
+				// A cast Summon chooses its targets before the opponent may respond, so the choice
+				// belongs to the caster and travels with the play. Always present, so the receiver
+				// can tell "chose nothing" from an older client that never chose at all.
+				.put("summonTargets", targets));
 	}
 
 	/** Builds a DISCARD_HAND for hand cards the local player is discarding without payment. */

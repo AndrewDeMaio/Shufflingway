@@ -60,6 +60,16 @@ public record StackEntry(CardData source, ActionAbility ability, AutoAbility aut
         return new StackEntry(card, null, null, isP1, xValue, false, null, false, true, removedCardPower);
     }
 
+    /**
+     * A copy of this entry choosing {@code newTargets} instead of its current selection —
+     * how a redirect ("the Summon or ability is now choosing X instead") takes effect, since
+     * the entry is otherwise unchanged and must keep its place in the resolution order.
+     */
+    public StackEntry withPreSelectedTargets(List<ForwardTarget> newTargets) {
+        return new StackEntry(source, ability, autoAbility, isP1, xValue, isExBurst,
+                newTargets, isWarpResolve, paidExtraCost, extraCostRemovedCardPower);
+    }
+
     public boolean isSummon()        { return ability == null && autoAbility == null && !isExBurst && !isWarpResolve; }
     public boolean isAutoAbility()   { return autoAbility != null; }
     public boolean isActionAbility() { return ability != null; }

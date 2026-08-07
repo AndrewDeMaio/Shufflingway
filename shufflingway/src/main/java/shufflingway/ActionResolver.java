@@ -481,7 +481,7 @@ public class ActionResolver {
         result = tryParseCancelAutoAbilityAndDamageIfForward(effectText);
         if (result != null) return result;
 
-        result = tryParseRedirectAbilityTarget(effectText);
+        result = tryParseRedirectChosenTarget(effectText, source);
         if (result != null) return result;
 
         result = tryParseCancelAbilityOnStack(effectText);
@@ -1372,7 +1372,8 @@ public class ActionResolver {
         if (tryParsePlayerNextDamageZero(effectText)           != null) return "PlayerNextDamageZero";
         if (tryParseCancelAutoAbilityAndDamageIfForward(effectText) != null) return "CancelAutoAbilityAndDamageIfForward";
         if (tryParseCancelStackEntry(effectText)               != null) return "CancelSummonOrAutoAbility";
-        if (tryParseRedirectAbilityTarget(effectText)          != null) return "RedirectAbilityTarget";
+        // Mirrors parse(): ahead of the general redirect, which would otherwise claim the name.
+        if (tryParseRedirectChosenTarget(effectText, source)   != null) return "RedirectChosenTarget";
         if (tryParseCancelAbilityOnStack(effectText)           != null) return "CancelAbilityOnStack";
         if (tryParseCancelChosenTargetUnlessPay(effectText)    != null) return "CancelChosenTargetUnlessPay";
         if (tryParseCancelChosenTargetUnlessDiscard(effectText) != null) return "CancelChosenTargetUnlessDiscard";
@@ -1978,7 +1979,8 @@ public class ActionResolver {
         if (tryParsePlayerNextDamageZero(effectText) != null)                  return "PlayerNextDamageZero";
         if (tryParseCancelAutoAbilityAndDamageIfForward(effectText) != null) return "CancelAutoAbilityAndDamageIfForward";
         if (tryParseCancelStackEntry(effectText)              != null) return "CancelSummonOrAutoAbility";
-        if (tryParseRedirectAbilityTarget(effectText)         != null) return "RedirectAbilityTarget";
+        // Mirrors parse(): ahead of the general redirect, which would otherwise claim the name.
+        if (tryParseRedirectChosenTarget(effectText, source)  != null) return "RedirectChosenTarget";
         if (tryParseCancelAbilityOnStack(effectText)          != null) return "CancelAbilityOnStack";
         if (tryParseCancelStackEntryUnlessPay(effectText)     != null) return "CancelStackEntryUnlessPay";
         if (tryParseCancelChosenTargetUnlessPay(effectText)   != null) return "CancelChosenTargetUnlessPay";
@@ -3517,6 +3519,50 @@ public class ActionResolver {
      * which resolves through {@link GameContext#cancelStackEntry()} and is therefore always
      * Summons and auto-abilities regardless of any cost or element wording in the choose clause.
      */
+    /**
+     * The redirect criteria of {@code effectText}, or {@code null} when it is not one of the
+     * "the Summon or ability is now choosing X instead" abilities — see {@link TargetRedirect}.
+     *
+     * <p>Both members of this family name their own card as the fixed end of the redirect:
+     * Faris in its eligibility ("choosing only Faris"), Edge in its destination ("now choosing
+     * Edge instead"). Checking that name against {@code source} rather than taking the text at
+     * face value is what stops a future card that names a <em>different</em> card from being
+     * read as one of these and silently redirecting to the wrong permanent.
+     *
+     * <p>Used both to gate activation (an ability with no eligible Stack entry has nothing to do
+     * and would pay its cost for nothing) and to drive resolution.
+     */
+    static TargetRedirect targetRedirect(String effectText, CardData source) {
+        if (effectText == null || effectText.isBlank() || source == null) return null;
+        String text = effectText.trim();
+
+        Matcher self = REDIRECT_CHOOSING_ONLY_SELF.matcher(text);
+        if (self.find() && namesSource(self.group("self"), source))
+            return TargetRedirect.toChosenForward(self.group("newelem").trim());
+
+        Matcher toSelf = REDIRECT_MY_FORWARD_TO_SELF.matcher(text);
+        if (toSelf.find() && namesSource(toSelf.group("newtarget"), source))
+            return TargetRedirect.toSource(toSelf.group("elem").trim());
+
+        Matcher onField = REDIRECT_ON_FIELD_TO_SELF.matcher(text);
+        if (onField.find() && namesSource(onField.group("newtarget"), source))
+            return TargetRedirect.onFieldToSource();
+
+        Matcher freePick = REDIRECT_SINGLE_TARGET_TO_CHOSEN.matcher(text);
+        if (freePick.find())
+            return TargetRedirect.toAnyChosenCharacter(
+                    freePick.group("types").toLowerCase(Locale.ROOT).startsWith("summon")
+                            ? TargetRedirect.EntryKind.SUMMON
+                            : TargetRedirect.EntryKind.ABILITY);
+
+        return null;
+    }
+
+    /** True when {@code printedName} is the source card's own name. */
+    private static boolean namesSource(String printedName, CardData source) {
+        return printedName != null && printedName.trim().equalsIgnoreCase(source.name());
+    }
+
     static Predicate<StackEntry> stackCancelFilter(String effectText, boolean cancellerIsP1) {
         if (effectText == null || effectText.isBlank()) return null;
         String text = effectText.trim();

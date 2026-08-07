@@ -242,12 +242,22 @@ public interface GameContext {
     java.util.List<ForwardTarget> consumePreloadedTargets();
 
     /**
-     * Filters the stack to entries matching {@code filter} and presents a selection dialog.
-     * The chosen ability's target is redirected — logged as an instruction for the player to
-     * manually apply, since the app does not store per-ability targets in the stack entry.
-     * The ability itself is NOT cancelled; it will still resolve.
+     * Moves a Stack entry's chosen target, for the five abilities whose criteria {@code spec}
+     * describes (see {@link TargetRedirect}). Picks an eligible entry — prompting when more than
+     * one qualifies — works out the replacement, and rewrites the entry via
+     * {@link StackEntry#preSelectedTargets()} so it resolves against the new permanent. The entry
+     * is NOT cancelled; it still resolves, just against something else.
+     *
+     * <p>Does nothing when no entry qualifies, when no legal replacement exists ("if possible"),
+     * or when the player declines an optional redirect.
+     *
+     * <p>Legality of the replacement is checked as far as the board can answer it: the card must
+     * be in the right zone, of the right Element, and not protected from being chosen by an
+     * effect of that kind. Restrictions belonging to the redirected effect itself — "choose 1
+     * Forward of cost 3 or less" — are not re-derived, matching how the cancel family already
+     * treats its own target filters.
      */
-    void redirectAbilityTarget(java.util.function.Predicate<StackEntry> filter, String prompt);
+    void redirectChosenTarget(TargetRedirect spec, CardData source);
 
     /**
      * Forces {@code t} directly into the Break Zone, bypassing any

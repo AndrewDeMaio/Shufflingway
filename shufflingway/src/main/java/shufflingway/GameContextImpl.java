@@ -1889,38 +1889,111 @@ final class GameContextImpl implements GameContext {
 				}
 			}
 
-			@Override public void redirectAbilityTarget(java.util.function.Predicate<StackEntry> filter, String prompt) {
-				List<StackEntry> targets = mw.gameState.getStack().stream()
-						.filter(filter)
+			@Override public void redirectChosenTarget(TargetRedirect spec, CardData source) {
+				List<StackEntry> eligible = mw.gameState.getStack().stream()
+						.filter(mw.redirectEligibility(spec, source, isP1))
 						.collect(java.util.stream.Collectors.toList());
-				if (targets.isEmpty()) {
-					logEntry("No matching abilities on the stack to redirect");
+				if (eligible.isEmpty()) {
+					logEntry("No Summon or ability on the stack is choosing what " + source.name()
+							+ " can redirect");
 					return;
 				}
-				StackEntry chosen;
-				if (targets.size() == 1) {
-					chosen = targets.get(0);
-				} else if (isP1) {
-					String[] options = new String[targets.size()];
-					for (int i = 0; i < targets.size(); i++) {
-						StackEntry e = targets.get(i);
-						String type = e.isSummon() ? "Summon" : e.isAutoAbility() ? "Auto" : e.isSpecialAbility() ? "Special" : "Action";
-						options[i] = e.source().name() + " (" + type + ", " + (e.isP1() ? "P1" : "P2") + ")";
-					}
-					Object sel = JOptionPane.showInputDialog(mw.frame,
-							prompt, "Redirect Target", JOptionPane.PLAIN_MESSAGE, null, options, options[0]);
-					if (sel == null) return;
-					int idx = java.util.Arrays.asList(options).indexOf(sel.toString());
-					if (idx < 0) return;
-					chosen = targets.get(idx);
-				} else {
-					chosen = targets.stream().filter(e -> e.isP1())
-							.reduce((a, b) -> b).orElse(targets.get(targets.size() - 1));
-					logEntry("[AI] Chose to redirect: " + chosen.source().name());
+				StackEntry chosen = pickRedirectEntry(eligible);
+				if (chosen == null) return;
+
+				ForwardTarget replacement = switch (spec.replacement()) {
+					case TO_SOURCE              -> sourceAsRedirectTarget(chosen, source);
+					case OWN_FORWARD_OF_ELEMENT -> askForRedirectTarget(chosen,
+							mw.redirectCandidates(chosen, isP1, spec.newTargetElement(), source),
+							"another " + spec.newTargetElement() + " Forward you control");
+					case ANY_CHARACTER          -> askForRedirectTarget(chosen,
+							mw.redirectCandidatesAnywhere(chosen, currentTargetOf(chosen)),
+							"another Character");
+				};
+				if (replacement == null) return;
+
+				CardData newCard = mw.fieldCardDataOrNull(replacement);
+				mw.redirectStackEntryTargets(chosen, List.of(replacement));
+				logEntry("Effect: " + chosen.source().name() + "'s " + entryTypeLabel(chosen)
+						+ " is now choosing " + (newCard != null ? newCard.name() : "a new target")
+						+ " instead");
+			}
+
+			/** Lets the player settle which eligible entry to redirect; the AI takes the topmost. */
+			private StackEntry pickRedirectEntry(List<StackEntry> eligible) {
+				if (eligible.size() == 1) return eligible.get(0);
+				if (!isP1) {
+					StackEntry pick = eligible.get(eligible.size() - 1);
+					logEntry("[AI] Chose to redirect: " + pick.source().name());
+					return pick;
 				}
-				String type = chosen.isSummon() ? "Summon" : chosen.isAutoAbility() ? "auto-ability"
-						: chosen.isSpecialAbility() ? "special ability" : "action ability";
-				logEntry("Effect: " + chosen.source().name() + "'s " + type + " target redirected — choose a new valid target for it");
+				String[] options = new String[eligible.size()];
+				for (int i = 0; i < eligible.size(); i++) {
+					StackEntry e = eligible.get(i);
+					options[i] = e.source().name() + " (" + entryTypeLabel(e) + ", "
+							+ (e.isP1() ? "P1" : "P2") + ")";
+				}
+				int idx = mw.showEffectOptionDialog(
+						"Choose 1 Summon or ability to redirect:", "Redirect Target", options);
+				return idx >= 0 && idx < eligible.size() ? eligible.get(idx) : null;
+			}
+
+			/** The card {@code entry} is currently choosing — what "another" excludes. */
+			private CardData currentTargetOf(StackEntry entry) {
+				List<ForwardTarget> chosen = entry.preSelectedTargets();
+				return chosen == null || chosen.isEmpty() ? null
+						: mw.fieldCardDataOrNull(chosen.get(0));
+			}
+
+			/**
+			 * The source card's own slot, or {@code null} when it cannot legally be chosen by
+			 * {@code entry} — the "if possible" on Edge and Calbrena, which covers the source
+			 * having left the field as well as protection against being chosen.
+			 */
+			private ForwardTarget sourceAsRedirectTarget(StackEntry entry, CardData source) {
+				ForwardTarget slot = mw.redirectSourceSlot(entry, source, isP1);
+				if (slot == null)
+					logEntry(source.name() + " cannot be chosen by " + entry.source().name()
+							+ "'s effect — no redirect");
+				return slot;
+			}
+
+			/**
+			 * The optional player pick shared by Faris, Wicked Mask and Aemo. Returns {@code null}
+			 * when nothing qualifies or the player declines — both legal outcomes of "You may".
+			 */
+			private ForwardTarget askForRedirectTarget(StackEntry entry,
+					List<ForwardTarget> candidates, String poolDescription) {
+				if (candidates.isEmpty()) {
+					logEntry("No " + poolDescription + " is a valid choice — no redirect");
+					return null;
+				}
+				if (!isP1) {
+					ForwardTarget pick = candidates.get(0);
+					logEntry("[AI] redirects onto " + mw.fieldCardDataOrNull(pick).name());
+					return pick;
+				}
+				// "You may" — declining is a legal outcome, so the list carries its own opt-out.
+				String[] options = new String[candidates.size() + 1];
+				for (int i = 0; i < candidates.size(); i++) {
+					ForwardTarget t = candidates.get(i);
+					options[i] = mw.fieldCardDataOrNull(t).name()
+							+ (t.isP1() ? " (yours)" : " (opponent's)");
+				}
+				options[candidates.size()] = "Don't redirect";
+				int idx = mw.showEffectOptionDialog(
+						"Choose the new target for " + entry.source().name() + "'s effect:",
+						"Redirect Target", options);
+				if (idx < 0 || idx >= candidates.size()) {
+					logEntry("Declined to redirect " + entry.source().name() + "'s effect");
+					return null;
+				}
+				return candidates.get(idx);
+			}
+
+			private String entryTypeLabel(StackEntry e) {
+				return e.isSummon() ? "Summon" : e.isAutoAbility() ? "auto-ability"
+						: e.isSpecialAbility() ? "special ability" : "action ability";
 			}
 
 			@Override public void forceTargetToBreakZone(ForwardTarget t) {
