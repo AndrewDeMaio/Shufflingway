@@ -10128,6 +10128,82 @@ public class CardBehaviorTest {
 				"Wicked Mask only ever touches Summons, so it was completely inert before this");
 	}
 
+	// =========================================================================================
+	// Tidus (1-163L) — "Blitz Ace" 《S》《Water》《Water》: "Until the end of the turn Tidus gains
+	// Brave. Tidus can attack as many times as your points of damage this turn."
+	//
+	// Two independent sentences, so they parse as two standalone effects and compose. The second
+	// is a multi-attack permission whose size is read off the damage zone when the ability
+	// resolves — a resolved special ability grants a fixed permission, not one that keeps pace
+	// with damage taken later in the turn.
+	// =========================================================================================
+
+	private static final String BLITZ_ACE =
+			"Until the end of the turn Tidus gains Brave. "
+			+ "Tidus can attack as many times as your points of damage this turn.";
+
+	/** Puts {@code points} cards into P1's damage zone. */
+	private static void dealP1Damage(MainWindow mw, int points) {
+		for (int i = 0; i < points; i++)
+			mw.gameState.getP1DamageZone().add(makeForward("Damage " + i, "Fire", 1, 1000));
+	}
+
+	@Test
+	void blitzAceComposesItsTwoIndependentSentences() {
+		CardData tidus = makeForward("Tidus", "Water", 4, 7000);
+		assertEquals("SelfBoostUntilEot + SelfAttacksPerOwnDamage",
+				ActionResolver.fullDescription(BLITZ_ACE, tidus));
+
+		// The subject has to be the source in both halves — the sentences name Tidus, and a
+		// grant that silently applied to whoever activated it would be a different card.
+		CardData wakka = makeForward("Wakka", "Water", 3, 7000);
+		assertNull(ActionResolver.parse(BLITZ_ACE, wakka));
+	}
+
+	@Test
+	void blitzAceGrantsBraveAndOneAttackPerPointOfDamage() {
+		MainWindow mw = new MainWindow();
+		CardData tidus = makeForward("Tidus", "Water", 4, 7000);
+		placeP1Forward(mw, tidus);
+		dealP1Damage(mw, 3);
+
+		ActionResolver.parse(BLITZ_ACE, tidus).accept(mw.buildGameContext(true));
+
+		assertTrue(mw.p1ForwardTempTraits.get(0).contains(CardData.Trait.BRAVE), "gains Brave");
+		assertEquals(3, mw.attacksAllowed(tidus), "3 points of damage — 3 attacks");
+	}
+
+	@Test
+	void blitzAceFixesTheAttackCountWhenItResolves() {
+		MainWindow mw = new MainWindow();
+		CardData tidus = makeForward("Tidus", "Water", 4, 7000);
+		placeP1Forward(mw, tidus);
+		dealP1Damage(mw, 2);
+
+		ActionResolver.parse(BLITZ_ACE, tidus).accept(mw.buildGameContext(true));
+		assertEquals(2, mw.attacksAllowed(tidus));
+
+		// Damage taken after the ability resolved does not enlarge a permission already granted.
+		dealP1Damage(mw, 3);
+		assertEquals(2, mw.attacksAllowed(tidus),
+				"the permission was sized when it resolved, not re-read on each attack");
+	}
+
+	@Test
+	void blitzAceOnAnUndamagedPlayerStillLeavesTidusHisNormalAttack() {
+		MainWindow mw = new MainWindow();
+		CardData tidus = makeForward("Tidus", "Water", 4, 7000);
+		placeP1Forward(mw, tidus);
+
+		ActionResolver.parse(BLITZ_ACE, tidus).accept(mw.buildGameContext(true));
+
+		// A permission of 0 cannot take away the one attack every Forward has: the granted count
+		// is the stronger of the two, never a cap.
+		assertEquals(1, mw.attacksAllowed(tidus), "no damage — no extra attacks, but not zero either");
+		assertTrue(mw.p1ForwardTempTraits.get(0).contains(CardData.Trait.BRAVE),
+				"the Brave half does not depend on the damage count");
+	}
+
 	/** A bare hand card carrying only the two fields the reveal-hand filters read. */
 	private static CardData handCard(String type, int cost) {
 		return new CardData(null, "X", "Fire", cost, 7000, type, false, 0, false, false,

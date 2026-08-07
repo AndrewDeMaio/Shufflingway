@@ -296,6 +296,48 @@ final class ActionResolverPower {
      * self-boost on the source card (standard order, no "Until" prefix).
      * Pronoun subjects ("it", "they") are skipped — they are followup pronouns.
      */
+    /**
+     * Parses the duration-first wording of a self grant — "Until the end of the turn [Self] gains
+     * Brave." (Tidus 1-163L). The trailing-duration order is
+     * {@link #tryParseStandaloneSelfBoost}'s.
+     */
+    static Consumer<GameContext> tryParseSelfBoostEotPrefix(String text, CardData source) {
+        if (source == null) return null;
+        Matcher m = SELF_BOOST_EOT_PREFIX.matcher(text.trim());
+        if (!m.matches()) return null;
+        if (!m.group("subject").trim().equalsIgnoreCase(source.name())) return null;
+        int boost = m.group("amount") != null ? Integer.parseInt(m.group("amount")) : 0;
+        EnumSet<CardData.Trait> traits = parseTraits(m.group("traits"));
+        // "gains" with neither a power amount nor a keyword grants nothing — leave such a sentence
+        // to whatever parser owns the rest of its wording.
+        if (boost == 0 && traits.isEmpty()) return null;
+        String logSuffix = boostLogSuffix(boost, traits);
+        return ctx -> {
+            ctx.logEntry(source.name() + logSuffix);
+            ctx.boostSourceForward(source, boost, traits);
+        };
+    }
+
+    /**
+     * Parses "[Self] can attack as many times as your points of damage this turn." (Tidus 1-163L).
+     *
+     * <p>The count is read when the ability resolves, not tracked live: this is a resolved special
+     * ability, so it grants a permission of a fixed size rather than one that keeps pace with
+     * damage taken later in the turn.
+     */
+    static Consumer<GameContext> tryParseSelfAttacksPerOwnDamage(String text, CardData source) {
+        if (source == null) return null;
+        Matcher m = SELF_ATTACKS_PER_OWN_DAMAGE.matcher(text.trim());
+        if (!m.matches()) return null;
+        if (!m.group("subject").trim().equalsIgnoreCase(source.name())) return null;
+        return ctx -> {
+            int damage = ctx.selfDamageCount();
+            ctx.logEntry(source.name() + " can attack " + damage
+                    + " time(s) this turn (your points of damage)");
+            ctx.grantMaxAttacksUntilEndOfTurn(source, damage);
+        };
+    }
+
     static Consumer<GameContext> tryParseStandaloneSelfBoost(String text, CardData source) {
         if (source == null) return null;
         Matcher m = SELF_POWER_BOOST.matcher(text);

@@ -2976,6 +2976,41 @@ final class ActionResolverPatterns {
         "\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn[.!]?"
     );
     /**
+     * The other word order of {@link #SELF_POWER_BOOST}: "Until the end of the turn[,] &lt;subject&gt;
+     * gains [+N power][, traits]." — the duration leads instead of trailing (Tidus 1-163L, whose
+     * printed text omits the comma).
+     *
+     * <p>Anchored end to end, unlike {@code SELF_POWER_BOOST}, because {@code subject} would
+     * otherwise run backwards across a preceding clause under {@code find()} and match sentences
+     * this parser has no business claiming.
+     * <ul>
+     *   <li>Group {@code subject} — the word(s) before "gains", checked against the source</li>
+     *   <li>Group {@code amount}  — optional numeric power amount</li>
+     *   <li>Group {@code traits}  — optional traits string</li>
+     * </ul>
+     */
+    static final Pattern SELF_BOOST_EOT_PREFIX = Pattern.compile(
+        "(?i)^Until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn,?\\s+" +
+        "(?<subject>[^.]+?)\\s+gains?\\s+" +
+        "(?:\\+(?<amount>\\d+)\\s+[Pp]ower)?" +
+        "(?<traits>(?:\\s*,?\\s*(?:and\\s+)?(?:Haste|First\\s+Strike|Brave))*)" +
+        "[.!]?\\s*$"
+    );
+    /**
+     * Matches Tidus 1-163L's "Blitz Ace" second sentence: "&lt;subject&gt; can attack as many times
+     * as your points of damage this turn." — a multi-attack permission whose count is the ability
+     * user's own damage, read when the ability resolves.
+     *
+     * <p>Scoped to this wording rather than generalised. Tidus 29-105L carries the same idea as a
+     * Damage-gated <em>field</em> ability ("as many times in the same turn as the points of damage
+     * you have received"), which is continuous rather than resolved and does not belong on the
+     * effect chain at all.
+     */
+    static final Pattern SELF_ATTACKS_PER_OWN_DAMAGE = Pattern.compile(
+        "(?i)^(?<subject>[^.]+?)\\s+can\\s+attack\\s+as\\s+many\\s+times\\s+" +
+        "as\\s+your\\s+points\\s+of\\s+damage\\s+this\\s+turn[.!]?\\s*$"
+    );
+    /**
      * Matches "if [CardName] has received N damage or more, draw M card(s)." —
      * the inner effect extracted from "At the end of each player's turn, …".
      * Groups: {@code cardname}, {@code damage}, {@code draw}.

@@ -648,6 +648,12 @@ public class ActionResolver {
         result = tryParseIfHandSizeSelfBoost(effectText, source);
         if (result != null) return result;
 
+        result = tryParseSelfBoostEotPrefix(effectText, source);
+        if (result != null) return result;
+
+        result = tryParseSelfAttacksPerOwnDamage(effectText, source);
+        if (result != null) return result;
+
         result = tryParseStandaloneSelfBoost(effectText, source);
         if (result != null) return result;
 
@@ -1429,6 +1435,8 @@ public class ActionResolver {
         if (tryParseDoublePlayerAbilityOutgoingThisTurn(effectText) != null)   return "DoublePlayerAbilityOutgoingThisTurn";
         if (tryParseStandaloneSelfBoostForEachCrystal(effectText, source) != null) return "StandaloneSelfBoostForEachCrystal";
         if (tryParseIfHandSizeSelfBoost(effectText, source)               != null) return "IfHandSizeSelfBoost";
+        if (tryParseSelfBoostEotPrefix(effectText, source)    != null) return "SelfBoostUntilEot";
+        if (tryParseSelfAttacksPerOwnDamage(effectText, source) != null) return "SelfAttacksPerOwnDamage";
         if (tryParseStandaloneSelfBoost(effectText, source)   != null) return "StandaloneSelfBoost";
         if (tryParseStandaloneSelfDullAndShield(effectText, source) != null) return "StandaloneSelfDullAndShield";
         if (tryParseStandaloneSelfDull(effectText, source) != null)          return "StandaloneSelfDull";
@@ -2052,6 +2060,8 @@ public class ActionResolver {
         if (tryParseStandaloneSelfBoostForEachCrystal(effectText, source) != null) return "StandaloneSelfBoostForEachCrystal";
         if (tryParseIfHandSizeSelfBoost(effectText, source)               != null) return "IfHandSizeSelfBoost";
         if (tryParseIfHandSizeSelfBoost(effectText, source)               != null) return "IfHandSizeSelfBoost";
+        if (tryParseSelfBoostEotPrefix(effectText, source) != null)         return "SelfBoostUntilEot";
+        if (tryParseSelfAttacksPerOwnDamage(effectText, source) != null)    return "SelfAttacksPerOwnDamage";
         if (tryParseStandaloneSelfBoost(effectText, source) != null)        return "StandaloneSelfBoost";
         if (tryParseStandaloneSelfDullAndShield(effectText, source) != null) return "StandaloneSelfDullAndShield";
         if (tryParseStandaloneSelfDull(effectText, source) != null)          return "StandaloneSelfDull";
