@@ -2922,6 +2922,17 @@ final class ActionResolverPatterns {
             "(?=\\s+of\\s+cost|\\s+(?:Forwards?|Backups?|Monsters?|Summons?|Characters?|card)\\b|\\s+other\\b|\\s+and\\b)" +
             "\\s+" +
         "|" +
+            // "Category X [Type] and/or Job Y" — OR logic. Must precede the plain Category
+            // alternative below: that one's lazy group cannot stop at "FFL" here, because the
+            // "or Job Warrior of Light Forwards" left over fits nothing later in the pattern, so
+            // it backtracks and swallows the whole phrase as the category name. The search then
+            // looks for a category literally called "FFL Forwards or Job Warrior of Light" and
+            // finds nothing — 12-099R Sarah (FFL) searching an empty result.
+            "Category\\s+(?<catjobor>.+?)" +
+            "(?:\\s+(?:Forwards?|Backups?|Monsters?|Summons?|Characters?|card))?" +
+            "\\s+(?:and/)?or\\s+Job\\s+(?<jobcator>.+?)" +
+            "(?=\\s+of\\s+cost|\\s+(?:Forwards?|Backups?|Monsters?|Summons?|Characters?|card)\\b|\\s+other\\b|\\s+and\\b)\\s*" +
+        "|" +
             // Category filter — lookahead keeps the type word in the targets group
             "Category\\s+(?<category>.+?)\\s+" +
             "(?=Forwards?|Backups?|Monsters?|Summons?|Characters?|card\\b)" +
@@ -2932,9 +2943,17 @@ final class ActionResolverPatterns {
             "\\s+(?:and/)?or\\s+Card\\s+Name\\s+(?<cnameor>.+?)" +
             "(?=\\s+of\\s+cost|\\s+(?:Forwards?|Backups?|Monsters?|Summons?|Characters?|card)\\b|\\s+other\\b|\\s+and\\b)\\s*" +
         "|" +
-            // Written job — lookahead keeps element, type word, "of cost", "other than", Category, or "and" ahead
-            "Job\\s+(?<jobnm>.+?)(?=\\s+(?:Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\b" +
-            "|\\s+(?:Forwards?|Backups?|Monsters?|Summons?|Characters?|card)\\b" +
+            // Written job — lookahead keeps the type word, "of cost", "other than", Category, or
+            // "and" ahead.
+            //
+            // Deliberately does NOT stop at an element word. 19 job names contain one — "Warrior
+            // of Light", "Dark Knight", "Oracle of Light" — and every search text in the corpus
+            // that reads "Job … <Element> <Type>" is one of those names, not a job plus an element
+            // filter. Stopping at the element truncated "Warrior of Light" to "Warrior of" and the
+            // search matched nothing (7-114H Sarah, 5-123H Aria). An element stated before the job
+            // is a separate group (preelems) and is unaffected.
+            "Job\\s+(?<jobnm>.+?)(?=" +
+            "\\s+(?:Forwards?|Backups?|Monsters?|Summons?|Characters?|card)\\b" +
             "|\\s+of\\s+cost\\b|\\s+other\\b|\\s+Category\\b|\\s+and\\b)\\s*" +
         ")?" +
         // Optional Category filter following a Job filter (e.g. "Job Standard Unit Category FFCC")
@@ -2946,8 +2965,12 @@ final class ActionResolverPatterns {
         "(?:\\s+other\\s+than\\s+a(?:n)?\\s+(?<excludetype>Forward|Backup|Monster|Summon|Character))?\\s*" +
         "(?:\\s+other\\s+than\\s+Card\\s+Name\\s+(?<excludename>.+?)(?=\\s+of\\s+cost|\\s+and\\b))?" +
         "(?:of\\s+cost\\s+(?<cost>\\d+)(?:\\s+or\\s+(?<costcmp>less|more|\\d+))?\\s*)?" +
+        // "other than Light and Dark" as well as "... or Dark": both name a set to exclude, and
+        // only "or" was accepted, so 7-114H Sarah (FFL)'s Job group backtracked across the
+        // exclusion and searched for a job called "Warrior of Light Forward of cost 4 or less
+        // other than Light and".
         "(?:\\s+other\\s+than\\s+(?<excludeelem>(?:Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)" +
-            "(?:\\s+or\\s+(?:Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark))*))?\\s*" +
+            "(?:\\s+(?:and|or)\\s+(?:Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark))*))?\\s*" +
         "and\\s+" +
         "(?<destination>" +
             "add\\s+it\\s+to\\s+your\\s+hand" +

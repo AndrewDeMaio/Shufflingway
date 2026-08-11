@@ -4370,17 +4370,30 @@ public class MainWindow {
 			}
 			if (requireWarp && !c.hasWarp()) continue;
 			if (!meetsCostConstraint(c.cost(), costVal, costCmp)) continue;
-			boolean passesNameJob = (jobFilter == null && cardNameFilter == null)
-				|| (jobFilter != null && cardNameFilter != null
-					? meetsJobFilterEffective(c, jobFilter) || meetsCardNameFilter(c, cardNameFilter)
-					: meetsJobFilterEffective(c, jobFilter) && meetsCardNameFilter(c, cardNameFilter));
-			if (!passesNameJob) continue;
-			if (!meetsCategoryFilter(c, categoryFilter)) continue;
+			// Job, Card Name and Category identify a card three different ways. Stated together
+			// they are alternatives, never requirements to combine: "Category FFL Forwards or Job
+			// Warrior of Light Forwards" (12-099R Sarah) wants either. Alone, each is a plain
+			// requirement. No card in the corpus asks a search for two of these at once in the AND
+			// sense, so there is no conjunction to preserve — if one ever appears, it needs a flag
+			// from the parser rather than a change here, because only the text says which it is.
+			int idFilters = (jobFilter      != null ? 1 : 0)
+			              + (cardNameFilter != null ? 1 : 0)
+			              + (categoryFilter != null ? 1 : 0);
+			boolean passesIdentity = idFilters <= 1
+				? meetsJobFilterEffective(c, jobFilter)
+					&& meetsCardNameFilter(c, cardNameFilter)
+					&& meetsCategoryFilter(c, categoryFilter)
+				: (jobFilter      != null && meetsJobFilterEffective(c, jobFilter))
+					|| (cardNameFilter != null && meetsCardNameFilter(c, cardNameFilter))
+					|| (categoryFilter != null && meetsCategoryFilter(c, categoryFilter));
+			if (!passesIdentity) continue;
 			if (!meetsElementFilter(c, elementFilter)) continue;
 			if (excludeName != null && meetsCardNameFilter(c, excludeName)) continue;
 			if (excludeElem != null) {
 				boolean excluded = false;
-				for (String ee : excludeElem.split("(?i)\\s+or\\s+"))
+				// "other than Light and Dark" excludes both, exactly as "Light or Dark" does —
+				// the conjunction is in the English, not in the filter.
+				for (String ee : excludeElem.split("(?i)\\s+(?:and|or)\\s+"))
 					if (c.containsElement(ee.trim())) { excluded = true; break; }
 				if (excluded) continue;
 			}

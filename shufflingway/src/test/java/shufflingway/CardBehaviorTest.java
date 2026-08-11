@@ -8464,6 +8464,113 @@ public class CardBehaviorTest {
     }
 
     // =========================================================================================
+    // Sarah (FFL) 12-099R / 7-114H: searches that found nothing.
+    //
+    // Both failed in the regex, silently: a lazy group backtracked past its intended stopping
+    // point and swallowed the rest of the sentence, so the search ran with a filter no card could
+    // satisfy. The ability parsed, logged, and shuffled — it just never matched anything, which is
+    // why the characterization test was blind to it.
+    // =========================================================================================
+
+    /** Captures the (job, category) a search text asks for. */
+    private static String[] searchJobAndCategory(String text) {
+        GameContext ctx = mock(GameContext.class);
+        when(ctx.promptYouMay(anyString())).thenReturn(true);
+        Consumer<GameContext> fn = ActionResolver.parse(text, null);
+        assertNotNull(fn, "text must parse: " + text);
+        fn.accept(ctx);
+        ArgumentCaptor<String> job = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> cat = ArgumentCaptor.forClass(String.class);
+        verify(ctx).searchDeckForCard(anyBoolean(), anyBoolean(), anyBoolean(), anyBoolean(),
+                anyInt(), any(), any(), job.capture(), cat.capture(), any(), any(), any(),
+                any(), anyInt(), anyBoolean(), anyBoolean());
+        return new String[] { job.getValue(), cat.getValue() };
+    }
+
+    // 12-099R. The category group used to run on to the end of the phrase, so the search looked
+    // for a category literally named "FFL Forwards or Job Warrior of Light".
+    @Test
+    void sarahSearchesForEitherTheCategoryOrTheJob() {
+        String[] f = searchJobAndCategory(
+                "you may search for up to 2 Category FFL Forwards or Job Warrior of Light Forwards "
+                + "and add them to your hand.");
+        assertEquals("FFL", f[1]);
+        assertEquals("Warrior of Light", f[0]);
+    }
+
+    // The reprint says "and/or" for the same effect.
+    @Test
+    void theReprintsAndOrWordingReadsTheSameWay() {
+        String[] f = searchJobAndCategory(
+                "you may search for up to 2 Category FFL Forwards and/or Job Warrior of Light "
+                + "Forwards and add them to your hand.");
+        assertEquals("FFL", f[1]);
+        assertEquals("Warrior of Light", f[0]);
+    }
+
+    // 7-114H, and 5-123H Aria. "Light" is an element as well as the tail of the job name, and the
+    // job group stopped at it — searching for a job called "Warrior of".
+    @Test
+    void aJobNameEndingInAnElementWordIsNotTruncated() {
+        assertEquals("Warrior of Light", searchJobAndCategory(
+                "you may search for 1 Job Warrior of Light Forward and add it to your hand.")[0]);
+        assertEquals("Warrior of Light", searchJobAndCategory(
+                "you may search for 1 Job Warrior of Light Forward of cost 4 or less "
+                + "other than Light and Dark and play it onto the field.")[0]);
+    }
+
+    @Test
+    void anOrdinaryJobFilterIsUnaffected() {
+        String[] f = searchJobAndCategory(
+                "you may search for 1 Job Knight Forward of cost 3 or less and add it to your hand.");
+        assertEquals("Knight", f[0]);
+        assertNull(f[1]);
+    }
+
+    /** A Forward carrying a job and/or a category, the two things a search identifies cards by. */
+    private static CardData makeJobCategoryForward(String name, String job, String category) {
+        return new CardData(null, name, "Fire", 3, 7000, "Forward", false, 0, false, false,
+                Set.of(), 0, List.of(), null, List.of(),
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of(), List.of(), List.of(),
+                false, false, null, false, false, false, false, false, 1,
+                job, category, null, "");
+    }
+
+    // The engine half: stated together, the job and the category are alternatives. Run on P2's
+    // side, where the search picks without a dialog.
+    @Test
+    void categoryAndJobStatedTogetherMatchEitherNotBoth() {
+        MainWindow mw = new MainWindow();
+        mw.gameState.getP2MainDeck().addAll(List.of(
+                makeJobCategoryForward("Warrior",  "Warrior of Light", null),
+                makeJobCategoryForward("Native",   null,               "FFL"),
+                makeJobCategoryForward("Stranger", "Knight",           "XIV")));
+
+        mw.searchDeckForCard(false, true, false, false, false, -1, null,
+                null, "Warrior of Light", "FFL", null, null, null, "hand", 2, false, false);
+
+        List<String> hand = mw.gameState.getP2Hand().stream().map(CardData::name).sorted().toList();
+        assertEquals(List.of("Native", "Warrior"), hand,
+                "either the job or the category qualifies; the card with neither does not");
+    }
+
+    // Alone, a category is still a plain requirement rather than a free pass.
+    @Test
+    void aCategoryOnItsOwnStillExcludesNonMatchingCards() {
+        MainWindow mw = new MainWindow();
+        mw.gameState.getP2MainDeck().addAll(List.of(
+                makeJobCategoryForward("Native",   null, "FFL"),
+                makeJobCategoryForward("Stranger", null, "XIV")));
+
+        mw.searchDeckForCard(false, true, false, false, false, -1, null,
+                null, null, "FFL", null, null, null, "hand", 2, false, false);
+
+        assertEquals(List.of("Native"),
+                mw.gameState.getP2Hand().stream().map(CardData::name).toList());
+    }
+
+    // =========================================================================================
     // 2-093H Raubahn: "choose 1 Forward you control and 1 Forward opponent controls. The first
     // one deals the second damage equal to its power."
     //

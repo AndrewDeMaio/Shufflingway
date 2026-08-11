@@ -722,6 +722,14 @@ final class ActionResolverSearch {
         String catAfterJob = m.group("catafterjob");
         if (catAfterJob != null && categoryFilter == null) categoryFilter = catAfterJob.trim();
 
+        // --- "Category X or Job Y" — sets both filters; OR logic applied at match time ---
+        String catJobOr = m.group("catjobor");
+        if (catJobOr != null) {
+            categoryFilter = catJobOr.trim();
+            String jobCatOr = m.group("jobcator");
+            if (jobCatOr != null) jobFilter = jobCatOr.trim();
+        }
+
         // --- Element filter (e.g. "Fire or Earth" → "Fire|Earth") ---
         // preelems captures elements that precede a Job/Name filter (e.g. "Fire Job Knight");
         // elements captures elements that follow the filter (classic ordering).
