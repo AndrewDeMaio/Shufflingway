@@ -28,7 +28,16 @@ public enum ActionType {
                     //   Indices address zones both clients hold in the same order.
     DISCARD_HAND,   // payload: { "indices": [idx, ...] } — a discard with no CP, e.g. the
                     //   end-phase trim to five. Replicated because it renumbers the hand.
-    ATTACK,         // payload: { "forwardIdx": n }
+    ATTACK,         // payload: { "zone": "FORWARD"|"MONSTER"|"BACKUP", "indices": [n, ...],
+                    //            "power": n }
+                    //   The sender's own attackers, so the side flips on arrival; the slot indices
+                    //   do not, both clients holding each zone in the same order. More than one
+                    //   index is a party attack, which is always FORWARD. "power" is the sender's
+                    //   effective total, carried only so the receiver can cross-check it.
+    BLOCK,          // payload: { "blocked": bool, "zone": "...", "idx": n,
+                    //            "damage": { "<attackerIdx>": amount } }
+                    //   The answer to an ATTACK. "damage" is the blocker's spread across a blocked
+                    //   party and is absent otherwise. When "blocked" is false the rest is absent.
     RESOLVE_STACK,  // payload: {}
 
     // ── Utility ───────────────────────────────────────────────────────────────

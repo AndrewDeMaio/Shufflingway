@@ -3578,7 +3578,7 @@ final class AutoAbilityTriggers {
 		}
 
 		CardData.SpecialAbilityProxy proxy = eff.isSpecial() ? source.specialAbilityProxy() : null;
-		String primerName = eff.isSpecial() ? mw.getPrimerCardName(source, isP1) : null;
+		String primerName = eff.isSpecial() ? mw.priming.getPrimerCardName(source, isP1) : null;
 		new AbilityPaymentDialog(mw.frame, eff, source,
 				mw.playerHand(isP1), mw.playerBackupCards(isP1), mw.playerBackupStates(isP1), mw.playerBackupUrls(isP1),
 				mw::showZoomAt, mw::hideZoom, proxy, primerName, mw.lightDarkDiscardGrants(isP1),
@@ -3608,7 +3608,7 @@ final class AutoAbilityTriggers {
 	 */
 	private List<CardData> specialCostCandidates(CardData source, List<CardData> hand,
 			Collection<Integer> excludedIdxs, boolean isP1) {
-		String primerName = mw.getPrimerCardName(source, isP1);
+		String primerName = mw.priming.getPrimerCardName(source, isP1);
 		CardData.SpecialAbilityProxy proxy = source.specialAbilityProxy();
 		List<CardData> eligible = new ArrayList<>();
 		for (int i = 0; i < hand.size(); i++) {
@@ -3623,7 +3623,7 @@ final class AutoAbilityTriggers {
 
 	/** Names accepted for {@code source}'s S cost, for the chooser title. */
 	private String specialCostDescription(CardData source, boolean isP1) {
-		String primerName = mw.getPrimerCardName(source, isP1);
+		String primerName = mw.priming.getPrimerCardName(source, isP1);
 		StringBuilder sb = new StringBuilder(source.name());
 		if (primerName != null && !primerName.equalsIgnoreCase(source.name()))
 			sb.append(" or ").append(primerName);

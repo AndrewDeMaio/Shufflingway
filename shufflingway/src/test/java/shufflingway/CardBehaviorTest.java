@@ -6397,6 +6397,96 @@ public class CardBehaviorTest {
     }
 
     // =========================================================================================
+    // "You can play 2 or more Card Name X onto the field" is a permission its own controller
+    // holds, so the uniqueness rule has to read it from that player's field.
+    //
+    // isMultiNameExceptionActive scanned P1's zones whoever was asking, and the rule process hid
+    // that by only consulting it when the incoming card was P1's. The result was that P2 lost a
+    // second copy to a rule a card on their own field says does not apply to them — and, had the
+    // guard not been there, P1's granter would have licensed P2's duplicate instead.
+    // =========================================================================================
+
+    private static final String MULTI_NAME_GRANT =
+            "You can play 2 or more Card Name Cid onto the field.";
+
+    /**
+     * Seats {@code card} on P2's Forward row with its owner recorded. The owner matters here in a
+     * way it does not for most placements: the uniqueness rule sends the loser to its owner's
+     * Break Zone, and that lookup is by identity.
+     */
+    private static void placeP2Forward(MainWindow mw, CardData card) {
+        mw.gameState.getIdentity().put(card, false);
+        mw.placeP2CardInForwardZone(card);
+    }
+
+    @Test
+    void aMultiNameGrantOnP2sFieldProtectsP2sSecondCopy() {
+        MainWindow mw = new MainWindow();
+        mw.placeP2CardInFirstBackupSlot(
+                makeFieldAbilityCard("Cid Grantor", "Fire", "Backup", MULTI_NAME_GRANT));
+
+        placeP2Forward(mw, makeForward("Cid", "Fire", 3, 7000));
+        placeP2Forward(mw, makeForward("Cid", "Fire", 3, 7000));
+
+        assertEquals(2, mw.p2ForwardCards.size(),
+                "the grant is on P2's own field, so both copies stay");
+    }
+
+    @Test
+    void withoutTheGrantP2sSecondCopyStillGoesToTheBreakZone() {
+        MainWindow mw = new MainWindow();
+        placeP2Forward(mw, makeForward("Cid", "Fire", 3, 7000));
+        placeP2Forward(mw, makeForward("Cid", "Fire", 3, 7000));
+
+        assertEquals(1, mw.p2ForwardCards.size(),
+                "with no grant anywhere the uniqueness rule applies to P2 as it always did");
+    }
+
+    @Test
+    void aMultiNameGrantOnP1sFieldDoesNotLicenseP2sDuplicate() {
+        MainWindow mw = new MainWindow();
+        mw.placeCardInFirstBackupSlot(
+                makeFieldAbilityCard("Cid Grantor", "Fire", "Backup", MULTI_NAME_GRANT));
+
+        placeP2Forward(mw, makeForward("Cid", "Fire", 3, 7000));
+        placeP2Forward(mw, makeForward("Cid", "Fire", 3, 7000));
+
+        assertEquals(1, mw.p2ForwardCards.size(),
+                "the permission belongs to P1 — reading it for P2 is the same seat mix-up in reverse");
+    }
+
+    // =========================================================================================
+    // The uniqueness rule gate on priming is per player, not per board.
+    //
+    // Priming is blocked when it would immediately break the card it just fetched. That check
+    // used to scan both fields, so an opponent controlling the target locked you out of priming
+    // your own copy — a board both players are entitled to. The rule process it mirrors,
+    // sendToBreakZoneByUniquenessRule, walks one side's zones only.
+    // =========================================================================================
+
+    @Test
+    void anOpponentsCopyDoesNotBlockPrimingYourOwn() {
+        MainWindow mw = new MainWindow();
+        mw.placeP2CardInForwardZone(makeForward("Odin", "Ice", 5, 9000));
+
+        assertFalse(mw.priming.primingTargetOnField("Odin", true),
+                "both players may control an Odin, so the opponent's must not gate P1's prime");
+        assertTrue(mw.priming.primingTargetOnField("Odin", false),
+                "the copy is P2's own, so it does gate P2 priming into that name");
+    }
+
+    @Test
+    void yourOwnCopyStillBlocksPriming() {
+        MainWindow mw = new MainWindow();
+        placeP1Forward(mw, makeForward("Odin", "Ice", 5, 9000));
+
+        assertTrue(mw.priming.primingTargetOnField("Odin", true),
+                "priming into a name you already control would break it on arrival");
+        assertFalse(mw.priming.primingTargetOnField("Odin", false),
+                "and it is no constraint at all on the opponent");
+    }
+
+    // =========================================================================================
     // Odin (XVI) 29-118L / 24-112L: "When Barnabas (XVI) primes into Odin (XVI), Odin (XVI) gains
     // "<ability>" (This effect does not end at the end of the turn.)"  Two things were wrong:
     // parseAutoAbilities deleted quoted trigger-bearing spans outright, so the grant read

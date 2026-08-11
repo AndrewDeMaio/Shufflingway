@@ -136,6 +136,7 @@ public class MainWindow {
 	final CostCalculator      costs               = new CostCalculator(this);
 	/** Damage resolution rules; MainWindow keeps thin delegators to these. */
 	final DamageResolver      damageResolver      = new DamageResolver(this);
+	final Priming             priming             = new Priming(this);
 	/** Sequences card arrivals on the field: animation, then the card, then its auto abilities. */
 	final FieldEntryAnimator  fieldEntryAnimator  = new FieldEntryAnimator(this);
 
@@ -1833,6 +1834,60 @@ public class MainWindow {
 	}
 
 	private static final String TURN_START_CHECKSUM = "turnStart:";
+	private static final String COMBAT_CHECKSUM     = "combat:";
+
+	/**
+	 * How many battles this client has finished. Both clients count the same battles — each
+	 * declaration is replicated, and each produces exactly one boundary per client — so the number
+	 * is what pairs the two digests for the same combat.
+	 */
+	private int combatsResolved = 0;
+
+	/**
+	 * Combat digests waiting for their counterpart, keyed by battle number — this client's under
+	 * {@link #localCombatChecksums}, the opponent's under {@link #remoteCombatChecksums}. A battle
+	 * is dropped from both the moment the two are compared.
+	 *
+	 * <p>Both are needed because either side can arrive first, and a digest describes the board as
+	 * it stood at that battle. Recomputing it later would hash a board that has since moved on.
+	 */
+	private final Map<Integer, String> localCombatChecksums  = new HashMap<>();
+	private final Map<Integer, String> remoteCombatChecksums = new HashMap<>();
+
+	/**
+	 * Publishes a board digest at the end of a battle, and compares it with the opponent's for the
+	 * same battle as soon as both exist.
+	 *
+	 * <p>Unlike the turn-start digest, this one cannot be compared on arrival. The two clients
+	 * finish a battle at genuinely different moments: the defender resolves as soon as its player
+	 * declares, while the attacker only starts resolving when the BLOCK lands and then waits out a
+	 * priority round before damage. Comparing whatever state happened to be on the board when the
+	 * message arrived would report a desync on every single battle. So each side records its own
+	 * digest under the battle number and the comparison happens when the second of the two shows
+	 * up, whichever that is.
+	 */
+	void sendCombatChecksum() {
+		if (matchSetup == null) return;
+		int battle = ++combatsResolved;
+		String local = MatchChecksum.ofCombat(this, matchSetup.localIsHost(), battle);
+		localCombatChecksums.put(battle, local);
+		sendToOpponent(GameAction.of(ActionType.STATE_CHECKSUM, new JSONObject()
+				.put("label", COMBAT_CHECKSUM + battle)
+				.put("checksum", local)));
+		matchCombatChecksums(battle);
+	}
+
+	/** Compares the two digests for {@code battle} once both are in, and forgets it either way. */
+	private void matchCombatChecksums(int battle) {
+		String local  = localCombatChecksums.get(battle);
+		String remote = remoteCombatChecksums.get(battle);
+		if (local == null || remote == null) return;
+		localCombatChecksums.remove(battle);
+		remoteCombatChecksums.remove(battle);
+		if (!local.equals(remote))
+			reportDesync("board state differs from the opponent's after battle " + battle
+					+ " of turn " + gameState.getTurnNumber());
+	}
 
 	/** Handles an inbound digest, whose label says which moment in the game it describes. */
 	private void onRemoteChecksum(JSONObject payload) {
@@ -1844,6 +1899,15 @@ public class MainWindow {
 			String local = MatchChecksum.ofTurnStart(this, matchSetup.localIsHost(), turn);
 			if (!local.equals(remote))
 				reportDesync("board state differs from the opponent's at the start of turn " + turn);
+			return;
+		}
+		if (label.startsWith(COMBAT_CHECKSUM)) {
+			if (matchSetup == null) return;
+			// Held rather than judged until this client has finished the same battle — until then
+			// the two boards are legitimately different.
+			int battle = Integer.parseInt(label.substring(COMBAT_CHECKSUM.length()));
+			remoteCombatChecksums.put(battle, remote);
+			matchCombatChecksums(battle);
 			return;
 		}
 		remoteDealChecksum = remote;
@@ -2277,7 +2341,7 @@ public class MainWindow {
 
 			// Apply the same play legality the hand-cast path enforces (uniqueness, Light/Dark, backup slot).
 			boolean isCharacter   = cd.isForward() || cd.isBackup() || cd.isMonster();
-			boolean nameConflict  = isCharacter && !cd.multicard() && hasCharacterNameOnField(cd.name()) && !isMultiNameExceptionActive(cd.name());
+			boolean nameConflict  = isCharacter && !cd.multicard() && hasCharacterNameOnField(cd.name()) && !isMultiNameExceptionActive(cd.name(), true);
 			boolean ldConflict    = isCharacter && isLightDarkConflict(cd);
 			boolean noSlot        = cd.isBackup() && !hasAvailableBackupSlot();
 			boolean summonBlocked = cd.isSummon() && summonCastingProhibited();
@@ -5116,7 +5180,14 @@ public class MainWindow {
 		// priority checkpoint — so it is cleared by finish, which every exit path below runs.
 		p2DeclaredAttackers.clear();
 		p2DeclaredAttackers.add(attacker);
-		Runnable finish = () -> { p2DeclaredAttackers.clear(); resolvePostCombatBreaks(); onDone.run(); };
+		// Every exit path below runs finish, which makes it this side's single combat boundary —
+		// the counterpart to continueAttackPhase on the client that declared the attack.
+		Runnable finish = () -> {
+			p2DeclaredAttackers.clear();
+			resolvePostCombatBreaks();
+			sendCombatChecksum();
+			onDone.run();
+		};
 
 		int displayPow = (pendingP2AttackerIsMonster || pendingP2AttackerIsBackup)
 				? pendingP2AttackerPower : effectiveP2ForwardPower(attackerIdx);
@@ -5163,6 +5234,136 @@ public class MainWindow {
 		});
 	}
 
+	// ── Remote combat: replaying the opponent's attack, and waiting on their block ──
+
+	/**
+	 * True while a local attack has been declared and the remote player has not yet answered it.
+	 *
+	 * <p>Combat is mid-flight but nothing is animating and the Stack is empty, so without this the
+	 * board reads as settled and {@link #runWhenBoardSettled} would hand priority on while the
+	 * attack is still unanswered.
+	 */
+	private boolean awaitingRemoteBlock = false;
+
+	/** @see #awaitingRemoteBlock */
+	void setAwaitingRemoteBlock(boolean waiting) {
+		awaitingRemoteBlock = waiting;
+		refreshAttackButton();
+		if (skipAttackButton != null && waiting) skipAttackButton.setEnabled(false);
+	}
+
+	/** The card the opponent declared an attack with, or {@code null} if that slot is empty here. */
+	CardData remoteAttackerAt(ForwardTarget.CardZone zone, int idx) {
+		return fieldCardDataOrNull(new ForwardTarget(false, idx, zone));
+	}
+
+	/** The effective total power of an attack the opponent declared, as this client computes it. */
+	int remoteAttackPower(ForwardTarget.CardZone zone, List<Integer> indices) {
+		int total = 0;
+		for (int idx : indices) {
+			total += switch (zone) {
+				case MONSTER -> p2MonsterForwardPower(idx);
+				case BACKUP  -> p2BackupForwardPower(idx);
+				default      -> effectiveP2ForwardPower(idx);
+			};
+		}
+		return total;
+	}
+
+	/**
+	 * Replays an attack the remote player declared, as though the AI had declared it.
+	 *
+	 * <p>Deliberately a mirror of {@code ComputerPlayer.doAttackPhaseInner}'s per-zone bodies: only
+	 * the <em>choice</em> of attacker crosses the wire, so everything downstream of the choice —
+	 * dulling, becomes-dull and attack triggers, the party bookkeeping, and handing the local
+	 * player their block declaration — has to run here exactly as it does for a local AI attack.
+	 * Both clients then resolve the same combat from the same state.
+	 *
+	 * <p>The completion callback is empty on purpose. When the AI attacks it drives its own next
+	 * declaration from there; a remote attacker instead sends the next ATTACK, or advances the
+	 * phase, of its own accord.
+	 */
+	void replayRemoteAttack(ForwardTarget.CardZone zone, List<Integer> indices) {
+		p2Turn.attackDeclarationsThisTurn++;
+		pendingP2AttackerIsMonster = zone == ForwardTarget.CardZone.MONSTER;
+		pendingP2AttackerIsBackup  = zone == ForwardTarget.CardZone.BACKUP;
+		pendingP2AttackerPower     = remoteAttackPower(zone, indices);
+		Runnable onDone = () -> refreshAllForwardSlots();
+
+		if (indices.size() > 1) {
+			replayRemotePartyAttack(indices, onDone);
+			return;
+		}
+		int idx = indices.get(0);
+
+		switch (zone) {
+			case MONSTER -> {
+				CardData attacker = p2MonsterCards.get(idx);
+				if (!effectiveMonsterHasTrait(false, idx, CardData.Trait.BRAVE)) {
+					p2MonsterStates.set(idx, CardState.DULL);
+					animateDullP2Monster(idx);
+				}
+				recordAttackDeclared(attacker);
+				autoAbilityTriggers.triggerAutoAbilitiesForAttack(attacker, false);
+				logEntry("[P2] " + attacker.name() + " attacks! (Forward — " + pendingP2AttackerPower + ")");
+				initP1BlockDeclaration(attacker, idx, onDone);
+			}
+			case BACKUP -> {
+				CardData attacker = p2BackupCards[idx];
+				if (!effectiveBackupHasTrait(false, idx, CardData.Trait.BRAVE)) {
+					p2BackupStates[idx] = CardState.DULL;
+					animateDullP2Backup(idx, true);
+				}
+				recordAttackDeclared(attacker);
+				autoAbilityTriggers.triggerAutoAbilitiesForAttack(attacker, false);
+				logEntry("[P2] " + attacker.name() + " attacks! (Forward — " + pendingP2AttackerPower + ")");
+				initP1BlockDeclaration(attacker, idx, onDone);
+			}
+			default -> {
+				CardData attacker = p2ForwardPrimedTop.get(idx) != null
+						? p2ForwardPrimedTop.get(idx) : p2ForwardCards.get(idx);
+				logEntry("[P2] " + attacker.name() + " attacks!");
+				CardState before = p2ForwardStates.get(idx);
+				if (!effectiveP2HasTrait(idx, CardData.Trait.BRAVE)) {
+					p2ForwardStates.set(idx, CardState.DULL);
+					animateDullP2Forward(idx, null);
+					if (before == CardState.ACTIVE)
+						autoAbilityTriggers.triggerAutoAbilitiesForBecomesDull(p2ForwardCards.get(idx), false);
+				}
+				recordAttackDeclared(attacker);
+				autoAbilityTriggers.triggerAutoAbilitiesForAttack(attacker, false);
+				initP1BlockDeclaration(attacker, idx, onDone);
+			}
+		}
+	}
+
+	/** The party arm of {@link #replayRemoteAttack}; mirrors {@code ComputerPlayer.executeP2PartyAttack}. */
+	private void replayRemotePartyAttack(List<Integer> partyIndices, Runnable onDone) {
+		int combinedPower = 0;
+		StringBuilder names = new StringBuilder();
+		for (int idx : partyIndices) {
+			if (!effectiveP2HasTrait(idx, CardData.Trait.BRAVE)) {
+				CardState before = p2ForwardStates.get(idx);
+				p2ForwardStates.set(idx, CardState.DULL);
+				animateDullP2Forward(idx, null);
+				if (before == CardState.ACTIVE)
+					autoAbilityTriggers.triggerAutoAbilitiesForBecomesDull(p2ForwardCards.get(idx), false);
+			}
+			recordAttackDeclared(effectiveP2Forward(idx));
+			combinedPower += effectiveP2ForwardPower(idx);
+			if (names.length() > 0) names.append(", ");
+			names.append(p2ForwardCards.get(idx).name());
+		}
+		logEntry("[P2] Party Attack! " + names + " (" + combinedPower + " combined)");
+		p2Turn.formedPartyThisTurn = true;
+		for (int idx : partyIndices)
+			autoAbilityTriggers.triggerAutoAbilitiesForAttack(
+					p2ForwardPrimedTop.get(idx) != null ? p2ForwardPrimedTop.get(idx) : p2ForwardCards.get(idx), false);
+		autoAbilityTriggers.triggerAutoAbilitiesForPartyAttack(false,
+				partyIndices.stream().map(p2ForwardCards::get).collect(Collectors.toList()));
+		initP1BlockDeclarationVsParty(partyIndices, combinedPower, onDone);
+	}
+
 	/** True when P1 controls at least one Forward that is allowed to block right now. */
 	private boolean hasEligibleP1Blocker() {
 		for (int i = 0; i < p1ForwardStates.size(); i++) {
@@ -5178,7 +5379,14 @@ public class MainWindow {
 		p2DeclaredAttackers.clear();
 		for (int idx : attackerIndices)
 			if (idx < p2ForwardCards.size()) p2DeclaredAttackers.add(effectiveP2Forward(idx));
-		Runnable finish = () -> { p2DeclaredAttackers.clear(); resolvePostCombatBreaks(); onDone.run(); };
+		// Every exit path below runs finish, which makes it this side's single combat boundary —
+		// the counterpart to continueAttackPhase on the client that declared the attack.
+		Runnable finish = () -> {
+			p2DeclaredAttackers.clear();
+			resolvePostCombatBreaks();
+			sendCombatChecksum();
+			onDone.run();
+		};
 
 		StringBuilder names = new StringBuilder();
 		for (int idx : attackerIndices) {
@@ -5259,7 +5467,7 @@ public class MainWindow {
 			public boolean isNameBlocked(CardData card) {
 				return !castRestrictionMet(card)
 						|| ((card.isForward() || card.isBackup() || card.isMonster())
-							&& ((!card.multicard() && hasCharacterNameOnField(card.name()) && !isMultiNameExceptionActive(card.name()))
+							&& ((!card.multicard() && hasCharacterNameOnField(card.name()) && !isMultiNameExceptionActive(card.name(), true))
 								|| isLightDarkConflict(card)));
 			}
 			public int effectiveCastCost(CardData card) { return MainWindow.this.effectiveCastCost(card); }
@@ -5704,7 +5912,7 @@ public class MainWindow {
 
 			boolean handCanPlayAction = castTimingWindowOpen(card);
 			boolean handIsCharacter = card.isForward() || card.isBackup() || card.isMonster();
-			boolean handNameConflict = handIsCharacter && !card.multicard() && hasCharacterNameOnField(card.name()) && !isMultiNameExceptionActive(card.name());
+			boolean handNameConflict = handIsCharacter && !card.multicard() && hasCharacterNameOnField(card.name()) && !isMultiNameExceptionActive(card.name(), true);
 			boolean handLightDarkConflict = handIsCharacter && isLightDarkConflict(card);
 			final boolean canPlay = handCanPlayAction && !handNameConflict && !handLightDarkConflict
 					&& canAffordCard(card, idx) && (!card.isBackup() || hasAvailableBackupSlot()) && castRestrictionMet(card)
@@ -5800,7 +6008,7 @@ public class MainWindow {
 		JMenuItem playItem = new JMenuItem("Play");
 		boolean canPlaySpecialAction = castTimingWindowOpen(card);
 		boolean isCharacter = card.isForward() || card.isBackup() || card.isMonster();
-		boolean nameConflict = isCharacter && !card.multicard() && hasCharacterNameOnField(card.name()) && !isMultiNameExceptionActive(card.name());
+		boolean nameConflict = isCharacter && !card.multicard() && hasCharacterNameOnField(card.name()) && !isMultiNameExceptionActive(card.name(), true);
 		boolean lightDarkConflict = isCharacter && isLightDarkConflict(card);
 		playItem.setEnabled(canPlaySpecialAction && !nameConflict && !lightDarkConflict && canAffordCard(card, handIdx)
 				&& (!card.isBackup() || hasAvailableBackupSlot()) && castRestrictionMet(card)
@@ -6587,11 +6795,11 @@ public class MainWindow {
 	 * Summons from being removed from the game by the opponent's Summons or abilities.
 	 */
 	boolean bzSummonsProtectedFromOppRfg(boolean isP1) {
-		for (CardData c : (isP1 ? p1ForwardCards : p2ForwardCards))
+		for (CardData c : p1ForwardCards)
 			if (ActionResolver.hasBzSummonRfgProtection(c)) return true;
 		CardData[] bkps = isP1 ? p1BackupCards : p2BackupCards;
 		for (CardData c : bkps) if (c != null && ActionResolver.hasBzSummonRfgProtection(c)) return true;
-		for (CardData c : (isP1 ? p1MonsterCards : p2MonsterCards))
+		for (CardData c : p1MonsterCards)
 			if (ActionResolver.hasBzSummonRfgProtection(c)) return true;
 		return false;
 	}
@@ -7011,13 +7219,21 @@ public class MainWindow {
 	}
 
 	/**
-	 * Returns true if a "You can play 2 or more Card Name X" exception is active on P1's field
-	 * for the given card name, allowing the name-uniqueness rule to be bypassed.
+	 * Returns true if a "You can play 2 or more Card Name X" exception is active on {@code isP1}'s
+	 * field for the given card name, allowing the name-uniqueness rule to be bypassed.
+	 *
+	 * <p>The grant is a permission its own controller holds, so it is read from that player's
+	 * zones. This used to scan P1's field whoever was asking, which the uniqueness rule process
+	 * papered over by only consulting it for P1 at all — leaving P2's second copy broken by a rule
+	 * a card on their own field says does not apply to them.
 	 */
-	private boolean isMultiNameExceptionActive(String cardName) {
-		for (CardData c : p1ForwardCards) if (cardName.equalsIgnoreCase(c.grantsMultiNamePlay())) return true;
-		for (CardData c : p1MonsterCards) if (cardName.equalsIgnoreCase(c.grantsMultiNamePlay())) return true;
-		for (CardData c : p1BackupCards)  if (c != null && cardName.equalsIgnoreCase(c.grantsMultiNamePlay())) return true;
+	private boolean isMultiNameExceptionActive(String cardName, boolean isP1) {
+		for (CardData c : (isP1 ? p1ForwardCards : p2ForwardCards))
+			if (cardName.equalsIgnoreCase(c.grantsMultiNamePlay())) return true;
+		for (CardData c : (isP1 ? p1MonsterCards : p2MonsterCards))
+			if (cardName.equalsIgnoreCase(c.grantsMultiNamePlay())) return true;
+		for (CardData c : (isP1 ? p1BackupCards : p2BackupCards))
+			if (c != null && cardName.equalsIgnoreCase(c.grantsMultiNamePlay())) return true;
 		return false;
 	}
 
@@ -8182,7 +8398,7 @@ public class MainWindow {
 	 */
 	boolean isBoardSettled() {
 		return !fieldEntryAnimator.isBusy() && gameState.getStack().isEmpty() && !isResolvingStack
-				&& turnFlowGate.isClear() && !anyModalDialogShowing();
+				&& turnFlowGate.isClear() && !anyModalDialogShowing() && !awaitingRemoteBlock;
 	}
 
 	/**
@@ -8664,17 +8880,6 @@ public class MainWindow {
 		return false;
 	}
 
-	/**
-	 * If {@code card} is currently the primed top of a forward slot, returns the name of
-	 * the primer (base) card beneath it; otherwise returns {@code null}.
-	 */
-	String getPrimerCardName(CardData card, boolean isP1) {
-		List<CardData> primedTops = isP1 ? p1ForwardPrimedTop : p2ForwardPrimedTop;
-		List<CardData> bases      = isP1 ? p1ForwardCards      : p2ForwardCards;
-		for (int i = 0; i < primedTops.size(); i++)
-			if (card.equals(primedTops.get(i))) return bases.get(i).name();
-		return null;
-	}
 
 	// ---- Per-player data selectors used by the ability payment chain -----------
 
@@ -9047,7 +9252,7 @@ public class MainWindow {
 			if (playedTurn > 0 && gameState.getTurnNumber() - playedTurn < 2) return false;
 		}
 		if (ability.isSpecial()) {
-			String primerName = getPrimerCardName(source, isP1);
+			String primerName = priming.getPrimerCardName(source, isP1);
 			if (!hasSameNameInHand(source.name(), primerName, isP1)) {
 				CardData.SpecialAbilityProxy proxy = source.specialAbilityProxy();
 				if (proxy == null || playerHand(isP1).stream().noneMatch(proxy::meetsSubstitute)) return false;
@@ -10142,7 +10347,7 @@ public class MainWindow {
 	 */
 	private boolean sendToBreakZoneByUniquenessRule(CardData incoming, boolean isP1) {
 		if (incoming.multicard()) return false;
-		if (isP1 && isMultiNameExceptionActive(incoming.name())) return false;
+		if (isMultiNameExceptionActive(incoming.name(), isP1)) return false;
 		boolean conflict = false;
 		if (isP1) {
 			// P1 forwards
@@ -11354,6 +11559,10 @@ public class MainWindow {
 			}
 		}
 
+		// The answer goes out before the local board acts on it, so the attacking client is
+		// resuming its combat while this one resolves the same battle.
+		sendToOpponent(RemoteOpponent.blockAction(blkZone, blkIdx, null));
+
 		// Clear pending state before any callbacks to avoid re-entrancy
 		pendingP2Attacker           = null;
 		pendingP2AttackerIdx        = -1;
@@ -11450,7 +11659,13 @@ public class MainWindow {
 			// Block declared: the turn player (P2) responds first, then P1, then damage.
 			combatPriorityRound(false, blocker.name() + " blocks the party!", () -> {
 				setAttackSubStep(3);
-				resolveP1BlockVsP2Party(blockerIdx, blocker, attackerIndices, combinedPower);
+				Map<Integer, Integer> spread =
+						resolveP1BlockVsP2Party(blockerIdx, blocker, attackerIndices, combinedPower);
+				// Unlike a single block, the party answer is not complete at declaration time: how
+				// the blocker splits its damage is chosen during resolution, and the attacking
+				// client needs that map to reach the same board. So the answer goes out here.
+				sendToOpponent(RemoteOpponent.blockAction(
+						ForwardTarget.CardZone.FORWARD, blockerIdx, spread));
 				p1BlockingIdx       = -1;
 				p1BlockedByAttacker = null;
 				setAttackSubStep(-1);
@@ -11458,6 +11673,7 @@ public class MainWindow {
 				onDone.run();
 			});
 		} else {
+			sendToOpponent(RemoteOpponent.blockAction(null, -1, null));
 			combatPriorityRound(false, "No blocker declared — taking the party's damage.", () -> {
 				setAttackSubStep(3);
 				setPlayerDamageSource(partyExBurstSuppressor(attackerIndices, false));
@@ -11736,6 +11952,10 @@ public class MainWindow {
 	 */
 	private void continueAttackPhase() {
 		resolvePostCombatBreaks();
+		// Every battle P1 declares ends here — both branches of all three single-attacker paths, and
+		// the party path's onDone — which makes this the one place to digest the result. The
+		// opponent's mirror of it is the finish runnable in initP1BlockDeclaration.
+		sendCombatChecksum();
 		p1AttackSelection.clear();
 		p1DeclaredAttackers.clear();
 		p1MonsterAttackIdx = -1;
@@ -11847,6 +12067,8 @@ public class MainWindow {
 
 		// Combat stays on Declare Attackers until both players have passed on the declaration.
 		refreshAttackButton();
+		sendToOpponent(RemoteOpponent.attackAction(
+				ForwardTarget.CardZone.MONSTER, List.of(monIdx), attackerPower));
 
 		combatPriorityRound(true, attacker.name() + " attacks! (Forward — " + attackerPower + ")", () -> {
 			if (survivingDeclaredAttackers(true).isEmpty()) { skipBlockStepNoAttackers(); return; }
@@ -12183,6 +12405,8 @@ public class MainWindow {
 
 		// Combat stays on Declare Attackers until both players have passed on the declaration.
 		refreshAttackButton();
+		sendToOpponent(RemoteOpponent.attackAction(
+				ForwardTarget.CardZone.BACKUP, List.of(bIdx), attackerPower));
 
 		combatPriorityRound(true, attacker.name() + " attacks! (Forward — " + attackerPower + ")", () -> {
 			if (survivingDeclaredAttackers(true).isEmpty()) { skipBlockStepNoAttackers(); return; }
@@ -12282,6 +12506,8 @@ public class MainWindow {
 
 		// Combat stays on Declare Attackers until both players have passed on the declaration.
 		refreshAttackButton();
+		sendToOpponent(RemoteOpponent.attackAction(ForwardTarget.CardZone.FORWARD, selection,
+				selection.stream().mapToInt(this::effectiveP1ForwardPower).sum()));
 
 		if (selection.size() == 1) {
 			int idx = selection.get(0);
@@ -12455,7 +12681,8 @@ public class MainWindow {
 	}
 
 	/** P1 blocks a P2 party attack: combined power hits the blocker; P1 assigns blocker power back. */
-	private void resolveP1BlockVsP2Party(int blockerIdx, CardData blocker,
+	/** @return the damage the blocker spread across the party, empty when First Strike stopped it. */
+	private Map<Integer, Integer> resolveP1BlockVsP2Party(int blockerIdx, CardData blocker,
 			List<Integer> attackerIndices, int combinedPower) {
 		// Party has First Strike only if every attacker has it and the blocker does not
 		boolean partyFirst = attackerIndices.stream()
@@ -12479,9 +12706,10 @@ public class MainWindow {
 					attackerIndices, attackerCards, effectivePowers, blockerPower);
 			if (damageMap.isEmpty()) damageMap = p2AiBuildDamageMap(attackerIndices, blockerPower);
 			applyP2PartyAttackerDamage(damageMap);
-		} else {
-			logEntry("First Strike — party takes no return damage");
+			return damageMap;
 		}
+		logEntry("First Strike — party takes no return damage");
+		return Map.of();
 	}
 
 	/** Applies a damage map onto P2 party attackers; breaks those that reach lethal. */
@@ -12629,9 +12857,9 @@ public class MainWindow {
 			GameState.GamePhase phase = gameState.getCurrentPhase();
 			boolean isMainPhase = phase == GameState.GamePhase.MAIN_1 || phase == GameState.GamePhase.MAIN_2;
 			JMenuItem primeItem = new JMenuItem("Prime (" + fwd.primingTarget() + ")");
-			primeItem.setEnabled(isMainPhase && canAffordPrimingCost(fwd)
-					&& !primingTargetOnField(fwd.primingTarget()));
-			primeItem.addActionListener(ae -> showPrimingPaymentDialog(fwd, idx));
+			primeItem.setEnabled(isMainPhase && priming.canAffordPrimingCost(fwd)
+					&& !priming.primingTargetOnField(fwd.primingTarget(), true));
+			primeItem.addActionListener(ae -> priming.showPrimingPaymentDialog(fwd, idx));
 			menu.add(primeItem);
 		}
 
@@ -12675,322 +12903,12 @@ public class MainWindow {
 
 		if (fwd.hasPriming() && p2ForwardPrimedTop.get(idx) == null) {
 			JMenuItem primeItem = new JMenuItem("Prime (" + fwd.primingTarget() + ")");
-			primeItem.setEnabled(!primingTargetOnField(fwd.primingTarget()));
-			primeItem.addActionListener(ae -> applyP2PrimedCard(fwd, idx));
+			primeItem.setEnabled(!priming.primingTargetOnField(fwd.primingTarget(), false));
+			primeItem.addActionListener(ae -> priming.applyP2PrimedCard(fwd, idx));
 			menu.add(primeItem);
 		}
 
 		if (menu.getComponentCount() > 0) menu.show(slot, e.getX(), e.getY());
-	}
-
-	/** Searches P2's deck for the priming target and sets it as the top card of the primed forward. */
-	private void applyP2PrimedCard(CardData primingCard, int slotIdx) {
-		String target = primingCard.primingTarget();
-		List<CardData> matches = gameState.findMatchingNamesInP2MainDeck(target);
-		if (matches.isEmpty()) {
-			logEntry("[P2] Priming: \"" + target + "\" not found in deck");
-			return;
-		}
-		CardData chosen = matches.get(0);
-		gameState.removeFromP2MainDeck(chosen);
-		p2ForwardPrimedTop.set(slotIdx, chosen);
-		logEntry("[P2] Primed: \"" + primingCard.name() + "\" topped with \"" + chosen.name() + "\"");
-		refreshP2ForwardSlot(slotIdx);
-		autoAbilityTriggers.triggerAutoAbilitiesForPrimedInto(primingCard, chosen, false);
-	}
-
-	/**
-	 * Returns true if {@code targetName} is already present on either player's field
-	 * (as a base forward or a primed top card), which would violate the uniqueness rule
-	 * if priming were performed.
-	 */
-	private boolean primingTargetOnField(String targetName) {
-		for (int i = 0; i < p1ForwardCards.size(); i++) {
-			if (p1ForwardCards.get(i).name().equalsIgnoreCase(targetName)) return true;
-			CardData top = p1ForwardPrimedTop.get(i);
-			if (top != null && top.name().equalsIgnoreCase(targetName)) return true;
-		}
-		for (int i = 0; i < p2ForwardCards.size(); i++) {
-			if (p2ForwardCards.get(i).name().equalsIgnoreCase(targetName)) return true;
-			CardData top = p2ForwardPrimedTop.get(i);
-			if (top != null && top.name().equalsIgnoreCase(targetName)) return true;
-		}
-		return false;
-	}
-
-	/** @see CostCalculator#canAffordPrimingCost */
-	private boolean canAffordPrimingCost(CardData card) { return costs.canAffordPrimingCost(card); }
-
-	/**
-	 * Payment dialog for the Priming ability cost. On confirm, searches the
-	 * main deck for the target card and places it on top of the priming forward.
-	 */
-	private void showPrimingPaymentDialog(CardData card, int slotIdx) {
-		List<String> rawCost = card.primingCost();
-		long genericNeeded = rawCost.stream().filter(String::isEmpty).count();
-		LinkedHashMap<String, Integer> costByElem = new LinkedHashMap<>();
-		for (String e : rawCost) if (!e.isEmpty()) costByElem.merge(e, 1, Integer::sum);
-		String[] elems   = costByElem.keySet().toArray(String[]::new);
-		int totalCost    = rawCost.size();
-
-		// If cost is empty, no dialog needed — go straight to execution
-		if (totalCost == 0) {
-			executePriming(card, slotIdx, new ArrayList<>(), new ArrayList<>());
-			return;
-		}
-
-		JDialog dlg = new JDialog(frame, "Prime: " + card.name(), true);
-		dlg.setResizable(false);
-		dlg.setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
-
-		List<CardData> hand = gameState.getP1Hand();
-
-		Map<String, Integer> bankCpByElem = new LinkedHashMap<>(costByElem);
-		for (String k : bankCpByElem.keySet()) bankCpByElem.put(k, 0);
-
-		List<Integer> selectedBackups  = new ArrayList<>();
-		List<Integer> selectedDiscards = new ArrayList<>();
-
-		List<Integer> eligibleBackupSlots = new ArrayList<>();
-		for (int i = 0; i < p1BackupCards.length; i++) {
-			if (p1BackupCards[i] != null && p1BackupStates[i] == CardState.ACTIVE
-					&& (genericNeeded > 0 || matchesAnyElement(p1BackupCards[i], elems)))
-				eligibleBackupSlots.add(i);
-		}
-
-		JLabel cpLabel = new JLabel();
-		cpLabel.setFont(FontLoader.loadPixelFont(11));
-		cpLabel.setHorizontalAlignment(SwingConstants.CENTER);
-
-		JButton confirmBtn = new JButton("Confirm (Prime)");
-		confirmBtn.setFont(FontLoader.loadPixelFont(11));
-
-		List<JLabel>   backupLbls  = new ArrayList<>();
-		List<Integer>  backupSlots = new ArrayList<>();
-		List<JLabel>   discardLbls = new ArrayList<>();
-		List<Integer>  discardIdxs = new ArrayList<>();
-
-		boolean[] canAddDiscard = {false};
-		Runnable updateAll = () -> {
-			Map<String, Integer> cpByElem = new LinkedHashMap<>(bankCpByElem);
-			int extraCp = 0;
-			for (int slot : selectedBackups) {
-				if (matchesAnyElement(p1BackupCards[slot], elems))
-					cpByElem.merge(contributingElement(p1BackupCards[slot], elems, cpByElem, costByElem), 1, Integer::sum);
-				else extraCp++;
-			}
-			for (int idx : selectedDiscards) {
-				if (matchesAnyElement(hand.get(idx), elems))
-					cpByElem.merge(contributingElement(hand.get(idx), elems, cpByElem, costByElem), 2, Integer::sum);
-				else extraCp += 2;
-			}
-			int total      = cpByElem.values().stream().mapToInt(Integer::intValue).sum() + extraCp;
-			// Any amount of CP may be produced when paying a cost; excess beyond the cost is wasted.
-			boolean canAddBackup = true;
-			canAddDiscard[0] = true;
-			boolean satisfied = cpByElem.entrySet().stream()
-					.allMatch(en -> en.getValue() >= costByElem.getOrDefault(en.getKey(), 0));
-			confirmBtn.setEnabled(total >= totalCost && satisfied);
-
-			StringBuilder sb = new StringBuilder("Prime CP: " + total + " / " + totalCost + "  (");
-			boolean first = true;
-			for (String en : elems) {
-				if (!first) sb.append(", ");
-				sb.append(en).append(": ").append(cpByElem.getOrDefault(en, 0)).append("/").append(costByElem.get(en));
-				first = false;
-			}
-			if (genericNeeded > 0) {
-				if (!first) sb.append(", ");
-				sb.append("any: ").append(Math.min(extraCp, (int) genericNeeded)).append("/").append((int) genericNeeded);
-			}
-			if (first) sb.append("free");
-			sb.append(")");
-			cpLabel.setText(sb.toString());
-
-			for (int i = 0; i < backupLbls.size(); i++) {
-				JLabel lbl = backupLbls.get(i); boolean sel = selectedBackups.contains(backupSlots.get(i));
-				lbl.setBorder(sel ? createCardGlowBorder(Color.YELLOW) : BorderFactory.createLineBorder(canAddBackup ? Color.GRAY : new Color(80,80,80), 1));
-				lbl.setBackground(sel || canAddBackup ? Color.DARK_GRAY : new Color(50,50,50));
-				lbl.setCursor(sel || canAddBackup ? Cursor.getPredefinedCursor(Cursor.HAND_CURSOR) : Cursor.getDefaultCursor());
-			}
-			for (int i = 0; i < discardLbls.size(); i++) {
-				JLabel lbl = discardLbls.get(i); boolean sel = selectedDiscards.contains(discardIdxs.get(i));
-				lbl.setBorder(sel ? createCardGlowBorder(Color.YELLOW) : BorderFactory.createLineBorder(canAddDiscard[0] ? Color.GRAY : new Color(80,80,80), 1));
-				lbl.setBackground(sel || canAddDiscard[0] ? Color.DARK_GRAY : new Color(50,50,50));
-				lbl.setCursor(sel || canAddDiscard[0] ? Cursor.getPredefinedCursor(Cursor.HAND_CURSOR) : Cursor.getDefaultCursor());
-			}
-		};
-		updateAll.run();
-
-		JPanel centerPanel = new JPanel();
-		centerPanel.setLayout(new BoxLayout(centerPanel, BoxLayout.Y_AXIS));
-
-		if (!eligibleBackupSlots.isEmpty()) {
-			JLabel hdr = new JLabel("Backups — dull for 1 CP each:");
-			hdr.setFont(FontLoader.loadPixelFont(9)); hdr.setAlignmentX(Component.LEFT_ALIGNMENT);
-			JPanel bp = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 6)); bp.setAlignmentX(Component.LEFT_ALIGNMENT);
-			for (int slot : eligibleBackupSlots) {
-				JLabel lbl = new JLabel("...", SwingConstants.CENTER);
-				lbl.setPreferredSize(new Dimension(CARD_W, CARD_H)); lbl.setMinimumSize(new Dimension(CARD_W, CARD_H));
-				lbl.setOpaque(true); lbl.setBackground(Color.DARK_GRAY); lbl.setForeground(Color.WHITE);
-				lbl.setFont(FontLoader.loadPixelFont(10)); lbl.setBorder(BorderFactory.createLineBorder(Color.GRAY, 1));
-				lbl.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-				final String url = p1BackupUrls[slot];
-				lbl.addMouseListener(new MouseAdapter() {
-					@Override public void mousePressed(MouseEvent ev) {
-						if (!selectedBackups.remove(Integer.valueOf(slot))) selectedBackups.add(slot);
-						updateAll.run();
-					}
-					@Override public void mouseEntered(MouseEvent ev) { if (lbl.getIcon() != null) showZoomAt(url); }
-					@Override public void mouseExited(MouseEvent ev)  { hideZoom(); }
-				});
-				new SwingWorker<ImageIcon, Void>() {
-					@Override protected ImageIcon doInBackground() throws Exception {
-						Image img = ImageCache.load(url);
-						return img == null ? null : new ImageIcon(img.getScaledInstance(CARD_W, CARD_H, Image.SCALE_SMOOTH));
-					}
-					@Override protected void done() {
-						try { ImageIcon ic = get(); if (ic != null) { lbl.setIcon(ic); lbl.setText(null); } }
-						catch (InterruptedException | ExecutionException ignored) {}
-					}
-				}.execute();
-				backupLbls.add(lbl); backupSlots.add(slot); bp.add(lbl);
-			}
-			centerPanel.add(hdr); centerPanel.add(bp);
-		}
-
-		JLabel discardHdr = new JLabel("Hand — discard for 2 CP each:");
-		discardHdr.setFont(FontLoader.loadPixelFont(9)); discardHdr.setAlignmentX(Component.LEFT_ALIGNMENT);
-		JPanel dp = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 6)); dp.setAlignmentX(Component.LEFT_ALIGNMENT);
-		Set<String> primingLdGrants = lightDarkDiscardGrants(true);
-		for (int i = 0; i < hand.size(); i++) {
-			final int hi = i; CardData hc = hand.get(i);
-			boolean payable = CpPaymentUtils.canDiscardForCp(hc, primingLdGrants);
-			JLabel lbl = new JLabel("...", SwingConstants.CENTER);
-			lbl.setPreferredSize(new Dimension(CARD_W, CARD_H)); lbl.setMinimumSize(new Dimension(CARD_W, CARD_H));
-			lbl.setOpaque(true); lbl.setBackground(payable ? Color.DARK_GRAY : new Color(50,50,50));
-			lbl.setForeground(Color.WHITE); lbl.setFont(FontLoader.loadPixelFont(10));
-			lbl.setBorder(BorderFactory.createLineBorder(payable ? Color.GRAY : new Color(80,80,80), 1));
-			lbl.setCursor(payable ? Cursor.getPredefinedCursor(Cursor.HAND_CURSOR) : Cursor.getDefaultCursor());
-			final String imgUrl = hc.imageUrl();
-			if (payable) {
-				lbl.addMouseListener(new MouseAdapter() {
-					@Override public void mousePressed(MouseEvent ev) {
-						if (!selectedDiscards.remove(Integer.valueOf(hi)) && canAddDiscard[0]) selectedDiscards.add(hi);
-						updateAll.run();
-					}
-					@Override public void mouseEntered(MouseEvent ev) { if (lbl.getIcon() != null) showZoomAt(imgUrl); }
-					@Override public void mouseExited(MouseEvent ev)  { hideZoom(); }
-				});
-				discardLbls.add(lbl); discardIdxs.add(hi);
-			} else {
-				lbl.addMouseListener(new MouseAdapter() {
-					@Override public void mouseEntered(MouseEvent ev) { if (lbl.getIcon() != null) showZoomAt(imgUrl); }
-					@Override public void mouseExited(MouseEvent ev)  { hideZoom(); }
-				});
-			}
-			new SwingWorker<ImageIcon, Void>() {
-				@Override protected ImageIcon doInBackground() throws Exception {
-					Image img = ImageCache.load(imgUrl);
-					return img == null ? null : new ImageIcon(img.getScaledInstance(CARD_W, CARD_H, Image.SCALE_SMOOTH));
-				}
-				@Override protected void done() {
-					try { ImageIcon ic = get(); if (ic != null) { lbl.setIcon(ic); lbl.setText(null); } }
-					catch (InterruptedException | ExecutionException ignored) {}
-				}
-			}.execute();
-			dp.add(lbl);
-		}
-		centerPanel.add(discardHdr); centerPanel.add(dp);
-
-		JButton cancelBtn = new JButton("Cancel");
-		cancelBtn.setFont(FontLoader.loadPixelFont(11));
-		cancelBtn.addActionListener(ev -> dlg.dispose());
-		confirmBtn.addActionListener(ev -> {
-			dlg.dispose();
-			executePriming(card, slotIdx, new ArrayList<>(selectedDiscards), new ArrayList<>(selectedBackups));
-		});
-
-		JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 6));
-		buttonPanel.add(confirmBtn); buttonPanel.add(cancelBtn);
-
-		StringBuilder costDesc = new StringBuilder();
-		boolean f = true;
-		for (Map.Entry<String, Integer> en : costByElem.entrySet()) {
-			if (!f) costDesc.append(" + ");
-			costDesc.append(en.getValue()).append(" ").append(en.getKey()).append(" CP"); f = false;
-		}
-		if (genericNeeded > 0) { if (!f) costDesc.append(" + "); costDesc.append((int) genericNeeded).append(" any CP"); }
-		JLabel titleLabel = new JLabel(
-				"Priming cost for: " + card.name() + "  (" + (costDesc.length() > 0 ? costDesc : "free") + ")",
-				SwingConstants.CENTER);
-		titleLabel.setFont(FontLoader.loadPixelFont(11));
-
-		JPanel topPanel = new JPanel(new BorderLayout(0, 4));
-		topPanel.setBorder(BorderFactory.createEmptyBorder(8, 8, 4, 8));
-		topPanel.add(titleLabel, BorderLayout.NORTH); topPanel.add(cpLabel, BorderLayout.CENTER);
-
-		JPanel mainPanel = new JPanel(new BorderLayout(0, 4));
-		mainPanel.setBorder(BorderFactory.createEmptyBorder(0, 8, 8, 8));
-		mainPanel.add(new JScrollPane(centerPanel), BorderLayout.CENTER);
-		mainPanel.add(buttonPanel, BorderLayout.SOUTH);
-
-		dlg.getContentPane().setLayout(new BorderLayout());
-		dlg.getContentPane().add(topPanel, BorderLayout.NORTH);
-		dlg.getContentPane().add(mainPanel, BorderLayout.CENTER);
-		dlg.pack(); dlg.setLocationRelativeTo(frame); dlg.setVisible(true);
-	}
-
-	/**
-	 * Pays the Priming cost, searches the main deck for the target card, and if
-	 * found places it as the top card of the primed forward.  The deck is shuffled
-	 * after the search regardless of whether the card was found.
-	 */
-	private void executePriming(CardData card, int slotIdx,
-			List<Integer> discardIndices, List<Integer> backupDullIndices) {
-		List<String> rawCost = card.primingCost();
-		LinkedHashMap<String, Integer> costByElem = new LinkedHashMap<>();
-		for (String e : rawCost) if (!e.isEmpty()) costByElem.merge(e, 1, Integer::sum);
-		String[] elems = costByElem.keySet().toArray(String[]::new);
-
-		// Pay cost
-		for (int bi : backupDullIndices) {
-			p1BackupStates[bi] = CardState.DULL;
-			animateDullBackup(bi, true);
-			String cpElem = matchesAnyElement(p1BackupCards[bi], elems)
-					? contributingElement(p1BackupCards[bi], elems) : (elems.length > 0 ? elems[0] : "");
-			if (!cpElem.isEmpty()) gameState.addP1Cp(cpElem, 1);
-		}
-		discardIndices.sort(Collections.reverseOrder());
-		for (int di : discardIndices) {
-			CardData discarded = gameState.getP1Hand().get(di);
-			String cpElem = matchesAnyElement(discarded, elems)
-					? contributingElement(discarded, elems) : (elems.length > 0 ? elems[0] : "");
-			if (!cpElem.isEmpty()) gameState.addP1Cp(cpElem, 2);
-			playerBreakFromHand(true,di);
-		}
-		for (String e : elems) { gameState.spendP1Cp(e, gameState.getP1CpForElement(e)); gameState.clearP1Cp(e); }
-
-		// Search deck — find all versions of the target card.  Multiple copies of the same
-		// printing are one choice, not several, so only distinct versions reach the dialog.
-		String target = card.primingTarget();
-		List<CardData> matches = distinctVersions(gameState.findMatchingNamesInP1MainDeck(target));
-
-		if (matches.isEmpty()) {
-			shuffleP1MainDeck();
-			logEntry("Priming: \"" + target + "\" not found in deck — no card placed");
-			refreshP1HandLabel();
-			refreshP1BreakLabel();
-		} else if (matches.size() == 1) {
-			gameState.removeFromP1MainDeck(matches.get(0));
-			shuffleP1MainDeck();
-			applyPrimedCard(matches.get(0), card, slotIdx);
-			refreshP1HandLabel();
-			refreshP1BreakLabel();
-		} else {
-			// Multiple printings found — let the player choose; shuffle and refresh happen inside the dialog
-			showPrimingVersionSelectDialog(matches, card, slotIdx);
-		}
 	}
 
 	/**
@@ -12998,14 +12916,14 @@ public class MainWindow {
 	 * order of first appearance.  Printings are identified by image URL — one image per card
 	 * serial — so genuinely different versions of a card name are all preserved.
 	 */
-	private static List<CardData> distinctVersions(List<CardData> cards) {
+	static List<CardData> distinctVersions(List<CardData> cards) {
 		LinkedHashMap<String, CardData> byPrinting = new LinkedHashMap<>();
 		for (CardData c : cards) byPrinting.putIfAbsent(c.imageUrl(), c);
 		return new ArrayList<>(byPrinting.values());
 	}
 
 	/** Shuffles P1's main deck in-place and refreshes the deck label. */
-	private void shuffleP1MainDeck() {
+	void shuffleP1MainDeck() {
 		List<CardData> list = new ArrayList<>(gameState.getP1MainDeck());
 		Collections.shuffle(list);
 		gameState.getP1MainDeck().clear();
@@ -13013,95 +12931,6 @@ public class MainWindow {
 		refreshP1DeckLabel();
 	}
 
-	/** Places {@code chosen} as the primed top card on {@code slotIdx} and logs the action. */
-	private void applyPrimedCard(CardData chosen, CardData primingCard, int slotIdx) {
-		p1ForwardPrimedTop.set(slotIdx, chosen);
-		logEntry("Primed: \"" + primingCard.name() + "\" topped with \"" + chosen.name() + "\"");
-		refreshP1ForwardSlot(slotIdx);
-		autoAbilityTriggers.triggerAutoAbilitiesForPrimedInto(primingCard, chosen, true);
-	}
-
-	/**
-	 * Shows a modal dialog letting the player pick which version of the priming
-	 * target to pull from the deck when multiple printings are present.
-	 * Closing without a choice auto-selects the first match.
-	 */
-	private void showPrimingVersionSelectDialog(List<CardData> matches, CardData primingCard, int slotIdx) {
-		JDialog dlg = new JDialog(frame,
-				"Choose version: " + primingCard.primingTarget() + " (" + matches.size() + " found)", true);
-		dlg.setResizable(false);
-		dlg.setDefaultCloseOperation(JDialog.DO_NOTHING_ON_CLOSE);
-
-		// Holds the picked version; defaults to first match so closing without a click auto-picks.
-		CardData[] picked = { matches.get(0) };
-
-		JPanel cardsPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 12));
-
-		for (CardData candidate : matches) {
-			JPanel wrapper = new JPanel(new BorderLayout(0, 4));
-			wrapper.setBackground(cardsPanel.getBackground());
-
-			JLabel lbl = new JLabel("...", SwingConstants.CENTER);
-			lbl.setPreferredSize(new Dimension(CARD_W, CARD_H));
-			lbl.setMinimumSize(new Dimension(CARD_W, CARD_H));
-			lbl.setOpaque(true);
-			lbl.setBackground(Color.DARK_GRAY);
-			lbl.setBorder(BorderFactory.createLineBorder(Color.GRAY, 2));
-			lbl.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-
-			lbl.addMouseListener(new MouseAdapter() {
-				@Override public void mouseEntered(MouseEvent e) {
-					if (lbl.getIcon() != null) showZoomAt(candidate.imageUrl());
-					lbl.setBorder(createCardGlowBorder(Color.YELLOW));
-				}
-				@Override public void mouseExited(MouseEvent e) {
-					hideZoom();
-					lbl.setBorder(BorderFactory.createLineBorder(Color.GRAY, 1));
-				}
-				@Override public void mousePressed(MouseEvent e) {
-					picked[0] = candidate;
-					dlg.dispose();
-				}
-			});
-
-			new SwingWorker<ImageIcon, Void>() {
-				@Override protected ImageIcon doInBackground() throws Exception {
-					Image img = ImageCache.load(candidate.imageUrl());
-					return img == null ? null
-							: new ImageIcon(img.getScaledInstance(CARD_W, CARD_H, Image.SCALE_SMOOTH));
-				}
-				@Override protected void done() {
-					try { ImageIcon ic = get(); if (ic != null) { lbl.setIcon(ic); lbl.setText(null); } }
-					catch (InterruptedException | ExecutionException ignored) {}
-				}
-			}.execute();
-
-			JLabel nameLabel = new JLabel(candidate.name(), SwingConstants.CENTER);
-			nameLabel.setFont(FontLoader.loadPixelFont(9));
-			nameLabel.setPreferredSize(new Dimension(CARD_W, 18));
-
-			wrapper.add(lbl, BorderLayout.CENTER);
-			wrapper.add(nameLabel, BorderLayout.SOUTH);
-			cardsPanel.add(wrapper);
-		}
-
-		JLabel hint = new JLabel("Click a card to select it", SwingConstants.CENTER);
-		hint.setFont(FontLoader.loadPixelFont(9));
-
-		dlg.getContentPane().setLayout(new BorderLayout(0, 6));
-		dlg.getContentPane().add(cardsPanel, BorderLayout.CENTER);
-		dlg.getContentPane().add(hint, BorderLayout.SOUTH);
-		dlg.pack();
-		dlg.setLocationRelativeTo(frame);
-		dlg.setVisible(true); // blocks until a card is clicked (dlg.dispose())
-
-		// Execution resumes here after dialog closes
-		gameState.removeFromP1MainDeck(picked[0]);
-		shuffleP1MainDeck();
-		applyPrimedCard(picked[0], primingCard, slotIdx);
-		refreshP1HandLabel();
-		refreshP1BreakLabel();
-	}
 
 	private JPanel buildBackupZonePanel(JLabel[] labelStorage) {
 		JPanel slotsPanel = new JPanel(new GridLayout(1, 5, 2, 0));

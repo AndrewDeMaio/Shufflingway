@@ -6,10 +6,13 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import org.json.JSONArray;
+import org.json.JSONObject;
 import org.junit.jupiter.api.Test;
 
 import shufflingway.net.MatchSetup;
@@ -267,5 +270,140 @@ class MultiplayerSetupTest {
 
         assertEquals(before, names(joiner.getP2Hand()),
                 "a rejected order must leave the hand untouched so the desync can be reported");
+    }
+
+    // =========================================================================================
+    // Phase 4 — the combat wire format.
+    //
+    // Applying an ATTACK or a BLOCK needs a MainWindow, so what is reachable here is the format
+    // itself: what a declaration puts on the wire, and what comes back off it. That is where this
+    // protocol is easiest to get quietly wrong, because a JSON object's keys are strings and the
+    // party damage spread is keyed by attacker slot.
+    // =========================================================================================
+
+    @Test
+    void anAttackNamesItsZoneAndEverySlotInTheParty() {
+        JSONObject solo = RemoteOpponent.attackAction(
+                ForwardTarget.CardZone.MONSTER, List.of(2), 7000).payload();
+        assertEquals("MONSTER", solo.getString("zone"));
+        assertEquals(List.of(2), intList(solo.getJSONArray("indices")));
+        assertEquals(7000, solo.getInt("power"));
+
+        JSONObject party = RemoteOpponent.attackAction(
+                ForwardTarget.CardZone.FORWARD, List.of(0, 3), 12000).payload();
+        assertEquals(List.of(0, 3), intList(party.getJSONArray("indices")),
+                "every party member travels — the receiver replays the whole declaration");
+        assertEquals(12000, party.getInt("power"),
+                "the combined power rides along so the receiver can cross-check its own total");
+    }
+
+    @Test
+    void decliningToBlockSendsNoSlotAtAll() {
+        JSONObject declined = RemoteOpponent.blockAction(null, -1, null).payload();
+        assertFalse(declined.getBoolean("blocked"));
+        assertFalse(declined.has("zone"), "a declined block names no blocker");
+        assertFalse(declined.has("idx"),  "...and no slot, so a stale index cannot be read back");
+    }
+
+    @Test
+    void aSingleBlockCarriesItsSlotAndNoDamageSpread() {
+        JSONObject blocked = RemoteOpponent.blockAction(
+                ForwardTarget.CardZone.BACKUP, 1, null).payload();
+        assertTrue(blocked.getBoolean("blocked"));
+        assertEquals("BACKUP", blocked.getString("zone"));
+        assertEquals(1, blocked.getInt("idx"));
+        assertFalse(blocked.has("damage"),
+                "one attacker takes the blocker's whole power — there is nothing to divide");
+    }
+
+    @Test
+    void aPartyBlocksDamageSpreadSurvivesItsStringKeys() {
+        Map<Integer, Integer> spread = new LinkedHashMap<>();
+        spread.put(0, 3000);
+        spread.put(3, 5000);
+
+        JSONObject payload = RemoteOpponent.blockAction(
+                ForwardTarget.CardZone.FORWARD, 2, spread).payload();
+
+        assertEquals(spread, RemoteOpponent.damageSpread(payload),
+                "attacker slots go out as JSON keys, which are strings — they have to come back "
+                + "as the Integers the damage map is keyed by, or every slot misses");
+    }
+
+    @Test
+    void aBlockWithNoSpreadReadsAsNoDamageRatherThanNull() {
+        JSONObject declined = RemoteOpponent.blockAction(null, -1, null).payload();
+        assertEquals(Map.of(), RemoteOpponent.damageSpread(declined),
+                "the caller assigns whatever this returns, so an absent spread must be empty");
+    }
+
+    private static List<Integer> intList(JSONArray arr) {
+        List<Integer> out = new ArrayList<>(arr.length());
+        for (int i = 0; i < arr.length(); i++) out.add(arr.getInt(i));
+        return out;
+    }
+
+    // =========================================================================================
+    // Phase 4 — the combat checksum.
+    //
+    // A battle's whole output is damage, breaks and dull state. The board digest used to carry
+    // only which cards were standing, so two clients that disagreed about a point of damage
+    // still agreed on the hash — and stayed agreed until something else broke the card, by which
+    // point the cause was many turns behind. These are the assertions that the digest now covers
+    // what combat actually moves.
+    // =========================================================================================
+
+    /** The same battle-1 board seen from each seat: the card is P1's here and P2's there. */
+    private static MainWindow[] mirroredSeats() {
+        MainWindow host   = new MainWindow();
+        MainWindow joiner = new MainWindow();
+        host.placeCardInForwardZone(card("Attacker", 3));
+        joiner.placeP2CardInForwardZone(card("Attacker", 3));
+        return new MainWindow[] { host, joiner };
+    }
+
+    private static String hostDigest(MainWindow mw)   { return MatchChecksum.ofCombat(mw, true,  1); }
+    private static String joinerDigest(MainWindow mw) { return MatchChecksum.ofCombat(mw, false, 1); }
+
+    @Test
+    void bothSeatsDigestTheSameBattleIdentically() {
+        MainWindow[] seats = mirroredSeats();
+        assertEquals(hostDigest(seats[0]), joinerDigest(seats[1]),
+                "each client seats itself as P1, so the digest has to be taken in host/joiner "
+                + "order or two agreeing boards would never match");
+    }
+
+    @Test
+    void aPointOfDamageOnlyOneSeatAppliedChangesTheDigest() {
+        MainWindow[] seats = mirroredSeats();
+        String before = hostDigest(seats[0]);
+
+        seats[0].p1ForwardDamage.set(0, 3000);
+
+        assertNotEquals(before, hostDigest(seats[0]),
+                "damage has to reach the digest — a battle that landed here and not there is "
+                + "exactly the divergence this exists to catch");
+        assertNotEquals(hostDigest(seats[0]), joinerDigest(seats[1]),
+                "and the two seats must now disagree");
+    }
+
+    @Test
+    void aMissedDullChangesTheDigest() {
+        MainWindow[] seats = mirroredSeats();
+        String before = hostDigest(seats[0]);
+
+        seats[0].p1ForwardStates.set(0, CardState.DULL);
+
+        assertNotEquals(before, hostDigest(seats[0]),
+                "attacking dulls, so a dull that only one client applied is a free extra attack");
+    }
+
+    @Test
+    void consecutiveBattlesOnOneBoardDigestDifferently() {
+        MainWindow[] seats = mirroredSeats();
+        assertNotEquals(MatchChecksum.ofCombat(seats[0], true, 1),
+                        MatchChecksum.ofCombat(seats[0], true, 2),
+                "the battle number is in the digest, so a checksum cannot be matched against the "
+                + "wrong battle and pass");
     }
 }

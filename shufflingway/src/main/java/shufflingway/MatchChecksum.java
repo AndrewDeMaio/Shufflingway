@@ -4,6 +4,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Collection;
+import java.util.List;
 
 /**
  * Hashes the parts of a networked game that both clients must agree on, so a divergence is
@@ -51,8 +52,27 @@ final class MatchChecksum {
 	 * @param localIsHost whether P1 on this client is the host
 	 */
 	static String ofTurnStart(MainWindow mw, boolean localIsHost, int turn) {
+		return ofBoard(mw, localIsHost, "turn=" + turn);
+	}
+
+	/**
+	 * Digests the board at a combat boundary — the end of one battle.
+	 *
+	 * <p>Combat is where the two clients do the most independent work: each resolves the same
+	 * battle from its own side, off a declaration and an answer that crossed the wire. Waiting for
+	 * the next turn to compare would let a mis-assigned point of damage sit undetected through
+	 * every attack that followed it.
+	 *
+	 * @param battle the battle's sequence number, which is what pairs this digest with the
+	 *               opponent's for the same combat — see {@code MainWindow.sendCombatChecksum}
+	 */
+	static String ofCombat(MainWindow mw, boolean localIsHost, int battle) {
+		return ofBoard(mw, localIsHost, "battle=" + battle);
+	}
+
+	private static String ofBoard(MainWindow mw, boolean localIsHost, String header) {
 		StringBuilder sb = new StringBuilder();
-		sb.append("turn=").append(turn).append('\n');
+		sb.append(header).append('\n');
 		appendSide(sb, "host",   mw, localIsHost);
 		appendSide(sb, "joiner", mw, !localIsHost);
 		return sha256(sb.toString());
@@ -67,11 +87,44 @@ final class MatchChecksum {
 		  .append(" break=").append(isP1Seat ? state.getP1BreakZone().size(): state.getP2BreakZone().size())
 		  .append(" damage=").append(isP1Seat ? state.getP1DamageZone().size() : state.getP2DamageZone().size())
 		  .append('\n');
-		appendZone(sb, label + "Forwards", isP1Seat ? mw.p1ForwardCards : mw.p2ForwardCards);
-		appendZone(sb, label + "Monsters", isP1Seat ? mw.p1MonsterCards : mw.p2MonsterCards);
-		CardData[] backups = isP1Seat ? mw.p1BackupCards : mw.p2BackupCards;
+		appendField(sb, label + "Forwards",
+				isP1Seat ? mw.p1ForwardCards : mw.p2ForwardCards,
+				isP1Seat ? mw.p1ForwardDamage : mw.p2ForwardDamage,
+				isP1Seat ? mw.p1ForwardStates : mw.p2ForwardStates);
+		appendField(sb, label + "Monsters",
+				isP1Seat ? mw.p1MonsterCards : mw.p2MonsterCards,
+				isP1Seat ? mw.p1MonsterDamage : mw.p2MonsterDamage,
+				isP1Seat ? mw.p1MonsterStates : mw.p2MonsterStates);
+		CardData[] backups     = isP1Seat ? mw.p1BackupCards  : mw.p2BackupCards;
+		CardState[] backupState = isP1Seat ? mw.p1BackupStates : mw.p2BackupStates;
 		sb.append(label).append("Backups\n");
-		for (CardData c : backups) sb.append(c == null ? "-" : c.name()).append('\n');
+		for (int i = 0; i < backups.length; i++) {
+			CardData c = backups[i];
+			sb.append(c == null ? "-" : c.name())
+			  .append('|').append(c == null ? "-" : String.valueOf(backupState[i]))
+			  .append('\n');
+		}
+	}
+
+	/**
+	 * A field zone, carrying the state a battle moves as well as which cards are standing.
+	 *
+	 * <p>Names alone would let two clients agree on a board where one had applied a battle's
+	 * damage and the other had not — exactly the divergence a combat digest exists to catch, and
+	 * one that stays invisible until the damaged card is broken by something else entirely. Dull
+	 * state is in for the same reason: attacking dulls, and a missed dull is a free extra attack.
+	 */
+	private static void appendField(StringBuilder sb, String label, List<CardData> cards,
+			List<Integer> damage, List<CardState> states) {
+		sb.append(label).append('[').append(cards.size()).append("]\n");
+		for (int i = 0; i < cards.size(); i++) {
+			CardData c = cards.get(i);
+			sb.append(c.name()).append('|').append(c.cost()).append('|')
+			  .append(c.element()).append('|').append(c.type())
+			  .append('|').append(i < damage.size() ? damage.get(i) : 0)
+			  .append('|').append(i < states.size() ? states.get(i) : CardState.ACTIVE)
+			  .append('\n');
+		}
 	}
 
 	private static void appendZone(StringBuilder sb, String label, Collection<CardData> cards) {

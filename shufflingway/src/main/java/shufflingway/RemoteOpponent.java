@@ -22,9 +22,17 @@ import shufflingway.net.MatchSetup;
  * Both clients run the same engine over the same seeded decks, so the opponent's draws do not
  * have to be transmitted — drawing two cards here pulls the same two cards it did there.
  *
- * <p><b>Phase 2 scope.</b> Turn flow is replicated: opening hands, phase advance, draws, and
- * end-of-turn cleanup, in both directions. Card plays (Phase 3) and combat (Phase 4) are not,
- * so the decision callbacks below still decline rather than asking the remote player.
+ * <p><b>Phase 4 scope.</b> Turn flow, card plays and combat are all replicated in both
+ * directions: opening hands, phase advance, draws, end-of-turn cleanup, plays from hand, and
+ * attack/block declarations with the damage that follows them.
+ *
+ * <p>What is <em>not</em> replicated yet is the opponent's priority windows. {@code MainWindow}
+ * still gives the opponent's half of every combat priority round to {@code p2AutoPass}, a timer,
+ * and {@link #requestReactiveShields} passes straight through — so a remote player cannot act in
+ * response to a declaration. That is the Phase 5 work, and until it lands it is also what keeps
+ * combat safe to replicate this way: with no response window, the only inputs to a battle are the
+ * attack and the block, both of which cross the wire, so the two clients cannot diverge partway
+ * through one.
  */
 class RemoteOpponent implements OpponentController {
 
@@ -41,8 +49,22 @@ class RemoteOpponent implements OpponentController {
 
 	MatchSetup setup() { return setup; }
 
+	/**
+	 * Stops this controller. A block that was still outstanding is answered as "no block" rather
+	 * than dropped: the local combat is parked on that callback, and leaving it unanswered would
+	 * strand the board mid-battle with the attacker dulled and the Attack Phase unable to end.
+	 */
 	@Override
-	public void cancel() { cancelled = true; }
+	public void cancel() {
+		cancelled = true;
+		Consumer<ForwardTarget> block      = pendingBlock;
+		Consumer<Integer>       partyBlock = pendingPartyBlock;
+		pendingBlock      = null;
+		pendingPartyBlock = null;
+		mw.setAwaitingRemoteBlock(false);
+		if (block      != null) block.accept(null);
+		if (partyBlock != null) partyBlock.accept(null);
+	}
 
 	@Override
 	public boolean isCpu() { return false; }
@@ -69,6 +91,8 @@ class RemoteOpponent implements OpponentController {
 			case ADVANCE_PHASE  -> applyPhaseAdvance(action.payload());
 			case PLAY_CARD      -> applyPlayCard(action.payload());
 			case DISCARD_HAND   -> applyDiscard(action.payload());
+			case ATTACK         -> applyAttack(action.payload());
+			case BLOCK          -> applyBlock(action.payload());
 			default             -> { return false; }
 		}
 		return true;
@@ -141,6 +165,114 @@ class RemoteOpponent implements OpponentController {
 		mw.executePlay(false, card, handIdx,
 				indices(payload, "discards"), indices(payload, "backups"), overrides,
 				summonTargets, targetsAreReplayed);
+	}
+
+	/**
+	 * The opponent declared an attack. What they attacked with is on their own side of their board
+	 * and on P2's side of this one, so the side flips while the slot indices do not — the same
+	 * convention a replayed Summon target follows.
+	 *
+	 * <p>The declaration is replayed rather than trusted: this drives the identical
+	 * {@code MainWindow} entry point the AI uses, so the attacker dulls, its attack triggers fire,
+	 * and the local player is put into block declaration by the same code either opponent reaches.
+	 * Only the choice crosses the wire; the rules stay on both clients.
+	 */
+	private void applyAttack(JSONObject payload) {
+		List<Integer> indices = indices(payload, "indices");
+		if (indices.isEmpty()) {
+			mw.reportDesync("opponent declared an attack with no attackers");
+			return;
+		}
+		ForwardTarget.CardZone zone;
+		try {
+			zone = ForwardTarget.CardZone.valueOf(payload.optString("zone", ""));
+		} catch (IllegalArgumentException e) {
+			mw.reportDesync("opponent attacked from an unknown zone \"" + payload.optString("zone", "") + "\"");
+			return;
+		}
+		if (indices.size() > 1 && zone != ForwardTarget.CardZone.FORWARD) {
+			mw.reportDesync("opponent declared a party attack from " + zone + ", which cannot form a party");
+			return;
+		}
+		for (int idx : indices) {
+			if (mw.remoteAttackerAt(zone, idx) == null) {
+				mw.reportDesync("opponent attacked with " + zone + " slot " + idx
+						+ ", which holds nothing on this client");
+				return;
+			}
+		}
+
+		int expectedPower = payload.optInt("power", -1);
+		int localPower    = mw.remoteAttackPower(zone, indices);
+		if (expectedPower >= 0 && expectedPower != localPower)
+			mw.reportDesync("opponent's attacker has power " + expectedPower + " there and "
+					+ localPower + " here");
+
+		mw.replayRemoteAttack(zone, indices);
+	}
+
+	/**
+	 * The opponent answered the attack this client is holding. Their blocker sits on their own
+	 * side there and on P1's here, so the target is rebuilt against the local board before the
+	 * parked callback resumes the combat that was waiting on it.
+	 */
+	private void applyBlock(JSONObject payload) {
+		mw.setAwaitingRemoteBlock(false);
+		boolean blocked = payload.optBoolean("blocked", false);
+
+		if (pendingPartyBlock != null) {
+			Consumer<Integer> resume = pendingPartyBlock;
+			pendingPartyBlock = null;
+			if (!blocked) { pendingPartyAttackers = List.of(); resume.accept(null); return; }
+			int idx = payload.optInt("idx", -1);
+			if (idx < 0 || idx >= mw.p1ForwardCards.size()) {
+				mw.reportDesync("opponent blocked the party with Forward " + idx
+						+ ", which is not on their field here");
+				pendingPartyAttackers = List.of();
+				resume.accept(null);
+				return;
+			}
+			partyDamageAnswer     = damageSpread(payload);
+			pendingPartyAttackers = List.of();
+			resume.accept(idx);
+			return;
+		}
+
+		if (pendingBlock == null) {
+			mw.reportDesync("opponent declared a block with no attack waiting for one");
+			return;
+		}
+		Consumer<ForwardTarget> resume = pendingBlock;
+		pendingBlock = null;
+		if (!blocked) { resume.accept(null); return; }
+
+		ForwardTarget.CardZone zone;
+		try {
+			zone = ForwardTarget.CardZone.valueOf(payload.optString("zone", ""));
+		} catch (IllegalArgumentException e) {
+			mw.reportDesync("opponent blocked from an unknown zone \"" + payload.optString("zone", "") + "\"");
+			resume.accept(null);
+			return;
+		}
+		int idx = payload.optInt("idx", -1);
+		// The blocker is on the opponent's field, which is this client's P1 side.
+		ForwardTarget blocker = new ForwardTarget(true, idx, zone);
+		if (mw.fieldCardDataOrNull(blocker) == null) {
+			mw.reportDesync("opponent blocked with " + zone + " slot " + idx
+					+ ", which holds nothing on their field here");
+			resume.accept(null);
+			return;
+		}
+		resume.accept(blocker);
+	}
+
+	/** Reads the blocker's party damage spread, keyed by attacker slot. */
+	static Map<Integer, Integer> damageSpread(JSONObject payload) {
+		JSONObject raw = payload.optJSONObject("damage");
+		if (raw == null) return Map.of();
+		Map<Integer, Integer> out = new LinkedHashMap<>();
+		for (String key : raw.keySet()) out.put(Integer.valueOf(key), raw.getInt(key));
+		return out;
 	}
 
 	/** The opponent settled on an opening hand order; mirror it so hand indices line up. */
@@ -260,25 +392,54 @@ class RemoteOpponent implements OpponentController {
 		mw.logEntry("[P2] Opponent's turn.");
 	}
 
+	/**
+	 * The block answer the local attack is waiting on, or {@code null} when no attack is pending.
+	 *
+	 * <p>These are the one place this class holds a continuation. Every other inbound action is
+	 * self-contained — it says what happened and this applies it — but a block is the second half
+	 * of a question the local board asked, and the combat that follows it cannot proceed until the
+	 * answer lands. The request methods park the callback here; {@link #applyBlock} runs it.
+	 */
+	private Consumer<ForwardTarget> pendingBlock;
+	private Consumer<Integer>       pendingPartyBlock;
+	/** The party the local player is attacking with, for validating the answer's damage spread. */
+	private List<Integer>           pendingPartyAttackers = List.of();
+
 	@Override
 	public void requestBlocker(int effectiveAttackerPower, ForwardTarget attacker, boolean forcedBlock,
 	                           Consumer<ForwardTarget> onChosen) {
-		mw.logEntry("[P2] Block declaration not yet sent over the network — treating as no block.");
-		onChosen.accept(null);
+		if (cancelled) { onChosen.accept(null); return; }
+		pendingBlock = onChosen;
+		mw.logEntry("Waiting for the opponent to declare a blocker...");
+		mw.setAwaitingRemoteBlock(true);
 	}
 
 	@Override
 	public void requestPartyBlocker(List<Integer> attackerIndices, int combinedPower,
 	                                Consumer<Integer> onChosen) {
-		mw.logEntry("[P2] Party block not yet sent over the network — treating as no block.");
-		onChosen.accept(null);
+		if (cancelled) { onChosen.accept(null); return; }
+		pendingPartyBlock     = onChosen;
+		pendingPartyAttackers = List.copyOf(attackerIndices);
+		mw.logEntry("Waiting for the opponent to declare a blocker...");
+		mw.setAwaitingRemoteBlock(true);
 	}
 
+	/**
+	 * The blocker's damage spread across the party. It rode in on the same BLOCK the block
+	 * declaration did — the remote player assigns it in one interaction, and splitting it into a
+	 * second round trip would leave the two clients' combats interleaved — so by the time this is
+	 * asked the answer is already here.
+	 */
 	@Override
 	public void requestPartyBlockerDamage(List<Integer> attackerIndices, int blockerPower,
 	                                      Consumer<Map<Integer, Integer>> onAssigned) {
-		onAssigned.accept(Map.of());
+		Map<Integer, Integer> answered = partyDamageAnswer;
+		partyDamageAnswer = null;
+		onAssigned.accept(answered != null ? answered : Map.of());
 	}
+
+	/** The spread carried by the BLOCK that answered a party attack; consumed by the request above. */
+	private Map<Integer, Integer> partyDamageAnswer;
 
 	@Override
 	public void requestReactiveShields(Runnable onDone) {
@@ -317,6 +478,40 @@ class RemoteOpponent implements OpponentController {
 				// belongs to the caster and travels with the play. Always present, so the receiver
 				// can tell "chose nothing" from an older client that never chose at all.
 				.put("summonTargets", targets));
+	}
+
+	/**
+	 * Builds an ATTACK for a declaration the local player has just made.
+	 *
+	 * <p>{@code indices} are slots on the sender's own field, which is the receiver's P2 side; more
+	 * than one is a party. {@code power} is the sender's effective total and is sent only so the
+	 * receiver can cross-check it — it never overrides the receiver's own calculation, because a
+	 * disagreement is a desync to report rather than a number to adopt.
+	 */
+	static GameAction attackAction(ForwardTarget.CardZone zone, List<Integer> indices, int power) {
+		return GameAction.of(ActionType.ATTACK, new JSONObject()
+				.put("zone", zone.name())
+				.put("indices", new JSONArray(indices))
+				.put("power", power));
+	}
+
+	/**
+	 * Builds a BLOCK answering the opponent's attack. A {@code null} zone declines the block.
+	 *
+	 * @param damage the blocker's spread across a blocked party, keyed by attacker slot; {@code null}
+	 *               for a single attacker, where the blocker deals all its power to the one card
+	 */
+	static GameAction blockAction(ForwardTarget.CardZone zone, int idx, Map<Integer, Integer> damage) {
+		JSONObject payload = new JSONObject().put("blocked", zone != null);
+		if (zone != null) {
+			payload.put("zone", zone.name()).put("idx", idx);
+			if (damage != null && !damage.isEmpty()) {
+				JSONObject spread = new JSONObject();
+				damage.forEach((attacker, amount) -> spread.put(String.valueOf(attacker), amount));
+				payload.put("damage", spread);
+			}
+		}
+		return GameAction.of(ActionType.BLOCK, payload);
 	}
 
 	/** Builds a DISCARD_HAND for hand cards the local player is discarding without payment. */
