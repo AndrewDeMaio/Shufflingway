@@ -3226,11 +3226,18 @@ public record CardData(
 
     /**
      * Matches passive grants of the form:
-     * "The (Job X | Category Y) [Forwards?|Backups?|Monsters?|Characters?]
+     * "The [Element] (Job X | Category Y) [Forwards?|Backups?|Monsters?|Characters?]
      *  [other than Z] you control gain[s] [+N power] [and] [Trait...]"
+     *
+     * <p>The optional {@code element} prefix stacks with the Job/Category filter — both must hold
+     * (3-040C DGS Trooper 1st Class, "The Ice Job Standard Unit Forwards you control"). It sits
+     * ahead of the {@code Job}/{@code Category} keyword, so a job or category whose own name
+     * begins with an element word cannot be clipped by it. The element-only form with no
+     * Job/Category filter is {@link #FIELD_GRANT_BARE_PATTERN}.
      */
     private static final Pattern FIELD_GRANT_PATTERN = Pattern.compile(
         "(?i)^The\\s+" +
+        "(?:(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?" +
         "(?:Job\\s+(?<job>[A-Za-z][A-Za-z\\s''\\-]*?)(?=\\s+Forwards?|\\s+Backups?|\\s+Monsters?|\\s+Characters?|\\s+other\\s+than|\\s+you)|" +
         "Category\\s+(?<category>\\S+))\\s*" +
         "(?<targets>Forwards?(?:\\s+and\\s+Monsters?)?|Backups?|Monsters?|Characters?)?\\s*" +
@@ -3656,7 +3663,9 @@ public record CardData(
 
             String job      = m.group("job");
             String category = m.group("category");
+            String element  = m.group("element");
             if (job != null) job = job.trim();
+            if (element != null) element = element.trim();
 
             String targets = m.group("targets");
             int[] inclFlags = parseFieldGrantTargetFlags(targets);
@@ -3681,7 +3690,7 @@ public record CardData(
 
             if (power == 0 && traits.isEmpty()) continue;
             result.add(new FieldPowerGrant(job, category, inclForwards, inclBackups, inclMonsters,
-                    except, power, traits));
+                    except, power, traits, false, -1, null, element));
         }
         return List.copyOf(result);
     }

@@ -11054,4 +11054,91 @@ public class CardBehaviorTest {
 	private static CardData cardOfType(String type) { return handCard(type, 3); }
 
 	private static CardData cardOfCost(int cost)    { return handCard("Forward", cost); }
+
+	// =========================================================================================
+	// Element-qualified Job/Category field grants: "The Ice Job Standard Unit Forwards you
+	// control gain +2000 power." (3-040C DGS Trooper 1st Class). FIELD_GRANT_PATTERN carried a
+	// Job/Category filter but no element, and FIELD_GRANT_BARE_PATTERN carried an element but no
+	// Job/Category — so a text needing both fell between them and produced no grant at all. The
+	// two filters stack: a card must clear both to be boosted.
+	// =========================================================================================
+
+	private static final String DGS_TROOPER_GRANT =
+			"The Ice Job Standard Unit Forwards you control gain +2000 power.";
+
+	/** Puts a grant-carrying Backup into P1's first Backup slot, as the engine's field-grant scan expects. */
+	private static CardData placeP1GrantBackup(MainWindow mw, String grantText) {
+		CardData backup = makeBackupWithPowerGrant("Granter", "Ice", grantText);
+		mw.gameState.getIdentity().put(backup, true);
+		mw.p1BackupCards[0] = backup;
+		return backup;
+	}
+
+	@Test
+	void elementQualifiedJobGrantCapturesBothFilters() {
+		List<FieldPowerGrant> grants = CardData.parseFieldPowerGrants(DGS_TROOPER_GRANT, "Forward");
+
+		assertEquals(1, grants.size(), "the grant must parse — it used to fall between two patterns");
+		FieldPowerGrant g = grants.get(0);
+		assertEquals("Ice", g.elementFilter(), "the element prefix is captured, not discarded");
+		assertEquals("Standard Unit", g.jobFilter(), "the Job filter survives the added element prefix");
+		assertTrue(g.inclForwards(), "Forwards are the target type");
+		assertFalse(g.inclBackups(), "Backups are not");
+		assertEquals(2000, g.powerBonus());
+	}
+
+	@Test
+	void elementQualifiedJobGrantRequiresBothFilters() {
+		MainWindow mw = new MainWindow();
+		placeP1GrantBackup(mw, DGS_TROOPER_GRANT);
+
+		placeP1Forward(mw, makeJobCard("Trooper",  "Ice",  "Forward", "Standard Unit")); // idx 0
+		placeP1Forward(mw, makeJobCard("Burner",   "Fire", "Forward", "Standard Unit")); // idx 1
+		placeP1Forward(mw, makeJobCard("Iceblade", "Ice",  "Forward", "Dragoon"));       // idx 2
+
+		assertEquals(9000, mw.effectiveP1ForwardPower(0), "Ice and Standard Unit — both filters hold");
+		assertEquals(7000, mw.effectiveP1ForwardPower(1), "right Job, wrong Element — no boost");
+		assertEquals(7000, mw.effectiveP1ForwardPower(2), "right Element, wrong Job — no boost");
+	}
+
+	@Test
+	void aJobGrantWithNoElementPrefixStillMatchesEveryElement() {
+		// Regression on the widening: the element group is optional, so the unqualified form must
+		// keep granting across elements rather than picking one up from the surrounding text.
+		MainWindow mw = new MainWindow();
+		placeP1GrantBackup(mw, "The Job Standard Unit Forwards you control gain +2000 power.");
+
+		placeP1Forward(mw, makeJobCard("Trooper", "Ice",  "Forward", "Standard Unit"));
+		placeP1Forward(mw, makeJobCard("Burner",  "Fire", "Forward", "Standard Unit"));
+
+		assertNull(CardData.parseFieldPowerGrants(
+						"The Job Standard Unit Forwards you control gain +2000 power.", "Forward")
+					.get(0).elementFilter(),
+				"no element prefix means no element filter");
+		assertEquals(9000, mw.effectiveP1ForwardPower(0));
+		assertEquals(9000, mw.effectiveP1ForwardPower(1), "an unqualified Job grant is element-blind");
+	}
+
+	@Test
+	void aJobNameBeginningWithAnElementWordIsNotClippedByThePrefix() {
+		// The element group sits ahead of the "Job" keyword, so it can only ever consume a word
+		// before it — a Job whose own name starts with an element stays intact.
+		List<FieldPowerGrant> grants = CardData.parseFieldPowerGrants(
+				"The Job Ice Warrior Forwards you control gain +1000 power.", "Forward");
+
+		assertEquals(1, grants.size());
+		assertEquals("Ice Warrior", grants.get(0).jobFilter(), "the Job name keeps its leading element word");
+		assertNull(grants.get(0).elementFilter(), "and nothing was lifted out of it into the element filter");
+	}
+
+	@Test
+	void elementQualifiedCategoryGrantCapturesBothFilters() {
+		// The prefix precedes the whole Job/Category alternation, so the Category branch gains it too.
+		List<FieldPowerGrant> grants = CardData.parseFieldPowerGrants(
+				"The Water Category VII Forwards you control gain +1000 power.", "Forward");
+
+		assertEquals(1, grants.size());
+		assertEquals("Water", grants.get(0).elementFilter());
+		assertEquals("VII", grants.get(0).categoryFilter());
+	}
 }
