@@ -77,11 +77,19 @@ final class ActionResolverPatterns {
                     "(?<followup>.+)"
     );
     /**
-     * Matches "Choose N [targets] you control and N [targets] opponent controls. [followup]"
-     * — one selection from the active player's side and one from the opponent's side.
+     * Matches "Choose N [Job X … or Card Name Y] [targets] you control and N [targets] opponent
+     * controls. [followup]" — one selection from the active player's side and one from the
+     * opponent's side.
+     *
+     * <p>The optional qualifier covers 14-074C / 12-070C Monk, whose own side is restricted to
+     * "1 Job Monk Forward or Card Name Monk Forward". Groups {@code job1} and {@code name1} are an
+     * <em>either/or</em>, which is how the selection layer already reads a job and a card name
+     * supplied together. Both are null for the unqualified form, which is every other card here.
      */
     static final Pattern CHOOSE_ONE_EACH_PATTERN = Pattern.compile(
         "(?i)Choose\\s+(?<count1>\\d+)\\s+" +
+        "(?:Job\\s+(?<job1>[^.]+?)\\s+(?:Forwards?|Backups?|Characters?|Monsters?)" +
+        "\\s+or\\s+Card\\s+Name\\s+(?<name1>[^.]+?)\\s+)?" +
         "(?<targets1>Forwards?|Backups?|Characters?|Monsters?)\\s+" +
         "you\\s+control\\s+and\\s+(?<count2>\\d+)\\s+" +
         "(?<targets2>Forwards?|Backups?|Characters?|Monsters?)\\s+" +
@@ -171,9 +179,17 @@ final class ActionResolverPatterns {
     /**
      * Matches "The former deals damage equal to its power to the latter."
      * — former deals its current power as damage to the latter (no boost).
+     *
+     * <p>Two wordings, one effect. 23-069C Narasimha and 16-078C Demonolith name the recipient
+     * last ("deals damage equal to its power <b>to the latter</b>"); 2-093H Raubahn uses the
+     * ditransitive form and names it first ("deals <b>the second</b> damage equal to its power").
+     * "first one"/"second" are the same two chosen targets "former"/"latter" refer to, and "its"
+     * is the former's power in both.
      */
     static final Pattern FORMER_DEALS_POWER_DAMAGE_TO_LATTER = Pattern.compile(
-        "(?i)The\\s+former\\s+deals?\\s+damage\\s+equal\\s+to\\s+its\\s+power\\s+to\\s+the\\s+latter[.!]?"
+        "(?i)The\\s+(?:former|first(?:\\s+one)?)\\s+deals?\\s+" +
+        "(?:damage\\s+equal\\s+to\\s+its\\s+power\\s+to\\s+the\\s+(?:latter|second(?:\\s+one)?)" +
+        "|the\\s+(?:latter|second(?:\\s+one)?)\\s+damage\\s+equal\\s+to\\s+its\\s+power)[.!]?"
     );
     /**
      * Matches "Break the former. If [card] enters the field due to Warp, also break the latter."
@@ -1710,6 +1726,40 @@ final class ActionResolverPatterns {
      * opponent's turn (i.e., whenever the opponent ends their turn).
      * Group {@code inner} — the effect to fire.
      */
+    /**
+     * Matches a leading "At the end of your opponent's turn, [effect]" on an effect that is being
+     * resolved <em>now</em> by some other trigger — 20-057L The Goddess's "When The Goddess enters
+     * the field, at the end of your opponent's turn, break …".  Group {@code inner} is the effect
+     * to defer.
+     *
+     * <p>Distinct from {@link #AT_END_OF_OPP_TURN_PATTERN}, which describes an ability whose
+     * <em>own</em> trigger is the end of the opponent's turn and whose caller therefore already
+     * runs it at the right moment.  This one is a one-shot delay set up by a different trigger, so
+     * the inner effect has to be queued rather than run.
+     */
+    static final Pattern AT_END_OF_OPP_TURN_DELAY_PREFIX = Pattern.compile(
+        "(?i)^\\s*(?:and\\s+)?at\\s+the\\s+end\\s+of\\s+your\\s+opponent'?s\\s+turn,\\s*(?<inner>\\S.*)$",
+        Pattern.DOTALL
+    );
+    /**
+     * Matches an action whose only target is a bare pronoun — "break it", "return them".  Such a
+     * clause cannot stand alone: whatever it refers to was named by the sentence before it.
+     * Mirrors the identically-shaped guard in {@code CardData}, which decides whether a delayed
+     * clause may be lifted into an ability of its own.
+     */
+    static final Pattern DELAYED_BARE_PRONOUN_ACTION = Pattern.compile(
+        "(?i)^\\w+\\s+(?:it|them)\\b"
+    );
+    /**
+     * Matches "Place N [Name] Counter(s) on all [the] Forwards [opponent controls|you control]."
+     * (20-057L The Goddess.)  The singular "on it" form is a choose followup and lives in
+     * {@link #FOLLOWUP_PLACE_COUNTER_ON_IT}.
+     */
+    static final Pattern PLACE_COUNTER_ON_ALL_FORWARDS = Pattern.compile(
+        "(?i)^\\s*place\\s+(?<count>\\d+)\\s+(?<name>[A-Za-z][A-Za-z ]*?)\\s+Counters?\\s+on\\s+" +
+        "all\\s+(?:the\\s+)?Forwards?" +
+        "(?:\\s+(?<control>(?:your\\s+)?opponent\\s+controls?|you\\s+control))?[.!]?\\s*$"
+    );
     static final Pattern AT_END_OF_OPP_TURN_PATTERN = Pattern.compile(
         "(?i)At\\s+the\\s+end\\s+of\\s+(?:each\\s+of\\s+)?your\\s+opponent'?s\\s+turns?,\\s+" +
         "(?<inner>.+?)\\s*" + GLOBAL_TRIGGER_INNER_BOUNDARY,
@@ -3581,6 +3631,10 @@ final class ActionResolverPatterns {
         "(?:\\s+of\\s+cost\\s+(?<cost>\\d+)(?:\\s+or\\s+(?<costcmp>less|more))?)?" +
         "(?:\\s+other\\s+than\\s+cost\\s+(?<excludecost>\\d+))?" +
         "(?:\\s+(?<control>(?:your\\s+)?opponent\\s+controls?|you\\s+control))?" +
+        // Trails the control clause, unlike the trait filter above it: "break all the Forwards
+        // opponent controls with a Doom Counter on them". Without this the regex ended at
+        // "controls" and find() quietly discarded the restriction, breaking every Forward.
+        "(?:\\s+with\\s+(?:a|an|\\d+)\\s+(?<counter>[A-Za-z][A-Za-z ]*?)\\s+Counters?\\s+on\\s+(?:it|them))?" +
         "[.!]?"
     );
     /**

@@ -2304,11 +2304,34 @@ public interface GameContext {
      * Same as above but only affects Forwards that have at least one trait in {@code traitFilter}
      * (backups and monsters are unaffected by the trait filter; ignored when the set is empty).
      */
+    default void applyMassFieldEffect(MassAction action,
+            boolean forwards, boolean backups, boolean monsters,
+            boolean opponentOnly, boolean selfOnly,
+            String element, int costVal, String costCmp, int excludeCostVal,
+            String job, String category, java.util.EnumSet<CardData.Trait> traitFilter) {
+        applyMassFieldEffect(action, forwards, backups, monsters, opponentOnly, selfOnly,
+                element, costVal, costCmp, excludeCostVal, job, category, traitFilter, null);
+    }
+
+    /**
+     * Same as above but also restricted to cards carrying at least one counter named
+     * {@code counterFilter} ("break all the Forwards opponent controls with a Doom Counter on
+     * them" — 20-057L The Goddess).  {@code null} applies no counter restriction.
+     */
     void applyMassFieldEffect(MassAction action,
             boolean forwards, boolean backups, boolean monsters,
             boolean opponentOnly, boolean selfOnly,
             String element, int costVal, String costCmp, int excludeCostVal,
-            String job, String category, java.util.EnumSet<CardData.Trait> traitFilter);
+            String job, String category, java.util.EnumSet<CardData.Trait> traitFilter,
+            String counterFilter);
+
+    /**
+     * Places {@code count} counters named {@code counterName} on every Forward on the side(s) the
+     * flags select — both sides when neither is set.  (20-057L The Goddess opens by putting a Doom
+     * Counter on each of the opponent's Forwards.)
+     */
+    void placeCountersOnAllForwards(String counterName, int count,
+            boolean opponentOnly, boolean selfOnly);
 
     /**
      * Adds {@code amount} power until end of turn to every matching field card.

@@ -108,6 +108,57 @@ final class ActionResolverFieldAbility {
         return innerEffect;
     }
     /**
+     * Parses "At the end of your opponent's turn, &lt;effect&gt;" appearing inside an ability that
+     * resolves now — 20-057L The Goddess's "When The Goddess enters the field, at the end of your
+     * opponent's turn, break all the Forwards opponent controls with a Doom Counter on them."
+     * The inner effect is queued as a one-shot rather than run.
+     *
+     * <p>Must be tried before any parser that would match the inner effect on its own: they all
+     * use {@code find()}, so {@link #tryParseAllFieldEffect} would happily claim the "break all …"
+     * tail and drop the delay, breaking the Forwards the moment the ability resolved.
+     *
+     * <p>Returns null for a bare-pronoun action ("break it"), which has no target of its own and
+     * belongs to a preceding choose — {@code tryParseChooseThenEndOfOppTurnAction} owns that shape.
+     *
+     * <p>Also defers to {@code tryParseEndOfOppTurnPlayNamedOntoField}, which sits further down
+     * the chain and cannot defend itself from here. 26-025C Kadaj removes itself from the game and
+     * plays back "at the end of your opponent's turn" — from the <em>RFG zone</em>, which only that
+     * parser knows. Resolving its inner text through the general chain would return Kadaj from the
+     * wrong zone.
+     */
+    static Consumer<GameContext> tryParseEndOfOppTurnDelayedEffect(String text, CardData source) {
+        Matcher m = AT_END_OF_OPP_TURN_DELAY_PREFIX.matcher(text.trim());
+        if (!m.matches()) return null;
+        if (AT_END_OF_OPP_TURN_PLAY_NAMED_ONTO_FIELD.matcher(text.trim()).matches()) return null;
+        String inner = m.group("inner").trim();
+        if (DELAYED_BARE_PRONOUN_ACTION.matcher(inner).find()) return null;
+        Consumer<GameContext> innerEffect = parse(inner, source);
+        if (innerEffect == null) return null;
+        return ctx -> {
+            ctx.logEntry("Queued for the end of your opponent's turn: " + inner);
+            ctx.addEndOfOpponentTurnEffect(innerEffect);
+        };
+    }
+    /**
+     * Parses "Place N [Name] Counter(s) on all [the] Forwards [opponent controls|you control]."
+     * (20-057L The Goddess.)
+     */
+    static Consumer<GameContext> tryParsePlaceCounterOnAllForwards(String text) {
+        Matcher m = PLACE_COUNTER_ON_ALL_FORWARDS.matcher(text);
+        if (!m.matches()) return null;
+        int    count       = Integer.parseInt(m.group("count"));
+        String counterName = m.group("name").trim();
+        String control     = m.group("control");
+        boolean opponentOnly = control != null && !control.toLowerCase().contains("you control");
+        boolean selfOnly     = control != null &&  control.toLowerCase().contains("you control");
+        String controlLabel  = opponentOnly ? " (opponent)" : selfOnly ? " (yours)" : "";
+        return ctx -> {
+            ctx.logEntry("Effect: Place " + count + " " + counterName
+                    + " Counter(s) on all Forwards" + controlLabel);
+            ctx.placeCountersOnAllForwards(counterName, count, opponentOnly, selfOnly);
+        };
+    }
+    /**
      * Parses "[action] all [the] [element] [targets] [of cost X] [control]".
      *
      * <p>Supported actions: Break, dull, freeze, dull and freeze, Activate.
@@ -157,6 +208,9 @@ final class ActionResolverFieldAbility {
         String traitStr     = m.group("trait");
         EnumSet<CardData.Trait> traitFilter = parseTraits(traitStr);
 
+        String counterRaw    = m.group("counter");
+        String counterFilter = counterRaw != null ? counterRaw.trim() : null;
+
         String actionLabel = switch (action) {
             case BREAK           -> "Break";
             case DULL            -> "Dull";
@@ -171,12 +225,15 @@ final class ActionResolverFieldAbility {
         String exclLabel    = excludeCostVal >= 0 ? " [not cost " + excludeCostVal + "]" : "";
         String controlLabel = opponentOnly ? " (opponent)" : selfOnly ? " (yours)" : "";
         String traitLabel   = traitStr != null ? " with " + traitStr.trim() : "";
-        String logMsg = actionLabel + " all " + tgtLabel + traitLabel + costLabel + exclLabel + controlLabel;
+        String counterLabel = counterFilter != null ? " with a " + counterFilter + " Counter" : "";
+        String logMsg = actionLabel + " all " + tgtLabel + traitLabel + costLabel + exclLabel
+                + controlLabel + counterLabel;
 
         return ctx -> {
             ctx.logEntry("Effect: " + logMsg);
             ctx.applyMassFieldEffect(action, inclForwards, inclBackups, inclMonsters,
-                    opponentOnly, selfOnly, element, costVal, costCmp, excludeCostVal, job, category, traitFilter);
+                    opponentOnly, selfOnly, element, costVal, costCmp, excludeCostVal, job, category,
+                    traitFilter, counterFilter);
         };
     }
     /**

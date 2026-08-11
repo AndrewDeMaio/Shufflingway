@@ -2402,18 +2402,18 @@ public record CardData(
         while (ootm.find()) {
             String effect = SUMMON_MARKUP.matcher(ootm.group("inner").trim()).replaceAll("").trim();
             if (effect.isEmpty()) continue;
-            // Skip a clause that cannot stand on its own because it belongs to an enclosing
-            // triggered ability. 28-043R Gi Nattak reads "When Gi Nattak is dealt damage, choose 1
-            // Forward opponent controls. At the end of your opponent's turn, break it." — lifting
-            // the delayed half out orphans "break it" from the choose that gives it a target.
+            // Skip a clause that belongs to an enclosing triggered ability — that trigger already
+            // owns it, and lifting it out here would make it a second, recurring ability.
             //
-            // Both conditions are needed. Being inside a trigger is not enough: 20-057L The
-            // Goddess's "When … enters the field, at the end of your opponent's turn, break all the
-            // Forwards opponent controls with a Doom Counter on them" names its own targets and
-            // works as a standalone ability. Only a clause whose target is a bare pronoun depends
-            // on the text around it.
-            if (isInsideTriggeredSentence(textForSearch, ootm.start())
-                    && BARE_PRONOUN_ACTION.matcher(effect).find()) continue;
+            // 28-043R Gi Nattak ("When Gi Nattak is dealt damage, choose 1 Forward opponent
+            // controls. At the end of your opponent's turn, break it.") shows the orphaning half of
+            // the problem: "break it" has no target once detached. 20-057L The Goddess shows the
+            // duplication half — "When The Goddess enters the field, at the end of your opponent's
+            // turn, break all the Forwards … with a Doom Counter on them" names its own targets, so
+            // it used to be lifted, and the card then broke Forwards at the end of *every* opponent
+            // turn instead of once. Both are one delayed effect set up by one trigger; the trigger's
+            // own ability queues it via tryParseEndOfOppTurnDelayedEffect.
+            if (isInsideTriggeredSentence(textForSearch, ootm.start())) continue;
             AutoAbility aa = parseAutoAbilityRestrictions("", "end of opponent's turn", false, false, false, false, effect, 0);
             if (aa != null) result.add(aa);
         }

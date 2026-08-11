@@ -8463,6 +8463,147 @@ public class CardBehaviorTest {
         assertNull(new LookConfig(2, LookConfig.LookAction.ADD_TO_HAND_REST_BREAK).handFilterLabel());
     }
 
+    // =========================================================================================
+    // 2-093H Raubahn: "choose 1 Forward you control and 1 Forward opponent controls. The first
+    // one deals the second damage equal to its power."
+    //
+    // The same effect as 23-069C Narasimha and 16-078C Demonolith ("the former deals damage equal
+    // to its power to the latter"), written two ways: Raubahn names the recipient first, in the
+    // ditransitive, and calls the two groups "the first one"/"the second" instead of
+    // former/latter. The parser gated on the literal words "the former" and "the latter" before
+    // any pattern ran, so Raubahn chose both targets and then did nothing at all.
+    // =========================================================================================
+
+    private static final String RAUBAHN_EFFECT =
+            "choose 1 Forward you control and 1 Forward opponent controls. "
+            + "The first one deals the second damage equal to its power.";
+
+    private static final String NARASIMHA_EFFECT =
+            "choose 1 Forward you control and 1 Forward opponent controls. "
+            + "The former deals damage equal to its power to the latter.";
+
+    @Test
+    void raubahnResolvesAsTheSameEffectAsItsFormerLatterSiblings() {
+        assertNotNull(ActionResolver.parse(RAUBAHN_EFFECT, null));
+        assertEquals(ActionResolver.fullDescription(NARASIMHA_EFFECT, null),
+                ActionResolver.fullDescription(RAUBAHN_EFFECT, null),
+                "two wordings of one effect must resolve the same way");
+        assertEquals("ChooseFormerLatter", ActionResolver.fullDescription(RAUBAHN_EFFECT, null));
+    }
+
+    // "its" is the first Forward's power, and only the second one takes the damage.
+    @Test
+    void raubahnDealsTheChosenAllysPowerToTheChosenEnemy() {
+        GameContext ctx = mock(GameContext.class);
+        ForwardTarget mine   = new ForwardTarget(true,  0, ForwardTarget.CardZone.FORWARD);
+        ForwardTarget theirs = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+        when(ctx.consumePreloadedTargets()).thenReturn(null);
+        when(ctx.selectCharacters(anyInt(), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(),
+                anyInt(), any(), anyInt(), any(), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(),
+                any(), any(), anyBoolean(), any(), anyBoolean()))
+                .thenReturn(List.of(mine), List.of(theirs));
+        when(ctx.effectiveTargetPower(mine)).thenReturn(8000);
+
+        ActionResolver.parse(RAUBAHN_EFFECT, null).accept(ctx);
+
+        verify(ctx).damageTarget(theirs, 8000);
+        verify(ctx, never()).damageTarget(eq(mine), anyInt());
+    }
+
+    // The mutual sibling: 19-062R Nacht, 4-093R Hecatoncheir, 13-118C Sarah (MOBIUS), 14-074C and
+    // 12-070C Monk. Both Forwards deal damage, and both amounts are the powers as they stood
+    // before either was applied — if the first damage broke a Forward or reduced its power, the
+    // return damage would otherwise shrink or vanish.
+    private static final String MUTUAL_EFFECT =
+            "choose 1 Forward you control and 1 Forward opponent controls. "
+            + "Each Forward deals damage equal to its power to the other.";
+
+    @Test
+    void mutualPowerDamageHitsBothForwardsWithPreDamagePowers() {
+        GameContext ctx = mock(GameContext.class);
+        ForwardTarget mine   = new ForwardTarget(true,  0, ForwardTarget.CardZone.FORWARD);
+        ForwardTarget theirs = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+        when(ctx.consumePreloadedTargets()).thenReturn(null);
+        when(ctx.selectCharacters(anyInt(), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(),
+                anyInt(), any(), anyInt(), any(), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(),
+                any(), any(), anyBoolean(), any(), anyBoolean()))
+                .thenReturn(List.of(mine), List.of(theirs));
+        when(ctx.effectiveTargetPower(mine)).thenReturn(8000);
+        when(ctx.effectiveTargetPower(theirs)).thenReturn(5000);
+
+        Consumer<GameContext> fn = ActionResolver.parse(MUTUAL_EFFECT, null);
+        assertNotNull(fn);
+        fn.accept(ctx);
+
+        verify(ctx).damageTarget(theirs, 8000);
+        verify(ctx).damageTarget(mine, 5000);
+    }
+
+    // 14-074C / 12-070C Monk restrict their own side to "1 Job Monk Forward or Card Name Monk
+    // Forward you control". The mutual damage must still land on both.
+    @Test
+    void mutualPowerDamageSurvivesAJobFilterOnTheChoosersSide() {
+        GameContext ctx = mock(GameContext.class);
+        ForwardTarget mine   = new ForwardTarget(true,  0, ForwardTarget.CardZone.FORWARD);
+        ForwardTarget theirs = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+        when(ctx.consumePreloadedTargets()).thenReturn(null);
+        when(ctx.selectCharacters(anyInt(), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(),
+                anyInt(), any(), anyInt(), any(), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(),
+                any(), any(), anyBoolean(), any(), anyBoolean()))
+                .thenReturn(List.of(mine), List.of(theirs));
+        when(ctx.effectiveTargetPower(mine)).thenReturn(8000);
+        when(ctx.effectiveTargetPower(theirs)).thenReturn(5000);
+
+        Consumer<GameContext> fn = ActionResolver.parse(
+                "choose 1 Job Monk Forward or Card Name Monk Forward you control and "
+                + "1 Forward opponent controls. "
+                + "Each Forward deals damage equal to its power to the other.", null);
+        assertNotNull(fn);
+        fn.accept(ctx);
+
+        verify(ctx).damageTarget(theirs, 8000);
+        verify(ctx).damageTarget(mine, 5000);
+    }
+
+    // The mutual and one-way forms must not be confused: only one Forward takes damage in
+    // Raubahn's, and only the opponent's.
+    @Test
+    void theOneWayFormDoesNotDamageTheChoosersOwnForward() {
+        GameContext ctx = mock(GameContext.class);
+        ForwardTarget mine   = new ForwardTarget(true,  0, ForwardTarget.CardZone.FORWARD);
+        ForwardTarget theirs = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+        when(ctx.consumePreloadedTargets()).thenReturn(null);
+        when(ctx.selectCharacters(anyInt(), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(),
+                anyInt(), any(), anyInt(), any(), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(),
+                any(), any(), anyBoolean(), any(), anyBoolean()))
+                .thenReturn(List.of(mine), List.of(theirs));
+        when(ctx.effectiveTargetPower(mine)).thenReturn(8000);
+        when(ctx.effectiveTargetPower(theirs)).thenReturn(5000);
+
+        ActionResolver.parse(RAUBAHN_EFFECT, null).accept(ctx);
+
+        verify(ctx).damageTarget(theirs, 8000);
+        verify(ctx, never()).damageTarget(eq(mine), anyInt());
+    }
+
+    @Test
+    void raubahnParsesAsOneEntersFieldAbility() {
+        List<AutoAbility> autos = CardData.parseAutoAbilities(
+                "[[ex]]EX BURST [[/]]When Raubahn enters the field, " + RAUBAHN_EFFECT);
+        assertEquals(1, autos.size());
+        assertEquals("enters the field", autos.get(0).trigger());
+        assertNotNull(ActionResolver.parse(autos.get(0).effectText(), null));
+    }
+
+    // Widening the pronoun gate must not let through a first/second text whose effects nothing
+    // understands — that would turn "chose nothing useful" into a silent no-op that claims to work.
+    @Test
+    void anUnknownFirstSecondEffectIsStillRejected() {
+        assertNull(ActionResolverChoose.tryParseChooseFormerLatter(
+                "choose 1 Forward you control and 1 Forward opponent controls. "
+                + "The first one waltzes with the second.", null));
+    }
+
 	// =========================================================================================
 	// Trailing draw.
 	//
@@ -8724,15 +8865,87 @@ public class CardBehaviorTest {
 		verify(ctx, never()).breakTarget(any());   // deferred, not applied now
 	}
 
-	// A delayed clause that names its own targets still stands alone: 20-057L The Goddess breaks
-	// every Doom-Countered Forward at end of turn and must keep working as its own ability.
+	// 20-057L The Goddess. A delayed clause inside a trigger is that trigger's one-shot, so it must
+	// NOT also be lifted into a standalone ability: it used to be, and the card then broke Forwards
+	// at the end of every opponent turn forever instead of once.
 	@Test
-	void selfContainedDelayedClauseRemainsItsOwnAbility() {
+	void delayedClauseInsideATriggerIsNotLiftedIntoItsOwnAbility() {
 		List<AutoAbility> autos = CardData.parseAutoAbilities(
 				"When The Goddess enters the field, at the end of your opponent's turn, break all the "
 				+ "Forwards opponent controls with a Doom Counter on them.");
-		assertTrue(autos.stream().anyMatch(x -> x.trigger().equals("end of opponent's turn")),
-				"a clause naming its own targets is not orphaned and must survive");
+		assertEquals(1, autos.size(), "one trigger, one ability — the delay is part of it");
+		assertEquals("enters the field", autos.get(0).trigger());
+		assertTrue(autos.stream().noneMatch(x -> x.trigger().equals("end of opponent's turn")),
+				"a recurring end-of-turn ability here would fire every opponent turn, not once");
+	}
+
+	// The delay governs the break, so the break must be queued rather than run on resolution.
+	// Both clauses use find(), so an ordering slip here breaks every Forward the moment
+	// The Goddess enters — which is what used to happen.
+	@Test
+	void theGoddessQueuesTheBreakRatherThanApplyingItOnEntry() {
+		GameContext ctx = mock(GameContext.class);
+		Consumer<GameContext> fn = ActionResolver.parse(
+				"at the end of your opponent's turn, break all the Forwards opponent controls "
+				+ "with a Doom Counter on them.", null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+		verify(ctx).addEndOfOpponentTurnEffect(any());
+		verify(ctx, never()).applyMassFieldEffect(any(), anyBoolean(), anyBoolean(), anyBoolean(),
+				anyBoolean(), anyBoolean(), any(), anyInt(), any(), anyInt(), any(), any(), any(), any());
+	}
+
+	@Test
+	void theGoddessPlacesDoomCountersOnEveryOpposingForward() {
+		GameContext ctx = mock(GameContext.class);
+		Consumer<GameContext> fn = ActionResolver.parse(
+				"place 1 Doom Counter on all the Forwards opponent controls.", null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+		verify(ctx).placeCountersOnAllForwards("Doom", 1, true, false);
+	}
+
+	// The counter clause trails "opponent controls", past where the regex used to end. Under
+	// find() the restriction was silently dropped and every opposing Forward broke.
+	@Test
+	void theDoomCounterRestrictionReachesTheMassEffect() {
+		GameContext ctx = mock(GameContext.class);
+		ActionResolver.parse(
+				"break all the Forwards opponent controls with a Doom Counter on them.", null).accept(ctx);
+		verify(ctx).applyMassFieldEffect(eq(GameContext.MassAction.BREAK),
+				eq(true), eq(false), eq(false), eq(true), eq(false),
+				isNull(), eq(-1), isNull(), eq(-1), isNull(), isNull(), any(), eq("Doom"));
+	}
+
+	// End to end on a real board: only the Doom-Countered Forward breaks.
+	@Test
+	void onlyDoomCounteredForwardsAreBroken() {
+		MainWindow mw = new MainWindow();
+		CardData doomed = makeForward("Doomed", "Fire", 3, 7000);
+		CardData spared = makeForward("Spared", "Fire", 3, 7000);
+		placeP2Forward(mw, doomed);
+		placeP2Forward(mw, spared);
+		mw.gameState.placeCounters(doomed, "Doom", 1);
+
+		mw.buildGameContext(true).applyMassFieldEffect(GameContext.MassAction.BREAK,
+				true, false, false, true, false, null, -1, null, -1, null, null,
+				EnumSet.noneOf(CardData.Trait.class), "Doom");
+
+		assertEquals(List.of(spared), mw.p2ForwardCards,
+				"the Forward without a Doom Counter must survive");
+	}
+
+	// The same call with no counter filter still sweeps the whole field.
+	@Test
+	void anUnfilteredMassBreakStillTakesEveryForward() {
+		MainWindow mw = new MainWindow();
+		placeP2Forward(mw, makeForward("A", "Fire", 3, 7000));
+		placeP2Forward(mw, makeForward("B", "Fire", 3, 7000));
+
+		mw.buildGameContext(true).applyMassFieldEffect(GameContext.MassAction.BREAK,
+				true, false, false, true, false, null, -1, null, -1, null, null);
+
+		assertTrue(mw.p2ForwardCards.isEmpty());
 	}
 
 	// =========================================================================================

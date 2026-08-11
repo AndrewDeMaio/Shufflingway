@@ -251,8 +251,14 @@ final class ActionResolverChoose {
         boolean bak2 = tgt2Lower.contains("backup")  || tgt2Lower.contains("character");
         boolean mon2 = tgt2Lower.contains("monster") || tgt2Lower.contains("character");
 
+        // "Job Monk Forward or Card Name Monk Forward" — supplied together, the selection layer
+        // reads these as an either/or rather than an and, which is the wording's meaning.
+        String job1  = m.group("job1")  != null ? m.group("job1").trim()  : null;
+        String name1 = m.group("name1") != null ? m.group("name1").trim() : null;
+
         String followup  = m.group("followup").trim();
-        String logPrefix = "Choose " + count1 + " " + targets1 + " (yours) and "
+        String qualifier = job1 != null ? "Job " + job1 + " or Card Name " + name1 + " " : "";
+        String logPrefix = "Choose " + count1 + " " + qualifier + targets1 + " (yours) and "
                 + count2 + " " + targets2 + " (opponent)";
 
         if (FOLLOWUP_RETURN_TO_OWNERS_HAND.matcher(followup).find()) {
@@ -260,7 +266,7 @@ final class ActionResolverChoose {
                 ctx.logEntry(logPrefix + " — Return to owner's hand");
                 List<ForwardTarget> selfTs = selectTargets(ctx, count1, false,
                         false, true, null, null, null, false, -1, null, -1, null,
-                        fwd1, bak1, mon1, null, null, null, null, false, null, false);
+                        fwd1, bak1, mon1, job1, name1, null, null, false, null, false);
                 List<ForwardTarget> oppTs = selectTargets(ctx, count2, false,
                         true, false, null, null, null, false, -1, null, -1, null,
                         fwd2, bak2, mon2, null, null, null, null, false, null, false);
@@ -275,7 +281,7 @@ final class ActionResolverChoose {
                 ctx.logEntry(logPrefix + " — Each deals damage equal to its power to the other");
                 List<ForwardTarget> selfTs = selectTargets(ctx, count1, false,
                         false, true, null, null, null, false, -1, null, -1, null,
-                        fwd1, bak1, mon1, null, null, null, null, false, null, false);
+                        fwd1, bak1, mon1, job1, name1, null, null, false, null, false);
                 List<ForwardTarget> oppTs = selectTargets(ctx, count2, false,
                         true, false, null, null, null, false, -1, null, -1, null,
                         fwd2, bak2, mon2, null, null, null, null, false, null, false);
@@ -299,7 +305,7 @@ final class ActionResolverChoose {
                 ctx.logEntry(logPrefix + " — boost former +" + boost + ", deal its power to latter");
                 List<ForwardTarget> selfTs = selectTargets(ctx, count1, false,
                         false, true, null, null, null, false, -1, null, -1, null,
-                        fwd1, bak1, mon1, null, null, null, null, false, null, false);
+                        fwd1, bak1, mon1, job1, name1, null, null, false, null, false);
                 List<ForwardTarget> oppTs = selectTargets(ctx, count2, false,
                         true, false, null, null, null, false, -1, null, -1, null,
                         fwd2, bak2, mon2, null, null, null, null, false, null, false);
@@ -319,7 +325,14 @@ final class ActionResolverChoose {
 
         String effects      = m.group("effects").trim();
         String effectsLower = effects.toLowerCase(java.util.Locale.ROOT);
-        if (!effectsLower.contains("the former") || !effectsLower.contains("the latter")) return null;
+        // The two chosen groups are referred to by pronoun. Almost every card says "the former" /
+        // "the latter"; 2-093H Raubahn says "the first one" / "the second" for the same two groups.
+        // Accepting the alias here only gives the anchored special cases below their turn — the
+        // generic split at the end of this method still recognises former/latter alone and returns
+        // null for anything else, so no text reaches it that it cannot read.
+        boolean formerLatter = effectsLower.contains("the former") && effectsLower.contains("the latter");
+        boolean firstSecond  = effectsLower.contains("the first")  && effectsLower.contains("the second");
+        if (!formerLatter && !firstSecond) return null;
 
         // Parse target descriptors (shared for all effect paths below)
         boolean upTo1  = m.group("upTo1") != null;

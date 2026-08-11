@@ -522,6 +522,15 @@ public class ActionResolver {
         result = tryParseRevealTopBreakSameCostAddToHand(effectText);
         if (result != null) return result;
 
+        // Must precede tryParseAllFieldEffect. Every parser below matches with find(), so the
+        // "break all …" tail of a delayed clause would be claimed here and run immediately,
+        // silently discarding the "at the end of your opponent's turn" that governs it.
+        result = tryParseEndOfOppTurnDelayedEffect(effectText, source);
+        if (result != null) return result;
+
+        result = tryParsePlaceCounterOnAllForwards(effectText);
+        if (result != null) return result;
+
         result = tryParseAllFieldEffect(effectText);
         if (result != null) return result;
 
@@ -1397,6 +1406,9 @@ public class ActionResolver {
         if (tryParseSelectNumber(effectText, source)          != null) return "SelectNumber";
         if (tryParseDullAllOppFwdsPowerLeSource(effectText, source)        != null) return "DullAllOppFwdsPowerLeSource";
         if (tryParseRevealTopBreakSameCostAddToHand(effectText)           != null) return "RevealTopBreakSameCostAddToHand";
+        // Must precede AllFieldEffect — see the ordering note in parse().
+        if (tryParseEndOfOppTurnDelayedEffect(effectText, source) != null) return "EndOfOppTurnDelayed";
+        if (tryParsePlaceCounterOnAllForwards(effectText)     != null) return "PlaceCounterOnAllForwards";
         if (tryParseAllFieldEffect(effectText)                != null) return "AllFieldEffect";
         if (tryParseFieldPowerGrantPassive(effectText)        != null) {
             String trimmed = effectText.trim();
@@ -1643,6 +1655,13 @@ public class ActionResolver {
             Matcher mutM = FOLLOWUP_MUTUAL_POWER_DAMAGE.matcher(followupText);
             if (mutM.find() && mutM.group("srcname").trim().equalsIgnoreCase(source.name())) return "MutualPowerDamage";
         }
+        // The sibling wording, where neither Forward is named because both were just chosen
+        // ("Each Forward deals damage equal to its power to the other" — 19-062R Nacht and family).
+        // tryParseChooseOneEach has always executed this correctly; only the name was missing, which
+        // left the description reading "ChooseCharacter / ? + ?" as though nothing resolved.
+        // Must precede the plain FOLLOWUP_DAMAGE check below, which would claim it with find().
+        if (FOLLOWUP_EACH_FORWARD_MUTUAL_POWER_DAMAGE.matcher(followupText).find())
+            return "EachForwardMutualPowerDamage";
         if (FOLLOWUP_DAMAGE_FOR_EACH_COUNTER.matcher(followupText).find())             return "DamageForEachCounter";
         if (FOLLOWUP_DAMAGE_FOR_EACH.matcher(followupText).find())                    return "DamageForEach";
         if (FOLLOWUP_DULL_AND_DAMAGE.matcher(followupText).find())                   return "DullAndDamage";
@@ -2015,6 +2034,13 @@ public class ActionResolver {
         if (tryParseIfSelfFwdReceivedDamageDraw(effectText, source)            != null) return "IfSelfFwdReceivedDamageDraw";
         if (tryParseIfRfpCount(effectText, source)                     != null) return "IfRfpCount";
         if (tryParseIfSelfRfgCount(effectText, source)                 != null) return "IfSelfRfgCount";
+        // Must precede AllFieldEffect — see the ordering note in parse().
+        if (tryParseEndOfOppTurnDelayedEffect(effectText, source) != null) {
+            Matcher delayed = AT_END_OF_OPP_TURN_DELAY_PREFIX.matcher(effectText.trim());
+            String inner = delayed.matches() ? delayed.group("inner").trim() : effectText;
+            return "At the end of your opponent's turn: " + fullDescription(inner, source);
+        }
+        if (tryParsePlaceCounterOnAllForwards(effectText) != null)          return "PlaceCounterOnAllForwards";
         if (tryParseAllFieldEffect(effectText) != null)                     return "AllFieldEffect";
         if (tryParseFieldPowerGrantPassive(effectText) != null) {
             String trimmed = effectText.trim();

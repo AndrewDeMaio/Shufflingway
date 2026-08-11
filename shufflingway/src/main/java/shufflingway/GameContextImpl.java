@@ -4254,6 +4254,28 @@ final class GameContextImpl implements GameContext {
 				return mw.gameState.getCounters(card, counterName);
 			}
 
+			@Override public void placeCountersOnAllForwards(String counterName, int count,
+					boolean opponentOnly, boolean selfOnly) {
+				boolean touchP1 = isP1 ? !opponentOnly : !selfOnly;
+				boolean touchP2 = isP1 ? !selfOnly     : !opponentOnly;
+				int touched = 0;
+				if (touchP1) {
+					for (int i = 0; i < mw.p1ForwardCards.size(); i++) {
+						mw.gameState.placeCounters(mw.p1ForwardCards.get(i), counterName, count);
+						mw.refreshP1ForwardSlot(i);
+						touched++;
+					}
+				}
+				if (touchP2) {
+					for (int i = 0; i < mw.p2ForwardCards.size(); i++) {
+						mw.gameState.placeCounters(mw.p2ForwardCards.get(i), counterName, count);
+						mw.refreshP2ForwardSlot(i);
+						touched++;
+					}
+				}
+				logEntry("Placed " + count + " " + counterName + " Counter(s) on " + touched + " Forward(s)");
+			}
+
 			@Override public void grantEotActionAbility(ForwardTarget target, String abilityText) {
 				if (target.zone() != ForwardTarget.CardZone.FORWARD) return;
 				List<ActionAbility> parsed = CardData.parseActionAbilities(abilityText);
@@ -5649,7 +5671,8 @@ final class GameContextImpl implements GameContext {
 					boolean forwards, boolean backups, boolean monsters,
 					boolean opponentOnly, boolean selfOnly,
 					String element, int costVal, String costCmp, int excludeCostVal,
-					String job, String category, EnumSet<CardData.Trait> traitFilter) {
+					String job, String category, EnumSet<CardData.Trait> traitFilter,
+					String counterFilter) {
 				boolean touchP1 = isP1 ? !opponentOnly : !selfOnly;
 				boolean touchP2 = isP1 ? !selfOnly     : !opponentOnly;
 				if (touchP1) {
@@ -5660,6 +5683,7 @@ final class GameContextImpl implements GameContext {
 							if (element != null && !c.containsElement(element)) continue;
 							if (!meetsCostConstraint(c.cost(), costVal, costCmp)) continue;
 							if (excludeCostVal >= 0 && c.cost() == excludeCostVal) continue;
+							if (counterFilter != null && mw.gameState.getCounters(c, counterFilter) <= 0) continue;
 							if (!mw.meetsJobFilterEffective(c, job)) continue;
 							if (!meetsCategoryFilter(c, category)) continue;
 							if (!forwardHasAnyTrait(true, i, traitFilter)) continue;
@@ -5680,6 +5704,7 @@ final class GameContextImpl implements GameContext {
 							if (element != null && !c.containsElement(element)) continue;
 							if (!meetsCostConstraint(c.cost(), costVal, costCmp)) continue;
 							if (excludeCostVal >= 0 && c.cost() == excludeCostVal) continue;
+							if (counterFilter != null && mw.gameState.getCounters(c, counterFilter) <= 0) continue;
 							if (!mw.meetsJobFilterEffective(c, job)) continue;
 							if (!meetsCategoryFilter(c, category)) continue;
 							switch (action) {
@@ -5705,6 +5730,7 @@ final class GameContextImpl implements GameContext {
 							if (element != null && !c.containsElement(element)) continue;
 							if (!meetsCostConstraint(c.cost(), costVal, costCmp)) continue;
 							if (excludeCostVal >= 0 && c.cost() == excludeCostVal) continue;
+							if (counterFilter != null && mw.gameState.getCounters(c, counterFilter) <= 0) continue;
 							if (!mw.meetsJobFilterEffective(c, job)) continue;
 							if (!meetsCategoryFilter(c, category)) continue;
 							switch (action) {
@@ -5740,6 +5766,7 @@ final class GameContextImpl implements GameContext {
 							if (element != null && !c.containsElement(element)) continue;
 							if (!meetsCostConstraint(c.cost(), costVal, costCmp)) continue;
 							if (excludeCostVal >= 0 && c.cost() == excludeCostVal) continue;
+							if (counterFilter != null && mw.gameState.getCounters(c, counterFilter) <= 0) continue;
 							if (!mw.meetsJobFilterEffective(c, job)) continue;
 							if (!meetsCategoryFilter(c, category)) continue;
 							if (!forwardHasAnyTrait(false, i, traitFilter)) continue;
@@ -5760,6 +5787,7 @@ final class GameContextImpl implements GameContext {
 							if (element != null && !c.containsElement(element)) continue;
 							if (!meetsCostConstraint(c.cost(), costVal, costCmp)) continue;
 							if (excludeCostVal >= 0 && c.cost() == excludeCostVal) continue;
+							if (counterFilter != null && mw.gameState.getCounters(c, counterFilter) <= 0) continue;
 							if (!mw.meetsJobFilterEffective(c, job)) continue;
 							if (!meetsCategoryFilter(c, category)) continue;
 							switch (action) {
@@ -5785,6 +5813,7 @@ final class GameContextImpl implements GameContext {
 							if (element != null && !c.containsElement(element)) continue;
 							if (!meetsCostConstraint(c.cost(), costVal, costCmp)) continue;
 							if (excludeCostVal >= 0 && c.cost() == excludeCostVal) continue;
+							if (counterFilter != null && mw.gameState.getCounters(c, counterFilter) <= 0) continue;
 							switch (action) {
 								case BREAK -> {
 									logEntry("[P2] " + c.name() + " is broken");
