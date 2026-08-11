@@ -6397,6 +6397,47 @@ public class CardBehaviorTest {
     }
 
     // =========================================================================================
+    // Benedikta 29-053L: "When Benedikta enters the field, choose up to 2 Wind Backups.
+    // Activate them."
+    //
+    // No parser work: ChooseCharacter already reaches the Backup zone with an element filter, and
+    // "Activate them." is an existing followup. What this pins is that the pieces compose into the
+    // right selection — the card is Wind, and an element filter dropped on the floor would let it
+    // activate anything. The corpus text reads "choose up 2", missing the printed "to"; that is a
+    // data defect fixed in the ETL, so the ability is tested against what the card actually says.
+    // =========================================================================================
+
+    @Test
+    void benediktaActivatesUpToTwoWindBackups() {
+        GameContext ctx = mock(GameContext.class);
+        // Without this the mock hands back an empty preloaded list and the selection no-ops.
+        when(ctx.consumePreloadedTargets()).thenReturn(null);
+        ForwardTarget one = new ForwardTarget(true, 0, ForwardTarget.CardZone.BACKUP);
+        ForwardTarget two = new ForwardTarget(true, 3, ForwardTarget.CardZone.BACKUP);
+        when(ctx.selectCharacters(anyInt(), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(),
+                anyInt(), any(), anyInt(), any(), anyBoolean(), anyBoolean(), anyBoolean(),
+                any(), any(), any(), any(), anyBoolean(), any(), anyBoolean()))
+                .thenReturn(new ArrayList<>(List.of(one, two)));
+
+        List<AutoAbility> autos = CardData.parseAutoAbilities(
+                "When Benedikta enters the field, choose up to 2 Wind Backups. Activate them.");
+        assertEquals(1, autos.size());
+        assertEquals("enters the field", autos.get(0).trigger());
+
+        Consumer<GameContext> fn = ActionResolver.parse(autos.get(0).effectText(),
+                makeForward("Benedikta", "Wind", 4, 8000));
+        assertNotNull(fn, "the effect has to resolve, not just split off the trigger");
+        fn.accept(ctx);
+
+        verify(ctx).selectCharacters(eq(2), eq(true), anyBoolean(), anyBoolean(), any(), eq("Wind"),
+                anyInt(), any(), anyInt(), any(),
+                eq(false), eq(true), eq(false),          // Backups only — not Forwards, not Monsters
+                any(), any(), any(), any(), anyBoolean(), any(), anyBoolean());
+        verify(ctx).activateTarget(one);
+        verify(ctx).activateTarget(two);
+    }
+
+    // =========================================================================================
     // "You can play 2 or more Card Name X onto the field" is a permission its own controller
     // holds, so the uniqueness rule has to read it from that player's field.
     //
