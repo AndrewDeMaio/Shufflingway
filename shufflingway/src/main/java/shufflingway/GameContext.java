@@ -1551,6 +1551,22 @@ public interface GameContext {
     void selectFromOpponentHandAndDiscard(int count, Predicate<CardData> eligible, String eligibleDesc);
 
     /**
+     * The ability-user's opponent reveals {@code revealCount} cards of <em>their own</em> choosing
+     * from hand; the ability user then selects 1 of those to be discarded.  (14-035C Don Corneo.)
+     *
+     * <p>Two players decide, which is what separates this from
+     * {@link #selectFromOpponentHandAndDiscard(int, Predicate, String)}.  There the whole hand is
+     * exposed and the ability user picks freely from all of it; here the opponent controls what is
+     * ever shown, so a well-played hand only ever offers up its three least valuable cards.
+     *
+     * <p>Hand size is read when this runs, not when the ability was put on the Stack — a response
+     * can add cards to the opponent's hand first.  An opponent holding {@code revealCount} cards or
+     * fewer is not asked which to reveal, the choice being forced; one holding none reveals
+     * nothing and discards nothing.
+     */
+    void opponentRevealsSelectOneDiscard(int revealCount);
+
+    /**
      * Reveals the ability-user's opponent's hand, then lets the ability user select up to
      * {@code count} cards to remove from the game <em>until the end of the opponent's next
      * turn</em>, at which point they return to their owner's hand.  The temporary removal is

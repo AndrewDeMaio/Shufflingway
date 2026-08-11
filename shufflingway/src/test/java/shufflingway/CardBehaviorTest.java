@@ -8787,6 +8787,121 @@ public class CardBehaviorTest {
 	}
 
 	// =========================================================================================
+	// Don Corneo 14-035C: "your opponent reveals 3 cards from their hand. Select 1 card among
+	// them. Your opponent discards this card."
+	//
+	// Two players decide here — the opponent picks what to show, the ability user picks what dies
+	// — which is why this cannot ride on the whole-hand reveal above. That one exposes the entire
+	// hand and would let the user take the best card in it, making Don Corneo strictly stronger
+	// than printed.
+	// =========================================================================================
+
+	private static final String DON_CORNEO_EFFECT =
+			"your opponent reveals 3 cards from their hand. Select 1 card among them. "
+			+ "Your opponent discards this card.";
+
+	@Test
+	void donCorneoRevealsThreeCardsRatherThanTheWholeHand() {
+		GameContext ctx = mock(GameContext.class);
+		Consumer<GameContext> fn = ActionResolver.parse(DON_CORNEO_EFFECT, null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+		verify(ctx).opponentRevealsSelectOneDiscard(3);
+		verify(ctx, never()).selectFromOpponentHandAndDiscard(anyInt(), any(), any());
+	}
+
+	// The whole-hand sibling sits directly behind this pattern in all three dispatch chains and
+	// opens with the same words, so it has to keep claiming its own text.
+	@Test
+	void wholeHandRevealIsStillClaimedByTheWholeHandParser() {
+		GameContext ctx = mock(GameContext.class);
+		Consumer<GameContext> fn = ActionResolver.parse(
+				"Your opponent reveals their hand. Select 1 card from their hand. "
+				+ "Your opponent discards this card.", null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+		verify(ctx).selectFromOpponentHandAndDiscard(eq(1), isNull(), any());
+		verify(ctx, never()).opponentRevealsSelectOneDiscard(anyInt());
+	}
+
+	@Test
+	void donCorneoReportsAPatternName() {
+		assertEquals("OpponentRevealNSelectOneDiscard",
+				ActionResolver.matchedPatternName(DON_CORNEO_EFFECT, null));
+	}
+
+	@Test
+	void donCorneoParsesAsOneEntersFieldAbility() {
+		List<AutoAbility> autos = CardData.parseAutoAbilities(
+				"When Don Corneo enters the field, " + DON_CORNEO_EFFECT);
+		assertEquals(1, autos.size());
+		assertEquals("enters the field", autos.get(0).trigger());
+		assertNotNull(ActionResolver.parse(autos.get(0).effectText(), null),
+				"the effect text must still parse once split off from its trigger");
+	}
+
+	// An empty hand has nothing to reveal and nothing to discard, so neither player is owed a
+	// dialog. Hand size is read here, as the effect resolves, not when it went on the Stack — a
+	// response that refilled the hand in between still counts.
+	@Test
+	void emptyOpponentHandRevealsAndDiscardsNothing() {
+		MainWindow mw = new MainWindow();
+		mw.buildGameContext(false).opponentRevealsSelectOneDiscard(3);
+		assertTrue(mw.gameState.getP1Hand().isEmpty());
+		assertTrue(mw.gameState.getP1BreakZone().isEmpty());
+	}
+
+	// Holding 3 or fewer makes the reveal forced, so the revealing player is never asked which
+	// cards to show — there is no decision in it. Both clients derive this case independently
+	// rather than exchanging it.
+	@Test
+	void handOfThreeOrFewerIsRevealedWithoutAskingWhichCards() {
+		MainWindow mw = new MainWindow();
+		mw.gameState.getP1Hand().addAll(List.of(
+				makeForward("Cheap", "Fire", 1, 3000),
+				makeForward("Dear",  "Fire", 7, 9000)));
+		assertEquals(List.of(0, 1), mw.revealHandCards(true, 3));
+	}
+
+	// What the CPU volunteers is a real decision: showing its best card would be a strictly worse
+	// one, so the three it reveals are its least valuable.
+	@Test
+	void cpuRevealsItsLeastValuableCards() {
+		MainWindow mw = new MainWindow();
+		mw.gameState.getP2Hand().addAll(List.of(
+				makeForward("Dear",    "Fire", 8, 9000),
+				makeForward("Cheap",   "Fire", 1, 3000),
+				makeForward("Middle",  "Fire", 4, 6000),
+				makeForward("Cheaper", "Fire", 0, 1000)));
+		List<Integer> revealed = mw.revealHandCards(false, 3);
+		assertEquals(List.of(1, 2, 3), revealed);
+		assertFalse(revealed.contains(0), "the CPU must not volunteer its best card");
+	}
+
+	@Test
+	void cpuSelectsTheMostExpensiveCardItWasShown() {
+		MainWindow mw = new MainWindow();
+		mw.gameState.getP1Hand().addAll(List.of(
+				makeForward("Cheap",  "Fire", 1, 3000),
+				makeForward("Dear",   "Fire", 7, 9000),
+				makeForward("Middle", "Fire", 4, 6000)));
+		assertEquals(1, mw.selectRevealedHandCard(false, List.of(0, 1, 2)));
+	}
+
+	// The whole effect end to end, on the one path that needs no dialogs: P2 owns Don Corneo, P1
+	// holds 2 cards so the reveal is forced, and the CPU selector takes the dearer of the two.
+	@Test
+	void donCorneoDiscardsTheBestCardOfAForcedReveal() {
+		MainWindow mw = new MainWindow();
+		CardData cheap = makeForward("Cheap", "Fire", 1, 3000);
+		CardData dear  = makeForward("Dear",  "Fire", 7, 9000);
+		mw.gameState.getP1Hand().addAll(List.of(cheap, dear));
+		mw.buildGameContext(false).opponentRevealsSelectOneDiscard(3);
+		assertEquals(List.of(cheap), mw.gameState.getP1Hand());
+		assertEquals(List.of(dear),  mw.gameState.getP1BreakZone());
+	}
+
+	// =========================================================================================
 	// "Choose 1 … in your Break Zone. Put it on top of your deck."
 	// The choose header was recognised but this followup was not, so the whole
 	// ability resolved to a "followup not yet implemented" log line and did nothing.

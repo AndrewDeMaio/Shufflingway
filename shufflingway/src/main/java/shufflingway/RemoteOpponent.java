@@ -6,6 +6,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
 
+import javax.swing.JDialog;
+
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -26,13 +28,19 @@ import shufflingway.net.MatchSetup;
  * directions: opening hands, phase advance, draws, end-of-turn cleanup, plays from hand, and
  * attack/block declarations with the damage that follows them.
  *
+ * <p>On top of that sits the beginning of the Phase 5 choice protocol: a CHOICE carries one
+ * player's answer to a decision the <em>other</em> client is parked on mid-effect. Both clients
+ * resolve the same ability, so each side simply waits for whichever half of the decision it does
+ * not own — see {@link #awaitChoice}. 14-035C Don Corneo is the first card to need it, and needs
+ * both halves.
+ *
  * <p>What is <em>not</em> replicated yet is the opponent's priority windows. {@code MainWindow}
  * still gives the opponent's half of every combat priority round to {@code p2AutoPass}, a timer,
  * and {@link #requestReactiveShields} passes straight through — so a remote player cannot act in
- * response to a declaration. That is the Phase 5 work, and until it lands it is also what keeps
- * combat safe to replicate this way: with no response window, the only inputs to a battle are the
- * attack and the block, both of which cross the wire, so the two clients cannot diverge partway
- * through one.
+ * response to a declaration. That is the rest of the Phase 5 work, and until it lands it is also
+ * what keeps combat safe to replicate this way: with no response window, the only inputs to a
+ * battle are the attack and the block, both of which cross the wire, so the two clients cannot
+ * diverge partway through one.
  */
 class RemoteOpponent implements OpponentController {
 
@@ -53,6 +61,9 @@ class RemoteOpponent implements OpponentController {
 	 * Stops this controller. A block that was still outstanding is answered as "no block" rather
 	 * than dropped: the local combat is parked on that callback, and leaving it unanswered would
 	 * strand the board mid-battle with the attacker dulled and the Attack Phase unable to end.
+	 *
+	 * <p>A choice being waited on is released for the same reason, and more urgently — that wait is
+	 * a modal dialog holding the EDT, so leaving it up would freeze the client outright.
 	 */
 	@Override
 	public void cancel() {
@@ -62,6 +73,7 @@ class RemoteOpponent implements OpponentController {
 		pendingBlock      = null;
 		pendingPartyBlock = null;
 		mw.setAwaitingRemoteBlock(false);
+		if (awaitedChoiceDialog != null) awaitedChoiceDialog.dispose();
 		if (block      != null) block.accept(null);
 		if (partyBlock != null) partyBlock.accept(null);
 	}
@@ -93,6 +105,7 @@ class RemoteOpponent implements OpponentController {
 			case DISCARD_HAND   -> applyDiscard(action.payload());
 			case ATTACK         -> applyAttack(action.payload());
 			case BLOCK          -> applyBlock(action.payload());
+			case CHOICE         -> applyChoice(action.payload());
 			default             -> { return false; }
 		}
 		return true;
@@ -264,6 +277,105 @@ class RemoteOpponent implements OpponentController {
 			return;
 		}
 		resume.accept(blocker);
+	}
+
+	// ── Two-sided card choices ───────────────────────────────────────────
+
+	/** The sender chose these cards from their own hand to reveal. */
+	static final String CHOICE_REVEAL = "REVEAL";
+	/** The sender picked this one card out of what their opponent revealed to them. */
+	static final String CHOICE_SELECT = "SELECT";
+
+	/** Answers that have arrived, keyed by kind and removed as they are consumed. */
+	private final Map<String, List<Integer>> deliveredChoices = new LinkedHashMap<>();
+	/** The kind {@link #awaitChoice} is parked on, and the dialog holding the EDT while it waits. */
+	private String  awaitedChoiceKind;
+	private JDialog awaitedChoiceDialog;
+
+	/** The opponent answered a choice. Buffered by kind, then the waiter — if any — is released. */
+	private void applyChoice(JSONObject payload) {
+		String kind = payload.optString("kind", "");
+		if (kind.isEmpty()) {
+			mw.reportDesync("opponent sent a choice with no kind");
+			return;
+		}
+		deliveredChoices.put(kind, indices(payload, "indices"));
+		if (kind.equals(awaitedChoiceKind) && awaitedChoiceDialog != null) awaitedChoiceDialog.dispose();
+	}
+
+	/**
+	 * Blocks this client until the opponent answers with a CHOICE of {@code kind}, and returns the
+	 * card indices they sent — empty if the answer never came.
+	 *
+	 * <p>Unlike a block, which parks a callback and returns, an effect mid-resolution has nowhere
+	 * to park: {@code GameContext} methods run to completion, and the rules that follow the choice
+	 * are the statements after the call.  So this waits in place, in a modal dialog whose nested
+	 * event loop keeps delivering inbound actions — including the one that disposes it.
+	 *
+	 * <p>The answer can also arrive <em>before</em> anyone waits, the sender firing as soon as
+	 * their own dialog closes.  {@link #deliveredChoices} is checked first for that reason; racing
+	 * the two would hang the client that lost.
+	 *
+	 * <p><b>Limitation.</b> Answers are keyed by kind alone, not by which decision they belong to.
+	 * The protocol is strictly one question at a time — each answer is removed as it is consumed,
+	 * and neither side sends until the other has — so a stale entry can only survive if one client
+	 * abandoned an effect the other completed.  That is already a reported desync by the time it
+	 * happens.  A sequence number would not help: the clients would have to agree on it, and the
+	 * case that breaks the keying is exactly the case that would break the counter.
+	 */
+	private List<Integer> awaitChoice(String kind, String prompt) {
+		if (cancelled) return List.of();
+		List<Integer> already = deliveredChoices.remove(kind);
+		if (already != null) return already;
+		JDialog dialog = mw.buildWaitingForOpponentDialog(prompt);
+		awaitedChoiceKind   = kind;
+		awaitedChoiceDialog = dialog;
+		dialog.setVisible(true);
+		awaitedChoiceKind   = null;
+		awaitedChoiceDialog = null;
+		List<Integer> answer = deliveredChoices.remove(kind);
+		return answer != null ? answer : List.of();
+	}
+
+	/**
+	 * Waits for the cards the opponent chose to reveal from their own hand, checked against the
+	 * hand this client holds for them before it is acted on.
+	 */
+	List<Integer> awaitRevealedHandCards(int count, int handSize) {
+		List<Integer> revealed = awaitChoice(CHOICE_REVEAL,
+				"Waiting for your opponent to reveal " + count + " cards from their hand...");
+		for (int i : revealed) {
+			if (i < 0 || i >= handSize) {
+				mw.reportDesync("opponent revealed hand card " + i + ", but their hand holds "
+						+ handSize + " cards here");
+				return List.of();
+			}
+		}
+		return revealed;
+	}
+
+	/**
+	 * Waits for the one card the opponent selected out of what this client revealed to them.
+	 * Returns -1 when nothing usable came back.
+	 */
+	int awaitSelectedHandCard(List<Integer> revealedIndices) {
+		List<Integer> answer = awaitChoice(CHOICE_SELECT,
+				"Waiting for your opponent to select a card to discard...");
+		if (answer.isEmpty()) return -1;
+		int idx = answer.get(0);
+		if (!revealedIndices.contains(idx)) {
+			mw.reportDesync("opponent selected hand card " + idx
+					+ ", which was not among the cards revealed to them");
+			return -1;
+		}
+		return idx;
+	}
+
+	/** Builds a CHOICE carrying one player's answer to a decision the opponent is parked on. */
+	static GameAction choiceAction(String kind, List<Integer> indices) {
+		return GameAction.of(ActionType.CHOICE, new JSONObject()
+				.put("kind", kind)
+				.put("indices", new JSONArray(indices)));
 	}
 
 	/** Reads the blocker's party damage spread, keyed by attacker slot. */

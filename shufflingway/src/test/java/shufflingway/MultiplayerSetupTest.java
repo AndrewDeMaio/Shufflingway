@@ -15,6 +15,8 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 import org.junit.jupiter.api.Test;
 
+import shufflingway.net.ActionType;
+import shufflingway.net.GameAction;
 import shufflingway.net.MatchSetup;
 
 /**
@@ -335,6 +337,50 @@ class MultiplayerSetupTest {
         JSONObject declined = RemoteOpponent.blockAction(null, -1, null).payload();
         assertEquals(Map.of(), RemoteOpponent.damageSpread(declined),
                 "the caller assigns whatever this returns, so an absent spread must be empty");
+    }
+
+    // =========================================================================================
+    // Two-sided card choices (Don Corneo 14-035C).
+    //
+    // Unlike an ATTACK or a BLOCK, which say what already happened, a CHOICE is one half of a
+    // decision the other client is parked on mid-effect. Both halves travel as hand indices, and
+    // hand indices — like slot indices — do not flip on the way across: the two clients hold each
+    // hand in the same order, so slot n means the same card on both.
+    // =========================================================================================
+
+    @Test
+    void aRevealNamesEveryCardTheSenderChoseToShow() {
+        JSONObject payload = RemoteOpponent.choiceAction(
+                RemoteOpponent.CHOICE_REVEAL, List.of(0, 2, 5)).payload();
+        assertEquals("REVEAL", payload.getString("kind"));
+        assertEquals(List.of(0, 2, 5), intList(payload.getJSONArray("indices")));
+    }
+
+    @Test
+    void aSelectionCarriesTheOneCardItPicked() {
+        JSONObject payload = RemoteOpponent.choiceAction(
+                RemoteOpponent.CHOICE_SELECT, List.of(2)).payload();
+        assertEquals("SELECT", payload.getString("kind"));
+        assertEquals(List.of(2), intList(payload.getJSONArray("indices")),
+                "the selection indexes the opponent's hand, not the revealed subset — the "
+                + "receiver discards from the hand directly");
+    }
+
+    // The two kinds share one action type, so the kind is what tells a waiting client whether the
+    // answer that just landed is the one it is parked on.
+    @Test
+    void theTwoKindsOfChoiceAreDistinguishable() {
+        assertNotEquals(RemoteOpponent.CHOICE_REVEAL, RemoteOpponent.CHOICE_SELECT);
+    }
+
+    // A CHOICE has to survive the same JSON round trip every other action does.
+    @Test
+    void aChoiceSurvivesSerialization() {
+        GameAction sent = RemoteOpponent.choiceAction(RemoteOpponent.CHOICE_REVEAL, List.of(1, 4));
+        GameAction back = GameAction.deserialize(sent.serialize());
+        assertEquals(ActionType.CHOICE, back.type());
+        assertEquals("REVEAL", back.payload().getString("kind"));
+        assertEquals(List.of(1, 4), intList(back.payload().getJSONArray("indices")));
     }
 
     private static List<Integer> intList(JSONArray arr) {

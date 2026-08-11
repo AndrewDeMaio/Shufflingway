@@ -2911,6 +2911,22 @@ final class ActionResolverPatterns {
         ")" +
         "[.!]?"
     );
+    /**
+     * Matches "Your opponent reveals N cards from their hand. Select 1 card among them.
+     * Your opponent discards this card." (14-035C Don Corneo, the only card in the corpus with
+     * this shape.)
+     *
+     * <p>Kept distinct from {@link #OPPONENT_REVEAL_HAND_PATTERN}, which shows the <em>whole</em>
+     * hand: here the opponent chooses which N to expose, so the ability user only ever selects
+     * from cards the opponent was willing to show. Routing this text at the whole-hand pattern
+     * would make the card strictly stronger than printed.
+     */
+    static final Pattern OPPONENT_REVEAL_N_SELECT_ONE_DISCARD_PATTERN = Pattern.compile(
+        "(?i)Your\\s+opponent\\s+(?:shows?|reveals?)\\s+(?<count>\\d+)\\s+cards?\\s+from\\s+" +
+        "(?:his/her|his|her|their)\\s+hand[.!]?\\s+" +
+        "Select\\s+1\\s+card\\s+among\\s+them[.!]?\\s+" +
+        "Your\\s+opponent\\s+discards\\s+this\\s+card[.!]?"
+    );
     /** Matches "Your opponent shows/reveals his/her/their hand". */
     static final Pattern OPPONENT_REVEAL_HAND_PATTERN = Pattern.compile(
         "(?i)Your\\s+opponent\\s+(?:shows?|reveals?)\\s+(?:his/her|his|her|their)\\s+hand[.!]?"

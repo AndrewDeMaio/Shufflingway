@@ -76,6 +76,7 @@ import javax.swing.SwingWorker;
 import javax.swing.Timer;
 import javax.swing.ToolTipManager;
 import javax.swing.UIManager;
+import javax.swing.WindowConstants;
 import shufflingway.graphics.ShieldIcon;
 import javax.swing.border.BevelBorder;
 import javax.swing.border.SoftBevelBorder;
@@ -5732,6 +5733,118 @@ public class MainWindow {
 				this::showZoomAt, this::hideZoom,
 				selected -> { for (int ri : selected) if (ri < choices.size()) picked.add(choices.get(ri)); });
 		return picked;
+	}
+
+	/**
+	 * The player at seat {@code revealerIsP1} reveals {@code count} cards <em>of their own
+	 * choosing</em> from hand; returns the hand indices they showed, ascending.
+	 *
+	 * <p>Indices rather than cards because the answer may have to cross the wire, and both clients
+	 * hold the same hand in the same order — the same convention a replayed play follows.
+	 *
+	 * <p>A hand of {@code count} cards or fewer makes the choice forced, so nobody is asked and the
+	 * whole hand is shown.  That case is derived independently on each client rather than
+	 * transmitted: with no decision in it, both arrive at the same answer.
+	 */
+	List<Integer> revealHandCards(boolean revealerIsP1, int count) {
+		List<CardData> hand = revealerIsP1 ? gameState.getP1Hand() : gameState.getP2Hand();
+		if (hand.isEmpty()) return List.of();
+		if (hand.size() <= count) {
+			List<Integer> all = new ArrayList<>();
+			for (int i = 0; i < hand.size(); i++) all.add(i);
+			return all;
+		}
+		if (revealerIsP1) {
+			List<CardData> picked = showHandSelectionDialog(new ArrayList<>(hand), count,
+					"reveal to your opponent", "Reveal");
+			List<Integer> revealed = new ArrayList<>();
+			for (CardData c : picked) {
+				int i = handIndexByIdentity(hand, c);
+				if (i >= 0) revealed.add(i);
+			}
+			Collections.sort(revealed);
+			// The opponent is waiting on this answer to know what they may select from.
+			if (opponent instanceof RemoteOpponent remote)
+				remote.send(RemoteOpponent.choiceAction(RemoteOpponent.CHOICE_REVEAL, revealed));
+			return revealed;
+		}
+		if (opponent instanceof RemoteOpponent remote)
+			return remote.awaitRevealedHandCards(count, hand.size());
+		// The CPU shows its least valuable cards — the low-cost-first heuristic a forced discard
+		// uses, applied repeatedly to a shrinking copy so the picks stay distinct.
+		List<CardData> pool   = new ArrayList<>(hand);
+		List<Integer>  origin = new ArrayList<>();
+		for (int i = 0; i < hand.size(); i++) origin.add(i);
+		List<Integer> revealed = new ArrayList<>();
+		for (int n = 0; n < count && !pool.isEmpty(); n++) {
+			int worst = pickWorstHandCard0(pool);
+			revealed.add(origin.remove(worst));
+			pool.remove(worst);
+		}
+		Collections.sort(revealed);
+		return revealed;
+	}
+
+	/**
+	 * The player at seat {@code selectorIsP1} picks 1 of the cards their opponent just revealed.
+	 * {@code revealedIndices} indexes the opponent's hand; the return is one of those indices, or
+	 * -1 when nothing was selected.
+	 */
+	int selectRevealedHandCard(boolean selectorIsP1, List<Integer> revealedIndices) {
+		List<CardData> oppHand = selectorIsP1 ? gameState.getP2Hand() : gameState.getP1Hand();
+		List<CardData> revealed = new ArrayList<>();
+		List<Integer>  usable   = new ArrayList<>();
+		for (int i : revealedIndices) {
+			if (i < 0 || i >= oppHand.size()) continue;
+			revealed.add(oppHand.get(i));
+			usable.add(i);
+		}
+		if (revealed.isEmpty()) return -1;
+		if (selectorIsP1) {
+			List<CardData> picked = showHandSelectionDialog(revealed, 1,
+					"discard from the revealed cards", "Discard");
+			if (picked.isEmpty()) return -1;
+			int rel = handIndexByIdentity(revealed, picked.get(0));
+			if (rel < 0) return -1;
+			int chosen = usable.get(rel);
+			// The opponent cannot derive this one — it is a free choice among the revealed cards.
+			if (opponent instanceof RemoteOpponent remote)
+				remote.send(RemoteOpponent.choiceAction(RemoteOpponent.CHOICE_SELECT, List.of(chosen)));
+			return chosen;
+		}
+		if (opponent instanceof RemoteOpponent remote)
+			return remote.awaitSelectedHandCard(usable);
+		// The CPU takes the most expensive card it was shown.
+		int best = usable.get(0);
+		for (int i : usable) if (oppHand.get(i).cost() > oppHand.get(best).cost()) best = i;
+		return best;
+	}
+
+	/** Position of {@code card} in {@code list} by identity, or -1. Two copies are distinct here. */
+	private static int handIndexByIdentity(List<CardData> list, CardData card) {
+		for (int i = 0; i < list.size(); i++) if (list.get(i) == card) return i;
+		return -1;
+	}
+
+	/**
+	 * Builds — but does not show — the modal dialog that parks this client while the opponent
+	 * makes a choice only they can make.
+	 *
+	 * <p>Modal on purpose.  {@code setVisible(true)} starts a nested event loop, and inbound
+	 * actions already arrive on the EDT, so the answer this dialog is waiting for can still be
+	 * delivered while it is up — which is what disposes it.  It carries no buttons: there is
+	 * nothing for this player to decide, and dismissing it early would resume a rule mid-effect.
+	 */
+	JDialog buildWaitingForOpponentDialog(String prompt) {
+		JDialog dialog = new JDialog(frame, "Waiting for opponent", true);
+		dialog.setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
+		JLabel label = new JLabel(prompt, SwingConstants.CENTER);
+		label.setBorder(BorderFactory.createEmptyBorder(
+				UiScale.scale(24), UiScale.scale(32), UiScale.scale(24), UiScale.scale(32)));
+		dialog.add(label);
+		dialog.pack();
+		dialog.setLocationRelativeTo(frame);
+		return dialog;
 	}
 
 	/**

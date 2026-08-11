@@ -944,6 +944,11 @@ public class ActionResolver {
         result = tryParseSelfMill(effectText);
         if (result != null) return result;
 
+        // Must precede tryParseOpponentRevealHand: both open with "Your opponent reveals ...",
+        // and the whole-hand parser would claim this text's opening clause under find().
+        result = tryParseOpponentRevealNSelectOneDiscard(effectText);
+        if (result != null) return result;
+
         result = tryParseOpponentRevealHand(effectText);
         if (result != null) return result;
 
@@ -1536,6 +1541,8 @@ public class ActionResolver {
         if (tryParseOpponentMillIfSameElementDraw(effectText)  != null) return "OpponentMillIfSameElementDraw";
         if (tryParseOpponentMill(effectText)                  != null) return "OpponentMill";
         if (tryParseSelfMill(effectText)                      != null) return "SelfMill";
+        // Must precede OpponentRevealHand — see the ordering note in parse().
+        if (tryParseOpponentRevealNSelectOneDiscard(effectText) != null) return "OpponentRevealNSelectOneDiscard";
         if (tryParseOpponentRevealHand(effectText)            != null) return "OpponentRevealHand";
         if (tryParseEachPlayerRevealCharacterMayPlay(effectText)      != null) return "EachPlayerRevealMayPlay";
         if (tryParseEachPlayerMaySearchForwardMinPower(effectText)     != null) return "EachPlayerMaySearchForwardMinPower";
@@ -2161,6 +2168,9 @@ public class ActionResolver {
         if (tryParseOpponentMillIfSameElementDraw(effectText) != null)      return "OpponentMillIfSameElementDraw";
         if (tryParseOpponentMill(effectText) != null)                       return "OpponentMill";
         if (tryParseSelfMill(effectText) != null)                           return "SelfMill";
+        // Must precede OpponentRevealHand — see the ordering note in parse().
+        if (tryParseOpponentRevealNSelectOneDiscard(effectText) != null)
+            return "Opponent reveals cards from their hand; you select 1 for them to discard";
         if (tryParseOpponentRevealHand(effectText) != null)                 return "OpponentRevealHand";
         if (tryParseEachPlayerRevealCharacterMayPlay(effectText) != null)   return "EachPlayerRevealMayPlay";
         if (tryParseEachPlayerMaySearchForwardMinPower(effectText) != null) return "EachPlayerMaySearchForwardMinPower";

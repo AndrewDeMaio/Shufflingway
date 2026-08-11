@@ -269,6 +269,24 @@ final class ActionResolverSearch {
             ctx.searchAndCastSummonFreeFromDeck(maxCost, element);
         };
     }
+    /**
+     * Parses "Your opponent reveals N cards from their hand. Select 1 card among them.
+     * Your opponent discards this card." (14-035C Don Corneo)
+     *
+     * <p>Two players decide here — the opponent picks what to reveal, the ability user picks
+     * what dies — which is why this does not reuse
+     * {@link GameContext#selectFromOpponentHandAndDiscard}: that one exposes the whole hand.
+     */
+    static Consumer<GameContext> tryParseOpponentRevealNSelectOneDiscard(String text) {
+        Matcher m = OPPONENT_REVEAL_N_SELECT_ONE_DISCARD_PATTERN.matcher(text);
+        if (!m.find()) return null;
+        int count = Integer.parseInt(m.group("count"));
+        return ctx -> {
+            ctx.logEntry("Effect: Opponent reveals " + count
+                    + " cards from hand — select 1 for them to discard");
+            ctx.opponentRevealsSelectOneDiscard(count);
+        };
+    }
     /** Parses "Your opponent shows/reveals his/her hand". */
     static Consumer<GameContext> tryParseOpponentRevealHand(String text) {
         Matcher m = OPPONENT_REVEAL_HAND_PATTERN.matcher(text);

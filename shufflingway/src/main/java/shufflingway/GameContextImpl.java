@@ -4770,6 +4770,37 @@ final class GameContextImpl implements GameContext {
 				else      { mw.refreshP1HandLabel();      mw.refreshP1BreakLabel(); }
 			}
 
+			@Override public void opponentRevealsSelectOneDiscard(int revealCount) {
+				// Read here rather than when the ability went on the Stack: a response can have put
+				// cards into their hand in the meantime, and it is this hand that gets revealed.
+				List<CardData> oppHand = isP1 ? mw.gameState.getP2Hand() : mw.gameState.getP1Hand();
+				if (oppHand.isEmpty()) {
+					logEntry("Opponent's hand is empty — nothing revealed, nothing discarded.");
+					return;
+				}
+				// Hand indices, not cards: they survive the trip between clients unchanged, both
+				// sides holding the same hand in the same order.
+				List<Integer> revealed = mw.revealHandCards(!isP1, revealCount);
+				if (revealed.isEmpty()) return;
+				StringBuilder shown = new StringBuilder();
+				for (int i : revealed) {
+					if (i < 0 || i >= oppHand.size()) continue;
+					if (shown.length() > 0) shown.append(", ");
+					shown.append(oppHand.get(i).name());
+				}
+				logEntry("[Opponent] Reveals " + revealed.size() + " card(s) from hand: " + shown);
+
+				int chosen = mw.selectRevealedHandCard(isP1, revealed);
+				if (chosen < 0) return;
+				CardData d = mw.playerBreakFromHand(!isP1, chosen);
+				if (d == null) return;
+				logEntry("[Opponent] Discards " + d.name() + " (selected from the revealed cards)");
+				mw.turn(!isP1).discardedByEffectThisTurn = true;
+				mw.turn(isP1).causedOpponentDiscardThisTurn = true;
+				if (isP1) { mw.refreshP2HandCountLabel(); mw.refreshP2BreakLabel(); }
+				else      { mw.refreshP1HandLabel();      mw.refreshP1BreakLabel(); }
+			}
+
 			@Override public void selectFromOpponentHandRfpUntilEndOfOpponentTurn(int count) {
 				List<CardData> hand = isP1 ? mw.gameState.getP2Hand() : mw.gameState.getP1Hand();
 				if (hand.isEmpty()) { logEntry("Opponent's hand is empty."); return; }
