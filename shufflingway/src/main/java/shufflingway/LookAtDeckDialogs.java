@@ -165,7 +165,7 @@ class LookAtDeckDialogs {
             case RETURN_TOP_ORDERED -> { showReturnTopOrdered(peeked, deck, isP1);   yield null; }
             case ADD_TO_HAND_REST_BOTTOM         -> showAddToHandRestBottom(peeked, deck, isP1);
             case ADD_TO_HAND_ONE_TO_BREAK_REST_BOTTOM -> showAddToHandOneToBreakRestBottom(peeked, deck, isP1);
-            case ADD_TO_HAND_REST_BREAK          -> showAddToHandRestBreak(peeked, deck, isP1);
+            case ADD_TO_HAND_REST_BREAK          -> showAddToHandRestBreak(peeked, deck, isP1, config);
             case TOP_OR_BOTTOM_ORDERED           -> { showTopOrBottom(peeked, deck, isP1, !p2IsCpu); yield null; }
             case PICK_ONE_TOP_REST_BOTTOM        -> { showPickOneTopRestBottom(peeked, deck, isP1); yield null; }
         };
@@ -230,12 +230,22 @@ class LookAtDeckDialogs {
 
             case ADD_TO_HAND_REST_BREAK -> {
                 for (int i = 0; i < n; i++) deck.pollFirst();
-                added = peeked.get(0);
-                gameState.getP2Hand().add(added);
-                cb.refreshP2Hand().run();
-                for (int i = 1; i < n; i++) gameState.getP2BreakZone().add(peeked.get(i));
+                // The topmost card the ability qualifies, not simply the topmost — a filtered
+                // effect ("Add 1 Category VII card among them") may not reach the first one, and
+                // may not reach any of them.
+                int keep = -1;
+                for (int i = 0; i < n && keep < 0; i++) if (config.eligibleForHand(peeked.get(i))) keep = i;
+                if (keep >= 0) {
+                    added = peeked.get(keep);
+                    gameState.getP2Hand().add(added);
+                    cb.refreshP2Hand().run();
+                }
+                for (int i = 0; i < n; i++)
+                    if (i != keep) gameState.getP2BreakZone().add(peeked.get(i));
                 cb.refreshP2Break().run();
-                log("[P2] adds a card to hand and sends " + (n - 1) + " to the Break Zone.");
+                log(keep >= 0
+                        ? "[P2] adds a card to hand and sends " + (n - 1) + " to the Break Zone."
+                        : "[P2] finds no eligible card and sends all " + n + " to the Break Zone.");
             }
 
             case ADD_TO_HAND_ONE_TO_BREAK_REST_BOTTOM -> {
@@ -770,9 +780,39 @@ class LookAtDeckDialogs {
         return handCard;
     }
 
-    /** @return the card put into hand */
-    private CardData showAddToHandRestBreak(List<CardData> cards, Deque<CardData> deck, boolean isP1) {
+    /**
+     * Lets the player take 1 of the revealed cards into hand; everything else goes to the Break
+     * Zone.  {@code config} may restrict which card qualifies ("Add 1 Category VII card among
+     * them") — an ineligible card cannot be chosen, and when none of the revealed cards qualifies
+     * there is nothing to decide, so no dialog is shown and all of them are broken.
+     *
+     * @return the card put into hand, or {@code null} when none qualified
+     */
+    private CardData showAddToHandRestBreak(List<CardData> cards, Deque<CardData> deck, boolean isP1,
+            LookConfig config) {
         int n = cards.size();
+        String filterLabel = config.handFilterLabel();
+
+        boolean[] eligible = new boolean[n];
+        boolean   anyEligible = false;
+        for (int i = 0; i < n; i++) {
+            eligible[i] = config.eligibleForHand(cards.get(i));
+            anyEligible |= eligible[i];
+        }
+
+        if (!anyEligible) {
+            for (int i = 0; i < n; i++) deck.pollFirst();
+            for (CardData c : cards) {
+                if (isP1) gameState.getP1BreakZone().add(c);
+                else      gameState.getP2BreakZone().add(c);
+                log(c.name() + " → Break Zone");
+            }
+            log("No " + filterLabel + " card among them — nothing added to hand.");
+            if (isP1) { cb.refreshP1Break().run(); cb.refreshP1Deck().run(); }
+            else      { cb.refreshP2Break().run(); cb.refreshP2Deck().run(); }
+            return null;
+        }
+
         JDialog dlg = new JDialog(frame, "Look — Add to Hand, Rest to Break Zone", true);
         dlg.setResizable(false);
         dlg.setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
@@ -797,6 +837,10 @@ class LookAtDeckDialogs {
 
             JToggleButton handBtn = new JToggleButton(txt("→ Hand"));
             handBtn.setFont(FontLoader.loadPixelFont(9));
+            // A card the ability does not qualify cannot be the one taken, so its button never
+            // arms — the restriction is enforced here rather than left to the player to honour.
+            handBtn.setEnabled(eligible[i]);
+            if (!eligible[i]) handBtn.setToolTipText("Not a " + filterLabel + " card");
             handBtns[i] = handBtn;
             handBtn.addItemListener(ie -> {
                 if (ie.getStateChange() == java.awt.event.ItemEvent.SELECTED) {
@@ -822,7 +866,10 @@ class LookAtDeckDialogs {
         }
 
         JLabel instructions = new JLabel(
-                txt("Click '→ Hand' to choose a card. The rest go to the Break Zone."), SwingConstants.CENTER);
+                txt(filterLabel == null
+                        ? "Click '→ Hand' to choose a card. The rest go to the Break Zone."
+                        : "Click '→ Hand' to choose a " + filterLabel
+                          + " card. The rest go to the Break Zone."), SwingConstants.CENTER);
         instructions.setFont(FontLoader.loadPixelFont(9));
         confirmBtn.addActionListener(ae -> { hideZoom(); dlg.dispose(); });
 
@@ -840,7 +887,10 @@ class LookAtDeckDialogs {
         dlg.setVisible(true);
 
         for (int i = 0; i < n; i++) deck.pollFirst();
-        int hi = handLblIdx[0] >= 0 ? handLblIdx[0] : 0;
+        // Closing the dialog without choosing still takes a card — but it has to be one the
+        // ability allows, so the fallback is the first eligible card rather than the first card.
+        int hi = handLblIdx[0];
+        if (hi < 0) for (int i = 0; i < n && hi < 0; i++) if (eligible[i]) hi = i;
         CardData handCard = cards.get(hi);
         if (isP1) { gameState.getP1Hand().add(handCard); cb.refreshP1Hand().run(); }
         else      { gameState.getP2Hand().add(handCard); cb.refreshP2Hand().run(); }

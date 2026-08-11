@@ -8308,7 +8308,7 @@ public class CardBehaviorTest {
         // The rider can only know what was taken after the look has resolved.
         InOrder order = inOrder(ctx);
         order.verify(ctx).lookAtTopDeck(
-                new LookConfig(5, LookConfig.LookAction.ADD_TO_HAND_REST_BOTTOM, null, true));
+                new LookConfig(5, LookConfig.LookAction.ADD_TO_HAND_REST_BOTTOM, null, null, true));
         order.verify(ctx).triggerExBurstOfCardAddedToHand();
     }
 
@@ -8334,7 +8334,7 @@ public class CardBehaviorTest {
                 "reveal the top 2 cards of your deck. Add 1 Fire card among them to your hand and "
                 + "put the rest into the Break Zone.", null).accept(ctx);
         verify(ctx).lookAtTopDeck(
-                new LookConfig(2, LookConfig.LookAction.ADD_TO_HAND_REST_BREAK, "Fire", true));
+                new LookConfig(2, LookConfig.LookAction.ADD_TO_HAND_REST_BREAK, "Fire", null, true));
     }
 
     @Test
@@ -8344,7 +8344,7 @@ public class CardBehaviorTest {
                 "Look at the top 2 cards of your deck. Add 1 Water card among them to your hand and "
                 + "put the rest into the Break Zone.", null).accept(ctx);
         verify(ctx).lookAtTopDeck(
-                new LookConfig(2, LookConfig.LookAction.ADD_TO_HAND_REST_BREAK, "Water", false));
+                new LookConfig(2, LookConfig.LookAction.ADD_TO_HAND_REST_BREAK, "Water", null, false));
     }
 
     @Test
@@ -8369,6 +8369,98 @@ public class CardBehaviorTest {
                 + "the other cards to the bottom of your deck in any order. If you added a Forward to "
                 + "your hand, deal the chosen Forward damage equal to the power of the added Forward.",
                 null));
+    }
+
+    // =========================================================================================
+    // "Add 1 [Category X] card among them to your hand" — the category branch of the
+    // add-to-hand/rest-to-break look.
+    //
+    // The pattern only understood an element filter, so four cards went unparsed (29-061L Vincent,
+    // 25-112H Sarah, and the branch inside 28-031L Snow and 24-061L Basch). Worse, the element
+    // filter it did parse was never applied: LookConfig carried it and the dialog ignored it, so
+    // every one of those cards let you take any revealed card. Both halves are fixed here — the
+    // filter now reaches the dialog, the AI, and the no-eligible-card case.
+    // =========================================================================================
+
+    private static final String VINCENT_REVEAL =
+            "reveal the top 2 cards of your deck. Add 1 Category VII card among them to your hand "
+            + "and put the rest of the cards into the Break Zone.";
+
+    @Test
+    void vincentFiltersTheAddToHandByCategory() {
+        GameContext ctx = mock(GameContext.class);
+        Consumer<GameContext> fn = ActionResolver.parse(VINCENT_REVEAL, null);
+        assertNotNull(fn);
+        fn.accept(ctx);
+        verify(ctx).lookAtTopDeck(
+                new LookConfig(2, LookConfig.LookAction.ADD_TO_HAND_REST_BREAK, null, "VII", true));
+    }
+
+    @Test
+    void vincentParsesAsOneEntersFieldAbility() {
+        List<AutoAbility> autos = CardData.parseAutoAbilities(
+                "When Vincent enters the field, " + VINCENT_REVEAL);
+        assertEquals(1, autos.size());
+        assertEquals("enters the field", autos.get(0).trigger());
+        assertNotNull(ActionResolver.parse(autos.get(0).effectText(), null));
+    }
+
+    // 25-112H Sarah names a category that is a word rather than a numeral, so the capture must not
+    // stop at the first token boundary it finds.
+    @Test
+    void aWordCategoryIsCapturedWhole() {
+        GameContext ctx = mock(GameContext.class);
+        ActionResolver.parse(
+                "reveal the top 4 cards of your deck. Add 1 Category MOBIUS card among them to "
+                + "your hand and put the rest of the cards into the Break Zone.", null).accept(ctx);
+        verify(ctx).lookAtTopDeck(
+                new LookConfig(4, LookConfig.LookAction.ADD_TO_HAND_REST_BREAK, null, "MOBIUS", true));
+    }
+
+    // The element branch and the unfiltered form share this pattern, so widening it must leave
+    // both alone.
+    @Test
+    void wideningForCategoriesLeavesTheElementAndUnfilteredFormsAlone() {
+        GameContext elem = mock(GameContext.class);
+        ActionResolver.parse(
+                "reveal the top 2 cards of your deck. Add 1 Earth card among them to your hand and "
+                + "put the rest of the cards into the Break Zone.", null).accept(elem);
+        verify(elem).lookAtTopDeck(
+                new LookConfig(2, LookConfig.LookAction.ADD_TO_HAND_REST_BREAK, "Earth", null, true));
+
+        GameContext plain = mock(GameContext.class);
+        ActionResolver.parse(
+                "Look at the top 3 cards of your deck. Add 1 card among them to your hand and put "
+                + "the rest of the cards into the Break Zone.", null).accept(plain);
+        verify(plain).lookAtTopDeck(
+                new LookConfig(3, LookConfig.LookAction.ADD_TO_HAND_REST_BREAK, null, null, false));
+    }
+
+    // The filter is what the dialog and the AI both consult, so it has to reject as well as accept.
+    @Test
+    void theHandFilterAcceptsOnlyMatchingCards() {
+        LookConfig byCategory = new LookConfig(
+                2, LookConfig.LookAction.ADD_TO_HAND_REST_BREAK, null, "VII", true);
+        assertTrue(byCategory.eligibleForHand(makeCategoryForward("Cloud", "Fire", "VII")));
+        assertFalse(byCategory.eligibleForHand(makeCategoryForward("Vaan", "Wind", "XII")));
+
+        LookConfig byElement = new LookConfig(
+                2, LookConfig.LookAction.ADD_TO_HAND_REST_BREAK, "Fire", null, true);
+        assertTrue(byElement.eligibleForHand(makeCategoryForward("Cloud", "Fire", "VII")));
+        assertFalse(byElement.eligibleForHand(makeCategoryForward("Vaan", "Wind", "XII")));
+
+        LookConfig unfiltered = new LookConfig(2, LookConfig.LookAction.ADD_TO_HAND_REST_BREAK);
+        assertTrue(unfiltered.eligibleForHand(makeCategoryForward("Vaan", "Wind", "XII")),
+                "an unfiltered look must keep accepting everything");
+    }
+
+    @Test
+    void theFilterLabelNamesWhicheverRestrictionApplies() {
+        assertEquals("Category VII", new LookConfig(
+                2, LookConfig.LookAction.ADD_TO_HAND_REST_BREAK, null, "VII", true).handFilterLabel());
+        assertEquals("Fire", new LookConfig(
+                2, LookConfig.LookAction.ADD_TO_HAND_REST_BREAK, "Fire", null, true).handFilterLabel());
+        assertNull(new LookConfig(2, LookConfig.LookAction.ADD_TO_HAND_REST_BREAK).handFilterLabel());
     }
 
 	// =========================================================================================

@@ -514,7 +514,7 @@ final class ActionResolverSearch {
             ctx.logEntry("Effect: " + (reveal ? "Reveal" : "Look at") + " top " + count
                     + " card(s) — add 1 to hand, return rest to bottom");
             ctx.lookAtTopDeck(new LookConfig(
-                    count, LookConfig.LookAction.ADD_TO_HAND_REST_BOTTOM, null, reveal));
+                    count, LookConfig.LookAction.ADD_TO_HAND_REST_BOTTOM, null, null, reveal));
         };
         String tail = text.substring(m.end()).trim();
         if (tail.isEmpty()) return look;
@@ -538,15 +538,18 @@ final class ActionResolverSearch {
     static Consumer<GameContext> tryParseLookTopDeckAddToHandRestBreak(String text) {
         Matcher m = LOOK_TOP_DECK_ADD_TO_HAND_REST_BREAK.matcher(text);
         if (!m.find()) return null;
-        int     count   = Integer.parseInt(m.group("count"));
-        String  element = m.group("element");
-        boolean reveal  = isRevealWording(m.group("verb"));
-        String elemLabel = element != null ? " (" + element + ")" : "";
+        int     count    = Integer.parseInt(m.group("count"));
+        String  element  = m.group("element");
+        String  category = m.group("category");
+        boolean reveal   = isRevealWording(m.group("verb"));
+        LookConfig config = new LookConfig(
+                count, LookConfig.LookAction.ADD_TO_HAND_REST_BREAK, element, category, reveal);
+        String label = config.handFilterLabel();
+        String filterLabel = label != null ? " (" + label + ")" : "";
         return ctx -> {
             ctx.logEntry("Effect: " + (reveal ? "Reveal" : "Look at") + " top " + count
-                    + " card(s) — add 1" + elemLabel + " to hand, rest to Break Zone");
-            ctx.lookAtTopDeck(new LookConfig(
-                    count, LookConfig.LookAction.ADD_TO_HAND_REST_BREAK, element, reveal));
+                    + " card(s) — add 1" + filterLabel + " to hand, rest to Break Zone");
+            ctx.lookAtTopDeck(config);
         };
     }
     static Consumer<GameContext> tryParseLookTopDeckTopOrBottom(String text, CardData source) {

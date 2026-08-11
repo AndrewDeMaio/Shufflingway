@@ -3848,17 +3848,22 @@ final class ActionResolverPatterns {
         "return\\s+the\\s+other\\s+cards?\\s+to\\s+the\\s+bottom\\s+of\\s+your\\s+deck\\s+in\\s+any\\s+order[.!]?"
     );
     /**
-     * Matches "Look at / Reveal the top N cards of your deck. Add 1 [Element] card among them
-     * to your hand and put the rest of the cards into the Break Zone."
+     * Matches "Look at / Reveal the top N cards of your deck. Add 1 [Element|Category X] card
+     * among them to your hand and put the rest of the cards into the Break Zone."
      * <ul>
-     *   <li>Group {@code count}   — number of cards to look at / reveal</li>
-     *   <li>Group {@code verb}    — which wording was used; "Reveal" makes the cards public</li>
-     *   <li>Group {@code element} — optional element filter on the card added to hand</li>
+     *   <li>Group {@code count}    — number of cards to look at / reveal</li>
+     *   <li>Group {@code verb}     — which wording was used; "Reveal" makes the cards public</li>
+     *   <li>Group {@code element}  — optional element filter on the card added to hand</li>
+     *   <li>Group {@code category} — optional category filter on the card added to hand; the two
+     *       filters are alternatives, no card in the corpus states both</li>
      * </ul>
+     * The category is captured non-greedily and anchored by the "card among them" that follows,
+     * so multi-word categories are picked up whole rather than truncated at the first space.
      */
     static final Pattern LOOK_TOP_DECK_ADD_TO_HAND_REST_BREAK = Pattern.compile(
         "(?i)(?<verb>Look\\s+at|Reveal)\\s+the\\s+top\\s+(?<count>\\d+)\\s+cards?\\s+of\\s+your\\s+deck[.!]?\\s*" +
-        "Add\\s+1\\s+(?:(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?card\\s+among\\s+them\\s+to\\s+your\\s+hand[,]?\\s+and\\s+" +
+        "Add\\s+1\\s+(?:(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+" +
+        "|Category\\s+(?<category>.+?)\\s+)?card\\s+among\\s+them\\s+to\\s+your\\s+hand[,]?\\s+and\\s+" +
         "put\\s+the\\s+rest\\s+(?:of\\s+the\\s+cards?\\s+)?into\\s+the\\s+Break\\s+Zone[.!]?"
     );
     /**

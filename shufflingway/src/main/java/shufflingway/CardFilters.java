@@ -151,7 +151,13 @@ public final class CardFilters {
         return false;
     }
 
-    /** Returns {@code true} if the card belongs to {@code categoryFilter} (case-insensitive contains), or if the filter is {@code null}. */
+    /**
+     * Returns {@code true} if the card belongs to {@code categoryFilter} (case-insensitive exact
+     * match on either category), or if the filter is {@code null}.
+     *
+     * <p>Exact, not "contains" — the categories are Roman numerals, so a substring test would make
+     * "VII" match VIII, XVII and XXVII.
+     */
     public static boolean meetsCategoryFilter(CardData card, String categoryFilter) {
         if (categoryFilter == null) return true;
         String cf = categoryFilter.trim().toLowerCase();
