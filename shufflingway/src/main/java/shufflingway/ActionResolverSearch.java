@@ -234,7 +234,8 @@ final class ActionResolverSearch {
         String normType = Character.toUpperCase(typeRaw.charAt(0)) + typeRaw.substring(1).toLowerCase();
         String costStr  = m.group("cost");
         int maxCost     = "X".equalsIgnoreCase(costStr) ? xValue : Integer.parseInt(costStr);
-        return ctx -> ctx.revealTopNPlayUpToElementTypeCostOntoFieldRestBottom(n, max, element, normType, maxCost);
+        boolean restToHand = m.group("resthand") != null;
+        return ctx -> ctx.revealTopNPlayUpToElementTypeCostOntoField(n, max, element, normType, maxCost, restToHand);
     }
     /**
      * Parses Banon's "Reveal the top card of your deck. If it is a [Type], cancel all effects

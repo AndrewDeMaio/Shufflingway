@@ -1505,18 +1505,21 @@ class LookAtDeckDialogs {
         String typeLabel = (categoryFilter != null ? "Category " + categoryFilter + " " : "") + typeFilter;
         java.util.function.Predicate<CardData> eligible = c ->
                 meetsRevealTypeFilter(c, typeFilter) && CardFilters.meetsCategoryFilter(c, categoryFilter);
-        showRevealPlayOntoFieldRestBottomImpl(cards, deck, isP1, maxPlay, typeLabel, eligible, playOntoField);
+        showRevealPlayOntoFieldRestBottomImpl(cards, deck, isP1, maxPlay, typeLabel, eligible,
+                false, playOntoField);
     }
 
-    void showRevealPlayElementTypeCostOntoFieldRestBottom(List<CardData> cards, Deque<CardData> deck,
-            boolean isP1, int maxPlay, String element, String typeFilter, int maxCost, Consumer<CardData> playOntoField) {
+    void showRevealPlayElementTypeCostOntoField(List<CardData> cards, Deque<CardData> deck,
+            boolean isP1, int maxPlay, String element, String typeFilter, int maxCost,
+            boolean restToHand, Consumer<CardData> playOntoField) {
         String typeLabel = (element != null ? element + " " : "") + typeFilter
                 + (maxCost >= 0 ? " of cost " + maxCost + " or less" : "");
         java.util.function.Predicate<CardData> eligible = c ->
                 meetsRevealTypeFilter(c, typeFilter)
                 && (element == null || c.containsElement(element))
                 && (maxCost < 0 || c.cost() <= maxCost);
-        showRevealPlayOntoFieldRestBottomImpl(cards, deck, isP1, maxPlay, typeLabel, eligible, playOntoField);
+        showRevealPlayOntoFieldRestBottomImpl(cards, deck, isP1, maxPlay, typeLabel, eligible,
+                restToHand, playOntoField);
     }
 
     /**
@@ -1531,14 +1534,23 @@ class LookAtDeckDialogs {
         java.util.function.Predicate<CardData> eligible = c ->
                 (CardFilters.meetsCardNameFilter(c, cardName) || CardFilters.meetsJobFilter(c, job))
                 && (maxCost < 0 || c.cost() <= maxCost);
-        showRevealPlayOntoFieldRestBottomImpl(cards, deck, isP1, maxPlay, typeLabel, eligible, playOntoField);
+        showRevealPlayOntoFieldRestBottomImpl(cards, deck, isP1, maxPlay, typeLabel, eligible,
+                false, playOntoField);
     }
 
+    /**
+     * @param restToHand where the revealed cards that were not played go — the ability user's hand
+     *                   when true (26-053L Bartz), the bottom of the deck otherwise. Bottom-of-deck
+     *                   order is the player's to set, so the swap controls only matter then; cards
+     *                   going to hand have no order to choose.
+     */
     private void showRevealPlayOntoFieldRestBottomImpl(List<CardData> cards, Deque<CardData> deck,
             boolean isP1, int maxPlay, String typeLabel,
-            java.util.function.Predicate<CardData> eligible, Consumer<CardData> playOntoField) {
+            java.util.function.Predicate<CardData> eligible, boolean restToHand,
+            Consumer<CardData> playOntoField) {
         int n = cards.size();
-        JDialog dlg = new JDialog(frame, "Reveal — Play up to " + maxPlay + " " + typeLabel + " onto Field, Rest to Bottom", true);
+        JDialog dlg = new JDialog(frame, "Reveal — Play up to " + maxPlay + " " + typeLabel
+                + (restToHand ? " onto Field, Rest to Hand" : " onto Field, Rest to Bottom"), true);
         dlg.setResizable(false);
         dlg.setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
 
@@ -1652,8 +1664,10 @@ class LookAtDeckDialogs {
         }
 
         JLabel instructions = new JLabel(
-                txt("Click '→ Field' on up to " + maxPlay + " " + typeLabel
-                        + "(s) to play. Swap the rest to set bottom-of-deck order (left = first)."),
+                txt("Click '→ Field' on up to " + maxPlay + " " + typeLabel + "(s) to play. "
+                        + (restToHand
+                            ? "The rest go to your hand."
+                            : "Swap the rest to set bottom-of-deck order (left = first).")),
                 SwingConstants.CENTER);
         instructions.setFont(FontLoader.loadPixelFont(9));
         confirmBtn.addActionListener(ae -> { hideZoom(); dlg.dispose(); });
@@ -1674,10 +1688,16 @@ class LookAtDeckDialogs {
         for (int i = 0; i < n; i++) deck.pollFirst();
         for (CardData c : order) {
             if (fieldSet.contains(c)) continue;
-            deck.addLast(c);
-            log(c.name() + " → bottom of deck");
+            if (restToHand) {
+                (isP1 ? gameState.getP1Hand() : gameState.getP2Hand()).add(c);
+                log(c.name() + " → hand");
+            } else {
+                deck.addLast(c);
+                log(c.name() + " → bottom of deck");
+            }
         }
         if (isP1) cb.refreshP1Deck().run(); else cb.refreshP2Deck().run();
+        if (restToHand) { if (isP1) cb.refreshP1Hand().run(); else cb.refreshP2Hand().run(); }
 
         for (CardData c : fieldSet) {
             log(c.name() + " played onto field");

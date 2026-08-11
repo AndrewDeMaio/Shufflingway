@@ -1483,15 +1483,27 @@ final class ActionResolverPatterns {
         "(?i)^\\s*reveal\\s+1\\s+(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+card\\s+from\\s+your\\s+hand[.]?\\s+" +
         "If\\s+you\\s+do\\s+so,?\\s+draw\\s+(?<draw>\\d+)\\s+cards?[.]?\\s*$"
     );
+    /**
+     * "Reveal the top N cards of your deck. Play up to M [Element] Type of cost C or less among
+     * them onto the field, and &lt;what happens to the rest&gt;."
+     *
+     * <p>The remainder goes to the bottom of the deck on every card in this family except 26-053L
+     * Bartz, which adds it to hand instead — a strictly better outcome, so the two cannot share a
+     * destination. Group {@code resthand} is non-null for the hand form and null for the rest.
+     */
     static final Pattern REVEAL_PLAY_ELEMENT_TYPE_COST_ONTO_FIELD_REST_BOTTOM = Pattern.compile(
         "(?i)^\\s*reveal\\s+the\\s+top\\s+(?<n>\\d+)\\s+cards?\\s+of\\s+your\\s+deck[.!]?\\s+" +
         "Play\\s+(?:up\\s+to\\s+)?(?<max>\\d+)\\s+" +
         "(?:(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?" +
         "(?<type>Forward|Backup|Monster|Character)s?\\s+of\\s+cost\\s+(?<cost>\\d+|X)\\s+or\\s+less\\s+" +
         "among\\s+them\\s+onto\\s+(?:the\\s+)?field[,.]?\\s+" +
-        "(?:Then,?\\s+shuffle\\s+the\\s+other\\s+cards?\\s+revealed\\s+and\\s+return\\s+them|" +
-        "and\\s+return\\s+the\\s+other\\s+cards?)\\s+to\\s+the\\s+bottom\\s+of\\s+(?:your|the)\\s+deck" +
-        "(?:\\s+in\\s+any\\s+order)?[.!]?\\s*$"
+        "(?:" +
+            "(?:Then,?\\s+shuffle\\s+the\\s+other\\s+cards?\\s+revealed\\s+and\\s+return\\s+them|" +
+            "and\\s+return\\s+the\\s+other\\s+cards?)\\s+to\\s+the\\s+bottom\\s+of\\s+(?:your|the)\\s+deck" +
+            "(?:\\s+in\\s+any\\s+order)?" +
+        "|" +
+            "(?<resthand>and\\s+add\\s+the\\s+other\\s+cards?\\s+to\\s+your\\s+hand)" +
+        ")[.!]?\\s*$"
     );
     /** Matches "Put it at the top or bottom of its owner's deck." — player chooses placement. Also handles "Your opponent puts it…" */
     static final Pattern FOLLOWUP_PUT_TOP_OR_BOTTOM_OF_DECK = Pattern.compile(

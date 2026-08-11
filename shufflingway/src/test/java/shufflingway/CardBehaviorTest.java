@@ -8464,6 +8464,73 @@ public class CardBehaviorTest {
     }
 
     // =========================================================================================
+    // Bartz 26-053L: "reveal the top 2 cards of your deck. Play up to 1 Character of cost 3 or
+    // less among them onto the field and add the other cards to your hand."
+    //
+    // Every other card in this family sends the unplayed cards to the bottom of the deck; Bartz
+    // adds them to hand, which is strictly better and so cannot share a destination. The tail also
+    // made the whole ability vanish: ADD_NAMED_TO_YOUR_HAND read "add the other cards to your
+    // hand" as a card literally named "the other cards", claimed the text, and Bartz did nothing.
+    // =========================================================================================
+
+    private static final String BARTZ_EFFECT =
+            "reveal the top 2 cards of your deck. Play up to 1 Character of cost 3 or less "
+            + "among them onto the field and add the other cards to your hand.";
+
+    @Test
+    void bartzRevealsPlaysAndKeepsTheRest() {
+        GameContext ctx = mock(GameContext.class);
+        Consumer<GameContext> fn = ActionResolver.parse(BARTZ_EFFECT, null);
+        assertNotNull(fn, "the reveal-and-play must not be swallowed by the trailing 'add … to your hand'");
+        fn.accept(ctx);
+        verify(ctx).revealTopNPlayUpToElementTypeCostOntoField(2, 1, null, "Character", 3, true);
+        verify(ctx, never()).returnNamedCardToYourHand(any());
+    }
+
+    @Test
+    void bartzParsesAsOneEntersFieldAbility() {
+        List<AutoAbility> autos = CardData.parseAutoAbilities(
+                "When Bartz enters the field, " + BARTZ_EFFECT);
+        assertEquals(1, autos.size());
+        assertEquals("enters the field", autos.get(0).trigger());
+        assertNotNull(ActionResolver.parse(autos.get(0).effectText(), null));
+    }
+
+    // The siblings keep sending the remainder to the bottom of the deck — the destination is the
+    // only thing that separates them, so it must not leak across.
+    @Test
+    void theBottomOfDeckSiblingsAreUnaffected() {
+        GameContext ctx = mock(GameContext.class);
+        ActionResolver.parse(
+                "reveal the top 5 cards of your deck. Play 1 Forward of cost 2 or less among them "
+                + "onto the field and return the other cards to the bottom of your deck in any order.",
+                null).accept(ctx);
+        verify(ctx).revealTopNPlayUpToElementTypeCostOntoField(5, 1, null, "Forward", 2, false);
+    }
+
+    // "Then, shuffle the other cards revealed and return them to the bottom" — the third tail in
+    // this family, and still a bottom-of-deck one.
+    @Test
+    void theShuffleThenBottomTailIsStillBottom() {
+        GameContext ctx = mock(GameContext.class);
+        ActionResolver.parse(
+                "reveal the top 5 cards of your deck. Play 1 Forward of cost 3 or less among them "
+                + "onto the field. Then, shuffle the other cards revealed and return them to the "
+                + "bottom of your deck in any order.", null).accept(ctx);
+        verify(ctx).revealTopNPlayUpToElementTypeCostOntoField(5, 1, null, "Forward", 3, false);
+    }
+
+    // A genuine "Add <card name> to your hand" must still be read as one.
+    @Test
+    void anActualNamedAddToHandStillResolvesAsOne() {
+        GameContext ctx = mock(GameContext.class);
+        Consumer<GameContext> fn = ActionResolver.parse("Add Cloud to your hand.", null);
+        assertNotNull(fn);
+        fn.accept(ctx);
+        verify(ctx).returnNamedCardToYourHand("Cloud");
+    }
+
+    // =========================================================================================
     // Sarah (FFL) 12-099R / 7-114H: searches that found nothing.
     //
     // Both failed in the regex, silently: a lazy group backtracked past its intended stopping

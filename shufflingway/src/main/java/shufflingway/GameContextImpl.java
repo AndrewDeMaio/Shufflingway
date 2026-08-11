@@ -7122,7 +7122,7 @@ final class GameContextImpl implements GameContext {
 				}
 			}
 
-			@Override public void revealTopNPlayUpToElementTypeCostOntoFieldRestBottom(int reveal, int maxPlay, String element, String typeFilter, int maxCost) {
+			@Override public void revealTopNPlayUpToElementTypeCostOntoField(int reveal, int maxPlay, String element, String typeFilter, int maxCost, boolean restToHand) {
 				Deque<CardData> deck = isP1 ? mw.gameState.getP1MainDeck() : mw.gameState.getP2MainDeck();
 				int n = Math.min(reveal, deck.size());
 				if (n == 0) { logEntry("Reveal top: deck is empty."); return; }
@@ -7147,9 +7147,17 @@ final class GameContextImpl implements GameContext {
 					Set<CardData> chosenSet = new java.util.LinkedHashSet<>(chosen);
 					for (int i = 0; i < n; i++) deck.pollFirst();
 					for (CardData c : peeked) {
-						if (!chosenSet.contains(c)) { deck.addLast(c); logEntry("[AI] " + c.name() + " → [P2] bottom of deck"); }
+						if (chosenSet.contains(c)) continue;
+						if (restToHand) {
+							mw.gameState.getP2Hand().add(c);
+							logEntry("[AI] " + c.name() + " → [P2] hand");
+						} else {
+							deck.addLast(c);
+							logEntry("[AI] " + c.name() + " → [P2] bottom of deck");
+						}
 					}
 					mw.refreshP2DeckLabel();
+						if (restToHand) mw.refreshP2HandCountLabel();
 					for (CardData c : chosenSet) {
 						logEntry("[AI] " + c.name() + " played onto field");
 						playOntoField.accept(c);
@@ -7157,7 +7165,7 @@ final class GameContextImpl implements GameContext {
 				} else if (!isP1) {
 					multiplayerP2RevealPending(n);
 				} else {
-					mw.lookDialogs().showRevealPlayElementTypeCostOntoFieldRestBottom(peeked, deck, isP1, maxPlay, element, typeFilter, maxCost, playOntoField);
+					mw.lookDialogs().showRevealPlayElementTypeCostOntoField(peeked, deck, isP1, maxPlay, element, typeFilter, maxCost, restToHand, playOntoField);
 				}
 			}
 

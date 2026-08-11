@@ -2010,7 +2010,18 @@ public interface GameContext {
      * matching {@code element} (if non-null), {@code typeFilter}, and cost &le; {@code maxCost}
      * (if &ge; 0) onto the field for free. The remaining cards go to the bottom of the deck in any order.
      */
-    void revealTopNPlayUpToElementTypeCostOntoFieldRestBottom(int reveal, int maxPlay, String element, String typeFilter, int maxCost);
+    default void revealTopNPlayUpToElementTypeCostOntoFieldRestBottom(int reveal, int maxPlay, String element, String typeFilter, int maxCost) {
+        revealTopNPlayUpToElementTypeCostOntoField(reveal, maxPlay, element, typeFilter, maxCost, false);
+    }
+
+    /**
+     * As above, but {@code restToHand} decides where the revealed cards that were not played go:
+     * the bottom of the deck (every card in this family) or the ability user's hand (26-053L
+     * Bartz).  Keeping it a parameter rather than a second effect keeps the reveal, the play and
+     * the disposal in one interaction, which is what the card describes.
+     */
+    void revealTopNPlayUpToElementTypeCostOntoField(int reveal, int maxPlay, String element,
+            String typeFilter, int maxCost, boolean restToHand);
 
     /**
      * Reveals the top {@code reveal} cards. The player may play up to {@code maxPlay} cards

@@ -755,6 +755,14 @@ public class ActionResolver {
         result = tryParseRevealAddTypeToHandOrPlayJobTypeOntoFieldRestBottom(effectText);
         if (result != null) return result;
 
+        // Must precede tryParseReturnNamedToHand. 26-053L Bartz ends "and add the other cards to
+        // your hand", which ADD_NAMED_TO_YOUR_HAND reads as a card literally named "the other
+        // cards" — the whole reveal-and-play was discarded and Bartz did nothing. Safe this early
+        // because this parser is fully anchored: it matches complete texts of one exact shape and
+        // cannot claim a prefix of anything else.
+        result = tryParseRevealPlayElementTypeCostOntoFieldRestBottom(effectText, xValue);
+        if (result != null) return result;
+
         result = tryParseReturnNamedToHand(effectText);
         if (result != null) return result;
 
@@ -1103,9 +1111,6 @@ public class ActionResolver {
         if (result != null) return result;
 
         result = tryParseRevealElementCardFromHandIfSoDraw(effectText);
-        if (result != null) return result;
-
-        result = tryParseRevealPlayElementTypeCostOntoFieldRestBottom(effectText, xValue);
         if (result != null) return result;
 
         result = tryParseShuffleDeck(effectText);
@@ -1486,6 +1491,8 @@ public class ActionResolver {
         if (tryParseRevealTopNJobOrNameToHand(effectText) != null) return "RevealTopNJobOrNameToHand";
         if (tryParseRevealTopNElementToHand(effectText) != null) return "RevealTopNElementToHand";
         if (tryParseRevealAddTypeToHandOrPlayJobTypeOntoFieldRestBottom(effectText) != null) return "RevealAddTypeToHandOrPlayJobTypeOntoFieldRestBottom";
+        // Must precede ReturnNamedToHand — see the ordering note in parse().
+        if (tryParseRevealPlayElementTypeCostOntoFieldRestBottom(effectText, 0) != null) return "RevealPlayElementTypeCostOntoFieldRestBottom";
         if (tryParseReturnNamedToHand(effectText) != null) return "ReturnNamedToHand";
         if (tryParseYouMayRemoveNamedFromGame(effectText, source) != null) return "YouMayRemoveNamedFromGame";
         if (tryParseEndOfOppTurnPlayNamedOntoField(effectText) != null) return "EndOfOppTurnPlayNamedOntoField";
@@ -1613,7 +1620,6 @@ public class ActionResolver {
         if (tryParseFlipUntilTypeToHandRestShuffleBottom(effectText)         != null) return "FlipUntilTypeToHandRestShuffleBottom";
         if (tryParseRevealPlayTypeOntoFieldRestBottom(effectText) != null) return "RevealPlayTypeOntoFieldRestBottom";
         if (tryParseRevealElementCardFromHandIfSoDraw(effectText) != null) return "RevealElementCardFromHandIfSoDraw";
-        if (tryParseRevealPlayElementTypeCostOntoFieldRestBottom(effectText, 0) != null) return "RevealPlayElementTypeCostOntoFieldRestBottom";
         if (tryParseShuffleDeck(effectText)                                  != null) return "ShuffleDeck";
         if (tryParseNameElementOnlySelfBecomes(effectText, source) != null) return "NameElementOnlySelfBecomes";
         if (tryParseNameElementAndJobSelfBecomes(effectText, source) != null) return "NameElementAndJobSelfBecomes";
@@ -2129,6 +2135,8 @@ public class ActionResolver {
         if (tryParseRevealTopNJobOrNameToHand(effectText)  != null)          return "RevealTopNJobOrNameToHand";
         if (tryParseRevealTopNElementToHand(effectText)    != null)           return "RevealTopNElementToHand";
         if (tryParseRevealAddTypeToHandOrPlayJobTypeOntoFieldRestBottom(effectText) != null) return "RevealAddTypeToHandOrPlayJobTypeOntoFieldRestBottom";
+        // Must precede ReturnNamedToHand — see the ordering note in parse().
+        if (tryParseRevealPlayElementTypeCostOntoFieldRestBottom(effectText)     != null) return "RevealPlayElementTypeCostOntoFieldRestBottom";
         if (tryParseReturnNamedToHand(effectText) != null)                   return "ReturnNamedToHand";
         if (tryParseYouMayRemoveNamedFromGame(effectText, source) != null)   return "YouMayRemoveNamedFromGame";
         if (tryParseEndOfOppTurnPlayNamedOntoField(effectText) != null)     return "EndOfOppTurnPlayNamedOntoField";
@@ -2247,7 +2255,6 @@ public class ActionResolver {
         if (tryParseShuffleThenRevealPlayNamedRestBottom(effectText, source) != null) return "ShuffleThenRevealPlayNamedRestBottom";
         if (tryParseRevealPlayTypeOntoFieldRestBottom(effectText)                != null) return "RevealPlayTypeOntoFieldRestBottom";
         if (tryParseRevealElementCardFromHandIfSoDraw(effectText)                != null) return "RevealElementCardFromHandIfSoDraw";
-        if (tryParseRevealPlayElementTypeCostOntoFieldRestBottom(effectText)     != null) return "RevealPlayElementTypeCostOntoFieldRestBottom";
         if (tryParseShuffleDeck(effectText)                              != null) return "ShuffleDeck";
         if (tryParseBackupCpDraw(effectText)                             != null) return "BackupCpDraw";
         if (tryParseAllMonstersTemporaryForward(effectText)            != null) return "AllMonstersTemporaryForward";
