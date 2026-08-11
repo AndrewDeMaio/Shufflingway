@@ -11131,6 +11131,124 @@ public class CardBehaviorTest {
 		assertNull(grants.get(0).elementFilter(), "and nothing was lifted out of it into the element filter");
 	}
 
+	// =========================================================================================
+	// "The Card Name Serah you control cannot be chosen by your opponent's Summons or abilities."
+	// (10-097R Noel, 19-134S Mog (XIII-2); siblings protect Sazh, Balthier and Madam Edel) — a
+	// permanent targeting immunity handed to a *named* card with no "If you control" condition.
+	// The engine's continuous immunity check reads IfControlBoost, so this is stored as one with
+	// an empty conditions list — the same shape the unconditional "cannot be blocked" grant
+	// already uses — rather than a second immunity mechanism the targeting code would have to
+	// consult separately.
+	// =========================================================================================
+
+	private static final String NOEL_SERAH_SHIELD =
+			"The Card Name Serah you control cannot be chosen by your opponent's Summons or abilities.";
+
+	/** Builds a card whose field abilities and IfControlBoosts are both parsed from {@code text}. */
+	private static CardData makeIcbCard(String name, String element, String type, String text) {
+		return new CardData(null, name, element, 3, 7000, type, false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				List.of(), List.of(), CardData.parseFieldAbilities(text, type),
+				CardData.parseIfControlBoosts(text, type),
+				List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				null, null, null, text);
+	}
+
+	/** One ability-scoped selection of a single Forward on the opponent's side, driven by P2 (the AI). */
+	private static List<ForwardTarget> p2ChoosesOneOpposingForward(MainWindow mw) {
+		return mw.buildGameContext(false).selectCharacters(
+				1, false, true, false, null, null, -1, null, -1, null,
+				true, false, false, null, null, null, null, false, null, false);
+	}
+
+	@Test
+	void namedCannotBeChosenGrantParsesAsAnUnconditionalIcb() {
+		List<IfControlBoost> boosts = CardData.parseIfControlBoosts(NOEL_SERAH_SHIELD, "Forward");
+
+		assertEquals(1, boosts.size(), "the grant must parse — it produced nothing at all before");
+		IfControlBoost icb = boosts.get(0);
+		assertEquals("Serah", icb.targetCardName(), "the protection is pinned to the named card");
+		assertTrue(icb.conditions().isEmpty(), "there is no \"If you control\" clause to satisfy");
+		assertTrue(icb.cannotBeChosenBySummons());
+		assertTrue(icb.cannotBeChosenByAbilities());
+		assertEquals(0, icb.powerBonus(), "it grants no power");
+	}
+
+	@Test
+	void aSingleScopeVariantSetsOnlyItsOwnFlag() {
+		// 16-062C Lexa shields Madam Edel from Summons only; 5-157S Fran shields Balthier from
+		// abilities only. Reading "or abilities" onto either would hand out protection the card
+		// does not print.
+		IfControlBoost summonsOnly = CardData.parseIfControlBoosts(
+				"The Card Name Madam Edel you control cannot be chosen by your opponent's Summons.",
+				"Backup").get(0);
+		assertTrue(summonsOnly.cannotBeChosenBySummons());
+		assertFalse(summonsOnly.cannotBeChosenByAbilities(), "Summons only — abilities still reach it");
+
+		IfControlBoost abilitiesOnly = CardData.parseIfControlBoosts(
+				"The Card Name Balthier you control cannot be chosen by your opponent's abilities.",
+				"Forward").get(0);
+		assertFalse(abilitiesOnly.cannotBeChosenBySummons(), "abilities only — Summons still reach it");
+		assertTrue(abilitiesOnly.cannotBeChosenByAbilities());
+	}
+
+	@Test
+	void theOpponentsAbilityCannotChooseTheProtectedCard() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForward("Serah", "Ice", 3, 7000));                          // idx 0
+		placeP1Forward(mw, makeIcbCard("Noel", "Ice", "Forward", NOEL_SERAH_SHIELD));      // idx 1
+
+		List<ForwardTarget> chosen = p2ChoosesOneOpposingForward(mw);
+
+		assertEquals(1, chosen.size(), "Noel is still a legal target, so the effect resolves");
+		assertEquals(1, chosen.get(0).idx(), "the only Forward P2 may choose is the granter itself");
+	}
+
+	@Test
+	void withoutTheGranterOnTheFieldSerahIsChoosableAgain() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForward("Serah", "Ice", 3, 7000));
+
+		List<ForwardTarget> chosen = p2ChoosesOneOpposingForward(mw);
+
+		assertEquals(1, chosen.size(), "with nothing granting immunity Serah is an ordinary target");
+		assertEquals(0, chosen.get(0).idx());
+	}
+
+	@Test
+	void theProtectionCoversOnlyTheGrantersOwnSideOfTheField() {
+		// "you control" — P1's Noel must not shield a Serah sitting on P2's field.
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeIcbCard("Noel", "Ice", "Forward", NOEL_SERAH_SHIELD));
+		placeP2Forward(mw, makeForward("Serah", "Ice", 3, 7000));
+
+		assertTrue(mw.icbGrantsImmunity("Serah", true, false),
+				"a Serah on P1's field is covered by P1's Noel");
+		assertFalse(mw.icbGrantsImmunity("Serah", false, false),
+				"a Serah on P2's field is not — the grant is scoped to the granter's controller");
+	}
+
+	@Test
+	void theGrantWorksFromTheBackupRowToo() {
+		// Mog (XIII-2) prints the same line as a Backup, so the immunity must not be tied to the
+		// granter being a Forward.
+		MainWindow mw = new MainWindow();
+		CardData mog = makeIcbCard("Mog (XIII-2)", "Ice", "Backup", NOEL_SERAH_SHIELD);
+		mw.gameState.getIdentity().put(mog, true);
+		mw.p1BackupCards[0] = mog;
+		placeP1Forward(mw, makeForward("Serah", "Ice", 3, 7000));
+
+		assertTrue(p2ChoosesOneOpposingForward(mw).isEmpty(),
+				"Serah is P1's only Forward and she is shielded — P2's ability finds nothing");
+
+		// The same line names Summons as well, and the two halves are separate sets in the
+		// targeting code — an immunity that only landed in one of them would pass the check above.
+		mw.currentResolutionIsSummon = true;
+		assertTrue(p2ChoosesOneOpposingForward(mw).isEmpty(),
+				"and an opposing Summon finds nothing either");
+	}
+
 	@Test
 	void elementQualifiedCategoryGrantCapturesBothFilters() {
 		// The prefix precedes the whole Job/Category alternation, so the Category branch gains it too.

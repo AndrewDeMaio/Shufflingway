@@ -5,6 +5,7 @@ import java.util.Collections;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
@@ -80,7 +81,7 @@ public record CardData(
             StringBuilder sb = new StringBuilder();
             for (String word : name().split("_")) {
                 if (sb.length() > 0) sb.append(' ');
-                sb.append(word.charAt(0)).append(word.substring(1).toLowerCase(java.util.Locale.ROOT));
+                sb.append(word.charAt(0)).append(word.substring(1).toLowerCase(Locale.ROOT));
             }
             return sb.toString();
         }
@@ -801,7 +802,7 @@ public record CardData(
         if (after.isEmpty()) return "";
 
         if (!isSummon()) {
-            int brIdx = after.toLowerCase(java.util.Locale.ROOT).indexOf("[[br]]");
+            int brIdx = after.toLowerCase(Locale.ROOT).indexOf("[[br]]");
             if (brIdx >= 0) after = after.substring(0, brIdx).trim();
             // Strip "When [CardName] [trigger], " so the bare effect text is left
             after = after.replaceFirst("(?i)^When\\s+[^,]+,\\s*", "").trim();
@@ -2118,7 +2119,7 @@ public record CardData(
             String primer    = pm.group("primer").trim();
             String youMayRaw = pm.group("youmay");
             boolean opponentMay = youMayRaw != null
-                    && youMayRaw.trim().toLowerCase(java.util.Locale.ROOT).startsWith("your opponent");
+                    && youMayRaw.trim().toLowerCase(Locale.ROOT).startsWith("your opponent");
             boolean youMay  = youMayRaw != null && !opponentMay;
             String effect = SUMMON_MARKUP.matcher(pm.group("effect").trim()).replaceAll("").trim();
             if (!effect.isEmpty()) {
@@ -2132,10 +2133,10 @@ public record CardData(
                 String pretriggerRaw = pm.group("pretrigger");
                 if (pretargetRaw != null && pretriggerRaw != null) {
                     String pretarget  = pretargetRaw.trim();
-                    String pretrigRaw = pretriggerRaw.trim().toLowerCase(java.util.Locale.ROOT);
+                    String pretrigRaw = pretriggerRaw.trim().toLowerCase(Locale.ROOT);
                     boolean castOnly  = pretrigRaw.contains("due to your cast");
                     boolean warpOnly  = pretrigRaw.contains("enter") && pretrigRaw.contains("warp");
-                    boolean preIsParty = pretarget.toLowerCase(java.util.Locale.ROOT).contains("party");
+                    boolean preIsParty = pretarget.toLowerCase(Locale.ROOT).contains("party");
                     String preTrig = normalizePretrigger(pretrigRaw, preIsParty, warpOnly);
                     AutoAbility preFA = parseAutoAbilityRestrictions(
                             pretarget, preTrig, youMay, opponentMay, castOnly, warpOnly, effect, 0);
@@ -2145,7 +2146,7 @@ public record CardData(
                     String preextra = pm.group("preextra");
                     if (preextra != null && !preextra.isBlank()) {
                         String extraTrig = normalizePretrigger(
-                                preextra.trim().toLowerCase(java.util.Locale.ROOT), false, false);
+                                preextra.trim().toLowerCase(Locale.ROOT), false, false);
                         AutoAbility extraFA = parseAutoAbilityRestrictions(
                                 pretarget, extraTrig, youMay, opponentMay, false, false, effect, 0);
                         if (extraFA != null) result.add(extraFA);
@@ -2167,7 +2168,7 @@ public record CardData(
         StringBuffer efBuf = new StringBuffer();
         while (efm.find()) {
             String card      = efm.group("card").trim();
-            String phaseRaw  = efm.group("phase").trim().toLowerCase(java.util.Locale.ROOT);
+            String phaseRaw  = efm.group("phase").trim().toLowerCase(Locale.ROOT);
             String phaseTrigger = phaseRaw.contains("attack") ? "beginning of attack phase" : "beginning of main phase 1";
             String effect = SUMMON_MARKUP.matcher(efm.group("effect").trim()).replaceAll("").trim();
             if (!effect.isEmpty()) {
@@ -2198,10 +2199,10 @@ public record CardData(
         Matcher m = AUTO_ABILITY_PATTERN.matcher(textForSearch);
         while (m.find()) {
             String card      = m.group("card").trim();
-            String triggerRaw = m.group("trigger").trim().toLowerCase(java.util.Locale.ROOT);
+            String triggerRaw = m.group("trigger").trim().toLowerCase(Locale.ROOT);
             // Normalise trigger to a canonical form
             String trigger;
-            boolean cardIsParty = card.toLowerCase(java.util.Locale.ROOT).contains("party");
+            boolean cardIsParty = card.toLowerCase(Locale.ROOT).contains("party");
             // triggerRaw contains "party" when the trigger phrase itself is "forms a party and attacks"
             boolean triggerHasParty = triggerRaw.contains("party");
             boolean warpOnly    = triggerRaw.contains("enter") && triggerRaw.contains("warp");
@@ -2218,7 +2219,7 @@ public record CardData(
             else if (triggerRaw.contains("attack")
                     && OTHER_FORWARD_SUBJECT.matcher(card).matches())                                        trigger = "other forward attacks";
             else if (triggerRaw.contains("attack")
-                    && card.toLowerCase(java.util.Locale.ROOT).matches("\\d+\\s+or\\s+more\\s+forwards?\\s+you\\s+control"))
+                    && card.toLowerCase(Locale.ROOT).matches("\\d+\\s+or\\s+more\\s+forwards?\\s+you\\s+control"))
                                                                                                              trigger = "attack";
             else if (triggerRaw.contains("attack"))                                                         trigger = "attacks";
             else if (triggerRaw.equals("is blocked"))                                                       trigger = "is blocked";
@@ -2264,14 +2265,14 @@ public record CardData(
             }
             // "a X of your opponent enters the field" → reclassify so dispatch can watch the opponent's side
             if (trigger.equals("enters the field")
-                    && card.toLowerCase(java.util.Locale.ROOT).contains("of your opponent")) {
+                    && card.toLowerCase(Locale.ROOT).contains("of your opponent")) {
                 trigger = "enters opponent's field";
                 card = card.replaceAll("(?i)\\s+of\\s+your\\s+opponent\\s*$", "").trim();
             }
 
             String  youMayRaw   = m.group("youmay");
             boolean opponentMay = youMayRaw != null
-                    && youMayRaw.trim().toLowerCase(java.util.Locale.ROOT).startsWith("your opponent");
+                    && youMayRaw.trim().toLowerCase(Locale.ROOT).startsWith("your opponent");
             boolean youMay      = youMayRaw != null && !opponentMay;
 
             boolean castOnly = triggerRaw.contains("due to your cast");
@@ -2316,7 +2317,7 @@ public record CardData(
             String target     = wm.group("target").trim();
             String youMayRaw  = wm.group("youmay");
             boolean opponentMay = youMayRaw != null
-                    && youMayRaw.trim().toLowerCase(java.util.Locale.ROOT).startsWith("your opponent");
+                    && youMayRaw.trim().toLowerCase(Locale.ROOT).startsWith("your opponent");
             boolean youMay      = youMayRaw != null && !opponentMay;
             String effect = SUMMON_MARKUP.matcher(wm.group("effect").trim()).replaceAll("").trim();
             if (effect.isEmpty()) continue;
@@ -2330,12 +2331,12 @@ public record CardData(
         while (sm.find()) {
             String card    = sm.group("card").trim();
             String element = sm.group("element").trim();
-            String elemCap = Character.toUpperCase(element.charAt(0)) + element.substring(1).toLowerCase(java.util.Locale.ROOT);
+            String elemCap = Character.toUpperCase(element.charAt(0)) + element.substring(1).toLowerCase(Locale.ROOT);
             String effect  = SUMMON_MARKUP.matcher(sm.group("effect").trim()).replaceAll("").trim();
             if (effect.isEmpty()) continue;
             AutoAbility fa1 = parseAutoAbilityRestrictions(card, "deals damage to forward", false, false, false, false, effect, 0);
             if (fa1 != null) result.add(fa1);
-            String summonTrigger = elemCap.toLowerCase(java.util.Locale.ROOT) + " summon deals damage to forward";
+            String summonTrigger = elemCap.toLowerCase(Locale.ROOT) + " summon deals damage to forward";
             AutoAbility fa2 = parseAutoAbilityRestrictions(card, summonTrigger, false, false, false, false, effect, 0);
             if (fa2 != null) result.add(fa2);
         }
@@ -2704,6 +2705,23 @@ public record CardData(
      */
     private static final Pattern UNCONDITIONAL_CNB_PATTERN = Pattern.compile(
         "(?i)^(?<name>[A-Z][A-Za-z''\\-\\s]+?)\\s+cannot\\s+be\\s+blocked\\.?\\s*$"
+    );
+
+    /**
+     * "The Card Name X you control cannot be chosen by your opponent's Summons [or abilities]."
+     * — permanent targeting immunity granted to a named card, with no "If you control" condition
+     * (10-097R Noel and 19-134S Mog (XIII-2) for Serah; 1-017R Dajh for Sazh; 5-157S / 21-057R
+     * Fran for Balthier; 16-062C Lexa for Madam Edel).
+     *
+     * <p>Stored as an {@link IfControlBoost} with an empty conditions list, the same shape
+     * {@link #UNCONDITIONAL_CNB_PATTERN} uses, so it reaches the engine through the existing
+     * {@code icbGrantsImmunity} check rather than a second immunity mechanism.
+     * Groups: {@code name}, {@code scope}.
+     */
+    private static final Pattern UNCONDITIONAL_NAMED_CANNOT_BE_CHOSEN = Pattern.compile(
+        "(?i)^The\\s+Card\\s+Name\\s+(?<name>.+?)\\s+you\\s+control\\s+" +
+        "cannot\\s+be\\s+chosen\\s+by\\s+your\\s+opponent's\\s+" +
+        "(?<scope>Summons?\\s+or\\s+abilities|Summons?|abilities)\\s*[.!]?\\s*$"
     );
 
     /**
@@ -3193,6 +3211,21 @@ public record CardData(
             String name = m.group("name").trim();
             result.add(new IfControlBoost(List.of(), "", name, null, 0,
                     EnumSet.noneOf(Trait.class), "", false, false, true, null, 0, 0, false));
+        }
+
+        // Parse "The Card Name X you control cannot be chosen by your opponent's Summons [or
+        // abilities]." — unconditional, no "If you control" condition. The named card is the
+        // ICB's target, so the protection follows whichever copy of X its controller has on the
+        // field rather than being pinned to the card that granted it.
+        for (String raw : textEn.split("(?i)\\[\\[br\\]\\]")) {
+            String seg = SUMMON_MARKUP.matcher(raw.trim()).replaceAll("").trim();
+            if (seg.isEmpty()) continue;
+            Matcher m = UNCONDITIONAL_NAMED_CANNOT_BE_CHOSEN.matcher(seg);
+            if (!m.matches()) continue;
+            String scope = m.group("scope").toLowerCase(Locale.ROOT);
+            result.add(new IfControlBoost(List.of(), "", m.group("name").trim(), null, 0,
+                    EnumSet.noneOf(Trait.class), "",
+                    scope.contains("summon"), scope.contains("abilit"), false, null, 0, 0, false));
         }
 
         return List.copyOf(result);
@@ -3824,7 +3857,7 @@ public record CardData(
 
         Matcher tm = SCALING_FILTER_TYPE_WORD.matcher(text);
         if (tm.matches()) {
-            String t = tm.group("type").toLowerCase(java.util.Locale.ROOT);
+            String t = tm.group("type").toLowerCase(Locale.ROOT);
             if      (t.startsWith("character")) source = ScalingSelfPowerBoost.Source.OTHER_CHARACTERS_YOU_CONTROL;
             else if (t.startsWith("backup"))    source = ScalingSelfPowerBoost.Source.OTHER_BACKUPS_YOU_CONTROL;
             else if (t.startsWith("monster"))   source = ScalingSelfPowerBoost.Source.OTHER_MONSTERS_YOU_CONTROL;
@@ -3991,7 +4024,7 @@ public record CardData(
             String exclude = coalesceScalingExclude(fe);
             String excludeElement = null;
             if (exclude != null) {
-                if (SCALING_ELEMENT_NAMES.contains(exclude.toLowerCase(java.util.Locale.ROOT))) {
+                if (SCALING_ELEMENT_NAMES.contains(exclude.toLowerCase(Locale.ROOT))) {
                     excludeElement = exclude;
                 } else if (!exclude.equalsIgnoreCase(cardName)) {
                     continue; // "other than X" with X not a self-name and not an element — not ours
