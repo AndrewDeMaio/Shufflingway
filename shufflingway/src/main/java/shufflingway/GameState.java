@@ -617,6 +617,24 @@ public class GameState {
     /** Returns an unmodifiable view of the Stack (index 0 = bottom, last = top). */
     public List<StackEntry> getStack()              { return Collections.unmodifiableList(stack); }
 
+    /** Number of entries currently on the Stack. */
+    public int stackSize()                          { return stack.size(); }
+
+    /**
+     * Inserts {@code entry} at {@code index} counted from the bottom, so anything pushed at or
+     * above that position stays above it and therefore resolves first.
+     *
+     * <p>Exists because a Summon or ability chooses its targets <em>before</em> its own entry is
+     * pushed, and that choice can trigger "when this is chosen by your opponent's Summons or
+     * abilities" auto-abilities.  Those resolve ahead of the effect that chose, so anything they
+     * put on the Stack has to stay above it: the chooser records the Stack depth before selecting
+     * and inserts itself back at that depth.  A plain {@link #pushStack} would bury them and let
+     * the choosing effect resolve first.
+     */
+    public void insertStack(int index, StackEntry entry) {
+        stack.add(Math.max(0, Math.min(index, stack.size())), entry);
+    }
+
     /**
      * Swaps {@code oldEntry} for {@code newEntry} in place, keeping its position in the
      * resolution order, and returns whether it was found.  Matching is by identity: two entries

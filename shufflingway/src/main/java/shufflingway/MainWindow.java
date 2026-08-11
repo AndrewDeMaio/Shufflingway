@@ -7784,14 +7784,19 @@ public class MainWindow {
 	 * The state half of {@link #showSummonOnStack} — chooses the Summon's targets and pushes the
 	 * entry, without opening the Stack overlay. Split out so the rule can be exercised without a
 	 * realised window.
+	 *
+	 * <p>The Stack depth is taken before the targets are chosen and the entry inserted back at it:
+	 * choosing can trigger the opponent's "when this is chosen" auto-abilities, whose entries must
+	 * end up above this Summon so they resolve first (see {@link GameState#insertStack}).
 	 */
 	void pushSummonOnStack(CardData card, boolean isP1, int extraCostRemovedCardPower,
 			int xValue, boolean paidExtraCost, List<ForwardTarget> preTargets, boolean targetsKnown) {
+		int depth = gameState.stackSize();
 		List<ForwardTarget> targets = targetsKnown
 				? (preTargets == null || preTargets.isEmpty() ? null : preTargets)
 				: chooseSummonTargets(card, isP1, paidExtraCost, xValue);
 		lastSummonPreTargets = targets;
-		gameState.pushStack(paidExtraCost
+		gameState.insertStack(depth, paidExtraCost
 				? new StackEntry(card, null, null, isP1, xValue, false, targets, false, true, extraCostRemovedCardPower)
 				: new StackEntry(card, null, null, isP1, xValue, false, targets, false, false, 0));
 		logEntry("[Stack] \"" + card.name() + "\" — Summon on the stack"

@@ -3459,21 +3459,6 @@ public class ActionResolver {
     }
 
     /**
-     * Returns {@code true} if {@code text} is one of the reactive "chosen by opponent's Summons or
-     * abilities" cancel effects — the family that must run <em>inline</em> during the opponent's
-     * target selection (so {@code selectCharacters} can drop the cancelled targets), rather than being
-     * pushed onto the stack to resolve after the choosing effect has already acted. See
-     * {@code AutoAbilityTriggers.executeAutoAbilityImpl}.
-     */
-    static boolean isChosenSelectionCancelEffect(String text) {
-        return tryParseCancelChosenTargetUnlessPay(text)     != null
-            || tryParseCancelChosenTargetUnlessDiscard(text)  != null
-            || tryParseCancelChosenTargetBare(text)           != null
-            || tryParseCancelChosenRevealTopIfType(text)      != null
-            || tryParseCancelChosenMillTopIfNotType(text)     != null;
-    }
-
-    /**
      * Converts an ability-type string captured by {@link #CANCEL_ABILITY_ON_STACK} or
      * {@link #REDIRECT_ABILITY_TARGET} into a predicate over stack entries.
      * <ul>

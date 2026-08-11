@@ -1043,10 +1043,10 @@ final class GameContextImpl implements GameContext {
 			 * Fires the "chosen by opponent's summon" (Summon-only, Forward-only — unchanged scope)
 			 * and "chosen by opponent's summon or ability" (Summon or ability, any zone) triggers for
 			 * whichever of {@code selected}'s cards belong to this context's opponent, then returns
-			 * {@code selected} unchanged — unless the broad trigger cancels the selection (opponent
-			 * declined to pay a Dull-style CP tax), in which case an empty list is returned so the
-			 * calling effect sees no targets at all and no-ops, per its usual "nothing eligible"
-			 * handling.
+			 * the selection re-anchored to where those cards now sit — unless the broad trigger
+			 * cancels the selection (opponent declined to pay a Dull-style CP tax), in which case an
+			 * empty list is returned so the calling effect sees no targets at all and no-ops, per its
+			 * usual "nothing eligible" handling.
 			 */
 			private List<ForwardTarget> fireChosenByOpponentTriggers(List<ForwardTarget> selected) {
 				// Only cards on the *other* side are events these triggers can see — they all read
@@ -1063,6 +1063,12 @@ final class GameContextImpl implements GameContext {
 						.map(this::cardAtTarget)
 						.filter(Objects::nonNull)
 						.toList();
+				if (oppCharactersChosen.isEmpty() && oppForwardsChosen.isEmpty()) return selected;
+
+				// What each slot held before the triggers ran, so the selection can be re-anchored
+				// afterwards — the triggers resolve inline and may move the very cards it names.
+				List<CardData> chosenCards = selected.stream().map(this::cardAtTarget).toList();
+
 				if (mw.currentResolutionIsSummon && !oppForwardsChosen.isEmpty())
 					mw.autoAbilityTriggers.triggerAutoAbilitiesForChosenByOpponentSummon(
 							!isP1, oppForwardsChosen);
@@ -1075,7 +1081,54 @@ final class GameContextImpl implements GameContext {
 						return List.of();
 					}
 				}
-				return selected;
+				return reanchorSelection(selected, chosenCards);
+			}
+
+			/**
+			 * Re-points {@code selected} at wherever {@code chosenCards} now sit, dropping the slots
+			 * whose card has left the zone it was chosen in.
+			 *
+			 * <p>A {@link ForwardTarget} is a position, not a card, and the zone lists close up when
+			 * a Character leaves them. Emet-Selch (12-024H) removing itself from the game in response
+			 * to being chosen therefore invalidates the very selection that named it: the index either
+			 * runs off the end or slides onto its neighbour, which would take the damage meant for the
+			 * card that just left. Dropping the slot is what makes that damage fizzle, and shifting
+			 * the survivors is what keeps a multi-target effect pointed at the cards it picked.
+			 */
+			private List<ForwardTarget> reanchorSelection(List<ForwardTarget> selected,
+					List<CardData> chosenCards) {
+				List<ForwardTarget> out = new ArrayList<>(selected.size());
+				for (int i = 0; i < selected.size(); i++) {
+					ForwardTarget t    = selected.get(i);
+					CardData      card = chosenCards.get(i);
+					// Break-zone picks and slots that were already empty carry no card to follow.
+					if (card == null || t.zone() == ForwardTarget.CardZone.BREAK_ZONE) { out.add(t); continue; }
+					if (cardAtTarget(t) == card) { out.add(t); continue; }
+					int now = currentIndexOf(card, t.isP1(), t.zone());
+					if (now >= 0) out.add(new ForwardTarget(t.isP1(), now, t.zone()));
+					else logEntry(card.name() + " is no longer on the field — it is no longer chosen");
+				}
+				return out;
+			}
+
+			/** {@code card}'s current index in the given side's zone list, or -1 once it has left. */
+			private int currentIndexOf(CardData card, boolean cardIsP1, ForwardTarget.CardZone zone) {
+				switch (zone) {
+					case FORWARD -> {
+						List<CardData> l = cardIsP1 ? mw.p1ForwardCards : mw.p2ForwardCards;
+						for (int i = 0; i < l.size(); i++) if (l.get(i) == card) return i;
+					}
+					case BACKUP -> {
+						CardData[] a = cardIsP1 ? mw.p1BackupCards : mw.p2BackupCards;
+						for (int i = 0; i < a.length; i++) if (a[i] == card) return i;
+					}
+					case MONSTER -> {
+						List<CardData> l = cardIsP1 ? mw.p1MonsterCards : mw.p2MonsterCards;
+						for (int i = 0; i < l.size(); i++) if (l.get(i) == card) return i;
+					}
+					default -> { }
+				}
+				return -1;
 			}
 
 			@Override public void dullP1Forward(int idx) {

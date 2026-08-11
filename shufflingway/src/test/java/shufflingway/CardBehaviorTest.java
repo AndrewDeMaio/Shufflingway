@@ -22,6 +22,58 @@ import org.mockito.InOrder;
  * below targets a single card or narrow bug fix, exercised against a mocked or minimally
  * constructed {@link GameContext}/{@link CardData} rather than just asserting that the text
  * parses. Kept in one file/class so the whole set runs together as a single suite.
+ *
+ * <p><b>Finding your way around.</b> This file is ~10,000 lines and must never be read whole —
+ * that is a ~150k-token read, and even a stray 2,000-line window is ~30k. Every one of its 113
+ * sections opens with a banner comment in one fixed shape, so a single search prints the table
+ * of contents and the line to jump to:
+ *
+ * <pre>    Grep: pattern "^[ \t]+// ={10,}\s*$", -A 1, this file</pre>
+ *
+ * then {@code Read} with an {@code offset} around the hit. Two details of that pattern are load
+ * bearing. The trailing {@code \s} class catches the carriage return — these sources are CRLF,
+ * so a bare {@code $} matches nothing at all. And the leading class is spelled {@code [ \t]+}
+ * rather than the obvious alternative, which would put a star immediately before a slash and so
+ * end this comment early. Every section is delimited top and bottom by the same rule, so the
+ * {@code -A 1} line separates the two — an opening banner is followed by its title, a closing
+ * one by a blank line.
+ *
+ * <p>Adding a section means opening it with a banner in that same shape. Three styles of divider
+ * were in use here, and the two that did not match this one left a 1,300-line stretch invisible
+ * to the search, and so unfindable without reading the region.
+ *
+ * <p><b>What lives here.</b> Sections run in the order they were written — roughly the order
+ * cards were wired up — not grouped by theme, so the search above is the index rather than any
+ * list kept here (a list with line numbers in it would be stale by the next commit). Each
+ * section is one of three kinds, and its opening banner says which:
+ *
+ * <ul>
+ *   <li><b>Effect wiring</b> (51 sections) — {@code ActionResolver.parse} against a
+ *       {@code mock(GameContext.class)}, asserting the right primitive is called with the right
+ *       arguments. Stub {@code consumePreloadedTargets()} or choose-target effects silently
+ *       no-op.</li>
+ *   <li><b>Board behaviour</b> (56 sections) — a real {@code new MainWindow()}: field state,
+ *       combat, damage and break rules, control transfer, the Stack.</li>
+ *   <li><b>Parsing</b> (6 sections) — parse outcome, {@code matchedPatternName},
+ *       {@code fullDescription} and the {@code CardData.parse*Abilities} splitters, with no
+ *       execution at all.</li>
+ * </ul>
+ *
+ * <p><b>Shared factories.</b> Most helpers are local to their section and sit directly above it.
+ * These are the ones used file-wide — look here before writing another:
+ *
+ * <ul>
+ *   <li>{@code makeForward}, and the {@code makeForwardWith…} variants for traits, raw text,
+ *       Warp and field abilities</li>
+ *   <li>{@code makeSummon}, {@code makeJobCard}, {@code makeCategoryForward},
+ *       {@code makeTraitCard}, {@code makeFieldAbilityCard} / {@code makeFieldAbilityForward}</li>
+ *   <li>{@code makeAutoAbilityForward} — two overloads: {@code (name, text)} and
+ *       {@code (name, element, power, text)}</li>
+ *   <li>{@code placeP1Forward} / {@code placeDamagedP1Forward} — seat a card on the board with
+ *       its owner recorded, as a real game would</li>
+ *   <li>{@code fwd(isP1, idx)} for a {@link ForwardTarget}; {@code summonChoosing} and
+ *       {@code abilityChoosing} for a {@link StackEntry} that has already chosen</li>
+ * </ul>
  */
 public class CardBehaviorTest {
 
@@ -3022,19 +3074,6 @@ public class CardBehaviorTest {
         GameContext ctx = mock(GameContext.class);
         fn.accept(ctx);
         verify(ctx).millTopDeckCancelChosenIfNotType("Forward");
-    }
-
-    @Test
-    void chosenSelectionCancelEffectsAreRecognizedForInlineExecution() {
-        // All the reactive-cancel bodies must be flagged so AutoAbilityTriggers runs them inline.
-        assertTrue(ActionResolver.isChosenSelectionCancelEffect("If your opponent doesn't pay 《2》, cancel their effects."));
-        assertTrue(ActionResolver.isChosenSelectionCancelEffect("If your opponent doesn't pay 《4》 or 《C》, cancel its effects."));
-        assertTrue(ActionResolver.isChosenSelectionCancelEffect("If your opponent doesn't discard 1 card, cancel its effect."));
-        assertTrue(ActionResolver.isChosenSelectionCancelEffect("Cancel their effects."));
-        assertTrue(ActionResolver.isChosenSelectionCancelEffect("Reveal the top card of your deck. If it is a Backup, cancel all effects choosing Banon."));
-        assertTrue(ActionResolver.isChosenSelectionCancelEffect("Put the top card of your deck into the Break Zone. If the card put into the Break Zone is not a Forward, cancel its effects."));
-        // A non-cancel chosen effect must NOT be flagged (still goes on the stack normally).
-        assertFalse(ActionResolver.isChosenSelectionCancelEffect("Your opponent discards 1 card from their hand."));
     }
 
     @Test
@@ -8201,11 +8240,13 @@ public class CardBehaviorTest {
                 null));
     }
 
-	// ---------------------------------------------------------------- trailing draw
-
+	// =========================================================================================
+	// Trailing draw.
+	//
 	// A trailing "Draw 1 card." rides behind a complete effect. Whichever pattern matches the
 	// leading sentences claims the whole text with find() and parse() returns, so its
 	// sentence-splitting fallback never runs and the draw used to be discarded silently.
+	// =========================================================================================
 
 	// 19-126C Shadow Lord.
 	@Test
@@ -8254,10 +8295,12 @@ public class CardBehaviorTest {
 				"Xyzzy the plugh into the frobnitz. Draw 1 card.", null, 0));
 	}
 
-	// ------------------------------------------------- independent-sentence composition
-
+	// =========================================================================================
+	// Independent-sentence composition.
+	//
 	// A pattern anchored on one sentence claims the whole ability via find(), so every other
 	// sentence used to be discarded. Where the sentences are independent, all of them resolve.
+	// =========================================================================================
 
 	// 16-036C Devout: the crystal was lost because the discard pattern matched the back half.
 	@Test
@@ -8319,11 +8362,14 @@ public class CardBehaviorTest {
 				s.contains("Choose 1 Forward") && s.contains("Deal 3000 damage")));
 	}
 
-	// ------------------------------------------------- conditional use restriction
-
+	// =========================================================================================
+	// Conditional use restriction.
+	//
 	// 23-053R Meteion: "You can only use this ability if neither player controls Forwards."
 	// The condition spans both fields, unlike "if you don't control any Forwards", which
 	// inspects only the activating player's side.
+	// =========================================================================================
+
 	@Test
 	void neitherPlayerControlsBecomesABothFieldsCondition() {
 		List<ActionAbility> abilities = CardData.parseActionAbilities(
@@ -8352,11 +8398,14 @@ public class CardBehaviorTest {
 		verify(ctx).drawCards(1);
 	}
 
-	// ------------------------------------------------- triggered target action
-
+	// =========================================================================================
+	// Triggered target action.
+	//
 	// 26-032L Charlotte: "When a Character enters your opponent's field, dull it and Freeze it."
 	// "it" is the card that fired the trigger, so the effect names no target of its own and the
 	// followup pattern it matches is only ever reached behind a Choose primary.
+	// =========================================================================================
+
 	@Test
 	void triggeredTargetActionDullsAndFreezesThePreloadedCard() {
 		GameContext ctx = mock(GameContext.class);
@@ -8415,11 +8464,14 @@ public class CardBehaviorTest {
 		assertFalse(ActionResolver.isTriggeredTargetAction("If you do so, dull it."));
 	}
 
-	// ------------------------------------------------- is-dealt-damage trigger
-
+	// =========================================================================================
+	// Is-dealt-damage trigger.
+	//
 	// 28-043R Gi Nattak: "When Gi Nattak is dealt damage, choose 1 Forward opponent controls.
 	// At the end of your opponent's turn, break it." The whole-text scan for delayed clauses used
 	// to lift the second half out as its own ability, orphaning "break it" from the choose.
+	// =========================================================================================
+
 	@Test
 	void giNattakParsesAsOneDamageTriggeredAbility() {
 		List<AutoAbility> autos = CardData.parseAutoAbilities(
@@ -8460,11 +8512,11 @@ public class CardBehaviorTest {
 				"a clause naming its own targets is not orphaned and must survive");
 	}
 
-	// -------------------------------------------------------------------------
+	// =========================================================================================
 	// "Your opponent reveals their hand. Select …" — 10 cards whose text used to be
 	// claimed by the bare OPPONENT_REVEAL_HAND_PATTERN, which reveals the hand and
 	// discards everything after it.
-	// -------------------------------------------------------------------------
+	// =========================================================================================
 
 	// 3-056H Zidane: the plain, unrestricted form. Before, only the reveal happened.
 	@Test
@@ -8603,11 +8655,11 @@ public class CardBehaviorTest {
 		assertEquals("enters the field", autos.get(0).trigger());
 	}
 
-	// -------------------------------------------------------------------------
+	// =========================================================================================
 	// "Choose 1 … in your Break Zone. Put it on top of your deck."
 	// The choose header was recognised but this followup was not, so the whole
 	// ability resolved to a "followup not yet implemented" log line and did nothing.
-	// -------------------------------------------------------------------------
+	// =========================================================================================
 
 	/** Stubs a single own-Break-Zone hit at index 0. */
 	private static ForwardTarget stubOwnBzHit(GameContext ctx) {
@@ -8686,13 +8738,13 @@ public class CardBehaviorTest {
 		verify(ctx, never()).promptYouMay(any());
 	}
 
-	// -------------------------------------------------------------------------
+	// =========================================================================================
 	// 8-147S Fordola: "choose 1 Backup you control. You may remove it from the game.
 	// If you do so, Fordola gains +1000 power, Haste, First Strike and Brave.
 	// (This effect does not end at the end of the turn.)"
 	// The "You may" used to be ignored (the Backup was removed unconditionally) and the
 	// payoff was dropped, because the permanent self-buff had no parser.
-	// -------------------------------------------------------------------------
+	// =========================================================================================
 
 	private static final String FORDOLA_TEXT =
 			"choose 1 Backup you control. You may remove it from the game. If you do so, Fordola "
@@ -8921,11 +8973,11 @@ public class CardBehaviorTest {
 				any(), any(), any(), any(), eq(2));
 	}
 
-	// -------------------------------------------------------------------------
+	// =========================================================================================
 	// 20-107H Urianger: "if 1 or more of your cards have been removed from the game,
 	// you may search for 1 Category XIV Forward and add it to your hand."
 	// The search parsed but the gate did not, so it searched unconditionally.
-	// -------------------------------------------------------------------------
+	// =========================================================================================
 
 	private static final String URIANGER_TEXT =
 			"if 1 or more of your cards have been removed from the game, "
@@ -9028,11 +9080,11 @@ public class CardBehaviorTest {
 		verify(ctx, never()).forceOpponentDiscard(anyInt());
 	}
 
-	// -------------------------------------------------------------------------
+	// =========================================================================================
 	// "You may search …" — searching is a public event that opponents' abilities react to
 	// (5-130R Tonberry, 13-034H Remedi, 25-111H The Emperor), so declining has to mean the
 	// search never happened, not that it happened and found nothing.
-	// -------------------------------------------------------------------------
+	// =========================================================================================
 
 	private static void verifyNoSearch(GameContext ctx) {
 		verify(ctx, never()).searchDeckForCard(anyBoolean(), anyBoolean(), anyBoolean(), anyBoolean(),
@@ -9123,7 +9175,7 @@ public class CardBehaviorTest {
 		verifyNoSearch(ctx);
 	}
 
-	// -------------------------------------------------------------------------
+	// =========================================================================================
 	// Searches whose filter comes off the card the player just chose:
 	//   23-130H Luso    — "…search for 1 Job Standard Unit of the same Element as the chosen
 	//                      Character and add it to your hand."
@@ -9133,7 +9185,7 @@ public class CardBehaviorTest {
 	// None of these filters is written in the text. Before this followup existed, ChooseCharacter's
 	// generic dispatch matched the trailing "add it to your hand" and returned the chosen Character
 	// to hand — the wrong zone, the wrong card, and no search at all.
-	// -------------------------------------------------------------------------
+	// =========================================================================================
 
 	private static final String LUSO_TEXT =
 			"choose 1 Character you control. You may search for 1 Job Standard Unit "
@@ -9246,10 +9298,10 @@ public class CardBehaviorTest {
 				ActionResolver.fullDescription(ALISAIE_TEXT, makeForward("Alisaie", "Fire", 2, 5000)));
 	}
 
-	// -------------------------------------------------------------------------
+	// =========================================================================================
 	// Searching is a public event. 5-130R Tonberry, 13-034H Remedi and 25-111H The Emperor
 	// all watch for it; none of them parsed a single auto ability before.
-	// -------------------------------------------------------------------------
+	// =========================================================================================
 
 	@Test
 	void opponentSearchTriggerIsRecognisedInAllThreePrintings() {
@@ -9352,10 +9404,10 @@ public class CardBehaviorTest {
 				"\"that Forward\" is Breaktouch and must keep the damage path");
 	}
 
-	// -------------------------------------------------------------------------
+	// =========================================================================================
 	// "discards … due to your Summons or abilities" (an 11-card family) and
 	// "1 or more cards are added to your opponent's hand from the Break Zone".
-	// -------------------------------------------------------------------------
+	// =========================================================================================
 
 	@Test
 	void discardByEffectTriggerAcceptsEveryPrintedWording() {
@@ -10126,6 +10178,67 @@ public class CardBehaviorTest {
 
 		assertNotEquals(List.of(fwd(true, 0)), mw.gameState.getStack().get(0).preSelectedTargets(),
 				"Wicked Mask only ever touches Summons, so it was completely inert before this");
+	}
+
+	// =========================================================================================
+	// A "when this is chosen by your opponent's Summons or abilities" trigger resolves BEFORE the
+	// effect that chose it — under the rules it goes on the Stack above that effect.
+	//
+	// The engine cannot express that once the chooser is already resolving: a selection made
+	// mid-resolution happens with the chooser off the Stack and about to act on what it picked, so
+	// a stacked trigger resolves *after* it. Emet-Selch (12-024H) was dealt its lethal damage and
+	// broken before the removal that should have made that damage fizzle ever ran. The whole
+	// family therefore resolves inline, and the selection is re-anchored afterwards: a
+	// ForwardTarget is a position, and the zone list closes up behind a card that just left.
+	// =========================================================================================
+
+	/** P2's ability chooses {@code maxCount} of P1's Forwards — the AI side, so no modal chooser. */
+	private static List<ForwardTarget> opponentChoosesP1Forwards(MainWindow mw, int maxCount) {
+		return mw.buildGameContext(false).selectCharacters(maxCount, false, true, false, null, null,
+				-1, null, -1, null, true, false, false, null, null, null, null, false, null, false);
+	}
+
+	@Test
+	void aChosenTriggerResolvesInsteadOfWaitingOnTheStack() {
+		MainWindow mw = new MainWindow();
+		CardData emet = makeAutoAbilityForward("Emet-Selch", "Ice", 9000, EMET_SELCH_TEXT);
+		mw.placeP2CardInForwardZone(emet);
+		mw.gameState.getIdentity().put(emet, false);
+
+		// Fired for P2's side: a P2-owned entry is one the Stack overlay never auto-resolves, so
+		// anything that reached the Stack here would still be sitting on it, unresolved.
+		mw.autoAbilityTriggers.triggerAutoAbilitiesForChosenByOpponentSummonOrAbility(false, List.of(emet));
+
+		assertTrue(mw.gameState.getStack().isEmpty(),
+				"the trigger has to resolve now, not queue up behind the effect that chose");
+		assertFalse(mw.p2ForwardCards.contains(emet),
+				"Emet-Selch removes itself from the game as it is chosen");
+	}
+
+	@Test
+	void aSelectionDropsTheCardThatLeftInResponseToBeingChosen() {
+		MainWindow mw = new MainWindow();
+		CardData emet = makeAutoAbilityForward("Emet-Selch", "Ice", 9000, EMET_SELCH_TEXT);
+		placeP1Forward(mw, emet);                                   // P1 idx 0 — the only Forward
+
+		assertEquals(List.of(), opponentChoosesP1Forwards(mw, 1),
+				"the only chosen card left the field, so the effect has nothing left to act on — "
+				+ "which is what makes its lethal damage fizzle");
+		assertFalse(mw.p1ForwardCards.contains(emet), "and it warped away rather than being broken");
+	}
+
+	@Test
+	void aSurvivingSelectionFollowsItsCardPastTheGapLeftBehind() {
+		MainWindow mw = new MainWindow();
+		CardData emet   = makeAutoAbilityForward("Emet-Selch", "Ice", 9000, EMET_SELCH_TEXT);
+		CardData sephir = makeForward("Sephiroth", "Dark", 5, 9000);
+		placeP1Forward(mw, emet);                                   // P1 idx 0
+		placeP1Forward(mw, sephir);                                 // P1 idx 1
+
+		// Both are chosen; Emet-Selch leaves, closing the gap Sephiroth then slides into.
+		assertEquals(List.of(fwd(true, 0)), opponentChoosesP1Forwards(mw, 2),
+				"Sephiroth is still chosen, now at index 0 — index 1 would point past the row, and "
+				+ "keeping Emet-Selch's index 0 would land the damage meant for it on Sephiroth");
 	}
 
 	// =========================================================================================

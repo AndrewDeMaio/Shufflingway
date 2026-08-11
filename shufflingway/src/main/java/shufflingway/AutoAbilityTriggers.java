@@ -2101,13 +2101,18 @@ final class AutoAbilityTriggers {
 		if (fa.oncePerTurn())
 			mw.usedOncePerTurnAbilities.computeIfAbsent(source, k -> new HashSet<>()).add(fa.effectText());
 
-		// Reactive "chosen by opponent's Summons or abilities" cancel effects must resolve INLINE,
-		// synchronously within the opponent's in-progress target selection (see
-		// GameContextImpl.selectCharacters / lastChosenSelectionCancelled), rather than being pushed
-		// onto the stack — a stacked cancel would resolve only after the choosing effect has already
-		// acted on its targets, making the cancellation a no-op.
-		if (fa.trigger().startsWith("chosen by opponent's summon")
-				&& ActionResolver.isChosenSelectionCancelEffect(fa.effectText())) {
+		// Reactive "chosen by opponent's Summons or abilities" triggers resolve INLINE, synchronously
+		// within the opponent's in-progress target selection (see GameContextImpl.selectCharacters),
+		// rather than being pushed onto the Stack.
+		//
+		// Under the rules the trigger goes on the Stack *above* the Summon or ability that chose it
+		// and therefore resolves first. This engine cannot express that once the chooser is already
+		// resolving — the selection can happen mid-resolution, at which point the chooser is off the
+		// Stack and about to act on what it picked. Stacking the trigger there defers it behind the
+		// chooser and inverts the order: a cancel becomes a no-op, and Emet-Selch (12-024H) is dealt
+		// its lethal damage and broken before the removal that should have made that damage fizzle
+		// ever runs. Resolving here reproduces the rules order in every path the selection can take.
+		if (fa.trigger().startsWith("chosen by opponent's summon")) {
 			Consumer<GameContext> effect = ActionResolver.parse(fa.effectText(), source);
 			mw.logEntry("[AutoAbility] " + source.name() + " — " + fa.effectText());
 			effect.accept(mw.buildGameContext(effectIsP1));
@@ -2118,13 +2123,16 @@ final class AutoAbilityTriggers {
 		// An ability chooses its targets as it goes on the Stack, not when it resolves, so the
 		// opponent can respond to what it is pointed at. The text is transformed the same way
 		// resolution will transform it, or a conditional clause could change the eligible set.
+		// The depth is taken first so any "when this is chosen" trigger the selection fires lands
+		// above this entry and resolves before it (see GameState.insertStack).
+		int depth = mw.gameState.stackSize();
 		String effectText = paidExtraCost
 				? ActionResolver.applyExtraCostPaid(fa.effectText())
 				: ActionResolver.stripExtraCostClause(fa.effectText());
 		List<ForwardTarget> preTargets = effectText.isBlank() ? null
 				: ActionResolver.preSelectTargets(effectText, source, 0, mw.buildGameContext(effectIsP1));
 		if (preTargets != null && preTargets.isEmpty()) preTargets = null;
-		mw.gameState.pushStack(new StackEntry(source, null, fa, effectIsP1, 0, false, preTargets, false, paidExtraCost, 0));
+		mw.gameState.insertStack(depth, new StackEntry(source, null, fa, effectIsP1, 0, false, preTargets, false, paidExtraCost, 0));
 	}
 
 	private void executeCounterRemovalWhenDoSoAutoAbility(AutoAbility fa, CardData source,
@@ -3916,9 +3924,12 @@ final class AutoAbilityTriggers {
 		if (ability.isSpecial())
 			mw.specialAbilitiesUsedThisTurn.add(new UsedSpecialAbility(source, ability));
 
+		// Depth before selection: a "when this is chosen" trigger fired by the selection has to
+		// stay above this ability so it resolves first (see GameState.insertStack).
+		int depth = mw.gameState.stackSize();
 		java.util.List<ForwardTarget> preTargets = ActionResolver.preSelectTargets(
 				ability.effectText(), source, xValue, mw.buildGameContext(isP1));
-		mw.gameState.pushStack(new StackEntry(source, ability, isP1, xValue, preTargets));
+		mw.gameState.insertStack(depth, new StackEntry(source, ability, isP1, xValue, preTargets));
 		mw.showStackWindow();
 		mw.refreshP1HandLabel();
 		mw.refreshP1BreakLabel();
