@@ -1,6 +1,7 @@
 package shufflingway;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -23,6 +24,7 @@ import shufflingway.net.ChoiceKind;
 import shufflingway.net.ConnectionListener;
 import shufflingway.net.GameAction;
 import shufflingway.net.GameConnection;
+import shufflingway.net.MatchSetup;
 
 /**
  * The choice protocol over a real TCP socket.
@@ -46,6 +48,9 @@ class WireProtocolTest {
     /** Actions the joiner's reader thread has delivered, oldest first. */
     private final BlockingQueue<GameAction> inbox = new ArrayBlockingQueue<>(64);
 
+    /** Reasons the joiner was told the connection ended. */
+    private final BlockingQueue<String> disconnects = new ArrayBlockingQueue<>(8);
+
     @BeforeEach
     void connect() throws IOException {
         listener   = new ServerSocket(0, 1, InetAddress.getLoopbackAddress());
@@ -56,7 +61,9 @@ class WireProtocolTest {
         joiner = new GameConnection(joinerSide);
         joiner.addListener(new ConnectionListener() {
             @Override public void onActionReceived(GameAction action) { inbox.add(action); }
-            @Override public void onDisconnected(String reason) { }
+            @Override public void onDisconnected(String reason) {
+                disconnects.add(reason == null ? "(none given)" : reason);
+            }
         });
         joiner.start();
     }
@@ -154,6 +161,97 @@ class WireProtocolTest {
         assertEquals("DECK_LOOK",     next().payload().getString("kind"));
         assertEquals("PRIORITY_PASS", next().payload().getString("kind"));
         assertEquals("MAY",           next().payload().getString("kind"));
+    }
+
+    @Test
+    void aPhasePriorityOfferAndItsAnswerCrossInOrder() throws InterruptedException {
+        // The full phase-transition exchange: the advancing client offers and holds the phase
+        // open, the other answers, and only then does the advance follow. An offer that went
+        // missing would advance the phase with the opponent never having had priority; a lost
+        // answer would hold the phase open forever.
+        host.send(GameAction.of(shufflingway.net.ActionType.PRIORITY_OFFER));
+        GameAction offer = next();
+        assertEquals(shufflingway.net.ActionType.PRIORITY_OFFER, offer.type());
+        assertEquals(0, offer.payload().length(),
+                "an empty payload is the whole message and has to survive the round trip");
+
+        host.send(RemoteOpponent.choiceAction(ChoiceKind.PRIORITY_PASS, List.of()));
+        host.send(GameAction.of(shufflingway.net.ActionType.ADVANCE_PHASE));
+        assertEquals("PRIORITY_PASS", next().payload().getString("kind"));
+        assertEquals(shufflingway.net.ActionType.ADVANCE_PHASE, next().type(),
+                "the advance must not overtake the answer that permits it");
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // Phase 6 — the peer going away.
+    //
+    // The disconnect signal is what releases anything waiting on that peer, and a choice wait is a
+    // modal dialog holding the EDT. If the signal never fires, the client is frozen behind the
+    // notice telling it why. So the signal itself is worth asserting, even though what the main
+    // window then does with it needs a real window.
+    // -----------------------------------------------------------------------------------------
+
+    @Test
+    void closingOneEndTellsTheOther() throws InterruptedException {
+        host.close();
+        assertNotNull(disconnects.poll(5, TimeUnit.SECONDS),
+                "nothing waiting on this peer would ever be released");
+    }
+
+    @Test
+    void aGoodbyeArrivesBeforeTheSocketCloses() throws InterruptedException {
+        // The close carries no reason, so the only way to say "they left" rather than "the network
+        // died" is to get the message out while the socket is still up.
+        host.send(GameAction.of(shufflingway.net.ActionType.DISCONNECT,
+                new org.json.JSONObject().put("reason", "Player left")));
+        GameAction goodbye = next();
+        assertEquals(shufflingway.net.ActionType.DISCONNECT, goodbye.type());
+        assertEquals("Player left", goodbye.payload().getString("reason"));
+
+        host.close();
+        assertNotNull(disconnects.poll(5, TimeUnit.SECONDS),
+                "the close still has to follow — a peer that only sent DISCONNECT and stayed "
+                + "connected must not leave this client hanging either");
+    }
+
+    /** A main window seated in a networked game against the far end of this test's socket. */
+    private MainWindow networkedWindow() {
+        MainWindow mw = new MainWindow();
+        mw.opponent = new RemoteOpponent(mw, joiner,
+                new MatchSetup(1, List.of("h1"), "Deck", "Host", 7L, true, true));
+        return mw;
+    }
+
+    @Test
+    void aDropEndsTheGameBeforeAnythingWaitingOnThePeerIsReleased() {
+        MainWindow mw = networkedWindow();
+        assertFalse(mw.gameState.isP1GameOver());
+
+        mw.onOpponentDisconnected("Player left");
+        assertTrue(mw.gameState.isP1GameOver(),
+                "cancelling releases continuations — an outstanding block resumes as \"no block\", "
+                + "a priority wait returns and carries on. They have to unwind into a finished "
+                + "game, so the flag is set first");
+    }
+
+    @Test
+    void theCloseFollowingAGoodbyeIsNotReportedTwice() {
+        MainWindow mw = networkedWindow();
+        mw.onOpponentDisconnected("Player left");
+        String afterFirst = mw.gameState.isP1GameOver() ? "over" : "live";
+
+        // The DISCONNECT message lands first, then the socket closing behind it fires again.
+        mw.onOpponentDisconnected("Connection closed");
+        assertEquals("over", afterFirst);
+        assertTrue(mw.gameState.isP1GameOver());
+    }
+
+    @Test
+    void aSoloGameIgnoresTheWholeThing() {
+        MainWindow solo = new MainWindow();   // opponent is the built-in AI
+        solo.onOpponentDisconnected("Connection closed");
+        assertFalse(solo.gameState.isP1GameOver(),
+                "there is no peer to lose, and ending the game would be a bug rather than tidiness");
     }
 
     @Test

@@ -43,6 +43,14 @@ public enum ActionType {
                     //   resolves. See ChoiceKind for what each kind's integers index, and which
                     //   of them flip sides on arrival: hand and slot indices do not, both clients
                     //   holding each zone in the same order, while a field code names a side.
+    PRIORITY_OFFER, // payload: {}
+                    //   The sender has passed priority at a phase transition and is holding the
+                    //   phase open while the receiver responds. The receiver answers with a
+                    //   CHOICE of kind PRIORITY_PASS, and only then does ADVANCE_PHASE follow.
+                    //   It has to precede the advance rather than ride on it: a response happens
+                    //   in the phase being left, so a receiver told after the fact would be acting
+                    //   in the wrong one. Combat needs no equivalent — both clients run a matching
+                    //   priority round there and each already knows when to hold.
     RESOLVE_STACK,  // payload: {}
 
     // ── Utility ───────────────────────────────────────────────────────────────

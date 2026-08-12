@@ -21,11 +21,14 @@ public class MultiplayerMenu extends JMenu {
     private final JMenuItem disconnectItem;
 
     /**
-     * @param onConnected receives the agreed match parameters; the main window starts the
-     *                    networked game from them
+     * @param onConnected    receives the agreed match parameters; the main window starts the
+     *                       networked game from them
+     * @param onDisconnected receives why the connection ended. It carries a reason rather than
+     *                       being a bare signal because the main window has to say what happened
+     *                       and, more importantly, release anything still waiting on the peer
      */
     public MultiplayerMenu(JFrame owner, Consumer<MatchSetup> onConnected,
-                           Runnable onDisconnected, Consumer<GameAction> onActionReceived) {
+                           Consumer<String> onDisconnected, Consumer<GameAction> onActionReceived) {
         super("Multiplayer");
 
         JMenuItem hostItem = new JMenuItem("Host Game…");
@@ -59,7 +62,7 @@ public class MultiplayerMenu extends JMenu {
     }
 
     private void activate(GameConnection conn, MatchSetup setup, JFrame owner,
-                          Consumer<MatchSetup> onConnected, Runnable onDisconnected,
+                          Consumer<MatchSetup> onConnected, Consumer<String> onDisconnected,
                           Consumer<GameAction> onActionReceived) {
         if (activeConnection != null) activeConnection.close();
         activeConnection = conn;
@@ -75,7 +78,7 @@ public class MultiplayerMenu extends JMenu {
                 SwingUtilities.invokeLater(() -> {
                     activeConnection = null;
                     disconnectItem.setEnabled(false);
-                    if (onDisconnected != null) onDisconnected.run();
+                    if (onDisconnected != null) onDisconnected.accept(reason);
                     JOptionPane.showMessageDialog(owner,
                         "Opponent disconnected: " + reason,
                         "Disconnected", JOptionPane.WARNING_MESSAGE);
@@ -91,7 +94,7 @@ public class MultiplayerMenu extends JMenu {
         conn.start();
     }
 
-    private void disconnect(JFrame owner, Runnable onDisconnected) {
+    private void disconnect(JFrame owner, Consumer<String> onDisconnected) {
         if (activeConnection != null) {
             activeConnection.send(GameAction.of(shufflingway.net.ActionType.DISCONNECT,
                     new org.json.JSONObject().put("reason", "Player left")));
@@ -99,7 +102,7 @@ public class MultiplayerMenu extends JMenu {
             activeConnection = null;
         }
         disconnectItem.setEnabled(false);
-        if (onDisconnected != null) onDisconnected.run();
+        if (onDisconnected != null) onDisconnected.accept("you left the game");
         JOptionPane.showMessageDialog(owner, "Disconnected.", "Multiplayer",
                 JOptionPane.INFORMATION_MESSAGE);
     }

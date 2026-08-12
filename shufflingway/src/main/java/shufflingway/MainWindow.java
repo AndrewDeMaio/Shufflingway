@@ -823,9 +823,10 @@ public class MainWindow {
 						startMultiplayerGame(setup);
 					});
 				},
-				() -> SwingUtilities.invokeLater(() -> {
+				reason -> SwingUtilities.invokeLater(() -> {
 					chatInput.setEnabled(false);
 					chatSendBtn.setEnabled(false);
+					onOpponentDisconnected(reason);
 				}),
 				action -> {
 					if (action.type() == ActionType.CHAT) {
@@ -2563,7 +2564,7 @@ public class MainWindow {
                             p1MonsterAttackIdx = -1;
                             logEntry("[Priority] P1 passes — P2 may respond.");
                             if (nextPhaseButton != null) nextPhaseButton.setEnabled(false);
-                            p2AutoPass(() -> {
+                            offerPhasePriority(() -> {
                                 advanceLocalPhase();   // MAIN_1 → ATTACK
                                 logEntry("Attack Phase");
                                 autoAbilityTriggers.triggerAutoAbilitiesForBeginningOfAttackPhase(true);
@@ -2589,7 +2590,7 @@ public class MainWindow {
                             if (attackSubStep == 0) {
                                 logEntry("[Priority] P1 passes — P2 may respond.");
                                 if (nextPhaseButton != null) nextPhaseButton.setEnabled(false);
-                                p2AutoPass(() -> {
+                                offerPhasePriority(() -> {
                                     setAttackSubStep(1);
                                     refreshPhaseTracker();
                                     refreshAttackButton();
@@ -2617,7 +2618,7 @@ public class MainWindow {
 			case MAIN_2 -> {
                             logEntry("[Priority] P1 passes — P2 may respond.");
                             if (nextPhaseButton != null) nextPhaseButton.setEnabled(false);
-                            p2AutoPass(() -> {
+                            offerPhasePriority(() -> {
                                 advanceLocalPhase();   // MAIN_2 → END
                                 refreshPhaseTracker();
                                 logEntry("End Phase");
@@ -12083,21 +12084,80 @@ public class MainWindow {
 		phaseTracker.setHasPriority(false);
 		runWhenBoardSettled(() -> {
 			remote.awaitPriorityPass();
+			// The wait can end because the pass arrived — or because the peer vanished and the
+			// disconnect released it. Only the first means carry on with the battle.
+			if (gameState.isP1GameOver()) return;
 			phaseTracker.setHasPriority(true);
 			onDone.run();
 		});
 	}
 
 	/**
-	 * Tells a remote opponent this client has passed a combat priority window.
+	 * Tells a remote opponent this client has passed a priority window they are holding open.
 	 *
-	 * <p>Only combat rounds send. The phase-transition windows in {@link #onNextPhase()} pass
-	 * priority too, but the other client applies a PHASE_ADVANCE after the fact and is not waiting
-	 * on anything — a pass sent there would sit in the buffer and release the next round early.
+	 * <p>The rule this must not break is that a pass is only ever sent when the far client is
+	 * already waiting for one — otherwise it sits in the delivered-answer buffer and releases some
+	 * later window early. Both senders satisfy it: a combat round is mirrored, so the other client
+	 * is in the opposite half of the same round, and a phase offer is followed immediately by the
+	 * offerer waiting.
 	 */
 	private void sendPriorityPass() {
 		if (opponent instanceof RemoteOpponent remote)
 			remote.send(RemoteOpponent.choiceAction(ChoiceKind.PRIORITY_PASS, List.of()));
+	}
+
+	/**
+	 * Passes priority at a phase transition and lets the opponent respond before the phase changes.
+	 *
+	 * <p>Unlike a combat round, the two clients are not both walking this checkpoint: only the
+	 * player whose turn it is reaches the transition, and the other learns of it from the
+	 * PHASE_ADVANCE that follows. So the offer is explicit — {@code PRIORITY_OFFER} goes out first
+	 * and holds the phase open, and only when the answering pass arrives does {@code onDone} run
+	 * and advance it. A response cast meanwhile is an ordinary PLAY_CARD and lands here inside the
+	 * wait, in the phase it was actually made in.
+	 *
+	 * <p>Against the AI this is exactly the timer it always was.
+	 */
+	private void offerPhasePriority(Runnable onDone) {
+		if (opponent instanceof RemoteOpponent remote)
+			remote.send(GameAction.of(ActionType.PRIORITY_OFFER));
+		opponentPriority(onDone);
+	}
+
+	/**
+	 * The remote opponent is gone — cleanly, or because the socket died. Ends the game.
+	 *
+	 * <p><b>Order matters.</b> The game is marked over <em>before</em> the opponent is cancelled,
+	 * because cancelling releases whatever was waiting on that peer and those releases run
+	 * continuations: an outstanding block resumes as "no block", a priority wait returns and its
+	 * callback would carry on into the next combat sub-step. Flagging first means they unwind into
+	 * a finished game instead of playing on against nobody.
+	 *
+	 * <p>Releasing them at all is not optional. A choice wait is a modal dialog holding the EDT, so
+	 * a peer that vanishes mid-question would otherwise leave this client frozen behind the
+	 * disconnect notice — with no way to reach even the menu bar.
+	 *
+	 * <p>Both ends of a graceful goodbye arrive here: the DISCONNECT message first, then the socket
+	 * closing behind it. The second is ignored, which is what the game-over guard is for.
+	 */
+	void onOpponentDisconnected(String reason) {
+		if (!(opponent instanceof RemoteOpponent)) return;
+		if (gameState.isP1GameOver()) return;
+		triggerGameOver("Opponent disconnected — " + reason + ". The game cannot continue.");
+		opponent.cancel();
+	}
+
+	/**
+	 * The far side of {@link #offerPhasePriority}: the opponent has passed at a phase transition
+	 * and is holding it open for this player.
+	 *
+	 * <p>Reuses the combat hold, which already serves both turns — P1 responds to P2's attacks the
+	 * same way — and which auto-passes when there is nothing priority could be spent on. The pass
+	 * is transmitted either way, so the opponent is never left waiting on a window this client
+	 * silently skipped.
+	 */
+	void holdPriorityForPhaseOffer() {
+		p1HoldPriority("[P2] passes priority.", this::sendPriorityPass);
 	}
 
 	/** True while P1 holds priority at a combat checkpoint and has not yet passed it with Next. */

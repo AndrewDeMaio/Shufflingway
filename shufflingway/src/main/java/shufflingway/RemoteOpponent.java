@@ -111,6 +111,11 @@ class RemoteOpponent implements OpponentController {
 			case ATTACK         -> applyAttack(action.payload());
 			case BLOCK          -> applyBlock(action.payload());
 			case CHOICE         -> applyChoice(action.payload());
+			case PRIORITY_OFFER -> mw.holdPriorityForPhaseOffer();
+			// A goodbye, sent while the socket is still open. Acting on it is what turns a drop
+			// into an explanation — the close that follows carries no reason at all.
+			case DISCONNECT     -> mw.onOpponentDisconnected(
+					action.payload().optString("reason", "they left the game"));
 			default             -> { return false; }
 		}
 		return true;
