@@ -7371,7 +7371,7 @@ public class MainWindow {
 		refreshP2WarpZoneUI();
 	}
 
-	/** Returns true if at least one P1 backup slot is currently empty. */
+	/** Whether P1 already has a Character of this name in play. */
 	boolean hasCharacterNameOnField(String name) {
 		for (CardData c : p1ForwardCards)
 			if (name.equalsIgnoreCase(c.name())) return true;
@@ -12051,11 +12051,53 @@ public class MainWindow {
 	 */
 	private void combatPriorityRound(boolean turnPlayerIsP1, String announcement, Runnable onBothPassed) {
 		if (turnPlayerIsP1) {
-			p1HoldPriority(announcement, () -> p2AutoPass(onBothPassed));
+			p1HoldPriority(announcement, () -> { sendPriorityPass(); opponentPriority(onBothPassed); });
 		} else {
 			if (announcement != null) logEntry(announcement);
-			p2AutoPass(() -> p1HoldPriority(null, onBothPassed));
+			opponentPriority(() -> p1HoldPriority(null,
+					() -> { sendPriorityPass(); onBothPassed.run(); }));
 		}
+	}
+
+	/**
+	 * The opponent's half of a combat priority window: the AI takes it on a timer, a remote player
+	 * takes it on their own client and this one waits to be told they are done.
+	 *
+	 * <p>The two clients mirror each other exactly here, which is what makes the wait safe.
+	 * {@code turnPlayerIsP1} is written from the local seat, so it is true on one client and false
+	 * on the other for the same round — exactly one of them takes each branch above, and a wait can
+	 * never meet a wait.
+	 *
+	 * <p>The wait is modal but not inert: its nested event loop keeps delivering inbound actions,
+	 * so a Summon the opponent casts <em>during</em> their window still arrives and is applied here
+	 * before their pass releases it. That is the whole point of opening the window.
+	 *
+	 * <p>Reactive shields are not solicited on this path. They are an AI construct — for a human
+	 * opponent, activating one is just using an action ability inside the window they now have.
+	 */
+	private void opponentPriority(Runnable onDone) {
+		if (!(opponent instanceof RemoteOpponent remote)) {
+			p2AutoPass(onDone);
+			return;
+		}
+		phaseTracker.setHasPriority(false);
+		runWhenBoardSettled(() -> {
+			remote.awaitPriorityPass();
+			phaseTracker.setHasPriority(true);
+			onDone.run();
+		});
+	}
+
+	/**
+	 * Tells a remote opponent this client has passed a combat priority window.
+	 *
+	 * <p>Only combat rounds send. The phase-transition windows in {@link #onNextPhase()} pass
+	 * priority too, but the other client applies a PHASE_ADVANCE after the fact and is not waiting
+	 * on anything — a pass sent there would sit in the buffer and release the next round early.
+	 */
+	private void sendPriorityPass() {
+		if (opponent instanceof RemoteOpponent remote)
+			remote.send(RemoteOpponent.choiceAction(ChoiceKind.PRIORITY_PASS, List.of()));
 	}
 
 	/** True while P1 holds priority at a combat checkpoint and has not yet passed it with Next. */

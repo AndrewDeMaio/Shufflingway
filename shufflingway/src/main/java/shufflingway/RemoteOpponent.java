@@ -37,13 +37,15 @@ import shufflingway.net.MatchSetup;
  * is read back are described once by a {@link PlayerChoice} and routed by
  * {@link MainWindow#decide}; this class holds only the waiting and the wire format.
  *
- * <p>What is <em>not</em> replicated yet is the opponent's priority windows. {@code MainWindow}
- * still gives the opponent's half of every combat priority round to {@code p2AutoPass}, a timer,
- * and {@link #requestReactiveShields} passes straight through — so a remote player cannot act in
- * response to a declaration. That is the rest of the Phase 5 work, and until it lands it is also
- * what keeps combat safe to replicate this way: with no response window, the only inputs to a
- * battle are the attack and the block, both of which cross the wire, so the two clients cannot
- * diverge partway through one.
+ * <p><b>Combat priority rounds are replicated</b>: each client holds its own player's half of the
+ * window and waits on {@link #awaitPriorityPass} for the other, which works because
+ * {@code combatPriorityRound} is written from the local seat and so takes opposite branches on the
+ * two clients. A response cast inside the window is an ordinary PLAY_CARD and crosses as one.
+ *
+ * <p>What is <em>not</em> replicated is the priority the phase transitions offer. The client
+ * advancing a phase pauses for the opponent, but the other client applies the PHASE_ADVANCE after
+ * the fact and has no window to open — giving a remote player priority there needs the offer to go
+ * out before the advance, which is a protocol addition rather than another pass.
  */
 class RemoteOpponent implements OpponentController {
 
@@ -548,8 +550,21 @@ class RemoteOpponent implements OpponentController {
 
 	@Override
 	public void requestReactiveShields(Runnable onDone) {
-		// Nothing to offer yet; pass priority straight on so the local game keeps moving.
+		// Nothing to solicit: a reactive shield is an action ability, and a remote player activates
+		// it inside their own priority window like any other. This hook exists for the AI, which
+		// has no window to act in.
 		onDone.run();
+	}
+
+	/**
+	 * Blocks until the opponent passes the combat priority window they are holding.
+	 *
+	 * <p>Waits in the same modal as any other answer, so inbound actions keep being delivered
+	 * while it holds — a Summon cast in response arrives and is applied here before the pass that
+	 * releases this wait.
+	 */
+	void awaitPriorityPass() {
+		awaitChoice(ChoiceKind.PRIORITY_PASS, "Waiting for your opponent to respond...");
 	}
 
 	/**

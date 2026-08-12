@@ -184,6 +184,16 @@ class NameSelectionDialogs {
 
     // -------------------------------------------------------------------------
 
+    /**
+     * Every Job in the card database, sorted — the vocabulary a named Job is an index into.
+     *
+     * @see NamedThing
+     */
+    static List<String> jobNames(Consumer<String> log) { return loadJobs(log); }
+
+    /** Every Category in the card database, sorted. @see NamedThing */
+    static List<String> categoryNames(Consumer<String> log) { return loadCategories(log); }
+
     private static List<String> loadJobs(Consumer<String> log) {
         try {
             return CardDatabase.loadJobs();

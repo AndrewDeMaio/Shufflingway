@@ -10,6 +10,7 @@ import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Deque;
 import java.util.EnumSet;
 import java.util.HashSet;
@@ -19,6 +20,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.regex.Matcher;
@@ -37,6 +39,8 @@ import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
 import javax.swing.SwingWorker;
 import javax.swing.Timer;
+
+import shufflingway.net.ChoiceKind;
 
 import static shufflingway.CardFilters.formatCostFilterLabel;
 import static shufflingway.CardFilters.isBlockingTargetFilter;
@@ -646,23 +650,81 @@ final class GameContextImpl implements GameContext {
 			}
 
 			@Override public String selectElement(String prompt) {
-				return NameSelectionDialogs.selectElement(mw.frame, prompt, isP1, mw::logEntry);
+				return selectElement(prompt, Set.of());
 			}
 
 			@Override public String selectElement(String prompt, Set<String> excluded) {
-				return NameSelectionDialogs.selectElement(mw.frame, prompt, excluded, isP1, mw::logEntry);
+				return firstNamed(askToName("Waiting for your opponent to name an Element...",
+						interactive -> NamedThing.of(NamedThing.Vocabulary.ELEMENT,
+								NameSelectionDialogs.selectElement(mw.frame, prompt, excluded,
+										interactive, mw::logEntry))));
 			}
 
 			@Override public String selectOption(String prompt, String[] choices) {
-				if (!isP1) {
-					String picked = choices[(int)(Math.random() * choices.length)];
-					logEntry("[AI] chose: " + picked);
-					return picked;
-				}
-				// One button per option rather than a dropdown: these choice lists are short
-				// (a pair of traits), and a button apiece is one click instead of three.
-				int idx = mw.showEffectOptionDialog(prompt, "Choose", (Object[]) choices);
-				return idx >= 0 && idx < choices.length ? choices[idx] : null;
+				List<Integer> answer = mw.decide(PlayerChoice.by(isP1, ChoiceKind.OPTION)
+						.prompting("Waiting for your opponent to choose...")
+						.locally(() -> {
+							// One button per option rather than a dropdown: these choice lists are
+							// short (a pair of traits), and a button apiece is one click not three.
+							int idx = mw.showEffectOptionDialog(prompt, "Choose", (Object[]) choices);
+							return idx >= 0 && idx < choices.length ? List.of(idx) : List.of();
+						})
+						.byCpu(() -> List.of((int) (Math.random() * choices.length)))
+						.legalWhen(a -> a.stream().allMatch(i -> i >= 0 && i < choices.length),
+								"this ability offers " + choices.length + " options here"));
+				return answer.isEmpty() ? null : choices[answer.get(0)];
+			}
+
+			/**
+			 * Asks the seat this effect belongs to to name something, and returns what they named.
+			 *
+			 * <p>{@code ask} is handed the old {@code interactive} flag, but it no longer means
+			 * "am I P1" — {@link MainWindow#decide} calls it with {@code true} to put the dialog in
+			 * front of the local human and with {@code false} to run the AI's heuristic, and calls
+			 * it not at all when a remote player is the one naming. That is the whole fix: the AI's
+			 * random pick used to stand in for <em>every</em> seat that was not this one, so two
+			 * clients resolving one ability named two different Jobs and neither ever found out.
+			 */
+			private List<NamedThing> askToName(String waitPrompt,
+					Function<Boolean, List<NamedThing>> ask) {
+				List<Integer> answer = mw.decide(PlayerChoice.by(isP1, ChoiceKind.NAMED)
+						.prompting(waitPrompt)
+						.locally(() -> NamedThing.toAnswer(ask.apply(true),  mw::logEntry))
+						.byCpu(()   -> NamedThing.toAnswer(ask.apply(false), mw::logEntry))
+						.legalWhen(a -> NamedThing.fromAnswer(a, mw::logEntry) != null,
+								"they named something this client has never heard of"));
+				List<NamedThing> named = NamedThing.fromAnswer(answer, mw::logEntry);
+				return named == null ? List.of() : named;
+			}
+
+			/** The first thing named, or null — for the abilities that ask for exactly one. */
+			private String firstNamed(List<NamedThing> named) {
+				return named.isEmpty() ? null : named.get(0).value();
+			}
+
+			/**
+			 * Takes {@code count} cards at random out of a pool of {@code poolSize}, and returns
+			 * where each one was — rolled once, on the controller's client, and sent.
+			 *
+			 * <p>Each index is a position in the pool <em>as it stood for that pick</em>, so the
+			 * caller must remove them in the order given: the pool is one smaller each time.
+			 *
+			 * <p>An empty list means either an empty pool or a roll this client rejected, and both
+			 * come to the same thing — nothing is taken. Falling back to a local roll would be the
+			 * one response guaranteed to desync, which is what this replaced.
+			 */
+			private List<Integer> randomPicks(int count, int poolSize, String what) {
+				int rolls = Math.min(count, poolSize);
+				if (rolls <= 0) return List.of();
+				List<Integer> answer = mw.decide(PlayerChoice.by(isP1, ChoiceKind.RANDOM)
+						.prompting("Waiting for your opponent to determine " + what + "...")
+						// Nobody is asked anything: whichever client holds the controller's seat
+						// rolls, and the other applies what it is told.
+						.locally(() -> RandomPicks.roll(rolls, poolSize))
+						.byCpu(()   -> RandomPicks.roll(rolls, poolSize))
+						.legalWhen(a -> a.size() == rolls && RandomPicks.fitPool(a, poolSize),
+								"there are " + poolSize + " card(s) to pick from here"));
+				return answer.size() == rolls ? answer : List.of();
 			}
 
 			@Override public void shieldJobForwardsCannotBeChosen(String job, String excludeName,
@@ -2479,146 +2541,168 @@ final class GameContextImpl implements GameContext {
 				logEntry((isP1 ? "" : "[P2] ") + card.name() + " added to hand from reveal");
 			}
 
-			@Override public void revealEachPlayerTopDeckMayPlay(java.util.function.Predicate<CardData> eligibleCondition) {
-				// --- P1 reveal ---
-				Deque<CardData> p1Deck = mw.gameState.getP1MainDeck();
-				if (p1Deck.isEmpty()) {
-					logEntry("Reveal: P1's deck is empty.");
-				} else {
-					CardData p1Card = p1Deck.pollFirst();
-					mw.refreshP1DeckLabel();
-					logEntry("P1 revealed: " + p1Card.name() + " (" + p1Card.type() + ")");
-					boolean p1Eligible = eligibleCondition.test(p1Card);
-					boolean[] p1Play = {false};
-					JDialog p1Dlg = new JDialog(mw.frame, "P1 Reveal", true);
-					p1Dlg.setResizable(false);
-					p1Dlg.setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
-					JLabel p1CardLabel = new JLabel("...", SwingConstants.CENTER);
-					p1CardLabel.setPreferredSize(new Dimension(CARD_W, CARD_H));
-					p1CardLabel.setOpaque(true);
-					p1CardLabel.setBackground(Color.DARK_GRAY);
-					p1CardLabel.setBorder(BorderFactory.createLineBorder(new Color(160, 110, 220), 1));
-					p1CardLabel.addMouseListener(new MouseAdapter() {
-						@Override public void mouseEntered(MouseEvent e) { mw.showZoomAt(p1Card.imageUrl()); }
-						@Override public void mouseExited(MouseEvent e)  { mw.hideZoom(); }
-					});
-					new SwingWorker<ImageIcon, Void>() {
-						@Override protected ImageIcon doInBackground() throws Exception {
-							Image img = ImageCache.load(p1Card.imageUrl());
-							return img == null ? null : new ImageIcon(img.getScaledInstance(CARD_W, CARD_H, Image.SCALE_SMOOTH));
-						}
-						@Override protected void done() {
-							try { ImageIcon icon = get(); if (icon != null) { p1CardLabel.setIcon(icon); p1CardLabel.setText(null); } }
-							catch (InterruptedException | ExecutionException ignored) {}
-						}
-					}.execute();
-					JPanel p1Wrapper = new JPanel(new BorderLayout(0, 4));
-					p1Wrapper.setBorder(BorderFactory.createEmptyBorder(8, 8, 0, 8));
-					JLabel p1NameLabel = new JLabel(p1Card.name(), SwingConstants.CENTER);
-					p1NameLabel.setFont(FontLoader.loadPixelFont(9));
-					p1NameLabel.setPreferredSize(new Dimension(CARD_W, 18));
-					p1Wrapper.add(p1CardLabel, BorderLayout.CENTER);
-					p1Wrapper.add(p1NameLabel, BorderLayout.SOUTH);
-					JPanel p1South = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 6));
-					p1South.setBorder(BorderFactory.createEmptyBorder(0, 8, 8, 8));
-					if (p1Eligible) {
-						JButton declineBtn = new JButton("Decline");
-						declineBtn.setFont(FontLoader.loadPixelFont(11));
-						declineBtn.addActionListener(ae -> { mw.hideZoom(); p1Dlg.dispose(); });
-						JButton okBtn = new JButton("Play onto field");
-						okBtn.setFont(FontLoader.loadPixelFont(11));
-						okBtn.addActionListener(ae -> { p1Play[0] = true; mw.hideZoom(); p1Dlg.dispose(); });
-						p1South.add(declineBtn);
-						p1South.add(okBtn);
-					} else {
-						JButton okBtn = new JButton("OK");
-						okBtn.setFont(FontLoader.loadPixelFont(11));
-						okBtn.addActionListener(ae -> { mw.hideZoom(); p1Dlg.dispose(); });
-						p1South.add(okBtn);
-					}
-					p1Dlg.getContentPane().setLayout(new BorderLayout(0, 4));
-					p1Dlg.getContentPane().add(p1Wrapper, BorderLayout.CENTER);
-					p1Dlg.getContentPane().add(p1South,   BorderLayout.SOUTH);
-					p1Dlg.pack();
-					p1Dlg.setLocationRelativeTo(mw.frame);
-					p1Dlg.setVisible(true);
-					if (p1Eligible && p1Play[0]) {
-						logEntry("P1 plays " + p1Card.name() + " onto field from reveal");
-						if (p1Card.isBackup())       mw.placeCardInFirstBackupSlot(p1Card);
-						else if (p1Card.isMonster()) mw.placeCardInMonsterZone(p1Card);
-						else                         mw.placeCardInForwardZone(p1Card);
-					} else {
-						logEntry("P1 returns " + p1Card.name() + " to top of deck");
-						p1Deck.addFirst(p1Card);
-					}
-					mw.refreshP1DeckLabel();
-				}
+			/**
+			 * "Each player reveals the top card of their deck and may play it onto the field."
+			 *
+			 * <p>Resolved a seat at a time, controller first. That order is what makes the two
+			 * clients agree: each seats its own player as P1, so running it as
+			 * {@code isP1} then {@code !isP1} has both walk the same two players in the same
+			 * order — and it falls out that each client asks its own player exactly once and
+			 * waits for the other exactly once.
+			 */
+			@Override public void revealEachPlayerTopDeckMayPlay(Predicate<CardData> eligibleCondition) {
+				revealTopMayPlayForSeat(isP1,  eligibleCondition);
+				revealTopMayPlayForSeat(!isP1, eligibleCondition);
+			}
 
-				// --- P2 reveal ---
-				Deque<CardData> p2Deck = mw.gameState.getP2MainDeck();
-				if (p2Deck.isEmpty()) {
-					logEntry("Reveal: P2's deck is empty.");
-				} else {
-					CardData p2Card = p2Deck.pollFirst();
-					mw.refreshP2DeckLabel();
-					boolean p2Eligible = eligibleCondition.test(p2Card);
-					logEntry("P2 revealed: " + p2Card.name() + " (" + p2Card.type() + ")"
-							+ (p2Eligible ? " — plays onto field" : " — returned to deck"));
-					JDialog p2Dlg = new JDialog(mw.frame, "P2 Reveal", true);
-					p2Dlg.setResizable(false);
-					p2Dlg.setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
-					JLabel p2CardLabel = new JLabel("...", SwingConstants.CENTER);
-					p2CardLabel.setPreferredSize(new Dimension(CARD_W, CARD_H));
-					p2CardLabel.setOpaque(true);
-					p2CardLabel.setBackground(Color.DARK_GRAY);
-					p2CardLabel.setBorder(BorderFactory.createLineBorder(new Color(160, 110, 220), 1));
-					p2CardLabel.addMouseListener(new MouseAdapter() {
-						@Override public void mouseEntered(MouseEvent e) { mw.showZoomAt(p2Card.imageUrl()); }
-						@Override public void mouseExited(MouseEvent e)  { mw.hideZoom(); }
-					});
-					new SwingWorker<ImageIcon, Void>() {
-						@Override protected ImageIcon doInBackground() throws Exception {
-							Image img = ImageCache.load(p2Card.imageUrl());
-							return img == null ? null : new ImageIcon(img.getScaledInstance(CARD_W, CARD_H, Image.SCALE_SMOOTH));
-						}
-						@Override protected void done() {
-							try { ImageIcon icon = get(); if (icon != null) { p2CardLabel.setIcon(icon); p2CardLabel.setText(null); } }
-							catch (InterruptedException | ExecutionException ignored) {}
-						}
-					}.execute();
-					JPanel p2Wrapper = new JPanel(new BorderLayout(0, 4));
-					p2Wrapper.setBorder(BorderFactory.createEmptyBorder(8, 8, 0, 8));
-					JLabel p2NameLabel = new JLabel(p2Card.name() + (p2Eligible ? " → field" : " → deck"), SwingConstants.CENTER);
-					p2NameLabel.setFont(FontLoader.loadPixelFont(9));
-					p2NameLabel.setPreferredSize(new Dimension(CARD_W, 18));
-					p2Wrapper.add(p2CardLabel, BorderLayout.CENTER);
-					p2Wrapper.add(p2NameLabel, BorderLayout.SOUTH);
-					JPanel p2South = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 6));
-					p2South.setBorder(BorderFactory.createEmptyBorder(0, 8, 8, 8));
-					JButton p2OkBtn = new JButton("OK");
-					p2OkBtn.setFont(FontLoader.loadPixelFont(11));
-					p2OkBtn.addActionListener(ae -> { mw.hideZoom(); p2Dlg.dispose(); });
-					p2South.add(p2OkBtn);
-					p2Dlg.getContentPane().setLayout(new BorderLayout(0, 4));
-					p2Dlg.getContentPane().add(p2Wrapper, BorderLayout.CENTER);
-					p2Dlg.getContentPane().add(p2South,   BorderLayout.SOUTH);
-					p2Dlg.pack();
-					p2Dlg.setLocationRelativeTo(mw.frame);
-					p2Dlg.setVisible(true);
-					boolean p2WouldViolateUniqueness = p2Eligible && !p2Card.multicard()
-							&& (mw.p2ForwardCards.stream().anyMatch(c -> p2Card.name().equalsIgnoreCase(c.name()))
-							   || java.util.Arrays.stream(mw.p2BackupCards).anyMatch(c -> c != null && p2Card.name().equalsIgnoreCase(c.name())));
-					if (p2Eligible && mw.isP2Cpu() && !p2WouldViolateUniqueness) {
-						if (p2Card.isBackup())       mw.placeP2CardInFirstBackupSlot(p2Card);
-						else if (p2Card.isMonster()) mw.placeP2CardInMonsterZone(p2Card);
-						else                         mw.placeP2CardInForwardZone(p2Card);
-					} else {
-						if (p2Eligible && !mw.isP2Cpu())
-							logEntry("[P2] Each player reveal — multiplayer P2 choice not yet implemented; returning to deck");
-						p2Deck.addFirst(p2Card);
-					}
-					mw.refreshP2DeckLabel();
+			/**
+			 * One seat's half of the above: reveal their top card, ask them whether to play it, and
+			 * carry out the answer. The card is fixed — the deck decides it — so the only thing
+			 * that crosses the wire is the yes or no.
+			 */
+			private void revealTopMayPlayForSeat(boolean seatIsP1, Predicate<CardData> eligibleCondition) {
+				Deque<CardData> deck = seatIsP1 ? mw.gameState.getP1MainDeck() : mw.gameState.getP2MainDeck();
+				if (deck.isEmpty()) {
+					logEntry("Reveal: " + (seatIsP1 ? "P1" : "P2") + "'s deck is empty.");
+					return;
 				}
+				CardData card = deck.pollFirst();
+				if (seatIsP1) mw.refreshP1DeckLabel(); else mw.refreshP2DeckLabel();
+				// A reveal is public, so both clients name the card whichever seat turned it up.
+				logEntry((seatIsP1 ? "P1" : "P2") + " revealed: " + card.name() + " (" + card.type() + ")");
+
+				boolean eligible = eligibleCondition.test(card);
+				// Not a legality gate — the engine nowhere stops a player putting a second copy of
+				// a Character on their field, from hand or otherwise. This is the AI declining to,
+				// which is what it does for every ordinary play too, so it is scoped to the AI's
+				// answer and deliberately absent from legalWhen below. Enforcing uniqueness as a
+				// rule is worth doing, but it belongs across the engine, not in this one effect.
+				boolean cpuMayPlay = eligible && !aiAvoidsDuplicate(seatIsP1, card);
+
+				List<Integer> answer = mw.decide(PlayerChoice.by(seatIsP1, ChoiceKind.REVEAL_MAY_PLAY)
+						.prompting("Waiting for your opponent to decide on the card they revealed...")
+						.locally(() -> showRevealMayPlayDialog(card, eligible) ? List.of(1) : List.of(0))
+						.byCpu(()   -> List.of(cpuMayPlay ? 1 : 0))
+						.legalWhen(a -> a.size() == 1 && (a.get(0) == 0 || (a.get(0) == 1 && eligible)),
+								"that card is not one they may play here"));
+
+				boolean play = !answer.isEmpty() && answer.get(0) == 1;
+				// The spectator's view of the other seat's reveal. Only worth a dialog against the
+				// AI: a remote opponent has already held this client on the wait prompt above.
+				if (!seatIsP1 && mw.isP2Cpu()) showRevealSpectatorDialog(card, play);
+
+				if (play) {
+					logEntry((seatIsP1 ? "P1" : "P2") + " plays " + card.name() + " onto field from reveal");
+					if (seatIsP1) {
+						if (card.isBackup())       mw.placeCardInFirstBackupSlot(card);
+						else if (card.isMonster()) mw.placeCardInMonsterZone(card);
+						else                       mw.placeCardInForwardZone(card);
+					} else {
+						if (card.isBackup())       mw.placeP2CardInFirstBackupSlot(card);
+						else if (card.isMonster()) mw.placeP2CardInMonsterZone(card);
+						else                       mw.placeP2CardInForwardZone(card);
+					}
+				} else {
+					logEntry((seatIsP1 ? "P1" : "P2") + " returns " + card.name() + " to top of deck");
+					deck.addFirst(card);
+				}
+				if (seatIsP1) mw.refreshP1DeckLabel(); else mw.refreshP2DeckLabel();
+			}
+
+			/**
+			 * Whether playing {@code card} would put a second copy of a non-multicard on that
+			 * side — the same check {@link ComputerPlayer} makes before any ordinary play, so the
+			 * AI behaves the same way here as it does everywhere else.
+			 */
+			private boolean aiAvoidsDuplicate(boolean seatIsP1, CardData card) {
+				return !card.multicard() && (seatIsP1
+						? mw.hasCharacterNameOnField(card.name())
+						: mw.p2HasCharacterNameOnField(card.name()));
+			}
+
+			/**
+			 * Shows the local player the card they revealed and returns whether they played it.
+			 * When {@code mayPlay} is false there is nothing to decide and the dialog is only
+			 * telling them what came up.
+			 */
+			private boolean showRevealMayPlayDialog(CardData card, boolean mayPlay) {
+				boolean[] play = { false };
+				JDialog dlg = new JDialog(mw.frame, "Reveal", true);
+				dlg.setResizable(false);
+				dlg.setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
+
+				JPanel south = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 6));
+				south.setBorder(BorderFactory.createEmptyBorder(0, 8, 8, 8));
+				if (mayPlay) {
+					JButton declineBtn = new JButton("Decline");
+					declineBtn.setFont(FontLoader.loadPixelFont(11));
+					declineBtn.addActionListener(ae -> { mw.hideZoom(); dlg.dispose(); });
+					JButton okBtn = new JButton("Play onto field");
+					okBtn.setFont(FontLoader.loadPixelFont(11));
+					okBtn.addActionListener(ae -> { play[0] = true; mw.hideZoom(); dlg.dispose(); });
+					south.add(declineBtn);
+					south.add(okBtn);
+				} else {
+					JButton okBtn = new JButton("OK");
+					okBtn.setFont(FontLoader.loadPixelFont(11));
+					okBtn.addActionListener(ae -> { mw.hideZoom(); dlg.dispose(); });
+					south.add(okBtn);
+				}
+				showRevealCardDialog(dlg, card, card.name(), south);
+				return play[0];
+			}
+
+			/** The other seat's reveal, shown to this client after that seat has decided. */
+			private void showRevealSpectatorDialog(CardData card, boolean played) {
+				JDialog dlg = new JDialog(mw.frame, "Opponent Reveal", true);
+				dlg.setResizable(false);
+				dlg.setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
+
+				JPanel south = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 6));
+				south.setBorder(BorderFactory.createEmptyBorder(0, 8, 8, 8));
+				JButton okBtn = new JButton("OK");
+				okBtn.setFont(FontLoader.loadPixelFont(11));
+				okBtn.addActionListener(ae -> { mw.hideZoom(); dlg.dispose(); });
+				south.add(okBtn);
+				showRevealCardDialog(dlg, card, card.name() + (played ? " → field" : " → deck"), south);
+			}
+
+			/** The card art, its caption and the caller's buttons, shown modally. */
+			private void showRevealCardDialog(JDialog dlg, CardData card, String caption, JPanel south) {
+				JLabel cardLabel = new JLabel("...", SwingConstants.CENTER);
+				cardLabel.setPreferredSize(new Dimension(CARD_W, CARD_H));
+				cardLabel.setOpaque(true);
+				cardLabel.setBackground(Color.DARK_GRAY);
+				cardLabel.setBorder(BorderFactory.createLineBorder(new Color(160, 110, 220), 1));
+				cardLabel.addMouseListener(new MouseAdapter() {
+					@Override public void mouseEntered(MouseEvent e) { mw.showZoomAt(card.imageUrl()); }
+					@Override public void mouseExited(MouseEvent e)  { mw.hideZoom(); }
+				});
+				new SwingWorker<ImageIcon, Void>() {
+					@Override protected ImageIcon doInBackground() throws Exception {
+						Image img = ImageCache.load(card.imageUrl());
+						return img == null ? null : new ImageIcon(img.getScaledInstance(CARD_W, CARD_H, Image.SCALE_SMOOTH));
+					}
+					@Override protected void done() {
+						try { ImageIcon icon = get(); if (icon != null) { cardLabel.setIcon(icon); cardLabel.setText(null); } }
+						catch (InterruptedException | ExecutionException ignored) {}
+					}
+				}.execute();
+
+				JPanel wrapper = new JPanel(new BorderLayout(0, 4));
+				wrapper.setBorder(BorderFactory.createEmptyBorder(8, 8, 0, 8));
+				JLabel nameLabel = new JLabel(caption, SwingConstants.CENTER);
+				nameLabel.setFont(FontLoader.loadPixelFont(9));
+				nameLabel.setPreferredSize(new Dimension(CARD_W, 18));
+				wrapper.add(cardLabel, BorderLayout.CENTER);
+				wrapper.add(nameLabel, BorderLayout.SOUTH);
+
+				dlg.getContentPane().setLayout(new BorderLayout(0, 4));
+				dlg.getContentPane().add(wrapper, BorderLayout.CENTER);
+				dlg.getContentPane().add(south,   BorderLayout.SOUTH);
+				dlg.pack();
+				dlg.setLocationRelativeTo(mw.frame);
+				dlg.setVisible(true);
 			}
 
 			@Override public void revealTopBreakSameCostAddToHand() {
@@ -2958,24 +3042,27 @@ final class GameContextImpl implements GameContext {
 					markEffectFizzled();
 					return;
 				}
-				int idx = (int) (Math.random() * hand.size());
+				List<Integer> picks = randomPicks(1, hand.size(), "which card is revealed");
+				if (picks.isEmpty()) return;
+				int idx = picks.get(0);
 				CardData revealed = hand.get(idx);
+				// A revealed card is public, so it is named for both players whoever revealed it.
 				logEntry((isP1 ? "" : "[P2] ") + "Randomly revealed: " + revealed.name());
 				if (!revealed.isSummon()) {
 					logEntry(revealed.name() + " is not a Summon — no cast");
 					return;
 				}
-				boolean cast;
-				if (isP1) {
-					int choice = mw.showEffectOptionDialog(
-							"Randomly revealed: " + revealed.name() + " (Summon)\nCast it without paying the cost?",
-							"May Cast Summon", new Object[]{"Cast", "Decline"});
-					cast = (choice == 0);
-				} else {
-					cast = true;
-					logEntry("[P2 AI] Auto-casts " + revealed.name());
-				}
-				if (!cast) {
+				// The AI never turns down a free Summon, which is what its branch used to do.
+				List<Integer> answer = mw.decide(PlayerChoice.by(isP1, ChoiceKind.MAY)
+						.prompting("Waiting for your opponent to decide on a free Summon...")
+						.locally(() -> List.of(mw.showEffectOptionDialog(
+								"Randomly revealed: " + revealed.name()
+										+ " (Summon)\nCast it without paying the cost?",
+								"May Cast Summon", new Object[]{"Cast", "Decline"}) == 0 ? 1 : 0))
+						.byCpu(()   -> List.of(1))
+						.legalWhen(a -> a.size() == 1 && (a.get(0) == 0 || a.get(0) == 1),
+								"a yes or a no is the only answer that fits"));
+				if (answer.isEmpty() || answer.get(0) != 1) {
 					logEntry("Declined to cast " + revealed.name());
 					return;
 				}
@@ -4355,23 +4442,17 @@ final class GameContextImpl implements GameContext {
 					return;
 				}
 				// The card stays in hand — only its EX Burst effect goes on the stack, as with
-				// Akstar's Damage Zone version.
-				if (isP1) {
-					int choice = JOptionPane.showConfirmDialog(mw.frame,
-							"Trigger " + added.name() + "'s EX Burst effect?",
-							"EX Burst", JOptionPane.YES_NO_OPTION);
-					if (choice != JOptionPane.YES_OPTION) {
-						logEntry("[EX Burst] " + added.name() + " — declined");
-						return;
-					}
-					logEntry("[EX Burst] " + added.name() + " — placed on stack");
-					mw.gameState.pushStack(new StackEntry(added, true, true));
-					mw.showStackWindow();
-				} else {
-					logEntry("[AI EX Burst] " + added.name() + " — placed on stack");
-					mw.gameState.pushStack(new StackEntry(added, false, true));
-					mw.showStackWindowIfNeeded();
+				// Akstar's Damage Zone version. The AI always takes a free EX Burst, which is what
+				// it did when this was a P2-only branch.
+				if (!askYesNo(isP1, ChoiceKind.EX_BURST,
+						"Trigger " + added.name() + "'s EX Burst effect?", "EX Burst",
+						"Waiting for your opponent to decide on an EX Burst...", true)) {
+					logEntry("[EX Burst] " + added.name() + " — declined");
+					return;
 				}
+				logEntry("[EX Burst] " + added.name() + " — placed on stack");
+				mw.gameState.pushStack(new StackEntry(added, isP1, true));
+				if (isP1) mw.showStackWindow(); else mw.showStackWindowIfNeeded();
 			}
 
 			@Override public void lookAtTopDeckCastSummonFreeRestBottom(int count, int maxCost) {
@@ -4626,35 +4707,17 @@ final class GameContextImpl implements GameContext {
 			}
 
 			@Override public void forceOpponentRandomDiscard(int count) {
-				if (isP1) {
-					List<CardData> hand = mw.gameState.getP2Hand();
-					int actual = Math.min(count, hand.size());
-					for (int i = 0; i < actual; i++) {
-						int idx = (int) (Math.random() * mw.gameState.getP2Hand().size());
-						CardData d = mw.playerBreakFromHand(false,idx);
-						if (d != null) {
-							logEntry("[P2] Randomly discards " + d.name());
-							mw.p2Turn.discardedByEffectThisTurn = true;
-							mw.p1Turn.causedOpponentDiscardThisTurn = true;
-						}
-					}
-					mw.refreshP2HandCountLabel();
-					mw.refreshP2BreakLabel();
-				} else {
-					List<CardData> hand = mw.gameState.getP1Hand();
-					int actual = Math.min(count, hand.size());
-					for (int i = 0; i < actual; i++) {
-						int idx = (int) (Math.random() * mw.gameState.getP1Hand().size());
-						CardData d = mw.playerBreakFromHand(true,idx);
-						if (d != null) {
-							logEntry("[P1] Randomly discards " + d.name());
-							mw.p1Turn.discardedByEffectThisTurn = true;
-							mw.p2Turn.causedOpponentDiscardThisTurn = true;
-						}
-					}
-					mw.refreshP1HandLabel();
-					mw.refreshP1BreakLabel();
+				boolean victimIsP1 = !isP1;
+				List<CardData> hand = victimIsP1 ? mw.gameState.getP1Hand() : mw.gameState.getP2Hand();
+				for (int idx : randomPicks(count, hand.size(), "a random discard")) {
+					CardData d = mw.playerBreakFromHand(victimIsP1, idx);
+					if (d == null) continue;
+					logEntry("[" + (victimIsP1 ? "P1" : "P2") + "] Randomly discards " + d.name());
+					(victimIsP1 ? mw.p1Turn : mw.p2Turn).discardedByEffectThisTurn    = true;
+					(victimIsP1 ? mw.p2Turn : mw.p1Turn).causedOpponentDiscardThisTurn = true;
 				}
+				if (victimIsP1) { mw.refreshP1HandLabel();      mw.refreshP1BreakLabel(); }
+				else            { mw.refreshP2HandCountLabel(); mw.refreshP2BreakLabel(); }
 			}
 
 			@Override public void drawCardsForOpponent(int count) {
@@ -4675,59 +4738,31 @@ final class GameContextImpl implements GameContext {
 			}
 
 			@Override public void forceOpponentRandomHandRfp(int count) {
-				if (isP1) {
-					List<CardData> hand = mw.gameState.getP2Hand();
-					int actual = Math.min(count, hand.size());
-					for (int i = 0; i < actual; i++) {
-						if (hand.isEmpty()) break;
-						int idx = (int) (Math.random() * hand.size());
-						CardData d = hand.remove(idx);
-						mw.gameState.addToPermanentRfp(d);
-						logEntry("[P2] Randomly removed from game: " + d.name());
-					}
-					mw.refreshP2HandCountLabel();
-				} else {
-					List<CardData> hand = mw.gameState.getP1Hand();
-					int actual = Math.min(count, hand.size());
-					for (int i = 0; i < actual; i++) {
-						if (hand.isEmpty()) break;
-						int idx = (int) (Math.random() * hand.size());
-						CardData d = mw.gameState.removeFromHand(idx);
-						if (d != null) { mw.gameState.addToPermanentRfp(d); logEntry("[P1] Randomly removed from game: " + d.name()); }
-					}
-					mw.refreshP1HandLabel();
-					mw.refreshP1WarpZoneUI();
+				boolean victimIsP1 = !isP1;
+				List<CardData> hand = victimIsP1 ? mw.gameState.getP1Hand() : mw.gameState.getP2Hand();
+				for (int idx : randomPicks(count, hand.size(), "a random card to remove from the game")) {
+					// P1's hand goes through GameState so its own bookkeeping runs; P2's is the
+					// list itself. Kept as it was rather than made uniform in passing.
+					CardData d = victimIsP1 ? mw.gameState.removeFromHand(idx) : hand.remove(idx);
+					if (d == null) continue;
+					mw.gameState.addToPermanentRfp(d);
+					logEntry("[" + (victimIsP1 ? "P1" : "P2") + "] Randomly removed from game: " + d.name());
 				}
+				if (victimIsP1) { mw.refreshP1HandLabel(); mw.refreshP1WarpZoneUI(); }
+				else            { mw.refreshP2HandCountLabel(); }
 			}
 
 			@Override public void forceOpponentRandomHandToBottomOfDeck(int count) {
-				if (isP1) {
-					List<CardData> hand = mw.gameState.getP2Hand();
-					int actual = Math.min(count, hand.size());
-					for (int i = 0; i < actual; i++) {
-						if (hand.isEmpty()) break;
-						int idx = (int) (Math.random() * hand.size());
-						CardData d = hand.remove(idx);
-						mw.gameState.getP2MainDeck().addLast(d);
-						logEntry("[P2] Randomly placed " + d.name() + " at bottom of deck");
-					}
-					mw.refreshP2HandCountLabel();
-					mw.refreshP2DeckLabel();
-				} else {
-					List<CardData> hand = mw.gameState.getP1Hand();
-					int actual = Math.min(count, hand.size());
-					for (int i = 0; i < actual; i++) {
-						if (hand.isEmpty()) break;
-						int idx = (int) (Math.random() * hand.size());
-						CardData d = mw.gameState.removeFromHand(idx);
-						if (d != null) {
-							mw.gameState.getP1MainDeck().addLast(d);
-							logEntry("[P1] Randomly placed " + d.name() + " at bottom of deck");
-						}
-					}
-					mw.refreshP1HandLabel();
-					mw.refreshP1DeckLabel();
+				boolean victimIsP1 = !isP1;
+				List<CardData> hand = victimIsP1 ? mw.gameState.getP1Hand() : mw.gameState.getP2Hand();
+				for (int idx : randomPicks(count, hand.size(), "a random card to put on the bottom of their deck")) {
+					CardData d = victimIsP1 ? mw.gameState.removeFromHand(idx) : hand.remove(idx);
+					if (d == null) continue;
+					(victimIsP1 ? mw.gameState.getP1MainDeck() : mw.gameState.getP2MainDeck()).addLast(d);
+					logEntry("[" + (victimIsP1 ? "P1" : "P2") + "] Randomly placed " + d.name() + " at bottom of deck");
 				}
+				if (victimIsP1) { mw.refreshP1HandLabel();      mw.refreshP1DeckLabel(); }
+				else            { mw.refreshP2HandCountLabel(); mw.refreshP2DeckLabel(); }
 			}
 
 			@Override public void selectFromOpponentHandAndRfp(int count) {
@@ -6104,9 +6139,37 @@ final class GameContextImpl implements GameContext {
 			}
 
 			@Override public boolean promptYouMay(String prompt) {
-				if (!isP1) return false;
-				int result = JOptionPane.showConfirmDialog(mw.frame, prompt, "You May", JOptionPane.YES_NO_OPTION);
-				return result == JOptionPane.YES_OPTION;
+				// The AI declines every optional effect. That is not a considered heuristic — it
+				// is what the P2 branch used to hardcode — but it is the safe answer of the two,
+				// since every caller treats "no" as the effect simply not happening.
+				return askYesNo(isP1, ChoiceKind.MAY, prompt, "You May",
+						"Waiting for your opponent: " + prompt, false);
+			}
+
+			/**
+			 * Puts a yes/no question to the seat at {@code seatIsP1} and returns their answer.
+			 *
+			 * <p>Both of this engine's yes/no questions used to be written as
+			 * {@code if (isP1) ask(); else <fixed answer>;}, which quietly meant the opposite of
+			 * what it looked like once the other seat could hold a human: their client asked them,
+			 * this one assumed, and the two resolved the same ability differently. Routing it
+			 * through {@link MainWindow#decide} is what makes the fixed answer the <em>AI's</em>
+			 * rather than everyone-who-is-not-me's.
+			 *
+			 * @param cpuAnswer what the AI says when it holds the seat
+			 */
+			private boolean askYesNo(boolean seatIsP1, ChoiceKind kind, String prompt, String title,
+					String waitPrompt, boolean cpuAnswer) {
+				List<Integer> answer = mw.decide(PlayerChoice.by(seatIsP1, kind)
+						.prompting(waitPrompt)
+						.locally(() -> List.of(
+								JOptionPane.showConfirmDialog(mw.frame, prompt, title,
+										JOptionPane.YES_NO_OPTION) == JOptionPane.YES_OPTION ? 1 : 0))
+						.byCpu(()   -> List.of(cpuAnswer ? 1 : 0))
+						// Nothing about the board makes one answer illegal — only the shape.
+						.legalWhen(a -> a.size() == 1 && (a.get(0) == 0 || a.get(0) == 1),
+								"a yes or a no is the only answer that fits"));
+				return !answer.isEmpty() && answer.get(0) == 1;
 			}
 
 			@Override public void addTempAttackTrigger(CardData card, Consumer<GameContext> effect) {
@@ -6893,11 +6956,17 @@ final class GameContextImpl implements GameContext {
 			}
 
 			@Override public String selectJobFromDatabase() {
+				// The AI's shortlist, not the human's: the dialog offers every Job in the database
+				// either way. Both clients could derive it — it is drawn from the naming player's
+				// own field — but only the client running the AI ever needs it.
 				List<String> candidates = NameSelectionDialogs.collectFieldJobs(
 						isP1 ? mw.p1ForwardCards : mw.p2ForwardCards,
 						isP1 ? mw.p1BackupCards  : mw.p2BackupCards,
 						isP1 ? mw.p1MonsterCards : mw.p2MonsterCards);
-				return NameSelectionDialogs.selectJob(mw.frame, candidates, isP1, mw::logEntry);
+				return firstNamed(askToName("Waiting for your opponent to name a Job...",
+						interactive -> NamedThing.of(NamedThing.Vocabulary.JOB,
+								NameSelectionDialogs.selectJob(mw.frame, candidates, interactive,
+										mw::logEntry))));
 			}
 
 			@Override public void grantJobUntilEndOfTurn(ForwardTarget t, String job) {
@@ -6916,11 +6985,23 @@ final class GameContextImpl implements GameContext {
 			}
 
 			@Override public String[] selectElementAndJob(String prompt, Set<String> excluded) {
-				return NameSelectionDialogs.selectElementAndJob(mw.frame, prompt, excluded, isP1, mw::logEntry);
+				// One question naming two things, so both travel in one answer — an Element pair
+				// followed by a Job pair.
+				List<NamedThing> named = askToName(
+						"Waiting for your opponent to name an Element and a Job...",
+						interactive -> {
+							String[] pair = NameSelectionDialogs.selectElementAndJob(
+									mw.frame, prompt, excluded, interactive, mw::logEntry);
+							if (pair == null || pair[0] == null || pair[1] == null) return List.of();
+							return List.of(new NamedThing(NamedThing.Vocabulary.ELEMENT, pair[0]),
+							               new NamedThing(NamedThing.Vocabulary.JOB,     pair[1]));
+						});
+				return named.size() < 2 ? null
+						: new String[] { named.get(0).value(), named.get(1).value() };
 			}
 
 			@Override public String[] selectElementAndJob(String prompt) {
-				return selectElementAndJob(prompt, java.util.Collections.emptySet());
+				return selectElementAndJob(prompt, Set.of());
 			}
 
 			@Override public void addCardJobPermanently(String cardName, String job) {
@@ -6946,11 +7027,37 @@ final class GameContextImpl implements GameContext {
 			}
 
 			@Override public String[] selectJobOrElement(String prompt) {
-				return NameSelectionDialogs.selectJobOrElement(mw.frame, prompt, isP1, mw::logEntry);
+				return namedWithLabel(askToName("Waiting for your opponent to name a Job or Element...",
+						interactive -> taggedPair(NameSelectionDialogs.selectJobOrElement(
+								mw.frame, prompt, interactive, mw::logEntry))));
 			}
 
 			@Override public String[] selectJobOrCategory(String prompt) {
-				return NameSelectionDialogs.selectJobOrCategory(mw.frame, prompt, isP1, mw::logEntry);
+				return namedWithLabel(askToName("Waiting for your opponent to name a Job or Category...",
+						interactive -> taggedPair(NameSelectionDialogs.selectJobOrCategory(
+								mw.frame, prompt, interactive, mw::logEntry))));
+			}
+
+			/**
+			 * Reads a {@code {"job"|"element"|"category", value}} answer from the dialogs into the
+			 * form the wire takes. Which vocabulary was used is part of what the player decided
+			 * here — these abilities let them pick the kind of thing to name, not just the thing.
+			 */
+			private List<NamedThing> taggedPair(String[] tagged) {
+				if (tagged == null || tagged[0] == null || tagged[1] == null) return List.of();
+				NamedThing.Vocabulary v = switch (tagged[0].toLowerCase()) {
+					case "element"  -> NamedThing.Vocabulary.ELEMENT;
+					case "category" -> NamedThing.Vocabulary.CATEGORY;
+					default         -> NamedThing.Vocabulary.JOB;
+				};
+				return List.of(new NamedThing(v, tagged[1]));
+			}
+
+			/** Puts a named thing back into the {@code {label, value}} shape the callers expect. */
+			private String[] namedWithLabel(List<NamedThing> named) {
+				if (named.isEmpty()) return null;
+				NamedThing t = named.get(0);
+				return new String[] { t.vocabulary().name().toLowerCase(), t.value() };
 			}
 
 			@Override public void revealTopAddUpToMatchingRestBottom(int reveal, int maxAdd,
@@ -6963,41 +7070,9 @@ final class GameContextImpl implements GameContext {
 				for (CardData c : deck) { peeked.add(c); if (peeked.size() >= n) break; }
 				logEntry("Reveal top " + n + " card(s): " +
 						peeked.stream().map(CardData::name).collect(Collectors.joining(", ")));
-				if (!isP1 && mw.isP2Cpu()) {
-					// CPU P2: auto-select — no dialog. Pick up to maxAdd eligible cards
-					// (highest cost first, matching any of the filters), rest go to bottom.
-					List<CardData> eligible = peeked.stream()
-							.filter(c -> {
-								if (maxCost >= 0 && c.cost() > maxCost) return false;
-								if (elementFilter != null && !CardFilters.meetsElementFilter(c, elementFilter)) return false;
-								boolean noFilters = jobFilter == null && categoryFilter == null
-										&& cardNameFilter == null && typeFilter == null && orElementFilter == null;
-								if (noFilters) return true;
-								return (jobFilter      != null && CardFilters.meetsJobFilter(c, jobFilter))
-								    || (categoryFilter != null && CardFilters.meetsCategoryFilter(c, categoryFilter))
-								    || (cardNameFilter != null && CardFilters.meetsCardNameFilter(c, cardNameFilter))
-								    || (typeFilter     != null && meetsRevealTypeFilter(c, typeFilter))
-									    || (orElementFilter != null && CardFilters.meetsElementFilter(c, orElementFilter));
-							})
-							.sorted(java.util.Comparator.comparingInt(CardData::cost).reversed())
-							.collect(Collectors.toList());
-					List<CardData> chosen = eligible.subList(0, Math.min(maxAdd, eligible.size()));
-					Set<CardData> chosenSet = new java.util.LinkedHashSet<>(chosen);
-					for (int i = 0; i < n; i++) deck.pollFirst();
-					for (CardData c : chosenSet) {
-						mw.gameState.getP2Hand().add(c);
-						logEntry("[AI] " + c.name() + " → [P2] hand");
-					}
-					if (!chosenSet.isEmpty()) mw.refreshP2HandCountLabel();
-					for (CardData c : peeked) {
-						if (!chosenSet.contains(c)) { deck.addLast(c); logEntry("[AI] " + c.name() + " → [P2] bottom of deck"); }
-					}
-					mw.refreshP2DeckLabel();
-				} else if (!isP1) {
-					multiplayerP2RevealPending(n);
-				} else {
-					mw.lookDialogs().showRevealAddUpToMatchingRestBottom(peeked, deck, isP1, maxAdd, jobFilter, categoryFilter, cardNameFilter, typeFilter, maxCost, elementFilter, orElementFilter);
-				}
+				mw.lookDialogs().revealAddUpToMatchingRestBottom(peeked, deck, isP1, maxAdd,
+						jobFilter, categoryFilter, cardNameFilter, typeFilter, maxCost,
+						elementFilter, orElementFilter);
 			}
 
 			@Override public void revealTopAddUpToExcludingNameRestBz(int reveal, int maxAdd, String excludeName) {
@@ -7008,43 +7083,7 @@ final class GameContextImpl implements GameContext {
 				for (CardData c : deck) { peeked.add(c); if (peeked.size() >= n) break; }
 				logEntry("Reveal top " + n + " card(s): " +
 						peeked.stream().map(CardData::name).collect(Collectors.joining(", ")));
-				if (!isP1 && mw.isP2Cpu()) {
-					// CPU P2: auto-add up to maxAdd cards (highest cost first, skipping excluded name)
-					List<CardData> eligible = peeked.stream()
-							.filter(c -> !c.name().equalsIgnoreCase(excludeName))
-							.sorted(java.util.Comparator.comparingInt(CardData::cost).reversed())
-							.collect(Collectors.toList());
-					Set<CardData> chosen = new java.util.LinkedHashSet<>(
-							eligible.subList(0, Math.min(maxAdd, eligible.size())));
-					for (int i = 0; i < n; i++) deck.pollFirst();
-					for (CardData c : chosen) {
-						mw.gameState.getP2Hand().add(c);
-						logEntry("[AI] " + c.name() + " → [P2] hand");
-					}
-					if (!chosen.isEmpty()) mw.refreshP2HandCountLabel();
-					for (CardData c : peeked) {
-						if (!chosen.contains(c)) {
-							mw.gameState.getP2BreakZone().add(c);
-							logEntry("[AI] " + c.name() + " → [P2] Break Zone");
-						}
-					}
-					mw.refreshP2DeckLabel();
-				} else if (!isP1) {
-					multiplayerP2RevealPending(n);
-				} else {
-					mw.lookDialogs().showRevealAddUpToExcludingNameRestBz(peeked, deck, isP1, maxAdd, excludeName);
-				}
-			}
-
-			/**
-			 * Placeholder for a reveal-and-choose effect that a remote human P2 controls. Routing the
-			 * choice to that player is not yet wired up, so — like the other multiplayer fallbacks in
-			 * this engine — the choice is not auto-resolved as if the AI made it, the dialog is never
-			 * shown at P1's seat, and the revealed cards are left on top of the deck as a safe default.
-			 */
-			private void multiplayerP2RevealPending(int n) {
-				logEntry("[P2] reveal top " + n + " card(s) — remote player choice not yet "
-						+ "implemented; cards left on top of deck");
+				mw.lookDialogs().revealAddUpToExcludingNameRestBz(peeked, deck, isP1, maxAdd, excludeName);
 			}
 
 			private boolean meetsRevealTypeFilter(CardData c, String type) {
@@ -7085,28 +7124,8 @@ final class GameContextImpl implements GameContext {
 					else if (c.isMonster()) mw.placeCardInMonsterZone(c);
 					else                    mw.placeCardInForwardZone(c);
 				};
-				if (!isP1 && mw.isP2Cpu()) {
-					List<CardData> eligible = peeked.stream()
-							.filter(c -> meetsRevealTypeFilter(c, typeFilter)
-									&& CardFilters.meetsCategoryFilter(c, categoryFilter))
-							.sorted(java.util.Comparator.comparingInt(CardData::cost).reversed())
-							.collect(Collectors.toList());
-					List<CardData> chosen = eligible.subList(0, Math.min(maxPlay, eligible.size()));
-					Set<CardData> chosenSet = new java.util.LinkedHashSet<>(chosen);
-					for (int i = 0; i < n; i++) deck.pollFirst();
-					for (CardData c : peeked) {
-						if (!chosenSet.contains(c)) { deck.addLast(c); logEntry("[AI] " + c.name() + " → [P2] bottom of deck"); }
-					}
-					mw.refreshP2DeckLabel();
-					for (CardData c : chosenSet) {
-						logEntry("[AI] " + c.name() + " played onto field");
-						playOntoField.accept(c);
-					}
-				} else if (!isP1) {
-					multiplayerP2RevealPending(n);
-				} else {
-					mw.lookDialogs().showRevealPlayTypeOntoFieldRestBottom(peeked, deck, isP1, maxPlay, typeFilter, categoryFilter, playOntoField);
-				}
+				mw.lookDialogs().revealPlayTypeOntoFieldRestBottom(peeked, deck, isP1, maxPlay,
+						typeFilter, categoryFilter, playOntoField);
 			}
 
 			@Override public void revealTopNPlayUpToElementTypeCostOntoField(int reveal, int maxPlay, String element, String typeFilter, int maxCost, boolean restToHand) {
@@ -7122,38 +7141,8 @@ final class GameContextImpl implements GameContext {
 					else if (c.isMonster()) mw.placeCardInMonsterZone(c);
 					else                    mw.placeCardInForwardZone(c);
 				};
-				java.util.function.Predicate<CardData> eligible = c ->
-						meetsRevealTypeFilter(c, typeFilter)
-						&& (element == null || c.containsElement(element))
-						&& (maxCost < 0 || c.cost() <= maxCost);
-				if (!isP1 && mw.isP2Cpu()) {
-					List<CardData> chosen = peeked.stream().filter(eligible)
-							.sorted(java.util.Comparator.comparingInt(CardData::cost).reversed())
-							.limit(maxPlay)
-							.collect(Collectors.toList());
-					Set<CardData> chosenSet = new java.util.LinkedHashSet<>(chosen);
-					for (int i = 0; i < n; i++) deck.pollFirst();
-					for (CardData c : peeked) {
-						if (chosenSet.contains(c)) continue;
-						if (restToHand) {
-							mw.gameState.getP2Hand().add(c);
-							logEntry("[AI] " + c.name() + " → [P2] hand");
-						} else {
-							deck.addLast(c);
-							logEntry("[AI] " + c.name() + " → [P2] bottom of deck");
-						}
-					}
-					mw.refreshP2DeckLabel();
-						if (restToHand) mw.refreshP2HandCountLabel();
-					for (CardData c : chosenSet) {
-						logEntry("[AI] " + c.name() + " played onto field");
-						playOntoField.accept(c);
-					}
-				} else if (!isP1) {
-					multiplayerP2RevealPending(n);
-				} else {
-					mw.lookDialogs().showRevealPlayElementTypeCostOntoField(peeked, deck, isP1, maxPlay, element, typeFilter, maxCost, restToHand, playOntoField);
-				}
+				mw.lookDialogs().revealPlayElementTypeCostOntoField(peeked, deck, isP1, maxPlay,
+						element, typeFilter, maxCost, restToHand, playOntoField);
 			}
 
 			@Override public void revealTopNPlayUpToNamedOrJobWithMaxCostOntoFieldRestBottom(
@@ -7170,29 +7159,8 @@ final class GameContextImpl implements GameContext {
 					else if (c.isMonster()) mw.placeCardInMonsterZone(c);
 					else                    mw.placeCardInForwardZone(c);
 				};
-				java.util.function.Predicate<CardData> eligible = c ->
-						(CardFilters.meetsCardNameFilter(c, cardName) || CardFilters.meetsJobFilter(c, job))
-						&& (maxCost < 0 || c.cost() <= maxCost);
-				if (!isP1 && mw.isP2Cpu()) {
-					List<CardData> chosen = peeked.stream().filter(eligible)
-							.sorted(java.util.Comparator.comparingInt(CardData::cost).reversed())
-							.limit(maxPlay)
-							.collect(Collectors.toList());
-					Set<CardData> chosenSet = new java.util.LinkedHashSet<>(chosen);
-					for (int i = 0; i < n; i++) deck.pollFirst();
-					for (CardData c : peeked) {
-						if (!chosenSet.contains(c)) { deck.addLast(c); logEntry("[AI] " + c.name() + " → [P2] bottom of deck"); }
-					}
-					mw.refreshP2DeckLabel();
-					for (CardData c : chosenSet) {
-						logEntry("[AI] " + c.name() + " played onto field");
-						playOntoField.accept(c);
-					}
-				} else if (!isP1) {
-					multiplayerP2RevealPending(n);
-				} else {
-					mw.lookDialogs().showRevealPlayNamedOrJobMaxCostOntoFieldRestBottom(peeked, deck, isP1, maxPlay, cardName, job, maxCost, playOntoField);
-				}
+				mw.lookDialogs().revealPlayNamedOrJobMaxCostOntoFieldRestBottom(peeked, deck, isP1,
+						maxPlay, cardName, job, maxCost, playOntoField);
 			}
 
 			@Override public void revealTopNAddTypeToHandOrPlayJobTypeOntoFieldRestBottom(
@@ -7209,41 +7177,8 @@ final class GameContextImpl implements GameContext {
 					else if (c.isMonster()) mw.placeCardInMonsterZone(c);
 					else                    mw.placeCardInForwardZone(c);
 				};
-				if (!isP1 && mw.isP2Cpu()) {
-					// CPU: prefer playing onto field (more tempo), fall back to adding to hand
-					List<CardData> fieldEligible = peeked.stream()
-							.filter(c -> meetsRevealTypeFilter(c, fieldType)
-									&& (fieldJob == null || CardFilters.meetsJobFilter(c, fieldJob)))
-							.sorted(java.util.Comparator.comparingInt(CardData::cost).reversed())
-							.collect(Collectors.toList());
-					CardData chosen = fieldEligible.isEmpty() ? null : fieldEligible.get(0);
-					String chosenDest = chosen != null ? "field" : null;
-					if (chosen == null) {
-						List<CardData> handEligible = peeked.stream()
-								.filter(c -> meetsRevealTypeFilter(c, handType))
-								.sorted(java.util.Comparator.comparingInt(CardData::cost).reversed())
-								.collect(Collectors.toList());
-						if (!handEligible.isEmpty()) { chosen = handEligible.get(0); chosenDest = "hand"; }
-					}
-					for (int i = 0; i < n; i++) deck.pollFirst();
-					for (CardData c : peeked) {
-						if (c == chosen) continue;
-						deck.addLast(c); logEntry("[AI] " + c.name() + " → [P2] bottom of deck");
-					}
-					mw.refreshP2DeckLabel();
-					if (chosen != null && "field".equals(chosenDest)) {
-						logEntry("[AI] " + chosen.name() + " played onto field"); playOntoField.accept(chosen);
-					} else if (chosen != null) {
-						mw.gameState.getP2Hand().add(chosen);
-						mw.refreshP2HandCountLabel();
-						logEntry("[AI] " + chosen.name() + " → [P2] hand");
-					}
-				} else if (!isP1) {
-					multiplayerP2RevealPending(n);
-				} else {
-					mw.lookDialogs().showRevealAddTypeToHandOrPlayJobTypeOntoFieldRestBottom(
-							peeked, deck, isP1, handMax, handType, fieldMax, fieldJob, fieldType, playOntoField);
-				}
+				mw.lookDialogs().revealAddTypeToHandOrPlayJobTypeOntoFieldRestBottom(
+						peeked, deck, isP1, handMax, handType, fieldMax, fieldJob, fieldType, playOntoField);
 			}
 
 			@Override public void revealTopNPlayNamedOntoFieldRestBottom(int reveal, String cardName) {
@@ -7260,34 +7195,15 @@ final class GameContextImpl implements GameContext {
 				for (CardData c : deck) { peeked.add(c); if (peeked.size() >= n) break; }
 				logEntry("Reveal top " + n + " card(s): " +
 						peeked.stream().map(CardData::name).collect(Collectors.joining(", ")));
-				String costSuffix = maxCost >= 0 ? " of cost ≤ " + maxCost : "";
-				if (!isP1 && mw.isP2Cpu()) {
-					CardData chosen = peeked.stream()
-							.filter(c -> c.name().equalsIgnoreCase(cardName) && (maxCost < 0 || c.cost() <= maxCost))
-							.findFirst().orElse(null);
-					for (int i = 0; i < n; i++) deck.pollFirst();
-					for (CardData c : peeked) {
-						if (c == chosen) continue;
-						deck.addLast(c);
-						logEntry("[AI] " + c.name() + " → [P2] bottom of deck");
-					}
-					mw.refreshP2DeckLabel();
-					if (chosen != null) {
-						logEntry("[AI] " + chosen.name() + " played onto field");
-						mw.placeCardInForwardZone(chosen);
-					} else {
-						logEntry("[AI] No Card Name " + cardName + costSuffix + " found — all cards to bottom");
-					}
-				} else if (!isP1) {
-					multiplayerP2RevealPending(n);
-				} else {
-					Consumer<CardData> playOntoField = c -> {
-						if (c.isBackup())       mw.placeCardInFirstBackupSlot(c);
-						else if (c.isMonster()) mw.placeCardInMonsterZone(c);
-						else                    mw.placeCardInForwardZone(c);
-					};
-					mw.lookDialogs().showRevealPlayNamedOntoFieldRestBottom(peeked, deck, isP1, cardName, maxCost, playOntoField);
-				}
+				// One placement rule for every seat. The AI used to have its own, which sent a
+				// Backup of the named kind into the Forward zone.
+				Consumer<CardData> playOntoField = c -> {
+					if (c.isBackup())       mw.placeCardInFirstBackupSlot(c);
+					else if (c.isMonster()) mw.placeCardInMonsterZone(c);
+					else                    mw.placeCardInForwardZone(c);
+				};
+				mw.lookDialogs().revealPlayNamedOntoFieldRestBottom(peeked, deck, isP1, cardName,
+						maxCost, playOntoField);
 			}
 
 			@Override public void flipUntilTypeToHandRestShuffleBottom() {

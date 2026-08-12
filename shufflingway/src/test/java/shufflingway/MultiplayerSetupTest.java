@@ -12,6 +12,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Predicate;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -383,6 +384,16 @@ class MultiplayerSetupTest {
 
     // A CHOICE has to survive the same JSON round trip every other action does.
     @Test
+    void aPriorityPassCarriesNothingAndStillArrives() {
+        GameAction back = GameAction.deserialize(
+                RemoteOpponent.choiceAction(ChoiceKind.PRIORITY_PASS, List.of()).serialize());
+        assertEquals("PRIORITY_PASS", back.payload().getString("kind"));
+        assertEquals(0, back.payload().getJSONArray("indices").length(),
+                "the message is the whole answer — an empty payload must survive the round trip, "
+                + "or the combat window it releases never closes");
+    }
+
+    @Test
     void aChoiceSurvivesSerialization() {
         GameAction sent = RemoteOpponent.choiceAction(ChoiceKind.REVEAL_HAND, List.of(1, 4));
         GameAction back = GameAction.deserialize(sent.serialize());
@@ -560,6 +571,192 @@ class MultiplayerSetupTest {
                 "the three counts claim six cards out of three");
     }
 
+    // -----------------------------------------------------------------------------------------
+    // The two reveal effects that answer with the same shape but live outside LookConfig.
+    //
+    // Their AI answers are the only part of LookAtDeckDialogs a headless test can reach, and they
+    // are worth reaching: the arrangement now has to be a permutation of the revealed cards, so an
+    // AI that drops or duplicates one no longer merely picks oddly — the reveal does nothing.
+    // -----------------------------------------------------------------------------------------
+
+    /** The revealed cards, cheapest first, so "takes the most expensive" is not the identity. */
+    private static List<CardData> revealed() {
+        return List.of(card("Cheap", 1), card("Dear", 6), card("Middling", 3));
+    }
+
+    @Test
+    void theAiTakesTheDearestRevealedCardsAndBottomsTheRest() {
+        DeckLookDecision d = LookAtDeckDialogs.cpuRevealAddUpToMatchingRestBottom(
+                revealed(), 2, null, null, null, null, -1, null, null);
+        assertEquals(List.of(1, 2), d.toHand(), "cost 6 then cost 3");
+        assertEquals(List.of(0), d.toBottom());
+        assertTrue(d.toBreak().isEmpty() && d.toTop().isEmpty());
+    }
+
+    @Test
+    void theAiRespectsTheRevealsCostCeiling() {
+        DeckLookDecision d = LookAtDeckDialogs.cpuRevealAddUpToMatchingRestBottom(
+                revealed(), 2, null, null, null, null, 3, null, null);
+        assertEquals(List.of(2, 0), d.toHand(), "cost 6 is out of reach, so cost 3 then cost 1");
+        assertEquals(List.of(1), d.toBottom());
+    }
+
+    @Test
+    void anAiRevealAnswerIsAlwaysALegalArrangement() {
+        // maxAdd larger than the reveal, and a filter nothing matches: the two ways an arrangement
+        // loses or repeats a card.
+        for (DeckLookDecision d : List.of(
+                LookAtDeckDialogs.cpuRevealAddUpToMatchingRestBottom(
+                        revealed(), 9, null, null, null, null, -1, null, null),
+                LookAtDeckDialogs.cpuRevealAddUpToMatchingRestBottom(
+                        revealed(), 1, "Dragoon", null, null, null, -1, null, null),
+                LookAtDeckDialogs.cpuRevealAddUpToExcludingNameRestBz(revealed(), 9, "Dear"),
+                LookAtDeckDialogs.cpuRevealAddUpToExcludingNameRestBz(revealed(), 1, "Cheap")))
+            assertEquals(d, DeckLookDecision.fromAnswer(d.toAnswer(), 3),
+                    "an AI answer the receiver would reject leaves the reveal doing nothing");
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // Playing a revealed card onto the field.
+    //
+    // The fifth destination, and the one that is not a zone append: it takes a slot and can fire
+    // an entry trigger. None of that travels — the placement rule is the same on both clients and
+    // an entry trigger is simply the next question — so what the player decided is still an index.
+    // -----------------------------------------------------------------------------------------
+
+    /** Every eligible card, so maxPlay is what limits the AI rather than the filter. */
+    private static final Predicate<CardData> ANY = c -> true;
+
+    @Test
+    void aCardPlayedOntoTheFieldSurvivesTheRoundTrip() {
+        DeckLookDecision sent = new DeckLookDecision(List.of(0), List.of(), List.of(3),
+                List.of(1), List.of(2));
+        assertEquals(sent, DeckLookDecision.fromAnswer(sent.toAnswer(), 4));
+    }
+
+    @Test
+    void theFieldGroupIsDistinctFromEveryOtherDestination() {
+        DeckLookDecision played = new DeckLookDecision(List.of(), List.of(), List.of(),
+                List.of(1), List.of(0));
+        DeckLookDecision bottomed = new DeckLookDecision(List.of(), List.of(), List.of(),
+                List.of(0, 1), List.of());
+        assertNotEquals(played.toAnswer(), bottomed.toAnswer(),
+                "a card put into play and a card sent to the bottom cannot read the same");
+        assertEquals(List.of(0), DeckLookDecision.fromAnswer(played.toAnswer(), 2).toField());
+    }
+
+    @Test
+    void theAiPlaysTheDearestCardsItIsAllowedAndBottomsTheRest() {
+        DeckLookDecision d = LookAtDeckDialogs.cpuRevealPlayOntoField(revealed(), 1, ANY, false);
+        assertEquals(List.of(1), d.toField(), "cost 6");
+        assertEquals(List.of(0, 2), d.toBottom());
+        assertTrue(d.toHand().isEmpty());
+    }
+
+    @Test
+    void theRevealThatSendsTheRestToHandDoesNotBottomThem() {
+        DeckLookDecision d = LookAtDeckDialogs.cpuRevealPlayOntoField(revealed(), 1, ANY, true);
+        assertEquals(List.of(1), d.toField());
+        assertEquals(List.of(0, 2), d.toHand(), "26-053L Bartz keeps what it does not play");
+        assertTrue(d.toBottom().isEmpty());
+    }
+
+    @Test
+    void theAiPrefersPlayingARevealedCardToHoldingIt() {
+        // Both branches accept a Forward, and every card here is one.
+        DeckLookDecision d = LookAtDeckDialogs.cpuRevealAddToHandOrPlayOntoField(
+                revealed(), "Forward", null, "Forward");
+        assertEquals(List.of(1), d.toField(), "the dearest playable card, not the dearest card in hand");
+        assertTrue(d.toHand().isEmpty(), "the two branches are alternatives — only one fires");
+        assertEquals(List.of(0, 2), d.toBottom());
+    }
+
+    @Test
+    void theAiFallsBackToHandWhenNothingIsPlayable() {
+        DeckLookDecision d = LookAtDeckDialogs.cpuRevealAddToHandOrPlayOntoField(
+                revealed(), "Forward", null, "Backup");
+        assertTrue(d.toField().isEmpty(), "none of the revealed cards is a Backup");
+        assertEquals(List.of(1), d.toHand());
+    }
+
+    @Test
+    void theAiTakesTheTopmostCopyOfANamedCardRatherThanTheDearest() {
+        List<CardData> cards = List.of(card("Moogle", 1), card("Bahamut", 9), card("Moogle", 4));
+        DeckLookDecision d = LookAtDeckDialogs.cpuRevealPlayNamedOntoField(
+                cards, c -> c.name().equals("Moogle"));
+        assertEquals(List.of(0), d.toField(),
+                "copies of one card name differ only by printing, so there is nothing to weigh");
+        assertEquals(List.of(1, 2), d.toBottom());
+    }
+
+    @Test
+    void anAiFieldPlayAnswerIsAlwaysALegalArrangement() {
+        for (DeckLookDecision d : List.of(
+                LookAtDeckDialogs.cpuRevealPlayOntoField(revealed(), 9, ANY, false),
+                LookAtDeckDialogs.cpuRevealPlayOntoField(revealed(), 1, c -> false, true),
+                LookAtDeckDialogs.cpuRevealAddToHandOrPlayOntoField(
+                        revealed(), "Backup", null, "Backup"),
+                LookAtDeckDialogs.cpuRevealPlayNamedOntoField(revealed(), c -> false)))
+            assertEquals(d, DeckLookDecision.fromAnswer(d.toAnswer(), 3),
+                    "an AI answer the receiver would reject leaves the reveal doing nothing");
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // Which revealed cards a player may take.
+    //
+    // One predicate now answers that for the dialog and for the AI. It used to be two, and only
+    // the dialog carried an unconditional "must be a Character" gate — so a reveal that said
+    // "Summon" in as many words let the AI take one and offered a human nothing.
+    // -----------------------------------------------------------------------------------------
+
+    /** A card of an arbitrary type and Category, for the filters that distinguish them. */
+    private static CardData typed(String name, int cost, String type, String category) {
+        return new CardData(null, name, "Fire", cost, 5000, type, false, 0, false, false,
+                Set.of(), 0, List.of(), null, List.of(),
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of(), List.of(), List.of(),
+                false, false, null, false, false, false, false, false, 1,
+                null, category, "", "");
+    }
+
+    @Test
+    void aRevealThatNamesSummonsLetsAPlayerTakeOne() {
+        List<CardData> cards = List.of(typed("Shiva", 2, "Summon", ""), card("Guard", 1));
+        DeckLookDecision d = LookAtDeckDialogs.cpuRevealAddUpToMatchingRestBottom(
+                cards, 1, null, null, null, "Summon", -1, null, null);
+        assertEquals(List.of(0), d.toHand(),
+                "the text says Summon, so a Character gate has no business overriding it");
+    }
+
+    @Test
+    void aCostOnlyRevealRestrictsNothingButCost() {
+        List<CardData> cards = List.of(typed("Shiva", 2, "Summon", ""), card("Dear", 9));
+        DeckLookDecision d = LookAtDeckDialogs.cpuRevealAddUpToMatchingRestBottom(
+                cards, 1, null, null, null, null, 2, null, null);
+        assertEquals(List.of(0), d.toHand(),
+                "\"add up to 1 card of cost 2 or less\" says card, not Character");
+    }
+
+    @Test
+    void aRevealSelectingByCategoryAloneStillMeansCharacters() {
+        List<CardData> cards = List.of(typed("Summoned", 2, "Summon", "VII"),
+                                       typed("Embodied", 3, "Forward", "VII"));
+        DeckLookDecision d = LookAtDeckDialogs.cpuRevealAddUpToMatchingRestBottom(
+                cards, 1, null, "VII", null, null, -1, null, null);
+        assertEquals(List.of(1), d.toHand(),
+                "the noun the text used is dropped by the parser, and for a bare Job/Category "
+                + "reveal it was reliably a Character one");
+    }
+
+    @Test
+    void theAiWillNotTakeTheCardTheRevealExcludes() {
+        DeckLookDecision d = LookAtDeckDialogs.cpuRevealAddUpToExcludingNameRestBz(
+                revealed(), 2, "Dear");
+        assertEquals(List.of(2, 0), d.toHand(), "the dearest card is the excluded one");
+        assertEquals(List.of(1), d.toBreak(), "and it is what the Break Zone gets");
+        assertTrue(d.toBottom().isEmpty(), "this reveal has no bottom-of-deck destination");
+    }
+
     @Test
     void aDeckLookAnswerCrossesTheWireIntact() {
         DeckLookDecision sent = decision(List.of(1), List.of(), List.of(0), List.of(2));
@@ -567,6 +764,126 @@ class MultiplayerSetupTest {
         GameAction back   = GameAction.deserialize(action.serialize());
         assertEquals("DECK_LOOK", back.payload().getString("kind"));
         assertEquals(sent, DeckLookDecision.fromAnswer(intList(back.payload().getJSONArray("indices")), 3));
+    }
+
+    // =========================================================================================
+    // Naming an Element, a Job or a Category.
+    //
+    // Not a choice among cards, so nothing on the board indexes it — the vocabulary it came from
+    // does. Asserted on Elements, whose list is a constant; Jobs and Categories run the identical
+    // code over lists the card database supplies, which a unit test has no business loading.
+    // =========================================================================================
+
+    private static final NamedThing.Vocabulary ELEMENT = NamedThing.Vocabulary.ELEMENT;
+
+    /** Discards the log these calls offer for database trouble; the Element list needs no database. */
+    private static final java.util.function.Consumer<String> QUIET = msg -> {};
+
+    @Test
+    void aNamedElementSurvivesTheRoundTrip() {
+        List<Integer> answer = NamedThing.toAnswer(NamedThing.of(ELEMENT, "Water"), QUIET);
+        assertEquals(List.of(new NamedThing(ELEMENT, "Water")),
+                NamedThing.fromAnswer(answer, QUIET));
+    }
+
+    @Test
+    void twoNamedThingsTravelInOneAnswer() {
+        List<NamedThing> both = List.of(new NamedThing(ELEMENT, "Fire"),
+                                        new NamedThing(ELEMENT, "Dark"));
+        assertEquals(both, NamedThing.fromAnswer(NamedThing.toAnswer(both, QUIET), QUIET),
+                "\"name 1 Element and 1 Job\" is one question with two answers");
+    }
+
+    @Test
+    void theVocabularyOrdinalIsPartOfTheAnswer() {
+        assertEquals(List.of(ELEMENT.ordinal(), 0),
+                NamedThing.toAnswer(NamedThing.of(ELEMENT, "Fire"), QUIET),
+                "the receiver has to know which list to read the index out of");
+    }
+
+    @Test
+    void namingNothingIsAnEmptyAnswerRatherThanAMissingOne() {
+        assertEquals(List.of(), NamedThing.toAnswer(NamedThing.of(ELEMENT, null), QUIET));
+        assertEquals(List.of(), NamedThing.fromAnswer(List.of(), QUIET));
+    }
+
+    @Test
+    void aNameThisClientDoesNotKnowIsNotSent() {
+        assertEquals(List.of(), NamedThing.toAnswer(NamedThing.of(ELEMENT, "Plasma"), QUIET),
+                "half an answer is worse than none — the receiver would apply the part that survived");
+    }
+
+    @Test
+    void namesAreMatchedWithoutRegardToCase() {
+        assertEquals(NamedThing.toAnswer(NamedThing.of(ELEMENT, "Fire"), QUIET),
+                     NamedThing.toAnswer(NamedThing.of(ELEMENT, "fire"), QUIET),
+                     "the dialogs and the database do not always agree on case");
+    }
+
+    @Test
+    void anAnswerNamingAnUnknownVocabularyIsRejected() {
+        assertNull(NamedThing.fromAnswer(List.of(99, 0), QUIET));
+    }
+
+    @Test
+    void anAnswerIndexingPastTheVocabularyIsRejected() {
+        assertNull(NamedThing.fromAnswer(List.of(ELEMENT.ordinal(), 99), QUIET),
+                "two clients disagreeing about the card database is a desync, not a name to act on");
+    }
+
+    @Test
+    void anAnswerMissingHalfOfAPairIsRejected() {
+        assertNull(NamedThing.fromAnswer(List.of(ELEMENT.ordinal()), QUIET));
+    }
+
+    // =========================================================================================
+    // Rolls the game makes rather than a player.
+    //
+    // "Your opponent discards 1 card at random" used to call Math.random() on both clients, which
+    // discarded different cards. One client rolls now and the other applies — so the receiver has
+    // to be able to tell a real run of picks from a run that could not have happened, and the pool
+    // being one smaller each time is what makes that non-obvious.
+    // =========================================================================================
+
+    @Test
+    void aPickIsAgainstThePoolAsItStoodForThatPick() {
+        assertTrue(RandomPicks.fitPool(List.of(2, 1, 0), 3),
+                "three picks out of three: the last one addresses a pool of one");
+        assertTrue(RandomPicks.fitPool(List.of(0, 0, 0), 3));
+    }
+
+    @Test
+    void aPickPastTheShrunkenPoolIsRejected() {
+        assertFalse(RandomPicks.fitPool(List.of(0, 2), 3),
+                "the second pick sees two cards, so 2 is off the end of it");
+        assertTrue(RandomPicks.fitPool(List.of(0, 1), 3),
+                "and 1 is the last position it can legally name");
+    }
+
+    @Test
+    void morePicksThanCardsIsRejected() {
+        assertFalse(RandomPicks.fitPool(List.of(0, 0, 0), 2));
+        assertFalse(RandomPicks.fitPool(List.of(-1), 3));
+        assertFalse(RandomPicks.fitPool(List.of(3), 3));
+    }
+
+    @Test
+    void rollingNeverProducesARunItsOwnCheckWouldReject() {
+        for (int pool = 1; pool <= 6; pool++)
+            for (int count = 1; count <= pool + 2; count++)
+                for (int attempt = 0; attempt < 40; attempt++) {
+                    List<Integer> picks = RandomPicks.roll(count, pool);
+                    assertEquals(Math.min(count, pool), picks.size(),
+                            "asking for more cards than the pool holds takes the whole pool");
+                    assertTrue(RandomPicks.fitPool(picks, pool),
+                            "the receiver rejecting a legitimate roll means nothing happens at all");
+                }
+    }
+
+    @Test
+    void anEmptyPoolIsPickedFromNotAtAll() {
+        assertEquals(List.of(), RandomPicks.roll(3, 0));
+        assertTrue(RandomPicks.fitPool(List.of(), 0));
     }
 
     // =========================================================================================

@@ -25,6 +25,7 @@ import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 
 import javax.swing.BorderFactory;
@@ -185,7 +186,7 @@ class LookAtDeckDialogs {
         // Nothing usable came back — a remote answer already reported as a desync, or a seat that
         // declined. Leaving the cards on top is the one outcome that changes nothing.
         if (decision == null) decision = DeckLookDecision.keepOnTop(n);
-        return applyDeckLook(decision, peeked, deck, isP1, namesArePublic, config.action());
+        return applyDeckLook(decision, peeked, deck, isP1, namesArePublic, config.action(), null);
     }
 
     /**
@@ -264,10 +265,13 @@ class LookAtDeckDialogs {
      * @param namesArePublic false for a private look the opponent controls — the moves are then
      *                       logged by count, because naming the cards would show the human at this
      *                       seat cards they are not entitled to see
+     * @param playOntoField  puts a card into play for the seat at {@code isP1}; required only when
+     *                       the decision names one, and it is the caller's because which zone a
+     *                       card enters is the effect's business, not this one's
      */
     private CardData applyDeckLook(DeckLookDecision decision, List<CardData> peeked,
             Deque<CardData> deck, boolean isP1, boolean namesArePublic,
-            LookConfig.LookAction action) {
+            LookConfig.LookAction action, Consumer<CardData> playOntoField) {
         int n = peeked.size();
         // An arrangement that puts every card back on top in the order it was found moved nothing,
         // and saying so would only repeat the "Look at top N" line already in the log.
@@ -313,6 +317,17 @@ class LookAtDeckDialogs {
             if (!decision.toBreak().isEmpty()) cb.animateMill().accept(isP1);
         }
         if (isP1) cb.refreshP1Deck().run(); else cb.refreshP2Deck().run();
+
+        // Played last, and after the deck has been put back together: entering play can fire an
+        // entry trigger, and one that looks at the deck has to see the arrangement just made
+        // rather than a deck still missing its top N cards.
+        // Named unconditionally: a card that enters play is on the board for both players to see,
+        // so withholding it from a private look's log would hide nothing.
+        for (int i : decision.toField()) {
+            CardData c = peeked.get(i);
+            log(c.name() + " played onto field");
+            if (playOntoField != null) playOntoField.accept(c);
+        }
         return handCard;
     }
 
@@ -328,6 +343,8 @@ class LookAtDeckDialogs {
             parts.add("sends " + decision.toBreak().size() + " to the Break Zone");
         if (!decision.toBottom().isEmpty())
             parts.add("returns " + decision.toBottom().size() + " to the bottom");
+        // A card played onto the field is public the moment it lands, so it is not summarised
+        // here — applyDeckLook logs it by name whatever the look's privacy was.
         String looks = "[P2] looks at the top " + n + " card(s) of their deck";
         return parts.isEmpty() ? looks + "." : looks + " and " + String.join(", ", parts) + ".";
     }
@@ -351,6 +368,25 @@ class LookAtDeckDialogs {
             if (i >= 0) out.add(i);
         }
         return out;
+    }
+
+    /**
+     * Membership by identity, for the selections these dialogs build up.
+     *
+     * <p>{@code CardData} is a record, so two copies of the same card are equal — a
+     * {@code Set<CardData>} silently holds one of them and reports the other as already selected.
+     * That matters more than it used to: a decision has to be a permutation of the peeked cards,
+     * and a lost copy is now a rejected answer rather than a slightly odd dialog.
+     */
+    private static boolean holdsIdentity(List<CardData> list, CardData card) {
+        for (CardData c : list) if (c == card) return true;
+        return false;
+    }
+
+    /** Removes {@code card} by identity; a value-equal second copy stays. */
+    private static void dropIdentity(List<CardData> list, CardData card) {
+        for (int i = 0; i < list.size(); i++)
+            if (list.get(i) == card) { list.remove(i); return; }
     }
 
     // ── Dialog implementations ──────────────────────────────────────────────────
@@ -1212,9 +1248,130 @@ class LookAtDeckDialogs {
                 peekIndices(cards, topCards), peekIndices(cards, bottomCards));
     }
 
-    void showRevealAddUpToMatchingRestBottom(List<CardData> cards, Deque<CardData> deck,
-            boolean isP1, int maxAdd, String jobFilter, String categoryFilter, String cardNameFilter, String typeFilter, int maxCost,
+    /**
+     * Resolves a "reveal the top N and choose among them" effect for the seat at {@code isP1}, from
+     * cards already peeked off the top of {@code deck}.
+     *
+     * <p>The same ask/apply split {@link #show} uses, for the reveal effects that live outside the
+     * {@link LookConfig} family: {@code ask} runs the dialog at the local seat and moves nothing,
+     * {@code cpu} is the AI holding that seat, and a remote player's arrangement arrives off the
+     * wire — all three land in {@link #applyDeckLook}.
+     *
+     * @param playOntoField how a card the decision sends to the field enters play, or {@code null}
+     *                      for a reveal that cannot put one there
+     */
+    private void resolveReveal(List<CardData> cards, Deque<CardData> deck, boolean isP1,
+            Supplier<DeckLookDecision> ask, Supplier<DeckLookDecision> cpu,
+            Consumer<CardData> playOntoField) {
+        int n = cards.size();
+        List<Integer> answer = cb.decide().apply(
+                PlayerChoice.by(isP1, ChoiceKind.DECK_LOOK)
+                        .prompting("Waiting for your opponent to choose from the " + n
+                                + " card(s) they revealed...")
+                        .locally(() -> ask.get().toAnswer())
+                        .byCpu(()   -> cpu.get().toAnswer())
+                        .legalWhen(a -> DeckLookDecision.fromAnswer(a, n) != null,
+                                "that is not an arrangement of the " + n
+                                + " card(s) revealed here"));
+
+        DeckLookDecision decision = DeckLookDecision.fromAnswer(answer, n);
+        // Nothing usable came back — a remote answer already reported as a desync, or a seat that
+        // declined. Leaving the cards on top is the one outcome that changes nothing.
+        if (decision == null) decision = DeckLookDecision.keepOnTop(n);
+        // A reveal is public, so the moves are named in the shared log whoever made them; and none
+        // of these effects is the one that animates.
+        applyDeckLook(decision, cards, deck, isP1, true, null, playOntoField);
+    }
+
+    /**
+     * "Reveal the top N cards of your deck. Add up to {@code maxAdd} of them matching the filters
+     * to your hand; return the rest to the bottom of your deck in any order."
+     */
+    void revealAddUpToMatchingRestBottom(List<CardData> cards, Deque<CardData> deck,
+            boolean isP1, int maxAdd, String jobFilter, String categoryFilter, String cardNameFilter,
+            String typeFilter, int maxCost, String elementFilter, String orElementFilter) {
+        resolveReveal(cards, deck, isP1,
+                () -> askRevealAddUpToMatchingRestBottom(cards, maxAdd, jobFilter, categoryFilter,
+                        cardNameFilter, typeFilter, maxCost, elementFilter, orElementFilter),
+                () -> cpuRevealAddUpToMatchingRestBottom(cards, maxAdd, jobFilter, categoryFilter,
+                        cardNameFilter, typeFilter, maxCost, elementFilter, orElementFilter),
+                null);
+    }
+
+    /**
+     * Whether {@code c} is one of the cards this reveal lets a player take.
+     *
+     * <p>{@code elementFilter} and {@code maxCost} gate every card; the rest are alternatives, and
+     * with none of them given every card qualifies. Shared so the AI takes exactly what the dialog
+     * would have offered a human — they used to disagree, and only the human was ever restricted.
+     */
+    private static boolean eligibleForReveal(CardData c, String jobFilter, String categoryFilter,
+            String cardNameFilter, String typeFilter, int maxCost,
             String elementFilter, String orElementFilter) {
+        if (maxCost >= 0 && c.cost() > maxCost) return false;
+        if (elementFilter != null && !CardFilters.meetsElementFilter(c, elementFilter)) return false;
+        if (needsCharacter(jobFilter, categoryFilter, cardNameFilter, typeFilter, orElementFilter)
+                && !(c.isForward() || c.isBackup() || c.isMonster())) return false;
+        boolean noFilters = jobFilter == null && categoryFilter == null
+                && cardNameFilter == null && typeFilter == null && orElementFilter == null;
+        return noFilters
+                || (jobFilter       != null && CardFilters.meetsJobFilter(c, jobFilter))
+                || (categoryFilter  != null && CardFilters.meetsCategoryFilter(c, categoryFilter))
+                || (cardNameFilter  != null && CardFilters.meetsCardNameFilter(c, cardNameFilter))
+                || (typeFilter      != null && meetsRevealTypeFilter(c, typeFilter))
+                || (orElementFilter != null && CardFilters.meetsElementFilter(c, orElementFilter));
+    }
+
+    /**
+     * Whether this reveal is one that only a Character satisfies.
+     *
+     * <p>It has to be inferred, because the card text says so in a word the parser drops. All three
+     * of "Add 1 Category VII <b>Forward</b>", "…VII <b>card</b>" and a bare "…VII" reach here as
+     * the same category filter, so the noun is gone by the time anyone asks. Selecting by Job or
+     * Category and nothing else is the case where it was reliably a Character noun — the effect's
+     * own log line calls them "matching Characters" — so the gate stays there and nowhere else.
+     *
+     * <p>What it must <em>not</em> do is override a filter that speaks for itself. This gate used
+     * to be unconditional on the dialog side, which meant a reveal that explicitly said "Summon",
+     * or one restricted by cost alone ("add up to 1 card of cost 2 or less"), offered a human
+     * nothing it turned up. Closing that off is why the AI and the dialog can now share one filter.
+     *
+     * <p>The real repair is upstream: capture the noun and pass it as a type filter. That needs the
+     * alternatives above to become a proper AND-gate first, since a type would otherwise widen the
+     * selection rather than narrow it.
+     */
+    private static boolean needsCharacter(String jobFilter, String categoryFilter,
+            String cardNameFilter, String typeFilter, String orElementFilter) {
+        return typeFilter == null && cardNameFilter == null && orElementFilter == null
+                && (jobFilter != null || categoryFilter != null);
+    }
+
+    /**
+     * The AI's answer: the most expensive cards it is allowed, the rest to the bottom.
+     *
+     * <p>Package-private, and pure, so it can be asserted on — every other path through this class
+     * needs a real window. It has to produce a legal arrangement of the revealed cards for the same
+     * reason a remote player's does: {@link #resolveReveal} rejects anything else and the reveal
+     * then does nothing at all.
+     */
+    static DeckLookDecision cpuRevealAddUpToMatchingRestBottom(List<CardData> cards,
+            int maxAdd, String jobFilter, String categoryFilter, String cardNameFilter,
+            String typeFilter, int maxCost, String elementFilter, String orElementFilter) {
+        List<Integer> eligible = new ArrayList<>();
+        for (int i = 0; i < cards.size(); i++)
+            if (eligibleForReveal(cards.get(i), jobFilter, categoryFilter, cardNameFilter,
+                    typeFilter, maxCost, elementFilter, orElementFilter)) eligible.add(i);
+        eligible.sort(java.util.Comparator.comparingInt((Integer i) -> cards.get(i).cost()).reversed());
+
+        List<Integer> toHand = new ArrayList<>(eligible.subList(0, Math.min(maxAdd, eligible.size())));
+        List<Integer> toBottom = new ArrayList<>();
+        for (int i = 0; i < cards.size(); i++) if (!toHand.contains(i)) toBottom.add(i);
+        return new DeckLookDecision(toHand, List.of(), List.of(), toBottom);
+    }
+
+    private DeckLookDecision askRevealAddUpToMatchingRestBottom(List<CardData> cards,
+            int maxAdd, String jobFilter, String categoryFilter, String cardNameFilter,
+            String typeFilter, int maxCost, String elementFilter, String orElementFilter) {
         int n = cards.size();
         JDialog dlg = new JDialog(frame, "Reveal — Add to Hand, Rest to Bottom", true);
         dlg.setResizable(false);
@@ -1223,7 +1380,7 @@ class LookAtDeckDialogs {
         List<CardData> order = new ArrayList<>(cards);
         Map<CardData, ImageIcon> imgCache = new LinkedHashMap<>();
         JLabel[] cardLabels = new JLabel[n];
-        Set<CardData> handSet = new LinkedHashSet<>();
+        List<CardData> handSel = new ArrayList<>();
         int[] selectedForSwap = { -1 };
         boolean[] updating = { false };
 
@@ -1241,29 +1398,20 @@ class LookAtDeckDialogs {
         JToggleButton[] handBtns = new JToggleButton[n];
 
         Runnable refreshHandButtons = () -> {
-            int count = handSet.size();
+            int count = handSel.size();
             for (int j = 0; j < n; j++) {
                 CardData c = order.get(j);
-                boolean isChar = c.isForward() || c.isBackup() || c.isMonster();
-                boolean noFilters = jobFilter == null && categoryFilter == null
-                        && cardNameFilter == null && typeFilter == null && orElementFilter == null;
-                boolean matches = noFilters
-                        || (jobFilter       != null && CardFilters.meetsJobFilter(c, jobFilter))
-                        || (categoryFilter  != null && CardFilters.meetsCategoryFilter(c, categoryFilter))
-                        || (cardNameFilter  != null && CardFilters.meetsCardNameFilter(c, cardNameFilter))
-                        || (typeFilter      != null && meetsRevealTypeFilter(c, typeFilter))
-                        || (orElementFilter != null && CardFilters.meetsElementFilter(c, orElementFilter));
-                boolean elemOk = elementFilter == null || CardFilters.meetsElementFilter(c, elementFilter);
-                boolean costOk = maxCost < 0 || c.cost() <= maxCost;
-                boolean inHand = handSet.contains(c);
-                handBtns[j].setEnabled(isChar && matches && elemOk && costOk && (inHand || count < maxAdd));
+                boolean eligible = eligibleForReveal(c, jobFilter, categoryFilter, cardNameFilter,
+                        typeFilter, maxCost, elementFilter, orElementFilter);
+                boolean inHand = holdsIdentity(handSel, c);
+                handBtns[j].setEnabled(eligible && (inHand || count < maxAdd));
             }
         };
 
         Runnable refreshBorders = () -> {
             for (int j = 0; j < n; j++) {
                 CardData c = order.get(j);
-                if (handSet.contains(c))
+                if (holdsIdentity(handSel, c))
                     cardLabels[j].setBorder(BorderFactory.createLineBorder(new Color(0, 200, 80), 3));
                 else if (j == selectedForSwap[0])
                     cardLabels[j].setBorder(BorderFactory.createLineBorder(Color.YELLOW, 3));
@@ -1281,18 +1429,18 @@ class LookAtDeckDialogs {
                 @Override public void mouseExited(MouseEvent e)  { hideZoom(); }
                 @Override public void mousePressed(MouseEvent e) {
                     CardData c = order.get(idx);
-                    if (handSet.contains(c)) return;
+                    if (holdsIdentity(handSel, c)) return;
                     if (selectedForSwap[0] == -1) {
                         selectedForSwap[0] = idx;
                     } else if (selectedForSwap[0] == idx) {
                         selectedForSwap[0] = -1;
                     } else {
                         int other = selectedForSwap[0];
-                        if (handSet.contains(order.get(other))) { selectedForSwap[0] = idx; refreshBorders.run(); return; }
+                        if (holdsIdentity(handSel, order.get(other))) { selectedForSwap[0] = idx; refreshBorders.run(); return; }
                         CardData tmp = order.get(idx); order.set(idx, order.get(other)); order.set(other, tmp);
                         updateLabels.run();
                         updating[0] = true;
-                        for (int j = 0; j < n; j++) handBtns[j].setSelected(handSet.contains(order.get(j)));
+                        for (int j = 0; j < n; j++) handBtns[j].setSelected(holdsIdentity(handSel, order.get(j)));
                         updating[0] = false;
                         refreshHandButtons.run();
                         selectedForSwap[0] = -1;
@@ -1309,9 +1457,9 @@ class LookAtDeckDialogs {
                 if (updating[0]) return;
                 CardData c = order.get(idx);
                 if (ie.getStateChange() == java.awt.event.ItemEvent.SELECTED) {
-                    handSet.add(c);
+                    if (!holdsIdentity(handSel, c)) handSel.add(c);
                 } else {
-                    handSet.remove(c);
+                    dropIdentity(handSel, c);
                 }
                 selectedForSwap[0] = -1;
                 refreshHandButtons.run();
@@ -1369,30 +1517,43 @@ class LookAtDeckDialogs {
         dlg.setLocationRelativeTo(frame);
         dlg.setVisible(true);
 
-        for (int i = 0; i < n; i++) deck.pollFirst();
-        for (CardData c : handSet) {
-            if (isP1) gameState.getP1Hand().add(c);
-            else      gameState.getP2Hand().add(c);
-            log(c.name() + " → hand");
-        }
-        if (!handSet.isEmpty()) {
-            if (isP1) cb.refreshP1Hand().run();
-            else      cb.refreshP2Hand().run();
-        }
-        for (CardData c : order) {
-            if (!handSet.contains(c)) { deck.addLast(c); log(c.name() + " → bottom of deck"); }
-        }
-        if (isP1) cb.refreshP1Deck().run();
-        else      cb.refreshP2Deck().run();
+        // The cards not taken reach the bottom in the order the player arranged them, so the
+        // arrangement is read off `order` rather than off the peeked list.
+        List<CardData> bottom = new ArrayList<>();
+        for (CardData c : order) if (!holdsIdentity(handSel, c)) bottom.add(c);
+        return new DeckLookDecision(peekIndices(cards, handSel), List.of(),
+                List.of(), peekIndices(cards, bottom));
     }
 
     /**
-     * Reveals {@code cards} (already peeked from the top of {@code deck}). The player toggles
-     * up to {@code maxAdd} cards to hand; any card whose name equals {@code excludeName} cannot
-     * be chosen for hand. All non-hand cards go to the Break Zone.
+     * Reveals {@code cards} (already peeked from the top of {@code deck}). The player takes
+     * up to {@code maxAdd} of them to hand; any card whose name equals {@code excludeName} cannot
+     * be chosen. All non-hand cards go to the Break Zone.
      */
-    void showRevealAddUpToExcludingNameRestBz(List<CardData> cards, Deque<CardData> deck,
+    void revealAddUpToExcludingNameRestBz(List<CardData> cards, Deque<CardData> deck,
             boolean isP1, int maxAdd, String excludeName) {
+        resolveReveal(cards, deck, isP1,
+                () -> askRevealAddUpToExcludingNameRestBz(cards, maxAdd, excludeName),
+                () -> cpuRevealAddUpToExcludingNameRestBz(cards, maxAdd, excludeName),
+                null);
+    }
+
+    /** The AI's answer: the most expensive cards it is allowed, the rest to the Break Zone. */
+    static DeckLookDecision cpuRevealAddUpToExcludingNameRestBz(List<CardData> cards,
+            int maxAdd, String excludeName) {
+        List<Integer> eligible = new ArrayList<>();
+        for (int i = 0; i < cards.size(); i++)
+            if (!cards.get(i).name().equalsIgnoreCase(excludeName)) eligible.add(i);
+        eligible.sort(java.util.Comparator.comparingInt((Integer i) -> cards.get(i).cost()).reversed());
+
+        List<Integer> toHand = new ArrayList<>(eligible.subList(0, Math.min(maxAdd, eligible.size())));
+        List<Integer> toBreak = new ArrayList<>();
+        for (int i = 0; i < cards.size(); i++) if (!toHand.contains(i)) toBreak.add(i);
+        return new DeckLookDecision(toHand, toBreak, List.of(), List.of());
+    }
+
+    private DeckLookDecision askRevealAddUpToExcludingNameRestBz(List<CardData> cards,
+            int maxAdd, String excludeName) {
         int n = cards.size();
         JDialog dlg = new JDialog(frame,
                 "Reveal — Add to Hand (up to " + maxAdd + "), Rest to Break Zone", true);
@@ -1401,7 +1562,7 @@ class LookAtDeckDialogs {
 
         Map<CardData, ImageIcon> imgCache = new LinkedHashMap<>();
         JLabel[] cardLabels = new JLabel[n];
-        Set<CardData> handSet = new LinkedHashSet<>();
+        List<CardData> handSel = new ArrayList<>();
 
         JButton confirmBtn = new JButton("Confirm");
         confirmBtn.setFont(FontLoader.loadPixelFont(11));
@@ -1409,11 +1570,11 @@ class LookAtDeckDialogs {
         JToggleButton[] handBtns = new JToggleButton[n];
 
         Runnable refreshHandButtons = () -> {
-            int count = handSet.size();
+            int count = handSel.size();
             for (int j = 0; j < n; j++) {
                 CardData c = cards.get(j);
                 boolean excluded = c.name().equalsIgnoreCase(excludeName);
-                boolean inHand = handSet.contains(c);
+                boolean inHand = holdsIdentity(handSel, c);
                 handBtns[j].setEnabled(!excluded && (inHand || count < maxAdd));
             }
         };
@@ -1422,7 +1583,7 @@ class LookAtDeckDialogs {
             for (int j = 0; j < n; j++) {
                 CardData c = cards.get(j);
                 boolean excluded = c.name().equalsIgnoreCase(excludeName);
-                if (handSet.contains(c))
+                if (holdsIdentity(handSel, c))
                     cardLabels[j].setBorder(BorderFactory.createLineBorder(new Color(0, 200, 80), 3));
                 else if (excluded)
                     cardLabels[j].setBorder(BorderFactory.createLineBorder(Color.RED, 2));
@@ -1446,8 +1607,11 @@ class LookAtDeckDialogs {
             handBtns[i] = handBtn;
             handBtn.addItemListener(ie -> {
                 CardData c = cards.get(idx);
-                if (ie.getStateChange() == java.awt.event.ItemEvent.SELECTED) handSet.add(c);
-                else handSet.remove(c);
+                if (ie.getStateChange() == java.awt.event.ItemEvent.SELECTED) {
+                    if (!holdsIdentity(handSel, c)) handSel.add(c);
+                } else {
+                    dropIdentity(handSel, c);
+                }
                 refreshHandButtons.run();
                 refreshBorders.run();
             });
@@ -1499,33 +1663,12 @@ class LookAtDeckDialogs {
         dlg.setLocationRelativeTo(frame);
         dlg.setVisible(true);
 
-        // Consume all peeked cards from the top of the deck, then distribute
-        for (int i = 0; i < n; i++) deck.pollFirst();
-        List<CardData> bz = isP1 ? gameState.getP1BreakZone() : gameState.getP2BreakZone();
-        for (CardData c : cards) {
-            if (handSet.contains(c)) {
-                if (isP1) gameState.getP1Hand().add(c);
-                else      gameState.getP2Hand().add(c);
-                log(c.name() + " → hand");
-            } else {
-                bz.add(c);
-                log(c.name() + " → Break Zone");
-            }
-        }
-        if (!handSet.isEmpty()) {
-            if (isP1) cb.refreshP1Hand().run();
-            else      cb.refreshP2Hand().run();
-        }
-        if (isP1) cb.refreshP1Deck().run();
-        else      cb.refreshP2Deck().run();
+        List<CardData> broken = new ArrayList<>();
+        for (CardData c : cards) if (!holdsIdentity(handSel, c)) broken.add(c);
+        return new DeckLookDecision(peekIndices(cards, handSel), peekIndices(cards, broken),
+                List.of(), List.of());
     }
 
-    /**
-     * Reveals {@code cards} (already peeked from the top of {@code deck}).
-     * Player chooses exactly 1 card whose name matches {@code cardName} to play onto
-     * the field; the remaining cards go to the bottom of the deck in any order.
-     * If no matching card exists, all cards go to the bottom and nothing is played.
-     */
     /**
      * "Reveal N cards. Play up to {@code maxPlay} matching {@code typeFilter} onto the field;
      * return the rest to the bottom of the deck in any order."
@@ -1533,25 +1676,25 @@ class LookAtDeckDialogs {
      * <p>The player clicks "→ Field" to select up to {@code maxPlay} eligible cards.
      * Clicking two non-selected cards swaps their bottom-of-deck order.
      */
-    void showRevealPlayTypeOntoFieldRestBottom(List<CardData> cards, Deque<CardData> deck,
+    void revealPlayTypeOntoFieldRestBottom(List<CardData> cards, Deque<CardData> deck,
             boolean isP1, int maxPlay, String typeFilter, String categoryFilter, Consumer<CardData> playOntoField) {
         String typeLabel = (categoryFilter != null ? "Category " + categoryFilter + " " : "") + typeFilter;
-        java.util.function.Predicate<CardData> eligible = c ->
+        Predicate<CardData> eligible = c ->
                 meetsRevealTypeFilter(c, typeFilter) && CardFilters.meetsCategoryFilter(c, categoryFilter);
-        showRevealPlayOntoFieldRestBottomImpl(cards, deck, isP1, maxPlay, typeLabel, eligible,
+        resolveRevealPlayOntoField(cards, deck, isP1, maxPlay, typeLabel, eligible,
                 false, playOntoField);
     }
 
-    void showRevealPlayElementTypeCostOntoField(List<CardData> cards, Deque<CardData> deck,
+    void revealPlayElementTypeCostOntoField(List<CardData> cards, Deque<CardData> deck,
             boolean isP1, int maxPlay, String element, String typeFilter, int maxCost,
             boolean restToHand, Consumer<CardData> playOntoField) {
         String typeLabel = (element != null ? element + " " : "") + typeFilter
                 + (maxCost >= 0 ? " of cost " + maxCost + " or less" : "");
-        java.util.function.Predicate<CardData> eligible = c ->
+        Predicate<CardData> eligible = c ->
                 meetsRevealTypeFilter(c, typeFilter)
                 && (element == null || c.containsElement(element))
                 && (maxCost < 0 || c.cost() <= maxCost);
-        showRevealPlayOntoFieldRestBottomImpl(cards, deck, isP1, maxPlay, typeLabel, eligible,
+        resolveRevealPlayOntoField(cards, deck, isP1, maxPlay, typeLabel, eligible,
                 restToHand, playOntoField);
     }
 
@@ -1560,15 +1703,45 @@ class LookAtDeckDialogs {
      * {@code maxCost} or less among them onto the field; rest to the bottom of the deck in any
      * order." — combined Card-Name-or-Job filter (e.g. "Card Name Moogle (XIV) or Job Moogle").
      */
-    void showRevealPlayNamedOrJobMaxCostOntoFieldRestBottom(List<CardData> cards, Deque<CardData> deck,
+    void revealPlayNamedOrJobMaxCostOntoFieldRestBottom(List<CardData> cards, Deque<CardData> deck,
             boolean isP1, int maxPlay, String cardName, String job, int maxCost, Consumer<CardData> playOntoField) {
         String typeLabel = "Card Name " + cardName + " or Job " + job
                 + (maxCost >= 0 ? " of cost " + maxCost + " or less" : "");
-        java.util.function.Predicate<CardData> eligible = c ->
+        Predicate<CardData> eligible = c ->
                 (CardFilters.meetsCardNameFilter(c, cardName) || CardFilters.meetsJobFilter(c, job))
                 && (maxCost < 0 || c.cost() <= maxCost);
-        showRevealPlayOntoFieldRestBottomImpl(cards, deck, isP1, maxPlay, typeLabel, eligible,
+        resolveRevealPlayOntoField(cards, deck, isP1, maxPlay, typeLabel, eligible,
                 false, playOntoField);
+    }
+
+    /** Routes the choice these three effects share to whoever is sitting in the seat. */
+    private void resolveRevealPlayOntoField(List<CardData> cards, Deque<CardData> deck,
+            boolean isP1, int maxPlay, String typeLabel, Predicate<CardData> eligible,
+            boolean restToHand, Consumer<CardData> playOntoField) {
+        resolveReveal(cards, deck, isP1,
+                () -> askRevealPlayOntoField(cards, maxPlay, typeLabel, eligible, restToHand),
+                () -> cpuRevealPlayOntoField(cards, maxPlay, eligible, restToHand),
+                playOntoField);
+    }
+
+    /**
+     * The AI's answer: the dearest cards it is allowed to play, and the rest wherever the effect
+     * sends them. Takes the same {@code eligible} predicate the dialog offers a human, so the two
+     * seats are choosing from the same cards.
+     */
+    static DeckLookDecision cpuRevealPlayOntoField(List<CardData> cards, int maxPlay,
+            Predicate<CardData> eligible, boolean restToHand) {
+        List<Integer> playable = new ArrayList<>();
+        for (int i = 0; i < cards.size(); i++)
+            if (eligible.test(cards.get(i))) playable.add(i);
+        playable.sort(java.util.Comparator.comparingInt((Integer i) -> cards.get(i).cost()).reversed());
+
+        List<Integer> toField = new ArrayList<>(playable.subList(0, Math.min(maxPlay, playable.size())));
+        List<Integer> rest = new ArrayList<>();
+        for (int i = 0; i < cards.size(); i++) if (!toField.contains(i)) rest.add(i);
+        return restToHand
+                ? new DeckLookDecision(rest, List.of(), List.of(), List.of(), toField)
+                : new DeckLookDecision(List.of(), List.of(), List.of(), rest, toField);
     }
 
     /**
@@ -1577,10 +1750,8 @@ class LookAtDeckDialogs {
      *                   order is the player's to set, so the swap controls only matter then; cards
      *                   going to hand have no order to choose.
      */
-    private void showRevealPlayOntoFieldRestBottomImpl(List<CardData> cards, Deque<CardData> deck,
-            boolean isP1, int maxPlay, String typeLabel,
-            java.util.function.Predicate<CardData> eligible, boolean restToHand,
-            Consumer<CardData> playOntoField) {
+    private DeckLookDecision askRevealPlayOntoField(List<CardData> cards,
+            int maxPlay, String typeLabel, Predicate<CardData> eligible, boolean restToHand) {
         int n = cards.size();
         JDialog dlg = new JDialog(frame, "Reveal — Play up to " + maxPlay + " " + typeLabel
                 + (restToHand ? " onto Field, Rest to Hand" : " onto Field, Rest to Bottom"), true);
@@ -1590,7 +1761,7 @@ class LookAtDeckDialogs {
         List<CardData> order     = new ArrayList<>(cards);
         Map<CardData, ImageIcon> imgCache = new LinkedHashMap<>();
         JLabel[] cardLabels      = new JLabel[n];
-        Set<CardData> fieldSet   = new LinkedHashSet<>();
+        List<CardData> fieldSel  = new ArrayList<>();
         int[] selectedForSwap    = { -1 };
         boolean[] updating       = { false };
 
@@ -1607,10 +1778,10 @@ class LookAtDeckDialogs {
         JToggleButton[] fieldBtns = new JToggleButton[n];
 
         Runnable refreshFieldButtons = () -> {
-            int count = fieldSet.size();
+            int count = fieldSel.size();
             for (int j = 0; j < n; j++) {
                 CardData c = order.get(j);
-                boolean inField = fieldSet.contains(c);
+                boolean inField = holdsIdentity(fieldSel, c);
                 fieldBtns[j].setEnabled(eligible.test(c) && (inField || count < maxPlay));
             }
         };
@@ -1618,7 +1789,7 @@ class LookAtDeckDialogs {
         Runnable refreshBorders = () -> {
             for (int j = 0; j < n; j++) {
                 CardData c = order.get(j);
-                if (fieldSet.contains(c))
+                if (holdsIdentity(fieldSel, c))
                     cardLabels[j].setBorder(BorderFactory.createLineBorder(new Color(0, 200, 80), 3));
                 else if (j == selectedForSwap[0])
                     cardLabels[j].setBorder(BorderFactory.createLineBorder(Color.YELLOW, 3));
@@ -1636,18 +1807,18 @@ class LookAtDeckDialogs {
                 @Override public void mouseExited(MouseEvent e)  { hideZoom(); }
                 @Override public void mousePressed(MouseEvent e) {
                     CardData c = order.get(idx);
-                    if (fieldSet.contains(c)) return;
+                    if (holdsIdentity(fieldSel, c)) return;
                     if (selectedForSwap[0] == -1) {
                         selectedForSwap[0] = idx;
                     } else if (selectedForSwap[0] == idx) {
                         selectedForSwap[0] = -1;
                     } else {
                         int other = selectedForSwap[0];
-                        if (fieldSet.contains(order.get(other))) { selectedForSwap[0] = idx; refreshBorders.run(); return; }
+                        if (holdsIdentity(fieldSel, order.get(other))) { selectedForSwap[0] = idx; refreshBorders.run(); return; }
                         CardData tmp = order.get(idx); order.set(idx, order.get(other)); order.set(other, tmp);
                         updateLabels.run();
                         updating[0] = true;
-                        for (int j = 0; j < n; j++) fieldBtns[j].setSelected(fieldSet.contains(order.get(j)));
+                        for (int j = 0; j < n; j++) fieldBtns[j].setSelected(holdsIdentity(fieldSel, order.get(j)));
                         updating[0] = false;
                         refreshFieldButtons.run();
                         selectedForSwap[0] = -1;
@@ -1664,9 +1835,9 @@ class LookAtDeckDialogs {
                 if (updating[0]) return;
                 CardData c = order.get(idx);
                 if (ie.getStateChange() == java.awt.event.ItemEvent.SELECTED) {
-                    fieldSet.add(c);
+                    if (!holdsIdentity(fieldSel, c)) fieldSel.add(c);
                 } else {
-                    fieldSet.remove(c);
+                    dropIdentity(fieldSel, c);
                 }
                 selectedForSwap[0] = -1;
                 refreshFieldButtons.run();
@@ -1718,24 +1889,15 @@ class LookAtDeckDialogs {
         dlg.setLocationRelativeTo(frame);
         dlg.setVisible(true);
 
-        for (int i = 0; i < n; i++) deck.pollFirst();
-        for (CardData c : order) {
-            if (fieldSet.contains(c)) continue;
-            if (restToHand) {
-                (isP1 ? gameState.getP1Hand() : gameState.getP2Hand()).add(c);
-                log(c.name() + " → hand");
-            } else {
-                deck.addLast(c);
-                log(c.name() + " → bottom of deck");
-            }
-        }
-        if (isP1) cb.refreshP1Deck().run(); else cb.refreshP2Deck().run();
-        if (restToHand) { if (isP1) cb.refreshP1Hand().run(); else cb.refreshP2Hand().run(); }
-
-        for (CardData c : fieldSet) {
-            log(c.name() + " played onto field");
-            playOntoField.accept(c);
-        }
+        // The cards not played reach the bottom in the order the player arranged them, so the rest
+        // is read off `order`; when they go to hand instead there was no order to set.
+        List<CardData> rest = new ArrayList<>();
+        for (CardData c : order) if (!holdsIdentity(fieldSel, c)) rest.add(c);
+        List<Integer> restIdx  = peekIndices(cards, rest);
+        List<Integer> fieldIdx = peekIndices(cards, fieldSel);
+        return restToHand
+                ? new DeckLookDecision(restIdx, List.of(), List.of(), List.of(), fieldIdx)
+                : new DeckLookDecision(List.of(), List.of(), List.of(), restIdx, fieldIdx);
     }
 
     /**
@@ -1746,9 +1908,49 @@ class LookAtDeckDialogs {
      * <p>Each revealed card shows two toggle buttons. Selecting any button disables every
      * other button across all cards — only one card can be sent to one destination.
      */
-    void showRevealAddTypeToHandOrPlayJobTypeOntoFieldRestBottom(List<CardData> cards, Deque<CardData> deck,
+    void revealAddTypeToHandOrPlayJobTypeOntoFieldRestBottom(List<CardData> cards, Deque<CardData> deck,
             boolean isP1, int handMax, String handTypeFilter, int fieldMax,
             String fieldJobFilter, String fieldTypeFilter, Consumer<CardData> playOntoField) {
+        resolveReveal(cards, deck, isP1,
+                () -> askRevealAddToHandOrPlayOntoField(cards, handMax, handTypeFilter, fieldMax,
+                        fieldJobFilter, fieldTypeFilter),
+                () -> cpuRevealAddToHandOrPlayOntoField(cards, handTypeFilter, fieldJobFilter,
+                        fieldTypeFilter),
+                playOntoField);
+    }
+
+    /**
+     * The AI's answer: it would rather have the card in play than in hand, so it looks for a
+     * playable one first and only falls back to the hand branch when there is none.
+     */
+    static DeckLookDecision cpuRevealAddToHandOrPlayOntoField(List<CardData> cards,
+            String handTypeFilter, String fieldJobFilter, String fieldTypeFilter) {
+        int pick = dearestMatching(cards, c -> meetsRevealTypeFilter(c, fieldTypeFilter)
+                && (fieldJobFilter == null || CardFilters.meetsJobFilter(c, fieldJobFilter)));
+        boolean ontoField = pick >= 0;
+        if (!ontoField) pick = dearestMatching(cards, c -> meetsRevealTypeFilter(c, handTypeFilter));
+
+        List<Integer> chosen = pick < 0 ? List.of() : List.of(pick);
+        List<Integer> bottom = new ArrayList<>();
+        for (int i = 0; i < cards.size(); i++) if (i != pick) bottom.add(i);
+        return ontoField
+                ? new DeckLookDecision(List.of(), List.of(), List.of(), bottom, chosen)
+                : new DeckLookDecision(chosen, List.of(), List.of(), bottom);
+    }
+
+    /** Index of the most expensive card {@code eligible} accepts, ties going to the topmost, or -1. */
+    private static int dearestMatching(List<CardData> cards, Predicate<CardData> eligible) {
+        int best = -1;
+        for (int i = 0; i < cards.size(); i++) {
+            CardData c = cards.get(i);
+            if (eligible.test(c) && (best < 0 || c.cost() > cards.get(best).cost())) best = i;
+        }
+        return best;
+    }
+
+    private DeckLookDecision askRevealAddToHandOrPlayOntoField(List<CardData> cards,
+            int handMax, String handTypeFilter, int fieldMax,
+            String fieldJobFilter, String fieldTypeFilter) {
         int n = cards.size();
         String title = "Reveal — Add " + handTypeFilter + " to Hand  OR  Play "
                 + (fieldJobFilter != null ? "Job " + fieldJobFilter + " " : "") + fieldTypeFilter + " onto Field";
@@ -1917,28 +2119,46 @@ class LookAtDeckDialogs {
         dlg.setLocationRelativeTo(frame);
         dlg.setVisible(true);
 
-        // Commit choices after dialog closes
-        for (int i = 0; i < n; i++) deck.pollFirst();
-        for (CardData c : order) {
-            if (c == chosenCard[0]) continue;
-            deck.addLast(c);
-            log(c.name() + " → bottom of deck");
-        }
-        if (isP1) cb.refreshP1Deck().run(); else cb.refreshP2Deck().run();
+        CardData chosen = chosenCard[0];
+        List<CardData> rest = new ArrayList<>();
+        for (CardData c : order) if (c != chosen) rest.add(c);
+        List<Integer> bottom = peekIndices(cards, rest);
+        if (chosen == null) return new DeckLookDecision(List.of(), List.of(), List.of(), bottom);
 
-        if (chosenCard[0] != null && "field".equals(chosenDest[0])) {
-            log(chosenCard[0].name() + " played onto field");
-            playOntoField.accept(chosenCard[0]);
-        } else if (chosenCard[0] != null) {
-            if (isP1) gameState.getP1Hand().add(chosenCard[0]);
-            else      gameState.getP2Hand().add(chosenCard[0]);
-            log(chosenCard[0].name() + " → hand");
-            if (isP1) cb.refreshP1Hand().run(); else cb.refreshP2Hand().run();
-        }
+        List<Integer> pick = List.of(peekIndexOf(cards, chosen));
+        return "field".equals(chosenDest[0])
+                ? new DeckLookDecision(List.of(), List.of(), List.of(), bottom, pick)
+                : new DeckLookDecision(pick, List.of(), List.of(), bottom);
     }
 
-    void showRevealPlayNamedOntoFieldRestBottom(List<CardData> cards, Deque<CardData> deck,
+    void revealPlayNamedOntoFieldRestBottom(List<CardData> cards, Deque<CardData> deck,
             boolean isP1, String cardName, int maxCost, Consumer<CardData> playOntoField) {
+        Predicate<CardData> eligible = c -> c.name().equalsIgnoreCase(cardName)
+                && (maxCost < 0 || c.cost() <= maxCost);
+        resolveReveal(cards, deck, isP1,
+                () -> askRevealPlayNamedOntoField(cards, cardName, maxCost, eligible),
+                () -> cpuRevealPlayNamedOntoField(cards, eligible),
+                playOntoField);
+    }
+
+    /**
+     * The AI's answer: the topmost card of the named kind, not the dearest. Copies of one card name
+     * differ only by printing, so there is nothing to weigh — unlike every other reveal here.
+     */
+    static DeckLookDecision cpuRevealPlayNamedOntoField(List<CardData> cards,
+            Predicate<CardData> eligible) {
+        int pick = -1;
+        for (int i = 0; i < cards.size() && pick < 0; i++)
+            if (eligible.test(cards.get(i))) pick = i;
+
+        List<Integer> bottom = new ArrayList<>();
+        for (int i = 0; i < cards.size(); i++) if (i != pick) bottom.add(i);
+        return new DeckLookDecision(List.of(), List.of(), List.of(), bottom,
+                pick < 0 ? List.of() : List.of(pick));
+    }
+
+    private DeckLookDecision askRevealPlayNamedOntoField(List<CardData> cards,
+            String cardName, int maxCost, Predicate<CardData> eligible) {
         String costSuffix = maxCost >= 0 ? " of cost " + maxCost + " or less" : "";
         int n = cards.size();
         JDialog dlg = new JDialog(frame, "Reveal — Play " + cardName + costSuffix + " onto Field, Rest to Bottom", true);
@@ -1966,11 +2186,9 @@ class LookAtDeckDialogs {
 
         Runnable refreshFieldButtons = () -> {
             for (int j = 0; j < n; j++) {
-                CardData c   = order.get(j);
-                boolean eligible = c.name().equalsIgnoreCase(cardName)
-                        && (maxCost < 0 || c.cost() <= maxCost);
-                boolean chosen   = chosenToPlay[0] == c;
-                fieldBtns[j].setEnabled(eligible && (chosen || chosenToPlay[0] == null));
+                CardData c     = order.get(j);
+                boolean chosen = chosenToPlay[0] == c;
+                fieldBtns[j].setEnabled(eligible.test(c) && (chosen || chosenToPlay[0] == null));
             }
         };
 
@@ -2075,21 +2293,11 @@ class LookAtDeckDialogs {
         dlg.setLocationRelativeTo(frame);
         dlg.setVisible(true);
 
-        for (int i = 0; i < n; i++) deck.pollFirst();
         CardData played = chosenToPlay[0];
-        for (CardData c : order) {
-            if (c == played) continue;
-            deck.addLast(c);
-            log(c.name() + " → bottom of deck");
-        }
-        if (isP1) cb.refreshP1Deck().run(); else cb.refreshP2Deck().run();
-
-        if (played != null) {
-            log(played.name() + " played onto field");
-            playOntoField.accept(played);
-        } else {
-            log("No Card Name " + cardName + costSuffix + " selected — all cards to bottom");
-        }
+        List<CardData> rest = new ArrayList<>();
+        for (CardData c : order) if (c != played) rest.add(c);
+        return new DeckLookDecision(List.of(), List.of(), List.of(), peekIndices(cards, rest),
+                played == null ? List.of() : List.of(peekIndexOf(cards, played)));
     }
 
     /**

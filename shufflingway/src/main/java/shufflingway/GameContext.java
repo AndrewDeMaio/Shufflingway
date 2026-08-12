@@ -311,7 +311,7 @@ public interface GameContext {
      * {@code eligibleCondition} may play it onto the field; otherwise it is returned to the top
      * of their deck. P1 gets a Decline/OK dialog; P2 auto-accepts.
      */
-    void revealEachPlayerTopDeckMayPlay(java.util.function.Predicate<CardData> eligibleCondition);
+    void revealEachPlayerTopDeckMayPlay(Predicate<CardData> eligibleCondition);
 
     /**
      * Reveals the top card of the player's deck in a modal popup, breaks all opponent Forwards
@@ -2250,8 +2250,12 @@ public interface GameContext {
 
     /**
      * Presents the active player with a yes/no "you may" prompt.
-     * For P1 (human), shows a dialog and returns true if they accept.
-     * For P2 (CPU), always returns false (declines).
+     * Asks the player this effect belongs to whether they take it up, and returns their answer.
+     *
+     * <p>Whoever is in that seat: the local human answers in a dialog, a remote human answers on
+     * their own client and the answer crosses the wire, and the AI declines. Ask before acting —
+     * several of these guard events other abilities react to, and a player who declines has to be
+     * seen not to have acted at all.
      */
     boolean promptYouMay(String prompt);
 
