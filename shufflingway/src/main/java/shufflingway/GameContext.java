@@ -726,6 +726,20 @@ public interface GameContext {
     void grantSelfFieldAbilityPermanently(CardData source, String abilityText);
 
     /**
+     * Shields {@code source} from being chosen by the opponent's Summons and/or abilities for as
+     * long as it stays on the field — the outlasts-the-turn form of
+     * {@link #shieldNamedCardCannotBeChosen} (Young Excenmille 23-100L).
+     */
+    void shieldSelfCannotBeChosenPermanently(CardData source, boolean bySummons, boolean byAbilities);
+
+    /**
+     * Puts {@code source} under a standing "must attack once per turn if possible" compulsion
+     * (Roche 29-076H). It re-arms every turn and is satisfied once that card has attacked, so
+     * unlike the one-turn must-attack instruction it is held by instance rather than slot.
+     */
+    void grantSelfMustAttackOncePerTurnPermanently(CardData source);
+
+    /**
      * Finds {@code source} on the field and doubles its power (and optionally grants
      * {@code traits}) until end of turn by boosting it by its current effective power.
      */

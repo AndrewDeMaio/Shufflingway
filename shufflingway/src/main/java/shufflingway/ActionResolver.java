@@ -3248,6 +3248,21 @@ public class ActionResolver {
             final String granted = quoted;
             return ctx -> ctx.grantSelfFieldAbilityPermanently(source, granted);
         }
+        // "[Self] cannot be chosen by your opponent's Summons/abilities." (Young Excenmille
+        // 23-100L). Not granted as field-ability text: the targeting rules read dedicated sets
+        // rather than scanning abilities, so this routes to the permanent shield primitive.
+        Matcher cbc = STANDALONE_NAMED_CANNOT_BE_CHOSEN.matcher(quoted);
+        if (cbc.matches() && cbc.group("name").trim().equalsIgnoreCase(source.name())) {
+            String scope = cbc.group("scope").toLowerCase(Locale.ROOT);
+            boolean bySummons   = scope.contains("summon");
+            boolean byAbilities = scope.contains("abilit");
+            return ctx -> ctx.shieldSelfCannotBeChosenPermanently(source, bySummons, byAbilities);
+        }
+        // "[Self] must attack once per turn if possible." (Roche 29-076H) — likewise a rules
+        // compulsion rather than a readable field ability.
+        Matcher ma = GRANTED_MUST_ATTACK_ONCE_PER_TURN.matcher(quoted);
+        if (ma.matches() && ma.group("subj").trim().equalsIgnoreCase(source.name()))
+            return ctx -> ctx.grantSelfMustAttackOncePerTurnPermanently(source);
         return null;
     }
 

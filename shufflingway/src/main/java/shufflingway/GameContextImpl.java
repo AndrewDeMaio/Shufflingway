@@ -4317,6 +4317,22 @@ final class GameContextImpl implements GameContext {
 				logEntry(source.name() + " gains \"" + abilityText + "\" (does not end at end of turn)");
 			}
 
+			@Override public void shieldSelfCannotBeChosenPermanently(CardData source, boolean bySummons,
+					boolean byAbilities) {
+				if (bySummons)   mw.permanentCannotBeChosenBySummons.add(source);
+				if (byAbilities) mw.permanentCannotBeChosenByAbilities.add(source);
+				logEntry(source.name() + " cannot be chosen by your opponent's "
+						+ (bySummons && byAbilities ? "Summons or abilities"
+								: bySummons ? "Summons" : "abilities")
+						+ " (does not end at end of turn)");
+			}
+
+			@Override public void grantSelfMustAttackOncePerTurnPermanently(CardData source) {
+				mw.permanentMustAttackOncePerTurn.add(source);
+				logEntry(source.name() + " must attack once per turn if possible"
+						+ " (does not end at end of turn)");
+			}
+
 			/**
 			 * Records a base-power override for {@code card} and queues its removal at the end of
 			 * the turn.  Boosts and reductions are deliberately left alone — they layer on top of

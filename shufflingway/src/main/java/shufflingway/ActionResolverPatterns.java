@@ -4934,6 +4934,15 @@ final class ActionResolverPatterns {
         "(?i)^(?<subject>.+?)\\s+gains\\s+\"(?<q1>.+?)\"(?:\\s+and\\s+\"(?<q2>.+?)\")?\\s*" +
         "\\(This\\s+effect\\s+does\\s+not\\s+end\\s+at\\s+the\\s+end\\s+of\\s+the\\s+turn\\.?\\)[.!]?$");
     /**
+     * A granted "[CardName] must attack once per turn if possible." clause (Roche 29-076H).
+     * Group {@code subj} — the compelled card, which must be the grant's own source.
+     *
+     * <p>Distinct from {@link #FOLLOWUP_MUST_ATTACK}'s "it must attack this turn if possible":
+     * that one binds for the turn it is applied, this one re-arms every turn.
+     */
+    static final Pattern GRANTED_MUST_ATTACK_ONCE_PER_TURN = Pattern.compile(
+        "(?i)^(?<subj>.+?)\\s+must\\s+attack\\s+once\\s+per\\s+turn\\s+if\\s+possible[.!]?$");
+    /**
      * "[Self] gains [traits | \"[quoted ability]\"] and [Self]'s power becomes N." — a grant that
      * states no duration, and so lasts as long as the card stays on the field (Hyoh 16-097H,
      * Ramza 16-017R). Some printings spell the same thing out in a trailing

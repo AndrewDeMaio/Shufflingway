@@ -322,6 +322,24 @@ public class MainWindow {
 	 */
 	final Map<CardData, List<FieldAbility>> permanentFieldAbilities = new IdentityHashMap<>();
 	/**
+	 * Cards shielded from the opponent's Summons / abilities by a grant that outlasts the turn —
+	 * the permanent twin of {@link #cannotBeChosenBySummons} / {@link #cannotBeChosenByAbilities}
+	 * (Young Excenmille 23-100L). Separate sets for the same reason as
+	 * {@link #permanentFieldAbilities}: the turn-scoped pair is emptied at the turn boundary.
+	 *
+	 * <p>Keyed by identity, like the rest of the permanent-grant family, so the shield belongs to
+	 * the instance that earned it rather than to every copy of the card.
+	 */
+	final Set<CardData> permanentCannotBeChosenBySummons   = Collections.newSetFromMap(new IdentityHashMap<>());
+	final Set<CardData> permanentCannotBeChosenByAbilities = Collections.newSetFromMap(new IdentityHashMap<>());
+	/**
+	 * Cards under a permanent "[Self] must attack once per turn if possible" compulsion
+	 * (Roche 29-076H). Unlike {@link #p1ForwardMustAttack}, which is a one-turn instruction held
+	 * as slot indices, this re-arms every turn and so is held by instance and never cleared by the
+	 * turn boundary — {@link #attacksMadeThisTurn} is what makes it "once per turn".
+	 */
+	final Set<CardData> permanentMustAttackOncePerTurn = Collections.newSetFromMap(new IdentityHashMap<>());
+	/**
 	 * Power added by an effect that outlasts the turn, and so is not zeroed by the end phase the
 	 * way {@link #p1ForwardPowerBoost} is. Keyed by card identity because the boost belongs to the
 	 * instance on the field, not to every copy of the card.
@@ -2606,6 +2624,18 @@ public class MainWindow {
                                     refreshAllForwardSlots();
                                     logEntry("Declare an attacker, or click Skip to end the Attack Phase.");
                                 });
+                                return;
+                            }
+
+                            // A Forward under a must-attack compulsion has to be sent in before the
+                            // phase can be left. This is the only enforcement point for that rule:
+                            // p1ForwardMustAttack was written and re-indexed but never read, so
+                            // "it must attack this turn if possible" had no effect at all until now.
+                            int mustAttackIdx = p1ForwardCompelledToAttackIdx();
+                            if (mustAttackIdx >= 0) {
+                                showEffectOptionDialog(p1ForwardCards.get(mustAttackIdx).name()
+                                        + " must attack this turn if possible.",
+                                        "Must Attack", new Object[]{"OK"});
                                 return;
                             }
 
@@ -9439,6 +9469,7 @@ public class MainWindow {
 		// Opponent-scoped grants: the controller may still choose their own card.
 		if (chooserIsP1 == sideIsP1) return false;
 		if ((bySummon ? cannotBeChosenBySummons : cannotBeChosenByAbilities).contains(c)) return true;
+		if ((bySummon ? permanentCannotBeChosenBySummons : permanentCannotBeChosenByAbilities).contains(c)) return true;
 		return icbGrantsImmunity(c.name(), sideIsP1, bySummon, true);
 	}
 
@@ -10471,6 +10502,9 @@ public class MainWindow {
 		permanentPowerBoost.remove(card);
 		permanentTraits.remove(card);
 		permanentFieldAbilities.remove(card);
+		permanentCannotBeChosenBySummons.remove(card);
+		permanentCannotBeChosenByAbilities.remove(card);
+		permanentMustAttackOncePerTurn.remove(card);
 		// A permanent "power becomes N" lives in the same map as the end-of-turn kind, which has
 		// its own removal hook; dropping the key here is what bounds the permanent one.
 		basePowerOverrides.remove(card);
@@ -11510,6 +11544,28 @@ public class MainWindow {
 		if (isFieldAbilityCannotAttack(fwd, true)) return false;
 		return effectiveP1HasTrait(idx, CardData.Trait.HASTE)
 				|| p1ForwardPlayedOnTurn.get(idx) != gameState.getTurnNumber();
+	}
+
+	/**
+	 * The P1 Forward that is compelled to attack this turn and still can, or {@code -1}.
+	 *
+	 * <p>Two sources feed it: {@link #p1ForwardMustAttack}, the one-turn instruction the choose
+	 * chain writes ("it must attack this turn if possible"), and
+	 * {@link #permanentMustAttackOncePerTurn}, Roche 29-076H's standing compulsion, which is
+	 * satisfied for the turn as soon as that Forward has attacked once.
+	 *
+	 * <p>"If possible" is {@link #isForwardSelectable}: a Forward that is dull, restricted, or out
+	 * of attacks lifts the compulsion instead of stranding the player in the attack phase.
+	 */
+	int p1ForwardCompelledToAttackIdx() {
+		for (int i = 0; i < p1ForwardCards.size(); i++) {
+			if (!isForwardSelectable(i)) continue;
+			if (p1ForwardMustAttack.contains(i)) return i;
+			CardData fwd = p1ForwardCards.get(i);
+			if (permanentMustAttackOncePerTurn.contains(fwd)
+					&& attacksMadeThisTurn.getOrDefault(fwd, 0) == 0) return i;
+		}
+		return -1;
 	}
 
 	private boolean p1InBlockDeclaration() {

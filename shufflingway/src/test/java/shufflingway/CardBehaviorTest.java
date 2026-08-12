@@ -11922,11 +11922,190 @@ public class CardBehaviorTest {
 
 	@Test
 	void anUnsupportedQuotedClauseDeclinesRatherThanApplyingHalfTheAbility() {
+		// "cannot be blocked by Forwards of cost N or less" has an end-of-turn grant primitive but
+		// no permanent one, so granting it here would be silently inert. The parser declines the
+		// whole match rather than applying the power half on its own — half an ability is worse
+		// than an unparsed one, and an unparsed one is at least visible in the coverage report.
+		CardData vaan = makeForward("Vaan", "Wind", 3, 7000);
+		String text = "Vaan gains \"Vaan cannot be blocked by Forwards of cost 2 or less.\" and "
+				+ "Vaan's power becomes 9000. (This effect does not end at the end of the turn.)";
+		assertNull(ActionResolverFieldAbility.tryParseSelfGainsAndBasePowerBecomesPermanent(text, vaan));
+	}
+
+	// =========================================================================================
+	// The two clauses the permanent self-grant used to decline, because neither is a field
+	// ability any rule reads: targeting immunity lives in dedicated sets, and the must-attack
+	// compulsion in an index set. Both now have permanent primitives, so the whole ability lands
+	// rather than the parser refusing it and leaving the power half unapplied too.
+	//
+	//   23-100L Young Excenmille — 《C》: … gains "… cannot be chosen by your opponent's
+	//                             abilities." and … power becomes 9000.
+	//   29-076H Roche           — Remove 1 Card Name Roche in your Break Zone from the game:
+	//                             … gains "Roche must attack once per turn if possible." and
+	//                             … power becomes 9000.
+	//
+	// Roche's half needed the must-attack rule built from nothing: p1ForwardMustAttack was
+	// written by the choose chain and re-indexed on every removal path, but never read, so "it
+	// must attack this turn if possible" had no effect whatsoever. Both sources now feed one
+	// check at the attack-phase exit.
+	// =========================================================================================
+
+	private static final String EXCENMILLE_PUMP =
+			"Young Excenmille gains \"Young Excenmille cannot be chosen by your opponent's "
+			+ "abilities.\" and Young Excenmille's power becomes 9000. "
+			+ "(This effect does not end at the end of the turn.)";
+	private static final String ROCHE_PUMP =
+			"Roche gains \"Roche must attack once per turn if possible.\" and Roche's power "
+			+ "becomes 9000. (This effect does not end at the end of the turn.)";
+
+	@Test
+	void excenmilleShieldsHimselfAndSetsHisPower() {
+		CardData ye = makeForward("Young Excenmille", "Water", 5, 5000);
+		assertEquals("SelfGainsAndBasePowerBecomesPermanent",
+				ActionResolver.matchedPatternName(EXCENMILLE_PUMP, ye),
+				"CannotBeChosen used to claim this off the quoted clause and drop the power half");
+
+		GameContext ctx = mock(GameContext.class);
+		ActionResolver.parse(EXCENMILLE_PUMP, ye).accept(ctx);
+		verify(ctx).shieldSelfCannotBeChosenPermanently(ye, false, true);
+		verify(ctx).setSourceForwardBasePowerPermanently(ye, 9000, EnumSet.noneOf(CardData.Trait.class));
+	}
+
+	@Test
+	void rocheTakesTheCompulsionAndSetsHisPower() {
 		CardData roche = makeForward("Roche", "Fire", 4, 6000);
-		String text = "Roche gains \"Roche must attack once per turn if possible.\" and Roche's "
-				+ "power becomes 9000. (This effect does not end at the end of the turn.)";
-		assertNull(ActionResolverFieldAbility.tryParseSelfGainsAndBasePowerBecomesPermanent(text, roche),
-				"there is no field-ability reader for a must-attack clause, so granting it would be "
-						+ "inert — better visibly unparsed than half-applied");
+		assertEquals("SelfGainsAndBasePowerBecomesPermanent",
+				ActionResolver.matchedPatternName(ROCHE_PUMP, roche));
+
+		GameContext ctx = mock(GameContext.class);
+		ActionResolver.parse(ROCHE_PUMP, roche).accept(ctx);
+		verify(ctx).grantSelfMustAttackOncePerTurnPermanently(roche);
+		verify(ctx).setSourceForwardBasePowerPermanently(roche, 9000, EnumSet.noneOf(CardData.Trait.class));
+	}
+
+	// --- Young Excenmille's shield ----------------------------------------------------------
+
+	private static MainWindow excenmilleShielded() {
+		MainWindow mw = new MainWindow();
+		CardData ye = makeForward("Young Excenmille", "Water", 5, 5000);
+		mw.placeCardInForwardZone(ye);
+		ActionResolver.parse(EXCENMILLE_PUMP, ye).accept(mw.buildGameContext(true));
+		return mw;
+	}
+
+	@Test
+	void theShieldStopsTheOpponentsAbilitiesButNotTheirSummons() {
+		MainWindow mw = excenmilleShielded();
+		CardData ye = mw.p1ForwardCards.get(0);
+
+		assertTrue(mw.isProtectedFromChoice(ye, true, false, false, null),
+				"an opponent's ability cannot choose him");
+		assertFalse(mw.isProtectedFromChoice(ye, true, false, true, null),
+				"the clause names abilities only — Summons still reach him");
+	}
+
+	@Test
+	void theShieldDoesNotStopHisOwnControllersAbilities() {
+		MainWindow mw = excenmilleShielded();
+		assertFalse(mw.isProtectedFromChoice(mw.p1ForwardCards.get(0), true, true, false, null),
+				"\"your opponent's abilities\" — his own side may still target him");
+	}
+
+	@Test
+	void theShieldAndThePowerBothSurviveTheEndOfTurn() {
+		MainWindow mw = excenmilleShielded();
+		CardData ye = mw.p1ForwardCards.get(0);
+		assertEquals(9000, mw.effectiveP1ForwardPower(0));
+
+		for (Consumer<GameContext> e : new ArrayList<>(mw.endOfTurnEffects))
+			e.accept(mw.buildGameContext(true));
+		// The turn-scoped shield sets are emptied wholesale at the boundary; the permanent ones
+		// are a separate pair precisely so that does not take this grant with it.
+		mw.cannotBeChosenByAbilities.clear();
+
+		assertTrue(mw.isProtectedFromChoice(ye, true, false, false, null));
+		assertEquals(9000, mw.effectiveP1ForwardPower(0));
+	}
+
+	@Test
+	void theShieldIsDroppedWhenHeLeavesTheField() {
+		MainWindow mw = excenmilleShielded();
+		CardData ye = mw.p1ForwardCards.get(0);
+		mw.clearPermanentGrants(ye);
+		assertFalse(mw.isProtectedFromChoice(ye, true, false, false, null));
+	}
+
+	// --- Roche's compulsion, and the must-attack rule it required ---------------------------
+
+	/** P1's attack phase, declaration sub-step, with Roche on the field under his compulsion. */
+	private static MainWindow rocheCompelled() {
+		MainWindow mw = new MainWindow();
+		enterP1AttackPhase(mw);
+		mw.attackSubStep = 1;   // declaration sub-step
+		CardData roche = makeForward("Roche", "Fire", 4, 6000);
+		mw.placeCardInForwardZone(roche);
+		mw.p1ForwardPlayedOnTurn.set(0, 0);   // not summoning-sick
+		ActionResolver.parse(ROCHE_PUMP, roche).accept(mw.buildGameContext(true));
+		return mw;
+	}
+
+	@Test
+	void rocheMustAttackAndTheCompulsionClearsOnceHeHas() {
+		MainWindow mw = rocheCompelled();
+		CardData roche = mw.p1ForwardCards.get(0);
+
+		assertEquals(0, mw.p1ForwardCompelledToAttackIdx(),
+				"the phase cannot be left while he can still attack");
+
+		mw.recordAttackDeclared(roche);
+
+		assertEquals(-1, mw.p1ForwardCompelledToAttackIdx(),
+				"\"once per turn\" — one attack satisfies it for this turn");
+	}
+
+	@Test
+	void theCompulsionReArmsOnTheFollowingTurn() {
+		MainWindow mw = rocheCompelled();
+		mw.recordAttackDeclared(mw.p1ForwardCards.get(0));
+		assertEquals(-1, mw.p1ForwardCompelledToAttackIdx());
+
+		// A new turn resets the attack counts; the compulsion itself is not turn-scoped.
+		mw.attacksMadeThisTurn.clear();
+
+		assertEquals(0, mw.p1ForwardCompelledToAttackIdx(),
+				"it is a standing rule, not a one-turn instruction");
+	}
+
+	@Test
+	void ifPossibleLiftsTheCompulsionWhenRocheCannotAttack() {
+		MainWindow mw = rocheCompelled();
+		mw.p1ForwardStates.set(0, CardState.DULL);
+		assertEquals(-1, mw.p1ForwardCompelledToAttackIdx(),
+				"a dull Forward cannot attack, so the compulsion must not strand the attack phase");
+	}
+
+	@Test
+	void theCompulsionIsDroppedWhenRocheLeavesTheField() {
+		MainWindow mw = rocheCompelled();
+		CardData roche = mw.p1ForwardCards.get(0);
+		mw.clearPermanentGrants(roche);
+		assertEquals(-1, mw.p1ForwardCompelledToAttackIdx());
+	}
+
+	@Test
+	void theOneTurnMustAttackInstructionIsNowHonouredToo() {
+		// p1ForwardMustAttack was populated by the choose chain and re-indexed on every removal
+		// path, but nothing ever read it — "it must attack this turn if possible" did nothing.
+		MainWindow mw = new MainWindow();
+		enterP1AttackPhase(mw);
+		mw.attackSubStep = 1;   // declaration sub-step
+		mw.placeCardInForwardZone(makeForward("Zell", "Fire", 3, 7000));
+		mw.p1ForwardPlayedOnTurn.set(0, 0);
+
+		assertEquals(-1, mw.p1ForwardCompelledToAttackIdx(), "no instruction yet");
+
+		mw.p1ForwardMustAttack.add(0);
+
+		assertEquals(0, mw.p1ForwardCompelledToAttackIdx());
 	}
 }
