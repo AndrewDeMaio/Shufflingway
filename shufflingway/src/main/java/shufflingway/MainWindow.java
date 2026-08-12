@@ -9269,13 +9269,46 @@ public class MainWindow {
 	 */
 	private Predicate<CardData> redirectLegality(StackEntry entry, boolean sideIsP1,
 			String element, CardData exclude) {
-		boolean entryIsOpponents = entry.isP1() != sideIsP1;
-		Set<CardData> protectedFromEntry = !entryIsOpponents ? Set.of()
-				: entry.isSummon() ? cannotBeChosenBySummons : cannotBeChosenByAbilities;
 		return c -> c != null && c != exclude
 				&& (element == null || c.containsElement(element))
-				&& !protectedFromEntry.contains(c)
-				&& !(entryIsOpponents && cannotBeChosenBySummonsAnyone.contains(c));
+				&& !isProtectedFromChoice(c, sideIsP1, entry.isP1(), entry.isSummon(), entry.source());
+	}
+
+	/**
+	 * Whether {@code c}, sitting on {@code sideIsP1}'s field, is shielded from being chosen by a
+	 * Summon ({@code bySummon = true}) or an ability controlled by {@code chooserIsP1}.
+	 *
+	 * <p>Applies the same two-scope rule as target selection: a grant that names no player
+	 * ("cannot be chosen by Summons") blocks whoever is choosing, including the card's own
+	 * controller, while one printed "by your opponent's …" blocks only the card's opponent.
+	 * {@code chooserSource} is the resolving card, needed by the element-matched immunities;
+	 * pass {@code null} when it is unknown.
+	 *
+	 * <p>This is the per-card form of the sets {@code GameContextImpl.selectCharacters} builds
+	 * once per selection. The two must stay in agreement — an immunity honoured when a target is
+	 * first chosen but not when an effect is redirected is a card that stops being protected the
+	 * moment someone points a redirect at it.
+	 */
+	boolean isProtectedFromChoice(CardData c, boolean sideIsP1, boolean chooserIsP1,
+			boolean bySummon, CardData chooserSource) {
+		if (c == null) return false;
+		List<String> chooserElems = chooserSource != null ? effectiveElements(chooserSource) : List.of();
+
+		// Unqualified grants: no player named, so both are bound.
+		if (bySummon && cannotBeChosenBySummonsAnyone.contains(c)) return true;
+		if (bySummon && ActionResolver.hasCannotBeChosenByAnySummonFieldAbility(c)) return true;
+		String immuneElem = cannotBeChosenByElement.get(c);
+		if (immuneElem != null && chooserElems.contains(immuneElem)) return true;
+		if (ActionResolver.hasCannotBeChosenByOwnElementFieldAbility(c)) {
+			String ce = effectiveElement(c);
+			if (ce != null && chooserElems.contains(ce)) return true;
+		}
+		if (icbGrantsImmunity(c.name(), sideIsP1, bySummon, false)) return true;
+
+		// Opponent-scoped grants: the controller may still choose their own card.
+		if (chooserIsP1 == sideIsP1) return false;
+		if ((bySummon ? cannotBeChosenBySummons : cannotBeChosenByAbilities).contains(c)) return true;
+		return icbGrantsImmunity(c.name(), sideIsP1, bySummon, true);
 	}
 
 	/**
@@ -9629,24 +9662,39 @@ public class MainWindow {
 	/**
 	 * Returns {@code true} if any {@link IfControlBoost} on the given player's field
 	 * targets {@code targetName} and grants it immunity to Summons ({@code forSummon=true})
-	 * or abilities ({@code forSummon=false}) while its conditions are currently met.
+	 * or abilities ({@code forSummon=false}) while its conditions are currently met — of either
+	 * scope. Targeting code wants one scope at a time; see the four-argument overload.
 	 */
 	boolean icbGrantsImmunity(String targetName, boolean isP1, boolean forSummon) {
+		return icbGrantsImmunity(targetName, isP1, forSummon, false)
+			|| icbGrantsImmunity(targetName, isP1, forSummon, true);
+	}
+
+	/**
+	 * As {@link #icbGrantsImmunity(String, boolean, boolean)}, but restricted to grants of one
+	 * scope. {@code opponentScoped=true} selects the "cannot be chosen by <em>your opponent's</em>
+	 * Summons or abilities" grants, which block only effects controlled by the target's opponent;
+	 * {@code false} selects the unqualified grants, which block whoever is choosing — including
+	 * the target's own controller.
+	 */
+	boolean icbGrantsImmunity(String targetName, boolean isP1, boolean forSummon, boolean opponentScoped) {
 		List<CardData> fwds = isP1 ? p1ForwardCards : p2ForwardCards;
 		CardData[]     bkps = isP1 ? p1BackupCards  : p2BackupCards;
 		List<CardData> mons = isP1 ? p1MonsterCards : p2MonsterCards;
-		for (CardData src : fwds)          if (icbSourceGrantsImmunity(src, targetName, isP1, forSummon)) return true;
-		for (CardData bkp : bkps) if (bkp != null && icbSourceGrantsImmunity(bkp, targetName, isP1, forSummon)) return true;
-		for (CardData src : mons)          if (icbSourceGrantsImmunity(src, targetName, isP1, forSummon)) return true;
+		for (CardData src : fwds)          if (icbSourceGrantsImmunity(src, targetName, isP1, forSummon, opponentScoped)) return true;
+		for (CardData bkp : bkps) if (bkp != null && icbSourceGrantsImmunity(bkp, targetName, isP1, forSummon, opponentScoped)) return true;
+		for (CardData src : mons)          if (icbSourceGrantsImmunity(src, targetName, isP1, forSummon, opponentScoped)) return true;
 		return false;
 	}
 
-	private boolean icbSourceGrantsImmunity(CardData src, String targetName, boolean isP1, boolean forSummon) {
+	private boolean icbSourceGrantsImmunity(CardData src, String targetName, boolean isP1,
+			boolean forSummon, boolean opponentScoped) {
 		List<CardData> fwds = isP1 ? p1ForwardCards : p2ForwardCards;
 		CardData[]     bkps = isP1 ? p1BackupCards  : p2BackupCards;
 		List<CardData> mons = isP1 ? p1MonsterCards : p2MonsterCards;
 		for (IfControlBoost icb : src.ifControlBoosts()) {
 			if (forSummon ? !icb.cannotBeChosenBySummons() : !icb.cannotBeChosenByAbilities()) continue;
+			if (icb.chosenImmunityOpponentOnly() != opponentScoped) continue;
 			if (!icbTargetsName(icb, targetName, fwds, bkps, mons)) continue;
 			if (icbConditionsMet(icb, isP1)) return true;
 		}

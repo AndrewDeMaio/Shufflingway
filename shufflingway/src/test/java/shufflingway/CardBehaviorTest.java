@@ -11162,6 +11162,13 @@ public class CardBehaviorTest {
 				true, false, false, null, null, null, null, false, null, false);
 	}
 
+	/** The same selection aimed at P2's own Forwards — the side the effect's controller owns. */
+	private static List<ForwardTarget> p2ChoosesOneOfItsOwnForwards(MainWindow mw) {
+		return mw.buildGameContext(false).selectCharacters(
+				1, false, false, true, null, null, -1, null, -1, null,
+				true, false, false, null, null, null, null, false, null, false);
+	}
+
 	@Test
 	void namedCannotBeChosenGrantParsesAsAnUnconditionalIcb() {
 		List<IfControlBoost> boosts = CardData.parseIfControlBoosts(NOEL_SERAH_SHIELD, "Forward");
@@ -11214,6 +11221,122 @@ public class CardBehaviorTest {
 
 		assertEquals(1, chosen.size(), "with nothing granting immunity Serah is an ordinary target");
 		assertEquals(0, chosen.get(0).idx());
+	}
+
+	// -----------------------------------------------------------------------------------------
+	// Scope: "by your opponent's Summons or abilities" protects against the opponent only. The
+	// controller may still choose their own shielded card — targeting your own Forward with your
+	// own buff is a normal play. Texts that omit the qualifier ("cannot be chosen by Summons")
+	// keep blocking whoever is choosing, so the two scopes are tracked separately end to end.
+	// -----------------------------------------------------------------------------------------
+
+	/**
+	 * 1-201S Rikku's second sentence — the one card in the corpus whose targeting immunity omits
+	 * "your opponent's", so it really does bind both players.
+	 */
+	private static final String RIKKU_SYMMETRIC_SHIELD =
+			"If you control Card Name Paine, Rikku gains +2000 power and "
+			+ "Rikku cannot be chosen by abilities.";
+
+	/** 12-037L Ashe — the same construction with the qualifier present. */
+	private static final String ASHE_OPPONENT_SHIELD =
+			"If you control 6 or more Characters, Ashe gains +2000 power and "
+			+ "\"Ashe cannot be chosen by your opponent's abilities.\"";
+
+	@Test
+	void theQualifierDecidesWhetherTheImmunityIsOpponentScoped() {
+		IfControlBoost opponentScoped = CardData.parseIfControlBoosts(ASHE_OPPONENT_SHIELD, "Forward").get(0);
+		assertTrue(opponentScoped.cannotBeChosenByAbilities());
+		assertTrue(opponentScoped.chosenImmunityOpponentOnly(),
+				"\"by your opponent's\" scopes the protection to the other player");
+
+		IfControlBoost symmetric = CardData.parseIfControlBoosts(RIKKU_SYMMETRIC_SHIELD, "Forward").get(0);
+		assertTrue(symmetric.cannotBeChosenByAbilities());
+		assertFalse(symmetric.chosenImmunityOpponentOnly(),
+				"with no qualifier the protection applies to either player");
+	}
+
+	@Test
+	void theControllerMayStillChooseTheirOwnOpponentShieldedCard() {
+		MainWindow mw = new MainWindow();
+		placeP2Forward(mw, makeForward("Serah", "Ice", 3, 7000));
+		placeP2Forward(mw, makeIcbCard("Noel", "Ice", "Forward", NOEL_SERAH_SHIELD));
+
+		// P2 owns both the granter and Serah, and is the one choosing.
+		List<ForwardTarget> chosen = p2ChoosesOneOfItsOwnForwards(mw);
+
+		assertEquals(1, chosen.size(), "the shield names the opponent, not the controller");
+		assertTrue(chosen.stream().anyMatch(t -> !t.isP1()), "and the pick comes off P2's own row");
+	}
+
+	@Test
+	void anUnqualifiedImmunityStillBlocksTheControllerToo() {
+		MainWindow mw = new MainWindow();
+		placeP2Forward(mw, makeIcbCard("Rikku", "Water", "Forward", RIKKU_SYMMETRIC_SHIELD)); // idx 0
+		placeP2Forward(mw, makeForward("Paine", "Water", 3, 7000));                           // idx 1
+
+		List<ForwardTarget> chosen = p2ChoosesOneOfItsOwnForwards(mw);
+
+		assertEquals(1, chosen.size(), "Paine is unprotected and still eligible");
+		assertEquals(1, chosen.get(0).idx(),
+				"Rikku is not — an unqualified \"cannot be chosen\" binds her own controller as well");
+	}
+
+	@Test
+	void bothHalvesOfASummonsOrAbilitiesScopeAreRecorded() {
+		// 21-051R Tiamat prints both halves under one "cannot be chosen by". A Summons matcher and
+		// an abilities matcher both anchored on that shared prefix cannot each claim their half,
+		// and the abilities one lost every time — Tiamat was immune to opposing Summons but not to
+		// opposing abilities.
+		IfControlBoost icb = CardData.parseIfControlBoosts(
+				"If you control 7 or more Wind Characters, Tiamat gains \"Tiamat cannot be chosen "
+				+ "by your opponent's Summons or abilities.\" and \"If Tiamat is dealt damage by "
+				+ "your opponent's Summons or abilities, the damage becomes 0 instead.\"",
+				"Forward").get(0);
+
+		assertTrue(icb.cannotBeChosenBySummons(), "the Summons half");
+		assertTrue(icb.cannotBeChosenByAbilities(), "and the abilities half, which used to be dropped");
+		assertTrue(icb.chosenImmunityOpponentOnly());
+	}
+
+	// -----------------------------------------------------------------------------------------
+	// Redirects. "The newly chosen target must be a valid choice", so a redirect has to judge
+	// eligibility by the same rule the original selection did. It was consulting only the
+	// turn-scoped shields, which left a permanently protected card protected right up until
+	// someone pointed a redirect at it.
+	// -----------------------------------------------------------------------------------------
+
+	@Test
+	void redirectLegalityHonoursTheSameTwoScopes() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForward("Serah", "Ice", 3, 7000));
+		placeP1Forward(mw, makeIcbCard("Noel", "Ice", "Forward", NOEL_SERAH_SHIELD));
+		CardData serah = mw.p1ForwardCards.get(0);
+
+		assertTrue(mw.isProtectedFromChoice(serah, true, false, true, null),
+				"an opposing Summon may not be redirected onto her");
+		assertFalse(mw.isProtectedFromChoice(serah, true, true, true, null),
+				"her own controller's Summon may — the grant names the opponent");
+	}
+
+	@Test
+	void aPermanentlyShieldedCardCannotBeRedirectedInto() {
+		MainWindow mw = new MainWindow();
+		CardData edge = makeEdge();
+		placeP1Forward(mw, edge);                                        // idx 0
+		placeP1Forward(mw, makeForward("Yuffie", "Wind", 3, 7000));      // idx 1
+		// A field ability, not a turn-scoped shield: this is the case the redirect path missed.
+		placeP1Forward(mw, makeIcbCard("Rydia", "Wind", "Forward",
+				"The Card Name Edge you control cannot be chosen by your opponent's Summons or abilities."));
+
+		StackEntry entry = summonChoosing(makeForward("Ramuh", "Wind", 3, 0), false, fwd(true, 1));
+		mw.gameState.pushStack(entry);
+
+		ActionResolver.parse(edge.actionAbilities().get(0).effectText(), edge)
+				.accept(mw.buildGameContext(true));
+
+		assertEquals(List.of(fwd(true, 1)), mw.gameState.getStack().get(0).preSelectedTargets(),
+				"Edge cannot be chosen by that Summon, so \"if possible\" fails and Yuffie keeps it");
 	}
 
 	@Test

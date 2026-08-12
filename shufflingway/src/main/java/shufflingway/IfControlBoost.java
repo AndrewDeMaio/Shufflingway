@@ -29,8 +29,8 @@ public record IfControlBoost(
         int       powerBonus,                 // +N power added to the target (0 if no power effect)
         Set<CardData.Trait> grantedTraits,    // traits granted to the target while active
         String    specialText,                // quoted special ability text (display only; empty if none)
-        boolean   cannotBeChosenBySummons,    // target cannot be chosen by any Summon while active
-        boolean   cannotBeChosenByAbilities,  // target cannot be chosen by any ability while active
+        boolean   cannotBeChosenBySummons,    // target cannot be chosen by Summons while active (see chosenImmunityOpponentOnly for whose)
+        boolean   cannotBeChosenByAbilities,  // target cannot be chosen by abilities while active (see chosenImmunityOpponentOnly for whose)
         boolean   cannotBeBlocked,            // target cannot be blocked (unconditionally) while active
         int[]     cannotBeBlockedByCost,      // null = no restriction; {costVal, 1} = "or more", {costVal, 0} = "or less"
         int       minRemovedFromGame,         // 0 = unused; >0 = condition requires this many cards total in both RFP zones
@@ -39,7 +39,8 @@ public record IfControlBoost(
         int       maxOpponentHandSize,        // 0 = unused; >0 = condition requires opponent hand size to be ≤ this value
         int       minOpponentForwards,        // 0 = unused; >0 = condition requires opponent to control this many Forwards
         int       maxOwnHandSize,            // 0 = unused; >0 = condition requires own hand size to be ≤ this value
-        boolean   allBackupsDifferentElements // true = condition requires all controlled Backups to be different Elements
+        boolean   allBackupsDifferentElements, // true = condition requires all controlled Backups to be different Elements
+        boolean   chosenImmunityOpponentOnly  // true = the cannotBeChosen* immunities apply only to the target's opponent ("cannot be chosen by your opponent's ..."); false = to either player
 ) {
     public IfControlBoost {
         conditions    = List.copyOf(conditions);
@@ -48,6 +49,25 @@ public record IfControlBoost(
         grantedTraits = Collections.unmodifiableSet(traitSet);
         if (exceptCardName == null) exceptCardName = "";
         if (specialText    == null) specialText    = "";
+    }
+
+    /**
+     * Compatibility constructor preserving the prior 18-arg signature; defaults
+     * {@code chosenImmunityOpponentOnly} to {@code false}. That default is the safe one: a grant
+     * whose scope was never recorded blocks either player, which is what every caller predating
+     * the field already assumed.
+     */
+    public IfControlBoost(List<ControlCondition> conditions, String exceptCardName,
+            String targetCardName, FieldPowerGrant targetFilter, int powerBonus,
+            Set<CardData.Trait> grantedTraits, String specialText,
+            boolean cannotBeChosenBySummons, boolean cannotBeChosenByAbilities, boolean cannotBeBlocked,
+            int[] cannotBeBlockedByCost, int minRemovedFromGame, int minDamageReceived, boolean instead,
+            int maxOpponentHandSize, int minOpponentForwards, int maxOwnHandSize,
+            boolean allBackupsDifferentElements) {
+        this(conditions, exceptCardName, targetCardName, targetFilter, powerBonus, grantedTraits,
+                specialText, cannotBeChosenBySummons, cannotBeChosenByAbilities, cannotBeBlocked,
+                cannotBeBlockedByCost, minRemovedFromGame, minDamageReceived, instead, maxOpponentHandSize,
+                minOpponentForwards, maxOwnHandSize, allBackupsDifferentElements, false);
     }
 
     /** Compatibility constructor preserving the prior 17-arg signature; defaults allBackupsDifferentElements to false. */
@@ -147,6 +167,20 @@ public record IfControlBoost(
                 specialText, cannotBeChosenBySummons, cannotBeChosenByAbilities, false, null, 0, 0, false, 0);
     }
 
+    /**
+     * A copy whose {@code cannotBeChosen*} immunities are scoped to the target's opponent.
+     * Written as a wither so the parse site stays readable: the flag is the nineteenth record
+     * component, and reaching it through a positional constructor there would spell out every
+     * default in between.
+     */
+    public IfControlBoost asOpponentScopedChosenImmunity() {
+        return new IfControlBoost(conditions, exceptCardName, targetCardName, targetFilter,
+                powerBonus, grantedTraits, specialText, cannotBeChosenBySummons,
+                cannotBeChosenByAbilities, cannotBeBlocked, cannotBeBlockedByCost,
+                minRemovedFromGame, minDamageReceived, instead, maxOpponentHandSize,
+                minOpponentForwards, maxOwnHandSize, allBackupsDifferentElements, true);
+    }
+
     @Override
     public String toString() {
         StringBuilder sb = new StringBuilder("ICB[");
@@ -169,6 +203,8 @@ public record IfControlBoost(
         if (!specialText.isEmpty()) sb.append(" \"").append(specialText).append('"');
         if (cannotBeChosenBySummons)   sb.append(" NCS");
         if (cannotBeChosenByAbilities) sb.append(" NCA");
+        if ((cannotBeChosenBySummons || cannotBeChosenByAbilities) && chosenImmunityOpponentOnly)
+            sb.append("(opp)");
         if (cannotBeBlocked)           sb.append(" unblockable");
         if (cannotBeBlockedByCost != null)
             sb.append(" not-blocked-cost").append(cannotBeBlockedByCost[0])

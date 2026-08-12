@@ -694,61 +694,60 @@ final class GameContextImpl implements GameContext {
 					String jobFilter, String cardNameFilter, String categoryFilter, String excludeName, boolean inclSummons,
 					String excludeElement, boolean withoutMulticard) {
 				List<ForwardTarget> eligible = new ArrayList<>();
-				// Build symmetric "cannot be chosen" sets — checked in all four targeting quadrants.
-				// summonImmuneAnyone: blocked from Summon targeting regardless of which player casts.
-				// abilityImmuneAnyone: blocked from ability targeting regardless of which player uses.
+				// Build the "cannot be chosen" sets — checked in all four targeting quadrants.
+				// They come in two scopes, and the card text is what decides which:
+				//   *ImmuneAnyone — "cannot be chosen by Summons" with no qualifier. Blocks whoever
+				//       is choosing, the card's own controller included.
+				//   *ImmuneFromOpp — "cannot be chosen by YOUR OPPONENT'S Summons or abilities".
+				//       Blocks only effects controlled by the target's opponent; its controller may
+				//       still choose it, which is the whole point of e.g. buffing your own shielded
+				//       Forward with your own ability.
 				// Sources: turn-scoped shields (action abilities), standalone field abilities,
 				// conditional IfControlBoost grants, and element-based immunity.
 				CardData resCard = mw.currentResolutionIsSummon ? mw.currentSummonSource : mw.currentAbilitySource;
 				List<String> resElems = (resCard != null) ? mw.effectiveElements(resCard) : List.of();
 				final Set<CardData> summonImmuneAnyone;
 				final Set<CardData> abilityImmuneAnyone;
+				final Set<CardData> summonImmuneFromOpp;
+				final Set<CardData> abilityImmuneFromOpp;
 				{
 					Set<CardData> sumTmp = new HashSet<>(mw.cannotBeChosenBySummonsAnyone);
 					Set<CardData> ablTmp = new HashSet<>();
+					// The turn-scoped shields are all printed "by your opponent's ...", so they seed
+					// the opponent-scoped sets rather than the symmetric ones.
+					Set<CardData> sumOpp = new HashSet<>(mw.cannotBeChosenBySummons);
+					Set<CardData> ablOpp = new HashSet<>(mw.cannotBeChosenByAbilities);
 					// Rubicante-style: "cannot be chosen by [element] Summons/abilities this turn"
 					for (java.util.Map.Entry<CardData, String> e : mw.cannotBeChosenByElement.entrySet()) {
 						if (resElems.contains(e.getValue())) { sumTmp.add(e.getKey()); ablTmp.add(e.getKey()); }
 					}
 					for (boolean p1side : new boolean[]{true, false}) {
-						List<CardData> fwds = p1side ? mw.p1ForwardCards : mw.p2ForwardCards;
-						CardData[]     bkps = p1side ? mw.p1BackupCards  : mw.p2BackupCards;
-						List<CardData> mons = p1side ? mw.p1MonsterCards : mw.p2MonsterCards;
-						for (CardData c : fwds) {
+						List<CardData> zone = new ArrayList<>(p1side ? mw.p1ForwardCards : mw.p2ForwardCards);
+						for (CardData b : p1side ? mw.p1BackupCards : mw.p2BackupCards) if (b != null) zone.add(b);
+						zone.addAll(p1side ? mw.p1MonsterCards : mw.p2MonsterCards);
+						for (CardData c : zone) {
 							if (ActionResolver.hasCannotBeChosenByAnySummonFieldAbility(c)) sumTmp.add(c);
 							if (ActionResolver.hasCannotBeChosenByOwnElementFieldAbility(c)) {
 								String ce = mw.effectiveElement(c);
 								if (ce != null && resElems.contains(ce)) { sumTmp.add(c); ablTmp.add(c); }
 							}
-							if (mw.icbGrantsImmunity(c.name(), p1side, true))  sumTmp.add(c);
-							if (mw.icbGrantsImmunity(c.name(), p1side, false)) ablTmp.add(c);
-						}
-						for (CardData c : bkps) {
-							if (c == null) continue;
-							if (ActionResolver.hasCannotBeChosenByAnySummonFieldAbility(c)) sumTmp.add(c);
-							if (ActionResolver.hasCannotBeChosenByOwnElementFieldAbility(c)) {
-								String ce = mw.effectiveElement(c);
-								if (ce != null && resElems.contains(ce)) { sumTmp.add(c); ablTmp.add(c); }
-							}
-							if (mw.icbGrantsImmunity(c.name(), p1side, true))  sumTmp.add(c);
-							if (mw.icbGrantsImmunity(c.name(), p1side, false)) ablTmp.add(c);
-						}
-						for (CardData c : mons) {
-							if (ActionResolver.hasCannotBeChosenByAnySummonFieldAbility(c)) sumTmp.add(c);
-							if (ActionResolver.hasCannotBeChosenByOwnElementFieldAbility(c)) {
-								String ce = mw.effectiveElement(c);
-								if (ce != null && resElems.contains(ce)) { sumTmp.add(c); ablTmp.add(c); }
-							}
-							if (mw.icbGrantsImmunity(c.name(), p1side, true))  sumTmp.add(c);
-							if (mw.icbGrantsImmunity(c.name(), p1side, false)) ablTmp.add(c);
+							if (mw.icbGrantsImmunity(c.name(), p1side, true,  false)) sumTmp.add(c);
+							if (mw.icbGrantsImmunity(c.name(), p1side, false, false)) ablTmp.add(c);
+							if (mw.icbGrantsImmunity(c.name(), p1side, true,  true))  sumOpp.add(c);
+							if (mw.icbGrantsImmunity(c.name(), p1side, false, true))  ablOpp.add(c);
 						}
 					}
-					summonImmuneAnyone  = sumTmp;
-					abilityImmuneAnyone = ablTmp;
+					summonImmuneAnyone   = sumTmp;
+					abilityImmuneAnyone  = ablTmp;
+					summonImmuneFromOpp  = sumOpp;
+					abilityImmuneFromOpp = ablOpp;
 				}
-				// Unified set for this resolution: whichever immunity type applies.
-				// Used in all four targeting quadrants with no per-site condition check needed.
-				final Set<CardData> immuneAnyone = mw.currentResolutionIsSummon ? summonImmuneAnyone : abilityImmuneAnyone;
+				// Two sets for this resolution, one per side of the field relative to the effect's
+				// controller. Each targeting quadrant iterates a known side, so it consults exactly
+				// one of them and needs no further scope test.
+				final Set<CardData> immuneOwn = mw.currentResolutionIsSummon ? summonImmuneAnyone : abilityImmuneAnyone;
+				final Set<CardData> immuneOpp = new HashSet<>(immuneOwn);
+				immuneOpp.addAll(mw.currentResolutionIsSummon ? summonImmuneFromOpp : abilityImmuneFromOpp);
 				// "own" = cards belonging to effect controller; "opp" = other player's cards.
 				// isP1 captures the controller's perspective, so the two blocks below must
 				// flip which physical side they iterate when isP1 is false (P2 controls).
@@ -757,7 +756,7 @@ final class GameContextImpl implements GameContext {
 						if (inclForwards || inclMonsters) for (int i = 0; i < mw.p1ForwardCards.size(); i++) {
 							CardData card = p1Forward(i);
 							if (!inclForwards && !card.alsoCountsAsMonster()) continue;
-							if (immuneAnyone.contains(card)) continue;
+							if (immuneOwn.contains(card)) continue;
 							if (element != null && !card.containsElement(element)) continue;
 							if (!meetsElementExclusion(card, excludeElement)) continue;
 							if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
@@ -780,6 +779,7 @@ final class GameContextImpl implements GameContext {
 							if (isBlockingTargetFilter(condition)) continue;
 							if (mw.p1BackupCards[i] == null) continue;
 							if (!inclBackups && !mw.isP1BackupTemporarilyForward(i)) continue;
+							if (immuneOwn.contains(mw.p1BackupCards[i])) continue;
 							if (element != null && !mw.p1BackupCards[i].containsElement(element)) continue;
 							if (!meetsCostConstraint(mw.p1BackupCards[i].cost(), costVal, costCmp)) continue;
 							if (!meetsPowerConstraint(mw.p1BackupCards[i].power(), powerVal, powerCmp)) continue;
@@ -794,7 +794,7 @@ final class GameContextImpl implements GameContext {
 						if (inclMonsters || inclForwards) for (int i = 0; i < mw.p1MonsterCards.size(); i++) {
 							if (!inclMonsters && !mw.isP1MonsterTemporarilyForward(i)) continue;
 							CardData card = mw.p1MonsterCards.get(i);
-							if (immuneAnyone.contains(card)) continue;
+							if (immuneOwn.contains(card)) continue;
 							if (element != null && !card.containsElement(element)) continue;
 							if (!meetsElementExclusion(card, excludeElement)) continue;
 							if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
@@ -813,7 +813,7 @@ final class GameContextImpl implements GameContext {
 						if (inclForwards || inclMonsters) for (int i = 0; i < mw.p2ForwardCards.size(); i++) {
 							CardData card = mw.p2ForwardCards.get(i);
 							if (!inclForwards && !card.alsoCountsAsMonster()) continue;
-							if (immuneAnyone.contains(card)) continue;
+							if (immuneOwn.contains(card)) continue;
 							if (element != null && !card.containsElement(element)) continue;
 							if (!meetsElementExclusion(card, excludeElement)) continue;
 							if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
@@ -836,7 +836,7 @@ final class GameContextImpl implements GameContext {
 							if (isBlockingTargetFilter(condition)) continue;
 							if (mw.p2BackupCards[i] == null) continue;
 							if (!inclBackups && !mw.isP2BackupTemporarilyForward(i)) continue;
-							if (immuneAnyone.contains(mw.p2BackupCards[i])) continue;
+							if (immuneOwn.contains(mw.p2BackupCards[i])) continue;
 							if (element != null && !mw.p2BackupCards[i].containsElement(element)) continue;
 							if (!meetsCostConstraint(mw.p2BackupCards[i].cost(), costVal, costCmp)) continue;
 							if (!meetsPowerConstraint(mw.p2BackupCards[i].power(), powerVal, powerCmp)) continue;
@@ -851,7 +851,7 @@ final class GameContextImpl implements GameContext {
 						if (inclMonsters || inclForwards) for (int i = 0; i < mw.p2MonsterCards.size(); i++) {
 							if (!inclMonsters && !mw.isP2MonsterTemporarilyForward(i)) continue;
 							CardData card = mw.p2MonsterCards.get(i);
-							if (immuneAnyone.contains(card)) continue;
+							if (immuneOwn.contains(card)) continue;
 							if (element != null && !card.containsElement(element)) continue;
 							if (!meetsElementExclusion(card, excludeElement)) continue;
 							if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
@@ -873,7 +873,7 @@ final class GameContextImpl implements GameContext {
 						if (inclForwards || inclMonsters) for (int i = 0; i < mw.p2ForwardCards.size(); i++) {
 							CardData card = mw.p2ForwardCards.get(i);
 							if (!inclForwards && !card.alsoCountsAsMonster()) continue;
-							if (immuneAnyone.contains(card)) continue;
+							if (immuneOpp.contains(card)) continue;
 							if (element != null && !card.containsElement(element)) continue;
 							if (!meetsElementExclusion(card, excludeElement)) continue;
 							if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
@@ -896,7 +896,7 @@ final class GameContextImpl implements GameContext {
 							if (isBlockingTargetFilter(condition)) continue;
 							if (mw.p2BackupCards[i] == null) continue;
 							if (!inclBackups && !mw.isP2BackupTemporarilyForward(i)) continue;
-							if (immuneAnyone.contains(mw.p2BackupCards[i])) continue;
+							if (immuneOpp.contains(mw.p2BackupCards[i])) continue;
 							if (element != null && !mw.p2BackupCards[i].containsElement(element)) continue;
 							if (!meetsCostConstraint(mw.p2BackupCards[i].cost(), costVal, costCmp)) continue;
 							if (!meetsPowerConstraint(mw.p2BackupCards[i].power(), powerVal, powerCmp)) continue;
@@ -911,7 +911,7 @@ final class GameContextImpl implements GameContext {
 						if (inclMonsters || inclForwards) for (int i = 0; i < mw.p2MonsterCards.size(); i++) {
 							if (!inclMonsters && !mw.isP2MonsterTemporarilyForward(i)) continue;
 							CardData card = mw.p2MonsterCards.get(i);
-							if (immuneAnyone.contains(card)) continue;
+							if (immuneOpp.contains(card)) continue;
 							if (element != null && !card.containsElement(element)) continue;
 							if (!meetsElementExclusion(card, excludeElement)) continue;
 							if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
@@ -928,11 +928,9 @@ final class GameContextImpl implements GameContext {
 						}
 					} else {
 						// P2 is targeting P1's cards — check "cannot be chosen" protection
-						Set<CardData> noChoose = mw.currentResolutionIsSummon ? mw.cannotBeChosenBySummons : mw.cannotBeChosenByAbilities;
 						if (inclForwards) for (int i = 0; i < mw.p1ForwardCards.size(); i++) {
 							CardData card = p1Forward(i);
-							if (noChoose.contains(card)) continue;
-							if (immuneAnyone.contains(card)) continue;
+							if (immuneOpp.contains(card)) continue;
 							if (element != null && !card.containsElement(element)) continue;
 							if (!meetsElementExclusion(card, excludeElement)) continue;
 							if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
@@ -955,8 +953,7 @@ final class GameContextImpl implements GameContext {
 							if (isBlockingTargetFilter(condition)) continue;
 							if (mw.p1BackupCards[i] == null) continue;
 							if (!inclBackups && !mw.isP1BackupTemporarilyForward(i)) continue;
-							if (noChoose.contains(mw.p1BackupCards[i])) continue;
-							if (immuneAnyone.contains(mw.p1BackupCards[i])) continue;
+							if (immuneOpp.contains(mw.p1BackupCards[i])) continue;
 							if (element != null && !mw.p1BackupCards[i].containsElement(element)) continue;
 							if (!meetsCostConstraint(mw.p1BackupCards[i].cost(), costVal, costCmp)) continue;
 							if (!meetsPowerConstraint(mw.p1BackupCards[i].power(), powerVal, powerCmp)) continue;
@@ -971,8 +968,7 @@ final class GameContextImpl implements GameContext {
 						if (inclMonsters || inclForwards) for (int i = 0; i < mw.p1MonsterCards.size(); i++) {
 							if (!inclMonsters && !mw.isP1MonsterTemporarilyForward(i)) continue;
 							CardData card = mw.p1MonsterCards.get(i);
-							if (noChoose.contains(card)) continue;
-							if (immuneAnyone.contains(card)) continue;
+							if (immuneOpp.contains(card)) continue;
 							if (element != null && !card.containsElement(element)) continue;
 							if (!meetsElementExclusion(card, excludeElement)) continue;
 							if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;

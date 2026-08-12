@@ -2767,8 +2767,21 @@ public record CardData(
     private static final Pattern ICB_EFFECT_BRAVE             = Pattern.compile("(?i)\\bBrave\\b");
     private static final Pattern ICB_EFFECT_FIRST_STRIKE      = Pattern.compile("(?i)\\bFirst\\s+Strike\\b");
     private static final Pattern ICB_EFFECT_BACK_ATTACK       = Pattern.compile("(?i)\\bBack\\s+Attack\\b");
-    private static final Pattern ICB_EFFECT_NO_CHOSEN_SUMMONS = Pattern.compile("(?i)cannot\\s+be\\s+chosen\\s+by\\s+(?:your\\s+opponent's\\s+)?Summons?");
-    private static final Pattern ICB_EFFECT_NO_CHOSEN_ABILITS = Pattern.compile("(?i)cannot\\s+be\\s+chosen\\s+by\\s+(?:your\\s+opponent's\\s+)?abilities");
+    /**
+     * "cannot be chosen by [your opponent's] &lt;scope&gt;" inside an IfControlBoost effects clause.
+     *
+     * <p>One pattern rather than a Summons matcher and an abilities matcher, because the two
+     * halves share a single "cannot be chosen by" prefix: two independent matchers both anchored
+     * on that prefix cannot each claim their half of "…by your opponent's Summons or abilities",
+     * and the abilities one silently lost every time.
+     *
+     * <p>Group {@code opp} is present only when the card prints the "your opponent's" qualifier,
+     * which is what decides whether the immunity blocks both players or only the target's
+     * opponent — see {@link IfControlBoost#chosenImmunityOpponentOnly}.
+     */
+    private static final Pattern ICB_EFFECT_NO_CHOSEN = Pattern.compile(
+        "(?i)cannot\\s+be\\s+chosen\\s+by\\s+(?<opp>your\\s+opponent's\\s+)?" +
+        "(?<scope>Summons?\\s+or\\s+abilities|abilities\\s+or\\s+Summons?|Summons?|abilities)");
 
     /** Matches a self-targeted trait grant: "[CardName] gains [Trait(s)]." — no "until end of turn". */
     private static final Pattern SELF_TRAIT_GRANT = Pattern.compile(
@@ -3163,17 +3176,31 @@ public record CardData(
             if (ICB_EFFECT_FIRST_STRIKE.matcher(effectsStr).find()) traits.add(Trait.FIRST_STRIKE);
             if (ICB_EFFECT_BACK_ATTACK.matcher(effectsStr).find())  traits.add(Trait.BACK_ATTACK);
 
-            boolean noChooseSummons  = ICB_EFFECT_NO_CHOSEN_SUMMONS.matcher(effectsStr).find();
-            boolean noChooseAbilits  = ICB_EFFECT_NO_CHOSEN_ABILITS.matcher(effectsStr).find();
+            // Every "cannot be chosen" clause in this effects string, so a text naming both halves
+            // ("… by your opponent's Summons or abilities") sets both flags. The immunity is scoped
+            // to the opponent only when *every* clause carries the qualifier: on a mixed text the
+            // unqualified half is the broader rule, and the broader rule has to win.
+            boolean noChooseSummons = false, noChooseAbilits = false;
+            boolean anyChosenClause = false, anyUnqualified = false;
+            Matcher chosenM = ICB_EFFECT_NO_CHOSEN.matcher(effectsStr);
+            while (chosenM.find()) {
+                String scope = chosenM.group("scope").toLowerCase(Locale.ROOT);
+                if (scope.contains("summon")) noChooseSummons = true;
+                if (scope.contains("abilit")) noChooseAbilits = true;
+                anyChosenClause = true;
+                if (chosenM.group("opp") == null) anyUnqualified = true;
+            }
+            boolean chosenImmunityOppOnly = anyChosenClause && !anyUnqualified;
 
             if (powerBonus == 0 && traits.isEmpty() && specialText.isEmpty()
                     && !noChooseSummons && !noChooseAbilits && !isCannotBeBlocked
                     && icbCostFilter == null) continue;
 
             FieldPowerGrant targetFilter = parseIcbTargetFilter(targetName);
-            result.add(new IfControlBoost(conditions, exceptName, targetName, targetFilter,
+            IfControlBoost icb = new IfControlBoost(conditions, exceptName, targetName, targetFilter,
                     powerBonus, traits, specialText, noChooseSummons, noChooseAbilits,
-                    isCannotBeBlocked, icbCostFilter));
+                    isCannotBeBlocked, icbCostFilter);
+            result.add(chosenImmunityOppOnly ? icb.asOpponentScopedChosenImmunity() : icb);
         }
 
         // Parse "The [Job X / Category Y] Forwards [other than Z] you control [gain "This Forward"]
@@ -3225,7 +3252,10 @@ public record CardData(
             String scope = m.group("scope").toLowerCase(Locale.ROOT);
             result.add(new IfControlBoost(List.of(), "", m.group("name").trim(), null, 0,
                     EnumSet.noneOf(Trait.class), "",
-                    scope.contains("summon"), scope.contains("abilit"), false, null, 0, 0, false));
+                    scope.contains("summon"), scope.contains("abilit"), false, null, 0, 0, false)
+                    // The pattern requires the "your opponent's" qualifier, so every match is
+                    // opponent-scoped: the controller may still choose their own protected card.
+                    .asOpponentScopedChosenImmunity());
         }
 
         return List.copyOf(result);
