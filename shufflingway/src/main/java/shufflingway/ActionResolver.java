@@ -184,6 +184,12 @@ public class ActionResolver {
         result = tryParseTrailingDraw(effectText, source, xValue);
         if (result != null) return result;
 
+        // Must precede tryParseIndependentSentences: its two sentences carry no pronoun back to
+        // each other, so that rule accepts them and resolves the replay through the Break Zone —
+        // but the removal in front of it has just put the card in the RFG zone.
+        result = tryParseRemoveSelfThenPlaySelfOntoField(effectText, source);
+        if (result != null) return result;
+
         // Same reason, generalised: whichever sentence a pattern happens to match claims the whole
         // ability and the rest is discarded. Where every sentence stands alone, resolve them all.
         // Must stay ahead of the effect patterns for the same reason tryParseTrailingDraw does.
@@ -1309,6 +1315,8 @@ public class ActionResolver {
                 return (headName != null ? headName : "?") + " + DrawCards";
             }
         }
+        // Mirrors parse(): claimed whole, ahead of the sentence composition that would split it.
+        if (tryParseRemoveSelfThenPlaySelfOntoField(effectText, source) != null) return "RemoveSelfThenPlaySelfOntoField";
         // Mirrors parse()'s independent-sentence composition, so a composed ability is named for
         // every sentence that runs rather than for whichever single pattern this chain finds first.
         if (tryParseIndependentSentences(effectText, source, 0) != null) {
@@ -1736,6 +1744,8 @@ public class ActionResolver {
         if (FOLLOWUP_ONLY_BLOCKED_BY_COST_LE_OWN.matcher(followupText).find())        return "OnlyBlockedByCostLeOwn";
         if (FOLLOWUP_CANNOT_BE_BLOCKED.matcher(followupText).find())                  return "CannotBeBlocked";
         if (FOLLOWUP_CANNOT_BE_BLOCKED_IF_ELEMENT_CP.matcher(followupText).find())   return "CannotBeBlockedIfElementCP";
+        // Mirrors the choose chain: the named form is checked ahead of the unqualified one.
+        if (FOLLOWUP_GAINS_MUST_BLOCK_NAMED_UNTIL_EOT.matcher(followupText).find())   return "MustBlockNamed";
         if (FOLLOWUP_MUST_BLOCK.matcher(followupText).find())                         return "MustBlock";
         if (FOLLOWUP_CANNOT_ATTACK.matcher(followupText).find())                      return "CannotAttack";
         if (FOLLOWUP_MUST_ATTACK.matcher(followupText).find())                        return "MustAttack";
@@ -1804,6 +1814,8 @@ public class ActionResolver {
                 return (headDesc != null ? headDesc : "?") + " + DrawCards";
             }
         }
+        // Mirrors parse(); see the matching guard in matchedPatternNameOn().
+        if (tryParseRemoveSelfThenPlaySelfOntoField(effectText, source) != null) return "RemoveSelfThenPlaySelfOntoField";
         // Mirrors parse(); see the matching guard in matchedPatternNameOn().
         if (tryParseIndependentSentences(effectText, source, 0) != null) {
             String composed = composeOverSentences(effectText, s -> fullDescription(s, source));

@@ -445,7 +445,7 @@ public class MainWindow {
 	int attackSubStep = -1;
 
 	// Non-modal P2-attack pending state: set while P1 is interactively declaring a blocker
-	private CardData pendingP2Attacker        = null;
+	CardData pendingP2Attacker        = null;   // package-private: tests open the block step with it
 	private int      pendingP2AttackerIdx     = -1;
 	private Runnable pendingP2BlockDone       = null;
 	boolean  pendingP2AttackerIsMonster = false;
@@ -5173,15 +5173,68 @@ public class MainWindow {
 		return false;
 	}
 
-	/** True if {@code attacker} carries a "Opponent must block [name] if possible" field ability. */
-	private boolean attackerMustBeBlocked(CardData attacker) {
-		for (FieldAbility fa : attacker.fieldAbilities()) {
+	/**
+	 * True if {@code attacker} carries a "Opponent must block [name] if possible" field ability.
+	 * Read through {@link #effectiveFieldAbilities} so a granted copy compels a block exactly as a
+	 * printed one does — the same rule {@link #forwardCompelledToBlock} follows for its own text.
+	 */
+	boolean attackerMustBeBlocked(CardData attacker) {
+		if (attacker == null) return false;
+		for (FieldAbility fa : effectiveFieldAbilities(attacker)) {
 			Matcher m = AutoAbilityTriggers.FA_OPPONENT_MUST_BLOCK.matcher(fa.effectText());
 			if (m.find() && m.group("cardname").trim().equalsIgnoreCase(attacker.name())) return true;
 		}
 		return false;
 	}
 
+	/**
+	 * True if {@code blocker} carries a "This Forward must block [attacker] if possible" ability
+	 * naming {@code attacker}. Read through {@link #effectiveFieldAbilities} because the only
+	 * current source, Dio 26-075C, grants the text until end of turn rather than printing it.
+	 *
+	 * <p>The compulsion is attacker-specific — unlike {@link #p1ForwardMustBlock}, which restricts
+	 * the blocker choice against everything that attacks — so both arguments matter.
+	 */
+	boolean forwardCompelledToBlock(CardData blocker, CardData attacker) {
+		if (blocker == null || attacker == null) return false;
+		for (FieldAbility fa : effectiveFieldAbilities(blocker)) {
+			Matcher m = AutoAbilityTriggers.FA_THIS_FORWARD_MUST_BLOCK_NAMED.matcher(fa.effectText());
+			if (m.find() && m.group("cardname").trim().equalsIgnoreCase(attacker.name())) return true;
+		}
+		return false;
+	}
+
+	/**
+	 * The P1 Forward index compelled to block {@code attacker} and legally able to, or {@code -1}.
+	 * "If possible" is what makes the second half necessary: a compelled Forward that is dull, or
+	 * that the attacker's own restrictions exclude, lifts the compulsion instead of deadlocking
+	 * the block step. Recursion is avoided by taking the eligibility check apart from
+	 * {@link #isForwardBlockSelectable}, which consults this method.
+	 */
+	private int p1ForwardCompelledToBlockIdx(CardData attacker) {
+		if (attacker == null) return -1;
+		for (int i = 0; i < p1ForwardCards.size(); i++)
+			if (forwardCompelledToBlock(p1ForwardCards.get(i), attacker) && p1ForwardBlockEligible(i))
+				return i;
+		return -1;
+	}
+
+	/**
+	 * {@link #p1ForwardCompelledToBlockIdx} against whatever P2 is currently attacking with. A
+	 * party is one attack made by several Forwards, so a compulsion naming any member of it
+	 * applies — the same reading {@link #attackerMustBeBlocked} already takes for party attacks.
+	 */
+	private int p1ForwardCompelledToBlockIdxForPendingAttack() {
+		if (pendingP2PartyIndices != null) {
+			for (int ai : pendingP2PartyIndices) {
+				if (ai < 0 || ai >= p2ForwardCards.size()) continue;
+				int idx = p1ForwardCompelledToBlockIdx(p2ForwardCards.get(ai));
+				if (idx >= 0) return idx;
+			}
+			return -1;
+		}
+		return p1ForwardCompelledToBlockIdx(pendingP2Attacker);
+	}
 
 	private static boolean blockerCostExcluded(int blockerCost, int[] costFilter) {
 		return costFilter[1] == 1 ? blockerCost >= costFilter[0] : blockerCost <= costFilter[0];
@@ -11440,6 +11493,23 @@ public class MainWindow {
 
 	/** Returns true if {@code idx} is a valid P1 blocker choice during block declaration. */
 	boolean isForwardBlockSelectable(int idx) {
+		if (!p1ForwardBlockEligible(idx)) return false;
+		// If any forward must block, restrict choices to those
+		if (!p1ForwardMustBlock.isEmpty() && !p1ForwardMustBlock.contains(idx)) return false;
+		// Dio 26-075C: a Forward compelled against this specific attacker takes the block, and
+		// only when it can — p1ForwardCompelledToBlockIdx returns -1 once "if possible" fails.
+		int compelled = p1ForwardCompelledToBlockIdxForPendingAttack();
+		if (compelled >= 0 && compelled != idx) return false;
+		return true;
+	}
+
+	/**
+	 * Everything that qualifies a P1 Forward as a blocker except the must-block restrictions,
+	 * which are layered on by {@link #isForwardBlockSelectable}. Split out so
+	 * {@link #p1ForwardCompelledToBlockIdx} can ask "could this Forward block at all?" without
+	 * calling back into the method that consults it.
+	 */
+	private boolean p1ForwardBlockEligible(int idx) {
 		if (!p1InBlockDeclaration()) return false;
 		if (idx < 0 || idx >= p1ForwardStates.size()) return false;
 		CardState s = p1ForwardStates.get(idx);
@@ -11456,8 +11526,6 @@ public class MainWindow {
 		if (attackerUnblockable()) return false;
 		if (attackerBlockCostFiltersExclude(blocker.cost())) return false;
 		if (attackerHigherPowerFilterExcludes(ForwardTarget.CardZone.FORWARD, idx)) return false;
-		// If any forward must block, restrict choices to those
-		if (!p1ForwardMustBlock.isEmpty() && !p1ForwardMustBlock.contains(idx)) return false;
 		return true;
 	}
 
@@ -11720,6 +11788,7 @@ public class MainWindow {
 		if (s != CardState.ACTIVE) return false;
 		if (!isP1MonsterTemporarilyForward(idx)) return false;
 		if (!p1ForwardMustBlock.isEmpty()) return false;   // a Forward is forced to block
+		if (p1ForwardCompelledToBlockIdxForPendingAttack() >= 0) return false;  // …against this attacker
 		if (attackerUnblockable()) return false;
 		CardData monsterBlocker = p1MonsterCards.get(idx);
 		if (monsterBlocker.cannotBlockAtAll() || monsterBlocker.cannotAttackOrBlock()) return false;
@@ -11741,6 +11810,7 @@ public class MainWindow {
 		if (s != CardState.ACTIVE) return false;
 		if (!isP1BackupTemporarilyForward(idx)) return false;
 		if (!p1ForwardMustBlock.isEmpty()) return false;
+		if (p1ForwardCompelledToBlockIdxForPendingAttack() >= 0) return false;
 		if (attackerUnblockable()) return false;
 		CardData backupBlocker = p1BackupCards[idx];
 		if (backupBlocker.cannotBlockAtAll() || backupBlocker.cannotAttackOrBlock()) return false;
@@ -11799,6 +11869,16 @@ public class MainWindow {
 					return;
 				}
 			}
+		}
+		// Dio 26-075C: the compulsion sits on one Forward rather than on the attacker, so it also
+		// has to be rejected when a different blocker was declared, not only when none was.
+		if (p1ForwardCompelledToBlockIdx(attacker) >= 0
+				&& !(blkZone == ForwardTarget.CardZone.FORWARD
+						&& blkIdx == p1ForwardCompelledToBlockIdx(attacker))) {
+			CardData compelled = p1ForwardCards.get(p1ForwardCompelledToBlockIdx(attacker));
+			showEffectOptionDialog(compelled.name() + " must block " + attacker.name()
+					+ " if possible.", "Must Block", new Object[]{"OK"});
+			return;
 		}
 
 		// The answer goes out before the local board acts on it, so the attacking client is
@@ -11883,6 +11963,14 @@ public class MainWindow {
 					}
 				}
 			}
+		}
+		// Dio 26-075C, party form: a compelled Forward must be the one declared, so this is
+		// checked whether or not a blocker was named. See handleP1BlockAction for the single case.
+		int partyCompelled = p1ForwardCompelledToBlockIdxForPendingAttack();
+		if (partyCompelled >= 0 && blockerIdx != partyCompelled) {
+			showEffectOptionDialog(p1ForwardCards.get(partyCompelled).name()
+					+ " must block if possible.", "Must Block", new Object[]{"OK"});
+			return;
 		}
 
 		pendingP2PartyIndices  = null;
@@ -12084,6 +12172,9 @@ public class MainWindow {
 		phaseTracker.setHasPriority(false);
 		runWhenBoardSettled(() -> {
 			remote.awaitPriorityPass();
+			// The wait can end because the pass arrived — or because the peer vanished and the
+			// disconnect released it. Only the first means carry on with the battle.
+			if (gameState.isP1GameOver()) return;
 			// The wait can end because the pass arrived — or because the peer vanished and the
 			// disconnect released it. Only the first means carry on with the battle.
 			if (gameState.isP1GameOver()) return;
@@ -12418,7 +12509,8 @@ public class MainWindow {
 			setAttackSubStep(2);
 			refreshAttackButton();
 			opponent.requestBlocker(attackerPower,
-					new ForwardTarget(true, monIdx, ForwardTarget.CardZone.MONSTER), blk -> {
+					new ForwardTarget(true, monIdx, ForwardTarget.CardZone.MONSTER),
+					attackerMustBeBlocked(attacker), blk -> {
 				if (blk != null) {
 					CardData blocker = autoAbilityTriggers.fieldCardData(blk);
 					logEntry("[P2] " + blocker.name() + " blocks!");
@@ -12756,7 +12848,8 @@ public class MainWindow {
 			setAttackSubStep(2);
 			refreshAttackButton();
 			opponent.requestBlocker(attackerPower,
-					new ForwardTarget(true, bIdx, ForwardTarget.CardZone.BACKUP), blk -> {
+					new ForwardTarget(true, bIdx, ForwardTarget.CardZone.BACKUP),
+					attackerMustBeBlocked(attacker), blk -> {
 				if (blk != null) {
 					CardData blocker = autoAbilityTriggers.fieldCardData(blk);
 					logEntry("[P2] " + blocker.name() + " blocks!");
@@ -12861,7 +12954,8 @@ public class MainWindow {
 				setAttackSubStep(2);
 				refreshAttackButton();
 				opponent.requestBlocker(effectiveP1ForwardPower(idx),
-						new ForwardTarget(true, idx, ForwardTarget.CardZone.FORWARD), blk -> {
+						new ForwardTarget(true, idx, ForwardTarget.CardZone.FORWARD),
+						attackerMustBeBlocked(attacker), blk -> {
 					if (blk != null) {
 						CardData blocker = autoAbilityTriggers.fieldCardData(blk);
 						logEntry("[P2] " + blocker.name() + " blocks!");
@@ -12914,7 +13008,11 @@ public class MainWindow {
 	}
 
 	private void p2OfferBlockParty(List<Integer> attackerIndices, int combinedPower, Runnable onDone) {
-		opponent.requestPartyBlocker(attackerIndices, combinedPower, chosenIdx -> {
+		// Blocking a party means blocking every member, so one member carrying the compulsion
+		// forces the block — the same reading handleP1PartyBlockAction takes on the human side.
+		boolean forced = attackerIndices.stream()
+				.anyMatch(i -> i < p1ForwardCards.size() && attackerMustBeBlocked(p1ForwardCards.get(i)));
+		opponent.requestPartyBlocker(attackerIndices, combinedPower, forced, chosenIdx -> {
 			if (chosenIdx != null) {
 				final int blockerIdx   = chosenIdx;
 				CardData  blocker      = p2ForwardCards.get(blockerIdx);

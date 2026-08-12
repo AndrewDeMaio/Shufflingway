@@ -818,8 +818,8 @@ class ComputerPlayer implements OpponentController {
 
 	@Override
 	public void requestPartyBlocker(List<Integer> attackerIndices, int combinedPower,
-	                                Consumer<Integer> onChosen) {
-		onChosen.accept(choosePartyBlocker(attackerIndices));
+	                                boolean forcedBlock, Consumer<Integer> onChosen) {
+		onChosen.accept(choosePartyBlocker(attackerIndices, forcedBlock));
 	}
 
 	@Override
@@ -837,9 +837,12 @@ class ComputerPlayer implements OpponentController {
 
 	/**
 	 * Picks the P2 Forward that blocks a party attack: the highest-power active Forward that
-	 * survives the weakest attacker's damage. Returns {@code null} when none qualifies.
+	 * survives the weakest attacker's damage. Returns {@code null} when none qualifies — unless
+	 * {@code forcedBlock} is set, in which case a block is mandatory and the weakest active
+	 * Forward is thrown in front of the party instead. Mirrors the single-attacker fallback in
+	 * {@link #chooseBlocker}.
 	 */
-	private Integer choosePartyBlocker(List<Integer> attackerIndices) {
+	private Integer choosePartyBlocker(List<Integer> attackerIndices, boolean forcedBlock) {
 		int minAttackerPower = Integer.MAX_VALUE;
 		for (int idx : attackerIndices) {
 			if (idx < mw.p1ForwardCards.size())
@@ -855,7 +858,20 @@ class ComputerPlayer implements OpponentController {
 				bestBlockerIdx   = i;
 			}
 		}
-		return bestBlockerIdx >= 0 ? bestBlockerIdx : null;
+		if (bestBlockerIdx >= 0) return bestBlockerIdx;
+
+		// "Opponent must block [X] if possible" on any party member: no Forward survives the
+		// block, but declining is not on offer, so the cheapest loss is the weakest one.
+		if (forcedBlock) {
+			int weakest = -1, weakestPower = Integer.MAX_VALUE;
+			for (int i = 0; i < mw.p2ForwardStates.size(); i++) {
+				if (mw.p2ForwardStates.get(i) != CardState.ACTIVE) continue;
+				int pw = mw.effectiveP2ForwardPower(i);
+				if (pw < weakestPower) { weakestPower = pw; weakest = i; }
+			}
+			if (weakest >= 0) return weakest;
+		}
+		return null;
 	}
 
 	ForwardTarget chooseBlocker(int effectiveAttackerPower, ForwardTarget attacker) {
@@ -902,6 +918,18 @@ class ComputerPlayer implements OpponentController {
 			if (mw.p2Turn.forwardCannotBlockInferiorPower && p1AttackerIdx >= 0 &&
 				mw.fieldForwardPower(false, ForwardTarget.CardZone.BACKUP, i) > mw.fieldForwardPower(true, ForwardTarget.CardZone.FORWARD, p1AttackerIdx)) continue;
 			cands.add(new ForwardTarget(false, i, ForwardTarget.CardZone.BACKUP));
+		}
+
+		// Dio 26-075C: a P2 Forward compelled to block this particular attacker has no choice at
+		// all — not even the weakest-survivor latitude below — so it is settled before anything
+		// else. It only binds while the Forward is a legal blocker, which is what "if possible"
+		// means and why the answer is looked for among cands rather than over the whole field.
+		CardData attackerCard = attacker != null ? mw.autoAbilityTriggers.fieldCardData(attacker) : null;
+		if (attackerCard != null) {
+			for (ForwardTarget t : cands) {
+				if (t.zone() != ForwardTarget.CardZone.FORWARD) continue;
+				if (mw.forwardCompelledToBlock(mw.p2ForwardCards.get(t.idx()), attackerCard)) return t;
+			}
 		}
 
 		// Honour must-block Forwards first: pick the weakest that can survive.

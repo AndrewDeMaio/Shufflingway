@@ -11382,4 +11382,345 @@ public class CardBehaviorTest {
 		assertEquals("Water", grants.get(0).elementFilter());
 		assertEquals("VII", grants.get(0).categoryFilter());
 	}
+
+	// =========================================================================================
+	// Lightning 4-115L: "Remove Lightning from the game. Then, play Lightning onto the field
+	// dull." — an immediate self-blink, as against the delayed "…at the end of the turn" form on
+	// Lightning 16-124H. Neither sentence refers back to the other with a pronoun, so the
+	// independent-sentence rule accepted them and resolved the replay through
+	// PLAY_SOURCE_ONTO_FIELD_PATTERN, which reads the Break Zone. The removal in front of it had
+	// just put the card in the RFG zone, so the replay found nothing and the ability was a
+	// one-way exile. Both sentences are now claimed together and the replay reads the RFG zone.
+	// =========================================================================================
+
+	private static final String LIGHTNING_BLINK =
+			"Remove Lightning from the game. Then, play Lightning onto the field dull.";
+
+	@Test
+	void lightningRemovesItselfAndComesStraightBackDull() {
+		CardData lightning = makeForward("Lightning", "Lightning", 5, 7000);
+
+		Consumer<GameContext> fn = ActionResolver.parse(LIGHTNING_BLINK, lightning);
+		assertNotNull(fn);
+		GameContext ctx = mock(GameContext.class);
+		fn.accept(ctx);
+
+		InOrder order = inOrder(ctx);
+		order.verify(ctx).removeNamedCardFromGame("Lightning");
+		// The RFG route, not the Break-Zone one — the card is in the RFG zone by this point.
+		order.verify(ctx).playLastRemovedFromRfpOntoField(true);
+		verify(ctx, never()).playAllByNameFromOwnBreakZoneDull(any(), anyBoolean());
+	}
+
+	@Test
+	void theSelfBlinkIsClaimedAsOneAbilityRatherThanTwoSentences() {
+		CardData lightning = makeForward("Lightning", "Lightning", 5, 7000);
+		assertEquals("RemoveSelfThenPlaySelfOntoField",
+				ActionResolver.matchedPatternName(LIGHTNING_BLINK, lightning));
+		assertEquals("RemoveSelfThenPlaySelfOntoField",
+				ActionResolver.fullDescription(LIGHTNING_BLINK, lightning),
+				"all three chains have to agree, or the characterization file records a split");
+	}
+
+	@Test
+	void theDelayedSelfBlinkIsLeftToItsOwnParser() {
+		// Lightning 16-124H (Switch Schemata) shares the whole first sentence and most of the
+		// second. Its replay is scheduled for the end phase and must not be pulled forward.
+		CardData lightning = makeForward("Lightning", "Lightning", 3, 7000);
+		assertEquals("RemoveNamedFromGame + EndOfTurnPlayNamedOntoField",
+				ActionResolver.matchedPatternName(
+						"Remove Lightning from the game. Play Lightning onto the field at the end of the turn.",
+						lightning));
+	}
+
+	@Test
+	void theBlinkOnlyClaimsTextWhereBothHalvesNameTheSource() {
+		// "Remove X from the game. Play Y onto the field" is two effects on two cards, and the
+		// RFG-top lookup this parser uses would hand the wrong card back.
+		CardData lightning = makeForward("Lightning", "Lightning", 5, 7000);
+		assertNotEquals("RemoveSelfThenPlaySelfOntoField",
+				ActionResolver.matchedPatternName(
+						"Remove Lightning from the game. Then, play Snow onto the field dull.", lightning));
+	}
+
+	@Test
+	void theBlinkCarriesTheDullFlagOffTheCardText() {
+		CardData snow = makeForward("Snow", "Ice", 4, 8000);
+		GameContext ctx = mock(GameContext.class);
+		ActionResolver.parse("Remove Snow from the game. Then, play Snow onto the field.", snow)
+				.accept(ctx);
+		verify(ctx).playLastRemovedFromRfpOntoField(false);
+	}
+
+	@Test
+	void aFourWordCardNameStillBlinks() {
+		// Shiva, Lady of Frost 14-036L is the same ability without the "dull", and it fared worse
+		// than Lightning: PLAY_SOURCE_ONTO_FIELD_PATTERN caps the card name at three words, so the
+		// second sentence did not parse at all, the independent-sentence rule declined, and
+		// RemoveNamedFromGame claimed the whole text with find(). The replay was dropped outright.
+		CardData shiva = makeForward("Shiva, Lady of Frost", "Ice", 5, 9000);
+		String effect = "Remove Shiva, Lady of Frost from the game. "
+				+ "Then, play Shiva, Lady of Frost onto the field.";
+		assertEquals("RemoveSelfThenPlaySelfOntoField",
+				ActionResolver.matchedPatternName(effect, shiva));
+
+		GameContext ctx = mock(GameContext.class);
+		ActionResolver.parse(effect, shiva).accept(ctx);
+		verify(ctx).removeNamedCardFromGame("Shiva, Lady of Frost");
+		verify(ctx).playLastRemovedFromRfpOntoField(false);
+	}
+
+	// =========================================================================================
+	// Dio 26-075C: "Choose 1 Forward. It gains "This Forward must block Dio if possible." until
+	// the end of the turn." The followup was unrecognised, so the ability chose a Forward and did
+	// nothing at all. It is the blocker-side mirror of "Opponent must block [X] if possible":
+	// that one sits on the attacker and compels any eligible blocker, this one sits on a single
+	// Forward and compels only that Forward, and only against the named attacker — so the two
+	// share neither the pattern nor the enforcement. The grant rides on grantedFieldAbilities,
+	// which is keyed by card instance and dropped at end of turn.
+	// =========================================================================================
+
+	private static final String DIO_MUST_BLOCK = "Choose 1 Forward. It gains "
+			+ "\"This Forward must block Dio if possible.\" until the end of the turn.";
+
+	/** A board where P2's Dio attacks, P1 holds a compelled Blocker and an unaffected Bystander. */
+	private static MainWindow dioCompelsABlocker() {
+		MainWindow mw = new MainWindow();
+		enterAttackDeclarationStep(mw, false);
+		CardData dio = makeForward("Dio", "Earth", 3, 7000);
+		mw.placeP2CardInForwardZone(dio);
+		mw.gameState.getIdentity().put(dio, false);
+		CardData blocker = makeForward("Blocker", "Ice", 3, 8000);
+		mw.placeCardInForwardZone(blocker);
+		mw.gameState.getIdentity().put(blocker, true);
+		CardData bystander = makeForward("Bystander", "Ice", 3, 8000);
+		mw.placeCardInForwardZone(bystander);
+		mw.gameState.getIdentity().put(bystander, true);
+
+		mw.buildGameContext(true).grantFieldAbilityUntilEndOfTurn(
+				new ForwardTarget(true, 0, ForwardTarget.CardZone.FORWARD),
+				"This Forward must block Dio if possible.");
+		mw.pendingP2Attacker = dio;
+		return mw;
+	}
+
+	@Test
+	void dioGrantsTheMustBlockAbilityToTheChosenForward() {
+		CardData dio = makeForward("Dio", "Earth", 3, 7000);
+		assertEquals("MustBlockNamed", ActionResolver.matchedFollowupName(
+				"It gains \"This Forward must block Dio if possible.\" until the end of the turn.", dio));
+
+		ForwardTarget chosen = new ForwardTarget(true, 0, ForwardTarget.CardZone.FORWARD);
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.consumePreloadedTargets()).thenReturn(new ArrayList<>(List.of(chosen)));
+		ActionResolver.parse(DIO_MUST_BLOCK, dio).accept(ctx);
+
+		// The text is stored verbatim, because the block rules match it as a printed field ability.
+		verify(ctx).grantFieldAbilityUntilEndOfTurn(chosen, "This Forward must block Dio if possible.");
+	}
+
+	@Test
+	void theGrantedCompulsionReadsBackThroughTheEffectiveView() {
+		MainWindow mw = dioCompelsABlocker();
+		CardData blocker = mw.p1ForwardCards.get(0);
+		CardData dio     = mw.p2ForwardCards.get(0);
+
+		assertTrue(blocker.fieldAbilities().isEmpty(), "nothing is printed on the card itself");
+		assertTrue(mw.forwardCompelledToBlock(blocker, dio),
+				"the compulsion is only visible through the effective-abilities view");
+	}
+
+	@Test
+	void theCompelledForwardIsTheOnlyLegalBlockerAgainstDio() {
+		MainWindow mw = dioCompelsABlocker();
+
+		assertTrue(mw.isForwardBlockSelectable(0), "the compelled Forward must be declarable");
+		assertFalse(mw.isForwardBlockSelectable(1),
+				"and it is the only one — declaring the bystander would dodge the compulsion");
+	}
+
+	@Test
+	void theCompulsionOnlyBitesAgainstTheNamedAttacker() {
+		MainWindow mw = dioCompelsABlocker();
+		CardData other = makeForward("Palmer", "Earth", 2, 5000);
+		mw.placeP2CardInForwardZone(other);
+		mw.gameState.getIdentity().put(other, false);
+		mw.pendingP2Attacker = other;
+
+		assertFalse(mw.forwardCompelledToBlock(mw.p1ForwardCards.get(0), other),
+				"\"must block Dio\" says nothing about anyone else attacking");
+		assertTrue(mw.isForwardBlockSelectable(1),
+				"so the bystander is free to block a different attacker");
+	}
+
+	@Test
+	void ifPossibleLiftsTheCompulsionWhenTheCompelledForwardCannotBlock() {
+		MainWindow mw = dioCompelsABlocker();
+		mw.p1ForwardStates.set(0, CardState.DULL);
+
+		assertFalse(mw.isForwardBlockSelectable(0), "a dull Forward cannot block at all");
+		assertTrue(mw.isForwardBlockSelectable(1),
+				"\"if possible\" — an impossible compulsion frees the rest of the board rather "
+						+ "than locking the block step");
+	}
+
+	@Test
+	void theCompulsionExpiresAtEndOfTurn() {
+		MainWindow mw = dioCompelsABlocker();
+		CardData blocker = mw.p1ForwardCards.get(0);
+		CardData dio     = mw.p2ForwardCards.get(0);
+		assertTrue(mw.forwardCompelledToBlock(blocker, dio));
+
+		for (Consumer<GameContext> eot : new ArrayList<>(mw.endOfTurnEffects))
+			eot.accept(mw.buildGameContext(true));
+
+		assertFalse(mw.forwardCompelledToBlock(blocker, dio),
+				"\"until the end of the turn\" — the grant does not carry into the next turn");
+	}
+
+	@Test
+	void theCompulsionFollowsTheCardRatherThanTheSlot() {
+		MainWindow mw = new MainWindow();
+		enterAttackDeclarationStep(mw, false);
+		CardData dio = makeForward("Dio", "Earth", 3, 7000);
+		mw.placeP2CardInForwardZone(dio);
+		mw.gameState.getIdentity().put(dio, false);
+		CardData doomed  = makeForward("Doomed", "Ice", 3, 8000);
+		CardData blocker = makeForward("Blocker", "Ice", 3, 8000);
+		mw.placeCardInForwardZone(doomed);    // slot 0
+		mw.placeCardInForwardZone(blocker);   // slot 1
+		mw.gameState.getIdentity().put(doomed, true);
+		mw.gameState.getIdentity().put(blocker, true);
+		mw.buildGameContext(true).grantFieldAbilityUntilEndOfTurn(
+				new ForwardTarget(true, 1, ForwardTarget.CardZone.FORWARD),
+				"This Forward must block Dio if possible.");
+
+		// The Forward below it leaves; every survivor shifts down a slot.
+		mw.breakP1Forward(0);
+
+		assertSame(blocker, mw.p1ForwardCards.get(0));
+		assertTrue(mw.forwardCompelledToBlock(blocker, dio),
+				"the grant is keyed by instance, so no slot re-indexing can lose it");
+	}
+
+	@Test
+	void theCompulsionDoesNotLandOnAnUnrelatedForward() {
+		MainWindow mw = dioCompelsABlocker();
+		assertFalse(mw.forwardCompelledToBlock(mw.p1ForwardCards.get(1), mw.p2ForwardCards.get(0)),
+				"only the chosen Forward is compelled");
+	}
+
+	// =========================================================================================
+	// "Opponent must block [X] if possible." OpponentController.requestBlocker has carried a
+	// forcedBlock parameter all along, and ComputerPlayer acts on it — but no call site ever
+	// passed it true, so the compulsion was enforced only when the human was the one blocking.
+	// Attacking into the AI with such a Forward, it simply declined the block and took the
+	// damage. MainWindow now computes the flag at all four block-request sites (Forward, Monster
+	// and Backup attackers, plus the party), and the party request gained the parameter its
+	// single-attacker sibling already had.
+	// =========================================================================================
+
+	/** A P1 Forward whose printed text compels the opponent to block it. */
+	private static CardData makeMustBeBlockedAttacker(String name) {
+		return makeFieldAbilityCard(name, "Fire", "Forward",
+				"Opponent must block " + name + " if possible.");
+	}
+
+	@Test
+	void theMustBeBlockedRuleReadsThePrintedAbility() {
+		MainWindow mw = new MainWindow();
+		CardData bully = makeMustBeBlockedAttacker("Bully");
+		assertTrue(mw.attackerMustBeBlocked(bully));
+		assertFalse(mw.attackerMustBeBlocked(makeForward("Meek", "Fire", 3, 7000)));
+	}
+
+	@Test
+	void theMustBeBlockedRuleAlsoSeesAGrantedCopy() {
+		// The check read CardData.fieldAbilities() directly, so a granted copy of the same text
+		// was invisible to it — the one thing effectiveFieldAbilities exists to prevent.
+		MainWindow mw = new MainWindow();
+		CardData bully = makeForward("Bully", "Fire", 3, 7000);
+		mw.placeCardInForwardZone(bully);
+		assertFalse(mw.attackerMustBeBlocked(bully), "nothing printed on the card");
+
+		mw.buildGameContext(true).grantSelfFieldAbilityUntilEndOfTurn(
+				bully, "Opponent must block Bully if possible.");
+
+		assertTrue(mw.attackerMustBeBlocked(bully), "a grant compels the block exactly as printing it would");
+	}
+
+	/** P1 attacks with {@code attackerPower}; P2 holds two Forwards, neither able to survive it. */
+	private static MainWindow doomedBlockerBoard(int attackerPower) {
+		MainWindow mw = new MainWindow();
+		mw.placeCardInForwardZone(makeForward("Attacker", "Fire", 5, attackerPower));
+		mw.placeP2CardInForwardZone(makeForward("Sturdy", "Ice", 3, 5000));
+		mw.placeP2CardInForwardZone(makeForward("Frail",  "Ice", 2, 3000));
+		return mw;
+	}
+
+	@Test
+	void theAiDeclinesAHopelessBlockWhenItIsNotForced() {
+		MainWindow mw = doomedBlockerBoard(9000);
+		ComputerPlayer cp = new ComputerPlayer(mw);
+		ForwardTarget attacker = new ForwardTarget(true, 0, ForwardTarget.CardZone.FORWARD);
+
+		assertNull(cp.chooseBlocker(9000, attacker, false),
+				"no Forward survives, so taking the damage is the better play");
+	}
+
+	@Test
+	void theAiBlocksAHopelessAttackWhenItIsForced() {
+		MainWindow mw = doomedBlockerBoard(9000);
+		ComputerPlayer cp = new ComputerPlayer(mw);
+		ForwardTarget attacker = new ForwardTarget(true, 0, ForwardTarget.CardZone.FORWARD);
+
+		ForwardTarget chosen = cp.chooseBlocker(9000, attacker, true);
+		assertNotNull(chosen, "declining is not on offer once the compulsion applies");
+		assertEquals(1, chosen.idx(), "and the cheapest loss is the weakest Forward");
+	}
+
+	@Test
+	void aForcedBlockStillPrefersASurvivorWhenThereIsOne() {
+		MainWindow mw = doomedBlockerBoard(4000);   // Sturdy (5000) now survives
+		ComputerPlayer cp = new ComputerPlayer(mw);
+		ForwardTarget attacker = new ForwardTarget(true, 0, ForwardTarget.CardZone.FORWARD);
+
+		ForwardTarget chosen = cp.chooseBlocker(4000, attacker, true);
+		assertEquals(0, chosen.idx(),
+				"the weakest-Forward fallback is for hopeless blocks only, not a blanket rule");
+	}
+
+	@Test
+	void aForcedPartyBlockAlsoThrowsTheWeakestForwardInFront() {
+		MainWindow mw = new MainWindow();
+		mw.placeCardInForwardZone(makeForward("Party A", "Fire", 3, 7000));
+		mw.placeCardInForwardZone(makeForward("Party B", "Fire", 3, 6000));
+		mw.placeP2CardInForwardZone(makeForward("Sturdy", "Ice", 3, 4000));
+		mw.placeP2CardInForwardZone(makeForward("Frail",  "Ice", 2, 2000));
+		ComputerPlayer cp = new ComputerPlayer(mw);
+
+		List<Integer> party = List.of(0, 1);
+		List<Integer> answer = new ArrayList<>();
+		cp.requestPartyBlocker(party, 13000, false, chosen -> answer.add(chosen));
+		assertEquals(1, answer.size(), "the callback answers exactly once either way");
+		assertNull(answer.get(0),
+				"neither Forward survives the weakest party member, so the AI takes the damage");
+
+		answer.clear();
+		cp.requestPartyBlocker(party, 13000, true, chosen -> answer.add(chosen));
+		assertEquals(List.of(1), answer, "forced, it blocks with the weakest Forward");
+	}
+
+	@Test
+	void thePartyBlockRequestCarriesTheCompulsionFromAnySingleMember() {
+		// Blocking a party means blocking every member, so one member with the ability is enough.
+		MainWindow mw = new MainWindow();
+		CardData plain = makeForward("Plain", "Fire", 3, 7000);
+		CardData bully = makeMustBeBlockedAttacker("Bully");
+		mw.placeCardInForwardZone(plain);
+		mw.placeCardInForwardZone(bully);
+
+		assertFalse(mw.attackerMustBeBlocked(mw.p1ForwardCards.get(0)));
+		assertTrue(mw.attackerMustBeBlocked(mw.p1ForwardCards.get(1)));
+	}
 }

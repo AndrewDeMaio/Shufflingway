@@ -528,7 +528,9 @@ class RemoteOpponent implements OpponentController {
 
 	@Override
 	public void requestPartyBlocker(List<Integer> attackerIndices, int combinedPower,
-	                                Consumer<Integer> onChosen) {
+	                                boolean forcedBlock, Consumer<Integer> onChosen) {
+		// forcedBlock is not sent: the blocking client evaluates the compulsion off its own board,
+		// the same way it does for a single attacker.
 		if (cancelled) { onChosen.accept(null); return; }
 		pendingPartyBlock     = onChosen;
 		pendingPartyAttackers = List.copyOf(attackerIndices);

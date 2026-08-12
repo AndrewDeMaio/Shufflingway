@@ -537,6 +537,17 @@ final class AutoAbilityTriggers {
 		"(?i)^Opponent\\s+must\\s+block\\s+(?<cardname>.+?)\\s+if\\s+possible[.!]?$"
 	);
 
+	/**
+	 * "This Forward must block [cardName] if possible." — the blocker-side counterpart of
+	 * {@link #FA_OPPONENT_MUST_BLOCK}. That one sits on the attacker and compels <em>any</em>
+	 * eligible blocker; this one sits on one specific Forward and compels only that Forward,
+	 * and only against the named attacker. Granted until end of turn by Dio 26-075C, so it is
+	 * read through {@link MainWindow#effectiveFieldAbilities} rather than off the printed card.
+	 */
+	static final Pattern FA_THIS_FORWARD_MUST_BLOCK_NAMED = Pattern.compile(
+		"(?i)^This\\s+Forward\\s+must\\s+block\\s+(?<cardname>.+?)\\s+if\\s+possible[.!]?$"
+	);
+
 	/** "All Forwards lose Haste." — global suppression that strips Haste from every Forward in play. */
 	static final Pattern FA_ALL_FORWARDS_LOSE_HASTE = Pattern.compile(
 		"(?i)^All\\s+Forwards?\\s+lose\\s+Haste[.!]?$"

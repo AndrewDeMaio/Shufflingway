@@ -1930,6 +1930,15 @@ public interface GameContext {
     void grantSelfFieldAbilityUntilEndOfTurn(CardData source, String abilityText);
 
     /**
+     * The chosen-target counterpart of {@link #grantSelfFieldAbilityUntilEndOfTurn}, for the
+     * "Choose 1 Forward. It gains '&lt;ability&gt;' until the end of the turn" wording (Dio 26-075C).
+     * The grant is keyed to the card instance occupying {@code target}, so it survives the
+     * re-indexing that happens when another card leaves the field, and is dropped by the same
+     * end-of-turn hook. A target no longer on the field is a no-op.
+     */
+    void grantFieldAbilityUntilEndOfTurn(ForwardTarget target, String abilityText);
+
+    /**
      * Grants {@code source} the auto ability written in {@code abilityText} for as long as it stays
      * on the field — the "(This effect does not end at the end of the turn.)" wording, as printed on
      * Odin (XVI) 29-118L / 24-112L's priming payoff.

@@ -88,6 +88,29 @@ final class ActionResolverPlay {
             ctx.addEndOfTurnEffect(ctx2 -> ctx2.playNamedFromHoldingZoneOntoField(name));
         };
     }
+    /**
+     * Parses "Remove [Self] from the game. Then, play [Self] onto the field [dull]." — Lightning
+     * 4-115L's immediate self-blink. The card leaves for the RFG zone and comes straight back, so
+     * the replay reads {@link GameContext#playLastRemovedFromRfpOntoField} (the card the preceding
+     * call just put there) rather than the Break-Zone route the second sentence would take alone.
+     */
+    static Consumer<GameContext> tryParseRemoveSelfThenPlaySelfOntoField(String text, CardData source) {
+        if (source == null) return null;
+        Matcher m = REMOVE_SELF_THEN_PLAY_SELF_ONTO_FIELD.matcher(text.trim());
+        if (!m.matches()) return null;
+        // Both halves must name the source: "Remove X from the game. Play Y onto the field" is a
+        // different effect, and the RFG-top lookup below would return the wrong card for it.
+        String name = m.group("name").trim();
+        if (!name.equalsIgnoreCase(source.name())) return null;
+        if (!m.group("name2").trim().equalsIgnoreCase(source.name())) return null;
+        boolean dull = m.group("dull") != null;
+        return ctx -> {
+            ctx.logEntry("Effect: Remove " + name + " from the game, then play it onto the field"
+                    + (dull ? " dull" : ""));
+            ctx.removeNamedCardFromGame(name);
+            ctx.playLastRemovedFromRfpOntoField(dull);
+        };
+    }
     static Consumer<GameContext> tryParseIfEitherPlayerNoForwardsPutSourceToBz(String text, CardData source) {
         if (source == null) return null;
         Matcher m = IF_EITHER_PLAYER_NO_FORWARDS_PUT_SOURCE_TO_BZ.matcher(text.trim());

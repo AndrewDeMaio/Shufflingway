@@ -54,9 +54,17 @@ interface OpponentController {
 	 *
 	 * @param attackerIndices indices into {@code p1ForwardCards} of the attacking party
 	 * @param combinedPower   the party's combined power
+	 * @param forcedBlock     true when a party member carries a "must block if possible" ability
 	 * @param onChosen        receives the blocking P2 Forward's index, or {@code null} for no block
 	 */
-	void requestPartyBlocker(List<Integer> attackerIndices, int combinedPower, Consumer<Integer> onChosen);
+	void requestPartyBlocker(List<Integer> attackerIndices, int combinedPower, boolean forcedBlock,
+	                         Consumer<Integer> onChosen);
+
+	/** As {@link #requestPartyBlocker(List, int, boolean, Consumer)} with no forced block. */
+	default void requestPartyBlocker(List<Integer> attackerIndices, int combinedPower,
+	                                 Consumer<Integer> onChosen) {
+		requestPartyBlocker(attackerIndices, combinedPower, false, onChosen);
+	}
 
 	/**
 	 * Asks the opponent how to spread its blocker's damage across a blocked party.

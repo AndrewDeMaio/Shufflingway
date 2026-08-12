@@ -2832,6 +2832,29 @@ final class ActionResolverChoose {
             };
         }
 
+        // --- Must block a named attacker followup (Dio 26-075C) ---
+        // Kept ahead of the plain must-block branch below: that one compels the chosen Forward
+        // against every attacker, which is a strictly harsher reading of this text. The two
+        // quoted wordings do not currently overlap, but the ordering makes the intent explicit.
+        Matcher mbNamed = FOLLOWUP_GAINS_MUST_BLOCK_NAMED_UNTIL_EOT.matcher(primaryFollowup);
+        if (mbNamed.find()) {
+            String attackerName = mbNamed.group("cardname").trim();
+            // Stored verbatim so MainWindow's block rules read it exactly as they read a printed
+            // "This Forward must block [name] if possible." — see FA_THIS_FORWARD_MUST_BLOCK_NAMED.
+            String granted = "This Forward must block " + attackerName + " if possible.";
+            return ctx -> {
+                ctx.logEntry(choosePrefix + " — Must block " + attackerName + " if possible this turn");
+                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
+                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
+                for (ForwardTarget t : ts) {
+                    if (t.zone() != ForwardTarget.CardZone.FORWARD) continue;
+                    ctx.grantFieldAbilityUntilEndOfTurn(t, granted);
+                }
+                if (secondary != null) secondary.accept(ctx);
+            };
+        }
+
         // --- Must block followup ---
         if (FOLLOWUP_MUST_BLOCK.matcher(primaryFollowup).find()) {
             return ctx -> {

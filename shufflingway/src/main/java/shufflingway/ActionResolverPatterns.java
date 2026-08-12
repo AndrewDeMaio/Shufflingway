@@ -1015,6 +1015,23 @@ final class ActionResolverPatterns {
     static final Pattern PLAY_NAMED_ONTO_FIELD_AT_END_OF_TURN = Pattern.compile(
         "(?i)^play\\s+(?<name>.+?)\\s+onto\\s+the\\s+field\\s+at\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn[.!]?\\s*$"
     );
+    /**
+     * Matches "Remove [Self] from the game. Then, play [Self] onto the field [dull]." — the
+     * immediate self-blink of Lightning 4-115L, as against the delayed
+     * {@link #PLAY_NAMED_ONTO_FIELD_AT_END_OF_TURN} form of Lightning 16-124H.
+     *
+     * <p>Both sentences must be claimed together. Split apart they compose cleanly — neither
+     * refers back with a pronoun, so the independent-sentence rule accepts them — and the second
+     * then resolves through {@link #PLAY_SOURCE_ONTO_FIELD_PATTERN}, which reads the Break Zone.
+     * The card is in the RFG zone by then, so the replay silently finds nothing.
+     *
+     * <p>Groups: {@code name} and {@code name2} — both must equal the source's name;
+     * {@code dull} — non-null when the card returns dull.
+     */
+    static final Pattern REMOVE_SELF_THEN_PLAY_SELF_ONTO_FIELD = Pattern.compile(
+        "(?i)^Remove\\s+(?<name>.+?)\\s+from\\s+(?:the\\s+)?game[.!]\\s+(?:Then,?\\s+)?" +
+        "play\\s+(?<name2>.+?)\\s+onto\\s+(?:the\\s+)?field(?:\\s+(?<dull>dull))?[.!]?\\s*$"
+    );
     /** Matches "Break [CardName]." — used when the source card breaks itself. */
     static final Pattern BREAK_SOURCE_CARD = Pattern.compile(
         "(?i)^break\\s+(?<name>.+?)[.!]?$"
@@ -1314,6 +1331,21 @@ final class ActionResolverPatterns {
             "if\\s+possible[,]?\\s+it\\s+must\\s+block\\s+this\\s+turn" +
             "|it\\s+gains\\s+[\"']If\\s+possible[,]?\\s+this\\s+Forward\\s+must\\s+block\\.?[\"']\\s+until\\s+the\\s+end\\s+of\\s+the\\s+turn" +
         ")[.!]?"
+    );
+    /**
+     * Matches the attacker-specific must-block grant: "It gains &quot;This Forward must block
+     * [CardName] if possible.&quot; until the end of the turn." (Dio 26-075C).
+     *
+     * <p>Distinct from {@link #FOLLOWUP_MUST_BLOCK}, whose quoted text is the unqualified
+     * "If possible, this Forward must block." — that one names no attacker and compels the
+     * chosen Forward to block whoever attacks. Here the compulsion only bites when
+     * {@code cardname} is the attacker, so the two cannot share a handler.
+     *
+     * <p>Group {@code cardname} — the attacker the chosen Forward is compelled to block.
+     */
+    static final Pattern FOLLOWUP_GAINS_MUST_BLOCK_NAMED_UNTIL_EOT = Pattern.compile(
+        "(?i)it\\s+gains\\s+[\"']This\\s+Forward\\s+must\\s+block\\s+(?<cardname>.+?)\\s+if\\s+possible[.!]?[\"']" +
+        "\\s+until\\s+the\\s+end\\s+of\\s+the\\s+turn[.!]?"
     );
     /** Matches "Return it to its owner's hand and draw N card(s)." — group {@code draw} is the count. */
     static final Pattern FOLLOWUP_RETURN_AND_DRAW = Pattern.compile(

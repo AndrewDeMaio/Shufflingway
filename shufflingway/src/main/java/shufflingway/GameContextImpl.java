@@ -1311,6 +1311,11 @@ final class GameContextImpl implements GameContext {
 				});
 				logEntry(source.name() + " gains \"" + abilityText + "\" until end of turn");
 			}
+			@Override public void grantFieldAbilityUntilEndOfTurn(ForwardTarget target, String abilityText) {
+				CardData card = mw.autoAbilityTriggers.fieldCardData(target);
+				if (card == null) return;
+				grantSelfFieldAbilityUntilEndOfTurn(card, abilityText);
+			}
 			@Override public void setOppForwardsCannotBlockInferiorPowerThisTurn() {
 				if (isP1()) mw.p2Turn.forwardCannotBlockInferiorPower = true;
 				else        mw.p1Turn.forwardCannotBlockInferiorPower = true;
