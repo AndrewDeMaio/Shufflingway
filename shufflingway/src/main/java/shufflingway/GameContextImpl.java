@@ -20,6 +20,7 @@ import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
+import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.stream.Collectors;
 
@@ -3194,134 +3195,124 @@ final class GameContextImpl implements GameContext {
 				}
 			}
 
+			/**
+			 * Both seats choose one of their own Forwards, so both clients ask their own player and
+			 * wait for the other's answer.  The two questions travel in opposite directions and are
+			 * asked in the same order on both clients — local first, remote second — so neither side
+			 * is waiting when the other is.
+			 */
 			@Override public void eachPlayerSelectForwardAndDamage(int amount) {
-				ForwardTarget p1Pick = null;
-				if (!mw.p1ForwardCards.isEmpty()) {
-					List<ForwardTarget> p1Eligible = new ArrayList<>();
-					for (int i = 0; i < mw.p1ForwardCards.size(); i++)
-						p1Eligible.add(new ForwardTarget(true, i, ForwardTarget.CardZone.FORWARD));
-					// Bypass the single-eligible auto-pick in mw.showForwardSelectDialog — the card text
-					// explicitly says "each player selects", so the choice must be explicit even when
-					// only one Forward is eligible (e.g. Brute Bomber alone on the field).
-					List<ForwardTarget> picks = mw.selectFieldTargetsInPlace(p1Eligible, 1, false,
-							"Each player selects 1 Forward — choose yours");
-					if (!picks.isEmpty()) p1Pick = picks.get(0);
-				} else {
-					logEntry("P1 has no Forwards — skipping selection");
-				}
-
-				ForwardTarget p2Pick = null;
-				if (!mw.p2ForwardCards.isEmpty()) {
-					p2Pick = mw.aiPickForwardToSurvive(amount);
-					if (p2Pick != null)
-						logEntry("[AI] selected " + mw.p2ForwardCards.get(p2Pick.idx()).name());
-				} else {
-					logEntry("[P2] has no Forwards — skipping selection");
-				}
+				ForwardTarget p1Pick = eachPlayerForwardPick(true,
+						"Each player selects 1 Forward — choose yours",
+						() -> mw.aiPickForwardToSurvive(amount));
+				ForwardTarget p2Pick = eachPlayerForwardPick(false,
+						"Each player selects 1 Forward — choose yours",
+						() -> mw.aiPickForwardToSurvive(amount));
 
 				if (p1Pick != null) damageP1Forward(p1Pick.idx(), amount);
 				if (p2Pick != null) damageP2Forward(p2Pick.idx(), amount);
 			}
 
 			@Override public void eachPlayerSelectForwardAndBreak() {
-				ForwardTarget p1Pick = null;
-				if (!mw.p1ForwardCards.isEmpty()) {
-					List<ForwardTarget> p1Eligible = new ArrayList<>();
-					for (int i = 0; i < mw.p1ForwardCards.size(); i++)
-						p1Eligible.add(new ForwardTarget(true, i, ForwardTarget.CardZone.FORWARD));
-					List<ForwardTarget> picks = mw.selectFieldTargetsInPlace(p1Eligible, 1, false,
-							"Both players select 1 Forward — choose yours to put in Break Zone");
-					if (!picks.isEmpty()) p1Pick = picks.get(0);
-				} else {
-					logEntry("P1 has no Forwards — skipping selection");
-				}
-
-				ForwardTarget p2Pick = null;
-				if (!mw.p2ForwardCards.isEmpty()) {
-					p2Pick = mw.aiPickForwardForBreak();
-					if (p2Pick != null)
-						logEntry("[AI] selected " + mw.p2ForwardCards.get(p2Pick.idx()).name());
-				} else {
-					logEntry("[P2] has no Forwards — skipping selection");
-				}
+				ForwardTarget p1Pick = eachPlayerForwardPick(true,
+						"Both players select 1 Forward — choose yours to put in Break Zone",
+						mw::aiPickForwardForBreak);
+				ForwardTarget p2Pick = eachPlayerForwardPick(false,
+						"Both players select 1 Forward — choose yours to put in Break Zone",
+						mw::aiPickForwardForBreak);
 
 				if (p1Pick != null) forceTargetToBreakZone(p1Pick);
 				if (p2Pick != null) forceTargetToBreakZone(p2Pick);
 			}
 
 			@Override public void selectControlledForwardAndBreak() {
-				if (isP1) {
-					if (mw.p1ForwardCards.isEmpty()) {
-						logEntry("P1 has no Forwards — skipping selection");
-						return;
-					}
-					List<ForwardTarget> eligible = new ArrayList<>();
-					for (int i = 0; i < mw.p1ForwardCards.size(); i++)
-						eligible.add(new ForwardTarget(true, i, ForwardTarget.CardZone.FORWARD));
-					List<ForwardTarget> picks = mw.selectFieldTargetsInPlace(eligible, 1, false,
-							"Select 1 Forward you control to put into the Break Zone");
-					if (!picks.isEmpty()) forceTargetToBreakZone(picks.get(0));
-				} else {
-					if (mw.p2ForwardCards.isEmpty()) {
-						logEntry("[AI] P2 has no Forwards — skipping selection");
-						return;
-					}
-					ForwardTarget pick = mw.aiPickForwardForBreak();
-					if (pick != null) {
-						logEntry("[AI] selected " + mw.p2ForwardCards.get(pick.idx()).name());
-						forceTargetToBreakZone(pick);
-					}
+				List<ForwardTarget> eligible = ownForwards(isP1);
+				if (eligible.isEmpty()) {
+					logEntry((isP1 ? "P1" : "[P2]") + " has no Forwards — skipping selection");
+					return;
+				}
+				ForwardTarget pick = mw.selectOwnFieldTarget(isP1, eligible,
+						"Select 1 Forward you control to put into the Break Zone",
+						"Waiting for your opponent to select a Forward to break...",
+						mw::aiPickForwardForBreak);
+				if (pick != null) {
+					logSelectedOwnCard(isP1, pick);
+					forceTargetToBreakZone(pick);
 				}
 			}
 
+			/**
+			 * One seat's half of an "each player selects 1 Forward" effect.  A seat with an empty
+			 * field is skipped rather than asked, and that is derived on both clients from a board
+			 * they already agree on — so it costs no round trip and cannot be answered wrongly.
+			 */
+			private ForwardTarget eachPlayerForwardPick(boolean seatIsP1, String title,
+			                                            Supplier<ForwardTarget> cpuPick) {
+				List<ForwardTarget> eligible = ownForwards(seatIsP1);
+				if (eligible.isEmpty()) {
+					logEntry((seatIsP1 ? "P1" : "[P2]") + " has no Forwards — skipping selection");
+					return null;
+				}
+				ForwardTarget pick = mw.selectOwnFieldTarget(seatIsP1, eligible, title,
+						"Waiting for your opponent to select their Forward...", cpuPick);
+				if (pick != null) logSelectedOwnCard(seatIsP1, pick);
+				return pick;
+			}
+
+			/** Every Forward on one seat's side of the board, as targets. */
+			private List<ForwardTarget> ownForwards(boolean seatIsP1) {
+				List<CardData> forwards = seatIsP1 ? mw.p1ForwardCards : mw.p2ForwardCards;
+				List<ForwardTarget> out = new ArrayList<>(forwards.size());
+				for (int i = 0; i < forwards.size(); i++)
+					out.add(new ForwardTarget(seatIsP1, i, ForwardTarget.CardZone.FORWARD));
+				return out;
+			}
+
+			/** Names the card a seat picked from its own field, whoever was sitting there. */
+			private void logSelectedOwnCard(boolean seatIsP1, ForwardTarget pick) {
+				CardData c = mw.fieldCardDataOrNull(pick);
+				if (c != null) logEntry("[" + (seatIsP1 ? "P1" : "P2") + "] selected " + c.name());
+			}
+
 			@Override public void selectControlledTypeAndBreak(boolean inclForwards, boolean inclBackups, boolean inclMonsters) {
-				if (isP1) {
-					List<ForwardTarget> eligible = new ArrayList<>();
-					if (inclForwards)
-						for (int i = 0; i < mw.p1ForwardCards.size(); i++)
-							eligible.add(new ForwardTarget(true, i, ForwardTarget.CardZone.FORWARD));
-					if (inclBackups)
-						for (int i = 0; i < mw.p1BackupCards.length; i++)
-							if (mw.p1BackupCards[i] != null)
-								eligible.add(new ForwardTarget(true, i, ForwardTarget.CardZone.BACKUP));
-					if (inclMonsters)
-						for (int i = 0; i < mw.p1MonsterCards.size(); i++)
-							eligible.add(new ForwardTarget(true, i, ForwardTarget.CardZone.MONSTER));
-					if (eligible.isEmpty()) { logEntry("P1 has no eligible characters — skipping"); return; }
-					List<ForwardTarget> picks = mw.selectFieldTargetsInPlace(eligible, 1, false,
-							"Select 1 Character you control to put into the Break Zone");
-					if (!picks.isEmpty()) forceTargetToBreakZone(picks.get(0));
-				} else {
-					List<ForwardTarget> eligible = new ArrayList<>();
-					if (inclForwards)
-						for (int i = 0; i < mw.p2ForwardCards.size(); i++)
-							eligible.add(new ForwardTarget(false, i, ForwardTarget.CardZone.FORWARD));
+				List<ForwardTarget> eligible = new ArrayList<>();
+				if (inclForwards) eligible.addAll(ownForwards(isP1));
+				if (inclBackups) {
+					CardData[] backups = isP1 ? mw.p1BackupCards : mw.p2BackupCards;
+					for (int i = 0; i < backups.length; i++)
+						if (backups[i] != null)
+							eligible.add(new ForwardTarget(isP1, i, ForwardTarget.CardZone.BACKUP));
+				}
+				if (inclMonsters) {
+					List<CardData> monsters = isP1 ? mw.p1MonsterCards : mw.p2MonsterCards;
+					for (int i = 0; i < monsters.size(); i++)
+						eligible.add(new ForwardTarget(isP1, i, ForwardTarget.CardZone.MONSTER));
+				}
+				if (eligible.isEmpty()) {
+					logEntry((isP1 ? "P1" : "[P2]") + " has no eligible characters — skipping");
+					return;
+				}
+
+				// The AI works down the same preference order it always has: cheapest Forward
+				// first, then any Backup, then a Monster.
+				Supplier<ForwardTarget> cpuPick = () -> {
+					if (inclForwards && !mw.p2ForwardCards.isEmpty()) return mw.aiPickForwardForBreak();
 					if (inclBackups)
 						for (int i = 0; i < mw.p2BackupCards.length; i++)
 							if (mw.p2BackupCards[i] != null)
-								eligible.add(new ForwardTarget(false, i, ForwardTarget.CardZone.BACKUP));
-					if (inclMonsters)
-						for (int i = 0; i < mw.p2MonsterCards.size(); i++)
-							eligible.add(new ForwardTarget(false, i, ForwardTarget.CardZone.MONSTER));
-					if (eligible.isEmpty()) { logEntry("[AI] P2 has no eligible characters — skipping"); return; }
-					ForwardTarget pick = null;
-					if (inclForwards && !mw.p2ForwardCards.isEmpty()) pick = mw.aiPickForwardForBreak();
-					if (pick == null && inclBackups) {
-						for (int i = 0; i < mw.p2BackupCards.length; i++)
-							if (mw.p2BackupCards[i] != null) { pick = new ForwardTarget(false, i, ForwardTarget.CardZone.BACKUP); break; }
-					}
-					if (pick == null && inclMonsters && !mw.p2MonsterCards.isEmpty())
-						pick = new ForwardTarget(false, 0, ForwardTarget.CardZone.MONSTER);
-					if (pick != null) {
-						String name = switch (pick.zone()) {
-							case FORWARD   -> mw.p2ForwardCards.get(pick.idx()).name();
-							case BACKUP    -> mw.p2BackupCards[pick.idx()].name();
-							case MONSTER   -> mw.p2MonsterCards.get(pick.idx()).name();
-							default        -> "?";
-						};
-						logEntry("[AI] selected " + name);
-						forceTargetToBreakZone(pick);
-					}
+								return new ForwardTarget(false, i, ForwardTarget.CardZone.BACKUP);
+					if (inclMonsters && !mw.p2MonsterCards.isEmpty())
+						return new ForwardTarget(false, 0, ForwardTarget.CardZone.MONSTER);
+					return null;
+				};
+
+				ForwardTarget pick = mw.selectOwnFieldTarget(isP1, eligible,
+						"Select 1 Character you control to put into the Break Zone",
+						"Waiting for your opponent to select a Character to break...",
+						cpuPick);
+				if (pick != null) {
+					logSelectedOwnCard(isP1, pick);
+					forceTargetToBreakZone(pick);
 				}
 			}
 

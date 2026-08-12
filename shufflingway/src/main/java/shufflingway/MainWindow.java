@@ -44,6 +44,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
+import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.stream.Collectors;
 
@@ -123,6 +124,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import shufflingway.net.ActionType;
+import shufflingway.net.ChoiceKind;
 import shufflingway.net.GameAction;
 import shufflingway.net.GameConnection;
 import shufflingway.net.MatchSetup;
@@ -5749,6 +5751,69 @@ public class MainWindow {
 	}
 
 	/**
+	 * Puts one question to one seat and returns the answer.
+	 *
+	 * <p>All three ways a seat can be answered live here, so an effect describes its question once
+	 * rather than branching on who is sitting there.  The local player answers in a dialog and the
+	 * answer is transmitted — the opponent's client is parked waiting for it, and forgetting to
+	 * send is what hangs a game.  A remote player's answer is waited for and checked before it is
+	 * acted on.  The AI's is computed.
+	 *
+	 * <p>Only the answer crosses the wire, never what it caused.  Both clients then run the same
+	 * rules over the same answer, which is what keeps them in step.
+	 *
+	 * @see PlayerChoice for what a question is made of and why the seat is not the player
+	 */
+	List<Integer> decide(PlayerChoice choice) {
+		if (choice.chooserIsP1()) {
+			List<Integer> answer = choice.localAnswer().get();
+			if (opponent instanceof RemoteOpponent remote)
+				remote.send(RemoteOpponent.choiceAction(choice.kind(), answer));
+			return answer;
+		}
+		if (opponent instanceof RemoteOpponent remote) return remote.awaitAnswer(choice);
+		return choice.cpuAnswer().get();
+	}
+
+	/**
+	 * The player at seat {@code chooserIsP1} picks 1 of {@code eligible}, all of which sit on their
+	 * own side of the board — "each player selects 1 Forward", and the effects that make a player
+	 * break something of their own.  Returns {@code null} when nothing was chosen.
+	 *
+	 * <p>Deliberately not {@link #showForwardSelectDialog}, which auto-picks when only one card is
+	 * eligible.  The card text says the player selects, so the choice stays explicit even with a
+	 * single Forward on the field — Brute Bomber standing alone is still selected, not assigned.
+	 * The auto-pick would also be a decision this client made and never transmitted, which the
+	 * other client has no way to reproduce.
+	 *
+	 * @param title      names the choice on the selection bar, for the player making it
+	 * @param waitPrompt names it for the player waiting on it
+	 * @param cpuPick    the AI's answer; may return {@code null} to decline
+	 */
+	ForwardTarget selectOwnFieldTarget(boolean chooserIsP1, List<ForwardTarget> eligible,
+	                                   String title, String waitPrompt,
+	                                   Supplier<ForwardTarget> cpuPick) {
+		if (eligible.isEmpty()) return null;
+		List<Integer> answer = decide(PlayerChoice.by(chooserIsP1, ChoiceKind.OWN_FIELD_CARD)
+				.prompting(waitPrompt)
+				.locally(() -> {
+					List<ForwardTarget> picks = selectFieldTargetsInPlace(eligible, 1, false, title);
+					return picks.isEmpty() ? List.of() : List.of(picks.get(0).choiceCode());
+				})
+				.byCpu(() -> {
+					ForwardTarget pick = cpuPick.get();
+					return pick == null ? List.of() : List.of(pick.choiceCode());
+				})
+				// The chooser packed their own side; from here that side is the opponent's.
+				.arrivingAs(ForwardTarget::flipChoiceSide)
+				.legalWhen(codes -> codes.stream().allMatch(code -> {
+					ForwardTarget t = ForwardTarget.fromChoiceCode(code);
+					return t != null && eligible.contains(t);
+				}), "no such card of theirs is eligible here"));
+		return answer.isEmpty() ? null : ForwardTarget.fromChoiceCode(answer.get(0));
+	}
+
+	/**
 	 * The player at seat {@code revealerIsP1} reveals {@code count} cards <em>of their own
 	 * choosing</em> from hand; returns the hand indices they showed, ascending.
 	 *
@@ -5767,35 +5832,38 @@ public class MainWindow {
 			for (int i = 0; i < hand.size(); i++) all.add(i);
 			return all;
 		}
-		if (revealerIsP1) {
-			List<CardData> picked = showHandSelectionDialog(new ArrayList<>(hand), count,
-					"reveal to your opponent", "Reveal");
-			List<Integer> revealed = new ArrayList<>();
-			for (CardData c : picked) {
-				int i = handIndexByIdentity(hand, c);
-				if (i >= 0) revealed.add(i);
-			}
-			Collections.sort(revealed);
-			// The opponent is waiting on this answer to know what they may select from.
-			if (opponent instanceof RemoteOpponent remote)
-				remote.send(RemoteOpponent.choiceAction(RemoteOpponent.CHOICE_REVEAL, revealed));
-			return revealed;
-		}
-		if (opponent instanceof RemoteOpponent remote)
-			return remote.awaitRevealedHandCards(count, hand.size());
-		// The CPU shows its least valuable cards — the low-cost-first heuristic a forced discard
-		// uses, applied repeatedly to a shrinking copy so the picks stay distinct.
-		List<CardData> pool   = new ArrayList<>(hand);
-		List<Integer>  origin = new ArrayList<>();
-		for (int i = 0; i < hand.size(); i++) origin.add(i);
-		List<Integer> revealed = new ArrayList<>();
-		for (int n = 0; n < count && !pool.isEmpty(); n++) {
-			int worst = pickWorstHandCard0(pool);
-			revealed.add(origin.remove(worst));
-			pool.remove(worst);
-		}
-		Collections.sort(revealed);
-		return revealed;
+		return decide(PlayerChoice.by(revealerIsP1, ChoiceKind.REVEAL_HAND)
+				.prompting("Waiting for your opponent to reveal " + count
+						+ " cards from their hand...")
+				.locally(() -> {
+					List<CardData> picked = showHandSelectionDialog(new ArrayList<>(hand), count,
+							"reveal to your opponent", "Reveal");
+					List<Integer> revealed = new ArrayList<>();
+					for (CardData c : picked) {
+						int i = handIndexByIdentity(hand, c);
+						if (i >= 0) revealed.add(i);
+					}
+					Collections.sort(revealed);
+					return revealed;
+				})
+				.byCpu(() -> {
+					// The CPU shows its least valuable cards — the low-cost-first heuristic a
+					// forced discard uses, applied repeatedly to a shrinking copy so the picks
+					// stay distinct.
+					List<CardData> pool   = new ArrayList<>(hand);
+					List<Integer>  origin = new ArrayList<>();
+					for (int i = 0; i < hand.size(); i++) origin.add(i);
+					List<Integer> revealed = new ArrayList<>();
+					for (int n = 0; n < count && !pool.isEmpty(); n++) {
+						int worst = pickWorstHandCard0(pool);
+						revealed.add(origin.remove(worst));
+						pool.remove(worst);
+					}
+					Collections.sort(revealed);
+					return revealed;
+				})
+				.legalWhen(shown -> shown.stream().allMatch(i -> i >= 0 && i < hand.size()),
+						"their hand holds " + hand.size() + " cards here"));
 	}
 
 	/**
@@ -5813,24 +5881,23 @@ public class MainWindow {
 			usable.add(i);
 		}
 		if (revealed.isEmpty()) return -1;
-		if (selectorIsP1) {
-			List<CardData> picked = showHandSelectionDialog(revealed, 1,
-					"discard from the revealed cards", "Discard");
-			if (picked.isEmpty()) return -1;
-			int rel = handIndexByIdentity(revealed, picked.get(0));
-			if (rel < 0) return -1;
-			int chosen = usable.get(rel);
-			// The opponent cannot derive this one — it is a free choice among the revealed cards.
-			if (opponent instanceof RemoteOpponent remote)
-				remote.send(RemoteOpponent.choiceAction(RemoteOpponent.CHOICE_SELECT, List.of(chosen)));
-			return chosen;
-		}
-		if (opponent instanceof RemoteOpponent remote)
-			return remote.awaitSelectedHandCard(usable);
-		// The CPU takes the most expensive card it was shown.
-		int best = usable.get(0);
-		for (int i : usable) if (oppHand.get(i).cost() > oppHand.get(best).cost()) best = i;
-		return best;
+		List<Integer> answer = decide(PlayerChoice.by(selectorIsP1, ChoiceKind.SELECT_REVEALED)
+				.prompting("Waiting for your opponent to select a card to discard...")
+				.locally(() -> {
+					List<CardData> picked = showHandSelectionDialog(revealed, 1,
+							"discard from the revealed cards", "Discard");
+					if (picked.isEmpty()) return List.of();
+					int rel = handIndexByIdentity(revealed, picked.get(0));
+					return rel < 0 ? List.of() : List.of(usable.get(rel));
+				})
+				.byCpu(() -> {
+					// The CPU takes the most expensive card it was shown.
+					int best = usable.get(0);
+					for (int i : usable) if (oppHand.get(i).cost() > oppHand.get(best).cost()) best = i;
+					return List.of(best);
+				})
+				.legalWhen(usable::containsAll, "it was not among the cards revealed to them"));
+		return answer.isEmpty() ? -1 : answer.get(0);
 	}
 
 	/** Position of {@code card} in {@code list} by identity, or -1. Two copies are distinct here. */
@@ -13333,7 +13400,8 @@ public class MainWindow {
 					this::refreshP1BreakLabel, this::refreshP2BreakLabel,
 					this::loadCardbackImage,
 					isP1 -> animateCardDraw(isP1, 1),
-					this::animateMillOneCard));
+					this::animateMillOneCard,
+					this::decide));
 		return lookDialogsInstance;
 	}
 

@@ -38,12 +38,11 @@ public enum ActionType {
                     //            "damage": { "<attackerIdx>": amount } }
                     //   The answer to an ATTACK. "damage" is the blocker's spread across a blocked
                     //   party and is absent otherwise. When "blocked" is false the rest is absent.
-    CHOICE,         // payload: { "kind": "REVEAL"|"SELECT", "indices": [n, ...] }
+    CHOICE,         // payload: { "kind": "<ChoiceKind>", "indices": [n, ...] }
                     //   One player's answer to a decision the other is parked on while an effect
-                    //   resolves. "REVEAL" is the cards the sender chose to show from their own
-                    //   hand; "SELECT" is the single card the sender picked out of what they were
-                    //   shown, indexed into their opponent's hand. Hand indices, like slot indices,
-                    //   do not flip on arrival — both clients hold each hand in the same order.
+                    //   resolves. See ChoiceKind for what each kind's integers index, and which
+                    //   of them flip sides on arrival: hand and slot indices do not, both clients
+                    //   holding each zone in the same order, while a field code names a side.
     RESOLVE_STACK,  // payload: {}
 
     // ── Utility ───────────────────────────────────────────────────────────────

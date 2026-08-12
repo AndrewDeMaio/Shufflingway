@@ -24,6 +24,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
 import javax.swing.BorderFactory;
@@ -36,6 +37,8 @@ import javax.swing.JPanel;
 import javax.swing.JToggleButton;
 import javax.swing.SwingConstants;
 import javax.swing.SwingWorker;
+
+import shufflingway.net.ChoiceKind;
 
 import static shufflingway.graphics.CardAnimation.CARD_H;
 import static shufflingway.graphics.CardAnimation.CARD_W;
@@ -64,6 +67,9 @@ class LookAtDeckDialogs {
      * @param cardbackImage supplier for the current cardback image
      * @param animateDraw   triggers a deck→hand slide animation for the given player (isP1)
      * @param animateMill   triggers a deck→break-zone slide animation for the given player (isP1)
+     * @param decide        puts a question to a seat and returns the answer — {@code MainWindow.decide}.
+     *                      These dialogs ask the local player; who else might be sitting in the
+     *                      seat, and how their answer gets here, is not their business
      */
     record Callbacks(
             Consumer<String>  log,
@@ -77,7 +83,8 @@ class LookAtDeckDialogs {
             Runnable          refreshP2Break,
             Supplier<Image>   cardbackImage,
             Consumer<Boolean> animateDraw,
-            Consumer<Boolean> animateMill
+            Consumer<Boolean> animateMill,
+            Function<PlayerChoice, List<Integer>> decide
     ) {}
 
     private final JFrame     frame;
@@ -133,10 +140,14 @@ class LookAtDeckDialogs {
     // ── Public entry point ──────────────────────────────────────────────────────
 
     /**
-     * Runs the dialog described by {@code config} and returns the card it put into the acting
-     * player's hand, or {@code null} when the effect adds none (and when the deck was empty).
-     * Riders that act on what was taken — Lunafreya 23-129H's "if the card added to your hand
-     * has an EX Burst" — need to know which card that was.
+     * Resolves the effect described by {@code config} for the player at seat {@code isP1}, and
+     * returns the card it put into their hand — {@code null} when it adds none, and when the deck
+     * was empty. Riders that act on what was taken — Lunafreya 23-129H's "if the card added to
+     * your hand has an EX Burst" — need to know which card that was.
+     *
+     * @param p2IsCpu whether the opposing seat is the built-in AI. Only the top/bottom ordering
+     *                dialog cares: it runs a countdown so a human opponent is not left waiting,
+     *                and the AI is not waiting for anything
      */
     CardData show(LookConfig config, boolean isP1, boolean p2IsCpu) {
         Deque<CardData> deck = isP1 ? gameState.getP1MainDeck() : gameState.getP2MainDeck();
@@ -148,123 +159,203 @@ class LookAtDeckDialogs {
 
         // "Reveal" is public — both players are entitled to see the cards, so they go to the
         // shared log whoever is looking. "Look at" is private to the controller, so P2's cards
-        // never reach the log the human at P1's seat reads.
-        if (isP1 || config.reveal())
+        // never reach the log the human at P1's seat reads. The same distinction decides whether
+        // the moves themselves are logged card by card or only counted.
+        boolean namesArePublic = isP1 || config.reveal();
+        if (namesArePublic)
             log((config.reveal() ? "Reveal" : "Look at") + " top " + n + " card(s): " +
                     peeked.stream().map(CardData::name)
                           .collect(java.util.stream.Collectors.joining(", ")));
 
-        // P2 controls the effect, so the choice belongs to P2, never P1 — never prompt the human
-        // sitting at P1's seat.
-        if (!isP1) return resolveForP2(config, peeked, deck, p2IsCpu);
+        // The choice belongs to whoever controls the effect, and all three kinds of player answer
+        // it the same way from here: as a DeckLookDecision over the peeked cards. Which is why the
+        // dialogs below only build one and never move a card themselves — a decision made at this
+        // seat has to be transmittable, and one made elsewhere has to be applicable.
+        List<Integer> answer = cb.decide().apply(
+                PlayerChoice.by(isP1, ChoiceKind.DECK_LOOK)
+                        .prompting("Waiting for your opponent to look at the top " + n
+                                + " card(s) of their deck...")
+                        .locally(() -> askDeckLook(config, peeked, p2IsCpu).toAnswer())
+                        .byCpu(()   -> cpuDeckLook(config, peeked).toAnswer())
+                        .legalWhen(a -> DeckLookDecision.fromAnswer(a, n) != null,
+                                "that is not an arrangement of the " + n
+                                + " card(s) on top of their deck here"));
 
+        DeckLookDecision decision = DeckLookDecision.fromAnswer(answer, n);
+        // Nothing usable came back — a remote answer already reported as a desync, or a seat that
+        // declined. Leaving the cards on top is the one outcome that changes nothing.
+        if (decision == null) decision = DeckLookDecision.keepOnTop(n);
+        return applyDeckLook(decision, peeked, deck, isP1, namesArePublic, config.action());
+    }
+
+    /**
+     * Asks the local player what to do with the cards they just looked at, <em>without moving any
+     * of them</em>. Every branch returns an arrangement for {@link #applyDeckLook} to carry out,
+     * because the same answer may have to be sent to the other client and applied there too.
+     */
+    private DeckLookDecision askDeckLook(LookConfig config, List<CardData> peeked, boolean p2IsCpu) {
         return switch (config.action()) {
-            case PEEK               -> { showPeek(peeked, deck, isP1);              yield null; }
-            case BREAK_OR_KEEP      -> { showBreakOrKeep(peeked.get(0), deck, isP1); yield null; }
-            case BOTTOM_OR_KEEP     -> { showBottomOrKeep(peeked.get(0), deck, isP1); yield null; }
-            case RETURN_TOP_ORDERED -> { showReturnTopOrdered(peeked, deck, isP1);   yield null; }
-            case ADD_TO_HAND_REST_BOTTOM         -> showAddToHandRestBottom(peeked, deck, isP1);
-            case ADD_TO_HAND_ONE_TO_BREAK_REST_BOTTOM -> showAddToHandOneToBreakRestBottom(peeked, deck, isP1);
-            case ADD_TO_HAND_REST_BREAK          -> showAddToHandRestBreak(peeked, deck, isP1, config);
-            case TOP_OR_BOTTOM_ORDERED           -> { showTopOrBottom(peeked, deck, isP1, !p2IsCpu); yield null; }
-            case PICK_ONE_TOP_REST_BOTTOM        -> { showPickOneTopRestBottom(peeked, deck, isP1); yield null; }
+            case PEEK               -> showPeek(peeked);
+            case BREAK_OR_KEEP      -> showBreakOrKeep(peeked.get(0));
+            case BOTTOM_OR_KEEP     -> showBottomOrKeep(peeked.get(0));
+            case RETURN_TOP_ORDERED -> showReturnTopOrdered(peeked);
+            case ADD_TO_HAND_REST_BOTTOM              -> showAddToHandRestBottom(peeked);
+            case ADD_TO_HAND_ONE_TO_BREAK_REST_BOTTOM -> showAddToHandOneToBreakRestBottom(peeked);
+            case ADD_TO_HAND_REST_BREAK               -> showAddToHandRestBreak(peeked, config);
+            case TOP_OR_BOTTOM_ORDERED                -> showTopOrBottom(peeked, !p2IsCpu);
+            case PICK_ONE_TOP_REST_BOTTOM             -> showPickOneTopRestBottom(peeked);
         };
     }
 
     /**
-     * Resolves a "look at the top of your deck" effect that P2 controls, without ever prompting the
-     * human at P1's seat. The peeked cards stay private (only public zone changes — hand/Break Zone —
-     * are logged), and the deck mutations mirror the human dialogs. A "Reveal" is public, so its
-     * cards are named in the log by the caller before this runs.
+     * The AI's answer: simple, safe defaults — keep private looks on top in the order they came,
+     * and for effects that pull a card to hand, take the topmost one the ability allows.
      *
-     * <p>When P2 is the built-in computer ({@code p2IsCpu}), the AI genuinely makes the choice using
-     * simple, safe defaults: keep private looks on top in their current order, and for effects that
-     * pull a card to hand, take the topmost. When P2 is a remote human (multiplayer), sending the
-     * choice to that player is not yet wired up, so the same safe default is applied and logged as a
-     * placeholder — matching the existing multiplayer fallbacks elsewhere in the engine.
-     *
-     * <p>The {@code peeked} cards are the current top {@code n} of {@code deck}, in top-first order.
-     *
-     * @return the card added to P2's hand, or {@code null} when the action adds none
+     * <p>Pure, and deliberately so. It used to be written as deck mutations inside a P2-only
+     * branch, which is how the multiplayer case ended up with nothing to fall back to but a
+     * placeholder that left the cards where they were.
      */
-    private CardData resolveForP2(LookConfig config, List<CardData> peeked, Deque<CardData> deck, boolean p2IsCpu) {
+    private static DeckLookDecision cpuDeckLook(LookConfig config, List<CardData> peeked) {
         int n = peeked.size();
+        return switch (config.action()) {
+            // Keep them on top, in the order they were peeked — no deck change at all.
+            case PEEK, RETURN_TOP_ORDERED, TOP_OR_BOTTOM_ORDERED, BREAK_OR_KEEP, BOTTOM_OR_KEEP ->
+                    DeckLookDecision.keepOnTop(n);
 
-        if (!p2IsCpu) {
-            // A remote human P2 controls this choice; routing it to that player is not yet wired up.
-            // The choice belongs to P2, so it must not be auto-resolved as if the AI made it, and the
-            // dialog must never appear at P1's seat. Leave the deck untouched as a safe placeholder.
-            log("[P2] looks at the top " + n + " card(s) of their deck — remote player choice not yet "
-                    + "implemented; cards left on top.");
-            cb.refreshP2Deck().run();
-            return null;
-        }
+            case PICK_ONE_TOP_REST_BOTTOM ->
+                    new DeckLookDecision(List.of(), List.of(), List.of(0), range(1, n));
 
-        CardData added = null;
-        switch (config.action()) {
-            case PEEK, RETURN_TOP_ORDERED, TOP_OR_BOTTOM_ORDERED ->
-                // Keep the cards on top in their current order — no deck change.
-                log("[P2] looks at the top " + n + " card(s) of their deck.");
+            case ADD_TO_HAND_REST_BOTTOM ->
+                    new DeckLookDecision(List.of(0), List.of(), List.of(), range(1, n));
 
-            case BREAK_OR_KEEP, BOTTOM_OR_KEEP ->
-                // Keep the card on top rather than breaking it / sending it to the bottom.
-                log("[P2] looks at the top card of their deck and keeps it on top.");
-
-            case PICK_ONE_TOP_REST_BOTTOM -> {
-                for (int i = 0; i < n; i++) deck.pollFirst();
-                deck.addFirst(peeked.get(0));
-                for (int i = 1; i < n; i++) deck.addLast(peeked.get(i));
-                log("[P2] looks at the top " + n + " card(s): keeps 1 on top, "
-                        + (n - 1) + " to the bottom.");
-            }
-
-            case ADD_TO_HAND_REST_BOTTOM -> {
-                for (int i = 0; i < n; i++) deck.pollFirst();
-                added = peeked.get(0);
-                gameState.getP2Hand().add(added);
-                cb.refreshP2Hand().run();
-                for (int i = 1; i < n; i++) deck.addLast(peeked.get(i));
-                log("[P2] adds a card to hand and returns " + (n - 1)
-                        + " to the bottom of their deck.");
-            }
+            case ADD_TO_HAND_ONE_TO_BREAK_REST_BOTTOM ->
+                    new DeckLookDecision(List.of(0), n > 1 ? List.of(1) : List.of(),
+                            List.of(), range(2, n));
 
             case ADD_TO_HAND_REST_BREAK -> {
-                for (int i = 0; i < n; i++) deck.pollFirst();
                 // The topmost card the ability qualifies, not simply the topmost — a filtered
                 // effect ("Add 1 Category VII card among them") may not reach the first one, and
                 // may not reach any of them.
                 int keep = -1;
-                for (int i = 0; i < n && keep < 0; i++) if (config.eligibleForHand(peeked.get(i))) keep = i;
-                if (keep >= 0) {
-                    added = peeked.get(keep);
-                    gameState.getP2Hand().add(added);
-                    cb.refreshP2Hand().run();
-                }
-                for (int i = 0; i < n; i++)
-                    if (i != keep) gameState.getP2BreakZone().add(peeked.get(i));
-                cb.refreshP2Break().run();
-                log(keep >= 0
-                        ? "[P2] adds a card to hand and sends " + (n - 1) + " to the Break Zone."
-                        : "[P2] finds no eligible card and sends all " + n + " to the Break Zone.");
+                for (int i = 0; i < n && keep < 0; i++)
+                    if (config.eligibleForHand(peeked.get(i))) keep = i;
+                List<Integer> broken = new ArrayList<>();
+                for (int i = 0; i < n; i++) if (i != keep) broken.add(i);
+                yield new DeckLookDecision(keep < 0 ? List.of() : List.of(keep), broken,
+                        List.of(), List.of());
             }
+        };
+    }
 
-            case ADD_TO_HAND_ONE_TO_BREAK_REST_BOTTOM -> {
-                for (int i = 0; i < n; i++) deck.pollFirst();
-                added = peeked.get(0);
-                gameState.getP2Hand().add(added);
-                cb.refreshP2Hand().run();
-                if (n > 1) { gameState.getP2BreakZone().add(peeked.get(1)); cb.refreshP2Break().run(); }
-                for (int i = 2; i < n; i++) deck.addLast(peeked.get(i));
-                log("[P2] adds a card to hand, 1 to the Break Zone, and returns the rest to the bottom.");
-            }
+    /** {@code [from, to)} as a list, for the fixed AI arrangements above. */
+    private static List<Integer> range(int from, int to) {
+        List<Integer> out = new ArrayList<>(Math.max(0, to - from));
+        for (int i = from; i < to; i++) out.add(i);
+        return out;
+    }
+
+    /**
+     * Moves the peeked cards where {@code decision} says, and returns the one that reached hand.
+     *
+     * <p>The single place a look-at-deck effect touches the game state, whoever decided it. The
+     * cards come off the top first and go back in destination order, so an arrangement that
+     * returns them all to the top in their original order is genuinely a no-op.
+     *
+     * @param namesArePublic false for a private look the opponent controls — the moves are then
+     *                       logged by count, because naming the cards would show the human at this
+     *                       seat cards they are not entitled to see
+     */
+    private CardData applyDeckLook(DeckLookDecision decision, List<CardData> peeked,
+            Deque<CardData> deck, boolean isP1, boolean namesArePublic,
+            LookConfig.LookAction action) {
+        int n = peeked.size();
+        // An arrangement that puts every card back on top in the order it was found moved nothing,
+        // and saying so would only repeat the "Look at top N" line already in the log.
+        boolean moved = !decision.equals(DeckLookDecision.keepOnTop(n));
+        boolean name  = namesArePublic && moved;
+
+        for (int i = 0; i < n; i++) deck.pollFirst();
+
+        CardData handCard = null;
+        for (int i : decision.toHand()) {
+            CardData c = peeked.get(i);
+            if (handCard == null) handCard = c;
+            if (isP1) gameState.getP1Hand().add(c); else gameState.getP2Hand().add(c);
+            if (name) log(c.name() + " → hand");
         }
-        cb.refreshP2Deck().run();
-        return added;
+        for (int i : decision.toBreak()) {
+            CardData c = peeked.get(i);
+            if (isP1) gameState.getP1BreakZone().add(c); else gameState.getP2BreakZone().add(c);
+            if (name) log(c.name() + " → Break Zone");
+        }
+        // toTop is topmost first, so it is pushed back in reverse.
+        List<Integer> top = decision.toTop();
+        for (int k = top.size() - 1; k >= 0; k--) deck.addFirst(peeked.get(top.get(k)));
+        if (name && !top.isEmpty()) log("→ Top of deck (topmost first): " + names(peeked, top));
+        for (int i : decision.toBottom()) {
+            deck.addLast(peeked.get(i));
+            if (name) log(peeked.get(i).name() + " → bottom of deck");
+        }
+
+        if (!namesArePublic) log(privateSummary(decision, n));
+
+        if (!decision.toHand().isEmpty()) {
+            if (isP1) cb.refreshP1Hand().run(); else cb.refreshP2Hand().run();
+        }
+        if (!decision.toBreak().isEmpty()) {
+            if (isP1) cb.refreshP1Break().run(); else cb.refreshP2Break().run();
+        }
+        // Only this one action has ever animated the cards it moves. Left as it was rather than
+        // made uniform: an animation is not free here — it runs against the turn-flow gate — and
+        // spreading it to eight more effects is a change to make deliberately, not in passing.
+        if (action == LookConfig.LookAction.ADD_TO_HAND_ONE_TO_BREAK_REST_BOTTOM) {
+            if (!decision.toHand().isEmpty())  cb.animateDraw().accept(isP1);
+            if (!decision.toBreak().isEmpty()) cb.animateMill().accept(isP1);
+        }
+        if (isP1) cb.refreshP1Deck().run(); else cb.refreshP2Deck().run();
+        return handCard;
+    }
+
+    /**
+     * What the opponent did with a private look, said without naming any of the cards — the human
+     * at this seat is not entitled to see them, and the log is shared.
+     */
+    private static String privateSummary(DeckLookDecision decision, int n) {
+        List<String> parts = new ArrayList<>();
+        if (!decision.toHand().isEmpty())
+            parts.add("takes " + decision.toHand().size() + " to hand");
+        if (!decision.toBreak().isEmpty())
+            parts.add("sends " + decision.toBreak().size() + " to the Break Zone");
+        if (!decision.toBottom().isEmpty())
+            parts.add("returns " + decision.toBottom().size() + " to the bottom");
+        String looks = "[P2] looks at the top " + n + " card(s) of their deck";
+        return parts.isEmpty() ? looks + "." : looks + " and " + String.join(", ", parts) + ".";
+    }
+
+    private static String names(List<CardData> peeked, List<Integer> indices) {
+        return indices.stream().map(i -> peeked.get(i).name())
+                .collect(java.util.stream.Collectors.joining(", "));
+    }
+
+    /** Position of {@code card} in {@code peeked} by identity — two copies are distinct here. */
+    private static int peekIndexOf(List<CardData> peeked, CardData card) {
+        for (int i = 0; i < peeked.size(); i++) if (peeked.get(i) == card) return i;
+        return -1;
+    }
+
+    /** The peek indices of {@code cards}, in the order given, skipping anything not peeked. */
+    private static List<Integer> peekIndices(List<CardData> peeked, List<CardData> cards) {
+        List<Integer> out = new ArrayList<>(cards.size());
+        for (CardData c : cards) {
+            int i = peekIndexOf(peeked, c);
+            if (i >= 0) out.add(i);
+        }
+        return out;
     }
 
     // ── Dialog implementations ──────────────────────────────────────────────────
 
-    private void showBreakOrKeep(CardData top, Deque<CardData> deck, boolean isP1) {
+    private DeckLookDecision showBreakOrKeep(CardData top) {
         JDialog dlg = new JDialog(frame, "Top of Deck — " + top.name(), true);
         dlg.setResizable(false);
         dlg.setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
@@ -292,16 +383,12 @@ class LookAtDeckDialogs {
         dlg.setLocationRelativeTo(frame);
         dlg.setVisible(true);
 
-        if (sendToBreak[0]) {
-            deck.pollFirst();
-            if (isP1) { gameState.getP1BreakZone().add(top); cb.refreshP1Break().run(); }
-            else      { gameState.getP2BreakZone().add(top); cb.refreshP2Break().run(); }
-            log(top.name() + " → Break Zone (from top of deck)");
-        }
-        if (isP1) cb.refreshP1Deck().run(); else cb.refreshP2Deck().run();
+        return sendToBreak[0]
+                ? new DeckLookDecision(List.of(), List.of(0), List.of(), List.of())
+                : DeckLookDecision.keepOnTop(1);
     }
 
-    private void showBottomOrKeep(CardData top, Deque<CardData> deck, boolean isP1) {
+    private DeckLookDecision showBottomOrKeep(CardData top) {
         JDialog dlg = new JDialog(frame, "Top of Deck — " + top.name(), true);
         dlg.setResizable(false);
         dlg.setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
@@ -329,15 +416,12 @@ class LookAtDeckDialogs {
         dlg.setLocationRelativeTo(frame);
         dlg.setVisible(true);
 
-        if (moveToBottom[0]) {
-            deck.pollFirst();
-            deck.addLast(top);
-            log(top.name() + " → bottom of deck");
-        }
-        if (isP1) cb.refreshP1Deck().run(); else cb.refreshP2Deck().run();
+        return moveToBottom[0]
+                ? new DeckLookDecision(List.of(), List.of(), List.of(), List.of(0))
+                : DeckLookDecision.keepOnTop(1);
     }
 
-    private void showPeek(List<CardData> cards, Deque<CardData> deck, boolean isP1) {
+    private DeckLookDecision showPeek(List<CardData> cards) {
         String title = cards.size() == 1
                 ? "Top of Deck — " + cards.get(0).name()
                 : "Top " + cards.size() + " Cards of Deck";
@@ -367,10 +451,11 @@ class LookAtDeckDialogs {
         dlg.pack();
         dlg.setLocationRelativeTo(frame);
         dlg.setVisible(true);
-        if (isP1) cb.refreshP1Deck().run(); else cb.refreshP2Deck().run();
+        // A peek decides nothing — the cards go back exactly as they were found.
+        return DeckLookDecision.keepOnTop(cards.size());
     }
 
-    private void showReturnTopOrdered(List<CardData> cards, Deque<CardData> deck, boolean isP1) {
+    private DeckLookDecision showReturnTopOrdered(List<CardData> cards) {
         int n = cards.size();
         JDialog dlg = new JDialog(frame, "Order Cards — Return to Top of Deck", true);
         dlg.setResizable(false);
@@ -450,16 +535,11 @@ class LookAtDeckDialogs {
         dlg.setLocationRelativeTo(frame);
         dlg.setVisible(true);
 
-        for (int i = 0; i < n; i++) deck.pollFirst();
-        for (int i = n - 1; i >= 0; i--) deck.addFirst(order.get(i));
-        log("Returned to top (topmost first): " +
-                order.stream().map(CardData::name)
-                      .collect(java.util.stream.Collectors.joining(", ")));
-        if (isP1) cb.refreshP1Deck().run(); else cb.refreshP2Deck().run();
+        return new DeckLookDecision(List.of(), List.of(), peekIndices(cards, order), List.of());
     }
 
-    /** @return the card put into hand */
-    private CardData showAddToHandRestBottom(List<CardData> cards, Deque<CardData> deck, boolean isP1) {
+    /** @return the arrangement chosen; its {@code toHand} is the card the player took */
+    private DeckLookDecision showAddToHandRestBottom(List<CardData> cards) {
         int n = cards.size();
         JDialog dlg = new JDialog(frame, "Look — Add to Hand, Return Rest to Bottom", true);
         dlg.setResizable(false);
@@ -574,20 +654,16 @@ class LookAtDeckDialogs {
         dlg.setLocationRelativeTo(frame);
         dlg.setVisible(true);
 
-        for (int i = 0; i < n; i++) deck.pollFirst();
+        // Closing the dialog without choosing still takes a card: the first in the chosen order.
         CardData handCard = handLblIdx[0] >= 0 ? order.get(handLblIdx[0]) : order.get(0);
-        if (isP1) { gameState.getP1Hand().add(handCard); cb.refreshP1Hand().run(); }
-        else      { gameState.getP2Hand().add(handCard); cb.refreshP2Hand().run(); }
-        log(handCard.name() + " → hand");
-        for (CardData c : order) {
-            if (c != handCard) { deck.addLast(c); log(c.name() + " → bottom of deck"); }
-        }
-        if (isP1) cb.refreshP1Deck().run(); else cb.refreshP2Deck().run();
-        return handCard;
+        List<CardData> bottom = new ArrayList<>();
+        for (CardData c : order) if (c != handCard) bottom.add(c);
+        return new DeckLookDecision(List.of(peekIndexOf(cards, handCard)), List.of(),
+                List.of(), peekIndices(cards, bottom));
     }
 
-    /** @return the card put into hand, or {@code null} when the player placed none there */
-    private CardData showAddToHandOneToBreakRestBottom(List<CardData> cards, Deque<CardData> deck, boolean isP1) {
+    /** @return the arrangement chosen; {@code toHand} may be empty if the player placed none there */
+    private DeckLookDecision showAddToHandOneToBreakRestBottom(List<CardData> cards) {
         int n = cards.size();
         // dest slot 0 = Hand, slot 1 = Break Zone, slots 2..n-1 = Deck Bottom (left = placed first = deeper)
         String[] destLabels = new String[n];
@@ -757,27 +833,14 @@ class LookAtDeckDialogs {
         int ui = 0;
         for (int s = 0; s < n; s++) if (destCards[s] == null && ui < unplaced.size()) destCards[s] = unplaced.get(ui++);
 
-        for (int i = 0; i < n; i++) deck.pollFirst();
-
         CardData handCard  = destCards[0];
         CardData breakCard = n > 1 ? destCards[1] : null;
-        if (handCard != null) {
-            if (isP1) { gameState.getP1Hand().add(handCard); cb.refreshP1Hand().run(); }
-            else      { gameState.getP2Hand().add(handCard); cb.refreshP2Hand().run(); }
-            log(handCard.name() + " → hand");
-        }
-        if (breakCard != null) {
-            if (isP1) { gameState.getP1BreakZone().add(breakCard); cb.refreshP1Break().run(); }
-            else      { gameState.getP2BreakZone().add(breakCard); cb.refreshP2Break().run(); }
-            log(breakCard.name() + " → Break Zone");
-        }
-        for (int i = 2; i < n; i++) {
-            if (destCards[i] != null) { deck.addLast(destCards[i]); log(destCards[i].name() + " → bottom of deck"); }
-        }
-        if (handCard  != null) cb.animateDraw().accept(isP1);
-        if (breakCard != null) cb.animateMill().accept(isP1);
-        if (isP1) cb.refreshP1Deck().run(); else cb.refreshP2Deck().run();
-        return handCard;
+        List<CardData> bottom = new ArrayList<>();
+        for (int i = 2; i < n; i++) if (destCards[i] != null) bottom.add(destCards[i]);
+        return new DeckLookDecision(
+                handCard  == null ? List.of() : List.of(peekIndexOf(cards, handCard)),
+                breakCard == null ? List.of() : List.of(peekIndexOf(cards, breakCard)),
+                List.of(), peekIndices(cards, bottom));
     }
 
     /**
@@ -786,10 +849,9 @@ class LookAtDeckDialogs {
      * them") — an ineligible card cannot be chosen, and when none of the revealed cards qualifies
      * there is nothing to decide, so no dialog is shown and all of them are broken.
      *
-     * @return the card put into hand, or {@code null} when none qualified
+     * @return the arrangement chosen; {@code toHand} is empty when nothing qualified
      */
-    private CardData showAddToHandRestBreak(List<CardData> cards, Deque<CardData> deck, boolean isP1,
-            LookConfig config) {
+    private DeckLookDecision showAddToHandRestBreak(List<CardData> cards, LookConfig config) {
         int n = cards.size();
         String filterLabel = config.handFilterLabel();
 
@@ -800,17 +862,11 @@ class LookAtDeckDialogs {
             anyEligible |= eligible[i];
         }
 
+        // Nothing qualifies, so there is nothing to decide and no dialog to show. Both clients
+        // reach this from the same revealed cards, so they agree without being told.
         if (!anyEligible) {
-            for (int i = 0; i < n; i++) deck.pollFirst();
-            for (CardData c : cards) {
-                if (isP1) gameState.getP1BreakZone().add(c);
-                else      gameState.getP2BreakZone().add(c);
-                log(c.name() + " → Break Zone");
-            }
             log("No " + filterLabel + " card among them — nothing added to hand.");
-            if (isP1) { cb.refreshP1Break().run(); cb.refreshP1Deck().run(); }
-            else      { cb.refreshP2Break().run(); cb.refreshP2Deck().run(); }
-            return null;
+            return new DeckLookDecision(List.of(), range(0, n), List.of(), List.of());
         }
 
         JDialog dlg = new JDialog(frame, "Look — Add to Hand, Rest to Break Zone", true);
@@ -886,26 +942,13 @@ class LookAtDeckDialogs {
         dlg.setLocationRelativeTo(frame);
         dlg.setVisible(true);
 
-        for (int i = 0; i < n; i++) deck.pollFirst();
         // Closing the dialog without choosing still takes a card — but it has to be one the
         // ability allows, so the fallback is the first eligible card rather than the first card.
         int hi = handLblIdx[0];
         if (hi < 0) for (int i = 0; i < n && hi < 0; i++) if (eligible[i]) hi = i;
-        CardData handCard = cards.get(hi);
-        if (isP1) { gameState.getP1Hand().add(handCard); cb.refreshP1Hand().run(); }
-        else      { gameState.getP2Hand().add(handCard); cb.refreshP2Hand().run(); }
-        log(handCard.name() + " → hand");
-        for (int i = 0; i < n; i++) {
-            if (i != hi) {
-                CardData c = cards.get(i);
-                if (isP1) gameState.getP1BreakZone().add(c);
-                else      gameState.getP2BreakZone().add(c);
-                log(c.name() + " → Break Zone");
-            }
-        }
-        if (isP1) { cb.refreshP1Break().run(); cb.refreshP1Deck().run(); }
-        else      { cb.refreshP2Break().run(); cb.refreshP2Deck().run(); }
-        return handCard;
+        List<Integer> broken = new ArrayList<>();
+        for (int i = 0; i < n; i++) if (i != hi) broken.add(i);
+        return new DeckLookDecision(List.of(hi), broken, List.of(), List.of());
     }
 
     /**
@@ -915,7 +958,7 @@ class LookAtDeckDialogs {
      *              top of the deck. It exists so a live opponent is not left waiting, so it is off
      *              against the CPU, which has nothing to wait for
      */
-    private void showTopOrBottom(List<CardData> cards, Deque<CardData> deck, boolean isP1, boolean timed) {
+    private DeckLookDecision showTopOrBottom(List<CardData> cards, boolean timed) {
         final int TW = 80, TH = 117, GAP = 8, SEP_H = 30;
         final int n      = cards.size();
         final int panelW = Math.max(600, 2 * n * (TW + GAP) + TW + 4 * GAP);
@@ -1165,18 +1208,8 @@ class LookAtDeckDialogs {
         dlg.setVisible(true);
         if (countdown != null) countdown.stop();
 
-        for (int i = 0; i < n; i++) deck.pollFirst();
-        for (int i = topCards.size() - 1; i >= 0; i--) deck.addFirst(topCards.get(i));
-        for (CardData c : bottomCards) deck.addLast(c);
-        if (!topCards.isEmpty())
-            log("→ Top of deck: " +
-                    topCards.stream().map(CardData::name)
-                            .collect(java.util.stream.Collectors.joining(", ")));
-        if (!bottomCards.isEmpty())
-            log("→ Bottom of deck: " +
-                    bottomCards.stream().map(CardData::name)
-                            .collect(java.util.stream.Collectors.joining(", ")));
-        if (isP1) cb.refreshP1Deck().run(); else cb.refreshP2Deck().run();
+        return new DeckLookDecision(List.of(), List.of(),
+                peekIndices(cards, topCards), peekIndices(cards, bottomCards));
     }
 
     void showRevealAddUpToMatchingRestBottom(List<CardData> cards, Deque<CardData> deck,
@@ -2066,19 +2099,11 @@ class LookAtDeckDialogs {
      * bottom of the deck in the order they were peeked.  For the canonical N=2 form there is
      * one binary choice; for N=1 the only card stays on top with no UI prompt.
      */
-    private void showPickOneTopRestBottom(List<CardData> cards, Deque<CardData> deck, boolean isP1) {
+    private DeckLookDecision showPickOneTopRestBottom(List<CardData> cards) {
         int n = cards.size();
 
-        // Pop the peeked cards off the deck up front; we'll push them back in the chosen order.
-        for (int i = 0; i < n; i++) deck.pollFirst();
-
-        // Trivial case: only one card peeked — it just stays on top.
-        if (n == 1) {
-            deck.addFirst(cards.get(0));
-            log(cards.get(0).name() + " → top of deck");
-            if (isP1) cb.refreshP1Deck().run(); else cb.refreshP2Deck().run();
-            return;
-        }
+        // Trivial case: only one card peeked — it just stays on top, nothing to decide.
+        if (n == 1) return DeckLookDecision.keepOnTop(1);
 
         JDialog dlg = new JDialog(frame, "Look — Pick 1 for Top of Deck", true);
         dlg.setResizable(false);
@@ -2149,15 +2174,9 @@ class LookAtDeckDialogs {
         dlg.setVisible(true);
 
         int chosen = topIdx[0] >= 0 ? topIdx[0] : 0;
-        CardData topCard = cards.get(chosen);
-        deck.addFirst(topCard);
-        log(topCard.name() + " → top of deck");
-        for (int i = 0; i < n; i++) {
-            if (i == chosen) continue;
-            deck.addLast(cards.get(i));
-            log(cards.get(i).name() + " → bottom of deck");
-        }
-        if (isP1) cb.refreshP1Deck().run(); else cb.refreshP2Deck().run();
+        List<Integer> bottom = new ArrayList<>();
+        for (int i = 0; i < n; i++) if (i != chosen) bottom.add(i);
+        return new DeckLookDecision(List.of(), List.of(), List.of(chosen), bottom);
     }
 
     // ── Shared helpers ──────────────────────────────────────────────────────────

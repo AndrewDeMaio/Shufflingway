@@ -1,6 +1,7 @@
 package shufflingway;
 
 import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -12,6 +13,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import shufflingway.net.ActionType;
+import shufflingway.net.ChoiceKind;
 import shufflingway.net.GameAction;
 import shufflingway.net.GameConnection;
 import shufflingway.net.MatchSetup;
@@ -28,11 +30,12 @@ import shufflingway.net.MatchSetup;
  * directions: opening hands, phase advance, draws, end-of-turn cleanup, plays from hand, and
  * attack/block declarations with the damage that follows them.
  *
- * <p>On top of that sits the beginning of the Phase 5 choice protocol: a CHOICE carries one
- * player's answer to a decision the <em>other</em> client is parked on mid-effect. Both clients
- * resolve the same ability, so each side simply waits for whichever half of the decision it does
- * not own — see {@link #awaitChoice}. 14-035C Don Corneo is the first card to need it, and needs
- * both halves.
+ * <p>On top of that sits the Phase 5 choice protocol: a CHOICE carries one player's answer to a
+ * decision the <em>other</em> client is parked on mid-effect. Both clients resolve the same
+ * ability, so each side simply waits for whichever half of the decision it does not own — see
+ * {@link #awaitAnswer}. What a question asks, how each kind of player answers it and how an answer
+ * is read back are described once by a {@link PlayerChoice} and routed by
+ * {@link MainWindow#decide}; this class holds only the waiting and the wire format.
  *
  * <p>What is <em>not</em> replicated yet is the opponent's priority windows. {@code MainWindow}
  * still gives the opponent's half of every combat priority round to {@code p2AutoPass}, a timer,
@@ -281,26 +284,24 @@ class RemoteOpponent implements OpponentController {
 
 	// ── Two-sided card choices ───────────────────────────────────────────
 
-	/** The sender chose these cards from their own hand to reveal. */
-	static final String CHOICE_REVEAL = "REVEAL";
-	/** The sender picked this one card out of what their opponent revealed to them. */
-	static final String CHOICE_SELECT = "SELECT";
-
 	/** Answers that have arrived, keyed by kind and removed as they are consumed. */
-	private final Map<String, List<Integer>> deliveredChoices = new LinkedHashMap<>();
+	private final Map<ChoiceKind, List<Integer>> deliveredChoices = new EnumMap<>(ChoiceKind.class);
 	/** The kind {@link #awaitChoice} is parked on, and the dialog holding the EDT while it waits. */
-	private String  awaitedChoiceKind;
-	private JDialog awaitedChoiceDialog;
+	private ChoiceKind awaitedChoiceKind;
+	private JDialog    awaitedChoiceDialog;
 
 	/** The opponent answered a choice. Buffered by kind, then the waiter — if any — is released. */
 	private void applyChoice(JSONObject payload) {
-		String kind = payload.optString("kind", "");
-		if (kind.isEmpty()) {
-			mw.reportDesync("opponent sent a choice with no kind");
+		String raw = payload.optString("kind", "");
+		ChoiceKind kind;
+		try {
+			kind = ChoiceKind.valueOf(raw);
+		} catch (IllegalArgumentException e) {
+			mw.reportDesync("opponent sent a choice of unknown kind \"" + raw + "\"");
 			return;
 		}
 		deliveredChoices.put(kind, indices(payload, "indices"));
-		if (kind.equals(awaitedChoiceKind) && awaitedChoiceDialog != null) awaitedChoiceDialog.dispose();
+		if (kind == awaitedChoiceKind && awaitedChoiceDialog != null) awaitedChoiceDialog.dispose();
 	}
 
 	/**
@@ -323,7 +324,7 @@ class RemoteOpponent implements OpponentController {
 	 * happens.  A sequence number would not help: the clients would have to agree on it, and the
 	 * case that breaks the keying is exactly the case that would break the counter.
 	 */
-	private List<Integer> awaitChoice(String kind, String prompt) {
+	private List<Integer> awaitChoice(ChoiceKind kind, String prompt) {
 		if (cancelled) return List.of();
 		List<Integer> already = deliveredChoices.remove(kind);
 		if (already != null) return already;
@@ -338,43 +339,35 @@ class RemoteOpponent implements OpponentController {
 	}
 
 	/**
-	 * Waits for the cards the opponent chose to reveal from their own hand, checked against the
-	 * hand this client holds for them before it is acted on.
+	 * Waits for the remote player's answer to {@code choice} and returns it in this client's frame
+	 * of reference, or nothing when it never came or cannot be acted on.
+	 *
+	 * <p>Two things happen to an answer between the wire and the caller, in this order. Each element
+	 * is rewritten by {@link PlayerChoice#fromWire} — a field code names a side, and the sender's
+	 * own side is this client's opponent — and then the answer is checked for legality, as a whole,
+	 * against the board as this client holds it. The check is what stops a disagreement becoming a
+	 * corrupted board: an answer this client cannot make sense of is reported as the desync it is,
+	 * and the effect declines rather than acting on the nearest plausible card.
+	 *
+	 * <p>The whole answer is dropped when any part of it is illegal. A partly-applied effect would
+	 * leave the two clients further apart than one that did nothing.
 	 */
-	List<Integer> awaitRevealedHandCards(int count, int handSize) {
-		List<Integer> revealed = awaitChoice(CHOICE_REVEAL,
-				"Waiting for your opponent to reveal " + count + " cards from their hand...");
-		for (int i : revealed) {
-			if (i < 0 || i >= handSize) {
-				mw.reportDesync("opponent revealed hand card " + i + ", but their hand holds "
-						+ handSize + " cards here");
-				return List.of();
-			}
+	List<Integer> awaitAnswer(PlayerChoice choice) {
+		List<Integer> answer = awaitChoice(choice.kind(), choice.waitPrompt());
+		List<Integer> local  = new ArrayList<>(answer.size());
+		for (int raw : answer) local.add(choice.fromWire().applyAsInt(raw));
+		if (!choice.legal().test(local)) {
+			mw.reportDesync("opponent answered " + choice.kind() + " with " + answer + ", but "
+					+ choice.legalityNote());
+			return List.of();
 		}
-		return revealed;
-	}
-
-	/**
-	 * Waits for the one card the opponent selected out of what this client revealed to them.
-	 * Returns -1 when nothing usable came back.
-	 */
-	int awaitSelectedHandCard(List<Integer> revealedIndices) {
-		List<Integer> answer = awaitChoice(CHOICE_SELECT,
-				"Waiting for your opponent to select a card to discard...");
-		if (answer.isEmpty()) return -1;
-		int idx = answer.get(0);
-		if (!revealedIndices.contains(idx)) {
-			mw.reportDesync("opponent selected hand card " + idx
-					+ ", which was not among the cards revealed to them");
-			return -1;
-		}
-		return idx;
+		return local;
 	}
 
 	/** Builds a CHOICE carrying one player's answer to a decision the opponent is parked on. */
-	static GameAction choiceAction(String kind, List<Integer> indices) {
+	static GameAction choiceAction(ChoiceKind kind, List<Integer> indices) {
 		return GameAction.of(ActionType.CHOICE, new JSONObject()
-				.put("kind", kind)
+				.put("kind", kind.name())
 				.put("indices", new JSONArray(indices)));
 	}
 

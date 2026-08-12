@@ -3,9 +3,11 @@ package shufflingway;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -16,6 +18,7 @@ import org.json.JSONObject;
 import org.junit.jupiter.api.Test;
 
 import shufflingway.net.ActionType;
+import shufflingway.net.ChoiceKind;
 import shufflingway.net.GameAction;
 import shufflingway.net.MatchSetup;
 
@@ -340,46 +343,51 @@ class MultiplayerSetupTest {
     }
 
     // =========================================================================================
-    // Two-sided card choices (Don Corneo 14-035C).
+    // Two-sided card choices — the Phase 5 seam.
     //
     // Unlike an ATTACK or a BLOCK, which say what already happened, a CHOICE is one half of a
-    // decision the other client is parked on mid-effect. Both halves travel as hand indices, and
-    // hand indices — like slot indices — do not flip on the way across: the two clients hold each
-    // hand in the same order, so slot n means the same card on both.
+    // decision the other client is parked on mid-effect. Every answer is a list of small
+    // integers; the ChoiceKind says what they index. Hand and slot indices do not flip on the way
+    // across — the two clients hold each zone in the same order, so index n means the same card on
+    // both — while a field code names a side and must be flipped into the receiver's frame.
     // =========================================================================================
 
     @Test
     void aRevealNamesEveryCardTheSenderChoseToShow() {
         JSONObject payload = RemoteOpponent.choiceAction(
-                RemoteOpponent.CHOICE_REVEAL, List.of(0, 2, 5)).payload();
-        assertEquals("REVEAL", payload.getString("kind"));
+                ChoiceKind.REVEAL_HAND, List.of(0, 2, 5)).payload();
+        assertEquals("REVEAL_HAND", payload.getString("kind"));
         assertEquals(List.of(0, 2, 5), intList(payload.getJSONArray("indices")));
     }
 
     @Test
     void aSelectionCarriesTheOneCardItPicked() {
         JSONObject payload = RemoteOpponent.choiceAction(
-                RemoteOpponent.CHOICE_SELECT, List.of(2)).payload();
-        assertEquals("SELECT", payload.getString("kind"));
+                ChoiceKind.SELECT_REVEALED, List.of(2)).payload();
+        assertEquals("SELECT_REVEALED", payload.getString("kind"));
         assertEquals(List.of(2), intList(payload.getJSONArray("indices")),
                 "the selection indexes the opponent's hand, not the revealed subset — the "
                 + "receiver discards from the hand directly");
     }
 
-    // The two kinds share one action type, so the kind is what tells a waiting client whether the
+    // The kinds share one action type, so the kind is what tells a waiting client whether the
     // answer that just landed is the one it is parked on.
     @Test
-    void theTwoKindsOfChoiceAreDistinguishable() {
-        assertNotEquals(RemoteOpponent.CHOICE_REVEAL, RemoteOpponent.CHOICE_SELECT);
+    void everyKindOfChoiceIsDistinguishableOnTheWire() {
+        Set<String> names = new HashSet<>();
+        for (ChoiceKind kind : ChoiceKind.values())
+            assertTrue(names.add(RemoteOpponent.choiceAction(kind, List.of()).payload().getString("kind")),
+                    "two kinds serialized to the same string, so a waiting client cannot tell "
+                    + "which question was answered");
     }
 
     // A CHOICE has to survive the same JSON round trip every other action does.
     @Test
     void aChoiceSurvivesSerialization() {
-        GameAction sent = RemoteOpponent.choiceAction(RemoteOpponent.CHOICE_REVEAL, List.of(1, 4));
+        GameAction sent = RemoteOpponent.choiceAction(ChoiceKind.REVEAL_HAND, List.of(1, 4));
         GameAction back = GameAction.deserialize(sent.serialize());
         assertEquals(ActionType.CHOICE, back.type());
-        assertEquals("REVEAL", back.payload().getString("kind"));
+        assertEquals("REVEAL_HAND", back.payload().getString("kind"));
         assertEquals(List.of(1, 4), intList(back.payload().getJSONArray("indices")));
     }
 
@@ -387,6 +395,178 @@ class MultiplayerSetupTest {
         List<Integer> out = new ArrayList<>(arr.length());
         for (int i = 0; i < arr.length(); i++) out.add(arr.getInt(i));
         return out;
+    }
+
+    // =========================================================================================
+    // Packing a field target into a choice answer.
+    //
+    // An answer travels as integers, so a card the player pointed at has to survive as one. The
+    // side is the part that does not mean the same thing on both clients: the chooser packs their
+    // own field, and the receiver reads it as their opponent's.
+    // =========================================================================================
+
+    @Test
+    void aFieldTargetSurvivesBeingPackedIntoOneInteger() {
+        for (ForwardTarget.CardZone zone : ForwardTarget.CardZone.values()) {
+            for (boolean isP1 : new boolean[] { true, false }) {
+                ForwardTarget target = new ForwardTarget(isP1, 3, zone);
+                assertEquals(target, ForwardTarget.fromChoiceCode(target.choiceCode()),
+                        "side, zone and slot all have to come back — a target that decodes to the "
+                        + "wrong zone breaks a different card than the player chose");
+            }
+        }
+    }
+
+    @Test
+    void everyFieldSlotPacksToADistinctCode() {
+        Set<Integer> codes = new HashSet<>();
+        for (ForwardTarget.CardZone zone : ForwardTarget.CardZone.values())
+            for (boolean isP1 : new boolean[] { true, false })
+                for (int idx = 0; idx < 12; idx++)
+                    assertTrue(codes.add(new ForwardTarget(isP1, idx, zone).choiceCode()),
+                            "two slots sharing a code would silently retarget a choice");
+    }
+
+    @Test
+    void theSideFlipsOnArrivalAndNothingElseDoes() {
+        ForwardTarget chosen = new ForwardTarget(true, 2, ForwardTarget.CardZone.BACKUP);
+        ForwardTarget asRead = ForwardTarget.fromChoiceCode(
+                ForwardTarget.flipChoiceSide(chosen.choiceCode()));
+        assertEquals(new ForwardTarget(false, 2, ForwardTarget.CardZone.BACKUP), asRead,
+                "the chooser packed their own Backup 2; on this client that is the opponent's");
+    }
+
+    @Test
+    void flippingTwiceIsTheOriginalCode() {
+        int code = new ForwardTarget(false, 4, ForwardTarget.CardZone.MONSTER).choiceCode();
+        assertEquals(code, ForwardTarget.flipChoiceSide(ForwardTarget.flipChoiceSide(code)),
+                "the flip is the only reinterpretation applied, so it has to be its own inverse");
+    }
+
+    @Test
+    void aCodeNamingNoZoneDecodesToNothingRatherThanThrowing() {
+        int noSuchZone = 0xF << 8;
+        assertNull(ForwardTarget.fromChoiceCode(noSuchZone),
+                "this is the first thing done to a number a remote client sent — a malformed one "
+                + "is a desync to report, not an exception thrown through a half-resolved effect");
+    }
+
+    // =========================================================================================
+    // Routing a question to whoever is in the seat.
+    //
+    // MainWindow.decide is the single place that knows how a seat is answered. These pin the two
+    // branches reachable without a connection; the remote branch needs a live socket and a modal
+    // wait, which is two-window territory.
+    // =========================================================================================
+
+    @Test
+    void theLocalSeatIsAskedThroughItsOwnDialog() {
+        MainWindow mw = new MainWindow();
+        boolean[] asked = { false, false };
+        List<Integer> answer = mw.decide(PlayerChoice.by(true, ChoiceKind.OWN_FIELD_CARD)
+                .locally(() -> { asked[0] = true; return List.of(7); })
+                .byCpu(()   -> { asked[1] = true; return List.of(9); }));
+        assertEquals(List.of(7), answer);
+        assertTrue(asked[0], "seat P1 is the local player on every client");
+        assertFalse(asked[1], "the AI must not answer a question put to the local player");
+    }
+
+    @Test
+    void theOtherSeatIsAnsweredByTheAiWhenNobodyIsConnected() {
+        MainWindow mw = new MainWindow();
+        boolean[] asked = { false, false };
+        List<Integer> answer = mw.decide(PlayerChoice.by(false, ChoiceKind.OWN_FIELD_CARD)
+                .locally(() -> { asked[0] = true; return List.of(7); })
+                .byCpu(()   -> { asked[1] = true; return List.of(9); }));
+        assertEquals(List.of(9), answer);
+        assertFalse(asked[0], "the local player must not answer for their opponent");
+        assertTrue(asked[1]);
+    }
+
+    @Test
+    void anUndescribedBranchDeclinesRatherThanInventingAMove() {
+        MainWindow mw = new MainWindow();
+        assertEquals(List.of(), mw.decide(PlayerChoice.by(false, ChoiceKind.OWN_FIELD_CARD)),
+                "a question that forgot to say how the AI answers it must pick nothing — "
+                + "choosing something would be a rule this client applied and the other did not");
+    }
+
+    // =========================================================================================
+    // Look at the top N cards — the answer covering that whole family.
+    //
+    // Nine different effects, one answer shape: which of the peeked cards go to hand, to the
+    // Break Zone, back on top and to the bottom, each group in arrival order. It has to survive
+    // the wire as integers, and — more importantly — a malformed one has to be rejected, because
+    // an index appearing twice would put the same card in two zones at once.
+    // =========================================================================================
+
+    private static DeckLookDecision decision(List<Integer> hand, List<Integer> brk,
+                                             List<Integer> top, List<Integer> bottom) {
+        return new DeckLookDecision(hand, brk, top, bottom);
+    }
+
+    @Test
+    void aDeckLookAnswerSurvivesTheRoundTrip() {
+        DeckLookDecision sent = decision(List.of(2), List.of(0), List.of(3), List.of(1, 4));
+        assertEquals(sent, DeckLookDecision.fromAnswer(sent.toAnswer(), 5));
+    }
+
+    @Test
+    void orderWithinADestinationIsPartOfTheAnswer() {
+        DeckLookDecision oneWay   = decision(List.of(), List.of(), List.of(0, 1, 2), List.of());
+        DeckLookDecision reversed = decision(List.of(), List.of(), List.of(2, 1, 0), List.of());
+        assertNotEquals(oneWay.toAnswer(), reversed.toAnswer(),
+                "a player who ordered three cards onto the top of their deck decided something, "
+                + "and it has to reach the other client");
+        assertEquals(reversed, DeckLookDecision.fromAnswer(reversed.toAnswer(), 3));
+    }
+
+    @Test
+    void keepingEverythingOnTopIsTheAnswerThatChangesNothing() {
+        DeckLookDecision noOp = DeckLookDecision.keepOnTop(3);
+        assertEquals(List.of(0, 1, 2), noOp.toTop());
+        assertEquals(noOp, DeckLookDecision.fromAnswer(noOp.toAnswer(), 3),
+                "the do-nothing arrangement is what an unanswered or rejected look falls back to, "
+                + "so it has to survive the same round trip as a real one");
+    }
+
+    @Test
+    void theCardTakenToHandIsRecoverable() {
+        assertEquals(2, decision(List.of(2), List.of(), List.of(), List.of(0, 1)).handCard(),
+                "riders like \"if the card added to your hand has an EX Burst\" ask for it");
+        assertEquals(-1, DeckLookDecision.keepOnTop(3).handCard());
+    }
+
+    @Test
+    void anAnswerThatNamesACardTwiceIsRejected() {
+        assertNull(DeckLookDecision.fromAnswer(List.of(1, 0, 0, 2, 2), 3),
+                "index 2 in both hand and bottom would put one card in two zones at once");
+    }
+
+    @Test
+    void anAnswerThatLosesACardIsRejected() {
+        assertNull(DeckLookDecision.fromAnswer(List.of(0, 0, 2, 0, 1), 3),
+                "a permutation of 2 cards cannot arrange the 3 that were revealed");
+    }
+
+    @Test
+    void anAnswerNamingACardThatWasNotRevealedIsRejected() {
+        assertNull(DeckLookDecision.fromAnswer(List.of(1, 0, 0, 7, 1), 3));
+    }
+
+    @Test
+    void countsThatOverrunTheCardsAreRejected() {
+        assertNull(DeckLookDecision.fromAnswer(List.of(2, 2, 2, 0, 1, 2), 3),
+                "the three counts claim six cards out of three");
+    }
+
+    @Test
+    void aDeckLookAnswerCrossesTheWireIntact() {
+        DeckLookDecision sent = decision(List.of(1), List.of(), List.of(0), List.of(2));
+        GameAction action = RemoteOpponent.choiceAction(ChoiceKind.DECK_LOOK, sent.toAnswer());
+        GameAction back   = GameAction.deserialize(action.serialize());
+        assertEquals("DECK_LOOK", back.payload().getString("kind"));
+        assertEquals(sent, DeckLookDecision.fromAnswer(intList(back.payload().getJSONArray("indices")), 3));
     }
 
     // =========================================================================================
