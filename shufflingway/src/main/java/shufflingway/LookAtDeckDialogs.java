@@ -18,10 +18,8 @@ import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.Deque;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -39,10 +37,9 @@ import javax.swing.JToggleButton;
 import javax.swing.SwingConstants;
 import javax.swing.SwingWorker;
 
-import shufflingway.net.ChoiceKind;
-
 import static shufflingway.graphics.CardAnimation.CARD_H;
 import static shufflingway.graphics.CardAnimation.CARD_W;
+import shufflingway.net.ChoiceKind;
 
 /**
  * Modal dialogs that implement the "Look at the top N cards of your deck" family of effects.

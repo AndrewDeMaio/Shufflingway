@@ -1293,7 +1293,15 @@ public record CardData(
             String inlineCostReductionExcludeName = inlineExcludeRaw != null ? inlineExcludeRaw.trim() : null;
             boolean requiresOwnWarpCard = REMOVE_WARP_COUNTER_FROM_RFG.matcher(effectRaw).find();
             boolean usableByEitherPlayer = EACH_PLAYER_CAN_USE_PATTERN.matcher(effectRaw).find();
-            result.add(new ActionAbility(abilityName, requiresDull, isSpecial, crystalCost, selfMillCost, hasXCost, cpCost, breakZoneCosts, discardCosts, removeFromGameCosts, returnToHandCosts, counterCosts, dullForwardCosts, yourTurnOnly, opponentTurnOnly, oncePerTurn, mainPhaseOnly, whileCardAtk, whileCardBlk, whilePartyAtk, whileCardInHand, hasBlockingTarget, effectRaw, damageThreshold, controlCondition, cpBackupElement, cpAllowedElements, sourceInBattle, requiresOppDiscardedThisTurn, requiresCastSummonThisTurn, requiresElementForwardEnteredThisTurn, requiresCardNameEnteredThisTurn, breakZoneOnly, requiresOpponentEmptyHand, requiresSelfEmptyHand, requiresNamedCardTookDamageThisTurn, requiresSelfReceivedDamageThisTurn, requiresForwardPutToBZThisTurn, requiresJobPutToBZThisTurn, blockerForAttacker, ownBzCard, counterScaleName, minCounterRequired, minCounterType, maxOpponentHandSize, requiresSourceIsForward, maxCounterAllowed, maxCounterType, inlineCostReductionJob, inlineCostReductionExcludeName, requiresOwnWarpCard, usableByEitherPlayer));
+            // "You can only use this ability if [CardName] has N power or more." The gate is
+            // applied to the source card, and the captured name is not checked against it because
+            // this method is given the text alone. Sound for the corpus: Hyoh 16-097H is the only
+            // card with the wording and it names itself. A future card naming a *different* card
+            // would need the owner's name threaded in here to tell the two apart.
+            Matcher selfPowerM = SELF_POWER_AT_LEAST_RESTRICTION.matcher(effectRaw);
+            int requiresSelfPowerAtLeast = selfPowerM.find()
+                    ? Integer.parseInt(selfPowerM.group("power")) : 0;
+            result.add(new ActionAbility(abilityName, requiresDull, isSpecial, crystalCost, selfMillCost, hasXCost, cpCost, breakZoneCosts, discardCosts, removeFromGameCosts, returnToHandCosts, counterCosts, dullForwardCosts, yourTurnOnly, opponentTurnOnly, oncePerTurn, mainPhaseOnly, whileCardAtk, whileCardBlk, whilePartyAtk, whileCardInHand, hasBlockingTarget, effectRaw, damageThreshold, controlCondition, cpBackupElement, cpAllowedElements, sourceInBattle, requiresOppDiscardedThisTurn, requiresCastSummonThisTurn, requiresElementForwardEnteredThisTurn, requiresCardNameEnteredThisTurn, breakZoneOnly, requiresOpponentEmptyHand, requiresSelfEmptyHand, requiresNamedCardTookDamageThisTurn, requiresSelfReceivedDamageThisTurn, requiresForwardPutToBZThisTurn, requiresJobPutToBZThisTurn, blockerForAttacker, ownBzCard, counterScaleName, minCounterRequired, minCounterType, maxOpponentHandSize, requiresSourceIsForward, maxCounterAllowed, maxCounterType, inlineCostReductionJob, inlineCostReductionExcludeName, requiresOwnWarpCard, usableByEitherPlayer, requiresSelfPowerAtLeast));
         }
         return List.copyOf(result);
     }
@@ -1312,7 +1320,7 @@ public record CardData(
                 a.requiresForwardPutToBZThisTurn(), a.requiresJobPutToBZThisTurn(), a.blockerForAttacker(), bzCard,
                 a.counterScaleName(), a.minCounterRequired(), a.minCounterType(), a.maxOpponentHandSize(), a.requiresSourceIsForward(),
                 a.maxCounterAllowed(), a.maxCounterType(), a.inlineCostReductionJob(), a.inlineCostReductionExcludeName(), a.requiresOwnWarpCard(),
-                a.usableByEitherPlayer());
+                a.usableByEitherPlayer(), a.requiresSelfPowerAtLeast());
     }
 
     /** Parses a "discard N [filter]" cost phrase into a {@link DiscardCost} list (0 or 1 item). */
@@ -1459,6 +1467,17 @@ public record CardData(
     /** "You can only use this ability if you have cast a Summon this turn." */
     static final Pattern CAST_SUMMON_THIS_TURN_PATTERN = Pattern.compile(
         "(?i)You\\s+can\\s+only\\s+use\\s+this\\s+ability\\s+if\\s+you\\s+have\\s+cast\\s+a\\s+Summon\\s+this\\s+turn[.!]?"
+    );
+
+    /**
+     * "You can only use this ability if [CardName] has N power or more." (Hyoh 16-097H) — gates
+     * activation on the source card's <em>current</em> power, so a card that has already used a
+     * power-setting ability this turn qualifies where its printed power would not.
+     * Group {@code power} — the required minimum.
+     */
+    static final Pattern SELF_POWER_AT_LEAST_RESTRICTION = Pattern.compile(
+        "(?i)You\\s+can\\s+only\\s+use\\s+this\\s+ability\\s+if\\s+(?<card>.+?)\\s+has\\s+" +
+        "(?<power>\\d+)\\s+power\\s+or\\s+more[.!]?"
     );
 
     /** "You can only use this ability if you have received N points of damage or more." */

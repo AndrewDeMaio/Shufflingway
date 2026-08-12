@@ -10,7 +10,6 @@ import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Deque;
 import java.util.EnumSet;
 import java.util.HashSet;
@@ -4291,6 +4290,33 @@ final class GameContextImpl implements GameContext {
 				}
 			}
 
+			@Override public void setSourceForwardBasePowerPermanently(CardData source, int power,
+					EnumSet<CardData.Trait> traits) {
+				List<CardData> fwds = isP1 ? mw.p1ForwardCards : mw.p2ForwardCards;
+				for (int i = 0; i < fwds.size(); i++) {
+					CardData card = fwds.get(i);
+					if (!card.name().equals(source.name())) continue;
+					// Same map as the end-of-turn override, minus the end-of-turn removal hook —
+					// that hook is the only thing that makes the other one temporary.
+					mw.basePowerOverrides.put(card, power);
+					if (!traits.isEmpty())
+						mw.permanentTraits.computeIfAbsent(card, k -> EnumSet.noneOf(CardData.Trait.class)).addAll(traits);
+					String traitList = ActionResolver.traitNamesOnly(traits);
+					logEntry(source.name() + " — base power becomes " + power
+							+ (traitList.isEmpty() ? "" : ", gains " + traitList)
+							+ " (does not end at end of turn)");
+					if (isP1) mw.refreshP1ForwardSlot(i); else mw.refreshP2ForwardSlot(i);
+					mw.enforceForwardBreakRuleProcess();
+					return;
+				}
+			}
+
+			@Override public void grantSelfFieldAbilityPermanently(CardData source, String abilityText) {
+				mw.permanentFieldAbilities.computeIfAbsent(source, k -> new ArrayList<>())
+						.add(new FieldAbility(abilityText, 0));
+				logEntry(source.name() + " gains \"" + abilityText + "\" (does not end at end of turn)");
+			}
+
 			/**
 			 * Records a base-power override for {@code card} and queues its removal at the end of
 			 * the turn.  Boosts and reductions are deliberately left alone — they layer on top of
@@ -6799,7 +6825,8 @@ final class GameContextImpl implements GameContext {
 					false, false, true, false,
 					null, null, false, false, false,
 					original.effectText(),
-					0, null, null, null, false, false, false, null, null, null, false, false, null, false, false, null, null, null, null, 0, null, -1, false, -1, null, null, null, false, false
+					0, null, null, null, false, false, false, null, null, null, false, false, null, false, false, null, null, null, null, 0, null, -1, false, -1, null, null, null, false, false,
+					original.requiresSelfPowerAtLeast()
 				);
 				Map<CardData, List<ActionAbility>> map = isP1 ? mw.p1TempGrantedAbilities : mw.p2TempGrantedAbilities;
 				map.computeIfAbsent(source, k -> new ArrayList<>()).add(copy);

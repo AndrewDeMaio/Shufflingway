@@ -11723,4 +11723,210 @@ public class CardBehaviorTest {
 		assertFalse(mw.attackerMustBeBlocked(mw.p1ForwardCards.get(0)));
 		assertTrue(mw.attackerMustBeBlocked(mw.p1ForwardCards.get(1)));
 	}
+
+	// =========================================================================================
+	// Hyoh 16-097H, a 1-cost 3000-power Forward that pumps itself twice:
+	//   《Lightning》: Hyoh gains Haste and Hyoh's power becomes 7000.
+	//   《L》《L》《L》: Hyoh gains "If Hyoh deals damage to your opponent, the damage becomes 2
+	//                  instead." and Hyoh's power becomes 10000. You can only use this ability if
+	//                  Hyoh has 7000 power or more.
+	//   (These effects do not end at the end of the turn.)
+	// Neither ability parsed at all. The wording states no duration, which in this game means the
+	// effect lasts while the card is on the field — the parenthetical on the printed card is a
+	// reminder of that rule, not a separate effect, and Hyoh's is a card-level line that never
+	// reaches the resolver anyway. So permanence here comes from the absence of "until the end of
+	// the turn", which is what separates this from SelfBasePowerBecomesUntil (Bartz 29-052H).
+	// =========================================================================================
+
+	private static final String HYOH_PUMP_1 = "Hyoh gains Haste and Hyoh's power becomes 7000.";
+	private static final String HYOH_PUMP_2 =
+			"Hyoh gains \"If Hyoh deals damage to your opponent, the damage becomes 2 instead.\" "
+			+ "and Hyoh's power becomes 10000. "
+			+ "You can only use this ability if Hyoh has 7000 power or more.";
+	private static final String HYOH_CARD_TEXT =
+			"《Lightning》: " + HYOH_PUMP_1 + "[[br]]《Lightning》《Lightning》《Lightning》: " + HYOH_PUMP_2;
+
+	private static MainWindow hyohOnField() {
+		MainWindow mw = new MainWindow();
+		// canActivateAbility reads live turn state, so the board needs a phase to sit in,
+		// and it ends on an affordability check — three active Lightning Backups cover the
+		// costlier of Hyoh's two abilities.
+		advanceTo(mw, GameState.Player.P1, GameState.GamePhase.MAIN_1);
+		for (int i = 0; i < 3; i++) {
+			mw.p1BackupCards[i]  = makePlainBackup("Sparker " + i, "Lightning", 2);
+			mw.p1BackupStates[i] = CardState.ACTIVE;
+		}
+		mw.placeCardInForwardZone(makeForward("Hyoh", "Lightning", 1, 3000,
+				CardData.parseActionAbilities(HYOH_CARD_TEXT)));
+		return mw;
+	}
+
+	@Test
+	void hyohsFirstAbilityGrantsHasteAndSetsBasePower() {
+		CardData hyoh = makeForward("Hyoh", "Lightning", 1, 3000);
+		assertEquals("SelfGainsAndBasePowerBecomesPermanent",
+				ActionResolver.matchedPatternName(HYOH_PUMP_1, hyoh));
+
+		GameContext ctx = mock(GameContext.class);
+		ActionResolver.parse(HYOH_PUMP_1, hyoh).accept(ctx);
+		verify(ctx).setSourceForwardBasePowerPermanently(
+				hyoh, 7000, EnumSet.of(CardData.Trait.HASTE));
+		// Not the end-of-turn primitive — that is the whole difference between the two wordings.
+		verify(ctx, never()).setSourceForwardBasePower(any(), anyInt(), any());
+	}
+
+	@Test
+	void hyohsSecondAbilityGrantsTheDamageSetterAndSetsBasePower() {
+		CardData hyoh = makeForward("Hyoh", "Lightning", 1, 3000);
+		assertEquals("SelfGainsAndBasePowerBecomesPermanent",
+				ActionResolver.matchedPatternName(HYOH_PUMP_2, hyoh),
+				"the trailing use-restriction sentence must not defeat the end anchor");
+
+		GameContext ctx = mock(GameContext.class);
+		ActionResolver.parse(HYOH_PUMP_2, hyoh).accept(ctx);
+		// Granted verbatim: DamageResolver matches this exact wording off the effective view.
+		verify(ctx).grantSelfFieldAbilityPermanently(hyoh,
+				"If Hyoh deals damage to your opponent, the damage becomes 2 instead.");
+		verify(ctx).setSourceForwardBasePowerPermanently(
+				hyoh, 10000, EnumSet.noneOf(CardData.Trait.class));
+	}
+
+	@Test
+	void theUntilEndOfTurnWordingStillRoutesToTheTemporaryPrimitive() {
+		// Bartz 29-052H prints the same shape with a duration, and must not become permanent.
+		CardData bartz = makeForward("Bartz", "Wind", 5, 7000);
+		String eot = "Until the end of the turn, Bartz gains Haste and Bartz's power becomes 9000.";
+		assertEquals("SelfBasePowerBecomesUntil", ActionResolver.matchedPatternName(eot, bartz));
+
+		GameContext ctx = mock(GameContext.class);
+		ActionResolver.parse(eot, bartz).accept(ctx);
+		verify(ctx).setSourceForwardBasePower(bartz, 9000, EnumSet.of(CardData.Trait.HASTE));
+		verify(ctx, never()).setSourceForwardBasePowerPermanently(any(), anyInt(), any());
+	}
+
+	@Test
+	void bothOfHyohsGrantsSurviveTheEndOfTurn() {
+		MainWindow mw = hyohOnField();
+		CardData hyoh = mw.p1ForwardCards.get(0);
+		ActionResolver.parse(HYOH_PUMP_1, hyoh).accept(mw.buildGameContext(true));
+		ActionResolver.parse(HYOH_PUMP_2, hyoh).accept(mw.buildGameContext(true));
+
+		assertEquals(10000, mw.effectiveP1ForwardPower(0));
+		assertTrue(mw.effectiveP1HasTrait(0, CardData.Trait.HASTE));
+		assertEquals(Integer.valueOf(2), mw.damageResolver.outgoingDamageToOpponentOverride(hyoh));
+
+		for (Consumer<GameContext> e : new ArrayList<>(mw.endOfTurnEffects))
+			e.accept(mw.buildGameContext(true));
+
+		assertEquals(10000, mw.effectiveP1ForwardPower(0),
+				"\"do not end at the end of the turn\" — the base power stays replaced");
+		assertTrue(mw.effectiveP1HasTrait(0, CardData.Trait.HASTE), "and so does Haste");
+		assertEquals(Integer.valueOf(2), mw.damageResolver.outgoingDamageToOpponentOverride(hyoh),
+				"and so does the granted damage setter");
+	}
+
+	@Test
+	void hyohsGrantsAreDroppedWhenHeLeavesTheField() {
+		MainWindow mw = hyohOnField();
+		CardData hyoh = mw.p1ForwardCards.get(0);
+		ActionResolver.parse(HYOH_PUMP_2, hyoh).accept(mw.buildGameContext(true));
+		assertEquals(Integer.valueOf(2), mw.damageResolver.outgoingDamageToOpponentOverride(hyoh));
+
+		mw.clearPermanentGrants(hyoh);
+
+		assertNull(mw.damageResolver.outgoingDamageToOpponentOverride(hyoh),
+				"a Character that leaves the field loses everything granted to it");
+		assertFalse(mw.basePowerOverrides.containsKey(hyoh),
+				"including the replaced base power, which has no end-of-turn hook to remove it");
+	}
+
+	@Test
+	void theGrantedDamageSetterReadsBackThroughTheEffectiveView() {
+		MainWindow mw = hyohOnField();
+		CardData hyoh = mw.p1ForwardCards.get(0);
+		assertTrue(hyoh.fieldAbilities().isEmpty(), "nothing is printed on the card itself");
+
+		ActionResolver.parse(HYOH_PUMP_2, hyoh).accept(mw.buildGameContext(true));
+
+		assertEquals(1, mw.effectiveFieldAbilities(hyoh).size(),
+				"the permanent grant joins the same view the end-of-turn ones use");
+	}
+
+	// --- The "if Hyoh has 7000 power or more" activation gate -------------------------------
+
+	@Test
+	void hyohsSecondAbilityCarriesThePowerRestriction() {
+		List<ActionAbility> abilities = CardData.parseActionAbilities(HYOH_CARD_TEXT);
+		assertEquals(2, abilities.size());
+		assertEquals(0, abilities.get(0).requiresSelfPowerAtLeast(), "the first ability is ungated");
+		assertEquals(7000, abilities.get(1).requiresSelfPowerAtLeast());
+	}
+
+	@Test
+	void theSecondAbilityIsLockedUntilTheFirstOneHasRunAndThenOpens() {
+		MainWindow mw = hyohOnField();
+		CardData hyoh = mw.p1ForwardCards.get(0);
+		ActionAbility gated = hyoh.actionAbilities().get(1);
+
+		assertFalse(mw.canActivateAbility(gated, false, CardState.ACTIVE, 0, hyoh, true),
+				"printed power is 3000 — the 3-Lightning ability is out of reach");
+
+		ActionResolver.parse(HYOH_PUMP_1, hyoh).accept(mw.buildGameContext(true));
+
+		assertTrue(mw.canActivateAbility(gated, false, CardState.ACTIVE, 0, hyoh, true),
+				"the gate reads current power, which is the point — the first ability unlocks the second");
+	}
+
+	@Test
+	void thePowerGateIsIgnoredByAbilitiesThatDoNotCarryIt() {
+		MainWindow mw = hyohOnField();
+		CardData hyoh = mw.p1ForwardCards.get(0);
+		assertTrue(mw.canActivateAbility(hyoh.actionAbilities().get(0), false, CardState.ACTIVE, 0, hyoh, true),
+				"a 3000-power Hyoh can still use the ungated ability");
+	}
+
+	@Test
+	void theRestrictionSentenceIsStrippedFromTheEffectText() {
+		// Left in place it would split the ability into two sentences and defeat the end anchor.
+		assertEquals("Hyoh gains \"If Hyoh deals damage to your opponent, the damage becomes 2 "
+				+ "instead.\" and Hyoh's power becomes 10000",
+				ActionResolver.stripRestrictionSentences(HYOH_PUMP_2));
+	}
+
+	// Ramza 16-017R prints the trait half of the same wording and was equally unparsed.
+	@Test
+	void theSameWordingOnRamzaIsAlsoClaimed() {
+		CardData ramza = makeForward("Ramza", "Lightning", 3, 5000);
+		GameContext ctx = mock(GameContext.class);
+		ActionResolver.parse("Ramza gains Haste and Ramza's power becomes 9000.", ramza).accept(ctx);
+		verify(ctx).setSourceForwardBasePowerPermanently(
+				ramza, 9000, EnumSet.of(CardData.Trait.HASTE));
+	}
+
+	// Roche 29-076H and Young Excenmille 23-100L print the same shape with the reminder spelled
+	// out inline. The reminder is accepted, but their quoted clauses have no permanent grant
+	// primitive, so the parser declines rather than applying the power half on its own.
+	@Test
+	void theInlineReminderIsAcceptedWhenTheQuotedClauseIsSupported() {
+		CardData caius = makeForward("Caius", "Fire", 2, 9000);
+		GameContext ctx = mock(GameContext.class);
+		Consumer<GameContext> fn = ActionResolver.parse(
+				"Caius gains \"If Caius deals damage to a Forward or your opponent, double the "
+				+ "damage instead.\" and Caius's power becomes 12000. "
+				+ "(This effect does not end at the end of the turn.)", caius);
+		assertNotNull(fn, "the trailing reminder is the same effect, not a different one");
+		fn.accept(ctx);
+		verify(ctx).setSourceForwardBasePowerPermanently(
+				caius, 12000, EnumSet.noneOf(CardData.Trait.class));
+	}
+
+	@Test
+	void anUnsupportedQuotedClauseDeclinesRatherThanApplyingHalfTheAbility() {
+		CardData roche = makeForward("Roche", "Fire", 4, 6000);
+		String text = "Roche gains \"Roche must attack once per turn if possible.\" and Roche's "
+				+ "power becomes 9000. (This effect does not end at the end of the turn.)";
+		assertNull(ActionResolverFieldAbility.tryParseSelfGainsAndBasePowerBecomesPermanent(text, roche),
+				"there is no field-ability reader for a must-attack clause, so granting it would be "
+						+ "inert — better visibly unparsed than half-applied");
+	}
 }

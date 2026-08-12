@@ -707,6 +707,25 @@ public interface GameContext {
     void setSourceForwardBasePower(CardData source, int power, EnumSet<CardData.Trait> traits);
 
     /**
+     * The outlasts-the-turn counterpart of {@link #setSourceForwardBasePower}, for the
+     * "[Self] gains [traits] and [Self]'s power becomes N." wording that states no duration
+     * (Hyoh 16-097H, Ramza 16-017R) or spells the permanence out in a trailing parenthetical
+     * (Roche 29-076H, Young Excenmille 23-100L).
+     *
+     * <p>Both halves persist: the base power is not withdrawn by the end phase, and the traits go
+     * to the permanent trait store rather than the per-turn one. Like every permanent grant it is
+     * dropped when the card leaves the field.
+     */
+    void setSourceForwardBasePowerPermanently(CardData source, int power, EnumSet<CardData.Trait> traits);
+
+    /**
+     * The outlasts-the-turn counterpart of {@link #grantSelfFieldAbilityUntilEndOfTurn}. The text
+     * is stored verbatim for the same reason, and read back through the same effective-abilities
+     * view, so a permanently granted field ability behaves exactly like a printed one.
+     */
+    void grantSelfFieldAbilityPermanently(CardData source, String abilityText);
+
+    /**
      * Finds {@code source} on the field and doubles its power (and optionally grants
      * {@code traits}) until end of turn by boosting it by its current effective power.
      */

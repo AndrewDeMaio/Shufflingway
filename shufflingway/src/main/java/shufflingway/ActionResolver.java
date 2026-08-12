@@ -457,6 +457,12 @@ public class ActionResolver {
         result = tryParsePlayerCannotCastSummons(effectText);
         if (result != null) return result;
 
+        // Must precede tryParseCannotBeChosenStandalone: that parser matches with find() and would
+        // claim this text off the protection clause quoted inside it, applying the grant and
+        // silently dropping the "power becomes N" half (23-100L Young Excenmille).
+        result = tryParseSelfGainsAndBasePowerBecomesPermanent(effectText, source);
+        if (result != null) return result;
+
         result = tryParseCannotBeChosenStandalone(effectText, source);
         if (result != null) return result;
 
@@ -1392,6 +1398,8 @@ public class ActionResolver {
         if (tryParseElementChange(effectText, source) != null) return "ElementChange";
         if (tryParseDelayedEffect(effectText)                 != null) return "DelayedEffect";
         if (tryParsePlayerCannotCastSummons(effectText)                != null) return "PlayerCannotCastSummons";
+        // Mirrors parse(): ahead of CannotBeChosen, which would claim it off the quoted clause.
+        if (tryParseSelfGainsAndBasePowerBecomesPermanent(effectText, source) != null) return "SelfGainsAndBasePowerBecomesPermanent";
         if (tryParseCannotBeChosenStandalone(effectText, source) != null) return "CannotBeChosen";
         if (tryParseCannotBecomeDullOpp(effectText, source) != null)     return "CannotBecomeDullOpp";
         if (tryParseCannotBeReturnedToHandOpp(effectText, source) != null) return "CannotBeReturnedToHandOpp";
@@ -2018,6 +2026,8 @@ public class ActionResolver {
         }
 
         if (tryParsePlayerCannotCastSummons(effectText)                != null) return "PlayerCannotCastSummons";
+        // Mirrors parse(): ahead of CannotBeChosen, which would claim it off the quoted clause.
+        if (tryParseSelfGainsAndBasePowerBecomesPermanent(effectText, source) != null) return "SelfGainsAndBasePowerBecomesPermanent";
         if (tryParseCannotBeChosenStandalone(effectText, source) != null)       return "CannotBeChosen";
         if (tryParseCannotBecomeDullOpp(effectText, source) != null)            return "CannotBecomeDullOpp";
         if (tryParseCannotBeReturnedToHandOpp(effectText, source) != null)      return "CannotBeReturnedToHandOpp";
@@ -3049,6 +3059,7 @@ public class ActionResolver {
         s = CardData.OPP_DISCARD_THIS_TURN_PATTERN .matcher(s).replaceAll("").trim();
         s = CardData.CAST_SUMMON_THIS_TURN_PATTERN .matcher(s).replaceAll("").trim();
         s = CardData.OWN_DAMAGE_THRESHOLD_RESTRICTION.matcher(s).replaceAll("").trim();
+        s = CardData.SELF_POWER_AT_LEAST_RESTRICTION .matcher(s).replaceAll("").trim();
         s = CardData.NAMED_CARD_TOOK_DAMAGE_THIS_TURN_RESTRICTION.matcher(s).replaceAll("").trim();
         s = CardData.SELF_RECEIVED_DAMAGE_THIS_TURN_RESTRICTION   .matcher(s).replaceAll("").trim();
         s = CardData.FORWARD_PUT_TO_BZ_THIS_TURN_RESTRICTION      .matcher(s).replaceAll("").trim();
@@ -3203,6 +3214,41 @@ public class ActionResolver {
         if (CardData.parseAutoAbilities(quoted).isEmpty()) return null;
         final String granted = quoted;
         return ctx -> ctx.grantSelfAutoAbilityPermanently(source, granted);
+    }
+
+    /**
+     * The permanent counterpart of {@link #grantedSelfFieldAbilityEffect}: a quoted clause a card
+     * hands <em>itself</em> for good, rather than for the turn.
+     *
+     * <p>Delegates to {@link #permanentGrantForClause} first, so the trigger-bearing and
+     * attack-permission clauses keep the one implementation, then adds the field-ability texts
+     * whose enforcement reads {@link MainWindow#effectiveFieldAbilities} — those can be granted
+     * verbatim and are recognised on a granted copy exactly as on a printed one.
+     *
+     * <p>Returns {@code null} for anything else <em>on purpose</em>. A clause like Roche 29-076H's
+     * "must attack once per turn if possible" has no field-ability reader at all — the must-attack
+     * rule is driven off an index set filled by the choose chain — so granting it verbatim would
+     * be silently inert, and declining leaves the ability visibly unparsed instead.
+     */
+    static Consumer<GameContext> permanentGrantForSelfClause(String quoted, CardData source) {
+        if (source == null) return null;
+        Consumer<GameContext> shared = permanentGrantForClause(quoted, source);
+        if (shared != null) return shared;
+
+        // "If [Self] deals damage to your opponent, the damage becomes N instead." (Hyoh 16-097H)
+        // — read back by DamageResolver.outgoingDamageToOpponentOverride off the effective view.
+        Matcher setTo = AutoAbilityTriggers.FA_OUTGOING_DAMAGE_TO_OPPONENT_SETS_TO.matcher(quoted);
+        if (setTo.matches() && setTo.group("card").trim().equalsIgnoreCase(source.name())) {
+            final String granted = quoted;
+            return ctx -> ctx.grantSelfFieldAbilityPermanently(source, granted);
+        }
+        // The doubler sibling, for the same reason — kept in step with the end-of-turn version.
+        Matcher dd = AutoAbilityTriggers.FA_OUTGOING_DAMAGE_DOUBLER.matcher(quoted);
+        if (dd.matches() && dd.group("card").trim().equalsIgnoreCase(source.name())) {
+            final String granted = quoted;
+            return ctx -> ctx.grantSelfFieldAbilityPermanently(source, granted);
+        }
+        return null;
     }
 
     /**

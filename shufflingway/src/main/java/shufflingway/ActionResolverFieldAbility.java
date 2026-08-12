@@ -68,6 +68,45 @@ final class ActionResolverFieldAbility {
         if (amount == 0 && traits.isEmpty()) return null;
         return ctx -> ctx.boostSourceForwardPermanently(source, amount, traits);
     }
+    /**
+     * Parses "[Self] gains [traits | "[quoted]"] and [Self]'s power becomes N." — the no-duration
+     * grant that lasts while the card stays on the field (Hyoh 16-097H, Ramza 16-017R, and the
+     * printings that add the "(This effect does not end…)" reminder, Roche 29-076H and Young
+     * Excenmille 23-100L).
+     *
+     * <p>Matched against the restriction-stripped text so a trailing "You can only use this
+     * ability if …" sentence does not defeat the end anchor — the same treatment
+     * {@link #tryParseGainsQuotedFieldAbilityUntilEot} gives it, and for the same reason: the
+     * restriction is captured as a flag on the ability and gated at activation, not executed here.
+     *
+     * <p>A quoted clause that no grant primitive recognises declines the whole match rather than
+     * applying the power half alone — half an ability is worse than an unparsed one.
+     */
+    static Consumer<GameContext> tryParseSelfGainsAndBasePowerBecomesPermanent(String text, CardData source) {
+        if (source == null) return null;
+        String matchOn = stripRestrictionSentences(text);
+        if (matchOn.isEmpty()) matchOn = text;
+        Matcher m = SELF_GAINS_AND_BASE_POWER_BECOMES_PERMANENT.matcher(matchOn.trim());
+        if (!m.matches()) return null;
+        if (!m.group("subject").trim().equalsIgnoreCase(source.name())) return null;
+        if (!m.group("powersubject").trim().equalsIgnoreCase(source.name())) return null;
+        int power = Integer.parseInt(m.group("power"));
+
+        String quoted = m.group("quoted");
+        EnumSet<CardData.Trait> traits = quoted != null
+                ? EnumSet.noneOf(CardData.Trait.class)
+                : parseTraits(m.group("traits"));
+        Consumer<GameContext> grant = null;
+        if (quoted != null) {
+            grant = permanentGrantForSelfClause(quoted.trim(), source);
+            if (grant == null) return null;
+        }
+        final Consumer<GameContext> quotedGrant = grant;
+        return ctx -> {
+            if (quotedGrant != null) quotedGrant.accept(ctx);
+            ctx.setSourceForwardBasePowerPermanently(source, power, traits);
+        };
+    }
     static Consumer<GameContext> tryParseOppFwdsLoseAllAbilitiesEot(String text) {
         if (!OPP_FWDS_LOSE_ALL_ABILITIES_EOT.matcher(text).matches()) return null;
         return ctx -> ctx.oppForwardsLoseAllAbilitiesUntilEndOfTurn();

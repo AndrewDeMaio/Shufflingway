@@ -4934,6 +4934,33 @@ final class ActionResolverPatterns {
         "(?i)^(?<subject>.+?)\\s+gains\\s+\"(?<q1>.+?)\"(?:\\s+and\\s+\"(?<q2>.+?)\")?\\s*" +
         "\\(This\\s+effect\\s+does\\s+not\\s+end\\s+at\\s+the\\s+end\\s+of\\s+the\\s+turn\\.?\\)[.!]?$");
     /**
+     * "[Self] gains [traits | \"[quoted ability]\"] and [Self]'s power becomes N." — a grant that
+     * states no duration, and so lasts as long as the card stays on the field (Hyoh 16-097H,
+     * Ramza 16-017R). Some printings spell the same thing out in a trailing
+     * "(This effect does not end at the end of the turn.)" (Roche 29-076H, Young Excenmille
+     * 23-100L), which is reminder text rather than a different effect — hence the optional group.
+     *
+     * <p>Hyoh's own card carries the reminder as a separate card-level line ("These effects…",
+     * plural, covering both abilities), and that line never reaches the resolver — which is why
+     * permanence here comes from the <em>absence</em> of a stated duration rather than from the
+     * parenthetical.
+     *
+     * <p>The leading anchor is what separates this from
+     * {@link #STANDALONE_SELF_BASE_POWER_BECOMES_UNTIL}, whose otherwise identical wording opens
+     * "Until the end of the turn, …". That prefix would be captured into {@code subject} and fail
+     * the name check, but the lookahead states the intent and fails faster.
+     *
+     * <p>Groups: {@code subject} and {@code powersubject} — both must equal the source's name;
+     * exactly one of {@code traits} / {@code quoted}; {@code power} — the new base power.
+     */
+    static final Pattern SELF_GAINS_AND_BASE_POWER_BECOMES_PERMANENT = Pattern.compile(
+        "(?i)^(?!Until\\b)(?<subject>[^\"]+?)\\s+gains\\s+" +
+        "(?:\"(?<quoted>.+?)\"|(?<traits>(?:Haste|First\\s+Strike|Brave)" +
+        "(?:\\s*,?\\s*(?:and\\s+)?(?:Haste|First\\s+Strike|Brave))*))\\s+and\\s+" +
+        "(?<powersubject>.+?)'s\\s+power\\s+becomes\\s+(?<power>\\d+)[.!]?" +
+        "(?:\\s*\\(This\\s+effect\\s+does\\s+not\\s+end\\s+at\\s+the\\s+end\\s+of\\s+the\\s+turn\\.?\\))?" +
+        "[.!]?\\s*$");
+    /**
      * "[Self] gains [+N power][, Haste[, First Strike][ and Brave]] (This effect does not end at
      * the end of the turn.)" — 8-147S Fordola's payoff.
      *

@@ -313,6 +313,15 @@ public class MainWindow {
 	/** Cards granted a multi-attack permission by an effect that outlasts the turn, instance to count. */
 	final Map<CardData, Integer> permanentMaxAttacks = new IdentityHashMap<>();
 	/**
+	 * Field abilities handed to a card by a grant that outlasts the turn — the permanent twin of
+	 * {@link #grantedFieldAbilities}, read through the same {@link #effectiveFieldAbilities} view.
+	 *
+	 * <p>A separate map rather than a flag on the other one: {@link #grantedFieldAbilities} is
+	 * emptied wholesale at the turn boundary, which is exactly what these grants must survive.
+	 * Like {@link #grantedAutoAbilities} it is dropped only when the card leaves the field.
+	 */
+	final Map<CardData, List<FieldAbility>> permanentFieldAbilities = new IdentityHashMap<>();
+	/**
 	 * Power added by an effect that outlasts the turn, and so is not zeroed by the end phase the
 	 * way {@link #p1ForwardPowerBoost} is. Keyed by card identity because the boost belongs to the
 	 * instance on the field, not to every copy of the card.
@@ -9056,6 +9065,7 @@ public class MainWindow {
 		if (ability.damageThreshold() > 0)         { restrict.append("Dmg≥").append(ability.damageThreshold()); firstRestrict = false; }
 		if (ability.minCounterRequired() > 0 && ability.minCounterType() != null) { if (!firstRestrict) restrict.append(", "); restrict.append("≥").append(ability.minCounterRequired()).append(" ").append(ability.minCounterType()).append(" Ctr"); firstRestrict = false; }
 		if (ability.maxCounterAllowed() >= 0 && ability.maxCounterType() != null) { if (!firstRestrict) restrict.append(", "); restrict.append("no ").append(ability.maxCounterType()).append(" Ctr"); firstRestrict = false; }
+		if (ability.requiresSelfPowerAtLeast() > 0) { if (!firstRestrict) restrict.append(", "); restrict.append("pow≥").append(ability.requiresSelfPowerAtLeast()); firstRestrict = false; }
 		if (ability.yourTurnOnly())                 { if (!firstRestrict) restrict.append(", "); restrict.append("your turn");     firstRestrict = false; }
 		if (ability.opponentTurnOnly())             { if (!firstRestrict) restrict.append(", "); restrict.append("opp turn");      firstRestrict = false; }
 		if (ability.oncePerTurn())                  { if (!firstRestrict) restrict.append(", "); restrict.append("1/turn");        firstRestrict = false; }
@@ -9544,6 +9554,13 @@ public class MainWindow {
 		}
 		if (ability.minCounterRequired() > 0 && ability.minCounterType() != null) {
 			if (gameState.getCounters(source, ability.minCounterType()) < ability.minCounterRequired()) return false;
+		}
+		if (ability.requiresSelfPowerAtLeast() > 0) {
+			// Current power, not printed: Hyoh 16-097H's 3-Lightning ability is meant to be unlocked
+			// by his own 1-Lightning one, which sets his base power to 7000 from a printed 3000.
+			ForwardTarget slot = findFieldSlot(source, isP1);
+			if (slot == null) return false;
+			if (fieldForwardPower(isP1, slot.zone(), slot.idx()) < ability.requiresSelfPowerAtLeast()) return false;
 		}
 		if (ability.maxCounterAllowed() >= 0 && ability.maxCounterType() != null) {
 			if (gameState.getCounters(source, ability.maxCounterType()) > ability.maxCounterAllowed()) return false;
@@ -10423,10 +10440,14 @@ public class MainWindow {
 	 * {@link CardData#fieldAbilities()} directly.
 	 */
 	List<FieldAbility> effectiveFieldAbilities(CardData card) {
-		List<FieldAbility> granted = grantedFieldAbilities.get(card);
-		if (granted == null || granted.isEmpty()) return card.fieldAbilities();
+		List<FieldAbility> granted   = grantedFieldAbilities.get(card);
+		List<FieldAbility> permanent = permanentFieldAbilities.get(card);
+		boolean noGranted   = granted   == null || granted.isEmpty();
+		boolean noPermanent = permanent == null || permanent.isEmpty();
+		if (noGranted && noPermanent) return card.fieldAbilities();
 		List<FieldAbility> all = new ArrayList<>(card.fieldAbilities());
-		all.addAll(granted);
+		if (!noGranted)   all.addAll(granted);
+		if (!noPermanent) all.addAll(permanent);
 		return all;
 	}
 
@@ -10449,6 +10470,10 @@ public class MainWindow {
 		permanentMaxAttacks.remove(card);
 		permanentPowerBoost.remove(card);
 		permanentTraits.remove(card);
+		permanentFieldAbilities.remove(card);
+		// A permanent "power becomes N" lives in the same map as the end-of-turn kind, which has
+		// its own removal hook; dropping the key here is what bounds the permanent one.
+		basePowerOverrides.remove(card);
 	}
 
 	/**
