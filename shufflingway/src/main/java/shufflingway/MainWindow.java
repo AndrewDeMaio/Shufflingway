@@ -46,6 +46,7 @@ import java.util.function.Consumer;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import javax.imageio.ImageIO;
@@ -5240,18 +5241,104 @@ public class MainWindow {
 	}
 
 	/**
+	 * True when any card on either field compels {@code defenderIsP1}'s Forwards to block —
+	 * General Leo 15-021R ("The Forwards you control"), Jack Garland 24-079L ("…opponent controls")
+	 * and Layle 16-083H ("All Forwards"), which differ only in whose Forwards they name.
+	 *
+	 * <p>"you control" / "opponent controls" are read relative to the side the printing card sits on,
+	 * so the same sentence binds a different player depending on who controls it.
+	 */
+	boolean forwardsMustBlock(boolean defenderIsP1) {
+		return fieldWideCompulsionBinds(AutoAbilityTriggers.FA_FIELD_FORWARDS_MUST_BLOCK, defenderIsP1);
+	}
+
+	/**
+	 * The attack-side counterpart of {@link #forwardsMustBlock}: true when any card on either field
+	 * compels {@code attackerIsP1}'s Forwards to attack once per turn — Layle 16-083H
+	 * ("All Forwards") and Jack Garland 24-079L ("The Forwards opponent controls").
+	 */
+	boolean forwardsMustAttack(boolean attackerIsP1) {
+		return fieldWideCompulsionBinds(AutoAbilityTriggers.FA_FIELD_FORWARDS_MUST_ATTACK, attackerIsP1);
+	}
+
+	/**
+	 * True when any card on either field carries {@code compulsion} — a field ability naming a whole
+	 * side of Forwards — in a way that binds {@code boundIsP1}.
+	 *
+	 * <p>"you control" and "opponent controls" are read relative to the side the printing card sits
+	 * on, so the same sentence binds a different player depending on who controls it; a form naming
+	 * no controller ("All Forwards") binds both. The pattern must expose a {@code scope} group,
+	 * absent for that uncontrolled form.
+	 */
+	private boolean fieldWideCompulsionBinds(Pattern compulsion, boolean boundIsP1) {
+		for (boolean srcIsP1 : new boolean[] { true, false }) {
+			List<CardData> zone = new ArrayList<>(srcIsP1 ? p1ForwardCards : p2ForwardCards);
+			for (CardData b : srcIsP1 ? p1BackupCards : p2BackupCards) if (b != null) zone.add(b);
+			zone.addAll(srcIsP1 ? p1MonsterCards : p2MonsterCards);
+			for (CardData src : zone) {
+				if (lostAbilitiesCards.contains(src)) continue;
+				for (FieldAbility fa : effectiveFieldAbilities(src)) {
+					Matcher m = compulsion.matcher(fa.effectText());
+					if (!m.find()) continue;
+					String scope = m.group("scope");
+					boolean binds = scope == null                                   // "All Forwards"
+							|| (scope.toLowerCase().startsWith("you") ? srcIsP1 == boundIsP1
+							                                          : srcIsP1 != boundIsP1);
+					if (binds) return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * True when {@code fwd} carries its own standing "must attack once per turn if possible"
+	 * ability — Berserker 15-078C and 3-091C, Umaro 17-022H, Reddas 2-072C. The printed counterpart
+	 * of {@link #permanentMustAttackOncePerTurn}, which holds the same compulsion when an effect
+	 * grants it (Roche 29-076H), and satisfied the same way: one attack settles it for the turn.
+	 */
+	boolean selfMustAttackOncePerTurn(CardData fwd) {
+		if (fwd == null || lostAbilitiesCards.contains(fwd)) return false;
+		for (FieldAbility fa : effectiveFieldAbilities(fwd)) {
+			Matcher m = AutoAbilityTriggers.FA_SELF_MUST_ATTACK.matcher(fa.effectText());
+			if (m.find() && m.group("card").trim().equalsIgnoreCase(fwd.name())) return true;
+		}
+		return false;
+	}
+
+	/**
+	 * True when {@code defenderIsP1} may not decline the block — either {@code attacker} carries
+	 * "Opponent must block [it] if possible", or a field-wide compulsion names the defender's
+	 * Forwards. The two reach the same decision from opposite sides of the field, and every caller
+	 * wants the disjunction.
+	 */
+	boolean blockIsCompelled(CardData attacker, boolean defenderIsP1) {
+		return attackerMustBeBlocked(attacker) || forwardsMustBlock(defenderIsP1);
+	}
+
+	/**
 	 * True if {@code blocker} carries a "This Forward must block [attacker] if possible" ability
 	 * naming {@code attacker}. Read through {@link #effectiveFieldAbilities} because the only
 	 * current source, Dio 26-075C, grants the text until end of turn rather than printing it.
 	 *
 	 * <p>The compulsion is attacker-specific — unlike {@link #p1ForwardMustBlock}, which restricts
 	 * the blocker choice against everything that attacks — so both arguments matter.
+	 *
+	 * <p>Also true for a standing self-named compulsion ("Ricard must block if possible." 6-103H,
+	 * "If possible, Cecil must block." 2-129L), which names no attacker and so binds against every
+	 * one. It rides this method rather than the turn-scoped index set because everything downstream
+	 * — the blocker-selectable checks, the two human validators, the AI's blocker pick — already
+	 * consults it, and because only this path checks that the compelled Forward can actually block
+	 * before restricting the choice, which is what "if possible" asks for.
 	 */
 	boolean forwardCompelledToBlock(CardData blocker, CardData attacker) {
 		if (blocker == null || attacker == null) return false;
+		if (lostAbilitiesCards.contains(blocker)) return false;
 		for (FieldAbility fa : effectiveFieldAbilities(blocker)) {
 			Matcher m = AutoAbilityTriggers.FA_THIS_FORWARD_MUST_BLOCK_NAMED.matcher(fa.effectText());
 			if (m.find() && m.group("cardname").trim().equalsIgnoreCase(attacker.name())) return true;
+			Matcher s = AutoAbilityTriggers.FA_SELF_MUST_BLOCK.matcher(fa.effectText());
+			if (s.find() && s.group("card").trim().equalsIgnoreCase(blocker.name())) return true;
 		}
 		return false;
 	}
@@ -10216,7 +10303,22 @@ public class MainWindow {
 			if (fpg.affectsOpponent() && fpg.appliesToCard(target, fpgTargetTraits(fpg, target, !isP1))
 					&& fpgBzConditionMet(fpg, isP1))
 				sum += fpg.powerBonus();
+		if (target.isForward())
+			for (CounterGrant cg : src.counterGrants())
+				if (cg.affectsOpponent()) sum += counterGrantPower(cg, target);
 		return sum;
+	}
+
+	/**
+	 * {@code grant}'s power contribution to {@code target} right now, or 0 when the counter it names
+	 * is absent. A {@link CounterGrant#perCounter} grant multiplies by the count on the card
+	 * (Gargas 17-045R: -2000 for each Poison Counter); every other form pays out once at one or more.
+	 */
+	private int counterGrantPower(CounterGrant grant, CardData target) {
+		if (grant.powerBonus() == 0) return 0;
+		int n = gameState.getCounters(target, grant.counterName());
+		if (n <= 0) return 0;
+		return grant.perCounter() ? grant.powerBonus() * n : grant.powerBonus();
 	}
 
 	private int fieldBoostContribution(CardData src, CardData target, boolean isP1) {
@@ -10239,8 +10341,7 @@ public class MainWindow {
 		// Counter-conditioned power grant ("Each Forward you control with a [X] Counter on it gains +N power.")
 		if (target.isForward())
 			for (CounterGrant cg : src.counterGrants())
-				if (cg.powerBonus() != 0 && gameState.getCounters(target, cg.counterName()) > 0)
-					boost += cg.powerBonus();
+				if (!cg.affectsOpponent()) boost += counterGrantPower(cg, target);
 		if (src == target) {
 			for (ScalingSelfPowerBoost ssb : src.scalingSelfPowerBoosts()) {
 				int count = switch (ssb.source()) {
@@ -11818,21 +11919,26 @@ public class MainWindow {
 	/**
 	 * The P1 Forward that is compelled to attack this turn and still can, or {@code -1}.
 	 *
-	 * <p>Two sources feed it: {@link #p1ForwardMustAttack}, the one-turn instruction the choose
-	 * chain writes ("it must attack this turn if possible"), and
-	 * {@link #permanentMustAttackOncePerTurn}, Roche 29-076H's standing compulsion, which is
-	 * satisfied for the turn as soon as that Forward has attacked once.
+	 * <p>Four sources feed it: {@link #p1ForwardMustAttack}, the one-turn instruction the choose
+	 * chain writes ("it must attack this turn if possible"); {@link #permanentMustAttackOncePerTurn},
+	 * the standing compulsion an effect grants (Roche 29-076H); the printed self-named form
+	 * ({@link #selfMustAttackOncePerTurn} — Berserker, Umaro, Reddas); and the field-wide form
+	 * ({@link #forwardsMustAttack} — Layle 16-083H, Jack Garland 24-079L). All but the first are
+	 * "once per turn", so each is satisfied as soon as that Forward has attacked once.
 	 *
 	 * <p>"If possible" is {@link #isForwardSelectable}: a Forward that is dull, restricted, or out
 	 * of attacks lifts the compulsion instead of stranding the player in the attack phase.
 	 */
 	int p1ForwardCompelledToAttackIdx() {
+		boolean fieldWide = forwardsMustAttack(true);
 		for (int i = 0; i < p1ForwardCards.size(); i++) {
 			if (!isForwardSelectable(i)) continue;
 			if (p1ForwardMustAttack.contains(i)) return i;
 			CardData fwd = p1ForwardCards.get(i);
-			if (permanentMustAttackOncePerTurn.contains(fwd)
-					&& attacksMadeThisTurn.getOrDefault(fwd, 0) == 0) return i;
+			boolean oncePerTurn = fieldWide
+					|| permanentMustAttackOncePerTurn.contains(fwd)
+					|| selfMustAttackOncePerTurn(fwd);
+			if (oncePerTurn && attacksMadeThisTurn.getOrDefault(fwd, 0) == 0) return i;
 		}
 		return -1;
 	}
@@ -12211,7 +12317,7 @@ public class MainWindow {
 		else if (p1BlockerBackupIdx >= 0)  { blkZone = ForwardTarget.CardZone.BACKUP;  blkIdx = p1BlockerBackupIdx; }
 
 		// Must-block validation: done before clearing state so isForwardBlockSelectable still works.
-		if (blkZone == null && attackerMustBeBlocked(attacker)) {
+		if (blkZone == null && blockIsCompelled(attacker, true)) {
 			for (int i = 0; i < p1ForwardStates.size(); i++) {
 				if (isForwardBlockSelectable(i)) {
 					showEffectOptionDialog("You must block " + attacker.name()
@@ -12299,14 +12405,17 @@ public class MainWindow {
 		// Must-block validation: done before clearing state so isForwardBlockSelectable still works.
 		if (blockerIdx < 0) {
 			boolean partyMustBeBlocked = attackerIndices.stream()
-					.anyMatch(i -> attackerMustBeBlocked(p2ForwardCards.get(i)));
+					.anyMatch(i -> attackerMustBeBlocked(p2ForwardCards.get(i)))
+					|| forwardsMustBlock(true);
 			if (partyMustBeBlocked) {
 				for (int i = 0; i < p1ForwardStates.size(); i++) {
 					if (isForwardBlockSelectable(i)) {
+						// No name when the compulsion is the field-wide kind — it names a side, not
+						// an attacker, so there is no party member to point at.
 						String mustBlockName = attackerIndices.stream()
 								.filter(i2 -> attackerMustBeBlocked(p2ForwardCards.get(i2)))
 								.map(i2 -> p2ForwardCards.get(i2).name())
-								.findFirst().orElse("a party member");
+								.findFirst().orElse("the attacking party");
 						showEffectOptionDialog("You must block " + mustBlockName
 								+ " — select an eligible Forward.", "Must Block", new Object[]{"OK"});
 						return;
@@ -12860,7 +12969,7 @@ public class MainWindow {
 			refreshAttackButton();
 			opponent.requestBlocker(attackerPower,
 					new ForwardTarget(true, monIdx, ForwardTarget.CardZone.MONSTER),
-					attackerMustBeBlocked(attacker), blk -> {
+					blockIsCompelled(attacker, false), blk -> {
 				if (blk != null) {
 					CardData blocker = autoAbilityTriggers.fieldCardData(blk);
 					logEntry("[P2] " + blocker.name() + " blocks!");
@@ -13199,7 +13308,7 @@ public class MainWindow {
 			refreshAttackButton();
 			opponent.requestBlocker(attackerPower,
 					new ForwardTarget(true, bIdx, ForwardTarget.CardZone.BACKUP),
-					attackerMustBeBlocked(attacker), blk -> {
+					blockIsCompelled(attacker, false), blk -> {
 				if (blk != null) {
 					CardData blocker = autoAbilityTriggers.fieldCardData(blk);
 					logEntry("[P2] " + blocker.name() + " blocks!");
@@ -13305,7 +13414,7 @@ public class MainWindow {
 				refreshAttackButton();
 				opponent.requestBlocker(effectiveP1ForwardPower(idx),
 						new ForwardTarget(true, idx, ForwardTarget.CardZone.FORWARD),
-						attackerMustBeBlocked(attacker), blk -> {
+						blockIsCompelled(attacker, false), blk -> {
 					if (blk != null) {
 						CardData blocker = autoAbilityTriggers.fieldCardData(blk);
 						logEntry("[P2] " + blocker.name() + " blocks!");
@@ -13361,7 +13470,8 @@ public class MainWindow {
 		// Blocking a party means blocking every member, so one member carrying the compulsion
 		// forces the block — the same reading handleP1PartyBlockAction takes on the human side.
 		boolean forced = attackerIndices.stream()
-				.anyMatch(i -> i < p1ForwardCards.size() && attackerMustBeBlocked(p1ForwardCards.get(i)));
+				.anyMatch(i -> i < p1ForwardCards.size() && attackerMustBeBlocked(p1ForwardCards.get(i)))
+				|| forwardsMustBlock(false);
 		opponent.requestPartyBlocker(attackerIndices, combinedPower, forced, chosenIdx -> {
 			if (chosenIdx != null) {
 				final int blockerIdx   = chosenIdx;

@@ -13486,6 +13486,272 @@ public class CardBehaviorTest {
 	}
 
 	// =========================================================================================
+	// "The Forwards opponent controls lose 2000 power for each Poison Counter on them."
+	// (Gargas 17-045R) — the only printed counter grant that differs from the "Each Forward you
+	// control with a [X] Counter on it gains …" family on both axes at once: it scales with the
+	// counter count rather than paying out once at one or more, and it reaches across the field.
+	// Both differences ride on CounterGrant, so the same accessor serves the whole family.
+	// =========================================================================================
+
+	private static final String GARGAS_DEBUFF =
+			"The Forwards opponent controls lose 2000 power for each Poison Counter on them.";
+
+	@Test
+	void theCounterScaledDebuffParsesAsAPerCounterOpponentGrant() {
+		CardData gargas = makeIcbCard("Gargas", "Wind", "Forward", GARGAS_DEBUFF);
+
+		assertEquals(1, gargas.counterGrants().size());
+		CounterGrant cg = gargas.counterGrants().get(0);
+		assertEquals("Poison", cg.counterName());
+		assertEquals(-2000, cg.powerBonus(), "\"lose\" is stored as a negative bonus");
+		assertTrue(cg.perCounter(), "\"for each\" scales with the count");
+		assertTrue(cg.affectsOpponent());
+		assertNull(cg.grantedAbilityText());
+	}
+
+	@Test
+	void poisonCountersStackTheirPowerLossAcrossTheField() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeIcbCard("Gargas", "Wind", "Forward", GARGAS_DEBUFF));
+		CardData clean   = makeForward("Clean",   "Fire", 3, 7000);
+		CardData poisoned = makeForward("Poisoned", "Fire", 3, 7000);
+		mw.placeP2CardInForwardZone(clean);     // P2 idx 0
+		mw.placeP2CardInForwardZone(poisoned);  // P2 idx 1
+
+		assertEquals(7000, mw.effectiveP2ForwardPower(0), "no counters, no loss");
+
+		mw.gameState.placeCounters(poisoned, "Poison", 3);
+
+		assertEquals(1000, mw.effectiveP2ForwardPower(1), "7000 - 3 x 2000");
+		assertEquals(7000, mw.effectiveP2ForwardPower(0), "the clean Forward is untouched");
+	}
+
+	@Test
+	void theDebuffDoesNotReachItsOwnControllersForwards() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeIcbCard("Gargas", "Wind", "Forward", GARGAS_DEBUFF));
+		CardData ally = makeForward("Ally", "Wind", 3, 7000);
+		placeP1Forward(mw, ally);
+		mw.gameState.placeCounters(ally, "Poison", 2);
+
+		assertEquals(7000, mw.effectiveP1ForwardPower(1),
+				"\"opponent controls\" scopes the debuff to the other side of the field");
+	}
+
+	@Test
+	void aCounterNamedByADifferentGrantIsNotCounted() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeIcbCard("Gargas", "Wind", "Forward", GARGAS_DEBUFF));
+		CardData other = makeForward("Other", "Fire", 3, 7000);
+		mw.placeP2CardInForwardZone(other);
+		mw.gameState.placeCounters(other, "Fortune", 3);
+
+		assertEquals(7000, mw.effectiveP2ForwardPower(0), "only Poison Counters feed this grant");
+	}
+
+	// =========================================================================================
+	// The field-wide block compulsion: "The Forwards you control must block if possible."
+	// (General Leo 15-021R), plus the two printings that differ only in whose Forwards they name —
+	// Jack Garland 24-079L ("opponent controls") and Layle 16-083H ("All Forwards"). Unlike
+	// "Opponent must block X if possible" this sits on neither combatant: it names a side, and
+	// because only one Forward can block an attack, it means that side may not decline a block it
+	// could make. So it feeds the same "forced" decision from the other direction.
+	// =========================================================================================
+
+	private static final String LEO_MUST_BLOCK    = "The Forwards you control must block if possible.";
+	private static final String GARLAND_MUST_BLOCK = "The Forwards opponent controls must block if possible.";
+	private static final String LAYLE_MUST_BLOCK  = "All Forwards must block if possible.";
+
+	@Test
+	void theBlockCompulsionBindsWhicheverSideItsTextNames() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeIcbCard("General Leo", "Fire", "Forward", LEO_MUST_BLOCK));
+
+		assertTrue(mw.forwardsMustBlock(true), "\"you control\" binds the printing card's own side");
+		assertFalse(mw.forwardsMustBlock(false), "and not the other one");
+	}
+
+	@Test
+	void theOpponentControlsPrintingBindsTheOtherSide() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeIcbCard("Jack Garland", "Lightning", "Forward", GARLAND_MUST_BLOCK));
+
+		assertFalse(mw.forwardsMustBlock(true), "Jack Garland does not compel its own controller");
+		assertTrue(mw.forwardsMustBlock(false));
+	}
+
+	@Test
+	void theAllForwardsPrintingBindsBothSides() {
+		MainWindow mw = new MainWindow();
+		mw.placeP2CardInForwardZone(makeIcbCard("Layle", "Earth", "Forward", LAYLE_MUST_BLOCK));
+
+		assertTrue(mw.forwardsMustBlock(true));
+		assertTrue(mw.forwardsMustBlock(false), "\"All Forwards\" names no controller, so it binds everyone");
+	}
+
+	@Test
+	void aFieldWideCompulsionForcesTheBlockWithoutNamingAnAttacker() {
+		MainWindow mw = new MainWindow();
+		CardData plainAttacker = makeForward("Plain", "Fire", 3, 7000);
+
+		assertFalse(mw.blockIsCompelled(plainAttacker, true), "nothing compels the block yet");
+
+		placeP1Forward(mw, makeIcbCard("General Leo", "Fire", "Forward", LEO_MUST_BLOCK));
+
+		assertTrue(mw.blockIsCompelled(plainAttacker, true),
+				"the attacker carries no compulsion — the defender's own field supplies it");
+		assertFalse(mw.blockIsCompelled(plainAttacker, false), "the attacking side is not compelled");
+	}
+
+	@Test
+	void aCardThatLostItsAbilitiesStopsCompellingTheBlock() {
+		MainWindow mw = new MainWindow();
+		CardData leo = makeIcbCard("General Leo", "Fire", "Forward", LEO_MUST_BLOCK);
+		placeP1Forward(mw, leo);
+		assertTrue(mw.forwardsMustBlock(true));
+
+		mw.lostAbilitiesCards.add(leo);
+
+		assertFalse(mw.forwardsMustBlock(true), "a passive read off the field goes when the abilities do");
+	}
+
+	// =========================================================================================
+	// The two remaining combat compulsions, both standing rather than turn-scoped.
+	//
+	// Field-wide must-attack — "All Forwards must attack once per turn if possible." (Layle
+	// 16-083H) and the "opponent controls" printing (Jack Garland 24-079L) — is the attack-side
+	// twin of the block form and shares its side-scoping, so both read one helper.
+	//
+	// Self-named must-block — "Ricard must block if possible." (6-103H) and its reversed printing
+	// "If possible, Cecil must block." (2-129L) — names no attacker, so it rides the existing
+	// per-Forward path rather than the turn-scoped index set: that path already checks the
+	// compelled Forward can block before restricting the choice, which is what "if possible" asks.
+	//
+	// The self-named must-attack form (Berserker, Umaro, Reddas — seven printings) is the same
+	// sentence with "attack" in it and lands on the mechanism Roche 29-076H's granted version
+	// already used, so it is wired here too.
+	// =========================================================================================
+
+	private static final String LAYLE_MUST_ATTACK   = "All Forwards must attack once per turn if possible.";
+	private static final String GARLAND_MUST_ATTACK = "The Forwards opponent controls must attack once per turn if possible.";
+	private static final String UMARO_MUST_ATTACK   = "Umaro must attack once per turn if possible.";
+	private static final String REDDAS_MUST_ATTACK  = "Reddas must attack at least once per turn if possible.";
+	private static final String RICARD_MUST_BLOCK   = "Ricard must block if possible.";
+	private static final String CECIL_MUST_BLOCK    = "If possible, Cecil must block.";
+
+	/** P1's attack phase at the declaration sub-step, with {@code fwds} placed and not summoning-sick. */
+	private static MainWindow p1AttackPhaseWith(MainWindow mw, CardData... fwds) {
+		enterP1AttackPhase(mw);
+		mw.attackSubStep = 1;
+		for (CardData f : fwds) {
+			mw.placeCardInForwardZone(f);
+			mw.p1ForwardPlayedOnTurn.set(mw.p1ForwardCards.size() - 1, 0);
+		}
+		return mw;
+	}
+
+	@Test
+	void theFieldWideAttackCompulsionScopesLikeItsBlockTwin() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeIcbCard("Jack Garland", "Lightning", "Forward", GARLAND_MUST_ATTACK));
+
+		assertFalse(mw.forwardsMustAttack(true), "\"opponent controls\" does not bind its own side");
+		assertTrue(mw.forwardsMustAttack(false));
+
+		MainWindow all = new MainWindow();
+		all.placeP2CardInForwardZone(makeIcbCard("Layle", "Earth", "Forward", LAYLE_MUST_ATTACK));
+		assertTrue(all.forwardsMustAttack(true));
+		assertTrue(all.forwardsMustAttack(false), "\"All Forwards\" binds both sides");
+	}
+
+	@Test
+	void anOpponentsGarlandForcesYourForwardIntoTheAttack() {
+		MainWindow mw = new MainWindow();
+		p1AttackPhaseWith(mw, makeForward("Grunt", "Fire", 2, 5000));
+		assertEquals(-1, mw.p1ForwardCompelledToAttackIdx(), "nothing compels it yet");
+
+		mw.placeP2CardInForwardZone(makeIcbCard("Jack Garland", "Lightning", "Forward", GARLAND_MUST_ATTACK));
+
+		assertEquals(0, mw.p1ForwardCompelledToAttackIdx(),
+				"the compulsion is printed across the field, not on the Forward it binds");
+
+		mw.recordAttackDeclared(mw.p1ForwardCards.get(0));
+
+		assertEquals(-1, mw.p1ForwardCompelledToAttackIdx(), "\"once per turn\" — one attack settles it");
+	}
+
+	@Test
+	void aSelfNamedAttackCompulsionIsHonouredInBothItsPrintings() {
+		for (String[] card : new String[][] { { "Umaro", UMARO_MUST_ATTACK }, { "Reddas", REDDAS_MUST_ATTACK } }) {
+			MainWindow mw = new MainWindow();
+			p1AttackPhaseWith(mw, makeIcbCard(card[0], "Ice", "Forward", card[1]));
+
+			assertTrue(mw.selfMustAttackOncePerTurn(mw.p1ForwardCards.get(0)), card[0]);
+			assertEquals(0, mw.p1ForwardCompelledToAttackIdx(), card[0] + " must be sent in");
+
+			mw.recordAttackDeclared(mw.p1ForwardCards.get(0));
+			assertEquals(-1, mw.p1ForwardCompelledToAttackIdx(), card[0] + " has now attacked");
+		}
+	}
+
+	@Test
+	void aSelfNamedCompulsionIgnoresAnAllyCarryingTheText() {
+		// The name in the text has to be the carrier's own — otherwise a Forward standing next to
+		// Umaro would be swept into his compulsion.
+		MainWindow mw = new MainWindow();
+		CardData umaro = makeIcbCard("Umaro", "Ice", "Forward", UMARO_MUST_ATTACK);
+		CardData ally  = makeForward("Ally", "Ice", 2, 5000);
+		p1AttackPhaseWith(mw, umaro, ally);
+
+		assertTrue(mw.selfMustAttackOncePerTurn(umaro));
+		assertFalse(mw.selfMustAttackOncePerTurn(ally), "the ally carries no such ability");
+
+		mw.recordAttackDeclared(umaro);
+		assertEquals(-1, mw.p1ForwardCompelledToAttackIdx(), "the ally is under no compulsion of its own");
+	}
+
+	@Test
+	void bothPrintingsOfTheSelfNamedBlockCompulsionBind() {
+		MainWindow mw = new MainWindow();
+		CardData ricard = makeIcbCard("Ricard", "Lightning", "Forward", RICARD_MUST_BLOCK);
+		CardData cecil  = makeIcbCard("Cecil",  "Water",     "Forward", CECIL_MUST_BLOCK);
+		CardData attacker = makeForward("Attacker", "Fire", 3, 7000);
+
+		assertTrue(mw.forwardCompelledToBlock(ricard, attacker), "\"[card] must block if possible.\"");
+		assertTrue(mw.forwardCompelledToBlock(cecil,  attacker), "\"If possible, [card] must block.\"");
+		// It names no attacker, so it binds against whatever is attacking.
+		assertTrue(mw.forwardCompelledToBlock(ricard, makeForward("Someone Else", "Ice", 1, 3000)));
+	}
+
+	@Test
+	void theGrantedThisForwardWordingIsNotTreatedAsSelfNamed() {
+		// Tulien 21-072H hands out "This Forward must block if possible." The self-named path must
+		// not claim it — the turn-scoped index set is what carries that grant.
+		MainWindow mw = new MainWindow();
+		CardData granted = makeIcbCard("Recipient", "Fire", "Forward",
+				"This Forward must block if possible.");
+
+		assertFalse(mw.forwardCompelledToBlock(granted, makeForward("Attacker", "Fire", 3, 7000)),
+				"\"This Forward\" is not the carrier's name, so the self-named path leaves it alone");
+	}
+
+	@Test
+	void bothStandingCompulsionsGoWithTheCardsAbilities() {
+		MainWindow mw = new MainWindow();
+		CardData ricard = makeIcbCard("Ricard", "Lightning", "Forward", RICARD_MUST_BLOCK);
+		CardData umaro  = makeIcbCard("Umaro",  "Ice",       "Forward", UMARO_MUST_ATTACK);
+		CardData attacker = makeForward("Attacker", "Fire", 3, 7000);
+		assertTrue(mw.forwardCompelledToBlock(ricard, attacker));
+		assertTrue(mw.selfMustAttackOncePerTurn(umaro));
+
+		mw.lostAbilitiesCards.add(ricard);
+		mw.lostAbilitiesCards.add(umaro);
+
+		assertFalse(mw.forwardCompelledToBlock(ricard, attacker));
+		assertFalse(mw.selfMustAttackOncePerTurn(umaro));
+	}
+
+	// =========================================================================================
 	// Element- and trait-filtered bare field grants: "The Multi-Element Forwards you control gain
 	// +1000 power." (13-096R Nichol) and "The Forwards with Brave other than Ash you control gain
 	// +3000 power." (21-062H Ash). FIELD_GRANT_BARE_PATTERN listed the eight printed elements but

@@ -3772,14 +3772,35 @@ public record CardData(
     private static final Pattern COUNTER_GRANT_POWER = Pattern.compile("(?i)\\+(?<power>\\d+)\\s+power");
 
     /**
-     * Parses "Each Forward you control with a [X] Counter on it gains …" grants from this card's
-     * field abilities. Each grant is either a power bonus or a quoted ability granted to every
-     * controlled Forward that currently carries at least one counter named {@code X}.
+     * "The Forwards opponent controls lose N power for each [X] Counter on them." — Gargas 17-045R.
+     * Groups: {@code power}, {@code counter}.
+     *
+     * <p>Kept apart from {@link #COUNTER_GRANT_PATTERN} rather than widened into it: this one scales
+     * with the counter count instead of triggering at one or more, and reaches across the field
+     * instead of applying to its controller's own Forwards. Both differences are carried on the
+     * resulting {@link CounterGrant}.
+     */
+    static final Pattern COUNTER_SCALED_OPP_DEBUFF = Pattern.compile(
+        "(?i)^The\\s+Forwards?\\s+(?:your\\s+)?opponent\\s+controls?\\s+loses?\\s+(?<power>\\d+)\\s+power\\s+" +
+        "for\\s+each\\s+(?<counter>.+?)\\s+Counter\\s+on\\s+them[.!]?$"
+    );
+
+    /**
+     * Parses counter-conditioned passive power grants from this card's field abilities — the
+     * same-side "Each Forward you control with a [X] Counter on it gains …" form (a power bonus or
+     * a quoted ability) and the opposing-side per-counter debuff.
      * The returned list is immutable (empty when the card has no such grant).
      */
     public List<CounterGrant> counterGrants() {
         List<CounterGrant> out = null;
         for (FieldAbility fa : fieldAbilities()) {
+            Matcher dm = COUNTER_SCALED_OPP_DEBUFF.matcher(fa.effectText());
+            if (dm.matches()) {
+                if (out == null) out = new ArrayList<>();
+                out.add(new CounterGrant(dm.group("counter").trim(),
+                        -Integer.parseInt(dm.group("power")), null, true, true));
+                continue;
+            }
             Matcher m = COUNTER_GRANT_PATTERN.matcher(fa.effectText());
             if (!m.matches()) continue;
             String counter = m.group("counter").trim();

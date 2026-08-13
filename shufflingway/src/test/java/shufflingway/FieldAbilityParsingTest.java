@@ -144,6 +144,12 @@ public class FieldAbilityParsingTest {
         if (ActionResolverFieldAbility.tryParseBeginningOfOppMainPhase1FieldAbility(fa.effectText(), source) != null) return true;
         if (AutoAbilityTriggers.FA_OPPONENT_MUST_BLOCK.matcher(fa.effectText()).find()) return true;
         if (AutoAbilityTriggers.FA_OPPONENT_MUST_CHOOSE.matcher(fa.effectText()).find()) return true;
+        if (AutoAbilityTriggers.FA_FIELD_FORWARDS_MUST_BLOCK.matcher(fa.effectText()).find()) return true;
+        if (AutoAbilityTriggers.FA_FIELD_FORWARDS_MUST_ATTACK.matcher(fa.effectText()).find()) return true;
+        if (CardData.COUNTER_SCALED_OPP_DEBUFF.matcher(fa.effectText()).matches()) return true;
+        // Both self-named compulsions are only recognised when the text names their own carrier.
+        if (selfNamedCompulsion(AutoAbilityTriggers.FA_SELF_MUST_BLOCK,  fa, source)) return true;
+        if (selfNamedCompulsion(AutoAbilityTriggers.FA_SELF_MUST_ATTACK, fa, source)) return true;
         if (AutoAbilityTriggers.FA_ALL_FORWARDS_LOSE_HASTE.matcher(fa.effectText()).find()) return true;
         if (AutoAbilityTriggers.FA_FORWARDS_CANNOT_GAIN_HASTE.matcher(fa.effectText()).find()) return true;
         if (!CardData.parseSelfTraitGrant(fa.effectText(), source.name()).isEmpty()) return true;
@@ -227,6 +233,17 @@ public class FieldAbilityParsingTest {
             sb.append("       ").append(desc != null ? desc : "(none)").append('\n');
         }
         return sb.toString();
+    }
+
+    /**
+     * True when {@code compulsion} matches {@code fa} <em>and</em> the card it names is the card
+     * carrying it. The engine applies the same test, so the report cannot claim recognition for a
+     * "This Forward must block if possible." grant that no self-named path would act on.
+     */
+    private static boolean selfNamedCompulsion(java.util.regex.Pattern compulsion, FieldAbility fa,
+            CardData source) {
+        java.util.regex.Matcher m = compulsion.matcher(fa.effectText());
+        return m.find() && m.group("card").trim().equalsIgnoreCase(source.name());
     }
 
     static String describeFieldAbility(FieldAbility fa, CardData source, String typeEn) {
@@ -342,6 +359,14 @@ public class FieldAbilityParsingTest {
         m = AutoAbilityTriggers.FA_OPPONENT_MUST_CHOOSE.matcher(fa.effectText());
         if (m.find()) return "OpponentMustChoose[" + m.group("cardname")
                 + (m.group("summons") != null ? " summons+abilities" : " abilities") + "]";
+        m = AutoAbilityTriggers.FA_FIELD_FORWARDS_MUST_BLOCK.matcher(fa.effectText());
+        if (m.find()) return "FieldForwardsMustBlock[" + (m.group("scope") != null ? m.group("scope") : "all") + "]";
+        m = AutoAbilityTriggers.FA_FIELD_FORWARDS_MUST_ATTACK.matcher(fa.effectText());
+        if (m.find()) return "FieldForwardsMustAttack[" + (m.group("scope") != null ? m.group("scope") : "all") + "]";
+        if (selfNamedCompulsion(AutoAbilityTriggers.FA_SELF_MUST_BLOCK,  fa, source)) return "SelfMustBlock";
+        if (selfNamedCompulsion(AutoAbilityTriggers.FA_SELF_MUST_ATTACK, fa, source)) return "SelfMustAttack";
+        m = CardData.COUNTER_SCALED_OPP_DEBUFF.matcher(fa.effectText());
+        if (m.matches()) return "CounterScaledOppDebuff[-" + m.group("power") + "/" + m.group("counter") + "]";
         if (AutoAbilityTriggers.FA_ALL_FORWARDS_LOSE_HASTE.matcher(fa.effectText()).find()) return "AllForwardsLoseHaste";
         if (AutoAbilityTriggers.FA_FORWARDS_CANNOT_GAIN_HASTE.matcher(fa.effectText()).find()) return "ForwardsCannotGainHaste";
         if (CardData.isBackupCpAbility(fa.effectText())) return "BackupCpAbility";

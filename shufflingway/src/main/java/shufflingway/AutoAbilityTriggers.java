@@ -538,6 +538,60 @@ final class AutoAbilityTriggers {
 	);
 
 	/**
+	 * The field-wide block compulsion: "The Forwards you control must block if possible."
+	 * (General Leo 15-021R), "The Forwards opponent controls must block if possible."
+	 * (Jack Garland 24-079L), and "All Forwards must block if possible." (Layle 16-083H). The three
+	 * differ only in whose Forwards they name, so one pattern reads all of them.
+	 *
+	 * <p>Unlike {@link #FA_OPPONENT_MUST_BLOCK} this sits on neither the attacker nor the blocker:
+	 * it names a whole side, and every Forward on it is compelled. Since only one Forward can block
+	 * a given attack, the effect is that the named side may not decline a block it could make — it
+	 * constrains the answer, not which Forward gives it.
+	 *
+	 * <p>Group {@code scope} is the controller clause, and is absent for the "All Forwards" form.
+	 */
+	static final Pattern FA_FIELD_FORWARDS_MUST_BLOCK = Pattern.compile(
+		"(?i)^(?:The\\s+Forwards?\\s+(?<scope>you\\s+control|(?:your\\s+)?opponent\\s+controls?)" +
+		"|All\\s+Forwards?)\\s+must\\s+block\\s+if\\s+possible[.!]?$"
+	);
+
+	/**
+	 * The attack-side twin of {@link #FA_FIELD_FORWARDS_MUST_BLOCK}: "All Forwards must attack once
+	 * per turn if possible." (Layle 16-083H) and "The Forwards opponent controls must attack once
+	 * per turn if possible." (Jack Garland 24-079L). "at least once" is accepted as the same thing —
+	 * older printings word it that way and mean no different.
+	 *
+	 * <p>Group {@code scope} is the controller clause, absent for the "All Forwards" form.
+	 */
+	static final Pattern FA_FIELD_FORWARDS_MUST_ATTACK = Pattern.compile(
+		"(?i)^(?:The\\s+Forwards?\\s+(?<scope>you\\s+control|(?:your\\s+)?opponent\\s+controls?)" +
+		"|All\\s+Forwards?)\\s+must\\s+attack\\s+(?:at\\s+least\\s+)?once\\s+per\\s+turn\\s+if\\s+possible[.!]?$"
+	);
+
+	/**
+	 * A standing self-named block compulsion: "[card] must block if possible." (Ricard 6-103H) and
+	 * the reversed printing "If possible, [card] must block." (Cecil 2-129L).
+	 *
+	 * <p>Unlike {@link #FA_THIS_FORWARD_MUST_BLOCK_NAMED} it names no attacker, so it binds against
+	 * everything that attacks rather than one card. The {@code card} capture is checked against the
+	 * carrier's own name by the caller, which is what keeps it off the granted "This Forward must
+	 * block if possible." wording — that one is handled by the turn-scoped index set instead.
+	 */
+	static final Pattern FA_SELF_MUST_BLOCK = Pattern.compile(
+		"(?i)^(?:If\\s+possible,\\s+)?(?<card>.+?)\\s+must\\s+block(?:\\s+if\\s+possible)?[.!]?$"
+	);
+
+	/**
+	 * A standing self-named attack compulsion: "[card] must attack [at least] once per turn if
+	 * possible." — Berserker 15-078C and 3-091C, Umaro 17-022H, Reddas 2-072C. The printed
+	 * counterpart of the granted compulsion {@code permanentMustAttackOncePerTurn} already holds
+	 * for Roche 29-076H, and satisfied the same way: one attack settles it for the turn.
+	 */
+	static final Pattern FA_SELF_MUST_ATTACK = Pattern.compile(
+		"(?i)^(?<card>.+?)\\s+must\\s+attack\\s+(?:at\\s+least\\s+)?once\\s+per\\s+turn\\s+if\\s+possible[.!]?$"
+	);
+
+	/**
 	 * "[Summons and/or ]abilities of your opponent must choose [cardName] if possible." — the
 	 * targeting counterpart of {@link #FA_OPPONENT_MUST_BLOCK}: while the named card is a legal
 	 * target, the opposing player's effects have to point at it.
