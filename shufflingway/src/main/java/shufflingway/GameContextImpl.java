@@ -2808,6 +2808,8 @@ final class GameContextImpl implements GameContext {
 					if (!meetsElementExclusion(card, excludeElement)) continue;
 					if (excludeName != null && excludeName.equalsIgnoreCase(card.name())) continue;
 					if ("Warp".equalsIgnoreCase(withTrait) && !card.hasWarp()) continue;
+					// "You cannot play X from your hand due to Summons or abilities."
+					if (card.playByEffectProhibited(true)) continue;
 					eligible.add(i);
 				}
 				if (eligible.isEmpty()) {
@@ -2876,6 +2878,7 @@ final class GameContextImpl implements GameContext {
 						if (!meetsCardNameFilter(c, cardNameFilter)) continue;
 						if (!meetsCategoryFilter(c, categoryFilter)) continue;
 						if (!meetsElementFilter(c, elementFilter)) continue;
+						if (c.playByEffectProhibited(true)) continue;
 						eligible.add(i);
 					}
 					if (eligible.isEmpty()) return;
@@ -3978,6 +3981,13 @@ final class GameContextImpl implements GameContext {
 			@Override public ForwardTarget playTargetOntoField(ForwardTarget t) {
 				List<CardData> bz = t.isP1() ? mw.gameState.getP1BreakZone() : mw.gameState.getP2BreakZone();
 				if (t.idx() >= bz.size()) return null;
+				// "You cannot play X due to Summons or abilities." — checked before the card leaves
+				// the Break Zone, so a blocked play is a no-op rather than a card in limbo.
+				if (bz.get(t.idx()).playByEffectProhibited(false)) {
+					logEntry(bz.get(t.idx()).name() + " cannot be played onto the field by an ability");
+					markEffectFizzled();
+					return null;
+				}
 				CardData card = bz.remove(t.idx());
 				String src = t.isP1() ? "Break Zone" : "opponent's Break Zone";
 				logEntry(card.name() + " played from " + src + " onto field");
@@ -4042,6 +4052,11 @@ final class GameContextImpl implements GameContext {
 			@Override public void playTargetOntoFieldDull(ForwardTarget t) {
 				List<CardData> bz = t.isP1() ? mw.gameState.getP1BreakZone() : mw.gameState.getP2BreakZone();
 				if (t.idx() >= bz.size()) return;
+				if (bz.get(t.idx()).playByEffectProhibited(false)) {
+					logEntry(bz.get(t.idx()).name() + " cannot be played onto the field by an ability");
+					markEffectFizzled();
+					return;
+				}
 				CardData card = bz.remove(t.idx());
 				String src = t.isP1() ? "Break Zone" : "opponent's Break Zone";
 				logEntry(card.name() + " played from " + src + " onto field (dull)");

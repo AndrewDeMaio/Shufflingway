@@ -10540,7 +10540,39 @@ public class MainWindow {
 		if (granted != null)   max = Math.max(max, granted);
 		Integer permanent = permanentMaxAttacks.get(card);
 		if (permanent != null) max = Math.max(max, permanent);
+		max = Math.max(max, attacksFromOwnDamage(card));
 		return max;
+	}
+
+	/**
+	 * Tidus 29-105L: "can attack as many times in the same turn as the points of damage you have
+	 * received." The allowance is the controller's damage-zone size and moves during the turn, so
+	 * it is read here rather than parsed into {@link CardData#maxAttacksPerTurn()}. Returns 0 when
+	 * the card has no such ability, so it never lowers the permission the caller already has.
+	 */
+	private int attacksFromOwnDamage(CardData card) {
+		if (lostAbilitiesCards.contains(card)) return 0;
+		Boolean side = fieldSideOf(card);
+		if (side == null) return 0;
+		int damage = side ? gameState.getP1DamageZone().size() : gameState.getP2DamageZone().size();
+		int best = 0;
+		for (FieldAbility fa : card.fieldAbilities()) {
+			if (!CardData.parseAttacksPerOwnDamage(fa.effectText(), card.name())) continue;
+			if (fa.damageThreshold() > 0 && damage < fa.damageThreshold()) continue;
+			best = Math.max(best, damage);
+		}
+		return best;
+	}
+
+	/**
+	 * Which side {@code card} is on as a field Forward, by identity, or {@code null} when it is not
+	 * on either. Identity rather than equality: {@link CardData} is a record, so two copies of the
+	 * same printing — one per player — are equal but are different cards on the board.
+	 */
+	private Boolean fieldSideOf(CardData card) {
+		for (CardData c : p1ForwardCards) if (c == card) return Boolean.TRUE;
+		for (CardData c : p2ForwardCards) if (c == card) return Boolean.FALSE;
+		return null;
 	}
 
 	/**

@@ -166,6 +166,7 @@ public class FieldAbilityParsingTest {
         if (CardData.parseCannotBlockParty(fa.effectText(), source.name())) return true;
         if (CardData.parseCannotAttackOrBlock(fa.effectText(), source.name())) return true;
         if (CardData.parseMaxAttacksPerTurn(fa.effectText(), source.name()) > 1) return true;
+        if (CardData.parseAttacksPerOwnDamage(fa.effectText(), source.name())) return true;
         if (CardData.isHasJobsOfForwardsAbility(fa.effectText())) return true;
         if (CardData.parseIfSelfJobCountTraitGrantThreshold(fa.effectText(), source.name()) >= 0) return true;
         if (CardData.parseIfSelfLbFaceUpCountTraitGrantThreshold(fa.effectText(), source.name()) >= 0) return true;
@@ -340,6 +341,8 @@ public class FieldAbilityParsingTest {
         int lbN = CardData.parseIfSelfLbFaceUpCountTraitGrantThreshold(fa.effectText(), source.name());
         if (lbN >= 0) return "LbFaceUpTraitGrant[n≥" + lbN + " " + CardData.parseIfSelfLbFaceUpCountTraitGrantTraits(fa.effectText()) + "]";
         if (CardData.parseSelfNonDmgBreakShieldDirect(fa.effectText(), source.name())) return "SelfNonDmgBreakShield";
+        if (CardData.parseAttacksPerOwnDamage(fa.effectText(), source.name()))
+            return "MaxAttacks[own damage]";
         if (CardData.parseSelfCannotBeBroken(fa.effectText(), source.name())) return "SelfCannotBeBroken";
         if (CardData.parseIfControlNonDmgBreakShield(fa.effectText(), source.name()) != null)
             return "SelfNonDmgBreakShield[if control]";

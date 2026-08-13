@@ -21,6 +21,7 @@ import java.util.TreeSet;
  *   <li>{@link #minBZAndRfpSummons}    — minimum combined Summon count across Break Zone and permanent RFP</li>
  *   <li>{@link #maxOpponentHandSize}   — opponent's hand must be ≤ this value; -1 means no restriction</li>
  *   <li>{@link #mustControlCondition}  — "You must control N or more Job X Forwards and/or Job Y Forwards"; {@code null} = no restriction</li>
+ *   <li>{@link #mustControlCosts}      — "You must control Characters of cost 1, 2, 3, 4, 5 and 6"; one Character per listed cost</li>
  * </ul>
  */
 public record CastRestriction(
@@ -33,11 +34,23 @@ public record CastRestriction(
         Set<String>      requiredBZTypes,
         int              minBZAndRfpSummons,
         int              maxOpponentHandSize,
-        ControlCondition mustControlCondition
+        ControlCondition mustControlCondition,
+        Set<Integer>     mustControlCosts
 ) {
     public CastRestriction {
         // Sorted, not Set.copyOf: the latter randomises iteration order per JVM run
         // (ImmutableCollections.SALT). Sorting is stable regardless of what the caller passes.
-        requiredBZTypes = Collections.unmodifiableSet(new TreeSet<>(requiredBZTypes));
+        requiredBZTypes  = Collections.unmodifiableSet(new TreeSet<>(requiredBZTypes));
+        mustControlCosts = Collections.unmodifiableSet(new TreeSet<>(mustControlCosts));
+    }
+
+    /** Compatibility constructor preserving the prior 10-arg form; no cost requirement. */
+    public CastRestriction(boolean castProhibited, boolean yourTurnOnly, boolean mainPhaseOnly,
+            boolean opponentTurnOnly, boolean requiresNoForwards, boolean requiresAForward,
+            Set<String> requiredBZTypes, int minBZAndRfpSummons, int maxOpponentHandSize,
+            ControlCondition mustControlCondition) {
+        this(castProhibited, yourTurnOnly, mainPhaseOnly, opponentTurnOnly, requiresNoForwards,
+                requiresAForward, requiredBZTypes, minBZAndRfpSummons, maxOpponentHandSize,
+                mustControlCondition, Set.of());
     }
 }

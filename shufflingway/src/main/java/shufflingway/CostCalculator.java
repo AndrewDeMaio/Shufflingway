@@ -552,6 +552,16 @@ class CostCalculator {
 		if (cr.mustControlCondition() != null && !mw.controlConditionMet(cr.mustControlCondition(), isP1))
 			return false;
 
+		// "You must control Characters of cost 1, 2, 3, 4, 5 and 6" (Leo 16-126R) — one Character
+		// per listed cost. A Character has a single cost, so no card can cover two of them.
+		if (!cr.mustControlCosts().isEmpty()) {
+			List<CardData> chars = new ArrayList<>(isP1 ? mw.p1ForwardCards : mw.p2ForwardCards);
+			for (CardData b : (isP1 ? mw.p1BackupCards : mw.p2BackupCards)) if (b != null) chars.add(b);
+			chars.addAll(isP1 ? mw.p1MonsterCards : mw.p2MonsterCards);
+			for (int required : cr.mustControlCosts())
+				if (chars.stream().noneMatch(c -> c.cost() == required)) return false;
+		}
+
 		return true;
 	}
 

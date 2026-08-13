@@ -620,6 +620,16 @@ public record CardData(
     );
 
     /**
+     * "You must control Characters of cost 1, 2, 3, 4, 5 and 6 to cast [Name]." (Leo 16-126R)
+     * Group {@code costs} — the raw "1, 2, 3, 4, 5 and 6" list. Each listed cost needs its own
+     * Character, so this is a set of separate requirements rather than one count.
+     */
+    private static final Pattern CAST_MUST_CONTROL_COSTS = Pattern.compile(
+        "(?i)You\\s+must\\s+control\\s+Characters\\s+of\\s+cost\\s+" +
+        "(?<costs>\\d+(?:\\s*,\\s*\\d+)*(?:\\s*,?\\s*and\\s+\\d+)?)\\s+to\\s+cast\\s+\\S[^.]*?[.!]?"
+    );
+
+    /**
      * "You must control a Category X Forward to play [name] from your hand onto the field."
      * Group {@code cat} — the category token (e.g. "XIV").
      */
@@ -662,6 +672,47 @@ public record CardData(
      */
     public boolean castProhibited() {
         return CAST_PROHIBITED.matcher(textEn).find();
+    }
+
+    /**
+     * "You cannot play [Name] from your hand due to Summons or abilities." — blocks only plays
+     * sourced from hand (Graham 12-060R, Nimbus 3-046H, Estinien 6-089R, Tidus 7-116L,
+     * Bergan 9-018R, Edge 9-045H). Group {@code name} is checked against the card.
+     */
+    private static final Pattern PLAY_BY_EFFECT_PROHIBITED_FROM_HAND = Pattern.compile(
+        "(?i)You\\s+cannot\\s+play\\s+(?<name>[^.!]+?)\\s+from\\s+your\\s+hand\\s+" +
+        "due\\s+to\\s+Summons?\\s+or\\s+abilities[.!]?"
+    );
+
+    /**
+     * "You cannot play [Name] due to Summons or abilities." — no zone named, so it blocks a play
+     * out of any zone (Leo 16-126R). The negative lookahead keeps the from-hand wording out, which
+     * is the narrower restriction and has its own pattern.
+     */
+    private static final Pattern PLAY_BY_EFFECT_PROHIBITED_ANY_ZONE = Pattern.compile(
+        "(?i)You\\s+cannot\\s+play\\s+(?<name>[^.!]+?)\\s+(?!from\\s+your\\s+hand\\s+)" +
+        "due\\s+to\\s+Summons?\\s+or\\s+abilities[.!]?"
+    );
+
+    /**
+     * Returns {@code true} when a Summon or ability may not put this card onto the field from
+     * {@code fromHand}'s zone. This is the counterpart to {@link #castProhibited()}: those cards
+     * can only arrive via an effect, these can only arrive by being cast normally.
+     *
+     * <p>Both printings name the card explicitly, and the name is verified — the sentence is a
+     * statement about this card, and the same text can appear quoted inside an ability it grants.
+     *
+     * @param fromHand {@code true} when the effect would play the card out of its owner's hand
+     */
+    public boolean playByEffectProhibited(boolean fromHand) {
+        Matcher any = PLAY_BY_EFFECT_PROHIBITED_ANY_ZONE.matcher(textEn);
+        while (any.find())
+            if (any.group("name").trim().equalsIgnoreCase(name)) return true;
+        if (!fromHand) return false;
+        Matcher hand = PLAY_BY_EFFECT_PROHIBITED_FROM_HAND.matcher(textEn);
+        while (hand.find())
+            if (hand.group("name").trim().equalsIgnoreCase(name)) return true;
+        return false;
     }
 
     /**
@@ -736,14 +787,21 @@ public record CardData(
             }
         }
 
+        java.util.Set<Integer> mustControlCosts = new java.util.TreeSet<>();
+        Matcher costsM = CAST_MUST_CONTROL_COSTS.matcher(textEn);
+        if (costsM.find())
+            for (String tok : costsM.group("costs").split("(?i)\\s*,\\s*|\\s*,?\\s*and\\s+"))
+                if (!tok.isBlank()) mustControlCosts.add(Integer.parseInt(tok.trim()));
+
         if (!yourTurnOnly && !mainPhaseOnly && !opponentTurnOnly && !requiresNoFwds
                 && !requiresAFwd && requiredBZTypes.isEmpty()
-                && minBZAndRfpSummons == 0 && maxOpponentHand < 0 && mustControl == null) {
+                && minBZAndRfpSummons == 0 && maxOpponentHand < 0 && mustControl == null
+                && mustControlCosts.isEmpty()) {
             return null;
         }
         return new CastRestriction(false, yourTurnOnly, mainPhaseOnly, opponentTurnOnly,
                 requiresNoFwds, requiresAFwd, requiredBZTypes, minBZAndRfpSummons,
-                maxOpponentHand, mustControl);
+                maxOpponentHand, mustControl, mustControlCosts);
     }
 
     /**
@@ -4779,6 +4837,27 @@ public record CardData(
     );
 
     /**
+     * "[CardName] can attack as many times in the same turn as the points of damage you have
+     * received." (Tidus 29-105L) — the permission {@link #FIELD_CAN_ATTACK_TWICE} deliberately
+     * skips, because its allowance moves with the damage zone during the turn and so has to be
+     * read at query time rather than frozen into {@link #maxAttacksPerTurn}.
+     */
+    static final Pattern FIELD_ATTACKS_PER_OWN_DAMAGE = Pattern.compile(
+        "(?i)^(?<cardname>.+?)\\s+can\\s+attack\\s+as\\s+many\\s+times\\s+in\\s+the\\s+same\\s+turn\\s+" +
+        "as\\s+the\\s+points\\s+of\\s+damage\\s+you\\s+have\\s+received[.!]?\\s*$"
+    );
+
+    /**
+     * Returns {@code true} when {@code effectText} is the "can attack as many times … as the points
+     * of damage you have received" field ability belonging to {@code cardName}.
+     */
+    public static boolean parseAttacksPerOwnDamage(String effectText, String cardName) {
+        Matcher m = FIELD_ATTACKS_PER_OWN_DAMAGE.matcher(effectText.trim());
+        if (!m.matches()) return false;
+        return m.group("cardname").trim().equalsIgnoreCase(cardName);
+    }
+
+    /**
      * The number of times {@code cardName} may attack in a turn per its printed text, or 1 when it
      * carries no multi-attack permission. Every Forward may attack once; a permission replaces that
      * allowance rather than adding to it.
@@ -5229,9 +5308,14 @@ public record CardData(
             if (CAST_PROHIBITED.matcher(seg).find())                          continue;
             if (CAST_REQUIRES_NO_FORWARDS.matcher(seg).find())                continue;
             if (CAST_MUST_CONTROL.matcher(seg).find())                        continue;
+            if (CAST_MUST_CONTROL_COSTS.matcher(seg).find())                  continue;
             if (CAST_MUST_CONTROL_CATEGORY_FWD.matcher(seg).find())          continue;
             if (CAST_ONLY_PLAY_IF_CONTROL_CATEGORY_FWD.matcher(seg).find())  continue;
             if (CAST_MAX_OPPONENT_HAND.matcher(seg).find())                   continue;
+            // "You cannot play X [from your hand] due to Summons or abilities." — read at
+            // effect-play time via playByEffectProhibited, not an ability of its own.
+            if (PLAY_BY_EFFECT_PROHIBITED_FROM_HAND.matcher(seg).find())      continue;
+            if (PLAY_BY_EFFECT_PROHIBITED_ANY_ZONE.matcher(seg).find())       continue;
 
             // Field cost reduction / any-element declarations — handled as static card properties
             if (FIELD_COST_REDUCTION_PATTERN.matcher(seg).find())            continue;

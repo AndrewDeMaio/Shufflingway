@@ -7186,6 +7186,140 @@ public class CardBehaviorTest {
         assertFalse(g.appliesToCard(edel), "an Adventurer is not a Morze's Soiree Member");
     }
 
+    // =========================================================================================
+    // Tidus 29-105L — "Damage 1 -- Tidus can attack as many times in the same turn as the points
+    // of damage you have received."
+    //
+    // FIELD_CAN_ATTACK_TWICE deliberately skips this wording: the allowance moves with the damage
+    // zone during the turn, so a static int on CardData cannot carry it. It is read per query
+    // instead. (Tidus 1-163L's Blitz Ace is the resolved action-ability cousin, not this.)
+    // =========================================================================================
+
+    private static final String TIDUS_29_105L_ATTACKS =
+            "Tidus can attack as many times in the same turn as the points of damage you have received.";
+
+    @Test
+    void attacksPerOwnDamageIsNotAStaticPrintedPermission() {
+        assertEquals(1, CardData.parseMaxAttacksPerTurn(TIDUS_29_105L_ATTACKS, "Tidus"),
+                "the varying count must not be frozen into maxAttacksPerTurn");
+        assertTrue(CardData.parseAttacksPerOwnDamage(TIDUS_29_105L_ATTACKS, "Tidus"));
+        assertFalse(CardData.parseAttacksPerOwnDamage(TIDUS_29_105L_ATTACKS, "Yuna"),
+                "the sentence names its own card");
+    }
+
+    @Test
+    void attacksPerOwnDamageTracksTheDamageZone() {
+        MainWindow mw = new MainWindow();
+        CardData tidus = makeTraitCard("Tidus", "Water", "Forward",
+                "Damage 1 -- " + TIDUS_29_105L_ATTACKS);
+        placeOwnP1Forward(mw, tidus);
+
+        assertEquals(1, mw.maxAttacksPerTurn(tidus), "no damage — the ordinary single attack");
+
+        for (int i = 0; i < 3; i++)
+            mw.gameState.getP1DamageZone().add(makeForward("Damage " + i, "Fire", 1, 1000));
+        assertEquals(3, mw.maxAttacksPerTurn(tidus), "three damage — three attacks");
+
+        mw.gameState.getP1DamageZone().add(makeForward("Damage 3", "Fire", 1, 1000));
+        assertEquals(4, mw.maxAttacksPerTurn(tidus), "the count follows the zone within the turn");
+    }
+
+    // The permission belongs to its controller's damage, not to whichever side asks.
+    @Test
+    void attacksPerOwnDamageReadsTheControllersDamageZone() {
+        MainWindow mw = new MainWindow();
+        CardData tidus = makeTraitCard("Tidus", "Water", "Forward",
+                "Damage 1 -- " + TIDUS_29_105L_ATTACKS);
+        mw.gameState.getIdentity().put(tidus, false);
+        mw.placeP2CardInForwardZone(tidus);
+
+        for (int i = 0; i < 2; i++)
+            mw.gameState.getP1DamageZone().add(makeForward("P1 Damage " + i, "Fire", 1, 1000));
+        assertEquals(1, mw.maxAttacksPerTurn(tidus), "P1's damage is not Tidus's");
+
+        for (int i = 0; i < 2; i++)
+            mw.gameState.getP2DamageZone().add(makeForward("P2 Damage " + i, "Fire", 1, 1000));
+        assertEquals(2, mw.maxAttacksPerTurn(tidus), "his own controller's damage counts");
+    }
+
+    // =========================================================================================
+    // Cast / play restrictions — Leo 16-126R and the "cannot play … due to Summons or abilities"
+    // family (Graham 12-060R and five siblings).
+    // =========================================================================================
+
+    private static final String LEO_TEXT =
+            "You must control Characters of cost 1, 2, 3, 4, 5 and 6 to cast Leo.[[br]]   "
+            + "You cannot play Leo due to Summons or abilities.[[br]]   "
+            + "When Leo enters the field, look at the top 5 cards of your deck. Cast 1 card among "
+            + "them without paying the cost and return the other cards to the bottom of your deck in any order.";
+
+    @Test
+    void mustControlCostsParsesEveryListedCost() {
+        CardData leo = makeTraitCard("Leo", "Light", "Forward", LEO_TEXT);
+        CastRestriction cr = leo.castRestriction();
+        assertNotNull(cr);
+        assertEquals(java.util.Set.of(1, 2, 3, 4, 5, 6), cr.mustControlCosts());
+    }
+
+    @Test
+    void mustControlCostsNeedsOneCharacterPerListedCost() {
+        MainWindow mw = new MainWindow();
+        CardData leo = makeTraitCard("Leo", "Light", "Forward", LEO_TEXT);
+
+        // Five of the six costs present — one short, so still not castable.
+        for (int cost = 1; cost <= 5; cost++)
+            placeOwnP1Forward(mw, makeForward("Ally " + cost, "Fire", cost, 5000));
+        assertFalse(mw.castRestrictionMet(leo, true),
+                "cost 6 is missing, so the requirement is unmet");
+
+        placeOwnP1Forward(mw, makeForward("Ally 6", "Fire", 6, 5000));
+        assertTrue(mw.castRestrictionMet(leo, true), "all six costs covered");
+    }
+
+    // One Character has one cost, so duplicates of the same cost cannot cover two requirements.
+    @Test
+    void mustControlCostsIsNotSatisfiedByDuplicatesOfOneCost() {
+        MainWindow mw = new MainWindow();
+        CardData leo = makeTraitCard("Leo", "Light", "Forward", LEO_TEXT);
+        for (int i = 0; i < 6; i++)
+            placeOwnP1Forward(mw, makeForward("Ally " + i, "Fire", 1, 5000));
+        assertFalse(mw.castRestrictionMet(leo, true),
+                "six cost-1 Characters cover only the cost-1 requirement");
+    }
+
+    @Test
+    void cannotPlayDueToEffectsDistinguishesTheZoneWording() {
+        // Leo names no zone — an effect may not play him out of any of them.
+        CardData leo = makeTraitCard("Leo", "Light", "Forward", LEO_TEXT);
+        assertTrue(leo.playByEffectProhibited(true),  "blocked from hand");
+        assertTrue(leo.playByEffectProhibited(false), "and from every other zone");
+
+        // Graham's wording is narrower: only a play out of hand is blocked.
+        CardData graham = makeTraitCard("Graham", "Earth", "Backup",
+                "You can only pay with CP produced by Earth Backups to play Graham from your hand "
+                + "onto the field.[[br]]You cannot play Graham from your hand due to Summons or "
+                + "abilities. [[br]] When Graham enters the field, choose 1 Forward opponent "
+                + "controls. Deal it 9000 damage. ");
+        assertTrue(graham.playByEffectProhibited(true), "blocked from hand");
+        assertFalse(graham.playByEffectProhibited(false),
+                "an effect may still play him from the Break Zone");
+
+        // An ordinary card is unaffected.
+        CardData plain = makeTraitCard("Plain", "Fire", "Forward", "Brave");
+        assertFalse(plain.playByEffectProhibited(true));
+        assertFalse(plain.playByEffectProhibited(false));
+    }
+
+    // Neither sentence is an ability in its own right, so neither should surface as a field ability.
+    @Test
+    void castAndPlayRestrictionSentencesAreNotFieldAbilities() {
+        CardData leo = makeTraitCard("Leo", "Light", "Forward", LEO_TEXT);
+        for (FieldAbility fa : leo.fieldAbilities())
+            assertFalse(fa.effectText().toLowerCase().contains("you must control")
+                     || fa.effectText().toLowerCase().contains("you cannot play"),
+                    "restriction sentence leaked into field abilities: " + fa.effectText());
+    }
+
     @Test
     void traitNamesAreFormattedForTheLog() {
         assertEquals("First Strike", CardData.Trait.FIRST_STRIKE.displayName());
