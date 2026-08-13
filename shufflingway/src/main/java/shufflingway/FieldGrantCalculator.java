@@ -78,6 +78,15 @@ class FieldGrantCalculator {
                     int oppHandSize = isP1 ? mw.gameState.getP2Hand().size() : mw.gameState.getP1Hand().size();
                     if (oppHandSize <= oppHandThreshold) out.add(CardData.Trait.CANNOT_BE_BROKEN);
                 }
+                // Hand-size conditional ("If either player has 2 cards or less in their hands,
+                // [name] gains Haste.") — Squall 16-011L. The multi-attack permission the same
+                // grant can carry is read separately, by MainWindow.maxAttacksPerTurn.
+                CardData.HandSizeSelfGrant handGrant =
+                        CardData.parseHandSizeSelfGrant(fa.effectText(), src.name());
+                if (handGrant != null && handGrant.conditionMet(
+                        (isP1 ? mw.gameState.getP1Hand() : mw.gameState.getP2Hand()).size(),
+                        (isP1 ? mw.gameState.getP2Hand() : mw.gameState.getP1Hand()).size()))
+                    out.addAll(handGrant.traits());
                 // Own-turn conditional ("Galuf cannot be broken during your turn.")
                 if (CardData.parseSelfCannotBeBrokenDuringYourTurn(fa.effectText(), src.name())
                         && isP1 == (mw.gameState.getCurrentPlayer() == GameState.Player.P1))

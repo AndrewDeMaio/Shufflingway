@@ -1012,12 +1012,38 @@ public record CardData(
     }
 
     /**
+     * "The [Type]s you control cannot be broken by your opponent's Summons or abilities." —
+     * Auron 1-002R, the one printing in the corpus with a bare type and no "that don't deal damage"
+     * qualifier. It is kept as its own pattern rather than by loosening
+     * {@link #FIELD_NON_DMG_BREAK_SHIELD_GRANT}, whose required filter and required qualifier are
+     * what stop it over-claiming the 26 other "cannot be broken" printings.
+     *
+     * <p>The missing qualifier costs nothing here: the only thing this protects in practice is a
+     * Backup, and a Backup has no power to be broken by damage, so "by Summons or abilities" and
+     * "by Summons or abilities that don't deal damage" pick out the same breaks.
+     */
+    private static final Pattern FIELD_TYPE_BREAK_SHIELD_GRANT = Pattern.compile(
+        "(?i)^The\\s+(?<type>Forwards?|Backups?|Monsters?|Characters?)\\s+you\\s+control\\s+" +
+        "cannot\\s+be\\s+broken\\s+by\\s+(?:your\\s+opponent(?:'s|s')|opposing)\\s+" +
+        "Summons?\\s+or\\s+abilit(?:y|ies)[.!]?$"
+    );
+
+    /**
      * Parses a "The [filter] you control cannot be broken by … that don't deal damage." field
      * ability, or returns {@code null}. The printing card is protected only when it matches its
      * own filter — Celestia is a Water Character and Haveh has the Job Warrior, so both do;
      * Rasler is not named Ashe and Madam Edel is not a Morze's Soiree Member, so neither does.
      */
     static NonDmgBreakShieldGrant parseFieldNonDmgBreakShieldGrant(String effectText) {
+        Matcher bare = FIELD_TYPE_BREAK_SHIELD_GRANT.matcher(effectText.trim());
+        if (bare.matches()) {
+            String bt = bare.group("type").toLowerCase(Locale.ROOT);
+            boolean anyType = bt.startsWith("character");
+            return new NonDmgBreakShieldGrant(null, null, null, null,
+                    anyType || bt.startsWith("forward"),
+                    anyType || bt.startsWith("backup"),
+                    anyType || bt.startsWith("monster"));
+        }
         Matcher m = FIELD_NON_DMG_BREAK_SHIELD_GRANT.matcher(effectText.trim());
         if (!m.matches()) return null;
         String type = m.group("type");
@@ -1097,6 +1123,110 @@ public record CardData(
         Matcher m = IF_OPP_HAND_SIZE_CANNOT_BE_BROKEN.matcher(effectText.trim());
         if (!m.matches() || !m.group("card").trim().equalsIgnoreCase(cardName)) return -1;
         return Integer.parseInt(m.group("n"));
+    }
+
+    /**
+     * "If either player has N cards or less in their hands, [CardName] gains …" and
+     * "If both you and your opponent have no cards in hand, [CardName] gains …" — Squall 16-011L.
+     *
+     * <p>One pattern for both because they differ only in the quantifier: {@code either} is
+     * satisfied by the smaller of the two hands, {@code both} by the larger. "no cards" is the
+     * threshold-0 spelling of "0 cards or less", so it feeds the same number.
+     */
+    private static final Pattern HAND_SIZE_SELF_GRANT = Pattern.compile(
+        "(?i)^If\\s+(?:(?<either>either\\s+player)|both\\s+you\\s+and\\s+your\\s+opponent)\\s+" +
+        "(?:has|have)\\s+(?:no\\s+cards?|(?<n>\\d+)\\s+cards?\\s+or\\s+less)\\s+in\\s+(?:their\\s+)?hands?,\\s+" +
+        "(?<card>[A-Za-z][A-Za-z0-9''\\-\\s()]*?)\\s+gains?\\s+(?<grant>.+?)[.!]?$"
+    );
+
+    /**
+     * A hand-size-conditional self grant: while the condition holds, the printing card has
+     * {@code traits} and may attack {@code maxAttacks} times.
+     *
+     * @param bothPlayers {@code true} for "both you and your opponent" (the larger hand must be
+     *                    within {@code maxCards}); {@code false} for "either player" (the smaller)
+     * @param maxCards    the hand-size ceiling the condition tests against
+     * @param maxAttacks  1 when the grant carries no multi-attack permission
+     */
+    record HandSizeSelfGrant(boolean bothPlayers, int maxCards, Set<Trait> traits, int maxAttacks) {
+        HandSizeSelfGrant {
+            // EnumSet, not Set.copyOf: the latter randomises iteration order per JVM run, which
+            // would leak into the rendered trait list.
+            EnumSet<Trait> t = EnumSet.noneOf(Trait.class);
+            t.addAll(traits);
+            traits = Collections.unmodifiableSet(t);
+        }
+
+        /** Whether {@code yourHand}/{@code theirHand} satisfy this grant's condition. */
+        boolean conditionMet(int yourHand, int theirHand) {
+            return (bothPlayers ? Math.max(yourHand, theirHand) : Math.min(yourHand, theirHand)) <= maxCards;
+        }
+    }
+
+    /**
+     * Parses a {@link HandSizeSelfGrant} from {@code effectText}, or returns {@code null} when the
+     * text is not one or names a card other than {@code cardName}. A grant that resolves to no
+     * traits and no multi-attack permission is rejected rather than returned empty, so a caller
+     * cannot mistake "parsed but grants nothing" for a live effect.
+     */
+    static HandSizeSelfGrant parseHandSizeSelfGrant(String effectText, String cardName) {
+        Matcher m = HAND_SIZE_SELF_GRANT.matcher(effectText.trim());
+        if (!m.matches() || !m.group("card").trim().equalsIgnoreCase(cardName)) return null;
+        String grant = m.group("grant");
+        EnumSet<Trait> traits = traitsNamedIn(grant);
+        int maxAttacks = 1;
+        // The multi-attack permission arrives as a quoted ability ("Squall can attack twice in the
+        // same turn."), so it is read with the same pattern that parses the printed form.
+        Matcher q = QUOTED_CLAUSE.matcher(grant);
+        while (q.find()) {
+            Matcher at = FIELD_CAN_ATTACK_TWICE.matcher(q.group(1).trim());
+            if (!at.matches() || !at.group("cardname").trim().equalsIgnoreCase(cardName)) continue;
+            String count = at.group("count");
+            maxAttacks = Math.max(maxAttacks, count != null ? Integer.parseInt(count) : 2);
+        }
+        if (traits.isEmpty() && maxAttacks == 1) return null;
+        int n = m.group("n") != null ? Integer.parseInt(m.group("n")) : 0;
+        return new HandSizeSelfGrant(m.group("either") == null, n, traits, maxAttacks);
+    }
+
+    /** A double-quoted clause; group 1 is its contents. */
+    private static final Pattern QUOTED_CLAUSE = Pattern.compile("\"([^\"]+)\"");
+
+    /**
+     * "If a [Card Name X] Forward you control [other than Y] is dealt damage, the damage is dealt
+     * to Y instead." — Daisy 18-060H (bare, with an exclusion) and Tidus 26-112H (Card Name
+     * filtered, no exclusion).
+     */
+    private static final Pattern FRIENDLY_DAMAGE_REDIRECT = Pattern.compile(
+        "(?i)^If\\s+a\\s+(?:Card\\s+Name\\s+(?<cardname>[A-Za-z][A-Za-z0-9''\\-\\s()]*?)\\s+)?" +
+        "Forward\\s+you\\s+control(?:\\s+other\\s+than\\s+(?<except>[A-Za-z][A-Za-z0-9''\\-\\s()]*?))?\\s+" +
+        "is\\s+dealt\\s+damage,\\s+the\\s+damage\\s+is\\s+dealt\\s+to\\s+(?<to>[A-Za-z][A-Za-z0-9''\\-\\s()]*?)\\s+instead[.!]?$"
+    );
+
+    /**
+     * Which of its controller's Forwards a {@link #parseDamageRedirectGrant} printing stands in for.
+     * The stand-in is always the printing card itself, so only the filter is carried.
+     */
+    record DamageRedirectGrant(String cardNameFilter, String exceptCardName) {
+        /** Whether damage dealt to {@code c} is taken by the printing card instead. */
+        boolean coversCard(CardData c) {
+            if (c == null || !c.isForward()) return false;
+            if (exceptCardName != null && CardFilters.meetsCardNameFilter(c, exceptCardName)) return false;
+            return CardFilters.meetsCardNameFilter(c, cardNameFilter);
+        }
+    }
+
+    /**
+     * Parses a friendly-damage redirect, or returns {@code null} when the text is not one or names
+     * a stand-in other than {@code cardName}. The name check is what keeps the redirect self-
+     * targeted: the effect only ever moves damage onto the card that prints it.
+     */
+    static DamageRedirectGrant parseDamageRedirectGrant(String effectText, String cardName) {
+        Matcher m = FRIENDLY_DAMAGE_REDIRECT.matcher(effectText.trim());
+        if (!m.matches() || !m.group("to").trim().equalsIgnoreCase(cardName)) return null;
+        return new DamageRedirectGrant(
+                m.group("cardname") != null ? m.group("cardname").trim() : null,
+                m.group("except")   != null ? m.group("except").trim()   : null);
     }
 
     private static final Pattern PRIMING_PATTERN = Pattern.compile(

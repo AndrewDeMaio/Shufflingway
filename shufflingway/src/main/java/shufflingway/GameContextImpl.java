@@ -3742,6 +3742,22 @@ final class GameContextImpl implements GameContext {
 							logEntry((t.isP1() ? "" : "[P2] ") + breakCard.name() + " cannot be broken by this effect (protected from non-damage breaks)");
 							return;
 						}
+					} else {
+						// Off the Forward row the traits above are read straight off the printed card,
+						// which misses every field-granted one — a Backup could not be protected at all
+						// until Auron 1-002R ("The Backups you control cannot be broken by your
+						// opponent's Summons or abilities.") needed it to be. The per-slot temp-trait
+						// lists are Forward-only, so only the conditional grants are consulted here.
+						EnumSet<CardData.Trait> granted = mw.fieldGrantCalculator
+								.computeConditionalTraitsForTarget(breakCard, t.isP1());
+						if (granted.contains(CardData.Trait.CANNOT_BE_BROKEN)) {
+							logEntry((t.isP1() ? "" : "[P2] ") + breakCard.name() + " cannot be broken");
+							return;
+						}
+						if (granted.contains(CardData.Trait.CANNOT_BE_BROKEN_BY_NON_DMG)) {
+							logEntry((t.isP1() ? "" : "[P2] ") + breakCard.name() + " cannot be broken by this effect (protected from non-damage breaks)");
+							return;
+						}
 					}
 				}
 				switch (t.zone()) {

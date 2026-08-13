@@ -3895,7 +3895,7 @@ public class MainWindow {
 	}
 
 	/** Identity (not {@code equals}) index of {@code card} in {@code list}; two copies of a card are distinct. */
-	private static int identityIndexOf(List<CardData> list, CardData card) {
+	static int identityIndexOf(List<CardData> list, CardData card) {
 		for (int i = 0; i < list.size(); i++) if (list.get(i) == card) return i;
 		return -1;
 	}
@@ -10943,7 +10943,57 @@ public class MainWindow {
 		Integer permanent = permanentMaxAttacks.get(card);
 		if (permanent != null) max = Math.max(max, permanent);
 		max = Math.max(max, attacksFromOwnDamage(card));
+		max = Math.max(max, attacksFromHandSizeGrant(card));
 		return max;
+	}
+
+	/**
+	 * Squall 16-011L: "If both you and your opponent have no cards in hand, Squall gains First
+	 * Strike, Brave and \"Squall can attack twice in the same turn.\"" The permission is conditional
+	 * on hand sizes that change during the turn, so — like {@link #attacksFromOwnDamage} — it is
+	 * read here rather than frozen into {@link CardData#maxAttacksPerTurn()}. The traits granted in
+	 * the same breath travel the ordinary route, through {@code FieldGrantCalculator}.
+	 *
+	 * <p>Returns 0 when the card has no such ability, so it never lowers an existing permission.
+	 */
+	private int attacksFromHandSizeGrant(CardData card) {
+		if (lostAbilitiesCards.contains(card)) return 0;
+		Boolean side = fieldSideOf(card);
+		if (side == null) return 0;
+		int yourHand  = (side ? gameState.getP1Hand() : gameState.getP2Hand()).size();
+		int theirHand = (side ? gameState.getP2Hand() : gameState.getP1Hand()).size();
+		int best = 0;
+		for (FieldAbility fa : effectiveFieldAbilities(card)) {
+			CardData.HandSizeSelfGrant g = CardData.parseHandSizeSelfGrant(fa.effectText(), card.name());
+			if (g != null && g.conditionMet(yourHand, theirHand)) best = Math.max(best, g.maxAttacks());
+		}
+		return best;
+	}
+
+	/**
+	 * The Forward on {@code isP1}'s side that takes {@code damaged}'s damage in its place, or
+	 * {@code null} when none does — Daisy 18-060H ("If a Forward you control other than Daisy is
+	 * dealt damage, the damage is dealt to Daisy instead.") and Tidus 26-112H, whose filter is a
+	 * card name rather than an exclusion.
+	 *
+	 * <p>A stand-in never covers itself: Daisy's own text excludes her by name and Tidus is not
+	 * named Yuna, but the identity check is what guarantees a redirect cannot loop back onto the
+	 * card that issued it regardless of how the filter is written.
+	 *
+	 * <p>When two stand-ins both cover the damaged Forward the rules would let the controller pick;
+	 * this takes the first found. No pair in the corpus creates the choice on one side of the field.
+	 */
+	CardData damageRedirectStandIn(CardData damaged, boolean isP1) {
+		if (damaged == null) return null;
+		for (CardData src : isP1 ? p1ForwardCards : p2ForwardCards) {
+			if (src == damaged || lostAbilitiesCards.contains(src)) continue;
+			for (FieldAbility fa : effectiveFieldAbilities(src)) {
+				CardData.DamageRedirectGrant g =
+						CardData.parseDamageRedirectGrant(fa.effectText(), src.name());
+				if (g != null && g.coversCard(damaged)) return src;
+			}
+		}
+		return null;
 	}
 
 	/**

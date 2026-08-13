@@ -15376,4 +15376,324 @@ public class CardBehaviorTest {
 
 		assertEquals(5000, mw.modifyIncomingDamage(false, ForwardTarget.CardZone.FORWARD, 0, 5000, true, false));
 	}
+
+	// =========================================================================================
+	// Auron 1-002R: "The Backups you control cannot be broken by your opponent's Summons or
+	// abilities."
+	//
+	// Alone in the corpus on two counts: it filters on type with no Job/Category/Element/Card Name,
+	// and it omits the "that don't deal damage" qualifier every other printing carries. Both are
+	// handled by giving it its own pattern rather than loosening the shared one, whose required
+	// filter and required qualifier are what keep it off the other 26 "cannot be broken" printings.
+	//
+	// The missing qualifier costs nothing: a Backup has no power, so it can never be broken by
+	// damage, and the two wordings pick out the same set of breaks for it.
+	//
+	// Wiring it exposed a gap in breakTarget — off the Forward row it read traits straight off the
+	// printed card, so no field-granted protection could reach a Backup at all.
+	// =========================================================================================
+
+	private static final String AURON_BACKUP_SHIELD =
+			"The Backups you control cannot be broken by your opponent's Summons or abilities.";
+
+	private static ForwardTarget bkp(boolean isP1, int idx) {
+		return new ForwardTarget(isP1, idx, ForwardTarget.CardZone.BACKUP);
+	}
+
+	@Test
+	void theBareTypeShieldParsesWithNoAttributeFilter() {
+		CardData.NonDmgBreakShieldGrant g =
+				CardData.parseFieldNonDmgBreakShieldGrant(AURON_BACKUP_SHIELD);
+
+		assertNotNull(g);
+		assertNull(g.job());
+		assertNull(g.cardName());
+		assertNull(g.category());
+		assertNull(g.element());
+		assertTrue(g.inclBackups());
+		assertFalse(g.inclForwards(), "the text names Backups, so Auron does not shield himself");
+		assertFalse(g.inclMonsters());
+	}
+
+	@Test
+	void auronKeepsTheOpponentFromBreakingYourBackup() {
+		MainWindow mw = new MainWindow();
+		mw.placeCardInFirstBackupSlot(makePlainBackup("Sage", "Fire", 2));
+		assertNotNull(mw.p1BackupCards[0]);
+
+		placeP1Forward(mw, makeFieldAbilityForward("Auron", AURON_BACKUP_SHIELD));
+		mw.buildGameContext(false).breakTarget(bkp(true, 0));
+
+		assertNotNull(mw.p1BackupCards[0], "P2's effect cannot break it while Auron is out");
+	}
+
+	@Test
+	void anUnprotectedBackupIsStillBroken() {
+		// The control: without Auron the same call goes through, so the test above is not vacuous.
+		MainWindow mw = new MainWindow();
+		mw.placeCardInFirstBackupSlot(makePlainBackup("Sage", "Fire", 2));
+
+		mw.buildGameContext(false).breakTarget(bkp(true, 0));
+
+		assertNull(mw.p1BackupCards[0]);
+	}
+
+	@Test
+	void auronDoesNotShieldForwardsOrTheOpponentsBackups() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeFieldAbilityForward("Auron", AURON_BACKUP_SHIELD)); // P1 idx 0
+		placeP1Forward(mw, makeForward("Ally", "Fire", 3, 7000));                  // P1 idx 1
+		mw.placeP2CardInFirstBackupSlot(makePlainBackup("Their Sage", "Ice", 2));
+
+		mw.buildGameContext(false).breakTarget(fwd(true, 1));
+		assertEquals(1, mw.p1ForwardCards.size(), "\"Backups\" — a Forward is not covered");
+
+		mw.buildGameContext(true).breakTarget(bkp(false, 0));
+		assertNull(mw.p2BackupCards[0], "\"you control\" — the shield does not cross the field");
+	}
+
+	@Test
+	void anAuronThatLostItsAbilitiesStopsShieldingTheBackup() {
+		MainWindow mw = new MainWindow();
+		mw.placeCardInFirstBackupSlot(makePlainBackup("Sage", "Fire", 2));
+		CardData auron = makeFieldAbilityForward("Auron", AURON_BACKUP_SHIELD);
+		placeP1Forward(mw, auron);
+
+		mw.lostAbilitiesCards.add(auron);
+		mw.buildGameContext(false).breakTarget(bkp(true, 0));
+
+		assertNull(mw.p1BackupCards[0]);
+	}
+
+	// =========================================================================================
+	// Squall 16-011L: "If either player has 2 cards or less in their hands, Squall gains Haste."
+	// and "If both you and your opponent have no cards in hand, Squall gains First Strike, Brave
+	// and \"Squall can attack twice in the same turn.\""
+	//
+	// Both are hand-size-conditional self grants, differing only in the quantifier: "either" is
+	// satisfied by the smaller of the two hands, "both" by the larger, so one pattern reads both
+	// and one comparison evaluates them.
+	//
+	// The traits travel the ordinary conditional-trait route. The multi-attack permission cannot:
+	// CardData.maxAttacksPerTurn() is frozen at construction and this allowance moves with the hands
+	// during the turn, so it is read at query time alongside Tidus 29-105L's damage-scaled one.
+	// =========================================================================================
+
+	private static final String SQUALL_HASTE =
+			"If either player has 2 cards or less in their hands, Squall gains Haste.";
+
+	private static final String SQUALL_EMPTY_HANDS =
+			"If both you and your opponent have no cards in hand, Squall gains First Strike, Brave "
+			+ "and \"Squall can attack twice in the same turn.\"";
+
+	private static final String SQUALL_TEXT = SQUALL_HASTE + "[[br]]" + SQUALL_EMPTY_HANDS;
+
+	/** Squall on P1 idx 0 with both hands filled to the given sizes. */
+	private static MainWindow boardWithSquall(int p1Hand, int p2Hand) {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeFieldAbilityCard("Squall", "Fire", "Forward", SQUALL_TEXT));
+		for (int i = 0; i < p1Hand; i++) mw.gameState.getP1Hand().add(makeForward("P1 Card " + i, "Fire", 1, 1000));
+		for (int i = 0; i < p2Hand; i++) mw.gameState.getP2Hand().add(makeForward("P2 Card " + i, "Ice", 1, 1000));
+		return mw;
+	}
+
+	@Test
+	void theTwoHandSizeConditionsParseWithTheirOwnQuantifiers() {
+		CardData.HandSizeSelfGrant either = CardData.parseHandSizeSelfGrant(SQUALL_HASTE, "Squall");
+		assertNotNull(either);
+		assertFalse(either.bothPlayers());
+		assertEquals(2, either.maxCards());
+		assertEquals(Set.of(CardData.Trait.HASTE), either.traits());
+		assertEquals(1, either.maxAttacks(), "this line carries no multi-attack permission");
+
+		CardData.HandSizeSelfGrant both = CardData.parseHandSizeSelfGrant(SQUALL_EMPTY_HANDS, "Squall");
+		assertNotNull(both);
+		assertTrue(both.bothPlayers());
+		assertEquals(0, both.maxCards(), "\"no cards in hand\" is the threshold-0 spelling");
+		assertEquals(Set.of(CardData.Trait.FIRST_STRIKE, CardData.Trait.BRAVE), both.traits());
+		assertEquals(2, both.maxAttacks());
+	}
+
+	@Test
+	void aGrantNamingSomeoneElseIsNotClaimed() {
+		assertNull(CardData.parseHandSizeSelfGrant(SQUALL_HASTE, "Zell"),
+				"the grant is self-targeted — it only acts for the card it names");
+	}
+
+	@Test
+	void squallGainsHasteWhenEitherHandIsSmallEnough() {
+		assertFalse(boardWithSquall(5, 5).effectiveP1HasTrait(0, CardData.Trait.HASTE));
+		assertTrue(boardWithSquall(2, 5).effectiveP1HasTrait(0, CardData.Trait.HASTE),
+				"his controller's hand alone satisfies \"either player\"");
+		assertTrue(boardWithSquall(5, 1).effectiveP1HasTrait(0, CardData.Trait.HASTE),
+				"and so does the opponent's alone");
+	}
+
+	@Test
+	void theEmptyHandGrantNeedsBothHandsEmpty() {
+		MainWindow oneLeft = boardWithSquall(0, 1);
+		assertFalse(oneLeft.effectiveP1HasTrait(0, CardData.Trait.FIRST_STRIKE));
+		assertFalse(oneLeft.effectiveP1HasTrait(0, CardData.Trait.BRAVE));
+		assertTrue(oneLeft.effectiveP1HasTrait(0, CardData.Trait.HASTE),
+				"the other line is satisfied at this hand size, and the two are independent");
+
+		MainWindow empty = boardWithSquall(0, 0);
+		assertTrue(empty.effectiveP1HasTrait(0, CardData.Trait.FIRST_STRIKE));
+		assertTrue(empty.effectiveP1HasTrait(0, CardData.Trait.BRAVE));
+	}
+
+	@Test
+	void theSecondAttackArrivesAndLeavesWithTheHands() {
+		MainWindow empty = boardWithSquall(0, 0);
+		assertEquals(2, empty.maxAttacksPerTurn(empty.p1ForwardCards.get(0)));
+
+		// Drawing a card mid-turn takes the permission away again.
+		empty.gameState.getP1Hand().add(makeForward("Drawn", "Fire", 1, 1000));
+		assertEquals(1, empty.maxAttacksPerTurn(empty.p1ForwardCards.get(0)));
+	}
+
+	@Test
+	void aSquallThatLostItsAbilitiesGetsNeither() {
+		MainWindow mw = boardWithSquall(0, 0);
+		mw.lostAbilitiesCards.add(mw.p1ForwardCards.get(0));
+
+		assertFalse(mw.effectiveP1HasTrait(0, CardData.Trait.FIRST_STRIKE));
+		assertEquals(1, mw.maxAttacksPerTurn(mw.p1ForwardCards.get(0)));
+	}
+
+	// =========================================================================================
+	// Daisy 18-060H: "If a Forward you control other than Daisy is dealt damage, the damage is
+	// dealt to Daisy instead." — and Tidus 26-112H, the same effect filtered by card name rather
+	// than by exclusion ("If a Card Name Yuna Forward you control is dealt damage…").
+	//
+	// A one-shot redirect map already existed for "the next damage dealt to A is received by B";
+	// this is its continuous relative, resolved at the same point in applyDamageToForward and
+	// ahead of modifyIncomingDamage, so it is the stand-in's own protections that apply to the
+	// damage rather than the original target's.
+	//
+	// LIMIT: battle damage is not redirected. Combat resolves in resolveCombat, which computes
+	// each side's damage, break check and First Strike interaction against fixed attacker/blocker
+	// indices; moving the recipient there means recomputing power and break against a third card
+	// and deciding what "the blocker was broken" means for the First Strike cancel. That is a
+	// restructure of three combat paths, not a hook, so it is deliberately left out — see the test
+	// at the end of this section, which pins the current behaviour rather than the correct one.
+	// =========================================================================================
+
+	private static final String DAISY_REDIRECT =
+			"If a Forward you control other than Daisy is dealt damage, the damage is dealt to Daisy instead.";
+
+	private static final String TIDUS_REDIRECT =
+			"If a Card Name Yuna Forward you control is dealt damage, the damage is dealt to Tidus instead.";
+
+	@Test
+	void bothRedirectShapesParse() {
+		CardData.DamageRedirectGrant daisy = CardData.parseDamageRedirectGrant(DAISY_REDIRECT, "Daisy");
+		assertNotNull(daisy);
+		assertNull(daisy.cardNameFilter(), "Daisy covers every Forward, narrowed only by the exclusion");
+		assertEquals("Daisy", daisy.exceptCardName());
+
+		CardData.DamageRedirectGrant tidus = CardData.parseDamageRedirectGrant(TIDUS_REDIRECT, "Tidus");
+		assertNotNull(tidus);
+		assertEquals("Yuna", tidus.cardNameFilter());
+		assertNull(tidus.exceptCardName(), "the name filter is what keeps Tidus out of his own net");
+
+		assertNull(CardData.parseDamageRedirectGrant(DAISY_REDIRECT, "Rosa"),
+				"the redirect only ever moves damage onto the card that prints it");
+	}
+
+	@Test
+	void daisyTakesTheDamageAimedAtAnAlly() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForward("Ally", "Earth", 3, 7000));                    // idx 0
+		placeP1Forward(mw, makeFieldAbilityCard("Daisy", "Earth", "Forward", DAISY_REDIRECT)); // idx 1
+
+		mw.applyDamageToForward(true, 0, 5000, true, false);
+
+		assertEquals(0, mw.p1ForwardDamage.get(0), "the ally is dealt none of it");
+		assertEquals(5000, mw.p1ForwardDamage.get(1));
+	}
+
+	@Test
+	void daisyDoesNotRedirectHerOwnDamage() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeFieldAbilityCard("Daisy", "Earth", "Forward", DAISY_REDIRECT));
+
+		mw.applyDamageToForward(true, 0, 5000, true, false);
+
+		assertEquals(5000, mw.p1ForwardDamage.get(0), "\"other than Daisy\" — and a stand-in never covers itself");
+	}
+
+	@Test
+	void daisyDoesNotReachAcrossTheField() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeFieldAbilityCard("Daisy", "Earth", "Forward", DAISY_REDIRECT));
+		placeP2Forward(mw, makeForward("Foe", "Ice", 3, 7000));
+
+		mw.applyDamageToForward(false, 0, 5000, true, false);
+
+		assertEquals(5000, mw.p2ForwardDamage.get(0), "\"a Forward you control\"");
+		assertEquals(0, mw.p1ForwardDamage.get(0));
+	}
+
+	@Test
+	void tidusCoversOnlyTheNamedForward() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForward("Yuna",  "Water", 3, 7000)); // idx 0
+		placeP1Forward(mw, makeForward("Wakka", "Water", 3, 7000)); // idx 1
+		placeP1Forward(mw, makeFieldAbilityCard("Tidus", "Water", "Forward", TIDUS_REDIRECT)); // idx 2
+
+		mw.applyDamageToForward(true, 1, 3000, true, false);
+		assertEquals(3000, mw.p1ForwardDamage.get(1), "Wakka is not a Card Name Yuna Forward");
+		assertEquals(0, mw.p1ForwardDamage.get(2));
+
+		mw.applyDamageToForward(true, 0, 4000, true, false);
+		assertEquals(0, mw.p1ForwardDamage.get(0));
+		assertEquals(4000, mw.p1ForwardDamage.get(2));
+	}
+
+	@Test
+	void itIsTheStandInsOwnProtectionsThatApply() {
+		// The redirect resolves before the incoming modifiers, so the ally's shield never gets a
+		// say and Daisy's does — the damage was dealt to Daisy, not merely moved after the fact.
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeFieldAbilityCard("Ally", "Earth", "Forward",
+				"If Ally is dealt damage, reduce the damage by 4000 instead."));
+		placeP1Forward(mw, makeFieldAbilityCard("Daisy", "Earth", "Forward",
+				DAISY_REDIRECT + "[[br]]If Daisy is dealt damage, reduce the damage by 1000 instead."));
+
+		mw.applyDamageToForward(true, 0, 5000, true, false);
+
+		assertEquals(0, mw.p1ForwardDamage.get(0));
+		assertEquals(4000, mw.p1ForwardDamage.get(1), "Daisy's 1000 reduction, not the ally's 4000");
+	}
+
+	@Test
+	void aDaisyThatLostHerAbilitiesStopsSoakingDamage() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForward("Ally", "Earth", 3, 7000));
+		CardData daisy = makeFieldAbilityCard("Daisy", "Earth", "Forward", DAISY_REDIRECT);
+		placeP1Forward(mw, daisy);
+
+		mw.lostAbilitiesCards.add(daisy);
+		mw.applyDamageToForward(true, 0, 5000, true, false);
+
+		assertEquals(5000, mw.p1ForwardDamage.get(0));
+		assertEquals(0, mw.p1ForwardDamage.get(1));
+	}
+
+	@Test
+	void battleDamageIsNotRedirected() {
+		// Pins the documented limit above rather than the correct rules answer: "is dealt damage"
+		// names no source, so the card should soak combat damage too. Change this test when the
+		// combat paths learn to move the recipient.
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForward("Ally", "Earth", 3, 7000));
+		placeP1Forward(mw, makeFieldAbilityCard("Daisy", "Earth", "Forward", DAISY_REDIRECT));
+		placeP2Forward(mw, makeForward("Attacker", "Ice", 3, 5000));
+
+		mw.resolveCombat(mw.p2ForwardCards.get(0), false, 0, mw.p1ForwardCards.get(0), true, 0);
+
+		assertEquals(5000, mw.p1ForwardDamage.get(0), "the blocker still takes it");
+		assertEquals(0, mw.p1ForwardDamage.get(1));
+	}
 }

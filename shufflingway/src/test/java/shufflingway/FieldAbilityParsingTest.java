@@ -173,6 +173,9 @@ public class FieldAbilityParsingTest {
         // Conditional printings, re-evaluated per query by FieldGrantCalculator.
         if (CardData.parseIfControlNonDmgBreakShield(fa.effectText(), source.name()) != null) return true;
         if (CardData.parseFieldNonDmgBreakShieldGrant(fa.effectText()) != null) return true;
+        // Both are self-named: the engine only acts on them when the text names its own carrier.
+        if (CardData.parseHandSizeSelfGrant(fa.effectText(), source.name()) != null) return true;
+        if (CardData.parseDamageRedirectGrant(fa.effectText(), source.name()) != null) return true;
         if (CardData.parseSelfCannotBeBrokenDuringYourTurn(fa.effectText(), source.name())) return true;
         if (CardData.parseSelfCannotBeBrokenDuringAttackPhase(fa.effectText(), source.name())) return true;
         if (CardData.parseSelfCannotBeBrokenWithCounter(fa.effectText(), source.name()) != null) return true;
@@ -405,12 +408,26 @@ public class FieldAbilityParsingTest {
             return "SelfNonDmgBreakShield";
         CardData.NonDmgBreakShieldGrant ndg = CardData.parseFieldNonDmgBreakShieldGrant(fa.effectText());
         if (ndg != null) {
+            // Auron 1-002R filters on type alone, so every attribute filter is null there and the
+            // type is the only thing there is to name.
             String who = ndg.job()      != null ? "Job " + ndg.job()
                        : ndg.cardName() != null ? "Card Name " + ndg.cardName()
                        : ndg.category() != null ? "Category " + ndg.category()
-                       : ndg.element();
+                       : ndg.element()  != null ? ndg.element()
+                       : ndg.inclForwards() && ndg.inclBackups() && ndg.inclMonsters() ? "Characters"
+                       : ndg.inclForwards() ? "Forwards"
+                       : ndg.inclBackups()  ? "Backups"
+                       : "Monsters";
             return "FieldNonDmgBreakShield[" + who + "]";
         }
+        CardData.HandSizeSelfGrant hsg = CardData.parseHandSizeSelfGrant(fa.effectText(), source.name());
+        if (hsg != null)
+            return "HandSizeSelfGrant[" + (hsg.bothPlayers() ? "both" : "either") + "≤" + hsg.maxCards()
+                    + " " + hsg.traits() + (hsg.maxAttacks() > 1 ? " attacks×" + hsg.maxAttacks() : "") + "]";
+        CardData.DamageRedirectGrant drg = CardData.parseDamageRedirectGrant(fa.effectText(), source.name());
+        if (drg != null)
+            return "DamageRedirect[" + (drg.cardNameFilter() != null ? "Card Name " + drg.cardNameFilter() : "Forwards")
+                    + (drg.exceptCardName() != null ? " excl." + drg.exceptCardName() : "") + " → " + source.name() + "]";
         if (CardData.parseSelfCannotBeBrokenDuringYourTurn(fa.effectText(), source.name()))
             return "SelfCannotBeBroken[your turn]";
         if (CardData.parseSelfCannotBeBrokenDuringAttackPhase(fa.effectText(), source.name()))

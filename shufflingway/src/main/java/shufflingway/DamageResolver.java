@@ -617,6 +617,19 @@ class DamageResolver {
 			}
 			// redirect target no longer on field — fall through to normal damage
 		}
+		// Continuous redirect from a field ability (Daisy 18-060H, Tidus 26-112H). Resolved before
+		// modifyIncomingDamage so the stand-in's own protections are the ones that apply, which is
+		// the order the replacement happens in: the damage is dealt to the stand-in, and what it
+		// then does about that damage is the stand-in's business.
+		CardData standIn = mw.damageRedirectStandIn(fwds.get(idx), isP1);
+		if (standIn != null) {
+			int standInIdx = mw.identityIndexOf(fwds, standIn);
+			if (standInIdx >= 0) {
+				mw.logEntry(fwds.get(idx).name() + " — damage dealt to " + standIn.name() + " instead");
+				applyDamageToForward(isP1, standInIdx, rawAmount, fromAbility, unreduced);
+				return;
+			}
+		}
 		int amount = modifyIncomingDamage(isP1, idx, rawAmount, fromAbility, unreduced);
 		if (amount <= 0) {
 			mw.logEntry((isP1 ? "" : "[P2] ") + fwds.get(idx).name() + " — damage blocked");
