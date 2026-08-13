@@ -3668,9 +3668,15 @@ public record CardData(
      * hands the boosted cards a trait as well (Poppy 18-048R, "…gain +1000 power and First Strike.")
      * — the Job/Category form of that already lives in {@link #FIELD_GRANT_PATTERN}.
      * Companion to {@link #FIELD_GRANT_PATTERN}.
+     *
+     * <p>The optional {@code attacking} prefix restricts the grant to Forwards currently declared as
+     * attackers (Lava Spider 8-022R). It is a board-state filter rather than a card filter, so
+     * {@link FieldPowerGrant#appliesToCard} cannot resolve it — {@code MainWindow} gates on it while
+     * summing contributions.
      */
     private static final Pattern FIELD_GRANT_BARE_PATTERN = Pattern.compile(
         "(?i)^The\\s+" +
+        "(?<attacking>attacking\\s+)?" +
         "(?<element>" + ELEMENT_KEYWORD + ")?\\s*" +
         "(?<targets>Forwards?(?:\\s+and\\s+Monsters?)?|Backups?|Monsters?|Characters?)\\s+" +
         "(?:with\\s+(?<withtrait>" + TRAIT_KEYWORD + ")\\s+)?" +
@@ -3786,6 +3792,47 @@ public record CardData(
     );
 
     /**
+     * "The power of Forwards you control cannot be decreased by your opponent's Summons or
+     * abilities." — Shelke 16-029R.
+     *
+     * <p>Stored as a passive grant of {@link Trait#POWER_CANNOT_BE_DECREASED_BY_OPP} to the
+     * controller's Forwards, because that trait is what every power-decrease path already consults,
+     * and those paths already scope the block to a decrease coming from the Forward's opponent.
+     * Asura 23-039R hands the same trait to a Forward through the quoted per-card wording, so the
+     * two printings meet at one enforcement point.
+     *
+     * <p>The boost-suppressing twin printed beside this on Shelke
+     * ({@link AutoAbilityTriggers#FA_OPP_FORWARD_SELF_BOOST_SUPPRESSED}) takes the opposite route —
+     * a scan of the opposing field — because it restricts who may boost rather than marking the
+     * Forwards, and so has no per-card trait to hang on.
+     */
+    private static final Pattern FIELD_POWER_CANNOT_BE_DECREASED = Pattern.compile(
+        "(?i)^The\\s+power\\s+of\\s+Forwards?\\s+you\\s+control\\s+cannot\\s+be\\s+decreased\\s+by\\s+" +
+        "your\\s+opponent(?:'s|s')\\s+Summons?\\s+or\\s+abilit(?:y|ies)[.!]?$"
+    );
+
+    /**
+     * "The power of the Job Pirate Forwards and Card Name Viking Forwards other than Faris you
+     * control becomes 8000." — Faris 21-114L.
+     *
+     * <p>A base-power replacement, not a bonus: the value lands in
+     * {@link FieldPowerGrant#basePowerSet}, which {@code MainWindow} substitutes for the printed
+     * power before boosts and reductions are applied, so those still stack on top of it.
+     *
+     * <p>Both filter branches are optional and either may carry its own "other than" exclusion, but
+     * the printing that motivates this puts one exclusion after the pair; {@code except} is captured
+     * once and applied to both grants for that reason. The two branches are ORed by emitting one
+     * grant each — {@link FieldPowerGrant#appliesToCard} ANDs job and card-name filters.
+     */
+    private static final Pattern FIELD_BASE_POWER_BECOMES = Pattern.compile(
+        "(?i)^The\\s+power\\s+of\\s+(?:the\\s+)?" +
+        "(?:Job\\s+(?<job>[A-Za-z][A-Za-z\\s''\\-]*?)\\s+(?:Forwards?)\\s+and\\s+)?" +
+        "Card\\s+Name\\s+(?<cardname>[A-Za-z][A-Za-z\\s''\\-]*?)\\s+Forwards?\\s+" +
+        "(?:other\\s+than\\s+(?<except>[A-Z][A-Za-z''\\-]+(?:\\s+[A-Za-z''\\-]+)*)\\s+)?" +
+        "you\\s+control\\s+becomes\\s+(?<power>\\d+)[.!]?$"
+    );
+
+    /**
      * "The Forwards you control gain +N power for every M cards with EX Burst in your Damage Zone."
      * Groups: {@code bonus}, {@code groupsize}.
      */
@@ -3878,6 +3925,26 @@ public record CardData(
             seg = seg.replaceAll("(?i)\\[Job\\s*\\(([^)]+)\\)\\]", "Job $1");
             seg = seg.replaceAll("(?i)\\[Category\\s*\\(([^)]+)\\)\\]", "Category $1");
             seg = seg.replaceAll("(?i)\\[Card\\s+Name\\s*\\(([^)]+)\\)\\]", "Card Name $1");
+
+            if (FIELD_POWER_CANNOT_BE_DECREASED.matcher(seg).matches()) {
+                result.add(FieldPowerGrant.sameSideFiltered(true, false, false, null, 0,
+                        EnumSet.of(Trait.POWER_CANNOT_BE_DECREASED_BY_OPP), null,
+                        EnumSet.noneOf(Trait.class)));
+                continue;
+            }
+
+            Matcher basePowM = FIELD_BASE_POWER_BECOMES.matcher(seg);
+            if (basePowM.matches()) {
+                int    newBase = Integer.parseInt(basePowM.group("power"));
+                String except  = basePowM.group("except");
+                String job     = basePowM.group("job");
+                String exceptName = except != null ? except.trim() : null;
+                if (job != null)
+                    result.add(FieldPowerGrant.sameSideBasePower(job.trim(), null, exceptName, newBase));
+                result.add(FieldPowerGrant.sameSideBasePower(null, basePowM.group("cardname").trim(),
+                        exceptName, newBase));
+                continue;
+            }
 
             Matcher exBurstDmgM = FIELD_EX_BURST_DMG_SCALING_GRANT.matcher(seg);
             if (exBurstDmgM.matches()) {
@@ -3990,7 +4057,8 @@ public record CardData(
                         Integer.parseInt(bareM.group("power")),
                         traitsNamedIn(bareM.group("traitstext")),
                         bareElem != null ? bareElem.trim() : null,
-                        traitsNamedIn(bareM.group("withtrait"))));
+                        traitsNamedIn(bareM.group("withtrait")),
+                        bareM.group("attacking") != null));
                 continue;
             }
 

@@ -128,7 +128,9 @@ public class FieldAbilityParsingTest {
         if (AutoAbilityTriggers.FA_NULLIFY_SUMMON_DAMAGE.matcher(fa.effectText()).find()) return true;
         if (AutoAbilityTriggers.FA_NULLIFY_ABILITY_DAMAGE.matcher(fa.effectText()).find()) return true;
         if (AutoAbilityTriggers.FA_NULLIFY_OPPONENT_ABILITY_DAMAGE.matcher(fa.effectText()).find()) return true;
-        if (AutoAbilityTriggers.FA_REDUCE_ABILITY_DAMAGE.matcher(fa.effectText()).find()) return true;
+        // Matched with matches(), exactly as DamageResolver.abilityDamageUnreducibleByField does.
+        if (AutoAbilityTriggers.FA_ABILITY_DAMAGE_TO_OPP_FORWARDS_UNREDUCIBLE
+                .matcher(fa.effectText()).matches()) return true;
         if (AutoAbilityTriggers.FA_OPP_FORWARD_POWER_BOOST_SUPPRESSED.matcher(fa.effectText()).find()) return true;
         if (AutoAbilityTriggers.FA_OPP_FORWARD_SELF_BOOST_SUPPRESSED.matcher(fa.effectText()).find()) return true;
         if (AutoAbilityTriggers.FA_OPP_FORWARD_ETF_SUPPRESSED.matcher(fa.effectText()).find()) return true;
@@ -337,8 +339,8 @@ public class FieldAbilityParsingTest {
         if (m.find()) return "NullifyAbilityDmg";
         m = AutoAbilityTriggers.FA_NULLIFY_OPPONENT_ABILITY_DAMAGE.matcher(fa.effectText());
         if (m.find()) return "NullifyOpponentAbilityDmg";
-        m = AutoAbilityTriggers.FA_REDUCE_ABILITY_DAMAGE.matcher(fa.effectText());
-        if (m.find()) return "ReduceAbilityDmg[" + m.group("reduction") + "]";
+        if (AutoAbilityTriggers.FA_ABILITY_DAMAGE_TO_OPP_FORWARDS_UNREDUCIBLE
+                .matcher(fa.effectText()).matches()) return "OwnAbilityDmgToOppFwdsUnreducible";
         if (AutoAbilityTriggers.FA_OPP_FORWARD_POWER_BOOST_SUPPRESSED.matcher(fa.effectText()).find())
             return "OppFwdPowerBoostSuppressed";
         if (AutoAbilityTriggers.FA_OPP_FORWARD_SELF_BOOST_SUPPRESSED.matcher(fa.effectText()).find())

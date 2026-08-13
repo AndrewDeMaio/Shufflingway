@@ -4994,7 +4994,8 @@ public class MainWindow {
 	int effectiveP1ForwardPower(int idx) {
 		CardData top  = p1ForwardPrimedTop.get(idx);
 		CardData card = p1ForwardCards.get(idx);
-		int base = basePowerOverrides.getOrDefault(card, top != null ? top.power() : card.power());
+		int printed = top != null ? top.power() : card.power();
+		int base = basePowerOverrides.getOrDefault(card, fieldGrantBasePower(card, true, printed));
 		return base + p1ForwardPowerBoost.get(idx) - p1ForwardPowerReduction.get(idx)
 				+ permanentPowerBoost.getOrDefault(card, 0)
 				+ computeConditionalBoostForTarget(card, true);
@@ -5002,10 +5003,44 @@ public class MainWindow {
 
 	int effectiveP2ForwardPower(int idx) {
 		CardData card = p2ForwardCards.get(idx);
-		return basePowerOverrides.getOrDefault(card, card.power())
+		return basePowerOverrides.getOrDefault(card, fieldGrantBasePower(card, false, card.power()))
 				+ p2ForwardPowerBoost.get(idx) - p2ForwardPowerReduction.get(idx)
 				+ permanentPowerBoost.getOrDefault(card, 0)
 				+ computeConditionalBoostForTarget(card, false);
+	}
+
+	/**
+	 * The base power {@code target} has on {@code isP1}'s side once a continuous field grant replaces
+	 * its printed value ("The power of the Job Pirate Forwards and Card Name Viking Forwards other
+	 * than Faris you control becomes 8000." — Faris 21-114L), or {@code printed} when none does.
+	 *
+	 * <p>Read at power-query time rather than written into {@link #basePowerOverrides}, so a Pirate
+	 * entering the field picks the value up at once and loses it the moment Faris leaves.
+	 *
+	 * <p>Callers give {@link #basePowerOverrides} precedence: that map holds one-shot replacements an
+	 * effect applied at a definite moment ("its power becomes 1000 until the end of the turn"), and
+	 * those almost always resolve after the continuous grant was already in place, which is the
+	 * order the rules would settle by timestamp. The engine keeps no timestamps, so the reverse
+	 * order — a Faris arriving after the one-shot — is resolved the same way rather than correctly.
+	 */
+	int fieldGrantBasePower(CardData target, boolean isP1, int printed) {
+		int base = printed;
+		List<CardData> fwds = isP1 ? p1ForwardCards : p2ForwardCards;
+		CardData[]     bkps = isP1 ? p1BackupCards  : p2BackupCards;
+		List<CardData> mons = isP1 ? p1MonsterCards : p2MonsterCards;
+		for (CardData src : fwds) base = applyFieldGrantBasePower(src, target, base);
+		for (CardData src : bkps) if (src != null) base = applyFieldGrantBasePower(src, target, base);
+		for (CardData src : mons) base = applyFieldGrantBasePower(src, target, base);
+		return base;
+	}
+
+	/** {@code src}'s base-power replacement for {@code target}, or {@code base} when it grants none. */
+	private int applyFieldGrantBasePower(CardData src, CardData target, int base) {
+		if (lostAbilitiesCards.contains(src)) return base;
+		for (FieldPowerGrant fpg : src.fieldPowerGrants())
+			if (fpg.basePowerSet() > 0 && !fpg.affectsOpponent() && fpg.appliesToCard(target))
+				return fpg.basePowerSet();
+		return base;
 	}
 
 	boolean effectiveP1HasTrait(int idx, CardData.Trait trait) {
@@ -10308,13 +10343,40 @@ public class MainWindow {
 		return out;
 	}
 
+	/**
+	 * Whether {@code target}, sitting on {@code isP1}'s side, is one of the Forwards currently
+	 * attacking — the state filter of Lava Spider 8-022R
+	 * ("The attacking Forwards you control gain +3000 power.").
+	 *
+	 * <p>Matched by identity, not {@code equals}, as {@link #survivingDeclaredAttackers} is:
+	 * {@link CardData} is a record, so two copies of one printing compare equal and a
+	 * {@code contains} test would boost the one sitting at home. That is defensive rather than
+	 * load-bearing — the uniqueness rule breaks the older copy as the second is seated, so the twins
+	 * never share a field — but the two attacker reads should not disagree about what they mean.
+	 *
+	 * <p>A primed Forward declares its attack as the top card while power is computed against the
+	 * card underneath it, so a stack is matched by slot as well as by instance.
+	 */
+	private boolean isDeclaredAttacker(CardData target, boolean isP1) {
+		List<CardData> declared = declaredAttackers(isP1);
+		for (CardData atk : declared) if (atk == target) return true;
+		List<CardData> fwds = isP1 ? p1ForwardCards : p2ForwardCards;
+		List<CardData> tops = isP1 ? p1ForwardPrimedTop : p2ForwardPrimedTop;
+		for (int i = 0; i < fwds.size() && i < tops.size(); i++) {
+			if (fwds.get(i) != target || tops.get(i) == null) continue;
+			for (CardData atk : declared) if (atk == tops.get(i)) return true;
+		}
+		return false;
+	}
+
 	/** Sum of {@link FieldPowerGrant#powerBonus} from {@code src} for grants that target the opposing side. */
 	private int opposingFieldDebuffContribution(CardData src, CardData target, boolean isP1) {
 		int sum = 0;
 		for (FieldPowerGrant fpg : src.fieldPowerGrants())
 			// isP1 is the *source's* side here, so the target's traits are read from the other side.
 			if (fpg.affectsOpponent() && fpg.appliesToCard(target, fpgTargetTraits(fpg, target, !isP1))
-					&& fpgBzConditionMet(fpg, isP1))
+					&& fpgBzConditionMet(fpg, isP1)
+					&& (!fpg.attackingOnly() || isDeclaredAttacker(target, !isP1)))
 				sum += fpg.powerBonus();
 		if (target.isForward())
 			for (CounterGrant cg : src.counterGrants())
@@ -10343,6 +10405,7 @@ public class MainWindow {
 		for (FieldPowerGrant fpg : src.fieldPowerGrants())
 			if (!fpg.affectsOpponent() && fpg.appliesToCard(target, fpgTargetTraits(fpg, target, isP1))
 					&& fpgBzConditionMet(fpg, isP1)
+					&& (!fpg.attackingOnly() || isDeclaredAttacker(target, isP1))
 					&& (!fpg.yourTurnOnly() || isP1 == (gameState.getCurrentPlayer() == GameState.Player.P1))) {
 				boost += fpg.powerBonus();
 				if (fpg.exBurstDmgPerGroup() > 0) {

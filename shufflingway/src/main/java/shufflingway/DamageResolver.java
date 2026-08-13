@@ -35,6 +35,35 @@ class DamageResolver {
 	}
 
 	/**
+	 * Whether the ability damage now resolving is unreducible because its controller has
+	 * "The damage dealt by your abilities to Forwards opponent controls cannot be reduced." on the
+	 * field — Adelard 17-001H. {@code targetIsP1} is the side taking the damage; the carrier has to
+	 * sit opposite it, and the ability has to be that same player's.
+	 *
+	 * <p>Summons are excluded: the printing says "abilities", and this mirrors the reading
+	 * {@code nullifyAbilityOnlyDmgSet} already applies to a bare "ability".
+	 */
+	private boolean abilityDamageUnreducibleByField(boolean targetIsP1, boolean fromAbility) {
+		if (!fromAbility || mw.currentResolutionIsSummon) return false;
+		if (mw.currentAbilitySource == null || mw.currentAbilitySourceIsP1 == targetIsP1) return false;
+		boolean casterIsP1 = !targetIsP1;
+		List<CardData> casterField = new ArrayList<>(casterIsP1 ? mw.p1ForwardCards : mw.p2ForwardCards);
+		for (CardData bkp : casterIsP1 ? mw.p1BackupCards : mw.p2BackupCards)
+			if (bkp != null) casterField.add(bkp);
+		casterField.addAll(casterIsP1 ? mw.p1MonsterCards : mw.p2MonsterCards);
+		for (CardData src : casterField) {
+			if (mw.lostAbilitiesCards.contains(src)) continue;
+			for (FieldAbility fa : mw.effectiveFieldAbilities(src))
+				if (AutoAbilityTriggers.FA_ABILITY_DAMAGE_TO_OPP_FORWARDS_UNREDUCIBLE
+						.matcher(fa.effectText()).matches()) {
+					mw.logEntry(src.name() + " — ability damage to opponent's Forwards cannot be reduced");
+					return true;
+				}
+		}
+		return false;
+	}
+
+	/**
 	 * Zone-aware variant: applies incoming-damage modifiers to a card acting as a Forward from any
 	 * zone (a real Forward, or a Monster/Backup temporarily a Forward). A card acting as a Forward
 	 * is a Forward for every eligible purpose, so the self- and field-wide protections apply to it.
@@ -140,20 +169,6 @@ class DamageResolver {
 				}
 			}
 
-			// Passive field ability: reduce ability-source damage by N (gated on damage threshold)
-			if (!mw.currentResolutionIsSummon) {
-				int dmgInZone = isP1 ? mw.gameState.getP1DamageZone().size() : mw.gameState.getP2DamageZone().size();
-				for (FieldAbility fa : card.fieldAbilities()) {
-					if (fa.damageThreshold() > 0 && dmgInZone < fa.damageThreshold()) continue;
-					Matcher m = AutoAbilityTriggers.FA_REDUCE_ABILITY_DAMAGE.matcher(fa.effectText());
-					if (m.find() && m.group("card").trim().equalsIgnoreCase(card.name())) {
-						int reduction = Integer.parseInt(m.group("reduction"));
-						int before = amount;
-						amount = Math.max(0, amount - reduction);
-						mw.logEntry(card.name() + " — ability damage reduced by " + reduction + " (" + before + " → " + amount + ")");
-					}
-				}
-			}
 		}
 
 		// Passive field ability: nullify battle damage from a Forward with specific traits (e.g. Haste, First Strike)
@@ -175,7 +190,7 @@ class DamageResolver {
 			}
 		}
 
-		if (unreduced) {
+		if (unreduced || abilityDamageUnreducibleByField(isP1, fromAbility)) {
 			// Consume one-shot shields so they are spent, but do not apply any reduction.
 			// Persistent shields ("until end of turn") remain in place unchanged.
 			mw.nextIncomingDmgZeroSet.remove(card);
@@ -202,7 +217,14 @@ class DamageResolver {
 		// ("by a Forward / by Summon or ability / other than battle damage / less than power / any source")
 		// Read through effectiveFieldAbilities, not the printed list: Sarah (MOBIUS) 16-115H hands
 		// herself one of these for the turn, and a grant has to be honoured exactly as a printing is.
+		//
+		// A "Damage N --" prefix gates the whole printing on its controller's own damage zone
+		// (Siren (V) 22-098H, Tidus 26-112H, Brute Bomber 28-019R). It has to be read here, where
+		// the FieldAbility is still in hand — applyDamageModifierMatch sees only the matcher, and
+		// the "threshold" group it does consult is the unrelated "is dealt N damage or more" form.
+		int dmgInZone = (isP1 ? mw.gameState.getP1DamageZone() : mw.gameState.getP2DamageZone()).size();
 		for (FieldAbility fa : mw.effectiveFieldAbilities(card)) {
+			if (fa.damageThreshold() > 0 && dmgInZone < fa.damageThreshold()) continue;
 			Matcher fam = AutoAbilityTriggers.FA_DAMAGE_MODIFIER.matcher(fa.effectText());
 			if (!fam.find() || !fam.group("card").trim().equalsIgnoreCase(card.name())) continue;
 			amount = applyDamageModifierMatch(fam, amount, isP1, zone, idx, fromAbility, card.name());

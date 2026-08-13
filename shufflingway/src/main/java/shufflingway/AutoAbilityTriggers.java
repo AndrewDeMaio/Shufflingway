@@ -217,17 +217,12 @@ final class AutoAbilityTriggers {
 				"(?i)If\\s+(?<card>.+?)\\s+is\\s+dealt\\s+damage\\s+by\\s+your\\s+opponent's\\s+Summons?,\\s+the\\s+damage\\s+becomes\\s+0\\s+instead\\.?"
 			);
 
-	/**
-	 * Matches a card's own passive field ability text:
-	 * "If &lt;cardName&gt; is dealt damage by abilities, reduce the damage by N instead."
-	 * Gated by the surrounding {@link FieldAbility#damageThreshold()} when the parser captured
-	 * a "Damage N --" prefix. Applied inline in {@link #modifyIncomingDamage} when the damage
-	 * source is an ability (not a Summon, not combat).
-	 */
-	static final Pattern FA_REDUCE_ABILITY_DAMAGE =
-			Pattern.compile(
-				"(?i)If\\s+(?<card>.+?)\\s+is\\s+dealt\\s+damage\\s+by\\s+abilities,\\s+reduce\\s+the\\s+damage\\s+by\\s+(?<reduction>\\d+)\\s+instead\\.?"
-			);
+	// "If <cardName> is dealt damage by abilities, reduce the damage by N instead." had its own
+	// pattern (FA_REDUCE_ABILITY_DAMAGE) and its own block in modifyIncomingDamage. Removed: the
+	// text is a strict subset of FA_DAMAGE_MODIFIER, whose "by abilities" source clause resolves to
+	// the identical gate, so the two both fired and the reduction was applied twice. The surviving
+	// copy also sits on the correct side of the "cannot be reduced" guard, which the old block did
+	// not — see DamageResolver.modifyIncomingDamage.
 
 	/** "If [name] is dealt damage by an ability, the damage becomes 0 instead." — persistent passive nullification vs non-Summon abilities. */
 	static final Pattern FA_NULLIFY_ABILITY_DAMAGE =
@@ -240,6 +235,25 @@ final class AutoAbilityTriggers {
 			Pattern.compile(
 				"(?i)If\\s+(?<card>.+?)\\s+is\\s+dealt\\s+damage\\s+by\\s+your\\s+opponent's\\s+abilit(?:y|ies),\\s+the\\s+damage\\s+becomes\\s+0\\s+instead\\.?"
 			);
+
+	/**
+	 * "The damage dealt by your abilities to Forwards opponent controls cannot be reduced." —
+	 * Adelard 17-001H.
+	 *
+	 * <p>A field-wide, permanent version of what "This damage cannot be reduced." does for a single
+	 * damage sentence, so {@link DamageResolver#modifyIncomingDamage} routes it into the same
+	 * {@code unreduced} path rather than adding a second notion of unreducible damage.
+	 *
+	 * <p>"your abilities" excludes Summons. The corpus writes "Summons or abilities" when it means
+	 * both, and Adelard's own sibling ability draws the same line ("if your ability deals damage to a
+	 * Forward, double the damage instead"); the engine already reads a bare "ability" that way for
+	 * {@code nullifyAbilityOnlyDmgSet}. Cu Chaspel 11-004C prints the turn-scoped, source-agnostic
+	 * relative of this and routes through {@code disableOpponentDamageReduction} instead.
+	 */
+	static final Pattern FA_ABILITY_DAMAGE_TO_OPP_FORWARDS_UNREDUCIBLE = Pattern.compile(
+		"(?i)^The\\s+damage\\s+dealt\\s+by\\s+your\\s+abilit(?:y|ies)\\s+to\\s+Forwards?\\s+" +
+		"(?:your\\s+)?opponent\\s+controls?\\s+cannot\\s+be\\s+reduced[.!]?$"
+	);
 
 	/**
 	 * General incoming-damage modifier field ability.

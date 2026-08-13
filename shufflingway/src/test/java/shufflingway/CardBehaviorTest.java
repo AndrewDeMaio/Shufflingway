@@ -13619,6 +13619,105 @@ public class CardBehaviorTest {
 
 
 
+	// =========================================================================================
+	// Shelke 16-029R: "The power of Forwards you control cannot be decreased by your opponent's
+	// Summons or abilities." (Kalmia 18-090R prints the same sentence on a Backup.)
+	//
+	// Wired as a passive grant of POWER_CANNOT_BE_DECREASED_BY_OPP rather than a new mechanism:
+	// every power-decrease path already consults that trait, and already scopes the block to a
+	// decrease coming from the Forward's opponent. Asura 23-039R hands the same trait out through
+	// the quoted per-card wording, so both printings meet at one enforcement point.
+	//
+	// The twin printed beside it on Shelke — "the power of Forwards opponent controls cannot be
+	// increased…" — goes the other way, scanning the opposing field, because it restricts who may
+	// boost rather than marking the Forwards, and so has no per-card trait to hang on.
+	// =========================================================================================
+
+	private static final String SHELKE_NO_DECREASE =
+			"The power of Forwards you control cannot be decreased by your opponent's Summons or abilities.";
+
+	@Test
+	void theNoDecreaseLineParsesAsATraitGrantToYourForwards() {
+		List<FieldPowerGrant> grants = CardData.parseFieldPowerGrants(SHELKE_NO_DECREASE, "Forward");
+
+		assertEquals(1, grants.size());
+		FieldPowerGrant g = grants.get(0);
+		assertEquals(Set.of(CardData.Trait.POWER_CANNOT_BE_DECREASED_BY_OPP), g.grantedTraits());
+		assertEquals(0, g.powerBonus(), "it grants a trait, not power");
+		assertTrue(g.inclForwards());
+		assertFalse(g.inclBackups(), "the grant reaches Forwards even when printed on a Backup");
+		assertFalse(g.affectsOpponent());
+	}
+
+	@Test
+	void shelkeMarksEveryForwardYouControlIncludingHerself() {
+		MainWindow mw = new MainWindow();
+		CardData ally = makeForward("Ally", "Ice", 3, 7000);
+		placeP1Forward(mw, ally);
+		assertFalse(mw.effectiveP1HasTrait(0, CardData.Trait.POWER_CANNOT_BE_DECREASED_BY_OPP));
+
+		placeP1Forward(mw, makeGrantForward("Shelke", "Ice", SHELKE_NO_DECREASE));
+		placeP2Forward(mw, makeForward("Foe", "Fire", 3, 7000));
+
+		assertTrue(mw.effectiveP1HasTrait(0, CardData.Trait.POWER_CANNOT_BE_DECREASED_BY_OPP));
+		assertTrue(mw.effectiveP1HasTrait(1, CardData.Trait.POWER_CANNOT_BE_DECREASED_BY_OPP),
+				"the text names no exception, so Shelke marks herself too");
+		assertFalse(mw.effectiveP2HasTrait(0, CardData.Trait.POWER_CANNOT_BE_DECREASED_BY_OPP),
+				"\"you control\" — the opponent's Forwards are untouched");
+	}
+
+	@Test
+	void theGrantAlsoReachesFromTheBackupRow() {
+		// Kalmia 18-090R prints the identical sentence on a Backup.
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForward("Ally", "Ice", 3, 7000));
+		mw.placeCardInFirstBackupSlot(makeBackupWithPowerGrant("Kalmia", "Ice", SHELKE_NO_DECREASE));
+
+		assertTrue(mw.effectiveP1HasTrait(0, CardData.Trait.POWER_CANNOT_BE_DECREASED_BY_OPP));
+	}
+
+	@Test
+	void anOpponentsEffectCannotLowerAMarkedForwardsPower() {
+		MainWindow mw = new MainWindow();
+		CardData ally = makeForward("Ally", "Ice", 3, 7000);
+		placeP1Forward(mw, ally);
+		placeP1Forward(mw, makeGrantForward("Shelke", "Ice", SHELKE_NO_DECREASE));
+
+		mw.buildGameContext(false).boostTarget(
+				new ForwardTarget(true, 0, ForwardTarget.CardZone.FORWARD), -3000,
+				EnumSet.noneOf(CardData.Trait.class));
+
+		assertEquals(7000, mw.effectiveP1ForwardPower(0), "P2's effect is blocked outright");
+	}
+
+	@Test
+	void theControllersOwnEffectsMayStillLowerIt() {
+		// The trait blocks the opponent only — a cost or drawback of your own still applies.
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForward("Ally", "Ice", 3, 7000));
+		placeP1Forward(mw, makeGrantForward("Shelke", "Ice", SHELKE_NO_DECREASE));
+
+		mw.buildGameContext(true).boostTarget(
+				new ForwardTarget(true, 0, ForwardTarget.CardZone.FORWARD), -3000,
+				EnumSet.noneOf(CardData.Trait.class));
+
+		assertEquals(4000, mw.effectiveP1ForwardPower(0));
+	}
+
+	@Test
+	void aPositiveBoostFromTheOpponentIsUnaffected() {
+		// The trait is about decreases; nothing here should touch an incoming buff.
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForward("Ally", "Ice", 3, 7000));
+		placeP1Forward(mw, makeGrantForward("Shelke", "Ice", SHELKE_NO_DECREASE));
+
+		mw.buildGameContext(false).boostTarget(
+				new ForwardTarget(true, 0, ForwardTarget.CardZone.FORWARD), 2000,
+				EnumSet.noneOf(CardData.Trait.class));
+
+		assertEquals(9000, mw.effectiveP1ForwardPower(0));
+	}
+
 	@Test
 	void theLimitBreakDeclarationIsNotAFieldAbility() {
 		// It is a cost declaration the ETL already reads into lb_cost, so it grants the card
@@ -14751,5 +14850,530 @@ public class CardBehaviorTest {
 		assertEquals(2, mw.buildGameContext(false).selectCharacters(2, false, true, false, null, null,
 				-1, null, -1, null, true, false, false, null, null, null, null, false, null, false).size(),
 				"both Forwards stay eligible, so both can be chosen");
+	}
+
+	// =========================================================================================
+	// Lava Spider 8-022R: "The attacking Forwards you control gain +3000 power."
+	//
+	// The first same-side grant whose filter is board state rather than a card attribute, so it
+	// cannot live in FieldPowerGrant.appliesToCard with the rest — MainWindow gates on it while
+	// summing contributions, reading the same declared-attacker list that "while [card] is
+	// attacking" abilities consult.
+	// =========================================================================================
+
+	private static final String LAVA_SPIDER_TEXT = "The attacking Forwards you control gain +3000 power.";
+
+	/** Builds a Monster whose field abilities, ICBs and power grants are parsed from {@code text}. */
+	private static CardData makeGrantMonster(String name, String element, String text) {
+		return new CardData(null, name, element, 1, 0, "Monster", false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				List.of(), List.of(), CardData.parseFieldAbilities(text, "Monster"),
+				CardData.parseIfControlBoosts(text, "Monster"),
+				CardData.parseFieldPowerGrants(text, "Monster"),
+				List.of(), List.of(), List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				null, null, null, text);
+	}
+
+	@Test
+	void theAttackingFilterParsesAsAStateFilterNotACardFilter() {
+		List<FieldPowerGrant> grants = CardData.parseFieldPowerGrants(LAVA_SPIDER_TEXT, "Monster");
+
+		assertEquals(1, grants.size());
+		FieldPowerGrant g = grants.get(0);
+		assertTrue(g.attackingOnly());
+		assertEquals(3000, g.powerBonus());
+		assertTrue(g.inclForwards());
+		assertFalse(g.affectsOpponent());
+		assertTrue(g.appliesToCard(makeForward("Idle", "Fire", 3, 7000)),
+				"appliesToCard cannot see the board, so it passes a Forward that is standing still");
+	}
+
+	@Test
+	void anIdleForwardGetsNothingFromLavaSpider() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForward("Ally", "Fire", 3, 7000));
+		mw.placeCardInMonsterZone(makeGrantMonster("Lava Spider", "Fire", LAVA_SPIDER_TEXT));
+
+		assertEquals(7000, mw.effectiveP1ForwardPower(0), "nothing has been declared as an attacker");
+	}
+
+	@Test
+	void aDeclaredAttackerPicksTheBoostUp() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForward("Ally", "Fire", 3, 7000));
+		mw.placeCardInMonsterZone(makeGrantMonster("Lava Spider", "Fire", LAVA_SPIDER_TEXT));
+
+		mw.p1DeclaredAttackers.add(mw.p1ForwardCards.get(0));
+
+		assertEquals(10000, mw.effectiveP1ForwardPower(0));
+	}
+
+	@Test
+	void theBoostIsAlreadyVisibleWhileAttackersAreStillBeingPicked() {
+		// declaredAttackers falls back to the in-progress selection before Attack is pressed, so the
+		// boost shows in the power the player is deciding against rather than appearing afterwards.
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForward("Ally", "Fire", 3, 7000));
+		mw.placeCardInMonsterZone(makeGrantMonster("Lava Spider", "Fire", LAVA_SPIDER_TEXT));
+
+		mw.p1AttackSelection.add(0);
+
+		assertEquals(10000, mw.effectiveP1ForwardPower(0));
+	}
+
+	@Test
+	void onlyTheDeclaredForwardIsBoosted() {
+		// The same-field twin case — two records that compare equal, one attacking — cannot be
+		// built: the uniqueness rule breaks the older copy the moment the second is seated. So the
+		// identity matching in the gate is defensive, and what is testable is that a Forward left
+		// out of the declaration is left out of the boost.
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForward("Runner",  "Fire", 3, 7000)); // idx 0
+		placeP1Forward(mw, makeForward("Homebody", "Fire", 3, 7000)); // idx 1
+		mw.placeCardInMonsterZone(makeGrantMonster("Lava Spider", "Fire", LAVA_SPIDER_TEXT));
+
+		mw.p1DeclaredAttackers.add(mw.p1ForwardCards.get(0));
+
+		assertEquals(10000, mw.effectiveP1ForwardPower(0));
+		assertEquals(7000, mw.effectiveP1ForwardPower(1), "it stayed home");
+	}
+
+	@Test
+	void theBoostLiftsWhenTheCombatEnds() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForward("Ally", "Fire", 3, 7000));
+		mw.placeCardInMonsterZone(makeGrantMonster("Lava Spider", "Fire", LAVA_SPIDER_TEXT));
+		mw.p1DeclaredAttackers.add(mw.p1ForwardCards.get(0));
+		assertEquals(10000, mw.effectiveP1ForwardPower(0));
+
+		mw.p1DeclaredAttackers.clear();
+
+		assertEquals(7000, mw.effectiveP1ForwardPower(0), "the grant is live only while the attack is");
+	}
+
+	@Test
+	void theOpponentsAttackersAreNotBoosted() {
+		MainWindow mw = new MainWindow();
+		mw.placeCardInMonsterZone(makeGrantMonster("Lava Spider", "Fire", LAVA_SPIDER_TEXT));
+		placeP2Forward(mw, makeForward("Foe", "Ice", 3, 7000));
+
+		mw.p2DeclaredAttackers.add(mw.p2ForwardCards.get(0));
+
+		assertEquals(7000, mw.effectiveP2ForwardPower(0), "\"you control\" — the boost does not cross the field");
+	}
+
+	// =========================================================================================
+	// Faris 21-114L: "The power of the Job Pirate Forwards and Card Name Viking Forwards other
+	// than Faris you control becomes 8000."
+	//
+	// A base-power replacement rather than a bonus, so it lands in FieldPowerGrant.basePowerSet,
+	// which MainWindow substitutes for the printed power before boosts and reductions are summed
+	// — those still stack on top of the replaced value, in both directions.
+	//
+	// The two filters are ORed, but appliesToCard ANDs job against card name, so the text emits
+	// one grant per branch. Overlap is harmless: both set the same base power.
+	// =========================================================================================
+
+	private static final String FARIS_BASE_POWER =
+			"The power of the Job Pirate Forwards and Card Name Viking Forwards other than Faris you control becomes 8000.";
+
+	/** Builds a Forward carrying a job, a printed power, and grants parsed from {@code text}. */
+	private static CardData makeGrantForwardWithJob(String name, String element, int power,
+			String job, String text) {
+		return new CardData(null, name, element, 3, power, "Forward", false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				List.of(), List.of(), CardData.parseFieldAbilities(text, "Forward"),
+				CardData.parseIfControlBoosts(text, "Forward"),
+				CardData.parseFieldPowerGrants(text, "Forward"),
+				List.of(), List.of(), List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				job, null, null, text);
+	}
+
+	/** Faris on P1 idx 0, then {@code others} from idx 1 up. */
+	private static MainWindow boardWithFaris(CardData... others) {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeGrantForwardWithJob("Faris", "Water", 8000, "Pirate", FARIS_BASE_POWER));
+		for (CardData c : others) placeP1Forward(mw, c);
+		return mw;
+	}
+
+	@Test
+	void theBecomesLineParsesIntoOneGrantPerFilterBranch() {
+		List<FieldPowerGrant> grants = CardData.parseFieldPowerGrants(FARIS_BASE_POWER, "Forward");
+
+		assertEquals(2, grants.size(), "job and card name are ANDed by appliesToCard, so the OR needs two");
+		FieldPowerGrant job = grants.get(0);
+		assertEquals("Pirate", job.jobFilter());
+		assertNull(job.inclCardName());
+		FieldPowerGrant name = grants.get(1);
+		assertNull(name.jobFilter());
+		assertEquals("Viking", name.inclCardName());
+		for (FieldPowerGrant g : grants) {
+			assertEquals(8000, g.basePowerSet());
+			assertEquals(0, g.powerBonus(), "it replaces the base power, it does not add to it");
+			assertEquals("Faris", g.exceptCardName());
+			assertTrue(g.inclForwards());
+			assertFalse(g.inclBackups());
+		}
+	}
+
+	@Test
+	void aWeakPirateIsRaisedToTheReplacedBasePower() {
+		MainWindow mw = boardWithFaris(makeGrantForwardWithJob("Deckhand", "Water", 3000, "Pirate", ""));
+
+		assertEquals(8000, mw.effectiveP1ForwardPower(1));
+	}
+
+	@Test
+	void aStrongPirateIsBroughtDownToIt() {
+		// "becomes" replaces the value outright — it is not a floor.
+		MainWindow mw = boardWithFaris(makeGrantForwardWithJob("Captain", "Water", 9000, "Pirate", ""));
+
+		assertEquals(8000, mw.effectiveP1ForwardPower(1));
+	}
+
+	@Test
+	void theCardNameBranchReachesAForwardWithNoMatchingJob() {
+		MainWindow mw = boardWithFaris(makeForward("Viking", "Water", 2, 5000));
+
+		assertEquals(8000, mw.effectiveP1ForwardPower(1), "Card Name Viking matches with no Job at all");
+	}
+
+	@Test
+	void aForwardMatchingNeitherFilterKeepsItsPrintedPower() {
+		MainWindow mw = boardWithFaris(makeGrantForwardWithJob("Mage", "Water", 5000, "Black Mage", ""));
+
+		assertEquals(5000, mw.effectiveP1ForwardPower(1));
+	}
+
+	@Test
+	void farisIsExcludedFromHerOwnGrant() {
+		// She is a Job Pirate herself, so only the "other than Faris" clause keeps her out; her
+		// printed power here is deliberately not 8000 so the exclusion is visible.
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeGrantForwardWithJob("Faris", "Water", 6000, "Pirate", FARIS_BASE_POWER));
+
+		assertEquals(6000, mw.effectiveP1ForwardPower(0));
+	}
+
+	@Test
+	void theOpponentsPiratesAreUntouched() {
+		MainWindow mw = boardWithFaris();
+		placeP2Forward(mw, makeGrantForwardWithJob("Foe", "Water", 3000, "Pirate", ""));
+
+		assertEquals(3000, mw.effectiveP2ForwardPower(0), "\"you control\" — the replacement stays on one side");
+	}
+
+	@Test
+	void boostsAndReductionsStackOnTopOfTheReplacedBase() {
+		MainWindow mw = boardWithFaris(makeGrantForwardWithJob("Deckhand", "Water", 3000, "Pirate", ""));
+
+		mw.p1ForwardPowerBoost.set(1, 2000);
+		assertEquals(10000, mw.effectiveP1ForwardPower(1), "the boost lands on 8000, not on the printed 3000");
+
+		mw.p1ForwardPowerReduction.set(1, 4000);
+		assertEquals(6000, mw.effectiveP1ForwardPower(1));
+	}
+
+	@Test
+	void aOneShotPowerReplacementOverridesTheContinuousOne() {
+		// basePowerOverrides holds a replacement an effect applied at a definite moment, which
+		// normally resolves after the continuous grant was already in place. Documented limit: the
+		// engine keeps no timestamps, so a Faris arriving later is resolved the same way.
+		MainWindow mw = boardWithFaris(makeGrantForwardWithJob("Deckhand", "Water", 3000, "Pirate", ""));
+
+		mw.basePowerOverrides.put(mw.p1ForwardCards.get(1), 1000);
+
+		assertEquals(1000, mw.effectiveP1ForwardPower(1));
+	}
+
+	@Test
+	void thePiratesFallBackToTheirPrintedPowerWhenFarisLeaves() {
+		MainWindow mw = boardWithFaris(makeGrantForwardWithJob("Deckhand", "Water", 3000, "Pirate", ""));
+		assertEquals(8000, mw.effectiveP1ForwardPower(1));
+
+		mw.lostAbilitiesCards.add(mw.p1ForwardCards.get(0));
+
+		assertEquals(3000, mw.effectiveP1ForwardPower(1), "a passive read off the field goes when the abilities do");
+	}
+
+	// =========================================================================================
+	// Adelard 17-001H: "The damage dealt by your abilities to Forwards opponent controls cannot
+	// be reduced."
+	//
+	// The field-wide, permanent version of what "This damage cannot be reduced." does for a single
+	// damage sentence, so it routes into the same `unreduced` path in modifyIncomingDamage rather
+	// than adding a second notion of unreducible damage.
+	//
+	// "your abilities" excludes Summons — the corpus writes "Summons or abilities" when it means
+	// both, and the engine already reads a bare "ability" that way for nullifyAbilityOnlyDmgSet.
+	// Cu Chaspel 11-004C prints the turn-scoped, source-agnostic relative and goes through
+	// disableOpponentDamageReduction instead.
+	// =========================================================================================
+
+	private static final String ADELARD_UNREDUCIBLE =
+			"The damage dealt by your abilities to Forwards opponent controls cannot be reduced.";
+
+	private static final String SHIELDED_TEXT =
+			"If Shielded is dealt damage, reduce the damage by 2000 instead.";
+
+	/**
+	 * A shielded Forward on P2 idx 0 with a P1-owned ability resolving against it, plus
+	 * {@code p1Field} seated on P1's Forward row.
+	 */
+	private static MainWindow boardWithShieldedTarget(CardData... p1Field) {
+		MainWindow mw = new MainWindow();
+		for (CardData c : p1Field) placeP1Forward(mw, c);
+		placeP2Forward(mw, makeFieldAbilityCard("Shielded", "Ice", "Forward", SHIELDED_TEXT));
+		mw.currentAbilitySource     = makeForward("Caster", "Fire", 3, 5000);
+		mw.currentAbilitySourceIsP1 = true;
+		return mw;
+	}
+
+	@Test
+	void theUnreducibleLineSurvivesAsAFieldAbility() {
+		List<FieldAbility> fas = CardData.parseFieldAbilities(ADELARD_UNREDUCIBLE, "Forward");
+
+		assertEquals(1, fas.size());
+		assertTrue(AutoAbilityTriggers.FA_ABILITY_DAMAGE_TO_OPP_FORWARDS_UNREDUCIBLE
+				.matcher(fas.get(0).effectText()).matches());
+	}
+
+	@Test
+	void aReductionShieldStillWorksWithNoAdelardOnTheField() {
+		MainWindow mw = boardWithShieldedTarget();
+
+		assertEquals(3000, mw.modifyIncomingDamage(false, ForwardTarget.CardZone.FORWARD, 0, 5000, true, false),
+				"the control: 5000 less the shield's 2000");
+	}
+
+	@Test
+	void adelardStripsTheShieldFromHisControllersAbilityDamage() {
+		MainWindow mw = boardWithShieldedTarget(
+				makeFieldAbilityForward("Adelard", ADELARD_UNREDUCIBLE));
+
+		assertEquals(5000, mw.modifyIncomingDamage(false, ForwardTarget.CardZone.FORWARD, 0, 5000, true, false));
+	}
+
+	@Test
+	void aSummonsDamageIsStillReduced() {
+		MainWindow mw = boardWithShieldedTarget(
+				makeFieldAbilityForward("Adelard", ADELARD_UNREDUCIBLE));
+		mw.currentResolutionIsSummon = true;
+
+		assertEquals(3000, mw.modifyIncomingDamage(false, ForwardTarget.CardZone.FORWARD, 0, 5000, true, false),
+				"the text says \"abilities\", and a Summon is not one");
+	}
+
+	@Test
+	void battleDamageIsStillReduced() {
+		MainWindow mw = boardWithShieldedTarget(
+				makeFieldAbilityForward("Adelard", ADELARD_UNREDUCIBLE));
+
+		assertEquals(3000, mw.modifyIncomingDamage(false, ForwardTarget.CardZone.FORWARD, 0, 5000, false, false),
+				"\"dealt by your abilities\" — combat damage is untouched");
+	}
+
+	@Test
+	void adelardDoesNotStripTheShieldFromHisOwnSidesForwards() {
+		// Mirror board: Adelard and the shielded Forward both belong to P2, and P1's ability is what
+		// is resolving, so "your abilities … to Forwards opponent controls" is not satisfied.
+		MainWindow mw = new MainWindow();
+		placeP2Forward(mw, makeFieldAbilityCard("Shielded", "Ice", "Forward", SHIELDED_TEXT));
+		placeP2Forward(mw, makeFieldAbilityForward("Adelard", ADELARD_UNREDUCIBLE));
+		mw.currentAbilitySource     = makeForward("Caster", "Fire", 3, 5000);
+		mw.currentAbilitySourceIsP1 = true;
+
+		assertEquals(3000, mw.modifyIncomingDamage(false, ForwardTarget.CardZone.FORWARD, 0, 5000, true, false));
+	}
+
+	@Test
+	void anAdelardThatLostItsAbilitiesStopsStrippingTheShield() {
+		CardData adelard = makeFieldAbilityForward("Adelard", ADELARD_UNREDUCIBLE);
+		MainWindow mw = boardWithShieldedTarget(adelard);
+
+		mw.lostAbilitiesCards.add(adelard);
+
+		assertEquals(3000, mw.modifyIncomingDamage(false, ForwardTarget.CardZone.FORWARD, 0, 5000, true, false));
+	}
+
+	// =========================================================================================
+	// Cu Chaspel 11-004C: "《Dull》: The damage dealt to Forwards opponent controls cannot be
+	// reduced this turn." — the turn-scoped, source-agnostic relative of Adelard 17-001H.
+	//
+	// The activated ability already parsed and already reached disableOpponentDamageReduction.
+	// What it could not do was stop the one reduction that ran ahead of the guard: a duplicate
+	// FA_REDUCE_ABILITY_DAMAGE block sat above the "cannot be reduced" check in
+	// modifyIncomingDamage, matching text that FA_DAMAGE_MODIFIER below the check already
+	// handled. Three defects fell out of that one block, and removing it fixes all three:
+	//
+	//   * the reduction was applied twice, once by each matcher (Brute Bomber 28-019R);
+	//   * it escaped every "cannot be reduced" route — Cu Chaspel, Adelard, and the per-sentence
+	//     "This damage cannot be reduced." — because all three are checked below it;
+	//   * its "Damage N --" gate lived only in the removed block, so the surviving matcher
+	//     ignored the gate entirely (Siren (V) 22-098H, Tidus 26-112H, Brute Bomber).
+	//
+	// The golden file could not have caught any of this: it records parse outcome, pattern name
+	// and description, and the description for these cards was already coming from the surviving
+	// matcher. Only the damage arithmetic was wrong.
+	// =========================================================================================
+
+	private static final String CU_CHASPEL_TEXT =
+			"《Dull》: The damage dealt to Forwards opponent controls cannot be reduced this turn.";
+
+	private static final String BRUTE_BOMBER_TEXT =
+			"Damage 3 -- If Brute Bomber is dealt damage by abilities, reduce the damage by 2000 instead.";
+
+	private static final String SIREN_TEXT =
+			"Damage 3 -- If Siren (V) is dealt damage, reduce the damage by 1000 instead.";
+
+	/** Builds a Forward whose action abilities and field abilities are both parsed from {@code text}. */
+	private static CardData makeActionAndFieldCard(String name, String type, String text) {
+		return new CardData(null, name, "Fire", 2, "Backup".equals(type) ? 0 : 7000, type,
+				false, 0, false, false, Set.of(), 0, List.of(), null, List.of(),
+				CardData.parseActionAbilities(text), List.of(),
+				CardData.parseFieldAbilities(text, type),
+				List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				null, null, null, text);
+	}
+
+	/** Puts {@code n} cards into {@code isP1}'s damage zone, for the "Damage N --" gates. */
+	private static void takeDamage(MainWindow mw, boolean isP1, int n) {
+		List<CardData> zone = isP1 ? mw.gameState.getP1DamageZone() : mw.gameState.getP2DamageZone();
+		for (int i = 0; i < n; i++) zone.add(makeForward("Damage " + i, "Fire", 1, 1000));
+	}
+
+	/** {@code target} on P2 idx 0 with a P1-owned ability resolving against it. */
+	private static MainWindow boardWithP2Target(CardData target) {
+		MainWindow mw = new MainWindow();
+		placeP2Forward(mw, target);
+		mw.currentAbilitySource     = makeForward("Caster", "Fire", 3, 5000);
+		mw.currentAbilitySourceIsP1 = true;
+		return mw;
+	}
+
+	/** Activates Cu Chaspel's ability on behalf of {@code isP1}. */
+	private static void activateCuChaspel(MainWindow mw, boolean isP1) {
+		CardData cu = makeActionAndFieldCard("Cu Chaspel", "Backup", CU_CHASPEL_TEXT);
+		assertEquals(1, cu.actionAbilities().size(), "the 《Dull》 cost is stripped into an action ability");
+		ActionResolver.parse(cu.actionAbilities().get(0).effectText(), cu)
+				.accept(mw.buildGameContext(isP1));
+	}
+
+	@Test
+	void cuChaspelStripsReductionFromDamageToTheOpponentsForwards() {
+		MainWindow mw = boardWithP2Target(
+				makeFieldAbilityCard("Shielded", "Ice", "Forward", SHIELDED_TEXT));
+		assertEquals(3000, mw.modifyIncomingDamage(false, ForwardTarget.CardZone.FORWARD, 0, 5000, true, false),
+				"the control: the shield is live before the ability is used");
+
+		activateCuChaspel(mw, true);
+
+		assertEquals(5000, mw.modifyIncomingDamage(false, ForwardTarget.CardZone.FORWARD, 0, 5000, true, false));
+	}
+
+	@Test
+	void cuChaspelCoversBattleDamageToo() {
+		// "The damage dealt to Forwards opponent controls" names no source, unlike Adelard's
+		// "dealt by your abilities", so combat is covered as well.
+		MainWindow mw = boardWithP2Target(
+				makeFieldAbilityCard("Shielded", "Ice", "Forward", SHIELDED_TEXT));
+		activateCuChaspel(mw, true);
+
+		assertEquals(5000, mw.modifyIncomingDamage(false, ForwardTarget.CardZone.FORWARD, 0, 5000, false, false));
+	}
+
+	@Test
+	void cuChaspelLeavesItsOwnControllersForwardsAlone() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeFieldAbilityCard("Shielded", "Ice", "Forward", SHIELDED_TEXT));
+		mw.currentAbilitySource     = makeForward("Caster", "Fire", 3, 5000);
+		mw.currentAbilitySourceIsP1 = false;
+
+		activateCuChaspel(mw, true);
+
+		assertEquals(3000, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 0, 5000, true, false),
+				"\"Forwards opponent controls\" — P1's own Forwards keep their shields");
+	}
+
+	@Test
+	void theByAbilitiesReductionIsAppliedOnceNotTwice() {
+		// The text matched two patterns that both subtracted, so 5000 arrived as 1000.
+		MainWindow mw = boardWithP2Target(makeFieldAbilityCard("Brute Bomber", "Fire", "Forward", BRUTE_BOMBER_TEXT));
+		takeDamage(mw, false, 3);
+
+		assertEquals(3000, mw.modifyIncomingDamage(false, ForwardTarget.CardZone.FORWARD, 0, 5000, true, false));
+	}
+
+	@Test
+	void theByAbilitiesReductionStillIgnoresSummonsAndCombat() {
+		MainWindow mw = boardWithP2Target(makeFieldAbilityCard("Brute Bomber", "Fire", "Forward", BRUTE_BOMBER_TEXT));
+		takeDamage(mw, false, 3);
+
+		mw.currentResolutionIsSummon = true;
+		assertEquals(5000, mw.modifyIncomingDamage(false, ForwardTarget.CardZone.FORWARD, 0, 5000, true, false),
+				"\"by abilities\" excludes Summons");
+
+		mw.currentResolutionIsSummon = false;
+		assertEquals(5000, mw.modifyIncomingDamage(false, ForwardTarget.CardZone.FORWARD, 0, 5000, false, false),
+				"and excludes battle damage");
+	}
+
+	@Test
+	void aDamageGatedReductionIsDormantBelowItsThreshold() {
+		// The "Damage 3 --" gate lived only in the removed block, so the surviving matcher reduced
+		// damage from the first turn regardless of how much its controller had taken.
+		MainWindow mw = boardWithP2Target(makeFieldAbilityCard("Siren (V)", "Wind", "Forward", SIREN_TEXT));
+
+		assertEquals(5000, mw.modifyIncomingDamage(false, ForwardTarget.CardZone.FORWARD, 0, 5000, false, false),
+				"no damage taken yet — the ability is not active");
+	}
+
+	@Test
+	void aDamageGatedReductionWakesAtItsThreshold() {
+		MainWindow mw = boardWithP2Target(makeFieldAbilityCard("Siren (V)", "Wind", "Forward", SIREN_TEXT));
+		takeDamage(mw, false, 3);
+
+		assertEquals(4000, mw.modifyIncomingDamage(false, ForwardTarget.CardZone.FORWARD, 0, 5000, false, false));
+	}
+
+	@Test
+	void theGateCountsTheAbilityControllersOwnDamageNotTheOpponents() {
+		MainWindow mw = boardWithP2Target(makeFieldAbilityCard("Siren (V)", "Wind", "Forward", SIREN_TEXT));
+		takeDamage(mw, true, 3);
+
+		assertEquals(5000, mw.modifyIncomingDamage(false, ForwardTarget.CardZone.FORWARD, 0, 5000, false, false),
+				"Siren is P2's, so P1's damage zone must not wake her");
+	}
+
+	@Test
+	void aPerSentenceCannotBeReducedNowLiftsTheByAbilitiesReduction() {
+		// "This damage cannot be reduced." reaches modifyIncomingDamage as the unreduced flag, and
+		// used to arrive too late to stop this particular reduction.
+		MainWindow mw = boardWithP2Target(makeFieldAbilityCard("Brute Bomber", "Fire", "Forward", BRUTE_BOMBER_TEXT));
+		takeDamage(mw, false, 3);
+
+		assertEquals(5000, mw.modifyIncomingDamage(false, ForwardTarget.CardZone.FORWARD, 0, 5000, true, true));
+	}
+
+	@Test
+	void cuChaspelLiftsTheByAbilitiesReductionToo() {
+		MainWindow mw = boardWithP2Target(makeFieldAbilityCard("Brute Bomber", "Fire", "Forward", BRUTE_BOMBER_TEXT));
+		takeDamage(mw, false, 3);
+		activateCuChaspel(mw, true);
+
+		assertEquals(5000, mw.modifyIncomingDamage(false, ForwardTarget.CardZone.FORWARD, 0, 5000, true, false));
+	}
+
+	@Test
+	void adelardLiftsTheByAbilitiesReductionToo() {
+		MainWindow mw = boardWithP2Target(makeFieldAbilityCard("Brute Bomber", "Fire", "Forward", BRUTE_BOMBER_TEXT));
+		takeDamage(mw, false, 3);
+		placeP1Forward(mw, makeFieldAbilityForward("Adelard", ADELARD_UNREDUCIBLE));
+
+		assertEquals(5000, mw.modifyIncomingDamage(false, ForwardTarget.CardZone.FORWARD, 0, 5000, true, false));
 	}
 }

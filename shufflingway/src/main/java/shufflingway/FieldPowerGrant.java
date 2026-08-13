@@ -39,7 +39,9 @@ public record FieldPowerGrant(
         int     exBurstDmgGroupSize, // group size for EX Burst damage zone scaling (e.g. 3 means +N per 3 EX Burst cards)
         int     minDamageThreshold,  // 0 = no restriction; >0 = grant applies only when controller's damage zone has ≥ this many cards
         int     maxDamageThreshold,  // 0 = no restriction; >0 = grant applies only when controller's damage zone has < this many cards
-        Set<CardData.Trait> traitFilter // empty = any card; non-empty = only cards having at least one of these traits
+        Set<CardData.Trait> traitFilter, // empty = any card; non-empty = only cards having at least one of these traits
+        boolean attackingOnly,       // true = applies only while the target is one of the declared attackers
+        int     basePowerSet         // 0 = unused; >0 = the target's base power becomes this instead of its printed value
 ) {
     public FieldPowerGrant {
         // EnumSet, not Set.copyOf: the latter randomises iteration order per JVM run
@@ -60,9 +62,54 @@ public record FieldPowerGrant(
     static FieldPowerGrant sameSideFiltered(boolean inclForwards, boolean inclBackups, boolean inclMonsters,
             String exceptCardName, int powerBonus, Set<CardData.Trait> grantedTraits,
             String elementFilter, Set<CardData.Trait> traitFilter) {
+        return sameSideFiltered(inclForwards, inclBackups, inclMonsters, exceptCardName, powerBonus,
+                grantedTraits, elementFilter, traitFilter, false);
+    }
+
+    /**
+     * As {@link #sameSideFiltered(boolean, boolean, boolean, String, int, Set, String, Set)}, with
+     * the "attacking" state filter of Lava Spider 8-022R
+     * ("The attacking Forwards you control gain +3000 power.").
+     */
+    static FieldPowerGrant sameSideFiltered(boolean inclForwards, boolean inclBackups, boolean inclMonsters,
+            String exceptCardName, int powerBonus, Set<CardData.Trait> grantedTraits,
+            String elementFilter, Set<CardData.Trait> traitFilter, boolean attackingOnly) {
         return new FieldPowerGrant(null, null, inclForwards, inclBackups, inclMonsters,
                 exceptCardName, powerBonus, grantedTraits, false, -1, null, elementFilter,
-                null, 0, 0, null, null, false, false, 0, 0, 1, 0, 0, traitFilter);
+                null, 0, 0, null, null, false, false, 0, 0, 1, 0, 0, traitFilter, attackingOnly, 0);
+    }
+
+    /**
+     * Same-side "the power of [Job X | Card Name Y] Forwards [other than Z] you control becomes N" —
+     * Faris 21-114L. Sets {@link #basePowerSet} rather than {@link #powerBonus}, so every other
+     * boost and reduction lands on top of the replaced value rather than on the printed one.
+     *
+     * <p>{@code jobFilter} and {@code inclCardName} are conjunctive in {@link #appliesToCard}, so a
+     * printing that ORs the two (Faris covers Job Pirate <em>and</em> Card Name Viking) produces one
+     * grant per branch. Overlap is harmless: both set the same base power.
+     */
+    static FieldPowerGrant sameSideBasePower(String jobFilter, String inclCardName,
+            String exceptCardName, int basePowerSet) {
+        return new FieldPowerGrant(jobFilter, null, true, false, false,
+                exceptCardName, 0, EnumSet.noneOf(CardData.Trait.class), false, -1, null, null,
+                inclCardName, 0, 0, null, null, false, false, 0, 0, 1, 0, 0,
+                EnumSet.noneOf(CardData.Trait.class), false, basePowerSet);
+    }
+
+    /** Compatibility constructor preserving the prior 25-arg canonical form; defaults {@code attackingOnly/basePowerSet} to false/0. */
+    public FieldPowerGrant(String jobFilter, String categoryFilter,
+            boolean inclForwards, boolean inclBackups, boolean inclMonsters,
+            String exceptCardName, int powerBonus, Set<CardData.Trait> grantedTraits,
+            boolean affectsOpponent, int costFilter, String costCmp, String elementFilter,
+            String inclCardName, int minBzSize, int minBzFilterCount, String bzFilterJob,
+            String bzFilterCardName, boolean bzFilterFwds, boolean yourTurnOnly,
+            int minDistinctElements, int exBurstDmgPerGroup, int exBurstDmgGroupSize,
+            int minDamageThreshold, int maxDamageThreshold, Set<CardData.Trait> traitFilter) {
+        this(jobFilter, categoryFilter, inclForwards, inclBackups, inclMonsters,
+                exceptCardName, powerBonus, grantedTraits, affectsOpponent, costFilter, costCmp, elementFilter,
+                inclCardName, minBzSize, minBzFilterCount, bzFilterJob, bzFilterCardName, bzFilterFwds, yourTurnOnly,
+                minDistinctElements, exBurstDmgPerGroup, exBurstDmgGroupSize,
+                minDamageThreshold, maxDamageThreshold, traitFilter, false, 0);
     }
 
     /** Compatibility constructor preserving the prior 24-arg canonical form; defaults {@code traitFilter} to empty. */
@@ -221,6 +268,8 @@ public record FieldPowerGrant(
         if (minDamageThreshold > 0) sb.append(" ifDmg>=").append(minDamageThreshold);
         if (maxDamageThreshold > 0) sb.append(" ifDmg<").append(maxDamageThreshold);
         if (!traitFilter.isEmpty()) sb.append(" with").append(traitFilter);
+        if (attackingOnly) sb.append(" whileAttacking");
+        if (basePowerSet > 0) sb.append(" base=").append(basePowerSet);
         return sb.toString();
     }
 
@@ -230,7 +279,9 @@ public record FieldPowerGrant(
      * {@link #appliesToCard(CardData, Set)}, which sees granted and stripped traits too.
      * Does not check which side of the field the card is on — callers must ensure
      * the card and the grant source belong to the same player when {@link #affectsOpponent} is
-     * {@code false}, or to opposing players when {@code true}.
+     * {@code false}, or to opposing players when {@code true}. Nor does it check
+     * {@link #attackingOnly}, which needs the board's declared attackers: {@code MainWindow} gates
+     * on that separately, so a grant that passes this test may still be dormant.
      */
     public boolean appliesToCard(CardData card) {
         return appliesToCard(card, card.traits());
