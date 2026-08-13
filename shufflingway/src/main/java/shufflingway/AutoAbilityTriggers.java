@@ -538,6 +538,38 @@ final class AutoAbilityTriggers {
 	);
 
 	/**
+	 * "[Summons and/or ]abilities of your opponent must choose [cardName] if possible." — the
+	 * targeting counterpart of {@link #FA_OPPONENT_MUST_BLOCK}: while the named card is a legal
+	 * target, the opposing player's effects have to point at it.
+	 *
+	 * <p>Printings differ on the conjunction with no change in meaning — Yaag Rosch 1-174R and
+	 * Cecil 1-162R print "Summons or abilities", Auron 16-136S and five others print "Summons and
+	 * abilities" — so both are accepted. The Summons half is optional because Angeal 28-060R prints
+	 * the abilities-only form, and whether it is present is what decides if Summons are bound.
+	 * Groups: {@code summons} (present only when Summons are named), {@code cardname}.
+	 */
+	static final Pattern FA_OPPONENT_MUST_CHOOSE = Pattern.compile(
+		"(?i)^(?:(?<summons>Summons?)\\s+(?:and|or)\\s+)?Abilit(?:y|ies)\\s+of\\s+your\\s+opponent\\s+" +
+		"must\\s+choose\\s+(?<cardname>.+?)\\s+if\\s+possible[.!]?$"
+	);
+
+	/**
+	 * "If [card] deals damage or is dealt damage while dull, the damage becomes 0 instead (this
+	 * includes player damage)." — Cagnazzo 2-124H, whose own "When Cagnazzo blocks, dull Cagnazzo"
+	 * auto ability is what normally puts it in that state mid-battle.
+	 *
+	 * <p>One sentence covering three damage paths — outgoing combat damage, damage to the opposing
+	 * player, and incoming damage — each gated on the card being dull at the moment the damage
+	 * would apply, not when the battle began.
+	 * Groups: {@code card}.
+	 */
+	static final Pattern FA_DAMAGE_ZERO_WHILE_DULL = Pattern.compile(
+		"(?i)^If\\s+(?<card>.+?)\\s+deals\\s+damage\\s+(?:or|and)\\s+is\\s+dealt\\s+damage\\s+while\\s+dull,\\s+" +
+		"the\\s+damage\\s+becomes\\s+0\\s+instead" +
+		"(?:\\s*\\(this\\s+includes\\s+player\\s+damage\\))?[.!]?$"
+	);
+
+	/**
 	 * "This Forward must block [cardName] if possible." — the blocker-side counterpart of
 	 * {@link #FA_OPPONENT_MUST_BLOCK}. That one sits on the attacker and compels <em>any</em>
 	 * eligible blocker; this one sits on one specific Forward and compels only that Forward,

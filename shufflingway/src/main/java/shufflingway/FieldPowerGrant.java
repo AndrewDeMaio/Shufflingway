@@ -5,9 +5,9 @@ import java.util.EnumSet;
 import java.util.Set;
 
 /**
- * A passive always-on grant: "The [Element / Job X / Category Y / Card Name Z] [type] [other than W]
- * you control gain +N power [and Trait]." or its opponent-side counterpart "The [filter] [type]
- * opponent controls lose N power."
+ * A passive always-on grant: "The [Element / Job X / Category Y / Card Name Z] [type] [with Trait]
+ * [other than W] you control gain +N power [and Trait]." or its opponent-side counterpart
+ * "The [filter] [type] opponent controls lose N power."
  *
  * <p>Active while the owning card is on the field. When {@link #affectsOpponent} is {@code false}
  * the grant scopes to the same player's side (the default); when {@code true} the grant scopes
@@ -38,7 +38,8 @@ public record FieldPowerGrant(
         int     exBurstDmgPerGroup,  // 0 = unused; >0 = bonus per group of exBurstDmgGroupSize EX Burst cards in own damage zone
         int     exBurstDmgGroupSize, // group size for EX Burst damage zone scaling (e.g. 3 means +N per 3 EX Burst cards)
         int     minDamageThreshold,  // 0 = no restriction; >0 = grant applies only when controller's damage zone has ≥ this many cards
-        int     maxDamageThreshold   // 0 = no restriction; >0 = grant applies only when controller's damage zone has < this many cards
+        int     maxDamageThreshold,  // 0 = no restriction; >0 = grant applies only when controller's damage zone has < this many cards
+        Set<CardData.Trait> traitFilter // empty = any card; non-empty = only cards having at least one of these traits
 ) {
     public FieldPowerGrant {
         // EnumSet, not Set.copyOf: the latter randomises iteration order per JVM run
@@ -46,7 +47,38 @@ public record FieldPowerGrant(
         EnumSet<CardData.Trait> traitSet = EnumSet.noneOf(CardData.Trait.class);
         traitSet.addAll(grantedTraits);
         grantedTraits = Collections.unmodifiableSet(traitSet);
+        EnumSet<CardData.Trait> filterSet = EnumSet.noneOf(CardData.Trait.class);
+        if (traitFilter != null) filterSet.addAll(traitFilter);
+        traitFilter = Collections.unmodifiableSet(filterSet);
         if (exceptCardName == null) exceptCardName = "";
+    }
+
+    /**
+     * Same-side grant filtered only by target type, element and/or trait — the shape produced by
+     * "The [Element] [type] [with Trait] [other than X] you control gain +N power [and Trait]."
+     */
+    static FieldPowerGrant sameSideFiltered(boolean inclForwards, boolean inclBackups, boolean inclMonsters,
+            String exceptCardName, int powerBonus, Set<CardData.Trait> grantedTraits,
+            String elementFilter, Set<CardData.Trait> traitFilter) {
+        return new FieldPowerGrant(null, null, inclForwards, inclBackups, inclMonsters,
+                exceptCardName, powerBonus, grantedTraits, false, -1, null, elementFilter,
+                null, 0, 0, null, null, false, false, 0, 0, 1, 0, 0, traitFilter);
+    }
+
+    /** Compatibility constructor preserving the prior 24-arg canonical form; defaults {@code traitFilter} to empty. */
+    public FieldPowerGrant(String jobFilter, String categoryFilter,
+            boolean inclForwards, boolean inclBackups, boolean inclMonsters,
+            String exceptCardName, int powerBonus, Set<CardData.Trait> grantedTraits,
+            boolean affectsOpponent, int costFilter, String costCmp, String elementFilter,
+            String inclCardName, int minBzSize, int minBzFilterCount, String bzFilterJob,
+            String bzFilterCardName, boolean bzFilterFwds, boolean yourTurnOnly,
+            int minDistinctElements, int exBurstDmgPerGroup, int exBurstDmgGroupSize,
+            int minDamageThreshold, int maxDamageThreshold) {
+        this(jobFilter, categoryFilter, inclForwards, inclBackups, inclMonsters,
+                exceptCardName, powerBonus, grantedTraits, affectsOpponent, costFilter, costCmp, elementFilter,
+                inclCardName, minBzSize, minBzFilterCount, bzFilterJob, bzFilterCardName, bzFilterFwds, yourTurnOnly,
+                minDistinctElements, exBurstDmgPerGroup, exBurstDmgGroupSize,
+                minDamageThreshold, maxDamageThreshold, EnumSet.noneOf(CardData.Trait.class));
     }
 
     /** Compatibility constructor preserving the prior 21-arg form; defaults {@code minDamageThreshold/maxDamageThreshold} to 0. */
@@ -188,17 +220,33 @@ public record FieldPowerGrant(
         if (exBurstDmgPerGroup > 0) sb.append(" +").append(exBurstDmgPerGroup).append("/").append(exBurstDmgGroupSize).append("EXBurstDmg");
         if (minDamageThreshold > 0) sb.append(" ifDmg>=").append(minDamageThreshold);
         if (maxDamageThreshold > 0) sb.append(" ifDmg<").append(maxDamageThreshold);
+        if (!traitFilter.isEmpty()) sb.append(" with").append(traitFilter);
         return sb.toString();
     }
 
     /**
-     * Returns {@code true} if this grant applies to {@code card}.
+     * Returns {@code true} if this grant applies to {@code card}, resolving a {@link #traitFilter}
+     * against the card's printed traits. Runtime callers should prefer
+     * {@link #appliesToCard(CardData, Set)}, which sees granted and stripped traits too.
      * Does not check which side of the field the card is on — callers must ensure
      * the card and the grant source belong to the same player when {@link #affectsOpponent} is
      * {@code false}, or to opposing players when {@code true}.
      */
     public boolean appliesToCard(CardData card) {
+        return appliesToCard(card, card.traits());
+    }
+
+    /**
+     * As {@link #appliesToCard(CardData)}, but resolves a {@link #traitFilter} against
+     * {@code currentTraits} — the traits the card has right now — instead of its printed set.
+     * A trait-filtered grant ("The Forwards with Brave … you control gain +3000 power." —
+     * Ash 21-062H) must see Brave an effect granted on the field, and must stop seeing printed
+     * Brave that an effect has stripped, so the caller supplies the resolved set rather than a
+     * delta over the printed one.
+     */
+    public boolean appliesToCard(CardData card, Set<CardData.Trait> currentTraits) {
         if (!exceptCardName.isEmpty() && CardFilters.meetsCardNameFilter(card, exceptCardName)) return false;
+        if (!traitFilter.isEmpty() && Collections.disjoint(traitFilter, currentTraits)) return false;
         boolean typeOk = (inclForwards && card.isForward())
                       || (inclBackups  && card.isBackup())
                       || (inclMonsters && (card.isMonster() || card.alsoCountsAsMonster()));

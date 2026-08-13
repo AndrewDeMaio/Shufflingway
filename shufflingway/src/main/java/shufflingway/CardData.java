@@ -2924,28 +2924,50 @@ public record CardData(
         "(?i)^If\\s+you\\s+control\\s+(?<raw>[^,]+),\\s+(?<target>.+?)\\s+loses?\\s+(?<power>\\d+)\\s+power(?:\\s+(?<instead>instead))?\\.?\\s*$"
     );
 
+    /** The four grantable keyword traits, as an alternation for embedding in a larger pattern. */
+    private static final String TRAIT_KEYWORD = "(?:Haste|Brave|First\\s+Strike|Back\\s+Attack)";
+
     /**
-     * "The [Job X | Category Y] Forwards [other than Z] you control cannot be blocked by
+     * The element names a grant filter may name, as a bare alternation (no group of its own, so
+     * callers can name it). Includes the "Multi-Element" pseudo-element, which
+     * {@link CardFilters#meetsElementFilter} resolves to "has more than one element".
+     */
+    private static final String ELEMENT_KEYWORD =
+            "Multi-Element|Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark";
+
+    /**
+     * The target filter shared by {@link #FIELD_GRANT_CNB_BY_COST_DIRECT} and
+     * {@link #FIELD_GRANT_CNB_BY_COST_QUOTED}: "The [Job X | Category Y | Element] Forwards
+     * [other than Z] you control". Both patterns must carry the same groups — the handler reads
+     * them off whichever matcher won, and a group missing from the other would throw.
+     */
+    private static final String CNB_BY_COST_TARGET =
+        "(?i)^The\\s+(?:Job\\s+(?<job>.+?)|Category\\s+(?<category>.+?)|(?<element>" + ELEMENT_KEYWORD + "))" +
+        "\\s+Forwards?\\s+(?:other\\s+than\\s+(?<except>.+?)\\s+)?you\\s+control\\s+";
+
+    /** The "by a/Forwards of cost N or more/less." tail shared by the two patterns below. */
+    private static final String CNB_BY_COST_TAIL =
+        "by\\s+(?:a\\s+)?Forwards?\\s+of\\s+cost\\s+(?<costval>\\d+)(?:\\s+or\\s+(?<costcmp>less|more))?";
+
+    /**
+     * "The [Job X | Category Y | Element] Forwards [other than Z] you control cannot be blocked by
      * a/Forwards of cost N or more/less."
-     * Groups: {@code job} or {@code category}, {@code except} (optional), {@code costval}, {@code costcmp}.
+     * Groups: {@code job}, {@code category} or {@code element}, {@code except} (optional),
+     * {@code costval}, {@code costcmp}.
      */
     private static final Pattern FIELD_GRANT_CNB_BY_COST_DIRECT = Pattern.compile(
-        "(?i)^The\\s+(?:Job\\s+(?<job>.+?)|Category\\s+(?<category>.+?))\\s+Forwards?\\s+" +
-        "(?:other\\s+than\\s+(?<except>.+?)\\s+)?you\\s+control\\s+" +
-        "cannot\\s+be\\s+blocked\\s+by\\s+(?:a\\s+)?Forwards?\\s+of\\s+cost\\s+" +
-        "(?<costval>\\d+)(?:\\s+or\\s+(?<costcmp>less|more))?\\s*\\.?\\s*$"
+        CNB_BY_COST_TARGET + "cannot\\s+be\\s+blocked\\s+" + CNB_BY_COST_TAIL + "\\s*\\.?\\s*$"
     );
 
     /**
-     * "The [Job X | Category Y] Forwards [other than Z] you control gain
+     * "The [Job X | Category Y | Element] Forwards [other than Z] you control gain
      * "This Forward cannot be blocked by a/Forwards of cost N or more/less.""
+     * (Vaan 15-044L for the Job form, Poppy 18-048R for the Element form.)
      * Groups: same as {@link #FIELD_GRANT_CNB_BY_COST_DIRECT}.
      */
     private static final Pattern FIELD_GRANT_CNB_BY_COST_QUOTED = Pattern.compile(
-        "(?i)^The\\s+(?:Job\\s+(?<job>.+?)|Category\\s+(?<category>.+?))\\s+Forwards?\\s+" +
-        "(?:other\\s+than\\s+(?<except>.+?)\\s+)?you\\s+control\\s+gain\\s+" +
-        "[\"\\u201C]This\\s+Forward\\s+cannot\\s+be\\s+blocked\\s+by\\s+(?:a\\s+)?Forwards?\\s+of\\s+cost\\s+" +
-        "(?<costval>\\d+)(?:\\s+or\\s+(?<costcmp>less|more))?[.][\"\\u201D]\\s*\\.?\\s*$"
+        CNB_BY_COST_TARGET + "gain\\s+[\"\\u201C]This\\s+Forward\\s+cannot\\s+be\\s+blocked\\s+" +
+        CNB_BY_COST_TAIL + "[.][\"\\u201D]\\s*\\.?\\s*$"
     );
 
     /**
@@ -3016,6 +3038,21 @@ public record CardData(
     private static final Pattern ICB_EFFECT_BRAVE             = Pattern.compile("(?i)\\bBrave\\b");
     private static final Pattern ICB_EFFECT_FIRST_STRIKE      = Pattern.compile("(?i)\\bFirst\\s+Strike\\b");
     private static final Pattern ICB_EFFECT_BACK_ATTACK       = Pattern.compile("(?i)\\bBack\\s+Attack\\b");
+
+    /**
+     * Collects the trait keywords named anywhere in {@code text}. Returns an empty set for
+     * {@code null} text, so an optional regex group can be passed straight through.
+     */
+    private static EnumSet<Trait> traitsNamedIn(String text) {
+        EnumSet<Trait> traits = EnumSet.noneOf(Trait.class);
+        if (text == null) return traits;
+        if (ICB_EFFECT_HASTE.matcher(text).find())        traits.add(Trait.HASTE);
+        if (ICB_EFFECT_BRAVE.matcher(text).find())        traits.add(Trait.BRAVE);
+        if (ICB_EFFECT_FIRST_STRIKE.matcher(text).find()) traits.add(Trait.FIRST_STRIKE);
+        if (ICB_EFFECT_BACK_ATTACK.matcher(text).find())  traits.add(Trait.BACK_ATTACK);
+        return traits;
+    }
+
     /**
      * "cannot be chosen by [your opponent's] &lt;scope&gt;" inside an IfControlBoost effects clause.
      *
@@ -3452,9 +3489,9 @@ public record CardData(
             result.add(chosenImmunityOppOnly ? icb.asOpponentScopedChosenImmunity() : icb);
         }
 
-        // Parse "The [Job X / Category Y] Forwards [other than Z] you control [gain "This Forward"]
-        // cannot be blocked by a/Forwards of cost N or more/less." — always-active grants with no
-        // "If you control..." condition, stored as ICBs with an empty conditions list.
+        // Parse "The [Job X / Category Y / Element] Forwards [other than Z] you control [gain "This
+        // Forward"] cannot be blocked by a/Forwards of cost N or more/less." — always-active grants
+        // with no "If you control..." condition, stored as ICBs with an empty conditions list.
         for (String raw : textEn.split("(?i)\\[\\[br\\]\\]")) {
             String seg = SUMMON_MARKUP.matcher(raw.trim()).replaceAll("").trim();
             if (seg.isEmpty()) continue;
@@ -3464,6 +3501,7 @@ public record CardData(
             if (fm == null) continue;
             String job      = fm.group("job");
             String category = fm.group("category");
+            String element  = fm.group("element");
             String except   = fm.group("except");
             int costVal     = Integer.parseInt(fm.group("costval"));
             boolean orMore  = !"less".equalsIgnoreCase(fm.group("costcmp"));
@@ -3472,7 +3510,8 @@ public record CardData(
                     category != null ? category.trim() : null,
                     true, false, false,
                     except   != null ? except.trim()   : null,
-                    0, java.util.Set.of());
+                    0, java.util.Set.of(), false, -1, null,
+                    element  != null ? element.trim()  : null);
             result.add(new IfControlBoost(List.of(), "", "", grantFilter, 0,
                     EnumSet.noneOf(Trait.class), "", false, false, false,
                     new int[]{costVal, orMore ? 1 : 0}));
@@ -3578,16 +3617,24 @@ public record CardData(
 
     /**
      * Matches the bare same-side grant "The [Element] Forwards?|Backups?|Monsters?|Characters?
-     * [other than Z] you control gain +N power" (no Job/Category prefix).
-     * The optional {@code element} group captures an element name prefix (e.g. "Ice").
+     * [with Trait] [other than Z] you control gain +N power" (no Job/Category prefix).
+     * The optional {@code element} group captures an element name prefix (e.g. "Ice"), including
+     * the pseudo-element "Multi-Element" (Nichol 13-096R), which {@link CardFilters#meetsElementFilter}
+     * resolves to "has more than one element". The optional {@code withtrait} group restricts the
+     * grant to cards carrying that trait (Ash 21-062H). The optional trailing {@code traitstext}
+     * hands the boosted cards a trait as well (Poppy 18-048R, "…gain +1000 power and First Strike.")
+     * — the Job/Category form of that already lives in {@link #FIELD_GRANT_PATTERN}.
      * Companion to {@link #FIELD_GRANT_PATTERN}.
      */
     private static final Pattern FIELD_GRANT_BARE_PATTERN = Pattern.compile(
         "(?i)^The\\s+" +
-        "(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)?\\s*" +
+        "(?<element>" + ELEMENT_KEYWORD + ")?\\s*" +
         "(?<targets>Forwards?(?:\\s+and\\s+Monsters?)?|Backups?|Monsters?|Characters?)\\s+" +
+        "(?:with\\s+(?<withtrait>" + TRAIT_KEYWORD + ")\\s+)?" +
         "(?:other\\s+than\\s+(?<except>[A-Z][A-Za-z''\\-]+(?:\\s+[A-Za-z''\\-]+)*)\\s+)?" +
-        "you\\s+control\\s+gains?\\s+\\+(?<power>\\d+)\\s+power[.!]?$"
+        "you\\s+control\\s+gains?\\s+\\+(?<power>\\d+)\\s+power" +
+        "(?:\\s+and\\s+(?<traitstext>" + TRAIT_KEYWORD + "(?:\\s+and\\s+" + TRAIT_KEYWORD + ")*))?" +
+        "[.!]?$"
     );
 
     /**
@@ -3874,11 +3921,12 @@ public record CardData(
                 int[] incl = parseFieldGrantTargetFlags(bareM.group("targets"));
                 String bareExcept = bareM.group("except");
                 String bareElem   = bareM.group("element");
-                result.add(new FieldPowerGrant(null, null, incl[0] != 0, incl[1] != 0, incl[2] != 0,
+                result.add(FieldPowerGrant.sameSideFiltered(incl[0] != 0, incl[1] != 0, incl[2] != 0,
                         bareExcept != null ? bareExcept.trim() : null,
                         Integer.parseInt(bareM.group("power")),
-                        EnumSet.noneOf(Trait.class), false, -1, null,
-                        bareElem != null ? bareElem.trim() : null));
+                        traitsNamedIn(bareM.group("traitstext")),
+                        bareElem != null ? bareElem.trim() : null,
+                        traitsNamedIn(bareM.group("withtrait"))));
                 continue;
             }
 
@@ -4085,11 +4133,14 @@ public record CardData(
      * "active" prefix, bracketed terms, and written Job/Card Name/Category terms.
      * {@code excA} (before "you control") or {@code excB} (after "you control") captures either the
      * source's own name OR an element name (e.g., "other than Fire"); the parser disambiguates downstream.
+     * {@code samejob} captures the trailing "with the same Job as X" qualifier (Bartz 18-047H), whose
+     * Job set is only knowable on the field and so is carried as a flag rather than a job string.
      */
     private static final Pattern SCALING_SELF_FOR_EACH_PATTERN = Pattern.compile(
         "(?i)^For\\s+each\\s+(?<filter>.+?)" +
         "(?:\\s+other\\s+than\\s+(?<excA>[^,]+?))?" +
         "\\s+you\\s+control" +
+        "(?:\\s+with\\s+the\\s+same\\s+Job\\s+as\\s+(?<samejob>[^,]+?))?" +
         "(?:\\s*,?\\s*other\\s+than\\s+(?<excB>[^,]+?))?" +
         ",\\s+(?<target>.+?)\\s+gains?\\s+\\+(?<power>\\d+)\\s+power[.!]?$"
     );
@@ -4309,11 +4360,17 @@ public record CardData(
                     continue; // "other than X" with X not a self-name and not an element — not ours
                 }
             }
+            // "with the same Job as X" is only ours when X is the card itself — a qualifier naming
+            // some other card would be a filter this boost cannot express.
+            String sameJobAs = fe.group("samejob");
+            if (sameJobAs != null && !sameJobAs.trim().equalsIgnoreCase(cardName)) continue;
+
             ScalingFilterParse sf = parseScalingForEachFilter(fe.group("filter"));
             result.add(new ScalingSelfPowerBoost(
                     sf.source(), perUnit,
                     sf.jobFilter(), sf.categoryFilter(), sf.cardNameFilter(),
-                    sf.elementFilter(), excludeElement, sf.requireActive()));
+                    sf.elementFilter(), excludeElement, sf.requireActive(), 1,
+                    sameJobAs != null));
         }
         return List.copyOf(result);
     }

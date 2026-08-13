@@ -1047,6 +1047,22 @@ final class GameContextImpl implements GameContext {
 						}
 					}
 				}
+				// "Summons and abilities of your opponent must choose X if possible." — a taunt only
+				// binds the player across the field from it, so only the effect controller's
+				// opponent's cards are considered. Narrowing the eligible set is what enforces it:
+				// every pick the selection can still make is then a compelled one.
+				//
+				// Only applied while the whole selection has to come from the taunting cards. An
+				// effect choosing more cards than there are taunts must include them and is then
+				// free with the surplus, which the select dialog has no way to express — such a
+				// selection is left unrestricted rather than over-constrained.
+				if (!eligible.isEmpty()) {
+					List<ForwardTarget> compelled = eligible.stream()
+							.filter(t -> t.isP1() != isP1)
+							.filter(t -> mw.mustBeChosenByOpponent(cardAtTarget(t), mw.currentResolutionIsSummon))
+							.toList();
+					if (!compelled.isEmpty() && maxCount <= compelled.size()) eligible.retainAll(compelled);
+				}
 				String costLabel  = formatCostFilterLabel(costVal, costCmp);
 				String powerLabel = powerVal >= 0 ? " of power " + powerVal + (powerCmp != null ? " or " + powerCmp : "") : "";
 				String targetNoun = inclForwards && !inclBackups && !inclMonsters ? "Forward"

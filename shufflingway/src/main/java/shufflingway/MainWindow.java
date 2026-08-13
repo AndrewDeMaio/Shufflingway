@@ -5257,6 +5257,48 @@ public class MainWindow {
 	}
 
 	/**
+	 * True when {@code card} compels the opposing player's Summons ({@code bySummon = true}) or
+	 * abilities to choose it while it is a legal target — the targeting counterpart of
+	 * {@link #attackerMustBeBlocked}.
+	 *
+	 * <p>Read through {@link #effectiveFieldAbilities} so a granted copy taunts exactly as a printed
+	 * one does: Ricard 17-062C hands this ability out through a conditional grant rather than
+	 * printing it outright.
+	 */
+	boolean mustBeChosenByOpponent(CardData card, boolean bySummon) {
+		if (card == null || lostAbilitiesCards.contains(card)) return false;
+		for (FieldAbility fa : effectiveFieldAbilities(card)) {
+			Matcher m = AutoAbilityTriggers.FA_OPPONENT_MUST_CHOOSE.matcher(fa.effectText());
+			if (!m.find() || !m.group("cardname").trim().equalsIgnoreCase(card.name())) continue;
+			// The abilities-only printing (Angeal 28-060R) leaves Summons free to choose elsewhere.
+			if (!bySummon || m.group("summons") != null) return true;
+		}
+		return false;
+	}
+
+	/**
+	 * True when {@code card} carries "If [card] deals damage or is dealt damage while dull, the
+	 * damage becomes 0 instead" (Cagnazzo 2-124H) <em>and</em> is dull right now. Both halves of the
+	 * ability are gated on the same state, so the incoming, outgoing and player-damage paths all
+	 * consult this one check.
+	 *
+	 * <p>The state is read at the moment damage would apply rather than cached: Cagnazzo's own
+	 * "When Cagnazzo blocks, dull Cagnazzo" fires during the battle it then nullifies.
+	 */
+	boolean damageZeroedWhileDull(CardData card) {
+		if (card == null || lostAbilitiesCards.contains(card)) return false;
+		boolean carries = false;
+		for (FieldAbility fa : effectiveFieldAbilities(card)) {
+			Matcher m = AutoAbilityTriggers.FA_DAMAGE_ZERO_WHILE_DULL.matcher(fa.effectText());
+			if (m.find() && m.group("card").trim().equalsIgnoreCase(card.name())) { carries = true; break; }
+		}
+		if (!carries) return false;
+		for (boolean side : new boolean[] { true, false })
+			if (findFieldSlot(card, side) != null) return fieldSlotState(card, side) == CardState.DULL;
+		return false;
+	}
+
+	/**
 	 * The P1 Forward index compelled to block {@code attacker} and legally able to, or {@code -1}.
 	 * "If possible" is what makes the second half necessary: a compelled Forward that is dull, or
 	 * that the attacker's own restrictions exclude, lifts the compulsion instead of deadlocking
@@ -10020,11 +10062,43 @@ public class MainWindow {
 		return true;
 	}
 
+	/**
+	 * The traits {@code target} has right now on {@code isP1}'s side — printed, plus temporary,
+	 * permanent and Monster-side grants, minus stripped ones — for resolving a
+	 * {@link FieldPowerGrant#traitFilter}. Short-circuits to the printed set when the grant has no
+	 * trait filter, so the common case allocates nothing.
+	 *
+	 * <p>Deliberately does not consult {@link FieldGrantCalculator#computeConditionalTraitsForTarget}:
+	 * this feeds field-grant evaluation, and that method walks the same grants — a grant that both
+	 * filtered on a trait and granted one would recurse. The other three sources cover what the
+	 * printed cards need (Ash's own {@code Dull} ability hands out Brave).
+	 */
+	Set<CardData.Trait> fpgTargetTraits(FieldPowerGrant fpg, CardData target, boolean isP1) {
+		if (fpg.traitFilter().isEmpty()) return target.traits();
+		EnumSet<CardData.Trait> out = EnumSet.noneOf(CardData.Trait.class);
+		out.addAll(target.traits());
+		out.addAll(permanentTraits.getOrDefault(target, NO_TRAITS));
+		EnumSet<CardData.Trait> monTemp = (isP1 ? p1MonsterTempTraits : p2MonsterTempTraits).get(target);
+		if (monTemp != null) out.addAll(monTemp);
+		List<CardData> fwds  = isP1 ? p1ForwardCards        : p2ForwardCards;
+		List<EnumSet<CardData.Trait>> temps = isP1 ? p1ForwardTempTraits    : p2ForwardTempTraits;
+		List<EnumSet<CardData.Trait>> rmvd  = isP1 ? p1ForwardRemovedTraits : p2ForwardRemovedTraits;
+		for (int i = 0; i < fwds.size(); i++) {
+			if (fwds.get(i) != target) continue;
+			if (i < temps.size()) out.addAll(temps.get(i));
+			if (i < rmvd.size())  out.removeAll(rmvd.get(i));
+			break;
+		}
+		return out;
+	}
+
 	/** Sum of {@link FieldPowerGrant#powerBonus} from {@code src} for grants that target the opposing side. */
 	private int opposingFieldDebuffContribution(CardData src, CardData target, boolean isP1) {
 		int sum = 0;
 		for (FieldPowerGrant fpg : src.fieldPowerGrants())
-			if (fpg.affectsOpponent() && fpg.appliesToCard(target) && fpgBzConditionMet(fpg, isP1))
+			// isP1 is the *source's* side here, so the target's traits are read from the other side.
+			if (fpg.affectsOpponent() && fpg.appliesToCard(target, fpgTargetTraits(fpg, target, !isP1))
+					&& fpgBzConditionMet(fpg, isP1))
 				sum += fpg.powerBonus();
 		return sum;
 	}
@@ -10036,7 +10110,8 @@ public class MainWindow {
 			if (icb.appliesToCard(target) && icbConditionsMet(icb, isP1))
 				boost += icb.powerBonus();
 		for (FieldPowerGrant fpg : src.fieldPowerGrants())
-			if (!fpg.affectsOpponent() && fpg.appliesToCard(target) && fpgBzConditionMet(fpg, isP1)
+			if (!fpg.affectsOpponent() && fpg.appliesToCard(target, fpgTargetTraits(fpg, target, isP1))
+					&& fpgBzConditionMet(fpg, isP1)
 					&& (!fpg.yourTurnOnly() || isP1 == (gameState.getCurrentPlayer() == GameState.Player.P1))) {
 				boost += fpg.powerBonus();
 				if (fpg.exBurstDmgPerGroup() > 0) {
@@ -10141,7 +10216,34 @@ public class MainWindow {
 		if (ssb.requireActive() && state != CardState.ACTIVE) return false;
 		if (ssb.elementFilter() != null && !c.containsElement(ssb.elementFilter())) return false;
 		if (ssb.excludeElement() != null && c.containsElement(ssb.excludeElement())) return false;
+		if (ssb.sameJobAsSelf() && !sharesAnyJob(c, src)) return false;
 		return matchesScalingFilter(c, ssb.jobFilter(), ssb.categoryFilter(), ssb.cardNameFilter());
+	}
+
+	/**
+	 * True when {@code a} and {@code b} have at least one Job in common, counting Jobs named onto a
+	 * card at runtime ("Bartz gains named Job") alongside its printed ones. Backs the "with the same
+	 * Job as [self]" scaling filter, whose Job set is only known while the card is on the field.
+	 *
+	 * <p>A card with all the Jobs shares a Job with anything that has one — but not with a card that
+	 * has none, since there is then no Job to share.
+	 */
+	private boolean sharesAnyJob(CardData a, CardData b) {
+		Set<String> aJobs = effectiveJobs(a);
+		Set<String> bJobs = effectiveJobs(b);
+		if (a.hasAllJobs()) return b.hasAllJobs() || !bJobs.isEmpty();
+		if (b.hasAllJobs()) return !aJobs.isEmpty();
+		for (String j : aJobs) if (bJobs.contains(j)) return true;
+		return false;
+	}
+
+	/** {@code card}'s Jobs, lower-cased for comparison, including any permanently named Job. */
+	private Set<String> effectiveJobs(CardData card) {
+		Set<String> jobs = new java.util.HashSet<>();
+		for (String j : card.jobs()) jobs.add(j.toLowerCase(java.util.Locale.ROOT));
+		String extra = permanentExtraJobMap.get(card);
+		if (extra != null && !extra.isBlank()) jobs.add(extra.toLowerCase(java.util.Locale.ROOT));
+		return jobs;
 	}
 
 	/**

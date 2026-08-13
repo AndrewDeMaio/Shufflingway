@@ -7,6 +7,10 @@ package shufflingway;
  * {@link #perUnit} multiplied by {@code floor(count / groupSize)}, where {@code count} is
  * derived from {@link #source} and {@code groupSize} is 1 for "for each" patterns and N for
  * "for every N" patterns.
+ *
+ * <p>{@link #sameJobAsSelf} is the one filter that cannot be resolved from card text alone: the
+ * Job it compares against is whatever the source card has on the field right now, which a
+ * "name 1 Job" effect can add to (Bartz 18-047H). The counting code resolves it.
  */
 public record ScalingSelfPowerBoost(
         Source source,
@@ -17,11 +21,12 @@ public record ScalingSelfPowerBoost(
         String elementFilter,  // include-only element (e.g., "Earth"); null if unused
         String excludeElement, // exclude this element (e.g., "Fire"); null if unused
         boolean requireActive, // count only active (non-dull) characters
-        int    groupSize       // 1 for "for each", N for "for every N"
+        int    groupSize,      // 1 for "for each", N for "for every N"
+        boolean sameJobAsSelf  // count only cards sharing a Job with the source card
 ) {
     /** Convenience constructor for sources that do not filter at all (groupSize = 1). */
     public ScalingSelfPowerBoost(Source source, int perUnit) {
-        this(source, perUnit, null, null, null, null, null, false, 1);
+        this(source, perUnit, null, null, null, null, null, false, 1, false);
     }
 
     /** Convenience constructor with all filter fields but groupSize = 1. */
@@ -29,7 +34,15 @@ public record ScalingSelfPowerBoost(
             String jobFilter, String categoryFilter, String cardNameFilter,
             String elementFilter, String excludeElement, boolean requireActive) {
         this(source, perUnit, jobFilter, categoryFilter, cardNameFilter,
-                elementFilter, excludeElement, requireActive, 1);
+                elementFilter, excludeElement, requireActive, 1, false);
+    }
+
+    /** Compatibility constructor preserving the prior 9-arg canonical form; defaults {@code sameJobAsSelf} to false. */
+    public ScalingSelfPowerBoost(Source source, int perUnit,
+            String jobFilter, String categoryFilter, String cardNameFilter,
+            String elementFilter, String excludeElement, boolean requireActive, int groupSize) {
+        this(source, perUnit, jobFilter, categoryFilter, cardNameFilter,
+                elementFilter, excludeElement, requireActive, groupSize, false);
     }
 
     public enum Source {

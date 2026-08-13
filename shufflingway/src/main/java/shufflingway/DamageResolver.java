@@ -43,6 +43,12 @@ class DamageResolver {
 			boolean fromAbility, boolean unreduced) {
 		CardData card = mw.fieldCombatant(isP1, zone, idx);
 		if (card == null) return rawAmount;
+		// "…or is dealt damage while dull, the damage becomes 0 instead" — a replacement, not a
+		// reduction, so it applies to every source and is not lifted by the unreduced flag.
+		if (mw.damageZeroedWhileDull(card)) {
+			mw.logEntry(card.name() + " is dull — incoming damage becomes 0");
+			return 0;
+		}
 		int amount = rawAmount * (mw.turn(isP1).forwardIncomingDmgMult)
 		                       * mw.perCardIncomingDmgMultiplierMap.getOrDefault(card, 1);
 
@@ -464,6 +470,12 @@ class DamageResolver {
 		if (card == null) return rawAmount;
 		if (mw.nextOutgoingDmgZeroSet.remove(card)) return 0;
 		if (mw.dealsNoCombatDamageSet.contains(card)) return 0;   // deals no damage for the whole battle
+		// "If [card] deals damage … while dull, the damage becomes 0 instead" — Cagnazzo dulls
+		// itself when it blocks, so this can flip mid-battle.
+		if (mw.damageZeroedWhileDull(card)) {
+			mw.logEntry(card.name() + " is dull — outgoing damage becomes 0");
+			return 0;
+		}
 		int mult = mw.outgoingDmgMultiplierMap.getOrDefault(card, 1);
 		if (mw.nextOutgoingDmgDoublerSet.remove(card)) mult *= 2;
 		if (target != null) mult *= mw.fieldAbilityCombatOutgoingMult(card, target);
@@ -505,6 +517,8 @@ class DamageResolver {
 
 	/** The points of combat damage {@code attacker} deals to the opposing player. */
 	int combatDamagePointsToOpponent(CardData attacker) {
+		// "(this includes player damage)" is what puts the while-dull replacement on this path too.
+		if (mw.damageZeroedWhileDull(attacker)) return 0;
 		Integer override = outgoingDamageToOpponentOverride(attacker);
 		if (override != null) return override;
 		return sourceHasOutgoingDmgToOpponentDoubler(attacker) ? 2 : 1;

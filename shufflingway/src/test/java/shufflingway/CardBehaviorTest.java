@@ -13484,4 +13484,463 @@ public class CardBehaviorTest {
 		assertEquals(CardState.ACTIVE, mw.p1ForwardStates.get(0));
 		assertEquals(CardState.DULL, mw.p2ForwardStates.get(0), "\"you control\" scopes the sweep");
 	}
+
+	// =========================================================================================
+	// Element- and trait-filtered bare field grants: "The Multi-Element Forwards you control gain
+	// +1000 power." (13-096R Nichol) and "The Forwards with Brave other than Ash you control gain
+	// +3000 power." (21-062H Ash). FIELD_GRANT_BARE_PATTERN listed the eight printed elements but
+	// not the "Multi-Element" pseudo-element, and had no slot at all for a "with Trait" filter, so
+	// both texts matched nothing and each card silently granted nobody anything. The trait filter
+	// is evaluated against the target's *current* traits, not only its printed ones — Ash's own
+	// Dull ability hands Brave to a Forward, and that Forward must then draw the +3000.
+	// =========================================================================================
+
+	private static final String NICHOL_GRANT =
+			"The Multi-Element Forwards you control gain +1000 power.";
+	private static final String ASH_GRANT =
+			"The Forwards with Brave other than Ash you control gain +3000 power.";
+
+	@Test
+	void theMultiElementPseudoElementIsAcceptedAsAGrantFilter() {
+		List<FieldPowerGrant> grants = CardData.parseFieldPowerGrants(NICHOL_GRANT, "Forward");
+
+		assertEquals(1, grants.size(), "the grant must parse — the bare pattern used to reject it");
+		FieldPowerGrant g = grants.get(0);
+		assertEquals("Multi-Element", g.elementFilter());
+		assertTrue(g.inclForwards());
+		assertFalse(g.inclBackups(), "Backups are outside the named target type");
+		assertEquals(1000, g.powerBonus());
+	}
+
+	@Test
+	void aMultiElementGrantBoostsOnlyCardsCarryingMoreThanOneElement() {
+		MainWindow mw = new MainWindow();
+		placeP1GrantBackup(mw, NICHOL_GRANT);
+
+		placeP1Forward(mw, makeForward("Duo",  "Fire/Ice", 3, 7000)); // idx 0
+		placeP1Forward(mw, makeForward("Mono", "Fire",     3, 7000)); // idx 1
+
+		assertEquals(8000, mw.effectiveP1ForwardPower(0), "two elements is Multi-Element");
+		assertEquals(7000, mw.effectiveP1ForwardPower(1), "one element is not");
+	}
+
+	@Test
+	void aTraitFilteredGrantParsesTheTraitAndTheExclusionTogether() {
+		List<FieldPowerGrant> grants = CardData.parseFieldPowerGrants(ASH_GRANT, "Forward");
+
+		assertEquals(1, grants.size(), "\"with Brave\" used to leave the whole text unmatched");
+		FieldPowerGrant g = grants.get(0);
+		assertEquals(Set.of(CardData.Trait.BRAVE), g.traitFilter());
+		assertEquals("Ash", g.exceptCardName(), "the exclusion still parses behind the trait clause");
+		assertEquals(3000, g.powerBonus());
+		assertNull(g.elementFilter(), "no element word means no element filter");
+	}
+
+	@Test
+	void aTraitFilteredGrantSkipsForwardsWithoutTheTraitAndTheNamedException() {
+		MainWindow mw = new MainWindow();
+		placeP1GrantBackup(mw, ASH_GRANT);
+
+		// Ash prints Brave itself, so only "other than Ash" keeps it off its own grant.
+		placeP1Forward(mw, makeForwardWithTraits("Ash",   "Earth", 7000, Set.of(CardData.Trait.BRAVE)));
+		placeP1Forward(mw, makeForwardWithTraits("Bravo", "Earth", 7000, Set.of(CardData.Trait.BRAVE)));
+		placeP1Forward(mw, makeForwardWithTraits("Meek",  "Earth", 7000, Set.of()));
+
+		assertEquals(7000, mw.effectiveP1ForwardPower(0), "the grant excludes the card that prints it");
+		assertEquals(10000, mw.effectiveP1ForwardPower(1), "a Brave ally is boosted");
+		assertEquals(7000, mw.effectiveP1ForwardPower(2), "a Forward without Brave is not");
+	}
+
+	@Test
+	void aTraitFilteredGrantSeesBraveThatWasGrantedRatherThanPrinted() {
+		MainWindow mw = new MainWindow();
+		placeP1GrantBackup(mw, ASH_GRANT);
+		placeP1Forward(mw, makeForwardWithTraits("Meek", "Earth", 7000, Set.of()));
+
+		mw.p1ForwardTempTraits.get(0).add(CardData.Trait.BRAVE);
+
+		assertEquals(10000, mw.effectiveP1ForwardPower(0),
+				"Ash's own Dull ability grants Brave until end of turn — the filter has to see it");
+	}
+
+	@Test
+	void aTraitFilteredGrantDropsAForwardWhoseTraitWasRemoved() {
+		MainWindow mw = new MainWindow();
+		placeP1GrantBackup(mw, ASH_GRANT);
+		placeP1Forward(mw, makeForwardWithTraits("Bravo", "Earth", 7000, Set.of(CardData.Trait.BRAVE)));
+
+		mw.p1ForwardRemovedTraits.get(0).add(CardData.Trait.BRAVE);
+
+		assertEquals(7000, mw.effectiveP1ForwardPower(0),
+				"printed Brave that has been stripped no longer satisfies \"with Brave\"");
+	}
+
+	@Test
+	void anUnfilteredBareGrantIsStillBlindToElementAndTraits() {
+		// Regression on the widening: both new groups are optional, so the plain form must keep
+		// granting to every Forward regardless of element count or traits.
+		MainWindow mw = new MainWindow();
+		placeP1GrantBackup(mw, "The Forwards you control gain +1000 power.");
+
+		placeP1Forward(mw, makeForward("Mono", "Fire", 3, 7000));
+		placeP1Forward(mw, makeForwardWithTraits("Bravo", "Fire", 7000, Set.of(CardData.Trait.BRAVE)));
+
+		FieldPowerGrant g = CardData.parseFieldPowerGrants(
+				"The Forwards you control gain +1000 power.", "Forward").get(0);
+		assertNull(g.elementFilter());
+		assertTrue(g.traitFilter().isEmpty());
+		assertEquals(8000, mw.effectiveP1ForwardPower(0));
+		assertEquals(8000, mw.effectiveP1ForwardPower(1));
+	}
+
+	// =========================================================================================
+	// Element-filtered grants that hand out more than power — Poppy 18-048R, whose three field
+	// abilities boost a different element each. Two are "+1000 power and <Trait>", which the
+	// bare grant pattern could not express (it stopped at the power) and the Job/Category pattern
+	// would not reach (Poppy names no Job). The third grants a quoted ability rather than a trait,
+	// which is stored as a condition-less IfControlBoost carrying a cost filter — that path
+	// existed for Vaan 15-044L's Job form and only needed the element branch.
+	// =========================================================================================
+
+	private static final String POPPY_TEXT =
+			"The Wind Forwards you control gain \"This Forward cannot be blocked by a Forward of cost 3 or more.\"[[br]]"
+			+ "   The Ice Forwards you control gain +1000 power and First Strike.[[br]]"
+			+ "   The Earth Forwards you control gain +1000 power and Brave.";
+
+	/** Builds a Forward whose field power grants and IfControlBoosts are both parsed from {@code text}. */
+	private static CardData makeGrantForward(String name, String element, String text) {
+		return new CardData(null, name, element, 3, 7000, "Forward", false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				List.of(), List.of(), CardData.parseFieldAbilities(text, "Forward"),
+				CardData.parseIfControlBoosts(text, "Forward"),
+				CardData.parseFieldPowerGrants(text, "Forward"),
+				List.of(), List.of(), List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				null, null, null, text);
+	}
+
+	@Test
+	void anElementGrantCarriesBothItsPowerAndItsTrait() {
+		List<FieldPowerGrant> grants = CardData.parseFieldPowerGrants(POPPY_TEXT, "Forward");
+
+		assertEquals(2, grants.size(), "the two power grants parse; the third line is an ICB");
+		FieldPowerGrant ice = grants.get(0);
+		assertEquals("Ice", ice.elementFilter());
+		assertEquals(1000, ice.powerBonus());
+		assertEquals(Set.of(CardData.Trait.FIRST_STRIKE), ice.grantedTraits(),
+				"the trailing \"and First Strike\" used to be dropped with the whole match");
+		FieldPowerGrant earth = grants.get(1);
+		assertEquals("Earth", earth.elementFilter());
+		assertEquals(1000, earth.powerBonus());
+		assertEquals(Set.of(CardData.Trait.BRAVE), earth.grantedTraits());
+	}
+
+	@Test
+	void eachElementGrantReachesOnlyItsOwnElement() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeGrantForward("Poppy", "Wind", POPPY_TEXT)); // idx 0
+		placeP1Forward(mw, makeForward("Icer",  "Ice",   3, 7000));        // idx 1
+		placeP1Forward(mw, makeForward("Digger", "Earth", 3, 7000));       // idx 2
+
+		assertEquals(8000, mw.effectiveP1ForwardPower(1));
+		assertTrue(mw.effectiveP1HasTrait(1, CardData.Trait.FIRST_STRIKE), "Ice gets First Strike");
+		assertFalse(mw.effectiveP1HasTrait(1, CardData.Trait.BRAVE), "and not the Earth grant's Brave");
+
+		assertEquals(8000, mw.effectiveP1ForwardPower(2));
+		assertTrue(mw.effectiveP1HasTrait(2, CardData.Trait.BRAVE), "Earth gets Brave");
+		assertFalse(mw.effectiveP1HasTrait(2, CardData.Trait.FIRST_STRIKE));
+
+		assertEquals(7000, mw.effectiveP1ForwardPower(0), "Poppy is Wind — neither power grant hits it");
+	}
+
+	@Test
+	void theElementFilteredUnblockableGrantParsesAsACostFilteredBoost() {
+		List<IfControlBoost> icbs = CardData.parseIfControlBoosts(POPPY_TEXT, "Forward");
+
+		IfControlBoost cnb = icbs.stream().filter(i -> i.cannotBeBlockedByCost() != null).findFirst()
+				.orElseThrow(() -> new AssertionError("the Wind line must produce a cost-filtered ICB"));
+		assertArrayEquals(new int[] { 3, 1 }, cnb.cannotBeBlockedByCost(), "cost 3 or more");
+		assertEquals("Wind", cnb.targetFilter().elementFilter(),
+				"the element branch feeds the same target filter the Job form uses");
+		assertTrue(cnb.conditions().isEmpty(), "the grant is always active — no \"If you control\" gate");
+	}
+
+	@Test
+	void onlyWindForwardsShakeOffTheExpensiveBlocker() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeGrantForward("Poppy", "Wind", POPPY_TEXT)); // idx 0
+		placeP1Forward(mw, makeForward("Gale", "Wind", 3, 7000));          // idx 1
+		placeP1Forward(mw, makeForward("Icer", "Ice",  3, 7000));          // idx 2
+
+		assertTrue(mw.p1AttackerCostFiltersExclude(1, 3), "a Wind ally cannot be blocked by cost 3");
+		assertTrue(mw.p1AttackerCostFiltersExclude(0, 4),
+				"Poppy is Wind and the grant names no exception, so it covers itself too");
+		assertFalse(mw.p1AttackerCostFiltersExclude(1, 2), "a cheaper blocker is still allowed");
+		assertFalse(mw.p1AttackerCostFiltersExclude(2, 3), "and the Ice Forward gets no such grant");
+	}
+
+	// =========================================================================================
+	// "For each Forward other than Bartz you control with the same Job as Bartz, Bartz gains
+	// +2000 power." (18-047H). Every other scaling filter resolves from card text — a Job name, a
+	// Category, an element — but this one compares against whatever Jobs the source has *on the
+	// field*, and Bartz's own enters-the-field ability names a third Job onto himself. So the
+	// filter is carried as a flag and resolved at count time against permanentExtraJobMap, rather
+	// than being frozen into a job string at parse time.
+	// =========================================================================================
+
+	private static final String BARTZ_TEXT =
+			"When Bartz enters the field, name 1 Job and 1 Element other than Light or Dark. "
+			+ "Bartz gains named Job and Element. (This effect does not end at the end of the turn.)[[br]]"
+			+ "   For each Forward other than Bartz you control with the same Job as Bartz, Bartz gains +2000 power.[[br]]"
+			+ "   Bartz cannot be chosen by your opponent's Summons or abilities that share its Element.";
+
+	/** Builds a Forward carrying {@code job} whose scaling self boosts are parsed from {@code text}. */
+	private static CardData makeJobScalingForward(String name, String element, int power,
+			String job, String text) {
+		return new CardData(null, name, element, 2, power, "Forward", false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				List.of(), List.of(), CardData.parseFieldAbilities(text, "Forward"),
+				List.of(), List.of(), CardData.parseScalingSelfPowerBoosts(text, "Forward", name),
+				List.of(), List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				job, null, null, text);
+	}
+
+	private static CardData placeBartz(MainWindow mw) {
+		CardData bartz = makeJobScalingForward("Bartz", "Wind", 5000, "Wanderer/Warrior of Light", BARTZ_TEXT);
+		placeP1Forward(mw, bartz);
+		return bartz;
+	}
+
+	@Test
+	void theSameJobQualifierParsesAsAFlagRatherThanAJobName() {
+		List<ScalingSelfPowerBoost> boosts =
+				CardData.parseScalingSelfPowerBoosts(BARTZ_TEXT, "Forward", "Bartz");
+
+		assertEquals(1, boosts.size(), "the trailing \"with the same Job as\" used to defeat the match");
+		ScalingSelfPowerBoost b = boosts.get(0);
+		assertEquals(ScalingSelfPowerBoost.Source.OTHER_FORWARDS_YOU_CONTROL, b.source());
+		assertEquals(2000, b.perUnit());
+		assertTrue(b.sameJobAsSelf());
+		assertNull(b.jobFilter(), "the Job is not knowable at parse time, so none is recorded");
+	}
+
+	@Test
+	void bartzCountsOnlyTheForwardsSharingOneOfHisJobs() {
+		MainWindow mw = new MainWindow();
+		placeBartz(mw);
+		placeP1Forward(mw, makeJobCard("Faris",  "Wind",  "Forward", "Wanderer"));
+		placeP1Forward(mw, makeJobCard("Firion", "Water", "Forward", "Warrior of Light"));
+		placeP1Forward(mw, makeJobCard("Kain",   "Wind",  "Forward", "Dragoon"));
+
+		assertEquals(9000, mw.effectiveP1ForwardPower(0),
+				"5000 base, +2000 for each of the two Forwards sharing a printed Job");
+	}
+
+	@Test
+	void aNamedJobWidensWhoCountsForBartz() {
+		MainWindow mw = new MainWindow();
+		CardData bartz = placeBartz(mw);
+		placeP1Forward(mw, makeJobCard("Kain", "Wind", "Forward", "Dragoon"));
+
+		assertEquals(5000, mw.effectiveP1ForwardPower(0), "a Dragoon shares nothing with Bartz yet");
+
+		// What "Bartz gains named Job" does when the enters-the-field ability resolves.
+		mw.permanentExtraJobMap.put(bartz, "Dragoon");
+
+		assertEquals(7000, mw.effectiveP1ForwardPower(0),
+				"the named Job counts as Bartz's own, so the Dragoon now shares one");
+	}
+
+	@Test
+	void aNamedJobOnAnAllyAlsoMakesItCount() {
+		MainWindow mw = new MainWindow();
+		placeBartz(mw);
+		CardData ally = makeJobCard("Kain", "Wind", "Forward", "Dragoon");
+		placeP1Forward(mw, ally);
+
+		mw.permanentExtraJobMap.put(ally, "Wanderer");
+
+		assertEquals(7000, mw.effectiveP1ForwardPower(0),
+				"the comparison reads granted Jobs on both sides, not just on Bartz");
+	}
+
+	@Test
+	void bartzCountsNeitherHimselfNorAJoblessForward() {
+		// A second Bartz cannot be tested against here: the uniqueness rule breaks the first copy
+		// on arrival, so "other than Bartz" only ever has to keep Bartz from counting himself.
+		MainWindow mw = new MainWindow();
+		placeBartz(mw);
+
+		assertEquals(5000, mw.effectiveP1ForwardPower(0), "alone, Bartz does not count himself");
+
+		placeP1Forward(mw, makeForward("Drifter", "Wind", 2, 7000)); // no Job at all
+
+		assertEquals(5000, mw.effectiveP1ForwardPower(0), "and a jobless Forward shares nothing");
+	}
+
+	@Test
+	void theOpponentsMatchingJobsDoNotCountForBartz() {
+		MainWindow mw = new MainWindow();
+		placeBartz(mw);
+		placeP2Forward(mw, makeJobCard("Faris", "Wind", "Forward", "Wanderer"));
+
+		assertEquals(5000, mw.effectiveP1ForwardPower(0), "\"you control\" scopes the count");
+	}
+
+	// =========================================================================================
+	// "If Cagnazzo deals damage or is dealt damage while dull, the damage becomes 0 instead (this
+	// includes player damage)." (2-124H) — one sentence covering three damage paths, all gated on
+	// the same state. The gate has to be read when the damage applies rather than when the battle
+	// opens, because Cagnazzo's own "When Cagnazzo blocks, dull Cagnazzo" fires mid-battle: it
+	// blocks while active, dulls itself, and then neither deals nor takes damage.
+	// =========================================================================================
+
+	private static final String CAGNAZZO_TEXT =
+			"Cagnazzo cannot block Forwards forming a party.[[br]]"
+			+ "When Cagnazzo blocks, dull Cagnazzo.[[br]]"
+			+ "If Cagnazzo deals damage or is dealt damage while dull, the damage becomes 0 instead "
+			+ "(this includes player damage).";
+
+	private static CardData placeCagnazzo(MainWindow mw) {
+		CardData cagnazzo = makeIcbCard("Cagnazzo", "Water", "Forward", CAGNAZZO_TEXT);
+		placeP1Forward(mw, cagnazzo);
+		return cagnazzo;
+	}
+
+	@Test
+	void anActiveCagnazzoTakesDamageNormally() {
+		MainWindow mw = new MainWindow();
+		placeCagnazzo(mw);
+
+		assertEquals(CardState.ACTIVE, mw.p1ForwardStates.get(0));
+		assertEquals(5000, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 0, 5000, false, false),
+				"the replacement is gated on being dull, not on carrying the ability");
+	}
+
+	@Test
+	void aDullCagnazzoTakesNoDamageFromEitherSource() {
+		MainWindow mw = new MainWindow();
+		placeCagnazzo(mw);
+		mw.p1ForwardStates.set(0, CardState.DULL);
+
+		assertEquals(0, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 0, 5000, false, false),
+				"battle damage becomes 0");
+		assertEquals(0, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 0, 9000, true, false),
+				"and so does ability damage — the text names no source");
+		assertEquals(0, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 0, 9000, true, true),
+				"a replacement to 0 is not a reduction, so unreduced damage does not slip past it");
+	}
+
+	@Test
+	void aDullCagnazzoDealsNoCombatDamage() {
+		MainWindow mw = new MainWindow();
+		placeCagnazzo(mw);
+		CardData victim = makeForward("Victim", "Fire", 3, 7000);
+		placeP2Forward(mw, victim);
+
+		assertEquals(5000, mw.modifyOutgoingCombatDamage(true, 0, 5000, victim), "active, it deals its power");
+
+		mw.p1ForwardStates.set(0, CardState.DULL);
+
+		assertEquals(0, mw.modifyOutgoingCombatDamage(true, 0, 5000, victim), "dull, it deals nothing");
+	}
+
+	@Test
+	void aDullCagnazzoDealsNoPlayerDamage() {
+		MainWindow mw = new MainWindow();
+		CardData cagnazzo = placeCagnazzo(mw);
+
+		assertEquals(1, mw.combatDamagePointsToOpponent(cagnazzo), "an unblocked attack normally deals 1");
+
+		mw.p1ForwardStates.set(0, CardState.DULL);
+
+		assertEquals(0, mw.combatDamagePointsToOpponent(cagnazzo),
+				"\"(this includes player damage)\" puts the replacement on this path too");
+	}
+
+	// =========================================================================================
+	// "Summons and/or abilities of your opponent must choose X if possible." — a taunt, and the
+	// targeting counterpart of the existing "Opponent must block X if possible". Seven card names
+	// print it across ten printings, split between "and" and "or" with no difference in meaning,
+	// so the pattern accepts both; Angeal 28-060R prints an abilities-only form that must leave
+	// Summons free. Enforced by narrowing the eligible target set, so every pick the selection can
+	// still make is a compelled one.
+	// =========================================================================================
+
+	private static final String YAAG_ROSCH_TEXT =
+			"Summons or abilities of your opponent must choose Yaag Rosch if possible.";
+	private static final String AURON_TEXT =
+			"Summons and abilities of your opponent must choose Auron if possible.";
+	private static final String ANGEAL_TEXT =
+			"Abilities of your opponent must choose Angeal if possible.";
+
+	/** P2 (the AI side) picks 1 Forward from P1's field, exercising the real eligibility path. */
+	private static List<ForwardTarget> oppChoosesOneP1Forward(MainWindow mw) {
+		return mw.buildGameContext(false).selectCharacters(1, false, true, false, null, null,
+				-1, null, -1, null, true, false, false, null, null, null, null, false, null, false);
+	}
+
+	@Test
+	void bothConjunctionsOfTheTauntReadTheSame() {
+		MainWindow mw = new MainWindow();
+		CardData yaag  = makeIcbCard("Yaag Rosch", "Water", "Backup",  YAAG_ROSCH_TEXT);
+		CardData auron = makeIcbCard("Auron",      "Water", "Forward", AURON_TEXT);
+
+		for (boolean bySummon : new boolean[] { true, false }) {
+			assertTrue(mw.mustBeChosenByOpponent(yaag,  bySummon), "\"Summons or abilities\" binds both");
+			assertTrue(mw.mustBeChosenByOpponent(auron, bySummon), "\"Summons and abilities\" binds both");
+		}
+	}
+
+	@Test
+	void theAbilitiesOnlyTauntLeavesSummonsFree() {
+		MainWindow mw = new MainWindow();
+		CardData angeal = makeIcbCard("Angeal", "Earth", "Forward", ANGEAL_TEXT);
+
+		assertTrue(mw.mustBeChosenByOpponent(angeal, false), "abilities are bound");
+		assertFalse(mw.mustBeChosenByOpponent(angeal, true), "Summons are not — the text does not name them");
+	}
+
+	@Test
+	void anOpponentsAbilityIsForcedOntoTheTauntingForward() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForward("Decoy A", "Fire", 3, 7000));
+		placeP1Forward(mw, makeIcbCard("Auron", "Water", "Forward", AURON_TEXT));
+		placeP1Forward(mw, makeForward("Decoy B", "Fire", 3, 7000));
+
+		List<ForwardTarget> chosen = oppChoosesOneP1Forward(mw);
+
+		assertEquals(1, chosen.size());
+		assertEquals("Auron", mw.p1ForwardCards.get(chosen.get(0).idx()).name(),
+				"two decoys were eligible; the taunt is what leaves only one legal pick");
+	}
+
+	@Test
+	void anOpponentsSummonIsForcedOntoTheTauntingForwardToo() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForward("Decoy", "Fire", 3, 7000));
+		placeP1Forward(mw, makeIcbCard("Auron", "Water", "Forward", AURON_TEXT));
+		mw.currentResolutionIsSummon = true;
+
+		List<ForwardTarget> chosen = oppChoosesOneP1Forward(mw);
+
+		assertEquals(1, chosen.size());
+		assertEquals("Auron", mw.p1ForwardCards.get(chosen.get(0).idx()).name(),
+				"\"Summons and abilities\" reaches the Summon path, which reads a different flag");
+	}
+
+	@Test
+	void aSelectionWiderThanTheTauntsIsLeftUnrestricted() {
+		// The documented limit: one taunt cannot constrain a two-card choice, because the second
+		// pick is free and the select dialog has no way to force one card and free the other. The
+		// selection is left whole rather than wrongly narrowed to the taunt alone.
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeIcbCard("Auron", "Water", "Forward", AURON_TEXT));
+		placeP1Forward(mw, makeForward("Decoy", "Fire", 3, 7000));
+
+		assertEquals(2, mw.buildGameContext(false).selectCharacters(2, false, true, false, null, null,
+				-1, null, -1, null, true, false, false, null, null, null, null, false, null, false).size(),
+				"both Forwards stay eligible, so both can be chosen");
+	}
 }

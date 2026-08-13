@@ -136,12 +136,14 @@ public class FieldAbilityParsingTest {
         if (AutoAbilityTriggers.FA_OUTGOING_FLAT_BOOST.matcher(fa.effectText()).find()) return true;
         if (AutoAbilityTriggers.FA_INCOMING_REDUCTION_VS_COST.matcher(fa.effectText()).find()) return true;
         if (AutoAbilityTriggers.FA_DAMAGE_WHILE_DULL_REDUCTION.matcher(fa.effectText()).find()) return true;
+        if (AutoAbilityTriggers.FA_DAMAGE_ZERO_WHILE_DULL.matcher(fa.effectText()).find()) return true;
         if (AutoAbilityTriggers.FA_NULLIFY_TRAIT_FORWARD_DAMAGE.matcher(fa.effectText()).find()) return true;
         if (AutoAbilityTriggers.FA_OUTGOING_DAMAGE_DOUBLER.matcher(fa.effectText()).find()) return true;
         if (AutoAbilityTriggers.FA_RECV_PLAYER_DAMAGE_ACTIVE_DULL_ZERO.matcher(fa.effectText()).find()) return true;
         if (AutoAbilityTriggers.FA_DISCARD_JOB_TO_CAST.matcher(fa.effectText()).find()) return true;
         if (ActionResolverFieldAbility.tryParseBeginningOfOppMainPhase1FieldAbility(fa.effectText(), source) != null) return true;
         if (AutoAbilityTriggers.FA_OPPONENT_MUST_BLOCK.matcher(fa.effectText()).find()) return true;
+        if (AutoAbilityTriggers.FA_OPPONENT_MUST_CHOOSE.matcher(fa.effectText()).find()) return true;
         if (AutoAbilityTriggers.FA_ALL_FORWARDS_LOSE_HASTE.matcher(fa.effectText()).find()) return true;
         if (AutoAbilityTriggers.FA_FORWARDS_CANNOT_GAIN_HASTE.matcher(fa.effectText()).find()) return true;
         if (!CardData.parseSelfTraitGrant(fa.effectText(), source.name()).isEmpty()) return true;
@@ -324,6 +326,8 @@ public class FieldAbilityParsingTest {
         if (m.find()) return "IncomingReductionVsCost[cost≥" + m.group("cost") + " -" + m.group("amount") + "]";
         m = AutoAbilityTriggers.FA_DAMAGE_WHILE_DULL_REDUCTION.matcher(fa.effectText());
         if (m.find()) return "DmgWhileDullReduction[-" + m.group("amount") + "]";
+        m = AutoAbilityTriggers.FA_DAMAGE_ZERO_WHILE_DULL.matcher(fa.effectText());
+        if (m.find()) return "DmgZeroWhileDull[" + m.group("card") + "]";
         m = AutoAbilityTriggers.FA_NULLIFY_TRAIT_FORWARD_DAMAGE.matcher(fa.effectText());
         if (m.find()) {
             String t2 = m.group("trait2");
@@ -335,6 +339,9 @@ public class FieldAbilityParsingTest {
         if (m.find()) return "RecvPlayerDmgActiveDullZero[" + m.group("card") + "]";
         m = AutoAbilityTriggers.FA_OPPONENT_MUST_BLOCK.matcher(fa.effectText());
         if (m.find()) return "OpponentMustBlock[" + m.group("cardname") + "]";
+        m = AutoAbilityTriggers.FA_OPPONENT_MUST_CHOOSE.matcher(fa.effectText());
+        if (m.find()) return "OpponentMustChoose[" + m.group("cardname")
+                + (m.group("summons") != null ? " summons+abilities" : " abilities") + "]";
         if (AutoAbilityTriggers.FA_ALL_FORWARDS_LOSE_HASTE.matcher(fa.effectText()).find()) return "AllForwardsLoseHaste";
         if (AutoAbilityTriggers.FA_FORWARDS_CANNOT_GAIN_HASTE.matcher(fa.effectText()).find()) return "ForwardsCannotGainHaste";
         if (CardData.isBackupCpAbility(fa.effectText())) return "BackupCpAbility";
