@@ -596,6 +596,17 @@ final class AutoAbilityTriggers {
 	);
 
 	/**
+	 * "[card] cannot be blocked by a Monster that is also a Forward." — Jack Garland 29-123R.
+	 *
+	 * <p>A restriction on the blocker's card type, so it bars exactly the Monsters some effect has
+	 * turned into Forwards — the only Monsters eligible to block at all — and leaves Backups acting
+	 * as Forwards alone, since those are not Monsters. Group: {@code card}.
+	 */
+	static final Pattern FA_CANNOT_BE_BLOCKED_BY_MONSTER_FORWARD = Pattern.compile(
+		"(?i)^(?<card>.+?)\\s+cannot\\s+be\\s+blocked\\s+by\\s+a\\s+Monster\\s+that\\s+is\\s+also\\s+a\\s+Forward[.!]?$"
+	);
+
+	/**
 	 * "[card] cannot form parties." — Berserker 3-091C. A restriction on joining a party, not on
 	 * attacking: the card may still attack on its own. Group: {@code card}.
 	 */

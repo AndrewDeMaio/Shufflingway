@@ -13615,6 +13615,246 @@ public class CardBehaviorTest {
 		assertFalse(mw.forwardsMustBlock(true), "a passive read off the field goes when the abilities do");
 	}
 
+
+
+
+
+	@Test
+	void theLimitBreakDeclarationIsNotAFieldAbility() {
+		// It is a cost declaration the ETL already reads into lb_cost, so it grants the card
+		// nothing and must not sit in fieldAbilities() as a record nothing will ever parse.
+		String text = "Limit Break -- 1[[br]]Jack Garland is also Card Name Garland in all situations.[[br]]"
+				+ "Jack Garland cannot be blocked by a Monster that is also a Forward.";
+		List<FieldAbility> fas = CardData.parseFieldAbilities(text, "Forward");
+
+		assertEquals(1, fas.size(), "only the block restriction is an ability");
+		assertEquals("Jack Garland cannot be blocked by a Monster that is also a Forward.",
+				fas.get(0).effectText(), "the alias declaration was already excluded; the LB line now is too");
+	}
+
+	@Test
+	void aLimitBreakCardKeepsItsRealAbilitiesAtTheirNewIndices() {
+		// The exclusion renumbers every LB card's abilities, so the guard is that nothing is lost.
+		String text = "(Cards with 《LB》 cannot be included in your main deck.)[[br]]Limit Break -- 1[[br]]"
+				+ "Brave[[br]]Maat must attack once per turn if possible.";
+		List<FieldAbility> fas = CardData.parseFieldAbilities(text, "Forward");
+
+		assertEquals(1, fas.size(), "the reminder, the LB line and the keyword all drop out");
+		assertEquals("Maat must attack once per turn if possible.", fas.get(0).effectText());
+	}
+
+	// =========================================================================================
+	// The targeting shield handed to a filtered *set* rather than a named card:
+	// "The Monsters other than Silver Dragon you control cannot be chosen by your opponent's
+	// Summons or abilities." (23-044R), the Backup twin on Yaag Rosch 22-086C, and the
+	// trait-filtered "The Forwards with Brave other than White Tiger l'Cie Nimbus you control
+	// cannot be chosen by your opponent's abilities." (23-035H).
+	//
+	// Stored the way the Card Name form already was — an IfControlBoost with no conditions — but
+	// carrying a target filter instead of a name. The immunity lookup resolves a filter by walking
+	// the field, so nothing downstream needed a new mechanism. The trait half is read against the
+	// card's *current* traits, since Brave can be granted or stripped.
+	// =========================================================================================
+
+	private static final String SILVER_DRAGON_SHIELD =
+			"The Monsters other than Silver Dragon you control cannot be chosen by your opponent's Summons or abilities.";
+	private static final String NIMBUS_SHIELD =
+			"The Forwards with Brave other than White Tiger l'Cie Nimbus you control "
+			+ "cannot be chosen by your opponent's abilities.";
+
+	@Test
+	void theFilteredShieldParsesAsAConditionlessBoostOverASet() {
+		List<IfControlBoost> icbs = CardData.parseIfControlBoosts(SILVER_DRAGON_SHIELD, "Monster");
+
+		assertEquals(1, icbs.size());
+		IfControlBoost icb = icbs.get(0);
+		assertTrue(icb.conditions().isEmpty(), "no \"If you control\" gate — it is always on");
+		assertNotNull(icb.targetFilter(), "a set, not a name");
+		assertTrue(icb.targetFilter().inclMonsters());
+		assertFalse(icb.targetFilter().inclForwards());
+		assertEquals("Silver Dragon", icb.targetFilter().exceptCardName());
+		assertTrue(icb.cannotBeChosenBySummons());
+		assertTrue(icb.cannotBeChosenByAbilities());
+		assertTrue(icb.chosenImmunityOpponentOnly(), "\"your opponent's\" scopes it to the other player");
+	}
+
+	@Test
+	void theTraitFilteredShieldKeepsBothItsFilterAndItsNarrowerScope() {
+		List<IfControlBoost> icbs = CardData.parseIfControlBoosts(NIMBUS_SHIELD, "Forward");
+
+		assertEquals(1, icbs.size());
+		IfControlBoost icb = icbs.get(0);
+		assertEquals(Set.of(CardData.Trait.BRAVE), icb.targetFilter().traitFilter());
+		assertEquals("White Tiger l'Cie Nimbus", icb.targetFilter().exceptCardName(),
+				"the apostrophe in l'Cie must survive the exclusion capture");
+		assertFalse(icb.cannotBeChosenBySummons(), "this printing names abilities only");
+		assertTrue(icb.cannotBeChosenByAbilities());
+	}
+
+	@Test
+	void silverDragonShieldsTheOtherMonstersButNotItself() {
+		MainWindow mw = new MainWindow();
+		CardData dragon = makeIcbCard("Silver Dragon", "Wind", "Monster", SILVER_DRAGON_SHIELD);
+		CardData ally   = makeIcbCard("Zu", "Wind", "Monster", "");
+		mw.placeCardInMonsterZone(dragon);
+		mw.placeCardInMonsterZone(ally);
+
+		for (boolean bySummon : new boolean[] { true, false }) {
+			assertTrue(mw.isProtectedFromChoice(ally, true, false, bySummon, null),
+					"the other Monster is shielded from both");
+			assertFalse(mw.isProtectedFromChoice(dragon, true, false, bySummon, null),
+					"\"other than Silver Dragon\" leaves the printing card exposed");
+			assertFalse(mw.isProtectedFromChoice(ally, true, true, bySummon, null),
+					"opponent-scoped — its own controller may still choose it");
+		}
+	}
+
+	@Test
+	void nimbusShieldsBraveForwardsFromAbilitiesOnly() {
+		MainWindow mw = new MainWindow();
+		CardData nimbus = makeIcbCard("White Tiger l'Cie Nimbus", "Ice", "Forward", NIMBUS_SHIELD);
+		CardData brave  = makeForwardWithTraits("Bravo", "Ice", 7000, Set.of(CardData.Trait.BRAVE));
+		CardData meek   = makeForwardWithTraits("Meek",  "Ice", 7000, Set.of());
+		placeP1Forward(mw, nimbus);
+		placeP1Forward(mw, brave);
+		placeP1Forward(mw, meek);
+
+		assertTrue(mw.isProtectedFromChoice(brave, true, false, false, null), "abilities are blocked");
+		assertFalse(mw.isProtectedFromChoice(brave, true, false, true, null),
+				"Summons are not — this printing names abilities only");
+		assertFalse(mw.isProtectedFromChoice(meek, true, false, false, null), "no Brave, no shield");
+		assertFalse(mw.isProtectedFromChoice(nimbus, true, false, false, null), "and not the printing card");
+	}
+
+	@Test
+	void nimbusFollowsBraveThatWasGrantedRatherThanPrinted() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeIcbCard("White Tiger l'Cie Nimbus", "Ice", "Forward", NIMBUS_SHIELD));
+		CardData meek = makeForwardWithTraits("Meek", "Ice", 7000, Set.of());
+		placeP1Forward(mw, meek);
+		assertFalse(mw.isProtectedFromChoice(meek, true, false, false, null));
+
+		mw.p1ForwardTempTraits.get(1).add(CardData.Trait.BRAVE);
+
+		assertTrue(mw.isProtectedFromChoice(meek, true, false, false, null),
+				"the filter reads current traits, so a granted Brave brings the shield with it");
+	}
+
+	// =========================================================================================
+	// Yuffie 3-069C: "If you control Card Name Vincent, the cost for playing Yuffie onto the field
+	// becomes 0." Every other self-cost modifier shifts the printed cost by a delta; this one
+	// replaces it. So SelfCostModifier gained a setsToCost mode that stays out of the delta
+	// arithmetic — its scaling type is read only as the condition that switches it on. The
+	// condition itself (IF_CONTROL_NAME) already existed for the "reduced by N" printings.
+	//
+	// Jack Garland 29-123R: "cannot be blocked by a Monster that is also a Forward" — a restriction
+	// on the blocker's card type, barring exactly the Monsters an effect turned into Forwards, and
+	// leaving Backups acting as Forwards alone since those are not Monsters.
+	// =========================================================================================
+
+	private static final String YUFFIE_FREE_WITH_VINCENT =
+			"If you control Card Name Vincent, the cost for playing Yuffie onto the field becomes 0.";
+	private static final String GARLAND_NO_MONSTER_BLOCK =
+			"Jack Garland cannot be blocked by a Monster that is also a Forward.";
+
+	/** Yuffie as printed: cost 2, with her self-cost modifier parsed from her text. */
+	private static CardData makeYuffie() {
+		return new CardData(null, "Yuffie", "Wind", 2, 5000, "Forward", false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				List.of(), List.of(), CardData.parseFieldAbilities(YUFFIE_FREE_WITH_VINCENT, "Forward"),
+				List.of(), List.of(), List.of(), List.of(),
+				CardData.parseSelfCostModifiers(YUFFIE_FREE_WITH_VINCENT),
+				List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				null, null, null, YUFFIE_FREE_WITH_VINCENT);
+	}
+
+	@Test
+	void theCostReplacementParsesAsASetToRatherThanADelta() {
+		List<SelfCostModifier> mods = CardData.parseSelfCostModifiers(YUFFIE_FREE_WITH_VINCENT);
+
+		assertEquals(1, mods.size(), "\"becomes 0\" used to fall outside the self-cost pattern entirely");
+		SelfCostModifier mod = mods.get(0);
+		assertEquals(0, mod.setsToCost(), "the replacement value, not a reduction amount");
+		assertEquals(SelfCostModifier.ScalingType.IF_CONTROL_NAME, mod.scalingType());
+		assertEquals("Vincent", mod.param1());
+		assertEquals(0, mod.amountPerUnit(), "a replacement contributes nothing to the delta arithmetic");
+		assertFalse(mod.isIncrease());
+	}
+
+	@Test
+	void yuffieCostsHerPrintedCostWithoutVincent() {
+		MainWindow mw = new MainWindow();
+		assertEquals(2, mw.effectiveCastCost(makeYuffie()));
+
+		placeP1Forward(mw, makeForward("Cid", "Wind", 3, 7000));
+		assertEquals(2, mw.effectiveCastCost(makeYuffie()), "some other Forward is not Vincent");
+	}
+
+	@Test
+	void yuffieIsFreeWhileVincentIsOnTheField() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForward("Vincent", "Wind", 4, 8000));
+
+		assertEquals(0, mw.effectiveCastCost(makeYuffie()));
+	}
+
+	@Test
+	void aVincentOnTheBackupRowAlsoMakesYuffieFree() {
+		// IF_CONTROL_NAME reads Forwards and Backups alike — "you control Card Name Vincent" names
+		// no card type.
+		MainWindow mw = new MainWindow();
+		mw.placeCardInFirstBackupSlot(makeJobCard("Vincent", "Wind", "Backup", "Shinra"));
+
+		assertEquals(0, mw.effectiveCastCost(makeYuffie()));
+	}
+
+	@Test
+	void theCostLineLeavesYuffiesOtherFieldAbilityIntact() {
+		// The cost sentence is claimed by the self-cost system and so drops out of fieldAbilities();
+		// the grant printed beside it on the real card must be unaffected.
+		String full = YUFFIE_FREE_WITH_VINCENT
+				+ "[[br]] The Card Name Vincent you control gains +1000 power and Brave.";
+
+		assertTrue(CardData.parseSelfCostModifiers(full).size() == 1, "the cost line still parses");
+		assertEquals(1, CardData.parseFieldPowerGrants(full, "Forward").size(),
+				"and the grant beside it is untouched");
+	}
+
+	@Test
+	void jackGarlandBarsMonstersThatBecameForwards() {
+		MainWindow mw = new MainWindow();
+		CardData garland = makeIcbCard("Jack Garland", "Lightning", "Forward", GARLAND_NO_MONSTER_BLOCK);
+
+		assertTrue(mw.barsMonsterForwardBlockers(garland));
+		assertFalse(mw.barsMonsterForwardBlockers(makeForward("Plain", "Fire", 3, 7000)));
+
+		mw.lostAbilitiesCards.add(garland);
+		assertFalse(mw.barsMonsterForwardBlockers(garland), "the restriction goes with the abilities");
+	}
+
+	@Test
+	void aMonsterActingAsAForwardCannotBeDeclaredAgainstJackGarland() {
+		MainWindow mw = new MainWindow();
+		CardData monster = makeForwardWithTraits("Chocobo", "Wind", 5000, Set.of());
+		mw.placeCardInMonsterZone(monster);
+		mw.p1MonsterTempForwardPower.put(monster, 5000);   // an effect made it a Forward
+		mw.placeP2CardInForwardZone(makeForward("Plain", "Fire", 3, 7000));
+
+		// P2 attacks with an ordinary Forward: the Monster may block.
+		mw.pendingP2Attacker    = mw.p2ForwardCards.get(0);
+		mw.pendingP2AttackerIdx = 0;
+		assertTrue(mw.isMonsterBlockSelectable(0), "nothing bars it yet");
+
+		// Swap the attacker for Jack Garland and the same Monster is out.
+		CardData garland = makeIcbCard("Jack Garland", "Lightning", "Forward", GARLAND_NO_MONSTER_BLOCK);
+		mw.p2ForwardCards.set(0, garland);
+		mw.pendingP2Attacker = garland;
+
+		assertFalse(mw.isMonsterBlockSelectable(0),
+				"the Monster is a Forward only by grant, which is exactly what the text names");
+	}
+
 	// =========================================================================================
 	// Four unrelated standing restrictions, one card each.
 	//

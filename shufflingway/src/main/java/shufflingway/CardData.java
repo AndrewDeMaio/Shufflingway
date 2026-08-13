@@ -2996,6 +2996,27 @@ public record CardData(
     );
 
     /**
+     * The same shield handed to a filtered <em>set</em> rather than a named card:
+     * "The [type] [with Trait] [other than X] you control cannot be chosen by your opponent's
+     * [Summons or abilities | Summons | abilities]." — Silver Dragon 23-044R (Monsters, excluding
+     * itself) and White Tiger l'Cie Nimbus 23-035H (Forwards with Brave, excluding itself).
+     *
+     * <p>Stored as an {@link IfControlBoost} with an empty conditions list and a target filter, the
+     * same shape {@link #UNCONDITIONAL_NAMED_CANNOT_BE_CHOSEN} uses for the named form — the
+     * immunity lookup already resolves a filter by walking the field, so nothing downstream needed
+     * a new mechanism.
+     * Groups: {@code targets}, {@code withtrait} (optional), {@code except} (optional), {@code scope}.
+     */
+    private static final Pattern UNCONDITIONAL_FILTERED_CANNOT_BE_CHOSEN = Pattern.compile(
+        "(?i)^The\\s+" +
+        "(?<targets>Forwards?(?:\\s+and\\s+Monsters?)?|Backups?|Monsters?|Characters?)\\s+" +
+        "(?:with\\s+(?<withtrait>" + TRAIT_KEYWORD + ")\\s+)?" +
+        "(?:other\\s+than\\s+(?<except>[A-Z][A-Za-z''\\-]+(?:\\s+[A-Za-z''\\-]+)*)\\s+)?" +
+        "you\\s+control\\s+cannot\\s+be\\s+chosen\\s+by\\s+your\\s+opponent's\\s+" +
+        "(?<scope>Summons?\\s+or\\s+abilities|Summons?|abilities)\\s*[.!]?\\s*$"
+    );
+
+    /**
      * "If you control <raw>, <target> cannot be blocked[ by a/Forwards of cost N or more/less][.]"
      * The cost clause is optional; when absent the target is fully unblockable while active.
      * Groups: {@code raw}, {@code target}, {@code costval} (optional), {@code costcmp} (optional).
@@ -3543,6 +3564,28 @@ public record CardData(
                     scope.contains("summon"), scope.contains("abilit"), false, null, 0, 0, false)
                     // The pattern requires the "your opponent's" qualifier, so every match is
                     // opponent-scoped: the controller may still choose their own protected card.
+                    .asOpponentScopedChosenImmunity());
+        }
+
+        // Parse the same shield handed to a filtered set — "The Monsters other than Silver Dragon
+        // you control cannot be chosen by …". Same storage as the named form above, with a target
+        // filter standing in for the name.
+        for (String raw : textEn.split("(?i)\\[\\[br\\]\\]")) {
+            String seg = SUMMON_MARKUP.matcher(raw.trim()).replaceAll("").trim();
+            if (seg.isEmpty()) continue;
+            Matcher m = UNCONDITIONAL_FILTERED_CANNOT_BE_CHOSEN.matcher(seg);
+            if (!m.matches()) continue;
+            int[] incl = parseFieldGrantTargetFlags(m.group("targets"));
+            String except = m.group("except");
+            FieldPowerGrant filter = FieldPowerGrant.sameSideFiltered(
+                    incl[0] != 0, incl[1] != 0, incl[2] != 0,
+                    except != null ? except.trim() : null,
+                    0, EnumSet.noneOf(Trait.class), null,
+                    traitsNamedIn(m.group("withtrait")));
+            String scope = m.group("scope").toLowerCase(Locale.ROOT);
+            result.add(new IfControlBoost(List.of(), "", "", filter, 0,
+                    EnumSet.noneOf(Trait.class), "",
+                    scope.contains("summon"), scope.contains("abilit"), false, null, 0, 0, false)
                     .asOpponentScopedChosenImmunity());
         }
 
@@ -5153,6 +5196,20 @@ public record CardData(
     );
 
     /**
+     * "Limit Break -- N", the cost declaration that opens a Limit Break card's text.
+     *
+     * <p>Not an ability: the ETL reads the value into {@code lb_cost} and the flag into
+     * {@code limit_break}, so the sentence grants the card nothing and is dropped from
+     * {@link #parseFieldAbilities} the way the alias and enters-dull declarations already are.
+     * It was the last such declaration still leaking through — the sibling "Warp N -- 《cost》"
+     * line and the parenthetical "(Cards with 《LB》 cannot be included…)" reminder are already
+     * excluded, the latter by the leading-parenthesis rule further down this method.
+     */
+    private static final Pattern LIMIT_BREAK_DECLARATION = Pattern.compile(
+        "(?i)^Limit\\s+Break\\s*--\\s*\\d+\\s*[.!]?$"
+    );
+
+    /**
      * Matches "[CardName] is also Card Name X [and Card Name Y ...] in all situations."
      * Group {@code names} captures the raw "Card Name A [and Card Name B]" list.
      */
@@ -5408,6 +5465,9 @@ public record CardData(
             if (WARP_ANY_ELEMENT_PATTERN.matcher(seg).find())                continue;
             if (PARTY_ANY_ELEMENT_PATTERN.matcher(seg).find())               continue;
             if (FIELD_PARTY_ANY_ELEMENT_PATTERN.matcher(seg).find())        continue;
+
+            // Limit Break cost declaration — handled as a static card property
+            if (LIMIT_BREAK_DECLARATION.matcher(seg).matches())             continue;
 
             // Name/type alias declarations and enter-dull — handled as static card properties
             if (IS_ALSO_CARD_NAME_PATTERN.matcher(seg).find())              continue;
@@ -6235,9 +6295,14 @@ public record CardData(
             "(?:play\\s+(?<name1>.+?)\\s+onto\\s+the\\s+field|cast\\s+(?<name2>.+?))" +
             "|for\\s+playing\\s+(?<name3>.+?)\\s+onto\\s+the\\s+field" +
         ")" +
-        "\\s+is\\s+(?<dir>reduced|increased)\\s+by\\s+(?<amount>\\d+)" +
-        "(?:\\s+(?<scaling>for\\s+.+?))?" +
-        "(?:[.]?\\s+\\(it\\s+cannot\\s+become\\s+(?:0|1\\s+or\\s+less)\\))?" +
+        "(?:" +
+            "\\s+is\\s+(?<dir>reduced|increased)\\s+by\\s+(?<amount>\\d+)" +
+            "(?:\\s+(?<scaling>for\\s+.+?))?" +
+            "(?:[.]?\\s+\\(it\\s+cannot\\s+become\\s+(?:0|1\\s+or\\s+less)\\))?" +
+            // The replacement form — "becomes N" rather than a delta (Yuffie 3-069C). It takes no
+            // scaling clause: a cost that becomes a fixed number has nothing to scale by.
+            "|\\s+becomes\\s+(?<becomes>\\d+)" +
+        ")" +
         "\\s*\\.?$"
     );
 
@@ -6466,14 +6531,28 @@ public record CardData(
             String condRaw    = m.group("cond");
             String yourTurnRaw = m.group("yourturn");
             String scalingRaw = m.group("scaling");
+            String becomesRaw = m.group("becomes");
             boolean isIncrease = "increased".equalsIgnoreCase(m.group("dir"));
-            int amount = Integer.parseInt(m.group("amount"));
+            int amount = becomesRaw != null ? 0 : Integer.parseInt(m.group("amount"));
 
             int minCost = 0;
             if (seg.contains("(it cannot become 0)"))          minCost = 1;
             else if (seg.contains("(it cannot become 1 or less)")) minCost = 2;
 
             SelfCostModifier mod = null;
+
+            // --- Replacement form: "If you control Card Name X, the cost … becomes N." ---
+            // Only the named-control condition prints this way, so it is read here rather than
+            // threaded through every condition branch below as a second kind of amount.
+            if (becomesRaw != null) {
+                if (condRaw == null) continue;
+                Matcher cn = SELF_COND_CONTROL_NAME.matcher(condRaw.trim());
+                if (!cn.find()) continue;
+                result.add(new SelfCostModifier(0, 0, false,
+                        SelfCostModifier.ScalingType.IF_CONTROL_NAME,
+                        cn.group("name").trim(), null, Integer.parseInt(becomesRaw)));
+                continue;
+            }
 
             // --- "During your turn" flat form ---
             if (yourTurnRaw != null && condRaw == null && scalingRaw == null) {

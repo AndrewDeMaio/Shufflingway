@@ -35,6 +35,11 @@ package shufflingway;
  *                       damage threshold; encoding varies per {@link ScalingType}
  * @param param2         secondary parameter: second name in name-or-name / job-or-name patterns,
  *                       or pipe-separated "element|type" filter for {@link ScalingType#PER_N_FILTERED_BZ_CARDS}
+ * @param setsToCost     {@code -1} for the usual delta modifiers; {@code >= 0} for the replacement
+ *                       form "the cost … becomes N" (Yuffie 3-069C), where the value stands in for
+ *                       the printed cost instead of being added to or subtracted from it. A
+ *                       replacement never contributes to {@link #amountPerUnit} arithmetic — its
+ *                       {@link #scalingType} is read only as the condition that switches it on.
  */
 public record SelfCostModifier(
         int         amountPerUnit,
@@ -42,8 +47,15 @@ public record SelfCostModifier(
         boolean     isIncrease,
         ScalingType scalingType,
         String      param1,
-        String      param2
+        String      param2,
+        int         setsToCost
 ) {
+    /** Convenience constructor for the delta forms; {@code setsToCost} defaults to unused. */
+    public SelfCostModifier(int amountPerUnit, int minCost, boolean isIncrease,
+            ScalingType scalingType, String param1, String param2) {
+        this(amountPerUnit, minCost, isIncrease, scalingType, param1, param2, -1);
+    }
+
     public enum ScalingType {
         /** Flat delta (×1) if a Summon was cast by the controller this turn; 0 otherwise. */
         IF_CAST_SUMMON_THIS_TURN,

@@ -474,7 +474,7 @@ public class MainWindow {
 
 	// Non-modal P2-attack pending state: set while P1 is interactively declaring a blocker
 	CardData pendingP2Attacker        = null;   // package-private: tests open the block step with it
-	private int      pendingP2AttackerIdx     = -1;
+	int      pendingP2AttackerIdx     = -1;     // …and name which Forward is attacking
 	private Runnable pendingP2BlockDone       = null;
 	boolean  pendingP2AttackerIsMonster = false;
 	boolean  pendingP2AttackerIsBackup  = false;
@@ -10128,20 +10128,33 @@ public class MainWindow {
 		for (IfControlBoost icb : src.ifControlBoosts()) {
 			if (forSummon ? !icb.cannotBeChosenBySummons() : !icb.cannotBeChosenByAbilities()) continue;
 			if (icb.chosenImmunityOpponentOnly() != opponentScoped) continue;
-			if (!icbTargetsName(icb, targetName, fwds, bkps, mons)) continue;
+			if (!icbTargetsName(icb, targetName, isP1, fwds, bkps, mons)) continue;
 			if (icbConditionsMet(icb, isP1)) return true;
 		}
 		return false;
 	}
 
-	private static boolean icbTargetsName(IfControlBoost icb, String targetName,
+	/**
+	 * Whether {@code icb} protects a card called {@code targetName} on {@code isP1}'s field. A
+	 * filter-based boost is resolved by walking that field, so a shield handed to a set covers each
+	 * member without the caller knowing anything but the name.
+	 *
+	 * <p>The trait half of a filter is read through {@link #fpgTargetTraits} rather than off the
+	 * printed card, so "The Forwards with Brave … cannot be chosen" follows Brave that an effect
+	 * granted or stripped.
+	 */
+	private boolean icbTargetsName(IfControlBoost icb, String targetName, boolean isP1,
 			List<CardData> fwds, CardData[] bkps, List<CardData> mons) {
 		if (icb.targetFilter() == null) {
 			return icb.targetCardName().equalsIgnoreCase(targetName);
 		}
-		for (CardData c : fwds) if (targetName.equalsIgnoreCase(c.name()) && icb.appliesToCard(c)) return true;
-		for (CardData c : mons) if (targetName.equalsIgnoreCase(c.name()) && icb.appliesToCard(c)) return true;
-		for (CardData c : bkps) if (c != null && targetName.equalsIgnoreCase(c.name()) && icb.appliesToCard(c)) return true;
+		FieldPowerGrant filter = icb.targetFilter();
+		for (CardData c : fwds)
+			if (targetName.equalsIgnoreCase(c.name()) && icb.appliesToCard(c, fpgTargetTraits(filter, c, isP1))) return true;
+		for (CardData c : mons)
+			if (targetName.equalsIgnoreCase(c.name()) && icb.appliesToCard(c, fpgTargetTraits(filter, c, isP1))) return true;
+		for (CardData c : bkps)
+			if (c != null && targetName.equalsIgnoreCase(c.name()) && icb.appliesToCard(c, fpgTargetTraits(filter, c, isP1))) return true;
 		return false;
 	}
 
@@ -12224,6 +12237,31 @@ public class MainWindow {
 		return all;
 	}
 
+	/**
+	 * True when {@code attacker} carries "cannot be blocked by a Monster that is also a Forward"
+	 * (Jack Garland 29-123R). Read through {@link #effectiveFieldAbilities} so a granted copy
+	 * restricts blockers exactly as a printed one does.
+	 */
+	boolean barsMonsterForwardBlockers(CardData attacker) {
+		if (attacker == null || lostAbilitiesCards.contains(attacker)) return false;
+		for (FieldAbility fa : effectiveFieldAbilities(attacker)) {
+			Matcher m = AutoAbilityTriggers.FA_CANNOT_BE_BLOCKED_BY_MONSTER_FORWARD.matcher(fa.effectText());
+			if (m.find() && m.group("card").trim().equalsIgnoreCase(attacker.name())) return true;
+		}
+		return false;
+	}
+
+	/**
+	 * Whether P2's pending attack bars Monster blockers. A party is one attack made by several
+	 * Forwards, so one member carrying the restriction gates the block — the same reading
+	 * {@link #attackerUnblockable} takes.
+	 */
+	private boolean pendingP2AttackBarsMonsterBlockers() {
+		for (int i : pendingP2AttackerForwardIndices())
+			if (barsMonsterForwardBlockers(p2ForwardCards.get(i))) return true;
+		return false;
+	}
+
 	/** Only Forward attackers track cannot-be-blocked; acting-as-Forwards don't. */
 	private boolean attackerUnblockable() {
 		for (int i : pendingP2AttackerForwardIndices())
@@ -12297,7 +12335,7 @@ public class MainWindow {
 	}
 
 	/** True when a P1 monster acting as a Forward may be declared as a blocker. */
-	private boolean isMonsterBlockSelectable(int idx) {
+	boolean isMonsterBlockSelectable(int idx) {
 		if (!p1InBlockDeclaration()) return false;
 		if (idx < 0 || idx >= p1MonsterStates.size()) return false;
 		if (Boolean.TRUE.equals(p1MonsterFrozen.get(idx))) return false;
@@ -12307,6 +12345,9 @@ public class MainWindow {
 		if (!p1ForwardMustBlock.isEmpty()) return false;   // a Forward is forced to block
 		if (p1ForwardCompelledToBlockIdxForPendingAttack() >= 0) return false;  // …against this attacker
 		if (attackerUnblockable()) return false;
+		// Jack Garland 29-123R: this method is the only path a Monster reaches a block by, so the
+		// restriction is complete here for P1's side.
+		if (pendingP2AttackBarsMonsterBlockers()) return false;
 		CardData monsterBlocker = p1MonsterCards.get(idx);
 		if (monsterBlocker.cannotBlockAtAll() || monsterBlocker.cannotAttackOrBlock()) return false;
 		if (isFieldAbilityCannotAttackOrBlock(monsterBlocker, true)) return false;

@@ -904,6 +904,11 @@ class ComputerPlayer implements OpponentController {
 		}
 		for (int i = 0; i < mw.p2MonsterCards.size(); i++) {
 			if (!mw.p2MonsterCanBlockAsForward(i)) continue;
+			// Jack Garland 29-123R bars Monster blockers outright, so it gates the zone rather than
+			// any one candidate — checked here for the same reason the human side checks it in
+			// isMonsterBlockSelectable: this loop is how a Monster becomes a blocker for P2.
+			if (p1AttackerIdx >= 0 && p1AttackerIdx < mw.p1ForwardCards.size()
+					&& mw.barsMonsterForwardBlockers(mw.p1ForwardCards.get(p1AttackerIdx))) continue;
 			if (p1AttackerIdx >= 0 && mw.p1AttackerCostFiltersExclude(p1AttackerIdx, mw.p2MonsterCards.get(i).cost())) continue;
 			if (p1AttackerHigherPower && mw.fieldForwardPower(false, ForwardTarget.CardZone.MONSTER, i) > p1AttackerPower) continue;
 			if (mw.p2Turn.forwardCannotBlockInferiorPower && p1AttackerIdx >= 0 &&

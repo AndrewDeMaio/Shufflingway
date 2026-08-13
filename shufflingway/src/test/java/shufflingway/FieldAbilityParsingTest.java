@@ -158,6 +158,7 @@ public class FieldAbilityParsingTest {
         if (selfNamedCompulsion(AutoAbilityTriggers.FA_SELF_MUST_BLOCK,  fa, source)) return true;
         if (selfNamedCompulsion(AutoAbilityTriggers.FA_SELF_MUST_ATTACK, fa, source)) return true;
         if (selfNamedCompulsion(AutoAbilityTriggers.FA_SELF_CANNOT_FORM_PARTIES, fa, source)) return true;
+        if (selfNamedCompulsion(AutoAbilityTriggers.FA_CANNOT_BE_BLOCKED_BY_MONSTER_FORWARD, fa, source)) return true;
         if (selfNamedCompulsion(AutoAbilityTriggers.FA_SELF_ATTACK_REQUIRES_CONTROL, fa, source)) return true;
         if (AutoAbilityTriggers.FA_ALL_FORWARDS_LOSE_HASTE.matcher(fa.effectText()).find()) return true;
         if (AutoAbilityTriggers.FA_FORWARDS_CANNOT_GAIN_HASTE.matcher(fa.effectText()).find()) return true;
@@ -375,6 +376,8 @@ public class FieldAbilityParsingTest {
         if (selfNamedCompulsion(AutoAbilityTriggers.FA_SELF_MUST_BLOCK,  fa, source)) return "SelfMustBlock";
         if (selfNamedCompulsion(AutoAbilityTriggers.FA_SELF_MUST_ATTACK, fa, source)) return "SelfMustAttack";
         if (selfNamedCompulsion(AutoAbilityTriggers.FA_SELF_CANNOT_FORM_PARTIES, fa, source)) return "SelfCannotFormParties";
+        if (selfNamedCompulsion(AutoAbilityTriggers.FA_CANNOT_BE_BLOCKED_BY_MONSTER_FORWARD, fa, source))
+            return "CannotBeBlockedByMonsterForward";
         m = AutoAbilityTriggers.FA_SELF_ATTACK_REQUIRES_CONTROL.matcher(fa.effectText());
         if (m.find() && m.group("card").trim().equalsIgnoreCase(source.name()))
             return "SelfAttackRequiresControl[" + m.group("count") + "+ Forwards | Job " + m.group("job") + "]";

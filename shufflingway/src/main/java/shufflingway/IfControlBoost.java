@@ -223,4 +223,15 @@ public record IfControlBoost(
         if (targetFilter != null) return targetFilter.appliesToCard(card);
         return targetCardName != null && targetCardName.equalsIgnoreCase(card.name());
     }
+
+    /**
+     * As {@link #appliesToCard(CardData)}, but resolves a target filter's trait requirement against
+     * {@code currentTraits} rather than the card's printed set — "The Forwards with Brave … cannot
+     * be chosen" (White Tiger l'Cie Nimbus 23-035H) has to cover a Forward that was granted Brave,
+     * and stop covering one whose Brave was stripped.
+     */
+    public boolean appliesToCard(CardData card, java.util.Set<CardData.Trait> currentTraits) {
+        if (targetFilter != null) return targetFilter.appliesToCard(card, currentTraits);
+        return targetCardName != null && targetCardName.equalsIgnoreCase(card.name());
+    }
 }

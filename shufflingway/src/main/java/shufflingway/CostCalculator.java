@@ -41,7 +41,14 @@ class CostCalculator {
 		int selfRed = 0;
 		int selfInc = 0;
 		int selfFloor = 0;
+		Integer setTo = null;
 		for (SelfCostModifier mod : card.selfCostModifiers()) {
+			// A "becomes N" modifier replaces the printed cost rather than shifting it, so it is
+			// kept out of the delta arithmetic — its scaling type is read only as the on/off test.
+			if (mod.setsToCost() >= 0) {
+				if (computeSelfCostUnits(mod, true) > 0) setTo = mod.setsToCost();
+				continue;
+			}
 			int units = computeSelfCostUnits(mod, true);
 			int delta = mod.amountPerUnit() * units;
 			if (mod.isIncrease()) selfInc += delta;
@@ -50,7 +57,9 @@ class CostCalculator {
 				selfFloor = Math.max(selfFloor, mod.minCost());
 			}
 		}
-		int cost = card.cost() + selfInc - selfRed;
+		// The replacement stands in for the printed cost, then the ordinary reductions run on top —
+		// they can only lower it further, so nothing can raise a cost back out of "becomes 0".
+		int cost = (setTo != null ? setTo : card.cost()) + selfInc - selfRed;
 		cost = Math.max(selfFloor, cost);
 		cost = mw.applyFieldReductions(cost, card, true);
 		for (CostReductionModifier m : mw.activeCostReductions) {
