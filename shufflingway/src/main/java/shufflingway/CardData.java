@@ -1034,12 +1034,31 @@ public record CardData(
         "(?:\\s+and\\s+(?<continuation>.+))?"
     );
 
-    /** Matches a single dull cost item: Card Name, Category, Job, or element-filtered Forward/Backup/Character. */
+    /**
+     * Where one dull cost item ends: the end of the cost text, the comma or "and" that introduces
+     * the next item. Used as a lookahead so a lazy Job or Category name cannot stop short of it.
+     */
+    private static final String DULL_ITEM_END = "(?=\\s*(?:,|and\\b|$))";
+
+    /**
+     * Matches a single dull cost item: Card Name, Category, Job, or element-filtered
+     * Forward/Backup/Character.
+     *
+     * <p>The Job and Category names are lazy and everything that can follow them — the card-type
+     * suffix, the "or Card Name X" alternative — is optional, so both need {@link #DULL_ITEM_END}
+     * behind them to force the name out to its full width. Without it the shortest possible name
+     * wins and the whole item still matches: "Dull 4 active Job Warrior of Light" captured the job
+     * as "W" (19-102L Refia), "Dull 2 active Category VII Characters" the category as "V", and
+     * since {@code dfcCardMatches} compares those against real Jobs and Categories, the cost could
+     * never be paid and the ability was unusable. Unlike the enclosing
+     * {@code ACTION_ABILITY_PATTERN}, which ends on the cost's colon and so backtracks the name
+     * out on its own, this pattern is run over the extracted cost text with nothing behind it.
+     */
     private static final Pattern DULL_COST_ITEM_PATTERN = Pattern.compile(
         "(?i)Dull\\s+(?:a\\s+total\\s+of\\s+)?(?<count>\\d+)\\s*(?<cond>active|dull|damaged)?\\s*" +
         "(?:Card\\s+Name\\s+(?<cardname>.+?)\\s+Forwards?" +
-        "|Category\\s+(?<category>[A-Za-z0-9][A-Za-z0-9\\s''\\-]*?)(?:\\s+(?:Forwards?|Backups?|Monsters?|(?<catchar>Characters?)))?" +
-        "|Job\\s+(?<job>[A-Za-z][A-Za-z''\\s\\-]*?)(?:\\s+(?:Forwards?|Backups?|Monsters?|(?<jobchar>Characters?)))?(?:\\s+(?:and/)?or\\s+Card\\s+Name\\s+(?<joborcardname>.+))?" +
+        "|Category\\s+(?<category>[A-Za-z0-9][A-Za-z0-9\\s''\\-]*?)(?:\\s+(?:Forwards?|Backups?|Monsters?|(?<catchar>Characters?)))?" + DULL_ITEM_END +
+        "|Job\\s+(?<job>[A-Za-z][A-Za-z''\\s\\-]*?)(?:\\s+(?:Forwards?|Backups?|Monsters?|(?<jobchar>Characters?)))?(?:\\s+(?:and/)?or\\s+Card\\s+Name\\s+(?<joborcardname>.+))?" + DULL_ITEM_END +
         "|(?<elem>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)?\\s*" +
         "(?:Forwards?(?<orbackup>\\s+or\\s+(?:Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)?\\s*Backups?)?" + // Forwards [or Backups]
         "|(?<sameelembackup>Backups?(?:\\s+of\\s+the\\s+same\\s+Element)?)" + // Backups [of same element] — e.g. Yuri

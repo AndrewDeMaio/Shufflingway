@@ -3689,6 +3689,20 @@ final class ActionResolverPatterns {
         "[.\\s]*$"
     );
     /**
+     * Matches a mass ACTIVATE whose payoff counts what it woke up: "&lt;sweep&gt;. When N or more
+     * dull Characters are activated by this effect, draw M card(s)." — 19-102L Refia.
+     *
+     * <p>Group {@code sweep} is handed back to {@link ActionResolverFieldAbility#tryParseAllFieldEffect}
+     * rather than re-parsed here, so the two sentences cannot describe different sweeps. Groups
+     * {@code threshold} and {@code draw} are captured rather than fixed at 4 and 1 because nothing
+     * about the wording makes those numbers special.
+     */
+    static final Pattern ALL_FIELD_ACTIVATE_THEN_DRAW = Pattern.compile(
+        "(?i)^(?<sweep>Activate\\s+all\\s+.+?)[.!]\\s*" +
+        "When\\s+(?<threshold>\\d+)\\s+or\\s+more\\s+dull\\s+Characters?\\s+are\\s+activated\\s+" +
+        "by\\s+this\\s+effect,\\s*draw\\s+(?<draw>\\d+)\\s+cards?[.!]?$");
+
+    /**
      * Matches mass-effect actions on all field cards of a given type:
      * "[action] all [the] [element] [targets] [of cost X [or less|more]] [other than cost Y] [control]"
      * <ul>

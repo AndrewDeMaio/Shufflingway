@@ -5765,6 +5765,9 @@ final class GameContextImpl implements GameContext {
 					String counterFilter) {
 				boolean touchP1 = isP1 ? !opponentOnly : !selfOnly;
 				boolean touchP2 = isP1 ? !selfOnly     : !opponentOnly;
+				// Reset for every action, not just ACTIVATE, so a later sweep of any kind cannot
+				// leave an earlier one's tally standing to be read as its own.
+				mw.lastMassActivateCount = 0;
 				if (touchP1) {
 					if (forwards || monsters) {
 						for (int i = mw.p1ForwardCards.size() - 1; i >= 0; i--) {
@@ -5782,7 +5785,8 @@ final class GameContextImpl implements GameContext {
 								case DULL           -> dullP1Forward(i);
 								case FREEZE         -> freezeP1Forward(i);
 								case DULL_AND_FREEZE -> { dullP1Forward(i); freezeP1Forward(i); }
-								case ACTIVATE       -> { mw.p1ForwardStates.set(i, CardState.ACTIVE); mw.refreshP1ForwardSlot(i); }
+								case ACTIVATE       -> { if (mw.p1ForwardStates.get(i) == CardState.DULL) mw.lastMassActivateCount++;
+								                         mw.p1ForwardStates.set(i, CardState.ACTIVE); mw.refreshP1ForwardSlot(i); }
 								case RETURN_TO_HAND -> returnP1ForwardToHand(i);
 							}
 						}
@@ -5809,7 +5813,8 @@ final class GameContextImpl implements GameContext {
 								case DULL           -> { mw.p1BackupStates[i] = CardState.DULL;   logEntry(c.name() + " is dulled");          mw.refreshP1BackupSlot(i); }
 								case FREEZE         -> { mw.p1BackupFrozen[i] = true;              logEntry(c.name() + " is frozen");          mw.refreshP1BackupSlot(i); }
 								case DULL_AND_FREEZE -> { mw.p1BackupStates[i] = CardState.DULL; mw.p1BackupFrozen[i] = true; logEntry(c.name() + " is dulled & frozen"); mw.refreshP1BackupSlot(i); }
-								case ACTIVATE       -> { mw.p1BackupStates[i] = CardState.ACTIVE; logEntry(c.name() + " is activated");       mw.refreshP1BackupSlot(i); }
+								case ACTIVATE       -> { if (mw.p1BackupStates[i] == CardState.DULL) mw.lastMassActivateCount++;
+								                         mw.p1BackupStates[i] = CardState.ACTIVE; logEntry(c.name() + " is activated");       mw.refreshP1BackupSlot(i); }
 								case RETURN_TO_HAND -> returnP1BackupToHand(i);
 							}
 						}
@@ -5842,7 +5847,8 @@ final class GameContextImpl implements GameContext {
 								case DULL           -> { mw.p1MonsterStates.set(i, CardState.DULL);   logEntry(c.name() + " is dulled");          mw.refreshP1MonsterSlot(i); }
 								case FREEZE         -> { mw.p1MonsterFrozen.set(i, true);              logEntry(c.name() + " is frozen");          mw.refreshP1MonsterSlot(i); }
 								case DULL_AND_FREEZE -> { mw.p1MonsterStates.set(i, CardState.DULL); mw.p1MonsterFrozen.set(i, true); logEntry(c.name() + " is dulled & frozen"); mw.refreshP1MonsterSlot(i); }
-								case ACTIVATE       -> { mw.p1MonsterStates.set(i, CardState.ACTIVE); logEntry(c.name() + " is activated");       mw.refreshP1MonsterSlot(i); }
+								case ACTIVATE       -> { if (mw.p1MonsterStates.get(i) == CardState.DULL) mw.lastMassActivateCount++;
+								                         mw.p1MonsterStates.set(i, CardState.ACTIVE); logEntry(c.name() + " is activated");       mw.refreshP1MonsterSlot(i); }
 								case RETURN_TO_HAND -> returnP1MonsterToHand(i);
 							}
 						}
@@ -5865,7 +5871,8 @@ final class GameContextImpl implements GameContext {
 								case DULL           -> dullP2Forward(i);
 								case FREEZE         -> freezeP2Forward(i);
 								case DULL_AND_FREEZE -> { dullP2Forward(i); freezeP2Forward(i); }
-								case ACTIVATE       -> { mw.p2ForwardStates.set(i, CardState.ACTIVE); mw.refreshP2ForwardSlot(i); }
+								case ACTIVATE       -> { if (mw.p2ForwardStates.get(i) == CardState.DULL) mw.lastMassActivateCount++;
+								                         mw.p2ForwardStates.set(i, CardState.ACTIVE); mw.refreshP2ForwardSlot(i); }
 								case RETURN_TO_HAND -> returnP2ForwardToHand(i);
 							}
 						}
@@ -5892,7 +5899,8 @@ final class GameContextImpl implements GameContext {
 								case DULL           -> { mw.p2BackupStates[i] = CardState.DULL;   logEntry("[P2] " + c.name() + " is dulled");          mw.refreshP2BackupSlot(i); }
 								case FREEZE         -> { mw.p2BackupFrozen[i] = true;              logEntry("[P2] " + c.name() + " is frozen");          mw.refreshP2BackupSlot(i); }
 								case DULL_AND_FREEZE -> { mw.p2BackupStates[i] = CardState.DULL; mw.p2BackupFrozen[i] = true; logEntry("[P2] " + c.name() + " is dulled & frozen"); mw.refreshP2BackupSlot(i); }
-								case ACTIVATE       -> { mw.p2BackupStates[i] = CardState.ACTIVE; logEntry("[P2] " + c.name() + " is activated");       mw.refreshP2BackupSlot(i); }
+								case ACTIVATE       -> { if (mw.p2BackupStates[i] == CardState.DULL) mw.lastMassActivateCount++;
+								                         mw.p2BackupStates[i] = CardState.ACTIVE; logEntry("[P2] " + c.name() + " is activated");       mw.refreshP2BackupSlot(i); }
 								case RETURN_TO_HAND -> returnP2BackupToHand(i);
 							}
 						}
@@ -5923,13 +5931,16 @@ final class GameContextImpl implements GameContext {
 								case DULL           -> { mw.p2MonsterStates.set(i, CardState.DULL);   logEntry("[P2] " + c.name() + " is dulled");          mw.refreshP2MonsterSlot(i); }
 								case FREEZE         -> { mw.p2MonsterFrozen.set(i, true);              logEntry("[P2] " + c.name() + " is frozen");          mw.refreshP2MonsterSlot(i); }
 								case DULL_AND_FREEZE -> { mw.p2MonsterStates.set(i, CardState.DULL); mw.p2MonsterFrozen.set(i, true); logEntry("[P2] " + c.name() + " is dulled & frozen"); mw.refreshP2MonsterSlot(i); }
-								case ACTIVATE       -> { mw.p2MonsterStates.set(i, CardState.ACTIVE); logEntry("[P2] " + c.name() + " is activated");       mw.refreshP2MonsterSlot(i); }
+								case ACTIVATE       -> { if (mw.p2MonsterStates.get(i) == CardState.DULL) mw.lastMassActivateCount++;
+								                         mw.p2MonsterStates.set(i, CardState.ACTIVE); logEntry("[P2] " + c.name() + " is activated");       mw.refreshP2MonsterSlot(i); }
 								case RETURN_TO_HAND -> returnP2MonsterToHand(i);
 							}
 						}
 					}
 				}
 			}
+
+			@Override public int lastMassActivateCount() { return mw.lastMassActivateCount; }
 
 			@Override
 			public void applyMassFieldPowerBoost(int amount, boolean inclForwards, boolean inclMonsters,

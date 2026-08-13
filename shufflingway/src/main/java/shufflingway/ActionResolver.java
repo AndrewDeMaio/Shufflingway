@@ -548,6 +548,11 @@ public class ActionResolver {
         result = tryParsePlaceCounterOnAllForwards(effectText);
         if (result != null) return result;
 
+        // Must precede tryParseAllFieldEffect: that one matches with find() and would claim the
+        // sweep sentence on its own, silently dropping the draw that counts what the sweep woke up.
+        result = tryParseAllFieldActivateThenDraw(effectText);
+        if (result != null) return result;
+
         result = tryParseAllFieldEffect(effectText);
         if (result != null) return result;
 
@@ -1437,6 +1442,8 @@ public class ActionResolver {
         // Must precede AllFieldEffect — see the ordering note in parse().
         if (tryParseEndOfOppTurnDelayedEffect(effectText, source) != null) return "EndOfOppTurnDelayed";
         if (tryParsePlaceCounterOnAllForwards(effectText)     != null) return "PlaceCounterOnAllForwards";
+        // Must precede AllFieldEffect — see the ordering note in parse().
+        if (tryParseAllFieldActivateThenDraw(effectText)      != null) return "AllFieldActivateThenDraw";
         if (tryParseAllFieldEffect(effectText)                != null) return "AllFieldEffect";
         if (tryParseFieldPowerGrantPassive(effectText)        != null) {
             String trimmed = effectText.trim();
@@ -2078,6 +2085,8 @@ public class ActionResolver {
             return "At the end of your opponent's turn: " + fullDescription(inner, source);
         }
         if (tryParsePlaceCounterOnAllForwards(effectText) != null)          return "PlaceCounterOnAllForwards";
+        // Must precede AllFieldEffect — see the ordering note in parse().
+        if (tryParseAllFieldActivateThenDraw(effectText) != null)           return "AllFieldEffect + DrawCards";
         if (tryParseAllFieldEffect(effectText) != null)                     return "AllFieldEffect";
         if (tryParseFieldPowerGrantPassive(effectText) != null) {
             String trimmed = effectText.trim();

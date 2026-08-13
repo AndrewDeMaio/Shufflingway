@@ -12652,4 +12652,214 @@ public class CardBehaviorTest {
 		assertEquals(List.of(dadaluma), triggerSources(mw),
 				"her own trigger is unaffected, and Dadaluma is no Warrior of Light for Faris to watch");
 	}
+
+	// =========================================================================================
+	// Refia 19-102L: "At the beginning of the Attack Phase during each of your turns, activate all
+	// the Job Warrior of Light you control. When 4 or more dull Characters are activated by this
+	// effect, draw 1 card.  Dull 4 active Job Warrior of Light: Choose 1 Forward opponent controls.
+	// Put it at the top or bottom of its owner's deck. You can only use this ability once per turn."
+	//
+	// Two halves, each of which was reaching the board incomplete.
+	//
+	// The sweep parsed, but only as far as its first sentence: the draw is conditional on what the
+	// sweep woke up, and there was no way to ask. It counts activations, not eligible cards — a
+	// Warrior of Light that was already active is not "activated by this effect" — so the count is
+	// taken by the sweep itself and read back through lastMassActivateCount().
+	//
+	// The dull cost parsed its Job as "W". DULL_COST_ITEM_PATTERN is run over the extracted cost
+	// text with nothing behind it, and every clause that can follow a Job name is optional, so the
+	// lazy name stopped at one character and the whole item still matched. hasJob("W") is false for
+	// everything, so the cost could never be paid — the ability was dead on every Job printing in
+	// the corpus, not just this one.
+	// =========================================================================================
+
+	private static final String REFIA_TEXT =
+			"At the beginning of the Attack Phase during each of your turns, activate all the Job "
+			+ "Warrior of Light you control. When 4 or more dull Characters are activated by this "
+			+ "effect, draw 1 card.[[br]]   Dull 4 active Job Warrior of Light: Choose 1 Forward "
+			+ "opponent controls. Put it at the top or bottom of its owner's deck. You can only use "
+			+ "this ability once per turn.";
+
+	private static CardData makeRefia() {
+		return new CardData(null, "Refia", "Water", 3, 7000, "Forward", false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				CardData.parseActionAbilities(REFIA_TEXT), CardData.parseAutoAbilities(REFIA_TEXT),
+				List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				"Warrior of Light", "III", null, REFIA_TEXT);
+	}
+
+	/** The sweep half, as the beginning-of-Attack-Phase trigger would run it. */
+	private static Consumer<GameContext> refiaSweep(CardData refia) {
+		return ActionResolver.parse(refia.autoAbilities().get(0).effectText(), refia);
+	}
+
+	/** A dull Job Warrior of Light on P1's field. */
+	private static void placeDullWarriorOfLight(MainWindow mw, String name) {
+		placeP1Forward(mw, makeJobForwardWithAutos(name, "Water", 7000, "Warrior of Light", ""));
+		mw.p1ForwardStates.set(mw.p1ForwardCards.size() - 1, CardState.DULL);
+	}
+
+	@Test
+	void refiaParsesIntoASweepTriggerAndAJobDullCost() {
+		CardData refia = makeRefia();
+
+		assertEquals(1, refia.autoAbilities().size());
+		AutoAbility sweep = refia.autoAbilities().get(0);
+		assertEquals("beginning of attack phase", sweep.trigger(),
+				"\"during each of your turns\" is the controller-only form, not the each-turn one");
+		assertEquals("AllFieldEffect + DrawCards",
+				ActionResolver.fullDescription(sweep.effectText(), refia),
+				"the conditional draw is part of the effect, not a dropped second sentence");
+
+		assertEquals(1, refia.actionAbilities().size());
+		ActionAbility ab = refia.actionAbilities().get(0);
+		assertTrue(ab.oncePerTurn());
+		assertEquals(1, ab.dullForwardCosts().size());
+		DullForwardCost cost = ab.dullForwardCosts().get(0);
+		assertEquals(4, cost.count());
+		assertEquals("active", cost.condition());
+		assertEquals("Warrior of Light", cost.job(), "the whole Job name, not its first letter");
+		assertEquals("ChooseCharacter / PutTopOrBottomOfDeck",
+				ActionResolver.fullDescription(ab.effectText(), refia));
+	}
+
+	// The truncation hit every shape the Job and Category branches accept, so the fix is pinned
+	// against the other wordings in the corpus rather than only against Refia's.
+	@Test
+	void dullCostsCaptureWholeJobAndCategoryNames() {
+		assertEquals("Sky Pirate", CardData.parseActionAbilities(
+				"Dull 2 active Job Sky Pirate: Draw 1 card.").get(0).dullForwardCosts().get(0).job());
+		assertEquals("Scion of the Seventh Dawn", CardData.parseActionAbilities(
+				"Dull 1 active Job Scion of the Seventh Dawn Forward: Draw 1 card.")
+				.get(0).dullForwardCosts().get(0).job(),
+				"the card-type suffix ends the name and is not part of it");
+		assertEquals("XII", CardData.parseActionAbilities(
+				"Dull 1 active Category XII Character: Draw 1 card.")
+				.get(0).dullForwardCosts().get(0).category());
+
+		DullForwardCost orName = CardData.parseActionAbilities(
+				"Dull 1 active Job Chocobo or Card Name Chocobo: Draw 1 card.")
+				.get(0).dullForwardCosts().get(0);
+		assertEquals("Chocobo", orName.job(), "the alternative also ends the Job name");
+		assertEquals("Chocobo", orName.orCardName());
+
+		// "and/or" is the shape that could lose its alternative: the "and" also satisfies the
+		// end-of-item lookahead, so the alternative has to be claimed before the item can end.
+		DullForwardCost andOr = CardData.parseActionAbilities(
+				"Dull a total of 2 active Job Ninja and/or Card Name Ninja: Draw 1 card.")
+				.get(0).dullForwardCosts().get(0);
+		assertEquals("Ninja", andOr.job());
+		assertEquals("Ninja", andOr.orCardName());
+	}
+
+	@Test
+	void refiasAbilityIsUnusableUntilFourWarriorsOfLightAreActive() {
+		MainWindow mw = new MainWindow();
+		CardData refia = makeRefia();
+		placeP1Forward(mw, refia);
+		ActionAbility ab = refia.actionAbilities().get(0);
+
+		for (int i = 0; i < 2; i++)
+			placeP1Forward(mw, makeJobForwardWithAutos("Ally" + i, "Water", 7000, "Warrior of Light", ""));
+		assertFalse(mw.canActivateAbility(ab, false, CardState.ACTIVE, 0, refia, true),
+				"3 active Warriors of Light — Refia herself counts, but that is one short");
+
+		placeP1Forward(mw, makeJobForwardWithAutos("Ally2", "Water", 7000, "Warrior of Light", ""));
+		assertTrue(mw.canActivateAbility(ab, false, CardState.ACTIVE, 0, refia, true),
+				"the fourth makes the cost payable");
+
+		placeP1Forward(mw, makeJobForwardWithAutos("Onion Knight", "Water", 7000, "Onion Knight", ""));
+		mw.p1ForwardStates.set(1, CardState.DULL);
+		assertFalse(mw.canActivateAbility(ab, false, CardState.ACTIVE, 0, refia, true),
+				"a dull one cannot be dulled again, and another Job does not stand in for it");
+	}
+
+	@Test
+	void theSweepActivatesOnlyWarriorsOfLightAndDrawsAtFour() {
+		MainWindow mw = new MainWindow();
+		CardData refia = makeRefia();
+		placeP1Forward(mw, refia);
+		mw.p1ForwardStates.set(0, CardState.DULL);
+		for (int i = 0; i < 3; i++) placeDullWarriorOfLight(mw, "Ally" + i);
+		placeP1Forward(mw, makeJobForwardWithAutos("Onion Knight", "Water", 7000, "Onion Knight", ""));
+		mw.p1ForwardStates.set(4, CardState.DULL);
+		mw.gameState.getP1MainDeck().add(makeForward("Top", "Water", 1, 3000));
+
+		refiaSweep(refia).accept(mw.buildGameContext(true));
+
+		for (int i = 0; i < 4; i++)
+			assertEquals(CardState.ACTIVE, mw.p1ForwardStates.get(i), "Warrior of Light " + i + " woke up");
+		assertEquals(CardState.DULL, mw.p1ForwardStates.get(4), "the Onion Knight is another Job");
+		assertEquals(1, mw.gameState.getP1Hand().size(), "4 activated — the draw is on");
+	}
+
+	@Test
+	void theDrawCountsWhatWokeUpRatherThanWhoWasEligible() {
+		MainWindow mw = new MainWindow();
+		CardData refia = makeRefia();
+		placeP1Forward(mw, refia);              // left active — nothing happens to her
+		for (int i = 0; i < 3; i++) placeDullWarriorOfLight(mw, "Ally" + i);
+		mw.gameState.getP1MainDeck().add(makeForward("Top", "Water", 1, 3000));
+
+		refiaSweep(refia).accept(mw.buildGameContext(true));
+
+		assertEquals(3, mw.buildGameContext(true).lastMassActivateCount(),
+				"4 Warriors of Light were swept, but only the 3 dull ones were activated");
+		assertTrue(mw.gameState.getP1Hand().isEmpty(), "3 activated is under the threshold — no draw");
+	}
+
+	@Test
+	void aLaterSweepDoesNotInheritTheEarlierTally() {
+		MainWindow mw = new MainWindow();
+		CardData refia = makeRefia();
+		placeP1Forward(mw, refia);
+		mw.p1ForwardStates.set(0, CardState.DULL);
+		for (int i = 0; i < 3; i++) placeDullWarriorOfLight(mw, "Ally" + i);
+		for (int i = 0; i < 2; i++) mw.gameState.getP1MainDeck().add(makeForward("Top" + i, "Water", 1, 3000));
+
+		refiaSweep(refia).accept(mw.buildGameContext(true));
+		assertEquals(1, mw.gameState.getP1Hand().size());
+
+		// Everything is active now, so the second sweep activates nothing and must say so.
+		refiaSweep(refia).accept(mw.buildGameContext(true));
+		assertEquals(0, mw.buildGameContext(true).lastMassActivateCount(),
+				"the count belongs to the sweep that just ran");
+		assertEquals(1, mw.gameState.getP1Hand().size(), "and so there is no second draw");
+	}
+
+	// "Characters", not "Forwards" — and 21 of the corpus's Warriors of Light are Backups, so the
+	// fourth activation is often one of them.
+	@Test
+	void aDullWarriorOfLightBackupCountsTowardTheFour() {
+		MainWindow mw = new MainWindow();
+		CardData refia = makeRefia();
+		placeP1Forward(mw, refia);
+		mw.p1ForwardStates.set(0, CardState.DULL);
+		for (int i = 0; i < 2; i++) placeDullWarriorOfLight(mw, "Ally" + i);
+		mw.placeCardInFirstBackupSlot(makeJobCard("Arc", "Water", "Backup", "Warrior of Light"));
+		mw.p1BackupStates[0] = CardState.DULL;
+		mw.gameState.getP1MainDeck().add(makeForward("Top", "Water", 1, 3000));
+
+		refiaSweep(refia).accept(mw.buildGameContext(true));
+
+		assertEquals(CardState.ACTIVE, mw.p1BackupStates[0], "the Backup shares the Job");
+		assertEquals(1, mw.gameState.getP1Hand().size(),
+				"3 Forwards and 1 Backup is 4 dull Characters activated");
+	}
+
+	@Test
+	void theSweepLeavesTheOpponentsWarriorsOfLightAlone() {
+		MainWindow mw = new MainWindow();
+		CardData refia = makeRefia();
+		placeP1Forward(mw, refia);
+		mw.p1ForwardStates.set(0, CardState.DULL);
+		placeP2Forward(mw, makeJobForwardWithAutos("Firion", "Water", 7000, "Warrior of Light", ""));
+		mw.p2ForwardStates.set(0, CardState.DULL);
+
+		refiaSweep(refia).accept(mw.buildGameContext(true));
+
+		assertEquals(CardState.ACTIVE, mw.p1ForwardStates.get(0));
+		assertEquals(CardState.DULL, mw.p2ForwardStates.get(0), "\"you control\" scopes the sweep");
+	}
 }

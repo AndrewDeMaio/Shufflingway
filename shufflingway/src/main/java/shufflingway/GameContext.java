@@ -2394,6 +2394,19 @@ public interface GameContext {
             String counterFilter);
 
     /**
+     * How many dull cards the most recent {@link #applyMassFieldEffect} with
+     * {@link MassAction#ACTIVATE} actually activated — cards already active are not counted,
+     * because nothing happened to them.
+     *
+     * <p>For "activate all X. When N or more dull Characters are activated by this effect, …"
+     * (19-102L Refia). Counted by the sweep rather than by a matching count taken beforehand so
+     * that the payoff can never be measured against a different set of cards than the one the
+     * sweep touched. Every {@code applyMassFieldEffect} call resets it, whatever its action, so it
+     * only ever reports the sweep that just ran.
+     */
+    int lastMassActivateCount();
+
+    /**
      * Places {@code count} counters named {@code counterName} on every Forward on the side(s) the
      * flags select — both sides when neither is set.  (20-057L The Goddess opens by putting a Doom
      * Counter on each of the opponent's Forwards.)

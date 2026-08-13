@@ -198,6 +198,36 @@ final class ActionResolverFieldAbility {
         };
     }
     /**
+     * Parses "Activate all [the] X. When N or more dull Characters are activated by this effect,
+     * draw M card(s)." — 19-102L Refia.
+     *
+     * <p>The sweep half is delegated to {@link #tryParseAllFieldEffect}, so this parser owns only
+     * the payoff. The count comes from {@link GameContext#lastMassActivateCount()} — what the
+     * sweep woke up — rather than from a count of eligible cards taken beforehand: "activated by
+     * this effect" excludes the ones that were already active, and a card can only be counted by
+     * the code that changed it.
+     */
+    static Consumer<GameContext> tryParseAllFieldActivateThenDraw(String text) {
+        Matcher m = ALL_FIELD_ACTIVATE_THEN_DRAW.matcher(text.trim());
+        if (!m.matches()) return null;
+        Consumer<GameContext> sweep = tryParseAllFieldEffect(m.group("sweep"));
+        if (sweep == null) return null;
+        int threshold = Integer.parseInt(m.group("threshold"));
+        int draw      = Integer.parseInt(m.group("draw"));
+        return ctx -> {
+            sweep.accept(ctx);
+            int activated = ctx.lastMassActivateCount();
+            if (activated < threshold) {
+                ctx.logEntry("Effect: " + activated + " dull Character(s) activated — fewer than "
+                        + threshold + ", no card drawn");
+                return;
+            }
+            ctx.logEntry("Effect: " + activated + " dull Character(s) activated — draw " + draw);
+            ctx.drawCards(draw);
+        };
+    }
+
+    /**
      * Parses "[action] all [the] [element] [targets] [of cost X] [control]".
      *
      * <p>Supported actions: Break, dull, freeze, dull and freeze, Activate.
