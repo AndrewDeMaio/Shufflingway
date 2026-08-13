@@ -4393,6 +4393,27 @@ public class ActionResolver {
      * (those are deferred to resolution time since the zone state may change).
      */
     public static List<ForwardTarget> preSelectTargets(String effectText, CardData source, int xValue, GameContext ctx) {
+        TargetSpec spec = targetSpec(effectText, source);
+        if (spec == null) return null;
+        return ctx.selectCharacters(spec.maxCount(), spec.upTo(), spec.opponentOnly(), spec.selfOnly(),
+                spec.condition(), spec.element(), spec.costVal(), spec.costCmp(), spec.powerVal(),
+                spec.powerCmp(), spec.inclForwards(), spec.inclBackups(), spec.inclMonsters(),
+                spec.jobFilter(), spec.cardNameFilter(), spec.categoryFilter(), spec.excludeName(),
+                spec.inclSummons(), spec.excludeElement(), spec.withoutMulticard());
+    }
+
+    /**
+     * Decodes the target constraints of a "Choose N [targets]…" effect into a {@link TargetSpec},
+     * or {@code null} when {@code effectText} does not match {@link #CHOOSE_CHARACTER_PATTERN} or
+     * would need a break-zone selection (deferred to resolution time, since the zone state moves).
+     *
+     * <p>Split out of {@link #preSelectTargets} so the redirect path can replay the same
+     * constraints against a replacement target instead of re-deriving them: two decodings of one
+     * card text that could disagree is exactly the drift that makes "must be a valid choice"
+     * enforceable in one place and not the other.
+     */
+    static TargetSpec targetSpec(String effectText, CardData source) {
+        if (effectText == null || effectText.isBlank()) return null;
         String text = ELEM_TYPE_OR_ELEM_TYPE.matcher(effectText).replaceAll("$1 or $3 $2");
         text = escapePeriodInName(text, source);
         Matcher m = CHOOSE_CHARACTER_PATTERN.matcher(text);
@@ -4513,7 +4534,7 @@ public class ActionResolver {
         String  zone        = m.group("zone");
         if (zone != null) return null; // break-zone targets deferred to resolution time
 
-        return ctx.selectCharacters(maxCount, upTo, opponentOnly, selfOnly, condition, element,
+        return new TargetSpec(maxCount, upTo, opponentOnly, selfOnly, condition, element,
                 costVal2, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
                 jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, excludeElem, withoutMulticard);
     }

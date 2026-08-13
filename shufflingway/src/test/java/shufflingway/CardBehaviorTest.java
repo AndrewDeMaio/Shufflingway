@@ -13930,6 +13930,167 @@ public class CardBehaviorTest {
 				"\"Summons and abilities\" reaches the Summon path, which reads a different flag");
 	}
 
+	// -----------------------------------------------------------------------------------------
+	// The same compulsion on the redirect path. A redirect re-chooses what an entry already on the
+	// Stack is pointing at, and its candidate pool screens for immunity but used not to screen for
+	// a taunt — so "The newly chosen target must be a valid choice", printed on every effect that
+	// offers a free pick, was being enforced with half the rule.
+	//
+	// Note the direction. Every such effect says "*another* target", so the entry's current target
+	// is always excluded: a taunt card already being chosen is never in the pool, and this can only
+	// pull a redirect ONTO a taunt, never forbid one that moves off it. Reuses the redirect
+	// section's summonChoosing/fwd/makeFaris helpers.
+	// -----------------------------------------------------------------------------------------
+
+	/** An action-ability entry belonging to {@code isP1} that has chosen exactly {@code targets}. */
+	private static StackEntry abilityChoosing(boolean isP1, ForwardTarget... targets) {
+		CardData src = makeForward("Prompter", "Fire", 2, 5000,
+				CardData.parseActionAbilities("《0》: Choose 1 Forward. Deal it 1000 damage."));
+		return new StackEntry(src, src.actionAbilities().get(0), isP1, 0, List.of(targets));
+	}
+
+	@Test
+	void aRedirectPoolNarrowsToTheTauntingCard() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForward("Caster", "Fire", 3, 7000));                  // P1 idx 0
+		mw.placeP2CardInForwardZone(makeForward("Decoy", "Water", 3, 7000));         // P2 idx 0
+		mw.placeP2CardInForwardZone(makeIcbCard("Auron", "Water", "Forward", AURON_TEXT)); // P2 idx 1
+
+		// P1's Summon is choosing P1's own Forward; a free-pick redirect may point it anywhere.
+		StackEntry entry = summonChoosing(makeForward("Shiva", "Ice", 2, 0), true, fwd(true, 0));
+
+		assertEquals(List.of(fwd(false, 1)),
+				mw.redirectCandidatesAnywhere(entry, mw.p1ForwardCards.get(0)),
+				"Auron taunts P1's Summons, so it is the only place the redirect may land");
+	}
+
+	@Test
+	void anAbilitiesOnlyTauntDoesNotNarrowASummonRedirect() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForward("Caster", "Fire", 3, 7000));
+		mw.placeP2CardInForwardZone(makeForward("Decoy", "Earth", 3, 7000));
+		mw.placeP2CardInForwardZone(makeIcbCard("Angeal", "Earth", "Forward", ANGEAL_TEXT));
+
+		StackEntry summon  = summonChoosing(makeForward("Shiva", "Ice", 2, 0), true, fwd(true, 0));
+		StackEntry ability = abilityChoosing(true, fwd(true, 0));
+		CardData exclude   = mw.p1ForwardCards.get(0);
+
+		assertEquals(2, mw.redirectCandidatesAnywhere(summon, exclude).size(),
+				"a Summon is not bound by an abilities-only taunt, so both P2 Forwards stay open");
+		assertEquals(List.of(fwd(false, 1)), mw.redirectCandidatesAnywhere(ability, exclude),
+				"the same board narrows for an ability entry");
+	}
+
+	@Test
+	void aTauntBindsTheEntrysControllerNotWhoeverWorksTheRedirect() {
+		MainWindow mw = new MainWindow();
+		// P2 controls Faris and can move an effect choosing her onto another Water Forward — but the
+		// effect is P1's, and P2's own Auron taunts it, so P2 is forced to take the hit on Auron.
+		CardData faris = makeFaris();
+		mw.placeP2CardInForwardZone(faris);                                                // P2 idx 0
+		mw.placeP2CardInForwardZone(makeForward("Lenna", "Water", 3, 7000));               // P2 idx 1
+		mw.placeP2CardInForwardZone(makeIcbCard("Auron", "Water", "Forward", AURON_TEXT)); // P2 idx 2
+
+		StackEntry entry = summonChoosing(makeForward("Shiva", "Ice", 2, 0), true, fwd(false, 0));
+		mw.gameState.pushStack(entry);
+
+		ActionResolver.parse(faris.actionAbilities().get(0).effectText(), faris)
+				.accept(mw.buildGameContext(false));
+
+		assertEquals(List.of(fwd(false, 2)), mw.gameState.getStack().get(0).preSelectedTargets(),
+				"Lenna is a legal Water Forward, but the taunt makes Auron the only valid choice");
+	}
+
+	@Test
+	void aRedirectPoolIsUntouchedWhenTheTauntIsOnTheEntrysOwnSide() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeIcbCard("Auron", "Water", "Forward", AURON_TEXT)); // P1 idx 0
+		placeP1Forward(mw, makeForward("Caster", "Fire", 3, 7000));               // P1 idx 1
+		mw.placeP2CardInForwardZone(makeForward("Decoy", "Water", 3, 7000));      // P2 idx 0
+
+		// The Summon belongs to P1, who also controls Auron — a taunt never binds its own controller.
+		StackEntry entry = summonChoosing(makeForward("Shiva", "Ice", 2, 0), true, fwd(true, 1));
+
+		assertEquals(2, mw.redirectCandidatesAnywhere(entry, mw.p1ForwardCards.get(1)).size(),
+				"Auron and the Decoy both stay in the pool");
+	}
+
+	// -----------------------------------------------------------------------------------------
+	// The other half of "The newly chosen target must be a valid choice": a redirect used to screen
+	// candidates for immunity only, never for the constraints the redirected effect's own text
+	// imposes. So a Summon that chose "1 Forward of cost 3 or less" could be pushed onto a cost 7
+	// Forward, or onto a Backup, or onto the side of the field its text never offered.
+	//
+	// The constraints are replayed from one decoding of the card text (ActionResolver.targetSpec),
+	// the same one that ran when the effect first chose — two decodings that could disagree is what
+	// would make the rule enforceable at one moment and not the other. Each test asserts the spec
+	// decodes, so a text this cannot read fails loudly instead of passing through the null fallback.
+	// -----------------------------------------------------------------------------------------
+
+	private static StackEntry summonEntryFor(String text, boolean isP1, ForwardTarget... targets) {
+		CardData summon = makeSummon("Blizzard", "Ice", 2, text);
+		assertNotNull(ActionResolver.targetSpec(text, summon),
+				"the test is meaningless unless the effect's targeting decodes");
+		return summonChoosing(summon, isP1, targets);
+	}
+
+	@Test
+	void aRedirectCannotLandOnATargetTheEffectsCostFilterExcluded() {
+		MainWindow mw = new MainWindow();
+		mw.placeP2CardInForwardZone(makeForward("Cheap",  "Fire", 2, 5000)); // P2 idx 0 — chosen
+		mw.placeP2CardInForwardZone(makeForward("Pricey", "Fire", 7, 9000)); // P2 idx 1
+		mw.placeP2CardInForwardZone(makeForward("Cheap2", "Fire", 2, 5000)); // P2 idx 2
+
+		StackEntry entry = summonEntryFor(
+				"Choose 1 Forward of cost 3 or less. Deal it 5000 damage.", true, fwd(false, 0));
+
+		assertEquals(List.of(fwd(false, 2)), mw.redirectCandidatesAnywhere(entry, mw.p2ForwardCards.get(0)),
+				"the cost 7 Forward was never a legal choice for this Summon");
+	}
+
+	@Test
+	void aRedirectCannotLandOnAZoneTheEffectNeverOffered() {
+		MainWindow mw = new MainWindow();
+		mw.placeP2CardInForwardZone(makeForward("Chosen", "Fire", 3, 7000)); // P2 idx 0 — chosen
+		mw.placeP2CardInForwardZone(makeForward("Other",  "Fire", 3, 7000)); // P2 idx 1
+		mw.placeP2CardInFirstBackupSlot(makeJobCard("Sage", "Fire", "Backup", "Sage"));
+
+		StackEntry entry = summonEntryFor("Choose 1 Forward. Deal it 5000 damage.", true, fwd(false, 0));
+
+		assertEquals(List.of(fwd(false, 1)), mw.redirectCandidatesAnywhere(entry, mw.p2ForwardCards.get(0)),
+				"\"Choose 1 Forward\" never offered the Backup, so a redirect cannot reach it either");
+	}
+
+	@Test
+	void aRedirectRespectsTheEffectsControlClause() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForward("Caster's Own", "Fire", 3, 7000));    // P1 idx 0
+		mw.placeP2CardInForwardZone(makeForward("Chosen", "Fire", 3, 7000)); // P2 idx 0 — chosen
+		mw.placeP2CardInForwardZone(makeForward("Other",  "Fire", 3, 7000)); // P2 idx 1
+
+		StackEntry entry = summonEntryFor(
+				"Choose 1 Forward opponent controls. Deal it 5000 damage.", true, fwd(false, 0));
+
+		assertEquals(List.of(fwd(false, 1)), mw.redirectCandidatesAnywhere(entry, mw.p2ForwardCards.get(0)),
+				"\"opponent controls\" is relative to the effect's controller, so P1's own Forward is out");
+	}
+
+	@Test
+	void anUndecodableEffectLeavesTheRedirectPoolAsWideAsItWas() {
+		MainWindow mw = new MainWindow();
+		mw.placeP2CardInForwardZone(makeForward("Chosen", "Fire", 3, 7000));
+		mw.placeP2CardInForwardZone(makeForward("Other",  "Fire", 7, 9000));
+
+		// A Summon whose text this cannot decode imposes no constraint — the fallback that keeps the
+		// redirect no stricter than it was before the spec existed.
+		CardData odd = makeSummon("Oddity", "Ice", 2, "Something entirely unparseable happens.");
+		assertNull(ActionResolver.targetSpec(odd.summonEffect(), odd));
+		StackEntry entry = summonChoosing(odd, true, fwd(false, 0));
+
+		assertEquals(List.of(fwd(false, 1)), mw.redirectCandidatesAnywhere(entry, mw.p2ForwardCards.get(0)),
+				"the cost 9000-power Forward stays available — nothing was decoded to exclude it");
+	}
+
 	@Test
 	void aSelectionWiderThanTheTauntsIsLeftUnrestricted() {
 		// The documented limit: one taunt cannot constrain a two-card choice, because the second

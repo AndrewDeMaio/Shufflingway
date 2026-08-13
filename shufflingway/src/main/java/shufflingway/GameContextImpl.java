@@ -1056,6 +1056,9 @@ final class GameContextImpl implements GameContext {
 				// effect choosing more cards than there are taunts must include them and is then
 				// free with the surplus, which the select dialog has no way to express — such a
 				// selection is left unrestricted rather than over-constrained.
+				//
+				// The redirect path re-chooses an entry's target without coming back through here,
+				// so it narrows its own candidate pool — see MainWindow.narrowToCompelledTargets.
 				if (!eligible.isEmpty()) {
 					List<ForwardTarget> compelled = eligible.stream()
 							.filter(t -> t.isP1() != isP1)

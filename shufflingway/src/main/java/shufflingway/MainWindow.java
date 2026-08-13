@@ -9408,9 +9408,11 @@ public class MainWindow {
 		List<ForwardTarget> out = new ArrayList<>();
 		List<CardData> fwds = userIsP1 ? p1ForwardCards : p2ForwardCards;
 		Predicate<CardData> legal = redirectLegality(entry, userIsP1, element, exclude);
-		for (int i = 0; i < fwds.size(); i++)
-			if (legal.test(fwds.get(i))) out.add(new ForwardTarget(userIsP1, i, ForwardTarget.CardZone.FORWARD));
-		return out;
+		for (int i = 0; i < fwds.size(); i++) {
+			ForwardTarget t = new ForwardTarget(userIsP1, i, ForwardTarget.CardZone.FORWARD);
+			if (legal.test(fwds.get(i)) && targetMeetsEntrySpec(entry, t)) out.add(t);
+		}
+		return narrowToCompelledTargets(entry, out);
 	}
 
 	/**
@@ -9427,15 +9429,52 @@ public class MainWindow {
 			Predicate<CardData> legal = redirectLegality(entry, sideIsP1, null, exclude);
 			List<CardData> fwds = sideIsP1 ? p1ForwardCards : p2ForwardCards;
 			for (int i = 0; i < fwds.size(); i++)
-				if (legal.test(fwds.get(i))) out.add(new ForwardTarget(sideIsP1, i, ForwardTarget.CardZone.FORWARD));
+				addRedirectCandidate(out, entry, legal, fwds.get(i), sideIsP1, i, ForwardTarget.CardZone.FORWARD);
 			CardData[] bkps = sideIsP1 ? p1BackupCards : p2BackupCards;
 			for (int i = 0; i < bkps.length; i++)
-				if (legal.test(bkps[i])) out.add(new ForwardTarget(sideIsP1, i, ForwardTarget.CardZone.BACKUP));
+				addRedirectCandidate(out, entry, legal, bkps[i], sideIsP1, i, ForwardTarget.CardZone.BACKUP);
 			List<CardData> mons = sideIsP1 ? p1MonsterCards : p2MonsterCards;
 			for (int i = 0; i < mons.size(); i++)
-				if (legal.test(mons.get(i))) out.add(new ForwardTarget(sideIsP1, i, ForwardTarget.CardZone.MONSTER));
+				addRedirectCandidate(out, entry, legal, mons.get(i), sideIsP1, i, ForwardTarget.CardZone.MONSTER);
 		}
-		return out;
+		return narrowToCompelledTargets(entry, out);
+	}
+
+	/**
+	 * Narrows a redirect's candidate pool to the cards a "must choose X if possible" taunt compels
+	 * {@code entry} to point at, or returns it unchanged when no taunt applies.
+	 *
+	 * <p>The redirect counterpart of the narrowing {@code GameContextImpl.selectCharacters} does
+	 * when a target is first chosen. Both are needed for the same reason immunity is checked on both
+	 * paths: "The newly chosen target must be a valid choice" is printed on every effect that offers
+	 * a free pick (Aemo 11-109R, Wicked Mask 20-038H, Faris 21-114L), and a compulsion consulted
+	 * only at first choice is one anyone holding those can sidestep.
+	 *
+	 * <p>The compulsion binds the <em>entry's</em> controller, not whoever is working the redirect —
+	 * it is still that Summon or ability making the choice. So Faris's controller using her {@code 《0》}
+	 * to move an opponent's ability can be forced to drop it on their own taunting Forward.
+	 *
+	 * <p>Two things make this simpler than the first-choice narrowing. A redirect replaces a
+	 * single-target entry with exactly one new target, so there is no surplus pick to leave free and
+	 * no count guard is needed. And every caller excludes the entry's current target ("another …"),
+	 * so a taunt card already being chosen is not in the pool to begin with — this can only ever
+	 * pull a redirect <em>onto</em> a taunt, never forbid one that moves off it.
+	 */
+	/** Adds one slot to a redirect pool when it clears both halves of "must be a valid choice". */
+	private void addRedirectCandidate(List<ForwardTarget> out, StackEntry entry,
+			Predicate<CardData> legal, CardData card, boolean sideIsP1, int idx,
+			ForwardTarget.CardZone zone) {
+		if (!legal.test(card)) return;
+		ForwardTarget t = new ForwardTarget(sideIsP1, idx, zone);
+		if (targetMeetsEntrySpec(entry, t)) out.add(t);
+	}
+
+	private List<ForwardTarget> narrowToCompelledTargets(StackEntry entry, List<ForwardTarget> candidates) {
+		List<ForwardTarget> compelled = candidates.stream()
+				.filter(t -> t.isP1() != entry.isP1())
+				.filter(t -> mustBeChosenByOpponent(fieldCardDataOrNull(t), entry.isSummon()))
+				.toList();
+		return compelled.isEmpty() ? candidates : compelled;
 	}
 
 	/**
@@ -9494,6 +9533,83 @@ public class MainWindow {
 		return c -> c != null && c != exclude
 				&& (element == null || c.containsElement(element))
 				&& !isProtectedFromChoice(c, sideIsP1, entry.isP1(), entry.isSummon(), entry.source());
+	}
+
+	/**
+	 * Whether {@code t} would have been a legal choice for {@code entry}'s own effect — the second
+	 * half of "The newly chosen target must be a valid choice", alongside the immunity check in
+	 * {@link #redirectLegality}. Replays the constraints the effect's text imposes, so a Summon that
+	 * chose "1 Forward of cost 3 or less" cannot be redirected onto a cost 7 Forward, or onto a
+	 * Backup, or onto the side of the field its text never offered.
+	 *
+	 * <p>Returns {@code true} when the effect's text yields no {@link TargetSpec} — an effect whose
+	 * targeting this cannot decode imposes no constraint here rather than a wrongly empty one, which
+	 * keeps the redirect no stricter than it was before the spec existed.
+	 *
+	 * <p>Mirrors the per-target checks {@code GameContextImpl.selectCharacters} runs, zone for zone.
+	 * The two are the same rule read at two moments, so a divergence here shows up as a redirect
+	 * landing somewhere the effect could not have chosen in the first place.
+	 */
+	private boolean targetMeetsEntrySpec(StackEntry entry, ForwardTarget t) {
+		TargetSpec spec = ActionResolver.targetSpec(entry.effectText(), entry.source());
+		if (spec == null) return true;
+		boolean sideIsP1 = t.isP1();
+		// "opponent controls" / "you control" are relative to whoever controls the effect.
+		if (spec.opponentOnly() && sideIsP1 == entry.isP1()) return false;
+		if (spec.selfOnly()     && sideIsP1 != entry.isP1()) return false;
+
+		CardData card = fieldCardDataOrNull(t);
+		if (card == null) return false;
+		String condition = spec.condition();
+		int i = t.idx();
+
+		if (spec.element() != null && !card.containsElement(spec.element())) return false;
+		if (!CardFilters.meetsCostConstraint(card.cost(), spec.costVal(), spec.costCmp())) return false;
+		if (!CardFilters.meetsPowerConstraint(card.power(), spec.powerVal(), spec.powerCmp())) return false;
+		if (!meetsJobFilterEffective(card, spec.jobFilter(),
+				sideIsP1 ? p1ForwardCards : p2ForwardCards)) return false;
+		if (!CardFilters.meetsCardNameFilter(card, spec.cardNameFilter())) return false;
+		if (!CardFilters.meetsCategoryFilter(card, spec.categoryFilter())) return false;
+		if (spec.excludeName() != null && spec.excludeName().equalsIgnoreCase(card.name())) return false;
+		if (spec.withoutMulticard() && card.multicard()) return false;
+
+		switch (t.zone()) {
+			case FORWARD -> {
+				if (!spec.inclForwards() && !card.alsoCountsAsMonster()) return false;
+				if (!CardFilters.meetsElementExclusion(card, spec.excludeElement())) return false;
+				if (CardFilters.isTraitCondition(condition)
+						&& !effectiveHasTrait(sideIsP1, i, CardFilters.parseTraitFromCondition(condition))) return false;
+				List<CardState>  states = sideIsP1 ? p1ForwardStates : p2ForwardStates;
+				List<Integer>    dmg    = sideIsP1 ? p1ForwardDamage : p2ForwardDamage;
+				List<Integer>    played = sideIsP1 ? p1ForwardPlayedOnTurn : p2ForwardPlayedOnTurn;
+				return CardFilters.isBlockingTargetFilter(condition)
+						? meetsBlockingTargetFilter(sideIsP1, i, condition)
+						: CardFilters.isEnteredThisTurnCondition(condition)
+						? played.get(i) == gameState.getTurnNumber()
+						: CardFilters.meetsTargetCondition(states.get(i), dmg.get(i),
+								sideIsP1 && p1AttackSelection.contains(i), false, condition);
+			}
+			case BACKUP -> {
+				if (CardFilters.isBlockingTargetFilter(condition)) return false;
+				boolean asFwd = sideIsP1 ? isP1BackupTemporarilyForward(i) : isP2BackupTemporarilyForward(i);
+				if (!spec.inclBackups() && !asFwd) return false;
+				CardState[] states = sideIsP1 ? p1BackupStates : p2BackupStates;
+				return CardFilters.meetsTargetCondition(states[i], 0, false, false, condition);
+			}
+			case MONSTER -> {
+				boolean asFwd = sideIsP1 ? isP1MonsterTemporarilyForward(i) : isP2MonsterTemporarilyForward(i);
+				if (!spec.inclMonsters() && !asFwd) return false;
+				if (!CardFilters.meetsElementExclusion(card, spec.excludeElement())) return false;
+				List<CardState> states = sideIsP1 ? p1MonsterStates : p2MonsterStates;
+				List<Integer>   played = sideIsP1 ? p1MonsterPlayedOnTurn : p2MonsterPlayedOnTurn;
+				return CardFilters.isEnteredThisTurnCondition(condition)
+						? played.get(i) == gameState.getTurnNumber()
+						: CardFilters.meetsTargetCondition(states.get(i), 0, false, false, condition);
+			}
+			default -> {
+				return false; // a redirect never lands in the Break Zone
+			}
+		}
 	}
 
 	/**
