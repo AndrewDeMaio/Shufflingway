@@ -836,26 +836,21 @@ public record CardData(
         "(?i)Warp\\s+(\\d+)\\s*--\\s*((?:《[^》]*》\\s*)*)"
     );
 
-    // Permanent printed "cannot be broken" field ability (e.g. Cid (WOFF), Ardyn).
-    // Matched against card text with quoted grant forms stripped, to avoid matching
-    // temporary "gains 'This Forward cannot be broken'" text.
-    private static final Pattern CANNOT_BE_BROKEN_TRAIT_PATTERN = Pattern.compile(
-        "(?i)cannot\\s+be\\s+broken(?!\\s+(?:this\\s+turn|until|by))\\s*[.!]?"
-    );
-
-    // Permanent "cannot be broken by [opposing Summons or] abilities that don't deal damage" (e.g. Vincent, Wicked Thunder).
-    private static final Pattern CANNOT_BE_BROKEN_BY_NON_DMG_TRAIT_PATTERN = Pattern.compile(
-        "(?i)cannot\\s+be\\s+broken\\s+by\\s+(?:opposing\\s+)?(?:Summons?\\s+or\\s+)?abilit(?:y|ies)\\s+that\\s+don'?t\\s+deal\\s+damage[.!]?"
-    );
+    /** The shared tail of every non-damage break shield: "cannot be broken by … that don't deal damage". */
+    private static final String NON_DMG_BREAK_TAIL =
+        "cannot\\s+be\\s+broken\\s+by\\s+(?:opposing\\s+)?(?:Summons?\\s+or\\s+)?abilit(?:y|ies)\\s+that\\s+don'?t\\s+deal\\s+damage";
 
     // Field-ability grants: "[CardName] gains '[CardName] cannot be broken by … abilities that don't deal damage.'"
+    // The optional "… and " run before the quote carries the other things granted in the same
+    // breath (Wol 14-059R: "gains +1000 power, Brave and \"Wol cannot be broken by …\"").
     private static final Pattern SELF_NON_DMG_BREAK_SHIELD_GRANT = Pattern.compile(
-        "(?i)^(?<name>.+?)\\s+gains?\\s+['\"][^'\"]*?cannot\\s+be\\s+broken\\s+by\\s+(?:opposing\\s+)?(?:Summons?\\s+or\\s+)?abilit(?:y|ies)\\s+that\\s+don'?t\\s+deal\\s+damage\\.?['\"][.!]?$"
+        "(?i)^(?<name>.+?)\\s+gains?\\s+(?:[^'\"]*\\s+and\\s+)?" +
+        "['\"][^'\"]*?" + NON_DMG_BREAK_TAIL + "\\.?['\"][.!]?$"
     );
 
     // Direct self-protection: "[CardName] cannot be broken by opposing Summons or abilities that don't deal damage."
     private static final Pattern SELF_NON_DMG_BREAK_SHIELD_DIRECT = Pattern.compile(
-        "(?i)^(?<name>[^.!]+?)\\s+cannot\\s+be\\s+broken\\s+by\\s+opposing\\s+(?:Summons?\\s+or\\s+)?abilit(?:y|ies)\\s+that\\s+don'?t\\s+deal\\s+damage[.!]?$"
+        "(?i)^(?<name>[^.!]+?)\\s+" + NON_DMG_BREAK_TAIL + "[.!]?$"
     );
 
     /**
@@ -876,6 +871,158 @@ public record CardData(
         Matcher m = SELF_NON_DMG_BREAK_SHIELD_DIRECT.matcher(effectText.trim());
         if (!m.matches()) return false;
         return m.group("name").trim().equalsIgnoreCase(cardName);
+    }
+
+    // Unconditional printed self-protection: "[CardName] cannot be broken." (Cid (WOFF) 4-034R,
+    // Ardyn 8-068L). Anchored at both ends and checked against the card's own name, so the
+    // qualified forms stay out: "... cannot be broken by ..." fails the tail anchor, and a
+    // leading condition ("During each Attack Phase, Galuf ...") fails the name check.
+    private static final Pattern SELF_CANNOT_BE_BROKEN_DIRECT = Pattern.compile(
+        "(?i)^(?<name>[^.!]+?)\\s+cannot\\s+be\\s+broken[.!]?$"
+    );
+
+    /**
+     * Returns {@code true} when {@code effectText} is the unconditional self-protection field
+     * ability "[cardName] cannot be broken."
+     *
+     * <p>The engine applies this one through the printed {@link Trait#CANNOT_BE_BROKEN} set by
+     * {@link #parseTraits}, which {@code breakTarget} checks for a card in any zone — so it
+     * protects Backups such as Cid (WOFF), not only Forwards. This parser exists so callers that
+     * work a field ability at a time can recognise the sentence that grants it.
+     */
+    static boolean parseSelfCannotBeBroken(String effectText, String cardName) {
+        Matcher m = SELF_CANNOT_BE_BROKEN_DIRECT.matcher(effectText.trim());
+        if (!m.matches()) return false;
+        return m.group("name").trim().equalsIgnoreCase(cardName);
+    }
+
+    /**
+     * "If you control [X], [CardName] [gains +N power and ]cannot be broken by … that don't deal
+     * damage." — Gilgamesh (XI) 10-111H and Gilgamesh 22-061L. The power half of the latter is
+     * already carried by its {@link IfControlBoost}; only the shield needs this.
+     */
+    private static final Pattern IF_CONTROL_NON_DMG_BREAK_SHIELD = Pattern.compile(
+        "(?i)^If\\s+you\\s+control\\s+(?<cond>.+?),\\s+(?<name>[^.!]+?)\\s+" +
+        "(?:gains?\\s+\\+\\d+\\s+power\\s+and\\s+)?" + NON_DMG_BREAK_TAIL + "[.!]?$"
+    );
+
+    /**
+     * Returns the {@link ControlCondition} gating "If you control [X], [cardName] cannot be broken
+     * by … that don't deal damage.", or {@code null} when the text is not that shape, names another
+     * card, or states a condition that does not parse.
+     */
+    static ControlCondition parseIfControlNonDmgBreakShield(String effectText, String cardName) {
+        Matcher m = IF_CONTROL_NON_DMG_BREAK_SHIELD.matcher(effectText.trim());
+        if (!m.matches()) return null;
+        if (!m.group("name").trim().equalsIgnoreCase(cardName)) return null;
+        return parseControlCondition(m.group("cond").trim());
+    }
+
+    /**
+     * "The [Element | Job X | Card Name Y | Category Z] [Type] you control [gain "…" and ]cannot be
+     * broken by … that don't deal damage." — a grant to a filtered set rather than to the printing
+     * card. Celestia 13-128L and Rasler 5-166S print it bare; Haveh 21-075R and Madam Edel 16-080H
+     * wrap it as a quoted ability the members gain.
+     */
+    private static final Pattern FIELD_NON_DMG_BREAK_SHIELD_GRANT = Pattern.compile(
+        "(?i)^The\\s+(?:Job\\s+(?<job>.+?)|Card\\s+Name\\s+(?<cardname>.+?)|Category\\s+(?<category>\\S+)" +
+        "|(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark))\\s+" +
+        "(?<type>Forwards?|Backups?|Monsters?|Characters?)?\\s*you\\s+control\\s+" +
+        "(?:gains?\\s+(?:\"[^\"]*\"\\s+and\\s+)*\"This\\s+(?:Character|Forward|Monster|Backup)\\s+)?" +
+        NON_DMG_BREAK_TAIL + "\\.?\"?[.!]?$"
+    );
+
+    /**
+     * The filter a {@link #FIELD_NON_DMG_BREAK_SHIELD_GRANT} protects. Exactly one of
+     * {@code job}/{@code cardName}/{@code category}/{@code element} is non-null.
+     */
+    record NonDmgBreakShieldGrant(String job, String cardName, String category, String element,
+            boolean inclForwards, boolean inclBackups, boolean inclMonsters) {
+
+        /** True when {@code c} is inside the protected set, using the shared field-filter rules. */
+        boolean appliesToCard(CardData c) {
+            if (c == null) return false;
+            boolean typeOk = (inclForwards && c.isForward())
+                          || (inclBackups  && c.isBackup())
+                          || (inclMonsters && (c.isMonster() || c.alsoCountsAsMonster()));
+            return typeOk
+                && CardFilters.meetsElementFilter(c, element)
+                && CardFilters.meetsJobFilter(c, job)
+                && CardFilters.meetsCategoryFilter(c, category)
+                && CardFilters.meetsCardNameFilter(c, cardName);
+        }
+    }
+
+    /**
+     * Parses a "The [filter] you control cannot be broken by … that don't deal damage." field
+     * ability, or returns {@code null}. The printing card is protected only when it matches its
+     * own filter — Celestia is a Water Character and Haveh has the Job Warrior, so both do;
+     * Rasler is not named Ashe and Madam Edel is not a Morze's Soiree Member, so neither does.
+     */
+    static NonDmgBreakShieldGrant parseFieldNonDmgBreakShieldGrant(String effectText) {
+        Matcher m = FIELD_NON_DMG_BREAK_SHIELD_GRANT.matcher(effectText.trim());
+        if (!m.matches()) return null;
+        String type = m.group("type");
+        String t    = type == null ? "character" : type.toLowerCase(Locale.ROOT);
+        boolean any = t.startsWith("character");
+        return new NonDmgBreakShieldGrant(
+                m.group("job")      != null ? m.group("job").trim()      : null,
+                m.group("cardname") != null ? m.group("cardname").trim() : null,
+                m.group("category") != null ? m.group("category").trim() : null,
+                m.group("element"),
+                any || t.startsWith("forward"),
+                any || t.startsWith("backup"),
+                any || t.startsWith("monster"));
+    }
+
+    /** "[CardName] cannot be broken during your turn." (Galuf 7-067L) */
+    private static final Pattern SELF_CANNOT_BE_BROKEN_YOUR_TURN = Pattern.compile(
+        "(?i)^(?<name>[^.!]+?)\\s+cannot\\s+be\\s+broken\\s+during\\s+your\\s+turn[.!]?$"
+    );
+
+    /** "During each Attack Phase, [CardName] cannot be broken." (Galuf 12-056H) */
+    private static final Pattern SELF_CANNOT_BE_BROKEN_ATTACK_PHASE = Pattern.compile(
+        "(?i)^During\\s+each\\s+Attack\\s+Phase,\\s+(?<name>[^.!]+?)\\s+cannot\\s+be\\s+broken[.!]?$"
+    );
+
+    /** "If a [X] Counter is placed on [CardName], [CardName] cannot be broken." (Llednar 13-108L) */
+    private static final Pattern SELF_CANNOT_BE_BROKEN_WITH_COUNTER = Pattern.compile(
+        "(?i)^If\\s+a\\s+(?<counter>.+?)\\s+Counter\\s+is\\s+placed\\s+on\\s+(?<on>[^,]+?),\\s+" +
+        "(?<name>[^.!]+?)\\s+cannot\\s+be\\s+broken[.!]?$"
+    );
+
+    /**
+     * Returns {@code true} for "[cardName] cannot be broken during your turn." — protection that
+     * holds only while it is the controller's own turn, so it is granted per-query by
+     * {@code FieldGrantCalculator} rather than baked into the printed traits.
+     */
+    static boolean parseSelfCannotBeBrokenDuringYourTurn(String effectText, String cardName) {
+        Matcher m = SELF_CANNOT_BE_BROKEN_YOUR_TURN.matcher(effectText.trim());
+        if (!m.matches()) return false;
+        return m.group("name").trim().equalsIgnoreCase(cardName);
+    }
+
+    /**
+     * Returns {@code true} for "During each Attack Phase, [cardName] cannot be broken." — note
+     * "each", so it holds in both players' Attack Phases, not only the controller's.
+     */
+    static boolean parseSelfCannotBeBrokenDuringAttackPhase(String effectText, String cardName) {
+        Matcher m = SELF_CANNOT_BE_BROKEN_ATTACK_PHASE.matcher(effectText.trim());
+        if (!m.matches()) return false;
+        return m.group("name").trim().equalsIgnoreCase(cardName);
+    }
+
+    /**
+     * Returns the counter name gating "If a [X] Counter is placed on [cardName], [cardName]
+     * cannot be broken.", or {@code null} when the text is not that shape or names another card.
+     * Both the card the counter sits on and the protected card must be the source itself.
+     */
+    static String parseSelfCannotBeBrokenWithCounter(String effectText, String cardName) {
+        Matcher m = SELF_CANNOT_BE_BROKEN_WITH_COUNTER.matcher(effectText.trim());
+        if (!m.matches()) return null;
+        if (!m.group("on").trim().equalsIgnoreCase(cardName)) return null;
+        if (!m.group("name").trim().equalsIgnoreCase(cardName)) return null;
+        return m.group("counter").trim();
     }
 
     /** "If your opponent has N card(s) or less in their hand, [CardName] cannot be broken." */
@@ -5471,8 +5618,15 @@ public record CardData(
     // Trait parsing
     // -------------------------------------------------------------------------
 
-    /** Parses {@code textEn} and returns the set of Special Traits present. */
-    public static Set<Trait> parseTraits(String textEn) {
+    /**
+     * Parses {@code textEn} and returns the set of Special Traits present.
+     *
+     * <p>{@code cardName} is needed because {@link Trait#CANNOT_BE_BROKEN} is a statement about
+     * this card and no other. It is read one {@code [[br]]} segment at a time and the subject is
+     * checked against the name, so a card that merely mentions the protection — granting it to
+     * other Forwards, or claiming it only under a condition — no longer picks it up itself.
+     */
+    public static Set<Trait> parseTraits(String textEn, String cardName) {
         if (textEn == null || textEn.isBlank()) return Set.of();
         EnumSet<Trait> found = EnumSet.noneOf(Trait.class);
         if (HASTE_PATTERN.matcher(textEn).find())        found.add(Trait.HASTE);
@@ -5481,15 +5635,14 @@ public record CardData(
         if (BACK_ATTACK_PATTERN.matcher(textEn).find())  found.add(Trait.BACK_ATTACK);
         if (WARP_PATTERN.matcher(textEn).find())         found.add(Trait.WARP);
         if (PRIMING_PATTERN.matcher(textEn).find())      found.add(Trait.PRIMING);
-        // Strip quoted "gains '...'" grant text before checking permanent "cannot be broken"
-        // so that temporary grant descriptions in action abilities are not matched.
-        String strippedForCbb = textEn
-                .replaceAll("(?i)gains\\s*'[^']*'", "")
-                .replaceAll("(?i)gains\\s*\"[^\"]*\"", "");
-        if (CANNOT_BE_BROKEN_TRAIT_PATTERN.matcher(strippedForCbb).find())
-            found.add(Trait.CANNOT_BE_BROKEN);
-        if (CANNOT_BE_BROKEN_BY_NON_DMG_TRAIT_PATTERN.matcher(strippedForCbb).find())
-            found.add(Trait.CANNOT_BE_BROKEN_BY_NON_DMG);
+        // Both break shields are unconditional-self-only here. Every other printing — a condition
+        // on either side of the sentence, a damage gate, a grant made to somebody else — falls
+        // through to FieldGrantCalculator, which re-evaluates it as the game state moves.
+        for (String raw : textEn.split("(?i)\\[\\[br\\]\\]")) {
+            String seg = SUMMON_MARKUP.matcher(raw.trim()).replaceAll("").trim();
+            if (parseSelfCannotBeBroken(seg, cardName))            found.add(Trait.CANNOT_BE_BROKEN);
+            if (parseSelfNonDmgBreakShieldDirect(seg, cardName))   found.add(Trait.CANNOT_BE_BROKEN_BY_NON_DMG);
+        }
         return found;
     }
 

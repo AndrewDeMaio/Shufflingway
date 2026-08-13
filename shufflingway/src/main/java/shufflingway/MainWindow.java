@@ -2005,7 +2005,7 @@ public class MainWindow {
 		String tx = card.textEn();
 		return new CardData(card.imageUrl(), card.name(), card.element(),
 				card.cost(), card.power(), card.type(), card.isLb(), card.lbCost(), card.exBurst(),
-				card.multicard(), CardData.parseTraits(tx),
+				card.multicard(), CardData.parseTraits(tx, card.name()),
 				CardData.parseWarpValue(tx), CardData.parseWarpCost(tx),
 				CardData.parsePrimingTarget(tx), CardData.parsePrimingCost(tx),
 				CardData.parseActionAbilities(tx), CardData.parseAutoAbilities(tx),

@@ -63,7 +63,7 @@ final class CardCorpus {
 				rs.getObject("lb_cost") != null ? rs.getInt("lb_cost") : 0,
 				rs.getInt("ex_burst") != 0,
 				rs.getInt("multicard") != 0,
-				CardData.parseTraits(textEn),
+				CardData.parseTraits(textEn, nameEn),
 				CardData.parseWarpValue(textEn),
 				CardData.parseWarpCost(textEn),
 				CardData.parsePrimingTarget(textEn),

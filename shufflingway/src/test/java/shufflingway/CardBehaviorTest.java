@@ -6289,7 +6289,7 @@ public class CardBehaviorTest {
     /** Builds a card of any type with its Special Traits parsed from {@code text}, as the real ETL does. */
     private static CardData makeTraitCard(String name, String element, String type, String text) {
         return new CardData(null, name, element, 3, 7000, type, false, 0, false, false,
-                CardData.parseTraits(text), 0, List.of(), null, List.of(),
+                CardData.parseTraits(text, name), 0, List.of(), null, List.of(),
                 CardData.parseActionAbilities(text), CardData.parseAutoAbilities(text),
                 CardData.parseFieldAbilities(text, type),
                 List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
@@ -6918,6 +6918,272 @@ public class CardBehaviorTest {
         // The damage-only variant is a separate trait and deliberately has no glyph yet — it must
         // not borrow this one, which would overstate the protection on the card.
         assertFalse(shufflingway.graphics.TraitTab.hasGlyph(CardData.Trait.CANNOT_BE_BROKEN_BY_NON_DMG));
+    }
+
+    // Cid (WOFF) 4-034R prints "Cid (WOFF) cannot be broken." on a Backup. breakTarget checks the
+    // printed trait before it splits by zone, so the protection reaches a Backup — the parenthesised
+    // card name is the part worth pinning, since it is what the sentence parser has to carry.
+    @Test
+    void unconditionalCannotBeBrokenAppliesToABackup() {
+        String text = "Cid (WOFF) cannot be broken.[[br]] 《Dull》, put Cid (WOFF) into the Break Zone: "
+                + "Choose 1 Monster of cost 2 or less in your Break Zone. Play it onto the field. "
+                + "You can only use this ability during your turn.";
+        CardData cid = makeTraitCard("Cid (WOFF)", "Water", "Backup", text);
+        assertTrue(cid.hasTrait(CardData.Trait.CANNOT_BE_BROKEN),
+                "the printed trait is what protects a Backup — breakTarget reads it in every zone");
+        assertTrue(CardData.parseSelfCannotBeBroken("Cid (WOFF) cannot be broken.", "Cid (WOFF)"));
+    }
+
+    // The sentence parser is anchored at both ends and name-checked, so the qualified and
+    // conditional forms must not read as unconditional protection. Each of these is a real card.
+    @Test
+    void unconditionalCannotBeBrokenRejectsTheQualifiedForms() {
+        // Trailing qualifier — Galuf 7-067L is protected only on his controller's turn.
+        assertFalse(CardData.parseSelfCannotBeBroken(
+                "Galuf cannot be broken during your turn.", "Galuf"));
+        // Leading condition — Galuf 12-056H, only during an Attack Phase.
+        assertFalse(CardData.parseSelfCannotBeBroken(
+                "During each Attack Phase, Galuf cannot be broken.", "Galuf"));
+        // Leading condition — Llednar 13-108L, only while a Fortune Counter is on him.
+        assertFalse(CardData.parseSelfCannotBeBroken(
+                "If a Fortune Counter is placed on Llednar, Llednar cannot be broken.", "Llednar"));
+        // The narrower non-damage shield is a different trait and has its own parser.
+        assertFalse(CardData.parseSelfCannotBeBroken(
+                "Vincent cannot be broken by opposing Summons or abilities that don't deal damage.", "Vincent"));
+        // A sentence about somebody else's protection is not a self-grant.
+        assertFalse(CardData.parseSelfCannotBeBroken(
+                "The Backups you control cannot be broken.", "Auron"));
+    }
+
+    // =========================================================================================
+    // Conditional "cannot be broken" — Galuf 7-067L, Galuf 12-056H, Llednar 13-108L
+    //
+    // The trait used to come from a find() over the whole card text, so a condition in front of
+    // the sentence ("During each Attack Phase, …") or behind it ("… during your turn") was simply
+    // not seen and all three were permanently unbreakable. They are now granted per query by
+    // FieldGrantCalculator, which can answer differently as the turn and phase move.
+    // =========================================================================================
+
+    /** Puts {@code card} on P1's field as its owner and returns the MainWindow driving it. */
+    private static MainWindow placeOwnP1Forward(MainWindow mw, CardData card) {
+        mw.gameState.getIdentity().put(card, true);
+        mw.placeCardInForwardZone(card);
+        return mw;
+    }
+
+    @Test
+    void cannotBeBrokenDuringYourTurnHoldsOnlyOnItsControllersTurn() {
+        MainWindow mw = new MainWindow();
+        CardData galuf = makeTraitCard("Galuf", "Earth", "Forward", "Galuf cannot be broken during your turn.");
+        assertFalse(galuf.hasTrait(CardData.Trait.CANNOT_BE_BROKEN),
+                "the qualifier means this is not an unconditional printed trait");
+        placeOwnP1Forward(mw, galuf);
+
+        advanceTo(mw, GameState.Player.P1, GameState.GamePhase.MAIN_1);
+        assertTrue(mw.effectiveP1HasTrait(0, CardData.Trait.CANNOT_BE_BROKEN), "protected on his own turn");
+
+        advanceTo(mw, GameState.Player.P2, GameState.GamePhase.MAIN_1);
+        assertFalse(mw.effectiveP1HasTrait(0, CardData.Trait.CANNOT_BE_BROKEN), "exposed on the opponent's turn");
+    }
+
+    @Test
+    void cannotBeBrokenDuringEachAttackPhaseHoldsInBothPlayersAttackPhases() {
+        MainWindow mw = new MainWindow();
+        CardData galuf = makeTraitCard("Galuf", "Earth", "Forward",
+                "During each Attack Phase, Galuf cannot be broken.");
+        assertFalse(galuf.hasTrait(CardData.Trait.CANNOT_BE_BROKEN));
+        placeOwnP1Forward(mw, galuf);
+
+        advanceTo(mw, GameState.Player.P1, GameState.GamePhase.MAIN_1);
+        assertFalse(mw.effectiveP1HasTrait(0, CardData.Trait.CANNOT_BE_BROKEN), "not in Main Phase 1");
+
+        advanceTo(mw, GameState.Player.P1, GameState.GamePhase.ATTACK);
+        assertTrue(mw.effectiveP1HasTrait(0, CardData.Trait.CANNOT_BE_BROKEN), "his own Attack Phase");
+
+        // "each Attack Phase" is not "your Attack Phase" — the opponent's counts too.
+        advanceTo(mw, GameState.Player.P2, GameState.GamePhase.ATTACK);
+        assertTrue(mw.effectiveP1HasTrait(0, CardData.Trait.CANNOT_BE_BROKEN), "the opponent's Attack Phase too");
+    }
+
+    @Test
+    void cannotBeBrokenWithCounterFollowsTheCounterOnAndOff() {
+        MainWindow mw = new MainWindow();
+        CardData llednar = makeTraitCard("Llednar", "Fire", "Forward",
+                "If a Fortune Counter is placed on Llednar, Llednar cannot be broken.");
+        assertFalse(llednar.hasTrait(CardData.Trait.CANNOT_BE_BROKEN));
+        placeOwnP1Forward(mw, llednar);
+
+        assertFalse(mw.effectiveP1HasTrait(0, CardData.Trait.CANNOT_BE_BROKEN), "no counter yet");
+
+        mw.gameState.placeCounters(llednar, "Fortune", 1);
+        assertTrue(mw.effectiveP1HasTrait(0, CardData.Trait.CANNOT_BE_BROKEN), "counter on → protected");
+
+        // Llednar's own "Remove all Fortune Counters" ability is what turns it back off.
+        mw.gameState.removeCounters(llednar, "Fortune", 1);
+        assertFalse(mw.effectiveP1HasTrait(0, CardData.Trait.CANNOT_BE_BROKEN), "counter gone → exposed");
+
+        // A different counter must not stand in for the named one.
+        mw.gameState.placeCounters(llednar, "Petrification", 1);
+        assertFalse(mw.effectiveP1HasTrait(0, CardData.Trait.CANNOT_BE_BROKEN), "wrong counter type");
+    }
+
+    // The four cards whose text only ever grants the shield to somebody else used to pick it up
+    // themselves, because the whole-text scan could not tell a grant from a self-statement.
+    @Test
+    void grantingCannotBeBrokenToOthersDoesNotShieldTheGranter() {
+        CardData regis = makeTraitCard("Regis", "Earth", "Forward",
+                "[[s]]Royal Sigil[[/]] 《S》《Earth》《Lightning》: All the Forwards you control gain "
+                + "\"This Forward cannot be broken\" until the end of the turn.");
+        assertFalse(regis.hasTrait(CardData.Trait.CANNOT_BE_BROKEN), "Regis 12-122L grants it, he does not have it");
+
+        CardData wol = makeTraitCard("Warrior of Light", "Light", "Forward",
+                "Remove Warrior of Light from the game: All the Forwards you control gain "
+                + "\"This Forward cannot be broken.\" until the end of the turn. "
+                + "You can only use this ability during your opponent's turn.");
+        assertFalse(wol.hasTrait(CardData.Trait.CANNOT_BE_BROKEN), "Warrior of Light 16-127L removes itself to grant it");
+
+        CardData antlion = makeTraitCard("Antlion", "Earth", "Monster",
+                "《Earth》, discard Antlion, remove 1 Backup from the game: Choose 1 Forward you control. "
+                + "Dull it. Until the end of the turn, it gains +2000 power and \"This Forward cannot be broken.\" "
+                + "You can only use this ability if Antlion is in your hand.");
+        assertFalse(antlion.hasTrait(CardData.Trait.CANNOT_BE_BROKEN),
+                "the quote does not follow 'gains' directly, which is what the old strip relied on");
+    }
+
+    // Qun'mi already had a correct opponent-hand-size conditional in FieldGrantCalculator; the
+    // permanent trait sat on top of it and made the condition unreachable.
+    @Test
+    void opponentHandSizeCannotBeBrokenIsNoLongerShadowedByAPermanentTrait() {
+        CardData qunmi = makeTraitCard("White Tiger l'Cie Qun'mi", "Ice", "Forward",
+                "If your opponent has 1 card or less in their hand, White Tiger l'Cie Qun'mi cannot be broken.");
+        assertFalse(qunmi.hasTrait(CardData.Trait.CANNOT_BE_BROKEN), "the condition has to be evaluated, not assumed");
+        assertEquals(1, CardData.parseIfOpponentHandSizeCannotBeBrokenThreshold(
+                "If your opponent has 1 card or less in their hand, White Tiger l'Cie Qun'mi cannot be broken.",
+                "White Tiger l'Cie Qun'mi"));
+    }
+
+    // =========================================================================================
+    // The non-damage break shield had the same whole-text defect as its unconditional sibling:
+    // any card whose text merely mentioned it picked it up, ungated. It is now the printed trait
+    // only for the bare self-statement; every other printing routes through FieldGrantCalculator.
+    // =========================================================================================
+
+    @Test
+    void nonDamageBreakShieldStaysPrintedForTheBareSelfStatement() {
+        CardData vincent = makeTraitCard("Vincent", "Earth", "Forward",
+                "Vincent cannot be broken by opposing Summons or abilities that don't deal damage.");
+        assertTrue(vincent.hasTrait(CardData.Trait.CANNOT_BE_BROKEN_BY_NON_DMG));
+
+        // Ceodore 25-044C drops the "Summons or", which the shared tail still accepts.
+        CardData ceodore = makeTraitCard("Ceodore", "Wind", "Forward",
+                "Ceodore cannot be broken by opposing abilities that don't deal damage.");
+        assertTrue(ceodore.hasTrait(CardData.Trait.CANNOT_BE_BROKEN_BY_NON_DMG));
+    }
+
+    @Test
+    void nonDamageBreakShieldIsNotPrintedForGrantsAndGates() {
+        // Doga 5-087R hands it out with an action ability; he never has it himself.
+        CardData doga = makeTraitCard("Doga", "Earth", "Backup",
+                "《Earth》《Dull》, put Doga into the Break Zone: Choose 1 Character you control. "
+                + "During this turn, it cannot be broken by opposing Summons or abilities that don't deal damage.");
+        assertFalse(doga.hasTrait(CardData.Trait.CANNOT_BE_BROKEN_BY_NON_DMG));
+
+        // Wol 14-059R is gated behind Damage 3.
+        CardData wol = makeTraitCard("Wol", "Earth", "Forward",
+                "Damage 3 -- Wol gains +1000 power, Brave and \"Wol cannot be broken by opposing "
+                + "Summons or abilities that don't deal damage.\"");
+        assertFalse(wol.hasTrait(CardData.Trait.CANNOT_BE_BROKEN_BY_NON_DMG),
+                "the Damage 3 gate has to be evaluated, not assumed");
+
+        // Gilgamesh (XI) 10-111H is gated on controlling 5 or more Water Characters.
+        CardData gilg = makeTraitCard("Gilgamesh (XI)", "Water", "Forward",
+                "If you control 5 or more Water Characters, Gilgamesh (XI) cannot be broken by "
+                + "opposing Summons or abilities that don't deal damage.");
+        assertFalse(gilg.hasTrait(CardData.Trait.CANNOT_BE_BROKEN_BY_NON_DMG));
+        assertNotNull(CardData.parseIfControlNonDmgBreakShield(
+                "If you control 5 or more Water Characters, Gilgamesh (XI) cannot be broken by "
+                + "opposing Summons or abilities that don't deal damage.", "Gilgamesh (XI)"));
+    }
+
+    // Wol's shield now arrives through the damage-gated self-grant path. The pattern had required
+    // the quote to follow "gains" directly, so "gains +1000 power, Brave and \"…\"" slipped past it
+    // and only the ungated whole-text scan was holding the card up.
+    @Test
+    void nonDamageBreakShieldFollowsTheDamageGate() {
+        MainWindow mw = new MainWindow();
+        CardData wol = makeTraitCard("Wol", "Earth", "Forward",
+                "Damage 3 -- Wol gains +1000 power, Brave and \"Wol cannot be broken by opposing "
+                + "Summons or abilities that don't deal damage.\"");
+        placeOwnP1Forward(mw, wol);
+        assertFalse(mw.effectiveP1HasTrait(0, CardData.Trait.CANNOT_BE_BROKEN_BY_NON_DMG),
+                "no damage taken yet");
+
+        for (int i = 0; i < 3; i++)
+            mw.gameState.getP1DamageZone().add(makeForward("Damage " + i, "Fire", 1, 1000));
+        assertTrue(mw.effectiveP1HasTrait(0, CardData.Trait.CANNOT_BE_BROKEN_BY_NON_DMG),
+                "Damage 3 reached");
+    }
+
+    @Test
+    void nonDamageBreakShieldControlConditionTurnsOnAndOff() {
+        MainWindow mw = new MainWindow();
+        CardData gilg = makeTraitCard("Gilgamesh (XI)", "Water", "Forward",
+                "If you control 5 or more Water Characters, Gilgamesh (XI) cannot be broken by "
+                + "opposing Summons or abilities that don't deal damage.");
+        placeOwnP1Forward(mw, gilg);
+        assertFalse(mw.effectiveP1HasTrait(0, CardData.Trait.CANNOT_BE_BROKEN_BY_NON_DMG),
+                "he is only one Water Character");
+
+        for (int i = 0; i < 4; i++)
+            placeOwnP1Forward(mw, makeTraitCard("Water Ally " + i, "Water", "Forward", ""));
+        assertTrue(mw.effectiveP1HasTrait(0, CardData.Trait.CANNOT_BE_BROKEN_BY_NON_DMG),
+                "five Water Characters now");
+    }
+
+    // Celestia 13-128L grants to a filtered set she happens to belong to; Rasler 5-166S grants to
+    // a set he does not. The old whole-text scan could not tell those apart and shielded both.
+    @Test
+    void nonDamageBreakShieldGrantCoversTheFilteredSetOnly() {
+        MainWindow mw = new MainWindow();
+        CardData celestia = makeTraitCard("Celestia", "Water/Ice", "Forward",
+                "The Water Characters you control cannot be broken by opposing Summons or "
+                + "abilities that don't deal damage.");
+        placeOwnP1Forward(mw, celestia);
+        placeOwnP1Forward(mw, makeTraitCard("Water Ally", "Water", "Forward", ""));
+        placeOwnP1Forward(mw, makeTraitCard("Fire Ally", "Fire", "Forward", ""));
+
+        assertTrue(mw.effectiveP1HasTrait(0, CardData.Trait.CANNOT_BE_BROKEN_BY_NON_DMG),
+                "Celestia is herself a Water Character");
+        assertTrue(mw.effectiveP1HasTrait(1, CardData.Trait.CANNOT_BE_BROKEN_BY_NON_DMG),
+                "the grant reaches other Water Characters, which it never used to");
+        assertFalse(mw.effectiveP1HasTrait(2, CardData.Trait.CANNOT_BE_BROKEN_BY_NON_DMG),
+                "a Fire Character is outside the filter");
+    }
+
+    @Test
+    void nonDamageBreakShieldGrantDoesNotCoverAGranterOutsideItsOwnFilter() {
+        MainWindow mw = new MainWindow();
+        CardData rasler = makeTraitCard("Rasler", "Water", "Forward",
+                "The Card Name Ashe you control cannot be broken by opposing Summons or "
+                + "abilities that don't deal damage.");
+        placeOwnP1Forward(mw, rasler);
+        placeOwnP1Forward(mw, makeTraitCard("Ashe", "Water", "Forward", ""));
+
+        assertFalse(mw.effectiveP1HasTrait(0, CardData.Trait.CANNOT_BE_BROKEN_BY_NON_DMG),
+                "Rasler is not named Ashe");
+        assertTrue(mw.effectiveP1HasTrait(1, CardData.Trait.CANNOT_BE_BROKEN_BY_NON_DMG),
+                "Ashe is");
+
+        // Madam Edel 16-080H is an Adventurer handing the shield to Morze's Soiree Members.
+        CardData edel = makeTraitCard("Madam Edel", "Earth", "Forward",
+                "The Job Morze's Soiree Member you control gain \"If this Character is dealt damage "
+                + "by your opponent's Summons or abilities, the damage becomes 0 instead.\" and "
+                + "\"This Character cannot be broken by opposing Summons or abilities that don't deal damage.\"");
+        assertFalse(edel.hasTrait(CardData.Trait.CANNOT_BE_BROKEN_BY_NON_DMG));
+        CardData.NonDmgBreakShieldGrant g = CardData.parseFieldNonDmgBreakShieldGrant(
+                edel.fieldAbilities().get(0).effectText());
+        assertNotNull(g, "the quoted-grant wrapper should still parse");
+        assertFalse(g.appliesToCard(edel), "an Adventurer is not a Morze's Soiree Member");
     }
 
     @Test

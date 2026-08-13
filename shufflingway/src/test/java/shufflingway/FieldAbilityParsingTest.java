@@ -147,6 +147,15 @@ public class FieldAbilityParsingTest {
         if (!CardData.parseSelfTraitGrant(fa.effectText(), source.name()).isEmpty()) return true;
         if (CardData.parseSelfNonDmgBreakShield(fa.effectText(), source.name())) return true;
         if (CardData.parseSelfNonDmgBreakShieldDirect(fa.effectText(), source.name())) return true;
+        // Applied as the printed CANNOT_BE_BROKEN trait rather than through a field-ability path,
+        // and honoured by breakTarget for a card in any zone — Backups included.
+        if (CardData.parseSelfCannotBeBroken(fa.effectText(), source.name())) return true;
+        // Conditional printings, re-evaluated per query by FieldGrantCalculator.
+        if (CardData.parseIfControlNonDmgBreakShield(fa.effectText(), source.name()) != null) return true;
+        if (CardData.parseFieldNonDmgBreakShieldGrant(fa.effectText()) != null) return true;
+        if (CardData.parseSelfCannotBeBrokenDuringYourTurn(fa.effectText(), source.name())) return true;
+        if (CardData.parseSelfCannotBeBrokenDuringAttackPhase(fa.effectText(), source.name())) return true;
+        if (CardData.parseSelfCannotBeBrokenWithCounter(fa.effectText(), source.name()) != null) return true;
         if (CardData.parseIfOpponentHandSizeCannotBeBrokenThreshold(fa.effectText(), source.name()) >= 0) return true;
         if (CardData.TRAIT_ONLY_SEGMENT.matcher(fa.effectText()).matches()) return true;
         if (CardData.parseOpponentForwardsEnterDull(fa.effectText())) return true;
@@ -175,7 +184,7 @@ public class FieldAbilityParsingTest {
                 rs.getObject("lb_cost") != null ? rs.getInt("lb_cost") : 0,
                 rs.getInt("ex_burst") != 0,
                 rs.getInt("multicard") != 0,
-                CardData.parseTraits(textEn),
+                CardData.parseTraits(textEn, rs.getString("name_en")),
                 CardData.parseWarpValue(textEn),
                 CardData.parseWarpCost(textEn),
                 CardData.parsePrimingTarget(textEn),
@@ -331,6 +340,25 @@ public class FieldAbilityParsingTest {
         int lbN = CardData.parseIfSelfLbFaceUpCountTraitGrantThreshold(fa.effectText(), source.name());
         if (lbN >= 0) return "LbFaceUpTraitGrant[n≥" + lbN + " " + CardData.parseIfSelfLbFaceUpCountTraitGrantTraits(fa.effectText()) + "]";
         if (CardData.parseSelfNonDmgBreakShieldDirect(fa.effectText(), source.name())) return "SelfNonDmgBreakShield";
+        if (CardData.parseSelfCannotBeBroken(fa.effectText(), source.name())) return "SelfCannotBeBroken";
+        if (CardData.parseIfControlNonDmgBreakShield(fa.effectText(), source.name()) != null)
+            return "SelfNonDmgBreakShield[if control]";
+        if (CardData.parseSelfNonDmgBreakShield(fa.effectText(), source.name()))
+            return "SelfNonDmgBreakShield";
+        CardData.NonDmgBreakShieldGrant ndg = CardData.parseFieldNonDmgBreakShieldGrant(fa.effectText());
+        if (ndg != null) {
+            String who = ndg.job()      != null ? "Job " + ndg.job()
+                       : ndg.cardName() != null ? "Card Name " + ndg.cardName()
+                       : ndg.category() != null ? "Category " + ndg.category()
+                       : ndg.element();
+            return "FieldNonDmgBreakShield[" + who + "]";
+        }
+        if (CardData.parseSelfCannotBeBrokenDuringYourTurn(fa.effectText(), source.name()))
+            return "SelfCannotBeBroken[your turn]";
+        if (CardData.parseSelfCannotBeBrokenDuringAttackPhase(fa.effectText(), source.name()))
+            return "SelfCannotBeBroken[Attack Phase]";
+        String cbbCounter = CardData.parseSelfCannotBeBrokenWithCounter(fa.effectText(), source.name());
+        if (cbbCounter != null) return "SelfCannotBeBroken[" + cbbCounter + " Counter]";
         int oppHst = CardData.parseIfOpponentHandSizeCannotBeBrokenThreshold(fa.effectText(), source.name());
         if (oppHst >= 0) return "IfOppHandSize≤" + oppHst + ":CannotBeBroken";
         return null;
