@@ -12108,4 +12108,548 @@ public class CardBehaviorTest {
 
 		assertEquals(0, mw.p1ForwardCompelledToAttackIdx());
 	}
+
+	// =========================================================================================
+	// Sarah (MOBIUS) 16-115H: "When you gain a 《C》, reveal the top card of your deck. If it is a
+	// Backup, add it to your hand. If it is not a Backup, put it at the top or bottom of your
+	// deck." The trigger did not exist — AUTO_ABILITY_PATTERN's alternation had no crystal-gain
+	// phrasing, so the whole sentence fell out of the card and only her ETB survived parsing.
+	//
+	// It fires once per Crystal rather than once per effect: an ability handing over 《C》《C》
+	// meets "gain a 《C》" twice. That follows the closest analogue already in the engine — a
+	// multi-point damage effect fires "you receive damage" per point, because each point is dealt
+	// as its own action. Nine cards in the corpus gain two Crystals at once, so the distinction
+	// is real rather than theoretical.
+	// =========================================================================================
+
+	private static final String SARAH_MOBIUS_TEXT =
+			"When Sarah (MOBIUS) enters the field, gain 《C》.[[br]]   "
+			+ "When you gain a 《C》, reveal the top card of your deck. If it is a Backup, add it "
+			+ "to your hand. If it is not a Backup, put it at the top or bottom of your deck.";
+	private static final String SARAH_REVEAL =
+			"reveal the top card of your deck. If it is a Backup, add it to your hand. "
+			+ "If it is not a Backup, put it at the top or bottom of your deck.";
+
+	@Test
+	void sarahsCrystalTriggerIsParsedAsItsOwnAutoAbility() {
+		List<AutoAbility> autos = CardData.parseAutoAbilities(SARAH_MOBIUS_TEXT);
+		assertEquals(2, autos.size(), "the crystal-gain sentence used to be dropped entirely");
+
+		AutoAbility onGain = autos.stream()
+				.filter(a -> "gain crystal".equals(a.trigger())).findFirst().orElse(null);
+		assertNotNull(onGain, "the trigger vocabulary had no crystal-gain phrasing at all");
+		assertEquals("you", onGain.triggerCard(), "the trigger watches the player, not a card");
+		assertTrue(onGain.effectText().toLowerCase().startsWith("reveal the top card"));
+	}
+
+	@Test
+	void sarahsRevealResolvesAsOneConditionalEffect() {
+		CardData sarah = makeForward("Sarah (MOBIUS)", "Water", 3, 7000);
+		assertEquals("RevealTopToHandIfTypeElseTopOrBottom",
+				ActionResolver.matchedPatternName(SARAH_REVEAL, sarah));
+
+		GameContext ctx = mock(GameContext.class);
+		ActionResolver.parse(SARAH_REVEAL, sarah).accept(ctx);
+		verify(ctx).revealTopAddToHandIfType("Backup");
+	}
+
+	@Test
+	void theTwoBranchesMustNameTheSameType() {
+		// A text that keeps one type and misses on another is a different effect; the
+		// back-reference is what stops this parser claiming it.
+		CardData sarah = makeForward("Sarah (MOBIUS)", "Water", 3, 7000);
+		assertNull(ActionResolverSearch.tryParseRevealTopToHandIfTypeElseTopOrBottom(
+				"Reveal the top card of your deck. If it is a Backup, add it to your hand. "
+				+ "If it is not a Forward, put it at the top or bottom of your deck."));
+		assertNotNull(ActionResolverSearch.tryParseRevealTopToHandIfTypeElseTopOrBottom(SARAH_REVEAL),
+				"the matching-type form still resolves");
+		assertNotNull(sarah);
+	}
+
+	/** A board with Sarah on P1's field and {@code top} sitting on top of P1's deck. */
+	private static MainWindow sarahWithDeckTop(CardData top) {
+		MainWindow mw = new MainWindow();
+		mw.placeCardInForwardZone(makeForward("Sarah (MOBIUS)", "Water", 3, 7000,
+				List.of()));
+		mw.gameState.getP1MainDeck().add(top);
+		mw.gameState.getP1MainDeck().add(makeForward("Filler", "Fire", 2, 5000));
+		return mw;
+	}
+
+	@Test
+	void aRevealedBackupGoesToHand() {
+		CardData backup = makePlainBackup("Sage", "Water", 2);
+		MainWindow mw = sarahWithDeckTop(backup);
+
+		mw.buildGameContext(true).revealTopAddToHandIfType("Backup");
+
+		assertTrue(mw.gameState.getP1Hand().contains(backup), "a Backup is taken");
+		assertEquals(1, mw.gameState.getP1MainDeck().size(), "and leaves the deck");
+	}
+
+	@Test
+	void aRevealedNonBackupStaysInTheDeck() {
+		// Driven from P2's seat: the miss hands the top-or-bottom choice to lookAtTopDeck, and a
+		// local seat would answer it through a modal dialog. P2 is the CPU here, so the same code
+		// path resolves without one — which is the point of routing the choice through
+		// PlayerChoice rather than deciding it inline.
+		MainWindow mw = new MainWindow();
+		mw.gameState.getP2MainDeck().add(makeForward("Not A Backup", "Fire", 3, 7000));
+		mw.gameState.getP2MainDeck().add(makeForward("Filler", "Fire", 2, 5000));
+
+		mw.buildGameContext(false).revealTopAddToHandIfType("Backup");
+
+		assertTrue(mw.gameState.getP2Hand().isEmpty(), "a non-Backup is never added to hand");
+		assertEquals(2, mw.gameState.getP2MainDeck().size(),
+				"it goes to the top or bottom — either way it stays in the deck");
+	}
+
+	@Test
+	void anEmptyDeckIsANoOpRatherThanACrash() {
+		MainWindow mw = new MainWindow();
+		mw.buildGameContext(true).revealTopAddToHandIfType("Backup");
+		assertTrue(mw.gameState.getP1Hand().isEmpty());
+	}
+
+	// --- Firing: once per Crystal ------------------------------------------------------------
+
+	/** Sarah on the field with her real crystal trigger, over a deck of {@code n} Backups. */
+	private static MainWindow sarahOverBackupDeck(int n) {
+		MainWindow mw = new MainWindow();
+		CardData sarah = makeForward("Sarah (MOBIUS)", "Water", 3, 7000);
+		mw.placeCardInForwardZone(sarah);
+		mw.grantedAutoAbilities.put(mw.p1ForwardCards.get(0),
+				new ArrayList<>(CardData.parseAutoAbilities(SARAH_MOBIUS_TEXT).stream()
+						.filter(a -> "gain crystal".equals(a.trigger())).toList()));
+		for (int i = 0; i < n; i++) mw.gameState.getP1MainDeck().add(makePlainBackup("Sage " + i, "Water", 2));
+		return mw;
+	}
+
+	@Test
+	void gainingOneCrystalFiresTheTriggerOnce() {
+		MainWindow mw = sarahOverBackupDeck(3);
+		mw.buildGameContext(true).gainCrystal(1);
+		assertEquals(1, mw.gameState.getP1Hand().size(), "one Crystal, one reveal");
+	}
+
+	@Test
+	void gainingTwoCrystalsAtOnceFiresTheTriggerTwice() {
+		MainWindow mw = sarahOverBackupDeck(3);
+		mw.buildGameContext(true).gainCrystal(2);
+		assertEquals(2, mw.gameState.getP1Hand().size(),
+				"《C》《C》 is two Crystals gained, so \"gain a 《C》\" is met twice");
+	}
+
+	@Test
+	void theOpponentsCrystalGainDoesNotFireP1sTrigger() {
+		MainWindow mw = sarahOverBackupDeck(3);
+		mw.buildGameContext(false).gainCrystal(1);
+		assertTrue(mw.gameState.getP1Hand().isEmpty(),
+				"the trigger watches its own controller gaining, not either player");
+	}
+
+	// =========================================================================================
+	// Sarah (MOBIUS) 16-115H's third ability:
+	//   《C》: Until the end of the turn, Sarah (MOBIUS) gains +1000 power and "If Sarah (MOBIUS)
+	//         is dealt damage less than her power, the damage becomes 0 instead."
+	// UntilEotGainsPowerTraitsAndQuoted matched the shape but declined, because the quoted clause
+	// was not a self-grant grantedSelfFieldAbilityEffect knew how to route — so the power half was
+	// dropped with it.
+	//
+	// The clause needed no new primitive: FA_DAMAGE_MODIFIER already covers this exact wording
+	// (down to the his/her/its variants), and several cards print it outright — Y'shtola 12-119L,
+	// Barret 14-121L, Aymeric 6-106H. What was missing is that the reader in DamageResolver
+	// scanned CardData.fieldAbilities() directly, so a granted copy was invisible to it. Reading
+	// the effective view instead is what makes granting the text verbatim work.
+	// =========================================================================================
+
+	private static final String SARAH_SHIELD_PUMP =
+			"Until the end of the turn, Sarah (MOBIUS) gains +1000 power and "
+			+ "\"If Sarah (MOBIUS) is dealt damage less than her power, the damage becomes 0 instead.\"";
+	private static final String SARAH_SHIELD_CLAUSE =
+			"If Sarah (MOBIUS) is dealt damage less than her power, the damage becomes 0 instead.";
+
+	@Test
+	void sarahsPumpAppliesBothThePowerAndTheShield() {
+		CardData sarah = makeForward("Sarah (MOBIUS)", "Water", 3, 7000);
+		assertEquals("UntilEotGainsPowerTraitsAndQuoted",
+				ActionResolver.matchedPatternName(SARAH_SHIELD_PUMP, sarah));
+
+		GameContext ctx = mock(GameContext.class);
+		ActionResolver.parse(SARAH_SHIELD_PUMP, sarah).accept(ctx);
+		verify(ctx).boostSourceForward(sarah, 1000, EnumSet.noneOf(CardData.Trait.class));
+		// Granted verbatim — the damage rules match this wording, so it needs no translation.
+		verify(ctx).grantSelfFieldAbilityUntilEndOfTurn(sarah, SARAH_SHIELD_CLAUSE);
+	}
+
+	@Test
+	void theGrantedShieldTurnsNonLethalDamageIntoZero() {
+		MainWindow mw = new MainWindow();
+		CardData sarah = makeForward("Sarah (MOBIUS)", "Water", 3, 7000);
+		mw.placeCardInForwardZone(sarah);
+
+		mw.buildGameContext(true).damageP1Forward(0, 5000);
+		assertEquals(5000, mw.p1ForwardDamage.get(0), "unprotected, the damage lands");
+
+		mw.p1ForwardDamage.set(0, 0);
+		ActionResolver.parse(SARAH_SHIELD_PUMP, sarah).accept(mw.buildGameContext(true));
+
+		assertEquals(8000, mw.effectiveP1ForwardPower(0), "+1000 power");
+		mw.buildGameContext(true).damageP1Forward(0, 5000);
+		assertEquals(0, mw.p1ForwardDamage.get(0),
+				"5000 is less than her 8000 power, so the granted clause zeroes it");
+	}
+
+	@Test
+	void theGrantedShieldStillLetsLethalDamageThrough() {
+		MainWindow mw = new MainWindow();
+		CardData sarah = makeForward("Sarah (MOBIUS)", "Water", 3, 7000);
+		mw.placeCardInForwardZone(sarah);
+		mw.gameState.getIdentity().put(sarah, true);   // lethal damage breaks her, which reads it
+		ActionResolver.parse(SARAH_SHIELD_PUMP, sarah).accept(mw.buildGameContext(true));
+
+		// 8000 equals her boosted power, so the clause does not cover it and she breaks.
+		mw.buildGameContext(true).damageP1Forward(0, 8000);
+		assertTrue(mw.p1ForwardCards.isEmpty(),
+				"\"less than her power\" — damage equal to it is not covered");
+		assertTrue(mw.gameState.getP1BreakZone().contains(sarah));
+	}
+
+	@Test
+	void theGrantedShieldIsReadThroughTheEffectiveView() {
+		// The reader used to scan the printed list only, which is what made the grant inert.
+		MainWindow mw = new MainWindow();
+		CardData sarah = makeForward("Sarah (MOBIUS)", "Water", 3, 7000);
+		mw.placeCardInForwardZone(sarah);
+		assertTrue(sarah.fieldAbilities().isEmpty(), "nothing is printed on the card itself");
+
+		ActionResolver.parse(SARAH_SHIELD_PUMP, sarah).accept(mw.buildGameContext(true));
+
+		assertEquals(1, mw.effectiveFieldAbilities(sarah).size());
+		assertTrue(AutoAbilityTriggers.FA_DAMAGE_MODIFIER
+				.matcher(mw.effectiveFieldAbilities(sarah).get(0).effectText()).matches(),
+				"granted in the wording the damage rules already recognise");
+	}
+
+	@Test
+	void theGrantedShieldExpiresAtEndOfTurn() {
+		MainWindow mw = new MainWindow();
+		CardData sarah = makeForward("Sarah (MOBIUS)", "Water", 3, 7000);
+		mw.placeCardInForwardZone(sarah);
+		ActionResolver.parse(SARAH_SHIELD_PUMP, sarah).accept(mw.buildGameContext(true));
+
+		// Only the grant is asserted here. The +1000 is an ordinary boostSourceForward boost,
+		// zeroed by the end-phase cleanup inside onNextPhase's MAIN_2 branch rather than by an
+		// end-of-turn effect -- existing behaviour this change does not touch, and out of reach
+		// of a unit test without driving the phase machine through a priority window.
+		mw.fireEndOfTurnEffects(true);
+
+		assertTrue(mw.effectiveFieldAbilities(sarah).isEmpty(), "the granted shield is gone");
+		mw.buildGameContext(true).damageP1Forward(0, 5000);
+		assertEquals(5000, mw.p1ForwardDamage.get(0), "non-lethal damage lands again next turn");
+	}
+
+	@Test
+	void aPrintedCopyOfTheSameClauseIsUnaffected() {
+		// Y'shtola 12-119L prints it. The reader change must not alter how a printing behaves.
+		MainWindow mw = new MainWindow();
+		CardData yshtola = makeFieldAbilityCard("Y'shtola", "Water", "Forward",
+				"If Y'shtola is dealt damage less than her power, the damage becomes 0 instead.");
+		mw.placeCardInForwardZone(yshtola);
+
+		mw.buildGameContext(true).damageP1Forward(0, 5000);
+		assertEquals(0, mw.p1ForwardDamage.get(0), "printed protection still applies");
+	}
+
+	// =========================================================================================
+	// Warrior of Light 19-128L: "When Warrior of Light enters the field due to your cast, activate
+	// all the Backups you control. Draw 1 card." The "due to your cast" qualifier is carried as
+	// AutoAbility.castOnly and gated in executeAutoAbilityImpl against MainWindow.lastCardWasCast,
+	// which is set true only around the cast-from-hand placement and reset immediately after — so
+	// every other route onto the field (Break Zone, RFG, deck, Warp, a borrowed cast) sees false.
+	//
+	// These lock that down from both ends: the gate is real, and the routes that must not fire it
+	// genuinely leave the flag clear rather than relying on the test to clear it by hand.
+	// =========================================================================================
+
+	private static final String WOL_TEXT =
+			"When Warrior of Light enters the field due to your cast, "
+			+ "activate all the Backups you control. Draw 1 card.";
+
+	/** P1 with a dull Backup and a stocked deck — both halves of the payoff are observable. */
+	private static MainWindow wolBoard() {
+		MainWindow mw = new MainWindow();
+		mw.placeCardInFirstBackupSlot(makePlainBackup("Sage", "Water", 2));
+		mw.p1BackupStates[0] = CardState.DULL;
+		for (int i = 0; i < 3; i++) mw.gameState.getP1MainDeck().add(makeForward("Deck" + i, "Fire", 1, 3000));
+		return mw;
+	}
+
+	@Test
+	void warriorOfLightCarriesTheCastOnlyQualifier() {
+		List<AutoAbility> autos = CardData.parseAutoAbilities(WOL_TEXT);
+		assertEquals(1, autos.size());
+		assertTrue(autos.get(0).castOnly(), "\"due to your cast\" is what makes this cast-only");
+		assertFalse(autos.get(0).warpOnly());
+		assertEquals("enters the field", autos.get(0).trigger());
+		assertEquals("AllFieldEffect + DrawCards",
+				ActionResolver.matchedPatternName(autos.get(0).effectText(),
+						makeAutoAbilityForward("Warrior of Light", WOL_TEXT)));
+	}
+
+	@Test
+	void warriorOfLightFiresWhenCastFromHand() {
+		MainWindow mw = wolBoard();
+		CardData wol = makeAutoAbilityForward("Warrior of Light", WOL_TEXT);
+		int deckBefore = mw.gameState.getP1MainDeck().size();
+
+		// What the cast-from-hand path does around the placement.
+		mw.lastCardWasCast = true;
+		mw.placeCardInForwardZone(wol);
+		mw.lastCardWasCast = false;
+
+		assertEquals(CardState.ACTIVE, mw.p1BackupStates[0], "the Backup is activated");
+		assertEquals(1, mw.gameState.getP1Hand().size(), "and a card is drawn");
+		assertEquals(deckBefore - 1, mw.gameState.getP1MainDeck().size());
+	}
+
+	@Test
+	void warriorOfLightDoesNotFireWhenItEntersAnyOtherWay() {
+		MainWindow mw = wolBoard();
+		CardData wol = makeAutoAbilityForward("Warrior of Light", WOL_TEXT);
+		int deckBefore = mw.gameState.getP1MainDeck().size();
+
+		mw.placeCardInForwardZone(wol);   // no cast in progress
+
+		assertEquals(CardState.DULL, mw.p1BackupStates[0], "the Backup stays dull");
+		assertTrue(mw.gameState.getP1Hand().isEmpty(), "and nothing is drawn");
+		assertEquals(deckBefore, mw.gameState.getP1MainDeck().size());
+	}
+
+	@Test
+	void aBreakZoneReplayDoesNotCountAsACast() {
+		// Not a hand-set flag: this drives a real non-cast entry and checks the route itself
+		// leaves lastCardWasCast clear. A cast immediately beforehand is the case that would
+		// catch a flag left stale rather than scoped to its own placement.
+		MainWindow mw = wolBoard();
+		CardData decoy = makeForward("Decoy", "Fire", 2, 5000);
+		mw.lastCardWasCast = true;
+		mw.placeCardInForwardZone(decoy);
+		mw.lastCardWasCast = false;
+
+		CardData wol = makeAutoAbilityForward("Warrior of Light", WOL_TEXT);
+		mw.gameState.getP1BreakZone().add(wol);
+		int deckBefore = mw.gameState.getP1MainDeck().size();
+
+		mw.buildGameContext(true).playAllByNameFromOwnBreakZoneDull("Warrior of Light", false);
+
+		assertTrue(mw.p1ForwardCards.contains(wol), "he is on the field");
+		assertEquals(CardState.DULL, mw.p1BackupStates[0],
+				"but a Break Zone replay is not a cast, so the Backup stays dull");
+		assertTrue(mw.gameState.getP1Hand().isEmpty(), "and nothing is drawn");
+		assertEquals(deckBefore, mw.gameState.getP1MainDeck().size());
+	}
+
+	@Test
+	void aBorrowedCastDoesNotCountAsYourCast() {
+		// The two "cast an opponent's card" paths set lastCardWasCast false explicitly, because
+		// casting a card you do not own is not "your cast". Pinned here so that stays true.
+		MainWindow mw = wolBoard();
+		CardData wol = makeAutoAbilityForward("Warrior of Light", WOL_TEXT);
+
+		mw.lastCardWasCast = false;   // what removeBorrowedSourceCard's callers leave behind
+		mw.placeCardInForwardZone(wol);
+
+		assertEquals(CardState.DULL, mw.p1BackupStates[0]);
+		assertTrue(mw.gameState.getP1Hand().isEmpty());
+	}
+
+	// =========================================================================================
+	// Faris 18-012L: "When Faris enters the field or attacks, deal 1000 damage to all Forwards.
+	// When Faris or a Job Warrior of Light Forward you control is dealt damage, choose up to 1
+	// Forward opponent controls. Deal it 3000 damage.  Damage 3 -- When Faris enters the field,
+	// you may search for 1 Job Warrior of Light other than Card Name Faris and add it to your hand."
+	//
+	// The middle ability is the watcher form of "is dealt damage". Every other printing of that
+	// trigger names the card itself, so dispatch used to consult only the card that took the
+	// damage; this one sits on Faris and watches damage dealt to her Warrior of Light stablemates,
+	// so it fires only if the dispatch walks her controller's whole field.
+	//
+	// It fires per instance of damage, which is what makes it pay: her own first ability deals a
+	// separate 1000 to every Forward, so a board of Warriors of Light answers with one 3000-damage
+	// trigger each.
+	//
+	// Everything here is run from P2's seat. The trigger chooses its target as it goes on the
+	// Stack, and that is a modal dialog for the human seat but the AI path for P2.
+	// =========================================================================================
+
+	private static final String FARIS_18_012L_TEXT =
+			"When Faris enters the field or attacks, deal 1000 damage to all Forwards.[[br]]   "
+			+ "When Faris or a Job Warrior of Light Forward you control is dealt damage, "
+			+ "choose up to 1 Forward opponent controls. Deal it 3000 damage.[[br]]   "
+			+ "Damage 3 -- When Faris enters the field, you may search for 1 Job Warrior of Light "
+			+ "other than Card Name Faris and add it to your hand.";
+
+	private static CardData makeFaris18012L() {
+		return makeJobForwardWithAutos("Faris", "Fire", 7000, "Pirate/Warrior of Light", FARIS_18_012L_TEXT);
+	}
+
+	/** A Job Warrior of Light Forward with no abilities of its own — something for Faris to watch. */
+	private static CardData makeWarriorOfLight(String name) {
+		return makeJobForwardWithAutos(name, "Fire", 7000, "Warrior of Light", "");
+	}
+
+	/** P2 fields {@code p2Cards}; P1 fields one Forward for the trigger to point at. */
+	private static MainWindow farisBoard(CardData... p2Cards) {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForward("Genesis", "Ice", 3, 9000));
+		for (CardData c : p2Cards) {
+			// Seated without running her enters-the-field sweep: that sweep is damage, and these
+			// tests are about what answers damage — it would fire the very trigger under test
+			// before the test had begun.
+			mw.suppressAutoAbilityForNextCard = true;
+			placeP2Forward(mw, c);
+		}
+		return mw;
+	}
+
+	/** The Forwards whose "is dealt damage" trigger is now waiting on the Stack, in push order. */
+	private static List<CardData> triggerSources(MainWindow mw) {
+		return mw.gameState.getStack().stream().map(StackEntry::source).toList();
+	}
+
+	@Test
+	void farisParsesIntoHerThreeAbilities() {
+		CardData faris = makeFaris18012L();
+		assertEquals(3, faris.autoAbilities().size());
+
+		AutoAbility etfOrAttack = faris.autoAbilities().get(0);
+		assertEquals("enters the field or attacks", etfOrAttack.trigger());
+		assertEquals("DealDamageToForwards",
+				ActionResolver.matchedPatternName(etfOrAttack.effectText(), faris));
+
+		AutoAbility watcher = faris.autoAbilities().get(1);
+		assertEquals("is dealt damage", watcher.trigger());
+		assertEquals("Faris or a Job Warrior of Light Forward you control", watcher.triggerCard(),
+				"the compound subject is what makes this the watcher form");
+
+		AutoAbility search = faris.autoAbilities().get(2);
+		assertEquals("enters the field", search.trigger());
+		assertEquals(3, search.damageThreshold(), "\"Damage 3 --\" gates the search");
+		assertTrue(search.youMay());
+	}
+
+	@Test
+	void farisAnswersDamageDealtToAWarriorOfLightSheControls() {
+		CardData faris = makeFaris18012L();
+		MainWindow mw = farisBoard(faris, makeWarriorOfLight("Bartz"));
+
+		mw.applyDamageToForward(false, 1, 1000, true, false);
+
+		assertEquals(List.of(faris), triggerSources(mw),
+				"the damage landed on Bartz, but the ability that answers it is Faris's");
+	}
+
+	@Test
+	void farisIgnoresDamageToAForwardThatIsNotAWarriorOfLight() {
+		MainWindow mw = farisBoard(makeFaris18012L(), makeForward("Zidane", "Wind", 3, 7000));
+
+		mw.applyDamageToForward(false, 1, 1000, true, false);
+
+		assertTrue(mw.gameState.getStack().isEmpty(), "the subject filter is a Job, not any Forward");
+	}
+
+	@Test
+	void farisIgnoresDamageToTheOpponentsWarriorOfLight() {
+		MainWindow mw = farisBoard(makeFaris18012L());
+		placeP1Forward(mw, makeWarriorOfLight("Firion"));   // P1 idx 1
+
+		mw.applyDamageToForward(true, 1, 1000, true, false);
+
+		assertTrue(mw.gameState.getStack().isEmpty(), "\"you control\" scopes the watch to her own side");
+	}
+
+	@Test
+	void farisAnsweringHerOwnDamageTriggersOnceAndNotTwice() {
+		CardData faris = makeFaris18012L();
+		MainWindow mw = farisBoard(faris);
+
+		mw.applyDamageToForward(false, 0, 1000, true, false);
+
+		// She satisfies both halves of her own subject — she is Faris, and she is a Job Warrior of
+		// Light Forward she controls. One damage is still one trigger.
+		assertEquals(List.of(faris), triggerSources(mw));
+	}
+
+	@Test
+	void everyInstanceOfHerOwnSweepAnswersSeparately() {
+		CardData faris = makeFaris18012L();
+		MainWindow mw = farisBoard(faris, makeWarriorOfLight("Bartz"), makeForward("Zidane", "Wind", 3, 7000));
+
+		// Her enters-the-field/attacks ability, run as the board would run it.
+		ActionResolver.parse(faris.autoAbilities().get(0).effectText(), faris)
+				.accept(mw.buildGameContext(false));
+
+		assertEquals(List.of(faris, faris), triggerSources(mw),
+				"1000 to all Forwards is four separate damages; two land on Warriors of Light she "
+				+ "controls, and each is answered in its own right");
+	}
+
+	@Test
+	void farisAnswersBattleDamageAndDoesSoEvenWhenItBreaksHer() {
+		CardData faris = makeFaris18012L();
+		MainWindow mw = farisBoard(faris);
+		CardData attacker = mw.p1ForwardCards.get(0);   // 9000 — lethal to her 7000
+
+		mw.resolveCombat(attacker, true, 0, faris, false, 0);
+
+		assertFalse(mw.p2ForwardCards.contains(faris), "the blow was lethal");
+		assertEquals(List.of(faris), triggerSources(mw),
+				"the trigger is on being dealt damage, not on surviving it");
+	}
+
+	@Test
+	void firstStrikeThatDealsNoDamageBackTriggersNothing() {
+		CardData faris = makeFaris18012L();
+		MainWindow mw = farisBoard(faris);
+		CardData attacker = makeTraitForward("Zack", "Fire", 3, 9000, CardData.Trait.FIRST_STRIKE);
+		mw.p1ForwardCards.set(0, attacker);
+		mw.gameState.getIdentity().put(attacker, true);
+
+		mw.resolveCombat(attacker, true, 0, faris, false, 0);
+
+		// She is broken by the first strike and never lands a blow, so Zack is dealt no damage —
+		// but she was dealt hers, and answers it.
+		assertEquals(List.of(faris), triggerSources(mw));
+	}
+
+	// The other subject form, sharing a field with Faris. 4-085H Dadaluma is the ordinary printing
+	// — she names herself — and dispatch now walks the whole field to find Faris, so Dadaluma is
+	// the guard that the walk did not quietly turn every printing of the trigger into a watcher.
+	private static final String DADALUMA_TEXT =
+			"When Dadaluma is dealt damage, choose up to 1 Forward opponent controls. Deal it 4000 damage.";
+
+	@Test
+	void aSelfNamingTriggerStaysDeafToAStablematesDamage() {
+		CardData faris    = makeFaris18012L();
+		CardData dadaluma = makeAutoAbilityForward("Dadaluma", DADALUMA_TEXT);
+		MainWindow mw = farisBoard(faris, dadaluma, makeWarriorOfLight("Bartz"));
+
+		mw.applyDamageToForward(false, 2, 1000, true, false);
+
+		assertEquals(List.of(faris), triggerSources(mw),
+				"Faris watches her Warrior of Light; Dadaluma names herself and hears nothing");
+	}
+
+	@Test
+	void aSelfNamingTriggerStillAnswersItsOwnDamage() {
+		CardData faris    = makeFaris18012L();
+		CardData dadaluma = makeAutoAbilityForward("Dadaluma", DADALUMA_TEXT);
+		MainWindow mw = farisBoard(faris, dadaluma);
+
+		mw.applyDamageToForward(false, 1, 1000, true, false);
+
+		assertEquals(List.of(dadaluma), triggerSources(mw),
+				"her own trigger is unaffected, and Dadaluma is no Warrior of Light for Faris to watch");
+	}
 }

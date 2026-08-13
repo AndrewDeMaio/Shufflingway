@@ -516,6 +516,11 @@ public class ActionResolver {
         result = tryParseIfOppNotPayAction(effectText);
         if (result != null) return result;
 
+        // Shares its opening two sentences with tryParseCancelChosenRevealTopIfType; both are
+        // end-anchored on their own tail, so either order is safe, but they belong together.
+        result = tryParseRevealTopToHandIfTypeElseTopOrBottom(effectText);
+        if (result != null) return result;
+
         result = tryParseCancelChosenRevealTopIfType(effectText);
         if (result != null) return result;
 
@@ -1421,6 +1426,8 @@ public class ActionResolver {
         if (tryParseTriggeredTargetAction(effectText, 0)      != null) return "TriggeredTargetAction";
         if (tryParseCancelChosenTargetBare(effectText)         != null) return "CancelChosenTargetBare";
         if (tryParseIfOppNotPayAction(effectText)             != null) return "IfOppNotPayAction";
+        // Mirrors parse(): checked alongside its sentence-sharing sibling below.
+        if (tryParseRevealTopToHandIfTypeElseTopOrBottom(effectText) != null) return "RevealTopToHandIfTypeElseTopOrBottom";
         if (tryParseCancelChosenRevealTopIfType(effectText)    != null) return "CancelChosenRevealTopIfType";
         if (tryParseCancelChosenMillTopIfNotType(effectText)   != null) return "CancelChosenMillTopIfNotType";
         if (tryParseCancelSummonTargetingMyCharacter(effectText) != null) return "CancelSummonTargetingMyCharacter";
@@ -2050,6 +2057,8 @@ public class ActionResolver {
         if (tryParseTriggeredTargetAction(effectText, 0)      != null) return "TriggeredTargetAction";
         if (tryParseCancelChosenTargetBare(effectText)         != null) return "CancelChosenTargetBare";
         if (tryParseIfOppNotPayAction(effectText)             != null) return "IfOppNotPayAction";
+        // Mirrors parse(): checked alongside its sentence-sharing sibling below.
+        if (tryParseRevealTopToHandIfTypeElseTopOrBottom(effectText) != null) return "RevealTopToHandIfTypeElseTopOrBottom";
         if (tryParseCancelChosenRevealTopIfType(effectText)    != null) return "CancelChosenRevealTopIfType";
         if (tryParseCancelChosenMillTopIfNotType(effectText)   != null) return "CancelChosenMillTopIfNotType";
         if (tryParseCancelSummonTargetingMyCharacter(effectText) != null) return "CancelSummonTargetingMyCharacter";
@@ -3175,6 +3184,16 @@ public class ActionResolver {
         // (Ramada 17-125R, Cecil 15-073H, Fang 19-131S) — granted verbatim, same as the doubler.
         Matcher setTo = AutoAbilityTriggers.FA_OUTGOING_DAMAGE_TO_OPPONENT_SETS_TO.matcher(quoted);
         if (setTo.matches() && setTo.group("card").trim().equalsIgnoreCase(source.name())) {
+            final String granted = quoted;
+            return ctx -> ctx.grantSelfFieldAbilityUntilEndOfTurn(source, granted);
+        }
+        // The incoming-damage counterpart: "If [Self] is dealt damage <clause>, <modifier> instead."
+        // Sarah (MOBIUS) 16-115H grants herself the "less than her power → 0" form, which several
+        // other cards print outright (Y'shtola 12-119L, Barret 14-121L, Aymeric 6-106H). Granted
+        // verbatim, and DamageResolver reads it off the effective view exactly as a printed one.
+        // Checked last of the damage clauses: this pattern is the broad one of the family.
+        Matcher inc = AutoAbilityTriggers.FA_DAMAGE_MODIFIER.matcher(quoted);
+        if (inc.matches() && inc.group("card").trim().equalsIgnoreCase(source.name())) {
             final String granted = quoted;
             return ctx -> ctx.grantSelfFieldAbilityUntilEndOfTurn(source, granted);
         }

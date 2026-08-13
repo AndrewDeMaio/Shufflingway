@@ -553,6 +553,23 @@ final class ActionResolverSearch {
             ctx.lookAtTopDeck(config);
         };
     }
+    /**
+     * Parses "Reveal the top card of your deck. If it is a [Type], add it to your hand. If it is
+     * not a [Type], put it at the top or bottom of your deck." — 16-115H Sarah (MOBIUS).
+     *
+     * <p>Kept whole rather than composed from its three sentences: the second and third are two
+     * branches of one decision on the card the first revealed, not three effects in sequence.
+     */
+    static Consumer<GameContext> tryParseRevealTopToHandIfTypeElseTopOrBottom(String text) {
+        Matcher m = REVEAL_TOP_TO_HAND_IF_TYPE_ELSE_TOP_OR_BOTTOM.matcher(text.trim());
+        if (!m.matches()) return null;
+        String type = m.group("type").trim();
+        return ctx -> {
+            ctx.logEntry("Effect: Reveal top card — a " + type + " goes to hand, anything else to "
+                    + "the top or bottom of the deck");
+            ctx.revealTopAddToHandIfType(type);
+        };
+    }
     static Consumer<GameContext> tryParseLookTopDeckTopOrBottom(String text, CardData source) {
         Matcher m = LOOK_TOP_DECK_TOP_OR_BOTTOM.matcher(text);
         if (!m.find()) return null;

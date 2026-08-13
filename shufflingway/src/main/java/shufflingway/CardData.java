@@ -1748,13 +1748,15 @@ public record CardData(
             "|discards?\\s+[^,]*?due\\s+to\\s+your\\s+Summons?\\s+or\\s+abilit(?:y|ies)" +
             // "are added to your opponent's hand from the Break Zone" — 25-111H The Emperor.
             "|(?:is|are)\\s+added\\s+to\\s+your\\s+opponent's\\s+hand\\s+from\\s+the\\s+Break\\s+Zone" +
+            // "gain a 《C》" — 16-115H Sarah (MOBIUS). Player-scoped, so the subject is "you".
+            "|gains?\\s+an?\\s+《C》" +
         ")\\s*,\\s+" +
         "(?<youmay>(?:you|your\\s+opponent)\\s+may\\s+)?" +
         "(?<effect>.+?)\\s*" +
         // Effect ends at: a [[br]], the next "When …" trigger, a card's own 《cost》: special-ability
         // marker, or end of text. The (?<!\") guard keeps a 《cost》: that sits INSIDE a quoted granted
         // ability (e.g. Machinist's "《Dull》: …", Medusa's "《5》: …") from prematurely ending the effect.
-        "(?=\\s*\\[\\[br\\]\\]|\\s*When\\s+[^,]+?\\s+(?:forms?\\s+a\\s+party\\s+and\\s+attacks?|attacks?|blocks?|enters?|leaves?|is\\s+(?:put|removed|blocked|dealt)|(?:is|are)\\s+added|deals?|uses?|becomes?|searches?|discards?)|\\s*(?<!\")(?:《[^》]+》)+\\s*:|\\s*$)",
+        "(?=\\s*\\[\\[br\\]\\]|\\s*When\\s+[^,]+?\\s+(?:forms?\\s+a\\s+party\\s+and\\s+attacks?|attacks?|blocks?|enters?|leaves?|is\\s+(?:put|removed|blocked|dealt)|(?:is|are)\\s+added|deals?|uses?|becomes?|searches?|discards?|gains?)|\\s*(?<!\")(?:《[^》]+》)+\\s*:|\\s*$)",
         Pattern.DOTALL
     );
 
@@ -2265,6 +2267,10 @@ public record CardData(
                 if (card.equalsIgnoreCase("you"))   trigger = "you receive damage";
                 else                                trigger = "either player receives damage";
             }
+            // Matched on the Crystal token rather than on "gain", which is a common enough verb in
+            // other trigger phrasings to be worth not keying on. Lower-case 《c》 because
+            // triggerRaw was folded above, as every literal in this chain assumes.
+            else if (triggerRaw.contains("《c》"))                                                            trigger = "gain crystal";
             else if (triggerRaw.contains("uses") && triggerRaw.contains("ex burst"))                        trigger = "opponent uses ex burst";
             else if (triggerRaw.contains("dull"))                                                            trigger = "becomes dull";
             // Every printing of this trigger watches the opponent searching — either "your opponent

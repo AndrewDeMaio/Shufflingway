@@ -788,6 +788,17 @@ public interface GameContext {
     void lookAtTopDeck(LookConfig config);
 
     /**
+     * "Reveal the top card of your deck. If it is a [type], add it to your hand. If it is not a
+     * [type], put it at the top or bottom of your deck." (16-115H Sarah (MOBIUS))
+     *
+     * <p>The branch is decided by the revealed card, so only the miss needs a decision from the
+     * player; it is delegated to {@link #lookAtTopDeck} with
+     * {@link LookConfig.LookAction#TOP_OR_BOTTOM_ORDERED} over the single card, which is what
+     * routes the choice correctly for a local seat, the AI and a remote opponent alike.
+     */
+    void revealTopAddToHandIfType(String cardType);
+
+    /**
      * Offers the EX Burst of the card the preceding {@link #lookAtTopDeck} put into hand, placing
      * it on the stack when the player accepts (Lunafreya 23-129H).  The card itself stays in hand
      * — only its effect goes on the stack, as with {@link #triggerExBurstFromDamageZone}.  Does

@@ -194,7 +194,9 @@ class DamageResolver {
 
 		// Passive field ability: self-targeted incoming damage modifier
 		// ("by a Forward / by Summon or ability / other than battle damage / less than power / any source")
-		for (FieldAbility fa : card.fieldAbilities()) {
+		// Read through effectiveFieldAbilities, not the printed list: Sarah (MOBIUS) 16-115H hands
+		// herself one of these for the turn, and a grant has to be honoured exactly as a printing is.
+		for (FieldAbility fa : mw.effectiveFieldAbilities(card)) {
 			Matcher fam = AutoAbilityTriggers.FA_DAMAGE_MODIFIER.matcher(fa.effectText());
 			if (!fam.find() || !fam.group("card").trim().equalsIgnoreCase(card.name())) continue;
 			amount = applyDamageModifierMatch(fam, amount, isP1, zone, idx, fromAbility, card.name());

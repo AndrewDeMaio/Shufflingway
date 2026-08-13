@@ -3218,6 +3218,10 @@ final class GameContextImpl implements GameContext {
 				if (isP1) mw.gameState.addP1Crystals(count);
 				else      mw.gameState.addP2Crystals(count);
 				mw.refreshCrystalDisplays();
+				// One trigger per Crystal — see triggerAutoAbilitiesForGainCrystal. Fired after
+				// the Crystals are on the counter so an ability that reads the total sees it.
+				for (int i = 0; i < count; i++)
+					mw.autoAbilityTriggers.triggerAutoAbilitiesForGainCrystal(isP1);
 			}
 
 			@Override public int crystalCount()         { return mw.playerCrystals(isP1);  }
@@ -4476,6 +4480,23 @@ final class GameContextImpl implements GameContext {
 
 			@Override public void lookAtTopDeck(LookConfig config) {
 				lastLookAddedToHand = mw.lookDialogs().show(config, isP1, mw.isP2Cpu());
+			}
+
+			@Override public void revealTopAddToHandIfType(String cardType) {
+				Deque<CardData> deck = isP1 ? mw.gameState.getP1MainDeck() : mw.gameState.getP2MainDeck();
+				if (deck.isEmpty()) { logEntry("Reveal top card: deck is empty."); return; }
+				CardData top = deck.peekFirst();
+				if (!CardFilters.matchesDiscardType(top, cardType)) {
+					// The miss is a player decision, and lookAtTopDeck logs the reveal itself —
+					// so no reveal line here, or the card would be announced twice.
+					lookAtTopDeck(new LookConfig(1, LookConfig.LookAction.TOP_OR_BOTTOM_ORDERED,
+							null, null, true));
+					return;
+				}
+				deck.pollFirst();
+				if (isP1) { mw.gameState.getP1Hand().add(top); mw.refreshP1HandLabel();      mw.refreshP1DeckLabel(); }
+				else      { mw.gameState.getP2Hand().add(top); mw.refreshP2HandCountLabel(); mw.refreshP2DeckLabel(); }
+				logEntry("Reveal top card: " + top.name() + " — a " + cardType + " → hand");
 			}
 
 			@Override public void triggerExBurstOfCardAddedToHand() {

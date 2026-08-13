@@ -23,9 +23,11 @@ import javax.swing.JLabel;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
+import javax.swing.JSpinner;
 import javax.swing.JTable;
 import javax.swing.JTextField;
 import javax.swing.ListSelectionModel;
+import javax.swing.SpinnerNumberModel;
 import javax.swing.table.DefaultTableModel;
 
 import shufflingway.dialog.DebugCardPickerDialog;
@@ -273,18 +275,32 @@ class DebugUtility {
         return new ImageIcon(img);
     }
 
-    void setDamage() {
+    /**
+     * Sets both players' damage counts and Crystal counts directly.
+     *
+     * <p>Damage is a row of 0–6 buttons because that is the whole range a player can sit at;
+     * Crystals have no comparable ceiling, so they get a spinner. Both are written straight to
+     * {@link GameState} rather than through the effects that normally change them, so nothing here
+     * fires "you receive damage" or "gain a 《C》" triggers — this is a state setter, and a debug
+     * tool that fired triggers could not be used to set up the board a trigger is being tested on.
+     */
+    void setDamageAndCrystals() {
         if (!mw.gameInProgress()) {
-            JOptionPane.showMessageDialog(mw.frame, "Start a game first.", "Debug Damage", JOptionPane.WARNING_MESSAGE);
+            JOptionPane.showMessageDialog(mw.frame, "Start a game first.", "Debug Damage/Crystals",
+                    JOptionPane.WARNING_MESSAGE);
             return;
         }
         int cur1 = mw.gameState.getP1DamageZone().size();
         int cur2 = mw.gameState.getP2DamageZone().size();
+        int curC1 = mw.gameState.getP1Crystals();
+        int curC2 = mw.gameState.getP2Crystals();
 
         int[] p1Value = {cur1};
         int[] p2Value = {cur2};
         JButton[] p1Buttons = makeDamageButtons(p1Value, cur1);
         JButton[] p2Buttons = makeDamageButtons(p2Value, cur2);
+        JSpinner p1Crystals = makeCrystalSpinner(curC1);
+        JSpinner p2Crystals = makeCrystalSpinner(curC2);
 
         JPanel p1Row = new JPanel(new FlowLayout(FlowLayout.LEFT, 2, 0));
         for (JButton b : p1Buttons) p1Row.add(b);
@@ -310,20 +326,26 @@ class DebugUtility {
             }
         });
 
-        JPanel panel = new JPanel(new GridLayout(3, 2, 8, 4));
+        JPanel panel = new JPanel(new GridLayout(5, 2, 8, 4));
         panel.add(new JLabel("P1 Damage (current: " + cur1 + "):"));
         panel.add(p1Row);
         panel.add(new JLabel("P2 Damage (current: " + cur2 + "):"));
         panel.add(p2Row);
+        panel.add(new JLabel("P1 Crystals (current: " + curC1 + "):"));
+        panel.add(p1Crystals);
+        panel.add(new JLabel("P2 Crystals (current: " + curC2 + "):"));
+        panel.add(p2Crystals);
         panel.add(new JLabel("Card serial (for additions):"));
         panel.add(serialField);
 
-        int result = JOptionPane.showConfirmDialog(mw.frame, panel, "Set Damage Counts",
+        int result = JOptionPane.showConfirmDialog(mw.frame, panel, "Set Damage/Crystals",
                 JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
         if (result != JOptionPane.OK_OPTION) return;
 
         int target1 = p1Value[0];
         int target2 = p2Value[0];
+        int targetC1 = (Integer) p1Crystals.getValue();
+        int targetC2 = (Integer) p2Crystals.getValue();
 
         CardData card = null;
         if (target1 > cur1 || target2 > cur2) {
@@ -354,8 +376,22 @@ class DebugUtility {
         }
         mw.refreshDamageZoneSlots(false);
 
+        // Applied as a delta because GameState exposes add/spend rather than a setter; computing it
+        // from the current count is also what keeps the total off negative.
+        mw.gameState.addP1Crystals(targetC1 - curC1);
+        mw.gameState.addP2Crystals(targetC2 - curC2);
+        mw.refreshCrystalDisplays();
+
         mw.logEntry("[Debug] Damage set — P1: " + target1 + ", P2: " + target2
-                + (card != null ? " (card: " + card.name() + ")" : ""));
+                + (card != null ? " (card: " + card.name() + ")" : "")
+                + "; Crystals set — P1: " + targetC1 + ", P2: " + targetC2);
+    }
+
+    /** 0–20 covers any board a debug session needs; the display renders the count as a number. */
+    private JSpinner makeCrystalSpinner(int initial) {
+        JSpinner spinner = new JSpinner(new SpinnerNumberModel(initial, 0, 20, 1));
+        spinner.setPreferredSize(new Dimension(56, 24));
+        return spinner;
     }
 
     private JButton[] makeDamageButtons(int[] valueHolder, int initial) {

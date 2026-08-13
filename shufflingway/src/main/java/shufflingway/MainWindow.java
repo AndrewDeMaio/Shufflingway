@@ -873,7 +873,7 @@ public class MainWindow {
 		if (AppSettings.isDebugEnabled()) {
 			DebugUtility debug = new DebugUtility(this);
 			menuBar.add(new DebugMenu(debug::spawnOnField, debug::addToHand, debug::addToBreakZone,
-					debug::addRemoveCounters, debug::setDamage));
+					debug::addRemoveCounters, debug::setDamageAndCrystals));
 		}
 
 		Dimension cardSize = new Dimension(CARD_W, CARD_H);
@@ -5112,6 +5112,15 @@ public class MainWindow {
 			dmgToBlocker  = 0; // blocker takes no return strike
 		}
 
+		// "Is dealt damage" triggers watch battle damage as much as ability damage (28-043R Gi
+		// Nattak, 18-012L Faris and the Forwards she watches). Fired here, ahead of the break
+		// below, for the same reason applyDamageToForward fires ahead of its own break check: the
+		// trigger is on being dealt damage, not on surviving it, so a Forward broken by this blow
+		// still triggers. Combat damage is dealt simultaneously, so both sides fire together, and
+		// a side whose damage First Strike zeroed above was dealt none and does not fire.
+		if (dmgToAttacker > 0) autoAbilityTriggers.fireIsDealtDamageTriggers(attacker, attackerIsP1);
+		if (dmgToBlocker  > 0) autoAbilityTriggers.fireIsDealtDamageTriggers(blocker,  blockerIsP1);
+
 		// First Strike is already fully accounted for above: the side that strikes first has had the
 		// return damage zeroed when its blow was lethal.  A surviving Forward still takes the damage
 		// it was dealt, so these branches must not re-test attackerFirst/blockerFirst — doing so
@@ -8343,6 +8352,12 @@ public class MainWindow {
 			resolveTopOfStack();
 			return;
 		}
+
+		// The window is positioned against the main frame, which has no location until it is on
+		// screen. An engine test drives the board through a MainWindow that is never shown, and
+		// every path that pushes to the Stack calls this — so bail out rather than throwing, and
+		// leave the entry on the Stack where it is.
+		if (!frame.isShowing()) return;
 
 		// P2 acted → P1 (human) has priority → show interactive Respond/OK window
 		final int myGeneration = ++stackWindowGeneration;
@@ -13107,6 +13122,8 @@ public class MainWindow {
 							.allMatch(i -> effectiveHasTrait(true, i, CardData.Trait.FIRST_STRIKE))
 							&& !effectiveHasTrait(false, blockerIdx, CardData.Trait.FIRST_STRIKE);
 					boolean blockerBroken = combinedPower >= blockerPower;
+					// See resolveP1BlockVsP2Party — the combined power is one instance of damage.
+					if (combinedPower > 0) autoAbilityTriggers.fireIsDealtDamageTriggers(blocker, false);
 					if (blockerBroken) breakP2Forward(blockerIdx);
 					if (!partyFirst || !blockerBroken) {
 						// How the blocker spreads its damage is the opponent's call.
@@ -13190,6 +13207,9 @@ public class MainWindow {
 			}
 			p1ForwardDamage.set(idx, p1ForwardDamage.get(idx) + dmg);
 			logEntry("[P2] Deals " + dmg + " damage to " + p1ForwardCards.get(idx).name());
+			// One instance of damage per party member the blocker's power was spread across, each
+			// firing "is dealt damage" triggers in its own right — see resolveCombat.
+			autoAbilityTriggers.fireIsDealtDamageTriggers(p1ForwardCards.get(idx), true);
 		}
 		List<Integer> toBreak = new ArrayList<>();
 		for (int idx : damageMap.keySet()) {
@@ -13214,6 +13234,9 @@ public class MainWindow {
 		int blockerPower = effectiveP1ForwardPower(blockerIdx);
 		logEntry("[P2] Party deals " + combinedPower + " damage to " + blocker.name());
 		boolean blockerBroken = combinedPower >= blockerPower;
+		// The party's combined power is one instance of damage to the blocker; triggers fire on it
+		// ahead of the break, as everywhere else damage lands.
+		if (combinedPower > 0) autoAbilityTriggers.fireIsDealtDamageTriggers(blocker, true);
 		if (blockerBroken) breakP1Forward(blockerIdx);
 
 		if (!partyFirst || !blockerBroken) {
@@ -13247,6 +13270,8 @@ public class MainWindow {
 			}
 			p2ForwardDamage.set(idx, p2ForwardDamage.get(idx) + dmg);
 			logEntry("Deals " + dmg + " damage to " + p2ForwardCards.get(idx).name());
+			// See applyPartyBlockerDamage — one instance of damage per party member.
+			autoAbilityTriggers.fireIsDealtDamageTriggers(p2ForwardCards.get(idx), false);
 		}
 		List<Integer> toBreak = new ArrayList<>();
 		for (int idx : damageMap.keySet()) {

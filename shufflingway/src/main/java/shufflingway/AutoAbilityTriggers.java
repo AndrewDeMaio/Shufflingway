@@ -1659,40 +1659,95 @@ final class AutoAbilityTriggers {
 	}
 
 	/**
-	 * Fires "When &lt;this card&gt; is dealt damage, …" auto-abilities on the card that just took
-	 * damage. Called from {@code DamageResolver} once the damage has been recorded, and before any
-	 * break check — the trigger is on being dealt damage, not on surviving it.
+	 * Fires "is dealt damage" auto-abilities for one instance of damage dealt to {@code damaged}.
+	 * Called from every path that deals damage to a Forward — ability damage once the damage has
+	 * been recorded and before any break check, and battle damage as combat resolves — because the
+	 * trigger is on being dealt damage, not on surviving it.
 	 *
-	 * <p>Only self-subject wordings fire here ("When Gi Nattak is dealt damage", "When this Forward
-	 * is dealt damage"). The watcher form, where one card reacts to damage dealt to another
-	 * (18-012L Faris), needs its own dispatch over the controller's field and is not wired.
+	 * <p>Called <em>per instance</em>: an effect that damages three Forwards deals three separate
+	 * damages and so meets the trigger three times, and a watcher of all three fires three times.
+	 * That is the same reading {@link #triggerAutoAbilitiesForGainCrystal} takes of "gain a 《C》".
+	 *
+	 * <p>Dispatch walks the damaged card's controller's whole field rather than only the damaged
+	 * card, because two subject forms exist. Most printings name the card itself ("When Gi Nattak
+	 * is dealt damage"), and those fire only for the copy that took the damage. 18-012L Faris is
+	 * the watcher form — "When Faris or a Job Warrior of Light Forward you control is dealt damage"
+	 * — which reacts to damage dealt to some other card, so its ability lives on a card the walk
+	 * has to reach independently of what was damaged. Both are decided by
+	 * {@link #matchesDamagedSubject}, so the self-naming printings keep firing exactly once.
 	 */
 	void fireIsDealtDamageTriggers(CardData damaged, boolean damagedIsP1) {
-		if (damaged == null || mw.lostAbilitiesCards.contains(damaged)) return;
-		for (AutoAbility fa : mw.effectiveAutoAbilities(damaged)) {
+		if (damaged == null) return;
+		// Batched: one damage can meet the trigger on more than one card — the Forward's own
+		// printing and a Faris watching it — and those are simultaneous, so their controller picks
+		// the order they go on the stack.
+		withBatch(() -> {
+			for (CardData watcher : fieldCards(damagedIsP1))
+				fireIsDealtDamageTriggers(watcher, damagedIsP1, damaged);
+		});
+		mw.showStackWindowIfNeeded();
+	}
+
+	private void fireIsDealtDamageTriggers(CardData watcher, boolean watcherIsP1, CardData damaged) {
+		for (AutoAbility fa : mw.effectiveAutoAbilities(watcher)) {
 			if (!fa.trigger().equals("is dealt damage")) continue;
-			if (!isSelfSubject(fa.triggerCard(), damaged)) continue;
-			executeAutoAbility(fa, damaged, damagedIsP1);
+			if (!matchesDamagedSubject(fa.triggerCard(), watcher, damaged)) continue;
+			executeAutoAbility(fa, watcher, watcherIsP1);
 		}
 	}
 
+	/** Every card {@code isP1} has on the field, in Forward / Backup / Monster order. */
+	private List<CardData> fieldCards(boolean isP1) {
+		List<CardData> cards = new ArrayList<>(isP1 ? mw.p1ForwardCards : mw.p2ForwardCards);
+		for (CardData c : isP1 ? mw.p1BackupCards : mw.p2BackupCards) if (c != null) cards.add(c);
+		cards.addAll(isP1 ? mw.p1MonsterCards : mw.p2MonsterCards);
+		return cards;
+	}
+
+	/** "this Forward" and friends — a self-reference spelled without the card's name. */
+	private static final Pattern DAMAGED_SUBJECT_SELF =
+			Pattern.compile("(?i)^this\\s+(?:forward|backup|monster|character)$");
+
 	/**
-	 * True if {@code subject} names the damaged card itself rather than some other card.
+	 * The qualifying clauses this dispatch has already settled: "you control", since the walk only
+	 * visits the damaged card's own side, and a "by …" source clause (20-024H Calbrena, 5-037R
+	 * Zeid), which no printing in the corpus uses to narrow anything this dispatch decides.
 	 *
-	 * <p>Split on " or " because the subject may be compound — 18-012L Faris reads "When Faris or a
-	 * Job Warrior of Light Forward you control is dealt damage". Only the self branch is honoured
-	 * here; the other branch is a watcher over the controller's field, which this dispatch does not
-	 * cover.
+	 * <p>Deliberately not "opponent controls": the walk cannot satisfy that, so such a subject is
+	 * left intact and declines on the filter below rather than being read as its own side.
 	 */
-	private static boolean isSelfSubject(String subject, CardData self) {
-		if (subject == null) return false;
-		for (String part : subject.split("(?i)\\s+or\\s+")) {
-			String s = part.trim();
-			if (s.equalsIgnoreCase(self.name())
-					|| s.equalsIgnoreCase("this Forward")
-					|| s.equalsIgnoreCase("this Character")
-					|| s.equalsIgnoreCase("this Monster")
-					|| s.equalsIgnoreCase("this Backup")) return true;
+	private static final Pattern DAMAGED_SUBJECT_TAIL =
+			Pattern.compile("(?i)\\s+(?:you\\s+control|by\\s+.*)$");
+
+	/**
+	 * True when {@code damaged} satisfies the subject of an "is dealt damage" trigger carried by
+	 * {@code watcher}.
+	 *
+	 * <p>A subject naming the watcher — by card name, or as "this Forward" — is matched by
+	 * <em>identity</em> rather than by name, following the rule that a card naming itself means
+	 * that copy. Name equality would be the wrong test here: the walk now visits every card on the
+	 * side, and {@code effectiveAutoAbilities} can hand a card an ability granted from elsewhere,
+	 * whose text names its granter. Every other subject is a filter over the damaged card, so it
+	 * fires on however many watchers match.
+	 *
+	 * <p>The subject may be compound — Faris reads "Faris or a Job Warrior of Light Forward you
+	 * control" — and one match anywhere in it fires the ability once, not once per half. Faris
+	 * being damaged satisfies both halves, and answers with a single trigger.
+	 */
+	private boolean matchesDamagedSubject(String subject, CardData watcher, CardData damaged) {
+		// A subject-less printing can only be about the watcher itself, so fall back to identity
+		// rather than firing unconditionally.
+		if (subject == null || subject.isBlank()) return damaged == watcher;
+
+		for (String rawPart : subject.split("(?i)\\s+or\\s+")) {
+			String part = DAMAGED_SUBJECT_TAIL.matcher(rawPart.trim()).replaceFirst("").trim();
+			if (part.isEmpty()) continue;
+			if (DAMAGED_SUBJECT_SELF.matcher(part).matches()
+					|| meetsCardNameFilter(watcher, part)) {
+				if (damaged == watcher) return true;
+				continue;
+			}
+			if (matchesSingleSubject(part, damaged, watcher)) return true;
 		}
 		return false;
 	}
@@ -1739,6 +1794,19 @@ final class AutoAbilityTriggers {
 	/** Fires "you receive damage" abilities on all field cards belonging to the player who took damage. */
 	void triggerAutoAbilitiesForYouReceiveDamage(boolean isP1) {
 		triggerAutoAbilitiesForEvent("you receive damage", isP1);
+	}
+
+	/**
+	 * Fires "when you gain a 《C》" abilities on the gaining player's field cards
+	 * (16-115H Sarah (MOBIUS)).
+	 *
+	 * <p>Called once per Crystal, not once per effect: an ability that hands over 《C》《C》 gains
+	 * two Crystals and so meets "gain a 《C》" twice. That matches how this engine already treats
+	 * the closest analogue — a multi-point damage effect fires "you receive damage" per point,
+	 * because each point is dealt as its own action.
+	 */
+	void triggerAutoAbilitiesForGainCrystal(boolean isP1) {
+		triggerAutoAbilitiesForEvent("gain crystal", isP1);
 	}
 
 	/**

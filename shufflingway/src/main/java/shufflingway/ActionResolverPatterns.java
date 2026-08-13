@@ -527,6 +527,20 @@ final class ActionResolverPatterns {
      * Reveals (peeks) the top card of the controller's deck; if it is of the captured {@code type},
      * the in-progress selection is cancelled. Group {@code type} — Forward / Backup / Monster / Summon.
      */
+    /**
+     * "Reveal the top card of your deck. If it is a [Type], add it to your hand. If it is not a
+     * [Type], put it at the top or bottom of your deck." — 16-115H Sarah (MOBIUS)'s crystal payoff.
+     *
+     * <p>Both halves must name the same type; the back-reference is what enforces it, so a text
+     * that keeps one type and misses on another declines rather than resolving as this one.
+     * Group {@code type} — Forward / Backup / Monster / Summon.
+     */
+    static final Pattern REVEAL_TOP_TO_HAND_IF_TYPE_ELSE_TOP_OR_BOTTOM = Pattern.compile(
+        "(?i)^Reveal\\s+the\\s+top\\s+card\\s+of\\s+your\\s+deck[.!]?\\s+" +
+        "If\\s+it\\s+is\\s+an?\\s+(?<type>Forward|Backup|Monster|Summon),\\s+" +
+        "add\\s+it\\s+to\\s+your\\s+hand[.!]?\\s+" +
+        "If\\s+it\\s+is\\s+not\\s+an?\\s+\\k<type>,\\s+" +
+        "put\\s+it\\s+at\\s+the\\s+top\\s+or\\s+bottom\\s+of\\s+your\\s+deck[.!]?\\s*$");
     static final Pattern CANCEL_CHOSEN_REVEAL_TOP_IF_TYPE = Pattern.compile(
         "(?i)^Reveal\\s+the\\s+top\\s+card\\s+of\\s+your\\s+deck[.!]?\\s+" +
         "If\\s+it\\s+is\\s+an?\\s+(?<type>Forward|Backup|Monster|Summon)s?,\\s*" +
