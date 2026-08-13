@@ -1651,6 +1651,16 @@ final class ActionResolverChoose {
             String  srcJobBracket = forEachM.group("jobbname") != null ? forEachM.group("jobbname").trim() : null;
             String  srcJobWritten = forEachM.group("jobwname") != null ? forEachM.group("jobwname").trim() : null;
             String  srcJobWType   = forEachM.group("jobwtype") != null ? forEachM.group("jobwtype").trim() : null;
+            String  srcJobUnion   = forEachM.group("jobuname")    != null ? forEachM.group("jobuname").trim() : null;
+            String  srcJobUElem   = forEachM.group("jobuelement") != null ? forEachM.group("jobuelement").toLowerCase(java.util.Locale.ROOT) : null;
+            String  srcJobUType   = forEachM.group("jobutype")    != null ? forEachM.group("jobutype")    : null;
+            String  srcJobCJob    = forEachM.group("jobcname") != null ? forEachM.group("jobcname").trim() : null;
+            String  srcJobCCard   = forEachM.group("jobccard") != null ? forEachM.group("jobccard").trim() : null;
+            String  srcJobZJob    = forEachM.group("jobzname") != null ? forEachM.group("jobzname").trim() : null;
+            String  srcJobZCard   = forEachM.group("jobzcard") != null ? forEachM.group("jobzcard").trim() : null;
+            String  srcJobXJob    = forEachM.group("jobxname") != null ? forEachM.group("jobxname").trim() : null;
+            String  srcJobXExcl   = forEachM.group("jobxexcl") != null ? forEachM.group("jobxexcl").trim() : null;
+            String  srcJobRJob    = forEachM.group("jobrname") != null ? forEachM.group("jobrname").trim() : null;
             String  srcCharType   = forEachM.group("chartype");
             String  srcCategory   = srcCharType != null && forEachM.group("category") != null ? forEachM.group("category").trim() : null;
             String  srcElement    = srcCharType != null && forEachM.group("element")  != null ? forEachM.group("element").toLowerCase(java.util.Locale.ROOT) : null;
@@ -1673,9 +1683,18 @@ final class ActionResolverChoose {
             boolean bzBkp   = srcBzType != null && (bzChar || srcBzType.matches("(?i)Backups?"));
             boolean bzMon   = srcBzType != null && (bzChar || srcBzType.matches("(?i)Monsters?"));
             boolean bzSmn   = srcBzType != null && srcBzType.matches("(?i)Summons?");
+            // Element half of the union source: which card types its type noun spans.
+            boolean unionFwd = srcJobUType != null && srcJobUType.matches("(?i)Forwards?|Characters?");
+            boolean unionBkp = srcJobUType != null && srcJobUType.matches("(?i)Backups?|Characters?");
+            boolean unionMon = srcJobUType != null && srcJobUType.matches("(?i)Monsters?|Characters?");
             String sourceLabel;
             if      (srcSelfDmg)           sourceLabel = "P1 damage";
             else if (srcJobBracket != null) sourceLabel = "[Job (" + srcJobBracket + ")] you control";
+            else if (srcJobUnion   != null) sourceLabel = "Job " + srcJobUnion + " or " + forEachM.group("jobuelement") + " " + srcJobUType + " you control";
+            else if (srcJobCJob    != null) sourceLabel = "Job " + srcJobCJob + " or Card Name " + srcJobCCard + " you control";
+            else if (srcJobZJob    != null) sourceLabel = "Job " + srcJobZJob + " or Card Name " + srcJobZCard + " in BZ";
+            else if (srcJobXJob    != null) sourceLabel = "Job " + srcJobXJob + " (excl. " + srcJobXExcl + ") you control";
+            else if (srcJobRJob    != null) sourceLabel = "Job " + srcJobRJob + " in BZ or RFP";
             else if (srcJobWritten != null) sourceLabel = "Job " + srcJobWritten + (srcJobWType != null ? " " + srcJobWType : "") + " you control";
             else if (srcCharType   != null) sourceLabel = (srcCategory != null ? "Category " + srcCategory + " " : "") + (srcElement != null ? srcElement + " " : "") + srcCharType + (srcCostFilter != -1 ? " of cost " + srcCostFilter : "") + " you control";
             else if (srcBzName     != null) sourceLabel = "Card Name " + srcBzName + " in BZ";
@@ -1693,6 +1712,38 @@ final class ActionResolverChoose {
                 int n;
                 if      (srcSelfDmg)           n = ctx.p1DamageCount();
                 else if (srcJobBracket != null) n = ctx.countSelfFieldCards(true, true, true, srcJobBracket, null);
+                // The three union sources all count distinct cards, not matches: one card can
+                // satisfy both halves (a Fire Warrior of Light; a card named Dragoon that was
+                // granted the Job Dragoon), so each asks for the overlap and subtracts it rather
+                // than summing the two counts. Every term goes through the same filter chain,
+                // which is what makes the subtraction exact.
+                else if (srcJobUnion   != null) {
+                    int jobN  = ctx.countSelfFieldCards(true, true, true, srcJobUnion, null);
+                    int elemN = ctx.countSelfFieldCards(unionFwd, unionBkp, unionMon, null, null, null, srcJobUElem, -1);
+                    int bothN = ctx.countSelfFieldCards(unionFwd, unionBkp, unionMon, srcJobUnion, null, null, srcJobUElem, -1);
+                    n = jobN + elemN - bothN;
+                }
+                else if (srcJobCJob    != null) {
+                    int jobN  = ctx.countSelfFieldCards(true, true, true, srcJobCJob, null);
+                    int nameN = ctx.countSelfFieldCards(true, true, true, null, srcJobCCard);
+                    int bothN = ctx.countSelfFieldCards(true, true, true, srcJobCJob, srcJobCCard);
+                    n = jobN + nameN - bothN;
+                }
+                else if (srcJobZJob    != null) {
+                    int jobN  = ctx.countSelfBreakZoneCards(null, srcJobZJob);
+                    int nameN = ctx.countSelfBreakZoneCards(srcJobZCard, null);
+                    int bothN = ctx.countSelfBreakZoneCards(srcJobZCard, srcJobZJob);
+                    n = jobN + nameN - bothN;
+                }
+                // "other than <name>" is a subtraction of the same shape: drop the cards that
+                // carry both the job and the excluded name. It excludes every copy of that name,
+                // not just the ability's source, which is what the printed text says.
+                else if (srcJobXJob    != null)
+                    n = ctx.countSelfFieldCards(true, true, true, srcJobXJob, null)
+                      - ctx.countSelfFieldCards(true, true, true, srcJobXJob, srcJobXExcl);
+                // The Break Zone and the removed-from-game zone are disjoint — a card is in one or
+                // the other — so this union needs no overlap term, unlike the three above.
+                else if (srcJobRJob    != null) n = ctx.countSelfBreakZoneAndRfgCards(null, srcJobRJob);
                 else if (srcJobWritten != null) {
                     boolean jwFwd = srcJobWType == null || srcJobWType.matches("(?i)Forwards?");
                     boolean jwBkp = srcJobWType == null || srcJobWType.matches("(?i)Backups?");

@@ -687,6 +687,17 @@ final class ActionResolverPatterns {
      *       which is group size 1. The source count is divided by it, rounding down.</li>
      *   <li>{@code selfdmg}    — source is P1's damage-zone count</li>
      *   <li>{@code jobbname}   — bracket job: "[Job (name)] you control"</li>
+     *   <li>{@code jobuname}/{@code jobuelement}/{@code jobutype} — the union source
+     *       "Job Name or/and-or [Element] Type you control"; a card satisfying both halves
+     *       counts once</li>
+     *   <li>{@code jobcname}/{@code jobccard} — the union source "Job Name or/and-or Card Name
+     *       Name you control"; a card satisfying both halves counts once</li>
+     *   <li>{@code jobzname}/{@code jobzcard} — the same union over P1's Break Zone</li>
+     *   <li>{@code jobxname}/{@code jobxexcl} — "Job Name other than CardName you control";
+     *       every card carrying the name is excluded, not just the ability's source</li>
+     *   <li>{@code jobrname}   — "Job Name in your Break Zone and/or Job Name you own removed
+     *       from the game", counted across both zones. A backreference ties the two halves to
+     *       the same job, since the count they feed takes a single job filter.</li>
      *   <li>{@code jobwname}   — written job: "Job Name you control"</li>
      *   <li>{@code chartype}   — type filter: "Forwards/Characters/etc. you control"</li>
      *   <li>{@code costfilter} — optional exact cost: "of cost N" appended to chartype</li>
@@ -704,6 +715,20 @@ final class ActionResolverPatterns {
         "(?:" +
             "(?<selfdmg>point\\s+of\\s+damage\\s+you\\s+have\\s+received)" +
             "|\\[Job\\s+\\((?<jobbname>[^)]+)\\)\\]\\s+you\\s+control" +
+            // The three union branches must all precede the plain Job branch: its reluctant name
+            // would otherwise swallow the whole "Warrior of Light or Fire Character" — or
+            // "Dragoon and/or Card Name Dragoon" — as one job name and count nothing.
+            // Their own order is free; the second half of each is anchored by a distinct literal
+            // (an Element word, "Card Name ... you control", "Card Name ... in your Break Zone").
+            "|Job\\s+(?<jobuname>.+?)\\s+(?:and/or|or)\\s+(?<jobuelement>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+(?<jobutype>Forwards?|Characters?|Backups?|Monsters?)\\s+you\\s+control" +
+            "|Job\\s+(?<jobcname>.+?)\\s+(?:and/or|or)\\s+Card\\s+Name\\s+(?<jobccard>.+?)\\s+you\\s+control" +
+            "|Job\\s+(?<jobzname>.+?)\\s+(?:and/or|or)\\s+Card\\s+Name\\s+(?<jobzcard>.+?)\\s+in\\s+your\\s+Break\\s+Zone" +
+            // Same reason these two sit ahead of the plain Job branch: it would take
+            // "Sky Pirate other than Fran" as one job name. Neither can be confused with a union
+            // branch — "other than" holds no free-standing "or", and the cross-zone form names a
+            // Job on both sides of its "and/or" where the unions require an Element or "Card Name".
+            "|Job\\s+(?<jobxname>.+?)\\s+other\\s+than\\s+(?<jobxexcl>.+?)\\s+you\\s+control" +
+            "|Job\\s+(?<jobrname>.+?)\\s+in\\s+your\\s+Break\\s+Zone\\s+and/or\\s+Job\\s+\\k<jobrname>\\s+you\\s+own\\s+removed\\s+from\\s+the\\s+game" +
             "|Job\\s+(?<jobwname>.+?)(?:\\s+(?<jobwtype>Forwards?|Backups?|Monsters?))?\\s+you\\s+control" +
             "|(?:Category\\s+(?<category>\\S+)\\s+)?(?:(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?(?<chartype>Forwards?|Characters?|Backups?|Monsters?)(?:\\s+of\\s+cost\\s+(?<costfilter>\\d+))?\\s+you\\s+control" +
             "|Card\\s+Name\\s+(?<bzname>\\S+(?:\\s+\\([^)]+\\))?)\\s+in\\s+your\\s+Break\\s+Zone" +

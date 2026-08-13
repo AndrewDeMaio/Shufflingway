@@ -1551,6 +1551,228 @@ public class CardBehaviorTest {
         verify(ctx).damageTarget(t, 3000);
     }
 
+    // Luneth 16-019R, second Attack-Phase option: "Deal it 1000 damage for each Job Warrior of
+    // Light or Fire Character you control." Two source halves on different axes — a job and an
+    // element+type. The plain Job branch of FOLLOWUP_DAMAGE_FOR_EACH used to swallow the whole
+    // phrase as one job name ("Warrior of Light or Fire Character"), which no card ever has, so
+    // the ability always dealt 0. The union branch has to be checked ahead of it.
+    private static final String LUNETH_DAMAGE_PER_WOL_OR_FIRE =
+            "Choose 1 Forward. Deal it 1000 damage for each Job Warrior of Light or Fire Character you control.";
+
+    /**
+     * Stubs the three counts the union source is built from: the job half over all card types,
+     * the element half over the types its noun spans, and their overlap.
+     */
+    private static ForwardTarget stubChooseWithJobOrElementCounts(
+            GameContext ctx, String job, String element, int jobCount, int elemCount, int bothCount) {
+        ForwardTarget t = stubChooseOneTarget(ctx);
+        when(ctx.countSelfFieldCards(true, true, true, job, null)).thenReturn(jobCount);
+        when(ctx.countSelfFieldCards(true, true, true, null, null, null, element, -1)).thenReturn(elemCount);
+        when(ctx.countSelfFieldCards(true, true, true, job, null, null, element, -1)).thenReturn(bothCount);
+        return t;
+    }
+
+    // A Fire Warrior of Light satisfies both halves, and Luneth's own board is full of them —
+    // summing the two counts would double every one of them.
+    @Test
+    void damageForEachJobOrElementCountsOverlapOnce() {
+        Consumer<GameContext> fn = ActionResolver.parse(LUNETH_DAMAGE_PER_WOL_OR_FIRE, null);
+        assertNotNull(fn, "\"for each Job X or [Element] Type you control\" should parse");
+        GameContext ctx = mock(GameContext.class);
+        // 3 Warriors of Light, 4 Fire Characters, 2 cards that are both → 5 distinct cards.
+        ForwardTarget t = stubChooseWithJobOrElementCounts(ctx, "Warrior of Light", "fire", 3, 4, 2);
+        fn.accept(ctx);
+        verify(ctx).damageTarget(t, 5000);
+    }
+
+    // The job half is not type-restricted, so a non-Fire Warrior of Light Backup still counts
+    // even though the element half only reaches Characters of that Element.
+    @Test
+    void damageForEachJobOrElementCountsEitherHalfAlone() {
+        Consumer<GameContext> fn = ActionResolver.parse(LUNETH_DAMAGE_PER_WOL_OR_FIRE, null);
+        assertNotNull(fn);
+        GameContext ctx = mock(GameContext.class);
+        ForwardTarget t = stubChooseWithJobOrElementCounts(ctx, "Warrior of Light", "fire", 2, 0, 0);
+        fn.accept(ctx);
+        verify(ctx).damageTarget(t, 2000);
+    }
+
+    // Ace 25-005H (Jackpot Shot) prints the same source with "and/or" instead of "or".
+    @Test
+    void damageForEachJobAndOrElementUsesTheSameUnion() {
+        Consumer<GameContext> fn = ActionResolver.parse(
+                "Choose 1 Forward. Deal it 2000 damage for each Job Class Zero Cadet and/or Fire Character you control.",
+                null);
+        assertNotNull(fn, "the \"and/or\" spelling should reach the same union source");
+        GameContext ctx = mock(GameContext.class);
+        ForwardTarget t = stubChooseWithJobOrElementCounts(ctx, "Class Zero Cadet", "fire", 2, 3, 1);
+        fn.accept(ctx);
+        verify(ctx).damageTarget(t, 8000);
+    }
+
+    // Monk 11-079C and Gekkou 11-006C: "for each Job Ninja or Card Name Ninja you control" — the
+    // union's second half is a card name rather than an element. The generic vanilla cards named
+    // after a job all carry the Job "Standard Unit", so in printed card data the two halves are
+    // disjoint; they can still overlap in play, because a job-granting effect can put the Job
+    // Ninja on a card already named Ninja.
+    private static ForwardTarget stubChooseWithJobOrNameCounts(
+            GameContext ctx, String job, String name, int jobCount, int nameCount, int bothCount) {
+        ForwardTarget t = stubChooseOneTarget(ctx);
+        when(ctx.countSelfFieldCards(true, true, true, job, null)).thenReturn(jobCount);
+        when(ctx.countSelfFieldCards(true, true, true, null, name)).thenReturn(nameCount);
+        when(ctx.countSelfFieldCards(true, true, true, job, name)).thenReturn(bothCount);
+        return t;
+    }
+
+    @Test
+    void damageForEachJobOrCardNameAddsTheTwoDisjointHalves() {
+        Consumer<GameContext> fn = ActionResolver.parse(
+                "Choose 1 Forward. Deal it 2000 damage for each Job Ninja or Card Name Ninja you control.", null);
+        assertNotNull(fn, "\"for each Job X or Card Name Y you control\" should parse");
+        GameContext ctx = mock(GameContext.class);
+        // 2 Forwards with the Job Ninja plus 3 vanilla cards named Ninja, no overlap → 5.
+        ForwardTarget t = stubChooseWithJobOrNameCounts(ctx, "Ninja", "Ninja", 2, 3, 0);
+        fn.accept(ctx);
+        verify(ctx).damageTarget(t, 10000);
+    }
+
+    @Test
+    void damageForEachJobOrCardNameCountsOverlapOnce() {
+        Consumer<GameContext> fn = ActionResolver.parse(
+                "Choose 1 Forward. Deal it 3000 damage for each Job Monk or Card Name Monk you control.", null);
+        assertNotNull(fn);
+        GameContext ctx = mock(GameContext.class);
+        // A card named Monk that has also been granted the Job Monk is in both halves → 3, not 4.
+        ForwardTarget t = stubChooseWithJobOrNameCounts(ctx, "Monk", "Monk", 2, 2, 1);
+        fn.accept(ctx);
+        verify(ctx).damageTarget(t, 9000);
+    }
+
+    // Freya 26-095R prints both zones: her attack trigger counts the field, Dragon's Crest counts
+    // the Break Zone. The Break Zone union must reach the zone counts and leave the field alone.
+    @Test
+    void damageForEachJobOrCardNameInBreakZoneUsesTheZoneCounts() {
+        Consumer<GameContext> fn = ActionResolver.parse(
+                "Choose 1 Forward. Deal it 2000 damage for each Job Dragoon and/or Card Name Dragoon in your Break Zone.",
+                null);
+        assertNotNull(fn, "the Break Zone union should parse");
+        GameContext ctx = mock(GameContext.class);
+        ForwardTarget t = stubChooseOneTarget(ctx);
+        when(ctx.countSelfBreakZoneCards(null, "Dragoon")).thenReturn(2);
+        when(ctx.countSelfBreakZoneCards("Dragoon", null)).thenReturn(4);
+        when(ctx.countSelfBreakZoneCards("Dragoon", "Dragoon")).thenReturn(1);
+        fn.accept(ctx);
+        verify(ctx).damageTarget(t, 10000);
+        verify(ctx, never()).countSelfFieldCards(anyBoolean(), anyBoolean(), anyBoolean(), any(), any());
+    }
+
+    // Freya's other half, over the field, on the same "and/or" spelling.
+    @Test
+    void damageForEachJobAndOrCardNameOnTheFieldStaysOnTheField() {
+        Consumer<GameContext> fn = ActionResolver.parse(
+                "Choose 1 Forward. Deal it 2000 damage for each Job Dragoon and/or Card Name Dragoon you control.", null);
+        assertNotNull(fn);
+        GameContext ctx = mock(GameContext.class);
+        ForwardTarget t = stubChooseWithJobOrNameCounts(ctx, "Dragoon", "Dragoon", 1, 2, 0);
+        fn.accept(ctx);
+        verify(ctx).damageTarget(t, 6000);
+        verify(ctx, never()).countSelfBreakZoneCards(any(), any());
+    }
+
+    // The plain "Card Name X in your Break Zone" source shares the zone phrasing with the new
+    // Break Zone union, so it must still reach the name-only count.
+    @Test
+    void damageForEachPlainBreakZoneNameIsNotClaimedByTheUnionBranch() {
+        Consumer<GameContext> fn = ActionResolver.parse(
+                "Choose 1 Forward. Deal it 1000 damage for each Card Name Dragoon in your Break Zone.", null);
+        assertNotNull(fn);
+        GameContext ctx = mock(GameContext.class);
+        ForwardTarget t = stubChooseOneTarget(ctx);
+        when(ctx.countSelfBreakZoneCards("Dragoon", null)).thenReturn(3);
+        fn.accept(ctx);
+        verify(ctx).damageTarget(t, 3000);
+        verify(ctx, never()).countSelfBreakZoneCards(any(), eq("Dragoon"));
+    }
+
+    // Fran 10-060L: "Deal it 1000 damage for each Job Sky Pirate other than Fran you control."
+    // Fran has the Job Sky Pirate herself, so the exclusion is what stops her from counting
+    // herself — and it drops every card named Fran, not just the ability's source.
+    private static final String FRAN_DAMAGE_PER_OTHER_SKY_PIRATE =
+            "Choose 1 Forward. Deal it 1000 damage for each Job Sky Pirate other than Fran you control.";
+
+    @Test
+    void damageForEachJobOtherThanNameSubtractsTheExcludedCards() {
+        Consumer<GameContext> fn = ActionResolver.parse(FRAN_DAMAGE_PER_OTHER_SKY_PIRATE, null);
+        assertNotNull(fn, "\"for each Job X other than Name you control\" should parse");
+        GameContext ctx = mock(GameContext.class);
+        ForwardTarget t = stubChooseOneTarget(ctx);
+        // 3 Sky Pirates on the field, one of which is Fran → 2 count.
+        when(ctx.countSelfFieldCards(true, true, true, "Sky Pirate", null)).thenReturn(3);
+        when(ctx.countSelfFieldCards(true, true, true, "Sky Pirate", "Fran")).thenReturn(1);
+        fn.accept(ctx);
+        verify(ctx).damageTarget(t, 2000);
+    }
+
+    // With Fran as the only Sky Pirate the ability does nothing — the case the old parse got
+    // wrong in the other direction, matching a job named "Sky Pirate other than Fran".
+    @Test
+    void damageForEachJobOtherThanNameIsZeroWhenOnlyTheExcludedCardQualifies() {
+        Consumer<GameContext> fn = ActionResolver.parse(FRAN_DAMAGE_PER_OTHER_SKY_PIRATE, null);
+        assertNotNull(fn);
+        GameContext ctx = mock(GameContext.class);
+        ForwardTarget t = stubChooseOneTarget(ctx);
+        when(ctx.countSelfFieldCards(true, true, true, "Sky Pirate", null)).thenReturn(1);
+        when(ctx.countSelfFieldCards(true, true, true, "Sky Pirate", "Fran")).thenReturn(1);
+        fn.accept(ctx);
+        verify(ctx).damageTarget(t, 0);
+    }
+
+    // Joshua 26-009L: "for each Job Eikon in your Break Zone and/or Job Eikon you own removed
+    // from the game" — one job counted across two zones. The zones are disjoint, so this one sums
+    // outright; countSelfBreakZoneAndRfgCards already does that.
+    @Test
+    void damageForEachJobAcrossBreakZoneAndRemovedFromGameSumsBothZones() {
+        Consumer<GameContext> fn = ActionResolver.parse(
+                "Choose 1 Forward. Deal it 2000 damage for each Job Eikon in your Break Zone and/or Job Eikon you own removed from the game.",
+                null);
+        assertNotNull(fn, "the Break-Zone-plus-removed-from-game source should parse");
+        GameContext ctx = mock(GameContext.class);
+        ForwardTarget t = stubChooseOneTarget(ctx);
+        when(ctx.countSelfBreakZoneAndRfgCards(null, "Eikon")).thenReturn(3);
+        fn.accept(ctx);
+        verify(ctx).damageTarget(t, 6000);
+    }
+
+    // The backreference ties both halves to one job, because the count behind them takes a single
+    // job filter. A card naming two different jobs must not quietly be counted as only the first.
+    @Test
+    void damageForEachAcrossZonesDoesNotClaimTwoDifferentJobs() {
+        Consumer<GameContext> fn = ActionResolver.parse(
+                "Choose 1 Forward. Deal it 2000 damage for each Job Eikon in your Break Zone and/or Job Dominant you own removed from the game.",
+                null);
+        GameContext ctx = mock(GameContext.class);
+        ForwardTarget t = stubChooseOneTarget(ctx);
+        if (fn != null) fn.accept(ctx);
+        verify(ctx, never()).countSelfBreakZoneAndRfgCards(any(), eq("Eikon"));
+        verify(ctx, never()).damageTarget(t, 6000);
+    }
+
+    // The union branch sits ahead of the plain Job branch, so the plain form must still reach the
+    // single job count and must not consult the element counts.
+    @Test
+    void damageForEachPlainJobStillUsesTheSingleJobCount() {
+        Consumer<GameContext> fn = ActionResolver.parse(
+                "Choose 1 Forward. Deal it 1000 damage for each Job Warrior of Light you control.", null);
+        assertNotNull(fn);
+        GameContext ctx = mock(GameContext.class);
+        ForwardTarget t = stubChooseOneTarget(ctx);
+        when(ctx.countSelfFieldCards(true, true, true, "Warrior of Light", null)).thenReturn(4);
+        fn.accept(ctx);
+        verify(ctx).damageTarget(t, 4000);
+        verify(ctx, never()).countSelfFieldCards(anyBoolean(), anyBoolean(), anyBoolean(),
+                any(), any(), any(), any(), anyInt());
+    }
+
     // "If the discarded card is of Wind Element, it also loses all its abilities until the end of the
     // turn." — the target-additive discard conditional tacked onto a "Choose 1 Forward" primary.
     private static final String DISCARD_COND_LOSE_ABILITIES =
