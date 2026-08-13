@@ -10793,11 +10793,18 @@ public class MainWindow {
 		for (CardData source : sources) {
 			for (FieldAbility fa : source.fieldAbilities()) {
 				Matcher m = AutoAbilityTriggers.FA_ELEMENT_FORWARD_DAMAGE_BOOST.matcher(fa.effectText());
-				if (!m.find()) continue;
-				if (!attacker.containsElement(m.group("element"))) continue;
-				int amount = Integer.parseInt(m.group("amount"));
-				boost += amount;
-				logEntry(source.name() + " — " + m.group("element") + " Forward combat damage increased by " + amount);
+				if (m.find() && attacker.containsElement(m.group("element"))) {
+					int amount = Integer.parseInt(m.group("amount"));
+					boost += amount;
+					logEntry(source.name() + " — " + m.group("element") + " Forward combat damage increased by " + amount);
+				}
+				// The unfiltered form: every Forward you control, Tulien 21-072H.
+				Matcher any = AutoAbilityTriggers.FA_FRIENDLY_FORWARD_BATTLE_DAMAGE_BOOST.matcher(fa.effectText());
+				if (any.find()) {
+					int amount = Integer.parseInt(any.group("amount"));
+					boost += amount;
+					logEntry(source.name() + " — Forward battle damage increased by " + amount);
+				}
 			}
 		}
 		return boost;
@@ -12027,7 +12034,30 @@ public class MainWindow {
 				List<CardData> oppFwds = isP1 ? p2ForwardCards : p1ForwardCards;
 				if (oppFwds.isEmpty()) return true;
 			}
+			// Permission rather than prohibition ("can only attack if …"), so it bars the attack
+			// whenever neither arm holds — Elena 11-088R.
+			Matcher mOnlyIf = AutoAbilityTriggers.FA_SELF_ATTACK_REQUIRES_CONTROL.matcher(fa.effectText());
+			if (mOnlyIf.find() && mOnlyIf.group("card").trim().equalsIgnoreCase(card.name())
+					&& !attackPermissionMet(mOnlyIf, isP1)) return true;
 		}
+		return false;
+	}
+
+	/**
+	 * Whether either arm of an {@link AutoAbilityTriggers#FA_SELF_ATTACK_REQUIRES_CONTROL}
+	 * permission currently holds: a plain count of the Forwards you control, or one Forward
+	 * carrying the named Job whose name is not the excluded one.
+	 *
+	 * <p>The exclusion matters because the card naming the Job usually has it too — Elena is
+	 * herself a Member of the Turks, so without it she would always satisfy her own second arm.
+	 */
+	private boolean attackPermissionMet(Matcher m, boolean isP1) {
+		List<CardData> fwds = isP1 ? p1ForwardCards : p2ForwardCards;
+		if (fwds.size() >= Integer.parseInt(m.group("count"))) return true;
+		String job    = m.group("job").trim();
+		String except = m.group("except").trim();
+		for (CardData f : fwds)
+			if (!except.equalsIgnoreCase(f.name()) && meetsJobFilterEffective(f, job, fwds)) return true;
 		return false;
 	}
 
@@ -12075,8 +12105,28 @@ public class MainWindow {
 
 	/** Returns {@code true} if {@code indices} form a valid party for {@code isP1}'s forwards. */
 	boolean canFormValidParty(boolean isP1, List<Integer> indices) {
+		// A party is two or more Forwards, so a card that "cannot form parties" only bars the
+		// grouping — it is still free to attack by itself, which is a one-member selection.
+		if (indices.size() > 1) {
+			List<CardData> fwds = isP1 ? p1ForwardCards : p2ForwardCards;
+			for (int i : indices)
+				if (i >= 0 && i < fwds.size() && cannotFormParties(fwds.get(i))) return false;
+		}
 		Set<String> req = partyRequiredElements(isP1, indices);
 		return req == null || !req.isEmpty();
+	}
+
+	/**
+	 * True when {@code card} carries "[card] cannot form parties." (Berserker 3-091C) — it may
+	 * attack alone but may not be grouped with another Forward.
+	 */
+	boolean cannotFormParties(CardData card) {
+		if (card == null || lostAbilitiesCards.contains(card)) return false;
+		for (FieldAbility fa : effectiveFieldAbilities(card)) {
+			Matcher m = AutoAbilityTriggers.FA_SELF_CANNOT_FORM_PARTIES.matcher(fa.effectText());
+			if (m.find() && m.group("card").trim().equalsIgnoreCase(card.name())) return true;
+		}
+		return false;
 	}
 
 	private void toggleAttackSelection(int idx) {
@@ -12088,6 +12138,17 @@ public class MainWindow {
 			return;
 		}
 		if (!p1AttackSelection.isEmpty()) {
+			// Berserker 3-091C: barred both from joining a party and from being joined, so the
+			// check reads the incoming Forward and everything already selected.
+			if (cannotFormParties(p1ForwardCards.get(idx))) {
+				logEntry("Cannot add to party — " + p1ForwardCards.get(idx).name() + " cannot form parties");
+				return;
+			}
+			for (int sel : p1AttackSelection) {
+				if (!cannotFormParties(p1ForwardCards.get(sel))) continue;
+				logEntry("Cannot add to party — " + p1ForwardCards.get(sel).name() + " cannot form parties");
+				return;
+			}
 			if (!effectiveCanFormPartyAnyElement(true, idx)) {
 				// Compute the common element constraint across non-wildcard existing members
 				Set<String> required = partyRequiredElements(true, p1AttackSelection);

@@ -13616,6 +13616,148 @@ public class CardBehaviorTest {
 	}
 
 	// =========================================================================================
+	// Four unrelated standing restrictions, one card each.
+	//
+	// Berserker 3-091C "cannot form parties" — a restriction on grouping, not on attacking: it
+	// still attacks alone, so only a selection of two or more is barred.
+	//
+	// Elena 11-088R is phrased as a permission ("can only attack if …") with two arms that differ
+	// in count and filter, so it is read directly rather than through ControlCondition. The second
+	// arm's "other than Elena" is load-bearing: Elena is a Member of the Turks herself.
+	//
+	// Tulien 21-072H boosts battle damage from every Forward you control — the unfiltered form of
+	// the Element-scoped boost that already existed.
+	//
+	// Ba'Gamnan 2-088C needed no wiring at all: DamageResolver has read this pattern since before
+	// this session. Its test pins behaviour that was already correct, and the recognizer entry
+	// closes a reporting gap.
+	// =========================================================================================
+
+	private static final String BERSERKER_NO_PARTY = "Berserker cannot form parties.";
+	private static final String ELENA_ATTACK_GATE =
+			"Elena can only attack if you control 4 or more Forwards, "
+			+ "or if you control a Job Member of the Turks Forward other than Elena.";
+	private static final String TULIEN_BATTLE_BOOST =
+			"If a Forward you control deals battle damage to a Forward, the damage increases by 2000 instead.";
+	private static final String BAGAMNAN_NO_PLAYER_DAMAGE =
+			"If Ba'Gamnan deals damage to your opponent, the damage becomes 0 instead.";
+
+	/** A Forward carrying {@code job} whose field abilities are parsed from {@code text}. */
+	private static CardData makeJobFieldForward(String name, String element, String job, String text) {
+		return new CardData(null, name, element, 3, 7000, "Forward", false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				List.of(), List.of(), CardData.parseFieldAbilities(text, "Forward"),
+				List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				job, null, null, text);
+	}
+
+	@Test
+	void aCardThatCannotFormPartiesMayStillAttackAlone() {
+		MainWindow mw = new MainWindow();
+		CardData berserker = makeIcbCard("Berserker", "Earth", "Forward", BERSERKER_NO_PARTY);
+		placeP1Forward(mw, berserker);
+		placeP1Forward(mw, makeForward("Ally", "Earth", 3, 7000));
+
+		assertTrue(mw.cannotFormParties(berserker));
+		assertTrue(mw.canFormValidParty(true, List.of(0)), "attacking by itself is not a party");
+		assertFalse(mw.canFormValidParty(true, List.of(0, 1)), "but it may not be grouped");
+		assertFalse(mw.canFormValidParty(true, List.of(1, 0)), "in either order");
+		assertTrue(mw.canFormValidParty(true, List.of(1)), "the ally is unaffected");
+	}
+
+	@Test
+	void theNoPartyRestrictionGoesWithTheCardsAbilities() {
+		MainWindow mw = new MainWindow();
+		CardData berserker = makeIcbCard("Berserker", "Earth", "Forward", BERSERKER_NO_PARTY);
+		placeP1Forward(mw, berserker);
+		placeP1Forward(mw, makeForward("Ally", "Earth", 3, 7000));
+		mw.lostAbilitiesCards.add(berserker);
+
+		assertTrue(mw.canFormValidParty(true, List.of(0, 1)), "with its abilities gone, so is the restriction");
+	}
+
+	@Test
+	void elenaCannotAttackWithNeitherArmSatisfied() {
+		MainWindow mw = new MainWindow();
+		CardData elena = makeJobFieldForward("Elena", "Lightning", "Member of the Turks", ELENA_ATTACK_GATE);
+		placeP1Forward(mw, elena);
+
+		assertTrue(mw.isFieldAbilityCannotAttack(elena, true),
+				"one Forward, and the only Member of the Turks is Elena herself");
+	}
+
+	@Test
+	void elenaAttacksOnceTheForwardCountArmIsMet() {
+		MainWindow mw = new MainWindow();
+		CardData elena = makeJobFieldForward("Elena", "Lightning", "Member of the Turks", ELENA_ATTACK_GATE);
+		placeP1Forward(mw, elena);
+		for (int i = 0; i < 3; i++) placeP1Forward(mw, makeForward("Body" + i, "Fire", 2, 5000));
+
+		assertFalse(mw.isFieldAbilityCannotAttack(elena, true), "4 Forwards including Elena clears the first arm");
+	}
+
+	@Test
+	void elenaAttacksOnceAnotherTurkIsOnTheField() {
+		MainWindow mw = new MainWindow();
+		CardData elena = makeJobFieldForward("Elena", "Lightning", "Member of the Turks", ELENA_ATTACK_GATE);
+		placeP1Forward(mw, elena);
+		placeP1Forward(mw, makeJobCard("Reno", "Lightning", "Forward", "Member of the Turks"));
+
+		assertFalse(mw.isFieldAbilityCannotAttack(elena, true), "two Forwards only — the Job arm is what clears it");
+	}
+
+	@Test
+	void elenaDoesNotSatisfyHerOwnJobArm() {
+		MainWindow mw = new MainWindow();
+		CardData elena = makeJobFieldForward("Elena", "Lightning", "Member of the Turks", ELENA_ATTACK_GATE);
+		placeP1Forward(mw, elena);
+		placeP1Forward(mw, makeJobCard("Rude", "Lightning", "Forward", "Soldier"));
+
+		assertTrue(mw.isFieldAbilityCannotAttack(elena, true),
+				"\"other than Elena\" is what stops her own Job from clearing the gate");
+	}
+
+	@Test
+	void tulienBoostsBattleDamageFromEveryForwardYouControl() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeIcbCard("Tulien", "Earth", "Forward", TULIEN_BATTLE_BOOST));
+		placeP1Forward(mw, makeForward("Ally", "Fire", 3, 7000));
+		CardData victim = makeForward("Victim", "Ice", 3, 7000);
+		mw.placeP2CardInForwardZone(victim);
+
+		assertEquals(9000, mw.modifyOutgoingCombatDamage(true, 1, 7000, victim),
+				"the boost is not scoped to an Element, so the Fire ally gets it");
+		assertEquals(7000, mw.modifyOutgoingCombatDamage(false, 0, 7000, mw.p1ForwardCards.get(1)),
+				"\"you control\" keeps it off the opponent's Forwards");
+	}
+
+	@Test
+	void baGamnanDealsNoPlayerDamage() {
+		// Regression cover for a rule DamageResolver already enforced — see the section note.
+		MainWindow mw = new MainWindow();
+		CardData bagamnan = makeIcbCard("Ba'Gamnan", "Earth", "Forward", BAGAMNAN_NO_PLAYER_DAMAGE);
+		placeP1Forward(mw, bagamnan);
+
+		assertEquals(0, mw.combatDamagePointsToOpponent(bagamnan));
+		assertEquals(1, mw.combatDamagePointsToOpponent(makeForward("Plain", "Fire", 3, 7000)),
+				"and an ordinary Forward still deals its 1 point");
+	}
+
+	@Test
+	void theQualifiedPlayerDamagePrintingIsNotTreatedAsTheUnconditionalOne() {
+		// Lightning 26-098L's "If Lightning forming a party deals damage…" matches the pattern with
+		// card="Lightning forming a party"; the name check is the only thing keeping it out.
+		MainWindow mw = new MainWindow();
+		CardData lightning = makeIcbCard("Lightning", "Lightning", "Forward",
+				"If Lightning forming a party deals damage to your opponent, the damage becomes 2 instead.");
+		placeP1Forward(mw, lightning);
+
+		assertEquals(1, mw.combatDamagePointsToOpponent(lightning),
+				"the party qualifier is unimplemented, so it must not be applied unconditionally");
+	}
+
+	// =========================================================================================
 	// The two remaining combat compulsions, both standing rather than turn-scoped.
 	//
 	// Field-wide must-attack — "All Forwards must attack once per turn if possible." (Layle

@@ -288,9 +288,13 @@ final class AutoAbilityTriggers {
 	 * {@link #FA_OUTGOING_DAMAGE_DOUBLER} rather than stacking with it, and {@code N} = 0 means the
 	 * card deals no damage to the opponent at all.
 	 *
-	 * <p>Deliberately does not match the qualified variants ("other than by its ability" on
-	 * Behemoth 24-084R, "forming a party" on Lightning 26-098L) — those carry extra conditions this
-	 * unconditional form must not silently apply.
+	 * <p>The qualified printings must not be treated as this unconditional form — they carry extra
+	 * conditions it would silently drop. Behemoth 24-084R ("other than by its ability") fails the
+	 * pattern outright, but Lightning 26-098L ("If Lightning <em>forming a party</em> deals damage…")
+	 * does not: {@code card} is lazy but unrestricted, so it absorbs the qualifier and the match
+	 * succeeds with {@code card = "Lightning forming a party"}. What actually excludes it is the
+	 * caller comparing {@code card} against the carrier's own name — every reader of this pattern
+	 * must make that check, not assume the anchors did it.
 	 * Groups: {@code card}, {@code amount}.
 	 */
 	static final Pattern FA_OUTGOING_DAMAGE_TO_OPPONENT_SETS_TO = Pattern.compile(
@@ -589,6 +593,42 @@ final class AutoAbilityTriggers {
 	 */
 	static final Pattern FA_SELF_MUST_ATTACK = Pattern.compile(
 		"(?i)^(?<card>.+?)\\s+must\\s+attack\\s+(?:at\\s+least\\s+)?once\\s+per\\s+turn\\s+if\\s+possible[.!]?$"
+	);
+
+	/**
+	 * "[card] cannot form parties." — Berserker 3-091C. A restriction on joining a party, not on
+	 * attacking: the card may still attack on its own. Group: {@code card}.
+	 */
+	static final Pattern FA_SELF_CANNOT_FORM_PARTIES = Pattern.compile(
+		"(?i)^(?<card>.+?)\\s+cannot\\s+form\\s+parties[.!]?$"
+	);
+
+	/**
+	 * "[card] can only attack if you control N or more Forwards, or if you control a Job [job]
+	 * Forward other than [card]." — Elena 11-088R.
+	 *
+	 * <p>Read directly rather than through {@link ControlCondition}: the two arms differ in both
+	 * count and filter, and the second carries a name exclusion, which that record's per-card
+	 * {@code orAlternatives} cannot express — it ORs filters within one count, not whole conditions.
+	 * Groups: {@code card}, {@code count}, {@code job}, {@code except}.
+	 */
+	static final Pattern FA_SELF_ATTACK_REQUIRES_CONTROL = Pattern.compile(
+		"(?i)^(?<card>.+?)\\s+can\\s+only\\s+attack\\s+if\\s+you\\s+control\\s+(?<count>\\d+)\\s+or\\s+more\\s+Forwards,?" +
+		"\\s+or\\s+if\\s+you\\s+control\\s+an?\\s+Job\\s+(?<job>.+?)\\s+Forward\\s+other\\s+than\\s+(?<except>.+?)[.!]?$"
+	);
+
+	/**
+	 * Outgoing battle-damage boost from any friendly Forward: "If a Forward you control deals battle
+	 * damage to a Forward, the damage increases by N instead." — Tulien 21-072H.
+	 *
+	 * <p>The unfiltered counterpart of {@link #FA_ELEMENT_FORWARD_DAMAGE_BOOST}, kept as its own
+	 * pattern rather than made by relaxing that one's element group: optional there would let it
+	 * claim this text with a null element, and an element-scoped card would then boost every Forward.
+	 * Group: {@code amount}.
+	 */
+	static final Pattern FA_FRIENDLY_FORWARD_BATTLE_DAMAGE_BOOST = Pattern.compile(
+		"(?i)^If\\s+a\\s+Forward\\s+you\\s+control\\s+deals?\\s+battle\\s+damage\\s+to\\s+a\\s+Forward,\\s+" +
+		"the\\s+damage\\s+increases\\s+by\\s+(?<amount>\\d+)\\s+instead[.!]?$"
 	);
 
 	/**

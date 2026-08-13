@@ -147,9 +147,18 @@ public class FieldAbilityParsingTest {
         if (AutoAbilityTriggers.FA_FIELD_FORWARDS_MUST_BLOCK.matcher(fa.effectText()).find()) return true;
         if (AutoAbilityTriggers.FA_FIELD_FORWARDS_MUST_ATTACK.matcher(fa.effectText()).find()) return true;
         if (CardData.COUNTER_SCALED_OPP_DEBUFF.matcher(fa.effectText()).matches()) return true;
-        // Both self-named compulsions are only recognised when the text names their own carrier.
+        if (AutoAbilityTriggers.FA_FRIENDLY_FORWARD_BATTLE_DAMAGE_BOOST.matcher(fa.effectText()).find()) return true;
+        // Read by DamageResolver.outgoingDamageToOpponentOverride; it was live well before it was
+        // listed here, so this row closes a reporting gap rather than turning a rule on. The name
+        // check is what that caller uses to reject the qualified printings, and it is not optional:
+        // the pattern's own "card" group happily absorbs the qualifier, so "If Lightning forming a
+        // party deals damage…" (26-098L) matches with card="Lightning forming a party".
+        if (selfNamedCompulsion(AutoAbilityTriggers.FA_OUTGOING_DAMAGE_TO_OPPONENT_SETS_TO, fa, source)) return true;
+        // The self-named forms are only recognised when the text names their own carrier.
         if (selfNamedCompulsion(AutoAbilityTriggers.FA_SELF_MUST_BLOCK,  fa, source)) return true;
         if (selfNamedCompulsion(AutoAbilityTriggers.FA_SELF_MUST_ATTACK, fa, source)) return true;
+        if (selfNamedCompulsion(AutoAbilityTriggers.FA_SELF_CANNOT_FORM_PARTIES, fa, source)) return true;
+        if (selfNamedCompulsion(AutoAbilityTriggers.FA_SELF_ATTACK_REQUIRES_CONTROL, fa, source)) return true;
         if (AutoAbilityTriggers.FA_ALL_FORWARDS_LOSE_HASTE.matcher(fa.effectText()).find()) return true;
         if (AutoAbilityTriggers.FA_FORWARDS_CANNOT_GAIN_HASTE.matcher(fa.effectText()).find()) return true;
         if (!CardData.parseSelfTraitGrant(fa.effectText(), source.name()).isEmpty()) return true;
@@ -365,6 +374,15 @@ public class FieldAbilityParsingTest {
         if (m.find()) return "FieldForwardsMustAttack[" + (m.group("scope") != null ? m.group("scope") : "all") + "]";
         if (selfNamedCompulsion(AutoAbilityTriggers.FA_SELF_MUST_BLOCK,  fa, source)) return "SelfMustBlock";
         if (selfNamedCompulsion(AutoAbilityTriggers.FA_SELF_MUST_ATTACK, fa, source)) return "SelfMustAttack";
+        if (selfNamedCompulsion(AutoAbilityTriggers.FA_SELF_CANNOT_FORM_PARTIES, fa, source)) return "SelfCannotFormParties";
+        m = AutoAbilityTriggers.FA_SELF_ATTACK_REQUIRES_CONTROL.matcher(fa.effectText());
+        if (m.find() && m.group("card").trim().equalsIgnoreCase(source.name()))
+            return "SelfAttackRequiresControl[" + m.group("count") + "+ Forwards | Job " + m.group("job") + "]";
+        m = AutoAbilityTriggers.FA_FRIENDLY_FORWARD_BATTLE_DAMAGE_BOOST.matcher(fa.effectText());
+        if (m.find()) return "FriendlyForwardBattleDmgBoost[+" + m.group("amount") + "]";
+        m = AutoAbilityTriggers.FA_OUTGOING_DAMAGE_TO_OPPONENT_SETS_TO.matcher(fa.effectText());
+        if (m.find() && m.group("card").trim().equalsIgnoreCase(source.name()))
+            return "OutgoingDmgToOpponentSetsTo[" + m.group("amount") + "]";
         m = CardData.COUNTER_SCALED_OPP_DEBUFF.matcher(fa.effectText());
         if (m.matches()) return "CounterScaledOppDebuff[-" + m.group("power") + "/" + m.group("counter") + "]";
         if (AutoAbilityTriggers.FA_ALL_FORWARDS_LOSE_HASTE.matcher(fa.effectText()).find()) return "AllForwardsLoseHaste";
