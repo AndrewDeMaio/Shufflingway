@@ -683,6 +683,9 @@ class CostCalculator {
 		if (fieldRemoval != null
 				&& mw.altFieldRemovalCandidates(fieldRemoval).size() < fieldRemoval.count()) return false;
 
+		// Dull check ("dull 1 active Fire Job Class Zero Cadet Forward you control and 1 …")
+		if (!mw.canPayAltDullCost(card)) return false;
+
 		// Break Zone removal check
 		List<String> bzReqs = card.altBzRemovals();
 		if (!bzReqs.isEmpty()) {

@@ -16726,4 +16726,329 @@ public class CardBehaviorTest {
 		assertNotNull(makeFieldTextForward("Machinist", "Lightning", 0, machinist).extraCost(),
 				"and it is still read as an extra cost");
 	}
+
+	// =========================================================================================
+	// Cast taxes — "The cost required for [all players|your opponent] to cast X is increased by N."
+	//
+	// Ultimecia 18-105H prints both halves of the family on one card, and neither parsed before:
+	// the affected player was hard-coded to "your opponent", and the spec had to be a positive
+	// type list, so "cards other than a Backup" matched nothing.  Her second line is behind
+	// "Damage 5 --", which FieldCostReduction had no way to record — the prefix simply sat in
+	// front of a ^-anchored pattern and stopped it matching.  Garnet 28-098H shows the cost of
+	// that gap in the other direction: her "Damage 3 -- … is reduced by 1" matched under find(),
+	// which ignores the prefix, so the discount was live from turn one.
+	//
+	// Terra 1-046H prints "increases by 1" where every later card prints "is increased by 1".
+	// Same effect, and it parsed as nothing at all.
+	// =========================================================================================
+
+	private static final String ULTIMECIA_18_105H_TEXT =
+			"The cost required for all players to cast cards other than a Backup is increased by 1.[[br]]"
+			+ "   Damage 5 -- The cost required for your opponent to cast cards other than a Backup is increased by 1.[[br]]"
+			+ "   [[s]]Hell's Judgement[[/]] 《S》《3》《Dull》: All the Forwards other than Ultimecia lose 8000 power until the end of the turn.";
+	private static final String TERRA_1_046H_TAX =
+			"The cost required for your opponent to cast Summons increases by 1.";
+	private static final String GARNET_28_098H_DISCOUNT =
+			"Damage 3 -- The cost required to cast your Summons is reduced by 1 (it cannot become 0).";
+	private static final String GOGO_27_099H_RESTRICTION =
+			"You can only cast Gogo during your opponent's turn.";
+
+	/** A Forward built from its printed text, with the cast-cost modifiers parsed alongside. */
+	private static CardData makeCostTextForward(String name, String element, int cost, String text) {
+		return new CardData(null, name, element, cost, 7000, "Forward", false, 0, false, false,
+				CardData.parseTraits(text, name), 0, List.of(), null, List.of(),
+				CardData.parseActionAbilities(text), CardData.parseAutoAbilities(text),
+				CardData.parseFieldAbilities(text, "Forward"),
+				CardData.parseIfControlBoosts(text, "Forward"),
+				CardData.parseFieldPowerGrants(text, "Forward"),
+				List.of(),
+				CardData.parseFieldCostReductions(text, "Forward"),
+				CardData.parseSelfCostModifiers(text),
+				List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				null, null, null, text);
+	}
+
+	@Test
+	void ultimeciaParsesAsTwoTaxesThatDifferInWhoPaysAndWhen() {
+		List<FieldCostReduction> mods =
+				CardData.parseFieldCostReductions(ULTIMECIA_18_105H_TEXT, "Forward");
+
+		assertEquals(2, mods.size(), "one line per printed sentence; the action ability contributes none");
+
+		FieldCostReduction allPlayers = mods.get(0);
+		assertEquals(-1, allPlayers.amountPerUnit(), "an increase is stored as a negative reduction");
+		assertFalse(allPlayers.opponentOnly(), "\"all players\" taxes Ultimecia's controller too");
+		assertFalse(allPlayers.ownerOnly());
+		assertEquals(0, allPlayers.damageThreshold(), "the first line is unconditional");
+		assertTrue(allPlayers.inclForwards());
+		assertTrue(allPlayers.inclMonsters());
+		assertTrue(allPlayers.inclSummons());
+		assertFalse(allPlayers.inclBackups(), "\"cards other than a Backup\" is the complement of Backup");
+
+		FieldCostReduction damageGated = mods.get(1);
+		assertEquals(-1, damageGated.amountPerUnit());
+		assertTrue(damageGated.opponentOnly(), "the second line names the opponent");
+		assertEquals(5, damageGated.damageThreshold(), "\"Damage 5 --\" is carried, not discarded");
+	}
+
+	@Test
+	void neitherUltimeciaLineIsReportedAsAnUnrecognizedFieldAbility() {
+		// Both are static card properties read through fieldCostReductions(), so — like every
+		// other cost declaration — they must not survive as field abilities.
+		assertTrue(CardData.parseFieldAbilities(ULTIMECIA_18_105H_TEXT, "Forward").isEmpty());
+	}
+
+	@Test
+	void ultimeciasFirstTaxAppliesToBothPlayersButSparesBackups() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeCostTextForward("Ultimecia", "Dark", 5, ULTIMECIA_18_105H_TEXT));
+
+		CardData forward = makeForward("Squall", "Ice", 3, 8000);
+		CardData backup  = makeJobCard("Quistis", "Ice", "Backup", "SeeD");
+
+		assertEquals(4, mw.applyFieldReductions(3, forward, true),  "her own controller pays it too");
+		assertEquals(4, mw.applyFieldReductions(3, forward, false), "and so does the opponent");
+		assertEquals(3, mw.applyFieldReductions(3, backup,  true),  "Backups are exempt");
+		assertEquals(3, mw.applyFieldReductions(3, backup,  false));
+	}
+
+	@Test
+	void ultimeciasSecondTaxIsSilentUntilHerControllerHasFiveDamage() {
+		MainWindow below = boardWithP1Damage(4, 0);
+		placeP1Forward(below, makeCostTextForward("Ultimecia", "Dark", 5, ULTIMECIA_18_105H_TEXT));
+		assertEquals(4, below.applyFieldReductions(3, makeForward("Squall", "Ice", 3, 8000), false),
+				"one point short: only the all-players line is live");
+
+		MainWindow at = boardWithP1Damage(5, 0);
+		placeP1Forward(at, makeCostTextForward("Ultimecia", "Dark", 5, ULTIMECIA_18_105H_TEXT));
+		assertEquals(5, at.applyFieldReductions(3, makeForward("Squall", "Ice", 3, 8000), false),
+				"both lines stack on the opponent");
+		assertEquals(4, at.applyFieldReductions(3, makeForward("Squall", "Ice", 3, 8000), true),
+				"the damage-gated half never touches her own controller");
+	}
+
+	@Test
+	void terrasOlderIncreasesByWordingTaxesOpponentSummonsToo() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeCostTextForward("Terra", "Ice", 4, TERRA_1_046H_TAX));
+
+		CardData summon = makeSummon("Shiva", "Ice", 2, "");
+		assertEquals(3, mw.applyFieldReductions(2, summon, false), "the opponent pays the tax");
+		assertEquals(2, mw.applyFieldReductions(2, summon, true),  "Terra's controller does not");
+	}
+
+	@Test
+	void garnetsDamageGatedDiscountWaitsForHerThirdDamage() {
+		CardData summon = makeSummon("Ramuh", "Lightning", 3, "");
+
+		MainWindow below = boardWithP1Damage(2, 0);
+		placeP1Forward(below, makeCostTextForward("Garnet", "Water", 4, GARNET_28_098H_DISCOUNT));
+		assertEquals(3, below.applyFieldReductions(3, summon, true),
+				"\"Damage 3 --\" used to be ignored, making this discount live from turn one");
+
+		MainWindow at = boardWithP1Damage(3, 0);
+		placeP1Forward(at, makeCostTextForward("Garnet", "Water", 4, GARNET_28_098H_DISCOUNT));
+		assertEquals(2, at.applyFieldReductions(3, summon, true));
+	}
+
+	@Test
+	void gogosBackAttackRestrictionIsACastRestrictionNotAFieldAbility() {
+		assertTrue(CardData.parseFieldAbilities(GOGO_27_099H_RESTRICTION, "Forward").isEmpty(),
+				"the sentence is read through castRestriction(), like every other cast condition");
+
+		CastRestriction cr = makeFieldTextForward("Gogo", "Water", 8000, GOGO_27_099H_RESTRICTION)
+				.castRestriction();
+		assertNotNull(cr);
+		assertTrue(cr.opponentTurnOnly(), "Back Attack: castable only on the opponent's turn");
+	}
+
+	// =========================================================================================
+	// Nine 13-123L: "You can dull 1 active Fire Job Class Zero Cadet Forward you control and
+	// 1 active Lightning Job Class Zero Cadet Forward you control (instead of paying the CP cost)
+	// to cast Nine."
+	//
+	// The alternate-cost family could pay with Crystals, CP, a removed Backup or a Break Zone
+	// removal, but not by dulling, so this sentence parsed as nothing and was reported as an
+	// unrecognized field ability. It reuses DullForwardCost — the same record ability costs use —
+	// so the filters and the eligibility test are the ones already written.
+	//
+	// The two clauses have to be solved together. A Fire/Lightning Cadet matches both and can only
+	// be dulled once, so checking each clause on its own would call a board with one such Forward
+	// payable.
+	// =========================================================================================
+
+	private static final String NINE_13_123L_ALT_COST =
+			"You can dull 1 active Fire Job Class Zero Cadet Forward you control and "
+			+ "1 active Lightning Job Class Zero Cadet Forward you control "
+			+ "(instead of paying the CP cost) to cast Nine.";
+	private static final String PHOENIX_26_017R_ALT_COST =
+			"During your turn, you can dull 2 active Fire Forwards you control "
+			+ "(instead of paying the CP cost) to cast Phoenix.";
+
+	/** A Class Zero Cadet Forward of the given element(s) — "Fire", or "Fire/Lightning" for both. */
+	private static CardData makeCadet(String name, String element) {
+		return makeJobCard(name, element, "Forward", "Class Zero Cadet");
+	}
+
+	private static CardData nine() {
+		return makeFieldTextForward("Nine", "Fire", 8000, NINE_13_123L_ALT_COST);
+	}
+
+	@Test
+	void ninesAlternateCostParsesAsTwoDistinctDullRequirements() {
+		List<DullForwardCost> costs = nine().altDullCosts();
+
+		assertEquals(2, costs.size(), "one clause per element");
+		assertEquals(1, costs.get(0).count());
+		assertEquals("Fire", costs.get(0).element());
+		assertEquals("Class Zero Cadet", costs.get(0).job(), "the Job runs up to \"Forward\", not past it");
+		assertEquals("Lightning", costs.get(1).element());
+		assertEquals("Class Zero Cadet", costs.get(1).job());
+		assertFalse(nine().altDullYourTurnOnly(), "no timing clause on the Forward printing");
+	}
+
+	@Test
+	void theAlternateCostSentenceIsNotAFieldAbility() {
+		assertTrue(CardData.parseFieldAbilities(NINE_13_123L_ALT_COST, "Forward").isEmpty());
+	}
+
+	@Test
+	void ninesAlternateCostNeedsBothElementsActiveOnTheField() {
+		MainWindow empty = new MainWindow();
+		assertFalse(empty.canPayAltDullCost(nine()), "no Forwards at all");
+
+		MainWindow oneElement = new MainWindow();
+		placeP1Forward(oneElement, makeCadet("Ace", "Fire"));
+		placeP1Forward(oneElement, makeCadet("Cater", "Fire"));
+		assertFalse(oneElement.canPayAltDullCost(nine()), "two Fire Cadets still leave the Lightning clause unpaid");
+
+		MainWindow both = new MainWindow();
+		placeP1Forward(both, makeCadet("Ace", "Fire"));
+		placeP1Forward(both, makeCadet("Trey", "Lightning"));
+		assertTrue(both.canPayAltDullCost(nine()));
+	}
+
+	@Test
+	void oneDualElementCadetCannotPayBothClausesAtOnce() {
+		MainWindow alone = new MainWindow();
+		placeP1Forward(alone, makeCadet("Rem", "Fire/Lightning"));
+		assertFalse(alone.canPayAltDullCost(nine()),
+				"it matches either clause, but it can only be dulled once");
+
+		MainWindow withPartner = new MainWindow();
+		placeP1Forward(withPartner, makeCadet("Rem", "Fire/Lightning"));
+		placeP1Forward(withPartner, makeCadet("Ace", "Fire"));
+		assertTrue(withPartner.canPayAltDullCost(nine()),
+				"Ace covers Fire, which frees Rem for Lightning");
+	}
+
+	@Test
+	void aDullCadetCannotBePaidWithAndNorCanAnOffJobForward() {
+		MainWindow dulled = new MainWindow();
+		placeP1Forward(dulled, makeCadet("Ace", "Fire"));
+		placeP1Forward(dulled, makeCadet("Trey", "Lightning"));
+		dulled.p1ForwardStates.set(1, CardState.DULL);
+		assertFalse(dulled.canPayAltDullCost(nine()), "the cost names active Forwards");
+
+		MainWindow offJob = new MainWindow();
+		placeP1Forward(offJob, makeCadet("Ace", "Fire"));
+		placeP1Forward(offJob, makeJobCard("Ramza", "Lightning", "Forward", "Squire"));
+		assertFalse(offJob.canPayAltDullCost(nine()), "a Lightning Forward that is no Cadet does not count");
+	}
+
+	@Test
+	void theSummonPrintingCarriesItsDuringYourTurnRestriction() {
+		CardData phoenix = makeFieldTextForward("Phoenix", "Fire", 0, PHOENIX_26_017R_ALT_COST);
+		List<DullForwardCost> costs = phoenix.altDullCosts();
+
+		assertEquals(1, costs.size());
+		assertEquals(2, costs.get(0).count(), "one clause covering two Forwards");
+		assertEquals("Fire", costs.get(0).element());
+		assertNull(costs.get(0).job(), "no Job filter on this printing");
+		assertTrue(phoenix.altDullYourTurnOnly());
+	}
+
+	// =========================================================================================
+	// "[Name] cannot leave the field due to your opponent's Summons or abilities."
+	// Chaos B-001, Spiritus B-002, President Shinra B-029, Hojo B-030 — all Backups.
+	//
+	// Wider than the "cannot be broken" shield next to it: every way an opponent's effect could
+	// move the card off the field is covered, so it is carried as its own printed trait and
+	// consulted at each exit — break, remove from game, return to hand. What it does not cover is
+	// anything that is not an opponent's Summon or ability: the controller's own effects, and
+	// causes like combat damage or a cost its controller pays.
+	// =========================================================================================
+
+	private static final String HOJO_B_030_SHIELD =
+			"Hojo cannot leave the field due to your opponent's Summons or abilities.";
+
+	/** A Backup built from its printed text, with traits and field abilities parsed. */
+	private static CardData makeTextBackup(String name, String element, String text) {
+		return new CardData(null, name, element, 2, 0, "Backup", false, 0, false, false,
+				CardData.parseTraits(text, name), 0, List.of(), null, List.of(),
+				List.of(), CardData.parseAutoAbilities(text),
+				CardData.parseFieldAbilities(text, "Backup"),
+				CardData.parseIfControlBoosts(text, "Backup"),
+				CardData.parseFieldPowerGrants(text, "Backup"),
+				List.of(), List.of(), List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				null, null, null, text);
+	}
+
+	private static ForwardTarget p1Backup(int slot) {
+		return new ForwardTarget(true, slot, ForwardTarget.CardZone.BACKUP);
+	}
+
+	@Test
+	void theShieldIsAPrintedTraitAndOnlyOnTheCardItNames() {
+		assertTrue(CardData.parseTraits(HOJO_B_030_SHIELD, "Hojo")
+				.contains(CardData.Trait.CANNOT_LEAVE_FIELD_BY_OPP));
+		assertFalse(CardData.parseTraits(HOJO_B_030_SHIELD, "Rufus")
+				.contains(CardData.Trait.CANNOT_LEAVE_FIELD_BY_OPP),
+				"the sentence is a statement about Hojo, not about whoever quotes it");
+		assertFalse(CardData.parseTraits("Hojo cannot be broken.", "Hojo")
+				.contains(CardData.Trait.CANNOT_LEAVE_FIELD_BY_OPP),
+				"and the narrower break shield is a different trait");
+	}
+
+	@Test
+	void anOpponentsEffectCannotBreakRemoveOrBounceHojo() {
+		MainWindow mw = new MainWindow();
+		mw.placeCardInFirstBackupSlot(makeTextBackup("Hojo", "Dark", HOJO_B_030_SHIELD));
+
+		GameContext opp = mw.buildGameContext(false);
+
+		opp.breakTarget(p1Backup(0));
+		assertNotNull(mw.p1BackupCards[0], "the opponent's ability cannot break him");
+		assertTrue(mw.gameState.getP1BreakZone().isEmpty());
+
+		opp.removeTargetFromGame(p1Backup(0));
+		assertNotNull(mw.p1BackupCards[0], "nor remove him from the game");
+
+		opp.returnP1BackupToHand(0);
+		assertNotNull(mw.p1BackupCards[0], "nor return him to hand");
+		assertTrue(mw.gameState.getP1Hand().isEmpty());
+	}
+
+	@Test
+	void hojosOwnControllerIsUnrestricted() {
+		MainWindow mw = new MainWindow();
+		mw.placeCardInFirstBackupSlot(makeTextBackup("Hojo", "Dark", HOJO_B_030_SHIELD));
+
+		mw.buildGameContext(true).breakTarget(p1Backup(0));
+
+		assertNull(mw.p1BackupCards[0], "the shield names the opponent's effects only");
+		assertEquals(1, mw.gameState.getP1BreakZone().size());
+	}
+
+	@Test
+	void aBackupWithoutTheShieldStillLeavesTheFieldNormally() {
+		MainWindow mw = new MainWindow();
+		mw.placeCardInFirstBackupSlot(makeTextBackup("Shinra Trooper", "Dark", ""));
+
+		mw.buildGameContext(false).breakTarget(p1Backup(0));
+
+		assertNull(mw.p1BackupCards[0], "the guard is scoped to the printed trait");
+	}
 }

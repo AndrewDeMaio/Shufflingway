@@ -70,6 +70,7 @@ public record CardData(
         CANNOT_BE_BROKEN_BY_NON_DMG,
         CANNOT_BE_DULLED_BY_OPP,
         CANNOT_BE_RETURNED_TO_HAND_BY_OPP,
+        CANNOT_LEAVE_FIELD_BY_OPP,
         POWER_CANNOT_BE_DECREASED_BY_OPP;
 
         /**
@@ -175,6 +176,31 @@ public record CardData(
         "(?:\\s+(?<backuponly>You\\s+can\\s+only\\s+pay\\s+this\\s+cost\\s+with\\s+CP\\s+produced\\s+by\\s+Backups)\\.?)?" +
         "(?:\\s+(?:If|When)\\s+you\\s+do\\s+so[,.]?\\s+(?<followup>.+?))?" +
         "(?=\\s*(?:\\[\\[br\\]\\]|$))"
+    );
+
+    /**
+     * Matches the alternate cast cost paid by dulling Forwards rather than CP:
+     * "[During your turn,] you can dull 1 active Fire Job Class Zero Cadet Forward you control and
+     * 1 active Lightning Job Class Zero Cadet Forward you control (instead of paying the CP cost)
+     * to cast Nine."
+     *
+     * <p>Group {@code reqs} holds the whole requirement list, one clause per "and"; group
+     * {@code yourturn} is present on the Summon printings (Phoenix 26-017R and its five element
+     * counterparts, Moomba 27-031H), which may only take this route on their controller's turn.
+     */
+    private static final Pattern ALT_COST_DULL = Pattern.compile(
+        "(?i)(?<yourturn>During\\s+your\\s+turn,\\s+)?" +
+        "you\\s+can\\s+dull\\s+(?<reqs>\\d+\\s+active\\s+[^(]+?)\\s*" +
+        "\\(instead\\s+of\\s+paying\\s+the\\s+CP\\s+cost\\)\\s+to\\s+(?:cast|play)\\s+\\S[^.]*\\.?"
+    );
+
+    /** One "N active [Element] [Category X] [Job Y] Forward(s) [you control]" clause of {@link #ALT_COST_DULL}. */
+    private static final Pattern ALT_DULL_REQUIREMENT = Pattern.compile(
+        "(?i)^(?<count>\\d+)\\s+active\\s+" +
+        "(?:(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?" +
+        "(?:Category\\s+(?<category>\\S+)\\s+)?" +
+        "(?:Job\\s+(?<job>[A-Za-z][A-Za-z\\s'\\-]*?)\\s+)?" +
+        "Forwards?(?:\\s+you\\s+control)?$"
     );
 
     /** Parses one "N Element Type" requirement phrase from a BZ-removal list. */
@@ -317,6 +343,34 @@ public record CardData(
 
     /** Convenience: total CP to pay for the alternate cast ({@code altCpElements().size()}). */
     public int altCpCost() { return altCpElements().size(); }
+
+    /**
+     * The Forwards this card's alternate cast cost dulls, in printed order, or an empty list when
+     * it has no such cost. {@link DullForwardCost} is reused rather than mirrored, so eligibility
+     * and payment follow the rules already written for ability costs.
+     *
+     * <p>A clause that fails to parse voids the whole list: a partial reading would understate the
+     * cost and let the card be cast for less than it prints.
+     */
+    public List<DullForwardCost> altDullCosts() {
+        Matcher m = ALT_COST_DULL.matcher(textEn);
+        if (!m.find()) return List.of();
+        List<DullForwardCost> out = new ArrayList<>();
+        for (String clause : m.group("reqs").split("(?i)\\s+and\\s+")) {
+            Matcher r = ALT_DULL_REQUIREMENT.matcher(clause.trim());
+            if (!r.find()) return List.of();
+            String job = r.group("job");
+            out.add(new DullForwardCost(Integer.parseInt(r.group("count")), "", r.group("element"),
+                    null, job != null ? job.trim() : null, r.group("category"), "Forward"));
+        }
+        return List.copyOf(out);
+    }
+
+    /** Whether the dull alternate cost may only be taken during its controller's own turn. */
+    public boolean altDullYourTurnOnly() {
+        Matcher m = ALT_COST_DULL.matcher(textEn);
+        return m.find() && m.group("yourturn") != null;
+    }
 
     /**
      * Returns the condition text that must be satisfied before the alternate cost may be used
@@ -812,7 +866,8 @@ public record CardData(
      */
     public String summonEffect() {
         String t = SUMMON_EX_PREFIX.matcher(textEn).replaceFirst("");
-        if (altCrystalCost() > 0 || extraCost() != null || altFieldRemoval() != null) {
+        if (altCrystalCost() > 0 || extraCost() != null || altFieldRemoval() != null
+                || !altDullCosts().isEmpty()) {
             String[] parts = SUMMON_BR.split(t);
             StringBuilder sb = new StringBuilder();
             for (String part : parts) {
@@ -821,6 +876,7 @@ public record CardData(
                 if (ALT_COST_SUMMON.matcher(trimmed).find())    continue;
                 if (ALT_COST_SUMMON_REMOVE_FIELD.matcher(trimmed).find()) continue;
                 if (ALT_COST_NONSUMMON.matcher(trimmed).find()) continue;
+                if (ALT_COST_DULL.matcher(trimmed).find())      continue;
                 if (EXTRA_COST_SUMMON.matcher(trimmed).find())  continue; // extra-cost clause
                 if (TRAIT_ONLY_SEGMENT.matcher(trimmed).matches()) continue;
                 sb.append(trimmed).append(" ");
@@ -950,6 +1006,34 @@ public record CardData(
      */
     static boolean parseSelfCannotBeBroken(String effectText, String cardName) {
         Matcher m = SELF_CANNOT_BE_BROKEN_DIRECT.matcher(effectText.trim());
+        if (!m.matches()) return false;
+        return m.group("name").trim().equalsIgnoreCase(cardName);
+    }
+
+    /**
+     * "[CardName] cannot leave the field due to your opponent's Summons or abilities."
+     * (Chaos B-001, Spiritus B-002, President Shinra B-029, Hojo B-030.)
+     *
+     * <p>Wider than {@link #SELF_CANNOT_BE_BROKEN_DIRECT}: it covers every way an opponent's
+     * effect could move the card off the field — broken, removed from the game, or returned to
+     * hand — while leaving the card's own controller and non-effect causes (combat damage, a cost
+     * the controller pays) alone.
+     */
+    private static final Pattern SELF_CANNOT_LEAVE_FIELD_BY_OPP = Pattern.compile(
+        "(?i)^(?<name>[^.!]+?)\\s+cannot\\s+leave\\s+the\\s+field\\s+due\\s+to\\s+" +
+        "your\\s+opponent(?:'s|s')\\s+Summons?\\s+or\\s+abilities[.!]?$"
+    );
+
+    /**
+     * Returns {@code true} when {@code effectText} is the self-protection field ability
+     * "[cardName] cannot leave the field due to your opponent's Summons or abilities."
+     *
+     * <p>Applied through the printed {@link Trait#CANNOT_LEAVE_FIELD_BY_OPP} set by
+     * {@link #parseTraits}, which every effect-driven field exit consults. The name check is what
+     * keeps it a statement about its own carrier rather than one it merely quotes.
+     */
+    static boolean parseSelfCannotLeaveFieldByOpp(String effectText, String cardName) {
+        Matcher m = SELF_CANNOT_LEAVE_FIELD_BY_OPP.matcher(effectText.trim());
         if (!m.matches()) return false;
         return m.group("name").trim().equalsIgnoreCase(cardName);
     }
@@ -1470,7 +1554,7 @@ public record CardData(
      * behind them to force the name out to its full width. Without it the shortest possible name
      * wins and the whole item still matches: "Dull 4 active Job Warrior of Light" captured the job
      * as "W" (19-102L Refia), "Dull 2 active Category VII Characters" the category as "V", and
-     * since {@code dfcCardMatches} compares those against real Jobs and Categories, the cost could
+     * since {@code dullForwardCostMatches} compares those against real Jobs and Categories, the cost could
      * never be paid and the ability was unusable. Unlike the enclosing
      * {@code ACTION_ABILITY_PATTERN}, which ends on the cost's colon and so backtracks the name
      * out on its own, this pattern is run over the extracted cost text with nothing behind it.
@@ -4821,13 +4905,25 @@ public record CardData(
     );
 
     /**
-     * Matches "The cost required for your opponent to cast [Type] is increased by N."
-     * Groups: {@code type} — card type(s); {@code amount} — increase magnitude.
+     * Matches "The cost required for [your opponent|all players] to cast &lt;spec&gt;
+     * is increased by N."
+     *
+     * <p>Groups: {@code who} — the affected player(s); {@code type} — the card type(s) named
+     * positively; {@code excluded} — the single type named by the "cards other than a Backup"
+     * form, which is the complement of {@code type}; {@code direction} — the verb, since the
+     * same sentence shape prints "reduced"; {@code amount} — the magnitude.
+     *
+     * <p>Terra 1-046H prints "increases by 1" rather than "is increased by 1", so the verb
+     * alternation carries both. Without it Terra's Summon tax parses as nothing at all.
      */
-    static final Pattern FIELD_OPP_CAST_COST_INCREASE_PATTERN = Pattern.compile(
-        "(?i)^The\\s+cost\\s+required\\s+for\\s+your\\s+opponent\\s+to\\s+cast\\s+" +
-        "(?<type>(?:Forwards?|Backups?|Monsters?|Summons?|Characters?)(?:\\s+or\\s+(?:Forwards?|Backups?|Monsters?|Summons?|Characters?))?)" +
-        "\\s+is\\s+(?:increased|reduced)\\s+by\\s+(?<amount>\\d+)" +
+    static final Pattern FIELD_CAST_COST_INCREASE_PATTERN = Pattern.compile(
+        "(?i)^The\\s+cost\\s+required\\s+for\\s+(?<who>your\\s+opponent|all\\s+players)\\s+to\\s+cast\\s+" +
+        "(?:" +
+            "cards?\\s+other\\s+than\\s+(?:an?\\s+)?(?<excluded>Forwards?|Backups?|Monsters?|Summons?)" +
+        "|" +
+            "(?<type>(?:Forwards?|Backups?|Monsters?|Summons?|Characters?)(?:\\s+or\\s+(?:Forwards?|Backups?|Monsters?|Summons?|Characters?))?)" +
+        ")" +
+        "\\s+(?:is\\s+(?<direction>increased|reduced)|(?<direction2>increases|decreases))\\s+by\\s+(?<amount>\\d+)" +
         "\\s*\\.?$"
     );
 
@@ -4933,105 +5029,145 @@ public record CardData(
             String seg = SUMMON_MARKUP.matcher(raw.trim()).replaceAll("").trim();
             if (seg.isEmpty()) continue;
 
-            // Flat / scaling reduction
-            Matcher m = FIELD_COST_REDUCTION_PATTERN.matcher(seg);
-            if (m.find()) {
-                boolean ownerOnly  = m.group("your")      != null;
-                boolean floorAtOne = m.group("flooratone") != null;
-                int     amount     = Integer.parseInt(m.group("amount"));
-
-                String elementFilter  = m.group("element");
-                String jobFilter      = m.group("job");
-                if (jobFilter != null) jobFilter = jobFilter.trim();
-                String cardNameFilter = m.group("bracketedname") != null
-                        ? m.group("bracketedname").trim()
-                        : m.group("cardname");
-                String scalingJob = m.group("scalingjob");
-                if (scalingJob != null) scalingJob = scalingJob.trim();
-
-                boolean inclForwards, inclBackups, inclMonsters, inclSummons;
-                if (cardNameFilter != null && m.group("type") == null) {
-                    inclForwards = inclBackups = inclMonsters = inclSummons = true;
-                } else if (jobFilter != null) {
-                    inclForwards = inclBackups = inclMonsters = inclSummons = true;
-                } else {
-                    String tl = m.group("type") != null ? m.group("type").toLowerCase() : "";
-                    inclForwards = tl.contains("forward")   || tl.contains("character");
-                    inclBackups  = tl.contains("backup")    || tl.contains("character");
-                    inclMonsters = tl.contains("monster")   || tl.contains("character");
-                    inclSummons  = tl.contains("summon");
-                }
-
-                result.add(new FieldCostReduction(amount, floorAtOne, ownerOnly, false,
-                        inclForwards, inclBackups, inclMonsters, inclSummons,
-                        elementFilter, jobFilter, cardNameFilter, null, scalingJob, false, null));
-                continue;
+            // "Damage N -- …" gates the modifier on the printing player's own damage zone.
+            // Stripping it here keeps every pattern below anchored at the sentence proper, which
+            // is why they matched these segments before the gate was honoured at all.
+            int damageThreshold = 0;
+            Matcher dtM = DAMAGE_THRESHOLD_PREFIX.matcher(seg);
+            if (dtM.find()) {
+                damageThreshold = Integer.parseInt(dtM.group(1));
+                seg = seg.substring(dtM.end()).trim();
+                if (seg.isEmpty()) continue;
             }
 
-            // "play … onto the field is reduced by N" — may have multiple "or Card Name X" branches
-            Matcher pm = FIELD_PLAY_COST_REDUCTION_PATTERN.matcher(seg);
-            if (pm.find()) {
-                boolean ownerOnly  = pm.group("your")       != null;
-                boolean floorAtOne = pm.group("flooratone") != null;
-                int     amount     = Integer.parseInt(pm.group("amount"));
-                String  scalingJob = pm.group("scalingjob");
-                if (scalingJob != null) scalingJob = scalingJob.trim();
-                for (String branch : pm.group("rawspec").split("(?i)\\s+or\\s+")) {
-                    FieldCostReduction fcr = parsePlayCostReductionBranch(
-                            branch.trim(), amount, floorAtOne, ownerOnly, scalingJob);
-                    if (fcr != null) result.add(fcr);
-                }
-                continue;
-            }
-
-            // Conditional reduction ("If you control N or more X, the cost … is reduced by N")
-            Matcher cm = FIELD_CONDITIONAL_COST_REDUCTION_PATTERN.matcher(seg);
-            if (cm.find()) {
-                int    amount   = Integer.parseInt(cm.group("amount"));
-                String cardName = cm.group("cardname").trim();
-                result.add(new FieldCostReduction(amount, false, false, false, true, true, true, true,
-                        null, null, cardName, null, null, false, null));
-                continue;
-            }
-
-            // Conditional BZ-job any-element grant
-            Matcher bzJobM = FIELD_CONDITIONAL_BZ_JOB_ANY_ELEMENT_PATTERN.matcher(seg);
-            if (bzJobM.find()) {
-                String job      = bzJobM.group("job").trim();
-                String cardName = bzJobM.group("cardname").trim();
-                result.add(new FieldCostReduction(0, false, true, false, true, true, true, true,
-                        null, null, cardName, null, null, true, job));
-                continue;
-            }
-
-            // Opponent cast cost increase ("The cost required for your opponent to cast X is increased by N")
-            Matcher oppM = FIELD_OPP_CAST_COST_INCREASE_PATTERN.matcher(seg);
-            if (oppM.find()) {
-                int    amount = Integer.parseInt(oppM.group("amount"));
-                String tl     = oppM.group("type").toLowerCase();
-                boolean iF    = tl.contains("forward")  || tl.contains("character");
-                boolean iB    = tl.contains("backup")   || tl.contains("character");
-                boolean iM    = tl.contains("monster")  || tl.contains("character");
-                boolean iS    = tl.contains("summon");
-                // Store increase as negative amountPerUnit so apply() adds it: cost - (-amount) = cost + amount
-                result.add(new FieldCostReduction(-amount, false, false, true, iF, iB, iM, iS,
-                        null, null, null, null, null, false, null));
-                continue;
-            }
-
-            // "can be paid with CP of any Element" (with optional flat reduction prefix)
-            m = FIELD_CAST_ANY_ELEMENT_PATTERN.matcher(seg);
-            if (m.find()) {
-                boolean ownerOnly = m.group("your") != null;
-                String  amtStr    = m.group("amount");
-                int     amount    = amtStr != null ? Integer.parseInt(amtStr) : 0;
-                for (String branch : m.group("rawspec").split("(?i)\\s+or\\s+")) {
-                    FieldCostReduction fcr = parseCastAnyElementBranch(branch.trim(), amount, ownerOnly);
-                    if (fcr != null) result.add(fcr);
-                }
-            }
+            for (FieldCostReduction fcr : parseFieldCostReductionSegment(seg))
+                result.add(damageThreshold > 0 ? fcr.withDamageThreshold(damageThreshold) : fcr);
         }
         return List.copyOf(result);
+    }
+
+    /**
+     * Parses one {@code [[br]]}-delimited segment, already stripped of markup and of any
+     * "Damage N --" prefix. Returns an empty list when the segment declares no cast-cost modifier.
+     */
+    private static List<FieldCostReduction> parseFieldCostReductionSegment(String seg) {
+        List<FieldCostReduction> result = new ArrayList<>();
+
+        // Flat / scaling reduction
+        Matcher m = FIELD_COST_REDUCTION_PATTERN.matcher(seg);
+        if (m.find()) {
+            boolean ownerOnly  = m.group("your")      != null;
+            boolean floorAtOne = m.group("flooratone") != null;
+            int     amount     = Integer.parseInt(m.group("amount"));
+
+            String elementFilter  = m.group("element");
+            String jobFilter      = m.group("job");
+            if (jobFilter != null) jobFilter = jobFilter.trim();
+            String cardNameFilter = m.group("bracketedname") != null
+                    ? m.group("bracketedname").trim()
+                    : m.group("cardname");
+            String scalingJob = m.group("scalingjob");
+            if (scalingJob != null) scalingJob = scalingJob.trim();
+
+            boolean inclForwards, inclBackups, inclMonsters, inclSummons;
+            if (cardNameFilter != null && m.group("type") == null) {
+                inclForwards = inclBackups = inclMonsters = inclSummons = true;
+            } else if (jobFilter != null) {
+                inclForwards = inclBackups = inclMonsters = inclSummons = true;
+            } else {
+                String tl = m.group("type") != null ? m.group("type").toLowerCase() : "";
+                inclForwards = tl.contains("forward")   || tl.contains("character");
+                inclBackups  = tl.contains("backup")    || tl.contains("character");
+                inclMonsters = tl.contains("monster")   || tl.contains("character");
+                inclSummons  = tl.contains("summon");
+            }
+
+            result.add(new FieldCostReduction(amount, floorAtOne, ownerOnly, false,
+                    inclForwards, inclBackups, inclMonsters, inclSummons,
+                    elementFilter, jobFilter, cardNameFilter, null, scalingJob, false, null));
+            return result;
+        }
+
+        // "play … onto the field is reduced by N" — may have multiple "or Card Name X" branches
+        Matcher pm = FIELD_PLAY_COST_REDUCTION_PATTERN.matcher(seg);
+        if (pm.find()) {
+            boolean ownerOnly  = pm.group("your")       != null;
+            boolean floorAtOne = pm.group("flooratone") != null;
+            int     amount     = Integer.parseInt(pm.group("amount"));
+            String  scalingJob = pm.group("scalingjob");
+            if (scalingJob != null) scalingJob = scalingJob.trim();
+            for (String branch : pm.group("rawspec").split("(?i)\\s+or\\s+")) {
+                FieldCostReduction fcr = parsePlayCostReductionBranch(
+                        branch.trim(), amount, floorAtOne, ownerOnly, scalingJob);
+                if (fcr != null) result.add(fcr);
+            }
+            return result;
+        }
+
+        // Conditional reduction ("If you control N or more X, the cost … is reduced by N")
+        Matcher cm = FIELD_CONDITIONAL_COST_REDUCTION_PATTERN.matcher(seg);
+        if (cm.find()) {
+            int    amount   = Integer.parseInt(cm.group("amount"));
+            String cardName = cm.group("cardname").trim();
+            result.add(new FieldCostReduction(amount, false, false, false, true, true, true, true,
+                    null, null, cardName, null, null, false, null));
+            return result;
+        }
+
+        // Conditional BZ-job any-element grant
+        Matcher bzJobM = FIELD_CONDITIONAL_BZ_JOB_ANY_ELEMENT_PATTERN.matcher(seg);
+        if (bzJobM.find()) {
+            String job      = bzJobM.group("job").trim();
+            String cardName = bzJobM.group("cardname").trim();
+            result.add(new FieldCostReduction(0, false, true, false, true, true, true, true,
+                    null, null, cardName, null, null, true, job));
+            return result;
+        }
+
+        // Cast cost increase ("The cost required for [your opponent|all players] to cast X
+        // is increased by N") — the "all players" form taxes the printing player too, so it
+        // is neither ownerOnly nor opponentOnly.
+        Matcher oppM = FIELD_CAST_COST_INCREASE_PATTERN.matcher(seg);
+        if (oppM.find()) {
+            int     amount   = Integer.parseInt(oppM.group("amount"));
+            boolean oppOnly  = oppM.group("who").toLowerCase().contains("opponent");
+            String  dir      = oppM.group("direction") != null
+                    ? oppM.group("direction") : oppM.group("direction2");
+            boolean increase = dir.toLowerCase().startsWith("increase");
+            boolean iF, iB, iM, iS;
+            if (oppM.group("excluded") != null) {
+                // "cards other than a Backup" — every type but the one named.
+                String ex = oppM.group("excluded").toLowerCase();
+                iF = !ex.contains("forward");
+                iB = !ex.contains("backup");
+                iM = !ex.contains("monster");
+                iS = !ex.contains("summon");
+            } else {
+                String tl = oppM.group("type").toLowerCase();
+                iF = tl.contains("forward")  || tl.contains("character");
+                iB = tl.contains("backup")   || tl.contains("character");
+                iM = tl.contains("monster")  || tl.contains("character");
+                iS = tl.contains("summon");
+            }
+            // Store an increase as negative amountPerUnit so apply() adds it:
+            // cost - (-amount) = cost + amount.
+            result.add(new FieldCostReduction(increase ? -amount : amount, false, false, oppOnly,
+                    iF, iB, iM, iS, null, null, null, null, null, false, null));
+            return result;
+        }
+
+        // "can be paid with CP of any Element" (with optional flat reduction prefix)
+        m = FIELD_CAST_ANY_ELEMENT_PATTERN.matcher(seg);
+        if (m.find()) {
+            boolean ownerOnly = m.group("your") != null;
+            String  amtStr    = m.group("amount");
+            int     amount    = amtStr != null ? Integer.parseInt(amtStr) : 0;
+            for (String branch : m.group("rawspec").split("(?i)\\s+or\\s+")) {
+                FieldCostReduction fcr = parseCastAnyElementBranch(branch.trim(), amount, ownerOnly);
+                if (fcr != null) result.add(fcr);
+            }
+        }
+        return result;
     }
 
     /**
@@ -5709,6 +5845,7 @@ public record CardData(
             if (ALT_COST_SUMMON.matcher(seg).find())    continue;
             if (ALT_COST_SUMMON_REMOVE_FIELD.matcher(seg).find()) continue;
             if (ALT_COST_NONSUMMON.matcher(seg).find()) continue;
+            if (ALT_COST_DULL.matcher(seg).find())      continue;
             // "If you cast [card], you may pay 《…》 as an extra cost." — a cast-time option read
             // by {@link #extraCost}, not a field ability. It has no continuous effect of its own;
             // what it does is set the flag a later "if you paid the extra cost" clause reads.
@@ -5772,6 +5909,13 @@ public record CardData(
             // Cast/play restrictions — handled as static properties via castRestriction()
             if (CAST_PROHIBITED.matcher(seg).find())                          continue;
             if (CAST_REQUIRES_NO_FORWARDS.matcher(seg).find())                continue;
+            // The three conditional forms that print as their own sentence (Gogo 27-099H,
+            // Titania 13-132S, Eiko 23-124L). "during your turn" and "during your Main Phase"
+            // are deliberately absent: those wordings occur as a *prefix* on a longer ability,
+            // and a find() exclusion here would swallow the ability with them.
+            if (CAST_OPPONENT_TURN_ONLY.matcher(seg).find())                  continue;
+            if (CAST_REQUIRES_BZ_TYPES.matcher(seg).find())                   continue;
+            if (CAST_MIN_BZ_RFP_SUMMONS.matcher(seg).find())                  continue;
             if (CAST_MUST_CONTROL.matcher(seg).find())                        continue;
             if (CAST_MUST_CONTROL_COSTS.matcher(seg).find())                  continue;
             if (CAST_MUST_CONTROL_CATEGORY_FWD.matcher(seg).find())          continue;
@@ -5788,7 +5932,7 @@ public record CardData(
             if (FIELD_CONDITIONAL_COST_REDUCTION_PATTERN.matcher(seg).find()) continue;
             // Self-cost modifier ("If <cond>, the cost required to cast/play <cardName>…") — handled via parseSelfCostModifiers
             if (isSelfCostModifierText(seg))                                  continue;
-            if (FIELD_OPP_CAST_COST_INCREASE_PATTERN.matcher(seg).find())   continue;
+            if (FIELD_CAST_COST_INCREASE_PATTERN.matcher(seg).find())       continue;
             if (FIELD_CONDITIONAL_BZ_JOB_ANY_ELEMENT_PATTERN.matcher(seg).find()) continue;
             if (FIELD_CAST_ANY_ELEMENT_PATTERN.matcher(seg).find())          continue;
             if (FIELD_PRIMING_ANY_ELEMENT_PATTERN.matcher(seg).find())       continue;
@@ -6194,6 +6338,7 @@ public record CardData(
             String seg = SUMMON_MARKUP.matcher(raw.trim()).replaceAll("").trim();
             if (parseSelfCannotBeBroken(seg, cardName))            found.add(Trait.CANNOT_BE_BROKEN);
             if (parseSelfNonDmgBreakShieldDirect(seg, cardName))   found.add(Trait.CANNOT_BE_BROKEN_BY_NON_DMG);
+            if (parseSelfCannotLeaveFieldByOpp(seg, cardName))     found.add(Trait.CANNOT_LEAVE_FIELD_BY_OPP);
         }
         return found;
     }

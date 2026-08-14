@@ -170,6 +170,9 @@ public class FieldAbilityParsingTest {
         // Applied as the printed CANNOT_BE_BROKEN trait rather than through a field-ability path,
         // and honoured by breakTarget for a card in any zone — Backups included.
         if (CardData.parseSelfCannotBeBroken(fa.effectText(), source.name())) return true;
+        // Applied as the printed CANNOT_LEAVE_FIELD_BY_OPP trait, which every effect-driven field
+        // exit consults — break, remove from game, and return to hand alike.
+        if (CardData.parseSelfCannotLeaveFieldByOpp(fa.effectText(), source.name())) return true;
         // Conditional printings, re-evaluated per query by FieldGrantCalculator.
         if (CardData.parseIfControlNonDmgBreakShield(fa.effectText(), source.name()) != null) return true;
         if (CardData.parseFieldNonDmgBreakShieldGrant(fa.effectText()) != null) return true;
@@ -406,6 +409,8 @@ public class FieldAbilityParsingTest {
         if (CardData.parseAttacksPerOwnDamage(fa.effectText(), source.name()))
             return "MaxAttacks[own damage]";
         if (CardData.parseSelfCannotBeBroken(fa.effectText(), source.name())) return "SelfCannotBeBroken";
+        if (CardData.parseSelfCannotLeaveFieldByOpp(fa.effectText(), source.name()))
+            return "SelfCannotLeaveFieldByOpp";
         if (CardData.parseIfControlNonDmgBreakShield(fa.effectText(), source.name()) != null)
             return "SelfNonDmgBreakShield[if control]";
         if (CardData.parseSelfNonDmgBreakShield(fa.effectText(), source.name()))

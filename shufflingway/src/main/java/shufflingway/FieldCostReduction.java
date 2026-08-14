@@ -34,6 +34,9 @@ package shufflingway;
  * @param anyElement      if {@code true}, the cost may be paid with CP of any element
  * @param bzConditionJob  if non-null, the grant only applies when the owning player has at least
  *                        one card with this job in their Break Zone
+ * @param damageThreshold {@code > 0}: the modifier is only live while the player controlling the
+ *                        card that prints it has at least this many damage counters
+ *                        ("Damage N -- The cost required …")
  */
 public record FieldCostReduction(
         int     amountPerUnit,
@@ -50,8 +53,31 @@ public record FieldCostReduction(
         String  categoryFilter,
         String  scalingJobFilter,
         boolean anyElement,
-        String  bzConditionJob
+        String  bzConditionJob,
+        int     damageThreshold
 ) {
+    /**
+     * Compatibility constructor preserving the prior 15-arg form; the modifier is always live.
+     * Only the two "Damage N --" printings in the corpus need the gate, so every other call site
+     * keeps reading as it did.
+     */
+    public FieldCostReduction(int amountPerUnit, boolean floorAtOne, boolean ownerOnly,
+            boolean opponentOnly, boolean inclForwards, boolean inclBackups, boolean inclMonsters,
+            boolean inclSummons, String elementFilter, String jobFilter, String cardNameFilter,
+            String categoryFilter, String scalingJobFilter, boolean anyElement, String bzConditionJob) {
+        this(amountPerUnit, floorAtOne, ownerOnly, opponentOnly, inclForwards, inclBackups,
+                inclMonsters, inclSummons, elementFilter, jobFilter, cardNameFilter, categoryFilter,
+                scalingJobFilter, anyElement, bzConditionJob, 0);
+    }
+
+    /** This modifier, gated on the printing player holding {@code threshold} damage counters. */
+    public FieldCostReduction withDamageThreshold(int threshold) {
+        return new FieldCostReduction(amountPerUnit, floorAtOne, ownerOnly, opponentOnly,
+                inclForwards, inclBackups, inclMonsters, inclSummons, elementFilter, jobFilter,
+                cardNameFilter, categoryFilter, scalingJobFilter, anyElement, bzConditionJob,
+                threshold);
+    }
+
     /** Returns {@code true} if this modifier can apply to {@code card}. */
     public boolean matchesCard(CardData card) {
         if (card.isForward() && !inclForwards) return false;

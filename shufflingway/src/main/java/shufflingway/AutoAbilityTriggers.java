@@ -3605,14 +3605,14 @@ final class AutoAbilityTriggers {
 		int eligible = 0;
 		for (int i = 0; i < fwds.size(); i++) {
 			if (fwdSt.get(i) != CardState.ACTIVE) continue;
-			if (!dfcCardMatches(dfc, fwds.get(i))) continue;
+			if (!dullForwardCostMatches(dfc, fwds.get(i))) continue;
 			eligible++;
 		}
 		if (anyChar) {
 			for (int i = 0; i < bkps.length; i++)
-				if (bkps[i] != null && bkpSt[i] == CardState.ACTIVE && dfcCardMatches(dfc, bkps[i])) eligible++;
+				if (bkps[i] != null && bkpSt[i] == CardState.ACTIVE && dullForwardCostMatches(dfc, bkps[i])) eligible++;
 			for (CardData mon : mons)
-				if (dfcCardMatches(dfc, mon)) eligible++;
+				if (dullForwardCostMatches(dfc, mon)) eligible++;
 		}
 		return eligible >= dfc.count();
 	}
@@ -3630,7 +3630,11 @@ final class AutoAbilityTriggers {
 		return false;
 	}
 
-	private boolean dfcCardMatches(DullForwardCost dfc, CardData card) {
+	/**
+	 * Whether {@code card} satisfies the filters on {@code dfc}. Shared with the dull-based
+	 * alternate cast cost (Nine 13-123L), which pays with the same kind of requirement.
+	 */
+	boolean dullForwardCostMatches(DullForwardCost dfc, CardData card) {
 		if (dfc.cardName() != null && !card.name().equalsIgnoreCase(dfc.cardName())) return false;
 		if (dfc.element()  != null && !dfc.element().isEmpty() && !card.containsElement(dfc.element())) return false;
 		if (dfc.job() != null) {
@@ -4256,13 +4260,13 @@ final class AutoAbilityTriggers {
 			List<ForwardTarget> targets = new ArrayList<>();
 			for (int i = 0; i < fwds.size(); i++) {
 				if (fwdSt.get(i) != CardState.ACTIVE) continue;
-				if (!dfcCardMatches(dfc, fwds.get(i))) continue;
+				if (!dullForwardCostMatches(dfc, fwds.get(i))) continue;
 				targets.add(new ForwardTarget(isP1, i, ForwardTarget.CardZone.FORWARD));
 			}
 			if (anyChar) {
 				for (int i = 0; i < bkps.length; i++) {
 					if (bkps[i] == null || bkpSt[i] != CardState.ACTIVE) continue;
-					if (!dfcCardMatches(dfc, bkps[i])) continue;
+					if (!dullForwardCostMatches(dfc, bkps[i])) continue;
 					targets.add(new ForwardTarget(isP1, i, ForwardTarget.CardZone.BACKUP));
 				}
 			}

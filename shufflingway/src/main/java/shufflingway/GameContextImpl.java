@@ -1407,6 +1407,7 @@ final class GameContextImpl implements GameContext {
 			@Override public void returnP1ForwardToHand(int idx) {
 				if (!isP1 && idx >= 0 && idx < mw.p1ForwardCards.size()) {
 					CardData c = p1Forward(idx);
+					if (leaveFieldProtected(c, true)) return;
 					if (ActionResolver.hasCannotBeReturnedToHandByOppFieldAbility(c)
 							|| mw.effectiveP1HasTrait(idx, CardData.Trait.CANNOT_BE_RETURNED_TO_HAND_BY_OPP)
 							|| mw.charactersProtectedFromOppReturnToHand(true)) {
@@ -1419,6 +1420,7 @@ final class GameContextImpl implements GameContext {
 			@Override public void returnP2ForwardToHand(int idx) {
 				if (isP1 && idx >= 0 && idx < mw.p2ForwardCards.size()) {
 					CardData c = mw.p2ForwardCards.get(idx);
+					if (leaveFieldProtected(c, false)) return;
 					if (ActionResolver.hasCannotBeReturnedToHandByOppFieldAbility(c)
 							|| mw.effectiveP2HasTrait(idx, CardData.Trait.CANNOT_BE_RETURNED_TO_HAND_BY_OPP)
 							|| mw.charactersProtectedFromOppReturnToHand(false)) {
@@ -1536,7 +1538,20 @@ final class GameContextImpl implements GameContext {
 			 * from being returned to hand by the acting opponent — via its own named field ability or a
 			 * controller-wide "Characters you control cannot be returned…" field card. Logs when protected.
 			 */
+			/**
+			 * True when {@code card}, controlled by {@code targetIsP1}, may not leave the field
+			 * because this context's effect belongs to the other player. Logs when it applies, so
+			 * every exit point reports the block the same way.
+			 */
+			private boolean leaveFieldProtected(CardData card, boolean targetIsP1) {
+				if (!mw.isProtectedFromLeavingField(card, targetIsP1, isP1)) return false;
+				logEntry((targetIsP1 ? "" : "[P2] ") + card.name()
+						+ " cannot leave the field due to your opponent's Summons or abilities");
+				return true;
+			}
+
 			private boolean characterReturnToHandProtected(CardData card, boolean targetIsP1) {
+				if (leaveFieldProtected(card, targetIsP1)) return true;
 				if (ActionResolver.hasCannotBeReturnedToHandByOppFieldAbility(card)
 						|| mw.charactersProtectedFromOppReturnToHand(targetIsP1)) {
 					logEntry((targetIsP1 ? "" : "[P2] ") + card.name()
@@ -3722,6 +3737,7 @@ final class GameContextImpl implements GameContext {
 
 			@Override public void breakTarget(ForwardTarget t) {
 				CardData breakCard = mw.autoAbilityTriggers.fieldCardData(t);
+				if (leaveFieldProtected(breakCard, t.isP1())) return;
 				if (breakCard != null && !mw.lostAbilitiesCards.contains(breakCard)) {
 					if (breakCard.hasTrait(CardData.Trait.CANNOT_BE_BROKEN)) {
 						logEntry((t.isP1() ? "" : "[P2] ") + breakCard.name() + " cannot be broken (protected until end of turn)");
@@ -3812,6 +3828,9 @@ final class GameContextImpl implements GameContext {
 			}
 
 			@Override public void removeTargetFromGame(ForwardTarget t) {
+				// A Break Zone card is not on the field, so the shield has nothing to say about it.
+				if (t.zone() != ForwardTarget.CardZone.BREAK_ZONE
+						&& leaveFieldProtected(mw.autoAbilityTriggers.fieldCardData(t), t.isP1())) return;
 				// Credit the removal to the ability resolving right now, so wordings like "cards
 				// removed by Anima's ability" (19-123H, whose enter-the-field effect removes Break
 				// Zone cards) can call them back later. Resolved per zone because the field-card

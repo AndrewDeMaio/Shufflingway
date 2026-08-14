@@ -28,6 +28,7 @@ import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.Deque;
@@ -6556,10 +6557,16 @@ public class MainWindow {
 			menu.add(ecItem);
 		}
 
-		if (card.altCrystalCost() > 0 || card.altCpCost() > 0 || card.altFieldRemoval() != null) {
+		List<DullForwardCost> altDull = card.altDullCosts();
+		if (card.altCrystalCost() > 0 || card.altCpCost() > 0 || card.altFieldRemoval() != null
+				|| !altDull.isEmpty()) {
 			int ac = card.altCrystalCost();
 			List<String> altElems = card.altCpElements();
 			CardData.AltFieldRemoval afr = card.altFieldRemoval();
+			String dullStr = altDull.isEmpty() ? ""
+					: "dull " + altDull.stream().map(MainWindow::describeAltDullClause)
+							.collect(Collectors.joining(" + "))
+					  + (altElems.isEmpty() && afr == null ? "" : " + ");
 			String removalStr = afr == null ? ""
 					: "remove " + afr.count() + " " + afr.element() + " " + afr.type()
 					  + (altElems.isEmpty() ? "" : " + ");
@@ -6569,7 +6576,7 @@ public class MainWindow {
 					.entrySet().stream().map(en -> (en.getKey().equals("generic") ? en.getValue() + " CP" : en.getValue() + " " + en.getKey() + " CP")).collect(Collectors.joining(" + "));
 			List<String> cond = card.altConditionCardNames();
 			String condStr = cond.isEmpty() ? "" : " [req: " + String.join("/", cond) + "]";
-			String altLabel = "Play (Alt: " + removalStr + crystalStr + cpStr + condStr + ")";
+			String altLabel = "Play (Alt: " + dullStr + removalStr + crystalStr + cpStr + condStr + ")";
 			JMenuItem altItem = new JMenuItem(altLabel);
 			altItem.setEnabled(canPlaySpecialAction && !nameConflict && !lightDarkConflict
 					&& canAffordAltCost(card, handIdx)
@@ -7120,6 +7127,7 @@ public class MainWindow {
 			if (fcr.amountPerUnit() == 0) continue;
 			if (fcr.opponentOnly() && srcIsP1 == isP1) continue;  // skip if opponent-only and caster is the owner
 			if (!fcr.opponentOnly() && fcr.ownerOnly() && srcIsP1 != isP1) continue;
+			if (!fieldCostModifierLive(fcr, srcIsP1)) continue;
 			if (lostAbilitiesCards.contains(src)) continue;
 			if (!fcr.matchesCard(card)) continue;
 			int units = fcr.scalingJobFilter() != null
@@ -7127,6 +7135,18 @@ public class MainWindow {
 			cost = fcr.apply(cost, units);
 		}
 		return cost;
+	}
+
+	/**
+	 * A "Damage N --" cost modifier is only live while the player who controls the card printing it
+	 * holds at least N damage counters. The threshold is read against that player, not the caster:
+	 * Garnet 28-098H discounts her own Summons off her own damage, and Ultimecia 18-105H taxes the
+	 * opponent off Ultimecia's controller's damage.
+	 */
+	private boolean fieldCostModifierLive(FieldCostReduction fcr, boolean srcIsP1) {
+		if (fcr.damageThreshold() <= 0) return true;
+		int dmgInZone = srcIsP1 ? gameState.getP1DamageZone().size() : gameState.getP2DamageZone().size();
+		return dmgInZone >= fcr.damageThreshold();
 	}
 
 	private int countForwardsWithJob(String job, boolean isP1) {
@@ -7466,6 +7486,27 @@ public class MainWindow {
 			removalSlots = List.of();
 		}
 
+		// Reserved on the same terms as the removal above: the Forwards are picked now and only
+		// dulled once the rest of the cost is covered, so cancelling leaves the board untouched.
+		List<DullForwardCost> altDull = card.altDullCosts();
+		final List<Integer> dullIdxs;
+		if (!altDull.isEmpty()) {
+			dullIdxs = selectAltDullForwards(card, altDull);
+			if (dullIdxs == null) return;
+		} else {
+			dullIdxs = List.of();
+		}
+
+		// Picking the Forwards is itself the confirmation, so a cost made up entirely of dulling
+		// goes straight to the play rather than asking again with an empty price.
+		if (altElemsList.isEmpty() && altC == 0 && !dullIdxs.isEmpty()) {
+			executeAltDull(dullIdxs);
+			executeAltFieldRemoval(removalSlots);
+			executePlay(card, handIdx, Collections.emptyList(), Collections.emptyList(), Map.of());
+			executeAltFollowup(followupText, card);
+			return;
+		}
+
 		if (altElemsList.isEmpty()) {
 			int choice = JOptionPane.showOptionDialog(frame,
 					card.name() + " — Pay " + "《C》".repeat(altC) + (altCp > 0 ? " + " + altCp + " CP" : "") + " to cast?",
@@ -7474,6 +7515,7 @@ public class MainWindow {
 					new Object[]{"Confirm", "Cancel"}, "Confirm");
 			if (choice != 0) return;
 			if (altC > 0) { playerSpendCrystals(true, altC); refreshCrystalDisplays(); }
+			executeAltDull(dullIdxs);
 			executeAltFieldRemoval(removalSlots);
 			executePlay(card, handIdx, Collections.emptyList(), Collections.emptyList(), Map.of());
 			executeAltFollowup(followupText, card);
@@ -7506,6 +7548,7 @@ public class MainWindow {
 				lightDarkDiscardGrants(true),
 				(discards, backups) -> {
 					if (altC > 0) { playerSpendCrystals(true, altC); refreshCrystalDisplays(); }
+					executeAltDull(dullIdxs);
 					executeAltFieldRemoval(removalSlots);
 					executeAltBzRemovals(bzRemovals);
 					executePlay(card, handIdx, discards, backups, Map.of());
@@ -7550,6 +7593,107 @@ public class MainWindow {
 			chosen.add(remaining.get(pick));
 		}
 		return chosen;
+	}
+
+	/**
+	 * P1 Forward indices that satisfy {@code costs}, one distinct Forward per required slot, or
+	 * {@code null} when no such assignment exists.
+	 *
+	 * <p>The requirements have to be solved together rather than one at a time. Nine 13-123L needs
+	 * one Fire and one Lightning Class Zero Cadet, and a single Fire/Lightning Cadet matches both
+	 * clauses while only being dullable once — checking each clause on its own would call that
+	 * payable.
+	 *
+	 * @param excluded Forward indices already committed elsewhere in the same payment
+	 */
+	private List<Integer> altDullAssignment(List<DullForwardCost> costs, Collection<Integer> excluded) {
+		List<DullForwardCost> slots = new ArrayList<>();
+		for (DullForwardCost dfc : costs)
+			for (int i = 0; i < dfc.count(); i++) slots.add(dfc);
+		List<Integer> assigned = new ArrayList<>();
+		return assignAltDullSlots(slots, 0, new HashSet<>(excluded), assigned) ? assigned : null;
+	}
+
+	/** Backtracking search behind {@link #altDullAssignment}; the slot count is never more than a few. */
+	private boolean assignAltDullSlots(List<DullForwardCost> slots, int slotIdx,
+			Set<Integer> used, List<Integer> assigned) {
+		if (slotIdx == slots.size()) return true;
+		for (int i = 0; i < p1ForwardCards.size(); i++) {
+			if (used.contains(i)) continue;
+			if (p1ForwardStates.get(i) != CardState.ACTIVE) continue;
+			if (!autoAbilityTriggers.dullForwardCostMatches(slots.get(slotIdx), p1ForwardCards.get(i))) continue;
+			used.add(i);
+			assigned.add(i);
+			if (assignAltDullSlots(slots, slotIdx + 1, used, assigned)) return true;
+			used.remove(i);
+			assigned.remove(assigned.size() - 1);
+		}
+		return false;
+	}
+
+	/** True when P1 controls the active Forwards {@code card}'s dull alternate cost calls for. */
+	boolean canPayAltDullCost(CardData card) {
+		List<DullForwardCost> costs = card.altDullCosts();
+		if (costs.isEmpty()) return true;
+		if (card.altDullYourTurnOnly() && gameState.getCurrentPlayer() != GameState.Player.P1) return false;
+		return altDullAssignment(costs, List.of()) != null;
+	}
+
+	/**
+	 * Asks the player which Forwards to dull for {@code costs}, one clause at a time, returning the
+	 * chosen indices or {@code null} if they cancelled. Nothing is dulled here — the Forwards are
+	 * only reserved, and {@link #executeAltDull} takes them once the whole cost is covered.
+	 *
+	 * <p>Each clause only offers Forwards that leave the remaining clauses payable, so the player
+	 * cannot spend the one card a later clause depends on.
+	 */
+	private List<Integer> selectAltDullForwards(CardData card, List<DullForwardCost> costs) {
+		List<Integer> chosen = new ArrayList<>();
+		for (int c = 0; c < costs.size(); c++) {
+			DullForwardCost dfc = costs.get(c);
+			List<DullForwardCost> later = costs.subList(c + 1, costs.size());
+			for (int n = 0; n < dfc.count(); n++) {
+				List<ForwardTarget> eligible = new ArrayList<>();
+				for (int i = 0; i < p1ForwardCards.size(); i++) {
+					if (chosen.contains(i)) continue;
+					if (p1ForwardStates.get(i) != CardState.ACTIVE) continue;
+					if (!autoAbilityTriggers.dullForwardCostMatches(dfc, p1ForwardCards.get(i))) continue;
+					Set<Integer> committed = new HashSet<>(chosen);
+					committed.add(i);
+					List<DullForwardCost> rest = new ArrayList<>(later);
+					if (n + 1 < dfc.count())
+						rest.add(0, new DullForwardCost(dfc.count() - n - 1, dfc.condition(), dfc.element(),
+								dfc.cardName(), dfc.job(), dfc.category(), dfc.cardType(), dfc.orCardName()));
+					if (altDullAssignment(rest, committed) == null) continue;
+					eligible.add(new ForwardTarget(true, i, ForwardTarget.CardZone.FORWARD));
+				}
+				if (eligible.isEmpty()) return null;
+				List<ForwardTarget> picks = showForwardSelectDialog(eligible, 1, false,
+						card.name() + " — Alt Cost: dull " + describeAltDullClause(dfc));
+				if (picks.size() < 1) return null;
+				chosen.add(picks.get(0).idx());
+			}
+		}
+		return chosen;
+	}
+
+	/** Dulls the Forwards reserved by {@link #selectAltDullForwards}. */
+	private void executeAltDull(List<Integer> forwardIdxs) {
+		if (forwardIdxs == null || forwardIdxs.isEmpty()) return;
+		for (int idx : forwardIdxs) {
+			p1ForwardStates.set(idx, CardState.DULL);
+			animateDullForward(idx, null);
+			logEntry("Alt cost: \"" + p1ForwardCards.get(idx).name() + "\" dulled");
+		}
+	}
+
+	/** "1 active Fire Job Class Zero Cadet Forward", as printed, for a menu label or dialog title. */
+	private static String describeAltDullClause(DullForwardCost dfc) {
+		StringBuilder sb = new StringBuilder().append(dfc.count()).append(" active ");
+		if (dfc.element()  != null) sb.append(dfc.element()).append(' ');
+		if (dfc.category() != null) sb.append("Category ").append(dfc.category()).append(' ');
+		if (dfc.job()      != null) sb.append(dfc.job()).append(' ');
+		return sb.append(dfc.count() == 1 ? "Forward" : "Forwards").toString();
 	}
 
 	/** Removes the Backups reserved by {@link #selectAltFieldRemoval} from the game. */
@@ -7994,6 +8138,7 @@ public class MainWindow {
 		for (FieldCostReduction fcr : src.fieldCostReductions()) {
 			if (!fcr.anyElement()) continue;
 			if (fcr.ownerOnly() && !srcIsP1) continue;
+			if (!fieldCostModifierLive(fcr, srcIsP1)) continue;
 			if (!fcr.matchesCard(card)) continue;
 			if (fcr.bzConditionJob() != null) {
 				List<CardData> bz = srcIsP1 ? gameState.getP1BreakZone() : gameState.getP2BreakZone();
@@ -9877,6 +10022,22 @@ public class MainWindow {
 		if ((bySummon ? cannotBeChosenBySummons : cannotBeChosenByAbilities).contains(c)) return true;
 		if ((bySummon ? permanentCannotBeChosenBySummons : permanentCannotBeChosenByAbilities).contains(c)) return true;
 		return icbGrantsImmunity(c.name(), sideIsP1, bySummon, true);
+	}
+
+	/**
+	 * Whether the card at {@code targetIsP1}'s field is shielded from leaving it by a Summon or
+	 * ability {@code actingIsP1} controls — "[Name] cannot leave the field due to your opponent's
+	 * Summons or abilities." (Chaos B-001 and its three siblings).
+	 *
+	 * <p>Opponent-scoped, so the controller's own effects still move the card, and it says nothing
+	 * about combat damage or a cost its controller chooses to pay: both are causes other than an
+	 * opponent's Summon or ability.
+	 */
+	boolean isProtectedFromLeavingField(CardData card, boolean targetIsP1, boolean actingIsP1) {
+		return card != null
+				&& targetIsP1 != actingIsP1
+				&& !lostAbilitiesCards.contains(card)
+				&& card.hasTrait(CardData.Trait.CANNOT_LEAVE_FIELD_BY_OPP);
 	}
 
 	/**
