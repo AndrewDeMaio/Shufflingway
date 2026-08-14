@@ -193,6 +193,53 @@ final class ActionResolverSearch {
         int maxCost     = Integer.parseInt(m.group("maxcost"));
         return ctx -> ctx.revealTopNPlayUpToNamedOrJobWithMaxCostOntoFieldRestBottom(n, max, cardName, job, maxCost);
     }
+    /**
+     * Parses "Search for up to 1 [half] and up to 1 [half] and play them onto the field" —
+     * 11-124H Relm (two costs) and 19-109H Cherukiki (two card names).
+     *
+     * <p>Runs as two searches of the one deck, in printed order. Each is its own prompt, which is
+     * also what makes "up to" work without a count: declining a search dialog takes nothing, and
+     * the second search still happens.
+     */
+    static Consumer<GameContext> tryParseDualSearchPlayOntoField(String text) {
+        Matcher m = DUAL_SEARCH_PLAY_ONTO_FIELD.matcher(text.trim());
+        if (!m.matches()) return null;
+        SearchHalf first  = SearchHalf.of(m.group("name1"), m.group("type1"), m.group("cost1"));
+        SearchHalf second = SearchHalf.of(m.group("name2"), m.group("type2"), m.group("cost2"));
+        return ctx -> {
+            ctx.logEntry("Effect: Search deck for up to 1 " + first.label()
+                    + " and up to 1 " + second.label() + " → field");
+            first.search(ctx);
+            second.search(ctx);
+        };
+    }
+
+    /**
+     * One half of {@link #tryParseDualSearchPlayOntoField} — a card name, or a type with an exact
+     * cost. Exactly one of {@code cardName} and {@code type} is set, which is what the two
+     * alternatives in the pattern guarantee.
+     */
+    private record SearchHalf(String cardName, String type, int cost) {
+
+        static SearchHalf of(String cardName, String typeRaw, String costRaw) {
+            if (cardName != null) return new SearchHalf(cardName.trim(), null, -1);
+            String t = typeRaw.toLowerCase(java.util.Locale.ROOT).replaceAll("s$", "");
+            return new SearchHalf(null, t, Integer.parseInt(costRaw));
+        }
+
+        String label() {
+            return cardName != null ? "Card Name " + cardName : type + " of cost " + cost;
+        }
+
+        /** A name search spans every card type, the way the single-pool parser reads a bare name. */
+        void search(GameContext ctx) {
+            boolean anyChar = cardName != null || "character".equals(type);
+            ctx.searchDeckForCard(anyChar || "forward".equals(type), anyChar || "backup".equals(type),
+                    anyChar || "monster".equals(type), cardName != null || "summon".equals(type),
+                    cost, null, cardName, null, null, null, null, null, "field", 1, false, false);
+        }
+    }
+
     static Consumer<GameContext> tryParseFlipUntilTypeToHandRestShuffleBottom(String text) {
         if (!FLIP_UNTIL_TYPE_TO_HAND_REST_SHUFFLE_BOTTOM.matcher(text.trim()).matches()) return null;
         return GameContext::flipUntilTypeToHandRestShuffleBottom;
@@ -234,8 +281,10 @@ final class ActionResolverSearch {
         String normType = Character.toUpperCase(typeRaw.charAt(0)) + typeRaw.substring(1).toLowerCase();
         String costStr  = m.group("cost");
         int maxCost     = "X".equalsIgnoreCase(costStr) ? xValue : Integer.parseInt(costStr);
-        boolean restToHand = m.group("resthand") != null;
-        return ctx -> ctx.revealTopNPlayUpToElementTypeCostOntoField(n, max, element, normType, maxCost, restToHand);
+        RevealRest rest = m.group("resthand") != null ? RevealRest.HAND
+                        : m.group("restbz")   != null ? RevealRest.BREAK_ZONE
+                        : RevealRest.BOTTOM;
+        return ctx -> ctx.revealTopNPlayUpToElementTypeCostOntoField(n, max, element, normType, maxCost, rest);
     }
     /**
      * Parses Banon's "Reveal the top card of your deck. If it is a [Type], cancel all effects

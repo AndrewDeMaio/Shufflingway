@@ -1793,10 +1793,17 @@ public class CardPickerDialog {
         return result[0];
     }
 
-    /** Shows {@code summons} from hand and lets P1 choose which ones to reveal (any number ≥ 0).
-     *  Returns the selected cards. */
+    /**
+     * Shows {@code summons} from hand and lets P1 choose which ones to reveal (any number ≥ 0).
+     * Returns the selected cards.
+     *
+     * <p>What revealing 0 costs and what revealing more buys differs per card, so both the standing
+     * {@code hint} and the label on the confirm button when nothing is selected come from the
+     * caller: 13-033R Levnato breaks itself on 0, while 15-037L Terra simply does nothing.
+     */
     public java.util.List<CardData> pickRevealSummons(java.util.List<CardData> summons,
-                                                       String sourceName, int minForBonus) {
+                                                       String sourceName, String hint,
+                                                       String zeroChoiceLabel) {
         if (summons.isEmpty()) return java.util.Collections.emptyList();
 
         Set<Integer> selected = new LinkedHashSet<>();
@@ -1806,19 +1813,18 @@ public class CardPickerDialog {
         dlg.setResizable(false);
         dlg.setDefaultCloseOperation(JDialog.DO_NOTHING_ON_CLOSE);
 
-        String hint = "Reveal 0 → " + sourceName + " breaks. Reveal " + minForBonus + "+ → bonus effect.";
         JLabel statusLabel = new JLabel(hint, SwingConstants.CENTER);
         statusLabel.setFont(FontLoader.loadPixelFont(9));
 
         java.util.List<JLabel> cardLabels = new ArrayList<>();
         JPanel cardsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 8));
 
-        JButton confirmBtn = new JButton("Reveal 0");
+        JButton confirmBtn = new JButton(zeroChoiceLabel);
         confirmBtn.setFont(FontLoader.loadPixelFont(11));
 
         Runnable refresh = () -> {
             int n = selected.size();
-            confirmBtn.setText(n == 0 ? "Reveal 0 (" + sourceName + " breaks)" : "Reveal " + n);
+            confirmBtn.setText(n == 0 ? zeroChoiceLabel : "Reveal " + n);
             for (int i = 0; i < cardLabels.size(); i++) {
                 cardLabels.get(i).setBorder(BorderFactory.createLineBorder(
                         selected.contains(i) ? Color.CYAN : Color.LIGHT_GRAY,

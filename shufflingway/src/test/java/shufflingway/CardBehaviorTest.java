@@ -9105,7 +9105,7 @@ public class CardBehaviorTest {
         Consumer<GameContext> fn = ActionResolver.parse(BARTZ_EFFECT, null);
         assertNotNull(fn, "the reveal-and-play must not be swallowed by the trailing 'add … to your hand'");
         fn.accept(ctx);
-        verify(ctx).revealTopNPlayUpToElementTypeCostOntoField(2, 1, null, "Character", 3, true);
+        verify(ctx).revealTopNPlayUpToElementTypeCostOntoField(2, 1, null, "Character", 3, RevealRest.HAND);
         verify(ctx, never()).returnNamedCardToYourHand(any());
     }
 
@@ -9127,7 +9127,7 @@ public class CardBehaviorTest {
                 "reveal the top 5 cards of your deck. Play 1 Forward of cost 2 or less among them "
                 + "onto the field and return the other cards to the bottom of your deck in any order.",
                 null).accept(ctx);
-        verify(ctx).revealTopNPlayUpToElementTypeCostOntoField(5, 1, null, "Forward", 2, false);
+        verify(ctx).revealTopNPlayUpToElementTypeCostOntoField(5, 1, null, "Forward", 2, RevealRest.BOTTOM);
     }
 
     // "Then, shuffle the other cards revealed and return them to the bottom" — the third tail in
@@ -9139,7 +9139,7 @@ public class CardBehaviorTest {
                 "reveal the top 5 cards of your deck. Play 1 Forward of cost 3 or less among them "
                 + "onto the field. Then, shuffle the other cards revealed and return them to the "
                 + "bottom of your deck in any order.", null).accept(ctx);
-        verify(ctx).revealTopNPlayUpToElementTypeCostOntoField(5, 1, null, "Forward", 3, false);
+        verify(ctx).revealTopNPlayUpToElementTypeCostOntoField(5, 1, null, "Forward", 3, RevealRest.BOTTOM);
     }
 
     // A genuine "Add <card name> to your hand" must still be read as one.
@@ -16023,5 +16023,413 @@ public class CardBehaviorTest {
 		assertNull(ActionResolverPower.tryParseStandaloneSelfBoostForEachControlled(
 				"until the end of the turn, Serah gains +1000 power for each Category XIII Character you control.",
 				noel));
+	}
+
+	// =========================================================================================
+	// Ace 16-002H: "When Ace attacks, Ace gains +1000 power for each different Element among
+	// Characters you control until the end of the turn."
+	//
+	// Effect wiring. Same self-targeted frame as Noel above, but the multiplier counts distinct
+	// Elements rather than cards, which no parser in the family read — the counted noun does not
+	// follow "for each" directly, so the sibling parser cannot reach it and the ability was
+	// unparsed. Multi-element Characters contribute each of their Elements, which is what makes
+	// this a distinct count rather than a filtered card count.
+	// =========================================================================================
+
+	private static final String ACE_16_002H_EFFECT =
+			"Ace gains +1000 power for each different Element among Characters you control "
+			+ "until the end of the turn.";
+
+	@Test
+	void aceScalesHisBoostByTheDistinctElementsHeControls() {
+		CardData ace = makeTraitCard("Ace", "Fire", "Forward", ACE_16_002H_EFFECT);
+		Consumer<GameContext> fn = ActionResolver.parse(ACE_16_002H_EFFECT, ace);
+		assertNotNull(fn, "\"for each different Element among Characters you control\" should parse");
+
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.selfDistinctElementCount(true, true, true)).thenReturn(4);
+		fn.accept(ctx);
+
+		verify(ctx).boostSourceForward(eq(ace), eq(4000), argThat(Set::isEmpty));
+	}
+
+	@Test
+	void theDistinctElementCountIsNotACardCount() {
+		// The whole point of the clause: 5 Characters sharing 2 Elements is +2000, not +5000.
+		// Reading it off a card count would also make a Fire/Ice Character worth 1 instead of 2.
+		CardData ace = makeTraitCard("Ace", "Fire", "Forward", ACE_16_002H_EFFECT);
+		Consumer<GameContext> fn = ActionResolver.parse(ACE_16_002H_EFFECT, ace);
+
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.selfDistinctElementCount(true, true, true)).thenReturn(2);
+		when(ctx.ownFieldCount(any())).thenReturn(5);
+		fn.accept(ctx);
+
+		verify(ctx).boostSourceForward(eq(ace), eq(2000), any());
+		verify(ctx, never()).ownFieldCount(any());
+	}
+
+	@Test
+	void bothWordOrdersOfTheDistinctElementBoostResolve() {
+		CardData ace = makeTraitCard("Ace", "Fire", "Forward", ACE_16_002H_EFFECT);
+		String leading = "Until the end of the turn, Ace gains +1000 power for each different "
+				+ "Element among Characters you control.";
+		assertEquals("StandaloneSelfBoostForEachDistinctElement",
+				ActionResolver.matchedPatternName(ACE_16_002H_EFFECT, ace));
+		assertEquals("StandaloneSelfBoostForEachDistinctElement",
+				ActionResolver.matchedPatternName(leading, ace));
+	}
+
+	@Test
+	void aDistinctElementBoostNamingSomeOtherCardIsNotTheSourcesOwn() {
+		CardData ace = makeTraitCard("Ace", "Fire", "Forward", ACE_16_002H_EFFECT);
+		assertNull(ActionResolverPower.tryParseStandaloneSelfBoostForEachDistinctElement(
+				"Machina gains +1000 power for each different Element among Characters you control "
+				+ "until the end of the turn.", ace));
+	}
+
+	// =========================================================================================
+	// Gau 19-089H: "When Gau enters the field, choose 1 Category VI Forward you control. Until the
+	// end of the turn, it gains +1000 power for each Category VI Character you control."
+	//
+	// Effect wiring. The chosen-target followup counted an optional Element and a card type, but
+	// had no Category alternative — so the text still parsed, via the plain "it gains +N power
+	// until end of turn" followup sitting behind it, and handed out a flat +1000 with the
+	// multiplier silently dropped. The Category qualifier brings the followup into step with the
+	// self-targeted form, which has admitted one since Noel.
+	// =========================================================================================
+
+	private static final String GAU_19_089H_EFFECT =
+			"Choose 1 Category VI Forward you control. Until the end of the turn, "
+			+ "it gains +1000 power for each Category VI Character you control.";
+
+	@Test
+	void gauScalesTheChosenForwardsBoostByCategory() {
+		Consumer<GameContext> fn = ActionResolver.parse(GAU_19_089H_EFFECT, null);
+		assertNotNull(fn);
+
+		GameContext ctx = mock(GameContext.class);
+		ForwardTarget t = stubChooseOneTarget(ctx);
+		when(ctx.countSelfFieldCards(true, true, true, null, null, "VI", null)).thenReturn(3);
+		fn.accept(ctx);
+
+		verify(ctx).boostTarget(eq(t), eq(3000), argThat(Set::isEmpty));
+	}
+
+	@Test
+	void theCategoryFollowupIsClaimedAheadOfTheFlatBoost() {
+		// The regression this guards: FOLLOWUP_POWER_BOOST_UNTIL matches the "+1000 power" prefix
+		// on its own, so if the for-each form does not claim the text first the multiplier is lost
+		// and the ability quietly becomes a flat boost.
+		assertEquals("ChooseCharacter / PowerBoostUntilForEach",
+				ActionResolver.fullDescription(GAU_19_089H_EFFECT, null));
+	}
+
+	@Test
+	void theElementFollowupStillCountsByElement() {
+		// The Category group is optional and must not disturb the Element reading beside it.
+		String elementText = "Choose 1 Forward you control. Until the end of the turn, "
+				+ "it gains +1000 power for each Fire Character you control.";
+		Consumer<GameContext> fn = ActionResolver.parse(elementText, null);
+		assertNotNull(fn);
+
+		GameContext ctx = mock(GameContext.class);
+		ForwardTarget t = stubChooseOneTarget(ctx);
+		when(ctx.countSelfFieldCards(true, true, true, null, null, null, "Fire")).thenReturn(2);
+		fn.accept(ctx);
+
+		verify(ctx).boostTarget(eq(t), eq(2000), argThat(Set::isEmpty));
+	}
+
+	// =========================================================================================
+	// Relm 11-124H: "When Relm enters the field, you may search for up to 1 Monster of cost 1 and
+	// up to 1 Monster of cost 2 and play them onto the field."
+	// Cherukiki 19-109H: "《Dull》: Search for up to 1 Card Name Kukki-Chebukki and up to 1 Card
+	// Name Makki-Chebukki and play them onto the field."
+	//
+	// Effect wiring. Two searches of the one deck in a single sentence, in two forms — two costs,
+	// or two card names. The general search parser describes a single pool, and the two printings
+	// broke on it differently: Relm's it declined outright, leaving the ability inert, while
+	// Cherukiki's it accepted and mis-read, its lazy name group running through the conjunction to
+	// search for a card called "Kukki-Chebukki and up to 1 Card Name Makki-Chebukki". That search
+	// can never hit, so the ability looked wired and quietly did nothing.
+	// =========================================================================================
+
+	private static final String RELM_11_124H_EFFECT =
+			"search for up to 1 Monster of cost 1 and up to 1 Monster of cost 2 "
+			+ "and play them onto the field.";
+
+	/** The argument list both halves of this search share — only the cost differs. */
+	private static void verifyMonsterSearchOfCost(GameContext ctx, InOrder order, int cost) {
+		order.verify(ctx).searchDeckForCard(false, false, true, false, cost, null, null, null,
+				null, null, null, null, "field", 1, false, false);
+	}
+
+	@Test
+	void relmSearchesBothCostsAndPlaysThemOntoTheField() {
+		Consumer<GameContext> fn = ActionResolver.parse(RELM_11_124H_EFFECT, null);
+		assertNotNull(fn, "two costs in one search sentence should parse");
+
+		GameContext ctx = mock(GameContext.class);
+		fn.accept(ctx);
+
+		// In printed order: the searches are two prompts, and the player meets them as written.
+		InOrder order = inOrder(ctx);
+		verifyMonsterSearchOfCost(ctx, order, 1);
+		verifyMonsterSearchOfCost(ctx, order, 2);
+		verify(ctx, times(2)).searchDeckForCard(anyBoolean(), anyBoolean(), anyBoolean(), anyBoolean(),
+				anyInt(), any(), any(), any(), any(), any(), any(), any(), any(), anyInt(),
+				anyBoolean(), anyBoolean());
+	}
+
+	@Test
+	void theSecondHalfIsNotClaimedAwayBySinglePoolSearch() {
+		// The ordering guard: tryParseSearchDeck sits behind this one, and reaching it first would
+		// silently halve the ability.
+		assertEquals("DualSearchPlayOntoField",
+				ActionResolver.matchedPatternName(RELM_11_124H_EFFECT, null));
+		assertEquals("DualSearchPlayOntoField",
+				ActionResolver.matchedPatternName("you may " + RELM_11_124H_EFFECT, null));
+		assertEquals("DualSearchPlayOntoField",
+				ActionResolver.matchedPatternName(CHERUKIKI_19_109H_EFFECT, null));
+	}
+
+	@Test
+	void anOrdinaryOneCostSearchIsStillTheSinglePoolParsers() {
+		assertEquals("SearchDeck", ActionResolver.matchedPatternName(
+				"search for up to 1 Monster of cost 1 and play it onto the field.", null));
+		assertEquals("SearchDeck", ActionResolver.matchedPatternName(
+				"Search for 1 Card Name Kukki-Chebukki and play it onto the field.", null));
+	}
+
+	private static final String CHERUKIKI_19_109H_EFFECT =
+			"Search for up to 1 Card Name Kukki-Chebukki and up to 1 Card Name Makki-Chebukki "
+			+ "and play them onto the field.";
+
+	/** A name half searches every card type, the way the single-pool parser reads a bare name. */
+	private static void verifyNameSearch(GameContext ctx, InOrder order, String cardName) {
+		order.verify(ctx).searchDeckForCard(true, true, true, true, -1, null, cardName, null,
+				null, null, null, null, "field", 1, false, false);
+	}
+
+	@Test
+	void cherukikiSearchesEachNameSeparately() {
+		Consumer<GameContext> fn = ActionResolver.parse(CHERUKIKI_19_109H_EFFECT, null);
+		assertNotNull(fn);
+
+		GameContext ctx = mock(GameContext.class);
+		fn.accept(ctx);
+
+		InOrder order = inOrder(ctx);
+		verifyNameSearch(ctx, order, "Kukki-Chebukki");
+		verifyNameSearch(ctx, order, "Makki-Chebukki");
+	}
+
+	@Test
+	void neitherNameSwallowsTheConjunction() {
+		// The failure mode this replaces: one search for a card whose name is the whole rest of
+		// the sentence. Nothing in the deck is ever called that, so the ability did nothing at all.
+		GameContext ctx = mock(GameContext.class);
+		ActionResolver.parse(CHERUKIKI_19_109H_EFFECT, null).accept(ctx);
+		verify(ctx, never()).searchDeckForCard(anyBoolean(), anyBoolean(), anyBoolean(), anyBoolean(),
+				anyInt(), any(), argThat(n -> n != null && n.contains("up to")), any(), any(), any(),
+				any(), any(), any(), anyInt(), anyBoolean(), anyBoolean());
+	}
+
+	// =========================================================================================
+	// Nox Suzaku 15-130H: "At the end of each of your turns, reveal the top 3 cards of your deck.
+	// Play up to 1 Forward of cost 4 or less among them onto the field and put the rest of the
+	// cards into the Break Zone."
+	//
+	// Effect wiring. The reveal-and-play family already handled the reveal and the play; it was
+	// the disposal that had nowhere to go — the leftovers could reach the bottom of the deck or
+	// the ability user's hand, and a Break Zone was neither, so the whole sentence failed to
+	// match. The destination is a RevealRest now rather than a boolean.
+	// =========================================================================================
+
+	private static final String NOX_SUZAKU_15_130H_EFFECT =
+			"reveal the top 3 cards of your deck. Play up to 1 Forward of cost 4 or less among "
+			+ "them onto the field and put the rest of the cards into the Break Zone.";
+
+	@Test
+	void noxSuzakuRevealsThreePlaysOneAndBreaksTheRest() {
+		Consumer<GameContext> fn = ActionResolver.parse(NOX_SUZAKU_15_130H_EFFECT, null);
+		assertNotNull(fn, "\"put the rest of the cards into the Break Zone\" should parse");
+
+		GameContext ctx = mock(GameContext.class);
+		fn.accept(ctx);
+		verify(ctx).revealTopNPlayUpToElementTypeCostOntoField(
+				3, 1, null, "Forward", 4, RevealRest.BREAK_ZONE);
+	}
+
+	@Test
+	void theBreakZoneDestinationSendsTheLeftoversToTheBreakZone() {
+		// The arrangement both seats build. Bottom-of-deck must stay empty: it is where every
+		// other card in this family sends its leftovers, so a leak there would look like business
+		// as usual in the log.
+		List<CardData> revealed = List.of(
+				makeForward("Cheap", "Dark", 2, 5000),
+				makeForward("Dear", "Dark", 7, 9000),
+				makeSummon("Summon", "Dark", 1, ""));
+		Predicate<CardData> eligible = c -> c.isForward() && c.cost() <= 4;
+
+		DeckLookDecision d = LookAtDeckDialogs.cpuRevealPlayOntoField(
+				revealed, 1, eligible, RevealRest.BREAK_ZONE);
+
+		assertEquals(List.of(0), d.toField(), "only the cost-2 Forward is playable");
+		assertEquals(Set.of(1, 2), Set.copyOf(d.toBreak()));
+		assertTrue(d.toBottom().isEmpty(), "the leftovers must not also reach the deck");
+		assertTrue(d.toHand().isEmpty());
+	}
+
+	@Test
+	void theOtherTwoRevealDestinationsAreUnchanged() {
+		List<CardData> revealed = List.of(makeForward("A", "Dark", 2, 5000),
+				makeForward("B", "Dark", 7, 9000));
+		Predicate<CardData> eligible = c -> c.cost() <= 4;
+
+		DeckLookDecision bottom = LookAtDeckDialogs.cpuRevealPlayOntoField(
+				revealed, 1, eligible, RevealRest.BOTTOM);
+		assertEquals(List.of(1), bottom.toBottom());
+		assertTrue(bottom.toBreak().isEmpty());
+
+		DeckLookDecision hand = LookAtDeckDialogs.cpuRevealPlayOntoField(
+				revealed, 1, eligible, RevealRest.HAND);
+		assertEquals(List.of(1), hand.toHand());
+		assertTrue(hand.toBreak().isEmpty());
+	}
+
+	// =========================================================================================
+	// Vanille 7-065H: "When Vanille enters the field, choose 1 dull Forward. Select 1 number and
+	// reveal the top card of your deck. If the revealed card is of the same cost as the selected
+	// number, break it."
+	//
+	// Parsing. The effect already resolved correctly — the break is conditional on the reveal, and
+	// "it" is the chosen Forward rather than the revealed card. The description was what lagged:
+	// the followup was split at ". ", separating the reveal from the cost test that consumes it,
+	// so the ability reported as "? + Break" — the shape an unconditional break would have, which
+	// is precisely the bug this card would exhibit if the wiring ever regressed.
+	// =========================================================================================
+
+	private static final String VANILLE_7_065H_EFFECT =
+			"choose 1 dull Forward. Select 1 number and reveal the top card of your deck. "
+			+ "If the revealed card is of the same cost as the selected number, break it.";
+
+	@Test
+	void vanilleIsDescribedAsOneConditionalRevealRatherThanABareBreak() {
+		assertEquals("ChooseCharacter / SelectNumberRevealBreak",
+				ActionResolver.fullDescription(VANILLE_7_065H_EFFECT, null));
+	}
+
+	@Test
+	void vanilleBreaksTheChosenForwardOnlyWhenTheCostsMatch() {
+		Consumer<GameContext> fn = ActionResolver.parse(VANILLE_7_065H_EFFECT, null);
+		assertNotNull(fn);
+
+		GameContext ctx = mock(GameContext.class);
+		ForwardTarget t = stubChooseOneTarget(ctx);
+		when(ctx.selectNumber(anyInt(), anyInt(), any())).thenReturn(4);
+
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<List<RevealClause>> clauses = ArgumentCaptor.forClass(List.class);
+		fn.accept(ctx);
+		verify(ctx).revealTopDeckCard(clauses.capture(), eq(false));
+
+		assertEquals(1, clauses.getValue().size());
+		RevealClause clause = clauses.getValue().get(0);
+		assertTrue(clause.condition().test(makeForward("Match", "Earth", 4, 7000)),
+				"cost 4 is the selected number");
+		assertFalse(clause.condition().test(makeForward("Miss", "Earth", 5, 7000)));
+
+		// And the card broken is the one that was chosen, not the one revealed.
+		clause.effect().accept(ctx);
+		verify(ctx).breakTarget(t);
+	}
+
+	// =========================================================================================
+	// Terra 15-037L: "When Terra enters the field, you may reveal any number of Summons from your
+	// hand. When you do so, choose up to the same number of Characters as the Summons you
+	// revealed. Dull them and Freeze them."
+	//
+	// Effect wiring. The target count is not in the text — it is however many Summons the player
+	// decided to reveal, and that is known only once the reveal has happened. Handled where the
+	// reveal already lives, in AutoAbilityTriggers beside 13-033R Levnato's conditional version:
+	// the count is written back into the follow-up sentence, and the resolver then reads the
+	// ordinary "choose up to N Characters" shape it already knows.
+	// =========================================================================================
+
+	private static final String TERRA_15_037L_FOLLOWUP =
+			"choose up to the same number of Characters as the Summons you revealed. "
+			+ "Dull them and Freeze them.";
+
+	@Test
+	void theRevealedCountIsWrittenIntoTheFollowupSentence() {
+		assertEquals("choose up to 2 Characters. Dull them and Freeze them.",
+				AutoAbilityTriggers.withRevealedCount(TERRA_15_037L_FOLLOWUP, 2));
+	}
+
+	@Test
+	void theRewrittenFollowupDullsAndFreezesThatManyCharacters() {
+		String resolved = AutoAbilityTriggers.withRevealedCount(TERRA_15_037L_FOLLOWUP, 2);
+		Consumer<GameContext> fn = ActionResolver.parse(resolved, null);
+		assertNotNull(fn, "the rewritten sentence must be one the resolver already reads");
+
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.consumePreloadedTargets()).thenReturn(null);
+		ForwardTarget a = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+		ForwardTarget b = new ForwardTarget(false, 1, ForwardTarget.CardZone.FORWARD);
+		when(ctx.selectCharacters(anyInt(), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(),
+				anyInt(), any(), anyInt(), any(), anyBoolean(), anyBoolean(), anyBoolean(),
+				any(), any(), any(), any(), anyBoolean(), any(), anyBoolean()))
+				.thenReturn(List.of(a, b));
+		fn.accept(ctx);
+
+		verify(ctx).dullAndFreezeTarget(a);
+		verify(ctx).dullAndFreezeTarget(b);
+	}
+
+	private static final String TERRA_15_037L_TEXT =
+			"When Terra enters the field, you may reveal any number of Summons from your hand. "
+			+ "When you do so, " + TERRA_15_037L_FOLLOWUP;
+
+	/** Terra entering P2's field with {@code summonsInHand} Summons to reveal, and one P1 target. */
+	private static MainWindow boardWithTerraEntering(int summonsInHand) {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForward("Victim", "Fire", 3, 7000));
+		mw.gameState.getP2Hand().clear();
+		for (int i = 0; i < summonsInHand; i++)
+			mw.gameState.getP2Hand().add(makeSummon("Firaga " + i, "Fire", 2, ""));
+		mw.autoAbilityTriggers.triggerAutoAbilitiesForEntersField(
+				makeAutoAbilityForward("Terra", "Ice", 8000, TERRA_15_037L_TEXT), false);
+		return mw;
+	}
+
+	@Test
+	void revealingASummonDullsAndFreezesThatManyCharacters() {
+		// The AI seat, so the whole path runs without a dialog: one Summon revealed buys one
+		// target, and the effect reaches the board rather than stopping at "Unrecognized effect".
+		MainWindow mw = boardWithTerraEntering(1);
+		assertEquals(CardState.DULL, mw.p1ForwardStates.get(0));
+		assertTrue(mw.p1ForwardFrozen.get(0), "dull and Freeze, not dull alone");
+	}
+
+	@Test
+	void withNoSummonsToRevealTheFollowupNeverRuns() {
+		// "When you do so" — revealing nothing means it never happened, and a count of 0 must not
+		// fall through to a choose that takes a target anyway.
+		MainWindow mw = boardWithTerraEntering(0);
+		assertNotEquals(CardState.DULL, mw.p1ForwardStates.get(0));
+		assertFalse(mw.p1ForwardFrozen.get(0));
+	}
+
+	@Test
+	void terrasEtfIsOneOptionalAbilityCarryingTheWholeReveal() {
+		AutoAbility fa = CardData.parseAutoAbilities(
+				"When Terra enters the field, you may reveal any number of Summons from your hand. "
+				+ "When you do so, " + TERRA_15_037L_FOLLOWUP).get(0);
+		assertEquals("enters the field", fa.trigger());
+		assertTrue(fa.youMay(), "the reveal is the player's to decline");
+		assertTrue(fa.effectText().startsWith("reveal any number of Summons from your hand."),
+				"the follow-up must stay attached to the reveal that sizes it: " + fa.effectText());
 	}
 }

@@ -676,6 +676,11 @@ public class ActionResolver {
         result = tryParseStandaloneSelfBoostForEachControlled(effectText, source);
         if (result != null) return result;
 
+        // Same frame, distinct-Element multiplier. Mutually exclusive with the parser above, but
+        // subject to the same "must precede the flat self-boost parsers" constraint.
+        result = tryParseStandaloneSelfBoostForEachDistinctElement(effectText, source);
+        if (result != null) return result;
+
         result = tryParseStandaloneItPowerBoostUntil(effectText, source);
         if (result != null) return result;
 
@@ -1016,6 +1021,11 @@ public class ActionResolver {
         if (result != null) return result;
 
         result = tryParseSearchNElementSummonsDiffCost(effectText);
+        if (result != null) return result;
+
+        // Must precede tryParseSearchDeck: that parser reads a single pool, so on a two-cost text
+        // it claims the first half and the second search is lost.
+        result = tryParseDualSearchPlayOntoField(effectText);
         if (result != null) return result;
 
         result = tryParseSearchDeck(effectText, source, xValue);
@@ -1504,6 +1514,7 @@ public class ActionResolver {
         if (tryParseStandaloneSelfBoostForEachCrystal(effectText, source) != null) return "StandaloneSelfBoostForEachCrystal";
         // Mirrors parse(): ahead of the two flat self-boost parsers, which share its frame.
         if (tryParseStandaloneSelfBoostForEachControlled(effectText, source) != null) return "StandaloneSelfBoostForEachControlled";
+        if (tryParseStandaloneSelfBoostForEachDistinctElement(effectText, source) != null) return "StandaloneSelfBoostForEachDistinctElement";
         if (tryParseIfHandSizeSelfBoost(effectText, source)               != null) return "IfHandSizeSelfBoost";
         if (tryParseSelfBoostEotPrefix(effectText, source)    != null) return "SelfBoostUntilEot";
         if (tryParseSelfAttacksPerOwnDamage(effectText, source) != null) return "SelfAttacksPerOwnDamage";
@@ -1618,6 +1629,8 @@ public class ActionResolver {
         if (tryParseDualSearchJobAndTypeDontShareElements(effectText)      != null) return "DualSearchDontShareElements";
         if (tryParseSearchElementOrCategoryCharsDiffCost(effectText)       != null) return "SearchElementOrCategoryCharsDiffCost";
         if (tryParseSearchNElementSummonsDiffCost(effectText)              != null) return "SearchNElementSummonsDiffCost";
+        // Mirrors parse(): ahead of the single-pool search, whose prefix it shares.
+        if (tryParseDualSearchPlayOntoField(effectText)            != null) return "DualSearchPlayOntoField";
         if (tryParseSearchDeck(effectText, source, 0)                      != null) return "SearchDeck";
         if (tryParsePlayAllByNameFromBreakZone(effectText)      != null) return "PlayAllByNameFromBreakZone";
         if (tryParsePlaySourceFromBreakZone(effectText, source) != null) return "PlaySourceFromBreakZone";
@@ -2002,6 +2015,11 @@ public class ActionResolver {
                 return "ChooseCharacter / RfpIfSameTypeDraw";
             if (FOLLOWUP_REVEAL_TOP_N_JOB_DEAL_DMG_PLACE_BOTTOM.matcher(followup).find())
                 return "ChooseCharacter / RevealTopNJobDealDmgPlaceBottom";
+            // Read off the whole followup, as parse() does — the ". " split below would otherwise
+            // separate the reveal from the cost test that consumes it, describing 7-065H Vanille
+            // as "? + Break" and losing the condition on the break.
+            if (FOLLOWUP_SELECT_NUMBER_REVEAL_BREAK.matcher(followup).find())
+                return "ChooseCharacter / SelectNumberRevealBreak";
             {
                 Matcher youMayPayM = FOLLOWUP_YOU_MAY_PAY_ELEMENT_IF_DO_SO.matcher(followup);
                 if (youMayPayM.matches()) {
@@ -2166,6 +2184,7 @@ public class ActionResolver {
         if (tryParseStandaloneSelfBoostForEachCrystal(effectText, source) != null) return "StandaloneSelfBoostForEachCrystal";
         // Mirrors parse(): ahead of the two flat self-boost parsers, which share its frame.
         if (tryParseStandaloneSelfBoostForEachControlled(effectText, source) != null) return "StandaloneSelfBoostForEachControlled";
+        if (tryParseStandaloneSelfBoostForEachDistinctElement(effectText, source) != null) return "StandaloneSelfBoostForEachDistinctElement";
         if (tryParseIfHandSizeSelfBoost(effectText, source)               != null) return "IfHandSizeSelfBoost";
         if (tryParseSelfBoostEotPrefix(effectText, source) != null)         return "SelfBoostUntilEot";
         if (tryParseSelfAttacksPerOwnDamage(effectText, source) != null)    return "SelfAttacksPerOwnDamage";
@@ -2281,6 +2300,8 @@ public class ActionResolver {
         if (tryParseStandaloneDamageShields(effectText, source) != null)    return "StandaloneDamageShields";
         if (tryParseDualSearchJobAndTypeDontShareElements(effectText) != null) return "DualSearchDontShareElements";
         if (tryParseSearchNElementSummonsDiffCost(effectText)         != null) return "SearchNElementSummonsDiffCost";
+        // Mirrors parse(): ahead of the single-pool search, whose prefix it shares.
+        if (tryParseDualSearchPlayOntoField(effectText)       != null) return "DualSearchPlayOntoField";
         if (tryParseSearchDeck(effectText, source, 0) != null)              return "SearchDeck";
         if (tryParsePlayAllByNameFromBreakZone(effectText) != null)         return "PlayAllByNameFromBreakZone";
         if (tryParsePlaySourceFromBreakZone(effectText, source) != null)    return "PlaySourceFromBreakZone";

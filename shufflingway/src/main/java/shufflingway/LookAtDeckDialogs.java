@@ -1679,12 +1679,12 @@ class LookAtDeckDialogs {
         Predicate<CardData> eligible = c ->
                 meetsRevealTypeFilter(c, typeFilter) && CardFilters.meetsCategoryFilter(c, categoryFilter);
         resolveRevealPlayOntoField(cards, deck, isP1, maxPlay, typeLabel, eligible,
-                false, playOntoField);
+                RevealRest.BOTTOM, playOntoField);
     }
 
     void revealPlayElementTypeCostOntoField(List<CardData> cards, Deque<CardData> deck,
             boolean isP1, int maxPlay, String element, String typeFilter, int maxCost,
-            boolean restToHand, Consumer<CardData> playOntoField) {
+            RevealRest rest, Consumer<CardData> playOntoField) {
         String typeLabel = (element != null ? element + " " : "") + typeFilter
                 + (maxCost >= 0 ? " of cost " + maxCost + " or less" : "");
         Predicate<CardData> eligible = c ->
@@ -1692,7 +1692,7 @@ class LookAtDeckDialogs {
                 && (element == null || c.containsElement(element))
                 && (maxCost < 0 || c.cost() <= maxCost);
         resolveRevealPlayOntoField(cards, deck, isP1, maxPlay, typeLabel, eligible,
-                restToHand, playOntoField);
+                rest, playOntoField);
     }
 
     /**
@@ -1708,16 +1708,16 @@ class LookAtDeckDialogs {
                 (CardFilters.meetsCardNameFilter(c, cardName) || CardFilters.meetsJobFilter(c, job))
                 && (maxCost < 0 || c.cost() <= maxCost);
         resolveRevealPlayOntoField(cards, deck, isP1, maxPlay, typeLabel, eligible,
-                false, playOntoField);
+                RevealRest.BOTTOM, playOntoField);
     }
 
     /** Routes the choice these three effects share to whoever is sitting in the seat. */
     private void resolveRevealPlayOntoField(List<CardData> cards, Deque<CardData> deck,
             boolean isP1, int maxPlay, String typeLabel, Predicate<CardData> eligible,
-            boolean restToHand, Consumer<CardData> playOntoField) {
+            RevealRest rest, Consumer<CardData> playOntoField) {
         resolveReveal(cards, deck, isP1,
-                () -> askRevealPlayOntoField(cards, maxPlay, typeLabel, eligible, restToHand),
-                () -> cpuRevealPlayOntoField(cards, maxPlay, eligible, restToHand),
+                () -> askRevealPlayOntoField(cards, maxPlay, typeLabel, eligible, rest),
+                () -> cpuRevealPlayOntoField(cards, maxPlay, eligible, rest),
                 playOntoField);
     }
 
@@ -1727,31 +1727,42 @@ class LookAtDeckDialogs {
      * seats are choosing from the same cards.
      */
     static DeckLookDecision cpuRevealPlayOntoField(List<CardData> cards, int maxPlay,
-            Predicate<CardData> eligible, boolean restToHand) {
+            Predicate<CardData> eligible, RevealRest rest) {
         List<Integer> playable = new ArrayList<>();
         for (int i = 0; i < cards.size(); i++)
             if (eligible.test(cards.get(i))) playable.add(i);
         playable.sort(java.util.Comparator.comparingInt((Integer i) -> cards.get(i).cost()).reversed());
 
         List<Integer> toField = new ArrayList<>(playable.subList(0, Math.min(maxPlay, playable.size())));
-        List<Integer> rest = new ArrayList<>();
-        for (int i = 0; i < cards.size(); i++) if (!toField.contains(i)) rest.add(i);
-        return restToHand
-                ? new DeckLookDecision(rest, List.of(), List.of(), List.of(), toField)
-                : new DeckLookDecision(List.of(), List.of(), List.of(), rest, toField);
+        List<Integer> leftover = new ArrayList<>();
+        for (int i = 0; i < cards.size(); i++) if (!toField.contains(i)) leftover.add(i);
+        return arrangeRest(leftover, toField, rest);
+    }
+
+    /** The one arrangement both seats build: the played cards, and the leftovers in their pile. */
+    private static DeckLookDecision arrangeRest(List<Integer> leftover, List<Integer> toField,
+            RevealRest rest) {
+        return switch (rest) {
+            case HAND       -> new DeckLookDecision(leftover, List.of(), List.of(), List.of(), toField);
+            case BREAK_ZONE -> new DeckLookDecision(List.of(), leftover, List.of(), List.of(), toField);
+            case BOTTOM     -> new DeckLookDecision(List.of(), List.of(), List.of(), leftover, toField);
+        };
     }
 
     /**
-     * @param restToHand where the revealed cards that were not played go — the ability user's hand
-     *                   when true (26-053L Bartz), the bottom of the deck otherwise. Bottom-of-deck
-     *                   order is the player's to set, so the swap controls only matter then; cards
-     *                   going to hand have no order to choose.
+     * @param rest where the revealed cards that were not played go. Bottom-of-deck order is the
+     *             player's to set, so the swap controls only matter for {@link RevealRest#BOTTOM};
+     *             cards going to hand or the Break Zone have no order to choose.
      */
     private DeckLookDecision askRevealPlayOntoField(List<CardData> cards,
-            int maxPlay, String typeLabel, Predicate<CardData> eligible, boolean restToHand) {
+            int maxPlay, String typeLabel, Predicate<CardData> eligible, RevealRest rest) {
         int n = cards.size();
         JDialog dlg = new JDialog(frame, "Reveal — Play up to " + maxPlay + " " + typeLabel
-                + (restToHand ? " onto Field, Rest to Hand" : " onto Field, Rest to Bottom"), true);
+                + switch (rest) {
+                    case HAND       -> " onto Field, Rest to Hand";
+                    case BREAK_ZONE -> " onto Field, Rest to Break Zone";
+                    case BOTTOM     -> " onto Field, Rest to Bottom";
+                }, true);
         dlg.setResizable(false);
         dlg.setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
 
@@ -1866,9 +1877,11 @@ class LookAtDeckDialogs {
 
         JLabel instructions = new JLabel(
                 txt("Click '→ Field' on up to " + maxPlay + " " + typeLabel + "(s) to play. "
-                        + (restToHand
-                            ? "The rest go to your hand."
-                            : "Swap the rest to set bottom-of-deck order (left = first).")),
+                        + switch (rest) {
+                            case HAND       -> "The rest go to your hand.";
+                            case BREAK_ZONE -> "The rest go to your Break Zone.";
+                            case BOTTOM     -> "Swap the rest to set bottom-of-deck order (left = first).";
+                        }),
                 SwingConstants.CENTER);
         instructions.setFont(FontLoader.loadPixelFont(9));
         confirmBtn.addActionListener(ae -> { hideZoom(); dlg.dispose(); });
@@ -1886,15 +1899,11 @@ class LookAtDeckDialogs {
         dlg.setLocationRelativeTo(frame);
         dlg.setVisible(true);
 
-        // The cards not played reach the bottom in the order the player arranged them, so the rest
-        // is read off `order`; when they go to hand instead there was no order to set.
-        List<CardData> rest = new ArrayList<>();
-        for (CardData c : order) if (!holdsIdentity(fieldSel, c)) rest.add(c);
-        List<Integer> restIdx  = peekIndices(cards, rest);
-        List<Integer> fieldIdx = peekIndices(cards, fieldSel);
-        return restToHand
-                ? new DeckLookDecision(restIdx, List.of(), List.of(), List.of(), fieldIdx)
-                : new DeckLookDecision(List.of(), List.of(), List.of(), restIdx, fieldIdx);
+        // The cards not played reach the bottom in the order the player arranged them, so the
+        // leftovers are read off `order`; the other destinations have no order to set.
+        List<CardData> leftover = new ArrayList<>();
+        for (CardData c : order) if (!holdsIdentity(fieldSel, c)) leftover.add(c);
+        return arrangeRest(peekIndices(cards, leftover), peekIndices(cards, fieldSel), rest);
     }
 
     /**

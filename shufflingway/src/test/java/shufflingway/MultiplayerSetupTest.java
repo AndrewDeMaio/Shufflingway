@@ -647,7 +647,7 @@ class MultiplayerSetupTest {
 
     @Test
     void theAiPlaysTheDearestCardsItIsAllowedAndBottomsTheRest() {
-        DeckLookDecision d = LookAtDeckDialogs.cpuRevealPlayOntoField(revealed(), 1, ANY, false);
+        DeckLookDecision d = LookAtDeckDialogs.cpuRevealPlayOntoField(revealed(), 1, ANY, RevealRest.BOTTOM);
         assertEquals(List.of(1), d.toField(), "cost 6");
         assertEquals(List.of(0, 2), d.toBottom());
         assertTrue(d.toHand().isEmpty());
@@ -655,7 +655,7 @@ class MultiplayerSetupTest {
 
     @Test
     void theRevealThatSendsTheRestToHandDoesNotBottomThem() {
-        DeckLookDecision d = LookAtDeckDialogs.cpuRevealPlayOntoField(revealed(), 1, ANY, true);
+        DeckLookDecision d = LookAtDeckDialogs.cpuRevealPlayOntoField(revealed(), 1, ANY, RevealRest.HAND);
         assertEquals(List.of(1), d.toField());
         assertEquals(List.of(0, 2), d.toHand(), "26-053L Bartz keeps what it does not play");
         assertTrue(d.toBottom().isEmpty());
@@ -692,8 +692,8 @@ class MultiplayerSetupTest {
     @Test
     void anAiFieldPlayAnswerIsAlwaysALegalArrangement() {
         for (DeckLookDecision d : List.of(
-                LookAtDeckDialogs.cpuRevealPlayOntoField(revealed(), 9, ANY, false),
-                LookAtDeckDialogs.cpuRevealPlayOntoField(revealed(), 1, c -> false, true),
+                LookAtDeckDialogs.cpuRevealPlayOntoField(revealed(), 9, ANY, RevealRest.BOTTOM),
+                LookAtDeckDialogs.cpuRevealPlayOntoField(revealed(), 1, c -> false, RevealRest.HAND),
                 LookAtDeckDialogs.cpuRevealAddToHandOrPlayOntoField(
                         revealed(), "Backup", null, "Backup"),
                 LookAtDeckDialogs.cpuRevealPlayNamedOntoField(revealed(), c -> false)))

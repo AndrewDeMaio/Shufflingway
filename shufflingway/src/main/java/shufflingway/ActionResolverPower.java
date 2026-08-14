@@ -426,6 +426,34 @@ final class ActionResolverPower {
         };
     }
 
+    /**
+     * Parses the self-targeted "gains +N power for each different Element among [Type] you control"
+     * boost — 16-002H Ace. The multiplier counts distinct Elements, not cards, so a single
+     * Fire/Ice Character is worth 2; see {@link GameContext#selfDistinctElementCount}.
+     */
+    static Consumer<GameContext> tryParseStandaloneSelfBoostForEachDistinctElement(String text, CardData source) {
+        if (source == null) return null;
+        Matcher m = SELF_POWER_BOOST_FOR_EACH_DISTINCT_ELEMENT.matcher(text.trim());
+        if (!m.find()) return null;
+        // Which alternative matched decides which group set carries the values.
+        boolean untilFirst = m.group("subject") != null;
+        String subject = (untilFirst ? m.group("subject") : m.group("subject2")).trim();
+        if (!subject.equalsIgnoreCase(source.name())) return null;
+        int    perElement = Integer.parseInt(untilFirst ? m.group("amount") : m.group("amount2"));
+        String type       = normalizeCountedType(untilFirst ? m.group("chartype") : m.group("chartype2"));
+        boolean all     = type.equals("Character");
+        boolean inclFwd = all || type.equals("Forward");
+        boolean inclBkp = all || type.equals("Backup");
+        boolean inclMon = all || type.equals("Monster");
+        return ctx -> {
+            int n = ctx.selfDistinctElementCount(inclFwd, inclBkp, inclMon);
+            int boost = perElement * n;
+            ctx.logEntry(source.name() + " gains +" + boost + " power ("
+                    + perElement + "×" + n + " different Element(s) among " + type + "s you control) until end of turn");
+            ctx.boostSourceForward(source, boost, EnumSet.noneOf(CardData.Trait.class));
+        };
+    }
+
     /** "Characters"/"Forwards" → the singular form the counting primitives take. */
     private static String normalizeCountedType(String raw) {
         String t = raw.trim().toLowerCase(Locale.ROOT).replaceAll("s$", "");

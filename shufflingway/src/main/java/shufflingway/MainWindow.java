@@ -6210,8 +6210,16 @@ public class MainWindow {
 	 * Any count (including 0) is valid. Returns the selected cards.
 	 * Hint text communicates the thresholds: 0 → source breaks; minForBonus+ → bonus effect.
 	 */
+	/** The conditional shape — revealing none breaks the source, {@code minForBonus} buys the extra effect. */
 	List<CardData> showRevealSummonsFromHandDialog(List<CardData> summons, String sourceName, int minForBonus) {
-		return cardPickerDialog.pickRevealSummons(summons, sourceName, minForBonus);
+		return cardPickerDialog.pickRevealSummons(summons, sourceName,
+				"Reveal 0 : " + sourceName + " breaks. Reveal " + minForBonus + "+ : bonus effect.",
+				"Reveal 0 (" + sourceName + " breaks)");
+	}
+
+	/** The scaled shape — the number revealed is how many targets the follow-up effect gets. */
+	List<CardData> showRevealSummonsFromHandDialog(List<CardData> summons, String sourceName, String hint) {
+		return cardPickerDialog.pickRevealSummons(summons, sourceName, hint, "Reveal 0 (no effect)");
 	}
 
 	// -------------------------------------------------------------------------

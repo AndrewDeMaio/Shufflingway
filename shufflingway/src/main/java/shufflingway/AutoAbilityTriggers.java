@@ -798,6 +798,27 @@ final class AutoAbilityTriggers {
 		Pattern.DOTALL
 	);
 
+	/**
+	 * Matches "reveal any number of Summons from your hand. When you do so, [effect]" where the
+	 * effect counts "up to the same number of [Type] as the Summons you revealed" — 15-037L Terra.
+	 *
+	 * <p>Sibling of {@link #FA_REVEAL_SUMMONS_CONDITIONAL} and mutually exclusive with it: that one
+	 * branches on how many were revealed, this one uses the number itself as the target count.
+	 * Group {@code effect} is the whole follow-up sentence, {@code type} the counted noun.
+	 */
+	private static final Pattern FA_REVEAL_SUMMONS_SAME_NUMBER = Pattern.compile(
+		"(?i)^reveal\\s+any\\s+number\\s+of\\s+Summons?\\s+from\\s+your\\s+hand[.,]?\\s+" +
+		"When\\s+you\\s+do\\s+so,?\\s+(?<effect>.*?up\\s+to\\s+the\\s+same\\s+number\\s+of\\s+" +
+		"(?<type>Forwards?|Backups?|Monsters?|Characters?)\\s+as\\s+the\\s+Summons?\\s+you\\s+revealed.*)$",
+		Pattern.DOTALL
+	);
+
+	/** The clause {@link #FA_REVEAL_SUMMONS_SAME_NUMBER} rewrites once the count is known. */
+	private static final Pattern SAME_NUMBER_AS_REVEALED = Pattern.compile(
+		"(?i)the\\s+same\\s+number\\s+of\\s+(?<type>Forwards?|Backups?|Monsters?|Characters?)" +
+		"\\s+as\\s+the\\s+Summons?\\s+you\\s+revealed"
+	);
+
 	/** Matches "pay 《cost》[.] When/If you do so, sub-effect[. The maximum you can pay for 《X》 is N]". */
 	private static final Pattern FA_PAY_WHEN_DO_SO = Pattern.compile(
 		"(?i)^pay\\s+《([^》]+)》[.,]?\\s+(?:When|If)\\s+you\\s+do\\s+so[,.]?\\s+(.+?)(?:[.,]?\\s+The\\s+maximum\\s+you\\s+can\\s+pay\\s+for\\s+《X》\\s+is\\s+\\d+\\.?)?$",
@@ -2344,6 +2365,13 @@ final class AutoAbilityTriggers {
 			return;
 		}
 
+		// Detect "reveal any number of Summons from your hand. When you do so, [effect on up to the same number of Characters]."
+		Matcher rvlSameM = FA_REVEAL_SUMMONS_SAME_NUMBER.matcher(fa.effectText());
+		if (rvlSameM.find()) {
+			executeRevealSummonsSameNumberAutoAbility(fa, source, isP1, effectIsP1, rvlSameM);
+			return;
+		}
+
 		// Detect "select the following actions from top to bottom up to the same number of Elements other than X as the cost you paid to cast [CardName]."
 		Matcher dynM = FA_SELECT_FOLLOWING_ACTIONS_DYNAMIC_ELEMENTS.matcher(fa.effectText());
 		if (dynM.find()) {
@@ -2687,6 +2715,73 @@ final class AutoAbilityTriggers {
 		} else {
 			mw.logEntry("[AutoAbility] " + source.name() + " — revealed " + count + " Summon(s), no additional effect");
 		}
+	}
+
+	/**
+	 * Writes the revealed count into the follow-up sentence: "up to the same number of Characters
+	 * as the Summons you revealed" becomes "up to 2 Characters", which the resolver already reads.
+	 */
+	static String withRevealedCount(String effectText, int count) {
+		return SAME_NUMBER_AS_REVEALED.matcher(effectText).replaceAll(count + " ${type}");
+	}
+
+	/**
+	 * 15-037L Terra: reveal any number of Summons from hand, then run a follow-up effect on up to
+	 * that many Characters.
+	 *
+	 * <p>The count is only known once the reveal is done, so the follow-up is written back into its
+	 * own sentence — "up to the same number of Characters as the Summons you revealed" becomes
+	 * "up to N Characters" — and handed to the resolver, which already reads that shape. Revealing
+	 * nothing means "when you do so" never happened, so no follow-up runs at all.
+	 */
+	private void executeRevealSummonsSameNumberAutoAbility(AutoAbility fa, CardData source,
+			boolean isP1, boolean effectIsP1, Matcher m) {
+		String effectText = m.group("effect").trim();
+
+		List<CardData> hand = effectIsP1 ? mw.gameState.getP1Hand() : mw.gameState.getP2Hand();
+		List<CardData> summonsInHand = new ArrayList<>();
+		for (CardData c : hand) if (c.isSummon()) summonsInHand.add(c);
+
+		boolean p1GetsDialog = (fa.youMay() && isP1) || (fa.opponentMay() && !isP1);
+		List<CardData> revealed;
+
+		if (summonsInHand.isEmpty()) {
+			mw.logEntry("[AutoAbility] " + source.name() + " — no Summons in hand, reveals 0");
+			return;
+		}
+		if (p1GetsDialog) {
+			String prompt = (fa.youMay() ? "You may: " : "Your opponent may: ") + fa.effectText();
+			int choice = mw.showEffectOptionDialog(source.name() + " — " + prompt,
+					"Auto Ability", new Object[]{"Reveal...", "Decline"});
+			if (choice != 0) {
+				mw.logEntry("[AutoAbility] " + source.name() + " — optional effect declined");
+				return;
+			}
+			revealed = mw.showRevealSummonsFromHandDialog(summonsInHand, source.name(),
+					"Reveal any number — you then get that many targets.");
+		} else {
+			// The AI reveals everything it can: the count is the target count, and a revealed
+			// Summon stays in hand, so there is nothing to weigh against taking the maximum.
+			revealed = new ArrayList<>(summonsInHand);
+			StringBuilder names = new StringBuilder();
+			for (CardData c : revealed) names.append(names.length() == 0 ? "" : ", ").append(c.name());
+			mw.logEntry("[AutoAbility] [AI] " + source.name() + " — reveals " + revealed.size()
+					+ " Summon(s): " + names);
+		}
+
+		int count = revealed.size();
+		if (count == 0) {
+			mw.logEntry("[AutoAbility] " + source.name() + " — revealed 0 Summons, no effect");
+			return;
+		}
+		String resolved = withRevealedCount(effectText, count);
+		Consumer<GameContext> fn = ActionResolver.parse(resolved, source);
+		if (fn == null) {
+			mw.logEntry("[AutoAbility] Unrecognized reveal-scaled effect: " + resolved);
+			return;
+		}
+		mw.logEntry("[AutoAbility] " + source.name() + " — revealed " + count + " Summon(s) → " + resolved);
+		fn.accept(mw.buildGameContext(effectIsP1));
 	}
 
 	private void executePayWhenDoSoAutoAbility(AutoAbility fa, CardData source, boolean isP1,

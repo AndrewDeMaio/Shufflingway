@@ -3020,19 +3020,22 @@ final class ActionResolverChoose {
             };
         }
 
-        // --- Power boost for each [element] [type] you control (must precede plain UNTIL boost) ---
+        // --- Power boost for each [element | Category X] [type] you control (must precede plain UNTIL boost) ---
         Matcher boostForEachM = FOLLOWUP_POWER_BOOST_UNTIL_FOR_EACH.matcher(primaryFollowup);
         if (boostForEachM.find()) {
-            boolean untilPrefix = boostForEachM.group(1) != null;
-            int    perUnit    = Integer.parseInt(untilPrefix ? boostForEachM.group(1) : boostForEachM.group(4));
-            String srcElem    = untilPrefix ? boostForEachM.group("element") : boostForEachM.group("element2");
-            String srcType    = (untilPrefix ? boostForEachM.group("chartype") : boostForEachM.group("chartype2")).toLowerCase();
+            boolean untilPrefix = boostForEachM.group("amount") != null;
+            int    perUnit    = Integer.parseInt(untilPrefix ? boostForEachM.group("amount") : boostForEachM.group("amount2"));
+            String srcElem    = untilPrefix ? boostForEachM.group("element")  : boostForEachM.group("element2");
+            String srcCat     = untilPrefix ? boostForEachM.group("category") : boostForEachM.group("category2");
+            String srcTypeRaw = untilPrefix ? boostForEachM.group("chartype") : boostForEachM.group("chartype2");
+            String srcType    = srcTypeRaw.toLowerCase();
             boolean cntFwd    = srcType.startsWith("forward") || srcType.startsWith("character");
             boolean cntBkp    = srcType.startsWith("backup")  || srcType.startsWith("character");
             boolean cntMon    = srcType.startsWith("monster")  || srcType.startsWith("character");
-            String logSuffix  = " +" + perUnit + "×[" + (srcElem != null ? srcElem + " " : "") + boostForEachM.group("chartype") + " you control] until EOT";
+            String logSuffix  = " +" + perUnit + "×[" + (srcElem != null ? srcElem + " " : "")
+                              + (srcCat != null ? "Category " + srcCat + " " : "") + srcTypeRaw + " you control] until EOT";
             return ctx -> {
-                int n      = ctx.countSelfFieldCards(cntFwd, cntBkp, cntMon, null, null, null, srcElem);
+                int n      = ctx.countSelfFieldCards(cntFwd, cntBkp, cntMon, null, null, srcCat, srcElem);
                 int boost  = perUnit * n;
                 ctx.logEntry(choosePrefix + logSuffix + " (n=" + n + ", boost=" + boost + ")");
                 List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,

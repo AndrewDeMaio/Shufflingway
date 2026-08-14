@@ -1574,6 +1574,10 @@ final class ActionResolverPatterns {
             "(?:\\s+in\\s+any\\s+order)?" +
         "|" +
             "(?<resthand>and\\s+add\\s+the\\s+other\\s+cards?\\s+to\\s+your\\s+hand)" +
+        "|" +
+            // 15-130H Nox Suzaku. "the rest of the cards" rather than "the other cards" — the
+            // only wording this disposal is printed with, so it is not shared with the two above.
+            "(?<restbz>and\\s+put\\s+the\\s+rest\\s+of\\s+the\\s+cards?\\s+into\\s+the\\s+Break\\s+Zone)" +
         ")[.!]?\\s*$"
     );
     /** Matches "Put it at the top or bottom of its owner's deck." — player chooses placement. Also handles "Your opponent puts it…" */
@@ -2918,6 +2922,33 @@ final class ActionResolverPatterns {
         "\\s+that\\s+don.t\\s+share\\s+[Ee]lements,?\\s+and\\s+add\\s+them\\s+to\\s+your\\s+hand[.!]?"
     );
     /**
+     * Matches "Search for up to 1 [half] and up to 1 [half] and play them onto the field", where
+     * each half is either a card name or a type with an exact cost:
+     * <ul>
+     *   <li>"up to 1 Monster of cost 1 and up to 1 Monster of cost 2" — 11-124H Relm</li>
+     *   <li>"up to 1 Card Name Kukki-Chebukki and up to 1 Card Name Makki-Chebukki" — 19-109H
+     *       Cherukiki</li>
+     * </ul>
+     *
+     * <p>Two searches of one deck in one sentence. Cannot go through {@link #SEARCH_DECK_PATTERN}:
+     * that one describes a single pool, and on the name form it does something worse than dropping
+     * the second half — its lazy name group runs straight through the conjunction and searches for
+     * a card called "Kukki-Chebukki and up to 1 Card Name Makki-Chebukki", which matches nothing.
+     *
+     * <p>Groups per half: {@code name1} or ({@code type1}, {@code cost1}), and likewise for 2. The
+     * halves are read independently rather than assumed alike — nothing in the phrasing pairs them,
+     * and both printings happen to use the same form on both sides only by chance.
+     */
+    static final Pattern DUAL_SEARCH_PLAY_ONTO_FIELD = Pattern.compile(
+        "(?i)^(?:you\\s+may\\s+)?search\\s+for\\s+up\\s+to\\s+1\\s+" +
+        "(?:Card\\s+Name\\s+(?<name1>.+?)" +
+            "|(?<type1>Forwards?|Backups?|Monsters?|Characters?|Summons?)\\s+of\\s+cost\\s+(?<cost1>\\d+))" +
+        "\\s+and\\s+up\\s+to\\s+1\\s+" +
+        "(?:Card\\s+Name\\s+(?<name2>.+?)" +
+            "|(?<type2>Forwards?|Backups?|Monsters?|Characters?|Summons?)\\s+of\\s+cost\\s+(?<cost2>\\d+))" +
+        "\\s+and\\s+play\\s+them\\s+onto\\s+(?:the\\s+)?field[.!]?\\s*$"
+    );
+    /**
      * Matches "Search for 2 [Element] Characters, 2 Category [X] Characters, or 1 of each,
      * each with a different cost, and add them to your hand."
      * Groups: {@code element}, {@code category}.
@@ -3225,8 +3256,7 @@ final class ActionResolverPatterns {
      * </ul>
      *
      * <p>The self-targeted twin of {@link #FOLLOWUP_POWER_BOOST_UNTIL_FOR_EACH}, which handles the
-     * same counting clause when it lands on a chosen Forward instead of the source. Distinct from
-     * that one in also admitting a Category qualifier, which the followup form still lacks.
+     * same counting clause when it lands on a chosen Forward instead of the source.
      *
      * <p>{@code subject} is checked against the source card by the parser, which is what keeps this
      * off a text naming some other card. Groups are doubled because a named group may not repeat
@@ -3243,6 +3273,30 @@ final class ActionResolverPatterns {
             "^(?<subject2>[^.,]+?)\\s+gains?\\s+\\+(?<amount2>\\d+)\\s+[Pp]ower\\s+for\\s+each\\s+" +
             "(?:(?<element2>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?" +
             "(?:Category\\s+(?<category2>\\S+)\\s+)?" +
+            "(?<chartype2>Forwards?|Backups?|Monsters?|Characters?)\\s+you\\s+control" +
+            "\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn[.!]?\\s*$" +
+        ")"
+    );
+    /**
+     * Matches the self-targeted "gains +N power for each different Element among [Type] you control"
+     * boost in either word order — 16-002H Ace.
+     *
+     * <p>Sibling of {@link #SELF_POWER_BOOST_FOR_EACH_CONTROLLED}, but the multiplier is a count of
+     * distinct Elements rather than of cards, so it reads a different counting primitive. The two
+     * are mutually exclusive: that one needs the counted type to follow "for each" directly.
+     *
+     * <p>Groups are doubled for the same reason as its sibling — a named group may not repeat
+     * across alternatives; the {@code 2}-suffixed set belongs to the trailing-duration order.
+     */
+    static final Pattern SELF_POWER_BOOST_FOR_EACH_DISTINCT_ELEMENT = Pattern.compile(
+        "(?i)(?:" +
+            "^Until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn,?\\s+" +
+            "(?<subject>[^.,]+?)\\s+gains?\\s+\\+(?<amount>\\d+)\\s+[Pp]ower\\s+for\\s+each\\s+" +
+            "different\\s+Elements?\\s+among\\s+" +
+            "(?<chartype>Forwards?|Backups?|Monsters?|Characters?)\\s+you\\s+control[.!]?\\s*$" +
+        "|" +
+            "^(?<subject2>[^.,]+?)\\s+gains?\\s+\\+(?<amount2>\\d+)\\s+[Pp]ower\\s+for\\s+each\\s+" +
+            "different\\s+Elements?\\s+among\\s+" +
             "(?<chartype2>Forwards?|Backups?|Monsters?|Characters?)\\s+you\\s+control" +
             "\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn[.!]?\\s*$" +
         ")"
@@ -3396,22 +3450,31 @@ final class ActionResolverPatterns {
         "\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:(?:the|your)\\s+)?turn"
     );
     /**
-     * Matches either word order of the "gains +N power for each [Element] [Type] you control" followup:
+     * Matches either word order of the "gains +N power for each [Element | Category X] [Type] you
+     * control" followup:
      * <ul>
      *   <li>"Until end of turn, it gains +N power for each [Element] Type you control."</li>
-     *   <li>"It gains +N power for each [Element] Type you control until end of turn."</li>
+     *   <li>"It gains +N power for each Category VI Character you control until end of turn." —
+     *       19-089H Gau</li>
      * </ul>
-     * Groups: 1 = per-unit amount, {@code element} = optional element, {@code chartype} = card type.
+     * Groups: {@code amount} = per-unit amount, {@code element} = optional element,
+     * {@code category} = optional category, {@code chartype} = card type. Groups are doubled
+     * because a named group may not repeat across alternatives: the {@code 2}-suffixed set belongs
+     * to the trailing-duration order.
+     *
+     * <p>Kept in step with {@link #SELF_POWER_BOOST_FOR_EACH_CONTROLLED}, the self-targeted twin.
      */
     static final Pattern FOLLOWUP_POWER_BOOST_UNTIL_FOR_EACH = Pattern.compile(
         "(?i)(?:" +
             "Until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn\\s*,\\s+" +
-            "(?:it|they)\\s+gains?\\s+\\+(\\d+)\\s+[Pp]ower\\s+for\\s+each\\s+" +
+            "(?:it|they)\\s+gains?\\s+\\+(?<amount>\\d+)\\s+[Pp]ower\\s+for\\s+each\\s+" +
             "(?:(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?" +
+            "(?:Category\\s+(?<category>\\S+)\\s+)?" +
             "(?<chartype>Forwards?|Backups?|Monsters?|Characters?)\\s+you\\s+control" +
         "|" +
-            "(?:it|they)\\s+gains?\\s+\\+(\\d+)\\s+[Pp]ower\\s+for\\s+each\\s+" +
+            "(?:it|they)\\s+gains?\\s+\\+(?<amount2>\\d+)\\s+[Pp]ower\\s+for\\s+each\\s+" +
             "(?:(?<element2>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?" +
+            "(?:Category\\s+(?<category2>\\S+)\\s+)?" +
             "(?<chartype2>Forwards?|Backups?|Monsters?|Characters?)\\s+you\\s+control" +
             "\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn" +
         ")[.!]?"

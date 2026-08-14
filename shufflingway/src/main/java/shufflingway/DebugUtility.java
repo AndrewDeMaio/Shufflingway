@@ -6,7 +6,8 @@ import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Graphics2D;
-import java.awt.GridLayout;
+import java.awt.GridBagConstraints;
+import java.awt.GridBagLayout;
 import java.awt.Insets;
 import java.awt.RenderingHints;
 import java.awt.event.FocusAdapter;
@@ -18,16 +19,19 @@ import java.util.List;
 import javax.swing.Icon;
 import javax.swing.ImageIcon;
 import javax.swing.JButton;
+import javax.swing.JComponent;
 import javax.swing.JDialog;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
+import javax.swing.JSeparator;
 import javax.swing.JSpinner;
 import javax.swing.JTable;
 import javax.swing.JTextField;
 import javax.swing.ListSelectionModel;
 import javax.swing.SpinnerNumberModel;
+import javax.swing.SwingConstants;
 import javax.swing.table.DefaultTableModel;
 
 import shufflingway.dialog.DebugCardPickerDialog;
@@ -275,6 +279,33 @@ class DebugUtility {
         return new ImageIcon(img);
     }
 
+    /** One "label: control" row of {@link #setDamageAndCrystals}'s form, at {@code row}. */
+    private static void addDialogRow(JPanel panel, int row, String label, JComponent field) {
+        GridBagConstraints c = new GridBagConstraints();
+        c.gridx = 0;
+        c.gridy = row;
+        c.anchor = GridBagConstraints.LINE_START;
+        c.insets = new Insets(2, 0, 2, 8);
+        panel.add(new JLabel(label), c);
+
+        c.gridx  = 1;
+        c.insets = new Insets(2, 0, 2, 0);
+        c.fill    = GridBagConstraints.HORIZONTAL;
+        c.weightx = 1;
+        panel.add(field, c);
+    }
+
+    /** A rule across both columns, separating one group of rows from the next. */
+    private static void addSeparatorRow(JPanel panel, int row) {
+        GridBagConstraints c = new GridBagConstraints();
+        c.gridx     = 0;
+        c.gridy     = row;
+        c.gridwidth = 2;
+        c.fill      = GridBagConstraints.HORIZONTAL;
+        c.insets    = new Insets(8, 0, 8, 0);
+        panel.add(new JSeparator(SwingConstants.HORIZONTAL), c);
+    }
+
     /**
      * Sets both players' damage counts and Crystal counts directly.
      *
@@ -326,17 +357,18 @@ class DebugUtility {
             }
         });
 
-        JPanel panel = new JPanel(new GridLayout(5, 2, 8, 4));
-        panel.add(new JLabel("P1 Damage (current: " + cur1 + "):"));
-        panel.add(p1Row);
-        panel.add(new JLabel("P2 Damage (current: " + cur2 + "):"));
-        panel.add(p2Row);
-        panel.add(new JLabel("P1 Crystals (current: " + curC1 + "):"));
-        panel.add(p1Crystals);
-        panel.add(new JLabel("P2 Crystals (current: " + curC2 + "):"));
-        panel.add(p2Crystals);
-        panel.add(new JLabel("Card serial (for additions):"));
-        panel.add(serialField);
+        // The serial belongs with the damage rows — it is the card the added damage is dealt with,
+        // and it is read only when a damage count goes up. The rule separates it from the Crystal
+        // rows, which nothing above them feeds. GridBag rather than GridLayout so the separator can
+        // span both columns while the labels stay in one aligned column.
+        JPanel panel = new JPanel(new GridBagLayout());
+        int row = 0;
+        addDialogRow(panel, row++, "P1 Damage (current: " + cur1 + "):", p1Row);
+        addDialogRow(panel, row++, "P2 Damage (current: " + cur2 + "):", p2Row);
+        addDialogRow(panel, row++, "Card serial (for additions):", serialField);
+        addSeparatorRow(panel, row++);
+        addDialogRow(panel, row++, "P1 Crystals (current: " + curC1 + "):", p1Crystals);
+        addDialogRow(panel, row,   "P2 Crystals (current: " + curC2 + "):", p2Crystals);
 
         int result = JOptionPane.showConfirmDialog(mw.frame, panel, "Set Damage/Crystals",
                 JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
