@@ -15696,4 +15696,332 @@ public class CardBehaviorTest {
 		assertEquals(5000, mw.p1ForwardDamage.get(0), "the blocker still takes it");
 		assertEquals(0, mw.p1ForwardDamage.get(1));
 	}
+
+	// =========================================================================================
+	// "When [subject] is priming" — Dion 24-109R, Barnabas (XVI) 24-113R, Anabella 26-021C,
+	// Vivian 26-084H, Cidolfus 29-085R.
+	//
+	// Board behaviour. AUTO_ABILITY_PATTERN's trigger list is closed, and "is priming" was not on
+	// it, so none of these five produced an AutoAbility at all — the text fell through parsing
+	// silently and nothing fired. Priming also never touches the Stack, so the dispatch has to be
+	// called from the two sites where a prime completes, alongside the "primed into" one that
+	// watches the far end of the same act.
+	// =========================================================================================
+
+	private static final String DION_24_109R_TEXT =
+			"Brave[[br]]Priming \"Bahamut (XVI)\" -- 《3》[[br]]"
+			+ "When Dion or a Character you control is priming, draw 1 card.";
+
+	/** 26-084H Vivian's watcher clause — a pure filter over the controller's Characters. */
+	private static final String VIVIAN_PRIMING_TEXT =
+			"When a Character you control is priming, draw 1 card.";
+
+	/** Gives P1 a deck to draw off and an empty hand to count into. */
+	private static MainWindow boardWithDrawableDeck() {
+		MainWindow mw = new MainWindow();
+		mw.gameState.initializeDeck(List.of(
+				makeForward("Deck A", "Water", 2, 5000),
+				makeForward("Deck B", "Water", 2, 5000)), List.of());
+		mw.gameState.getP1Hand().clear();
+		mw.gameState.getP2Hand().clear();
+		return mw;
+	}
+
+	@Test
+	void primingTriggerParsesAsItsOwnTriggerNotAsAnEnterTheField() {
+		List<AutoAbility> abilities = CardData.parseAutoAbilities(DION_24_109R_TEXT);
+		AutoAbility fa = abilities.stream()
+				.filter(a -> a.trigger().equals("is priming")).findFirst()
+				.orElseThrow(() -> new AssertionError("no is-priming ability parsed from Dion's text"));
+		assertEquals("Dion or a Character you control", fa.triggerCard(),
+				"the whole disjunction is the subject, resolved at dispatch time");
+		assertEquals("draw 1 card.", fa.effectText());
+		// The unknown-trigger fallback is "enters the field", which is what this used to become
+		// once the trigger clause failed to match anything in the list.
+		assertTrue(abilities.stream().noneMatch(a -> a.trigger().equals("enters the field")),
+				"priming is not an enter-the-field event");
+	}
+
+	@Test
+	void aCardWithAPrimingTriggerDrawsWhenItIsTheOnePriming() {
+		MainWindow mw = boardWithDrawableDeck();
+		CardData dion = makeTraitCard("Dion", "Water", "Forward", DION_24_109R_TEXT);
+		placeP1Forward(mw, dion);
+
+		mw.autoAbilityTriggers.triggerAutoAbilitiesForPriming(dion, true);
+
+		assertEquals(1, mw.gameState.getP1Hand().size(),
+				"Dion names itself in the subject, so its own prime fires it");
+	}
+
+	@Test
+	void aPrimedCardIsStillTheOneWatchingItsOwnPrime() {
+		// The prime sites set the top card before dispatching, so the slot walk reports the Eikon
+		// where Dion sits. Dion's ability was live at the instant it paid and must still fire.
+		MainWindow mw = boardWithDrawableDeck();
+		CardData dion = makeTraitCard("Dion", "Water", "Forward", DION_24_109R_TEXT);
+		placeP1Forward(mw, dion);
+		mw.p1ForwardPrimedTop.set(0, makeForward("Bahamut (XVI)", "Water", 5, 9000));
+
+		mw.autoAbilityTriggers.triggerAutoAbilitiesForPriming(dion, true);
+
+		assertEquals(1, mw.gameState.getP1Hand().size());
+	}
+
+	@Test
+	void aFilterSubjectFiresForAnyOfTheControllersCharactersPriming() {
+		MainWindow mw = boardWithDrawableDeck();
+		mw.placeCardInFirstBackupSlot(makeTraitCard("Vivian", "Fire", "Backup", VIVIAN_PRIMING_TEXT));
+		CardData clive = makeForward("Clive", "Fire", 3, 7000);
+		placeP1Forward(mw, clive);
+
+		mw.autoAbilityTriggers.triggerAutoAbilitiesForPriming(clive, true);
+
+		assertEquals(1, mw.gameState.getP1Hand().size(),
+				"\"a Character you control\" is a filter, satisfied by the Forward that primed");
+	}
+
+	@Test
+	void aWatcherDoesNotFireOnTheOpponentsPrime() {
+		MainWindow mw = boardWithDrawableDeck();
+		mw.placeCardInFirstBackupSlot(makeTraitCard("Vivian", "Fire", "Backup", VIVIAN_PRIMING_TEXT));
+		CardData theirs = makeForward("Clive", "Fire", 3, 7000);
+		placeP2Forward(mw, theirs);
+
+		mw.autoAbilityTriggers.triggerAutoAbilitiesForPriming(theirs, false);
+
+		assertEquals(0, mw.gameState.getP1Hand().size(),
+				"the subject is scoped to the watcher's own side");
+	}
+
+	@Test
+	void aSelfNamedPrimingSubjectDoesNotFireForAnotherCardsPrime() {
+		// Every printing pairs the self-name with a filter that subsumes it, so this pins the
+		// identity reading rather than a card: a subject naming the watcher means that copy.
+		MainWindow mw = boardWithDrawableDeck();
+		CardData watcher = makeTraitCard("Dion", "Water", "Forward",
+				"When Dion is priming, draw 1 card.");
+		placeP1Forward(mw, watcher);
+		CardData other = makeForward("Joshua", "Fire", 3, 7000);
+		placeP1Forward(mw, other);
+
+		mw.autoAbilityTriggers.triggerAutoAbilitiesForPriming(other, true);
+		assertEquals(0, mw.gameState.getP1Hand().size(), "a different card primed");
+
+		mw.autoAbilityTriggers.triggerAutoAbilitiesForPriming(watcher, true);
+		assertEquals(1, mw.gameState.getP1Hand().size(), "and this one is the watcher itself");
+	}
+
+	// =========================================================================================
+	// Princess Sarah 28-102R: "When Princess Sarah enters the field, look at the top card of your
+	// deck. You may put it at the bottom of your deck. Then, draw 1 card. Gain 《C》."
+	//
+	// Effect wiring. Two faults stacked. The look/bottom pattern only knew the "place the card"
+	// printing, not this card's "put it"; and GAIN_CRYSTAL matched the final sentence with find(),
+	// claiming the whole ability, so parse() returned a crystal gain and nothing else. The second
+	// fault is general — 28-103C Astrologian loses a deck reorder the same way — so the fix is a
+	// trailing-gain composer mirroring the trailing-draw one, sitting immediately ahead of the
+	// bare crystal parser rather than at the top of the chain, where it would have rerouted the
+	// dozen Choose-then-effect printings that already compose the gain inside their own parser.
+	// =========================================================================================
+
+	private static final String PRINCESS_SARAH_EFFECT =
+			"look at the top card of your deck. You may put it at the bottom of your deck. "
+			+ "Then, draw 1 card. Gain 《C》.";
+
+	@Test
+	void princessSarahLooksDrawsAndGainsInThatOrder() {
+		Consumer<GameContext> fn = ActionResolver.parse(PRINCESS_SARAH_EFFECT, null);
+		assertNotNull(fn);
+
+		GameContext ctx = mock(GameContext.class);
+		fn.accept(ctx);
+
+		ArgumentCaptor<LookConfig> look = ArgumentCaptor.forClass(LookConfig.class);
+		InOrder order = inOrder(ctx);
+		order.verify(ctx).lookAtTopDeck(look.capture());
+		order.verify(ctx).drawCards(1);
+		order.verify(ctx).gainCrystal(1);
+
+		assertEquals(1, look.getValue().count());
+		assertEquals(LookConfig.LookAction.BOTTOM_OR_KEEP, look.getValue().action());
+	}
+
+	@Test
+	void theTrailingGainIsReportedAsACompositeNotAsTheWholeAbility() {
+		assertEquals("LookTopDeckBottomOrKeep + DrawCards + GainCrystal",
+				ActionResolver.matchedPatternName(PRINCESS_SARAH_EFFECT, null));
+		assertEquals("LookTopDeckBottomOrKeep + DrawCards + GainCrystal",
+				ActionResolver.fullDescription(PRINCESS_SARAH_EFFECT, null));
+	}
+
+	@Test
+	void bothPrintingsOfTheLookThenBottomWordingResolveTheSame() {
+		// 1-169C Geomancer and friends print "place the card"; Princess Sarah prints "put it".
+		for (String text : List.of(
+				"Look at the top card of your deck. You may place the card at the bottom of your deck.",
+				"Look at the top card of your deck. You may put it at the bottom of your deck.")) {
+			Consumer<GameContext> fn = ActionResolver.parse(text, null);
+			assertNotNull(fn, text);
+			GameContext ctx = mock(GameContext.class);
+			fn.accept(ctx);
+			verify(ctx).lookAtTopDeck(argThat(
+					c -> c.count() == 1 && c.action() == LookConfig.LookAction.BOTTOM_OR_KEEP));
+		}
+	}
+
+	@Test
+	void astrologianReordersTheTopThreeAndGainsACrystal() {
+		// 28-103C, the other card the trailing-gain composer rescued: same bug, a deck reorder lost
+		// instead of a look-and-draw.
+		String effect = "look at the top 3 cards of your deck. "
+				+ "Return them to the top of your deck in any order. Gain 《C》.";
+		assertEquals("LookTopDeckReturnTopOrdered + GainCrystal",
+				ActionResolver.matchedPatternName(effect, null));
+
+		Consumer<GameContext> fn = ActionResolver.parse(effect, null);
+		assertNotNull(fn);
+		GameContext ctx = mock(GameContext.class);
+		fn.accept(ctx);
+
+		ArgumentCaptor<LookConfig> look = ArgumentCaptor.forClass(LookConfig.class);
+		InOrder order = inOrder(ctx);
+		order.verify(ctx).lookAtTopDeck(look.capture());
+		order.verify(ctx).gainCrystal(1);
+		assertEquals(3, look.getValue().count());
+		assertEquals(LookConfig.LookAction.RETURN_TOP_ORDERED, look.getValue().action());
+	}
+
+	@Test
+	void theComposerDeclinesTextWhereTheGainIsNotItsOwnTrailingSentence() {
+		// The gain must start a sentence of its own at the end of the ability. Anything else is a
+		// single effect with its own parser, and composing it would resolve the leading clause as
+		// though it stood alone — dropping the condition in the first case below.
+		assertNull(ActionResolverCost.tryParseTrailingGainCrystal(
+				"If your opponent has a 《C》, also gain 《C》.", null, 0));
+		assertNull(ActionResolverCost.tryParseTrailingGainCrystal(
+				"Gain 《C》.", null, 0), "no leading effect to compose with");
+		assertNull(ActionResolverCost.tryParseTrailingGainCrystal(
+				"Gain 《C》. Draw 1 card.", null, 0), "the gain is not the trailing sentence");
+	}
+
+	// =========================================================================================
+	// Steiner 4-129L: "When Steiner enters the field, if you have received 3 points of damage or
+	// more, draw 1 card."
+	//
+	// Parsing + board behaviour. The damage gate is written inline after the trigger rather than
+	// as the "Damage 3 --" prefix the parser knows, so the effect text reaching the resolver was
+	// "if you have received 3 points of damage or more, draw 1 card." — which matches nothing, so
+	// the ability never drew at any damage total. The gate is lifted into the same damageThreshold
+	// field the prefix feeds, where executeAutoAbilityImpl already enforces it.
+	// =========================================================================================
+
+	private static final String STEINER_4_129L_TEXT =
+			"When Steiner enters the field, if you have received 3 points of damage or more, draw 1 card."
+			+ "[[br]] Dull 1 active Water Forward other than Steiner: "
+			+ "Steiner gains +1000 power until the end of the turn.";
+
+	@Test
+	void anInlineDamageGateBecomesTheAbilitysThreshold() {
+		AutoAbility fa = CardData.parseAutoAbilities(STEINER_4_129L_TEXT).stream()
+				.filter(a -> a.trigger().equals("enters the field")).findFirst().orElseThrow();
+		assertEquals(3, fa.damageThreshold(), "the condition is the threshold, not part of the effect");
+		assertEquals("draw 1 card.", fa.effectText());
+		assertNotNull(ActionResolver.parse(fa.effectText(), null),
+				"and what is left is an effect the resolver already knows");
+	}
+
+	@Test
+	void steinerDrawsOnlyOnceTheDamageThresholdIsMet() {
+		MainWindow mw = boardWithDrawableDeck();
+		CardData steiner = makeTraitCard("Steiner", "Water", "Forward", STEINER_4_129L_TEXT);
+		placeP1Forward(mw, steiner);
+
+		dealP1Damage(mw, 2);
+		mw.autoAbilityTriggers.triggerAutoAbilitiesForEntersField(steiner, true);
+		assertEquals(0, mw.gameState.getP1Hand().size(), "two damage is under the gate");
+
+		dealP1Damage(mw, 1);
+		mw.autoAbilityTriggers.triggerAutoAbilitiesForEntersField(steiner, true);
+		assertEquals(1, mw.gameState.getP1Hand().size(), "three is \"3 or more\"");
+	}
+
+	@Test
+	void aLaterDamageConditionIsNotMistakenForTheGate() {
+		// The gate is anchored to the head of the effect. A condition further in is qualifying one
+		// clause of a larger effect ("… break it. If you have received 5 …, do X instead."), and
+		// lifting that into a whole-ability threshold would suppress the unconditional part.
+		String trailing = "choose 1 Forward. Break it. "
+				+ "If you have received 5 points of damage or more, draw 1 card.";
+		AutoAbility fa = CardData.parseAutoAbilities(
+				"When Tester enters the field, " + trailing).get(0);
+		assertEquals(0, fa.damageThreshold());
+		assertEquals(trailing, fa.effectText());
+	}
+
+	// =========================================================================================
+	// Noel 19-136S: "When Noel attacks, until the end of the turn, Noel gains +1000 power for each
+	// Category XIII Character you control."
+	//
+	// Effect wiring. The scaling boost existed only in two narrower forms — on a chosen Forward
+	// ("it gains +N power for each [Element] Type you control") and on the source counting Crystals
+	// — so this self-targeted, Category-counted printing matched nothing at all. The new parser is
+	// the self-targeted twin, and must sit ahead of the flat self-boost parsers: they read the same
+	// "<Name> gains +N power … until end of turn" frame and would hand out a flat +1000.
+	// =========================================================================================
+
+	private static final String NOEL_19_136S_EFFECT =
+			"until the end of the turn, Noel gains +1000 power for each Category XIII Character you control.";
+
+	@Test
+	void noelScalesHisBoostByTheCategoryHeCounts() {
+		CardData noel = makeTraitCard("Noel", "Wind", "Forward", NOEL_19_136S_EFFECT);
+		Consumer<GameContext> fn = ActionResolver.parse(NOEL_19_136S_EFFECT, noel);
+		assertNotNull(fn);
+
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.ownFieldCountByCategory("XIII", "Character")).thenReturn(3);
+		fn.accept(ctx);
+
+		verify(ctx).boostSourceForward(eq(noel), eq(3000), argThat(Set::isEmpty));
+	}
+
+	@Test
+	void theMultiplierIsReadWhenTheAbilityResolves() {
+		CardData noel = makeTraitCard("Noel", "Wind", "Forward", NOEL_19_136S_EFFECT);
+		Consumer<GameContext> fn = ActionResolver.parse(NOEL_19_136S_EFFECT, noel);
+
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.ownFieldCountByCategory("XIII", "Character")).thenReturn(0);
+		fn.accept(ctx);
+		verify(ctx).boostSourceForward(eq(noel), eq(0), any());
+
+		// A Character arriving between the trigger and the resolution counts, so the same parsed
+		// consumer must ask again rather than close over the first answer.
+		when(ctx.ownFieldCountByCategory("XIII", "Character")).thenReturn(5);
+		fn.accept(ctx);
+		verify(ctx).boostSourceForward(eq(noel), eq(5000), any());
+	}
+
+	@Test
+	void bothWordOrdersOfTheScalingSelfBoostResolve() {
+		// Noel leads with the duration; the trailing-duration order is the commoner printing.
+		String trailing = "Noel gains +1000 power for each Category XIII Character you control "
+				+ "until the end of the turn.";
+		CardData noel = makeTraitCard("Noel", "Wind", "Forward", trailing);
+		assertEquals("StandaloneSelfBoostForEachControlled",
+				ActionResolver.matchedPatternName(trailing, noel));
+		assertEquals("StandaloneSelfBoostForEachControlled",
+				ActionResolver.matchedPatternName(NOEL_19_136S_EFFECT, noel));
+	}
+
+	@Test
+	void aScalingBoostNamingSomeOtherCardIsNotTheSourcesOwn() {
+		// The subject is checked against the source, which is what stops this claiming a boost
+		// that some other card's text hands out.
+		CardData noel = makeTraitCard("Noel", "Wind", "Forward", NOEL_19_136S_EFFECT);
+		assertNull(ActionResolverPower.tryParseStandaloneSelfBoostForEachControlled(
+				"until the end of the turn, Serah gains +1000 power for each Category XIII Character you control.",
+				noel));
+	}
 }

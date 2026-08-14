@@ -79,6 +79,7 @@ class Priming {
 		mw.logEntry("[P2] Primed: \"" + primingCard.name() + "\" topped with \"" + chosen.name() + "\"");
 		mw.refreshP2ForwardSlot(slotIdx);
 		mw.autoAbilityTriggers.triggerAutoAbilitiesForPrimedInto(primingCard, chosen, false);
+		mw.autoAbilityTriggers.triggerAutoAbilitiesForPriming(primingCard, false);
 	}
 
 	/**
@@ -409,6 +410,7 @@ class Priming {
 		mw.logEntry("Primed: \"" + primingCard.name() + "\" topped with \"" + chosen.name() + "\"");
 		mw.refreshP1ForwardSlot(slotIdx);
 		mw.autoAbilityTriggers.triggerAutoAbilitiesForPrimedInto(primingCard, chosen, true);
+		mw.autoAbilityTriggers.triggerAutoAbilitiesForPriming(primingCard, true);
 	}
 
 	/**

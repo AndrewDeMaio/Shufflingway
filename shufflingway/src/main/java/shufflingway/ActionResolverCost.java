@@ -242,6 +242,53 @@ final class ActionResolverCost {
             ctx.gainCrystal(count);
         };
     }
+    /**
+     * The leading effect of "&lt;effect&gt;. Gain 《C》[《C》…].", or {@code null} if the text is not
+     * that shape. Shared so parse() and both reporting chains split it identically.
+     *
+     * <p>Restrictions are stripped first, for the reason {@link #trailingGainCrystalHead}'s
+     * counterpart {@code trailingDrawHead} strips them: a use-restriction sentence sitting after
+     * the gain would defeat the end-anchor, and restrictions are carried as flags on the ability
+     * rather than executed here.
+     */
+    static String trailingGainCrystalHead(String text) {
+        String matchOn = stripRestrictionSentences(text);
+        if (matchOn.isEmpty()) matchOn = text;
+
+        Matcher m = TRAILING_GAIN_CRYSTAL_SUFFIX.matcher(matchOn.trim());
+        if (!m.find()) return null;
+
+        String head = m.group("head").trim();
+        return head.isEmpty() ? null : head;
+    }
+
+    /**
+     * Composes "&lt;effect&gt;. Gain 《C》[《C》…]." from the leading effect plus the crystal gain.
+     *
+     * <p>Recurses through {@code parse()} for the head, so the leading effect resolves exactly as
+     * it does on its own and this only ever adds the crystals. Returns {@code null} when the head
+     * does not parse, leaving such texts to the existing chain rather than half-resolving them.
+     */
+    static Consumer<GameContext> tryParseTrailingGainCrystal(String text, CardData source, int xValue) {
+        String head = trailingGainCrystalHead(text);
+        if (head == null) return null;
+
+        String matchOn = stripRestrictionSentences(text);
+        if (matchOn.isEmpty()) matchOn = text;
+        Matcher m = TRAILING_GAIN_CRYSTAL_SUFFIX.matcher(matchOn.trim());
+        if (!m.find()) return null;
+
+        Consumer<GameContext> headEffect = parse(head, source, xValue);
+        if (headEffect == null) return null;
+
+        int count = m.group("crystals").length() / "《C》".length();
+        return ctx -> {
+            headEffect.accept(ctx);
+            ctx.logEntry("Effect: Gain " + count + " Crystal(s)");
+            ctx.gainCrystal(count);
+        };
+    }
+
     static Consumer<GameContext> tryParseGainCrystalIfOpponentHas(String text) {
         if (!GAIN_CRYSTAL_IF_OPPONENT_HAS.matcher(text).find()) return null;
         return ctx -> {

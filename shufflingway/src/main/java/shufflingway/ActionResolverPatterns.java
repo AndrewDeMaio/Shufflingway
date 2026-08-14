@@ -3216,6 +3216,38 @@ final class ActionResolverPatterns {
         "\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn[.!]?"
     );
     /**
+     * Matches the self-targeted "gains +N power for each [Element | Category X] [Type] you control"
+     * boost in either word order:
+     * <ul>
+     *   <li>"Until the end of the turn, [Name] gains +N power for each Category XIII Character you
+     *       control." — 19-136S Noel</li>
+     *   <li>"[Name] gains +N power for each Earth Backup you control until the end of the turn."</li>
+     * </ul>
+     *
+     * <p>The self-targeted twin of {@link #FOLLOWUP_POWER_BOOST_UNTIL_FOR_EACH}, which handles the
+     * same counting clause when it lands on a chosen Forward instead of the source. Distinct from
+     * that one in also admitting a Category qualifier, which the followup form still lacks.
+     *
+     * <p>{@code subject} is checked against the source card by the parser, which is what keeps this
+     * off a text naming some other card. Groups are doubled because a named group may not repeat
+     * across alternatives: the {@code 2}-suffixed set belongs to the trailing-duration order.
+     */
+    static final Pattern SELF_POWER_BOOST_FOR_EACH_CONTROLLED = Pattern.compile(
+        "(?i)(?:" +
+            "^Until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn,?\\s+" +
+            "(?<subject>[^.,]+?)\\s+gains?\\s+\\+(?<amount>\\d+)\\s+[Pp]ower\\s+for\\s+each\\s+" +
+            "(?:(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?" +
+            "(?:Category\\s+(?<category>\\S+)\\s+)?" +
+            "(?<chartype>Forwards?|Backups?|Monsters?|Characters?)\\s+you\\s+control[.!]?\\s*$" +
+        "|" +
+            "^(?<subject2>[^.,]+?)\\s+gains?\\s+\\+(?<amount2>\\d+)\\s+[Pp]ower\\s+for\\s+each\\s+" +
+            "(?:(?<element2>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?" +
+            "(?:Category\\s+(?<category2>\\S+)\\s+)?" +
+            "(?<chartype2>Forwards?|Backups?|Monsters?|Characters?)\\s+you\\s+control" +
+            "\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn[.!]?\\s*$" +
+        ")"
+    );
+    /**
      * Matches "[subject] gains +N power until the end of the turn and activate [activateName]."
      * Groups: {@code subject}, {@code amount}, {@code activateName}.
      */
@@ -3969,10 +4001,14 @@ final class ActionResolverPatterns {
     );
     /**
      * Matches "Look at the top card of your deck. You may place the card at the bottom of your deck."
+     *
+     * <p>28-102R Princess Sarah prints the second sentence as "You may put it at the bottom of your
+     * deck", so both verbs and the pronoun object are admitted. The two readings are the same
+     * effect — the card either goes to the bottom or stays where it is.
      */
     static final Pattern LOOK_TOP_DECK_BOTTOM_OR_KEEP = Pattern.compile(
         "(?i)Look\\s+at\\s+the\\s+top\\s+card\\s+of\\s+your\\s+deck[.!]?\\s*" +
-        "You\\s+may\\s+place\\s+(?:the\\s+)?card\\s+at\\s+the\\s+bottom\\s+of\\s+your\\s+deck[.!]?"
+        "You\\s+may\\s+(?:place|put)\\s+(?:the\\s+card|it)\\s+at\\s+the\\s+bottom\\s+of\\s+your\\s+deck[.!]?"
     );
     /**
      * Matches "Look at the top N cards of your deck. Return them to the top of your deck in any order."
@@ -4389,6 +4425,26 @@ final class ActionResolverPatterns {
     );
     static final Pattern TRAILING_DRAW_SUFFIX = Pattern.compile(
         "(?is)^(?<head>.*[.!])\\s+(?:Then,?\\s+)?(?<draw>draw\\s+\\d+\\s+cards?)[.!]?\\s*$"
+    );
+    /**
+     * An ability ending in a standalone "Gain 《C》[《C》…]." sentence, split into the leading effect
+     * ({@code head}) and the crystals ({@code crystals}).
+     *
+     * <p>The same shape as {@link #TRAILING_DRAW_SUFFIX} and it exists for the same reason: the
+     * crystal gain is a separate sentence appended to a complete effect, and whichever of the two
+     * a pattern happens to match claims the whole ability under {@code find()}. 28-102R Princess
+     * Sarah — "look at the top card of your deck. You may put it at the bottom of your deck. Then,
+     * draw 1 card. Gain 《C》." — gained the crystal and did nothing else, because GAIN_CRYSTAL
+     * matched the last sentence and parse() returned.
+     *
+     * <p>{@code head} is greedy, so the split is taken at the last sentence boundary and the head
+     * may itself carry a trailing draw — the two composers nest. The gain is anchored to the end
+     * and must start its own sentence, which keeps this off the mid-sentence conditional form
+     * ("If your opponent has a 《C》, also gain 《C》.") that {@link #GAIN_CRYSTAL_IF_OPPONENT_HAS}
+     * owns.
+     */
+    static final Pattern TRAILING_GAIN_CRYSTAL_SUFFIX = Pattern.compile(
+        "(?is)^(?<head>.*[.!])\\s+Gain\\s+(?<crystals>(?:《C》)+)[.!]?\\s*$"
     );
     static final Pattern DRAW_CARDS = Pattern.compile(
         "(?i)^Draw\\s+(\\d+)\\s+cards?(?:\\s*[,.]?\\s*then\\s+discard\\s+(\\d+)\\s+cards?)?[.!]?"

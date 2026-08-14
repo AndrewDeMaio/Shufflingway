@@ -670,6 +670,12 @@ public class ActionResolver {
         result = tryParseStandaloneSelfBoostForEachCrystal(effectText, source);
         if (result != null) return result;
 
+        // Must precede tryParseSelfBoostEotPrefix and tryParseStandaloneSelfBoost below: both read
+        // the same "<Name> gains +N power … until end of turn" frame and would hand out a flat
+        // boost, dropping the "for each …" multiplier that is the whole effect.
+        result = tryParseStandaloneSelfBoostForEachControlled(effectText, source);
+        if (result != null) return result;
+
         result = tryParseStandaloneItPowerBoostUntil(effectText, source);
         if (result != null) return result;
 
@@ -1061,6 +1067,16 @@ public class ActionResolver {
         if (result != null) return result;
 
         result = tryParseExtraTurnThenLose(effectText);
+        if (result != null) return result;
+
+        // Must precede tryParseGainCrystal: a trailing "Gain 《C》." sentence rides along behind a
+        // complete effect, and the bare parser matches it with find() and claims the whole ability,
+        // dropping everything in front of it (28-102R Princess Sarah gained the crystal and neither
+        // looked nor drew). Deliberately here rather than at the top of the chain next to
+        // tryParseTrailingDraw: most of this family — the Choose-then-effect printings — already
+        // composes the gain inside its own parser, and hoisting this above them would reroute a
+        // dozen working abilities through a different code path to reach the same result.
+        result = tryParseTrailingGainCrystal(effectText, source, xValue);
         if (result != null) return result;
 
         result = tryParseGainCrystal(effectText);
@@ -1486,6 +1502,8 @@ public class ActionResolver {
         if (tryParseChooseForwardDoubleNextOutgoing(effectText) != null)        return "ChooseForwardDoubleNextOutgoing";
         if (tryParseDoublePlayerAbilityOutgoingThisTurn(effectText) != null)   return "DoublePlayerAbilityOutgoingThisTurn";
         if (tryParseStandaloneSelfBoostForEachCrystal(effectText, source) != null) return "StandaloneSelfBoostForEachCrystal";
+        // Mirrors parse(): ahead of the two flat self-boost parsers, which share its frame.
+        if (tryParseStandaloneSelfBoostForEachControlled(effectText, source) != null) return "StandaloneSelfBoostForEachControlled";
         if (tryParseIfHandSizeSelfBoost(effectText, source)               != null) return "IfHandSizeSelfBoost";
         if (tryParseSelfBoostEotPrefix(effectText, source)    != null) return "SelfBoostUntilEot";
         if (tryParseSelfAttacksPerOwnDamage(effectText, source) != null) return "SelfAttacksPerOwnDamage";
@@ -1623,6 +1641,15 @@ public class ActionResolver {
         if (AutoAbilityTriggers.FA_DISCARD_JOB_TO_CAST.matcher(effectText).find()) return "DiscardJobToCast";
         if (tryParseExtraTurnThenLose(effectText)               != null) return "ExtraTurnThenLose";
         if (tryParseGainCrystalPerX(effectText, 0)               != null) return "GainCrystalPerX";
+        // Mirrors parse()'s position for this guard; composite so the leading effect still names
+        // itself rather than being hidden behind a bare "GainCrystal" label.
+        if (tryParseTrailingGainCrystal(effectText, source, 0)   != null) {
+            String gcHead = trailingGainCrystalHead(effectText);
+            if (gcHead != null) {
+                String headName = matchedPatternName(gcHead, source);
+                return (headName != null ? headName : "?") + " + GainCrystal";
+            }
+        }
         if (tryParseGainCrystal(effectText)                      != null) return "GainCrystal";
         if (tryParseGainCrystalIfOpponentHas(effectText)         != null) return "GainCrystalIfOpponentHas";
         if (tryParsePlaceCountersForEach(effectText, source)     != null) return "PlaceCountersForEach";
@@ -2137,7 +2164,8 @@ public class ActionResolver {
         if (tryParseChooseForwardDoubleNextOutgoing(effectText) != null)        return "ChooseForwardDoubleNextOutgoing";
         if (tryParseDoublePlayerAbilityOutgoingThisTurn(effectText) != null)   return "DoublePlayerAbilityOutgoingThisTurn";
         if (tryParseStandaloneSelfBoostForEachCrystal(effectText, source) != null) return "StandaloneSelfBoostForEachCrystal";
-        if (tryParseIfHandSizeSelfBoost(effectText, source)               != null) return "IfHandSizeSelfBoost";
+        // Mirrors parse(): ahead of the two flat self-boost parsers, which share its frame.
+        if (tryParseStandaloneSelfBoostForEachControlled(effectText, source) != null) return "StandaloneSelfBoostForEachControlled";
         if (tryParseIfHandSizeSelfBoost(effectText, source)               != null) return "IfHandSizeSelfBoost";
         if (tryParseSelfBoostEotPrefix(effectText, source) != null)         return "SelfBoostUntilEot";
         if (tryParseSelfAttacksPerOwnDamage(effectText, source) != null)    return "SelfAttacksPerOwnDamage";
@@ -2261,6 +2289,14 @@ public class ActionResolver {
         if (tryParseOpponentCannotSearchThisTurn(effectText) != null)       return "OpponentCannotSearch";
         if (tryParseExtraTurnThenLose(effectText) != null)                  return "ExtraTurnThenLose";
         if (tryParseGainCrystalPerX(effectText, 0) != null)                 return "GainCrystalPerX";
+        // Mirrors parse(); see the matching guard in matchedPatternNameOn().
+        if (tryParseTrailingGainCrystal(effectText, source, 0) != null) {
+            String gcHead = trailingGainCrystalHead(effectText);
+            if (gcHead != null) {
+                String headDesc = fullDescription(gcHead, source);
+                return (headDesc != null ? headDesc : "?") + " + GainCrystal";
+            }
+        }
         if (tryParseGainCrystal(effectText)        != null)                  return "GainCrystal";
         if (tryParseGainCrystalIfOpponentHas(effectText) != null)            return "GainCrystalIfOpponentHas";
         if (tryParsePlaceCountersForEach(effectText, source) != null)        return "PlaceCountersForEach";

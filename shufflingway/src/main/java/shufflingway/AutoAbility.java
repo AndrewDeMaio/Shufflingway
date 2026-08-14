@@ -20,7 +20,13 @@ package shufflingway;
  * {@code "put into break zone"}, {@code "enters the field or put into break zone"},
  * {@code "cast summon"}, {@code "damage zone"},
  * {@code "either player receives damage"}, {@code "you receive damage"},
- * or {@code "primed into"}.
+ * {@code "primed into"}, or {@code "is priming"}.
+ *
+ * <p>The two priming triggers watch opposite ends of the same act. {@code "primed into"} names the
+ * Eikon that arrives and lives on that Eikon, with {@link #triggerCard()} holding the primer's
+ * name. {@code "is priming"} fires on the payment itself, before the fetched card is known, and
+ * {@link #triggerCard()} holds a subject phrase over the priming card ({@code "Dion or a Character
+ * you control"}) resolved the same way the chosen-by-opponent subjects are.
  *
  * <p>For {@code trigger == "other forward attacks"}, {@link #triggerCard()} holds the full
  * subject phrase (e.g. {@code "a Forward other than Tifa you control"}). The ability fires

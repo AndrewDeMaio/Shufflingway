@@ -2092,6 +2092,11 @@ public record CardData(
             "|(?:is|are)\\s+chosen\\s+by\\s+your\\s+opponent's\\s+Summons?(?:\\s+or\\s+abilit(?:y|ies))?" +
             "|uses?\\s+an\\s+EX\\s+Burst" +
             "|becomes?\\s+dull" +
+            // "is priming" — the act of paying a Priming cost, watched by 24-109R Dion,
+            // 24-113R Barnabas (XVI), 26-021C Anabella, 26-084H Vivian and 29-085R Cidolfus.
+            // Distinct from "primes into", which names the fetched Eikon and is handled by
+            // PRIMES_INTO_PATTERN in an earlier pass.
+            "|(?:is|are)\\s+priming" +
             // "searches for 1 or more cards" (5-130R Tonberry, 13-034H Remedi) and the "for"-less
             // printing on 25-111H The Emperor. Searching is a public event other cards punish.
             "|searches?\\s+(?:for\\s+)?1\\s+or\\s+more\\s+cards?" +
@@ -2110,7 +2115,29 @@ public record CardData(
         // Effect ends at: a [[br]], the next "When …" trigger, a card's own 《cost》: special-ability
         // marker, or end of text. The (?<!\") guard keeps a 《cost》: that sits INSIDE a quoted granted
         // ability (e.g. Machinist's "《Dull》: …", Medusa's "《5》: …") from prematurely ending the effect.
-        "(?=\\s*\\[\\[br\\]\\]|\\s*When\\s+[^,]+?\\s+(?:forms?\\s+a\\s+party\\s+and\\s+attacks?|attacks?|blocks?|enters?|leaves?|is\\s+(?:put|removed|blocked|dealt)|(?:is|are)\\s+added|deals?|uses?|becomes?|searches?|discards?|gains?)|\\s*(?<!\")(?:《[^》]+》)+\\s*:|\\s*$)",
+        "(?=\\s*\\[\\[br\\]\\]|\\s*When\\s+[^,]+?\\s+(?:forms?\\s+a\\s+party\\s+and\\s+attacks?|attacks?|blocks?|enters?|leaves?|is\\s+(?:put|removed|blocked|dealt)|(?:is|are)\\s+(?:added|priming)|deals?|uses?|becomes?|searches?|discards?|gains?)|\\s*(?<!\")(?:《[^》]+》)+\\s*:|\\s*$)",
+        Pattern.DOTALL
+    );
+
+    /**
+     * A damage gate written inline at the head of an auto-ability's effect: "if you have received
+     * N points of damage or more, &lt;effect&gt;" — 4-129L Steiner.
+     *
+     * <p>Semantically identical to the "Damage N --" prefix {@link #AUTO_ABILITY_PATTERN} captures
+     * as {@code threshold}, so {@link #parseAutoAbilities} lifts it into the same field rather than
+     * asking the resolver to carry a conditional it has no other use for.
+     *
+     * <p>Anchored at the start: a gate appearing later in the text is qualifying some clause of a
+     * larger effect ("… If you have received 5 points of damage or more, … instead"), which is a
+     * different thing entirely and belongs to whatever parser owns that effect.
+     * <ul>
+     *   <li>Group {@code damage} — the damage-counter threshold</li>
+     *   <li>Group {@code effect} — the gated effect, with the condition removed</li>
+     * </ul>
+     */
+    private static final Pattern INLINE_DAMAGE_GATE = Pattern.compile(
+        "(?i)^if\\s+you\\s+have\\s+received\\s+(?<damage>\\d+)\\s+points?\\s+of\\s+damage" +
+        "(?:\\s+or\\s+more)?,\\s*(?<effect>.+)$",
         Pattern.DOTALL
     );
 
@@ -2631,6 +2658,10 @@ public record CardData(
             // searches" or "a Character opponent controls searches" — so the side is implied by the
             // trigger itself and the subject only narrows which of their cards counts.
             else if (triggerRaw.contains("search"))                                                          trigger = "opponent searches";
+            // The act of priming, watched by the card doing it or by a filter over the controller's
+            // Characters. The Eikon that arrives is what "primes into" describes; this fires on the
+            // payment, before the fetched card is known.
+            else if (triggerRaw.contains("priming"))                                                         trigger = "is priming";
             else                                                                                             trigger = "enters the field";
 
             // For "becomes dull", strip optional "active " state qualifier from the card name
@@ -2660,6 +2691,17 @@ public record CardData(
 
             String thresholdStr = m.group("threshold");
             int damageThreshold = thresholdStr != null ? Integer.parseInt(thresholdStr) : 0;
+
+            // "if you have received N points of damage or more, <effect>" — the same gate the
+            // "Damage N --" prefix expresses, written inline after the trigger instead (4-129L
+            // Steiner). Folding it into damageThreshold hands it to the check already in
+            // executeAutoAbilityImpl and leaves a bare effect the resolver can parse; left in
+            // place the whole ability failed to parse, so Steiner drew nothing at any damage.
+            Matcher inline = INLINE_DAMAGE_GATE.matcher(effect);
+            if (inline.find()) {
+                damageThreshold = Integer.parseInt(inline.group("damage"));
+                effect = inline.group("effect").trim();
+            }
 
             // Extract party-attack filter fields when applicable
             int    partyMinCount = 0;

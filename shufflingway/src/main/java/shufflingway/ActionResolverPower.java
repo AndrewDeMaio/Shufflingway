@@ -7,6 +7,7 @@ import static shufflingway.ActionResolver.*;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
 
@@ -397,6 +398,55 @@ final class ActionResolverPower {
             ctx.boostSourceForward(source, boost, EnumSet.noneOf(CardData.Trait.class));
         };
     }
+    /**
+     * Parses the self-targeted "gains +N power for each [Element | Category X] [Type] you control"
+     * boost — 19-136S Noel. The multiplier is read when the ability resolves, not when it is
+     * parsed, so a Character entering between the trigger and the resolution counts.
+     */
+    static Consumer<GameContext> tryParseStandaloneSelfBoostForEachControlled(String text, CardData source) {
+        if (source == null) return null;
+        Matcher m = SELF_POWER_BOOST_FOR_EACH_CONTROLLED.matcher(text.trim());
+        if (!m.find()) return null;
+        // Which alternative matched decides which group set carries the values.
+        boolean untilFirst = m.group("subject") != null;
+        String subject  = (untilFirst ? m.group("subject")  : m.group("subject2")).trim();
+        if (!subject.equalsIgnoreCase(source.name())) return null;
+        int    perUnit  = Integer.parseInt(untilFirst ? m.group("amount") : m.group("amount2"));
+        String element  = untilFirst ? m.group("element")  : m.group("element2");
+        String category = untilFirst ? m.group("category") : m.group("category2");
+        String type     = normalizeCountedType(untilFirst ? m.group("chartype") : m.group("chartype2"));
+        String label    = (element != null ? element + " " : "")
+                        + (category != null ? "Category " + category + " " : "") + type;
+        return ctx -> {
+            int n = countControlled(ctx, element, category, type);
+            int boost = perUnit * n;
+            ctx.logEntry(source.name() + " gains +" + boost + " power ("
+                    + perUnit + "×" + n + " " + label + ") until end of turn");
+            ctx.boostSourceForward(source, boost, EnumSet.noneOf(CardData.Trait.class));
+        };
+    }
+
+    /** "Characters"/"Forwards" → the singular form the counting primitives take. */
+    private static String normalizeCountedType(String raw) {
+        String t = raw.trim().toLowerCase(Locale.ROOT).replaceAll("s$", "");
+        return Character.toUpperCase(t.charAt(0)) + t.substring(1);
+    }
+
+    /**
+     * Counts the active player's field cards matching an optional element, an optional category and
+     * a type. Each qualifier has its own primitive on {@link GameContext}; no printing in the corpus
+     * carries both an element and a category, so the two are read as alternatives.
+     */
+    private static int countControlled(GameContext ctx, String element, String category, String type) {
+        if (category != null) return ctx.ownFieldCountByCategory(category, type);
+        if (element  == null) return ctx.ownFieldCount(type);
+        boolean all = type.equals("Character");
+        return ctx.selfFieldCount(element,
+                all || type.equals("Forward"),
+                all || type.equals("Backup"),
+                all || type.equals("Monster"));
+    }
+
     /** Parses "[subject] gains +N power until the end of the turn and activate [name]." */
     static Consumer<GameContext> tryParseSelfPowerBoostAndActivate(String text, CardData source) {
         if (source == null) return null;

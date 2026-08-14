@@ -1227,6 +1227,65 @@ final class AutoAbilityTriggers {
 		mw.showStackWindowIfNeeded();
 	}
 
+	/**
+	 * Fires "When [subject] is priming" abilities on {@code primingCard}'s controller's field.
+	 *
+	 * <p>Priming does not use the stack, so nothing downstream would ever see it — this is called
+	 * from the two sites where a prime completes, alongside the "primed into" dispatch that watches
+	 * the other end of the same act.
+	 *
+	 * <p>The walk reads each Forward slot through its primed top card, as the attack and damage
+	 * dispatches do, so a Character that has already been replaced by its Eikon no longer watches.
+	 * {@code primingCard} is added back explicitly for exactly that reason: its own top card was
+	 * set just before this call, and its ability was still live at the instant it paid.
+	 */
+	void triggerAutoAbilitiesForPriming(CardData primingCard, boolean isP1) {
+		withBatch(() -> {
+			List<CardData> watchers = new ArrayList<>();
+			watchers.add(primingCard);
+			List<CardData> fwds = isP1 ? mw.p1ForwardCards     : mw.p2ForwardCards;
+			List<CardData> tops = isP1 ? mw.p1ForwardPrimedTop : mw.p2ForwardPrimedTop;
+			for (int i = 0; i < fwds.size(); i++) {
+				CardData top = i < tops.size() ? tops.get(i) : null;
+				CardData eff = top != null ? top : fwds.get(i);
+				if (eff != primingCard) watchers.add(eff);
+			}
+			for (CardData c : (isP1 ? mw.p1BackupCards : mw.p2BackupCards)) if (c != null) watchers.add(c);
+			watchers.addAll(isP1 ? mw.p1MonsterCards : mw.p2MonsterCards);
+
+			for (CardData watcher : watchers)
+				for (AutoAbility fa : mw.effectiveAutoAbilities(watcher))
+					if (fa.trigger().equals("is priming")
+							&& matchesPrimingSubject(fa.triggerCard(), watcher, primingCard))
+						executeAutoAbility(fa, watcher, isP1);
+		});
+		mw.showStackWindowIfNeeded();
+	}
+
+	/**
+	 * Returns true when {@code priming} satisfies an "is priming" trigger's subject.
+	 *
+	 * <p>Shares the reading {@link #matchesChosenSubject} uses: a part naming the watcher itself is
+	 * matched by <em>identity</em> — a card naming itself means that copy, so a second Dion priming
+	 * must not fire the first one's ability — while every other part is a filter over the priming
+	 * card. Both printed shapes are disjunctions ("Dion or a Character you control"), whose second
+	 * half subsumes the first; the identity reading is what keeps the halves from disagreeing when
+	 * a card of the same name primes on the same field.
+	 */
+	private boolean matchesPrimingSubject(String subject, CardData watcher, CardData priming) {
+		if (subject == null || subject.isBlank()) return priming == watcher;
+		for (String rawPart : subject.trim().split("(?i)\\s+or\\s+")) {
+			String part = TRIGGER_SUBJECT_CTRL.matcher(rawPart.trim()).replaceFirst("").trim();
+			if (part.isEmpty()) continue;
+			if (CardFilters.meetsCardNameFilter(watcher, part)) {
+				if (priming == watcher) return true;
+				continue;
+			}
+			if (matchesSingleSubject(part, priming, watcher)) return true;
+		}
+		return false;
+	}
+
 	void triggerAutoAbilitiesForAttack(CardData card, boolean isP1) {
 		withBatch(() -> {
 			for (AutoAbility fa : mw.effectiveAutoAbilities(card)) {
@@ -1620,8 +1679,11 @@ final class AutoAbilityTriggers {
 
 	/** "1 or more Forwards you control" — the count prefix, stripped before splitting on " or ". */
 	private static final Pattern CHOSEN_SUBJECT_COUNT = Pattern.compile("(?i)^\\d+\\s+or\\s+more\\s+");
-	/** Trailing controller clause; the dispatch side already establishes the controller. */
-	private static final Pattern CHOSEN_SUBJECT_CTRL =
+	/**
+	 * Trailing controller clause; the dispatch side already establishes the controller. Shared by
+	 * the chosen-by-opponent and is-priming subject matchers, which read subjects the same way.
+	 */
+	private static final Pattern TRIGGER_SUBJECT_CTRL =
 			Pattern.compile("(?i)\\s+(?:you\\s+control|opponent\\s+controls?)$");
 	/** "this Forward" and friends — a self-reference spelled without the card's name. */
 	private static final Pattern CHOSEN_SUBJECT_SELF =
@@ -1645,7 +1707,7 @@ final class AutoAbilityTriggers {
 
 		String stripped = CHOSEN_SUBJECT_COUNT.matcher(subject.trim()).replaceFirst("");
 		for (String rawPart : stripped.split("(?i)\\s+or\\s+")) {
-			String part = CHOSEN_SUBJECT_CTRL.matcher(rawPart.trim()).replaceFirst("").trim();
+			String part = TRIGGER_SUBJECT_CTRL.matcher(rawPart.trim()).replaceFirst("").trim();
 			// "the Card Name Palom" — normalise the article so the shared subject matcher, which
 			// expects "a"/"an", recognises it.
 			part = part.replaceAll("(?i)^the\\s+", "a ");
