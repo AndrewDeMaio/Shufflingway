@@ -25,7 +25,7 @@ Current card coverage (estimate):
 
 * Auto Abilities: (90.5%)
 
-* Field Abilities: (73.7%)
+* Field Abilities: (80.5%)
 
 # Installation Guide
 
