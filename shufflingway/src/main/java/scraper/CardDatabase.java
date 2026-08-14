@@ -165,6 +165,7 @@ public class CardDatabase implements AutoCloseable {
                                 .replace("Break [[br]]   Zone", "Break Zone") // Glaive's card was particularly mangled
                                 .replace("Card Name [[br]]   Glaive", "Card Name Glaive")
                                 .replace("you [[br]]   control", "you control")
+                                .replace("Card Name [[br]] Kan-E-Senna", "Card Name Kan-E-Senna")
                                 .replace("CP cost) [[br]]to cast", "CP cost) to cast") // Nine reissue
                                 .replace("choose up 2 Wind", "choose up to 2 Wind") // Benedikta card text fix
                                 // Strip inline [[s]]…[[/]] ability-name references (e.g. Bartz 7-059L, Gogo
