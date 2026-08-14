@@ -152,9 +152,26 @@ public class FieldAbilityParsingTest {
         // its prefix, which is exactly the bug that made it look wired.
         if (namesItself(ActionResolverPatterns.STANDALONE_NAMED_CANNOT_BE_CHOSEN_BY_OWN_ELEMENT,
                 fa, source)) return true;
+        // Royal Ripeness 5-007H. Read per resolution by isProtectedFromChoice and by
+        // selectCharacters' immunity sets, against the resolving card's Elements.
+        if (namesItself(ActionResolverPatterns.STANDALONE_NAMED_CANNOT_BE_CHOSEN_BY_ELEMENT,
+                fa, source)) return true;
+        // Sin 14-045H. Read by canActivateAbility, which is the single gate both the menu and the
+        // AI go through, so the lock cannot be reached around.
+        if (AutoAbilityTriggers.FA_OPP_FORWARDS_CANNOT_USE_ACTION_ABILITIES
+                .matcher(fa.effectText().trim()).matches()) return true;
+        // Kalmia 18-090R. Read by MainWindow.bzCardsProtectedFromOppChoice wherever an effect
+        // would choose in a Break Zone. Not self-named like its neighbours — it speaks about a
+        // zone rather than about its carrier, so there is no name to check.
+        if (ActionResolverPatterns.FA_BZ_CARDS_PROTECTED_FROM_OPP_CHOICE
+                .matcher(fa.effectText()).find()) return true;
         // Kimahri 1-103C. Resolved per lookup against the opposing board, so it lives on the card
         // as a query rather than as a parsed effect.
         if (namesItself(CardData.GAINS_OPP_CHARACTER_ELEMENTS_PATTERN, fa, source)) return true;
+        // Exdeath 1-122H, Arborous Simulacrum 2-118C, Shadow Lord B-007. Read per damage-zone
+        // reveal by MainWindow.exBurstSuppressionCostCap, straight off the source's field
+        // abilities — self-named, exactly as that caller checks it.
+        if (ActionResolver.exBurstSuppressionMaxCost(fa.effectText(), source.name()) != null) return true;
         if (ActionResolverFieldAbility.tryParseBeginningOfOppMainPhase1FieldAbility(fa.effectText(), source) != null) return true;
         if (AutoAbilityTriggers.FA_OPPONENT_MUST_BLOCK.matcher(fa.effectText()).find()) return true;
         if (AutoAbilityTriggers.FA_OPPONENT_MUST_CHOOSE.matcher(fa.effectText()).find()) return true;
@@ -442,8 +459,22 @@ public class FieldAbilityParsingTest {
                 fa, source)) return "CannotBeChosenByMultiElementForwardAbility";
         if (namesItself(ActionResolverPatterns.STANDALONE_NAMED_CANNOT_BE_CHOSEN_BY_OWN_ELEMENT,
                 fa, source)) return "CannotBeChosenBySharedElement";
+        String immuneElem = ActionResolver.cannotBeChosenByElementFieldAbility(source);
+        if (immuneElem != null
+                && ActionResolverPatterns.STANDALONE_NAMED_CANNOT_BE_CHOSEN_BY_ELEMENT
+                        .matcher(fa.effectText()).find())
+            return "CannotBeChosenByElement[" + immuneElem + "]";
+        if (AutoAbilityTriggers.FA_OPP_FORWARDS_CANNOT_USE_ACTION_ABILITIES
+                .matcher(fa.effectText().trim()).matches())
+            return "OppForwardsCannotUseActionAbilities[their turn]";
+        if (ActionResolverPatterns.FA_BZ_CARDS_PROTECTED_FROM_OPP_CHOICE
+                .matcher(fa.effectText()).find())
+            return "BzCardsCannotBeChosenByOpp";
         if (namesItself(CardData.GAINS_OPP_CHARACTER_ELEMENTS_PATTERN, fa, source))
             return "GainsOpponentCharacterElements";
+        Integer exbCap = ActionResolver.exBurstSuppressionMaxCost(fa.effectText(), source.name());
+        if (exbCap != null)
+            return "ExBurstSuppression[" + (exbCap == Integer.MAX_VALUE ? "any cost" : "cost≤" + exbCap) + "]";
         if (CardData.parseIfControlNonDmgBreakShield(fa.effectText(), source.name()) != null)
             return "SelfNonDmgBreakShield[if control]";
         if (CardData.parseSelfNonDmgBreakShield(fa.effectText(), source.name()))

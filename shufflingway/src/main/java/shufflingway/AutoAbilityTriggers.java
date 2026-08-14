@@ -591,6 +591,31 @@ final class AutoAbilityTriggers {
 	);
 
 	/**
+	 * "During your opponent's turn, the Forwards opponent controls cannot use action abilities."
+	 * (Sin 14-045H.)
+	 *
+	 * <p>Both clauses name the same player, and it is not the carrier's controller: the lock lands
+	 * on the opposing player's Forwards, and only while that player is the one taking the turn.
+	 * Off their turn they act normally, which is what makes this narrower than a blanket lock —
+	 * it shuts down responses to the carrier's own attacks, not the opponent's whole game.
+	 *
+	 * <p>Action abilities only. Under rule 6-1-1 a Special Ability is its own kind of ability
+	 * rather than a form of action ability, so it is not caught here; nor are auto or field
+	 * abilities, which nobody "uses".
+	 */
+	static final Pattern FA_OPP_FORWARDS_CANNOT_USE_ACTION_ABILITIES = Pattern.compile(
+		"(?i)^During\\s+your\\s+opponent.?s\\s+turn,\\s+the\\s+Forwards?\\s+" +
+		"(?:your\\s+)?opponent\\s+controls?\\s+cannot\\s+use\\s+action\\s+abilit(?:y|ies)[.!]?$"
+	);
+
+	/** Returns true if {@code card} locks the opposing player's Forwards out of action abilities. */
+	static boolean hasOppForwardsActionAbilityLock(CardData card) {
+		for (FieldAbility fa : card.fieldAbilities())
+			if (FA_OPP_FORWARDS_CANNOT_USE_ACTION_ABILITIES.matcher(fa.effectText().trim()).matches()) return true;
+		return false;
+	}
+
+	/**
 	 * A standing self-named block compulsion: "[card] must block if possible." (Ricard 6-103H) and
 	 * the reversed printing "If possible, [card] must block." (Cecil 2-129L).
 	 *
@@ -1568,6 +1593,13 @@ final class AutoAbilityTriggers {
 			boolean brokenIsP1, boolean abilityOwnerIsP1, Set<CardData> partyMembers) {
 		String subject = fa.triggerCard().trim();
 
+		// A card's own name in its own text refers to that card and nothing else, so a self-named
+		// subject is settled by identity rather than by name. Without this, every other printing
+		// sharing the name answered for it: blocking with Dark Knight 1-054C and losing it fired
+		// the opposing Dark Knight 1-055C's "deals you 1 point of damage" — the opponent's card
+		// reading a stranger's death as its own.
+		if (subjectNamesItsOwnCard(fa, source) && broken != source) return false;
+
 		// "Chocobo forming a party" — broken card is the named card and was in a party
 		Matcher selfPartyM = BZ_SUBJECT_SELF_PARTY.matcher(subject);
 		if (selfPartyM.matches()) {
@@ -1604,6 +1636,21 @@ final class AutoAbilityTriggers {
 	}
 
 	/**
+	 * True when {@code fa}'s break-zone subject names the card carrying it — "Dark Knight" on Dark
+	 * Knight 1-055C, "Chocobo forming a party" on Chocobo 25-045C.
+	 *
+	 * <p>Such a subject can only ever be answered by the carrier itself, which is why these are
+	 * dispatched from the broken card in {@link #triggerAutoAbilitiesForBreakZone} rather than
+	 * from the board scan: no card still on the field can be the card that just left it.
+	 */
+	private static boolean subjectNamesItsOwnCard(AutoAbility fa, CardData source) {
+		String subject = fa.triggerCard().trim();
+		if (subject.equalsIgnoreCase(source.name())) return true;
+		Matcher m = BZ_SUBJECT_SELF_PARTY.matcher(subject);
+		return m.matches() && m.group("name").trim().equalsIgnoreCase(source.name());
+	}
+
+	/**
 	 * Fires "put into break zone" field abilities on all field cards whose subject matches
 	 * the card that just broke.  Must be called after the card is removed from the field.
 	 *
@@ -1634,7 +1681,12 @@ final class AutoAbilityTriggers {
 			for (AutoAbility fa : mw.effectiveAutoAbilities(broken)) {
 				if (!fa.trigger().equals("enters the field or put into break zone")
 						&& !fa.trigger().equals("put into break zone")) continue;
-				if (!fa.triggerCard().equalsIgnoreCase(broken.name())) continue;
+				if (!subjectNamesItsOwnCard(fa, broken)) continue;
+				// The subject may still qualify how the card left — "Chocobo forming a party" only
+				// answers for a Chocobo that was in one — so it is put through the same matcher the
+				// board scan uses, with the broken card standing as its own source.
+				if (!matchesBreakZoneSubject(fa, broken, broken, brokenIsP1, brokenIsP1, partyMembers))
+					continue;
 				executeAutoAbility(fa, broken, brokenIsP1);
 			}
 		});

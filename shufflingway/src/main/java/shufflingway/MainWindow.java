@@ -2723,7 +2723,9 @@ public class MainWindow {
                                 p2Turn.attackDeclarationLimit = Integer.MAX_VALUE; p2Turn.attackDeclarationsThisTurn = 0;
                                 p1Turn.attackDeclarationLimit = Integer.MAX_VALUE;       p1Turn.attackDeclarationsThisTurn = 0;
                                 p1Turn.cannotSearchThisTurn = false; p2Turn.cannotSearchThisTurn = false;
-                                for (int i = 0; i < p2ForwardCards.size(); i++) refreshP2ForwardSlot(i);
+                                // attacksMadeThisTurn was just emptied, so the exhausted-attacker
+                                // glow comes off with it.
+                                refreshCombatGlows();
                                 // An end-of-turn trigger may still be arriving/resolving (a card
                                 // returning from the RFG zone and its abilities) — the turn may not
                                 // advance until the player has resolved it and the stack is empty.
@@ -5507,10 +5509,12 @@ public class MainWindow {
 		// priority checkpoint — so it is cleared by finish, which every exit path below runs.
 		p2DeclaredAttackers.clear();
 		p2DeclaredAttackers.add(attacker);
+		refreshCombatGlows();   // the attacker turns red before P1 is asked for a blocker
 		// Every exit path below runs finish, which makes it this side's single combat boundary —
 		// the counterpart to continueAttackPhase on the client that declared the attack.
 		Runnable finish = () -> {
 			p2DeclaredAttackers.clear();
+			refreshCombatGlows();
 			resolvePostCombatBreaks();
 			sendCombatChecksum();
 			onDone.run();
@@ -5706,10 +5710,12 @@ public class MainWindow {
 		p2DeclaredAttackers.clear();
 		for (int idx : attackerIndices)
 			if (idx < p2ForwardCards.size()) p2DeclaredAttackers.add(effectiveP2Forward(idx));
+		refreshCombatGlows();   // the whole party turns red, so the blocker choice reads at a glance
 		// Every exit path below runs finish, which makes it this side's single combat boundary —
 		// the counterpart to continueAttackPhase on the client that declared the attack.
 		Runnable finish = () -> {
 			p2DeclaredAttackers.clear();
+			refreshCombatGlows();
 			resolvePostCombatBreaks();
 			sendCombatChecksum();
 			onDone.run();
@@ -7345,6 +7351,62 @@ public class MainWindow {
 		for (CardData c : p1MonsterCards)
 			if (ActionResolver.hasBzSummonRfgProtection(c)) return true;
 		return false;
+	}
+
+	/**
+	 * Returns {@code true} when {@code ownerIsP1} controls a field card shielding every card in
+	 * their Break Zone from being chosen by the opposing player's Summons or abilities
+	 * (Kalmia 18-090R).
+	 *
+	 * <p>Opponent-scoped: the zone's owner may still choose their own Break Zone cards, which is
+	 * what keeps their own recursion working. It shields against being <em>chosen</em>, so an
+	 * effect that sweeps the whole zone without picking anything is unaffected.
+	 */
+	boolean bzCardsProtectedFromOppChoice(boolean ownerIsP1) {
+		List<CardData> fwds = ownerIsP1 ? p1ForwardCards : p2ForwardCards;
+		CardData[]     bkps = ownerIsP1 ? p1BackupCards  : p2BackupCards;
+		List<CardData> mons = ownerIsP1 ? p1MonsterCards : p2MonsterCards;
+		for (CardData c : fwds) if (!lostAbilitiesCards.contains(c) && ActionResolver.hasBzCardChoiceProtection(c)) return true;
+		for (CardData c : bkps) if (c != null && !lostAbilitiesCards.contains(c) && ActionResolver.hasBzCardChoiceProtection(c)) return true;
+		for (CardData c : mons) if (!lostAbilitiesCards.contains(c) && ActionResolver.hasBzCardChoiceProtection(c)) return true;
+		return false;
+	}
+
+	/**
+	 * Returns {@code true} when {@code isP1}'s Forwards may not use action abilities right now —
+	 * Sin 14-045H, "During your opponent's turn, the Forwards opponent controls cannot use action
+	 * abilities."
+	 *
+	 * <p>The lock is doubly scoped and both halves point at the same player, the one who does
+	 * <em>not</em> control Sin: it binds that player's Forwards, and only while the turn is
+	 * theirs. Sin's own controller is never affected, and neither player is affected on Sin's
+	 * controller's turn.
+	 */
+	boolean forwardActionAbilitiesLockedFor(boolean isP1) {
+		GameState.Player self = isP1 ? GameState.Player.P1 : GameState.Player.P2;
+		if (gameState.getCurrentPlayer() != self) return false;
+		List<CardData> fwds = isP1 ? p2ForwardCards : p1ForwardCards;
+		CardData[]     bkps = isP1 ? p2BackupCards  : p1BackupCards;
+		List<CardData> mons = isP1 ? p2MonsterCards : p1MonsterCards;
+		for (CardData c : fwds) if (!lostAbilitiesCards.contains(c) && AutoAbilityTriggers.hasOppForwardsActionAbilityLock(c)) return true;
+		for (CardData c : bkps) if (c != null && !lostAbilitiesCards.contains(c) && AutoAbilityTriggers.hasOppForwardsActionAbilityLock(c)) return true;
+		for (CardData c : mons) if (!lostAbilitiesCards.contains(c) && AutoAbilityTriggers.hasOppForwardsActionAbilityLock(c)) return true;
+		return false;
+	}
+
+	/**
+	 * True when {@code card} currently counts as a Forward on {@code isP1}'s field — the Forward
+	 * row, plus any Backup or Monster an effect has temporarily made into one.
+	 */
+	boolean isFieldForward(CardData card, boolean isP1) {
+		ForwardTarget slot = findFieldSlot(card, isP1);
+		if (slot == null) return false;
+		return switch (slot.zone()) {
+			case FORWARD -> true;
+			case BACKUP  -> isP1 ? isP1BackupTemporarilyForward(slot.idx())  : isP2BackupTemporarilyForward(slot.idx());
+			case MONSTER -> isP1 ? isP1MonsterTemporarilyForward(slot.idx()) : isP2MonsterTemporarilyForward(slot.idx());
+			default      -> false;
+		};
 	}
 
 	// -------------------------------------------------------------------------
@@ -9738,6 +9800,50 @@ public class MainWindow {
 				.collect(Collectors.toList());
 	}
 
+	/**
+	 * The combat glow {@code card} shows on {@code isP1}'s field, or {@code null} for none.
+	 *
+	 * <p>Red while it is part of a declared attack. The point of it is the blocking decision, so it
+	 * has to be up for the whole window in which the defender is choosing — which is exactly as
+	 * long as {@link #declaredAttackers} holds the card, declaration through damage.
+	 *
+	 * <p>Gray once it has attacked as often as it may this turn. That is narrower than "cannot
+	 * attack": a Forward played this turn or held down by an effect has not spent anything and is
+	 * not marked, because the mark is about a threat that is now used up rather than one that was
+	 * never available. Dulling already says as much for most attackers, but not for the ones that
+	 * matter here — Brave keeps a card active, and a re-activated attacker looks untouched.
+	 *
+	 * <p>The two are ranked, not combined: an attacker mid-combat has usually spent its last
+	 * declaration already, and while it is swinging that is not what the player needs to see.
+	 *
+	 * <p>Both lists are compared by identity. {@link CardData} is a record, so two copies of the
+	 * same printing are equal — matching by value would light up the twin standing next to the
+	 * attacker.
+	 */
+	Color combatGlowFor(CardData card, boolean isP1) {
+		if (card == null) return null;
+		for (CardData attacker : declaredAttackers(isP1))
+			if (attacker == card) return CardAnimation.GLOW_ATTACKING;
+		if (attacksMadeThisTurn.getOrDefault(card, 0) > 0 && !hasAttackRemaining(card))
+			return CardAnimation.GLOW_EXHAUSTED;
+		return null;
+	}
+
+	/**
+	 * Repaints every field row on both sides, for the two glows that change with combat rather than
+	 * with a slot's own contents.
+	 *
+	 * <p>Called wherever a declared-attacker list is written or cleared. A declaration changes what
+	 * the <em>other</em> player's board should be showing, and no other refresh path crosses sides:
+	 * {@link #refreshAllForwardSlots} is P1's rows only.
+	 */
+	void refreshCombatGlows() {
+		for (int i = 0; i < p1ForwardLabels.size(); i++) refreshP1ForwardSlot(i);
+		for (int i = 0; i < p2ForwardLabels.size(); i++) refreshP2ForwardSlot(i);
+		for (int i = 0; i < p1MonsterLabels.size(); i++) refreshP1MonsterSlot(i);
+		for (int i = 0; i < p2MonsterLabels.size(); i++) refreshP2MonsterSlot(i);
+	}
+
 	/** The card acting at P1 Forward slot {@code idx} — the primed top card when one is stacked. */
 	CardData effectiveP1Forward(int idx) {
 		CardData top = p1ForwardPrimedTop.get(idx);
@@ -10034,6 +10140,10 @@ public class MainWindow {
 		if (bySummon && ActionResolver.hasCannotBeChosenByAnySummonFieldAbility(c)) return true;
 		String immuneElem = cannotBeChosenByElement.get(c);
 		if (immuneElem != null && chooserElems.contains(immuneElem)) return true;
+		// The printed twin of the turn-scoped shield above (Royal Ripeness 5-007H): a literal
+		// Element rather than one named on resolution, and permanent rather than this turn's.
+		String printedImmuneElem = ActionResolver.cannotBeChosenByElementFieldAbility(c);
+		if (printedImmuneElem != null && chooserElems.contains(printedImmuneElem)) return true;
 		if (ActionResolver.hasCannotBeChosenByOwnElementFieldAbility(c)) {
 			String ce = effectiveElement(c);
 			if (ce != null && chooserElems.contains(ce)) return true;
@@ -10108,6 +10218,11 @@ public class MainWindow {
 	boolean canActivateAbility(ActionAbility ability, boolean isFrozen, CardState state,
 			int playedTurn, CardData source, boolean isP1) {
 		if (ability.breakZoneOnly() != null) return false; // only activatable from the Break Zone
+		// Sin 14-045H shuts the opposing player's Forwards out of action abilities on that
+		// player's own turn. Special abilities are a separate kind of ability under rule 6-1-1
+		// and are left alone; so is anything the source is using from off the Forward row.
+		if (!ability.isSpecial() && forwardActionAbilitiesLockedFor(isP1) && isFieldForward(source, isP1))
+			return false;
 		if (ability.ownBreakZoneNameRequired() != null) {
 			List<CardData> bz = isP1 ? gameState.getP1BreakZone() : gameState.getP2BreakZone();
 			if (bz.stream().noneMatch(c -> c.name().equalsIgnoreCase(ability.ownBreakZoneNameRequired())))
@@ -12284,6 +12399,7 @@ public class MainWindow {
 		boolean canAttack = attackSubStep == 1 && isMonsterSelectableAsForward(idx);
 		boolean canBlock  = isMonsterBlockSelectable(idx);
 		boolean selected  = p1MonsterAttackIdx == idx || p1BlockerMonsterIdx == idx;
+		Color   glow      = combatGlowFor(card, true);
 		int damage        = p1MonsterDamage.get(idx);
 		boolean bfaActive = bfa != null && (
 				bfa.minControlledMonsters() > 0 ? p1MonsterCards.size() >= bfa.minControlledMonsters() :
@@ -12300,7 +12416,7 @@ public class MainWindow {
 				Image raw = ImageCache.load(url);
 				if (raw == null) return new ImageIcon(CardAnimation.renderPlaceholder(state));
 				BufferedImage canvas = CardAnimation.renderBackupCard(
-						CardAnimation.toARGB(raw, CARD_W, CARD_H), state, canAttack || canBlock, selected, p1MonsterFrozen.get(idx));
+						CardAnimation.toARGB(raw, CARD_W, CARD_H), state, canAttack || canBlock, selected, p1MonsterFrozen.get(idx), glow);
 				TraitTab.renderTraitTabs(canvas, state, traitTabs);
 				if (damage > 0)
 					CardAnimation.renderDamageOverlay(canvas, damage, state);
@@ -12375,6 +12491,7 @@ public class MainWindow {
 		if (url == null) return;
 		if (fieldEntryAnimator.holdSlotBlank(slot, p2MonsterCards.get(idx))) return;
 		CardData card     = p2MonsterCards.get(idx);
+		Color    glow     = combatGlowFor(card, false);
 		int power         = effectiveP2MonsterPower(idx);
 		int basePower     = card.power();
 		CardData.BecomeForwardAbility bfa = card.becomeForwardAbility();
@@ -12395,7 +12512,7 @@ public class MainWindow {
 				Image raw = ImageCache.load(url);
 				if (raw == null) return new ImageIcon(CardAnimation.renderPlaceholder(state));
 				BufferedImage canvas = CardAnimation.toARGB(raw, CARD_W, CARD_H);
-				canvas = CardAnimation.renderBackupCard(canvas, state, false, false, p2MonsterFrozen.get(idx));
+				canvas = CardAnimation.renderBackupCard(canvas, state, false, false, p2MonsterFrozen.get(idx), glow);
 				TraitTab.renderTraitTabs(canvas, state, traitTabs);
 				if (damage > 0)
 					CardAnimation.renderDamageOverlay(canvas, damage, state);
@@ -12474,6 +12591,7 @@ public class MainWindow {
 		int power     = effectiveP1ForwardPower(idx);
 		int basePower = (topCard != null ? topCard : p1ForwardCards.get(idx)).power();
 		boolean selected = p1AttackSelection.contains(idx) || p1BlockerSelection == idx;
+		Color   glow     = combatGlowFor(effectiveP1Forward(idx), true);
 		Map<String, Integer> countersMap = gameState.getCountersMap(fwdCard);
 		int totalCounters = countersMap.values().stream().mapToInt(c -> c == null ? 0 : c.intValue()).sum();
 		List<CardData.Trait> traitTabs = visibleTraitTabs(true, idx);
@@ -12482,7 +12600,7 @@ public class MainWindow {
 			@Override protected ImageIcon doInBackground() throws Exception {
 				Image raw = ImageCache.load(url);
 				if (raw == null) return new ImageIcon(CardAnimation.renderPlaceholder(state));
-				BufferedImage canvas = CardAnimation.renderBackupCard(CardAnimation.toARGB(raw, CARD_W, CARD_H), state, canAttack || canBlock, selected, Boolean.TRUE.equals(p1ForwardFrozen.get(idx)));
+				BufferedImage canvas = CardAnimation.renderBackupCard(CardAnimation.toARGB(raw, CARD_W, CARD_H), state, canAttack || canBlock, selected, Boolean.TRUE.equals(p1ForwardFrozen.get(idx)), glow);
 				TraitTab.renderTraitTabs(canvas, state, traitTabs);
 				if (damage > 0) {
 					CardAnimation.renderDamageOverlay(canvas, damage, state);
@@ -13571,7 +13689,9 @@ public class MainWindow {
 		p1DeclaredAttackers.clear();
 		p1MonsterAttackIdx = -1;
 		p1BackupAttackIdx = -1;
-		refreshAllForwardSlots();
+		// Combat is over: red comes off, and gray goes on for whatever has now spent its last
+		// declaration. Both rows, since the opponent's screen is showing the same board.
+		refreshCombatGlows();
 		for (int i = 0; i < p1BackupCards.length; i++) refreshP1BackupSlot(i);
 		if (p1Turn.attackDeclarationsThisTurn >= p1Turn.attackDeclarationLimit) {
 			logEntry("Attack declaration limit reached — ending attack phase.");
@@ -13679,6 +13799,7 @@ public class MainWindow {
 
 		p1DeclaredAttackers.clear();
 		p1DeclaredAttackers.add(attacker);
+		refreshCombatGlows();
 
 		// Combat stays on Declare Attackers until both players have passed on the declaration.
 		refreshAttackButton();
@@ -14026,6 +14147,7 @@ public class MainWindow {
 
 		p1DeclaredAttackers.clear();
 		p1DeclaredAttackers.add(attacker);
+		refreshCombatGlows();
 
 		// Combat stays on Declare Attackers until both players have passed on the declaration.
 		refreshAttackButton();
@@ -14132,6 +14254,7 @@ public class MainWindow {
 		// attacking so attack-conditional abilities stay usable while P1 holds priority.
 		p1DeclaredAttackers.clear();
 		for (int idx : selection) p1DeclaredAttackers.add(effectiveP1Forward(idx));
+		refreshCombatGlows();
 
 		// Combat stays on Declare Attackers until both players have passed on the declaration.
 		refreshAttackButton();
@@ -15030,6 +15153,7 @@ public class MainWindow {
 		int damage    = p2ForwardDamage.get(idx);
 		int power     = effectiveP2ForwardPower(idx);
 		CardData fwdCard = p2ForwardCards.get(idx);
+		Color    glow    = combatGlowFor(effectiveP2Forward(idx), false);
 		int basePower = (topCard != null ? topCard : fwdCard).power();
 		Map<String, Integer> countersMap = gameState.getCountersMap(fwdCard);
 		int totalCounters = countersMap.values().stream().mapToInt(c -> c == null ? 0 : c.intValue()).sum();
@@ -15039,7 +15163,7 @@ public class MainWindow {
 			@Override protected ImageIcon doInBackground() throws Exception {
 				Image raw = ImageCache.load(url);
 				if (raw == null) return new ImageIcon(CardAnimation.renderPlaceholder(state));
-				BufferedImage canvas = CardAnimation.renderBackupCard(CardAnimation.toARGB(raw, CARD_W, CARD_H), state, false, false, p2ForwardFrozen.get(idx));
+				BufferedImage canvas = CardAnimation.renderBackupCard(CardAnimation.toARGB(raw, CARD_W, CARD_H), state, false, false, p2ForwardFrozen.get(idx), glow);
 				TraitTab.renderTraitTabs(canvas, state, traitTabs);
 				if (damage > 0) {
 					CardAnimation.renderDamageOverlay(canvas, damage, state);

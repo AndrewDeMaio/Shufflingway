@@ -16,6 +16,8 @@ import java.util.regex.Matcher;
 
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+
+import shufflingway.graphics.CardAnimation;
 import org.mockito.InOrder;
 
 /**
@@ -17845,5 +17847,441 @@ public class CardBehaviorTest {
 
 		assertTrue(mw.effectiveP1HasTrait(0, CardData.Trait.HASTE));
 		assertTrue(mw.effectiveP2HasTrait(0, CardData.Trait.HASTE));
+	}
+
+	// =========================================================================================
+	// Royal Ripeness 5-007H — "cannot be chosen by [Element] Summons or [Element] abilities"
+	//
+	// The third member of the named-immunity family and the only one that names a literal
+	// Element. Its two siblings read something other than the text to decide: Kam'lanaut 5-148H
+	// ("share its Element") follows the carrier's own Element wherever an effect moves it, and
+	// Rubicante 2-023H ("of the named Element") takes the Element from a player on resolution.
+	// Royal Ripeness prints the Element, so the Element is captured rather than looked up — the
+	// shield is Fire even if something makes Royal Ripeness Ice.
+	//
+	// It names no player, so it binds whoever is choosing, its own controller included.
+	// =========================================================================================
+
+	private static final String ROYAL_RIPENESS_5_007H_SHIELD =
+			"Royal Ripeness cannot be chosen by Fire Summons or Fire abilities.";
+
+	@Test
+	void royalRipenessNamesTheElementItIsImmuneTo() {
+		CardData ripeness = makeFieldAbilityCard("Royal Ripeness", "Fire", "Monster",
+				ROYAL_RIPENESS_5_007H_SHIELD);
+
+		assertEquals("Fire", ActionResolver.cannotBeChosenByElementFieldAbility(ripeness));
+		// Neither sibling may claim it: one would make the shield follow the card's Element, the
+		// other expects a player to name one.
+		assertFalse(ActionResolver.hasCannotBeChosenByOwnElementFieldAbility(ripeness));
+		assertFalse(ActionResolver.hasCannotBeChosenByAnySummonFieldAbility(ripeness),
+				"the printing qualifies which Summons, so the blanket shield must not match");
+	}
+
+	@Test
+	void theShieldIsSelfNamedLikeTheRestOfItsFamily() {
+		CardData impostor = makeFieldAbilityCard("Cactuar", "Earth", "Monster",
+				ROYAL_RIPENESS_5_007H_SHIELD);
+		assertNull(ActionResolver.cannotBeChosenByElementFieldAbility(impostor),
+				"the text shields Royal Ripeness, not whoever is holding the sentence");
+	}
+
+	@Test
+	void onlyTheNamedElementsSummonsAndAbilitiesAreBlocked() {
+		MainWindow mw = new MainWindow();
+		CardData ripeness = makeFieldAbilityCard("Royal Ripeness", "Fire", "Monster",
+				ROYAL_RIPENESS_5_007H_SHIELD);
+		mw.placeCardInMonsterZone(ripeness);
+
+		assertTrue(mw.isProtectedFromChoice(ripeness, true, false, true,
+						makeSummon("Ifrit", "Fire", 3, "")),
+				"a Fire Summon");
+		assertTrue(mw.isProtectedFromChoice(ripeness, true, false, false,
+						makeForward("Fire Mage", "Fire", 3, 7000)),
+				"\"or Fire abilities\" — a Fire card's ability is caught too");
+		assertFalse(mw.isProtectedFromChoice(ripeness, true, false, true,
+						makeSummon("Shiva", "Ice", 2, "")),
+				"an Ice Summon is not what the text names");
+		assertFalse(mw.isProtectedFromChoice(ripeness, true, false, false, null),
+				"nothing to compare an Element against");
+	}
+
+	@Test
+	void theShieldBindsRoyalRipenessesOwnControllerToo() {
+		MainWindow mw = new MainWindow();
+		CardData ripeness = makeFieldAbilityCard("Royal Ripeness", "Fire", "Monster",
+				ROYAL_RIPENESS_5_007H_SHIELD);
+		mw.placeCardInMonsterZone(ripeness);
+
+		assertTrue(mw.isProtectedFromChoice(ripeness, true, true, true,
+						makeSummon("Ifrit", "Fire", 3, "")),
+				"no player is named, so its controller's own Fire Summon is blocked as well");
+	}
+
+	// =========================================================================================
+	// Sin 14-045H — "During your opponent's turn, the Forwards opponent controls cannot use
+	// action abilities."
+	//
+	// Doubly scoped, and both halves point at the same player — the one who does NOT control Sin.
+	// It binds that player's Forwards, and only while the turn is theirs, which is what makes it
+	// a tax on responding to Sin's controller rather than a blanket lock. Enforced in
+	// canActivateAbility, the single gate the ability menu and the AI both pass through.
+	//
+	// Action abilities only: under rule 6-1-1 a Special Ability is its own kind of ability, not a
+	// form of action ability.
+	// =========================================================================================
+
+	private static final String SIN_14_045H_LOCK =
+			"During your opponent's turn, the Forwards opponent controls cannot use action abilities.";
+	private static final String PLAIN_ACTION_ABILITY =
+			"《Dull》: Choose 1 Forward. Deal it 4000 damage.";
+
+	/** P2 fields Sin; P1 fields a Forward with an ordinary action ability. Returns that Forward. */
+	private static CardData sinFacingAnAbilityUser(MainWindow mw, GameState.Player whoseTurn) {
+		advanceTo(mw, whoseTurn, GameState.GamePhase.MAIN_1);
+		mw.placeP2CardInFirstBackupSlot(makeFieldAbilityCard("Sin", "Wind", "Backup", SIN_14_045H_LOCK));
+		CardData user = makeForward("Vaan", "Wind", 3, 7000,
+				CardData.parseActionAbilities(PLAIN_ACTION_ABILITY));
+		placeP1Forward(mw, user);
+		return user;
+	}
+
+	@Test
+	void sinLocksTheOpposingForwardsOutOnTheirOwnTurn() {
+		MainWindow mw = new MainWindow();
+		CardData user = sinFacingAnAbilityUser(mw, GameState.Player.P1);
+		ActionAbility ab = user.actionAbilities().get(0);
+
+		assertTrue(mw.forwardActionAbilitiesLockedFor(true));
+		assertFalse(mw.canActivateAbility(ab, false, CardState.ACTIVE, 0, user, true),
+				"P1's turn, and P2 controls Sin");
+	}
+
+	@Test
+	void theLockLiftsOnSinsControllersOwnTurn() {
+		MainWindow mw = new MainWindow();
+		CardData user = sinFacingAnAbilityUser(mw, GameState.Player.P2);
+		ActionAbility ab = user.actionAbilities().get(0);
+
+		assertFalse(mw.forwardActionAbilitiesLockedFor(true),
+				"\"during your opponent's turn\" — this is not it");
+		assertTrue(mw.canActivateAbility(ab, false, CardState.ACTIVE, 0, user, true));
+	}
+
+	@Test
+	void sinDoesNotLockItsOwnControllersForwards() {
+		MainWindow mw = new MainWindow();
+		advanceTo(mw, GameState.Player.P2, GameState.GamePhase.MAIN_1);
+		mw.placeP2CardInFirstBackupSlot(makeFieldAbilityCard("Sin", "Wind", "Backup", SIN_14_045H_LOCK));
+		CardData ally = makeForward("Ally", "Wind", 3, 7000,
+				CardData.parseActionAbilities(PLAIN_ACTION_ABILITY));
+		placeP2Forward(mw, ally);
+
+		assertFalse(mw.forwardActionAbilitiesLockedFor(false),
+				"the text locks the opponent's Forwards, never its own side's");
+		assertTrue(mw.canActivateAbility(ally.actionAbilities().get(0), false,
+				CardState.ACTIVE, 0, ally, false));
+	}
+
+	@Test
+	void aBackupsAbilityIsNotAForwardsAbility() {
+		MainWindow mw = new MainWindow();
+		advanceTo(mw, GameState.Player.P1, GameState.GamePhase.MAIN_1);
+		mw.placeP2CardInFirstBackupSlot(makeFieldAbilityCard("Sin", "Wind", "Backup", SIN_14_045H_LOCK));
+		CardData backup = makeForward("Scholar", "Wind", 2, 0,
+				CardData.parseActionAbilities(PLAIN_ACTION_ABILITY));
+		mw.placeCardInFirstBackupSlot(backup);
+
+		assertTrue(mw.forwardActionAbilitiesLockedFor(true), "the lock is up");
+		assertFalse(mw.isFieldForward(backup, true), "but a Backup is not a Forward");
+		assertTrue(mw.canActivateAbility(backup.actionAbilities().get(0), false,
+				CardState.ACTIVE, 0, backup, true));
+	}
+
+	@Test
+	void aSpecialAbilityIsNotAnActionAbility() {
+		MainWindow mw = new MainWindow();
+		advanceTo(mw, GameState.Player.P1, GameState.GamePhase.MAIN_1);
+		mw.placeP2CardInFirstBackupSlot(makeFieldAbilityCard("Sin", "Wind", "Backup", SIN_14_045H_LOCK));
+		CardData bartz = makeForward("Bartz", "Wind", 3, 7000, CardData.parseActionAbilities(
+				"[[s]]Spellblade[[/]] 《S》: Choose 1 Forward. Deal it 5000 damage."));
+		placeP1Forward(mw, bartz);
+		mw.gameState.getP1Hand().add(makeForward("Bartz", "Wind", 3, 7000)); // discarded for the 《S》
+
+		ActionAbility s = bartz.actionAbilities().get(0);
+		assertTrue(s.isSpecial(), "《S》 marks it Special");
+		assertTrue(mw.forwardActionAbilitiesLockedFor(true), "the lock is up");
+		assertTrue(mw.canActivateAbility(s, false, CardState.ACTIVE, 0, bartz, true),
+				"rule 6-1-1 makes a Special Ability its own kind of ability, not an action ability");
+	}
+
+	@Test
+	void sinLeavingTheFieldEndsTheLock() {
+		MainWindow mw = new MainWindow();
+		CardData user = sinFacingAnAbilityUser(mw, GameState.Player.P1);
+		mw.p2BackupCards[0] = null;
+
+		assertFalse(mw.forwardActionAbilitiesLockedFor(true));
+		assertTrue(mw.canActivateAbility(user.actionAbilities().get(0), false,
+				CardState.ACTIVE, 0, user, true));
+	}
+
+	// =========================================================================================
+	// Kalmia 18-090R — "All cards in your Break Zone cannot be chosen by your opponent's Summons
+	// or abilities."
+	//
+	// The wider twin of the Break Zone shield already in the engine: every card type rather than
+	// Summons alone, and every way an effect could choose one rather than removal from the game
+	// specifically. Opponent-scoped, so the zone's owner keeps choosing their own cards — which
+	// is what leaves their recursion working.
+	//
+	// It shields against being CHOSEN. An effect that takes the whole zone without picking
+	// anything is a different thing and is not stopped here.
+	// =========================================================================================
+
+	private static final String KALMIA_18_090R_BZ_SHIELD =
+			"All cards in your Break Zone cannot be chosen by your opponent's Summons or abilities.";
+
+	/** Every argument {@code selectCharactersFromBreakZone} takes past its first four, unfiltered. */
+	private static List<ForwardTarget> chooseFromBz(GameContext ctx, boolean opponentZone) {
+		return ctx.selectCharactersFromBreakZone(1, false, opponentZone, false,
+				null, null, -1, null, -1, null, true, true, true,
+				null, null, null, null, true, null, false);
+	}
+
+	@Test
+	void kalmiaClosesHerBreakZoneToTheOpponent() {
+		MainWindow mw = new MainWindow();
+		mw.placeCardInFirstBackupSlot(
+				makeFieldAbilityCard("Kalmia", "Water", "Backup", KALMIA_18_090R_BZ_SHIELD));
+		mw.gameState.getP1BreakZone().add(makeForward("Fallen", "Water", 3, 7000));
+
+		assertTrue(mw.bzCardsProtectedFromOppChoice(true));
+		assertTrue(chooseFromBz(mw.buildGameContext(false), true).isEmpty(),
+				"P2 reaching into P1's Break Zone finds nothing it may choose");
+	}
+
+	@Test
+	void theOwnerStillChoosesFromTheirOwnBreakZone() {
+		MainWindow mw = new MainWindow();
+		mw.placeP2CardInFirstBackupSlot(
+				makeFieldAbilityCard("Kalmia", "Water", "Backup", KALMIA_18_090R_BZ_SHIELD));
+		mw.gameState.getP2BreakZone().add(makeForward("Fallen", "Water", 3, 7000));
+
+		assertEquals(1, chooseFromBz(mw.buildGameContext(false), false).size(),
+				"\"your opponent's\" — Kalmia's controller is not bound by it");
+	}
+
+	@Test
+	void withoutKalmiaTheBreakZoneIsOpen() {
+		MainWindow mw = new MainWindow();
+		mw.gameState.getP1BreakZone().add(makeForward("Fallen", "Water", 3, 7000));
+
+		assertFalse(mw.bzCardsProtectedFromOppChoice(true));
+		assertEquals(1, chooseFromBz(mw.buildGameContext(false), true).size());
+	}
+
+	// =========================================================================================
+	// Combat glows — what a Forward slot says about the attack in progress
+	//
+	// Red marks a card that is part of a declared attack, on either side. The defender is choosing
+	// a blocker against it, so it stays up for the whole combat: declaration, both priority
+	// checkpoints, and damage. Gray marks one that has attacked as many times as it may this turn.
+	//
+	// Gray is deliberately narrower than "cannot attack". A Forward played this turn, or held down
+	// by an effect, has spent nothing and stays unmarked — the mark is for a threat that is used
+	// up, not one that was never there. Dulling says as much for most attackers, but not for the
+	// ones worth marking: Brave leaves a card active, and so does a re-activation.
+	// =========================================================================================
+
+	/** A Forward on P2's field that has declared {@code attacks} attacks this turn. */
+	private static CardData attackedTwice(MainWindow mw, CardData card, int attacks) {
+		placeP2Forward(mw, card);
+		for (int i = 0; i < attacks; i++) mw.recordAttackDeclared(card);
+		return card;
+	}
+
+	@Test
+	void aDeclaredAttackerGlowsRed() {
+		MainWindow mw = new MainWindow();
+		CardData attacker = attackedTwice(mw, makeForward("Sephiroth", "Dark", 5, 9000), 1);
+		mw.p2DeclaredAttackers.add(attacker);
+
+		assertEquals(CardAnimation.GLOW_ATTACKING, mw.combatGlowFor(attacker, false),
+				"red for as long as P1 is choosing a blocker against it");
+	}
+
+	@Test
+	void aSpentAttackerGlowsGrayOnceTheCombatIsOver() {
+		MainWindow mw = new MainWindow();
+		CardData attacker = attackedTwice(mw, makeForward("Sephiroth", "Dark", 5, 9000), 1);
+		mw.p2DeclaredAttackers.add(attacker);
+		assertEquals(CardAnimation.GLOW_ATTACKING, mw.combatGlowFor(attacker, false));
+
+		mw.p2DeclaredAttackers.clear();   // combat resolved; the card is still on the board
+
+		assertEquals(CardAnimation.GLOW_EXHAUSTED, mw.combatGlowFor(attacker, false),
+				"one declaration allowed, one spent — it will not be attacking again");
+	}
+
+	@Test
+	void attackingIsRankedAboveExhausted() {
+		MainWindow mw = new MainWindow();
+		// Mid-combat an attacker has almost always spent its last declaration already, so the two
+		// conditions overlap constantly. What the player needs then is that it is swinging.
+		CardData attacker = attackedTwice(mw, makeForward("Sephiroth", "Dark", 5, 9000), 1);
+		mw.p2DeclaredAttackers.add(attacker);
+
+		assertEquals(CardAnimation.GLOW_ATTACKING, mw.combatGlowFor(attacker, false));
+	}
+
+	@Test
+	void aForwardWithAnAttackLeftIsNotExhausted() {
+		MainWindow mw = new MainWindow();
+		CardData tifa = attackedTwice(mw, makeForward("Tifa", "Fire", 4, 8000), 1);
+		mw.grantExtraAttack(tifa);
+
+		assertNull(mw.combatGlowFor(tifa, false), "\"can attack once more this turn\" — not spent yet");
+
+		mw.recordAttackDeclared(tifa);
+		assertEquals(CardAnimation.GLOW_EXHAUSTED, mw.combatGlowFor(tifa, false),
+				"now both declarations are gone");
+	}
+
+	@Test
+	void aForwardThatNeverAttackedIsNotMarked() {
+		MainWindow mw = new MainWindow();
+		CardData fresh = attackedTwice(mw, makeForward("Rookie", "Wind", 2, 5000), 0);
+
+		assertNull(mw.combatGlowFor(fresh, false),
+				"summoning sickness is not exhaustion — it has spent nothing");
+	}
+
+	@Test
+	void theGlowFollowsTheCardAndNotItsName() {
+		MainWindow mw = new MainWindow();
+		CardData attacker = attackedTwice(mw, makeForward("Dark Knight", "Ice", 3, 7000), 1);
+		CardData twin     = attackedTwice(mw, makeForward("Dark Knight", "Ice", 3, 7000), 0);
+		mw.p2DeclaredAttackers.add(attacker);
+
+		assertNull(mw.combatGlowFor(twin, false),
+				"CardData is a record, so a value compare would light up the copy standing next to it");
+	}
+
+	// =========================================================================================
+	// A card's own name in its own text refers to that card, not to every printing sharing it
+	//
+	// The break-zone dispatch is the one trigger family that scans the whole board, because its
+	// subjects may name somebody else ("a Forward you control", "Geomancer"). That scan ended in
+	// a bare name compare, so a self-named subject answered for any card with the same name:
+	// blocking with Dark Knight 1-054C and losing it fired the opposing Dark Knight 1-055C's
+	// "Dark Knight deals you 1 point of damage" — a card reading a stranger's death as its own,
+	// and damaging the wrong player for it.
+	//
+	// Every other trigger family is already safe by construction: they consult only the abilities
+	// of the card that entered, attacked or departed, so the name compare there is a self-check.
+	// =========================================================================================
+
+	private static final String DARK_KNIGHT_1_055C =
+			"When Dark Knight is put from the field into the Break Zone, "
+			+ "Dark Knight deals you 1 point of damage.";
+
+	/**
+	 * The auto-abilities the break put on the Stack, by the card each belongs to. A trigger that
+	 * fires is pushed rather than resolved, so this is what "it fired" looks like from outside.
+	 */
+	private static List<CardData> triggeredSources(MainWindow mw) {
+		return mw.gameState.getStack().stream()
+				.filter(StackEntry::isAutoAbility).map(StackEntry::source).toList();
+	}
+
+	/** Puts {@code card} on {@code isP1}'s Forward row and takes it straight off, as a break does. */
+	private static CardData broken(MainWindow mw, boolean isP1, CardData card) {
+		if (isP1) { placeP1Forward(mw, card); mw.p1ForwardCards.remove(card); }
+		else      { placeP2Forward(mw, card); mw.p2ForwardCards.remove(card); }
+		return card;
+	}
+
+	@Test
+	void anotherPrintingSharingTheNameDoesNotAnswerForIt() {
+		MainWindow mw = new MainWindow();
+		placeP2Forward(mw, makeAutoAbilityForward("Dark Knight", "Ice", 5000, DARK_KNIGHT_1_055C));
+		// P1 blocks with Dark Knight 1-054C — same name, no break trigger of its own — and loses it.
+		CardData blocker = broken(mw, true, makeForward("Dark Knight", "Ice", 4, 8000));
+
+		mw.autoAbilityTriggers.triggerAutoAbilitiesForBreakZone(blocker, true, Set.of());
+
+		assertEquals(List.of(), triggeredSources(mw),
+				"P2's Dark Knight means itself — P1's blocker dying is not its own departure");
+	}
+
+	@Test
+	void theCardStillFiresOnItsOwnDeparture() {
+		MainWindow mw = new MainWindow();
+		CardData dk = broken(mw, false,
+				makeAutoAbilityForward("Dark Knight", "Ice", 5000, DARK_KNIGHT_1_055C));
+
+		mw.autoAbilityTriggers.triggerAutoAbilitiesForBreakZone(dk, false, Set.of());
+
+		assertEquals(List.of(dk), triggeredSources(mw),
+				"it is the card that broke, so its own trigger answers");
+	}
+
+	@Test
+	void aSecondCopyOnTheSameSideIsStillADifferentCard() {
+		MainWindow mw = new MainWindow();
+		CardData survivor = makeAutoAbilityForward("Dark Knight", "Ice", 5000, DARK_KNIGHT_1_055C);
+		placeP2Forward(mw, survivor);
+		CardData twin = broken(mw, false,
+				makeAutoAbilityForward("Dark Knight", "Ice", 5000, DARK_KNIGHT_1_055C));
+
+		mw.autoAbilityTriggers.triggerAutoAbilitiesForBreakZone(twin, false, Set.of());
+
+		assertEquals(List.of(twin), triggeredSources(mw),
+				"one point, from the copy that broke — the survivor does not add a second");
+	}
+
+	@Test
+	void aSubjectNamingSomebodyElseStillMatchesByName() {
+		MainWindow mw = new MainWindow();
+		CardData watcher = makeAutoAbilityForward("Watcher", "Ice", 5000,
+				"When Geomancer is put from the field into the Break Zone, "
+				+ "Watcher deals you 1 point of damage.");
+		placeP2Forward(mw, watcher);
+		CardData geomancer = broken(mw, true, makeForward("Geomancer", "Ice", 2, 5000));
+
+		mw.autoAbilityTriggers.triggerAutoAbilitiesForBreakZone(geomancer, true, Set.of());
+
+		assertEquals(List.of(watcher), triggeredSources(mw),
+				"the name compare is only narrowed where the text names its own card");
+	}
+
+	@Test
+	void aFormingAPartySubjectFiresForItsOwnCardOnly() {
+		// Chocobo 25-045C. Self-named through a qualifier, so it was reachable from neither side:
+		// the board scan could not see the card that had just left it, and the self-dispatch only
+		// accepted a bare name. It now answers for its own death, and only in a party.
+		String text = "When Chocobo forming a party is put from the field into the Break Zone, "
+				+ "Chocobo deals you 1 point of damage.";
+		MainWindow mw = new MainWindow();
+		CardData chocobo = broken(mw, false, makeAutoAbilityForward("Chocobo", "Wind", 3000, text));
+
+		mw.autoAbilityTriggers.triggerAutoAbilitiesForBreakZone(chocobo, false, Set.of(chocobo));
+		assertEquals(List.of(chocobo), triggeredSources(mw), "it was in a party when it broke");
+
+		MainWindow alone = new MainWindow();
+		CardData solo = broken(alone, false, makeAutoAbilityForward("Chocobo", "Wind", 3000, text));
+		alone.autoAbilityTriggers.triggerAutoAbilitiesForBreakZone(solo, false, Set.of());
+		assertEquals(List.of(), triggeredSources(alone), "the qualifier still has to hold");
+	}
+
+	@Test
+	void aKalmiaThatHasLostItsAbilitiesShieldsNothing() {
+		MainWindow mw = new MainWindow();
+		CardData kalmia = makeFieldAbilityCard("Kalmia", "Water", "Backup", KALMIA_18_090R_BZ_SHIELD);
+		mw.placeCardInFirstBackupSlot(kalmia);
+		mw.lostAbilitiesCards.add(kalmia);
+
+		assertFalse(mw.bzCardsProtectedFromOppChoice(true));
 	}
 }

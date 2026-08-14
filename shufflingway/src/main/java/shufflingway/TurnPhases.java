@@ -258,5 +258,8 @@ class TurnPhases {
 		mw.p2Turn.attackDeclarationLimit = Integer.MAX_VALUE; mw.p2Turn.attackDeclarationsThisTurn = 0;
 		mw.p1Turn.attackDeclarationLimit = Integer.MAX_VALUE;       mw.p1Turn.attackDeclarationsThisTurn = 0;
 		mw.p1Turn.cannotSearchThisTurn = false; mw.p2Turn.cannotSearchThisTurn = false;
+		// Last, not with the row refreshes above: the exhausted-attacker glow reads
+		// attacksMadeThisTurn, which this method has just emptied.
+		mw.refreshCombatGlows();
 	}
 }

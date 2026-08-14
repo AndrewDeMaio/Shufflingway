@@ -2449,6 +2449,30 @@ final class ActionResolverPatterns {
         "(?i)(?<name>[A-Z][A-Za-z''\\-\\s()]+?)\\s+cannot\\s+be\\s+chosen\\s+by\\s+Summons?\\s+or\\s+abilities\\s+that\\s+share\\s+its\\s+Element\\s*\\.?"
     );
     /**
+     * "[CardName] cannot be chosen by [Element] Summons or [Element] abilities." (Royal Ripeness
+     * 5-007H.) Passive field ability: the immunity is checked per resolution against the resolving
+     * card's Elements.
+     *
+     * <p>The Element is captured rather than read off the carrier. Royal Ripeness names its own —
+     * a Fire Monster shielded from Fire — but nothing in the wording requires that, and reading
+     * the card instead would follow an Element override the text never mentions. That is exactly
+     * the difference from {@link #STANDALONE_NAMED_CANNOT_BE_CHOSEN_BY_OWN_ELEMENT}, whose "share
+     * its Element" does track the carrier, and from {@link #STANDALONE_NAME_ELEMENT_AND_IMMUNE},
+     * where a player picks the Element on resolution.
+     *
+     * <p>The second Element is optional so "by Fire Summons or abilities" reads the same way, and
+     * the backreference keeps a mismatched pair ("Fire Summons or Ice abilities") out — no such
+     * printing exists, and one would mean two immunities rather than this one.
+     *
+     * <p>No player is named, so the shield binds whoever is choosing, the card's own controller
+     * included.
+     */
+    static final Pattern STANDALONE_NAMED_CANNOT_BE_CHOSEN_BY_ELEMENT = Pattern.compile(
+        "(?i)(?<name>[A-Z][A-Za-z''\\-\\s()]+?)\\s+cannot\\s+be\\s+chosen\\s+by\\s+" +
+        "(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+Summons?\\s+or\\s+" +
+        "(?:\\k<element>\\s+)?abilit(?:y|ies)\\s*(?=[.!\"]|$)"
+    );
+    /**
      * "[CardName] cannot be chosen by a Multi-Element Forward's ability." (Kam'lanaut 18-072C.)
      *
      * <p>Passive field ability, and the narrowest immunity in the family: it reads the resolving
@@ -2487,6 +2511,20 @@ final class ActionResolverPatterns {
     static final Pattern FA_BZ_SUMMONS_PROTECTED_FROM_OPP_RFG = Pattern.compile(
         "(?i)All\\s+Summons?\\s+in\\s+your\\s+Break\\s+Zone\\s+cannot\\s+be\\s+removed\\s+from\\s+the\\s+game\\s+" +
         "by\\s+your\\s+opponent.?s\\s+(?:Summons?\\s+or\\s+)?abilities[.!]?"
+    );
+    /**
+     * "All cards in your Break Zone cannot be chosen by your opponent's Summons or abilities."
+     * (Kalmia 18-090R.) Wider than {@link #FA_BZ_SUMMONS_PROTECTED_FROM_OPP_RFG} on both axes:
+     * every card type rather than Summons alone, and every way an opponent's effect could choose
+     * one rather than removal from the game specifically.
+     *
+     * <p>"Chosen" is the operative word. An effect that takes the whole zone without choosing —
+     * "remove all cards in your opponent's Break Zone from the game" — is not stopped by this,
+     * because it never chooses anything.
+     */
+    static final Pattern FA_BZ_CARDS_PROTECTED_FROM_OPP_CHOICE = Pattern.compile(
+        "(?i)All\\s+cards\\s+in\\s+your\\s+Break\\s+Zone\\s+cannot\\s+be\\s+chosen\\s+by\\s+" +
+        "your\\s+opponent.?s\\s+(?:Summons?\\s+or\\s+)?abilit(?:y|ies)[.!]?"
     );
     /**
      * "[CardName] cannot become dull by your opponent's Summons or abilities."

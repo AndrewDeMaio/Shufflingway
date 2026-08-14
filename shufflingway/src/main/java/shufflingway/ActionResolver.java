@@ -4092,6 +4092,16 @@ public class ActionResolver {
     }
 
     /**
+     * Returns {@code true} if the card has the "all cards in your Break Zone cannot be chosen by
+     * your opponent's Summons or abilities" field ability (Kalmia 18-090R).
+     */
+    public static boolean hasBzCardChoiceProtection(CardData card) {
+        for (FieldAbility fa : card.fieldAbilities())
+            if (FA_BZ_CARDS_PROTECTED_FROM_OPP_CHOICE.matcher(fa.effectText()).find()) return true;
+        return false;
+    }
+
+    /**
      * Returns {@code true} if the card has a field ability of the form
      * "[CardName] cannot be chosen by Summons." — i.e., a permanent self-targeting
      * immunity to any Summon while the card is on the field.
@@ -4115,6 +4125,23 @@ public class ActionResolver {
             if (m.find() && m.group("name").trim().equalsIgnoreCase(card.name())) return true;
         }
         return false;
+    }
+
+    /**
+     * The Element whose Summons and abilities may not choose {@code card}, read off a field
+     * ability of the form "[CardName] cannot be chosen by [Element] Summons or [Element]
+     * abilities" (Royal Ripeness 5-007H); {@code null} when the card prints no such shield.
+     *
+     * <p>Self-named like the rest of this family: the text has to name its own carrier, so a
+     * granted copy naming someone else does not shield the card holding it.
+     */
+    static String cannotBeChosenByElementFieldAbility(CardData card) {
+        for (FieldAbility fa : card.fieldAbilities()) {
+            Matcher m = STANDALONE_NAMED_CANNOT_BE_CHOSEN_BY_ELEMENT.matcher(fa.effectText());
+            if (m.find() && m.group("name").trim().equalsIgnoreCase(card.name()))
+                return cap(m.group("element"));
+        }
+        return null;
     }
 
     /**

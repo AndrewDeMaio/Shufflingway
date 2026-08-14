@@ -793,6 +793,10 @@ final class GameContextImpl implements GameContext {
 						zone.addAll(p1side ? mw.p1MonsterCards : mw.p2MonsterCards);
 						for (CardData c : zone) {
 							if (ActionResolver.hasCannotBeChosenByAnySummonFieldAbility(c)) sumTmp.add(c);
+							// Royal Ripeness 5-007H: printed immunity to one named Element, both
+							// halves of it — its Summons and its abilities alike.
+							String pe = ActionResolver.cannotBeChosenByElementFieldAbility(c);
+							if (pe != null && resElems.contains(pe)) { sumTmp.add(c); ablTmp.add(c); }
 							if (ActionResolver.hasCannotBeChosenByOwnElementFieldAbility(c)) {
 								String ce = mw.effectiveElement(c);
 								if (ce != null && resElems.contains(ce)) { sumTmp.add(c); ablTmp.add(c); }
@@ -1674,7 +1678,12 @@ final class GameContextImpl implements GameContext {
 					List<ForwardTarget> eligible = new ArrayList<>();
 					// combined flat list for display; index = offset into combined list
 					List<CardData> combined = new ArrayList<>();
-					for (int i = 0; i < p1bz.size(); i++) {
+					// Kalmia 18-090R shields a player's whole Break Zone from the other player's
+					// effects. It is opponent-scoped, so only the far half of an "either Break
+					// Zone" choice can close; the chooser's own half stays open.
+					boolean skipP1Bz = !isP1 && mw.bzCardsProtectedFromOppChoice(true);
+					boolean skipP2Bz =  isP1 && mw.bzCardsProtectedFromOppChoice(false);
+					for (int i = 0; !skipP1Bz && i < p1bz.size(); i++) {
 						CardData card = p1bz.get(i);
 						if (card.isForward()  && !inclForwards) continue;
 						if (card.isBackup()   && !inclBackups)  continue;
@@ -1691,7 +1700,7 @@ final class GameContextImpl implements GameContext {
 						eligible.add(new ForwardTarget(true, i, ForwardTarget.CardZone.BREAK_ZONE));
 						combined.add(card);
 					}
-					for (int i = 0; i < p2bz.size(); i++) {
+					for (int i = 0; !skipP2Bz && i < p2bz.size(); i++) {
 						CardData card = p2bz.get(i);
 						if (card.isForward()  && !inclForwards) continue;
 						if (card.isBackup()   && !inclBackups)  continue;
@@ -1739,8 +1748,11 @@ final class GameContextImpl implements GameContext {
 				boolean useP1Zone = isP1 != opponentZone;
 				List<CardData> bz = useP1Zone
 						? mw.gameState.getP1BreakZone() : mw.gameState.getP2BreakZone();
+				// Kalmia 18-090R closes the far Break Zone to this effect entirely; the near one
+				// is the chooser's own and is never shielded from them.
+				boolean shieldedZone = useP1Zone != isP1 && mw.bzCardsProtectedFromOppChoice(useP1Zone);
 				List<ForwardTarget> eligible = new ArrayList<>();
-				for (int i = 0; i < bz.size(); i++) {
+				for (int i = 0; !shieldedZone && i < bz.size(); i++) {
 					CardData card = bz.get(i);
 					if (card.isForward()  && !inclForwards) continue;
 					if (card.isBackup()   && !inclBackups)  continue;
@@ -6488,7 +6500,9 @@ final class GameContextImpl implements GameContext {
 
 			@Override public void chooseFromOpponentBzMakeCastable(boolean inclForwards,
 					boolean inclBackups, boolean inclMonsters) {
-				List<CardData> oppBz = isP1 ? mw.gameState.getP2BreakZone() : mw.gameState.getP1BreakZone();
+				List<CardData> oppBz = mw.bzCardsProtectedFromOppChoice(!isP1)
+						? List.<CardData>of()   // Kalmia 18-090R — nothing there may be chosen
+						: isP1 ? mw.gameState.getP2BreakZone() : mw.gameState.getP1BreakZone();
 				List<CardData> candidates = new ArrayList<>();
 				for (CardData c : oppBz) {
 					if (c.isForward() && inclForwards) candidates.add(c);
@@ -6520,7 +6534,10 @@ final class GameContextImpl implements GameContext {
 					List<CardData> ownBz = isP1 ? mw.gameState.getP1BreakZone() : mw.gameState.getP2BreakZone();
 					List<CardData> oppBz = isP1 ? mw.gameState.getP2BreakZone() : mw.gameState.getP1BreakZone();
 					for (CardData c : ownBz) if (c.isSummon() && !mw.bzPlayableP1.containsKey(c) && !mw.bzPlayableP2.containsKey(c)) candidates.add(c);
-					if (eitherBz && !mw.bzSummonsProtectedFromOppRfg(!isP1))
+					// Two shields on the same half of this choice: one against removal from the
+					// game specifically, one against being chosen at all (Kalmia 18-090R).
+					if (eitherBz && !mw.bzSummonsProtectedFromOppRfg(!isP1)
+							&& !mw.bzCardsProtectedFromOppChoice(!isP1))
 						for (CardData c : oppBz) if (c.isSummon() && !mw.bzPlayableP1.containsKey(c) && !mw.bzPlayableP2.containsKey(c)) candidates.add(c);
 					if (candidates.isEmpty()) {
 						if (picks == 0) logEntry("No eligible Summon in Break Zone — effect fizzles");

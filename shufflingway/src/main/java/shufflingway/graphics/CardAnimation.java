@@ -82,6 +82,25 @@ public class CardAnimation {
 	}
 
 	public static BufferedImage renderBackupCard(BufferedImage card, CardState state, boolean highlight, boolean selected, boolean frozen) {
+		return renderBackupCard(card, state, highlight, selected, frozen, null);
+	}
+
+	/** Glow on a card the player has picked — an attacker being lined up, a blocker being assigned. */
+	public static final Color GLOW_SELECTED   = new Color(255, 165, 0);
+	/** Glow on a card the player could still act with this step. */
+	public static final Color GLOW_ACTIONABLE = new Color(0, 220, 0);
+	/** Glow on a card that is part of a declared attack, on either side of the board. */
+	public static final Color GLOW_ATTACKING  = new Color(215, 45, 45);
+	/** Glow on a card that has attacked as often as it may this turn. */
+	public static final Color GLOW_EXHAUSTED  = new Color(140, 140, 140);
+
+	/**
+	 * @param glow drawn when neither {@code selected} nor {@code highlight} applies; {@code null}
+	 *             for none. A slot has one glow, so the three are ranked rather than blended: what
+	 *             the player is doing right now outranks what the board is telling them about.
+	 */
+	public static BufferedImage renderBackupCard(BufferedImage card, CardState state, boolean highlight,
+			boolean selected, boolean frozen, Color glow) {
 		BufferedImage canvas = new BufferedImage(CARD_H, CARD_H, BufferedImage.TYPE_INT_ARGB);
 		Graphics2D g = canvas.createGraphics();
 		if (frozen) card = applyBlueTint(card);
@@ -100,9 +119,11 @@ public class CardAnimation {
 		int ch = dull ? CARD_W : CARD_H;
 
 		if (selected) {
-			drawRoundedGlow(g, new Color(255, 165, 0), cx, cy, cw, ch);
+			drawRoundedGlow(g, GLOW_SELECTED, cx, cy, cw, ch);
 		} else if (highlight) {
-			drawRoundedGlow(g, new Color(0, 220, 0), cx, cy, cw, ch);
+			drawRoundedGlow(g, GLOW_ACTIONABLE, cx, cy, cw, ch);
+		} else if (glow != null) {
+			drawRoundedGlow(g, glow, cx, cy, cw, ch);
 		}
 		g.dispose();
 		return canvas;
