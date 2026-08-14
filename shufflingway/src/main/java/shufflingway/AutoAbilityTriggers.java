@@ -4060,6 +4060,31 @@ final class AutoAbilityTriggers {
 	 *     {@link AbilityPaymentDialog}, or {@code -1} when the choice has not been made yet
 	 *     (the zero-CP fast path and the CPU path both pass {@code -1}).
 	 */
+	/**
+	 * Pays "put [self] at the bottom of its owner's deck", if this ability prints one.
+	 *
+	 * <p>The cost names a card, and it is only paid when that name is the source's own — the
+	 * printing is a statement about its own carrier, and the same sentence can appear quoted
+	 * inside an ability granted to somebody else.
+	 *
+	 * <p>The slot is found by identity, not by {@code indexOf}: {@link CardData} is a record, so
+	 * two copies of the same card are equal and the first copy on the row would be moved instead.
+	 */
+	void payBottomOfDeckCost(ActionAbility ability, CardData source, boolean isP1) {
+		String named = ability.bottomOfDeckCostCardName();
+		if (named == null || !named.equalsIgnoreCase(source.name())) return;
+		List<CardData> fwds = isP1 ? mw.p1ForwardCards : mw.p2ForwardCards;
+		for (int i = 0; i < fwds.size(); i++) {
+			if (fwds.get(i) != source) continue;
+			GameContext ctx = mw.buildGameContext(isP1);
+			if (isP1) ctx.returnP1ForwardToDeckBottom(i);
+			else      ctx.returnP2ForwardToDeckBottom(i);
+			mw.logEntry((isP1 ? "" : "[P2] ") + source.name()
+					+ " put at the bottom of its owner's deck (cost)");
+			return;
+		}
+	}
+
 	private void executeAbilityPayment(ActionAbility ability, CardData source,
 			Runnable applyDull, List<Integer> discardIndices, List<Integer> backupDullIndices,
 			List<ForwardTarget> bzTargets, boolean isP1, int xValue, int sCostHandIdx) {
@@ -4336,6 +4361,11 @@ final class AutoAbilityTriggers {
 				return;
 			}
 		}
+
+		// Bottom-of-deck cost (Bartz 19-048C), paid last of all: it takes the source off the field,
+		// so every index-based cost above has already been settled against the board it was chosen
+		// on, and the effect goes onto the stack with the card gone — which is the printed order.
+		payBottomOfDeckCost(ability, source, isP1);
 
 		mw.logEntry("\"" + source.name() + "\" activated ability");
 

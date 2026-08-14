@@ -10461,20 +10461,6 @@ public class MainWindow {
 	}
 
 	/**
-	 * Which side's field {@code c} is sitting on, or {@code null} when it is not on the field at
-	 * all. Compared by identity, because both players can control same-named copies and only the
-	 * instance in front of us has the board position that matters.
-	 */
-	private Boolean fieldSideOf(CardData c) {
-		for (boolean isP1 : new boolean[]{true, false}) {
-			for (CardData f : (isP1 ? p1ForwardCards : p2ForwardCards)) if (f == c) return isP1;
-			for (CardData b : (isP1 ? p1BackupCards  : p2BackupCards))  if (b == c) return isP1;
-			for (CardData m : (isP1 ? p1MonsterCards : p2MonsterCards)) if (m == c) return isP1;
-		}
-		return null;
-	}
-
-	/**
 	 * Whether {@code c} counts as {@code elem} right now — its printed Elements, plus an override
 	 * or anything gained from the opposing board. The board-aware form of
 	 * {@link CardData#containsElement}, which can only see what is printed.
@@ -11485,13 +11471,21 @@ public class MainWindow {
 	}
 
 	/**
-	 * Which side {@code card} is on as a field Forward, by identity, or {@code null} when it is not
-	 * on either. Identity rather than equality: {@link CardData} is a record, so two copies of the
+	 * Which side {@code card} is on as a field card, by identity, or {@code null} when it is on
+	 * neither. Identity rather than equality: {@link CardData} is a record, so two copies of the
 	 * same printing — one per player — are equal but are different cards on the board.
+	 *
+	 * <p>All three rows are searched, not just the Forwards. Kimahri 1-103C needs it as a Backup,
+	 * and the damage-threshold caller is better for it too: a Backup used to miss and fall through
+	 * to the ownership map, which answers who owns the card rather than who controls it.
 	 */
 	private Boolean fieldSideOf(CardData card) {
 		for (CardData c : p1ForwardCards) if (c == card) return Boolean.TRUE;
 		for (CardData c : p2ForwardCards) if (c == card) return Boolean.FALSE;
+		for (CardData c : p1BackupCards)  if (c == card) return Boolean.TRUE;
+		for (CardData c : p2BackupCards)  if (c == card) return Boolean.FALSE;
+		for (CardData c : p1MonsterCards) if (c == card) return Boolean.TRUE;
+		for (CardData c : p2MonsterCards) if (c == card) return Boolean.FALSE;
 		return null;
 	}
 

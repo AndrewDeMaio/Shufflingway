@@ -17535,4 +17535,88 @@ public class CardBehaviorTest {
 				"the ability works while he is on the field; a Break Zone copy controls nothing");
 		assertTrue(mw.effectiveContainsElement(buried, "Earth"));
 	}
+
+	// =========================================================================================
+	// Bartz 19-048C: "《Dull》, put Bartz at the bottom of its owner's deck: Draw 2 cards."
+	//
+	// The cost phrase was not one ACTION_ABILITY_PATTERN knew, so the whole line failed to match
+	// as an action ability and fell through to the field-ability bucket — which is where the
+	// report found it. Bartz 16-128H's neighbouring "《4》, put Bartz into the Break Zone:" already
+	// worked; this is the same shape sending the card somewhere else.
+	//
+	// The new group is appended after every numbered cost group on purpose: one inserted higher up
+	// would renumber groups 6-11, which the parse site reads positionally.
+	// =========================================================================================
+
+	private static final String BARTZ_19_048C_TEXT =
+			"《Dull》, put Bartz at the bottom of its owner's deck: Draw 2 cards.";
+
+	@Test
+	void bartzsLineParsesAsAnActionAbilityRatherThanAFieldOne() {
+		assertTrue(CardData.parseFieldAbilities(BARTZ_19_048C_TEXT, "Forward").isEmpty(),
+				"an unrecognised cost used to leave the whole ability in the field bucket");
+
+		List<ActionAbility> abilities = CardData.parseActionAbilities(BARTZ_19_048C_TEXT);
+		assertEquals(1, abilities.size());
+		ActionAbility ab = abilities.get(0);
+		assertTrue(ab.requiresDull(), "《Dull》 is still read alongside the new cost");
+		assertEquals("Bartz", ab.bottomOfDeckCostCardName());
+		assertEquals("Draw 2 cards.", ab.effectText());
+		assertTrue(ab.cpCost().isEmpty(), "the cost is the dull and the card itself, no CP");
+	}
+
+	@Test
+	void theBottomOfDeckCostSurvivesACostReduction() {
+		// withReducedCp rebuilds the record; routing that through the compatibility constructor
+		// would silently drop the cost from the copy.
+		ActionAbility ab = CardData.parseActionAbilities(BARTZ_19_048C_TEXT).get(0);
+		assertEquals("Bartz", ab.withReducedCp(1).bottomOfDeckCostCardName());
+	}
+
+	@Test
+	void payingTheCostPutsBartzUnderHisOwnersDeck() {
+		MainWindow mw = new MainWindow();
+		CardData bartz = makeForwardWithText("Bartz", "Wind", 2, 5000, BARTZ_19_048C_TEXT);
+		placeP1Forward(mw, bartz);
+		int deckBefore = mw.gameState.getP1MainDeck().size();
+
+		mw.autoAbilityTriggers.payBottomOfDeckCost(bartz.actionAbilities().get(0), bartz, true);
+
+		assertTrue(mw.p1ForwardCards.isEmpty(), "he leaves the field to pay");
+		assertEquals(deckBefore + 1, mw.gameState.getP1MainDeck().size());
+		assertEquals("Bartz", mw.gameState.getP1MainDeck().peekLast().name(), "at the bottom, not the top");
+		assertTrue(mw.gameState.getP1BreakZone().isEmpty(), "the deck, not the Break Zone");
+	}
+
+	@Test
+	void aCostNamingSomebodyElseIsNotPaidBySource() {
+		MainWindow mw = new MainWindow();
+		CardData other = makeForwardWithText("Faris", "Wind", 2, 5000, BARTZ_19_048C_TEXT);
+		placeP1Forward(mw, other);
+
+		mw.autoAbilityTriggers.payBottomOfDeckCost(other.actionAbilities().get(0), other, true);
+
+		assertEquals(1, mw.p1ForwardCards.size(),
+				"the sentence names Bartz, so it says nothing about the card quoting it");
+	}
+
+	@Test
+	void onlyTheCopyThatUsedTheAbilityLeaves() {
+		// CardData is a record, so both players' Bartz are equal and only identity tells them
+		// apart. The uniqueness rule keeps a player from controlling two, so one per side is the
+		// board that can actually hold a pair.
+		MainWindow mw = new MainWindow();
+		CardData mine   = makeForwardWithText("Bartz", "Wind", 2, 5000, BARTZ_19_048C_TEXT);
+		CardData theirs = makeForwardWithText("Bartz", "Wind", 2, 5000, BARTZ_19_048C_TEXT);
+		placeP1Forward(mw, mine);
+		placeP2Forward(mw, theirs);
+
+		mw.autoAbilityTriggers.payBottomOfDeckCost(theirs.actionAbilities().get(0), theirs, false);
+
+		assertTrue(mw.p2ForwardCards.isEmpty(), "the copy that used the ability paid");
+		assertEquals(1, mw.p1ForwardCards.size(), "and the other player's Bartz is untouched");
+		assertSame(mine, mw.p1ForwardCards.get(0));
+		assertEquals("Bartz", mw.gameState.getP2MainDeck().peekLast().name(),
+				"under its own owner's deck, not the other player's");
+	}
 }

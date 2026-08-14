@@ -92,8 +92,66 @@ public record ActionAbility(
         String                  inlineCostReductionExcludeName, // null = no exclusion; else = card name excluded from the reduction count
         boolean                 requiresOwnWarpCard,          // true = ability disabled when the controller has no cards in the Warp zone
         boolean                 usableByEitherPlayer,         // "Each player can use this ability." — the non-controller may also activate it, paying costs from their own resources
-        int                     requiresSelfPowerAtLeast      // 0 = no restriction; >0 = source's current power must be at least this to activate
+        int                     requiresSelfPowerAtLeast,     // 0 = no restriction; >0 = source's current power must be at least this to activate
+        String                  bottomOfDeckCostCardName      // null = no such cost; else the card named by "put X at the bottom of its owner's deck" (Bartz 19-048C)
 ) {
+    /**
+     * Compatibility constructor preserving the prior 51-arg signature; no bottom-of-deck cost.
+     * Only Bartz 19-048C prints one, so every other construction site reads as it did.
+     */
+    public ActionAbility(String abilityName, boolean requiresDull, boolean isSpecial, int crystalCost,
+            int selfMillCost, boolean hasXCost, List<String> cpCost, List<BreakZoneCost> breakZoneCosts,
+            List<DiscardCost> discardCosts, List<RemoveFromGameCost> removeFromGameCosts,
+            List<ReturnToHandCost> returnToHandCosts, List<CounterCost> counterCosts,
+            List<DullForwardCost> dullForwardCosts, boolean yourTurnOnly, boolean opponentTurnOnly,
+            boolean oncePerTurn, boolean mainPhaseOnly, String whileCardAttacking, String whileCardBlocking,
+            boolean whilePartyAttacking, boolean whileCardInHand, boolean hasBlockingTargetEffect,
+            String effectText, int damageThreshold, ControlCondition controlCondition,
+            String cpBackupElement, String cpAllowedElements, boolean sourceInBattle,
+            boolean requiresOppDiscardedThisTurn, boolean requiresCastSummonThisTurn,
+            String requiresElementForwardEnteredThisTurn, String requiresCardNameEnteredThisTurn,
+            String breakZoneOnly, boolean requiresOpponentEmptyHand, boolean requiresSelfEmptyHand,
+            String requiresNamedCardTookDamageThisTurn, boolean requiresSelfReceivedDamageThisTurn,
+            boolean requiresForwardPutToBZThisTurn, String requiresJobPutToBZThisTurn,
+            String blockerForAttacker, String ownBreakZoneNameRequired, String counterScaleName,
+            int minCounterRequired, String minCounterType, int maxOpponentHandSize,
+            boolean requiresSourceIsForward, int maxCounterAllowed, String maxCounterType,
+            String inlineCostReductionJob, String inlineCostReductionExcludeName,
+            boolean requiresOwnWarpCard, boolean usableByEitherPlayer, int requiresSelfPowerAtLeast) {
+        this(abilityName, requiresDull, isSpecial, crystalCost, selfMillCost, hasXCost, cpCost,
+                breakZoneCosts, discardCosts, removeFromGameCosts, returnToHandCosts, counterCosts,
+                dullForwardCosts, yourTurnOnly, opponentTurnOnly, oncePerTurn, mainPhaseOnly,
+                whileCardAttacking, whileCardBlocking, whilePartyAttacking, whileCardInHand,
+                hasBlockingTargetEffect, effectText, damageThreshold, controlCondition, cpBackupElement,
+                cpAllowedElements, sourceInBattle, requiresOppDiscardedThisTurn, requiresCastSummonThisTurn,
+                requiresElementForwardEnteredThisTurn, requiresCardNameEnteredThisTurn, breakZoneOnly,
+                requiresOpponentEmptyHand, requiresSelfEmptyHand, requiresNamedCardTookDamageThisTurn,
+                requiresSelfReceivedDamageThisTurn, requiresForwardPutToBZThisTurn, requiresJobPutToBZThisTurn,
+                blockerForAttacker, ownBreakZoneNameRequired, counterScaleName, minCounterRequired,
+                minCounterType, maxOpponentHandSize, requiresSourceIsForward, maxCounterAllowed,
+                maxCounterType, inlineCostReductionJob, inlineCostReductionExcludeName, requiresOwnWarpCard,
+                usableByEitherPlayer, requiresSelfPowerAtLeast, null);
+    }
+
+    /** A copy whose cost also puts {@code cardName} at the bottom of its owner's deck. */
+    public ActionAbility withBottomOfDeckCost(String cardName) {
+        return new ActionAbility(abilityName(), requiresDull(), isSpecial(), crystalCost(),
+                selfMillCost(), hasXCost(), cpCost(), breakZoneCosts(), discardCosts(),
+                removeFromGameCosts(), returnToHandCosts(), counterCosts(), dullForwardCosts(),
+                yourTurnOnly(), opponentTurnOnly(), oncePerTurn(), mainPhaseOnly(),
+                whileCardAttacking(), whileCardBlocking(), whilePartyAttacking(), whileCardInHand(),
+                hasBlockingTargetEffect(), effectText(), damageThreshold(), controlCondition(),
+                cpBackupElement(), cpAllowedElements(), sourceInBattle(), requiresOppDiscardedThisTurn(),
+                requiresCastSummonThisTurn(), requiresElementForwardEnteredThisTurn(),
+                requiresCardNameEnteredThisTurn(), breakZoneOnly(), requiresOpponentEmptyHand(),
+                requiresSelfEmptyHand(), requiresNamedCardTookDamageThisTurn(), requiresSelfReceivedDamageThisTurn(),
+                requiresForwardPutToBZThisTurn(), requiresJobPutToBZThisTurn(), blockerForAttacker(),
+                ownBreakZoneNameRequired(), counterScaleName(), minCounterRequired(), minCounterType(),
+                maxOpponentHandSize(), requiresSourceIsForward(), maxCounterAllowed(), maxCounterType(),
+                inlineCostReductionJob(), inlineCostReductionExcludeName(), requiresOwnWarpCard(),
+                usableByEitherPlayer(), requiresSelfPowerAtLeast(), cardName);
+    }
+
     public ActionAbility {
         cpCost            = List.copyOf(cpCost);
         breakZoneCosts    = List.copyOf(breakZoneCosts);
@@ -130,7 +188,10 @@ public record ActionAbility(
                 counterScaleName(), minCounterRequired(), minCounterType(), maxOpponentHandSize(),
                 requiresSourceIsForward(), maxCounterAllowed(), maxCounterType(),
                 inlineCostReductionJob(), inlineCostReductionExcludeName(), requiresOwnWarpCard(),
-                usableByEitherPlayer(), requiresSelfPowerAtLeast());
+                usableByEitherPlayer(), requiresSelfPowerAtLeast(),
+                // Carried explicitly: routing through the compatibility constructor would silently
+                // drop the cost from the reduced copy.
+                bottomOfDeckCostCardName());
     }
 
     /** Creates an action ability whose sole cost is "Put {@code bzCardName} into the Break Zone." */

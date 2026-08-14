@@ -1523,6 +1523,10 @@ public record CardData(
         "|Backups?(?:\\s+of\\s+the\\s+same\\s+Element)?(?:\\s+or\\s+\\d+\\s*(?:active|dull|damaged)?\\s*Backups?\\s+of\\s+the\\s+same\\s+Element(?:\\s+and\\s+[A-Za-z][A-Za-z\\s''\\-]*?)?)?" + // Backups [of the same Element] [or N Backups ... and Name]
         "|Characters?)" + // Characters
         "|(?<dullbarename>(?-i:[A-Z])[A-Za-z''\\-]+)(?:\\s+(?:Forwards?|Backups?|Monsters?|Characters?))?(?:\\s+and\\s+[^:\\[]+)?)\\s*)?" + // bare-name branch: "Dull [cond] CardName [and N [cond] ...]"
+        // Appended after every numbered cost group on purpose: a group inserted higher up would
+        // renumber groups 6-11, which the parse site reads positionally.
+        "(?<bottomdeckcost>(?i)(?:,\\s*)?put\\s+(?<bottomdeckname>[^:,]+?)\\s+at\\s+the\\s+bottom\\s+of\\s+" +
+        "(?:its|their)\\s+owner(?:'s|s')?\\s+deck\\s*)?" +                      // optional "put [self] at the bottom of its owner's deck" cost
         ":\\s*"                                                              +  // colon separator
         "(?<effecttext>(?:[^\\[]|\\[(?!\\[))*)"                                // effect text (up to next [[markup]])
     );
@@ -1655,12 +1659,13 @@ public record CardData(
             String returnRaw     = m.group(9);
             String counterRaw    = m.group(10);
             String dullCostRaw   = m.group("dullcost");
+            String bottomDeckRaw = m.group("bottomdeckcost");
             String effectRaw     = DAMAGE_THRESHOLD_REMINDER_PAREN.matcher(m.group("effecttext").trim()).replaceAll("").trim();
             if (effectRaw.isEmpty()) continue;
             // Skip if there are no CP tokens or any non-CP cost phrase (spurious match)
             if ((costPart == null || costPart.isBlank()) && bzRaw == null && discardRaw == null
                     && removeRaw == null && returnRaw == null && counterRaw == null
-                    && dullCostRaw == null) continue;
+                    && dullCostRaw == null && bottomDeckRaw == null) continue;
 
             String  abilityName  = rawName != null ? rawName.trim() : "";
             boolean isSpecial    = !abilityName.isEmpty();
@@ -1829,7 +1834,12 @@ public record CardData(
             Matcher selfPowerM = SELF_POWER_AT_LEAST_RESTRICTION.matcher(effectRaw);
             int requiresSelfPowerAtLeast = selfPowerM.find()
                     ? Integer.parseInt(selfPowerM.group("power")) : 0;
-            result.add(new ActionAbility(abilityName, requiresDull, isSpecial, crystalCost, selfMillCost, hasXCost, cpCost, breakZoneCosts, discardCosts, removeFromGameCosts, returnToHandCosts, counterCosts, dullForwardCosts, yourTurnOnly, opponentTurnOnly, oncePerTurn, mainPhaseOnly, whileCardAtk, whileCardBlk, whilePartyAtk, whileCardInHand, hasBlockingTarget, effectRaw, damageThreshold, controlCondition, cpBackupElement, cpAllowedElements, sourceInBattle, requiresOppDiscardedThisTurn, requiresCastSummonThisTurn, requiresElementForwardEnteredThisTurn, requiresCardNameEnteredThisTurn, breakZoneOnly, requiresOpponentEmptyHand, requiresSelfEmptyHand, requiresNamedCardTookDamageThisTurn, requiresSelfReceivedDamageThisTurn, requiresForwardPutToBZThisTurn, requiresJobPutToBZThisTurn, blockerForAttacker, ownBzCard, counterScaleName, minCounterRequired, minCounterType, maxOpponentHandSize, requiresSourceIsForward, maxCounterAllowed, maxCounterType, inlineCostReductionJob, inlineCostReductionExcludeName, requiresOwnWarpCard, usableByEitherPlayer, requiresSelfPowerAtLeast));
+            ActionAbility parsed = new ActionAbility(abilityName, requiresDull, isSpecial, crystalCost, selfMillCost, hasXCost, cpCost, breakZoneCosts, discardCosts, removeFromGameCosts, returnToHandCosts, counterCosts, dullForwardCosts, yourTurnOnly, opponentTurnOnly, oncePerTurn, mainPhaseOnly, whileCardAtk, whileCardBlk, whilePartyAtk, whileCardInHand, hasBlockingTarget, effectRaw, damageThreshold, controlCondition, cpBackupElement, cpAllowedElements, sourceInBattle, requiresOppDiscardedThisTurn, requiresCastSummonThisTurn, requiresElementForwardEnteredThisTurn, requiresCardNameEnteredThisTurn, breakZoneOnly, requiresOpponentEmptyHand, requiresSelfEmptyHand, requiresNamedCardTookDamageThisTurn, requiresSelfReceivedDamageThisTurn, requiresForwardPutToBZThisTurn, requiresJobPutToBZThisTurn, blockerForAttacker, ownBzCard, counterScaleName, minCounterRequired, minCounterType, maxOpponentHandSize, requiresSourceIsForward, maxCounterAllowed, maxCounterType, inlineCostReductionJob, inlineCostReductionExcludeName, requiresOwnWarpCard, usableByEitherPlayer, requiresSelfPowerAtLeast);
+            // The named card is carried rather than resolved here: this parser is not given the
+            // card's own name, and the activation site is, so the self check belongs there.
+            if (bottomDeckRaw != null && m.group("bottomdeckname") != null)
+                parsed = parsed.withBottomOfDeckCost(m.group("bottomdeckname").trim());
+            result.add(parsed);
         }
         return List.copyOf(result);
     }
