@@ -164,6 +164,20 @@ final class ActionResolverSearch {
             ctx.putSourceToBottomOfDeck(source);
         };
     }
+    /**
+     * The deck-top twin of {@link #tryParsePutSourceToBottomOfDeck} — "Put [Self] on top of its
+     * owner's deck." (Fiona 16-118C). Kept adjacent so the pair stays visible as one decision.
+     */
+    static Consumer<GameContext> tryParsePutSourceOnTopOfDeck(String text, CardData source) {
+        if (source == null) return null;
+        Matcher m = PUT_SOURCE_ON_TOP_OF_DECK.matcher(text.trim());
+        if (!m.matches()) return null;
+        if (!m.group("name").trim().equalsIgnoreCase(source.name())) return null;
+        return ctx -> {
+            ctx.logEntry("Effect: " + source.name() + " → top of its owner's deck");
+            ctx.putSourceOnTopOfDeck(source);
+        };
+    }
     static Consumer<GameContext> tryParseShuffleThenRevealPlayNamedRestBottom(String text, CardData source) {
         Matcher m = SHUFFLE_THEN_REVEAL_PLAY_NAMED_REST_BOTTOM.matcher(text.trim());
         if (!m.matches()) return null;

@@ -1102,7 +1102,7 @@ final class ActionResolverChoose {
         final String secondaryText;
         final Consumer<GameContext> secondary;
         {
-            int dotSpaceIdx = followup.indexOf(". ");
+            int dotSpaceIdx = sentenceBreakOutsideQuotes(followup);
             if (dotSpaceIdx >= 0) {
                 primaryFollowup = followup.substring(0, dotSpaceIdx).trim();
                 String stripped = stripRestrictionSentences(followup.substring(dotSpaceIdx + 2).trim());
@@ -1196,6 +1196,48 @@ final class ActionResolverChoose {
                 + (condition != null ? " " + condition : "")
                 + (element   != null ? " " + element   : "")
                 + categoryLabel + " " + targets + costLabel + powerLabel + controlLabel + excludeLabel + zoneLabel;
+
+        // --- Multi-sentence quoted-ability grants ---------------------------------------
+        // Settled here, ahead of every followup parser below, because those all match with
+        // find(): the effects printed inside a quotation belong to the ability being granted, not
+        // to this choose, and a quotation long enough to hold a sentence break is long enough for
+        // one of them to reach in and claim a clause. 12-013C Ninja grants "When this Forward
+        // attacks, choose 1 Forward. Deal it 5000 damage." and was resolving as the choose itself
+        // dealing 5000 damage.
+        //
+        // Scoped to quotations that span a sentence on purpose. The single-sentence grants
+        // (breaktouch, cannot-be-chosen, must-block, ability-damage shield) have handlers further
+        // down that nothing in between has ever claimed, and are left on that path untouched.
+        {
+            Matcher anyGrantM = FOLLOWUP_GAINS_QUOTED_ABILITY.matcher(primaryFollowup.trim());
+            if (anyGrantM.matches() && anyGrantM.group("quoted").contains(". ")) {
+                // Permanent grant ("(This effect does not end at the end of the turn.)"), the one
+                // shape this engine can apply: it goes into the permanent granted-ability map and
+                // is dropped only when the grantee leaves the field (21-079R Lich).
+                Matcher permM = FOLLOWUP_GAINS_QUOTED_ABILITY_PERMANENT.matcher(primaryFollowup.trim());
+                if (permM.matches()) {
+                    String granted = PERMANENCE_REMINDER.matcher(permM.group("quoted").trim())
+                            .replaceFirst("").trim();
+                    // A clause parseAutoAbilities does not recognise would be granted inert, so it
+                    // declines to the warning below instead — permanentGrantForClause's reasoning.
+                    if (!CardData.parseAutoAbilities(granted).isEmpty()) {
+                        return ctx -> {
+                            ctx.logEntry(choosePrefix + " — gains \"" + granted
+                                    + "\" (does not end at end of turn)");
+                            List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                                    opponentOnly, selfOnly, condition, element, zone, opponentZone,
+                                    costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
+                            ts.forEach(t -> ctx.grantAutoAbilityPermanently(t, granted));
+                            if (secondary != null) secondary.accept(ctx);
+                        };
+                    }
+                }
+                final String unhandled = primaryFollowup;
+                Consumer<GameContext> warn = ctx -> ctx.logEntry(
+                        "[ActionResolver] Choose effect — granted ability not yet implemented: " + unhandled);
+                return secondary == null ? warn : warn.andThen(secondary);
+            }
+        }
 
         // --- "You may pay 《Element》. If you do so, [target action]." ---
         // Checked against the full followup before the primary/secondary split so the conditional is not lost.
@@ -3551,6 +3593,26 @@ final class ActionResolverChoose {
         Consumer<GameContext> warnEffect = ctx -> ctx.logEntry(
                 "[ActionResolver] Choose effect — followup not yet implemented: " + followup);
         return secondary == null ? warnEffect : warnEffect.andThen(secondary);
+    }
+    /**
+     * Index of the first ". " sentence boundary of {@code text} that lies outside every quoted
+     * span, or -1 when there is none.
+     *
+     * <p>Quote-awareness is what makes a two-sentence <em>quotation</em> survive the primary /
+     * secondary split. Lich 21-079R's followup is
+     * {@code It gains "At the end of each of your turns, break this Forward. (This effect does not
+     * end at the end of the turn.)"} — a plain {@code indexOf(". ")} cut it at the period inside
+     * the quotes, leaving a primary with an unbalanced quote that no followup pattern could claim
+     * and the reminder text stranded as the secondary.
+     */
+    static int sentenceBreakOutsideQuotes(String text) {
+        boolean inQuotes = false;
+        for (int i = 0; i < text.length() - 1; i++) {
+            char c = text.charAt(i);
+            if (c == '"') { inQuotes = !inQuotes; continue; }
+            if (!inQuotes && c == '.' && text.charAt(i + 1) == ' ') return i;
+        }
+        return -1;
     }
     static Consumer<GameContext> tryParseChooseForwardDoubleIncomingThisTurn(String text) {
         if (!CHOOSE_FORWARD_DOUBLE_INCOMING_THIS_TURN.matcher(text).find()) return null;

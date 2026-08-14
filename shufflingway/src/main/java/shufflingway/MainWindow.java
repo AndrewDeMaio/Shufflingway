@@ -4150,6 +4150,10 @@ public class MainWindow {
 		}
 	}
 
+	// -------------------------------------------------------------------------
+	// Bounce: field cards back to the deck
+	// -------------------------------------------------------------------------
+
 	void returnP1ForwardToDeck(int idx, boolean toBottom) {
 		if (idx < 0 || idx >= p1ForwardCards.size()) return;
 		CardData card    = p1ForwardCards.get(idx);
@@ -4158,12 +4162,14 @@ public class MainWindow {
 
 		boolean player1 = gameState.getIdentity().get(card);
 		Deque<CardData> zone = player1 ? gameState.getP1MainDeck() : gameState.getP2MainDeck();
-		zone.add(card);
 
 		if (topCard != null) {
 			gameState.addToPermanentRfp(topCard);
 			logEntry(topCard.name() + " → Removed From Play");
 		}
+		// One insertion only — the addLast/addFirst below is the real one. An unconditional
+		// zone.add(card) used to run here as well, which put a second copy of every bounced
+		// Forward into the deck.
 		if (toBottom) zone.addLast(card);
 		else          zone.addFirst(card);
 		logEntry(card.name() + " → " + pos + " of deck");
@@ -4219,12 +4225,12 @@ public class MainWindow {
 
 		boolean player1 = gameState.getIdentity().get(card);
 		Deque<CardData> zone = player1 ? gameState.getP1MainDeck() : gameState.getP2MainDeck();
-		zone.add(card);
 
 		if (topCard != null) {
 			gameState.addToPermanentRfp(topCard);
 			logEntry("[P2] " + topCard.name() + " → Removed From Play");
 		}
+		// One insertion only — see returnP1ForwardToDeck.
 		if (toBottom) zone.addLast(card);
 		else          zone.addFirst(card);
 		logEntry("[P2] " + card.name() + " → " + pos + " of deck");
@@ -4371,6 +4377,10 @@ public class MainWindow {
 		if (player1) refreshP1DeckLabel(); else refreshP2DeckLabel();
 		autoAbilityTriggers.triggerAutoAbilitiesForLeavesField(card, false);
 	}
+
+	// -------------------------------------------------------------------------
+	// Deck search
+	// -------------------------------------------------------------------------
 
 	void searchDeckForCard(boolean isP1,
 			boolean inclForwards, boolean inclBackups,
@@ -4796,6 +4806,10 @@ public class MainWindow {
 		return cardPickerDialog.pickMultiCardImage(cards, title, count, eachDifferentType, showCost);
 	}
 
+	// -------------------------------------------------------------------------
+	// Bounce: field cards back to hand
+	// -------------------------------------------------------------------------
+
 	void returnP1ForwardToHand(int idx) {
 		if (idx < 0 || idx >= p1ForwardCards.size()) return;
 		CardData card    = p1ForwardCards.get(idx);
@@ -4991,6 +5005,10 @@ public class MainWindow {
 		autoAbilityTriggers.triggerAutoAbilitiesForLeavesField(c, false);
 	}
 
+	// -------------------------------------------------------------------------
+	// Effective power and traits after field grants
+	// -------------------------------------------------------------------------
+
 	int effectiveP1ForwardPower(int idx) {
 		CardData top  = p1ForwardPrimedTop.get(idx);
 		CardData card = p1ForwardCards.get(idx);
@@ -5100,6 +5118,10 @@ public class MainWindow {
 		return granted != null && granted.contains(trait);
 	}
 
+	// -------------------------------------------------------------------------
+	// Combat resolution
+	// -------------------------------------------------------------------------
+
 	/**
 	 * Resolves combat between an attacker and a blocker.
 	 * A forward breaks when the opponent's power equals or exceeds its own power.
@@ -5208,6 +5230,10 @@ public class MainWindow {
 			logEntry("Both forwards survive combat");
 		}
 	}
+
+	// -------------------------------------------------------------------------
+	// Attack and block legality, compulsions
+	// -------------------------------------------------------------------------
 
 	/**
 	 * P2 AI: returns the index of the best P2 blocker against {@code attacker},
@@ -5455,6 +5481,10 @@ public class MainWindow {
 	private static boolean blockerCostExcluded(int blockerCost, int[] costFilter) {
 		return costFilter[1] == 1 ? blockerCost >= costFilter[0] : blockerCost <= costFilter[0];
 	}
+
+	// -------------------------------------------------------------------------
+	// Block declaration - local seat and remote replay
+	// -------------------------------------------------------------------------
 
 	/**
 	 * Called when P2 attacks: sets up interactive block declaration so P1 can click
@@ -5719,6 +5749,10 @@ public class MainWindow {
 	}
 
 
+	// -------------------------------------------------------------------------
+	// Damage zone, Limit Break and forced-discard dialogs
+	// -------------------------------------------------------------------------
+
 	/**
 	 * Previews the damage-zone card sitting in slot {@code slotIdx} in the side panel.
 	 * No-op for the empty slots below the current damage count.
@@ -5944,6 +5978,10 @@ public class MainWindow {
 			}
 		}
 	}
+
+	// -------------------------------------------------------------------------
+	// Hand selection, hand reveal, remote-choice plumbing
+	// -------------------------------------------------------------------------
 
 	void showPlaceToBottomOfDeckDialog(int count) {
 		showPlaceToBottomOfDeckDialog(count, false);
@@ -7212,6 +7250,10 @@ public class MainWindow {
 		return false;
 	}
 
+	// -------------------------------------------------------------------------
+	// Protections against opponent effects
+	// -------------------------------------------------------------------------
+
 	/**
 	 * Returns {@code true} when player {@code targetIsP1} controls a field card with
 	 * "Characters you control cannot be returned to their owner's hand by your opponent's
@@ -7275,6 +7317,10 @@ public class MainWindow {
 		return false;
 	}
 
+	// -------------------------------------------------------------------------
+	// Cast restrictions and granted CP
+	// -------------------------------------------------------------------------
+
 	/** @see CostCalculator#castRestrictionMet */
 	boolean castRestrictionMet(CardData card) { return costs.castRestrictionMet(card); }
 
@@ -7326,6 +7372,10 @@ public class MainWindow {
 
 	/** @see CostCalculator#canAffordExtraCost */
 	private boolean canAffordExtraCost(CardData card, int handIdx, ExtraCost ec) { return costs.canAffordExtraCost(card, handIdx, ec); }
+
+	// -------------------------------------------------------------------------
+	// Extra and alternative cost payment
+	// -------------------------------------------------------------------------
 
 	/**
 	 * Opens the appropriate extra-cost selection dialog (BZ removal, hand discard, or X spinner),
@@ -7557,6 +7607,10 @@ public class MainWindow {
 	}
 
 
+	// -------------------------------------------------------------------------
+	// Warp play
+	// -------------------------------------------------------------------------
+
 	/**
 	 * Pays the Warp alternate cost (dulls backups, discards hand cards), removes the card
 	 * from hand, and places it in the Removed-From-Play zone with Warp counters.
@@ -7648,6 +7702,10 @@ public class MainWindow {
 		refreshP2BreakLabel();
 		refreshP2WarpZoneUI();
 	}
+
+	// -------------------------------------------------------------------------
+	// Uniqueness and Light/Dark conflict rules
+	// -------------------------------------------------------------------------
 
 	/** Whether P1 already has a Character of this name in play. */
 	boolean hasCharacterNameOnField(String name) {
@@ -7807,6 +7865,10 @@ public class MainWindow {
 		return false;
 	}
 
+	// -------------------------------------------------------------------------
+	// Payment dialogs and field-granted discard casts
+	// -------------------------------------------------------------------------
+
 	/**
 	 * Opens a modal payment dialog where the player selects backups to dull (1 CP each)
 	 * and/or hand cards to discard (2 CP each) to cover the cost of {@code card}.
@@ -7942,6 +8004,10 @@ public class MainWindow {
 		}
 		return false;
 	}
+
+	// -------------------------------------------------------------------------
+	// Playing a card - from hand and from the Break Zone
+	// -------------------------------------------------------------------------
 
 	/**
 	 * The local player's play, which a networked opponent also has to see.
@@ -8385,6 +8451,10 @@ public class MainWindow {
 		lastCardWasCast = false;
 	}
 
+	// -------------------------------------------------------------------------
+	// Opponent wiring and Summons on the Stack
+	// -------------------------------------------------------------------------
+
 	/**
 	 * Builds the controller that will make P2's decisions for the game being started:
 	 * the remote human when the lobby handed us a {@link MatchSetup}, the local AI otherwise.
@@ -8499,6 +8569,10 @@ public class MainWindow {
 	private static String escapeForHtmlLabel(String text) {
 		return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
 	}
+
+	// -------------------------------------------------------------------------
+	// Stack window and stack resolution
+	// -------------------------------------------------------------------------
 
 	/**
 	 * Shows the resolution overlay for the current top of the stack.
@@ -8864,6 +8938,10 @@ public class MainWindow {
 	/** How often {@link #runWhenBoardSettled} re-checks whether the board has settled. */
 	private static final int BOARD_SETTLE_POLL_MS = 100;
 
+	// -------------------------------------------------------------------------
+	// Board-settled gating and Limit Break play
+	// -------------------------------------------------------------------------
+
 	/**
 	 * True when nothing is left to resolve: no card is still arriving on the field, the stack is
 	 * empty, no stack entry is mid-resolution, and {@link #turnFlowGate} reports no outstanding
@@ -8990,6 +9068,10 @@ public class MainWindow {
 			break;
 		}
 	}
+
+	// -------------------------------------------------------------------------
+	// Dull/activate animations, slot tooltips, Backup slot rendering
+	// -------------------------------------------------------------------------
 
 	/**
 	 * Shared dull/activate rotation for a single card slot: rotates {@code slot}'s image between
@@ -9361,6 +9443,10 @@ public class MainWindow {
 
 	// ---- Per-player data selectors used by the ability payment chain -----------
 
+	// -------------------------------------------------------------------------
+	// Seat-agnostic accessors
+	// -------------------------------------------------------------------------
+
 	List<CardData> playerHand(boolean isP1)       { return isP1 ? gameState.getP1Hand()       : gameState.getP2Hand(); }
 	CardData[]     playerBackupCards(boolean isP1) { return isP1 ? p1BackupCards               : p2BackupCards; }
 	CardState[]    playerBackupStates(boolean isP1){ return isP1 ? p1BackupStates              : p2BackupStates; }
@@ -9396,6 +9482,11 @@ public class MainWindow {
 	void notifyCardsAddedToHandFromBreakZone(boolean handOwnerIsP1) {
 		autoAbilityTriggers.triggerAutoAbilitiesForBreakZoneToHand(handOwnerIsP1);
 	}
+
+	// -------------------------------------------------------------------------
+	// Breaking P2 Backup and Monster slots
+	// -------------------------------------------------------------------------
+
 	void playerDullBackupSlot(boolean isP1, int idx) {
 		if (isP1) animateDullBackup(idx, true); else animateDullP2Backup(idx, true);
 	}
@@ -9456,6 +9547,10 @@ public class MainWindow {
 		refreshP2BreakLabel();
 		autoAbilityTriggers.triggerAutoAbilitiesForBreakZone(c, false, Collections.emptySet());
 	}
+
+	// -------------------------------------------------------------------------
+	// Damage redirection
+	// -------------------------------------------------------------------------
 
 	/**
 	 * The cards currently attacking on {@code isP1}'s side.
@@ -9665,6 +9760,10 @@ public class MainWindow {
 				&& !isProtectedFromChoice(c, sideIsP1, entry.isP1(), entry.isSummon(), entry.source());
 	}
 
+	// -------------------------------------------------------------------------
+	// Targeting legality and protection from being chosen
+	// -------------------------------------------------------------------------
+
 	/**
 	 * Whether {@code t} would have been a legal choice for {@code entry}'s own effect — the second
 	 * half of "The newly chosen target must be a valid choice", alongside the immunity check in
@@ -9793,6 +9892,10 @@ public class MainWindow {
 		if (!gameState.replaceStackEntry(entry, updated)) return;
 		if (cancelledStackEntries.remove(entry)) cancelledStackEntries.add(updated);
 	}
+
+	// -------------------------------------------------------------------------
+	// Ability activation legality
+	// -------------------------------------------------------------------------
 
 	/**
 	 * Returns {@code true} if {@code ability} can currently be activated by the
@@ -9968,6 +10071,10 @@ public class MainWindow {
 		return canAffordAbilityCost(ability, isP1);
 	}
 
+	// -------------------------------------------------------------------------
+	// Control conditions, effective Element and Job
+	// -------------------------------------------------------------------------
+
 	/**
 	 * Returns {@code true} when the "if you/opponent control(s) [X]" restriction on an action
 	 * ability is met.  When {@code cond.opponentControls()} is true, checks the opponent's field.
@@ -10135,6 +10242,10 @@ public class MainWindow {
 		return false;
 	}
 
+	// -------------------------------------------------------------------------
+	// Cannot-be-chosen (ICB) immunity
+	// -------------------------------------------------------------------------
+
 	/**
 	 * Returns {@code true} if any {@link IfControlBoost} on the given player's field
 	 * targets {@code targetName} and grants it immunity to Summons ({@code forSummon=true})
@@ -10263,6 +10374,10 @@ public class MainWindow {
 			if (mons.get(i).name().equalsIgnoreCase(name) && monStates.get(i) == CardState.DULL) return true;
 		return false;
 	}
+
+	// -------------------------------------------------------------------------
+	// Field power grants and boost contribution
+	// -------------------------------------------------------------------------
 
 	/**
 	 * Computes the total conditional power bonus for a field card named {@code targetName}
@@ -10583,6 +10698,10 @@ public class MainWindow {
 		return base + computeConditionalBoostForTarget(card, true) + p1MonsterPowerBoost.getOrDefault(card, 0);
 	}
 
+
+	// -------------------------------------------------------------------------
+	// GameContext construction and field-ability firing
+	// -------------------------------------------------------------------------
 
 	/**
 	 * Builds the {@link GameContext} used by {@link ActionResolver} to apply field effects.
@@ -10917,11 +11036,48 @@ public class MainWindow {
 	 * a granted trigger fires on exactly the same events as a printed one.
 	 */
 	List<AutoAbility> effectiveAutoAbilities(CardData card) {
-		List<AutoAbility> granted = grantedAutoAbilities.get(card);
-		if (granted == null || granted.isEmpty()) return card.autoAbilities();
+		List<AutoAbility> granted   = grantedAutoAbilities.get(card);
+		List<AutoAbility> selfGrant = damageThresholdGrantedAutoAbilities(card);
+		boolean hasGranted = granted != null && !granted.isEmpty();
+		if (!hasGranted && selfGrant.isEmpty()) return card.autoAbilities();
 		List<AutoAbility> all = new ArrayList<>(card.autoAbilities());
-		all.addAll(granted);
+		if (hasGranted) all.addAll(granted);
+		all.addAll(selfGrant);
 		return all;
+	}
+
+	/**
+	 * Abilities a card's own conditional field ability is currently handing it — Yumcax 18-067C's
+	 * "Damage 3 -- Yumcax gains Brave and \"When Yumcax is put from the field into the Break Zone,
+	 * draw 1 card.\"".
+	 *
+	 * <p>Read live rather than stored, because the condition can stop holding: unlike
+	 * {@link #grantedAutoAbilities}, which records a grant some other effect made, this one is a
+	 * property of the card's own text and has to be re-evaluated every time the abilities are asked
+	 * for.
+	 *
+	 * <p>The damage zone consulted is the card's controller's, and falls back to its owner's when
+	 * the card is no longer on the field. That fallback is what makes the grant survive its own
+	 * trigger: a "put from the field into the Break Zone" ability is asked for <em>after</em> the
+	 * card has left, so a field-position lookup alone would find nothing and the ability would
+	 * never fire.
+	 */
+	private List<AutoAbility> damageThresholdGrantedAutoAbilities(CardData card) {
+		if (lostAbilitiesCards.contains(card)) return List.of();
+		Boolean side = fieldSideOf(card);
+		if (side == null) side = gameState.getIdentity().get(card);
+		if (side == null) return List.of();
+		int dmg = (side ? gameState.getP1DamageZone() : gameState.getP2DamageZone()).size();
+		List<AutoAbility> out = null;
+		for (FieldAbility fa : card.fieldAbilities()) {
+			if (fa.damageThreshold() > 0 && dmg < fa.damageThreshold()) continue;
+			CardData.SelfGainsQuotedGrant g =
+					CardData.parseSelfGainsQuotedGrant(fa.effectText(), card.name());
+			if (g == null || g.abilityTexts().isEmpty()) continue;
+			if (out == null) out = new ArrayList<>();
+			for (String text : g.abilityTexts()) out.addAll(CardData.parseAutoAbilities(text));
+		}
+		return out == null ? List.of() : out;
 	}
 
 	/** Drops everything granted to {@code card} by an outlasts-the-turn effect, as it leaves the field. */
@@ -10952,7 +11108,32 @@ public class MainWindow {
 		if (permanent != null) max = Math.max(max, permanent);
 		max = Math.max(max, attacksFromOwnDamage(card));
 		max = Math.max(max, attacksFromHandSizeGrant(card));
+		max = Math.max(max, attacksFromDamageThresholdGrant(card));
 		return max;
+	}
+
+	/**
+	 * Gilgamesh 18-074L: "Damage 3 -- Gilgamesh gains Brave and \"Gilgamesh can attack twice in the
+	 * same turn.\"" The permission is conditional on a damage count that changes during the game,
+	 * so — like {@link #attacksFromHandSizeGrant} — it is read here rather than frozen into
+	 * {@link CardData#maxAttacksPerTurn()}. The Brave granted in the same breath travels the
+	 * ordinary route, through {@code FieldGrantCalculator}.
+	 *
+	 * <p>Returns 0 when the card has no such ability, so it never lowers an existing permission.
+	 */
+	private int attacksFromDamageThresholdGrant(CardData card) {
+		if (lostAbilitiesCards.contains(card)) return 0;
+		Boolean side = fieldSideOf(card);
+		if (side == null) return 0;
+		int dmg = (side ? gameState.getP1DamageZone() : gameState.getP2DamageZone()).size();
+		int best = 0;
+		for (FieldAbility fa : effectiveFieldAbilities(card)) {
+			if (fa.damageThreshold() > 0 && dmg < fa.damageThreshold()) continue;
+			CardData.SelfGainsQuotedGrant g =
+					CardData.parseSelfGainsQuotedGrant(fa.effectText(), card.name());
+			if (g != null) best = Math.max(best, g.maxAttacks());
+		}
+		return best;
 	}
 
 	/**
@@ -11611,6 +11792,10 @@ public class MainWindow {
 	 */
 	private static final int FORWARD_ZONE_H = CARD_H * 5 / 4;
 
+	// -------------------------------------------------------------------------
+	// Forward and Monster zones - panels, placement, slot rendering
+	// -------------------------------------------------------------------------
+
 	private JScrollPane buildForwardZonePanel(boolean isP1) {
 		JPanel forwardInner = new JPanel(new FlowLayout(FlowLayout.CENTER, 4, 0)) {
 			@Override
@@ -11976,6 +12161,10 @@ public class MainWindow {
 		}
 	}
 
+	// -------------------------------------------------------------------------
+	// Forward slot rendering and selectability
+	// -------------------------------------------------------------------------
+
 	/** Reloads and re-renders a single P1 forward slot using its stored URL and state. */
 	void refreshP1ForwardSlot(int idx) {
 		refreshPlayerDamageShieldIcon(true);
@@ -12126,6 +12315,10 @@ public class MainWindow {
 		return true;
 	}
 
+	// -------------------------------------------------------------------------
+	// Attack permission from field abilities; party formation
+	// -------------------------------------------------------------------------
+
 	/**
 	 * Returns {@code true} if any field ability on {@code card} currently prevents it from
 	 * attacking or blocking (conditional forms — unconditional form is handled by
@@ -12263,6 +12456,10 @@ public class MainWindow {
 		return false;
 	}
 
+	// -------------------------------------------------------------------------
+	// Attacker and blocker selection
+	// -------------------------------------------------------------------------
+
 	private void toggleAttackSelection(int idx) {
 		if (!isForwardSelectable(idx)) return;
 		if (p1AttackSelection.contains(idx)) {
@@ -12327,6 +12524,10 @@ public class MainWindow {
 		refreshAllForwardSlots();
 		for (int i = 0; i < p1BackupCards.length; i++) refreshP1BackupSlot(i);
 	}
+
+	// -------------------------------------------------------------------------
+	// Blocker legality - unblockable, power filters, Monsters and Backups
+	// -------------------------------------------------------------------------
 
 	/**
 	 * The P2 Forward-zone indices currently attacking: every party member during a party attack, the
@@ -12522,6 +12723,10 @@ public class MainWindow {
 		for (int i = 0; i < p1BackupCards.length; i++) refreshP1BackupSlot(i);
 	}
 
+	// -------------------------------------------------------------------------
+	// Block resolution
+	// -------------------------------------------------------------------------
+
 	/** Called when P1 clicks the Attack/Block/Take-Damage button during block declaration. */
 	private void handleP1BlockAction() {
 		if (pendingP2PartyIndices != null) { handleP1PartyBlockAction(); return; }
@@ -12697,6 +12902,10 @@ public class MainWindow {
 			});
 		}
 	}
+
+	// -------------------------------------------------------------------------
+	// Priority windows
+	// -------------------------------------------------------------------------
 
 	/** Sets attackSubStep and updates the phaseTracker sub-diamond. */
 	private void setAttackSubStep(int step) {
@@ -12999,6 +13208,10 @@ public class MainWindow {
 		onPass.run();
 	}
 
+	// -------------------------------------------------------------------------
+	// Combat timing and post-combat breaks
+	// -------------------------------------------------------------------------
+
 	/**
 	 * True when a left-click on a P1 Forward slot means combat selection (declaring an attacker, or
 	 * choosing a blocker on P2's turn) rather than opening the card's ability menu.  Attack
@@ -13092,6 +13305,10 @@ public class MainWindow {
 			onNextPhase();
 		}
 	}
+
+	// -------------------------------------------------------------------------
+	// Monsters acting as Forwards
+	// -------------------------------------------------------------------------
 
 	/** Returns true when the P1 monster at {@code idx} currently has the Forward type. */
 	boolean isP1MonsterTemporarilyForward(int idx) {
@@ -13221,6 +13438,10 @@ public class MainWindow {
 	}
 
 	// ── Generalized combat for cards acting as Forwards (any zone on either side) ──
+
+	// -------------------------------------------------------------------------
+	// Seat-agnostic field combat helpers
+	// -------------------------------------------------------------------------
 
 	int fieldForwardPower(boolean isP1, ForwardTarget.CardZone zone, int idx) {
 		return switch (zone) {
@@ -13374,6 +13595,10 @@ public class MainWindow {
 	}
 
 	// ── Backups acting as Forwards (e.g. 17-012R) ────────────────────────
+
+	// -------------------------------------------------------------------------
+	// Backups acting as Forwards
+	// -------------------------------------------------------------------------
 
 	private static int indexOfBackup(CardData[] backups, CardData card) {
 		for (int i = 0; i < backups.length; i++) if (backups[i] == card) return i;
@@ -13574,6 +13799,10 @@ public class MainWindow {
 		for (int i = 0; i < p2BackupCards.length; i++) refreshP2BackupSlot(i);
 	}
 
+	// -------------------------------------------------------------------------
+	// Attack execution
+	// -------------------------------------------------------------------------
+
 	private void refreshAttackButton() {
 		if (attackButton == null) return;
 		boolean inAttack = gameState.getCurrentPhase() == GameState.GamePhase.ATTACK;
@@ -13688,6 +13917,10 @@ public class MainWindow {
 			});
 		}
 	}
+
+	// -------------------------------------------------------------------------
+	// Party attack and block resolution, AI picks
+	// -------------------------------------------------------------------------
 
 	private void p2OfferBlockParty(List<Integer> attackerIndices, int combinedPower, Runnable onDone) {
 		// Blocking a party means blocking every member, so one member carrying the compulsion
@@ -13967,6 +14200,10 @@ public class MainWindow {
 		return false;
 	}
 
+	// -------------------------------------------------------------------------
+	// Field context menus
+	// -------------------------------------------------------------------------
+
 	/** Shows a context menu for a P1 forward slot. */
 	private void showForwardContextMenu(int idx, JLabel slot, MouseEvent e) {
 		if (fieldTargetingActive) return;
@@ -14044,6 +14281,10 @@ public class MainWindow {
 
 		if (menu.getComponentCount() > 0) menu.show(slot, e.getX(), e.getY());
 	}
+
+	// -------------------------------------------------------------------------
+	// Deck shuffling, zone panels and board rendering
+	// -------------------------------------------------------------------------
 
 	/**
 	 * Collapses duplicate copies of the same printing down to one representative, keeping the

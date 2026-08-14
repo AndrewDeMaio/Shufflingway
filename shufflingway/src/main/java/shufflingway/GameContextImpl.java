@@ -1334,6 +1334,11 @@ final class GameContextImpl implements GameContext {
 				if (card == null) return;
 				grantSelfFieldAbilityUntilEndOfTurn(card, abilityText);
 			}
+			@Override public void grantAutoAbilityPermanently(ForwardTarget target, String abilityText) {
+				CardData card = mw.autoAbilityTriggers.fieldCardData(target);
+				if (card == null) return;
+				grantSelfAutoAbilityPermanently(card, abilityText);
+			}
 			@Override public void setOppForwardsCannotBlockInferiorPowerThisTurn() {
 				if (isP1()) mw.p2Turn.forwardCannotBlockInferiorPower = true;
 				else        mw.p1Turn.forwardCannotBlockInferiorPower = true;
@@ -6348,6 +6353,30 @@ final class GameContextImpl implements GameContext {
 				else       { mw.refreshP2BreakLabel(); mw.refreshP2HandCountLabel(); }
 			}
 
+			@Override public void chooseNamedFromOwnRfgToHand(String cardName) {
+				// The RFG zone proper, not the Warp zone — the same reading countP1RfgCards takes
+				// of "removed from the game", so the two never disagree about what is in there.
+				List<CardData> rfg = isP1 ? mw.gameState.getP1PermanentRfp() : mw.gameState.getP2PermanentRfp();
+				List<CardData> candidates = new ArrayList<>();
+				for (CardData c : rfg) if (meetsCardNameFilter(c, cardName)) candidates.add(c);
+				if (candidates.isEmpty()) {
+					logEntry((isP1 ? "P1" : "P2") + " has no Card Name " + cardName
+							+ " removed from the game — effect fizzles");
+					markEffectFizzled();
+					return;
+				}
+				CardData picked = isP1
+						? mw.chooseCardFromBzDialog(candidates,
+								"Select 1 Card Name " + cardName + " removed from the game")
+						: candidates.get(0);
+				if (picked == null) return;
+				if (!mw.gameState.removeFromPermanentRfp(picked)) return;
+				(isP1 ? mw.gameState.getP1Hand() : mw.gameState.getP2Hand()).add(picked);
+				logEntry(picked.name() + " → " + (isP1 ? "P1" : "P2") + " hand from Removed From Game");
+				if (isP1) { mw.refreshP1HandLabel();      mw.refreshP1WarpZoneUI(); }
+				else      { mw.refreshP2HandCountLabel(); mw.refreshP2WarpZoneUI(); }
+			}
+
 			@Override public void chooseSummonsFromBzPickOneToHandRestRfg(int total) {
 				List<CardData> bz = isP1 ? mw.gameState.getP1BreakZone() : mw.gameState.getP2BreakZone();
 				List<CardData> allSummons = new ArrayList<>();
@@ -7239,6 +7268,42 @@ final class GameContextImpl implements GameContext {
 				}
 				markEffectFizzled();
 				logEntry("Effect: " + source.name() + " not found on field — fizzle");
+			}
+
+			/**
+			 * Two printings reach this by different routes: Fiona 16-118C is still on the field
+			 * when its "chosen by your opponent's Summons or abilities" trigger resolves, while
+			 * Ewen 17-080R triggers on being put into the Break Zone and so is already there.
+			 * The field is checked first, the Break Zone second; missing both is a real fizzle.
+			 */
+			@Override public void putSourceOnTopOfDeck(CardData source) {
+				List<CardData> fwds = isP1 ? mw.p1ForwardCards : mw.p2ForwardCards;
+				for (int i = fwds.size() - 1; i >= 0; i--) {
+					if (fwds.get(i) == source) {
+						logEntry("Effect: " + source.name() + " → top of its owner's deck");
+						if (isP1) mw.returnP1ForwardToDeck(i, false);
+						else      mw.returnP2ForwardToDeck(i, false);
+						return;
+					}
+				}
+				// The Break Zone the card actually landed in belongs to its owner, which control
+				// transfer can make someone other than this context's player — so both are checked.
+				for (int pass = 0; pass < 2; pass++) {
+					boolean bzIsP1 = (pass == 0) == isP1;
+					List<CardData> bz = bzIsP1 ? mw.gameState.getP1BreakZone() : mw.gameState.getP2BreakZone();
+					int idx = indexByIdentity(bz, source);
+					if (idx < 0) continue;
+					bz.remove(idx);
+					Boolean ownerIsP1 = mw.gameState.getIdentity().get(source);
+					(Boolean.TRUE.equals(ownerIsP1) ? mw.gameState.getP1MainDeck()
+					                                : mw.gameState.getP2MainDeck()).addFirst(source);
+					logEntry("Effect: " + source.name() + " → Break Zone to top of its owner's deck");
+					if (bzIsP1) mw.refreshP1BreakLabel(); else mw.refreshP2BreakLabel();
+					if (Boolean.TRUE.equals(ownerIsP1)) mw.refreshP1DeckLabel(); else mw.refreshP2DeckLabel();
+					return;
+				}
+				markEffectFizzled();
+				logEntry("Effect: " + source.name() + " not found on field or in the Break Zone — fizzle");
 			}
 
 			@Override public void revealTopNPlayUpToTypeOntoFieldRestBottom(int reveal, int maxPlay, String typeFilter, String categoryFilter) {

@@ -295,6 +295,11 @@ class DamageResolver {
 				applies = amount < power;
 			} else if (srcN.startsWith("by a forward")) {
 				applies = !fromAbility;
+			} else if (srcN.startsWith("by a character")) {
+				// The source is a Character rather than a Summon, which covers both the battle
+				// damage a Forward deals and the damage a Character's own ability deals. Only a
+				// resolving Summon is excluded (Ark Angel EV 4-097H).
+				applies = !fromAbility || !mw.currentResolutionIsSummon;
 			} else if (srcN.contains("summon") && !srcN.contains("abilit")) {
 				applies = fromAbility && mw.currentResolutionIsSummon;
 			} else if (!srcN.contains("summon") && !srcN.startsWith("other")) {

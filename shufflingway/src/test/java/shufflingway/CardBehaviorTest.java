@@ -16432,4 +16432,298 @@ public class CardBehaviorTest {
 		assertTrue(fa.effectText().startsWith("reveal any number of Summons from your hand."),
 				"the follow-up must stay attached to the reveal that sizes it: " + fa.effectText());
 	}
+
+	// =========================================================================================
+	// Board behaviour: three auto abilities that each move a card between zones the choose chain
+	// could not previously reach — Fiona 16-118C (self to deck top on being chosen), Feral Chaos
+	// B-010 (a named card out of the RFG zone on leaving the field), Lich 21-079R (a permanent
+	// end-of-turn break granted to an opponent's Forward on entering).
+	//
+	// Every card sits on the P2 seat so the AI path resolves the optional prompt and the target
+	// selection without a dialog, the way boardWithTerraEntering does above.
+	// =========================================================================================
+
+	private static final String FIONA_TEXT =
+			"[[ex]]EX BURST[[/]] When Fiona enters the field, draw 1 card.[[br]]   "
+			+ "When Fiona is chosen by your opponent's Summons or abilities, "
+			+ "you may put Fiona on top of its owner's deck.";
+
+	private static final String FERAL_CHAOS_TEXT =
+			"Feral Chaos is also Card Name Chaos in all situations.[[br]]   Haste First Strike Brave[[br]]   "
+			+ "When Feral Chaos leaves the field, select 1 of your Card Name Chaos removed from the game. "
+			+ "Add it to your hand.";
+
+	private static final String LICH_TEXT =
+			"When Lich enters the field, choose 1 Forward opponent controls. It gains "
+			+ "\"At the end of each of your turns, break this Forward. "
+			+ "(This effect does not end at the end of the turn.)\"";
+
+	@Test
+	void fionaChosenByAnOpponentsAbilityGoesToTheTopOfItsOwnersDeck() {
+		MainWindow mw = new MainWindow();
+		CardData fiona = makeAutoAbilityForward("Fiona", "Water", 8000, FIONA_TEXT);
+		placeP2Forward(mw, fiona);
+		mw.gameState.getP2MainDeck().clear();
+
+		mw.autoAbilityTriggers.triggerAutoAbilitiesForChosenByOpponentSummonOrAbility(false, List.of(fiona));
+
+		assertFalse(mw.p2ForwardCards.contains(fiona), "Fiona leaves the field");
+		assertEquals(fiona, mw.gameState.getP2MainDeck().peekFirst(), "and lands on top of its own deck");
+	}
+
+	@Test
+	void aBouncedForwardIsPutIntoTheDeckExactlyOnce() {
+		// Regression: returnP1/P2ForwardToDeck used to add the card twice — once unconditionally
+		// and once through the addFirst/addLast that picks the end — inflating the deck by 1 on
+		// every bounce, and leaving a second copy of the card to be drawn later.
+		MainWindow mw = new MainWindow();
+		CardData bouncer = makeForward("Bouncer", "Fire", 3, 7000);
+		placeP1Forward(mw, bouncer);
+		mw.gameState.getP1MainDeck().clear();
+
+		mw.returnP1ForwardToDeck(0, false);
+
+		assertEquals(1, mw.gameState.getP1MainDeck().size());
+		assertEquals(bouncer, mw.gameState.getP1MainDeck().peekFirst());
+	}
+
+	/**
+	 * Resolves {@code card}'s single auto ability against a real board on the P2 seat.
+	 *
+	 * <p>Goes straight to the effect rather than through {@code triggerAutoAbilities…}: everything
+	 * except the reactive "chosen by opponent's …" family is <em>pushed onto the Stack</em> by
+	 * {@code executeAutoAbilityImpl} and resolved later by the turn loop, which a unit test has no
+	 * way to drive. The P2 seat is what makes the AI answer the target selection without a dialog.
+	 */
+	private static void resolveP2AutoAbility(MainWindow mw, CardData card) {
+		AutoAbility fa = card.autoAbilities().get(0);
+		ActionResolver.parse(fa.effectText(), card).accept(mw.buildGameContext(false));
+	}
+
+	@Test
+	void feralChaosLeavingTheFieldSalvagesAChaosFromTheRfgZone() {
+		MainWindow mw = new MainWindow();
+		CardData feral = makeAutoAbilityForward("Feral Chaos", "Dark", 10000, FERAL_CHAOS_TEXT);
+		// A second Feral Chaos already removed from the game. It is a Chaos only through its
+		// "is also Card Name Chaos in all situations" alias, which is what the filter must read.
+		CardData exiled = makeAutoAbilityForward("Feral Chaos", "Dark", 10000, FERAL_CHAOS_TEXT);
+		mw.gameState.getIdentity().put(exiled, false);
+		mw.gameState.addToPermanentRfp(exiled);
+		mw.gameState.getP2Hand().clear();
+
+		resolveP2AutoAbility(mw, feral);
+
+		assertTrue(mw.gameState.getP2Hand().contains(exiled), "the exiled Chaos is added to hand");
+		assertFalse(mw.gameState.getP2PermanentRfp().contains(exiled), "and leaves the RFG zone");
+	}
+
+	@Test
+	void feralChaosSalvageIgnoresACardThatIsNotAChaos() {
+		MainWindow mw = new MainWindow();
+		CardData feral = makeAutoAbilityForward("Feral Chaos", "Dark", 10000, FERAL_CHAOS_TEXT);
+		CardData bystander = makeForward("Bystander", "Dark", 3, 7000);
+		mw.gameState.getIdentity().put(bystander, false);
+		mw.gameState.addToPermanentRfp(bystander);
+		mw.gameState.getP2Hand().clear();
+
+		resolveP2AutoAbility(mw, feral);
+
+		assertTrue(mw.gameState.getP2Hand().isEmpty(), "no Chaos to salvage — the hand is untouched");
+		assertTrue(mw.gameState.getP2PermanentRfp().contains(bystander), "and the RFG zone keeps it");
+	}
+
+	@Test
+	void lichGrantsTheChosenForwardAnEndOfTurnBreakThatOutlaststheTurn() {
+		MainWindow mw = new MainWindow();
+		CardData victim = makeForward("Victim", "Fire", 3, 7000);
+		placeP1Forward(mw, victim);
+
+		resolveP2AutoAbility(mw, makeAutoAbilityForward("Lich", "Earth", 9000, LICH_TEXT));
+
+		List<AutoAbility> granted = mw.effectiveAutoAbilities(victim);
+		assertEquals(1, granted.size(), "the chosen Forward carries the granted ability: " + granted);
+		assertEquals("end of your turn", granted.get(0).trigger());
+		// "(This effect does not end at the end of the turn.)" — it has to land in the permanent
+		// map, not in grantedFieldAbilities, which the turn boundary empties wholesale.
+		assertTrue(mw.grantedAutoAbilities.containsKey(victim),
+				"the grant belongs to the permanent map");
+		assertFalse(mw.grantedFieldAbilities.containsKey(victim),
+				"and not to the map cleared at the end of the turn");
+	}
+
+	@Test
+	void lichsGrantReachesTheOpponentsForwardNotItsOwnSide() {
+		MainWindow mw = new MainWindow();
+		CardData victim = makeForward("Victim", "Fire", 3, 7000);
+		CardData ally   = makeForward("Ally", "Earth", 3, 7000);
+		placeP1Forward(mw, victim);
+		placeP2Forward(mw, ally);
+
+		resolveP2AutoAbility(mw, makeAutoAbilityForward("Lich", "Earth", 9000, LICH_TEXT));
+
+		assertTrue(mw.grantedAutoAbilities.containsKey(victim), "\"Forward opponent controls\"");
+		assertFalse(mw.grantedAutoAbilities.containsKey(ally), "never Lich's own side");
+	}
+
+	@Test
+	void aQuotedGrantIsNotRaidedForEffectsPrintedInsideIt() {
+		// 12-013C Ninja grants "When this Forward attacks, choose 1 Forward. Deal it 5000 damage."
+		// The damage belongs to the granted attack trigger. The followup split is quote-aware so
+		// the sentence break inside the quotation does not tear the grant in half, and the grant
+		// is claimed ahead of the find()-based parsers so none of them resolves that inner clause
+		// as damage this choose deals.
+		String ninja = "When Ninja enters the field, choose 1 Forward. It gains "
+				+ "\"When this Forward attacks, choose 1 Forward. Deal it 5000 damage.\" "
+				+ "until the end of the turn.";
+		CardData source = makeForward("Ninja", "Wind", 3, 7000);
+		String effect = CardData.parseAutoAbilities(ninja).get(0).effectText();
+
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.selectCharacters(anyInt(), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(),
+				anyInt(), any(), anyInt(), any(), anyBoolean(), anyBoolean(), anyBoolean(),
+				any(), any(), any(), any(), anyBoolean(), any(), anyBoolean()))
+				.thenReturn(List.of(fwd(false, 0)));
+		ActionResolver.parse(effect, source).accept(ctx);
+
+		verify(ctx, never()).damageTarget(any(), anyInt());
+	}
+
+	// =========================================================================================
+	// Board behaviour: three field abilities — Ark Angel EV 4-097H's "by a Character" incoming
+	// damage reduction, and the "Damage 3 -- [Self] gains Brave and "…"" grants on Yumcax 18-067C
+	// and Gilgamesh 18-074L, whose three halves (trait, multi-attack permission, quoted trigger)
+	// each reach a different reader and all re-evaluate as the damage zone changes.
+	// =========================================================================================
+
+	private static final String YUMCAX_TEXT =
+			"Warp 3 -- 《Earth》《1》[[br]]   If Yumcax is dealt damage, reduce the damage by 2000 instead.[[br]]   "
+			+ "Damage 3 -- Yumcax gains Brave and "
+			+ "\"When Yumcax is put from the field into the Break Zone, draw 1 card.\"";
+
+	private static final String GILGAMESH_18_074L_TEXT =
+			"Damage 3 -- Gilgamesh gains Brave and \"Gilgamesh can attack twice in the same turn.\"";
+
+	/** A Forward built from its printed text, with every field-ability list parsed as a real card's is. */
+	private static CardData makeFieldTextForward(String name, String element, int power, String text) {
+		return new CardData(null, name, element, 5, power, "Forward", false, 0, false, false,
+				CardData.parseTraits(text, name), 0, List.of(), null, List.of(),
+				List.of(), CardData.parseAutoAbilities(text),
+				CardData.parseFieldAbilities(text, "Forward"),
+				CardData.parseIfControlBoosts(text, "Forward"),
+				CardData.parseFieldPowerGrants(text, "Forward"),
+				List.of(), List.of(), List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false,
+				CardData.parseMaxAttacksPerTurn(text, name),
+				null, null, null, text);
+	}
+
+	/** Fills P1's damage zone to {@code points} and its deck with {@code deck} drawable cards. */
+	private static MainWindow boardWithP1Damage(int points, int deck) {
+		MainWindow mw = new MainWindow();
+		mw.gameState.getP1MainDeck().clear();
+		mw.gameState.getP1Hand().clear();
+		for (int i = 0; i < deck; i++) {
+			CardData c = makeForward("Filler" + i, "Fire", 1, 1000);
+			mw.gameState.getIdentity().put(c, true);
+			mw.gameState.getP1MainDeck().add(c);
+		}
+		for (int i = 0; i < points; i++) {
+			CardData d = makeForward("Dmg" + i, "Fire", 1, 1000);
+			mw.gameState.getIdentity().put(d, true);
+			mw.gameState.getP1DamageZone().add(d);
+		}
+		return mw;
+	}
+
+	@Test
+	void arkAngelReducesDamageDealtByACharacter() {
+		String text = "If Ark Angel EV is dealt damage by a Character, reduce the damage by 2000 instead.";
+		CardData ark = makeFieldTextForward("Ark Angel EV", "Lightning", 6000, text);
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, ark);
+
+		// Battle damage from a Forward, and a Character's ability damage, are both "by a Character".
+		assertEquals(3000, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 0, 5000, false, false),
+				"battle damage is reduced");
+		assertEquals(3000, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 0, 5000, true, false),
+				"a Character's ability damage is reduced too");
+	}
+
+	@Test
+	void arkAngelDoesNotReduceSummonDamage() {
+		// A Summon is not a Character, so the clause does not cover it.
+		String text = "If Ark Angel EV is dealt damage by a Character, reduce the damage by 2000 instead.";
+		CardData ark = makeFieldTextForward("Ark Angel EV", "Lightning", 6000, text);
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, ark);
+		mw.currentResolutionIsSummon = true;
+
+		assertEquals(5000, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 0, 5000, true, false));
+	}
+
+	@Test
+	void yumcaxGainsBraveAndItsBreakTriggerOnlyAtThreeDamage() {
+		MainWindow below = boardWithP1Damage(2, 5);
+		CardData yumcaxBelow = makeFieldTextForward("Yumcax", "Earth", 9000, YUMCAX_TEXT);
+		placeP1Forward(below, yumcaxBelow);
+		assertFalse(below.fieldGrantCalculator.computeConditionalTraitsForTarget(yumcaxBelow, true)
+				.contains(CardData.Trait.BRAVE), "no Brave below the threshold");
+		assertTrue(below.effectiveAutoAbilities(yumcaxBelow).isEmpty(), "and no granted trigger");
+
+		MainWindow at = boardWithP1Damage(3, 5);
+		CardData yumcax = makeFieldTextForward("Yumcax", "Earth", 9000, YUMCAX_TEXT);
+		placeP1Forward(at, yumcax);
+		assertTrue(at.fieldGrantCalculator.computeConditionalTraitsForTarget(yumcax, true)
+				.contains(CardData.Trait.BRAVE), "Brave at 3 damage");
+		assertEquals(1, at.effectiveAutoAbilities(yumcax).size(), "and the quoted trigger is live");
+
+		at.breakP1Forward(0);
+		assertEquals(1, at.gameState.getP1Hand().size(),
+				"the granted \"when put into the Break Zone\" trigger draws as Yumcax leaves");
+	}
+
+	@Test
+	void gilgameshGainsBraveAndASecondAttackOnlyAtThreeDamage() {
+		MainWindow below = boardWithP1Damage(2, 0);
+		CardData gilBelow = makeFieldTextForward("Gilgamesh", "Lightning", 7000, GILGAMESH_18_074L_TEXT);
+		placeP1Forward(below, gilBelow);
+		assertEquals(1, below.maxAttacksPerTurn(gilBelow));
+		assertFalse(below.fieldGrantCalculator.computeConditionalTraitsForTarget(gilBelow, true)
+				.contains(CardData.Trait.BRAVE));
+
+		MainWindow at = boardWithP1Damage(3, 0);
+		CardData gil = makeFieldTextForward("Gilgamesh", "Lightning", 7000, GILGAMESH_18_074L_TEXT);
+		placeP1Forward(at, gil);
+		assertEquals(2, at.maxAttacksPerTurn(gil), "\"can attack twice in the same turn\"");
+		assertTrue(at.fieldGrantCalculator.computeConditionalTraitsForTarget(gil, true)
+				.contains(CardData.Trait.BRAVE), "Brave comes from the same grant");
+	}
+
+	@Test
+	void aCardsOwnPutIntoBreakZoneTriggerFires() {
+		// Regression: the broken card is removed from the field lists before the break-zone
+		// triggers are dispatched, so nothing walked reached its own "When [self] is put from the
+		// field into the Break Zone" — only other cards' watchers ever fired.
+		MainWindow mw = boardWithP1Damage(0, 5);
+		CardData probe = makeAutoAbilityForward("Probe", "Fire", 7000,
+				"When Probe is put from the field into the Break Zone, draw 1 card.");
+		placeP1Forward(mw, probe);
+
+		mw.breakP1Forward(0);
+
+		assertEquals(1, mw.gameState.getP1Hand().size());
+	}
+
+	@Test
+	void anExtraCostDeclarationIsNotAFieldAbility() {
+		// "If you cast X, you may pay 《…》 as an extra cost." is a cast-time option read by
+		// CardData.extraCost; the effect it enables lives in a later "if you paid the extra cost"
+		// clause. Reported as an unrecognized field ability until it was excluded.
+		String machinist = "If you cast Machinist, you may pay 《Fire》《3》 as an extra cost.[[br]]"
+				+ "When Machinist enters the field, choose 1 Forward. If you paid the extra cost, deal it 8000 damage.";
+		assertTrue(CardData.parseFieldAbilities(machinist, "Backup").isEmpty(),
+				"the extra-cost declaration is not a field ability");
+		assertNotNull(makeFieldTextForward("Machinist", "Lightning", 0, machinist).extraCost(),
+				"and it is still read as an extra cost");
+	}
 }

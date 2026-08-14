@@ -933,4 +933,21 @@ final class ActionResolverHand {
             ctx.chooseSummonsFromBzPickOneToHandRestRfg(total);
         };
     }
+    /**
+     * Parses "Select 1 of your Card Name X removed from the game. Add it to your hand."
+     * (Feral Chaos B-010).
+     *
+     * <p>The name is matched through {@code CardFilters.meetsCardNameFilter} at resolution, so a
+     * card that is "also Card Name X in all situations" qualifies — which is the whole point here:
+     * Feral Chaos is itself a Chaos, and is normally the card it retrieves.
+     */
+    static Consumer<GameContext> tryParseSelectNamedFromRfgToHand(String text) {
+        Matcher m = SELECT_NAMED_FROM_RFG_TO_HAND.matcher(text.trim());
+        if (!m.matches()) return null;
+        String cardName = m.group("name").trim();
+        return ctx -> {
+            ctx.logEntry("Effect: Select 1 Card Name " + cardName + " removed from the game → hand");
+            ctx.chooseNamedFromOwnRfgToHand(cardName);
+        };
+    }
 }

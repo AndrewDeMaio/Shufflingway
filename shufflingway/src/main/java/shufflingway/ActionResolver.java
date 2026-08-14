@@ -86,13 +86,13 @@ public class ActionResolver {
      * (e.g. Samurai: "Choose 1 Forward … If you paid the extra cost, break it.").
      * Groups: {@code base}, {@code also}, {@code effect}, {@code instead}.
      */
-    private static final java.util.regex.Pattern IF_PAID_EXTRA_COST = java.util.regex.Pattern.compile(
+    private static final Pattern IF_PAID_EXTRA_COST = Pattern.compile(
         "(?i)(?<base>.*?)\\s*\\b[Ii]f\\s+you\\s+paid\\s+the\\s+extra\\s+cost(?:\\s+and\\s+[^,]+)?,\\s+" +
         "(?<also>also\\s+)?" +
         "(?<effect>.+?)" +
         "(?<instead>\\s+instead)?" +
         "\\.?\\s*$",
-        java.util.regex.Pattern.DOTALL
+        Pattern.DOTALL
     );
 
     /**
@@ -120,7 +120,7 @@ public class ActionResolver {
             return base.isEmpty() ? cap : base + " " + cap;
         }
         if (isInstead) {
-            if (java.util.regex.Pattern.compile("(?i)\\bit\\b").matcher(effect).find()) {
+            if (Pattern.compile("(?i)\\bit\\b").matcher(effect).find()) {
                 String withoutLast = removeLastSentence(base);
                 return withoutLast.isEmpty() ? cap : withoutLast + " " + cap;
             }
@@ -841,6 +841,9 @@ public class ActionResolver {
         result = tryParsePutSourceToBottomOfDeck(effectText, source);
         if (result != null) return result;
 
+        result = tryParsePutSourceOnTopOfDeck(effectText, source);
+        if (result != null) return result;
+
         result = tryParseBreakBlockingForward(effectText);
         if (result != null) return result;
 
@@ -1059,6 +1062,9 @@ public class ActionResolver {
         if (result != null) return result;
 
         result = tryParseChooseNSummonsBzPickOneHandRestRfg(effectText);
+        if (result != null) return result;
+
+        result = tryParseSelectNamedFromRfgToHand(effectText);
         if (result != null) return result;
 
         result = tryParseChooseWarpCardRemoveCounter(effectText);
@@ -1566,6 +1572,7 @@ public class ActionResolver {
         if (tryParseIfEitherPlayerNoForwardsPutSourceToBz(effectText, source)  != null) return "IfEitherPlayerNoForwardsPutSourceToBz";
         if (tryParseIfSelfDamagePointsPutToBreakZone(effectText, source)      != null) return "IfSelfDamagePointsPutToBreakZone";
         if (tryParsePutSourceToBottomOfDeck(effectText, source) != null) return "PutSourceToBottomOfDeck";
+        if (tryParsePutSourceOnTopOfDeck(effectText, source)   != null) return "PutSourceOnTopOfDeck";
         if (tryParseBreakBlockingForward(effectText)           != null) return "BreakBlockingForward";
         if (tryParseBreakForwardThatBlocksCard(effectText)     != null) return "BreakForwardThatBlocksCard";
         if (tryParseChooseExBurstFromDamageZone(effectText)    != null) return "ChooseExBurstFromDamageZone";
@@ -1640,6 +1647,7 @@ public class ActionResolver {
         if (tryParseRemoveFromBattle(effectText)                != null) return "RemoveFromBattle";
         if (tryParseChooseSummonFromBzToHandWithCostReduction(effectText) != null) return "ChooseSummonFromBzToHandWithCostReduction";
         if (tryParseChooseNSummonsBzPickOneHandRestRfg(effectText)        != null) return "ChooseNSummonsBzPickOneHandRestRfg";
+        if (tryParseSelectNamedFromRfgToHand(effectText)                  != null) return "SelectNamedFromRfgToHand";
         if (tryParseChooseWarpCardRemoveCounter(effectText)               != null) return "ChooseWarpCardRemoveCounter";
         if (tryParseChooseWarpCardMayRemoveCounter(effectText)            != null) return "ChooseWarpCardMayRemoveCounter";
         if (tryParseChooseSummonInBzCastable(effectText)              != null) return "ChooseSummonInBzCastable";
@@ -1726,6 +1734,22 @@ public class ActionResolver {
         // Strip leading "You may " so optional-followup effects are identified correctly
         if (followupText.toLowerCase(java.util.Locale.ROOT).startsWith("you may "))
             followupText = followupText.substring("You may ".length()).trim();
+        // Mirrors parseChooseFollowup: a quoted grant spanning a sentence is settled here, ahead
+        // of every find() check below, so the name cannot come from a clause printed inside the
+        // quotation. The permanent shape is the only one that resolves, and only when its clause
+        // is a real ability — anything else falls through to the unimplemented-followup warning
+        // there and so must go unnamed here too.
+        {
+            Matcher anyGrantM = FOLLOWUP_GAINS_QUOTED_ABILITY.matcher(followupText.trim());
+            if (anyGrantM.matches() && anyGrantM.group("quoted").contains(". ")) {
+                Matcher permM = FOLLOWUP_GAINS_QUOTED_ABILITY_PERMANENT.matcher(followupText.trim());
+                if (permM.matches() && !CardData.parseAutoAbilities(
+                        PERMANENCE_REMINDER.matcher(permM.group("quoted").trim())
+                                .replaceFirst("").trim()).isEmpty())
+                    return "GainsQuotedAbilityPermanent";
+                return null;
+            }
+        }
         if (FOLLOWUP_TARGET_CONTROLLER_DISCARDS.matcher(followupText).matches()) return "TargetControllerDiscards";
         if (source != null) {
             Matcher mutM = FOLLOWUP_MUTUAL_POWER_DAMAGE.matcher(followupText);
@@ -1886,6 +1910,7 @@ public class ActionResolver {
         if (tryParseChooseSummonInBzCastable(effectText)              != null) return "ChooseSummonInBzCastable";
         if (tryParseChooseSummonFromBzToHandWithCostReduction(effectText) != null) return "ChooseSummonFromBzToHandWithCostReduction";
         if (tryParseChooseNSummonsBzPickOneHandRestRfg(effectText)    != null) return "ChooseNSummonsBzPickOneHandRestRfg";
+        if (tryParseSelectNamedFromRfgToHand(effectText)              != null) return "SelectNamedFromRfgToHand";
         if (tryParseOppRfpTopDeckCastable(effectText)                != null) return "OppRfpTopDeckCastable";
         if (tryParseChooseFromOppBzCastable(effectText)              != null) return "ChooseFromOppBzCastable";
         if (tryParseChooseSummonsFromBzCastable(effectText)          != null) return "ChooseSummonsFromBzCastable";
@@ -2028,7 +2053,9 @@ public class ActionResolver {
                     return "ChooseCharacter / YouMayPayElement[" + (innerDesc != null ? innerDesc : "?") + "]";
                 }
             }
-            int    dotIdx        = followup.indexOf(". ");
+            // Same quote-aware split parse() uses, so the two cannot disagree about where the
+            // primary followup ends when a granted ability is quoted across two sentences.
+            int    dotIdx        = sentenceBreakOutsideQuotes(followup);
             String primaryPart   = dotIdx >= 0 ? followup.substring(0, dotIdx).trim() : followup;
             String secondaryRaw  = dotIdx >= 0 ? followup.substring(dotIdx + 2).trim() : null;
             String secondaryTxt  = secondaryRaw != null ? stripRestrictionSentences(secondaryRaw) : null;
@@ -2237,6 +2264,7 @@ public class ActionResolver {
         if (tryParseIfEitherPlayerNoForwardsPutSourceToBz(effectText, source)  != null) return "IfEitherPlayerNoForwardsPutSourceToBz";
         if (tryParseIfSelfDamagePointsPutToBreakZone(effectText, source) != null) return "IfSelfDamagePointsPutToBreakZone";
         if (tryParsePutSourceToBottomOfDeck(effectText, source) != null)   return "PutSourceToBottomOfDeck";
+        if (tryParsePutSourceOnTopOfDeck(effectText, source)   != null)     return "PutSourceOnTopOfDeck";
         if (tryParseBreakBlockingForward(effectText)           != null)     return "BreakBlockingForward";
         if (tryParseBreakForwardThatBlocksCard(effectText)     != null)     return "BreakForwardThatBlocksCard";
         if (tryParseChooseExBurstFromDamageZone(effectText)    != null)     return "ChooseExBurstFromDamageZone";
@@ -2582,25 +2610,25 @@ public class ActionResolver {
             return new DamageInsteadCondition.YouHaveSummonInBreakZone();
 
         // Self damage count: "you have received N points of damage or more"
-        Matcher selfDmgM = java.util.regex.Pattern
+        Matcher selfDmgM = Pattern
                 .compile("(?i)you have received (\\d+) points? of damage or more").matcher(s);
         if (selfDmgM.find())
             return new DamageInsteadCondition.YouReceivedDamageAtLeast(Integer.parseInt(selfDmgM.group(1)));
 
         // Opponent damage count: "your opponent has received N points of damage or more"
-        Matcher oppDmgM = java.util.regex.Pattern
+        Matcher oppDmgM = Pattern
                 .compile("(?i)your opponent has received (\\d+) points? of damage or more").matcher(s);
         if (oppDmgM.find())
             return new DamageInsteadCondition.OpponentDamageAtLeast(Integer.parseInt(oppDmgM.group(1)));
 
         // Opponent hand size: "your opponent has N cards or less in their hand"
-        Matcher oppHandM = java.util.regex.Pattern
+        Matcher oppHandM = Pattern
                 .compile("(?i)your opponent has (\\d+) cards? or (?:less|fewer) in their hand").matcher(s);
         if (oppHandM.find())
             return new DamageInsteadCondition.OpponentHandAtMost(Integer.parseInt(oppHandM.group(1)));
 
         // Cards cast this turn: "you have cast N or more cards this turn"
-        Matcher castM = java.util.regex.Pattern
+        Matcher castM = Pattern
                 .compile("(?i)you have cast (\\d+) or more cards this turn").matcher(s);
         if (castM.find())
             return new DamageInsteadCondition.YouCastAtLeast(Integer.parseInt(castM.group(1)));
@@ -2617,7 +2645,7 @@ public class ActionResolver {
         if (s.toLowerCase().startsWith("you control ")) {
             String rest = s.substring("you control ".length()).trim();
             String excludeName = null;
-            Matcher otherThanM = java.util.regex.Pattern
+            Matcher otherThanM = Pattern
                     .compile("(?i)^(?<cond>.+?)\\s+other\\s+than\\s+(?<name>.+)$").matcher(rest);
             if (otherThanM.matches()) {
                 excludeName = otherThanM.group("name").trim();

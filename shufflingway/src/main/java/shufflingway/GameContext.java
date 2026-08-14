@@ -1983,6 +1983,16 @@ public interface GameContext {
     void grantFieldAbilityUntilEndOfTurn(ForwardTarget target, String abilityText);
 
     /**
+     * Hands the card at {@code target} an auto ability that outlasts the turn — the target-facing
+     * twin of {@link #grantSelfAutoAbilityPermanently}, used by the "It gains "…" (This effect does
+     * not end at the end of the turn.)" choose followup (Lich 21-079R).
+     *
+     * <p>The granted ability belongs to the grantee's controller, so a "your turn" trigger inside
+     * it fires on <em>their</em> turns, not the granting player's.
+     */
+    void grantAutoAbilityPermanently(ForwardTarget target, String abilityText);
+
+    /**
      * Grants {@code source} the auto ability written in {@code abilityText} for as long as it stays
      * on the field — the "(This effect does not end at the end of the turn.)" wording, as printed on
      * Odin (XVI) 29-118L / 24-112L's priming payoff.
@@ -2021,6 +2031,12 @@ public interface GameContext {
      * its owner's deck.  Calls {@link #markEffectFizzled()} if the card is not found.
      */
     void putSourceToBottomOfDeck(CardData source);
+
+    /**
+     * Finds the source card on its owner's forward zone and returns it to the top of
+     * its owner's deck.  Calls {@link #markEffectFizzled()} if the card is not found.
+     */
+    void putSourceOnTopOfDeck(CardData source);
 
     /**
      * Reveals the top {@code reveal} cards of the active player's deck.
@@ -2507,6 +2523,13 @@ public interface GameContext {
      * If fewer than {@code total} Summons are available, treats all available Summons as the pool.
      */
     void chooseSummonsFromBzPickOneToHandRestRfg(int total);
+
+    /**
+     * Lets the acting player take one of their own cards named {@code cardName} out of the
+     * Removed From Game zone and add it to hand.  Name matching honours "is also Card Name X in
+     * all situations" aliases.  No-ops when the zone holds no such card.
+     */
+    void chooseNamedFromOwnRfgToHand(String cardName);
 
     /**
      * Resolves a "Choose 1 [Element] Summon in your Break Zone. You can cast it at any time

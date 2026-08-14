@@ -175,6 +175,10 @@ public class FieldAbilityParsingTest {
         if (CardData.parseFieldNonDmgBreakShieldGrant(fa.effectText()) != null) return true;
         // Both are self-named: the engine only acts on them when the text names its own carrier.
         if (CardData.parseHandSizeSelfGrant(fa.effectText(), source.name()) != null) return true;
+        // "[Self] gains [traits] and \"[quoted ability]\"" behind a Damage N gate — the traits go
+        // through FieldGrantCalculator, the multi-attack permission through
+        // MainWindow.maxAttacksPerTurn, and the quoted trigger through effectiveAutoAbilities.
+        if (CardData.parseSelfGainsQuotedGrant(fa.effectText(), source.name()) != null) return true;
         if (CardData.parseDamageRedirectGrant(fa.effectText(), source.name()) != null) return true;
         if (CardData.parseSelfCannotBeBrokenDuringYourTurn(fa.effectText(), source.name())) return true;
         if (CardData.parseSelfCannotBeBrokenDuringAttackPhase(fa.effectText(), source.name())) return true;
@@ -420,6 +424,12 @@ public class FieldAbilityParsingTest {
                        : "Monsters";
             return "FieldNonDmgBreakShield[" + who + "]";
         }
+        CardData.SelfGainsQuotedGrant sgq =
+                CardData.parseSelfGainsQuotedGrant(fa.effectText(), source.name());
+        if (sgq != null)
+            return "SelfGainsQuotedGrant[" + sgq.traits()
+                    + (sgq.maxAttacks() > 1 ? " attacks×" + sgq.maxAttacks() : "")
+                    + (sgq.abilityTexts().isEmpty() ? "" : " +" + sgq.abilityTexts().size() + " ability") + "]";
         CardData.HandSizeSelfGrant hsg = CardData.parseHandSizeSelfGrant(fa.effectText(), source.name());
         if (hsg != null)
             return "HandSizeSelfGrant[" + (hsg.bothPlayers() ? "both" : "either") + "≤" + hsg.maxCards()

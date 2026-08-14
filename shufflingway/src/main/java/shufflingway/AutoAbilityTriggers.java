@@ -258,8 +258,9 @@ final class AutoAbilityTriggers {
 	/**
 	 * General incoming-damage modifier field ability.
 	 * Covers "reduce the damage by N", "the damage becomes N", and "the damage increases by N" variants,
-	 * with optional source clauses: "by a Forward", "by [your opponent's] Summons [or abilities]",
-	 * "by a Summon or an ability", "by [an] abilit[y|ies]", "other than battle damage", or no clause (any source).
+	 * with optional source clauses: "by a Forward", "by a Character", "by [your opponent's] Summons
+	 * [or abilities]", "by a Summon or an ability", "by [an] abilit[y|ies]", "other than battle
+	 * damage", or no clause (any source).
 	 * Also accepts "receives damage" as a synonym for "is dealt damage", and an optional threshold:
 	 * "is dealt N damage or more" (captured in {@code threshold}) to apply the modifier only when damage ≥ N.
 	 * Groups: {@code card}, {@code threshold} (optional), {@code sourceclause} (optional),
@@ -269,6 +270,9 @@ final class AutoAbilityTriggers {
 		"(?i)^If\\s+(?<card>.+?)\\s+(?:is\\s+dealt|receives)\\s+(?:(?<threshold>\\d+)\\s+damage\\s+or\\s+more|damage)" +
 		"(?<sourceclause>" +
 			"\\s+by\\s+a\\s+Forward" +
+			// Ahead of the Summon and ability branches, which would otherwise never see it —
+			// they are the narrower readings and "Character" names the source, not the effect.
+			"|\\s+by\\s+a\\s+Character" +
 			"|\\s+other\\s+than\\s+battle\\s+damage" +
 			"|\\s+by\\s+(?:your\\s+opponent's\\s+)?(?:a\\s+)?Summons?(?:\\s+or\\s+(?:an?\\s+)?abilit(?:y|ies))?" +
 			"|\\s+by\\s+(?:your\\s+opponent's\\s+)?(?:a\\s+Summon\\s+or\\s+)?(?:an?\\s+)?abilit(?:y|ies)" +
@@ -1588,10 +1592,18 @@ final class AutoAbilityTriggers {
 				for (CardData c : bkps) if (c != null) fireBreakZoneTriggers(c, ownerIsP1, broken, brokenIsP1, partyMembers);
 				for (CardData c : mons) fireBreakZoneTriggers(c, ownerIsP1, broken, brokenIsP1, partyMembers);
 			}
-			// Fire self-break triggers on the broken card itself
-			// (handles "When [card] enters the field or is put from the field into the Break Zone")
+			// Fire self-break triggers on the broken card itself. It is no longer in any of the
+			// field lists walked above, so nothing there can reach it — including its own
+			// "When [card] is put from the field into the Break Zone, …", which is why that one is
+			// dispatched here rather than through fireBreakZoneTriggers.
+			//
+			// Restricted to subjects that name the broken card. A filter subject ("a Forward you
+			// control") arguably describes the broken card too, but firing those here would change
+			// what every existing watcher does when it is the card that broke; that is a separate
+			// question from letting a card see its own departure.
 			for (AutoAbility fa : mw.effectiveAutoAbilities(broken)) {
-				if (!fa.trigger().equals("enters the field or put into break zone")) continue;
+				if (!fa.trigger().equals("enters the field or put into break zone")
+						&& !fa.trigger().equals("put into break zone")) continue;
 				if (!fa.triggerCard().equalsIgnoreCase(broken.name())) continue;
 				executeAutoAbility(fa, broken, brokenIsP1);
 			}

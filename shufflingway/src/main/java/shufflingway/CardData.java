@@ -1193,6 +1193,92 @@ public record CardData(
     private static final Pattern QUOTED_CLAUSE = Pattern.compile("\"([^\"]+)\"");
 
     /**
+     * "[CardName] gains [traits] and "[quoted ability]"" — a self grant whose condition is carried
+     * by the {@link FieldAbility} rather than spelled inside the text. Yumcax 18-067C and
+     * Gilgamesh 18-074L both print it behind a "Damage 3 --" prefix, which
+     * {@link #parseFieldAbilities} strips into {@link FieldAbility#damageThreshold()}; the callers
+     * that read this grant apply that gate themselves.
+     *
+     * <p>A quoted clause is <em>required</em>. The traits-only spelling ("Desch gains First
+     * Strike.") belongs to {@link #SELF_TRAIT_GRANT}, and letting this pattern claim it as well
+     * would put one text under two parsers with no rule for which wins.
+     */
+    private static final Pattern SELF_GAINS_QUOTED_GRANT = Pattern.compile(
+        "(?i)^(?<card>[A-Za-z][A-Za-z0-9''\\-\\s()]*?)\\s+gains?\\s+(?<grant>[^\"]*\"[^\"]+\".*?)[.!]?$"
+    );
+
+    /**
+     * A conditional self grant carrying a quoted ability: while its condition holds, the printing
+     * card has {@code traits}, may attack {@code maxAttacks} times, and has {@code abilityTexts}
+     * as auto abilities of its own.
+     *
+     * @param maxAttacks   1 when the grant carries no multi-attack permission
+     * @param abilityTexts quoted clauses {@link #parseAutoAbilities} recognises as triggered
+     *                     abilities; the multi-attack permission is not among them, since it is a
+     *                     rules permission rather than a trigger and is reported separately
+     */
+    record SelfGainsQuotedGrant(Set<Trait> traits, int maxAttacks, List<String> abilityTexts) {
+        SelfGainsQuotedGrant {
+            // EnumSet, not Set.copyOf — the latter randomises iteration order per JVM run, which
+            // would leak into the rendered trait list.
+            EnumSet<Trait> t = EnumSet.noneOf(Trait.class);
+            t.addAll(traits);
+            traits       = Collections.unmodifiableSet(t);
+            abilityTexts = List.copyOf(abilityTexts);
+        }
+    }
+
+    /**
+     * Parses a {@link SelfGainsQuotedGrant} from {@code effectText}, or {@code null} when the text
+     * is not one or names a card other than {@code cardName}. A grant that resolves to nothing at
+     * all is rejected rather than returned empty, so a caller cannot mistake "parsed but grants
+     * nothing" for a live effect — the same guard {@link #parseHandSizeSelfGrant} applies.
+     */
+    static SelfGainsQuotedGrant parseSelfGainsQuotedGrant(String effectText, String cardName) {
+        if (effectText == null || cardName == null) return null;
+        Matcher m = SELF_GAINS_QUOTED_GRANT.matcher(effectText.trim());
+        if (!m.matches() || !m.group("card").trim().equalsIgnoreCase(cardName)) return null;
+        String grant = m.group("grant");
+
+        // Traits come from outside the quotation only. A quoted clause is a different card's
+        // ability or a grant to a whole field ("Aranea gains \"The Forwards you control gain
+        // Haste.\"" — 11-086L), and scanning the quotation for trait words hands the printing card
+        // a trait it was only handing out.
+        String outside = QUOTED_CLAUSE.matcher(grant).replaceAll(" ");
+        // A power boost in the same breath (Kefka 23-004R, The Fiend 20-114L) has no reader on
+        // this path, so the whole grant declines rather than applying the traits alone.
+        if (SELF_GAINS_POWER_IN_GRANT.matcher(outside).find()) return null;
+        EnumSet<Trait> traits = traitsNamedIn(outside);
+
+        int maxAttacks = 1;
+        List<String> abilities = new ArrayList<>();
+        Matcher q = QUOTED_CLAUSE.matcher(grant);
+        while (q.find()) {
+            String clause = q.group(1).trim();
+            // The multi-attack permission arrives quoted, and is read with the same pattern that
+            // parses the printed form — as parseHandSizeSelfGrant does for Squall 16-011L.
+            Matcher at = FIELD_CAN_ATTACK_TWICE.matcher(clause);
+            if (at.matches() && at.group("cardname").trim().equalsIgnoreCase(cardName)) {
+                String count = at.group("count");
+                maxAttacks = Math.max(maxAttacks, count != null ? Integer.parseInt(count) : 2);
+                continue;
+            }
+            // Anything else has to be a trigger-bearing ability, which parseAutoAbilities is the
+            // authority on. A clause that is neither declines the whole grant: granting half of it
+            // and reporting the text as handled is worse than leaving it visibly unparsed, which
+            // is the rule permanentGrantForClause follows for the same situation.
+            if (parseAutoAbilities(clause).isEmpty()) return null;
+            abilities.add(clause);
+        }
+        if (traits.isEmpty() && maxAttacks == 1 && abilities.isEmpty()) return null;
+        return new SelfGainsQuotedGrant(traits, maxAttacks, abilities);
+    }
+
+    /** A "+N power" clause sharing a {@link #SELF_GAINS_QUOTED_GRANT} with the traits. */
+    private static final Pattern SELF_GAINS_POWER_IN_GRANT =
+            Pattern.compile("(?i)[+-]\\d+\\s+power");
+
+    /**
      * "If a [Card Name X] Forward you control [other than Y] is dealt damage, the damage is dealt
      * to Y instead." — Daisy 18-060H (bare, with an exclusion) and Tidus 26-112H (Card Name
      * filtered, no exclusion).
@@ -5623,6 +5709,10 @@ public record CardData(
             if (ALT_COST_SUMMON.matcher(seg).find())    continue;
             if (ALT_COST_SUMMON_REMOVE_FIELD.matcher(seg).find()) continue;
             if (ALT_COST_NONSUMMON.matcher(seg).find()) continue;
+            // "If you cast [card], you may pay 《…》 as an extra cost." — a cast-time option read
+            // by {@link #extraCost}, not a field ability. It has no continuous effect of its own;
+            // what it does is set the flag a later "if you paid the extra cost" clause reads.
+            if (EXTRA_COST_SUMMON.matcher(seg).find())  continue;
 
             // Auto abilities: "When [card/event] [trigger], [effect]" and phase-trigger patterns
             if (FA_AUTO_PREFIX.matcher(seg).find()) continue;

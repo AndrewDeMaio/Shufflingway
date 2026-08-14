@@ -61,6 +61,11 @@ class FieldGrantCalculator {
                 // Damage-gated (e.g., "Damage 1 -- Desch gains First Strike.")
                 if (fa.damageThreshold() > 0 && dmg < fa.damageThreshold()) continue;
                 out.addAll(CardData.parseSelfTraitGrant(fa.effectText(), src.name()));
+                // The same grant spelled with a quoted ability alongside the traits
+                // ("Yumcax gains Brave and \"When Yumcax …\"") — only the trait half is a trait.
+                CardData.SelfGainsQuotedGrant quoted =
+                        CardData.parseSelfGainsQuotedGrant(fa.effectText(), src.name());
+                if (quoted != null) out.addAll(quoted.traits());
                 if (CardData.parseSelfNonDmgBreakShield(fa.effectText(), src.name())
                         || CardData.parseSelfNonDmgBreakShieldDirect(fa.effectText(), src.name()))
                     out.add(CardData.Trait.CANNOT_BE_BROKEN_BY_NON_DMG);

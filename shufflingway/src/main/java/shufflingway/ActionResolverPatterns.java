@@ -1480,6 +1480,19 @@ final class ActionResolverPatterns {
         "(?i)Put\\s+(?<name>.+?)\\s+at\\s+the\\s+bottom\\s+of\\s+its\\s+owner's\\s+deck[.!]?"
     );
     /**
+     * Matches "Put [CardName] on top of its owner's deck." — the deck-top twin of
+     * {@link #PUT_SOURCE_TO_BOTTOM_OF_DECK}, used when a card sends <em>itself</em> back to the top
+     * of the deck (Fiona 16-118C, whose "chosen by your opponent's Summons or abilities" trigger
+     * lets its controller pull it out of the way).
+     * Group: {@code name} — the card name (must equal source.name()).
+     *
+     * <p>Distinct from {@link #FOLLOWUP_PUT_TOP_OF_DECK}, which spells its subject "it" and belongs
+     * to a preceding choose. The two cannot collide: this one names a card, that one a pronoun.
+     */
+    static final Pattern PUT_SOURCE_ON_TOP_OF_DECK = Pattern.compile(
+        "(?i)Put\\s+(?<name>.+?)\\s+on\\s+top\\s+of\\s+its\\s+owner's\\s+deck[.!]?"
+    );
+    /**
      * Matches "Reveal the top N cards of your deck. Play 1 Card Name X of cost M or less among
      * them onto the field and return the other cards to the bottom of your deck in any order."
      * Groups: {@code n}, {@code cardname}, {@code maxcost}.
@@ -2088,6 +2101,33 @@ final class ActionResolverPatterns {
     static final Pattern FOLLOWUP_GAINS_SHIELD_ABILITY_ONLY = Pattern.compile(
         "(?i)(?:it|they)\\s+gains?\\s+['\"]If\\s+this\\s+Forward\\s+is\\s+dealt\\s+damage\\s+by\\s+your\\s+opponent's\\s+abilities,\\s+the\\s+damage\\s+becomes\\s+0\\s+instead\\.?['\"]" +
         "\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn\\.?"
+    );
+    /**
+     * "It/They gains "[ability] (This effect does not end at the end of the turn.)"" — a choose
+     * followup handing the chosen Character an ability for good (Lich 21-079R).
+     *
+     * <p>The permanence reminder is printed <em>inside</em> the quotes, so {@code quoted} carries
+     * it and the parser strips it before the clause is read as an ability. Requiring it is what
+     * separates this from the turn-scoped grants: without the parenthetical the grant would expire,
+     * and no card in the corpus spells a permanent grant any other way in this position.
+     */
+    /**
+     * "It/They gains "[anything]"[ until the end of the turn]" — the shape of every quoted-ability
+     * grant in the choose followup position, used to claim one before the {@code find()}-based
+     * parsers can reach a clause printed inside the quotation. Group {@code quoted} is the whole
+     * quotation, so a caller can test how much text it spans.
+     */
+    static final Pattern FOLLOWUP_GAINS_QUOTED_ABILITY = Pattern.compile(
+        "(?i)^(?:it|they)\\s+gains?\\s+\"(?<quoted>.+)\"" +
+        "(?:\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn)?[.!]?\\s*$"
+    );
+    static final Pattern FOLLOWUP_GAINS_QUOTED_ABILITY_PERMANENT = Pattern.compile(
+        "(?i)^(?:it|they)\\s+gains?\\s+\"(?<quoted>.+?" +
+        "\\(This\\s+effect\\s+does\\s+not\\s+end\\s+at\\s+the\\s+end\\s+of\\s+the\\s+turn\\.?\\))\"[.!]?\\s*$"
+    );
+    /** The permanence reminder {@link #FOLLOWUP_GAINS_QUOTED_ABILITY_PERMANENT} strips off its quoted clause. */
+    static final Pattern PERMANENCE_REMINDER = Pattern.compile(
+        "(?i)\\s*\\(This\\s+effect\\s+does\\s+not\\s+end\\s+at\\s+the\\s+end\\s+of\\s+the\\s+turn\\.?\\)\\s*$"
     );
     /** Matches "Negate all [the] damage dealt to it/them." — removes all existing damage immediately. */
     static final Pattern FOLLOWUP_NEGATE_DAMAGE = Pattern.compile(
@@ -4781,6 +4821,18 @@ final class ActionResolverPatterns {
     static final Pattern CHOOSE_N_SUMMONS_BZ_PICK_ONE_HAND_REST_RFG = Pattern.compile(
         "(?i)Choose\\s+(?<total>\\d+)\\s+Summons?\\s+in\\s+your\\s+Break\\s+Zone[.!]?\\s+" +
         "Add\\s+1\\s+of\\s+them\\s+to\\s+your\\s+hand[,.]?(?:\\s+and)?\\s+remove\\s+the\\s+rest\\s+from\\s+the\\s+game[.!]?\\s*$"
+    );
+    /**
+     * Matches "Select 1 of your Card Name X removed from the game. Add it to your hand."
+     * (Feral Chaos B-010, salvaging a Chaos it had exiled).
+     * Group {@code name} — the card name to look for in the acting player's RFG zone.
+     *
+     * <p>Anchored whole rather than matched with {@code find()}: the tail on its own ("Add it to
+     * your hand") is a followup several choose parsers claim, and only the head names the zone.
+     */
+    static final Pattern SELECT_NAMED_FROM_RFG_TO_HAND = Pattern.compile(
+        "(?i)^(?:Select|Choose)\\s+1\\s+of\\s+your\\s+Card\\s+Name\\s+(?<name>.+?)\\s+" +
+        "removed\\s+from\\s+the\\s+game[,.!]?\\s+Add\\s+it\\s+to\\s+your\\s+hand[.!]?\\s*$"
     );
     /**
      * Matches "Choose 1 [Element] Summon in your Break Zone. You can cast it at any time you
