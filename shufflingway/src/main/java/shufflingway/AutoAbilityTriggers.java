@@ -269,7 +269,12 @@ final class AutoAbilityTriggers {
 	static final Pattern FA_DAMAGE_MODIFIER = Pattern.compile(
 		"(?i)^If\\s+(?<card>.+?)\\s+(?:is\\s+dealt|receives)\\s+(?:(?<threshold>\\d+)\\s+damage\\s+or\\s+more|damage)" +
 		"(?<sourceclause>" +
-			"\\s+by\\s+a\\s+Forward" +
+			// Must precede the bare "by a Forward" branch, which names the source of battle damage.
+			// This one names the source of an *ability's* damage (Gawain 7-107R) — the narrower
+			// reading, and the opposite answer: one applies only to battle damage, the other only
+			// to ability damage.
+			"\\s+by\\s+a\\s+Forward(?:'s|s')\\s+abilit(?:y|ies)" +
+			"|\\s+by\\s+a\\s+Forward" +
 			// Ahead of the Summon and ability branches, which would otherwise never see it —
 			// they are the narrower readings and "Character" names the source, not the effect.
 			"|\\s+by\\s+a\\s+Character" +

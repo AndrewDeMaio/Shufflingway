@@ -301,6 +301,28 @@ final class ActionResolverSearch {
         return ctx -> ctx.revealTopNPlayUpToElementTypeCostOntoField(n, max, element, normType, maxCost, rest);
     }
     /**
+     * Parses Syldra 29-101H's "Reveal the top N cards of your deck. Play 1 [Type] of cost C or less
+     * other than Multi-Element or 1 Card Name X of cost D or less among them onto the field and
+     * return the other cards to the bottom of your deck in any order."
+     *
+     * <p>One card is played, from whichever of the two alternatives it satisfies. Each alternative
+     * brings its own cost ceiling, so the Faris branch reaches cards the Forward branch cannot.
+     */
+    static Consumer<GameContext> tryParseRevealPlayTypeCostOrNamedCostRestBottom(String text) {
+        Matcher m = REVEAL_PLAY_TYPE_COST_OR_NAMED_COST_REST_BOTTOM
+                .matcher(stripCastTimingPrefix(text));
+        if (!m.matches()) return null;
+        int n           = Integer.parseInt(m.group("n"));
+        String typeRaw  = m.group("type");
+        String normType = Character.toUpperCase(typeRaw.charAt(0)) + typeRaw.substring(1).toLowerCase();
+        int typeMaxCost = Integer.parseInt(m.group("typecost"));
+        boolean exclMulti = m.group("except") != null;
+        String cardName = m.group("cardname").trim();
+        int nameMaxCost = Integer.parseInt(m.group("namecost"));
+        return ctx -> ctx.revealTopNPlayTypeCostOrNamedCostOntoFieldRestBottom(
+                n, normType, typeMaxCost, exclMulti, cardName, nameMaxCost);
+    }
+    /**
      * Parses Banon's "Reveal the top card of your deck. If it is a [Type], cancel all effects
      * choosing [Name]." — reveals the top deck card and cancels the in-progress selection when it
      * is of the given type.

@@ -293,6 +293,13 @@ class DamageResolver {
 			if (srcN.startsWith("less than") && srcN.endsWith("power")) {
 				int power = mw.fieldForwardPower(isP1, zone, idx);
 				applies = amount < power;
+			} else if (srcN.startsWith("by a forward's abilit") || srcN.startsWith("by a forwards abilit")) {
+				// Gawain 7-107R. Narrower than either neighbour, and checked ahead of the bare
+				// "by a Forward" branch below, which would otherwise claim it and return the
+				// opposite answer: that one is battle damage, this one is only ability damage.
+				// A Summon's damage is not an ability's, and neither is a Backup's.
+				applies = fromAbility && !mw.currentResolutionIsSummon
+						&& mw.sourceIsActingForward(mw.currentAbilitySource);
 			} else if (srcN.startsWith("by a forward")) {
 				applies = !fromAbility;
 			} else if (srcN.startsWith("by a character")) {

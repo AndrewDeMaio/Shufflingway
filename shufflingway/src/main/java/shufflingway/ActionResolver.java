@@ -796,6 +796,12 @@ public class ActionResolver {
         result = tryParseRevealPlayElementTypeCostOntoFieldRestBottom(effectText, xValue);
         if (result != null) return result;
 
+        // Sits beside the parser above and is anchored the same way, so neither can take the
+        // other's text: that one ends at "among them", this one is still reading a second
+        // alternative there.
+        result = tryParseRevealPlayTypeCostOrNamedCostRestBottom(effectText);
+        if (result != null) return result;
+
         result = tryParseReturnNamedToHand(effectText);
         if (result != null) return result;
 
@@ -1558,6 +1564,7 @@ public class ActionResolver {
         if (tryParseRevealAddTypeToHandOrPlayJobTypeOntoFieldRestBottom(effectText) != null) return "RevealAddTypeToHandOrPlayJobTypeOntoFieldRestBottom";
         // Must precede ReturnNamedToHand — see the ordering note in parse().
         if (tryParseRevealPlayElementTypeCostOntoFieldRestBottom(effectText, 0) != null) return "RevealPlayElementTypeCostOntoFieldRestBottom";
+        if (tryParseRevealPlayTypeCostOrNamedCostRestBottom(effectText) != null) return "RevealPlayTypeCostOrNamedCostRestBottom";
         if (tryParseReturnNamedToHand(effectText) != null) return "ReturnNamedToHand";
         if (tryParseYouMayRemoveNamedFromGame(effectText, source) != null) return "YouMayRemoveNamedFromGame";
         if (tryParseEndOfOppTurnPlayNamedOntoField(effectText) != null) return "EndOfOppTurnPlayNamedOntoField";
@@ -2251,6 +2258,7 @@ public class ActionResolver {
         if (tryParseRevealAddTypeToHandOrPlayJobTypeOntoFieldRestBottom(effectText) != null) return "RevealAddTypeToHandOrPlayJobTypeOntoFieldRestBottom";
         // Must precede ReturnNamedToHand — see the ordering note in parse().
         if (tryParseRevealPlayElementTypeCostOntoFieldRestBottom(effectText)     != null) return "RevealPlayElementTypeCostOntoFieldRestBottom";
+        if (tryParseRevealPlayTypeCostOrNamedCostRestBottom(effectText)         != null) return "RevealPlayTypeCostOrNamedCostRestBottom";
         if (tryParseReturnNamedToHand(effectText) != null)                   return "ReturnNamedToHand";
         if (tryParseYouMayRemoveNamedFromGame(effectText, source) != null)   return "YouMayRemoveNamedFromGame";
         if (tryParseEndOfOppTurnPlayNamedOntoField(effectText) != null)     return "EndOfOppTurnPlayNamedOntoField";
@@ -4155,6 +4163,21 @@ public class ActionResolver {
             if (m.find() && m.group("name").trim().equalsIgnoreCase(card.name())) return true;
         }
         return false;
+    }
+
+    /**
+     * Strips a leading "You can only cast [Name] during your turn / Main Phase." sentence.
+     *
+     * <p>The restriction is read off the card into a {@link CastRestriction} and enforced when the
+     * card is cast, so by the time the effect resolves it is a sentence the effect parsers have to
+     * step over rather than anything they act on. Leaving it in front is what made Syldra 29-101H
+     * unparseable while the identical effect on a card without the restriction parsed fine.
+     */
+    static String stripCastTimingPrefix(String text) {
+        if (text == null) return null;
+        return text.trim().replaceFirst(
+                "(?i)^You\\s+can\\s+only\\s+cast\\s+[^.]+?\\s+during\\s+your\\s+(?:turn|Main\\s+Phase)[.!]?\\s*",
+                "").trim();
     }
 
     static String cap(String s) {

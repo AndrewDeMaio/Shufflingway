@@ -82,6 +82,24 @@ final class GameContextImpl implements GameContext {
 		this.exBurst = exBurst;
 	}
 
+	/**
+	 * Where a card revealed off the top of a deck goes when an effect plays it: onto the field of
+	 * whoever is resolving the effect, in the row its type belongs to.
+	 *
+	 * <p>Shared by the whole reveal-and-play family, and the sharing is the point. Each of those
+	 * effects used to build this lambda inline against P1's zones — {@code placeCardInForwardZone}
+	 * and its two siblings are P1-only, the P2 seat has its own trio — so every one of them put
+	 * P2's revealed card onto P1's board. Silent in a solo game against the AI right up until the
+	 * opponent hands you a free Forward.
+	 */
+	private Consumer<CardData> revealPlacement() {
+		return c -> {
+			if (c.isBackup())       { if (isP1) mw.placeCardInFirstBackupSlot(c); else mw.placeP2CardInFirstBackupSlot(c); }
+			else if (c.isMonster()) { if (isP1) mw.placeCardInMonsterZone(c);     else mw.placeP2CardInMonsterZone(c); }
+			else                    { if (isP1) mw.placeCardInForwardZone(c);     else mw.placeP2CardInForwardZone(c); }
+		};
+	}
+
 	/** "twice" / "3 times" — how a permitted attack count reads inside a granted ability's text. */
 	private static String attackCountPhrase(int maxAttacks) {
 		return maxAttacks == 2 ? "twice" : maxAttacks + " times";
@@ -7359,11 +7377,7 @@ final class GameContextImpl implements GameContext {
 				for (CardData c : deck) { peeked.add(c); if (peeked.size() >= n) break; }
 				logEntry("Reveal top " + n + " card(s): " +
 						peeked.stream().map(CardData::name).collect(Collectors.joining(", ")));
-				Consumer<CardData> playOntoField = c -> {
-					if (c.isBackup())       mw.placeCardInFirstBackupSlot(c);
-					else if (c.isMonster()) mw.placeCardInMonsterZone(c);
-					else                    mw.placeCardInForwardZone(c);
-				};
+				Consumer<CardData> playOntoField = revealPlacement();
 				mw.lookDialogs().revealPlayTypeOntoFieldRestBottom(peeked, deck, isP1, maxPlay,
 						typeFilter, categoryFilter, playOntoField);
 			}
@@ -7376,11 +7390,7 @@ final class GameContextImpl implements GameContext {
 				for (CardData c : deck) { peeked.add(c); if (peeked.size() >= n) break; }
 				logEntry("Reveal top " + n + " card(s): " +
 						peeked.stream().map(CardData::name).collect(Collectors.joining(", ")));
-				Consumer<CardData> playOntoField = c -> {
-					if (c.isBackup())       mw.placeCardInFirstBackupSlot(c);
-					else if (c.isMonster()) mw.placeCardInMonsterZone(c);
-					else                    mw.placeCardInForwardZone(c);
-				};
+				Consumer<CardData> playOntoField = revealPlacement();
 				mw.lookDialogs().revealPlayElementTypeCostOntoField(peeked, deck, isP1, maxPlay,
 						element, typeFilter, maxCost, rest, playOntoField);
 			}
@@ -7394,13 +7404,24 @@ final class GameContextImpl implements GameContext {
 				for (CardData c : deck) { peeked.add(c); if (peeked.size() >= n) break; }
 				logEntry("Reveal top " + n + " card(s): " +
 						peeked.stream().map(CardData::name).collect(Collectors.joining(", ")));
-				Consumer<CardData> playOntoField = c -> {
-					if (c.isBackup())       mw.placeCardInFirstBackupSlot(c);
-					else if (c.isMonster()) mw.placeCardInMonsterZone(c);
-					else                    mw.placeCardInForwardZone(c);
-				};
+				Consumer<CardData> playOntoField = revealPlacement();
 				mw.lookDialogs().revealPlayNamedOrJobMaxCostOntoFieldRestBottom(peeked, deck, isP1,
 						maxPlay, cardName, job, maxCost, playOntoField);
+			}
+
+			@Override public void revealTopNPlayTypeCostOrNamedCostOntoFieldRestBottom(
+					int reveal, String typeFilter, int typeMaxCost, boolean excludeMultiElement,
+					String cardName, int nameMaxCost) {
+				Deque<CardData> deck = isP1 ? mw.gameState.getP1MainDeck() : mw.gameState.getP2MainDeck();
+				int n = Math.min(reveal, deck.size());
+				if (n == 0) { logEntry("Reveal top: deck is empty."); return; }
+				List<CardData> peeked = new ArrayList<>();
+				for (CardData c : deck) { peeked.add(c); if (peeked.size() >= n) break; }
+				logEntry("Reveal top " + n + " card(s): " +
+						peeked.stream().map(CardData::name).collect(Collectors.joining(", ")));
+				Consumer<CardData> playOntoField = revealPlacement();
+				mw.lookDialogs().revealPlayTypeCostOrNamedCostOntoFieldRestBottom(peeked, deck, isP1,
+						typeFilter, typeMaxCost, excludeMultiElement, cardName, nameMaxCost, playOntoField);
 			}
 
 			@Override public void revealTopNAddTypeToHandOrPlayJobTypeOntoFieldRestBottom(
@@ -7412,11 +7433,7 @@ final class GameContextImpl implements GameContext {
 				for (CardData c : deck) { peeked.add(c); if (peeked.size() >= n) break; }
 				logEntry("Reveal top " + n + " card(s): " +
 						peeked.stream().map(CardData::name).collect(Collectors.joining(", ")));
-				Consumer<CardData> playOntoField = c -> {
-					if (c.isBackup())       mw.placeCardInFirstBackupSlot(c);
-					else if (c.isMonster()) mw.placeCardInMonsterZone(c);
-					else                    mw.placeCardInForwardZone(c);
-				};
+				Consumer<CardData> playOntoField = revealPlacement();
 				mw.lookDialogs().revealAddTypeToHandOrPlayJobTypeOntoFieldRestBottom(
 						peeked, deck, isP1, handMax, handType, fieldMax, fieldJob, fieldType, playOntoField);
 			}
@@ -7435,13 +7452,7 @@ final class GameContextImpl implements GameContext {
 				for (CardData c : deck) { peeked.add(c); if (peeked.size() >= n) break; }
 				logEntry("Reveal top " + n + " card(s): " +
 						peeked.stream().map(CardData::name).collect(Collectors.joining(", ")));
-				// One placement rule for every seat. The AI used to have its own, which sent a
-				// Backup of the named kind into the Forward zone.
-				Consumer<CardData> playOntoField = c -> {
-					if (c.isBackup())       mw.placeCardInFirstBackupSlot(c);
-					else if (c.isMonster()) mw.placeCardInMonsterZone(c);
-					else                    mw.placeCardInForwardZone(c);
-				};
+				Consumer<CardData> playOntoField = revealPlacement();
 				mw.lookDialogs().revealPlayNamedOntoFieldRestBottom(peeked, deck, isP1, cardName,
 						maxCost, playOntoField);
 			}

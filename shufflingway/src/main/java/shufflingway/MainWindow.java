@@ -7397,6 +7397,18 @@ public class MainWindow {
 	}
 
 	/**
+	 * True when {@code card} is on the board and currently counts as a Forward, whichever side it
+	 * is on — for callers that have a card but no seat, such as the resolving source of an ability.
+	 *
+	 * <p>Reads the board rather than the printed type, so a Monster or Backup an effect has turned
+	 * into a Forward answers yes for as long as that lasts.
+	 */
+	boolean sourceIsActingForward(CardData card) {
+		Boolean side = fieldSideOf(card);
+		return side != null && isFieldForward(card, side);
+	}
+
+	/**
 	 * True when {@code card} currently counts as a Forward on {@code isP1}'s field — the Forward
 	 * row, plus any Backup or Monster an effect has temporarily made into one.
 	 */

@@ -1593,6 +1593,29 @@ final class ActionResolverPatterns {
             "(?<restbz>and\\s+put\\s+the\\s+rest\\s+of\\s+the\\s+cards?\\s+into\\s+the\\s+Break\\s+Zone)" +
         ")[.!]?\\s*$"
     );
+    /**
+     * "Reveal the top N cards of your deck. Play 1 [Type] of cost C or less [other than
+     * Multi-Element] or 1 Card Name X of cost D or less among them onto the field and return the
+     * other cards to the bottom of your deck in any order." (Syldra 29-101H.)
+     *
+     * <p>Two alternatives, each carrying its own cost ceiling — which is what keeps it apart from
+     * {@link #REVEAL_PLAY_NAMED_OR_JOB_MAX_COST_REST_BOTTOM}, where the Card Name and the Job share
+     * one. Exactly one card is played, whichever branch it comes from.
+     *
+     * <p>Both are fully anchored and both consume the whole sentence, so neither this nor
+     * {@link #REVEAL_PLAY_ELEMENT_TYPE_COST_ONTO_FIELD_REST_BOTTOM} can claim the other's text:
+     * that one ends at "among them", where this one is still reading a second alternative.
+     */
+    static final Pattern REVEAL_PLAY_TYPE_COST_OR_NAMED_COST_REST_BOTTOM = Pattern.compile(
+        "(?i)^\\s*reveal\\s+the\\s+top\\s+(?<n>\\d+)\\s+cards?\\s+of\\s+your\\s+deck[.!]?\\s+" +
+        "Play\\s+1\\s+(?<type>Forward|Backup|Monster|Character)s?\\s+" +
+        "of\\s+cost\\s+(?<typecost>\\d+)\\s+or\\s+less" +
+        "(?:\\s+other\\s+than\\s+(?<except>Multi-Element))?\\s+" +
+        "or\\s+1\\s+Card\\s+Name\\s+(?<cardname>.+?)\\s+of\\s+cost\\s+(?<namecost>\\d+)\\s+or\\s+less\\s+" +
+        "among\\s+them\\s+onto\\s+(?:the\\s+)?field\\s+" +
+        "and\\s+return\\s+the\\s+other\\s+cards?\\s+to\\s+the\\s+bottom\\s+of\\s+(?:your|the)\\s+deck" +
+        "(?:\\s+in\\s+any\\s+order)?[.!]?\\s*$"
+    );
     /** Matches "Put it at the top or bottom of its owner's deck." — player chooses placement. Also handles "Your opponent puts it…" */
     static final Pattern FOLLOWUP_PUT_TOP_OR_BOTTOM_OF_DECK = Pattern.compile(
         "(?i)(?:Your\\s+opponent\\s+puts?\\s+it|Put\\s+it)\\s+at\\s+the\\s+top\\s+or\\s+bottom\\s+of\\s+its\\s+owner's\\s+deck\\.?"

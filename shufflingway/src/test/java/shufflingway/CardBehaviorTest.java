@@ -18082,6 +18082,191 @@ public class CardBehaviorTest {
 	}
 
 	// =========================================================================================
+	// Three field abilities whose machinery already existed and whose wording did not
+	//
+	//   Ephemeral Vision 2-123C  "If you control 4 Forwards or more, …"  — the count qualifier
+	//       printed after the noun. The only card in the corpus that prints it that way round, so
+	//       it is normalised into the leading form rather than loosening the count pattern.
+	//   Gawain 7-107R            "…by a Forward's ability"  — a source clause between two that
+	//       already existed and narrower than both: "by a Forward" is battle damage, "by an
+	//       ability" is any ability. Left unwired it fell to "by a Forward" and inverted.
+	//   Rosa 2-143R              "Whenever …"  — already wired as an auto-ability. It was ALSO
+	//       being emitted as a field ability, because the exclusion that keeps auto-abilities out
+	//       of field-ability parsing read "When " and not "Whenever ".
+	// =========================================================================================
+
+	@Test
+	void aCountQualifierPrintedAfterTheNounReadsTheSame() {
+		String trailing = "If you control 4 Forwards or more, Ephemeral Vision gains +3000 power.";
+		String leading  = "If you control 4 or more Forwards, Ephemeral Vision gains +3000 power.";
+
+		List<IfControlBoost> boosts = CardData.parseIfControlBoosts(trailing, "Forward");
+		assertEquals(1, boosts.size());
+		assertEquals(CardData.parseIfControlBoosts(leading, "Forward").toString(), boosts.toString(),
+				"the two wordings are the same condition and must parse to the same boost");
+	}
+
+	@Test
+	void theTrailingFormIsNotMistakenForAnUnqualifiedNoun() {
+		// The normalisation is anchored, so it cannot reach into a longer condition and rewrite a
+		// threshold that belongs to some other clause.
+		assertEquals(List.of(), CardData.parseIfControlBoosts(
+				"If you control 4 Forwards or more Backups, Nobody gains +3000 power.", "Forward"));
+	}
+
+	private static final String GAWAIN_7_107R =
+			"If Gawain is dealt damage by a Forward's ability, the damage becomes 0 instead.";
+
+	@Test
+	void gawainReadsTheAbilitySourceRatherThanTheBattleSource() {
+		Matcher m = AutoAbilityTriggers.FA_DAMAGE_MODIFIER.matcher(GAWAIN_7_107R);
+		assertTrue(m.matches(), "the source clause has to be one the modifier recognises");
+		assertEquals("Gawain", m.group("card"));
+		assertEquals("0", m.group("setsto"));
+		assertEquals("by a Forward's ability", m.group("sourceclause").trim(),
+				"the bare \"by a Forward\" branch must not claim it — it means battle damage");
+	}
+
+	@Test
+	void theBareForwardSourceStillMeansBattleDamage() {
+		Matcher m = AutoAbilityTriggers.FA_DAMAGE_MODIFIER.matcher(
+				"If Gawain is dealt damage by a Forward, the damage becomes 0 instead.");
+		assertTrue(m.matches());
+		assertEquals("by a Forward", m.group("sourceclause").trim(),
+				"inserting the narrower branch ahead of it must not disturb the wording it had");
+	}
+
+	@Test
+	void wheneverIsTheSameTriggerWordAsWhen() {
+		String rosa = "Whenever a Forward you control is chosen by your opponent's Summon, "
+				+ "you may draw 1 card.";
+
+		assertEquals(1, CardData.parseAutoAbilities(rosa).size(), "it is a triggered ability");
+		assertEquals("chosen by opponent's summon", CardData.parseAutoAbilities(rosa).get(0).trigger());
+		assertEquals(List.of(), CardData.parseFieldAbilities(rosa, "Backup"),
+				"and must not be emitted as a field ability on top of that");
+	}
+
+	@Test
+	void theWheneverExclusionDoesNotSwallowOrdinaryFieldAbilities() {
+		// The exclusion is a prefix test, so a field ability that merely contains the word is safe.
+		String fa = "The Forwards you control gain +1000 power whenever you control a Backup.";
+		assertEquals(1, CardData.parseFieldAbilities(fa, "Backup").size());
+	}
+
+	// =========================================================================================
+	// Syldra 29-101H — two alternatives, each with its own cost ceiling
+	//
+	// "Play 1 Forward of cost 4 or less other than Multi-Element or 1 Card Name Faris of cost 6 or
+	// less among them onto the field." One card is played, from whichever branch it satisfies, and
+	// the branches do not share a ceiling — the Faris branch reaches costs the Forward branch
+	// cannot, which is why it is printed as a second alternative rather than as a wider filter.
+	//
+	// The effect also carries a cast restriction in front of it. That is parsed off the card into
+	// a CastRestriction and enforced at cast time, so the effect parsers have to step over the
+	// sentence; leaving it there is what made this text unparseable.
+	// =========================================================================================
+
+	private static final String SYLDRA_29_101H =
+			"You can only cast Syldra during your turn. Reveal the top 5 cards of your deck. "
+			+ "Play 1 Forward of cost 4 or less other than Multi-Element or 1 Card Name Faris of "
+			+ "cost 6 or less among them onto the field and return the other cards to the bottom "
+			+ "of your deck in any order.";
+
+	@Test
+	void syldraReadsBothAlternativesAndTheirSeparateCeilings() {
+		CardData syldra = makeSummon("Syldra", "Water", 4, SYLDRA_29_101H);
+		assertEquals("RevealPlayTypeCostOrNamedCostRestBottom",
+				ActionResolver.matchedPatternName(SYLDRA_29_101H, syldra),
+				"the cast-restriction sentence must not defeat the anchored pattern");
+
+		GameContext ctx = mock(GameContext.class);
+		ActionResolver.parse(SYLDRA_29_101H, syldra).accept(ctx);
+		verify(ctx).revealTopNPlayTypeCostOrNamedCostOntoFieldRestBottom(
+				5, "Forward", 4, true, "Faris", 6);
+	}
+
+	/** P2's deck, top card first — P2 so the reveal resolves through the AI seat, dialog-free. */
+	private static MainWindow syldraDeck(CardData... topFirst) {
+		MainWindow mw = new MainWindow();
+		for (CardData c : topFirst) mw.gameState.getP2MainDeck().add(c);
+		return mw;
+	}
+
+	private static void resolveSyldra(MainWindow mw) {
+		mw.buildGameContext(false).revealTopNPlayTypeCostOrNamedCostOntoFieldRestBottom(
+				5, "Forward", 4, true, "Faris", 6);
+	}
+
+	@Test
+	void theNamedBranchReachesACostTheTypeBranchCannot() {
+		MainWindow mw = syldraDeck(
+				makeForward("Faris", "Wind", 6, 9000),        // eligible: named, cost 6
+				makeForward("Bartz", "Wind", 3, 7000),        // eligible: Forward, cost 3
+				makeForward("Krile", "Wind", 5, 8000),        // too dear for the Forward branch
+				makeForward("Twin", "Fire/Water", 4, 8000),   // Multi-Element, excluded
+				makeSummon("Shiva", "Ice", 2, ""));           // not a Forward, not Faris
+
+		resolveSyldra(mw);
+
+		assertEquals(1, mw.p2ForwardCards.size());
+		assertEquals("Faris", mw.p2ForwardCards.get(0).name(),
+				"the dearest eligible card, and only the named branch could supply it");
+	}
+
+	@Test
+	void theTypeBranchExcludesMultiElementAndAnythingTooDear() {
+		MainWindow mw = syldraDeck(
+				makeForward("Krile", "Wind", 5, 8000),        // over the Forward ceiling
+				makeForward("Twin", "Fire/Water", 4, 8000),   // at the ceiling but Multi-Element
+				makeForward("Bartz", "Wind", 3, 7000),        // the only eligible card
+				makeForward("Lenna", "Water", 2, 5000),
+				makeSummon("Shiva", "Ice", 2, ""));
+
+		resolveSyldra(mw);
+
+		assertEquals(1, mw.p2ForwardCards.size());
+		assertEquals("Bartz", mw.p2ForwardCards.get(0).name(),
+				"\"other than Multi-Element\" rules out the cost-4 twin above it");
+	}
+
+	@Test
+	void theRevealedCardLandsOnTheResolvingPlayersField() {
+		// Guards the whole reveal-and-play family, not just Syldra: each of them built its
+		// placement inline against P1's zones, which are P1-only, so P2 resolving any of them
+		// handed the card to P1 instead.
+		MainWindow mw = syldraDeck(
+				makeForward("Bartz", "Wind", 3, 7000),
+				makeForward("Lenna", "Water", 2, 5000),
+				makeSummon("Shiva", "Ice", 2, ""));
+
+		resolveSyldra(mw);
+
+		assertEquals(1, mw.p2ForwardCards.size(), "P2 resolved it, so P2 gets the Forward");
+		assertEquals(0, mw.p1ForwardCards.size(), "and nothing lands on the opponent's board");
+	}
+
+	@Test
+	void theCardsNotPlayedGoToTheBottomOfTheDeck() {
+		MainWindow mw = syldraDeck(
+				makeForward("Bartz", "Wind", 3, 7000),
+				makeForward("Krile", "Wind", 5, 8000),
+				makeForward("Lenna", "Water", 2, 5000),
+				makeForward("Galuf", "Earth", 4, 8000),
+				makeSummon("Shiva", "Ice", 2, ""),
+				makeForward("Deep Deck", "Fire", 1, 3000));   // never revealed — stays put
+
+		resolveSyldra(mw);
+
+		List<CardData> deck = new ArrayList<>(mw.gameState.getP2MainDeck());
+		assertEquals(5, deck.size(), "one of the six was played");
+		assertEquals("Deep Deck", deck.get(0).name(),
+				"the unrevealed card is now on top; the other four went under it");
+		assertFalse(deck.stream().anyMatch(c -> c.name().equals("Galuf")),
+				"the dearest eligible Forward was the one played");
+	}
+
+	// =========================================================================================
 	// Combat glows — what a Forward slot says about the attack in progress
 	//
 	// Red marks a card that is part of a declared attack, on either side. The defender is choosing

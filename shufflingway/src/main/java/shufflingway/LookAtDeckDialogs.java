@@ -1711,6 +1711,30 @@ class LookAtDeckDialogs {
                 RevealRest.BOTTOM, playOntoField);
     }
 
+    /**
+     * "Play 1 {@code typeFilter} of cost {@code typeMaxCost} or less [other than Multi-Element] or
+     * 1 Card Name {@code cardName} of cost {@code nameMaxCost} or less among them onto the field;
+     * rest to the bottom of the deck in any order." (Syldra 29-101H.)
+     *
+     * <p>Two alternatives with separate ceilings, collapsed into the one predicate the rest of this
+     * family already takes — a card qualifies by satisfying either branch, and only one card is
+     * played whichever branch supplied it.
+     */
+    void revealPlayTypeCostOrNamedCostOntoFieldRestBottom(List<CardData> cards, Deque<CardData> deck,
+            boolean isP1, String typeFilter, int typeMaxCost, boolean excludeMultiElement,
+            String cardName, int nameMaxCost, Consumer<CardData> playOntoField) {
+        String typeLabel = typeFilter + " of cost " + typeMaxCost + " or less"
+                + (excludeMultiElement ? " other than Multi-Element" : "")
+                + " or Card Name " + cardName + " of cost " + nameMaxCost + " or less";
+        Predicate<CardData> eligible = c ->
+                (meetsRevealTypeFilter(c, typeFilter)
+                        && c.cost() <= typeMaxCost
+                        && !(excludeMultiElement && c.containsElement("Multi-Element")))
+                || (CardFilters.meetsCardNameFilter(c, cardName) && c.cost() <= nameMaxCost);
+        resolveRevealPlayOntoField(cards, deck, isP1, 1, typeLabel, eligible,
+                RevealRest.BOTTOM, playOntoField);
+    }
+
     /** Routes the choice these three effects share to whoever is sitting in the seat. */
     private void resolveRevealPlayOntoField(List<CardData> cards, Deque<CardData> deck,
             boolean isP1, int maxPlay, String typeLabel, Predicate<CardData> eligible,

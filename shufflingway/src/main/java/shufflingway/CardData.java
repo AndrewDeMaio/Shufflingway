@@ -2268,6 +2268,19 @@ public record CardData(
      *   <li>{@code altname}  — card name after "or Card Name"</li>
      * </ul>
      */
+    /**
+     * "4 Forwards or more" — the same threshold {@link #CONTROL_COUNT_CONDITION_PATTERN} reads,
+     * with the qualifier printed after the noun instead of before it. Normalised into the leading
+     * form rather than widening that pattern: its count prefix is what anchors the whole match,
+     * and letting "or more" float would leave every bare noun ambiguous.
+     *
+     * <p>Anchored and limited to the four type nouns, because Ephemeral Vision 2-123C is the only
+     * card in the corpus that prints it this way round.
+     */
+    private static final Pattern TRAILING_OR_MORE_COUNT = Pattern.compile(
+        "(?i)^(?<count>\\d+)\\s+(?<noun>Forwards?|Monsters?|Backups?|Characters?)\\s+or\\s+more$"
+    );
+
     private static final Pattern CONTROL_COUNT_CONDITION_PATTERN = Pattern.compile(
         "(?i)" +
         "(?:(?<count>\\d+)\\s+or\\s+more|only\\s+(?<exactn>\\d+)|a(?:n)?\\s+)\\s*" +
@@ -5697,8 +5710,15 @@ public record CardData(
      * The optional "EX BURST " prefix covers cards whose EX Burst text is stored inline
      * without [[ex]]…[[/]] tag delimiters (so EX_BURST_TAG does not strip it).
      * Used to exclude auto-ability segments from field-ability parsing.
+     *
+     * <p>"Whenever" is the same trigger word — {@link #AUTO_ABILITY_PATTERN} has always accepted
+     * both — and it has to be excluded here for the same reason. Without it Rosa 2-143R's
+     * "Whenever a Forward you control is chosen by your opponent's Summon, …" was emitted as a
+     * field ability <em>as well as</em> the auto-ability that actually runs it, and showed up in
+     * the field-ability report as unwired work that was in fact already done.
      */
-    private static final Pattern FA_AUTO_PREFIX = Pattern.compile("(?i)^(?:EX\\s+BURST\\s+)?When\\s+");
+    private static final Pattern FA_AUTO_PREFIX =
+            Pattern.compile("(?i)^(?:EX\\s+BURST\\s+)?When(?:ever)?\\s+");
 
     /**
      * Matches a "Damage N -- " threshold prefix at the start of a {@code [[br]]}-delimited
@@ -6304,6 +6324,7 @@ public record CardData(
         // Strip trailing ", during your turn" and "and only once per turn" clauses
         String cond = raw.replaceAll("(?i)\\s*,?\\s*during\\s+your\\s+turn\\b.*", "").trim();
         cond = cond.replaceAll("(?i)\\s*,?\\s*(?:and\\s+)?only\\s+once\\s+per\\s+turn\\b.*", "").trim();
+        cond = TRAILING_OR_MORE_COUNT.matcher(cond).replaceAll("${count} or more ${noun}");
 
         // Named-card mode: "(a) Card Name X [and Card Name Y [and Card Name Z]]"
         // Must be checked before count mode to avoid "a Card Name X" being parsed as count=1

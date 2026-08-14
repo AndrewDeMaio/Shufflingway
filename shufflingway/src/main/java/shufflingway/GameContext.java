@@ -2112,6 +2112,20 @@ public interface GameContext {
             int reveal, int maxPlay, String cardName, String job, int maxCost);
 
     /**
+     * Reveals the top {@code reveal} cards. The player plays exactly one of them onto the field
+     * for free, satisfying <em>either</em> {@code typeFilter} at cost &le; {@code typeMaxCost}
+     * (excluding Multi-Element cards when {@code excludeMultiElement}) <em>or</em> Card Name
+     * {@code cardName} at cost &le; {@code nameMaxCost}. The rest go to the bottom of the deck in
+     * any order.  (Syldra 29-101H.)
+     *
+     * <p>Unlike {@link #revealTopNPlayUpToNamedOrJobWithMaxCostOntoFieldRestBottom} the two
+     * alternatives carry separate ceilings, so the named branch reaches costs the type branch
+     * cannot — which is the whole point of printing it as a second alternative.
+     */
+    void revealTopNPlayTypeCostOrNamedCostOntoFieldRestBottom(int reveal, String typeFilter,
+            int typeMaxCost, boolean excludeMultiElement, String cardName, int nameMaxCost);
+
+    /**
      * Reveals the top {@code reveal} cards. The player may either add up to {@code handMax}
      * cards matching {@code handType} to their hand, OR play up to {@code fieldMax} cards
      * matching {@code fieldJob} (optional) and {@code fieldType} onto the field for free.
