@@ -2655,7 +2655,9 @@ public class MainWindow {
                             refreshAttackButton();
                             advanceLocalPhase();   // ATTACK → MAIN_2
                             refreshPhaseTracker();
-                            refreshAllForwardSlots();
+                            // The attack phase is over, so the exhausted-attacker glow comes off
+                            // with it — on both boards, since the same phase ended for both.
+                            refreshCombatGlows();
                             logEntry("Main Phase 2");
                             autoAbilityTriggers.triggerAutoAbilitiesForBeginningOfMainPhase2(true);
                             syncBzForwardPlayables(true);
@@ -9824,7 +9826,11 @@ public class MainWindow {
 		if (card == null) return null;
 		for (CardData attacker : declaredAttackers(isP1))
 			if (attacker == card) return CardAnimation.GLOW_ATTACKING;
-		if (attacksMadeThisTurn.getOrDefault(card, 0) > 0 && !hasAttackRemaining(card))
+		// Only while attacks are still being declared. attacksMadeThisTurn runs to end of turn, but
+		// once the phase is over nobody was going to attack again anyway, so the mark stops saying
+		// anything and is just clutter across both main phases.
+		if (gameState.getCurrentPhase() == GameState.GamePhase.ATTACK
+				&& attacksMadeThisTurn.getOrDefault(card, 0) > 0 && !hasAttackRemaining(card))
 			return CardAnimation.GLOW_EXHAUSTED;
 		return null;
 	}

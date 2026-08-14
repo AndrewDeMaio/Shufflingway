@@ -18094,8 +18094,13 @@ public class CardBehaviorTest {
 	// ones worth marking: Brave leaves a card active, and so does a re-activation.
 	// =========================================================================================
 
-	/** A Forward on P2's field that has declared {@code attacks} attacks this turn. */
+	/**
+	 * A Forward on P2's field that has declared {@code attacks} attacks, with the board sitting in
+	 * the Attack Phase — the only phase in which the exhausted mark means anything.
+	 */
 	private static CardData attackedTwice(MainWindow mw, CardData card, int attacks) {
+		if (mw.gameState.getCurrentPhase() != GameState.GamePhase.ATTACK)
+			advanceTo(mw, GameState.Player.P2, GameState.GamePhase.ATTACK);
 		placeP2Forward(mw, card);
 		for (int i = 0; i < attacks; i++) mw.recordAttackDeclared(card);
 		return card;
@@ -18146,6 +18151,19 @@ public class CardBehaviorTest {
 		mw.recordAttackDeclared(tifa);
 		assertEquals(CardAnimation.GLOW_EXHAUSTED, mw.combatGlowFor(tifa, false),
 				"now both declarations are gone");
+	}
+
+	@Test
+	void theExhaustedMarkComesOffWhenTheAttackPhaseEnds() {
+		MainWindow mw = new MainWindow();
+		CardData attacker = attackedTwice(mw, makeForward("Sephiroth", "Dark", 5, 9000), 1);
+		assertEquals(CardAnimation.GLOW_EXHAUSTED, mw.combatGlowFor(attacker, false));
+
+		mw.gameState.advancePhase();   // ATTACK → MAIN_2
+		assertEquals(GameState.GamePhase.MAIN_2, mw.gameState.getCurrentPhase());
+
+		assertNull(mw.combatGlowFor(attacker, false),
+				"attacksMadeThisTurn still holds it, but nobody was attacking again anyway");
 	}
 
 	@Test

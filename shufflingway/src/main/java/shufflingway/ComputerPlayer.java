@@ -101,6 +101,7 @@ class ComputerPlayer implements OpponentController {
 				mw.logEntry("[P2] Attack Phase — No attackers, skipping");
 				mw.gameState.advancePhase(); // ATTACK → MAIN_2
 				mw.refreshPhaseTracker();
+				mw.refreshCombatGlows();   // attack phase over — the exhausted mark comes off
 				mw.logEntry("[P2] Main Phase 2");
 				mw.autoAbilityTriggers.triggerAutoAbilitiesForBeginningOfMainPhase2(false);
 				step(() -> doMainPhase(this::doEndPhase));
@@ -114,6 +115,7 @@ class ComputerPlayer implements OpponentController {
 				mw.offerP1AttackPrepPriority(() -> step(() -> doAttackPhase(() -> {
 					mw.gameState.advancePhase(); // ATTACK → MAIN_2
 					mw.refreshPhaseTracker();
+					mw.refreshCombatGlows();   // attack phase over — the exhausted mark comes off
 					mw.logEntry("[P2] Main Phase 2");
 					mw.autoAbilityTriggers.triggerAutoAbilitiesForBeginningOfMainPhase2(false);
 					step(() -> doMainPhase(this::doEndPhase));
@@ -165,7 +167,9 @@ class ComputerPlayer implements OpponentController {
 		// strictly better value than discarding-for-CP from a fresh hand cast.
 		if (tryP2BzPlay()) { step(() -> doMainPhase(onDone)); return; }
 
-		// Try action abilities before committing to a hand play or passing.
+		// Try action abilities before committing to a hand play or passing. The resume is built
+		// from onDone, not from the continuation below: an activation restarts the main phase, and
+		// it has to restart carrying the callback that ends it.
 		tryP2ActionAbilities(() -> {
 			P2Plan plan = findPlayPlan();
 			if (plan == null) {
@@ -175,7 +179,7 @@ class ComputerPlayer implements OpponentController {
 			}
 			executeP2HandPlay(plan);
 			step(() -> doMainPhase(onDone));
-		});
+		}, () -> doMainPhase(onDone));
 	}
 
 	/** Executes a planned P2 hand-cast: dulls backups, discards for CP, pays cost, plays the card. */
@@ -320,7 +324,8 @@ class ComputerPlayer implements OpponentController {
 		// Allow P2 to use Main-Phase-compatible abilities during the attack-preparation window
 		// (attackSubStep == 0) before declaring any attacker.
 		if (mw.attackSubStep == 0) {
-			tryP2ActionAbilities(() -> doAttackPhaseInner(onDone));
+			Runnable declareAttack = () -> doAttackPhaseInner(onDone);
+			tryP2ActionAbilities(declareAttack, () -> doMainPhase(declareAttack));
 			return;
 		}
 		doAttackPhaseInner(onDone);
@@ -1083,9 +1088,22 @@ class ComputerPlayer implements OpponentController {
 
 	/**
 	 * Tries to activate any available P2 action ability this main phase.
-	 * Calls {@code onDone} when no more usable abilities are found.
+	 *
+	 * @param onDone run when no more usable abilities are found
+	 * @param resume run <em>instead</em> after one is activated: activating changes what else is
+	 *               affordable, so the phase restarts from the top rather than continuing down the
+	 *               board.
+	 *
+	 * <p>{@code resume} is supplied by the caller rather than derived from {@code onDone}, and the
+	 * distinction is the whole point of the second parameter. These helpers used to restart with
+	 * {@code doMainPhase(onDone)} — re-entering the main phase carrying the continuation of the
+	 * pass that was still running, so each activation wrapped another layer around the callback
+	 * that ends the phase. Unwinding those layers cost the player one full priority round each:
+	 * P2 auto-passed, P1 clicked Next, and instead of the phase advancing another identical
+	 * handoff appeared. Three activations meant three rounds of clicking Next before Main 1 would
+	 * end.
 	 */
-	private void tryP2ActionAbilities(Runnable onDone) {
+	private void tryP2ActionAbilities(Runnable onDone, Runnable resume) {
 		if (mw.gameState.isP1GameOver()) return;
 		GameState.GamePhase phase = mw.gameState.getCurrentPhase();
 		boolean isAttackPrep = phase == GameState.GamePhase.ATTACK && mw.attackSubStep == 0;
@@ -1101,7 +1119,7 @@ class ComputerPlayer implements OpponentController {
 			if (tryP2UseAbility(eff, mw.p2ForwardFrozen.get(i), mw.p2ForwardStates.get(i),
 					mw.p2ForwardPlayedOnTurn.get(i),
 					() -> { mw.p2ForwardStates.set(fi, CardState.DULL); mw.refreshP2ForwardSlot(fi); },
-					onDone)) return;
+					resume)) return;
 		}
 		for (int i = 0; i < mw.p2BackupCards.length; i++) {
 			CardData card = mw.p2BackupCards[i];
@@ -1109,7 +1127,7 @@ class ComputerPlayer implements OpponentController {
 			final int bi = i;
 			if (tryP2UseAbility(card, mw.p2BackupFrozen[i], mw.p2BackupStates[i], 0,
 					() -> { mw.p2BackupStates[bi] = CardState.DULL; mw.animateDullP2Backup(bi, true); },
-					onDone)) return;
+					resume)) return;
 		}
 		for (int i = 0; i < mw.p2MonsterCards.size(); i++) {
 			CardData card = mw.p2MonsterCards.get(i);
@@ -1118,9 +1136,9 @@ class ComputerPlayer implements OpponentController {
 			if (tryP2UseAbility(card, mw.p2MonsterFrozen.get(i), mw.p2MonsterStates.get(i),
 					mw.p2MonsterPlayedOnTurn.get(i),
 					() -> { mw.p2MonsterStates.set(mi, CardState.DULL); mw.refreshP2MonsterSlot(mi); },
-					onDone)) return;
+					resume)) return;
 		}
-		tryP2BzActionAbilities(() -> tryP2SharedOpponentAbilities(onDone));
+		tryP2BzActionAbilities(() -> tryP2SharedOpponentAbilities(onDone, resume), resume);
 	}
 
 	/**
@@ -1160,9 +1178,10 @@ class ComputerPlayer implements OpponentController {
 
 	/**
 	 * Tries to activate any available P2 break-zone action abilities.
-	 * Called at the end of {@link #tryP2ActionAbilities} before {@code onDone}.
+	 * Called at the end of {@link #tryP2ActionAbilities} before {@code onDone}, and takes the same
+	 * pair: {@code onDone} when nothing fires, {@code resume} when something does.
 	 */
-	private void tryP2BzActionAbilities(Runnable onDone) {
+	private void tryP2BzActionAbilities(Runnable onDone, Runnable resume) {
 		List<CardData> bz = mw.gameState.getP2BreakZone();
 		for (CardData card : bz) {
 			for (ActionAbility ability : card.actionAbilities()) {
@@ -1190,7 +1209,7 @@ class ComputerPlayer implements OpponentController {
 
 				mw.logEntry("[P2] Activates BZ ability: " + card.name() + " — " + ability.effectText());
 				mw.autoAbilityTriggers.executeP2AbilityActivation(ability, card, () -> {}, backupDullIndices, discardIndices, 0);
-				step(() -> doMainPhase(onDone));
+				step(resume);
 				return;
 			}
 		}
@@ -1208,9 +1227,10 @@ class ComputerPlayer implements OpponentController {
 	/**
 	 * "Each player can use this ability." — tries to activate a {@code usableByEitherPlayer}
 	 * ability on one of P1's field cards, paying costs from P2's own resources.  Called as a
-	 * low-priority fallback after P2 has exhausted its own abilities this main phase.
+	 * low-priority fallback after P2 has exhausted its own abilities this main phase.  Same
+	 * {@code onDone}/{@code resume} pair as {@link #tryP2ActionAbilities}.
 	 */
-	private void tryP2SharedOpponentAbilities(Runnable onDone) {
+	private void tryP2SharedOpponentAbilities(Runnable onDone, Runnable resume) {
 		for (int i = 0; i < mw.p1ForwardCards.size(); i++) {
 			CardData card = mw.p1ForwardCards.get(i);
 			if (card == null) continue;
@@ -1218,7 +1238,7 @@ class ComputerPlayer implements OpponentController {
 			if (tryP2UseOpponentSharedAbility(card, mw.p1ForwardFrozen.get(i), mw.p1ForwardStates.get(i),
 					mw.p1ForwardPlayedOnTurn.get(i),
 					() -> { mw.p1ForwardStates.set(fi, CardState.DULL); mw.animateDullForward(fi, null); },
-					onDone)) return;
+					resume)) return;
 		}
 		for (int i = 0; i < mw.p1BackupCards.length; i++) {
 			CardData card = mw.p1BackupCards[i];
@@ -1226,7 +1246,7 @@ class ComputerPlayer implements OpponentController {
 			final int bi = i;
 			if (tryP2UseOpponentSharedAbility(card, mw.p1BackupFrozen[i], mw.p1BackupStates[i], 0,
 					() -> { mw.p1BackupStates[bi] = CardState.DULL; mw.refreshP1BackupSlot(bi); },
-					onDone)) return;
+					resume)) return;
 		}
 		for (int i = 0; i < mw.p1MonsterCards.size(); i++) {
 			CardData card = mw.p1MonsterCards.get(i);
@@ -1235,7 +1255,7 @@ class ComputerPlayer implements OpponentController {
 			if (tryP2UseOpponentSharedAbility(card, mw.p1MonsterFrozen.get(i), mw.p1MonsterStates.get(i),
 					mw.p1MonsterPlayedOnTurn.get(i),
 					() -> { mw.p1MonsterStates.set(mi, CardState.DULL); mw.refreshP1MonsterSlot(mi); },
-					onDone)) return;
+					resume)) return;
 		}
 		onDone.run();
 	}
@@ -1243,11 +1263,11 @@ class ComputerPlayer implements OpponentController {
 	/**
 	 * Checks each {@code usableByEitherPlayer} action ability on {@code card} (a P1 card).
 	 * If one is usable, affordable without giving up P2's hand advantage, and its effect is
-	 * implemented, pays cost from P2's resources and schedules a doMainPhase continuation.
+	 * implemented, pays its cost from P2's resources and schedules {@code resume}.
 	 * Returns {@code true} if an ability was dispatched.
 	 */
 	private boolean tryP2UseOpponentSharedAbility(CardData card, boolean isFrozen, CardState state,
-			int playedTurn, Runnable applyDull, Runnable onDone) {
+			int playedTurn, Runnable applyDull, Runnable resume) {
 		if (mw.lostAbilitiesCards.contains(card)) return false;
 		for (ActionAbility ability : card.actionAbilities()) {
 			if (!ability.usableByEitherPlayer()) continue;
@@ -1269,7 +1289,7 @@ class ComputerPlayer implements OpponentController {
 
 			mw.logEntry("[P2] Activates shared ability on " + card.name() + " — " + ability.effectText());
 			mw.autoAbilityTriggers.executeP2AbilityActivation(ability, card, applyDull, backupDullIndices, discardIndices, 0);
-			step(() -> doMainPhase(onDone));
+			step(resume);
 			return true;
 		}
 		return false;
@@ -1277,11 +1297,11 @@ class ComputerPlayer implements OpponentController {
 
 	/**
 	 * Checks each field action ability on {@code card}.  If one is usable, affordable,
-	 * and its effect is implemented, pays cost and schedules doMainPhase continuation.
+	 * and its effect is implemented, pays its cost and schedules {@code resume}.
 	 * Returns {@code true} if an ability was dispatched.
 	 */
 	private boolean tryP2UseAbility(CardData card, boolean isFrozen, CardState state,
-			int playedTurn, Runnable applyDull, Runnable onDone) {
+			int playedTurn, Runnable applyDull, Runnable resume) {
 		if (mw.lostAbilitiesCards.contains(card)) return false;
 		for (ActionAbility ability : card.actionAbilities()) {
 			if (ability.whileCardInHand()) continue;
@@ -1363,7 +1383,7 @@ class ComputerPlayer implements OpponentController {
 
 			mw.logEntry("[P2] Activates ability: " + card.name() + " — " + ability.effectText());
 			mw.autoAbilityTriggers.executeP2AbilityActivation(ability, card, applyDull, backupDullIndices, discardIndices, xValue);
-			step(() -> doMainPhase(onDone));
+			step(resume);
 			return true;
 		}
 		return false;

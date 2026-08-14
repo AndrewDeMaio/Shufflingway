@@ -474,6 +474,7 @@ class RemoteOpponent implements OpponentController {
 
 			case MAIN_2 -> {
 				mw.logEntry("[P2] Main Phase 2");
+				mw.refreshCombatGlows();   // attack phase over — the exhausted mark comes off
 				mw.autoAbilityTriggers.triggerAutoAbilitiesForBeginningOfMainPhase2(false);
 			}
 
