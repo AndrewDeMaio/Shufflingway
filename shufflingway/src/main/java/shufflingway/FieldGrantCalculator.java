@@ -1,5 +1,6 @@
 package shufflingway;
 
+import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
@@ -116,24 +117,51 @@ class FieldGrantCalculator {
         }
     }
 
-    /** True if any field card on either side is suppressing Haste globally. */
-    boolean isHasteSuppressedGlobally() {
+    /**
+     * True when Haste is suppressed for the Forwards {@code targetIsP1} controls.
+     *
+     * <p>Two scopes reach this. Edward 2-031C's "All Forwards lose Haste." names no player, so a
+     * copy on either side binds both. The Magus Sisters (XIV) 20-083R's "The Forwards opponent
+     * controls lose Haste." binds one side only — the side facing whoever controls it — so it is
+     * read off the opposing field rather than off both.
+     *
+     * <p>"lose Haste" and "cannot gain Haste" are treated as one suppression. Both printings that
+     * carry either sentence carry both of them together, so no corpus card distinguishes stripping
+     * a printed Haste from barring a granted one; splitting them would be modelling a case that
+     * does not exist yet.
+     */
+    boolean isHasteSuppressedFor(boolean targetIsP1) {
         for (int side = 0; side < 2; side++) {
-            boolean isP1 = side == 0;
-            List<CardData> fwds = isP1 ? mw.p1ForwardCards : mw.p2ForwardCards;
-            CardData[]     bkps = isP1 ? mw.p1BackupCards  : mw.p2BackupCards;
-            List<CardData> mons = isP1 ? mw.p1MonsterCards : mw.p2MonsterCards;
-            for (CardData c : fwds) if (!mw.lostAbilitiesCards.contains(c) && cardHasHasteSuppression(c)) return true;
-            for (CardData c : bkps) if (c != null && !mw.lostAbilitiesCards.contains(c) && cardHasHasteSuppression(c)) return true;
-            for (CardData c : mons) if (!mw.lostAbilitiesCards.contains(c) && cardHasHasteSuppression(c)) return true;
+            boolean srcIsP1 = side == 0;
+            // A card only suppresses its opponent's Forwards, so its own side is exempt from the
+            // one-sided sentence while the unqualified one still reaches everyone.
+            boolean oppScopeApplies = srcIsP1 != targetIsP1;
+            for (CardData c : fieldCards(srcIsP1))
+                if (c != null && !mw.lostAbilitiesCards.contains(c)
+                        && cardHasHasteSuppression(c, oppScopeApplies)) return true;
         }
         return false;
     }
 
-    private boolean cardHasHasteSuppression(CardData card) {
+    /** Every card on {@code isP1}'s field: Forwards, Backups and Monsters. */
+    private List<CardData> fieldCards(boolean isP1) {
+        List<CardData> out = new ArrayList<>(isP1 ? mw.p1ForwardCards : mw.p2ForwardCards);
+        for (CardData b : (isP1 ? mw.p1BackupCards : mw.p2BackupCards)) if (b != null) out.add(b);
+        out.addAll(isP1 ? mw.p1MonsterCards : mw.p2MonsterCards);
+        return out;
+    }
+
+    /**
+     * @param inclOpponentScoped whether the card's one-sided sentences count for the side being
+     *     asked about; false when the question is about the card's own controller
+     */
+    private boolean cardHasHasteSuppression(CardData card, boolean inclOpponentScoped) {
         for (FieldAbility fa : card.fieldAbilities()) {
             if (AutoAbilityTriggers.FA_ALL_FORWARDS_LOSE_HASTE.matcher(fa.effectText()).find()) return true;
             if (AutoAbilityTriggers.FA_FORWARDS_CANNOT_GAIN_HASTE.matcher(fa.effectText()).find()) return true;
+            if (!inclOpponentScoped) continue;
+            if (AutoAbilityTriggers.FA_OPP_FORWARDS_LOSE_HASTE.matcher(fa.effectText()).find()) return true;
+            if (AutoAbilityTriggers.FA_OPP_FORWARDS_CANNOT_GAIN_HASTE.matcher(fa.effectText()).find()) return true;
         }
         return false;
     }

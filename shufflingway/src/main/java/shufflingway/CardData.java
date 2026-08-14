@@ -220,26 +220,41 @@ public record CardData(
      *   <li>discard N card(s) as an extra cost</li>
      *   <li>pay 《X》 as an extra cost — variable amount, player's choice</li>
      *   <li>pay 《Element》《N》 as an extra cost — fixed CP amount, e.g. "Wind + 2 generic"</li>
+     *   <li>pay an extra 《Element》《N》 — the same fixed-CP cost with the marker printed
+     *       <em>before</em> the tokens instead of after (Prishe 14-128H, Ixion 17-090R,
+     *       Fenrir 8-081R, Fina 8-060L)</li>
      * </ul>
+     *
+     * <p>Two lead-ins, because Fina 8-060L says "If you pay the cost to play Fina onto the field"
+     * where the rest say "If you cast [Name]". Same declaration either way.
+     *
      * Groups: {@code count}, {@code element}, {@code forward}, {@code cardname}, {@code discardcount},
-     * {@code cptoks} (raw {@code 《...》《...》} token string for the fixed-CP variant).
+     * {@code cptoks} (raw {@code 《...》《...》} token string for the fixed-CP variant) and
+     * {@code cptoksinline} (the same, for the "an extra" word order).
      */
     static final Pattern EXTRA_COST_SUMMON = Pattern.compile(
-        "(?i)If\\s+you\\s+cast\\s+[^,]+,\\s+you\\s+may\\s+" +
+        "(?i)If\\s+you\\s+(?:cast\\s+[^,]+|pay\\s+the\\s+cost\\s+to\\s+play\\s+.+?\\s+onto\\s+the\\s+field)" +
+        ",\\s+you\\s+may\\s+" +
         "(?:" +
-            "remove\\s+(?<count>\\d+)\\s+" +
-            "(?:(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+cards?|" +
-            "(?<forward>Forwards?)|" +
-            "Card\\s+Name\\s+(?<cardname>.+?)(?=\\s+in\\s+your\\s+Break))" +
-            "\\s+in\\s+your\\s+Break\\s+Zone\\s+from\\s+the\\s+game" +
+            // Marker-first spelling. Tried ahead of the branches below so the "as an extra cost"
+            // tail they require is never hunted for on a sentence that has no such tail.
+            "pay\\s+an\\s+extra\\s+(?<cptoksinline>(?:《[^》]+》)+)" +
         "|" +
-            "discard\\s+(?<discardcount>\\d+)\\s+cards?" +
-        "|" +
-            "pay\\s+《X》" +
-        "|" +
-            "pay\\s+(?<cptoks>(?:《[^》]+》)+)" +
-        ")" +
-        "\\s+as\\s+an\\s+extra\\s+cost"
+            "(?:" +
+                "remove\\s+(?<count>\\d+)\\s+" +
+                "(?:(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+cards?|" +
+                "(?<forward>Forwards?)|" +
+                "Card\\s+Name\\s+(?<cardname>.+?)(?=\\s+in\\s+your\\s+Break))" +
+                "\\s+in\\s+your\\s+Break\\s+Zone\\s+from\\s+the\\s+game" +
+            "|" +
+                "discard\\s+(?<discardcount>\\d+)\\s+cards?" +
+            "|" +
+                "pay\\s+《X》" +
+            "|" +
+                "pay\\s+(?<cptoks>(?:《[^》]+》)+)" +
+            ")" +
+            "\\s+as\\s+an\\s+extra\\s+cost" +
+        ")"
     );
 
     /** Extracts card names from "a Card Name X" phrases in a condition string. */
@@ -418,7 +433,7 @@ public record CardData(
         if (!m.find()) return null;
         String discardcount = m.group("discardcount");
         if (discardcount != null) return ExtraCost.discardHand(Integer.parseInt(discardcount));
-        String cptoks = m.group("cptoks");
+        String cptoks = m.group("cptoks") != null ? m.group("cptoks") : m.group("cptoksinline");
         if (cptoks != null) return ExtraCost.cpFixed(parseCostTokens(cptoks, new int[1]));
         String count = m.group("count");
         if (count == null) return ExtraCost.cpX();  // pay 《X》 branch
@@ -1027,6 +1042,43 @@ public record CardData(
         "(?i)^(?<name>[^.!]+?)\\s+cannot\\s+leave\\s+the\\s+field\\s+due\\s+to\\s+" +
         "your\\s+opponent(?:'s|s')\\s+Summons?\\s+or\\s+abilities[.!]?$"
     );
+
+    /**
+     * "[CardName] cannot gain [Trait]." (Ravana, Savior of the Gnath 14-087L.)
+     *
+     * <p>A restriction on <em>gaining</em>, not on having: a trait printed on the card is not one
+     * it gained, so this only bars the granted sources. Ravana prints no Brave of his own, and the
+     * distinction is what keeps the sentence from reading as "loses Brave" — the wording next to
+     * it on Magus Sisters 20-083R ("The Forwards opponent controls lose Haste") is the other kind.
+     */
+    private static final Pattern SELF_CANNOT_GAIN_TRAIT = Pattern.compile(
+        "(?i)^(?<name>[^.!]+?)\\s+cannot\\s+gain\\s+" +
+        "(?<trait>Haste|Brave|First\\s+Strike|Back\\s+Attack)[.!]?$"
+    );
+
+    /**
+     * The trait {@code effectText} bars this card from gaining, or {@code null} when the text is
+     * not that shape or names another card.
+     */
+    static Trait parseSelfCannotGainTrait(String effectText, String cardName) {
+        Matcher m = SELF_CANNOT_GAIN_TRAIT.matcher(effectText.trim());
+        if (!m.matches() || !m.group("name").trim().equalsIgnoreCase(cardName)) return null;
+        EnumSet<Trait> named = traitsNamedIn(m.group("trait"));
+        return named.isEmpty() ? null : named.iterator().next();
+    }
+
+    /**
+     * Traits this card may never gain from an effect. Empty for every card that prints no such
+     * restriction; the traits it prints itself are unaffected.
+     */
+    public Set<Trait> cannotGainTraits() {
+        EnumSet<Trait> out = EnumSet.noneOf(Trait.class);
+        for (FieldAbility fa : fieldAbilities()) {
+            Trait t = parseSelfCannotGainTrait(fa.effectText(), name);
+            if (t != null) out.add(t);
+        }
+        return out;
+    }
 
     /**
      * Returns {@code true} when {@code effectText} is the self-protection field ability
@@ -3358,7 +3410,7 @@ public record CardData(
      * Group {@code name} captures the card name.
      */
     private static final Pattern UNCONDITIONAL_CNB_PATTERN = Pattern.compile(
-        "(?i)^(?<name>[A-Z][A-Za-z''\\-\\s]+?)\\s+cannot\\s+be\\s+blocked\\.?\\s*$"
+        "(?i)^(?<name>[A-Z][A-Za-z''\\-\\s()]+?)\\s+cannot\\s+be\\s+blocked\\.?\\s*$"
     );
 
     /**

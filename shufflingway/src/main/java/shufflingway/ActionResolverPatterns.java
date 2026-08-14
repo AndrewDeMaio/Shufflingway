@@ -1874,7 +1874,7 @@ final class ActionResolverPatterns {
      */
     static final Pattern ELEMENT_CHANGE_PATTERN = Pattern.compile(
         "(?i)^\\s*select\\s+1\\s+Element\\.\\s+" +
-        "(?<name>[A-Z][A-Za-z''\\-\\s]+?)\\s+becomes\\s+that\\s+Element" +
+        "(?<name>[A-Z][A-Za-z''\\-\\s()]+?)\\s+becomes\\s+that\\s+Element" +
         "(?:\\s*\\(this\\s+effect\\s+does\\s+not\\s+end\\s+at\\s+the\\s+end\\s+of\\s+the\\s+turn\\))?\\s*\\.?\\s*$"
     );
     /** All eight FFTCG element names, in standard order. */
@@ -2177,7 +2177,7 @@ final class ActionResolverPatterns {
      * gaining control of a chosen target.
      */
     static final Pattern STANDALONE_OPPONENT_GAINS_CONTROL = Pattern.compile(
-        "(?i)^Your\\s+opponent\\s+gains?\\s+control\\s+of\\s+(?<name>[A-Z][A-Za-z''\\-\\s]+?)\\.?\\s*$"
+        "(?i)^Your\\s+opponent\\s+gains?\\s+control\\s+of\\s+(?<name>[A-Z][A-Za-z''\\-\\s()]+?)\\.?\\s*$"
     );
 
     // ---- Cannot-be-chosen followup patterns -----------------------------------------
@@ -2375,9 +2375,24 @@ final class ActionResolverPatterns {
     /**
      * "[CardName] cannot be chosen by your opponent's Summons/abilities."
      * Only matches when {@code cardName} equals the {@code source} card's name.
+     *
+     * <p><b>Parentheses in the name class.</b> This is the first of the self-named family — the
+     * patterns whose {@code name} group is the source card naming itself, and whose only right-hand
+     * boundary is the literal that follows it ("cannot", "becomes", "is dealt"). The group has to
+     * run right up to that literal, so a character it cannot cross kills the whole match rather
+     * than truncating the capture: without {@code ()} in the class, "The Magus Sisters (XIV) cannot
+     * be chosen …" matched nothing at all. 140 cards carry a parenthesised, disambiguated printing
+     * name and 114 quote it in their own text, so every member of this family admits {@code ()}.
+     *
+     * <p>Widening is safe here specifically because each consumer re-checks the capture with
+     * {@code equalsIgnoreCase(source.name())} (or anchors with {@code matches()}): the class is a
+     * scanner, the equality check is the real filter, so a looser class cannot over-claim.
+     * <b>That reasoning does not transfer</b> to the ~30 remaining name classes in this file and
+     * {@code CardData} — job names, Counter names, "other than X" filters — which have no such
+     * backstop and no parenthesised member in the corpus. Leave those narrow.
      */
     static final Pattern STANDALONE_NAMED_CANNOT_BE_CHOSEN = Pattern.compile(
-        "(?i)(?<name>[A-Z][A-Za-z''\\-\\s]+?)\\s+cannot\\s+be\\s+chosen\\s+by\\s+your\\s+opponent's\\s+" +
+        "(?i)(?<name>[A-Z][A-Za-z''\\-\\s()]+?)\\s+cannot\\s+be\\s+chosen\\s+by\\s+your\\s+opponent's\\s+" +
         "(?<scope>Summons?(?:\\s+or\\s+abilities)?|abilities)\\s*\\.?"
     );
     /**
@@ -2394,7 +2409,7 @@ final class ActionResolverPatterns {
      * end here sends each of those on to its own branch.
      */
     static final Pattern STANDALONE_NAMED_CANNOT_BE_CHOSEN_ANY_SUMMON = Pattern.compile(
-        "(?i)(?<name>[A-Z][A-Za-z''\\-\\s]+?)\\s+cannot\\s+be\\s+chosen\\s+by\\s+(?!your\\s)Summons?" +
+        "(?i)(?<name>[A-Z][A-Za-z''\\-\\s()]+?)\\s+cannot\\s+be\\s+chosen\\s+by\\s+(?!your\\s)Summons?" +
         "(?:\\s+during\\s+this\\s+turn)?\\s*(?=[.!\"]|$)"
     );
     /**
@@ -2404,8 +2419,8 @@ final class ActionResolverPatterns {
      */
     static final Pattern STANDALONE_NAME_ELEMENT_IMMUNE_AND_NULLIFY_DAMAGE = Pattern.compile(
         "(?i)Name\\s+1\\s+Element\\.\\s+During\\s+this\\s+turn,\\s+" +
-        "(?<name>[A-Z][A-Za-z''\\-\\s]+?)\\s+cannot\\s+be\\s+chosen\\s+by\\s+Summons?\\s+or\\s+abilities\\s+of\\s+the\\s+named\\s+Element" +
-        "\\s+and\\s+if\\s+[A-Za-z''\\-\\s]+?is\\s+dealt\\s+damage\\s+by\\s+a\\s+Summon\\s+or\\s+an\\s+ability\\s+of\\s+the\\s+named\\s+Element,\\s+" +
+        "(?<name>[A-Z][A-Za-z''\\-\\s()]+?)\\s+cannot\\s+be\\s+chosen\\s+by\\s+Summons?\\s+or\\s+abilities\\s+of\\s+the\\s+named\\s+Element" +
+        "\\s+and\\s+if\\s+[A-Za-z''\\-\\s()]+?is\\s+dealt\\s+damage\\s+by\\s+a\\s+Summon\\s+or\\s+an\\s+ability\\s+of\\s+the\\s+named\\s+Element,\\s+" +
         "the\\s+damage\\s+becomes\\s+0\\s+instead\\s*\\.?"
     );
     /**
@@ -2415,7 +2430,7 @@ final class ActionResolverPatterns {
      */
     static final Pattern STANDALONE_NAME_ELEMENT_NULLIFY_ABILITY_DAMAGE_ONLY = Pattern.compile(
         "(?i)Name\\s+1\\s+Element\\.\\s+During\\s+this\\s+turn,\\s+if\\s+" +
-        "(?<name>[A-Z][A-Za-z''\\-\\s]+?)\\s+is\\s+dealt\\s+damage\\s+by\\s+abilities\\s+of\\s+the\\s+named\\s+Element,\\s+" +
+        "(?<name>[A-Z][A-Za-z''\\-\\s()]+?)\\s+is\\s+dealt\\s+damage\\s+by\\s+abilities\\s+of\\s+the\\s+named\\s+Element,\\s+" +
         "the\\s+damage\\s+becomes\\s+0\\s+instead\\s*\\.?"
     );
     /**
@@ -2424,14 +2439,14 @@ final class ActionResolverPatterns {
      */
     static final Pattern STANDALONE_NAME_ELEMENT_AND_IMMUNE = Pattern.compile(
         "(?i)Name\\s+1\\s+Element\\.\\s+" +
-        "(?<name>[A-Z][A-Za-z''\\-\\s]+?)\\s+cannot\\s+be\\s+chosen\\s+by\\s+Summons?\\s+or\\s+abilities\\s+of\\s+the\\s+named\\s+Element\\s+this\\s+turn\\s*\\.?"
+        "(?<name>[A-Z][A-Za-z''\\-\\s()]+?)\\s+cannot\\s+be\\s+chosen\\s+by\\s+Summons?\\s+or\\s+abilities\\s+of\\s+the\\s+named\\s+Element\\s+this\\s+turn\\s*\\.?"
     );
     /**
      * "[CardName] cannot be chosen by Summons or abilities that share its Element."
      * Passive field ability: immunity is checked dynamically against the resolving card's element.
      */
     static final Pattern STANDALONE_NAMED_CANNOT_BE_CHOSEN_BY_OWN_ELEMENT = Pattern.compile(
-        "(?i)(?<name>[A-Z][A-Za-z''\\-\\s]+?)\\s+cannot\\s+be\\s+chosen\\s+by\\s+Summons?\\s+or\\s+abilities\\s+that\\s+share\\s+its\\s+Element\\s*\\.?"
+        "(?i)(?<name>[A-Z][A-Za-z''\\-\\s()]+?)\\s+cannot\\s+be\\s+chosen\\s+by\\s+Summons?\\s+or\\s+abilities\\s+that\\s+share\\s+its\\s+Element\\s*\\.?"
     );
     /**
      * "[CardName] cannot be chosen by a Multi-Element Forward's ability." (Kam'lanaut 18-072C.)
@@ -2445,7 +2460,7 @@ final class ActionResolverPatterns {
      * included.
      */
     static final Pattern STANDALONE_NAMED_CANNOT_BE_CHOSEN_BY_MULTI_ELEMENT_FORWARD = Pattern.compile(
-        "(?i)(?<name>[A-Z][A-Za-z''\\-\\s]+?)\\s+cannot\\s+be\\s+chosen\\s+by\\s+" +
+        "(?i)(?<name>[A-Z][A-Za-z''\\-\\s()]+?)\\s+cannot\\s+be\\s+chosen\\s+by\\s+" +
         "a\\s+Multi-Element\\s+Forward(?:'s|s')\\s+abilit(?:y|ies)\\s*\\.?"
     );
     /**
@@ -2478,7 +2493,7 @@ final class ActionResolverPatterns {
      * Permanent self-protection while this card is on the field.
      */
     static final Pattern STANDALONE_NAMED_CANNOT_BECOME_DULL_OPP = Pattern.compile(
-        "(?i)(?<name>[A-Z][A-Za-z''\\-\\s]+?)\\s+cannot\\s+become\\s+dull\\s+by\\s+your\\s+opponent's\\s+" +
+        "(?i)(?<name>[A-Z][A-Za-z''\\-\\s()]+?)\\s+cannot\\s+become\\s+dull\\s+by\\s+your\\s+opponent's\\s+" +
         "(?:Summons?(?:\\s+or\\s+abilities)?|abilities)\\s*\\.?"
     );
     /**
@@ -2486,7 +2501,7 @@ final class ActionResolverPatterns {
      * Permanent self-protection while this card is on the field (Gilgamesh).
      */
     static final Pattern STANDALONE_NAMED_CANNOT_BE_RETURNED_TO_HAND_OPP = Pattern.compile(
-        "(?i)(?<name>[A-Z][A-Za-z''\\-\\s]+?)\\s+cannot\\s+be\\s+returned\\s+to\\s+(?:its|their)\\s+owner's\\s+hand" +
+        "(?i)(?<name>[A-Z][A-Za-z''\\-\\s()]+?)\\s+cannot\\s+be\\s+returned\\s+to\\s+(?:its|their)\\s+owner's\\s+hand" +
         "\\s+by\\s+(?:your\\s+)?opponent's\\s+(?:Summons?(?:\\s+or\\s+abilities)?|abilities)\\s*\\.?"
     );
     /**
@@ -2503,7 +2518,7 @@ final class ActionResolverPatterns {
      * Permanent self-protection while this card is on the field (Black Tortoise l'Cie Gilgamesh).
      */
     static final Pattern STANDALONE_NAMED_CANNOT_BE_PUT_INTO_BZ_OPP = Pattern.compile(
-        "(?i)(?<name>[A-Z][A-Za-z''\\-\\s]+?)\\s+cannot\\s+be\\s+put\\s+into\\s+the\\s+Break\\s+Zone" +
+        "(?i)(?<name>[A-Z][A-Za-z''\\-\\s()]+?)\\s+cannot\\s+be\\s+put\\s+into\\s+the\\s+Break\\s+Zone" +
         "\\s+by\\s+(?:your\\s+)?opponent's\\s+(?:Summons?(?:\\s+or\\s+abilities)?|abilities)\\s*\\.?"
     );
     /** "Negate all [the] damage dealt to all the Forwards/Characters you control." */

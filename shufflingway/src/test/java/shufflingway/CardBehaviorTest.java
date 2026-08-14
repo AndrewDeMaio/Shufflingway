@@ -17619,4 +17619,231 @@ public class CardBehaviorTest {
 		assertEquals("Bartz", mw.gameState.getP2MainDeck().peekLast().name(),
 				"under its own owner's deck, not the other player's");
 	}
+
+	// =========================================================================================
+	// Ravana, Savior of the Gnath 14-087L: "Ravana, Savior of the Gnath cannot gain Brave."
+	//
+	// A restriction on *gaining*, not on having. It sits beside "can attack 4 times in the same
+	// turn", and Brave (attacking without dulling) is what would make that unbounded — so the
+	// card bars the grant rather than removing a trait. Ravana prints no Brave of his own, but the
+	// distinction is still the one the wording makes, and it is what separates this from the
+	// "lose Haste" printings, which strip a trait already held.
+	//
+	// The suppression therefore applies only to the granted sources — temp traits, permanent
+	// grants and conditional field grants — and leaves a printed trait alone.
+	// =========================================================================================
+
+	private static final String RAVANA_14_087L_TEXT =
+			"Ravana, Savior of the Gnath can attack 4 times in the same turn.[[br]]"
+			+ "Ravana, Savior of the Gnath cannot gain Brave.";
+
+	private static CardData ravana() {
+		return makeForwardWithText("Ravana, Savior of the Gnath", "Lightning", 5, 9000, RAVANA_14_087L_TEXT);
+	}
+
+	@Test
+	void theRestrictionIsReadOffRavanaAndNamesOneTrait() {
+		assertEquals(Set.of(CardData.Trait.BRAVE), ravana().cannotGainTraits());
+		assertTrue(makeForwardWithText("Gnath Soldier", "Lightning", 3, 7000, RAVANA_14_087L_TEXT)
+						.cannotGainTraits().isEmpty(),
+				"the sentence names Ravana, so it says nothing about whoever quotes it");
+	}
+
+	@Test
+	void aGrantedBraveDoesNotStickToRavana() {
+		MainWindow mw = new MainWindow();
+		CardData rav = ravana();
+		placeP1Forward(mw, rav);
+
+		mw.p1ForwardTempTraits.get(0).add(CardData.Trait.BRAVE);
+		assertFalse(mw.effectiveP1HasTrait(0, CardData.Trait.BRAVE),
+				"an until-end-of-turn grant is exactly what he cannot gain");
+
+		mw.permanentTraits.computeIfAbsent(rav, k -> EnumSet.noneOf(CardData.Trait.class))
+				.add(CardData.Trait.BRAVE);
+		assertFalse(mw.effectiveP1HasTrait(0, CardData.Trait.BRAVE),
+				"and a permanent grant is still a grant");
+	}
+
+	@Test
+	void theRestrictionIsNarrowToTheTraitItNames() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, ravana());
+
+		mw.p1ForwardTempTraits.get(0).add(CardData.Trait.FIRST_STRIKE);
+		assertTrue(mw.effectiveP1HasTrait(0, CardData.Trait.FIRST_STRIKE),
+				"only Brave is named");
+	}
+
+	@Test
+	void aPrintedTraitIsNotOneThatWasGained() {
+		// A card printing both the trait and the restriction keeps the trait: it never gained it.
+		MainWindow mw = new MainWindow();
+		CardData braveByPrint = makeForwardWithTraits("Ravana, Savior of the Gnath", "Lightning", 9000,
+				Set.of(CardData.Trait.BRAVE));
+		placeP1Forward(mw, braveByPrint);
+
+		assertTrue(mw.effectiveP1HasTrait(0, CardData.Trait.BRAVE));
+	}
+
+	@Test
+	void anotherForwardCanStillBeGrantedBrave() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, ravana());
+		placeP1Forward(mw, makeForward("Ally", "Lightning", 3, 7000));
+
+		mw.p1ForwardTempTraits.get(1).add(CardData.Trait.BRAVE);
+
+		assertTrue(mw.effectiveP1HasTrait(1, CardData.Trait.BRAVE),
+				"the restriction is Ravana's own, not a field-wide suppression");
+	}
+
+	// =========================================================================================
+	// "you may pay an extra 《…》" — the same extra-cost declaration with the marker printed before
+	// the tokens rather than after.
+	//
+	// EXTRA_COST_SUMMON only knew "you may pay 《…》 as an extra cost", so four cards' declarations
+	// parsed as nothing: Prishe 14-128H, Ixion 17-090R, Fenrir 8-081R and Fina 8-060L — whose
+	// lead-in is "If you pay the cost to play Fina onto the field" rather than "If you cast".
+	// On Prishe (a Forward) the unmatched line showed up as an unrecognized field ability, which
+	// is how it was found; on the Summons it simply meant the extra cost was never offered.
+	// =========================================================================================
+
+	private static final String PRISHE_14_128H_EXTRA_COST =
+			"If you cast Prishe, you may pay an extra 《Wind》《Earth》《1》.";
+	private static final String FINA_8_060L_EXTRA_COST =
+			"If you pay the cost to play Fina onto the field, you may pay an extra 《Wind》《Wind》《Wind》.";
+
+	@Test
+	void anExtraCostIsNotAFieldAbilityInEitherWordOrder() {
+		assertTrue(CardData.parseFieldAbilities(PRISHE_14_128H_EXTRA_COST, "Forward").isEmpty(),
+				"this is a cast-time option, not a continuous effect");
+		assertTrue(CardData.parseFieldAbilities(FINA_8_060L_EXTRA_COST, "Forward").isEmpty());
+	}
+
+	@Test
+	void theMarkerFirstWordingStillYieldsTheSameFixedCpCost() {
+		ExtraCost prishe = makeForwardWithText("Prishe", "Wind", 4, 8000, PRISHE_14_128H_EXTRA_COST)
+				.extraCost();
+		assertNotNull(prishe, "\"pay an extra 《…》\" used to parse as nothing at all");
+		assertEquals(ExtraCost.Type.CP_FIXED, prishe.type());
+		assertEquals(List.of("Wind", "Earth", ""), prishe.cpElements(),
+				"《1》 is one generic CP, and the element order is as printed");
+
+		ExtraCost fina = makeForwardWithText("Fina", "Wind", 5, 9000, FINA_8_060L_EXTRA_COST).extraCost();
+		assertNotNull(fina, "the play-onto-the-field lead-in is the same declaration");
+		assertEquals(List.of("Wind", "Wind", "Wind"), fina.cpElements());
+	}
+
+	@Test
+	void theOriginalAsAnExtraCostWordingIsUnaffected() {
+		// The tail-marker spelling shares the lead-in, so widening the pattern must not disturb it.
+		String machinist = "If you cast Machinist, you may pay 《Fire》《3》 as an extra cost.";
+		ExtraCost ec = makeForwardWithText("Machinist", "Fire", 3, 7000, machinist).extraCost();
+		assertNotNull(ec);
+		assertEquals(List.of("Fire", "", "", ""), ec.cpElements());
+	}
+
+	@Test
+	void prishesOtherPrintedLinesAreLeftAlone() {
+		// Only the declaration drops out; the damage-gated grant beside it is a real field ability.
+		String full = PRISHE_14_128H_EXTRA_COST
+				+ "[[br]]   Damage 3 -- Prishe gains +1000 power and Brave.";
+		List<FieldAbility> fas = CardData.parseFieldAbilities(full, "Forward");
+
+		assertEquals(1, fas.size(), "the extra-cost line is gone, the grant stays");
+		assertEquals(3, fas.get(0).damageThreshold());
+	}
+
+	// =========================================================================================
+	// The Magus Sisters (XIV) 20-083R — three field abilities, none of which parsed.
+	//
+	// Two separate causes:
+	//
+	// 1. "The Magus Sisters (XIV) cannot be chosen by your opponent's Summons." matched nothing
+	//    because the card-name group excluded parentheses, and the group has to run right up to
+	//    "cannot" — so it stalled on the ")". This is a general shape, not one card's quirk: 140
+	//    cards carry a parenthesised name and 114 quote it in their own text.
+	//
+	// 2. "The Forwards opponent controls lose Haste." / "… cannot gain Haste." are the one-sided
+	//    twins of Edward 2-031C's unqualified pair, and the engine only knew the global form —
+	//    both the patterns and the suppression, which was a single board-wide boolean. Magus
+	//    Sisters binds one side only, so the check had to learn which side is being asked about.
+	// =========================================================================================
+
+	private static final String MAGUS_SISTERS_20_083R_TEXT =
+			"The Magus Sisters (XIV) cannot be chosen by your opponent's Summons.[[br]]"
+			+ "The Forwards opponent controls lose Haste.[[br]]"
+			+ "The Forwards opponent controls cannot gain Haste.";
+	private static final String EDWARD_2_031C_TEXT =
+			"All Forwards lose Haste.[[br]]Forwards cannot gain Haste.";
+
+	private static CardData magusSisters() {
+		return makeForwardWithText("The Magus Sisters (XIV)", "Earth", 5, 9000, MAGUS_SISTERS_20_083R_TEXT);
+	}
+
+	@Test
+	void aParenthesisedNameCanNameItself() {
+		CardData magus = magusSisters();
+		assertEquals(3, magus.fieldAbilities().size());
+		assertNotNull(ActionResolver.parse(magus.fieldAbilities().get(0).effectText(), magus),
+				"the \")\" in the name used to stop the pattern dead");
+	}
+
+	@Test
+	void magusSistersSuppressesHasteOnlyAcrossTheTable() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, magusSisters());
+		placeP1Forward(mw, makeForwardWithTraits("Ally", "Earth", 7000, Set.of(CardData.Trait.HASTE)));
+		placeP2Forward(mw, makeForwardWithTraits("Enemy", "Fire", 7000, Set.of(CardData.Trait.HASTE)));
+
+		assertTrue(mw.effectiveP1HasTrait(1, CardData.Trait.HASTE),
+				"her controller's own Forwards keep Haste — the sentence names the opponent's");
+		assertFalse(mw.effectiveP2HasTrait(0, CardData.Trait.HASTE),
+				"and the opposing Forward loses it");
+	}
+
+	@Test
+	void theSuppressionFollowsWhoeverControlsHer() {
+		MainWindow mw = new MainWindow();
+		placeP2Forward(mw, magusSisters());
+		placeP1Forward(mw, makeForwardWithTraits("Ally", "Earth", 7000, Set.of(CardData.Trait.HASTE)));
+
+		assertFalse(mw.effectiveP1HasTrait(0, CardData.Trait.HASTE),
+				"on P2's side she suppresses P1's Forwards instead");
+	}
+
+	@Test
+	void aGrantedHasteIsSuppressedAcrossTheTableToo() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, magusSisters());
+		placeP2Forward(mw, makeForward("Enemy", "Fire", 3, 7000));
+
+		mw.p2ForwardTempTraits.get(0).add(CardData.Trait.HASTE);
+
+		assertFalse(mw.effectiveP2HasTrait(0, CardData.Trait.HASTE),
+				"\"cannot gain Haste\" covers what \"lose Haste\" would not");
+	}
+
+	@Test
+	void theUnqualifiedPrintingStillBindsBothSides() {
+		// Edward 2-031C names no player, so a copy on one side must still reach the other.
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForwardWithText("Edward", "Water", 2, 5000, EDWARD_2_031C_TEXT));
+		placeP1Forward(mw, makeForwardWithTraits("Ally", "Water", 7000, Set.of(CardData.Trait.HASTE)));
+		placeP2Forward(mw, makeForwardWithTraits("Enemy", "Fire", 7000, Set.of(CardData.Trait.HASTE)));
+
+		assertFalse(mw.effectiveP1HasTrait(1, CardData.Trait.HASTE), "including his own side");
+		assertFalse(mw.effectiveP2HasTrait(0, CardData.Trait.HASTE));
+	}
+
+	@Test
+	void withNoSuppressorHasteIsUntouched() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForwardWithTraits("Ally", "Earth", 7000, Set.of(CardData.Trait.HASTE)));
+		placeP2Forward(mw, makeForwardWithTraits("Enemy", "Fire", 7000, Set.of(CardData.Trait.HASTE)));
+
+		assertTrue(mw.effectiveP1HasTrait(0, CardData.Trait.HASTE));
+		assertTrue(mw.effectiveP2HasTrait(0, CardData.Trait.HASTE));
+	}
 }

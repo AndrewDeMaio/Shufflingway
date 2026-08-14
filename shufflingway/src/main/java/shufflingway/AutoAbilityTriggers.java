@@ -714,6 +714,20 @@ final class AutoAbilityTriggers {
 	);
 
 	/**
+	 * "The Forwards opponent controls lose Haste." — the one-sided twin of
+	 * {@link #FA_ALL_FORWARDS_LOSE_HASTE}, suppressing Haste only across the printing card's
+	 * opponent's Forwards (The Magus Sisters (XIV) 20-083R).
+	 */
+	static final Pattern FA_OPP_FORWARDS_LOSE_HASTE = Pattern.compile(
+		"(?i)^The\\s+Forwards?\\s+opponent\\s+controls\\s+lose\\s+Haste[.!]?$"
+	);
+
+	/** "The Forwards opponent controls cannot gain Haste." — one-sided twin of {@link #FA_FORWARDS_CANNOT_GAIN_HASTE}. */
+	static final Pattern FA_OPP_FORWARDS_CANNOT_GAIN_HASTE = Pattern.compile(
+		"(?i)^The\\s+Forwards?\\s+opponent\\s+controls\\s+cannot\\s+gain\\s+Haste[.!]?$"
+	);
+
+	/**
 	 * "If you receive damage while [cardName] is active, dull [cardName]. The damage becomes 0 instead."
 	 * Groups: {@code card} (the self-dulling card name that must be active).
 	 */

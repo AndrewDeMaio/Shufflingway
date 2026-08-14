@@ -5067,22 +5067,31 @@ public class MainWindow {
 		if (p1ForwardRemovedTraits.get(idx).contains(trait)) return false;
 		CardData card = p1ForwardCards.get(idx);
 		if (lostAbilitiesCards.contains(card)) return false;
-		boolean has = card.hasTrait(trait)
-		           || p1ForwardTempTraits.get(idx).contains(trait)
+		boolean granted = p1ForwardTempTraits.get(idx).contains(trait)
 		           || permanentTraits.getOrDefault(card, NO_TRAITS).contains(trait)
 		           || fieldGrantCalculator.computeConditionalTraitsForTarget(card, true).contains(trait);
-		return has && !(trait == CardData.Trait.HASTE && fieldGrantCalculator.isHasteSuppressedGlobally());
+		boolean has = card.hasTrait(trait) || (granted && !cannotGain(card, trait));
+		return has && !(trait == CardData.Trait.HASTE && fieldGrantCalculator.isHasteSuppressedFor(true));
 	}
 
 	boolean effectiveP2HasTrait(int idx, CardData.Trait trait) {
 		if (p2ForwardRemovedTraits.get(idx).contains(trait)) return false;
 		CardData card = p2ForwardCards.get(idx);
 		if (lostAbilitiesCards.contains(card)) return false;
-		boolean has = card.hasTrait(trait)
-		           || p2ForwardTempTraits.get(idx).contains(trait)
+		boolean granted = p2ForwardTempTraits.get(idx).contains(trait)
 		           || permanentTraits.getOrDefault(card, NO_TRAITS).contains(trait)
 		           || fieldGrantCalculator.computeConditionalTraitsForTarget(card, false).contains(trait);
-		return has && !(trait == CardData.Trait.HASTE && fieldGrantCalculator.isHasteSuppressedGlobally());
+		boolean has = card.hasTrait(trait) || (granted && !cannotGain(card, trait));
+		return has && !(trait == CardData.Trait.HASTE && fieldGrantCalculator.isHasteSuppressedFor(false));
+	}
+
+	/**
+	 * Whether {@code card} prints "[self] cannot gain [trait]" (Ravana, Savior of the Gnath
+	 * 14-087L). Only the granted sources are tested against this: a trait printed on the card was
+	 * never gained, so the restriction has nothing to say about it.
+	 */
+	private boolean cannotGain(CardData card, CardData.Trait trait) {
+		return !lostAbilitiesCards.contains(card) && card.cannotGainTraits().contains(trait);
 	}
 
 	private boolean effectiveHasTrait(boolean isP1, int idx, CardData.Trait trait) {

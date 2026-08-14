@@ -176,6 +176,9 @@ public class FieldAbilityParsingTest {
         if (selfNamedCompulsion(AutoAbilityTriggers.FA_SELF_ATTACK_REQUIRES_CONTROL, fa, source)) return true;
         if (AutoAbilityTriggers.FA_ALL_FORWARDS_LOSE_HASTE.matcher(fa.effectText()).find()) return true;
         if (AutoAbilityTriggers.FA_FORWARDS_CANNOT_GAIN_HASTE.matcher(fa.effectText()).find()) return true;
+        // One-sided twins of the two above; both read by FieldGrantCalculator.isHasteSuppressedFor.
+        if (AutoAbilityTriggers.FA_OPP_FORWARDS_LOSE_HASTE.matcher(fa.effectText()).find()) return true;
+        if (AutoAbilityTriggers.FA_OPP_FORWARDS_CANNOT_GAIN_HASTE.matcher(fa.effectText()).find()) return true;
         if (!CardData.parseSelfTraitGrant(fa.effectText(), source.name()).isEmpty()) return true;
         if (CardData.parseSelfNonDmgBreakShield(fa.effectText(), source.name())) return true;
         if (CardData.parseSelfNonDmgBreakShieldDirect(fa.effectText(), source.name())) return true;
@@ -185,6 +188,8 @@ public class FieldAbilityParsingTest {
         // Applied as the printed CANNOT_LEAVE_FIELD_BY_OPP trait, which every effect-driven field
         // exit consults — break, remove from game, and return to hand alike.
         if (CardData.parseSelfCannotLeaveFieldByOpp(fa.effectText(), source.name())) return true;
+        // Applied by effectiveP1/P2HasTrait, which drops a granted trait the card may not gain.
+        if (CardData.parseSelfCannotGainTrait(fa.effectText(), source.name()) != null) return true;
         // Conditional printings, re-evaluated per query by FieldGrantCalculator.
         if (CardData.parseIfControlNonDmgBreakShield(fa.effectText(), source.name()) != null) return true;
         if (CardData.parseFieldNonDmgBreakShieldGrant(fa.effectText()) != null) return true;
@@ -420,6 +425,8 @@ public class FieldAbilityParsingTest {
         if (m.matches()) return "CounterScaledOppDebuff[-" + m.group("power") + "/" + m.group("counter") + "]";
         if (AutoAbilityTriggers.FA_ALL_FORWARDS_LOSE_HASTE.matcher(fa.effectText()).find()) return "AllForwardsLoseHaste";
         if (AutoAbilityTriggers.FA_FORWARDS_CANNOT_GAIN_HASTE.matcher(fa.effectText()).find()) return "ForwardsCannotGainHaste";
+        if (AutoAbilityTriggers.FA_OPP_FORWARDS_LOSE_HASTE.matcher(fa.effectText()).find()) return "OppForwardsLoseHaste";
+        if (AutoAbilityTriggers.FA_OPP_FORWARDS_CANNOT_GAIN_HASTE.matcher(fa.effectText()).find()) return "OppForwardsCannotGainHaste";
         if (CardData.isBackupCpAbility(fa.effectText())) return "BackupCpAbility";
         int lbN = CardData.parseIfSelfLbFaceUpCountTraitGrantThreshold(fa.effectText(), source.name());
         if (lbN >= 0) return "LbFaceUpTraitGrant[n≥" + lbN + " " + CardData.parseIfSelfLbFaceUpCountTraitGrantTraits(fa.effectText()) + "]";
@@ -429,6 +436,8 @@ public class FieldAbilityParsingTest {
         if (CardData.parseSelfCannotBeBroken(fa.effectText(), source.name())) return "SelfCannotBeBroken";
         if (CardData.parseSelfCannotLeaveFieldByOpp(fa.effectText(), source.name()))
             return "SelfCannotLeaveFieldByOpp";
+        CardData.Trait ungainable = CardData.parseSelfCannotGainTrait(fa.effectText(), source.name());
+        if (ungainable != null) return "SelfCannotGain[" + ungainable.displayName() + "]";
         if (namesItself(ActionResolverPatterns.STANDALONE_NAMED_CANNOT_BE_CHOSEN_BY_MULTI_ELEMENT_FORWARD,
                 fa, source)) return "CannotBeChosenByMultiElementForwardAbility";
         if (namesItself(ActionResolverPatterns.STANDALONE_NAMED_CANNOT_BE_CHOSEN_BY_OWN_ELEMENT,
