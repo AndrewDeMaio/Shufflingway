@@ -37,6 +37,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -7569,7 +7570,7 @@ public class MainWindow {
 		List<Integer> out = new ArrayList<>();
 		if (removal == null || !removal.type().toLowerCase(Locale.ROOT).startsWith("backup")) return out;
 		for (int i = 0; i < p1BackupCards.length; i++)
-			if (p1BackupCards[i] != null && p1BackupCards[i].containsElement(removal.element())) out.add(i);
+			if (p1BackupCards[i] != null && effectiveContainsElement(p1BackupCards[i], removal.element())) out.add(i);
 		return out;
 	}
 
@@ -7746,7 +7747,8 @@ public class MainWindow {
 				p1ForwardCards,
 				this::showZoomAt, this::hideZoom,
 				lightDarkDiscardGrants(true), warpCostAnyElement(true),
-				(discards, backups, overrides) -> executeWarpPlay(card, handIdx, discards, backups, overrides))
+				(discards, backups, overrides) -> executeWarpPlay(card, handIdx, discards, backups, overrides),
+				this::gainedElementsForPayment)
 			.show();
 	}
 
@@ -8040,7 +8042,7 @@ public class MainWindow {
 				this::showZoomAt, this::hideZoom,
 				new ArrayList<>(p1ForwardCards),
 				(discards, backups, overrides) -> executePlayFromBzP1(card, discards, backups, overrides),
-				anyElement, null, lightDarkDiscardGrants(true))
+				anyElement, null, lightDarkDiscardGrants(true), this::gainedElementsForPayment)
 			.show();
 	}
 
@@ -8060,7 +8062,7 @@ public class MainWindow {
 				this::showZoomAt, this::hideZoom,
 				new ArrayList<>(p1ForwardCards),
 				(discards, backups, overrides) -> executePlay(card, handIdx, discards, backups, overrides),
-				isAnyElementCast(card), extraElems, lightDarkDiscardGrants(true))
+				isAnyElementCast(card), extraElems, lightDarkDiscardGrants(true), this::gainedElementsForPayment)
 			.show();
 	}
 
@@ -8225,7 +8227,7 @@ public class MainWindow {
 		List<Integer> sortedBackups = new ArrayList<>(backupDullIndices);
 		if (!isLD) sortedBackups.sort(Comparator.comparingInt(s ->
 				(int) Arrays.stream(elems)
-						.filter(e -> backupCards[s].containsElement(e)).count()));
+						.filter(e -> effectiveContainsElement(backupCards[s], e)).count()));
 		for (int bi : sortedBackups) {
 			backupStates[bi] = CardState.DULL;
 			if (isP1) animateDullBackup(bi, true); else animateDullP2Backup(bi, true);
@@ -8374,7 +8376,7 @@ public class MainWindow {
 		List<Integer> sortedBackups = new ArrayList<>(backupDullIndices);
 		if (!isLD) sortedBackups.sort(Comparator.comparingInt(s ->
 				(int) Arrays.stream(elems)
-						.filter(e -> p1BackupCards[s].containsElement(e)).count()));
+						.filter(e -> effectiveContainsElement(p1BackupCards[s], e)).count()));
 		for (int bi : sortedBackups) {
 			p1BackupStates[bi] = CardState.DULL;
 			animateDullBackup(bi, true);
@@ -9768,7 +9770,7 @@ public class MainWindow {
 				case OWN_FORWARD_OF_ELEMENT -> card != null
 						&& only.isP1() == userIsP1
 						&& only.zone() == ForwardTarget.CardZone.FORWARD
-						&& card.containsElement(spec.eligibleElement());
+						&& effectiveContainsElement(card, spec.eligibleElement());
 				// "either player controls" — on a field, so a Break Zone selection does not qualify.
 				case ON_FIELD -> card != null && only.zone() != ForwardTarget.CardZone.BREAK_ZONE;
 				case ANY_ZONE -> true;
@@ -9913,7 +9915,7 @@ public class MainWindow {
 	private Predicate<CardData> redirectLegality(StackEntry entry, boolean sideIsP1,
 			String element, CardData exclude) {
 		return c -> c != null && c != exclude
-				&& (element == null || c.containsElement(element))
+				&& (element == null || effectiveContainsElement(c, element))
 				&& !isProtectedFromChoice(c, sideIsP1, entry.isP1(), entry.isSummon(), entry.source());
 	}
 
@@ -9949,7 +9951,7 @@ public class MainWindow {
 		String condition = spec.condition();
 		int i = t.idx();
 
-		if (spec.element() != null && !card.containsElement(spec.element())) return false;
+		if (spec.element() != null && !effectiveContainsElement(card, spec.element())) return false;
 		if (!CardFilters.meetsCostConstraint(card.cost(), spec.costVal(), spec.costCmp())) return false;
 		if (!CardFilters.meetsPowerConstraint(card.power(), spec.powerVal(), spec.powerCmp())) return false;
 		if (!meetsJobFilterEffective(card, spec.jobFilter(),
@@ -10312,7 +10314,7 @@ public class MainWindow {
 				for (CardData bkp : bkps) if (bkp != null) ahPool.add(bkp);
 			if (ahPool.isEmpty()) return false;
 			for (CardData card : ahPool) {
-				if (cond.element() != null && !card.containsElement(cond.element())) return false;
+				if (cond.element() != null && !effectiveContainsElement(card, cond.element())) return false;
 				if (cond.job()     != null && !meetsJobFilterEffective(card, cond.job())) return false;
 			}
 			return true;
@@ -10369,8 +10371,8 @@ public class MainWindow {
 		if (zone == null || !typeAdmits(cond.cardType(), zone)) return false;
 		if (!cond.orCardNames().isEmpty()
 				&& cond.orCardNames().stream().anyMatch(n -> n.equalsIgnoreCase(card.name()))) return true;
-		if (cond.element()        != null && !card.containsElement(cond.element()))        return false;
-		if (cond.excludeElement() != null &&  card.containsElement(cond.excludeElement())) return false;
+		if (cond.element()        != null && !effectiveContainsElement(card, cond.element()))        return false;
+		if (cond.excludeElement() != null &&  effectiveContainsElement(card, cond.excludeElement())) return false;
 		if (cond.job()            != null && !meetsJobFilterEffective(card, cond.job()))   return false;
 		if (cond.category() != null && !meetsCategoryFilter(card, cond.category())) return false;
 		if (cond.minPower() > 0     && card.power() < cond.minPower())         return false;
@@ -10405,12 +10407,88 @@ public class MainWindow {
 	}
 
 	/**
-	 * Returns the effective element list of {@code c}, substituting the override element when present.
+	 * Returns the effective element list of {@code c}, substituting the override element when present
+	 * and adding any Elements gained from the opposing board.
 	 * Used to compare against the currently-resolving Summon/ability's elements.
 	 */
 	List<String> effectiveElements(CardData c) {
 		String override = elementOverrideMap.get(c);
-		return (override != null) ? List.of(override) : Arrays.asList(c.elements());
+		List<String> base = (override != null) ? List.of(override) : Arrays.asList(c.elements());
+		Set<String> gained = gainedOpponentCharacterElements(c);
+		if (gained.isEmpty()) return base;
+		// LinkedHashSet: the printed Elements keep their printed order and the gained ones follow
+		// in board order, so anything that renders this list reads the same way twice running.
+		Set<String> all = new LinkedHashSet<>(base);
+		all.addAll(gained);
+		return List.copyOf(all);
+	}
+
+	/**
+	 * The Elements {@code c} gains from "gains Elements of all the Characters opponent controls
+	 * except Light and Dark." (Kimahri 1-103C) — the union of the Elements on the opposing
+	 * Characters, minus the exclusions. Empty for every card that does not print the ability, and
+	 * empty while the card is off the field, where it controls nothing and faces no opponent.
+	 *
+	 * <p>Recomputed per call rather than cached: the answer changes with every Character that
+	 * enters or leaves the other side, so a stored copy would go stale the moment it was written.
+	 */
+	/**
+	 * {@link #gainedOpponentCharacterElements} as a list, for the payment dialogs. They are handed
+	 * only the paying player's side of the board, so they cannot work the answer out themselves.
+	 */
+	List<String> gainedElementsForPayment(CardData c) {
+		return List.copyOf(gainedOpponentCharacterElements(c));
+	}
+
+	private Set<String> gainedOpponentCharacterElements(CardData c) {
+		Set<String> except = c.gainsOpponentCharacterElementsExcept();
+		if (except == null || lostAbilitiesCards.contains(c)) return Set.of();
+		Boolean side = fieldSideOf(c);
+		if (side == null) return Set.of();
+		Set<String> gained = new LinkedHashSet<>();
+		for (CardData opp : opposingCharacters(side))
+			for (String e : opp.elements())
+				if (except.stream().noneMatch(x -> x.equalsIgnoreCase(e))) gained.add(e);
+		return gained;
+	}
+
+	/** Every Character on the side facing {@code isP1}: their Forwards, Backups and Monsters. */
+	private List<CardData> opposingCharacters(boolean isP1) {
+		List<CardData> out = new ArrayList<>(isP1 ? p2ForwardCards : p1ForwardCards);
+		for (CardData b : (isP1 ? p2BackupCards : p1BackupCards)) if (b != null) out.add(b);
+		out.addAll(isP1 ? p2MonsterCards : p1MonsterCards);
+		return out;
+	}
+
+	/**
+	 * Which side's field {@code c} is sitting on, or {@code null} when it is not on the field at
+	 * all. Compared by identity, because both players can control same-named copies and only the
+	 * instance in front of us has the board position that matters.
+	 */
+	private Boolean fieldSideOf(CardData c) {
+		for (boolean isP1 : new boolean[]{true, false}) {
+			for (CardData f : (isP1 ? p1ForwardCards : p2ForwardCards)) if (f == c) return isP1;
+			for (CardData b : (isP1 ? p1BackupCards  : p2BackupCards))  if (b == c) return isP1;
+			for (CardData m : (isP1 ? p1MonsterCards : p2MonsterCards)) if (m == c) return isP1;
+		}
+		return null;
+	}
+
+	/**
+	 * Whether {@code c} counts as {@code elem} right now — its printed Elements, plus an override
+	 * or anything gained from the opposing board. The board-aware form of
+	 * {@link CardData#containsElement}, which can only see what is printed.
+	 */
+	boolean effectiveContainsElement(CardData c, String elem) {
+		if (c == null || elem == null) return false;
+		if (c.containsElement(elem)) return true;
+		if (elem.contains("|")) {
+			for (String e : elem.split("\\|")) if (effectiveContainsElement(c, e.trim())) return true;
+			return false;
+		}
+		List<String> effective = effectiveElements(c);
+		if ("Multi-Element".equalsIgnoreCase(elem)) return effective.size() > 1;
+		return effective.stream().anyMatch(e -> e.equalsIgnoreCase(elem));
 	}
 
 	private String effectiveExtraJob(CardData card) {
@@ -10531,6 +10609,18 @@ public class MainWindow {
 		if (icb.maxOwnHandSize() > 0) {
 			int ownHandSize = (isP1 ? gameState.getP1Hand() : gameState.getP2Hand()).size();
 			if (ownHandSize > icb.maxOwnHandSize()) return false;
+		}
+		if (icb.minOwnHandSize() > 0) {
+			int ownHandSize = (isP1 ? gameState.getP1Hand() : gameState.getP2Hand()).size();
+			if (ownHandSize < icb.minOwnHandSize()) return false;
+		}
+		if (icb.minDifferentElementBackups() > 0) {
+			// Distinct Elements, not distinct Backups: two Fire Backups count once, and a
+			// multi-element Backup contributes each of its Elements.
+			Set<String> elems = new HashSet<>();
+			for (CardData b : (isP1 ? p1BackupCards : p2BackupCards))
+				if (b != null) elems.addAll(effectiveElements(b));
+			if (elems.size() < icb.minDifferentElementBackups()) return false;
 		}
 		if (icb.allBackupsDifferentElements()) {
 			CardData[] bkps = isP1 ? p1BackupCards : p2BackupCards;
@@ -10819,8 +10909,8 @@ public class MainWindow {
 		if (c == null) return false;
 		if (c.name().equalsIgnoreCase(src.name())) return false;
 		if (ssb.requireActive() && state != CardState.ACTIVE) return false;
-		if (ssb.elementFilter() != null && !c.containsElement(ssb.elementFilter())) return false;
-		if (ssb.excludeElement() != null && c.containsElement(ssb.excludeElement())) return false;
+		if (ssb.elementFilter() != null && !effectiveContainsElement(c, ssb.elementFilter())) return false;
+		if (ssb.excludeElement() != null && effectiveContainsElement(c, ssb.excludeElement())) return false;
 		if (ssb.sameJobAsSelf() && !sharesAnyJob(c, src)) return false;
 		return matchesScalingFilter(c, ssb.jobFilter(), ssb.categoryFilter(), ssb.cardNameFilter());
 	}
@@ -11185,7 +11275,7 @@ public class MainWindow {
 		for (CardData source : sources) {
 			for (FieldAbility fa : source.fieldAbilities()) {
 				Matcher m = AutoAbilityTriggers.FA_ELEMENT_FORWARD_DAMAGE_BOOST.matcher(fa.effectText());
-				if (m.find() && attacker.containsElement(m.group("element"))) {
+				if (m.find() && effectiveContainsElement(attacker, m.group("element"))) {
 					int amount = Integer.parseInt(m.group("amount"));
 					boost += amount;
 					logEntry(source.name() + " — " + m.group("element") + " Forward combat damage increased by " + amount);

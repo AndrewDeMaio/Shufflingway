@@ -61,6 +61,14 @@ public class WarpPaymentDialog {
     private final ConfirmCallback  onConfirm;
     private final java.util.Set<String> ldDiscardGrants;
     private final boolean          anyElement;
+    /** @see StandardPaymentDialog#gainedElementsOf */
+    private final java.util.function.Function<CardData, java.util.List<String>> gainedElements;
+
+    /** The Elements {@code backup} can produce beyond its printed ones; never null. */
+    private java.util.List<String> gainedElementsOf(CardData backup) {
+        java.util.List<String> gained = gainedElements == null ? null : gainedElements.apply(backup);
+        return gained == null ? java.util.List.of() : gained;
+    }
 
     /**
      * @param ldDiscardGrants Light/Dark elements the player may discard from hand for CP via a
@@ -74,6 +82,22 @@ public class WarpPaymentDialog {
             Consumer<String> onZoom, Runnable onZoomHide,
             java.util.Set<String> ldDiscardGrants, boolean anyElement,
             ConfirmCallback onConfirm) {
+        this(owner, card, handIdx, hand, backupCards, backupStates, backupUrls, controlledForwards,
+                onZoom, onZoomHide, ldDiscardGrants, anyElement, onConfirm, b -> java.util.List.of());
+    }
+
+    /**
+     * @param gainedElements per-Backup lookup of Elements gained from the board on top of the
+     *     printed ones (Kimahri 1-103C); empty list for a Backup that has gained none.
+     */
+    public WarpPaymentDialog(JFrame owner, CardData card, int handIdx,
+            List<CardData> hand, CardData[] backupCards, CardState[] backupStates,
+            String[] backupUrls, List<CardData> controlledForwards,
+            Consumer<String> onZoom, Runnable onZoomHide,
+            java.util.Set<String> ldDiscardGrants, boolean anyElement,
+            ConfirmCallback onConfirm,
+            java.util.function.Function<CardData, java.util.List<String>> gainedElements) {
+        this.gainedElements     = gainedElements;
         this.owner              = owner;
         this.card               = card;
         this.handIdx            = handIdx;
@@ -214,7 +238,8 @@ public class WarpPaymentDialog {
                         boolean isAnyElemOfFwds = bkp.backupCpAnyElementOfForwards()
                                 && !controlledForwards.isEmpty();
                         java.util.List<String> grantedSpecific = getGrantedSpecificElements(bkp);
-                        boolean hasGrantedSpecific = !grantedSpecific.isEmpty();
+                        java.util.List<String> gained = gainedElementsOf(bkp);
+                        boolean hasGrantedSpecific = !grantedSpecific.isEmpty() || !gained.isEmpty();
                         // Under an any-element grant the produced element is irrelevant, so skip the
                         // picker rather than recording an override the cost can't consume.
                         if (!anyElement && (isAnyElem || isAnyElemOfFwds || hasGrantedSpecific)) {
@@ -228,6 +253,7 @@ public class WarpPaymentDialog {
                                 java.util.LinkedHashSet<String> opts = new java.util.LinkedHashSet<>(
                                         java.util.Arrays.asList(bkp.elements()));
                                 opts.addAll(grantedSpecific);
+                                opts.addAll(gained);
                                 available = opts.toArray(String[]::new);
                             } else {
                                 available = StandardPaymentDialog.ALL_ELEMENTS;

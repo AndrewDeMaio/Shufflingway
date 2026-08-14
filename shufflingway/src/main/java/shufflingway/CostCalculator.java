@@ -276,7 +276,7 @@ class CostCalculator {
 				String excluded = mod.param2();
 				Predicate<CardData> matches = c ->
 						(cat.equalsIgnoreCase(c.category1()) || cat.equalsIgnoreCase(c.category2()))
-						&& !c.containsElement(excluded);
+						&& !mw.effectiveContainsElement(c, excluded);
 				boolean found = false;
 				if ("Forward".equalsIgnoreCase(type) || "Character".equalsIgnoreCase(type))
 					found = fwds.stream().anyMatch(matches);
@@ -639,7 +639,7 @@ class CostCalculator {
 				} else {
 					List<String> grantedSpecific = mw.getGrantedSpecificElementsCp(bkp);
 					for (int ei = 0; ei < elems.length; ei++) {
-						if (bkp.containsElement(elems[ei]) || grantedSpecific.contains(elems[ei])) {
+						if (mw.effectiveContainsElement(bkp, elems[ei]) || grantedSpecific.contains(elems[ei])) {
 							totalGenerate += 1;
 							hasElemSource[ei] = true;
 							break;
@@ -769,7 +769,7 @@ class CostCalculator {
 			if (mw.p1BackupCards[i] == null || mw.p1BackupStates[i] != CardState.ACTIVE) continue;
 			boolean matched = false;
 			for (int ei = 0; ei < elems.length; ei++) {
-				if (mw.p1BackupCards[i].containsElement(elems[ei])) {
+				if (mw.effectiveContainsElement(mw.p1BackupCards[i], elems[ei])) {
 					available++;
 					hasSrc[ei] = true;
 					matched = true;
@@ -880,7 +880,7 @@ class CostCalculator {
 				List<String> grantedSpecific = mw.getGrantedSpecificElementsCp(bkp);
 				boolean matched = false;
 				for (int ei = 0; ei < elems.length; ei++) {
-					if (bkp.containsElement(elems[ei]) || grantedSpecific.contains(elems[ei])) {
+					if (mw.effectiveContainsElement(bkp, elems[ei]) || grantedSpecific.contains(elems[ei])) {
 						available++; hasSrc[ei] = true; matched = true; break;
 					}
 				}
@@ -924,7 +924,7 @@ class CostCalculator {
 			if (mw.p1BackupCards[i] == null || mw.p1BackupStates[i] != CardState.ACTIVE) continue;
 			boolean matched = false;
 			for (int ei = 0; ei < elems.length; ei++) {
-				if (mw.p1BackupCards[i].containsElement(elems[ei])) { available++; hasSrc[ei] = true; matched = true; break; }
+				if (mw.effectiveContainsElement(mw.p1BackupCards[i], elems[ei])) { available++; hasSrc[ei] = true; matched = true; break; }
 			}
 			if (!matched && hasGeneric) available++;
 		}

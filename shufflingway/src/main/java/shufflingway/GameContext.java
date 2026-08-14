@@ -60,6 +60,18 @@ public interface GameContext {
      */
     CardData p1Forward(int idx);
 
+    /**
+     * Whether the field card {@code card} counts as {@code elem} right now — its printed Elements
+     * plus any it has gained from the board (Kimahri 1-103C). Use this rather than
+     * {@link CardData#containsElement} whenever the card being tested is on the field.
+     *
+     * <p>The default answers from the printed Elements alone, which is all a caller without a
+     * board can know; the live implementation consults the board.
+     */
+    default boolean fieldCardHasElement(CardData card, String elem) {
+        return card != null && card.containsElement(elem);
+    }
+
     /** Accumulated damage on P1's forward at {@code idx}. */
     int p1ForwardCurrentDamage(int idx);
 

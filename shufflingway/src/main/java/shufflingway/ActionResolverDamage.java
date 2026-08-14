@@ -133,11 +133,11 @@ final class ActionResolverDamage {
         return ctx -> {
             ctx.logEntry("Effect: Deal " + damage + " damage to all Forwards of all Elements except " + excludeElem);
             for (int i = ctx.p2ForwardCount() - 1; i >= 0; i--) {
-                if (ctx.p2Forward(i).containsElement(excludeElem)) continue;
+                if (ctx.fieldCardHasElement(ctx.p2Forward(i), excludeElem)) continue;
                 ctx.damageP2Forward(i, damage);
             }
             for (int i = ctx.p1ForwardCount() - 1; i >= 0; i--) {
-                if (ctx.p1Forward(i).containsElement(excludeElem)) continue;
+                if (ctx.fieldCardHasElement(ctx.p1Forward(i), excludeElem)) continue;
                 ctx.damageP1Forward(i, damage);
             }
         };

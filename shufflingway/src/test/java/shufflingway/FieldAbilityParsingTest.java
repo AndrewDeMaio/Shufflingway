@@ -152,6 +152,9 @@ public class FieldAbilityParsingTest {
         // its prefix, which is exactly the bug that made it look wired.
         if (namesItself(ActionResolverPatterns.STANDALONE_NAMED_CANNOT_BE_CHOSEN_BY_OWN_ELEMENT,
                 fa, source)) return true;
+        // Kimahri 1-103C. Resolved per lookup against the opposing board, so it lives on the card
+        // as a query rather than as a parsed effect.
+        if (namesItself(CardData.GAINS_OPP_CHARACTER_ELEMENTS_PATTERN, fa, source)) return true;
         if (ActionResolverFieldAbility.tryParseBeginningOfOppMainPhase1FieldAbility(fa.effectText(), source) != null) return true;
         if (AutoAbilityTriggers.FA_OPPONENT_MUST_BLOCK.matcher(fa.effectText()).find()) return true;
         if (AutoAbilityTriggers.FA_OPPONENT_MUST_CHOOSE.matcher(fa.effectText()).find()) return true;
@@ -430,6 +433,8 @@ public class FieldAbilityParsingTest {
                 fa, source)) return "CannotBeChosenByMultiElementForwardAbility";
         if (namesItself(ActionResolverPatterns.STANDALONE_NAMED_CANNOT_BE_CHOSEN_BY_OWN_ELEMENT,
                 fa, source)) return "CannotBeChosenBySharedElement";
+        if (namesItself(CardData.GAINS_OPP_CHARACTER_ELEMENTS_PATTERN, fa, source))
+            return "GainsOpponentCharacterElements";
         if (CardData.parseIfControlNonDmgBreakShield(fa.effectText(), source.name()) != null)
             return "SelfNonDmgBreakShield[if control]";
         if (CardData.parseSelfNonDmgBreakShield(fa.effectText(), source.name()))

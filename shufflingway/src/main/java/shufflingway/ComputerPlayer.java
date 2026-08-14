@@ -710,13 +710,13 @@ class ComputerPlayer implements OpponentController {
 			if (mw.p2BackupStates[bi] != CardState.ACTIVE) continue;
 			if (mw.p2BackupFrozen[bi]) continue;
 			boolean matches = false;
-			for (String e : elems) if (bk.containsElement(e)) { matches = true; break; }
+			for (String e : elems) if (mw.effectiveContainsElement(bk, e)) { matches = true; break; }
 			if (matches) matchingBackups.add(bi);
 			else offColorBackups.add(bi);
 		}
 		matchingBackups.sort(java.util.Comparator.comparingInt(bi ->
 				(int) java.util.Arrays.stream(elems)
-						.filter(e -> mw.p2BackupCards[bi].containsElement(e)).count()));
+						.filter(e -> mw.effectiveContainsElement(mw.p2BackupCards[bi], e)).count()));
 		for (int bi : matchingBackups) {
 			if (p2CanAfford(reducedCost, elems, simCp, anyCp)) break;
 			CardData bk = mw.p2BackupCards[bi];
@@ -1552,13 +1552,13 @@ class ComputerPlayer implements OpponentController {
 			CardData bk = mw.p2BackupCards[bi];
 			if (bk == null || mw.p2BackupStates[bi] != CardState.ACTIVE || mw.p2BackupFrozen[bi]) continue;
 			boolean matches = false;
-			for (String e : elems) if (bk.containsElement(e)) { matches = true; break; }
+			for (String e : elems) if (mw.effectiveContainsElement(bk, e)) { matches = true; break; }
 			if (matches) matchingBackups.add(bi);
 			else         offColorBackups.add(bi);
 		}
 		matchingBackups.sort(java.util.Comparator.comparingInt(bi ->
 				(int) java.util.Arrays.stream(elems)
-						.filter(e -> mw.p2BackupCards[bi].containsElement(e)).count()));
+						.filter(e -> mw.effectiveContainsElement(mw.p2BackupCards[bi], e)).count()));
 		for (int bi : matchingBackups) {
 			if (p2CanAfford(totalCost, elems, simCp, anyCp)) break;
 			int ei = elems.length > 0 ? p2BestDiscardElement(mw.p2BackupCards[bi], elems, simCp) : 0;

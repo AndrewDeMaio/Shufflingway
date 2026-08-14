@@ -167,6 +167,7 @@ public class CardDatabase implements AutoCloseable {
                                 .replace("you [[br]]   control", "you control")
                                 .replace("Card Name [[br]] Kan-E-Senna", "Card Name Kan-E-Senna")
                                 .replace("CP cost) [[br]]to cast", "CP cost) to cast") // Nine reissue
+                                .replace("You may pay[[br]]", "You may pay ") // Galuf
                                 .replace("choose up 2 Wind", "choose up to 2 Wind") // Benedikta card text fix
                                 // Strip inline [[s]]…[[/]] ability-name references (e.g. Bartz 7-059L, Gogo
                                 // 15-028H). A [[s]]…[[/]] is a special-ability header only when followed by a

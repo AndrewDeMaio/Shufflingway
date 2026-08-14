@@ -2824,7 +2824,7 @@ public class ActionResolver {
             case DamageInsteadCondition.TargetIsActive() ->
                 (t.isP1() ? ctx.p1ForwardState(t.idx()) : ctx.p2ForwardState(t.idx())) == CardState.ACTIVE;
             case DamageInsteadCondition.TargetIsMultiElement() ->
-                (t.isP1() ? ctx.p1Forward(t.idx()) : ctx.p2Forward(t.idx())).containsElement("Multi-Element");
+                ctx.fieldCardHasElement(t.isP1() ? ctx.p1Forward(t.idx()) : ctx.p2Forward(t.idx()), "Multi-Element");
             default -> insteadConditionMet(ctx, cond);
         };
         return condMet ? alt : base;

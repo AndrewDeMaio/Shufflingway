@@ -40,7 +40,9 @@ public record IfControlBoost(
         int       minOpponentForwards,        // 0 = unused; >0 = condition requires opponent to control this many Forwards
         int       maxOwnHandSize,            // 0 = unused; >0 = condition requires own hand size to be ≤ this value
         boolean   allBackupsDifferentElements, // true = condition requires all controlled Backups to be different Elements
-        boolean   chosenImmunityOpponentOnly  // true = the cannotBeChosen* immunities apply only to the target's opponent ("cannot be chosen by your opponent's ..."); false = to either player
+        boolean   chosenImmunityOpponentOnly, // true = the cannotBeChosen* immunities apply only to the target's opponent ("cannot be chosen by your opponent's ..."); false = to either player
+        int       minOwnHandSize,             // 0 = unused; >0 = condition requires own hand size to be >= this value
+        int       minDifferentElementBackups  // 0 = unused; >0 = condition requires this many DISTINCT Elements among controlled Backups
 ) {
     public IfControlBoost {
         conditions    = List.copyOf(conditions);
@@ -67,7 +69,7 @@ public record IfControlBoost(
         this(conditions, exceptCardName, targetCardName, targetFilter, powerBonus, grantedTraits,
                 specialText, cannotBeChosenBySummons, cannotBeChosenByAbilities, cannotBeBlocked,
                 cannotBeBlockedByCost, minRemovedFromGame, minDamageReceived, instead, maxOpponentHandSize,
-                minOpponentForwards, maxOwnHandSize, allBackupsDifferentElements, false);
+                minOpponentForwards, maxOwnHandSize, allBackupsDifferentElements, false, 0, 0);
     }
 
     /** Compatibility constructor preserving the prior 17-arg signature; defaults allBackupsDifferentElements to false. */
@@ -178,7 +180,32 @@ public record IfControlBoost(
                 powerBonus, grantedTraits, specialText, cannotBeChosenBySummons,
                 cannotBeChosenByAbilities, cannotBeBlocked, cannotBeBlockedByCost,
                 minRemovedFromGame, minDamageReceived, instead, maxOpponentHandSize,
-                minOpponentForwards, maxOwnHandSize, allBackupsDifferentElements, true);
+                minOpponentForwards, maxOwnHandSize, allBackupsDifferentElements, true,
+                minOwnHandSize, minDifferentElementBackups);
+    }
+
+    /**
+     * A copy gated on the controller holding at least {@code n} cards in hand (Galuf 3-077H).
+     * A wither for the same reason as {@link #asOpponentScopedChosenImmunity}: the field sits past
+     * a long tail of defaults that a positional call would have to spell out.
+     */
+    public IfControlBoost withMinOwnHandSize(int n) {
+        return new IfControlBoost(conditions, exceptCardName, targetCardName, targetFilter,
+                powerBonus, grantedTraits, specialText, cannotBeChosenBySummons,
+                cannotBeChosenByAbilities, cannotBeBlocked, cannotBeBlockedByCost,
+                minRemovedFromGame, minDamageReceived, instead, maxOpponentHandSize,
+                minOpponentForwards, maxOwnHandSize, allBackupsDifferentElements,
+                chosenImmunityOpponentOnly, n, minDifferentElementBackups);
+    }
+
+    /** A copy gated on {@code n} distinct Elements among the controller's Backups (Kefka 3-079H). */
+    public IfControlBoost withMinDifferentElementBackups(int n) {
+        return new IfControlBoost(conditions, exceptCardName, targetCardName, targetFilter,
+                powerBonus, grantedTraits, specialText, cannotBeChosenBySummons,
+                cannotBeChosenByAbilities, cannotBeBlocked, cannotBeBlockedByCost,
+                minRemovedFromGame, minDamageReceived, instead, maxOpponentHandSize,
+                minOpponentForwards, maxOwnHandSize, allBackupsDifferentElements,
+                chosenImmunityOpponentOnly, minOwnHandSize, n);
     }
 
     @Override
@@ -213,6 +240,9 @@ public record IfControlBoost(
         if (maxOpponentHandSize > 0)   sb.append(" oppHand<=").append(maxOpponentHandSize);
         if (minOpponentForwards > 0)   sb.append(" oppFwds>=").append(minOpponentForwards);
         if (maxOwnHandSize > 0)        sb.append(" ownHand<=").append(maxOwnHandSize);
+        if (minOwnHandSize > 0)        sb.append(" ownHand>=").append(minOwnHandSize);
+        if (minDifferentElementBackups > 0)
+            sb.append(" diffElemBkps>=").append(minDifferentElementBackups);
         if (allBackupsDifferentElements) sb.append(" allBkpsDiffElem");
         sb.append(']');
         return sb.toString();

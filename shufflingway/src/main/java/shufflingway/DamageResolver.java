@@ -467,7 +467,7 @@ class DamageResolver {
 			for (FieldAbility fa : booster.fieldAbilities()) {
 				Matcher m = AutoAbilityTriggers.FA_ELEMENT_FORWARD_DAMAGE_BOOST.matcher(fa.effectText());
 				if (!m.find()) continue;
-				if (!mw.currentAbilitySource.containsElement(m.group("element"))) continue;
+				if (!mw.effectiveContainsElement(mw.currentAbilitySource, m.group("element"))) continue;
 				int boost = Integer.parseInt(m.group("amount"));
 				int before = amount;
 				amount += boost;

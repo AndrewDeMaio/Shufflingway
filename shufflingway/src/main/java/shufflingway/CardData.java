@@ -686,10 +686,14 @@ public record CardData(
     /**
      * "You must control a Category X Forward to play [name] from your hand onto the field."
      * Group {@code cat} — the category token (e.g. "XIV").
+     *
+     * <p>Two tails, same requirement: Rhitahtyn 9-020R prints the play-from-hand spelling, both
+     * Noctis printings (21-130S, 29-090R) print "to cast [name]". A hand card's play is its cast,
+     * so nothing distinguishes them but the wording.
      */
     private static final Pattern CAST_MUST_CONTROL_CATEGORY_FWD = Pattern.compile(
-        "(?i)You\\s+must\\s+control\\s+a\\s+Category\\s+(?<cat>\\S+)\\s+Forward\\s+" +
-        "to\\s+play\\s+\\S[^.]*?\\s+from\\s+your\\s+hand\\s+onto\\s+the\\s+field[.!]?"
+        "(?i)You\\s+must\\s+control\\s+a\\s+Category\\s+(?<cat>\\S+)\\s+Forward\\s+to\\s+" +
+        "(?:play\\s+\\S[^.]*?\\s+from\\s+your\\s+hand\\s+onto\\s+the\\s+field|cast\\s+\\S[^.]*?)[.!]?"
     );
 
     /**
@@ -3203,6 +3207,33 @@ public record CardData(
     );
 
     /**
+     * "If you have N or more cards in your hand, [target] gains [effects]." (Galuf 3-077H, which
+     * prints one line per threshold: +2000 power at 4 cards, Brave at 5.)
+     * Groups: {@code count}, {@code target}, {@code effects}.
+     *
+     * <p>The floor twin of {@link #IF_OWN_HAND_BOOST}, whose "N cards or less" is a ceiling. The
+     * two wordings cannot be folded together: the comparison runs the other way.
+     */
+    private static final Pattern IF_OWN_HAND_MIN_BOOST = Pattern.compile(
+        "(?i)^If\\s+you\\s+have\\s+(?<count>\\d+)\\s+or\\s+more\\s+cards?\\s+in\\s+your\\s+hand,\\s+" +
+        "(?<target>.+?)\\s+gains?\\s+(?<effects>.+?)\\.?\\s*$"
+    );
+
+    /**
+     * "If you control N or more different Element Backups, [target] gains [effects]."
+     * (Kefka 3-079H: +3000 power at 3 Elements, Brave at 5.)
+     * Groups: {@code count}, {@code target}, {@code effects}.
+     *
+     * <p>Counts <em>distinct</em> Elements among the Backups controlled, not the Backups
+     * themselves, which is what separates it from {@link #IF_N_BACKUPS_ALL_DIFF_ELEMENTS_BOOST} —
+     * that one counts Backups and requires no two to share an Element.
+     */
+    private static final Pattern IF_N_DIFF_ELEMENT_BACKUPS_BOOST = Pattern.compile(
+        "(?i)^If\\s+you\\s+control\\s+(?<count>\\d+)\\s+or\\s+more\\s+different\\s+Element\\s+Backups?,\\s+" +
+        "(?<target>.+?)\\s+gains?\\s+(?<effects>.+?)\\.?\\s*$"
+    );
+
+    /**
      * "If you control N or more Backups and if the Backups you control are all of different Elements,
      * [target] gains +[power] power."
      * Groups: {@code count}, {@code target}, {@code power}.
@@ -3622,6 +3653,29 @@ public record CardData(
                 continue;
             }
 
+            // "If you have N or more cards in your hand, [target] gains [effects]."
+            // Must follow IF_OWN_HAND_BOOST: the two share the "If you have N" prefix and differ
+            // only in the comparison word, so neither can be allowed to run on the other's text.
+            Matcher ownHandMinM = IF_OWN_HAND_MIN_BOOST.matcher(seg);
+            if (ownHandMinM.find()) {
+                IfControlBoost boost = icbSelfGrant(ownHandMinM.group("target").trim(),
+                        ownHandMinM.group("effects").trim());
+                if (boost != null)
+                    result.add(boost.withMinOwnHandSize(Integer.parseInt(ownHandMinM.group("count"))));
+                continue;
+            }
+
+            // "If you control N or more different Element Backups, [target] gains [effects]."
+            Matcher diffElemBkpM = IF_N_DIFF_ELEMENT_BACKUPS_BOOST.matcher(seg);
+            if (diffElemBkpM.find()) {
+                IfControlBoost boost = icbSelfGrant(diffElemBkpM.group("target").trim(),
+                        diffElemBkpM.group("effects").trim());
+                if (boost != null)
+                    result.add(boost.withMinDifferentElementBackups(
+                            Integer.parseInt(diffElemBkpM.group("count"))));
+                continue;
+            }
+
             // "If you control N or more Backups and if the Backups you control are all of different Elements, [target] gains +[power] power."
             Matcher diffElemM = IF_N_BACKUPS_ALL_DIFF_ELEMENTS_BOOST.matcher(seg);
             if (diffElemM.find()) {
@@ -3932,6 +3986,28 @@ public record CardData(
         }
 
         return List.copyOf(result);
+    }
+
+    /**
+     * Builds the unconditional half of an {@link IfControlBoost} — the target and what it gains —
+     * leaving the caller to attach the condition with the matching wither.
+     *
+     * <p>Returns {@code null} when the effects clause yields neither power nor a trait, so a
+     * caller cannot mistake "parsed but grants nothing" for a live grant. That rejection is why
+     * this is worth factoring out: every branch that reads a "[target] gains [effects]" tail owes
+     * the same check, and the ones written inline have repeated it by hand.
+     */
+    private static IfControlBoost icbSelfGrant(String targetName, String effectsStr) {
+        Matcher pwrM = IF_CTRL_EFFECT_POWER.matcher(effectsStr);
+        int powerBonus = pwrM.find() ? Integer.parseInt(pwrM.group(1)) : 0;
+        EnumSet<Trait> traits = EnumSet.noneOf(Trait.class);
+        if (ICB_EFFECT_HASTE.matcher(effectsStr).find())        traits.add(Trait.HASTE);
+        if (ICB_EFFECT_BRAVE.matcher(effectsStr).find())        traits.add(Trait.BRAVE);
+        if (ICB_EFFECT_FIRST_STRIKE.matcher(effectsStr).find()) traits.add(Trait.FIRST_STRIKE);
+        if (ICB_EFFECT_BACK_ATTACK.matcher(effectsStr).find())  traits.add(Trait.BACK_ATTACK);
+        if (powerBonus == 0 && traits.isEmpty()) return null;
+        return new IfControlBoost(List.of(), "", targetName, parseIcbTargetFilter(targetName),
+                powerBonus, traits, "", false, false, false, null, 0, 0, false, 0);
     }
 
     /**
@@ -5763,6 +5839,40 @@ public record CardData(
     static final Pattern HAS_ALL_ELEMENTS_PATTERN = Pattern.compile(
         "(?i)^.+?\\s+has\\s+all\\s+the\\s+Elements?(?:\\s+except\\s+(?<exceptions>[^.]+))?\\.?$"
     );
+
+    /**
+     * Matches "[CardName] gains Elements of all the Characters opponent controls except X[, Y]."
+     * (Kimahri 1-103C.) Group {@code exceptions} captures the exclusion list, if any.
+     *
+     * <p>Unlike {@link #HAS_ALL_ELEMENTS_PATTERN}, which names a fixed set, this one is a
+     * standing query over the opposing board: the Elements it grants change as the opponent's
+     * Characters come and go, so it cannot be resolved on the card and is answered per lookup by
+     * {@code MainWindow.effectiveElements}.
+     */
+    static final Pattern GAINS_OPP_CHARACTER_ELEMENTS_PATTERN = Pattern.compile(
+        "(?i)^(?<name>[^.!]+?)\\s+gains\\s+Elements\\s+of\\s+all\\s+the\\s+Characters\\s+" +
+        "opponent\\s+controls(?:\\s+except\\s+(?<exceptions>[^.]+))?\\.?$"
+    );
+
+    /**
+     * The Elements excluded from a "gains Elements of all the Characters opponent controls except X"
+     * field ability, an empty set when it names no exclusions, or {@code null} when this card has
+     * no such ability. The name is checked against the card, so a quoted copy of the sentence does
+     * not grant it to whoever prints the quote.
+     */
+    public java.util.Set<String> gainsOpponentCharacterElementsExcept() {
+        for (FieldAbility fa : fieldAbilities()) {
+            Matcher m = GAINS_OPP_CHARACTER_ELEMENTS_PATTERN.matcher(fa.effectText().trim());
+            if (!m.matches() || !m.group("name").trim().equalsIgnoreCase(name)) continue;
+            String raw = m.group("exceptions");
+            if (raw == null || raw.isBlank()) return java.util.Set.of();
+            return java.util.Arrays.stream(raw.split(",\\s*|\\s+and\\s+"))
+                    .map(String::trim)
+                    .filter(s -> !s.isEmpty())
+                    .collect(java.util.stream.Collectors.toSet());
+        }
+        return null;
+    }
 
     /**
      * Matches "[CardName] can be played onto the field even if you control other [Light|Dark] Characters."

@@ -68,6 +68,12 @@ public class StandardPaymentDialog {
     private final boolean        anyElementCast;
     private final String[]       extraRequiredElements;
     private final java.util.Set<String> ldDiscardGrants;
+    /**
+     * Elements a Backup has gained from the board beyond the ones printed on it (Kimahri 1-103C).
+     * Supplied as a lookup rather than baked into the card because the answer depends on the
+     * opposing field, which this dialog is never handed — it only ever sees the paying player's.
+     */
+    private final java.util.function.Function<CardData, java.util.List<String>> gainedElements;
 
     public StandardPaymentDialog(JFrame owner, CardData card, int handIdx, int cost,
             List<CardData> hand, CardData[] backupCards, CardState[] backupStates,
@@ -100,6 +106,22 @@ public class StandardPaymentDialog {
             List<CardData> controlledForwards, ConfirmCallback onConfirm,
             boolean anyElementCast, String[] extraRequiredElements,
             java.util.Set<String> ldDiscardGrants) {
+        this(owner, card, handIdx, cost, hand, backupCards, backupStates, backupUrls, onZoom,
+                onZoomHide, controlledForwards, onConfirm, anyElementCast, extraRequiredElements,
+                ldDiscardGrants, b -> java.util.List.of());
+    }
+
+    /**
+     * @param gainedElements per-Backup lookup of Elements gained from the board on top of the
+     *     printed ones; return an empty list for a Backup that has gained none.
+     */
+    public StandardPaymentDialog(JFrame owner, CardData card, int handIdx, int cost,
+            List<CardData> hand, CardData[] backupCards, CardState[] backupStates,
+            String[] backupUrls, Consumer<String> onZoom, Runnable onZoomHide,
+            List<CardData> controlledForwards, ConfirmCallback onConfirm,
+            boolean anyElementCast, String[] extraRequiredElements,
+            java.util.Set<String> ldDiscardGrants,
+            java.util.function.Function<CardData, java.util.List<String>> gainedElements) {
         this.owner              = owner;
         this.card               = card;
         this.handIdx            = handIdx;
@@ -115,6 +137,13 @@ public class StandardPaymentDialog {
         this.anyElementCast     = anyElementCast;
         this.extraRequiredElements = extraRequiredElements;
         this.ldDiscardGrants    = ldDiscardGrants;
+        this.gainedElements     = gainedElements;
+    }
+
+    /** The Elements {@code backup} can produce beyond its printed ones; never null. */
+    java.util.List<String> gainedElementsOf(CardData backup) {
+        java.util.List<String> gained = gainedElements == null ? null : gainedElements.apply(backup);
+        return gained == null ? java.util.List.of() : gained;
     }
 
     /** Unions {@code baseElems} with {@link #extraRequiredElements}, deduplicated, base order first. */
@@ -151,6 +180,7 @@ public class StandardPaymentDialog {
             if (backupCards[i] != null && backupStates[i] == CardState.ACTIVE) {
                 if (castElemOnly == null
                         || backupCards[i].containsElement(castElemOnly)
+                        || gainedElementsOf(backupCards[i]).stream().anyMatch(castElemOnly::equalsIgnoreCase)
                         || backupCards[i].backupCpAnyElement())
                     eligibleBackupSlots.add(i);
             }
@@ -269,8 +299,9 @@ public class StandardPaymentDialog {
                                 && !controlledForwards.isEmpty();
                         java.util.List<String> extraElems = bkp.backupCpExtraElements();
                         java.util.List<String> grantedSpecific = getGrantedSpecificElements(bkp);
+                        java.util.List<String> gained = gainedElementsOf(bkp);
                         boolean hasExtraElems = !extraElems.isEmpty();
-                        boolean hasGrantedSpecific = !grantedSpecific.isEmpty();
+                        boolean hasGrantedSpecific = !grantedSpecific.isEmpty() || !gained.isEmpty();
                         if (isAnyElem || isAnyElemOfFwds || hasExtraElems || hasGrantedSpecific) {
                             if (castElemOnly != null) {
                                 // Element-locked cast: any-element backup auto-produces the required element.
@@ -289,6 +320,7 @@ public class StandardPaymentDialog {
                                             java.util.Arrays.asList(bkp.elements()));
                                     opts.addAll(extraElems);
                                     opts.addAll(grantedSpecific);
+                                    opts.addAll(gained);
                                     available = opts.toArray(String[]::new);
                                 } else {
                                     available = ALL_ELEMENTS;

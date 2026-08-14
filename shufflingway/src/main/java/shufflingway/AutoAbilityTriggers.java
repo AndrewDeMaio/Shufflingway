@@ -1144,7 +1144,7 @@ final class AutoAbilityTriggers {
 		Matcher elemTypeM = java.util.regex.Pattern.compile(
 				"(?i)^an?\\s+(?<elem>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark|Multi-Element)\\s+(?<type>Forwards?|Backups?|Monsters?|Characters?)$").matcher(subject);
 		if (elemTypeM.matches())
-			return enteringCard.containsElement(elemTypeM.group("elem"))
+			return mw.effectiveContainsElement(enteringCard, elemTypeM.group("elem"))
 				&& meetsSubjectTypeFilter(enteringCard, elemTypeM.group("type"));
 		// "a Job X" / "an Job X" — match by job (any type)
 		Matcher jobM = java.util.regex.Pattern.compile(
@@ -3652,7 +3652,7 @@ final class AutoAbilityTriggers {
 	 */
 	boolean dullForwardCostMatches(DullForwardCost dfc, CardData card) {
 		if (dfc.cardName() != null && !card.name().equalsIgnoreCase(dfc.cardName())) return false;
-		if (dfc.element()  != null && !dfc.element().isEmpty() && !card.containsElement(dfc.element())) return false;
+		if (dfc.element()  != null && !dfc.element().isEmpty() && !mw.effectiveContainsElement(card, dfc.element())) return false;
 		if (dfc.job() != null) {
 			boolean jobMatch    = card.hasJob(dfc.job());
 			boolean orNameMatch = dfc.orCardName() != null && card.name().equalsIgnoreCase(dfc.orCardName());
@@ -3687,23 +3687,23 @@ final class AutoAbilityTriggers {
 		String elemFilt = typeDesc.contains(" ") ? typeDesc.substring(0, typeDesc.lastIndexOf(' ')).trim() : null;
 		if (last.equalsIgnoreCase("Forward")) {
 			for (int i = 0; i < fwds.size(); i++) {
-				if (elemFilt != null && !fwds.get(i).containsElement(elemFilt)) continue;
+				if (elemFilt != null && !mw.effectiveContainsElement(fwds.get(i), elemFilt)) continue;
 				result.add(new ForwardTarget(isP1, i, ForwardTarget.CardZone.FORWARD));
 			}
 		} else if (last.equalsIgnoreCase("Backup")) {
 			for (int i = 0; i < bkps.length; i++) {
 				if (bkps[i] == null) continue;
-				if (elemFilt != null && !bkps[i].containsElement(elemFilt)) continue;
+				if (elemFilt != null && !mw.effectiveContainsElement(bkps[i], elemFilt)) continue;
 				result.add(new ForwardTarget(isP1, i, ForwardTarget.CardZone.BACKUP));
 			}
 		} else if (last.equalsIgnoreCase("Monster")) {
 			for (int i = 0; i < mons.size(); i++) {
-				if (elemFilt != null && !mons.get(i).containsElement(elemFilt)) continue;
+				if (elemFilt != null && !mw.effectiveContainsElement(mons.get(i), elemFilt)) continue;
 				result.add(new ForwardTarget(isP1, i, ForwardTarget.CardZone.MONSTER));
 			}
 			for (int i = 0; i < fwds.size(); i++) {
 				if (!fwds.get(i).alsoCountsAsMonster()) continue;
-				if (elemFilt != null && !fwds.get(i).containsElement(elemFilt)) continue;
+				if (elemFilt != null && !mw.effectiveContainsElement(fwds.get(i), elemFilt)) continue;
 				result.add(new ForwardTarget(isP1, i, ForwardTarget.CardZone.FORWARD));
 			}
 		}
@@ -3770,7 +3770,7 @@ final class AutoAbilityTriggers {
 
 	private boolean matchesRfgFieldFilter(CardData c, RemoveFromGameCost rfg) {
 		if (rfg.cardName()    != null && !meetsCardNameFilter(c, rfg.cardName()))     return false;
-		if (rfg.element()     != null && !c.containsElement(rfg.element()))           return false;
+		if (rfg.element()     != null && !mw.effectiveContainsElement(c, rfg.element()))           return false;
 		if (rfg.cardType()    != null && !matchesDiscardType(c, rfg.cardType()))      return false;
 		if (rfg.excludeName() != null &&  c.name().equalsIgnoreCase(rfg.excludeName())) return false;
 		return true;

@@ -139,6 +139,10 @@ final class GameContextImpl implements GameContext {
 			@Override public boolean effectMadeProgress() { return mw.effectProgress; }
 
 			@Override public int p1ForwardCount()                    { return mw.p1ForwardCards.size(); }
+			@Override public boolean fieldCardHasElement(CardData card, String elem) {
+				return mw.effectiveContainsElement(card, elem);
+			}
+
 			@Override public CardData p1Forward(int idx) {
 				CardData top = mw.p1ForwardPrimedTop.get(idx);
 				return top != null ? top : mw.p1ForwardCards.get(idx);
@@ -824,7 +828,7 @@ final class GameContextImpl implements GameContext {
 							CardData card = p1Forward(i);
 							if (!inclForwards && !card.alsoCountsAsMonster()) continue;
 							if (immuneOwn.contains(card)) continue;
-							if (element != null && !card.containsElement(element)) continue;
+							if (element != null && !mw.effectiveContainsElement(card, element)) continue;
 							if (!meetsElementExclusion(card, excludeElement)) continue;
 							if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
 							if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
@@ -847,7 +851,7 @@ final class GameContextImpl implements GameContext {
 							if (mw.p1BackupCards[i] == null) continue;
 							if (!inclBackups && !mw.isP1BackupTemporarilyForward(i)) continue;
 							if (immuneOwn.contains(mw.p1BackupCards[i])) continue;
-							if (element != null && !mw.p1BackupCards[i].containsElement(element)) continue;
+							if (element != null && !mw.effectiveContainsElement(mw.p1BackupCards[i], element)) continue;
 							if (!meetsCostConstraint(mw.p1BackupCards[i].cost(), costVal, costCmp)) continue;
 							if (!meetsPowerConstraint(mw.p1BackupCards[i].power(), powerVal, powerCmp)) continue;
 							if (!mw.meetsJobFilterEffective(mw.p1BackupCards[i], jobFilter, mw.p1ForwardCards)) continue;
@@ -862,7 +866,7 @@ final class GameContextImpl implements GameContext {
 							if (!inclMonsters && !mw.isP1MonsterTemporarilyForward(i)) continue;
 							CardData card = mw.p1MonsterCards.get(i);
 							if (immuneOwn.contains(card)) continue;
-							if (element != null && !card.containsElement(element)) continue;
+							if (element != null && !mw.effectiveContainsElement(card, element)) continue;
 							if (!meetsElementExclusion(card, excludeElement)) continue;
 							if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
 							if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
@@ -881,7 +885,7 @@ final class GameContextImpl implements GameContext {
 							CardData card = mw.p2ForwardCards.get(i);
 							if (!inclForwards && !card.alsoCountsAsMonster()) continue;
 							if (immuneOwn.contains(card)) continue;
-							if (element != null && !card.containsElement(element)) continue;
+							if (element != null && !mw.effectiveContainsElement(card, element)) continue;
 							if (!meetsElementExclusion(card, excludeElement)) continue;
 							if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
 							if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
@@ -904,7 +908,7 @@ final class GameContextImpl implements GameContext {
 							if (mw.p2BackupCards[i] == null) continue;
 							if (!inclBackups && !mw.isP2BackupTemporarilyForward(i)) continue;
 							if (immuneOwn.contains(mw.p2BackupCards[i])) continue;
-							if (element != null && !mw.p2BackupCards[i].containsElement(element)) continue;
+							if (element != null && !mw.effectiveContainsElement(mw.p2BackupCards[i], element)) continue;
 							if (!meetsCostConstraint(mw.p2BackupCards[i].cost(), costVal, costCmp)) continue;
 							if (!meetsPowerConstraint(mw.p2BackupCards[i].power(), powerVal, powerCmp)) continue;
 							if (!mw.meetsJobFilterEffective(mw.p2BackupCards[i], jobFilter, mw.p2ForwardCards)) continue;
@@ -919,7 +923,7 @@ final class GameContextImpl implements GameContext {
 							if (!inclMonsters && !mw.isP2MonsterTemporarilyForward(i)) continue;
 							CardData card = mw.p2MonsterCards.get(i);
 							if (immuneOwn.contains(card)) continue;
-							if (element != null && !card.containsElement(element)) continue;
+							if (element != null && !mw.effectiveContainsElement(card, element)) continue;
 							if (!meetsElementExclusion(card, excludeElement)) continue;
 							if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
 							if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
@@ -941,7 +945,7 @@ final class GameContextImpl implements GameContext {
 							CardData card = mw.p2ForwardCards.get(i);
 							if (!inclForwards && !card.alsoCountsAsMonster()) continue;
 							if (immuneOpp.contains(card)) continue;
-							if (element != null && !card.containsElement(element)) continue;
+							if (element != null && !mw.effectiveContainsElement(card, element)) continue;
 							if (!meetsElementExclusion(card, excludeElement)) continue;
 							if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
 							if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
@@ -964,7 +968,7 @@ final class GameContextImpl implements GameContext {
 							if (mw.p2BackupCards[i] == null) continue;
 							if (!inclBackups && !mw.isP2BackupTemporarilyForward(i)) continue;
 							if (immuneOpp.contains(mw.p2BackupCards[i])) continue;
-							if (element != null && !mw.p2BackupCards[i].containsElement(element)) continue;
+							if (element != null && !mw.effectiveContainsElement(mw.p2BackupCards[i], element)) continue;
 							if (!meetsCostConstraint(mw.p2BackupCards[i].cost(), costVal, costCmp)) continue;
 							if (!meetsPowerConstraint(mw.p2BackupCards[i].power(), powerVal, powerCmp)) continue;
 							if (!mw.meetsJobFilterEffective(mw.p2BackupCards[i], jobFilter, mw.p2ForwardCards)) continue;
@@ -979,7 +983,7 @@ final class GameContextImpl implements GameContext {
 							if (!inclMonsters && !mw.isP2MonsterTemporarilyForward(i)) continue;
 							CardData card = mw.p2MonsterCards.get(i);
 							if (immuneOpp.contains(card)) continue;
-							if (element != null && !card.containsElement(element)) continue;
+							if (element != null && !mw.effectiveContainsElement(card, element)) continue;
 							if (!meetsElementExclusion(card, excludeElement)) continue;
 							if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
 							if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
@@ -998,7 +1002,7 @@ final class GameContextImpl implements GameContext {
 						if (inclForwards) for (int i = 0; i < mw.p1ForwardCards.size(); i++) {
 							CardData card = p1Forward(i);
 							if (immuneOpp.contains(card)) continue;
-							if (element != null && !card.containsElement(element)) continue;
+							if (element != null && !mw.effectiveContainsElement(card, element)) continue;
 							if (!meetsElementExclusion(card, excludeElement)) continue;
 							if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
 							if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
@@ -1021,7 +1025,7 @@ final class GameContextImpl implements GameContext {
 							if (mw.p1BackupCards[i] == null) continue;
 							if (!inclBackups && !mw.isP1BackupTemporarilyForward(i)) continue;
 							if (immuneOpp.contains(mw.p1BackupCards[i])) continue;
-							if (element != null && !mw.p1BackupCards[i].containsElement(element)) continue;
+							if (element != null && !mw.effectiveContainsElement(mw.p1BackupCards[i], element)) continue;
 							if (!meetsCostConstraint(mw.p1BackupCards[i].cost(), costVal, costCmp)) continue;
 							if (!meetsPowerConstraint(mw.p1BackupCards[i].power(), powerVal, powerCmp)) continue;
 							if (!mw.meetsJobFilterEffective(mw.p1BackupCards[i], jobFilter, mw.p1ForwardCards)) continue;
@@ -1036,7 +1040,7 @@ final class GameContextImpl implements GameContext {
 							if (!inclMonsters && !mw.isP1MonsterTemporarilyForward(i)) continue;
 							CardData card = mw.p1MonsterCards.get(i);
 							if (immuneOpp.contains(card)) continue;
-							if (element != null && !card.containsElement(element)) continue;
+							if (element != null && !mw.effectiveContainsElement(card, element)) continue;
 							if (!meetsElementExclusion(card, excludeElement)) continue;
 							if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
 							if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
@@ -5852,7 +5856,7 @@ final class GameContextImpl implements GameContext {
 						for (int i = mw.p1ForwardCards.size() - 1; i >= 0; i--) {
 							CardData c = p1Forward(i);
 							if (!forwards && !c.alsoCountsAsMonster()) continue;
-							if (element != null && !c.containsElement(element)) continue;
+							if (element != null && !mw.effectiveContainsElement(c, element)) continue;
 							if (!meetsCostConstraint(c.cost(), costVal, costCmp)) continue;
 							if (excludeCostVal >= 0 && c.cost() == excludeCostVal) continue;
 							if (counterFilter != null && mw.gameState.getCounters(c, counterFilter) <= 0) continue;
@@ -5874,7 +5878,7 @@ final class GameContextImpl implements GameContext {
 						for (int i = 0; i < mw.p1BackupCards.length; i++) {
 							if (mw.p1BackupCards[i] == null) continue;
 							CardData c = mw.p1BackupCards[i];
-							if (element != null && !c.containsElement(element)) continue;
+							if (element != null && !mw.effectiveContainsElement(c, element)) continue;
 							if (!meetsCostConstraint(c.cost(), costVal, costCmp)) continue;
 							if (excludeCostVal >= 0 && c.cost() == excludeCostVal) continue;
 							if (counterFilter != null && mw.gameState.getCounters(c, counterFilter) <= 0) continue;
@@ -5901,7 +5905,7 @@ final class GameContextImpl implements GameContext {
 					if (monsters) {
 						for (int i = mw.p1MonsterCards.size() - 1; i >= 0; i--) {
 							CardData c = mw.p1MonsterCards.get(i);
-							if (element != null && !c.containsElement(element)) continue;
+							if (element != null && !mw.effectiveContainsElement(c, element)) continue;
 							if (!meetsCostConstraint(c.cost(), costVal, costCmp)) continue;
 							if (excludeCostVal >= 0 && c.cost() == excludeCostVal) continue;
 							if (counterFilter != null && mw.gameState.getCounters(c, counterFilter) <= 0) continue;
@@ -5938,7 +5942,7 @@ final class GameContextImpl implements GameContext {
 						for (int i = mw.p2ForwardCards.size() - 1; i >= 0; i--) {
 							CardData c = mw.p2ForwardCards.get(i);
 							if (!forwards && !c.alsoCountsAsMonster()) continue;
-							if (element != null && !c.containsElement(element)) continue;
+							if (element != null && !mw.effectiveContainsElement(c, element)) continue;
 							if (!meetsCostConstraint(c.cost(), costVal, costCmp)) continue;
 							if (excludeCostVal >= 0 && c.cost() == excludeCostVal) continue;
 							if (counterFilter != null && mw.gameState.getCounters(c, counterFilter) <= 0) continue;
@@ -5960,7 +5964,7 @@ final class GameContextImpl implements GameContext {
 						for (int i = 0; i < mw.p2BackupCards.length; i++) {
 							if (mw.p2BackupCards[i] == null) continue;
 							CardData c = mw.p2BackupCards[i];
-							if (element != null && !c.containsElement(element)) continue;
+							if (element != null && !mw.effectiveContainsElement(c, element)) continue;
 							if (!meetsCostConstraint(c.cost(), costVal, costCmp)) continue;
 							if (excludeCostVal >= 0 && c.cost() == excludeCostVal) continue;
 							if (counterFilter != null && mw.gameState.getCounters(c, counterFilter) <= 0) continue;
@@ -5987,7 +5991,7 @@ final class GameContextImpl implements GameContext {
 					if (monsters) {
 						for (int i = mw.p2MonsterCards.size() - 1; i >= 0; i--) {
 							CardData c = mw.p2MonsterCards.get(i);
-							if (element != null && !c.containsElement(element)) continue;
+							if (element != null && !mw.effectiveContainsElement(c, element)) continue;
 							if (!meetsCostConstraint(c.cost(), costVal, costCmp)) continue;
 							if (excludeCostVal >= 0 && c.cost() == excludeCostVal) continue;
 							if (counterFilter != null && mw.gameState.getCounters(c, counterFilter) <= 0) continue;
@@ -6033,7 +6037,7 @@ final class GameContextImpl implements GameContext {
 					if (inclForwards) {
 						for (int i = 0; i < mw.p1ForwardCards.size(); i++) {
 							CardData c = p1Forward(i);
-							if (element != null && !c.containsElement(element)) continue;
+							if (element != null && !mw.effectiveContainsElement(c, element)) continue;
 							if (!meetsCostConstraint(c.cost(), costVal, costCmp)) continue;
 							if (!CardFilters.meetsCategoryFilter(c, category)) continue;
 							if (excludeName != null && CardFilters.meetsCardNameFilter(c, excludeName)) continue;
@@ -6051,7 +6055,7 @@ final class GameContextImpl implements GameContext {
 					if (inclMonsters) {
 						for (int i = 0; i < mw.p1MonsterCards.size(); i++) {
 							CardData c = mw.p1MonsterCards.get(i);
-							if (element != null && !c.containsElement(element)) continue;
+							if (element != null && !mw.effectiveContainsElement(c, element)) continue;
 							if (!meetsCostConstraint(c.cost(), costVal, costCmp)) continue;
 							if (!CardFilters.meetsCategoryFilter(c, category)) continue;
 							if (excludeName != null && CardFilters.meetsCardNameFilter(c, excludeName)) continue;
@@ -6063,7 +6067,7 @@ final class GameContextImpl implements GameContext {
 					if (inclForwards) {
 						for (int i = 0; i < mw.p2ForwardCards.size(); i++) {
 							CardData c = mw.p2ForwardCards.get(i);
-							if (element != null && !c.containsElement(element)) continue;
+							if (element != null && !mw.effectiveContainsElement(c, element)) continue;
 							if (!meetsCostConstraint(c.cost(), costVal, costCmp)) continue;
 							if (!CardFilters.meetsCategoryFilter(c, category)) continue;
 							if (excludeName != null && CardFilters.meetsCardNameFilter(c, excludeName)) continue;
@@ -6081,7 +6085,7 @@ final class GameContextImpl implements GameContext {
 					if (inclMonsters) {
 						for (int i = 0; i < mw.p2MonsterCards.size(); i++) {
 							CardData c = mw.p2MonsterCards.get(i);
-							if (element != null && !c.containsElement(element)) continue;
+							if (element != null && !mw.effectiveContainsElement(c, element)) continue;
 							if (!meetsCostConstraint(c.cost(), costVal, costCmp)) continue;
 							if (!CardFilters.meetsCategoryFilter(c, category)) continue;
 							if (excludeName != null && CardFilters.meetsCardNameFilter(c, excludeName)) continue;
@@ -6131,7 +6135,7 @@ final class GameContextImpl implements GameContext {
 				final CardData src = named;
 				java.util.function.Predicate<CardData> sharesElement = c -> {
 					for (String e : List.of("fire","ice","wind","earth","lightning","water","light","dark"))
-						if (c.containsElement(e) && src.containsElement(e)) return true;
+						if (mw.effectiveContainsElement(c, e) && mw.effectiveContainsElement(src, e)) return true;
 					return false;
 				};
 				boolean touchP1 = isP1 ? !opponentOnly : !selfOnly;
@@ -6239,7 +6243,7 @@ final class GameContextImpl implements GameContext {
 				if (touchP1 && inclForwards) {
 					for (int i = 0; i < mw.p1ForwardCards.size(); i++) {
 						CardData c = p1Forward(i);
-						if (element != null && !c.containsElement(element)) continue;
+						if (element != null && !mw.effectiveContainsElement(c, element)) continue;
 						if (!meetsCostConstraint(c.cost(), costVal, costCmp)) continue;
 						if (!CardFilters.meetsCategoryFilter(c, category)) continue;
 						mw.p1ForwardTempTraits.get(i).addAll(traits);
@@ -6250,7 +6254,7 @@ final class GameContextImpl implements GameContext {
 				if (touchP2 && inclForwards) {
 					for (int i = 0; i < mw.p2ForwardCards.size(); i++) {
 						CardData c = mw.p2ForwardCards.get(i);
-						if (element != null && !c.containsElement(element)) continue;
+						if (element != null && !mw.effectiveContainsElement(c, element)) continue;
 						if (!meetsCostConstraint(c.cost(), costVal, costCmp)) continue;
 						if (!CardFilters.meetsCategoryFilter(c, category)) continue;
 						mw.p2ForwardTempTraits.get(i).addAll(traits);
@@ -6606,7 +6610,7 @@ final class GameContextImpl implements GameContext {
 					if (!mw.meetsJobFilterEffective(c, jobFilter)) continue;
 					if (!meetsCardNameFilter(c, cardNameFilter)) continue;
 					if (!meetsCategoryFilter(c, categoryFilter)) continue;
-					if (elementFilter != null && !c.containsElement(elementFilter)) continue;
+					if (elementFilter != null && !mw.effectiveContainsElement(c, elementFilter)) continue;
 					if (costFilter != -1 && c.cost() != costFilter) continue;
 					count++;
 				}
@@ -6615,7 +6619,7 @@ final class GameContextImpl implements GameContext {
 					if (!mw.meetsJobFilterEffective(c, jobFilter)) continue;
 					if (!meetsCardNameFilter(c, cardNameFilter)) continue;
 					if (!meetsCategoryFilter(c, categoryFilter)) continue;
-					if (elementFilter != null && !c.containsElement(elementFilter)) continue;
+					if (elementFilter != null && !mw.effectiveContainsElement(c, elementFilter)) continue;
 					if (costFilter != -1 && c.cost() != costFilter) continue;
 					count++;
 				}
@@ -6623,7 +6627,7 @@ final class GameContextImpl implements GameContext {
 					if (!mw.meetsJobFilterEffective(c, jobFilter)) continue;
 					if (!meetsCardNameFilter(c, cardNameFilter)) continue;
 					if (!meetsCategoryFilter(c, categoryFilter)) continue;
-					if (elementFilter != null && !c.containsElement(elementFilter)) continue;
+					if (elementFilter != null && !mw.effectiveContainsElement(c, elementFilter)) continue;
 					if (costFilter != -1 && c.cost() != costFilter) continue;
 					count++;
 				}
@@ -6712,7 +6716,7 @@ final class GameContextImpl implements GameContext {
 					if (!mw.meetsJobFilterEffective(c, jobFilter)) continue;
 					if (!meetsCardNameFilter(c, cardNameFilter)) continue;
 					if (!meetsCategoryFilter(c, categoryFilter)) continue;
-					if (elementFilter != null && !c.containsElement(elementFilter)) continue;
+					if (elementFilter != null && !mw.effectiveContainsElement(c, elementFilter)) continue;
 					if (costFilter != -1 && c.cost() != costFilter) continue;
 					count++;
 				}
@@ -6721,7 +6725,7 @@ final class GameContextImpl implements GameContext {
 					if (!mw.meetsJobFilterEffective(c, jobFilter)) continue;
 					if (!meetsCardNameFilter(c, cardNameFilter)) continue;
 					if (!meetsCategoryFilter(c, categoryFilter)) continue;
-					if (elementFilter != null && !c.containsElement(elementFilter)) continue;
+					if (elementFilter != null && !mw.effectiveContainsElement(c, elementFilter)) continue;
 					if (costFilter != -1 && c.cost() != costFilter) continue;
 					count++;
 				}
@@ -6729,7 +6733,7 @@ final class GameContextImpl implements GameContext {
 					if (!mw.meetsJobFilterEffective(c, jobFilter)) continue;
 					if (!meetsCardNameFilter(c, cardNameFilter)) continue;
 					if (!meetsCategoryFilter(c, categoryFilter)) continue;
-					if (elementFilter != null && !c.containsElement(elementFilter)) continue;
+					if (elementFilter != null && !mw.effectiveContainsElement(c, elementFilter)) continue;
 					if (costFilter != -1 && c.cost() != costFilter) continue;
 					count++;
 				}
@@ -6867,9 +6871,9 @@ final class GameContextImpl implements GameContext {
 				CardData[]     bkps = isP1 ? mw.p1BackupCards  : mw.p2BackupCards;
 				List<CardData> mons = isP1 ? mw.p1MonsterCards : mw.p2MonsterCards;
 				int count = 0;
-				if (inclForwards) for (CardData c : fwds) if (element == null || c.containsElement(element)) count++;
-				if (inclBackups)  for (CardData c : bkps) if (c != null && (element == null || c.containsElement(element))) count++;
-				if (inclMonsters) for (CardData c : mons) if (element == null || c.containsElement(element)) count++;
+				if (inclForwards) for (CardData c : fwds) if (element == null || mw.effectiveContainsElement(c, element)) count++;
+				if (inclBackups)  for (CardData c : bkps) if (c != null && (element == null || mw.effectiveContainsElement(c, element))) count++;
+				if (inclMonsters) for (CardData c : mons) if (element == null || mw.effectiveContainsElement(c, element)) count++;
 				return count;
 			}
 

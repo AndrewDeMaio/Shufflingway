@@ -17270,4 +17270,269 @@ public class CardBehaviorTest {
 		verify(ctx).nullifyNamedCardDamageByElement("Hein", "Wind");
 		verify(ctx, never()).shieldNamedCardCannotBeChosenByAnySummon(anyString());
 	}
+
+	// =========================================================================================
+	// Threshold self-grants that read something other than the board's card counts.
+	//
+	// Galuf 3-077H  "If you have 4 or more cards in your hand, Galuf gains +2000 power."
+	//               "If you have 5 or more cards in your hand, Galuf gains Brave."
+	// Kefka 3-079H  "If you control 3 or more different Element Backups, Kefka gains +3000 power."
+	//               "If you control 5 or more different Element Backups, Kefka gains Brave."
+	//
+	// Both print one line per threshold, so each card carries two independent IfControlBoosts that
+	// switch on at different points — the power one alone between the thresholds, both above.
+	//
+	// IfControlBoost already had a hand-size condition, but only as a ceiling ("N cards or less",
+	// Zidane-style); Galuf's is a floor and the comparison runs the other way, so it needed its
+	// own field rather than a reused one. Kefka counts DISTINCT Elements among his Backups, which
+	// is not the same question as the count of Backups that share no Element (the condition next
+	// to it): two Fire Backups and an Ice one are 3 Backups but only 2 Elements.
+	// =========================================================================================
+
+	private static final String GALUF_3_077H_TEXT =
+			"If you have 4 or more cards in your hand, Galuf gains +2000 power.[[br]]"
+			+ "If you have 5 or more cards in your hand, Galuf gains Brave.";
+	private static final String KEFKA_3_079H_TEXT =
+			"If you control 3 or more different Element Backups, Kefka gains +3000 power.[[br]]"
+			+ "If you control 5 or more different Element Backups, Kefka gains Brave.";
+
+	/** Puts {@code n} throwaway cards into P1's hand. */
+	private static void fillP1Hand(MainWindow mw, int n) {
+		mw.gameState.getP1Hand().clear();
+		for (int i = 0; i < n; i++) mw.gameState.getP1Hand().add(makeForward("Card" + i, "Fire", 1, 1000));
+	}
+
+	@Test
+	void galufsTwoLinesParseAsSeparateHandSizeFloors() {
+		List<IfControlBoost> boosts = CardData.parseIfControlBoosts(GALUF_3_077H_TEXT, "Forward");
+
+		assertEquals(2, boosts.size(), "one grant per printed threshold");
+		assertEquals(4, boosts.get(0).minOwnHandSize());
+		assertEquals(2000, boosts.get(0).powerBonus());
+		assertEquals(5, boosts.get(1).minOwnHandSize());
+		assertTrue(boosts.get(1).grantedTraits().contains(CardData.Trait.BRAVE));
+		assertEquals(0, boosts.get(0).maxOwnHandSize(),
+				"the ceiling condition is a different field; reusing it would invert the test");
+	}
+
+	@Test
+	void galufsGrantsSwitchOnAtTheirOwnThresholds() {
+		MainWindow mw = new MainWindow();
+		List<IfControlBoost> boosts = CardData.parseIfControlBoosts(GALUF_3_077H_TEXT, "Forward");
+		IfControlBoost power = boosts.get(0), brave = boosts.get(1);
+
+		fillP1Hand(mw, 3);
+		assertFalse(mw.icbConditionsMet(power, true), "3 cards is below both thresholds");
+		assertFalse(mw.icbConditionsMet(brave, true));
+
+		fillP1Hand(mw, 4);
+		assertTrue(mw.icbConditionsMet(power, true), "+2000 power at 4");
+		assertFalse(mw.icbConditionsMet(brave, true), "but not Brave yet");
+
+		fillP1Hand(mw, 5);
+		assertTrue(mw.icbConditionsMet(power, true), "both hold at 5");
+		assertTrue(mw.icbConditionsMet(brave, true));
+	}
+
+	@Test
+	void kefkaCountsDistinctElementsNotBackups() {
+		MainWindow mw = new MainWindow();
+		List<IfControlBoost> boosts = CardData.parseIfControlBoosts(KEFKA_3_079H_TEXT, "Forward");
+		assertEquals(2, boosts.size());
+		IfControlBoost power = boosts.get(0);
+		assertEquals(3, power.minDifferentElementBackups());
+		assertEquals(3000, power.powerBonus());
+
+		mw.p1BackupCards[0] = makeJobCard("Fire A", "Fire", "Backup", "Soldier");
+		mw.p1BackupCards[1] = makeJobCard("Fire B", "Fire", "Backup", "Soldier");
+		mw.p1BackupCards[2] = makeJobCard("Ice A",  "Ice",  "Backup", "Soldier");
+		assertFalse(mw.icbConditionsMet(power, true),
+				"three Backups, but only two Elements between them");
+
+		mw.p1BackupCards[3] = makeJobCard("Wind A", "Wind", "Backup", "Soldier");
+		assertTrue(mw.icbConditionsMet(power, true), "Fire, Ice and Wind is three Elements");
+	}
+
+	@Test
+	void aMultiElementBackupCountsForEachElementItCarries() {
+		MainWindow mw = new MainWindow();
+		IfControlBoost power = CardData.parseIfControlBoosts(KEFKA_3_079H_TEXT, "Forward").get(0);
+
+		mw.p1BackupCards[0] = makeJobCard("Fire A", "Fire",     "Backup", "Soldier");
+		mw.p1BackupCards[1] = makeJobCard("Dual",   "Ice/Wind", "Backup", "Soldier");
+
+		assertTrue(mw.icbConditionsMet(power, true), "Fire + Ice + Wind across two Backups");
+	}
+
+	// =========================================================================================
+	// Kimahri 1-103C: "Kimahri gains Elements of all the Characters opponent controls except
+	// Light and Dark."
+	//
+	// Unlike "[Name] has all the Elements except X", which names a fixed set once and for all,
+	// this is a standing query over the other side of the board — the Elements it grants change
+	// as the opponent's Characters come and go. So it cannot be answered on the card, and instead
+	// widens MainWindow's effectiveElements, which is what board-aware Element comparisons
+	// already go through.
+	// =========================================================================================
+
+	private static final String KIMAHRI_1_103C_TEXT =
+			"Kimahri gains Elements of all the Characters opponent controls except Light and Dark.";
+
+	/** Kimahri as printed: an Earth Backup whose only text is the Element-gaining ability. */
+	private static CardData kimahri() {
+		return new CardData(null, "Kimahri", "Earth", 2, 0, "Backup", false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				List.of(), List.of(),
+				CardData.parseFieldAbilities(KIMAHRI_1_103C_TEXT, "Backup"),
+				List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				null, null, null, KIMAHRI_1_103C_TEXT);
+	}
+
+	@Test
+	void theExclusionListIsReadOffKimahriAndOnlyWhenHeNamesHimself() {
+		assertEquals(Set.of("Light", "Dark"), kimahri().gainsOpponentCharacterElementsExcept());
+		assertNull(makeForwardWithText("Kiros", "Earth", 3, 7000, KIMAHRI_1_103C_TEXT)
+						.gainsOpponentCharacterElementsExcept(),
+				"the sentence is about Kimahri, not about whoever quotes it");
+	}
+
+	@Test
+	void kimahriGainsTheElementsFacingHimAndNoOthers() {
+		MainWindow mw = new MainWindow();
+		CardData kim = kimahri();
+		mw.placeCardInFirstBackupSlot(kim);
+		placeP2Forward(mw, makeForward("Squall", "Ice", 4, 8000));
+		placeP2Forward(mw, makeForward("Cloud", "Fire", 4, 8000));
+
+		assertTrue(mw.effectiveContainsElement(kim, "Earth"), "his printed Element stays");
+		assertTrue(mw.effectiveContainsElement(kim, "Ice"));
+		assertTrue(mw.effectiveContainsElement(kim, "Fire"));
+		assertFalse(mw.effectiveContainsElement(kim, "Water"), "nobody facing him is Water");
+	}
+
+	@Test
+	void theExcludedElementsAreNeverGained() {
+		MainWindow mw = new MainWindow();
+		CardData kim = kimahri();
+		mw.placeCardInFirstBackupSlot(kim);
+		placeP2Forward(mw, makeForward("Cecil", "Light", 5, 9000));
+		placeP2Forward(mw, makeForward("Golbez", "Dark", 5, 9000));
+
+		assertFalse(mw.effectiveContainsElement(kim, "Light"));
+		assertFalse(mw.effectiveContainsElement(kim, "Dark"));
+		assertEquals(List.of("Earth"), mw.effectiveElements(kim),
+				"an opposing board of only Light and Dark leaves him as printed");
+	}
+
+	@Test
+	void hisOwnSideContributesNothing() {
+		MainWindow mw = new MainWindow();
+		CardData kim = kimahri();
+		mw.placeCardInFirstBackupSlot(kim);
+		placeP1Forward(mw, makeForward("Ally", "Wind", 3, 7000));
+
+		assertFalse(mw.effectiveContainsElement(kim, "Wind"),
+				"the ability reads the Characters the opponent controls");
+	}
+
+	@Test
+	void theGainTracksTheOpposingBoardRatherThanBeingFixedOnce() {
+		MainWindow mw = new MainWindow();
+		CardData kim = kimahri();
+		mw.placeCardInFirstBackupSlot(kim);
+		assertFalse(mw.effectiveContainsElement(kim, "Ice"), "empty board opposite him");
+
+		CardData squall = makeForward("Squall", "Ice", 4, 8000);
+		placeP2Forward(mw, squall);
+		assertTrue(mw.effectiveContainsElement(kim, "Ice"));
+
+		mw.buildGameContext(false).breakTarget(new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD));
+		assertFalse(mw.effectiveContainsElement(kim, "Ice"),
+				"the Element leaves with the Character that supplied it");
+	}
+
+	// =========================================================================================
+	// The gained Elements reaching the rest of the engine.
+	//
+	// effectiveContainsElement is only worth having if the Element-sensitive rules consult it, so
+	// every field-card Element check now routes through it — targeting, counting, mass effects,
+	// grants, and a Backup's CP production. What deliberately still reads printed Elements is
+	// every card NOT on the field: hand, deck, Break Zone and removed-from-game. Kimahri gains
+	// Elements while he is on the field, so a card sitting in a Break Zone has nothing to gain.
+	// =========================================================================================
+
+	/** Kimahri on P1's Backup row, with {@code oppElements} worth of Characters facing him. */
+	private static MainWindow boardWithKimahriFacing(String... oppElements) {
+		MainWindow mw = new MainWindow();
+		mw.p1BackupCards[0] = kimahri();
+		for (String e : oppElements) placeP2Forward(mw, makeForward("Opp " + e, e, 3, 7000));
+		return mw;
+	}
+
+	@Test
+	void aGainedElementCountsTowardFieldCounts() {
+		MainWindow mw = boardWithKimahriFacing("Ice");
+		GameContext ctx = mw.buildGameContext(true);
+
+		assertEquals(1, ctx.countP1FieldCards(false, true, false, null, null, null, "Ice"),
+				"Kimahri counts as an Ice Backup while an Ice Character faces him");
+		assertEquals(1, ctx.countP1FieldCards(false, true, false, null, null, null, "Earth"),
+				"and still as the Earth Backup he is printed as");
+		assertEquals(0, ctx.countP1FieldCards(false, true, false, null, null, null, "Water"));
+	}
+
+	@Test
+	void aGainedElementCountsForSelfFieldCount() {
+		MainWindow mw = boardWithKimahriFacing("Wind");
+		GameContext ctx = mw.buildGameContext(true);
+
+		assertEquals(1, ctx.selfFieldCount("Wind", false, true, false));
+		assertEquals(0, ctx.selfFieldCount("Fire", false, true, false));
+	}
+
+	@Test
+	void aGainedElementSatisfiesAnIfYouControlCondition() {
+		MainWindow mw = boardWithKimahriFacing("Lightning");
+		ControlCondition lightningBackup = new ControlCondition(
+				List.of(), 1, false, "Backup", "Lightning", null, null, 0, List.of());
+
+		assertTrue(mw.controlConditionMet(lightningBackup, true),
+				"\"if you control a Lightning Backup\" reads what he counts as now");
+	}
+
+	@Test
+	void aGainedElementLetsHimProduceThatCpElement() {
+		// A Backup produces CP of its Elements, and a gained Element is one of its Elements.
+		MainWindow mw = boardWithKimahriFacing("Ice");
+		CardData iceCard = makeForward("Shiva's Pupil", "Ice", 1, 5000);
+		mw.gameState.getP1Hand().add(iceCard);
+		mw.p1BackupStates[0] = CardState.ACTIVE;
+
+		assertTrue(mw.canAffordCard(iceCard, 0),
+				"the only CP source is Kimahri, and he counts as Ice while an Ice Character faces him");
+	}
+
+	@Test
+	void withoutTheGainHeCannotPayForThatElement() {
+		MainWindow mw = new MainWindow();
+		mw.p1BackupCards[0] = kimahri();
+		mw.p1BackupStates[0] = CardState.ACTIVE;
+		CardData iceCard = makeForward("Shiva's Pupil", "Ice", 1, 5000);
+		mw.gameState.getP1Hand().add(iceCard);
+
+		assertFalse(mw.canAffordCard(iceCard, 0),
+				"nothing faces him, so he is the Earth Backup he is printed as");
+	}
+
+	@Test
+	void aCardInTheBreakZoneGainsNothing() {
+		MainWindow mw = boardWithKimahriFacing("Ice");
+		CardData buried = kimahri();
+		mw.gameState.getP1BreakZone().add(buried);
+
+		assertFalse(mw.effectiveContainsElement(buried, "Ice"),
+				"the ability works while he is on the field; a Break Zone copy controls nothing");
+		assertTrue(mw.effectiveContainsElement(buried, "Earth"));
+	}
 }

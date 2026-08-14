@@ -32,12 +32,12 @@ final class ActionResolverSearch {
             List<ForwardTarget> toRemove = new ArrayList<>();
             for (int i = 0; i < ctx.p1ForwardCount(); i++) {
                 CardData fwd = ctx.p1Forward(i);
-                if (!fwd.containsElement(elem1) && !fwd.containsElement(elem2))
+                if (!ctx.fieldCardHasElement(fwd, elem1) && !ctx.fieldCardHasElement(fwd, elem2))
                     toRemove.add(new ForwardTarget(true, i, ForwardTarget.CardZone.FORWARD));
             }
             for (int i = 0; i < ctx.p2ForwardCount(); i++) {
                 CardData fwd = ctx.p2Forward(i);
-                if (!fwd.containsElement(elem1) && !fwd.containsElement(elem2))
+                if (!ctx.fieldCardHasElement(fwd, elem1) && !ctx.fieldCardHasElement(fwd, elem2))
                     toRemove.add(new ForwardTarget(false, i, ForwardTarget.CardZone.FORWARD));
             }
             sortedByIdxDesc(toRemove, true) .forEach(ctx::removeTargetFromGame);
