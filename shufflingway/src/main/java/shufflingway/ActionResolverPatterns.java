@@ -2384,10 +2384,18 @@ final class ActionResolverPatterns {
      * "[CardName] cannot be chosen by Summons [during this turn]." — no "your opponent's" qualifier,
      * meaning the protection applies to Summons from either player.
      * Only matches when {@code cardName} equals the {@code source} card's name.
+     *
+     * <p>The trailing lookahead is what keeps this to the unqualified printing. Matching with
+     * {@code find()}, the pattern used to end at "Summons" and ignore whatever qualified it, so it
+     * claimed every longer sentence sharing that prefix and replaced the real effect with a blanket
+     * any-Summon shield: Kam'lanaut 5-148H's "…or abilities that share its Element" became immunity
+     * to all Summons, and Rubicante 2-023H's and Hein 10-129L's "Name 1 Element" effects were
+     * swallowed whole, never reaching the parsers below that read them. Requiring the sentence to
+     * end here sends each of those on to its own branch.
      */
     static final Pattern STANDALONE_NAMED_CANNOT_BE_CHOSEN_ANY_SUMMON = Pattern.compile(
         "(?i)(?<name>[A-Z][A-Za-z''\\-\\s]+?)\\s+cannot\\s+be\\s+chosen\\s+by\\s+(?!your\\s)Summons?" +
-        "(?:\\s+during\\s+this\\s+turn)?\\s*\\.?"
+        "(?:\\s+during\\s+this\\s+turn)?\\s*(?=[.!\"]|$)"
     );
     /**
      * "Name 1 Element. During this turn, [CardName] cannot be chosen by Summons or abilities of the named
@@ -2424,6 +2432,21 @@ final class ActionResolverPatterns {
      */
     static final Pattern STANDALONE_NAMED_CANNOT_BE_CHOSEN_BY_OWN_ELEMENT = Pattern.compile(
         "(?i)(?<name>[A-Z][A-Za-z''\\-\\s]+?)\\s+cannot\\s+be\\s+chosen\\s+by\\s+Summons?\\s+or\\s+abilities\\s+that\\s+share\\s+its\\s+Element\\s*\\.?"
+    );
+    /**
+     * "[CardName] cannot be chosen by a Multi-Element Forward's ability." (Kam'lanaut 18-072C.)
+     *
+     * <p>Passive field ability, and the narrowest immunity in the family: it reads the resolving
+     * card rather than the target, and both halves of that reading matter — the source must be a
+     * Forward and must carry more than one Element. A Summon is not a Forward, so it is never
+     * blocked here no matter how many Elements it has.
+     *
+     * <p>No player is named, so the shield binds whoever is choosing, the card's own controller
+     * included.
+     */
+    static final Pattern STANDALONE_NAMED_CANNOT_BE_CHOSEN_BY_MULTI_ELEMENT_FORWARD = Pattern.compile(
+        "(?i)(?<name>[A-Z][A-Za-z''\\-\\s]+?)\\s+cannot\\s+be\\s+chosen\\s+by\\s+" +
+        "a\\s+Multi-Element\\s+Forward(?:'s|s')\\s+abilit(?:y|ies)\\s*\\.?"
     );
     /**
      * "The Job X [other than Y] Forwards/Characters you control cannot be chosen by

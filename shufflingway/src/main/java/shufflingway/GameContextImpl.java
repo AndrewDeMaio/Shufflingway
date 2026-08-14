@@ -793,6 +793,11 @@ final class GameContextImpl implements GameContext {
 								String ce = mw.effectiveElement(c);
 								if (ce != null && resElems.contains(ce)) { sumTmp.add(c); ablTmp.add(c); }
 							}
+							// Ability-only by construction: the source test rejects a Summon outright,
+							// so this seeds the ability set alone.
+							if (ActionResolver.hasCannotBeChosenByMultiElementForwardAbility(c)
+									&& mw.isMultiElementForwardAbilitySource(resCard, mw.currentResolutionIsSummon))
+								ablTmp.add(c);
 							if (mw.icbGrantsImmunity(c.name(), p1side, true,  false)) sumTmp.add(c);
 							if (mw.icbGrantsImmunity(c.name(), p1side, false, false)) ablTmp.add(c);
 							if (mw.icbGrantsImmunity(c.name(), p1side, true,  true))  sumOpp.add(c);

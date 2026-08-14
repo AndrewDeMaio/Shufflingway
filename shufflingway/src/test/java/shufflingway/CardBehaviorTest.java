@@ -12,6 +12,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
+import java.util.regex.Matcher;
 
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -17050,5 +17051,223 @@ public class CardBehaviorTest {
 		mw.buildGameContext(false).breakTarget(p1Backup(0));
 
 		assertNull(mw.p1BackupCards[0], "the guard is scoped to the printed trait");
+	}
+
+	// =========================================================================================
+	// Kam'lanaut 18-072C: "Kam'lanaut cannot be chosen by a Multi-Element Forward's ability."
+	//
+	// The narrowest immunity in the family, and the only one that reads the card doing the
+	// choosing rather than the card being chosen. Both halves of "Multi-Element Forward" are
+	// load-bearing: a Summon is not a Forward, so it is never caught however many Elements it
+	// carries, and a single-Element Forward's ability is ordinary.
+	//
+	// No player is named, so — like "cannot be chosen by Summons" and unlike the "by your
+	// opponent's ..." printings — it also stops Kam'lanaut's own controller.
+	// =========================================================================================
+
+	private static final String KAMLANAUT_18_072C_IMMUNITY =
+			"Kam'lanaut cannot be chosen by a Multi-Element Forward's ability.";
+
+	private static CardData kamlanaut() {
+		return makeForwardWithText("Kam'lanaut", "Light", 4, 8000, KAMLANAUT_18_072C_IMMUNITY);
+	}
+
+	@Test
+	void theImmunityIsReadOffKamlanautAndOnlyWhenItNamesHim() {
+		assertTrue(ActionResolver.hasCannotBeChosenByMultiElementForwardAbility(kamlanaut()));
+		assertFalse(ActionResolver.hasCannotBeChosenByMultiElementForwardAbility(
+						makeForwardWithText("Eald'narche", "Light", 4, 8000, KAMLANAUT_18_072C_IMMUNITY)),
+				"the sentence is a statement about Kam'lanaut, not about whoever quotes it");
+	}
+
+	@Test
+	void onlyAMultiElementForwardsAbilityIsBlocked() {
+		MainWindow mw = new MainWindow();
+		CardData kam = kamlanaut();
+		placeP1Forward(mw, kam);
+
+		CardData multiFwd  = makeForward("Y'shtola", "Wind/Water", 4, 8000);
+		CardData singleFwd = makeForward("Vaan", "Wind", 3, 7000);
+		CardData multiSum  = makeSummon("Ragnarok", "Fire/Ice", 3, "");
+
+		assertTrue(mw.isProtectedFromChoice(kam, true, false, false, multiFwd),
+				"a Multi-Element Forward's ability cannot choose him");
+		assertFalse(mw.isProtectedFromChoice(kam, true, false, false, singleFwd),
+				"one Element is not Multi-Element");
+		assertFalse(mw.isProtectedFromChoice(kam, true, false, true, multiSum),
+				"a Summon is not a Forward, whatever its Elements");
+		assertFalse(mw.isProtectedFromChoice(kam, true, false, false, null),
+				"an unknown source cannot be shown to be one");
+	}
+
+	@Test
+	void theImmunityBindsKamlanautsOwnControllerToo() {
+		MainWindow mw = new MainWindow();
+		CardData kam = kamlanaut();
+		placeP1Forward(mw, kam);
+		CardData multiFwd = makeForward("Y'shtola", "Wind/Water", 4, 8000);
+
+		assertTrue(mw.isProtectedFromChoice(kam, true, true, false, multiFwd),
+				"no player is named, so the shield is symmetric");
+	}
+
+	@Test
+	void anElementOverrideOnTheSourceIsWhatCounts() {
+		// The Element a card has now, not the one it was printed with — the same reading the
+		// share-its-Element immunity beside this one uses.
+		MainWindow mw = new MainWindow();
+		CardData kam = kamlanaut();
+		placeP1Forward(mw, kam);
+		CardData multiFwd = makeForward("Y'shtola", "Wind/Water", 4, 8000);
+
+		mw.elementOverrideMap.put(multiFwd, "Wind");
+
+		assertFalse(mw.isProtectedFromChoice(kam, true, false, false, multiFwd),
+				"an effect has made it single-Element, so its ability chooses freely");
+	}
+
+	// =========================================================================================
+	// King 9-010R: "You can discard 1 Job Class Zero Cadet (instead of paying the CP cost) to
+	// play King from your hand onto the field."
+	//
+	// The discard alt cost already existed for False Hero 18-087C's "… to cast False Hero", but
+	// two things kept King's from working. His tail is the "play … from your hand onto the field"
+	// wording, which the pattern did not carry; and the entry was only ever looked for on cards
+	// already on the field. Both corpus printings put the sentence on the card the cost buys —
+	// which is in hand at the moment it matters, so the field scan could never see it. False
+	// Hero's cost parsed and was reported as recognized, but was never actually offered.
+	// =========================================================================================
+
+	private static final String KING_9_010R_ALT_COST =
+			"You can discard 1 Job Class Zero Cadet (instead of paying the CP cost) "
+			+ "to play King from your hand onto the field.";
+	private static final String FALSE_HERO_18_087C_ALT_COST =
+			"You can discard 1 Job Manikin (instead of paying the CP cost) to cast False Hero.";
+
+	@Test
+	void bothTailsOfTheDiscardAltCostNameTheirCard() {
+		Matcher king = AutoAbilityTriggers.FA_DISCARD_JOB_TO_CAST.matcher(KING_9_010R_ALT_COST);
+		assertTrue(king.find(), "the \"play … from your hand onto the field\" tail used to miss entirely");
+		assertEquals("King", AutoAbilityTriggers.discardJobToCastTarget(king),
+				"the name stops before \"from your hand\"");
+		assertEquals("1", king.group("count"));
+		assertEquals("Class Zero Cadet", king.group("job").trim());
+
+		Matcher falseHero = AutoAbilityTriggers.FA_DISCARD_JOB_TO_CAST.matcher(FALSE_HERO_18_087C_ALT_COST);
+		assertTrue(falseHero.find(), "and the original \"to cast\" tail still matches");
+		assertEquals("False Hero", AutoAbilityTriggers.discardJobToCastTarget(falseHero));
+		assertEquals("Manikin", falseHero.group("job").trim());
+	}
+
+	@Test
+	void kingsOwnPrintingIsFoundWhileHeSitsInHand() {
+		MainWindow mw = new MainWindow();
+		CardData king = makeForwardWithText("King", "Fire", 5, 8000, KING_9_010R_ALT_COST);
+		mw.gameState.getP1Hand().add(king);
+
+		assertEquals(1, mw.findDiscardCastGrants(king, true).size(),
+				"the cost is printed on King himself, and the field scan cannot see a card in hand");
+	}
+
+	@Test
+	void aDiscardCostPrintedAboutSomebodyElseIsNotOffered() {
+		MainWindow mw = new MainWindow();
+		CardData other = makeForwardWithText("Ace", "Fire", 4, 7000, KING_9_010R_ALT_COST);
+		mw.gameState.getP1Hand().add(other);
+
+		assertTrue(mw.findDiscardCastGrants(other, true).isEmpty(),
+				"the sentence buys King, not whoever is holding it");
+	}
+
+	// =========================================================================================
+	// The any-Summon shield's find() over-run.
+	//
+	// STANDALONE_NAMED_CANNOT_BE_CHOSEN_ANY_SUMMON ended at "Summons" and matched with find(), so
+	// it claimed every longer sentence beginning that way and installed a blanket any-Summon
+	// shield in place of the real effect. Three cards were affected, and in each the substitution
+	// was silent — the printed qualifier simply vanished:
+	//
+	//   Kam'lanaut 5-148H  "…or abilities that share its Element"  → immune to ALL Summons
+	//   Rubicante  2-023H  "Name 1 Element. …of the named Element" → never reached its own parser
+	//   Hein      10-129L  same, plus a damage nullification half  → likewise
+	//
+	// Requiring the sentence to end at "Summons" sends each on to the branch that reads it. The
+	// characterization file could not catch this: every branch of tryParseCannotBeChosenStandalone
+	// reports the one label "CannotBeChosen", so the description never moved while the effect did.
+	// Hence the assertions below are on what the parsed effect calls, not on what it is named.
+	// =========================================================================================
+
+	private static final String KAMLANAUT_5_148H_SHARED_ELEMENT =
+			"Kam'lanaut cannot be chosen by Summons or abilities that share its Element.";
+	private static final String RUBICANTE_2_023H_BARRIER_SHIFT =
+			"[[s]]Barrier Shift[[/]] 《S》《Fire》: Name 1 Element. "
+			+ "Rubicante cannot be chosen by Summons or abilities of the named Element this turn.";
+	private static final String HEIN_10_129L_NAME_ELEMENT =
+			"Discard 1 card: Name 1 Element. During this turn, Hein cannot be chosen by Summons or "
+			+ "abilities of the named Element and if Hein is dealt damage by a Summon or an ability "
+			+ "of the named Element, the damage becomes 0 instead.";
+
+	@Test
+	void theUnqualifiedShieldStillMatchesTheCardsThatPrintIt() {
+		// The four clean printings in the corpus, which the tightened tail must not disturb.
+		assertTrue(ActionResolver.hasCannotBeChosenByAnySummonFieldAbility(
+				makeForwardWithText("Belgemine", "Water", 4, 8000,
+						"Belgemine cannot be chosen by Summons.")));
+		assertTrue(ActionResolver.hasCannotBeChosenByAnySummonFieldAbility(
+				makeForwardWithText("Mecha Chocobo", "Wind", 3, 7000,
+						"Mecha Chocobo cannot be chosen by Summons.")));
+	}
+
+	@Test
+	void kamlanautIsOnlyImmuneToSummonsSharingHisElement() {
+		CardData kam = makeForwardWithText("Kam'lanaut", "Dark", 5, 9000, KAMLANAUT_5_148H_SHARED_ELEMENT);
+
+		assertFalse(ActionResolver.hasCannotBeChosenByAnySummonFieldAbility(kam),
+				"the blanket shield was the bug: his printing qualifies which Summons");
+		assertTrue(ActionResolver.hasCannotBeChosenByOwnElementFieldAbility(kam));
+
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, kam);
+
+		assertTrue(mw.isProtectedFromChoice(kam, true, false, true, makeSummon("Bahamut", "Dark", 5, "")),
+				"a Dark Summon shares his Element");
+		assertFalse(mw.isProtectedFromChoice(kam, true, false, true, makeSummon("Ifrit", "Fire", 3, "")),
+				"a Fire Summon does not, and used to be blocked anyway");
+		assertTrue(mw.isProtectedFromChoice(kam, true, false, false,
+						makeForward("Dark Knight", "Dark", 4, 8000)),
+				"\"Summons or abilities\" — a Dark ability is caught too");
+	}
+
+	@Test
+	void rubicanteReachesHisOwnNameAnElementParser() {
+		CardData rubicante = makeForwardWithText("Rubicante", "Fire", 5, 9000, RUBICANTE_2_023H_BARRIER_SHIFT);
+		String effect = rubicante.actionAbilities().get(0).effectText();
+
+		Consumer<GameContext> fn = ActionResolver.parse(effect, rubicante);
+		assertNotNull(fn);
+
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.selectElement(anyString())).thenReturn("Ice");
+		fn.accept(ctx);
+
+		verify(ctx).shieldNamedCardCannotBeChosenByElement("Rubicante", "Ice");
+		verify(ctx, never()).shieldNamedCardCannotBeChosenByAnySummon(anyString());
+	}
+
+	@Test
+	void heinKeepsBothHalvesOfHisNamedElementEffect() {
+		CardData hein = makeForwardWithText("Hein", "Dark", 4, 8000, HEIN_10_129L_NAME_ELEMENT);
+		String effect = hein.actionAbilities().get(0).effectText();
+
+		Consumer<GameContext> fn = ActionResolver.parse(effect, hein);
+		assertNotNull(fn);
+
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.selectElement(anyString())).thenReturn("Wind");
+		fn.accept(ctx);
+
+		verify(ctx).shieldNamedCardCannotBeChosenByElement("Hein", "Wind");
+		verify(ctx).nullifyNamedCardDamageByElement("Hein", "Wind");
+		verify(ctx, never()).shieldNamedCardCannotBeChosenByAnySummon(anyString());
 	}
 }

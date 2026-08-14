@@ -6589,7 +6589,7 @@ public class MainWindow {
 			menu.add(altItem);
 		}
 
-		for (FieldDiscardCastEntry grant : findFieldDiscardCastGrants(card.name(), true)) {
+		for (FieldDiscardCastEntry grant : findDiscardCastGrants(card, true)) {
 			JMenuItem dItem = new JMenuItem("Play (Discard " + grant.count() + " Job " + grant.job() + ")");
 			dItem.setEnabled(canPlaySpecialAction && !nameConflict && !lightDarkConflict
 					&& hasEligibleJobInHand(grant.job(), handIdx, grant.count())
@@ -8065,25 +8065,37 @@ public class MainWindow {
 	}
 
 	/** Carries a field-granted "discard N Job X to cast [CardName]" alt cost entry. */
-	private record FieldDiscardCastEntry(int count, String job) {}
+	record FieldDiscardCastEntry(int count, String job) {}
 
-	/** Returns field-granted discard-cast entries for {@code targetCardName} playable by {@code isP1}. */
-	private List<FieldDiscardCastEntry> findFieldDiscardCastGrants(String targetCardName, boolean isP1) {
+	/**
+	 * Discard-cast entries that would let {@code isP1} play {@code card} by discarding instead of
+	 * paying its cost.
+	 *
+	 * <p>Two sources, because the sentence appears in both places. A card on the field can grant it
+	 * to a card named in its text, and a card can print it about itself — which is what both corpus
+	 * printings do (False Hero 18-087C, King 9-010R). The self case has to be read off {@code card}
+	 * directly: it is sitting in hand while this runs, so the field scan cannot see it, and the
+	 * cost parsed but was never offered.
+	 */
+	List<FieldDiscardCastEntry> findDiscardCastGrants(CardData card, boolean isP1) {
 		List<FieldDiscardCastEntry> result = new ArrayList<>();
+		addDiscardCastGrants(card, card.name(), result);
 		List<CardData> fwds = isP1 ? p1ForwardCards : p2ForwardCards;
 		CardData[]     bkps = isP1 ? p1BackupCards  : p2BackupCards;
 		List<CardData> mons = isP1 ? p1MonsterCards : p2MonsterCards;
-		for (CardData src : fwds)                   addDiscardCastGrants(src, targetCardName, result);
-		for (CardData bkp : bkps) if (bkp != null) addDiscardCastGrants(bkp, targetCardName, result);
-		for (CardData src : mons)                   addDiscardCastGrants(src, targetCardName, result);
+		for (CardData src : fwds)                   addDiscardCastGrants(src, card.name(), result);
+		for (CardData bkp : bkps) if (bkp != null) addDiscardCastGrants(bkp, card.name(), result);
+		for (CardData src : mons)                   addDiscardCastGrants(src, card.name(), result);
 		return result;
 	}
 
 	private void addDiscardCastGrants(CardData src, String targetCardName, List<FieldDiscardCastEntry> out) {
 		if (lostAbilitiesCards.contains(src)) return;
 		for (FieldAbility fa : src.fieldAbilities()) {
-			java.util.regex.Matcher m = AutoAbilityTriggers.FA_DISCARD_JOB_TO_CAST.matcher(fa.effectText());
-			if (m.find() && m.group("target").trim().equalsIgnoreCase(targetCardName))
+			Matcher m = AutoAbilityTriggers.FA_DISCARD_JOB_TO_CAST.matcher(fa.effectText());
+			if (!m.find()) continue;
+			String target = AutoAbilityTriggers.discardJobToCastTarget(m);
+			if (target != null && target.equalsIgnoreCase(targetCardName))
 				out.add(new FieldDiscardCastEntry(Integer.parseInt(m.group("count")), m.group("job").trim()));
 		}
 	}
@@ -10015,6 +10027,8 @@ public class MainWindow {
 			String ce = effectiveElement(c);
 			if (ce != null && chooserElems.contains(ce)) return true;
 		}
+		if (ActionResolver.hasCannotBeChosenByMultiElementForwardAbility(c)
+				&& isMultiElementForwardAbilitySource(chooserSource, bySummon)) return true;
 		if (icbGrantsImmunity(c.name(), sideIsP1, bySummon, false)) return true;
 
 		// Opponent-scoped grants: the controller may still choose their own card.
@@ -10022,6 +10036,20 @@ public class MainWindow {
 		if ((bySummon ? cannotBeChosenBySummons : cannotBeChosenByAbilities).contains(c)) return true;
 		if ((bySummon ? permanentCannotBeChosenBySummons : permanentCannotBeChosenByAbilities).contains(c)) return true;
 		return icbGrantsImmunity(c.name(), sideIsP1, bySummon, true);
+	}
+
+	/**
+	 * Whether {@code resolvingCard}'s effect is "a Multi-Element Forward's ability" — the source
+	 * Kam'lanaut 18-072C is immune to.
+	 *
+	 * <p>Both halves of the phrase are load-bearing. A Summon is not a Forward, so it is never
+	 * caught here however many Elements it carries, and a single-Element Forward's ability is
+	 * ordinary. Elements are read through {@link #effectiveElements}, so a card whose Element an
+	 * effect has replaced is judged on what it is now.
+	 */
+	boolean isMultiElementForwardAbilitySource(CardData resolvingCard, boolean bySummon) {
+		return !bySummon && resolvingCard != null && resolvingCard.isForward()
+				&& effectiveElements(resolvingCard).size() > 1;
 	}
 
 	/**

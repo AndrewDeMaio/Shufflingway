@@ -4117,6 +4117,19 @@ public class ActionResolver {
         return false;
     }
 
+    /**
+     * Returns {@code true} if the card has a field ability of the form
+     * "[CardName] cannot be chosen by a Multi-Element Forward's ability."
+     * Whether the immunity applies is decided per resolution, against the resolving card.
+     */
+    static boolean hasCannotBeChosenByMultiElementForwardAbility(CardData card) {
+        for (FieldAbility fa : card.fieldAbilities()) {
+            Matcher m = STANDALONE_NAMED_CANNOT_BE_CHOSEN_BY_MULTI_ELEMENT_FORWARD.matcher(fa.effectText());
+            if (m.find() && m.group("name").trim().equalsIgnoreCase(card.name())) return true;
+        }
+        return false;
+    }
+
     static String cap(String s) {
         if (s == null || s.isEmpty()) return s;
         return Character.toUpperCase(s.charAt(0)) + s.substring(1).toLowerCase();

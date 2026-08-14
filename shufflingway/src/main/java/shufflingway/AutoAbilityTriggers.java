@@ -747,14 +747,30 @@ final class AutoAbilityTriggers {
 
 	/**
 	 * "You can discard N Job [Job] (instead of paying the CP cost) to cast [CardName]."
-	 * Grants the controlling player an alternate cast cost for a named card: discard matching
-	 * cards from hand (no CP generated) instead of paying the normal cost.
+	 * An alternate cast cost for a named card: discard matching cards from hand (no CP generated)
+	 * instead of paying the normal cost.
 	 * Groups: {@code count}, {@code job}, {@code target} (card name to cast).
+	 *
+	 * <p>King 9-010R prints the tail as "to play King from your hand onto the field" rather than
+	 * "to cast King". Same cost, same timing — the only cast a hand card has — so the tail carries
+	 * both. The {@code target} group stops before "from your hand" so the name stays a name.
+	 *
+	 * <p>Both printings in the corpus put this sentence on the card the cost buys, so the entry has
+	 * to be read off the card in hand as well as off the field; see
+	 * {@code MainWindow.findDiscardCastGrants}.
 	 */
 	static final Pattern FA_DISCARD_JOB_TO_CAST = Pattern.compile(
 		"(?i)^You\\s+can\\s+discard\\s+(?<count>\\d+)\\s+Job\\s+(?<job>.+?)\\s+" +
-		"\\(instead\\s+of\\s+paying\\s+the\\s+CP\\s+cost\\)\\s+to\\s+cast\\s+(?<target>.+?)\\s*\\.?$"
+		"\\(instead\\s+of\\s+paying\\s+the\\s+CP\\s+cost\\)\\s+to\\s+" +
+		"(?:cast\\s+(?<target>[^.!]+?)|play\\s+(?<playtarget>[^.!]+?)\\s+from\\s+your\\s+hand\\s+onto\\s+the\\s+field)" +
+		"\\s*\\.?$"
 	);
+
+	/** The card named by {@link #FA_DISCARD_JOB_TO_CAST}, whichever of its two tails matched. */
+	static String discardJobToCastTarget(Matcher m) {
+		String target = m.group("target") != null ? m.group("target") : m.group("playtarget");
+		return target == null ? null : target.trim();
+	}
 
 	/**
 	 * Matches "select [up to] N of the M following actions. "action1" "action2" ..."

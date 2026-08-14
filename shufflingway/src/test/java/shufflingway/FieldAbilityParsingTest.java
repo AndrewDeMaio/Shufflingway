@@ -143,6 +143,15 @@ public class FieldAbilityParsingTest {
         if (AutoAbilityTriggers.FA_OUTGOING_DAMAGE_DOUBLER.matcher(fa.effectText()).find()) return true;
         if (AutoAbilityTriggers.FA_RECV_PLAYER_DAMAGE_ACTIVE_DULL_ZERO.matcher(fa.effectText()).find()) return true;
         if (AutoAbilityTriggers.FA_DISCARD_JOB_TO_CAST.matcher(fa.effectText()).find()) return true;
+        // Read per resolution by isProtectedFromChoice and by selectCharacters' immunity sets;
+        // self-named, exactly as the engine checks it.
+        if (namesItself(ActionResolverPatterns.STANDALONE_NAMED_CANNOT_BE_CHOSEN_BY_MULTI_ELEMENT_FORWARD,
+                fa, source)) return true;
+        // Kam'lanaut 5-148H. Recognised here rather than through ActionResolver because it is a
+        // passive read per resolution, not an effect: the any-Summon parser used to claim it off
+        // its prefix, which is exactly the bug that made it look wired.
+        if (namesItself(ActionResolverPatterns.STANDALONE_NAMED_CANNOT_BE_CHOSEN_BY_OWN_ELEMENT,
+                fa, source)) return true;
         if (ActionResolverFieldAbility.tryParseBeginningOfOppMainPhase1FieldAbility(fa.effectText(), source) != null) return true;
         if (AutoAbilityTriggers.FA_OPPONENT_MUST_BLOCK.matcher(fa.effectText()).find()) return true;
         if (AutoAbilityTriggers.FA_OPPONENT_MUST_CHOOSE.matcher(fa.effectText()).find()) return true;
@@ -266,6 +275,12 @@ public class FieldAbilityParsingTest {
             CardData source) {
         java.util.regex.Matcher m = compulsion.matcher(fa.effectText());
         return m.find() && m.group("card").trim().equalsIgnoreCase(source.name());
+    }
+
+    /** {@link #selfNamedCompulsion} for the patterns that call their card-name group {@code name}. */
+    private static boolean namesItself(java.util.regex.Pattern p, FieldAbility fa, CardData source) {
+        Matcher m = p.matcher(fa.effectText());
+        return m.find() && m.group("name").trim().equalsIgnoreCase(source.name());
     }
 
     static String describeFieldAbility(FieldAbility fa, CardData source, String typeEn) {
@@ -411,6 +426,10 @@ public class FieldAbilityParsingTest {
         if (CardData.parseSelfCannotBeBroken(fa.effectText(), source.name())) return "SelfCannotBeBroken";
         if (CardData.parseSelfCannotLeaveFieldByOpp(fa.effectText(), source.name()))
             return "SelfCannotLeaveFieldByOpp";
+        if (namesItself(ActionResolverPatterns.STANDALONE_NAMED_CANNOT_BE_CHOSEN_BY_MULTI_ELEMENT_FORWARD,
+                fa, source)) return "CannotBeChosenByMultiElementForwardAbility";
+        if (namesItself(ActionResolverPatterns.STANDALONE_NAMED_CANNOT_BE_CHOSEN_BY_OWN_ELEMENT,
+                fa, source)) return "CannotBeChosenBySharedElement";
         if (CardData.parseIfControlNonDmgBreakShield(fa.effectText(), source.name()) != null)
             return "SelfNonDmgBreakShield[if control]";
         if (CardData.parseSelfNonDmgBreakShield(fa.effectText(), source.name()))
