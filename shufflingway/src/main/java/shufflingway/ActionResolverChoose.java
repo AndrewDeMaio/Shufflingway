@@ -3772,6 +3772,35 @@ final class ActionResolverChoose {
         };
     }
     /**
+     * Parses Ardyn 8-068L's "Your opponent selects 1 Character he/she controls. He/she may put it
+     * into the Break Zone. If he/she does so, [Self] cannot block this turn."
+     *
+     * <p>Self-named: the block restriction lands on the card printing the ability, so a text naming
+     * anything else is declined rather than silently applied to the carrier. Ordered ahead of
+     * {@link #tryParseOpponentSelects} — see the note on
+     * {@link ActionResolverPatterns#OPP_SELECTS_MAY_BREAK_ELSE_SELF_CANNOT_BLOCK}.
+     */
+    static Consumer<GameContext> tryParseOppSelectsMayBreakElseSelfCannotBlock(String text, CardData source) {
+        if (source == null) return null;
+        Matcher m = OPP_SELECTS_MAY_BREAK_ELSE_SELF_CANNOT_BLOCK.matcher(text.trim());
+        if (!m.matches()) return null;
+        if (!m.group("card").trim().equalsIgnoreCase(source.name())) return null;
+
+        String  targets  = m.group("targets");
+        String  tgtLower = targets.toLowerCase();
+        boolean inclForwards = tgtLower.contains("forward") || tgtLower.contains("character");
+        boolean inclBackups  = tgtLower.contains("backup")  || tgtLower.contains("character");
+        boolean inclMonsters = tgtLower.contains("monster") || tgtLower.contains("character");
+        String  name     = source.name();
+        return ctx -> {
+            ctx.logEntry("Effect: opponent may put 1 " + targets + " they control into the Break Zone — "
+                    + "if they do, " + name + " cannot block this turn");
+            if (ctx.opponentMayBreakOwnCharacter(inclForwards, inclBackups, inclMonsters, name))
+                ctx.grantSelfCannotBlockUntilEndOfTurn(source);
+        };
+    }
+
+    /**
      * Parses "Your opponent selects N [condition] [type] [of cost C or less/more] they control
      * [sep] followup". Supported followups: "Put it into the Break Zone" and "dull/dulls it".
      */

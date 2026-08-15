@@ -111,6 +111,9 @@ public class FieldAbilityParsingTest {
         if (CardData.MULTI_NAME_PLAY_PATTERN.matcher(fa.effectText()).matches()) return true;
         if (CardData.LIGHT_DARK_DISCARD_CP_PATTERN.matcher(fa.effectText()).matches()) return true;
         if (CardData.COUNTER_GRANT_PATTERN.matcher(fa.effectText()).matches()) return true;
+        // Number 24 20-036H. Both name captures are checked against the carrier exactly as
+        // CardData.counterGrants does, so the report cannot claim a cross-card grant as this one.
+        if (selfCounterPlacedGrant(fa, source)) return true;
         if (AutoAbilityTriggers.FA_CAST_SELF_FROM_BZ.matcher(fa.effectText().trim()).matches()) return true;
         // Passives the engine reads straight off the card rather than routing through ActionResolver.
         // Each is matched exactly as its AutoAbilityTriggers.has* counterpart does, so the report
@@ -124,6 +127,10 @@ public class FieldAbilityParsingTest {
         if (AutoAbilityTriggers.FA_FIELD_DAMAGE_MODIFIER.matcher(fa.effectText()).find()) return true;
         if (AutoAbilityTriggers.FA_FIELD_DAMAGE_EXACT_NULLIFY.matcher(fa.effectText()).find()) return true;
         if (AutoAbilityTriggers.FA_ELEMENT_FORWARD_DAMAGE_BOOST.matcher(fa.effectText()).find()) return true;
+        // Caetuna 6-010H. Read on the CASTER's side by DamageResolver.applyCasterSideElementSummon-
+        // DamageBoosts, not on the damaged Forward's — it was live before it was listed here, so this
+        // row closes a reporting gap rather than turning a rule on.
+        if (AutoAbilityTriggers.FA_ELEMENT_SUMMON_DAMAGE_BOOST.matcher(fa.effectText()).find()) return true;
         if (AutoAbilityTriggers.FA_PARTY_DAMAGE_PROTECTION.matcher(fa.effectText()).find()) return true;
         if (AutoAbilityTriggers.FA_NULLIFY_SUMMON_DAMAGE.matcher(fa.effectText()).find()) return true;
         if (AutoAbilityTriggers.FA_NULLIFY_ABILITY_DAMAGE.matcher(fa.effectText()).find()) return true;
@@ -309,6 +316,18 @@ public class FieldAbilityParsingTest {
         return m.find() && m.group("card").trim().equalsIgnoreCase(source.name());
     }
 
+    /**
+     * True when {@code fa} is Number 24's self-named counter grant and both of its name captures are
+     * the carrier — the same pair of checks {@link CardData#counterGrants()} makes before turning it
+     * into a {@link CounterGrant}.
+     */
+    private static boolean selfCounterPlacedGrant(FieldAbility fa, CardData source) {
+        Matcher m = CardData.SELF_COUNTER_PLACED_GAINS_PATTERN.matcher(fa.effectText());
+        return m.matches()
+                && m.group("placed").trim().equalsIgnoreCase(source.name())
+                && m.group("subject").trim().equalsIgnoreCase(source.name());
+    }
+
     /** {@link #selfNamedCompulsion} for the patterns that call their card-name group {@code name}. */
     private static boolean namesItself(java.util.regex.Pattern p, FieldAbility fa, CardData source) {
         Matcher m = p.matcher(fa.effectText());
@@ -340,6 +359,11 @@ public class FieldAbilityParsingTest {
             return "CounterGrant[" + m.group("counter").trim() + ": "
                 + (grant.startsWith("\"") ? "ability" : grant.replaceAll("[.!]$", "")) + "]";
         }
+        if (selfCounterPlacedGrant(fa, source)) {
+            m = CardData.SELF_COUNTER_PLACED_GAINS_PATTERN.matcher(fa.effectText());
+            m.matches();
+            return "SelfCounterGrant[" + m.group("counter").trim() + ": ability]";
+        }
         m = AutoAbilityTriggers.FA_CAST_SELF_FROM_BZ.matcher(fa.effectText().trim());
         if (m.matches()) return "CastFromBreakZone[" + m.group("name").trim() + "]";
         if (AutoAbilityTriggers.FA_SELF_CAST_LIMIT.matcher(fa.effectText().trim()).matches())
@@ -363,10 +387,14 @@ public class FieldAbilityParsingTest {
                             : reduceBy != null ? "reduce " + reduceBy
                             : increase != null ? "+" + increase
                             : "becomes " + setsTo;
-            return "DmgModifier[" + (src != null ? src.trim() : "any") + ": " + effect + "]";
+            String thresh   = m.group("threshold") == null ? ""
+                            : ("less".equalsIgnoreCase(m.group("threshcmp")) ? " ≤" : " ≥") + m.group("threshold");
+            return "DmgModifier[" + (src != null ? src.trim() : "any") + thresh + ": " + effect + "]";
         }
         m = AutoAbilityTriggers.FA_ELEMENT_FORWARD_DAMAGE_BOOST.matcher(fa.effectText());
         if (m.find()) return "ElementFwdDmgBoost[" + m.group("element") + " Fwd +" + m.group("amount") + "]";
+        m = AutoAbilityTriggers.FA_ELEMENT_SUMMON_DAMAGE_BOOST.matcher(fa.effectText());
+        if (m.find()) return "ElementSummonDmgBoost[" + m.group("element") + " Summon +" + m.group("amount") + "]";
         m = AutoAbilityTriggers.FA_FIELD_DAMAGE_MODIFIER.matcher(fa.effectText());
         if (m.find()) {
             String src      = m.group("sourceclause");

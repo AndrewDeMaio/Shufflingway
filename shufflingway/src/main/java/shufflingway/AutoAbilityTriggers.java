@@ -262,12 +262,15 @@ final class AutoAbilityTriggers {
 	 * [or abilities]", "by a Summon or an ability", "by [an] abilit[y|ies]", "other than battle
 	 * damage", or no clause (any source).
 	 * Also accepts "receives damage" as a synonym for "is dealt damage", and an optional threshold:
-	 * "is dealt N damage or more" (captured in {@code threshold}) to apply the modifier only when damage ≥ N.
-	 * Groups: {@code card}, {@code threshold} (optional), {@code sourceclause} (optional),
-	 * {@code reduceby} (optional), {@code setsto} (optional), {@code increaseby} (optional).
+	 * "is dealt N damage or more" / "or less" (captured in {@code threshold}, with the direction in
+	 * {@code threshcmp}) to apply the modifier only when the damage is on that side of N. Both
+	 * comparisons are inclusive of N — Baigan 9-072H zeroes exactly 3000 as well as less.
+	 * Groups: {@code card}, {@code threshold} (optional), {@code threshcmp} (present iff
+	 * {@code threshold} is), {@code sourceclause} (optional), {@code reduceby} (optional),
+	 * {@code setsto} (optional), {@code increaseby} (optional).
 	 */
 	static final Pattern FA_DAMAGE_MODIFIER = Pattern.compile(
-		"(?i)^If\\s+(?<card>.+?)\\s+(?:is\\s+dealt|receives)\\s+(?:(?<threshold>\\d+)\\s+damage\\s+or\\s+more|damage)" +
+		"(?i)^If\\s+(?<card>.+?)\\s+(?:is\\s+dealt|receives)\\s+(?:(?<threshold>\\d+)\\s+damage\\s+or\\s+(?<threshcmp>more|less)|damage)" +
 		"(?<sourceclause>" +
 			// Must precede the bare "by a Forward" branch, which names the source of battle damage.
 			// This one names the source of an *ability's* damage (Gawain 7-107R) — the narrower
@@ -284,6 +287,11 @@ final class AutoAbilityTriggers {
 			"|\\s+less\\s+than\\s+(?:his|her|its)\\s+power" +
 		")?" +
 		"\\s*,\\s+" +
+		// Optional cost the replacement pays for itself: "remove 1 Barrier Counter from Number 24 and
+		// the damage becomes 0 instead." (Number 24 20-036H, via its own self-named counter grant).
+		// The removal is part of the replacement, not a separate effect — it happens only on the
+		// resolutions this modifier actually claims, which is what makes one counter buy one shield.
+		"(?:remove\\s+(?<rmcount>\\d+)\\s+(?<rmcounter>.+?)\\s+Counters?\\s+from\\s+(?<rmfrom>.+?)\\s+and\\s+)?" +
 		"(?:reduce\\s+the\\s+damage\\s+by\\s+(?<reduceby>\\d+)|the\\s+damage\\s+becomes\\s+(?<setsto>\\d+)|the\\s+damage\\s+increases\\s+by\\s+(?<increaseby>\\d+)|(?<double>double\\s+the\\s+damage))" +
 		"\\s+instead\\.?$"
 	);
@@ -1974,6 +1982,18 @@ final class AutoAbilityTriggers {
 	void triggerAutoAbilitiesForBeginningOfAttackPhaseEachTurn(boolean activeIsP1) {
 		triggerAutoAbilitiesForEvent("beginning of attack phase each turn", activeIsP1);
 		triggerAutoAbilitiesForEvent("beginning of attack phase each turn", !activeIsP1);
+	}
+
+	/**
+	 * Fires "beginning of opponent's attack phase" auto-abilities (Ardyn 8-068L) for all field cards
+	 * controlled by the player whose Attack Phase this is <em>not</em>. Call alongside
+	 * {@link #triggerAutoAbilitiesForBeginningOfAttackPhase} at the start of {@code activeIsP1}'s
+	 * Attack Phase.
+	 *
+	 * @param activeIsP1 whether the player whose Attack Phase is beginning is P1
+	 */
+	void triggerAutoAbilitiesForBeginningOfOppAttackPhase(boolean activeIsP1) {
+		triggerAutoAbilitiesForEvent("beginning of opponent's attack phase", !activeIsP1);
 	}
 
 	/**

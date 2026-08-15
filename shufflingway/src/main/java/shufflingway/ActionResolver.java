@@ -527,6 +527,9 @@ public class ActionResolver {
         result = tryParseCancelChosenMillTopIfNotType(effectText);
         if (result != null) return result;
 
+        result = tryParseCancelChosenMillBothIfSameType(effectText);
+        if (result != null) return result;
+
         result = tryParseCancelSummonTargetingMyCharacter(effectText);
         if (result != null) return result;
 
@@ -981,6 +984,11 @@ public class ActionResolver {
         result = tryParsePlayFromHand(effectText, source, xValue);
         if (result != null) return result;
 
+
+        // Must precede OpponentSelects, which claims the same text and drops both the option and the
+        // block restriction — see OPP_SELECTS_MAY_BREAK_ELSE_SELF_CANNOT_BLOCK.
+        result = tryParseOppSelectsMayBreakElseSelfCannotBlock(effectText, source);
+        if (result != null) return result;
 
         result = tryParseOpponentSelects(effectText);
         if (result != null) return result;
@@ -1473,6 +1481,7 @@ public class ActionResolver {
         if (tryParseRevealTopToHandIfTypeElseTopOrBottom(effectText) != null) return "RevealTopToHandIfTypeElseTopOrBottom";
         if (tryParseCancelChosenRevealTopIfType(effectText)    != null) return "CancelChosenRevealTopIfType";
         if (tryParseCancelChosenMillTopIfNotType(effectText)   != null) return "CancelChosenMillTopIfNotType";
+        if (tryParseCancelChosenMillBothIfSameType(effectText) != null) return "CancelChosenMillBothIfSameType";
         if (tryParseCancelSummonTargetingMyCharacter(effectText) != null) return "CancelSummonTargetingMyCharacter";
         if (tryParseSelectNumber(effectText, source)          != null) return "SelectNumber";
         if (tryParseDullAllOppFwdsPowerLeSource(effectText, source)        != null) return "DullAllOppFwdsPowerLeSource";
@@ -1627,6 +1636,9 @@ public class ActionResolver {
         // Checked ahead of OpponentSelects: an "…, X instead." upgrade wraps a base clause the
         // OpponentSelects matcher would otherwise claim on its own, dropping the replacement.
         if (tryParseControlGatedInsteadUpgrade(effectText, source, 0) != null) return "ControlGatedInsteadUpgrade";
+        // Mirrors parse(): ahead of OpponentSelects, which would otherwise claim it.
+        if (tryParseOppSelectsMayBreakElseSelfCannotBlock(effectText, source) != null)
+            return "OppSelectsMayBreakElseSelfCannotBlock";
         if (tryParseOpponentSelects(effectText)               != null) return "OpponentSelects";
         if (tryParseBzFwdToHandOppFwdToBzByDamage(effectText)  != null) return "BzFwdToHandOppFwdToBzByDamage";
         if (tryParseOpponentPutsForwardToBreakZone(effectText) != null) return "OpponentPutsForwardToBreakZone";
@@ -2147,6 +2159,7 @@ public class ActionResolver {
         if (tryParseRevealTopToHandIfTypeElseTopOrBottom(effectText) != null) return "RevealTopToHandIfTypeElseTopOrBottom";
         if (tryParseCancelChosenRevealTopIfType(effectText)    != null) return "CancelChosenRevealTopIfType";
         if (tryParseCancelChosenMillTopIfNotType(effectText)   != null) return "CancelChosenMillTopIfNotType";
+        if (tryParseCancelChosenMillBothIfSameType(effectText) != null) return "CancelChosenMillBothIfSameType";
         if (tryParseCancelSummonTargetingMyCharacter(effectText) != null) return "CancelSummonTargetingMyCharacter";
         if (tryParseSelectNumber(effectText, source) != null)               return "SelectNumber";
         if (tryParseChooseOppFwdDynCostBreak(effectText)               != null) return "ChooseOppFwdDynCostBreak";
@@ -2313,6 +2326,11 @@ public class ActionResolver {
         if (tryParseSearchAndCastSummonFree(effectText) != null)            return "SearchAndCastSummonFree";
         if (tryParsePlayAnyNumberFromHand(effectText, source) != null)      return "PlayAnyNumberFromHand";
         if (tryParsePlayFromHand(effectText, source, 0) != null)            return "PlayFromHand";
+
+        // Mirrors parse(): ahead of OPPONENT_SELECTS_PATTERN, which would otherwise claim it.
+        if (tryParseOppSelectsMayBreakElseSelfCannotBlock(effectText, source) != null)
+            return "Your opponent may put 1 Character they control into the Break Zone; if they do, "
+                    + source.name() + " cannot block this turn";
 
         Matcher opSelM = OPPONENT_SELECTS_PATTERN.matcher(effectText);
         if (opSelM.find()) {

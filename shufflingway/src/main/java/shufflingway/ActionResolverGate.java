@@ -164,4 +164,18 @@ final class ActionResolverGate {
             ctx.millTopDeckCancelChosenIfNotType(type);
         };
     }
+
+    /**
+     * Parses Colkhab 18-041C's "Each player puts the top card of their deck into the Break Zone. If
+     * both cards are of the same card type, cancel its effect." — both players mill one card and the
+     * in-progress selection is cancelled when the two match on card type.
+     */
+    static Consumer<GameContext> tryParseCancelChosenMillBothIfSameType(String text) {
+        if (!CANCEL_CHOSEN_MILL_BOTH_IF_SAME_TYPE.matcher(text.trim()).find()) return null;
+        return ctx -> {
+            ctx.logEntry("Effect: each player mills top of deck; if the two share a card type, "
+                    + "cancel the effect choosing your Character(s)");
+            ctx.millTopDeckBothCancelChosenIfSameType();
+        };
+    }
 }

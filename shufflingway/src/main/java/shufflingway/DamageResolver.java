@@ -227,7 +227,7 @@ class DamageResolver {
 			if (fa.damageThreshold() > 0 && dmgInZone < fa.damageThreshold()) continue;
 			Matcher fam = AutoAbilityTriggers.FA_DAMAGE_MODIFIER.matcher(fa.effectText());
 			if (!fam.find() || !fam.group("card").trim().equalsIgnoreCase(card.name())) continue;
-			amount = applyDamageModifierMatch(fam, amount, isP1, zone, idx, fromAbility, card.name());
+			amount = applyDamageModifierMatch(fam, amount, isP1, zone, idx, fromAbility, card);
 		}
 
 		// Incoming damage modifier granted to this Forward by a counter grant (e.g. Kimahri's
@@ -235,7 +235,7 @@ class DamageResolver {
 		// subject is implicit, so no card-name match is required.
 		for (String granted : mw.counterGrantedAbilities(card, isP1)) {
 			Matcher fam = AutoAbilityTriggers.FA_DAMAGE_MODIFIER.matcher(granted);
-			if (fam.find()) amount = applyDamageModifierMatch(fam, amount, isP1, zone, idx, fromAbility, card.name());
+			if (fam.find()) amount = applyDamageModifierMatch(fam, amount, isP1, zone, idx, fromAbility, card);
 		}
 
 		// Passive field ability: self-targeted incoming damage reduction while dull
@@ -277,13 +277,21 @@ class DamageResolver {
 	/**
 	 * Applies one matched {@link AutoAbilityTriggers#FA_DAMAGE_MODIFIER} effect (reduce/set/increase/
 	 * double) to {@code amount}, honoring its optional damage threshold and source clause. Shared by
-	 * a Forward's own field ability and abilities granted to it via a counter grant. {@code subjectName}
-	 * is used only for the log line. Returns the (possibly modified) amount.
+	 * a Forward's own field ability and abilities granted to it via a counter grant. {@code subject}
+	 * is the damaged card — it names the log line, and it is what an optional "remove N [X] Counter
+	 * from …" clause spends. Returns the (possibly modified) amount.
 	 */
 	int applyDamageModifierMatch(Matcher fam, int amount, boolean isP1,
-			ForwardTarget.CardZone zone, int idx, boolean fromAbility, String subjectName) {
+			ForwardTarget.CardZone zone, int idx, boolean fromAbility, CardData subject) {
+		String subjectName = subject.name();
 		String threshStr = fam.group("threshold");
-		if (threshStr != null && amount < Integer.parseInt(threshStr)) return amount;
+		if (threshStr != null) {
+			// "N damage or more" gates on amount >= N; "or less" (Baigan 9-072H) on amount <= N.
+			// Both are inclusive of N, so only the strict comparison on the far side declines.
+			int thresh = Integer.parseInt(threshStr);
+			boolean orLess = "less".equalsIgnoreCase(fam.group("threshcmp"));
+			if (orLess ? amount > thresh : amount < thresh) return amount;
+		}
 		String src = fam.group("sourceclause");
 		boolean applies;
 		if (src == null || src.isBlank()) {
@@ -316,6 +324,20 @@ class DamageResolver {
 			}
 		}
 		if (!applies) return amount;
+		// "remove N [X] Counter from [self] and …" — the replacement's own cost, spent only now that
+		// the modifier has been claimed. The counter is what conditions the grant in the first place
+		// (see MainWindow.counterGrantedAbilities), so spending the last one ends the shield.
+		String rmCount = fam.group("rmcount");
+		if (rmCount != null) {
+			String rmName = fam.group("rmcounter").trim();
+			int    need   = Integer.parseInt(rmCount);
+			// Pay in full or not at all: a partial payment buys nothing, so the counters stay put and
+			// the damage lands unmodified.
+			if (mw.gameState.getCounters(subject, rmName) < need) return amount;
+			mw.gameState.removeCounters(subject, rmName, need);
+			mw.logEntry(subjectName + " — removed " + need + " " + rmName + " Counter"
+					+ (need == 1 ? "" : "s") + " (" + mw.gameState.getCounters(subject, rmName) + " left)");
+		}
 		String reduceStr   = fam.group("reduceby");
 		String setstoStr   = fam.group("setsto");
 		String increaseStr = fam.group("increaseby");

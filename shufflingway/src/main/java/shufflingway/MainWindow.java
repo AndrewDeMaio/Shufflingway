@@ -2603,6 +2603,7 @@ public class MainWindow {
                                 logEntry("Attack Phase");
                                 autoAbilityTriggers.triggerAutoAbilitiesForBeginningOfAttackPhase(true);
                                 autoAbilityTriggers.triggerAutoAbilitiesForBeginningOfAttackPhaseEachTurn(true);
+                                autoAbilityTriggers.triggerAutoAbilitiesForBeginningOfOppAttackPhase(true);
                                 refreshAllForwardSlots();
                                 if (!hasAttackableForward() && !hasBackAttackInHand()) {
                                     logEntry("No attackers available — skipping to Main Phase 2");
@@ -11279,7 +11280,7 @@ public class MainWindow {
 	int modifyIncomingDamage(boolean isP1, ForwardTarget.CardZone zone, int idx, int rawAmount, boolean fromAbility, boolean unreduced) { return damageResolver.modifyIncomingDamage(isP1, zone, idx, rawAmount, fromAbility, unreduced); }
 
 	/** @see DamageResolver#applyDamageModifierMatch */
-	private int applyDamageModifierMatch(Matcher fam, int amount, boolean isP1, ForwardTarget.CardZone zone, int idx, boolean fromAbility, String subjectName) { return damageResolver.applyDamageModifierMatch(fam, amount, isP1, zone, idx, fromAbility, subjectName); }
+	private int applyDamageModifierMatch(Matcher fam, int amount, boolean isP1, ForwardTarget.CardZone zone, int idx, boolean fromAbility, CardData subject) { return damageResolver.applyDamageModifierMatch(fam, amount, isP1, zone, idx, fromAbility, subject); }
 
 	/**
 	 * Ability texts granted to {@code target} (a Forward on the given side) by "Each Forward you
@@ -11303,6 +11304,9 @@ public class MainWindow {
 		if (lostAbilitiesCards.contains(src)) return out;
 		for (CounterGrant cg : src.counterGrants()) {
 			if (cg.grantedAbilityText() == null) continue;
+			// Number 24 20-036H grants only to itself, so the walk over the whole field has to skip
+			// every other Forward carrying the same counter.
+			if (cg.selfOnly() && src != target) continue;
 			if (gameState.getCounters(target, cg.counterName()) <= 0) continue;
 			if (out == null) out = new ArrayList<>();
 			out.add(cg.grantedAbilityText());

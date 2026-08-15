@@ -2456,6 +2456,53 @@ public record CardData(
     );
 
     /**
+     * Matches "At the beginning of your opponent's Attack Phase, [effect]" — Ardyn 8-068L.  The
+     * opponent-turn twin of {@link #AT_BEGINNING_OF_ATTACK_PHASE_PATTERN}, which names "each of your
+     * turns" and so never claims this wording.  Named group {@code effect} captures the effect text;
+     * {@code threshold} captures the segment's optional "Damage N -- " gate, which this pass has to
+     * read itself because it scans the whole card text rather than the stripped segments.
+     */
+    private static final Pattern AT_BEGINNING_OF_OPP_ATTACK_PHASE_PATTERN = Pattern.compile(
+        "(?i)(?:Damage\\s+(?<threshold>\\d+)\\s+--\\s+)?" +
+        "At\\s+the\\s+beginning\\s+of\\s+your\\s+opponent'?s\\s+Attack\\s+Phase,\\s+" +
+        "(?<effect>.+?)\\s*" +
+        "(?=\\s*\\[\\[br\\]\\]|\\s*At\\s+the\\s+beginning|\\s*When\\s+[^,]+?\\s+" +
+        "(?:attacks?|blocks?|enters?|leaves?|is\\s+(?:put|removed))|\\s*$)",
+        Pattern.DOTALL
+    );
+
+    /**
+     * Matches "During each turn, when [subject] is chosen by your opponent's [Summon | ability |
+     * Summon or ability] for the first time in that turn, [effect]" — Colkhab 18-041C, Owe 17-092R,
+     * Illua 5-099H, The Fiend 20-114L.
+     *
+     * <p>The same reactive trigger the "When [subject] is chosen by …" printings carry, with the
+     * per-turn limit stated up front instead of as a trailing "This effect will trigger only once
+     * per turn." sentence. Because the segment opens with "During" rather than "When", neither
+     * {@link #AUTO_ABILITY_PATTERN} nor the {@link #FA_AUTO_PREFIX} exclusion saw it, and the whole
+     * family fell through to the field-ability list unparsed.
+     *
+     * <p>Groups: {@code card} — the trigger subject, matched the same way every other chosen-by
+     * subject is; {@code by} — the chooser clause, which picks the Summon-only trigger apart from
+     * the Summon-or-ability one; {@code effect}; {@code threshold} — the segment's optional
+     * "Damage N -- " gate, captured here because this pass scans the whole card text rather than the
+     * already-stripped segments {@link #parseFieldAbilities} works from. The Fiend 20-114L prints
+     * one, and dropping it would leave the ability live from turn one.
+     */
+    private static final Pattern DURING_EACH_TURN_CHOSEN_FIRST_TIME_PATTERN = Pattern.compile(
+        "(?i)(?:Damage\\s+(?<threshold>\\d+)\\s+--\\s+)?" +
+        // The subject must not run past a segment break. It is lazy, but a card printing two of
+        // these (The Fiend 20-114L) gives it a second "is chosen by" to reach, and it took it —
+        // swallowing the intervening segment, the "Damage 3 -- " gate included, into the name.
+        "During\\s+each\\s+turn,\\s+when\\s+(?<card>(?:(?!\\[\\[br\\]\\]).)+?)\\s+is\\s+chosen\\s+by\\s+your\\s+opponent'?s\\s+" +
+        "(?<by>Summons?\\s+or\\s+(?:an?\\s+)?abilit(?:y|ies)|Summons?|abilit(?:y|ies))\\s+" +
+        "for\\s+the\\s+first\\s+time\\s+in\\s+that\\s+turn,\\s+" +
+        "(?<effect>.+?)\\s*" +
+        "(?=\\s*\\[\\[br\\]\\]|\\s*$)",
+        Pattern.DOTALL
+    );
+
+    /**
      * Separate pattern for "When a Warp Counter is removed from [CardName], [effect]".
      * Uses {@code target} for the card whose counter is decremented.
      */
@@ -3112,6 +3159,39 @@ public record CardData(
             if (aa != null) result.add(aa);
         }
 
+        // Fourteenth pass: "At the beginning of your opponent's Attack Phase, [effect]"
+        Matcher oapm = AT_BEGINNING_OF_OPP_ATTACK_PHASE_PATTERN.matcher(textForSearch);
+        while (oapm.find()) {
+            // Titan (XVI) 29-068L prints this wording inside the ability it grants to chosen
+            // Forwards, so a match starting inside quotes is not the printing card's own.
+            if (isInsideQuotes(textForSearch, oapm.start())) continue;
+            String effect = SUMMON_MARKUP.matcher(oapm.group("effect").trim()).replaceAll("").trim();
+            if (effect.isEmpty()) continue;
+            AutoAbility aa = parseAutoAbilityRestrictions("", "beginning of opponent's attack phase",
+                    false, false, false, false, effect, damageThresholdOf(oapm));
+            if (aa != null) result.add(aa);
+        }
+
+        // Fifteenth pass: "During each turn, when [subject] is chosen by your opponent's
+        // [Summon | ability | Summon or ability] for the first time in that turn, [effect]"
+        Matcher dcm = DURING_EACH_TURN_CHOSEN_FIRST_TIME_PATTERN.matcher(textForSearch);
+        while (dcm.find()) {
+            String effect = SUMMON_MARKUP.matcher(dcm.group("effect").trim()).replaceAll("").trim();
+            if (effect.isEmpty()) continue;
+            // "Summon or ability" and the ability-only printing both dispatch through the broader
+            // trigger — there is no ability-only dispatch, and the Summon-only one would miss the
+            // ability half outright. Only a text naming Summons alone takes the narrow trigger.
+            String by      = dcm.group("by").toLowerCase(Locale.ROOT);
+            String trigger = by.contains("abilit")
+                    ? "chosen by opponent's summon or ability"
+                    : "chosen by opponent's summon";
+            AutoAbility aa = parseAutoAbilityRestrictions(dcm.group("card").trim(), trigger,
+                    false, false, false, false, effect, damageThresholdOf(dcm));
+            // "for the first time in that turn" is the per-turn limit stated in the trigger clause;
+            // the restriction stripper only reads the trailing sentence form, so set it here.
+            if (aa != null) result.add(aa.withOncePerTurn());
+        }
+
         // Put back any quoted granted ability that was masked while scanning for triggers, so a
         // grant reports the ability it confers rather than a hole where the quote used to be.
         if (!maskedQuotes.isEmpty()) {
@@ -3121,6 +3201,16 @@ public record CardData(
             });
         }
         return List.copyOf(result);
+    }
+
+    /**
+     * The "Damage N -- " gate a whole-text trigger pass captured on its own match, or 0 when the
+     * segment carries none. The segment-based parsers strip the prefix before matching; the passes
+     * that scan the full card text have to read it from their own {@code threshold} group instead.
+     */
+    private static int damageThresholdOf(Matcher m) {
+        String s = m.group("threshold");
+        return s == null ? 0 : Integer.parseInt(s);
     }
 
     /**
@@ -4418,6 +4508,24 @@ public record CardData(
     );
 
     /**
+     * The self-named counter grant: "If a [X] Counter is placed on [Name], [Name] gains \"[ability]\"."
+     * — Number 24 20-036H. Groups: {@code counter}, {@code subject} (the gaining card), {@code grant}.
+     *
+     * <p>Worded as a trigger but read as a standing grant, because that is what it does: the counter
+     * is what the ability is conditioned on, so removing the last one takes the ability away again —
+     * which is exactly what Number 24's granted ability does to itself. Treating the placement as a
+     * one-shot event would leave the ability behind after the counter it paid for was spent.
+     *
+     * <p>Both name captures are checked against the carrier by {@link #counterGrants()}; without that
+     * the lazy groups would happily read a grant one card makes to another as a self-grant.
+     */
+    static final Pattern SELF_COUNTER_PLACED_GAINS_PATTERN = Pattern.compile(
+        "(?i)^If\\s+an?\\s+(?<counter>.+?)\\s+Counter\\s+is\\s+placed\\s+on\\s+(?<placed>.+?),\\s+" +
+        "(?<subject>.+?)\\s+gains\\s+(?<grant>\".+\")[.!]?$",
+        Pattern.DOTALL
+    );
+
+    /**
      * Parses counter-conditioned passive power grants from this card's field abilities — the
      * same-side "Each Forward you control with a [X] Counter on it gains …" form (a power bonus or
      * a quoted ability) and the opposing-side per-counter debuff.
@@ -4430,7 +4538,18 @@ public record CardData(
             if (dm.matches()) {
                 if (out == null) out = new ArrayList<>();
                 out.add(new CounterGrant(dm.group("counter").trim(),
-                        -Integer.parseInt(dm.group("power")), null, true, true));
+                        -Integer.parseInt(dm.group("power")), null, true, true, false));
+                continue;
+            }
+            Matcher sm = SELF_COUNTER_PLACED_GAINS_PATTERN.matcher(fa.effectText());
+            if (sm.matches()
+                    && sm.group("placed").trim().equalsIgnoreCase(name())
+                    && sm.group("subject").trim().equalsIgnoreCase(name())) {
+                String ability = unquoteGrant(sm.group("grant").trim());
+                if (ability != null) {
+                    if (out == null) out = new ArrayList<>();
+                    out.add(new CounterGrant(sm.group("counter").trim(), 0, ability, false, false, true));
+                }
                 continue;
             }
             Matcher m = COUNTER_GRANT_PATTERN.matcher(fa.effectText());
@@ -4439,10 +4558,8 @@ public record CardData(
             String grant   = m.group("grant").trim();
             CounterGrant cg;
             if (grant.startsWith("\"")) {
-                int end = grant.lastIndexOf('"');
-                if (end <= 0) continue;
-                String ability = grant.substring(1, end).trim();
-                if (ability.isEmpty()) continue;
+                String ability = unquoteGrant(grant);
+                if (ability == null) continue;
                 cg = new CounterGrant(counter, 0, ability);
             } else {
                 Matcher pm = COUNTER_GRANT_POWER.matcher(grant);
@@ -4453,6 +4570,20 @@ public record CardData(
             out.add(cg);
         }
         return out == null ? List.of() : List.copyOf(out);
+    }
+
+    /**
+     * Strips the surrounding quotes from a counter grant's quoted ability clause, or returns
+     * {@code null} when {@code grant} is not a non-empty quoted ability. The closing quote is taken
+     * as the last one in the clause, not the next, so an ability that itself quotes something keeps
+     * its inner text.
+     */
+    private static String unquoteGrant(String grant) {
+        if (!grant.startsWith("\"")) return null;
+        int end = grant.lastIndexOf('"');
+        if (end <= 0) return null;
+        String ability = grant.substring(1, end).trim();
+        return ability.isEmpty() ? null : ability;
     }
 
     public static List<FieldPowerGrant> parseFieldPowerGrants(String textEn, String cardType) {
@@ -6142,6 +6273,13 @@ public record CardData(
             if (FA_AUTO_PREFIX.matcher(seg).find()) continue;
             if (AT_BEGINNING_OF_ATTACK_PHASE_PATTERN.matcher(seg).find()) continue;
             if (AT_BEGINNING_OF_ATTACK_PHASE_EACH_TURN_PATTERN.matcher(seg).find()) continue;
+            // Opens with "During", so FA_AUTO_PREFIX above does not see the "when … is chosen by"
+            // trigger it carries; without this line the auto-ability it produces would be printed a
+            // second time here as a field ability.
+            if (DURING_EACH_TURN_CHOSEN_FIRST_TIME_PATTERN.matcher(seg).find()) continue;
+            // Quote-aware for the same reason as the end-of-turn line below: Titan (XVI) 29-068L
+            // prints this trigger inside a grant, and that segment stays a field ability.
+            if (matchesOutsideQuotes(AT_BEGINNING_OF_OPP_ATTACK_PHASE_PATTERN, seg)) continue;
             // Quote-aware: Vayne 9-022L's grant prints this trigger inside quotes, and that segment
             // must stay a field ability — it is the grant, not an end-of-turn ability of Vayne's own.
             if (matchesOutsideQuotes(ActionResolverPatterns.AT_END_OF_EACH_TURN_PATTERN, seg)) continue;

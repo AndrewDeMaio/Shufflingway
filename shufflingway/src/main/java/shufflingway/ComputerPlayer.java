@@ -109,6 +109,7 @@ class ComputerPlayer implements OpponentController {
 				mw.logEntry("[P2] Attack Phase");
 				mw.autoAbilityTriggers.triggerAutoAbilitiesForBeginningOfAttackPhase(false);
 				mw.autoAbilityTriggers.triggerAutoAbilitiesForBeginningOfAttackPhaseEachTurn(false);
+				mw.autoAbilityTriggers.triggerAutoAbilitiesForBeginningOfOppAttackPhase(false);
 				mw.refreshAllP2ForwardSlots();
 				// Attack Preparation: P2 (turn player) has acted, so P1 holds priority before P2
 				// may declare an attacker.

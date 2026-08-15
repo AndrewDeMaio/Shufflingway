@@ -95,4 +95,17 @@ public record AutoAbility(
                 castPaymentMinElements, castOnly, warpOnly, damageThreshold,
                 partyMinCount, partyCategory, partyJob, partyCardName);
     }
+
+    /**
+     * A copy of this ability with {@link #oncePerTurn()} set. Used by the trigger forms that state
+     * the limit in the trigger clause rather than as the trailing "This effect will trigger only
+     * once per turn." sentence the restriction stripper reads — Colkhab 18-041C's "…for the first
+     * time in that turn".
+     */
+    public AutoAbility withOncePerTurn() {
+        return oncePerTurn ? this : new AutoAbility(triggerCard, trigger, youMay, opponentMay, effectText,
+                true, yourTurnOnly, rfpConditionCard, bzConditionCard, bzConditionJob,
+                castPaymentMinElements, castOnly, warpOnly, damageThreshold,
+                partyMinCount, partyCategory, partyJob, partyCardName);
+    }
 }

@@ -18566,4 +18566,326 @@ public class CardBehaviorTest {
 
 		assertFalse(mw.bzCardsProtectedFromOppChoice(true));
 	}
+
+	// =========================================================================================
+	// Baigan 9-072H: "If Baigan is dealt 3000 damage or less, the damage becomes 0 instead." —
+	// the "or less" direction of the damage-modifier threshold, whose only printing before this
+	// was "or more".
+	// =========================================================================================
+
+	private static final String BAIGAN_9_072H =
+			"If Baigan is dealt 3000 damage or less, the damage becomes 0 instead.";
+
+	@Test
+	void baiganZeroesDamageAtOrBelowItsThreshold() {
+		MainWindow mw = new MainWindow();
+		mw.placeCardInForwardZone(makeFieldAbilityCard("Baigan", "Earth", "Forward", BAIGAN_9_072H));
+
+		assertEquals(0, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 0, 2000, false, false),
+				"below the threshold");
+		assertEquals(0, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 0, 3000, false, false),
+				"'or less' includes the threshold itself");
+		assertEquals(4000, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 0, 4000, false, false),
+				"above it the damage lands in full");
+	}
+
+	@Test
+	void theOrMoreDirectionStillGatesTheOtherWay() {
+		// The branch this shares its threshold group with, asserted alongside so a change to one
+		// cannot quietly invert the other.
+		MainWindow mw = new MainWindow();
+		mw.placeCardInForwardZone(makeFieldAbilityCard("Ward", "Earth", "Forward",
+				"If Ward is dealt 5000 damage or more, reduce the damage by 2000 instead."));
+
+		assertEquals(4000, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 0, 4000, false, false),
+				"below the threshold nothing applies");
+		assertEquals(3000, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 0, 5000, false, false),
+				"'or more' includes the threshold itself");
+	}
+
+	// =========================================================================================
+	// Vermilion Bird l'Cie Caetuna 6-010H: "If a Forward is dealt damage by your Fire Summon,
+	// the damage increases by 1000 instead." — read on the CASTER's side, so it boosts the
+	// Summon its controller cast rather than protecting the Forward being hit.
+	// =========================================================================================
+
+	private static final String CAETUNA_6_010H =
+			"If a Forward is dealt damage by your Fire Summon, the damage increases by 1000 instead.";
+
+	@Test
+	void caetunaBoostsItsControllersFireSummonDamage() {
+		MainWindow mw = new MainWindow();
+		mw.placeCardInFirstBackupSlot(makeFieldAbilityCard(
+				"Vermilion Bird l'Cie Caetuna", "Fire", "Backup", CAETUNA_6_010H));
+		mw.currentResolutionIsSummon  = true;
+		mw.currentSummonSource        = makeFieldAbilityCard("Ifrit", "Fire", "Summon", "");
+		mw.currentSummonSourceIsP1    = true;
+
+		assertEquals(8000, mw.damageResolver.applyCasterSideElementSummonDamageBoosts(7000, false),
+				"P1's Fire Summon hitting a P2 Forward gets the boost");
+		assertEquals(7000, mw.damageResolver.applyCasterSideElementSummonDamageBoosts(7000, true),
+				"it does not boost damage aimed back at its own side");
+
+		mw.currentSummonSource = makeFieldAbilityCard("Shiva", "Ice", "Summon", "");
+		assertEquals(7000, mw.damageResolver.applyCasterSideElementSummonDamageBoosts(7000, false),
+				"the Element has to match");
+	}
+
+	// =========================================================================================
+	// Number 24 20-036H / The Emperor 17-130L: "If a [X] Counter is placed on [Self], [Self]
+	// gains \"If [Self] is dealt damage, remove 1 [X] Counter from [Self] and the damage becomes
+	// 0 instead.\"" — a self-only counter grant whose granted ability spends the counter that
+	// conditions it, so each counter buys exactly one shield.
+	// =========================================================================================
+
+	private static final String NUMBER_24_20_036H =
+			"When Number 24 enters the field or at the beginning of your Main Phase 1 during each "
+			+ "of your turns, place 1 Barrier Counter on Number 24.[[br]]   "
+			+ "If a Barrier Counter is placed on Number 24, Number 24 gains \"If Number 24 is dealt "
+			+ "damage, remove 1 Barrier Counter from Number 24 and the damage becomes 0 instead.\"";
+
+	@Test
+	void number24ParsesAsASelfOnlyCounterAbilityGrant() {
+		CardData n24 = makeFieldAbilityCard("Number 24", "Ice", "Forward", NUMBER_24_20_036H);
+		List<CounterGrant> grants = n24.counterGrants();
+		assertEquals(1, grants.size());
+		CounterGrant cg = grants.get(0);
+		assertEquals("Barrier", cg.counterName());
+		assertEquals(0, cg.powerBonus());
+		assertTrue(cg.selfOnly(), "the grant names its own carrier, not every Forward beside it");
+		assertEquals("If Number 24 is dealt damage, remove 1 Barrier Counter from Number 24 and "
+				+ "the damage becomes 0 instead.", cg.grantedAbilityText());
+		assertTrue(AutoAbilityTriggers.FA_DAMAGE_MODIFIER.matcher(cg.grantedAbilityText()).find(),
+				"the counter-removal clause must not push the text out of the damage-modifier parser");
+	}
+
+	@Test
+	void aGrantNamingAnotherCardIsNotReadAsASelfGrant() {
+		CardData impostor = makeFieldAbilityCard("Number 24", "Ice", "Forward",
+				"If a Barrier Counter is placed on Number 25, Number 25 gains \"If Number 25 is "
+				+ "dealt damage, the damage becomes 0 instead.\"");
+		assertTrue(impostor.counterGrants().isEmpty(),
+				"both name captures are checked against the carrier");
+	}
+
+	@Test
+	void eachBarrierCounterBuysExactlyOneShield() {
+		MainWindow mw = new MainWindow();
+		CardData n24 = makeFieldAbilityCard("Number 24", "Ice", "Forward", NUMBER_24_20_036H);
+		mw.placeCardInForwardZone(n24);
+
+		assertEquals(9000, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 0, 9000, false, false),
+				"no counter — no grant, so no shield");
+
+		mw.gameState.placeCounters(n24, "Barrier", 2);
+		assertEquals(0, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 0, 9000, false, false));
+		assertEquals(1, mw.gameState.getCounters(n24, "Barrier"), "the shield spent one counter");
+		assertEquals(0, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 0, 9000, false, false));
+		assertEquals(0, mw.gameState.getCounters(n24, "Barrier"), "and the second one too");
+		assertEquals(9000, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 0, 9000, false, false),
+				"with the counters gone the grant is gone with them");
+	}
+
+	@Test
+	void aSelfOnlyCounterGrantDoesNotReachTheForwardBesideIt() {
+		MainWindow mw = new MainWindow();
+		mw.placeCardInForwardZone(makeFieldAbilityCard("Number 24", "Ice", "Forward", NUMBER_24_20_036H));
+		CardData neighbour = makeForward("Shiva", "Ice", 3, 7000);
+		mw.placeCardInForwardZone(neighbour);          // P1 idx 1
+		mw.gameState.placeCounters(neighbour, "Barrier", 1);
+
+		assertEquals(9000, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 1, 9000, false, false),
+				"same counter, different card — the grant stays home");
+		assertEquals(1, mw.gameState.getCounters(neighbour, "Barrier"), "and spends nothing");
+	}
+
+	// =========================================================================================
+	// Colkhab 18-041C, Owe 17-092R, Illua 5-099H, The Fiend 20-114L: "During each turn, when
+	// [self] is chosen by your opponent's Summon or ability for the first time in that turn,
+	// [effect]" — the reactive chosen-by trigger with its per-turn limit stated up front. The
+	// wording opens with "During", so it used to fall past both the auto-ability pattern and the
+	// field-ability exclusion and land in the field-ability list unparsed.
+	// =========================================================================================
+
+	private static final String COLKHAB_18_041C =
+			"During each turn, when Colkhab is chosen by your opponent's Summon or ability for the "
+			+ "first time in that turn, each player puts the top card of their deck into the Break "
+			+ "Zone. If both cards are of the same card type, cancel its effect.";
+
+	@Test
+	void colkhabBecomesAOncePerTurnChosenByTrigger() {
+		List<AutoAbility> autos = CardData.parseAutoAbilities(COLKHAB_18_041C);
+		assertEquals(1, autos.size());
+		AutoAbility aa = autos.get(0);
+		assertEquals("chosen by opponent's summon or ability", aa.trigger());
+		assertEquals("Colkhab", aa.triggerCard());
+		assertTrue(aa.oncePerTurn(), "'for the first time in that turn' is the per-turn limit");
+		assertEquals(0, aa.damageThreshold());
+		assertTrue(CardData.parseFieldAbilities(COLKHAB_18_041C, "Forward").isEmpty(),
+				"and it is no longer also emitted as a field ability");
+	}
+
+	@Test
+	void theFiendKeepsItsDamageGateAndItsOwnName() {
+		// Two of these on one card: the subject capture used to run past the [[br]] to the second
+		// "is chosen by", swallowing the "Damage 3 --" gate into the card name.
+		String text = "During each turn, when your opponent casts a Summon for the first time in "
+				+ "that turn, cancel its effect.[[br]]   Damage 3 -- During each turn, when The Fiend "
+				+ "is chosen by your opponent's ability for the first time in that turn, cancel its effect.";
+		List<AutoAbility> autos = CardData.parseAutoAbilities(text);
+		assertEquals(1, autos.size(), "only the chosen-by half is claimed");
+		assertEquals("The Fiend", autos.get(0).triggerCard());
+		assertEquals(3, autos.get(0).damageThreshold(), "the Damage 3 gate survives");
+		assertEquals("chosen by opponent's summon or ability", autos.get(0).trigger(),
+				"an ability-only printing rides the broad trigger — there is no ability-only dispatch");
+	}
+
+	@Test
+	void colkhabsEffectDelegatesToTheTwoSidedMillCancel() {
+		Consumer<GameContext> fn = ActionResolver.parse(
+				"Each player puts the top card of their deck into the Break Zone. If both cards "
+				+ "are of the same card type, cancel its effect.", null);
+		assertNotNull(fn);
+		GameContext ctx = mock(GameContext.class);
+		fn.accept(ctx);
+		verify(ctx).millTopDeckBothCancelChosenIfSameType();
+	}
+
+	@Test
+	void twoMilledCardsOfTheSameTypeCancelTheSelection() {
+		MainWindow mw = colkhabBoardWithDeckTops(
+				makeForward("Mine", "Wind", 2, 5000), makeForward("Theirs", "Fire", 2, 5000));
+
+		mw.buildGameContext(true).millTopDeckBothCancelChosenIfSameType();
+
+		assertTrue(mw.lastChosenSelectionCancelled, "both Forwards — the effect that chose is cancelled");
+		assertEquals(1, mw.gameState.getP1BreakZone().size(), "and both cards were milled");
+		assertEquals(1, mw.gameState.getP2BreakZone().size());
+	}
+
+	@Test
+	void twoMilledCardsOfDifferentTypesLetTheSelectionStand() {
+		MainWindow mw = colkhabBoardWithDeckTops(
+				makeForward("Mine", "Wind", 2, 5000), makePlainBackup("Theirs", "Fire", 2));
+
+		mw.buildGameContext(true).millTopDeckBothCancelChosenIfSameType();
+
+		assertFalse(mw.lastChosenSelectionCancelled, "a Forward and a Backup are no pair");
+	}
+
+	@Test
+	void anEmptyDeckLeavesNoPairToCompare() {
+		MainWindow mw = new MainWindow();
+		mw.gameState.getIdentity().put(makeForward("Unused", "Wind", 2, 5000), true);
+
+		mw.buildGameContext(true).millTopDeckBothCancelChosenIfSameType();
+
+		assertFalse(mw.lastChosenSelectionCancelled, "nothing milled, nothing cancelled");
+	}
+
+	/** A board whose two decks are topped by {@code p1Top} and {@code p2Top}, owners registered. */
+	private static MainWindow colkhabBoardWithDeckTops(CardData p1Top, CardData p2Top) {
+		MainWindow mw = new MainWindow();
+		mw.gameState.getIdentity().put(p1Top, true);
+		mw.gameState.getIdentity().put(p2Top, false);
+		mw.gameState.getP1MainDeck().add(p1Top);
+		mw.gameState.getP2MainDeck().add(p2Top);
+		return mw;
+	}
+
+	// =========================================================================================
+	// Ardyn 8-068L: "At the beginning of your opponent's Attack Phase, your opponent selects 1
+	// Character he/she controls. He/she may put it into the Break Zone. If he/she does so, Ardyn
+	// cannot block this turn." — a trigger on the phase the card's controller is NOT taking, and
+	// an option that belongs to the opponent rather than to the card.
+	// =========================================================================================
+
+	private static final String ARDYN_8_068L_EFFECT =
+			"Your opponent selects 1 Character he/she controls. He/she may put it into the Break "
+			+ "Zone. If he/she does so, Ardyn cannot block this turn.";
+
+	@Test
+	void ardynsAbilityIsATriggerOnTheOpponentsAttackPhase() {
+		String text = "Brave[[br]] Ardyn cannot be broken.[[br]] At the beginning of your opponent's "
+				+ "Attack Phase, " + ARDYN_8_068L_EFFECT;
+		List<AutoAbility> autos = CardData.parseAutoAbilities(text);
+		assertEquals(1, autos.size());
+		assertEquals("beginning of opponent's attack phase", autos.get(0).trigger());
+		assertEquals(ARDYN_8_068L_EFFECT, autos.get(0).effectText());
+		assertEquals(List.of("Ardyn cannot be broken."),
+				CardData.parseFieldAbilities(text, "Forward").stream().map(FieldAbility::effectText).toList(),
+				"only the standing restriction is left behind as a field ability");
+	}
+
+	@Test
+	void theTriggerFiresForThePlayerWhoseAttackPhaseItIsNot() {
+		MainWindow own = ardynFacing(2);
+		own.autoAbilityTriggers.triggerAutoAbilitiesForBeginningOfOppAttackPhase(true);
+		assertEquals(2, own.p2ForwardCards.size(), "not on its own controller's Attack Phase");
+
+		MainWindow theirs = ardynFacing(2);
+		theirs.autoAbilityTriggers.triggerAutoAbilitiesForBeginningOfOppAttackPhase(false);
+		assertEquals(1, theirs.p2ForwardCards.size(), "but on the opponent's, who paid a Character");
+		assertTrue(theirs.p1ForwardCannotBlock.contains(0));
+	}
+
+	/** Ardyn 8-068L on P1's field at index 0, facing {@code oppForwards} P2 Forwards. */
+	private static MainWindow ardynFacing(int oppForwards) {
+		MainWindow mw = new MainWindow();
+		mw.placeCardInForwardZone(makeAutoAbilityForward("Ardyn", "Earth", 9000,
+				"At the beginning of your opponent's Attack Phase, " + ARDYN_8_068L_EFFECT));
+		for (int i = 0; i < oppForwards; i++)
+			placeP2Forward(mw, makeForward("Opp" + i, "Fire", i + 1, 3000));
+		return mw;
+	}
+
+	@Test
+	void ardynsEffectIsNotClaimedByThePlainOpponentSelectsParser() {
+		CardData ardyn = makeForward("Ardyn", "Earth", 5, 9000);
+		assertEquals("OppSelectsMayBreakElseSelfCannotBlock",
+				ActionResolver.matchedPatternName(ARDYN_8_068L_EFFECT, ardyn),
+				"OpponentSelects would read it as a forced break and drop the block restriction");
+		// Self-named: the restriction lands on the printing card, so another name is declined.
+		assertNull(ActionResolverChoose.tryParseOppSelectsMayBreakElseSelfCannotBlock(
+				ARDYN_8_068L_EFFECT, makeForward("Somebody Else", "Earth", 5, 9000)));
+	}
+
+	@Test
+	void takingTheOfferBreaksACharacterAndStopsArdynBlocking() {
+		MainWindow mw = new MainWindow();
+		CardData ardyn = makeForward("Ardyn", "Earth", 5, 9000);
+		mw.placeCardInForwardZone(ardyn);                                  // P1 idx 0
+		placeP2Forward(mw, makeForward("Spare", "Fire", 1, 3000));         // the cheap one it gives up
+		placeP2Forward(mw, makeForward("Keeper", "Fire", 7, 9000));
+
+		ActionResolver.parse(ARDYN_8_068L_EFFECT, ardyn).accept(mw.buildGameContext(true));
+
+		assertEquals(List.of("Keeper"), mw.p2ForwardCards.stream().map(CardData::name).toList(),
+				"the CPU spends its cheapest Character");
+		assertTrue(mw.p1ForwardCannotBlock.contains(0), "and buys Ardyn's block off for the turn");
+	}
+
+	@Test
+	void anOpponentWithOneCharacterLeftDeclinesAndArdynStillBlocks() {
+		MainWindow mw = new MainWindow();
+		CardData ardyn = makeForward("Ardyn", "Earth", 5, 9000);
+		mw.placeCardInForwardZone(ardyn);                                  // P1 idx 0
+		placeP2Forward(mw, makeForward("Lonely", "Fire", 1, 3000));
+
+		ActionResolver.parse(ARDYN_8_068L_EFFECT, ardyn).accept(mw.buildGameContext(true));
+
+		assertEquals(1, mw.p2ForwardCards.size(), "it will not empty its board for this");
+		assertFalse(mw.p1ForwardCannotBlock.contains(0), "so Ardyn keeps its block");
+	}
+
+	@Test
+	void anOpponentWithNoCharactersIsNotEvenAsked() {
+		MainWindow mw = new MainWindow();
+		CardData ardyn = makeForward("Ardyn", "Earth", 5, 9000);
+		mw.placeCardInForwardZone(ardyn);
+
+		ActionResolver.parse(ARDYN_8_068L_EFFECT, ardyn).accept(mw.buildGameContext(true));
+
+		assertTrue(mw.p1ForwardCannotBlock.isEmpty(), "no offer to take, no restriction");
+	}
 }

@@ -558,6 +558,17 @@ final class ActionResolverPatterns {
         "(?<type>Forward|Backup|Monster|Summon)s?,\\s*cancel\\s+(?:its|their)\\s+effects?[.!]?$"
     );
     /**
+     * Colkhab 18-041C: "Each player puts the top card of their deck into the Break Zone. If both
+     * cards are of the same card type, cancel its/their effect(s)." The two-sided sibling of
+     * {@link #CANCEL_CHOSEN_MILL_TOP_IF_NOT_TYPE} — both players mill, and the comparison is between
+     * the two milled cards rather than against a printed type, so the pattern captures no type at all.
+     */
+    static final Pattern CANCEL_CHOSEN_MILL_BOTH_IF_SAME_TYPE = Pattern.compile(
+        "(?i)^Each\\s+player\\s+puts\\s+the\\s+top\\s+card\\s+of\\s+their\\s+decks?\\s+into\\s+the\\s+" +
+        "Break\\s+Zone[.!]?\\s+If\\s+both\\s+cards\\s+are\\s+of\\s+the\\s+same\\s+card\\s+type,\\s*" +
+        "cancel\\s+(?:its|their)\\s+effects?[.!]?$"
+    );
+    /**
      * Matches "Choose 1 auto-ability. Cancel its effect. If the cancelled auto-ability triggered
      * from a Forward, deal that Forward N damage."
      * Group {@code amount} — damage to deal if the source was a Forward.
@@ -2850,6 +2861,30 @@ final class ActionResolverPatterns {
         "\\s+(?:they|he/she|he|she)\\s+controls?" +
         "(?:[.]\\s*|\\s+and\\s+)" +
         "(?<followup>.+)",
+        Pattern.DOTALL
+    );
+    /**
+     * Ardyn 8-068L: "Your opponent selects 1 Character he/she controls. He/she may put it into the
+     * Break Zone. If he/she does so, [CardName] cannot block this turn."
+     *
+     * <p>Must precede {@link #OPPONENT_SELECTS_PATTERN} in every dispatch chain. That one matches
+     * this text too — its {@code followup} group swallows all three remaining sentences and its
+     * {@code FOLLOWUP_PUT_TO_BREAK_ZONE} check then finds "put it into the Break Zone" inside them —
+     * and it would resolve as a <em>forced</em> break with the block restriction dropped entirely,
+     * turning the opponent's option into the printing card's unconditional removal effect.
+     * <ul>
+     *   <li>Group {@code count}   — number of Characters selected</li>
+     *   <li>Group {@code targets} — card type(s) the opponent selects from</li>
+     *   <li>Group {@code card}    — the card that cannot block; checked against the carrier's name</li>
+     * </ul>
+     */
+    static final Pattern OPP_SELECTS_MAY_BREAK_ELSE_SELF_CANNOT_BLOCK = Pattern.compile(
+        "(?i)^Your\\s+opponent\\s+selects?\\s+(?<count>\\d+)\\s+" +
+        "(?<targets>Forwards?|Backups?|Characters?|Monsters?)\\s+" +
+        "(?:they|he\\s*/\\s*she|he|she)\\s+controls?[.!]\\s*" +
+        "(?:They|He\\s*/\\s*She|He|She)\\s+may\\s+put\\s+it\\s+into\\s+the\\s+Break\\s+Zone[.!]\\s*" +
+        "If\\s+(?:they|he\\s*/\\s*she|he|she)\\s+(?:does|do)\\s+so,\\s+" +
+        "(?<card>.+?)\\s+cannot\\s+block\\s+this\\s+turn[.!]?$",
         Pattern.DOTALL
     );
     /**

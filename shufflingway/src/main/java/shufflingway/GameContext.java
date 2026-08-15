@@ -241,6 +241,16 @@ public interface GameContext {
     void millTopDeckCancelChosenIfNotType(String type);
 
     /**
+     * Colkhab (18-041C): both players mill the top card of their deck; if the two milled cards share
+     * a card type, the in-progress selection is cancelled. Two-sided sibling of
+     * {@link #millTopDeckCancelChosenIfNotType}, and cancels on a match rather than on a mismatch.
+     *
+     * <p>An empty deck on either side mills nothing and cancels nothing — with only one card there is
+     * no pair to compare.
+     */
+    void millTopDeckBothCancelChosenIfSameType();
+
+    /**
      * Loads {@code targets} as the pre-selected targets for the ability about to be resolved.
      * Called by {@link MainWindow} just before running the resolution lambda, so that
      * {@link ActionResolver}'s {@code selectTargets} can return them without showing a dialog.
@@ -1822,6 +1832,22 @@ public interface GameContext {
      * full, it does not. Pay-in-full-or-decline — there is no partial payment that still prevents it.
      */
     void opponentMayPayToPreventAction(int cost, Runnable onNotPaid);
+
+    /**
+     * Ardyn 8-068L: offers the ability controller's <em>opponent</em> the option to put 1 Character
+     * they control into the Break Zone, and reports whether they took it. The cost is the opponent's
+     * to weigh — it buys them something the printing card would rather they not have — so the
+     * decision goes to them, not to the controller resolving the ability.
+     *
+     * <p>{@code forwards} / {@code backups} / {@code monsters} narrow which of their Characters are
+     * eligible. With none eligible there is no offer to make and this returns {@code false} without
+     * prompting. {@code sourceName} names the printing card in the prompt, so the opponent can see
+     * what they are buying.
+     *
+     * @return {@code true} if a Character was actually put into the Break Zone
+     */
+    boolean opponentMayBreakOwnCharacter(boolean forwards, boolean backups, boolean monsters,
+            String sourceName);
 
     /**
      * Offers the ability user the chance to pay an optional cost that averts a consequence — the

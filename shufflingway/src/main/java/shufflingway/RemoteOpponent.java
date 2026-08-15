@@ -469,6 +469,7 @@ class RemoteOpponent implements OpponentController {
 				mw.logEntry("[P2] Attack Phase");
 				mw.autoAbilityTriggers.triggerAutoAbilitiesForBeginningOfAttackPhase(false);
 				mw.autoAbilityTriggers.triggerAutoAbilitiesForBeginningOfAttackPhaseEachTurn(false);
+				mw.autoAbilityTriggers.triggerAutoAbilitiesForBeginningOfOppAttackPhase(false);
 				mw.refreshAllP2ForwardSlots();
 			}
 

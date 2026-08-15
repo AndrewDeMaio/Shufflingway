@@ -2038,6 +2038,37 @@ final class GameContextImpl implements GameContext {
 				}
 			}
 
+			@Override public void millTopDeckBothCancelChosenIfSameType() {
+				CardData mine  = millTopForCancelCompare(isP1);
+				CardData theirs = millTopForCancelCompare(!isP1);
+				if (mine == null || theirs == null) {
+					logEntry("A deck was empty — no pair to compare, the effect proceeds");
+					return;
+				}
+				if (mine.type() != null && mine.type().equalsIgnoreCase(theirs.type())) {
+					mw.lastChosenSelectionCancelled = true;
+					logEntry("Both milled cards are " + mine.type() + "s — the effect choosing your "
+							+ "Character(s) is cancelled");
+				} else {
+					logEntry("The milled cards differ in card type — the effect proceeds");
+				}
+			}
+
+			/**
+			 * Mills {@code sideIsP1}'s top deck card into their Break Zone and returns it, or
+			 * {@code null} when that deck is empty.
+			 */
+			private CardData millTopForCancelCompare(boolean sideIsP1) {
+				Deque<CardData> deck = sideIsP1 ? mw.gameState.getP1MainDeck() : mw.gameState.getP2MainDeck();
+				if (deck.isEmpty()) return null;
+				CardData top = deck.pollFirst();
+				logEntry((sideIsP1 ? "" : "[P2] ") + top.name() + " (" + top.type() + ") → Break Zone (top of deck)");
+				mw.addToBreakZone(top);   // routed to its owner's Break Zone by card identity
+				if (sideIsP1) { mw.refreshP1DeckLabel(); mw.refreshP1BreakLabel(); }
+				else          { mw.refreshP2DeckLabel(); mw.refreshP2BreakLabel(); }
+				return top;
+			}
+
 			@Override public void cancelChosenSelectionUnlessOpponentDiscards(int count) {
 				String src = mw.currentAbilitySource != null ? mw.currentAbilitySource.name() : "Ability";
 				boolean opponentIsP1 = !isP1;   // the player being asked to discard
@@ -3450,20 +3481,64 @@ final class GameContextImpl implements GameContext {
 				if (c != null) logEntry("[" + (seatIsP1 ? "P1" : "P2") + "] selected " + c.name());
 			}
 
-			@Override public void selectControlledTypeAndBreak(boolean inclForwards, boolean inclBackups, boolean inclMonsters) {
-				List<ForwardTarget> eligible = new ArrayList<>();
-				if (inclForwards) eligible.addAll(ownForwards(isP1));
+			/** One seat's Characters in the named zones, as targets. */
+			private List<ForwardTarget> ownCharacters(boolean seatIsP1, boolean inclForwards,
+					boolean inclBackups, boolean inclMonsters) {
+				List<ForwardTarget> out = new ArrayList<>();
+				if (inclForwards) out.addAll(ownForwards(seatIsP1));
 				if (inclBackups) {
-					CardData[] backups = isP1 ? mw.p1BackupCards : mw.p2BackupCards;
+					CardData[] backups = seatIsP1 ? mw.p1BackupCards : mw.p2BackupCards;
 					for (int i = 0; i < backups.length; i++)
 						if (backups[i] != null)
-							eligible.add(new ForwardTarget(isP1, i, ForwardTarget.CardZone.BACKUP));
+							out.add(new ForwardTarget(seatIsP1, i, ForwardTarget.CardZone.BACKUP));
 				}
 				if (inclMonsters) {
-					List<CardData> monsters = isP1 ? mw.p1MonsterCards : mw.p2MonsterCards;
+					List<CardData> monsters = seatIsP1 ? mw.p1MonsterCards : mw.p2MonsterCards;
 					for (int i = 0; i < monsters.size(); i++)
-						eligible.add(new ForwardTarget(isP1, i, ForwardTarget.CardZone.MONSTER));
+						out.add(new ForwardTarget(seatIsP1, i, ForwardTarget.CardZone.MONSTER));
 				}
+				return out;
+			}
+
+			@Override public boolean opponentMayBreakOwnCharacter(boolean inclForwards, boolean inclBackups,
+					boolean inclMonsters, String sourceName) {
+				boolean oppIsP1 = !isP1;
+				List<ForwardTarget> eligible = ownCharacters(oppIsP1, inclForwards, inclBackups, inclMonsters);
+				if (eligible.isEmpty()) {
+					logEntry((oppIsP1 ? "P1" : "[P2]") + " has no eligible Characters — no offer made");
+					return false;
+				}
+
+				// Declining is the point of the offer, so the AI weighs it rather than always taking
+				// it: the cheapest Character it can spare buys the opening, but it will not empty its
+				// board for one. Returning null from the supplier is how a seat declines.
+				Supplier<ForwardTarget> cpuPick = () -> {
+					if (eligible.size() < 2) return null;
+					ForwardTarget best = null;
+					int bestCost = Integer.MAX_VALUE;
+					for (ForwardTarget t : eligible) {
+						CardData c = mw.fieldCardDataOrNull(t);
+						if (c != null && c.cost() < bestCost) { bestCost = c.cost(); best = t; }
+					}
+					return best;
+				};
+
+				ForwardTarget pick = mw.selectOwnFieldTarget(oppIsP1, eligible,
+						"You may put 1 Character you control into the Break Zone — if you do, "
+								+ sourceName + " cannot block this turn",
+						"Waiting for your opponent to decide whether to break a Character...",
+						cpuPick);
+				if (pick == null) {
+					logEntry("Effect: opponent declined — " + sourceName + " may still block");
+					return false;
+				}
+				logSelectedOwnCard(oppIsP1, pick);
+				forceTargetToBreakZone(pick);
+				return true;
+			}
+
+			@Override public void selectControlledTypeAndBreak(boolean inclForwards, boolean inclBackups, boolean inclMonsters) {
+				List<ForwardTarget> eligible = ownCharacters(isP1, inclForwards, inclBackups, inclMonsters);
 				if (eligible.isEmpty()) {
 					logEntry((isP1 ? "P1" : "[P2]") + " has no eligible characters — skipping");
 					return;
