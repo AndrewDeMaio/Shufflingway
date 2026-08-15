@@ -1843,6 +1843,22 @@ final class GameContextImpl implements GameContext {
 				logEntry("Effect: " + chosen.source().name() + "'s " + type + " effect will be cancelled");
 			}
 
+			@Override public void cancelTriggeringSummon() {
+				List<StackEntry> stack = mw.gameState.getStack();
+				// Top down: the trigger resolving now was pushed above the Summon that fired it,
+				// so the first Summon found walking back down is that one. A Summon cast in
+				// response would sit above it and be found first, which is also correct — that
+				// is the Summon whose cast triggered the copy resolving now.
+				for (int i = stack.size() - 1; i >= 0; i--) {
+					StackEntry e = stack.get(i);
+					if (!e.isSummon()) continue;
+					mw.cancelledStackEntries.add(e);
+					logEntry("Effect: \"" + e.source().name() + "\"'s effect will be cancelled");
+					return;
+				}
+				logEntry("No Summon on the stack to cancel");
+			}
+
 			@Override public void cancelAutoAbilityAndDamageSourceIfForward(int damage) {
 				List<StackEntry> targets = mw.gameState.getStack().stream()
 						.filter(StackEntry::isAutoAbility)

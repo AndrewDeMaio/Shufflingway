@@ -167,6 +167,14 @@ public class FieldAbilityParsingTest {
         // AI go through, so the lock cannot be reached around.
         if (AutoAbilityTriggers.FA_OPP_FORWARDS_CANNOT_USE_ACTION_ABILITIES
                 .matcher(fa.effectText().trim()).matches()) return true;
+        // The Emperor 2-147L. Read by canActivateAbility alongside Sin's narrower lock, and matched
+        // the same way its AutoAbilityTriggers.hasOppCharacterAbilityLock counterpart matches it.
+        if (AutoAbilityTriggers.FA_OPP_CHARACTERS_CANNOT_USE_ABILITIES
+                .matcher(fa.effectText().trim()).matches()) return true;
+        // The Fiend 20-114L. Read by MainWindow.pushSummonOnStack as each Summon goes on the Stack,
+        // which is the single point every casting path funnels through.
+        if (AutoAbilityTriggers.FA_CANCEL_OPP_FIRST_SUMMON_EACH_TURN
+                .matcher(fa.effectText().trim()).matches()) return true;
         // Kalmia 18-090R. Read by MainWindow.bzCardsProtectedFromOppChoice wherever an effect
         // would choose in a Break Zone. Not self-named like its neighbours — it speaks about a
         // zone rather than about its carrier, so there is no name to check.
@@ -217,6 +225,7 @@ public class FieldAbilityParsingTest {
         // Conditional printings, re-evaluated per query by FieldGrantCalculator.
         if (CardData.parseIfControlNonDmgBreakShield(fa.effectText(), source.name()) != null) return true;
         if (CardData.parseFieldNonDmgBreakShieldGrant(fa.effectText()) != null) return true;
+        if (selfGrantedBreakShield(fa, source)) return true;
         // Both are self-named: the engine only acts on them when the text names its own carrier.
         if (CardData.parseHandSizeSelfGrant(fa.effectText(), source.name()) != null) return true;
         // "[Self] gains [traits] and \"[quoted ability]\"" behind a Damage N gate — the traits go
@@ -326,6 +335,16 @@ public class FieldAbilityParsingTest {
         return m.matches()
                 && m.group("placed").trim().equalsIgnoreCase(source.name())
                 && m.group("subject").trim().equalsIgnoreCase(source.name());
+    }
+
+    /**
+     * True when {@code fa} is a break shield the carrier grants itself in quotes — the shape
+     * {@link FieldGrantCalculator} unwraps before reading. The unwrap is name-checked there, so it
+     * is name-checked here too.
+     */
+    private static boolean selfGrantedBreakShield(FieldAbility fa, CardData source) {
+        String inner = CardData.selfGrantedFieldAbility(fa.effectText(), source.name());
+        return inner != null && CardData.parseFieldNonDmgBreakShieldGrant(inner) != null;
     }
 
     /** {@link #selfNamedCompulsion} for the patterns that call their card-name group {@code name}. */
@@ -502,6 +521,12 @@ public class FieldAbilityParsingTest {
         if (AutoAbilityTriggers.FA_OPP_FORWARDS_CANNOT_USE_ACTION_ABILITIES
                 .matcher(fa.effectText().trim()).matches())
             return "OppForwardsCannotUseActionAbilities[their turn]";
+        if (AutoAbilityTriggers.FA_OPP_CHARACTERS_CANNOT_USE_ABILITIES
+                .matcher(fa.effectText().trim()).matches())
+            return "OppCharactersCannotUseAbilities[special+action, always]";
+        if (AutoAbilityTriggers.FA_CANCEL_OPP_FIRST_SUMMON_EACH_TURN
+                .matcher(fa.effectText().trim()).matches())
+            return "CancelOppFirstSummon[each turn]";
         if (ActionResolverPatterns.FA_BZ_CARDS_PROTECTED_FROM_OPP_CHOICE
                 .matcher(fa.effectText()).find())
             return "BzCardsCannotBeChosenByOpp";
@@ -514,7 +539,11 @@ public class FieldAbilityParsingTest {
             return "SelfNonDmgBreakShield[if control]";
         if (CardData.parseSelfNonDmgBreakShield(fa.effectText(), source.name()))
             return "SelfNonDmgBreakShield";
-        CardData.NonDmgBreakShieldGrant ndg = CardData.parseFieldNonDmgBreakShieldGrant(fa.effectText());
+        // Tifa 11-071L prints the same shield inside a quoted ability she hands herself; the
+        // unwrapped text is what FieldGrantCalculator reads, so it is what gets described.
+        String selfGranted = CardData.selfGrantedFieldAbility(fa.effectText(), source.name());
+        CardData.NonDmgBreakShieldGrant ndg = CardData.parseFieldNonDmgBreakShieldGrant(
+                selfGranted != null ? selfGranted : fa.effectText());
         if (ndg != null) {
             // Auron 1-002R filters on type alone, so every attribute filter is null there and the
             // type is the only thing there is to name.

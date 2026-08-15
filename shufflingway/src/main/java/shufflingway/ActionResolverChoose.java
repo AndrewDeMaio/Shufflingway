@@ -3675,6 +3675,21 @@ final class ActionResolverChoose {
         };
     }
     /**
+     * Parses a bare "Cancel the Summon's effect." — the sub-effect of Clione 4-125C, split off its
+     * "put Clione into the Break Zone. If you do so, …" wrapper by
+     * {@code AutoAbilityTriggers.executePutSelfIntoBzIfDoSoAutoAbility} before it reaches here.
+     *
+     * <p>The named sibling of {@link #tryParseCancelChosenTargetBare}: that one answers a selection
+     * still in progress, this one cancels the Summon on the Stack that the ability triggered off.
+     */
+    static Consumer<GameContext> tryParseCancelTriggeringSummon(String text) {
+        if (!CANCEL_TRIGGERING_SUMMON.matcher(text.trim()).matches()) return null;
+        return ctx -> {
+            ctx.logEntry("Effect: cancel the Summon's effect");
+            ctx.cancelTriggeringSummon();
+        };
+    }
+    /**
      * Parses the two abilities that move a Stack entry's chosen target onto a different
      * permanent — Faris 21-114L and Edge 15-045H. See {@link TargetRedirect} for the two shapes.
      *

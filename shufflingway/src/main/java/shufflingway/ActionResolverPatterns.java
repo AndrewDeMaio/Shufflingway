@@ -511,6 +511,21 @@ final class ActionResolverPatterns {
         "(?i)^Cancel\\s+(?:its|their)\\s+effects?[.!]?$"
     );
     /**
+     * Matches a bare "Cancel the Summon's effect." — the sub-effect half of Clione 4-125C's "put
+     * Clione into the Break Zone. If you do so, cancel the Summon's effect."
+     *
+     * <p>Named rather than pronominal, which is what separates it from
+     * {@link #CANCEL_CHOSEN_TARGET_BARE}: that one answers a selection in progress, while this names
+     * the Summon whose casting triggered the ability. The Summon is still on the Stack, one entry
+     * below the trigger, so nothing is chosen — see {@link GameContext#cancelTriggeringSummon}.
+     *
+     * <p>{@code AutoAbilityTriggers.executePutSelfIntoBzIfDoSoAutoAbility} splits the sentence and
+     * parses this half on its own, so the whole two-sentence text never needs a parser of its own.
+     */
+    static final Pattern CANCEL_TRIGGERING_SUMMON = Pattern.compile(
+        "(?i)^Cancel\\s+the\\s+Summon'?s\\s+effect[.!]?$"
+    );
+    /**
      * Standalone "If your opponent doesn't pay 《N》, [target action]." — the body of a reactive
      * auto-ability (e.g. Remedi: "…if your opponent doesn't pay 《2》, break it.") whose target is
      * supplied via {@link GameContext#consumePreloadedTargets()} (the entering card). The opponent

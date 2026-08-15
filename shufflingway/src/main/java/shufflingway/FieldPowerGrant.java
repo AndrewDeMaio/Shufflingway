@@ -58,6 +58,25 @@ public record FieldPowerGrant(
     }
 
     /**
+     * This grant gated on the controller having taken {@code threshold} points of damage — the
+     * "Damage N -- [self] gains "…"" printings, whose quoted half is an ordinary passive grant
+     * parsed on its own and then handed the gate its wrapper carried (Aranea 11-086L, Yang 13-064R,
+     * Yuna 16-134S).
+     *
+     * <p>Returns {@code this} for a non-positive threshold, so an ungated caller can pipe every
+     * grant through without branching.
+     */
+    FieldPowerGrant withMinDamageThreshold(int threshold) {
+        if (threshold <= 0) return this;
+        return new FieldPowerGrant(jobFilter, categoryFilter, inclForwards, inclBackups, inclMonsters,
+                exceptCardName, powerBonus, grantedTraits, affectsOpponent, costFilter, costCmp,
+                elementFilter, inclCardName, minBzSize, minBzFilterCount, bzFilterJob,
+                bzFilterCardName, bzFilterFwds, yourTurnOnly, minDistinctElements, exBurstDmgPerGroup,
+                exBurstDmgGroupSize, threshold, maxDamageThreshold, traitFilter, attackingOnly,
+                basePowerSet, excludeElement, partyWithCardName);
+    }
+
+    /**
      * Same-side grant filtered only by target type, element and/or trait — the shape produced by
      * "The [Element] [type] [with Trait] [other than X] you control gain +N power [and Trait]."
      */

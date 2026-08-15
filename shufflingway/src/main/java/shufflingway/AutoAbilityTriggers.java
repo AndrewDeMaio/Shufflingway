@@ -632,6 +632,58 @@ final class AutoAbilityTriggers {
 	}
 
 	/**
+	 * "The Characters opponent controls cannot use special or action abilities."
+	 * (The Emperor 2-147L.)
+	 *
+	 * <p>The unconditional, whole-board twin of
+	 * {@link #FA_OPP_FORWARDS_CANNOT_USE_ACTION_ABILITIES}, and wider on all three axes that one is
+	 * narrow on: every Character rather than Forwards alone, Special Abilities as well as action
+	 * ones, and at all times rather than only while the locked player is taking their turn. What it
+	 * keeps is the side scoping — it binds the opposing player's Characters, never its controller's.
+	 *
+	 * <p>Auto and field abilities are untouched: nobody "uses" those, so a locked Character keeps
+	 * every trigger it prints. Nor does the lock reach an ability used from hand or from the Break
+	 * Zone, since the text speaks of Characters on the field.
+	 */
+	static final Pattern FA_OPP_CHARACTERS_CANNOT_USE_ABILITIES = Pattern.compile(
+		"(?i)^The\\s+Characters?\\s+(?:your\\s+)?opponent\\s+controls?\\s+cannot\\s+use\\s+" +
+		"special\\s+or\\s+action\\s+abilit(?:y|ies)[.!]?$"
+	);
+
+	/** Returns true if {@code card} locks the opposing player's Characters out of used abilities. */
+	static boolean hasOppCharacterAbilityLock(CardData card) {
+		for (FieldAbility fa : card.fieldAbilities())
+			if (FA_OPP_CHARACTERS_CANNOT_USE_ABILITIES.matcher(fa.effectText().trim()).matches()) return true;
+		return false;
+	}
+
+	/**
+	 * "During each turn, when your opponent casts a Summon for the first time in that turn, cancel
+	 * its effect." (The Fiend 20-114L.)
+	 *
+	 * <p>Read off the board by {@code MainWindow.pushSummonOnStack} rather than dispatched as an
+	 * auto-ability: the existing {@code "cast summon"} trigger fires on the <em>casting</em> player's
+	 * own field and only after the Summon has resolved, so neither the side nor the timing this needs
+	 * is available there. Both matter — the cancel has to land while the Summon is still on the
+	 * Stack, and it has to land on the Summon its controller's opponent cast.
+	 *
+	 * <p>"for the first time in that turn" counts the caster's Summons within the turn, not the
+	 * carrier's uses: a second Summon in the same turn resolves normally even if the first was never
+	 * cancelled because the carrier had only just arrived.
+	 */
+	static final Pattern FA_CANCEL_OPP_FIRST_SUMMON_EACH_TURN = Pattern.compile(
+		"(?i)^During\\s+each\\s+turn,\\s+when\\s+your\\s+opponent\\s+casts\\s+a\\s+Summon\\s+" +
+		"for\\s+the\\s+first\\s+time\\s+in\\s+that\\s+turn,\\s+cancel\\s+its\\s+effect[.!]?$"
+	);
+
+	/** Returns true if {@code card} cancels the first Summon its controller's opponent casts each turn. */
+	static boolean hasOppFirstSummonCancel(CardData card) {
+		for (FieldAbility fa : card.fieldAbilities())
+			if (FA_CANCEL_OPP_FIRST_SUMMON_EACH_TURN.matcher(fa.effectText().trim()).matches()) return true;
+		return false;
+	}
+
+	/**
 	 * A standing self-named block compulsion: "[card] must block if possible." (Ricard 6-103H) and
 	 * the reversed printing "If possible, [card] must block." (Cecil 2-129L).
 	 *
@@ -1748,9 +1800,34 @@ final class AutoAbilityTriggers {
 		if (departing.isForward()) mw.fireOppNoForwardsFieldAbilities(!isP1);
 	}
 
-	/** Fires "cast summon" field abilities for all field cards belonging to the casting player. */
-	void triggerAutoAbilitiesForCastSummon(boolean isP1) {
-		triggerAutoAbilitiesForEvent("cast summon", isP1);
+	/**
+	 * Fires the cast-a-Summon triggers for a Summon {@code casterIsP1} has just put on the Stack.
+	 *
+	 * <p>Three canonical triggers share this event and they do not share a side. "When you cast a
+	 * Summon" belongs to the caster; "When your opponent casts a Summon" (Lenne 1-215S, Ezel 4-053R,
+	 * Gladiator 7-090C, Nelapa 23-014H) belongs to the player who did not cast, and is precisely the
+	 * side the text excludes; "When either player casts a Summon" (Clione 4-125C) belongs to both.
+	 * Dispatching all three on the caster's field fired the opponent-side printings for whichever
+	 * player they were not watching, and never for the one they were.
+	 *
+	 * <p>All three are collected in one batch, so a cast that wakes abilities on both sides is
+	 * ordered once — active player's first onto the Stack, and so last to resolve — rather than in
+	 * two independent rounds whose relative order would be an artefact of the call sequence here.
+	 *
+	 * <p>Deliberately does not open the Stack overlay, unlike every other event dispatcher here.
+	 * Its caller is {@code MainWindow.pushSummonOnStack}, which runs before the Summon's own
+	 * {@code showStackWindow}; showing it from here would resolve the Stack — the overlay resolves
+	 * a P1-owned top entry on the spot — while the cast that is putting entries on it is still
+	 * running. The old call site sat inside {@code resolveTopOfStack}, where the same call was a
+	 * no-op because {@code isResolvingStack} was already set.
+	 */
+	void triggerAutoAbilitiesForCastSummon(boolean casterIsP1) {
+		withBatch(() -> {
+			collectEventTriggers("cast summon", casterIsP1);
+			collectEventTriggers("opponent casts summon", !casterIsP1);
+			collectEventTriggers("either player casts summon", casterIsP1);
+			collectEventTriggers("either player casts summon", !casterIsP1);
+		});
 	}
 
 	/**
@@ -2333,15 +2410,26 @@ final class AutoAbilityTriggers {
 	}
 
 	private void triggerAutoAbilitiesForEvent(String triggerType, boolean isP1) {
-		withBatch(() -> {
-			List<CardData> fwds = new ArrayList<>(isP1 ? mw.p1ForwardCards : mw.p2ForwardCards);
-			CardData[]     bkps = isP1 ? mw.p1BackupCards : mw.p2BackupCards;
-			List<CardData> mons = new ArrayList<>(isP1 ? mw.p1MonsterCards : mw.p2MonsterCards);
-			for (CardData c : fwds) fireEventTriggers(c, isP1, triggerType);
-			for (CardData c : bkps) if (c != null) fireEventTriggers(c, isP1, triggerType);
-			for (CardData c : mons) fireEventTriggers(c, isP1, triggerType);
-		});
+		withBatch(() -> collectEventTriggers(triggerType, isP1));
 		mw.showStackWindowIfNeeded();
+	}
+
+	/**
+	 * Walks {@code isP1}'s field and fires every {@code triggerType} ability on it.
+	 *
+	 * <p>Split out of {@link #triggerAutoAbilitiesForEvent} so an event whose triggers span both
+	 * sides can gather all of them inside a single {@link #withBatch}. Callers that open no batch of
+	 * their own must go through {@code triggerAutoAbilitiesForEvent} instead — {@link #withBatch} is
+	 * re-entrant, so nesting is safe, but calling this bare would push each ability straight onto the
+	 * Stack and skip the simultaneous-trigger ordering entirely.
+	 */
+	private void collectEventTriggers(String triggerType, boolean isP1) {
+		List<CardData> fwds = new ArrayList<>(isP1 ? mw.p1ForwardCards : mw.p2ForwardCards);
+		CardData[]     bkps = isP1 ? mw.p1BackupCards : mw.p2BackupCards;
+		List<CardData> mons = new ArrayList<>(isP1 ? mw.p1MonsterCards : mw.p2MonsterCards);
+		for (CardData c : fwds) fireEventTriggers(c, isP1, triggerType);
+		for (CardData c : bkps) if (c != null) fireEventTriggers(c, isP1, triggerType);
+		for (CardData c : mons) fireEventTriggers(c, isP1, triggerType);
 	}
 
 	private void fireEventTriggers(CardData card, boolean isP1, String triggerType) {
@@ -2743,30 +2831,48 @@ final class AutoAbilityTriggers {
 			return;
 		}
 
-		// "If you do so" = controller may decline
-		if (isP1) {
+		// Only a printed "you may put …" is declinable, which the parser has already lifted into
+		// youMay/opponentMay. "If you do so" is not the choice it looks like: it gates the
+		// sub-effect on a step that has just happened unconditionally, and reading it as an offer
+		// let the player refuse Clione 4-125C's own cost and keep it on the field — declining the
+		// downside of a card whose upside is the cancel. Nine printings in this family are
+		// mandatory (Clione, Grenade 5-008R, Buccaboo 5-046R, Leyak 5-071R, Black Knight 5-106R,
+		// Tonberry 5-130R among them); the other thirty-one do say "you may".
+		//
+		// Gated exactly as the sibling executePutIntoBzWhenDoSoAutoAbility gates it, which had this
+		// right already — the two differ only in whether the card put into the Break Zone is the
+		// source itself or one it selects.
+		boolean p1GetsDialog = (fa.youMay() && isP1) || (fa.opponentMay() && !isP1);
+		if (p1GetsDialog) {
 			int choice = mw.showEffectOptionDialog(source.name() + " — " + fa.effectText(),
 					"Auto Ability", new Object[]{"Put into Break Zone", "Decline"});
 			if (choice != 0) {
 				mw.logEntry("[AutoAbility] " + source.name() + " — self-break declined");
 				return;
 			}
-		} else {
+		} else if (fa.youMay() || fa.opponentMay()) {
 			mw.logEntry("[AutoAbility] [AI] auto-accepts self-break for " + source.name());
 		}
 
-		// Find the source Monster on the field and break it directly (no selection dialog needed)
-		List<CardData> mons = isP1 ? mw.p1MonsterCards : mw.p2MonsterCards;
-		int idx = -1;
-		for (int i = 0; i < mons.size(); i++) {
-			if (CardFilters.meetsCardNameFilter(mons.get(i), source.name())) { idx = i; break; }
-		}
-		if (idx < 0) {
+		// Break the source where it actually stands (no selection dialog needed — the text names it).
+		//
+		// All three rows are searched, not the Monsters alone. The family is mostly Backups (Bard
+		// 12-028C, Summoner 12-031C, Red Mage 12-073C, Lilty 16-018C, Selkie 16-052C, Gladiator
+		// 16-071C, Yuke 16-101C, Clavat 16-110C, Larsa 26-058H, Jack Garland 28-010R, Arciela
+		// 28-058R) and Forwards (Tama 18-059R, Seifer 22-079L, Bhunivelze 24-033L, Cid Raines
+		// 26-031H); a Monster-only lookup left every one of them logging "no longer on field" and
+		// silently dropping the sub-effect it had just paid for.
+		//
+		// Matched by identity, which is what a card naming itself means and what findFieldSlot
+		// already does. No corpus case distinguishes it from the name scan it replaces — the
+		// same-name rule breaks the older copy on placement, so one side never holds two — but the
+		// identity check is the one that stays right if that ever stops holding.
+		ForwardTarget slot = mw.findFieldSlot(source, isP1);
+		if (slot == null) {
 			mw.logEntry("[AutoAbility] " + source.name() + " — no longer on field, sub-effect skipped");
 			return;
 		}
-		mw.buildGameContext(isP1).forceTargetToBreakZone(
-				new ForwardTarget(isP1, idx, ForwardTarget.CardZone.MONSTER));
+		mw.buildGameContext(isP1).forceTargetToBreakZone(slot);
 
 		Consumer<GameContext> effect = ActionResolver.parse(subEffect, source);
 		if (effect == null) {

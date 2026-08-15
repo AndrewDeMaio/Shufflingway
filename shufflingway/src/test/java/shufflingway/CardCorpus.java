@@ -72,7 +72,7 @@ final class CardCorpus {
 				CardData.parseAutoAbilities(textEn),
 				CardData.parseFieldAbilities(textEn, typeEn),
 				CardData.parseIfControlBoosts(textEn, typeEn),
-				CardData.parseFieldPowerGrants(textEn, typeEn),
+				CardData.parseFieldPowerGrants(textEn, typeEn, nameEn),
 				CardData.parseScalingSelfPowerBoosts(textEn, typeEn, nameEn),
 				CardData.parseFieldCostReductions(textEn, typeEn),
 				CardData.parseSelfCostModifiers(textEn),

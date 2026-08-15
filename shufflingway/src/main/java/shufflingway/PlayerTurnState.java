@@ -63,6 +63,16 @@ class PlayerTurnState {
 
 	int cardsCastThisTurn = 0;
 	boolean summonCastThisTurn = false;
+	/**
+	 * Summons this player has put on the Stack during the current turn.
+	 *
+	 * <p>The counted twin of {@link #summonCastThisTurn}, kept separately because the two are set at
+	 * different moments: the flag is raised by each casting path before the Summon reaches the Stack,
+	 * while this is incremented by {@code MainWindow.pushSummonOnStack} — the single point every cast
+	 * funnels through, and the only place from which "is this the first one this turn?" can still be
+	 * answered. The Fiend 20-114L asks exactly that.
+	 */
+	int summonsCastThisTurn = 0;
 	final Set<String> castJobsThisTurn = new HashSet<>();
 	final Set<String> castNamesThisTurn = new HashSet<>();
 	final Map<String, Integer> castCountByNameThisTurn = new HashMap<>();
@@ -122,6 +132,7 @@ class PlayerTurnState {
 	void resetCastTracking() {
 		cardsCastThisTurn = 0;
 		summonCastThisTurn = false;
+		summonsCastThisTurn = 0;
 		castJobsThisTurn.clear();
 		castNamesThisTurn.clear();
 		castCountByNameThisTurn.clear();

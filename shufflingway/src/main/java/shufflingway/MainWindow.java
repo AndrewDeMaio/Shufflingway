@@ -2014,7 +2014,7 @@ public class MainWindow {
 				CardData.parseActionAbilities(tx), CardData.parseAutoAbilities(tx),
 				CardData.parseFieldAbilities(tx, card.type()),
 				CardData.parseIfControlBoosts(tx, card.type()),
-				CardData.parseFieldPowerGrants(tx, card.type()),
+				CardData.parseFieldPowerGrants(tx, card.type(), card.name()),
 				CardData.parseScalingSelfPowerBoosts(tx, card.type(), card.name()),
 				CardData.parseFieldCostReductions(tx, card.type()),
 				CardData.parseSelfCostModifiers(tx),
@@ -6975,7 +6975,7 @@ public class MainWindow {
 	}
 
 	/** Locates {@code card} on {@code isP1}'s field by identity; {@code null} when it is not there. */
-	private ForwardTarget findFieldSlot(CardData card, boolean isP1) {
+	ForwardTarget findFieldSlot(CardData card, boolean isP1) {
 		int fIdx = identityIndexOf(isP1 ? p1ForwardCards : p2ForwardCards, card);
 		if (fIdx >= 0) return new ForwardTarget(isP1, fIdx, ForwardTarget.CardZone.FORWARD);
 		CardData[] backups = isP1 ? p1BackupCards : p2BackupCards;
@@ -7394,6 +7394,45 @@ public class MainWindow {
 		for (CardData c : fwds) if (!lostAbilitiesCards.contains(c) && AutoAbilityTriggers.hasOppForwardsActionAbilityLock(c)) return true;
 		for (CardData c : bkps) if (c != null && !lostAbilitiesCards.contains(c) && AutoAbilityTriggers.hasOppForwardsActionAbilityLock(c)) return true;
 		for (CardData c : mons) if (!lostAbilitiesCards.contains(c) && AutoAbilityTriggers.hasOppForwardsActionAbilityLock(c)) return true;
+		return false;
+	}
+
+	/**
+	 * Returns {@code true} when the Characters {@code isP1} controls may not use special or action
+	 * abilities at all — The Emperor 2-147L, "The Characters opponent controls cannot use special or
+	 * action abilities."
+	 *
+	 * <p>The wide twin of {@link #forwardActionAbilitiesLockedFor}: no turn gate, no ability-kind
+	 * exemption, and every Character rather than the Forward row alone. Only the side scoping is
+	 * shared — the lock is read off the opposing field, so its own controller is never bound by it.
+	 */
+	boolean characterAbilitiesLockedFor(boolean isP1) {
+		List<CardData> fwds = isP1 ? p2ForwardCards : p1ForwardCards;
+		CardData[]     bkps = isP1 ? p2BackupCards  : p1BackupCards;
+		List<CardData> mons = isP1 ? p2MonsterCards : p1MonsterCards;
+		for (CardData c : fwds) if (!lostAbilitiesCards.contains(c) && AutoAbilityTriggers.hasOppCharacterAbilityLock(c)) return true;
+		for (CardData c : bkps) if (c != null && !lostAbilitiesCards.contains(c) && AutoAbilityTriggers.hasOppCharacterAbilityLock(c)) return true;
+		for (CardData c : mons) if (!lostAbilitiesCards.contains(c) && AutoAbilityTriggers.hasOppCharacterAbilityLock(c)) return true;
+		return false;
+	}
+
+	/**
+	 * Returns {@code true} when the Summon {@code casterIsP1} is casting right now has its effect
+	 * cancelled by the opposing board — The Fiend 20-114L, "During each turn, when your opponent
+	 * casts a Summon for the first time in that turn, cancel its effect."
+	 *
+	 * <p>Call sites must have already counted the cast: "the first time in that turn" is read off
+	 * {@link PlayerTurnState#summonsCastThisTurn}, which {@link #pushSummonOnStack} increments as the
+	 * entry goes on the Stack.
+	 */
+	boolean castSummonIsCancelledByOpponent(boolean casterIsP1) {
+		if (turn(casterIsP1).summonsCastThisTurn != 1) return false;
+		List<CardData> fwds = casterIsP1 ? p2ForwardCards : p1ForwardCards;
+		CardData[]     bkps = casterIsP1 ? p2BackupCards  : p1BackupCards;
+		List<CardData> mons = casterIsP1 ? p2MonsterCards : p1MonsterCards;
+		for (CardData c : fwds) if (!lostAbilitiesCards.contains(c) && AutoAbilityTriggers.hasOppFirstSummonCancel(c)) return true;
+		for (CardData c : bkps) if (c != null && !lostAbilitiesCards.contains(c) && AutoAbilityTriggers.hasOppFirstSummonCancel(c)) return true;
+		for (CardData c : mons) if (!lostAbilitiesCards.contains(c) && AutoAbilityTriggers.hasOppFirstSummonCancel(c)) return true;
 		return false;
 	}
 
@@ -8805,6 +8844,16 @@ public class MainWindow {
 	 * <p>The Stack depth is taken before the targets are chosen and the entry inserted back at it:
 	 * choosing can trigger the opponent's "when this is chosen" auto-abilities, whose entries must
 	 * end up above this Summon so they resolve first (see {@link GameState#insertStack}).
+	 *
+	 * <p>Every way a Summon can be cast funnels through here, which makes this the place the turn's
+	 * Summon count is kept, the place The Fiend 20-114L's cancellation lands, and the place the
+	 * cast-a-Summon auto-abilities fire. All three want the cast itself rather than the resolution:
+	 * a cancel is only a cancel while the Summon is still on the Stack, and a trigger that reads
+	 * "when … casts" goes on the Stack above the Summon and resolves first. Firing here gives that
+	 * ordering for free, since {@code executeAutoAbilityImpl} inserts at the current Stack depth.
+	 *
+	 * <p>Marking the entry cancelled here also means the Stack overlay opens on an already-cancelled
+	 * entry, which {@link #showStackWindow} resolves without a response window.
 	 */
 	void pushSummonOnStack(CardData card, boolean isP1, int extraCostRemovedCardPower,
 			int xValue, boolean paidExtraCost, List<ForwardTarget> preTargets, boolean targetsKnown) {
@@ -8813,11 +8862,19 @@ public class MainWindow {
 				? (preTargets == null || preTargets.isEmpty() ? null : preTargets)
 				: chooseSummonTargets(card, isP1, paidExtraCost, xValue);
 		lastSummonPreTargets = targets;
-		gameState.insertStack(depth, paidExtraCost
+		StackEntry entry = paidExtraCost
 				? new StackEntry(card, null, null, isP1, xValue, false, targets, false, true, extraCostRemovedCardPower)
-				: new StackEntry(card, null, null, isP1, xValue, false, targets, false, false, 0));
+				: new StackEntry(card, null, null, isP1, xValue, false, targets, false, false, 0);
+		gameState.insertStack(depth, entry);
 		logEntry("[Stack] \"" + card.name() + "\" — Summon on the stack"
 				+ (paidExtraCost ? " (Extra Cost paid)" : ""));
+		turn(isP1).summonsCastThisTurn++;
+		if (castSummonIsCancelledByOpponent(isP1)) {
+			cancelledStackEntries.add(entry);
+			logEntry((isP1 ? "" : "[P2] ") + "\"" + card.name()
+					+ "\" — the turn's first Summon; its effect is cancelled");
+		}
+		autoAbilityTriggers.triggerAutoAbilitiesForCastSummon(isP1);
 	}
 
 	/**
@@ -9092,7 +9149,6 @@ public class MainWindow {
 						currentSummonSource   = null;
 					}
 				} else logEntry("[ActionResolver] Summon effect not yet implemented: " + effectText);
-				autoAbilityTriggers.triggerAutoAbilitiesForCastSummon(entry.isP1());
 				if (pendingSummonReturnToHand) {
 					if (entry.isP1()) {
 						gameState.getP1Hand().add(entry.source());
@@ -10256,6 +10312,12 @@ public class MainWindow {
 		// player's own turn. Special abilities are a separate kind of ability under rule 6-1-1
 		// and are left alone; so is anything the source is using from off the Forward row.
 		if (!ability.isSpecial() && forwardActionAbilitiesLockedFor(isP1) && isFieldForward(source, isP1))
+			return false;
+		// The Emperor 2-147L shuts the opposing player's Characters out of both kinds of used
+		// ability, on every turn. Scoped to the field rather than to the Forward row, since it names
+		// Characters: a Backup's or Monster's ability is caught too. An ability used from hand or
+		// from the Break Zone is not — the text binds Characters the opponent controls.
+		if (characterAbilitiesLockedFor(isP1) && Boolean.valueOf(isP1).equals(fieldSideOf(source)))
 			return false;
 		if (ability.ownBreakZoneNameRequired() != null) {
 			List<CardData> bz = isP1 ? gameState.getP1BreakZone() : gameState.getP2BreakZone();

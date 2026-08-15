@@ -167,6 +167,16 @@ public interface GameContext {
     void cancelStackEntry();
 
     /**
+     * Cancels the Summon whose casting triggered the ability now resolving — Clione 4-125C's
+     * "cancel the Summon's effect". Nothing is chosen: "the Summon" is definite, and it is the
+     * topmost Summon on the Stack, which is the one this trigger was pushed on top of.
+     *
+     * <p>Does nothing when no Summon is on the Stack, which is what an ability reaching this from
+     * anywhere but its cast-time trigger would find.
+     */
+    void cancelTriggeringSummon();
+
+    /**
      * Cancels one auto-ability on the stack (chosen by the active player), then if the source
      * card is a Forward currently on the field, deals {@code damage} to it.
      */

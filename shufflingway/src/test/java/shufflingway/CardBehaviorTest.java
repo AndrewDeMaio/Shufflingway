@@ -18911,7 +18911,7 @@ public class CardBehaviorTest {
 		return new CardData(null, name, element, 3, power, "Forward", false, 0, false, false,
 				CardData.parseTraits(text, name), 0, List.of(), null, List.of(),
 				List.of(), List.of(), CardData.parseFieldAbilities(text, "Forward"),
-				List.of(), CardData.parseFieldPowerGrants(text, "Forward"),
+				List.of(), CardData.parseFieldPowerGrants(text, "Forward", name),
 				List.of(), List.of(), List.of(), List.of(), List.of(),
 				false, false, null, false, false, false, false, false, 1,
 				null, null, null, text);
@@ -19259,5 +19259,602 @@ public class CardBehaviorTest {
 
 		assertEquals(3, mw.gameState.peekStack().xValue(),
 				"nothing is reachable, so the full range stays open rather than the cost being blocked");
+	}
+
+	// =========================================================================================
+	// The Emperor 2-147L — "The Characters opponent controls cannot use special or action
+	// abilities."
+	//
+	// The wide twin of Sin 14-045H's lock, which the engine already carried: Sin binds Forwards,
+	// action abilities only, and only while the locked player is taking their turn. This one
+	// drops all three narrowings and keeps only the side scoping. So the interesting assertions
+	// are the three places it reaches that Sin's does not, and the one place it still stops.
+	// =========================================================================================
+
+	private static final String EMPEROR_2_147L_LOCK =
+			"The Characters opponent controls cannot use special or action abilities.";
+
+	/** P2 fields The Emperor; P1 fields a Forward with an ordinary action ability. Returns it. */
+	private static CardData emperorFacingAnAbilityUser(MainWindow mw, GameState.Player whoseTurn) {
+		advanceTo(mw, whoseTurn, GameState.GamePhase.MAIN_1);
+		mw.placeP2CardInFirstBackupSlot(
+				makeFieldAbilityCard("The Emperor", "Dark", "Backup", EMPEROR_2_147L_LOCK));
+		CardData user = makeForward("Vaan", "Wind", 3, 7000,
+				CardData.parseActionAbilities(PLAIN_ACTION_ABILITY));
+		placeP1Forward(mw, user);
+		return user;
+	}
+
+	@Test
+	void theEmperorLocksTheOpposingForwardsOutOfActionAbilities() {
+		MainWindow mw = new MainWindow();
+		CardData user = emperorFacingAnAbilityUser(mw, GameState.Player.P1);
+
+		assertTrue(mw.characterAbilitiesLockedFor(true));
+		assertFalse(mw.canActivateAbility(user.actionAbilities().get(0), false,
+				CardState.ACTIVE, 0, user, true));
+	}
+
+	@Test
+	void theEmperorsLockDoesNotLiftOnItsControllersTurn() {
+		MainWindow mw = new MainWindow();
+		CardData user = emperorFacingAnAbilityUser(mw, GameState.Player.P2);
+
+		assertTrue(mw.characterAbilitiesLockedFor(true),
+				"no \"during your opponent's turn\" clause — unlike Sin, this one never lifts");
+		assertFalse(mw.canActivateAbility(user.actionAbilities().get(0), false,
+				CardState.ACTIVE, 0, user, true));
+	}
+
+	@Test
+	void theEmperorCatchesSpecialAbilitiesToo() {
+		MainWindow mw = new MainWindow();
+		emperorFacingAnAbilityUser(mw, GameState.Player.P1);
+		CardData bartz = makeForward("Bartz", "Wind", 3, 7000, CardData.parseActionAbilities(
+				"[[s]]Spellblade[[/]] 《S》: Choose 1 Forward. Deal it 5000 damage."));
+		placeP1Forward(mw, bartz);
+		mw.gameState.getP1Hand().add(makeForward("Bartz", "Wind", 3, 7000)); // discarded for the 《S》
+
+		ActionAbility s = bartz.actionAbilities().get(0);
+		assertTrue(s.isSpecial(), "《S》 marks it Special");
+		assertFalse(mw.canActivateAbility(s, false, CardState.ACTIVE, 0, bartz, true),
+				"the text names both kinds, so rule 6-1-1's separation does not exempt this one");
+	}
+
+	@Test
+	void theEmperorReachesBackupsAndMonstersAsWell() {
+		MainWindow mw = new MainWindow();
+		emperorFacingAnAbilityUser(mw, GameState.Player.P1);
+		CardData backup = makeForward("Scholar", "Wind", 2, 0,
+				CardData.parseActionAbilities(PLAIN_ACTION_ABILITY));
+		mw.placeCardInFirstBackupSlot(backup);
+
+		assertFalse(mw.isFieldForward(backup, true), "a Backup is not a Forward");
+		assertFalse(mw.canActivateAbility(backup.actionAbilities().get(0), false,
+				CardState.ACTIVE, 0, backup, true),
+				"but it is a Character, and this lock names Characters");
+	}
+
+	@Test
+	void theEmperorDoesNotLockItsOwnControllersCharacters() {
+		MainWindow mw = new MainWindow();
+		advanceTo(mw, GameState.Player.P2, GameState.GamePhase.MAIN_1);
+		mw.placeP2CardInFirstBackupSlot(
+				makeFieldAbilityCard("The Emperor", "Dark", "Backup", EMPEROR_2_147L_LOCK));
+		CardData ally = makeForward("Ally", "Dark", 3, 7000,
+				CardData.parseActionAbilities(PLAIN_ACTION_ABILITY));
+		placeP2Forward(mw, ally);
+
+		assertFalse(mw.characterAbilitiesLockedFor(false),
+				"the text locks the opponent's Characters, never its own side's");
+		assertTrue(mw.canActivateAbility(ally.actionAbilities().get(0), false,
+				CardState.ACTIVE, 0, ally, false));
+	}
+
+	@Test
+	void theEmperorLeavingTheFieldEndsTheLock() {
+		MainWindow mw = new MainWindow();
+		CardData user = emperorFacingAnAbilityUser(mw, GameState.Player.P1);
+		mw.p2BackupCards[0] = null;
+
+		assertFalse(mw.characterAbilitiesLockedFor(true));
+		assertTrue(mw.canActivateAbility(user.actionAbilities().get(0), false,
+				CardState.ACTIVE, 0, user, true));
+	}
+
+	// =========================================================================================
+	// The Fiend 20-114L — "During each turn, when your opponent casts a Summon for the first
+	// time in that turn, cancel its effect."
+	//
+	// Read off the board as each Summon goes on the Stack rather than dispatched through the
+	// "cast summon" trigger, which fires on the casting player's own side and only once the
+	// Summon has already resolved — neither the side nor the timing this needs. The counting is
+	// the caster's, not the carrier's: "the first time in that turn" asks how many Summons the
+	// opponent has cast this turn, so a second one resolves even if the first went uncancelled.
+	// =========================================================================================
+
+	private static final String FIEND_20_114L_CANCEL =
+			"During each turn, when your opponent casts a Summon for the first time in that turn, "
+			+ "cancel its effect.";
+
+	/** P1 fields The Fiend, so P2's casts are the ones being watched. */
+	private static void fieldTheFiend(MainWindow mw) {
+		placeP1Forward(mw, makeFieldAbilityCard("The Fiend", "Water", "Forward", FIEND_20_114L_CANCEL));
+	}
+
+	/** {@code isP1} casts a plain Summon; returns the Stack entry it produced. */
+	private static StackEntry cast(MainWindow mw, boolean isP1, String name) {
+		mw.pushSummonOnStack(makeSummon(name, "Ice", 2, "Draw 1 card."), isP1, 0, 0, false, null, false);
+		return mw.gameState.peekStack();
+	}
+
+	@Test
+	void theFiendCancelsTheFirstSummonItsOpponentCastsInATurn() {
+		MainWindow mw = new MainWindow();
+		fieldTheFiend(mw);
+
+		StackEntry first = cast(mw, false, "Shiva");
+
+		assertTrue(mw.cancelledStackEntries.contains(first),
+				"cancelled on the Stack, before it has a chance to resolve");
+	}
+
+	@Test
+	void theSecondSummonOfTheSameTurnResolvesNormally() {
+		MainWindow mw = new MainWindow();
+		fieldTheFiend(mw);
+
+		cast(mw, false, "Shiva");
+		StackEntry second = cast(mw, false, "Ifrit");
+
+		assertFalse(mw.cancelledStackEntries.contains(second),
+				"\"for the first time in that turn\" — this is the second");
+	}
+
+	@Test
+	void theFiendDoesNotCancelItsOwnControllersSummons() {
+		MainWindow mw = new MainWindow();
+		fieldTheFiend(mw);
+
+		StackEntry own = cast(mw, true, "Shiva");
+
+		assertFalse(mw.cancelledStackEntries.contains(own),
+				"the text watches your opponent's casts, not your own");
+	}
+
+	@Test
+	void eachPlayersSummonCountIsKeptApart() {
+		MainWindow mw = new MainWindow();
+		fieldTheFiend(mw);
+
+		cast(mw, true, "Shiva");                       // The Fiend's controller casts first
+		StackEntry opposing = cast(mw, false, "Ifrit"); // still the opponent's first
+
+		assertTrue(mw.cancelledStackEntries.contains(opposing),
+				"the count that matters is the caster's own");
+	}
+
+	@Test
+	void theCountIsClearedAtTheTurnBoundarySoTheNextFirstSummonIsCaughtToo() {
+		MainWindow mw = new MainWindow();
+		fieldTheFiend(mw);
+		cast(mw, false, "Shiva");
+
+		mw.p2Turn.resetCastTracking(); // what the turn-boundary hooks call
+
+		StackEntry nextTurn = cast(mw, false, "Ifrit");
+		assertTrue(mw.cancelledStackEntries.contains(nextTurn),
+				"\"during each turn\" — every turn gets its own first Summon");
+	}
+
+	@Test
+	void theFiendLeavingTheFieldEndsTheCancellation() {
+		MainWindow mw = new MainWindow();
+		fieldTheFiend(mw);
+		mw.p1ForwardCards.clear();
+
+		assertFalse(mw.cancelledStackEntries.contains(cast(mw, false, "Shiva")));
+	}
+
+	// =========================================================================================
+	// Aranea 11-086L — "Damage 6 -- Aranea gains "The Forwards you control gain Haste.""
+	//
+	// A card handing itself a whole passive ability once its controller is deep enough in
+	// damage. The wrapper contributes only the gate: the quoted half is an ordinary field grant,
+	// so it is parsed on its own and comes back carrying minDamageThreshold. Two gaps had to
+	// close for that to work — the unwrapping, and the trait-only grant with no Job/Category or
+	// power clause, which no existing pattern accepted.
+	// =========================================================================================
+
+	private static final String ARANEA_11_086L_GRANT =
+			"Damage 6 -- Aranea gains \"The Forwards you control gain Haste.\"";
+
+	@Test
+	void aTraitOnlyGrantWithNoFilterParsesOnItsOwn() {
+		List<FieldPowerGrant> grants =
+				CardData.parseFieldPowerGrants("The Forwards you control gain Haste.", "Forward");
+		assertEquals(1, grants.size(), "no power clause and no Job/Category filter is still a grant");
+		FieldPowerGrant g = grants.get(0);
+		assertEquals(0, g.powerBonus());
+		assertEquals(Set.of(CardData.Trait.HASTE), g.grantedTraits());
+		assertTrue(g.inclForwards());
+		assertFalse(g.inclBackups(), "\"Forwards\" names one row");
+	}
+
+	@Test
+	void theResolvedEffectWordingIsNotClaimedAsAPassiveGrant() {
+		assertEquals(List.of(), CardData.parseFieldPowerGrants(
+				"The Forwards you control gain Haste until the end of the turn.", "Forward"),
+				"that one is an effect the ActionResolver runs, not a standing grant");
+	}
+
+	@Test
+	void araneasQuotedGrantIsUnwrappedAndKeepsItsDamageGate() {
+		List<FieldPowerGrant> grants =
+				CardData.parseFieldPowerGrants(ARANEA_11_086L_GRANT, "Forward", "Aranea");
+		assertEquals(1, grants.size());
+		FieldPowerGrant g = grants.get(0);
+		assertEquals(Set.of(CardData.Trait.HASTE), g.grantedTraits());
+		assertEquals(6, g.minDamageThreshold(), "the \"Damage 6 --\" prefix the wrapper carried");
+	}
+
+	@Test
+	void aQuotedGrantNamingSomebodyElseIsNotReadAsSelfGranted() {
+		assertEquals(List.of(), CardData.parseFieldPowerGrants(
+				ARANEA_11_086L_GRANT, "Forward", "Biggs"),
+				"the subject has to be the carrier when the carrier's name is known");
+	}
+
+	@Test
+	void araneaHandsOutHasteOnlyOnceTheDamageIsDeepEnough() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForwardWithPowerGrant("Aranea", "Lightning", 7000, ARANEA_11_086L_GRANT));
+		CardData ally = makeForward("Biggs", "Lightning", 2, 5000);
+		placeP1Forward(mw, ally);
+		int allyIdx = mw.p1ForwardCards.indexOf(ally);
+
+		for (int i = 0; i < 5; i++)
+			mw.gameState.getP1DamageZone().add(makeForward("Damage " + i, "Fire", 1, 1000));
+		assertFalse(mw.effectiveP1HasTrait(allyIdx, CardData.Trait.HASTE), "5 damage is not 6");
+
+		mw.gameState.getP1DamageZone().add(makeForward("Damage 5", "Fire", 1, 1000));
+		assertTrue(mw.effectiveP1HasTrait(allyIdx, CardData.Trait.HASTE));
+	}
+
+	@Test
+	void araneasGrantStaysOnItsOwnSide() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForwardWithPowerGrant("Aranea", "Lightning", 7000, ARANEA_11_086L_GRANT));
+		CardData opposing = makeForward("Biggs", "Lightning", 2, 5000);
+		placeP2Forward(mw, opposing);
+		for (int i = 0; i < 6; i++)
+			mw.gameState.getP1DamageZone().add(makeForward("Damage " + i, "Fire", 1, 1000));
+
+		assertFalse(mw.effectiveP2HasTrait(mw.p2ForwardCards.indexOf(opposing), CardData.Trait.HASTE),
+				"\"you control\" — the opposing Forwards get nothing");
+	}
+
+	// =========================================================================================
+	// Tifa 11-071L — "Damage 3 -- Tifa gains "The Category VII Forwards you control cannot be
+	// broken by opposing Summons or abilities that don't deal damage.""
+	//
+	// The same self-granted wrapper Aranea prints, but the quoted half is a break shield, which
+	// FieldGrantCalculator reads straight off the field abilities rather than through
+	// parseFieldPowerGrants. So the unwrap had to happen there too — and the gate with it: that
+	// loop had no damage check at all, because until now nothing damage-gated reached it.
+	// =========================================================================================
+
+	private static final String TIFA_11_071L_SHIELD =
+			"Damage 3 -- Tifa gains \"The Category VII Forwards you control cannot be broken by "
+			+ "opposing Summons or abilities that don't deal damage.\"";
+
+	/** Builds a Category VII Forward, the set Tifa's shield names. */
+	private static CardData makeCategoryVIIForward(String name, String text) {
+		return new CardData(null, name, "Fire", 3, 7000, "Forward", false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				List.of(), List.of(), CardData.parseFieldAbilities(text, "Forward"),
+				List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				null, "VII", null, text);
+	}
+
+	@Test
+	void tifasQuotedShieldIsDormantUntilThreeDamage() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeCategoryVIIForward("Tifa", TIFA_11_071L_SHIELD));
+		CardData cloud = makeCategoryVIIForward("Cloud", "");
+		placeP1Forward(mw, cloud);
+		int idx = mw.p1ForwardCards.indexOf(cloud);
+
+		for (int i = 0; i < 2; i++)
+			mw.gameState.getP1DamageZone().add(makeForward("Damage " + i, "Fire", 1, 1000));
+		assertFalse(mw.effectiveP1HasTrait(idx, CardData.Trait.CANNOT_BE_BROKEN_BY_NON_DMG),
+				"2 damage is not 3 — the wrapper's gate has to be read");
+
+		mw.gameState.getP1DamageZone().add(makeForward("Damage 2", "Fire", 1, 1000));
+		assertTrue(mw.effectiveP1HasTrait(idx, CardData.Trait.CANNOT_BE_BROKEN_BY_NON_DMG));
+	}
+
+	@Test
+	void tifasShieldCoversHerselfButNotOffCategoryForwards() {
+		MainWindow mw = new MainWindow();
+		CardData tifa = makeCategoryVIIForward("Tifa", TIFA_11_071L_SHIELD);
+		placeP1Forward(mw, tifa);
+		CardData outsider = makeForward("Vaan", "Wind", 3, 7000); // no category
+		placeP1Forward(mw, outsider);
+		for (int i = 0; i < 3; i++)
+			mw.gameState.getP1DamageZone().add(makeForward("Damage " + i, "Fire", 1, 1000));
+
+		assertTrue(mw.effectiveP1HasTrait(mw.p1ForwardCards.indexOf(tifa),
+				CardData.Trait.CANNOT_BE_BROKEN_BY_NON_DMG),
+				"Tifa is herself a Category VII Forward, so she is inside her own filter");
+		assertFalse(mw.effectiveP1HasTrait(mw.p1ForwardCards.indexOf(outsider),
+				CardData.Trait.CANNOT_BE_BROKEN_BY_NON_DMG));
+	}
+
+	@Test
+	void aQuotedShieldNamingSomebodyElseIsNotUnwrapped() {
+		assertNull(CardData.selfGrantedFieldAbility(
+				"Tifa gains \"The Category VII Forwards you control cannot be broken by opposing "
+				+ "Summons or abilities that don't deal damage.\"", "Cloud"),
+				"the wrapper only unwraps for the card it names");
+	}
+
+	// =========================================================================================
+	// The cast-a-Summon trigger family — three triggers, three different sides
+	//
+	// "When you cast a Summon" (Yuna 1-214S and ~20 others) belongs to the caster; "When your
+	// opponent casts a Summon" (Lenne 1-215S, Ezel 4-053R, Gladiator 7-090C, Nelapa 23-014H) to
+	// the player who did not cast; "When either player casts a Summon" (Clione 4-125C) to both.
+	// All three normalised to one key and dispatched on the caster's field, so the opponent-side
+	// printings fired for exactly the player their text excludes and never for the one it names.
+	//
+	// The trigger also moved from after the Summon resolved to the cast itself, which is both
+	// what the text says and the only timing at which Clione's cancel can mean anything.
+	// =========================================================================================
+
+	private static final String EZEL_4_053R =
+			"When your opponent casts a Summon, activate all the Forwards you control.";
+	private static final String CLIONE_4_125C =
+			"When either player casts a Summon, put Clione into the Break Zone. "
+			+ "If you do so, cancel the Summon's effect.";
+	/** An "either player" watcher with a trivial effect, for testing dispatch without Clione's prompt. */
+	private static final String EITHER_PLAYER_WATCHER =
+			"When either player casts a Summon, draw 1 card.";
+
+	/** The Stack entries a cast produced, bottom first. */
+	private static List<StackEntry> stackOf(MainWindow mw) {
+		return mw.gameState.getStack();
+	}
+
+	@Test
+	void theThreeCastSummonSubjectsNormaliseToThreeTriggers() {
+		assertEquals("cast summon", CardData.parseAutoAbilities(
+				"When you cast a Summon, draw 1 card.").get(0).trigger());
+		assertEquals("opponent casts summon", CardData.parseAutoAbilities(
+				"When your opponent casts a Summon, draw 1 card.").get(0).trigger());
+		assertEquals("either player casts summon", CardData.parseAutoAbilities(
+				"When either player casts a Summon, draw 1 card.").get(0).trigger());
+	}
+
+	@Test
+	void anOpponentCastsTriggerFiresForTheWatcherNotTheCaster() {
+		MainWindow mw = new MainWindow();
+		CardData ezel = makeForwardWithText("Ezel", "Fire", 3, 7000, EZEL_4_053R);
+		placeP1Forward(mw, ezel);
+
+		mw.pushSummonOnStack(makeSummon("Shiva", "Ice", 2, "Draw 1 card."), false, 0, 0, false, null, false);
+
+		assertEquals(2, stackOf(mw).size(), "the Summon, and Ezel's trigger above it");
+		assertSame(ezel, stackOf(mw).get(1).source());
+		assertTrue(stackOf(mw).get(1).isAutoAbility());
+		assertTrue(stackOf(mw).get(0).isSummon(),
+				"the trigger resolves first — that is what \"when ... casts\" means");
+	}
+
+	@Test
+	void anOpponentCastsTriggerStaysSilentOnItsOwnControllersCast() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForwardWithText("Ezel", "Fire", 3, 7000, EZEL_4_053R));
+
+		mw.pushSummonOnStack(makeSummon("Shiva", "Ice", 2, "Draw 1 card."), true, 0, 0, false, null, false);
+
+		assertEquals(1, stackOf(mw).size(), "Ezel watches the opponent, and the opponent did not cast");
+	}
+
+	@Test
+	void aYouCastTriggerStillBelongsToTheCaster() {
+		MainWindow mw = new MainWindow();
+		CardData yuna = makeForwardWithText("Yuna", "Water", 3, 7000,
+				"When you cast a Summon, draw 1 card.");
+		placeP1Forward(mw, yuna);
+
+		mw.pushSummonOnStack(makeSummon("Shiva", "Ice", 2, "Draw 1 card."), false, 0, 0, false, null, false);
+		assertEquals(1, stackOf(mw).size(), "P2 cast it, so P1's \"when you cast\" does not fire");
+
+		mw.pushSummonOnStack(makeSummon("Ifrit", "Fire", 2, "Draw 1 card."), true, 0, 0, false, null, false);
+		assertSame(yuna, stackOf(mw).get(stackOf(mw).size() - 1).source());
+	}
+
+	@Test
+	void anEitherPlayerTriggerFiresWhicheverSideCasts() {
+		for (boolean casterIsP1 : new boolean[]{true, false}) {
+			MainWindow mw = new MainWindow();
+			CardData watcher = makeForwardWithText("Clione", "Water", 2, 3000, EITHER_PLAYER_WATCHER);
+			placeP1Forward(mw, watcher);
+
+			mw.pushSummonOnStack(makeSummon("Shiva", "Ice", 2, "Draw 1 card."),
+					casterIsP1, 0, 0, false, null, false);
+
+			assertEquals(2, stackOf(mw).size(), "cast by " + (casterIsP1 ? "P1" : "P2"));
+			assertSame(watcher, stackOf(mw).get(1).source());
+		}
+	}
+
+	@Test
+	void anEitherPlayerTriggerFiresOnceForEachWatcherNotOncePerSide() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForwardWithText("Clione", "Water", 2, 3000, EITHER_PLAYER_WATCHER));
+
+		mw.pushSummonOnStack(makeSummon("Shiva", "Ice", 2, "Draw 1 card."), true, 0, 0, false, null, false);
+
+		assertEquals(2, stackOf(mw).size(),
+				"both sides are walked, but only the side holding the watcher yields an entry");
+	}
+
+	// -- Clione's sub-effect ---------------------------------------------------------------
+	// The two-sentence text is split by AutoAbilityTriggers.executePutSelfIntoBzIfDoSoAutoAbility,
+	// which already handled the sacrifice half for the whole "put [self] into the Break Zone.
+	// If/When you do so, …" family. Only "cancel the Summon's effect." had no parser, so that half
+	// was logged as unrecognised and Clione sacrificed itself for nothing.
+	//
+	// That executor also used to offer P1 a Decline for every printing in the family. Nine of the
+	// forty are mandatory — no printed "you may" — and Clione is one: refusing meant keeping it on
+	// the field and dodging the cost of its own cancel.
+
+	/** A Monster whose auto abilities are parsed from {@code text} — {@code makeFieldAbilityCard} omits them. */
+	private static CardData makeMonsterWithText(String name, String element, String text) {
+		return new CardData(null, name, element, 2, 3000, "Monster", false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				CardData.parseActionAbilities(text), CardData.parseAutoAbilities(text),
+				CardData.parseFieldAbilities(text, "Monster"),
+				List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				null, null, null, text);
+	}
+
+	/** P1 fields Clione as the Monster it is, so the self-break executor can find it. */
+	private static CardData fieldClione(MainWindow mw) {
+		CardData clione = makeMonsterWithText("Clione", "Water", CLIONE_4_125C);
+		mw.gameState.getIdentity().put(clione, true);
+		mw.placeCardInMonsterZone(clione); // the full row, not just the card list — the break needs it
+		return clione;
+	}
+
+	@Test
+	void aMandatorySelfBreakIsNotOfferedAsAChoice() {
+		CardData clione = makeMonsterWithText("Clione", "Water", CLIONE_4_125C);
+		AutoAbility fa = clione.autoAbilities().stream()
+				.filter(a -> a.trigger().equals("either player casts summon")).findFirst().orElseThrow();
+		assertFalse(fa.youMay(), "\"If you do so\" is a gate, not an offer — nothing here is optional");
+		assertFalse(fa.opponentMay());
+
+		AutoAbility optional = CardData.parseAutoAbilities(
+				"When you cast a Summon, you may put Summoner into the Break Zone. "
+				+ "When you do so, draw 2 cards.").get(0);
+		assertTrue(optional.youMay(), "the printings that do say \"you may\" still offer the choice");
+	}
+
+	@Test
+	void clioneSacrificesItselfAndCancelsTheSummonWithoutPrompting() {
+		MainWindow mw = new MainWindow();
+		CardData clione = fieldClione(mw);
+
+		// This shape resolves inline inside its executor rather than going on the Stack, so the
+		// whole ability is done by the time the cast returns. Before the prompt was gated on
+		// "you may", it blocked here on a modal Decline dialog instead.
+		mw.pushSummonOnStack(makeSummon("Shiva", "Ice", 2, "Draw 1 card."), false, 0, 0, false, null, false);
+
+		assertEquals(1, stackOf(mw).size(), "only the Summon — the trigger resolved on the spot");
+		assertTrue(mw.cancelledStackEntries.contains(stackOf(mw).get(0)),
+				"the sacrifice buys the cancel — the sentence split used to drop it");
+		assertFalse(mw.p1MonsterCards.contains(clione), "and Clione paid for it");
+	}
+
+	// -- Which row the self-break searches -------------------------------------------------
+	// The executor used to look for the source in the Monster row only, so every Backup and
+	// Forward printing in the family logged "no longer on field" and dropped its sub-effect —
+	// after charging the player for it. Clione and the other mandatory ones happen to be
+	// Monsters, which is why the row never came up until the rest of the family was examined.
+
+	private static final String SUMMONER_12_031C =
+			"When you cast a Summon, you may put Summoner into the Break Zone. "
+			+ "When you do so, draw 2 cards.";
+
+	/**
+	 * P2 casts a plain Summon. Both row tests are driven from P2's seat because the executor asks
+	 * the human before an optional self-break: Summoner 12-031C really does print "you may", so a
+	 * P1-side cast raises its Decline dialog and blocks. From P2's seat the AI auto-accepts, which
+	 * leaves the row lookup — the thing under test — as the only variable.
+	 */
+	private static void castAsP2(MainWindow mw, String name) {
+		mw.pushSummonOnStack(makeSummon(name, "Ice", 2, "Draw 1 card."), false, 0, 0, false, null, false);
+	}
+
+	@Test
+	void aBackupSelfBreakReachesItsSubEffect() {
+		MainWindow mw = new MainWindow();
+		CardData summoner = new CardData(null, "Summoner", "Water", 2, 0, "Backup", false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				List.of(), CardData.parseAutoAbilities(SUMMONER_12_031C),
+				List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				null, null, null, SUMMONER_12_031C);
+		mw.gameState.getIdentity().put(summoner, false);
+		mw.placeP2CardInFirstBackupSlot(summoner);
+		int handBefore = mw.gameState.getP2Hand().size();
+		for (int i = 0; i < 5; i++) mw.gameState.getP2MainDeck().push(makeForward("Card " + i, "Water", 1, 1000));
+
+		castAsP2(mw, "Shiva");
+
+		assertNull(mw.p2BackupCards[0], "the Backup broke itself — the Monster-only lookup never found it");
+		assertEquals(handBefore + 2, mw.gameState.getP2Hand().size(), "and the sub-effect it paid for ran");
+	}
+
+	@Test
+	void aForwardSelfBreakReachesItsSubEffectToo() {
+		MainWindow mw = new MainWindow();
+		CardData tama = makeForwardWithText("Tama", "Water", 2, 5000,
+				"When you cast a Summon, put Tama into the Break Zone. If you do so, draw 1 card.");
+		placeP2Forward(mw, tama);
+		int handBefore = mw.gameState.getP2Hand().size();
+		mw.gameState.getP2MainDeck().push(makeForward("Top", "Water", 1, 1000));
+
+		castAsP2(mw, "Shiva");
+
+		assertFalse(mw.p2ForwardCards.contains(tama), "the Forward row was as unreachable as the Backup one");
+		assertEquals(handBefore + 1, mw.gameState.getP2Hand().size());
+	}
+
+	@Test
+	void cancelTheSummonsEffectIsItsOwnEffect() {
+		assertEquals("CancelTriggeringSummon",
+				ActionResolver.matchedPatternName("Cancel the Summon's effect.", null));
+		assertEquals("CancelChosenTargetBare",
+				ActionResolver.matchedPatternName("Cancel its effect.", null),
+				"the pronominal sibling answers a selection instead, and is untouched");
+	}
+
+	@Test
+	void cancellingTheTriggeringSummonHitsTheSummonOnTheStack() {
+		MainWindow mw = new MainWindow();
+		mw.pushSummonOnStack(makeSummon("Shiva", "Ice", 2, "Draw 1 card."), false, 0, 0, false, null, false);
+		StackEntry summon = stackOf(mw).get(0);
+
+		ActionResolver.parse("Cancel the Summon's effect.", null).accept(mw.buildGameContext(true));
+
+		assertTrue(mw.cancelledStackEntries.contains(summon),
+				"nothing is chosen — \"the Summon\" is the one this trigger sits on top of");
+	}
+
+	@Test
+	void cancellingWithNoSummonOnTheStackIsHarmless() {
+		MainWindow mw = new MainWindow();
+		mw.buildGameContext(true).cancelTriggeringSummon();
+		assertTrue(mw.cancelledStackEntries.isEmpty());
+	}
+
+	@Test
+	void anAbilityOnTheStackIsNotMistakenForTheSummon() {
+		MainWindow mw = new MainWindow();
+		CardData watcher = makeForwardWithText("Clione", "Water", 2, 3000, EITHER_PLAYER_WATCHER);
+		placeP1Forward(mw, watcher);
+		mw.pushSummonOnStack(makeSummon("Shiva", "Ice", 2, "Draw 1 card."), false, 0, 0, false, null, false);
+
+		mw.buildGameContext(true).cancelTriggeringSummon();
+
+		assertFalse(mw.cancelledStackEntries.contains(stackOf(mw).get(1)),
+				"the watcher's own trigger sits above the Summon and must not be the one cancelled");
+		assertTrue(mw.cancelledStackEntries.contains(stackOf(mw).get(0)));
 	}
 }

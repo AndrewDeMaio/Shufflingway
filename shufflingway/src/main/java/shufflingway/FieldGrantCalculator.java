@@ -48,17 +48,23 @@ class FieldGrantCalculator {
                     && mw.fpgPartyConditionMet(fpg, src, target, isP1)
                     && (!fpg.yourTurnOnly() || isP1 == (mw.gameState.getCurrentPlayer() == GameState.Player.P1)))
                 out.addAll(fpg.grantedTraits());
+        int dmg = isP1 ? mw.gameState.getP1DamageZone().size() : mw.gameState.getP2DamageZone().size();
         // "The [filter] you control cannot be broken by … that don't deal damage." — a grant to a
         // filtered set, so it runs for every target including the printing card when it matches
         // its own filter (Celestia is a Water Character; Rasler is not named Ashe).
         for (FieldAbility fa : src.fieldAbilities()) {
-            CardData.NonDmgBreakShieldGrant g =
-                    CardData.parseFieldNonDmgBreakShieldGrant(fa.effectText());
+            if (fa.damageThreshold() > 0 && dmg < fa.damageThreshold()) continue;
+            // Tifa 11-071L prints this shield inside a quoted ability she hands herself, so the
+            // wrapper comes off before the grant is read. The gate the wrapper carried is already
+            // on the FieldAbility and was checked above.
+            String text = fa.effectText();
+            String granted = CardData.selfGrantedFieldAbility(text, src.name());
+            if (granted != null) text = granted;
+            CardData.NonDmgBreakShieldGrant g = CardData.parseFieldNonDmgBreakShieldGrant(text);
             if (g != null && g.appliesToCard(target)) out.add(CardData.Trait.CANNOT_BE_BROKEN_BY_NON_DMG);
         }
         // Self-targeted trait grants, optionally gated on damage threshold or job count.
         if (src == target) {
-            int dmg = isP1 ? mw.gameState.getP1DamageZone().size() : mw.gameState.getP2DamageZone().size();
             for (FieldAbility fa : src.fieldAbilities()) {
                 // Damage-gated (e.g., "Damage 1 -- Desch gains First Strike.")
                 if (fa.damageThreshold() > 0 && dmg < fa.damageThreshold()) continue;

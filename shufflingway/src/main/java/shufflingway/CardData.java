@@ -2899,7 +2899,7 @@ public record CardData(
                     boolean castOnly  = pretrigRaw.contains("due to your cast");
                     boolean warpOnly  = pretrigRaw.contains("enter") && pretrigRaw.contains("warp");
                     boolean preIsParty = pretarget.toLowerCase(Locale.ROOT).contains("party");
-                    String preTrig = normalizePretrigger(pretrigRaw, preIsParty, warpOnly);
+                    String preTrig = normalizePretrigger(pretrigRaw, pretarget, preIsParty, warpOnly);
                     AutoAbility preFA = parseAutoAbilityRestrictions(
                             pretarget, preTrig, youMay, opponentMay, castOnly, warpOnly, effect, 0);
                     if (preFA != null) result.add(preFA);
@@ -2908,7 +2908,7 @@ public record CardData(
                     String preextra = pm.group("preextra");
                     if (preextra != null && !preextra.isBlank()) {
                         String extraTrig = normalizePretrigger(
-                                preextra.trim().toLowerCase(Locale.ROOT), false, false);
+                                preextra.trim().toLowerCase(Locale.ROOT), pretarget, false, false);
                         AutoAbility extraFA = parseAutoAbilityRestrictions(
                                 pretarget, extraTrig, youMay, opponentMay, false, false, effect, 0);
                         if (extraFA != null) result.add(extraFA);
@@ -2995,7 +2995,7 @@ public record CardData(
             else if (triggerRaw.contains("break zone"))                                                     trigger = "put into break zone";
             else if (triggerRaw.contains("chosen") && triggerRaw.contains("abilit"))                        trigger = "chosen by opponent's summon or ability";
             else if (triggerRaw.contains("chosen"))                                                         trigger = "chosen by opponent's summon";
-            else if (triggerRaw.contains("summon"))                                                         trigger = "cast summon";
+            else if (triggerRaw.contains("summon"))                                                         trigger = castSummonTrigger(card);
             else if (triggerRaw.contains("damage zone"))                                                    trigger = "damage zone";
             else if (triggerRaw.contains("leaves"))                                                         trigger = "leaves the field";
             else if (warpOnly)                                                                               trigger = "enters the field";
@@ -3348,8 +3348,27 @@ public record CardData(
                 partyMinCount, partyCategory, partyJob, partyCardName);
     }
 
+    /**
+     * Which of the three cast-a-Summon triggers {@code subject} names.
+     *
+     * <p>Unlike almost every other trigger subject, this one is a player rather than a card, and it
+     * decides <em>whose</em> field the trigger fires on: "you" is the caster's own side, "your
+     * opponent" the other one, "either player" both. Every printing spells it out, so a subject that
+     * matches neither of the two special forms is the "you" case.
+     *
+     * <p>Folding all three into one key is what let the dispatch fire "When your opponent casts a
+     * Summon" on the casting player's field — the side the text explicitly excludes.
+     */
+    private static String castSummonTrigger(String subject) {
+        String s = subject == null ? "" : subject.toLowerCase(Locale.ROOT);
+        if (s.contains("either player")) return "either player casts summon";
+        if (s.contains("opponent"))      return "opponent casts summon";
+        return "cast summon";
+    }
+
     /** Normalises a raw trigger string (lower-cased) to a canonical trigger value. */
-    private static String normalizePretrigger(String raw, boolean cardIsParty, boolean warpOnly) {
+    private static String normalizePretrigger(String raw, String subject, boolean cardIsParty,
+            boolean warpOnly) {
         if (raw == null || raw.isBlank()) return "enters the field";
         String r = raw.trim();
         if (r.contains("attack") && r.contains("block"))                   return "attacks or blocks";
@@ -3360,7 +3379,7 @@ public record CardData(
         if (r.equals("is blocked"))                                 return "is blocked";
         if (r.contains("block"))                                    return "blocks";
         if (r.contains("break zone"))                               return "put into break zone";
-        if (r.contains("summon"))                                   return "cast summon";
+        if (r.contains("summon"))                                   return castSummonTrigger(subject);
         if (r.contains("damage zone"))                              return "damage zone";
         if (r.contains("leaves"))                                   return "leaves the field";
         if (warpOnly)                                               return "enters the field";
@@ -4415,6 +4434,67 @@ public record CardData(
     );
 
     /**
+     * The trait-only sibling of {@link #FIELD_GRANT_BARE_PATTERN}: "The [Element] [type]
+     * [with Trait] [other than Z] you control gain Trait[, and Trait]." — a grant with no power
+     * component and no Job/Category filter, which the bare pattern's mandatory "+N power" clause
+     * turns away and {@link #FIELD_GRANT_PATTERN} never sees because it requires a Job or Category.
+     *
+     * <p>The trait clause is spelled out from {@link #TRAIT_KEYWORD} rather than left open, and the
+     * pattern is end-anchored, so the resolved-effect wording "…gain Haste until the end of the
+     * turn." — which is an effect the {@code ActionResolver} runs, not a passive — cannot reach it.
+     */
+    private static final Pattern FIELD_GRANT_BARE_TRAIT_ONLY_PATTERN = Pattern.compile(
+        "(?i)^The\\s+" +
+        "(?<element>" + ELEMENT_KEYWORD + ")?\\s*" +
+        "(?<targets>Forwards?(?:\\s+and\\s+Monsters?)?|Backups?|Monsters?|Characters?)\\s+" +
+        "(?:with\\s+(?<withtrait>" + TRAIT_KEYWORD + ")\\s+)?" +
+        "(?:other\\s+than\\s+(?<except>[A-Z][A-Za-z''\\-]+(?:\\s+[A-Za-z''\\-]+)*)\\s+)?" +
+        "you\\s+control\\s+gains?\\s+" +
+        "(?<traitstext>" + TRAIT_KEYWORD + "(?:\\s*,?\\s*(?:and\\s+)?" + TRAIT_KEYWORD + ")*)" +
+        "[.!]?$"
+    );
+
+    /**
+     * Matches "[Damage N -- ] [Self] gains "&lt;field ability&gt;"" — a card handing itself a whole
+     * passive ability, usually once its controller has taken enough damage. Aranea 11-086L,
+     * Yang 13-064R, Yuna 16-134S and Tifa 11-071L are the printings.
+     *
+     * <p>The quoted half is an ordinary field ability, so the parsers re-enter it on its own and the
+     * wrapper contributes only the "Damage N -- " gate. Group {@code subject} is checked against the
+     * carrier's name when the caller knows it; {@code threshold} is the gate, captured here because
+     * this parser reads raw {@code [[br]]} segments rather than the stripped ones
+     * {@link #parseFieldAbilities} produces.
+     *
+     * <p>The subject may not contain a comma, which is what keeps the lazy group inside the name
+     * rather than letting it swallow a leading condition: "If a Blessing Counter is placed on
+     * Number 24, Number 24 gains "…"" (20-036H) is a counter grant read elsewhere, and without that
+     * bound a caller passing no name would read the whole clause as the subject and claim it.
+     */
+    static final Pattern SELF_GAINS_QUOTED_FIELD_ABILITY = Pattern.compile(
+        "(?i)^(?:Damage\\s+(?<threshold>\\d+)\\s+--\\s+)?" +
+        "(?<subject>[^\",.]+?)\\s+gains?\\s+" +
+        "\"(?<inner>.+)\"[.!]?$",
+        Pattern.DOTALL
+    );
+
+    /**
+     * The field ability {@code effectText} hands {@code cardName} in quotes, or {@code null} when it
+     * is not a self-granted quoted ability. The "Damage N -- " gate the wrapper may carry is not
+     * returned: callers reading a {@link FieldAbility} already have it in
+     * {@link FieldAbility#damageThreshold()}, which {@link #parseFieldAbilities} stripped for them.
+     *
+     * <p>{@link #parseFieldPowerGrants} does its own matching rather than calling this, because it
+     * works from raw {@code [[br]]} segments and so needs the gate as well.
+     */
+    static String selfGrantedFieldAbility(String effectText, String cardName) {
+        if (effectText == null || cardName == null) return null;
+        Matcher m = SELF_GAINS_QUOTED_FIELD_ABILITY.matcher(effectText.trim());
+        if (!m.matches()) return null;
+        if (!m.group("subject").trim().equalsIgnoreCase(cardName)) return null;
+        return m.group("inner").trim();
+    }
+
+    /**
      * Matches "The Card Name X you control gains +N power [and Trait(s)]."
      * Groups: {@code cardname}, {@code power}, {@code traitstext} (optional).
      */
@@ -4707,6 +4787,19 @@ public record CardData(
     }
 
     public static List<FieldPowerGrant> parseFieldPowerGrants(String textEn, String cardType) {
+        return parseFieldPowerGrants(textEn, cardType, null);
+    }
+
+    /**
+     * As {@link #parseFieldPowerGrants(String, String)}, but able to verify that a card handing
+     * itself a quoted field ability ("Damage 6 -- Aranea gains "…"") really is naming itself.
+     *
+     * @param cardName the carrier's name, or {@code null} to accept any name-shaped subject —
+     *     which is what the two-argument form passes, since most of its callers parse a text with
+     *     no card attached
+     */
+    public static List<FieldPowerGrant> parseFieldPowerGrants(String textEn, String cardType,
+            String cardName) {
         if (textEn == null || textEn.isBlank()) return List.of();
         if ("Summon".equalsIgnoreCase(cardType)) return List.of();
 
@@ -4726,6 +4819,20 @@ public record CardData(
             // is this parser's, and the rider is read separately off the same text.
             String[] rider = splitGrantWithDamageRider(seg);
             if (rider != null) seg = rider[0];
+
+            // "Damage N -- [Self] gains "<field ability>"" — the quoted half is an ordinary passive
+            // grant, so it is re-entered on its own and the wrapper contributes only its gate.
+            // Checked ahead of everything else: every pattern below is anchored on "^The ", so none
+            // of them can see past a segment that opens with the carrier's name.
+            Matcher selfQuotedM = SELF_GAINS_QUOTED_FIELD_ABILITY.matcher(seg);
+            if (selfQuotedM.matches()
+                    && (cardName == null || selfQuotedM.group("subject").trim().equalsIgnoreCase(cardName))) {
+                String thresholdStr = selfQuotedM.group("threshold");
+                int threshold = thresholdStr != null ? Integer.parseInt(thresholdStr) : 0;
+                for (FieldPowerGrant inner : parseFieldPowerGrants(selfQuotedM.group("inner"), cardType, cardName))
+                    result.add(inner.withMinDamageThreshold(threshold));
+                continue;
+            }
 
             if (FIELD_POWER_CANNOT_BE_DECREASED.matcher(seg).matches()) {
                 result.add(FieldPowerGrant.sameSideFiltered(true, false, false, null, 0,
@@ -4771,7 +4878,7 @@ public record CardData(
             Matcher bzCnJobM = FIELD_GRANT_BZ_COND_CN_AND_JOB_PATTERN.matcher(seg);
             if (bzCnJobM.matches()) {
                 int minBzSize = Integer.parseInt(bzCnJobM.group("bzcount"));
-                String cardName = bzCnJobM.group("cardname").trim();
+                String bzCardName = bzCnJobM.group("cardname").trim();
                 String job      = bzCnJobM.group("job").trim();
                 String type1    = bzCnJobM.group("type1");
                 String type2    = bzCnJobM.group("type2");
@@ -4788,7 +4895,7 @@ public record CardData(
                     if (ICB_EFFECT_BACK_ATTACK.matcher(traitsText).find())  traits.add(Trait.BACK_ATTACK);
                 }
                 result.add(new FieldPowerGrant(null, null, incl1[0] != 0, incl1[1] != 0, incl1[2] != 0,
-                        null, power, traits, false, -1, null, null, cardName, minBzSize, 0, null, false, false));
+                        null, power, traits, false, -1, null, null, bzCardName, minBzSize, 0, null, false, false));
                 result.add(new FieldPowerGrant(job, null, incl2[0] != 0, incl2[1] != 0, incl2[2] != 0,
                         null, power, traits, false, -1, null, null, null, minBzSize, 0, null, false, false));
                 continue;
@@ -4861,6 +4968,23 @@ public record CardData(
                         traitsNamedIn(bareM.group("withtrait")),
                         bareM.group("attacking") != null));
                 continue;
+            }
+
+            // Must follow FIELD_GRANT_BARE_PATTERN: the two describe the same sentence minus and
+            // plus a power clause, and only the power-bearing one can tell them apart.
+            Matcher bareTraitM = FIELD_GRANT_BARE_TRAIT_ONLY_PATTERN.matcher(seg);
+            if (bareTraitM.matches()) {
+                int[] incl = parseFieldGrantTargetFlags(bareTraitM.group("targets"));
+                EnumSet<Trait> traits = traitsNamedIn(bareTraitM.group("traitstext"));
+                if (!traits.isEmpty()) {
+                    String bareExcept = bareTraitM.group("except");
+                    String bareElem   = bareTraitM.group("element");
+                    result.add(FieldPowerGrant.sameSideFiltered(incl[0] != 0, incl[1] != 0, incl[2] != 0,
+                            bareExcept != null ? bareExcept.trim() : null, 0, traits,
+                            bareElem != null ? bareElem.trim() : null,
+                            traitsNamedIn(bareTraitM.group("withtrait"))));
+                    continue;
+                }
             }
 
             Matcher dualCnM = FIELD_GRANT_DUAL_CARD_NAME_PATTERN.matcher(seg);

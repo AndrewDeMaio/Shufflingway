@@ -513,6 +513,9 @@ public class ActionResolver {
         result = tryParseCancelChosenTargetBare(effectText);
         if (result != null) return result;
 
+        result = tryParseCancelTriggeringSummon(effectText);
+        if (result != null) return result;
+
         result = tryParseIfOppNotPayAction(effectText);
         if (result != null) return result;
 
@@ -1476,6 +1479,7 @@ public class ActionResolver {
         if (tryParseCancelChosenTargetUnlessDiscard(effectText) != null) return "CancelChosenTargetUnlessDiscard";
         if (tryParseTriggeredTargetAction(effectText, 0)      != null) return "TriggeredTargetAction";
         if (tryParseCancelChosenTargetBare(effectText)         != null) return "CancelChosenTargetBare";
+        if (tryParseCancelTriggeringSummon(effectText)         != null) return "CancelTriggeringSummon";
         if (tryParseIfOppNotPayAction(effectText)             != null) return "IfOppNotPayAction";
         // Mirrors parse(): checked alongside its sentence-sharing sibling below.
         if (tryParseRevealTopToHandIfTypeElseTopOrBottom(effectText) != null) return "RevealTopToHandIfTypeElseTopOrBottom";
@@ -2154,6 +2158,7 @@ public class ActionResolver {
         if (tryParseCancelChosenTargetUnlessDiscard(effectText) != null) return "CancelChosenTargetUnlessDiscard";
         if (tryParseTriggeredTargetAction(effectText, 0)      != null) return "TriggeredTargetAction";
         if (tryParseCancelChosenTargetBare(effectText)         != null) return "CancelChosenTargetBare";
+        if (tryParseCancelTriggeringSummon(effectText)         != null) return "CancelTriggeringSummon";
         if (tryParseIfOppNotPayAction(effectText)             != null) return "IfOppNotPayAction";
         // Mirrors parse(): checked alongside its sentence-sharing sibling below.
         if (tryParseRevealTopToHandIfTypeElseTopOrBottom(effectText) != null) return "RevealTopToHandIfTypeElseTopOrBottom";
