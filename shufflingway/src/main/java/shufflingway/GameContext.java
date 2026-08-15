@@ -2265,6 +2265,16 @@ public interface GameContext {
      */
     void putBreakZoneTargetOnTopOfDeck(ForwardTarget t);
 
+    /**
+     * Moves {@code t}, a card in a Break Zone, to the bottom of the ability user's deck.
+     * The bottom-of-deck twin of {@link #putBreakZoneTargetOnTopOfDeck(ForwardTarget)}, with the
+     * same split between the zone the card is taken from and the deck it lands in.
+     *
+     * <p>Callers moving more than one card must supply the targets in descending index order —
+     * see {@code ActionResolver.sortedByIdxDesc} — since each removal shifts the ones after it.
+     */
+    void putBreakZoneTargetOnBottomOfDeck(ForwardTarget t);
+
     /** Removes P1's forward at {@code idx} from the field and places it on top of P1's deck. */
     void returnP1ForwardToDeckTop(int idx);
 
@@ -2365,6 +2375,26 @@ public interface GameContext {
      * (survives P1's end-phase clearing, cleared at P2's end phase).
      */
     void setP2ForwardCannotAttackOrBlockPersistent(int idx);
+
+    /**
+     * Prevents the Character {@code t} names from using action abilities for the rest of the turn
+     * (14-064R Kitone).  Special abilities are a separate kind of ability under rule 6-1-1 and are
+     * left alone, matching how 14-045H Sin's field-wide lock is scoped.
+     *
+     * <p>Keyed by the card rather than by row index, because the choose that feeds this names a
+     * Character and so may land on a Backup or a Monster as readily as a Forward.
+     */
+    void setTargetCannotUseActionAbilitiesThisTurn(ForwardTarget t);
+
+    /**
+     * Stops the Character {@code t} names from attacking or blocking for the rest of the turn.
+     *
+     * <p>The zone-agnostic form of {@link #setP1ForwardCannotAttack(int)} and its siblings, for
+     * effects that choose a Character rather than a Forward. A Monster, or a Backup that something
+     * later turns into a Forward, can still end up in combat, and the restriction has to bind it
+     * there — so it is keyed by card rather than by Forward-row index.
+     */
+    void setTargetCannotAttackOrBlockThisTurn(ForwardTarget t);
 
     // ---- Attack / block state queries ---------------------------------------
 

@@ -2797,6 +2797,57 @@ final class ActionResolverChoose {
             };
         }
 
+        // --- Put at bottom of your own deck, with a second effect in the same clause (Scholar) ---
+        // Kept ahead of the plain form below for readability; the two cannot both match, since that
+        // pattern's lookahead declines any text continuing with "and".
+        Matcher bottomThenM = FOLLOWUP_PUT_BOTTOM_OF_YOUR_DECK_AND_THEN.matcher(primaryFollowup);
+        if (bottomThenM.find()) {
+            String alsoText = bottomThenM.group("also").trim();
+            Consumer<GameContext> alsoFn = parse(alsoText, source);
+            // Falling through when the trailing effect has no parser is deliberate: burying the
+            // chosen card and dropping the rest is a half-applied effect, and the unimplemented
+            // followup warning at the end of this method is the honest outcome.
+            if (alsoFn != null) {
+                return ctx -> {
+                    ctx.logEntry(choosePrefix + " — Put at bottom of your deck, then: " + alsoText);
+                    List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                            opponentOnly, selfOnly, condition, element, zone, opponentZone,
+                            costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
+                    // Descending index order: each removal shifts the Break Zone entries after it.
+                    sortedByIdxDesc(ts, true).forEach(ctx::putBreakZoneTargetOnBottomOfDeck);
+                    sortedByIdxDesc(ts, false).forEach(ctx::putBreakZoneTargetOnBottomOfDeck);
+                    // Runs even when nothing was chosen: Scholar's "choose up to 1" permits zero,
+                    // and the trailing clause is a second instruction of the same effect, not a
+                    // consequence of the first ("when you do so" would be the conditional wording).
+                    alsoFn.accept(ctx);
+                    if (secondary != null) secondary.accept(ctx);
+                };
+            }
+        }
+
+        // --- Put at bottom of your own deck followup (Break Zone burial) ---
+        // The twin of the block above, kept adjacent for the same reason: "your deck" and "its
+        // owner's deck" are disjoint phrasings that read as one decision.
+        Matcher bottomOwnDeckM = FOLLOWUP_PUT_BOTTOM_OF_YOUR_DECK.matcher(primaryFollowup);
+        if (bottomOwnDeckM.find()) {
+            boolean optional = bottomOwnDeckM.group("may") != null;
+            return ctx -> {
+                ctx.logEntry(choosePrefix + " — Put at bottom of your deck");
+                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
+                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
+                if (!ts.isEmpty() && optional
+                        && !ctx.promptYouMay("Put the chosen card at the bottom of your deck?")) {
+                    ctx.logEntry("  declined — card stays in the Break Zone");
+                } else {
+                    // Descending index order: each removal shifts the Break Zone entries after it.
+                    sortedByIdxDesc(ts, true).forEach(ctx::putBreakZoneTargetOnBottomOfDeck);
+                    sortedByIdxDesc(ts, false).forEach(ctx::putBreakZoneTargetOnBottomOfDeck);
+                }
+                if (secondary != null) secondary.accept(ctx);
+            };
+        }
+
         // --- Put on top of owner's deck followup ---
         if (FOLLOWUP_PUT_TOP_OF_DECK.matcher(primaryFollowup).find()) {
             return ctx -> {
@@ -2997,6 +3048,25 @@ final class ActionResolverChoose {
         }
 
         // --- Cannot attack or block (this turn) followup ---
+        // --- Cannot attack or block, and cannot use action abilities, this turn (Kitone) ---
+        // Must precede the plain cannot-attack-or-block branch below: both scan with find(), and
+        // that one would claim the first clause and drop the action-ability lock.
+        if (FOLLOWUP_CANNOT_ATTACK_OR_BLOCK_AND_NO_ACTION_ABILITIES.matcher(primaryFollowup).find()) {
+            return ctx -> {
+                ctx.logEntry(choosePrefix + " — Cannot attack, block or use action abilities this turn");
+                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
+                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
+                for (ForwardTarget t : ts) {
+                    // Both halves are keyed by card, so they hold wherever the chosen Character
+                    // sits — including a Backup or Monster that only becomes a Forward later.
+                    ctx.setTargetCannotAttackOrBlockThisTurn(t);
+                    ctx.setTargetCannotUseActionAbilitiesThisTurn(t);
+                }
+                if (secondary != null) secondary.accept(ctx);
+            };
+        }
+
         if (FOLLOWUP_CANNOT_ATTACK_OR_BLOCK.matcher(primaryFollowup).find()) {
             return ctx -> {
                 ctx.logEntry(choosePrefix + " — Cannot attack or block this turn");

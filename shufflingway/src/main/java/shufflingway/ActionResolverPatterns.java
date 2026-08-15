@@ -1692,6 +1692,41 @@ final class ActionResolverPatterns {
         "(?:\\s+in\\s+any\\s+order)?\\.?"
     );
     /**
+     * Matches "Put/Place it/them at the bottom of your deck[ in any order]." — the bottom-of-deck
+     * twin of {@link #FOLLOWUP_PUT_TOP_OF_YOUR_DECK}, and like it the followup of a choose that
+     * reaches into a Break Zone rather than onto the field (11-123R Yunalesca, 24-094C Corsair).
+     * Both "put" and "place" appear in the corpus for this destination.
+     *
+     * <p>Distinct from {@link #FOLLOWUP_PUT_BOTTOM_OF_DECK}, which sends a card already on the
+     * field back to whichever player owns it.  Group {@code may} is present for the optional form.
+     *
+     * <p>The trailing {@code (?!\s+and\b)} keeps the compound wording out — see
+     * {@link #FOLLOWUP_PUT_BOTTOM_OF_YOUR_DECK_AND_THEN}, which claims that instead.  Without the
+     * lookahead this pattern would match under {@code find()} and silently drop the second effect.
+     */
+    static final Pattern FOLLOWUP_PUT_BOTTOM_OF_YOUR_DECK = Pattern.compile(
+        "(?i)(?<may>You\\s+may\\s+)?(?:Put|Place)\\s+(?:it|them)\\s+(?:at|on)\\s+the\\s+bottom\\s+of\\s+your\\s+deck" +
+        "(?:\\s+in\\s+any\\s+order)?\\.?(?!\\s+and\\b)"
+    );
+    /**
+     * Matches "Put/Place it/them at the bottom of your deck and [effect]." — 15-065C Scholar's
+     * "Place it at the bottom of your deck <em>and put the top card of your deck into the Break
+     * Zone</em>", where a second effect rides in the same clause rather than in its own sentence,
+     * so the resolver's ". " sentence split never separates the two.
+     *
+     * <p>{@code also} is handed to {@link ActionResolver#parse}, so this only takes effect when
+     * that trailing effect has a parser of its own; anything else falls through to the
+     * unimplemented-followup warning rather than being half-applied.
+     *
+     * <p>Order against {@link #FOLLOWUP_PUT_BOTTOM_OF_YOUR_DECK} is not load-bearing — that
+     * pattern's lookahead already declines this text — but the two are kept adjacent at every
+     * call site so the pair reads as one decision.
+     */
+    static final Pattern FOLLOWUP_PUT_BOTTOM_OF_YOUR_DECK_AND_THEN = Pattern.compile(
+        "(?i)(?:Put|Place)\\s+(?:it|them)\\s+(?:at|on)\\s+the\\s+bottom\\s+of\\s+your\\s+deck" +
+        "(?:\\s+in\\s+any\\s+order)?\\s+and\\s+(?<also>\\S.*?)[.!]?\\s*$"
+    );
+    /**
      * Matches "If its power is equal to or less/more than [SourceName]'s power, put it on top of
      * its owner's deck." — Wakka-style conditional bounce whose threshold is the source card's power.
      * Groups: {@code sourcename} — name of the card providing the power threshold;
@@ -1719,6 +1754,21 @@ final class ActionResolverPatterns {
     /** Matches "it/they cannot attack or block this turn". */
     static final Pattern FOLLOWUP_CANNOT_ATTACK_OR_BLOCK = Pattern.compile(
         "(?i)(?:it|they)\\s+cannot\\s+attack\\s+or\\s+block\\s+this\\s+turn\\.?"
+    );
+    /**
+     * Matches "During this turn, it cannot attack or block, and it cannot use action abilities."
+     * — 14-064R Kitone.  Three restrictions in one sentence, and the only wording in the corpus
+     * that shuts a single chosen Character out of action abilities (14-045H Sin's lock is a
+     * field-wide auto-ability, not a chosen target).
+     *
+     * <p>Must be checked ahead of {@link #FOLLOWUP_CANNOT_ATTACK_OR_BLOCK}: that pattern currently
+     * requires a trailing "this turn" and so does not claim this text, but both scan with
+     * {@code find()}, and any future widening of it would take the first clause here and silently
+     * drop the action-ability half.
+     */
+    static final Pattern FOLLOWUP_CANNOT_ATTACK_OR_BLOCK_AND_NO_ACTION_ABILITIES = Pattern.compile(
+        "(?i)(?:During\\s+this\\s+turn[,.]?\\s+)?(?:it|they)\\s+cannot\\s+attack\\s+or\\s+block[,.]?\\s+" +
+        "and\\s+(?:it|they)\\s+cannot\\s+use\\s+action\\s+abilities[.!]?"
     );
     /**
      * Matches "it cannot attack or block until the end of your opponent's turn" or

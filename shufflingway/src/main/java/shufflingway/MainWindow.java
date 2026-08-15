@@ -264,21 +264,47 @@ public class MainWindow {
 	/** Temporary job granted to P1/P2 Forwards until end of turn; {@code null} = no override. */
 	final List<String> p1ForwardTempJobs = new ArrayList<>();
 	final List<String> p2ForwardTempJobs = new ArrayList<>();
-	/** Forwards that may not be chosen as a blocker for the remainder of this turn. */
-	final Set<Integer> p1ForwardCannotBlock = new HashSet<>();
-	final Set<Integer> p2ForwardCannotBlock = new HashSet<>();
-	/** Forwards that must be chosen as a blocker this turn if they are eligible. */
-	final Set<Integer> p1ForwardMustBlock   = new HashSet<>();
-	final Set<Integer> p2ForwardMustBlock   = new HashSet<>();
-	/** Forwards that may not attack for the remainder of this turn. */
-	final Set<Integer> p1ForwardCannotAttack = new HashSet<>();
-	final Set<Integer> p2ForwardCannotAttack = new HashSet<>();
-	/** Forwards that must attack this turn if they are eligible. */
-	final Set<Integer> p1ForwardMustAttack   = new HashSet<>();
-	final Set<Integer> p2ForwardMustAttack   = new HashSet<>();
-	/** Forwards restricted from attacking until the end of their owner's turn (survives one end-phase). */
-	final Set<Integer> p1ForwardCannotAttackPersistent = new HashSet<>();
-	final Set<Integer> p2ForwardCannotAttackPersistent = new HashSet<>();
+	/**
+	 * Per-turn combat restrictions and compulsions, keyed by card instance.
+	 *
+	 * <p>These were slot indices into the Forward row until 14-064R Kitone, which chooses a
+	 * <em>Character</em> and so can land on a Backup or a Monster — neither of which has a
+	 * Forward-row index to key on, and both of which can still end up attacking or blocking once
+	 * something turns them into a Forward for the turn. Card identity is what all three rows have
+	 * in common, so it is what the restriction hangs on.
+	 *
+	 * <p>Two consequences of the change are worth knowing. Indices no longer have to be renumbered
+	 * when a Forward leaves the row — the {@code shiftBlockSet}/{@code shiftBlockMap} pair that
+	 * did that, and the "wrong card is flagged" bugs it existed to prevent, are both gone with the
+	 * last index-keyed combat collection. In exchange, a card that
+	 * leaves the field has to be dropped explicitly, or a restriction would follow the instance
+	 * back in when it is replayed from the Break Zone — see {@link #clearCombatRestrictionsFor}.
+	 *
+	 * <p>The P1/P2 split is kept because it is load-bearing for the persistent pair: each side's
+	 * is cleared at its own controller's end phase, not at every end phase.
+	 */
+	final Set<CardData> p1CannotBlock = Collections.newSetFromMap(new IdentityHashMap<>());
+	final Set<CardData> p2CannotBlock = Collections.newSetFromMap(new IdentityHashMap<>());
+	/** Characters that must be chosen as a blocker this turn if they are eligible. */
+	final Set<CardData> p1MustBlock   = Collections.newSetFromMap(new IdentityHashMap<>());
+	final Set<CardData> p2MustBlock   = Collections.newSetFromMap(new IdentityHashMap<>());
+	/** Characters that may not attack for the remainder of this turn. */
+	final Set<CardData> p1CannotAttack = Collections.newSetFromMap(new IdentityHashMap<>());
+	final Set<CardData> p2CannotAttack = Collections.newSetFromMap(new IdentityHashMap<>());
+	/** Characters that must attack this turn if they are eligible. */
+	final Set<CardData> p1MustAttack   = Collections.newSetFromMap(new IdentityHashMap<>());
+	final Set<CardData> p2MustAttack   = Collections.newSetFromMap(new IdentityHashMap<>());
+	/** Characters restricted from attacking until the end of their owner's turn (survives one end-phase). */
+	final Set<CardData> p1CannotAttackPersistent = Collections.newSetFromMap(new IdentityHashMap<>());
+	final Set<CardData> p2CannotAttackPersistent = Collections.newSetFromMap(new IdentityHashMap<>());
+	/**
+	 * Characters shut out of action abilities for the remainder of this turn — 14-064R Kitone.
+	 *
+	 * <p>Keyed by card instance rather than by row index because the effect that fills it chooses a
+	 * Character, so the restriction has to survive on Backups and Monsters too, where there is no
+	 * Forward-row index to key on. Cleared with the other end-of-turn restriction sets.
+	 */
+	final Set<CardData> cannotUseActionAbilitiesThisTurn = Collections.newSetFromMap(new IdentityHashMap<>());
 	/**
 	 * Attack declarations each Character has made this turn, keyed by card instance.
 	 *
@@ -337,9 +363,9 @@ public class MainWindow {
 	final Set<CardData> permanentCannotBeChosenByAbilities = Collections.newSetFromMap(new IdentityHashMap<>());
 	/**
 	 * Cards under a permanent "[Self] must attack once per turn if possible" compulsion
-	 * (Roche 29-076H). Unlike {@link #p1ForwardMustAttack}, which is a one-turn instruction held
-	 * as slot indices, this re-arms every turn and so is held by instance and never cleared by the
-	 * turn boundary — {@link #attacksMadeThisTurn} is what makes it "once per turn".
+	 * (Roche 29-076H). Unlike {@link #p1MustAttack}, which is a one-turn instruction cleared at the
+	 * turn boundary, this re-arms every turn and so is never cleared there —
+	 * {@link #attacksMadeThisTurn} is what makes it "once per turn".
 	 */
 	final Set<CardData> permanentMustAttackOncePerTurn = Collections.newSetFromMap(new IdentityHashMap<>());
 	/**
@@ -352,15 +378,22 @@ public class MainWindow {
 	final Map<CardData, EnumSet<CardData.Trait>> permanentTraits = new IdentityHashMap<>();
 	/** Shared empty lookup default, so the trait reads do not allocate an EnumSet per call. */
 	private static final EnumSet<CardData.Trait> NO_TRAITS = EnumSet.noneOf(CardData.Trait.class);
-	/** Forwards restricted from blocking until the end of their owner's turn (survives one end-phase). */
-	final Set<Integer> p1ForwardCannotBlockPersistent  = new HashSet<>();
-	final Set<Integer> p2ForwardCannotBlockPersistent  = new HashSet<>();
-	/** Forwards that cannot be blocked this turn (attacker-side unblockability). */
-	final Set<Integer>          p1ForwardCannotBeBlocked       = new HashSet<>();
-	final Set<Integer>          p2ForwardCannotBeBlocked       = new HashSet<>();
-	/** Forwards that cannot be blocked by Forwards whose cost matches the filter {costVal, 1=isMore/0=isLess}. */
-	final Map<Integer, int[]>   p1ForwardCannotBeBlockedByCost = new HashMap<>();
-	final Map<Integer, int[]>   p2ForwardCannotBeBlockedByCost = new HashMap<>();
+	/** Characters restricted from blocking until the end of their owner's turn (survives one end-phase). */
+	final Set<CardData> p1CannotBlockPersistent  = Collections.newSetFromMap(new IdentityHashMap<>());
+	final Set<CardData> p2CannotBlockPersistent  = Collections.newSetFromMap(new IdentityHashMap<>());
+	/**
+	 * Attackers that cannot be blocked this turn, and attackers that cannot be blocked by a
+	 * Character whose cost matches the filter {@code {costVal, 1=isMore/0=isLess}}.
+	 *
+	 * <p>Keyed by card instance for the same reasons as the defender-side sets above: the grant
+	 * belongs to the Character, which may be attacking from the Monster or Backup row, and an
+	 * instance key needs no renumbering when the Forward row shifts. Cleared on departure by
+	 * {@link #clearCombatRestrictionsFor} and at the turn boundary.
+	 */
+	final Set<CardData>          p1CannotBeBlocked       = Collections.newSetFromMap(new IdentityHashMap<>());
+	final Set<CardData>          p2CannotBeBlocked       = Collections.newSetFromMap(new IdentityHashMap<>());
+	final Map<CardData, int[]>   p1CannotBeBlockedByCost = new IdentityHashMap<>();
+	final Map<CardData, int[]>   p2CannotBeBlockedByCost = new IdentityHashMap<>();
 	final boolean[]       p1BackupFrozen       = new boolean[5];
 	final boolean[]       p2BackupFrozen       = new boolean[5];
 	final List<Boolean>   p1MonsterFrozen      = new ArrayList<>();
@@ -371,7 +404,7 @@ public class MainWindow {
 
 	// State for Backups temporarily acting as Forwards (e.g. 17-012R). Keyed by CardData.
 	final Map<CardData, Integer> p1BackupTempForwardPower = new HashMap<>();
-	private final Map<CardData, Integer> p2BackupTempForwardPower = new HashMap<>();
+	final Map<CardData, Integer> p2BackupTempForwardPower = new HashMap<>();
 	final Map<CardData, List<ActionAbility>> p1TempGrantedAbilities = new HashMap<>();
 	final Map<CardData, List<ActionAbility>> p2TempGrantedAbilities = new HashMap<>();
 	final Map<CardData, Integer> p1BackupForwardBoost     = new HashMap<>();
@@ -1598,8 +1631,9 @@ public class MainWindow {
 		p2TempAttackTriggers.clear();
 		p1TempBlockTriggers.clear();
 		p2TempBlockTriggers.clear();
-		p1ForwardCannotBlock.clear();
-		p2ForwardCannotBlock.clear();
+		p1CannotBlock.clear();
+		p2CannotBlock.clear();
+		cannotUseActionAbilitiesThisTurn.clear();
 		// Per-turn tracking flags.
 		p1Turn.receivedDamageThisTurn = false;
 		p2Turn.receivedDamageThisTurn = false;
@@ -2637,7 +2671,7 @@ public class MainWindow {
 
                             // A Forward under a must-attack compulsion has to be sent in before the
                             // phase can be left. This is the only enforcement point for that rule:
-                            // p1ForwardMustAttack was written and re-indexed but never read, so
+                            // p1MustAttack was written and re-indexed but never read, so
                             // "it must attack this turn if possible" had no effect at all until now.
                             int mustAttackIdx = p1ForwardCompelledToAttackIdx();
                             if (mustAttackIdx >= 0) {
@@ -2693,13 +2727,14 @@ public class MainWindow {
                                 for (int i = 0; i < p1MonsterCards.size(); i++) refreshP1MonsterSlot(i);
                                 for (int i = 0; i < p2MonsterCards.size(); i++) refreshP2MonsterSlot(i);
                                 clearBackupForwardState();
-                                p1ForwardCannotBeBlocked.clear();       p2ForwardCannotBeBlocked.clear();
-                                p1ForwardCannotBeBlockedByCost.clear(); p2ForwardCannotBeBlockedByCost.clear();
-                                p1ForwardCannotBlock.clear();           p2ForwardCannotBlock.clear();
-                                p1ForwardMustBlock.clear();             p2ForwardMustBlock.clear();
-                                p1ForwardCannotAttack.clear();          p2ForwardCannotAttack.clear();
-                                p1ForwardMustAttack.clear();            p2ForwardMustAttack.clear();
-                                p1ForwardCannotAttackPersistent.clear(); p1ForwardCannotBlockPersistent.clear();
+                                p1CannotBeBlocked.clear();              p2CannotBeBlocked.clear();
+                                p1CannotBeBlockedByCost.clear();        p2CannotBeBlockedByCost.clear();
+                                p1CannotBlock.clear();                  p2CannotBlock.clear();
+                                p1MustBlock.clear();                    p2MustBlock.clear();
+                                p1CannotAttack.clear();                 p2CannotAttack.clear();
+                                p1MustAttack.clear();                   p2MustAttack.clear();
+                                p1CannotAttackPersistent.clear();       p1CannotBlockPersistent.clear();
+                                cannotUseActionAbilitiesThisTurn.clear();
                                 attacksMadeThisTurn.clear();            extraAttacksThisTurn.clear();
                                 grantedFieldAbilities.clear();          grantedMaxAttacks.clear();
                                 p1TempAttackTriggers.clear();           p2TempAttackTriggers.clear();
@@ -3581,29 +3616,6 @@ public class MainWindow {
 	// Combat: breaking forwards
 	// -------------------------------------------------------------------------
 
-	/** Removes P1's forward at {@code idx} from the field and sends it to P1's Break Zone. */
-	/** Removes {@code removedIdx} from {@code set} and decrements all higher indices by 1. */
-	private static void shiftBlockSet(Set<Integer> set, int removedIdx) {
-		Set<Integer> updated = new HashSet<>();
-		for (int i : set) {
-			if      (i < removedIdx) updated.add(i);
-			else if (i > removedIdx) updated.add(i - 1);
-		}
-		set.clear();
-		set.addAll(updated);
-	}
-
-	private static void shiftBlockMap(Map<Integer, int[]> map, int removedIdx) {
-		Map<Integer, int[]> updated = new HashMap<>();
-		for (Map.Entry<Integer, int[]> e : map.entrySet()) {
-			int i = e.getKey();
-			if      (i < removedIdx) updated.put(i,     e.getValue());
-			else if (i > removedIdx) updated.put(i - 1, e.getValue());
-		}
-		map.clear();
-		map.putAll(updated);
-	}
-
 	/**
 	 * Drops every piece of slot-indexed state for the P1 Forward leaving position {@code idx}: each
 	 * parallel per-slot list loses its entry, and each index-keyed set/map is re-indexed so entries
@@ -3633,15 +3645,8 @@ public class MainWindow {
 		p1ForwardPrimedTop.remove(idx);
 		p1ForwardFrozen.remove(idx);
 		p1ForwardLabels.remove(idx);
-		shiftBlockSet(p1ForwardCannotBlock,            idx);
-		shiftBlockSet(p1ForwardMustBlock,              idx);
-		shiftBlockSet(p1ForwardCannotAttack,           idx);
-		shiftBlockSet(p1ForwardMustAttack,             idx);
-		shiftBlockSet(p1ForwardCannotAttackPersistent, idx);
-		shiftBlockSet(p1ForwardCannotBlockPersistent,  idx);
-		shiftBlockSet(p1ForwardCannotBeBlocked,        idx);
-
-		shiftBlockMap(p1ForwardCannotBeBlockedByCost,  idx);
+		// Every combat restriction, attacker- and defender-side, is keyed by card instance and so
+		// needs no renumbering here; clearCombatRestrictionsFor drops them when the card departs.
 	}
 
 	/** P2's counterpart to {@link #removeP1ForwardSlotState(int)}; the same contract applies. */
@@ -3659,15 +3664,7 @@ public class MainWindow {
 		p2ForwardPrimedTop.remove(idx);
 		p2ForwardFrozen.remove(idx);
 		p2ForwardLabels.remove(idx);
-		shiftBlockSet(p2ForwardCannotBlock,            idx);
-		shiftBlockSet(p2ForwardMustBlock,              idx);
-		shiftBlockSet(p2ForwardCannotAttack,           idx);
-		shiftBlockSet(p2ForwardMustAttack,             idx);
-		shiftBlockSet(p2ForwardCannotAttackPersistent, idx);
-		shiftBlockSet(p2ForwardCannotBlockPersistent,  idx);
-		shiftBlockSet(p2ForwardCannotBeBlocked,        idx);
-
-		shiftBlockMap(p2ForwardCannotBeBlockedByCost,  idx);
+		// See removeP1ForwardSlotState: the combat-restriction sets are keyed by instance.
 	}
 
 	void breakP1Forward(int idx) {
@@ -4130,6 +4127,29 @@ public class MainWindow {
 	 * Called from {@link AutoAbilityTriggers#triggerAutoAbilitiesForLeavesField} so every
 	 * leave-field path is covered.
 	 */
+	/**
+	 * Drops {@code departing} from every per-turn combat restriction and compulsion.
+	 *
+	 * <p>Called from {@link AutoAbilityTriggers#triggerAutoAbilitiesForLeavesField} alongside the
+	 * other per-card teardown, so every leave-field path is covered whatever row the card sat in.
+	 *
+	 * <p>This is what keeps instance keying honest. The same {@link CardData} goes to the Break
+	 * Zone and comes back when it is replayed, so without this a Forward restricted this turn,
+	 * broken, and replayed from the Break Zone would return still restricted — where the rules
+	 * treat a card changing zones as a new object with none of its old state.
+	 */
+	void clearCombatRestrictionsFor(CardData departing) {
+		p1CannotBlock.remove(departing);            p2CannotBlock.remove(departing);
+		p1MustBlock.remove(departing);              p2MustBlock.remove(departing);
+		p1CannotAttack.remove(departing);           p2CannotAttack.remove(departing);
+		p1MustAttack.remove(departing);             p2MustAttack.remove(departing);
+		p1CannotAttackPersistent.remove(departing); p2CannotAttackPersistent.remove(departing);
+		p1CannotBlockPersistent.remove(departing);  p2CannotBlockPersistent.remove(departing);
+		p1CannotBeBlocked.remove(departing);        p2CannotBeBlocked.remove(departing);
+		p1CannotBeBlockedByCost.remove(departing);  p2CannotBeBlockedByCost.remove(departing);
+		cannotUseActionAbilitiesThisTurn.remove(departing);
+	}
+
 	void returnTempExiledOnLeave(CardData departing) {
 		if (tempExiledCards.isEmpty()) return;
 		List<CardData> toReturn = new ArrayList<>();
@@ -5281,6 +5301,12 @@ public class MainWindow {
 		if (idx < 0 || idx >= p2MonsterStates.size()) return false;
 		if (p2MonsterStates.get(idx) != CardState.ACTIVE) return false;
 		if (Boolean.TRUE.equals(p2MonsterFrozen.get(idx))) return false;
+		CardData card = p2MonsterCards.get(idx);
+		if (p2CannotBlock.contains(card) || p2CannotBlockPersistent.contains(card)) return false;
+		// The printed restrictions were being checked on P1's side of this row but not here, so a
+		// P2 Monster with "cannot block" could still block. Same list as isMonsterBlockSelectable.
+		if (card.cannotBlockAtAll() || card.cannotAttackOrBlock()) return false;
+		if (isFieldAbilityCannotAttackOrBlock(card, false)) return false;
 		return isP2MonsterTemporarilyForward(idx);
 	}
 
@@ -5289,18 +5315,29 @@ public class MainWindow {
 		if (idx < 0 || idx >= p2BackupCards.length || p2BackupCards[idx] == null) return false;
 		if (p2BackupStates[idx] != CardState.ACTIVE) return false;
 		if (p2BackupFrozen[idx]) return false;
+		CardData card = p2BackupCards[idx];
+		if (p2CannotBlock.contains(card) || p2CannotBlockPersistent.contains(card)) return false;
+		// As in p2MonsterCanBlockAsForward: the printed restrictions were only being read on P1's
+		// side of this row.
+		if (card.cannotBlockAtAll() || card.cannotAttackOrBlock()) return false;
+		if (isFieldAbilityCannotAttackOrBlock(card, false)) return false;
 		return isP2BackupTemporarilyForward(idx);
 	}
 
-	/** Checks all cost-filter sources (dynamic, intrinsic, conditional ICB) for a P1 Forward attacker. */
-	boolean p1AttackerCostFiltersExclude(int attackerIdx, int blockerCost) {
+	/**
+	 * Checks all cost-filter sources (dynamic, intrinsic, conditional ICB) for a P1 attacker.
+	 *
+	 * <p>Takes the attacking card rather than a Forward-row index, so it reads the same for an
+	 * attacker acting as a Forward from the Monster or Backup row.
+	 */
+	boolean p1AttackerCostFiltersExclude(CardData attCard, int blockerCost) {
+		if (attCard == null) return false;
 		if (allForwardsCannotBeBlockedByHigherCostThisTurn
-				&& blockerCost > p1ForwardCards.get(attackerIdx).cost()) return true;
-		int[] dyn = p1ForwardCannotBeBlockedByCost.get(attackerIdx);
+				&& blockerCost > attCard.cost()) return true;
+		int[] dyn = p1CannotBeBlockedByCost.get(attCard);
 		if (dyn != null && blockerCostExcluded(blockerCost, dyn)) return true;
-		int[] intr = p1ForwardCards.get(attackerIdx).fieldCannotBeBlockedByCost();
+		int[] intr = attCard.fieldCannotBeBlockedByCost();
 		if (intr != null && blockerCostExcluded(blockerCost, intr)) return true;
-		CardData attCard = p1ForwardCards.get(attackerIdx);
 		for (CardData src : p1ForwardCards)
 			for (IfControlBoost icb : src.ifControlBoosts())
 				if (icb.cannotBeBlockedByCost() != null && icb.appliesToCard(attCard)
@@ -5418,7 +5455,7 @@ public class MainWindow {
 	 * naming {@code attacker}. Read through {@link #effectiveFieldAbilities} because the only
 	 * current source, Dio 26-075C, grants the text until end of turn rather than printing it.
 	 *
-	 * <p>The compulsion is attacker-specific — unlike {@link #p1ForwardMustBlock}, which restricts
+	 * <p>The compulsion is attacker-specific — unlike {@link #p1MustBlock}, which restricts
 	 * the blocker choice against everything that attacks — so both arguments matter.
 	 *
 	 * <p>Also true for a standing self-named compulsion ("Ricard must block if possible." 6-103H,
@@ -5722,9 +5759,10 @@ public class MainWindow {
 	private boolean hasEligibleP1Blocker() {
 		for (int i = 0; i < p1ForwardStates.size(); i++) {
 			CardState s = p1ForwardStates.get(i);
+			CardData  c = p1ForwardCards.get(i);
 			if (s == CardState.ACTIVE
-					&& !p1ForwardCannotBlock.contains(i)
-					&& !p1ForwardCannotBlockPersistent.contains(i)) return true;
+					&& !p1CannotBlock.contains(c)
+					&& !p1CannotBlockPersistent.contains(c)) return true;
 		}
 		return false;
 	}
@@ -10375,6 +10413,9 @@ public class MainWindow {
 		// from the Break Zone is not — the text binds Characters the opponent controls.
 		if (characterAbilitiesLockedFor(isP1) && Boolean.valueOf(isP1).equals(fieldSideOf(source)))
 			return false;
+		// Kitone 14-064R shuts one chosen Character out of action abilities for the turn. Keyed by
+		// card, so it follows the Character across rows; specials are exempt, as under Sin's lock.
+		if (!ability.isSpecial() && cannotUseActionAbilitiesThisTurn.contains(source)) return false;
 		if (ability.ownBreakZoneNameRequired() != null) {
 			List<CardData> bz = isP1 ? gameState.getP1BreakZone() : gameState.getP2BreakZone();
 			if (bz.stream().noneMatch(c -> c.name().equalsIgnoreCase(ability.ownBreakZoneNameRequired())))
@@ -12788,8 +12829,8 @@ public class MainWindow {
 				&& attackSubStep == 1
 				&& state == CardState.ACTIVE
 				&& hasAttackRemaining(effectiveP1Forward(idx))
-				&& !p1ForwardCannotAttack.contains(idx)
-				&& !p1ForwardCannotAttackPersistent.contains(idx)
+				&& !p1CannotAttack.contains(fwdCard)
+				&& !p1CannotAttackPersistent.contains(fwdCard)
 				&& !fwdCard.cannotAttackOrBlock()
 				&& !isFieldAbilityCannotAttackOrBlock(fwdCard, true)
 				&& (hasHaste || p1ForwardPlayedOnTurn.get(idx) != gameState.getTurnNumber());
@@ -12843,9 +12884,9 @@ public class MainWindow {
 		CardState state = p1ForwardStates.get(idx);
 		if (state != CardState.ACTIVE) return false;
 		if (!hasAttackRemaining(effectiveP1Forward(idx))) return false;
-		if (p1ForwardCannotAttack.contains(idx)) return false;
-		if (p1ForwardCannotAttackPersistent.contains(idx)) return false;
 		CardData fwd = p1ForwardCards.get(idx);
+		if (p1CannotAttack.contains(fwd)) return false;
+		if (p1CannotAttackPersistent.contains(fwd)) return false;
 		if (fwd.cannotAttackOrBlock()) return false;
 		if (isFieldAbilityCannotAttackOrBlock(fwd, true)) return false;
 		if (isFieldAbilityCannotAttack(fwd, true)) return false;
@@ -12856,7 +12897,7 @@ public class MainWindow {
 	/**
 	 * The P1 Forward that is compelled to attack this turn and still can, or {@code -1}.
 	 *
-	 * <p>Four sources feed it: {@link #p1ForwardMustAttack}, the one-turn instruction the choose
+	 * <p>Four sources feed it: {@link #p1MustAttack}, the one-turn instruction the choose
 	 * chain writes ("it must attack this turn if possible"); {@link #permanentMustAttackOncePerTurn},
 	 * the standing compulsion an effect grants (Roche 29-076H); the printed self-named form
 	 * ({@link #selfMustAttackOncePerTurn} — Berserker, Umaro, Reddas); and the field-wide form
@@ -12870,8 +12911,8 @@ public class MainWindow {
 		boolean fieldWide = forwardsMustAttack(true);
 		for (int i = 0; i < p1ForwardCards.size(); i++) {
 			if (!isForwardSelectable(i)) continue;
-			if (p1ForwardMustAttack.contains(i)) return i;
 			CardData fwd = p1ForwardCards.get(i);
+			if (p1MustAttack.contains(fwd)) return i;
 			boolean oncePerTurn = fieldWide
 					|| permanentMustAttackOncePerTurn.contains(fwd)
 					|| selfMustAttackOncePerTurn(fwd);
@@ -12888,7 +12929,7 @@ public class MainWindow {
 	boolean isForwardBlockSelectable(int idx) {
 		if (!p1ForwardBlockEligible(idx)) return false;
 		// If any forward must block, restrict choices to those
-		if (!p1ForwardMustBlock.isEmpty() && !p1ForwardMustBlock.contains(idx)) return false;
+		if (!p1MustBlock.isEmpty() && !p1MustBlock.contains(p1ForwardCards.get(idx))) return false;
 		// Dio 26-075C: a Forward compelled against this specific attacker takes the block, and
 		// only when it can — p1ForwardCompelledToBlockIdx returns -1 once "if possible" fails.
 		int compelled = p1ForwardCompelledToBlockIdxForPendingAttack();
@@ -12907,9 +12948,9 @@ public class MainWindow {
 		if (idx < 0 || idx >= p1ForwardStates.size()) return false;
 		CardState s = p1ForwardStates.get(idx);
 		if (s != CardState.ACTIVE) return false;
-		if (p1ForwardCannotBlock.contains(idx)) return false;
-		if (p1ForwardCannotBlockPersistent.contains(idx)) return false;
 		CardData blocker = p1ForwardCards.get(idx);
+		if (p1CannotBlock.contains(blocker)) return false;
+		if (p1CannotBlockPersistent.contains(blocker)) return false;
 		if (blocker.cannotBlockAtAll() || blocker.cannotAttackOrBlock()) return false;
 		if (isFieldAbilityCannotAttackOrBlock(blocker, true)) return false;
 		if (blocker.cannotBlockParty() && pendingP2PartyIndices != null) return false;
@@ -13138,25 +13179,44 @@ public class MainWindow {
 	// -------------------------------------------------------------------------
 
 	/**
-	 * The P2 Forward-zone indices currently attacking: every party member during a party attack, the
-	 * lone attacker otherwise.  Empty when a Monster or Backup is acting as the Forward, since
-	 * {@code pendingP2AttackerIdx} then indexes that zone rather than the Forward zone and none of
-	 * the attacker-side blocking restrictions below apply to it.
+	 * The P2 Characters currently attacking: every party member during a party attack, the lone
+	 * attacker otherwise — including one attacking from the Monster or Backup row.
+	 *
+	 * <p>This used to return Forward-row indices only and gave back an empty list for a Monster or
+	 * Backup acting as a Forward, which silently exempted such an attacker from every
+	 * attacker-side blocking restriction. A Character attacking as a Forward is a Forward for as
+	 * long as it is attacking, so its restrictions apply the same way; the exemption was a gap in
+	 * the slot-indexed representation rather than a rule.
 	 *
 	 * <p>Every attacker-side check runs over this list, so they all read the whole party rather than
 	 * a single {@code pendingP2AttackerIdx} — which a party attack never sets.
 	 */
-	private List<Integer> pendingP2AttackerForwardIndices() {
+	private List<ForwardTarget> pendingP2AttackerTargets() {
 		if (pendingP2PartyIndices != null) {
 			// A member can be broken during the priority round before the block is declared.
-			List<Integer> live = new ArrayList<>();
+			List<ForwardTarget> live = new ArrayList<>();
 			for (int i : pendingP2PartyIndices)
-				if (i >= 0 && i < p2ForwardCards.size()) live.add(i);
+				if (i >= 0 && i < p2ForwardCards.size())
+					live.add(new ForwardTarget(false, i, ForwardTarget.CardZone.FORWARD));
 			return live;
 		}
-		if (pendingP2AttackerIsMonster || pendingP2AttackerIsBackup) return List.of();
-		if (pendingP2AttackerIdx < 0 || pendingP2AttackerIdx >= p2ForwardCards.size()) return List.of();
-		return List.of(pendingP2AttackerIdx);
+		if (pendingP2AttackerIdx < 0) return List.of();
+		ForwardTarget.CardZone zone = pendingP2AttackerIsMonster ? ForwardTarget.CardZone.MONSTER
+				: pendingP2AttackerIsBackup ? ForwardTarget.CardZone.BACKUP
+				: ForwardTarget.CardZone.FORWARD;
+		int limit = switch (zone) {
+			case MONSTER -> p2MonsterCards.size();
+			case BACKUP  -> p2BackupCards.length;
+			default      -> p2ForwardCards.size();
+		};
+		if (pendingP2AttackerIdx >= limit) return List.of();
+		ForwardTarget t = new ForwardTarget(false, pendingP2AttackerIdx, zone);
+		return autoAbilityTriggers.fieldCardData(t) == null ? List.of() : List.of(t);
+	}
+
+	/** The attacking Character behind {@code t}, or {@code null} if its slot has since emptied. */
+	private CardData pendingAttackerCard(ForwardTarget t) {
+		return autoAbilityTriggers.fieldCardData(t);
 	}
 
 	/** Every card on P2's field that can carry an IfControlBoost. */
@@ -13187,23 +13247,26 @@ public class MainWindow {
 	 * {@link #attackerUnblockable} takes.
 	 */
 	private boolean pendingP2AttackBarsMonsterBlockers() {
-		for (int i : pendingP2AttackerForwardIndices())
-			if (barsMonsterForwardBlockers(p2ForwardCards.get(i))) return true;
+		for (ForwardTarget t : pendingP2AttackerTargets()) {
+			CardData attacker = pendingAttackerCard(t);
+			if (attacker != null && barsMonsterForwardBlockers(attacker)) return true;
+		}
 		return false;
 	}
 
-	/** Only Forward attackers track cannot-be-blocked; acting-as-Forwards don't. */
+	/** True when a turn-scoped "cannot be blocked" grant covers any of the current attackers. */
 	private boolean attackerUnblockable() {
-		for (int i : pendingP2AttackerForwardIndices())
-			if (p2ForwardCannotBeBlocked.contains(i)) return true;
+		for (ForwardTarget t : pendingP2AttackerTargets())
+			if (p2CannotBeBlocked.contains(pendingAttackerCard(t))) return true;
 		return attackerConditionallyUnblockable();
 	}
 
 	/** Returns true if any IfControlBoost on P2's field grants cannot-be-blocked to an attacker
 	 *  and all of that boost's conditions are currently met. */
 	private boolean attackerConditionallyUnblockable() {
-		for (int i : pendingP2AttackerForwardIndices()) {
-			CardData attacker = p2ForwardCards.get(i);
+		for (ForwardTarget t : pendingP2AttackerTargets()) {
+			CardData attacker = pendingAttackerCard(t);
+			if (attacker == null) continue;
 			if (hasSelfCannotBeBlockedFieldAbility(attacker, false)) return true;
 			for (CardData src : p2FieldCards())
 				for (IfControlBoost icb : src.ifControlBoosts())
@@ -13219,7 +13282,7 @@ public class MainWindow {
 	 *
 	 * <p>Read per block-legality check rather than applied once, because the "Damage N --" gate it
 	 * sits behind opens and shuts as its controller's damage zone fills. That is what separates it
-	 * from the {@code p1/p2ForwardCannotBeBlocked} sets, which record a turn-scoped grant some
+	 * from the {@code p1/p2CannotBeBlocked} sets, which record a turn-scoped grant some
 	 * effect made and are cleared at end of turn.
 	 */
 	boolean hasSelfCannotBeBlockedFieldAbility(CardData card, boolean isP1) {
@@ -13246,9 +13309,11 @@ public class MainWindow {
 	 */
 	private boolean attackerHigherPowerFilterExcludes(ForwardTarget.CardZone blockerZone, int blockerIdx) {
 		int blockerPower = fieldForwardPower(true, blockerZone, blockerIdx);
-		for (int i : pendingP2AttackerForwardIndices())
-			if (p2ForwardCards.get(i).cannotBeBlockedByHigherPower() && blockerPower > effectiveP2ForwardPower(i))
-				return true;
+		for (ForwardTarget t : pendingP2AttackerTargets()) {
+			CardData attacker = pendingAttackerCard(t);
+			if (attacker != null && attacker.cannotBeBlockedByHigherPower()
+					&& blockerPower > fieldForwardPower(false, t.zone(), t.idx())) return true;
+		}
 		return false;
 	}
 
@@ -13262,8 +13327,9 @@ public class MainWindow {
 	 */
 	private boolean attackerBlockPowerFiltersExclude(ForwardTarget.CardZone blockerZone, int blockerIdx) {
 		int blockerPower = fieldForwardPower(true, blockerZone, blockerIdx);
-		for (int i : pendingP2AttackerForwardIndices()) {
-			CardData attacker = p2ForwardCards.get(i);
+		for (ForwardTarget t : pendingP2AttackerTargets()) {
+			CardData attacker = pendingAttackerCard(t);
+			if (attacker == null) continue;
 			int[] intr = CardData.parseFieldCannotBeBlockedByPower(attacker.textEn(), attacker.name());
 			if (intr != null && blockerPowerExcluded(blockerPower, intr)) return true;
 		}
@@ -13278,16 +13344,16 @@ public class MainWindow {
 	/** True when the potential P1 blocker (given zone/idx) has strictly greater power than ANY attacker. */
 	private boolean blockerPowerExceedsAttacker(ForwardTarget.CardZone blockerZone, int blockerIdx) {
 		int blockerPower = fieldForwardPower(true, blockerZone, blockerIdx);
-		for (int i : pendingP2AttackerForwardIndices())
-			if (blockerPower > effectiveP2ForwardPower(i)) return true;
+		for (ForwardTarget t : pendingP2AttackerTargets())
+			if (blockerPower > fieldForwardPower(false, t.zone(), t.idx())) return true;
 		return false;
 	}
 
 	/** True when ANY attacker (single or every party member) has strictly greater power than the blocker. */
 	private boolean attackerPowerExceedsBlocker(ForwardTarget.CardZone blockerZone, int blockerIdx) {
 		int blockerPower = fieldForwardPower(true, blockerZone, blockerIdx);
-		for (int i : pendingP2AttackerForwardIndices())
-			if (effectiveP2ForwardPower(i) > blockerPower) return true;
+		for (ForwardTarget t : pendingP2AttackerTargets())
+			if (fieldForwardPower(false, t.zone(), t.idx()) > blockerPower) return true;
 		return false;
 	}
 
@@ -13297,10 +13363,11 @@ public class MainWindow {
 	 * conditional (IfControlBoost) filters.
 	 */
 	private boolean attackerBlockCostFiltersExclude(int blockerCost) {
-		for (int i : pendingP2AttackerForwardIndices()) {
-			CardData attacker = p2ForwardCards.get(i);
+		for (ForwardTarget t : pendingP2AttackerTargets()) {
+			CardData attacker = pendingAttackerCard(t);
+			if (attacker == null) continue;
 			if (allForwardsCannotBeBlockedByHigherCostThisTurn && blockerCost > attacker.cost()) return true;
-			int[] dyn = p2ForwardCannotBeBlockedByCost.get(i);
+			int[] dyn = p2CannotBeBlockedByCost.get(attacker);
 			if (dyn != null && blockerCostExcluded(blockerCost, dyn)) return true;
 			int[] intr = attacker.fieldCannotBeBlockedByCost();
 			if (intr != null && blockerCostExcluded(blockerCost, intr)) return true;
@@ -13322,13 +13389,17 @@ public class MainWindow {
 		CardState s = p1MonsterStates.get(idx);
 		if (s != CardState.ACTIVE) return false;
 		if (!isP1MonsterTemporarilyForward(idx)) return false;
-		if (!p1ForwardMustBlock.isEmpty()) return false;   // a Forward is forced to block
+		if (!p1MustBlock.isEmpty()) return false;   // a Forward is forced to block
 		if (p1ForwardCompelledToBlockIdxForPendingAttack() >= 0) return false;  // …against this attacker
 		if (attackerUnblockable()) return false;
 		// Jack Garland 29-123R: this method is the only path a Monster reaches a block by, so the
 		// restriction is complete here for P1's side.
 		if (pendingP2AttackBarsMonsterBlockers()) return false;
 		CardData monsterBlocker = p1MonsterCards.get(idx);
+		// Kitone 14-064R can point a per-turn block restriction at a Monster; instance keying is
+		// what lets it reach this row at all.
+		if (p1CannotBlock.contains(monsterBlocker)) return false;
+		if (p1CannotBlockPersistent.contains(monsterBlocker)) return false;
 		if (monsterBlocker.cannotBlockAtAll() || monsterBlocker.cannotAttackOrBlock()) return false;
 		if (isFieldAbilityCannotAttackOrBlock(monsterBlocker, true)) return false;
 		if (monsterBlocker.cannotBlockParty() && pendingP2PartyIndices != null) return false;
@@ -13348,10 +13419,14 @@ public class MainWindow {
 		CardState s = p1BackupStates[idx];
 		if (s != CardState.ACTIVE) return false;
 		if (!isP1BackupTemporarilyForward(idx)) return false;
-		if (!p1ForwardMustBlock.isEmpty()) return false;
+		if (!p1MustBlock.isEmpty()) return false;
 		if (p1ForwardCompelledToBlockIdxForPendingAttack() >= 0) return false;
 		if (attackerUnblockable()) return false;
 		CardData backupBlocker = p1BackupCards[idx];
+		// A Backup restricted while it was still a Backup keeps the restriction once something
+		// turns it into a Forward for the turn — the restriction is on the card, not the row.
+		if (p1CannotBlock.contains(backupBlocker)) return false;
+		if (p1CannotBlockPersistent.contains(backupBlocker)) return false;
 		if (backupBlocker.cannotBlockAtAll() || backupBlocker.cannotAttackOrBlock()) return false;
 		if (isFieldAbilityCannotAttackOrBlock(backupBlocker, true)) return false;
 		if (backupBlocker.cannotBlockParty() && pendingP2PartyIndices != null) return false;
@@ -14003,6 +14078,8 @@ public class MainWindow {
 		if (idx < 0 || idx >= p1MonsterStates.size()) return false;
 		if (p1MonsterStates.get(idx) != CardState.ACTIVE) return false;
 		CardData card = p1MonsterCards.get(idx);
+		if (p1CannotAttack.contains(card) || p1CannotAttackPersistent.contains(card)) return false;
+		if (card.cannotAttackOrBlock() || isFieldAbilityCannotAttackOrBlock(card, true)) return false;
 		if (!p1MonsterTempForwardPower.containsKey(card)) {
 			CardData.BecomeForwardAbility bfa = card.becomeForwardAbility();
 			if (bfa == null) return false;
@@ -14253,6 +14330,9 @@ public class MainWindow {
 	boolean p2MonsterCanAttackAsForward(int idx) {
 		if (p2MonsterStates.get(idx) != CardState.ACTIVE) return false;
 		if (!isP2MonsterTemporarilyForward(idx)) return false;
+		CardData card = p2MonsterCards.get(idx);
+		if (p2CannotAttack.contains(card) || p2CannotAttackPersistent.contains(card)) return false;
+		if (card.cannotAttackOrBlock() || isFieldAbilityCannotAttackOrBlock(card, false)) return false;
 		return effectiveMonsterHasTrait(false, idx, CardData.Trait.HASTE)
 				|| p2MonsterPlayedOnTurn.get(idx) != gameState.getTurnNumber();
 	}
@@ -14354,6 +14434,9 @@ public class MainWindow {
 		if (idx < 0 || idx >= p1BackupCards.length || p1BackupCards[idx] == null) return false;
 		if (p1BackupStates[idx] != CardState.ACTIVE) return false;
 		if (!isP1BackupTemporarilyForward(idx)) return false;
+		CardData card = p1BackupCards[idx];
+		if (p1CannotAttack.contains(card) || p1CannotAttackPersistent.contains(card)) return false;
+		if (card.cannotAttackOrBlock() || isFieldAbilityCannotAttackOrBlock(card, true)) return false;
 		return effectiveBackupHasTrait(true, idx, CardData.Trait.HASTE)
 				|| p1BackupPlayedOnTurn[idx] != gameState.getTurnNumber();
 	}
@@ -14361,6 +14444,9 @@ public class MainWindow {
 	boolean p2BackupCanAttackAsForward(int idx) {
 		if (idx < 0 || idx >= p2BackupCards.length || p2BackupCards[idx] == null) return false;
 		if (p2BackupStates[idx] != CardState.ACTIVE) return false;
+		CardData card = p2BackupCards[idx];
+		if (p2CannotAttack.contains(card) || p2CannotAttackPersistent.contains(card)) return false;
+		if (card.cannotAttackOrBlock() || isFieldAbilityCannotAttackOrBlock(card, false)) return false;
 		return isP2BackupTemporarilyForward(idx);
 	}
 
@@ -14846,8 +14932,8 @@ public class MainWindow {
 		for (int i = 0; i < p1ForwardStates.size(); i++) {
 			CardData fwd = p1ForwardCards.get(i);
 			if (p1ForwardStates.get(i) == CardState.ACTIVE
-					&& !p1ForwardCannotAttack.contains(i)
-					&& !p1ForwardCannotAttackPersistent.contains(i)
+					&& !p1CannotAttack.contains(fwd)
+					&& !p1CannotAttackPersistent.contains(fwd)
 					&& !Boolean.TRUE.equals(p1ForwardFrozen.get(i))
 					&& !fwd.cannotAttackOrBlock()
 					&& !isFieldAbilityCannotAttackOrBlock(fwd, true)

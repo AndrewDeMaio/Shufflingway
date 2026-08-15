@@ -1857,6 +1857,20 @@ public class ActionResolver {
         if (FOLLOWUP_RETURN_TO_YOUR_HAND.matcher(followupText).find())                return "ReturnToYourHand";
         if (FOLLOWUP_PUT_TOP_OR_BOTTOM_OF_DECK.matcher(followupText).find())          return "PutTopOrBottomOfDeck";
         if (FOLLOWUP_PUT_BOTTOM_OF_DECK.matcher(followupText).find())                 return "PutBottomOfDeck";
+        // The two Break-Zone-salvage forms, mirroring their adjacency in the choose chain. Both are
+        // disjoint from the owner's-deck patterns around them ("your deck" vs "its owner's deck").
+        if (FOLLOWUP_PUT_TOP_OF_YOUR_DECK.matcher(followupText).find())               return "PutTopOfYourDeck";
+        // The compound form is guarded on its trailing effect having a parser, exactly as the
+        // dispatch is, so a text the executor declines goes unnamed here too.
+        {
+            Matcher bottomThenM = FOLLOWUP_PUT_BOTTOM_OF_YOUR_DECK_AND_THEN.matcher(followupText);
+            if (bottomThenM.find()) {
+                String alsoTxt  = bottomThenM.group("also").trim();
+                String alsoName = parse(alsoTxt, source) != null ? matchedPatternName(alsoTxt, source) : null;
+                if (alsoName != null) return "PutBottomOfYourDeckThen[" + alsoName + "]";
+            }
+        }
+        if (FOLLOWUP_PUT_BOTTOM_OF_YOUR_DECK.matcher(followupText).find())            return "PutBottomOfYourDeck";
         if (FOLLOWUP_PUT_TOP_OF_DECK.matcher(followupText).find())                    return "PutTopOfDeck";
         if (FOLLOWUP_PUT_UNDER_TOP_OF_DECK.matcher(followupText).find())              return "PutUnderTopOfDeck";
         if (FOLLOWUP_CANNOT_BLOCK.matcher(followupText).find())                       return "CannotBlock";
@@ -1868,6 +1882,10 @@ public class ActionResolver {
         if (FOLLOWUP_MUST_BLOCK.matcher(followupText).find())                         return "MustBlock";
         if (FOLLOWUP_CANNOT_ATTACK.matcher(followupText).find())                      return "CannotAttack";
         if (FOLLOWUP_MUST_ATTACK.matcher(followupText).find())                        return "MustAttack";
+        // Must precede the plain form, mirroring the choose chain: that pattern's find() would take
+        // the first clause and lose the action-ability half.
+        if (FOLLOWUP_CANNOT_ATTACK_OR_BLOCK_AND_NO_ACTION_ABILITIES.matcher(followupText).find())
+            return "CannotAttackOrBlockOrUseActionAbilities";
         if (FOLLOWUP_CANNOT_ATTACK_OR_BLOCK.matcher(followupText).find())             return "CannotAttackOrBlock";
         if (FOLLOWUP_CANNOT_ATTACK_OR_BLOCK_PERSISTENT.matcher(followupText).find())  return "CannotAttackOrBlockPersistent";
         if (FOLLOWUP_POWER_BECOMES.matcher(followupText).find())                      return "PowerBecomes";
@@ -2757,6 +2775,15 @@ public class ActionResolver {
                     if (ft.isP1()) ctx.returnP1ForwardToHand(ft.idx());
                     else           ctx.returnP2ForwardToHand(ft.idx());
                 }
+            };
+
+        // Bury a chosen Break Zone card at the bottom of the ability user's deck. Reached through
+        // the "If you control N or more …" gate (24-094C Corsair), which is why it lives here
+        // rather than only as a followup branch in ActionResolverChoose.
+        if (FOLLOWUP_PUT_BOTTOM_OF_YOUR_DECK.matcher(t).find())
+            return (ctx, ts) -> {
+                sortedByIdxDesc(ts, true) .forEach(ctx::putBreakZoneTargetOnBottomOfDeck);
+                sortedByIdxDesc(ts, false).forEach(ctx::putBreakZoneTargetOnBottomOfDeck);
             };
 
         // Power reduce — both word orders

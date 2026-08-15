@@ -1883,6 +1883,9 @@ final class AutoAbilityTriggers {
 			}
 		});
 		mw.clearPermanentGrants(departing);
+		// Per-turn attack/block restrictions are keyed by instance, so they have to be dropped
+		// here or they would follow the card back in when it is replayed from the Break Zone.
+		mw.clearCombatRestrictionsFor(departing);
 		// Necron: cards the departing card had removed "for as long as it is on the field"
 		// re-enter their owner's field.
 		mw.returnTempExiledOnLeave(departing);

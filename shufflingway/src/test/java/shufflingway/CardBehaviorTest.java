@@ -7821,28 +7821,31 @@ public class CardBehaviorTest {
         assertP1SlotListsAligned(mw, 2, "a break");
     }
 
+    // Every combat collection is now keyed by card, so a break renumbers nothing — the property
+    // to hold is that each restriction stays with its own Forward and never lands on whoever
+    // slides into the vacated slot. This is what retired shiftBlockSet/shiftBlockMap.
     @Test
-    void breakingAForwardReindexesTheSurvivorsRestrictions() {
+    void breakingAForwardLeavesTheSurvivorsRestrictionsWithTheirOwnCards() {
         MainWindow mw = sixForwardBoard();
-        // Restrict the Forwards above the one about to break.
-        mw.p1ForwardCannotBlock.add(4);
-        mw.p1ForwardCannotBeBlocked.add(5);
-        mw.grantExtraAttack(mw.p1ForwardCards.get(3));
-
         CardData survivor4 = mw.p1ForwardCards.get(4);
         CardData survivor5 = mw.p1ForwardCards.get(5);
         CardData survivor3 = mw.p1ForwardCards.get(3);
 
+        mw.p1CannotBlock.add(survivor4);            // defender-side
+        mw.p1CannotBeBlocked.add(survivor5);        // attacker-side
+        mw.grantExtraAttack(survivor3);
+
         mw.breakP1Forward(2);
 
         assertSame(survivor4, mw.p1ForwardCards.get(3));
-        assertTrue(mw.p1ForwardCannotBlock.contains(3),
-                "the restriction follows its Forward down into slot 3");
-        assertFalse(mw.p1ForwardCannotBlock.contains(4),
-                "and no longer lands on the Forward that moved into slot 4");
+        assertTrue(mw.p1CannotBlock.contains(survivor4),
+                "the restriction is on the card, so the move to slot 3 cannot shake it off");
+        assertFalse(mw.p1CannotBlock.contains(mw.p1ForwardCards.get(4)),
+                "and never lands on the Forward that moved into the slot it used to hold");
 
         assertSame(survivor5, mw.p1ForwardCards.get(4));
-        assertTrue(mw.p1ForwardCannotBeBlocked.contains(4));
+        assertTrue(mw.p1CannotBeBlocked.contains(survivor5), "same for the attacker-side grant");
+        assertFalse(mw.p1CannotBeBlocked.contains(mw.p1ForwardCards.get(3)));
 
         assertSame(survivor3, mw.p1ForwardCards.get(2));
         assertEquals(2, mw.attacksAllowed(survivor3),
@@ -7896,10 +7899,37 @@ public class CardBehaviorTest {
         mw.gameState.getIdentity().put(blocker, true);
 
         openPartyBlockStep(mw);
-        mw.p2ForwardCannotBeBlocked.add(1);
+        mw.p2CannotBeBlocked.add(mw.p2ForwardCards.get(1));
 
         assertFalse(mw.isForwardBlockSelectable(0),
                 "blocking the party means blocking every member, so one unblockable member stops it");
+    }
+
+    // A Monster attacking as a Forward used to be exempt from every attacker-side restriction:
+    // the enumeration behind these checks returned Forward-row indices and gave back an empty
+    // list for any other row. That was a gap in the representation, not a rule — a Character
+    // attacking as a Forward is a Forward while it attacks.
+    @Test
+    void aMonsterAttackingAsAForwardCarriesItsCannotBeBlockedGrant() {
+        MainWindow mw = new MainWindow();
+        enterAttackDeclarationStep(mw, false);
+        CardData ogre = makeFieldAbilityCard("Ogre", "Fire", "Monster", "");
+        mw.gameState.getIdentity().put(ogre, false);
+        mw.p2MonsterCards.add(ogre);
+        mw.p2MonsterStates.add(CardState.ACTIVE);
+        mw.p2MonsterFrozen.add(false);
+        CardData blocker = makeForward("Blocker", "Ice", 3, 8000);
+        mw.placeCardInForwardZone(blocker);
+        mw.gameState.getIdentity().put(blocker, true);
+
+        mw.pendingP2Attacker         = ogre;
+        mw.pendingP2AttackerIdx      = 0;
+        mw.pendingP2AttackerIsMonster = true;
+
+        assertTrue(mw.isForwardBlockSelectable(0), "blockable before the grant");
+        mw.p2CannotBeBlocked.add(ogre);
+        assertFalse(mw.isForwardBlockSelectable(0),
+                "the grant binds a Monster attacker exactly as it binds a Forward one");
     }
 
     @Test
@@ -10086,6 +10116,246 @@ public class CardBehaviorTest {
 		fn.accept(ctx);
 
 		verify(ctx, never()).promptYouMay(any());
+	}
+
+	// =========================================================================================
+	// "Choose 1 … in your Break Zone. Put/Place it at the bottom of your deck."
+	// The bottom-of-deck twin of the section above, unrecognised for the same reason: the
+	// choose header matched but nothing claimed a followup naming "your deck" rather than
+	// "its owner's deck", so the whole ability logged "followup not yet implemented".
+	// 24-094C Corsair gates the same followup on a board condition, which routes it through
+	// the "If you control N or more …" branch and so through parseTargetAction instead.
+	// =========================================================================================
+
+	// 11-123R Yunalesca. "Place" rather than "put", and the plain ungated form.
+	@Test
+	void yunalescaPlacesChosenBreakZoneSummonAtBottomOfDeck() {
+		GameContext ctx = mock(GameContext.class);
+		ForwardTarget hit = stubOwnBzHit(ctx);
+
+		Consumer<GameContext> fn = ActionResolver.parse(
+				"choose 1 Summon in your Break Zone. Place it at the bottom of your deck.", null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+
+		verify(ctx).putBreakZoneTargetOnBottomOfDeck(hit);
+		verify(ctx, never()).promptYouMay(any());
+	}
+
+	// 24-094C Corsair. The condition gates the burial, not the choosing: the card is picked
+	// either way, so a Break Zone selection still happens when the board test fails.
+	private static final String CORSAIR_TEXT =
+			"choose 1 card in your Break Zone. If you control 4 or more Water Backups, "
+			+ "put it at the bottom of your deck.";
+
+	@Test
+	void corsairBuriesChosenCardWhenWaterBackupCountIsMet() {
+		GameContext ctx = mock(GameContext.class);
+		ForwardTarget hit = stubOwnBzHit(ctx);
+		when(ctx.selfFieldCount("Water", false, true, false)).thenReturn(4);
+
+		Consumer<GameContext> fn = ActionResolver.parse(CORSAIR_TEXT, null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+
+		verify(ctx).putBreakZoneTargetOnBottomOfDeck(hit);
+	}
+
+	@Test
+	void corsairStillChoosesButDoesNotBuryBelowFourWaterBackups() {
+		GameContext ctx = mock(GameContext.class);
+		stubOwnBzHit(ctx);
+		when(ctx.selfFieldCount("Water", false, true, false)).thenReturn(3);
+
+		Consumer<GameContext> fn = ActionResolver.parse(CORSAIR_TEXT, null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+
+		verify(ctx).selectCharactersFromBreakZone(
+				eq(1), anyBoolean(), anyBoolean(), anyBoolean(),
+				any(), any(), anyInt(), any(), anyInt(), any(),
+				anyBoolean(), anyBoolean(), anyBoolean(),
+				any(), any(), any(), any(), anyBoolean(), any(), anyBoolean());
+		verify(ctx, never()).putBreakZoneTargetOnBottomOfDeck(any());
+	}
+
+	// 15-065C Scholar pairs the same burial with a deck-to-Break-Zone mill in one "and" clause,
+	// so the resolver's ". " sentence split never separates them and the second effect has to be
+	// pulled out of the followup itself.
+	private static final String SCHOLAR_TEXT =
+			"choose up to 1 card in your Break Zone. Place it at the bottom of your deck "
+			+ "and put the top card of your deck into the Break Zone.";
+
+	@Test
+	void scholarBuriesChosenCardAndThenMills() {
+		GameContext ctx = mock(GameContext.class);
+		ForwardTarget hit = stubOwnBzHit(ctx);
+
+		Consumer<GameContext> fn = ActionResolver.parse(SCHOLAR_TEXT, null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+
+		InOrder order = inOrder(ctx);
+		order.verify(ctx).putBreakZoneTargetOnBottomOfDeck(hit);
+		order.verify(ctx).millCards(1);
+	}
+
+	// "Up to 1" permits choosing nothing — an empty Break Zone is the ordinary case for a Backup
+	// played early. The mill is a second instruction of the same effect, not a consequence of the
+	// burial ("when you do so" would be the conditional wording), so it still resolves.
+	@Test
+	void scholarStillMillsWhenNothingWasChosen() {
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.consumePreloadedTargets()).thenReturn(null);
+		when(ctx.selectCharactersFromBreakZone(
+				anyInt(), anyBoolean(), anyBoolean(), anyBoolean(),
+				any(), any(), anyInt(), any(), anyInt(), any(),
+				anyBoolean(), anyBoolean(), anyBoolean(),
+				any(), any(), any(), any(), anyBoolean(), any(), anyBoolean()
+		)).thenReturn(new ArrayList<>());
+
+		Consumer<GameContext> fn = ActionResolver.parse(SCHOLAR_TEXT, null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+
+		verify(ctx, never()).putBreakZoneTargetOnBottomOfDeck(any());
+		verify(ctx).millCards(1);
+	}
+
+	// The compound branch is guarded on the trailing effect having a parser of its own. When it
+	// does not, burying the card and dropping the rest would be a half-applied effect, so the
+	// whole followup has to decline instead.
+	@Test
+	void compoundBurialWithAnUnparseableTailIsDeclinedRatherThanHalfApplied() {
+		GameContext ctx = mock(GameContext.class);
+		stubOwnBzHit(ctx);
+
+		Consumer<GameContext> fn = ActionResolver.parse(
+				"choose up to 1 card in your Break Zone. Place it at the bottom of your deck "
+				+ "and whistle a merry tune.", null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+
+		verify(ctx, never()).putBreakZoneTargetOnBottomOfDeck(any());
+	}
+
+	// =========================================================================================
+	// 14-064R Kitone: "choose 1 Character. During this turn, it cannot attack or block, and it
+	// cannot use action abilities."
+	// Three restrictions in one sentence. The plain cannot-attack-or-block pattern wants a
+	// trailing "this turn", so nothing claimed this text and the whole ability was a no-op.
+	// =========================================================================================
+
+	private static final String KITONE_TEXT =
+			"choose 1 Character. During this turn, it cannot attack or block, "
+			+ "and it cannot use action abilities.";
+
+	@Test
+	void kitoneLocksChosenForwardOutOfAttackingBlockingAndActionAbilities() {
+		GameContext ctx = mock(GameContext.class);
+		ForwardTarget hit = stubChooseOneTarget(ctx);   // P2 Forward at index 0
+
+		Consumer<GameContext> fn = ActionResolver.parse(KITONE_TEXT, null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+
+		verify(ctx).setTargetCannotAttackOrBlockThisTurn(hit);
+		verify(ctx).setTargetCannotUseActionAbilitiesThisTurn(hit);
+	}
+
+	// "Character" reaches Backups and Monsters, where there is no Forward-row index to restrict.
+	// Both halves go through the zone-agnostic setters, so neither depends on the target sitting
+	// on the Forward row — and the row-indexed setters must not be reached at all.
+	@Test
+	void kitoneRestrictsABackupThroughTheZoneAgnosticSetters() {
+		GameContext ctx = mock(GameContext.class);
+		ForwardTarget hit = new ForwardTarget(true, 2, ForwardTarget.CardZone.BACKUP);
+		when(ctx.consumePreloadedTargets()).thenReturn(null);
+		when(ctx.selectCharacters(anyInt(), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(),
+				anyInt(), any(), anyInt(), any(), anyBoolean(), anyBoolean(), anyBoolean(),
+				any(), any(), any(), any(), anyBoolean(), any(), anyBoolean())).thenReturn(List.of(hit));
+
+		Consumer<GameContext> fn = ActionResolver.parse(KITONE_TEXT, null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+
+		verify(ctx).setTargetCannotAttackOrBlockThisTurn(hit);
+		verify(ctx).setTargetCannotUseActionAbilitiesThisTurn(hit);
+		verify(ctx, never()).setP1ForwardCannotAttack(anyInt());
+		verify(ctx, never()).setP1ForwardCannotBlock(anyInt());
+	}
+
+	// The case that motivated moving off slot indices: a Backup restricted while it is still a
+	// Backup, which something later turns into a Forward for the turn. The restriction is on the
+	// card, so becoming a legal blocker does not shake it off.
+	@Test
+	void aRestrictedBackupStillCannotBlockAfterItBecomesAForward() {
+		MainWindow mw = new MainWindow();
+		CardData golem = makeFieldAbilityCard("Golem", "Earth", "Backup", "");
+		mw.gameState.getIdentity().put(golem, false);   // owned by P2
+		mw.p2BackupCards[0]  = golem;
+		mw.p2BackupStates[0] = CardState.ACTIVE;
+		mw.p2BackupTempForwardPower.put(golem, 5000);   // something turned it into a Forward
+		assertTrue(mw.p2BackupCanBlockAsForward(0), "a legal blocker before the restriction");
+
+		mw.buildGameContext(false).setTargetCannotAttackOrBlockThisTurn(
+				new ForwardTarget(false, 0, ForwardTarget.CardZone.BACKUP));
+
+		assertFalse(mw.p2BackupCanBlockAsForward(0),
+				"the restriction is on the card, so becoming a Forward does not shake it off");
+		assertFalse(mw.p2BackupCanAttackAsForward(0), "and it covers the attack half too");
+	}
+
+	// The other half of instance keying: a restriction must not ride the card back onto the field.
+	// The same CardData goes to the Break Zone and returns when replayed, so the departure hook
+	// has to drop it or a broken-and-replayed Character would come back still restricted.
+	@Test
+	void aRestrictionIsDroppedWhenTheCardLeavesTheField() {
+		MainWindow mw = new MainWindow();
+		CardData zell = makeForward("Zell", "Fire", 3, 7000);
+		mw.gameState.getIdentity().put(zell, true);   // breakP1Forward routes the card by owner
+		mw.placeCardInForwardZone(zell);
+		mw.buildGameContext(true).setTargetCannotAttackOrBlockThisTurn(
+				new ForwardTarget(true, 0, ForwardTarget.CardZone.FORWARD));
+		assertTrue(mw.p1CannotAttack.contains(zell));
+
+		mw.breakP1Forward(0);
+
+		assertFalse(mw.p1CannotAttack.contains(zell), "a card that left the field is a new object");
+		assertFalse(mw.p1CannotBlock.contains(zell));
+	}
+
+	// The lock has to reach canActivateAbility, the one gate the ability menu and the AI share,
+	// and it has to stop at action abilities — a Special is a separate kind of ability under
+	// rule 6-1-1, which is the same line 14-045H Sin's field-wide lock draws.
+	@Test
+	void kitoneLockBlocksActionAbilitiesButNotSpecials() {
+		MainWindow mw = new MainWindow();
+		ActionAbility action  = CardData.parseActionAbilities("《Dull》: Draw 1 card.").get(0);
+		ActionAbility special =
+				CardData.parseActionAbilities("《S》《Dull》: Choose 1 Forward. Deal it 4000 damage.").get(0);
+		assertTrue(special.isSpecial(), "test fixture must actually parse as a Special Ability");
+		CardData victim = makeForward("Victim", "Earth", 3, 7000, List.of(action, special));
+		mw.placeCardInForwardZone(victim);
+		// A Special Ability is paid for by discarding a same-named card, so the hand needs one
+		// before the special is usable for reasons that have nothing to do with Kitone.
+		mw.gameState.getP1Hand().add(makeForward("Victim", "Earth", 3, 7000));
+
+		assertTrue(mw.canActivateAbility(action, false, CardState.ACTIVE, 0, victim, true),
+				"unrestricted to begin with");
+
+		mw.cannotUseActionAbilitiesThisTurn.add(victim);
+		assertFalse(mw.canActivateAbility(action, false, CardState.ACTIVE, 0, victim, true),
+				"Kitone's lock covers action abilities");
+		assertTrue(mw.canActivateAbility(special, false, CardState.ACTIVE, 0, victim, true),
+				"Special Abilities are a different kind of ability and stay usable");
+
+		// Turn scoping is not exercised here: it comes from clearing the set alongside the other
+		// per-turn restriction sets in onNextPhase, and driving the real end phase from a test
+		// starts the EDT timers the board settles on.
+		mw.cannotUseActionAbilitiesThisTurn.clear();
+		assertTrue(mw.canActivateAbility(action, false, CardState.ACTIVE, 0, victim, true),
+				"clearing the set lifts the restriction");
 	}
 
 	// =========================================================================================
@@ -12569,7 +12839,7 @@ public class CardBehaviorTest {
 	//                             … gains "Roche must attack once per turn if possible." and
 	//                             … power becomes 9000.
 	//
-	// Roche's half needed the must-attack rule built from nothing: p1ForwardMustAttack was
+	// Roche's half needed the must-attack rule built from nothing: p1MustAttack was
 	// written by the choose chain and re-indexed on every removal path, but never read, so "it
 	// must attack this turn if possible" had no effect whatsoever. Both sources now feed one
 	// check at the attack-phase exit.
@@ -12719,17 +12989,18 @@ public class CardBehaviorTest {
 
 	@Test
 	void theOneTurnMustAttackInstructionIsNowHonouredToo() {
-		// p1ForwardMustAttack was populated by the choose chain and re-indexed on every removal
+		// p1MustAttack was populated by the choose chain and re-indexed on every removal
 		// path, but nothing ever read it — "it must attack this turn if possible" did nothing.
 		MainWindow mw = new MainWindow();
 		enterP1AttackPhase(mw);
 		mw.attackSubStep = 1;   // declaration sub-step
-		mw.placeCardInForwardZone(makeForward("Zell", "Fire", 3, 7000));
+		CardData zell = makeForward("Zell", "Fire", 3, 7000);
+		mw.placeCardInForwardZone(zell);
 		mw.p1ForwardPlayedOnTurn.set(0, 0);
 
 		assertEquals(-1, mw.p1ForwardCompelledToAttackIdx(), "no instruction yet");
 
-		mw.p1ForwardMustAttack.add(0);
+		mw.p1MustAttack.add(zell);
 
 		assertEquals(0, mw.p1ForwardCompelledToAttackIdx());
 	}
@@ -14422,11 +14693,13 @@ public class CardBehaviorTest {
 		placeP1Forward(mw, makeForward("Gale", "Wind", 3, 7000));          // idx 1
 		placeP1Forward(mw, makeForward("Icer", "Ice",  3, 7000));          // idx 2
 
-		assertTrue(mw.p1AttackerCostFiltersExclude(1, 3), "a Wind ally cannot be blocked by cost 3");
-		assertTrue(mw.p1AttackerCostFiltersExclude(0, 4),
+		CardData poppy = mw.p1ForwardCards.get(0), gale = mw.p1ForwardCards.get(1),
+				 icer  = mw.p1ForwardCards.get(2);
+		assertTrue(mw.p1AttackerCostFiltersExclude(gale, 3), "a Wind ally cannot be blocked by cost 3");
+		assertTrue(mw.p1AttackerCostFiltersExclude(poppy, 4),
 				"Poppy is Wind and the grant names no exception, so it covers itself too");
-		assertFalse(mw.p1AttackerCostFiltersExclude(1, 2), "a cheaper blocker is still allowed");
-		assertFalse(mw.p1AttackerCostFiltersExclude(2, 3), "and the Ice Forward gets no such grant");
+		assertFalse(mw.p1AttackerCostFiltersExclude(gale, 2), "a cheaper blocker is still allowed");
+		assertFalse(mw.p1AttackerCostFiltersExclude(icer, 3), "and the Ice Forward gets no such grant");
 	}
 
 	// =========================================================================================
@@ -18826,7 +19099,7 @@ public class CardBehaviorTest {
 		MainWindow theirs = ardynFacing(2);
 		theirs.autoAbilityTriggers.triggerAutoAbilitiesForBeginningOfOppAttackPhase(false);
 		assertEquals(1, theirs.p2ForwardCards.size(), "but on the opponent's, who paid a Character");
-		assertTrue(theirs.p1ForwardCannotBlock.contains(0));
+		assertTrue(theirs.p1CannotBlock.contains(theirs.p1ForwardCards.get(0)));
 	}
 
 	/** Ardyn 8-068L on P1's field at index 0, facing {@code oppForwards} P2 Forwards. */
@@ -18862,7 +19135,7 @@ public class CardBehaviorTest {
 
 		assertEquals(List.of("Keeper"), mw.p2ForwardCards.stream().map(CardData::name).toList(),
 				"the CPU spends its cheapest Character");
-		assertTrue(mw.p1ForwardCannotBlock.contains(0), "and buys Ardyn's block off for the turn");
+		assertTrue(mw.p1CannotBlock.contains(ardyn), "and buys Ardyn's block off for the turn");
 	}
 
 	@Test
@@ -18875,7 +19148,7 @@ public class CardBehaviorTest {
 		ActionResolver.parse(ARDYN_8_068L_EFFECT, ardyn).accept(mw.buildGameContext(true));
 
 		assertEquals(1, mw.p2ForwardCards.size(), "it will not empty its board for this");
-		assertFalse(mw.p1ForwardCannotBlock.contains(0), "so Ardyn keeps its block");
+		assertFalse(mw.p1CannotBlock.contains(ardyn), "so Ardyn keeps its block");
 	}
 
 	@Test
@@ -18886,7 +19159,7 @@ public class CardBehaviorTest {
 
 		ActionResolver.parse(ARDYN_8_068L_EFFECT, ardyn).accept(mw.buildGameContext(true));
 
-		assertTrue(mw.p1ForwardCannotBlock.isEmpty(), "no offer to take, no restriction");
+		assertTrue(mw.p1CannotBlock.isEmpty(), "no offer to take, no restriction");
 	}
 
 	// =========================================================================================

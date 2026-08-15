@@ -1293,35 +1293,37 @@ final class GameContextImpl implements GameContext {
 				mw.refreshP2ForwardSlot(idx);
 			}
 
+			// The row-index API is kept because the effects that use it genuinely mean "the Forward
+			// in slot N" — several sweep the whole row. Storage is by card instance, so the index
+			// is resolved here and never held.
 			@Override public void setP1ForwardCannotBlock(int idx) {
-				if (idx >= 0 && idx < mw.p1ForwardCards.size()) mw.p1ForwardCannotBlock.add(idx);
+				if (idx >= 0 && idx < mw.p1ForwardCards.size()) mw.p1CannotBlock.add(mw.p1ForwardCards.get(idx));
 			}
 			@Override public void setP2ForwardCannotBlock(int idx) {
-				if (idx >= 0 && idx < mw.p2ForwardCards.size()) mw.p2ForwardCannotBlock.add(idx);
+				if (idx >= 0 && idx < mw.p2ForwardCards.size()) mw.p2CannotBlock.add(mw.p2ForwardCards.get(idx));
 			}
 			@Override public void setP1ForwardCannotBeBlocked(int idx) {
-				if (idx >= 0 && idx < mw.p1ForwardCards.size()) mw.p1ForwardCannotBeBlocked.add(idx);
+				if (idx >= 0 && idx < mw.p1ForwardCards.size()) mw.p1CannotBeBlocked.add(mw.p1ForwardCards.get(idx));
 			}
 			@Override public void setP2ForwardCannotBeBlocked(int idx) {
-				if (idx >= 0 && idx < mw.p2ForwardCards.size()) mw.p2ForwardCannotBeBlocked.add(idx);
+				if (idx >= 0 && idx < mw.p2ForwardCards.size()) mw.p2CannotBeBlocked.add(mw.p2ForwardCards.get(idx));
 			}
 			@Override public void setP1ForwardCannotBeBlockedByCost(int idx, int costVal, boolean isMore) {
 				if (idx >= 0 && idx < mw.p1ForwardCards.size())
-					mw.p1ForwardCannotBeBlockedByCost.put(idx, new int[]{costVal, isMore ? 1 : 0});
+					mw.p1CannotBeBlockedByCost.put(mw.p1ForwardCards.get(idx), new int[]{costVal, isMore ? 1 : 0});
 			}
 			@Override public void setP2ForwardCannotBeBlockedByCost(int idx, int costVal, boolean isMore) {
 				if (idx >= 0 && idx < mw.p2ForwardCards.size())
-					mw.p2ForwardCannotBeBlockedByCost.put(idx, new int[]{costVal, isMore ? 1 : 0});
+					mw.p2CannotBeBlockedByCost.put(mw.p2ForwardCards.get(idx), new int[]{costVal, isMore ? 1 : 0});
 			}
+			// Instance keying makes the grant a direct write: no row search, so it reaches a source
+			// attacking from the Monster or Backup row as readily as one on the Forward row.
 			@Override public void grantSelfCannotBeBlockedByCost(CardData source, int costVal, boolean isMore) {
-				boolean applied = false;
-				for (int i = 0; i < mw.p1ForwardCards.size() && !applied; i++)
-					if (mw.p1ForwardCards.get(i) == source) { setP1ForwardCannotBeBlockedByCost(i, costVal, isMore); applied = true; }
-				for (int i = 0; i < mw.p2ForwardCards.size() && !applied; i++)
-					if (mw.p2ForwardCards.get(i) == source) { setP2ForwardCannotBeBlockedByCost(i, costVal, isMore); applied = true; }
-				if (applied)
-					logEntry(source.name() + " gains \"cannot be blocked by a Forward of cost " + costVal
-							+ " or " + (isMore ? "more" : "less") + "\" until end of turn");
+				if (source == null) return;
+				(isP1 ? mw.p1CannotBeBlockedByCost : mw.p2CannotBeBlockedByCost)
+						.put(source, new int[]{costVal, isMore ? 1 : 0});
+				logEntry(source.name() + " gains \"cannot be blocked by a Forward of cost " + costVal
+						+ " or " + (isMore ? "more" : "less") + "\" until end of turn");
 			}
 			@Override public void grantSelfCannotBlockUntilEndOfTurn(CardData source) {
 				boolean applied = false;
@@ -1406,34 +1408,51 @@ final class GameContextImpl implements GameContext {
 						.anyMatch(e -> e.equalsIgnoreCase(element));
 			}
 			@Override public void setP1ForwardMustBlock(int idx) {
-				if (idx >= 0 && idx < mw.p1ForwardCards.size()) mw.p1ForwardMustBlock.add(idx);
+				if (idx >= 0 && idx < mw.p1ForwardCards.size()) mw.p1MustBlock.add(mw.p1ForwardCards.get(idx));
 			}
 			@Override public void setP2ForwardMustBlock(int idx) {
-				if (idx >= 0 && idx < mw.p2ForwardCards.size()) mw.p2ForwardMustBlock.add(idx);
+				if (idx >= 0 && idx < mw.p2ForwardCards.size()) mw.p2MustBlock.add(mw.p2ForwardCards.get(idx));
 			}
 			@Override public void setP1ForwardCannotAttack(int idx) {
-				if (idx >= 0 && idx < mw.p1ForwardCards.size()) mw.p1ForwardCannotAttack.add(idx);
+				if (idx >= 0 && idx < mw.p1ForwardCards.size()) mw.p1CannotAttack.add(mw.p1ForwardCards.get(idx));
 			}
 			@Override public void setP2ForwardCannotAttack(int idx) {
-				if (idx >= 0 && idx < mw.p2ForwardCards.size()) mw.p2ForwardCannotAttack.add(idx);
+				if (idx >= 0 && idx < mw.p2ForwardCards.size()) mw.p2CannotAttack.add(mw.p2ForwardCards.get(idx));
 			}
 			@Override public void setP1ForwardMustAttack(int idx) {
-				if (idx >= 0 && idx < mw.p1ForwardCards.size()) mw.p1ForwardMustAttack.add(idx);
+				if (idx >= 0 && idx < mw.p1ForwardCards.size()) mw.p1MustAttack.add(mw.p1ForwardCards.get(idx));
 			}
 			@Override public void setP2ForwardMustAttack(int idx) {
-				if (idx >= 0 && idx < mw.p2ForwardCards.size()) mw.p2ForwardMustAttack.add(idx);
+				if (idx >= 0 && idx < mw.p2ForwardCards.size()) mw.p2MustAttack.add(mw.p2ForwardCards.get(idx));
 			}
 			@Override public void setP1ForwardCannotAttackOrBlockPersistent(int idx) {
 				if (idx >= 0 && idx < mw.p1ForwardCards.size()) {
-					mw.p1ForwardCannotAttackPersistent.add(idx);
-					mw.p1ForwardCannotBlockPersistent.add(idx);
+					CardData card = mw.p1ForwardCards.get(idx);
+					mw.p1CannotAttackPersistent.add(card);
+					mw.p1CannotBlockPersistent.add(card);
 				}
 			}
 			@Override public void setP2ForwardCannotAttackOrBlockPersistent(int idx) {
 				if (idx >= 0 && idx < mw.p2ForwardCards.size()) {
-					mw.p2ForwardCannotAttackPersistent.add(idx);
-					mw.p2ForwardCannotBlockPersistent.add(idx);
+					CardData card = mw.p2ForwardCards.get(idx);
+					mw.p2CannotAttackPersistent.add(card);
+					mw.p2CannotBlockPersistent.add(card);
 				}
+			}
+			@Override public void setTargetCannotAttackOrBlockThisTurn(ForwardTarget t) {
+				CardData card = targetCard(t);
+				if (card == null) return;
+				// The target names the side the Character sits on, which is the side whose end
+				// phase clears the restriction.
+				if (t.isP1()) { mw.p1CannotAttack.add(card); mw.p1CannotBlock.add(card); }
+				else          { mw.p2CannotAttack.add(card); mw.p2CannotBlock.add(card); }
+				logEntry(card.name() + " cannot attack or block this turn");
+			}
+			@Override public void setTargetCannotUseActionAbilitiesThisTurn(ForwardTarget t) {
+				CardData card = targetCard(t);
+				if (card == null) return;
+				mw.cannotUseActionAbilitiesThisTurn.add(card);
+				logEntry(card.name() + " cannot use action abilities this turn");
 			}
 			@Override public void returnP1ForwardToHand(int idx) {
 				if (!isP1 && idx >= 0 && idx < mw.p1ForwardCards.size()) {
@@ -4339,6 +4358,16 @@ final class GameContextImpl implements GameContext {
 				if (isP1) mw.refreshP1DeckLabel(); else mw.refreshP2DeckLabel();
 			}
 
+			@Override public void putBreakZoneTargetOnBottomOfDeck(ForwardTarget t) {
+				List<CardData> bz = t.isP1() ? mw.gameState.getP1BreakZone() : mw.gameState.getP2BreakZone();
+				if (t.idx() < 0 || t.idx() >= bz.size()) return;
+				CardData card = bz.remove(t.idx());
+				(isP1 ? mw.gameState.getP1MainDeck() : mw.gameState.getP2MainDeck()).addLast(card);
+				logEntry((isP1 ? "" : "[P2] ") + card.name() + " → Break Zone to bottom of deck");
+				if (t.isP1()) mw.refreshP1BreakLabel(); else mw.refreshP2BreakLabel();
+				if (isP1) mw.refreshP1DeckLabel(); else mw.refreshP2DeckLabel();
+			}
+
 			@Override public CardData p1BreakZoneCard(int idx) {
 				List<CardData> bz = mw.gameState.getP1BreakZone();
 				return (idx >= 0 && idx < bz.size()) ? bz.get(idx) : null;
@@ -4455,14 +4484,12 @@ final class GameContextImpl implements GameContext {
 				                : mw.effectiveP2HasTrait(t.idx(), trait);
 			}
 
+			// Was a row search matching on name(), which granted to the wrong copy when two of the
+			// same card were on the field and missed a source attacking from another row entirely.
+			// The set is keyed by instance, so the source can just be written in.
 			@Override public void setSourceForwardCannotBeBlocked(CardData source) {
-				List<CardData> fwds = isP1 ? mw.p1ForwardCards : mw.p2ForwardCards;
-				for (int i = 0; i < fwds.size(); i++) {
-					if (fwds.get(i).name().equals(source.name())) {
-						if (isP1) setP1ForwardCannotBeBlocked(i); else setP2ForwardCannotBeBlocked(i);
-						return;
-					}
-				}
+				if (source == null) return;
+				(isP1 ? mw.p1CannotBeBlocked : mw.p2CannotBeBlocked).add(source);
 			}
 
 			@Override public void boostSourceForward(CardData source, int amount,
@@ -5425,10 +5452,10 @@ final class GameContextImpl implements GameContext {
 
 			@Override public void grantAttackOnceMore(String cardName) {
 				List<CardData> fwds    = isP1 ? mw.p1ForwardCards : mw.p2ForwardCards;
-				Set<Integer>   blocked = isP1 ? mw.p1ForwardCannotAttack : mw.p2ForwardCannotAttack;
+				Set<CardData>  blocked = isP1 ? mw.p1CannotAttack : mw.p2CannotAttack;
 				for (int i = 0; i < fwds.size(); i++) {
 					if (!fwds.get(i).name().equalsIgnoreCase(cardName)) continue;
-					blocked.remove(i);
+					blocked.remove(fwds.get(i));
 					mw.grantExtraAttack(isP1 ? mw.effectiveP1Forward(i) : mw.effectiveP2Forward(i));
 					logEntry(cardName + " may attack once more this turn");
 					if (isP1) mw.refreshP1ForwardSlot(i); else mw.refreshP2ForwardSlot(i);

@@ -437,9 +437,9 @@ class ComputerPlayer implements OpponentController {
 	// ── Helpers ──────────────────────────────────────────────────────────
 
 	private boolean p2ForwardCanAttack(int idx) {
-		if (mw.p2ForwardCannotAttack.contains(idx)) return false;
-		if (mw.p2ForwardCannotAttackPersistent.contains(idx)) return false;
 		CardData fwd = mw.p2ForwardCards.get(idx);
+		if (mw.p2CannotAttack.contains(fwd)) return false;
+		if (mw.p2CannotAttackPersistent.contains(fwd)) return false;
 		if (fwd.cannotAttackOrBlock()) return false;
 		if (mw.isFieldAbilityCannotAttackOrBlock(fwd, false)) return false;
 		CardState state = mw.p2ForwardStates.get(idx);
@@ -884,32 +884,35 @@ class ComputerPlayer implements OpponentController {
 	}
 
 	ForwardTarget chooseBlocker(int effectiveAttackerPower, ForwardTarget attacker, boolean forcedBlock) {
-		// Attacker-side unblockability is only tracked for Forwards.
-		// Attacker-side restrictions are only tracked for P1 Forwards.
-		int     p1AttackerIdx         = -1;
-		boolean p1AttackerHigherPower = false;
-		int     p1AttackerPower       = 0;
-		if (attacker != null && attacker.isP1() && attacker.zone() == ForwardTarget.CardZone.FORWARD) {
-			p1AttackerIdx = attacker.idx();
-			if (mw.p1ForwardCannotBeBlocked.contains(p1AttackerIdx)) return null;
+		// Attacker-side restrictions are read off the attacking card, so they bind an attacker
+		// acting as a Forward from the Monster or Backup row just as they do one on the Forward row.
+		CardData p1AttackerCard       = null;
+		boolean  p1AttackerHigherPower = false;
+		int      p1AttackerPower       = 0;
+		if (attacker != null && attacker.isP1()) {
+			p1AttackerCard = mw.autoAbilityTriggers.fieldCardData(attacker);
+		}
+		int      p1AttackerFieldPower = 0;
+		if (p1AttackerCard != null) {
+			if (mw.p1CannotBeBlocked.contains(p1AttackerCard)) return null;
 			// The standing, damage-gated spelling of the same restriction (Ritz 11-063L), which is
 			// re-read per block rather than recorded in the set above.
-			if (mw.hasSelfCannotBeBlockedFieldAbility(mw.p1ForwardCards.get(p1AttackerIdx), true))
-				return null;
-			p1AttackerHigherPower = mw.p1ForwardCards.get(p1AttackerIdx).cannotBeBlockedByHigherPower();
-			if (p1AttackerHigherPower)
-				p1AttackerPower = mw.fieldForwardPower(true, ForwardTarget.CardZone.FORWARD, p1AttackerIdx);
+			if (mw.hasSelfCannotBeBlockedFieldAbility(p1AttackerCard, true)) return null;
+			p1AttackerFieldPower  = mw.fieldForwardPower(true, attacker.zone(), attacker.idx());
+			p1AttackerHigherPower = p1AttackerCard.cannotBeBlockedByHigherPower();
+			if (p1AttackerHigherPower) p1AttackerPower = p1AttackerFieldPower;
 		}
 
 		// Candidate P2 blockers: Forwards plus Monsters/Backups acting as Forwards.
 		List<ForwardTarget> cands = new ArrayList<>();
 		for (int i = 0; i < mw.p2ForwardStates.size(); i++) {
-			if (mw.p2ForwardCannotBlock.contains(i) || mw.p2ForwardCannotBlockPersistent.contains(i)) continue;
+			CardData blocker = mw.p2ForwardCards.get(i);
+			if (mw.p2CannotBlock.contains(blocker) || mw.p2CannotBlockPersistent.contains(blocker)) continue;
 			if (mw.p2ForwardStates.get(i) != CardState.ACTIVE) continue;
-			if (p1AttackerIdx >= 0 && mw.p1AttackerCostFiltersExclude(p1AttackerIdx, mw.p2ForwardCards.get(i).cost())) continue;
+			if (mw.p1AttackerCostFiltersExclude(p1AttackerCard, blocker.cost())) continue;
 			if (p1AttackerHigherPower && mw.fieldForwardPower(false, ForwardTarget.CardZone.FORWARD, i) > p1AttackerPower) continue;
-			if (mw.p2Turn.forwardCannotBlockInferiorPower && p1AttackerIdx >= 0 &&
-				mw.fieldForwardPower(false, ForwardTarget.CardZone.FORWARD, i) > mw.fieldForwardPower(true, ForwardTarget.CardZone.FORWARD, p1AttackerIdx)) continue;
+			if (mw.p2Turn.forwardCannotBlockInferiorPower && p1AttackerCard != null &&
+				mw.fieldForwardPower(false, ForwardTarget.CardZone.FORWARD, i) > p1AttackerFieldPower) continue;
 			cands.add(new ForwardTarget(false, i, ForwardTarget.CardZone.FORWARD));
 		}
 		for (int i = 0; i < mw.p2MonsterCards.size(); i++) {
@@ -917,20 +920,19 @@ class ComputerPlayer implements OpponentController {
 			// Jack Garland 29-123R bars Monster blockers outright, so it gates the zone rather than
 			// any one candidate — checked here for the same reason the human side checks it in
 			// isMonsterBlockSelectable: this loop is how a Monster becomes a blocker for P2.
-			if (p1AttackerIdx >= 0 && p1AttackerIdx < mw.p1ForwardCards.size()
-					&& mw.barsMonsterForwardBlockers(mw.p1ForwardCards.get(p1AttackerIdx))) continue;
-			if (p1AttackerIdx >= 0 && mw.p1AttackerCostFiltersExclude(p1AttackerIdx, mw.p2MonsterCards.get(i).cost())) continue;
+			if (p1AttackerCard != null && mw.barsMonsterForwardBlockers(p1AttackerCard)) continue;
+			if (mw.p1AttackerCostFiltersExclude(p1AttackerCard, mw.p2MonsterCards.get(i).cost())) continue;
 			if (p1AttackerHigherPower && mw.fieldForwardPower(false, ForwardTarget.CardZone.MONSTER, i) > p1AttackerPower) continue;
-			if (mw.p2Turn.forwardCannotBlockInferiorPower && p1AttackerIdx >= 0 &&
-				mw.fieldForwardPower(false, ForwardTarget.CardZone.MONSTER, i) > mw.fieldForwardPower(true, ForwardTarget.CardZone.FORWARD, p1AttackerIdx)) continue;
+			if (mw.p2Turn.forwardCannotBlockInferiorPower && p1AttackerCard != null &&
+				mw.fieldForwardPower(false, ForwardTarget.CardZone.MONSTER, i) > p1AttackerFieldPower) continue;
 			cands.add(new ForwardTarget(false, i, ForwardTarget.CardZone.MONSTER));
 		}
 		for (int i = 0; i < mw.p2BackupCards.length; i++) {
 			if (!mw.p2BackupCanBlockAsForward(i)) continue;
-			if (p1AttackerIdx >= 0 && mw.p1AttackerCostFiltersExclude(p1AttackerIdx, mw.p2BackupCards[i].cost())) continue;
+			if (mw.p1AttackerCostFiltersExclude(p1AttackerCard, mw.p2BackupCards[i].cost())) continue;
 			if (p1AttackerHigherPower && mw.fieldForwardPower(false, ForwardTarget.CardZone.BACKUP, i) > p1AttackerPower) continue;
-			if (mw.p2Turn.forwardCannotBlockInferiorPower && p1AttackerIdx >= 0 &&
-				mw.fieldForwardPower(false, ForwardTarget.CardZone.BACKUP, i) > mw.fieldForwardPower(true, ForwardTarget.CardZone.FORWARD, p1AttackerIdx)) continue;
+			if (mw.p2Turn.forwardCannotBlockInferiorPower && p1AttackerCard != null &&
+				mw.fieldForwardPower(false, ForwardTarget.CardZone.BACKUP, i) > p1AttackerFieldPower) continue;
 			cands.add(new ForwardTarget(false, i, ForwardTarget.CardZone.BACKUP));
 		}
 
@@ -947,10 +949,11 @@ class ComputerPlayer implements OpponentController {
 		}
 
 		// Honour must-block Forwards first: pick the weakest that can survive.
-		if (!mw.p2ForwardMustBlock.isEmpty()) {
+		if (!mw.p2MustBlock.isEmpty()) {
 			ForwardTarget best = null; int bestPow = -1;
 			for (ForwardTarget t : cands) {
-				if (t.zone() != ForwardTarget.CardZone.FORWARD || !mw.p2ForwardMustBlock.contains(t.idx())) continue;
+				if (t.zone() != ForwardTarget.CardZone.FORWARD
+						|| !mw.p2MustBlock.contains(mw.p2ForwardCards.get(t.idx()))) continue;
 				int p = mw.fieldForwardPower(false, t.zone(), t.idx());
 				if (p >= effectiveAttackerPower && (best == null || p < bestPow)) { best = t; bestPow = p; }
 			}
@@ -971,7 +974,7 @@ class ComputerPlayer implements OpponentController {
 		// Forward that would otherwise not be a legal blocker at all (Water: +power/activate).
 		if (best == null) {
 			ForwardTarget trick = findDiscardCombatTrickBlocker(
-					effectiveAttackerPower, p1AttackerIdx, p1AttackerHigherPower, p1AttackerPower);
+					effectiveAttackerPower, p1AttackerCard, p1AttackerHigherPower, p1AttackerPower);
 			if (trick != null) return trick;
 		}
 
@@ -1019,7 +1022,7 @@ class ComputerPlayer implements OpponentController {
 	 * respond, so the effect is applied directly rather than round-tripped through the stack.
 	 * Returns {@code null} if no such trick exists or no matching-element card is in hand.
 	 */
-	private ForwardTarget findDiscardCombatTrickBlocker(int effectiveAttackerPower, int p1AttackerIdx,
+	private ForwardTarget findDiscardCombatTrickBlocker(int effectiveAttackerPower, CardData p1AttackerCard,
 			boolean p1AttackerHigherPower, int p1AttackerPower) {
 		List<CardData> hand = mw.gameState.getP2Hand();
 		if (hand.isEmpty()) return null;
@@ -1028,11 +1031,11 @@ class ComputerPlayer implements OpponentController {
 			CardData card = mw.p2ForwardCards.get(i);
 			if (card == null) continue;
 			if (mw.lostAbilitiesCards.contains(card)) continue;
-			if (mw.p2ForwardCannotBlock.contains(i) || mw.p2ForwardCannotBlockPersistent.contains(i)) continue;
+			if (mw.p2CannotBlock.contains(card) || mw.p2CannotBlockPersistent.contains(card)) continue;
 			if (mw.p2ForwardFrozen.get(i)) continue; // frozen forwards can't become legal blockers regardless
 			CardState state = mw.p2ForwardStates.get(i);
 			boolean isDull = state != CardState.ACTIVE;
-			if (p1AttackerIdx >= 0 && mw.p1AttackerCostFiltersExclude(p1AttackerIdx, card.cost())) continue;
+			if (mw.p1AttackerCostFiltersExclude(p1AttackerCard, card.cost())) continue;
 
 			for (ActionAbility ability : card.actionAbilities()) {
 				if (ability.discardCosts().size() != 1) continue;
@@ -1052,7 +1055,7 @@ class ComputerPlayer implements OpponentController {
 					int basePower = mw.effectiveP2ForwardPower(i);
 					int postPower = basePower + branchPowerBoost(branch.effectText());
 					if (p1AttackerHigherPower && postPower > p1AttackerPower) continue;
-					if (mw.p2Turn.forwardCannotBlockInferiorPower && p1AttackerIdx >= 0
+					if (mw.p2Turn.forwardCannotBlockInferiorPower && p1AttackerCard != null
 							&& postPower > p1AttackerPower) continue;
 					// Equal power breaks BOTH characters — not "survives" per the user's ask — unless
 					// First Strike breaks the attacker before it can deal damage back, in which
