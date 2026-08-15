@@ -18082,6 +18082,85 @@ public class CardBehaviorTest {
 	}
 
 	// =========================================================================================
+	// "All the …" grants, a grant with a damage rider, and an absolute block-power threshold
+	//
+	//   Golbez 19-077L  "All the Job Archfiend Forwards you control gain +3000 power."
+	//   Cecil 2-129L    the same prefix, plus a damage shield printed as a rider on the grant
+	//   Ark Angel MR 8-045R  "cannot be blocked by a Forward of power 7000 or more"
+	//
+	// The first two are the only cards in the corpus that write "All the"; every grant pattern is
+	// anchored on "^The ", so the prefix is normalised once rather than in a dozen places. Cecil's
+	// rider is two effects in one sentence, split into the two the engine already reads — with
+	// "they" resolved back to the grant's own filter — rather than teaching either parser about a
+	// sentence carrying the other's effect.
+	// =========================================================================================
+
+	@Test
+	void allTheIsTheSameGrantAsThe() {
+		String all = "All the Job Archfiend Forwards you control gain +3000 power.";
+		String the = "The Job Archfiend Forwards you control gain +3000 power.";
+		assertEquals(CardData.parseFieldPowerGrants(the, "Forward").toString(),
+				CardData.parseFieldPowerGrants(all, "Forward").toString());
+		assertEquals(1, CardData.parseFieldPowerGrants(all, "Forward").size());
+	}
+
+	private static final String CECIL_2_129L_GRANT =
+			"All the Forwards other than Cecil you control gain +1000 power, and if they are dealt "
+			+ "damage by a Summon or an ability, the damage becomes 0 instead.";
+
+	@Test
+	void theGrantHalfOfCecilsRiderIsAnOrdinaryPowerGrant() {
+		List<FieldPowerGrant> grants = CardData.parseFieldPowerGrants(CECIL_2_129L_GRANT, "Forward");
+		assertEquals(1, grants.size());
+		assertEquals(CardData.parseFieldPowerGrants(
+						"The Forwards other than Cecil you control gain +1000 power.", "Forward").toString(),
+				grants.toString(),
+				"the rider must not change what the power half grants");
+	}
+
+	@Test
+	void theRiderHalfBecomesTheCanonicalFieldDamageWording() {
+		String[] split = CardData.splitGrantWithDamageRider(
+				"The Forwards other than Cecil you control gain +1000 power, and if they are dealt "
+				+ "damage by a Summon or an ability, the damage becomes 0 instead.");
+		assertNotNull(split);
+
+		Matcher m = AutoAbilityTriggers.FA_FIELD_DAMAGE_MODIFIER.matcher(split[1]);
+		assertTrue(m.matches(), "the rewritten rider has to land in the parser that owns that shape");
+		assertEquals("Cecil", m.group("except1").trim(),
+				"\"they\" resolves back to the grant's own exclusion, so Cecil is not shielded by it");
+		assertEquals("0", m.group("setsto"));
+	}
+
+	@Test
+	void aGrantWithNoRiderIsLeftAlone() {
+		assertNull(CardData.splitGrantWithDamageRider(
+				"The Forwards you control gain +1000 power."));
+		assertNull(CardData.splitGrantWithDamageRider(
+				"If a Forward you control is dealt damage by a Summon, the damage becomes 0 instead."));
+	}
+
+	@Test
+	void arkAngelReadsAnAbsolutePowerThreshold() {
+		String text = "Ark Angel MR cannot be blocked by a Forward of power 7000 or more.";
+		assertArrayEquals(new int[]{7000, 1},
+				CardData.parseFieldCannotBeBlockedByPower(text, "Ark Angel MR"));
+		assertNull(CardData.parseFieldCannotBeBlockedByPower(text, "Somebody Else"),
+				"self-named, like the rest of the block-restriction family");
+		// The relative twin must not claim it — that one moves with the attacker's own power.
+		assertFalse(CardData.parseCannotBeBlockedByHigherPower(text, "Ark Angel MR"));
+	}
+
+	@Test
+	void theAbsoluteThresholdExcludesTheRightBlockers() {
+		int[] filter = CardData.parseFieldCannotBeBlockedByPower(
+				"Ark Angel MR cannot be blocked by a Forward of power 7000 or more.", "Ark Angel MR");
+		assertTrue(MainWindow.blockerPowerExcluded(9000, filter));
+		assertTrue(MainWindow.blockerPowerExcluded(7000, filter), "\"or more\" includes the boundary");
+		assertFalse(MainWindow.blockerPowerExcluded(6000, filter));
+	}
+
+	// =========================================================================================
 	// Three field abilities whose machinery already existed and whose wording did not
 	//
 	//   Ephemeral Vision 2-123C  "If you control 4 Forwards or more, …"  — the count qualifier

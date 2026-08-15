@@ -4111,6 +4111,55 @@ public record CardData(
     // FieldPowerGrant parsing
     // -------------------------------------------------------------------------
 
+    /** The "All the …" spelling of a same-side grant, normalised to the "The …" every pattern reads. */
+    private static final Pattern ALL_THE_GRANT_PREFIX = Pattern.compile("(?i)^All\\s+the\\s+");
+
+    /**
+     * A same-side power grant with a damage rider attached: "The Forwards other than Cecil you
+     * control gain +1000 power, and if they are dealt damage by a Summon or an ability, the damage
+     * becomes 0 instead." (Cecil 2-129L, the only printing of this shape.)
+     *
+     * <p>Group {@code grant} is the power half; {@code targets} and {@code except} are the target
+     * filter the rider's "they" refers back to; {@code rider} is the damage clause with its own
+     * leading "if" already consumed.
+     */
+    private static final Pattern GRANT_WITH_DAMAGE_RIDER = Pattern.compile(
+        "(?i)^(?<grant>The\\s+(?<targets>Forwards?|Backups?|Monsters?|Characters?)\\s+" +
+        "(?:other\\s+than\\s+(?<except>[A-Z][A-Za-z''\\-]+(?:\\s+[A-Za-z''\\-]+)*)\\s+)?" +
+        "you\\s+control\\s+gains?\\s+\\+\\d+\\s+power)" +
+        ",\\s+and\\s+if\\s+they\\s+are\\s+(?<rider>dealt\\s+damage.+?)\\s+instead[.!]?$"
+    );
+
+    /**
+     * Splits a grant that carries a damage rider into the two sentences the engine already reads
+     * separately, or {@code null} when {@code seg} is not one.
+     *
+     * <p>{@code [0]} is the power grant on its own; {@code [1]} is the rider rewritten into the
+     * canonical field-damage wording, with "they" resolved back to the grant's own target filter —
+     * "If a Forward other than Cecil you control is dealt damage by a Summon or an ability, the
+     * damage becomes 0 instead." Both halves then land in the parser that already owns that shape,
+     * rather than teaching either one about a sentence carrying the other's effect.
+     */
+    static String[] splitGrantWithDamageRider(String seg) {
+        Matcher m = GRANT_WITH_DAMAGE_RIDER.matcher(seg.trim());
+        if (!m.matches()) return null;
+        String singular = m.group("targets").replaceAll("(?i)s$", "");
+        String except   = m.group("except");
+        String rewritten = "If a " + singular
+                + (except != null ? " other than " + except.trim() : "")
+                + " you control is " + m.group("rider").trim() + " instead.";
+        return new String[]{ m.group("grant") + ".", rewritten };
+    }
+
+    /**
+     * The text a field-damage scan should read for {@code seg}: the rider half when {@code seg} is
+     * a power grant carrying one, and {@code seg} unchanged otherwise.
+     */
+    static String fieldDamageRiderText(String seg) {
+        String[] split = splitGrantWithDamageRider(seg);
+        return split != null ? split[1] : seg;
+    }
+
     /**
      * Matches passive grants of the form:
      * "The [Element] (Job X | Category Y) [Forwards?|Backups?|Monsters?|Characters?]
@@ -4418,6 +4467,14 @@ public record CardData(
             seg = seg.replaceAll("(?i)\\[Job\\s*\\(([^)]+)\\)\\]", "Job $1");
             seg = seg.replaceAll("(?i)\\[Category\\s*\\(([^)]+)\\)\\]", "Category $1");
             seg = seg.replaceAll("(?i)\\[Card\\s+Name\\s*\\(([^)]+)\\)\\]", "Card Name $1");
+            // "All the …" is the same grant as "The …", printed by two cards (Golbez 19-077L,
+            // Cecil 2-129L). Normalised once here rather than in each of the dozen patterns below,
+            // every one of which is anchored on "^The ".
+            seg = ALL_THE_GRANT_PREFIX.matcher(seg).replaceFirst("The ");
+            // A grant that carries a damage rider is two effects in one sentence; the power half
+            // is this parser's, and the rider is read separately off the same text.
+            String[] rider = splitGrantWithDamageRider(seg);
+            if (rider != null) seg = rider[0];
 
             if (FIELD_POWER_CANNOT_BE_DECREASED.matcher(seg).matches()) {
                 result.add(FieldPowerGrant.sameSideFiltered(true, false, false, null, 0,
@@ -5503,6 +5560,44 @@ public record CardData(
             int costVal  = Integer.parseInt(m.group("costval"));
             boolean orMore = !"less".equalsIgnoreCase(m.group("costcmp")); // default "or more"
             return new int[]{costVal, orMore ? 1 : 0};
+        }
+        return null;
+    }
+
+    /**
+     * Matches "[CardName] cannot be blocked by a Forward of power N or more/less." (Ark Angel MR
+     * 8-045R; Iris 12-117R grants the same wording until end of turn.)
+     * Groups: {@code cardname}, {@code powerval}, {@code powercmp} (optional; default "more").
+     *
+     * <p>An absolute threshold, unlike {@link #FIELD_CANNOT_BE_BLOCKED_BY_HIGHER_POWER}, which
+     * compares the blocker against the attacker's own power and so moves with it. The shape is
+     * {@link #FIELD_CANNOT_BE_BLOCKED_BY_COST}'s, with power in place of cost.
+     */
+    private static final Pattern FIELD_CANNOT_BE_BLOCKED_BY_POWER = Pattern.compile(
+        "(?i)^(?<cardname>.+?)\\s+cannot\\s+be\\s+blocked\\s+by\\s+(?:a\\s+)?Forwards?\\s+of\\s+power\\s+" +
+        "(?<powerval>\\d+)(?:\\s+or\\s+(?<powercmp>less|more))?\\s*\\.?\\s*$"
+    );
+
+    /**
+     * Parses an intrinsic "cannot be blocked by a Forward of power N or more/less" field ability
+     * off {@code textEn}, or {@code null} when the card prints none naming itself.
+     * The result is {@code {powerVal, 1}} for "or more" and {@code {powerVal, 0}} for "or less".
+     *
+     * <p>Read on demand rather than stored on the record, unlike its cost-filter twin: the
+     * constructor already carries thirty-odd arguments and fifty-nine call sites, and the answer is
+     * a regex over one sentence.
+     */
+    public static int[] parseFieldCannotBeBlockedByPower(String textEn, String cardName) {
+        if (textEn == null || textEn.isBlank()) return null;
+        for (String raw : textEn.split("(?i)\\[\\[br\\]\\]")) {
+            String seg = SUMMON_MARKUP.matcher(raw.trim()).replaceAll("").trim();
+            if (seg.isEmpty()) continue;
+            Matcher m = FIELD_CANNOT_BE_BLOCKED_BY_POWER.matcher(seg);
+            if (!m.matches()) continue;
+            if (!m.group("cardname").trim().equalsIgnoreCase(cardName)) continue;
+            int powerVal = Integer.parseInt(m.group("powerval"));
+            boolean orMore = !"less".equalsIgnoreCase(m.group("powercmp")); // default "or more"
+            return new int[]{powerVal, orMore ? 1 : 0};
         }
         return null;
     }

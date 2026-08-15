@@ -355,7 +355,10 @@ class DamageResolver {
 
 		for (CardData protector : sources) {
 			for (FieldAbility fa : protector.fieldAbilities()) {
-				Matcher m = AutoAbilityTriggers.FA_FIELD_DAMAGE_MODIFIER.matcher(fa.effectText());
+				// Cecil 2-129L prints the shield as a rider on a power grant; the rider is read
+				// here in the canonical wording, and the grant half by parseFieldPowerGrants.
+				Matcher m = AutoAbilityTriggers.FA_FIELD_DAMAGE_MODIFIER
+						.matcher(CardData.fieldDamageRiderText(fa.effectText()));
 				if (!m.find()) continue;
 
 				// Target filter

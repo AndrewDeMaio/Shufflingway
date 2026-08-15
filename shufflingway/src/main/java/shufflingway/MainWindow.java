@@ -12730,6 +12730,7 @@ public class MainWindow {
 		if (attackerUnblockable()) return false;
 		if (attackerBlockCostFiltersExclude(blocker.cost())) return false;
 		if (attackerHigherPowerFilterExcludes(ForwardTarget.CardZone.FORWARD, idx)) return false;
+		if (attackerBlockPowerFiltersExclude(ForwardTarget.CardZone.FORWARD, idx)) return false;
 		return true;
 	}
 
@@ -13035,6 +13036,29 @@ public class MainWindow {
 		return false;
 	}
 
+	/**
+	 * True when an attacker's "cannot be blocked by a Forward of power N or more/less" restriction
+	 * rules this blocker out (Ark Angel MR 8-045R).
+	 *
+	 * <p>An absolute threshold, where {@link #attackerHigherPowerFilterExcludes} is relative to the
+	 * attacker's own power. The blocker's power is the effective one, so a pump applied to it in
+	 * response can push it over the line — which is the interaction the card is sold on.
+	 */
+	private boolean attackerBlockPowerFiltersExclude(ForwardTarget.CardZone blockerZone, int blockerIdx) {
+		int blockerPower = fieldForwardPower(true, blockerZone, blockerIdx);
+		for (int i : pendingP2AttackerForwardIndices()) {
+			CardData attacker = p2ForwardCards.get(i);
+			int[] intr = CardData.parseFieldCannotBeBlockedByPower(attacker.textEn(), attacker.name());
+			if (intr != null && blockerPowerExcluded(blockerPower, intr)) return true;
+		}
+		return false;
+	}
+
+	/** {@code filter} is {@code {powerVal, orMore}}, as {@link CardData#parseFieldCannotBeBlockedByPower} returns. */
+	static boolean blockerPowerExcluded(int blockerPower, int[] filter) {
+		return filter[1] == 1 ? blockerPower >= filter[0] : blockerPower <= filter[0];
+	}
+
 	/** True when the potential P1 blocker (given zone/idx) has strictly greater power than ANY attacker. */
 	private boolean blockerPowerExceedsAttacker(ForwardTarget.CardZone blockerZone, int blockerIdx) {
 		int blockerPower = fieldForwardPower(true, blockerZone, blockerIdx);
@@ -13096,6 +13120,7 @@ public class MainWindow {
 		if (p1Turn.forwardCannotBlockInferiorPower && blockerPowerExceedsAttacker(ForwardTarget.CardZone.MONSTER, idx)) return false;
 		if (attackerBlockCostFiltersExclude(monsterBlocker.cost())) return false;
 		if (attackerHigherPowerFilterExcludes(ForwardTarget.CardZone.MONSTER, idx)) return false;
+		if (attackerBlockPowerFiltersExclude(ForwardTarget.CardZone.MONSTER, idx)) return false;
 		return true;
 	}
 
@@ -13118,6 +13143,7 @@ public class MainWindow {
 		if (p1Turn.forwardCannotBlockInferiorPower && blockerPowerExceedsAttacker(ForwardTarget.CardZone.BACKUP, idx)) return false;
 		if (attackerBlockCostFiltersExclude(backupBlocker.cost())) return false;
 		if (attackerHigherPowerFilterExcludes(ForwardTarget.CardZone.BACKUP, idx)) return false;
+		if (attackerBlockPowerFiltersExclude(ForwardTarget.CardZone.BACKUP, idx)) return false;
 		return true;
 	}
 

@@ -224,6 +224,13 @@ public class FieldAbilityParsingTest {
         if (CardData.TRAIT_ONLY_SEGMENT.matcher(fa.effectText()).matches()) return true;
         if (CardData.parseOpponentForwardsEnterDull(fa.effectText())) return true;
         if (CardData.parseFieldCannotBeBlockedByCost(fa.effectText(), source.name()) != null) return true;
+        // Ark Angel MR 8-045R. Read per block-legality check by attackerBlockPowerFiltersExclude,
+        // self-named exactly as that caller reads it.
+        if (CardData.parseFieldCannotBeBlockedByPower(fa.effectText(), source.name()) != null) return true;
+        // Cecil 2-129L prints a damage shield as a rider on a power grant. The grant half is
+        // claimed by parseFieldPowerGrants above; this is the half DamageResolver reads.
+        if (AutoAbilityTriggers.FA_FIELD_DAMAGE_MODIFIER
+                .matcher(CardData.fieldDamageRiderText(fa.effectText())).find()) return true;
         if (CardData.parseCannotBeBlockedByHigherPower(fa.effectText(), source.name())) return true;
         if (CardData.parseCannotBlockAtAll(fa.effectText(), source.name())) return true;
         if (CardData.parseCannotBlockHigherPower(fa.effectText(), source.name())) return true;
@@ -515,6 +522,9 @@ public class FieldAbilityParsingTest {
         if (cbbCounter != null) return "SelfCannotBeBroken[" + cbbCounter + " Counter]";
         int oppHst = CardData.parseIfOpponentHandSizeCannotBeBrokenThreshold(fa.effectText(), source.name());
         if (oppHst >= 0) return "IfOppHandSize≤" + oppHst + ":CannotBeBroken";
+        int[] cbbPow = CardData.parseFieldCannotBeBlockedByPower(fa.effectText(), source.name());
+        if (cbbPow != null)
+            return "CannotBeBlockedByPower[" + (cbbPow[1] == 1 ? "≥" : "≤") + cbbPow[0] + "]";
         return null;
     }
 
