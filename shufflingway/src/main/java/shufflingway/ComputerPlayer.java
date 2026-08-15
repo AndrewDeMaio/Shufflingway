@@ -892,6 +892,10 @@ class ComputerPlayer implements OpponentController {
 		if (attacker != null && attacker.isP1() && attacker.zone() == ForwardTarget.CardZone.FORWARD) {
 			p1AttackerIdx = attacker.idx();
 			if (mw.p1ForwardCannotBeBlocked.contains(p1AttackerIdx)) return null;
+			// The standing, damage-gated spelling of the same restriction (Ritz 11-063L), which is
+			// re-read per block rather than recorded in the set above.
+			if (mw.hasSelfCannotBeBlockedFieldAbility(mw.p1ForwardCards.get(p1AttackerIdx), true))
+				return null;
 			p1AttackerHigherPower = mw.p1ForwardCards.get(p1AttackerIdx).cannotBeBlockedByHigherPower();
 			if (p1AttackerHigherPower)
 				p1AttackerPower = mw.fieldForwardPower(true, ForwardTarget.CardZone.FORWARD, p1AttackerIdx);

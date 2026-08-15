@@ -226,8 +226,23 @@ class DamageResolver {
 		for (FieldAbility fa : mw.effectiveFieldAbilities(card)) {
 			if (fa.damageThreshold() > 0 && dmgInZone < fa.damageThreshold()) continue;
 			Matcher fam = AutoAbilityTriggers.FA_DAMAGE_MODIFIER.matcher(fa.effectText());
-			if (!fam.find() || !fam.group("card").trim().equalsIgnoreCase(card.name())) continue;
-			amount = applyDamageModifierMatch(fam, amount, isP1, zone, idx, fromAbility, card);
+			if (fam.find() && fam.group("card").trim().equalsIgnoreCase(card.name())) {
+				amount = applyDamageModifierMatch(fam, amount, isP1, zone, idx, fromAbility, card);
+				continue;
+			}
+			// The same modifier spelled as a quoted clause the card hands itself ("Charlotte gains
+			// +2000 power and \"The damage dealt to Charlotte is reduced by 2000 instead.\"" —
+			// 13-023R). parseSelfGainsQuotedGrant has already rewritten it into the canonical
+			// wording, so the matcher above reads it unchanged; what kept it out of reach was the
+			// outer sentence it is nested in, which no damage pattern matches.
+			CardData.SelfGainsQuotedGrant sgq =
+					CardData.parseSelfGainsQuotedGrant(fa.effectText(), card.name());
+			if (sgq == null) continue;
+			for (String passive : sgq.passiveTexts()) {
+				Matcher pm = AutoAbilityTriggers.FA_DAMAGE_MODIFIER.matcher(passive);
+				if (pm.find() && pm.group("card").trim().equalsIgnoreCase(card.name()))
+					amount = applyDamageModifierMatch(pm, amount, isP1, zone, idx, fromAbility, card);
+			}
 		}
 
 		// Incoming damage modifier granted to this Forward by a counter grant (e.g. Kimahri's

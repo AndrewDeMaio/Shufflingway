@@ -1357,7 +1357,8 @@ public record CardData(
      *                     abilities; the multi-attack permission is not among them, since it is a
      *                     rules permission rather than a trigger and is reported separately
      */
-    record SelfGainsQuotedGrant(Set<Trait> traits, int maxAttacks, List<String> abilityTexts) {
+    record SelfGainsQuotedGrant(Set<Trait> traits, int maxAttacks, List<String> abilityTexts,
+            List<String> passiveTexts) {
         SelfGainsQuotedGrant {
             // EnumSet, not Set.copyOf — the latter randomises iteration order per JVM run, which
             // would leak into the rendered trait list.
@@ -1365,7 +1366,53 @@ public record CardData(
             t.addAll(traits);
             traits       = Collections.unmodifiableSet(t);
             abilityTexts = List.copyOf(abilityTexts);
+            passiveTexts = List.copyOf(passiveTexts);
         }
+
+        /** Compatibility constructor for the trigger-only form; no passive clauses. */
+        SelfGainsQuotedGrant(Set<Trait> traits, int maxAttacks, List<String> abilityTexts) {
+            this(traits, maxAttacks, abilityTexts, List.of());
+        }
+    }
+
+    /**
+     * "[Self] cannot be blocked." — the standing restriction Ritz 11-063L hands itself inside a
+     * quoted grant. Read per block-legality check by {@code MainWindow.attackerConditionallyUnblockable}.
+     */
+    private static final Pattern SELF_CANNOT_BE_BLOCKED = Pattern.compile(
+        "(?i)^(?<name>.+?)\\s+cannot\\s+be\\s+blocked[.!]?$"
+    );
+
+    /** Whether {@code clause} is "[cardName] cannot be blocked." naming its own carrier. */
+    static boolean isSelfCannotBeBlocked(String clause, String cardName) {
+        if (clause == null || cardName == null) return false;
+        Matcher m = SELF_CANNOT_BE_BLOCKED.matcher(clause.trim());
+        return m.matches() && m.group("name").trim().equalsIgnoreCase(cardName);
+    }
+
+    /**
+     * "The damage dealt to [Self] is reduced by N instead." — Charlotte 13-023R's quoted half. The
+     * passive spelling of a damage modifier, with the subject in the object position rather than
+     * the subject one.
+     */
+    private static final Pattern SELF_INCOMING_DAMAGE_REDUCED = Pattern.compile(
+        "(?i)^The\\s+damage\\s+dealt\\s+to\\s+(?<name>.+?)\\s+is\\s+reduced\\s+by\\s+(?<amount>\\d+)\\s+instead[.!]?$"
+    );
+
+    /**
+     * {@code clause} rewritten into the canonical damage-modifier wording when it is the passive
+     * spelling naming {@code cardName}, or {@code null} when it is not one.
+     *
+     * <p>Rewritten rather than given its own pattern, on the same reasoning as
+     * {@link #splitGrantWithDamageRider}: the effect is one {@code FA_DAMAGE_MODIFIER} already
+     * knows how to apply, and a second pattern for it would be a second place to keep the source
+     * clauses and the reduce/set/increase arithmetic in step.
+     */
+    static String canonicalSelfDamageModifier(String clause, String cardName) {
+        if (clause == null || cardName == null) return null;
+        Matcher m = SELF_INCOMING_DAMAGE_REDUCED.matcher(clause.trim());
+        if (!m.matches() || !m.group("name").trim().equalsIgnoreCase(cardName)) return null;
+        return "If " + cardName + " is dealt damage, reduce the damage by " + m.group("amount") + " instead.";
     }
 
     /**
@@ -1385,16 +1432,35 @@ public record CardData(
         // Haste.\"" — 11-086L), and scanning the quotation for trait words hands the printing card
         // a trait it was only handing out.
         String outside = QUOTED_CLAUSE.matcher(grant).replaceAll(" ");
-        // A power boost in the same breath (Kefka 23-004R, The Fiend 20-114L) has no reader on
-        // this path, so the whole grant declines rather than applying the traits alone.
-        if (SELF_GAINS_POWER_IN_GRANT.matcher(outside).find()) return null;
+        // A power boost in the same breath is read off the same sentence by parseSelfPowerGrant, so
+        // it no longer forces the grant to decline — but it must not be mistaken for a trait, which
+        // is why the traits are still taken from the de-quoted text alone.
         EnumSet<Trait> traits = traitsNamedIn(outside);
 
         int maxAttacks = 1;
         List<String> abilities = new ArrayList<>();
+        List<String> passives  = new ArrayList<>();
         Matcher q = QUOTED_CLAUSE.matcher(grant);
         while (q.find()) {
             String clause = q.group(1).trim();
+            // Standing restrictions and passives the card hands itself. They carry no trigger, so
+            // parseAutoAbilities rejects them and the whole grant used to decline.
+            //
+            // Only clauses with a reader are accepted here. A passive nobody consults would let the
+            // grant's other half (traits, power) apply while the quoted ability silently did
+            // nothing — the half-an-ability failure the decline below exists to prevent. Kefka
+            // 23-004R's "…double the damage instead." is the live example: the outgoing-damage
+            // doubler is read off printed field abilities only, so that grant still declines whole.
+            if (isSelfCannotBeBlocked(clause, cardName)) { passives.add(clause); continue; }
+            String canonical = canonicalSelfDamageModifier(clause, cardName);
+            if (canonical != null) { passives.add(canonical); continue; }
+            // Already in the canonical incoming-damage wording (The Fiend 20-114L), so it needs no
+            // rewrite — the same DamageResolver scan reads it as printed.
+            Matcher dmgM = AutoAbilityTriggers.FA_DAMAGE_MODIFIER.matcher(clause);
+            if (dmgM.find() && dmgM.group("card").trim().equalsIgnoreCase(cardName)) {
+                passives.add(clause);
+                continue;
+            }
             // The multi-attack permission arrives quoted, and is read with the same pattern that
             // parses the printed form — as parseHandSizeSelfGrant does for Squall 16-011L.
             Matcher at = FIELD_CAN_ATTACK_TWICE.matcher(clause);
@@ -1410,13 +1476,11 @@ public record CardData(
             if (parseAutoAbilities(clause).isEmpty()) return null;
             abilities.add(clause);
         }
-        if (traits.isEmpty() && maxAttacks == 1 && abilities.isEmpty()) return null;
-        return new SelfGainsQuotedGrant(traits, maxAttacks, abilities);
+        if (traits.isEmpty() && maxAttacks == 1 && abilities.isEmpty() && passives.isEmpty()
+                && parseSelfPowerGrant(effectText, cardName) == 0)
+            return null;
+        return new SelfGainsQuotedGrant(traits, maxAttacks, abilities, passives);
     }
-
-    /** A "+N power" clause sharing a {@link #SELF_GAINS_QUOTED_GRANT} with the traits. */
-    private static final Pattern SELF_GAINS_POWER_IN_GRANT =
-            Pattern.compile("(?i)[+-]\\d+\\s+power");
 
     /**
      * "If a [Card Name X] Forward you control [other than Y] is dealt damage, the damage is dealt
@@ -1564,7 +1628,7 @@ public record CardData(
         "((?i)(?:,\\s*)?discard(?:(?!,\\s*(?:remove|return)\\b)[^:\\[])+)?"  +  // group 7: optional discard cost phrase (never crosses [[…]] markup)
         "((?i)(?:,\\s*)?remove\\s+[^:]+?\\s+from\\s+(?:the\\s+)?game\\s*)?" + // group 8: optional remove-from-game cost phrase
         "((?i)(?:,\\s*)?return\\s+[^:]+?\\s+to\\s+(?:its|their)\\s+owner(?:'s|s')?\\s+hand\\s*)?" + // group 9: optional return-to-hand cost phrase
-        "((?i)(?:,\\s*)?remove\\s+\\d+\\s+[^:]+?\\s+Counters?\\s+from\\s+[^:,]+?\\s*)?" +           // group 10: optional counter-removal cost phrase
+        "((?i)(?:,\\s*)?remove\\s+(?:\\d+|X)\\s+[^:]+?\\s+Counters?\\s+from\\s+[^:,]+?\\s*)?" +     // group 10: optional counter-removal cost phrase ("remove X …" defers the amount to activation)
         "(?<dullcost>(?i)(?:,\\s*)?Dull\\s+(?:a\\s+total\\s+of\\s+)?(?<dullcount>\\d+)?\\s*(?<dullcond>active|dull|damaged)?\\s*" + // group 11 (named): optional Dull N? [cond] Forward(s) cost — simple, Card Name, or bare-name form
         "(?:Card\\s+Name\\s+.+?\\s+Forwards?" +                                              // named-card branch: "Dull N [cond] Card Name X Forward [and N [cond] Card Name Y Forward]"
         "(?:\\s+and\\s+\\d+\\s*(?:active|dull|damaged)?\\s*Card\\s+Name\\s+.+?\\s+Forwards?)*" +
@@ -3652,6 +3716,38 @@ public record CardData(
     }
 
     /**
+     * Matches a self-targeted power grant: "[CardName] gains +N power[ and …]." — the power sibling
+     * of {@link #SELF_TRAIT_GRANT}, which matches only when the grant is traits alone.
+     *
+     * <p>The tail is deliberately unrestricted: what follows the power may be traits (which
+     * {@link #parseSelfTraitGrant} reads from the same sentence) or a quoted ability (which
+     * {@link #parseSelfGainsQuotedGrant} reads). Each parser takes its own half, so this one only
+     * has to find the number.
+     */
+    private static final Pattern SELF_POWER_GRANT = Pattern.compile(
+        "(?i)^(?<name>[^\"]+?)\\s+gains?\\s+\\+(?<power>\\d+)\\s+power(?<rest>.*)$",
+        Pattern.DOTALL
+    );
+
+    /**
+     * The power a self-targeted grant hands its own card ("Charlotte gains +2000 power and …",
+     * "Elle gains +2000 power."), or 0 when {@code effectText} is not one or names another card.
+     *
+     * <p>A passive read, not an effect. {@code ActionResolverPower.tryParseFieldSelfPowerBoost}
+     * parses the same sentence into a {@code Consumer<GameContext>} — what an <em>ability</em>
+     * resolving the text would run — but a field ability is never resolved, so nothing was applying
+     * it and the coverage report's "OK" on these printings was hollow. Every one of them in the
+     * corpus sits behind a "Damage N --" gate whose state changes mid-game, which is the other
+     * reason it has to be read per query rather than applied once.
+     */
+    static int parseSelfPowerGrant(String effectText, String cardName) {
+        if (effectText == null || cardName == null) return 0;
+        Matcher m = SELF_POWER_GRANT.matcher(effectText.trim());
+        if (!m.matches() || !m.group("name").trim().equalsIgnoreCase(cardName)) return 0;
+        return Integer.parseInt(m.group("power"));
+    }
+
+    /**
      * Parses all "If you control [X], [target] gains [Z]" conditional field boosts from
      * {@code textEn}.  Returns an empty list for Summons (field abilities don't apply to them)
      * and whenever no matching segments are found.
@@ -4384,6 +4480,30 @@ public record CardData(
     );
 
     /**
+     * Matches the controller-less debuff "The [type] of an Element other than [X] lose N power." —
+     * Tchakka 18-092C. Naming no controller is the whole point: it reaches both boards, so it is
+     * stored as a pair of {@link FieldPowerGrant}s, one per side.
+     */
+    private static final Pattern FIELD_ELEMENT_EXCLUDED_DEBUFF_PATTERN = Pattern.compile(
+        "(?i)^The\\s+(?<targets>Forwards?(?:\\s+and\\s+Monsters?)?|Backups?|Monsters?|Characters?)\\s+" +
+        "of\\s+an\\s+Element\\s+other\\s+than\\s+(?<element>" + ELEMENT_KEYWORD + ")\\s+" +
+        "loses?\\s+(?<power>\\d+)\\s+power[.!]?$"
+    );
+
+    /**
+     * Matches "The [type] forming a party with [CardName] gain [+N power] [and] [Trait…]." —
+     * Chocobo 2-060C. The grant is live only while a party containing the printing card is declared,
+     * which {@code MainWindow} checks; the card name is verified against the carrier by the caller,
+     * since a party clause naming someone else is a different card's business.
+     */
+    private static final Pattern FIELD_PARTY_WITH_GRANT_PATTERN = Pattern.compile(
+        "(?i)^The\\s+(?<targets>Forwards?(?:\\s+and\\s+Monsters?)?|Backups?|Monsters?|Characters?)\\s+" +
+        "forming\\s+a\\s+party\\s+with\\s+(?<cardname>.+?)\\s+gains?\\s+" +
+        "(?:\\+(?<power>\\d+)\\s+power(?:\\s+and\\s+)?)?" +
+        "(?<traitstext>.+?)?[.!]?$"
+    );
+
+    /**
      * Matches "If there are N or more cards in your Break Zone, the Card Name X [type] and the
      * Job Y [type] you control gain[s] +P power [and traits]."
      * Groups: {@code bzcount}, {@code cardname}, {@code type1}, {@code job}, {@code type2},
@@ -4797,6 +4917,32 @@ public record CardData(
                 result.add(new FieldPowerGrant(null, null, true, true, true, null, 0, traits,
                         false, -1, null, null, cnTraitAlwaysM.group("cardname").trim(),
                         0, 0, null, false, false));
+                continue;
+            }
+
+            // Controller-less element-excluded debuff — one grant per side, because the record
+            // scopes to one side at a time and this sentence names neither.
+            Matcher elemDebuffM = FIELD_ELEMENT_EXCLUDED_DEBUFF_PATTERN.matcher(seg);
+            if (elemDebuffM.matches()) {
+                int[] incl  = parseFieldGrantTargetFlags(elemDebuffM.group("targets"));
+                int   power = -Integer.parseInt(elemDebuffM.group("power"));
+                String elem = elemDebuffM.group("element");
+                result.add(FieldPowerGrant.elementExcludedDebuff(
+                        incl[0] != 0, incl[1] != 0, incl[2] != 0, power, elem, false));
+                result.add(FieldPowerGrant.elementExcludedDebuff(
+                        incl[0] != 0, incl[1] != 0, incl[2] != 0, power, elem, true));
+                continue;
+            }
+
+            Matcher partyM = FIELD_PARTY_WITH_GRANT_PATTERN.matcher(seg);
+            if (partyM.matches()) {
+                int[]  incl      = parseFieldGrantTargetFlags(partyM.group("targets"));
+                String powerStr  = partyM.group("power");
+                int    power     = powerStr != null ? Integer.parseInt(powerStr) : 0;
+                EnumSet<Trait> traits = traitsNamedIn(partyM.group("traitstext"));
+                if (power != 0 || !traits.isEmpty())
+                    result.add(FieldPowerGrant.partyWithGrant(incl[0] != 0, incl[1] != 0, incl[2] != 0,
+                            power, traits, partyM.group("cardname").trim()));
                 continue;
             }
 
@@ -6422,18 +6568,23 @@ public record CardData(
     }
 
     private static final Pattern COUNTER_COST_PATTERN = Pattern.compile(
-        "(?i)remove\\s+(?<n>\\d+)\\s+(?<name>.+?)\\s+Counters?\\s+from\\s+(?<card>[^,:.]+?)\\s*$"
+        "(?i)remove\\s+(?<n>\\d+|X)\\s+(?<name>.+?)\\s+Counters?\\s+from\\s+(?<card>[^,:.]+?)\\s*$"
     );
 
-    /** Parses "remove N [Name] Counter(s) from [CardName]" into a {@link CounterCost} list. */
+    /**
+     * Parses "remove [N|X] [Name] Counter(s) from [CardName]" into a {@link CounterCost} list.
+     * The {@code X} form defers the amount to activation time — see {@link CounterCost#variable}.
+     */
     private static List<CounterCost> parseCounterCosts(String raw) {
         if (raw == null || raw.isBlank()) return List.of();
         Matcher m = COUNTER_COST_PATTERN.matcher(raw.trim());
         if (!m.find()) return List.of();
-        int    count       = Integer.parseInt(m.group("n"));
-        String counterName = m.group("name").trim();
-        String cardName    = m.group("card").trim();
-        return List.of(new CounterCost(cardName, counterName, count));
+        String  n           = m.group("n");
+        boolean variable    = "X".equalsIgnoreCase(n);
+        String  counterName = m.group("name").trim();
+        String  cardName    = m.group("card").trim();
+        return List.of(new CounterCost(cardName, counterName,
+                variable ? 0 : Integer.parseInt(n), variable));
     }
 
     /** Parses one or more dull-forward cost items from the raw {@code dullcost} group string.
@@ -7183,6 +7334,12 @@ public record CardData(
      *   <li>"If &lt;condition&gt;, the cost required to play &lt;name&gt; onto the field is (reduced|increased) by N [(it cannot become 0)]."</li>
      *   <li>"If &lt;condition&gt;, the cost for playing &lt;name&gt; onto the field is (reduced|increased) by N."</li>
      * </ul>
+     *
+     * <p>An "…and can be paid with CP of any Element" tail is part of the same sentence rather than a
+     * second ability, so it is captured here as {@code anyelem} instead of ending the match. Tifa
+     * 11-071L prints it, and before it was accepted the end anchor rejected the whole sentence —
+     * losing the reduction as well as the payment permission, and leaving the text in the
+     * field-ability report as if nothing about it were handled.
      */
     private static final Pattern SELF_COST_MAIN = Pattern.compile(
         "(?i)" +
@@ -7204,6 +7361,7 @@ public record CardData(
             // scaling clause: a cost that becomes a fixed number has nothing to scale by.
             "|\\s+becomes\\s+(?<becomes>\\d+)" +
         ")" +
+        "(?<anyelem>\\s+and\\s+can\\s+be\\s+paid\\s+with\\s+CP\\s+of\\s+any\\s+Element)?" +
         "\\s*\\.?$"
     );
 
@@ -7214,8 +7372,12 @@ public record CardData(
     private static final Pattern SELF_COND_CAST_JOB_OR_NAME = Pattern.compile(
         "(?i)^you\\s+have\\s+cast\\s+a\\s+Job\\s+(?<job>.+?)\\s+or\\s+Card\\s+Name\\s+(?<name>.+?)\\s+this\\s+turn$"
     );
+    /**
+     * "you control [a] Card Name X" — the article is optional because the corpus prints it both
+     * ways: Leo 15-034H omits it, Tifa 11-071L ("If you control a Card Name Cloud, …") does not.
+     */
     private static final Pattern SELF_COND_CONTROL_NAME = Pattern.compile(
-        "(?i)^you\\s+control\\s+Card\\s+Name\\s+(?<name>.+?)\\s*$"
+        "(?i)^you\\s+control\\s+(?:an?\\s+)?Card\\s+Name\\s+(?<name>.+?)\\s*$"
     );
     private static final Pattern SELF_COND_RECEIVED_N_DAMAGE = Pattern.compile(
         "(?i)^you\\s+have\\s+received\\s+(?<n>\\d+)\\s+points?\\s+of\\s+damage\\s+or\\s+more$"
@@ -7968,6 +8130,10 @@ public record CardData(
                 }
             }
 
+            // The "…and can be paid with CP of any Element" tail rides whichever branch above built
+            // the modifier — it qualifies the same cost under the same condition, so it is applied
+            // once here rather than threaded through every branch.
+            if (mod != null && m.group("anyelem") != null) mod = mod.withAnyElement();
             if (mod != null) result.add(mod);
         }
         return List.copyOf(result);

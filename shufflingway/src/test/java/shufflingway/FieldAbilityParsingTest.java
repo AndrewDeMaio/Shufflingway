@@ -530,10 +530,14 @@ public class FieldAbilityParsingTest {
         }
         CardData.SelfGainsQuotedGrant sgq =
                 CardData.parseSelfGainsQuotedGrant(fa.effectText(), source.name());
-        if (sgq != null)
+        if (sgq != null) {
+            int selfPower = CardData.parseSelfPowerGrant(fa.effectText(), source.name());
             return "SelfGainsQuotedGrant[" + sgq.traits()
+                    + (selfPower > 0 ? " +" + selfPower + " power" : "")
                     + (sgq.maxAttacks() > 1 ? " attacks×" + sgq.maxAttacks() : "")
-                    + (sgq.abilityTexts().isEmpty() ? "" : " +" + sgq.abilityTexts().size() + " ability") + "]";
+                    + (sgq.abilityTexts().isEmpty() ? "" : " +" + sgq.abilityTexts().size() + " ability")
+                    + (sgq.passiveTexts().isEmpty() ? "" : " +" + sgq.passiveTexts().size() + " passive") + "]";
+        }
         CardData.HandSizeSelfGrant hsg = CardData.parseHandSizeSelfGrant(fa.effectText(), source.name());
         if (hsg != null)
             return "HandSizeSelfGrant[" + (hsg.bothPlayers() ? "both" : "either") + "≤" + hsg.maxCards()

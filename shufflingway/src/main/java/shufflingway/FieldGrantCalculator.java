@@ -45,6 +45,7 @@ class FieldGrantCalculator {
         for (FieldPowerGrant fpg : src.fieldPowerGrants())
             if (!fpg.affectsOpponent() && fpg.appliesToCard(target, mw.fpgTargetTraits(fpg, target, isP1))
                     && mw.fpgBzConditionMet(fpg, isP1)
+                    && mw.fpgPartyConditionMet(fpg, src, target, isP1)
                     && (!fpg.yourTurnOnly() || isP1 == (mw.gameState.getCurrentPlayer() == GameState.Player.P1)))
                 out.addAll(fpg.grantedTraits());
         // "The [filter] you control cannot be broken by … that don't deal damage." — a grant to a

@@ -284,7 +284,10 @@ final class AutoAbilityTriggers {
 			"|\\s+other\\s+than\\s+battle\\s+damage" +
 			"|\\s+by\\s+(?:your\\s+opponent's\\s+)?(?:a\\s+)?Summons?(?:\\s+or\\s+(?:an?\\s+)?abilit(?:y|ies))?" +
 			"|\\s+by\\s+(?:your\\s+opponent's\\s+)?(?:a\\s+Summon\\s+or\\s+)?(?:an?\\s+)?abilit(?:y|ies)" +
-			"|\\s+less\\s+than\\s+(?:his|her|its)\\s+power" +
+			// The subject's own power, named either by pronoun or by repeating the card's name
+			// (The Fiend 20-114L, Ifrit (XVI) 26-003R). Comma-free so the possessive branch cannot
+			// reach past the clause into the effect half of the sentence.
+			"|\\s+less\\s+than\\s+(?:his|her|its|[^,]+?'s)\\s+power" +
 		")?" +
 		"\\s*,\\s+" +
 		// Optional cost the replacement pays for itself: "remove 1 Barrier Counter from Number 24 and
@@ -3696,10 +3699,53 @@ final class AutoAbilityTriggers {
 		return eligibleBzFieldCards(bz, isP1).size() >= bz.count();
 	}
 
+	/**
+	 * How many counters a variable ("remove X …") cost spends this activation, between 1 and the
+	 * number currently on {@code source}.
+	 *
+	 * <p>The effect these costs pay for reads X as an exact cost to match in the Break Zone
+	 * (Lenna 12-109L, Leo 13-067L: "If its cost is X, play it onto the field."), so the amounts
+	 * worth choosing are the costs actually sitting there. The human is offered those, and the AI
+	 * takes the most expensive one it can reach — spending more counters than any Break Zone card
+	 * costs would buy nothing.
+	 */
+	private int chooseVariableCounterAmount(CounterCost cc, CardData source, boolean isP1) {
+		int available = mw.gameState.getCounters(source, cc.counterName());
+		if (available <= 1) return available;
+
+		// The distinct Break Zone Forward costs within reach, ascending — the only X values that
+		// can pay off. Falls back to the full range when the zone offers nothing, so the player is
+		// never blocked from spending by a heuristic.
+		List<CardData> bz = isP1 ? mw.gameState.getP1BreakZone() : mw.gameState.getP2BreakZone();
+		List<Integer> useful = bz.stream()
+				.filter(CardData::isForward)
+				.map(CardData::cost)
+				.filter(c -> c >= 1 && c <= available)
+				.distinct().sorted().toList();
+		if (useful.isEmpty()) {
+			List<Integer> all = new ArrayList<>();
+			for (int i = 1; i <= available; i++) all.add(i);
+			useful = all;
+		}
+
+		if (!isP1) return useful.get(useful.size() - 1);   // AI: the biggest it can actually use
+
+		Object[] options = useful.stream().map(n -> "X = " + n).toArray();
+		int choice = mw.showEffectOptionDialog(
+				"<html><body style='width:320px'>" + source.name() + " has <b>" + available + "</b> "
+				+ cc.counterName() + " Counter(s).<br><br>Remove how many? The number removed is the "
+				+ "cost this ability can play back from your Break Zone.</body></html>",
+				source.name() + " — remove " + cc.counterName() + " Counters", options);
+		return choice >= 0 && choice < useful.size() ? useful.get(choice) : useful.get(0);
+	}
+
 	/** True when {@code source} (the activating card) has enough counters to pay {@code cc}. */
 	boolean counterCostSatisfied(CounterCost cc, CardData source) {
 		if (!source.name().equalsIgnoreCase(cc.cardName())) return false;
-		return mw.gameState.getCounters(source, cc.counterName()) >= cc.count();
+		// A variable cost names no amount, so what it needs is something to spend: X = 0 buys
+		// nothing, since no Forward in the corpus costs 0.
+		int required = cc.variable() ? 1 : cc.count();
+		return mw.gameState.getCounters(source, cc.counterName()) >= required;
 	}
 
 	boolean dullForwardCostSatisfied(DullForwardCost dfc, boolean isP1) {
@@ -4375,10 +4421,17 @@ final class AutoAbilityTriggers {
 
 		// Counter removal costs
 		for (CounterCost cc : ability.counterCosts()) {
-			int removed = mw.gameState.removeCounters(source, cc.counterName(), cc.count());
+			// "remove X …" names no amount: the player picks it here, and what they pick becomes the
+			// X the effect reads — the same xValue a 《X》 CP cost produces for Zemus 5-108L, which
+			// prints Lenna's effect verbatim.
+			int toRemove = cc.variable()
+					? chooseVariableCounterAmount(cc, source, isP1)
+					: cc.count();
+			int removed = mw.gameState.removeCounters(source, cc.counterName(), toRemove);
+			if (cc.variable()) xValue = removed;
 			mw.logEntry(source.name() + " — removed " + removed + " " + cc.counterName()
-					+ " Counter(s) (cost)  [remaining: "
-					+ mw.gameState.getCounters(source, cc.counterName()) + "]");
+					+ " Counter(s) (cost)" + (cc.variable() ? " — X = " + removed : "")
+					+ "  [remaining: " + mw.gameState.getCounters(source, cc.counterName()) + "]");
 		}
 
 		// Dull-forward costs: player picks active forward(s) (and backups when anyChar) to dull

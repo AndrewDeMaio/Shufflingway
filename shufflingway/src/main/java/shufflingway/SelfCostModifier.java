@@ -40,6 +40,12 @@ package shufflingway;
  *                       the printed cost instead of being added to or subtracted from it. A
  *                       replacement never contributes to {@link #amountPerUnit} arithmetic — its
  *                       {@link #scalingType} is read only as the condition that switches it on.
+ * @param anyElement     {@code true} when the same sentence also lets the cost be paid with CP of
+ *                       any Element (Tifa 11-071L). Its {@link #scalingType} gates the permission
+ *                       exactly as it gates the reduction, so both halves switch on together.
+ *                       Distinct from the {@link FieldCostReduction} spelling of the same
+ *                       permission, which is read off cards already on the field and therefore
+ *                       cannot reach a card still in hand — which is where this one applies.
  */
 public record SelfCostModifier(
         int         amountPerUnit,
@@ -48,12 +54,26 @@ public record SelfCostModifier(
         ScalingType scalingType,
         String      param1,
         String      param2,
-        int         setsToCost
+        int         setsToCost,
+        boolean     anyElement
 ) {
     /** Convenience constructor for the delta forms; {@code setsToCost} defaults to unused. */
     public SelfCostModifier(int amountPerUnit, int minCost, boolean isIncrease,
             ScalingType scalingType, String param1, String param2) {
-        this(amountPerUnit, minCost, isIncrease, scalingType, param1, param2, -1);
+        this(amountPerUnit, minCost, isIncrease, scalingType, param1, param2, -1, false);
+    }
+
+    /** Convenience constructor preserving the prior 7-arg canonical form; no any-Element permission. */
+    public SelfCostModifier(int amountPerUnit, int minCost, boolean isIncrease,
+            ScalingType scalingType, String param1, String param2, int setsToCost) {
+        this(amountPerUnit, minCost, isIncrease, scalingType, param1, param2, setsToCost, false);
+    }
+
+    /** A copy of this modifier carrying the any-Element payment permission. */
+    public SelfCostModifier withAnyElement() {
+        return anyElement ? this
+                : new SelfCostModifier(amountPerUnit, minCost, isIncrease, scalingType,
+                        param1, param2, setsToCost, true);
     }
 
     public enum ScalingType {

@@ -41,7 +41,9 @@ public record FieldPowerGrant(
         int     maxDamageThreshold,  // 0 = no restriction; >0 = grant applies only when controller's damage zone has < this many cards
         Set<CardData.Trait> traitFilter, // empty = any card; non-empty = only cards having at least one of these traits
         boolean attackingOnly,       // true = applies only while the target is one of the declared attackers
-        int     basePowerSet         // 0 = unused; >0 = the target's base power becomes this instead of its printed value
+        int     basePowerSet,        // 0 = unused; >0 = the target's base power becomes this instead of its printed value
+        String  excludeElement,      // null = no exclusion; non-null = skip cards carrying this element
+        String  partyWithCardName    // null = no party condition; else the card the target must be partied with
 ) {
     public FieldPowerGrant {
         // EnumSet, not Set.copyOf: the latter randomises iteration order per JVM run
@@ -94,6 +96,56 @@ public record FieldPowerGrant(
                 exceptCardName, 0, EnumSet.noneOf(CardData.Trait.class), false, -1, null, null,
                 inclCardName, 0, 0, null, null, false, false, 0, 0, 1, 0, 0,
                 EnumSet.noneOf(CardData.Trait.class), false, basePowerSet);
+    }
+
+    /** Compatibility constructor preserving the prior 27-arg canonical form; defaults {@code excludeElement/partyWithSource} to null/false. */
+    public FieldPowerGrant(String jobFilter, String categoryFilter,
+            boolean inclForwards, boolean inclBackups, boolean inclMonsters,
+            String exceptCardName, int powerBonus, Set<CardData.Trait> grantedTraits,
+            boolean affectsOpponent, int costFilter, String costCmp, String elementFilter,
+            String inclCardName, int minBzSize, int minBzFilterCount, String bzFilterJob,
+            String bzFilterCardName, boolean bzFilterFwds, boolean yourTurnOnly,
+            int minDistinctElements, int exBurstDmgPerGroup, int exBurstDmgGroupSize,
+            int minDamageThreshold, int maxDamageThreshold, Set<CardData.Trait> traitFilter,
+            boolean attackingOnly, int basePowerSet) {
+        this(jobFilter, categoryFilter, inclForwards, inclBackups, inclMonsters,
+                exceptCardName, powerBonus, grantedTraits, affectsOpponent, costFilter, costCmp, elementFilter,
+                inclCardName, minBzSize, minBzFilterCount, bzFilterJob, bzFilterCardName, bzFilterFwds, yourTurnOnly,
+                minDistinctElements, exBurstDmgPerGroup, exBurstDmgGroupSize,
+                minDamageThreshold, maxDamageThreshold, traitFilter, attackingOnly, basePowerSet, null, null);
+    }
+
+    /**
+     * The both-sides debuff "The [type] of an Element other than [X] lose N power." — Tchakka
+     * 18-092C. It names no controller, so it reaches every matching Character on the board; the
+     * caller emits one of these per side, since {@link #affectsOpponent} picks one side or the other.
+     */
+    static FieldPowerGrant elementExcludedDebuff(boolean inclForwards, boolean inclBackups,
+            boolean inclMonsters, int powerBonus, String excludeElement, boolean affectsOpponent) {
+        return new FieldPowerGrant(null, null, inclForwards, inclBackups, inclMonsters,
+                null, powerBonus, EnumSet.noneOf(CardData.Trait.class), affectsOpponent, -1, null, null,
+                null, 0, 0, null, null, false, false, 0, 0, 1, 0, 0,
+                EnumSet.noneOf(CardData.Trait.class), false, 0, excludeElement, null);
+    }
+
+    /**
+     * The party-conditioned grant "The Forwards forming a party with [X] gain [traits]." —
+     * Chocobo 2-060C. Party membership is board state rather than a property of the card, so
+     * {@link #appliesToCard} cannot resolve it; {@code MainWindow} gates on
+     * {@link #partyWithCardName} while summing contributions, exactly as it does for
+     * {@link #attackingOnly}.
+     *
+     * <p>The name is carried rather than reduced to a "with me" flag so the check stays honest: the
+     * only printing names its own carrier, and a future one naming somebody else must not silently
+     * become a self-reference.
+     */
+    static FieldPowerGrant partyWithGrant(boolean inclForwards, boolean inclBackups,
+            boolean inclMonsters, int powerBonus, Set<CardData.Trait> grantedTraits,
+            String partyWithCardName) {
+        return new FieldPowerGrant(null, null, inclForwards, inclBackups, inclMonsters,
+                null, powerBonus, grantedTraits, false, -1, null, null,
+                null, 0, 0, null, null, false, false, 0, 0, 1, 0, 0,
+                EnumSet.noneOf(CardData.Trait.class), false, 0, null, partyWithCardName);
     }
 
     /** Compatibility constructor preserving the prior 25-arg canonical form; defaults {@code attackingOnly/basePowerSet} to false/0. */
@@ -308,6 +360,9 @@ public record FieldPowerGrant(
             else if ("less".equalsIgnoreCase(costCmp))   { if (c >  costFilter) return false; }
             else                                         { if (c <  costFilter) return false; }
         }
+        // "of an Element other than X" — a Multi-Element card carrying X is spared, since it does
+        // have that Element (Tchakka 18-092C spares a Water/Fire Forward, not just a mono-Water one).
+        if (!CardFilters.meetsElementExclusion(card, excludeElement)) return false;
         return CardFilters.meetsElementFilter(card, elementFilter)
             && CardFilters.meetsJobFilter(card, jobFilter)
             && CardFilters.meetsCategoryFilter(card, categoryFilter)

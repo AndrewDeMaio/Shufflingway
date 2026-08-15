@@ -18888,4 +18888,376 @@ public class CardBehaviorTest {
 
 		assertTrue(mw.p1ForwardCannotBlock.isEmpty(), "no offer to take, no restriction");
 	}
+
+	// =========================================================================================
+	// Damage-gated self grants: "Damage N -- [Self] gains [+P power] [traits] [and \"[quoted]\"]."
+	// (Elle 13-088H, Ritz 11-063L, Charlotte 13-023R, The Fiend 20-114L)
+	//
+	// The power half of these had no reader at all: ActionResolverPower.tryParseFieldSelfPowerBoost
+	// turns the same sentence into an effect, which is what an *ability* resolving it would run —
+	// but a field ability is never resolved, so the coverage report's "OK" was hollow and the
+	// Forward stood at its printed power. Read per query now, because the gate opens and shuts as
+	// the damage zone fills.
+	// =========================================================================================
+
+	private static final String ELLE_13_088H     = "Damage 3 -- Elle gains +2000 power.";
+	private static final String RITZ_11_063L     = "Damage 3 -- Ritz gains \"Ritz cannot be blocked.\"";
+	private static final String CHARLOTTE_13_023R =
+			"Damage 3 -- Charlotte gains +2000 power and "
+			+ "\"The damage dealt to Charlotte is reduced by 2000 instead.\"";
+
+	/** Builds a Forward whose fieldAbilities <em>and</em> fieldPowerGrants are parsed from {@code text}. */
+	private static CardData makeForwardWithPowerGrant(String name, String element, int power, String text) {
+		return new CardData(null, name, element, 3, power, "Forward", false, 0, false, false,
+				CardData.parseTraits(text, name), 0, List.of(), null, List.of(),
+				List.of(), List.of(), CardData.parseFieldAbilities(text, "Forward"),
+				List.of(), CardData.parseFieldPowerGrants(text, "Forward"),
+				List.of(), List.of(), List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				null, null, null, text);
+	}
+
+	/** Puts {@code n} cards into P1's damage zone, so a "Damage N --" gate can open. */
+	private static void giveP1Damage(MainWindow mw, int n) {
+		for (int i = 0; i < n; i++)
+			mw.gameState.getP1DamageZone().add(makeForward("Dmg" + i, "Fire", 1, 1000));
+	}
+
+	@Test
+	void aDamageGatedSelfPowerGrantOnlyAppliesOnceTheGateOpens() {
+		MainWindow mw = new MainWindow();
+		mw.placeCardInForwardZone(makeFieldAbilityCard("Elle", "Water", "Forward", ELLE_13_088H));
+
+		assertEquals(7000, mw.effectiveP1ForwardPower(0), "below the threshold, the printed power stands");
+		giveP1Damage(mw, 2);
+		assertEquals(7000, mw.effectiveP1ForwardPower(0), "still short of Damage 3");
+		giveP1Damage(mw, 1);
+		assertEquals(9000, mw.effectiveP1ForwardPower(0), "at Damage 3 the grant is live");
+	}
+
+	@Test
+	void aSelfPowerGrantIsReadOnlyForItsOwnCard() {
+		assertEquals(2000, CardData.parseSelfPowerGrant("Elle gains +2000 power.", "Elle"));
+		assertEquals(0, CardData.parseSelfPowerGrant("Elle gains +2000 power.", "Somebody Else"),
+				"a grant naming another card is not this card's");
+		assertEquals(0, CardData.parseSelfPowerGrant(
+				"The Forwards you control gain +2000 power.", "Elle"),
+				"and a field-wide grant belongs to parseFieldPowerGrants, not here");
+	}
+
+	@Test
+	void ritzCannotBeBlockedOnlyAtDamageThree() {
+		MainWindow mw = new MainWindow();
+		CardData ritz = makeFieldAbilityCard("Ritz", "Wind", "Forward", RITZ_11_063L);
+		mw.placeCardInForwardZone(ritz);
+
+		assertFalse(mw.hasSelfCannotBeBlockedFieldAbility(ritz, true), "the gate is shut at 0 damage");
+		giveP1Damage(mw, 3);
+		assertTrue(mw.hasSelfCannotBeBlockedFieldAbility(ritz, true), "and open at 3");
+
+		mw.lostAbilitiesCards.add(ritz);
+		assertFalse(mw.hasSelfCannotBeBlockedFieldAbility(ritz, true),
+				"a Ritz that has lost its abilities is blockable again");
+	}
+
+	@Test
+	void theQuotedCannotBeBlockedMustNameItsOwnCarrier() {
+		CardData ritz = makeFieldAbilityCard("Ritz", "Wind", "Forward", RITZ_11_063L);
+		CardData.SelfGainsQuotedGrant g = CardData.parseSelfGainsQuotedGrant(
+				ritz.fieldAbilities().get(0).effectText(), "Ritz");
+		assertNotNull(g);
+		assertEquals(List.of("Ritz cannot be blocked."), g.passiveTexts());
+		assertTrue(g.abilityTexts().isEmpty(), "a standing restriction is not a triggered ability");
+		assertNull(CardData.parseSelfGainsQuotedGrant(
+				"Ritz gains \"Shara cannot be blocked.\"", "Ritz"),
+				"a clause about another card leaves the grant unreadable, as before");
+	}
+
+	@Test
+	void charlotteGainsPowerAndAShieldAtDamageThree() {
+		MainWindow mw = new MainWindow();
+		CardData charlotte = makeFieldAbilityCard("Charlotte", "Ice", "Forward", CHARLOTTE_13_023R);
+		mw.placeCardInForwardZone(charlotte);
+
+		assertEquals(7000, mw.effectiveP1ForwardPower(0));
+		assertEquals(5000, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 0, 5000, true, false),
+				"no reduction below the threshold");
+
+		giveP1Damage(mw, 3);
+		assertEquals(9000, mw.effectiveP1ForwardPower(0), "the power half of the same sentence");
+		assertEquals(3000, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 0, 5000, true, false),
+				"and the quoted half reduces the damage by 2000");
+	}
+
+	@Test
+	void charlottesPassiveIsRewrittenIntoTheCanonicalDamageWording() {
+		CardData.SelfGainsQuotedGrant g = CardData.parseSelfGainsQuotedGrant(
+				"Charlotte gains +2000 power and "
+				+ "\"The damage dealt to Charlotte is reduced by 2000 instead.\"", "Charlotte");
+		assertNotNull(g);
+		assertEquals(List.of("If Charlotte is dealt damage, reduce the damage by 2000 instead."),
+				g.passiveTexts(),
+				"the object-position spelling is rewritten so FA_DAMAGE_MODIFIER reads it unchanged");
+		assertTrue(g.traits().isEmpty(), "the power is not a trait");
+	}
+
+	@Test
+	void theFiendReadsAPossessiveNameAsItsOwnPower() {
+		// "less than The Fiend's power" — the same clause every other printing spells "its power".
+		String text = "Damage 5 -- The Fiend gains +1000 power, Brave and "
+				+ "\"If The Fiend is dealt damage less than The Fiend's power, the damage becomes 0 instead.\"";
+		CardData.SelfGainsQuotedGrant g = CardData.parseSelfGainsQuotedGrant(
+				makeFieldAbilityCard("The Fiend", "Dark", "Forward", text)
+						.fieldAbilities().get(0).effectText(), "The Fiend");
+		assertNotNull(g, "the whole grant used to decline over the power clause");
+		assertEquals(Set.of(CardData.Trait.BRAVE), g.traits());
+		assertEquals(1, g.passiveTexts().size());
+		assertTrue(AutoAbilityTriggers.FA_DAMAGE_MODIFIER.matcher(g.passiveTexts().get(0)).find(),
+				"already canonical, so it is carried through unrewritten");
+	}
+
+	@Test
+	void aQuotedPassiveWithNoReaderStillDeclinesTheWholeGrant() {
+		// Kefka 23-004R. The outgoing-damage doubler is read off printed field abilities only, so
+		// accepting this clause would hand Kefka +2000 power and Haste while the ability it was
+		// bought with did nothing.
+		assertNull(CardData.parseSelfGainsQuotedGrant(
+				"Kefka gains +2000 power, Haste and "
+				+ "\"If Kefka deals damage to a Forward or your opponent, double the damage instead.\"",
+				"Kefka"));
+	}
+
+	// =========================================================================================
+	// Tchakka 18-092C: "The Forwards of an Element other than Water lose 1000 power." — a debuff
+	// naming no controller, so it reaches both boards, and excluding an Element rather than
+	// selecting one.
+	// =========================================================================================
+
+	private static final String TCHAKKA_18_092C =
+			"The Forwards of an Element other than Water lose 1000 power.";
+
+	@Test
+	void tchakkaShrinksEveryNonWaterForwardOnBothBoards() {
+		MainWindow mw = new MainWindow();
+		mw.placeCardInForwardZone(makeForwardWithPowerGrant("Tchakka", "Water", 7000, TCHAKKA_18_092C));
+		mw.placeCardInForwardZone(makeForward("Ally", "Fire", 3, 7000));      // P1 idx 1
+		placeP2Forward(mw, makeForward("Enemy", "Fire", 3, 7000));            // P2 idx 0
+		placeP2Forward(mw, makeForward("Wet Enemy", "Water", 3, 7000));       // P2 idx 1
+
+		assertEquals(7000, mw.effectiveP1ForwardPower(0), "Tchakka is Water — it spares itself");
+		assertEquals(6000, mw.effectiveP1ForwardPower(1), "its own side is not exempt");
+		assertEquals(6000, mw.effectiveP2ForwardPower(0), "and neither is the opponent's");
+		assertEquals(7000, mw.effectiveP2ForwardPower(1), "Water is spared wherever it stands");
+	}
+
+	@Test
+	void aMultiElementForwardCarryingTheNamedElementIsSpared() {
+		MainWindow mw = new MainWindow();
+		mw.placeCardInForwardZone(makeForwardWithPowerGrant("Tchakka", "Water", 7000, TCHAKKA_18_092C));
+		mw.placeCardInForwardZone(makeForward("Hybrid", "Water/Fire", 3, 7000));  // P1 idx 1
+
+		assertEquals(7000, mw.effectiveP1ForwardPower(1),
+				"\"other than Water\" is not \"not only Water\" — having the Element is enough");
+	}
+
+	@Test
+	void theDebuffParsesAsOneGrantPerSide() {
+		List<FieldPowerGrant> grants = CardData.parseFieldPowerGrants(TCHAKKA_18_092C, "Forward");
+		assertEquals(2, grants.size(), "one side each, since a grant scopes to one at a time");
+		assertEquals(1, grants.stream().filter(FieldPowerGrant::affectsOpponent).count());
+		for (FieldPowerGrant g : grants) {
+			assertEquals(-1000, g.powerBonus());
+			assertEquals("Water", g.excludeElement());
+		}
+	}
+
+	// =========================================================================================
+	// Chocobo 2-060C: "The Forwards forming a party with Chocobo gain First Strike." — a grant
+	// conditioned on board state that exists only while a party is declared.
+	// =========================================================================================
+
+	private static final String CHOCOBO_2_060C =
+			"First Strike[[br]]The Forwards forming a party with Chocobo gain First Strike.";
+
+	@Test
+	void chocobosPartyGrantIsLiveOnlyWhileThePartyIs() {
+		MainWindow mw = new MainWindow();
+		CardData chocobo = makeForwardWithPowerGrant("Chocobo", "Wind", 7000, CHOCOBO_2_060C);
+		CardData friend  = makeForward("Moogle", "Wind", 3, 7000);
+		mw.placeCardInForwardZone(chocobo);  // idx 0
+		mw.placeCardInForwardZone(friend);   // idx 1
+
+		assertFalse(mw.effectiveP1HasTrait(1, CardData.Trait.FIRST_STRIKE),
+				"no party declared — nobody is forming one with Chocobo");
+
+		mw.p1DeclaredAttackers.addAll(List.of(chocobo, friend));
+		assertTrue(mw.effectiveP1HasTrait(1, CardData.Trait.FIRST_STRIKE),
+				"attacking together is what forms the party");
+	}
+
+	@Test
+	void aLoneChocoboFormsAPartyWithNobody() {
+		MainWindow mw = new MainWindow();
+		CardData chocobo = makeForwardWithPowerGrant("Chocobo", "Wind", 7000, CHOCOBO_2_060C);
+		CardData bystander = makeForward("Moogle", "Wind", 3, 7000);
+		mw.placeCardInForwardZone(chocobo);
+		mw.placeCardInForwardZone(bystander);
+
+		mw.p1DeclaredAttackers.add(chocobo);   // attacking alone
+		assertFalse(mw.effectiveP1HasTrait(1, CardData.Trait.FIRST_STRIKE),
+				"a Forward sitting at home is not in the attacker's party");
+	}
+
+	@Test
+	void thePartyGrantCarriesTheNameItWasPrintedWith() {
+		List<FieldPowerGrant> grants = CardData.parseFieldPowerGrants(CHOCOBO_2_060C, "Forward");
+		assertEquals(1, grants.size());
+		assertEquals("Chocobo", grants.get(0).partyWithCardName(),
+				"carried rather than reduced to a self-reference, so a future printing naming "
+				+ "somebody else cannot silently become one");
+		assertEquals(Set.of(CardData.Trait.FIRST_STRIKE), grants.get(0).grantedTraits());
+	}
+
+	// =========================================================================================
+	// Tifa 11-071L: "If you control a Card Name Cloud, the cost for playing Tifa onto the field is
+	// reduced by 1 and can be paid with CP of any Element." — one sentence carrying a conditional
+	// discount and a payment permission. The trailing clause used to defeat the end anchor, losing
+	// both halves.
+	// =========================================================================================
+
+	private static final String TIFA_11_071L =
+			"If you control a Card Name Cloud, the cost for playing Tifa onto the field is "
+			+ "reduced by 1 and can be paid with CP of any Element.";
+
+	/** Tifa 11-071L as a 5-cost hand card carrying her own cost modifier. */
+	private static CardData makeTifa() {
+		return new CardData(null, "Tifa", "Earth", 5, 8000, "Forward", false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				List.of(), List.of(), CardData.parseFieldAbilities(TIFA_11_071L, "Forward"),
+				List.of(), List.of(), List.of(), List.of(),
+				CardData.parseSelfCostModifiers(TIFA_11_071L),
+				List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				null, null, null, TIFA_11_071L);
+	}
+
+	@Test
+	void tifasDiscountAndPaymentPermissionBothWaitOnCloud() {
+		MainWindow mw = new MainWindow();
+		CardData tifa = makeTifa();
+
+		assertEquals(5, mw.effectiveCastCost(tifa), "no Cloud — the printed cost stands");
+		assertFalse(mw.selfGrantsAnyElement(tifa), "and no payment permission either");
+
+		mw.placeCardInForwardZone(makeForward("Cloud", "Ice", 4, 8000));
+		assertEquals(4, mw.effectiveCastCost(tifa), "Cloud on the field opens the discount");
+		assertTrue(mw.selfGrantsAnyElement(tifa), "and the same condition opens the permission");
+	}
+
+	@Test
+	void tifasSentenceIsOneCostModifierRatherThanAFieldAbility() {
+		List<SelfCostModifier> mods = CardData.parseSelfCostModifiers(TIFA_11_071L);
+		assertEquals(1, mods.size());
+		SelfCostModifier mod = mods.get(0);
+		assertEquals(1, mod.amountPerUnit());
+		assertFalse(mod.isIncrease());
+		assertEquals(SelfCostModifier.ScalingType.IF_CONTROL_NAME, mod.scalingType());
+		assertEquals("Cloud", mod.param1());
+		assertTrue(mod.anyElement(), "the trailing clause rides the same modifier");
+		assertTrue(CardData.parseFieldAbilities(TIFA_11_071L, "Forward").isEmpty(),
+				"and the sentence is no longer also reported as an unhandled field ability");
+	}
+
+	// =========================================================================================
+	// Variable counter costs: "remove X [Name] Counters from [Self]:" (Lenna 12-109L, Leo 13-067L)
+	//
+	// The counter-cost pattern accepted only a literal count, so the whole ability failed to parse
+	// as an action ability and fell through into the field-ability list. The effect half already
+	// worked — Zemus 5-108L prints it verbatim behind a 《X》 CP cost — so what X means here is the
+	// same xValue that cost produces, sourced from the counters spent instead of from CP.
+	// =========================================================================================
+
+	private static final String LENNA_12_109L_ABILITY =
+			"《Dull》, remove X Arise Counters from Lenna: Choose 1 Forward in your Break Zone. "
+			+ "If its cost is X, play it onto the field.";
+	private static final String LEO_13_067L_ABILITY =
+			"《1》《Dull》, remove X Kingdom Counters from Leo: Choose 1 Forward other than Card Name "
+			+ "Leo, Light or Dark in your Break Zone. If its cost is X, play it onto the field. "
+			+ "You can only use this ability during your turn and only once per turn.";
+
+	@Test
+	void aVariableCounterCostParsesAsAnActionAbility() {
+		for (String[] c : new String[][]{{"Lenna", LENNA_12_109L_ABILITY, "Arise"},
+		                                 {"Leo",   LEO_13_067L_ABILITY,   "Kingdom"}}) {
+			List<ActionAbility> abilities = CardData.parseActionAbilities(c[1]);
+			assertEquals(1, abilities.size(), c[0] + " parses as one action ability");
+			List<CounterCost> costs = abilities.get(0).counterCosts();
+			assertEquals(1, costs.size(), c[0] + " carries its counter cost");
+			assertTrue(costs.get(0).variable(), c[0] + "'s amount is chosen at activation");
+			assertEquals(c[2], costs.get(0).counterName());
+			assertEquals(c[0], costs.get(0).cardName());
+			assertTrue(CardData.parseFieldAbilities(c[1], "Forward").isEmpty(),
+					c[0] + " no longer leaks into the field-ability list");
+		}
+	}
+
+	@Test
+	void aFixedCounterCostStillParsesAsBefore() {
+		List<CounterCost> costs = CardData.parseActionAbilities(
+				"Remove 1 Shuriken Counter from Edge: Choose 1 Forward. Deal it 3000 damage.")
+				.get(0).counterCosts();
+		assertEquals(1, costs.size());
+		assertFalse(costs.get(0).variable(), "a literal count is not the X form");
+		assertEquals(1, costs.get(0).count());
+	}
+
+	@Test
+	void aVariableCostNeedsOnlyOneCounterToBeActivatable() {
+		MainWindow mw = new MainWindow();
+		CardData lenna = makeForward("Lenna", "Light", 5, 9000,
+				CardData.parseActionAbilities(LENNA_12_109L_ABILITY));
+		mw.placeCardInForwardZone(lenna);
+		CounterCost cc = lenna.actionAbilities().get(0).counterCosts().get(0);
+
+		assertFalse(mw.autoAbilityTriggers.counterCostSatisfied(cc, lenna),
+				"X = 0 buys nothing, so an empty card cannot pay");
+		mw.gameState.placeCounters(lenna, "Arise", 1);
+		assertTrue(mw.autoAbilityTriggers.counterCostSatisfied(cc, lenna));
+	}
+
+	@Test
+	void theCountersSpentBecomeTheXTheEffectReads() {
+		// Driven from P2's seat so the amount is chosen without a dialog.
+		MainWindow mw = new MainWindow();
+		CardData lenna = makeForward("Lenna", "Light", 5, 9000,
+				CardData.parseActionAbilities(LENNA_12_109L_ABILITY));
+		placeP2Forward(mw, lenna);
+		mw.gameState.placeCounters(lenna, "Arise", 5);
+		// Costs 2 and 4 are reachable; 7 is not, and nothing should be spent reaching for it.
+		for (int cost : new int[]{2, 4, 7})
+			mw.gameState.getP2BreakZone().add(makeForward("Bz" + cost, "Light", cost, 5000));
+
+		mw.autoAbilityTriggers.executeP2AbilityActivation(
+				lenna.actionAbilities().get(0), lenna, () -> {}, new ArrayList<>(), new ArrayList<>(), 0);
+
+		assertEquals(4, mw.gameState.peekStack().xValue(),
+				"the most expensive Break Zone Forward within reach sets X");
+		assertEquals(1, mw.gameState.getCounters(lenna, "Arise"), "and 4 of the 5 counters paid for it");
+	}
+
+	@Test
+	void anUnreachableBreakZoneDoesNotStopTheAbilityResolving() {
+		MainWindow mw = new MainWindow();
+		CardData lenna = makeForward("Lenna", "Light", 5, 9000,
+				CardData.parseActionAbilities(LENNA_12_109L_ABILITY));
+		placeP2Forward(mw, lenna);
+		mw.gameState.placeCounters(lenna, "Arise", 3);
+		mw.gameState.getP2BreakZone().add(makeForward("Pricey", "Light", 9, 9000));
+
+		mw.autoAbilityTriggers.executeP2AbilityActivation(
+				lenna.actionAbilities().get(0), lenna, () -> {}, new ArrayList<>(), new ArrayList<>(), 0);
+
+		assertEquals(3, mw.gameState.peekStack().xValue(),
+				"nothing is reachable, so the full range stays open rather than the cost being blocked");
+	}
 }

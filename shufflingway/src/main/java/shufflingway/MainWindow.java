@@ -8222,6 +8222,9 @@ public class MainWindow {
 
 	/** Returns true if any field card grants any-element payment for {@code card}. */
 	private boolean isAnyElementCast(CardData card) {
+		// The card's own printing comes first: Tifa 11-071L carries the permission on the card being
+		// played, which the board walk below cannot see — it is still in hand, not on the field.
+		if (selfGrantsAnyElement(card)) return true;
 		for (int s = 0; s < 2; s++) {
 			boolean sIsP1 = s == 0;
 			List<CardData> fwds = sIsP1 ? p1ForwardCards : p2ForwardCards;
@@ -8231,6 +8234,18 @@ public class MainWindow {
 			for (CardData bkp : bkps) if (bkp != null) { if (srcGrantsAnyElement(bkp, card, sIsP1)) return true; }
 			for (CardData src : mons)                   { if (srcGrantsAnyElement(src, card, sIsP1)) return true; }
 		}
+		return false;
+	}
+
+	/**
+	 * True when {@code card}'s own "…and can be paid with CP of any Element" self-cost modifier is
+	 * live right now. The permission shares its condition with the reduction printed alongside it,
+	 * so it is switched on by the same unit count {@link CostCalculator#effectiveCastCost} reads —
+	 * a Tifa played while no Cloud is on the field is neither discounted nor freely payable.
+	 */
+	boolean selfGrantsAnyElement(CardData card) {
+		for (SelfCostModifier mod : card.selfCostModifiers())
+			if (mod.anyElement() && computeSelfCostUnits(mod, true) > 0) return true;
 		return false;
 	}
 
@@ -10927,6 +10942,25 @@ public class MainWindow {
 		return grant.perCounter() ? grant.powerBonus() * n : grant.powerBonus();
 	}
 
+	/**
+	 * Whether a {@link FieldPowerGrant#partyWithCardName} grant's party condition holds — Chocobo
+	 * 2-060C's "The Forwards forming a party with Chocobo gain First Strike."
+	 *
+	 * <p>A party exists only while one is declared, so this reads the declared attackers rather than
+	 * the board: {@code src} must be the card the text names, both it and {@code target} must be in
+	 * the declared party, and that party must have two or more members — one Forward attacking alone
+	 * is not forming a party with anybody, itself included.
+	 *
+	 * <p>Grants with no party clause pass unconditionally, so this can sit in the same conjunction
+	 * as the other board-state gates.
+	 */
+	boolean fpgPartyConditionMet(FieldPowerGrant fpg, CardData src, CardData target, boolean isP1) {
+		if (fpg.partyWithCardName() == null) return true;
+		if (!CardFilters.meetsCardNameFilter(src, fpg.partyWithCardName())) return false;
+		if (declaredAttackers(isP1).size() < 2) return false;
+		return isDeclaredAttacker(src, isP1) && isDeclaredAttacker(target, isP1);
+	}
+
 	private int fieldBoostContribution(CardData src, CardData target, boolean isP1) {
 		if (lostAbilitiesCards.contains(src)) return 0;
 		int boost = 0;
@@ -10937,6 +10971,7 @@ public class MainWindow {
 			if (!fpg.affectsOpponent() && fpg.appliesToCard(target, fpgTargetTraits(fpg, target, isP1))
 					&& fpgBzConditionMet(fpg, isP1)
 					&& (!fpg.attackingOnly() || isDeclaredAttacker(target, isP1))
+					&& fpgPartyConditionMet(fpg, src, target, isP1)
 					&& (!fpg.yourTurnOnly() || isP1 == (gameState.getCurrentPlayer() == GameState.Player.P1))) {
 				boost += fpg.powerBonus();
 				if (fpg.exBurstDmgPerGroup() > 0) {
@@ -10950,6 +10985,16 @@ public class MainWindow {
 			for (CounterGrant cg : src.counterGrants())
 				if (!cg.affectsOpponent()) boost += counterGrantPower(cg, target);
 		if (src == target) {
+			// Self-targeted power grant, gated on the FieldAbility's own "Damage N --" prefix
+			// (Elle 13-088H, Charlotte 13-023R). A passive re-read per query, because the gate opens
+			// and shuts as the damage zone fills.
+			if (!lostAbilitiesCards.contains(src)) {
+				int dmgZone = (isP1 ? gameState.getP1DamageZone() : gameState.getP2DamageZone()).size();
+				for (FieldAbility fa : src.fieldAbilities()) {
+					if (fa.damageThreshold() > 0 && dmgZone < fa.damageThreshold()) continue;
+					boost += CardData.parseSelfPowerGrant(fa.effectText(), src.name());
+				}
+			}
 			for (ScalingSelfPowerBoost ssb : src.scalingSelfPowerBoosts()) {
 				int count = switch (ssb.source()) {
 					case OPPONENT_FORWARDS -> isP1 ? p2ForwardCards.size() : p1ForwardCards.size();
@@ -13019,10 +13064,37 @@ public class MainWindow {
 	private boolean attackerConditionallyUnblockable() {
 		for (int i : pendingP2AttackerForwardIndices()) {
 			CardData attacker = p2ForwardCards.get(i);
+			if (hasSelfCannotBeBlockedFieldAbility(attacker, false)) return true;
 			for (CardData src : p2FieldCards())
 				for (IfControlBoost icb : src.ifControlBoosts())
 					if (icb.cannotBeBlocked() && icb.appliesToCard(attacker) && icbConditionsMet(icb, false))
 						return true;
+		}
+		return false;
+	}
+
+	/**
+	 * Whether {@code card} currently hands itself "cannot be blocked" through one of its own field
+	 * abilities — Ritz 11-063L's {@code Damage 3 -- Ritz gains "Ritz cannot be blocked."}.
+	 *
+	 * <p>Read per block-legality check rather than applied once, because the "Damage N --" gate it
+	 * sits behind opens and shuts as its controller's damage zone fills. That is what separates it
+	 * from the {@code p1/p2ForwardCannotBeBlocked} sets, which record a turn-scoped grant some
+	 * effect made and are cleared at end of turn.
+	 */
+	boolean hasSelfCannotBeBlockedFieldAbility(CardData card, boolean isP1) {
+		if (card == null || lostAbilitiesCards.contains(card)) return false;
+		int dmg = (isP1 ? gameState.getP1DamageZone() : gameState.getP2DamageZone()).size();
+		for (FieldAbility fa : effectiveFieldAbilities(card)) {
+			if (fa.damageThreshold() > 0 && dmg < fa.damageThreshold()) continue;
+			// The bare printing and the quoted-grant spelling both land here; the grant is what
+			// Ritz prints, and it names its own carrier on both halves.
+			if (CardData.isSelfCannotBeBlocked(fa.effectText(), card.name())) return true;
+			CardData.SelfGainsQuotedGrant sgq =
+					CardData.parseSelfGainsQuotedGrant(fa.effectText(), card.name());
+			if (sgq == null) continue;
+			for (String passive : sgq.passiveTexts())
+				if (CardData.isSelfCannotBeBlocked(passive, card.name())) return true;
 		}
 		return false;
 	}
