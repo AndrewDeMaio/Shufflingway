@@ -132,6 +132,12 @@ public class FieldAbilityParsingTest {
         // row closes a reporting gap rather than turning a rule on.
         if (AutoAbilityTriggers.FA_ELEMENT_SUMMON_DAMAGE_BOOST.matcher(fa.effectText()).find()) return true;
         if (AutoAbilityTriggers.FA_PARTY_DAMAGE_PROTECTION.matcher(fa.effectText()).find()) return true;
+        // Chocobo 5-060C, Paladin 12-102C, Chelinka 20-049R. Read per damage resolution by
+        // DamageResolver.partyDamageNullified, which matches it exactly this way.
+        if (AutoAbilityTriggers.FA_PARTY_SELF_DAMAGE_NULLIFY.matcher(fa.effectText()).matches()) return true;
+        // Cherukiki 19-109H, Zangan 26-070H. Read by canActivateAbility at the point the 《Dull》
+        // cost's summoning-sickness check runs, which is the single gate the menu and the AI share.
+        if (AutoAbilityTriggers.parseDullCostHasteGrant(fa.effectText()) != null) return true;
         if (AutoAbilityTriggers.FA_NULLIFY_SUMMON_DAMAGE.matcher(fa.effectText()).find()) return true;
         if (AutoAbilityTriggers.FA_NULLIFY_ABILITY_DAMAGE.matcher(fa.effectText()).find()) return true;
         if (AutoAbilityTriggers.FA_NULLIFY_OPPONENT_ABILITY_DAMAGE.matcher(fa.effectText()).find()) return true;
@@ -556,6 +562,19 @@ public class FieldAbilityParsingTest {
                        : ndg.inclBackups()  ? "Backups"
                        : "Monsters";
             return "FieldNonDmgBreakShield[" + who + "]";
+        }
+        Matcher partyNul = AutoAbilityTriggers.FA_PARTY_SELF_DAMAGE_NULLIFY.matcher(fa.effectText());
+        if (partyNul.matches())
+            return "PartyDamageNullify[" + (partyNul.group("wholeparty") != null ? "party" : "self") + "]";
+        AutoAbilityTriggers.DullCostHasteGrant dch =
+                AutoAbilityTriggers.parseDullCostHasteGrant(fa.effectText());
+        if (dch != null) {
+            String who = dch.cardName() != null ? "Card Name " + dch.cardName()
+                       : dch.category() != null ? "Category " + dch.category()
+                       : dch.job()      != null ? "Job " + dch.job()
+                       : "any";
+            return "DullCostHaste[" + (dch.selfName() != null ? "self+" : "") + who
+                    + (dch.inclSpecial() ? ", incl. Special" : "") + "]";
         }
         CardData.SelfGainsQuotedGrant sgq =
                 CardData.parseSelfGainsQuotedGrant(fa.effectText(), source.name());

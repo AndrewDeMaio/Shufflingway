@@ -19857,4 +19857,245 @@ public class CardBehaviorTest {
 				"the watcher's own trigger sits above the Summon and must not be the one cancelled");
 		assertTrue(mw.cancelledStackEntries.contains(stackOf(mw).get(0)));
 	}
+
+	// =========================================================================================
+	// Mystic Knight 3-048C — "If Mystic Knight receives damage from Summons or abilities, reduce
+	// the damage by 5000 instead."
+	//
+	// The engine already read every shape of this sentence; the one thing it did not accept was
+	// the preposition. Every other printing in the corpus says "by", and the two that say "from"
+	// mean no different — Mystic Knight, and the ability Behemoth 4-111H grants itself.
+	// =========================================================================================
+
+	private static final String MYSTIC_KNIGHT_3_048C =
+			"If Mystic Knight receives damage from Summons or abilities, reduce the damage by 5000 instead.";
+
+	@Test
+	void theDamageModifierReadsFromAsWellAsBy() {
+		for (String prep : new String[]{"from", "by"}) {
+			String text = "If Mystic Knight receives damage " + prep
+					+ " Summons or abilities, reduce the damage by 5000 instead.";
+			assertTrue(AutoAbilityTriggers.FA_DAMAGE_MODIFIER.matcher(text).matches(), prep);
+		}
+	}
+
+	@Test
+	void mysticKnightSheddsFiveThousandOfAbilityDamage() {
+		MainWindow mw = new MainWindow();
+		CardData mk = makeFieldAbilityCard("Mystic Knight", "Ice", "Forward", MYSTIC_KNIGHT_3_048C);
+		placeP1Forward(mw, mk);
+		int idx = mw.p1ForwardCards.indexOf(mk);
+
+		assertEquals(3000, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, idx, 8000, true, false));
+		assertEquals(0, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, idx, 4000, true, false),
+				"a reduction cannot go below zero");
+	}
+
+	@Test
+	void mysticKnightStillTakesBattleDamageInFull() {
+		MainWindow mw = new MainWindow();
+		CardData mk = makeFieldAbilityCard("Mystic Knight", "Ice", "Forward", MYSTIC_KNIGHT_3_048C);
+		placeP1Forward(mw, mk);
+		int idx = mw.p1ForwardCards.indexOf(mk);
+
+		assertEquals(8000, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, idx, 8000, false, false),
+				"the source clause names Summons and abilities, not combat");
+	}
+
+	// =========================================================================================
+	// Chocobo 5-060C / Paladin 12-102C / Chelinka 20-049R — "If [card] forms a party, the damage
+	// dealt to [that card | the Forwards forming this party] becomes 0 instead."
+	//
+	// The mirror image of the party shield the engine already had. That one is printed on the
+	// protector and asks whether the damaged Forward is partied with it; this one asks whether
+	// the printing card is in a party at all, then protects either itself or the whole party.
+	// =========================================================================================
+
+	private static final String CHOCOBO_5_060C =
+			"If Chocobo forms a party, the damage dealt to Chocobo becomes 0 instead.";
+	private static final String CHELINKA_20_049R =
+			"If Chelinka forms a party, the damage dealt to the Forwards forming this party becomes 0 instead.";
+
+	/** Declares {@code members} as one attacking party for P1 — which is what "forms a party" means. */
+	private static void formParty(MainWindow mw, CardData... members) {
+		mw.p1DeclaredAttackers.clear();
+		for (CardData c : members) mw.p1DeclaredAttackers.add(c);
+	}
+
+	private static int damageTo(MainWindow mw, CardData card, int raw) {
+		return mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD,
+				mw.p1ForwardCards.indexOf(card), raw, true, false);
+	}
+
+	@Test
+	void theTwoPartyNullifyWordingsAreToldApart() {
+		Matcher self = AutoAbilityTriggers.FA_PARTY_SELF_DAMAGE_NULLIFY.matcher(CHOCOBO_5_060C);
+		assertTrue(self.matches());
+		assertNull(self.group("wholeparty"), "Chocobo protects only itself");
+		assertEquals("Chocobo", self.group("target"));
+
+		Matcher party = AutoAbilityTriggers.FA_PARTY_SELF_DAMAGE_NULLIFY.matcher(CHELINKA_20_049R);
+		assertTrue(party.matches());
+		assertNotNull(party.group("wholeparty"), "Chelinka protects everyone alongside her");
+		assertEquals("Chelinka", party.group("card"));
+	}
+
+	@Test
+	void chocoboTakesNothingWhileInAPartyAndEverythingAlone() {
+		MainWindow mw = new MainWindow();
+		CardData chocobo = makeFieldAbilityCard("Chocobo", "Wind", "Forward", CHOCOBO_5_060C);
+		CardData ally    = makeForward("Vaan", "Wind", 3, 7000);
+		placeP1Forward(mw, chocobo);
+		placeP1Forward(mw, ally);
+
+		assertEquals(6000, damageTo(mw, chocobo, 6000), "no party declared — no shield");
+
+		formParty(mw, chocobo, ally);
+		assertEquals(0, damageTo(mw, chocobo, 6000));
+		assertEquals(6000, damageTo(mw, ally, 6000), "the shield is self-scoped, so the ally is bare");
+	}
+
+	@Test
+	void aLoneAttackerIsNotAParty() {
+		MainWindow mw = new MainWindow();
+		CardData chocobo = makeFieldAbilityCard("Chocobo", "Wind", "Forward", CHOCOBO_5_060C);
+		placeP1Forward(mw, chocobo);
+		formParty(mw, chocobo);
+
+		assertEquals(6000, damageTo(mw, chocobo, 6000), "one Forward attacking is not a party");
+	}
+
+	@Test
+	void chelinkaShieldsEveryForwardInHerParty() {
+		MainWindow mw = new MainWindow();
+		CardData chelinka = makeFieldAbilityCard("Chelinka", "Wind", "Forward", CHELINKA_20_049R);
+		CardData ally     = makeForward("Yuri", "Wind", 3, 7000);
+		CardData bystander = makeForward("Vaan", "Wind", 3, 7000);
+		placeP1Forward(mw, chelinka);
+		placeP1Forward(mw, ally);
+		placeP1Forward(mw, bystander);
+		formParty(mw, chelinka, ally);
+
+		assertEquals(0, damageTo(mw, chelinka, 6000), "her own copy is not excluded from the walk");
+		assertEquals(0, damageTo(mw, ally, 6000));
+		assertEquals(6000, damageTo(mw, bystander, 6000), "not in the party, not protected");
+	}
+
+	// =========================================================================================
+	// Cherukiki 19-109H / Zangan 26-070H — "… can use action abilities [and special abilities]
+	// with 《Dull》 in the cost as though they had Haste."
+	//
+	// This is one consequence of Haste lifted out on its own, not a Haste grant: a Forward under
+	// it still may not attack the turn it enters. It is therefore asked as its own question at
+	// the point the dull cost's summoning-sickness check runs.
+	//
+	// That check had no Haste exemption at all, so printed Haste did not beat summoning sickness
+	// for a 《Dull》 ability either. Both are fixed by the same query.
+	// =========================================================================================
+
+	private static final String CHERUKIKI_19_109H =
+			"The Category XI Forwards you control can use action abilities with 《Dull》 in the cost "
+			+ "as though they had Haste.";
+	private static final String ZANGAN_26_070H =
+			"Zangan and the Card Name Tifa you control can use action abilities and special "
+			+ "abilities with 《Dull》 in the cost as though they had Haste.";
+	private static final String DULL_ABILITY = "《Dull》: Choose 1 Forward. Deal it 1000 damage.";
+	private static final String DULL_SPECIAL =
+			"[[s]]Final Heaven[[/]] 《S》《Dull》: Choose 1 Forward. Deal it 9000 damage.";
+
+	/** A Forward built with a category, placed on P1's field as though it just arrived this turn. */
+	private static CardData placeFreshP1(MainWindow mw, String name, String category, String text) {
+		CardData c = new CardData(null, name, "Fire", 3, 7000, "Forward", false, 0, false, false,
+				CardData.parseTraits(text, name), 0, List.of(), null, List.of(),
+				CardData.parseActionAbilities(text), List.of(),
+				CardData.parseFieldAbilities(text, "Forward"),
+				List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				null, category, null, text);
+		placeP1Forward(mw, c);
+		return c;
+	}
+
+	/** Can {@code card} use its first action ability right now, having arrived this very turn? */
+	private static boolean canUseDullAbilityThisTurn(MainWindow mw, CardData card) {
+		return mw.canActivateAbility(card.actionAbilities().get(0), false, CardState.ACTIVE,
+				mw.gameState.getTurnNumber(), card, true);
+	}
+
+	@Test
+	void printedHasteNowBeatsSummoningSicknessForADullCost() {
+		MainWindow mw = new MainWindow();
+		mw.gameState.startFirstTurn(GameState.Player.P1);
+		CardData hasty = placeFreshP1(mw, "Hasty", null, "Haste[[br]]" + DULL_ABILITY);
+		CardData plain = placeFreshP1(mw, "Plain", null, DULL_ABILITY);
+
+		assertTrue(hasty.hasTrait(CardData.Trait.HASTE));
+		assertTrue(canUseDullAbilityThisTurn(mw, hasty),
+				"Haste lifts summoning sickness for 《Dull》 costs, not only for attacking");
+		assertFalse(canUseDullAbilityThisTurn(mw, plain));
+	}
+
+	@Test
+	void cherukikiFreesTheDullCostsOfCategoryXIOnly() {
+		MainWindow mw = new MainWindow();
+		mw.gameState.startFirstTurn(GameState.Player.P1);
+		placeP1Forward(mw, makeFieldAbilityCard("Cherukiki", "Fire", "Forward", CHERUKIKI_19_109H));
+		CardData inSet  = placeFreshP1(mw, "Kukki-Chebukki", "XI", DULL_ABILITY);
+		CardData outSet = placeFreshP1(mw, "Vaan", "XII", DULL_ABILITY);
+
+		assertTrue(canUseDullAbilityThisTurn(mw, inSet));
+		assertFalse(canUseDullAbilityThisTurn(mw, outSet), "Category XII is not Category XI");
+	}
+
+	@Test
+	void cherukikisPermissionIsNotHasteAndGrantsNoAttack() {
+		MainWindow mw = new MainWindow();
+		mw.gameState.startFirstTurn(GameState.Player.P1);
+		placeP1Forward(mw, makeFieldAbilityCard("Cherukiki", "Fire", "Forward", CHERUKIKI_19_109H));
+		CardData inSet = placeFreshP1(mw, "Kukki-Chebukki", "XI", DULL_ABILITY);
+
+		assertTrue(canUseDullAbilityThisTurn(mw, inSet), "the dull cost is freed");
+		assertFalse(mw.effectiveP1HasTrait(mw.p1ForwardCards.indexOf(inSet), CardData.Trait.HASTE),
+				"but only that half — the Forward still has no Haste, so it cannot attack");
+	}
+
+	@Test
+	void cherukikiDoesNotReachSpecialAbilities() {
+		MainWindow mw = new MainWindow();
+		mw.gameState.startFirstTurn(GameState.Player.P1);
+		placeP1Forward(mw, makeFieldAbilityCard("Cherukiki", "Fire", "Forward", CHERUKIKI_19_109H));
+		CardData tifa = placeFreshP1(mw, "Tifa", "XI", DULL_SPECIAL);
+		mw.gameState.getP1Hand().add(makeForward("Tifa", "Earth", 3, 7000)); // the 《S》 discard
+
+		assertTrue(tifa.actionAbilities().get(0).isSpecial());
+		assertFalse(canUseDullAbilityThisTurn(mw, tifa),
+				"Cherukiki's text names action abilities alone");
+	}
+
+	@Test
+	void zanganCoversItselfAndTifaIncludingSpecialAbilities() {
+		MainWindow mw = new MainWindow();
+		mw.gameState.startFirstTurn(GameState.Player.P1);
+		CardData zangan = placeFreshP1(mw, "Zangan", null, ZANGAN_26_070H + "[[br]]" + DULL_ABILITY);
+		CardData tifa   = placeFreshP1(mw, "Tifa", null, DULL_SPECIAL);
+		CardData other  = placeFreshP1(mw, "Vaan", null, DULL_ABILITY);
+		mw.gameState.getP1Hand().add(makeForward("Tifa", "Earth", 3, 7000)); // the 《S》 discard
+
+		assertTrue(canUseDullAbilityThisTurn(mw, zangan), "\"Zangan and …\" names its own copy");
+		assertTrue(canUseDullAbilityThisTurn(mw, tifa),
+				"and Tifa's Special Ability, which only Zangan's wording extends to");
+		assertFalse(canUseDullAbilityThisTurn(mw, other), "nobody else is named");
+	}
+
+	@Test
+	void theDullCostGrantIsReadOffTheGrantersOwnSide() {
+		MainWindow mw = new MainWindow();
+		mw.gameState.startFirstTurn(GameState.Player.P1);
+		mw.placeP2CardInFirstBackupSlot(
+				makeFieldAbilityCard("Cherukiki", "Fire", "Backup", CHERUKIKI_19_109H));
+		CardData inSet = placeFreshP1(mw, "Kukki-Chebukki", "XI", DULL_ABILITY);
+
+		assertFalse(canUseDullAbilityThisTurn(mw, inSet),
+				"\"you control\" — the opponent's Cherukiki frees nothing of mine");
+	}
 }

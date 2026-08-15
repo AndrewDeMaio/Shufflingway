@@ -266,6 +266,14 @@ class DamageResolver {
 			}
 		}
 
+		// Party-conditioned shield: "If [card] forms a party, the damage dealt to [card | the
+		// Forwards forming this party] becomes 0 instead." A replacement rather than a reduction,
+		// so it answers before the field-wide modifiers rather than after them.
+		if (amount > 0 && partyDamageNullified(card, isP1)) {
+			mw.logEntry(card.name() + " — damage becomes 0 (forming a party)");
+			return 0;
+		}
+
 		// Passive field ability on other friendly cards: field-wide incoming damage modifier
 		amount = applyFieldWideDamageModifiers(amount, card, isP1, zone, idx, fromAbility);
 
@@ -287,6 +295,38 @@ class DamageResolver {
 		}
 
 		return amount;
+	}
+
+	/**
+	 * Returns {@code true} when {@code card}'s damage is replaced with 0 because it is in a party
+	 * and something in that party says so — {@link AutoAbilityTriggers#FA_PARTY_SELF_DAMAGE_NULLIFY}.
+	 *
+	 * <p>Two scopes reach this, and both are read off the party rather than off the damaged card
+	 * alone. Chocobo 5-060C and Paladin 12-102C protect only themselves, so their printing has to be
+	 * on {@code card} and name it twice over. Chelinka 20-049R protects every Forward in the party,
+	 * so any member's printing covers {@code card} — including Chelinka's own copy, which is why the
+	 * carrier is not excluded from the walk.
+	 *
+	 * <p>Field abilities are read through {@code effectiveFieldAbilities}, so a granted copy of
+	 * either printing is honoured exactly as a printed one is.
+	 */
+	private boolean partyDamageNullified(CardData card, boolean isP1) {
+		if (!mw.isFormingParty(card, isP1)) return false;
+		for (FieldAbility fa : mw.effectiveFieldAbilities(card)) {
+			Matcher m = AutoAbilityTriggers.FA_PARTY_SELF_DAMAGE_NULLIFY.matcher(fa.effectText());
+			if (m.matches() && m.group("wholeparty") == null
+					&& m.group("card").trim().equalsIgnoreCase(card.name())
+					&& m.group("target").trim().equalsIgnoreCase(card.name())) return true;
+		}
+		for (CardData member : mw.currentPartyMembers(isP1)) {
+			if (mw.lostAbilitiesCards.contains(member)) continue;
+			for (FieldAbility fa : mw.effectiveFieldAbilities(member)) {
+				Matcher m = AutoAbilityTriggers.FA_PARTY_SELF_DAMAGE_NULLIFY.matcher(fa.effectText());
+				if (m.matches() && m.group("wholeparty") != null
+						&& m.group("card").trim().equalsIgnoreCase(member.name())) return true;
+			}
+		}
+		return false;
 	}
 
 	/**

@@ -16,6 +16,7 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
@@ -268,6 +269,11 @@ final class AutoAbilityTriggers {
 	 * Groups: {@code card}, {@code threshold} (optional), {@code threshcmp} (present iff
 	 * {@code threshold} is), {@code sourceclause} (optional), {@code reduceby} (optional),
 	 * {@code setsto} (optional), {@code increaseby} (optional).
+	 *
+	 * <p>The source clauses accept "from" as well as "by". Two printings word it that way and mean
+	 * no different — Mystic Knight 3-048C ("receives damage from Summons or abilities") and the
+	 * ability Behemoth 4-111H grants itself ("receives damage from a Forward"); every other printing
+	 * says "by", which is why the alternative went unnoticed.
 	 */
 	static final Pattern FA_DAMAGE_MODIFIER = Pattern.compile(
 		"(?i)^If\\s+(?<card>.+?)\\s+(?:is\\s+dealt|receives)\\s+(?:(?<threshold>\\d+)\\s+damage\\s+or\\s+(?<threshcmp>more|less)|damage)" +
@@ -276,14 +282,14 @@ final class AutoAbilityTriggers {
 			// This one names the source of an *ability's* damage (Gawain 7-107R) — the narrower
 			// reading, and the opposite answer: one applies only to battle damage, the other only
 			// to ability damage.
-			"\\s+by\\s+a\\s+Forward(?:'s|s')\\s+abilit(?:y|ies)" +
-			"|\\s+by\\s+a\\s+Forward" +
+			"\\s+(?:by|from)\\s+a\\s+Forward(?:'s|s')\\s+abilit(?:y|ies)" +
+			"|\\s+(?:by|from)\\s+a\\s+Forward" +
 			// Ahead of the Summon and ability branches, which would otherwise never see it —
 			// they are the narrower readings and "Character" names the source, not the effect.
-			"|\\s+by\\s+a\\s+Character" +
+			"|\\s+(?:by|from)\\s+a\\s+Character" +
 			"|\\s+other\\s+than\\s+battle\\s+damage" +
-			"|\\s+by\\s+(?:your\\s+opponent's\\s+)?(?:a\\s+)?Summons?(?:\\s+or\\s+(?:an?\\s+)?abilit(?:y|ies))?" +
-			"|\\s+by\\s+(?:your\\s+opponent's\\s+)?(?:a\\s+Summon\\s+or\\s+)?(?:an?\\s+)?abilit(?:y|ies)" +
+			"|\\s+(?:by|from)\\s+(?:your\\s+opponent's\\s+)?(?:a\\s+)?Summons?(?:\\s+or\\s+(?:an?\\s+)?abilit(?:y|ies))?" +
+			"|\\s+(?:by|from)\\s+(?:your\\s+opponent's\\s+)?(?:a\\s+Summon\\s+or\\s+)?(?:an?\\s+)?abilit(?:y|ies)" +
 			// The subject's own power, named either by pronoun or by repeating the card's name
 			// (The Fiend 20-114L, Ifrit (XVI) 26-003R). Comma-free so the possessive branch cannot
 			// reach past the clause into the effect half of the sentence.
@@ -409,6 +415,27 @@ final class AutoAbilityTriggers {
 	 */
 	static final Pattern FA_PARTY_DAMAGE_PROTECTION = Pattern.compile(
 		"(?i)^If\\s+a\\s+Forward\\s+forming\\s+a\\s+party\\s+with\\s+(?<source>.+?)\\s+is\\s+dealt\\s+damage,\\s+the\\s+damage\\s+becomes\\s+0\\s+instead\\.?$"
+	);
+
+	/**
+	 * The self-conditioned twin of {@link #FA_PARTY_DAMAGE_PROTECTION}: "If [card] forms a party,
+	 * the damage dealt to [whom] becomes 0 instead." Chocobo 5-060C and Paladin 12-102C name
+	 * themselves as the protected card; Chelinka 20-049R names the whole party instead.
+	 *
+	 * <p>The difference from its sibling is which side of the party the condition sits on. That one
+	 * is printed on the protector and asks whether the <em>damaged</em> Forward is partied with it;
+	 * this one asks whether the <em>printing</em> card is in a party at all, and then protects either
+	 * itself or everyone alongside it.
+	 *
+	 * <p>Group {@code card} is the Forward whose party membership is the condition, checked against
+	 * the carrier by the caller. {@code wholeparty} is present only for the Chelinka wording and is
+	 * matched first, so the lazy {@code target} group cannot claim it; exactly one of the two is
+	 * non-null on any match.
+	 */
+	static final Pattern FA_PARTY_SELF_DAMAGE_NULLIFY = Pattern.compile(
+		"(?i)^If\\s+(?<card>.+?)\\s+forms\\s+a\\s+party,\\s+the\\s+damage\\s+dealt\\s+to\\s+" +
+		"(?:(?<wholeparty>the\\s+Forwards?\\s+forming\\s+this\\s+party)|(?<target>.+?))" +
+		"\\s+becomes\\s+0\\s+instead[.!]?$"
 	);
 
 	/**
@@ -649,6 +676,77 @@ final class AutoAbilityTriggers {
 		"(?i)^The\\s+Characters?\\s+(?:your\\s+)?opponent\\s+controls?\\s+cannot\\s+use\\s+" +
 		"special\\s+or\\s+action\\s+abilit(?:y|ies)[.!]?$"
 	);
+
+	/**
+	 * "[Self and] the [filter] you control can use action abilities [and special abilities] with
+	 * 《Dull》 in the cost as though they had Haste." — Cherukiki 19-109H and Zangan 26-070H.
+	 *
+	 * <p>Not a Haste grant. It lifts one specific consequence of Haste — that a Character may pay a
+	 * 《Dull》 cost the turn it arrives — and leaves the rest alone: a Forward under this permission
+	 * still cannot attack on the turn it enters. Modelling it as {@code Trait.HASTE} would hand out
+	 * the attack too, so it is asked as its own question at the point the dull cost is checked.
+	 *
+	 * <p>Zangan's printing shows both halves the grammar allows: an optional leading self-reference
+	 * ("Zangan and …"), and a filtered set that names no card type ("the Card Name Tifa you
+	 * control"), which reaches any Character. Cherukiki's names a type but no self ("The Category XI
+	 * Forwards you control"). Which kinds of ability are covered differs too — only Zangan's extends
+	 * to Special Abilities, which rule 6-1-1 makes a separate kind.
+	 */
+	static final Pattern FA_DULL_COST_AS_THOUGH_HASTE = Pattern.compile(
+		"(?i)^(?:(?<selfname>[^,]+?)\\s+and\\s+)?(?:The\\s+)?" +
+		"(?:Category\\s+(?<category>\\S+)|Card\\s+Name\\s+(?<cardname>.+?)|Job\\s+(?<job>.+?))\\s*" +
+		"(?<type>Forwards?|Backups?|Monsters?|Characters?)?\\s*" +
+		"you\\s+control\\s+can\\s+use\\s+action\\s+abilit(?:y|ies)" +
+		"(?<special>\\s+and\\s+special\\s+abilit(?:y|ies))?\\s+" +
+		"with\\s+《Dull》\\s+in\\s+the\\s+cost\\s+as\\s+though\\s+(?:they|it)\\s+had\\s+Haste[.!]?$"
+	);
+
+	/**
+	 * Who may pay a 《Dull》 cost the turn they arrive, and for which kinds of ability.
+	 *
+	 * @param selfName    the carrier named alongside the filtered set, or {@code null}; checked by
+	 *     identity against the carrier, since a card naming itself means that copy
+	 * @param inclSpecial whether Special Abilities are covered as well as action abilities
+	 */
+	record DullCostHasteGrant(String selfName, String cardName, String category, String job,
+			boolean inclForwards, boolean inclBackups, boolean inclMonsters, boolean inclSpecial) {
+
+		/** True when this grant speaks to {@code ability} at all — a dull cost of a covered kind. */
+		boolean coversAbility(ActionAbility ability) {
+			return ability.requiresDull() && (inclSpecial || !ability.isSpecial());
+		}
+
+		/** True when {@code c} is inside the filtered set, using the shared field-filter rules. */
+		boolean coversCard(CardData c) {
+			if (c == null) return false;
+			boolean typeOk = (inclForwards && c.isForward())
+			              || (inclBackups  && c.isBackup())
+			              || (inclMonsters && (c.isMonster() || c.alsoCountsAsMonster()));
+			return typeOk
+				&& CardFilters.meetsCardNameFilter(c, cardName)
+				&& CardFilters.meetsCategoryFilter(c, category)
+				&& CardFilters.meetsJobFilter(c, job);
+		}
+	}
+
+	/** Reads a {@link DullCostHasteGrant} out of a field ability, or {@code null} if it is not one. */
+	static DullCostHasteGrant parseDullCostHasteGrant(String effectText) {
+		if (effectText == null) return null;
+		Matcher m = FA_DULL_COST_AS_THOUGH_HASTE.matcher(effectText.trim());
+		if (!m.matches()) return null;
+		String type = m.group("type");
+		String t    = type == null ? "character" : type.toLowerCase(Locale.ROOT);
+		boolean any = t.startsWith("character");
+		return new DullCostHasteGrant(
+				m.group("selfname") != null ? m.group("selfname").trim() : null,
+				m.group("cardname") != null ? m.group("cardname").trim() : null,
+				m.group("category") != null ? m.group("category").trim() : null,
+				m.group("job")      != null ? m.group("job").trim()      : null,
+				any || t.startsWith("forward"),
+				any || t.startsWith("backup"),
+				any || t.startsWith("monster"),
+				m.group("special") != null);
+	}
 
 	/** Returns true if {@code card} locks the opposing player's Characters out of used abilities. */
 	static boolean hasOppCharacterAbilityLock(CardData card) {

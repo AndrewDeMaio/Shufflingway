@@ -5104,6 +5104,26 @@ public class MainWindow {
 	}
 
 	/**
+	 * Whether {@code card} has {@code trait} right now, wherever it stands on {@code isP1}'s field —
+	 * for callers that hold a card but no row and index.
+	 *
+	 * <p>Falls back to the printed trait when the card is not on the field, which is the honest
+	 * answer for something being asked about from hand or the Break Zone: nothing on the board is
+	 * granting or stripping traits for it.
+	 */
+	boolean effectiveCardHasTrait(CardData card, boolean isP1, CardData.Trait trait) {
+		ForwardTarget slot = findFieldSlot(card, isP1);
+		if (slot == null) return card.hasTrait(trait);
+		return switch (slot.zone()) {
+			case FORWARD -> effectiveHasTrait(isP1, slot.idx(), trait);
+			case BACKUP  -> effectiveBackupHasTrait(isP1, slot.idx(), trait);
+			case MONSTER -> effectiveMonsterHasTrait(isP1, slot.idx(), trait);
+			// findFieldSlot only ever reports the three field rows.
+			case BREAK_ZONE -> card.hasTrait(trait);
+		};
+	}
+
+	/**
 	 * Returns the traits the forward at {@code idx} should show a {@link TraitTab} for, in a
 	 * stable display order. Only traits {@link TraitTab#hasGlyph} can draw are considered, and
 	 * each is resolved through {@code effectiveHasTrait} so granted, temporary and suppressed
@@ -7433,6 +7453,42 @@ public class MainWindow {
 		for (CardData c : fwds) if (!lostAbilitiesCards.contains(c) && AutoAbilityTriggers.hasOppFirstSummonCancel(c)) return true;
 		for (CardData c : bkps) if (c != null && !lostAbilitiesCards.contains(c) && AutoAbilityTriggers.hasOppFirstSummonCancel(c)) return true;
 		for (CardData c : mons) if (!lostAbilitiesCards.contains(c) && AutoAbilityTriggers.hasOppFirstSummonCancel(c)) return true;
+		return false;
+	}
+
+	/**
+	 * Returns {@code true} when {@code source} may pay {@code ability}'s 《Dull》 cost on the turn it
+	 * arrived — because it has Haste, or because something on its side grants the dull-cost half of
+	 * Haste to it (Cherukiki 19-109H, Zangan 26-070H).
+	 *
+	 * <p>The grant is asked here rather than folded into {@code Trait.HASTE} because it is only the
+	 * dull-cost half: a Forward under it still may not attack the turn it enters. Which kinds of
+	 * ability it reaches is part of the grant — Cherukiki's covers action abilities alone, Zangan's
+	 * covers Special Abilities too.
+	 */
+	boolean canPayDullCostWhileSummoningSick(CardData source, ActionAbility ability, boolean isP1) {
+		if (effectiveCardHasTrait(source, isP1, CardData.Trait.HASTE)) return true;
+		List<CardData> fwds = isP1 ? p1ForwardCards : p2ForwardCards;
+		CardData[]     bkps = isP1 ? p1BackupCards  : p2BackupCards;
+		List<CardData> mons = isP1 ? p1MonsterCards : p2MonsterCards;
+		for (CardData src : fwds) if (grantsDullCostHaste(src, source, ability)) return true;
+		for (CardData src : bkps) if (src != null && grantsDullCostHaste(src, source, ability)) return true;
+		for (CardData src : mons) if (grantsDullCostHaste(src, source, ability)) return true;
+		return false;
+	}
+
+	/** Whether {@code src}'s field abilities let {@code target} pay {@code ability}'s dull cost early. */
+	private boolean grantsDullCostHaste(CardData src, CardData target, ActionAbility ability) {
+		if (lostAbilitiesCards.contains(src)) return false;
+		for (FieldAbility fa : effectiveFieldAbilities(src)) {
+			AutoAbilityTriggers.DullCostHasteGrant g =
+					AutoAbilityTriggers.parseDullCostHasteGrant(fa.effectText());
+			if (g == null || !g.coversAbility(ability)) continue;
+			// "Zangan and …" — by identity, since a card naming itself means that copy.
+			if (src == target && g.selfName() != null
+					&& g.selfName().equalsIgnoreCase(src.name())) return true;
+			if (g.coversCard(target)) return true;
+		}
 		return false;
 	}
 
@@ -10391,7 +10447,12 @@ public class MainWindow {
 		}
 		if (ability.requiresDull()) {
 			if (state != CardState.ACTIVE) return false;
-			if (playedTurn > 0 && gameState.getTurnNumber() - playedTurn < 2) return false;
+			// Summoning sickness. Haste lifts it for dull costs as well as for attacking, and the
+			// check used to ignore Haste entirely — a Forward with printed Haste could not use its
+			// own 《Dull》 ability on the turn it arrived. Cherukiki 19-109H and Zangan 26-070H hand
+			// out this half of Haste on its own, and are read by the same query.
+			if (playedTurn > 0 && gameState.getTurnNumber() - playedTurn < 2
+					&& !canPayDullCostWhileSummoningSick(source, ability, isP1)) return false;
 		}
 		if (ability.isSpecial()) {
 			String primerName = priming.getPrimerCardName(source, isP1);
@@ -10965,6 +11026,23 @@ public class MainWindow {
 	 * <p>A primed Forward declares its attack as the top card while power is computed against the
 	 * card underneath it, so a stack is matched by slot as well as by instance.
 	 */
+	/**
+	 * Returns {@code true} when {@code card} is currently one of two or more Forwards {@code isP1}
+	 * has declared as attackers — the board condition "forms a party" names.
+	 *
+	 * <p>Read the same way {@link #fpgPartyConditionMet} reads it, so the party-conditioned power
+	 * grants and the party-conditioned damage shields agree about when a party exists.
+	 */
+	boolean isFormingParty(CardData card, boolean isP1) {
+		return declaredAttackers(isP1).size() >= 2 && isDeclaredAttacker(card, isP1);
+	}
+
+	/** Every Forward in the party {@code isP1} currently has declared, or empty when there is none. */
+	List<CardData> currentPartyMembers(boolean isP1) {
+		List<CardData> declared = declaredAttackers(isP1);
+		return declared.size() >= 2 ? declared : List.of();
+	}
+
 	private boolean isDeclaredAttacker(CardData target, boolean isP1) {
 		List<CardData> declared = declaredAttackers(isP1);
 		for (CardData atk : declared) if (atk == target) return true;
