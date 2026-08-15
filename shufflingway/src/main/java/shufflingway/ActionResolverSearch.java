@@ -719,6 +719,28 @@ final class ActionResolverSearch {
             ctx.lookAtTopDeckCastSummonFreeRestBottom(count, maxCost);
         };
     }
+    /**
+     * Parses "Reveal the top N cards of your deck. Remove 1 [Category X] card among them from the
+     * game and return the other cards to the bottom of your deck in any order. You can cast it at
+     * any time you could normally cast it this turn." — Snow 18-109C, Warrior of Light 20-004C.
+     *
+     * <p>One effect rather than three: the removal exists to make the card castable, and the
+     * leftovers going to the bottom is the same interaction the player is already arranging. See
+     * the pattern's own note for why this must be dispatched ahead of
+     * {@code tryParseRemoveNamedFromGame}.
+     */
+    static Consumer<GameContext> tryParseRevealTopNRfgOneCastableRestBottom(String text) {
+        Matcher m = REVEAL_TOP_N_RFG_ONE_CASTABLE_REST_BOTTOM.matcher(text.trim());
+        if (!m.matches()) return null;
+        int    reveal   = Integer.parseInt(m.group("reveal"));
+        String category = m.group("category") != null ? m.group("category").trim() : null;
+        return ctx -> {
+            ctx.logEntry("Effect: Reveal top " + reveal + " — remove 1 "
+                    + (category != null ? "Category " + category + " " : "")
+                    + "card from the game (castable this turn), rest to bottom");
+            ctx.revealTopNRemoveOneFromGameCastableThisTurnRestBottom(reveal, category);
+        };
+    }
     static Consumer<GameContext> tryParseRemoveTopOfDeckFromGame(String text, CardData source) {
         Matcher m = REMOVE_TOP_OF_DECK_FROM_GAME.matcher(text);
         if (!m.find()) return null;

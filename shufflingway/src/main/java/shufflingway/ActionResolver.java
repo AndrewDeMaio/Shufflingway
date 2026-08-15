@@ -826,6 +826,11 @@ public class ActionResolver {
         result = tryParseRemoveAllOppBzFromGame(effectText);
         if (result != null) return result;
 
+        // Must precede tryParseRemoveNamedFromGame: that parser find()s a lazy name group and
+        // claims this text off its middle clause, leaving the reveal and the cast permission behind.
+        result = tryParseRevealTopNRfgOneCastableRestBottom(effectText);
+        if (result != null) return result;
+
         result = tryParseRemoveNamedFromGame(effectText, source);
         if (result != null) return result;
 
@@ -1591,6 +1596,7 @@ public class ActionResolver {
         if (tryParseEndOfOppTurnPlayNamedOntoField(effectText) != null) return "EndOfOppTurnPlayNamedOntoField";
         if (tryParseEndOfTurnPlayNamedOntoField(effectText)    != null) return "EndOfTurnPlayNamedOntoField";
         if (tryParseRemoveAllOppBzFromGame(effectText)         != null) return "RemoveAllOppBzFromGame";
+        if (tryParseRevealTopNRfgOneCastableRestBottom(effectText) != null) return "RevealTopNRfgOneCastableRestBottom";
         if (tryParseRemoveNamedFromGame(effectText, source)   != null) return "RemoveNamedFromGame";
         if (tryParseBreakSourceCard(effectText, source)        != null) return "BreakSourceCard";
         if (tryParsePutSourceIntoBreakZone(effectText, source) != null) return "PutSourceIntoBreakZone";
@@ -2310,6 +2316,7 @@ public class ActionResolver {
         if (tryParseEndOfOppTurnPlayNamedOntoField(effectText) != null)     return "EndOfOppTurnPlayNamedOntoField";
         if (tryParseEndOfTurnPlayNamedOntoField(effectText)  != null)      return "EndOfTurnPlayNamedOntoField";
         if (tryParseRemoveAllOppBzFromGame(effectText)       != null)      return "RemoveAllOppBzFromGame";
+        if (tryParseRevealTopNRfgOneCastableRestBottom(effectText) != null) return "RevealTopNRfgOneCastableRestBottom";
         if (tryParseRemoveNamedFromGame(effectText, source) != null)        return "RemoveNamedFromGame";
         if (tryParseBreakSourceCard(effectText, source)        != null)     return "BreakSourceCard";
         if (tryParsePutSourceIntoBreakZone(effectText, source) != null)     return "PutSourceIntoBreakZone";

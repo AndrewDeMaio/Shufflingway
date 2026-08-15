@@ -10739,10 +10739,15 @@ public class MainWindow {
 		String override = elementOverrideMap.get(c);
 		List<String> base = (override != null) ? List.of(override) : Arrays.asList(c.elements());
 		Set<String> gained = gainedOpponentCharacterElements(c);
-		if (gained.isEmpty()) return base;
+		// Shantotto Re-099L/1-107L names its six Elements outright rather than querying the board,
+		// so the set is read off the card. It joins the same union as the queried form, and a card
+		// stripped of its abilities loses it exactly as it loses that one.
+		Set<String> printed = selfGrantedElements(c);
+		if (gained.isEmpty() && printed.isEmpty()) return base;
 		// LinkedHashSet: the printed Elements keep their printed order and the gained ones follow
 		// in board order, so anything that renders this list reads the same way twice running.
 		Set<String> all = new LinkedHashSet<>(base);
+		all.addAll(printed);
 		all.addAll(gained);
 		return List.copyOf(all);
 	}
@@ -10757,11 +10762,30 @@ public class MainWindow {
 	 * enters or leaves the other side, so a stored copy would go stale the moment it was written.
 	 */
 	/**
-	 * {@link #gainedOpponentCharacterElements} as a list, for the payment dialogs. They are handed
-	 * only the paying player's side of the board, so they cannot work the answer out themselves.
+	 * Every Element {@code c} has gained beyond its printed ones, as a list, for the payment
+	 * dialogs. They are handed only the paying player's side of the board, so they cannot work the
+	 * queried half out themselves — and the self-granted half (Shantotto) has to arrive by the same
+	 * route, or discarding Shantotto for CP would offer only its printed Earth.
 	 */
 	List<String> gainedElementsForPayment(CardData c) {
-		return List.copyOf(gainedOpponentCharacterElements(c));
+		Set<String> out = new LinkedHashSet<>(selfGrantedElements(c));
+		out.addAll(gainedOpponentCharacterElements(c));
+		return List.copyOf(out);
+	}
+
+	/**
+	 * The Elements a card grants itself outright — Shantotto's "If Shantotto is on the field,
+	 * [it | Shantotto] gains Elements of Fire, Ice, Wind, Earth, Lightning and Water."
+	 *
+	 * <p>Read through {@link CardData#selfGainedElements}, which shares its pattern with the CP
+	 * accessor that already drove this text, rather than through a second parser: "gains Elements
+	 * of" is one rule, and the payment dialog and the Element tests must not be able to disagree
+	 * about what it grants. Empty once an effect has stripped the card's abilities.
+	 */
+	private Set<String> selfGrantedElements(CardData c) {
+		if (lostAbilitiesCards.contains(c)) return Set.of();
+		List<String> extra = c.selfGainedElements();
+		return extra.isEmpty() ? Set.of() : new LinkedHashSet<>(extra);
 	}
 
 	private Set<String> gainedOpponentCharacterElements(CardData c) {
@@ -11679,6 +11703,18 @@ public class MainWindow {
 					int amount = Integer.parseInt(any.group("amount"));
 					boost += amount;
 					logEntry(source.name() + " — Forward battle damage increased by " + amount);
+				}
+				// The Character-scoped form, Lehftia 21-020C and Iroha 8-004R. Its Summon arm is
+				// meaningless in combat and is simply absent from the match here; the attacker is a
+				// combatant and so is a Character for this purpose whatever row it came from.
+				Matcher chr = AutoAbilityTriggers.FA_ELEMENT_SUMMON_OR_CHARACTER_DAMAGE_BOOST.matcher(fa.effectText());
+				if (chr.matches()) {
+					String elem = AutoAbilityTriggers.characterArmElement(chr);
+					if (elem != null && effectiveContainsElement(attacker, elem)) {
+						int amount = Integer.parseInt(chr.group("amount"));
+						boost += amount;
+						logEntry(source.name() + " — " + elem + " Character combat damage increased by " + amount);
+					}
 				}
 			}
 		}

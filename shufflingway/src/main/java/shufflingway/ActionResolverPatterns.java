@@ -1178,6 +1178,25 @@ final class ActionResolverPatterns {
         "(?i)Remove\\s+the\\s+top\\s+(?:(?<count>\\d+)\\s+cards?|card)\\s+of\\s+your\\s+deck\\s+from\\s+(?:the\\s+)?game\\.?"
     );
     /**
+     * Matches "Reveal the top N cards of your deck. Remove 1 [Category X] card among them from the
+     * game and return the other cards to the bottom of your deck in any order. You can cast it at
+     * any time you could normally cast it this turn." — Snow 18-109C (with the Category filter) and
+     * Warrior of Light 20-004C (without).
+     *
+     * <p>Must precede {@code tryParseRemoveNamedFromGame} in all three chains. That parser matches
+     * with {@code find()} on a lazy name group, so it claims this text off its middle clause with
+     * {@code named = "1 Category XIII card among them"} — a card name that is on nobody's field, so
+     * the ability parsed and then did nothing at all.
+     * Groups: {@code reveal}, {@code category} (optional).
+     */
+    static final Pattern REVEAL_TOP_N_RFG_ONE_CASTABLE_REST_BOTTOM = Pattern.compile(
+        "(?i)^Reveal\\s+the\\s+top\\s+(?<reveal>\\d+)\\s+cards?\\s+of\\s+your\\s+deck\\.\\s+" +
+        "Remove\\s+1\\s+(?:Category\\s+(?<category>[A-Za-z0-9\\-]+)\\s+)?card\\s+among\\s+them\\s+" +
+        "from\\s+the\\s+game\\s+and\\s+return\\s+the\\s+other\\s+cards?\\s+to\\s+the\\s+bottom\\s+" +
+        "of\\s+your\\s+deck\\s+in\\s+any\\s+order\\.\\s+" +
+        "You\\s+can\\s+cast\\s+it\\s+at\\s+any\\s+time\\s+you\\s+could\\s+normally\\s+cast\\s+it\\s+this\\s+turn[.!]?\\s*$"
+    );
+    /**
      * Matches the compound followup "Remove the top card of your deck from the game.
      * Deal it/them N damage for each CP required to play/cast the removed card."
      * Group {@code base} — damage per CP.

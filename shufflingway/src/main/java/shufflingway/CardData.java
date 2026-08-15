@@ -518,11 +518,17 @@ public record CardData(
     );
 
     /**
-     * "If [Name] is on the field, it gains Elements of Fire, Ice, Wind, Earth, Lightning and Water."
-     * Group {@code elems} — comma-and-separated element list.
+     * "If [Name] is on the field, [it | [Name]] gains Elements of Fire, Ice, Wind, Earth, Lightning
+     * and Water." — Shantotto, whose two printings word the subject differently: 1-107L says "it
+     * gains" and the reprint Re-099L/1-107L spells the name out. Both mean the same thing, so both
+     * route here rather than the reprint getting a parallel mechanism of its own.
+     *
+     * <p>{@code subject} is lazy and otherwise unrestricted, so it will happily absorb a name that
+     * is not the carrier's; {@link #backupCpExtraElements} checks it, and any future reader must.
+     * Groups: {@code cond}, {@code subject}, {@code elems} — comma-and-separated element list.
      */
     private static final Pattern BACKUP_GAINS_ELEMENTS = Pattern.compile(
-        "(?i)If\\s+.+?\\s+is\\s+on\\s+the\\s+field,\\s+it\\s+gains\\s+Elements?\\s+of\\s+" +
+        "(?i)If\\s+(?<cond>[^,]+?)\\s+is\\s+on\\s+the\\s+field,\\s+(?<subject>[^,]+?)\\s+gains\\s+Elements?\\s+of\\s+" +
         "(?<elems>(?:(?:Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)(?:,\\s*|\\s+and\\s+))*" +
         "(?:Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark))[.!]?"
     );
@@ -535,8 +541,31 @@ public record CardData(
     public List<String> backupCpExtraElements() {
         Matcher m = BACKUP_CP_EXTRA_ELEMENTS.matcher(textEn);
         if (m.find()) return List.of(m.group("elems").split("(?i)\\s+or\\s+"));
+        return selfGainedElements();
+    }
+
+    /**
+     * The Elements this card grants itself through "If [self] is on the field, [it | [self]] gains
+     * Elements of A, B and C." (Shantotto), or an empty list when it prints no such ability.
+     *
+     * <p>Split from its "can produce X CP" sibling above because the two say different things and
+     * only one of them is about Elements: producing CP of an Element does not make a card that
+     * Element, while gaining an Element does — which is why {@code MainWindow.effectiveElements}
+     * reads this and not {@link #backupCpExtraElements}. Both still resolve through the one
+     * {@link #BACKUP_GAINS_ELEMENTS} pattern, so the CP dialog and the Element tests cannot
+     * disagree about what the sentence grants.
+     *
+     * <p>Both name captures are checked against the carrier: the subject group is lazy and
+     * unrestricted, so without this a sentence granting Elements to some other card would be read
+     * as a self-grant. "it" is the pronoun form, and refers to whoever the condition names.
+     */
+    public List<String> selfGainedElements() {
         Matcher mg = BACKUP_GAINS_ELEMENTS.matcher(textEn);
-        if (mg.find()) return List.of(mg.group("elems").split("(?i),\\s*|\\s+and\\s+"));
+        if (mg.find()
+                && mg.group("cond").trim().equalsIgnoreCase(name)
+                && (mg.group("subject").trim().equalsIgnoreCase("it")
+                    || mg.group("subject").trim().equalsIgnoreCase(name)))
+            return List.of(mg.group("elems").split("(?i),\\s*|\\s+and\\s+"));
         return List.of();
     }
 
@@ -3617,6 +3646,24 @@ public record CardData(
     );
 
     /**
+     * The conditional twin of {@link #UNCONDITIONAL_NAMED_CANNOT_BE_CHOSEN}:
+     * "If you control Card Name X, it cannot be chosen by your opponent's
+     * [Summons or abilities | Summons | abilities]." — Serah 1-045R (for Snow).
+     *
+     * <p>The pronoun "it" refers back to the card the condition names, so the condition and the
+     * target are the same card: the shield covers X while X is on the field. That makes the
+     * condition redundant with the target lookup, which already walks the field — but it is kept
+     * so the parsed shape says what the text says, and so a future printing whose "it" resolves
+     * elsewhere cannot be folded in here by accident.
+     * Groups: {@code name}, {@code scope}.
+     */
+    private static final Pattern IF_CONTROL_NAMED_IT_CANNOT_BE_CHOSEN = Pattern.compile(
+        "(?i)^If\\s+you\\s+control\\s+(?:an?\\s+)?Card\\s+Name\\s+(?<name>.+?),\\s+" +
+        "it\\s+cannot\\s+be\\s+chosen\\s+by\\s+your\\s+opponent's\\s+" +
+        "(?<scope>Summons?\\s+or\\s+abilities|Summons?|abilities)\\s*[.!]?\\s*$"
+    );
+
+    /**
      * The same shield handed to a filtered <em>set</em> rather than a named card:
      * "The [type] [with Trait] [other than X] you control cannot be chosen by your opponent's
      * [Summons or abilities | Summons | abilities]." — Silver Dragon 23-044R (Monsters, excluding
@@ -4240,6 +4287,26 @@ public record CardData(
                     scope.contains("summon"), scope.contains("abilit"), false, null, 0, 0, false)
                     // The pattern requires the "your opponent's" qualifier, so every match is
                     // opponent-scoped: the controller may still choose their own protected card.
+                    .asOpponentScopedChosenImmunity());
+        }
+
+        // Parse the conditional named form — "If you control Card Name Snow, it cannot be chosen by
+        // your opponent's abilities." (Serah 1-045R). "it" is the card the condition names, so the
+        // condition and the target carry the same name.
+        for (String raw : textEn.split("(?i)\\[\\[br\\]\\]")) {
+            String seg = SUMMON_MARKUP.matcher(raw.trim()).replaceAll("").trim();
+            if (seg.isEmpty()) continue;
+            Matcher m = IF_CONTROL_NAMED_IT_CANNOT_BE_CHOSEN.matcher(seg);
+            if (!m.matches()) continue;
+            String target = m.group("name").trim();
+            ControlCondition cond = parseControlCondition("Card Name " + target);
+            if (cond == null) continue;
+            String scope = m.group("scope").toLowerCase(Locale.ROOT);
+            result.add(new IfControlBoost(List.of(cond), "", target, null, 0,
+                    EnumSet.noneOf(Trait.class), "",
+                    scope.contains("summon"), scope.contains("abilit"), false, null, 0, 0, false)
+                    // The pattern requires the "your opponent's" qualifier, so the controller may
+                    // still choose their own protected card — as with the unconditional form.
                     .asOpponentScopedChosenImmunity());
         }
 

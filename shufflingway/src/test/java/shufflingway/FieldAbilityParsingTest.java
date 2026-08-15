@@ -144,6 +144,13 @@ public class FieldAbilityParsingTest {
         // row closes a reporting gap rather than turning a rule on.
         if (AutoAbilityTriggers.FA_ELEMENT_SUMMON_DAMAGE_BOOST.matcher(fa.effectText()).find()) return true;
         if (AutoAbilityTriggers.FA_PARTY_DAMAGE_PROTECTION.matcher(fa.effectText()).find()) return true;
+        // White Mage 3-136C. Read per damage resolution by DamageResolver.selfOrPartyDamageReduction,
+        // which name-checks both captures against the carrier exactly as this does.
+        if (selfOrPartyDamageReduction(fa, source)) return true;
+        // Lehftia 21-020C, Iroha 8-004R. Read on the dealing side by all three damage paths —
+        // Summon, ability and combat — each taking the arm that applies to it.
+        if (AutoAbilityTriggers.FA_ELEMENT_SUMMON_OR_CHARACTER_DAMAGE_BOOST
+                .matcher(fa.effectText()).matches()) return true;
         // Chocobo 5-060C, Paladin 12-102C, Chelinka 20-049R. Read per damage resolution by
         // DamageResolver.partyDamageNullified, which matches it exactly this way.
         if (AutoAbilityTriggers.FA_PARTY_SELF_DAMAGE_NULLIFY.matcher(fa.effectText()).matches()) return true;
@@ -371,6 +378,18 @@ public class FieldAbilityParsingTest {
         return inner != null && CardData.parseFieldNonDmgBreakShieldGrant(inner) != null;
     }
 
+    /**
+     * True when {@code fa} is White Mage 3-136C's self-or-party damage reduction and both of its
+     * name captures are the carrier — the same pair of checks
+     * {@code DamageResolver.selfOrPartyDamageReduction} makes before applying it.
+     */
+    private static boolean selfOrPartyDamageReduction(FieldAbility fa, CardData source) {
+        Matcher m = AutoAbilityTriggers.FA_SELF_OR_PARTY_DAMAGE_REDUCTION.matcher(fa.effectText());
+        return m.matches()
+                && m.group("card").trim().equalsIgnoreCase(source.name())
+                && m.group("partner").trim().equalsIgnoreCase(source.name());
+    }
+
     /** {@link #selfNamedCompulsion} for the patterns that call their card-name group {@code name}. */
     private static boolean namesItself(java.util.regex.Pattern p, FieldAbility fa, CardData source) {
         Matcher m = p.matcher(fa.effectText());
@@ -466,6 +485,20 @@ public class FieldAbilityParsingTest {
         }
         m = AutoAbilityTriggers.FA_PARTY_DAMAGE_PROTECTION.matcher(fa.effectText());
         if (m.find()) return "PartyDmgProtection[" + m.group("source") + "]";
+        if (selfOrPartyDamageReduction(fa, source)) {
+            m = AutoAbilityTriggers.FA_SELF_OR_PARTY_DAMAGE_REDUCTION.matcher(fa.effectText());
+            m.matches();
+            return "SelfOrPartyDmgReduction[-" + m.group("amount") + "]";
+        }
+        m = AutoAbilityTriggers.FA_ELEMENT_SUMMON_OR_CHARACTER_DAMAGE_BOOST.matcher(fa.effectText());
+        if (m.matches()) {
+            String summon = m.group("summonelement");
+            String chr    = AutoAbilityTriggers.characterArmElement(m);
+            String who = summon != null && chr != null ? summon + " Summon or " + chr + " Character"
+                       : summon != null ? summon + " Summon"
+                       : chr + " Character";
+            return "ElementSummonOrCharacterDmgBoost[" + who + " +" + m.group("amount") + "]";
+        }
         m = AutoAbilityTriggers.FA_NULLIFY_SUMMON_DAMAGE.matcher(fa.effectText());
         if (m.find()) return "NullifySummonDmg";
         m = AutoAbilityTriggers.FA_NULLIFY_ABILITY_DAMAGE.matcher(fa.effectText());

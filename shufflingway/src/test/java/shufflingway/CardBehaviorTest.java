@@ -20953,4 +20953,398 @@ public class CardBehaviorTest {
 		assertTrue(mw.isForwardBlockSelectable(0),
 				"the source can leave mid-Attack Phase, and the lock leaves with it");
 	}
+	// =========================================================================================
+	// Shantotto: "If Shantotto is on the field, [it | Shantotto] gains Elements of Fire, Ice,
+	// Wind, Earth, Lightning and Water." Two printings word the subject differently — 1-107L uses
+	// the pronoun, the reprint Re-099L/1-107L spells the name out — and only the pronoun form was
+	// being read, so the reprint granted nothing at all.
+	//
+	// The other half is what "gains Elements" means. It was driving CP production alone, which is
+	// the narrower reading: producing CP of an Element does not make a card that Element, but
+	// gaining one does. So the same list now also widens effectiveElements, where every board-aware
+	// Element comparison already goes.
+	// =========================================================================================
+
+	private static final String SHANTOTTO_PRONOUN =
+			"If Shantotto is on the field, it gains Elements of Fire, Ice, Wind, Earth, Lightning and Water.";
+	private static final String SHANTOTTO_NAMED =
+			"If Shantotto is on the field, Shantotto gains Elements of Fire, Ice, Wind, Earth, Lightning and Water.";
+
+	/** Shantotto as printed: an Earth Backup whose only text is the Element-gaining ability. */
+	private static CardData shantotto(String text) {
+		return new CardData(null, "Shantotto", "Earth", 7, 0, "Backup", false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				List.of(), List.of(), CardData.parseFieldAbilities(text, "Backup"),
+				List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				null, null, null, text);
+	}
+
+	@Test
+	void bothShantottoPrintingsGrantTheSameSixElements() {
+		List<String> six = List.of("Fire", "Ice", "Wind", "Earth", "Lightning", "Water");
+		assertEquals(six, shantotto(SHANTOTTO_PRONOUN).selfGainedElements(), "the pronoun printing");
+		assertEquals(six, shantotto(SHANTOTTO_NAMED).selfGainedElements(),
+				"the reprint spells the name out and must read identically");
+	}
+
+	@Test
+	void theElementGrantIsNameCheckedAgainstItsCarrier() {
+		assertTrue(makeForwardWithText("Ajido-Marujido", "Earth", 3, 7000, SHANTOTTO_NAMED)
+						.selfGainedElements().isEmpty(),
+				"the sentence is about Shantotto, not about whoever quotes it");
+	}
+
+	@Test
+	void shantottoCountsAsEveryElementItNames() {
+		MainWindow mw = new MainWindow();
+		CardData shan = shantotto(SHANTOTTO_NAMED);
+		mw.placeCardInFirstBackupSlot(shan);
+
+		assertTrue(mw.effectiveContainsElement(shan, "Earth"), "its printed Element stays");
+		assertTrue(mw.effectiveContainsElement(shan, "Fire"));
+		assertTrue(mw.effectiveContainsElement(shan, "Lightning"));
+		assertFalse(mw.effectiveContainsElement(shan, "Light"), "the six named stop short of Light");
+		assertFalse(mw.effectiveContainsElement(shan, "Dark"));
+	}
+
+	@Test
+	void theGrantedElementsReachTheCpPaymentPath() {
+		MainWindow mw = new MainWindow();
+		CardData shan = shantotto(SHANTOTTO_NAMED);
+		mw.placeCardInFirstBackupSlot(shan);
+
+		assertTrue(mw.gainedElementsForPayment(shan).contains("Water"),
+				"discarding it for CP must offer every Element it gained, not just its printed Earth");
+	}
+
+	@Test
+	void anAbilityStrippedShantottoIsBackToItsPrintedElement() {
+		MainWindow mw = new MainWindow();
+		CardData shan = shantotto(SHANTOTTO_NAMED);
+		mw.placeCardInFirstBackupSlot(shan);
+		mw.lostAbilitiesCards.add(shan);
+
+		assertEquals(List.of("Earth"), mw.effectiveElements(shan));
+		assertTrue(mw.gainedElementsForPayment(shan).isEmpty());
+	}
+
+	// =========================================================================================
+	// Serah 1-045R: "If you control Card Name Snow, it cannot be chosen by your opponent's
+	// abilities." The conditional twin of "The Card Name X you control cannot be chosen by …",
+	// with the pronoun standing in for the card the condition names. It rides the same
+	// IfControlBoost the unconditional form does, so the immunity lookup needed nothing new —
+	// only a parser that recognises the wording.
+	// =========================================================================================
+
+	private static final String SERAH_SNOW_SHIELD =
+			"If you control Card Name Snow, it cannot be chosen by your opponent's abilities.";
+
+	@Test
+	void serahParsesAsAConditionalNamedChoiceShield() {
+		CardData serah = makeIcbCard("Serah", "Ice", "Backup", SERAH_SNOW_SHIELD);
+
+		assertEquals(1, serah.ifControlBoosts().size());
+		IfControlBoost icb = serah.ifControlBoosts().get(0);
+		assertEquals("Snow", icb.targetCardName(), "\"it\" is the card the condition names");
+		assertTrue(icb.cannotBeChosenByAbilities());
+		assertFalse(icb.cannotBeChosenBySummons(), "the text names abilities only");
+		assertTrue(icb.chosenImmunityOpponentOnly(), "\"your opponent's\" scopes it to one side");
+		assertEquals(List.of("Snow"), icb.conditions().get(0).requiredCardNames());
+	}
+
+	@Test
+	void snowIsShieldedFromOpposingAbilitiesButNotSummons() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeIcbCard("Serah", "Ice", "Backup", SERAH_SNOW_SHIELD));
+		placeP1Forward(mw, makeForward("Snow", "Ice", 3, 7000));
+		CardData snow = mw.p1ForwardCards.get(1);
+
+		assertTrue(mw.isProtectedFromChoice(snow, true, false, false, null),
+				"an opposing ability may not choose him");
+		assertFalse(mw.isProtectedFromChoice(snow, true, false, true, null),
+				"a Summon still may — the text names abilities alone");
+		assertFalse(mw.isProtectedFromChoice(snow, true, true, false, null),
+				"and his own controller's ability may, since the grant names the opponent");
+	}
+
+	@Test
+	void theShieldCoversOnlySnowAndOnlyOnSerahsSide() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeIcbCard("Serah", "Ice", "Backup", SERAH_SNOW_SHIELD));
+		placeP1Forward(mw, makeForward("Snow", "Ice", 3, 7000));
+		placeP1Forward(mw, makeForward("Lightning", "Ice", 3, 7000));
+		placeP2Forward(mw, makeForward("Snow", "Ice", 3, 7000));
+
+		assertTrue(mw.icbGrantsImmunity("Snow", true, false));
+		assertFalse(mw.icbGrantsImmunity("Lightning", true, false),
+				"the grant names one card, not the board");
+		assertFalse(mw.icbGrantsImmunity("Snow", false, false),
+				"\"you control\" keeps it on the granter's own side");
+	}
+
+	// =========================================================================================
+	// White Mage 3-136C: "If White Mage or a Forward forming a party with White Mage receives
+	// damage, the damage decreases by 3000 instead."
+	//
+	// The reduction relative of Knight 1-165C's party shield, and it differs on both counts that
+	// matter: it reduces rather than replacing with 0, so it cannot ride the nullification path;
+	// and its first arm is unconditional, so White Mage is covered whether or not a party exists
+	// while everyone else needs one.
+	// =========================================================================================
+
+	private static final String WHITE_MAGE_TEXT =
+			"If White Mage or a Forward forming a party with White Mage receives damage, "
+			+ "the damage decreases by 3000 instead.";
+
+	@Test
+	void whiteMageProtectsItselfWithNoPartyAtAll() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeFieldAbilityCard("White Mage", "Water", "Forward", WHITE_MAGE_TEXT));
+
+		assertEquals(5000, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 0, 8000, true, false),
+				"the self arm carries no party condition");
+	}
+
+	@Test
+	void aNeighbourIsCoveredOnlyWhileTheyAreInAPartyTogether() {
+		MainWindow mw = new MainWindow();
+		enterAttackDeclarationStep(mw, true);
+		placeP1Forward(mw, makeFieldAbilityCard("White Mage", "Water", "Forward", WHITE_MAGE_TEXT));
+		CardData ally = makeForward("Ally", "Water", 3, 9000);
+		placeP1Forward(mw, ally);
+
+		assertEquals(8000, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 1, 8000, true, false),
+				"nobody is attacking, so there is no party to be forming");
+
+		mw.p1DeclaredAttackers.add(mw.p1ForwardCards.get(0));
+		mw.p1DeclaredAttackers.add(ally);
+
+		assertEquals(5000, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 1, 8000, true, false),
+				"partied with White Mage — 3000 less");
+	}
+
+	@Test
+	void aForwardAttackingAloneAlongsideWhiteMageIsNotInAPartyWithIt() {
+		MainWindow mw = new MainWindow();
+		enterAttackDeclarationStep(mw, true);
+		placeP1Forward(mw, makeFieldAbilityCard("White Mage", "Water", "Forward", WHITE_MAGE_TEXT));
+		CardData ally = makeForward("Ally", "Water", 3, 9000);
+		placeP1Forward(mw, ally);
+		mw.p1DeclaredAttackers.add(ally);   // attacking by itself
+
+		assertEquals(8000, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 1, 8000, true, false),
+				"one Forward attacking alone forms no party, so the second arm never opens");
+	}
+
+	@Test
+	void theReductionIsNameCheckedAndSideScoped() {
+		assertFalse(FieldAbilityParsingTest.isFieldAbilityRecognized(
+						new FieldAbility(WHITE_MAGE_TEXT, 0),
+						makeFieldAbilityCard("Black Mage", "Water", "Forward", WHITE_MAGE_TEXT), "Forward"),
+				"the sentence names White Mage, so a card quoting it grants nothing");
+
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeFieldAbilityCard("White Mage", "Water", "Forward", WHITE_MAGE_TEXT));
+		placeP2Forward(mw, makeForward("Enemy", "Fire", 3, 9000));
+
+		assertEquals(8000, mw.modifyIncomingDamage(false, ForwardTarget.CardZone.FORWARD, 0, 8000, true, false),
+				"the protector's own side is the only one it reads");
+	}
+
+	// =========================================================================================
+	// Lehftia 21-020C: "If your Fire Summon or a Fire Character you control deals damage to a
+	// Forward, the damage increases by 2000 instead."
+	//
+	// Two arms, and the engine already had a pattern for each half — but each differed on the axis
+	// this text needs. FA_ELEMENT_SUMMON_DAMAGE_BOOST says the Summon half from the receiving side
+	// ("If a Forward is dealt damage by your Fire Summon"), and FA_ELEMENT_FORWARD_DAMAGE_BOOST
+	// covers Forwards where this covers every Character. Iroha 8-004R prints the Character arm on
+	// its own, and falls out of the same pattern.
+	// =========================================================================================
+
+	private static final String LEHFTIA_TEXT =
+			"If your Fire Summon or a Fire Character you control deals damage to a Forward, "
+			+ "the damage increases by 2000 instead.";
+	private static final String IROHA_TEXT =
+			"If a Fire Character you control deals damage to a Forward, the damage increases by 1000 instead.";
+
+	@Test
+	void bothArmsAreReadOffLehftiaAndOnlyTheCharacterArmOffIroha() {
+		Matcher leh = AutoAbilityTriggers.FA_ELEMENT_SUMMON_OR_CHARACTER_DAMAGE_BOOST.matcher(LEHFTIA_TEXT);
+		assertTrue(leh.matches());
+		assertEquals("Fire", leh.group("summonelement"));
+		assertEquals("Fire", AutoAbilityTriggers.characterArmElement(leh));
+		assertEquals("2000", leh.group("amount"));
+
+		Matcher iro = AutoAbilityTriggers.FA_ELEMENT_SUMMON_OR_CHARACTER_DAMAGE_BOOST.matcher(IROHA_TEXT);
+		assertTrue(iro.matches(), "the Character arm stands alone on Iroha");
+		assertNull(iro.group("summonelement"), "she names no Summon");
+		assertEquals("Fire", AutoAbilityTriggers.characterArmElement(iro),
+				"the arm lands in a different group without the Summon half, which is why callers "
+				+ "go through characterArmElement");
+	}
+
+	@Test
+	void lehftiaBoostsAFireSummonsDamage() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeFieldAbilityCard("Lehftia", "Fire", "Forward", LEHFTIA_TEXT));
+		mw.currentResolutionIsSummon  = true;
+		mw.currentSummonSourceIsP1    = true;
+		mw.currentSummonSource        = makeForward("Ifrit", "Fire", 3, 0);
+
+		assertEquals(10000, mw.damageResolver.applyCasterSideElementSummonDamageBoosts(8000, false),
+				"a Fire Summon of its controller's — +2000");
+
+		mw.currentSummonSource = makeForward("Shiva", "Ice", 3, 0);
+		assertEquals(8000, mw.damageResolver.applyCasterSideElementSummonDamageBoosts(8000, false),
+				"an Ice Summon is outside the Element the arm names");
+	}
+
+	@Test
+	void theCharacterArmCoversABackupsAbilityWhereTheForwardOnlyPatternWouldNot() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeFieldAbilityCard("Lehftia", "Fire", "Forward", LEHFTIA_TEXT));
+		CardData caster = new CardData(null, "Fire Backup", "Fire", 2, 0, "Backup", false, 0, false,
+				false, Set.of(), 0, List.of(), null, List.of(), List.of(), List.of(), List.of(),
+				List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1, null, null, null, "");
+		mw.placeCardInFirstBackupSlot(caster);
+		mw.currentAbilitySource     = caster;
+		mw.currentAbilitySourceIsP1 = true;
+
+		assertEquals(6000, mw.damageResolver.applyCasterSideElementForwardDamageBoosts(4000, false),
+				"\"Character\" reaches a Backup's ability; the Forward-only pattern never would");
+	}
+
+	@Test
+	void theCharacterArmBoostsCombatDamageFromAFireAttacker() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeFieldAbilityCard("Lehftia", "Fire", "Forward", LEHFTIA_TEXT)); // idx 0
+		placeP1Forward(mw, makeForward("Fire Ally", "Fire", 3, 7000));                        // idx 1
+		placeP1Forward(mw, makeForward("Ice Ally",  "Ice",  3, 7000));                        // idx 2
+		CardData target = makeForward("Target", "Wind", 3, 9000);
+		placeP2Forward(mw, target);
+
+		assertEquals(9000, mw.modifyOutgoingCombatDamage(true, 1, 7000, target),
+				"a Fire attacker — +2000");
+		assertEquals(7000, mw.modifyOutgoingCombatDamage(true, 2, 7000, target),
+				"an Ice attacker is outside the Element the arm names");
+	}
+
+	@Test
+	void theBoostReadsItsControllersSideOnly() {
+		MainWindow mw = new MainWindow();
+		placeP2Forward(mw, makeFieldAbilityCard("Lehftia", "Fire", "Forward", LEHFTIA_TEXT));
+		CardData attacker = makeForward("Fire Ally", "Fire", 3, 7000);
+		placeP1Forward(mw, attacker);
+		CardData target = makeForward("Target", "Wind", 3, 9000);
+		placeP2Forward(mw, target);
+
+		assertEquals(7000, mw.modifyOutgoingCombatDamage(true, 0, 7000, target),
+				"\"you control\" scopes the boost to Lehftia's own controller");
+	}
+	// =========================================================================================
+	// Snow 18-109C: "When Snow enters the field or attacks, reveal the top 2 cards of your deck.
+	// Remove 1 Category XIII card among them from the game and return the other cards to the
+	// bottom of your deck in any order. You can cast it at any time you could normally cast it
+	// this turn."
+	//
+	// It was already reporting as parsed, which is the worst way for an ability to be broken:
+	// tryParseRemoveNamedFromGame find()s a lazy name group and claimed the middle clause with
+	// named = "1 Category XIII card among them", so the effect resolved to a search of the field
+	// for a card by that name, found nothing, and the reveal and the cast permission never
+	// happened at all. The new parser has to sit ahead of it in all three chains.
+	//
+	// Warrior of Light 20-004C prints the same sentence without the Category filter and falls out
+	// of the same pattern.
+	// =========================================================================================
+
+	private static final String SNOW_REVEAL_TEXT =
+			"reveal the top 2 cards of your deck. Remove 1 Category XIII card among them from the game "
+			+ "and return the other cards to the bottom of your deck in any order. "
+			+ "You can cast it at any time you could normally cast it this turn.";
+	private static final String WOL_REVEAL_TEXT =
+			"reveal the top 4 cards of your deck. Remove 1 card among them from the game "
+			+ "and return the other cards to the bottom of your deck in any order. "
+			+ "You can cast it at any time you could normally cast it this turn.";
+
+	@Test
+	void snowsRevealNoLongerLosesToTheRemoveNamedParser() {
+		CardData snow = makeAutoAbilityForward("Snow",
+				"When Snow enters the field or attacks, " + SNOW_REVEAL_TEXT);
+		AutoAbility aa = snow.autoAbilities().get(0);
+
+		assertEquals("RevealTopNRfgOneCastableRestBottom",
+				ActionResolver.matchedPatternName(aa.effectText(), snow),
+				"the general remove-a-named-card parser must not reach this text first");
+		assertEquals("enters the field or attacks", aa.trigger(),
+				"both halves of the trigger are already dispatched — on entry and on attack");
+	}
+
+	@Test
+	void snowRevealsTwoAndRemovesOneCategoryXiiiCard() {
+		GameContext ctx = mock(GameContext.class);
+		CardData snow = makeAutoAbilityForward("Snow",
+				"When Snow enters the field or attacks, " + SNOW_REVEAL_TEXT);
+
+		ActionResolver.parse(snow.autoAbilities().get(0).effectText(), snow).accept(ctx);
+
+		verify(ctx).revealTopNRemoveOneFromGameCastableThisTurnRestBottom(2, "XIII");
+	}
+
+	@Test
+	void warriorOfLightPrintsTheSameSentenceWithNoCategoryFilter() {
+		GameContext ctx = mock(GameContext.class);
+		CardData wol = makeAutoAbilityForward("Warrior of Light",
+				"When Warrior of Light enters the field, " + WOL_REVEAL_TEXT);
+
+		ActionResolver.parse(wol.autoAbilities().get(0).effectText(), wol).accept(ctx);
+
+		verify(ctx).revealTopNRemoveOneFromGameCastableThisTurnRestBottom(4, null);
+	}
+
+	// The three chains have to agree, so the description is asserted alongside the name — a guard
+	// inserted into parse() alone is exactly the drift the characterization test cannot classify.
+	@Test
+	void allThreeChainsClaimTheRevealForTheSameParser() {
+		CardData snow = makeAutoAbilityForward("Snow",
+				"When Snow enters the field or attacks, " + SNOW_REVEAL_TEXT);
+		String effect = snow.autoAbilities().get(0).effectText();
+
+		assertNotNull(ActionResolver.parse(effect, snow));
+		assertEquals("RevealTopNRfgOneCastableRestBottom",
+				ActionResolver.matchedPatternName(effect, snow));
+		assertEquals("RevealTopNRfgOneCastableRestBottom",
+				ActionResolver.fullDescription(effect, snow));
+	}
+
+	// -----------------------------------------------------------------------------------------
+	// The registration the effect leaves behind: the removed card is castable from the removed-
+	// from-game zone until the turn ends, and an uncast one simply stops being offered — it does
+	// not come back to hand or deck, it stays removed.
+	// -----------------------------------------------------------------------------------------
+
+	@Test
+	void theRemovedCardIsCastableFromRfgUntilTheTurnEnds() {
+		MainWindow mw = new MainWindow();
+		CardData removed = makeForward("Lightning", "Ice", 3, 7000);
+		mw.gameState.getIdentity().put(removed, true);
+		mw.gameState.addToPermanentRfp(removed);
+		mw.registerBorrowedPlayable(true, removed, new PlayableEntry(
+				PlayableEntry.SourceZone.RFP, 0, false, false, false, true));
+
+		assertTrue(mw.bzPlayableP1.containsKey(removed), "it shows up among the cards P1 may cast");
+		assertEquals(PlayableEntry.SourceZone.RFP, mw.bzPlayableP1.get(removed).source());
+		assertEquals(3, mw.bzPlayableP1.get(removed).effectiveCost(removed),
+				"it is cast at its printed cost — the ability grants no discount");
+
+		for (Consumer<GameContext> eot : new ArrayList<>(mw.endOfTurnEffects))
+			eot.accept(mw.buildGameContext(true));
+
+		assertFalse(mw.bzPlayableP1.containsKey(removed),
+				"the permission is \"this turn\", so it lapses with the turn");
+		assertTrue(mw.gameState.getP1PermanentRfp().contains(removed),
+				"and the card stays removed from the game — losing the permission moves nothing");
+	}
 }

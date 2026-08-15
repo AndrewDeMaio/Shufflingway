@@ -2907,6 +2907,22 @@ public interface GameContext {
     }
 
     /**
+     * "Reveal the top {@code reveal} cards of your deck. Remove 1 [Category {@code categoryFilter}]
+     * card among them from the game and return the other cards to the bottom of your deck in any
+     * order. You can cast it at any time you could normally cast it this turn." — Snow 18-109C, and
+     * Warrior of Light 20-004C with {@code categoryFilter} null.
+     *
+     * <p>The removal and the casting permission are one effect, not two: the card is removed so it
+     * can be cast, and the permission is what the sentence is for. It is registered as a
+     * {@link PlayableEntry} over the removed-from-game zone that expires at end of turn — so an
+     * uncast card simply stops being offered and stays where it is, removed from the game.
+     *
+     * @param categoryFilter category a revealed card must match to be removable, or {@code null}
+     *                       to offer every revealed card.
+     */
+    void revealTopNRemoveOneFromGameCastableThisTurnRestBottom(int reveal, String categoryFilter);
+
+    /**
      * Reveals the top {@code reveal} cards of the player's deck.  The player may add up to
      * {@code maxAdd} of them to hand, excluding any card whose name equals {@code excludeName}.
      * All remaining revealed cards go to the Break Zone.

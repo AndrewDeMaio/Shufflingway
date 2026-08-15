@@ -274,6 +274,19 @@ class DamageResolver {
 			return 0;
 		}
 
+		// The reduction form of the same idea, covering the protector itself as well as its party
+		// (White Mage 3-136C). A reduction rather than a replacement, so unlike the nullification
+		// above it stacks with the field-wide modifiers instead of short-circuiting them.
+		if (amount > 0) {
+			int partyRed = selfOrPartyDamageReduction(card, isP1);
+			if (partyRed > 0) {
+				int before = amount;
+				amount = Math.max(0, amount - partyRed);
+				mw.logEntry(card.name() + " — damage reduced by " + partyRed
+						+ " (" + before + " → " + amount + ")");
+			}
+		}
+
 		// Passive field ability on other friendly cards: field-wide incoming damage modifier
 		amount = applyFieldWideDamageModifiers(amount, card, isP1, zone, idx, fromAbility);
 
@@ -327,6 +340,41 @@ class DamageResolver {
 			}
 		}
 		return false;
+	}
+
+	/**
+	 * The total reduction {@code card} gets from {@link AutoAbilityTriggers#FA_SELF_OR_PARTY_DAMAGE_REDUCTION}
+	 * printings on its own side — White Mage 3-136C's "If White Mage or a Forward forming a party
+	 * with White Mage receives damage, the damage decreases by 3000 instead."
+	 *
+	 * <p>Two arms, and they differ in what they require of the board. The carrier protects itself
+	 * unconditionally, so a White Mage sitting alone still takes 3000 less. Everyone else needs to
+	 * be in a party <em>with</em> the carrier, which is why both must be declared attackers in a
+	 * party of two or more — read the way {@link MainWindow#isFormingParty} reads it, so this and
+	 * the party-conditioned power grants agree about when a party exists.
+	 *
+	 * <p>Both name captures are checked against the protector, so a quoted copy of the sentence
+	 * carried by somebody else does not protect that card's party.
+	 */
+	private int selfOrPartyDamageReduction(CardData card, boolean isP1) {
+		int reduction = 0;
+		List<CardData> sources = new ArrayList<>(isP1 ? mw.p1ForwardCards : mw.p2ForwardCards);
+		for (CardData bkp : isP1 ? mw.p1BackupCards : mw.p2BackupCards)
+			if (bkp != null) sources.add(bkp);
+		sources.addAll(isP1 ? mw.p1MonsterCards : mw.p2MonsterCards);
+		for (CardData protector : sources) {
+			if (mw.lostAbilitiesCards.contains(protector)) continue;
+			boolean self = protector == card;
+			for (FieldAbility fa : mw.effectiveFieldAbilities(protector)) {
+				Matcher m = AutoAbilityTriggers.FA_SELF_OR_PARTY_DAMAGE_REDUCTION.matcher(fa.effectText());
+				if (!m.matches()) continue;
+				if (!m.group("card").trim().equalsIgnoreCase(protector.name())) continue;
+				if (!m.group("partner").trim().equalsIgnoreCase(protector.name())) continue;
+				if (!self && !(mw.isFormingParty(protector, isP1) && mw.isFormingParty(card, isP1))) continue;
+				reduction += Integer.parseInt(m.group("amount"));
+			}
+		}
+		return reduction;
 	}
 
 	/**
@@ -534,6 +582,19 @@ class DamageResolver {
 				mw.logEntry(booster.name() + " — " + elem + " Summon damage increased by " + boost
 						+ " (" + before + " → " + amount + ")");
 			}
+			// The same boost worded from the dealing side (Lehftia 21-020C). Only its Summon arm is
+			// read here; the Character arm belongs to the combat and ability paths.
+			for (FieldAbility fa : booster.fieldAbilities()) {
+				Matcher m = AutoAbilityTriggers.FA_ELEMENT_SUMMON_OR_CHARACTER_DAMAGE_BOOST.matcher(fa.effectText());
+				if (!m.matches()) continue;
+				String elem = m.group("summonelement");
+				if (elem == null || !mw.currentSummonSource.containsElement(elem)) continue;
+				int boost = Integer.parseInt(m.group("amount"));
+				int before = amount;
+				amount += boost;
+				mw.logEntry(booster.name() + " — " + elem + " Summon damage increased by " + boost
+						+ " (" + before + " → " + amount + ")");
+			}
 		}
 		return amount;
 	}
@@ -542,15 +603,37 @@ class DamageResolver {
 	 * Scans the caster's side field cards for {@link AutoAbilityTriggers#FA_ELEMENT_FORWARD_DAMAGE_BOOST}
 	 * abilities and applies any that match when the resolving ability source is an Element Forward
 	 * dealing damage to a Forward on the opposing side.
+	 *
+	 * <p>Also applies the Character arm of
+	 * {@link AutoAbilityTriggers#FA_ELEMENT_SUMMON_OR_CHARACTER_DAMAGE_BOOST}, which reaches wider:
+	 * it says "Character" where this one says "Forward", so a Backup's or Monster's ability carries
+	 * it too. That is why the Forward guard below is scoped to the narrower pattern rather than
+	 * gating the whole method as it used to.
 	 */
 	int applyCasterSideElementForwardDamageBoosts(int amount, boolean targetIsP1) {
-		if (mw.currentAbilitySource == null || !mw.currentAbilitySource.isForward()) return amount;
+		if (mw.currentAbilitySource == null) return amount;
 		if (mw.currentAbilitySourceIsP1 == targetIsP1) return amount;
+		boolean sourceIsForward = mw.currentAbilitySource.isForward();
 		boolean casterIsP1 = mw.currentAbilitySourceIsP1;
 		List<CardData> casterField = new ArrayList<>(casterIsP1 ? mw.p1ForwardCards : mw.p2ForwardCards);
+		// Forwards and Backups only, as the narrower pattern's scan has always been. A Monster
+		// carrying either printing is missed by both — a pre-existing gap, left alone here rather
+		// than closed as a side effect.
 		for (CardData bkp : casterIsP1 ? mw.p1BackupCards : mw.p2BackupCards)
 			if (bkp != null) casterField.add(bkp);
 		for (CardData booster : casterField) {
+			for (FieldAbility fa : booster.fieldAbilities()) {
+				Matcher cm = AutoAbilityTriggers.FA_ELEMENT_SUMMON_OR_CHARACTER_DAMAGE_BOOST.matcher(fa.effectText());
+				if (!cm.matches()) continue;
+				String elem = AutoAbilityTriggers.characterArmElement(cm);
+				if (elem == null || !mw.effectiveContainsElement(mw.currentAbilitySource, elem)) continue;
+				int boost = Integer.parseInt(cm.group("amount"));
+				int before = amount;
+				amount += boost;
+				mw.logEntry(booster.name() + " — " + elem + " Character ability damage increased by "
+						+ boost + " (" + before + " → " + amount + ")");
+			}
+			if (!sourceIsForward) continue;
 			for (FieldAbility fa : booster.fieldAbilities()) {
 				Matcher m = AutoAbilityTriggers.FA_ELEMENT_FORWARD_DAMAGE_BOOST.matcher(fa.effectText());
 				if (!m.find()) continue;

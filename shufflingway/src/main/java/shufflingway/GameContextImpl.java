@@ -7465,6 +7465,28 @@ final class GameContextImpl implements GameContext {
 						elementFilter, orElementFilter);
 			}
 
+			@Override public void revealTopNRemoveOneFromGameCastableThisTurnRestBottom(
+					int reveal, String categoryFilter) {
+				Deque<CardData> deck = isP1 ? mw.gameState.getP1MainDeck() : mw.gameState.getP2MainDeck();
+				int n = Math.min(reveal, deck.size());
+				if (n == 0) { logEntry("Reveal top: deck is empty."); return; }
+				List<CardData> peeked = new ArrayList<>();
+				for (CardData c : deck) { peeked.add(c); if (peeked.size() >= n) break; }
+				logEntry("Reveal top " + n + " card(s): " +
+						peeked.stream().map(CardData::name).collect(Collectors.joining(", ")));
+				mw.lookDialogs().revealRemoveOneFromGameRestBottom(peeked, deck, isP1, categoryFilter,
+						card -> {
+							// The reveal has already lifted the card off the deck, so removing it is
+							// only a matter of putting it in the removed-from-game zone; the leftovers
+							// went to the bottom in the arrangement the player chose.
+							mw.gameState.addToPermanentRfp(card);
+							mw.registerBorrowedPlayable(isP1, card, new PlayableEntry(
+									PlayableEntry.SourceZone.RFP, 0, false, false, false, true));
+							logEntry((isP1 ? "" : "[P2] ") + card.name()
+									+ " — castable from Removed From Game until end of turn");
+						});
+			}
+
 			@Override public void revealTopAddUpToExcludingNameRestBz(int reveal, int maxAdd, String excludeName) {
 				Deque<CardData> deck = isP1 ? mw.gameState.getP1MainDeck() : mw.gameState.getP2MainDeck();
 				int n = Math.min(reveal, deck.size());

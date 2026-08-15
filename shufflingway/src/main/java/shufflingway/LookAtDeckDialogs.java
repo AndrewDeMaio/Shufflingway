@@ -269,6 +269,13 @@ class LookAtDeckDialogs {
     private CardData applyDeckLook(DeckLookDecision decision, List<CardData> peeked,
             Deque<CardData> deck, boolean isP1, boolean namesArePublic,
             LookConfig.LookAction action, Consumer<CardData> playOntoField) {
+        return applyDeckLook(decision, peeked, deck, isP1, namesArePublic, action, playOntoField,
+                RevealTake.FIELD);
+    }
+
+    private CardData applyDeckLook(DeckLookDecision decision, List<CardData> peeked,
+            Deque<CardData> deck, boolean isP1, boolean namesArePublic,
+            LookConfig.LookAction action, Consumer<CardData> playOntoField, RevealTake take) {
         int n = peeked.size();
         // An arrangement that puts every card back on top in the order it was found moved nothing,
         // and saying so would only repeat the "Look at top N" line already in the log.
@@ -322,7 +329,7 @@ class LookAtDeckDialogs {
         // so withholding it from a private look's log would hide nothing.
         for (int i : decision.toField()) {
             CardData c = peeked.get(i);
-            log(c.name() + " played onto field");
+            log(c.name() + " " + take.logVerb());
             if (playOntoField != null) playOntoField.accept(c);
         }
         return handCard;
@@ -1260,6 +1267,12 @@ class LookAtDeckDialogs {
     private void resolveReveal(List<CardData> cards, Deque<CardData> deck, boolean isP1,
             Supplier<DeckLookDecision> ask, Supplier<DeckLookDecision> cpu,
             Consumer<CardData> playOntoField) {
+        resolveReveal(cards, deck, isP1, ask, cpu, playOntoField, RevealTake.FIELD);
+    }
+
+    private void resolveReveal(List<CardData> cards, Deque<CardData> deck, boolean isP1,
+            Supplier<DeckLookDecision> ask, Supplier<DeckLookDecision> cpu,
+            Consumer<CardData> playOntoField, RevealTake take) {
         int n = cards.size();
         List<Integer> answer = cb.decide().apply(
                 PlayerChoice.by(isP1, ChoiceKind.DECK_LOOK)
@@ -1277,7 +1290,7 @@ class LookAtDeckDialogs {
         if (decision == null) decision = DeckLookDecision.keepOnTop(n);
         // A reveal is public, so the moves are named in the shared log whoever made them; and none
         // of these effects is the one that animates.
-        applyDeckLook(decision, cards, deck, isP1, true, null, playOntoField);
+        applyDeckLook(decision, cards, deck, isP1, true, null, playOntoField, take);
     }
 
     /**
@@ -1735,14 +1748,45 @@ class LookAtDeckDialogs {
                 RevealRest.BOTTOM, playOntoField);
     }
 
+    /**
+     * "Reveal the top N cards of your deck. Remove 1 [Category X] card among them from the game and
+     * return the other cards to the bottom of your deck in any order." — Snow 18-109C and Warrior
+     * of Light 20-004C, which prints the same sentence with no filter.
+     *
+     * <p>The same interaction as its play-onto-field siblings and so the same dialog: pick one of
+     * the revealed cards, order the leftovers into the bottom of the deck. Only the destination
+     * differs, and {@code takeCard} is what carries it — this class moves nothing but the leftovers.
+     *
+     * <p>{@code categoryFilter} may be null, which offers every revealed card.
+     */
+    void revealRemoveOneFromGameRestBottom(List<CardData> cards, Deque<CardData> deck,
+            boolean isP1, String categoryFilter, Consumer<CardData> takeCard) {
+        String typeLabel = (categoryFilter != null ? "Category " + categoryFilter + " " : "") + "card";
+        Predicate<CardData> eligible = c -> CardFilters.meetsCategoryFilter(c, categoryFilter);
+        resolveRevealPlayOntoField(cards, deck, isP1, 1, typeLabel, eligible,
+                RevealRest.BOTTOM, takeCard, RevealTake.RFG_CASTABLE);
+    }
+
     /** Routes the choice these three effects share to whoever is sitting in the seat. */
     private void resolveRevealPlayOntoField(List<CardData> cards, Deque<CardData> deck,
             boolean isP1, int maxPlay, String typeLabel, Predicate<CardData> eligible,
             RevealRest rest, Consumer<CardData> playOntoField) {
+        resolveRevealPlayOntoField(cards, deck, isP1, maxPlay, typeLabel, eligible, rest,
+                playOntoField, RevealTake.FIELD);
+    }
+
+    /**
+     * As above, for a reveal whose picks go somewhere other than the field. Only the words change
+     * here — {@code take} names the destination for the dialog and the log, while what actually
+     * happens to a picked card is {@code takeCard}'s business, as it already was.
+     */
+    private void resolveRevealPlayOntoField(List<CardData> cards, Deque<CardData> deck,
+            boolean isP1, int maxPlay, String typeLabel, Predicate<CardData> eligible,
+            RevealRest rest, Consumer<CardData> takeCard, RevealTake take) {
         resolveReveal(cards, deck, isP1,
-                () -> askRevealPlayOntoField(cards, maxPlay, typeLabel, eligible, rest),
+                () -> askRevealPlayOntoField(cards, maxPlay, typeLabel, eligible, rest, take),
                 () -> cpuRevealPlayOntoField(cards, maxPlay, eligible, rest),
-                playOntoField);
+                takeCard, take);
     }
 
     /**
@@ -1779,14 +1823,10 @@ class LookAtDeckDialogs {
      *             cards going to hand or the Break Zone have no order to choose.
      */
     private DeckLookDecision askRevealPlayOntoField(List<CardData> cards,
-            int maxPlay, String typeLabel, Predicate<CardData> eligible, RevealRest rest) {
+            int maxPlay, String typeLabel, Predicate<CardData> eligible, RevealRest rest,
+            RevealTake take) {
         int n = cards.size();
-        JDialog dlg = new JDialog(frame, "Reveal — Play up to " + maxPlay + " " + typeLabel
-                + switch (rest) {
-                    case HAND       -> " onto Field, Rest to Hand";
-                    case BREAK_ZONE -> " onto Field, Rest to Break Zone";
-                    case BOTTOM     -> " onto Field, Rest to Bottom";
-                }, true);
+        JDialog dlg = new JDialog(frame, take.title(maxPlay, typeLabel, rest), true);
         dlg.setResizable(false);
         dlg.setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
 
@@ -1860,7 +1900,7 @@ class LookAtDeckDialogs {
             });
             cardLabels[i] = lbl;
 
-            JToggleButton fieldBtn = new JToggleButton(txt("→ Field"));
+            JToggleButton fieldBtn = new JToggleButton(txt(take.buttonLabel()));
             fieldBtn.setFont(FontLoader.loadPixelFont(9));
             fieldBtns[i] = fieldBtn;
             fieldBtn.addItemListener(ie -> {

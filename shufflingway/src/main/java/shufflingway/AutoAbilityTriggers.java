@@ -366,6 +366,41 @@ final class AutoAbilityTriggers {
 	);
 
 	/**
+	 * Outgoing damage boost worded from the DEALING side, covering an Element Summon, an Element
+	 * Character you control, or both: "If [your [Element] Summon or ]a [Element] Character you
+	 * control deals damage to a Forward, the damage increases by N instead." — Lehftia 21-020C
+	 * (both arms) and Iroha 8-004R / Re-004C (the Character arm alone).
+	 *
+	 * <p>Distinct from both of the patterns above on the axis each of them fixes.
+	 * {@link #FA_ELEMENT_SUMMON_DAMAGE_BOOST} says the same thing about Summons from the receiving
+	 * side ("If a Forward is dealt damage by your Fire Summon"), and
+	 * {@link #FA_ELEMENT_FORWARD_DAMAGE_BOOST} covers only Forwards where this covers every
+	 * Character — a Backup or Monster whose ability deals the damage counts here and not there.
+	 *
+	 * <p>The two arms are read separately by the caller: {@code summonelement} gates the Summon
+	 * damage path, {@code element} the combat and ability paths. Either group may be absent.
+	 * Groups: {@code summonelement} (optional), {@code element} (optional), {@code amount}.
+	 */
+	static final Pattern FA_ELEMENT_SUMMON_OR_CHARACTER_DAMAGE_BOOST = Pattern.compile(
+		"(?i)^If\\s+" +
+		"(?:your\\s+(?<summonelement>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+Summon" +
+		"(?:\\s+or\\s+an?\\s+(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+Character\\s+you\\s+control)?" +
+		"|an?\\s+(?<element2>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+Character\\s+you\\s+control)" +
+		"\\s+deals?\\s+damage\\s+to\\s+a\\s+Forward,\\s+" +
+		"the\\s+damage\\s+increases\\s+by\\s+(?<amount>\\d+)\\s+instead[.!]?$"
+	);
+
+	/**
+	 * The Element named by {@link #FA_ELEMENT_SUMMON_OR_CHARACTER_DAMAGE_BOOST}'s Character arm,
+	 * whichever branch matched it, or {@code null} when the text has only the Summon arm. The
+	 * alternation puts that arm in two different groups depending on whether the Summon arm
+	 * preceded it, so every reader goes through here rather than picking a group and hoping.
+	 */
+	static String characterArmElement(Matcher m) {
+		return m.group("element") != null ? m.group("element") : m.group("element2");
+	}
+
+	/**
 	 * Field-wide incoming-damage modifier: "If a [Category X | Job Y | Element] Forward
 	 * [of cost N or less/more] [other than Z] you control [other than Z] is dealt damage
 	 * [less than its power | by a Backup | by [your opponent's] Summons/abilities],
@@ -415,6 +450,23 @@ final class AutoAbilityTriggers {
 	 */
 	static final Pattern FA_PARTY_DAMAGE_PROTECTION = Pattern.compile(
 		"(?i)^If\\s+a\\s+Forward\\s+forming\\s+a\\s+party\\s+with\\s+(?<source>.+?)\\s+is\\s+dealt\\s+damage,\\s+the\\s+damage\\s+becomes\\s+0\\s+instead\\.?$"
+	);
+
+	/**
+	 * The reduction twin of {@link #FA_PARTY_DAMAGE_PROTECTION}, covering the carrier as well as
+	 * its party: "If [card] or a Forward forming a party with [card] receives damage, the damage
+	 * decreases by N instead." — White Mage 3-136C.
+	 *
+	 * <p>Two things separate it from that sibling. It reduces rather than replacing with 0, so it
+	 * cannot ride the nullification path; and its first arm is unconditional — the carrier is
+	 * protected whether or not it is in a party, while the second arm needs one. Both name captures
+	 * are checked against the carrier by the caller, exactly as the neighbouring patterns require.
+	 * Groups: {@code card}, {@code partner}, {@code amount}.
+	 */
+	static final Pattern FA_SELF_OR_PARTY_DAMAGE_REDUCTION = Pattern.compile(
+		"(?i)^If\\s+(?<card>.+?)\\s+or\\s+a\\s+Forward\\s+forming\\s+a\\s+party\\s+with\\s+(?<partner>.+?)\\s+" +
+		"(?:receives|is\\s+dealt)\\s+damage,\\s+" +
+		"(?:the\\s+damage\\s+decreases\\s+by|reduce\\s+the\\s+damage\\s+by)\\s+(?<amount>\\d+)\\s+instead[.!]?$"
 	);
 
 	/**
