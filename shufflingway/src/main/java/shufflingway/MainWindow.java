@@ -5306,6 +5306,7 @@ public class MainWindow {
 		// The printed restrictions were being checked on P1's side of this row but not here, so a
 		// P2 Monster with "cannot block" could still block. Same list as isMonsterBlockSelectable.
 		if (card.cannotBlockAtAll() || card.cannotAttackOrBlock()) return false;
+		if (blockBarredByFieldCostLock(card)) return false;
 		if (isFieldAbilityCannotAttackOrBlock(card, false)) return false;
 		return isP2MonsterTemporarilyForward(idx);
 	}
@@ -5320,6 +5321,7 @@ public class MainWindow {
 		// As in p2MonsterCanBlockAsForward: the printed restrictions were only being read on P1's
 		// side of this row.
 		if (card.cannotBlockAtAll() || card.cannotAttackOrBlock()) return false;
+		if (blockBarredByFieldCostLock(card)) return false;
 		if (isFieldAbilityCannotAttackOrBlock(card, false)) return false;
 		return isP2BackupTemporarilyForward(idx);
 	}
@@ -10950,6 +10952,37 @@ public class MainWindow {
 		return false;
 	}
 
+	/**
+	 * Returns {@code true} when {@code entering} must enter the field dull — its own printed
+	 * "enters the field dull", an opponent forcing it, or a board-wide "All the Forwards other than
+	 * X enter the field dull." (Ultimecia 1-152L) that does not spare it.
+	 *
+	 * <p>The board-wide form names no controller, so both fields are searched and its own
+	 * controller's Forwards are dulled alongside the opponent's. The exception is matched by Card
+	 * Name, which is what the text means: a second Ultimecia entering is spared too.
+	 */
+	private boolean forwardEntersFieldDull(CardData entering, boolean isP1) {
+		if (entering.entersFieldDull() || opponentForcesForwardDull(isP1)) return true;
+		return allForwardsForcedDullExcept(entering, true) || allForwardsForcedDullExcept(entering, false);
+	}
+
+	/** Whether any card on {@code side}'s field dulls all entering Forwards but {@code entering}. */
+	private boolean allForwardsForcedDullExcept(CardData entering, boolean side) {
+		List<CardData> fwds = side ? p1ForwardCards : p2ForwardCards;
+		CardData[]     bkps = side ? p1BackupCards  : p2BackupCards;
+		List<CardData> mons = side ? p1MonsterCards : p2MonsterCards;
+		for (CardData c : fwds)                  if (forcesAllForwardsDull(c, entering)) return true;
+		for (CardData c : bkps) if (c != null)   if (forcesAllForwardsDull(c, entering)) return true;
+		for (CardData c : mons)                  if (forcesAllForwardsDull(c, entering)) return true;
+		return false;
+	}
+
+	private boolean forcesAllForwardsDull(CardData src, CardData entering) {
+		if (lostAbilitiesCards.contains(src)) return false;
+		String except = src.allForwardsEnterFieldDullExcept();
+		return except != null && !CardFilters.meetsCardNameFilter(entering, except);
+	}
+
 	private boolean isNamedCardDull(String name, boolean isP1) {
 		List<CardData> fwds = isP1 ? p1ForwardCards : p2ForwardCards;
 		List<CardState> states = isP1 ? p1ForwardStates : p2ForwardStates;
@@ -11114,12 +11147,14 @@ public class MainWindow {
 	/**
 	 * {@code grant}'s power contribution to {@code target} right now, or 0 when the counter it names
 	 * is absent. A {@link CounterGrant#perCounter} grant multiplies by the count on the card
-	 * (Gargas 17-045R: -2000 for each Poison Counter); every other form pays out once at one or more.
+	 * (Gargas 17-045R: -2000 for each Poison Counter); every other form pays out once at
+	 * {@link CounterGrant#minCount} or more — one, except for the threshold printings (Palom
+	 * 23-018R needs two EXP Counters).
 	 */
 	private int counterGrantPower(CounterGrant grant, CardData target) {
 		if (grant.powerBonus() == 0) return 0;
 		int n = gameState.getCounters(target, grant.counterName());
-		if (n <= 0) return 0;
+		if (n < grant.minCount()) return 0;
 		return grant.perCounter() ? grant.powerBonus() * n : grant.powerBonus();
 	}
 
@@ -11533,7 +11568,7 @@ public class MainWindow {
 			// Number 24 20-036H grants only to itself, so the walk over the whole field has to skip
 			// every other Forward carrying the same counter.
 			if (cg.selfOnly() && src != target) continue;
-			if (gameState.getCounters(target, cg.counterName()) <= 0) continue;
+			if (gameState.getCounters(target, cg.counterName()) < cg.minCount()) continue;
 			if (out == null) out = new ArrayList<>();
 			out.add(cg.grantedAbilityText());
 		}
@@ -12549,7 +12584,7 @@ public class MainWindow {
 
 		p1ForwardUrls.add(card.imageUrl());
 		p1ForwardCards.add(card);
-		p1ForwardStates.add((card.entersFieldDull() || opponentForcesForwardDull(true)) ? CardState.DULL : CardState.ACTIVE);
+		p1ForwardStates.add(forwardEntersFieldDull(card, true) ? CardState.DULL : CardState.ACTIVE);
 		p1ForwardPlayedOnTurn.add(gameState.getTurnNumber());
 		if (card.element() != null) p1Turn.elementForwardsEnteredThisTurn.add(card.element().toLowerCase());
 		p1ForwardDamage.add(0);
@@ -12952,6 +12987,7 @@ public class MainWindow {
 		if (p1CannotBlock.contains(blocker)) return false;
 		if (p1CannotBlockPersistent.contains(blocker)) return false;
 		if (blocker.cannotBlockAtAll() || blocker.cannotAttackOrBlock()) return false;
+		if (blockBarredByFieldCostLock(blocker)) return false;
 		if (isFieldAbilityCannotAttackOrBlock(blocker, true)) return false;
 		if (blocker.cannotBlockParty() && pendingP2PartyIndices != null) return false;
 		if (blocker.cannotBlockHigherPower() && attackerPowerExceedsBlocker(ForwardTarget.CardZone.FORWARD, idx)) return false;
@@ -12967,6 +13003,40 @@ public class MainWindow {
 	// -------------------------------------------------------------------------
 	// Attack permission from field abilities; party formation
 	// -------------------------------------------------------------------------
+
+	/**
+	 * Returns {@code true} when a board-wide cost-gated block lock currently bars {@code blocker}
+	 * from blocking — Edea 2-100H's "Forwards of cost 5 or more cannot block."
+	 *
+	 * <p>The text names no controller, so both fields are searched and the lock catches its own
+	 * controller's Forwards as readily as the opponent's. It is read per block-legality check rather
+	 * than latched, because the source can leave the field mid-Attack Phase.
+	 *
+	 * <p>Every path by which a card is declared as a blocker consults this — the Forward row and the
+	 * Monster and Backup rows a card can block from once something has turned it into a Forward,
+	 * since a Forward is what the restriction speaks about however it got to be one.
+	 */
+	boolean blockBarredByFieldCostLock(CardData blocker) {
+		if (blocker == null) return false;
+		return costBlockLockExcludes(blocker, true) || costBlockLockExcludes(blocker, false);
+	}
+
+	private boolean costBlockLockExcludes(CardData blocker, boolean side) {
+		List<CardData> fwds = side ? p1ForwardCards : p2ForwardCards;
+		CardData[]     bkps = side ? p1BackupCards  : p2BackupCards;
+		List<CardData> mons = side ? p1MonsterCards : p2MonsterCards;
+		for (CardData c : fwds)                if (costLockBars(c, blocker)) return true;
+		for (CardData c : bkps) if (c != null)  if (costLockBars(c, blocker)) return true;
+		for (CardData c : mons)                if (costLockBars(c, blocker)) return true;
+		return false;
+	}
+
+	private boolean costLockBars(CardData src, CardData blocker) {
+		if (lostAbilitiesCards.contains(src)) return false;
+		int[] lock = src.costForwardsCannotBlock();
+		if (lock == null) return false;
+		return lock[1] > 0 ? blocker.cost() >= lock[0] : blocker.cost() <= lock[0];
+	}
 
 	/**
 	 * Returns {@code true} if any field ability on {@code card} currently prevents it from
@@ -13401,6 +13471,7 @@ public class MainWindow {
 		if (p1CannotBlock.contains(monsterBlocker)) return false;
 		if (p1CannotBlockPersistent.contains(monsterBlocker)) return false;
 		if (monsterBlocker.cannotBlockAtAll() || monsterBlocker.cannotAttackOrBlock()) return false;
+		if (blockBarredByFieldCostLock(monsterBlocker)) return false;
 		if (isFieldAbilityCannotAttackOrBlock(monsterBlocker, true)) return false;
 		if (monsterBlocker.cannotBlockParty() && pendingP2PartyIndices != null) return false;
 		if (monsterBlocker.cannotBlockHigherPower() && attackerPowerExceedsBlocker(ForwardTarget.CardZone.MONSTER, idx)) return false;
@@ -13428,6 +13499,7 @@ public class MainWindow {
 		if (p1CannotBlock.contains(backupBlocker)) return false;
 		if (p1CannotBlockPersistent.contains(backupBlocker)) return false;
 		if (backupBlocker.cannotBlockAtAll() || backupBlocker.cannotAttackOrBlock()) return false;
+		if (blockBarredByFieldCostLock(backupBlocker)) return false;
 		if (isFieldAbilityCannotAttackOrBlock(backupBlocker, true)) return false;
 		if (backupBlocker.cannotBlockParty() && pendingP2PartyIndices != null) return false;
 		if (backupBlocker.cannotBlockHigherPower() && attackerPowerExceedsBlocker(ForwardTarget.CardZone.BACKUP, idx)) return false;
@@ -15410,7 +15482,7 @@ public class MainWindow {
 
 		p2ForwardUrls.add(card.imageUrl());
 		p2ForwardCards.add(card);
-		p2ForwardStates.add((card.entersFieldDull() || opponentForcesForwardDull(false)) ? CardState.DULL : CardState.ACTIVE);
+		p2ForwardStates.add(forwardEntersFieldDull(card, false) ? CardState.DULL : CardState.ACTIVE);
 		p2ForwardPlayedOnTurn.add(gameState.getTurnNumber());
 		if (card.element() != null) p2Turn.elementForwardsEnteredThisTurn.add(card.element().toLowerCase());
 		p2ForwardDamage.add(0);

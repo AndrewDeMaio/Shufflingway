@@ -908,6 +908,7 @@ class ComputerPlayer implements OpponentController {
 		for (int i = 0; i < mw.p2ForwardStates.size(); i++) {
 			CardData blocker = mw.p2ForwardCards.get(i);
 			if (mw.p2CannotBlock.contains(blocker) || mw.p2CannotBlockPersistent.contains(blocker)) continue;
+			if (mw.blockBarredByFieldCostLock(blocker)) continue;
 			if (mw.p2ForwardStates.get(i) != CardState.ACTIVE) continue;
 			if (mw.p1AttackerCostFiltersExclude(p1AttackerCard, blocker.cost())) continue;
 			if (p1AttackerHigherPower && mw.fieldForwardPower(false, ForwardTarget.CardZone.FORWARD, i) > p1AttackerPower) continue;
@@ -1032,6 +1033,7 @@ class ComputerPlayer implements OpponentController {
 			if (card == null) continue;
 			if (mw.lostAbilitiesCards.contains(card)) continue;
 			if (mw.p2CannotBlock.contains(card) || mw.p2CannotBlockPersistent.contains(card)) continue;
+			if (mw.blockBarredByFieldCostLock(card)) continue;
 			if (mw.p2ForwardFrozen.get(i)) continue; // frozen forwards can't become legal blockers regardless
 			CardState state = mw.p2ForwardStates.get(i);
 			boolean isDull = state != CardState.ACTIVE;

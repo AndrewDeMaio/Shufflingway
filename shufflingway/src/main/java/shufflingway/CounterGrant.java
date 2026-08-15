@@ -24,17 +24,32 @@ package shufflingway;
  * auto-ability path, with the flag confining it to the carrier instead of every Forward alongside it.
  * Only the ability-grant form is printed that way, so {@link #powerBonus} is always 0 when it is set
  * and the power readers need no matching guard.
+ *
+ * <p>{@link #minCount} carries the threshold form: "The Forwards with 2 or more EXP Counters on them
+ * you control gain …" (Palom 23-018R, Porom 23-110R). Every other printing pays out at one or more,
+ * which is what the default of 1 says, so readers can compare against it unconditionally.
  */
 public record CounterGrant(
-        String  counterName,        // e.g. "Turks", "Guardian", "Ronso", "Poison", "Barrier"
+        String  counterName,        // e.g. "Turks", "Guardian", "Ronso", "Poison", "Barrier", "EXP"
         int     powerBonus,         // 0 when this grant is an ability grant; negative for a debuff
         String  grantedAbilityText, // null when this grant is a power grant; else the granted ability text
-        boolean perCounter,         // true = powerBonus applies once per counter; false = once at 1 or more
+        boolean perCounter,         // true = powerBonus applies once per counter; false = once at minCount or more
         boolean affectsOpponent,    // true = applies to the opposing player's Forwards
-        boolean selfOnly            // true = applies only to the card printing it, not to its neighbours
+        boolean selfOnly,           // true = applies only to the card printing it, not to its neighbours
+        int     minCount            // counters required before the grant applies; 1 for every unthresholded printing
 ) {
+    public CounterGrant {
+        if (minCount < 1) minCount = 1;
+    }
+
+    /** Convenience constructor preserving the prior 6-arg form; defaults {@code minCount} to 1. */
+    public CounterGrant(String counterName, int powerBonus, String grantedAbilityText,
+            boolean perCounter, boolean affectsOpponent, boolean selfOnly) {
+        this(counterName, powerBonus, grantedAbilityText, perCounter, affectsOpponent, selfOnly, 1);
+    }
+
     /** Convenience constructor for the same-side, at-least-one-counter, field-wide form. */
     public CounterGrant(String counterName, int powerBonus, String grantedAbilityText) {
-        this(counterName, powerBonus, grantedAbilityText, false, false, false);
+        this(counterName, powerBonus, grantedAbilityText, false, false, false, 1);
     }
 }

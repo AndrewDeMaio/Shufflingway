@@ -4690,6 +4690,22 @@ public record CardData(
         "(?i)^Each\\s+Forward\\s+you\\s+control\\s+with\\s+an?\\s+(?<counter>.+?)\\s+Counter\\s+on\\s+it\\s+gains\\s+(?<grant>.+)$"
     );
 
+    /**
+     * The threshold twin of {@link #COUNTER_GRANT_PATTERN}:
+     * "The Forwards with N or more [name] Counters on them you control gain [grant]."
+     * — Palom 23-018R (a power grant) and Porom 23-110R (a quoted ability).
+     * Groups: {@code count} — counters required; {@code counter}; {@code grant}.
+     *
+     * <p>Kept apart rather than folded in as an optional clause: the two word the subject
+     * differently ("Each Forward … with a" against "The Forwards with … on them"), and an optional
+     * count group on the other pattern would let a threshold printing match at one counter if the
+     * clause ever failed to bind.
+     */
+    static final Pattern COUNTER_THRESHOLD_GRANT_PATTERN = Pattern.compile(
+        "(?i)^The\\s+Forwards?\\s+with\\s+(?<count>\\d+)\\s+or\\s+more\\s+(?<counter>.+?)\\s+Counters?\\s+" +
+        "on\\s+them\\s+you\\s+control\\s+gains?\\s+(?<grant>.+)$"
+    );
+
     /** Captures the "+N power" bonus within a {@link #COUNTER_GRANT_PATTERN} grant clause. */
     private static final Pattern COUNTER_GRANT_POWER = Pattern.compile("(?i)\\+(?<power>\\d+)\\s+power");
 
@@ -4752,24 +4768,53 @@ public record CardData(
                 }
                 continue;
             }
+            CounterGrant threshold = parseCounterThresholdGrant(fa.effectText());
+            if (threshold != null) {
+                if (out == null) out = new ArrayList<>();
+                out.add(threshold);
+                continue;
+            }
+            if (COUNTER_THRESHOLD_GRANT_PATTERN.matcher(fa.effectText()).matches()) continue;
             Matcher m = COUNTER_GRANT_PATTERN.matcher(fa.effectText());
             if (!m.matches()) continue;
-            String counter = m.group("counter").trim();
-            String grant   = m.group("grant").trim();
-            CounterGrant cg;
-            if (grant.startsWith("\"")) {
-                String ability = unquoteGrant(grant);
-                if (ability == null) continue;
-                cg = new CounterGrant(counter, 0, ability);
-            } else {
-                Matcher pm = COUNTER_GRANT_POWER.matcher(grant);
-                if (!pm.find()) continue;
-                cg = new CounterGrant(counter, Integer.parseInt(pm.group("power")), null);
-            }
+            CounterGrant cg = counterGrantFor(m.group("counter"), m.group("grant"), 1);
+            if (cg == null) continue;
             if (out == null) out = new ArrayList<>();
             out.add(cg);
         }
         return out == null ? List.of() : List.copyOf(out);
+    }
+
+    /**
+     * The {@link CounterGrant} {@code seg} describes when it is a threshold counter grant
+     * ({@link #COUNTER_THRESHOLD_GRANT_PATTERN}), or {@code null} when it is not one or names a
+     * grant clause this cannot build. {@link #counterGrants()} reads it through this, so a caller
+     * asking whether the engine acts on a text gets the same answer the engine gives.
+     */
+    static CounterGrant parseCounterThresholdGrant(String seg) {
+        if (seg == null || seg.isBlank()) return null;
+        Matcher m = COUNTER_THRESHOLD_GRANT_PATTERN.matcher(seg);
+        if (!m.matches()) return null;
+        return counterGrantFor(m.group("counter"), m.group("grant"), Integer.parseInt(m.group("count")));
+    }
+
+    /**
+     * Builds the same-side {@link CounterGrant} a "… gains [grant]" clause describes — a quoted
+     * ability or a "+N power" bonus — or {@code null} when the clause is neither. Shared by the
+     * at-least-one and threshold counter-grant patterns, which differ only in {@code minCount}.
+     */
+    private static CounterGrant counterGrantFor(String counterName, String grantClause, int minCount) {
+        String counter = counterName.trim();
+        String grant   = grantClause.trim();
+        if (grant.startsWith("\"")) {
+            String ability = unquoteGrant(grant);
+            return ability == null ? null
+                    : new CounterGrant(counter, 0, ability, false, false, false, minCount);
+        }
+        Matcher pm = COUNTER_GRANT_POWER.matcher(grant);
+        if (!pm.find()) return null;
+        return new CounterGrant(counter, Integer.parseInt(pm.group("power")), null,
+                false, false, false, minCount);
     }
 
     /**
@@ -6047,6 +6092,47 @@ public record CardData(
         "(?i)^(?<cardname>.+?)\\s+cannot\\s+block[.!]?\\s*$"
     );
 
+    /**
+     * "[All the] Forwards of cost N or more/less cannot block." — Edea 2-100H.
+     *
+     * <p>Board-wide: it names no controller, so unlike its self-named neighbours above it reaches
+     * every Forward on either side of the field, its own controller's included.
+     * Groups: {@code cost}, {@code costcmp}.
+     *
+     * <p>{@link #FIELD_CANNOT_BLOCK}'s lazy {@code cardname} group also matches this sentence, with
+     * the whole cost clause absorbed as the name. That is harmless — the name check against the
+     * carrier fails — but it is why this must not be folded into that pattern.
+     */
+    static final Pattern FIELD_COST_FORWARDS_CANNOT_BLOCK = Pattern.compile(
+        "(?i)^(?:All\\s+)?(?:the\\s+)?Forwards?\\s+of\\s+cost\\s+(?<cost>\\d+)\\s+or\\s+" +
+        "(?<costcmp>more|less)\\s+cannot\\s+block[.!]?\\s*$"
+    );
+
+    /**
+     * Reads a board-wide cost-gated block lock out of {@code seg}, or {@code null} when it is not
+     * one. Returns {@code {cost, cmp}} where {@code cmp} is {@code 1} for "or more" and {@code -1}
+     * for "or less".
+     */
+    public static int[] parseCostForwardsCannotBlock(String seg) {
+        if (seg == null || seg.isBlank()) return null;
+        Matcher m = FIELD_COST_FORWARDS_CANNOT_BLOCK.matcher(seg.trim());
+        if (!m.matches()) return null;
+        return new int[] { Integer.parseInt(m.group("cost")),
+                           "more".equalsIgnoreCase(m.group("costcmp")) ? 1 : -1 };
+    }
+
+    /**
+     * This card's board-wide cost-gated block lock as {@code {cost, cmp}}, or {@code null} when it
+     * prints none. See {@link #parseCostForwardsCannotBlock}.
+     */
+    public int[] costForwardsCannotBlock() {
+        for (String seg : rawFieldSegments()) {
+            int[] lock = parseCostForwardsCannotBlock(seg);
+            if (lock != null) return lock;
+        }
+        return null;
+    }
+
     /** "[CardName] cannot attack or block." — absolute restriction on both attack and block. */
     static final Pattern FIELD_CANNOT_ATTACK_OR_BLOCK = Pattern.compile(
         "(?i)^(?<cardname>.+?)\\s+cannot\\s+attack\\s+or\\s+block[.!]?\\s*$"
@@ -6382,6 +6468,42 @@ public record CardData(
         for (String seg : rawFieldSegments())
             if (parseOpponentForwardsEnterDull(seg)) return true;
         return false;
+    }
+
+    /**
+     * Matches "All the Forwards other than [Name] enter the field dull." — Ultimecia 1-152L.
+     * The both-sides twin of {@link #OPPONENT_FORWARDS_ENTER_DULL_PATTERN}: naming no controller,
+     * it dulls every Forward that enters on either side except the ones the exception names.
+     * Group: {@code except}.
+     */
+    static final Pattern ALL_FORWARDS_EXCEPT_ENTER_DULL_PATTERN = Pattern.compile(
+        "(?i)^All\\s+the\\s+Forwards?\\s+other\\s+than\\s+(?<except>.+?)\\s+enters?\\s+the\\s+field\\s+dull[.!]?\\s*$"
+    );
+
+    /**
+     * The card name spared by an "All the Forwards other than X enter the field dull." ability, or
+     * {@code null} when {@code seg} is not one.
+     */
+    public static String parseAllForwardsExceptEnterDull(String seg) {
+        if (seg == null || seg.isBlank()) return null;
+        Matcher m = ALL_FORWARDS_EXCEPT_ENTER_DULL_PATTERN.matcher(seg.trim());
+        return m.matches() ? m.group("except").trim() : null;
+    }
+
+    /**
+     * The card name this card's "All the Forwards other than X enter the field dull." ability
+     * spares, or {@code null} when it prints none.
+     *
+     * <p>The exception is carried as a name rather than reduced to "except me": card text names
+     * cards by Card Name, so a second copy of Ultimecia entering is spared too, and a future
+     * printing that named somebody else would not silently become a self-reference.
+     */
+    public String allForwardsEnterFieldDullExcept() {
+        for (String seg : rawFieldSegments()) {
+            String except = parseAllForwardsExceptEnterDull(seg);
+            if (except != null) return except;
+        }
+        return null;
     }
 
     /**

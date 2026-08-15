@@ -16,6 +16,15 @@ public class FieldAbilityParsingTest {
     private static final java.util.regex.Pattern LIMIT_BREAK_PREFIX =
             java.util.regex.Pattern.compile("(?i)^Limit\\s+Break\\s+--\\s+");
 
+    /** Examples printed for the fully- and partially-parsed buckets. */
+    private static final int SAMPLE_SIZE = 3;
+
+    /**
+     * Examples printed for the unrecognized bucket. Larger than {@link #SAMPLE_SIZE}: that list is
+     * the worklist, so a wider sample per run surfaces more of what is left to wire.
+     */
+    private static final int UNRECOGNIZED_SAMPLE_SIZE = 5;
+
     // -------------------------------------------------------------------------
     // Per-card coverage
     // -------------------------------------------------------------------------
@@ -66,13 +75,13 @@ public class FieldAbilityParsingTest {
                 String example = formatCardExample(source.name(), abilities, source);
                 if (parsed == abilities.size()) {
                     fullyParsed++;
-                    reservoirAdd(examplesFully, example, fullyParsed, rng);
+                    reservoirAdd(examplesFully, example, fullyParsed, rng, SAMPLE_SIZE);
                 } else if (parsed > 0) {
                     partiallyParsed++;
-                    reservoirAdd(examplesPartial, example, partiallyParsed, rng);
+                    reservoirAdd(examplesPartial, example, partiallyParsed, rng, SAMPLE_SIZE);
                 } else {
                     noneParsed++;
-                    reservoirAdd(examplesNone, example, noneParsed, rng);
+                    reservoirAdd(examplesNone, example, noneParsed, rng, UNRECOGNIZED_SAMPLE_SIZE);
                 }
             }
         }
@@ -111,6 +120,9 @@ public class FieldAbilityParsingTest {
         if (CardData.MULTI_NAME_PLAY_PATTERN.matcher(fa.effectText()).matches()) return true;
         if (CardData.LIGHT_DARK_DISCARD_CP_PATTERN.matcher(fa.effectText()).matches()) return true;
         if (CardData.COUNTER_GRANT_PATTERN.matcher(fa.effectText()).matches()) return true;
+        // Palom 23-018R, Porom 23-110R. Read through the same builder CardData.counterGrants uses,
+        // so a grant clause that produces no CounterGrant is not claimed as recognised.
+        if (CardData.parseCounterThresholdGrant(fa.effectText()) != null) return true;
         // Number 24 20-036H. Both name captures are checked against the carrier exactly as
         // CardData.counterGrants does, so the report cannot claim a cross-card grant as this one.
         if (selfCounterPlacedGrant(fa, source)) return true;
@@ -245,6 +257,12 @@ public class FieldAbilityParsingTest {
         if (CardData.parseIfOpponentHandSizeCannotBeBrokenThreshold(fa.effectText(), source.name()) >= 0) return true;
         if (CardData.TRAIT_ONLY_SEGMENT.matcher(fa.effectText()).matches()) return true;
         if (CardData.parseOpponentForwardsEnterDull(fa.effectText())) return true;
+        // Ultimecia 1-152L. Both-sides twin of the row above, read by MainWindow.forwardEntersFieldDull
+        // as each Forward is seated; the exception it names is matched by Card Name there.
+        if (CardData.parseAllForwardsExceptEnterDull(fa.effectText()) != null) return true;
+        // Edea 2-100H. Read per block-legality check by MainWindow.blockBarredByFieldCostLock, which
+        // every path to declaring a blocker consults. Names no controller, so it is not name-checked.
+        if (CardData.parseCostForwardsCannotBlock(fa.effectText()) != null) return true;
         if (CardData.parseFieldCannotBeBlockedByCost(fa.effectText(), source.name()) != null) return true;
         // Ark Angel MR 8-045R. Read per block-legality check by attackerBlockPowerFiltersExclude,
         // self-named exactly as that caller reads it.
@@ -383,6 +401,11 @@ public class FieldAbilityParsingTest {
             String grant = m.group("grant").trim();
             return "CounterGrant[" + m.group("counter").trim() + ": "
                 + (grant.startsWith("\"") ? "ability" : grant.replaceAll("[.!]$", "")) + "]";
+        }
+        CounterGrant tcg = CardData.parseCounterThresholdGrant(fa.effectText());
+        if (tcg != null) {
+            return "CounterThresholdGrant[" + tcg.minCount() + "+ " + tcg.counterName() + ": "
+                + (tcg.grantedAbilityText() != null ? "ability" : "+" + tcg.powerBonus() + " power") + "]";
         }
         if (selfCounterPlacedGrant(fa, source)) {
             m = CardData.SELF_COUNTER_PLACED_GAINS_PATTERN.matcher(fa.effectText());
@@ -605,6 +628,12 @@ public class FieldAbilityParsingTest {
         int[] cbbPow = CardData.parseFieldCannotBeBlockedByPower(fa.effectText(), source.name());
         if (cbbPow != null)
             return "CannotBeBlockedByPower[" + (cbbPow[1] == 1 ? "≥" : "≤") + cbbPow[0] + "]";
+        int[] blockLock = CardData.parseCostForwardsCannotBlock(fa.effectText());
+        if (blockLock != null)
+            return "FieldCostCannotBlock[cost" + (blockLock[1] > 0 ? "≥" : "≤") + blockLock[0] + "]";
+        String dullExcept = CardData.parseAllForwardsExceptEnterDull(fa.effectText());
+        if (dullExcept != null) return "AllForwardsEnterDull[excl." + dullExcept + "]";
+        if (CardData.parseOpponentForwardsEnterDull(fa.effectText())) return "OppForwardsEnterDull";
         return null;
     }
 
@@ -612,12 +641,17 @@ public class FieldAbilityParsingTest {
         return threshold > 0 ? "  [Damage ≥" + threshold + "]" : "";
     }
 
-    private static void reservoirAdd(List<String> reservoir, String item, int seen, java.util.Random rng) {
-        if (reservoir.size() < 3) {
+    /**
+     * Reservoir-samples {@code item} into {@code reservoir}, keeping at most {@code capacity}
+     * examples uniformly over the {@code seen} candidates offered so far.
+     */
+    private static void reservoirAdd(List<String> reservoir, String item, int seen,
+            java.util.Random rng, int capacity) {
+        if (reservoir.size() < capacity) {
             reservoir.add(item);
         } else {
             int j = rng.nextInt(seen);
-            if (j < 3) reservoir.set(j, item);
+            if (j < capacity) reservoir.set(j, item);
         }
     }
 

@@ -5329,6 +5329,100 @@ public class CardBehaviorTest {
     }
 
     // =========================================================================================
+    // The threshold twin of the family above: "The Forwards with 2 or more EXP Counters on them
+    // you control gain …" (Palom 23-018R, Porom 23-110R). Same standing grant, same two payload
+    // shapes, but it holds off until the second counter — so a single counter, which is what every
+    // other printing pays out at, must buy nothing here.
+    // =========================================================================================
+
+    private static final String PALOM_23_TEXT =
+            "If you control a Card Name Porom, the cost required to cast Palom is reduced by 2.[[br]]   "
+            + "The Forwards with 2 or more EXP Counters on them you control gain +2000 power.[[br]]   "
+            + "When Palom enters the field, choose 1 Forward. Place 2 EXP Counters on it.";
+
+    private static final String POROM_23_TEXT =
+            "If you control a Card Name Palom, the cost required to cast Porom is reduced by 2.[[br]]   "
+            + "The Forwards with 2 or more EXP Counters on them you control gain \"If this Forward is "
+            + "dealt damage, reduce the damage by 2000 instead.\"[[br]]   "
+            + "When Porom enters the field, choose 1 Forward. Place 2 EXP Counters on it.";
+
+    @Test
+    void palomAndPoromParseAsThresholdedCounterGrants() {
+        CounterGrant palom = makeFieldAbilityCard("Palom", "Fire", "Forward", PALOM_23_TEXT)
+                .counterGrants().get(0);
+        assertEquals("EXP", palom.counterName());
+        assertEquals(2, palom.minCount(), "\"2 or more\" is the threshold, not the payout");
+        assertEquals(2000, palom.powerBonus());
+        assertFalse(palom.perCounter(), "the bonus is flat — it does not scale with the count");
+        assertNull(palom.grantedAbilityText());
+
+        CounterGrant porom = makeFieldAbilityCard("Porom", "Water", "Forward", POROM_23_TEXT)
+                .counterGrants().get(0);
+        assertEquals("EXP", porom.counterName());
+        assertEquals(2, porom.minCount());
+        assertEquals(0, porom.powerBonus());
+        assertEquals("If this Forward is dealt damage, reduce the damage by 2000 instead.",
+                porom.grantedAbilityText());
+        assertTrue(AutoAbilityTriggers.FA_DAMAGE_MODIFIER.matcher(porom.grantedAbilityText()).find(),
+                "the granted text has to be readable by the incoming damage-modifier parser");
+    }
+
+    @Test
+    void theUnthresholdedPrintingsStillPayOutAtOneCounter() {
+        assertEquals(1, makeFieldAbilityCard("Legendary Turk", "Ice", "Forward", LEGENDARY_TURK_TEXT)
+                .counterGrants().get(0).minCount(),
+                "a printing that names no threshold pays out at one or more");
+    }
+
+    @Test
+    void palomsPowerGrantWaitsForTheSecondCounter() {
+        MainWindow mw = new MainWindow();
+        placeP1Forward(mw, makeFieldAbilityCard("Palom", "Fire", "Forward", PALOM_23_TEXT)); // idx 0
+        CardData counted = makeForward("Ceodore", "Fire", 3, 7000);
+        placeP1Forward(mw, counted);                                                      // idx 1
+
+        assertEquals(7000, mw.effectiveP1ForwardPower(1), "no counters — no boost");
+
+        mw.gameState.placeCounters(counted, "EXP", 1);
+        assertEquals(7000, mw.effectiveP1ForwardPower(1),
+                "one EXP Counter is below the threshold this grant names");
+
+        mw.gameState.placeCounters(counted, "EXP", 1);
+        assertEquals(9000, mw.effectiveP1ForwardPower(1), "two EXP Counters → +2000");
+
+        mw.gameState.placeCounters(counted, "EXP", 2);
+        assertEquals(9000, mw.effectiveP1ForwardPower(1),
+                "the bonus is flat, so a third and fourth counter add nothing");
+    }
+
+    @Test
+    void palomsGrantDoesNotReachTheOpponentsCountedForwards() {
+        MainWindow mw = new MainWindow();
+        placeP1Forward(mw, makeFieldAbilityCard("Palom", "Fire", "Forward", PALOM_23_TEXT));
+        CardData enemy = makeForward("Enemy", "Fire", 3, 7000);
+        mw.placeP2CardInForwardZone(enemy);
+        mw.gameState.placeCounters(enemy, "EXP", 3);
+
+        assertEquals(7000, mw.effectiveP2ForwardPower(0), "\"you control\" scopes the grant");
+    }
+
+    @Test
+    void poromsAbilityGrantWaitsForTheSecondCounterToo() {
+        MainWindow mw = new MainWindow();
+        placeP1Forward(mw, makeFieldAbilityCard("Porom", "Water", "Forward", POROM_23_TEXT)); // idx 0
+        CardData counted = makeForward("Ceodore", "Water", 3, 9000);
+        placeP1Forward(mw, counted);                                                        // idx 1
+
+        mw.gameState.placeCounters(counted, "EXP", 1);
+        assertEquals(8000, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 1, 8000, true, false),
+                "one counter — the shield is not there yet");
+
+        mw.gameState.placeCounters(counted, "EXP", 1);
+        assertEquals(6000, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 1, 8000, true, false),
+                "two counters — damage reduced by 2000");
+    }
+
+    // =========================================================================================
     // Zenos: "You can cast Zenos from your Break Zone." — a self-referential Break-Zone ability
     // that registers the card as castable from the Break Zone while it sits there.
     // =========================================================================================
@@ -20729,5 +20823,134 @@ public class CardBehaviorTest {
 		assertNotEquals("SearchDeck",
 				ActionResolver.matchedPatternName(chadley.autoAbilities().get(0).effectText(), chadley),
 				"\"Research Counters\" is not a search");
+	}
+	// =========================================================================================
+	// "All the Forwards other than Ultimecia enter the field dull." (Ultimecia 1-152L) — the
+	// both-sides twin of Maquis the Phantasm's "The opponent's Forwards enter the field dull.".
+	// It names no controller, so it dulls its own controller's Forwards alongside the opponent's,
+	// and it spares by Card Name rather than by instance: a second Ultimecia entering is spared too.
+	// =========================================================================================
+
+	private static final String ULTIMECIA_TEXT =
+			"All the Forwards other than Ultimecia enter the field dull.[[br]] "
+			+ "Time Compression 《S》《Water》《Water》《Water》: "
+			+ "Freeze all the Forwards other than Ultimecia.";
+
+	@Test
+	void ultimeciaParsesAsABothSidesEnterDullWithANamedException() {
+		CardData ultimecia = makeFieldAbilityCard("Ultimecia", "Water", "Forward", ULTIMECIA_TEXT);
+
+		assertEquals("Ultimecia", ultimecia.allForwardsEnterFieldDullExcept());
+		assertFalse(ultimecia.opponentForwardsEnterFieldDull(),
+				"the one-sided pattern must not claim a text that names no controller");
+	}
+
+	@Test
+	void ultimeciaDullsForwardsEnteringOnBothSidesOfTheField() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeFieldAbilityCard("Ultimecia", "Water", "Forward", ULTIMECIA_TEXT));
+
+		placeP1Forward(mw, makeForward("Ally", "Water", 3, 7000));
+		mw.placeP2CardInForwardZone(makeForward("Enemy", "Fire", 3, 7000));
+
+		assertEquals(CardState.DULL, mw.p1ForwardStates.get(1),
+				"its own controller's Forwards are not spared — the text names no side");
+		assertEquals(CardState.DULL, mw.p2ForwardStates.get(0));
+	}
+
+	@Test
+	void ultimeciaSparesEveryForwardSharingHerName() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeFieldAbilityCard("Ultimecia", "Water", "Forward", ULTIMECIA_TEXT));
+
+		// A different copy of the same printing, seated on the other side of the field.
+		mw.placeP2CardInForwardZone(makeFieldAbilityCard("Ultimecia", "Water", "Forward", ULTIMECIA_TEXT));
+
+		assertEquals(CardState.ACTIVE, mw.p2ForwardStates.get(0),
+				"card text names cards by Card Name, so the exception covers the second copy");
+	}
+
+	@Test
+	void theEnterDullLockLiftsWhenItsSourceLeavesTheField() {
+		MainWindow mw = new MainWindow();
+		CardData ultimecia = makeFieldAbilityCard("Ultimecia", "Water", "Forward", ULTIMECIA_TEXT);
+		placeP1Forward(mw, ultimecia);
+		mw.placeP2CardInForwardZone(makeForward("First", "Fire", 3, 7000));
+		assertEquals(CardState.DULL, mw.p2ForwardStates.get(0));
+
+		mw.breakP1Forward(0);
+
+		mw.placeP2CardInForwardZone(makeForward("Second", "Fire", 3, 7000));
+		assertEquals(CardState.ACTIVE, mw.p2ForwardStates.get(1),
+				"the lock is a field ability, so it stops applying the moment its source is gone");
+	}
+
+	// =========================================================================================
+	// "Forwards of cost 5 or more cannot block." (Edea 2-100H) — a board-wide block lock. Unlike
+	// its self-named neighbours ("[CardName] cannot block.") it names no controller, so it bars
+	// its own controller's expensive Forwards as readily as the opponent's, and unlike the
+	// attacker-side cost filters it is sourced from a card that is not in the combat at all.
+	// =========================================================================================
+
+	private static final String EDEA_TEXT = "Forwards of cost 5 or more cannot block.";
+
+	@Test
+	void edeaParsesAsABoardWideCostGatedBlockLock() {
+		CardData edea = makeFieldAbilityCard("Edea", "Lightning", "Backup", EDEA_TEXT);
+
+		assertArrayEquals(new int[] { 5, 1 }, edea.costForwardsCannotBlock());
+		assertFalse(CardData.parseCannotBlockAtAll(EDEA_TEXT, "Edea"),
+				"the self-named pattern's lazy name group also matches this sentence, "
+				+ "but the carrier check is what keeps it from claiming it");
+	}
+
+	@Test
+	void edeaBarsExpensiveForwardsFromBlockingAndLeavesCheapOnesAlone() {
+		MainWindow mw = new MainWindow();
+		enterAttackDeclarationStep(mw, false);
+		mw.p2BackupCards[0]  = makeFieldAbilityCard("Edea", "Lightning", "Backup", EDEA_TEXT);
+		mw.p2BackupStates[0] = CardState.ACTIVE;
+		mw.placeP2CardInForwardZone(makeForward("Attacker", "Fire", 3, 7000));
+
+		CardData cheap     = makeForward("Cheap",     "Ice", 4, 7000);
+		CardData expensive = makeForward("Expensive", "Ice", 5, 9000);
+		placeP1Forward(mw, cheap);      // idx 0
+		placeP1Forward(mw, expensive);  // idx 1
+		openPartyBlockStep(mw);
+
+		assertTrue(mw.isForwardBlockSelectable(0), "cost 4 is below the lock's threshold");
+		assertFalse(mw.isForwardBlockSelectable(1), "cost 5 is \"5 or more\"");
+	}
+
+	@Test
+	void edeaBarsItsOwnControllersForwardsToo() {
+		MainWindow mw = new MainWindow();
+		enterAttackDeclarationStep(mw, false);
+		mw.p1BackupCards[0]  = makeFieldAbilityCard("Edea", "Lightning", "Backup", EDEA_TEXT);
+		mw.p1BackupStates[0] = CardState.ACTIVE;
+		mw.placeP2CardInForwardZone(makeForward("Attacker", "Fire", 3, 7000));
+		placeP1Forward(mw, makeForward("Expensive", "Ice", 6, 9000));
+		openPartyBlockStep(mw);
+
+		assertFalse(mw.isForwardBlockSelectable(0),
+				"the text names no side, so its controller's own Forwards are caught by it");
+	}
+
+	@Test
+	void theBlockLockIsReadPerCheckRatherThanLatched() {
+		MainWindow mw = new MainWindow();
+		enterAttackDeclarationStep(mw, false);
+		CardData edea = makeFieldAbilityCard("Edea", "Lightning", "Forward", EDEA_TEXT);
+		mw.gameState.getIdentity().put(edea, false);   // owned by P2, so the break can find its side
+		mw.placeP2CardInForwardZone(edea);                                   // P2 idx 0
+		mw.placeP2CardInForwardZone(makeForward("Attacker", "Fire", 3, 7000)); // P2 idx 1
+		placeP1Forward(mw, makeForward("Expensive", "Ice", 7, 9000));
+		openPartyBlockStep(mw);
+		assertFalse(mw.isForwardBlockSelectable(0));
+
+		mw.breakP2Forward(0);
+
+		assertTrue(mw.isForwardBlockSelectable(0),
+				"the source can leave mid-Attack Phase, and the lock leaves with it");
 	}
 }
