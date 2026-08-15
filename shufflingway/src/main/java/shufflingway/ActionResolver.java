@@ -984,6 +984,11 @@ public class ActionResolver {
         result = tryParsePlayAnyNumberFromHand(effectText, source);
         if (result != null) return result;
 
+        // Must precede tryParsePlayFromHand: that one declines the "each player may" wording by
+        // guard, so this is the only reading of it, and the pair is clearer kept adjacent.
+        result = tryParseEachPlayerMayPlayFromHand(effectText, source, xValue);
+        if (result != null) return result;
+
         result = tryParsePlayFromHand(effectText, source, xValue);
         if (result != null) return result;
 
@@ -1173,6 +1178,9 @@ public class ActionResolver {
         if (result != null) return result;
 
         result = tryParseFlipUntilTypeToHandRestShuffleBottom(effectText);
+        if (result != null) return result;
+
+        result = tryParseFlipUntilElementToHandRestShuffleBottom(effectText);
         if (result != null) return result;
 
         result = tryParseShuffleThenRevealPlayNamedRestBottom(effectText, source);
@@ -1636,6 +1644,7 @@ public class ActionResolver {
         if (tryParseCastSummonFromHandFree(effectText, 0)     != null) return "CastSummonFromHandFree";
         if (tryParseSearchAndCastSummonFree(effectText)       != null) return "SearchAndCastSummonFree";
         if (tryParsePlayAnyNumberFromHand(effectText, source) != null) return "PlayAnyNumberFromHand";
+        if (tryParseEachPlayerMayPlayFromHand(effectText, source, 0) != null) return "EachPlayerMayPlayFromHand";
         if (tryParsePlayFromHand(effectText, source, 0)       != null) return "PlayFromHand";
         // Checked ahead of OpponentSelects: an "…, X instead." upgrade wraps a base clause the
         // OpponentSelects matcher would otherwise claim on its own, dropping the replacement.
@@ -1719,6 +1728,7 @@ public class ActionResolver {
         if (tryParseRevealPlayNamedWithMaxCostRestBottom(effectText)         != null) return "RevealPlayNamedWithMaxCostRestBottom";
         if (tryParseRevealPlayNamedOrJobMaxCostRestBottom(effectText)        != null) return "RevealPlayNamedOrJobMaxCostRestBottom";
         if (tryParseFlipUntilTypeToHandRestShuffleBottom(effectText)         != null) return "FlipUntilTypeToHandRestShuffleBottom";
+        if (tryParseFlipUntilElementToHandRestShuffleBottom(effectText)      != null) return "FlipUntilElementToHandRestShuffleBottom";
         if (tryParseRevealPlayTypeOntoFieldRestBottom(effectText) != null) return "RevealPlayTypeOntoFieldRestBottom";
         if (tryParseRevealElementCardFromHandIfSoDraw(effectText) != null) return "RevealElementCardFromHandIfSoDraw";
         if (tryParseShuffleDeck(effectText)                                  != null) return "ShuffleDeck";
@@ -2330,6 +2340,7 @@ public class ActionResolver {
         if (tryParseCastSummonFromHandFree(effectText, 0) != null)          return "CastSummonFromHandFree";
         if (tryParseSearchAndCastSummonFree(effectText) != null)            return "SearchAndCastSummonFree";
         if (tryParsePlayAnyNumberFromHand(effectText, source) != null)      return "PlayAnyNumberFromHand";
+        if (tryParseEachPlayerMayPlayFromHand(effectText, source, 0) != null) return "EachPlayerMayPlayFromHand";
         if (tryParsePlayFromHand(effectText, source, 0) != null)            return "PlayFromHand";
 
         // Mirrors parse(): ahead of OPPONENT_SELECTS_PATTERN, which would otherwise claim it.
@@ -2408,6 +2419,7 @@ public class ActionResolver {
         if (tryParseRevealPlayNamedWithMaxCostRestBottom(effectText)           != null) return "RevealPlayNamedWithMaxCostRestBottom";
         if (tryParseRevealPlayNamedOrJobMaxCostRestBottom(effectText)          != null) return "RevealPlayNamedOrJobMaxCostRestBottom";
         if (tryParseFlipUntilTypeToHandRestShuffleBottom(effectText)           != null) return "FlipUntilTypeToHandRestShuffleBottom";
+        if (tryParseFlipUntilElementToHandRestShuffleBottom(effectText)        != null) return "FlipUntilElementToHandRestShuffleBottom";
         if (tryParseShuffleThenRevealPlayNamedRestBottom(effectText, source) != null) return "ShuffleThenRevealPlayNamedRestBottom";
         if (tryParseRevealPlayTypeOntoFieldRestBottom(effectText)                != null) return "RevealPlayTypeOntoFieldRestBottom";
         if (tryParseRevealElementCardFromHandIfSoDraw(effectText)                != null) return "RevealElementCardFromHandIfSoDraw";

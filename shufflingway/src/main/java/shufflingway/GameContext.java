@@ -380,6 +380,25 @@ public interface GameContext {
             boolean suppressAutoAbility, String withTrait);
 
     /**
+     * The "each player may play 1 [type] … from their hand onto the field" wording — 28-051R
+     * Black Cat. Both players get the same offer, applied to their own hand and their own field,
+     * with the same filters and the same meaning for every parameter as
+     * {@link #playCharacterFromHand}.
+     *
+     * <p>Resolves in turn order: the turn player chooses first, then their opponent, who by then
+     * can see what was played. The controller of the ability has no priority here — it is "each
+     * player", not "you, then your opponent".
+     *
+     * <p>Either player may decline, and one declining does not stop the other. The effect counts
+     * as having fizzled only if neither played.
+     */
+    void eachPlayerMayPlayCharacterFromHand(boolean inclForwards, boolean inclBackups,
+            boolean inclMonsters, int costVal, String costCmp, int costVal2,
+            String jobFilter, String cardNameFilter, String categoryFilter,
+            String elementFilter, String excludeName, boolean entersDull, String excludeElement,
+            boolean suppressAutoAbility, String withTrait);
+
+    /**
      * Repeatedly prompts the ability user to play matching characters from their hand onto the
      * field until no eligible cards remain or they decline.
      */
@@ -2109,6 +2128,19 @@ public interface GameContext {
      * bottom of their deck.
      */
     void flipUntilTypeToHandRestShuffleBottom();
+
+    /**
+     * Turns cards over one at a time from the top of the active player's deck until one of
+     * {@code elem1} or {@code elem2} Element is revealed. That card is added to their hand; all
+     * other revealed cards are shuffled and returned to the bottom of their deck.
+     *
+     * <p>Running the deck out is not a loss. A player only loses by being unable to draw, and this
+     * turns cards over rather than drawing them — so an exhausted deck simply ends the reveal with
+     * nothing added to hand, and an already-empty deck reveals nothing at all.
+     *
+     * <p>A multi-Element card counts if any of its Elements matches.
+     */
+    void flipUntilElementToHandRestShuffleBottom(String elem1, String elem2);
 
     /**
      * Reveals the top {@code reveal} cards of the active player's deck.

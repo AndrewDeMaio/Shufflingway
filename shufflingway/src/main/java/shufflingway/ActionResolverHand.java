@@ -670,9 +670,44 @@ final class ActionResolverHand {
         };
     }
     /**
-     * Parses "Play 1 [type] of cost N [or less|more] from your hand onto the field".
+     * Parses "Play 1 [type] of cost N [or less|more] from [your|his/her|their] hand onto the field".
+     *
+     * <p>Resolves for whichever player the context belongs to, so the possessive carries no meaning
+     * here: on "your opponent may play 1 … from his/her hand" (1-060H Leon, 12-071R Shadow Lord)
+     * {@code AutoAbility.opponentMay} has already flipped the context to the opponent.
      */
     static Consumer<GameContext> tryParsePlayFromHand(String text, CardData source, int xValue) {
+        // "each player may play …" is two plays, one per player; this reading resolves a single
+        // play. tryParseEachPlayerMayPlayFromHand takes that wording instead.
+        if (EACH_PLAYER_MAY_PLAY_FROM_HAND.matcher(text).find()) return null;
+        return parsePlayFromHand(text, source, xValue, false);
+    }
+
+    /**
+     * Parses "each player may play 1 [type] [of cost N or less] from their hand onto the field"
+     * — 28-051R Black Cat.
+     *
+     * <p>Both players get the offer, on their own hand and their own field, so this cannot go
+     * through {@link #tryParsePlayFromHand}: that one resolves for whichever player the context
+     * belongs to, which would silently drop the other player's half of the effect.
+     *
+     * <p>Everything after "each player may" is the ordinary single-player wording, so the filters
+     * are read by the same pattern rather than a second copy of it.
+     */
+    static Consumer<GameContext> tryParseEachPlayerMayPlayFromHand(String text, CardData source, int xValue) {
+        Matcher g = EACH_PLAYER_MAY_PLAY_FROM_HAND.matcher(text);
+        if (!g.find()) return null;
+        return parsePlayFromHand(text.substring(g.end()), source, xValue, true);
+    }
+
+    /**
+     * Shared body of the two readings above.
+     *
+     * @param eachPlayer {@code true} to dispatch to the both-players primitive rather than the
+     *                   single-player one; the filters are parsed identically either way.
+     */
+    private static Consumer<GameContext> parsePlayFromHand(String text, CardData source, int xValue,
+            boolean eachPlayer) {
         Matcher m = PLAY_FROM_HAND_PATTERN.matcher(text);
         if (!m.find()) return null;
 
@@ -800,11 +835,18 @@ final class ActionResolverHand {
                 resolvedCost = n;
                 resolvedCmp  = "less";
             }
-            ctx.logEntry("Effect: Play 1" + filterDesc + tgtLabel + costLabel + exclLabel + dullLabel + " from hand"
+            ctx.logEntry("Effect: " + (eachPlayer ? "Each player may play 1" : "Play 1")
+                    + filterDesc + tgtLabel + costLabel + exclLabel + dullLabel + " from hand"
                     + (fSuppressAuto ? " (no ETF auto-ability)" : ""));
-            ctx.playCharacterFromHand(inclForwards, inclBackups, inclMonsters,
-                    resolvedCost, resolvedCmp, fCostVal2,
-                    fJob, fName, fCat, fElem, fExclude, fEntersDull, fExcludeElem, fSuppressAuto, fWithTrait);
+            if (eachPlayer) {
+                ctx.eachPlayerMayPlayCharacterFromHand(inclForwards, inclBackups, inclMonsters,
+                        resolvedCost, resolvedCmp, fCostVal2,
+                        fJob, fName, fCat, fElem, fExclude, fEntersDull, fExcludeElem, fSuppressAuto, fWithTrait);
+            } else {
+                ctx.playCharacterFromHand(inclForwards, inclBackups, inclMonsters,
+                        resolvedCost, resolvedCmp, fCostVal2,
+                        fJob, fName, fCat, fElem, fExclude, fEntersDull, fExcludeElem, fSuppressAuto, fWithTrait);
+            }
         };
     }
     static Consumer<GameContext> tryParseOpponentMillIfSameElementDraw(String text) {

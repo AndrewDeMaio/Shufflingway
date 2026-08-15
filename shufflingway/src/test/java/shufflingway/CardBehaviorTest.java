@@ -20098,4 +20098,363 @@ public class CardBehaviorTest {
 		assertFalse(canUseDullAbilityThisTurn(mw, inSet),
 				"\"you control\" — the opponent's Cherukiki frees nothing of mine");
 	}
+
+	// =========================================================================================
+	// White Mage 13-042C / Black Mage 13-005C: "When [name] enters the field, turn over one card
+	// at a time from the top of your deck until a [Element] or [Element] card is revealed. Add it
+	// to your hand. Then, shuffle the other cards revealed and return them to the bottom of your
+	// deck."
+	//
+	// Board behaviour. Twelve cards share this text, one per element pair, across two printings
+	// that differ by the word "revealed". The rule worth pinning is the miss case: turning cards
+	// over is not drawing, so exhausting the deck here must not put the player at risk of decking
+	// out, and an already-empty deck is a legal no-op rather than a loss.
+	// =========================================================================================
+
+	private static final String WHITE_MAGE_13_042C =
+			"When White Mage enters the field, turn over one card at a time from the top of your "
+			+ "deck until a Fire or Ice card is revealed. Add it to your hand. Then, shuffle the "
+			+ "other cards revealed and return them to the bottom of your deck.";
+
+	/** The 11- printing of the same ability, which omits "revealed" from the shuffle clause. */
+	private static final String LILTY_11_020C =
+			"When Lilty enters the field, turn over one card at a time from the top of your deck "
+			+ "until an Ice or Wind card is revealed. Add it to your hand. Then, shuffle the other "
+			+ "cards and return them to the bottom of your deck.";
+
+	private static Consumer<GameContext> flipUntilElement(String text) {
+		CardData card = makeAutoAbilityForward("Flipper", text);
+		assertEquals(1, card.autoAbilities().size(), "one ETF trigger: " + text);
+		Consumer<GameContext> effect = ActionResolver.parse(card.autoAbilities().get(0).effectText(), card);
+		assertNotNull(effect, "the flip-until-element text parses");
+		return effect;
+	}
+
+	/** Stacks {@code cards} so the first argument ends up on top of P1's deck. */
+	private static void stackP1Deck(MainWindow mw, CardData... cards) {
+		mw.gameState.getP1MainDeck().clear();
+		for (CardData c : cards) mw.gameState.getP1MainDeck().addLast(c);
+	}
+
+	@Test
+	void theFlipStopsAtTheFirstMatchingElementAndTakesIt() {
+		MainWindow mw = new MainWindow();
+		CardData miss1 = makeForward("Wind Miss", "Wind", 2, 5000);
+		CardData miss2 = makeForward("Earth Miss", "Earth", 2, 5000);
+		CardData hit   = makeForward("Ice Hit", "Ice", 2, 5000);
+		CardData below = makeForward("Fire Below", "Fire", 2, 5000);
+		stackP1Deck(mw, miss1, miss2, hit, below);
+
+		flipUntilElement(WHITE_MAGE_13_042C).accept(mw.buildGameContext(true));
+
+		assertEquals(List.of(hit), mw.gameState.getP1Hand(), "the first Fire-or-Ice card is taken");
+		assertEquals(3, mw.gameState.getP1MainDeck().size(), "one card left the deck");
+		assertEquals(below, mw.gameState.getP1MainDeck().peekFirst(),
+				"the flip stopped at the hit, so the card under it stays on top");
+		assertEquals(Set.of(miss1, miss2),
+				Set.copyOf(new ArrayList<>(mw.gameState.getP1MainDeck()).subList(1, 3)),
+				"and the two misses went to the bottom");
+	}
+
+	@Test
+	void aMultiElementCardCountsOnEitherOfItsElements() {
+		MainWindow mw = new MainWindow();
+		CardData multi = makeForward("Y'shtola", "Fire/Earth", 2, 5000);
+		stackP1Deck(mw, multi, makeForward("Below", "Wind", 2, 5000));
+
+		flipUntilElement(WHITE_MAGE_13_042C).accept(mw.buildGameContext(true));
+
+		assertEquals(List.of(multi), mw.gameState.getP1Hand(),
+				"Fire/Earth matches on the Fire half of \"a Fire or Ice card\"");
+	}
+
+	// The point of the whole section: a miss is not a deck-out.
+	@Test
+	void runningTheDeckOutRevealsEverythingAndAddsNothing() {
+		MainWindow mw = new MainWindow();
+		CardData miss1 = makeForward("Wind Miss", "Wind", 2, 5000);
+		CardData miss2 = makeForward("Earth Miss", "Earth", 2, 5000);
+		stackP1Deck(mw, miss1, miss2);
+
+		flipUntilElement(WHITE_MAGE_13_042C).accept(mw.buildGameContext(true));
+
+		assertTrue(mw.gameState.getP1Hand().isEmpty(), "no Fire or Ice card to add");
+		assertEquals(2, mw.gameState.getP1MainDeck().size(),
+				"every revealed card went back to the bottom, so the deck is whole again");
+		assertFalse(mw.gameState.isP1GameOver(),
+				"turning cards over is not drawing — emptying the deck this way loses nothing");
+	}
+
+	@Test
+	void anEmptyDeckRevealsNothingRatherThanLosing() {
+		MainWindow mw = new MainWindow();
+		mw.gameState.getP1MainDeck().clear();
+
+		flipUntilElement(WHITE_MAGE_13_042C).accept(mw.buildGameContext(true));
+
+		assertTrue(mw.gameState.getP1Hand().isEmpty());
+		assertTrue(mw.gameState.getP1MainDeck().isEmpty());
+		assertFalse(mw.gameState.isP1GameOver(),
+				"0 cards left is a no-op here, not a forced draw on an empty deck");
+	}
+
+	@Test
+	void theFlipResolvesOnWhicheverSideControlsIt() {
+		MainWindow mw = new MainWindow();
+		CardData hit = makeForward("Ice Hit", "Ice", 2, 5000);
+		mw.gameState.getP2MainDeck().clear();
+		mw.gameState.getP2MainDeck().addLast(makeForward("Wind Miss", "Wind", 2, 5000));
+		mw.gameState.getP2MainDeck().addLast(hit);
+		int p1DeckBefore = mw.gameState.getP1MainDeck().size();
+
+		flipUntilElement(WHITE_MAGE_13_042C).accept(mw.buildGameContext(false));
+
+		assertEquals(List.of(hit), mw.gameState.getP2Hand(), "P2's own deck is the one flipped");
+		assertEquals(p1DeckBefore, mw.gameState.getP1MainDeck().size(), "P1's deck is untouched");
+	}
+
+	// The 11- and 13- printings differ only by "revealed" in the shuffle clause; both are the same
+	// ability and must reach the same primitive.
+	@Test
+	void bothPrintingsOfTheShuffleClauseParse() {
+		MainWindow mw = new MainWindow();
+		CardData hit = makeForward("Wind Hit", "Wind", 2, 5000);
+		stackP1Deck(mw, makeForward("Fire Miss", "Fire", 2, 5000), hit);
+
+		flipUntilElement(LILTY_11_020C).accept(mw.buildGameContext(true));
+
+		assertEquals(List.of(hit), mw.gameState.getP1Hand(),
+				"\"shuffle the other cards\" without \"revealed\" is the same effect");
+	}
+
+	@Test
+	void theFlipUntilElementTextIsNamedAndDescribed() {
+		CardData whiteMage = makeAutoAbilityForward("White Mage", WHITE_MAGE_13_042C);
+		String effect = whiteMage.autoAbilities().get(0).effectText();
+
+		assertEquals("FlipUntilElementToHandRestShuffleBottom",
+				ActionResolver.matchedPatternName(effect, whiteMage));
+		assertEquals("FlipUntilElementToHandRestShuffleBottom",
+				ActionResolver.fullDescription(effect, whiteMage));
+	}
+
+	// =========================================================================================
+	// Leon 1-060H: "When Leon enters the field, your opponent may play 1 Character Card from
+	// his/her hand onto the field."  Bel Dat 11-058H: "When Bel Dat enters the field, you may
+	// search 1 Job Standard Unit Category FFCC Forward and add it to your hand."
+	//
+	// Parsing. Each was unparsed over one word: Leon for the possessive ("his/her hand", not
+	// "your hand") and Bel Dat for the corpus's only "search" that omits "for". Leon needs no new
+	// primitive — AutoAbility.opponentMay already flips the execution context to the opponent, so
+	// "play 1 … from hand" resolves against the right player once the text matches at all.
+	// =========================================================================================
+
+	private static final String LEON_1_060H =
+			"When Leon enters the field, your opponent may play 1 Character Card from his/her "
+			+ "hand onto the field.";
+
+	private static final String BEL_DAT_11_058H =
+			"When Bel Dat enters the field, you may search 1 Job Standard Unit Category FFCC "
+			+ "Forward and add it to your hand.";
+
+	@Test
+	void leonsEtbIsAnOpponentMayPlayFromHand() {
+		CardData leon = makeAutoAbilityForward("Leon", LEON_1_060H);
+		AutoAbility fa = leon.autoAbilities().get(0);
+
+		assertEquals("enters the field", fa.trigger());
+		assertTrue(fa.opponentMay(), "\"your opponent may\" — the opponent chooses, and the context "
+				+ "flip that follows from it is what makes \"his/her hand\" read the right hand");
+		assertFalse(fa.youMay(), "the choice is not the controller's");
+		assertEquals("PlayFromHand", ActionResolver.matchedPatternName(fa.effectText(), leon));
+	}
+
+	@Test
+	void leonPlaysACharacterOfAnyTypeWithNoCostLimit() {
+		GameContext ctx = mock(GameContext.class);
+		CardData leon = makeAutoAbilityForward("Leon", LEON_1_060H);
+
+		ActionResolver.parse(leon.autoAbilities().get(0).effectText(), leon).accept(ctx);
+
+		// "Character Card" is every non-Summon type, and the text caps nothing.
+		verify(ctx).playCharacterFromHand(eq(true), eq(true), eq(true), eq(-1), isNull(), eq(-1),
+				isNull(), isNull(), isNull(), isNull(), isNull(), eq(false), isNull(), eq(false), isNull());
+	}
+
+	// Shadow Lord is the other "from their hand" card, and it carries the filters Leon does not.
+	@Test
+	void shadowLordPlaysABackupOfCostTwoOrLess() {
+		GameContext ctx = mock(GameContext.class);
+		CardData shadowLord = makeAutoAbilityForward("Shadow Lord",
+				"When Shadow Lord enters the field, your opponent may play 1 Backup of cost 2 or "
+				+ "less from their hand onto the field.");
+
+		ActionResolver.parse(shadowLord.autoAbilities().get(0).effectText(), shadowLord).accept(ctx);
+
+		verify(ctx).playCharacterFromHand(eq(false), eq(true), eq(false), eq(2), eq("less"), eq(-1),
+				isNull(), isNull(), isNull(), isNull(), isNull(), eq(false), isNull(), eq(false), isNull());
+	}
+
+	// =========================================================================================
+	// Black Cat 28-051R: "When Black Cat enters the field, each player may play 1 Character of
+	// cost 3 or less from their hand onto the field."
+	//
+	// Board behaviour. The corpus's only "each player may play" — both players get the offer, on
+	// their own hand and their own field. It cannot go through the single-player PlayFromHand
+	// reading, which resolves for whichever side the context belongs to and would silently drop
+	// the other player's half; the guard that keeps it off is what makes the two readings split.
+	//
+	// P1's half opens a card chooser, so the board tests below stock only P2's hand and assert
+	// that the halves are independent of each other. The resolution order (turn player first) is
+	// deliberately not asserted: observing it needs both halves to actually play, and that means
+	// driving P1's modal chooser.
+	// =========================================================================================
+
+	private static final String BLACK_CAT_28_051R =
+			"When Black Cat enters the field, each player may play 1 Character of cost 3 or less "
+			+ "from their hand onto the field.";
+
+	private static Consumer<GameContext> blackCatEtb() {
+		CardData blackCat = makeAutoAbilityForward("Black Cat", BLACK_CAT_28_051R);
+		Consumer<GameContext> effect =
+				ActionResolver.parse(blackCat.autoAbilities().get(0).effectText(), blackCat);
+		assertNotNull(effect, "\"each player may play\" has its own reading");
+		return effect;
+	}
+
+	/** A board with P1 holding nothing, so only P2's half of the effect can act without a dialog. */
+	private static MainWindow blackCatBoard() {
+		MainWindow mw = new MainWindow();
+		mw.gameState.startFirstTurn(GameState.Player.P1);
+		mw.gameState.getP1Hand().clear();
+		mw.effectProgress = true;
+		return mw;
+	}
+
+	@Test
+	void blackCatIsReadAsAnEachPlayerPlayNotASinglePlay() {
+		GameContext ctx = mock(GameContext.class);
+		CardData blackCat = makeAutoAbilityForward("Black Cat", BLACK_CAT_28_051R);
+		String effect = blackCat.autoAbilities().get(0).effectText();
+
+		assertEquals("EachPlayerMayPlayFromHand", ActionResolver.matchedPatternName(effect, blackCat));
+
+		ActionResolver.parse(effect, blackCat).accept(ctx);
+
+		// Same filters the single-player reading would produce — "Character" is every non-Summon
+		// type, capped at cost 3 — but dispatched to the both-players primitive.
+		verify(ctx).eachPlayerMayPlayCharacterFromHand(eq(true), eq(true), eq(true), eq(3),
+				eq("less"), eq(-1), isNull(), isNull(), isNull(), isNull(), isNull(), eq(false),
+				isNull(), eq(false), isNull());
+		verify(ctx, never()).playCharacterFromHand(anyBoolean(), anyBoolean(), anyBoolean(), anyInt(),
+				any(), anyInt(), any(), any(), any(), any(), any(), anyBoolean(), any(), anyBoolean(), any());
+	}
+
+	@Test
+	void theOpponentsHalfResolvesEvenWhenTheControllerHoldsNothing() {
+		MainWindow mw = blackCatBoard();
+		CardData theirs = makeForward("Tonberry", "Earth", 2, 5000);
+		mw.gameState.getP2Hand().add(theirs);
+
+		blackCatEtb().accept(mw.buildGameContext(true));
+
+		assertEquals(List.of(theirs), mw.p2ForwardCards, "P2 played onto P2's own field");
+		assertTrue(mw.gameState.getP2Hand().isEmpty(), "and out of P2's own hand");
+		assertTrue(mw.p1ForwardCards.isEmpty(), "P1 had nothing to play");
+		assertTrue(mw.effectProgress, "one player passing is not the effect failing");
+	}
+
+	@Test
+	void eachHalfIsCappedAgainstThatPlayersOwnHand() {
+		MainWindow mw = blackCatBoard();
+		mw.gameState.getP2Hand().add(makeForward("Bahamut", "Fire", 4, 9000));
+
+		blackCatEtb().accept(mw.buildGameContext(true));
+
+		assertTrue(mw.p2ForwardCards.isEmpty(), "cost 4 is over the cap of 3");
+		assertEquals(1, mw.gameState.getP2Hand().size(), "so it stays in hand");
+	}
+
+	@Test
+	void aBackupPlayedThisWayLandsInTheBackupRow() {
+		MainWindow mw = blackCatBoard();
+		CardData backup = makePlainBackup("Chocobo", "Wind", 2);
+		mw.gameState.getP2Hand().add(backup);
+
+		blackCatEtb().accept(mw.buildGameContext(true));
+
+		assertEquals(backup, mw.p2BackupCards[0], "\"Character\" covers Backups, placed by their type");
+		assertTrue(mw.p2ForwardCards.isEmpty());
+	}
+
+	@Test
+	void aSummonInHandIsNeverEligible() {
+		MainWindow mw = blackCatBoard();
+		mw.gameState.getP2Hand().add(makeSummon("Shiva", "Ice", 2, ""));
+
+		blackCatEtb().accept(mw.buildGameContext(true));
+
+		assertTrue(mw.p2ForwardCards.isEmpty(), "a Summon is not a Character and is not played");
+		assertEquals(1, mw.gameState.getP2Hand().size());
+	}
+
+	@Test
+	void neitherPlayerPlayingFizzlesTheEffect() {
+		MainWindow mw = blackCatBoard();
+		mw.gameState.getP2Hand().clear();
+
+		blackCatEtb().accept(mw.buildGameContext(true));
+
+		assertFalse(mw.effectProgress, "both hands empty — nothing happened at all");
+	}
+
+	// The controller is not privileged here: the same board resolves the same way from either
+	// side's context, because the effect names each player rather than "you" and "your opponent".
+	@Test
+	void theEffectReadsTheSameFromEitherControllersContext() {
+		MainWindow mw = blackCatBoard();
+		CardData theirs = makeForward("Tonberry", "Earth", 2, 5000);
+		mw.gameState.getP2Hand().add(theirs);
+
+		blackCatEtb().accept(mw.buildGameContext(false));
+
+		assertEquals(List.of(theirs), mw.p2ForwardCards,
+				"P2's half still plays onto P2's field when P2 controls Black Cat");
+	}
+
+	@Test
+	void belDatSearchesWithoutTheWordFor() {
+		GameContext ctx = mock(GameContext.class);
+		CardData belDat = makeAutoAbilityForward("Bel Dat", BEL_DAT_11_058H);
+		AutoAbility fa = belDat.autoAbilities().get(0);
+
+		assertTrue(fa.youMay(), "\"you may search\" is the controller's own choice");
+		assertEquals("SearchDeck", ActionResolver.matchedPatternName(fa.effectText(), belDat));
+
+		ActionResolver.parse(fa.effectText(), belDat).accept(ctx);
+
+		verify(ctx).searchDeckForCard(eq(true), eq(false), eq(false), eq(false), eq(-1), isNull(),
+				isNull(), eq("Standard Unit"), eq("FFCC"), isNull(), isNull(), isNull(),
+				eq("hand"), eq(1), eq(false), eq(false));
+	}
+
+	// Dropping "for" must not widen the parser onto anything else. "Research" ends in "search", so
+	// the word boundary added with the optional "for" is what keeps the Chadley cards out.
+	@Test
+	void theSpelledOutSearchStillParsesAndResearchCountersDoNot() {
+		GameContext ctx = mock(GameContext.class);
+		CardData leon19 = makeAutoAbilityForward("Leon",
+				"When Leon enters the field, you may search for 1 Card Name Maria and add it to your hand.");
+
+		ActionResolver.parse(leon19.autoAbilities().get(0).effectText(), leon19).accept(ctx);
+		verify(ctx).searchDeckForCard(anyBoolean(), anyBoolean(), anyBoolean(), anyBoolean(),
+				anyInt(), isNull(), eq("Maria"), isNull(), isNull(), isNull(), isNull(), isNull(),
+				eq("hand"), eq(1), eq(false), eq(false));
+
+		CardData chadley = makeAutoAbilityForward("Chadley",
+				"When Chadley enters the field, place 2 Research Counters on Chadley.");
+		assertNotEquals("SearchDeck",
+				ActionResolver.matchedPatternName(chadley.autoAbilities().get(0).effectText(), chadley),
+				"\"Research Counters\" is not a search");
+	}
 }

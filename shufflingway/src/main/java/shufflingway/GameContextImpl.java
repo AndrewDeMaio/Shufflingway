@@ -2911,7 +2911,57 @@ final class GameContextImpl implements GameContext {
 					String jobFilter, String cardNameFilter, String categoryFilter,
 					String elementFilter, String excludeName, boolean entersDull, String excludeElement,
 					boolean suppressAutoAbility, String withTrait) {
-				List<CardData> hand = isP1 ? mw.gameState.getP1Hand() : mw.gameState.getP2Hand();
+				if (!playCharacterFromHandFor(isP1, inclForwards, inclBackups, inclMonsters,
+						costVal, costCmp, costVal2, jobFilter, cardNameFilter, categoryFilter,
+						elementFilter, excludeName, entersDull, excludeElement, suppressAutoAbility,
+						withTrait)) {
+					markEffectFizzled();
+				}
+			}
+
+			@Override public void eachPlayerMayPlayCharacterFromHand(boolean inclForwards,
+					boolean inclBackups, boolean inclMonsters, int costVal, String costCmp,
+					int costVal2, String jobFilter, String cardNameFilter, String categoryFilter,
+					String elementFilter, String excludeName, boolean entersDull,
+					String excludeElement, boolean suppressAutoAbility, String withTrait) {
+				// Turn player first — an "each player" effect resolves in turn order, and here the
+				// order is visible: whoever goes second sees what the first one played before
+				// choosing. Not the controller first: the ability's controller need not be the
+				// turn player (28-051R Black Cat can enter on either side's turn via other cards).
+				boolean turnPlayerIsP1 = mw.gameState.getCurrentPlayer() == GameState.Player.P1;
+				boolean playedFirst = playCharacterFromHandFor(turnPlayerIsP1, inclForwards,
+						inclBackups, inclMonsters, costVal, costCmp, costVal2, jobFilter,
+						cardNameFilter, categoryFilter, elementFilter, excludeName, entersDull,
+						excludeElement, suppressAutoAbility, withTrait);
+				boolean playedSecond = playCharacterFromHandFor(!turnPlayerIsP1, inclForwards,
+						inclBackups, inclMonsters, costVal, costCmp, costVal2, jobFilter,
+						cardNameFilter, categoryFilter, elementFilter, excludeName, entersDull,
+						excludeElement, suppressAutoAbility, withTrait);
+				// One player passing is not the effect failing; both passing is.
+				if (!playedFirst && !playedSecond) markEffectFizzled();
+			}
+
+			/**
+			 * Plays 1 matching Character from {@code forP1}'s hand onto their field — the body
+			 * shared by the single-player {@link #playCharacterFromHand} and the two-player
+			 * {@link #eachPlayerMayPlayCharacterFromHand}, so both apply the same eligibility
+			 * rules, the same decline path and the same placement.
+			 *
+			 * <p>Takes the player explicitly rather than reading {@code isP1}, which names the
+			 * ability's controller and so is the wrong side for one of the two calls above.
+			 *
+			 * <p>Optionality lives in the choice itself: P1 gets a cancellable chooser, and the
+			 * AI takes the first eligible card. Fizzling is left to the caller, since "neither
+			 * player played" and "this player did not play" are different conditions.
+			 *
+			 * @return {@code true} if a card was actually played.
+			 */
+			private boolean playCharacterFromHandFor(boolean forP1, boolean inclForwards,
+					boolean inclBackups, boolean inclMonsters, int costVal, String costCmp,
+					int costVal2, String jobFilter, String cardNameFilter, String categoryFilter,
+					String elementFilter, String excludeName, boolean entersDull,
+					String excludeElement, boolean suppressAutoAbility, String withTrait) {
+				List<CardData> hand = forP1 ? mw.gameState.getP1Hand() : mw.gameState.getP2Hand();
 				List<Integer> eligible = new ArrayList<>();
 				for (int i = 0; i < hand.size(); i++) {
 					CardData card = hand.get(i);
@@ -2938,25 +2988,24 @@ final class GameContextImpl implements GameContext {
 					eligible.add(i);
 				}
 				if (eligible.isEmpty()) {
-					logEntry("No eligible cards in hand to play.");
-					markEffectFizzled();
-					return;
+					logEntry((forP1 ? "" : "[P2] ") + "No eligible cards in hand to play.");
+					return false;
 				}
 				int handIdx;
-				if (isP1) {
+				if (forP1) {
 					List<CardData> candidates = new ArrayList<>();
 					for (int i : eligible) candidates.add(hand.get(i));
 					int listIdx = mw.showCardImageChooser(candidates, "Play a card onto the field", true, false);
-					if (listIdx < 0) { markEffectFizzled(); return; }
+					if (listIdx < 0) return false; // cancelled — this is how "may" is declined
 					handIdx = eligible.get(listIdx);
 				} else {
 					handIdx = eligible.get(0); // AI: play first eligible card
 				}
 				CardData card = hand.remove(handIdx);
-				logEntry((isP1 ? "" : "[P2] ") + card.name() + " played from hand onto field"
+				logEntry((forP1 ? "" : "[P2] ") + card.name() + " played from hand onto field"
 						+ (entersDull ? " (dull)" : "") + (suppressAutoAbility ? " (no ETF auto-ability)" : ""));
 				if (suppressAutoAbility) mw.suppressAutoAbilityForNextCard = true;
-				if (isP1) {
+				if (forP1) {
 					if (card.isBackup()) {
 						mw.placeCardInFirstBackupSlot(card);
 					} else if (card.isMonster()) {
@@ -2985,6 +3034,7 @@ final class GameContextImpl implements GameContext {
 					}
 					mw.refreshP2HandCountLabel();
 				}
+				return true;
 			}
 
 			@Override public void playAnyNumberFromHand(boolean inclForwards, boolean inclBackups,
@@ -7583,6 +7633,43 @@ final class GameContextImpl implements GameContext {
 					if (isP1) mw.refreshP1HandLabel(); else mw.refreshP2HandCountLabel();
 				} else {
 					logEntry("No " + selectedType + " found in deck — deck exhausted");
+				}
+				if (!revealed.isEmpty()) {
+					java.util.Collections.shuffle(revealed);
+					for (CardData c : revealed) deck.addLast(c);
+					logEntry(revealed.size() + " revealed card(s) shuffled to bottom of deck");
+				}
+				if (isP1) mw.refreshP1DeckLabel(); else mw.refreshP2DeckLabel();
+			}
+
+			@Override public void flipUntilElementToHandRestShuffleBottom(String elem1, String elem2) {
+				Deque<CardData> deck = isP1 ? mw.gameState.getP1MainDeck() : mw.gameState.getP2MainDeck();
+				if (deck.isEmpty()) {
+					// Not a loss: turning cards over is not drawing, so an empty deck just means
+					// there is nothing to reveal.
+					logEntry("Reveal from top: deck is empty — nothing revealed");
+					return;
+				}
+				List<CardData> revealed = new ArrayList<>();
+				CardData found = null;
+				while (!deck.isEmpty()) {
+					CardData c = deck.pollFirst();
+					logEntry("Revealed: " + c.name() + " [" + c.element() + "]");
+					// Multi-Element cards match on any of their Elements, which is what
+					// meetsElementFilter's "|" list already means.
+					if (meetsElementFilter(c, elem1 + "|" + elem2)) {
+						found = c;
+						break;
+					}
+					revealed.add(c);
+				}
+				if (found != null) {
+					List<CardData> hand = isP1 ? mw.gameState.getP1Hand() : mw.gameState.getP2Hand();
+					hand.add(found);
+					logEntry(found.name() + " → hand");
+					if (isP1) mw.refreshP1HandLabel(); else mw.refreshP2HandCountLabel();
+				} else {
+					logEntry("No " + elem1 + " or " + elem2 + " card found — deck exhausted, nothing added to hand");
 				}
 				if (!revealed.isEmpty()) {
 					java.util.Collections.shuffle(revealed);

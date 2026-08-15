@@ -1557,6 +1557,30 @@ final class ActionResolverPatterns {
         "Then,?\\s+shuffle\\s+the\\s+other\\s+cards?\\s+revealed\\s+and\\s+return\\s+them\\s+to\\s+the\\s+bottom\\s+of\\s+your\\s+deck[.!]?"
     );
     /**
+     * Matches "Turn over one card at a time from the top of your deck until a [Element] or
+     * [Element] card is revealed. Add it to your hand. Then, shuffle the other cards [revealed]
+     * and return them to the bottom of your deck."
+     *
+     * <p>The element sibling of {@link #FLIP_UNTIL_TYPE_TO_HAND_REST_SHUFFLE_BOTTOM}, which the
+     * two cannot share: that one is gated on a "Select 1 card type." prefix and matches on the
+     * type the player named, while these state both elements in the text and prompt for nothing.
+     *
+     * <p>Twelve cards in the corpus, one per adjacent element pair — the FFCC cycle (11-020C
+     * Lilty through 11-112C Clavat) and the FFIII job cycle (13-005C Black Mage through 13-092C
+     * Sage). The two printings differ by one word: the 11- cards say "shuffle the other cards",
+     * the 13- cards "shuffle the other cards revealed", hence the optional group.
+     *
+     * <p>Groups: {@code elem1}, {@code elem2} — the two accepted elements.
+     */
+    static final Pattern FLIP_UNTIL_ELEMENT_TO_HAND_REST_SHUFFLE_BOTTOM = Pattern.compile(
+        "(?i)Turn\\s+over\\s+one\\s+card\\s+at\\s+a\\s+time\\s+from\\s+the\\s+top\\s+of\\s+your\\s+deck\\s+" +
+        "until\\s+an?\\s+(?<elem1>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+or\\s+" +
+        "(?<elem2>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+card\\s+is\\s+revealed[.!]?\\s+" +
+        "Add\\s+it\\s+to\\s+your\\s+hand[.!]?\\s+" +
+        "Then,?\\s+shuffle\\s+the\\s+other\\s+cards?(?:\\s+revealed)?\\s+and\\s+" +
+        "return\\s+them\\s+to\\s+the\\s+bottom\\s+of\\s+your\\s+deck[.!]?"
+    );
+    /**
      * Matches "Shuffle your deck. Then, reveal the top N cards of your deck.
      * Play 1 Card Name [name] among them onto the field and return the other cards to the
      * bottom of your deck in any order." — used as the 'when you do so' followup on self-bounce
@@ -3044,6 +3068,20 @@ final class ActionResolverPatterns {
         "\\s+and\\s+cast\\s+it\\s+without\\s+paying\\s+(?:its|the)\\s+cost[.!]?" +
         "(?:\\s+If\\s+you\\s+do\\s+not\\s+cast\\s+it,\\s+put\\s+the\\s+Summon\\s+into\\s+the\\s+Break\\s+Zone[.!]?)?"
     );
+    /**
+     * Matches the "each player may" opening of "each player may play 1 … from their hand onto the
+     * field" — 28-051R Black Cat, the corpus's only instance.
+     *
+     * <p>Two jobs, which is why it ends in a zero-width lookahead at "play". It keeps
+     * {@link #PLAY_FROM_HAND_PATTERN} off the text: that pattern resolves a single play and runs
+     * under {@code find()}, so it would match from "play 1 Character…" onward and quietly do the
+     * controller's half while dropping the opponent's. And because the match ends exactly where
+     * "play" begins, the tail is the ordinary single-player wording and can be handed straight to
+     * that same pattern, so both readings share one set of filter groups.
+     */
+    static final Pattern EACH_PLAYER_MAY_PLAY_FROM_HAND = Pattern.compile(
+        "(?i)each\\s+player\\s+may\\s+(?=play\\b)"
+    );
     static final Pattern PLAY_FROM_HAND_PATTERN = Pattern.compile(
         "(?i)Play\\s+1\\s+" +
         // Element(s) before any filter (e.g. "Ice" in "Play 1 Ice Forward")
@@ -3056,7 +3094,7 @@ final class ActionResolverPatterns {
             "\\s+" +
         "|" +
             // Written card name — stops at cost or "from your"
-            "Card\\s+Name\\s+(?<cardname>.+?)\\s+(?=of\\s+cost|from\\s+your|[.!])" +
+            "Card\\s+Name\\s+(?<cardname>.+?)\\s+(?=of\\s+cost|from\\s+(?:your|his/her|his|her|their)\\b|[.!])" +
         "|" +
             // Category filter: lookahead keeps the type in the targets group
             "Category\\s+(?<category>.+?)\\s+(?=Forwards?|Backups?|Monsters?|Characters?)" +
@@ -3068,7 +3106,7 @@ final class ActionResolverPatterns {
             "Job\\s+(?<jobnm>.+?)\\s+(?=Forwards?|Backups?|Monsters?|Characters?)" +
         "|" +
             // Written job with no explicit type (e.g. "Job Archfiend from your hand") — any character type
-            "Job\\s+(?<jobnmonly>.+?)\\s+(?=of\\s+cost|from\\s+your|other\\s+than)" +
+            "Job\\s+(?<jobnmonly>.+?)\\s+(?=of\\s+cost|from\\s+(?:your|his/her|his|her|their)\\b|other\\s+than)" +
         ")?" +
         // Type is optional when a card-name filter is present
         "(?<targets>Forwards?|Backups?|Monsters?|Characters?(?:\\s+Cards?)?)?" +
@@ -3089,7 +3127,12 @@ final class ActionResolverPatterns {
         // Exclusion
         "(?:other\\s+than\\s+Card\\s+Name\\s+(?<excludename>\\S+(?:\\s+\\([^)]+\\))?)\\s+)?" +
         "(?:with\\s+(?<trait>Warp)\\s+)?" +
-        "from\\s+your\\s+hand\\s+onto\\s+(?:the\\s+)?field" +
+        // Possessive is not a filter — it names whoever the effect is already resolving for.
+        // "his/her|their" appears on the "your opponent may play 1 … from his/her hand" abilities
+        // (1-060H Leon, 12-071R Shadow Lord), and those reach here with the execution context
+        // already flipped to the opponent by AutoAbility.opponentMay, so the hand read is correct
+        // without the parser knowing whose it is.
+        "from\\s+(?:your|his/her|his|her|their)\\s+hand\\s+onto\\s+(?:the\\s+)?field" +
         // Dull modifier
         "(?:\\s+(?<dull>dull))?" +
         "[.!]?"
@@ -3196,7 +3239,11 @@ final class ActionResolverPatterns {
         "|play\\s+(?:it|them)\\s+onto\\s+the\\s+field)[.!]?$"
     );
     static final Pattern SEARCH_DECK_PATTERN = Pattern.compile(
-        "(?i)Search\\s+for\\s+(?:up\\s+to\\s+)?(?<count>\\d+)\\s+" +
+        // "for" is optional: 11-058H Bel Dat is the corpus's only "search 1 …" wording, every other
+        // search text says "search for". The leading \b is what makes dropping it safe — "Research"
+        // ends in "search", and the Chadley cards ("place 2 Research Counters") would otherwise be
+        // one word away from matching.
+        "(?i)\\bSearch\\s+(?:for\\s+)?(?:up\\s+to\\s+)?(?<count>\\d+)\\s+" +
         // Element(s) that precede the job/name filter (e.g. "Fire Job Knight")
         "(?:(?<preelems>(?:Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)" +
             "(?:\\s+or\\s+(?:Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark))*)\\s+)?" +

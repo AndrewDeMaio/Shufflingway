@@ -258,6 +258,22 @@ final class ActionResolverSearch {
         if (!FLIP_UNTIL_TYPE_TO_HAND_REST_SHUFFLE_BOTTOM.matcher(text.trim()).matches()) return null;
         return GameContext::flipUntilTypeToHandRestShuffleBottom;
     }
+    /**
+     * Parses "Turn over one card at a time from the top of your deck until a [Element] or [Element]
+     * card is revealed. Add it to your hand. Then, shuffle the other cards and return them to the
+     * bottom of your deck." — 13-042C White Mage, 13-005C Black Mage and their ten siblings.
+     */
+    static Consumer<GameContext> tryParseFlipUntilElementToHandRestShuffleBottom(String text) {
+        Matcher m = FLIP_UNTIL_ELEMENT_TO_HAND_REST_SHUFFLE_BOTTOM.matcher(text.trim());
+        if (!m.matches()) return null;
+        String elem1 = m.group("elem1");
+        String elem2 = m.group("elem2");
+        return ctx -> {
+            ctx.logEntry("Effect: Reveal from top of deck until a " + elem1 + " or " + elem2
+                    + " card → hand; rest shuffled to bottom");
+            ctx.flipUntilElementToHandRestShuffleBottom(elem1, elem2);
+        };
+    }
     static Consumer<GameContext> tryParseRevealPlayTypeOntoFieldRestBottom(String text) {
         String s = stripRestrictionSentences(text);
         Matcher m = REVEAL_PLAY_TYPE_ONTO_FIELD_REST_BOTTOM.matcher((s.isEmpty() ? text : s).trim());
