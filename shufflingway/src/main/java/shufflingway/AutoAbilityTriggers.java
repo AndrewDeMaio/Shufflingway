@@ -355,6 +355,21 @@ final class AutoAbilityTriggers {
 	);
 
 	/**
+	 * Outgoing Summon damage boost with no Element qualifier: "If a Forward is dealt damage by your
+	 * Summon, the damage increases by N instead." — Terra 9-029C.
+	 *
+	 * <p>The unfiltered counterpart of {@link #FA_ELEMENT_SUMMON_DAMAGE_BOOST}, and kept as its own
+	 * pattern for the same reason {@link #FA_FRIENDLY_FORWARD_BATTLE_DAMAGE_BOOST} is: making the
+	 * element group optional there would let it claim this text with a null element, and every
+	 * element-scoped card would then boost every Summon.
+	 * Group: {@code amount}.
+	 */
+	static final Pattern FA_FRIENDLY_SUMMON_DAMAGE_BOOST = Pattern.compile(
+		"(?i)^If\\s+a\\s+Forward\\s+is\\s+dealt\\s+damage\\s+by\\s+your\\s+Summon,\\s+" +
+		"the\\s+damage\\s+increases\\s+by\\s+(?<amount>\\d+)\\s+instead[.!]?$"
+	);
+
+	/**
 	 * Outgoing combat damage boost from a friendly Element Forward to an opposing Forward.
 	 * "If a Fire Forward you control deals damage to a Forward, the damage increases by N instead."
 	 * Checked on the ATTACKER's side field cards (Forwards and Backups).
@@ -432,6 +447,30 @@ final class AutoAbilityTriggers {
 		"\\s*,\\s+" +
 		"(?:reduce\\s+the\\s+damage\\s+by\\s+(?<reduceby>\\d+)|the\\s+damage\\s+becomes\\s+(?<setsto>\\d+))" +
 		"\\s+instead\\.?$"
+	);
+
+	/**
+	 * The imperative spelling of a {@link #FA_FIELD_DAMAGE_MODIFIER} reduction: "Reduce the damage
+	 * dealt to the [Category X | Job Y | Element] [Forwards | Characters] you control by N." —
+	 * Warrior of Light 2-145L.
+	 *
+	 * <p>Same effect, different sentence: that one states a condition ("If a … is dealt damage")
+	 * and then an outcome, this one states the outcome directly. Kept separate rather than bolted
+	 * onto that pattern as another alternative, because the two put their filter, their amount and
+	 * their target-type token in different places and merging them would produce a regex neither
+	 * printing could be read out of.
+	 *
+	 * <p>Unqualified by damage source: it reduces combat, ability and Summon damage alike, which is
+	 * the difference from the {@code sourceclause} arms of its sibling.
+	 * Groups: {@code category}, {@code job}, {@code element}, {@code types}, {@code amount}.
+	 */
+	static final Pattern FA_REDUCE_DAMAGE_TO_FILTER = Pattern.compile(
+		"(?i)^Reduce\\s+the\\s+damage\\s+dealt\\s+to\\s+the\\s+" +
+		"(?:Category\\s+(?<category>\\S+)\\s+" +
+			"|Job\\s+(?<job>.+?)\\s+(?=Forwards?\\b|Characters?\\b|you\\s+control)" +
+			"|(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?" +
+		"(?<types>Forwards?|Characters?)?\\s*" +
+		"you\\s+control\\s+by\\s+(?<amount>\\d+)[.!]?$"
 	);
 
 	/**
@@ -902,6 +941,29 @@ final class AutoAbilityTriggers {
 		"(?i)^If\\s+a\\s+Forward\\s+you\\s+control\\s+deals?\\s+battle\\s+damage\\s+to\\s+a\\s+Forward,\\s+" +
 		"the\\s+damage\\s+increases\\s+by\\s+(?<amount>\\d+)\\s+instead[.!]?$"
 	);
+
+	/**
+	 * "The cost required for the Characters opponent controls to use action abilities is increased
+	 * by 《N》." — The Emperor 20-092R.
+	 *
+	 * <p>Read off the <em>opposing</em> field, like the Haste-suppression sentences: whoever
+	 * controls this taxes the other player.
+	 *
+	 * <p>The 《N》 markup reaches this intact — {@code SUMMON_MARKUP} strips only {@code [[…]]} tags
+	 * — so the guillemets are matched rather than assumed away. The bare form is accepted too, so a
+	 * reprint that drops the markup still reads.
+	 * Group: {@code amount}.
+	 */
+	static final Pattern FA_OPP_ACTION_ABILITY_COST_INCREASE = Pattern.compile(
+		"(?i)^The\\s+cost\\s+required\\s+for\\s+the\\s+Characters\\s+opponent\\s+controls\\s+" +
+		"to\\s+use\\s+action\\s+abilities\\s+is\\s+increased\\s+by\\s+" +
+		"(?:《(?<amount>\\d+)》|(?<bare>\\d+))[.!]?$"
+	);
+
+	/** The 《N》 or bare amount from a {@link #FA_OPP_ACTION_ABILITY_COST_INCREASE} match. */
+	static int actionAbilityCostIncreaseAmount(Matcher m) {
+		return Integer.parseInt(m.group("amount") != null ? m.group("amount") : m.group("bare"));
+	}
 
 	/**
 	 * "Your opponent may only declare as many attacks in the same turn as the number of Backups
@@ -3887,9 +3949,8 @@ final class AutoAbilityTriggers {
 
 	/** Payment dialog for an action ability activated from the Break Zone. */
 	void showBzAbilityPaymentDialog(ActionAbility ability, CardData source, boolean isP1) {
-		final ActionAbility eff = ability.inlineCostReductionJob() != null
-				? ability.withReducedCp(mw.computeInlineReduction(ability.inlineCostReductionJob(), ability.inlineCostReductionExcludeName(), isP1))
-				: ability;
+		// Own discount then the opposing field's tax (The Emperor 20-092R) — see effectiveAbilityCost.
+		final ActionAbility eff = mw.effectiveAbilityCost(ability, isP1);
 		List<String> rawCost = eff.cpCost();
 		List<BreakZoneCost> bzCosts = eff.breakZoneCosts();
 
@@ -4396,9 +4457,8 @@ final class AutoAbilityTriggers {
 	 */
 	void showActionAbilityPaymentDialog(ActionAbility ability, CardData source,
 			Runnable applyDull, boolean isP1) {
-		final ActionAbility eff = ability.inlineCostReductionJob() != null
-				? ability.withReducedCp(mw.computeInlineReduction(ability.inlineCostReductionJob(), ability.inlineCostReductionExcludeName(), isP1))
-				: ability;
+		// Own discount then the opposing field's tax (The Emperor 20-092R) — see effectiveAbilityCost.
+		final ActionAbility eff = mw.effectiveAbilityCost(ability, isP1);
 		List<String> rawCost = eff.cpCost();
 		List<BreakZoneCost> bzCosts = eff.breakZoneCosts();
 

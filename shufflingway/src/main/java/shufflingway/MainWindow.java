@@ -11943,11 +11943,19 @@ public class MainWindow {
 		List<AutoAbility> out = null;
 		for (FieldAbility fa : card.fieldAbilities()) {
 			if (fa.damageThreshold() > 0 && dmg < fa.damageThreshold()) continue;
+			// Machina 15-017H gates the same kind of grant on the board instead of on damage.
+			// Re-read every lookup, because the Forward count moves during the turn.
+			String text = fa.effectText();
+			CardData.MaxForwardsGatedGrant gate = CardData.parseMaxForwardsGatedGrant(text);
+			if (gate != null) {
+				if (forwardCount(side) > gate.maxForwards()) continue;
+				text = gate.remainder();
+			}
 			CardData.SelfGainsQuotedGrant g =
-					CardData.parseSelfGainsQuotedGrant(fa.effectText(), card.name());
+					CardData.parseSelfGainsQuotedGrant(text, card.name());
 			if (g == null || g.abilityTexts().isEmpty()) continue;
 			if (out == null) out = new ArrayList<>();
-			for (String text : g.abilityTexts()) out.addAll(CardData.parseAutoAbilities(text));
+			for (String t : g.abilityTexts()) out.addAll(CardData.parseAutoAbilities(t));
 		}
 		return out == null ? List.of() : out;
 	}
@@ -15221,6 +15229,43 @@ public class MainWindow {
 		return limit;
 	}
 
+	/**
+	 * Extra generic CP {@code userIsP1} must pay to use any of their Characters' action abilities —
+	 * The Emperor 20-092R's "The cost required for the Characters opponent controls to use action
+	 * abilities is increased by 《2》."
+	 *
+	 * <p>Read off the opposing field, since the sentence taxes its controller's opponent. Several
+	 * copies stack, which is what summing rather than maxing gives.
+	 */
+	int actionAbilityCostIncreaseFor(boolean userIsP1) {
+		int extra = 0;
+		for (CardData src : fieldCards(!userIsP1)) {
+			if (lostAbilitiesCards.contains(src)) continue;
+			for (FieldAbility fa : effectiveFieldAbilities(src)) {
+				Matcher m = AutoAbilityTriggers.FA_OPP_ACTION_ABILITY_COST_INCREASE
+						.matcher(fa.effectText().trim());
+				if (m.matches()) extra += AutoAbilityTriggers.actionAbilityCostIncreaseAmount(m);
+			}
+		}
+		return extra;
+	}
+
+	/**
+	 * {@code ability} as its user actually has to pay for it — its own inline reduction applied
+	 * first, then any tax the opposing field levies.
+	 *
+	 * <p>Reduction before increase, so a discounted ability under The Emperor pays the tax rather
+	 * than having it cancelled out of the discount. The two are separate effects on the same cost
+	 * and neither is worded to consume the other.
+	 */
+	ActionAbility effectiveAbilityCost(ActionAbility ability, boolean isP1) {
+		ActionAbility eff = ability.inlineCostReductionJob() != null
+				? ability.withReducedCp(computeInlineReduction(
+						ability.inlineCostReductionJob(), ability.inlineCostReductionExcludeName(), isP1))
+				: ability;
+		return eff.withIncreasedCp(actionAbilityCostIncreaseFor(isP1));
+	}
+
 	/** Whether {@code isP1} has spent every attack declaration {@link #effectiveAttackDeclarationLimit} allows. */
 	boolean attackDeclarationsExhausted(boolean isP1) {
 		return turn(isP1).attackDeclarationsThisTurn >= effectiveAttackDeclarationLimit(isP1);
@@ -15231,6 +15276,11 @@ public class MainWindow {
 		int n = 0;
 		for (CardData b : (isP1 ? p1BackupCards : p2BackupCards)) if (b != null) n++;
 		return n;
+	}
+
+	/** How many Forwards {@code isP1} currently controls. */
+	int forwardCount(boolean isP1) {
+		return (isP1 ? p1ForwardCards : p2ForwardCards).size();
 	}
 
 	private boolean hasAttackableForward() {

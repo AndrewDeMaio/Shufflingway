@@ -1463,6 +1463,37 @@ public record CardData(
     );
 
     /**
+     * "If you control N or less Forwards, …" — the board gate on Machina 15-017H's self grant,
+     * whose remainder is an ordinary {@link SelfGainsQuotedGrant} ("Machina gains Brave and
+     * \"When Machina attacks, deal 4000 damage to all the Forwards opponent controls.\"").
+     *
+     * <p>Stripped and evaluated the way the {@code Damage N --} prefix is for Yumcax 18-067C: the
+     * gate is read off the board, the remainder is handed to the grant parser unchanged, and
+     * nothing about the grant itself has to know a condition was there. The difference is only that
+     * a damage threshold is recorded on the {@link FieldAbility} at parse time while this one
+     * cannot be — the Forward count moves during the turn, so it is re-read on every lookup.
+     * Group: {@code max}.
+     */
+    private static final Pattern IF_CONTROL_MAX_FORWARDS_PREFIX = Pattern.compile(
+        "(?i)^If\\s+you\\s+control\\s+(?<max>\\d+)\\s+or\\s+less\\s+Forwards,\\s+(?<rest>\\S.*)$",
+        Pattern.DOTALL
+    );
+
+    /** A {@link #IF_CONTROL_MAX_FORWARDS_PREFIX} gate and the grant sentence it guards. */
+    record MaxForwardsGatedGrant(int maxForwards, String remainder) {}
+
+    /**
+     * Splits "If you control N or less Forwards, [grant]" into its gate and its grant, or returns
+     * {@code null} when {@code text} is not that shape.
+     */
+    static MaxForwardsGatedGrant parseMaxForwardsGatedGrant(String text) {
+        if (text == null) return null;
+        Matcher m = IF_CONTROL_MAX_FORWARDS_PREFIX.matcher(text.trim());
+        if (!m.matches()) return null;
+        return new MaxForwardsGatedGrant(Integer.parseInt(m.group("max")), m.group("rest").trim());
+    }
+
+    /**
      * A conditional self grant carrying a quoted ability: while its condition holds, the printing
      * card has {@code traits}, may attack {@code maxAttacks} times, and has {@code abilityTexts}
      * as auto abilities of its own.
@@ -3771,6 +3802,25 @@ public record CardData(
     );
 
     /**
+     * The same shield handed to a Job and a Card Name at once: "The Job Dancer and Card Name Dancer
+     * you control cannot be chosen by your opponent's abilities." — Mayakov 15-121R.
+     *
+     * <p>The two halves are alternatives, not a conjunction — a Job Dancer qualifies whatever it is
+     * called, and a card named Dancer qualifies whatever Job it has. {@link FieldPowerGrant}'s job
+     * and card-name filters are conjunctive, so this is stored as <em>two</em> boosts, one per
+     * branch, exactly as Faris 21-114L's "Job Pirate and Card Name Viking" base-power grant is.
+     * A card satisfying both is covered twice, which changes nothing: the immunity is a boolean.
+     *
+     * <p>No target-type token in the sentence, so it reaches every row.
+     * Groups: {@code job}, {@code name}, {@code scope}.
+     */
+    private static final Pattern UNCONDITIONAL_JOB_AND_NAME_CANNOT_BE_CHOSEN = Pattern.compile(
+        "(?i)^The\\s+Job\\s+(?<job>.+?)\\s+and\\s+Card\\s+Name\\s+(?<name>.+?)\\s+you\\s+control\\s+" +
+        "cannot\\s+be\\s+chosen\\s+by\\s+your\\s+opponent's\\s+" +
+        "(?<scope>Summons?\\s+or\\s+abilities|Summons?|abilities)\\s*[.!]?\\s*$"
+    );
+
+    /**
      * "If you control <raw>, <target> cannot be blocked[ by a/Forwards of cost N or more/less][.]"
      * The cost clause is optional; when absent the target is fully unblockable while active.
      * Groups: {@code raw}, {@code target}, {@code costval} (optional), {@code costcmp} (optional).
@@ -4393,6 +4443,27 @@ public record CardData(
                     scope.contains("summon"), scope.contains("abilit"), false, null, 0, 0, false)
                     // The pattern requires the "your opponent's" qualifier, so the controller may
                     // still choose their own protected card — as with the unconditional form.
+                    .asOpponentScopedChosenImmunity());
+        }
+
+        // Parse the Job-and-Card-Name form — "The Job Dancer and Card Name Dancer you control
+        // cannot be chosen by …" (Mayakov 15-121R). One boost per branch, since a single filter
+        // would AND the two and cover only cards that are both.
+        for (String raw : textEn.split("(?i)\\[\\[br\\]\\]")) {
+            String seg = SUMMON_MARKUP.matcher(raw.trim()).replaceAll("").trim();
+            if (seg.isEmpty()) continue;
+            Matcher m = UNCONDITIONAL_JOB_AND_NAME_CANNOT_BE_CHOSEN.matcher(seg);
+            if (!m.matches()) continue;
+            String scope = m.group("scope").toLowerCase(Locale.ROOT);
+            boolean byS = scope.contains("summon");
+            boolean byA = scope.contains("abilit");
+            FieldPowerGrant jobFilter = new FieldPowerGrant(m.group("job").trim(), null,
+                    true, true, true, null, 0, EnumSet.noneOf(Trait.class));
+            result.add(new IfControlBoost(List.of(), "", "", jobFilter, 0,
+                    EnumSet.noneOf(Trait.class), "", byS, byA, false, null, 0, 0, false)
+                    .asOpponentScopedChosenImmunity());
+            result.add(new IfControlBoost(List.of(), "", m.group("name").trim(), null, 0,
+                    EnumSet.noneOf(Trait.class), "", byS, byA, false, null, 0, 0, false)
                     .asOpponentScopedChosenImmunity());
         }
 

@@ -358,11 +358,7 @@ class DamageResolver {
 	 */
 	private int selfOrPartyDamageReduction(CardData card, boolean isP1) {
 		int reduction = 0;
-		List<CardData> sources = new ArrayList<>(isP1 ? mw.p1ForwardCards : mw.p2ForwardCards);
-		for (CardData bkp : isP1 ? mw.p1BackupCards : mw.p2BackupCards)
-			if (bkp != null) sources.add(bkp);
-		sources.addAll(isP1 ? mw.p1MonsterCards : mw.p2MonsterCards);
-		for (CardData protector : sources) {
+		for (CardData protector : mw.fieldCards(isP1)) {
 			if (mw.lostAbilitiesCards.contains(protector)) continue;
 			boolean self = protector == card;
 			for (FieldAbility fa : mw.effectiveFieldAbilities(protector)) {
@@ -465,21 +461,47 @@ class DamageResolver {
 	}
 
 	/**
-	 * Scans all friendly Forwards and Backups for {@link AutoAbilityTriggers#FA_FIELD_DAMAGE_MODIFIER}
-	 * abilities and applies any that target the damaged Forward.
-	 * Returns the (possibly modified) damage amount.
+	 * Scans every card on the damaged Forward's own side for
+	 * {@link AutoAbilityTriggers#FA_FIELD_DAMAGE_MODIFIER} and
+	 * {@link AutoAbilityTriggers#FA_REDUCE_DAMAGE_TO_FILTER} abilities and applies any that target
+	 * it. Returns the (possibly modified) damage amount.
+	 *
+	 * <p>Reads the same three things its outgoing-damage counterparts read, and for the same
+	 * reasons. Every row rather than Forwards and Backups by hand, so a Monster printing a shield
+	 * is not silently exempt. {@code lostAbilitiesCards} skipped, because a card stripped of its
+	 * abilities prints nothing and so shields nothing. And {@code effectiveFieldAbilities} rather
+	 * than the printed list, so a shield granted until end of turn is as live as a printed one.
 	 */
 	int applyFieldWideDamageModifiers(int amount, CardData damaged, boolean isP1,
 			ForwardTarget.CardZone zone, int idx, boolean fromAbility) {
 		int effectivePower = mw.fieldForwardPower(isP1, zone, idx);
 		boolean attackerIsBackup = !fromAbility && (isP1 ? mw.pendingP2AttackerIsBackup : mw.p1BackupAttackIdx >= 0);
 
-		List<CardData> sources = new ArrayList<>(isP1 ? mw.p1ForwardCards : mw.p2ForwardCards);
-		for (CardData bkp : isP1 ? mw.p1BackupCards : mw.p2BackupCards)
-			if (bkp != null) sources.add(bkp);
-
-		for (CardData protector : sources) {
-			for (FieldAbility fa : protector.fieldAbilities()) {
+		for (CardData protector : mw.fieldCards(isP1)) {
+			if (mw.lostAbilitiesCards.contains(protector)) continue;
+			for (FieldAbility fa : mw.effectiveFieldAbilities(protector)) {
+				// The imperative spelling of the same reduction (Warrior of Light 2-145L). Read
+				// first and on its own terms: it carries no condition and no source clause, so
+				// none of the filtering below applies to it beyond who the damaged card is.
+				Matcher red = AutoAbilityTriggers.FA_REDUCE_DAMAGE_TO_FILTER.matcher(fa.effectText().trim());
+				if (red.matches()) {
+					String rc = red.group("category");
+					String rj = red.group("job");
+					String re = red.group("element");
+					String rt = red.group("types");
+					if (rc != null && !CardFilters.meetsCategoryFilter(damaged, rc)) continue;
+					if (rj != null && !CardFilters.meetsJobFilter(damaged, rj))      continue;
+					if (re != null && !mw.effectiveElements(damaged).contains(re))   continue;
+					// "Forwards" binds the type; "Characters" and the bare form do not, and the
+					// damaged card is a combatant either way.
+					if (rt != null && rt.toLowerCase().startsWith("forward") && !damaged.isForward()) continue;
+					int by = Integer.parseInt(red.group("amount"));
+					int before = amount;
+					amount = Math.max(0, amount - by);
+					mw.logEntry(damaged.name() + " — damage reduced by " + by + " ("
+							+ protector.name() + ") (" + before + " → " + amount + ")");
+					continue;
+				}
 				// Cecil 2-129L prints the shield as a rider on a power grant; the rider is read
 				// here in the canonical wording, and the grant half by parseFieldPowerGrants.
 				Matcher m = AutoAbilityTriggers.FA_FIELD_DAMAGE_MODIFIER
@@ -580,6 +602,18 @@ class DamageResolver {
 				int before = amount;
 				amount += boost;
 				mw.logEntry(booster.name() + " — " + elem + " Summon damage increased by " + boost
+						+ " (" + before + " → " + amount + ")");
+			}
+			// The unfiltered form: any Summon of yours, Terra 9-029C. No element to match, so the
+			// only question is that the resolving source is this player's Summon, which the guards
+			// at the top of the method have already settled.
+			for (FieldAbility fa : fas) {
+				Matcher m = AutoAbilityTriggers.FA_FRIENDLY_SUMMON_DAMAGE_BOOST.matcher(fa.effectText().trim());
+				if (!m.matches()) continue;
+				int boost = Integer.parseInt(m.group("amount"));
+				int before = amount;
+				amount += boost;
+				mw.logEntry(booster.name() + " — Summon damage increased by " + boost
 						+ " (" + before + " → " + amount + ")");
 			}
 			// The same boost worded from the dealing side (Lehftia 21-020C). Only its Summon arm is

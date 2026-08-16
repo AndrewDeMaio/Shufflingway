@@ -22118,4 +22118,326 @@ public class CardBehaviorTest {
 				"the shield belongs to whoever owns the Break Zone it names");
 		assertTrue(mw.bzCardProtectedFromOppRfg(bzCard, true));
 	}
+
+	// =========================================================================================
+	// Terra 9-029C: "If a Forward is dealt damage by your Summon, the damage increases by 2000
+	// instead." — Caetuna 6-010H's boost with the Element qualifier removed.
+	//
+	// Kept as its own pattern rather than by making the element group optional, for the reason
+	// FA_FRIENDLY_FORWARD_BATTLE_DAMAGE_BOOST is: an optional group would let the element-scoped
+	// pattern match this text with a null element, and every Caetuna would then boost every Summon.
+	// =========================================================================================
+
+	private static final String TERRA_9_029C =
+			"If a Forward is dealt damage by your Summon, the damage increases by 2000 instead.";
+
+	@Test
+	void terraBoostsEverySummonRegardlessOfElement() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeFieldAbilityCard("Terra", "Fire", "Forward", TERRA_9_029C));
+		mw.currentResolutionIsSummon = true;
+		mw.currentSummonSourceIsP1   = true;
+
+		mw.currentSummonSource = makeSummon("Ifrit", "Fire", 2, "");
+		assertEquals(9000, mw.damageResolver.applyCasterSideElementSummonDamageBoosts(7000, false));
+
+		mw.currentSummonSource = makeSummon("Shiva", "Ice", 2, "");
+		assertEquals(9000, mw.damageResolver.applyCasterSideElementSummonDamageBoosts(7000, false),
+				"no Element qualifier, so the Element cannot fail to match");
+	}
+
+	@Test
+	void terraStillOnlyBoostsHerOwnSide() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeFieldAbilityCard("Terra", "Fire", "Forward", TERRA_9_029C));
+		mw.currentResolutionIsSummon = true;
+		mw.currentSummonSource       = makeSummon("Ifrit", "Fire", 2, "");
+		mw.currentSummonSourceIsP1   = true;
+
+		assertEquals(7000, mw.damageResolver.applyCasterSideElementSummonDamageBoosts(7000, true),
+				"a Summon of P1's aimed at P1's own Forward gets nothing");
+	}
+
+	@Test
+	void anElementScopedBoostDoesNotClaimTheUnfilteredText() {
+		// The reason the two are separate patterns.
+		assertFalse(AutoAbilityTriggers.FA_ELEMENT_SUMMON_DAMAGE_BOOST.matcher(TERRA_9_029C).find(),
+				"Caetuna's pattern must not read Terra's sentence");
+	}
+
+	// =========================================================================================
+	// Warrior of Light 2-145L: "Reduce the damage dealt to the Job Warrior of Light you control
+	// by 2000." — FA_FIELD_DAMAGE_MODIFIER's reduction said imperatively instead of as a
+	// condition-and-outcome. No source clause, so it covers combat, ability and Summon damage.
+	// =========================================================================================
+
+	private static final String WOL_2_145L =
+			"Reduce the damage dealt to the Job Warrior of Light you control by 2000.";
+
+	/** A P1 board holding the reducer plus a Job Warrior of Light and an unrelated Forward. */
+	private static MainWindow wolReducerBoard() {
+		MainWindow mw = new MainWindow();
+		mw.placeCardInFirstBackupSlot(makeFieldAbilityCard("Cid", "Light", "Backup", WOL_2_145L));
+		placeP1Forward(mw, makeJobCard("Warrior of Light", "Light", "Forward", "Warrior of Light"));
+		placeP1Forward(mw, makeJobCard("Bystander", "Light", "Forward", "Knight"));
+		return mw;
+	}
+
+	@Test
+	void theReductionAppliesToTheNamedJobOnly() {
+		MainWindow mw = wolReducerBoard();
+
+		assertEquals(3000, mw.damageResolver.applyFieldWideDamageModifiers(
+				5000, mw.p1ForwardCards.get(0), true, ForwardTarget.CardZone.FORWARD, 0, false));
+		assertEquals(5000, mw.damageResolver.applyFieldWideDamageModifiers(
+				5000, mw.p1ForwardCards.get(1), true, ForwardTarget.CardZone.FORWARD, 1, false),
+				"a Knight is not a Warrior of Light");
+	}
+
+	@Test
+	void theReductionIsNotScopedToADamageSource() {
+		// Its FA_FIELD_DAMAGE_MODIFIER sibling can carry "by a Summon or ability"; this wording
+		// carries nothing, so ability damage is reduced exactly as combat damage is.
+		MainWindow mw = wolReducerBoard();
+
+		assertEquals(3000, mw.damageResolver.applyFieldWideDamageModifiers(
+				5000, mw.p1ForwardCards.get(0), true, ForwardTarget.CardZone.FORWARD, 0, true),
+				"fromAbility makes no difference");
+	}
+
+	@Test
+	void theReductionCannotDriveDamageBelowZero() {
+		MainWindow mw = wolReducerBoard();
+
+		assertEquals(0, mw.damageResolver.applyFieldWideDamageModifiers(
+				1000, mw.p1ForwardCards.get(0), true, ForwardTarget.CardZone.FORWARD, 0, false));
+	}
+
+	// -----------------------------------------------------------------------------------------
+	// The incoming-damage scan reads the same three things the outgoing ones do. It read none of
+	// them: it built its source list from the Forward and Backup rows by hand, took the printed
+	// ability list, and never asked whether the printing card still had its abilities. All three
+	// are the holes already closed on the boost side; these pin them on the reduction side.
+	// -----------------------------------------------------------------------------------------
+
+	@Test
+	void aMonsterPrintingTheShieldStillShieldsIt() {
+		MainWindow mw = new MainWindow();
+		mw.p1MonsterCards.add(makeFieldAbilityCard("Cid", "Light", "Monster", WOL_2_145L));
+		mw.p1MonsterStates.add(CardState.ACTIVE);
+		placeP1Forward(mw, makeJobCard("Warrior of Light", "Light", "Forward", "Warrior of Light"));
+
+		assertEquals(3000, mw.damageResolver.applyFieldWideDamageModifiers(
+				5000, mw.p1ForwardCards.get(0), true, ForwardTarget.CardZone.FORWARD, 0, false),
+				"a Monster's field ability is as live as anyone else's");
+	}
+
+	@Test
+	void aShieldGrantedUntilEndOfTurnReducesToo() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeJobCard("Warrior of Light", "Light", "Forward", "Warrior of Light"));
+		placeP1Forward(mw, makeForward("Granted", "Light", 3, 7000));   // idx 1, the shield's future home
+
+		assertEquals(5000, mw.damageResolver.applyFieldWideDamageModifiers(
+				5000, mw.p1ForwardCards.get(0), true, ForwardTarget.CardZone.FORWARD, 0, false),
+				"nothing prints the shield yet");
+
+		mw.buildGameContext(true).grantFieldAbilityUntilEndOfTurn(
+				new ForwardTarget(true, 1, ForwardTarget.CardZone.FORWARD), WOL_2_145L);
+
+		assertEquals(3000, mw.damageResolver.applyFieldWideDamageModifiers(
+				5000, mw.p1ForwardCards.get(0), true, ForwardTarget.CardZone.FORWARD, 0, false),
+				"a granted shield is as live as a printed one");
+	}
+
+	@Test
+	void aSilencedShieldReducesNothing() {
+		MainWindow mw = wolReducerBoard();
+		assertEquals(3000, mw.damageResolver.applyFieldWideDamageModifiers(
+				5000, mw.p1ForwardCards.get(0), true, ForwardTarget.CardZone.FORWARD, 0, false));
+
+		mw.lostAbilitiesCards.add(mw.p1BackupCards[0]);
+
+		assertEquals(5000, mw.damageResolver.applyFieldWideDamageModifiers(
+				5000, mw.p1ForwardCards.get(0), true, ForwardTarget.CardZone.FORWARD, 0, false));
+	}
+
+	// =========================================================================================
+	// Mayakov 15-121R: "The Job Dancer and Card Name Dancer you control cannot be chosen by your
+	// opponent's abilities."
+	//
+	// The two halves are alternatives — a Job Dancer qualifies whatever it is called, a card named
+	// Dancer qualifies whatever Job it has. FieldPowerGrant's job and card-name filters are
+	// conjunctive, so this parses to two boosts, one per branch, the way Faris 21-114L's
+	// "Job Pirate and Card Name Viking" base-power grant does.
+	// =========================================================================================
+
+	private static final String MAYAKOV_15_121R =
+			"The Job Dancer and Card Name Dancer you control cannot be chosen by your opponent's "
+			+ "abilities.";
+
+	/** Mayakov, with the boosts his sentence parses to actually attached. */
+	private static CardData mayakov() {
+		return new CardData(null, "Mayakov", "Earth", 3, 7000, "Forward", false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				List.of(), List.of(), CardData.parseFieldAbilities(MAYAKOV_15_121R, "Forward"),
+				CardData.parseIfControlBoosts(MAYAKOV_15_121R, "Mayakov"),
+				List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				null, null, null, MAYAKOV_15_121R);
+	}
+
+	@Test
+	void mayakovParsesAsOneBoostPerBranch() {
+		List<IfControlBoost> boosts = mayakov().ifControlBoosts();
+
+		assertEquals(2, boosts.size(), "a single filter would AND the Job with the Card Name");
+		assertTrue(boosts.stream().anyMatch(b -> b.targetFilter() != null
+				&& "Dancer".equalsIgnoreCase(b.targetFilter().jobFilter())), "the Job branch");
+		assertTrue(boosts.stream().anyMatch(b -> b.targetFilter() == null
+				&& "Dancer".equalsIgnoreCase(b.targetCardName())), "the Card Name branch");
+		assertTrue(boosts.stream().allMatch(IfControlBoost::cannotBeChosenByAbilities));
+		assertTrue(boosts.stream().noneMatch(IfControlBoost::cannotBeChosenBySummons),
+				"the text names abilities only");
+		assertTrue(boosts.stream().allMatch(IfControlBoost::chosenImmunityOpponentOnly),
+				"\"your opponent's\" — Mayakov's controller may still choose them");
+	}
+
+	@Test
+	void eitherBranchAloneIsEnoughToShield() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, mayakov());
+		// A Job Dancer under another name, and a card named Dancer with another Job.
+		placeP1Forward(mw, makeJobCard("Kuja", "Earth", "Forward", "Dancer"));
+		placeP1Forward(mw, makeJobCard("Dancer", "Earth", "Forward", "Entertainer"));
+		placeP1Forward(mw, makeJobCard("Nobody", "Earth", "Forward", "Knight"));
+
+		assertTrue(mw.icbGrantsImmunity("Kuja", true, false, true),
+				"Job Dancer, whatever it is called");
+		assertTrue(mw.icbGrantsImmunity("Dancer", true, false, true),
+				"Card Name Dancer, whatever Job it has");
+		assertFalse(mw.icbGrantsImmunity("Nobody", true, false, true));
+	}
+
+	// =========================================================================================
+	// The Emperor 20-092R: "The cost required for the Characters opponent controls to use action
+	// abilities is increased by 《2》."
+	//
+	// The tax is generic CP, matching the printed 《2》, so it may be paid with any Element — the
+	// exact inverse of the inline reduction, which removes generic entries and leaves the
+	// Element-specific ones alone. Read off the opposing field: it taxes its controller's opponent.
+	// =========================================================================================
+
+	private static final String EMPEROR_20_092R =
+			"The cost required for the Characters opponent controls to use action abilities is "
+			+ "increased by 《2》.";
+
+	@Test
+	void theEmperorTaxesTheOpposingSideOnly() {
+		MainWindow mw = new MainWindow();
+		mw.p2BackupCards[0] = makeFieldAbilityCard("The Emperor", "Dark", "Backup", EMPEROR_20_092R);
+
+		assertEquals(2, mw.actionAbilityCostIncreaseFor(true), "P1 pays the tax");
+		assertEquals(0, mw.actionAbilityCostIncreaseFor(false), "its own controller does not");
+	}
+
+	@Test
+	void theTaxIsGenericCpAddedOnTopOfTheAbilitysOwnElements() {
+		ActionAbility ability = CardData.parseActionAbilities(
+				"《Fire》《1》: Deal 1000 damage to all the Forwards.").get(0);
+		assertEquals(2, ability.cpCost().size());
+
+		ActionAbility taxed = ability.withIncreasedCp(2);
+
+		assertEquals(4, taxed.cpCost().size());
+		assertEquals(2, taxed.cpCost().stream().filter(String::isEmpty).count() - 1,
+				"two generic entries added beside the ability's own one");
+		assertTrue(taxed.cpCost().contains("Fire"), "the Element entry is untouched");
+	}
+
+	@Test
+	void twoEmperorsStack() {
+		MainWindow mw = new MainWindow();
+		mw.p2BackupCards[0] = makeFieldAbilityCard("The Emperor", "Dark", "Backup", EMPEROR_20_092R);
+		mw.p2BackupCards[1] = makeFieldAbilityCard("The Emperor II", "Dark", "Backup", EMPEROR_20_092R);
+
+		assertEquals(4, mw.actionAbilityCostIncreaseFor(true));
+	}
+
+	@Test
+	void aSilencedEmperorTaxesNothing() {
+		MainWindow mw = new MainWindow();
+		CardData emperor = makeFieldAbilityCard("The Emperor", "Dark", "Backup", EMPEROR_20_092R);
+		mw.p2BackupCards[0] = emperor;
+		mw.lostAbilitiesCards.add(emperor);
+
+		assertEquals(0, mw.actionAbilityCostIncreaseFor(true));
+	}
+
+	// =========================================================================================
+	// Machina 15-017H: "If you control 2 or less Forwards, Machina gains Brave and "When Machina
+	// attacks, deal 4000 damage to all the Forwards opponent controls.""
+	//
+	// The same shape as Yumcax 18-067C's "Damage 3 -- Yumcax gains Brave and "…"" — a self grant
+	// of a trait plus a quoted auto-ability — with a board condition where Yumcax has a damage
+	// threshold. The difference is that a damage threshold is recorded on the FieldAbility at parse
+	// time, while a Forward count moves during the turn and so is re-read on every lookup.
+	// =========================================================================================
+
+	private static final String MACHINA_15_017H =
+			"If you control 2 or less Forwards, Machina gains Brave and \"When Machina attacks, "
+			+ "deal 4000 damage to all the Forwards opponent controls.\"";
+
+	@Test
+	void machinaSplitsIntoAGateAndAGrant() {
+		CardData.MaxForwardsGatedGrant gate = CardData.parseMaxForwardsGatedGrant(MACHINA_15_017H);
+
+		assertNotNull(gate);
+		assertEquals(2, gate.maxForwards());
+		assertTrue(gate.remainder().startsWith("Machina gains Brave"));
+		CardData.SelfGainsQuotedGrant grant =
+				CardData.parseSelfGainsQuotedGrant(gate.remainder(), "Machina");
+		assertNotNull(grant, "the remainder is an ordinary quoted self grant");
+		assertTrue(grant.traits().contains(CardData.Trait.BRAVE));
+		assertEquals(1, grant.abilityTexts().size());
+	}
+
+	@Test
+	void machinaHasBraveOnlyWhileTheBoardIsSmall() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeFieldAbilityCard("Machina", "Water", "Forward", MACHINA_15_017H));
+		assertTrue(mw.effectiveP1HasTrait(0, CardData.Trait.BRAVE), "1 Forward is 2 or less");
+
+		placeP1Forward(mw, makeForward("Ally", "Water", 2, 5000));
+		assertTrue(mw.effectiveP1HasTrait(0, CardData.Trait.BRAVE), "2 is still 2 or less");
+
+		placeP1Forward(mw, makeForward("Second Ally", "Water", 2, 5000));
+		assertFalse(mw.effectiveP1HasTrait(0, CardData.Trait.BRAVE), "3 is not");
+	}
+
+	@Test
+	void theQuotedAbilityComesAndGoesWithTheSameGate() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeFieldAbilityCard("Machina", "Water", "Forward", MACHINA_15_017H));
+		CardData machina = mw.p1ForwardCards.get(0);
+
+		assertEquals(1, mw.effectiveAutoAbilities(machina).size(),
+				"the attack trigger is live while the gate holds");
+
+		placeP1Forward(mw, makeForward("Ally", "Water", 2, 5000));
+		placeP1Forward(mw, makeForward("Second Ally", "Water", 2, 5000));
+
+		assertTrue(mw.effectiveAutoAbilities(machina).isEmpty(),
+				"and gone once a third Forward joins — re-read, not cached");
+	}
+
+	@Test
+	void theGateCountsOnlyTheControllersOwnForwards() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeFieldAbilityCard("Machina", "Water", "Forward", MACHINA_15_017H));
+		for (int i = 0; i < 4; i++) placeP2Forward(mw, makeForward("Enemy " + i, "Fire", 2, 5000));
+
+		assertTrue(mw.effectiveP1HasTrait(0, CardData.Trait.BRAVE),
+				"\"you control\" — the opponent's board is not counted");
+	}
 }

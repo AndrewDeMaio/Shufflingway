@@ -289,6 +289,17 @@ public class FieldAbilityParsingTest {
         if (CardData.parseIfSelfJobCountTraitGrantThreshold(fa.effectText(), source.name()) >= 0) return true;
         if (CardData.parseIfSelfLbFaceUpCountTraitGrantThreshold(fa.effectText(), source.name()) >= 0) return true;
         if (CardData.parseIfSelfPowerTraitGrantThreshold(fa.effectText(), source.name()) >= 0) return true;
+        // Terra 9-029C, the element-free Summon damage boost. Read on the CASTER's side by
+        // DamageResolver.applyCasterSideElementSummonDamageBoosts, beside its element-scoped twin.
+        if (AutoAbilityTriggers.FA_FRIENDLY_SUMMON_DAMAGE_BOOST.matcher(fa.effectText().trim()).matches()) return true;
+        // Warrior of Light 2-145L. The imperative spelling of FA_FIELD_DAMAGE_MODIFIER's reduction,
+        // applied alongside it in DamageResolver.applyFieldWideDamageModifiers.
+        if (AutoAbilityTriggers.FA_REDUCE_DAMAGE_TO_FILTER.matcher(fa.effectText().trim()).matches()) return true;
+        // The Emperor 20-092R. Read by MainWindow.actionAbilityCostIncreaseFor when an ability is paid for.
+        if (AutoAbilityTriggers.FA_OPP_ACTION_ABILITY_COST_INCREASE.matcher(fa.effectText().trim()).matches()) return true;
+        // Machina 15-017H. A board-gated self grant; the gate comes off and the remainder is an
+        // ordinary quoted grant, read by FieldGrantCalculator and MainWindow.effectiveAutoAbilities.
+        if (maxForwardsGatedSelfGrant(fa, source)) return true;
         // The Night Dancer 17-078R. Read at declaration time by MainWindow.effectiveAttackDeclarationLimit.
         if (AutoAbilityTriggers.FA_OPP_ATTACKS_LIMITED_BY_OWN_BACKUPS.matcher(fa.effectText().trim()).matches()) return true;
         // Lenna 18-100L, Ultimecia 22-073L, and the Summons-only Terra 23-011L. Both read by
@@ -299,6 +310,15 @@ public class FieldAbilityParsingTest {
         if (ActionResolverPatterns.FA_BZ_SUMMONS_PROTECTED_FROM_OPP_RFG
                 .matcher(fa.effectText()).find()) return true;
         return CardData.isBackupCpAbility(fa.effectText());
+    }
+
+    /**
+     * Whether {@code fa} is a Forward-count-gated self grant naming its own carrier — Machina
+     * 15-017H. The gate comes off before the grant is checked, exactly as the runtime does it.
+     */
+    private static boolean maxForwardsGatedSelfGrant(FieldAbility fa, CardData source) {
+        CardData.MaxForwardsGatedGrant g = CardData.parseMaxForwardsGatedGrant(fa.effectText());
+        return g != null && CardData.parseSelfGainsQuotedGrant(g.remainder(), source.name()) != null;
     }
 
     private static CardData buildSource(ResultSet rs, String textEn) throws Exception {
@@ -613,6 +633,18 @@ public class FieldAbilityParsingTest {
         if (AutoAbilityTriggers.FA_OPP_ATTACKS_LIMITED_BY_OWN_BACKUPS
                 .matcher(fa.effectText().trim()).matches())
             return "OppAttacksLimitedByOwnBackups";
+        Matcher sdb = AutoAbilityTriggers.FA_FRIENDLY_SUMMON_DAMAGE_BOOST.matcher(fa.effectText().trim());
+        if (sdb.matches()) return "FriendlySummonDamageBoost[+" + sdb.group("amount") + "]";
+        Matcher rdf = AutoAbilityTriggers.FA_REDUCE_DAMAGE_TO_FILTER.matcher(fa.effectText().trim());
+        if (rdf.matches()) return "ReduceDamageToFilter[-" + rdf.group("amount") + "]";
+        Matcher aci = AutoAbilityTriggers.FA_OPP_ACTION_ABILITY_COST_INCREASE.matcher(fa.effectText().trim());
+        if (aci.matches())
+            return "OppActionAbilityCostIncrease[+"
+                    + AutoAbilityTriggers.actionAbilityCostIncreaseAmount(aci) + "]";
+        if (maxForwardsGatedSelfGrant(fa, source)) {
+            CardData.MaxForwardsGatedGrant g = CardData.parseMaxForwardsGatedGrant(fa.effectText());
+            return "MaxForwardsGatedSelfGrant[fwds<=" + g.maxForwards() + "]";
+        }
         if (namesItself(CardData.GAINS_OPP_CHARACTER_ELEMENTS_PATTERN, fa, source))
             return "GainsOpponentCharacterElements";
         Integer exbCap = ActionResolver.exBurstSuppressionMaxCost(fa.effectText(), source.name());

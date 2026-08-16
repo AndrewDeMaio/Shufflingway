@@ -1598,9 +1598,12 @@ class ComputerPlayer implements OpponentController {
 	 * but driven by the ability's element list and total cost.  Handles generic (empty-string)
 	 * CP elements by allowing any active backup or any non-Light/Dark hand card to contribute.
 	 */
-	private boolean p2PlanAbilityPayment(ActionAbility ability,
+	private boolean p2PlanAbilityPayment(ActionAbility rawAbility,
 			List<Integer> outBackups, Map<Integer, String> outBackupElems,
 			List<Integer> outDiscards, Map<Integer, String> outDiscardElems) {
+		// Plan against the cost P2 will actually be charged, tax included (The Emperor 20-092R).
+		// Planning off the printed cost would have P2 commit to abilities it cannot pay for.
+		ActionAbility ability = rawAbility.withIncreasedCp(mw.actionAbilityCostIncreaseFor(false));
 		String[] elems = p2AbilityElements(ability);
 		long genericCount = ability.cpCost().stream().filter(String::isEmpty).count();
 		int totalCost = ability.cpCost().size();

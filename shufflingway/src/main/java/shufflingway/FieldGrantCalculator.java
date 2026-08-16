@@ -71,8 +71,16 @@ class FieldGrantCalculator {
                 out.addAll(CardData.parseSelfTraitGrant(fa.effectText(), src.name()));
                 // The same grant spelled with a quoted ability alongside the traits
                 // ("Yumcax gains Brave and \"When Yumcax …\"") — only the trait half is a trait.
+                // Machina 15-017H gates the identical shape on a Forward count instead of on
+                // damage; the gate comes off here and the remainder is read as any other grant.
+                String grantText = fa.effectText();
+                CardData.MaxForwardsGatedGrant gate = CardData.parseMaxForwardsGatedGrant(grantText);
+                if (gate != null) {
+                    if (mw.forwardCount(isP1) > gate.maxForwards()) continue;
+                    grantText = gate.remainder();
+                }
                 CardData.SelfGainsQuotedGrant quoted =
-                        CardData.parseSelfGainsQuotedGrant(fa.effectText(), src.name());
+                        CardData.parseSelfGainsQuotedGrant(grantText, src.name());
                 if (quoted != null) out.addAll(quoted.traits());
                 if (CardData.parseSelfNonDmgBreakShield(fa.effectText(), src.name())
                         || CardData.parseSelfNonDmgBreakShieldDirect(fa.effectText(), src.name()))

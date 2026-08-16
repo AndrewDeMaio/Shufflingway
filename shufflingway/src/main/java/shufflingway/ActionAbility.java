@@ -166,6 +166,37 @@ public record ActionAbility(
      * Returns a copy of this ability with {@code reduction} generic CP slots removed from
      * {@link #cpCost}, floored at 0.  Used to apply inline cost-modifier text at activation time.
      */
+    /**
+     * A copy whose CP cost carries {@code increase} more generic CP — the tax The Emperor 20-092R
+     * lays on the opposing side ("The cost required for the Characters opponent controls to use
+     * action abilities is increased by 《2》").
+     *
+     * <p>Generic, because the printed 《2》 is generic: the extra may be paid with CP of any Element,
+     * unlike the Element-specific entries the ability itself prints. That makes this the exact
+     * inverse of {@link #withReducedCp}, which removes generic entries and leaves the Element ones
+     * alone.
+     */
+    public ActionAbility withIncreasedCp(int increase) {
+        if (increase <= 0) return this;
+        List<String> raised = new java.util.ArrayList<>(cpCost());
+        for (int i = 0; i < increase; i++) raised.add("");
+        return new ActionAbility(abilityName(), requiresDull(), isSpecial(), crystalCost(),
+                selfMillCost(), hasXCost(), raised, breakZoneCosts(), discardCosts(),
+                removeFromGameCosts(), returnToHandCosts(), counterCosts(), dullForwardCosts(),
+                yourTurnOnly(), opponentTurnOnly(), oncePerTurn(), mainPhaseOnly(),
+                whileCardAttacking(), whileCardBlocking(), whilePartyAttacking(), whileCardInHand(),
+                hasBlockingTargetEffect(), effectText(), damageThreshold(), controlCondition(),
+                cpBackupElement(), cpAllowedElements(), sourceInBattle(), requiresOppDiscardedThisTurn(),
+                requiresCastSummonThisTurn(), requiresElementForwardEnteredThisTurn(),
+                requiresCardNameEnteredThisTurn(), breakZoneOnly(), requiresOpponentEmptyHand(),
+                requiresSelfEmptyHand(), requiresNamedCardTookDamageThisTurn(), requiresSelfReceivedDamageThisTurn(),
+                requiresForwardPutToBZThisTurn(), requiresJobPutToBZThisTurn(), blockerForAttacker(), ownBreakZoneNameRequired(),
+                counterScaleName(), minCounterRequired(), minCounterType(), maxOpponentHandSize(),
+                requiresSourceIsForward(), maxCounterAllowed(), maxCounterType(),
+                inlineCostReductionJob(), inlineCostReductionExcludeName(), requiresOwnWarpCard(),
+                usableByEitherPlayer(), requiresSelfPowerAtLeast(), bottomOfDeckCostCardName());
+    }
+
     public ActionAbility withReducedCp(int reduction) {
         if (reduction <= 0) return this;
         List<String> orig = cpCost();
