@@ -2539,7 +2539,14 @@ public record CardData(
             // distinct from "of your opponent enters the field" (possessive-based; see below)
             "|enters?\\s+your\\s+opponent's\\s+field" +
             "|leaves?\\s+the\\s+field" +
+            // The optional "on/during the same turn" tail belongs to the eight printings whose
+            // subject is "[a|the] [type] damaged by [name]" — see DAMAGED_BY_BZ_SUBJECT. Widening
+            // this arm rather than adding a second one keeps the alternation free of an ordering
+            // hazard: a separate arm would have to be placed ahead of this one, since find()
+            // would otherwise match the shorter phrase and then fail on the comma that is not
+            // there yet.
             "|is\\s+put\\s+(?:from\\s+the\\s+field\\s+)?into\\s+the\\s+Break\\s+Zone" +
+                "(?:\\s+(?:on|during)\\s+the\\s+same\\s+turn)?" +
             "|casts?\\s+a\\s+Summon" +
             "|is\\s+put\\s+into\\s+(?:your\\s+)?Damage\\s+Zone" +
             "|is\\s+removed\\s+from\\s+the\\s+game\\s+due\\s+to\\s+Warp" +
@@ -2614,6 +2621,26 @@ public record CardData(
         "(?i)(?<prefix>When\\s+)(?<head>[^,]+?)" +
         "(?<rest>(?:,\\s+an?\\s+[^,]+?)+\\s+or\\s+an?\\s+[^,]+?)" +
         "\\s+(?=enters?|attacks?|blocks?|leaves?|is\\s+(?:put|blocked|removed|dealt)|deals?|forms?|casts?|receives?|primes?)"
+    );
+
+    /**
+     * "When [event A], or when [event B], [effect]" — two whole triggers sharing one effect, as
+     * distinct from {@link #MULTI_SUBJECT_TRIGGER}'s several subjects sharing one trigger verb.
+     * Palom 2-016R is the only printing: "When Palom deals damage to your opponent, or when the
+     * Forward damaged by Palom is put from the field into the Break Zone during the same turn, …".
+     *
+     * <p>Groups: {@code first} and {@code second} (each an unpunctuated subject-plus-trigger
+     * clause) and {@code effect}, which runs to the end of the segment.
+     *
+     * <p>{@link #expandAlternativeTriggers} splits it into two sentences rather than trying to
+     * teach {@link #AUTO_ABILITY_PATTERN} a second trigger in one match. Two independent abilities
+     * is also the right reading: the card fires on each occurrence of either event, not once for
+     * the pair.
+     */
+    private static final Pattern ALTERNATIVE_TRIGGERS = Pattern.compile(
+        "(?i)When\\s+(?<first>[^,]+?),\\s*or\\s+when\\s+(?<second>[^,]+?),\\s+" +
+        "(?<effect>.+?)(?=\\s*\\[\\[br\\]\\]|\\s*$)",
+        Pattern.DOTALL
     );
 
     /**
@@ -2787,6 +2814,32 @@ public record CardData(
     );
 
     /**
+     * "[a|an|the] [type][ you control| opponent controls] [damaged by | that took damage from]
+     * [name]" — the break-zone trigger subject of the printings that ask <em>who dealt the
+     * damage</em> rather than merely describing the departing card: Galuf 15-066C, Firion 16-120C,
+     * Tifa 23-012C, Delita 16-014R, Machina 3-022H, Vermilion Bird l'Cie Zhuyu 5-011H, Bahamut
+     * 24-015C, both Cid Highwinds (1-072R, 1-073C), and the copy Morrow 11-013R hands itself in
+     * quotes.
+     *
+     * <p>Groups: {@code subject} (everything ahead of the damage clause, which is an ordinary
+     * type/controller phrase) and {@code name} (the damager, always the printing card).
+     *
+     * <p>The two wordings say the same thing from opposite ends — the Cid Highwinds are the only
+     * printings to put the departing card in the subject position — so they resolve to one trigger
+     * rather than two. Without the second arm those two would still have matched the widened
+     * break-zone arm of {@link #AUTO_ABILITY_PATTERN} and been classified as ordinary "put into
+     * break zone" triggers, whose subject matcher has no way to answer "that took damage from Cid
+     * Highwind": they would have counted as parsed and then never fired.
+     *
+     * <p>Kept here rather than beside the matcher in {@code AutoAbilityTriggers} for the reason
+     * {@link #FILTER_FORWARD_SUBJECT} is: one definition, shared by the classifier that assigns the
+     * trigger and the runtime check that answers it, so the two cannot drift apart.
+     */
+    static final Pattern DAMAGED_BY_BZ_SUBJECT = Pattern.compile(
+        "(?i)^(?<subject>.+?)\\s+(?:damaged\\s+by|that\\s+took\\s+damage\\s+from)\\s+(?<name>.+?)\\s*$"
+    );
+
+    /**
      * "[a | N or more] Job X [or a Card Name Y] [Forward(s)] [other than Z] you control" — subject
      * of a filtered-forward attack trigger.
      *
@@ -2881,6 +2934,27 @@ public record CardData(
      * disjunctive subject in one match. The compound subject is split downstream when the
      * trigger fires.
      */
+    /**
+     * Rewrites "When A, or when B, [effect]" into two sentences carrying the same effect, split by
+     * {@code [[br]]} so {@link #AUTO_ABILITY_PATTERN} reads each as its own auto-ability.
+     *
+     * <p>Without this the pattern matched the first trigger and stopped at the "or when …" that
+     * follows it, producing an ability whose whole effect was the word "or" — and losing the second
+     * trigger entirely. See {@link #ALTERNATIVE_TRIGGERS}.
+     */
+    private static String expandAlternativeTriggers(String text) {
+        Matcher m = ALTERNATIVE_TRIGGERS.matcher(text);
+        StringBuffer sb = new StringBuffer();
+        while (m.find()) {
+            String effect = m.group("effect").trim();
+            String replacement = "When " + m.group("first").trim() + ", " + effect
+                    + "[[br]]When " + m.group("second").trim() + ", " + effect;
+            m.appendReplacement(sb, Matcher.quoteReplacement(replacement));
+        }
+        m.appendTail(sb);
+        return sb.toString();
+    }
+
     private static String expandMultiSubjectTriggers(String text) {
         Matcher m = MULTI_SUBJECT_TRIGGER.matcher(text);
         StringBuffer sb = new StringBuffer();
@@ -3100,6 +3174,12 @@ public record CardData(
                 "(?i)your\\s+opponent\\s+plays\\s+(an?)\\s+(Forward|Backup|Monster|Character)\\s+onto\\s+the\\s+field\\s+other\\s+than\\s+from\\s+(?:his/her|his|her|their)\\s+hand",
                 "$1 $2 enters your opponent's field other than from their hand");
 
+        // Split "When A, or when B, [effect]" into one sentence per trigger. Must precede
+        // expandMultiSubjectTriggers: that one rewrites a comma-separated subject list into an
+        // "or"-joined one, and running it first on "When A, or when B, …" would leave a shape this
+        // pattern no longer recognises.
+        textForSearch = expandAlternativeTriggers(textForSearch);
+
         // Rewrite "When X, a Y or a Z [trigger]" into "When X or a Y or a Z [trigger]" so that
         // AUTO_ABILITY_PATTERN's (?<card>[^,]+?) group captures the full disjunction as one subject.
         textForSearch = expandMultiSubjectTriggers(textForSearch);
@@ -3138,6 +3218,15 @@ public record CardData(
             // "break zone", and "due to your Summons or abilities" contains "summon".
             else if (triggerRaw.contains("added to your opponent's hand"))                                  trigger = "opponent salvages from break zone";
             else if (triggerRaw.contains("discard") && triggerRaw.contains("due to your"))                  trigger = discardByEffectTrigger(triggerRaw);
+            // "a Forward damaged by Galuf is put from the field into the Break Zone on the same
+            // turn" — the same event as the plain break-zone trigger below, qualified by who dealt
+            // the damage. Told apart by the subject rather than by the "same turn" tail: the tail
+            // only restates the window the damage record already keeps, while "damaged by" is what
+            // makes this a different question from "put into break zone" and needs that record.
+            // Must precede the plain branch, which would otherwise claim it — both contain
+            // "break zone".
+            else if (triggerRaw.contains("break zone")
+                    && DAMAGED_BY_BZ_SUBJECT.matcher(card).matches())                               trigger = "damaged card put into break zone";
             else if (triggerRaw.contains("break zone"))                                                     trigger = "put into break zone";
             else if (triggerRaw.contains("chosen") && triggerRaw.contains("abilit"))                        trigger = "chosen by opponent's summon or ability";
             else if (triggerRaw.contains("chosen"))                                                         trigger = "chosen by opponent's summon";
@@ -3614,6 +3703,20 @@ public record CardData(
     );
 
     /**
+     * "If you have N or more cards in your hand, [target] cannot be blocked." (Zidane 8-115L)
+     * Groups: {@code count}, {@code target}.
+     *
+     * <p>The unblockable twin of {@link #IF_OWN_HAND_MIN_BOOST}, which cannot claim this text:
+     * its tail is a "gains [power/traits]" clause, and this printing grants neither — it lifts a
+     * blocking restriction instead. Same hand-size gate, different effect, so the two are separate
+     * patterns rather than one with an optional tail.
+     */
+    private static final Pattern IF_OWN_HAND_MIN_CANNOT_BE_BLOCKED = Pattern.compile(
+        "(?i)^If\\s+you\\s+have\\s+(?<count>\\d+)\\s+or\\s+more\\s+cards?\\s+in\\s+your\\s+hand,\\s+" +
+        "(?<target>.+?)\\s+cannot\\s+be\\s+blocked[.!]?\\s*$"
+    );
+
+    /**
      * "If you control N or more different Element Backups, [target] gains [effects]."
      * (Kefka 3-079H: +3000 power at 3 Elements, Brave at 5.)
      * Groups: {@code count}, {@code target}, {@code effects}.
@@ -3894,9 +3997,18 @@ public record CardData(
         "(?i)cannot\\s+be\\s+chosen\\s+by\\s+(?<opp>your\\s+opponent's\\s+)?" +
         "(?<scope>Summons?\\s+or\\s+abilities|abilities\\s+or\\s+Summons?|Summons?|abilities)");
 
-    /** Matches a self-targeted trait grant: "[CardName] gains [Trait(s)]." — no "until end of turn". */
+    /**
+     * Matches a self-targeted trait grant: "[CardName] gains [+N power,] [Trait(s)]." — no
+     * "until end of turn".
+     *
+     * <p>The power clause is optional and discarded here: Kain 28-081L prints
+     * "Damage 3 -- Kain gains +1000 power, Haste and First Strike.", where the number is
+     * {@link #parseSelfPowerGrant}'s half of the same sentence. Without the optional clause the
+     * trait list did not reach the front of the string, so the whole match failed and Kain's two
+     * keywords were silently dropped while his power boost applied.
+     */
     private static final Pattern SELF_TRAIT_GRANT = Pattern.compile(
-        "(?i)^(?<name>.+?)\\s+gains?\\s+" +
+        "(?i)^(?<name>.+?)\\s+gains?\\s+(?:\\+\\d+\\s+power\\s*(?:,|and)\\s*)?" +
         "(?<traits>(?:(?:Haste|First\\s+Strike|Brave|Back\\s+Attack)(?:\\s*(?:,|and)\\s*)?)+)[.!]?$"
     );
 
@@ -4125,6 +4237,18 @@ public record CardData(
                         ownHandMinM.group("effects").trim());
                 if (boost != null)
                     result.add(boost.withMinOwnHandSize(Integer.parseInt(ownHandMinM.group("count"))));
+                continue;
+            }
+
+            // "If you have N or more cards in your hand, [target] cannot be blocked." (Zidane 8-115L)
+            // Must follow IF_OWN_HAND_MIN_BOOST for the same reason that one follows IF_OWN_HAND_BOOST:
+            // all three open on "If you have N", and only the clause after the comma tells them apart.
+            Matcher ownHandMinNbM = IF_OWN_HAND_MIN_CANNOT_BE_BLOCKED.matcher(seg);
+            if (ownHandMinNbM.find()) {
+                String nbTarget = ownHandMinNbM.group("target").trim();
+                result.add(new IfControlBoost(List.of(), "", nbTarget, parseIcbTargetFilter(nbTarget),
+                        0, EnumSet.noneOf(Trait.class), "", false, false, true, null, 0, 0, false, 0)
+                        .withMinOwnHandSize(Integer.parseInt(ownHandMinNbM.group("count"))));
                 continue;
             }
 
@@ -5442,6 +5566,18 @@ public record CardData(
         "(?<target>.+?)\\s+gains?\\s+\\+(?<power>\\d+)\\s+power[.!]?$"
     );
 
+    /**
+     * "For each dull Character [your] opponent controls, [target] gains +N power." (Squall 2-038H)
+     *
+     * <p>Kept separate from {@link #SCALING_SELF_OPP_FWD_PATTERN} rather than widened into it:
+     * the type word is Character, not Forward, so the count spans the opposing Backup and Monster
+     * rows as well, and the dull filter has no counterpart on the other opponent-side patterns.
+     */
+    private static final Pattern SCALING_SELF_OPP_DULL_CHARACTER_PATTERN = Pattern.compile(
+        "(?i)^For\\s+each\\s+dull\\s+Character\\s+(?:your\\s+)?opponent\\s+controls,\\s+" +
+        "(?<target>.+?)\\s+gains?\\s+\\+(?<power>\\d+)\\s+power[.!]?$"
+    );
+
     /** "For each point of damage you have received, [target] gains +N power." */
     private static final Pattern SCALING_SELF_DMG_PATTERN = Pattern.compile(
         "(?i)^For\\s+each\\s+point\\s+of\\s+damage\\s+you\\s+have\\s+received,\\s+" +
@@ -5635,6 +5771,15 @@ public record CardData(
                 if (perUnit <= 0) continue;
                 result.add(new ScalingSelfPowerBoost(
                         ScalingSelfPowerBoost.Source.OPPONENT_BACKUPS, perUnit));
+                continue;
+            }
+            Matcher od = SCALING_SELF_OPP_DULL_CHARACTER_PATTERN.matcher(seg);
+            if (od.find()) {
+                if (!od.group("target").trim().equalsIgnoreCase(cardName)) continue;
+                int perUnit = Integer.parseInt(od.group("power"));
+                if (perUnit <= 0) continue;
+                result.add(new ScalingSelfPowerBoost(
+                        ScalingSelfPowerBoost.Source.OPPONENT_DULL_CHARACTERS, perUnit));
                 continue;
             }
             Matcher dm = SCALING_SELF_DMG_PATTERN.matcher(seg);
@@ -6600,7 +6745,7 @@ public record CardData(
     );
 
     /** Matches "[CardName] has all the jobs." as a field ability. */
-    private static final Pattern HAS_ALL_JOBS_PATTERN = Pattern.compile(
+    static final Pattern HAS_ALL_JOBS_PATTERN = Pattern.compile(
         "(?i)^.+?\\s+has\\s+all\\s+the\\s+jobs\\.?$"
     );
 
@@ -6946,6 +7091,8 @@ public record CardData(
             if (SCALING_SELF_OPP_FWD_PATTERN.matcher(seg).find())            continue;
             // Scaling self power boost ("For each Backup opponent controls, X gains +N power")
             if (SCALING_SELF_OPP_BACKUP_PATTERN.matcher(seg).find())         continue;
+            // Scaling self power boost ("For each dull Character opponent controls, X gains +N power")
+            if (SCALING_SELF_OPP_DULL_CHARACTER_PATTERN.matcher(seg).find()) continue;
             // Scaling self power boost ("For each [filter] you control, X gains +N power")
             if (SCALING_SELF_FOR_EACH_PATTERN.matcher(seg).find())            continue;
             // Scaling self power boost ("For each point of damage you have received, X gains +N power")
@@ -7483,6 +7630,18 @@ public record CardData(
     /** Returns {@code true} when {@code text} is a "[name] has the Jobs of the Forwards you control." ability. */
     public static boolean isHasJobsOfForwardsAbility(String text) {
         return HAS_JOBS_OF_FORWARDS_PATTERN.matcher(text.trim()).matches();
+    }
+
+    /**
+     * Returns {@code true} when {@code text} is a "[name] has all the jobs." ability — the
+     * text-level twin of {@link #hasAllJobs()}, which asks the same question of a whole card.
+     *
+     * <p>Bartz 1-081R's rule has been live for as long as {@code hasAllJobs} has had callers; what
+     * was missing was a way for the field-ability coverage report to see it, since the rule is
+     * answered by a query on the card rather than by anything {@link ActionResolver} parses.
+     */
+    public static boolean isHasAllJobsAbility(String text) {
+        return text != null && HAS_ALL_JOBS_PATTERN.matcher(text.trim()).matches();
     }
 
     /**

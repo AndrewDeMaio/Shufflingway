@@ -51,6 +51,16 @@ public record ScalingSelfPowerBoost(
         /** Number of Backups the opponent currently controls. */
         OPPONENT_BACKUPS,
         /**
+         * Number of <em>dull</em> Characters the opponent currently controls — Forwards, Backups
+         * and Monsters alike (Squall 2-038H).
+         *
+         * <p>Kept apart from {@link #requireActive}, which is the same question asked the other way
+         * round and only of the controller's own side. The two never meet on one printing, and
+         * folding them into one tri-state field would have made every existing caller pass a value
+         * for a state its text does not mention.
+         */
+        OPPONENT_DULL_CHARACTERS,
+        /**
          * Number of Characters the controller controls whose name differs from the source card's name.
          * Honors {@link #requireActive}, {@link #elementFilter}, {@link #excludeElement}, and the
          * job/category/cardName filters (as an OR disjunction across the non-null filters).

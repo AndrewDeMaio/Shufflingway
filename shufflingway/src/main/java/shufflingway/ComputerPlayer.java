@@ -934,6 +934,10 @@ class ComputerPlayer implements OpponentController {
 			// The standing, damage-gated spelling of the same restriction (Ritz 11-063L), which is
 			// re-read per block rather than recorded in the set above.
 			if (mw.hasSelfCannotBeBlockedFieldAbility(p1AttackerCard, true)) return null;
+			// The conditional spelling (Zidane 8-115L's hand-size gate, the "If you control X"
+			// printings). P2's own attackers get this through attackerConditionallyUnblockable;
+			// this is the same check on the side where the AI is the one declining to block.
+			if (mw.attackerConditionallyUnblockable(p1AttackerCard, true)) return null;
 			p1AttackerFieldPower  = mw.fieldForwardPower(true, attacker.zone(), attacker.idx());
 			p1AttackerHigherPower = p1AttackerCard.cannotBeBlockedByHigherPower();
 			if (p1AttackerHigherPower) p1AttackerPower = p1AttackerFieldPower;

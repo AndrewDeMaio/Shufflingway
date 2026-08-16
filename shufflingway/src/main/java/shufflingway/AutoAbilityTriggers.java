@@ -655,6 +655,34 @@ final class AutoAbilityTriggers {
 		return false;
 	}
 
+	/**
+	 * "If a Forward damaged by [name] is put from the field into the Break Zone on the same turn,
+	 * remove it from the game instead." — Susano, Lord of the Revel 14-011H.
+	 *
+	 * <p>Unlike {@link #FA_OPP_DAMAGED_FORWARD_FIELD_TO_BZ_RFG}, which asks only whether the
+	 * departing Forward carries damage, this one asks <em>who dealt it</em>: the redirect is owed to
+	 * the carrier's own damage and to nothing else. That is why it needs
+	 * {@code MainWindow.damagedBySourcesThisTurn} behind it rather than a damage count.
+	 *
+	 * <p>The name capture is checked against the carrier by {@link #hasDamagedBySelfFieldToBzRfg} —
+	 * "Susano, Lord of the Revel" contains a comma, so {@code card} is anchored on both sides rather
+	 * than stopped at one.
+	 */
+	static final Pattern FA_DAMAGED_BY_SELF_FIELD_TO_BZ_RFG = Pattern.compile(
+		"(?i)^If\\s+(?:a|the)\\s+Forward\\s+damaged\\s+by\\s+(?<card>.+?)\\s+is\\s+put\\s+from\\s+the\\s+field\\s+" +
+		"into\\s+the\\s+Break\\s+Zone\\s+(?:on|during)\\s+the\\s+same\\s+turn,\\s+" +
+		"remove\\s+it\\s+from\\s+the\\s+game\\s+instead[.!]?$"
+	);
+
+	/** Whether {@code card} carries {@link #FA_DAMAGED_BY_SELF_FIELD_TO_BZ_RFG} naming itself. */
+	static boolean hasDamagedBySelfFieldToBzRfg(CardData card) {
+		for (FieldAbility fa : card.fieldAbilities()) {
+			Matcher m = FA_DAMAGED_BY_SELF_FIELD_TO_BZ_RFG.matcher(fa.effectText().trim());
+			if (m.matches() && m.group("card").trim().equalsIgnoreCase(card.name())) return true;
+		}
+		return false;
+	}
+
 	/** "If [name] deals damage to a Forward of cost N or more, double the damage instead." */
 	static final Pattern FA_DOUBLE_DAMAGE_VS_COST_THRESHOLD =
 			Pattern.compile(
@@ -1994,10 +2022,53 @@ final class AutoAbilityTriggers {
 	private void fireBreakZoneTriggers(CardData card, boolean ownerIsP1, CardData broken,
 			boolean brokenIsP1, Set<CardData> partyMembers) {
 		for (AutoAbility fa : mw.effectiveAutoAbilities(card)) {
+			if (fa.trigger().equals("damaged card put into break zone")) {
+				if (matchesDamagedByBreakZoneSubject(fa, card, broken, brokenIsP1, ownerIsP1))
+					executeAutoAbility(fa, card, ownerIsP1);
+				continue;
+			}
 			if (!fa.trigger().equals("put into break zone")) continue;
 			if (!matchesBreakZoneSubject(fa, card, broken, brokenIsP1, ownerIsP1, partyMembers)) continue;
 			executeAutoAbility(fa, card, ownerIsP1);
 		}
+	}
+
+	/**
+	 * Returns true when {@code broken} satisfies a "[a Forward] damaged by [watcher] is put from the
+	 * field into the Break Zone on the same turn" subject — Galuf 15-066C, Firion 16-120C, Tifa
+	 * 23-012C, Delita 16-014R, Machina 3-022H, Vermilion Bird l'Cie Zhuyu 5-011H, Bahamut 24-015C,
+	 * and the copy Morrow 11-013R hands itself.
+	 *
+	 * <p>Two questions, in the order that makes the cheap one first: did this card deal the damage,
+	 * and is the departing card the kind the subject describes. The damage half is settled by
+	 * identity against {@code MainWindow}'s per-turn record, not by name — a second copy of Galuf
+	 * elsewhere on the board did not deal this damage and does not get the trigger. The name check
+	 * ahead of it only confirms the subject names its own carrier, which every printing does.
+	 *
+	 * <p>"the same turn" needs no check of its own: the record is emptied at end of turn and when a
+	 * card arrives on the field, so an entry existing at all means the damage was dealt this turn to
+	 * this incarnation of the card.
+	 */
+	private boolean matchesDamagedByBreakZoneSubject(AutoAbility fa, CardData watcher, CardData broken,
+			boolean brokenIsP1, boolean watcherIsP1) {
+		Matcher m = CardData.DAMAGED_BY_BZ_SUBJECT.matcher(fa.triggerCard().trim());
+		if (!m.matches()) return false;
+		if (!CardFilters.meetsCardNameFilter(watcher, m.group("name").trim())) return false;
+		if (!mw.wasDamagedBy(broken, watcher)) return false;
+
+		// The half ahead of "damaged by" is an ordinary break-zone subject: an optional controller
+		// clause over a type word.
+		String subject = m.group("subject").trim();
+		Matcher ctrlM = BZ_SUBJECT_CTRL.matcher(subject);
+		if (ctrlM.find()) {
+			boolean selfCtrl = ctrlM.group("ctrl").equalsIgnoreCase("you");
+			if (selfCtrl != (brokenIsP1 == watcherIsP1)) return false;
+			subject = subject.substring(0, ctrlM.start()).trim();
+		}
+		// These printings use the definite and indefinite article interchangeably for the same
+		// thing — "the Forward damaged by Machina", "a Forward damaged by Galuf" — and
+		// matchesSingleSubject only strips the indefinite one.
+		return matchesSingleSubject(subject.replaceFirst("(?i)^the\\s+", "a "), broken, watcher);
 	}
 
 	/**

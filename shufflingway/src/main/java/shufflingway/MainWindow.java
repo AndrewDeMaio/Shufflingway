@@ -736,6 +736,17 @@ public class MainWindow {
 	final Map<CardData, String> nullifyElementDamageAbilityOnlyMap = new HashMap<>();
 	/** Cards marked (by a targeted ability) to be removed from the game instead of put into the Break Zone, if that happens from the field this turn. */
 	final Set<CardData> rfgInsteadOfBzThisTurn = new HashSet<>();
+	/**
+	 * Which cards dealt damage to which Forward this turn, for the "a Forward damaged by [X] …
+	 * on the same turn" printings (Susano, Lord of the Revel 14-011H).
+	 *
+	 * <p>Keyed by identity for the same reason {@link #rfgInsteadOfBzThisTurn} is: the mark rides
+	 * one card instance, and two copies of a card on the field are two separate damagers. Emptied
+	 * at end of turn, which is what "the same turn" means, and per card in
+	 * {@link #clearCombatRestrictionsFor} — a Forward that left the field and came back is a new
+	 * object and carries none of the old damage.
+	 */
+	final Map<CardData, Set<CardData>> damagedBySourcesThisTurn = new IdentityHashMap<>();
 	/** One pending "draw when the marked card leaves the field for the Break Zone" trigger. */
 	record PendingBzDraw(boolean drawerIsP1, int count) {}
 	/**
@@ -2775,7 +2786,7 @@ public class MainWindow {
                                 perCardIncomingDmgMultiplierMap.clear();
                                 p1Turn.forwardIncomingDmgMult = 1;      p2Turn.forwardIncomingDmgMult = 1;
                                 p1Turn.abilityOutgoingDmgMult = 1;      p2Turn.abilityOutgoingDmgMult = 1;
-                                cannotBeChosenBySummons.clear();  cannotBeChosenByAbilities.clear();  cannotBeChosenBySummonsAnyone.clear();  cannotBeChosenByElement.clear();  nullifyElementDamageMap.clear();  nullifyElementDamageAbilityOnlyMap.clear();  rfgInsteadOfBzThisTurn.clear();  drawOnFieldToBzThisTurn.clear();
+                                cannotBeChosenBySummons.clear();  cannotBeChosenByAbilities.clear();  cannotBeChosenBySummonsAnyone.clear();  cannotBeChosenByElement.clear();  nullifyElementDamageMap.clear();  nullifyElementDamageAbilityOnlyMap.clear();  rfgInsteadOfBzThisTurn.clear();  drawOnFieldToBzThisTurn.clear();  damagedBySourcesThisTurn.clear();
                                 breaktouchBattleSet.clear();
                                 p1Turn.nonLethalProtection = false;    p2Turn.nonLethalProtection = false;
                                 p1Turn.dmgReductionDisabled = false;   p2Turn.dmgReductionDisabled = false;
@@ -4202,6 +4213,70 @@ public class MainWindow {
 		cannotUseActionAbilitiesThisTurn.remove(departing);
 	}
 
+	/**
+	 * Records that {@code source} dealt damage to {@code damaged} this turn, so the
+	 * "[a Forward] damaged by [source] …" printings can find it when the damaged card leaves the
+	 * field. Called at every point damage actually lands, ahead of the break check, because the
+	 * blow that records the source is usually the one that kills.
+	 */
+	void recordDamagedBy(CardData damaged, CardData source) {
+		if (damaged == null || source == null || damaged == source) return;
+		damagedBySourcesThisTurn
+				.computeIfAbsent(damaged, k -> Collections.newSetFromMap(new IdentityHashMap<>()))
+				.add(source);
+	}
+
+	/** Whether {@code source} is recorded as having damaged {@code damaged} this turn. */
+	boolean wasDamagedBy(CardData damaged, CardData source) {
+		Set<CardData> sources = damagedBySourcesThisTurn.get(damaged);
+		return sources != null && sources.contains(source);
+	}
+
+	/**
+	 * Forgets every damage {@code card} took or dealt before now. Called as a card is seated on the
+	 * field: a card that changed zones is a new object, and neither the damage its previous
+	 * incarnation took this turn nor the damage it dealt is its own.
+	 *
+	 * <p>Arrival is the moment for this, not departure. Unlike the combat restrictions
+	 * {@link #clearCombatRestrictionsFor} drops on the way out, this record exists precisely to be
+	 * read <em>as</em> a card leaves the field — both by {@code addToBreakZone}'s remove-from-game
+	 * replacement and by the break-zone triggers that fire after it — so tearing it down on the way
+	 * out would delete it a step before its only readers run.
+	 */
+	void forgetDamageRecordFor(CardData card) {
+		damagedBySourcesThisTurn.remove(card);
+		for (Set<CardData> sources : damagedBySourcesThisTurn.values()) sources.remove(card);
+	}
+
+	/**
+	 * Whether some card still on the field damaged {@code card} this turn and carries
+	 * "If a Forward damaged by [self] is put from the field into the Break Zone on the same turn,
+	 * remove it from the game instead." (Susano, Lord of the Revel 14-011H).
+	 *
+	 * <p>The damager has to still be on the field: the replacement is a continuous ability, and a
+	 * Susano that has already left takes it with him. Read through
+	 * {@link #effectiveFieldAbilities}-free {@code hasDamagedBySelfFieldToBzRfg} on the printed
+	 * abilities, with the usual lost-abilities suppression applied here.
+	 */
+	private boolean damagerRemovesFromGameInstead(CardData card) {
+		Set<CardData> sources = damagedBySourcesThisTurn.get(card);
+		if (sources == null || sources.isEmpty()) return false;
+		for (CardData src : sources) {
+			if (lostAbilitiesCards.contains(src)) continue;
+			if (!cardIsOnField(src)) continue;
+			if (AutoAbilityTriggers.hasDamagedBySelfFieldToBzRfg(src)) return true;
+		}
+		return false;
+	}
+
+	/** Whether {@code card} currently occupies a Forward, Backup or Monster slot on either field. */
+	private boolean cardIsOnField(CardData card) {
+		return identityIndexOf(p1ForwardCards, card) >= 0 || identityIndexOf(p2ForwardCards, card) >= 0
+			|| identityIndexOf(p1MonsterCards, card) >= 0 || identityIndexOf(p2MonsterCards, card) >= 0
+			|| identityIndexOf(Arrays.asList(p1BackupCards), card) >= 0
+			|| identityIndexOf(Arrays.asList(p2BackupCards), card) >= 0;
+	}
+
 	void returnTempExiledOnLeave(CardData departing) {
 		if (tempExiledCards.isEmpty()) return;
 		List<CardData> toReturn = new ArrayList<>();
@@ -5290,6 +5365,11 @@ public class MainWindow {
 		// a side whose damage First Strike zeroed above was dealt none and does not fire.
 		if (dmgToAttacker > 0) autoAbilityTriggers.fireIsDealtDamageTriggers(attacker, attackerIsP1);
 		if (dmgToBlocker  > 0) autoAbilityTriggers.fireIsDealtDamageTriggers(blocker,  blockerIsP1);
+
+		// Recorded here for the same reason the triggers fire here: before the break below, so a
+		// Forward killed by this blow still counts as damaged by whoever struck it.
+		if (dmgToAttacker > 0) recordDamagedBy(attacker, blocker);
+		if (dmgToBlocker  > 0) recordDamagedBy(blocker,  attacker);
 
 		// First Strike is already fully accounted for above: the side that strikes first has had the
 		// return damage zeroed when its blow was lethal.  A surviving Forward still takes the damage
@@ -6801,6 +6881,17 @@ public class MainWindow {
 			// FA3: "If a damaged Forward opponent controls is put from the field into the Break Zone, remove it from the game instead."
 			if (card.isForward() && getCardFieldDamage(card) > 0
 					&& playerHasBzToRfgOppDamagedForwardFromField(!player1)) {
+				gameState.addToPermanentRfp(card);
+				logEntry((player1 ? "" : "[P2] ") + card.name() + " → Removed From Game instead of Break Zone");
+				if (player1) refreshP1WarpZoneUI(); else refreshP2WarpZoneUI();
+				return;
+			}
+
+			// FA4: "If a Forward damaged by [self] is put from the field into the Break Zone on the
+			// same turn, remove it from the game instead." (Susano, Lord of the Revel 14-011H).
+			// Narrower than FA3 — it asks who dealt the damage, not merely whether there is any —
+			// so it is checked after it: where both apply the outcome is identical anyway.
+			if (card.isForward() && damagerRemovesFromGameInstead(card)) {
 				gameState.addToPermanentRfp(card);
 				logEntry((player1 ? "" : "[P2] ") + card.name() + " → Removed From Game instead of Break Zone");
 				if (player1) refreshP1WarpZoneUI(); else refreshP2WarpZoneUI();
@@ -9636,6 +9727,8 @@ public class MainWindow {
 
 	/** Places a card into the first empty P1 backup slot and renders it. */
 	void placeCardInFirstBackupSlot(CardData card) {
+		// A card arriving on the field is a new object: it has taken no damage and dealt none.
+		forgetDamageRecordFor(card);
 		if (p1BackupLabels == null) return;
 		for (int i = 0; i < p1BackupLabels.length; i++) {
 			if (p1BackupLabels[i] == null || p1BackupLabels[i].getIcon() != null) continue;
@@ -11430,6 +11523,21 @@ public class MainWindow {
 						for (CardData b : bkps) if (b != null) n++;
 						yield n;
 					}
+					// "Character" spans all three opposing rows, so a dull Backup counts as readily
+					// as a dull Forward — which is the point of Squall 2-038H, whose own attack
+					// trigger dulls the Backups he is about to be measured against.
+					case OPPONENT_DULL_CHARACTERS -> {
+						List<CardState> fwdSt = isP1 ? p2ForwardStates : p1ForwardStates;
+						CardState[]     bkpSt = isP1 ? p2BackupStates  : p1BackupStates;
+						CardData[]      bkps  = isP1 ? p2BackupCards   : p1BackupCards;
+						List<CardState> monSt = isP1 ? p2MonsterStates : p1MonsterStates;
+						int n = 0;
+						for (CardState st : fwdSt) if (st == CardState.DULL) n++;
+						for (int i = 0; i < bkps.length; i++)
+							if (bkps[i] != null && bkpSt[i] == CardState.DULL) n++;
+						for (CardState st : monSt) if (st == CardState.DULL) n++;
+						yield n;
+					}
 					case OTHER_CHARACTERS_YOU_CONTROL -> {
 						List<CardData>  fwds   = isP1 ? p1ForwardCards  : p2ForwardCards;
 						List<CardState> fwdSt  = isP1 ? p1ForwardStates : p2ForwardStates;
@@ -12874,6 +12982,8 @@ public class MainWindow {
 
 	/** @param paidExtraCost whether the optional extra cost was paid when casting {@code card} (threaded to its ETB auto-ability). */
 	void placeCardInForwardZone(CardData card, boolean paidExtraCost) {
+		// A card arriving on the field is a new object: it has taken no damage and dealt none.
+		forgetDamageRecordFor(card);
 		if (p1ForwardPanel == null) return;
 		int idx = p1ForwardLabels.size();
 
@@ -12932,6 +13042,8 @@ public class MainWindow {
 
 	/** Adds a Monster card to P1's monster zone (right side of forward zone, newest leftmost). */
 	void placeCardInMonsterZone(CardData card) {
+		// A card arriving on the field is a new object: it has taken no damage and dealt none.
+		forgetDamageRecordFor(card);
 		if (p1MonsterPanel == null) return;
 		int idx = p1MonsterLabels.size();
 
@@ -13043,6 +13155,8 @@ public class MainWindow {
 
 	/** Adds a Monster card to P2's monster zone (right side of forward zone). */
 	void placeP2CardInMonsterZone(CardData card) {
+		// A card arriving on the field is a new object: it has taken no damage and dealt none.
+		forgetDamageRecordFor(card);
 		if (p2MonsterPanel == null) return;
 		int idx = p2MonsterLabels.size();
 
@@ -13674,10 +13788,34 @@ public class MainWindow {
 
 	/** Every card on P2's field that can carry an IfControlBoost. */
 	private List<CardData> p2FieldCards() {
-		List<CardData> all = new ArrayList<>(p2ForwardCards);
-		for (CardData bkp : p2BackupCards) if (bkp != null) all.add(bkp);
-		all.addAll(p2MonsterCards);
+		return fieldCardsFor(false);
+	}
+
+	/** Every card on {@code isP1}'s field that can carry an {@link IfControlBoost}. */
+	private List<CardData> fieldCardsFor(boolean isP1) {
+		List<CardData> all = new ArrayList<>(isP1 ? p1ForwardCards : p2ForwardCards);
+		for (CardData bkp : (isP1 ? p1BackupCards : p2BackupCards)) if (bkp != null) all.add(bkp);
+		all.addAll(isP1 ? p1MonsterCards : p2MonsterCards);
 		return all;
+	}
+
+	/**
+	 * True when an {@link IfControlBoost} on the attacker's own side grants it "cannot be blocked"
+	 * and every condition of that boost is currently met — the "If you control X" printings, and
+	 * Zidane 8-115L's hand-size gate.
+	 *
+	 * <p>Re-read per block-legality check rather than recorded once, for the same reason
+	 * {@link #hasSelfCannotBeBlockedFieldAbility} is: the condition opens and shuts as the board and
+	 * the hand change, and a card drawn or discarded mid-turn moves Zidane across his threshold.
+	 */
+	boolean attackerConditionallyUnblockable(CardData attacker, boolean attackerIsP1) {
+		if (attacker == null) return false;
+		for (CardData src : fieldCardsFor(attackerIsP1))
+			for (IfControlBoost icb : src.ifControlBoosts())
+				if (icb.cannotBeBlocked() && icb.appliesToCard(attacker)
+						&& icbConditionsMet(icb, attackerIsP1))
+					return true;
+		return false;
 	}
 
 	/**
@@ -13721,10 +13859,7 @@ public class MainWindow {
 			CardData attacker = pendingAttackerCard(t);
 			if (attacker == null) continue;
 			if (hasSelfCannotBeBlockedFieldAbility(attacker, false)) return true;
-			for (CardData src : p2FieldCards())
-				for (IfControlBoost icb : src.ifControlBoosts())
-					if (icb.cannotBeBlocked() && icb.appliesToCard(attacker) && icbConditionsMet(icb, false))
-						return true;
+			if (attackerConditionallyUnblockable(attacker, false)) return true;
 		}
 		return false;
 	}
@@ -14735,6 +14870,11 @@ public class MainWindow {
 		if (atkFirst && blkBroken)      { atkBroken = false; dmgToAtk = 0; }
 		else if (blkFirst && atkBroken) { blkBroken = false; dmgToBlk = 0; }
 
+		// Ahead of the breaks below, as in resolveCombat: a combatant killed by this blow was still
+		// damaged by whoever struck it, and the "damaged by [X] …" printings read that on the way out.
+		if (dmgToAtk > 0) recordDamagedBy(attacker, blocker);
+		if (dmgToBlk > 0) recordDamagedBy(blocker,  attacker);
+
 		if (atkBroken) breakFieldCard(atkP1, atkZone, atkIdx);
 		else if (!blkFirst && dmgToAtk > 0) addFieldCombatDamage(atkP1, atkZone, atkIdx, dmgToAtk);
 
@@ -15150,11 +15290,16 @@ public class MainWindow {
 					boolean blockerBroken = combinedPower >= blockerPower;
 					// See resolveP1BlockVsP2Party — the combined power is one instance of damage.
 					if (combinedPower > 0) autoAbilityTriggers.fireIsDealtDamageTriggers(blocker, false);
+					// Every member of the party dealt part of that one instance, so each is a damager
+					// of the blocker. Recorded before the break, as everywhere damage lands.
+					if (combinedPower > 0)
+						for (int i : attackerIndices)
+							if (i < p1ForwardCards.size()) recordDamagedBy(blocker, p1ForwardCards.get(i));
 					if (blockerBroken) breakP2Forward(blockerIdx);
 					if (!partyFirst || !blockerBroken) {
 						// How the blocker spreads its damage is the opponent's call.
 						opponent.requestPartyBlockerDamage(attackerIndices, blockerPower, damageMap -> {
-							applyPartyBlockerDamage(damageMap);
+							applyPartyBlockerDamage(damageMap, blocker);
 							if (onDone != null) onDone.run();
 						});
 					} else {
@@ -15220,8 +15365,12 @@ public class MainWindow {
 		return false;
 	}
 
-	/** Applies a party-block damage map: logs, updates p1ForwardDamage, and breaks lethal targets. */
-	private void applyPartyBlockerDamage(Map<Integer, Integer> damageMap) {
+	/**
+	 * Applies a party-block damage map: logs, updates p1ForwardDamage, and breaks lethal targets.
+	 * {@code blocker} is the P2 Forward whose power was spread across the party — the damager of
+	 * record for every entry in the map.
+	 */
+	private void applyPartyBlockerDamage(Map<Integer, Integer> damageMap, CardData blocker) {
 		if (damageMap.isEmpty()) return;
 		Set<Integer> partySet = damageMap.keySet();
 		for (Map.Entry<Integer, Integer> entry : damageMap.entrySet()) {
@@ -15236,6 +15385,7 @@ public class MainWindow {
 			// One instance of damage per party member the blocker's power was spread across, each
 			// firing "is dealt damage" triggers in its own right — see resolveCombat.
 			autoAbilityTriggers.fireIsDealtDamageTriggers(p1ForwardCards.get(idx), true);
+			if (dmg > 0) recordDamagedBy(p1ForwardCards.get(idx), blocker);
 		}
 		List<Integer> toBreak = new ArrayList<>();
 		for (int idx : damageMap.keySet()) {
@@ -15263,6 +15413,10 @@ public class MainWindow {
 		// The party's combined power is one instance of damage to the blocker; triggers fire on it
 		// ahead of the break, as everywhere else damage lands.
 		if (combinedPower > 0) autoAbilityTriggers.fireIsDealtDamageTriggers(blocker, true);
+		// Each member dealt part of that instance, so each is a damager of the blocker.
+		if (combinedPower > 0)
+			for (int i : attackerIndices)
+				if (i < p2ForwardCards.size()) recordDamagedBy(blocker, p2ForwardCards.get(i));
 		if (blockerBroken) breakP1Forward(blockerIdx);
 
 		if (!partyFirst || !blockerBroken) {
@@ -15276,15 +15430,18 @@ public class MainWindow {
 			Map<Integer, Integer> damageMap = cardPickerDialog.assignPartyDamage(
 					attackerIndices, attackerCards, effectivePowers, blockerPower);
 			if (damageMap.isEmpty()) damageMap = p2AiBuildDamageMap(attackerIndices, blockerPower);
-			applyP2PartyAttackerDamage(damageMap);
+			applyP2PartyAttackerDamage(damageMap, blocker);
 			return damageMap;
 		}
 		logEntry("First Strike — party takes no return damage");
 		return Map.of();
 	}
 
-	/** Applies a damage map onto P2 party attackers; breaks those that reach lethal. */
-	private void applyP2PartyAttackerDamage(Map<Integer, Integer> damageMap) {
+	/**
+	 * Applies a damage map onto P2 party attackers; breaks those that reach lethal. {@code blocker}
+	 * is the P1 Forward whose power was spread across them — see {@link #applyPartyBlockerDamage}.
+	 */
+	private void applyP2PartyAttackerDamage(Map<Integer, Integer> damageMap, CardData blocker) {
 		if (damageMap.isEmpty()) return;
 		Set<Integer> partySet = damageMap.keySet();
 		for (Map.Entry<Integer, Integer> entry : damageMap.entrySet()) {
@@ -15298,6 +15455,7 @@ public class MainWindow {
 			logEntry("Deals " + dmg + " damage to " + p2ForwardCards.get(idx).name());
 			// See applyPartyBlockerDamage — one instance of damage per party member.
 			autoAbilityTriggers.fireIsDealtDamageTriggers(p2ForwardCards.get(idx), false);
+			if (dmg > 0) recordDamagedBy(p2ForwardCards.get(idx), blocker);
 		}
 		List<Integer> toBreak = new ArrayList<>();
 		for (int idx : damageMap.keySet()) {
@@ -15931,6 +16089,8 @@ public class MainWindow {
 	}
 
 	void placeP2CardInForwardZone(CardData card) {
+		// A card arriving on the field is a new object: it has taken no damage and dealt none.
+		forgetDamageRecordFor(card);
 		if (p2ForwardPanel == null) return;
 		int idx = p2ForwardLabels.size();
 
@@ -15982,6 +16142,8 @@ public class MainWindow {
 	}
 
 	void placeP2CardInFirstBackupSlot(CardData card) {
+		// A card arriving on the field is a new object: it has taken no damage and dealt none.
+		forgetDamageRecordFor(card);
 		for (int i = 0; i < p2BackupCards.length; i++) {
 			if (p2BackupCards[i] != null) continue;
 			p2BackupUrls[i]   = card.imageUrl();

@@ -22557,4 +22557,546 @@ public class CardBehaviorTest {
 		assertTrue(mw.effectiveP1HasTrait(0, CardData.Trait.BRAVE),
 				"\"you control\" — the opponent's board is not counted");
 	}
+
+	// =========================================================================================
+	// Five field abilities read straight off the card rather than through ActionResolver.
+	//
+	// Zidane 8-115L  "If you have 6 or more cards in your hand, Zidane cannot be blocked."
+	// Kain 28-081L   "Damage 3 -- Kain gains +1000 power, Haste and First Strike."
+	// Bartz 1-081R   "Bartz has all the jobs."
+	// Squall 2-038H  "For each dull Character opponent controls, Squall gains +1000 power."
+	// Susano 14-011H "If a Forward damaged by Susano, Lord of the Revel is put from the field into
+	//                 the Break Zone on the same turn, remove it from the game instead."
+	//
+	// None of the five is an effect that resolves, so none goes through ActionResolver: each is a
+	// standing property the engine queries while the card sits on the field. What they had in
+	// common before this section is that every one of them fell a step short — Zidane's condition
+	// had no unblockable arm, Kain's keywords were dropped because the power clause in front of
+	// them broke the trait match, Bartz's rule was live but invisible to the coverage report,
+	// Squall's counter had no source that counts the opponent's dull side, and Susano needed a
+	// record of who dealt each Forward its damage that nothing was keeping.
+	// =========================================================================================
+
+	private static final String ZIDANE_8_115L =
+			"If you have 6 or more cards in your hand, Zidane cannot be blocked.";
+	private static final String KAIN_28_081L =
+			"Damage 3 -- Kain gains +1000 power, Haste and First Strike.";
+	private static final String BARTZ_1_081R = "Bartz has all the jobs.";
+	private static final String SQUALL_2_038H =
+			"For each dull Character opponent controls, Squall gains +1000 power.";
+	private static final String SUSANO_14_011H =
+			"If a Forward damaged by Susano, Lord of the Revel is put from the field into the "
+			+ "Break Zone on the same turn, remove it from the game instead.";
+
+	@Test
+	void zidanesHandSizeConditionCarriesAnUnblockableArm() {
+		List<IfControlBoost> boosts = CardData.parseIfControlBoosts(ZIDANE_8_115L, "Forward");
+
+		assertEquals(1, boosts.size());
+		IfControlBoost icb = boosts.get(0);
+		assertEquals(6, icb.minOwnHandSize(), "a floor, not the ceiling maxOwnHandSize expresses");
+		assertTrue(icb.cannotBeBlocked());
+		assertEquals(0, icb.powerBonus(), "the printing grants no power");
+		assertTrue(icb.grantedTraits().isEmpty(), "and no traits");
+		assertEquals("Zidane", icb.targetCardName());
+	}
+
+	@Test
+	void galufsGainsLineIsStillReadAsAGrantAndNotAsZidanes() {
+		// The two share the "If you have N or more cards in your hand," opening, so the branch added
+		// for Zidane must not reach text that ends in a grant.
+		List<IfControlBoost> boosts = CardData.parseIfControlBoosts(
+				"If you have 4 or more cards in your hand, Galuf gains +2000 power.", "Forward");
+
+		assertEquals(1, boosts.size());
+		assertEquals(2000, boosts.get(0).powerBonus());
+		assertFalse(boosts.get(0).cannotBeBlocked());
+	}
+
+	@Test
+	void zidaneBecomesUnblockableOnlyAtSixCards() {
+		MainWindow mw = new MainWindow();
+		CardData zidane = makeGrantForward("Zidane", "Water", ZIDANE_8_115L);
+		placeP1Forward(mw, zidane);
+
+		fillP1Hand(mw, 5);
+		assertFalse(mw.attackerConditionallyUnblockable(zidane, true), "5 is short of 6");
+		fillP1Hand(mw, 6);
+		assertTrue(mw.attackerConditionallyUnblockable(zidane, true), "at 6 the block is off");
+		fillP1Hand(mw, 9);
+		assertTrue(mw.attackerConditionallyUnblockable(zidane, true), "and stays off above it");
+	}
+
+	@Test
+	void zidanesGrantReachesNobodyElse() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeGrantForward("Zidane", "Water", ZIDANE_8_115L));
+		CardData ally = makeForward("Ally", "Water", 3, 7000);
+		placeP1Forward(mw, ally);
+		fillP1Hand(mw, 8);
+
+		assertFalse(mw.attackerConditionallyUnblockable(ally, true),
+				"the grant names Zidane, so it is Zidane's alone");
+	}
+
+	@Test
+	void kainsPowerClauseNoLongerSwallowsHisKeywords() {
+		List<FieldAbility> fas = CardData.parseFieldAbilities(KAIN_28_081L, "Forward");
+
+		assertEquals(1, fas.size());
+		FieldAbility fa = fas.get(0);
+		assertEquals(3, fa.damageThreshold(), "the \"Damage 3 --\" prefix is lifted onto the gate");
+		assertEquals(1000, CardData.parseSelfPowerGrant(fa.effectText(), "Kain"));
+		assertEquals(EnumSet.of(CardData.Trait.HASTE, CardData.Trait.FIRST_STRIKE),
+				CardData.parseSelfTraitGrant(fa.effectText(), "Kain"),
+				"both keywords, read from the same sentence as the power");
+	}
+
+	@Test
+	void aSelfTraitGrantStillRejectsAnotherCardsName() {
+		assertTrue(CardData.parseSelfTraitGrant("Kain gains +1000 power, Haste and First Strike.",
+				"Cecil").isEmpty(), "the optional power clause must not loosen the name check");
+	}
+
+	@Test
+	void kainsPowerAndKeywordsArriveTogetherAtDamageThree() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeFieldAbilityCard("Kain", "Lightning", "Forward", KAIN_28_081L));
+
+		assertEquals(7000, mw.effectiveP1ForwardPower(0), "below the gate, the printed power stands");
+		assertFalse(mw.effectiveP1HasTrait(0, CardData.Trait.HASTE));
+		assertFalse(mw.effectiveP1HasTrait(0, CardData.Trait.FIRST_STRIKE));
+
+		giveP1Damage(mw, 3);
+
+		assertEquals(8000, mw.effectiveP1ForwardPower(0));
+		assertTrue(mw.effectiveP1HasTrait(0, CardData.Trait.HASTE), "the half that used to go missing");
+		assertTrue(mw.effectiveP1HasTrait(0, CardData.Trait.FIRST_STRIKE));
+	}
+
+	@Test
+	void bartzsAllJobsRuleIsReadableFromItsTextAlone() {
+		assertTrue(CardData.isHasAllJobsAbility(BARTZ_1_081R));
+		assertTrue(CardData.isHasAllJobsAbility("  Bartz has all the jobs  "),
+				"trimmed before matching, as every other text-level predicate is");
+		assertFalse(CardData.isHasAllJobsAbility("Bartz has the Jobs of the Forwards you control."),
+				"its neighbour reads the board and is a different rule");
+		assertFalse(CardData.isHasAllJobsAbility(null));
+	}
+
+	@Test
+	void theAllJobsCardQueryAndTheTextPredicateAgree() {
+		CardData bartz = makeFieldAbilityForward("Bartz", BARTZ_1_081R);
+
+		assertTrue(bartz.hasAllJobs());
+		assertTrue(CardData.isHasAllJobsAbility(bartz.fieldAbilities().get(0).effectText()));
+	}
+
+	@Test
+	void squallCountsTheOpponentsDullCharacters() {
+		List<ScalingSelfPowerBoost> boosts =
+				CardData.parseScalingSelfPowerBoosts(SQUALL_2_038H, "Forward", "Squall");
+
+		assertEquals(1, boosts.size());
+		assertEquals(ScalingSelfPowerBoost.Source.OPPONENT_DULL_CHARACTERS, boosts.get(0).source());
+		assertEquals(1000, boosts.get(0).perUnit());
+		assertEquals(1, boosts.get(0).groupSize());
+		assertTrue(CardData.parseFieldAbilities(SQUALL_2_038H, "Forward").isEmpty(),
+				"claimed as a scaling boost, so it is not also reported as an unparsed field ability");
+	}
+
+	@Test
+	void squallsBoostTracksTheOpposingBoardAsItDulls() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeScalingSelfForward("Squall", "Ice", 8000, SQUALL_2_038H));
+		placeP2Forward(mw, makeForward("Enemy Forward", "Fire", 3, 7000));
+		mw.placeP2CardInFirstBackupSlot(makeForward("Enemy Backup", "Fire", 2, 1000));
+
+		mw.p2ForwardStates.set(0, CardState.ACTIVE);
+		mw.p2BackupStates[0] = CardState.ACTIVE;
+		assertEquals(8000, mw.effectiveP1ForwardPower(0), "nothing dull, nothing counted");
+
+		mw.p2ForwardStates.set(0, CardState.DULL);
+		assertEquals(9000, mw.effectiveP1ForwardPower(0));
+
+		// "Character" spans the Backup row too — which is the point of the attack trigger printed
+		// beside this line, since it dulls exactly those Backups.
+		mw.p2BackupStates[0] = CardState.DULL;
+		assertEquals(10000, mw.effectiveP1ForwardPower(0));
+	}
+
+	@Test
+	void squallIgnoresHisOwnSidesDullCharacters() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeScalingSelfForward("Squall", "Ice", 8000, SQUALL_2_038H));
+		placeP1Forward(mw, makeForward("Friendly", "Ice", 3, 7000));
+		mw.p1ForwardStates.set(1, CardState.DULL);
+
+		assertEquals(8000, mw.effectiveP1ForwardPower(0), "\"opponent controls\" — not your own row");
+	}
+
+	@Test
+	void susanosRedirectIsReadOnlyOffItsOwnCarrier() {
+		CardData susano = makeFieldAbilityForward("Susano, Lord of the Revel", SUSANO_14_011H);
+		assertTrue(AutoAbilityTriggers.hasDamagedBySelfFieldToBzRfg(susano),
+				"the comma in the name must not truncate the capture");
+
+		CardData impostor = makeFieldAbilityForward("Bystander", SUSANO_14_011H);
+		assertFalse(AutoAbilityTriggers.hasDamagedBySelfFieldToBzRfg(impostor),
+				"a card naming someone else's damage does not get the redirect");
+	}
+
+	/** Seats Susano for P1 and a victim for P2, with Susano credited as the ability source. */
+	private static void susanoBoard(MainWindow mw, CardData susano, CardData victim) {
+		placeP1Forward(mw, susano);
+		placeP2Forward(mw, victim);
+		mw.currentAbilitySource     = susano;
+		mw.currentAbilitySourceIsP1 = true;
+	}
+
+	@Test
+	void aForwardSusanoDamagedIsRemovedFromTheGameRatherThanBroken() {
+		MainWindow mw = new MainWindow();
+		CardData susano = makeFieldAbilityForward("Susano, Lord of the Revel", SUSANO_14_011H);
+		CardData victim = makeForward("Victim", "Fire", 3, 7000);
+		susanoBoard(mw, susano, victim);
+
+		mw.applyDamageToForward(false, 0, 9000, true, false);
+
+		assertTrue(mw.gameState.getP2PermanentRfp().contains(victim), "removed from the game");
+		assertFalse(mw.gameState.getP2BreakZone().contains(victim), "and never reached the Break Zone");
+	}
+
+	@Test
+	void aForwardSomebodyElseDamagedGoesToTheBreakZone() {
+		MainWindow mw = new MainWindow();
+		CardData susano = makeFieldAbilityForward("Susano, Lord of the Revel", SUSANO_14_011H);
+		CardData victim = makeForward("Victim", "Fire", 3, 7000);
+		susanoBoard(mw, susano, victim);
+		mw.currentAbilitySource = makeForward("Someone Else", "Fire", 3, 7000);
+
+		mw.applyDamageToForward(false, 0, 9000, true, false);
+
+		assertTrue(mw.gameState.getP2BreakZone().contains(victim),
+				"the redirect is owed to Susano's damage and to nothing else");
+		assertFalse(mw.gameState.getP2PermanentRfp().contains(victim));
+	}
+
+	@Test
+	void aSilencedSusanoRedirectsNothing() {
+		MainWindow mw = new MainWindow();
+		CardData susano = makeFieldAbilityForward("Susano, Lord of the Revel", SUSANO_14_011H);
+		CardData victim = makeForward("Victim", "Fire", 3, 7000);
+		susanoBoard(mw, susano, victim);
+		mw.lostAbilitiesCards.add(susano);
+
+		mw.applyDamageToForward(false, 0, 9000, true, false);
+
+		assertTrue(mw.gameState.getP2BreakZone().contains(victim));
+	}
+
+	@Test
+	void theDamageRecordIsKeptUntilTheDamagedForwardIsSeatedAgain() {
+		MainWindow mw = new MainWindow();
+		CardData susano = makeFieldAbilityForward("Susano, Lord of the Revel", SUSANO_14_011H);
+		CardData victim = makeForward("Victim", "Fire", 3, 7000);
+		susanoBoard(mw, susano, victim);
+
+		mw.applyDamageToForward(false, 0, 3000, true, false);
+		assertTrue(mw.wasDamagedBy(victim, susano), "non-lethal damage still records");
+
+		// Cleared as the card is seated, not as it departs: the readers — this replacement and the
+		// break-zone triggers behind it — all run on the way out.
+		mw.forgetDamageRecordFor(victim);
+		assertFalse(mw.wasDamagedBy(victim, susano),
+				"a card that changed zones is a new object and carries none of the old damage");
+	}
+
+	// =========================================================================================
+	// "When a Forward damaged by [self] is put from the field into the Break Zone on the same
+	// turn, [effect]" — the trigger half of the family whose replacement half is Susano 14-011H.
+	//
+	// Galuf 15-066C, Tifa 23-012C  gain 《C》
+	// Firion 16-120C               draw 2 cards
+	// Delita 16-014R               gain 《C》, and over Characters rather than Forwards
+	// Machina 3-022H               choose 1 Forward opponent controls, deal it 4000 damage
+	// Zhuyu 5-011H                 activate itself and attack once more
+	// Bahamut 24-015C              deal the opponent 1 point, and only for their Forwards
+	// Cid Highwind 1-072R/1-073C   mill the opponent 2, worded "that took damage from" instead
+	// Morrow 11-013R               Zhuyu's effect, handed to itself in quotes behind Damage 6
+	// Palom 2-016R                 this trigger OR "deals damage to your opponent"
+	//
+	// Every effect already parsed; what none of them had was a trigger. AUTO_ABILITY_PATTERN's
+	// break-zone arm stopped at "Break Zone" and then demanded the comma that "on the same turn"
+	// stands in front of, so the whole sentence failed to match and the ability was dropped.
+	//
+	// The subject is what separates this from the plain break-zone trigger: it asks who dealt the
+	// damage, which no filter over the departing card can answer. That is what
+	// MainWindow.damagedBySourcesThisTurn is for, and why the record is cleared as a card arrives
+	// on the field rather than as it leaves — these triggers fire on the way out and would find it
+	// already gone.
+	// =========================================================================================
+
+	private static final String GALUF_15_066C =
+			"When a Forward damaged by Galuf is put from the field into the Break Zone on the same turn, gain 《C》.";
+	private static final String FIRION_16_120C =
+			"When a Forward damaged by Firion is put from the field into the Break Zone on the same turn, draw 2 cards.";
+	private static final String DELITA_16_014R =
+			"When a Character damaged by Delita is put from the field into the Break Zone on the same turn, gain 《C》.";
+	private static final String MACHINA_3_022H =
+			"When the Forward damaged by Machina is put from the field into the Break Zone on the same turn, "
+			+ "choose 1 Forward opponent controls. Deal it 4000 damage.";
+	private static final String BAHAMUT_24_015C =
+			"When a Forward opponent controls damaged by Bahamut is put from the field into the Break Zone "
+			+ "on the same turn, Bahamut deals your opponent 1 point of damage.";
+	private static final String CID_HIGHWIND_1_072R =
+			"When the Forward that took damage from Cid Highwind is put from the field into the Break Zone "
+			+ "on the same turn, your opponent puts the top 2 cards of his/her deck into the Break Zone.";
+	private static final String MORROW_11_013R =
+			"Damage 6 -- Morrow gains +2000 power and \"When the Forward damaged by Morrow is put from the "
+			+ "field into the Break Zone on the same turn, activate Morrow. Morrow can attack once more this turn.\"";
+	private static final String PALOM_2_016R =
+			"When Palom deals damage to your opponent, or when the Forward damaged by Palom is put from the "
+			+ "field into the Break Zone during the same turn, you may put Palom into the Break Zone. "
+			+ "If you do so, search for 1 Card Name Palom, and play it onto the field.";
+
+	/** The single auto-ability {@code text} parses to. */
+	private static AutoAbility onlyAuto(String text) {
+		List<AutoAbility> autos = CardData.parseAutoAbilities(text);
+		assertEquals(1, autos.size(), "expected exactly one auto-ability from: " + text);
+		return autos.get(0);
+	}
+
+	@Test
+	void theWholeFamilyParsesToOneTriggerWithItsDamagerNamed() {
+		Map<String, String> subjects = new LinkedHashMap<>();
+		subjects.put(GALUF_15_066C,   "a Forward damaged by Galuf");
+		subjects.put(FIRION_16_120C,  "a Forward damaged by Firion");
+		subjects.put(DELITA_16_014R,  "a Character damaged by Delita");
+		subjects.put(MACHINA_3_022H,  "the Forward damaged by Machina");
+		subjects.put(BAHAMUT_24_015C, "a Forward opponent controls damaged by Bahamut");
+		subjects.put(CID_HIGHWIND_1_072R, "the Forward that took damage from Cid Highwind");
+		for (Map.Entry<String, String> e : subjects.entrySet()) {
+			AutoAbility aa = onlyAuto(e.getKey());
+			assertEquals("damaged card put into break zone", aa.trigger(), e.getValue());
+			assertEquals(e.getValue(), aa.triggerCard());
+		}
+	}
+
+	@Test
+	void everyEffectInTheFamilyStillReachesTheResolver() {
+		// The trigger was the only missing half — none of these effects needed new wiring.
+		for (String text : List.of(GALUF_15_066C, FIRION_16_120C, DELITA_16_014R,
+				MACHINA_3_022H, BAHAMUT_24_015C, CID_HIGHWIND_1_072R)) {
+			AutoAbility aa = onlyAuto(text);
+			CardData src = makeForward("Src", "Fire", 3, 7000);
+			assertNotNull(ActionResolver.parse(aa.effectText(), src), aa.effectText());
+		}
+	}
+
+	@Test
+	void cidHighwindFiresOnTheSameEventFromTheOtherEnd() {
+		// "the Forward that took damage from Cid Highwind" says what "a Forward damaged by Galuf"
+		// says with the departing card in the subject position. One trigger, not two: without the
+		// second wording these two would have fallen through to the plain break-zone trigger, whose
+		// subject matcher cannot answer them — parsed on paper and dead in play.
+		MainWindow mw = new MainWindow();
+		CardData cid = makeAutoAbilityForward("Cid Highwind", "Wind", 7000, CID_HIGHWIND_1_072R);
+		placeP2Forward(mw, cid);
+		CardData victim = makeForward("Victim", "Ice", 3, 7000);
+		placeP1Forward(mw, victim);
+
+		damage(mw, cid, victim, true);
+		breakAndDispatch(mw, victim, true);
+
+		assertEquals(List.of(cid), triggeredSources(mw));
+	}
+
+	@Test
+	void thePlainBreakZoneTriggerIsUntouched() {
+		// The arm this widened is shared with every "is put from the field into the Break Zone"
+		// printing, so the tail has to stay optional in fact and not only in intent.
+		AutoAbility aa = onlyAuto(DARK_KNIGHT_1_055C);
+
+		assertEquals("put into break zone", aa.trigger());
+		assertEquals("Dark Knight", aa.triggerCard());
+	}
+
+	@Test
+	void morrowsQuotedCopyOfTheTriggerParsesToo() {
+		CardData.SelfGainsQuotedGrant grant =
+				CardData.parseSelfGainsQuotedGrant(
+						CardData.parseFieldAbilities(MORROW_11_013R, "Forward").get(0).effectText(), "Morrow");
+
+		assertNotNull(grant, "the grant declines whole when its quoted clause has no trigger");
+		assertEquals(1, grant.abilityTexts().size());
+		assertEquals("damaged card put into break zone",
+				onlyAuto(grant.abilityTexts().get(0)).trigger());
+	}
+
+	@Test
+	void morrowOnlyCarriesTheTriggerOnceTheDamageGateOpens() {
+		MainWindow mw = new MainWindow();
+		CardData morrow = makeFieldAbilityCard("Morrow", "Fire", "Forward", MORROW_11_013R);
+		placeP1Forward(mw, morrow);
+
+		assertTrue(mw.effectiveAutoAbilities(morrow).isEmpty(), "below Damage 6 it has no trigger");
+		giveP1Damage(mw, 6);
+		assertEquals(List.of("damaged card put into break zone"),
+				mw.effectiveAutoAbilities(morrow).stream().map(AutoAbility::trigger).toList());
+	}
+
+	@Test
+	void palomsTwoAlternativeTriggersBecomeTwoAbilitiesSharingOneEffect() {
+		List<AutoAbility> autos = CardData.parseAutoAbilities(PALOM_2_016R);
+
+		assertEquals(2, autos.size(), "\"When A, or when B\" is two triggers, not one");
+		assertEquals("deals damage to opponent", autos.get(0).trigger());
+		assertEquals("damaged card put into break zone", autos.get(1).trigger());
+		assertEquals(autos.get(0).effectText(), autos.get(1).effectText(),
+				"both arms carry the whole shared effect — the first used to carry the word \"or\"");
+		assertTrue(autos.get(0).youMay(), "and the \"you may\" in front of it");
+		assertTrue(autos.get(1).youMay());
+	}
+
+	/**
+	 * Has {@code damager} deal {@code victim} a non-lethal blow. Kept short of lethal so the test
+	 * controls when the break happens, and so the damage that matters is unambiguously this one.
+	 *
+	 * <p>Watchers in this section sit on P2's field throughout. A P1-owned trigger resolves where
+	 * it stands instead of waiting on the Stack, so {@link #triggeredSources} — which reads the
+	 * Stack — would see nothing fire even when it did.
+	 */
+	private static void damage(MainWindow mw, CardData damager, CardData victim, boolean victimIsP1) {
+		mw.currentAbilitySource     = damager;
+		mw.currentAbilitySourceIsP1 = false;
+		List<CardData> row = victimIsP1 ? mw.p1ForwardCards : mw.p2ForwardCards;
+		mw.applyDamageToForward(victimIsP1, row.indexOf(victim), 1000, true, false);
+		mw.currentAbilitySource = null;
+	}
+
+	/**
+	 * Takes {@code victim} off its Forward row and runs the break-zone dispatch, as a break does.
+	 * Like {@link #broken}, this drops the card from the row without touching the parallel per-slot
+	 * lists, so nothing may be seated on that row afterwards.
+	 */
+	private static void breakAndDispatch(MainWindow mw, CardData victim, boolean victimIsP1) {
+		(victimIsP1 ? mw.p1ForwardCards : mw.p2ForwardCards).remove(victim);
+		mw.autoAbilityTriggers.triggerAutoAbilitiesForBreakZone(victim, victimIsP1, Set.of());
+	}
+
+	@Test
+	void galufFiresForTheForwardHeDamagedAndForNoOther() {
+		MainWindow mw = new MainWindow();
+		CardData galuf = makeAutoAbilityForward("Galuf", "Fire", 7000, GALUF_15_066C);
+		placeP2Forward(mw, galuf);
+		CardData victim    = makeForward("Victim", "Ice", 3, 7000);
+		CardData bystander = makeForward("Bystander", "Ice", 3, 7000);
+		placeP1Forward(mw, victim);
+		placeP1Forward(mw, bystander);
+		damage(mw, galuf, victim, true);
+
+		breakAndDispatch(mw, bystander, true);
+		assertEquals(List.of(), triggeredSources(mw), "Galuf never touched it");
+
+		breakAndDispatch(mw, victim, true);
+		assertEquals(List.of(galuf), triggeredSources(mw), "this one he did");
+	}
+
+	@Test
+	void aSecondGalufThatDealtNoDamageDoesNotFire() {
+		MainWindow mw = new MainWindow();
+		CardData dealer = makeAutoAbilityForward("Galuf", "Fire", 7000, GALUF_15_066C);
+		placeP2Forward(mw, dealer);
+		// The second copy sits opposite because the uniqueness rule bars two of one name on the
+		// same side. Galuf's subject names no controller, so this one watches the same Forward.
+		CardData idler = makeAutoAbilityForward("Galuf", "Fire", 7000, GALUF_15_066C);
+		placeP1Forward(mw, idler);
+		CardData victim = makeForward("Victim", "Ice", 3, 7000);
+		placeP1Forward(mw, victim);
+
+		damage(mw, dealer, victim, true);
+
+		assertTrue(mw.wasDamagedBy(victim, dealer));
+		assertFalse(mw.wasDamagedBy(victim, idler),
+				"CardData is a record, so a value compare would hand the bystander the same credit");
+
+		breakAndDispatch(mw, victim, true);
+		assertEquals(List.of(dealer), triggeredSources(mw),
+				"\"damaged by Galuf\" is this Galuf, not any Galuf");
+	}
+
+	@Test
+	void bahamutWatchesOnlyTheOpponentsForwards() {
+		MainWindow mw = new MainWindow();
+		CardData bahamut = makeAutoAbilityForward("Bahamut", "Fire", 9000, BAHAMUT_24_015C);
+		placeP2Forward(mw, bahamut);
+		CardData friendly = makeForward("Friendly", "Fire", 3, 7000);
+		placeP2Forward(mw, friendly);
+		CardData enemy = makeForward("Enemy", "Ice", 3, 7000);
+		placeP1Forward(mw, enemy);
+		damage(mw, bahamut, friendly, false);
+		damage(mw, bahamut, enemy, true);
+
+		breakAndDispatch(mw, friendly, false);
+		assertEquals(List.of(), triggeredSources(mw), "\"opponent controls\" excludes his own side");
+
+		breakAndDispatch(mw, enemy, true);
+		assertEquals(List.of(bahamut), triggeredSources(mw));
+	}
+
+	@Test
+	void delitasCharacterSubjectReachesAMonsterToo() {
+		MainWindow mw = new MainWindow();
+		CardData delita = makeAutoAbilityForward("Delita", "Ice", 8000, DELITA_16_014R);
+		placeP2Forward(mw, delita);
+		CardData beast = makeFieldAbilityCard("Beast", "Fire", "Monster", "");
+		mw.gameState.getIdentity().put(beast, true);
+		mw.placeCardInMonsterZone(beast);
+
+		mw.currentAbilitySource = delita;
+		mw.applyDamageToMonster(true, mw.p1MonsterCards.indexOf(beast), 1000);
+		mw.currentAbilitySource = null;
+		mw.p1MonsterCards.remove(beast);
+		mw.autoAbilityTriggers.triggerAutoAbilitiesForBreakZone(beast, true, Set.of());
+
+		assertEquals(List.of(delita), triggeredSources(mw),
+				"a Monster is a Character, and its damage is recorded on the same path");
+	}
+
+	@Test
+	void firionDoesNotFireForAForwardHeOnlyWatched() {
+		MainWindow mw = new MainWindow();
+		CardData firion = makeAutoAbilityForward("Firion", "Fire", 7000, FIRION_16_120C);
+		placeP2Forward(mw, firion);
+		CardData other = makeForward("Someone Else", "Fire", 3, 7000);
+		placeP2Forward(mw, other);
+		CardData victim = makeForward("Victim", "Ice", 3, 7000);
+		placeP1Forward(mw, victim);
+
+		damage(mw, other, victim, true);
+		breakAndDispatch(mw, victim, true);
+
+		assertEquals(List.of(), triggeredSources(mw), "somebody else's damage is not Firion's");
+	}
+
+	@Test
+	void aReplayedForwardCarriesNoneOfItsOldDamage() {
+		MainWindow mw = new MainWindow();
+		CardData galuf = makeAutoAbilityForward("Galuf", "Fire", 7000, GALUF_15_066C);
+		placeP2Forward(mw, galuf);
+		CardData victim = makeForward("Victim", "Ice", 3, 7000);
+		placeP1Forward(mw, victim);
+		damage(mw, galuf, victim, true);
+		assertTrue(mw.wasDamagedBy(victim, galuf));
+
+		// Broken and replayed from the Break Zone: the same CardData is seated again, and the
+		// rules treat that as a new object.
+		mw.breakP1Forward(0);
+		assertEquals(List.of(galuf), triggeredSources(mw), "the break it was damaged for fires");
+		placeP1Forward(mw, victim);
+
+		assertFalse(mw.wasDamagedBy(victim, galuf),
+				"seating a card forgets what its previous incarnation took");
+	}
 }

@@ -17,7 +17,8 @@ package shufflingway;
  * {@code "attacks"}, {@code "blocks"}, {@code "attacks or blocks"},
  * {@code "is blocked"}, {@code "blocks or is blocked"},
  * {@code "other forward attacks"}, {@code "party attacks"}, {@code "enters the field"},
- * {@code "put into break zone"}, {@code "enters the field or put into break zone"},
+ * {@code "put into break zone"}, {@code "damaged card put into break zone"},
+ * {@code "enters the field or put into break zone"},
  * {@code "cast summon"}, {@code "damage zone"},
  * {@code "either player receives damage"}, {@code "you receive damage"},
  * {@code "primed into"}, or {@code "is priming"}.
@@ -47,6 +48,11 @@ package shufflingway;
  *   <li>For break-zone triggers — the subject description that must match the card being broken
  *       (e.g. {@code "a Forward you control"}, {@code "Geomancer"},
  *       {@code "a Character opponent controls"}).</li>
+ *   <li>For {@code "damaged card put into break zone"} — the same, with a trailing
+ *       {@code "damaged by [name]"} naming the card whose damage the trigger watches
+ *       ({@code "a Forward damaged by Galuf"}). Split by
+ *       {@code CardData.DAMAGED_BY_BZ_SUBJECT}; the half ahead of it is an ordinary
+ *       break-zone subject.</li>
  *   <li>For cast-summon / damage-zone triggers — empty string (trigger is not card-specific).</li>
  *   <li>For primed-into triggers — the name of the card that initiates the priming.</li>
  * </ul>

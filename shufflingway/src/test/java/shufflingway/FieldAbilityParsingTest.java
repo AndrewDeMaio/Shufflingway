@@ -135,6 +135,11 @@ public class FieldAbilityParsingTest {
         if (AutoAbilityTriggers.FA_BZ_TO_RFG_ANY_SITUATION.matcher(fa.effectText()).find()) return true;
         if (AutoAbilityTriggers.FA_CHARACTER_FIELD_TO_BZ_MAY_RFG.matcher(fa.effectText()).find()) return true;
         if (AutoAbilityTriggers.FA_OPP_DAMAGED_FORWARD_FIELD_TO_BZ_RFG.matcher(fa.effectText()).find()) return true;
+        // Susano, Lord of the Revel 14-011H. Read by MainWindow.addToBreakZone against the
+        // per-turn damage record; self-named there, so it is name-checked here too.
+        if (AutoAbilityTriggers.hasDamagedBySelfFieldToBzRfg(source)
+                && AutoAbilityTriggers.FA_DAMAGED_BY_SELF_FIELD_TO_BZ_RFG
+                        .matcher(fa.effectText().trim()).matches()) return true;
         if (AutoAbilityTriggers.FA_DAMAGE_MODIFIER.matcher(fa.effectText()).find()) return true;
         if (AutoAbilityTriggers.FA_FIELD_DAMAGE_MODIFIER.matcher(fa.effectText()).find()) return true;
         if (AutoAbilityTriggers.FA_FIELD_DAMAGE_EXACT_NULLIFY.matcher(fa.effectText()).find()) return true;
@@ -286,6 +291,10 @@ public class FieldAbilityParsingTest {
         if (CardData.parseMaxAttacksPerTurn(fa.effectText(), source.name()) > 1) return true;
         if (CardData.parseAttacksPerOwnDamage(fa.effectText(), source.name())) return true;
         if (CardData.isHasJobsOfForwardsAbility(fa.effectText())) return true;
+        // Bartz 1-081R. Answered by CardData.hasAllJobs wherever a Job filter is resolved, so it
+        // was live long before it was listed here — this row closes a reporting gap rather than
+        // turning a rule on.
+        if (CardData.isHasAllJobsAbility(fa.effectText())) return true;
         if (CardData.parseIfSelfJobCountTraitGrantThreshold(fa.effectText(), source.name()) >= 0) return true;
         if (CardData.parseIfSelfLbFaceUpCountTraitGrantThreshold(fa.effectText(), source.name()) >= 0) return true;
         if (CardData.parseIfSelfPowerTraitGrantThreshold(fa.effectText(), source.name()) >= 0) return true;
@@ -473,6 +482,10 @@ public class FieldAbilityParsingTest {
             return "CharacterFieldToBzMayRfg";
         if (AutoAbilityTriggers.FA_OPP_DAMAGED_FORWARD_FIELD_TO_BZ_RFG.matcher(fa.effectText()).find())
             return "OppDamagedFwdFieldToBzRfg";
+        if (AutoAbilityTriggers.hasDamagedBySelfFieldToBzRfg(source)
+                && AutoAbilityTriggers.FA_DAMAGED_BY_SELF_FIELD_TO_BZ_RFG
+                        .matcher(fa.effectText().trim()).matches())
+            return "DamagedBySelfFieldToBzRfg";
         m = AutoAbilityTriggers.FA_DAMAGE_MODIFIER.matcher(fa.effectText());
         if (m.find()) {
             String src      = m.group("sourceclause");
@@ -720,6 +733,24 @@ public class FieldAbilityParsingTest {
         String dullExcept = CardData.parseAllForwardsExceptEnterDull(fa.effectText());
         if (dullExcept != null) return "AllForwardsEnterDull[excl." + dullExcept + "]";
         if (CardData.parseOpponentForwardsEnterDull(fa.effectText())) return "OppForwardsEnterDull";
+        // The bare self grant, power and traits alike — Kain 28-081L behind its "Damage 3 --" gate.
+        // Last of the self-grant branches, so the quoted and conditional spellings above name
+        // themselves first and only the plain sentence lands here.
+        //
+        // Texts carrying a quoted clause are excluded outright. Lion 10-123R ("Lion gains +1000
+        // power and \"If Lion receives damage …\"") is not recognised, and describing it by the
+        // half that does parse would read as coverage the row does not have.
+        java.util.Set<CardData.Trait> selfTraits = fa.effectText().contains("\"")
+                ? java.util.Set.<CardData.Trait>of()
+                : CardData.parseSelfTraitGrant(fa.effectText(), source.name());
+        int selfPow = fa.effectText().contains("\"")
+                ? 0 : CardData.parseSelfPowerGrant(fa.effectText(), source.name());
+        if (!selfTraits.isEmpty() || selfPow > 0)
+            return "SelfGrant[" + (selfPow > 0 ? "+" + selfPow + " power" : "")
+                    + (selfPow > 0 && !selfTraits.isEmpty() ? " " : "")
+                    + (selfTraits.isEmpty() ? "" : selfTraits.toString()) + "]";
+        if (CardData.isHasAllJobsAbility(fa.effectText())) return "HasAllJobs";
+        if (CardData.isHasJobsOfForwardsAbility(fa.effectText())) return "HasJobsOfForwardsYouControl";
         return null;
     }
 

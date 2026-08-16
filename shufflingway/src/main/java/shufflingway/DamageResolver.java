@@ -797,6 +797,7 @@ class DamageResolver {
 		if (idx >= mons.size() || amount <= 0) return;
 		int accum  = dmgList.get(idx) + amount;
 		dmgList.set(idx, accum);
+		mw.recordDamagedBy(mons.get(idx), abilityDamageSource());
 		boolean asFwd = isP1 ? mw.isP1MonsterTemporarilyForward(idx) : mw.isP2MonsterTemporarilyForward(idx);
 		int effPow = asFwd ? (isP1 ? mw.p1MonsterForwardPower(idx) : mw.p2MonsterForwardPower(idx))
 		                   : (isP1 ? mw.effectiveP1MonsterPower(idx) : mw.effectiveP2MonsterPower(idx));
@@ -850,6 +851,7 @@ class DamageResolver {
 		int accum  = dmgList.get(idx) + amount;
 		dmgList.set(idx, accum);
 		(mw.turn(isP1).cardsTookDamageThisTurn).add(fwds.get(idx).name());
+		mw.recordDamagedBy(fwds.get(idx), abilityDamageSource());
 		int effPow = isP1 ? mw.effectiveP1ForwardPower(idx) : mw.effectiveP2ForwardPower(idx);
 		mw.logEntry((isP1 ? "" : "[P2] ") + fwds.get(idx).name() + " takes " + amount + " damage"
 				+ (effPow > 0 ? " (" + (effPow - accum) + " remaining)" : ""));
@@ -873,6 +875,18 @@ class DamageResolver {
 			if (mw.currentSummonSource != null)
 				fireBreaktouchForDamage(mw.currentSummonSource, mw.currentSummonSourceIsP1, isP1, idx);
 		}
+	}
+
+	/**
+	 * The card credited with a non-combat instance of damage, for the per-turn record the
+	 * "[a Forward] damaged by [X] …" printings read (Susano 14-011H, Galuf 15-066C and their
+	 * family). The ability source is preferred over the Summon one: while an ability of a Character
+	 * resolves, that Character is the damager, and {@code currentSummonSource} may still be holding
+	 * an earlier caster. Null when neither is set, which {@code recordDamagedBy} treats as
+	 * "nobody to credit".
+	 */
+	private CardData abilityDamageSource() {
+		return mw.currentAbilitySource != null ? mw.currentAbilitySource : mw.currentSummonSource;
 	}
 
 	/** Forward-zone overload — see {@link #fireBreaktouchForDamage(CardData, boolean, boolean, ForwardTarget.CardZone, int)}. */
@@ -960,6 +974,7 @@ class DamageResolver {
 		Map<CardData, Integer> dmgMap = isP1 ? mw.p1BackupForwardDamage : mw.p2BackupForwardDamage;
 		int accum = dmgMap.getOrDefault(c, 0) + amount;
 		dmgMap.put(c, accum);
+		mw.recordDamagedBy(c, abilityDamageSource());
 		int effPow = isP1 ? mw.p1BackupForwardPower(idx) : mw.p2BackupForwardPower(idx);
 		mw.logEntry((isP1 ? "" : "[P2] ") + c.name() + " takes " + amount + " damage"
 				+ (effPow > 0 ? " (" + (effPow - accum) + " remaining)" : ""));
