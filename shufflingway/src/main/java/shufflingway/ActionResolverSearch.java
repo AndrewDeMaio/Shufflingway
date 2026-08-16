@@ -730,15 +730,23 @@ final class ActionResolverSearch {
      * {@code tryParseRemoveNamedFromGame}.
      */
     static Consumer<GameContext> tryParseRevealTopNRfgOneCastableRestBottom(String text) {
-        Matcher m = REVEAL_TOP_N_RFG_ONE_CASTABLE_REST_BOTTOM.matcher(text.trim());
+        // End-anchored, so Helena Leonis 22-052H's trailing "You can only use this ability during
+        // your turn and only once per turn." would defeat it. The restriction is captured as a flag
+        // on the ability and gated at activation, so matching the stripped text loses nothing —
+        // the same treatment the field-ability parsers give their own trailing restrictions.
+        String matchOn = stripRestrictionSentences(text);
+        if (matchOn.isEmpty()) matchOn = text;
+        Matcher m = REVEAL_TOP_N_RFG_ONE_CASTABLE_REST_BOTTOM.matcher(matchOn.trim());
         if (!m.matches()) return null;
-        int    reveal   = Integer.parseInt(m.group("reveal"));
-        String category = m.group("category") != null ? m.group("category").trim() : null;
+        int    reveal    = Integer.parseInt(m.group("reveal"));
+        String category  = m.group("category") != null ? m.group("category").trim() : null;
+        int    reduction = m.group("reduction") != null ? Integer.parseInt(m.group("reduction")) : 0;
         return ctx -> {
             ctx.logEntry("Effect: Reveal top " + reveal + " — remove 1 "
                     + (category != null ? "Category " + category + " " : "")
-                    + "card from the game (castable this turn), rest to bottom");
-            ctx.revealTopNRemoveOneFromGameCastableThisTurnRestBottom(reveal, category);
+                    + "card from the game (castable this turn"
+                    + (reduction > 0 ? ", cost -" + reduction : "") + "), rest to bottom");
+            ctx.revealTopNRemoveOneFromGameCastableThisTurnRestBottom(reveal, category, reduction);
         };
     }
     static Consumer<GameContext> tryParseRemoveTopOfDeckFromGame(String text, CardData source) {

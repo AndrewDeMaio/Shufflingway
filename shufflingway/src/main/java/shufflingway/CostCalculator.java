@@ -558,6 +558,10 @@ class CostCalculator {
 			if (bzSummons + rfpSummons < cr.minBZAndRfpSummons()) return false;
 		}
 
+		// Nox Suzaku 15-130H. The same per-turn flag the ability-level restriction reads, so a
+		// Forward lost this turn opens both, and the end of the turn shuts both.
+		if (cr.requiresForwardPutToBZThisTurn() && !mw.turn(isP1).forwardPutToBZThisTurn) return false;
+
 		if (cr.mustControlCondition() != null && !mw.controlConditionMet(cr.mustControlCondition(), isP1))
 			return false;
 
@@ -685,6 +689,13 @@ class CostCalculator {
 
 		// Dull check ("dull 1 active Fire Job Class Zero Cadet Forward you control and 1 …")
 		if (!mw.canPayAltDullCost(card)) return false;
+
+		// Put-into-Break-Zone check ("put a total of 3 Forwards or Monsters you control into the
+		// Break Zone"). Kefka 4-080L is the card being played, so it is not on the field to count
+		// itself; every eligible card is a legitimate payment.
+		CardData.AltPutToBzCost putToBz = card.altPutToBzCost();
+		if (putToBz != null && mw.altPutToBzCandidates(putToBz, true).size() < putToBz.count())
+			return false;
 
 		// Break Zone removal check
 		List<String> bzReqs = card.altBzRemovals();

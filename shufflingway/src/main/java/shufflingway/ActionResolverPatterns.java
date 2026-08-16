@@ -1179,22 +1179,29 @@ final class ActionResolverPatterns {
     );
     /**
      * Matches "Reveal the top N cards of your deck. Remove 1 [Category X] card among them from the
-     * game and return the other cards to the bottom of your deck in any order. You can cast it at
-     * any time you could normally cast it this turn." — Snow 18-109C (with the Category filter) and
-     * Warrior of Light 20-004C (without).
+     * game and [return the other cards|put the other] to the bottom of your deck [in any order].
+     * You can cast it at any time you could normally cast it this turn. [The cost required to cast
+     * it is reduced by M.]" — Snow 18-109C (Category filter), Warrior of Light 20-004C (neither
+     * option), Helena Leonis 22-052H (singular rest clause and a discount).
+     *
+     * <p>Helena's two-card reveal leaves exactly one card over, which is why her printing says "the
+     * other" and skips "in any order" — with one card there is no order to choose. Both wordings
+     * describe the same arrangement, so they share a parser rather than the singular form getting
+     * one of its own.
      *
      * <p>Must precede {@code tryParseRemoveNamedFromGame} in all three chains. That parser matches
      * with {@code find()} on a lazy name group, so it claims this text off its middle clause with
      * {@code named = "1 Category XIII card among them"} — a card name that is on nobody's field, so
      * the ability parsed and then did nothing at all.
-     * Groups: {@code reveal}, {@code category} (optional).
+     * Groups: {@code reveal}, {@code category} (optional), {@code reduction} (optional).
      */
     static final Pattern REVEAL_TOP_N_RFG_ONE_CASTABLE_REST_BOTTOM = Pattern.compile(
         "(?i)^Reveal\\s+the\\s+top\\s+(?<reveal>\\d+)\\s+cards?\\s+of\\s+your\\s+deck\\.\\s+" +
         "Remove\\s+1\\s+(?:Category\\s+(?<category>[A-Za-z0-9\\-]+)\\s+)?card\\s+among\\s+them\\s+" +
-        "from\\s+the\\s+game\\s+and\\s+return\\s+the\\s+other\\s+cards?\\s+to\\s+the\\s+bottom\\s+" +
-        "of\\s+your\\s+deck\\s+in\\s+any\\s+order\\.\\s+" +
-        "You\\s+can\\s+cast\\s+it\\s+at\\s+any\\s+time\\s+you\\s+could\\s+normally\\s+cast\\s+it\\s+this\\s+turn[.!]?\\s*$"
+        "from\\s+the\\s+game\\s+and\\s+(?:return\\s+the\\s+other\\s+cards?|put\\s+the\\s+other)\\s+" +
+        "to\\s+the\\s+bottom\\s+of\\s+your\\s+deck(?:\\s+in\\s+any\\s+order)?\\.\\s+" +
+        "You\\s+can\\s+cast\\s+it\\s+at\\s+any\\s+time\\s+you\\s+could\\s+normally\\s+cast\\s+it\\s+this\\s+turn[.!]?" +
+        "(?:\\s+The\\s+cost\\s+required\\s+to\\s+cast\\s+it\\s+is\\s+reduced\\s+by\\s+(?<reduction>\\d+)[.!]?)?\\s*$"
     );
     /**
      * Matches the compound followup "Remove the top card of your deck from the game.

@@ -2919,8 +2919,11 @@ public interface GameContext {
      *
      * @param categoryFilter category a revealed card must match to be removable, or {@code null}
      *                       to offer every revealed card.
+     * @param costReduction  CP knocked off the removed card's cost when it is cast, 0 for none —
+     *                       Helena Leonis 22-052H discounts hers by 2.
      */
-    void revealTopNRemoveOneFromGameCastableThisTurnRestBottom(int reveal, String categoryFilter);
+    void revealTopNRemoveOneFromGameCastableThisTurnRestBottom(int reveal, String categoryFilter,
+            int costReduction);
 
     /**
      * Reveals the top {@code reveal} cards of the player's deck.  The player may add up to

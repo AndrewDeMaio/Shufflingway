@@ -3667,7 +3667,26 @@ public class MainWindow {
 		// See removeP1ForwardSlotState: the combat-restriction sets are keyed by instance.
 	}
 
-	void breakP1Forward(int idx) {
+	void breakP1Forward(int idx) { p1ForwardToBreakZone(idx, true); }
+
+	/**
+	 * Puts P1's Forward at {@code idx} into the Break Zone <em>without</em> breaking it — the cost
+	 * wording "put a total of 3 Forwards or Monsters you control into the Break Zone" (Kefka
+	 * 4-080L).
+	 *
+	 * <p>A put is not a break; it is only the move from one zone to the other. Everything that
+	 * watches a card <em>leave the field</em> still fires, because it did: the "put into break
+	 * zone" and "leaves the field" auto-abilities, {@code forwardsLeftFieldThisTurn}, and the
+	 * {@code forwardPutToBZThisTurn} flag Nox Suzaku 15-130H reads — that one is worded "put from
+	 * the field into the Break Zone" precisely because it covers both routes. What a put must not
+	 * feed are the trackers that answer "was a Forward <em>broken</em> this turn"
+	 * ({@code turnOpponentFwdBroken} and the broken job/element/category sets), and that is the
+	 * whole of the difference below.
+	 */
+	void putP1ForwardIntoBreakZone(int idx) { p1ForwardToBreakZone(idx, false); }
+
+	/** Shared body of {@link #breakP1Forward} and {@link #putP1ForwardIntoBreakZone}. */
+	private void p1ForwardToBreakZone(int idx, boolean isBreak) {
 		if (idx < 0 || idx >= p1ForwardCards.size()) return;
 		startBreakAnim(p1ForwardLabels.get(idx));
 		CardData card    = p1ForwardCards.get(idx);
@@ -3735,11 +3754,13 @@ public class MainWindow {
 		}
 		if (hadGrants) for (int i = 0; i < p1MonsterCards.size(); i++) refreshP1MonsterSlot(i);
 		if (hadCostReduces) refreshHandPopupIfVisible();
-		p2Turn.turnOpponentFwdBroken = true;
-		for (String j : card.jobs()) p1Turn.brokenJobsThisTurn.add(j.toLowerCase());
-		if (card.element() != null && !card.element().isBlank()) p1Turn.brokenElementsThisTurn.add(card.element().toLowerCase());
-		if (card.category1() != null && !card.category1().isBlank()) p1Turn.brokenCategoriesThisTurn.add(card.category1().toLowerCase());
-		if (card.category2() != null && !card.category2().isBlank()) p1Turn.brokenCategoriesThisTurn.add(card.category2().toLowerCase());
+		if (isBreak) {
+			p2Turn.turnOpponentFwdBroken = true;
+			for (String j : card.jobs()) p1Turn.brokenJobsThisTurn.add(j.toLowerCase());
+			if (card.element() != null && !card.element().isBlank()) p1Turn.brokenElementsThisTurn.add(card.element().toLowerCase());
+			if (card.category1() != null && !card.category1().isBlank()) p1Turn.brokenCategoriesThisTurn.add(card.category1().toLowerCase());
+			if (card.category2() != null && !card.category2().isBlank()) p1Turn.brokenCategoriesThisTurn.add(card.category2().toLowerCase());
+		}
 		if (gameState.getCurrentPlayer() == GameState.Player.P1) p1Turn.forwardsLeftFieldThisTurn++;
 		else p2Turn.forwardsLeftFieldThisTurn++;
 		p1Turn.forwardPutToBZThisTurn = true;
@@ -3756,7 +3777,13 @@ public class MainWindow {
 	}
 
 	/** Removes P2's forward at {@code idx} from the field and sends it to P2's Break Zone. */
-	void breakP2Forward(int idx) {
+	void breakP2Forward(int idx) { p2ForwardToBreakZone(idx, true); }
+
+	/** P2's side of {@link #putP1ForwardIntoBreakZone} — a put, not a break. */
+	void putP2ForwardIntoBreakZone(int idx) { p2ForwardToBreakZone(idx, false); }
+
+	/** Shared body of {@link #breakP2Forward} and {@link #putP2ForwardIntoBreakZone}. */
+	private void p2ForwardToBreakZone(int idx, boolean isBreak) {
 		if (idx < 0 || idx >= p2ForwardCards.size()) return;
 		startBreakAnim(p2ForwardLabels.get(idx));
 		CardData card    = p2ForwardCards.get(idx);
@@ -3811,11 +3838,13 @@ public class MainWindow {
 		}
 		if (hadGrants) for (int i = 0; i < p2MonsterCards.size(); i++) refreshP2MonsterSlot(i);
 		if (hadCostReduces) refreshHandPopupIfVisible();
-		p1Turn.turnOpponentFwdBroken = true;
-		for (String j : card.jobs()) p2Turn.brokenJobsThisTurn.add(j.toLowerCase());
-		if (card.element() != null && !card.element().isBlank()) p2Turn.brokenElementsThisTurn.add(card.element().toLowerCase());
-		if (card.category1() != null && !card.category1().isBlank()) p2Turn.brokenCategoriesThisTurn.add(card.category1().toLowerCase());
-		if (card.category2() != null && !card.category2().isBlank()) p2Turn.brokenCategoriesThisTurn.add(card.category2().toLowerCase());
+		if (isBreak) {
+			p1Turn.turnOpponentFwdBroken = true;
+			for (String j : card.jobs()) p2Turn.brokenJobsThisTurn.add(j.toLowerCase());
+			if (card.element() != null && !card.element().isBlank()) p2Turn.brokenElementsThisTurn.add(card.element().toLowerCase());
+			if (card.category1() != null && !card.category1().isBlank()) p2Turn.brokenCategoriesThisTurn.add(card.category1().toLowerCase());
+			if (card.category2() != null && !card.category2().isBlank()) p2Turn.brokenCategoriesThisTurn.add(card.category2().toLowerCase());
+		}
 		if (gameState.getCurrentPlayer() == GameState.Player.P1) p1Turn.forwardsLeftFieldThisTurn++;
 		else p2Turn.forwardsLeftFieldThisTurn++;
 		p2Turn.forwardPutToBZThisTurn = true;
@@ -6637,11 +6666,15 @@ public class MainWindow {
 		}
 
 		List<DullForwardCost> altDull = card.altDullCosts();
+		CardData.AltPutToBzCost altBz = card.altPutToBzCost();
 		if (card.altCrystalCost() > 0 || card.altCpCost() > 0 || card.altFieldRemoval() != null
-				|| !altDull.isEmpty()) {
+				|| !altDull.isEmpty() || altBz != null) {
 			int ac = card.altCrystalCost();
 			List<String> altElems = card.altCpElements();
 			CardData.AltFieldRemoval afr = card.altFieldRemoval();
+			String bzStr = altBz == null ? ""
+					: "put " + describeAltPutToBzCost(altBz) + " to BZ"
+					  + (altDull.isEmpty() && altElems.isEmpty() && afr == null ? "" : " + ");
 			String dullStr = altDull.isEmpty() ? ""
 					: "dull " + altDull.stream().map(MainWindow::describeAltDullClause)
 							.collect(Collectors.joining(" + "))
@@ -6655,7 +6688,7 @@ public class MainWindow {
 					.entrySet().stream().map(en -> (en.getKey().equals("generic") ? en.getValue() + " CP" : en.getValue() + " " + en.getKey() + " CP")).collect(Collectors.joining(" + "));
 			List<String> cond = card.altConditionCardNames();
 			String condStr = cond.isEmpty() ? "" : " [req: " + String.join("/", cond) + "]";
-			String altLabel = "Play (Alt: " + dullStr + removalStr + crystalStr + cpStr + condStr + ")";
+			String altLabel = "Play (Alt: " + bzStr + dullStr + removalStr + crystalStr + cpStr + condStr + ")";
 			JMenuItem altItem = new JMenuItem(altLabel);
 			altItem.setEnabled(canPlaySpecialAction && !nameConflict && !lightDarkConflict
 					&& canAffordAltCost(card, handIdx)
@@ -7719,11 +7752,24 @@ public class MainWindow {
 			dullIdxs = List.of();
 		}
 
-		// Picking the Forwards is itself the confirmation, so a cost made up entirely of dulling
-		// goes straight to the play rather than asking again with an empty price.
-		if (altElemsList.isEmpty() && altC == 0 && !dullIdxs.isEmpty()) {
+		// Reserved like the two above, and for the same reason.
+		CardData.AltPutToBzCost putToBz = card.altPutToBzCost();
+		final List<ForwardTarget> bzPayment;
+		if (putToBz != null) {
+			bzPayment = selectAltPutToBz(card, putToBz);
+			if (bzPayment == null) return;
+		} else {
+			bzPayment = List.of();
+		}
+
+		// Picking the cards is itself the confirmation, so a cost made up entirely of dulling or of
+		// handing cards over goes straight to the play rather than asking again with an empty price.
+		// Kefka 4-080L reaches this with no CP left to pay at all: its sentence buys the play
+		// outright rather than reducing a cost.
+		if (altElemsList.isEmpty() && altC == 0 && (!dullIdxs.isEmpty() || !bzPayment.isEmpty())) {
 			executeAltDull(dullIdxs);
 			executeAltFieldRemoval(removalSlots);
+			executeAltPutToBz(bzPayment);
 			executePlay(card, handIdx, Collections.emptyList(), Collections.emptyList(), Map.of());
 			executeAltFollowup(followupText, card);
 			return;
@@ -7897,6 +7943,85 @@ public class MainWindow {
 			}
 		}
 		return chosen;
+	}
+
+	/**
+	 * The field cards that may pay {@code cost} — Kefka 4-080L's "a total of 3 Forwards or Monsters
+	 * you control".
+	 *
+	 * <p>"a total of" pools the rows rather than requiring a count from each, so this returns one
+	 * list across every permitted row and the caller takes any {@code count} of them.
+	 */
+	List<ForwardTarget> altPutToBzCandidates(CardData.AltPutToBzCost cost, boolean isP1) {
+		List<ForwardTarget> out = new ArrayList<>();
+		if (cost.inclForwards()) {
+			List<CardData> fwds = isP1 ? p1ForwardCards : p2ForwardCards;
+			for (int i = 0; i < fwds.size(); i++) out.add(new ForwardTarget(isP1, i, ForwardTarget.CardZone.FORWARD));
+		}
+		if (cost.inclMonsters()) {
+			List<CardData> mons = isP1 ? p1MonsterCards : p2MonsterCards;
+			for (int i = 0; i < mons.size(); i++) out.add(new ForwardTarget(isP1, i, ForwardTarget.CardZone.MONSTER));
+		}
+		if (cost.inclBackups()) {
+			CardData[] bkps = isP1 ? p1BackupCards : p2BackupCards;
+			for (int i = 0; i < bkps.length; i++)
+				if (bkps[i] != null) out.add(new ForwardTarget(isP1, i, ForwardTarget.CardZone.BACKUP));
+		}
+		return out;
+	}
+
+	/**
+	 * Reserves the cards P1 hands over for a put-into-Break-Zone alternate cost, or {@code null}
+	 * when there are too few or the player cancels.
+	 *
+	 * <p>Reserved rather than paid, on the same terms as the dull and removal costs above:
+	 * cancelling the play must leave the board exactly as it was.
+	 */
+	private List<ForwardTarget> selectAltPutToBz(CardData card, CardData.AltPutToBzCost cost) {
+		List<ForwardTarget> eligible = altPutToBzCandidates(cost, true);
+		if (eligible.size() < cost.count()) return null;
+		List<ForwardTarget> picks = showForwardSelectDialog(eligible, cost.count(), false,
+				card.name() + " — Alt Cost: put " + describeAltPutToBzCost(cost) + " into the Break Zone");
+		if (picks == null || picks.size() < cost.count()) return null;
+		return picks;
+	}
+
+	/**
+	 * Puts the cards reserved by {@link #selectAltPutToBz} into the Break Zone.
+	 *
+	 * <p>Reverse index order within each zone, because every removal shifts the slots above it —
+	 * the same ordering {@code executeAbilityPayment} uses for an ability's Break Zone costs.
+	 *
+	 * <p>A put, not a break, so the Forwards go through {@link #putP1ForwardIntoBreakZone}. The
+	 * Monster and Backup calls need no such counterpart: neither records anything break-specific,
+	 * so what they already do <em>is</em> the put.
+	 */
+	private void executeAltPutToBz(List<ForwardTarget> targets) {
+		if (targets == null || targets.isEmpty()) return;
+		List<ForwardTarget> sorted = new ArrayList<>(targets);
+		sorted.sort((a, b) -> a.zone() == b.zone() ? Integer.compare(b.idx(), a.idx()) : 0);
+		for (ForwardTarget t : sorted) {
+			pendingCostBreakDestLabel = p1BreakLabel;
+			String name = switch (t.zone()) {
+				case FORWARD -> t.idx() < p1ForwardCards.size() ? p1ForwardCards.get(t.idx()).name() : "?";
+				case MONSTER -> t.idx() < p1MonsterCards.size() ? p1MonsterCards.get(t.idx()).name() : "?";
+				default      -> p1BackupCards[t.idx()] != null ? p1BackupCards[t.idx()].name() : "?";
+			};
+			switch (t.zone()) {
+				case FORWARD -> putP1ForwardIntoBreakZone(t.idx());
+				case MONSTER -> autoAbilityTriggers.breakP1MonsterSlot(t.idx());
+				default      -> autoAbilityTriggers.breakP1BackupSlot(t.idx());
+			}
+			logEntry("Alt cost: \"" + name + "\" put into the Break Zone");
+		}
+	}
+
+	/** "3 Forwards or Monsters", as printed, for a menu label or dialog title. */
+	private static String describeAltPutToBzCost(CardData.AltPutToBzCost cost) {
+		String types = cost.inclBackups() ? "Characters"
+				: cost.inclForwards() && cost.inclMonsters() ? "Forwards or Monsters"
+				: cost.inclForwards() ? "Forwards" : "Monsters";
+		return cost.count() + " " + types;
 	}
 
 	/** Dulls the Forwards reserved by {@link #selectAltDullForwards}. */
@@ -10800,6 +10925,22 @@ public class MainWindow {
 		return gained;
 	}
 
+	/**
+	 * Every card {@code isP1} has on the field: their Forwards, Backups and Monsters.
+	 *
+	 * <p>The list a field-ability scan should walk. Several scans built it by hand from the Forward
+	 * and Backup rows alone, which silently exempted every Monster printing a field ability they
+	 * read — Djinn 16-010H's damage boost did nothing at all for that reason. Two more private
+	 * copies of this walk live in {@code AutoAbilityTriggers} and {@code FieldGrantCalculator};
+	 * they already include Monsters, and are left where they are.
+	 */
+	List<CardData> fieldCards(boolean isP1) {
+		List<CardData> out = new ArrayList<>(isP1 ? p1ForwardCards : p2ForwardCards);
+		for (CardData b : (isP1 ? p1BackupCards : p2BackupCards)) if (b != null) out.add(b);
+		out.addAll(isP1 ? p1MonsterCards : p2MonsterCards);
+		return out;
+	}
+
 	/** Every Character on the side facing {@code isP1}: their Forwards, Backups and Monsters. */
 	private List<CardData> opposingCharacters(boolean isP1) {
 		List<CardData> out = new ArrayList<>(isP1 ? p2ForwardCards : p1ForwardCards);
@@ -11686,11 +11827,12 @@ public class MainWindow {
 
 	int friendlyElementForwardCombatBoost(CardData attacker, boolean isP1) {
 		int boost = 0;
-		List<CardData> sources = new ArrayList<>(isP1 ? p1ForwardCards : p2ForwardCards);
-		for (CardData bkp : isP1 ? p1BackupCards : p2BackupCards)
-			if (bkp != null) sources.add(bkp);
-		for (CardData source : sources) {
-			for (FieldAbility fa : source.fieldAbilities()) {
+		// Every row, Monsters included: what is being asked is which of this player's cards print a
+		// boost, and a Monster's field ability is as live as anyone else's (Djinn 16-010H).
+		for (CardData source : fieldCards(isP1)) {
+			// A card stripped of its abilities prints nothing, so it boosts nothing.
+			if (lostAbilitiesCards.contains(source)) continue;
+			for (FieldAbility fa : effectiveFieldAbilities(source)) {
 				Matcher m = AutoAbilityTriggers.FA_ELEMENT_FORWARD_DAMAGE_BOOST.matcher(fa.effectText());
 				if (m.find() && effectiveContainsElement(attacker, m.group("element"))) {
 					int amount = Integer.parseInt(m.group("amount"));

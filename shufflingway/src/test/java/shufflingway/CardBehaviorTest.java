@@ -21290,7 +21290,7 @@ public class CardBehaviorTest {
 
 		ActionResolver.parse(snow.autoAbilities().get(0).effectText(), snow).accept(ctx);
 
-		verify(ctx).revealTopNRemoveOneFromGameCastableThisTurnRestBottom(2, "XIII");
+		verify(ctx).revealTopNRemoveOneFromGameCastableThisTurnRestBottom(2, "XIII", 0);
 	}
 
 	@Test
@@ -21301,7 +21301,7 @@ public class CardBehaviorTest {
 
 		ActionResolver.parse(wol.autoAbilities().get(0).effectText(), wol).accept(ctx);
 
-		verify(ctx).revealTopNRemoveOneFromGameCastableThisTurnRestBottom(4, null);
+		verify(ctx).revealTopNRemoveOneFromGameCastableThisTurnRestBottom(4, null, 0);
 	}
 
 	// The three chains have to agree, so the description is asserted alongside the name — a guard
@@ -21346,5 +21346,544 @@ public class CardBehaviorTest {
 				"the permission is \"this turn\", so it lapses with the turn");
 		assertTrue(mw.gameState.getP1PermanentRfp().contains(removed),
 				"and the card stays removed from the game — losing the permission moves nothing");
+	}
+	// =========================================================================================
+	// The field-ability scans that ask "which of my cards print this?" have to walk every row.
+	// Three of them built the list from the Forward and Backup rows by hand, which quietly
+	// exempted every Monster: Djinn 16-010H's "If a Fire Forward you control deals damage to a
+	// Forward, the damage increases by 1000 instead." did nothing at all, in combat or from an
+	// ability, because Djinn is a Monster and the scan never looked at its row.
+	//
+	// The report cannot catch this — it checks that the text matches a pattern, not that the
+	// runtime scan reaches the card printing it. So these are board tests, not parse tests.
+	// =========================================================================================
+
+	private static final String DJINN_BOOST =
+			"If a Fire Forward you control deals damage to a Forward, the damage increases by 1000 instead.";
+
+	private static CardData djinn() {
+		return new CardData(null, "Djinn", "Fire", 2, 7000, "Monster", false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				List.of(), List.of(), CardData.parseFieldAbilities(DJINN_BOOST, "Monster"),
+				List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				null, null, null, DJINN_BOOST);
+	}
+
+	@Test
+	void aMonstersDamageBoostReachesCombatDamage() {
+		MainWindow mw = new MainWindow();
+		mw.p1MonsterCards.add(djinn());
+		mw.p1MonsterStates.add(CardState.ACTIVE);
+		placeP1Forward(mw, makeForward("Fire Ally", "Fire", 3, 7000));   // idx 0
+		placeP1Forward(mw, makeForward("Ice Ally",  "Ice",  3, 7000));   // idx 1
+		CardData target = makeForward("Target", "Wind", 3, 9000);
+		placeP2Forward(mw, target);
+
+		assertEquals(8000, mw.modifyOutgoingCombatDamage(true, 0, 7000, target),
+				"a Monster's field ability is as live as anyone else's");
+		assertEquals(7000, mw.modifyOutgoingCombatDamage(true, 1, 7000, target),
+				"and it still only boosts the Element it names");
+	}
+
+	@Test
+	void aMonstersDamageBoostReachesAbilityDamage() {
+		MainWindow mw = new MainWindow();
+		mw.p1MonsterCards.add(djinn());
+		mw.p1MonsterStates.add(CardState.ACTIVE);
+		CardData caster = makeForward("Fire Caster", "Fire", 3, 7000);
+		placeP1Forward(mw, caster);
+		mw.currentAbilitySource     = caster;
+		mw.currentAbilitySourceIsP1 = true;
+
+		assertEquals(5000, mw.damageResolver.applyCasterSideElementForwardDamageBoosts(4000, false));
+	}
+
+	@Test
+	void theScanStillReadsTheForwardAndBackupRows() {
+		// Widening to three rows must not drop the two it already had.
+		MainWindow mw = new MainWindow();
+		mw.placeCardInFirstBackupSlot(makeFieldAbilityCard("Djinn", "Fire", "Backup", DJINN_BOOST));
+		placeP1Forward(mw, makeForward("Fire Ally", "Fire", 3, 7000));
+		CardData target = makeForward("Target", "Wind", 3, 9000);
+		placeP2Forward(mw, target);
+
+		assertEquals(8000, mw.modifyOutgoingCombatDamage(true, 0, 7000, target));
+	}
+
+	@Test
+	void aBoosterStrippedOfItsAbilitiesBoostsNothing() {
+		// The scan reads the printed text, so it needs the lostAbilities check every other
+		// field-ability scan makes; without it a silenced card keeps handing out its boost.
+		MainWindow mw = new MainWindow();
+		CardData djinn = djinn();
+		mw.p1MonsterCards.add(djinn);
+		mw.p1MonsterStates.add(CardState.ACTIVE);
+		CardData caster = makeForward("Fire Caster", "Fire", 3, 7000);
+		placeP1Forward(mw, caster);
+		CardData target = makeForward("Target", "Wind", 3, 9000);
+		placeP2Forward(mw, target);
+
+		mw.lostAbilitiesCards.add(djinn);
+
+		assertEquals(7000, mw.modifyOutgoingCombatDamage(true, 0, 7000, target),
+				"combat damage is unboosted");
+
+		mw.currentAbilitySource     = caster;
+		mw.currentAbilitySourceIsP1 = true;
+		assertEquals(4000, mw.damageResolver.applyCasterSideElementForwardDamageBoosts(4000, false),
+				"and so is ability damage — the sibling scan had the same hole");
+	}
+
+	@Test
+	void aBoostGrantedUntilEndOfTurnRegisters() {
+		// The other half of the same question: the scans read the printed list, so a card that
+		// gains the boost for the turn never handed it out. Every field-ability check a grant
+		// should be able to satisfy has to go through effectiveFieldAbilities.
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForward("Fire Ally", "Fire", 3, 7000));   // idx 0, the dealer
+		placeP1Forward(mw, makeForward("Granted",   "Fire", 3, 7000));   // idx 1, the booster
+		CardData target = makeForward("Target", "Wind", 3, 9000);
+		placeP2Forward(mw, target);
+
+		assertEquals(7000, mw.modifyOutgoingCombatDamage(true, 0, 7000, target),
+				"nothing on the board prints a boost yet");
+
+		mw.buildGameContext(true).grantFieldAbilityUntilEndOfTurn(
+				new ForwardTarget(true, 1, ForwardTarget.CardZone.FORWARD), DJINN_BOOST);
+
+		assertEquals(8000, mw.modifyOutgoingCombatDamage(true, 0, 7000, target),
+				"a granted boost is as live as a printed one");
+
+		mw.currentAbilitySource     = mw.p1ForwardCards.get(0);
+		mw.currentAbilitySourceIsP1 = true;
+		assertEquals(5000, mw.damageResolver.applyCasterSideElementForwardDamageBoosts(4000, false),
+				"and the ability-damage scan reads the same view");
+	}
+
+	@Test
+	void theSummonScanReadsTheSameTwoViews() {
+		// The third of the three, and it had both holes. Its dealer is the resolving Summon rather
+		// than a card in a field row, and it matches Caetuna's wording rather than Djinn's, so it
+		// takes its own fixture — but the question it asks of the board is the same one.
+		MainWindow mw = new MainWindow();
+		CardData booster = makeForward("Booster", "Fire", 3, 7000);
+		placeP1Forward(mw, booster);
+		mw.currentResolutionIsSummon = true;
+		mw.currentSummonSource       = makeFieldAbilityCard("Ifrit", "Fire", "Summon", "");
+		mw.currentSummonSourceIsP1   = true;
+
+		assertEquals(7000, mw.damageResolver.applyCasterSideElementSummonDamageBoosts(7000, false),
+				"nothing on the board prints the boost yet");
+
+		mw.buildGameContext(true).grantFieldAbilityUntilEndOfTurn(
+				new ForwardTarget(true, 0, ForwardTarget.CardZone.FORWARD), CAETUNA_6_010H);
+		assertEquals(8000, mw.damageResolver.applyCasterSideElementSummonDamageBoosts(7000, false),
+				"a boost granted for the turn registers");
+
+		mw.lostAbilitiesCards.add(booster);
+		assertEquals(7000, mw.damageResolver.applyCasterSideElementSummonDamageBoosts(7000, false),
+				"and silencing the booster takes the granted text with it — the check sits ahead of "
+				+ "the view, so it drops everything the card would have printed");
+	}
+
+	// =========================================================================================
+	// Helena Leonis 22-052H prints Snow 18-109C's reveal with two differences: her two-card
+	// reveal leaves exactly one card over, so she says "put the other" and skips "in any order"
+	// (with one card there is no order to choose), and she discounts the removed card by 2.
+	//
+	// She was the printing left behind when Snow's parser went in — still claimed by
+	// tryParseRemoveNamedFromGame off her middle clause.
+	// =========================================================================================
+
+	private static final String HELENA_TEXT =
+			"Reveal the top 2 cards of your deck. Remove 1 card among them from the game and put the "
+			+ "other to the bottom of your deck. You can cast it at any time you could normally cast "
+			+ "it this turn. The cost required to cast it is reduced by 2. "
+			+ "You can only use this ability during your turn and only once per turn.";
+
+	@Test
+	void helenasSingularRestClauseAndDiscountParseAsTheSameEffect() {
+		GameContext ctx = mock(GameContext.class);
+		CardData helena = makeFieldAbilityCard("Helena Leonis", "Wind", "Forward", HELENA_TEXT);
+
+		assertEquals("RevealTopNRfgOneCastableRestBottom",
+				ActionResolver.matchedPatternName(HELENA_TEXT, helena),
+				"the general remove-a-named-card parser must not reach this text first");
+
+		ActionResolver.parse(HELENA_TEXT, helena).accept(ctx);
+		verify(ctx).revealTopNRemoveOneFromGameCastableThisTurnRestBottom(2, null, 2);
+	}
+
+	@Test
+	void theTrailingRestrictionSentenceDoesNotDefeatTheEndAnchor() {
+		// The restriction is captured as a flag on the ability and gated at activation, so the
+		// parser matches the stripped text. Without that the end anchor fails and the whole
+		// ability falls through to the parser it was taken from.
+		CardData helena = makeFieldAbilityCard("Helena Leonis", "Wind", "Forward", HELENA_TEXT);
+		assertNotNull(ActionResolver.parse(HELENA_TEXT, helena));
+		assertTrue(HELENA_TEXT.contains("You can only use this ability"),
+				"this test is worthless if the restriction ever leaves the printed text");
+	}
+
+	@Test
+	void theDiscountRidesThroughToTheCastCost() {
+		MainWindow mw = new MainWindow();
+		CardData removed = makeForward("Bahamut", "Wind", 5, 9000);
+		mw.gameState.getIdentity().put(removed, true);
+		mw.gameState.addToPermanentRfp(removed);
+		mw.registerBorrowedPlayable(true, removed, new PlayableEntry(
+				PlayableEntry.SourceZone.RFP, 2, false, false, false, true));
+
+		assertEquals(3, mw.bzPlayableP1.get(removed).effectiveCost(removed),
+				"cost 5 less Helena's 2");
+	}
+
+	// =========================================================================================
+	// Nox Suzaku 15-130H: "You can only play Nox Suzaku if a Forward you controlled has been put
+	// from the field into the Break Zone this turn."
+	//
+	// A cast-time restriction rather than a field ability, so it joins CastRestriction and drops
+	// out of the field-ability report the way the other static properties there do. The board
+	// condition was already tracked — PlayerTurnState.forwardPutToBZThisTurn is what the
+	// ability-level "You can only use this ability if …" printings read, and this is that same
+	// condition moved to the cast.
+	// =========================================================================================
+
+	private static final String NOX_SUZAKU_RESTRICTION =
+			"You can only play Nox Suzaku if a Forward you controlled has been put from the field "
+			+ "into the Break Zone this turn.";
+
+	@Test
+	void noxSuzakuParsesAsACastRestrictionNotAFieldAbility() {
+		CardData nox = makeFieldAbilityCard("Nox Suzaku", "Fire", "Forward", NOX_SUZAKU_RESTRICTION);
+
+		CastRestriction cr = nox.castRestriction();
+		assertNotNull(cr, "the sentence is a restriction, not a passive");
+		assertTrue(cr.requiresForwardPutToBZThisTurn());
+		assertTrue(nox.fieldAbilities().isEmpty(),
+				"read as a static property, so it does not also show up as a field ability");
+	}
+
+	@Test
+	void noxSuzakuCannotBePlayedUntilAForwardHasBeenLost() {
+		MainWindow mw = new MainWindow();
+		CardData nox = makeFieldAbilityCard("Nox Suzaku", "Fire", "Forward", NOX_SUZAKU_RESTRICTION);
+
+		assertFalse(mw.costs.castRestrictionMet(nox, true),
+				"nothing has been put into the Break Zone this turn");
+
+		mw.p1Turn.forwardPutToBZThisTurn = true;
+
+		assertTrue(mw.costs.castRestrictionMet(nox, true));
+	}
+
+	@Test
+	void theRestrictionIsReadFromTheCastersOwnSide() {
+		MainWindow mw = new MainWindow();
+		CardData nox = makeFieldAbilityCard("Nox Suzaku", "Fire", "Forward", NOX_SUZAKU_RESTRICTION);
+		mw.p1Turn.forwardPutToBZThisTurn = true;
+
+		assertTrue(mw.costs.castRestrictionMet(nox, true));
+		assertFalse(mw.costs.castRestrictionMet(nox, false),
+				"P2 losing nothing this turn is P2's problem, whatever P1 lost");
+	}
+	// =========================================================================================
+	// Kefka 4-080L: "You can put a total of 3 Forwards or Monsters you control into the Break
+	// Zone to play Kefka from your hand onto the field."
+	//
+	// An alternate cast cost of a kind the engine had not seen: it carries no "(instead of paying
+	// the CP cost)" marker and leaves no CP to pay, because "to play Kefka from your hand onto the
+	// field" already says what the payment buys. So it replaces the cost outright rather than
+	// reducing it, and reports separately from altCpElements.
+	//
+	// "a total of" is the load-bearing phrase — three cards across the two rows in any mix, not
+	// three of each.
+	// =========================================================================================
+
+	private static final String KEFKA_ALT_COST =
+			"You can put a total of 3 Forwards or Monsters you control into the Break Zone to play "
+			+ "Kefka from your hand onto the field.";
+
+	private static CardData kefka() {
+		return new CardData(null, "Kefka", "Dark", 8, 9000, "Forward", false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				List.of(), List.of(), CardData.parseFieldAbilities(KEFKA_ALT_COST, "Forward"),
+				List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				null, null, null, KEFKA_ALT_COST);
+	}
+
+	@Test
+	void kefkaParsesAsAPooledPutToBreakZoneCost() {
+		CardData.AltPutToBzCost cost = kefka().altPutToBzCost();
+
+		assertNotNull(cost);
+		assertEquals(3, cost.count(), "\"a total of 3\" is one pooled count");
+		assertTrue(cost.inclForwards());
+		assertTrue(cost.inclMonsters());
+		assertFalse(cost.inclBackups(), "the text names Forwards and Monsters, not Backups");
+	}
+
+	@Test
+	void theAlternateCostIsNotAlsoReadAsAFieldAbility() {
+		CardData k = kefka();
+		assertTrue(k.fieldAbilities().isEmpty(),
+				"an alternate cost is a cast-time property, like its neighbours in that family");
+		assertEquals(0, k.altCpCost(), "it leaves no CP to pay — it buys the play outright");
+		assertEquals(0, k.altCrystalCost());
+	}
+
+	@Test
+	void theCostPoolsAcrossTheForwardAndMonsterRows() {
+		MainWindow mw = new MainWindow();
+		CardData k = kefka();
+
+		assertFalse(mw.costs.canAffordAltCost(k, -1), "an empty board pays nothing");
+
+		placeP1Forward(mw, makeForward("A", "Fire", 2, 5000));
+		placeP1Forward(mw, makeForward("B", "Fire", 2, 5000));
+		assertFalse(mw.costs.canAffordAltCost(k, -1), "two is short of three");
+
+		// The third comes from the Monster row — "a total of" is what lets the rows combine.
+		mw.p1MonsterCards.add(makeForward("C", "Fire", 2, 5000));
+		mw.p1MonsterStates.add(CardState.ACTIVE);
+
+		assertEquals(3, mw.altPutToBzCandidates(k.altPutToBzCost(), true).size());
+		assertTrue(mw.costs.canAffordAltCost(k, -1), "three across both rows pays it");
+	}
+
+	@Test
+	void theCandidateListReadsTheCastersOwnSide() {
+		MainWindow mw = new MainWindow();
+		CardData k = kefka();
+		for (int i = 0; i < 3; i++) placeP2Forward(mw, makeForward("Enemy " + i, "Fire", 2, 5000));
+
+		assertTrue(mw.altPutToBzCandidates(k.altPutToBzCost(), true).isEmpty(),
+				"the opponent's Forwards are not yours to hand over");
+		assertEquals(3, mw.altPutToBzCandidates(k.altPutToBzCost(), false).size());
+		assertFalse(mw.costs.canAffordAltCost(k, -1));
+	}
+
+	// -----------------------------------------------------------------------------------------
+	// Paying the cost is a *put*, not a break. The two share a destination and nothing else that
+	// matters: the card leaves the field either way, so everything watching for that still fires,
+	// but only a break answers "was a Forward broken this turn" — which several cards read as a
+	// cost reduction or a cast condition, and which handing a card over must not hand out.
+	// -----------------------------------------------------------------------------------------
+
+	@Test
+	void payingTheCostIsAPutAndNotABreak() {
+		MainWindow mw = new MainWindow();
+		CardData paid = makeForward("Paid", "Fire", 2, 5000);
+		placeP1Forward(mw, paid);
+
+		mw.putP1ForwardIntoBreakZone(0);
+
+		assertTrue(mw.p1ForwardCards.isEmpty(), "it left the field");
+		assertTrue(mw.gameState.getP1BreakZone().contains(paid), "and it is in the Break Zone");
+		assertTrue(mw.p1Turn.forwardPutToBZThisTurn,
+				"\"put from the field into the Break Zone this turn\" is worded to cover this route "
+				+ "(Nox Suzaku 15-130H)");
+
+		assertFalse(mw.p2Turn.turnOpponentFwdBroken, "but P2 broke nothing");
+		assertTrue(mw.p1Turn.brokenElementsThisTurn.isEmpty(), "and no Fire Forward was broken");
+		assertTrue(mw.p1Turn.brokenCategoriesThisTurn.isEmpty());
+		assertTrue(mw.p1Turn.brokenJobsThisTurn.isEmpty());
+	}
+
+	@Test
+	void breakingTheSameForwardStillRecordsTheBreak() {
+		// The contrast that gives the test above its meaning: the guard splits the two paths, it
+		// does not disable the trackers.
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForward("Broken", "Fire", 2, 5000));
+
+		mw.breakP1Forward(0);
+
+		assertTrue(mw.p2Turn.turnOpponentFwdBroken);
+		assertTrue(mw.p1Turn.brokenElementsThisTurn.contains("fire"));
+		assertTrue(mw.p1Turn.forwardPutToBZThisTurn, "a break is also a departure to the Break Zone");
+	}
+
+	@Test
+	void theAiDeclinesTheAlternateCostForNow() {
+		// A stub, asserted so that wiring it up trips this rather than passing unnoticed.
+		MainWindow mw = new MainWindow();
+		assertFalse(new ComputerPlayer(mw).p2PlanAltPutToBzCost(kefka()),
+				"P2 has no heuristic for giving up its own board — see p2PlanAltPutToBzCost");
+	}
+
+	// =========================================================================================
+	// Ramza 7-104H prints three self-power gates at rising thresholds — Haste at 4000, Brave at
+	// 6000, First Strike at 8000 — off a printed power of 2000, which clears none of them. The
+	// card is built to unlock its own gates: its 《Lightning》 ability is +2000 power.
+	//
+	// So the threshold has to be read against *current* power, the same reading Hyoh 16-097H's
+	// "You can only use this ability if Hyoh has 7000 power or more" already gets. Reading the
+	// printed value would make all three sentences dead text on every board.
+	//
+	// These are continuous grants, not one-shots: the gate closes again when the power leaves.
+	// =========================================================================================
+
+	private static final String RAMZA_7_104H =
+			"If Ramza has 4000 power or more, Ramza gains Haste.[[br]] "
+			+ "If Ramza has 6000 power or more, Ramza gains Brave.[[br]] "
+			+ "If Ramza has 8000 power or more, Ramza gains First Strike.";
+
+	private static CardData ramza() {
+		return new CardData(null, "Ramza", "Lightning", 1, 2000, "Forward", false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				List.of(), List.of(), CardData.parseFieldAbilities(RAMZA_7_104H, "Forward"),
+				List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				null, null, null, RAMZA_7_104H);
+	}
+
+	@Test
+	void theThreeGatesParseAsThreeFieldAbilities() {
+		List<FieldAbility> fas = ramza().fieldAbilities();
+
+		assertEquals(3, fas.size(), "one per sentence");
+		assertEquals(4000, CardData.parseIfSelfPowerTraitGrantThreshold(fas.get(0).effectText(), "Ramza"));
+		assertEquals(6000, CardData.parseIfSelfPowerTraitGrantThreshold(fas.get(1).effectText(), "Ramza"));
+		assertEquals(8000, CardData.parseIfSelfPowerTraitGrantThreshold(fas.get(2).effectText(), "Ramza"));
+		assertEquals(EnumSet.of(CardData.Trait.BRAVE),
+				CardData.parseIfSelfPowerTraitGrantTraits(fas.get(1).effectText()));
+	}
+
+	@Test
+	void ramzasGatesOpenOneByOneAsHisPowerRises() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, ramza());
+
+		assertFalse(mw.effectiveP1HasTrait(0, CardData.Trait.HASTE),
+				"a printed 2000 clears none of the three");
+		assertFalse(mw.effectiveP1HasTrait(0, CardData.Trait.BRAVE));
+		assertFalse(mw.effectiveP1HasTrait(0, CardData.Trait.FIRST_STRIKE));
+
+		mw.p1ForwardPowerBoost.set(0, 2000);                       // 4000
+		assertTrue(mw.effectiveP1HasTrait(0, CardData.Trait.HASTE), "his own +2000 opens the first");
+		assertFalse(mw.effectiveP1HasTrait(0, CardData.Trait.BRAVE), "and only the first");
+		assertFalse(mw.effectiveP1HasTrait(0, CardData.Trait.FIRST_STRIKE));
+
+		mw.p1ForwardPowerBoost.set(0, 4000);                       // 6000
+		assertTrue(mw.effectiveP1HasTrait(0, CardData.Trait.HASTE));
+		assertTrue(mw.effectiveP1HasTrait(0, CardData.Trait.BRAVE));
+		assertFalse(mw.effectiveP1HasTrait(0, CardData.Trait.FIRST_STRIKE));
+
+		mw.p1ForwardPowerBoost.set(0, 6000);                       // 8000
+		assertTrue(mw.effectiveP1HasTrait(0, CardData.Trait.HASTE));
+		assertTrue(mw.effectiveP1HasTrait(0, CardData.Trait.BRAVE));
+		assertTrue(mw.effectiveP1HasTrait(0, CardData.Trait.FIRST_STRIKE));
+	}
+
+	@Test
+	void theGatesCloseAgainWhenThePowerLeaves() {
+		// Continuous, not a one-shot grant: what opens on a boost shuts when it expires.
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, ramza());
+		mw.p1ForwardPowerBoost.set(0, 6000);
+		assertTrue(mw.effectiveP1HasTrait(0, CardData.Trait.FIRST_STRIKE));
+
+		mw.p1ForwardPowerBoost.set(0, 0);
+
+		assertFalse(mw.effectiveP1HasTrait(0, CardData.Trait.FIRST_STRIKE));
+		assertFalse(mw.effectiveP1HasTrait(0, CardData.Trait.BRAVE));
+		assertFalse(mw.effectiveP1HasTrait(0, CardData.Trait.HASTE));
+	}
+
+	@Test
+	void aPowerReductionCanShutAGateTheBoardHadOpened() {
+		// Current power is the whole point of the wording, so it has to fall as well as rise.
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, ramza());
+		mw.p1ForwardPowerBoost.set(0, 6000);
+		mw.p1ForwardPowerReduction.set(0, 4000);                   // 8000 - 4000 = 4000
+
+		assertTrue(mw.effectiveP1HasTrait(0, CardData.Trait.HASTE), "4000 still clears the first");
+		assertFalse(mw.effectiveP1HasTrait(0, CardData.Trait.BRAVE), "but no longer the second");
+		assertFalse(mw.effectiveP1HasTrait(0, CardData.Trait.FIRST_STRIKE));
+	}
+
+	@Test
+	void aLongerSentenceSharingThePrefixIsNotClaimed() {
+		// Three corpus printings open exactly like Ramza's and then keep going. Claiming them on
+		// the keyword alone would grant that keyword and drop everything after it, so the trait
+		// list is anchored to the end of the sentence and these stay unhandled — which is what
+		// they already were.
+		assertEquals(-1, CardData.parseIfSelfPowerTraitGrantThreshold(
+				"If Ramza has 10000 power or more, Ramza gains Haste and \"When Ramza attacks, "
+				+ "choose 1 Forward of cost 3 or less opponent controls. Break it.\"", "Ramza"),
+				"Ramza 5-118L also hands itself a quoted ability");
+		assertEquals(-1, CardData.parseIfSelfPowerTraitGrantThreshold(
+				"If Gilgamesh has 10000 power or more, Gilgamesh gains Brave and can attack twice "
+				+ "in the same turn.", "Gilgamesh"),
+				"Gilgamesh 7-088L also grants a second attack");
+		assertEquals(-1, CardData.parseIfSelfPowerTraitGrantThreshold(
+				"If Oschon has 10000 power or more, Oschon gains \"Oschon cannot be chosen by your "
+				+ "opponent's abilities.\" and \"If Oschon is dealt damage by your opponent's "
+				+ "abilities, the damage becomes 0 instead.\"", "Oschon"),
+				"Oschon 26-047H grants no keyword at all");
+	}
+
+	@Test
+	void theGateOnlyAnswersForTheCardThatPrintsIt() {
+		// Both names in the sentence are checked, so a card naming someone else is not a self grant.
+		assertEquals(-1, CardData.parseIfSelfPowerTraitGrantThreshold(
+				"If Ramza has 4000 power or more, Ramza gains Haste.", "Steiner"));
+	}
+
+	// =========================================================================================
+	// Steiner 14-109C: "You must control 2 or more Forwards to cast Steiner."
+	//
+	// The unqualified sibling of the "N or more Job X Forwards and/or Job Y Forwards" wording
+	// (Warrior of Light 24-120R) the parser already read. That one requires a "Job …" segment
+	// after the count, so a bare "Forwards" fell through every branch and the sentence surfaced
+	// as an unparsed field ability instead of a cast restriction.
+	// =========================================================================================
+
+	private static final String STEINER_14_109C =
+			"You must control 2 or more Forwards to cast Steiner.";
+
+	@Test
+	void steinersRestrictionIsACastRestrictionNotAFieldAbility() {
+		CardData steiner = makeFieldAbilityCard("Steiner", "Earth", "Forward", STEINER_14_109C);
+
+		assertTrue(steiner.fieldAbilities().isEmpty(),
+				"a cast restriction is a static property, like its neighbours in that family");
+		CastRestriction cr = steiner.castRestriction();
+		assertNotNull(cr);
+		ControlCondition cond = cr.mustControlCondition();
+		assertNotNull(cond);
+		assertEquals(2, cond.minCount());
+		assertEquals("Forward", cond.cardType());
+		assertNull(cond.job(), "no Job qualifies the count");
+		assertNull(cond.category());
+	}
+
+	@Test
+	void steinerNeedsTwoForwardsBeforeHeCanBeCast() {
+		MainWindow mw = new MainWindow();
+		CardData steiner = makeFieldAbilityCard("Steiner", "Earth", "Forward", STEINER_14_109C);
+
+		assertFalse(mw.castRestrictionMet(steiner, true), "an empty board controls none");
+
+		placeP1Forward(mw, makeForward("Ally", "Earth", 2, 5000));
+		assertFalse(mw.castRestrictionMet(steiner, true), "one is short of two");
+
+		placeP1Forward(mw, makeForward("Second Ally", "Earth", 2, 5000));
+		assertTrue(mw.castRestrictionMet(steiner, true), "two of any Job or Element will do");
+	}
+
+	@Test
+	void steinersCountReadsTheCastersOwnSide() {
+		MainWindow mw = new MainWindow();
+		CardData steiner = makeFieldAbilityCard("Steiner", "Earth", "Forward", STEINER_14_109C);
+		for (int i = 0; i < 3; i++) placeP2Forward(mw, makeForward("Enemy " + i, "Fire", 2, 5000));
+
+		assertFalse(mw.castRestrictionMet(steiner, true),
+				"the opponent's Forwards are not yours to control");
+		assertTrue(mw.castRestrictionMet(steiner, false));
 	}
 }

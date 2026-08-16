@@ -567,12 +567,12 @@ class DamageResolver {
 		if (!mw.currentResolutionIsSummon || mw.currentSummonSource == null) return amount;
 		boolean casterIsP1 = mw.currentSummonSourceIsP1;
 		if (casterIsP1 == targetIsP1) return amount;  // Only boosts damage to the opposing side
-		List<CardData> casterField = new ArrayList<>(casterIsP1 ? mw.p1ForwardCards : mw.p2ForwardCards);
-		for (CardData bkp : casterIsP1 ? mw.p1BackupCards : mw.p2BackupCards)
-			if (bkp != null) casterField.add(bkp);
-		for (CardData booster : casterField) {
-			for (FieldAbility fa : booster.fieldAbilities()) {
-				java.util.regex.Matcher m = AutoAbilityTriggers.FA_ELEMENT_SUMMON_DAMAGE_BOOST.matcher(fa.effectText());
+		for (CardData booster : mw.fieldCards(casterIsP1)) {
+			// A card stripped of its abilities prints nothing, so it boosts nothing.
+			if (mw.lostAbilitiesCards.contains(booster)) continue;
+			List<FieldAbility> fas = mw.effectiveFieldAbilities(booster);
+			for (FieldAbility fa : fas) {
+				Matcher m = AutoAbilityTriggers.FA_ELEMENT_SUMMON_DAMAGE_BOOST.matcher(fa.effectText());
 				if (!m.find()) continue;
 				String elem = m.group("element");
 				if (!mw.currentSummonSource.containsElement(elem)) continue;
@@ -584,7 +584,7 @@ class DamageResolver {
 			}
 			// The same boost worded from the dealing side (Lehftia 21-020C). Only its Summon arm is
 			// read here; the Character arm belongs to the combat and ability paths.
-			for (FieldAbility fa : booster.fieldAbilities()) {
+			for (FieldAbility fa : fas) {
 				Matcher m = AutoAbilityTriggers.FA_ELEMENT_SUMMON_OR_CHARACTER_DAMAGE_BOOST.matcher(fa.effectText());
 				if (!m.matches()) continue;
 				String elem = m.group("summonelement");
@@ -609,20 +609,23 @@ class DamageResolver {
 	 * it says "Character" where this one says "Forward", so a Backup's or Monster's ability carries
 	 * it too. That is why the Forward guard below is scoped to the narrower pattern rather than
 	 * gating the whole method as it used to.
+	 *
+	 * <p>Two separate things are "Forward" here and must not be conflated: the guard asks what type
+	 * the <em>damage source</em> is, which is what the narrower pattern restricts; the scan asks
+	 * which of the caster's cards are <em>printing</em> a boost, and that is every card on their
+	 * field. Building the scan from the Forward and Backup rows alone is what left Djinn 16-010H,
+	 * a Monster, unable to boost anything.
 	 */
 	int applyCasterSideElementForwardDamageBoosts(int amount, boolean targetIsP1) {
 		if (mw.currentAbilitySource == null) return amount;
 		if (mw.currentAbilitySourceIsP1 == targetIsP1) return amount;
 		boolean sourceIsForward = mw.currentAbilitySource.isForward();
 		boolean casterIsP1 = mw.currentAbilitySourceIsP1;
-		List<CardData> casterField = new ArrayList<>(casterIsP1 ? mw.p1ForwardCards : mw.p2ForwardCards);
-		// Forwards and Backups only, as the narrower pattern's scan has always been. A Monster
-		// carrying either printing is missed by both — a pre-existing gap, left alone here rather
-		// than closed as a side effect.
-		for (CardData bkp : casterIsP1 ? mw.p1BackupCards : mw.p2BackupCards)
-			if (bkp != null) casterField.add(bkp);
-		for (CardData booster : casterField) {
-			for (FieldAbility fa : booster.fieldAbilities()) {
+		for (CardData booster : mw.fieldCards(casterIsP1)) {
+			// A card stripped of its abilities prints nothing, so it boosts nothing.
+			if (mw.lostAbilitiesCards.contains(booster)) continue;
+			List<FieldAbility> fas = mw.effectiveFieldAbilities(booster);
+			for (FieldAbility fa : fas) {
 				Matcher cm = AutoAbilityTriggers.FA_ELEMENT_SUMMON_OR_CHARACTER_DAMAGE_BOOST.matcher(fa.effectText());
 				if (!cm.matches()) continue;
 				String elem = AutoAbilityTriggers.characterArmElement(cm);
@@ -634,7 +637,7 @@ class DamageResolver {
 						+ boost + " (" + before + " → " + amount + ")");
 			}
 			if (!sourceIsForward) continue;
-			for (FieldAbility fa : booster.fieldAbilities()) {
+			for (FieldAbility fa : fas) {
 				Matcher m = AutoAbilityTriggers.FA_ELEMENT_FORWARD_DAMAGE_BOOST.matcher(fa.effectText());
 				if (!m.find()) continue;
 				if (!mw.effectiveContainsElement(mw.currentAbilitySource, m.group("element"))) continue;

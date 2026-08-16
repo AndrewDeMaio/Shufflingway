@@ -7466,7 +7466,7 @@ final class GameContextImpl implements GameContext {
 			}
 
 			@Override public void revealTopNRemoveOneFromGameCastableThisTurnRestBottom(
-					int reveal, String categoryFilter) {
+					int reveal, String categoryFilter, int costReduction) {
 				Deque<CardData> deck = isP1 ? mw.gameState.getP1MainDeck() : mw.gameState.getP2MainDeck();
 				int n = Math.min(reveal, deck.size());
 				if (n == 0) { logEntry("Reveal top: deck is empty."); return; }
@@ -7481,9 +7481,10 @@ final class GameContextImpl implements GameContext {
 							// went to the bottom in the arrangement the player chose.
 							mw.gameState.addToPermanentRfp(card);
 							mw.registerBorrowedPlayable(isP1, card, new PlayableEntry(
-									PlayableEntry.SourceZone.RFP, 0, false, false, false, true));
+									PlayableEntry.SourceZone.RFP, costReduction, false, false, false, true));
 							logEntry((isP1 ? "" : "[P2] ") + card.name()
-									+ " — castable from Removed From Game until end of turn");
+									+ " — castable from Removed From Game until end of turn"
+									+ (costReduction > 0 ? " (cost -" + costReduction + ")" : ""));
 						});
 			}
 

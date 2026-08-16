@@ -589,6 +589,12 @@ class ComputerPlayer implements OpponentController {
 			if (p2PlanPayment(card, card.cost(), cardIdx, backups, backupElems, discards, discardElems)) {
 				return new P2Plan(cardIdx, card.cost(), backups, backupElems, discards, discardElems);
 			}
+			// P2 could not raise the CP. A card printing a put-into-Break-Zone alternate cost has a
+			// second route onto the field that costs no CP at all; P2 does not take it yet, and
+			// p2PlanAltPutToBzCost documents what wiring it would need.
+			if (card.altPutToBzCost() != null && p2PlanAltPutToBzCost(card)) {
+				throw new IllegalStateException("p2PlanAltPutToBzCost is a stub — see its javadoc");
+			}
 		}
 		return null;
 	}
@@ -683,6 +689,36 @@ class ComputerPlayer implements OpponentController {
 	 * toward the total but cannot satisfy per-element minimums.  {@code excludeHandIdx == -1}
 	 * means no exclusion (used by BZ-cast where the source isn't in hand).
 	 */
+	/**
+	 * Stub — whether P2 would play {@code card} by paying its put-into-Break-Zone alternate cost
+	 * instead of CP: "You can put a total of 3 Forwards or Monsters you control into the Break Zone
+	 * to play Kefka from your hand onto the field." (Kefka 4-080L). Always declines, so P2 plays
+	 * such a card only when it can raise the printed CP cost the ordinary way.
+	 *
+	 * <p>This is not merely an unwired predicate — the route is a genuinely different kind of
+	 * decision from {@link #p2PlanPayment} and needs four things before it can return true:
+	 *
+	 * <ul>
+	 *   <li>a heuristic for whether giving up {@code count} of P2's own Characters is worth the
+	 *       play at all, which is a board evaluation rather than an affordability sum — this cost
+	 *       replaces the CP cost outright, so it is available at zero CP and the question is never
+	 *       "can P2 pay" but "should it";</li>
+	 *   <li>a choice of <em>which</em> cards to hand over (weakest first is the obvious start, but
+	 *       a Backup supplying CP or an ability is worth more than its power suggests);</li>
+	 *   <li>a field on {@code P2Plan} to carry the picks, since the plan record models only CP
+	 *       payment (backups dulled, cards discarded);</li>
+	 *   <li>a branch in {@code executeP2HandPlay} that spends them through
+	 *       {@code MainWindow.putP2ForwardIntoBreakZone} and the Monster/Backup equivalents — a
+	 *       put, not a break.</li>
+	 * </ul>
+	 *
+	 * <p>{@code CostCalculator.canAffordAltCost} and {@code MainWindow.altPutToBzCandidates} are
+	 * P1-hardcoded for the same reason and would need their side parameter honoured too.
+	 */
+	boolean p2PlanAltPutToBzCost(CardData card) {
+		return false;
+	}
+
 	private boolean p2PlanPayment(CardData card, int reducedCost, int excludeHandIdx,
 			List<Integer> outBackups, Map<Integer, String> outBackupElems,
 			List<Integer> outDiscards, Map<Integer, String> outDiscardElems) {

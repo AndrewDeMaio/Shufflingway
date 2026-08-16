@@ -288,6 +288,7 @@ public class FieldAbilityParsingTest {
         if (CardData.isHasJobsOfForwardsAbility(fa.effectText())) return true;
         if (CardData.parseIfSelfJobCountTraitGrantThreshold(fa.effectText(), source.name()) >= 0) return true;
         if (CardData.parseIfSelfLbFaceUpCountTraitGrantThreshold(fa.effectText(), source.name()) >= 0) return true;
+        if (CardData.parseIfSelfPowerTraitGrantThreshold(fa.effectText(), source.name()) >= 0) return true;
         return CardData.isBackupCpAbility(fa.effectText());
     }
 
@@ -563,6 +564,8 @@ public class FieldAbilityParsingTest {
         if (CardData.isBackupCpAbility(fa.effectText())) return "BackupCpAbility";
         int lbN = CardData.parseIfSelfLbFaceUpCountTraitGrantThreshold(fa.effectText(), source.name());
         if (lbN >= 0) return "LbFaceUpTraitGrant[n≥" + lbN + " " + CardData.parseIfSelfLbFaceUpCountTraitGrantTraits(fa.effectText()) + "]";
+        int powN = CardData.parseIfSelfPowerTraitGrantThreshold(fa.effectText(), source.name());
+        if (powN >= 0) return "SelfPowerTraitGrant[pow≥" + powN + " " + CardData.parseIfSelfPowerTraitGrantTraits(fa.effectText()) + "]";
         if (CardData.parseSelfNonDmgBreakShieldDirect(fa.effectText(), source.name())) return "SelfNonDmgBreakShield";
         if (CardData.parseAttacksPerOwnDamage(fa.effectText(), source.name()))
             return "MaxAttacks[own damage]";

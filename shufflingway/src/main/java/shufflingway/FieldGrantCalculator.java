@@ -81,6 +81,12 @@ class FieldGrantCalculator {
                 int threshold = CardData.parseIfSelfJobCountTraitGrantThreshold(fa.effectText(), src.name());
                 if (threshold >= 0 && countEffectiveJobs(src, isP1) >= threshold)
                     out.addAll(CardData.parseIfSelfJobCountTraitGrantTraits(fa.effectText()));
+                // Self-power conditional ("If Ramza has 4000 power or more, Ramza gains Haste.")
+                // — Ramza 7-104H, who prints three of these at rising thresholds. Read against
+                // current power, so his own 《Lightning》 boost is what unlocks them.
+                int powerThreshold = CardData.parseIfSelfPowerTraitGrantThreshold(fa.effectText(), src.name());
+                if (powerThreshold >= 0 && currentPower(src, isP1) >= powerThreshold)
+                    out.addAll(CardData.parseIfSelfPowerTraitGrantTraits(fa.effectText()));
                 // LB face-up count conditional ("If there are N or more face-up cards in your LB deck, [name] gains [traits].")
                 int lbThreshold = CardData.parseIfSelfLbFaceUpCountTraitGrantThreshold(fa.effectText(), src.name());
                 if (lbThreshold >= 0 && countFaceUpLbCards(isP1) >= lbThreshold)
@@ -148,6 +154,33 @@ class FieldGrantCalculator {
                         && cardHasHasteSuppression(c, oppScopeApplies)) return true;
         }
         return false;
+    }
+
+    /**
+     * {@code card}'s power as it stands on {@code isP1}'s field, for a grant that gates itself on
+     * its own power.
+     *
+     * <p>Current power rather than printed, the same reading {@code MainWindow.canActivateAbility}
+     * gives Hyoh 16-097H's "You can only use this ability if Hyoh has 7000 power or more" — the
+     * wording only earns its place on a card that expects to be boosted past it.
+     *
+     * <p>Safe against the recursion this would otherwise invite: the power path never consults
+     * {@link #computeConditionalTraitsForTarget}, which is exactly why
+     * {@code MainWindow.fpgTargetTraits} resolves its trait filter off the raw maps.
+     *
+     * <p>Only Forwards print the wording today. The Monster arm is here because
+     * {@code fieldForwardPower} would answer 0 for a Monster that is not currently acting as a
+     * Forward, and a wrong number is worse than a longer switch.
+     */
+    private int currentPower(CardData card, boolean isP1) {
+        ForwardTarget slot = mw.findFieldSlot(card, isP1);
+        if (slot == null) return card.power();
+        return switch (slot.zone()) {
+            case FORWARD -> mw.fieldForwardPower(isP1, slot.zone(), slot.idx());
+            case MONSTER -> isP1 ? mw.effectiveP1MonsterPower(slot.idx())
+                                 : mw.effectiveP2MonsterPower(slot.idx());
+            default      -> card.power();
+        };
     }
 
     /** Every card on {@code isP1}'s field: Forwards, Backups and Monsters. */

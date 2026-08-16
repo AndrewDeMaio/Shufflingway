@@ -194,6 +194,51 @@ public record CardData(
         "\\(instead\\s+of\\s+paying\\s+the\\s+CP\\s+cost\\)\\s+to\\s+(?:cast|play)\\s+\\S[^.]*\\.?"
     );
 
+    /**
+     * Matches the alternate cast cost paid by putting your own Characters into the Break Zone
+     * rather than CP: "You can put a total of 3 Forwards or Monsters you control into the Break
+     * Zone to play Kefka from your hand onto the field." — Kefka 4-080L.
+     *
+     * <p>Unlike its neighbours this one carries no "(instead of paying the CP cost)" marker. It
+     * does not need one: "to play Kefka from your hand onto the field" is already a complete
+     * description of what the payment buys, so the cost replaces the CP cost outright rather than
+     * reducing it. That is why {@link #altPutToBzCost} reports no CP alongside it.
+     *
+     * <p>"a total of" is what makes {@code types} one pool rather than a count per type — any three
+     * cards across the two rows will do. Group {@code count} is that total.
+     */
+    private static final Pattern ALT_COST_PUT_TO_BZ = Pattern.compile(
+        "(?i)You\\s+can\\s+put\\s+a\\s+total\\s+of\\s+(?<count>\\d+)\\s+" +
+        "(?<types>Forwards?(?:\\s+or\\s+Monsters?)?|Monsters?(?:\\s+or\\s+Forwards?)?|Characters?)\\s+" +
+        "you\\s+control\\s+into\\s+the\\s+Break\\s+Zone\\s+to\\s+play\\s+\\S[^.]*?\\s+" +
+        "from\\s+your\\s+hand\\s+onto\\s+the\\s+field[.!]?"
+    );
+
+    /**
+     * An alternate cast cost paid by putting {@code count} of your own Characters into the Break
+     * Zone. The three flags say which rows may supply them; "a total of" pools them, so the count
+     * is across all the permitted rows rather than per row.
+     */
+    public record AltPutToBzCost(int count, boolean inclForwards, boolean inclMonsters,
+            boolean inclBackups) {}
+
+    /**
+     * This card's put-into-Break-Zone alternate cast cost, or {@code null} when it prints none.
+     *
+     * <p>Reported on its own rather than through {@link #altCpElements()} because it leaves no CP
+     * to pay: the sentence buys the play outright.
+     */
+    public AltPutToBzCost altPutToBzCost() {
+        Matcher m = ALT_COST_PUT_TO_BZ.matcher(textEn);
+        if (!m.find()) return null;
+        String types = m.group("types").toLowerCase(Locale.ROOT);
+        boolean character = types.contains("character");
+        return new AltPutToBzCost(Integer.parseInt(m.group("count")),
+                character || types.contains("forward"),
+                character || types.contains("monster"),
+                character);
+    }
+
     /** One "N active [Element] [Category X] [Job Y] Forward(s) [you control]" clause of {@link #ALT_COST_DULL}. */
     private static final Pattern ALT_DULL_REQUIREMENT = Pattern.compile(
         "(?i)^(?<count>\\d+)\\s+active\\s+" +
@@ -698,6 +743,21 @@ public record CardData(
     );
 
     /**
+     * "You can only play [Name] if a Forward you controlled has been put from the field into the
+     * Break Zone this turn." — Nox Suzaku 15-130H.
+     *
+     * <p>Says "play" rather than "cast" because Nox Suzaku is a Forward; both verbs are accepted so
+     * a Summon printing the same condition would be read too. The board condition it names is
+     * already tracked, per player and per turn, as {@code PlayerTurnState.forwardPutToBZThisTurn} —
+     * {@link #FORWARD_PUT_TO_BZ_THIS_TURN_RESTRICTION} gates <em>abilities</em> on the same flag.
+     * This is that restriction moved to the cast.
+     */
+    private static final Pattern CAST_REQUIRES_FORWARD_PUT_TO_BZ = Pattern.compile(
+        "(?i)You\\s+can\\s+only\\s+(?:cast|play)\\s+\\S[^.]+?\\s+if\\s+a\\s+Forward\\s+you\\s+controlled\\s+" +
+        "has\\s+been\\s+put\\s+from\\s+the\\s+field\\s+into\\s+the\\s+Break\\s+Zone\\s+this\\s+turn[.!]?"
+    );
+
+    /**
      * "You can only cast X if your opponent has N cards or less in their hand."
      * Group {@code count} — the maximum allowed hand size.
      */
@@ -714,6 +774,21 @@ public record CardData(
     private static final Pattern CAST_MUST_CONTROL = Pattern.compile(
         "(?i)You\\s+must\\s+control\\s+(?<count>\\d+)\\s+or\\s+more\\s+" +
         "(?<jobs>Job\\s+.+?\\s+Forwards?(?:\\s+and/or\\s+Job\\s+.+?\\s+Forwards?)*)\\s+" +
+        "to\\s+cast\\s+\\S[^.]*?[.!]?"
+    );
+
+    /**
+     * "You must control N or more Forwards to cast [Name]." (Steiner 14-109C)
+     * Group {@code count} — minimum number of Forwards, of any Job, Element or Category.
+     *
+     * <p>The unqualified sibling of {@link #CAST_MUST_CONTROL}, which requires a "Job X Forwards"
+     * segment after "or more" and so cannot reach this wording. The two cannot both match one
+     * sentence — either "Job" follows the count or "Forwards to cast" does — but the parse site
+     * still tries the qualified form first, so a future "N or more Job X Forwards" printing keeps
+     * its job filter rather than being flattened into a bare count.
+     */
+    private static final Pattern CAST_MUST_CONTROL_FORWARD_COUNT = Pattern.compile(
+        "(?i)You\\s+must\\s+control\\s+(?<count>\\d+)\\s+or\\s+more\\s+Forwards?\\s+" +
         "to\\s+cast\\s+\\S[^.]*?[.!]?"
     );
 
@@ -833,6 +908,7 @@ public record CardData(
         boolean opponentTurnOnly = CAST_OPPONENT_TURN_ONLY.matcher(textEn).find();
         boolean requiresNoFwds   = CAST_REQUIRES_NO_FORWARDS.matcher(textEn).find();
         boolean requiresAFwd     = CAST_REQUIRES_A_FORWARD.matcher(textEn).find();
+        boolean requiresFwdToBZ  = CAST_REQUIRES_FORWARD_PUT_TO_BZ.matcher(textEn).find();
 
         java.util.Set<String> requiredBZTypes = java.util.Set.of();
         Matcher bzM = CAST_REQUIRES_BZ_TYPES.matcher(textEn);
@@ -873,6 +949,16 @@ public record CardData(
                     null, 0, java.util.List.of());
         }
         if (mustControl == null) {
+            // Checked after the Job-qualified form above, so a job filter is never lost to the
+            // bare count. See CAST_MUST_CONTROL_FORWARD_COUNT.
+            Matcher cntM = CAST_MUST_CONTROL_FORWARD_COUNT.matcher(textEn);
+            if (cntM.find()) {
+                mustControl = new ControlCondition(
+                        java.util.List.of(), Integer.parseInt(cntM.group("count")), false,
+                        "Forward", null, null, null, 0, java.util.List.of());
+            }
+        }
+        if (mustControl == null) {
             Matcher catM = CAST_MUST_CONTROL_CATEGORY_FWD.matcher(textEn);
             if (catM.find()) {
                 mustControl = new ControlCondition(
@@ -898,12 +984,12 @@ public record CardData(
         if (!yourTurnOnly && !mainPhaseOnly && !opponentTurnOnly && !requiresNoFwds
                 && !requiresAFwd && requiredBZTypes.isEmpty()
                 && minBZAndRfpSummons == 0 && maxOpponentHand < 0 && mustControl == null
-                && mustControlCosts.isEmpty()) {
+                && mustControlCosts.isEmpty() && !requiresFwdToBZ) {
             return null;
         }
         return new CastRestriction(false, yourTurnOnly, mainPhaseOnly, opponentTurnOnly,
                 requiresNoFwds, requiresAFwd, requiredBZTypes, minBZAndRfpSummons,
-                maxOpponentHand, mustControl, mustControlCosts);
+                maxOpponentHand, mustControl, mustControlCosts, requiresFwdToBZ);
     }
 
     /**
@@ -6458,6 +6544,25 @@ public record CardData(
         "(?<traits>(?:(?:Haste|First\\s+Strike|Brave|Back\\s+Attack)(?:\\s*(?:,|and)\\s*)?)+)[.!]?\\s*$"
     );
 
+    /**
+     * Matches "If [name] has N power or more, [name] gains [traits]." — Ramza 7-104H, which prints
+     * three of these at 4000/6000/8000 for Haste, Brave and First Strike.
+     *
+     * <p>The threshold is read against the card's <em>current</em> power, not its printed one; that
+     * is the whole point of the wording, and on Ramza the printed 2000 clears none of the three.
+     *
+     * <p>The trait list is anchored to the end of the sentence, so this claims only the grants that
+     * are traits and nothing else. Three corpus printings open identically and then continue past
+     * the keyword — Ramza 5-118L ("Haste and \"When Ramza attacks …\""), Gilgamesh 7-088L ("Brave
+     * and can attack twice in the same turn") and Oschon 26-047H (two quoted abilities and no
+     * keyword at all). Matching those on the trait half alone would grant the keyword and silently
+     * drop the rest, so the anchor refuses them; they stay unhandled, which is what they were.
+     */
+    static final Pattern IF_SELF_POWER_TRAIT_GRANT = Pattern.compile(
+        "(?i)^If\\s+(?<n1>.+?)\\s+has\\s+(?<n>\\d+)\\s+power\\s+or\\s+more,\\s+(?<n2>.+?)\\s+gains?\\s+" +
+        "(?<traits>(?:(?:Haste|First\\s+Strike|Brave|Back\\s+Attack)(?:\\s*(?:,|and)\\s*)?)+)[.!]?\\s*$"
+    );
+
     /** Matches "If there are N or more face-up cards in your LB deck, [name] gains [traits]." */
     static final Pattern IF_SELF_LB_FACEUP_COUNT_TRAIT_GRANT = Pattern.compile(
         "(?i)^If\\s+there\\s+are\\s+(?<n>\\d+)\\s+or\\s+more\\s+face[- ]up\\s+cards?\\s+in\\s+your\\s+LB\\s+deck,\\s+(?<cardname>.+?)\\s+gains?\\s+" +
@@ -6723,6 +6828,7 @@ public record CardData(
             if (ALT_COST_SUMMON_REMOVE_FIELD.matcher(seg).find()) continue;
             if (ALT_COST_NONSUMMON.matcher(seg).find()) continue;
             if (ALT_COST_DULL.matcher(seg).find())      continue;
+            if (ALT_COST_PUT_TO_BZ.matcher(seg).find()) continue;
             // "If you cast [card], you may pay 《…》 as an extra cost." — a cast-time option read
             // by {@link #extraCost}, not a field ability. It has no continuous effect of its own;
             // what it does is set the flag a later "if you paid the extra cost" clause reads.
@@ -6793,6 +6899,7 @@ public record CardData(
             // Cast/play restrictions — handled as static properties via castRestriction()
             if (CAST_PROHIBITED.matcher(seg).find())                          continue;
             if (CAST_REQUIRES_NO_FORWARDS.matcher(seg).find())                continue;
+            if (CAST_REQUIRES_FORWARD_PUT_TO_BZ.matcher(seg).find())          continue;
             // The three conditional forms that print as their own sentence (Gogo 27-099H,
             // Titania 13-132S, Eiko 23-124L). "during your turn" and "during your Main Phase"
             // are deliberately absent: those wordings occur as a *prefix* on a longer ability,
@@ -6801,6 +6908,7 @@ public record CardData(
             if (CAST_REQUIRES_BZ_TYPES.matcher(seg).find())                   continue;
             if (CAST_MIN_BZ_RFP_SUMMONS.matcher(seg).find())                  continue;
             if (CAST_MUST_CONTROL.matcher(seg).find())                        continue;
+            if (CAST_MUST_CONTROL_FORWARD_COUNT.matcher(seg).find())          continue;
             if (CAST_MUST_CONTROL_COSTS.matcher(seg).find())                  continue;
             if (CAST_MUST_CONTROL_CATEGORY_FWD.matcher(seg).find())          continue;
             if (CAST_ONLY_PLAY_IF_CONTROL_CATEGORY_FWD.matcher(seg).find())  continue;
@@ -7324,6 +7432,34 @@ public record CardData(
      */
     public static EnumSet<Trait> parseIfSelfJobCountTraitGrantTraits(String text) {
         Matcher m = IF_SELF_JOB_COUNT_TRAIT_GRANT.matcher(text.trim());
+        if (!m.matches()) return EnumSet.noneOf(Trait.class);
+        String traitsText = m.group("traits");
+        EnumSet<Trait> result = EnumSet.noneOf(Trait.class);
+        if (ICB_EFFECT_HASTE.matcher(traitsText).find())        result.add(Trait.HASTE);
+        if (ICB_EFFECT_BRAVE.matcher(traitsText).find())        result.add(Trait.BRAVE);
+        if (ICB_EFFECT_FIRST_STRIKE.matcher(traitsText).find()) result.add(Trait.FIRST_STRIKE);
+        if (ICB_EFFECT_BACK_ATTACK.matcher(traitsText).find())  result.add(Trait.BACK_ATTACK);
+        return result;
+    }
+
+    /**
+     * Returns the power threshold for a "If [cardName] has N power or more, gains [traits]" ability,
+     * or -1 if the text does not match or either name is not {@code cardName}.
+     */
+    public static int parseIfSelfPowerTraitGrantThreshold(String text, String cardName) {
+        Matcher m = IF_SELF_POWER_TRAIT_GRANT.matcher(text.trim());
+        if (!m.matches()) return -1;
+        if (!m.group("n1").trim().equalsIgnoreCase(cardName)) return -1;
+        if (!m.group("n2").trim().equalsIgnoreCase(cardName)) return -1;
+        return Integer.parseInt(m.group("n"));
+    }
+
+    /**
+     * Returns the traits granted by a "If [cardName] has N power or more, gains [traits]" ability.
+     * Assumes the text already matches {@link #IF_SELF_POWER_TRAIT_GRANT}.
+     */
+    public static EnumSet<Trait> parseIfSelfPowerTraitGrantTraits(String text) {
+        Matcher m = IF_SELF_POWER_TRAIT_GRANT.matcher(text.trim());
         if (!m.matches()) return EnumSet.noneOf(Trait.class);
         String traitsText = m.group("traits");
         EnumSet<Trait> result = EnumSet.noneOf(Trait.class);
