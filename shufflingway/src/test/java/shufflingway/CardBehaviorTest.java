@@ -6771,7 +6771,7 @@ public class CardBehaviorTest {
 
     /**
      * Seats {@code card} on P2's Forward row with its owner recorded. The owner matters here in a
-     * way it does not for most placements: the uniqueness rule sends the loser to its owner's
+     * way it does not for most placements: the uniqueness rule sends every copy to its owner's
      * Break Zone, and that lookup is by identity.
      */
     private static void placeP2Forward(MainWindow mw, CardData card) {
@@ -6798,8 +6798,8 @@ public class CardBehaviorTest {
         placeP2Forward(mw, makeForward("Cid", "Fire", 3, 7000));
         placeP2Forward(mw, makeForward("Cid", "Fire", 3, 7000));
 
-        assertEquals(1, mw.p2ForwardCards.size(),
-                "with no grant anywhere the uniqueness rule applies to P2 as it always did");
+        assertEquals(0, mw.p2ForwardCards.size(),
+                "with no grant anywhere the uniqueness rule applies to P2, taking both copies");
     }
 
     @Test
@@ -6811,8 +6811,57 @@ public class CardBehaviorTest {
         placeP2Forward(mw, makeForward("Cid", "Fire", 3, 7000));
         placeP2Forward(mw, makeForward("Cid", "Fire", 3, 7000));
 
-        assertEquals(1, mw.p2ForwardCards.size(),
+        assertEquals(0, mw.p2ForwardCards.size(),
                 "the permission belongs to P1 — reading it for P2 is the same seat mix-up in reverse");
+    }
+
+    // =========================================================================================
+    // The rule takes both copies, and it has to empty the whole slot when it does.
+    //
+    // Two same-named Backups (Gnash 18-046 then Gnash 20-052) left the first copy still painted in
+    // its slot while the second seated itself in the next one along. Two faults met there: the rule
+    // spared the arriving copy instead of breaking it alongside the resident one, and the Backup
+    // branch nulled the slot's card without nulling its art URL — which is the field
+    // refreshP2BackupSlot reads to decide whether the slot is empty, so it kept drawing a card that
+    // had already gone to the Break Zone.
+    // =========================================================================================
+
+    @Test
+    void twoSameNamedBackupsBothLeaveAndNeitherGoesOnPaintingItsSlot() {
+        MainWindow mw = new MainWindow();
+        CardData first  = makeFieldAbilityCard("Gnash", "Water", "Backup", "");
+        CardData second = makeFieldAbilityCard("Gnash", "Water", "Backup", "");
+        mw.gameState.getIdentity().put(first,  false);
+        mw.gameState.getIdentity().put(second, false);
+
+        // Seat the resident copy the way the real app leaves a slot — card and art together, which
+        // is the state the stale-URL fault needs to show itself.
+        mw.p2BackupCards[0]  = first;
+        mw.p2BackupUrls[0]   = "gnash-18-046.png";
+        mw.p2BackupStates[0] = CardState.DULL;
+
+        mw.placeP2CardInFirstBackupSlot(second);
+
+        assertNull(mw.p2BackupCards[0], "the resident copy leaves the field");
+        assertNull(mw.p2BackupUrls[0],
+                "and its art leaves with it — a surviving URL keeps the slot painting a broken card");
+        assertNull(mw.p2BackupCards[1], "the arriving copy goes too: the rule takes both, not one");
+        assertNull(mw.p2BackupUrls[1]);
+        assertTrue(mw.gameState.getP2BreakZone().contains(first),  "resident copy → Break Zone");
+        assertTrue(mw.gameState.getP2BreakZone().contains(second), "arriving copy → Break Zone");
+    }
+
+    @Test
+    void aLoneBackupIsLeftAloneByTheUniquenessRule() {
+        MainWindow mw = new MainWindow();
+        CardData only = makeFieldAbilityCard("Gnash", "Water", "Backup", "");
+        mw.gameState.getIdentity().put(only, false);
+
+        mw.placeP2CardInFirstBackupSlot(only);
+
+        assertSame(only, mw.p2BackupCards[0],
+                "a card overlaps its own name, so the rule must not fire on a single copy");
+        assertTrue(mw.gameState.getP2BreakZone().isEmpty());
     }
 
     // =========================================================================================

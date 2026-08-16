@@ -21,6 +21,8 @@ import java.awt.Insets;
 import java.awt.Point;
 import java.awt.RenderingHints;
 import java.awt.Toolkit;
+import java.awt.event.ComponentAdapter;
+import java.awt.event.ComponentEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
@@ -66,6 +68,7 @@ import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
+import javax.swing.JScrollBar;
 import javax.swing.JScrollPane;
 import javax.swing.JSeparator;
 import javax.swing.JSpinner;
@@ -114,9 +117,11 @@ import static shufflingway.graphics.CardAnimation.CARD_W;
 import shufflingway.graphics.CardBreakAnimator;
 import shufflingway.graphics.CardRfpAnimator;
 import shufflingway.graphics.CardSlideAnimator;
+import shufflingway.graphics.BoardEdgeFadePanel;
 import shufflingway.graphics.CrystalDisplay;
 import shufflingway.graphics.GradientPanel;
 import shufflingway.graphics.GrayscaleLabel;
+import shufflingway.graphics.HandFanPanel;
 import shufflingway.graphics.TraitTab;
 import shufflingway.graphics.TriangleIcon;
 import shufflingway.menu.DebugMenu;
@@ -169,9 +174,11 @@ public class MainWindow {
 	private JButton p1LimitButton;
 	private JButton p2LimitButton;
 	private JPanel handPanel;
+	/** The strip between the two zones: P2's tail, the divider, P1's gradient. */
+	private JPanel gameBoard;
 	JLabel p1BreakLabel;
 	JLabel p2BreakLabel;
-	private JLabel p2HandCountLabel;
+	private HandFanPanel p2HandFan;
 	private GrayscaleLabel p1RemoveLabel;
 	private GrayscaleLabel p2RemoveLabel;
 	private JButton        p1RemoveButton;
@@ -1008,37 +1015,17 @@ public class MainWindow {
 		p2CornerPanel.add(p2DeckLabel,  BorderLayout.CENTER);
 		p2CornerPanel.add(p2BottomBar,  BorderLayout.SOUTH);
 
-		p2HandCountLabel = new JLabel("P2 Hand: 0", SwingConstants.CENTER) {
-			@Override protected void paintComponent(Graphics g) {
-				Graphics2D g2 = (Graphics2D) g.create();
-				g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING,
-						RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-				FontMetrics fm = g2.getFontMetrics(getFont());
-				String text = getText();
-				int x = (getWidth()  - fm.stringWidth(text)) / 2;
-				int y = fm.getAscent();
-				g2.setFont(getFont());
-				g2.setColor(new Color(0, 0, 0, 180));
-				g2.drawString(text, x + 1, y + 1);
-				g2.setColor(getForeground());
-				g2.drawString(text, x, y);
-				g2.dispose();
-			}
-		};
-		p2HandCountLabel.setFont(FontLoader.loadPixelFont(10));
-		p2HandCountLabel.setForeground(Color.LIGHT_GRAY);
-		p2HandCountLabel.setOpaque(false);
-
-		// Crystal display sits to the left of the hand-count label
-		JPanel p2HandRow = new JPanel(new BorderLayout(0, 0));
-		p2HandRow.setOpaque(false);
-		p2HandRow.add(p2CrystalDisplay, BorderLayout.WEST);
-		p2HandRow.add(p2HandCountLabel,  BorderLayout.CENTER);
+		// The crystal badge is pinned WEST rather than dropped straight into the wrapper's SOUTH:
+		// CrystalDisplay centres a fixed-size hexagon within getWidth(), so stretching it across the
+		// full column would slide the hexagon to the column's centre. P1 mirrors this with EAST.
+		JPanel p2CrystalRow = new JPanel(new BorderLayout(0, 0));
+		p2CrystalRow.setOpaque(false);
+		p2CrystalRow.add(p2CrystalDisplay, BorderLayout.WEST);
 
 		JPanel p2CornerWrapper = new JPanel(new BorderLayout(0, 2));
 		p2CornerWrapper.setOpaque(false);
-		p2CornerWrapper.add(p2CornerPanel, BorderLayout.CENTER);
-		p2CornerWrapper.add(p2HandRow,     BorderLayout.SOUTH);
+		p2CornerWrapper.add(p2CornerPanel,  BorderLayout.CENTER);
+		p2CornerWrapper.add(p2CrystalRow,   BorderLayout.SOUTH);
 
 		JPanel p2DamagePanel = buildDamageZonePanel("P2");
 
@@ -1065,14 +1052,27 @@ public class MainWindow {
 
 		JScrollPane p2ForwardZone = buildForwardZonePanel(false);
 
+		p2HandFan = new HandFanPanel(false, this::loadCardbackImage);
+
+		// The fan claims the top of the band, pushing the backups down away from the screen edge.
+		// Its height is paid for out of the forward zone's spare seating — see buildForwardZonePanel.
 		JPanel p2TopRow = new JPanel(new BorderLayout());
+		p2TopRow.add(p2HandFan,       BorderLayout.NORTH);
 		p2TopRow.add(p2BackupWrapper, BorderLayout.CENTER);
 
 		JPanel p2MainArea = new JPanel(new BorderLayout(0, 4));
+		// Transparent so p2ZonesPanel's board fade shows through the middle column — the Forward
+		// zone's scroll pane and inner panels are already non-opaque, so nothing else covers it.
+		p2MainArea.setOpaque(false);
 		p2MainArea.add(p2TopRow,      BorderLayout.NORTH);
 		p2MainArea.add(p2ForwardZone, BorderLayout.SOUTH);
 
-		p2ZonesPanel = new JPanel(new GridBagLayout());
+		// The board gradient starts inside P2's own zone rather than in the thin strip below it.
+		// BOARD_FADE_H is bounded by where the side columns turn transparent — the crystal row for
+		// the corner, the bottom of the damage stack — or their solid backgrounds would step across
+		// the fade. It comfortably clears the Forward row's scrollbar, which is the point.
+		p2ZonesPanel = new BoardEdgeFadePanel(true, BOARD_FADE_H);
+		p2ZonesPanel.setLayout(new GridBagLayout());
 		{
 			GridBagConstraints z = new GridBagConstraints();
 			z.gridy = 0; z.fill = GridBagConstraints.NONE; z.anchor = GridBagConstraints.NORTH; z.weightx = 0;
@@ -1289,7 +1289,7 @@ public class MainWindow {
 		divider.setForeground(Color.LIGHT_GRAY);
 		fieldDivider = divider;
 
-		JPanel gameBoard = new JPanel(new GridBagLayout());
+		gameBoard = new JPanel(new GridBagLayout());
 		gameBoard.setBackground(UIManager.getColor("Panel.background"));
 
 		GridBagConstraints gbc = new GridBagConstraints();
@@ -2540,9 +2540,13 @@ public class MainWindow {
 		}
 	}
 
+	/**
+	 * Refreshes P2's fanned hand — one card back per card held, plus the count tooltip. Named for
+	 * the label it used to drive; kept that way because ~80 call sites across six files reference it.
+	 */
 	void refreshP2HandCountLabel() {
-		if (p2HandCountLabel == null) return;
-		p2HandCountLabel.setText("P2 Hand: " + gameState.getP2Hand().size());
+		if (p2HandFan == null) return;
+		p2HandFan.setCount(gameState.getP2Hand().size());
 	}
 
 	// -------------------------------------------------------------------------
@@ -12271,7 +12275,8 @@ public class MainWindow {
 	/**
 	 * Enforces the uniqueness rule after {@code incoming} has entered the field.
 	 * Every card on that side (including {@code incoming} itself) whose name overlaps
-	 * is sent directly to the Break Zone.  This does NOT count as "breaking", so
+	 * is sent directly to the Break Zone — the rule takes both copies, it does not let
+	 * the owner keep one.  This does NOT count as "breaking", so
 	 * "cannot be broken" protection is bypassed and break-zone auto-abilities do not
 	 * fire.  "Leaves field" auto-abilities still fire.  Multicards are exempt.
 	 *
@@ -12282,14 +12287,15 @@ public class MainWindow {
 	private boolean sendToBreakZoneByUniquenessRule(CardData incoming, boolean isP1) {
 		if (incoming.multicard()) return false;
 		if (isMultiNameExceptionActive(incoming.name(), isP1)) return false;
-		boolean conflict = false;
+		// Every copy goes, the arriving one included, so the conflict has to be settled up front:
+		// the loops below deliberately match incoming as well, and on their own they cannot tell
+		// "a second copy is on the field" from "incoming matched itself".
+		if (!hasUniquenessConflict(incoming, isP1)) return false;
 		if (isP1) {
 			// P1 forwards
 			for (int i = p1ForwardCards.size() - 1; i >= 0; i--) {
 				CardData c = p1ForwardCards.get(i);
-				if (c == incoming) continue;
 				if (!cardNamesOverlap(incoming, c)) continue;
-				conflict = true;
 				logEntry("[Uniqueness] " + c.name() + " — sent to Break Zone");
 				animateUniquenessSlide(p1ForwardLabels.get(i), true);
 				CardData top = p1ForwardPrimedTop.get(i);
@@ -12311,20 +12317,18 @@ public class MainWindow {
 			// P1 backups
 			for (int i = 0; i < p1BackupCards.length; i++) {
 				CardData c = p1BackupCards[i];
-				if (c == null || c == incoming || !cardNamesOverlap(incoming, c)) continue;
-				conflict = true;
+				if (c == null || !cardNamesOverlap(incoming, c)) continue;
 				logEntry("[Uniqueness] " + c.name() + " — sent to Break Zone");
 				animateUniquenessSlide(p1BackupLabels[i], true);
 				addToBreakZone(c, true);
-				p1BackupCards[i] = null; p1BackupStates[i] = CardState.ACTIVE;
+				clearBackupSlotState(i, true);
 				refreshP1BackupSlot(i); refreshP1BreakLabel();
 				autoAbilityTriggers.triggerAutoAbilitiesForLeavesField(c, true);
 			}
 			// P1 monsters
 			for (int i = p1MonsterCards.size() - 1; i >= 0; i--) {
 				CardData c = p1MonsterCards.get(i);
-				if (c == incoming || !cardNamesOverlap(incoming, c)) continue;
-				conflict = true;
+				if (!cardNamesOverlap(incoming, c)) continue;
 				logEntry("[Uniqueness] " + c.name() + " — sent to Break Zone");
 				addToBreakZone(c, true);
 				p1MonsterTempForwardPower.remove(c);
@@ -12342,9 +12346,7 @@ public class MainWindow {
 			// P2 forwards
 			for (int i = p2ForwardCards.size() - 1; i >= 0; i--) {
 				CardData c = p2ForwardCards.get(i);
-				if (c == incoming) continue;
 				if (!cardNamesOverlap(incoming, c)) continue;
-				conflict = true;
 				logEntry("[Uniqueness] [P2] " + c.name() + " — sent to Break Zone");
 				animateUniquenessSlide(p2ForwardLabels.get(i), false);
 				addToBreakZone(c, true);
@@ -12356,20 +12358,18 @@ public class MainWindow {
 			// P2 backups
 			for (int i = 0; i < p2BackupCards.length; i++) {
 				CardData c = p2BackupCards[i];
-				if (c == null || c == incoming || !cardNamesOverlap(incoming, c)) continue;
-				conflict = true;
+				if (c == null || !cardNamesOverlap(incoming, c)) continue;
 				logEntry("[Uniqueness] [P2] " + c.name() + " — sent to Break Zone");
 				animateUniquenessSlide(p2BackupLabels[i], false);
 				addToBreakZone(c, true);
-				p2BackupCards[i] = null; p2BackupStates[i] = CardState.ACTIVE;
+				clearBackupSlotState(i, false);
 				refreshP2BackupSlot(i); refreshP2BreakLabel();
 				autoAbilityTriggers.triggerAutoAbilitiesForLeavesField(c, false);
 			}
 			// P2 monsters
 			for (int i = p2MonsterCards.size() - 1; i >= 0; i--) {
 				CardData c = p2MonsterCards.get(i);
-				if (c == incoming || !cardNamesOverlap(incoming, c)) continue;
-				conflict = true;
+				if (!cardNamesOverlap(incoming, c)) continue;
 				logEntry("[Uniqueness] [P2] " + c.name() + " — sent to Break Zone");
 				addToBreakZone(c, true);
 				p2MonsterTempForwardPower.remove(c);
@@ -12384,7 +12384,58 @@ public class MainWindow {
 				autoAbilityTriggers.triggerAutoAbilitiesForLeavesField(c, false);
 			}
 		}
-		return conflict;
+		return true;
+	}
+
+	/**
+	 * Whether {@code isP1} already has a card sharing {@code incoming}'s name, {@code incoming}
+	 * itself excluded. Separate from the rule process because that process breaks every copy: once
+	 * it is running it has no way to distinguish the second copy from the first.
+	 */
+	private boolean hasUniquenessConflict(CardData incoming, boolean isP1) {
+		for (CardData c : isP1 ? p1ForwardCards : p2ForwardCards)
+			if (c != incoming && cardNamesOverlap(incoming, c)) return true;
+		for (CardData c : isP1 ? p1BackupCards : p2BackupCards)
+			if (c != null && c != incoming && cardNamesOverlap(incoming, c)) return true;
+		for (CardData c : isP1 ? p1MonsterCards : p2MonsterCards)
+			if (c != incoming && cardNamesOverlap(incoming, c)) return true;
+		return false;
+	}
+
+	/**
+	 * Empties one side's Backup slot {@code idx} — the card, its art, its state flags and the four
+	 * per-card side maps keyed on it — without implying anything about where the card went. Callers
+	 * move it themselves; this is only the slot bookkeeping, so it carries no logging or triggers.
+	 *
+	 * <p>The art URL matters as much as the card reference: {@code refreshP1BackupSlot} treats a
+	 * null URL as "slot empty" and returns early, so a slot whose card is nulled while its URL
+	 * survives goes on painting the departed card indefinitely.
+	 */
+	private void clearBackupSlotState(int idx, boolean isP1) {
+		CardData c = isP1 ? p1BackupCards[idx] : p2BackupCards[idx];
+		if (isP1) {
+			if (c != null) {
+				p1BackupTempForwardPower.remove(c); p1BackupForwardBoost.remove(c);
+				p1BackupTempTraits.remove(c);       p1BackupForwardDamage.remove(c);
+			}
+			if (p1BackupAttackIdx == idx) p1BackupAttackIdx = -1;
+			p1BackupCards[idx]  = null;
+			p1BackupUrls[idx]   = null;
+			p1BackupStates[idx] = CardState.ACTIVE;
+			p1BackupFrozen[idx] = false;
+			if (p1BackupLabels[idx] != null) { p1BackupLabels[idx].setIcon(null); p1BackupLabels[idx].setText(null); }
+		} else {
+			if (c != null) {
+				p2BackupTempForwardPower.remove(c); p2BackupForwardBoost.remove(c);
+				p2BackupTempTraits.remove(c);       p2BackupForwardDamage.remove(c);
+			}
+			if (p2BackupAttackIdx == idx) p2BackupAttackIdx = -1;
+			p2BackupCards[idx]  = null;
+			p2BackupUrls[idx]   = null;
+			p2BackupStates[idx] = CardState.ACTIVE;
+			p2BackupFrozen[idx] = false;
+			if (p2BackupLabels[idx] != null) { p2BackupLabels[idx].setIcon(null); p2BackupLabels[idx].setText(null); }
+		}
 	}
 
 	/**
@@ -12680,18 +12731,39 @@ public class MainWindow {
 	 */
 	private static final int FORWARD_ZONE_H = CARD_H * 5 / 4;
 
+	/**
+	 * How far the board gradient reaches up into a player's zone. Bounded above by the band where
+	 * that zone's side columns have already ended — past the corner column's crystal row and the
+	 * bottom of the damage stack — since those are opaque and would step across the fade.
+	 */
+	private static final int BOARD_FADE_H = CARD_H / 3;
+
 	// -------------------------------------------------------------------------
 	// Forward and Monster zones - panels, placement, slot rendering
 	// -------------------------------------------------------------------------
 
 	private JScrollPane buildForwardZonePanel(boolean isP1) {
+		// A horizontal scrollbar is laid out inside the scroll pane's height, so whatever it takes
+		// comes out of the cards. It only bites P2: a scroll pane puts the bar along its bottom
+		// edge, which for P1 is the far side (its spare height already lives there) but for P2 is
+		// the centre-facing side, directly between its cards and the board.
+		final int barH = new JScrollBar(JScrollBar.HORIZONTAL).getPreferredSize().height;
+
+		// P2 surrenders its spare seating to the hand fan above the backups — see the seat comment
+		// below for what that spare is and why only P2 has it to give — but keeps enough for the
+		// scrollbar, so the bar overhangs the board gradient instead of cropping the cards. P1 keeps
+		// the full height until its own fan lands, at which point this branch collapses.
+		final int zoneH = isP1
+				? FORWARD_ZONE_H
+				: Math.max(CARD_H + barH, FORWARD_ZONE_H - HandFanPanel.peekHeight());
+
 		JPanel forwardInner = new JPanel(new FlowLayout(FlowLayout.CENTER, 4, 0)) {
 			@Override
 			public Dimension getPreferredSize() {
 				int gap   = 4;
 				int slots = getComponentCount();
 				int width = gap + (CARD_H + gap) * slots;
-				return new Dimension(Math.max(width, gap * 2), FORWARD_ZONE_H);
+				return new Dimension(Math.max(width, gap * 2), zoneH);
 			}
 		};
 		forwardInner.setOpaque(false);
@@ -12704,7 +12776,7 @@ public class MainWindow {
 				int gap   = 4;
 				int slots = getComponentCount();
 				int width = slots > 0 ? gap + (CARD_H + gap) * slots : 0;
-				return new Dimension(width, FORWARD_ZONE_H);
+				return new Dimension(width, zoneH);
 			}
 		};
 		monsterInner.setOpaque(false);
@@ -12713,20 +12785,21 @@ public class MainWindow {
 
 		// Seat P2's cards against the centre-facing edge of the zone.
 		//
-		// The zone is FORWARD_ZONE_H tall but a card is only CARD_H, and FlowLayout packs its
-		// single row against the top of the container. P1's zone is the NORTH child of the bottom
-		// band, so its top edge faces the centre and top-packed cards already sit against it.
-		// P2's zone is the SOUTH child of the top band, so its *bottom* edge faces the centre and
-		// the spare height lands between P2's cards and the centre line — seating them further out
-		// than P1's by exactly that amount. Pushing P2's rows down by the spare height mirrors P1.
+		// The zone is taller than a card, and FlowLayout packs its single row against the top of
+		// the container. P1's zone is the NORTH child of the bottom band, so its top edge faces the
+		// centre and top-packed cards already sit against it. P2's zone is the SOUTH child of the
+		// top band, so its *bottom* edge faces the centre and the spare height lands between P2's
+		// cards and the centre line — seating them further out than P1's by exactly that amount.
+		// Pushing P2's rows down by the spare height mirrors P1.
+		//
+		// That spare is also where the hand fan's peek comes from: zoneH above has already handed
+		// the fan as much of it as the fan needs, so what remains here is whatever the fan left.
+		//
+		// The seat is applied below, once the scroll pane exists — it has to shrink by the
+		// scrollbar's thickness whenever the bar is showing.
 		//
 		// The overridden getPreferredSize() above ignores insets, so this shifts the rows without
 		// changing the zone's height.
-		if (!isP1) {
-			int seat = FORWARD_ZONE_H - CARD_H;
-			forwardInner.setBorder(BorderFactory.createEmptyBorder(seat, 0, 0, 0));
-			monsterInner.setBorder(BorderFactory.createEmptyBorder(seat, 0, 0, 0));
-		}
 
 		// Monster panel sits at the bottom of the EAST area for "lower-right" appearance
 		JPanel monsterContainer = new JPanel(new BorderLayout());
@@ -12738,7 +12811,7 @@ public class MainWindow {
 			public Dimension getPreferredSize() {
 				Dimension fwd = forwardInner.getPreferredSize();
 				Dimension mon = monsterInner.getPreferredSize();
-				return new Dimension(fwd.width + mon.width, FORWARD_ZONE_H);
+				return new Dimension(fwd.width + mon.width, zoneH);
 			}
 		};
 		outer.setOpaque(false);
@@ -12751,7 +12824,27 @@ public class MainWindow {
 		scroll.setBorder(BorderFactory.createEmptyBorder());
 		scroll.setOpaque(false);
 		scroll.getViewport().setOpaque(false);
-		scroll.setPreferredSize(new Dimension(0, FORWARD_ZONE_H));
+		scroll.setPreferredSize(new Dimension(0, zoneH));
+
+		if (!isP1) {
+			// Seat P2's cards against the centre-facing edge, discounting the scrollbar when it is
+			// showing. The bar then hangs below the cards, over the board gradient — which begins in
+			// the zone panel's own colour, so the strip reads as part of the board rather than as a
+			// bite out of the cards. Without the discount the bar would eat its thickness off the
+			// bottom of every card, cropping exactly the corner where power is printed.
+			JScrollBar hbar = scroll.getHorizontalScrollBar();
+			Runnable reseat = () -> {
+				int seat = Math.max(0, zoneH - CARD_H - (hbar.isVisible() ? barH : 0));
+				if (forwardInner.getInsets().top == seat) return;
+				forwardInner.setBorder(BorderFactory.createEmptyBorder(seat, 0, 0, 0));
+				monsterInner.setBorder(BorderFactory.createEmptyBorder(seat, 0, 0, 0));
+			};
+			reseat.run();
+			hbar.addComponentListener(new ComponentAdapter() {
+				@Override public void componentShown(ComponentEvent e)  { reseat.run(); }
+				@Override public void componentHidden(ComponentEvent e) { reseat.run(); }
+			});
+		}
 		return scroll;
 	}
 
@@ -15680,12 +15773,21 @@ public class MainWindow {
 	void applyBoardColor(boolean isP1, String colorName) {
 		Color c = "Default".equals(colorName) ? null
 				: (ElementColor.fromName(colorName) != null ? ElementColor.fromName(colorName).color : null);
+		Color base = UIManager.getColor("Panel.background");
 		if (isP1) {
 			applyElementColor(colorName, p1ZonesPanel);
 			if (p1Board != null) p1Board.setGradientColor(c);
+			// gameBoard's GridBag hands its two halves an odd number of pixels to split, so a row
+			// can be left over at the bottom edge. That gap used to show the default panel colour
+			// as a bright line across the top of P1's zone; matching P1's tone hides it whichever
+			// way the rounding falls.
+			if (gameBoard != null) gameBoard.setBackground(c != null ? c : base);
 		} else {
 			applyElementColor(colorName, p2ZonesPanel);
-			if (p2Board != null) p2Board.setGradientColor(c);
+			// P2's fade now lives inside p2ZonesPanel (see BoardEdgeFadePanel), which ends on the
+			// neutral tone at its bottom edge. p2Board carries that tone across to the divider, so
+			// it must stay flat — giving it the element colour would jump back to full saturation.
+			if (p2Board != null) p2Board.setGradientColor(null);
 		}
 	}
 
