@@ -374,8 +374,10 @@ public class CardDatabase implements AutoCloseable {
     /** Run via: mvn compile exec:java -Dexec.mainClass=scraper.CardDatabase */
     public static void main(String[] args) throws SQLException {
         try (CardDatabase db = new CardDatabase("shufflingway.db")) {
-            int upgraded = db.applyReprintTextUpgrades();
-            System.out.printf("Migration complete. Applied %d reprint text upgrade(s).%n", upgraded);
+            int upgraded  = db.applyReprintTextUpgrades();
+            int corrected = db.applyMulticardCorrections();
+            System.out.printf("Migration complete. Applied %d reprint text upgrade(s), "
+                    + "%d multicard correction(s).%n", upgraded, corrected);
         }
     }
 
@@ -422,6 +424,51 @@ public class CardDatabase implements AutoCloseable {
                 if (lbCost != null) ps.setInt (3, lbCost);
                 else                ps.setNull(3, Types.INTEGER);
                 ps.setString(4, serial);
+                updated += ps.executeUpdate();
+            }
+        }
+        return updated;
+    }
+
+    // -------------------------------------------------------------------------
+    // Multicard corrections (final ETL step)
+    // -------------------------------------------------------------------------
+
+    /** A serial whose scraped {@code multicard} flag is wrong, with the value it should carry. */
+    private record MulticardFix(String serial, boolean multicard) {}
+
+    /**
+     * Cards whose {@code multicard} flag arrives wrong from the source data.
+     *
+     * <p>Corrections go in both directions.
+     */
+    private static final List<MulticardFix> MULTICARD_CORRECTIONS = List.of(
+            // Summoner — scrapes as 0, but the card carries the generic icon and every other
+            // Summoner print does too, its own reprint 6-032C/1-040C included.
+            new MulticardFix("1-040C", true),
+            new MulticardFix("7-067L", false),
+            new MulticardFix("16-025C", true)
+    );
+
+    /**
+     * Final ETL step: force {@code multicard} to the known-good value for each serial in
+     * {@link #MULTICARD_CORRECTIONS}.
+     *
+     * <p>Idempotent, and the guard on the current value means the count reflects rows actually
+     * changed — a re-run against an already-corrected database reports 0 rather than repeating the
+     * original figure. Serials with no matching row are skipped.
+     *
+     * @return number of rows whose flag was changed
+     */
+    public int applyMulticardCorrections() throws SQLException {
+        int updated = 0;
+        try (PreparedStatement ps = conn.prepareStatement(
+                "UPDATE cards SET multicard = ? WHERE serial = ? AND multicard <> ?")) {
+            for (MulticardFix fix : MULTICARD_CORRECTIONS) {
+                int value = fix.multicard() ? 1 : 0;
+                ps.setInt   (1, value);
+                ps.setString(2, fix.serial());
+                ps.setInt   (3, value);
                 updated += ps.executeUpdate();
             }
         }

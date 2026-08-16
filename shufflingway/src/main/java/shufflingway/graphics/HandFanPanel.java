@@ -32,8 +32,14 @@ import shufflingway.AppSettings;
  */
 public class HandFanPanel extends JComponent {
 
-	/** Fraction of {@code CARD_H} that stays visible past the screen edge. Tune here. */
-	public static final double PEEK_FRACTION = 0.40;
+	/**
+	 * Fraction of {@code CARD_H} that stays visible past the screen edge. Tune here.
+	 *
+	 * <p>Both seats pay this out of the same fixed board height, so the ceiling is roughly
+	 * {@code (boardHeight - bothZonesWithoutFans) / 2} — around 0.30 at 1080p. Past that the two
+	 * zones meet and overlap rather than degrading gracefully.
+	 */
+	public static final double PEEK_FRACTION = 0.28;
 
 	/** Per-card tilt for small hands, in degrees; the fan opens this much wider per extra card. */
 	private static final double MAX_STEP_DEG = 5.0;

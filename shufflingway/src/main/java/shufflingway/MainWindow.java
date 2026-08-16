@@ -174,8 +174,6 @@ public class MainWindow {
 	private JButton p1LimitButton;
 	private JButton p2LimitButton;
 	private JPanel handPanel;
-	/** The strip between the two zones: P2's tail, the divider, P1's gradient. */
-	private JPanel gameBoard;
 	JLabel p1BreakLabel;
 	JLabel p2BreakLabel;
 	private HandFanPanel p2HandFan;
@@ -1193,6 +1191,11 @@ public class MainWindow {
 		p1DeckLabel.setMinimumSize(cardSize);
 
 		JPanel p1CornerPanel = new JPanel(new BorderLayout(0, 0));
+		// Transparent so the board fade reaches behind the crystal row. P2's crystal row sits
+		// outside its corner panel and is already clear of it; P1's is nested inside this one, so
+		// without this the corner would cut a step across the fade. The deck and Break Zone labels
+		// below are opaque and cover the rest, so nothing else changes.
+		p1CornerPanel.setOpaque(false);
 		p1CornerPanel.add(p1NorthWrapper, BorderLayout.NORTH);
 		p1CornerPanel.add(p1DeckLabel,    BorderLayout.CENTER);
 		p1CornerPanel.add(p1BreakLabel,   BorderLayout.SOUTH);
@@ -1253,10 +1256,23 @@ public class MainWindow {
 		});
 		glowTimer.start();
 
+		// Room held at the bottom edge for P1's hand fan, mirroring the space P2's fan occupies at
+		// the top. Empty for now: P1's hand is the player's own, so it wants a face-up treatment
+		// rather than the card backs HandFanPanel draws. Reserving it now settles the layout, so
+		// adding the fan later is a swap rather than another round of budget arithmetic.
+		JPanel p1FanSpace = new JPanel();
+		p1FanSpace.setOpaque(false);
+		p1FanSpace.setPreferredSize(new Dimension(0, HandFanPanel.peekHeight()));
+		p1FanSpace.setMinimumSize(new Dimension(0, HandFanPanel.peekHeight()));
+
 		JPanel p1BottomRow = new JPanel(new BorderLayout());
+		p1BottomRow.setOpaque(false);
 		p1BottomRow.add(p1BackupWrapper, BorderLayout.CENTER);
+		p1BottomRow.add(p1FanSpace,      BorderLayout.SOUTH);
 
 		JPanel p1MainArea = new JPanel(new BorderLayout(0, 4));
+		// Transparent so p1ZonesPanel's board fade shows through the middle column, as on P2.
+		p1MainArea.setOpaque(false);
 		p1MainArea.add(p1ForwardZone,  BorderLayout.NORTH);
 		p1MainArea.add(p1BottomRow,    BorderLayout.SOUTH);
 
@@ -1268,7 +1284,10 @@ public class MainWindow {
 		lgbc.weighty = 1.0;
 		p1LeftGroup.add(p1DamagePanel, lgbc);
 
-		p1ZonesPanel = new JPanel(new GridBagLayout());
+		// Mirror of P2: the board gradient begins inside P1's own zone, fading up from the element
+		// colour to the neutral tone at the centre-facing (top) edge.
+		p1ZonesPanel = new BoardEdgeFadePanel(false, BOARD_FADE_H);
+		p1ZonesPanel.setLayout(new GridBagLayout());
 		{
 			GridBagConstraints z = new GridBagConstraints();
 			z.gridy = 0; z.fill = GridBagConstraints.NONE; z.anchor = GridBagConstraints.SOUTH; z.weightx = 0;
@@ -1289,7 +1308,7 @@ public class MainWindow {
 		divider.setForeground(Color.LIGHT_GRAY);
 		fieldDivider = divider;
 
-		gameBoard = new JPanel(new GridBagLayout());
+		JPanel gameBoard = new JPanel(new GridBagLayout());
 		gameBoard.setBackground(UIManager.getColor("Panel.background"));
 
 		GridBagConstraints gbc = new GridBagConstraints();
@@ -12736,7 +12755,10 @@ public class MainWindow {
 	 * that zone's side columns have already ended — past the corner column's crystal row and the
 	 * bottom of the damage stack — since those are opaque and would step across the fade.
 	 */
-	private static final int BOARD_FADE_H = CARD_H / 3;
+	private static final int BOARD_FADE_H = CARD_H / 4;
+
+	/** Client-property key naming the most recent render of a card slot; see {@link #markSlotRender}. */
+	private static final String SLOT_RENDER_TOKEN = "shufflingway.slotRenderToken";
 
 	// -------------------------------------------------------------------------
 	// Forward and Monster zones - panels, placement, slot rendering
@@ -12749,13 +12771,10 @@ public class MainWindow {
 		// the centre-facing side, directly between its cards and the board.
 		final int barH = new JScrollBar(JScrollBar.HORIZONTAL).getPreferredSize().height;
 
-		// P2 surrenders its spare seating to the hand fan above the backups — see the seat comment
-		// below for what that spare is and why only P2 has it to give — but keeps enough for the
-		// scrollbar, so the bar overhangs the board gradient instead of cropping the cards. P1 keeps
-		// the full height until its own fan lands, at which point this branch collapses.
-		final int zoneH = isP1
-				? FORWARD_ZONE_H
-				: Math.max(CARD_H + barH, FORWARD_ZONE_H - HandFanPanel.peekHeight());
+		// Both seats surrender their spare seating to the hand fan — see the seat comment below for
+		// what that spare is — but keep enough for the scrollbar, so the bar overhangs the board
+		// gradient instead of cropping the cards.
+		final int zoneH = Math.max(CARD_H + barH, FORWARD_ZONE_H - HandFanPanel.peekHeight());
 
 		JPanel forwardInner = new JPanel(new FlowLayout(FlowLayout.CENTER, 4, 0)) {
 			@Override
@@ -13180,6 +13199,7 @@ public class MainWindow {
 		int totalCounters = countersMap.values().stream().mapToInt(c -> c == null ? 0 : c.intValue()).sum();
 		List<CardData.Trait> traitTabs = visibleTraitTabs(true, idx);
 		if (slot.getIcon() == null) slot.setIcon(new ImageIcon(CardAnimation.renderPlaceholder(state)));
+		final Object renderToken = markSlotRender(slot);
 		new SwingWorker<ImageIcon, Void>() {
 			@Override protected ImageIcon doInBackground() throws Exception {
 				Image raw = ImageCache.load(url);
@@ -13199,6 +13219,7 @@ public class MainWindow {
 				return new ImageIcon(canvas);
 			}
 			@Override protected void done() {
+				if (slotRenderSuperseded(slot, renderToken)) return;
 				try {
 					ImageIcon icon = get();
 					if (icon != null) { slot.setIcon(icon); slot.setText(null); }
@@ -13206,6 +13227,31 @@ public class MainWindow {
 				} catch (InterruptedException | ExecutionException ignored) {}
 			}
 		}.execute();
+	}
+
+	/**
+	 * Claims {@code slot} for the render about to start and returns that render's token.
+	 *
+	 * <p>Slot art is built on a background thread, and nothing orders two renders of the same slot
+	 * against each other. That matters most around combat: breaking a blocker refreshes every
+	 * Forward at a moment when no block step is open — so nothing draws as a legal blocker — and the
+	 * next attack's block step refreshes them again immediately after. If the earlier, glow-less
+	 * render finishes second it overwrites the newer one, and a Forward sits there looking
+	 * ineligible while {@link #isForwardBlockSelectable} still says it can block. The glow is the
+	 * only thing wrong in that state, which is what makes it read as "some blockers stopped working".
+	 *
+	 * <p>Both this and the check in {@code done()} run on the EDT, so the token needs no
+	 * synchronisation: the last render to start is the only one allowed to paint.
+	 */
+	private Object markSlotRender(JLabel slot) {
+		Object token = new Object();
+		slot.putClientProperty(SLOT_RENDER_TOKEN, token);
+		return token;
+	}
+
+	/** True when a later render has claimed {@code slot}, so this one's result must be dropped. */
+	private boolean slotRenderSuperseded(JLabel slot, Object token) {
+		return slot.getClientProperty(SLOT_RENDER_TOKEN) != token;
 	}
 
 	void refreshAllForwardSlots() {
@@ -13263,42 +13309,71 @@ public class MainWindow {
 
 	/** Returns true if {@code idx} is a valid P1 blocker choice during block declaration. */
 	boolean isForwardBlockSelectable(int idx) {
-		if (!p1ForwardBlockEligible(idx)) return false;
+		return p1ForwardBlockRejection(idx) == null;
+	}
+
+	/**
+	 * Why P1's Forward at {@code idx} cannot be chosen as a blocker, or {@code null} when it can.
+	 *
+	 * <p>Every refusal reads the same on the board — no green glow, and the click does nothing — but
+	 * a dozen unrelated rules can produce it, several of which legitimately change from one attacker
+	 * to the next. Naming the rule turns "that Forward stopped working" into something answerable,
+	 * so {@link #toggleP1BlockerSelection} logs this when it turns a click away.
+	 *
+	 * <p>This is the single source of truth for blocker legality: {@link #isForwardBlockSelectable}
+	 * is a null check over it, and the checks stay in their original order so the reason reported is
+	 * the first rule that actually bit.
+	 */
+	String p1ForwardBlockRejection(int idx) {
+		String ineligible = p1ForwardBlockIneligibility(idx);
+		if (ineligible != null) return ineligible;
 		// If any forward must block, restrict choices to those
-		if (!p1MustBlock.isEmpty() && !p1MustBlock.contains(p1ForwardCards.get(idx))) return false;
+		if (!p1MustBlock.isEmpty() && !p1MustBlock.contains(p1ForwardCards.get(idx)))
+			return "another Forward you control must block";
 		// Dio 26-075C: a Forward compelled against this specific attacker takes the block, and
 		// only when it can — p1ForwardCompelledToBlockIdx returns -1 once "if possible" fails.
 		int compelled = p1ForwardCompelledToBlockIdxForPendingAttack();
-		if (compelled >= 0 && compelled != idx) return false;
-		return true;
+		if (compelled >= 0 && compelled != idx)
+			return "another Forward is compelled to block this attacker";
+		return null;
 	}
 
 	/**
 	 * Everything that qualifies a P1 Forward as a blocker except the must-block restrictions,
-	 * which are layered on by {@link #isForwardBlockSelectable}. Split out so
+	 * which are layered on by {@link #p1ForwardBlockRejection}. Split out so
 	 * {@link #p1ForwardCompelledToBlockIdx} can ask "could this Forward block at all?" without
 	 * calling back into the method that consults it.
 	 */
 	private boolean p1ForwardBlockEligible(int idx) {
-		if (!p1InBlockDeclaration()) return false;
-		if (idx < 0 || idx >= p1ForwardStates.size()) return false;
+		return p1ForwardBlockIneligibility(idx) == null;
+	}
+
+	/** Reason half of {@link #p1ForwardBlockEligible}; {@code null} means it qualifies. */
+	private String p1ForwardBlockIneligibility(int idx) {
+		if (!p1InBlockDeclaration()) return "no attack is waiting on a block";
+		if (idx < 0 || idx >= p1ForwardStates.size()) return "no Forward in that slot";
 		CardState s = p1ForwardStates.get(idx);
-		if (s != CardState.ACTIVE) return false;
+		if (s != CardState.ACTIVE) return "it is dull";
 		CardData blocker = p1ForwardCards.get(idx);
-		if (p1CannotBlock.contains(blocker)) return false;
-		if (p1CannotBlockPersistent.contains(blocker)) return false;
-		if (blocker.cannotBlockAtAll() || blocker.cannotAttackOrBlock()) return false;
-		if (blockBarredByFieldCostLock(blocker)) return false;
-		if (isFieldAbilityCannotAttackOrBlock(blocker, true)) return false;
-		if (blocker.cannotBlockParty() && pendingP2PartyIndices != null) return false;
-		if (blocker.cannotBlockHigherPower() && attackerPowerExceedsBlocker(ForwardTarget.CardZone.FORWARD, idx)) return false;
-		if (p1Turn.forwardCannotBlockInferiorPower && blockerPowerExceedsAttacker(ForwardTarget.CardZone.FORWARD, idx)) return false;
+		if (p1CannotBlock.contains(blocker)) return "an effect says it cannot block this turn";
+		if (p1CannotBlockPersistent.contains(blocker)) return "an effect says it cannot block";
+		if (blocker.cannotBlockAtAll() || blocker.cannotAttackOrBlock()) return "its own text says it cannot block";
+		if (blockBarredByFieldCostLock(blocker)) return "a field ability bars Forwards of its cost from blocking";
+		if (isFieldAbilityCannotAttackOrBlock(blocker, true)) return "a field ability says it cannot block";
+		if (blocker.cannotBlockParty() && pendingP2PartyIndices != null) return "it cannot block a party";
+		if (blocker.cannotBlockHigherPower() && attackerPowerExceedsBlocker(ForwardTarget.CardZone.FORWARD, idx))
+			return "it cannot block a Forward of higher power";
+		if (p1Turn.forwardCannotBlockInferiorPower && blockerPowerExceedsAttacker(ForwardTarget.CardZone.FORWARD, idx))
+			return "an effect bars it from blocking a Forward of lower power";
 		// Check attacker-side unblockability
-		if (attackerUnblockable()) return false;
-		if (attackerBlockCostFiltersExclude(blocker.cost())) return false;
-		if (attackerHigherPowerFilterExcludes(ForwardTarget.CardZone.FORWARD, idx)) return false;
-		if (attackerBlockPowerFiltersExclude(ForwardTarget.CardZone.FORWARD, idx)) return false;
-		return true;
+		if (attackerUnblockable()) return "the attacker cannot be blocked";
+		if (attackerBlockCostFiltersExclude(blocker.cost()))
+			return "the attacker cannot be blocked by a Forward of its cost";
+		if (attackerHigherPowerFilterExcludes(ForwardTarget.CardZone.FORWARD, idx))
+			return "the attacker cannot be blocked by a Forward of higher power";
+		if (attackerBlockPowerFiltersExclude(ForwardTarget.CardZone.FORWARD, idx))
+			return "the attacker cannot be blocked by a Forward of its power";
+		return null;
 	}
 
 	// -------------------------------------------------------------------------
@@ -13536,7 +13611,14 @@ public class MainWindow {
 
 	/** Toggles the P1 blocker selection during block-declaration sub-step. */
 	private void toggleP1BlockerSelection(int idx) {
-		if (!isForwardBlockSelectable(idx)) return;
+		String why = p1ForwardBlockRejection(idx);
+		if (why != null) {
+			// Silent refusals are indistinguishable from a dead click, and the rule that bit is
+			// rarely the one the player is thinking of. Say which.
+			if (idx >= 0 && idx < p1ForwardCards.size())
+				logEntry("[Block] " + p1ForwardCards.get(idx).name() + " cannot block — " + why + ".");
+			return;
+		}
 		p1BlockerSelection = (p1BlockerSelection == idx) ? -1 : idx;
 		p1BlockerMonsterIdx = -1;
 		p1BlockerBackupIdx = -1;
@@ -15773,20 +15855,20 @@ public class MainWindow {
 	void applyBoardColor(boolean isP1, String colorName) {
 		Color c = "Default".equals(colorName) ? null
 				: (ElementColor.fromName(colorName) != null ? ElementColor.fromName(colorName).color : null);
-		Color base = UIManager.getColor("Panel.background");
+		// Both fades now live inside the zone panels (see BoardEdgeFadePanel), each ending on the
+		// neutral tone at its centre-facing edge. What is left between them — p2Board, the divider,
+		// p1Board — simply carries that tone across, so both halves stay flat; giving either the
+		// element colour would jump back to full saturation right at the seam.
+		//
+		// Keeping the whole strip one flat tone also settles a rounding artefact: gameBoard's
+		// GridBag hands its two halves an odd number of pixels to split and can leave a row over at
+		// an edge, which used to show its background as a bright line across the top of P1's zone.
+		// Now that line, the halves and both zone edges are all the same colour, so it cannot show.
 		if (isP1) {
 			applyElementColor(colorName, p1ZonesPanel);
-			if (p1Board != null) p1Board.setGradientColor(c);
-			// gameBoard's GridBag hands its two halves an odd number of pixels to split, so a row
-			// can be left over at the bottom edge. That gap used to show the default panel colour
-			// as a bright line across the top of P1's zone; matching P1's tone hides it whichever
-			// way the rounding falls.
-			if (gameBoard != null) gameBoard.setBackground(c != null ? c : base);
+			if (p1Board != null) p1Board.setGradientColor(null);
 		} else {
 			applyElementColor(colorName, p2ZonesPanel);
-			// P2's fade now lives inside p2ZonesPanel (see BoardEdgeFadePanel), which ends on the
-			// neutral tone at its bottom edge. p2Board carries that tone across to the divider, so
-			// it must stay flat — giving it the element colour would jump back to full saturation.
 			if (p2Board != null) p2Board.setGradientColor(null);
 		}
 	}
@@ -15968,6 +16050,7 @@ public class MainWindow {
 		int totalCounters = countersMap.values().stream().mapToInt(c -> c == null ? 0 : c.intValue()).sum();
 		List<CardData.Trait> traitTabs = visibleTraitTabs(false, idx);
 		if (slot.getIcon() == null) slot.setIcon(new ImageIcon(CardAnimation.renderPlaceholder(state)));
+		final Object renderToken = markSlotRender(slot);
 		new SwingWorker<ImageIcon, Void>() {
 			@Override protected ImageIcon doInBackground() throws Exception {
 				Image raw = ImageCache.load(url);
@@ -15987,6 +16070,7 @@ public class MainWindow {
 				return new ImageIcon(canvas);
 			}
 			@Override protected void done() {
+				if (slotRenderSuperseded(slot, renderToken)) return;
 				try {
 					ImageIcon icon = get();
 					if (icon != null) { slot.setIcon(icon); slot.setText(null); }

@@ -8015,6 +8015,74 @@ public class CardBehaviorTest {
                     mw.p1ForwardCards.get(i).name() + " must still be a legal blocker for the next attack");
     }
 
+    // =========================================================================================
+    // The same question for the single-attacker path, which reaches the attacker-side checks
+    // through pendingP2AttackerIdx rather than pendingP2PartyIndices. The party path rebuilds its
+    // target list against the live Forward row on every call, so a member that has left the field
+    // simply drops out; the single path carries one index and only bounds-checks it, so if the row
+    // shifted underneath it that index still resolves — to whichever Forward moved into the slot.
+    //
+    // Reported symptom: after a blocker and its attacker trade, some survivors stop being offered
+    // as blockers for the next attack. Green glow and clickability are the same predicate —
+    // refreshP1ForwardSlot feeds isForwardBlockSelectable straight into the render — so "no glow"
+    // and "cannot be chosen" are one fault, not two.
+    // =========================================================================================
+
+    /** Opens the block step against a single P2 Forward, the non-party path. */
+    private static void openSingleBlockStep(MainWindow mw, int p2Idx) {
+        mw.pendingP2PartyIndices = null;
+        mw.pendingP2Attacker     = mw.p2ForwardCards.get(p2Idx);
+        mw.pendingP2AttackerIdx  = p2Idx;
+    }
+
+    @Test
+    void everySurvivingForwardCanStillBlockTheNextSingleAttackAfterATrade() {
+        MainWindow mw = sixForwardBoard();
+        openSingleBlockStep(mw, 0);
+        for (int i = 0; i < 6; i++)
+            assertTrue(mw.isForwardBlockSelectable(i), "P1-" + i + " starts out a legal blocker");
+
+        // P2's attacker and P1's blocker trade lethal damage; both leave the field.
+        mw.p1BlockingIdx = 2;
+        mw.resolveCombat(mw.p2ForwardCards.get(0), false, 0, mw.p1ForwardCards.get(2), true, 2);
+        mw.p1BlockingIdx = -1;
+        assertEquals(5, mw.p1ForwardCards.size());
+        assertEquals(1, mw.p2ForwardCards.size());
+        assertP1SlotListsAligned(mw, 5, "a blocker traded with its attacker");
+
+        // P2 declares its next attack with the Forward that survived — now at slot 0, not slot 1.
+        openSingleBlockStep(mw, 0);
+        for (int i = 0; i < 5; i++)
+            assertTrue(mw.isForwardBlockSelectable(i),
+                    mw.p1ForwardCards.get(i).name() + " must still be a legal blocker for the next attack");
+    }
+
+    /**
+     * The same trade, but the next block step is opened while {@code pendingP2AttackerIdx} still
+     * holds the slot the broken attacker occupied — the state a caller leaves behind if it declares
+     * the next attack from indices read before the row shifted. The stale index is in range, so it
+     * silently names the wrong attacker rather than failing.
+     */
+    @Test
+    void aStaleAttackerIndexDoesNotSilentlyNameADifferentAttacker() {
+        MainWindow mw = sixForwardBoard();
+        CardData secondAttacker = mw.p2ForwardCards.get(1);
+
+        mw.p1BlockingIdx = 2;
+        mw.resolveCombat(mw.p2ForwardCards.get(0), false, 0, mw.p1ForwardCards.get(2), true, 2);
+        mw.p1BlockingIdx = -1;
+
+        // Slot 0 now holds the *second* attacker, so an index carried over from before the break
+        // resolves to a live card either way — the check has to be on identity, not on range.
+        assertSame(secondAttacker, mw.p2ForwardCards.get(0),
+                "the survivor slid down into the broken attacker's slot");
+
+        openSingleBlockStep(mw, 0);
+        for (int i = 0; i < 5; i++)
+            assertTrue(mw.isForwardBlockSelectable(i),
+                    mw.p1ForwardCards.get(i).name() + " must be selectable against the survivor");
+    }
+
     @Test
     void aForwardCanBeChosenAsBlockerAgainstAPartyAttack() {
         MainWindow mw = new MainWindow();
