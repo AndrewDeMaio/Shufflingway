@@ -2662,6 +2662,23 @@ final class ActionResolverPatterns {
         "by\\s+your\\s+opponent.?s\\s+(?:Summons?\\s+or\\s+)?abilities[.!]?"
     );
     /**
+     * "All cards in your Break Zone cannot be removed from the game by your opponent's Summons or
+     * abilities." — Lenna 18-100L, Ultimecia 22-073L.
+     *
+     * <p>{@link #FA_BZ_SUMMONS_PROTECTED_FROM_OPP_RFG} with the card type widened from Summons to
+     * everything; the two are otherwise the same sentence and are enforced together, the narrow one
+     * asking additionally whether the card being removed is a Summon.
+     *
+     * <p>Distinct from {@link #FA_BZ_CARDS_PROTECTED_FROM_OPP_CHOICE}, which covers the same cards
+     * against a different verb. That one stops the opponent <em>choosing</em> a Break Zone card at
+     * all, and so does nothing against a sweep that names no card; this one stops the removal
+     * itself, chosen or not.
+     */
+    static final Pattern FA_BZ_CARDS_PROTECTED_FROM_OPP_RFG = Pattern.compile(
+        "(?i)All\\s+cards\\s+in\\s+your\\s+Break\\s+Zone\\s+cannot\\s+be\\s+removed\\s+from\\s+the\\s+game\\s+" +
+        "by\\s+your\\s+opponent.?s\\s+(?:Summons?\\s+or\\s+)?abilit(?:y|ies)[.!]?"
+    );
+    /**
      * "All cards in your Break Zone cannot be chosen by your opponent's Summons or abilities."
      * (Kalmia 18-090R.) Wider than {@link #FA_BZ_SUMMONS_PROTECTED_FROM_OPP_RFG} on both axes:
      * every card type rather than Summons alone, and every way an opponent's effect could choose

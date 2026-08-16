@@ -7436,16 +7436,38 @@ public class MainWindow {
 	}
 
 	/**
+	 * Whether {@code card}, sitting in {@code ownerIsP1}'s Break Zone, is shielded from being
+	 * removed from the game by the opposing player's Summons or abilities.
+	 *
+	 * <p>Two printings answer this, and the wider one subsumes the narrower: Lenna 18-100L and
+	 * Ultimecia 22-073L shield every card in the zone, Terra 23-011L shields only its Summons.
+	 *
+	 * <p>Opponent-scoped, like its {@link #bzCardsProtectedFromOppChoice} neighbour — the zone's
+	 * owner may still remove their own cards, which is what keeps their own recursion working.
+	 * Callers are responsible for establishing that the remover is the opponent.
+	 */
+	boolean bzCardProtectedFromOppRfg(CardData card, boolean ownerIsP1) {
+		for (CardData c : fieldCards(ownerIsP1)) {
+			if (lostAbilitiesCards.contains(c)) continue;
+			if (ActionResolver.hasBzCardRfgProtection(c)) return true;
+			if (card != null && card.isSummon() && ActionResolver.hasBzSummonRfgProtection(c)) return true;
+		}
+		return false;
+	}
+
+	/**
 	 * Returns {@code true} if the given player has a field card that protects their Break Zone
 	 * Summons from being removed from the game by the opponent's Summons or abilities.
+	 *
+	 * <p>The Summon-shaped question {@link #bzCardProtectedFromOppRfg} answers per card, for the
+	 * one caller that is filtering a candidate list rather than blocking a single removal.
 	 */
-	boolean bzSummonsProtectedFromOppRfg(boolean isP1) {
-		for (CardData c : p1ForwardCards)
+	boolean bzSummonsProtectedFromOppRfg(boolean ownerIsP1) {
+		for (CardData c : fieldCards(ownerIsP1)) {
+			if (lostAbilitiesCards.contains(c)) continue;
 			if (ActionResolver.hasBzSummonRfgProtection(c)) return true;
-		CardData[] bkps = isP1 ? p1BackupCards : p2BackupCards;
-		for (CardData c : bkps) if (c != null && ActionResolver.hasBzSummonRfgProtection(c)) return true;
-		for (CardData c : p1MonsterCards)
-			if (ActionResolver.hasBzSummonRfgProtection(c)) return true;
+			if (ActionResolver.hasBzCardRfgProtection(c)) return true;
+		}
 		return false;
 	}
 
@@ -14278,7 +14300,7 @@ public class MainWindow {
 		// declaration. Both rows, since the opponent's screen is showing the same board.
 		refreshCombatGlows();
 		for (int i = 0; i < p1BackupCards.length; i++) refreshP1BackupSlot(i);
-		if (p1Turn.attackDeclarationsThisTurn >= p1Turn.attackDeclarationLimit) {
+		if (attackDeclarationsExhausted(true)) {
 			logEntry("Attack declaration limit reached — ending attack phase.");
 			onNextPhase();
 			return;
@@ -15177,7 +15199,46 @@ public class MainWindow {
 				.anyMatch(c -> c.hasTrait(CardData.Trait.BACK_ATTACK));
 	}
 
+	/**
+	 * The most attack declarations {@code isP1} may make this turn — the turn-state limit an effect
+	 * may have set (Folka 22-104R), narrowed by any continuous cap the opposing field imposes.
+	 *
+	 * <p>The Night Dancer 17-078R is the only such cap: "Your opponent may only declare as many
+	 * attacks in the same turn as the number of Backups they control." Read here rather than
+	 * written into {@code attackDeclarationLimit} because it moves with the board — a Backup
+	 * entering or leaving changes it mid-phase, and a stored value would be stale.
+	 *
+	 * <p>The lowest cap wins when several apply, which is what {@code min} across the scan gives.
+	 */
+	int effectiveAttackDeclarationLimit(boolean isP1) {
+		int limit = turn(isP1).attackDeclarationLimit;
+		for (CardData src : fieldCards(!isP1)) {
+			if (lostAbilitiesCards.contains(src)) continue;
+			for (FieldAbility fa : effectiveFieldAbilities(src))
+				if (AutoAbilityTriggers.FA_OPP_ATTACKS_LIMITED_BY_OWN_BACKUPS.matcher(fa.effectText().trim()).matches())
+					limit = Math.min(limit, backupCount(isP1));
+		}
+		return limit;
+	}
+
+	/** Whether {@code isP1} has spent every attack declaration {@link #effectiveAttackDeclarationLimit} allows. */
+	boolean attackDeclarationsExhausted(boolean isP1) {
+		return turn(isP1).attackDeclarationsThisTurn >= effectiveAttackDeclarationLimit(isP1);
+	}
+
+	/** How many Backups {@code isP1} currently controls. */
+	private int backupCount(boolean isP1) {
+		int n = 0;
+		for (CardData b : (isP1 ? p1BackupCards : p2BackupCards)) if (b != null) n++;
+		return n;
+	}
+
 	private boolean hasAttackableForward() {
+		// The declaration cap is asked first: with none left there is no attacker to find, whatever
+		// the rows hold. This is the gate for both the phase-entry skip and the between-attacks
+		// continue, so The Night Dancer 17-078R closes the phase at zero Backups rather than
+		// allowing one attack through before the post-combat check notices.
+		if (attackDeclarationsExhausted(true)) return false;
 		int turn = gameState.getTurnNumber();
 		for (int i = 0; i < p1ForwardStates.size(); i++) {
 			CardData fwd = p1ForwardCards.get(i);

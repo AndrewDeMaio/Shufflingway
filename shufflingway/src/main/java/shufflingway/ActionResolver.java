@@ -4169,6 +4169,17 @@ public class ActionResolver {
     }
 
     /**
+     * Returns {@code true} if the card has the "all cards in your Break Zone cannot be removed from
+     * the game by your opponent's Summons or abilities" field ability (Lenna 18-100L,
+     * Ultimecia 22-073L) — the every-card widening of {@link #hasBzSummonRfgProtection}.
+     */
+    public static boolean hasBzCardRfgProtection(CardData card) {
+        for (FieldAbility fa : card.fieldAbilities())
+            if (FA_BZ_CARDS_PROTECTED_FROM_OPP_RFG.matcher(fa.effectText()).find()) return true;
+        return false;
+    }
+
+    /**
      * Returns {@code true} if the card has the "all cards in your Break Zone cannot be chosen by
      * your opponent's Summons or abilities" field ability (Kalmia 18-090R).
      */

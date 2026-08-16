@@ -289,6 +289,15 @@ public class FieldAbilityParsingTest {
         if (CardData.parseIfSelfJobCountTraitGrantThreshold(fa.effectText(), source.name()) >= 0) return true;
         if (CardData.parseIfSelfLbFaceUpCountTraitGrantThreshold(fa.effectText(), source.name()) >= 0) return true;
         if (CardData.parseIfSelfPowerTraitGrantThreshold(fa.effectText(), source.name()) >= 0) return true;
+        // The Night Dancer 17-078R. Read at declaration time by MainWindow.effectiveAttackDeclarationLimit.
+        if (AutoAbilityTriggers.FA_OPP_ATTACKS_LIMITED_BY_OWN_BACKUPS.matcher(fa.effectText().trim()).matches()) return true;
+        // Lenna 18-100L, Ultimecia 22-073L, and the Summons-only Terra 23-011L. Both read by
+        // MainWindow.bzCardProtectedFromOppRfg; Terra's was live but unlisted, so that row closes
+        // a reporting gap rather than turning a rule on.
+        if (ActionResolverPatterns.FA_BZ_CARDS_PROTECTED_FROM_OPP_RFG
+                .matcher(fa.effectText()).find()) return true;
+        if (ActionResolverPatterns.FA_BZ_SUMMONS_PROTECTED_FROM_OPP_RFG
+                .matcher(fa.effectText()).find()) return true;
         return CardData.isBackupCpAbility(fa.effectText());
     }
 
@@ -595,6 +604,15 @@ public class FieldAbilityParsingTest {
         if (ActionResolverPatterns.FA_BZ_CARDS_PROTECTED_FROM_OPP_CHOICE
                 .matcher(fa.effectText()).find())
             return "BzCardsCannotBeChosenByOpp";
+        if (ActionResolverPatterns.FA_BZ_CARDS_PROTECTED_FROM_OPP_RFG
+                .matcher(fa.effectText()).find())
+            return "BzCardsCannotBeRfgByOpp";
+        if (ActionResolverPatterns.FA_BZ_SUMMONS_PROTECTED_FROM_OPP_RFG
+                .matcher(fa.effectText()).find())
+            return "BzSummonsCannotBeRfgByOpp";
+        if (AutoAbilityTriggers.FA_OPP_ATTACKS_LIMITED_BY_OWN_BACKUPS
+                .matcher(fa.effectText().trim()).matches())
+            return "OppAttacksLimitedByOwnBackups";
         if (namesItself(CardData.GAINS_OPP_CHARACTER_ELEMENTS_PATTERN, fa, source))
             return "GainsOpponentCharacterElements";
         Integer exbCap = ActionResolver.exBurstSuppressionMaxCost(fa.effectText(), source.name());

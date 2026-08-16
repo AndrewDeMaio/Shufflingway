@@ -904,6 +904,24 @@ final class AutoAbilityTriggers {
 	);
 
 	/**
+	 * "Your opponent may only declare as many attacks in the same turn as the number of Backups
+	 * they control." — The Night Dancer 17-078R.
+	 *
+	 * <p>A cap on attack <em>declarations</em>, not on attackers: a party attack is one declaration
+	 * however many Forwards join it, which is the unit {@code PlayerTurnState.attackDeclarationsThisTurn}
+	 * already counts for Folka 22-104R's one-shot version.
+	 *
+	 * <p>"they" is the opponent — the attacking player counts their own Backups, not this card's
+	 * controller's. The count is live, so a Backup entering mid-phase raises the cap and one
+	 * leaving lowers it, which is why this is evaluated at declaration time rather than written
+	 * into the turn state the way Folka's is.
+	 */
+	static final Pattern FA_OPP_ATTACKS_LIMITED_BY_OWN_BACKUPS = Pattern.compile(
+		"(?i)^Your\\s+opponent\\s+may\\s+only\\s+declare\\s+as\\s+many\\s+attacks\\s+in\\s+the\\s+same\\s+turn\\s+" +
+		"as\\s+the\\s+number\\s+of\\s+Backups\\s+they\\s+control[.!]?$"
+	);
+
+	/**
 	 * "[Summons and/or ]abilities of your opponent must choose [cardName] if possible." — the
 	 * targeting counterpart of {@link #FA_OPPONENT_MUST_BLOCK}: while the named card is a legal
 	 * target, the opposing player's effects have to point at it.

@@ -4030,6 +4030,18 @@ final class GameContextImpl implements GameContext {
 				// A Break Zone card is not on the field, so the shield has nothing to say about it.
 				if (t.zone() != ForwardTarget.CardZone.BREAK_ZONE
 						&& leaveFieldProtected(mw.autoAbilityTriggers.fieldCardData(t), t.isP1())) return;
+				// The Break Zone has a shield of its own (Lenna 18-100L, Ultimecia 22-073L, and
+				// Terra 23-011L for Summons). Checked ahead of the crediting below: a removal that
+				// never happens must not be credited to the resolving ability, or a later "the
+				// cards removed by this ability" wording would call back a card still in the zone.
+				if (t.zone() == ForwardTarget.CardZone.BREAK_ZONE && t.isP1() != isP1) {
+					CardData shielded = cardAtTarget(t);
+					if (shielded != null && mw.bzCardProtectedFromOppRfg(shielded, t.isP1())) {
+						logEntry(shielded.name() + " cannot be removed from the game by your opponent's "
+								+ "Summons or abilities");
+						return;
+					}
+				}
 				// Credit the removal to the ability resolving right now, so wordings like "cards
 				// removed by Anima's ability" (19-123H, whose enter-the-field effect removes Break
 				// Zone cards) can call them back later. Resolved per zone because the field-card

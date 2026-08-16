@@ -313,7 +313,7 @@ class ComputerPlayer implements OpponentController {
 
 	private void doAttackPhase(Runnable onDone) {
 		if (mw.gameState.isP1GameOver()) return;
-		if (mw.p2Turn.attackDeclarationsThisTurn >= mw.p2Turn.attackDeclarationLimit) {
+		if (mw.attackDeclarationsExhausted(false)) {
 			mw.logEntry("[P2] Attack declaration limit reached — ending attack phase.");
 			onDone.run();
 			return;

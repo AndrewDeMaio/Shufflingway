@@ -21886,4 +21886,236 @@ public class CardBehaviorTest {
 				"the opponent's Forwards are not yours to control");
 		assertTrue(mw.castRestrictionMet(steiner, false));
 	}
+
+	// =========================================================================================
+	// The Night Dancer 17-078R: "Your opponent may only declare as many attacks in the same turn
+	// as the number of Backups they control."
+	//
+	// A cap on attack *declarations*, the unit PlayerTurnState already counts for Folka 22-104R's
+	// one-shot "your opponent may only declare attack once" — so a party attack is one declaration
+	// however many Forwards join it.
+	//
+	// Unlike Folka's, this one cannot be written into attackDeclarationLimit when it resolves: it
+	// has no moment of resolution, and the number moves with the board. A Backup entering during
+	// the Attack Phase raises the cap and one leaving lowers it, so it is derived at the moment a
+	// declaration is asked about.
+	//
+	// "they" is the attacking player, not the card's controller — the attacker counts their own
+	// Backups.
+	// =========================================================================================
+
+	private static final String NIGHT_DANCER =
+			"Your opponent may only declare as many attacks in the same turn as the number of "
+			+ "Backups they control.";
+
+	/**
+	 * Fills {@code n} Backup slots on a side. Not placeCardInFirstBackupSlot: that one finds its
+	 * slot by looking for a label with no icon, and headless tests never set icons, so repeated
+	 * calls all land in slot 0.
+	 */
+	private static void fillBackups(MainWindow mw, boolean isP1, int n, String prefix) {
+		CardData[] row = isP1 ? mw.p1BackupCards : mw.p2BackupCards;
+		int placed = 0;
+		for (int i = 0; i < row.length && placed < n; i++)
+			if (row[i] == null) { row[i] = makeForward(prefix + placed, "Earth", 2, 0); placed++; }
+	}
+
+	private static MainWindow nightDancerFacing() {
+		MainWindow mw = new MainWindow();
+		mw.p2BackupCards[0] = makeFieldAbilityCard("The Night Dancer", "Earth", "Backup", NIGHT_DANCER);
+		return mw;
+	}
+
+	@Test
+	void theNightDancerCapsTheOpponentAtTheirOwnBackupCount() {
+		MainWindow mw = nightDancerFacing();
+
+		assertEquals(0, mw.effectiveAttackDeclarationLimit(true),
+				"P1 controls no Backups, so P1 may declare nothing");
+		assertTrue(mw.attackDeclarationsExhausted(true));
+
+		fillBackups(mw, true, 1, "Aide ");
+		assertEquals(1, mw.effectiveAttackDeclarationLimit(true), "one Backup buys one declaration");
+		assertFalse(mw.attackDeclarationsExhausted(true));
+
+		mw.p1Turn.attackDeclarationsThisTurn = 1;
+		assertTrue(mw.attackDeclarationsExhausted(true), "and it is spent");
+	}
+
+	@Test
+	void theCapCountsTheAttackersBackupsNotItsControllers() {
+		// P2 holds The Night Dancer *and* Backups of their own; none of that helps P1.
+		MainWindow mw = nightDancerFacing();
+		fillBackups(mw, false, 2, "Theirs ");
+
+		assertEquals(0, mw.effectiveAttackDeclarationLimit(true));
+
+		fillBackups(mw, true, 1, "Mine ");
+		assertEquals(1, mw.effectiveAttackDeclarationLimit(true),
+				"only the attacker's own Backups count");
+	}
+
+	@Test
+	void theCapMovesWithTheBoard() {
+		// The reason it is derived rather than stored: the number is live.
+		MainWindow mw = nightDancerFacing();
+		fillBackups(mw, true, 2, "Aide ");
+		assertEquals(2, mw.effectiveAttackDeclarationLimit(true));
+
+		mw.p1BackupCards[1] = null;
+
+		assertEquals(1, mw.effectiveAttackDeclarationLimit(true),
+				"losing a Backup mid-phase lowers the cap");
+	}
+
+	@Test
+	void theLowestCapWinsAndTheDancerLeavingLiftsHers() {
+		MainWindow mw = nightDancerFacing();
+		fillBackups(mw, true, 3, "Aide ");
+		assertEquals(3, mw.effectiveAttackDeclarationLimit(true));
+
+		// Folka 22-104R's one-shot sets the turn-state limit; the tighter of the two binds.
+		mw.p1Turn.attackDeclarationLimit = 1;
+		assertEquals(1, mw.effectiveAttackDeclarationLimit(true));
+
+		mw.p1Turn.attackDeclarationLimit = Integer.MAX_VALUE;
+		mw.p2BackupCards[0] = null;
+		assertEquals(Integer.MAX_VALUE, mw.effectiveAttackDeclarationLimit(true),
+				"with the card gone the cap goes with it");
+	}
+
+	@Test
+	void aSilencedDancerCapsNothing() {
+		MainWindow mw = nightDancerFacing();
+		assertEquals(0, mw.effectiveAttackDeclarationLimit(true));
+
+		mw.lostAbilitiesCards.add(mw.p2BackupCards[0]);
+
+		assertEquals(Integer.MAX_VALUE, mw.effectiveAttackDeclarationLimit(true));
+	}
+
+	// =========================================================================================
+	// Lenna 18-100L and Ultimecia 22-073L: "All cards in your Break Zone cannot be removed from
+	// the game by your opponent's Summons or abilities."
+	//
+	// Terra 23-011L already printed the same sentence scoped to Summons, and was enforced at one
+	// candidate-list site. This is that shield widened to every card type, enforced at the removal
+	// itself — which is where it has to be, because the wording stops the removal rather than the
+	// choosing. Kalmia 18-090R's neighbour stops the *choosing* and is deliberately silent about a
+	// sweep that names no card; this one is not.
+	//
+	// Opponent-scoped: the zone's owner may still remove their own cards, which is what keeps
+	// their own recursion working.
+	// =========================================================================================
+
+	private static final String BZ_RFG_SHIELD =
+			"All cards in your Break Zone cannot be removed from the game by your opponent's "
+			+ "Summons or abilities.";
+
+	/** P2 holds the shield and two cards in their Break Zone; P1 is the would-be remover. */
+	private static MainWindow shieldedBreakZone(String shieldText) {
+		MainWindow mw = new MainWindow();
+		CardData lenna = makeFieldAbilityCard("Lenna", "Water", "Forward", shieldText);
+		mw.placeP2CardInForwardZone(lenna);
+		mw.gameState.getIdentity().put(lenna, false);
+		CardData fwd = makeForward("BzForward", "Water", 2, 5000);
+		CardData summon = makeSummon("BzSummon", "Water", 2, "");
+		mw.gameState.getP2BreakZone().add(fwd);
+		mw.gameState.getP2BreakZone().add(summon);
+		mw.gameState.getIdentity().put(fwd, false);
+		mw.gameState.getIdentity().put(summon, false);
+		return mw;
+	}
+
+	@Test
+	void theOpponentCannotRemoveAnythingFromAShieldedBreakZone() {
+		MainWindow mw = shieldedBreakZone(BZ_RFG_SHIELD);
+
+		mw.buildGameContext(true).removeTargetFromGame(
+				new ForwardTarget(false, 0, ForwardTarget.CardZone.BREAK_ZONE));
+
+		assertEquals(2, mw.gameState.getP2BreakZone().size(), "the Forward stays put");
+		assertTrue(mw.gameState.getP2PermanentRfp().isEmpty());
+	}
+
+	@Test
+	void theOwnerMayStillRemoveTheirOwn() {
+		// Opponent-scoped. Without this the shield would shut off its own controller's recursion.
+		MainWindow mw = shieldedBreakZone(BZ_RFG_SHIELD);
+
+		mw.buildGameContext(false).removeTargetFromGame(
+				new ForwardTarget(false, 0, ForwardTarget.CardZone.BREAK_ZONE));
+
+		assertEquals(1, mw.gameState.getP2BreakZone().size());
+		assertEquals(1, mw.gameState.getP2PermanentRfp().size());
+	}
+
+	@Test
+	void aBlockedRemovalIsNotCreditedToTheResolvingAbility() {
+		// The shield is checked ahead of the cardsRemovedBySource bookkeeping. Otherwise a later
+		// "the cards removed by this ability" wording would call back a card still in the zone.
+		MainWindow mw = shieldedBreakZone(BZ_RFG_SHIELD);
+		CardData remover = makeAutoAbilityForward("Anima", "");
+		GameContext ctx = mw.buildGameContext(true);
+		mw.currentAbilitySource = remover;
+		try {
+			ctx.removeTargetFromGame(new ForwardTarget(false, 0, ForwardTarget.CardZone.BREAK_ZONE));
+		} finally {
+			mw.currentAbilitySource = null;
+		}
+
+		assertEquals(0, ctx.cardsRemovedBySourceCount(remover));
+	}
+
+	@Test
+	void terrasNarrowerShieldStillOnlyCoversSummons() {
+		String terra = "All Summons in your Break Zone cannot be removed from the game by your "
+				+ "opponent's Summons or abilities.";
+		MainWindow mw = shieldedBreakZone(terra);
+		GameContext ctx = mw.buildGameContext(true);
+
+		// idx 1 is the Summon — shielded.
+		ctx.removeTargetFromGame(new ForwardTarget(false, 1, ForwardTarget.CardZone.BREAK_ZONE));
+		assertEquals(2, mw.gameState.getP2BreakZone().size());
+
+		// idx 0 is the Forward — Terra says nothing about it.
+		ctx.removeTargetFromGame(new ForwardTarget(false, 0, ForwardTarget.CardZone.BREAK_ZONE));
+		assertEquals(1, mw.gameState.getP2BreakZone().size(),
+				"the Summons-only wording leaves everything else exposed");
+	}
+
+	@Test
+	void theWiderShieldCoversTheSummonToo() {
+		MainWindow mw = shieldedBreakZone(BZ_RFG_SHIELD);
+
+		mw.buildGameContext(true).removeTargetFromGame(
+				new ForwardTarget(false, 1, ForwardTarget.CardZone.BREAK_ZONE));
+
+		assertEquals(2, mw.gameState.getP2BreakZone().size(), "\"All cards\" includes the Summons");
+	}
+
+	@Test
+	void aSilencedShieldProtectsNothing() {
+		MainWindow mw = shieldedBreakZone(BZ_RFG_SHIELD);
+		mw.lostAbilitiesCards.add(mw.p2ForwardCards.get(0));
+
+		mw.buildGameContext(true).removeTargetFromGame(
+				new ForwardTarget(false, 0, ForwardTarget.CardZone.BREAK_ZONE));
+
+		assertEquals(1, mw.gameState.getP2BreakZone().size());
+	}
+
+	@Test
+	void theShieldReadsTheZoneOwnersOwnField() {
+		// P1 holding a Lenna does nothing for P2's Break Zone — the scan was P1-hardcoded before.
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeFieldAbilityCard("Lenna", "Water", "Forward", BZ_RFG_SHIELD));
+		CardData bzCard = makeForward("BzForward", "Water", 2, 5000);
+		mw.gameState.getP2BreakZone().add(bzCard);
+		mw.gameState.getIdentity().put(bzCard, false);
+
+		assertFalse(mw.bzCardProtectedFromOppRfg(bzCard, false),
+				"the shield belongs to whoever owns the Break Zone it names");
+		assertTrue(mw.bzCardProtectedFromOppRfg(bzCard, true));
+	}
 }
