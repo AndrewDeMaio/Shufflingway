@@ -1404,6 +1404,8 @@ class ComputerPlayer implements OpponentController {
 			// a card outright (no matching-element card in hand) or grant a boost with no relevant
 			// combat to use it in (e.g. no Haste to attack with the turn it enters the field).
 			if (ActionResolver.discardConditionalElementBranches(ability.effectText()) != null) continue;
+			// A card-for-damage trade that breaks nothing is worth holding for a later board.
+			if (p2ShouldHoldDamageAbility(ability)) continue;
 			// Gogo's "Mimic" replays a special ability a Character used this turn — pointless (and a
 			// wasted S + Dull cost) when none other than Mimic itself has been used yet.
 			if (ActionResolver.isUseSpecialAbilityUsedThisTurnEffect(ability.effectText())
@@ -1503,6 +1505,46 @@ class ComputerPlayer implements OpponentController {
 		for (int i = 0; i < mw.p2MonsterCards.size(); i++)
 			if (mw.p2MonsterCards.get(i) == card) return mw.effectiveP2MonsterPower(i);
 		return card.power();
+	}
+
+	/**
+	 * True when {@code ability} deals a fixed amount of damage to a Forward it chooses, pays for it
+	 * by putting a card into the Break Zone, and no P1 Forward on the board would break under that
+	 * damage — in which case P2 holds the ability rather than activating it.
+	 *
+	 * <p>The trade is what makes it worth holding: damage short of lethal is wiped at the end of the
+	 * turn, so a card has been spent to change nothing, while the same number becomes lethal on a
+	 * later board (a power boost expiring, a Forward already damaged in combat). Only the
+	 * irrecoverable costs are gated this way — an ability that costs no more than a Dull is free to
+	 * soften a Forward up for the attack phase that follows, and a Dull spent is a Dull recovered
+	 * next turn.
+	 *
+	 * <p>Targeting is judged by {@link #abilityHarmsChosenTarget}, which already excludes the
+	 * "Forward you control" printings: an ability aimed at P2's own board is not one being held back
+	 * for a better target.
+	 */
+	boolean p2ShouldHoldDamageAbility(ActionAbility ability) {
+		int damage = ActionResolver.chooseTargetDamageAmount(ability.effectText());
+		if (damage <= 0 || ability.breakZoneCosts().isEmpty()) return false;
+		if (!abilityHarmsChosenTarget(ability)) return false;
+		return !p1HasForwardBreakableBy(damage);
+	}
+
+	/**
+	 * True if {@code damage} would break at least one P1 Forward (or Monster acting as one) as the
+	 * board stands.  Optimistic by design: it reads raw power and damage
+	 * ({@link MainWindow#fieldForwardBreakableBy}), so a shielded Forward still counts as a kill.
+	 */
+	private boolean p1HasForwardBreakableBy(int damage) {
+		for (int i = 0; i < mw.p1ForwardCards.size(); i++) {
+			if (mw.p1ForwardCards.get(i) == null) continue;
+			if (mw.fieldForwardBreakableBy(true, ForwardTarget.CardZone.FORWARD, i, damage)) return true;
+		}
+		for (int i = 0; i < mw.p1MonsterCards.size(); i++) {
+			if (mw.p1MonsterCards.get(i) == null || !mw.isP1MonsterTemporarilyForward(i)) continue;
+			if (mw.fieldForwardBreakableBy(true, ForwardTarget.CardZone.MONSTER, i, damage)) return true;
+		}
+		return false;
 	}
 
 	/** True if P1 has at least one Forward (or temp-forward Monster) on the field. */

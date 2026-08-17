@@ -24295,4 +24295,162 @@ public class CardBehaviorTest {
 		assertEquals(0, mw.friendlyElementForwardCombatBoost(
 				makeCategoryFwd("Stranger", "Wind", "XV"), true), "and neither arm answers this one");
 	}
+
+	// =========================================================================================
+	// AI damage targeting: which Forward the CPU aims a "Choose 1 Forward. Deal it N damage."
+	// effect at, and when it holds such an ability instead of spending a card on it. The bug this
+	// section pins: a Black Mage put itself into the Break Zone for 5000 damage and the shuffle
+	// aimed it at a 7000-power Forward (5000 printed, boosted) standing next to a 5000-power one
+	// it would have broken outright.
+	// =========================================================================================
+
+	private static final String BLACK_MAGE_DAMAGE_ABILITY =
+			"《Dull》, put Black Mage into the Break Zone: Choose 1 Forward. Deal it 5000 damage.";
+
+	/** The one Forward the AI picked for {@code effectText}, resolving as P2. */
+	private static CardData aiDamagePick(MainWindow mw, String effectText) {
+		CardData source = makeForward("Source", "Fire", 2, 5000);
+		List<ForwardTarget> picked = ActionResolver.preSelectTargets(
+				effectText, source, 0, mw.buildGameContext(false));
+		assertNotNull(picked, "a \"Choose 1 Forward\" effect selects its target at activation");
+		assertEquals(1, picked.size(), "one Forward chosen");
+		ForwardTarget t = picked.get(0);
+		assertTrue(t.isP1(), "a damage effect is aimed across the field");
+		return mw.p1ForwardCards.get(t.idx());
+	}
+
+	@Test
+	void theDamageClauseAmountIsReadOffTheChooseText() {
+		assertEquals(5000, ActionResolver.chooseTargetDamageAmount(
+				"Choose 1 Forward. Deal it 5000 damage."));
+		assertEquals(9000, ActionResolver.chooseTargetDamageAmount(
+				"Choose 1 Forward opponent controls. Deal it 9000 damage."));
+		assertEquals(3000, ActionResolver.chooseTargetDamageAmount(
+				"Choose up to 2 Forwards. Deal them 3000 damage."));
+		assertEquals(5000, ActionResolver.chooseTargetDamageAmount(
+				"Choose 1 Forward. Deal it 5000 damage. If you control 3 Fire Characters, deal it "
+				+ "9000 damage instead."),
+				"the base amount is the one every branch is sure to deal");
+		assertEquals(0, ActionResolver.chooseTargetDamageAmount(
+				"Choose 1 Forward. Deal it damage equal to its power."),
+				"an amount computed at resolution time cannot be read off the text");
+		assertEquals(0, ActionResolver.chooseTargetDamageAmount("Choose 1 Forward. Break it."));
+		assertEquals(0, ActionResolver.chooseTargetDamageAmount(null));
+	}
+
+	@Test
+	void aiAimsDamageAtTheForwardItBreaksRatherThanTheBoostedOne() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForward("Urianger", "Ice", 3, 5000));
+		placeP1Forward(mw, makeForward("Papalymo", "Ice", 3, 5000));
+		mw.p1ForwardPowerBoost.set(0, 2000);   // Urianger stands at 7000 and survives the hit
+
+		// Repeated because the pick is shuffled among equally good choices: one run passing could
+		// be luck, twenty cannot.
+		for (int i = 0; i < 20; i++)
+			assertEquals("Papalymo", aiDamagePick(mw, "Choose 1 Forward. Deal it 5000 damage.").name(),
+					"5000 damage goes to the Forward it breaks, not the one boosted past it");
+	}
+
+	@Test
+	void amongBreakableForwardsTheAiTakesTheBiggest() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForward("Chocobo", "Wind", 1, 3000));
+		placeP1Forward(mw, makeForward("Bahamut", "Fire", 5, 5000));
+
+		for (int i = 0; i < 20; i++)
+			assertEquals("Bahamut", aiDamagePick(mw, "Choose 1 Forward. Deal it 5000 damage.").name(),
+					"both break, so the bigger one is the better trade");
+	}
+
+	@Test
+	void damageAlreadyOnAForwardCountsTowardBreakingIt() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForward("Odin", "Dark", 6, 9000));
+		placeP1Forward(mw, makeForward("Shiva", "Ice", 4, 7000));
+		mw.p1ForwardDamage.set(0, 5000);   // Odin has 4000 left — inside the hit; Shiva has 7000
+
+		for (int i = 0; i < 20; i++)
+			assertEquals("Odin", aiDamagePick(mw, "Choose 1 Forward. Deal it 5000 damage.").name(),
+					"the damage on the board is part of what the next hit has to beat");
+	}
+
+	@Test
+	void anEffectThatBreaksNothingStillPicksATarget() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForward("Ark", "Dark", 7, 9000));
+
+		// A preference, never a veto: the effect is already being resolved, and declining to choose
+		// would fizzle it rather than improve it.
+		assertEquals("Ark", aiDamagePick(mw, "Choose 1 Forward. Deal it 5000 damage.").name());
+	}
+
+	@Test
+	void aBuffIsStillAimedAtTheAiOwnBoardWhenTheTextAlsoNamesDamage() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForward("Vivi", "Ice", 2, 3000));
+
+		// No damage clause to read, so the hint stays clear and the existing side preference decides.
+		assertEquals(0, ActionResolver.chooseTargetDamageAmount(
+				"Choose 1 Forward. During this turn, if it is dealt damage, double the damage instead."));
+	}
+
+	@Test
+	void amultiTargetDamageEffectFillsUpFromTheBreakableForwards() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForward("Moogle", "Wind", 1, 2000));
+		placeP1Forward(mw, makeForward("Ark", "Dark", 7, 9000));
+		placeP1Forward(mw, makeForward("Chocobo", "Wind", 1, 3000));
+
+		CardData source = makeForward("Source", "Fire", 2, 5000);
+		List<ForwardTarget> picked = ActionResolver.preSelectTargets(
+				"Choose up to 2 Forwards. Deal them 3000 damage.", source, 0, mw.buildGameContext(false));
+		assertNotNull(picked);
+		assertEquals(List.of("Chocobo", "Moogle"),
+				picked.stream().map(t -> mw.p1ForwardCards.get(t.idx()).name()).toList(),
+				"both Forwards the damage breaks, biggest first — Ark survives it and is passed over");
+	}
+
+	@Test
+	void aDamageAbilityHoldsItselfWhenNothingWouldBreak() {
+		MainWindow mw = new MainWindow();
+		CardData blackMage = makeTraitCard("Black Mage", "Fire", "Backup", BLACK_MAGE_DAMAGE_ABILITY);
+		ActionAbility ability = blackMage.actionAbilities().get(0);
+		assertFalse(ability.breakZoneCosts().isEmpty(), "the cost puts Black Mage into the Break Zone");
+
+		ComputerPlayer cpu = new ComputerPlayer(mw);
+		placeP1Forward(mw, makeForward("Urianger", "Ice", 3, 5000));
+		mw.p1ForwardPowerBoost.set(0, 2000);
+		assertTrue(cpu.p2ShouldHoldDamageAbility(ability),
+				"a card spent on damage the 7000-power Forward shrugs off changes nothing");
+
+		// A second Forward inside the hit, and the trade is worth making.
+		placeP1Forward(mw, makeForward("Papalymo", "Ice", 3, 5000));
+		assertFalse(cpu.p2ShouldHoldDamageAbility(ability));
+	}
+
+	@Test
+	void theHoldOnlyAppliesToAbilitiesThatSpendACard() {
+		MainWindow mw = new MainWindow();
+		ComputerPlayer cpu = new ComputerPlayer(mw);
+		placeP1Forward(mw, makeForward("Urianger", "Ice", 3, 5000));
+		mw.p1ForwardPowerBoost.set(0, 2000);
+
+		// Dull only: the cost comes back next turn, and non-lethal damage can still set up a block
+		// or an attack later in the same turn.
+		CardData dullOnly = makeTraitCard("Firion", "Fire", "Forward",
+				"《Dull》: Choose 1 Forward. Deal it 5000 damage.");
+		assertFalse(cpu.p2ShouldHoldDamageAbility(dullOnly.actionAbilities().get(0)));
+
+		// A break-zone cost aimed at P2's own board is not being held back for a better target.
+		CardData ownBoard = makeTraitCard("Selfharm", "Fire", "Backup",
+				"《Dull》, put Selfharm into the Break Zone: Choose 1 Forward you control. "
+				+ "Deal it 5000 damage.");
+		assertFalse(cpu.p2ShouldHoldDamageAbility(ownBoard.actionAbilities().get(0)));
+
+		// And an amount that is only known at resolution time is never second-guessed.
+		CardData computed = makeTraitCard("Titan", "Earth", "Backup",
+				"《Dull》, put Titan into the Break Zone: Choose 1 Forward. Deal it damage equal to its power.");
+		assertFalse(cpu.p2ShouldHoldDamageAbility(computed.actionAbilities().get(0)));
+	}
 }

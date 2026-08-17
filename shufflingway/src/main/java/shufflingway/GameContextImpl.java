@@ -73,6 +73,13 @@ final class GameContextImpl implements GameContext {
 	private List<ForwardTarget> preloadedTargets  = null;
 	/** Pending "draw N when it leaves the field for the Break Zone" mark, applied at target selection. */
 	private int armedBzDrawMark = 0;
+	/**
+	 * Damage the selection about to be made will be dealt, or {@code 0} when the effect deals none.
+	 * Set by {@link ActionResolver#preSelectTargets} and read only by the AI's auto-selection branch
+	 * in {@link #selectCharacters}; an instance field rather than MainWindow state because the hint
+	 * is only ever true of the one selection this context is being used for.
+	 */
+	private int aiDamageTargetHint = 0;
 	/** Card the most recent {@link #lookAtTopDeck} put into hand; read by riders on that look. */
 	private CardData lastLookAddedToHand = null;
 
@@ -769,6 +776,16 @@ final class GameContextImpl implements GameContext {
 				mw.giveForwardControlToOpponent(source);
 			}
 
+			/** Current effective Forward power of the Character at {@code t}, whichever row it stands in. */
+			private int fieldPowerAt(ForwardTarget t) {
+				return mw.fieldForwardPower(t.isP1(), t.zone(), t.idx());
+			}
+
+			/** {@link MainWindow#fieldForwardBreakableBy} for a whole target. */
+			private boolean wouldBreakUnderDamage(ForwardTarget t, int damage) {
+				return mw.fieldForwardBreakableBy(t.isP1(), t.zone(), t.idx(), damage);
+			}
+
 			@Override
 			public List<ForwardTarget> selectCharacters(
 					int maxCount, boolean upTo, boolean opponentOnly,
@@ -1134,8 +1151,28 @@ final class GameContextImpl implements GameContext {
 								.filter(t -> t.isP1() != preferOwn).toList();
 						if (!preferred.isEmpty()) pool = preferred;
 					}
+					// The selection is about to be dealt damage: aim it at an opponent's Character
+					// the damage would actually break. Left to the shuffle below, a 5000-damage
+					// ability is as likely to pick the 7000-power Forward that shrugs it off as
+					// the 5000-power one it would remove — the same cost paid for nothing.
+					// Narrowing the pool rather than sorting it keeps the pick random among the
+					// choices that are equally the best one.
+					boolean orderByPower = false;
+					if (aiDamageTargetHint > 0) {
+						List<ForwardTarget> lethal = pool.stream()
+								.filter(t -> t.isP1() != isP1)
+								.filter(t -> wouldBreakUnderDamage(t, aiDamageTargetHint))
+								.toList();
+						if (!lethal.isEmpty()) { pool = lethal; orderByPower = true; }
+					}
 					List<ForwardTarget> copy = new ArrayList<>(pool);
 					java.util.Collections.shuffle(copy);
+					// Biggest of the breakable first — same cost, strictly more removed — so a
+					// choose of several fills up from the top of the board downwards. The sort is
+					// stable, so the shuffle above still decides between equal Forwards.
+					if (orderByPower)
+						copy.sort(java.util.Comparator.comparingInt(
+								(ForwardTarget t) -> fieldPowerAt(t)).reversed());
 					List<ForwardTarget> picked = List.copyOf(copy.subList(0, Math.min(maxCount, copy.size())));
 					picked.forEach(t -> {
 						CardData c = switch (t.zone()) {
@@ -4921,6 +4958,7 @@ final class GameContextImpl implements GameContext {
 			@Override public int bzCostForwardPower() { return mw.lastBzCostForwardPower; }
 			@Override public void suppressExBurstsThisAbility() { mw.suppressExBurstsThisAbility = true; }
 			@Override public void setAiPrefersOwnTargets(boolean preferOwn) { mw.aiPrefersOwnTargets = preferOwn; }
+			@Override public void setAiDamageTargetHint(int damage) { aiDamageTargetHint = Math.max(0, damage); }
 			@Override public void grantSelfExBurstSuppression(CardData source) {
 				if (source == null) return;
 				// No printed grant wording carries a cost filter, so the grant covers any cost.

@@ -1489,6 +1489,14 @@ public interface GameContext {
     void setAiPrefersOwnTargets(boolean preferOwn);
 
     /**
+     * Tells this context how much damage the targets it is about to select will be dealt, so an AI
+     * controller can aim the selection at a Character the damage would actually break rather than
+     * at one that survives it.  {@code 0} clears the hint.  Advisory, and scoped to this context
+     * instance: no effect on a human's choice.
+     */
+    void setAiDamageTargetHint(int damage);
+
+    /**
      * Grants {@code source} "EX Bursts of cards put into the Damage Zone due to [source] cannot be
      * used" until the end of the turn (Shadow Lord 12-071R).  Broader than
      * {@link #suppressExBurstsThisAbility}: it follows the card, so every point of player damage

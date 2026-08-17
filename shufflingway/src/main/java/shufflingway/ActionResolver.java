@@ -4570,6 +4570,24 @@ public class ActionResolver {
         return OWN_FORWARD_PROTECTION.matcher(text).find();
     }
 
+    /**
+     * The fixed damage a "…Deal it/them N damage" effect deals to each Character it chooses, or
+     * {@code 0} when {@code text} carries no such clause — including the amounts computed at
+     * resolution time from board state ("damage equal to its power"), which nothing here can
+     * predict.
+     *
+     * <p>Read two ways, both advisory: {@link #preSelectTargets} passes it to the context so the
+     * AI aims its selection at a Character the damage would break, and {@link ComputerPlayer}
+     * weighs it against the board to decide whether an ability is worth its cost at all. Where
+     * the text raises the amount conditionally ("…deal it 9000 damage instead"), the base is what
+     * gets reported: it is the amount every branch is sure to deal.
+     */
+    static int chooseTargetDamageAmount(String text) {
+        if (text == null) return 0;
+        Matcher m = FOLLOWUP_DAMAGE.matcher(text);
+        return m.find() ? Integer.parseInt(m.group("amount")) : 0;
+    }
+
     private static Consumer<GameContext> tryParseExtraTurnThenLose(String text) {
         if (!EXTRA_TURN_THEN_LOSE.matcher(text).find()) return null;
         return ctx -> {
@@ -4647,6 +4665,10 @@ public class ActionResolver {
     public static List<ForwardTarget> preSelectTargets(String effectText, CardData source, int xValue, GameContext ctx) {
         TargetSpec spec = targetSpec(effectText, source);
         if (spec == null) return null;
+        // Every activation-time selection funnels through here — action abilities, Summons and auto
+        // abilities alike — so it is the one place that can tell the context what the cards it is
+        // about to pick are in for. Ignored unless the picker is the AI.
+        ctx.setAiDamageTargetHint(chooseTargetDamageAmount(effectText));
         return ctx.selectCharacters(spec.maxCount(), spec.upTo(), spec.opponentOnly(), spec.selfOnly(),
                 spec.condition(), spec.element(), spec.costVal(), spec.costCmp(), spec.powerVal(),
                 spec.powerCmp(), spec.inclForwards(), spec.inclBackups(), spec.inclMonsters(),

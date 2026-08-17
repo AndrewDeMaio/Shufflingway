@@ -72,11 +72,11 @@ import javax.swing.JScrollBar;
 import javax.swing.JScrollPane;
 import javax.swing.JSeparator;
 import javax.swing.JSpinner;
-import javax.swing.SpinnerNumberModel;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.JWindow;
 import javax.swing.ScrollPaneConstants;
+import javax.swing.SpinnerNumberModel;
 import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
 import javax.swing.SwingWorker;
@@ -84,11 +84,13 @@ import javax.swing.Timer;
 import javax.swing.ToolTipManager;
 import javax.swing.UIManager;
 import javax.swing.WindowConstants;
-import shufflingway.graphics.ShieldIcon;
 import javax.swing.border.BevelBorder;
 import javax.swing.border.SoftBevelBorder;
 import javax.swing.event.PopupMenuEvent;
 import javax.swing.event.PopupMenuListener;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 import scraper.DeckDatabase;
 import scraper.DeckDatabase.DeckCardDetail;
@@ -103,34 +105,32 @@ import static shufflingway.CardFilters.meetsJobFilter;
 import static shufflingway.CpPaymentUtils.contributingElement;
 import static shufflingway.CpPaymentUtils.matchesAnyElement;
 import shufflingway.dialog.AltCostPaymentDialog;
-import shufflingway.dialog.ExtraCostBzSelectDialog;
 import shufflingway.dialog.BreakZoneDialog;
+import shufflingway.dialog.ExtraCostBzSelectDialog;
 import shufflingway.dialog.HandPickDialog;
 import shufflingway.dialog.LbDialog;
 import shufflingway.dialog.LbPaymentDialog;
 import shufflingway.dialog.RemovedFromPlayDialog;
 import shufflingway.dialog.StandardPaymentDialog;
 import shufflingway.dialog.WarpPaymentDialog;
+import shufflingway.graphics.BoardEdgeFadePanel;
 import shufflingway.graphics.CardAnimation;
 import static shufflingway.graphics.CardAnimation.CARD_H;
 import static shufflingway.graphics.CardAnimation.CARD_W;
 import shufflingway.graphics.CardBreakAnimator;
 import shufflingway.graphics.CardRfpAnimator;
 import shufflingway.graphics.CardSlideAnimator;
-import shufflingway.graphics.BoardEdgeFadePanel;
 import shufflingway.graphics.CrystalDisplay;
 import shufflingway.graphics.GradientPanel;
 import shufflingway.graphics.GrayscaleLabel;
 import shufflingway.graphics.HandFanPanel;
+import shufflingway.graphics.ShieldIcon;
 import shufflingway.graphics.TraitTab;
 import shufflingway.graphics.TriangleIcon;
 import shufflingway.menu.DebugMenu;
 import shufflingway.menu.FileMenu;
 import shufflingway.menu.HelpMenu;
 import shufflingway.menu.MultiplayerMenu;
-import org.json.JSONArray;
-import org.json.JSONObject;
-
 import shufflingway.net.ActionType;
 import shufflingway.net.ChoiceKind;
 import shufflingway.net.GameAction;
@@ -15014,6 +15014,19 @@ public class MainWindow {
 			}
 			default -> 0;
 		};
+	}
+
+	/**
+	 * True when {@code damage} would break the Character in this slot: the power it has left, after
+	 * the damage already on it, is no more than the incoming hit.
+	 *
+	 * <p>Reads the board as it stands. Damage reduction, "damage becomes 0" shields and anything the
+	 * other player might do in response are not consulted, so this is for weighing a play — which is
+	 * what both callers use it for — and not for deciding an outcome.
+	 */
+	boolean fieldForwardBreakableBy(boolean isP1, ForwardTarget.CardZone zone, int idx, int damage) {
+		int power = fieldForwardPower(isP1, zone, idx);
+		return power > 0 && power - fieldCombatDamage(isP1, zone, idx) <= damage;
 	}
 
 	private void addFieldCombatDamage(boolean isP1, ForwardTarget.CardZone zone, int idx, int amount) {
