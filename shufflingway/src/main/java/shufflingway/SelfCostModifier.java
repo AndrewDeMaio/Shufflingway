@@ -84,6 +84,12 @@ public record SelfCostModifier(
         /** Flat delta (×1) if you control a field card named {@code param1}; 0 otherwise. */
         IF_CONTROL_NAME,
         /**
+         * Flat delta (×1) if you control a field card named {@code param1} <em>or</em> one named
+         * {@code param2}; 0 otherwise (Cloud 21-090R). Either name satisfies it on its own, and
+         * controlling both is still one unit — the condition is a yes/no, not a count.
+         */
+        IF_CONTROL_NAME_OR_NAME,
+        /**
          * Flat delta (×1) if the count of field cards with category {@code param1-part} and
          * type {@code param2-part} is ≥ {@code Integer.parseInt(param1)}.
          * Encoding: {@code param1} = threshold string, {@code param2} = "category|type"

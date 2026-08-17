@@ -811,6 +811,10 @@ final class GameContextImpl implements GameContext {
 						zone.addAll(p1side ? mw.p1MonsterCards : mw.p2MonsterCards);
 						for (CardData c : zone) {
 							if (ActionResolver.hasCannotBeChosenByAnySummonFieldAbility(c)) sumTmp.add(c);
+							// The opponent-scoped printing (Terra 1-046H, Seiryu 16-049R). Seeds the
+							// opponent-scoped sets, so the card's own controller can still choose it.
+							if (ActionResolver.hasCannotBeChosenByOppFieldAbility(c, true))  sumOpp.add(c);
+							if (ActionResolver.hasCannotBeChosenByOppFieldAbility(c, false)) ablOpp.add(c);
 							// Royal Ripeness 5-007H: printed immunity to one named Element, both
 							// halves of it — its Summons and its abilities alike.
 							String pe = ActionResolver.cannotBeChosenByElementFieldAbility(c);

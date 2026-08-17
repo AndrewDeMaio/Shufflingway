@@ -2517,7 +2517,9 @@ public record CardData(
      */
     private static final Pattern AUTO_ABILITY_PATTERN = Pattern.compile(
         "(?i)(?:Damage\\s+(?<threshold>\\d+)\\s+--\\s+)?" +
-        "(?:When|Whenever)\\s+(?<card>[^,]+?)\\s+" +
+        // "Each time" is the same trigger word as "When" — Cloud 1-187S is the only printing to use
+        // it, and it means exactly what the other two do: once per occurrence.
+        "(?:When|Whenever|Each\\s+time)\\s+(?<card>[^,]+?)\\s+" +
         "(?<trigger>" +
             // "forms a party and attacks" must precede plain "attacks" to be preferred
             "forms?\\s+a\\s+party\\s+and\\s+attacks?" +
@@ -2811,6 +2813,19 @@ public record CardData(
     /** "a Forward other than [name] you control" — subject of a watcher attack trigger. */
     static final Pattern OTHER_FORWARD_SUBJECT = Pattern.compile(
         "(?i)^a\\s+Forward\\s+other\\s+than\\s+.+?\\s+you\\s+control$"
+    );
+
+    /**
+     * "a Forward you control" — the unrestricted watcher attack subject (Cloud 1-187S). The same
+     * trigger as {@link #OTHER_FORWARD_SUBJECT} with nobody excluded, so it is classified alongside
+     * it and told apart at dispatch by {@code AutoAbilityTriggers#matchesOtherForwardSubject}.
+     *
+     * <p>The carrier is <em>not</em> excluded: "a Forward you control" describes Cloud too, so
+     * Cloud attacking gives Cloud the boost. That is what separates the two subjects, and it is why
+     * this one cannot simply be folded into the "other than" pattern with an optional clause.
+     */
+    static final Pattern ANY_OWN_FORWARD_SUBJECT = Pattern.compile(
+        "(?i)^a\\s+Forward\\s+you\\s+control$"
     );
 
     /**
@@ -3206,6 +3221,8 @@ public record CardData(
                     && FILTER_FORWARD_SUBJECT.matcher(card).matches())                                       trigger = "filtered forward attacks";
             else if (triggerRaw.contains("attack")
                     && OTHER_FORWARD_SUBJECT.matcher(card).matches())                                        trigger = "other forward attacks";
+            else if (triggerRaw.contains("attack")
+                    && ANY_OWN_FORWARD_SUBJECT.matcher(card).matches())                                      trigger = "other forward attacks";
             else if (triggerRaw.contains("attack")
                     && card.toLowerCase(Locale.ROOT).matches("\\d+\\s+or\\s+more\\s+forwards?\\s+you\\s+control"))
                                                                                                              trigger = "attack";
@@ -6668,8 +6685,14 @@ public record CardData(
      * field ability <em>as well as</em> the auto-ability that actually runs it, and showed up in
      * the field-ability report as unwired work that was in fact already done.
      */
+    /**
+     * The trigger words that open an auto-ability sentence, so {@link #parseFieldAbilities} leaves
+     * it to {@link #parseAutoAbilities} instead of listing it as an unparsed field ability. Kept in
+     * step with {@link #AUTO_ABILITY_PATTERN}'s opener — "Each time" is Cloud 1-187S's, and adding
+     * it to one without the other would have the segment claimed twice.
+     */
     private static final Pattern FA_AUTO_PREFIX =
-            Pattern.compile("(?i)^(?:EX\\s+BURST\\s+)?When(?:ever)?\\s+");
+            Pattern.compile("(?i)^(?:EX\\s+BURST\\s+)?(?:When(?:ever)?|Each\\s+time)\\s+");
 
     /**
      * Matches a "Damage N -- " threshold prefix at the start of a {@code [[br]]}-delimited
@@ -8019,6 +8042,21 @@ public record CardData(
      * 11-071L prints it, and before it was accepted the end anchor rejected the whole sentence —
      * losing the reduction as well as the payment permission, and leaving the text in the
      * field-ability report as if nothing about it were handled.
+     *
+     * <p>The delta itself is optional, because Cloud 21-090R prints the permission <em>alone</em>:
+     * "If you control a Card Name Lann or a Card Name Reynn, the cost required to cast Cloud can be
+     * paid with CP of any Element." — a condition and a payment rule with no discount at all. That
+     * is why {@code anyelem}'s "and" is optional too: with no delta in front of it there is nothing
+     * for the conjunction to join.
+     *
+     * <p>Making it optional needs the lookahead that follows the name, which requires one of the
+     * three real continuations to be there. Without it the pattern degenerates into "The cost
+     * required to cast &lt;anything&gt;", and the lazy name group happily runs to the end of the
+     * sentence — six cards print "Before paying the cost to cast X, you can remove … <em>to reduce
+     * the cost required to cast X by N</em>", a pre-payment ability whose tail reads exactly like
+     * that. They were silently claimed as self-cost modifiers and dropped from the field-ability
+     * list. The guard in {@link #parseSelfCostModifiers} is not enough on its own: the
+     * field-ability pass asks {@link #isSelfCostModifierText}, which only tests the pattern.
      */
     private static final Pattern SELF_COST_MAIN = Pattern.compile(
         "(?i)" +
@@ -8032,6 +8070,10 @@ public record CardData(
             "(?:play\\s+(?<name1>.+?)\\s+onto\\s+the\\s+field|cast\\s+(?<name2>.+?))" +
             "|for\\s+playing\\s+(?<name3>.+?)\\s+onto\\s+the\\s+field" +
         ")" +
+        // One of the three continuations must follow the name — see the note above.
+        "(?=\\s+(?:is\\s+(?:reduced|increased)\\s+by\\s+\\d" +
+            "|becomes\\s+\\d" +
+            "|(?:and\\s+)?can\\s+be\\s+paid\\s+with\\s+CP\\s+of\\s+any\\s+Element))" +
         "(?:" +
             "\\s+is\\s+(?<dir>reduced|increased)\\s+by\\s+(?<amount>\\d+)" +
             "(?:\\s+(?<scaling>for\\s+.+?))?" +
@@ -8039,8 +8081,8 @@ public record CardData(
             // The replacement form — "becomes N" rather than a delta (Yuffie 3-069C). It takes no
             // scaling clause: a cost that becomes a fixed number has nothing to scale by.
             "|\\s+becomes\\s+(?<becomes>\\d+)" +
-        ")" +
-        "(?<anyelem>\\s+and\\s+can\\s+be\\s+paid\\s+with\\s+CP\\s+of\\s+any\\s+Element)?" +
+        ")?" +
+        "(?<anyelem>\\s+(?:and\\s+)?can\\s+be\\s+paid\\s+with\\s+CP\\s+of\\s+any\\s+Element)?" +
         "\\s*\\.?$"
     );
 
@@ -8057,6 +8099,16 @@ public record CardData(
      */
     private static final Pattern SELF_COND_CONTROL_NAME = Pattern.compile(
         "(?i)^you\\s+control\\s+(?:an?\\s+)?Card\\s+Name\\s+(?<name>.+?)\\s*$"
+    );
+    /**
+     * "you control a Card Name X or a Card Name Y" — Cloud 21-090R, whose condition names two cards
+     * and is met by either. Must be checked ahead of {@link #SELF_COND_CONTROL_NAME}, whose
+     * {@code name} group would otherwise swallow the whole disjunction and look for a card called
+     * "Lann or a Card Name Reynn".
+     */
+    private static final Pattern SELF_COND_CONTROL_NAME_OR_NAME = Pattern.compile(
+        "(?i)^you\\s+control\\s+(?:an?\\s+)?Card\\s+Name\\s+(?<name1>.+?)" +
+        "\\s+or\\s+(?:an?\\s+)?Card\\s+Name\\s+(?<name2>.+?)\\s*$"
     );
     private static final Pattern SELF_COND_RECEIVED_N_DAMAGE = Pattern.compile(
         "(?i)^you\\s+have\\s+received\\s+(?<n>\\d+)\\s+points?\\s+of\\s+damage\\s+or\\s+more$"
@@ -8274,8 +8326,13 @@ public record CardData(
             String yourTurnRaw = m.group("yourturn");
             String scalingRaw = m.group("scaling");
             String becomesRaw = m.group("becomes");
+            String amountRaw  = m.group("amount");
+            // A sentence that adjusts nothing and permits nothing is not a cost modifier — it is a
+            // fragment of some larger ability that happens to open the same way. Cloud 21-090R is
+            // the case that makes the delta optional at all, and it always carries the permission.
+            if (amountRaw == null && becomesRaw == null && m.group("anyelem") == null) continue;
             boolean isIncrease = "increased".equalsIgnoreCase(m.group("dir"));
-            int amount = becomesRaw != null ? 0 : Integer.parseInt(m.group("amount"));
+            int amount = amountRaw != null ? Integer.parseInt(amountRaw) : 0;
 
             int minCost = 0;
             if (seg.contains("(it cannot become 0)"))          minCost = 1;
@@ -8316,6 +8373,15 @@ public record CardData(
                         mod = new SelfCostModifier(amount, minCost, isIncrease,
                                 SelfCostModifier.ScalingType.IF_CAST_JOB_OR_NAME_THIS_TURN,
                                 cm.group("job").trim(), cm.group("name").trim());
+                    }
+                }
+                // Must precede SELF_COND_CONTROL_NAME — see that pattern's note.
+                if (mod == null) {
+                    cm = SELF_COND_CONTROL_NAME_OR_NAME.matcher(condRaw.trim());
+                    if (cm.find()) {
+                        mod = new SelfCostModifier(amount, minCost, isIncrease,
+                                SelfCostModifier.ScalingType.IF_CONTROL_NAME_OR_NAME,
+                                cm.group("name1").trim(), cm.group("name2").trim());
                     }
                 }
                 if (mod == null) {

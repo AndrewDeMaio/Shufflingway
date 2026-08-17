@@ -4203,6 +4203,30 @@ public class ActionResolver {
     }
 
     /**
+     * Whether {@code card} prints "[Self] cannot be chosen by [your] opponent's Summons/abilities."
+     * as a standing field ability covering {@code bySummon} — Terra 1-046H, Seiryu 16-049R and the
+     * 23 other printings of the same sentence.
+     *
+     * <p>The opponent-scoped sibling of {@link #hasCannotBeChosenByAnySummonFieldAbility}. Both are
+     * read per choice rather than applied once, because the immunity lasts exactly as long as the
+     * card is on the field. The scope word decides which half of the question it answers: a
+     * printing naming only Summons does not stop an ability, and the other way round.
+     *
+     * <p>Self-named, checked by equality: a card's own name in its own text means that card, so a
+     * second printing sharing the name is not covered by this one.
+     */
+    static boolean hasCannotBeChosenByOppFieldAbility(CardData card, boolean bySummon) {
+        if (card == null) return false;
+        for (FieldAbility fa : card.fieldAbilities()) {
+            Matcher m = FA_SELF_CANNOT_BE_CHOSEN_BY_OPP.matcher(fa.effectText().trim());
+            if (!m.matches() || !m.group("name").trim().equalsIgnoreCase(card.name())) continue;
+            String scope = m.group("scope").toLowerCase(java.util.Locale.ROOT);
+            if (bySummon ? scope.contains("summon") : scope.contains("abilit")) return true;
+        }
+        return false;
+    }
+
+    /**
      * Returns {@code true} if the card has a field ability of the form
      * "[CardName] cannot be chosen by Summons or abilities that share its Element."
      * Immunity is evaluated dynamically against the resolving card's element.

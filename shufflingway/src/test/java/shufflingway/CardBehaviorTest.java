@@ -23099,4 +23099,242 @@ public class CardBehaviorTest {
 		assertFalse(mw.wasDamagedBy(victim, galuf),
 				"seating a card forgets what its previous incarnation took");
 	}
+
+	// =========================================================================================
+	// Four standing rules a card states about itself or about its side of the board.
+	//
+	// Cloud 21-090R  "If you control a Card Name Lann or a Card Name Reynn, the cost required to
+	//                 cast Cloud can be paid with CP of any Element."
+	// Terra 1-046H   "Terra cannot be chosen by opponent's Summons."
+	// Cloud 1-187S   "Each time a Forward you control attacks, it gains +1000 power until the end
+	//                 of the turn."
+	// Neon 21-011H   "If a Fire Forward or a Category SOPFFO Forward you control deals damage to a
+	//                 Forward, the damage increases by 1000 instead."
+	//
+	// Each fell a different step short. Cloud 21-090R's sentence carries a payment permission and
+	// no discount at all, which the cost pattern required, and names two cards where the condition
+	// read one. Terra's omits the "your" every other printing of that sentence has — and behind
+	// that, nothing was reading the sentence at all: it parsed as an effect, and a field ability is
+	// never resolved. Cloud 1-187S opens with "Each time" rather than "When", and names a subject
+	// the attack watcher had no case for. Neon's adds a Category arm to a pattern that knew only
+	// Elements.
+	// =========================================================================================
+
+	private static final String CLOUD_21_090R =
+			"If you control a Card Name Lann  or a Card Name Reynn , the cost required to cast Cloud "
+			+ "can be paid with CP of any Element.";
+	private static final String TERRA_1_046H = "Terra cannot be chosen by opponent's Summons.";
+	private static final String CLOUD_1_187S =
+			"Each time a Forward you control attacks, it gains +1000 power until the end of the turn.";
+	private static final String NEON_21_011H =
+			"If a Fire Forward or a Category SOPFFO  Forward you control deals damage to a Forward, "
+			+ "the damage increases by 1000 instead.";
+
+	/** Cloud 21-090R as a 2-cost hand card carrying its own cost modifier. */
+	private static CardData makeWoffCloud() {
+		return new CardData(null, "Cloud", "Lightning", 2, 5000, "Forward", false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				List.of(), List.of(), CardData.parseFieldAbilities(CLOUD_21_090R, "Forward"),
+				List.of(), List.of(), List.of(), List.of(),
+				CardData.parseSelfCostModifiers(CLOUD_21_090R),
+				List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				null, "WOFF", null, CLOUD_21_090R);
+	}
+
+	@Test
+	void cloudsPermissionParsesWithoutADiscountToRideOn() {
+		List<SelfCostModifier> mods = CardData.parseSelfCostModifiers(CLOUD_21_090R);
+
+		assertEquals(1, mods.size());
+		SelfCostModifier mod = mods.get(0);
+		assertTrue(mod.anyElement(), "the permission is the whole of what the sentence grants");
+		assertEquals(0, mod.amountPerUnit(), "and there is no discount beside it");
+		assertEquals(SelfCostModifier.ScalingType.IF_CONTROL_NAME_OR_NAME, mod.scalingType());
+		assertEquals("Lann", mod.param1());
+		assertEquals("Reynn", mod.param2(),
+				"two names, not one called \"Lann or a Card Name Reynn\"");
+	}
+
+	@Test
+	void eitherTwinOpensCloudsPermissionAndNeitherChangesHisCost() {
+		MainWindow mw = new MainWindow();
+		CardData cloud = makeWoffCloud();
+
+		assertEquals(2, mw.effectiveCastCost(cloud));
+		assertFalse(mw.selfGrantsAnyElement(cloud), "neither twin on the field");
+
+		placeP1Forward(mw, makeForward("Lann", "Wind", 2, 5000));
+		assertTrue(mw.selfGrantsAnyElement(cloud), "Lann alone answers it");
+		assertEquals(2, mw.effectiveCastCost(cloud), "the sentence discounts nothing");
+
+		MainWindow other = new MainWindow();
+		placeP1Forward(other, makeForward("Reynn", "Wind", 2, 5000));
+		assertTrue(other.selfGrantsAnyElement(makeWoffCloud()), "and so does Reynn alone");
+	}
+
+	@Test
+	void aBystanderDoesNotOpenCloudsPermission() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForward("Tama", "Wind", 2, 5000));
+
+		assertFalse(mw.selfGrantsAnyElement(makeWoffCloud()));
+	}
+
+	@Test
+	void tifasSingleNameConditionStillReadsAsOne() {
+		// The two-name branch runs first, so the one-name printing has to survive it.
+		SelfCostModifier mod = CardData.parseSelfCostModifiers(TIFA_11_071L).get(0);
+
+		assertEquals(SelfCostModifier.ScalingType.IF_CONTROL_NAME, mod.scalingType());
+		assertEquals("Cloud", mod.param1());
+	}
+
+	@Test
+	void terrasImmunityIsReadOffHerPrintingRatherThanResolved() {
+		CardData terra = makeFieldAbilityCard("Terra", "Ice", "Forward", TERRA_1_046H);
+
+		assertTrue(ActionResolver.hasCannotBeChosenByOppFieldAbility(terra, true),
+				"the printing omits \"your\", which is why the qualifier is optional");
+		assertFalse(ActionResolver.hasCannotBeChosenByOppFieldAbility(terra, false),
+				"it names Summons, so an ability may still choose her");
+	}
+
+	@Test
+	void terraIsUnchoosableByTheOpponentsSummonAndChoosableByHerOwnControllers() {
+		MainWindow mw = new MainWindow();
+		CardData terra = makeFieldAbilityCard("Terra", "Ice", "Forward", TERRA_1_046H);
+		placeP2Forward(mw, terra);
+		CardData chooser = makeForward("Chooser", "Fire", 3, 7000);
+
+		assertTrue(mw.isProtectedFromChoice(terra, false, true, true, chooser),
+				"P1's Summon cannot choose her");
+		assertFalse(mw.isProtectedFromChoice(terra, false, true, false, chooser),
+				"P1's ability still can — the printing names Summons alone");
+		assertFalse(mw.isProtectedFromChoice(terra, false, false, true, chooser),
+				"and her own controller is not the opponent");
+	}
+
+	@Test
+	void theScopeWordDecidesWhichHalfOfTheImmunityApplies() {
+		CardData seiryu = makeFieldAbilityCard("Seiryu", "Water", "Forward",
+				"Seiryu cannot be chosen by your opponent's abilities.");
+		assertFalse(ActionResolver.hasCannotBeChosenByOppFieldAbility(seiryu, true));
+		assertTrue(ActionResolver.hasCannotBeChosenByOppFieldAbility(seiryu, false));
+
+		CardData fina = makeFieldAbilityCard("Fina", "Water", "Forward",
+				"Fina cannot be chosen by your opponent's Summons or abilities.");
+		assertTrue(ActionResolver.hasCannotBeChosenByOppFieldAbility(fina, true));
+		assertTrue(ActionResolver.hasCannotBeChosenByOppFieldAbility(fina, false));
+	}
+
+	@Test
+	void aQualifiedImmunityIsNotClaimedAsABlanketOne() {
+		// Both of these continue past the keyword with a clause that narrows the immunity. A
+		// scanning matcher would stop at "abilities" and hand them protection they do not print;
+		// the reader is anchored precisely so it cannot.
+		CardData bartz = makeFieldAbilityCard("Bartz", "Wind", "Forward",
+				"Bartz cannot be chosen by your opponent's Summons or abilities that share its Element.");
+		assertFalse(ActionResolver.hasCannotBeChosenByOppFieldAbility(bartz, true));
+		assertFalse(ActionResolver.hasCannotBeChosenByOppFieldAbility(bartz, false));
+
+		CardData garland = makeFieldAbilityCard("Jack Garland", "Dark", "Forward",
+				"Jack Garland cannot be chosen by your opponent's abilities of Characters with the named Job.");
+		assertFalse(ActionResolver.hasCannotBeChosenByOppFieldAbility(garland, false));
+	}
+
+	@Test
+	void anImmunityNamingAnotherCardIsNotThisCardsOwn() {
+		CardData impostor = makeFieldAbilityCard("Bystander", "Ice", "Forward", TERRA_1_046H);
+
+		assertFalse(ActionResolver.hasCannotBeChosenByOppFieldAbility(impostor, true),
+				"a card's own name in its own text means that card");
+	}
+
+	@Test
+	void cloudsEachTimeOpenerIsTheSameTriggerWordAsWhen() {
+		AutoAbility aa = onlyAuto(CLOUD_1_187S);
+
+		assertEquals("other forward attacks", aa.trigger());
+		assertEquals("a Forward you control", aa.triggerCard());
+		assertEquals("it gains +1000 power until the end of the turn.", aa.effectText());
+		assertTrue(CardData.parseFieldAbilities(CLOUD_1_187S, "Forward").isEmpty(),
+				"claimed as an auto-ability, so not also listed as an unparsed field ability");
+	}
+
+	@Test
+	void cloudBoostsEveryAttackerOnHisSideIncludingHimself() {
+		MainWindow mw = new MainWindow();
+		CardData cloud = makeAutoAbilityForward("Cloud", "Fire", 9000, CLOUD_1_187S);
+		placeP1Forward(mw, cloud);
+		CardData ally = makeForward("Ally", "Fire", 3, 7000);
+		placeP1Forward(mw, ally);
+
+		mw.autoAbilityTriggers.triggerAutoAbilitiesForAttack(ally, true);
+		assertEquals(8000, mw.effectiveP1ForwardPower(1), "the ally attacked and gained +1000");
+		assertEquals(9000, mw.effectiveP1ForwardPower(0), "Cloud did not attack, so Cloud gained nothing");
+
+		mw.autoAbilityTriggers.triggerAutoAbilitiesForAttack(cloud, true);
+		assertEquals(10000, mw.effectiveP1ForwardPower(0),
+				"\"a Forward you control\" excludes nobody — Cloud answers his own subject");
+	}
+
+	@Test
+	void cloudDoesNotBoostTheOpponentsAttackers() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeAutoAbilityForward("Cloud", "Fire", 9000, CLOUD_1_187S));
+		CardData enemy = makeForward("Enemy", "Ice", 3, 7000);
+		placeP2Forward(mw, enemy);
+
+		mw.autoAbilityTriggers.triggerAutoAbilitiesForAttack(enemy, false);
+
+		assertEquals(7000, mw.effectiveP2ForwardPower(0), "\"you control\" is Cloud's side, not theirs");
+	}
+
+	@Test
+	void neonsCategoryArmQualifiesTheSameBoostAsHisElementArm() {
+		Matcher m = AutoAbilityTriggers.FA_ELEMENT_FORWARD_DAMAGE_BOOST.matcher(NEON_21_011H);
+
+		assertTrue(m.find());
+		assertEquals("Fire", m.group("element"));
+		assertEquals("SOPFFO", m.group("category"));
+		assertEquals("1000", m.group("amount"));
+	}
+
+	@Test
+	void theElementOnlyPrintingStillParsesWithNoCategoryArm() {
+		Matcher m = AutoAbilityTriggers.FA_ELEMENT_FORWARD_DAMAGE_BOOST.matcher(
+				"If a Fire Forward you control deals damage to a Forward, "
+				+ "the damage increases by 1000 instead.");
+
+		assertTrue(m.find());
+		assertEquals("Fire", m.group("element"));
+		assertNull(m.group("category"), "the arm is optional, not defaulted");
+	}
+
+	/** A Forward carrying {@code category} in its first category slot. */
+	private static CardData makeCategoryFwd(String name, String element, String category) {
+		return new CardData(null, name, element, 3, 7000, "Forward", false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+				List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				null, category, null, "");
+	}
+
+	@Test
+	void neonBoostsEitherArmAndNeitherTwice() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeFieldAbilityCard("Neon", "Fire", "Forward", NEON_21_011H));
+
+		assertEquals(1000, mw.friendlyElementForwardCombatBoost(
+				makeCategoryFwd("Firestarter", "Fire", "XV"), true), "the Element arm");
+		assertEquals(1000, mw.friendlyElementForwardCombatBoost(
+				makeCategoryFwd("Ash", "Wind", "SOPFFO"), true), "the Category arm");
+		assertEquals(1000, mw.friendlyElementForwardCombatBoost(
+				makeCategoryFwd("Jack Garland", "Fire", "SOPFFO"), true),
+				"both arms at once is still one boost — they qualify the same +1000");
+		assertEquals(0, mw.friendlyElementForwardCombatBoost(
+				makeCategoryFwd("Stranger", "Wind", "XV"), true), "and neither arm answers this one");
+	}
 }

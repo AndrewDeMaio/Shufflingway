@@ -10603,6 +10603,10 @@ public class MainWindow {
 
 		// Opponent-scoped grants: the controller may still choose their own card.
 		if (chooserIsP1 == sideIsP1) return false;
+		// The printed, standing form (Terra 1-046H, Seiryu 16-049R, …). Read here rather than
+		// recorded in the sets below because those hold what some effect granted; this one is a
+		// property of the card's own text and lasts as long as it is on the field.
+		if (ActionResolver.hasCannotBeChosenByOppFieldAbility(c, bySummon)) return true;
 		if ((bySummon ? cannotBeChosenBySummons : cannotBeChosenByAbilities).contains(c)) return true;
 		if ((bySummon ? permanentCannotBeChosenBySummons : permanentCannotBeChosenByAbilities).contains(c)) return true;
 		return icbGrantsImmunity(c.name(), sideIsP1, bySummon, true);
@@ -11987,10 +11991,10 @@ public class MainWindow {
 			if (lostAbilitiesCards.contains(source)) continue;
 			for (FieldAbility fa : effectiveFieldAbilities(source)) {
 				Matcher m = AutoAbilityTriggers.FA_ELEMENT_FORWARD_DAMAGE_BOOST.matcher(fa.effectText());
-				if (m.find() && effectiveContainsElement(attacker, m.group("element"))) {
+				if (m.find() && AutoAbilityTriggers.elementForwardBoostCovers(m, attacker, this)) {
 					int amount = Integer.parseInt(m.group("amount"));
 					boost += amount;
-					logEntry(source.name() + " — " + m.group("element") + " Forward combat damage increased by " + amount);
+					logEntry(source.name() + " — Forward combat damage increased by " + amount);
 				}
 				// The unfiltered form: every Forward you control, Tulien 21-072H.
 				Matcher any = AutoAbilityTriggers.FA_FRIENDLY_FORWARD_BATTLE_DAMAGE_BOOST.matcher(fa.effectText());

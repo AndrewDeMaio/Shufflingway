@@ -370,15 +370,40 @@ final class AutoAbilityTriggers {
 	);
 
 	/**
-	 * Outgoing combat damage boost from a friendly Element Forward to an opposing Forward.
-	 * "If a Fire Forward you control deals damage to a Forward, the damage increases by N instead."
+	 * Outgoing combat damage boost from a friendly Forward to an opposing Forward.
+	 * "If a Fire Forward [or a Category SOPFFO Forward] you control deals damage to a Forward, the
+	 * damage increases by N instead."
 	 * Checked on the ATTACKER's side field cards (Forwards and Backups).
-	 * Groups: {@code element}, {@code amount}.
+	 * Groups: {@code element}, {@code category} (optional), {@code amount}.
+	 *
+	 * <p>The Category arm is Neon 21-011H's, and it is a second way for the <em>same</em> boost to
+	 * qualify rather than a second boost: a Fire Category SOPFFO Forward gets +1000 once, not twice.
+	 * {@link #elementForwardBoostCovers} is what both readers ask, so neither can double-count it.
+	 *
+	 * <p>"you control" is printed once, after the last arm, which is why it sits outside the
+	 * optional group rather than inside the first.
 	 */
 	static final Pattern FA_ELEMENT_FORWARD_DAMAGE_BOOST = Pattern.compile(
-		"(?i)If\\s+a\\s+(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+Forward\\s+you\\s+control" +
+		"(?i)If\\s+a\\s+(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+Forward" +
+		"(?:\\s+or\\s+a\\s+Category\\s+(?<category>\\S+)\\s+Forward)?" +
+		"\\s+you\\s+control" +
 		"\\s+deals?\\s+damage\\s+to\\s+a\\s+Forward,\\s+the\\s+damage\\s+increases\\s+by\\s+(?<amount>\\d+)\\s+instead\\.?"
 	);
+
+	/**
+	 * Whether {@code dealer} satisfies the filter a {@link #FA_ELEMENT_FORWARD_DAMAGE_BOOST} match
+	 * captured — its Element, or the Category the optional second arm named.
+	 *
+	 * <p>Shared by the combat reader ({@code MainWindow.friendlyElementForwardCombatBoost}) and the
+	 * ability reader ({@code DamageResolver.applyCasterSideElementForwardDamageBoosts}), so the two
+	 * cannot come to different answers about the same printing.
+	 */
+	static boolean elementForwardBoostCovers(Matcher m, CardData dealer, MainWindow mw) {
+		if (dealer == null) return false;
+		if (mw.effectiveContainsElement(dealer, m.group("element"))) return true;
+		String category = m.group("category");
+		return category != null && CardFilters.meetsCategoryFilter(dealer, category);
+	}
 
 	/**
 	 * Outgoing damage boost worded from the DEALING side, covering an Element Summon, an Element
@@ -1547,9 +1572,13 @@ final class AutoAbilityTriggers {
 				"(?i)^a\\s+Forward\\s+other\\s+than\\s+(?<name>.+?)\\s+you\\s+control$");
 
 	/**
-	 * Returns true when {@code attacker} matches "a Forward other than [excluded] you control".
+	 * Returns true when {@code attacker} matches "a Forward other than [excluded] you control", or
+	 * the unrestricted "a Forward you control" (Cloud 1-187S), which excludes nobody — the carrier
+	 * attacking answers its own subject.
 	 */
 	private boolean matchesOtherForwardSubject(String triggerCard, CardData attacker) {
+		if (CardData.ANY_OWN_FORWARD_SUBJECT.matcher(triggerCard.trim()).matches())
+			return attacker.isForward();
 		java.util.regex.Matcher m = OTHER_FORWARD_SUBJECT_WITH_NAME.matcher(triggerCard);
 		if (!m.matches()) return false;
 		String excludedName = m.group("name").trim();

@@ -502,7 +502,10 @@ public class FieldAbilityParsingTest {
             return "DmgModifier[" + (src != null ? src.trim() : "any") + thresh + ": " + effect + "]";
         }
         m = AutoAbilityTriggers.FA_ELEMENT_FORWARD_DAMAGE_BOOST.matcher(fa.effectText());
-        if (m.find()) return "ElementFwdDmgBoost[" + m.group("element") + " Fwd +" + m.group("amount") + "]";
+        if (m.find())
+            return "ElementFwdDmgBoost[" + m.group("element")
+                    + (m.group("category") != null ? " or Category " + m.group("category") : "")
+                    + " Fwd +" + m.group("amount") + "]";
         m = AutoAbilityTriggers.FA_ELEMENT_SUMMON_DAMAGE_BOOST.matcher(fa.effectText());
         if (m.find()) return "ElementSummonDmgBoost[" + m.group("element") + " Summon +" + m.group("amount") + "]";
         m = AutoAbilityTriggers.FA_FIELD_DAMAGE_MODIFIER.matcher(fa.effectText());

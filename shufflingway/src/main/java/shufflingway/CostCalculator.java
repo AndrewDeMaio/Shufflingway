@@ -98,6 +98,15 @@ class CostCalculator {
 					         .anyMatch(b -> b.name().equalsIgnoreCase(name))
 					? 1 : 0;
 			}
+			case IF_CONTROL_NAME_OR_NAME -> {
+				String n1 = mod.param1(), n2 = mod.param2();
+				// One unit whichever name answers, and one unit when both do: the printed condition
+				// is "if you control", not "for each".
+				yield fwds.stream().anyMatch(f -> f.name().equalsIgnoreCase(n1) || f.name().equalsIgnoreCase(n2))
+					|| Arrays.stream(bkps).filter(b -> b != null)
+					         .anyMatch(b -> b.name().equalsIgnoreCase(n1) || b.name().equalsIgnoreCase(n2))
+					? 1 : 0;
+			}
 			case EACH_FORWARD ->
 				fwds.size();
 			case EACH_BACKUP ->

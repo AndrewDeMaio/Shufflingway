@@ -2541,8 +2541,28 @@ final class ActionResolverPatterns {
      * backstop and no parenthesised member in the corpus. Leave those narrow.
      */
     static final Pattern STANDALONE_NAMED_CANNOT_BE_CHOSEN = Pattern.compile(
-        "(?i)(?<name>[A-Z][A-Za-z''\\-\\s()]+?)\\s+cannot\\s+be\\s+chosen\\s+by\\s+your\\s+opponent's\\s+" +
+        "(?i)(?<name>[A-Z][A-Za-z''\\-\\s()]+?)\\s+cannot\\s+be\\s+chosen\\s+by\\s+(?:your\\s+)?opponent's\\s+" +
         "(?<scope>Summons?(?:\\s+or\\s+abilities)?|abilities)\\s*\\.?"
+    );
+
+    /**
+     * The standing field-ability spelling of the sentence above: "[Self] cannot be chosen by [your]
+     * opponent's Summons/abilities." — 25 printings, from Zidane 1-071L to Yuna 27-107R.
+     *
+     * <p>Anchored end to end, where {@link #STANDALONE_NAMED_CANNOT_BE_CHOSEN} scans with
+     * {@code find()}. That is the whole difference and it is load bearing: two printings continue
+     * past the keyword with a qualifier that narrows the immunity — Bartz 18-047H's "…that share
+     * its Element" and Jack Garland 27-111L's "…of Characters with the named Job" — and a scanning
+     * matcher would stop at "abilities" and hand both of them a blanket immunity they do not have.
+     * Bartz's is read by {@link #STANDALONE_NAMED_CANNOT_BE_CHOSEN_BY_OWN_ELEMENT} instead; Jack
+     * Garland's is unhandled, and stays visibly so.
+     *
+     * <p>Terra 1-046H is the one printing that omits "your", which is why the qualifier is optional
+     * in both patterns.
+     */
+    static final Pattern FA_SELF_CANNOT_BE_CHOSEN_BY_OPP = Pattern.compile(
+        "(?i)^(?<name>.+?)\\s+cannot\\s+be\\s+chosen\\s+by\\s+(?:your\\s+)?opponent's\\s+" +
+        "(?<scope>Summons?\\s+or\\s+abilities|Summons?|abilities)\\s*[.!]?$"
     );
     /**
      * "[CardName] cannot be chosen by Summons [during this turn]." — no "your opponent's" qualifier,

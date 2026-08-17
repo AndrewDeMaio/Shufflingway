@@ -674,11 +674,11 @@ class DamageResolver {
 			for (FieldAbility fa : fas) {
 				Matcher m = AutoAbilityTriggers.FA_ELEMENT_FORWARD_DAMAGE_BOOST.matcher(fa.effectText());
 				if (!m.find()) continue;
-				if (!mw.effectiveContainsElement(mw.currentAbilitySource, m.group("element"))) continue;
+				if (!AutoAbilityTriggers.elementForwardBoostCovers(m, mw.currentAbilitySource, mw)) continue;
 				int boost = Integer.parseInt(m.group("amount"));
 				int before = amount;
 				amount += boost;
-				mw.logEntry(booster.name() + " — " + m.group("element") + " Forward ability damage increased by "
+				mw.logEntry(booster.name() + " — Forward ability damage increased by "
 						+ boost + " (" + before + " → " + amount + ")");
 			}
 		}
