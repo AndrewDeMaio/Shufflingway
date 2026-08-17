@@ -1225,6 +1225,23 @@ final class AutoAbilityTriggers {
 		"cannot\\s+produce\\s+CP[.!]?$"
 	);
 
+	/**
+	 * "The dull Forwards opponent controls lose their abilities." — Gentiana 11-033R.
+	 *
+	 * <p>Not the field-ability form of Halicarnassus 7-119H's "all the Forwards opponent controls
+	 * lose their abilities <em>until the end of the turn</em>", which is a one-shot that writes into
+	 * {@code lostAbilitiesCards} and schedules its own removal. This one carries no duration and a
+	 * state filter, so it has to be a live query: a Forward it covers gets its abilities back the
+	 * moment it activates, and there is no event to hang that restoration on. It is answered inside
+	 * {@code MainWindow.lostAbilitiesCards}'s own membership test for that reason.
+	 *
+	 * <p>"their abilities" and "all abilities" are the same statement, so both spellings are taken.
+	 */
+	static final Pattern FA_OPP_DULL_FORWARDS_LOSE_ABILITIES = Pattern.compile(
+		"(?i)^The\\s+dull\\s+Forwards?\\s+(?:your\\s+)?opponent\\s+controls?\\s+" +
+		"lose\\s+(?:their|all)\\s+abilities[.!]?$"
+	);
+
 	/** "The Forwards opponent controls cannot gain Haste." — one-sided twin of {@link #FA_FORWARDS_CANNOT_GAIN_HASTE}. */
 	static final Pattern FA_OPP_FORWARDS_CANNOT_GAIN_HASTE = Pattern.compile(
 		"(?i)^The\\s+Forwards?\\s+opponent\\s+controls\\s+cannot\\s+gain\\s+Haste[.!]?$"

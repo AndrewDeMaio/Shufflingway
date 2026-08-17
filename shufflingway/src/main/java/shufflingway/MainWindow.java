@@ -633,8 +633,93 @@ public class MainWindow {
 	/** Effects to fire at the end of P2's turn (scheduled by P1 or by "end of opponent's turn" effects). */
 	final List<Consumer<GameContext>> scheduledForP2EndTurn = new ArrayList<>();
 
-	/** Cards whose printed abilities are suppressed until end of turn ("lose all abilities"). */
-	final Set<CardData> lostAbilitiesCards = Collections.newSetFromMap(new IdentityHashMap<>());
+	/**
+	 * Cards whose printed abilities are currently suppressed: those an effect stripped until end of
+	 * turn ("lose all abilities"), plus those a standing field ability is suppressing right now —
+	 * Gentiana 11-033R's "The dull Forwards opponent controls lose their abilities."
+	 *
+	 * <p>Membership is therefore part stored and part derived. That is what lets the standing form
+	 * be honoured at all 121 places that ask this question without any of them learning about it,
+	 * and it is why the derived half must be a live query: a Forward covered by Gentiana gets its
+	 * abilities back the moment it activates, with no event to hang a removal on.
+	 *
+	 * <p>Only ever asked ({@code contains}) and written ({@code add}/{@code remove}/{@code clear});
+	 * never iterated or sized, which is what makes a partly-derived membership safe here.
+	 */
+	final Set<CardData> lostAbilitiesCards = new LostAbilitiesSet();
+
+	/**
+	 * Backing store for {@link #lostAbilitiesCards}: an identity set of the cards an effect has
+	 * stripped, with {@code contains} widened to include the standing suppressions.
+	 *
+	 * <p>Identity, not {@code equals}: {@link CardData} is a record, so two copies of one card
+	 * would otherwise share an entry and one copy's restoration would return the other's abilities.
+	 */
+	private final class LostAbilitiesSet extends java.util.AbstractSet<CardData> {
+		private final Set<CardData> stripped = Collections.newSetFromMap(new IdentityHashMap<>());
+
+		@Override public boolean add(CardData c)                { return stripped.add(c); }
+		@Override public boolean remove(Object c)               { return stripped.remove(c); }
+		@Override public void    clear()                        { stripped.clear(); }
+		@Override public java.util.Iterator<CardData> iterator(){ return stripped.iterator(); }
+		@Override public int     size()                         { return stripped.size(); }
+
+		@Override public boolean contains(Object o) {
+			if (stripped.contains(o)) return true;
+			return o instanceof CardData c && abilitiesSuppressedByOpposingField(c);
+		}
+
+		/**
+		 * The stored half alone. {@link #abilitiesSuppressedByOpposingField} asks this rather than
+		 * {@code contains} when deciding whether a suppressor is itself silenced — going through
+		 * {@code contains} would recurse straight back into here.
+		 */
+		boolean strippedByEffect(CardData c) { return stripped.contains(c); }
+	}
+
+	/**
+	 * Whether {@code card} is currently having its abilities suppressed by a standing field ability
+	 * on the opposing side — Gentiana 11-033R.
+	 *
+	 * <p>The structural test comes first and is deliberately cheap: the only standing suppression in
+	 * the corpus names <em>dull Forwards</em>, so anything active, and anything that is not a
+	 * Forward, is answered without touching a field. This matters because
+	 * {@link #lostAbilitiesCards} is consulted on hot paths.
+	 *
+	 * <p>A suppressor that an <em>effect</em> has silenced prints nothing and so suppresses nothing.
+	 * That check reads the stored half directly: asking the full membership would recurse. The
+	 * consequence is that two facing Gentianas do not silence each other, which is also the answer
+	 * that terminates.
+	 */
+	private boolean abilitiesSuppressedByOpposingField(CardData card) {
+		if (card == null) return false;
+		Boolean side = dullForwardSideOf(card);
+		if (side == null) return false;
+		LostAbilitiesSet set = (LostAbilitiesSet) lostAbilitiesCards;
+		for (CardData src : fieldCards(!side)) {
+			if (src == null || set.strippedByEffect(src)) continue;
+			for (FieldAbility fa : effectiveFieldAbilities(src))
+				if (AutoAbilityTriggers.FA_OPP_DULL_FORWARDS_LOSE_ABILITIES
+						.matcher(fa.effectText().trim()).matches()) return true;
+		}
+		return false;
+	}
+
+	/**
+	 * The side controlling {@code card} when it is a Forward standing dull, or {@code null} when it
+	 * is active, is not a Forward, or is not on the field at all.
+	 */
+	private Boolean dullForwardSideOf(CardData card) {
+		for (int i = 0; i < p1ForwardCards.size(); i++)
+			if (p1ForwardCards.get(i) == card)
+				return i < p1ForwardStates.size() && p1ForwardStates.get(i) == CardState.DULL
+						? Boolean.TRUE : null;
+		for (int i = 0; i < p2ForwardCards.size(); i++)
+			if (p2ForwardCards.get(i) == card)
+				return i < p2ForwardStates.size() && p2ForwardStates.get(i) == CardState.DULL
+						? Boolean.FALSE : null;
+		return null;
+	}
 
 	/**
 	 * Cards <em>granted</em> "EX Bursts of cards put into the Damage Zone due to [this card] cannot
@@ -11580,7 +11665,12 @@ public class MainWindow {
 				int dmgZone = (isP1 ? gameState.getP1DamageZone() : gameState.getP2DamageZone()).size();
 				for (FieldAbility fa : src.fieldAbilities()) {
 					if (fa.damageThreshold() > 0 && dmgZone < fa.damageThreshold()) continue;
-					boost += CardData.parseSelfPowerGrant(fa.effectText(), src.name());
+					// Firion 21-099H gates the same sentence on the opposing board instead of on a
+					// damage count; the gate comes off here and the remainder is read as any other
+					// self power grant. Null means the gate is shut.
+					String grantText = oppDullCharsGrantRemainder(fa.effectText(), isP1);
+					if (grantText == null) continue;
+					boost += CardData.parseSelfPowerGrant(grantText, src.name());
 				}
 			}
 			for (ScalingSelfPowerBoost ssb : src.scalingSelfPowerBoosts()) {
@@ -12188,7 +12278,34 @@ public class MainWindow {
 		max = Math.max(max, attacksFromOwnDamage(card));
 		max = Math.max(max, attacksFromHandSizeGrant(card));
 		max = Math.max(max, attacksFromDamageThresholdGrant(card));
+		max = Math.max(max, attacksFromOppDullCharsGrant(card));
 		return max;
+	}
+
+	/**
+	 * Firion 21-099H: "If your opponent controls 4 or more dull Characters, Firion gains +5000
+	 * power, Brave and \"Firion can attack twice in the same turn.\"" The permission is conditional
+	 * on an opposing board that changes during the turn, so — like {@link #attacksFromHandSizeGrant}
+	 * — it is read here rather than frozen into {@link CardData#maxAttacksPerTurn()}. The power and
+	 * the Brave granted in the same breath travel their ordinary routes, through
+	 * {@code fieldBoostContribution} and {@code FieldGrantCalculator}, each stripping the same gate.
+	 *
+	 * <p>Returns 0 when the card has no such ability, so it never lowers an existing permission.
+	 */
+	private int attacksFromOppDullCharsGrant(CardData card) {
+		if (lostAbilitiesCards.contains(card)) return 0;
+		Boolean side = fieldSideOf(card);
+		if (side == null) return 0;
+		int best = 0;
+		for (FieldAbility fa : effectiveFieldAbilities(card)) {
+			String grantText = oppDullCharsGrantRemainder(fa.effectText(), side);
+			// Unchanged text carries no gate, and this reader owns only the gated printing.
+			if (grantText == null || grantText.equals(fa.effectText())) continue;
+			CardData.SelfGainsQuotedGrant g =
+					CardData.parseSelfGainsQuotedGrant(grantText, card.name());
+			if (g != null) best = Math.max(best, g.maxAttacks());
+		}
+		return best;
 	}
 
 	/**
@@ -12293,6 +12410,43 @@ public class MainWindow {
 	 * and the damage-threshold caller is better for it too: a Backup used to miss and fall through
 	 * to the ownership map, which answers who owns the card rather than who controls it.
 	 */
+	/**
+	 * How many dull Characters the given player's opponent controls — the board condition Firion
+	 * 21-099H's grant is gated on.
+	 *
+	 * <p>"Characters" spans all three opposing rows: a dull Backup or Monster counts as readily as
+	 * a dull Forward, which is the same reading {@code ScalingSelfPowerBoost}'s opponent-Character
+	 * source already takes of the word.
+	 */
+	int opposingDullCharacterCount(boolean isP1) {
+		boolean opp = !isP1;
+		int n = 0;
+		List<CardState> fwdStates = opp ? p1ForwardStates : p2ForwardStates;
+		for (CardState s : fwdStates) if (s == CardState.DULL) n++;
+		CardState[] bkpStates = opp ? p1BackupStates : p2BackupStates;
+		CardData[]  bkpCards  = opp ? p1BackupCards  : p2BackupCards;
+		for (int i = 0; i < bkpStates.length; i++)
+			if (bkpCards[i] != null && bkpStates[i] == CardState.DULL) n++;
+		List<CardState> monStates = opp ? p1MonsterStates : p2MonsterStates;
+		for (CardState s : monStates) if (s == CardState.DULL) n++;
+		return n;
+	}
+
+	/**
+	 * The grant half of a {@code parseOppDullCharsGatedGrant} sentence once its board condition is
+	 * known to hold, or {@code null} when {@code text} carries no such gate or the gate is shut.
+	 *
+	 * <p>Shared by the three readers that each take one half of Firion's grant — the power sum, the
+	 * trait collector and the multi-attack permission — so none of them can disagree about whether
+	 * the condition is met. Text that carries no gate is returned unchanged, so a caller can pipe
+	 * every field ability through this before handing it to the parser that owns it.
+	 */
+	String oppDullCharsGrantRemainder(String text, boolean isP1) {
+		CardData.OppDullCharsGatedGrant gate = CardData.parseOppDullCharsGatedGrant(text);
+		if (gate == null) return text;
+		return opposingDullCharacterCount(isP1) >= gate.minDullCharacters() ? gate.remainder() : null;
+	}
+
 	private Boolean fieldSideOf(CardData card) {
 		for (CardData c : p1ForwardCards) if (c == card) return Boolean.TRUE;
 		for (CardData c : p2ForwardCards) if (c == card) return Boolean.FALSE;

@@ -21571,6 +21571,215 @@ public class CardBehaviorTest {
 	}
 
 	// =========================================================================================
+	// Firion 21-099H: "If your opponent controls 4 or more dull Characters, Firion gains +5000
+	// power, Brave and "Firion can attack twice in the same turn.""
+	//
+	// The same three-part grant Gilgamesh 18-074L prints (power + trait + quoted multi-attack
+	// permission), gated on the opposing board rather than on a damage count. So it is wired the
+	// way the other gated grants are: a splitter takes the condition off the front and the
+	// remainder goes to the parser that already owns each half — the power sum in
+	// fieldBoostContribution, the trait in FieldGrantCalculator, the permission in maxAttacksPerTurn.
+	// One shared helper answers the condition, so the three cannot disagree about whether it holds.
+	//
+	// "Characters" spans all three opposing rows: a dull Backup counts as readily as a dull Forward.
+	// =========================================================================================
+
+	private static final String FIRION_21_099H =
+			"If your opponent controls 4 or more dull Characters, Firion gains +5000 power, Brave "
+			+ "and \"Firion can attack twice in the same turn.\"";
+
+	/** Dulls the first {@code n} of P2's Forwards. */
+	private static void dullP2Forwards(MainWindow mw, int n) {
+		for (int i = 0; i < n; i++) mw.p2ForwardStates.set(i, CardState.DULL);
+	}
+
+	@Test
+	void firionsGateSplitsOffLeavingAnOrdinarySelfGrant() {
+		CardData.OppDullCharsGatedGrant gate = CardData.parseOppDullCharsGatedGrant(FIRION_21_099H);
+		assertNotNull(gate);
+		assertEquals(4, gate.minDullCharacters());
+		assertEquals(5000, CardData.parseSelfPowerGrant(gate.remainder(), "Firion"),
+				"the power half is read by the parser that already owns it");
+		CardData.SelfGainsQuotedGrant q =
+				CardData.parseSelfGainsQuotedGrant(gate.remainder(), "Firion");
+		assertNotNull(q);
+		assertEquals(2, q.maxAttacks(), "and the quoted permission by its own");
+		assertTrue(q.traits().contains(CardData.Trait.BRAVE));
+	}
+
+	@Test
+	void firionCountsDullCharactersAcrossEveryOpposingRow() {
+		MainWindow mw = new MainWindow();
+		placeP2Forward(mw, makeForward("A", "Fire", 3, 7000));
+		placeP2Forward(mw, makeForward("B", "Fire", 3, 7000));
+		dullP2Forwards(mw, 2);
+		assertEquals(2, mw.opposingDullCharacterCount(true), "two dull Forwards");
+
+		mw.placeP2CardInFirstBackupSlot(makeFieldAbilityCard("Backup", "Fire", "Backup", ""));
+		mw.p2BackupStates[0] = CardState.DULL;
+		assertEquals(3, mw.opposingDullCharacterCount(true), "a dull Backup is a dull Character too");
+
+		assertEquals(0, mw.opposingDullCharacterCount(false),
+				"and the count is asked of the other side's board, not this one's");
+	}
+
+	@Test
+	void firionGainsAllThreeHalvesOnlyWhileTheGateIsOpen() {
+		MainWindow mw = new MainWindow();
+		CardData firion = makeForwardWithPowerGrant("Firion", "Lightning", 8000, FIRION_21_099H);
+		placeP1Forward(mw, firion);
+		for (int i = 0; i < 4; i++) placeP2Forward(mw, makeForward("Enemy" + i, "Fire", 3, 7000));
+
+		assertEquals(8000, mw.effectiveP1ForwardPower(0), "three dull is not four");
+		assertFalse(mw.effectiveP1HasTrait(0, CardData.Trait.BRAVE));
+		assertEquals(1, mw.maxAttacksPerTurn(firion));
+
+		dullP2Forwards(mw, 3);
+		assertEquals(8000, mw.effectiveP1ForwardPower(0), "still short");
+
+		dullP2Forwards(mw, 4);
+		assertEquals(13000, mw.effectiveP1ForwardPower(0), "+5000 at the threshold");
+		assertTrue(mw.effectiveP1HasTrait(0, CardData.Trait.BRAVE), "Brave alongside it");
+		assertEquals(2, mw.maxAttacksPerTurn(firion), "and the second attack");
+	}
+
+	@Test
+	void firionsGrantLapsesWhenTheOpposingCharactersActivate() {
+		MainWindow mw = new MainWindow();
+		CardData firion = makeForwardWithPowerGrant("Firion", "Lightning", 8000, FIRION_21_099H);
+		placeP1Forward(mw, firion);
+		for (int i = 0; i < 4; i++) placeP2Forward(mw, makeForward("Enemy" + i, "Fire", 3, 7000));
+		dullP2Forwards(mw, 4);
+		assertEquals(13000, mw.effectiveP1ForwardPower(0));
+
+		mw.p2ForwardStates.set(0, CardState.ACTIVE);
+
+		assertEquals(8000, mw.effectiveP1ForwardPower(0), "a live condition, re-read per query");
+		assertFalse(mw.effectiveP1HasTrait(0, CardData.Trait.BRAVE));
+		assertEquals(1, mw.maxAttacksPerTurn(firion));
+	}
+
+	// =========================================================================================
+	// Gentiana 11-033R: "The dull Forwards opponent controls lose their abilities."
+	//
+	// Not the field-ability spelling of Halicarnassus 7-119H's "all the Forwards opponent controls
+	// lose their abilities until the end of the turn". That one is a one-shot: it writes every
+	// opposing Forward into lostAbilitiesCards and schedules the removal for end of turn. This one
+	// carries no duration and a state filter, so it cannot be written in — a Forward it covers gets
+	// its abilities back the instant it activates, and there is no event to hang that on.
+	//
+	// So membership in lostAbilitiesCards became part stored and part derived: contains() also asks
+	// whether a standing suppression covers the card. That is what lets all 121 places that consult
+	// the set honour this without any of them changing. The structural test comes first and is
+	// cheap — active cards and non-Forwards are answered without touching a field.
+	// =========================================================================================
+
+	private static final String GENTIANA_11_033R =
+			"The dull Forwards opponent controls lose their abilities.";
+
+	@Test
+	void gentianaIsAStandingSuppressionNotTheUntilEndOfTurnOne() {
+		assertTrue(AutoAbilityTriggers.FA_OPP_DULL_FORWARDS_LOSE_ABILITIES
+				.matcher(GENTIANA_11_033R).matches());
+		assertFalse(AutoAbilityTriggers.FA_OPP_DULL_FORWARDS_LOSE_ABILITIES.matcher(
+				"All the Forwards opponent controls lose their abilities until the end of the turn.")
+				.matches(), "Halicarnassus 7-119H's one-shot is a different ability");
+		assertTrue(AutoAbilityTriggers.FA_OPP_DULL_FORWARDS_LOSE_ABILITIES.matcher(
+				"The dull Forwards opponent controls lose all abilities.").matches(),
+				"\"their\" and \"all\" say the same thing");
+	}
+
+	@Test
+	void gentianaSilencesOpposingForwardsExactlyWhileTheyAreDull() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeFieldAbilityCard("Gentiana", "Ice", "Forward", GENTIANA_11_033R));
+		CardData enemy = makeForward("Enemy", "Fire", 3, 7000);
+		placeP2Forward(mw, enemy);
+
+		assertFalse(mw.lostAbilitiesCards.contains(enemy), "active — it keeps its abilities");
+
+		mw.p2ForwardStates.set(0, CardState.DULL);
+		assertTrue(mw.lostAbilitiesCards.contains(enemy), "dull — silenced while it stays that way");
+
+		mw.p2ForwardStates.set(0, CardState.ACTIVE);
+		assertFalse(mw.lostAbilitiesCards.contains(enemy),
+				"and it recovers the instant it activates, with no event to restore it");
+	}
+
+	@Test
+	void gentianaReachesOnlyTheOpposingSide() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeFieldAbilityCard("Gentiana", "Ice", "Forward", GENTIANA_11_033R));
+		CardData ally = makeForward("Ally", "Ice", 3, 7000);
+		placeP1Forward(mw, ally);
+		mw.p1ForwardStates.set(1, CardState.DULL);
+
+		assertFalse(mw.lostAbilitiesCards.contains(ally),
+				"\"opponent controls\" — a dull Forward of its own controller is untouched");
+	}
+
+	@Test
+	void gentianaLeavingTheFieldRestoresTheAbilities() {
+		MainWindow mw = new MainWindow();
+		CardData gentiana = makeFieldAbilityCard("Gentiana", "Ice", "Forward", GENTIANA_11_033R);
+		placeP1Forward(mw, gentiana);
+		CardData enemy = makeForward("Enemy", "Fire", 3, 7000);
+		placeP2Forward(mw, enemy);
+		mw.p2ForwardStates.set(0, CardState.DULL);
+		assertTrue(mw.lostAbilitiesCards.contains(enemy));
+
+		mw.p1ForwardCards.remove(gentiana);
+		assertFalse(mw.lostAbilitiesCards.contains(enemy),
+				"the suppression is hers, and it goes with her");
+	}
+
+	@Test
+	void theExplicitlyStrippedHalfStillBehavesAsBefore() {
+		// The stored half of the set is untouched by the derived one: an effect strips a card
+		// regardless of its state, and removal still restores it.
+		MainWindow mw = new MainWindow();
+		CardData c = makeForward("Someone", "Fire", 3, 7000);
+		placeP1Forward(mw, c);
+
+		assertTrue(mw.lostAbilitiesCards.add(c));
+		assertTrue(mw.lostAbilitiesCards.contains(c), "active, but explicitly stripped");
+		assertTrue(mw.lostAbilitiesCards.remove(c));
+		assertFalse(mw.lostAbilitiesCards.contains(c));
+	}
+
+	@Test
+	void aSilencedGentianaSuppressesNothing() {
+		// A card an effect has stripped prints nothing, so it cannot be the source of a standing
+		// suppression either. Reading the stored half here is also what stops contains() recursing.
+		MainWindow mw = new MainWindow();
+		CardData gentiana = makeFieldAbilityCard("Gentiana", "Ice", "Forward", GENTIANA_11_033R);
+		placeP1Forward(mw, gentiana);
+		CardData enemy = makeForward("Enemy", "Fire", 3, 7000);
+		placeP2Forward(mw, enemy);
+		mw.p2ForwardStates.set(0, CardState.DULL);
+		assertTrue(mw.lostAbilitiesCards.contains(enemy));
+
+		mw.lostAbilitiesCards.add(gentiana);
+		assertFalse(mw.lostAbilitiesCards.contains(enemy), "her own abilities are gone, this one included");
+	}
+
+	@Test
+	void twoFacingGentianasDoNotSilenceEachOther() {
+		// Both dull, both printing the suppression: the terminating answer, and the one the
+		// stored-half check produces.
+		MainWindow mw = new MainWindow();
+		CardData mine   = makeFieldAbilityCard("Gentiana", "Ice", "Forward", GENTIANA_11_033R);
+		CardData theirs = makeFieldAbilityCard("Gentiana", "Ice", "Forward", GENTIANA_11_033R);
+		placeP1Forward(mw, mine);
+		placeP2Forward(mw, theirs);
+		mw.p1ForwardStates.set(0, CardState.DULL);
+		mw.p2ForwardStates.set(0, CardState.DULL);
+
+		assertTrue(mw.lostAbilitiesCards.contains(mine),  "each is a dull Forward the other opposes");
+		assertTrue(mw.lostAbilitiesCards.contains(theirs), "and the query terminates");
+	}
+
+	// =========================================================================================
 	// Amber Bahamut 17-036R: "If a Job Winged Chaos you control is dealt damage by a Forward,
 	// reduce the damage by 2000 instead."
 	//

@@ -255,6 +255,14 @@ public class FieldAbilityParsingTest {
         // same way that caller matches it.
         if (AutoAbilityTriggers.FA_OPP_BACKUPS_CANNOT_PRODUCE_CP
                 .matcher(fa.effectText().trim()).matches()) return true;
+        // Gentiana 11-033R. Answered inside MainWindow.lostAbilitiesCards's own membership test,
+        // matched exactly as that caller matches it.
+        if (AutoAbilityTriggers.FA_OPP_DULL_FORWARDS_LOSE_ABILITIES
+                .matcher(fa.effectText().trim()).matches()) return true;
+        // Firion 21-099H. A gate over an ordinary self grant: the power, trait and multi-attack
+        // halves are each read by the parser that owns them, so recognition asks only that the gate
+        // splits and that the remainder is a grant one of them accepts.
+        if (oppDullCharsGatedSelfGrant(fa, source)) return true;
         // Edge 15-045H. Read per damage resolution by DamageResolver, self-named exactly as that
         // caller name-checks it.
         if (selfNamedCompulsion(AutoAbilityTriggers.FA_FIRST_OPP_EFFECT_DAMAGE_ZERO_EACH_TURN,
@@ -415,6 +423,23 @@ public class FieldAbilityParsingTest {
             CardData source) {
         java.util.regex.Matcher m = compulsion.matcher(fa.effectText());
         return m.find() && m.group("card").trim().equalsIgnoreCase(source.name());
+    }
+
+    /**
+     * True when {@code fa} is Firion 21-099H's opponent-board-gated self grant: the gate splits off
+     * and what remains is a grant the ordinary self-grant parsers read. Checked the way the three
+     * readers check it — each strips the gate and hands the remainder on — so the report claims it
+     * only when at least one of them would find something to apply.
+     */
+    private static boolean oppDullCharsGatedSelfGrant(FieldAbility fa, CardData source) {
+        CardData.OppDullCharsGatedGrant gate =
+                CardData.parseOppDullCharsGatedGrant(fa.effectText());
+        if (gate == null) return false;
+        String rest = gate.remainder();
+        if (CardData.parseSelfPowerGrant(rest, source.name()) != 0) return true;
+        if (!CardData.parseSelfTraitGrant(rest, source.name()).isEmpty()) return true;
+        CardData.SelfGainsQuotedGrant q = CardData.parseSelfGainsQuotedGrant(rest, source.name());
+        return q != null && (q.maxAttacks() > 1 || !q.traits().isEmpty());
     }
 
     /**
@@ -644,6 +669,23 @@ public class FieldAbilityParsingTest {
         if (AutoAbilityTriggers.FA_OPP_FORWARDS_CANNOT_GAIN_HASTE.matcher(fa.effectText()).find()) return "OppForwardsCannotGainHaste";
         if (AutoAbilityTriggers.FA_OPP_BACKUPS_CANNOT_PRODUCE_CP
                 .matcher(fa.effectText().trim()).matches()) return "OppBackupsCannotProduceCp";
+        if (AutoAbilityTriggers.FA_OPP_DULL_FORWARDS_LOSE_ABILITIES
+                .matcher(fa.effectText().trim()).matches()) return "OppDullForwardsLoseAbilities";
+        if (oppDullCharsGatedSelfGrant(fa, source)) {
+            CardData.OppDullCharsGatedGrant gate =
+                    CardData.parseOppDullCharsGatedGrant(fa.effectText());
+            String rest = gate.remainder();
+            CardData.SelfGainsQuotedGrant q = CardData.parseSelfGainsQuotedGrant(rest, source.name());
+            java.util.EnumSet<CardData.Trait> tr = CardData.parseSelfTraitGrant(rest, source.name());
+            if (q != null) tr.addAll(q.traits());
+            StringBuilder sb = new StringBuilder("OppDullCharsSelfGrant[≥")
+                    .append(gate.minDullCharacters()).append(" dull");
+            int pow = CardData.parseSelfPowerGrant(rest, source.name());
+            if (pow != 0)        sb.append(": +").append(pow);
+            if (!tr.isEmpty())   sb.append(' ').append(tr);
+            if (q != null && q.maxAttacks() > 1) sb.append(" atk×").append(q.maxAttacks());
+            return sb.append(']').toString();
+        }
         if (selfNamedCompulsion(AutoAbilityTriggers.FA_FIRST_OPP_EFFECT_DAMAGE_ZERO_EACH_TURN, fa, source))
             return "FirstOppEffectDmgZeroEachTurn";
         java.util.EnumSet<CardData.Trait> bzTraits =

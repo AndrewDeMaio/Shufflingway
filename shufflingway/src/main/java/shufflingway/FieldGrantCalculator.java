@@ -105,6 +105,11 @@ class FieldGrantCalculator {
                     if (mw.forwardCount(isP1) > gate.maxForwards()) continue;
                     grantText = gate.remainder();
                 }
+                // Firion 21-099H's gate, read the same way: strip it, and let the parsers below
+                // take the remainder. Null means the opposing board does not meet it.
+                grantText = mw.oppDullCharsGrantRemainder(grantText, isP1);
+                if (grantText == null) continue;
+                out.addAll(CardData.parseSelfTraitGrant(grantText, src.name()));
                 CardData.SelfGainsQuotedGrant quoted =
                         CardData.parseSelfGainsQuotedGrant(grantText, src.name());
                 if (quoted != null) out.addAll(quoted.traits());

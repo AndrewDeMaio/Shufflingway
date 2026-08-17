@@ -1494,6 +1494,38 @@ public record CardData(
     }
 
     /**
+     * "If your opponent controls N or more dull Characters, [grant]" — Firion 21-099H, whose grant
+     * is "Firion gains +5000 power, Brave and "Firion can attack twice in the same turn.""
+     *
+     * <p>"Characters" spans all three opposing rows, so a dull Backup counts as readily as a dull
+     * Forward — the same reading {@link ScalingSelfPowerBoost}'s opponent-Character source uses.
+     * Groups: {@code count}, {@code rest}.
+     */
+    private static final Pattern IF_OPP_DULL_CHARACTERS_PREFIX = Pattern.compile(
+        "(?i)^If\\s+your\\s+opponent\\s+controls\\s+(?<count>\\d+)\\s+or\\s+more\\s+dull\\s+Characters,\\s+" +
+        "(?<rest>.+)$",
+        Pattern.DOTALL
+    );
+
+    /** The gate and grant halves of an {@link #IF_OPP_DULL_CHARACTERS_PREFIX} sentence. */
+    record OppDullCharsGatedGrant(int minDullCharacters, String remainder) {}
+
+    /**
+     * Splits "If your opponent controls N or more dull Characters, [grant]" into its gate and its
+     * grant, or {@code null} when {@code text} is not that shape.
+     *
+     * <p>A splitter rather than a grant parser, exactly like {@link #parseMaxForwardsGatedGrant}:
+     * the remainder is an ordinary self grant, so the power, trait and multi-attack halves are each
+     * read by the parser that already owns them instead of this one learning to read all three.
+     */
+    static OppDullCharsGatedGrant parseOppDullCharsGatedGrant(String text) {
+        if (text == null) return null;
+        Matcher m = IF_OPP_DULL_CHARACTERS_PREFIX.matcher(text.trim());
+        if (!m.matches()) return null;
+        return new OppDullCharsGatedGrant(Integer.parseInt(m.group("count")), m.group("rest").trim());
+    }
+
+    /**
      * A conditional self grant carrying a quoted ability: while its condition holds, the printing
      * card has {@code traits}, may attack {@code maxAttacks} times, and has {@code abilityTexts}
      * as auto abilities of its own.
