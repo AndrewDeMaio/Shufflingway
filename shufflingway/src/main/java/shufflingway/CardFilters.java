@@ -24,6 +24,9 @@ public final class CardFilters {
             case "backup"    -> c.isBackup();
             case "monster"   -> c.isMonster() || c.alsoCountsAsMonster();
             case "character" -> !c.isSummon();
+            // Explicit rather than left to the default: Tifa 26-076H's S-cost substitution names
+            // "1 card" and means exactly that, so the widest filter is one a reader can find.
+            case "card"      -> true;
             default          -> true;
         };
     }

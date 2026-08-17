@@ -245,6 +245,17 @@ class DamageResolver {
 			}
 		}
 
+		// Once-per-turn replacement: "During each turn, if [self] is dealt damage by your opponent's
+		// Summons or abilities for the first time in that turn, the damage becomes 0 instead."
+		// (Edge 15-045H). Answered after the standing modifiers above so a printing that would have
+		// reduced the damage anyway does not burn the turn's one use, and the slot is taken only on
+		// a resolution this actually claims.
+		if (amount > 0 && fromAbility && firstOppEffectDamageZeroApplies(card, isP1)) {
+			mw.turn(isP1).firstOppEffectDamageZeroedThisTurn.add(card);
+			mw.logEntry(card.name() + " — first opposing Summon/ability damage this turn becomes 0");
+			return 0;
+		}
+
 		// Incoming damage modifier granted to this Forward by a counter grant (e.g. Kimahri's
 		// Ronso Counter, Tidus's Guardian Counter). "If this Forward is dealt damage …" — the
 		// subject is implicit, so no card-name match is required.
@@ -374,6 +385,31 @@ class DamageResolver {
 	}
 
 	/**
+	 * Whether {@code card} prints Edge 15-045H's once-per-turn shield, has not spent it this turn,
+	 * and the resolving Summon or ability belongs to its opponent.
+	 *
+	 * <p>Read through {@code effectiveFieldAbilities} and name-checked against the carrier, like
+	 * every other self-targeted damage passive, and gated on a "Damage N --" threshold the same way.
+	 * Only the caller records the use, so asking this question does not spend the shield.
+	 */
+	private boolean firstOppEffectDamageZeroApplies(CardData card, boolean isP1) {
+		if (mw.turn(isP1).firstOppEffectDamageZeroedThisTurn.contains(card)) return false;
+		// The damage has to originate on the other side of the board — a friendly Summon or ability
+		// is not "your opponent's".
+		CardData resCard = mw.currentResolutionIsSummon ? mw.currentSummonSource : mw.currentAbilitySource;
+		boolean  resIsP1 = mw.currentResolutionIsSummon ? mw.currentSummonSourceIsP1 : mw.currentAbilitySourceIsP1;
+		if (resCard == null || resIsP1 == isP1) return false;
+		int dmgInZone = (isP1 ? mw.gameState.getP1DamageZone() : mw.gameState.getP2DamageZone()).size();
+		for (FieldAbility fa : mw.effectiveFieldAbilities(card)) {
+			if (fa.damageThreshold() > 0 && dmgInZone < fa.damageThreshold()) continue;
+			Matcher m = AutoAbilityTriggers.FA_FIRST_OPP_EFFECT_DAMAGE_ZERO_EACH_TURN
+					.matcher(fa.effectText().trim());
+			if (m.matches() && m.group("card").trim().equalsIgnoreCase(card.name())) return true;
+		}
+		return false;
+	}
+
+	/**
 	 * Applies one matched {@link AutoAbilityTriggers#FA_DAMAGE_MODIFIER} effect (reduce/set/increase/
 	 * double) to {@code amount}, honoring its optional damage threshold and source clause. Shared by
 	 * a Forward's own field ability and abilities granted to it via a counter grant. {@code subject}
@@ -456,8 +492,27 @@ class DamageResolver {
 			int before = amount;
 			amount = amount * 2;
 			mw.logEntry(subjectName + " — damage doubled (" + before + " → " + amount + ")");
+		} else if (fam.group("half") != null) {
+			int before = amount;
+			amount = halveRoundedUpToThousand(amount);
+			mw.logEntry(subjectName + " — damage halved (" + before + " → " + amount + ")");
 		}
 		return amount;
+	}
+
+	/**
+	 * Halves {@code amount} and rounds the result up to a whole 1000, the rule Rosso 2-024R's
+	 * parenthetical states ("numbers are rounded up to units of 1000").
+	 *
+	 * <p>Rounding is applied to the halved figure, not to the input: 5000 halves to 2500 and rounds
+	 * to 3000, while 4000 halves to exactly 2000 and stays there. The odd-input step is there because
+	 * damage does not have to arrive in whole thousands — a reduction elsewhere in the chain can
+	 * leave any figure — and it rounds up for the same reason the printed rule does.
+	 */
+	static int halveRoundedUpToThousand(int amount) {
+		if (amount <= 0) return 0;
+		int halved = (amount + 1) / 2;
+		return ((halved + 999) / 1000) * 1000;
 	}
 
 	/**
@@ -510,7 +565,7 @@ class DamageResolver {
 
 				// Target filter
 				String category = m.group("category");
-				String job      = m.group("job");
+				String job      = AutoAbilityTriggers.fieldDamageModifierJob(m);
 				String element  = m.group("element");
 				String costStr  = m.group("cost");
 				String costcmp  = m.group("costcmp");
@@ -533,6 +588,9 @@ class DamageResolver {
 					String srcN = src.trim().toLowerCase();
 					if (srcN.contains("less than its power") && amount >= effectivePower) continue;
 					if (srcN.contains("by a backup") && !attackerIsBackup) continue;
+					// "by a Forward" names the source of battle damage, so an ability's damage is
+					// outside it — the same reading this clause gets on FA_DAMAGE_MODIFIER.
+					if (srcN.startsWith("by a forward") && fromAbility) continue;
 					if (srcN.contains("abilit") || srcN.contains("summon")) {
 						if (!fromAbility) continue;
 						boolean namesSummon  = srcN.contains("summon");
@@ -662,13 +720,12 @@ class DamageResolver {
 			for (FieldAbility fa : fas) {
 				Matcher cm = AutoAbilityTriggers.FA_ELEMENT_SUMMON_OR_CHARACTER_DAMAGE_BOOST.matcher(fa.effectText());
 				if (!cm.matches()) continue;
-				String elem = AutoAbilityTriggers.characterArmElement(cm);
-				if (elem == null || !mw.effectiveContainsElement(mw.currentAbilitySource, elem)) continue;
+				if (!AutoAbilityTriggers.characterArmCovers(cm, mw.currentAbilitySource, mw)) continue;
 				int boost = Integer.parseInt(cm.group("amount"));
 				int before = amount;
 				amount += boost;
-				mw.logEntry(booster.name() + " — " + elem + " Character ability damage increased by "
-						+ boost + " (" + before + " → " + amount + ")");
+				mw.logEntry(booster.name() + " — " + AutoAbilityTriggers.characterArmLabel(cm)
+						+ " ability damage increased by " + boost + " (" + before + " → " + amount + ")");
 			}
 			if (!sourceIsForward) continue;
 			for (FieldAbility fa : fas) {

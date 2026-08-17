@@ -47,6 +47,10 @@ class TurnPhases {
 		mw.p2Turn.cardsTookDamageThisTurn.clear();
 		mw.p2Turn.forwardEnteredViaWarpThisTurn = false;
 		mw.p2Turn.turnOpponentCharReturnedToHand = false;
+		// Both sides: Edge 15-045H's shield is scoped to "each turn", so it returns on the
+		// opponent's turn as well as its controller's.
+		mw.p1Turn.firstOppEffectDamageZeroedThisTurn.clear();
+		mw.p2Turn.firstOppEffectDamageZeroedThisTurn.clear();
 		int activated = 0, thawed = 0;
 
 		// Pass 1: activate DULL cards; frozen cards are skipped
@@ -116,6 +120,9 @@ class TurnPhases {
 		mw.p1Turn.cardsTookDamageThisTurn.clear();
 		mw.p1Turn.forwardEnteredViaWarpThisTurn = false;
 		mw.p1Turn.turnOpponentCharReturnedToHand = false;
+		// Both sides, for the same reason as in runP2ActivePhase.
+		mw.p1Turn.firstOppEffectDamageZeroedThisTurn.clear();
+		mw.p2Turn.firstOppEffectDamageZeroedThisTurn.clear();
 		for (int i = 0; i < mw.p1MonsterCards.size(); i++) mw.refreshP1MonsterSlot(i);
 		for (int i = 0; i < mw.p2MonsterCards.size(); i++) mw.refreshP2MonsterSlot(i);
 		int activated = 0, thawed = 0;

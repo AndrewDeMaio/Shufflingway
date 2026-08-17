@@ -21361,6 +21361,755 @@ public class CardBehaviorTest {
 		assertEquals(7000, mw.modifyOutgoingCombatDamage(true, 0, 7000, target),
 				"\"you control\" scopes the boost to Lehftia's own controller");
 	}
+
+	// =========================================================================================
+	// The dealing-side damage boosts, filtered by something other than an Element.
+	//
+	// Both boost patterns had grown an Element filter first and a second filter later, and both
+	// stopped there. Angeal 22-004H filters the Forward-scoped one by Job; Chelinka 7-054L filters
+	// the Character-scoped one by Category, and Rapha 13-082C and Papalymo 5-159S filter it by Card
+	// Name. Every one of them is the same boost with a different way of naming who carries it.
+	//
+	// Each new filter is a sibling arm rather than a relaxation of the Element group: making that
+	// group optional would let a Job printing match with a null Element, and an Element-scoped card
+	// would then boost every Forward on the field — the trap FA_FRIENDLY_FORWARD_BATTLE_DAMAGE_BOOST
+	// is kept separate to avoid. Both readers of each pattern ask one shared covers() helper, so the
+	// combat path and the ability path cannot come to different answers about the same printing.
+	//
+	// Papalymo also prints the imperative wording ("increase the damage by") where every other
+	// printing is declarative ("the damage increases by"); the tail accepts both.
+	// =========================================================================================
+
+	private static final String ANGEAL_22_004H =
+			"If a Job SOLDIER Forward you control deals damage to a Forward, "
+			+ "the damage increases by 2000 instead.";
+	private static final String CHELINKA_7_054L =
+			"If a Category FFCC Character you control deals damage to a Forward, "
+			+ "the damage increases by 1000 instead.";
+	private static final String RAPHA_13_082C =
+			"If the Card Name Marach you control deals damage to a Forward, "
+			+ "the damage increases by 1000 instead.";
+	private static final String PAPALYMO_5_159S =
+			"If the Card Name Yda you control deals damage to a Forward, "
+			+ "increase the damage by 2000 instead.";
+
+	/** A Backup in {@code category}, for the Character arm's reach past the Forward row. */
+	private static CardData makeCategoryBackup(String name, String element, String category) {
+		return new CardData(null, name, element, 2, 0, "Backup", false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+				List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				null, category, null, "");
+	}
+
+	@Test
+	void theForwardBoostReadsAJobFilterWithNoElementPresent() {
+		Matcher m = AutoAbilityTriggers.FA_ELEMENT_FORWARD_DAMAGE_BOOST.matcher(ANGEAL_22_004H);
+		assertTrue(m.find());
+		assertNull(m.group("element"), "Angeal's sentence names no Element");
+		assertNull(m.group("category"));
+		assertEquals("SOLDIER", m.group("job").trim());
+		assertEquals("2000", m.group("amount"));
+	}
+
+	@Test
+	void angealBoostsAJobSoldierForwardAndLeavesOtherJobsAlone() {
+		MainWindow mw = new MainWindow();
+		mw.placeCardInFirstBackupSlot(makeFieldAbilityCard("Angeal", "Fire", "Backup", ANGEAL_22_004H));
+		placeP1Forward(mw, makeJobForwardWithAutos("Zack",   "Fire", 8000, "SOLDIER", ""));  // idx 0
+		placeP1Forward(mw, makeJobForwardWithAutos("Cissnei", "Fire", 8000, "Turks",  ""));  // idx 1
+		CardData target = makeForward("Target", "Wind", 3, 20000);
+		placeP2Forward(mw, target);
+
+		assertEquals(10000, mw.modifyOutgoingCombatDamage(true, 0, 8000, target),
+				"a Job SOLDIER Forward — +2000");
+		assertEquals(8000, mw.modifyOutgoingCombatDamage(true, 1, 8000, target),
+				"another Job is outside the filter the sentence names");
+	}
+
+	@Test
+	void angealBoostsTheAbilityDamageAJobSoldierForwardDeals() {
+		MainWindow mw = new MainWindow();
+		mw.placeCardInFirstBackupSlot(makeFieldAbilityCard("Angeal", "Fire", "Backup", ANGEAL_22_004H));
+		CardData zack = makeJobForwardWithAutos("Zack", "Fire", 8000, "SOLDIER", "");
+		placeP1Forward(mw, zack);
+		mw.currentAbilitySource     = zack;
+		mw.currentAbilitySourceIsP1 = true;
+
+		assertEquals(6000, mw.damageResolver.applyCasterSideElementForwardDamageBoosts(4000, false),
+				"the boost is not restricted to battle damage");
+	}
+
+	@Test
+	void theCharacterArmReadsACategoryFilterAndACardNameFilter() {
+		Matcher che = AutoAbilityTriggers.FA_ELEMENT_SUMMON_OR_CHARACTER_DAMAGE_BOOST.matcher(CHELINKA_7_054L);
+		assertTrue(che.matches());
+		assertNull(AutoAbilityTriggers.characterArmElement(che), "she names a Category, not an Element");
+		assertEquals("FFCC", che.group("category"));
+
+		Matcher rap = AutoAbilityTriggers.FA_ELEMENT_SUMMON_OR_CHARACTER_DAMAGE_BOOST.matcher(RAPHA_13_082C);
+		assertTrue(rap.matches());
+		assertEquals("Marach", rap.group("cardname").trim());
+		assertNull(rap.group("category"));
+
+		Matcher pap = AutoAbilityTriggers.FA_ELEMENT_SUMMON_OR_CHARACTER_DAMAGE_BOOST.matcher(PAPALYMO_5_159S);
+		assertTrue(pap.matches(), "the imperative wording of the same boost");
+		assertEquals("Yda", pap.group("cardname").trim());
+		assertEquals("2000", pap.group("amount"));
+	}
+
+	private static final String GARNET_BAHAMUT_17_035R =
+			"If a Job Winged Chaos you control deals damage to a Forward, "
+			+ "the damage increases by 3000 instead.";
+
+	@Test
+	void theCharacterArmReadsAJobFilterThatNamesNoCardType() {
+		Matcher m = AutoAbilityTriggers.FA_ELEMENT_SUMMON_OR_CHARACTER_DAMAGE_BOOST.matcher(GARNET_BAHAMUT_17_035R);
+		assertTrue(m.matches(), "\"a Job Winged Chaos you control\" names no card type at all");
+		assertEquals("Winged Chaos", m.group("job").trim(), "a job of two words");
+		assertNull(AutoAbilityTriggers.characterArmElement(m));
+		assertEquals("3000", m.group("amount"));
+	}
+
+	@Test
+	void theJobArmRefusesAJobEndingInACardTypeSoTheForwardPatternKeepsIt() {
+		// The guard that stops the two boost patterns claiming the same sentence. Without the
+		// lookbehinds the lazy job group swallows "Forward" and Angeal matches here too — and both
+		// readers add every match they find, so his +2000 would apply twice.
+		assertFalse(AutoAbilityTriggers.FA_ELEMENT_SUMMON_OR_CHARACTER_DAMAGE_BOOST
+				.matcher(ANGEAL_22_004H).matches(),
+				"the Forward-scoped printing belongs to FA_ELEMENT_FORWARD_DAMAGE_BOOST alone");
+		assertTrue(AutoAbilityTriggers.FA_ELEMENT_FORWARD_DAMAGE_BOOST
+				.matcher(ANGEAL_22_004H).find(), "and it still claims it");
+
+		assertFalse(AutoAbilityTriggers.FA_ELEMENT_FORWARD_DAMAGE_BOOST
+				.matcher(GARNET_BAHAMUT_17_035R).find(),
+				"and the type-less printing is not claimed by the Forward-scoped pattern");
+	}
+
+	@Test
+	void garnetBahamutBoostsItsOwnJobAndNoOther() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeFieldAbilityCard("Garnet Bahamut", "Ice", "Forward", GARNET_BAHAMUT_17_035R));
+		placeP1Forward(mw, makeJobForwardWithAutos("Amber Bahamut", "Ice", 7000, "Winged Chaos", "")); // idx 1
+		placeP1Forward(mw, makeJobForwardWithAutos("Shiva",         "Ice", 7000, "Ice Sprite",    "")); // idx 2
+		CardData target = makeForward("Target", "Fire", 3, 30000);
+		placeP2Forward(mw, target);
+
+		assertEquals(10000, mw.modifyOutgoingCombatDamage(true, 1, 7000, target),
+				"a Job Winged Chaos Character — +3000");
+		assertEquals(7000, mw.modifyOutgoingCombatDamage(true, 2, 7000, target),
+				"another Job is outside the filter");
+	}
+
+	@Test
+	void theSummonOnlyArmCoversNoCharacterAtAll() {
+		// Every Character filter group is absent on a Summon-only printing, and a Summon is not a
+		// Character — so the covers() helper has to decline rather than read a null filter as "any".
+		Matcher m = AutoAbilityTriggers.FA_ELEMENT_SUMMON_OR_CHARACTER_DAMAGE_BOOST.matcher(
+				"If your Fire Summon deals damage to a Forward, the damage increases by 1000 instead.");
+		assertTrue(m.matches());
+		assertEquals("Fire", m.group("summonelement"));
+		assertFalse(AutoAbilityTriggers.characterArmCovers(m, makeForward("Fire Ally", "Fire", 3, 7000),
+				new MainWindow()), "the Summon arm boosts Summons, not the Characters that share its Element");
+	}
+
+	@Test
+	void chelinkaBoostsCategoryFfccCombatDamageOnly() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeFieldAbilityCard("Chelinka", "Wind", "Forward", CHELINKA_7_054L)); // idx 0
+		placeP1Forward(mw, makeCategoryForward("Yuri",  "Wind", "FFCC"));                        // idx 1
+		placeP1Forward(mw, makeCategoryForward("Vaan",  "Wind", "XII"));                         // idx 2
+		CardData target = makeForward("Target", "Fire", 3, 20000);
+		placeP2Forward(mw, target);
+
+		assertEquals(8000, mw.modifyOutgoingCombatDamage(true, 1, 7000, target),
+				"a Category FFCC Forward — +1000");
+		assertEquals(7000, mw.modifyOutgoingCombatDamage(true, 2, 7000, target),
+				"another Category is outside the filter");
+	}
+
+	@Test
+	void chelinkaReachesABackupsAbilityBecauseSheSaysCharacter() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeFieldAbilityCard("Chelinka", "Wind", "Forward", CHELINKA_7_054L));
+		CardData caster = makeCategoryBackup("FFCC Backup", "Wind", "FFCC");
+		mw.placeCardInFirstBackupSlot(caster);
+		mw.currentAbilitySource     = caster;
+		mw.currentAbilitySourceIsP1 = true;
+
+		assertEquals(5000, mw.damageResolver.applyCasterSideElementForwardDamageBoosts(4000, false),
+				"\"Character\" reaches a Backup's ability; the Forward-scoped pattern never would");
+	}
+
+	@Test
+	void raphaBoostsOnlyTheCardSheNames() {
+		MainWindow mw = new MainWindow();
+		mw.placeCardInFirstBackupSlot(makeFieldAbilityCard("Rapha", "Lightning", "Backup", RAPHA_13_082C));
+		placeP1Forward(mw, makeForward("Marach", "Lightning", 3, 7000));  // idx 0
+		placeP1Forward(mw, makeForward("Rapha's Ally", "Lightning", 3, 7000)); // idx 1
+		CardData target = makeForward("Target", "Water", 3, 20000);
+		placeP2Forward(mw, target);
+
+		assertEquals(8000, mw.modifyOutgoingCombatDamage(true, 0, 7000, target),
+				"the Card Name the sentence names — +1000");
+		assertEquals(7000, mw.modifyOutgoingCombatDamage(true, 1, 7000, target),
+				"another card of the same Element is not that name");
+	}
+
+	@Test
+	void theCategoryAndCardNameBoostsReadTheirControllersSideOnly() {
+		MainWindow mw = new MainWindow();
+		placeP2Forward(mw, makeFieldAbilityCard("Chelinka", "Wind", "Forward", CHELINKA_7_054L));
+		placeP1Forward(mw, makeCategoryForward("Yuri", "Wind", "FFCC"));
+		CardData target = makeForward("Target", "Fire", 3, 20000);
+		placeP2Forward(mw, target);
+
+		assertEquals(7000, mw.modifyOutgoingCombatDamage(true, 0, 7000, target),
+				"\"you control\" scopes the boost to Chelinka's own controller");
+	}
+
+	// =========================================================================================
+	// Amber Bahamut 17-036R: "If a Job Winged Chaos you control is dealt damage by a Forward,
+	// reduce the damage by 2000 instead."
+	//
+	// The incoming mirror of Garnet Bahamut's outgoing boost, and it was reporting as parsed while
+	// doing nothing at all — the worst way for an ability to be broken. FA_DAMAGE_MODIFIER, the
+	// SELF-targeted pattern, claimed it with card = "a Job Winged Chaos you control", which the
+	// coverage report accepted because it matches without a name check. The engine does name-check,
+	// against the carrier, so "a Job Winged Chaos you control" never equalled "Amber Bahamut" and
+	// the reduction never applied.
+	//
+	// It belongs to FA_FIELD_DAMAGE_MODIFIER, which needed two things it did not have: the
+	// type-less Job filter (the sentence names no card type), and a "by a Forward" source clause —
+	// that pattern had branches for Backups, Summons and abilities but none for battle damage.
+	// =========================================================================================
+
+	private static final String AMBER_BAHAMUT_17_036R =
+			"If a Job Winged Chaos you control is dealt damage by a Forward, "
+			+ "reduce the damage by 2000 instead.";
+
+	@Test
+	void amberBahamutIsReadAsAFieldWideModifierNotASelfTargetedOne() {
+		Matcher m = AutoAbilityTriggers.FA_FIELD_DAMAGE_MODIFIER.matcher(AMBER_BAHAMUT_17_036R);
+		assertTrue(m.matches(), "the field-wide pattern is the one that owns this sentence");
+		assertEquals("Winged Chaos", AutoAbilityTriggers.fieldDamageModifierJob(m).trim());
+		assertNull(m.group("job"), "the type-less arm carries it, so the typed group stays empty");
+		assertEquals(" by a Forward", m.group("sourceclause"));
+		assertEquals("2000", m.group("reduceby"));
+	}
+
+	@Test
+	void amberBahamutReducesBattleDamageToItsJobAndNoOther() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeFieldAbilityCard("Amber Bahamut", "Ice", "Forward", AMBER_BAHAMUT_17_036R));
+		CardData ally  = makeJobForwardWithAutos("Garnet Bahamut", "Ice", 7000, "Winged Chaos", "");
+		CardData other = makeJobForwardWithAutos("Shiva",          "Ice", 7000, "Ice Sprite",    "");
+		placeP1Forward(mw, ally);   // idx 1
+		placeP1Forward(mw, other);  // idx 2
+
+		assertEquals(6000, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 1, 8000, false, false),
+				"a Job Winged Chaos Character — battle damage reduced by 2000");
+		assertEquals(8000, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 2, 8000, false, false),
+				"another Job is outside the filter");
+	}
+
+	@Test
+	void amberBahamutLeavesAbilityDamageAlone() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeFieldAbilityCard("Amber Bahamut", "Ice", "Forward", AMBER_BAHAMUT_17_036R));
+		placeP1Forward(mw, makeJobForwardWithAutos("Garnet Bahamut", "Ice", 7000, "Winged Chaos", ""));
+
+		assertEquals(8000, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 1, 8000, true, false),
+				"\"by a Forward\" names the source of battle damage, so an ability is outside it");
+	}
+
+	// =========================================================================================
+	// Gogo 4-127H: "If a Forward in your Break Zone has Haste, First Strike, or Brave, Gogo gains
+	// those abilities."
+	//
+	// A self trait grant whose granted set is discovered rather than printed: the sentence lists
+	// keywords to look for, and which of them Gogo actually gains depends on what is in the Break
+	// Zone when the question is asked. So the parser returns candidates and FieldGrantCalculator
+	// intersects them with the Break Zone, exactly where the other board-conditioned grants live.
+	//
+	// The list's last joint is "First Strike, or Brave" — comma AND conjunction. A separator that
+	// accepts only one of the two stops the list at "First Strike" and lets the lazy name group
+	// absorb "or Brave, Gogo"; the sentence still matches, and it is the carrier's name check that
+	// quietly fails. Asserting the captures rather than the match is what catches that.
+	// =========================================================================================
+
+	private static final String GOGO_4_127H =
+			"If a Forward in your Break Zone has Haste, First Strike, or Brave, "
+			+ "Gogo gains those abilities.";
+
+	@Test
+	void gogoListsAllThreeKeywordsAndNamesHimselfAsTheCarrier() {
+		assertEquals(EnumSet.of(CardData.Trait.HASTE, CardData.Trait.FIRST_STRIKE, CardData.Trait.BRAVE),
+				CardData.parseBreakZoneTraitGrantCandidates(GOGO_4_127H, "Gogo"),
+				"the comma-plus-conjunction joint must not truncate the list");
+		assertTrue(CardData.parseBreakZoneTraitGrantCandidates(GOGO_4_127H, "Someone Else").isEmpty(),
+				"the sentence names its own carrier");
+	}
+
+	@Test
+	void gogoGainsOnlyTheKeywordsPresentInHisBreakZone() {
+		MainWindow mw = new MainWindow();
+		CardData gogo = makeFieldAbilityCard("Gogo", "Water", "Forward", GOGO_4_127H);
+		placeP1Forward(mw, gogo);
+
+		assertFalse(mw.effectiveP1HasTrait(0, CardData.Trait.HASTE), "an empty Break Zone grants nothing");
+
+		mw.gameState.getP1BreakZone().add(
+				makeForwardWithTraits("Sabin", "Fire", 7000, Set.of(CardData.Trait.BRAVE)));
+		assertTrue(mw.effectiveP1HasTrait(0, CardData.Trait.BRAVE), "Brave is there to be found");
+		assertFalse(mw.effectiveP1HasTrait(0, CardData.Trait.HASTE), "Haste is not");
+		assertFalse(mw.effectiveP1HasTrait(0, CardData.Trait.FIRST_STRIKE), "nor First Strike");
+
+		mw.gameState.getP1BreakZone().add(
+				makeForwardWithTraits("Shadow", "Wind", 7000, Set.of(CardData.Trait.HASTE)));
+		assertTrue(mw.effectiveP1HasTrait(0, CardData.Trait.HASTE),
+				"a second Forward contributes its own keyword");
+		assertTrue(mw.effectiveP1HasTrait(0, CardData.Trait.BRAVE), "without displacing the first");
+	}
+
+	@Test
+	void gogoIgnoresNonForwardsAndTheOpposingBreakZone() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeFieldAbilityCard("Gogo", "Water", "Forward", GOGO_4_127H));
+		// A Backup with Haste in your own Break Zone: the sentence says "a Forward".
+		mw.gameState.getP1BreakZone().add(makeFieldAbilityCard("Hasty Backup", "Fire", "Backup", ""));
+		mw.gameState.getP2BreakZone().add(
+				makeForwardWithTraits("Enemy", "Fire", 7000, Set.of(CardData.Trait.BRAVE)));
+
+		assertFalse(mw.effectiveP1HasTrait(0, CardData.Trait.BRAVE),
+				"\"your Break Zone\" is one-sided");
+	}
+
+	// =========================================================================================
+	// Maat 6-078R: "The Job Monk Forwards and Card Name Monk Forwards you control cannot become
+	// dull by your opponent's Summons or abilities."
+	//
+	// Stored as a passive grant of CANNOT_BE_DULLED_BY_OPP, the trait every dulling path already
+	// consults, so this printing meets the per-card quoted wording at one enforcement point.
+	//
+	// The two filters are ORed by emitting one grant each, exactly as Faris 21-114L's base-power
+	// grant is: appliesToCard ANDs job and card-name filters, so a single grant carrying both
+	// would cover only the cards satisfying the two at once — which is nearly none of them.
+	// =========================================================================================
+
+	private static final String MAAT_6_078R =
+			"The Job Monk Forwards and Card Name Monk Forwards you control cannot become dull "
+			+ "by your opponent's Summons or abilities.";
+
+	@Test
+	void maatEmitsOneGrantPerFilterBranch() {
+		List<FieldPowerGrant> grants = CardData.parseFieldPowerGrants(MAAT_6_078R, "Forward");
+		assertEquals(2, grants.size(), "job and card-name filters are ANDed, so they are ORed by splitting");
+		assertEquals("Monk", grants.get(0).jobFilter());
+		assertNull(grants.get(0).inclCardName());
+		assertNull(grants.get(1).jobFilter());
+		assertEquals("Monk", grants.get(1).inclCardName());
+		for (FieldPowerGrant g : grants) {
+			assertEquals(Set.of(CardData.Trait.CANNOT_BE_DULLED_BY_OPP), g.grantedTraits());
+			assertEquals(0, g.powerBonus(), "a protection, not a boost");
+			assertFalse(g.affectsOpponent());
+		}
+	}
+
+	@Test
+	void maatProtectsBothFiltersAndNobodyElse() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForwardWithPowerGrant("Maat", "Earth", 7000, MAAT_6_078R));
+		placeP1Forward(mw, makeJobForwardWithAutos("Sabin", "Earth", 7000, "Monk", "")); // idx 1, by Job
+		placeP1Forward(mw, makeForward("Monk", "Earth", 3, 7000));                       // idx 2, by Card Name
+		placeP1Forward(mw, makeJobForwardWithAutos("Vaan", "Earth", 7000, "Sky Pirate", "")); // idx 3
+
+		assertTrue(mw.effectiveP1HasTrait(1, CardData.Trait.CANNOT_BE_DULLED_BY_OPP), "Job Monk");
+		assertTrue(mw.effectiveP1HasTrait(2, CardData.Trait.CANNOT_BE_DULLED_BY_OPP), "Card Name Monk");
+		assertFalse(mw.effectiveP1HasTrait(3, CardData.Trait.CANNOT_BE_DULLED_BY_OPP),
+				"neither Job Monk nor named Monk");
+	}
+
+	// =========================================================================================
+	// Titan (XVI) 29-068L: "During your turn, the Backups opponent controls cannot produce CP."
+	//
+	// Read off the OPPOSING field, like the Haste-suppression sentences it is shaped like: whoever
+	// controls the printing taxes the other player, and "during your turn" scopes it to the
+	// printer's own turn — which is exactly when the taxed player would be paying at instant speed.
+	// =========================================================================================
+
+	private static final String TITAN_XVI_29_068L =
+			"During your turn, the Backups opponent controls cannot produce CP.";
+
+	@Test
+	void titanSuppressesTheOpposingBackupsOnlyOnItsControllersTurn() {
+		MainWindow mw = new MainWindow();
+		placeP2Forward(mw, makeFieldAbilityCard("Titan (XVI)", "Earth", "Forward", TITAN_XVI_29_068L));
+
+		advanceTo(mw, GameState.Player.P2, GameState.GamePhase.MAIN_1);
+		assertTrue(mw.backupCpSuppressed(true),
+				"P2 controls it and holds the turn, so P1's Backups cannot produce CP");
+		assertFalse(mw.backupCpSuppressed(false), "its controller's own Backups are untouched");
+
+		advanceTo(mw, GameState.Player.P1, GameState.GamePhase.MAIN_1);
+		assertFalse(mw.backupCpSuppressed(true),
+				"\"during your turn\" is the printer's turn, and it is not theirs");
+	}
+
+	@Test
+	void titanMasksTheBackupRowHandedToThePaymentDialogs() {
+		MainWindow mw = new MainWindow();
+		placeP2Forward(mw, makeFieldAbilityCard("Titan (XVI)", "Earth", "Forward", TITAN_XVI_29_068L));
+		mw.placeCardInFirstBackupSlot(makeFieldAbilityCard("Some Backup", "Fire", "Backup", ""));
+		advanceTo(mw, GameState.Player.P2, GameState.GamePhase.MAIN_1);
+
+		CardData[] masked = mw.cpPayableBackupCards(true);
+		for (CardData c : masked)
+			assertNull(c, "every slot reads empty while the suppression holds");
+		assertNotNull(mw.playerBackupCards(true)[0],
+				"the live row is untouched — the Backup is still on the field for everything else");
+	}
+
+	// =========================================================================================
+	// Edge 15-045H: "During each turn, if Edge is dealt damage by your opponent's Summons or
+	// abilities for the first time in that turn, the damage becomes 0 instead."
+	//
+	// A once-per-turn replacement, so unlike its standing relatives it has to record that it fired.
+	// The slot is spent only on a resolution it actually claims: battle damage, and anything
+	// originating on Edge's own side, leave the shield up. Tracked identity-wise, because CardData
+	// is a record and two copies of Edge would otherwise share one shield.
+	// =========================================================================================
+
+	private static final String EDGE_15_045H =
+			"During each turn, if Edge is dealt damage by your opponent's Summons or abilities "
+			+ "for the first time in that turn, the damage becomes 0 instead.";
+
+	/** Puts P2 in the seat of the resolving Summon, which is what "your opponent's" asks about. */
+	private static void resolveAsP2Summon(MainWindow mw) {
+		mw.currentResolutionIsSummon  = true;
+		mw.currentSummonSourceIsP1    = false;
+		mw.currentSummonSource        = makeForward("Shiva", "Ice", 3, 0);
+	}
+
+	@Test
+	void edgeZeroesTheFirstOpposingEffectDamageEachTurnAndOnlyTheFirst() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeFieldAbilityCard("Edge", "Wind", "Forward", EDGE_15_045H));
+		resolveAsP2Summon(mw);
+
+		assertEquals(0, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 0, 7000, true, false),
+				"the first opposing Summon this turn");
+		assertEquals(7000, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 0, 7000, true, false),
+				"the second lands in full");
+	}
+
+	@Test
+	void edgesShieldDoesNotCoverBattleDamageOrHisOwnSide() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeFieldAbilityCard("Edge", "Wind", "Forward", EDGE_15_045H));
+
+		assertEquals(7000, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 0, 7000, false, false),
+				"battle damage is outside \"Summons or abilities\"");
+
+		mw.currentResolutionIsSummon = true;
+		mw.currentSummonSourceIsP1   = true;
+		mw.currentSummonSource       = makeForward("Own Summon", "Wind", 3, 0);
+		assertEquals(7000, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 0, 7000, true, false),
+				"a friendly Summon is not \"your opponent's\"");
+
+		// Neither of those spent the shield, so it is still up for the first opposing one.
+		resolveAsP2Summon(mw);
+		assertEquals(0, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 0, 7000, true, false),
+				"the slot was never taken by a resolution the clause does not cover");
+	}
+
+	@Test
+	void edgesShieldReturnsOnTheNextTurn() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeFieldAbilityCard("Edge", "Wind", "Forward", EDGE_15_045H));
+		resolveAsP2Summon(mw);
+		assertEquals(0, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 0, 7000, true, false));
+
+		mw.p1Turn.firstOppEffectDamageZeroedThisTurn.clear();
+		mw.p2Turn.firstOppEffectDamageZeroedThisTurn.clear();
+
+		assertEquals(0, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 0, 7000, true, false),
+				"\"during each turn\" — the shield is back");
+	}
+
+	// =========================================================================================
+	// Tifa 26-076H: "If you control a Card Name Zangan, you can discard 1 card instead of 《S》
+	// when paying for Tifa's special ability."
+	//
+	// The board-conditioned relative of the S-cost substitutions already wired (Braska 16-133S,
+	// Rydia 2-094H, Duncan 8-014L). Those widen the S cost permanently and by card kind
+	// ("discarding an Earth Summon"); this widens it to any card at all, but only while its
+	// controller has a Zangan on the field.
+	//
+	// Carried as a SpecialAbilityProxy so it reaches the four places that already read one — the
+	// menu gate, the payment dialog, the S-cost candidate list and its chooser title — and the
+	// board condition is checked in MainWindow.effectiveSpecialAbilityProxy, which those four now
+	// share. A CardData cannot see the board, so the condition cannot live on the record.
+	// =========================================================================================
+
+	private static final String TIFA_26_076H =
+			"If you control a Card Name Zangan, you can discard 1 card instead of 《S》 "
+			+ "when paying for Tifa's special ability.";
+
+	@Test
+	void tifasSubstitutionParsesAsAnAnyCardProxyCarryingItsBoardCondition() {
+		CardData.SpecialAbilityProxy p = CardData.parseSpecialAbilityProxy(TIFA_26_076H);
+		assertNotNull(p, "the 《S》 markup reaches the pattern intact");
+		assertEquals("Tifa",   p.targetName());
+		assertEquals("Zangan", p.requiresControlCardName());
+		assertEquals("card",   p.subType(), "\"1 card\" means any card");
+		assertNull(p.subCardName());
+		assertNull(p.subElement());
+		assertEquals("any card", p.substituteDescription(), "how the S slot's header names it");
+	}
+
+	@Test
+	void theUnconditionalSubstitutionsStillParseAndCarryNoCondition() {
+		// The three printings that were already wired, asserted alongside so widening the parser
+		// cannot quietly change what they mean.
+		CardData.SpecialAbilityProxy braska = CardData.parseSpecialAbilityProxy(
+				"You may use Braska's special ability by discarding a Summon instead of "
+				+ "discarding a Card Name Braska as part of the cost.");
+		assertNotNull(braska);
+		assertEquals("Summon", braska.subType());
+		assertNull(braska.requiresControlCardName(), "no board condition on the printed form");
+
+		CardData.SpecialAbilityProxy duncan = CardData.parseSpecialAbilityProxy(
+				"You may use Duncan's special ability by discarding a Card Name Sabin instead of "
+				+ "discarding a Card Name Duncan as part of the cost.");
+		assertNotNull(duncan);
+		assertEquals("Sabin", duncan.subCardName());
+		assertNull(duncan.requiresControlCardName());
+	}
+
+	@Test
+	void tifasSubstitutionIsLiveOnlyWhileAZanganIsOnTheField() {
+		MainWindow mw = new MainWindow();
+		CardData tifa = makeFieldAbilityCard("Tifa", "Earth", "Forward", TIFA_26_076H);
+		placeP1Forward(mw, tifa);
+
+		assertNull(mw.effectiveSpecialAbilityProxy(tifa, true),
+				"no Zangan on the field — the substitution is not offered");
+
+		placeP1Forward(mw, makeForward("Zangan", "Earth", 5, 9000));
+		assertNotNull(mw.effectiveSpecialAbilityProxy(tifa, true), "with a Zangan it is");
+	}
+
+	@Test
+	void aZanganInAnyRowSatisfiesTheCondition() {
+		// "You control a Card Name Zangan" names a name, not a row, and Zangan is printed as a
+		// Backup (1-188S) as well as a Forward (26-070H).
+		MainWindow mw = new MainWindow();
+		CardData tifa = makeFieldAbilityCard("Tifa", "Earth", "Forward", TIFA_26_076H);
+		placeP1Forward(mw, tifa);
+		mw.placeCardInFirstBackupSlot(makeFieldAbilityCard("Zangan", "Fire", "Backup", ""));
+
+		assertNotNull(mw.effectiveSpecialAbilityProxy(tifa, true), "a Backup Zangan counts");
+	}
+
+	@Test
+	void theOpponentsZanganDoesNotUnlockTifasSubstitution() {
+		MainWindow mw = new MainWindow();
+		CardData tifa = makeFieldAbilityCard("Tifa", "Earth", "Forward", TIFA_26_076H);
+		placeP1Forward(mw, tifa);
+		placeP2Forward(mw, makeForward("Zangan", "Earth", 5, 9000));
+
+		assertNull(mw.effectiveSpecialAbilityProxy(tifa, true), "\"you control\" is one-sided");
+	}
+
+	@Test
+	void withAZanganAnyHandCardCanPayTifasSCost() {
+		MainWindow mw = new MainWindow();
+		CardData tifa = makeFieldAbilityCard("Tifa", "Earth", "Forward", TIFA_26_076H);
+		placeP1Forward(mw, tifa);
+		placeP1Forward(mw, makeForward("Zangan", "Earth", 5, 9000));
+
+		CardData.SpecialAbilityProxy p = mw.effectiveSpecialAbilityProxy(tifa, true);
+		assertNotNull(p);
+		assertTrue(p.meetsSubstitute(makeForward("Cloud", "Earth", 3, 7000)), "a Forward pays it");
+		assertTrue(p.meetsSubstitute(makeFieldAbilityCard("Potion", "Earth", "Summon", "")),
+				"and so does a Summon — the cost names a card, with no filter at all");
+	}
+
+	// =========================================================================================
+	// Gippal 12-058C: "The Forwards forming a party you control gain Brave."
+	//
+	// The unnamed sibling of Chocobo 2-060C's "The Forwards forming a party with Chocobo gain
+	// First Strike." That one names the partymate the grant flows from and requires it to be in
+	// the party; this one names only whose party it must be, and Gippal himself need not be in it
+	// or attacking at all.
+	//
+	// Carried as FieldPowerGrant.ANY_PARTY in partyWithCardName rather than as a thirtieth record
+	// component: that field is read in exactly one place, so one branch there expresses the whole
+	// difference where a new field would mean editing thirteen constructors for one card.
+	// =========================================================================================
+
+	private static final String GIPPAL_12_058C = "The Forwards forming a party you control gain Brave.";
+
+	@Test
+	void gippalsGrantParsesAsAPartyConditionThatNamesNoCard() {
+		List<FieldPowerGrant> grants = CardData.parseFieldPowerGrants(GIPPAL_12_058C, "Forward");
+		assertEquals(1, grants.size());
+		FieldPowerGrant g = grants.get(0);
+		assertEquals(FieldPowerGrant.ANY_PARTY, g.partyWithCardName(),
+				"the party condition is present but names nobody");
+		assertEquals(Set.of(CardData.Trait.BRAVE), g.grantedTraits());
+		assertEquals(0, g.powerBonus(), "traits only");
+		assertTrue(g.inclForwards());
+		assertFalse(g.inclBackups());
+	}
+
+	@Test
+	void gippalGrantsBraveOnlyWhileAPartyIsActuallyFormed() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForwardWithPowerGrant("Gippal", "Earth", 7000, GIPPAL_12_058C)); // idx 0
+		placeP1Forward(mw, makeForward("Ally",      "Earth", 3, 7000));                         // idx 1
+		placeP1Forward(mw, makeForward("Bystander", "Earth", 3, 7000));                         // idx 2
+
+		assertFalse(mw.effectiveP1HasTrait(1, CardData.Trait.BRAVE),
+				"no attack declared — there is no party to be forming");
+
+		mw.p1DeclaredAttackers.add(mw.p1ForwardCards.get(1));
+		assertFalse(mw.effectiveP1HasTrait(1, CardData.Trait.BRAVE),
+				"one Forward attacking alone is not forming a party");
+
+		mw.p1DeclaredAttackers.add(mw.p1ForwardCards.get(2));
+		assertTrue(mw.effectiveP1HasTrait(1, CardData.Trait.BRAVE), "two attackers make a party");
+		assertTrue(mw.effectiveP1HasTrait(2, CardData.Trait.BRAVE), "and it reaches both of them");
+		assertFalse(mw.effectiveP1HasTrait(0, CardData.Trait.BRAVE),
+				"Gippal is not attacking, so he is not one of the Forwards forming the party");
+	}
+
+	@Test
+	void gippalNeedNotBeInThePartyForTheGrantToApply() {
+		// The axis that separates this from Chocobo 2-060C's named form, where the grant flows from
+		// one named partymate and dies if that card is not in the party.
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForwardWithPowerGrant("Gippal", "Earth", 7000, GIPPAL_12_058C));
+		placeP1Forward(mw, makeForward("Ally One", "Earth", 3, 7000));
+		placeP1Forward(mw, makeForward("Ally Two", "Earth", 3, 7000));
+		mw.p1DeclaredAttackers.add(mw.p1ForwardCards.get(1));
+		mw.p1DeclaredAttackers.add(mw.p1ForwardCards.get(2));
+
+		assertTrue(mw.effectiveP1HasTrait(1, CardData.Trait.BRAVE),
+				"the grant asks about the target's party, not the source's");
+	}
+
+	@Test
+	void gippalDoesNotReachTheOpposingSidesParty() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForwardWithPowerGrant("Gippal", "Earth", 7000, GIPPAL_12_058C));
+		placeP2Forward(mw, makeForward("Enemy One", "Fire", 3, 7000));
+		placeP2Forward(mw, makeForward("Enemy Two", "Fire", 3, 7000));
+		mw.p2DeclaredAttackers.add(mw.p2ForwardCards.get(0));
+		mw.p2DeclaredAttackers.add(mw.p2ForwardCards.get(1));
+
+		assertFalse(mw.effectiveP2HasTrait(0, CardData.Trait.BRAVE), "\"you control\" is one-sided");
+	}
+
+	// =========================================================================================
+	// Sophie 16-076R: "If Sophie deals damage to a Forward due to an ability, double the damage
+	// instead."
+	//
+	// The doubling itself was already live — GameContextImpl.applyOutgoingFieldAbilityMult reads
+	// this pattern on every ability damage the carrier deals to a Forward. What was missing was the
+	// coverage report's row for it, so the card read as unwired. These tests pin the behaviour the
+	// row now claims, including the name check that stops it applying to anyone else's ability.
+	// =========================================================================================
+
+	private static final String SOPHIE_16_076R =
+			"If Sophie deals damage to a Forward due to an ability, double the damage instead.";
+
+	@Test
+	void sophieDoublesTheAbilityDamageSheDealsToAForward() {
+		MainWindow mw = new MainWindow();
+		CardData sophie = makeFieldAbilityCard("Sophie", "Earth", "Forward", SOPHIE_16_076R);
+		placeP1Forward(mw, sophie);
+		placeP2Forward(mw, makeForward("Target", "Fire", 3, 20000));
+		mw.currentAbilitySource     = sophie;
+		mw.currentAbilitySourceIsP1 = true;
+
+		mw.buildGameContext(true).damageP2Forward(0, 4000);
+
+		assertEquals(8000, (int) mw.p2ForwardDamage.get(0), "4000 doubled");
+	}
+
+	@Test
+	void sophiesDoublerDoesNotApplyToAnotherCardsAbility() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeFieldAbilityCard("Sophie", "Earth", "Forward", SOPHIE_16_076R));
+		CardData other = makeForward("Someone Else", "Earth", 3, 7000);
+		placeP1Forward(mw, other);
+		placeP2Forward(mw, makeForward("Target", "Fire", 3, 20000));
+		mw.currentAbilitySource     = other;
+		mw.currentAbilitySourceIsP1 = true;
+
+		mw.buildGameContext(true).damageP2Forward(0, 4000);
+
+		assertEquals(4000, (int) mw.p2ForwardDamage.get(0),
+				"the sentence names Sophie, and it is read off the dealing card's own abilities");
+	}
+
+	// =========================================================================================
+	// Rosso 2-024R: "If Rosso receives damage, reduce the damage by half instead (numbers are
+	// rounded up to units of 1000)."
+	//
+	// The one incoming-damage modifier whose result is a function of the amount rather than a
+	// printed number, which is why its arm captures no digits. The trailing parenthetical states
+	// the rounding rule the arm already implements, so it is matched and discarded — left
+	// unmatched, the whole sentence failed the pattern's end anchor.
+	//
+	// Rounding applies to the halved figure, not the input: 5000 halves to 2500 and rounds up to
+	// 3000, while 4000 halves to exactly 2000 and stays there.
+	// =========================================================================================
+
+	private static final String ROSSO_2_024H =
+			"If Rosso receives damage, reduce the damage by half instead "
+			+ "(numbers are rounded up to units of 1000).";
+
+	@Test
+	void theRoundingParentheticalIsMatchedRatherThanLeftToBreakTheAnchor() {
+		Matcher m = AutoAbilityTriggers.FA_DAMAGE_MODIFIER.matcher(ROSSO_2_024H);
+		assertTrue(m.matches(), "the sentence ends in a parenthetical, and the pattern is end-anchored");
+		assertEquals("Rosso", m.group("card").trim(), "the parenthetical must not leak into the subject");
+		assertNotNull(m.group("half"));
+		assertNull(m.group("reduceby"), "\"half\" is not a number the reduction arm could read");
+		assertNull(m.group("sourceclause"), "unqualified — every source is halved");
+	}
+
+	@Test
+	void rossoHalvesIncomingDamageRoundingUpToAWholeThousand() {
+		MainWindow mw = new MainWindow();
+		mw.placeCardInForwardZone(makeFieldAbilityCard("Rosso", "Fire", "Forward", ROSSO_2_024H));
+
+		assertEquals(3000, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 0, 5000, false, false),
+				"2500 rounds up to 3000");
+		assertEquals(2000, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 0, 4000, false, false),
+				"an exact half stays where it lands");
+		assertEquals(4000, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 0, 7000, false, false),
+				"3500 rounds up to 4000");
+		assertEquals(1000, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 0, 1000, false, false),
+				"500 rounds up to a whole unit rather than down to nothing");
+		assertEquals(0, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 0, 0, false, false),
+				"nothing halves to nothing");
+	}
+
+	@Test
+	void rossoHalvesAbilityDamageAsWellAsBattleDamage() {
+		MainWindow mw = new MainWindow();
+		mw.placeCardInForwardZone(makeFieldAbilityCard("Rosso", "Fire", "Forward", ROSSO_2_024H));
+
+		assertEquals(5000, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 0, 9000, true, false),
+				"the sentence carries no source clause, so an ability is halved too");
+	}
+
 	// =========================================================================================
 	// Snow 18-109C: "When Snow enters the field or attacks, reveal the top 2 cards of your deck.
 	// Remove 1 Category XIII card among them from the game and return the other cards to the

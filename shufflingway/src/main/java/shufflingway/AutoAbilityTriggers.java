@@ -268,7 +268,11 @@ final class AutoAbilityTriggers {
 	 * comparisons are inclusive of N — Baigan 9-072H zeroes exactly 3000 as well as less.
 	 * Groups: {@code card}, {@code threshold} (optional), {@code threshcmp} (present iff
 	 * {@code threshold} is), {@code sourceclause} (optional), {@code reduceby} (optional),
-	 * {@code setsto} (optional), {@code increaseby} (optional).
+	 * {@code setsto} (optional), {@code increaseby} (optional), {@code half} (optional).
+	 *
+	 * <p>{@code half} is Rosso 2-024R's "reduce the damage by half instead (numbers are rounded up to
+	 * units of 1000)" — the one arm whose result is a function of the incoming amount rather than a
+	 * printed number, which is why it carries no digits to capture.
 	 *
 	 * <p>The source clauses accept "from" as well as "by". Two printings word it that way and mean
 	 * no different — Mystic Knight 3-048C ("receives damage from Summons or abilities") and the
@@ -301,8 +305,13 @@ final class AutoAbilityTriggers {
 		// The removal is part of the replacement, not a separate effect — it happens only on the
 		// resolutions this modifier actually claims, which is what makes one counter buy one shield.
 		"(?:remove\\s+(?<rmcount>\\d+)\\s+(?<rmcounter>.+?)\\s+Counters?\\s+from\\s+(?<rmfrom>.+?)\\s+and\\s+)?" +
-		"(?:reduce\\s+the\\s+damage\\s+by\\s+(?<reduceby>\\d+)|the\\s+damage\\s+becomes\\s+(?<setsto>\\d+)|the\\s+damage\\s+increases\\s+by\\s+(?<increaseby>\\d+)|(?<double>double\\s+the\\s+damage))" +
-		"\\s+instead\\.?$"
+		// The halving arm precedes the numeric reduction it shares a prefix with, so "by half" is not
+		// offered to a branch that can only read digits.
+		"(?:(?<half>reduce\\s+the\\s+damage\\s+by\\s+half)|reduce\\s+the\\s+damage\\s+by\\s+(?<reduceby>\\d+)|the\\s+damage\\s+becomes\\s+(?<setsto>\\d+)|the\\s+damage\\s+increases\\s+by\\s+(?<increaseby>\\d+)|(?<double>double\\s+the\\s+damage))" +
+		// A trailing parenthetical restating the rounding rule ("numbers are rounded up to units of
+		// 1000" — Rosso 2-024R). Text, not a term: the rounding it describes is what the half arm
+		// already does, so it is matched and discarded rather than captured.
+		"\\s+instead(?:\\s*\\([^)]*\\))?[.!]?$"
 	);
 
 	/**
@@ -372,37 +381,53 @@ final class AutoAbilityTriggers {
 	/**
 	 * Outgoing combat damage boost from a friendly Forward to an opposing Forward.
 	 * "If a Fire Forward [or a Category SOPFFO Forward] you control deals damage to a Forward, the
-	 * damage increases by N instead."
+	 * damage increases by N instead." — and the Job-filtered spelling of the same sentence,
+	 * "If a Job SOLDIER Forward you control deals damage to a Forward…" (Angeal 22-004H).
 	 * Checked on the ATTACKER's side field cards (Forwards and Backups).
-	 * Groups: {@code element}, {@code category} (optional), {@code amount}.
+	 * Groups: {@code element}, {@code category} (optional), {@code job}, {@code amount}.
 	 *
 	 * <p>The Category arm is Neon 21-011H's, and it is a second way for the <em>same</em> boost to
 	 * qualify rather than a second boost: a Fire Category SOPFFO Forward gets +1000 once, not twice.
 	 * {@link #elementForwardBoostCovers} is what both readers ask, so neither can double-count it.
 	 *
+	 * <p>The Job arm is a sibling of the Element one rather than an addition to it — Angeal's
+	 * sentence names no Element, so a Job printing must not be readable as an Element printing with a
+	 * null filter, which is what would happen if the Element group were simply made optional. That is
+	 * the same trap {@link #FA_FRIENDLY_FORWARD_BATTLE_DAMAGE_BOOST} is kept separate to avoid.
+	 *
 	 * <p>"you control" is printed once, after the last arm, which is why it sits outside the
 	 * optional group rather than inside the first.
 	 */
 	static final Pattern FA_ELEMENT_FORWARD_DAMAGE_BOOST = Pattern.compile(
-		"(?i)If\\s+a\\s+(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+Forward" +
-		"(?:\\s+or\\s+a\\s+Category\\s+(?<category>\\S+)\\s+Forward)?" +
+		"(?i)If\\s+a\\s+" +
+		"(?:(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+Forward" +
+			"(?:\\s+or\\s+a\\s+Category\\s+(?<category>\\S+)\\s+Forward)?" +
+		"|Job\\s+(?<job>[^,]+?)\\s+Forward)" +
 		"\\s+you\\s+control" +
 		"\\s+deals?\\s+damage\\s+to\\s+a\\s+Forward,\\s+the\\s+damage\\s+increases\\s+by\\s+(?<amount>\\d+)\\s+instead\\.?"
 	);
 
 	/**
 	 * Whether {@code dealer} satisfies the filter a {@link #FA_ELEMENT_FORWARD_DAMAGE_BOOST} match
-	 * captured — its Element, or the Category the optional second arm named.
+	 * captured — its Element, the Category the optional second arm named, or the Job named by the
+	 * arm that carries no Element at all.
 	 *
 	 * <p>Shared by the combat reader ({@code MainWindow.friendlyElementForwardCombatBoost}) and the
 	 * ability reader ({@code DamageResolver.applyCasterSideElementForwardDamageBoosts}), so the two
 	 * cannot come to different answers about the same printing.
+	 *
+	 * <p>Every group is null-checked before it is consulted: the Job arm leaves {@code element}
+	 * absent, so the Element test can no longer assume a value the way it could when that group was
+	 * mandatory.
 	 */
 	static boolean elementForwardBoostCovers(Matcher m, CardData dealer, MainWindow mw) {
 		if (dealer == null) return false;
-		if (mw.effectiveContainsElement(dealer, m.group("element"))) return true;
+		String element = m.group("element");
+		if (element != null && mw.effectiveContainsElement(dealer, element)) return true;
 		String category = m.group("category");
-		return category != null && CardFilters.meetsCategoryFilter(dealer, category);
+		if (category != null && CardFilters.meetsCategoryFilter(dealer, category)) return true;
+		String job = m.group("job");
+		return job != null && CardFilters.meetsJobFilter(dealer, job.trim());
 	}
 
 	/**
@@ -417,17 +442,42 @@ final class AutoAbilityTriggers {
 	 * {@link #FA_ELEMENT_FORWARD_DAMAGE_BOOST} covers only Forwards where this covers every
 	 * Character — a Backup or Monster whose ability deals the damage counts here and not there.
 	 *
-	 * <p>The two arms are read separately by the caller: {@code summonelement} gates the Summon
-	 * damage path, {@code element} the combat and ability paths. Either group may be absent.
-	 * Groups: {@code summonelement} (optional), {@code element} (optional), {@code amount}.
+	 * <p>The Character arm filters on an Element, a Category (Chelinka 7-054L), a Job (Garnet
+	 * Bahamut 17-035R) or a Card Name (Rapha 13-082C, Papalymo 5-159S) — four ways of naming which
+	 * of your Characters carry the boost, never combined in one printing. The Job and Card Name
+	 * spellings drop the word "Character" altogether ("If the Card Name Marach you control deals
+	 * damage…"), which is why those branches end at "you control" rather than at a type token — and
+	 * why the Job branch has to refuse a job that ends in one, or it would also claim the
+	 * Forward-scoped printings {@link #FA_ELEMENT_FORWARD_DAMAGE_BOOST} owns.
+	 *
+	 * <p>The two halves are read separately by the caller: {@code summonelement} gates the Summon
+	 * damage path, the Character filter the combat and ability paths, and either half may be absent.
+	 * Readers ask {@link #characterArmCovers} rather than picking a group, so a printing that filters
+	 * by Category cannot be silently read as one that filters by nothing.
+	 * Groups: {@code summonelement} (optional), {@code element} / {@code element2} (optional, see
+	 * {@link #characterArmElement}), {@code category} (optional), {@code cardname} (optional),
+	 * {@code amount}.
 	 */
 	static final Pattern FA_ELEMENT_SUMMON_OR_CHARACTER_DAMAGE_BOOST = Pattern.compile(
 		"(?i)^If\\s+" +
 		"(?:your\\s+(?<summonelement>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+Summon" +
 		"(?:\\s+or\\s+an?\\s+(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+Character\\s+you\\s+control)?" +
-		"|an?\\s+(?<element2>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+Character\\s+you\\s+control)" +
+		"|(?:an?|the)\\s+(?:" +
+			"(?<element2>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+Character" +
+			"|Category\\s+(?<category>\\S+)\\s+Character" +
+			// The Job arm names no card type at all (Garnet Bahamut 17-035R, "a Job Winged Chaos you
+			// control"), so it must refuse a job that ends in one. Without the lookbehinds the lazy
+			// group swallows the type token and this pattern also claims Angeal 22-004H's "a Job
+			// SOLDIER Forward you control" — which FA_ELEMENT_FORWARD_DAMAGE_BOOST already claims,
+			// and both readers add every match they find, so the boost would apply twice.
+			"|Job\\s+(?<job>[^,]+?)(?<!Forward)(?<!Backup)(?<!Monster)(?<!Character)" +
+			// Comma-free, so the lazy name cannot reach past the subject into the effect half.
+			"|Card\\s+Name\\s+(?<cardname>[^,]+?)" +
+		")\\s+you\\s+control)" +
 		"\\s+deals?\\s+damage\\s+to\\s+a\\s+Forward,\\s+" +
-		"the\\s+damage\\s+increases\\s+by\\s+(?<amount>\\d+)\\s+instead[.!]?$"
+		// Papalymo 5-159S prints the imperative wording of the same boost; every other printing in
+		// the corpus uses the declarative one.
+		"(?:the\\s+damage\\s+increases\\s+by|increase\\s+the\\s+damage\\s+by)\\s+(?<amount>\\d+)\\s+instead[.!]?$"
 	);
 
 	/**
@@ -441,6 +491,46 @@ final class AutoAbilityTriggers {
 	}
 
 	/**
+	 * Whether {@code dealer} satisfies the Character arm of a
+	 * {@link #FA_ELEMENT_SUMMON_OR_CHARACTER_DAMAGE_BOOST} match — its Element, its Category or its
+	 * Card Name, whichever the printing named.
+	 *
+	 * <p>The counterpart of {@link #elementForwardBoostCovers} for the wider pattern, and shared by
+	 * the same two readers ({@code MainWindow.friendlyElementForwardCombatBoost} and
+	 * {@code DamageResolver.applyCasterSideElementForwardDamageBoosts}) for the same reason: the
+	 * combat and ability paths must agree about which cards a printing covers.
+	 *
+	 * <p>Returns false when the match carries only the Summon arm — every filter group is absent
+	 * there, and a Summon is not a Character. That is what stops the Summon-only printings from
+	 * boosting every Character on the field.
+	 */
+	static boolean characterArmCovers(Matcher m, CardData dealer, MainWindow mw) {
+		if (dealer == null) return false;
+		String element = characterArmElement(m);
+		if (element != null && mw.effectiveContainsElement(dealer, element)) return true;
+		String category = m.group("category");
+		if (category != null && CardFilters.meetsCategoryFilter(dealer, category)) return true;
+		String job = m.group("job");
+		if (job != null && CardFilters.meetsJobFilter(dealer, job.trim())) return true;
+		String cardname = m.group("cardname");
+		return cardname != null && CardFilters.meetsCardNameFilter(dealer, cardname.trim());
+	}
+
+	/**
+	 * How a {@link #FA_ELEMENT_SUMMON_OR_CHARACTER_DAMAGE_BOOST} match names the Characters it
+	 * covers, for the log line the damage paths write. Descriptive only — {@link #characterArmCovers}
+	 * is what decides whether the boost applies.
+	 */
+	static String characterArmLabel(Matcher m) {
+		String element = characterArmElement(m);
+		if (element != null) return element + " Character";
+		if (m.group("category") != null) return "Category " + m.group("category") + " Character";
+		if (m.group("job") != null) return "Job " + m.group("job").trim();
+		if (m.group("cardname") != null) return "Card Name " + m.group("cardname").trim();
+		return "Character";
+	}
+
+	/**
 	 * Field-wide incoming-damage modifier: "If a [Category X | Job Y | Element] Forward
 	 * [of cost N or less/more] [other than Z] you control [other than Z] is dealt damage
 	 * [less than its power | by a Backup | by [your opponent's] Summons/abilities],
@@ -449,16 +539,24 @@ final class AutoAbilityTriggers {
 	 * <p>The element qualifier is matched against the damaged Forward's effective elements, so a
 	 * Multi-Element Forward satisfies every clause naming one of its elements — Yuzuki 13-125R
 	 * protects Fire and Water Forwards separately and is itself Water/Fire.
-	 * Groups: {@code category}, {@code job}, {@code element}, {@code cost}, {@code costcmp},
+	 * Groups: {@code category}, {@code job} / {@code job2} (see {@link #fieldDamageModifierJob}),
+	 * {@code element}, {@code cost}, {@code costcmp},
 	 * {@code except1} (before "you control"), {@code except2} (after "you control"),
 	 * {@code sourceclause}, {@code reduceby}, {@code setsto}.
 	 */
 	static final Pattern FA_FIELD_DAMAGE_MODIFIER = Pattern.compile(
 		"(?i)^If\\s+a\\s+" +
-		"(?:Category\\s+(?<category>\\S+)\\s+" +
-			"|Job\\s+(?<job>.+?)\\s+(?=Forward)" +
-			"|(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?" +
-		"Forward(?:\\s+of\\s+cost\\s+(?<cost>\\d+)\\s+or\\s+(?<costcmp>less|more))?" +
+		"(?:" +
+			"(?:Category\\s+(?<category>\\S+)\\s+" +
+				"|Job\\s+(?<job>.+?)\\s+(?=Forward)" +
+				"|(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?" +
+			"Forward(?:\\s+of\\s+cost\\s+(?<cost>\\d+)\\s+or\\s+(?<costcmp>less|more))?" +
+			// The type-less Job spelling (Amber Bahamut 17-036R, "a Job Winged Chaos you control"),
+			// which names no card type at all. Refuses a job ending in one so it cannot claim the
+			// arm above by swallowing its "Forward" token — the same guard, and for the same reason,
+			// as the Job arm of FA_ELEMENT_SUMMON_OR_CHARACTER_DAMAGE_BOOST.
+			"|Job\\s+(?<job2>[^,]+?)(?<!Forward)(?<!Backup)(?<!Monster)(?<!Character)" +
+		")" +
 		"(?:\\s+other\\s+than\\s+(?<except1>.+?))?" +
 		"\\s+you\\s+control" +
 		"(?:\\s+other\\s+than\\s+(?<except2>.+?))?" +
@@ -466,6 +564,10 @@ final class AutoAbilityTriggers {
 		"(?<sourceclause>" +
 			"\\s+less\\s+than\\s+its\\s+power" +
 			"|\\s+by\\s+a\\s+Backup" +
+			// Battle damage, the mirror of the same clause on FA_DAMAGE_MODIFIER (Amber Bahamut
+			// 17-036R). Must follow the Backup branch and precede nothing that starts "by a" —
+			// the two name different sources and neither is a prefix of the other.
+			"|\\s+by\\s+a\\s+Forward" +
 			"|\\s+by\\s+(?:your\\s+opponent's\\s+)?(?:a\\s+)?Summons?(?:\\s+or\\s+(?:an?\\s+)?abilit(?:y|ies))?" +
 			"|\\s+by\\s+(?:your\\s+opponent's\\s+)?(?:a\\s+Summon\\s+or\\s+)?(?:an?\\s+)?abilit(?:y|ies)" +
 		")?" +
@@ -473,6 +575,18 @@ final class AutoAbilityTriggers {
 		"(?:reduce\\s+the\\s+damage\\s+by\\s+(?<reduceby>\\d+)|the\\s+damage\\s+becomes\\s+(?<setsto>\\d+))" +
 		"\\s+instead\\.?$"
 	);
+
+	/**
+	 * The Job a {@link #FA_FIELD_DAMAGE_MODIFIER} match filters on, whichever of its two arms
+	 * carried it, or {@code null} when the printing names no Job.
+	 *
+	 * <p>The arm that names a card type puts it in {@code job} and the type-less one in
+	 * {@code job2}, so every reader goes through here rather than picking a group and hoping —
+	 * exactly as {@link #characterArmElement} exists for the boost pattern.
+	 */
+	static String fieldDamageModifierJob(Matcher m) {
+		return m.group("job") != null ? m.group("job") : m.group("job2");
+	}
 
 	/**
 	 * The imperative spelling of a {@link #FA_FIELD_DAMAGE_MODIFIER} reduction: "Reduce the damage
@@ -1098,6 +1212,19 @@ final class AutoAbilityTriggers {
 		"(?i)^The\\s+Forwards?\\s+opponent\\s+controls\\s+lose\\s+Haste[.!]?$"
 	);
 
+	/**
+	 * "During your turn, the Backups opponent controls cannot produce CP." — Titan (XVI) 29-068L.
+	 *
+	 * <p>Read off the opposing field by {@link MainWindow#backupCpSuppressed}, alongside the
+	 * Haste-suppression sentences it is shaped like: the controller of the printing taxes the other
+	 * player, and "during your turn" scopes it to the printer's own turn — which is precisely when
+	 * the taxed player would be paying at instant speed.
+	 */
+	static final Pattern FA_OPP_BACKUPS_CANNOT_PRODUCE_CP = Pattern.compile(
+		"(?i)^During\\s+your\\s+turn,\\s+the\\s+Backups?\\s+(?:your\\s+)?opponent\\s+controls?\\s+" +
+		"cannot\\s+produce\\s+CP[.!]?$"
+	);
+
 	/** "The Forwards opponent controls cannot gain Haste." — one-sided twin of {@link #FA_FORWARDS_CANNOT_GAIN_HASTE}. */
 	static final Pattern FA_OPP_FORWARDS_CANNOT_GAIN_HASTE = Pattern.compile(
 		"(?i)^The\\s+Forwards?\\s+opponent\\s+controls\\s+cannot\\s+gain\\s+Haste[.!]?$"
@@ -1127,6 +1254,26 @@ final class AutoAbilityTriggers {
 		"(?i)^If\\s+(?<card>.+?)\\s+is\\s+dealt\\s+damage\\s+by\\s+a\\s+Forward\\s+with\\s+" +
 		"(?<trait1>[^,]+?)(?:\\s+or\\s+(?<trait2>[^,]+?))?" +
 		",\\s+the\\s+damage\\s+becomes\\s+0\\s+instead[.!]?$"
+	);
+
+	/**
+	 * "During each turn, if [card] is dealt damage by your opponent's Summons or abilities for the
+	 * first time in that turn, the damage becomes 0 instead." — Edge 15-045H.
+	 *
+	 * <p>A once-per-turn replacement rather than a standing one, so unlike
+	 * {@link #FA_NULLIFY_OPPONENT_ABILITY_DAMAGE} it has to record that it fired. The slot is spent
+	 * only on a resolution it actually claims — damage that is already 0, or that comes from the
+	 * carrier's own side, leaves the shield up.
+	 *
+	 * <p>"Summons or abilities" names both, so no distinction is drawn between the two; what the
+	 * clause does exclude is battle damage, and anything originating on the carrier's own side.
+	 * Group: {@code card}.
+	 */
+	static final Pattern FA_FIRST_OPP_EFFECT_DAMAGE_ZERO_EACH_TURN = Pattern.compile(
+		"(?i)^During\\s+each\\s+turn,\\s+if\\s+(?<card>.+?)\\s+is\\s+dealt\\s+damage\\s+by\\s+" +
+		"your\\s+opponent's\\s+Summons?(?:\\s+or\\s+abilit(?:y|ies))?\\s+" +
+		"for\\s+the\\s+first\\s+time\\s+in\\s+that\\s+turn,\\s+" +
+		"the\\s+damage\\s+becomes\\s+0\\s+instead[.!]?$"
 	);
 
 	/** "If [name] deals damage to a Forward due to an ability, double the damage instead." */
@@ -4062,7 +4209,7 @@ final class AutoAbilityTriggers {
 		}
 
 		new AbilityPaymentDialog(mw.frame, eff, source,
-				mw.playerHand(isP1), mw.playerBackupCards(isP1), mw.playerBackupStates(isP1), mw.playerBackupUrls(isP1),
+				mw.playerHand(isP1), mw.cpPayableBackupCards(isP1), mw.playerBackupStates(isP1), mw.playerBackupUrls(isP1),
 				mw::showZoomAt, mw::hideZoom, null, null, mw.lightDarkDiscardGrants(isP1),
 				(discards, backups, xValue, sCostIdx) -> {
 					List<ForwardTarget> bzTargets = resolveBzCostTargetsForBzAbility(bzCosts, isP1);
@@ -4570,10 +4717,11 @@ final class AutoAbilityTriggers {
 			return;
 		}
 
-		CardData.SpecialAbilityProxy proxy = eff.isSpecial() ? source.specialAbilityProxy() : null;
+		CardData.SpecialAbilityProxy proxy = eff.isSpecial()
+				? mw.effectiveSpecialAbilityProxy(source, isP1) : null;
 		String primerName = eff.isSpecial() ? mw.priming.getPrimerCardName(source, isP1) : null;
 		new AbilityPaymentDialog(mw.frame, eff, source,
-				mw.playerHand(isP1), mw.playerBackupCards(isP1), mw.playerBackupStates(isP1), mw.playerBackupUrls(isP1),
+				mw.playerHand(isP1), mw.cpPayableBackupCards(isP1), mw.playerBackupStates(isP1), mw.playerBackupUrls(isP1),
 				mw::showZoomAt, mw::hideZoom, proxy, primerName, mw.lightDarkDiscardGrants(isP1),
 				(discards, backups, xValue, sCostIdx) -> executeAbilityPayment(eff, source, applyDull,
 						discards, backups, autoResolveBzTargets(source, bzCosts, isP1), isP1, xValue, sCostIdx))
@@ -4602,7 +4750,7 @@ final class AutoAbilityTriggers {
 	private List<CardData> specialCostCandidates(CardData source, List<CardData> hand,
 			Collection<Integer> excludedIdxs, boolean isP1) {
 		String primerName = mw.priming.getPrimerCardName(source, isP1);
-		CardData.SpecialAbilityProxy proxy = source.specialAbilityProxy();
+		CardData.SpecialAbilityProxy proxy = mw.effectiveSpecialAbilityProxy(source, isP1);
 		List<CardData> eligible = new ArrayList<>();
 		for (int i = 0; i < hand.size(); i++) {
 			if (excludedIdxs.contains(i)) continue;
@@ -4620,7 +4768,7 @@ final class AutoAbilityTriggers {
 		StringBuilder sb = new StringBuilder(source.name());
 		if (primerName != null && !primerName.equalsIgnoreCase(source.name()))
 			sb.append(" or ").append(primerName);
-		CardData.SpecialAbilityProxy proxy = source.specialAbilityProxy();
+		CardData.SpecialAbilityProxy proxy = mw.effectiveSpecialAbilityProxy(source, isP1);
 		if (proxy != null) sb.append(" or ").append(proxy.substituteDescription());
 		return sb.toString();
 	}

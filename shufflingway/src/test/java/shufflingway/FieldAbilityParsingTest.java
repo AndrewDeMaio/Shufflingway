@@ -178,8 +178,17 @@ public class FieldAbilityParsingTest {
         if (AutoAbilityTriggers.FA_DAMAGE_ZERO_WHILE_DULL.matcher(fa.effectText()).find()) return true;
         if (AutoAbilityTriggers.FA_NULLIFY_TRAIT_FORWARD_DAMAGE.matcher(fa.effectText()).find()) return true;
         if (AutoAbilityTriggers.FA_OUTGOING_DAMAGE_DOUBLER.matcher(fa.effectText()).find()) return true;
+        // Sophie 16-076R. Read by GameContextImpl.applyOutgoingFieldAbilityMult on every ability
+        // damage the carrier deals to a Forward — live well before it was listed here, so this row
+        // closes a reporting gap rather than turning a rule on. Name-checked exactly as that caller
+        // checks it, so a cross-card printing cannot be claimed as this one.
+        if (namesItself(AutoAbilityTriggers.FA_DOUBLE_ABILITY_DAMAGE, fa, source)) return true;
         if (AutoAbilityTriggers.FA_RECV_PLAYER_DAMAGE_ACTIVE_DULL_ZERO.matcher(fa.effectText()).find()) return true;
         if (AutoAbilityTriggers.FA_DISCARD_JOB_TO_CAST.matcher(fa.effectText()).find()) return true;
+        // No row for the S-cost substitutions (Braska 16-133S, Rydia 2-094H, Duncan 8-014L,
+        // Tifa 26-076H): parseFieldAbilities skips those segments as static card properties, so
+        // they never reach this report as a FieldAbility. They are read straight off the card by
+        // MainWindow.effectiveSpecialAbilityProxy instead.
         // Read per resolution by isProtectedFromChoice and by selectCharacters' immunity sets;
         // self-named, exactly as the engine checks it.
         if (namesItself(ActionResolverPatterns.STANDALONE_NAMED_CANNOT_BE_CHOSEN_BY_MULTI_ELEMENT_FORWARD,
@@ -241,6 +250,19 @@ public class FieldAbilityParsingTest {
         // One-sided twins of the two above; both read by FieldGrantCalculator.isHasteSuppressedFor.
         if (AutoAbilityTriggers.FA_OPP_FORWARDS_LOSE_HASTE.matcher(fa.effectText()).find()) return true;
         if (AutoAbilityTriggers.FA_OPP_FORWARDS_CANNOT_GAIN_HASTE.matcher(fa.effectText()).find()) return true;
+        // Titan (XVI) 29-068L. Read off the opposing field by MainWindow.backupCpSuppressed, which
+        // gates every CP-source scan and the Backup row each payment dialog offers. Matched the
+        // same way that caller matches it.
+        if (AutoAbilityTriggers.FA_OPP_BACKUPS_CANNOT_PRODUCE_CP
+                .matcher(fa.effectText().trim()).matches()) return true;
+        // Edge 15-045H. Read per damage resolution by DamageResolver, self-named exactly as that
+        // caller name-checks it.
+        if (selfNamedCompulsion(AutoAbilityTriggers.FA_FIRST_OPP_EFFECT_DAMAGE_ZERO_EACH_TURN,
+                fa, source)) return true;
+        // Gogo 4-127H. Resolved per query by FieldGrantCalculator against the controller's Break
+        // Zone; self-named, and the parser is the one that caller uses.
+        if (!CardData.parseBreakZoneTraitGrantCandidates(fa.effectText(), source.name()).isEmpty())
+            return true;
         if (!CardData.parseSelfTraitGrant(fa.effectText(), source.name()).isEmpty()) return true;
         if (CardData.parseSelfNonDmgBreakShield(fa.effectText(), source.name())) return true;
         if (CardData.parseSelfNonDmgBreakShieldDirect(fa.effectText(), source.name())) return true;
@@ -493,7 +515,9 @@ public class FieldAbilityParsingTest {
             String setsTo   = m.group("setsto");
             String increase = m.group("increaseby");
             String dbl      = m.group("double");
+            String half     = m.group("half");
             String effect   = dbl != null ? "×2"
+                            : half != null ? "half↑1000"
                             : reduceBy != null ? "reduce " + reduceBy
                             : increase != null ? "+" + increase
                             : "becomes " + setsTo;
@@ -502,10 +526,15 @@ public class FieldAbilityParsingTest {
             return "DmgModifier[" + (src != null ? src.trim() : "any") + thresh + ": " + effect + "]";
         }
         m = AutoAbilityTriggers.FA_ELEMENT_FORWARD_DAMAGE_BOOST.matcher(fa.effectText());
-        if (m.find())
-            return "ElementFwdDmgBoost[" + m.group("element")
-                    + (m.group("category") != null ? " or Category " + m.group("category") : "")
-                    + " Fwd +" + m.group("amount") + "]";
+        if (m.find()) {
+            // The Job arm carries no Element, so the filter is named by whichever group is present
+            // rather than by assuming the Element one is.
+            String filter = m.group("element") != null
+                    ? m.group("element") + (m.group("category") != null
+                            ? " or Category " + m.group("category") : "")
+                    : "Job " + m.group("job").trim();
+            return "ElementFwdDmgBoost[" + filter + " Fwd +" + m.group("amount") + "]";
+        }
         m = AutoAbilityTriggers.FA_ELEMENT_SUMMON_DAMAGE_BOOST.matcher(fa.effectText());
         if (m.find()) return "ElementSummonDmgBoost[" + m.group("element") + " Summon +" + m.group("amount") + "]";
         m = AutoAbilityTriggers.FA_FIELD_DAMAGE_MODIFIER.matcher(fa.effectText());
@@ -514,7 +543,7 @@ public class FieldAbilityParsingTest {
             String reduceBy = m.group("reduceby");
             String setsTo   = m.group("setsto");
             String cat      = m.group("category");
-            String job      = m.group("job");
+            String job      = AutoAbilityTriggers.fieldDamageModifierJob(m);
             String cost     = m.group("cost");
             String costcmp  = m.group("costcmp");
             String except   = m.group("except1") != null ? m.group("except1") : m.group("except2");
@@ -539,10 +568,15 @@ public class FieldAbilityParsingTest {
         m = AutoAbilityTriggers.FA_ELEMENT_SUMMON_OR_CHARACTER_DAMAGE_BOOST.matcher(fa.effectText());
         if (m.matches()) {
             String summon = m.group("summonelement");
-            String chr    = AutoAbilityTriggers.characterArmElement(m);
-            String who = summon != null && chr != null ? summon + " Summon or " + chr + " Character"
+            // The Character arm may filter by Element, Category or Card Name, so it is named through
+            // the same label helper the damage paths log with rather than off the Element group.
+            boolean hasChr = AutoAbilityTriggers.characterArmElement(m) != null
+                    || m.group("category") != null || m.group("job") != null
+                    || m.group("cardname") != null;
+            String chr = AutoAbilityTriggers.characterArmLabel(m);
+            String who = summon != null && hasChr ? summon + " Summon or " + chr
                        : summon != null ? summon + " Summon"
-                       : chr + " Character";
+                       : chr;
             return "ElementSummonOrCharacterDmgBoost[" + who + " +" + m.group("amount") + "]";
         }
         m = AutoAbilityTriggers.FA_NULLIFY_SUMMON_DAMAGE.matcher(fa.effectText());
@@ -576,6 +610,8 @@ public class FieldAbilityParsingTest {
         }
         m = AutoAbilityTriggers.FA_OUTGOING_DAMAGE_DOUBLER.matcher(fa.effectText());
         if (m.find()) return "OutgoingDmgDoubler[to " + m.group("target") + "]";
+        if (namesItself(AutoAbilityTriggers.FA_DOUBLE_ABILITY_DAMAGE, fa, source))
+            return "DoubleAbilityDmgToForward";
         m = AutoAbilityTriggers.FA_RECV_PLAYER_DAMAGE_ACTIVE_DULL_ZERO.matcher(fa.effectText());
         if (m.find()) return "RecvPlayerDmgActiveDullZero[" + m.group("card") + "]";
         m = AutoAbilityTriggers.FA_OPPONENT_MUST_BLOCK.matcher(fa.effectText());
@@ -606,6 +642,13 @@ public class FieldAbilityParsingTest {
         if (AutoAbilityTriggers.FA_FORWARDS_CANNOT_GAIN_HASTE.matcher(fa.effectText()).find()) return "ForwardsCannotGainHaste";
         if (AutoAbilityTriggers.FA_OPP_FORWARDS_LOSE_HASTE.matcher(fa.effectText()).find()) return "OppForwardsLoseHaste";
         if (AutoAbilityTriggers.FA_OPP_FORWARDS_CANNOT_GAIN_HASTE.matcher(fa.effectText()).find()) return "OppForwardsCannotGainHaste";
+        if (AutoAbilityTriggers.FA_OPP_BACKUPS_CANNOT_PRODUCE_CP
+                .matcher(fa.effectText().trim()).matches()) return "OppBackupsCannotProduceCp";
+        if (selfNamedCompulsion(AutoAbilityTriggers.FA_FIRST_OPP_EFFECT_DAMAGE_ZERO_EACH_TURN, fa, source))
+            return "FirstOppEffectDmgZeroEachTurn";
+        java.util.EnumSet<CardData.Trait> bzTraits =
+                CardData.parseBreakZoneTraitGrantCandidates(fa.effectText(), source.name());
+        if (!bzTraits.isEmpty()) return "BreakZoneTraitGrant" + bzTraits;
         if (CardData.isBackupCpAbility(fa.effectText())) return "BackupCpAbility";
         int lbN = CardData.parseIfSelfLbFaceUpCountTraitGrantThreshold(fa.effectText(), source.name());
         if (lbN >= 0) return "LbFaceUpTraitGrant[n≥" + lbN + " " + CardData.parseIfSelfLbFaceUpCountTraitGrantTraits(fa.effectText()) + "]";

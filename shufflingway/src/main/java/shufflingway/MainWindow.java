@@ -7936,7 +7936,7 @@ public class MainWindow {
 
 		// A reserved Backup is being handed over, so it cannot also be dulled for CP. Hiding it
 		// from the payment dialog is what keeps the deferred removal from letting it be spent twice.
-		CardData[]  payBackups = playerBackupCards(true);
+		CardData[]  payBackups = cpPayableBackupCards(true);
 		CardState[] payStates  = playerBackupStates(true);
 		String[]    payUrls    = playerBackupUrls(true);
 		if (!removalSlots.isEmpty()) {
@@ -8225,7 +8225,7 @@ public class MainWindow {
 
 	private void showWarpPaymentDialog(CardData card, int handIdx) {
 		new WarpPaymentDialog(frame, card, handIdx,
-				gameState.getP1Hand(), p1BackupCards, p1BackupStates, p1BackupUrls,
+				gameState.getP1Hand(), cpPayableBackupCards(true), p1BackupStates, p1BackupUrls,
 				p1ForwardCards,
 				this::showZoomAt, this::hideZoom,
 				lightDarkDiscardGrants(true), warpCostAnyElement(true),
@@ -8520,7 +8520,7 @@ public class MainWindow {
 		PlayableEntry entry = bzPlayableP1.get(card);
 		boolean anyElement = isAnyElementCast(card) || (entry != null && entry.anyElement());
 		new StandardPaymentDialog(frame, card, -1, reducedCost,
-				gameState.getP1Hand(), p1BackupCards, p1BackupStates, p1BackupUrls,
+				gameState.getP1Hand(), cpPayableBackupCards(true), p1BackupStates, p1BackupUrls,
 				this::showZoomAt, this::hideZoom,
 				new ArrayList<>(p1ForwardCards),
 				(discards, backups, overrides) -> executePlayFromBzP1(card, discards, backups, overrides),
@@ -8540,7 +8540,7 @@ public class MainWindow {
 		String[] extraElems = pendingExtraCostCpElements == null ? null
 				: pendingExtraCostCpElements.stream().filter(e -> !e.isEmpty()).distinct().toArray(String[]::new);
 		new StandardPaymentDialog(frame, card, handIdx, cost,
-				gameState.getP1Hand(), p1BackupCards, p1BackupStates, p1BackupUrls,
+				gameState.getP1Hand(), cpPayableBackupCards(true), p1BackupStates, p1BackupUrls,
 				this::showZoomAt, this::hideZoom,
 				new ArrayList<>(p1ForwardCards),
 				(discards, backups, overrides) -> executePlay(card, handIdx, discards, backups, overrides),
@@ -9670,7 +9670,7 @@ public class MainWindow {
 	 */
 	private void showLbCpPaymentDialog(CardData card, int lbCastIdx, Set<Integer> pendingLbPayment) {
 		new LbPaymentDialog(frame, card,
-				gameState.getP1Hand(), p1BackupCards, p1BackupStates, p1BackupUrls,
+				gameState.getP1Hand(), cpPayableBackupCards(true), p1BackupStates, p1BackupUrls,
 				this::showZoomAt, this::hideZoom,
 				lightDarkDiscardGrants(true),
 				(discards, backups) -> {
@@ -10113,6 +10113,67 @@ public class MainWindow {
 			if (extraName != null && extraName.equalsIgnoreCase(c.name())) return true;
 		}
 		return false;
+	}
+
+	/**
+	 * Whether the given player's Backups are currently barred from producing CP by an opposing
+	 * "During your turn, the Backups opponent controls cannot produce CP." — Titan (XVI) 29-068L.
+	 *
+	 * <p>Read off the <em>opposing</em> field, like the Haste-suppression sentences: whoever
+	 * controls the printing taxes the other player. "During your turn" is the printer's turn, so
+	 * the suppression is live only while its controller holds the turn — which is exactly when the
+	 * suppressed player would be paying for something at instant speed.
+	 */
+	boolean backupCpSuppressed(boolean isP1) {
+		boolean suppressorIsP1 = !isP1;
+		boolean suppressorHasTurn = suppressorIsP1
+				== (gameState.getCurrentPlayer() == GameState.Player.P1);
+		if (!suppressorHasTurn) return false;
+		for (CardData c : fieldCards(suppressorIsP1)) {
+			if (c == null || lostAbilitiesCards.contains(c)) continue;
+			for (FieldAbility fa : effectiveFieldAbilities(c))
+				if (AutoAbilityTriggers.FA_OPP_BACKUPS_CANNOT_PRODUCE_CP
+						.matcher(fa.effectText().trim()).matches()) return true;
+		}
+		return false;
+	}
+
+	/**
+	 * {@link #playerBackupCards} masked for CP payment: the same array, or a copy with every slot
+	 * nulled while {@link #backupCpSuppressed} holds for that player.
+	 *
+	 * <p>Handed to the payment dialogs in place of the raw row. All five of them already skip null
+	 * slots when deciding which Backups may be clicked for CP, so one masked array suppresses the
+	 * whole set without five separate gates that could drift apart. A copy, never the live row —
+	 * the suppression is about paying, and the Backups are still on the field for everything else.
+	 */
+	CardData[] cpPayableBackupCards(boolean isP1) {
+		CardData[] row = playerBackupCards(isP1);
+		if (!backupCpSuppressed(isP1)) return row;
+		return new CardData[row.length];
+	}
+
+	/**
+	 * {@code source}'s S-cost substitution as it stands on the current board, or {@code null} when
+	 * it prints none or prints one whose board condition is not met.
+	 *
+	 * <p>Tifa 26-076H's is live only while its controller has a Card Name Zangan on the field, and
+	 * that has to be re-asked every time rather than resolved once: the Zangan can leave between
+	 * the menu opening and the payment being made. Every reader of a proxy goes through here — the
+	 * menu gate in {@link #canActivateAbility}, the payment dialog, the S-cost candidate list and
+	 * its chooser title — so none of them can offer a payment another would refuse.
+	 *
+	 * <p>Every row is searched, not just the Forwards: the name is a name, and a Zangan printed as
+	 * a Backup (1-188S) satisfies "you control a Card Name Zangan" exactly as the Forward does.
+	 */
+	CardData.SpecialAbilityProxy effectiveSpecialAbilityProxy(CardData source, boolean isP1) {
+		if (source == null) return null;
+		CardData.SpecialAbilityProxy proxy = source.specialAbilityProxy();
+		if (proxy == null || proxy.requiresControlCardName() == null) return proxy;
+		for (CardData c : fieldCards(isP1))
+			if (c != null && CardFilters.meetsCardNameFilter(c, proxy.requiresControlCardName()))
+				return proxy;
+		return null;
 	}
 
 
@@ -10767,7 +10828,7 @@ public class MainWindow {
 		if (ability.isSpecial()) {
 			String primerName = priming.getPrimerCardName(source, isP1);
 			if (!hasSameNameInHand(source.name(), primerName, isP1)) {
-				CardData.SpecialAbilityProxy proxy = source.specialAbilityProxy();
+				CardData.SpecialAbilityProxy proxy = effectiveSpecialAbilityProxy(source, isP1);
 				if (proxy == null || playerHand(isP1).stream().noneMatch(proxy::meetsSubstitute)) return false;
 			}
 		}
@@ -11479,6 +11540,10 @@ public class MainWindow {
 	 */
 	boolean fpgPartyConditionMet(FieldPowerGrant fpg, CardData src, CardData target, boolean isP1) {
 		if (fpg.partyWithCardName() == null) return true;
+		// Gippal 12-058C's unnamed form asks only that the target be in a party. The source is not
+		// consulted at all: he grants Brave to the Forwards forming a party whether or not he is one
+		// of them, and whether or not he is attacking.
+		if (FieldPowerGrant.ANY_PARTY.equals(fpg.partyWithCardName())) return isFormingParty(target, isP1);
 		if (!CardFilters.meetsCardNameFilter(src, fpg.partyWithCardName())) return false;
 		if (declaredAttackers(isP1).size() < 2) return false;
 		return isDeclaredAttacker(src, isP1) && isDeclaredAttacker(target, isP1);
@@ -12003,17 +12068,16 @@ public class MainWindow {
 					boost += amount;
 					logEntry(source.name() + " — Forward battle damage increased by " + amount);
 				}
-				// The Character-scoped form, Lehftia 21-020C and Iroha 8-004R. Its Summon arm is
-				// meaningless in combat and is simply absent from the match here; the attacker is a
+				// The Character-scoped form, Lehftia 21-020C and Iroha 8-004R by Element, Chelinka
+				// 7-054L by Category, Rapha 13-082C and Papalymo 5-159S by Card Name. Its Summon arm
+				// is meaningless in combat and is simply absent from the match here; the attacker is a
 				// combatant and so is a Character for this purpose whatever row it came from.
 				Matcher chr = AutoAbilityTriggers.FA_ELEMENT_SUMMON_OR_CHARACTER_DAMAGE_BOOST.matcher(fa.effectText());
-				if (chr.matches()) {
-					String elem = AutoAbilityTriggers.characterArmElement(chr);
-					if (elem != null && effectiveContainsElement(attacker, elem)) {
-						int amount = Integer.parseInt(chr.group("amount"));
-						boost += amount;
-						logEntry(source.name() + " — " + elem + " Character combat damage increased by " + amount);
-					}
+				if (chr.matches() && AutoAbilityTriggers.characterArmCovers(chr, attacker, this)) {
+					int amount = Integer.parseInt(chr.group("amount"));
+					boost += amount;
+					logEntry(source.name() + " — " + AutoAbilityTriggers.characterArmLabel(chr)
+							+ " combat damage increased by " + amount);
 				}
 			}
 		}

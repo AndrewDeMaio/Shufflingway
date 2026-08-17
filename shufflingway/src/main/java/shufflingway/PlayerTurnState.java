@@ -117,6 +117,21 @@ class PlayerTurnState {
 	boolean cannotSearchThisTurn = false;
 
 	/**
+	 * Cards of this player's whose "for the first time in that turn" damage replacement has already
+	 * been spent this turn — Edge 15-045H's "During each turn, if Edge is dealt damage by your
+	 * opponent's Summons or abilities for the first time in that turn, the damage becomes 0
+	 * instead."
+	 *
+	 * <p>Identity-based, not {@code equals}: {@link CardData} is a record, so two copies of Edge
+	 * would share an entry and the second copy's shield would be spent by the first one's use.
+	 *
+	 * <p>Cleared at <em>every</em> turn boundary rather than only at this player's own, because
+	 * "during each turn" means exactly that — the shield comes back on the opponent's turn too.
+	 */
+	final Set<CardData> firstOppEffectDamageZeroedThisTurn =
+			java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+
+	/**
 	 * Clears this player's cast tracking at a turn boundary.
 	 *
 	 * <p>Every "this turn" cast condition — Ace's "You can only cast up to 2 cards per turn",

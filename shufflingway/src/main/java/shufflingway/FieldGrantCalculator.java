@@ -36,6 +36,25 @@ class FieldGrantCalculator {
         return out;
     }
 
+    /**
+     * Which of {@code candidates} appear on at least one Forward in the given player's Break Zone.
+     *
+     * <p>Printed traits only. A card in the Break Zone is not on the field, so nothing is granting
+     * it anything — what it "has" is what it was printed with, which is also the only thing a
+     * {@link CardData} in a zone list carries.
+     */
+    private EnumSet<CardData.Trait> traitsOnBreakZoneForwards(
+            EnumSet<CardData.Trait> candidates, boolean isP1) {
+        EnumSet<CardData.Trait> found = EnumSet.noneOf(CardData.Trait.class);
+        for (CardData bz : isP1 ? mw.gameState.getP1BreakZone() : mw.gameState.getP2BreakZone()) {
+            if (bz == null || !bz.isForward()) continue;
+            for (CardData.Trait t : candidates)
+                if (bz.traits().contains(t)) found.add(t);
+            if (found.size() == candidates.size()) break;
+        }
+        return found;
+    }
+
     private void collectFieldTraits(CardData src, CardData target, boolean isP1,
             EnumSet<CardData.Trait> out) {
         if (mw.lostAbilitiesCards.contains(src)) return;
@@ -69,6 +88,13 @@ class FieldGrantCalculator {
                 // Damage-gated (e.g., "Damage 1 -- Desch gains First Strike.")
                 if (fa.damageThreshold() > 0 && dmg < fa.damageThreshold()) continue;
                 out.addAll(CardData.parseSelfTraitGrant(fa.effectText(), src.name()));
+                // Gogo 4-127H: the sentence lists keywords to look for, and he gains whichever of
+                // them a Forward in his controller's Break Zone actually has. Resolved here rather
+                // than at parse time because the answer is board state and changes as the Break
+                // Zone does.
+                EnumSet<CardData.Trait> bzCandidates =
+                        CardData.parseBreakZoneTraitGrantCandidates(fa.effectText(), src.name());
+                if (!bzCandidates.isEmpty()) out.addAll(traitsOnBreakZoneForwards(bzCandidates, isP1));
                 // The same grant spelled with a quoted ability alongside the traits
                 // ("Yumcax gains Brave and \"When Yumcax …\"") — only the trait half is a trait.
                 // Machina 15-017H gates the identical shape on a Forward count instead of on

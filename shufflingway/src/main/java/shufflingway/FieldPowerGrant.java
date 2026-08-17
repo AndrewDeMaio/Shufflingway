@@ -167,6 +167,34 @@ public record FieldPowerGrant(
                 EnumSet.noneOf(CardData.Trait.class), false, 0, null, partyWithCardName);
     }
 
+    /**
+     * The {@link #partyWithCardName} value standing for "any party its controller has declared",
+     * used by the printings that condition on forming a party without naming a card to form it with
+     * (Gippal 12-058C's "The Forwards forming a party you control gain Brave.").
+     *
+     * <p>A sentinel rather than a thirtieth record component: {@code partyWithCardName} is read in
+     * exactly one place ({@code MainWindow.fpgPartyConditionMet}), so one branch there expresses the
+     * whole difference, where a new field would mean editing the canonical constructor and all
+     * twelve compatibility overloads for a single card. It is deliberately not a legal card name —
+     * no printing contains a NUL — so the name comparison the other party grants make cannot
+     * accidentally satisfy it, and a card called "Any Party" would still not collide.
+     */
+    static final String ANY_PARTY = "\0any-party";
+
+    /**
+     * The unnamed counterpart of {@link #partyWithGrant}: "The [type] forming a party you control
+     * gain [+N power] [and] [Trait…]." — Gippal 12-058C.
+     *
+     * <p>The condition is on the <em>target</em> alone. Gippal need not be in the party himself, or
+     * attacking at all, which is what separates this from the named form: there, the grant flows
+     * from one specific partymate to the others.
+     */
+    static FieldPowerGrant partyAnyGrant(boolean inclForwards, boolean inclBackups,
+            boolean inclMonsters, int powerBonus, Set<CardData.Trait> grantedTraits) {
+        return partyWithGrant(inclForwards, inclBackups, inclMonsters, powerBonus, grantedTraits,
+                ANY_PARTY);
+    }
+
     /** Compatibility constructor preserving the prior 25-arg canonical form; defaults {@code attackingOnly/basePowerSet} to false/0. */
     public FieldPowerGrant(String jobFilter, String categoryFilter,
             boolean inclForwards, boolean inclBackups, boolean inclMonsters,

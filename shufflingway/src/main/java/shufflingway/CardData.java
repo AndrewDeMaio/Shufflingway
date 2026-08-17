@@ -1789,6 +1789,12 @@ public record CardData(
         // renumber groups 6-11, which the parse site reads positionally.
         "(?<bottomdeckcost>(?i)(?:,\\s*)?put\\s+(?<bottomdeckname>[^:,]+?)\\s+at\\s+the\\s+bottom\\s+of\\s+" +
         "(?:its|their)\\s+owner(?:'s|s')?\\s+deck\\s*)?" +                      // optional "put [self] at the bottom of its owner's deck" cost
+        // Optional "reveal N [filter] in your hand" cost (Rinoa 18-097R, "《S》, reveal 1 Forward in
+        // your hand:"). Named and appended for the same reason bottomdeckcost is: groups 6-11 are
+        // read positionally, so a group inserted above would renumber them. Every group between the
+        // 《》 tokens and here is optional, so the phrase still matches in its printed position.
+        "(?<revealcost>(?i)(?:,\\s*)?reveal\\s+(?<revealcount>\\d+)\\s+(?<revealwhat>[^:,]+?)\\s+" +
+        "in\\s+your\\s+hand\\s*)?" +
         ":\\s*"                                                              +  // colon separator
         "(?<effecttext>(?:[^\\[]|\\[(?!\\[))*)"                                // effect text (up to next [[markup]])
     );
@@ -4047,6 +4053,53 @@ public record CardData(
     }
 
     /**
+     * "If a Forward in your Break Zone has Haste, First Strike, or Brave, [CardName] gains those
+     * abilities." — Gogo 4-127H.
+     *
+     * <p>A self trait grant whose granted set is not printed but discovered: the sentence lists the
+     * keywords to look for, and which of them Gogo actually gains depends on what is in the Break
+     * Zone at the moment the question is asked. "those abilities" is therefore a filter over the
+     * listed keywords rather than the grant itself — see
+     * {@link #parseBreakZoneTraitGrantCandidates}.
+     * Groups: {@code traits}, {@code name}.
+     */
+    private static final Pattern SELF_BZ_TRAIT_GRANT = Pattern.compile(
+        "(?i)^If\\s+a\\s+Forward\\s+in\\s+your\\s+Break\\s+Zone\\s+has\\s+" +
+        // Separators are spelled out as one repetition rather than an optional
+        // "(?:,|and|or)" between keywords, because the printed list uses BOTH at its last
+        // joint — "Haste, First Strike, or Brave". The looser form stops the list at
+        // "First Strike", and the lazy name group then absorbs "or Brave, Gogo", so the
+        // sentence still matches and the carrier's name check is what quietly fails.
+        "(?<traits>(?:Haste|First\\s+Strike|Brave|Back\\s+Attack)" +
+        "(?:\\s*,?\\s*(?:and|or)?\\s+(?:Haste|First\\s+Strike|Brave|Back\\s+Attack))*)," +
+        // Comma-free, so a name can never reach back across the list either.
+        "\\s+(?<name>[^,]+?)\\s+gains?\\s+those\\s+abilities[.!]?$"
+    );
+
+    /**
+     * The keywords a {@link #SELF_BZ_TRAIT_GRANT} on {@code cardName} can confer, or an empty set
+     * when {@code effectText} is not one.
+     *
+     * <p>These are candidates, not a grant: the carrier gains only those a Forward in its
+     * controller's Break Zone actually has, which is board state and so is resolved by
+     * {@code FieldGrantCalculator}. Returning the printed list here keeps the parsing side free of
+     * the board, exactly as {@link #parseSelfTraitGrant} is.
+     */
+    static EnumSet<Trait> parseBreakZoneTraitGrantCandidates(String effectText, String cardName) {
+        if (effectText == null || cardName == null) return EnumSet.noneOf(Trait.class);
+        Matcher m = SELF_BZ_TRAIT_GRANT.matcher(effectText.trim());
+        if (!m.matches()) return EnumSet.noneOf(Trait.class);
+        if (!m.group("name").trim().equalsIgnoreCase(cardName)) return EnumSet.noneOf(Trait.class);
+        String traitsText = m.group("traits");
+        EnumSet<Trait> result = EnumSet.noneOf(Trait.class);
+        if (ICB_EFFECT_HASTE.matcher(traitsText).find())        result.add(Trait.HASTE);
+        if (ICB_EFFECT_BRAVE.matcher(traitsText).find())        result.add(Trait.BRAVE);
+        if (ICB_EFFECT_FIRST_STRIKE.matcher(traitsText).find()) result.add(Trait.FIRST_STRIKE);
+        if (ICB_EFFECT_BACK_ATTACK.matcher(traitsText).find())  result.add(Trait.BACK_ATTACK);
+        return result;
+    }
+
+    /**
      * Matches a self-targeted power grant: "[CardName] gains +N power[ and …]." — the power sibling
      * of {@link #SELF_TRAIT_GRANT}, which matches only when the grant is traits alone.
      *
@@ -4949,6 +5002,21 @@ public record CardData(
     );
 
     /**
+     * Matches "The [type] forming a party you control gain [+N power] [and] [Trait…]." —
+     * Gippal 12-058C. The unnamed sibling of {@link #FIELD_PARTY_WITH_GRANT_PATTERN}: that one
+     * names the partymate the grant flows from, this one names only whose party it has to be.
+     *
+     * <p>The two cannot claim each other's text — one requires the literal "with", the other the
+     * literal "you control" in the same slot — so their order in the chain is free.
+     */
+    private static final Pattern FIELD_PARTY_ANY_GRANT_PATTERN = Pattern.compile(
+        "(?i)^The\\s+(?<targets>Forwards?(?:\\s+and\\s+Monsters?)?|Backups?|Monsters?|Characters?)\\s+" +
+        "forming\\s+a\\s+party\\s+you\\s+control\\s+gains?\\s+" +
+        "(?:\\+(?<power>\\d+)\\s+power(?:\\s+and\\s+)?)?" +
+        "(?<traitstext>.+?)?[.!]?$"
+    );
+
+    /**
      * Matches "If there are N or more cards in your Break Zone, the Card Name X [type] and the
      * Job Y [type] you control gain[s] +P power [and traits]."
      * Groups: {@code bzcount}, {@code cardname}, {@code type1}, {@code job}, {@code type2},
@@ -5027,6 +5095,29 @@ public record CardData(
         "Card\\s+Name\\s+(?<cardname>[A-Za-z][A-Za-z\\s''\\-]*?)\\s+Forwards?\\s+" +
         "(?:other\\s+than\\s+(?<except>[A-Z][A-Za-z''\\-]+(?:\\s+[A-Za-z''\\-]+)*)\\s+)?" +
         "you\\s+control\\s+becomes\\s+(?<power>\\d+)[.!]?$"
+    );
+
+    /**
+     * "The Job Monk Forwards and Card Name Monk Forwards you control cannot become dull by your
+     * opponent's Summons or abilities." — Maat 6-078R.
+     *
+     * <p>Stored as a passive grant of {@link Trait#CANNOT_BE_DULLED_BY_OPP}, which is the trait
+     * every dulling path already consults ({@code GameContextImpl.dullP1Forward} and its twin), so
+     * this printing meets the per-card quoted wording at one enforcement point rather than adding a
+     * second notion of dull immunity.
+     *
+     * <p>The two filter branches are ORed by emitting one grant each, exactly as Faris 21-114L's
+     * base-power grant is — {@link FieldPowerGrant#appliesToCard} ANDs job and card-name filters,
+     * so a single grant carrying both would cover only the cards that satisfy the two at once.
+     * Overlap between the branches is harmless here for the same reason it is there: the grants
+     * carry no power, and a trait added twice is the same set.
+     * Groups: {@code job} (optional), {@code cardname}.
+     */
+    private static final Pattern FIELD_CANNOT_BECOME_DULL_BY_OPP = Pattern.compile(
+        "(?i)^The\\s+(?:Job\\s+(?<job>[A-Za-z][A-Za-z\\s''\\-]*?)\\s+Forwards?\\s+and\\s+)?" +
+        "Card\\s+Name\\s+(?<cardname>[A-Za-z][A-Za-z\\s''\\-]*?)\\s+Forwards?\\s+you\\s+control\\s+" +
+        "cannot\\s+become\\s+dull\\s+by\\s+your\\s+opponent's\\s+" +
+        "Summons?(?:\\s+or\\s+abilit(?:y|ies))?[.!]?$"
     );
 
     /**
@@ -5264,6 +5355,20 @@ public record CardData(
                 continue;
             }
 
+            Matcher dullImmM = FIELD_CANNOT_BECOME_DULL_BY_OPP.matcher(seg);
+            if (dullImmM.matches()) {
+                EnumSet<Trait> immune = EnumSet.of(Trait.CANNOT_BE_DULLED_BY_OPP);
+                String job = dullImmM.group("job");
+                if (job != null)
+                    result.add(new FieldPowerGrant(job.trim(), null, true, false, false,
+                            null, 0, immune, false));
+                result.add(new FieldPowerGrant(null, null, true, false, false,
+                        null, 0, immune, false, -1, null, null,
+                        dullImmM.group("cardname").trim(), 0, 0, null, null, false, false, 0, 0, 1, 0, 0,
+                        EnumSet.noneOf(Trait.class), false, 0));
+                continue;
+            }
+
             Matcher exBurstDmgM = FIELD_EX_BURST_DMG_SCALING_GRANT.matcher(seg);
             if (exBurstDmgM.matches()) {
                 int bonus     = Integer.parseInt(exBurstDmgM.group("bonus"));
@@ -5477,6 +5582,18 @@ public record CardData(
                 if (power != 0 || !traits.isEmpty())
                     result.add(FieldPowerGrant.partyWithGrant(incl[0] != 0, incl[1] != 0, incl[2] != 0,
                             power, traits, partyM.group("cardname").trim()));
+                continue;
+            }
+
+            Matcher partyAnyM = FIELD_PARTY_ANY_GRANT_PATTERN.matcher(seg);
+            if (partyAnyM.matches()) {
+                int[]  incl     = parseFieldGrantTargetFlags(partyAnyM.group("targets"));
+                String powerStr = partyAnyM.group("power");
+                int    power    = powerStr != null ? Integer.parseInt(powerStr) : 0;
+                EnumSet<Trait> traits = traitsNamedIn(partyAnyM.group("traitstext"));
+                if (power != 0 || !traits.isEmpty())
+                    result.add(FieldPowerGrant.partyAnyGrant(incl[0] != 0, incl[1] != 0, incl[2] != 0,
+                            power, traits));
                 continue;
             }
 
@@ -6863,6 +6980,26 @@ public record CardData(
         "\\s+instead\\s+of\\s+discarding\\s+a\\s+Card\\s+Name\\s+.+?\\s+as\\s+part\\s+of\\s+the\\s+cost\\.?\\s*$"
     );
 
+    /**
+     * Matches "If you control a Card Name [Require], you can discard [N] card instead of 《S》 when
+     * paying for [Target]'s special ability." — Tifa 26-076H.
+     *
+     * <p>The board-conditioned relative of {@link #SPECIAL_ABILITY_PROXY_PATTERN}. That one widens
+     * the S cost permanently and by card <em>kind</em> ("discarding an Earth Summon"); this one
+     * widens it to any card at all, but only while its controller has the named card on the field.
+     *
+     * <p>The 《S》 markup reaches this intact — {@code SUMMON_MARKUP} strips only {@code [[…]]} tags
+     * — so the guillemets are matched rather than assumed away, with the bare spelling accepted too
+     * in case a reprint drops them.
+     * Groups: {@code require} — the card name that must be on your field; {@code count} — how many
+     * cards the alternative discards; {@code target} — whose special ability it pays for.
+     */
+    private static final Pattern SPECIAL_ABILITY_CONTROL_ANY_DISCARD_PATTERN = Pattern.compile(
+        "(?i)^If\\s+you\\s+control\\s+an?\\s+Card\\s+Name\\s+(?<require>.+?),\\s+" +
+        "you\\s+can\\s+discard\\s+(?<count>\\d+)\\s+cards?\\s+instead\\s+of\\s+" +
+        "(?:《S》|S)\\s+when\\s+paying\\s+for\\s+(?<target>.+?)'s\\s+special\\s+ability[.!]?\\s*$"
+    );
+
     /** Matches "The opponent's Forwards enter the field dull." */
     static final Pattern OPPONENT_FORWARDS_ENTER_DULL_PATTERN = Pattern.compile(
         "(?i)^(?:the\\s+)?(?:your\\s+)?opponent'?s?\\s+Forwards?\\s+enters?\\s+the\\s+field\\s+dull[.!]?\\s*$"
@@ -7182,6 +7319,7 @@ public record CardData(
             if (ENTERS_FIELD_DULL_PATTERN.matcher(seg).matches())           continue;
             if (ALIAS_PLAY_RESTRICTION_PATTERN.matcher(seg).matches())      continue;
             if (SPECIAL_ABILITY_PROXY_PATTERN.matcher(seg).matches())       continue;
+            if (SPECIAL_ABILITY_CONTROL_ANY_DISCARD_PATTERN.matcher(seg).matches()) continue;
             if (BECOME_FORWARD_IF_CONTROL_N_MONSTERS_PATTERN.matcher(seg).find()) continue;
             if (BECOME_FORWARD_DURING_TURN_PATTERN.matcher(seg).find())       continue;
             if (BECOME_FORWARD_UNCONDITIONAL_PATTERN.matcher(seg).find())     continue;
@@ -7838,8 +7976,20 @@ public record CardData(
      * Grants use of {@code targetName}'s special ability by discarding a substitute card:
      * either a specific card name ({@code subCardName}), a typed card ({@code subType}),
      * or an element+type card ({@code subElement} + {@code subType}).
+     *
+     * <p>{@code requiresControlCardName} is Tifa 26-076H's board condition: the substitution is
+     * live only while its controller has a card of that name on the field, and it is the caller's
+     * job to check — a {@link CardData} cannot see the board. Every reader goes through
+     * {@code MainWindow.effectiveSpecialAbilityProxy} rather than this record directly, so the
+     * menu gate, the payment dialog and the CPU path cannot disagree about whether it applies.
+     * {@code null} means unconditional, which is what the printed substitutions all are.
      */
-    public record SpecialAbilityProxy(String targetName, String subElement, String subType, String subCardName) {
+    public record SpecialAbilityProxy(String targetName, String subElement, String subType,
+            String subCardName, String requiresControlCardName) {
+        /** The unconditional form — every printing but Tifa 26-076H's. */
+        public SpecialAbilityProxy(String targetName, String subElement, String subType, String subCardName) {
+            this(targetName, subElement, subType, subCardName, null);
+        }
         public boolean meetsSubstitute(CardData handCard) {
             if (subCardName != null) return subCardName.equalsIgnoreCase(handCard.name());
             if (subType == null) return false;
@@ -7848,6 +7998,7 @@ public record CardData(
         }
         public String substituteDescription() {
             if (subCardName != null) return subCardName;
+            if ("card".equalsIgnoreCase(subType) && subElement == null) return "any card";
             return (subElement != null ? subElement + " " : "") + subType;
         }
     }
@@ -7855,18 +8006,40 @@ public record CardData(
     /**
      * Returns a {@link SpecialAbilityProxy} if this card grants use of another card's special
      * ability with an alternate substitute discard, or {@code null} if it has none.
+     *
+     * <p>Both spellings are read here: the unconditional "by discarding a[n] X instead of
+     * discarding a Card Name Y" (Braska 16-133S, Rydia 2-094H, Duncan 8-014L) and Tifa 26-076H's
+     * board-conditioned "If you control a Card Name Z, you can discard 1 card instead of 《S》".
+     * The latter substitutes <em>any</em> card, carried as the {@code "card"} type so it runs
+     * through the same {@link SpecialAbilityProxy#meetsSubstitute} every other printing uses.
      */
     public SpecialAbilityProxy specialAbilityProxy() {
         for (String seg : rawFieldSegments()) {
-            Matcher m = SPECIAL_ABILITY_PROXY_PATTERN.matcher(seg);
-            if (!m.matches()) continue;
+            SpecialAbilityProxy proxy = parseSpecialAbilityProxy(seg);
+            if (proxy != null) return proxy;
+        }
+        return null;
+    }
+
+    /**
+     * The {@link SpecialAbilityProxy} one field segment declares, or {@code null} when it declares
+     * none. Split out from {@link #specialAbilityProxy()} so a caller holding a single segment can
+     * ask the same question the card-wide lookup asks, rather than re-deriving the two patterns.
+     */
+    public static SpecialAbilityProxy parseSpecialAbilityProxy(String seg) {
+        if (seg == null || seg.isBlank()) return null;
+        Matcher m = SPECIAL_ABILITY_PROXY_PATTERN.matcher(seg);
+        if (m.matches())
             return new SpecialAbilityProxy(
                 m.group("target").trim(),
                 m.group("subElem") != null ? m.group("subElem").trim() : null,
                 m.group("subType") != null ? m.group("subType").trim() : null,
                 m.group("subName") != null ? m.group("subName").trim() : null
             );
-        }
+        Matcher c = SPECIAL_ABILITY_CONTROL_ANY_DISCARD_PATTERN.matcher(seg);
+        if (c.matches())
+            return new SpecialAbilityProxy(c.group("target").trim(), null, "card", null,
+                    c.group("require").trim());
         return null;
     }
 

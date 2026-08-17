@@ -613,10 +613,11 @@ class CostCalculator {
 				if (i == excludeHandIdx) continue;
 				if (CpPaymentUtils.canDiscardForCp(hand.get(i), ldGrants)) totalGenerate += 2;
 			}
-			for (int i = 0; i < mw.p1BackupCards.length; i++) {
-				if (mw.p1BackupCards[i] != null && mw.p1BackupStates[i] == CardState.ACTIVE)
-					totalGenerate += 1;
-			}
+			if (!mw.backupCpSuppressed(true))
+				for (int i = 0; i < mw.p1BackupCards.length; i++) {
+					if (mw.p1BackupCards[i] != null && mw.p1BackupStates[i] == CardState.ACTIVE)
+						totalGenerate += 1;
+				}
 			return totalExisting + totalGenerate >= totalCostNeeded;
 		}
 
@@ -636,7 +637,7 @@ class CostCalculator {
 				if (h.containsElement(elems[ei])) hasElemSource[ei] = true;
 			}
 		}
-		for (int i = 0; i < mw.p1BackupCards.length; i++) {
+		for (int i = 0; i < mw.p1BackupCards.length && !mw.backupCpSuppressed(true); i++) {
 			if (mw.p1BackupCards[i] != null && mw.p1BackupStates[i] == CardState.ACTIVE) {
 				CardData bkp = mw.p1BackupCards[i];
 				String anyElemCat = bkp.backupCpAnyElementCategory();
@@ -735,7 +736,7 @@ class CostCalculator {
 
 		int totalSources = 0;
 		for (String e : elems) totalSources += mw.gameState.getP1CpForElement(e);
-		for (int i = 0; i < mw.p1BackupCards.length; i++)
+		for (int i = 0; i < mw.p1BackupCards.length && !mw.backupCpSuppressed(true); i++)
 			if (mw.p1BackupCards[i] != null && mw.p1BackupStates[i] == CardState.ACTIVE
 					&& (genericNeeded > 0 || matchesAnyElement(mw.p1BackupCards[i], elems))) totalSources++;
 		if (!card.altBackupOnlyCp()) {
@@ -785,7 +786,7 @@ class CostCalculator {
 
 		// Undulled backups: matching backups satisfy element requirements;
 		// any backup can cover generic CP
-		for (int i = 0; i < mw.p1BackupCards.length; i++) {
+		for (int i = 0; i < mw.p1BackupCards.length && !mw.backupCpSuppressed(true); i++) {
 			if (mw.p1BackupCards[i] == null || mw.p1BackupStates[i] != CardState.ACTIVE) continue;
 			boolean matched = false;
 			for (int ei = 0; ei < elems.length; ei++) {
@@ -887,7 +888,7 @@ class CostCalculator {
 		}
 		CardData[]  bkpCards  = mw.playerBackupCards(isP1);
 		CardState[] bkpStates = mw.playerBackupStates(isP1);
-		for (int i = 0; i < bkpCards.length; i++) {
+		for (int i = 0; i < bkpCards.length && !mw.backupCpSuppressed(isP1); i++) {
 			if (bkpCards[i] == null || bkpStates[i] != CardState.ACTIVE) continue;
 			CardData bkp = bkpCards[i];
 			boolean isAnyElem = bkp.backupCpAnyElement()
@@ -940,7 +941,7 @@ class CostCalculator {
 			available += mw.gameState.getP1CpByElement().values().stream().mapToInt(Integer::intValue).sum();
 			for (int ei = 0; ei < elems.length; ei++) available -= mw.gameState.getP1CpForElement(elems[ei]);
 		}
-		for (int i = 0; i < mw.p1BackupCards.length; i++) {
+		for (int i = 0; i < mw.p1BackupCards.length && !mw.backupCpSuppressed(true); i++) {
 			if (mw.p1BackupCards[i] == null || mw.p1BackupStates[i] != CardState.ACTIVE) continue;
 			boolean matched = false;
 			for (int ei = 0; ei < elems.length; ei++) {
