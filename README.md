@@ -11,11 +11,8 @@ Includes a deck manager, full card browser, game board and CPU opponent.
 
 Links to rules and guides are found in the Help menu.
 
-<img width="1905" height="1071" alt="image" src="https://github.com/user-attachments/assets/46c2da10-c6fd-49fe-bf57-bb3f2ba0a8a1" />
-
-<img width="1906" height="1070" alt="image" src="https://github.com/user-attachments/assets/a71bd2fd-2a80-4e16-b2cc-7d80ea5a37c6" />
-
-<img width="1903" height="1072" alt="image" src="https://github.com/user-attachments/assets/d52ec854-d746-4c93-b32b-060a385b9b86" />
+<img width="2455" height="1378" alt="Shufflingway2" src="https://github.com/user-attachments/assets/4eeb7d69-f67e-4caf-86aa-c186eaf16a86" />
+<img width="2457" height="1385" alt="Shufflingway1" src="https://github.com/user-attachments/assets/5bc5b9ff-b8d1-43e4-ac5d-2b2bbf630fc2" />
 
 The ultimate goal for this application will be to play against someone else with the application facilitating the flow of the game, tracking the game state and resolving card interactions.
 
