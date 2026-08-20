@@ -116,10 +116,17 @@ public class AbilityPaymentDialog {
         List<Integer>         selectedDiscards      = new ArrayList<>();
         Map<Integer, String>  backupElementOverrides = new LinkedHashMap<>();
 
+        // The source may be one of these slots: a Backup with no 《Dull》 cost to pay is an ordinary
+        // CP source for its own ability, and one the ability sacrifices (1-053C Summoner) is leaving
+        // the field anyway, so holding its dull back gains nothing. Only a 《Dull》 cost takes it out
+        // of the list, because that cost is what the dull is for — see
+        // CpPaymentUtils.sourceCanFundOwnAbility, which the CPU's planner asks the same question of.
+        boolean sourceIsPayable = CpPaymentUtils.sourceCanFundOwnAbility(ability);
         List<Integer> eligibleBackupSlots = new ArrayList<>();
         for (int i = 0; i < backupCards.length; i++) {
-            if (backupCards[i] != null && backupCards[i] != source && backupStates[i] == CardState.ACTIVE)
-                eligibleBackupSlots.add(i);
+            if (backupCards[i] == null || backupStates[i] != CardState.ACTIVE) continue;
+            if (backupCards[i] == source && !sourceIsPayable) continue;
+            eligibleBackupSlots.add(i);
         }
 
         JLabel  cpLabel    = new JLabel();

@@ -43,6 +43,25 @@ public class CpPaymentUtils {
 	}
 
 	/**
+	 * Returns true when the card whose action ability is being paid for may also be dulled for CP
+	 * toward that same ability.
+	 *
+	 * <p>It comes down to whether the ability spends the source's dull. A 《Dull》 cost does, so the
+	 * one dull cannot also be sold for CP — letting it would settle both halves of a
+	 * 《Fire》《Dull》 cost with a single dull, which is the bug this rule was written for. Without a
+	 * 《Dull》 cost the source is an ordinary CP source like any other Backup on the row, and a
+	 * Backup that the ability's own cost sacrifices (1-053C Summoner, 6-047C White Mage) is the case
+	 * that makes it worth having: it is leaving the field regardless, so its dull is free money.
+	 *
+	 * <p>Both seats ask this one question — {@code AbilityPaymentDialog} when it decides which slots
+	 * a human may click, {@code ComputerPlayer.p2PlanAbilityPayment} when it plans P2's payment.
+	 * They disagreed once already, in P2's favour.
+	 */
+	public static boolean sourceCanFundOwnAbility(ActionAbility ability) {
+		return !ability.requiresDull();
+	}
+
+	/**
 	 * Returns true when {@code handCard} may be discarded from hand for CP: non-Light/Dark
 	 * cards always may; Light/Dark cards only when a field grant ("You can discard [Light and
 	 * Dark|Dark] Element cards from your hand to produce CP") covers their element.

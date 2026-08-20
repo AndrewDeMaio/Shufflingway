@@ -656,8 +656,9 @@ class ComputerPlayer implements OpponentController {
 		for (String e : ActionResolverPatterns.ELEMENT_NAMES) total += mw.gameState.getP2CpForElement(e);
 		if (total >= cost) return true;
 
-		for (int bi = 0; bi < mw.p2BackupCards.length && total < cost; bi++) {
-			CardData bk = mw.p2BackupCards[bi];
+		CardData[] payable = p2CpBackups();
+		for (int bi = 0; bi < payable.length && total < cost; bi++) {
+			CardData bk = payable[bi];
 			if (bk == null || mw.p2BackupStates[bi] != CardState.ACTIVE || mw.p2BackupFrozen[bi]) continue;
 			outBackups.add(bi);
 			outBackupElems.put(bi, bk.elements()[0]);
@@ -746,8 +747,9 @@ class ComputerPlayer implements OpponentController {
 		// Prefer less-versatile (fewer matching elements) backups first.
 		List<Integer> matchingBackups = new ArrayList<>();
 		List<Integer> offColorBackups = new ArrayList<>();
-		for (int bi = 0; bi < mw.p2BackupCards.length; bi++) {
-			CardData bk = mw.p2BackupCards[bi];
+		CardData[] payable = p2CpBackups();
+		for (int bi = 0; bi < payable.length; bi++) {
+			CardData bk = payable[bi];
 			if (bk == null) continue;
 			if (mw.p2BackupStates[bi] != CardState.ACTIVE) continue;
 			if (mw.p2BackupFrozen[bi]) continue;
@@ -758,10 +760,10 @@ class ComputerPlayer implements OpponentController {
 		}
 		matchingBackups.sort(java.util.Comparator.comparingInt(bi ->
 				(int) java.util.Arrays.stream(elems)
-						.filter(e -> mw.effectiveContainsElement(mw.p2BackupCards[bi], e)).count()));
+						.filter(e -> mw.effectiveContainsElement(payable[bi], e)).count()));
 		for (int bi : matchingBackups) {
 			if (p2CanAfford(reducedCost, elems, simCp, anyCp)) break;
-			CardData bk = mw.p2BackupCards[bi];
+			CardData bk = payable[bi];
 			int ei = p2BestDiscardElement(bk, elems, simCp);
 			simCp[ei] += 1;
 			outBackups.add(bi);
@@ -1037,7 +1039,13 @@ class ComputerPlayer implements OpponentController {
 		return effectText.toLowerCase().contains("first strike");
 	}
 
-	private static boolean branchActivatesSelf(String effectText, CardData source) {
+	/**
+	 * True when {@code effectText} activates {@code source} by name ("Activate Ghido."). Read both
+	 * by the combat-trick reader, where activating turns a dull Forward into a legal blocker, and by
+	 * {@link #tryP2UseAbility}, where it is the shape that must not be used on an already-active
+	 * source.
+	 */
+	static boolean effectActivatesSelf(String effectText, CardData source) {
 		return effectText.toLowerCase().contains("activate " + source.name().toLowerCase());
 	}
 
@@ -1086,7 +1094,7 @@ class ComputerPlayer implements OpponentController {
 				if (!mw.canActivateAbility(ability, false, state, mw.p2ForwardPlayedOnTurn.get(i), card, false)) continue;
 
 				for (ActionResolver.DiscardElementBranch branch : branches) {
-					boolean activates = branchActivatesSelf(branch.effectText(), card);
+					boolean activates = effectActivatesSelf(branch.effectText(), card);
 					if (isDull && !activates) continue; // dull needs the activating branch specifically
 
 					int basePower = mw.effectiveP2ForwardPower(i);
@@ -1209,7 +1217,7 @@ class ComputerPlayer implements OpponentController {
 				Map<Integer, String> backupElems       = new LinkedHashMap<>();
 				List<Integer>        discardIndices    = new ArrayList<>();
 				Map<Integer, String> discardElems      = new LinkedHashMap<>();
-				if (!p2PlanAbilityPayment(ability, backupDullIndices, backupElems, discardIndices, discardElems)) continue;
+				if (!p2PlanAbilityPayment(ability, card, backupDullIndices, backupElems, discardIndices, discardElems)) continue;
 				mw.logEntry("[P2] Activates reactive shield: " + card.name() + " — " + ability.effectText());
 				mw.autoAbilityTriggers.executeP2AbilityActivation(ability, card,
 						() -> { mw.p2ForwardStates.set(fi, CardState.DULL); mw.refreshP2ForwardSlot(fi); },
@@ -1249,7 +1257,7 @@ class ComputerPlayer implements OpponentController {
 				Map<Integer, String> backupElems       = new LinkedHashMap<>();
 				List<Integer>        discardIndices    = new ArrayList<>();
 				Map<Integer, String> discardElems      = new LinkedHashMap<>();
-				if (!p2PlanAbilityPayment(ability, backupDullIndices, backupElems, discardIndices, discardElems))
+				if (!p2PlanAbilityPayment(ability, card, backupDullIndices, backupElems, discardIndices, discardElems))
 					continue;
 
 				mw.logEntry("[P2] Activates BZ ability: " + card.name() + " — " + ability.effectText());
@@ -1329,7 +1337,7 @@ class ComputerPlayer implements OpponentController {
 			Map<Integer, String> backupElems       = new LinkedHashMap<>();
 			List<Integer>        discardIndices    = new ArrayList<>();
 			Map<Integer, String> discardElems      = new LinkedHashMap<>();
-			if (!p2PlanAbilityPayment(ability, backupDullIndices, backupElems, discardIndices, discardElems))
+			if (!p2PlanAbilityPayment(ability, card, backupDullIndices, backupElems, discardIndices, discardElems))
 				continue;
 
 			mw.logEntry("[P2] Activates shared ability on " + card.name() + " — " + ability.effectText());
@@ -1401,6 +1409,8 @@ class ComputerPlayer implements OpponentController {
 			if (ActionResolver.discardConditionalElementBranches(ability.effectText()) != null) continue;
 			// A card-for-damage trade that breaks nothing is worth holding for a later board.
 			if (p2ShouldHoldDamageAbility(ability)) continue;
+			// Activating an already-active source changes nothing, and can now loop forever.
+			if (p2ShouldHoldActivateSelf(ability, card, state)) continue;
 			// Gogo's "Mimic" replays a special ability a Character used this turn — pointless (and a
 			// wasted S + Dull cost) when none other than Mimic itself has been used yet.
 			if (ActionResolver.isUseSpecialAbilityUsedThisTurnEffect(ability.effectText())
@@ -1411,7 +1421,7 @@ class ComputerPlayer implements OpponentController {
 			Map<Integer, String> backupElems       = new LinkedHashMap<>();
 			List<Integer>        discardIndices    = new ArrayList<>();
 			Map<Integer, String> discardElems      = new LinkedHashMap<>();
-			if (!p2PlanAbilityPayment(ability, backupDullIndices, backupElems, discardIndices, discardElems))
+			if (!p2PlanAbilityPayment(ability, card, backupDullIndices, backupElems, discardIndices, discardElems))
 				continue;
 
 			// Determine X value for X-cost abilities
@@ -1420,8 +1430,9 @@ class ComputerPlayer implements OpponentController {
 				// Count active P2 backups not needed for CP payment
 				int usedBackups = backupDullIndices.size();
 				int totalActiveBackups = 0;
-				for (int bi = 0; bi < mw.p2BackupCards.length; bi++) {
-					if (mw.p2BackupCards[bi] != null && mw.p2BackupStates[bi] == CardState.ACTIVE && !mw.p2BackupFrozen[bi])
+				CardData[] payable = p2CpBackups();
+				for (int bi = 0; bi < payable.length; bi++) {
+					if (payable[bi] != null && mw.p2BackupStates[bi] == CardState.ACTIVE && !mw.p2BackupFrozen[bi])
 						totalActiveBackups++;
 				}
 				xValue = totalActiveBackups - usedBackups;
@@ -1500,6 +1511,25 @@ class ComputerPlayer implements OpponentController {
 		for (int i = 0; i < mw.p2MonsterCards.size(); i++)
 			if (mw.p2MonsterCards.get(i) == card) return mw.effectiveP2MonsterPower(i);
 		return card.power();
+	}
+
+	/**
+	 * True when P2 should hold an "Activate [self]" ability rather than use it, because the source
+	 * is already active and the effect would change nothing.
+	 *
+	 * <p>Wasted CP was the whole cost of this before; it is a hang now. A Backup may fund its own
+	 * ability by dulling for CP ({@link CpPaymentUtils#sourceCanFundOwnAbility}), so Ghido 3-131H's
+	 * "《Water》: Activate Ghido." pays the 《Water》 with its own dull and is handed that same dull
+	 * straight back — no net cost, an identical board, and a Main Phase that restarts and does it
+	 * again forever. The ability exists to undo a dull, which is exactly why holding it while the
+	 * source is active loses nothing.
+	 *
+	 * <p>Ghido is the only card in the corpus that can reach this state (the only Backup ability
+	 * with a CP cost, no 《Dull》 cost, and an effect that re-activates its own source), but any
+	 * future effect that hands its source's dull back at no net cost belongs here too.
+	 */
+	boolean p2ShouldHoldActivateSelf(ActionAbility ability, CardData source, CardState state) {
+		return state == CardState.ACTIVE && effectActivatesSelf(ability.effectText(), source);
 	}
 
 	/**
@@ -1627,6 +1657,24 @@ class ComputerPlayer implements OpponentController {
 		return false;
 	}
 
+	/**
+	 * P2's Backup row <em>as a CP source</em>: the live row, or an all-null copy while Titan (XVI)
+	 * 29-068L's "During your turn, the Backups opponent controls cannot produce CP." is binding P2.
+	 *
+	 * <p>Every P2 payment planner reads the row through here, exactly as the payment dialogs take
+	 * {@link MainWindow#cpPayableBackupCards} rather than the raw row. The planners all skip null
+	 * slots already, so one masked row suppresses the whole set without four separate gates that
+	 * could drift apart. They read the raw row until now, which let P2 pay for a reactive shield on
+	 * P1's turn with CP its Backups were barred from producing — the suppression only binds while
+	 * the card's controller has the turn, so P1's turn is the only window in which P2 can hit it.
+	 *
+	 * <p>Only for deciding what may be dulled for CP. The Backups are still on the field for
+	 * everything else, which is why the row is masked rather than emptied.
+	 */
+	private CardData[] p2CpBackups() {
+		return mw.cpPayableBackupCards(false);
+	}
+
 	/** Returns unique non-empty CP cost elements, in encounter order. */
 	private static String[] p2AbilityElements(ActionAbility ability) {
 		LinkedHashSet<String> seen = new LinkedHashSet<>();
@@ -1638,8 +1686,17 @@ class ComputerPlayer implements OpponentController {
 	 * Greedy CP planner for action ability payment — same logic as {@link #p2PlanPayment}
 	 * but driven by the ability's element list and total cost.  Handles generic (empty-string)
 	 * CP elements by allowing any active backup or any non-Light/Dark hand card to contribute.
+	 *
+	 * <p>{@code source} is the card whose ability is being paid for, and whether it may be dulled
+	 * for CP toward that ability is {@link CpPaymentUtils#sourceCanFundOwnAbility}'s call: only a
+	 * 《Dull》 cost rules it out, because that cost is already spending the dull. Without the source
+	 * the planner had no way to know, and paid the 《Fire》 half of a 《Fire》《Dull》 cost by dulling
+	 * the very card the 《Dull》 was about to dull — Yotsuyu activating for free while every other
+	 * Backup stayed active. Matched by identity, not equality: {@link CardData} is a record, so a
+	 * second copy of the same Backup on the row is {@code equals} to the source and would be
+	 * excluded along with it.
 	 */
-	private boolean p2PlanAbilityPayment(ActionAbility rawAbility,
+	boolean p2PlanAbilityPayment(ActionAbility rawAbility, CardData source,
 			List<Integer> outBackups, Map<Integer, String> outBackupElems,
 			List<Integer> outDiscards, Map<Integer, String> outDiscardElems) {
 		// Plan against the cost P2 will actually be charged, tax included (The Emperor 20-092R).
@@ -1658,9 +1715,11 @@ class ComputerPlayer implements OpponentController {
 
 		List<Integer> matchingBackups = new ArrayList<>();
 		List<Integer> offColorBackups = new ArrayList<>();
-		for (int bi = 0; bi < mw.p2BackupCards.length; bi++) {
-			CardData bk = mw.p2BackupCards[bi];
-			if (bk == null || mw.p2BackupStates[bi] != CardState.ACTIVE || mw.p2BackupFrozen[bi]) continue;
+		CardData[] payable = p2CpBackups();
+		for (int bi = 0; bi < payable.length; bi++) {
+			CardData bk = payable[bi];
+			if (bk == null || (bk == source && !CpPaymentUtils.sourceCanFundOwnAbility(ability))) continue;
+			if (mw.p2BackupStates[bi] != CardState.ACTIVE || mw.p2BackupFrozen[bi]) continue;
 			boolean matches = false;
 			for (String e : elems) if (mw.effectiveContainsElement(bk, e)) { matches = true; break; }
 			if (matches) matchingBackups.add(bi);
@@ -1668,10 +1727,10 @@ class ComputerPlayer implements OpponentController {
 		}
 		matchingBackups.sort(java.util.Comparator.comparingInt(bi ->
 				(int) java.util.Arrays.stream(elems)
-						.filter(e -> mw.effectiveContainsElement(mw.p2BackupCards[bi], e)).count()));
+						.filter(e -> mw.effectiveContainsElement(payable[bi], e)).count()));
 		for (int bi : matchingBackups) {
 			if (p2CanAfford(totalCost, elems, simCp, anyCp)) break;
-			int ei = elems.length > 0 ? p2BestDiscardElement(mw.p2BackupCards[bi], elems, simCp) : 0;
+			int ei = elems.length > 0 ? p2BestDiscardElement(payable[bi], elems, simCp) : 0;
 			simCp[ei] += 1;
 			outBackups.add(bi);
 			outBackupElems.put(bi, elems[ei]);

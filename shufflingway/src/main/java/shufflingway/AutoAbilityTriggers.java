@@ -4903,6 +4903,10 @@ final class AutoAbilityTriggers {
 			String cpElem = matchesAnyElement(bkpCards[bi], elems)
 					? contributingElement(bkpCards[bi], elems) : (elems.length > 0 ? elems[0] : "");
 			if (!cpElem.isEmpty()) mw.playerAddCp(isP1, cpElem, 1);
+			// Logged for the same reason the cast path logs it (payP2CostViaBackupsAndDiscards):
+			// without it an ability's CP payment is invisible, and a CPU that paid from the wrong
+			// slot reads exactly like a CPU that paid from the right one.
+			mw.logEntry((isP1 ? "" : "[P2] ") + "Dulls " + bkpCards[bi].name() + " for CP");
 		}
 		discardIndices.sort(Collections.reverseOrder());
 		for (int di : discardIndices) {
@@ -4925,7 +4929,10 @@ final class AutoAbilityTriggers {
 			mw.usedOncePerTurnAbilities.computeIfAbsent(source, k -> new HashSet<>()).add(ability.effectText());
 
 		// Dull source card
-		if (ability.requiresDull()) applyDull.run();
+		if (ability.requiresDull()) {
+			applyDull.run();
+			mw.logEntry("Dull cost: \"" + source.name() + "\" dulled");
+		}
 
 		// Special: discard the card settled on above (looked up by identity — the CP discards
 		// may have shifted the hand since).

@@ -24453,4 +24453,239 @@ public class CardBehaviorTest {
 				"《Dull》, put Titan into the Break Zone: Choose 1 Forward. Deal it damage equal to its power.");
 		assertFalse(cpu.p2ShouldHoldDamageAbility(computed.actionAbilities().get(0)));
 	}
+
+	// =========================================================================================
+	// Whether a Backup may dull itself for CP toward its own ability turns on one thing: whether
+	// the ability's cost already spends that dull (CpPaymentUtils.sourceCanFundOwnAbility).
+	//
+	// Yotsuyu's "《Fire》《Dull》: …" was activating with no other Backup dulled and nothing
+	// discarded — the CPU's planner did not know which card was paying, so it dulled Yotsuyu for
+	// the 《Fire》 and the 《Dull》 cost then re-dulled the same already-dull card, one dull
+	// settling both halves. The opposite error sat on the human side: AbilityPaymentDialog barred
+	// the source unconditionally, so P1 could not dull a 《Dull》-free Backup for its own cost even
+	// though the rules allow it — including a Backup the cost was about to sacrifice anyway
+	// (1-053C Summoner), whose dull is free money. Both seats now read the one predicate.
+	// =========================================================================================
+
+	private static final String YOTSUYU_ABILITY =
+			"《Fire》《Dull》: Choose 1 Forward of cost 5 or less. It cannot block this turn.";
+
+	/** 1-053C Summoner: a CP cost with no 《Dull》, and the source sacrificed by the same cost. */
+	private static final String SUMMONER_ABILITY =
+			"《Ice》, put Summoner into the Break Zone: Choose 1 Summon. Cancel its effect.";
+
+	/** 3-131H Ghido: one ability with no 《Dull》 cost that re-activates him, one with a 《Dull》. */
+	private static final String GHIDO_TEXT =
+			"Ghido does not activate during the Active Phase.[[br]] 《Water》: Activate Ghido.[[br]] "
+			+ "《Water》《1》《Dull》: Choose 1 Forward of cost 5 or more opponent controls. "
+			+ "Put it on top of its owner's deck.";
+
+	/** A vanilla Backup in P2's slot {@code idx}, active and unfrozen. */
+	private static CardData placeP2Backup(MainWindow mw, int idx, CardData card) {
+		mw.p2BackupCards[idx]  = card;
+		mw.p2BackupStates[idx] = CardState.ACTIVE;
+		return card;
+	}
+
+	/** Runs the CPU's ability-cost planner, returning the planned Backup slots or null when unpayable. */
+	private static List<Integer> planAbilityPayment(MainWindow mw, ActionAbility ability, CardData source) {
+		List<Integer>        backups      = new ArrayList<>();
+		Map<Integer, String> backupElems  = new LinkedHashMap<>();
+		List<Integer>        discards     = new ArrayList<>();
+		Map<Integer, String> discardElems = new LinkedHashMap<>();
+		boolean payable = new ComputerPlayer(mw).p2PlanAbilityPayment(
+				ability, source, backups, backupElems, discards, discardElems);
+		assertTrue(discards.isEmpty() || payable, "a failed plan commits nothing");
+		return payable ? backups : null;
+	}
+
+	@Test
+	void yotsuyusAbilityCostsBothOneFireAndTheDull() {
+		ActionAbility ability = CardData.parseActionAbilities(YOTSUYU_ABILITY).get(0);
+		assertTrue(ability.requiresDull(), "《Dull》 is half the cost");
+		assertEquals(List.of("Fire"), ability.cpCost(), "and 1 Fire CP is the other half");
+	}
+
+	@Test
+	void aBackupCannotDullForCpTowardItsOwnDullAbility() {
+		MainWindow mw = new MainWindow();
+		CardData yotsuyu = makeTraitCard("Yotsuyu", "Fire", "Backup", YOTSUYU_ABILITY);
+		placeP2Backup(mw, 0, yotsuyu);
+
+		assertNull(planAbilityPayment(mw, yotsuyu.actionAbilities().get(0), yotsuyu),
+				"the one dull cannot pay the 《Fire》 and the 《Dull》 both — with no other CP source "
+				+ "on the board the ability is simply unaffordable");
+	}
+
+	@Test
+	void theCpForADullAbilityComesFromSomeOtherBackup() {
+		MainWindow mw = new MainWindow();
+		CardData yotsuyu = makeTraitCard("Yotsuyu", "Fire", "Backup", YOTSUYU_ABILITY);
+		placeP2Backup(mw, 0, yotsuyu);
+		placeP2Backup(mw, 1, makeFieldAbilityCard("Chocobo Rider", "Fire", "Backup", ""));
+
+		assertEquals(List.of(1), planAbilityPayment(mw, yotsuyu.actionAbilities().get(0), yotsuyu),
+				"the neighbour pays the 《Fire》; Yotsuyu's own dull is spoken for");
+	}
+
+	@Test
+	void asecondCopyOfTheSameCardIsStillAValidCpSource() {
+		MainWindow mw = new MainWindow();
+		CardData yotsuyu = makeTraitCard("Yotsuyu", "Fire", "Backup", YOTSUYU_ABILITY);
+		CardData twin    = makeTraitCard("Yotsuyu", "Fire", "Backup", YOTSUYU_ABILITY);
+		assertEquals(yotsuyu, twin, "CardData is a record — the two copies are equal");
+		placeP2Backup(mw, 0, yotsuyu);
+		placeP2Backup(mw, 1, twin);
+
+		assertEquals(List.of(1), planAbilityPayment(mw, yotsuyu.actionAbilities().get(0), yotsuyu),
+				"only the card actually paying is excluded, which is why the check is by identity");
+	}
+
+	@Test
+	void onlyADullCostStopsASourceFundingItsOwnAbility() {
+		ActionAbility dullCost = CardData.parseActionAbilities(YOTSUYU_ABILITY).get(0);
+		assertFalse(CpPaymentUtils.sourceCanFundOwnAbility(dullCost),
+				"the 《Dull》 is what the dull is for");
+
+		ActionAbility cpOnly = CardData.parseActionAbilities(SUMMONER_ABILITY).get(0);
+		assertTrue(CpPaymentUtils.sourceCanFundOwnAbility(cpOnly),
+				"no 《Dull》 cost, so the source is an ordinary CP source for itself");
+	}
+
+	@Test
+	void aBackupWithNoDullCostPaysForItselfByDulling() {
+		MainWindow mw = new MainWindow();
+		CardData summoner = makeTraitCard("Summoner", "Ice", "Backup", SUMMONER_ABILITY);
+		placeP2Backup(mw, 0, summoner);
+
+		// Alone on the row, and still affordable: Summoner dulls for the 《Ice》 it needs. It is
+		// being put into the Break Zone by the same cost, so the dull costs it nothing at all.
+		assertEquals(List.of(0), planAbilityPayment(mw, summoner.actionAbilities().get(0), summoner),
+				"the source's own slot pays when no 《Dull》 cost is competing for it");
+	}
+
+	@Test
+	void aDullCostAbilityStillCannotBeSelfFundedEvenAlongsideOtherCosts() {
+		// The 《Water》《1》《Dull》 half of Ghido 3-131H: a Dull cost bars self-funding no matter
+		// what else the cost carries.
+		MainWindow mw = new MainWindow();
+		CardData ghido = makeTraitCard("Ghido", "Water", "Backup", GHIDO_TEXT);
+		ActionAbility dullAbility = ghido.actionAbilities().stream()
+				.filter(ActionAbility::requiresDull).findFirst().orElseThrow();
+		placeP2Backup(mw, 0, ghido);
+
+		assertNull(planAbilityPayment(mw, dullAbility, ghido),
+				"2 CP needed, and Ghido's own dull is spoken for by the 《Dull》");
+	}
+
+	@Test
+	void theAiHoldsActivateSelfWhileTheSourceIsAlreadyActive() {
+		MainWindow mw = new MainWindow();
+		CardData ghido = makeTraitCard("Ghido", "Water", "Backup", GHIDO_TEXT);
+		ActionAbility activateSelf = ghido.actionAbilities().stream()
+				.filter(a -> !a.requiresDull()).findFirst().orElseThrow();
+		assertEquals("Activate Ghido.", activateSelf.effectText());
+
+		ComputerPlayer cpu = new ComputerPlayer(mw);
+		// Active: using it changes nothing, and self-funding makes it free — so P2 would otherwise
+		// pay its own dull, get it back, and restart the Main Phase on the same board forever.
+		assertTrue(cpu.p2ShouldHoldActivateSelf(activateSelf, ghido, CardState.ACTIVE));
+		// Dull: this is the board the ability was printed for.
+		assertFalse(cpu.p2ShouldHoldActivateSelf(activateSelf, ghido, CardState.DULL));
+		// And it is the source being activated that matters, not the word "activate".
+		ActionAbility other = CardData.parseActionAbilities(
+				"《Water》: Choose 1 Forward you control. Activate it.").get(0);
+		assertFalse(cpu.p2ShouldHoldActivateSelf(other, ghido, CardState.ACTIVE));
+	}
+
+	@Test
+	void aDulledSourceIsNotSilentlyDulledAgainForCp() {
+		// The end state the bug produced: Yotsuyu dull, every other Backup untouched, no discard.
+		// With a second Fire Backup present the planner must reach for it rather than for the source.
+		MainWindow mw = new MainWindow();
+		CardData yotsuyu = makeTraitCard("Yotsuyu", "Fire", "Backup", YOTSUYU_ABILITY);
+		placeP2Backup(mw, 0, yotsuyu);
+		placeP2Backup(mw, 1, makeFieldAbilityCard("Chocobo Rider", "Fire", "Backup", ""));
+
+		List<Integer> planned = planAbilityPayment(mw, yotsuyu.actionAbilities().get(0), yotsuyu);
+		assertNotNull(planned);
+		assertFalse(planned.contains(0), "the source's slot never appears in the payment plan");
+	}
+
+	// =========================================================================================
+	// Titan (XVI) 29-068L: "During your turn, the Backups opponent controls cannot produce CP."
+	//
+	// The payment dialogs have always read the row through MainWindow.cpPayableBackupCards, which
+	// hands back an all-null copy while the suppression holds. P2's planners read the live row
+	// instead, so the CPU went on dulling Backups for CP that Titan had barred — on P1's turn,
+	// which is the only turn the suppression can reach P2, and where the CPU's one CP spend is the
+	// reactive shield it activates before passing priority.
+	// =========================================================================================
+
+	private static final String TITAN_XVI =
+			"During your turn, the Backups opponent controls cannot produce CP.";
+
+	/** A P2 Backup ability that needs 1 Fire CP and does not dull its source. */
+	private static final String FIRE_CP_ABILITY = "《Fire》: Deal 1000 damage to all the Forwards.";
+
+	@Test
+	void titanStopsTheAiDullingBackupsForCpOnItsControllersTurn() {
+		MainWindow mw = new MainWindow();                          // P1 holds the turn by default
+		placeP1Forward(mw, makeFieldAbilityCard("Titan (XVI)", "Earth", "Forward", TITAN_XVI));
+		CardData source = makeTraitCard("Firestarter", "Fire", "Backup", FIRE_CP_ABILITY);
+		placeP2Backup(mw, 0, source);
+		placeP2Backup(mw, 1, makeFieldAbilityCard("Chocobo Rider", "Fire", "Backup", ""));
+		assertTrue(mw.backupCpSuppressed(false), "Titan is P1's, and it is P1's turn");
+
+		assertNull(planAbilityPayment(mw, source.actionAbilities().get(0), source),
+				"neither Backup may produce the 《Fire》 while Titan is binding");
+	}
+
+	@Test
+	void withoutTitanTheSameBoardPays() {
+		MainWindow mw = new MainWindow();
+		CardData source = makeTraitCard("Firestarter", "Fire", "Backup", FIRE_CP_ABILITY);
+		placeP2Backup(mw, 0, source);
+		placeP2Backup(mw, 1, makeFieldAbilityCard("Chocobo Rider", "Fire", "Backup", ""));
+		assertFalse(mw.backupCpSuppressed(false));
+
+		// Slot 0 is the source and this ability has no 《Dull》 cost, so it funds itself.
+		assertEquals(List.of(0), planAbilityPayment(mw, source.actionAbilities().get(0), source));
+	}
+
+	@Test
+	void titanDoesNotReachAcrossIntoTheAisOwnTurn() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeFieldAbilityCard("Titan (XVI)", "Earth", "Forward", TITAN_XVI));
+		CardData source = makeTraitCard("Firestarter", "Fire", "Backup", FIRE_CP_ABILITY);
+		placeP2Backup(mw, 0, source);
+		advanceTo(mw, GameState.Player.P2, GameState.GamePhase.MAIN_1);
+
+		assertFalse(mw.backupCpSuppressed(false), "\"During your turn\" is Titan's controller's turn");
+		assertEquals(List.of(0), planAbilityPayment(mw, source.actionAbilities().get(0), source),
+				"P2's own turn is untouched by it");
+	}
+
+	@Test
+	void theCastPlannerHonoursTheSuppressionToo() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeFieldAbilityCard("Titan (XVI)", "Earth", "Forward", TITAN_XVI));
+		placeP2Backup(mw, 0, makeFieldAbilityCard("Chocobo Rider", "Fire", "Backup", ""));
+		CardData cast = makeForward("Ifrit", "Fire", 1, 5000);
+		mw.gameState.getP2Hand().add(cast);                        // idx 0 — the card being cast
+
+		List<Integer>        backups      = new ArrayList<>();
+		Map<Integer, String> backupElems  = new LinkedHashMap<>();
+		List<Integer>        discards     = new ArrayList<>();
+		Map<Integer, String> discardElems = new LinkedHashMap<>();
+		ComputerPlayer cpu = new ComputerPlayer(mw);
+		assertFalse(cpu.p2PlanPayment(cast, 1, 0, -1, backups, backupElems, discards, discardElems),
+				"the one Backup cannot produce the CP, and the hand holds only the card being cast");
+
+		// The cast path is only reachable on P2's own turn anyway; prove the board itself is fine.
+		mw.p1ForwardCards.clear();
+		backups.clear(); backupElems.clear(); discards.clear(); discardElems.clear();
+		assertTrue(cpu.p2PlanPayment(cast, 1, 0, -1, backups, backupElems, discards, discardElems));
+		assertEquals(List.of(0), backups);
+	}
 }
