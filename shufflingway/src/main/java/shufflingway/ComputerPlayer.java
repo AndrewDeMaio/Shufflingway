@@ -816,11 +816,6 @@ class ComputerPlayer implements OpponentController {
 	}
 
 	/** Returns true when {@code cpByElemIdx} satisfies the cost and per-element minimums. */
-	private static boolean p2CanAfford(int cost, String[] elems, int[] cpByElemIdx) {
-		return p2CanAfford(cost, elems, cpByElemIdx, 0);
-	}
-
-	/** As {@link #p2CanAfford(int, String[], int[])} but with additional off-color CP. */
 	private static boolean p2CanAfford(int cost, String[] elems, int[] cpByElemIdx, int anyCp) {
 		int total = anyCp;
 		for (int ei = 0; ei < elems.length; ei++) {

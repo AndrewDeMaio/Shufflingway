@@ -43,8 +43,6 @@ public class CardScraper {
 
     private static final String API_URL =
             "https://fftcg.square-enix-games.com/na/get-cards";
-    private static final String IMAGE_BASE_URL =
-            "https://fftcg.cdn.sewest.net/images/cards/full/";
 
     /** Cards returned per API page. The SE API accepts up to ~60. */
     private static final int PAGE_SIZE = 60;

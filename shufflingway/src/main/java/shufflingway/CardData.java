@@ -3052,15 +3052,6 @@ public record CardData(
         return TRIGGER_CLAUSE_OPENER.matcher(segment).find();
     }
 
-    /**
-     * An action whose only target is a pronoun — "break it", "add them to their owner's hand".
-     * Such a clause carries no target of its own and is meaningless detached from the text that
-     * supplied one, unlike "break all the Forwards opponent controls …" which names its targets.
-     */
-    private static final Pattern BARE_PRONOUN_ACTION = Pattern.compile(
-        "(?i)^\\w+\\s+(?:it|them)\\b"
-    );
-
     /** A "When &lt;subject&gt; &lt;trigger verb&gt;," clause opening a triggered ability. */
     private static final Pattern TRIGGER_CLAUSE_OPENER = Pattern.compile(
         "(?i)\\bWhen(?:ever)?\\s+[^,]+?\\s+(?:attacks?|blocks?|enters?|leaves?|casts?|uses?|becomes?" +

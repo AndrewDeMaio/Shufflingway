@@ -1084,7 +1084,7 @@ public class MainWindow {
 		p2RemoveButton.setPreferredSize(new Dimension(REMOVE_W, CORNER_BAR_H));
 		p2RemoveButton.setMinimumSize(new Dimension(REMOVE_W, CORNER_BAR_H));
 		p2RemoveButton.setMaximumSize(new Dimension(REMOVE_W, CORNER_BAR_H));
-		p2RemoveButton.addActionListener(e -> showRemovedFromPlayDialog(p2RemoveLabel, "P2"));
+		p2RemoveButton.addActionListener(e -> showRemovedFromPlayDialog("P2"));
 
 		JPanel p2BottomBar = new JPanel(new GridBagLayout());
 		p2BottomBar.setPreferredSize(new Dimension(CARD_W, CORNER_BAR_H));
@@ -1251,7 +1251,7 @@ public class MainWindow {
 		p1RemoveButton.setPreferredSize(new Dimension(REMOVE_W, CORNER_BAR_H));
 		p1RemoveButton.setMinimumSize(new Dimension(REMOVE_W, CORNER_BAR_H));
 		p1RemoveButton.setMaximumSize(new Dimension(REMOVE_W, CORNER_BAR_H));
-		p1RemoveButton.addActionListener(e -> showRemovedFromPlayDialog(p1RemoveLabel, "P1"));
+		p1RemoveButton.addActionListener(e -> showRemovedFromPlayDialog("P1"));
 
 		p1CrystalDisplay = new CrystalDisplay(0);
 		p1CrystalDisplay.setPreferredSize(new Dimension(CRYSTAL_W, CrystalDisplay.CRYSTAL_H));
@@ -3321,13 +3321,10 @@ public class MainWindow {
 		});
 	}
 
-	private void showRemovedFromPlayDialog(GrayscaleLabel removeLabel, String player) {
-		showRemovedFromPlayDialog(removeLabel, player, "P1".equals(player));
-	}
-
-	private void showRemovedFromPlayDialog(GrayscaleLabel removeLabel, String player, boolean isP1) {
-		List<GameState.WarpEntry> warpZone = isP1 ? gameState.getP1WarpZone() : gameState.getP2WarpZone();
-		List<CardData>            permZone = isP1 ? gameState.getP1PermanentRfp() : gameState.getP2PermanentRfp();
+	/** Shows the "Removed from Play" dialog for the specified player. */
+	private void showRemovedFromPlayDialog(String player) {
+		List<GameState.WarpEntry> warpZone = "P1".equals(player) ? gameState.getP1WarpZone() : gameState.getP2WarpZone();
+		List<CardData>            permZone = "P1".equals(player) ? gameState.getP1PermanentRfp() : gameState.getP2PermanentRfp();
 		RemovedFromPlayDialog.show(frame, warpZone, permZone, player, this::showZoomAt, this::hideZoom);
 	}
 
@@ -16246,17 +16243,6 @@ public class MainWindow {
 	 * from {@link ElementColor#boardColorChoices()} ({@code "Default"} or a title-case element).
 	 */
 	void applyBoardColor(boolean isP1, String colorName) {
-		Color c = "Default".equals(colorName) ? null
-				: (ElementColor.fromName(colorName) != null ? ElementColor.fromName(colorName).color : null);
-		// Both fades now live inside the zone panels (see BoardEdgeFadePanel), each ending on the
-		// neutral tone at its centre-facing edge. What is left between them — p2Board, the divider,
-		// p1Board — simply carries that tone across, so both halves stay flat; giving either the
-		// element colour would jump back to full saturation right at the seam.
-		//
-		// Keeping the whole strip one flat tone also settles a rounding artefact: gameBoard's
-		// GridBag hands its two halves an odd number of pixels to split and can leave a row over at
-		// an edge, which used to show its background as a bright line across the top of P1's zone.
-		// Now that line, the halves and both zone edges are all the same colour, so it cannot show.
 		if (isP1) {
 			applyElementColor(colorName, p1ZonesPanel);
 			if (p1Board != null) p1Board.setGradientColor(null);
@@ -16317,9 +16303,11 @@ public class MainWindow {
 	// -------------------------------------------------------------------------
 
 	boolean p2HasAvailableBackupSlot() {
-		for (int i = 0; i < p2BackupCards.length; i++) {
-			if (p2BackupCards[i] == null) return true;
-		}
+            for (CardData p2BackupCard : p2BackupCards) {
+                if (p2BackupCard == null) {
+                    return true;
+                }
+            }
 		return false;
 	}
 

@@ -1,16 +1,16 @@
 package shufflingway;
 
-import org.json.JSONArray;
-import org.json.JSONObject;
-
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
-import java.net.URL;
+import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Locale;
 import java.util.Scanner;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 public final class UpdateChecker {
 
@@ -56,7 +56,7 @@ public final class UpdateChecker {
     public static ReleaseInfo checkLatest() throws IOException {
         String current = currentVersion();
 
-        HttpURLConnection conn = (HttpURLConnection) new URL(RELEASES_API).openConnection();
+        HttpURLConnection conn = (HttpURLConnection) URI.create(RELEASES_API).toURL().openConnection();
         conn.setRequestProperty("Accept", "application/vnd.github+json");
         conn.setRequestProperty("User-Agent", "Shufflingway-App");
         conn.setConnectTimeout(8000);
@@ -95,7 +95,7 @@ public final class UpdateChecker {
      */
     public static void downloadAndInstall(String installerUrl, InstallerKind kind,
                                           ProgressCallback progress) throws IOException {
-        HttpURLConnection conn = (HttpURLConnection) new URL(installerUrl).openConnection();
+        HttpURLConnection conn = (HttpURLConnection) URI.create(installerUrl).toURL().openConnection();
         conn.setRequestProperty("User-Agent", "Shufflingway-App");
         conn.setConnectTimeout(10000);
         conn.setReadTimeout(60000);
