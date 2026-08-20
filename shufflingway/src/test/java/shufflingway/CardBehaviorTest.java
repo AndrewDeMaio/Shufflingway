@@ -24613,6 +24613,58 @@ public class CardBehaviorTest {
 	}
 
 	// =========================================================================================
+	// A CP cost that is entirely generic — Onion Knight 1-181H's
+	// "《1》《Dull》, return Onion Knight to its owner's hand:" — names no Element at all, so the
+	// CPU's planner works with a zero-length per-element array and every CP it assembles has to
+	// land in the generic pool. Crediting a discard to element slot 0 threw
+	// ArrayIndexOutOfBoundsException out of p2PlanAbilityPayment, killing the CPU mid Main Phase
+	// and leaving the turn unable to advance. Only a board with no active Backup reaches it: a
+	// Backup settles the payment one loop earlier, which is why it survived until P2 had dulled
+	// its row for the cast that preceded the activation.
+	// =========================================================================================
+
+	/** Onion Knight 1-181H's ability: one generic CP, a dull, and a self-bounce. */
+	private static final String GENERIC_CP_COST_ABILITY =
+			"《1》《Dull》, return Onion Knight to its owner's hand: You may play 1 Card Name "
+			+ "Onion Knight from your hand onto the field.";
+
+	@Test
+	void aGenericCpCostNamesNoElement() {
+		ActionAbility ability = CardData.parseActionAbilities(GENERIC_CP_COST_ABILITY).get(0);
+		assertEquals(List.of(""), ability.cpCost(), "《1》 expands to one generic, unnamed CP token");
+		assertTrue(ability.requiresDull());
+	}
+
+	@Test
+	void aGenericCpCostIsPaidByDullingAnyBackup() {
+		MainWindow mw = new MainWindow();
+		CardData onionKnight = makeTraitCard("Onion Knight", "Light", "Forward", GENERIC_CP_COST_ABILITY);
+		// Fire, against a cost naming no Element: no Backup can ever "match", so the whole row is
+		// off-colour and pays generically.
+		placeP2Backup(mw, 0, makeFieldAbilityCard("Chocobo Rider", "Fire", "Backup", ""));
+
+		assertEquals(List.of(0), planAbilityPayment(mw, onionKnight.actionAbilities().get(0), onionKnight),
+				"1 generic CP, and the one Backup on the row produces it");
+	}
+
+	@Test
+	void aGenericCpCostFallsBackToADiscardWithNoBackupToDull() {
+		MainWindow mw = new MainWindow();
+		CardData onionKnight = makeTraitCard("Onion Knight", "Light", "Forward", GENERIC_CP_COST_ABILITY);
+		mw.gameState.getP2Hand().add(makeFieldAbilityCard("Chocobo Rider", "Fire", "Backup", ""));
+
+		List<Integer>        backups      = new ArrayList<>();
+		Map<Integer, String> backupElems  = new LinkedHashMap<>();
+		List<Integer>        discards     = new ArrayList<>();
+		Map<Integer, String> discardElems = new LinkedHashMap<>();
+		assertTrue(new ComputerPlayer(mw).p2PlanAbilityPayment(onionKnight.actionAbilities().get(0),
+				onionKnight, backups, backupElems, discards, discardElems),
+				"the empty row leaves the hand to pay — the plan that used to throw instead");
+		assertEquals(List.of(0), discards, "the one discardable card, worth 2 CP against a cost of 1");
+		assertEquals("", discardElems.get(0), "no Element is named, so the CP is assigned none");
+	}
+
+	// =========================================================================================
 	// Titan (XVI) 29-068L: "During your turn, the Backups opponent controls cannot produce CP."
 	//
 	// The payment dialogs have always read the row through MainWindow.cpPayableBackupCards, which

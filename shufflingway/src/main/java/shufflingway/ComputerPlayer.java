@@ -1759,15 +1759,20 @@ class ComputerPlayer implements OpponentController {
 		discardable.sort((a, b) -> hand.get(a).cost() - hand.get(b).cost());
 		for (int di : discardable) {
 			if (p2CanAfford(totalCost, elems, simCp, anyCp)) return true;
-			int ei = elems.length > 0 ? p2BestDiscardElement(hand.get(di), elems, simCp) : 0;
+			// An all-generic cost (Onion Knight 1-181H's 《1》《Dull》) names no Element, so there is
+			// no per-element bucket to credit and simCp is zero-length — ei is -1 and the CP can only
+			// go to the generic pool. Crediting it to element slot 0 instead threw
+			// ArrayIndexOutOfBoundsException, on the one board that reaches here with an empty cost:
+			// no active Backup left, so the off-color loop above could not settle the payment first.
+			int ei = elems.length > 0 ? p2BestDiscardElement(hand.get(di), elems, simCp) : -1;
 			// If off-color but generic slots remain, contribute to any pool
-			if (elems.length > 0 && !hand.get(di).containsElement(elems[ei]) && genericCount > 0) {
+			if (ei < 0 || (!hand.get(di).containsElement(elems[ei]) && genericCount > 0)) {
 				anyCp += 2;
 			} else {
 				simCp[ei] += 2;
 			}
 			outDiscards.add(di);
-			outDiscardElems.put(di, elems.length > 0 ? elems[ei] : "");
+			outDiscardElems.put(di, ei >= 0 ? elems[ei] : "");
 			if (p2CanAfford(totalCost, elems, simCp, anyCp)) return true;
 		}
 		return false;
