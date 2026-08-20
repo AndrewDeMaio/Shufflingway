@@ -8160,6 +8160,56 @@ public class CardBehaviorTest {
     }
 
     // =========================================================================================
+    // Starting a New Game while P2's attack is waiting on P1's block declaration.
+    //
+    // The board is emptied, but the block step does not live on the board: pendingP2Attacker /
+    // pendingP2PartyIndices are what make p1InBlockDeclaration() true, and that is what holds the
+    // Attack button at "Take Damage" and enabled. Both survived the reset, so the button stayed
+    // live over the fresh game's empty board and pressing it ran the abandoned attack's handler
+    // against p2ForwardCards.get(0) on an empty row — IndexOutOfBoundsException on the EDT, with
+    // the side buttons stuck reading "Next" and "Take Damage".
+    // =========================================================================================
+
+    /** A P2 party attack of two Forwards, waiting on P1's blocker choice. */
+    private static MainWindow boardAwaitingPartyBlock() {
+        MainWindow mw = new MainWindow();
+        enterAttackDeclarationStep(mw, false);
+        mw.placeP2CardInForwardZone(makeForward("Party A", "Fire", 3, 7000));
+        mw.placeP2CardInForwardZone(makeForward("Party B", "Fire", 3, 5000));
+        CardData blocker = makeForward("Blocker", "Ice", 3, 8000);
+        mw.placeCardInForwardZone(blocker);
+        mw.gameState.getIdentity().put(blocker, true);
+        openPartyBlockStep(mw);
+        return mw;
+    }
+
+    @Test
+    void aNewGameEndsAPendingPartyBlockDeclaration() {
+        MainWindow mw = boardAwaitingPartyBlock();
+        assertEquals(List.of(0, 1), mw.pendingP2PartyIndices, "the party is waiting on a blocker");
+
+        mw.resetForNewGame();
+
+        assertTrue(mw.p2ForwardCards.isEmpty(), "the row the stale indices pointed into is gone");
+        assertNull(mw.pendingP2PartyIndices, "so the attack that indexed it must be gone too");
+        assertNull(mw.pendingP2Attacker, "and the single-attacker half of the same step");
+        assertEquals(-1, mw.attackSubStep, "the new game is not in an attack");
+    }
+
+    @Test
+    void aNewGameEndsAPendingSingleBlockDeclaration() {
+        MainWindow mw = boardAwaitingPartyBlock();
+        openSingleBlockStep(mw, 0);
+        mw.p1BlockingIdx = 0;
+
+        mw.resetForNewGame();
+
+        assertNull(mw.pendingP2Attacker);
+        assertEquals(-1, mw.pendingP2AttackerIdx);
+        assertEquals(-1, mw.p1BlockingIdx, "no blocker is mid-battle in a game that just started");
+    }
+
+    // =========================================================================================
     // Louisoix 5-120C: "…you may search for 1 Card Name Alisaie or Card Name Alphinaud and add it
     // to your hand."  The name capture ran to the trailing "and", so the filter became the single
     // unmatchable name "Alisaie or Card Name Alphinaud" and the search found nothing. Names are now

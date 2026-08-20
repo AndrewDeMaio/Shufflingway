@@ -1708,7 +1708,7 @@ public class MainWindow {
 	}
 
 	/** Tears down any in-progress game and clears every piece of per-game state. */
-	private void resetForNewGame() {
+	void resetForNewGame() {
 		// --- Tear down any in-progress game before resetting state ---
 		// Stop timers first so they cannot fire callbacks after state is cleared.
 		stackWindowGeneration++;
@@ -1788,10 +1788,44 @@ public class MainWindow {
 		if (opponent != null) opponent.cancel();
 		opponent = createOpponent();
 		clearUIZones();
+		clearPendingCombatState();
 		if (nextPhaseButton != null) nextPhaseButton.setEnabled(false);
 		if (gameLog != null) gameLog.setText("");
 		logEntry("Game Start");
 		refreshP1HandLabel();
+	}
+
+	/**
+	 * Clears the combat state a new game would otherwise inherit from the game it replaced.
+	 *
+	 * <p>{@link #clearUIZones()} empties the board, but the block-declaration step does not live on
+	 * the board: while P2 attacks it is {@link #pendingP2Attacker} or {@link #pendingP2PartyIndices}
+	 * that makes {@code p1InBlockDeclaration()} true, and that is what holds the Attack button at
+	 * "Take Damage" and enabled. Carried across a New Game the button stayed live over an empty
+	 * board, and pressing it ran the interrupted attack's handler against Forward indices whose row
+	 * had just been cleared — {@code p2ForwardCards.get(0)} on an empty list.
+	 *
+	 * <p>{@code pendingP2BlockDone} is a continuation into the previous game's combat loop, so it is
+	 * dropped rather than run: the battle it would finish no longer has a board.
+	 */
+	private void clearPendingCombatState() {
+		setAttackSubStep(-1);
+		pendingP2Attacker          = null;
+		pendingP2AttackerIdx       = -1;
+		pendingP2AttackerIsMonster = false;
+		pendingP2AttackerIsBackup  = false;
+		pendingP2AttackerPower     = 0;
+		pendingP2PartyIndices      = null;
+		pendingP2PartyCombined     = 0;
+		pendingP2BlockDone         = null;
+		p1BlockerSelection         = -1;
+		p1BlockerMonsterIdx        = -1;
+		p1BlockerBackupIdx         = -1;
+		p1BlockingIdx              = -1;
+		p1BlockedByAttacker        = null;
+		p2BlockingIdx              = -1;
+		p2BlockedByAttacker        = null;
+		refreshAttackButton();
 	}
 
 	/** Loads both decks from the local deck database, for a game against the AI. */
