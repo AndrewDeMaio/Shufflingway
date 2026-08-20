@@ -75,7 +75,6 @@ import javax.swing.JSpinner;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.JWindow;
-import javax.swing.ScrollPaneConstants;
 import javax.swing.SpinnerNumberModel;
 import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
@@ -4819,103 +4818,6 @@ public class MainWindow {
 		deck.clear();
 		deck.addAll(list);
 		if (isP1) refreshP1DeckLabel(); else refreshP2DeckLabel();
-	}
-
-	private CardData showDeckSearchSelectDialog(List<CardData> matches) {
-		if (matches.size() == 1) return matches.get(0);
-		JDialog dlg = new JDialog(frame, "Search — choose a card (" + matches.size() + " found)", true);
-		dlg.setResizable(false);
-		dlg.setDefaultCloseOperation(JDialog.DO_NOTHING_ON_CLOSE);
-
-		CardData[] picked = { matches.get(0) };  // fallback if dialog is dismissed without a click
-
-		final int CARDS_PER_ROW = 10;
-		JPanel cardsPanel = new JPanel();
-		cardsPanel.setLayout(new BoxLayout(cardsPanel, BoxLayout.Y_AXIS));
-		JPanel currentRow = null;
-		for (int idx = 0; idx < matches.size(); idx++) {
-			CardData candidate = matches.get(idx);
-			if (idx % CARDS_PER_ROW == 0) {
-				currentRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 12, 12));
-				currentRow.setAlignmentX(Component.LEFT_ALIGNMENT);
-				cardsPanel.add(currentRow);
-			}
-			JPanel wrapper = new JPanel(new BorderLayout(0, 4));
-			wrapper.setBackground(cardsPanel.getBackground());
-
-			JLabel lbl = new JLabel("...", SwingConstants.CENTER);
-			lbl.setPreferredSize(new Dimension(CARD_W, CARD_H));
-			lbl.setMinimumSize(new Dimension(CARD_W, CARD_H));
-			lbl.setOpaque(true);
-			lbl.setBackground(Color.DARK_GRAY);
-			lbl.setBorder(BorderFactory.createLineBorder(Color.GRAY, 2));
-			lbl.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-
-			lbl.addMouseListener(new MouseAdapter() {
-				@Override public void mouseEntered(MouseEvent e) {
-					if (lbl.getIcon() != null) showZoomAt(candidate.imageUrl());
-					lbl.setBorder(createCardGlowBorder(Color.YELLOW));
-				}
-				@Override public void mouseExited(MouseEvent e) {
-					hideZoom();
-					lbl.setBorder(BorderFactory.createLineBorder(Color.GRAY, 1));
-				}
-				@Override public void mousePressed(MouseEvent e) {
-					picked[0] = candidate;
-					dlg.dispose();
-				}
-			});
-
-			new SwingWorker<ImageIcon, Void>() {
-				@Override protected ImageIcon doInBackground() throws Exception {
-					Image img = ImageCache.load(candidate.imageUrl());
-					return img == null ? null
-							: new ImageIcon(img.getScaledInstance(CARD_W, CARD_H, Image.SCALE_SMOOTH));
-				}
-				@Override protected void done() {
-					try { ImageIcon ic = get(); if (ic != null) { lbl.setIcon(ic); lbl.setText(null); } }
-					catch (InterruptedException | ExecutionException ignored) {}
-				}
-			}.execute();
-
-			JLabel nameLabel = new JLabel(candidate.name(), SwingConstants.CENTER);
-			nameLabel.setFont(FontLoader.loadPixelFont(9));
-			nameLabel.setPreferredSize(new Dimension(CARD_W, 18));
-
-			wrapper.add(lbl, BorderLayout.CENTER);
-			wrapper.add(nameLabel, BorderLayout.SOUTH);
-			currentRow.add(wrapper);
-		}
-
-		JLabel hint = new JLabel("Click a card to select it", SwingConstants.CENTER);
-		hint.setFont(FontLoader.loadPixelFont(9));
-
-		// Wrap in a scroll pane sized to show at most 2 rows; scroll vertically when more.
-		// Row height = FlowLayout vgap (12) above + card (CARD_H) + BorderLayout vgap (4) + name (18) + vgap below (12)
-		int rowHeight = 12 + CARD_H + 4 + 18 + 12;
-		int rowsToShow = Math.min(2, (matches.size() + CARDS_PER_ROW - 1) / CARDS_PER_ROW);
-		// Row width = left margin (12) + N cards × CARD_W + (N-1) × hgap (12) + right margin (12)
-		int colsInWidest = Math.min(matches.size(), CARDS_PER_ROW);
-		int rowWidth = 12 + colsInWidest * CARD_W + (colsInWidest - 1) * 12 + 12;
-
-		JScrollPane scroll = new JScrollPane(cardsPanel,
-				ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED,
-				ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
-		scroll.setBorder(null);
-		scroll.getVerticalScrollBar().setUnitIncrement(rowHeight);
-		// Reserve scrollbar width when content exceeds the visible rows so cards don't get clipped.
-		int scrollbarPad = matches.size() > rowsToShow * CARDS_PER_ROW
-				? scroll.getVerticalScrollBar().getPreferredSize().width : 0;
-		scroll.setPreferredSize(new Dimension(rowWidth + scrollbarPad, rowsToShow * rowHeight));
-
-		dlg.getContentPane().setLayout(new BorderLayout(0, 6));
-		dlg.getContentPane().add(scroll, BorderLayout.CENTER);
-		dlg.getContentPane().add(hint, BorderLayout.SOUTH);
-		dlg.pack();
-		dlg.setLocationRelativeTo(frame);
-		dlg.setVisible(true);
-
-		return picked[0];
 	}
 
 	void searchDeckJobAndTypeDontShareElements(boolean isP1, String jobFilter, String typeName) {

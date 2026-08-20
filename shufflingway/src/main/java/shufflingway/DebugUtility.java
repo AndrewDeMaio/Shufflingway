@@ -49,7 +49,7 @@ class DebugUtility {
             JOptionPane.showMessageDialog(mw.frame, "Start a game first.", "Debug Spawn", JOptionPane.WARNING_MESSAGE);
             return;
         }
-        DebugCardPickerDialog.pickRepeated(mw.frame, "Spawn Card on Field", this::spawnSelectedOnField);
+        DebugCardPickerDialog.pickRepeatedWithOrigin(mw.frame, "Spawn Card on Field", this::spawnSelectedOnField);
     }
 
     private void spawnSelectedOnField(DebugCardPickerDialog.Selection sel) {
@@ -61,23 +61,52 @@ class DebugUtility {
         boolean isP1 = sel.isP1();
         String who = isP1 ? "P1" : "P2";
         mw.gameState.getIdentity().put(card, isP1);
-        if (card.isForward()) {
-            if (isP1) mw.placeCardInForwardZone(card); else mw.placeP2CardInForwardZone(card);
-        } else if (card.isMonster()) {
-            if (isP1) mw.placeCardInMonsterZone(card); else mw.placeP2CardInMonsterZone(card);
-        } else if (card.isBackup()) {
-            boolean hasSlot = isP1 ? mw.hasAvailableBackupSlot() : mw.p2HasAvailableBackupSlot();
-            if (!hasSlot) {
-                JOptionPane.showMessageDialog(mw.frame, who + " has no free Backup slot.", "Debug Spawn", JOptionPane.WARNING_MESSAGE);
-                return;
-            }
-            if (isP1) mw.placeCardInFirstBackupSlot(card); else mw.placeP2CardInFirstBackupSlot(card);
-        } else {
+        // The two cases that never reach the field are settled first, so the arrival below is
+        // unconditional and its "as if cast" bookkeeping cannot be recorded for a card that then
+        // bailed out.
+        if (!card.isForward() && !card.isMonster() && !card.isBackup()) {
             addCardToHand(card, isP1);
             mw.logEntry("[Debug] " + card.name() + " is a Summon — added to " + who + " hand instead of field.");
             return;
         }
-        mw.logEntry("[Debug] Spawned " + card.name() + " (" + sel.serial() + ") onto " + who + " field.");
+        if (card.isBackup() && !(isP1 ? mw.hasAvailableBackupSlot() : mw.p2HasAvailableBackupSlot())) {
+            JOptionPane.showMessageDialog(mw.frame, who + " has no free Backup slot.", "Debug Spawn", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        boolean asCast = sel.origin() == DebugCardPickerDialog.Origin.HAND;
+        // Recorded before the card lands, exactly as executePlay does it, so an enter-the-field
+        // ability that counts what its controller has cast this turn counts this card too.
+        if (asCast) noteDebugCast(card, isP1);
+        boolean prevCast = mw.lastCardWasCast;
+        mw.lastCardWasCast = asCast;
+        try {
+            if (card.isForward()) {
+                if (isP1) mw.placeCardInForwardZone(card); else mw.placeP2CardInForwardZone(card);
+            } else if (card.isMonster()) {
+                if (isP1) mw.placeCardInMonsterZone(card); else mw.placeP2CardInMonsterZone(card);
+            } else {
+                if (isP1) mw.placeCardInFirstBackupSlot(card); else mw.placeP2CardInFirstBackupSlot(card);
+            }
+        } finally {
+            mw.lastCardWasCast = prevCast;
+        }
+        mw.logEntry("[Debug] Spawned " + card.name() + " (" + sel.serial() + ") onto " + who + " field "
+                + (asCast ? "as a cast from hand." : "as an arrival from the Break Zone."));
+    }
+
+    /**
+     * The turn-scoped cast bookkeeping {@code MainWindow.executePlay} records, for a spawn the user
+     * asked to treat as a cast from hand. Nothing about the payment is simulated — a debug spawn is
+     * free — so only the facts a later ability can ask about are written: how many cards, which Jobs
+     * and which names their controller has cast this turn.
+     */
+    private void noteDebugCast(CardData card, boolean isP1) {
+        PlayerTurnState playerTurn = mw.turn(isP1);
+        playerTurn.cardsCastThisTurn++;
+        for (String j : card.jobs()) playerTurn.castJobsThisTurn.add(j.toLowerCase());
+        playerTurn.castNamesThisTurn.add(card.name().toLowerCase());
+        playerTurn.castCountByNameThisTurn.merge(card.name().toLowerCase(), 1, Integer::sum);
     }
 
     void addToHand() {

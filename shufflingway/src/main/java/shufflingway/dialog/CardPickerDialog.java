@@ -143,8 +143,11 @@ public class CardPickerDialog {
         JLabel hint = new JLabel("Click a card to select it", SwingConstants.CENTER);
         hint.setFont(FontLoader.loadPixelFont(9));
 
+        // Wrap in a scroll pane sized to show at most 2 rows; scroll vertically when more.
+        // Row height = FlowLayout vgap (12) above + card (CARD_H) + BorderLayout vgap (4) + name (18) + vgap below (12)
         int rowHeight = 12 + CARD_H + 4 + 18 + 12;
         int rowsToShow = Math.min(2, (matches.size() + CARDS_PER_ROW - 1) / CARDS_PER_ROW);
+        // Row width = left margin (12) + N cards × CARD_W + (N-1) × hgap (12) + right margin (12)
         int colsInWidest = Math.min(matches.size(), CARDS_PER_ROW);
         int rowWidth = 12 + colsInWidest * CARD_W + (colsInWidest - 1) * 12 + 12;
 
@@ -153,6 +156,7 @@ public class CardPickerDialog {
                 ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
         scroll.setBorder(null);
         scroll.getVerticalScrollBar().setUnitIncrement(rowHeight);
+        // Reserve scrollbar width when content exceeds the visible rows so cards don't get clipped.
         int scrollbarPad = matches.size() > rowsToShow * CARDS_PER_ROW
                 ? scroll.getVerticalScrollBar().getPreferredSize().width : 0;
         scroll.setPreferredSize(new Dimension(rowWidth + scrollbarPad, rowsToShow * rowHeight));

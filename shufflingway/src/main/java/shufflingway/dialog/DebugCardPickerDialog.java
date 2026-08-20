@@ -50,8 +50,16 @@ import shufflingway.ImageCache;
  */
 public class DebugCardPickerDialog extends JDialog {
 
-    /** A single add: the chosen card serial and which player it targets. */
-    public record Selection(String serial, boolean isP1) {}
+    /** A single add: the chosen card serial, which player it targets, and how it arrives. */
+    public record Selection(String serial, boolean isP1, Origin origin) {}
+
+    /**
+     * Where a spawned card is treated as having come from. The engine's own distinction is binary —
+     * {@code MainWindow.lastCardWasCast} is what gates {@code castOnly} abilities and what holds back
+     * the "enters ... other than from your hand" watchers — so {@code HAND} means "as if cast" and
+     * {@code BREAK_ZONE} stands for every other way a card can arrive.
+     */
+    public enum Origin { HAND, BREAK_ZONE }
 
     private static final String DB_URL = scraper.AppPaths.dbUrl();
     /** Model columns. The last two are hidden from the table; only {@code Card Text} stays searchable. */
@@ -92,10 +100,13 @@ public class DebugCardPickerDialog extends JDialog {
     private String pendingPreviewUrl;
     /** Target player for the spawn/add; defaults to P1. */
     private boolean targetIsP1 = true;
+    /** Arrival origin for the spawn flow; defaults to the way a card normally reaches the field. */
+    private Origin origin = Origin.HAND;
 
     private DebugCardPickerDialog(JFrame parent, String title,
             java.util.function.Consumer<Selection> addAction,
-            java.util.function.Consumer<Boolean> clearAction, String clearActionLabel) {
+            java.util.function.Consumer<Boolean> clearAction, String clearActionLabel,
+            boolean showOrigin) {
         super(parent, title, false);
         setSize(720 + PREVIEW_W + 16, 560);
         setLocationRelativeTo(parent);
@@ -169,16 +180,35 @@ public class DebugCardPickerDialog extends JDialog {
         buttonPanel.add(addButton);
 
         JPanel southPanel = new JPanel(new BorderLayout());
+        JPanel leftPanel  = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 4));
         // Optional lower-left action (e.g. the "Add Card to Hand"/"Add Card to BZ" flows): wipe the
         // corresponding zone of whichever player is currently selected by the target radio buttons.
         if (clearAction != null) {
             JButton clearButton = new JButton(clearActionLabel);
             clearButton.setToolTipText("Remove all cards from the selected player's zone.");
             clearButton.addActionListener(e -> clearAction.accept(targetIsP1));
-            JPanel leftPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
             leftPanel.add(clearButton);
-            southPanel.add(leftPanel, BorderLayout.WEST);
         }
+        // Arrival origin, for the spawn flow. A card cast from hand fires castOnly enter-the-field
+        // abilities that a card arriving any other way does not — and suppresses the abilities
+        // watching for an arrival that was not a cast — so the two are worth spawning separately.
+        if (showOrigin) {
+            JRadioButton handRadio = new JRadioButton("Hand (cast)", true);
+            JRadioButton bzRadio   = new JRadioButton("Break Zone");
+            handRadio.setToolTipText("Enters as if cast from hand: castOnly abilities fire, and the "
+                    + "card counts toward what its controller has cast this turn.");
+            bzRadio.setToolTipText("Enters the way an effect puts a card onto the field: the "
+                    + "\"enters other than from your hand\" abilities fire instead.");
+            ButtonGroup originGroup = new ButtonGroup();
+            originGroup.add(handRadio);
+            originGroup.add(bzRadio);
+            handRadio.addActionListener(e -> origin = Origin.HAND);
+            bzRadio.addActionListener(e -> origin = Origin.BREAK_ZONE);
+            leftPanel.add(new JLabel("Enters from:"));
+            leftPanel.add(handRadio);
+            leftPanel.add(bzRadio);
+        }
+        if (leftPanel.getComponentCount() > 0) southPanel.add(leftPanel, BorderLayout.WEST);
         southPanel.add(buttonPanel, BorderLayout.EAST);
 
         table.addMouseListener(new java.awt.event.MouseAdapter() {
@@ -277,7 +307,7 @@ public class DebugCardPickerDialog extends JDialog {
         }
         int modelRow = table.convertRowIndexToModel(row);
         String serial = (String) tableModel.getValueAt(modelRow, 0);
-        addAction.accept(new Selection(serial, targetIsP1));
+        addAction.accept(new Selection(serial, targetIsP1, origin));
     }
 
     private void loadCards() {
@@ -304,7 +334,17 @@ public class DebugCardPickerDialog extends JDialog {
      */
     public static void pickRepeated(JFrame parent, String title,
             java.util.function.Consumer<Selection> addAction) {
-        pickRepeated(parent, title, addAction, null, null);
+        show(parent, title, addAction, null, null, false);
+    }
+
+    /**
+     * Variant that also shows the arrival-origin radio buttons, so each add says whether the card
+     * is entering as a cast from hand or by some other route. The choice reaches the caller as
+     * {@link Selection#origin()}; without this the picker always reports {@link Origin#HAND}.
+     */
+    public static void pickRepeatedWithOrigin(JFrame parent, String title,
+            java.util.function.Consumer<Selection> addAction) {
+        show(parent, title, addAction, null, null, true);
     }
 
     /**
@@ -315,7 +355,15 @@ public class DebugCardPickerDialog extends JDialog {
     public static void pickRepeated(JFrame parent, String title,
             java.util.function.Consumer<Selection> addAction,
             java.util.function.Consumer<Boolean> clearAction, String clearActionLabel) {
-        DebugCardPickerDialog dialog = new DebugCardPickerDialog(parent, title, addAction, clearAction, clearActionLabel);
+        show(parent, title, addAction, clearAction, clearActionLabel, false);
+    }
+
+    private static void show(JFrame parent, String title,
+            java.util.function.Consumer<Selection> addAction,
+            java.util.function.Consumer<Boolean> clearAction, String clearActionLabel,
+            boolean showOrigin) {
+        DebugCardPickerDialog dialog =
+                new DebugCardPickerDialog(parent, title, addAction, clearAction, clearActionLabel, showOrigin);
         dialog.setVisible(true);
     }
 }
