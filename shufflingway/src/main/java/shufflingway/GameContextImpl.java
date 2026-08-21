@@ -7298,10 +7298,8 @@ final class GameContextImpl implements GameContext {
 					chosen = options.get(0); // AI: replay the earliest eligible special used this turn
 				}
 				// Substitute the mimicking card's name for the original user's where the effect names it.
-				String originalName = chosen.source().name();
-				String effect = chosen.ability().effectText();
-				String substituted = originalName.equals(mimicSource.name())
-						? effect : effect.replace(originalName, mimicSource.name());
+				String substituted = ActionResolver.substituteSourceName(
+						chosen.ability().effectText(), chosen.source().name(), mimicSource.name());
 				String label = chosen.ability().abilityName().isEmpty()
 						? "" : chosen.ability().abilityName() + " ";
 				logEntry((isP1 ? "" : "[P2] ") + mimicSource.name() + " — Mimic uses "

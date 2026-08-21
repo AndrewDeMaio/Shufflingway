@@ -26462,4 +26462,377 @@ public class CardBehaviorTest {
 				"Backup");
 		assertEquals(2, mayakov.size(), "one boost per branch, and no third from the filtered pattern");
 	}
+	// =========================================================================================
+	// Monk 10-084C: "Dull 1 active Card Name Monk: Monk gains +1000 power until the end of the
+	// turn." — a dull cost whose named card carries no "Forward" after it.
+	//
+	// ACTION_ABILITY_PATTERN required that word, so the whole ability failed to match and the
+	// sentence fell through to parseFieldAbilities, where it surfaced as an unrecognised field
+	// ability. Making the card-type suffix optional moved six printings back onto the action
+	// path: this one, Palom 2-015H, Porom 2-135H, Raijin 27-088C, Cloud 29-005L and Luca 3-023C.
+	// =========================================================================================
+
+	private static final String MONK_TEXT =
+			"Dull 1 active Card Name Monk: Monk gains +1000 power until the end of the turn.";
+
+	@Test
+	void aNamedDullCostParsesWithoutTheForwardSuffix() {
+		List<ActionAbility> abilities = CardData.parseActionAbilities(MONK_TEXT);
+		assertEquals(1, abilities.size(), "the ability must reach the action path at all");
+
+		List<DullForwardCost> costs = abilities.get(0).dullForwardCosts();
+		assertEquals(1, costs.size());
+		assertEquals("Monk", costs.get(0).cardName(), "the bare name is the whole filter");
+		assertEquals("active", costs.get(0).condition());
+		assertEquals(1, costs.get(0).count());
+		assertEquals("Monk gains +1000 power until the end of the turn.",
+				abilities.get(0).effectText());
+	}
+
+	@Test
+	void theSentenceNoLongerReachesTheFieldAbilitySplitter() {
+		assertTrue(CardData.parseFieldAbilities(MONK_TEXT, "Forward").isEmpty(),
+				"a cost-and-colon ability is not a field ability");
+	}
+
+	@Test
+	void theSuffixedFormKeepsWorkingAndStillSplitsTwoNamedCosts() {
+		// Ceodore 11-117R prints the suffix on both halves; making it optional must not let the
+		// lazy name run through " and " into a card nobody has.
+		List<ActionAbility> abilities = CardData.parseActionAbilities(
+				"Dull 1 active Card Name Cecil Forward and 1 active Card Name Rosa Forward: "
+				+ "Play Ceodore onto the field.");
+		assertEquals(1, abilities.size());
+		List<DullForwardCost> costs = abilities.get(0).dullForwardCosts();
+		assertEquals(2, costs.size(), "two named Forwards, two costs");
+		assertEquals("Cecil", costs.get(0).cardName());
+		assertEquals("Rosa",  costs.get(1).cardName());
+	}
+
+	@Test
+	void anActiveMonkOnTheFieldCanPayTheCost() {
+		MainWindow mw = new MainWindow();
+		DullForwardCost cost = CardData.parseActionAbilities(MONK_TEXT).get(0).dullForwardCosts().get(0);
+
+		assertFalse(mw.autoAbilityTriggers.dullForwardCostSatisfied(cost, true),
+				"an empty board pays nothing");
+		placeP1Forward(mw, makeForward("Monk", "Earth", 2, 5000));
+		assertTrue(mw.autoAbilityTriggers.dullForwardCostSatisfied(cost, true));
+
+		mw.p1ForwardStates.set(0, CardState.DULL);
+		assertFalse(mw.autoAbilityTriggers.dullForwardCostSatisfied(cost, true),
+				"the cost names an active Monk");
+	}
+
+	@Test
+	void aDifferentlyNamedForwardCannotPayIt() {
+		MainWindow mw = new MainWindow();
+		DullForwardCost cost = CardData.parseActionAbilities(MONK_TEXT).get(0).dullForwardCosts().get(0);
+		placeP1Forward(mw, makeForward("Black Mage", "Earth", 2, 5000));
+		assertFalse(mw.autoAbilityTriggers.dullForwardCostSatisfied(cost, true));
+	}
+
+	@Test
+	void theTwoNameAlternativeIsPayableByEitherName() {
+		// Cloud 29-005L: "dull 1 active Card Name Tifa or Card Name Aerith". Only reachable now
+		// that the suffix is optional, and the alternative needs its own capture — without it the
+		// lazy name grew into "Tifa or Card Name Aerith", which no card is named.
+		List<ActionAbility> abilities = CardData.parseActionAbilities(
+				"[[s]]Power Cleave[[/]] 《S》《Dull》, dull 1 active Card Name Tifa or Card Name Aerith: "
+				+ "Choose 2 Forwards. Break them.");
+		assertEquals(1, abilities.size());
+		DullForwardCost cost = abilities.get(0).dullForwardCosts().get(0);
+		assertEquals("Tifa",   cost.cardName());
+		assertEquals("Aerith", cost.orCardName());
+
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForward("Aerith", "Fire", 2, 5000));
+		assertTrue(mw.autoAbilityTriggers.dullForwardCostSatisfied(cost, true),
+				"the alternative name pays it too");
+	}
+
+	@Test
+	void theImperativeOpponentDamageWordingParses() {
+		// Palom 2-015H's Comet reads "Deal your opponent 1 point of damage." with no subject — a
+		// record that only became visible once his ability stopped being read as a field ability.
+		assertNotNull(ActionResolver.parse("Deal your opponent 1 point of damage.", null));
+		assertEquals("DealPlayerDamageToOpponent",
+				ActionResolver.matchedPatternName("Deal your opponent 1 point of damage.", null));
+	}
+
+	// =========================================================================================
+	// Prompto 27-068R: "The Card Name Noctis Forward you control gains Brave and \"This Forward
+	// can attack twice per turn.\""
+	//
+	// The only multi-attack permission in the corpus handed out by a card other than the one that
+	// attacks. Its two halves travel separately: the keyword as an ordinary FieldPowerGrant
+	// filtered by card name, the permission through MainWindow.maxAttacksPerTurn, which scans the
+	// controller's field rather than the attacker's own text. Both are read, so the sentence is
+	// only claimed where it is honoured.
+	// =========================================================================================
+
+	private static final String PROMPTO_GRANT =
+			"The Card Name Noctis Forward you control gains Brave and "
+			+ "\"This Forward can attack twice per turn.\"";
+
+	/** Prompto on P1 idx 0, with {@code allies} seated after him. */
+	private static MainWindow boardWithPrompto(CardData... allies) {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeGrantingForward("Prompto", PROMPTO_GRANT));
+		for (CardData ally : allies) placeP1Forward(mw, ally);
+		return mw;
+	}
+
+	/** A Forward carrying both the FieldAbility and the FieldPowerGrant parsed from {@code text}. */
+	private static CardData makeGrantingForward(String name, String text) {
+		return new CardData(null, name, "Fire", 3, 7000, "Forward", false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				List.of(), List.of(), CardData.parseFieldAbilities(text, "Forward"), List.of(),
+				CardData.parseFieldPowerGrants(text, "Forward"),
+				List.of(), List.of(), List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false,
+				CardData.parseMaxAttacksPerTurn(text, name),
+				null, null, null, text);
+	}
+
+	@Test
+	void promptoGrantParsesAsANameFilteredTraitGrant() {
+		List<FieldPowerGrant> grants = CardData.parseFieldPowerGrants(PROMPTO_GRANT, "Forward");
+		assertEquals(1, grants.size(), "the trait half is an ordinary field grant");
+		FieldPowerGrant g = grants.get(0);
+		assertEquals("Noctis", g.inclCardName());
+		assertEquals(Set.of(CardData.Trait.BRAVE), g.grantedTraits());
+		assertEquals(0, g.powerBonus(), "the sentence grants no power");
+		assertFalse(g.affectsOpponent());
+	}
+
+	@Test
+	void theQuotedHalfIsReadAsAMultiAttackPermission() {
+		CardData.NamedMaxAttacksGrant g = CardData.parseNamedMaxAttacksGrant(PROMPTO_GRANT);
+		assertNotNull(g);
+		assertEquals("Noctis", g.cardName());
+		assertEquals(2, g.maxAttacks());
+	}
+
+	@Test
+	void aQuotationTheEngineCannotHonourIsNotClaimedAtAll() {
+		// The grant is only taken where both halves land. A quotation that is not a permission
+		// leaves the trait half unparsed too, rather than granting Brave and dropping the rest.
+		String unknown = "The Card Name Noctis Forward you control gains Brave and "
+				+ "\"This Forward wins the game.\"";
+		assertNull(CardData.parseNamedMaxAttacksGrant(unknown));
+		assertTrue(CardData.parseFieldPowerGrants(unknown, "Forward").isEmpty());
+	}
+
+	@Test
+	void promptoHandsNoctisBraveAndASecondAttack() {
+		MainWindow mw = boardWithPrompto(makeForward("Noctis", "Fire", 5, 9000));
+		CardData noctis = mw.p1ForwardCards.get(1);
+
+		assertTrue(mw.effectiveP1HasTrait(1, CardData.Trait.BRAVE), "the keyword half");
+		assertEquals(2, mw.maxAttacksPerTurn(noctis), "the quoted half");
+	}
+
+	@Test
+	void theGrantIsNameFilteredOnBothHalves() {
+		MainWindow mw = boardWithPrompto(makeForward("Ignis", "Fire", 4, 8000));
+		CardData ignis = mw.p1ForwardCards.get(1);
+
+		assertFalse(mw.effectiveP1HasTrait(1, CardData.Trait.BRAVE));
+		assertEquals(1, mw.maxAttacksPerTurn(ignis), "and no second attack either");
+	}
+
+	@Test
+	void thePermissionLapsesWithTheGranter() {
+		MainWindow mw = boardWithPrompto(makeForward("Noctis", "Fire", 5, 9000));
+		CardData noctis = mw.p1ForwardCards.get(1);
+		assertEquals(2, mw.maxAttacksPerTurn(noctis));
+
+		mw.lostAbilitiesCards.add(mw.p1ForwardCards.get(0));
+		assertEquals(1, mw.maxAttacksPerTurn(noctis),
+				"a granter that has lost its abilities grants nothing");
+	}
+
+	@Test
+	void aNoctisAcrossTheTableIsUnaffected() {
+		MainWindow mw = boardWithPrompto();
+		CardData oppNoctis = makeForward("Noctis", "Fire", 5, 9000);
+		mw.gameState.getIdentity().put(oppNoctis, false);
+		mw.placeP2CardInForwardZone(oppNoctis);
+
+		assertEquals(1, mw.maxAttacksPerTurn(oppNoctis), "the grant reads \"you control\"");
+	}
+
+	// =========================================================================================
+	// Clive 26-005H: "Clive gains all the special abilities of the Job Eikon you own removed from
+	// the game."
+	//
+	// A continuous grant over a zone that keeps moving, so the borrowed abilities are recomputed
+	// per query rather than copied once. They are handed back as printed and activated against
+	// Clive as their source, which is what makes their 《S》 cost ask for a card named Clive rather
+	// than one named after the Eikon that printed the ability.
+	// =========================================================================================
+
+	private static final String CLIVE_GRANT =
+			"Clive gains all the special abilities of the Job Eikon you own removed from the game.";
+
+	private static final String SPITFLARE_TEXT =
+			"[[s]]Spitflare[[/]] 《S》: Choose 1 Forward. Deal it 10000 damage.";
+
+	/** A Forward with the given Job, whose action abilities are parsed from {@code text}. */
+	private static CardData makeJobForwardWithAbilities(String name, String job, String text) {
+		return new CardData(null, name, "Fire", 3, 7000, "Forward", false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				CardData.parseActionAbilities(text), List.of(), List.of(), List.of(), List.of(),
+				List.of(), List.of(), List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				job, null, null, text);
+	}
+
+	/** Clive on P1 idx 0, with {@code removed} sitting in P1's removed-from-game zone. */
+	private static MainWindow boardWithClive(CardData... removed) {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeFieldAbilityForward("Clive", CLIVE_GRANT));
+		for (CardData card : removed) {
+			mw.gameState.getIdentity().put(card, true);
+			mw.gameState.addToPermanentRfp(card);
+		}
+		return mw;
+	}
+
+	@Test
+	void theCliveGrantParsesToItsJob() {
+		assertEquals("Eikon", CardData.parseRfgJobSpecialAbilityGrant(CLIVE_GRANT, "Clive"));
+	}
+
+	@Test
+	void theGrantIsNameCheckedAgainstItsCarrier() {
+		assertNull(CardData.parseRfgJobSpecialAbilityGrant(CLIVE_GRANT, "Joshua"),
+				"the sentence names who gains the abilities");
+	}
+
+	@Test
+	void cliveBorrowsTheSpecialsOfARemovedEikon() {
+		CardData ifrit = makeJobForwardWithAbilities("Ifrit (XVI)", "Eikon", SPITFLARE_TEXT);
+		assertEquals(1, ifrit.actionAbilities().size(), "Spitflare must parse for the test to mean anything");
+
+		MainWindow mw = boardWithClive(ifrit);
+		List<ActionAbility> borrowed = mw.rfgJobSpecialAbilities(mw.p1ForwardCards.get(0), true);
+
+		assertEquals(1, borrowed.size());
+		assertEquals("Spitflare", borrowed.get(0).abilityName());
+		assertTrue(borrowed.get(0).isSpecial());
+		assertEquals("Choose 1 Forward. Deal it 10000 damage.", borrowed.get(0).effectText());
+	}
+
+	@Test
+	void anEmptyRemovedZoneLendsNothing() {
+		MainWindow mw = boardWithClive();
+		assertTrue(mw.rfgJobSpecialAbilities(mw.p1ForwardCards.get(0), true).isEmpty());
+	}
+
+	@Test
+	void onlyTheNamedJobIsBorrowedFrom() {
+		CardData notAnEikon = makeJobForwardWithAbilities("Torgal", "Wolf", SPITFLARE_TEXT);
+		MainWindow mw = boardWithClive(notAnEikon);
+		assertTrue(mw.rfgJobSpecialAbilities(mw.p1ForwardCards.get(0), true).isEmpty(),
+				"the grant names Job Eikon");
+	}
+
+	@Test
+	void onlySpecialAbilitiesAreBorrowed() {
+		CardData eikon = makeJobForwardWithAbilities("Garuda (XVI)", "Eikon",
+				"《Wind》《Dull》: Choose 1 Forward. Deal it 3000 damage.");
+		assertEquals(1, eikon.actionAbilities().size());
+		assertFalse(eikon.actionAbilities().get(0).isSpecial(), "an ordinary action ability");
+
+		MainWindow mw = boardWithClive(eikon);
+		assertTrue(mw.rfgJobSpecialAbilities(mw.p1ForwardCards.get(0), true).isEmpty(),
+				"the sentence says special abilities");
+	}
+
+	@Test
+	void theBorrowedListFollowsTheZoneAndTheCarrier() {
+		CardData ifrit = makeJobForwardWithAbilities("Ifrit (XVI)", "Eikon", SPITFLARE_TEXT);
+		MainWindow mw = boardWithClive(ifrit);
+		CardData clive = mw.p1ForwardCards.get(0);
+		assertEquals(1, mw.rfgJobSpecialAbilities(clive, true).size());
+
+		mw.gameState.removeFromPermanentRfp(ifrit);
+		assertTrue(mw.rfgJobSpecialAbilities(clive, true).isEmpty(),
+				"the pile is re-read per query, not copied once");
+
+		mw.gameState.addToPermanentRfp(ifrit);
+		mw.lostAbilitiesCards.add(clive);
+		assertTrue(mw.rfgJobSpecialAbilities(clive, true).isEmpty(),
+				"and a Clive with no abilities borrows none");
+	}
+
+	@Test
+	void theOpponentsRemovedEikonsAreNotYours() {
+		CardData ifrit = makeJobForwardWithAbilities("Ifrit (XVI)", "Eikon", SPITFLARE_TEXT);
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeFieldAbilityForward("Clive", CLIVE_GRANT));
+		mw.gameState.getIdentity().put(ifrit, false);
+		mw.gameState.addToPermanentRfp(ifrit);
+
+		assertTrue(mw.rfgJobSpecialAbilities(mw.p1ForwardCards.get(0), true).isEmpty(),
+				"the grant reads \"you own\"");
+	}
+
+	@Test
+	void aBorrowedSpecialThatNamesItsOwnCardIsRePointedAtTheCarrier() {
+		// Odin (XVI) 24-112L. Both halves of Iron Flash resolve by name at runtime, so left as
+		// printed they would activate an Odin that is not on the field.
+		CardData odin = makeJobForwardWithAbilities("Odin (XVI)", "Eikon",
+				"[[s]]Iron Flash[[/]] 《S》: Activate Odin (XVI). Odin (XVI) can attack once more this turn.");
+		MainWindow mw = boardWithClive(odin);
+		CardData clive = mw.p1ForwardCards.get(0);
+
+		ActionAbility borrowed = mw.rfgJobSpecialAbilities(clive, true).get(0);
+		assertEquals("Activate Clive. Clive can attack once more this turn.", borrowed.effectText());
+		assertNotNull(ActionResolver.parse(borrowed.effectText(), clive),
+				"and the rewritten text still resolves");
+	}
+
+	@Test
+	void theRewriteLeavesTheCostsAndRestrictionsAlone() {
+		// Garuda (XVI) 29-046L's Aerial Blast — the other Eikon special that names itself, and the
+		// one that carries costs and restrictions worth checking survive the copy.
+		CardData garuda = makeJobForwardWithAbilities("Garuda (XVI)", "Eikon",
+				"[[s]]Aerial Blast[[/]] 《S》《5》《Dull》: Garuda (XVI) deals your opponent 1 point of damage. "
+				+ "You can only use this ability during your turn and only once per turn.");
+		MainWindow mw = boardWithClive(garuda);
+
+		ActionAbility borrowed = mw.rfgJobSpecialAbilities(mw.p1ForwardCards.get(0), true).get(0);
+		// The restriction sentence stays in the text alongside the flags parsed out of it; what
+		// matters here is that only the name moved.
+		assertEquals("Clive deals your opponent 1 point of damage. "
+				+ "You can only use this ability during your turn and only once per turn.",
+				borrowed.effectText());
+		assertEquals("Aerial Blast", borrowed.abilityName());
+		assertTrue(borrowed.isSpecial());
+		assertTrue(borrowed.requiresDull());
+		assertEquals(5, borrowed.cpCost().size(), "the 《5》 is paid as printed");
+		assertTrue(borrowed.yourTurnOnly());
+		assertTrue(borrowed.oncePerTurn());
+	}
+
+	@Test
+	void aSpecialThatNamesNobodyIsHandedBackVerbatim() {
+		CardData ifrit = makeJobForwardWithAbilities("Ifrit (XVI)", "Eikon", SPITFLARE_TEXT);
+		MainWindow mw = boardWithClive(ifrit);
+
+		assertEquals("Choose 1 Forward. Deal it 10000 damage.",
+				mw.rfgJobSpecialAbilities(mw.p1ForwardCards.get(0), true).get(0).effectText());
+	}
+
+	@Test
+	void theRewriteIsANoOpWhenBorrowerAndPrinterShareAName() {
+		assertEquals("Activate Clive.",
+				ActionResolver.substituteSourceName("Activate Clive.", "Clive", "Clive"));
+		assertEquals("Activate Clive.",
+				ActionResolver.substituteSourceName("Activate Odin (XVI).", "Odin (XVI)", "Clive"),
+				"and a parenthesised name is replaced literally, parentheses and all");
+	}
 }

@@ -1978,8 +1978,10 @@ public record CardData(
         "((?i)(?:,\\s*)?return\\s+[^:]+?\\s+to\\s+(?:its|their)\\s+owner(?:'s|s')?\\s+hand\\s*)?" + // group 9: optional return-to-hand cost phrase
         "((?i)(?:,\\s*)?remove\\s+(?:\\d+|X)\\s+[^:]+?\\s+Counters?\\s+from\\s+[^:,]+?\\s*)?" +     // group 10: optional counter-removal cost phrase ("remove X …" defers the amount to activation)
         "(?<dullcost>(?i)(?:,\\s*)?Dull\\s+(?:a\\s+total\\s+of\\s+)?(?<dullcount>\\d+)?\\s*(?<dullcond>active|dull|damaged)?\\s*" + // group 11 (named): optional Dull N? [cond] Forward(s) cost — simple, Card Name, or bare-name form
-        "(?:Card\\s+Name\\s+.+?\\s+Forwards?" +                                              // named-card branch: "Dull N [cond] Card Name X Forward [and N [cond] Card Name Y Forward]"
-        "(?:\\s+and\\s+\\d+\\s*(?:active|dull|damaged)?\\s*Card\\s+Name\\s+.+?\\s+Forwards?)*" +
+        // The card-type suffix is optional: Monk 10-084C prints "Dull 1 active Card Name Monk:"
+        // with no "Forward" after the name, and requiring it dropped the whole ability.
+        "(?:Card\\s+Name\\s+.+?(?:\\s+(?:Forwards?|Backups?|Monsters?|Characters?))?" +      // named-card branch: "Dull N [cond] Card Name X [Forward] [and N [cond] Card Name Y Forward]"
+        "(?:\\s+and\\s+\\d+\\s*(?:active|dull|damaged)?\\s*Card\\s+Name\\s+.+?(?:\\s+(?:Forwards?|Backups?|Monsters?|Characters?))?)*" +
         "|Category\\s+(?<dullcat>[A-Za-z0-9][A-Za-z0-9\\s''\\-]*?)(?:\\s+(?:Forwards?|Backups?|Monsters?|Characters?))?" + // category branch
         "|Job\\s+(?<dulljob>[A-Za-z][A-Za-z''\\s\\-]*?)(?:\\s+(?:Forwards?|Backups?|Monsters?|Characters?))?(?:\\s+(?:and/)?or\\s+Card\\s+Name\\s+[^:]+?)?" + // job branch: "Dull N [cond] Job X [and/or Card Name Y]"
         "|(?<dullelem>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)?\\s*" + // standard branch
@@ -2043,8 +2045,19 @@ public record CardData(
      * out on its own, this pattern is run over the extracted cost text with nothing behind it.
      */
     private static final Pattern DULL_COST_ITEM_PATTERN = Pattern.compile(
-        "(?i)Dull\\s+(?:a\\s+total\\s+of\\s+)?(?<count>\\d+)\\s*(?<cond>active|dull|damaged)?\\s*" +
-        "(?:Card\\s+Name\\s+(?<cardname>.+?)\\s+Forwards?" +
+        // "and" leads every item after the first: the cost text says "Dull" once and joins the rest
+        // with it (Ceodore 11-117R, "Dull 1 active Card Name Cecil Forward and 1 active Card Name
+        // Rosa Forward"). The scan is a find() loop, so without this arm it stopped after the item
+        // the word "Dull" introduced and the second Forward was never required. A digit has to
+        // follow, which is what keeps it off the "and" inside an item's own filter text.
+        "(?i)(?:Dull|and)\\s+(?:a\\s+total\\s+of\\s+)?(?<count>\\d+)\\s*(?<cond>active|dull|damaged)?\\s*" +
+        // Suffix optional for the same reason ACTION_ABILITY_PATTERN's named-card branch makes it
+        // optional; the trailing DULL_ITEM_END still forces the lazy name out to its full width.
+        // The "or Card Name Y" alternative is the Job branch's {@code joborcardname} in the shape
+        // Cloud 29-005L prints it ("dull 1 active Card Name Tifa or Card Name Aerith"); without it
+        // the lazy name grew straight through the alternative into a name no card has.
+        "(?:Card\\s+Name\\s+(?<cardname>.+?)(?:\\s+(?:Forwards?|Backups?|Monsters?|Characters?))?" +
+        "(?:\\s+or\\s+Card\\s+Name\\s+(?<cardorname>.+?)(?:\\s+(?:Forwards?|Backups?|Monsters?|Characters?))?)?" +
         "|Category\\s+(?<category>[A-Za-z0-9][A-Za-z0-9\\s''\\-]*?)(?:\\s+(?:Forwards?|Backups?|Monsters?|(?<catchar>Characters?)))?" + DULL_ITEM_END +
         // The Job branch takes its own exclusion group, ahead of the item-end lookahead: that
         // lookahead is what forces the greedy card-name capture to keep growing, and it grew right
@@ -5322,6 +5335,60 @@ public record CardData(
     );
 
     /**
+     * Matches "The Card Name X [Forward] you control gains Trait[s] and "[quoted permission]"."
+     * — Prompto 27-068R, the only corpus printing that hands a <em>named</em> Forward a keyword
+     * and a quoted rules permission in the same sentence.
+     *
+     * <p>Its own pattern rather than a widening of {@link #FIELD_GRANT_CARD_NAME_TRAIT_ALWAYS},
+     * which anchors its trait list to the end of the sentence: letting that one run on would
+     * grant the keyword and silently drop the quotation, the half-an-ability failure
+     * {@link #parseSelfGainsQuotedGrant} declines for the same reason. Both halves are read —
+     * the traits by {@link #parseFieldPowerGrants}, the quotation by
+     * {@link #parseNamedMaxAttacksGrant} — so the sentence is only claimed where it is honoured.
+     *
+     * <p>Groups: {@code cardname}, {@code traitstext}, {@code quoted}.
+     */
+    private static final Pattern FIELD_GRANT_CARD_NAME_TRAIT_AND_QUOTED = Pattern.compile(
+        "(?i)^(?:The\\s+)?Card\\s+Name\\s+(?<cardname>.+?)" +
+        "(?:\\s+(?:Forwards?|Backups?|Monsters?|Characters?))?\\s+you\\s+control\\s+gains?\\s+" +
+        "(?<traitstext>(?:Haste|Brave|First\\s+Strike|Back\\s+Attack)" +
+        "(?:\\s*(?:,|and)\\s*(?:Haste|Brave|First\\s+Strike|Back\\s+Attack))*)" +
+        "\\s+and\\s+\"(?<quoted>[^\"]+)\"[.!]?$"
+    );
+
+    /**
+     * The multi-attack permission a {@link #FIELD_GRANT_CARD_NAME_TRAIT_AND_QUOTED} sentence hands
+     * the card it names, or {@code null} when {@code effectText} is not that sentence or its
+     * quotation is not a permission this engine can honour.
+     *
+     * @param cardName    the name the grant targets ("Noctis")
+     * @param maxAttacks  how many attacks per turn the quotation allows; always &gt; 1
+     */
+    record NamedMaxAttacksGrant(String cardName, int maxAttacks) {}
+
+    /**
+     * Parses the quoted half of a named-Forward grant into a {@link NamedMaxAttacksGrant}, or
+     * {@code null} when the text is not one.
+     *
+     * <p>The quotation's subject is written from the grantee's point of view ("This Forward can
+     * attack twice per turn."), so it is matched against the demonstrative wordings as well as
+     * against the granted name — a printing that spelled the name out reads the same way here.
+     */
+    static NamedMaxAttacksGrant parseNamedMaxAttacksGrant(String effectText) {
+        if (effectText == null) return null;
+        Matcher m = FIELD_GRANT_CARD_NAME_TRAIT_AND_QUOTED.matcher(effectText.trim());
+        if (!m.matches()) return null;
+        String cardName = m.group("cardname").trim();
+        Matcher at = FIELD_CAN_ATTACK_TWICE.matcher(m.group("quoted").trim());
+        if (!at.matches()) return null;
+        String subject = at.group("cardname").trim();
+        if (!subject.equalsIgnoreCase(cardName)
+                && !subject.matches("(?i)This\\s+(?:Forward|Character|Monster|Backup)")) return null;
+        String count = at.group("count");
+        return new NamedMaxAttacksGrant(cardName, count != null ? Integer.parseInt(count) : 2);
+    }
+
+    /**
      * Matches a cost-filtered same-side grant with optional power and/or traits:
      * "The [type] of cost N you control gain[s] [+P power [and]] [Trait...]"
      * Groups: {@code targets}, {@code cost}, {@code power} (optional), {@code traitstext} (optional).
@@ -5896,6 +5963,22 @@ public record CardData(
                 result.add(new FieldPowerGrant(null, null, true, true, true, null,
                         power, traits, false, -1, null, null,
                         cnM.group("cardname").trim()));
+                continue;
+            }
+
+            // Must precede the two trait-only Card Name readers: this sentence opens exactly as
+            // they do and continues into a quotation, which they would drop.
+            Matcher cnTraitQuotedM = FIELD_GRANT_CARD_NAME_TRAIT_AND_QUOTED.matcher(seg);
+            if (cnTraitQuotedM.matches() && parseNamedMaxAttacksGrant(seg) != null) {
+                String traitsText = cnTraitQuotedM.group("traitstext");
+                EnumSet<Trait> traits = EnumSet.noneOf(Trait.class);
+                if (ICB_EFFECT_HASTE.matcher(traitsText).find())        traits.add(Trait.HASTE);
+                if (ICB_EFFECT_BRAVE.matcher(traitsText).find())        traits.add(Trait.BRAVE);
+                if (ICB_EFFECT_FIRST_STRIKE.matcher(traitsText).find()) traits.add(Trait.FIRST_STRIKE);
+                if (ICB_EFFECT_BACK_ATTACK.matcher(traitsText).find())  traits.add(Trait.BACK_ATTACK);
+                result.add(new FieldPowerGrant(null, null, true, true, true, null, 0, traits,
+                        false, -1, null, null, cnTraitQuotedM.group("cardname").trim(),
+                        0, 0, null, false, false));
                 continue;
             }
 
@@ -7363,6 +7446,31 @@ public record CardData(
     );
 
     /**
+     * "[Self] gains all the special abilities of the Job [Job] you own removed from the game."
+     * — Clive 26-005H, whose Priming pile is Job Eikon.
+     *
+     * <p>A continuous grant, not a one-shot copy: the borrowed abilities are whatever is sitting in
+     * the owner's removed-from-game zone at the moment the question is asked, so the reader is run
+     * per query rather than at parse time. Group {@code cardname} is name-checked against the
+     * carrier by {@link #parseRfgJobSpecialAbilityGrant}; {@code job} is the pile it opens.
+     */
+    private static final Pattern SELF_GAINS_RFG_JOB_SPECIAL_ABILITIES = Pattern.compile(
+        "(?i)^(?<cardname>.+?)\\s+gains?\\s+all\\s+the\\s+special\\s+abilities\\s+of\\s+the\\s+" +
+        "Job\\s+(?<job>[A-Za-z][A-Za-z''\\s\\-]*?)\\s+you\\s+own\\s+removed\\s+from\\s+the\\s+game[.!]?\\s*$"
+    );
+
+    /**
+     * The Job whose removed-from-game Special abilities {@code effectText} hands {@code cardName},
+     * or {@code null} when the text is not that grant or names another card.
+     */
+    static String parseRfgJobSpecialAbilityGrant(String effectText, String cardName) {
+        if (effectText == null || cardName == null) return null;
+        Matcher m = SELF_GAINS_RFG_JOB_SPECIAL_ABILITIES.matcher(effectText.trim());
+        if (!m.matches() || !m.group("cardname").trim().equalsIgnoreCase(cardName)) return null;
+        return m.group("job").trim();
+    }
+
+    /**
      * Matches "You may use [Target]'s special ability by discarding a[n] [Substitute] instead of
      * discarding a Card Name [Target] as part of the cost."
      * Groups: {@code target} — whose special ability; {@code subName} — substitute card name;
@@ -7865,7 +7973,8 @@ public record CardData(
                         String elem      = contM.group("elem");
                         String job       = contM.group("job");
                         String category  = contM.group("category");
-                        String jobOrName = contM.group("joborcardname");
+                        String jobOrName = contM.group("joborcardname") != null
+                                         ? contM.group("joborcardname") : contM.group("cardorname");
                         boolean inclBkps = contM.group("orbackup") != null || contM.group("sameelembackup") != null;
                         boolean isChar   = contM.group("catchar") != null || contM.group("jobchar") != null
                                         || contM.group("stdchar") != null || inclBkps;
@@ -7894,7 +8003,8 @@ public record CardData(
             String elem        = m.group("elem");
             String job         = m.group("job");
             String category    = m.group("category");
-            String jobOrName   = m.group("joborcardname");
+            String jobOrName   = m.group("joborcardname") != null
+                               ? m.group("joborcardname") : m.group("cardorname");
             // "Forwards or Backups" and plain "Backups [of the same Element]" forms include non-Forward characters
             boolean inclBackups = m.group("orbackup") != null || m.group("sameelembackup") != null;
             boolean isChar     = m.group("catchar") != null

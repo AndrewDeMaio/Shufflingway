@@ -133,6 +133,31 @@ public record ActionAbility(
                 usableByEitherPlayer, requiresSelfPowerAtLeast, null);
     }
 
+    /**
+     * A copy carrying {@code newEffectText} in place of {@link #effectText()}, with every cost and
+     * restriction left as printed. Used when an ability is lent to a card other than the one that
+     * printed it and its text has to be re-pointed at the borrower
+     * ({@code MainWindow.rfgJobSpecialAbilities}).
+     */
+    public ActionAbility withEffectText(String newEffectText) {
+        if (newEffectText.equals(effectText())) return this;
+        return new ActionAbility(abilityName(), requiresDull(), isSpecial(), crystalCost(),
+                selfMillCost(), hasXCost(), cpCost(), breakZoneCosts(), discardCosts(),
+                removeFromGameCosts(), returnToHandCosts(), counterCosts(), dullForwardCosts(),
+                yourTurnOnly(), opponentTurnOnly(), oncePerTurn(), mainPhaseOnly(),
+                whileCardAttacking(), whileCardBlocking(), whilePartyAttacking(), whileCardInHand(),
+                hasBlockingTargetEffect(), newEffectText, damageThreshold(), controlCondition(),
+                cpBackupElement(), cpAllowedElements(), sourceInBattle(), requiresOppDiscardedThisTurn(),
+                requiresCastSummonThisTurn(), requiresElementForwardEnteredThisTurn(),
+                requiresCardNameEnteredThisTurn(), breakZoneOnly(), requiresOpponentEmptyHand(),
+                requiresSelfEmptyHand(), requiresNamedCardTookDamageThisTurn(), requiresSelfReceivedDamageThisTurn(),
+                requiresForwardPutToBZThisTurn(), requiresJobPutToBZThisTurn(), blockerForAttacker(),
+                ownBreakZoneNameRequired(), counterScaleName(), minCounterRequired(), minCounterType(),
+                maxOpponentHandSize(), requiresSourceIsForward(), maxCounterAllowed(), maxCounterType(),
+                inlineCostReductionJob(), inlineCostReductionExcludeName(), requiresOwnWarpCard(),
+                usableByEitherPlayer(), requiresSelfPowerAtLeast(), bottomOfDeckCostCardName());
+    }
+
     /** A copy whose cost also puts {@code cardName} at the bottom of its owner's deck. */
     public ActionAbility withBottomOfDeckCost(String cardName) {
         return new ActionAbility(abilityName(), requiresDull(), isSpecial(), crystalCost(),

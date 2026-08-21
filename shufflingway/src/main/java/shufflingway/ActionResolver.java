@@ -4349,6 +4349,28 @@ public class ActionResolver {
         return ctx -> ctx.useSpecialAbilityUsedThisTurn(source, excludedName);
     }
 
+    /**
+     * {@code effectText} re-pointed from the card that printed it at the card now using it: every
+     * mention of {@code printedName} becomes {@code userName}.
+     *
+     * <p>An ability lent across cards keeps naming its original owner — Odin (XVI) 24-112L's Iron
+     * Flash reads "Activate Odin (XVI). Odin (XVI) can attack once more this turn.", and a card
+     * that borrowed it would activate an Odin that is not on the field. Both borrowers do the same
+     * rewrite: Gogo's Mimic, replaying a special used this turn, and Clive 26-005H, holding the
+     * specials of the Eikons removed from the game.
+     *
+     * <p>Literal replacement, not word-bounded: the printed names this sees are full card names
+     * (parentheses and all), and the resolver matches them the same way.
+     *
+     * <p>Returns the text unchanged when the two names are equal, so a card borrowing from a copy
+     * of itself is a no-op rather than a self-substitution.
+     */
+    static String substituteSourceName(String effectText, String printedName, String userName) {
+        if (effectText == null || printedName == null || userName == null) return effectText;
+        if (printedName.equals(userName)) return effectText;
+        return effectText.replace(printedName, userName);
+    }
+
     /** True when {@code text} is Gogo's "Mimic" effect (see {@link #USE_SPECIAL_ABILITY_USED_THIS_TURN}). */
     static boolean isUseSpecialAbilityUsedThisTurnEffect(String text) {
         return text != null && USE_SPECIAL_ABILITY_USED_THIS_TURN.matcher(text.trim()).matches();

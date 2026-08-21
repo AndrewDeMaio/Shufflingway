@@ -4627,7 +4627,15 @@ final class AutoAbilityTriggers {
 		// by name, so a second copy of him cannot pay it either.
 		if (dfc.exceptCardName() != null
 				&& CardFilters.meetsCardNameFilter(card, dfc.exceptCardName())) return false;
-		if (dfc.cardName() != null && !card.name().equalsIgnoreCase(dfc.cardName())) return false;
+		if (dfc.cardName() != null) {
+			// Cloud 29-005L pays with either of two named Forwards ("dull 1 active Card Name Tifa
+			// or Card Name Aerith"), the same alternative the Job branch below reads off the same
+			// field. Without it his special ability could never be paid for with Aerith.
+			boolean nameMatch   = card.name().equalsIgnoreCase(dfc.cardName());
+			boolean orNameMatch = dfc.orCardName() != null
+					&& card.name().equalsIgnoreCase(dfc.orCardName());
+			if (!nameMatch && !orNameMatch) return false;
+		}
 		if (dfc.element()  != null && !dfc.element().isEmpty() && !mw.effectiveContainsElement(card, dfc.element())) return false;
 		if (dfc.job() != null) {
 			boolean jobMatch    = card.hasJob(dfc.job());
@@ -4878,7 +4886,12 @@ final class AutoAbilityTriggers {
 	void addAbilityMenuItems(JPopupMenu menu, CardData card, boolean isFrozen,
 			CardState state, int playedTurn, Runnable applyDull, boolean isP1) {
 		if (mw.lostAbilitiesCards.contains(card)) return;
-		List<ActionAbility> abilities = card.actionAbilities();
+		// Printed abilities first, then the ones borrowed from the removed-from-game zone (Clive
+		// 26-005H). Borrowed specials join this list rather than the temp-granted one below so they
+		// go through the same phase and 《S》-cost checks a printed special does; the temp list is
+		// for cost-free once-per-turn copies, which these are not.
+		List<ActionAbility> abilities = new ArrayList<>(card.actionAbilities());
+		abilities.addAll(mw.rfgJobSpecialAbilities(card, isP1));
 		List<ActionAbility> tempAbilities = (isP1 ? mw.p1TempGrantedAbilities : mw.p2TempGrantedAbilities)
 				.getOrDefault(card, List.of());
 		// Medusa grants a petrified Forward "《5》: Remove all Petrification Counters from this Forward."

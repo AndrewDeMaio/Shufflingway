@@ -443,11 +443,10 @@ public class CardDatabase implements AutoCloseable {
      * <p>Corrections go in both directions.
      */
     private static final List<MulticardFix> MULTICARD_CORRECTIONS = List.of(
-            // Summoner — scrapes as 0, but the card carries the generic icon and every other
-            // Summoner print does too, its own reprint 6-032C/1-040C included.
             new MulticardFix("1-040C", true),
             new MulticardFix("7-067L", false),
-            new MulticardFix("16-025C", true)
+            new MulticardFix("16-025C", true),
+            new MulticardFix("24-110L", false)
     );
 
     /**

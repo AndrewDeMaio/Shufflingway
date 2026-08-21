@@ -11367,6 +11367,44 @@ public class MainWindow {
 		return out;
 	}
 
+	/**
+	 * The Special abilities {@code card} borrows from {@code isP1}'s removed-from-game zone — Clive
+	 * 26-005H, "Clive gains all the special abilities of the Job Eikon you own removed from the
+	 * game."
+	 *
+	 * <p>Recomputed per query rather than stored, for the reason {@link #syncRfgRemovedPlayables}
+	 * is: the grant is a field ability over a zone that keeps moving, so it has to follow both the
+	 * pile and the carrier's presence on the field. The abilities are activated against
+	 * {@code card} as their source, which is what makes the 《S》 cost ask for a card named after
+	 * the carrier rather than after the Eikon that printed the ability.
+	 *
+	 * <p>Their text is re-pointed at the carrier for the same reason, through the rewrite Gogo's
+	 * Mimic uses: two Eikon specials name their own card — Odin (XVI) 24-112L's Iron Flash
+	 * ("Activate Odin (XVI). Odin (XVI) can attack once more this turn.") and Garuda (XVI)
+	 * 29-046L's Aerial Blast — and left as printed they would act on an Odin that is not on the
+	 * field. Costs and restrictions are untouched: only the effect names the wrong card.
+	 *
+	 * <p>Read through {@link #effectiveFieldAbilities} so a granted copy of the sentence opens the
+	 * same pile a printed one does.
+	 */
+	List<ActionAbility> rfgJobSpecialAbilities(CardData card, boolean isP1) {
+		if (card == null || lostAbilitiesCards.contains(card)) return List.of();
+		List<ActionAbility> out = new ArrayList<>();
+		for (FieldAbility fa : effectiveFieldAbilities(card)) {
+			String job = CardData.parseRfgJobSpecialAbilityGrant(fa.effectText(), card.name());
+			if (job == null) continue;
+			for (CardData removed : isP1 ? gameState.getP1PermanentRfp() : gameState.getP2PermanentRfp()) {
+				if (removed == null || !CardFilters.meetsJobFilter(removed, job)) continue;
+				for (ActionAbility aa : removed.actionAbilities()) {
+					if (!aa.isSpecial()) continue;
+					out.add(aa.withEffectText(ActionResolver.substituteSourceName(
+							aa.effectText(), removed.name(), card.name())));
+				}
+			}
+		}
+		return out;
+	}
+
 	/** Every Character on the side facing {@code isP1}: their Forwards, Backups and Monsters. */
 	private List<CardData> opposingCharacters(boolean isP1) {
 		List<CardData> out = new ArrayList<>(isP1 ? p2ForwardCards : p1ForwardCards);
@@ -12463,7 +12501,33 @@ public class MainWindow {
 		max = Math.max(max, attacksFromHandSizeGrant(card));
 		max = Math.max(max, attacksFromDamageThresholdGrant(card));
 		max = Math.max(max, attacksFromOppDullCharsGrant(card));
+		max = Math.max(max, attacksFromNamedGrant(card));
 		return max;
+	}
+
+	/**
+	 * Prompto 27-068R: "The Card Name Noctis Forward you control gains Brave and \"This Forward can
+	 * attack twice per turn.\"" — the only multi-attack permission in the corpus handed out by a
+	 * card other than the one that attacks, so it is read off the controller's field rather than
+	 * off {@code card}'s own text. The Brave granted in the same breath travels the ordinary route,
+	 * through {@code FieldGrantCalculator}, off the {@link FieldPowerGrant} the same sentence
+	 * produces.
+	 *
+	 * <p>Returns 0 when nothing on the field grants it, so it never lowers an existing permission.
+	 */
+	private int attacksFromNamedGrant(CardData card) {
+		Boolean side = fieldSideOf(card);
+		if (side == null) return 0;
+		int best = 0;
+		for (CardData src : fieldCards(side)) {
+			if (src == null || lostAbilitiesCards.contains(src)) continue;
+			for (FieldAbility fa : effectiveFieldAbilities(src)) {
+				CardData.NamedMaxAttacksGrant g = CardData.parseNamedMaxAttacksGrant(fa.effectText());
+				if (g != null && CardFilters.meetsCardNameFilter(card, g.cardName()))
+					best = Math.max(best, g.maxAttacks());
+			}
+		}
+		return best;
 	}
 
 	/**
@@ -14699,12 +14763,8 @@ public class MainWindow {
 	 * checkpoint the player could not act at.
 	 */
 	private boolean p1HasActivatableAbilities() {
-		for (CardData c : p1ForwardCards)
-			if (!c.actionAbilities().isEmpty()) return true;
-		for (CardData c : p1BackupCards)
-			if (c != null && !c.actionAbilities().isEmpty()) return true;
-		for (CardData c : p1MonsterCards)
-			if (!c.actionAbilities().isEmpty()) return true;
+		for (CardData c : fieldCards(true))
+			if (hasFieldActionAbilities(c, true)) return true;
 		for (CardData c : gameState.getP1Hand())
 			if (c.castsAtSummonSpeed()) return true;
 		return false;
@@ -14712,15 +14772,21 @@ public class MainWindow {
 
 	/** Returns true if any P2 field card has at least one action ability. */
 	private boolean p2HasActivatableAbilities() {
-		for (CardData c : p2ForwardCards)
-			if (!c.actionAbilities().isEmpty()) return true;
-		for (CardData c : p2BackupCards)
-			if (c != null && !c.actionAbilities().isEmpty()) return true;
-		for (CardData c : p2MonsterCards)
-			if (!c.actionAbilities().isEmpty()) return true;
+		for (CardData c : fieldCards(false))
+			if (hasFieldActionAbilities(c, false)) return true;
 		for (CardData c : gameState.getP2Hand())
 			if (c.isSummon()) return true;
 		return false;
+	}
+
+	/**
+	 * Whether {@code c} has any action ability at all while on {@code isP1}'s field — printed, or
+	 * borrowed from the removed-from-game zone. Clive 26-005H prints none of his own, so asking
+	 * only {@link CardData#actionAbilities()} would skip every priority window he could act at.
+	 */
+	private boolean hasFieldActionAbilities(CardData c, boolean isP1) {
+		if (c == null) return false;
+		return !c.actionAbilities().isEmpty() || !rfgJobSpecialAbilities(c, isP1).isEmpty();
 	}
 
 	/**

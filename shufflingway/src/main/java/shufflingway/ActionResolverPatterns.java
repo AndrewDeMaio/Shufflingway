@@ -4954,13 +4954,14 @@ final class ActionResolverPatterns {
         "(?i)^Discard\\s+(\\d+)\\s+cards?[,.]?\\s+then\\s+draw\\s+(\\d+)\\s+cards?[.!]?"
     );
     /**
-     * Matches "&lt;subject&gt; deals your opponent N point(s) of damage."
+     * Matches "&lt;subject&gt; deals your opponent N point(s) of damage." and the bare imperative
+     * spelling of the same effect, "Deal your opponent N point(s) of damage." (Palom 2-015H).
      * <ul>
      *   <li>Group {@code amount} — number of damage points dealt to the opponent player</li>
      * </ul>
      */
     static final Pattern DEAL_PLAYER_DAMAGE_TO_OPPONENT = Pattern.compile(
-        "(?i).+?\\s+deals?\\s+your\\s+opponent\\s+(?<amount>\\d+)\\s+points?\\s+of\\s+damage[.!]?"
+        "(?i)^(?:.+?\\s+deals?|Deal)\\s+your\\s+opponent\\s+(?<amount>\\d+)\\s+points?\\s+of\\s+damage[.!]?$"
     );
     /**
      * Matches "&lt;subject&gt; deals you N point(s) of damage." or "receive N point(s) of damage."

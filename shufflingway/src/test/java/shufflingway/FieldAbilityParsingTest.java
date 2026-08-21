@@ -115,6 +115,9 @@ public class FieldAbilityParsingTest {
         if (ActionResolver.parse(fa.effectText(), source) != null) return true;
         if (!CardData.parseFieldPowerGrants(fa.effectText(), typeEn).isEmpty()) return true;
         if (!CardData.parseIfControlBoosts(fa.effectText(), typeEn).isEmpty()) return true;
+        // Clive 26-005H. Read by MainWindow.rfgJobSpecialAbilities against the removed-from-game
+        // zone; name-checked against the carrier there, so it is name-checked here too.
+        if (CardData.parseRfgJobSpecialAbilityGrant(fa.effectText(), source.name()) != null) return true;
         if (CardData.SELF_LIGHT_DARK_PLAY_EXCEPTION_PATTERN.matcher(fa.effectText()).matches()) return true;
         if (CardData.MULTI_LIGHT_DARK_PLAY_PATTERN.matcher(fa.effectText()).matches()) return true;
         if (CardData.MULTI_NAME_PLAY_PATTERN.matcher(fa.effectText()).matches()) return true;
@@ -563,6 +566,8 @@ public class FieldAbilityParsingTest {
         if (fwdGrant != null)
             return "ForwardAbilityGrant[" + (fwdGrant.affectsOpponent() ? "opponent's" : "your")
                     + " Forwards: " + fwdGrant.abilityText() + "]";
+        String rfgJob = CardData.parseRfgJobSpecialAbilityGrant(fa.effectText(), source.name());
+        if (rfgJob != null) return "RfgJobSpecialAbilityGrant[" + rfgJob + "]";
         Matcher m;
         m = CardData.SELF_LIGHT_DARK_PLAY_EXCEPTION_PATTERN.matcher(fa.effectText());
         if (m.matches()) return "SelfPlayException[" + m.group("element") + "]";
