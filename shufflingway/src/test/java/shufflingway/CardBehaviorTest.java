@@ -14,6 +14,7 @@ import java.util.function.Consumer;
 import java.util.function.Predicate;
 import java.util.regex.Matcher;
 
+import org.json.JSONObject;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
@@ -26834,5 +26835,405 @@ public class CardBehaviorTest {
 		assertEquals("Activate Clive.",
 				ActionResolver.substituteSourceName("Activate Odin (XVI).", "Odin (XVI)", "Clive"),
 				"and a parenthesised name is replaced literally, parentheses and all");
+	}
+	// =========================================================================================
+	// Rydia 28-072L: "During your opponent's turn, all the Forwards you control gain +2000 power."
+	//
+	// The mirror of the "during your turn" window FieldPowerGrant already carried. A real record
+	// component rather than an ANY_PARTY-style sentinel: yourTurnOnly is a boolean with no spare
+	// value to overload, and both sites that gate on a window now read the two together through
+	// MainWindow.fpgTurnWindowOpen.
+	// =========================================================================================
+
+	private static final String RYDIA_GRANT =
+			"During your opponent's turn, all the Forwards you control gain +2000 power.";
+
+	/** Rydia on P1 idx 0 with an ally behind her, and the turn set to the named player. */
+	private static MainWindow boardWithRydia(boolean p1sTurn) {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeGrantingForward("Rydia", RYDIA_GRANT));
+		placeP1Forward(mw, makeForward("Ally", "Earth", 3, 7000));
+		advanceTo(mw, p1sTurn ? GameState.Player.P1 : GameState.Player.P2, GameState.GamePhase.MAIN_1);
+		return mw;
+	}
+
+	@Test
+	void theOpponentTurnWindowIsCapturedRatherThanDropped() {
+		List<FieldPowerGrant> grants = CardData.parseFieldPowerGrants(RYDIA_GRANT, "Forward");
+		assertEquals(1, grants.size());
+		FieldPowerGrant g = grants.get(0);
+		assertTrue(g.oppTurnOnly(), "the window the sentence names");
+		assertFalse(g.yourTurnOnly(), "and not the other one");
+		assertEquals(2000, g.powerBonus());
+		assertTrue(g.inclForwards());
+		assertFalse(g.inclBackups());
+	}
+
+	@Test
+	void theSameSentenceWithoutAWindowCarriesNeitherFlag() {
+		FieldPowerGrant g = CardData.parseFieldPowerGrants(
+				"The Forwards you control gain +2000 power.", "Forward").get(0);
+		assertFalse(g.oppTurnOnly());
+		assertFalse(g.yourTurnOnly(), "an unqualified grant is always open");
+	}
+
+	@Test
+	void theYourTurnSpellingLandsOnTheOtherFlag() {
+		FieldPowerGrant g = CardData.parseFieldPowerGrants(
+				"During your turn, all the Forwards you control gain +2000 power.", "Forward").get(0);
+		assertTrue(g.yourTurnOnly());
+		assertFalse(g.oppTurnOnly());
+	}
+
+	@Test
+	void rydiaBoostsOnlyDuringTheOpponentsTurn() {
+		assertEquals(7000, boardWithRydia(true).effectiveP1ForwardPower(1),
+				"her controller's turn — the window is shut");
+		assertEquals(9000, boardWithRydia(false).effectiveP1ForwardPower(1),
+				"the opponent's turn — the window is open");
+	}
+
+	@Test
+	void theWindowIsReadAgainstTheGrantsOwnSide() {
+		// "Your" in a card's own text is its controller's, so a Rydia the CPU controls opens on
+		// P1's turn — the same sentence, the other way round.
+		MainWindow mw = new MainWindow();
+		CardData rydia = makeGrantingForward("Rydia", RYDIA_GRANT);
+		CardData ally  = makeForward("Ally", "Earth", 3, 7000);
+		mw.gameState.getIdentity().put(rydia, false);
+		mw.gameState.getIdentity().put(ally, false);
+		mw.placeP2CardInForwardZone(rydia);
+		mw.placeP2CardInForwardZone(ally);
+
+		advanceTo(mw, GameState.Player.P1, GameState.GamePhase.MAIN_1);
+		assertEquals(9000, mw.effectiveP2ForwardPower(1), "P1's turn is P2's opponent's turn");
+		advanceTo(mw, GameState.Player.P2, GameState.GamePhase.MAIN_1);
+		assertEquals(7000, mw.effectiveP2ForwardPower(1));
+	}
+
+	// =========================================================================================
+	// Ghis 2-126R: "If Ghis is dealt damage by abilities other than special abilities, the damage
+	// becomes 0 instead."
+	//
+	// The only printing in the corpus that draws the line between the two kinds of ability — rule
+	// 6-1-1 makes a special ability a kind of its own, and this shield lets it through while
+	// stopping every other ability. Answering it needs to know what kind is resolving, which is
+	// what MainWindow.currentAbilityIsSpecial records alongside currentAbilitySource.
+	// =========================================================================================
+
+	private static final String GHIS_SHIELD =
+			"If Ghis is dealt damage by abilities other than special abilities, "
+			+ "the damage becomes 0 instead.";
+
+	/** Ghis alone on P1 idx 0. */
+	private static MainWindow boardWithGhis() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeFieldAbilityCard("Ghis", "Water", "Forward", GHIS_SHIELD));
+		return mw;
+	}
+
+	private static int damageGhis(MainWindow mw, boolean fromAbility, boolean special, boolean summon) {
+		mw.currentAbilityIsSpecial  = special;
+		mw.currentResolutionIsSummon = summon;
+		try {
+			return mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 0, 8000, fromAbility, false);
+		} finally {
+			mw.currentAbilityIsSpecial   = false;
+			mw.currentResolutionIsSummon = false;
+		}
+	}
+
+	@Test
+	void theGhisShieldParsesWithItsSourceClause() {
+		Matcher m = AutoAbilityTriggers.FA_DAMAGE_MODIFIER.matcher(GHIS_SHIELD);
+		assertTrue(m.matches(), "the clause used to run past the comma and fail the whole sentence");
+		assertEquals("Ghis", m.group("card").trim());
+		assertEquals("0", m.group("setsto"));
+		assertTrue(m.group("sourceclause").toLowerCase().contains("other than special abilit"));
+	}
+
+	@Test
+	void ghisZeroesOrdinaryAbilityDamage() {
+		assertEquals(0, damageGhis(boardWithGhis(), true, false, false));
+	}
+
+	@Test
+	void aSpecialAbilityGetsThrough() {
+		assertEquals(8000, damageGhis(boardWithGhis(), true, true, false),
+				"the one kind the sentence names as an exception");
+	}
+
+	@Test
+	void aSummonAndBattleDamageBothGetThrough() {
+		assertEquals(8000, damageGhis(boardWithGhis(), true, false, true),
+				"a Summon is not an ability");
+		assertEquals(8000, damageGhis(boardWithGhis(), false, false, false),
+				"nor is battle damage");
+	}
+
+	// =========================================================================================
+	// Aerith 3-050L: "The Forwards you control cannot be chosen by your opponent's Backup
+	// abilities."
+	//
+	// The only printing that narrows a chosen-immunity by the *source's* card type. It rides the
+	// existing IfControlBoost shield — the pattern already reads "The [filter] you control cannot
+	// be chosen by your opponent's [scope]" — with one added field naming the type, and the
+	// choosing card threaded down to the check that reads it.
+	// =========================================================================================
+
+	private static final String AERITH_SHIELD =
+			"The Forwards you control cannot be chosen by your opponent's Backup abilities.";
+
+	/** A Backup carrying the IfControlBoosts parsed from {@code text}, in P1 slot 0. */
+	private static CardData placeP1IcbBackup(MainWindow mw, String name, String text) {
+		CardData backup = new CardData(null, name, "Wind", 3, 0, "Backup", false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				List.of(), List.of(), CardData.parseFieldAbilities(text, "Backup"),
+				CardData.parseIfControlBoosts(text, "Backup"),
+				List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				null, null, null, text);
+		mw.gameState.getIdentity().put(backup, true);
+		mw.p1BackupCards[0]  = backup;
+		mw.p1BackupStates[0] = CardState.ACTIVE;
+		return backup;
+	}
+
+	@Test
+	void theAerithShieldRecordsItsSourceType() {
+		List<IfControlBoost> boosts = CardData.parseIfControlBoosts(AERITH_SHIELD, "Backup");
+		assertEquals(1, boosts.size());
+		IfControlBoost icb = boosts.get(0);
+		assertEquals("Backup", icb.chosenImmunitySourceType());
+		assertTrue(icb.cannotBeChosenByAbilities());
+		assertFalse(icb.cannotBeChosenBySummons(), "a Summon has no card type to match");
+		assertTrue(icb.chosenImmunityOpponentOnly());
+	}
+
+	@Test
+	void aShieldNamingNoTypeStillCoversEverySource() {
+		IfControlBoost icb = CardData.parseIfControlBoosts(
+				"The Forwards you control cannot be chosen by your opponent's abilities.", "Backup").get(0);
+		assertNull(icb.chosenImmunitySourceType());
+		assertTrue(icb.admitsChooserSource(makeForward("Anyone", "Fire", 3, 7000)),
+				"no type named means no narrowing");
+	}
+
+	@Test
+	void anUnknownChoosingCardIsAdmitted() {
+		IfControlBoost icb = CardData.parseIfControlBoosts(AERITH_SHIELD, "Backup").get(0);
+		assertTrue(icb.admitsChooserSource(null),
+				"unknown is not \"not a Backup\" — refusing it would narrow every existing grant");
+	}
+
+	@Test
+	void onlyAnOpposingBackupsAbilityIsTurnedAway() {
+		MainWindow mw = new MainWindow();
+		placeP1IcbBackup(mw, "Aerith", AERITH_SHIELD);
+		CardData cloud = makeForward("Cloud", "Fire", 3, 7000);
+		placeP1Forward(mw, cloud);
+
+		CardData oppBackup  = makeJobCard("Chocobo", "Fire", "Backup", "Chocobo");
+		CardData oppForward = makeForward("Sephiroth", "Fire", 5, 9000);
+		CardData oppSummon  = makeSummon("Firaga", "Fire", 2, "");
+		mw.gameState.getIdentity().put(oppBackup,  false);
+		mw.gameState.getIdentity().put(oppForward, false);
+		mw.gameState.getIdentity().put(oppSummon,  false);
+
+		assertTrue(mw.isProtectedFromChoice(cloud, true, false, false, oppBackup),
+				"a Backup's ability is what the sentence names");
+		assertFalse(mw.isProtectedFromChoice(cloud, true, false, false, oppForward),
+				"a Forward's ability is not");
+		assertFalse(mw.isProtectedFromChoice(cloud, true, false, true, oppSummon),
+				"and a Summon is not an ability at all");
+	}
+
+	@Test
+	void aerithDoesNotShieldAgainstHerOwnControllersBackups() {
+		MainWindow mw = new MainWindow();
+		placeP1IcbBackup(mw, "Aerith", AERITH_SHIELD);
+		CardData cloud = makeForward("Cloud", "Fire", 3, 7000);
+		placeP1Forward(mw, cloud);
+
+		CardData ownBackup = makeJobCard("Chocobo", "Fire", "Backup", "Chocobo");
+		mw.gameState.getIdentity().put(ownBackup, true);
+		assertFalse(mw.isProtectedFromChoice(cloud, true, true, false, ownBackup),
+				"the sentence reads \"your opponent's\"");
+	}
+
+	@Test
+	void theShieldReachesOnlyForwards() {
+		MainWindow mw = new MainWindow();
+		CardData aerith = placeP1IcbBackup(mw, "Aerith", AERITH_SHIELD);
+		CardData oppBackup = makeJobCard("Chocobo", "Fire", "Backup", "Chocobo");
+		mw.gameState.getIdentity().put(oppBackup, false);
+
+		assertFalse(mw.isProtectedFromChoice(aerith, true, false, false, oppBackup),
+				"Aerith is a Backup, and the grant names Forwards");
+	}
+
+	// =========================================================================================
+	// Sherlotta 8-053H (and her reprint Re-066H): "You may put Sherlotta into the Break Zone to
+	// produce 1 CP of any Element in order to pay a CP cost. (This can be in addition to dulling
+	// Sherlotta for CP.)"
+	//
+	// A second, independent way for one Backup to pay: the payment dialog offers her twice, once
+	// to dull and once — captioned "Break" — to put into the Break Zone for CP of a chosen
+	// Element. Both may be taken in the same payment, which is why the break selections travel in
+	// their own map rather than as more entries in the dull one, all the way out to the wire.
+	// =========================================================================================
+
+	private static final String SHERLOTTA_REPRINT =
+			"You may put Sherlotta into the Break Zone to produce 1 CP of any Element "
+			+ "in order to pay a CP cost. (This can be in addition to dulling Sherlotta for CP.)";
+
+	private static final String SHERLOTTA_ORIGINAL =
+			"If you pay a CP, you may put Sherlotta into the Break Zone to produce 1 CP of any "
+			+ "Element. (You can dull Sherlotta to pay the CP.)";
+
+	/** Sherlotta in P1 Backup slot 0, in the given state. */
+	private static MainWindow boardWithSherlotta(String text, CardState state) {
+		MainWindow mw = new MainWindow();
+		CardData s = makeFieldAbilityCard("Sherlotta", "Wind", "Backup", text);
+		mw.gameState.getIdentity().put(s, true);
+		mw.p1BackupCards[0]  = s;
+		mw.p1BackupStates[0] = state;
+		return mw;
+	}
+
+	@Test
+	void bothPrintingsOfTheBreakForCpPermissionReadTheSame() {
+		assertEquals(1, CardData.parseBreakSelfForCpAmount(SHERLOTTA_REPRINT,  "Sherlotta"));
+		assertEquals(1, CardData.parseBreakSelfForCpAmount(SHERLOTTA_ORIGINAL, "Sherlotta"));
+	}
+
+	@Test
+	void thePermissionIsSelfNamed() {
+		assertEquals(0, CardData.parseBreakSelfForCpAmount(SHERLOTTA_REPRINT, "Cid"),
+				"the sentence spends the card it is printed on");
+	}
+
+	@Test
+	void aDulledSherlottaCanStillBeBroken() {
+		// The whole point of the reminder text: the break is a payment of its own, so the slot is
+		// offered whatever state the Backup is in.
+		assertEquals(Map.of(0, 1),
+				boardWithSherlotta(SHERLOTTA_REPRINT, CardState.ACTIVE).breakForCpBackupSlots(true));
+		assertEquals(Map.of(0, 1),
+				boardWithSherlotta(SHERLOTTA_REPRINT, CardState.DULL).breakForCpBackupSlots(true));
+	}
+
+	@Test
+	void aBackupWithoutThePermissionIsNotOffered() {
+		MainWindow mw = new MainWindow();
+		CardData plain = makeJobCard("Chocobo", "Wind", "Backup", "Chocobo");
+		mw.gameState.getIdentity().put(plain, true);
+		mw.p1BackupCards[0] = plain;
+		assertTrue(mw.breakForCpBackupSlots(true).isEmpty());
+	}
+
+	@Test
+	void aSherlottaWhoHasLostHerAbilitiesPaysNothing() {
+		MainWindow mw = boardWithSherlotta(SHERLOTTA_REPRINT, CardState.ACTIVE);
+		mw.lostAbilitiesCards.add(mw.p1BackupCards[0]);
+		assertTrue(mw.breakForCpBackupSlots(true).isEmpty());
+	}
+
+	@Test
+	void breakingHerBanksTheChosenElementAndEmptiesTheSlot() {
+		MainWindow mw = boardWithSherlotta(SHERLOTTA_REPRINT, CardState.DULL);
+		CardData sherlotta = mw.p1BackupCards[0];
+
+		mw.breakBackupsForCp(true, Map.of(0, "Fire"));
+
+		assertEquals(1, mw.gameState.getP1CpForElement("Fire"), "1 CP of the chosen Element");
+		assertNull(mw.p1BackupCards[0], "and the slot is empty");
+		assertTrue(mw.gameState.getP1BreakZone().contains(sherlotta));
+	}
+
+	@Test
+	void theBreakReportsTheCpItProducedToItsCaller() {
+		// executePlay merges this into its own accumulator, which is what lets the clear step
+		// reach an off-Element CP the cast did not need.
+		MainWindow mw = boardWithSherlotta(SHERLOTTA_REPRINT, CardState.ACTIVE);
+		assertEquals(Map.of("Water", 1), mw.breakBackupsForCp(true, Map.of(0, "Water")));
+	}
+
+	@Test
+	void theBreakCrossesTheWireWithThePlay() {
+		CardData card = makeForward("Cast Me", "Wind", 2, 5000);
+		JSONObject payload = RemoteOpponent.playCardAction(card, 0, List.of(), List.of(0),
+				Map.of(), List.of(), Map.of(0, "Water")).payload();
+		assertEquals("Water", payload.getJSONObject("backupBreaks").getString("0"));
+		assertEquals(0, payload.getJSONArray("backups").getInt(0),
+				"the same slot may be dulled and broken, so the two travel separately");
+	}
+
+	@Test
+	void aSherlottaDulledAndBrokenInOnePaymentPaysTwice() {
+		// The reminder text's whole point. The dull step has to see her on the field and the break
+		// step has to follow it, which is why the break is spent inside executePlay rather than
+		// before it.
+		MainWindow mw = new MainWindow();
+		CardData sherlotta = makeFieldAbilityCard("Sherlotta", "Wind", "Backup", SHERLOTTA_REPRINT);
+		mw.gameState.getIdentity().put(sherlotta, true);
+		mw.p1BackupCards[0]  = sherlotta;
+		mw.p1BackupStates[0] = CardState.ACTIVE;
+		CardData cast = makeForward("Cast Me", "Wind", 2, 5000);
+		mw.gameState.getP1Hand().add(cast);
+
+		mw.executePlay(true, cast, 0, List.of(), List.of(0), Map.of(), null, false, Map.of(0, "Wind"));
+
+		assertNull(mw.p1BackupCards[0], "she was broken as well as dulled");
+		assertTrue(mw.gameState.getP1BreakZone().contains(sherlotta));
+		assertEquals(1, mw.p1ForwardCards.size(), "and the 2 CP covered the cost");
+		assertEquals(cast, mw.p1ForwardCards.get(0));
+	}
+
+	@Test
+	void anOpponentsBreakRunsAgainstTheirOwnBoard() {
+		MainWindow mw = new MainWindow();
+		CardData s = makeFieldAbilityCard("Sherlotta", "Wind", "Backup", SHERLOTTA_REPRINT);
+		mw.gameState.getIdentity().put(s, false);
+		mw.p2BackupCards[0]  = s;
+		mw.p2BackupStates[0] = CardState.ACTIVE;
+
+		mw.breakBackupsForCp(false, Map.of(0, "Ice"));
+
+		assertEquals(1, mw.gameState.getP2CpForElement("Ice"));
+		assertNull(mw.p2BackupCards[0]);
+		assertTrue(mw.gameState.getP2BreakZone().contains(s));
+	}
+
+	@Test
+	void anOffElementBreakCpDoesNotLingerInTheBank() {
+		// The reason the break reports what it produced: a Fire CP made to help pay for a Wind
+		// card is still CP, and the clear step only reaches Elements it knows about.
+		MainWindow mw = new MainWindow();
+		CardData sherlotta = makeFieldAbilityCard("Sherlotta", "Wind", "Backup", SHERLOTTA_REPRINT);
+		CardData helper    = makeJobCard("Chocobo", "Wind", "Backup", "Chocobo");
+		mw.gameState.getIdentity().put(sherlotta, true);
+		mw.gameState.getIdentity().put(helper, true);
+		mw.p1BackupCards[0]  = sherlotta;  mw.p1BackupStates[0] = CardState.ACTIVE;
+		mw.p1BackupCards[1]  = helper;     mw.p1BackupStates[1] = CardState.ACTIVE;
+		CardData cast = makeForward("Cast Me", "Wind", 2, 5000);
+		mw.gameState.getP1Hand().add(cast);
+
+		// Wind from the Chocobo, Fire from breaking Sherlotta — 2 CP for a cost of 2.
+		mw.executePlay(true, cast, 0, List.of(), List.of(1), Map.of(), null, false, Map.of(0, "Fire"));
+
+		assertEquals(1, mw.p1ForwardCards.size(), "the cast went through");
+		assertEquals(0, mw.gameState.getP1CpForElement("Fire"), "and the off-Element CP was cleared with it");
+		assertEquals(0, mw.gameState.getP1CpForElement("Wind"));
+	}
+
+	@Test
+	void everyPaymentWindowIsOfferedTheBreakCopies() {
+		// Her text says "in order to pay a CP cost", which is any of them. This is the shared
+		// reader all seven payment paths are handed; a window that stopped asking for it would
+		// silently drop the payment, and there is no headless way to open one and look.
+		MainWindow mw = boardWithSherlotta(SHERLOTTA_REPRINT, CardState.ACTIVE);
+		assertEquals(Map.of(0, 1), mw.breakForCpBackupSlots(true));
+		assertTrue(mw.breakForCpBackupSlots(false).isEmpty(), "and only on her own controller's side");
 	}
 }

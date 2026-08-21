@@ -300,6 +300,12 @@ final class AutoAbilityTriggers {
 			"|\\s+(?:by|from)\\s+a\\s+Character" +
 			"|\\s+other\\s+than\\s+battle\\s+damage" +
 			"|\\s+(?:by|from)\\s+(?:your\\s+opponent's\\s+)?(?:a\\s+)?Summons?(?:\\s+or\\s+(?:an?\\s+)?abilit(?:y|ies))?" +
+			// Must precede the bare ability branch below, which stops at "abilities" and would
+			// leave "other than special abilities" stranded against the comma this pattern
+			// requires next — the whole sentence then fails to match rather than matching wrong.
+			// Ghis 2-126R is the only printing that draws the line between the two kinds.
+			"|\\s+(?:by|from)\\s+(?:your\\s+opponent's\\s+)?(?:an?\\s+)?abilit(?:y|ies)\\s+" +
+			"other\\s+than\\s+special\\s+abilit(?:y|ies)" +
 			"|\\s+(?:by|from)\\s+(?:your\\s+opponent's\\s+)?(?:a\\s+Summon\\s+or\\s+)?(?:an?\\s+)?abilit(?:y|ies)" +
 			// The subject's own power, named either by pronoun or by repeating the card's name
 			// (The Fiend 20-114L, Ifrit (XVI) 26-003R). Comma-free so the possessive branch cannot
@@ -1652,13 +1658,16 @@ final class AutoAbilityTriggers {
 			}
 			GameContext ctx = mw.buildGameContext(watcherIsP1);
 			ctx.preloadTargets(List.of(enteringTarget));
-			CardData prevSource = mw.currentAbilitySource;
-			mw.currentAbilitySource = watcher;
+			CardData prevSource  = mw.currentAbilitySource;
+			boolean  prevSpecial = mw.currentAbilityIsSpecial;
+			mw.currentAbilitySource    = watcher;
+			mw.currentAbilityIsSpecial = false;
 			try {
 				mw.logEntry("[AutoAbility] " + watcher.name() + " — " + fa.effectText());
 				effect.accept(ctx);
 			} finally {
-				mw.currentAbilitySource = prevSource;
+				mw.currentAbilitySource    = prevSource;
+				mw.currentAbilityIsSpecial = prevSpecial;
 			}
 		}
 	}
@@ -1763,13 +1772,16 @@ final class AutoAbilityTriggers {
 		}
 		GameContext ctx = mw.buildGameContext(watcherIsP1);
 		ctx.preloadTargets(List.of(enteringTarget));
-		CardData prevSource = mw.currentAbilitySource;
-		mw.currentAbilitySource = watcher;
+		CardData prevSource  = mw.currentAbilitySource;
+		boolean  prevSpecial = mw.currentAbilityIsSpecial;
+		mw.currentAbilitySource    = watcher;
+		mw.currentAbilityIsSpecial = false;
 		try {
 			mw.logEntry("[AutoAbility] " + watcher.name() + " — " + fa.effectText());
 			effect.accept(ctx);
 		} finally {
-			mw.currentAbilitySource = prevSource;
+			mw.currentAbilitySource    = prevSource;
+			mw.currentAbilityIsSpecial = prevSpecial;
 		}
 	}
 
@@ -2681,13 +2693,16 @@ final class AutoAbilityTriggers {
 		if (effect == null) return;
 		GameContext ctx = mw.buildGameContext(watcherIsP1);
 		ctx.preloadTargets(List.of(target));
-		CardData prevSource = mw.currentAbilitySource;
-		mw.currentAbilitySource = watcher;
+		CardData prevSource  = mw.currentAbilitySource;
+		boolean  prevSpecial = mw.currentAbilityIsSpecial;
+		mw.currentAbilitySource    = watcher;
+		mw.currentAbilityIsSpecial = false;
 		try {
 			mw.logEntry("[AutoAbility] " + watcher.name() + " — " + fa.effectText());
 			effect.accept(ctx);
 		} finally {
-			mw.currentAbilitySource = prevSource;
+			mw.currentAbilitySource    = prevSource;
+			mw.currentAbilityIsSpecial = prevSpecial;
 		}
 	}
 
@@ -4461,11 +4476,12 @@ final class AutoAbilityTriggers {
 				mw.playerHand(isP1), mw.cpPayableBackupCards(isP1), mw.playerBackupStates(isP1), mw.playerBackupUrls(isP1),
 				mw::showZoomAt, mw::hideZoom, null, null, mw.lightDarkDiscardGrants(isP1),
 				eff.isSpecial() && mw.canPaySpecialCostWithCrystal(source, isP1),
-				(discards, backups, xValue, sCostIdx) -> {
+				(discards, backups, xValue, sCostIdx, breaks) -> {
 					List<ForwardTarget> bzTargets = resolveBzCostTargetsForBzAbility(bzCosts, isP1);
 					if (bzTargets == null) return;
-					executeAbilityPayment(eff, source, () -> {}, discards, backups, bzTargets, isP1, xValue, sCostIdx);
-				})
+					executeAbilityPayment(eff, source, () -> {}, discards, backups, bzTargets, isP1,
+							xValue, sCostIdx, breaks);
+				}, mw.breakForCpBackupSlots(isP1))
 			.show();
 	}
 
@@ -4991,8 +5007,10 @@ final class AutoAbilityTriggers {
 				mw.playerHand(isP1), mw.cpPayableBackupCards(isP1), mw.playerBackupStates(isP1), mw.playerBackupUrls(isP1),
 				mw::showZoomAt, mw::hideZoom, proxy, primerName, mw.lightDarkDiscardGrants(isP1),
 				eff.isSpecial() && mw.canPaySpecialCostWithCrystal(source, isP1),
-				(discards, backups, xValue, sCostIdx) -> executeAbilityPayment(eff, source, applyDull,
-						discards, backups, autoResolveBzTargets(source, bzCosts, isP1), isP1, xValue, sCostIdx))
+				(discards, backups, xValue, sCostIdx, breaks) -> executeAbilityPayment(eff, source, applyDull,
+						discards, backups, autoResolveBzTargets(source, bzCosts, isP1), isP1, xValue,
+						sCostIdx, breaks),
+				mw.breakForCpBackupSlots(isP1))
 			.show();
 	}
 
@@ -5078,6 +5096,19 @@ final class AutoAbilityTriggers {
 	private void executeAbilityPayment(ActionAbility ability, CardData source,
 			Runnable applyDull, List<Integer> discardIndices, List<Integer> backupDullIndices,
 			List<ForwardTarget> bzTargets, boolean isP1, int xValue, int sCostHandIdx) {
+		executeAbilityPayment(ability, source, applyDull, discardIndices, backupDullIndices,
+				bzTargets, isP1, xValue, sCostHandIdx, Map.of());
+	}
+
+	/**
+	 * @param backupBreaks Backups put into the Break Zone for CP as part of this payment, slot to
+	 *                     the Element each produces (Sherlotta 8-053H) — "a CP cost" in her text is
+	 *                     any of them, an ability's included
+	 */
+	private void executeAbilityPayment(ActionAbility ability, CardData source,
+			Runnable applyDull, List<Integer> discardIndices, List<Integer> backupDullIndices,
+			List<ForwardTarget> bzTargets, boolean isP1, int xValue, int sCostHandIdx,
+			Map<Integer, String> backupBreaks) {
 		List<String> rawCost = ability.cpCost();
 		LinkedHashMap<String, Integer> costByElem = new LinkedHashMap<>();
 		for (String e : rawCost) if (!e.isEmpty()) costByElem.merge(e, 1, Integer::sum);
@@ -5190,6 +5221,11 @@ final class AutoAbilityTriggers {
 			// slot reads exactly like a CPU that paid from the right one.
 			mw.logEntry((isP1 ? "" : "[P2] ") + "Dulls " + bkpCards[bi].name() + " for CP");
 		}
+		// Break-for-CP payments (Sherlotta 8-053H), after the dull step so a Backup paying both
+		// ways is still on the field for it. Its Element joins the clear set below, so CP this cost
+		// did not need is not left in the bank.
+		Set<String> abilityCpToClear = new java.util.LinkedHashSet<>(java.util.Arrays.asList(elems));
+		abilityCpToClear.addAll(mw.breakBackupsForCp(isP1, backupBreaks).keySet());
 		discardIndices.sort(Collections.reverseOrder());
 		for (int di : discardIndices) {
 			CardData discarded = mw.playerHand(isP1).get(di);
@@ -5198,7 +5234,7 @@ final class AutoAbilityTriggers {
 			if (!cpElem.isEmpty()) mw.playerAddCp(isP1, cpElem, 2);
 			mw.playerBreakFromHand(isP1, di);
 		}
-		for (String e : elems) { mw.playerSpendCp(isP1, e, mw.playerCpForElem(isP1, e)); mw.playerClearCp(isP1, e); }
+		for (String e : abilityCpToClear) { mw.playerSpendCp(isP1, e, mw.playerCpForElem(isP1, e)); mw.playerClearCp(isP1, e); }
 
 		// Crystal cost
 		if (ability.crystalCost() > 0) {

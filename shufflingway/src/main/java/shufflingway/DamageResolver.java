@@ -468,6 +468,12 @@ class DamageResolver {
 				// damage a Forward deals and the damage a Character's own ability deals. Only a
 				// resolving Summon is excluded (Ark Angel EV 4-097H).
 				applies = !fromAbility || !mw.currentResolutionIsSummon;
+			} else if (srcN.contains("other than special abilit")) {
+				// Ghis 2-126R. Special abilities are a separate kind of ability under rule 6-1-1,
+				// and this is the one printing that shields against the other kinds while leaving
+				// them through. Checked ahead of the general ability branch below, which would
+				// answer "yes" to a special.
+				applies = fromAbility && !mw.currentResolutionIsSummon && !mw.currentAbilityIsSpecial;
 			} else if (srcN.contains("summon") && !srcN.contains("abilit")) {
 				applies = fromAbility && mw.currentResolutionIsSummon;
 			} else if (!srcN.contains("summon") && !srcN.startsWith("other")) {
@@ -1056,13 +1062,16 @@ class DamageResolver {
 
 		GameContext ctx = mw.buildGameContext(sourceIsP1);
 		ctx.preloadTargets(List.of(new ForwardTarget(damagedIsP1, damagedIdx, damagedZone)));
-		CardData prevSource = mw.currentAbilitySource;
-		mw.currentAbilitySource = source;
+		CardData prevSource  = mw.currentAbilitySource;
+		boolean  prevSpecial = mw.currentAbilityIsSpecial;
+		mw.currentAbilitySource    = source;
+		mw.currentAbilityIsSpecial = false;
 		try {
 			mw.logEntry((sourceIsP1 ? "" : "[P2] ") + source.name() + " — " + fa.effectText());
 			effect.accept(ctx);
 		} finally {
-			mw.currentAbilitySource = prevSource;
+			mw.currentAbilitySource    = prevSource;
+			mw.currentAbilityIsSpecial = prevSpecial;
 		}
 	}
 

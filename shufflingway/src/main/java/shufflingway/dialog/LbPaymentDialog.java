@@ -20,7 +20,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
-import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
 import javax.swing.BorderFactory;
@@ -53,7 +52,20 @@ public class LbPaymentDialog {
     private final Consumer<String> onZoom;
     private final Runnable         onZoomHide;
     /** Called on Confirm with (discardIndices, backupSlots). */
-    private final BiConsumer<List<Integer>, List<Integer>> onConfirm;
+    /**
+     * Called on Confirm with the discards, the Backups to dull, and the Backups to put into the
+     * Break Zone for CP mapped to the Element each produces (Sherlotta 8-053H).
+     */
+    @FunctionalInterface
+    public interface ConfirmCallback {
+        void accept(List<Integer> discards, List<Integer> backups, Map<Integer, String> breakElements);
+    }
+    private final ConfirmCallback onConfirm;
+    /**
+     * Backup slots that may be put into the Break Zone for CP — Sherlotta 8-053H. Each appears in
+     * the Backups row a second time, captioned "Break".
+     */
+    private final Map<Integer, Integer> breakForCpSlots;
     private final java.util.Set<String> ldDiscardGrants;
 
     /**
@@ -64,7 +76,21 @@ public class LbPaymentDialog {
             List<CardData> hand, CardData[] backupCards, CardState[] backupStates,
             String[] backupUrls, Consumer<String> onZoom, Runnable onZoomHide,
             java.util.Set<String> ldDiscardGrants,
-            BiConsumer<List<Integer>, List<Integer>> onConfirm) {
+            ConfirmCallback onConfirm) {
+        this(owner, card, hand, backupCards, backupStates, backupUrls, onZoom, onZoomHide,
+                ldDiscardGrants, onConfirm, Map.of());
+    }
+
+    /**
+     * @param breakForCpSlots backup slots that may be broken for CP, mapped to how much each
+     *     produces (Sherlotta 8-053H); empty when none apply
+     */
+    public LbPaymentDialog(JFrame owner, CardData card,
+            List<CardData> hand, CardData[] backupCards, CardState[] backupStates,
+            String[] backupUrls, Consumer<String> onZoom, Runnable onZoomHide,
+            java.util.Set<String> ldDiscardGrants,
+            ConfirmCallback onConfirm, Map<Integer, Integer> breakForCpSlots) {
+        this.breakForCpSlots = breakForCpSlots == null ? Map.of() : breakForCpSlots;
         this.owner        = owner;
         this.card         = card;
         this.hand         = hand;
@@ -112,6 +138,9 @@ public class LbPaymentDialog {
         List<Integer> discardIdxs = new ArrayList<>();
         boolean[] canAddDiscard   = {false};
 
+        BreakForCpEntries breaks = new BreakForCpEntries(breakForCpSlots, backupCards, backupUrls,
+                onZoom, onZoomHide);
+
         Runnable updateAll = () -> {
             Map<String, Integer> cpByElem = new LinkedHashMap<>(bankCpByElem);
             int extraCp = 0;
@@ -131,6 +160,8 @@ public class LbPaymentDialog {
                 else
                     extraCp += 2;
             }
+            extraCp += breaks.contribute(cpByElem, isLD ? elem : null);
+            breaks.refresh();
             int total       = cpByElem.values().stream().mapToInt(Integer::intValue).sum() + extraCp;
             // Any amount of CP may be produced when paying a cost; excess beyond the cost is wasted.
             boolean canAddBkp = true;
@@ -169,8 +200,9 @@ public class LbPaymentDialog {
         JPanel centerPanel = new JPanel();
         centerPanel.setLayout(new BoxLayout(centerPanel, BoxLayout.Y_AXIS));
 
-        if (!eligibleBackupSlots.isEmpty()) {
-            JLabel hdr = new JLabel("Backups — dull for 1 CP each:");
+        if (!eligibleBackupSlots.isEmpty() || !breaks.isEmpty()) {
+            JLabel hdr = new JLabel("Backups — dull for 1 CP each"
+                    + (breaks.isEmpty() ? "" : BreakForCpEntries.headerSuffix()) + ":");
             hdr.setFont(FontLoader.loadPixelFont(9)); hdr.setAlignmentX(Component.LEFT_ALIGNMENT);
             JPanel bp = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 6)); bp.setAlignmentX(Component.LEFT_ALIGNMENT);
             for (int slot : eligibleBackupSlots) {
@@ -188,6 +220,7 @@ public class LbPaymentDialog {
                 loadCardImage(lbl, url);
                 backupLbls.add(lbl); backupSlots.add(slot); bp.add(lbl);
             }
+            breaks.addTo(bp, null, updateAll);
             centerPanel.add(hdr); centerPanel.add(bp);
         }
 
@@ -236,7 +269,8 @@ public class LbPaymentDialog {
         cancelBtn.addActionListener(e -> { onZoomHide.run(); dlg.dispose(); });
         confirmBtn.addActionListener(e -> {
             dlg.dispose();
-            onConfirm.accept(new ArrayList<>(selectedDiscards), new ArrayList<>(selectedBackups));
+            onConfirm.accept(new ArrayList<>(selectedDiscards), new ArrayList<>(selectedBackups),
+                    breaks.selection());
         });
 
         JPanel south = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 6));

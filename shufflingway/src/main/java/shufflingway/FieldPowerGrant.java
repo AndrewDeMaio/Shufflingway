@@ -43,7 +43,8 @@ public record FieldPowerGrant(
         boolean attackingOnly,       // true = applies only while the target is one of the declared attackers
         int     basePowerSet,        // 0 = unused; >0 = the target's base power becomes this instead of its printed value
         String  excludeElement,      // null = no exclusion; non-null = skip cards carrying this element
-        String  partyWithCardName    // null = no party condition; else the card the target must be partied with
+        String  partyWithCardName,   // null = no party condition; else the card the target must be partied with
+        boolean oppTurnOnly          // true = trait/power grant applies only during the opposing player's turns
 ) {
     public FieldPowerGrant {
         // EnumSet, not Set.copyOf: the latter randomises iteration order per JVM run
@@ -73,7 +74,28 @@ public record FieldPowerGrant(
                 elementFilter, inclCardName, minBzSize, minBzFilterCount, bzFilterJob,
                 bzFilterCardName, bzFilterFwds, yourTurnOnly, minDistinctElements, exBurstDmgPerGroup,
                 exBurstDmgGroupSize, threshold, maxDamageThreshold, traitFilter, attackingOnly,
-                basePowerSet, excludeElement, partyWithCardName);
+                basePowerSet, excludeElement, partyWithCardName, oppTurnOnly);
+    }
+
+    /**
+     * This grant restricted to one player's turns — Rydia 28-072L, "During your opponent's turn,
+     * all the Forwards you control gain +2000 power."
+     *
+     * <p>A wither rather than another {@code sameSideFiltered} overload: the window is orthogonal to
+     * every filter, and the parse site already has the finished grant in hand when it reads it.
+     * One wither for both directions, since a sentence naming a window names exactly one.
+     *
+     * @param opponentsTurn {@code true} for "during your opponent's turn", {@code false} for
+     *                      "during your turn" — "your" being the carrier's controller either way
+     */
+    FieldPowerGrant withTurnWindow(boolean opponentsTurn) {
+        return new FieldPowerGrant(jobFilter, categoryFilter, inclForwards, inclBackups, inclMonsters,
+                exceptCardName, powerBonus, grantedTraits, affectsOpponent, costFilter, costCmp,
+                elementFilter, inclCardName, minBzSize, minBzFilterCount, bzFilterJob,
+                bzFilterCardName, bzFilterFwds, !opponentsTurn, minDistinctElements,
+                exBurstDmgPerGroup, exBurstDmgGroupSize, minDamageThreshold, maxDamageThreshold,
+                traitFilter, attackingOnly, basePowerSet, excludeElement, partyWithCardName,
+                opponentsTurn);
     }
 
     /**
@@ -132,6 +154,33 @@ public record FieldPowerGrant(
                 exceptCardName, 0, EnumSet.noneOf(CardData.Trait.class), false, -1, null, null,
                 inclCardName, 0, 0, null, null, false, false, 0, 0, 1, 0, 0,
                 EnumSet.noneOf(CardData.Trait.class), false, basePowerSet);
+    }
+
+    /**
+     * Compatibility constructor preserving the prior 29-arg canonical form; defaults
+     * {@code oppTurnOnly} to false.
+     *
+     * <p>A real component rather than a sentinel on an existing field, unlike {@link #ANY_PARTY}:
+     * {@link #yourTurnOnly} is a boolean with no spare value to overload, and the two are read
+     * together at both sites that gate on a turn window. Every other overload funnels through this
+     * arity, so the twelve below did not have to change.
+     */
+    public FieldPowerGrant(String jobFilter, String categoryFilter,
+            boolean inclForwards, boolean inclBackups, boolean inclMonsters,
+            String exceptCardName, int powerBonus, Set<CardData.Trait> grantedTraits,
+            boolean affectsOpponent, int costFilter, String costCmp, String elementFilter,
+            String inclCardName, int minBzSize, int minBzFilterCount, String bzFilterJob,
+            String bzFilterCardName, boolean bzFilterFwds, boolean yourTurnOnly,
+            int minDistinctElements, int exBurstDmgPerGroup, int exBurstDmgGroupSize,
+            int minDamageThreshold, int maxDamageThreshold, Set<CardData.Trait> traitFilter,
+            boolean attackingOnly, int basePowerSet, String excludeElement,
+            String partyWithCardName) {
+        this(jobFilter, categoryFilter, inclForwards, inclBackups, inclMonsters,
+                exceptCardName, powerBonus, grantedTraits, affectsOpponent, costFilter, costCmp,
+                elementFilter, inclCardName, minBzSize, minBzFilterCount, bzFilterJob,
+                bzFilterCardName, bzFilterFwds, yourTurnOnly, minDistinctElements,
+                exBurstDmgPerGroup, exBurstDmgGroupSize, minDamageThreshold, maxDamageThreshold,
+                traitFilter, attackingOnly, basePowerSet, excludeElement, partyWithCardName, false);
     }
 
     /** Compatibility constructor preserving the prior 27-arg canonical form; defaults {@code excludeElement/partyWithSource} to null/false. */
@@ -379,6 +428,7 @@ public record FieldPowerGrant(
             sb.append(">=").append(minBzFilterCount).append(')');
         }
         if (yourTurnOnly) sb.append(" yourTurnOnly");
+        if (oppTurnOnly)  sb.append(" oppTurnOnly");
         if (minDistinctElements > 0) sb.append(" ifDistinctElem>=").append(minDistinctElements);
         if (exBurstDmgPerGroup > 0) sb.append(" +").append(exBurstDmgPerGroup).append("/").append(exBurstDmgGroupSize).append("EXBurstDmg");
         if (minDamageThreshold > 0) sb.append(" ifDmg>=").append(minDamageThreshold);

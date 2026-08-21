@@ -898,6 +898,17 @@ public class MainWindow {
 	CardData currentAbilitySource       = null;
 	/** {@code true} if {@link #currentAbilitySource} belongs to P1. */
 	boolean currentAbilitySourceIsP1 = false;
+	/**
+	 * {@code true} while the ability resolving from {@link #currentAbilitySource} is a <em>special</em>
+	 * ability. Read by {@code DamageResolver} for Ghis 2-126R, whose shield covers ability damage
+	 * "other than special abilities" — the one printing that draws the line between the two kinds.
+	 *
+	 * <p>Kept in step with {@link #currentAbilitySource} at every assignment, including the nested
+	 * save-and-restore sites that stand a passive's carrier up as the source: those are auto and
+	 * field abilities, never specials, and leaving the flag set through one would have zeroed damage
+	 * the shield does not cover.
+	 */
+	boolean currentAbilityIsSpecial = false;
 	/** Set to {@code true} while a Summon effect is resolving so {@link #selectCharacters} applies the correct protection set. */
 	boolean currentResolutionIsSummon = false;
 	/** Set to {@code true} by {@code returnNamedCardToYourHand} when the Summon itself is being returned to hand. */
@@ -1755,6 +1766,7 @@ public class MainWindow {
 		pendingSummonReturnToHand = false;
 		currentSummonSource      = null;
 		currentAbilitySource     = null;
+		currentAbilityIsSpecial  = false;
 		lastChosenSelectionCancelled = false;
 		suppressAutoAbilityForNextCard = false;
 		// Per-game callback/priority state.
@@ -7253,18 +7265,20 @@ public class MainWindow {
 		ForwardTarget slot = findFieldSlot(card, isP1);
 		if (slot == null) return null;
 		switch (slot.zone()) {
-			case FORWARD: {
+			case FORWARD -> {
 				List<JLabel> labels = isP1 ? p1ForwardLabels : p2ForwardLabels;
 				return slot.idx() < labels.size() ? labels.get(slot.idx()) : null;
 			}
-			case BACKUP:
-				return (isP1 ? p1BackupLabels : p2BackupLabels)[slot.idx()];
-			case MONSTER: {
+			case BACKUP -> {
+                            return (isP1 ? p1BackupLabels : p2BackupLabels)[slot.idx()];
+                }
+			case MONSTER -> {
 				List<JLabel> labels = isP1 ? p1MonsterLabels : p2MonsterLabels;
 				return slot.idx() < labels.size() ? labels.get(slot.idx()) : null;
 			}
-			default:
-				return null;
+			default -> {
+                            return null;
+                }
 		}
 	}
 
@@ -8070,14 +8084,14 @@ public class MainWindow {
 				backupOnly, gameState.getP1Hand(), payBackups, payStates,
 				payUrls, this::showZoomAt, this::hideZoom,
 				lightDarkDiscardGrants(true),
-				(discards, backups) -> {
+				(discards, backups, breaks) -> {
 					if (altC > 0) { playerSpendCrystals(true, altC); refreshCrystalDisplays(); }
 					executeAltDull(dullIdxs);
 					executeAltFieldRemoval(removalSlots);
 					executeAltBzRemovals(bzRemovals);
-					executePlay(card, handIdx, discards, backups, Map.of());
+					executePlay(card, handIdx, discards, backups, Map.of(), breaks);
 					executeAltFollowup(followupText, card);
-				}).show();
+				}, breakForCpBackupSlots(true)).show();
 	}
 
 
@@ -8349,8 +8363,9 @@ public class MainWindow {
 				p1ForwardCards,
 				this::showZoomAt, this::hideZoom,
 				lightDarkDiscardGrants(true), warpCostAnyElement(true),
-				(discards, backups, overrides) -> executeWarpPlay(card, handIdx, discards, backups, overrides),
-				this::gainedElementsForPayment)
+				(discards, backups, overrides, breaks) ->
+						executeWarpPlay(card, handIdx, discards, backups, overrides, breaks),
+				this::gainedElementsForPayment, breakForCpBackupSlots(true))
 			.show();
 	}
 
@@ -8365,11 +8380,12 @@ public class MainWindow {
 	 */
 	private void executeWarpPlay(CardData card, int cardHandIdx,
 			List<Integer> discardIndices, List<Integer> backupDullIndices,
-			Map<Integer, String> elementOverrides) {
+			Map<Integer, String> elementOverrides, Map<Integer, String> backupBreaks) {
 		List<String> rawCost = card.warpCost();
 		LinkedHashMap<String, Integer> costByElem = new LinkedHashMap<>();
 		for (String e : rawCost) costByElem.merge(e, 1, Integer::sum);
 		String[] elems = costByElem.keySet().toArray(String[]::new);
+		Set<String> warpCpToClear = new java.util.LinkedHashSet<>(Arrays.asList(elems));
 
 		for (int bi : backupDullIndices) {
 			p1BackupStates[bi] = CardState.DULL;
@@ -8380,6 +8396,10 @@ public class MainWindow {
 					? contributingElement(p1BackupCards[bi], elems) : elems[0];
 			gameState.addP1Cp(cpElem, 1);
 		}
+		// Break-for-CP payments (Sherlotta 8-053H), after the dull step so a Backup paying both
+		// ways is still on the field for it. Its Element joins the clear set below, so CP the Warp
+		// cost did not need is not left in the bank.
+		warpCpToClear.addAll(breakBackupsForCp(true, backupBreaks).keySet());
 		discardIndices.sort(Collections.reverseOrder());
 		for (int di : discardIndices) {
 			CardData discarded = gameState.getP1Hand().get(di);
@@ -8389,7 +8409,7 @@ public class MainWindow {
 			playerBreakFromHand(true,di);
 			if (di < cardHandIdx) cardHandIdx--;
 		}
-		for (String e : elems) {
+		for (String e : warpCpToClear) {
 			gameState.spendP1Cp(e, gameState.getP1CpForElement(e));
 			gameState.clearP1Cp(e);
 		}
@@ -8643,8 +8663,10 @@ public class MainWindow {
 				gameState.getP1Hand(), cpPayableBackupCards(true), p1BackupStates, p1BackupUrls,
 				this::showZoomAt, this::hideZoom,
 				new ArrayList<>(p1ForwardCards),
-				(discards, backups, overrides) -> executePlayFromBzP1(card, discards, backups, overrides),
-				anyElement, null, lightDarkDiscardGrants(true), this::gainedElementsForPayment)
+				(discards, backups, overrides, breaks) ->
+						executePlayFromBzP1(card, discards, backups, overrides, breaks),
+				anyElement, null, lightDarkDiscardGrants(true), this::gainedElementsForPayment,
+				breakForCpBackupSlots(true))
 			.show();
 	}
 
@@ -8663,9 +8685,50 @@ public class MainWindow {
 				gameState.getP1Hand(), cpPayableBackupCards(true), p1BackupStates, p1BackupUrls,
 				this::showZoomAt, this::hideZoom,
 				new ArrayList<>(p1ForwardCards),
-				(discards, backups, overrides) -> executePlay(card, handIdx, discards, backups, overrides),
-				isAnyElementCast(card), extraElems, lightDarkDiscardGrants(true), this::gainedElementsForPayment)
+				(discards, backups, overrides, breaks) ->
+						executePlay(card, handIdx, discards, backups, overrides, breaks),
+				isAnyElementCast(card), extraElems, lightDarkDiscardGrants(true),
+				this::gainedElementsForPayment, breakForCpBackupSlots(true))
 			.show();
+	}
+
+	/**
+	 * Pays the break half of a CP payment: puts each named Backup into the Break Zone and banks the
+	 * CP it produces — Sherlotta 8-053H, "you may put Sherlotta into the Break Zone to produce 1 CP
+	 * of any Element in order to pay a CP cost."
+	 *
+	 * <p>Run from inside the play it pays for, after the Backups being dulled have been dulled and
+	 * before the cost is spent. The order matters both ways: a Backup selected for <em>both</em>
+	 * payments must still be on the field when the dull step reads it, and its CP must be in the
+	 * bank — and in the caller's accumulator, so the clear step reaches an off-Element CP the cast
+	 * did not need — by the time the cost is taken. Slots are broken high-index first so a break
+	 * cannot shift a slot another entry still names, the same reason the discard step removes from
+	 * hand in reverse-index order.
+	 *
+	 * <p>Mirrored across both players for the same reason {@code executePlay} is: a networked
+	 * opponent replays this exact code against their own zones.
+	 *
+	 * @return the CP produced, Element to amount; empty when nothing was broken
+	 */
+	Map<String, Integer> breakBackupsForCp(boolean isP1, Map<Integer, String> breakElements) {
+		Map<String, Integer> produced = new LinkedHashMap<>();
+		if (breakElements == null || breakElements.isEmpty()) return produced;
+		Map<Integer, Integer> eligible = breakForCpBackupSlots(isP1);
+		List<Integer> slots = new ArrayList<>(breakElements.keySet());
+		slots.sort(Comparator.reverseOrder());
+		CardData[] bkps = isP1 ? p1BackupCards : p2BackupCards;
+		for (int slot : slots) {
+			if (slot < 0 || slot >= bkps.length || bkps[slot] == null) continue;
+			String cpElem = breakElements.get(slot);
+			int amount = eligible.getOrDefault(slot, 1);
+			String name = bkps[slot].name();
+			if (isP1) autoAbilityTriggers.breakP1BackupSlot(slot); else breakP2BackupSlot(slot);
+			addCp(isP1, cpElem, amount);
+			produced.merge(cpElem, amount, Integer::sum);
+			if (cpElem != null && !cpElem.isEmpty()) lastCastActualPaymentElements.add(cpElem);
+			logEntry((isP1 ? "" : "[P2] ") + name + " broken for " + amount + " " + cpElem + " CP");
+		}
+		return produced;
 	}
 
 	/** Carries a field-granted "discard N Job X to cast [CardName]" alt cost entry. */
@@ -8818,10 +8881,23 @@ public class MainWindow {
 	private void executePlay(CardData card, int cardHandIdx,
 			List<Integer> discardIndices, List<Integer> backupDullIndices,
 			Map<Integer, String> backupElementOverrides) {
+		executePlay(card, cardHandIdx, discardIndices, backupDullIndices, backupElementOverrides,
+				Map.of());
+	}
+
+	/**
+	 * @param backupBreaks Backups to put into the Break Zone for CP as part of this payment, slot
+	 *                     to the Element each produces (Sherlotta 8-053H). Travels to the other
+	 *                     client with the play, so both spend the same payment.
+	 */
+	private void executePlay(CardData card, int cardHandIdx,
+			List<Integer> discardIndices, List<Integer> backupDullIndices,
+			Map<Integer, String> backupElementOverrides, Map<Integer, String> backupBreaks) {
 		lastSummonPreTargets = null;
-		executePlay(true, card, cardHandIdx, discardIndices, backupDullIndices, backupElementOverrides);
+		executePlay(true, card, cardHandIdx, discardIndices, backupDullIndices,
+				backupElementOverrides, null, false, backupBreaks);
 		sendToOpponent(RemoteOpponent.playCardAction(card, cardHandIdx, discardIndices,
-				backupDullIndices, backupElementOverrides, lastSummonPreTargets));
+				backupDullIndices, backupElementOverrides, lastSummonPreTargets, backupBreaks));
 	}
 
 	/**
@@ -8839,7 +8915,7 @@ public class MainWindow {
 			List<Integer> discardIndices, List<Integer> backupDullIndices,
 			Map<Integer, String> backupElementOverrides) {
 		executePlay(isP1, card, cardHandIdx, discardIndices, backupDullIndices,
-				backupElementOverrides, null, false);
+				backupElementOverrides, null, false, Map.of());
 	}
 
 	/**
@@ -8852,6 +8928,21 @@ public class MainWindow {
 			List<Integer> discardIndices, List<Integer> backupDullIndices,
 			Map<Integer, String> backupElementOverrides,
 			List<ForwardTarget> replayedSummonTargets, boolean targetsAreReplayed) {
+		executePlay(isP1, card, cardHandIdx, discardIndices, backupDullIndices,
+				backupElementOverrides, replayedSummonTargets, targetsAreReplayed, Map.of());
+	}
+
+	/**
+	 * @param backupBreaks Backups put into the Break Zone for CP as part of this payment, slot to
+	 *                     the Element each produces (Sherlotta 8-053H). Spent after the dull step
+	 *                     and before the cost, so a Backup selected for both payments is still on
+	 *                     the field when the dull step reads it.
+	 */
+	void executePlay(boolean isP1, CardData card, int cardHandIdx,
+			List<Integer> discardIndices, List<Integer> backupDullIndices,
+			Map<Integer, String> backupElementOverrides,
+			List<ForwardTarget> replayedSummonTargets, boolean targetsAreReplayed,
+			Map<Integer, String> backupBreaks) {
 		String[] elems = card.elements();
 		boolean  isLD  = card.isLightOrDark();
 		CardData[]     backupCards = isP1 ? p1BackupCards  : p2BackupCards;
@@ -8884,6 +8975,10 @@ public class MainWindow {
 					? backupElementOverrides.get(bi) : backupCards[bi].elements()[0];
 			if (!actualElem.isEmpty()) lastCastActualPaymentElements.add(actualElem);
 		}
+
+		// Break-for-CP payments (Sherlotta 8-053H), after the dull step so a Backup paying both
+		// ways is still on the field for it, and before the cost so its CP is banked and accounted.
+		breakBackupsForCp(isP1, backupBreaks).forEach((e, n) -> execCpAccum.merge(e, n, Integer::sum));
 
 		// Discards: pre-compute optimal element assignments (fewer matches first),
 		// then remove from hand in reverse-index order to avoid index shifting.
@@ -9002,6 +9097,17 @@ public class MainWindow {
 	private void executePlayFromBzP1(CardData card,
 			List<Integer> discardIndices, List<Integer> backupDullIndices,
 			Map<Integer, String> backupElementOverrides) {
+		executePlayFromBzP1(card, discardIndices, backupDullIndices, backupElementOverrides, Map.of());
+	}
+
+	/**
+	 * @param backupBreaks Backups put into the Break Zone for CP as part of this payment, slot to
+	 *                     the Element each produces (Sherlotta 8-053H) — spent in the same window
+	 *                     {@code executePlay} spends them in.
+	 */
+	private void executePlayFromBzP1(CardData card,
+			List<Integer> discardIndices, List<Integer> backupDullIndices,
+			Map<Integer, String> backupElementOverrides, Map<Integer, String> backupBreaks) {
 		String[] elems = card.elements();
 		boolean  isLD  = card.isLightOrDark();
 		Map<String, Integer> execCostByElem = new LinkedHashMap<>();
@@ -9030,6 +9136,9 @@ public class MainWindow {
 					? backupElementOverrides.get(bi) : p1BackupCards[bi].elements()[0];
 			if (!actualElem.isEmpty()) lastCastActualPaymentElements.add(actualElem);
 		}
+
+		// Break-for-CP payments (Sherlotta 8-053H), in the same window executePlay spends them in.
+		breakBackupsForCp(true, backupBreaks).forEach((e, n) -> execCpAccum.merge(e, n, Integer::sum));
 
 		List<Integer> assignOrder = new ArrayList<>(discardIndices);
 		if (!isLD) assignOrder.sort(Comparator.comparingInt(i ->
@@ -9687,6 +9796,7 @@ public class MainWindow {
 				if (effect != null) {
 					currentAbilitySource     = entry.source();
 					currentAbilitySourceIsP1 = entry.isP1();
+					currentAbilityIsSpecial  = false;
 					try { effect.accept(ctx); } finally { currentAbilitySource = null; }
 				} else {
 					logEntry("[EX Burst on Stack] Effect not yet implemented: " + exText);
@@ -9710,6 +9820,7 @@ public class MainWindow {
 					if (entry.preSelectedTargets() != null) ctx.preloadTargets(entry.preSelectedTargets());
 					currentAbilitySource     = entry.source();
 					currentAbilitySourceIsP1 = entry.isP1();
+					currentAbilityIsSpecial  = false;
 					try { effect.accept(ctx); } finally { currentAbilitySource = null; }
 				} else if (hadExtraCostClause && !entry.paidExtraCost()) {
 					// Extra cost wasn't paid, and the remaining unconditional lead-in (if any) has no
@@ -9728,11 +9839,13 @@ public class MainWindow {
 			} else {
 				currentAbilitySource     = entry.source();
 				currentAbilitySourceIsP1 = entry.isP1();
+				currentAbilityIsSpecial  = entry.isSpecialAbility();
 				try {
 					if (entry.preSelectedTargets() != null) ctx.preloadTargets(entry.preSelectedTargets());
 					ActionResolver.resolve(entry.ability(), entry.source(), gameState, ctx, entry.xValue());
 				} finally {
-					currentAbilitySource = null;
+					currentAbilitySource    = null;
+					currentAbilityIsSpecial = false;
 				}
 				refreshP1HandLabel();
 				refreshP1BreakLabel();
@@ -9815,12 +9928,12 @@ public class MainWindow {
 				gameState.getP1Hand(), cpPayableBackupCards(true), p1BackupStates, p1BackupUrls,
 				this::showZoomAt, this::hideZoom,
 				lightDarkDiscardGrants(true),
-				(discards, backups) -> {
+				(discards, backups, breaks) -> {
 					spentLbIndices.add(lbCastIdx);
 					spentLbIndices.addAll(pendingLbPayment);
 					logEntry("Cast LB \"" + card.name() + "\"");
-					executeLbPlay(card, discards, backups);
-				})
+					executeLbPlay(card, discards, backups, breaks);
+				}, breakForCpBackupSlots(true))
 			.show();
 	}
 
@@ -9831,6 +9944,15 @@ public class MainWindow {
 	 */
 	private void executeLbPlay(CardData card, List<Integer> discardIndices,
 			List<Integer> backupDullIndices) {
+		executeLbPlay(card, discardIndices, backupDullIndices, Map.of());
+	}
+
+	/**
+	 * @param backupBreaks Backups put into the Break Zone for CP as part of this payment, slot to
+	 *                     the Element each produces (Sherlotta 8-053H)
+	 */
+	private void executeLbPlay(CardData card, List<Integer> discardIndices,
+			List<Integer> backupDullIndices, Map<Integer, String> backupBreaks) {
 		String[] elems = card.elements();
 		boolean  isLD  = card.isLightOrDark();
 		Map<String, Integer> lbCpAccum = new LinkedHashMap<>();
@@ -9841,6 +9963,7 @@ public class MainWindow {
 			gameState.addP1Cp(cpElem, 1);
 			lbCpAccum.merge(cpElem, 1, Integer::sum);
 		}
+		breakBackupsForCp(true, backupBreaks).forEach((e, n) -> lbCpAccum.merge(e, n, Integer::sum));
 		discardIndices.sort(Collections.reverseOrder());
 		for (int di : discardIndices) {
 			CardData discarded = gameState.getP1Hand().get(di);
@@ -10360,7 +10483,6 @@ public class MainWindow {
 	List<CardData> playerHand(boolean isP1)       { return isP1 ? gameState.getP1Hand()       : gameState.getP2Hand(); }
 	CardData[]     playerBackupCards(boolean isP1) { return isP1 ? p1BackupCards               : p2BackupCards; }
 	CardState[]    playerBackupStates(boolean isP1){ return isP1 ? p1BackupStates              : p2BackupStates; }
-	private boolean[]      playerBackupFrozen(boolean isP1){ return isP1 ? p1BackupFrozen              : p2BackupFrozen; }
 	String[]       playerBackupUrls(boolean isP1)  { return isP1 ? p1BackupUrls                : p2BackupUrls; }
 	List<CardData> playerForwardCards(boolean isP1){ return isP1 ? p1ForwardCards              : p2ForwardCards; }
 	List<CardData> playerMonsterCards(boolean isP1){ return isP1 ? p1MonsterCards              : p2MonsterCards; }
@@ -10834,7 +10956,7 @@ public class MainWindow {
 		}
 		if (ActionResolver.hasCannotBeChosenByMultiElementForwardAbility(c)
 				&& isMultiElementForwardAbilitySource(chooserSource, bySummon)) return true;
-		if (icbGrantsImmunity(c.name(), sideIsP1, bySummon, false)) return true;
+		if (icbGrantsImmunity(c.name(), sideIsP1, bySummon, false, chooserSource)) return true;
 
 		// Opponent-scoped grants: the controller may still choose their own card.
 		if (chooserIsP1 == sideIsP1) return false;
@@ -10844,7 +10966,7 @@ public class MainWindow {
 		if (ActionResolver.hasCannotBeChosenByOppFieldAbility(c, bySummon)) return true;
 		if ((bySummon ? cannotBeChosenBySummons : cannotBeChosenByAbilities).contains(c)) return true;
 		if ((bySummon ? permanentCannotBeChosenBySummons : permanentCannotBeChosenByAbilities).contains(c)) return true;
-		return icbGrantsImmunity(c.name(), sideIsP1, bySummon, true);
+		return icbGrantsImmunity(c.name(), sideIsP1, bySummon, true, chooserSource);
 	}
 
 	/**
@@ -11400,15 +11522,32 @@ public class MainWindow {
 					out.add(aa.withEffectText(ActionResolver.substituteSourceName(
 							aa.effectText(), removed.name(), card.name())));
 				}
-			String job = CardData.parseRfgJobSpecialAbilityGrant(fa.effectText(), card.name());
-			if (job == null) continue;
-			for (CardData removed : isP1 ? gameState.getP1PermanentRfp() : gameState.getP2PermanentRfp()) {
-				if (removed == null || !CardFilters.meetsJobFilter(removed, job)) continue;
-				for (ActionAbility aa : removed.actionAbilities()) {
-					if (!aa.isSpecial()) continue;
-					out.add(aa.withEffectText(ActionResolver.substituteSourceName(
-							aa.effectText(), removed.name(), card.name())));
-				}
+			}
+		}
+		return out;
+	}
+
+	/**
+	 * Backup slots on {@code isP1}'s field that may be put into the Break Zone for CP while paying
+	 * a cost, mapped to how much each produces — Sherlotta 8-053H and her reprint.
+	 *
+	 * <p>Not filtered by {@link CardState}: breaking is a payment of its own and the printing says
+	 * so in as many words ("this can be in addition to dulling Sherlotta for CP"), so a Backup
+	 * already dulled for CP can still be broken for more. That is the whole difference between this
+	 * list and the eligible-to-dull one the payment dialog builds beside it.
+	 *
+	 * <p>Read through {@link #effectiveFieldAbilities} so a granted copy of the sentence pays the
+	 * same way a printed one does.
+	 */
+	Map<Integer, Integer> breakForCpBackupSlots(boolean isP1) {
+		Map<Integer, Integer> out = new LinkedHashMap<>();
+		CardData[] bkps = isP1 ? p1BackupCards : p2BackupCards;
+		for (int i = 0; i < bkps.length; i++) {
+			CardData b = bkps[i];
+			if (b == null || lostAbilitiesCards.contains(b)) continue;
+			for (FieldAbility fa : effectiveFieldAbilities(b)) {
+				int amount = CardData.parseBreakSelfForCpAmount(fa.effectText(), b.name());
+				if (amount > 0) { out.put(i, amount); break; }
 			}
 		}
 		return out;
@@ -11468,8 +11607,8 @@ public class MainWindow {
 	 * scope. Targeting code wants one scope at a time; see the four-argument overload.
 	 */
 	boolean icbGrantsImmunity(String targetName, boolean isP1, boolean forSummon) {
-		return icbGrantsImmunity(targetName, isP1, forSummon, false)
-			|| icbGrantsImmunity(targetName, isP1, forSummon, true);
+		return icbGrantsImmunity(targetName, isP1, forSummon, false, null)
+			|| icbGrantsImmunity(targetName, isP1, forSummon, true, null);
 	}
 
 	/**
@@ -11479,24 +11618,38 @@ public class MainWindow {
 	 * {@code false} selects the unqualified grants, which block whoever is choosing — including
 	 * the target's own controller.
 	 */
+	/**
+	 * As the five-argument form with no choosing card known. Every source-type filter admits an
+	 * unknown source (see {@link IfControlBoost#admitsChooserSource}), so this is the widest answer
+	 * — the right default for a caller asking whether a card is shielded at all rather than
+	 * whether one particular effect may choose it.
+	 */
 	boolean icbGrantsImmunity(String targetName, boolean isP1, boolean forSummon, boolean opponentScoped) {
+		return icbGrantsImmunity(targetName, isP1, forSummon, opponentScoped, null);
+	}
+
+	boolean icbGrantsImmunity(String targetName, boolean isP1, boolean forSummon,
+			boolean opponentScoped, CardData chooserSource) {
 		List<CardData> fwds = isP1 ? p1ForwardCards : p2ForwardCards;
 		CardData[]     bkps = isP1 ? p1BackupCards  : p2BackupCards;
 		List<CardData> mons = isP1 ? p1MonsterCards : p2MonsterCards;
-		for (CardData src : fwds)          if (icbSourceGrantsImmunity(src, targetName, isP1, forSummon, opponentScoped)) return true;
-		for (CardData bkp : bkps) if (bkp != null && icbSourceGrantsImmunity(bkp, targetName, isP1, forSummon, opponentScoped)) return true;
-		for (CardData src : mons)          if (icbSourceGrantsImmunity(src, targetName, isP1, forSummon, opponentScoped)) return true;
+		for (CardData src : fwds)          if (icbSourceGrantsImmunity(src, targetName, isP1, forSummon, opponentScoped, chooserSource)) return true;
+		for (CardData bkp : bkps) if (bkp != null && icbSourceGrantsImmunity(bkp, targetName, isP1, forSummon, opponentScoped, chooserSource)) return true;
+		for (CardData src : mons)          if (icbSourceGrantsImmunity(src, targetName, isP1, forSummon, opponentScoped, chooserSource)) return true;
 		return false;
 	}
 
 	private boolean icbSourceGrantsImmunity(CardData src, String targetName, boolean isP1,
-			boolean forSummon, boolean opponentScoped) {
+			boolean forSummon, boolean opponentScoped, CardData chooserSource) {
 		List<CardData> fwds = isP1 ? p1ForwardCards : p2ForwardCards;
 		CardData[]     bkps = isP1 ? p1BackupCards  : p2BackupCards;
 		List<CardData> mons = isP1 ? p1MonsterCards : p2MonsterCards;
 		for (IfControlBoost icb : src.ifControlBoosts()) {
 			if (forSummon ? !icb.cannotBeChosenBySummons() : !icb.cannotBeChosenByAbilities()) continue;
 			if (icb.chosenImmunityOpponentOnly() != opponentScoped) continue;
+			// Aerith 3-050L shields only against a Backup's abilities. Grants naming no source
+			// type admit anything, so this is a no-op for every other printing.
+			if (!icb.admitsChooserSource(chooserSource)) continue;
 			if (!icbTargetsName(icb, targetName, isP1, fwds, bkps, mons)) continue;
 			if (icbConditionsMet(icb, isP1)) return true;
 		}
@@ -11797,6 +11950,20 @@ public class MainWindow {
 	}
 
 	/**
+	 * Whether {@code fpg}'s turn window is open for a grant on {@code isP1}'s side — Rydia 28-072L's
+	 * "During your opponent's turn" and the "during your turn" printings alike.
+	 *
+	 * <p>"Your" in a card's own text is its controller, so both windows are read against the side
+	 * the grant is running on. A grant naming no window is always open, so this can sit in the same
+	 * conjunction as the other board-state gates.
+	 */
+	boolean fpgTurnWindowOpen(FieldPowerGrant fpg, boolean isP1) {
+		if (!fpg.yourTurnOnly() && !fpg.oppTurnOnly()) return true;
+		boolean ownTurn = isP1 == (gameState.getCurrentPlayer() == GameState.Player.P1);
+		return fpg.oppTurnOnly() ? !ownTurn : ownTurn;
+	}
+
+	/**
 	 * Whether a {@link FieldPowerGrant#partyWithCardName} grant's party condition holds — Chocobo
 	 * 2-060C's "The Forwards forming a party with Chocobo gain First Strike."
 	 *
@@ -11830,7 +11997,7 @@ public class MainWindow {
 					&& fpgBzConditionMet(fpg, isP1)
 					&& (!fpg.attackingOnly() || isDeclaredAttacker(target, isP1))
 					&& fpgPartyConditionMet(fpg, src, target, isP1)
-					&& (!fpg.yourTurnOnly() || isP1 == (gameState.getCurrentPlayer() == GameState.Player.P1))) {
+					&& fpgTurnWindowOpen(fpg, isP1)) {
 				boost += fpg.powerBonus();
 				if (fpg.exBurstDmgPerGroup() > 0) {
 					List<CardData> dmg = isP1 ? gameState.getP1DamageZone() : gameState.getP2DamageZone();
@@ -12161,10 +12328,12 @@ public class MainWindow {
 						if (effect == null) continue;
 						logEntry((isP1 ? "" : "[P2] ") + fwd.name() + " — granted by " + granter.name()
 								+ ": " + grant.abilityText());
-						CardData prevSource = currentAbilitySource;
-						currentAbilitySource = fwd;
+						CardData prevSource  = currentAbilitySource;
+						boolean  prevSpecial = currentAbilityIsSpecial;
+						currentAbilitySource    = fwd;
+						currentAbilityIsSpecial = false;
 						try { effect.accept(buildGameContext(isP1)); }
-						finally { currentAbilitySource = prevSource; }
+						finally { currentAbilitySource = prevSource; currentAbilityIsSpecial = prevSpecial; }
 					}
 				}
 			}

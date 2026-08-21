@@ -118,6 +118,9 @@ public class FieldAbilityParsingTest {
         // Clive 26-005H. Read by MainWindow.rfgJobSpecialAbilities against the removed-from-game
         // zone; name-checked against the carrier there, so it is name-checked here too.
         if (CardData.parseRfgJobSpecialAbilityGrant(fa.effectText(), source.name()) != null) return true;
+        // Sherlotta 8-053H. Read by MainWindow.breakForCpBackupSlots while a CP cost is being paid;
+        // self-named there, so it is name-checked here too.
+        if (CardData.parseBreakSelfForCpAmount(fa.effectText(), source.name()) > 0) return true;
         if (CardData.SELF_LIGHT_DARK_PLAY_EXCEPTION_PATTERN.matcher(fa.effectText()).matches()) return true;
         if (CardData.MULTI_LIGHT_DARK_PLAY_PATTERN.matcher(fa.effectText()).matches()) return true;
         if (CardData.MULTI_NAME_PLAY_PATTERN.matcher(fa.effectText()).matches()) return true;
@@ -568,6 +571,8 @@ public class FieldAbilityParsingTest {
                     + " Forwards: " + fwdGrant.abilityText() + "]";
         String rfgJob = CardData.parseRfgJobSpecialAbilityGrant(fa.effectText(), source.name());
         if (rfgJob != null) return "RfgJobSpecialAbilityGrant[" + rfgJob + "]";
+        int breakCp = CardData.parseBreakSelfForCpAmount(fa.effectText(), source.name());
+        if (breakCp > 0) return "BreakSelfForCp[" + breakCp + " any Element]";
         Matcher m;
         m = CardData.SELF_LIGHT_DARK_PLAY_EXCEPTION_PATTERN.matcher(fa.effectText());
         if (m.matches()) return "SelfPlayException[" + m.group("element") + "]";

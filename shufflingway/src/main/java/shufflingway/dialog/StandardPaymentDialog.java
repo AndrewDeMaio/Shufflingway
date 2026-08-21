@@ -61,10 +61,21 @@ public class StandardPaymentDialog {
     /** Callback invoked on payment confirmation. */
     @FunctionalInterface
     public interface ConfirmCallback {
-        void accept(List<Integer> discards, List<Integer> backups, Map<Integer, String> elementOverrides);
+        /**
+         * @param breakElements backup slots the player chose to put into the Break Zone for CP,
+         *     mapped to the Element each produces (Sherlotta 8-053H). A slot may appear here and
+         *     in {@code backups} at once — breaking is a payment of its own, additional to dulling.
+         */
+        void accept(List<Integer> discards, List<Integer> backups, Map<Integer, String> elementOverrides,
+                Map<Integer, String> breakElements);
     }
-    /** Called on Confirm with (discardIndices, backupSlots, elementOverrides). */
+    /** Called on Confirm with (discardIndices, backupSlots, elementOverrides, breakElements). */
     private final ConfirmCallback onConfirm;
+    /**
+     * Backup slots that may be put into the Break Zone for CP, mapped to how much each produces —
+     * Sherlotta 8-053H. Each appears in the Backups row a second time, captioned "Break".
+     */
+    private final Map<Integer, Integer> breakForCpSlots;
     private final boolean        anyElementCast;
     private final String[]       extraRequiredElements;
     private final java.util.Set<String> ldDiscardGrants;
@@ -122,6 +133,25 @@ public class StandardPaymentDialog {
             boolean anyElementCast, String[] extraRequiredElements,
             java.util.Set<String> ldDiscardGrants,
             java.util.function.Function<CardData, java.util.List<String>> gainedElements) {
+        this(owner, card, handIdx, cost, hand, backupCards, backupStates, backupUrls, onZoom,
+                onZoomHide, controlledForwards, onConfirm, anyElementCast, extraRequiredElements,
+                ldDiscardGrants, gainedElements, Map.of());
+    }
+
+    /**
+     * @param gainedElements per-Backup lookup of Elements gained from the board on top of the
+     *     printed ones; return an empty list for a Backup that has gained none.
+     * @param breakForCpSlots backup slots that may be broken for CP, mapped to how much each
+     *     produces; empty when none apply.
+     */
+    public StandardPaymentDialog(JFrame owner, CardData card, int handIdx, int cost,
+            List<CardData> hand, CardData[] backupCards, CardState[] backupStates,
+            String[] backupUrls, Consumer<String> onZoom, Runnable onZoomHide,
+            List<CardData> controlledForwards, ConfirmCallback onConfirm,
+            boolean anyElementCast, String[] extraRequiredElements,
+            java.util.Set<String> ldDiscardGrants,
+            java.util.function.Function<CardData, java.util.List<String>> gainedElements,
+            Map<Integer, Integer> breakForCpSlots) {
         this.owner              = owner;
         this.card               = card;
         this.handIdx            = handIdx;
@@ -138,6 +168,7 @@ public class StandardPaymentDialog {
         this.extraRequiredElements = extraRequiredElements;
         this.ldDiscardGrants    = ldDiscardGrants;
         this.gainedElements     = gainedElements;
+        this.breakForCpSlots    = breakForCpSlots == null ? Map.of() : breakForCpSlots;
     }
 
     /** The Elements {@code backup} can produce beyond its printed ones; never null. */
@@ -174,6 +205,11 @@ public class StandardPaymentDialog {
         List<Integer> selectedBackups      = new ArrayList<>();
         List<Integer> selectedDiscards     = new ArrayList<>();
         Map<Integer, String> backupElementOverrides = new LinkedHashMap<>();
+        // The break-for-CP copies (Sherlotta 8-053H). Their selection is kept apart from
+        // backupElementOverrides because the same slot can be dulled and broken in one payment,
+        // each producing its own CP.
+        BreakForCpEntries breaks = new BreakForCpEntries(breakForCpSlots, backupCards, backupUrls,
+                onZoom, onZoomHide);
 
         List<Integer> eligibleBackupSlots = new ArrayList<>();
         for (int i = 0; i < backupCards.length; i++) {
@@ -223,6 +259,7 @@ public class StandardPaymentDialog {
                     extraCp++;
                 }
             }
+            extraCp += breaks.contribute(cpByElem, isLD ? elem : null);
             List<Integer> sortedDiscards = new ArrayList<>(selectedDiscards);
             if (!isLD) sortedDiscards.sort(Comparator.comparingInt(i ->
                     (int) java.util.Arrays.stream(elems)
@@ -261,6 +298,7 @@ public class StandardPaymentDialog {
                 lbl.setBackground(sel || canAddBkp ? Color.DARK_GRAY : new Color(50, 50, 50));
                 lbl.setCursor(sel || canAddBkp ? Cursor.getPredefinedCursor(Cursor.HAND_CURSOR) : Cursor.getDefaultCursor());
             }
+            breaks.refresh();
             for (int i = 0; i < discardLbls.size(); i++) {
                 JLabel lbl = discardLbls.get(i); boolean sel = selectedDiscards.contains(discardIdxs.get(i));
                 lbl.setBorder(sel ? CardAnimation.createCardGlowBorder(Color.YELLOW)
@@ -274,8 +312,9 @@ public class StandardPaymentDialog {
         JPanel centerPanel = new JPanel();
         centerPanel.setLayout(new BoxLayout(centerPanel, BoxLayout.Y_AXIS));
 
-        if (!eligibleBackupSlots.isEmpty()) {
-            JLabel hdr = new JLabel("Backups — dull for 1 CP each:");
+        if (!eligibleBackupSlots.isEmpty() || !breaks.isEmpty()) {
+            JLabel hdr = new JLabel("Backups — dull for 1 CP each"
+                    + (breaks.isEmpty() ? "" : BreakForCpEntries.headerSuffix()) + ":");
             hdr.setFont(FontLoader.loadPixelFont(9)); hdr.setAlignmentX(Component.LEFT_ALIGNMENT);
             JPanel bp = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 6)); bp.setAlignmentX(Component.LEFT_ALIGNMENT);
             for (int slot : eligibleBackupSlots) {
@@ -342,6 +381,7 @@ public class StandardPaymentDialog {
                 loadImage(lbl, url, false);
                 backupLbls.add(lbl); backupSlots.add(slot); bp.add(lbl);
             }
+            breaks.addTo(bp, castElemOnly, updateAll);
             centerPanel.add(hdr); centerPanel.add(bp);
         }
 
@@ -407,7 +447,7 @@ public class StandardPaymentDialog {
         confirmBtn.addActionListener(e -> {
             dlg.dispose();
             onConfirm.accept(new ArrayList<>(selectedDiscards), new ArrayList<>(selectedBackups),
-                    new LinkedHashMap<>(backupElementOverrides));
+                    new LinkedHashMap<>(backupElementOverrides), breaks.selection());
         });
 
         JPanel south = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 6));

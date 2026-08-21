@@ -42,7 +42,8 @@ public record IfControlBoost(
         boolean   allBackupsDifferentElements, // true = condition requires all controlled Backups to be different Elements
         boolean   chosenImmunityOpponentOnly, // true = the cannotBeChosen* immunities apply only to the target's opponent ("cannot be chosen by your opponent's ..."); false = to either player
         int       minOwnHandSize,             // 0 = unused; >0 = condition requires own hand size to be >= this value
-        int       minDifferentElementBackups  // 0 = unused; >0 = condition requires this many DISTINCT Elements among controlled Backups
+        int       minDifferentElementBackups, // 0 = unused; >0 = condition requires this many DISTINCT Elements among controlled Backups
+        String    chosenImmunitySourceType  // null = any source; else the card type whose abilities the immunity covers ("Backup")
 ) {
     public IfControlBoost {
         conditions    = List.copyOf(conditions);
@@ -51,6 +52,63 @@ public record IfControlBoost(
         grantedTraits = Collections.unmodifiableSet(traitSet);
         if (exceptCardName == null) exceptCardName = "";
         if (specialText    == null) specialText    = "";
+    }
+
+    /**
+     * Compatibility constructor preserving the prior 21-arg canonical form; defaults
+     * {@code chosenImmunitySourceType} to {@code null} — an immunity that names no source type
+     * covers every source, which is what every grant predating the field meant.
+     */
+    public IfControlBoost(List<ControlCondition> conditions, String exceptCardName,
+            String targetCardName, FieldPowerGrant targetFilter, int powerBonus,
+            Set<CardData.Trait> grantedTraits, String specialText,
+            boolean cannotBeChosenBySummons, boolean cannotBeChosenByAbilities, boolean cannotBeBlocked,
+            int[] cannotBeBlockedByCost, int minRemovedFromGame, int minDamageReceived, boolean instead,
+            int maxOpponentHandSize, int minOpponentForwards, int maxOwnHandSize,
+            boolean allBackupsDifferentElements, boolean chosenImmunityOpponentOnly,
+            int minOwnHandSize, int minDifferentElementBackups) {
+        this(conditions, exceptCardName, targetCardName, targetFilter, powerBonus, grantedTraits,
+                specialText, cannotBeChosenBySummons, cannotBeChosenByAbilities, cannotBeBlocked,
+                cannotBeBlockedByCost, minRemovedFromGame, minDamageReceived, instead,
+                maxOpponentHandSize, minOpponentForwards, maxOwnHandSize, allBackupsDifferentElements,
+                chosenImmunityOpponentOnly, minOwnHandSize, minDifferentElementBackups, null);
+    }
+
+    /**
+     * A copy whose chosen-immunity covers only abilities belonging to a card of {@code cardType}
+     * — Aerith 3-050L, "The Forwards you control cannot be chosen by your opponent's Backup
+     * abilities", the only printing in the corpus to narrow the immunity by the source's type.
+     *
+     * <p>A wither for the same reason as {@link #asOpponentScopedChosenImmunity}: the field sits
+     * past a long tail of defaults that a positional call would have to spell out.
+     */
+    public IfControlBoost withChosenImmunitySourceType(String cardType) {
+        return new IfControlBoost(conditions, exceptCardName, targetCardName, targetFilter,
+                powerBonus, grantedTraits, specialText, cannotBeChosenBySummons,
+                cannotBeChosenByAbilities, cannotBeBlocked, cannotBeBlockedByCost,
+                minRemovedFromGame, minDamageReceived, instead, maxOpponentHandSize,
+                minOpponentForwards, maxOwnHandSize, allBackupsDifferentElements,
+                chosenImmunityOpponentOnly, minOwnHandSize, minDifferentElementBackups, cardType);
+    }
+
+    /**
+     * Whether an ability belonging to {@code chooserSource} is one this grant's immunity covers.
+     *
+     * <p>An immunity naming no source type covers every source, so this answers {@code true}
+     * whenever the field is unset — which keeps it usable in the same conjunction as the rest.
+     * A {@code null} source is unknown rather than "not a Backup", and is admitted for the same
+     * reason: refusing it would silently narrow every existing grant.
+     */
+    public boolean admitsChooserSource(CardData chooserSource) {
+        if (chosenImmunitySourceType == null) return true;
+        if (chooserSource == null) return true;
+        return switch (chosenImmunitySourceType.toLowerCase(java.util.Locale.ROOT)) {
+            case "backup"    -> chooserSource.isBackup();
+            case "forward"   -> chooserSource.isForward();
+            case "monster"   -> chooserSource.isMonster();
+            case "character" -> !chooserSource.isSummon();
+            default          -> true;
+        };
     }
 
     /**
@@ -181,7 +239,7 @@ public record IfControlBoost(
                 cannotBeChosenByAbilities, cannotBeBlocked, cannotBeBlockedByCost,
                 minRemovedFromGame, minDamageReceived, instead, maxOpponentHandSize,
                 minOpponentForwards, maxOwnHandSize, allBackupsDifferentElements, true,
-                minOwnHandSize, minDifferentElementBackups);
+                minOwnHandSize, minDifferentElementBackups, chosenImmunitySourceType);
     }
 
     /**
@@ -195,7 +253,7 @@ public record IfControlBoost(
                 cannotBeChosenByAbilities, cannotBeBlocked, cannotBeBlockedByCost,
                 minRemovedFromGame, minDamageReceived, instead, maxOpponentHandSize,
                 minOpponentForwards, maxOwnHandSize, allBackupsDifferentElements,
-                chosenImmunityOpponentOnly, n, minDifferentElementBackups);
+                chosenImmunityOpponentOnly, n, minDifferentElementBackups, chosenImmunitySourceType);
     }
 
     /** A copy gated on {@code n} distinct Elements among the controller's Backups (Kefka 3-079H). */
@@ -232,6 +290,7 @@ public record IfControlBoost(
         if (cannotBeChosenByAbilities) sb.append(" NCA");
         if ((cannotBeChosenBySummons || cannotBeChosenByAbilities) && chosenImmunityOpponentOnly)
             sb.append("(opp)");
+        if (chosenImmunitySourceType != null) sb.append("[from:").append(chosenImmunitySourceType).append(']');
         if (cannotBeBlocked)           sb.append(" unblockable");
         if (cannotBeBlockedByCost != null)
             sb.append(" not-blocked-cost").append(cannotBeBlockedByCost[0])

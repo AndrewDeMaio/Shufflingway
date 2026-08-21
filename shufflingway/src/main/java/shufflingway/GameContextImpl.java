@@ -845,10 +845,10 @@ final class GameContextImpl implements GameContext {
 							if (ActionResolver.hasCannotBeChosenByMultiElementForwardAbility(c)
 									&& mw.isMultiElementForwardAbilitySource(resCard, mw.currentResolutionIsSummon))
 								ablTmp.add(c);
-							if (mw.icbGrantsImmunity(c.name(), p1side, true,  false)) sumTmp.add(c);
-							if (mw.icbGrantsImmunity(c.name(), p1side, false, false)) ablTmp.add(c);
-							if (mw.icbGrantsImmunity(c.name(), p1side, true,  true))  sumOpp.add(c);
-							if (mw.icbGrantsImmunity(c.name(), p1side, false, true))  ablOpp.add(c);
+							if (mw.icbGrantsImmunity(c.name(), p1side, true,  false, resCard)) sumTmp.add(c);
+							if (mw.icbGrantsImmunity(c.name(), p1side, false, false, resCard)) ablTmp.add(c);
+							if (mw.icbGrantsImmunity(c.name(), p1side, true,  true,  resCard)) sumOpp.add(c);
+							if (mw.icbGrantsImmunity(c.name(), p1side, false, true,  resCard)) ablOpp.add(c);
 						}
 					}
 					summonImmuneAnyone   = sumTmp;

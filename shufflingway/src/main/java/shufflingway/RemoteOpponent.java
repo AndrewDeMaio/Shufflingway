@@ -185,9 +185,17 @@ class RemoteOpponent implements OpponentController {
 			}
 		}
 
+		// The break half of the payment (Sherlotta 8-053H) travels with the play and is spent
+		// inside it, in the same window the caster's client spent it in.
+		Map<Integer, String> breaks = new LinkedHashMap<>();
+		JSONObject rawBreaks = payload.optJSONObject("backupBreaks");
+		if (rawBreaks != null)
+			for (String key : rawBreaks.keySet())
+				breaks.put(Integer.valueOf(key), rawBreaks.getString(key));
+
 		mw.executePlay(false, card, handIdx,
 				indices(payload, "discards"), indices(payload, "backups"), overrides,
-				summonTargets, targetsAreReplayed);
+				summonTargets, targetsAreReplayed, breaks);
 	}
 
 	/**
@@ -585,9 +593,16 @@ class RemoteOpponent implements OpponentController {
 	 */
 	static GameAction playCardAction(CardData card, int handIdx, List<Integer> discards,
 	                                 List<Integer> backupDulls, Map<Integer, String> backupElements,
-	                                 List<ForwardTarget> summonTargets) {
+	                                 List<ForwardTarget> summonTargets,
+	                                 Map<Integer, String> backupBreaks) {
 		JSONObject overrides = new JSONObject();
 		backupElements.forEach((slot, element) -> overrides.put(String.valueOf(slot), element));
+		// Backups broken for CP as part of this payment (Sherlotta 8-053H). Its own object rather
+		// than more entries in backupElements: the same slot can be dulled and broken in one
+		// payment, so the two cannot share a key space.
+		JSONObject breaks = new JSONObject();
+		if (backupBreaks != null)
+			backupBreaks.forEach((slot, element) -> breaks.put(String.valueOf(slot), element));
 		JSONArray targets = new JSONArray();
 		if (summonTargets != null) {
 			for (ForwardTarget t : summonTargets) {
@@ -603,6 +618,7 @@ class RemoteOpponent implements OpponentController {
 				.put("discards", new JSONArray(discards))
 				.put("backups", new JSONArray(backupDulls))
 				.put("backupElements", overrides)
+				.put("backupBreaks", breaks)
 				// A cast Summon chooses its targets before the opponent may respond, so the choice
 				// belongs to the caster and travels with the play. Always present, so the receiver
 				// can tell "chose nothing" from an older client that never chose at all.

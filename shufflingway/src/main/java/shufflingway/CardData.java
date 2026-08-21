@@ -4296,6 +4296,11 @@ public record CardData(
         "(?:with\\s+(?<withtrait>" + TRAIT_KEYWORD + ")\\s+)?" +
         "(?:other\\s+than\\s+(?<except>[A-Z][A-Za-z''\\-]+(?:\\s+[A-Za-z''\\-]+)*)\\s+)?" +
         "you\\s+control\\s+cannot\\s+be\\s+chosen\\s+by\\s+your\\s+opponent's\\s+" +
+        // The card type whose abilities the immunity covers, when the printing names one —
+        // "your opponent's Backup abilities" (Aerith 3-050L). Its own group ahead of the scope,
+        // because it narrows what may choose rather than what kind of effect chooses: a Summon
+        // has no card type to match and is excluded by the scope alone.
+        "(?<sourcetype>Forward|Backup|Monster|Character)?\\s*" +
         "(?<scope>Summons?\\s+or\\s+abilities|Summons?|abilities)\\s*[.!]?\\s*$"
     );
 
@@ -5058,10 +5063,15 @@ public record CardData(
                     0, EnumSet.noneOf(Trait.class), null,
                     traitsNamedIn(m.group("withtrait")));
             String scope = m.group("scope").toLowerCase(Locale.ROOT);
-            result.add(new IfControlBoost(List.of(), "", "", filter, 0,
+            IfControlBoost shield = new IfControlBoost(List.of(), "", "", filter, 0,
                     EnumSet.noneOf(Trait.class), "",
                     scope.contains("summon"), scope.contains("abilit"), false, null, 0, 0, false)
-                    .asOpponentScopedChosenImmunity());
+                    .asOpponentScopedChosenImmunity();
+            // "Backup abilities" narrows the immunity to abilities belonging to a card of that
+            // type; every other printing names no type and covers any source.
+            String sourceType = m.group("sourcetype");
+            if (sourceType != null) shield = shield.withChosenImmunitySourceType(sourceType.trim());
+            result.add(shield);
         }
 
         return List.copyOf(result);
@@ -5221,7 +5231,11 @@ public record CardData(
      * summing contributions.
      */
     private static final Pattern FIELD_GRANT_BARE_PATTERN = Pattern.compile(
-        "(?i)^The\\s+" +
+        // The window the grant is open in, when the printing states one — "During your opponent's
+        // turn, all the Forwards you control gain +2000 power." (Rydia 28-072L). The optional
+        // "all" comes with it: every printing that opens with the window also says "all the",
+        // and the two are the same sentence otherwise.
+        "(?i)^(?:During\\s+(?<turnwindow>your\\s+opponent's|your)\\s+turn,\\s+all\\s+)?The\\s+" +
         "(?<attacking>attacking\\s+)?" +
         "(?<element>" + ELEMENT_KEYWORD + ")?\\s*" +
         "(?<targets>Forwards?(?:\\s+and\\s+Monsters?)?|Backups?|Monsters?|Characters?)\\s+" +
@@ -5910,13 +5924,17 @@ public record CardData(
                 int[] incl = parseFieldGrantTargetFlags(bareM.group("targets"));
                 String bareExcept = bareM.group("except");
                 String bareElem   = bareM.group("element");
-                result.add(FieldPowerGrant.sameSideFiltered(incl[0] != 0, incl[1] != 0, incl[2] != 0,
+                FieldPowerGrant bare = FieldPowerGrant.sameSideFiltered(incl[0] != 0, incl[1] != 0, incl[2] != 0,
                         bareExcept != null ? bareExcept.trim() : null,
                         Integer.parseInt(bareM.group("power")),
                         traitsNamedIn(bareM.group("traitstext")),
                         bareElem != null ? bareElem.trim() : null,
                         traitsNamedIn(bareM.group("withtrait")),
-                        bareM.group("attacking") != null));
+                        bareM.group("attacking") != null);
+                String window = bareM.group("turnwindow");
+                if (window != null)
+                    bare = bare.withTurnWindow(window.toLowerCase(Locale.ROOT).contains("opponent"));
+                result.add(bare);
                 continue;
             }
 
@@ -7439,6 +7457,38 @@ public record CardData(
     private static final Pattern IS_ALSO_MONSTER_PATTERN = Pattern.compile(
         "(?i)^.+?\\s+is\\s+also\\s+a\\s+Monster\\s+in\\s+all\\s+situations\\.?\\s*$"
     );
+
+    /**
+     * "[You may] put [Self] into the Break Zone to produce N CP of any Element [in order to pay a
+     * CP cost]." — Sherlotta 8-053H and her reprint Re-066H, which word the same permission two
+     * ways and mean the same thing.
+     *
+     * <p>Both spellings state that breaking her is <em>additional</em> to dulling her, one in the
+     * lead-in ("If you pay a CP, …") and one in the parenthetical, so neither half is captured:
+     * the reminder is text, and the rule it describes is that the break is a payment of its own.
+     * The trailing parenthetical is matched and discarded for the same reason.
+     * Groups: {@code cardname}, {@code count}.
+     */
+    private static final Pattern FIELD_BREAK_SELF_FOR_ANY_CP = Pattern.compile(
+        "(?i)^(?:If\\s+you\\s+pay\\s+a\\s+CP,\\s+)?[Yy]ou\\s+may\\s+put\\s+(?<cardname>.+?)\\s+" +
+        "into\\s+the\\s+Break\\s+Zone\\s+to\\s+produce\\s+(?<count>\\d+)\\s+CP\\s+of\\s+any\\s+Element" +
+        "(?:\\s+in\\s+order\\s+to\\s+pay\\s+a\\s+CP\\s+cost)?\\s*[.!]?" +
+        "(?:\\s*\\([^)]*\\))?\\s*$"
+    );
+
+    /**
+     * How much CP breaking {@code cardName} produces under {@code effectText}, or 0 when the text
+     * is not that permission or names another card.
+     *
+     * <p>Self-named like every other passive of this shape: the sentence is printed on the card it
+     * spends, and a grant that named somebody else would be a different rule.
+     */
+    public static int parseBreakSelfForCpAmount(String effectText, String cardName) {
+        if (effectText == null || cardName == null) return 0;
+        Matcher m = FIELD_BREAK_SELF_FOR_ANY_CP.matcher(effectText.trim());
+        if (!m.matches() || !m.group("cardname").trim().equalsIgnoreCase(cardName)) return 0;
+        return Integer.parseInt(m.group("count"));
+    }
 
     /** Matches "[CardName] enters the field dull." */
     private static final Pattern ENTERS_FIELD_DULL_PATTERN = Pattern.compile(

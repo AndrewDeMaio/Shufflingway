@@ -15,7 +15,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
-import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
 import javax.swing.BorderFactory;
@@ -54,7 +53,20 @@ public class AltCostPaymentDialog {
     private final Consumer<String> onZoom;
     private final Runnable         onZoomHide;
     /** Called on Confirm with (discardIndices, backupSlots). */
-    private final BiConsumer<List<Integer>, List<Integer>> onConfirm;
+    /**
+     * Called on Confirm with the discards, the Backups to dull, and the Backups to put into the
+     * Break Zone for CP mapped to the Element each produces (Sherlotta 8-053H).
+     */
+    @FunctionalInterface
+    public interface ConfirmCallback {
+        void accept(List<Integer> discards, List<Integer> backups, Map<Integer, String> breakElements);
+    }
+    private final ConfirmCallback onConfirm;
+    /**
+     * Backup slots that may be put into the Break Zone for CP — Sherlotta 8-053H. Each appears in
+     * the Backups row a second time, captioned "Break".
+     */
+    private final Map<Integer, Integer> breakForCpSlots;
     private final java.util.Set<String> ldDiscardGrants;
 
     /**
@@ -66,7 +78,23 @@ public class AltCostPaymentDialog {
             boolean backupOnly, List<CardData> hand, CardData[] backupCards, CardState[] backupStates,
             String[] backupUrls, Consumer<String> onZoom, Runnable onZoomHide,
             java.util.Set<String> ldDiscardGrants,
-            BiConsumer<List<Integer>, List<Integer>> onConfirm) {
+            ConfirmCallback onConfirm) {
+        this(owner, card, handIdx, altCp, genericNeeded, elems, costByElem, backupOnly, hand,
+                backupCards, backupStates, backupUrls, onZoom, onZoomHide, ldDiscardGrants,
+                onConfirm, Map.of());
+    }
+
+    /**
+     * @param breakForCpSlots backup slots that may be broken for CP, mapped to how much each
+     *     produces (Sherlotta 8-053H); empty when none apply
+     */
+    public AltCostPaymentDialog(JFrame owner, CardData card, int handIdx,
+            int altCp, long genericNeeded, String[] elems, LinkedHashMap<String, Integer> costByElem,
+            boolean backupOnly, List<CardData> hand, CardData[] backupCards, CardState[] backupStates,
+            String[] backupUrls, Consumer<String> onZoom, Runnable onZoomHide,
+            java.util.Set<String> ldDiscardGrants,
+            ConfirmCallback onConfirm, Map<Integer, Integer> breakForCpSlots) {
+        this.breakForCpSlots = breakForCpSlots == null ? Map.of() : breakForCpSlots;
         this.owner         = owner;
         this.card          = card;
         this.handIdx       = handIdx;
@@ -112,6 +140,9 @@ public class AltCostPaymentDialog {
         boolean[] canAddBackup  = {true};
         boolean[] canAddDiscard = {true};
 
+        BreakForCpEntries breaks = new BreakForCpEntries(breakForCpSlots, backupCards, backupUrls,
+                onZoom, onZoomHide);
+
         Runnable updateAll = () -> {
             Map<String, Integer> cp = new LinkedHashMap<>(bankCp);
             int extra = 0;
@@ -125,6 +156,8 @@ public class AltCostPaymentDialog {
                     cp.merge(contributingElement(hand.get(idx), elems, cp, costByElem), 2, Integer::sum);
                 else extra += 2;
             }
+            extra += breaks.contribute(cp, null);
+            breaks.refresh();
             int total      = cp.values().stream().mapToInt(Integer::intValue).sum() + extra;
             // Any amount of CP may be produced when paying a cost; excess beyond the cost is wasted.
             canAddBackup[0]  = true;
@@ -167,8 +200,9 @@ public class AltCostPaymentDialog {
             if (backupCards[i] != null && backupCards[i] != card && backupStates[i] == CardState.ACTIVE)
                 eligibleSlots.add(i);
 
-        if (!eligibleSlots.isEmpty()) {
-            JLabel hdr = new JLabel("Backups — dull for 1 CP each:");
+        if (!eligibleSlots.isEmpty() || !breaks.isEmpty()) {
+            JLabel hdr = new JLabel("Backups — dull for 1 CP each"
+                    + (breaks.isEmpty() ? "" : BreakForCpEntries.headerSuffix()) + ":");
             hdr.setFont(FontLoader.loadPixelFont(9)); hdr.setAlignmentX(Component.LEFT_ALIGNMENT);
             JPanel bp = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 6)); bp.setAlignmentX(Component.LEFT_ALIGNMENT);
             for (int slot : eligibleSlots) {
@@ -185,6 +219,7 @@ public class AltCostPaymentDialog {
                 loadCardImage(lbl, url);
                 backupLbls.add(lbl); backupSlots.add(slot); bp.add(lbl);
             }
+            breaks.addTo(bp, null, updateAll);
             center.add(hdr); center.add(bp);
         }
 
@@ -229,7 +264,8 @@ public class AltCostPaymentDialog {
         cancelBtn.addActionListener(ev -> dlg.dispose());
         confirmBtn.addActionListener(ev -> {
             dlg.dispose();
-            onConfirm.accept(new ArrayList<>(selectedDiscards), new ArrayList<>(selectedBackups));
+            onConfirm.accept(new ArrayList<>(selectedDiscards), new ArrayList<>(selectedBackups),
+                    breaks.selection());
         });
         JPanel south = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 6));
         south.add(confirmBtn); south.add(cancelBtn);

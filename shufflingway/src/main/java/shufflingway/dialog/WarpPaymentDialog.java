@@ -45,7 +45,12 @@ public class WarpPaymentDialog {
     /** Callback invoked on payment confirmation. */
     @FunctionalInterface
     public interface ConfirmCallback {
-        void accept(List<Integer> discards, List<Integer> backups, Map<Integer, String> elementOverrides);
+        /**
+         * @param breakElements backup slots the player chose to put into the Break Zone for CP,
+         *     mapped to the Element each produces (Sherlotta 8-053H)
+         */
+        void accept(List<Integer> discards, List<Integer> backups, Map<Integer, String> elementOverrides,
+                Map<Integer, String> breakElements);
     }
 
     private final JFrame         owner;
@@ -56,6 +61,11 @@ public class WarpPaymentDialog {
     private final CardState[]    backupStates;
     private final String[]       backupUrls;
     private final List<CardData> controlledForwards;
+    /**
+     * Backup slots that may be put into the Break Zone for CP — Sherlotta 8-053H. Each appears in
+     * the Backups row a second time, captioned "Break".
+     */
+    private final Map<Integer, Integer> breakForCpSlots;
     private final Consumer<String> onZoom;
     private final Runnable         onZoomHide;
     private final ConfirmCallback  onConfirm;
@@ -97,6 +107,23 @@ public class WarpPaymentDialog {
             java.util.Set<String> ldDiscardGrants, boolean anyElement,
             ConfirmCallback onConfirm,
             java.util.function.Function<CardData, java.util.List<String>> gainedElements) {
+        this(owner, card, handIdx, hand, backupCards, backupStates, backupUrls, controlledForwards,
+                onZoom, onZoomHide, ldDiscardGrants, anyElement, onConfirm, gainedElements, Map.of());
+    }
+
+    /**
+     * @param breakForCpSlots backup slots that may be broken for CP, mapped to how much each
+     *     produces (Sherlotta 8-053H); empty when none apply
+     */
+    public WarpPaymentDialog(JFrame owner, CardData card, int handIdx,
+            List<CardData> hand, CardData[] backupCards, CardState[] backupStates,
+            String[] backupUrls, List<CardData> controlledForwards,
+            Consumer<String> onZoom, Runnable onZoomHide,
+            java.util.Set<String> ldDiscardGrants, boolean anyElement,
+            ConfirmCallback onConfirm,
+            java.util.function.Function<CardData, java.util.List<String>> gainedElements,
+            Map<Integer, Integer> breakForCpSlots) {
+        this.breakForCpSlots    = breakForCpSlots == null ? Map.of() : breakForCpSlots;
         this.gainedElements     = gainedElements;
         this.owner              = owner;
         this.card               = card;
@@ -152,6 +179,9 @@ public class WarpPaymentDialog {
         List<Integer> discardIdxs = new ArrayList<>();
         boolean[] canAddDiscard   = {false};
 
+        BreakForCpEntries breaks = new BreakForCpEntries(breakForCpSlots, backupCards, backupUrls,
+                onZoom, onZoomHide);
+
         Runnable updateAll = () -> {
             Map<String, Integer> cpByElem = new LinkedHashMap<>(bankCpByElem);
             int extraCp = 0;
@@ -171,6 +201,8 @@ public class WarpPaymentDialog {
                     cpByElem.merge(contributingElement(hand.get(idx), elems, cpByElem, costByElem), 2, Integer::sum);
                 else extraCp += 2;
             }
+            extraCp += breaks.contribute(cpByElem, null);
+            breaks.refresh();
             int total       = cpByElem.values().stream().mapToInt(Integer::intValue).sum() + extraCp;
             // Any amount of CP may be produced when paying a cost; excess beyond the cost is wasted.
             boolean canAddBkp = true;
@@ -214,8 +246,9 @@ public class WarpPaymentDialog {
         JPanel centerPanel = new JPanel();
         centerPanel.setLayout(new BoxLayout(centerPanel, BoxLayout.Y_AXIS));
 
-        if (!eligibleBackupSlots.isEmpty()) {
-            JLabel hdr = new JLabel("Backups — dull for 1 CP each:");
+        if (!eligibleBackupSlots.isEmpty() || !breaks.isEmpty()) {
+            JLabel hdr = new JLabel("Backups — dull for 1 CP each"
+                    + (breaks.isEmpty() ? "" : BreakForCpEntries.headerSuffix()) + ":");
             hdr.setFont(FontLoader.loadPixelFont(9)); hdr.setAlignmentX(Component.LEFT_ALIGNMENT);
             JPanel bp = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 6)); bp.setAlignmentX(Component.LEFT_ALIGNMENT);
             for (int slot : eligibleBackupSlots) {
@@ -274,6 +307,8 @@ public class WarpPaymentDialog {
                 loadCardImage(lbl, url);
                 backupLbls.add(lbl); backupSlots.add(slot); bp.add(lbl);
             }
+            // A Warp cost names its own Elements, so the break copy still offers the picker.
+            breaks.addTo(bp, null, updateAll);
             centerPanel.add(hdr); centerPanel.add(bp);
         }
 
@@ -316,7 +351,7 @@ public class WarpPaymentDialog {
         confirmBtn.addActionListener(e -> {
             dlg.dispose();
             onConfirm.accept(new ArrayList<>(selectedDiscards), new ArrayList<>(selectedBackups),
-                    new LinkedHashMap<>(backupElementOverrides));
+                    new LinkedHashMap<>(backupElementOverrides), breaks.selection());
         });
 
         JPanel south = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 6));

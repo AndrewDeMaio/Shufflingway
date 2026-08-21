@@ -64,8 +64,11 @@ public class AbilityPaymentDialog {
          * @param sCostIdx hand index of the card committed to the Special (S) cost slot,
          *                 {@link #S_COST_CRYSTAL} when a Crystal pays it instead, or {@code -1}
          *                 when the ability has no S cost.
+         * @param breakElements backup slots the player chose to put into the Break Zone for CP,
+         *                 mapped to the Element each produces (Sherlotta 8-053H)
          */
-        void onConfirm(List<Integer> discards, List<Integer> backups, int xValue, int sCostIdx);
+        void onConfirm(List<Integer> discards, List<Integer> backups, int xValue, int sCostIdx,
+                Map<Integer, String> breakElements);
     }
 
     private final JFrame         owner;
@@ -82,6 +85,11 @@ public class AbilityPaymentDialog {
     private final Callback         onConfirm;
     private final java.util.Set<String> ldDiscardGrants;
     private final boolean          crystalMayPaySCost;
+    /**
+     * Backup slots that may be put into the Break Zone for CP — Sherlotta 8-053H. Each appears in
+     * the Backups row a second time, captioned "Break".
+     */
+    private final Map<Integer, Integer> breakForCpSlots;
 
     /**
      * @param primerName      name of the primer card beneath {@code source} when the source is a
@@ -99,6 +107,21 @@ public class AbilityPaymentDialog {
             CardData.SpecialAbilityProxy proxy, String primerName,
             java.util.Set<String> ldDiscardGrants, boolean crystalMayPaySCost,
             Callback onConfirm) {
+        this(owner, ability, source, hand, backupCards, backupStates, backupUrls, onZoom, onZoomHide,
+                proxy, primerName, ldDiscardGrants, crystalMayPaySCost, onConfirm, Map.of());
+    }
+
+    /**
+     * @param breakForCpSlots backup slots that may be broken for CP, mapped to how much each
+     *     produces (Sherlotta 8-053H); empty when none apply
+     */
+    public AbilityPaymentDialog(JFrame owner, ActionAbility ability, CardData source,
+            List<CardData> hand, CardData[] backupCards, CardState[] backupStates,
+            String[] backupUrls, Consumer<String> onZoom, Runnable onZoomHide,
+            CardData.SpecialAbilityProxy proxy, String primerName,
+            java.util.Set<String> ldDiscardGrants, boolean crystalMayPaySCost,
+            Callback onConfirm, Map<Integer, Integer> breakForCpSlots) {
+        this.breakForCpSlots = breakForCpSlots == null ? Map.of() : breakForCpSlots;
         this.owner        = owner;
         this.ability      = ability;
         this.source       = source;
@@ -170,6 +193,9 @@ public class AbilityPaymentDialog {
         boolean[] canAddBackup  = {false};
         int[]     xValueHolder  = {0};
 
+        BreakForCpEntries breaks = new BreakForCpEntries(breakForCpSlots, backupCards, backupUrls,
+                onZoom, onZoomHide);
+
         Runnable updateAll = () -> {
             Map<String, Integer> cpByElem = new LinkedHashMap<>(bankCpByElem);
             int extraCp = 0;
@@ -187,6 +213,8 @@ public class AbilityPaymentDialog {
                     cpByElem.merge(contributingElement(hand.get(idx), elems, cpByElem, costByElem), 2, Integer::sum);
                 else extraCp += 2;
             }
+            extraCp += breaks.contribute(cpByElem, null);
+            breaks.refresh();
             int total       = cpByElem.values().stream().mapToInt(Integer::intValue).sum() + extraCp;
             boolean satisfied = cpByElem.entrySet().stream()
                     .allMatch(en -> en.getValue() >= costByElem.getOrDefault(en.getKey(), 0));
@@ -270,8 +298,9 @@ public class AbilityPaymentDialog {
         JPanel center = new JPanel();
         center.setLayout(new BoxLayout(center, BoxLayout.Y_AXIS));
 
-        if (!eligibleBackupSlots.isEmpty()) {
-            JLabel hdr = new JLabel("Backups — dull for 1 CP each:");
+        if (!eligibleBackupSlots.isEmpty() || !breaks.isEmpty()) {
+            JLabel hdr = new JLabel("Backups — dull for 1 CP each"
+                    + (breaks.isEmpty() ? "" : BreakForCpEntries.headerSuffix()) + ":");
             hdr.setFont(FontLoader.loadPixelFont(9)); hdr.setAlignmentX(Component.LEFT_ALIGNMENT);
             JPanel bp = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 6)); bp.setAlignmentX(Component.LEFT_ALIGNMENT);
             for (int slot : eligibleBackupSlots) {
@@ -303,6 +332,7 @@ public class AbilityPaymentDialog {
                 loadCardImage(lbl, url, false);
                 backupLbls.add(lbl); backupSlots.add(slot); bp.add(lbl);
             }
+            breaks.addTo(bp, null, updateAll);
             center.add(hdr); center.add(bp);
         }
 
@@ -455,7 +485,8 @@ public class AbilityPaymentDialog {
                     xValueHolder[0],
                     ability.isSpecial()
                             ? (sCostCrystal[0] ? S_COST_CRYSTAL : sCostIdx[0])
-                            : -1);
+                            : -1,
+                    breaks.selection());
         });
 
         JPanel south = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 6));
