@@ -11400,6 +11400,15 @@ public class MainWindow {
 					out.add(aa.withEffectText(ActionResolver.substituteSourceName(
 							aa.effectText(), removed.name(), card.name())));
 				}
+			String job = CardData.parseRfgJobSpecialAbilityGrant(fa.effectText(), card.name());
+			if (job == null) continue;
+			for (CardData removed : isP1 ? gameState.getP1PermanentRfp() : gameState.getP2PermanentRfp()) {
+				if (removed == null || !CardFilters.meetsJobFilter(removed, job)) continue;
+				for (ActionAbility aa : removed.actionAbilities()) {
+					if (!aa.isSpecial()) continue;
+					out.add(aa.withEffectText(ActionResolver.substituteSourceName(
+							aa.effectText(), removed.name(), card.name())));
+				}
 			}
 		}
 		return out;

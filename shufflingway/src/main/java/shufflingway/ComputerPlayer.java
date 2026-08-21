@@ -1617,10 +1617,9 @@ class ComputerPlayer implements OpponentController {
 			CardData c = mw.p1ForwardCards.get(i);
 			if (c != null && !mw.lostAbilitiesCards.contains(c) && hasSearchAbility(c)) return true;
 		}
-		for (int i = 0; i < mw.p1BackupCards.length; i++) {
-			CardData c = mw.p1BackupCards[i];
-			if (c != null && !mw.lostAbilitiesCards.contains(c) && hasSearchAbility(c)) return true;
-		}
+        for (CardData c : mw.p1BackupCards) {
+            if (c != null && !mw.lostAbilitiesCards.contains(c) && hasSearchAbility(c)) return true;
+        }
 		for (int i = 0; i < mw.p1MonsterCards.size(); i++) {
 			CardData c = mw.p1MonsterCards.get(i);
 			if (c != null && !mw.lostAbilitiesCards.contains(c) && hasSearchAbility(c)) return true;
