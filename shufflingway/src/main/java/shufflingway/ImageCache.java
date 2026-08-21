@@ -5,7 +5,7 @@ import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.net.URL;
+import java.net.URI;
 import java.sql.SQLException;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -112,7 +112,7 @@ public final class ImageCache {
     }
 
     private static byte[] fetchFromNetwork(String url) throws IOException {
-        try (var in  = new URL(url).openStream();
+        try (var in  = URI.create(url).toURL().openStream();
              var out = new ByteArrayOutputStream()) {
             in.transferTo(out);
             return out.toByteArray();

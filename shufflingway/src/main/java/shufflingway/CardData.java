@@ -4252,9 +4252,15 @@ public record CardData(
 
     /**
      * The same shield handed to a filtered <em>set</em> rather than a named card:
-     * "The [type] [with Trait] [other than X] you control cannot be chosen by your opponent's
-     * [Summons or abilities | Summons | abilities]." — Silver Dragon 23-044R (Monsters, excluding
-     * itself) and White Tiger l'Cie Nimbus 23-035H (Forwards with Brave, excluding itself).
+     * "The [Job J | Category C] [type] [with Trait] [other than X] you control cannot be chosen
+     * by your opponent's [Summons or abilities | Summons | abilities]." — Silver Dragon 23-044R
+     * (Monsters, excluding itself), White Tiger l'Cie Nimbus 23-035H (Forwards with Brave,
+     * excluding itself), Kimahri 7-108H (a Job and a Category, one printing each), Reddas
+     * 22-054R (Job, excluding itself) and Paine 6-053R / Rikku 6-062R (Job plus a type).
+     *
+     * <p>Every part before "you control" is optional but at least one has to be there for the
+     * sentence to name a set at all; the anchors are what enforce that, since a text with none of
+     * them does not reach "you control" from "The".
      *
      * <p>Stored as an {@link IfControlBoost} with an empty conditions list and a target filter, the
      * same shape {@link #UNCONDITIONAL_NAMED_CANNOT_BE_CHOSEN} uses for the named form — the
@@ -4264,7 +4270,16 @@ public record CardData(
      */
     private static final Pattern UNCONDITIONAL_FILTERED_CANNOT_BE_CHOSEN = Pattern.compile(
         "(?i)^The\\s+" +
-        "(?<targets>Forwards?(?:\\s+and\\s+Monsters?)?|Backups?|Monsters?|Characters?)\\s+" +
+        // A Job or Category narrowing the set (Kimahri 7-108H, Reddas 22-054R, Paine 6-053R,
+        // Rikku 6-062R). The lookahead refuses Mayakov 15-121R's "Job Dancer and Card Name
+        // Dancer", which is two alternative filters rather than one and has its own pattern —
+        // without it the lazy Job group swallows the whole phrase and yields a filter no card
+        // can meet.
+        "(?:Job\\s+(?!.*\\s+and\\s+Card\\s+Name\\s+)(?<job>.+?)\\s+" +
+        "|Category\\s+(?<category>\\S+)\\s+)?" +
+        // Optional, because a Job or Category is subject enough on its own — "The Job Guardian
+        // … you control" names no type and so reaches every row.
+        "(?:(?<targets>Forwards?(?:\\s+and\\s+Monsters?)?|Backups?|Monsters?|Characters?)\\s+)?" +
         "(?:with\\s+(?<withtrait>" + TRAIT_KEYWORD + ")\\s+)?" +
         "(?:other\\s+than\\s+(?<except>[A-Z][A-Za-z''\\-]+(?:\\s+[A-Za-z''\\-]+)*)\\s+)?" +
         "you\\s+control\\s+cannot\\s+be\\s+chosen\\s+by\\s+your\\s+opponent's\\s+" +
@@ -5013,9 +5028,18 @@ public record CardData(
             if (seg.isEmpty()) continue;
             Matcher m = UNCONDITIONAL_FILTERED_CANNOT_BE_CHOSEN.matcher(seg);
             if (!m.matches()) continue;
-            int[] incl = parseFieldGrantTargetFlags(m.group("targets"));
+            String job      = m.group("job");
+            String category = m.group("category");
+            // No type token is not "no rows": a Job or Category names Characters wherever they
+            // sit, so the filter has to reach all three. parseFieldGrantTargetFlags answers for
+            // the printings that do name a type.
+            int[] incl = m.group("targets") != null
+                    ? parseFieldGrantTargetFlags(m.group("targets"))
+                    : new int[]{1, 1, 1};
             String except = m.group("except");
             FieldPowerGrant filter = FieldPowerGrant.sameSideFiltered(
+                    job      != null ? job.trim()      : null,
+                    category != null ? category.trim() : null,
                     incl[0] != 0, incl[1] != 0, incl[2] != 0,
                     except != null ? except.trim() : null,
                     0, EnumSet.noneOf(Trait.class), null,

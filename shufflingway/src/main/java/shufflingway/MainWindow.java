@@ -9369,8 +9369,7 @@ public class MainWindow {
 				+ (paidExtraCost ? " (Extra Cost paid)" : ""));
 		turn(isP1).summonsCastThisTurn++;
 		autoAbilityTriggers.triggerAutoAbilitiesForNthSummonCast(isP1, turn(isP1).summonsCastThisTurn);
-		if (castSummonIsCancelledByOpponent(isP1)) {
-			cancelledStackEntries.add(entry);
+		if (castSummonIsCancelledByOpponent(isP1) && cancelStackEntry(entry)) {
 			logEntry((isP1 ? "" : "[P2] ") + "\"" + card.name()
 					+ "\" — the turn's first Summon; its effect is cancelled");
 		}
@@ -10860,6 +10859,51 @@ public class MainWindow {
 	boolean isMultiElementForwardAbilitySource(CardData resolvingCard, boolean bySummon) {
 		return !bySummon && resolvingCard != null && resolvingCard.isForward()
 				&& effectiveElements(resolvingCard).size() > 1;
+	}
+
+	/**
+	 * Whether {@code entry} is an ability its controller's field protects from being cancelled —
+	 * Yoran-Oran 29-075H, who shields the abilities of their Job Mage.
+	 *
+	 * <p>Summons and EX Bursts are never protected by this: the sentence names the three kinds of
+	 * <em>ability</em>, and an entry carrying neither an action nor an auto ability is neither.
+	 *
+	 * <p>Read off the entry's own controller's field, since "your Job Mage" is the shielding
+	 * card's controller's. The source is judged on the Job it has now rather than the one it was
+	 * printed with, and is not required to still be on the field — an ability outlives the card
+	 * that used it, and the protection has to outlive it too.
+	 */
+	boolean stackEntryProtectedFromCancel(StackEntry entry) {
+		if (entry == null || entry.source() == null) return false;
+		if (entry.ability() == null && entry.autoAbility() == null) return false;
+		for (CardData c : fieldCards(entry.isP1())) {
+			if (lostAbilitiesCards.contains(c)) continue;
+			for (FieldAbility fa : effectiveFieldAbilities(c)) {
+				Matcher m = AutoAbilityTriggers.FA_JOB_ABILITIES_CANNOT_BE_CANCELLED
+						.matcher(fa.effectText().trim());
+				if (m.matches() && meetsJobFilterEffective(entry.source(), m.group("job").trim()))
+					return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Marks {@code entry} to be cancelled when it resolves, unless its controller's field
+	 * protects it. Returns whether the cancellation took.
+	 *
+	 * <p>The single point every cancelling effect goes through, so a protection has one place to
+	 * be honoured. The effects that let a player <em>choose</em> what to cancel also filter their
+	 * candidate list with {@link #stackEntryProtectedFromCancel} beforehand, so a protected entry
+	 * is never offered as a choice that would then do nothing.
+	 */
+	boolean cancelStackEntry(StackEntry entry) {
+		if (stackEntryProtectedFromCancel(entry)) {
+			logEntry(entry.source().name() + " — its ability cannot be cancelled");
+			return false;
+		}
+		cancelledStackEntries.add(entry);
+		return true;
 	}
 
 	/**

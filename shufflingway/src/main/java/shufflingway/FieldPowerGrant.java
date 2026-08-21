@@ -101,6 +101,23 @@ public record FieldPowerGrant(
     }
 
     /**
+     * As {@link #sameSideFiltered(boolean, boolean, boolean, String, int, Set, String, Set)}, with a
+     * Job and/or Category narrowing the set — "The Job Guardian other than Kimahri you control …"
+     * and "The Category X Characters other than Kimahri you control …" (both Kimahri 7-108H).
+     *
+     * <p>The two filters are conjunctive in {@link #appliesToCard}, as they are everywhere else;
+     * no corpus printing states both, so each arrives with the other null.
+     */
+    static FieldPowerGrant sameSideFiltered(String jobFilter, String categoryFilter,
+            boolean inclForwards, boolean inclBackups, boolean inclMonsters,
+            String exceptCardName, int powerBonus, Set<CardData.Trait> grantedTraits,
+            String elementFilter, Set<CardData.Trait> traitFilter) {
+        return new FieldPowerGrant(jobFilter, categoryFilter, inclForwards, inclBackups, inclMonsters,
+                exceptCardName, powerBonus, grantedTraits, false, -1, null, elementFilter,
+                null, 0, 0, null, null, false, false, 0, 0, 1, 0, 0, traitFilter, false, 0);
+    }
+
+    /**
      * Same-side "the power of [Job X | Card Name Y] Forwards [other than Z] you control becomes N" —
      * Faris 21-114L. Sets {@link #basePowerSet} rather than {@link #powerBonus}, so every other
      * boost and reduction lands on top of the replaced value rather than on the printed one.

@@ -26255,4 +26255,211 @@ public class CardBehaviorTest {
 				.accept(mw.buildGameContext(true));
 		assertTrue(mw.p1CannotBeBlocked.contains(shikaree), "he cannot be blocked for the turn");
 	}
+
+	// =========================================================================================
+	// Turn-scoped incoming damage shields: "During your turn, if Garland receives damage, reduce
+	// the damage by 2000 instead." (Garland 3-004H) and "If Cagnazzo receives damage during your
+	// opponent's turn, reduce the damage by 4000 instead." (Cagnazzo 3-130R).  One modifier with
+	// its window printed at either end of the sentence, so both spellings land on FA_DAMAGE_MODIFIER
+	// and DamageResolver reads whichever group carried it.
+	// =========================================================================================
+
+	private static final String GARLAND_3_004H =
+			"During your turn, if Garland receives damage, reduce the damage by 2000 instead.";
+	private static final String CAGNAZZO_3_130R =
+			"If Cagnazzo receives damage during your opponent's turn, reduce the damage by 4000 instead.";
+
+	/** Seats a self-shielding Forward on P1 and deals it {@code amount}, on {@code turnPlayer}'s turn. */
+	private static int damageTakenOnTurnOf(String text, String name, GameState.Player turnPlayer,
+			int amount) {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeFieldAbilityCard(name, "Fire", "Forward", text));
+		mw.gameState.startFirstTurn(turnPlayer);
+		mw.applyDamageToForward(true, 0, amount, true, false);
+		return mw.p1ForwardDamage.get(0);
+	}
+
+	@Test
+	void garlandsShieldIsOpenOnlyOnHisControllersOwnTurn() {
+		assertEquals(3000, damageTakenOnTurnOf(GARLAND_3_004H, "Garland", GameState.Player.P1, 5000),
+				"on his controller's turn the 5000 lands as 3000");
+		assertEquals(5000, damageTakenOnTurnOf(GARLAND_3_004H, "Garland", GameState.Player.P2, 5000),
+				"on the opponent's turn the shield is shut");
+	}
+
+	@Test
+	void cagnazzosShieldIsTheMirrorOfGarlandsAndPrintsItsWindowAtTheOtherEnd() {
+		assertEquals(1000, damageTakenOnTurnOf(CAGNAZZO_3_130R, "Cagnazzo", GameState.Player.P2, 5000),
+				"on the opponent's turn the 5000 lands as 1000");
+		assertEquals(5000, damageTakenOnTurnOf(CAGNAZZO_3_130R, "Cagnazzo", GameState.Player.P1, 5000),
+				"on his controller's own turn the shield is shut");
+	}
+
+	@Test
+	void theTurnWindowIsReadOffWhicheverEndItWasPrintedAt() {
+		// The two groups are alternatives, never both, and an unqualified printing sets neither —
+		// which is what keeps every existing modifier unrestricted.
+		Matcher pre = AutoAbilityTriggers.FA_DAMAGE_MODIFIER.matcher(GARLAND_3_004H);
+		assertTrue(pre.matches());
+		assertEquals("your", pre.group("turnpre").trim());
+		assertNull(pre.group("turnpost"));
+
+		Matcher post = AutoAbilityTriggers.FA_DAMAGE_MODIFIER.matcher(CAGNAZZO_3_130R);
+		assertTrue(post.matches());
+		assertEquals("your opponent's", post.group("turnpost").trim());
+		assertNull(post.group("turnpre"));
+		assertNull(post.group("sourceclause"),
+				"the window is not offered to the source-clause chain, which reads what dealt the damage");
+
+		Matcher plain = AutoAbilityTriggers.FA_DAMAGE_MODIFIER.matcher(
+				"If Thancred is dealt damage by a Forward, reduce the damage by 1000 instead.");
+		assertTrue(plain.matches());
+		assertNull(plain.group("turnpre"));
+		assertNull(plain.group("turnpost"));
+	}
+
+	// =========================================================================================
+	// Yoran-Oran 29-075H: "Auto-abilities, action abilities and special abilities of your Job Mage
+	// cannot be cancelled."  The three kinds it lists are every kind of ability there is, so the
+	// line it actually draws is between abilities and Summons.  Read per cancellation attempt, and
+	// every cancelling effect now funnels through one door so the shield has one place to be honoured.
+	// =========================================================================================
+
+	private static final String YORAN_ORAN_29_075H =
+			"Auto-abilities, action abilities and special abilities of your Job Mage cannot be cancelled.";
+
+	/** A Stack entry for {@code source}'s auto ability, owned by {@code isP1}. */
+	private static StackEntry autoEntryFor(CardData source, boolean isP1) {
+		AutoAbility aa = CardData.parseAutoAbilities(
+				"When " + source.name() + " enters the field, draw 1 card.").get(0);
+		return new StackEntry(source, null, aa, isP1, 0, false, null, false, false, 0);
+	}
+
+	/** Seats Yoran-Oran in P1's first Backup slot, where a Backup's field ability is read from. */
+	private static MainWindow yoranOranBoard() {
+		MainWindow mw = new MainWindow();
+		CardData yoran = makeFieldAbilityCard("Yoran-Oran", "Earth", "Backup", YORAN_ORAN_29_075H);
+		mw.gameState.getIdentity().put(yoran, true);
+		mw.placeCardInFirstBackupSlot(yoran);
+		return mw;
+	}
+
+	@Test
+	void yoranOranShieldsHisJobMagesAbilitiesButNotEveryonesElse() {
+		MainWindow mw = yoranOranBoard();
+		CardData mage  = makeJobCard("Vivi",   "Fire", "Forward", "Mage");
+		CardData thief = makeJobCard("Zidane", "Wind", "Forward", "Thief");
+
+		assertTrue(mw.stackEntryProtectedFromCancel(autoEntryFor(mage, true)),
+				"his controller's Job Mage is shielded");
+		assertFalse(mw.stackEntryProtectedFromCancel(autoEntryFor(thief, true)),
+				"a Job the sentence does not name is not");
+		assertFalse(mw.stackEntryProtectedFromCancel(autoEntryFor(mage, false)),
+				"\"your\" is his controller's, so the opponent's Job Mage is not");
+	}
+
+	@Test
+	void yoranOransShieldCoversEveryKindOfAbilityAndNoSummon() {
+		MainWindow mw = yoranOranBoard();
+		CardData mage = makeJobCard("Vivi", "Fire", "Forward", "Mage");
+		ActionAbility action = CardData.parseActionAbilities("《1》: Draw 1 card.").get(0);
+
+		assertTrue(mw.stackEntryProtectedFromCancel(autoEntryFor(mage, true)), "auto ability");
+		assertTrue(mw.stackEntryProtectedFromCancel(new StackEntry(mage, action, true)),
+				"action ability");
+		// A Summon its controller cast is not an ability, however the Job filter reads.
+		assertFalse(mw.stackEntryProtectedFromCancel(new StackEntry(mage, null, true)),
+				"a Summon is not one of the three kinds the sentence names");
+	}
+
+	@Test
+	void aProtectedAbilitySurvivesTheCancelDoorItWouldHaveGoneThrough() {
+		MainWindow mw = yoranOranBoard();
+		StackEntry shielded = autoEntryFor(makeJobCard("Vivi", "Fire", "Forward", "Mage"), true);
+		StackEntry exposed  = autoEntryFor(makeJobCard("Zidane", "Wind", "Forward", "Thief"), true);
+
+		assertFalse(mw.cancelStackEntry(shielded), "the cancellation is refused");
+		assertFalse(mw.cancelledStackEntries.contains(shielded), "and nothing is recorded");
+		assertTrue(mw.cancelStackEntry(exposed));
+		assertTrue(mw.cancelledStackEntries.contains(exposed));
+	}
+
+	// =========================================================================================
+	// Kimahri 7-108H: "The Job Guardian other than Kimahri you control cannot be chosen by your
+	// opponent's abilities." and "The Category X Characters other than Kimahri you control cannot
+	// be chosen by your opponent's Summons."  The direct spelling of a shield the corpus more often
+	// prints as a quoted grant, and the first two printings to filter the set by Job and by Category.
+	// Each names one half of the question, so neither covers the other's.
+	// =========================================================================================
+
+	private static final String KIMAHRI_7_108H =
+			"The Job Guardian other than Kimahri you control cannot be chosen by your opponent's abilities."
+			+ "[[br]]The Category X Characters other than Kimahri you control cannot be chosen by "
+			+ "your opponent's Summons.";
+
+	/** Kimahri himself: Job Guardian, Category X, with his two shields parsed into IfControlBoosts. */
+	private static CardData makeKimahri() {
+		return new CardData(null, "Kimahri", "Water", 6, 9000, "Forward", false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				List.of(), List.of(), CardData.parseFieldAbilities(KIMAHRI_7_108H, "Forward"),
+				CardData.parseIfControlBoosts(KIMAHRI_7_108H, "Forward"),
+				List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				"Guardian", "X", null, KIMAHRI_7_108H);
+	}
+
+	@Test
+	void kimahrisTwoShieldsEachCoverOnlyTheHalfTheyName() {
+		MainWindow mw = new MainWindow();
+		CardData kimahri  = makeKimahri();
+		CardData guardian = makeJobCard("Auron", "Fire", "Forward", "Guardian");
+		CardData catX     = makeCategoryForward("Yuna", "Water", "X");
+		placeP1Forward(mw, kimahri);
+		placeP1Forward(mw, guardian);
+		placeP1Forward(mw, catX);
+		CardData oppSource = makeForward("Opp Caster", "Wind", 3, 5000);
+
+		// The Job half answers for abilities only.
+		assertTrue(mw.isProtectedFromChoice(guardian, true, false, false, oppSource),
+				"a Job Guardian is shielded from the opponent's abilities");
+		assertFalse(mw.isProtectedFromChoice(guardian, true, false, true, oppSource),
+				"but the Job half says nothing about Summons");
+
+		// The Category half answers for Summons only.
+		assertTrue(mw.isProtectedFromChoice(catX, true, false, true, oppSource),
+				"a Category X Character is shielded from the opponent's Summons");
+		assertFalse(mw.isProtectedFromChoice(catX, true, false, false, oppSource),
+				"and the Category half says nothing about abilities");
+	}
+
+	@Test
+	void kimahriShieldsEveryoneButHimselfAndOnlyAgainstHisOpponent() {
+		MainWindow mw = new MainWindow();
+		CardData kimahri  = makeKimahri();
+		CardData guardian = makeJobCard("Auron", "Fire", "Forward", "Guardian");
+		placeP1Forward(mw, kimahri);
+		placeP1Forward(mw, guardian);
+		CardData oppSource = makeForward("Opp Caster", "Wind", 3, 5000);
+
+		// "other than Kimahri" — he is a Job Guardian and a Category X Character himself, and both
+		// sentences exclude him by name.
+		assertFalse(mw.isProtectedFromChoice(kimahri, true, false, false, oppSource),
+				"Kimahri does not shield himself from abilities");
+		assertFalse(mw.isProtectedFromChoice(kimahri, true, false, true, oppSource),
+				"nor from Summons");
+		// "your opponent's" — his controller may still choose their own Forwards.
+		assertFalse(mw.isProtectedFromChoice(guardian, true, true, false, kimahri),
+				"the shield is opponent-scoped");
+	}
+
+	@Test
+	void theWidenedFilterDoesNotClaimTheTwoBranchPrinting() {
+		// Mayakov 15-121R's "Job Dancer and Card Name Dancer" is two alternative filters, not one,
+		// and has its own pattern producing a boost per branch. A lazy Job group would swallow the
+		// whole phrase into a filter no card can meet, so the widened one refuses the shape outright.
+		List<IfControlBoost> mayakov = CardData.parseIfControlBoosts(
+				"The Job Dancer and Card Name Dancer you control cannot be chosen by your opponent's abilities.",
+				"Backup");
+		assertEquals(2, mayakov.size(), "one boost per branch, and no third from the filtered pattern");
+	}
 }

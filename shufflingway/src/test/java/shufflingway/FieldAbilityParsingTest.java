@@ -364,6 +364,11 @@ public class FieldAbilityParsingTest {
         if (AutoAbilityTriggers.FA_REDUCE_DAMAGE_TO_FILTER.matcher(fa.effectText().trim()).matches()) return true;
         // The Emperor 20-092R. Read by MainWindow.actionAbilityCostIncreaseFor when an ability is paid for.
         if (AutoAbilityTriggers.FA_OPP_ACTION_ABILITY_COST_INCREASE.matcher(fa.effectText().trim()).matches()) return true;
+        // Yoran-Oran 29-075H. Read per cancellation attempt by
+        // MainWindow.stackEntryProtectedFromCancel, which every cancelling effect funnels
+        // through, and matched the same way that caller matches it.
+        if (AutoAbilityTriggers.FA_JOB_ABILITIES_CANNOT_BE_CANCELLED
+                .matcher(fa.effectText().trim()).matches()) return true;
         // Machina 15-017H. A board-gated self grant; the gate comes off and the remainder is an
         // ordinary quoted grant, read by FieldGrantCalculator and MainWindow.effectiveAutoAbilities.
         if (maxForwardsGatedSelfGrant(fa, source)) return true;
@@ -789,6 +794,9 @@ public class FieldAbilityParsingTest {
         if (CardData.isBackupCpAbility(fa.effectText())) return "BackupCpAbility";
         int lbN = CardData.parseIfSelfLbFaceUpCountTraitGrantThreshold(fa.effectText(), source.name());
         if (lbN >= 0) return "LbFaceUpTraitGrant[n≥" + lbN + " " + CardData.parseIfSelfLbFaceUpCountTraitGrantTraits(fa.effectText()) + "]";
+        Matcher noCancelM = AutoAbilityTriggers.FA_JOB_ABILITIES_CANNOT_BE_CANCELLED
+                .matcher(fa.effectText().trim());
+        if (noCancelM.matches()) return "AbilitiesCannotBeCancelled[Job " + noCancelM.group("job").trim() + "]";
         int powN = CardData.parseIfSelfPowerTraitGrantThreshold(fa.effectText(), source.name());
         if (powN >= 0) return "SelfPowerTraitGrant[pow≥" + powN + " " + CardData.parseIfSelfPowerTraitGrantTraits(fa.effectText()) + "]";
         if (CardData.parseSelfNonDmgBreakShieldDirect(fa.effectText(), source.name())) return "SelfNonDmgBreakShield";

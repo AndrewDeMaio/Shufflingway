@@ -264,7 +264,11 @@ final class AutoAbilityTriggers {
 	 * with optional source clauses: "by a Forward", "by a Character", "by [your opponent's] Summons
 	 * [or abilities]", "by a Summon or an ability", "by [an] abilit[y|ies]", "other than battle
 	 * damage", or no clause (any source).
-	 * Also accepts "receives damage" as a synonym for "is dealt damage", and an optional threshold:
+	 * A leading "During your turn," / "During your opponent's turn," (Garland 3-004H), or the same
+ * window spelled after "receives damage" (Cagnazzo 3-130R), restricts the modifier to one
+ * player's turns; whichever position it is printed in, it lands in {@code turnpre} or
+ * {@code turnpost} and is read against the carrier's own controller.
+ * Also accepts "receives damage" as a synonym for "is dealt damage", and an optional threshold:
 	 * "is dealt N damage or more" / "or less" (captured in {@code threshold}, with the direction in
 	 * {@code threshcmp}) to apply the modifier only when the damage is on that side of N. Both
 	 * comparisons are inclusive of N — Baigan 9-072H zeroes exactly 3000 as well as less.
@@ -282,7 +286,8 @@ final class AutoAbilityTriggers {
 	 * says "by", which is why the alternative went unnoticed.
 	 */
 	static final Pattern FA_DAMAGE_MODIFIER = Pattern.compile(
-		"(?i)^If\\s+(?<card>.+?)\\s+(?:is\\s+dealt|receives)\\s+(?:(?<threshold>\\d+)\\s+damage\\s+or\\s+(?<threshcmp>more|less)|damage)" +
+		"(?i)^(?:During\\s+(?<turnpre>your\\s+opponent's|your)\\s+turn,\\s+)?" +
+		"If\\s+(?<card>.+?)\\s+(?:is\\s+dealt|receives)\\s+(?:(?<threshold>\\d+)\\s+damage\\s+or\\s+(?<threshcmp>more|less)|damage)" +
 		"(?<sourceclause>" +
 			// Must precede the bare "by a Forward" branch, which names the source of battle damage.
 			// This one names the source of an *ability's* damage (Gawain 7-107R) — the narrower
@@ -301,6 +306,11 @@ final class AutoAbilityTriggers {
 			// reach past the clause into the effect half of the sentence.
 			"|\\s+less\\s+than\\s+(?:his|her|its|[^,]+?'s)\\s+power" +
 		")?" +
+		// The window the shield is open in, when the printing states one at the far end of the
+		// sentence instead of at the front (Cagnazzo 3-130R). Its own group rather than an arm of
+		// the source clause above: that chain reads what *dealt* the damage, and its catch-all
+		// would take a turn phrase for an ability source and answer the wrong question.
+		"(?:\\s+during\\s+(?<turnpost>your\\s+opponent's|your)\\s+turn)?" +
 		"\\s*,\\s+" +
 		// Optional cost the replacement pays for itself: "remove 1 Barrier Counter from Number 24 and
 		// the damage becomes 0 instead." (Number 24 20-036H, via its own self-named counter grant).
@@ -314,6 +324,22 @@ final class AutoAbilityTriggers {
 		// 1000" — Rosso 2-024R). Text, not a term: the rounding it describes is what the half arm
 		// already does, so it is matched and discarded rather than captured.
 		"\\s+instead(?:\\s*\\([^)]*\\))?[.!]?$"
+	);
+
+	/**
+	 * "Auto-abilities, action abilities and special abilities of your Job [X] cannot be
+	 * cancelled." — Yoran-Oran 29-075H.
+	 *
+	 * <p>The three kinds it lists are every kind of ability there is, so what the sentence
+	 * actually draws is the line between abilities and Summons: a Summon its controller casts is
+	 * not protected however the Job filter reads. Read per cancellation attempt by
+	 * {@code MainWindow.stackEntryProtectedFromCancel}, off the entry's controller's field,
+	 * because "your" in a card's own text is its controller.
+	 * Group: {@code job}.
+	 */
+	static final Pattern FA_JOB_ABILITIES_CANNOT_BE_CANCELLED = Pattern.compile(
+		"(?i)^Auto-abilities,\\s+action\\s+abilities\\s+and\\s+special\\s+abilities\\s+of\\s+your\\s+" +
+		"Job\\s+(?<job>.+?)\\s+cannot\\s+be\\s+cancelled[.!]?$"
 	);
 
 	/**

@@ -436,6 +436,15 @@ class DamageResolver {
 			boolean orLess = "less".equalsIgnoreCase(fam.group("threshcmp"));
 			if (orLess ? amount > thresh : amount < thresh) return amount;
 		}
+		// "During your turn" (Garland 3-004H) / "during your opponent's turn" (Cagnazzo 3-130R),
+		// printed at either end of the sentence and meaning the same either way. "Your" in a
+		// card's own text is its controller, so the window is read against the damaged card's side
+		// — which for these self-named shields is the carrier's.
+		String turnScope = fam.group("turnpre") != null ? fam.group("turnpre") : fam.group("turnpost");
+		if (turnScope != null) {
+			boolean ownTurn = (mw.gameState.getCurrentPlayer() == GameState.Player.P1) == isP1;
+			if (ownTurn == turnScope.toLowerCase().contains("opponent")) return amount;
+		}
 		String src = fam.group("sourceclause");
 		boolean applies;
 		if (src == null || src.isBlank()) {

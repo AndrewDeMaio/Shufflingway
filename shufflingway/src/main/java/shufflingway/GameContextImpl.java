@@ -1869,6 +1869,7 @@ final class GameContextImpl implements GameContext {
 				// Y'shtola can only cancel Summons and auto-abilities, not action abilities.
 				List<StackEntry> targets = mw.gameState.getStack().stream()
 						.filter(e -> e.isSummon() || e.isAutoAbility())
+						.filter(e -> !mw.stackEntryProtectedFromCancel(e))
 						.collect(java.util.stream.Collectors.toList());
 				if (targets.isEmpty()) {
 					logEntry("No Summons or auto-abilities on the stack to cancel");
@@ -1898,9 +1899,10 @@ final class GameContextImpl implements GameContext {
 							.reduce((a, b) -> b).orElse(targets.get(targets.size() - 1));
 					logEntry("[AI] Chose to cancel: " + chosen.source().name());
 				}
-				mw.cancelledStackEntries.add(chosen);
-				String type = chosen.isSummon() ? "Summon" : "auto-ability";
-				logEntry("Effect: " + chosen.source().name() + "'s " + type + " effect will be cancelled");
+				if (mw.cancelStackEntry(chosen)) {
+					String type = chosen.isSummon() ? "Summon" : "auto-ability";
+					logEntry("Effect: " + chosen.source().name() + "'s " + type + " effect will be cancelled");
+				}
 			}
 
 			@Override public void cancelTriggeringSummon() {
@@ -1912,8 +1914,8 @@ final class GameContextImpl implements GameContext {
 				for (int i = stack.size() - 1; i >= 0; i--) {
 					StackEntry e = stack.get(i);
 					if (!e.isSummon()) continue;
-					mw.cancelledStackEntries.add(e);
-					logEntry("Effect: \"" + e.source().name() + "\"'s effect will be cancelled");
+					if (mw.cancelStackEntry(e))
+						logEntry("Effect: \"" + e.source().name() + "\"'s effect will be cancelled");
 					return;
 				}
 				logEntry("No Summon on the stack to cancel");
@@ -1922,6 +1924,7 @@ final class GameContextImpl implements GameContext {
 			@Override public void cancelAutoAbilityAndDamageSourceIfForward(int damage) {
 				List<StackEntry> targets = mw.gameState.getStack().stream()
 						.filter(StackEntry::isAutoAbility)
+						.filter(e -> !mw.stackEntryProtectedFromCancel(e))
 						.collect(java.util.stream.Collectors.toList());
 				if (targets.isEmpty()) {
 					logEntry("No auto-abilities on the stack to cancel");
@@ -1949,8 +1952,8 @@ final class GameContextImpl implements GameContext {
 							.reduce((a, b) -> b).orElse(targets.get(targets.size() - 1));
 					logEntry("[AI] Chose to cancel: " + chosen.source().name());
 				}
-				mw.cancelledStackEntries.add(chosen);
-				logEntry("Effect: " + chosen.source().name() + "'s auto-ability effect will be cancelled");
+				if (mw.cancelStackEntry(chosen))
+					logEntry("Effect: " + chosen.source().name() + "'s auto-ability effect will be cancelled");
 
 				if (!chosen.source().isForward()) {
 					logEntry(chosen.source().name() + " is not a Forward — no damage");
@@ -1974,6 +1977,7 @@ final class GameContextImpl implements GameContext {
 						: filter;
 				List<StackEntry> targets = mw.gameState.getStack().stream()
 						.filter(fullFilter)
+						.filter(e -> !mw.stackEntryProtectedFromCancel(e))
 						.collect(java.util.stream.Collectors.toList());
 				if (targets.isEmpty()) {
 					logEntry("No matching abilities on the stack to cancel");
@@ -2000,15 +2004,17 @@ final class GameContextImpl implements GameContext {
 							.reduce((a, b) -> b).orElse(targets.get(targets.size() - 1));
 					logEntry("[AI] Chose to cancel: " + chosen.source().name());
 				}
-				mw.cancelledStackEntries.add(chosen);
-				String type = chosen.isSummon() ? "Summon" : chosen.isAutoAbility() ? "auto-ability"
-						: chosen.isSpecialAbility() ? "special ability" : "action ability";
-				logEntry("Effect: " + chosen.source().name() + "'s " + type + " effect will be cancelled");
+				if (mw.cancelStackEntry(chosen)) {
+					String type = chosen.isSummon() ? "Summon" : chosen.isAutoAbility() ? "auto-ability"
+							: chosen.isSpecialAbility() ? "special ability" : "action ability";
+					logEntry("Effect: " + chosen.source().name() + "'s " + type + " effect will be cancelled");
+				}
 			}
 
 			@Override public void cancelFilteredAbilityOnStackUnlessOpponentPays(java.util.function.Predicate<StackEntry> filter, String prompt, int cost) {
 				List<StackEntry> targets = mw.gameState.getStack().stream()
 						.filter(filter)
+						.filter(e -> !mw.stackEntryProtectedFromCancel(e))
 						.collect(java.util.stream.Collectors.toList());
 				if (targets.isEmpty()) {
 					logEntry("No matching abilities on the stack to threaten");
@@ -2041,8 +2047,8 @@ final class GameContextImpl implements GameContext {
 				String label = chosen.source().name() + " — pay 《" + cost + "》 or its effect is cancelled";
 				mw.autoAbilityTriggers.showAutoAbilityPaymentDialog(label, cost, cost, !isP1, 0, paid -> paidHolder[0] = paid, null);
 				if (paidHolder[0] < cost) {
-					mw.cancelledStackEntries.add(chosen);
-					logEntry("Effect: opponent declined to pay 《" + cost + "》 — " + chosen.source().name() + "'s " + type + " effect will be cancelled");
+					if (mw.cancelStackEntry(chosen))
+						logEntry("Effect: opponent declined to pay 《" + cost + "》 — " + chosen.source().name() + "'s " + type + " effect will be cancelled");
 				} else {
 					logEntry("Effect: opponent paid 《" + cost + "》 — " + chosen.source().name() + "'s " + type + " effect proceeds");
 				}
