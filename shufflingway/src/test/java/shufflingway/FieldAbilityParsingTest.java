@@ -16,14 +16,12 @@ public class FieldAbilityParsingTest {
     private static final java.util.regex.Pattern LIMIT_BREAK_PREFIX =
             java.util.regex.Pattern.compile("(?i)^Limit\\s+Break\\s+--\\s+");
 
-    /** Examples printed for the fully- and partially-parsed buckets. */
-    private static final int SAMPLE_SIZE = 3;
-
     /**
-     * Examples printed for the unrecognized bucket. Larger than {@link #SAMPLE_SIZE}: that list is
-     * the worklist, so a wider sample per run surfaces more of what is left to wire.
+     * Examples printed per bucket. Every bucket samples the same width: the unrecognized list is
+     * the worklist, and the other two are the regression surface, so a wider sample per run
+     * surfaces more of both.
      */
-    private static final int UNRECOGNIZED_SAMPLE_SIZE = 5;
+    private static final int SAMPLE_SIZE = 5;
 
     // -------------------------------------------------------------------------
     // Per-card coverage
@@ -81,7 +79,7 @@ public class FieldAbilityParsingTest {
                     reservoirAdd(examplesPartial, example, partiallyParsed, rng, SAMPLE_SIZE);
                 } else {
                     noneParsed++;
-                    reservoirAdd(examplesNone, example, noneParsed, rng, UNRECOGNIZED_SAMPLE_SIZE);
+                    reservoirAdd(examplesNone, example, noneParsed, rng, SAMPLE_SIZE);
                 }
             }
         }
@@ -199,6 +197,17 @@ public class FieldAbilityParsingTest {
         if (AutoAbilityTriggers.FA_DAMAGE_ZERO_WHILE_DULL.matcher(fa.effectText()).find()) return true;
         if (AutoAbilityTriggers.FA_NULLIFY_TRAIT_FORWARD_DAMAGE.matcher(fa.effectText()).find()) return true;
         if (AutoAbilityTriggers.FA_OUTGOING_DAMAGE_DOUBLER.matcher(fa.effectText()).find()) return true;
+        // Warrior of Light 1-005R. Read by MainWindow.combatDamageFieldAbilityMult for combat and
+        // by GameContextImpl.applyOutgoingFieldAbilityMult for ability damage; both name-check it
+        // against the carrier, so it is name-checked here too.
+        if (selfDoublerVsCost(fa, source) != null) return true;
+        // Bahamut (XVI) 29-115L. Read by MainWindow.cancelFirstOppForwardAuto as an auto ability
+        // goes on the Stack; it names no card, so there is nothing to name-check.
+        if (AutoAbilityTriggers.FA_CANCEL_FIRST_OPP_FORWARD_AUTO
+                .matcher(fa.effectText().trim()).matches()) return true;
+        // Wakka 16-138S. Read by MainWindow.specialCostCounterWaiver at ability activation;
+        // self-named there, so it is name-checked here too.
+        if (CardData.parseSpecialCostCounterWaiver(fa.effectText(), source.name()) != null) return true;
         // Sophie 16-076R. Read by GameContextImpl.applyOutgoingFieldAbilityMult on every ability
         // damage the carrier deals to a Forward — live well before it was listed here, so this row
         // closes a reporting gap rather than turning a rule on. Name-checked exactly as that caller
@@ -522,6 +531,18 @@ public class FieldAbilityParsingTest {
      * the carrier — the same pair of checks {@link CardData#counterGrants()} makes before turning it
      * into a {@link CounterGrant}.
      */
+    /**
+     * The matcher for {@code fa} when it is the carrier's own cost-gated damage doubler ("If
+     * [self] deals damage to a Forward of cost N or more, double the damage instead." — Warrior of
+     * Light 1-005R), or {@code null} when it is not one. Name-checked against the carrier exactly
+     * as both engine readers are.
+     */
+    private static Matcher selfDoublerVsCost(FieldAbility fa, CardData source) {
+        Matcher m = AutoAbilityTriggers.FA_DOUBLE_DAMAGE_VS_COST_THRESHOLD.matcher(fa.effectText());
+        if (!m.find() || !m.group("name").trim().equalsIgnoreCase(source.name())) return null;
+        return m;
+    }
+
     private static boolean selfCounterPlacedGrant(FieldAbility fa, CardData source) {
         Matcher m = CardData.SELF_COUNTER_PLACED_GAINS_PATTERN.matcher(fa.effectText());
         return m.matches()
@@ -738,6 +759,16 @@ public class FieldAbilityParsingTest {
                         .matcher(fa.effectText().trim()).matches())
             return "CastRemovedByOwnAbilities[" + castRemoved.cardType()
                     + (castRemoved.oncePerTurn() ? ", once per turn" : "") + "]";
+        if (AutoAbilityTriggers.FA_CANCEL_FIRST_OPP_FORWARD_AUTO
+                .matcher(fa.effectText().trim()).matches())
+            return "CancelFirstOppForwardAuto[each turn]";
+        CardData.SpecialCostCounterWaiver waiver =
+                CardData.parseSpecialCostCounterWaiver(fa.effectText(), source.name());
+        if (waiver != null)
+            return "SpecialCostCounterWaiver[" + waiver.count() + " " + waiver.counterName() + "]";
+        Matcher costDoubler = selfDoublerVsCost(fa, source);
+        if (costDoubler != null)
+            return "DmgDoubler[vs Forward of cost " + costDoubler.group("cost") + "+]";
         m = AutoAbilityTriggers.FA_OUTGOING_DAMAGE_DOUBLER.matcher(fa.effectText());
         if (m.find()) return "OutgoingDmgDoubler[to " + m.group("target") + "]";
         if (namesItself(AutoAbilityTriggers.FA_DOUBLE_ABILITY_DAMAGE, fa, source))

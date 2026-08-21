@@ -10419,6 +10419,33 @@ public class MainWindow {
 	}
 
 	/**
+	 * The counter payment that lets {@code source} use its Special ability for nothing, or
+	 * {@code null} when it prints none or does not currently hold enough counters — Wakka 16-138S,
+	 * "You can remove 3 Reel Counters from Wakka to use Wakka's special ability without paying the
+	 * cost."
+	 *
+	 * <p>Re-asked on every query rather than settled once, for the reason
+	 * {@link #effectiveSpecialAbilityProxy} is: the counters move during the turn, and the menu
+	 * gate, the payment prompt and the payment itself must not disagree about whether the waiver is
+	 * open. Read through {@link #effectiveFieldAbilities} and gated on {@code lostAbilitiesCards},
+	 * so a granted copy pays the same way a printed one does and a card with no abilities pays
+	 * neither.
+	 *
+	 * <p>{@code isP1} is unused by the count itself — the counters sit on the card — but the
+	 * parameter is kept so every reader of a per-side payment reads the same way.
+	 */
+	CardData.SpecialCostCounterWaiver specialCostCounterWaiver(CardData source, boolean isP1) {
+		if (source == null || lostAbilitiesCards.contains(source)) return null;
+		for (FieldAbility fa : effectiveFieldAbilities(source)) {
+			CardData.SpecialCostCounterWaiver w =
+					CardData.parseSpecialCostCounterWaiver(fa.effectText(), source.name());
+			if (w == null) continue;
+			if (gameState.getCounters(source, w.counterName()) >= w.count()) return w;
+		}
+		return null;
+	}
+
+	/**
 	 * {@code source}'s S-cost substitution as it stands on the current board, or {@code null} when
 	 * it prints none or prints one whose board condition is not met.
 	 *
@@ -11011,6 +11038,44 @@ public class MainWindow {
 	}
 
 	/**
+	 * Cancels {@code entry} when it is the first auto ability an opponent's Forward has put on the
+	 * Stack this turn and somebody across the table prints Bahamut (XVI) 29-115L's reply.
+	 *
+	 * <p>Read as the entry goes on rather than as it resolves: the sentence counts what is
+	 * <em>put on</em> the Stack, so an entry that never resolves — cancelled by something else,
+	 * or fizzled — has still spent the reply for the turn. The record is per carrier and cleared at
+	 * every turn boundary, since "during each turn" covers both players' turns.
+	 *
+	 * <p>The cancel goes through {@link #cancelStackEntry}, so a protected ability (Yoran-Oran
+	 * 29-075H) turns it away and the reply is not spent on it — the marker is only set once the
+	 * cancellation actually took.
+	 *
+	 * <p>Only Forwards, and only the opponent's: an auto ability from a Backup or a Monster is
+	 * left alone, as is one from a Forward on the canceller's own side.
+	 */
+	void cancelFirstOppForwardAuto(StackEntry entry) {
+		if (entry == null || !entry.isAutoAbility() || entry.source() == null) return;
+		boolean sourceIsP1 = entry.isP1();
+		// "your opponent's Forward" is judged where the ability came from, which is the side that
+		// controls the entry — a Forward that has since left the field triggered from one all the same.
+		if (!entry.source().isForward() && !entry.source().alsoCountsAsMonster()) return;
+		boolean cancellerIsP1 = !sourceIsP1;
+		for (CardData c : fieldCards(cancellerIsP1)) {
+			if (c == null || lostAbilitiesCards.contains(c)) continue;
+			if (turn(cancellerIsP1).firstOppForwardAutoCancelledThisTurn.contains(c)) continue;
+			for (FieldAbility fa : effectiveFieldAbilities(c)) {
+				if (!AutoAbilityTriggers.FA_CANCEL_FIRST_OPP_FORWARD_AUTO
+						.matcher(fa.effectText().trim()).matches()) continue;
+				if (!cancelStackEntry(entry)) return;
+				turn(cancellerIsP1).firstOppForwardAutoCancelledThisTurn.add(c);
+				logEntry((cancellerIsP1 ? "" : "[P2] ") + c.name() + " — cancelled "
+						+ entry.source().name() + "'s auto ability (first this turn)");
+				return;
+			}
+		}
+	}
+
+	/**
 	 * Marks {@code entry} to be cancelled when it resolves, unless its controller's field
 	 * protects it. Returns whether the cancellation took.
 	 *
@@ -11166,14 +11231,18 @@ public class MainWindow {
 			if (playedTurn > 0 && gameState.getTurnNumber() - playedTurn < 2
 					&& !canPayDullCostWhileSummoningSick(source, ability, isP1)) return false;
 		}
+		// Wakka 16-138S's Reel Counters buy the whole cost, so the question below is not "can this
+		// be paid" but "is there anything left to pay" — settled once here and read twice.
+		boolean costWaived = ability.isSpecial() && specialCostCounterWaiver(source, isP1) != null;
 		if (ability.isSpecial()) {
 			String primerName = priming.getPrimerCardName(source, isP1);
 			if (!hasSameNameInHand(source.name(), primerName, isP1)) {
 				CardData.SpecialAbilityProxy proxy = effectiveSpecialAbilityProxy(source, isP1);
 				boolean handCanPay = proxy != null && playerHand(isP1).stream().anyMatch(proxy::meetsSubstitute);
-				// A Crystal pays the 《S》 outright under Glaciela Wezette 17-113L, so an empty hand
-				// is no longer the end of the question.
-				if (!handCanPay && !canPaySpecialCostWithCrystal(source, isP1)) return false;
+				// A Crystal pays the 《S》 outright under Glaciela Wezette 17-113L, and Wakka
+				// 16-138S's Reel Counters waive the whole cost — so an empty hand is no longer the
+				// end of the question either way.
+				if (!handCanPay && !canPaySpecialCostWithCrystal(source, isP1) && !costWaived) return false;
 			}
 		}
 		if (ability.damageThreshold() > 0) {
@@ -11242,6 +11311,10 @@ public class MainWindow {
 			}
 		}
 		if (ability.controlCondition() != null && !controlConditionMet(ability.controlCondition(), isP1)) return false;
+		// Everything below prices a cost, and a waived ability has none — "without paying the cost"
+		// covers the CP as squarely as the 《S》. The restrictions above are not costs and still bind:
+		// a waived ability is no more legal to use than it was, only cheaper.
+		if (costWaived) return true;
 		if (ability.crystalCost() > 0 && playerCrystals(isP1) < ability.crystalCost()) return false;
 		for (BreakZoneCost bz : ability.breakZoneCosts())
 			if (!autoAbilityTriggers.bzCostSatisfied(bz, isP1)) return false;
@@ -12934,6 +13007,9 @@ public class MainWindow {
 
 	int fieldAbilityCombatOutgoingMult(CardData attacker, CardData target) {
 		int mult = 1;
+		// A card with no abilities doubles nothing. Asked here as well as on the ability-damage
+		// path, so the two readers of one doubler cannot disagree about whether it is live.
+		if (attacker == null || lostAbilitiesCards.contains(attacker)) return mult;
 		// A "Damage N --" gate belongs to the printing, and this reader holds the FieldAbility that
 		// carries it — read the same way DamageResolver.sourceHasOutgoingDmgToOpponentDoubler reads
 		// it, so the two halves of one doubler cannot disagree about whether it is live. Kefka

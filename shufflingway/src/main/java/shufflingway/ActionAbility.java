@@ -134,6 +134,33 @@ public record ActionAbility(
     }
 
     /**
+     * A copy with every cost stripped and every restriction kept — the shape "use [it] without
+     * paying the cost" produces (Wakka 16-138S, who buys it with Reel Counters).
+     *
+     * <p>Costs only. When the timing and legality clauses go too the ability stops being the one
+     * the card prints: a once-per-turn ability would become repeatable and a your-turn-only one
+     * usable on the opponent's turn, neither of which the waiver says anything about. The 《S》 flag
+     * is a cost like the rest, so it clears with them — which is the point, since the waived
+     * activation must not go back and ask for a same-named discard.
+     */
+    public ActionAbility withCostsWaived() {
+        return new ActionAbility(abilityName(), false, false, 0, 0, false,
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                yourTurnOnly(), opponentTurnOnly(), oncePerTurn(), mainPhaseOnly(),
+                whileCardAttacking(), whileCardBlocking(), whilePartyAttacking(), whileCardInHand(),
+                hasBlockingTargetEffect(), effectText(), damageThreshold(), controlCondition(),
+                cpBackupElement(), cpAllowedElements(), sourceInBattle(), requiresOppDiscardedThisTurn(),
+                requiresCastSummonThisTurn(), requiresElementForwardEnteredThisTurn(),
+                requiresCardNameEnteredThisTurn(), breakZoneOnly(), requiresOpponentEmptyHand(),
+                requiresSelfEmptyHand(), requiresNamedCardTookDamageThisTurn(), requiresSelfReceivedDamageThisTurn(),
+                requiresForwardPutToBZThisTurn(), requiresJobPutToBZThisTurn(), blockerForAttacker(),
+                ownBreakZoneNameRequired(), counterScaleName(), minCounterRequired(), minCounterType(),
+                maxOpponentHandSize(), requiresSourceIsForward(), maxCounterAllowed(), maxCounterType(),
+                inlineCostReductionJob(), inlineCostReductionExcludeName(), requiresOwnWarpCard(),
+                usableByEitherPlayer(), requiresSelfPowerAtLeast(), null);
+    }
+
+    /**
      * A copy carrying {@code newEffectText} in place of {@link #effectText()}, with every cost and
      * restriction left as printed. Used when an ability is lent to a card other than the one that
      * printed it and its text has to be re-pointed at the borrower

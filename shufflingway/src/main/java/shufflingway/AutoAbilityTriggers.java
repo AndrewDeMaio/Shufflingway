@@ -959,6 +959,23 @@ final class AutoAbilityTriggers {
 		return false;
 	}
 
+	/**
+	 * "During each turn, when an auto-ability triggered from your opponent's Forward is put on the
+	 * stack for the first time in that turn, cancel its effect." — Bahamut (XVI) 29-115L.
+	 *
+	 * <p>Its subject is the Stack rather than the board, so it is read where an auto ability is
+	 * pushed ({@code MainWindow.cancelFirstOppForwardAuto}) rather than at resolution: the rule is
+	 * about what goes on, not what comes off.
+	 *
+	 * <p>The trailing period is optional because this printing has none — its text ends mid-clause
+	 * with a trailing space, which is how it scrapes.
+	 */
+	static final Pattern FA_CANCEL_FIRST_OPP_FORWARD_AUTO = Pattern.compile(
+		"(?i)^During\\s+each\\s+turn,\\s+when\\s+an\\s+auto-abilit(?:y|ies)\\s+triggered\\s+from\\s+" +
+		"your\\s+opponent's\\s+Forwards?\\s+is\\s+put\\s+on\\s+the\\s+stack\\s+for\\s+the\\s+first\\s+time\\s+" +
+		"in\\s+that\\s+turn,\\s+cancel\\s+its\\s+effect[.!]?\\s*$"
+	);
+
 	/** "If [name] deals damage to a Forward of cost N or more, double the damage instead." */
 	static final Pattern FA_DOUBLE_DAMAGE_VS_COST_THRESHOLD =
 			Pattern.compile(
@@ -3406,7 +3423,9 @@ final class AutoAbilityTriggers {
 		List<ForwardTarget> preTargets = effectText.isBlank() ? null
 				: ActionResolver.preSelectTargets(effectText, source, 0, mw.buildGameContext(effectIsP1));
 		if (preTargets != null && preTargets.isEmpty()) preTargets = null;
-		mw.gameState.insertStack(depth, new StackEntry(source, null, fa, effectIsP1, 0, false, preTargets, false, paidExtraCost, 0));
+		StackEntry entry = new StackEntry(source, null, fa, effectIsP1, 0, false, preTargets, false, paidExtraCost, 0);
+		mw.gameState.insertStack(depth, entry);
+		mw.cancelFirstOppForwardAuto(entry);
 	}
 
 	private void executeCounterRemovalWhenDoSoAutoAbility(AutoAbility fa, CardData source,
@@ -4991,6 +5010,34 @@ final class AutoAbilityTriggers {
 		final ActionAbility eff = mw.effectiveAbilityCost(ability, isP1);
 		List<String> rawCost = eff.cpCost();
 		List<BreakZoneCost> bzCosts = eff.breakZoneCosts();
+
+		// Wakka 16-138S: Reel Counters buy the whole cost. Offered ahead of the payment dialog
+		// because what it waives is the dialog's entire subject — the CP, the 《S》 discard and the
+		// 《Dull》 alike. Declining falls through to the ordinary payment, which may still be the
+		// better line when the counters are wanted for something else.
+		CardData.SpecialCostCounterWaiver waiver = eff.isSpecial()
+				? mw.specialCostCounterWaiver(source, isP1) : null;
+		if (waiver != null && isP1) {
+			String label = "Remove " + waiver.count() + " " + waiver.counterName() + " Counter"
+					+ (waiver.count() == 1 ? "" : "s");
+			Object[] options = { label, "Pay the cost" };
+			int choice = mw.showEffectOptionDialog("Use " + source.name()
+					+ "'s special ability without paying the cost?", "Special Cost", options);
+			if (choice < 0) return; // dismissed — nothing committed yet
+			if (choice == 0) {
+				int removed = mw.gameState.removeCounters(source, waiver.counterName(), waiver.count());
+				mw.logEntry(source.name() + " — removed " + removed + " " + waiver.counterName()
+						+ " Counter(s): special ability used without paying the cost"
+						+ "  [remaining: " + mw.gameState.getCounters(source, waiver.counterName()) + "]");
+				// A cost-stripped copy rather than a flag threaded through the payment: the waiver
+				// says "without paying the cost", and an ability with no costs is exactly that.
+				// Its restrictions travel with it, so a once-per-turn or your-turn-only ability is
+				// no more usable than it was.
+				executeAbilityPayment(eff.withCostsWaived(), source, () -> {},
+						new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), isP1, 0, -1);
+				return;
+			}
+		}
 
 		// Zero CP + no X: confirm immediately.  Any S cost is resolved inside executeAbilityPayment,
 		// which prompts when more than one hand card can pay it.

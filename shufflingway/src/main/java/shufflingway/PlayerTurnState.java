@@ -142,6 +142,17 @@ class PlayerTurnState {
 			java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
 
 	/**
+	 * Cards on this side whose "cancel the first auto-ability from an opponent's Forward" has
+	 * already fired this turn — Bahamut (XVI) 29-115L.
+	 *
+	 * <p>Identity-based and cleared at every turn boundary, for the same two reasons
+	 * {@link #firstOppEffectDamageZeroedThisTurn} is: two copies of the card each get their own
+	 * cancel, and "during each turn" means the opponent's turn as well as this player's.
+	 */
+	final Set<CardData> firstOppForwardAutoCancelledThisTurn =
+			java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+
+	/**
 	 * Clears this player's cast tracking at a turn boundary.
 	 *
 	 * <p>Every "this turn" cast condition — Ace's "You can only cast up to 2 cards per turn",

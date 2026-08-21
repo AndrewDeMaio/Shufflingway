@@ -1976,7 +1976,13 @@ public record CardData(
         "((?i)(?:,\\s*)?discard(?:(?!,\\s*(?:remove|return)\\b)[^:\\[])+)?"  +  // group 7: optional discard cost phrase (never crosses [[…]] markup)
         "((?i)(?:,\\s*)?remove\\s+[^:]+?\\s+from\\s+(?:the\\s+)?game\\s*)?" + // group 8: optional remove-from-game cost phrase
         "((?i)(?:,\\s*)?return\\s+[^:]+?\\s+to\\s+(?:its|their)\\s+owner(?:'s|s')?\\s+hand\\s*)?" + // group 9: optional return-to-hand cost phrase
-        "((?i)(?:,\\s*)?remove\\s+(?:\\d+|X)\\s+[^:]+?\\s+Counters?\\s+from\\s+[^:,]+?\\s*)?" +     // group 10: optional counter-removal cost phrase ("remove X …" defers the amount to activation)
+        // Neither half may cross [[…]] markup, for the reason the Break Zone and discard groups
+        // above may not: a counter-removal *sentence* elsewhere on the card ("You can remove 3 Reel
+        // Counters from Wakka to use …", 16-138S) otherwise runs its lazy tail through [[br]] and
+        // the next ability's [[s]]…[[/]] header to reach that ability's colon, swallowing the
+        // header and the 《》 costs with it. Wakka escapes only because a comma happens to sit in
+        // between; a printing without one would lose its Special entirely.
+        "((?i)(?:,\\s*)?remove\\s+(?:\\d+|X)\\s+[^:\\[]+?\\s+Counters?\\s+from\\s+[^:,\\[]+?\\s*)?" + // group 10: optional counter-removal cost phrase ("remove X …" defers the amount to activation)
         "(?<dullcost>(?i)(?:,\\s*)?Dull\\s+(?:a\\s+total\\s+of\\s+)?(?<dullcount>\\d+)?\\s*(?<dullcond>active|dull|damaged)?\\s*" + // group 11 (named): optional Dull N? [cond] Forward(s) cost — simple, Card Name, or bare-name form
         // The card-type suffix is optional: Monk 10-084C prints "Dull 1 active Card Name Monk:"
         // with no "Forward" after the name, and requiring it dropped the whole ability.
@@ -7488,6 +7494,49 @@ public record CardData(
         Matcher m = FIELD_BREAK_SELF_FOR_ANY_CP.matcher(effectText.trim());
         if (!m.matches() || !m.group("cardname").trim().equalsIgnoreCase(cardName)) return 0;
         return Integer.parseInt(m.group("count"));
+    }
+
+    /**
+     * "You can remove N [X] Counters from [Self] to use [Self]'s special ability without paying the
+     * cost." — Wakka 16-138S, whose own auto ability stocks the Reel Counters this spends.
+     *
+     * <p>A third way to pay a Special, alongside the same-named discard and Glaciela Wezette
+     * 17-113L's Crystal — and the widest of the three: "without paying the cost" waives the whole
+     * cost rather than standing in for the 《S》 alone, which is why the reader hands the activation
+     * a cost-stripped copy of the ability rather than a substitute payment.
+     * Groups: {@code count}, {@code counter}, {@code cardname}, {@code owner}.
+     */
+    private static final Pattern FIELD_COUNTER_WAIVES_SPECIAL_COST = Pattern.compile(
+        "(?i)^You\\s+can\\s+remove\\s+(?<count>\\d+)\\s+(?<counter>.+?)\\s+Counters?\\s+from\\s+" +
+        "(?<cardname>.+?)\\s+to\\s+use\\s+(?<owner>.+?)'s\\s+special\\s+ability\\s+" +
+        "without\\s+paying\\s+the\\s+cost[.!]?\\s*$"
+    );
+
+    /**
+     * How many counters of what kind {@code cardName} may remove from itself to use its Special
+     * ability for free, or {@code null} when {@code effectText} is not that permission.
+     *
+     * @param counterName the counter spent ("Reel")
+     * @param count       how many the waiver costs
+     */
+    record SpecialCostCounterWaiver(String counterName, int count) {}
+
+    /**
+     * Parses a {@link SpecialCostCounterWaiver} from {@code effectText}, or {@code null} when the
+     * text is not one or names another card.
+     *
+     * <p>Both names in the sentence are checked, not just the first: the counters come off the
+     * carrier and the ability being paid for is the carrier's, and a printing that split the two
+     * would be a different rule than the one this waiver implements.
+     */
+    static SpecialCostCounterWaiver parseSpecialCostCounterWaiver(String effectText, String cardName) {
+        if (effectText == null || cardName == null) return null;
+        Matcher m = FIELD_COUNTER_WAIVES_SPECIAL_COST.matcher(effectText.trim());
+        if (!m.matches()) return null;
+        if (!m.group("cardname").trim().equalsIgnoreCase(cardName)) return null;
+        if (!m.group("owner").trim().equalsIgnoreCase(cardName)) return null;
+        return new SpecialCostCounterWaiver(m.group("counter").trim(),
+                Integer.parseInt(m.group("count")));
     }
 
     /** Matches "[CardName] enters the field dull." */

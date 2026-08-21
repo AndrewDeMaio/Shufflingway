@@ -27236,4 +27236,278 @@ public class CardBehaviorTest {
 		assertEquals(Map.of(0, 1), mw.breakForCpBackupSlots(true));
 		assertTrue(mw.breakForCpBackupSlots(false).isEmpty(), "and only on her own controller's side");
 	}
+	// =========================================================================================
+	// Warrior of Light 1-005R: "If Warrior of Light deals damage to a Forward of cost 4 or more,
+	// double the damage instead."
+	//
+	// The doubler itself was already read on both damage paths; what was missing was that the
+	// ability-damage reader consulted the printed field-ability list rather than the effective
+	// one, so a granted copy doubled nothing and a source that had lost its abilities doubled
+	// anyway. Both readers now ask the same three questions the combat one always did.
+	// =========================================================================================
+
+	private static final String WOL_DOUBLER =
+			"If Warrior of Light deals damage to a Forward of cost 4 or more, double the damage instead.";
+
+	@Test
+	void theCostGatedDoublerParsesWithItsThreshold() {
+		Matcher m = AutoAbilityTriggers.FA_DOUBLE_DAMAGE_VS_COST_THRESHOLD.matcher(WOL_DOUBLER);
+		assertTrue(m.find());
+		assertEquals("Warrior of Light", m.group("name").trim());
+		assertEquals("4", m.group("cost"));
+	}
+
+	@Test
+	void theDoublerAppliesOnlyAtOrAboveTheNamedCost() {
+		MainWindow mw = new MainWindow();
+		CardData wol = makeFieldAbilityCard("Warrior of Light", "Fire", "Forward", WOL_DOUBLER);
+		placeP1Forward(mw, wol);
+
+		assertEquals(2, mw.fieldAbilityCombatOutgoingMult(wol, makeForward("Big", "Ice", 4, 9000)),
+				"cost 4 clears the threshold");
+		assertEquals(2, mw.fieldAbilityCombatOutgoingMult(wol, makeForward("Bigger", "Ice", 7, 9000)));
+		assertEquals(1, mw.fieldAbilityCombatOutgoingMult(wol, makeForward("Small", "Ice", 3, 5000)),
+				"cost 3 does not");
+	}
+
+	@Test
+	void aWarriorOfLightWithNoAbilitiesDoublesNothing() {
+		MainWindow mw = new MainWindow();
+		CardData wol = makeFieldAbilityCard("Warrior of Light", "Fire", "Forward", WOL_DOUBLER);
+		placeP1Forward(mw, wol);
+		mw.lostAbilitiesCards.add(wol);
+		assertEquals(1, mw.fieldAbilityCombatOutgoingMult(wol, makeForward("Big", "Ice", 5, 9000)));
+	}
+
+	@Test
+	void theDoublerIsNameCheckedAgainstItsCarrier() {
+		// The sentence names who deals the damage. A card carrying a copy that names somebody else
+		// doubles nothing — the same check both engine readers make.
+		MainWindow mw = new MainWindow();
+		CardData impostor = makeFieldAbilityCard("Firion", "Fire", "Forward", WOL_DOUBLER);
+		placeP1Forward(mw, impostor);
+		assertEquals(1, mw.fieldAbilityCombatOutgoingMult(impostor, makeForward("Big", "Ice", 5, 9000)));
+	}
+
+	// =========================================================================================
+	// Bahamut (XVI) 29-115L: "During each turn, when an auto-ability triggered from your
+	// opponent's Forward is put on the stack for the first time in that turn, cancel its effect"
+	//
+	// Read as the entry goes on the Stack rather than as it resolves — the sentence counts what is
+	// put on, so an entry cancelled by something else has still spent the reply. Its once-per-turn
+	// record is per carrier and clears at every turn boundary, since "during each turn" covers the
+	// opponent's turns too; that is the shape Edge 15-045H's shield already uses.
+	// =========================================================================================
+
+	private static final String BAHAMUT_CANCEL =
+			"During each turn, when an auto-ability triggered from your opponent's Forward is put "
+			+ "on the stack for the first time in that turn, cancel its effect";
+
+	/** An auto-ability stack entry from a Forward on {@code isP1}'s side. */
+	private static StackEntry oppAutoEntry(CardData source, boolean isP1) {
+		return new StackEntry(source, null,
+				CardData.parseAutoAbilities("When " + source.name() + " enters the field, draw 1 card.").get(0),
+				isP1, 0, false, null, false, false, 0);
+	}
+
+	/** Bahamut on P2's field, facing a P1 Forward whose auto abilities are about to trigger. */
+	private static MainWindow boardWithBahamut() {
+		MainWindow mw = new MainWindow();
+		CardData bahamut = makeFieldAbilityCard("Bahamut (XVI)", "Light", "Forward", BAHAMUT_CANCEL);
+		mw.gameState.getIdentity().put(bahamut, false);
+		mw.placeP2CardInForwardZone(bahamut);
+		return mw;
+	}
+
+	@Test
+	void theStackCancelParsesDespiteItsMissingPeriod() {
+		assertTrue(AutoAbilityTriggers.FA_CANCEL_FIRST_OPP_FORWARD_AUTO
+				.matcher(BAHAMUT_CANCEL.trim()).matches(),
+				"the printing ends mid-clause with no period, which is how it scrapes");
+	}
+
+	@Test
+	void bahamutCancelsTheFirstOpposingForwardAutoOfTheTurn() {
+		MainWindow mw = boardWithBahamut();
+		CardData attacker = makeForward("Cloud", "Fire", 3, 7000);
+		placeP1Forward(mw, attacker);
+
+		StackEntry first = oppAutoEntry(attacker, true);
+		mw.gameState.pushStack(first);
+		mw.cancelFirstOppForwardAuto(first);
+		assertTrue(mw.cancelledStackEntries.contains(first));
+	}
+
+	@Test
+	void onlyTheFirstOneEachTurnIsCancelled() {
+		MainWindow mw = boardWithBahamut();
+		CardData attacker = makeForward("Cloud", "Fire", 3, 7000);
+		placeP1Forward(mw, attacker);
+
+		StackEntry first  = oppAutoEntry(attacker, true);
+		StackEntry second = oppAutoEntry(attacker, true);
+		mw.cancelFirstOppForwardAuto(first);
+		mw.cancelFirstOppForwardAuto(second);
+
+		assertTrue(mw.cancelledStackEntries.contains(first));
+		assertFalse(mw.cancelledStackEntries.contains(second), "the reply is spent for the turn");
+	}
+
+	@Test
+	void bahamutLeavesHisOwnSidesAutoAbilitiesAlone() {
+		MainWindow mw = boardWithBahamut();
+		CardData ally = makeForward("Dion", "Light", 4, 8000);
+		mw.gameState.getIdentity().put(ally, false);
+		mw.placeP2CardInForwardZone(ally);
+
+		StackEntry own = oppAutoEntry(ally, false);
+		mw.cancelFirstOppForwardAuto(own);
+		assertFalse(mw.cancelledStackEntries.contains(own), "the sentence reads \"your opponent's\"");
+	}
+
+	@Test
+	void aBackupsAutoAbilityIsNotAForwards() {
+		MainWindow mw = boardWithBahamut();
+		CardData backup = makeJobCard("Chocobo", "Fire", "Backup", "Chocobo");
+		mw.gameState.getIdentity().put(backup, true);
+		mw.p1BackupCards[0] = backup;
+
+		StackEntry fromBackup = oppAutoEntry(backup, true);
+		mw.cancelFirstOppForwardAuto(fromBackup);
+		assertFalse(mw.cancelledStackEntries.contains(fromBackup));
+	}
+
+	@Test
+	void anActionAbilityOnTheStackIsNotAnAutoAbility() {
+		MainWindow mw = boardWithBahamut();
+		CardData attacker = makeForward("Cloud", "Fire", 3, 7000);
+		placeP1Forward(mw, attacker);
+
+		ActionAbility aa = CardData.parseActionAbilities("《1》: Draw 1 card.").get(0);
+		StackEntry action = new StackEntry(attacker, aa, true);
+		mw.cancelFirstOppForwardAuto(action);
+		assertFalse(mw.cancelledStackEntries.contains(action));
+	}
+
+	@Test
+	void aBahamutWithNoAbilitiesCancelsNothing() {
+		MainWindow mw = boardWithBahamut();
+		CardData attacker = makeForward("Cloud", "Fire", 3, 7000);
+		placeP1Forward(mw, attacker);
+		mw.lostAbilitiesCards.add(mw.p2ForwardCards.get(0));
+
+		StackEntry first = oppAutoEntry(attacker, true);
+		mw.cancelFirstOppForwardAuto(first);
+		assertFalse(mw.cancelledStackEntries.contains(first));
+	}
+
+	// =========================================================================================
+	// Wakka 16-138S: "You can remove 3 Reel Counters from Wakka to use Wakka's special ability
+	// without paying the cost."
+	//
+	// A third way to pay a Special, alongside the same-named discard and Glaciela Wezette
+	// 17-113L's Crystal — and the widest of the three, since "without paying the cost" waives the
+	// whole cost rather than standing in for the 《S》. The activation is handed a cost-stripped
+	// copy of the ability, which is what stops it going back to ask for a discard.
+	// =========================================================================================
+
+	private static final String WAKKA_WAIVER =
+			"You can remove 3 Reel Counters from Wakka to use Wakka's special ability "
+			+ "without paying the cost.";
+
+	private static final String WAKKA_SPECIAL =
+			"[[s]]Aurochs Spirit[[/]] 《S》《Water》: Choose 1 Forward. "
+			+ "It loses all abilities until the end of the turn. Break it.";
+
+	/** Wakka on P1 idx 0 carrying {@code counters} Reel Counters. */
+	private static MainWindow boardWithWakka(int counters) {
+		MainWindow mw = new MainWindow();
+		String text = WAKKA_WAIVER + "[[br]]" + WAKKA_SPECIAL;
+		CardData wakka = new CardData(null, "Wakka", "Water", 4, 8000, "Forward", false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				CardData.parseActionAbilities(text), List.of(),
+				CardData.parseFieldAbilities(text, "Forward"),
+				List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				"Guardian", "X", null, text);
+		placeP1Forward(mw, wakka);
+		if (counters > 0) mw.gameState.placeCounters(wakka, "Reel", counters);
+		return mw;
+	}
+
+	@Test
+	void theWaiverParsesToItsCounterAndCount() {
+		CardData.SpecialCostCounterWaiver w =
+				CardData.parseSpecialCostCounterWaiver(WAKKA_WAIVER, "Wakka");
+		assertNotNull(w);
+		assertEquals("Reel", w.counterName());
+		assertEquals(3, w.count());
+	}
+
+	@Test
+	void theWaiverIsSelfNamedOnBothHalves() {
+		assertNull(CardData.parseSpecialCostCounterWaiver(WAKKA_WAIVER, "Tidus"),
+				"the counters come off the carrier and the ability is the carrier's");
+	}
+
+	@Test
+	void theWaiverOpensOnlyOnceTheCountersAreThere() {
+		assertNull(boardWithWakka(2).specialCostCounterWaiver(
+				boardWithWakka(2).p1ForwardCards.get(0), true));
+
+		MainWindow ready = boardWithWakka(3);
+		CardData.SpecialCostCounterWaiver w =
+				ready.specialCostCounterWaiver(ready.p1ForwardCards.get(0), true);
+		assertNotNull(w);
+		assertEquals(3, w.count());
+	}
+
+	@Test
+	void aWakkaWithNoAbilitiesOffersNoWaiver() {
+		MainWindow mw = boardWithWakka(3);
+		mw.lostAbilitiesCards.add(mw.p1ForwardCards.get(0));
+		assertNull(mw.specialCostCounterWaiver(mw.p1ForwardCards.get(0), true));
+	}
+
+	@Test
+	void theWaiverOpensTheActivationGateWithAnEmptyHand() {
+		// Without it the Special is unusable: its 《S》 wants a card named Wakka discarded, and
+		// there is none in hand.
+		MainWindow mw = boardWithWakka(3);
+		CardData wakka = mw.p1ForwardCards.get(0);
+		ActionAbility special = wakka.actionAbilities().stream()
+				.filter(ActionAbility::isSpecial).findFirst().orElse(null);
+		assertNotNull(special, "the fixture has to carry the Special for this to mean anything");
+
+		assertTrue(mw.canActivateAbility(special, false, CardState.ACTIVE, 0, wakka, true),
+				"3 Reel Counters are a way to pay");
+
+		MainWindow poor = boardWithWakka(2);
+		assertFalse(poor.canActivateAbility(special, false, CardState.ACTIVE, 0,
+						poor.p1ForwardCards.get(0), true),
+				"2 are not, and nothing else can pay either");
+	}
+
+	@Test
+	void theWaivedCopyKeepsItsRestrictionsAndDropsOnlyItsCosts() {
+		ActionAbility special = CardData.parseActionAbilities(
+				"[[s]]Name[[/]] 《S》《Water》《Dull》: Draw 1 card. "
+				+ "You can only use this ability during your turn and only once per turn.").get(0);
+		assertTrue(special.isSpecial());
+		assertTrue(special.requiresDull());
+		assertEquals(1, special.cpCost().size(), "《S》 and 《Dull》 are flags; only 《Water》 is CP");
+
+		ActionAbility waived = special.withCostsWaived();
+		assertFalse(waived.isSpecial(), "the 《S》 is a cost like the rest");
+		assertFalse(waived.requiresDull());
+		assertTrue(waived.cpCost().isEmpty());
+		assertEquals(0, waived.crystalCost());
+		assertTrue(waived.dullForwardCosts().isEmpty());
+		assertTrue(waived.discardCosts().isEmpty());
+		// The clauses that say when it may be used are not costs and stay put.
+		assertTrue(waived.yourTurnOnly(), "a waived ability is no more usable than it was");
+		assertTrue(waived.oncePerTurn());
+		assertEquals(special.effectText(), waived.effectText());
+		assertEquals(special.abilityName(), waived.abilityName());
+	}
 }

@@ -210,15 +210,31 @@ final class GameContextImpl implements GameContext {
 				return amount * mult + flat;
 			}
 
+			/**
+			 * The source's own outgoing multipliers against {@code target} — Warrior of Light
+			 * 1-005R's cost-gated doubler and Sophie 16-076R's ability-damage one.
+			 *
+			 * <p>Read through {@code MainWindow.effectiveFieldAbilities} and gated on
+			 * {@code lostAbilitiesCards} and the printing's own "Damage N --" threshold, exactly
+			 * as {@code MainWindow.combatDamageFieldAbilityMult} reads the same two patterns for
+			 * combat damage. The two are one rule asked at two moments; reading the printed list
+			 * here meant a granted copy doubled nothing and a source that had lost its abilities
+			 * doubled anyway.
+			 */
 			private int applyOutgoingFieldAbilityMult(int amount, CardData target) {
-				if (mw.currentAbilitySource == null) return amount;
-				for (FieldAbility fa : mw.currentAbilitySource.fieldAbilities()) {
+				CardData src = mw.currentAbilitySource;
+				if (src == null || mw.lostAbilitiesCards.contains(src)) return amount;
+				Boolean side = mw.fieldSideOf(src);
+				int dmg = side == null ? 0
+						: (side ? mw.gameState.getP1DamageZone() : mw.gameState.getP2DamageZone()).size();
+				for (FieldAbility fa : mw.effectiveFieldAbilities(src)) {
+					if (fa.damageThreshold() > 0 && dmg < fa.damageThreshold()) continue;
 					Matcher m = AutoAbilityTriggers.FA_DOUBLE_DAMAGE_VS_COST_THRESHOLD.matcher(fa.effectText());
-					if (m.find() && m.group("name").trim().equalsIgnoreCase(mw.currentAbilitySource.name())
+					if (m.find() && m.group("name").trim().equalsIgnoreCase(src.name())
 							&& target.cost() >= Integer.parseInt(m.group("cost")))
 						amount *= 2;
 					Matcher m2 = AutoAbilityTriggers.FA_DOUBLE_ABILITY_DAMAGE.matcher(fa.effectText());
-					if (m2.find() && m2.group("name").trim().equalsIgnoreCase(mw.currentAbilitySource.name()))
+					if (m2.find() && m2.group("name").trim().equalsIgnoreCase(src.name()))
 						amount *= 2;
 				}
 				return amount;
@@ -5004,7 +5020,12 @@ final class GameContextImpl implements GameContext {
 				for (AutoAbility fa : source.autoAbilities()) {
 					if (fa.trigger().equals(triggerType)) {
 						mw.logEntry("[AutoAbility] " + source.name() + " — retriggered (" + triggerType + ")");
-						mw.gameState.pushStack(new StackEntry(source, null, fa, isP1, 0, false, null, false, false, 0));
+						StackEntry retriggered = new StackEntry(source, null, fa, isP1, 0, false, null, false, false, 0);
+						mw.gameState.pushStack(retriggered);
+						// A retrigger is an auto ability going on the Stack like any other, so
+						// Bahamut (XVI) 29-115L sees it — and it is the first one of the turn as
+						// readily as a first trigger is.
+						mw.cancelFirstOppForwardAuto(retriggered);
 						mw.showStackWindowIfNeeded();
 						return;
 					}
