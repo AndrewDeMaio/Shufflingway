@@ -95,13 +95,22 @@ class DamageResolver {
 		// Outgoing damage doubler from the source card's own field ability (ability damage to opponent's Forward)
 		if (fromAbility && mw.currentAbilitySource != null && mw.currentAbilitySourceIsP1 != isP1
 				&& !mw.lostAbilitiesCards.contains(mw.currentAbilitySource)) {
+			int doublerDmg = (mw.currentAbilitySourceIsP1
+					? mw.gameState.getP1DamageZone() : mw.gameState.getP2DamageZone()).size();
 			for (FieldAbility fa : mw.effectiveFieldAbilities(mw.currentAbilitySource)) {
-				Matcher fam = AutoAbilityTriggers.FA_OUTGOING_DAMAGE_DOUBLER.matcher(fa.effectText());
-				if (!fam.find() || !fam.group("card").trim().equalsIgnoreCase(mw.currentAbilitySource.name())) continue;
-				if (!fam.group("target").toLowerCase().contains("forward")) continue;
-				int before = amount;
-				amount *= 2;
-				mw.logEntry(mw.currentAbilitySource.name() + " — outgoing damage doubled (" + before + " → " + amount + ")");
+				// The printing's own "Damage N --" gate, read here where the FieldAbility still
+				// carries it — the same check the combat and damage-to-opponent paths make.
+				if (fa.damageThreshold() > 0 && doublerDmg < fa.damageThreshold()) continue;
+				// The clause list, not the printed text alone: Kefka 23-004R prints his doubler inside
+				// a self grant, and a granted copy has to double exactly as a printed one does.
+				for (String clause : CardData.selfPassiveClauses(fa.effectText(), mw.currentAbilitySource.name())) {
+					Matcher fam = AutoAbilityTriggers.FA_OUTGOING_DAMAGE_DOUBLER.matcher(clause);
+					if (!fam.find() || !fam.group("card").trim().equalsIgnoreCase(mw.currentAbilitySource.name())) continue;
+					if (!fam.group("target").toLowerCase().contains("forward")) continue;
+					int before = amount;
+					amount *= 2;
+					mw.logEntry(mw.currentAbilitySource.name() + " — outgoing damage doubled (" + before + " → " + amount + ")");
+				}
 			}
 		}
 
@@ -794,12 +803,14 @@ class DamageResolver {
 				: (side ? mw.gameState.getP1DamageZone() : mw.gameState.getP2DamageZone()).size();
 		for (FieldAbility fa : mw.effectiveFieldAbilities(attacker)) {
 			if (fa.damageThreshold() > 0 && dmg < fa.damageThreshold()) continue;
-			Matcher m = AutoAbilityTriggers.FA_OUTGOING_DAMAGE_DOUBLER.matcher(fa.effectText());
-			if (!m.find() || !m.group("card").trim().equalsIgnoreCase(attacker.name())) continue;
-			// "a player" covers the opponent as surely as "your opponent" does; it is the wider
-			// wording, not a different one.
-			String target = m.group("target").toLowerCase();
-			if (target.contains("opponent") || target.contains("player")) return true;
+			for (String clause : CardData.selfPassiveClauses(fa.effectText(), attacker.name())) {
+				Matcher m = AutoAbilityTriggers.FA_OUTGOING_DAMAGE_DOUBLER.matcher(clause);
+				if (!m.find() || !m.group("card").trim().equalsIgnoreCase(attacker.name())) continue;
+				// "a player" covers the opponent as surely as "your opponent" does; it is the wider
+				// wording, not a different one.
+				String target = m.group("target").toLowerCase();
+				if (target.contains("opponent") || target.contains("player")) return true;
+			}
 		}
 		return false;
 	}

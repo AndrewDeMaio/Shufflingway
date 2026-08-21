@@ -146,10 +146,7 @@ class ComputerPlayer implements OpponentController {
 			mw.lastCastPaymentElements.add(element);
 			mw.lastCastActualPaymentElements.add(element);
 			mw.lastCardWasCast = true;
-			mw.p2Turn.cardsCastThisTurn++;
-			for (String j : card.jobs()) mw.p2Turn.castJobsThisTurn.add(j.toLowerCase());
-			mw.p2Turn.castNamesThisTurn.add(card.name().toLowerCase());
-			mw.p2Turn.castCountByNameThisTurn.merge(card.name().toLowerCase(), 1, Integer::sum);
+			mw.noteCardCast(card, false);
 			if (card.isSummon()) { mw.p2Turn.summonCastThisTurn = true; mw.noteDoublecastSummonCast(false, card); }
 			if (card.isForward())      mw.placeP2CardInForwardZone(card);
 			else if (card.isBackup())  mw.placeP2CardInFirstBackupSlot(card);
@@ -221,10 +218,7 @@ class ComputerPlayer implements OpponentController {
 		mw.logEntry("[P2] Plays " + toPlay.name()
 				+ (freeCast && mw.p2DoublecastFreeSummons ? " (free — Doublecast)" : ""));
 		mw.lastCardWasCast = true;
-		mw.p2Turn.cardsCastThisTurn++;
-		for (String j : toPlay.jobs()) mw.p2Turn.castJobsThisTurn.add(j.toLowerCase());
-		mw.p2Turn.castNamesThisTurn.add(toPlay.name().toLowerCase());
-		mw.p2Turn.castCountByNameThisTurn.merge(toPlay.name().toLowerCase(), 1, Integer::sum);
+		mw.noteCardCast(toPlay, false);
 		if (toPlay.isSummon()) { mw.p2Turn.summonCastThisTurn = true; mw.noteDoublecastSummonCast(false, toPlay); }
 		if (toPlay.isForward())      mw.placeP2CardInForwardZone(toPlay);
 		else if (toPlay.isBackup())  mw.placeP2CardInFirstBackupSlot(toPlay);

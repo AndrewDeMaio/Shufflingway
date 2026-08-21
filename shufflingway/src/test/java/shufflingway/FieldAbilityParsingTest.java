@@ -242,6 +242,12 @@ public class FieldAbilityParsingTest {
         // abilities — self-named, exactly as that caller checks it.
         if (ActionResolver.exBurstSuppressionMaxCost(fa.effectText(), source.name()) != null) return true;
         if (ActionResolverFieldAbility.tryParseBeginningOfOppMainPhase1FieldAbility(fa.effectText(), source) != null) return true;
+        // Vayne 9-022L. Read off the granter at the moment it fires by
+        // MainWindow.fireGrantedEndOfTurnForwardAbilities, which walks both fields and hands each
+        // grantee its own copy — live well before it was listed here, so this row closes a
+        // reporting gap rather than turning a rule on. Names no carrier: the grant speaks about
+        // the Forwards on one side of the table, not about the card printing it.
+        if (ActionResolverFieldAbility.tryParseForwardAbilityGrant(fa.effectText()) != null) return true;
         if (AutoAbilityTriggers.FA_OPPONENT_MUST_BLOCK.matcher(fa.effectText()).find()) return true;
         if (AutoAbilityTriggers.FA_OPPONENT_MUST_CHOOSE.matcher(fa.effectText()).find()) return true;
         if (AutoAbilityTriggers.FA_FIELD_FORWARDS_MUST_BLOCK.matcher(fa.effectText()).find()) return true;
@@ -547,6 +553,11 @@ public class FieldAbilityParsingTest {
         if (!grants.isEmpty()) return "FieldPowerGrant " + grants;
         List<IfControlBoost> boosts = CardData.parseIfControlBoosts(fa.effectText(), typeEn);
         if (!boosts.isEmpty()) return "IfControlBoost " + boosts;
+        ActionResolver.ForwardAbilityGrant fwdGrant =
+                ActionResolverFieldAbility.tryParseForwardAbilityGrant(fa.effectText());
+        if (fwdGrant != null)
+            return "ForwardAbilityGrant[" + (fwdGrant.affectsOpponent() ? "opponent's" : "your")
+                    + " Forwards: " + fwdGrant.abilityText() + "]";
         Matcher m;
         m = CardData.SELF_LIGHT_DARK_PLAY_EXCEPTION_PATTERN.matcher(fa.effectText());
         if (m.matches()) return "SelfPlayException[" + m.group("element") + "]";

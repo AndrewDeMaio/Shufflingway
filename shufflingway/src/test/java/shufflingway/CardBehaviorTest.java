@@ -19551,13 +19551,38 @@ public class CardBehaviorTest {
 	}
 
 	@Test
+	void kefkaCarriesHisOutgoingDoublerAsAGrantedPassive() {
+		// Kefka 23-004R. Every reader of the doubler goes through CardData.selfPassiveClauses,
+		// so the clause has a reader on a granted copy exactly as on a printed one — and the
+		// power and Haste it is bought with no longer arrive alone.
+		String text = "Damage 5 -- Kefka gains +2000 power, Haste and "
+				+ "\"If Kefka deals damage to a Forward or your opponent, double the damage instead.\"";
+		FieldAbility fa = makeFieldAbilityCard("Kefka", "Fire", "Forward", text).fieldAbilities().get(0);
+		assertEquals(5, fa.damageThreshold(), "the gate stays on the FieldAbility");
+
+		CardData.SelfGainsQuotedGrant g = CardData.parseSelfGainsQuotedGrant(fa.effectText(), "Kefka");
+		assertNotNull(g, "the whole grant used to decline over the doubler clause");
+		assertEquals(Set.of(CardData.Trait.HASTE), g.traits());
+		assertEquals(2000, CardData.parseSelfPowerGrant(fa.effectText(), "Kefka"));
+		assertEquals(1, g.passiveTexts().size());
+
+		// The printed sentence comes first, so a reader that walks the list behaves as it did
+		// when it read the effect text alone; the quoted clause is what it used to miss.
+		List<String> clauses = CardData.selfPassiveClauses(fa.effectText(), "Kefka");
+		assertEquals(fa.effectText(), clauses.get(0));
+		assertTrue(AutoAbilityTriggers.FA_OUTGOING_DAMAGE_DOUBLER.matcher(clauses.get(1)).matches(),
+				"the granted clause is read by the same pattern a printed doubler is");
+	}
+
+	@Test
 	void aQuotedPassiveWithNoReaderStillDeclinesTheWholeGrant() {
-		// Kefka 23-004R. The outgoing-damage doubler is read off printed field abilities only, so
-		// accepting this clause would hand Kefka +2000 power and Haste while the ability it was
-		// bought with did nothing.
+		// The must-attack compulsion is driven off an index set the choose chain fills, not off
+		// any field-ability scan, so granting it verbatim would be silently inert. Accepting the
+		// clause anyway would hand the card +2000 power and Haste for an ability that did
+		// nothing — which is the failure the decline exists to prevent.
 		assertNull(CardData.parseSelfGainsQuotedGrant(
 				"Kefka gains +2000 power, Haste and "
-				+ "\"If Kefka deals damage to a Forward or your opponent, double the damage instead.\"",
+				+ "\"Kefka must attack once per turn if possible.\"",
 				"Kefka"));
 	}
 
@@ -26008,5 +26033,226 @@ public class CardBehaviorTest {
 		mw.syncRfgRemovedPlayables(false);
 		assertEquals(1, mw.bzPlayableP2.size());
 		assertSame(summon, mw.bzPlayableP2.keySet().iterator().next());
+	}
+
+	// =========================================================================================
+	// Sephiroth 11-130L: "You can only play Sephiroth if either player has received 4 points of
+	// damage or more."  A cast gate, not a field ability — and the only one in the corpus measured
+	// against the larger of the two damage zones rather than the caster's own.
+	// =========================================================================================
+
+	private static final String SEPHIROTH_11_130L =
+			"You can only play Sephiroth if either player has received 4 points of damage or more.";
+
+	@Test
+	void sephirothsGateIsACastRestrictionRatherThanAFieldAbility() {
+		assertTrue(CardData.parseFieldAbilities(SEPHIROTH_11_130L, "Forward").isEmpty(),
+				"cast restrictions are static properties, not standing abilities");
+		CastRestriction cr = makeFieldAbilityCard("Sephiroth", "Dark", "Forward", SEPHIROTH_11_130L)
+				.castRestriction();
+		assertNotNull(cr);
+		assertEquals(4, cr.minEitherPlayerDamage());
+		assertFalse(cr.castProhibited(), "the gate opens; it is not a prohibition");
+	}
+
+	@Test
+	void sephirothOpensOnWhicheverPlayerHasTakenFour() {
+		MainWindow mw = new MainWindow();
+		CardData sephiroth = makeFieldAbilityCard("Sephiroth", "Dark", "Forward", SEPHIROTH_11_130L);
+		assertFalse(mw.castRestrictionMet(sephiroth), "neither player has taken any damage");
+
+		giveP1Damage(mw, 3);
+		assertFalse(mw.castRestrictionMet(sephiroth), "three is short of four");
+		giveP1Damage(mw, 1);
+		assertTrue(mw.castRestrictionMet(sephiroth), "the caster's own four opens it");
+	}
+
+	@Test
+	void sephirothOpensOnTheOpponentsDamageToo() {
+		// "Either player" is the whole point of the wording: a caster who has taken nothing may still
+		// play him once the opponent has taken four.
+		MainWindow mw = new MainWindow();
+		CardData sephiroth = makeFieldAbilityCard("Sephiroth", "Dark", "Forward", SEPHIROTH_11_130L);
+		for (int i = 0; i < 4; i++)
+			mw.gameState.getP2DamageZone().add(makeForward("Dmg" + i, "Fire", 1, 1000));
+		assertTrue(mw.castRestrictionMet(sephiroth, true), "P1 casts off P2's damage");
+		assertTrue(mw.castRestrictionMet(sephiroth, false), "and P2 off their own");
+	}
+
+	// =========================================================================================
+	// Yang 2-090R: "If the power of Yang is 10000 or more, Yang gains Brave."  The same conditional
+	// trait grant Ramza 7-104H prints, with subject and power the other way round — read against
+	// current power, which on Yang is what his own Monk-counting boost is there to raise.
+	// =========================================================================================
+
+	private static final String YANG_2_090R =
+			"If the power of Yang is 10000 or more, Yang gains Brave.";
+
+	@Test
+	void yangsInvertedPowerGateReadsTheSameAsRamzas() {
+		assertEquals(10000, CardData.parseIfSelfPowerTraitGrantThreshold(YANG_2_090R, "Yang"));
+		assertEquals(EnumSet.of(CardData.Trait.BRAVE),
+				CardData.parseIfSelfPowerTraitGrantTraits(YANG_2_090R));
+		// The printed spelling still reads, and neither claims another card's sentence.
+		assertEquals(4000, CardData.parseIfSelfPowerTraitGrantThreshold(
+				"If Ramza has 4000 power or more, Ramza gains Haste.", "Ramza"));
+		assertEquals(-1, CardData.parseIfSelfPowerTraitGrantThreshold(YANG_2_090R, "Somebody Else"),
+				"a grant naming another card is not this card's");
+	}
+
+	@Test
+	void yangGainsBraveOnlyOnceHisPowerReachesTheThreshold() {
+		MainWindow shortOf = new MainWindow();
+		shortOf.placeCardInForwardZone(makeForwardWithPowerGrant("Yang", "Earth", 9000, YANG_2_090R));
+		assertFalse(shortOf.effectiveP1HasTrait(0, CardData.Trait.BRAVE), "9000 is short of 10000");
+
+		MainWindow at = new MainWindow();
+		at.placeCardInForwardZone(makeForwardWithPowerGrant("Yang", "Earth", 10000, YANG_2_090R));
+		assertTrue(at.effectiveP1HasTrait(0, CardData.Trait.BRAVE), "the threshold is inclusive");
+	}
+
+	// =========================================================================================
+	// Lion 10-123R: "Damage 5 -- Lion gains +1000 power and \"If Lion receives damage, the damage
+	// is reduced by 1000 instead.\""  The quoted half is the passive-voice spelling of a modifier
+	// DamageResolver already applies, so it is rewritten into the canonical wording rather than
+	// given a reader of its own.
+	// =========================================================================================
+
+	private static final String LION_10_123R =
+			"Damage 5 -- Lion gains +1000 power and "
+			+ "\"If Lion receives damage, the damage is reduced by 1000 instead.\"";
+
+	@Test
+	void lionsPassiveVoiceShieldIsRewrittenIntoTheCanonicalWording() {
+		FieldAbility fa = makeFieldAbilityCard("Lion", "Water", "Forward", LION_10_123R)
+				.fieldAbilities().get(0);
+		assertEquals(5, fa.damageThreshold());
+		CardData.SelfGainsQuotedGrant g = CardData.parseSelfGainsQuotedGrant(fa.effectText(), "Lion");
+		assertNotNull(g, "the grant used to decline over the passive spelling");
+		assertEquals(1000, CardData.parseSelfPowerGrant(fa.effectText(), "Lion"));
+		assertEquals(List.of("If Lion is dealt damage, reduce the damage by 1000 instead."),
+				g.passiveTexts());
+	}
+
+	@Test
+	void lionsShieldAndPowerBothWaitForTheDamageGate() {
+		MainWindow mw = new MainWindow();
+		CardData lion = makeForwardWithPowerGrant("Lion", "Water", 7000, LION_10_123R);
+		placeP1Forward(mw, lion);
+
+		assertEquals(7000, mw.effectiveP1ForwardPower(0), "below Damage 5 nothing applies");
+		mw.applyDamageToForward(true, 0, 3000, true, false);
+		assertEquals(3000, mw.p1ForwardDamage.get(0), "and the damage lands in full");
+
+		giveP1Damage(mw, 5);
+		assertEquals(8000, mw.effectiveP1ForwardPower(0), "at Damage 5 the power grant is live");
+		mw.applyDamageToForward(true, 0, 3000, true, false);
+		assertEquals(5000, mw.p1ForwardDamage.get(0), "and the next 3000 arrives as 2000");
+	}
+
+	// =========================================================================================
+	// Kefka 23-004R: "Damage 5 -- Kefka gains +2000 power, Haste and \"If Kefka deals damage to a
+	// Forward or your opponent, double the damage instead.\""  The doubler is printed inside the
+	// grant, so every reader of it takes the clause list rather than the sentence alone — and the
+	// gate the grant carries has to shut it until his controller has taken 5.
+	// =========================================================================================
+
+	private static final String KEFKA_23_004R =
+			"Damage 5 -- Kefka gains +2000 power, Haste and "
+			+ "\"If Kefka deals damage to a Forward or your opponent, double the damage instead.\"";
+
+	@Test
+	void kefkasGrantedDoublerWaitsForItsDamageGate() {
+		MainWindow mw = new MainWindow();
+		CardData kefka  = makeForwardWithPowerGrant("Kefka", "Fire", 7000, KEFKA_23_004R);
+		CardData victim = makeForward("Victim", "Ice", 3, 9000);
+		placeP1Forward(mw, kefka);
+
+		assertEquals(1, mw.fieldAbilityCombatOutgoingMult(kefka, victim),
+				"below Damage 5 the doubler is not live");
+		assertFalse(mw.sourceHasOutgoingDmgToOpponentDoubler(kefka), "nor is its other half");
+
+		giveP1Damage(mw, 5);
+		assertEquals(2, mw.fieldAbilityCombatOutgoingMult(kefka, victim),
+				"the granted clause doubles exactly as a printed one would");
+		assertTrue(mw.sourceHasOutgoingDmgToOpponentDoubler(kefka),
+				"and the same clause covers his damage to the opponent");
+		assertTrue(mw.effectiveP1HasTrait(0, CardData.Trait.HASTE), "Haste comes with it");
+		assertEquals(9000, mw.effectiveP1ForwardPower(0), "as does the +2000");
+	}
+
+	// =========================================================================================
+	// Shikaree G 15-051C: "During each turn, when you cast the second card you've cast, Shikaree G
+	// gains \"Shikaree G cannot be blocked.\" until the end of the turn."  An ordinal cast trigger,
+	// counted per player per turn — the same trigger Atomos 16-043H and Rosa 14-057H print, the
+	// latter spelling its window as a trailing "this turn" instead of a leading "During each turn".
+	// =========================================================================================
+
+	private static final String SHIKAREE_G_15_051C =
+			"During each turn, when you cast the second card you've cast, Shikaree G gains "
+			+ "\"Shikaree G cannot be blocked.\" until the end of the turn.";
+
+	@Test
+	void theOrdinalCastTriggerIsAnAutoAbilityRatherThanAFieldAbility() {
+		List<AutoAbility> parsed = CardData.parseAutoAbilities(SHIKAREE_G_15_051C);
+		assertEquals(1, parsed.size());
+		assertEquals("cast nth card 2", parsed.get(0).trigger());
+		assertTrue(CardData.parseFieldAbilities(SHIKAREE_G_15_051C, "Forward").isEmpty(),
+				"the segment no longer doubles as a standing ability");
+	}
+
+	@Test
+	void bothSpellingsOfTheOrdinalCastTriggerAreTheSameTrigger() {
+		// Rosa 14-057H states the window at the end; Belgemine 24-052L counts Summons rather than
+		// cards, which is a different counter and so a different key.
+		assertEquals("cast nth card 3", CardData.parseAutoAbilities(
+				"When you cast the third card you've cast this turn, activate all the Backups you control.")
+				.get(0).trigger());
+		assertEquals("cast nth summon 2", CardData.parseAutoAbilities(
+				"During each turn, when you cast the second Summon you've cast, choose up to 2 Forwards. "
+				+ "Deal them 4000 damage.").get(0).trigger());
+	}
+
+	@Test
+	void shikareeGsTriggerFiresOnHisControllersSecondCastAndNoOther() {
+		// A triggered ability goes on the Stack rather than resolving where it fires, so what this
+		// asserts is that it was put there — with Shikaree G as its source and his controller as its
+		// owner. Resolution is the Stack's job and is exercised where the Stack is.
+		MainWindow mw = new MainWindow();
+		CardData shikaree = makeAutoAbilityForward("Shikaree G", "Wind", 8000, SHIKAREE_G_15_051C);
+		placeP1Forward(mw, shikaree);
+
+		mw.noteCardCast(makeForward("First", "Wind", 2, 5000), true);
+		assertEquals(0, mw.gameState.stackSize(), "one cast is not two");
+
+		mw.noteCardCast(makeForward("Second", "Wind", 2, 5000), true);
+		assertEquals(1, mw.gameState.stackSize(), "the second cast fires it");
+		StackEntry fired = mw.gameState.peekStack();
+		assertSame(shikaree, fired.source());
+		assertTrue(fired.isP1(), "it belongs to the player who did the casting");
+		assertEquals("cast nth card 2", fired.autoAbility().trigger());
+		assertNotNull(ActionResolver.parse(fired.autoAbility().effectText(), shikaree),
+				"and the effect it will resolve is one the resolver knows");
+
+		// A third cast is not a second one, so nothing fires again — and the opponent's casts are
+		// counted against their own total, never his.
+		mw.noteCardCast(makeForward("Third", "Wind", 2, 5000), true);
+		mw.noteCardCast(makeForward("Theirs", "Wind", 2, 5000), false);
+		mw.noteCardCast(makeForward("TheirSecond", "Wind", 2, 5000), false);
+		assertEquals(1, mw.gameState.stackSize(), "the count that matters is his controller's own");
+	}
+
+	@Test
+	void theEffectShikareeGResolvesIsTheStandingUnblockableShield() {
+		// The quoted clause is a self grant the resolver already applies; this is the half the
+		// trigger delivers, checked directly so the Stack is not in the way.
+		MainWindow mw = new MainWindow();
+		CardData shikaree = makeAutoAbilityForward("Shikaree G", "Wind", 8000, SHIKAREE_G_15_051C);
+		placeP1Forward(mw, shikaree);
+		mw.currentAbilitySource = shikaree;
+
+		ActionResolver.parse(shikaree.autoAbilities().get(0).effectText(), shikaree)
+				.accept(mw.buildGameContext(true));
+		assertTrue(mw.p1CannotBeBlocked.contains(shikaree), "he cannot be blocked for the turn");
 	}
 }

@@ -758,6 +758,25 @@ public record CardData(
     );
 
     /**
+     * "You can only play [Name] if either player has received N points of damage or more."
+     * — Sephiroth 11-130L. Group {@code count} — the damage threshold.
+     *
+     * <p>"Either player" is the whole point of the wording: the larger of the two damage zones is
+     * what the threshold is measured against, so an opponent who has taken four opens the cast as
+     * readily as taking four yourself. Every other damage gate in the corpus reads one side only
+     * ("if you have received N points of damage or more"), which is why this one cannot join the
+     * {@code Damage N --} family.
+     *
+     * <p>Says "play" rather than "cast" the way {@link #CAST_REQUIRES_FORWARD_PUT_TO_BZ} does, and
+     * accepts both verbs for the same reason: a hand card's play is its cast, and which verb is
+     * printed only reflects whether the card is a Character or a Summon.
+     */
+    private static final Pattern CAST_REQUIRES_EITHER_PLAYER_DAMAGE = Pattern.compile(
+        "(?i)You\\s+can\\s+only\\s+(?:cast|play)\\s+\\S[^.]+?\\s+if\\s+either\\s+player\\s+has\\s+received\\s+" +
+        "(?<count>\\d+)\\s+points?\\s+of\\s+damage\\s+or\\s+more[.!]?"
+    );
+
+    /**
      * "You can only cast X if your opponent has N cards or less in their hand."
      * Group {@code count} — the maximum allowed hand size.
      */
@@ -929,6 +948,12 @@ public record CardData(
         Matcher oppHandM = CAST_MAX_OPPONENT_HAND.matcher(textEn);
         if (oppHandM.find()) maxOpponentHand = Integer.parseInt(oppHandM.group("count"));
 
+        // Sephiroth 11-130L. 0 means no such restriction, as with minBZAndRfpSummons — a printed
+        // threshold is always at least 1.
+        int minEitherPlayerDamage = 0;
+        Matcher eitherDmgM = CAST_REQUIRES_EITHER_PLAYER_DAMAGE.matcher(textEn);
+        if (eitherDmgM.find()) minEitherPlayerDamage = Integer.parseInt(eitherDmgM.group("count"));
+
         ControlCondition mustControl = null;
         Matcher mustM = CAST_MUST_CONTROL.matcher(textEn);
         if (mustM.find()) {
@@ -984,12 +1009,13 @@ public record CardData(
         if (!yourTurnOnly && !mainPhaseOnly && !opponentTurnOnly && !requiresNoFwds
                 && !requiresAFwd && requiredBZTypes.isEmpty()
                 && minBZAndRfpSummons == 0 && maxOpponentHand < 0 && mustControl == null
-                && mustControlCosts.isEmpty() && !requiresFwdToBZ) {
+                && mustControlCosts.isEmpty() && !requiresFwdToBZ && minEitherPlayerDamage == 0) {
             return null;
         }
         return new CastRestriction(false, yourTurnOnly, mainPhaseOnly, opponentTurnOnly,
                 requiresNoFwds, requiresAFwd, requiredBZTypes, minBZAndRfpSummons,
-                maxOpponentHand, mustControl, mustControlCosts, requiresFwdToBZ);
+                maxOpponentHand, mustControl, mustControlCosts, requiresFwdToBZ,
+                minEitherPlayerDamage);
     }
 
     /**
@@ -1635,6 +1661,21 @@ public record CardData(
     );
 
     /**
+     * "If [Self] receives damage, the damage is reduced by N instead." — Lion 10-123R's quoted
+     * half, and the passive-voice twin of {@link #SELF_INCOMING_DAMAGE_REDUCED}.
+     *
+     * <p>{@code FA_DAMAGE_MODIFIER} already reads "receives damage" as a synonym for "is dealt
+     * damage", but only ahead of the <em>active</em> effect wording ("reduce the damage by N
+     * instead"). This sentence states the same replacement passively, which is why it needs a
+     * rewrite rather than simply reaching that pattern. Both openings are accepted here so the
+     * two halves of the synonym stay together.
+     */
+    private static final Pattern SELF_RECEIVES_DAMAGE_REDUCED = Pattern.compile(
+        "(?i)^If\\s+(?<name>.+?)\\s+(?:receives|is\\s+dealt)\\s+damage,\\s+the\\s+damage\\s+is\\s+" +
+        "reduced\\s+by\\s+(?<amount>\\d+)\\s+instead[.!]?$"
+    );
+
+    /**
      * {@code clause} rewritten into the canonical damage-modifier wording when it is the passive
      * spelling naming {@code cardName}, or {@code null} when it is not one.
      *
@@ -1645,9 +1686,14 @@ public record CardData(
      */
     static String canonicalSelfDamageModifier(String clause, String cardName) {
         if (clause == null || cardName == null) return null;
-        Matcher m = SELF_INCOMING_DAMAGE_REDUCED.matcher(clause.trim());
-        if (!m.matches() || !m.group("name").trim().equalsIgnoreCase(cardName)) return null;
-        return "If " + cardName + " is dealt damage, reduce the damage by " + m.group("amount") + " instead.";
+        String t = clause.trim();
+        for (Pattern p : new Pattern[]{ SELF_INCOMING_DAMAGE_REDUCED, SELF_RECEIVES_DAMAGE_REDUCED }) {
+            Matcher m = p.matcher(t);
+            if (!m.matches() || !m.group("name").trim().equalsIgnoreCase(cardName)) continue;
+            return "If " + cardName + " is dealt damage, reduce the damage by "
+                    + m.group("amount") + " instead.";
+        }
+        return null;
     }
 
     /**
@@ -1683,10 +1729,16 @@ public record CardData(
             //
             // Only clauses with a reader are accepted here. A passive nobody consults would let the
             // grant's other half (traits, power) apply while the quoted ability silently did
-            // nothing — the half-an-ability failure the decline below exists to prevent. Kefka
-            // 23-004R's "…double the damage instead." is the live example: the outgoing-damage
-            // doubler is read off printed field abilities only, so that grant still declines whole.
+            // nothing — the half-an-ability failure the decline below exists to prevent.
             if (isSelfCannotBeBlocked(clause, cardName)) { passives.add(clause); continue; }
+            // "If [Self] deals damage to a Forward or your opponent, double the damage instead."
+            // — Kefka 23-004R. Every reader of the doubler goes through selfPassiveClauses, so a
+            // granted copy is seen wherever a printed one is.
+            Matcher ddM = AutoAbilityTriggers.FA_OUTGOING_DAMAGE_DOUBLER.matcher(clause);
+            if (ddM.matches() && ddM.group("card").trim().equalsIgnoreCase(cardName)) {
+                passives.add(clause);
+                continue;
+            }
             String canonical = canonicalSelfDamageModifier(clause, cardName);
             if (canonical != null) { passives.add(canonical); continue; }
             // Already in the canonical incoming-damage wording (The Fiend 20-114L), so it needs no
@@ -1715,6 +1767,26 @@ public record CardData(
                 && parseSelfPowerGrant(effectText, cardName) == 0)
             return null;
         return new SelfGainsQuotedGrant(traits, maxAttacks, abilities, passives);
+    }
+
+    /**
+     * Every clause of {@code effectText} a passive reader should be offered for {@code cardName}:
+     * the sentence as printed, followed by any passive the card hands itself inside quotes.
+     *
+     * <p>The printed text comes first and is always present, so a reader that walks this list
+     * behaves exactly as it did when it read {@code fa.effectText()} directly — the quoted clauses
+     * only add cases it used to miss. Kefka 23-004R is why it exists: his doubler is printed
+     * inside a "Kefka gains +2000 power, Haste and \"…\"" grant, and no damage pattern matches the
+     * outer sentence the clause is nested in.
+     */
+    static List<String> selfPassiveClauses(String effectText, String cardName) {
+        if (effectText == null) return List.of();
+        SelfGainsQuotedGrant grant = parseSelfGainsQuotedGrant(effectText, cardName);
+        if (grant == null || grant.passiveTexts().isEmpty()) return List.of(effectText);
+        List<String> out = new ArrayList<>();
+        out.add(effectText);
+        out.addAll(grant.passiveTexts());
+        return out;
     }
 
     /**
@@ -2894,6 +2966,56 @@ public record CardData(
     );
 
     /**
+     * Matches the ordinal cast trigger: "During each turn, when you cast the [ordinal] [card |
+     * Summon] you've cast, [effect]" — Shikaree G 15-051C, Atomos 16-043H, Belgemine 24-052L —
+     * and the equivalent "When you cast the [ordinal] card you've cast this turn, [effect]" that
+     * Rosa 14-057H prints instead.
+     *
+     * <p>The two spellings are one trigger. "During each turn" and the trailing "this turn" both
+     * say the count restarts each turn, which is what the per-turn cast counters already do, so
+     * each is optional here rather than meaning anything different. Neither shape could reach
+     * {@link #AUTO_ABILITY_PATTERN}: its trigger list is closed, and "cast the Nth card" is not on
+     * it — so the whole family fell through to the field-ability list unparsed.
+     *
+     * <p>Groups: {@code ordinal} — the position word, resolved by {@link #ordinalValue};
+     * {@code what} — "card" or "Summon", which decides which of the two per-turn counters the
+     * trigger is measured against; {@code effect}; {@code threshold} — the optional "Damage N -- "
+     * gate, captured for the same reason the chosen-first-time pass captures one.
+     */
+    private static final Pattern DURING_EACH_TURN_NTH_CAST_PATTERN = Pattern.compile(
+        "(?i)(?:Damage\\s+(?<threshold>\\d+)\\s+--\\s+)?" +
+        "(?:During\\s+each\\s+turn,\\s+)?when\\s+you\\s+cast\\s+the\\s+" +
+        "(?<ordinal>first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)\\s+" +
+        "(?<what>cards?|Summons?)\\s+you've\\s+cast(?:\\s+this\\s+turn)?,\\s+" +
+        "(?<effect>.+?)\\s*" +
+        "(?=\\s*\\[\\[br\\]\\]|\\s*$)",
+        Pattern.DOTALL
+    );
+
+    /** The position words {@link #DURING_EACH_TURN_NTH_CAST_PATTERN} accepts, in order from 1. */
+    private static final List<String> ORDINAL_WORDS = List.of(
+            "first", "second", "third", "fourth", "fifth",
+            "sixth", "seventh", "eighth", "ninth", "tenth");
+
+    /** The 1-based position {@code word} names, or 0 when it is not one this parser knows. */
+    private static int ordinalValue(String word) {
+        int i = ORDINAL_WORDS.indexOf(word.trim().toLowerCase(Locale.ROOT));
+        return i < 0 ? 0 : i + 1;
+    }
+
+    /**
+     * The trigger key an ordinal cast ability carries, and the one
+     * {@code AutoAbilityTriggers} fires as each cast is recorded. Built here rather than spelled
+     * out at both ends so the parser and the dispatcher cannot disagree about it.
+     *
+     * @param summon whether the printing counts Summons rather than cards of any type
+     * @param n      the 1-based position within the turn
+     */
+    static String nthCastTrigger(boolean summon, int n) {
+        return "cast nth " + (summon ? "summon " : "card ") + n;
+    }
+
+    /**
      * Separate pattern for "When a Warp Counter is removed from [CardName], [effect]".
      * Uses {@code target} for the card whose counter is decremented.
      */
@@ -3718,6 +3840,22 @@ public record CardData(
             // "for the first time in that turn" is the per-turn limit stated in the trigger clause;
             // the restriction stripper only reads the trailing sentence form, so set it here.
             if (aa != null) result.add(aa.withOncePerTurn());
+        }
+
+        // Sixteenth pass: the ordinal cast trigger — "During each turn, when you cast the [ordinal]
+        // [card | Summon] you've cast, [effect]" and Rosa 14-057H's "…this turn" spelling of it.
+        Matcher ncm = DURING_EACH_TURN_NTH_CAST_PATTERN.matcher(textForSearch);
+        while (ncm.find()) {
+            String effect = SUMMON_MARKUP.matcher(ncm.group("effect").trim()).replaceAll("").trim();
+            if (effect.isEmpty()) continue;
+            int n = ordinalValue(ncm.group("ordinal"));
+            if (n == 0) continue;
+            boolean summonsOnly = ncm.group("what").toLowerCase(Locale.ROOT).startsWith("summon");
+            // "you" is the subject every printing in the family names: the count is the caster's,
+            // not any one card's, so the trigger is player-scoped like "When you cast a Summon".
+            AutoAbility aa = parseAutoAbilityRestrictions("you", nthCastTrigger(summonsOnly, n),
+                    false, false, false, false, effect, damageThresholdOf(ncm));
+            if (aa != null) result.add(aa);
         }
 
         // Put back any quoted granted ability that was masked while scanning for triggers, so a
@@ -7135,6 +7273,24 @@ public record CardData(
         "(?<traits>(?:(?:Haste|First\\s+Strike|Brave|Back\\s+Attack)(?:\\s*(?:,|and)\\s*)?)+)[.!]?\\s*$"
     );
 
+    /**
+     * The same grant with subject and power swapped: "If the power of [name] is N or more, [name]
+     * gains [traits]." — Yang 2-090R, the only printing in the corpus to word it this way.
+     *
+     * <p>A sibling pattern rather than an alternation inside {@link #IF_SELF_POWER_TRAIT_GRANT}:
+     * Java forbids repeating a group name, so folding the two openings into one regex would mean a
+     * second set of capture names and a reader that has to ask which arm fired. The names here are
+     * deliberately identical to that pattern's, so both accessors read whichever matched without
+     * caring which it was.
+     *
+     * <p>The trait list is anchored to the end of the sentence for the same reason it is there: a
+     * printing that continues past the keyword carries an effect this grant would silently drop.
+     */
+    static final Pattern IF_SELF_POWER_IS_TRAIT_GRANT = Pattern.compile(
+        "(?i)^If\\s+the\\s+power\\s+of\\s+(?<n1>.+?)\\s+is\\s+(?<n>\\d+)\\s+or\\s+more,\\s+(?<n2>.+?)\\s+gains?\\s+" +
+        "(?<traits>(?:(?:Haste|First\\s+Strike|Brave|Back\\s+Attack)(?:\\s*(?:,|and)\\s*)?)+)[.!]?\\s*$"
+    );
+
     /** Matches "If there are N or more face-up cards in your LB deck, [name] gains [traits]." */
     static final Pattern IF_SELF_LB_FACEUP_COUNT_TRAIT_GRANT = Pattern.compile(
         "(?i)^If\\s+there\\s+are\\s+(?<n>\\d+)\\s+or\\s+more\\s+face[- ]up\\s+cards?\\s+in\\s+your\\s+LB\\s+deck,\\s+(?<cardname>.+?)\\s+gains?\\s+" +
@@ -7470,6 +7626,10 @@ public record CardData(
             // trigger it carries; without this line the auto-ability it produces would be printed a
             // second time here as a field ability.
             if (DURING_EACH_TURN_CHOSEN_FIRST_TIME_PATTERN.matcher(seg).find()) continue;
+            // Same shape and same reason: the ordinal cast trigger opens on "During" (Shikaree G
+            // 15-051C, Atomos 16-043H, Belgemine 24-052L) or states its window at the end
+            // (Rosa 14-057H), so neither reaches FA_AUTO_PREFIX above.
+            if (DURING_EACH_TURN_NTH_CAST_PATTERN.matcher(seg).find()) continue;
             // Same shape, same reason: Lunafreya 8-132L opens on "During your opponent's turn," and
             // the trigger behind it is parsed as an auto ability, so the segment is not also a
             // standing one.
@@ -7541,6 +7701,7 @@ public record CardData(
             if (CAST_PROHIBITED.matcher(seg).find())                          continue;
             if (CAST_REQUIRES_NO_FORWARDS.matcher(seg).find())                continue;
             if (CAST_REQUIRES_FORWARD_PUT_TO_BZ.matcher(seg).find())          continue;
+            if (CAST_REQUIRES_EITHER_PLAYER_DAMAGE.matcher(seg).find())      continue;
             // The three conditional forms that print as their own sentence (Gogo 27-099H,
             // Titania 13-132S, Eiko 23-124L). "during your turn" and "during your Main Phase"
             // are deliberately absent: those wordings occur as a *prefix* on a longer ability,
@@ -8115,11 +8276,26 @@ public record CardData(
      * or -1 if the text does not match or either name is not {@code cardName}.
      */
     public static int parseIfSelfPowerTraitGrantThreshold(String text, String cardName) {
-        Matcher m = IF_SELF_POWER_TRAIT_GRANT.matcher(text.trim());
-        if (!m.matches()) return -1;
-        if (!m.group("n1").trim().equalsIgnoreCase(cardName)) return -1;
-        if (!m.group("n2").trim().equalsIgnoreCase(cardName)) return -1;
-        return Integer.parseInt(m.group("n"));
+        Matcher m = selfPowerTraitGrantMatcher(text, cardName);
+        return m == null ? -1 : Integer.parseInt(m.group("n"));
+    }
+
+    /**
+     * The matcher for whichever self-power trait grant {@code text} is — the "has N power"
+     * spelling or Yang 2-090R's "the power of … is N" one — with both name captures already
+     * checked against {@code cardName}, or {@code null} when it is neither.
+     */
+    private static Matcher selfPowerTraitGrantMatcher(String text, String cardName) {
+        if (text == null || cardName == null) return null;
+        String t = text.trim();
+        for (Pattern p : new Pattern[]{ IF_SELF_POWER_TRAIT_GRANT, IF_SELF_POWER_IS_TRAIT_GRANT }) {
+            Matcher m = p.matcher(t);
+            if (!m.matches()) continue;
+            if (!m.group("n1").trim().equalsIgnoreCase(cardName)) continue;
+            if (!m.group("n2").trim().equalsIgnoreCase(cardName)) continue;
+            return m;
+        }
+        return null;
     }
 
     /**
@@ -8128,6 +8304,7 @@ public record CardData(
      */
     public static EnumSet<Trait> parseIfSelfPowerTraitGrantTraits(String text) {
         Matcher m = IF_SELF_POWER_TRAIT_GRANT.matcher(text.trim());
+        if (!m.matches()) m = IF_SELF_POWER_IS_TRAIT_GRANT.matcher(text.trim());
         if (!m.matches()) return EnumSet.noneOf(Trait.class);
         String traitsText = m.group("traits");
         EnumSet<Trait> result = EnumSet.noneOf(Trait.class);

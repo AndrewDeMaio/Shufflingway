@@ -2466,6 +2466,36 @@ final class AutoAbilityTriggers {
 	}
 
 	/**
+	 * Fires the ordinal cast triggers for the card {@code isP1} has just cast — "During each turn,
+	 * when you cast the second card you've cast, …" (Shikaree G 15-051C, Atomos 16-043H) and
+	 * Rosa 14-057H's "…this turn" spelling of the same trigger.
+	 *
+	 * <p>Only the caster's own field is walked: every printing in the family says "you", so the
+	 * count and the abilities watching it belong to the same player. Nothing on the opposing side
+	 * watches this event.
+	 *
+	 * <p>Deliberately does not open the Stack overlay, for the reason
+	 * {@link #triggerAutoAbilitiesForCastSummon} does not: this runs while the cast that woke it is
+	 * still being recorded, and the overlay resolves a P1-owned top entry on the spot.
+	 *
+	 * @param countThisTurn how many cards {@code isP1} has now cast this turn, this one included
+	 */
+	void triggerAutoAbilitiesForNthCardCast(boolean isP1, int countThisTurn) {
+		withBatch(() -> collectEventTriggers(CardData.nthCastTrigger(false, countThisTurn), isP1));
+	}
+
+	/**
+	 * The Summon-counting twin of {@link #triggerAutoAbilitiesForNthCardCast} (Belgemine 24-052L),
+	 * fired by {@code MainWindow.pushSummonOnStack} — the single point every Summon cast funnels
+	 * through, and where {@link PlayerTurnState#summonsCastThisTurn} is kept.
+	 *
+	 * @param countThisTurn how many Summons {@code isP1} has now cast this turn, this one included
+	 */
+	void triggerAutoAbilitiesForNthSummonCast(boolean isP1, int countThisTurn) {
+		withBatch(() -> collectEventTriggers(CardData.nthCastTrigger(true, countThisTurn), isP1));
+	}
+
+	/**
 	 * Fires "chosen by opponent's summon" field abilities on {@code chosenSideIsP1}'s side — called
 	 * when that player's Forward was selected as a target by the opponent's Summon.
 	 *

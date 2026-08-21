@@ -8786,6 +8786,28 @@ public class MainWindow {
 	// -------------------------------------------------------------------------
 
 	/**
+	 * The turn-scoped cast bookkeeping every casting path records, and the point the ordinal cast
+	 * triggers fire from — "During each turn, when you cast the second card you've cast, …"
+	 * (Shikaree G 15-051C, Atomos 16-043H) and Rosa 14-057H's "…this turn" spelling of it.
+	 *
+	 * <p>One method rather than the same four lines at each call site, because the trigger has to
+	 * see every cast to fire on the right one: a path that recorded the cast without firing would
+	 * leave the counter and the trigger out of step for the rest of the turn.
+	 *
+	 * <p>The Summon-counting sibling (Belgemine 24-052L) is not fired here. It is measured against
+	 * {@link PlayerTurnState#summonsCastThisTurn}, which {@link #pushSummonOnStack} owns — a Summon
+	 * is cast here but reaches the Stack there, and that is the moment its printings speak about.
+	 */
+	void noteCardCast(CardData card, boolean isP1) {
+		PlayerTurnState playerTurn = turn(isP1);
+		playerTurn.cardsCastThisTurn++;
+		for (String j : card.jobs()) playerTurn.castJobsThisTurn.add(j.toLowerCase());
+		playerTurn.castNamesThisTurn.add(card.name().toLowerCase());
+		playerTurn.castCountByNameThisTurn.merge(card.name().toLowerCase(), 1, Integer::sum);
+		autoAbilityTriggers.triggerAutoAbilitiesForNthCardCast(isP1, playerTurn.cardsCastThisTurn);
+	}
+
+	/**
 	 * The local player's play, which a networked opponent also has to see.
 	 *
 	 * <p>The play runs before the action is sent, because a Summon chooses its targets while it
@@ -8904,10 +8926,7 @@ public class MainWindow {
 		else      { gameState.removeP2FromHand(cardHandIdx); refreshP2HandCountLabel(); }
 		activeCostReductions.removeIf(m -> m.consumeOnUse() && m.matches(card));
 		PlayerTurnState playerTurn = turn(isP1);
-		playerTurn.cardsCastThisTurn++;
-		for (String j : card.jobs()) playerTurn.castJobsThisTurn.add(j.toLowerCase());
-		playerTurn.castNamesThisTurn.add(card.name().toLowerCase());
-		playerTurn.castCountByNameThisTurn.merge(card.name().toLowerCase(), 1, Integer::sum);
+		noteCardCast(card, isP1);
 		if (card.isSummon()) {
 			playerTurn.summonCastThisTurn = true;
 			noteDoublecastSummonCast(isP1, card);
@@ -9062,10 +9081,7 @@ public class MainWindow {
 		refreshPlayableCardsButton();
 
 		activeCostReductions.removeIf(m -> m.consumeOnUse() && m.matches(card));
-		p1Turn.cardsCastThisTurn++;
-		for (String j : card.jobs()) p1Turn.castJobsThisTurn.add(j.toLowerCase());
-		p1Turn.castNamesThisTurn.add(card.name().toLowerCase());
-		p1Turn.castCountByNameThisTurn.merge(card.name().toLowerCase(), 1, Integer::sum);
+		noteCardCast(card, true);
 		if (card.isSummon()) {
 			p1Turn.summonCastThisTurn = true;
 			noteDoublecastSummonCast(true, card);
@@ -9213,10 +9229,7 @@ public class MainWindow {
 		if (card.isSummon() && borrowEntry != null && borrowEntry.rfgAfterUse())
 			rfgAfterUseSummons.add(card);
 
-		p2Turn.cardsCastThisTurn++;
-		for (String j : card.jobs()) p2Turn.castJobsThisTurn.add(j.toLowerCase());
-		p2Turn.castNamesThisTurn.add(card.name().toLowerCase());
-		p2Turn.castCountByNameThisTurn.merge(card.name().toLowerCase(), 1, Integer::sum);
+		noteCardCast(card, false);
 		if (card.isSummon()) { p2Turn.summonCastThisTurn = true; noteDoublecastSummonCast(false, card); }
 		logEntry("[P2] Played \"" + card.name() + "\" from " + sourceLabel);
 
@@ -9355,6 +9368,7 @@ public class MainWindow {
 		logEntry("[Stack] \"" + card.name() + "\" — Summon on the stack"
 				+ (paidExtraCost ? " (Extra Cost paid)" : ""));
 		turn(isP1).summonsCastThisTurn++;
+		autoAbilityTriggers.triggerAutoAbilitiesForNthSummonCast(isP1, turn(isP1).summonsCastThisTurn);
 		if (castSummonIsCancelledByOpponent(isP1)) {
 			cancelledStackEntries.add(entry);
 			logEntry((isP1 ? "" : "[P2] ") + "\"" + card.name()
@@ -12634,15 +12648,27 @@ public class MainWindow {
 
 	int fieldAbilityCombatOutgoingMult(CardData attacker, CardData target) {
 		int mult = 1;
+		// A "Damage N --" gate belongs to the printing, and this reader holds the FieldAbility that
+		// carries it — read the same way DamageResolver.sourceHasOutgoingDmgToOpponentDoubler reads
+		// it, so the two halves of one doubler cannot disagree about whether it is live. Kefka
+		// 23-004R doubles nothing until his controller has taken 5.
+		Boolean side = fieldSideOf(attacker);
+		int dmg = side == null ? 0
+				: (side ? gameState.getP1DamageZone() : gameState.getP2DamageZone()).size();
 		for (FieldAbility fa : effectiveFieldAbilities(attacker)) {
+			if (fa.damageThreshold() > 0 && dmg < fa.damageThreshold()) continue;
 			Matcher m = AutoAbilityTriggers.FA_DOUBLE_DAMAGE_VS_COST_THRESHOLD.matcher(fa.effectText());
 			if (m.find() && m.group("name").trim().equalsIgnoreCase(attacker.name())
 					&& target.cost() >= Integer.parseInt(m.group("cost")))
 				mult *= 2;
-			m = AutoAbilityTriggers.FA_OUTGOING_DAMAGE_DOUBLER.matcher(fa.effectText());
-			if (m.find() && m.group("card").trim().equalsIgnoreCase(attacker.name())
-					&& m.group("target").toLowerCase().contains("forward"))
-				mult *= 2;
+			// Kefka 23-004R prints his doubler inside a self grant, so the clause list is what is
+			// scanned rather than the sentence alone.
+			for (String clause : CardData.selfPassiveClauses(fa.effectText(), attacker.name())) {
+				m = AutoAbilityTriggers.FA_OUTGOING_DAMAGE_DOUBLER.matcher(clause);
+				if (m.find() && m.group("card").trim().equalsIgnoreCase(attacker.name())
+						&& m.group("target").toLowerCase().contains("forward"))
+					mult *= 2;
+			}
 		}
 		return mult;
 	}

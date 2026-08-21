@@ -571,6 +571,12 @@ class CostCalculator {
 		// Forward lost this turn opens both, and the end of the turn shuts both.
 		if (cr.requiresForwardPutToBZThisTurn() && !mw.turn(isP1).forwardPutToBZThisTurn) return false;
 
+		// Sephiroth 11-130L. "Either player" is the larger of the two damage zones, not the caster's
+		// own — the opponent taking four opens the cast just as the caster taking four does.
+		if (cr.minEitherPlayerDamage() > 0
+				&& Math.max(mw.gameState.getP1DamageZone().size(), mw.gameState.getP2DamageZone().size())
+					< cr.minEitherPlayerDamage()) return false;
+
 		if (cr.mustControlCondition() != null && !mw.controlConditionMet(cr.mustControlCondition(), isP1))
 			return false;
 

@@ -3256,19 +3256,8 @@ final class GameContextImpl implements GameContext {
 				CardData card = hand.remove(handIdx);
 				if (isP1) mw.refreshP1HandLabel(); else mw.refreshP2HandCountLabel();
 				if (returnToHandAfterUse) mw.returnToHandAfterUseSummons.add(card);
-				if (isP1) {
-					mw.p1Turn.cardsCastThisTurn++;
-					mw.p1Turn.summonCastThisTurn = true;
-					for (String j : card.jobs()) mw.p1Turn.castJobsThisTurn.add(j.toLowerCase());
-					mw.p1Turn.castNamesThisTurn.add(card.name().toLowerCase());
-					mw.p1Turn.castCountByNameThisTurn.merge(card.name().toLowerCase(), 1, Integer::sum);
-				} else {
-					mw.p2Turn.cardsCastThisTurn++;
-					mw.p2Turn.summonCastThisTurn = true;
-					for (String j : card.jobs()) mw.p2Turn.castJobsThisTurn.add(j.toLowerCase());
-					mw.p2Turn.castNamesThisTurn.add(card.name().toLowerCase());
-					mw.p2Turn.castCountByNameThisTurn.merge(card.name().toLowerCase(), 1, Integer::sum);
-				}
+				mw.turn(isP1).summonCastThisTurn = true;
+				mw.noteCardCast(card, isP1);
 				mw.noteDoublecastSummonCast(isP1, card);
 				mw.lastCardWasCast = true;
 				logEntry((isP1 ? "" : "[P2] ") + "Cast \"" + card.name() + "\" from hand for free"
@@ -3310,19 +3299,8 @@ final class GameContextImpl implements GameContext {
 				}
 				hand.remove(idx);
 				if (isP1) mw.refreshP1HandLabel(); else mw.refreshP2HandCountLabel();
-				if (isP1) {
-					mw.p1Turn.cardsCastThisTurn++;
-					mw.p1Turn.summonCastThisTurn = true;
-					for (String j : revealed.jobs()) mw.p1Turn.castJobsThisTurn.add(j.toLowerCase());
-					mw.p1Turn.castNamesThisTurn.add(revealed.name().toLowerCase());
-					mw.p1Turn.castCountByNameThisTurn.merge(revealed.name().toLowerCase(), 1, Integer::sum);
-				} else {
-					mw.p2Turn.cardsCastThisTurn++;
-					mw.p2Turn.summonCastThisTurn = true;
-					for (String j : revealed.jobs()) mw.p2Turn.castJobsThisTurn.add(j.toLowerCase());
-					mw.p2Turn.castNamesThisTurn.add(revealed.name().toLowerCase());
-					mw.p2Turn.castCountByNameThisTurn.merge(revealed.name().toLowerCase(), 1, Integer::sum);
-				}
+				mw.turn(isP1).summonCastThisTurn = true;
+				mw.noteCardCast(revealed, isP1);
 				mw.noteDoublecastSummonCast(isP1, revealed);
 				mw.lastCardWasCast = true;
 				logEntry((isP1 ? "" : "[P2] ") + "Cast \"" + revealed.name() + "\" from hand for free");
@@ -3364,11 +3342,8 @@ final class GameContextImpl implements GameContext {
 				} else {
 					hand.remove(handIdx);
 					mw.refreshP2HandCountLabel();
-					mw.p2Turn.cardsCastThisTurn++;
 					mw.p2Turn.summonCastThisTurn = true;
-					for (String j : card.jobs()) mw.p2Turn.castJobsThisTurn.add(j.toLowerCase());
-					mw.p2Turn.castNamesThisTurn.add(card.name().toLowerCase());
-					mw.p2Turn.castCountByNameThisTurn.merge(card.name().toLowerCase(), 1, Integer::sum);
+					mw.noteCardCast(card, false);
 					mw.noteDoublecastSummonCast(false, card);
 					mw.activeCostReductions.remove(mod);
 					logEntry("[P2] Cast \"" + card.name() + "\" from hand (cost -" + discount + ")");
@@ -3420,19 +3395,8 @@ final class GameContextImpl implements GameContext {
 				}
 
 				if (castIt) {
-					if (isP1) {
-						mw.p1Turn.cardsCastThisTurn++;
-						mw.p1Turn.summonCastThisTurn = true;
-						for (String j : picked.jobs()) mw.p1Turn.castJobsThisTurn.add(j.toLowerCase());
-						mw.p1Turn.castNamesThisTurn.add(picked.name().toLowerCase());
-						mw.p1Turn.castCountByNameThisTurn.merge(picked.name().toLowerCase(), 1, Integer::sum);
-					} else {
-						mw.p2Turn.cardsCastThisTurn++;
-						mw.p2Turn.summonCastThisTurn = true;
-						for (String j : picked.jobs()) mw.p2Turn.castJobsThisTurn.add(j.toLowerCase());
-						mw.p2Turn.castNamesThisTurn.add(picked.name().toLowerCase());
-						mw.p2Turn.castCountByNameThisTurn.merge(picked.name().toLowerCase(), 1, Integer::sum);
-					}
+					mw.turn(isP1).summonCastThisTurn = true;
+					mw.noteCardCast(picked, isP1);
 					mw.noteDoublecastSummonCast(isP1, picked);
 					mw.lastCardWasCast = true;
 					logEntry((isP1 ? "" : "[P2] ") + "Cast \"" + picked.name() + "\" from deck search for free");
@@ -4944,19 +4908,8 @@ final class GameContextImpl implements GameContext {
 				for (int i = 0; i < n; i++) deck.pollFirst();
 
 				if (picked != null) {
-					if (isP1) {
-						mw.p1Turn.cardsCastThisTurn++;
-						mw.p1Turn.summonCastThisTurn = true;
-						for (String j : picked.jobs()) mw.p1Turn.castJobsThisTurn.add(j.toLowerCase());
-						mw.p1Turn.castNamesThisTurn.add(picked.name().toLowerCase());
-						mw.p1Turn.castCountByNameThisTurn.merge(picked.name().toLowerCase(), 1, Integer::sum);
-					} else {
-						mw.p2Turn.cardsCastThisTurn++;
-						mw.p2Turn.summonCastThisTurn = true;
-						for (String j : picked.jobs()) mw.p2Turn.castJobsThisTurn.add(j.toLowerCase());
-						mw.p2Turn.castNamesThisTurn.add(picked.name().toLowerCase());
-						mw.p2Turn.castCountByNameThisTurn.merge(picked.name().toLowerCase(), 1, Integer::sum);
-					}
+					mw.turn(isP1).summonCastThisTurn = true;
+					mw.noteCardCast(picked, isP1);
 					mw.noteDoublecastSummonCast(isP1, picked);
 					mw.lastCardWasCast = true;
 					logEntry((isP1 ? "" : "[P2] ") + "Cast \"" + picked.name() + "\" from top of deck for free");
@@ -6108,17 +6061,23 @@ final class GameContextImpl implements GameContext {
 					Boolean doublerSide = mw.fieldSideOf(mw.currentAbilitySource);
 					int doublerDmg = doublerSide == null ? 0
 							: (doublerSide ? mw.gameState.getP1DamageZone() : mw.gameState.getP2DamageZone()).size();
+					doubler:
 					for (FieldAbility fa : mw.effectiveFieldAbilities(mw.currentAbilitySource)) {
 						if (fa.damageThreshold() > 0 && doublerDmg < fa.damageThreshold()) continue;
-						Matcher m = AutoAbilityTriggers.FA_OUTGOING_DAMAGE_DOUBLER.matcher(fa.effectText());
-						if (!m.find()) continue;
-						if (!m.group("card").trim().equalsIgnoreCase(mw.currentAbilitySource.name())) continue;
-						String doublerTarget = m.group("target").toLowerCase();
-						if (!doublerTarget.contains("opponent") && !doublerTarget.contains("player")) continue;
-						logEntry(mw.currentAbilitySource.name() + " — outgoing damage to opponent doubled ("
-								+ amount + " → " + (amount * 2) + ")");
-						amount *= 2;
-						break;
+						// Kefka 23-004R prints his doubler inside a self grant; the clause list carries
+						// the printed sentence first, so nothing that used to match stops matching.
+						for (String clause : CardData.selfPassiveClauses(fa.effectText(),
+								mw.currentAbilitySource.name())) {
+							Matcher m = AutoAbilityTriggers.FA_OUTGOING_DAMAGE_DOUBLER.matcher(clause);
+							if (!m.find()) continue;
+							if (!m.group("card").trim().equalsIgnoreCase(mw.currentAbilitySource.name())) continue;
+							String doublerTarget = m.group("target").toLowerCase();
+							if (!doublerTarget.contains("opponent") && !doublerTarget.contains("player")) continue;
+							logEntry(mw.currentAbilitySource.name() + " — outgoing damage to opponent doubled ("
+									+ amount + " → " + (amount * 2) + ")");
+							amount *= 2;
+							break doubler;
+						}
 					}
 					// A "becomes N instead" replacement wins over the doubler — it sets the damage
 					// rather than scaling it, and the wording covers ability damage as well as combat.
