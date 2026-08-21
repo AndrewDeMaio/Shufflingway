@@ -41,6 +41,32 @@ final class ActionResolverGate {
             }
         };
     }
+    /**
+     * Parses "If N or more Warp Counters are placed on [CardName], [effect]" — resolves the inner
+     * effect only when the named card is still waiting in the ability user's Warp zone with at
+     * least N counters on it. 21-007L Shadow, whose end-of-turn ability is a no-op on the turn its
+     * last counter comes off.
+     *
+     * <p>Returns {@code null} when the inner effect does not parse, so the text falls through to
+     * the regular matchers exactly as the other gates here do.
+     */
+    static Consumer<GameContext> tryParseWarpCounterCountGate(String text, CardData source, int xValue) {
+        Matcher m = WARP_COUNTER_COUNT_GATE.matcher(text.trim());
+        if (!m.matches()) return null;
+        String cardName = m.group("card").trim();
+        int    required = Integer.parseInt(m.group("count"));
+        Consumer<GameContext> inner = parse(m.group("effect").trim(), source, xValue);
+        if (inner == null) return null;
+        return ctx -> {
+            int have = ctx.warpCountersOnNamed(cardName);
+            if (have >= required) {
+                inner.accept(ctx);
+            } else {
+                ctx.logEntry("Effect: " + cardName + " has " + have + " Warp Counter(s), needs "
+                        + required + " — skipped");
+            }
+        };
+    }
     static Consumer<GameContext> tryParseControlConditionGate(String text, CardData source, int xValue) {
         Matcher m = CONTROL_CONDITION_GATE.matcher(text.trim());
         if (!m.matches()) return null;

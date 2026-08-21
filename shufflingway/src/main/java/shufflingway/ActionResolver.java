@@ -265,6 +265,9 @@ public class ActionResolver {
         result = tryParseControlConditionGate(effectText, source, xValue);
         if (result != null) return result;
 
+        result = tryParseWarpCounterCountGate(effectText, source, xValue);
+        if (result != null) return result;
+
         result = tryParseControlGatedInsteadUpgrade(effectText, source, xValue);
         if (result != null) return result;
 
@@ -837,6 +840,12 @@ public class ActionResolver {
         // Must precede tryParseRemoveNamedFromGame: that parser find()s a lazy name group and
         // claims this text off its middle clause, leaving the reveal and the cast permission behind.
         result = tryParseRevealTopNRfgOneCastableRestBottom(effectText);
+        if (result != null) return result;
+
+        // Must precede tryParseRemoveNamedFromGame for the same reason as the parser above: on
+        // "Remove 1 Warp Counter from Shadow for each …" its lazy name group reads the counter
+        // clause as the thing being removed from the game.
+        result = tryParseRemoveWarpCountersFromNamed(effectText, source);
         if (result != null) return result;
 
         result = tryParseRemoveNamedFromGame(effectText, source);
@@ -1628,6 +1637,9 @@ public class ActionResolver {
         if (tryParseEndOfTurnPlayNamedOntoField(effectText)    != null) return "EndOfTurnPlayNamedOntoField";
         if (tryParseRemoveAllOppBzFromGame(effectText)         != null) return "RemoveAllOppBzFromGame";
         if (tryParseRevealTopNRfgOneCastableRestBottom(effectText) != null) return "RevealTopNRfgOneCastableRestBottom";
+        // Must precede RemoveNamedFromGame, mirroring parse(): it reads the counter clause as the
+        // thing being removed from the game and would answer in this parser's place.
+        if (tryParseRemoveWarpCountersFromNamed(effectText, source) != null) return "RemoveWarpCountersFromNamed";
         if (tryParseRemoveNamedFromGame(effectText, source)   != null) return "RemoveNamedFromGame";
         if (tryParseBreakSourceCard(effectText, source)        != null) return "BreakSourceCard";
         if (tryParsePutSourceIntoBreakZone(effectText, source) != null) return "PutSourceIntoBreakZone";
@@ -1781,6 +1793,10 @@ public class ActionResolver {
         if (tryParseIfControlAtMost(effectText, source, 0)             != null) return "IfControlAtMost";
         if (tryParseIfCastAtLeast(effectText, source, 0)               != null) return "IfCastAtLeast";
         if (tryParseIfControlCondOtherThan(effectText, source, 0)      != null) return "IfControlCondOtherThan";
+        // Reports the gate itself, not the effect behind it. Without an entry here the whole
+        // gated sentence falls through to RemoveNamedFromGame, which find()s a name out of the
+        // counter clause and would answer for a parser that never runs.
+        if (tryParseWarpCounterCountGate(effectText, source, 0)        != null) return "WarpCounterCountGate";
         if (tryParseIfOppControlsNOrMoreCondTypeGate(effectText, source, 0) != null) return "IfOppControlsNOrMoreCondType";
         if (tryParseDiscardConditionalElement(effectText, source, 0)   != null) return "DiscardConditionalElement";
         if (tryParseDiscardConditionalElementSingle(effectText, source, 0) != null) return "DiscardConditionalElementSingle";
@@ -1872,6 +1888,7 @@ public class ActionResolver {
         if (FOLLOWUP_DULL_OR_ACTIVATE.matcher(followupText).find())                   return "DullOrActivate";
         if (FOLLOWUP_DULL_OR_FREEZE.matcher(followupText).find())                     return "DullOrFreeze";
         if (FOLLOWUP_ACTIVATE.matcher(followupText).find())                           return "Activate";
+        if (FOLLOWUP_ELEMENT_BECOMES.matcher(followupText).matches())                  return "ElementBecomes";
         if (FOLLOWUP_DULL.matcher(followupText).find()
                 && !FOLLOWUP_DULL_AND_FREEZE.matcher(followupText).find()
                 && !FOLLOWUP_DULL_OR_FREEZE.matcher(followupText).find())             return "Dull";
@@ -2036,6 +2053,17 @@ public class ActionResolver {
         if (tryParseIfCastAtLeast(effectText, source, 0)                != null) return "IfCastAtLeast";
         if (tryParseIfControlCondOtherThan(effectText, source, 0)      != null) return "IfControlCondOtherThan";
         if (tryParseControlGatedInsteadUpgrade(effectText, source, 0)  != null) return "ControlGatedInsteadUpgrade";
+        // Mirrors parse(), where the gate sits beside the control gates. Described like
+        // IfControl(…) below: the gate is named, the effect it guards described inside it.
+        if (tryParseWarpCounterCountGate(effectText, source, 0)        != null) {
+            Matcher wcg = WARP_COUNTER_COUNT_GATE.matcher(effectText.trim());
+            if (!wcg.matches()) return "WarpCounterCountGate";
+            String innerTxt  = wcg.group("effect").trim();
+            String innerDesc = fullDescription(innerTxt, source);
+            if (innerDesc == null) innerDesc = matchedPatternName(innerTxt, source);
+            return "IfWarpCounters(" + wcg.group("count") + "+ on " + wcg.group("card").trim()
+                    + ": " + (innerDesc != null ? innerDesc : "?") + ")";
+        }
         if (tryParseControlConditionGate(effectText, source, 0)        != null) {
             Matcher ccg = CONTROL_CONDITION_GATE.matcher(effectText.trim());
             if (!ccg.matches()) return "ControlConditionGate";
@@ -2056,6 +2084,9 @@ public class ActionResolver {
         if (tryParseDrawDiscardIfMultiElement(effectText) != null) return "DrawDiscardIfMultiElement";
         if (tryParseSelectNumber(effectText, source)          != null) return "SelectNumber";
         if (tryParseForEachJobAndNameDealDamageToForwards(effectText)   != null) return "ForEachJobAndNameDealDamageToForwards";
+        // Mirrors its position in parse() and matchedPatternName(), both of which check it
+        // immediately after the sibling above — it is the same effect in the other word order.
+        if (tryParseDealNForEachJobOrNameToOppForwards(effectText)      != null) return "DealNForEachJobOrNameToOppForwards";
         if (tryParseSelfGainsWhenAttacksEOT(effectText, source)        != null) return "SelfGainsWhenAttacksEOT";
         if (tryParseDealDamageToForwardsForEach(effectText)         != null) return "DealDamageToForwardsForEach";
         if (tryParseDealDamageToForwardsExceptElement(effectText)          != null) return "DealDamageToForwardsExceptElement";
@@ -2143,6 +2174,11 @@ public class ActionResolver {
             // as "? + Break" and losing the condition on the break.
             if (FOLLOWUP_SELECT_NUMBER_REVEAL_BREAK.matcher(followup).find())
                 return "ChooseCharacter / SelectNumberRevealBreak";
+            // Also read off the whole followup, mirroring the Choose parser: the ". " split puts
+            // 12-021R Necron's "(This effect does not end at the end of the turn.)" in the
+            // secondary, which described the card as "ElementBecomes + ?" over a reminder.
+            if (FOLLOWUP_ELEMENT_BECOMES.matcher(followup).matches())
+                return "ChooseCharacter / ElementBecomes";
             {
                 Matcher youMayPayM = FOLLOWUP_YOU_MAY_PAY_ELEMENT_IF_DO_SO.matcher(followup);
                 if (youMayPayM.matches()) {
@@ -2358,6 +2394,8 @@ public class ActionResolver {
         if (tryParseEndOfTurnPlayNamedOntoField(effectText)  != null)      return "EndOfTurnPlayNamedOntoField";
         if (tryParseRemoveAllOppBzFromGame(effectText)       != null)      return "RemoveAllOppBzFromGame";
         if (tryParseRevealTopNRfgOneCastableRestBottom(effectText) != null) return "RevealTopNRfgOneCastableRestBottom";
+        // Must precede RemoveNamedFromGame, mirroring parse() and matchedPatternName().
+        if (tryParseRemoveWarpCountersFromNamed(effectText, source) != null) return "RemoveWarpCountersFromNamed";
         if (tryParseRemoveNamedFromGame(effectText, source) != null)        return "RemoveNamedFromGame";
         if (tryParseBreakSourceCard(effectText, source)        != null)     return "BreakSourceCard";
         if (tryParsePutSourceIntoBreakZone(effectText, source) != null)     return "PutSourceIntoBreakZone";
@@ -2803,6 +2841,12 @@ public class ActionResolver {
                 sortedByIdxDesc(ts, true) .forEach(ctx::activateTarget);
                 sortedByIdxDesc(ts, false).forEach(ctx::activateTarget);
             };
+
+        Matcher elemBecomesM = FOLLOWUP_ELEMENT_BECOMES.matcher(t);
+        if (elemBecomesM.matches()) {
+            String newElement = elemBecomesM.group("element");
+            return (ctx, ts) -> ts.forEach(ft -> ctx.setTargetElement(ft, newElement));
+        }
 
         // Return + draw must precede plain return (draw extends the return text)
         Matcher retDrawM = FOLLOWUP_RETURN_AND_DRAW.matcher(t);
@@ -4867,7 +4911,8 @@ public class ActionResolver {
         String  powerStr    = m.group("power");
         String  powerCmp    = m.group("powercmp");
         int     powerVal    = powerStr != null ? Integer.parseInt(powerStr) : -1;
-        String  control     = m.group("control");
+        // Either slot may hold it — see the control2 comment on CHOOSE_CHARACTER_PATTERN.
+        String  control     = m.group("control") != null ? m.group("control") : m.group("control2");
         boolean opponentOnly = control != null && !control.equalsIgnoreCase("you control");
         boolean selfOnly     = "you control".equalsIgnoreCase(control);
         String  zone        = m.group("zone");

@@ -327,6 +327,43 @@ final class GameContextImpl implements GameContext {
 				if (isP1) mw.refreshP1WarpZoneUI(); else mw.refreshP2WarpZoneUI();
 			}
 
+			@Override public int warpCountersOnNamed(String cardName) {
+				for (GameState.WarpEntry e : isP1 ? mw.gameState.getP1WarpZone() : mw.gameState.getP2WarpZone())
+					if (e.card.name().equalsIgnoreCase(cardName)) return e.counters;
+				return 0;
+			}
+
+			@Override public void removeWarpCountersFromNamed(String cardName, int count) {
+				String p = isP1 ? "" : "[P2] ";
+				for (int removed = 0; removed < count; removed++) {
+					List<GameState.WarpEntry> zone = isP1
+							? mw.gameState.getP1WarpZone() : mw.gameState.getP2WarpZone();
+					GameState.WarpEntry entry = null;
+					for (GameState.WarpEntry e : zone)
+						if (e.card.name().equalsIgnoreCase(cardName)) { entry = e; break; }
+					if (entry == null) {
+						// Either the card was never in the zone or the previous pass took its last
+						// counter and resolved it onto the field. Both mean there is nothing left
+						// to remove, so stop rather than logging a miss per remaining iteration.
+						if (removed == 0) logEntry(p + "No \"" + cardName + "\" in the Warp zone — nothing to remove");
+						return;
+					}
+					logEntry(p + "Remove Warp Counter from \"" + cardName
+							+ "\" (" + entry.counters + " → " + (entry.counters - 1) + ")");
+					// Same ordering as chooseAndRemoveWarpCounter: the warp-resolve is pushed
+					// first so it sits below the counter-removed trigger and the card enters the
+					// field after that trigger has resolved.
+					boolean willResolve = entry.counters - 1 <= 0;
+					if (willResolve) mw.gameState.pushStack(StackEntry.forWarpResolve(entry.card, isP1));
+					mw.autoAbilityTriggers.triggerAutoAbilitiesForWarpCounterRemoved(entry.card, isP1);
+					mw.gameState.removeOneWarpCounterFrom(entry.card, isP1);
+					if (willResolve) {
+						if (isP1) mw.refreshP1BreakLabel(); else mw.refreshP2BreakLabel();
+					}
+					if (isP1) mw.refreshP1WarpZoneUI(); else mw.refreshP2WarpZoneUI();
+				}
+			}
+
 			@Override public void doubleOpponentForwardIncomingDamage() {
 				if (isP1) {
 					mw.p2Turn.forwardIncomingDmgMult *= 2;
@@ -691,6 +728,20 @@ final class GameContextImpl implements GameContext {
 					}
 				}
 				logEntry("[Field] setCardElement: " + cardName + " not found");
+			}
+
+			@Override public void setTargetElement(ForwardTarget t, String element) {
+				CardData card = targetCard(t);
+				if (card == null) {
+					logEntry("[Field] setTargetElement: no card at " + t);
+					return;
+				}
+				mw.elementOverrideMap.put(card, element);
+				logEntry("[Field] " + card.name() + " → element becomes " + element);
+				// The element is on the card face and gates who may block whom, so both boards
+				// have to redraw — the same refresh setCardElement's callers do by hand.
+				mw.refreshAllForwardSlots();
+				for (int i = 0; i < mw.p2ForwardCards.size(); i++) mw.refreshP2ForwardSlot(i);
 			}
 
 			@Override public String selectElement(String prompt) {

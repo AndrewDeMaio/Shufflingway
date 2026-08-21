@@ -1159,7 +1159,8 @@ final class ActionResolverChoose {
         String  powerStr     = m.group("power");
         String  powerCmp     = m.group("powercmp");
         int     powerVal     = powerStr != null ? Integer.parseInt(powerStr) : -1;
-        String  control      = m.group("control");
+        // Either slot may hold it — see the control2 comment on CHOOSE_CHARACTER_PATTERN.
+        String  control      = m.group("control") != null ? m.group("control") : m.group("control2");
         boolean opponentOnly = control != null && !control.equalsIgnoreCase("you control");
         boolean selfOnly     = "you control".equalsIgnoreCase(control);
         String  zone         = m.group("zone");
@@ -2373,6 +2374,28 @@ final class ActionResolverChoose {
                 } else if (activateSecondary != null) {
                     activateSecondary.accept(ctx);
                 }
+            };
+        }
+
+        // --- "Its Element becomes X." followup (12-021R Necron) ---
+        // The change is permanent, so nothing is registered for the end-of-turn sweep.
+        //
+        // Read off the whole followup rather than the primary half, as the reveal/cost followups
+        // above are: the ". " split puts Necron's "(This effect does not end at the end of the
+        // turn.)" in the secondary, where it parses as nothing and shows up as a dangling "+ ?".
+        // The pattern is anchored and admits only that reminder after the sentence, so a match
+        // here proves there is no real secondary to run. Anything else still falls to the split.
+        Matcher elemBecomesM = FOLLOWUP_ELEMENT_BECOMES.matcher(followup);
+        if (!elemBecomesM.matches()) elemBecomesM = FOLLOWUP_ELEMENT_BECOMES.matcher(primaryFollowup);
+        if (elemBecomesM.matches()) {
+            String newElement = elemBecomesM.group("element");
+            return ctx -> {
+                ctx.logEntry(choosePrefix + " — Element becomes " + newElement);
+                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
+                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
+                ts.forEach(t -> ctx.setTargetElement(t, newElement));
+                if (secondary != null) secondary.accept(ctx);
             };
         }
 

@@ -234,6 +234,55 @@ final class ActionResolverState {
         };
     }
     /**
+     * Parses "Remove N Warp Counter(s) from [CardName][ for each [filter] you control]" —
+     * 21-007L Shadow's end-of-turn thaw, which comes off faster the wider its Category VI board is.
+     *
+     * <p>The card is required to be the source, as the sibling counter parsers above require it:
+     * the printed texts all name the card the ability is on, and a Warp Counter can only be
+     * removed from a card in its own controller's Warp zone.
+     *
+     * <p>Must precede {@code tryParseRemoveNamedFromGame}, whose lazy {@code named} group and
+     * {@code find()} otherwise read "Remove <b>1 Warp Counter from Shadow …</b> from the game" out
+     * of this sentence and hand that whole string to {@code removeNamedCardFromGame}.
+     */
+    static Consumer<GameContext> tryParseRemoveWarpCountersFromNamed(String text, CardData source) {
+        Matcher m = REMOVE_WARP_COUNTERS_FROM_NAMED.matcher(text.trim());
+        if (!m.matches()) return null;
+        String name = m.group("name").trim();
+        if (source == null || !source.name().equalsIgnoreCase(name)) return null;
+
+        int    perUnit  = Integer.parseInt(m.group("count"));
+        String typeRaw  = m.group("type");
+        String element  = m.group("element");
+        String category = m.group("category");
+        String job      = m.group("job") != null ? m.group("job").trim() : null;
+
+        if (typeRaw == null) {
+            // Flat removal, no multiplier.
+            return ctx -> {
+                ctx.logEntry("Effect: Remove " + perUnit + " Warp Counter(s) from " + name);
+                ctx.removeWarpCountersFromNamed(name, perUnit);
+            };
+        }
+
+        String tgtLower = typeRaw.toLowerCase();
+        boolean inclForwards = tgtLower.startsWith("forward")  || tgtLower.startsWith("character");
+        boolean inclBackups  = tgtLower.startsWith("backup")   || tgtLower.startsWith("character");
+        boolean inclMonsters = tgtLower.startsWith("monster")  || tgtLower.startsWith("character");
+        String label = (element != null ? element + " " : "")
+                + (category != null ? "Category " + category + " " : "")
+                + (job != null ? "Job " + job + " " : "") + typeRaw;
+
+        return ctx -> {
+            int units = ctx.countSelfFieldCards(inclForwards, inclBackups, inclMonsters,
+                    job, null, category, element);
+            int total = perUnit * units;
+            ctx.logEntry("Effect: Remove " + perUnit + " Warp Counter(s) per " + label
+                    + " you control (" + units + " → " + total + ") from " + name);
+            if (total > 0) ctx.removeWarpCountersFromNamed(name, total);
+        };
+    }
+    /**
      * Parses "Activate &lt;cardName&gt;[.]" — activates named card(s) the ability user controls.
      * Handles single plain names ("Activate <cardName>"), "Card Name X" notation, and
      * "Card Name X and Card Name Y [you control]" multi-target form.

@@ -74,6 +74,15 @@ final class ActionResolverPatterns {
                     "(?:\\s+of\\s+(?:power\\s+)?(?<power>\\d+)(?:\\s+power)?(?:\\s+or\\s+(?<powercmp>less|more))?)?" +
                     "(?:\\s+(?<control>(?:your\\s+)?opponent\\s+controls|you\\s+control))?" +
                     "(?:\\s+other\\s+than\\s+(?:Card\\s+Name\\s+)?(?<excludename>\\S(?:.*?\\S)?))?" +
+                    // Both orders are printed: "1 Forward you control other than X" and
+                    // "1 Character other than X you control" (12-021R Necron and 16 others). Only
+                    // the first has a place above, so without this the exclusion group — lazy, but
+                    // bounded only by the followup separator — ran straight through the control
+                    // clause and came back as "Necron you control", a name that matches nobody,
+                    // while the control group stayed null and let the choice cross the table.
+                    // Being optional and immediately after the lazy group, this is what the engine
+                    // tries first, so the shorter exclusion wins whenever the clause is present.
+                    "(?:\\s+(?<control2>(?:your\\s+)?opponent\\s+controls|you\\s+control))?" +
                     "(?:\\s+(?<zone>(?:in|from)\\s+(?:your(?:\\s+opponent(?:'s)?)?|the|either\\s+player'?s|any\\s+player'?s)\\s+Break\\s+Zone))?" +
                     "(?:\\s+blocking\\s+" +
                     "(?:(?:a\\s+(?:Job\\s+)?(?<blockingjob>[^.,]+?)(?=\\s*[.,]))" +
@@ -905,6 +914,18 @@ final class ActionResolverPatterns {
     /** Matches "Break it" or "Break them". */
     static final Pattern FOLLOWUP_BREAK = Pattern.compile(
         "(?i)Break\\s+(?:it|them)"
+    );
+    /**
+     * Matches "Its/Their Element becomes [Element]." — the chosen-target element change printed on
+     * 12-021R Necron, with its permanence reminder optionally trailing.
+     *
+     * <p>Anchored at the start so it cannot claim the tail of a longer sentence that merely ends
+     * this way; the reminder is optional because the same effect is printed with and without it.
+     */
+    static final Pattern FOLLOWUP_ELEMENT_BECOMES = Pattern.compile(
+        "(?i)^(?:Its|Their)\\s+Elements?\\s+becomes?\\s+" +
+        "(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)[.!]?\\s*" +
+        "(?:\\(This\\s+effect\\s+does\\s+not\\s+end\\s+at\\s+the\\s+end\\s+of\\s+the\\s+turn\\.?\\)[.!]?)?\\s*$"
     );
     /**
      * Matches "Break that Character." — the demonstrative form, 5-130R Tonberry.
@@ -4296,7 +4317,10 @@ final class ActionResolverPatterns {
      * </ul>
      */
     static final Pattern ALL_FIELD_POWER_BOOST_PATTERN = Pattern.compile(
-        "(?i)All\\s+(?:the\\s+)?" +
+        // "All the Forwards …", "All Forwards …" and the article-only "The Forwards …" are one
+        // effect; 2-072C Reddas prints the third. The article is required rather than the whole
+        // lead-in being optional — with it optional, find() would start on any bare "Forwards".
+        "(?i)(?:All\\s+(?:the\\s+)?|The\\s+)" +
         "(?:(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?" +
         "(?:Category\\s+(?<category>\\S+)\\s+)?" +
         "(?<targets>Forwards?(?:\\s+and\\s+Monsters?)?|Backups?|Characters?)" +
@@ -4718,6 +4742,43 @@ final class ActionResolverPatterns {
         "\\s+for\\s+each\\s+(?<type>Forwards?|Backups?|Monsters?|Characters?)\\s+you\\s+control[.!]?$"
     );
     /**
+     * Matches "Remove N Warp Counter(s) from [CardName][ for each [Element] [Category X]
+     * [Job Y] [Type] you control]." — 21-007L Shadow, 23-050H Noel.
+     *
+     * <p>Both ends are anchored, and deliberately so. Unanchored at the front it would claim
+     * 29-086H Shadow's "you may remove 2 Warp Counters from Shadow. If you do so, …", dropping the
+     * cost prompt and the clause it pays for; unanchored at the back it would swallow the
+     * "This effect will trigger only if …" restriction that {@code CardData} leaves in the effect
+     * text of some of these cards, silently discarding a trigger condition.
+     *
+     * <p>Groups: {@code count}, {@code name}, and the optional multiplier's {@code element},
+     * {@code category}, {@code job} and {@code type}. Without the "for each" clause the count is
+     * flat, which is the far more common printing.
+     */
+    static final Pattern REMOVE_WARP_COUNTERS_FROM_NAMED = Pattern.compile(
+        "(?i)^Remove\\s+(?<count>\\d+)\\s+Warp\\s+Counters?\\s+from\\s+(?<name>[^.,]+?)" +
+        "(?:\\s+for\\s+each\\s+" +
+            "(?:(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?" +
+            "(?:Category\\s+(?<category>\\S+)\\s+)?" +
+            "(?:Job\\s+(?<job>.+?)\\s+)?" +
+            "(?<type>Forwards?|Backups?|Monsters?|Characters?)\\s+you\\s+control" +
+        ")?[.!]?$"
+    );
+    /**
+     * Matches "If N or more Warp Counters are placed on [CardName], [effect]" — the resolution-time
+     * gate on 21-007L Shadow's end-of-turn ability.
+     *
+     * <p>Warp Counters only, not counters in general. They are the one kind that does not live in
+     * the counter map (see {@link GameContext#warpCountersOnNamed}), so the gate needs its own
+     * lookup; the other four cards in the corpus printing this sentence shape count Weapon, EXP,
+     * Reraise and Barrier Counters, and each is already claimed by a parser of its own.
+     */
+    static final Pattern WARP_COUNTER_COUNT_GATE = Pattern.compile(
+        "(?i)^If\\s+(?<count>\\d+)\\s+or\\s+more\\s+Warp\\s+Counters?\\s+are\\s+placed\\s+on\\s+" +
+        "(?<card>[^,]+?),\\s*(?<effect>.+)$",
+        Pattern.DOTALL
+    );
+    /**
      * Matches "Choose 1 Forward opponent controls. [Name] gains its Special Ability until the end of the turn.
      * You can use this ability without paying any cost but only once."
      * Group {@code sourceName} — card name that gains the ability (used for logging).
@@ -5065,12 +5126,17 @@ final class ActionResolverPatterns {
         "(?:\\s+(?<opponent>(?:your\\s+)?opponent\\s+controls))?[.!]?$"
     );
     /**
-     * Matches "deal N damage for each Job X or [a] Card Name Y you control to all [the] Forwards opponent controls."
+     * Matches "deal N damage for each Job X [and]/or [a] Card Name Y you control to all [the]
+     * Forwards opponent controls."
      * Groups: {@code amount}, {@code job}, {@code cardname}.
+     *
+     * <p>Both conjunctions are printed for the same effect — 11-003R Cyan says "or", its Re-007C
+     * reprint says "and/or" — so the sibling {@link #FOR_EACH_JOB_AND_NAME_DEAL_DAMAGE_TO_FORWARDS}
+     * spells it {@code and(?:/or)?} for the mirror-image word order.
      */
     static final Pattern DEAL_N_FOR_EACH_JOB_OR_NAME_TO_OPP_FORWARDS = Pattern.compile(
         "(?i)deal\\s+(?<amount>\\d+)\\s+damage\\s+for\\s+each\\s+" +
-        "Job\\s+(?<job>.+?)\\s+or\\s+(?:a\\s+)?Card\\s+[Nn]ame\\s+(?<cardname>.+?)\\s+you\\s+control\\s+" +
+        "Job\\s+(?<job>.+?)\\s+(?:and/)?or\\s+(?:a\\s+)?Card\\s+[Nn]ame\\s+(?<cardname>.+?)\\s+you\\s+control\\s+" +
         "to\\s+all\\s+(?:the\\s+)?Forwards?(?:\\s+(?:your\\s+)?opponent\\s+controls)?[.!]?$"
     );
     /**

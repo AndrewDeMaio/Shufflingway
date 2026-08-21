@@ -27656,4 +27656,224 @@ public class CardBehaviorTest {
 				"the name must follow whichever parser parse() actually dispatches to");
 	}
 
+
+	// =========================================================================================
+	// Four auto-abilities wired together, each blocked by a different kind of gap.
+	//
+	//   Shadow 21-007L   "if 1 or more Warp Counters are placed on Shadow, remove 1 Warp Counter
+	//                     from Shadow for each Category VI Forward you control" - did not parse.
+	//   Necron 12-021R   "choose 1 Character other than Necron you control. Its Element becomes
+	//                     Dark." - the choose half parsed, the element change was dropped.
+	//   Cyan 11-003R     the "or" printing worked; the Re-007C reprint's "and/or" did not.
+	//   Reddas 2-072C    "the Forwards other than Reddas you control gain +1000 power" - the
+	//                     mass-boost pattern required a leading "All", which Reddas does not print.
+	// =========================================================================================
+
+	private static GameContext quietContext() {
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.consumePreloadedTargets()).thenReturn(null);
+		return ctx;
+	}
+
+	// --- Shadow 21-007L -------------------------------------------------------------------
+
+	private static final String SHADOW_EOT_EFFECT =
+			"if 1 or more Warp Counters are placed on Shadow, remove 1 Warp Counter from Shadow "
+			+ "for each Category VI  Forward you control";
+
+	private static CardData shadow() {
+		return makeForward("Shadow", "Fire", 5, 9000);
+	}
+
+	/** The doubled space before "Forward" is what the card database holds; it must not matter. */
+	@Test
+	void shadowRemovesOneWarpCounterPerCategorySixForward() {
+		GameContext ctx = quietContext();
+		when(ctx.warpCountersOnNamed("Shadow")).thenReturn(3);
+		when(ctx.countSelfFieldCards(true, false, false, null, null, "VI", null)).thenReturn(2);
+
+		Consumer<GameContext> fn = ActionResolver.parse(SHADOW_EOT_EFFECT, shadow());
+		assertNotNull(fn, "Shadow's end-of-turn ability should parse");
+		fn.accept(ctx);
+
+		verify(ctx).removeWarpCountersFromNamed("Shadow", 2);
+	}
+
+	/** No Category VI Forwards means no counters come off - not even a single free one. */
+	@Test
+	void shadowRemovesNothingWithNoCategorySixForwards() {
+		GameContext ctx = quietContext();
+		when(ctx.warpCountersOnNamed("Shadow")).thenReturn(3);
+		when(ctx.countSelfFieldCards(true, false, false, null, null, "VI", null)).thenReturn(0);
+
+		ActionResolver.parse(SHADOW_EOT_EFFECT, shadow()).accept(ctx);
+
+		verify(ctx, never()).removeWarpCountersFromNamed(any(), anyInt());
+	}
+
+	/**
+	 * The gate is checked at resolution, not at trigger time: with no Warp Counters left on Shadow
+	 * the ability does nothing, however wide the board is.
+	 */
+	@Test
+	void shadowSkipsEntirelyWhenNoWarpCountersRemain() {
+		GameContext ctx = quietContext();
+		when(ctx.warpCountersOnNamed("Shadow")).thenReturn(0);
+		when(ctx.countSelfFieldCards(true, false, false, null, null, "VI", null)).thenReturn(4);
+
+		ActionResolver.parse(SHADOW_EOT_EFFECT, shadow()).accept(ctx);
+
+		verify(ctx, never()).removeWarpCountersFromNamed(any(), anyInt());
+	}
+
+	/**
+	 * The removal clause must not reach {@code tryParseRemoveNamedFromGame}, whose lazy name group
+	 * reads "1 Warp Counter from Shadow for each ..." as the thing being removed from the game.
+	 */
+	@Test
+	void shadowsCounterRemovalIsNotReadAsRemovingShadowFromTheGame() {
+		GameContext ctx = quietContext();
+		when(ctx.warpCountersOnNamed("Shadow")).thenReturn(1);
+		when(ctx.countSelfFieldCards(true, false, false, null, null, "VI", null)).thenReturn(1);
+
+		ActionResolver.parse(SHADOW_EOT_EFFECT, shadow()).accept(ctx);
+
+		verify(ctx, never()).removeNamedCardFromGame(any());
+		assertEquals("WarpCounterCountGate",
+				ActionResolver.matchedPatternName(SHADOW_EOT_EFFECT, shadow()));
+	}
+
+	// --- Necron 12-021R -------------------------------------------------------------------
+
+	private static final String NECRON_ETF_EFFECT =
+			"choose 1 Character other than Necron you control. Its Element becomes Dark. "
+			+ "(This effect does not end at the end of the turn.)";
+
+	@Test
+	void necronTurnsTheChosenCharacterDark() {
+		GameContext ctx = quietContext();
+		ForwardTarget chosen = new ForwardTarget(true, 1, ForwardTarget.CardZone.FORWARD);
+		ArgumentCaptor<String>  excludeName  = ArgumentCaptor.forClass(String.class);
+		ArgumentCaptor<Boolean> opponentOnly = ArgumentCaptor.forClass(Boolean.class);
+		ArgumentCaptor<Boolean> selfOnly     = ArgumentCaptor.forClass(Boolean.class);
+		when(ctx.selectCharacters(
+				anyInt(), anyBoolean(), opponentOnly.capture(), selfOnly.capture(),
+				any(), any(), anyInt(), any(), anyInt(), any(),
+				anyBoolean(), anyBoolean(), anyBoolean(),
+				any(), any(), any(), excludeName.capture(), anyBoolean(), any(), anyBoolean()
+		)).thenReturn(List.of(chosen));
+
+		Consumer<GameContext> fn = ActionResolver.parse(NECRON_ETF_EFFECT, makeForward("Necron", "Dark", 5, 9000));
+		assertNotNull(fn, "Necron's enters-the-field ability should parse");
+		fn.accept(ctx);
+
+		verify(ctx).setTargetElement(chosen, "Dark");
+		// "other than Necron you control" — the exclusion ends at the name, and the control
+		// clause after it still binds. Read as one blob, the exclusion matched nobody and the
+		// choice was unrestricted, so Necron could recolour a Character across the table.
+		assertEquals("Necron", excludeName.getValue(), "Necron cannot choose itself");
+		assertTrue(selfOnly.getValue(), "only Characters Necron's controller controls");
+		assertFalse(opponentOnly.getValue());
+	}
+
+	/**
+	 * The trailing-control word order is not Necron's alone — 17 cards print it, and every one of
+	 * them was reading its own name plus the control clause as the excluded card name. Nothing in
+	 * the characterization golden file can see this: the exclusion is an argument to the selection
+	 * call, and the golden file records only parse outcome, pattern name and description.
+	 */
+	@Test
+	void theExclusionStopsAtTheNameInBothPrintedWordOrders() {
+		for (String clause : List.of(
+				"choose 1 Forward other than Rinoa you control",
+				"choose 1 Forward you control other than Rinoa")) {
+			GameContext ctx = quietContext();
+			ArgumentCaptor<String>  excludeName = ArgumentCaptor.forClass(String.class);
+			ArgumentCaptor<Boolean> selfOnly    = ArgumentCaptor.forClass(Boolean.class);
+			when(ctx.selectCharacters(
+					anyInt(), anyBoolean(), anyBoolean(), selfOnly.capture(),
+					any(), any(), anyInt(), any(), anyInt(), any(),
+					anyBoolean(), anyBoolean(), anyBoolean(),
+					any(), any(), any(), excludeName.capture(), anyBoolean(), any(), anyBoolean()
+			)).thenReturn(List.of(new ForwardTarget(true, 0, ForwardTarget.CardZone.FORWARD)));
+
+			ActionResolver.parse(clause + ". Break it.", makeForward("Rinoa", "Ice", 4, 8000)).accept(ctx);
+
+			assertEquals("Rinoa", excludeName.getValue(), "exclusion for: " + clause);
+			assertTrue(selfOnly.getValue(), "self-only for: " + clause);
+		}
+	}
+
+	/**
+	 * The trailing "(This effect does not end at the end of the turn.)" is a reminder, not a second
+	 * effect. It is what the ability's description used to trail a dangling "+ ?" over.
+	 */
+	@Test
+	void necronsPermanenceReminderIsNotTreatedAsASecondEffect() {
+		CardData necron = makeForward("Necron", "Dark", 5, 9000);
+		assertEquals("ChooseCharacter / ElementBecomes",
+				ActionResolver.fullDescription(NECRON_ETF_EFFECT, necron));
+		// The same sentence without the reminder reads identically - the reminder adds nothing.
+		assertEquals("ChooseCharacter / ElementBecomes",
+				ActionResolver.fullDescription(
+						"choose 1 Character other than Necron you control. Its Element becomes Dark.", necron));
+	}
+
+	// --- Cyan 11-003R ---------------------------------------------------------------------
+
+	/**
+	 * 11-003R prints "or" between the two Samurai filters and its Re-007C reprint prints "and/or".
+	 * Both are the same effect, and only the first used to parse.
+	 */
+	@Test
+	void cyanScalesSamuraiDamageIdenticallyForBothPrintings() {
+		for (String conjunction : List.of("or", "and/or")) {
+			String effect = "deal 1000 damage for each Job Samurai " + conjunction
+					+ " Card Name Samurai you control to all the Forwards opponent controls.";
+			GameContext ctx = quietContext();
+			when(ctx.isP1()).thenReturn(true);
+			when(ctx.p2ForwardCount()).thenReturn(2);
+			when(ctx.countSelfFieldCards(true, true, true, "Samurai", null)).thenReturn(2);
+			when(ctx.countSelfFieldCards(true, true, true, null, "Samurai")).thenReturn(1);
+
+			Consumer<GameContext> fn = ActionResolver.parse(effect, null);
+			assertNotNull(fn, "both printings should parse: " + conjunction);
+			fn.accept(ctx);
+
+			// 2 Job Samurai + 1 Card Name Samurai = 3 units of 1000, dealt to each opposing Forward.
+			verify(ctx).damageP2Forward(1, 3000);
+			verify(ctx).damageP2Forward(0, 3000);
+		}
+	}
+
+	// --- Reddas 2-072C --------------------------------------------------------------------
+
+	@Test
+	void reddasBoostsTheRestOfTheBoardButNotItself() {
+		String effect = "the Forwards other than Reddas you control gain +1000 power until the end of the turn.";
+		GameContext ctx = quietContext();
+
+		Consumer<GameContext> fn = ActionResolver.parse(effect, makeForward("Reddas", "Wind", 3, 7000));
+		assertNotNull(fn, "Reddas' attack trigger should parse");
+		fn.accept(ctx);
+
+		verify(ctx).applyMassFieldPowerBoost(1000, true, false, false, true,
+				null, -1, null, null, "Reddas");
+	}
+
+	/**
+	 * Requiring an article rather than making the whole "All the" lead-in optional is what keeps
+	 * {@code find()} from starting on a bare noun mid-sentence.
+	 */
+	@Test
+	void theMassBoostStillNeedsAnArticleBeforeItsNoun() {
+		assertNotNull(ActionResolver.parse(
+				"All the Forwards you control gain +1000 power until the end of the turn.", null));
+		assertNotNull(ActionResolver.parse(
+				"The Forwards you control gain +1000 power until the end of the turn.", null));
+		assertNull(ActionResolver.parse(
+				"Forwards you control gain +1000 power until the end of the turn.", null),
+				"a bare noun is not a printed wording and must not match");
+	}
+
 }

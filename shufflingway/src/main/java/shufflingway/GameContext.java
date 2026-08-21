@@ -1031,6 +1031,17 @@ public interface GameContext {
     void setCardElement(String cardName, String element);
 
     /**
+     * Stores a permanent element override on the card at {@code t} — the chosen-target twin of
+     * {@link #setCardElement(String, String)}, which can only reach a card by name.
+     *
+     * <p>12-021R Necron ("choose 1 Character other than Necron you control. Its Element becomes
+     * Dark.") needs the target form: the chooser picks one of several Characters, and naming is
+     * ambiguous once two copies share a name. The override outlives the turn, as the printed
+     * "(This effect does not end at the end of the turn.)" says.
+     */
+    void setTargetElement(ForwardTarget t, String element);
+
+    /**
      * Shows a modal dialog for the ability user to name one Element, or picks randomly for the AI.
      *
      * @param prompt text shown above the picker
@@ -2860,6 +2871,28 @@ public interface GameContext {
      * No-ops if the Warp zone is empty.
      */
     void chooseAndMayRemoveWarpCounter();
+
+    /**
+     * Counts the Warp Counters on the named card in the ability user's Warp zone, or 0 when no
+     * card of that name is waiting there.
+     *
+     * <p>Warp Counters are not ordinary counters: they live on the {@code WarpEntry} in the Warp
+     * zone rather than in the counter map {@link #getCounters} reads, and the card they sit on is
+     * removed from the game, so it cannot be found on the field either. Gates such as 21-007L
+     * Shadow's "if 1 or more Warp Counters are placed on Shadow" have to ask the zone directly.
+     */
+    int warpCountersOnNamed(String cardName);
+
+    /**
+     * Removes up to {@code count} Warp Counters from the named card in the ability user's Warp
+     * zone, one at a time — firing the "Warp Counter removed" trigger for each and entering the
+     * card onto the field if the last one comes off. No-op when no such card is in the zone, and
+     * stops early rather than going negative when fewer than {@code count} counters remain.
+     *
+     * <p>The named counterpart of {@link #chooseAndRemoveWarpCounter()}: the card is fixed by the
+     * ability text ("remove 1 Warp Counter from Shadow"), so there is nothing to choose.
+     */
+    void removeWarpCountersFromNamed(String cardName, int count);
 
     /**
      * Shows a modal dialog listing every distinct Job name in the card database and returns
