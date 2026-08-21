@@ -55,7 +55,12 @@ final class ActionResolverPatterns {
                     "|Card\\s+Name\\s+\\S+(?:\\s+\\S+)*?(?:\\s+\\([^)]+\\))?(?:\\s+or\\s+Card\\s+Name\\s+\\S+(?:\\s+\\S+)*?(?:\\s+\\([^)]+\\))?)*" +
                     "|Job\\s+.+?\\s+(?:and/)?or\\s+Card\\s+Name\\s+\\S+" +
                     "|Job\\s+.+?\\s+Forwards?(?:\\s+or\\s+Job\\s+.+?\\s+Forwards?)*" +
-                    "|Job\\s+.+?(?=\\s+(?:of\\s+|other\\s+than|in\\s+your|from\\s+your)|[,.]))" +
+                    // The control clause ends the job phrase too — "Job Class Zero Cadet Characters
+                    // you control" (Eight 3-051R). Without it the phrase ran to the full stop, took
+                    // "you control" into the Job name and matched nobody, and the control group it
+                    // belongs to came back null.
+                    "|Job\\s+.+?(?=\\s+(?:of\\s+|other\\s+than|in\\s+your|from\\s+your" +
+                    "|you\\s+control|(?:your\\s+)?opponent\\s+controls)|[,.]))" +
                     "(?:\\s+Cards?)?" +
                     "(?:\\s+with\\s+(?<trait>Brave|Haste|First\\s+Strike))?" +
                     "(?:\\s+that\\s+(?<postcondition>entered\\s+the\\s+field\\s+this\\s+turn|entered\\s+this\\s+turn))?" +
@@ -340,6 +345,18 @@ final class ActionResolverPatterns {
     /** Matches one {@code Job name Forward(s)} segment in the written job-filter form; group 1 is the job name. */
     static final Pattern JOB_WRITTEN_SEGMENT = Pattern.compile(
         "(?i)Job\\s+(.+?)\\s+Forwards?"
+    );
+    /**
+     * The card type a written job phrase ends on — the {@code Backups} of "Job Class Zero Cadet
+     * Backups" (Queen 25-037H). Group 1 is the type word.
+     *
+     * <p>The counterpart to {@link #JOB_WRITTEN_SEGMENT}, which reads the Forward spelling only.
+     * Anchored at the end so it takes the phrase's own type word rather than one belonging to a
+     * later clause, and left out of {@code JOB_WRITTEN_SEGMENT} itself because that pattern's job
+     * name is captured lazily against the type word that follows it.
+     */
+    static final Pattern JOB_PHRASE_TRAILING_TYPE = Pattern.compile(
+        "(?i)\\s+(Forwards?|Backups?|Monsters?|Characters?)$"
     );
     /** Matches "Cancel its effect." — used to counter a Summon on the stack. */
     static final Pattern FOLLOWUP_CANCEL_EFFECT = Pattern.compile(

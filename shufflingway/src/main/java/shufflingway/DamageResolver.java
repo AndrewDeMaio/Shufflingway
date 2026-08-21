@@ -679,13 +679,18 @@ class DamageResolver {
 			for (FieldAbility fa : fas) {
 				Matcher m = AutoAbilityTriggers.FA_ELEMENT_SUMMON_OR_CHARACTER_DAMAGE_BOOST.matcher(fa.effectText());
 				if (!m.matches()) continue;
+				// The arm's presence is what this reader needs; its Element is optional, and an
+				// unelemented one covers every Summon its controller casts (Ifrit, Lord of the
+				// Inferno 14-006R). Reading absence of an Element as absence of the arm is what
+				// would have made that printing boost nothing at all.
+				if (m.group("summonarm") == null) continue;
 				String elem = m.group("summonelement");
-				if (elem == null || !mw.currentSummonSource.containsElement(elem)) continue;
+				if (elem != null && !mw.currentSummonSource.containsElement(elem)) continue;
 				int boost = Integer.parseInt(m.group("amount"));
 				int before = amount;
 				amount += boost;
-				mw.logEntry(booster.name() + " — " + elem + " Summon damage increased by " + boost
-						+ " (" + before + " → " + amount + ")");
+				mw.logEntry(booster.name() + " — " + (elem == null ? "" : elem + " ")
+						+ "Summon damage increased by " + boost + " (" + before + " → " + amount + ")");
 			}
 		}
 		return amount;
@@ -800,8 +805,20 @@ class DamageResolver {
 		if (attacker == null || mw.lostAbilitiesCards.contains(attacker)) return null;
 		for (FieldAbility fa : mw.effectiveFieldAbilities(attacker)) {
 			Matcher m = AutoAbilityTriggers.FA_OUTGOING_DAMAGE_TO_OPPONENT_SETS_TO.matcher(fa.effectText());
-			if (m.find() && m.group("card").trim().equalsIgnoreCase(attacker.name()))
-				return Integer.valueOf(m.group("amount"));
+			if (!m.find()) continue;
+			// The subject may qualify the attacker rather than only name it — Lightning 26-098L
+			// deals the 2 points only "forming a party", which is a board state read at the moment
+			// the damage lands, not a property of the card.
+			String subject = m.group("card").trim();
+			Matcher partyM = AutoAbilityTriggers.FA_SUBJECT_FORMING_PARTY.matcher(subject);
+			boolean partyRequired = partyM.matches();
+			if (partyRequired) subject = partyM.group("name").trim();
+			if (!subject.equalsIgnoreCase(attacker.name())) continue;
+			if (partyRequired) {
+				Boolean side = mw.fieldSideOf(attacker);
+				if (side == null || !mw.isFormingParty(attacker, side)) continue;
+			}
+			return Integer.valueOf(m.group("amount"));
 		}
 		return null;
 	}

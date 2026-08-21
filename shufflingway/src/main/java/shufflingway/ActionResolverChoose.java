@@ -1045,11 +1045,25 @@ final class ActionResolverChoose {
             if (bareJob)
                 for (String p : targets.substring("Job ".length()).trim().split("(?i)\\s+or\\s+Job\\s+"))
                     jobs.add(p.trim());
+            // A job phrase can name the card type it filters, and JOB_WRITTEN_SEGMENT reads only the
+            // Forward spelling of that — so for "Job Class Zero Cadet Backups" (Queen 25-037H) the
+            // phrase falls through to the bare split with the type word still stuck on the end of
+            // the Job name, matching nothing. The word comes off the name here and decides the rows
+            // instead: a Backup phrase searches the Backup row rather than the Forward row it
+            // silently searched before. A bare "Job X" still means every row, as it did.
+            Matcher typeM = JOB_PHRASE_TRAILING_TYPE.matcher(targets);
+            String typedRow = bareJob && typeM.find() ? typeM.group(1).toLowerCase() : null;
+            if (typedRow != null)
+                jobs.replaceAll(j -> JOB_PHRASE_TRAILING_TYPE.matcher(j).replaceAll("").trim());
             jobFilter      = String.join("|", jobs);
             cardNameFilter = null;
-            inclForwards   = true;
-            inclBackups    = bareJob;
-            inclMonsters   = bareJob;
+            boolean anyRow = bareJob && typedRow == null;
+            inclForwards   = anyRow || typedRow == null
+                    || typedRow.startsWith("forward") || typedRow.startsWith("character");
+            inclBackups    = anyRow
+                    || (typedRow != null && (typedRow.startsWith("backup") || typedRow.startsWith("character")));
+            inclMonsters   = anyRow
+                    || (typedRow != null && (typedRow.startsWith("monster") || typedRow.startsWith("character")));
         } else {
             jobFilter      = null;
             cardNameFilter = null;

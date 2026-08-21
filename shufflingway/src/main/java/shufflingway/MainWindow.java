@@ -7570,8 +7570,25 @@ public class MainWindow {
 		for (CardData c : fwds) if (!lostAbilitiesCards.contains(c) && AutoAbilityTriggers.hasOppForwardPowerBoostSuppression(c)) return true;
 		for (CardData c : bkps) if (c != null && !lostAbilitiesCards.contains(c) && AutoAbilityTriggers.hasOppForwardPowerBoostSuppression(c)) return true;
 		for (CardData c : mons) if (!lostAbilitiesCards.contains(c) && AutoAbilityTriggers.hasOppForwardPowerBoostSuppression(c)) return true;
+		// Meltigemini 8-128R names no controller, so it binds both sides and is searched on both —
+		// including the row of the player whose Forwards are being boosted, which the scan above
+		// deliberately skips.
+		if (allForwardPowerBoostSuppressed()) return true;
 		if (targetIsP1 && p1Turn.fwdBoostSuppressedThisTurn) return true;
 		if (!targetIsP1 && p2Turn.fwdBoostSuppressedThisTurn) return true;
+		return false;
+	}
+
+	/**
+	 * Whether anybody on the table is printing "The power of Forwards cannot be increased by Summons
+	 * or abilities." — Meltigemini 8-128R, which suppresses the boost wherever the Forward sits and
+	 * whoever is applying it, its own controller included.
+	 */
+	private boolean allForwardPowerBoostSuppressed() {
+		for (boolean side : new boolean[]{true, false})
+			for (CardData c : fieldCards(side))
+				if (c != null && !lostAbilitiesCards.contains(c)
+						&& AutoAbilityTriggers.hasAllForwardPowerBoostSuppression(c)) return true;
 		return false;
 	}
 
@@ -12485,7 +12502,33 @@ public class MainWindow {
 		return opposingDullCharacterCount(isP1) >= gate.minDullCharacters() ? gate.remainder() : null;
 	}
 
-	private Boolean fieldSideOf(CardData card) {
+	/**
+	 * The Priming cost {@code card} would actually pay right now — its printed one, or the cheaper
+	 * one a discount on the card itself currently allows (Dion 29-106H's "If you control 7 or more
+	 * Characters, Dion can prime to pay 《Water》《1》 instead").
+	 *
+	 * <p>Every reader of a Priming cost goes through here — the context-menu gate, the payment
+	 * dialog and the payment itself — so none of them can offer a price another would refuse.
+	 * Re-read per call: the Character count moves during the turn, and a discount that lapsed
+	 * between opening the menu and confirming the dialog must lapse for the payment too.
+	 *
+	 * <p>A card stripped of its abilities prints no discount, so it pays the printed cost.
+	 */
+	List<String> effectivePrimingCost(CardData card, boolean isP1) {
+		if (card == null) return List.of();
+		if (lostAbilitiesCards.contains(card)) return card.primingCost();
+		for (FieldAbility fa : effectiveFieldAbilities(card)) {
+			CardData.PrimingCostDiscount discount =
+					CardData.parsePrimingCostDiscount(fa.effectText(), card.name());
+			if (discount == null) continue;
+			if (fieldCards(isP1).size() < discount.minCharacters()) continue;
+			return discount.cost();
+		}
+		return card.primingCost();
+	}
+
+	/** Which side of the field {@code card} is on, or {@code null} when it is on neither. */
+	Boolean fieldSideOf(CardData card) {
 		for (CardData c : p1ForwardCards) if (c == card) return Boolean.TRUE;
 		for (CardData c : p2ForwardCards) if (c == card) return Boolean.FALSE;
 		for (CardData c : p1BackupCards)  if (c == card) return Boolean.TRUE;

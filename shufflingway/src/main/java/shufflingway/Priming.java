@@ -137,7 +137,7 @@ class Priming {
 	 * main deck for the target card and places it on top of the priming forward.
 	 */
 	void showPrimingPaymentDialog(CardData card, int slotIdx) {
-		List<String> rawCost = card.primingCost();
+		List<String> rawCost = mw.effectivePrimingCost(card, true);
 		long genericNeeded = rawCost.stream().filter(String::isEmpty).count();
 		LinkedHashMap<String, Integer> costByElem = new LinkedHashMap<>();
 		for (String e : rawCost) if (!e.isEmpty()) costByElem.merge(e, 1, Integer::sum);
@@ -359,7 +359,9 @@ class Priming {
 	 */
 	void executePriming(CardData card, int slotIdx,
 			List<Integer> discardIndices, List<Integer> backupDullIndices) {
-		List<String> rawCost = card.primingCost();
+		// Re-read rather than passed in from the dialog: the discount is a board condition, and the
+		// board can have moved between the dialog opening and the payment being confirmed.
+		List<String> rawCost = mw.effectivePrimingCost(card, true);
 		LinkedHashMap<String, Integer> costByElem = new LinkedHashMap<>();
 		for (String e : rawCost) if (!e.isEmpty()) costByElem.merge(e, 1, Integer::sum);
 		String[] elems = costByElem.keySet().toArray(String[]::new);

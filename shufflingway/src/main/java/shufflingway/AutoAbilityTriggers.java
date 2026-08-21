@@ -343,14 +343,28 @@ final class AutoAbilityTriggers {
 	 * conditions it would silently drop. Behemoth 24-084R ("other than by its ability") fails the
 	 * pattern outright, but Lightning 26-098L ("If Lightning <em>forming a party</em> deals damage…")
 	 * does not: {@code card} is lazy but unrestricted, so it absorbs the qualifier and the match
-	 * succeeds with {@code card = "Lightning forming a party"}. What actually excludes it is the
-	 * caller comparing {@code card} against the carrier's own name — every reader of this pattern
-	 * must make that check, not assume the anchors did it.
+	 * succeeds with {@code card = "Lightning forming a party"}. What excludes an unread qualifier is
+	 * the caller comparing {@code card} against the carrier's own name — every reader of this
+	 * pattern must make that check, not assume the anchors did it. {@link #FA_SUBJECT_FORMING_PARTY}
+	 * is how a reader that does honour the party qualifier takes it off first.
 	 * Groups: {@code card}, {@code amount}.
 	 */
 	static final Pattern FA_OUTGOING_DAMAGE_TO_OPPONENT_SETS_TO = Pattern.compile(
 		"(?i)^If\\s+(?<card>.+?)\\s+deals\\s+damage\\s+to\\s+your\\s+opponent,\\s+" +
 		"the\\s+damage\\s+becomes\\s+(?<amount>\\d+)\\s+instead\\.?$"
+	);
+
+	/**
+	 * "[Name] forming a party" — the party qualifier a damage subject can carry, as Lightning
+	 * 26-098L's does. Group {@code name} is the card name underneath it.
+	 *
+	 * <p>Its own pattern rather than an optional tail on each subject, because the readers that
+	 * honour it have to do two things with it: match the name against their carrier, and ask the
+	 * board whether a party is declared right now. A reader that does not know it exists still
+	 * declines the printing, because the whole phrase fails its name check.
+	 */
+	static final Pattern FA_SUBJECT_FORMING_PARTY = Pattern.compile(
+		"(?i)^(?<name>.+?)\\s+forming\\s+a\\s+party$"
 	);
 
 	/**
@@ -462,8 +476,13 @@ final class AutoAbilityTriggers {
 	 */
 	static final Pattern FA_ELEMENT_SUMMON_OR_CHARACTER_DAMAGE_BOOST = Pattern.compile(
 		"(?i)^If\\s+" +
-		"(?:your\\s+(?<summonelement>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+Summon" +
-		"(?:\\s+or\\s+an?\\s+(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+Character\\s+you\\s+control)?" +
+		// Both halves of this arm may drop their Element, and Ifrit, Lord of the Inferno 14-006R
+		// drops both: "If your Summon or an ability of a Character you control …" boosts every
+		// Summon its controller casts and every ability their Characters use. summonarm is what
+		// tells a reader the Summon half is present at all, now that its Element no longer does.
+		"(?:your\\s+(?:(?<summonelement>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?(?<summonarm>Summon)" +
+		"(?:\\s+or\\s+(?:an?\\s+ability\\s+of\\s+)?an?\\s+" +
+		"(?:(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?(?<anycharacter>Character)\\s+you\\s+control)?" +
 		"|(?:an?|the)\\s+(?:" +
 			"(?<element2>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+Character" +
 			"|Category\\s+(?<category>\\S+)\\s+Character" +
@@ -515,7 +534,13 @@ final class AutoAbilityTriggers {
 		String job = m.group("job");
 		if (job != null && CardFilters.meetsJobFilter(dealer, job.trim())) return true;
 		String cardname = m.group("cardname");
-		return cardname != null && CardFilters.meetsCardNameFilter(dealer, cardname.trim());
+		if (cardname != null && CardFilters.meetsCardNameFilter(dealer, cardname.trim())) return true;
+		// An unfiltered Character arm — "an ability of a Character you control" (Ifrit, Lord of the
+		// Inferno 14-006R) — covers every one of them. Asked last, and off the arm's own group
+		// rather than off the absence of filters: a Summon-only printing has no filters either, and
+		// must not be read as covering every Character on the field.
+		return m.group("anycharacter") != null && element == null
+				&& category == null && job == null && cardname == null;
 	}
 
 	/**
@@ -688,10 +713,30 @@ final class AutoAbilityTriggers {
 		"(?i)The\\s+power\\s+of\\s+Forwards?\\s+(?:your\\s+)?opponent\\s+controls?\\s+cannot\\s+be\\s+increased\\s+by\\s+your\\s+opponent(?:'s|s')\\s+Summons?\\s+or\\s+abilit(?:y|ies)[.!]?"
 	);
 
+	/**
+	 * Field ability: "The power of Forwards cannot be increased by Summons or abilities." —
+	 * Meltigemini 8-128R.
+	 *
+	 * <p>The unscoped twin of {@link #FA_OPP_FORWARD_POWER_BOOST_SUPPRESSED}: naming no controller,
+	 * it binds every Forward on the table, its own controller's included. The two cannot collide —
+	 * this one requires "Forwards" to be followed straight by "cannot", where that one requires the
+	 * controller clause in between.
+	 */
+	static final Pattern FA_ALL_FORWARD_POWER_BOOST_SUPPRESSED = Pattern.compile(
+		"(?i)^The\\s+power\\s+of\\s+Forwards?\\s+cannot\\s+be\\s+increased\\s+by\\s+Summons?\\s+or\\s+abilit(?:y|ies)[.!]?$"
+	);
+
 	/** Returns true if {@code card} has the opponent-Forward-power-boost-suppression field ability. */
 	static boolean hasOppForwardPowerBoostSuppression(CardData card) {
 		for (FieldAbility fa : card.fieldAbilities())
 			if (FA_OPP_FORWARD_POWER_BOOST_SUPPRESSED.matcher(fa.effectText()).find()) return true;
+		return false;
+	}
+
+	/** Returns true if {@code card} has the both-sides power-boost-suppression field ability. */
+	static boolean hasAllForwardPowerBoostSuppression(CardData card) {
+		for (FieldAbility fa : card.fieldAbilities())
+			if (FA_ALL_FORWARD_POWER_BOOST_SUPPRESSED.matcher(fa.effectText().trim()).matches()) return true;
 		return false;
 	}
 

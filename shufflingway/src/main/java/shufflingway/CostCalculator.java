@@ -920,7 +920,9 @@ class CostCalculator {
 
 	/** Returns true if the player can afford the Priming cost of {@code card} (card is on the field, not in hand). */
 	boolean canAffordPrimingCost(CardData card) {
-		List<String> cost = card.primingCost();
+		// The effective cost, not the printed one: Dion 29-106H's discount has to gate the menu item
+		// as well as the payment, or it would offer a price the dialog then charges differently.
+		List<String> cost = mw.effectivePrimingCost(card, true);
 		if (cost.isEmpty()) return true;
 
 		boolean hasGeneric = cost.contains("");

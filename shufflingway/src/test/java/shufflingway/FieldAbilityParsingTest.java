@@ -169,6 +169,12 @@ public class FieldAbilityParsingTest {
         if (AutoAbilityTriggers.FA_ABILITY_DAMAGE_TO_OPP_FORWARDS_UNREDUCIBLE
                 .matcher(fa.effectText()).matches()) return true;
         if (AutoAbilityTriggers.FA_OPP_FORWARD_POWER_BOOST_SUPPRESSED.matcher(fa.effectText()).find()) return true;
+        // Meltigemini 8-128R's unscoped twin, read by MainWindow.oppForwardPowerBoostSuppressedFor
+        // from both sides of the table rather than only the opposing one.
+        if (AutoAbilityTriggers.hasAllForwardPowerBoostSuppression(source)) return true;
+        // Dion 29-106H. Read per Priming attempt by MainWindow.effectivePrimingCost, name-checked
+        // against its carrier exactly as that caller reads it.
+        if (CardData.parsePrimingCostDiscount(fa.effectText(), source.name()) != null) return true;
         if (AutoAbilityTriggers.FA_OPP_FORWARD_SELF_BOOST_SUPPRESSED.matcher(fa.effectText()).find()) return true;
         if (AutoAbilityTriggers.FA_OPP_FORWARD_ETF_SUPPRESSED.matcher(fa.effectText()).find()) return true;
         if (AutoAbilityTriggers.FA_OUTGOING_FLAT_BOOST_VS_COST.matcher(fa.effectText()).find()) return true;
@@ -238,7 +244,7 @@ public class FieldAbilityParsingTest {
         // check is what that caller uses to reject the qualified printings, and it is not optional:
         // the pattern's own "card" group happily absorbs the qualifier, so "If Lightning forming a
         // party deals damage…" (26-098L) matches with card="Lightning forming a party".
-        if (selfNamedCompulsion(AutoAbilityTriggers.FA_OUTGOING_DAMAGE_TO_OPPONENT_SETS_TO, fa, source)) return true;
+        if (outgoingDamageToOpponentSetsTo(fa, source) != null) return true;
         // The self-named forms are only recognised when the text names their own carrier.
         if (selfNamedCompulsion(AutoAbilityTriggers.FA_SELF_MUST_BLOCK,  fa, source)) return true;
         if (selfNamedCompulsion(AutoAbilityTriggers.FA_SELF_MUST_ATTACK, fa, source)) return true;
@@ -447,6 +453,26 @@ public class FieldAbilityParsingTest {
      * traits/power spellings behind this gate belong to {@link CardData#parseIfControlBoosts} and
      * are claimed by that row instead.
      */
+    /**
+     * The description for a self-named "deals damage to your opponent, the damage becomes N
+     * instead" printing, or {@code null} when {@code fa} is not one of {@code source}'s.
+     *
+     * <p>The name check is what rejects a qualifier the engine does not read — the pattern's own
+     * {@code card} group absorbs one whole. The one qualifier it does read is the party clause
+     * (Lightning 26-098L), taken off here exactly as {@code DamageResolver} takes it off, so the
+     * report cannot claim a printing that caller would decline.
+     */
+    private static String outgoingDamageToOpponentSetsTo(FieldAbility fa, CardData source) {
+        Matcher m = AutoAbilityTriggers.FA_OUTGOING_DAMAGE_TO_OPPONENT_SETS_TO.matcher(fa.effectText());
+        if (!m.find()) return null;
+        String subject = m.group("card").trim();
+        Matcher partyM = AutoAbilityTriggers.FA_SUBJECT_FORMING_PARTY.matcher(subject);
+        boolean party = partyM.matches();
+        if (party) subject = partyM.group("name").trim();
+        if (!subject.equalsIgnoreCase(source.name())) return null;
+        return "OutgoingDmgToOpponentSetsTo[" + m.group("amount") + (party ? " in party" : "") + "]";
+    }
+
     private static boolean minHandSizeGatedSelfGrant(FieldAbility fa, CardData source) {
         CardData.MinHandSizeGatedGrant gate =
                 CardData.parseMinHandSizeGatedGrant(fa.effectText());
@@ -615,15 +641,20 @@ public class FieldAbilityParsingTest {
         }
         m = AutoAbilityTriggers.FA_ELEMENT_SUMMON_OR_CHARACTER_DAMAGE_BOOST.matcher(fa.effectText());
         if (m.matches()) {
+            // Either arm may be present, and either may drop its Element (Ifrit, Lord of the Inferno
+            // 14-006R drops both), so each is named off its own marker group rather than off the
+            // Element that used to stand in for it. The Character arm may filter by Element,
+            // Category, Job or Card Name, and is named through the same label helper the damage
+            // paths log with.
+            boolean hasSummon = m.group("summonarm") != null;
             String summon = m.group("summonelement");
-            // The Character arm may filter by Element, Category or Card Name, so it is named through
-            // the same label helper the damage paths log with rather than off the Element group.
+            String summonLabel = (summon == null ? "" : summon + " ") + "Summon";
             boolean hasChr = AutoAbilityTriggers.characterArmElement(m) != null
                     || m.group("category") != null || m.group("job") != null
-                    || m.group("cardname") != null;
+                    || m.group("cardname") != null || m.group("anycharacter") != null;
             String chr = AutoAbilityTriggers.characterArmLabel(m);
-            String who = summon != null && hasChr ? summon + " Summon or " + chr
-                       : summon != null ? summon + " Summon"
+            String who = hasSummon && hasChr ? summonLabel + " or " + chr
+                       : hasSummon ? summonLabel
                        : chr;
             return "ElementSummonOrCharacterDmgBoost[" + who + " +" + m.group("amount") + "]";
         }
@@ -637,6 +668,13 @@ public class FieldAbilityParsingTest {
                 .matcher(fa.effectText()).matches()) return "OwnAbilityDmgToOppFwdsUnreducible";
         if (AutoAbilityTriggers.FA_OPP_FORWARD_POWER_BOOST_SUPPRESSED.matcher(fa.effectText()).find())
             return "OppFwdPowerBoostSuppressed";
+        if (AutoAbilityTriggers.FA_ALL_FORWARD_POWER_BOOST_SUPPRESSED.matcher(fa.effectText().trim()).matches())
+            return "AllFwdPowerBoostSuppressed";
+        CardData.PrimingCostDiscount primeDiscount =
+                CardData.parsePrimingCostDiscount(fa.effectText(), source.name());
+        if (primeDiscount != null)
+            return "PrimingCostDiscount[" + primeDiscount.minCharacters() + "+ Characters: "
+                    + primeDiscount.cost() + "]";
         if (AutoAbilityTriggers.FA_OPP_FORWARD_SELF_BOOST_SUPPRESSED.matcher(fa.effectText()).find())
             return "OppFwdSelfBoostSuppressed";
         if (AutoAbilityTriggers.FA_OPP_FORWARD_ETF_SUPPRESSED.matcher(fa.effectText()).find())
@@ -681,9 +719,8 @@ public class FieldAbilityParsingTest {
             return "SelfAttackRequiresControl[" + m.group("count") + "+ Forwards | Job " + m.group("job") + "]";
         m = AutoAbilityTriggers.FA_FRIENDLY_FORWARD_BATTLE_DAMAGE_BOOST.matcher(fa.effectText());
         if (m.find()) return "FriendlyForwardBattleDmgBoost[+" + m.group("amount") + "]";
-        m = AutoAbilityTriggers.FA_OUTGOING_DAMAGE_TO_OPPONENT_SETS_TO.matcher(fa.effectText());
-        if (m.find() && m.group("card").trim().equalsIgnoreCase(source.name()))
-            return "OutgoingDmgToOpponentSetsTo[" + m.group("amount") + "]";
+        String setsTo = outgoingDamageToOpponentSetsTo(fa, source);
+        if (setsTo != null) return setsTo;
         m = CardData.COUNTER_SCALED_OPP_DEBUFF.matcher(fa.effectText());
         if (m.matches()) return "CounterScaledOppDebuff[-" + m.group("power") + "/" + m.group("counter") + "]";
         if (AutoAbilityTriggers.FA_ALL_FORWARDS_LOSE_HASTE.matcher(fa.effectText()).find()) return "AllForwardsLoseHaste";

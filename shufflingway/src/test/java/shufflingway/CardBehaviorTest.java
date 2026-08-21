@@ -25221,4 +25221,292 @@ public class CardBehaviorTest {
 		assertTrue(mw.p1ForwardCards.isEmpty(), "it stays in its owner's Break Zone");
 		assertNotNull(mw.p2BackupCards[0], "\"you control\" — not the Forwards across the table");
 	}
+
+	// =========================================================================================
+	// Queen 25-037H: "《0》: Choose up to 2 Job Class Zero Cadet Backups. Activate them."
+	//
+	// A job phrase can name the card type it filters, and the written-job pattern reads only the
+	// Forward spelling of that. So "Job Class Zero Cadet Backups" fell through to the bare-job
+	// split with the type word still stuck on the end of the Job name — a Job nobody has — and the
+	// selection searched the Forward row for it. Nothing was ever chosen and the ability did
+	// nothing at all. The type word now comes off the name and decides the rows instead.
+	//
+	// Eight 3-051R prints the same effect with a control clause after it, which the target
+	// alternation ran straight past for the same reason: it stopped only at a full stop.
+	// =========================================================================================
+
+	private static final String QUEEN_ABILITY =
+			"《0》: Choose up to 2 Job Class Zero Cadet Backups. Activate them. "
+			+ "You can only use this ability during your turn and only once per turn.";
+
+	/** A Backup of the given Job on P2's row, dull. */
+	private static CardData dullP2JobBackup(MainWindow mw, int slot, String name, String job) {
+		CardData c = makeJobCard(name, "Wind", "Backup", job);
+		mw.gameState.getIdentity().put(c, false);
+		mw.placeP2CardInFirstBackupSlot(c);
+		mw.p2BackupStates[slot] = CardState.DULL;
+		return c;
+	}
+
+	/** Resolves {@code effect} for P2 with two dull Job Class Zero Cadet Backups on the row. */
+	private static MainWindow runJobBackupActivation(String effect, String backupJob) {
+		MainWindow mw = new MainWindow();
+		CardData queen = makeJobCard("Queen", "Wind", "Forward", "Class Zero Cadet");
+		mw.gameState.getIdentity().put(queen, false);
+		mw.placeP2CardInForwardZone(queen);
+		dullP2JobBackup(mw, 0, "Ace",   backupJob);
+		dullP2JobBackup(mw, 1, "Cater", backupJob);
+		Consumer<GameContext> fn = ActionResolver.parse(effect, queen);
+		assertNotNull(fn, "effect should parse: " + effect);
+		fn.accept(mw.buildGameContext(false));
+		return mw;
+	}
+
+	@Test
+	void queensAbilityCostsNothingAndIsBoundToHerOwnTurn() {
+		ActionAbility ability = CardData.parseActionAbilities(QUEEN_ABILITY).get(0);
+		assertEquals(List.of(), ability.cpCost(), "《0》 is a printed cost of nothing");
+		assertTrue(ability.yourTurnOnly());
+		assertTrue(ability.oncePerTurn());
+	}
+
+	@Test
+	void queenActivatesTheJobFilteredBackups() {
+		MainWindow mw = runJobBackupActivation(
+				"Choose up to 2 Job Class Zero Cadet Backups. Activate them.", "Class Zero Cadet");
+		assertEquals(CardState.ACTIVE, mw.p2BackupStates[0]);
+		assertEquals(CardState.ACTIVE, mw.p2BackupStates[1]);
+	}
+
+	@Test
+	void theJobStillHasToMatch() {
+		MainWindow mw = runJobBackupActivation(
+				"Choose up to 2 Job Class Zero Cadet Backups. Activate them.", "Dragoon");
+		assertEquals(CardState.DULL, mw.p2BackupStates[0], "a Backup of another Job is not hers to activate");
+		assertEquals(CardState.DULL, mw.p2BackupStates[1]);
+	}
+
+	@Test
+	void theTypeWordInAJobPhraseChoosesTheRow() {
+		// The Forward spelling must keep searching the Forward row — the Backups stay dull.
+		MainWindow mw = runJobBackupActivation(
+				"Choose up to 2 Job Class Zero Cadet Forwards. Activate them.", "Class Zero Cadet");
+		assertEquals(CardState.DULL, mw.p2BackupStates[0], "a Forward phrase does not reach the Backup row");
+		assertEquals(CardState.DULL, mw.p2BackupStates[1]);
+
+		// "Characters" reaches every row, which is Eight 3-051R's wording.
+		MainWindow chars = runJobBackupActivation(
+				"Choose up to 3 Job Class Zero Cadet Characters you control. Activate them.", "Class Zero Cadet");
+		assertEquals(CardState.ACTIVE, chars.p2BackupStates[0], "and a control clause ends the job phrase");
+		assertEquals(CardState.ACTIVE, chars.p2BackupStates[1]);
+	}
+
+	// =========================================================================================
+	// Lightning 26-098L: "If Lightning forming a party deals damage to your opponent, the damage
+	// becomes 2 instead."
+	//
+	// The damage replacement had a reader, but the subject group absorbs a qualifier whole, so the
+	// name check that keeps unread qualifiers out also kept this one out — deliberately, until
+	// somebody read it. The party clause is a board state at the moment the damage lands, not a
+	// property of the card, so it is taken off the subject and asked of the board.
+	// =========================================================================================
+
+	private static final String LIGHTNING_PARTY_DAMAGE =
+			"If Lightning forming a party deals damage to your opponent, the damage becomes 2 instead.";
+
+	@Test
+	void lightningDealsTwoOnlyWhileSheIsInAParty() {
+		MainWindow mw = new MainWindow();
+		CardData lightning = makeFieldAbilityCard("Lightning", "Lightning", "Forward", LIGHTNING_PARTY_DAMAGE);
+		CardData ally      = makeForward("Snow", "Lightning", 3, 7000);
+		placeP1Forward(mw, lightning);
+		placeP1Forward(mw, ally);
+
+		assertEquals(1, mw.combatDamagePointsToOpponent(lightning), "attacking alone is not a party");
+
+		mw.p1DeclaredAttackers.add(lightning);
+		assertEquals(1, mw.combatDamagePointsToOpponent(lightning), "one declared attacker is still not a party");
+
+		mw.p1DeclaredAttackers.add(ally);
+		assertEquals(2, mw.combatDamagePointsToOpponent(lightning), "two of them are");
+		assertEquals(1, mw.combatDamagePointsToOpponent(ally), "and the ability is hers, not the party's");
+	}
+
+	// =========================================================================================
+	// Ifrit, Lord of the Inferno 14-006R: "If your Summon or an ability of a Character you control
+	// deals damage to a Forward, the damage increases by 1000 instead."
+	//
+	// The widest printing of a shape whose every other version names an Element: it filters neither
+	// half. Both arms of the pattern now carry their Element optionally, and each is recognised by
+	// its own marker group rather than by that Element — reading a missing Element as a missing arm
+	// is what would have made this printing boost nothing at all.
+	// =========================================================================================
+
+	private static final String IFRIT_LORD_TEXT =
+			"If your Summon or an ability of a Character you control deals damage to a Forward, "
+			+ "the damage increases by 1000 instead.";
+
+	/** Ifrit on P2's field with a P2 ability resolving against P1's Forward at index 0. */
+	private static MainWindow ifritBoardWithP2AbilityResolving(CardData dealer) {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForward("Target", "Fire", 3, 9000));
+		CardData ifrit = makeFieldAbilityCard("Ifrit, Lord of the Inferno", "Fire", "Forward", IFRIT_LORD_TEXT);
+		mw.gameState.getIdentity().put(ifrit, false);
+		mw.placeP2CardInForwardZone(ifrit);
+		mw.currentAbilitySource    = dealer;
+		mw.currentAbilitySourceIsP1 = false;
+		return mw;
+	}
+
+	@Test
+	void ifritBoostsAnyOfHisControllersCharactersAbilities() {
+		// A Backup's ability counts: the printing says Character, not Forward.
+		MainWindow mw = ifritBoardWithP2AbilityResolving(makeJobCard("Some Backup", "Ice", "Backup", "Scholar"));
+		assertEquals(5000, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 0, 4000, true, false),
+				"any Character of his controller's, of any Element");
+	}
+
+	@Test
+	void ifritDoesNotBoostTheOpponentsAbilities() {
+		MainWindow mw = ifritBoardWithP2AbilityResolving(makeForward("Their Caster", "Ice", 3, 7000));
+		mw.currentAbilitySourceIsP1 = true;   // P1's own ability, resolving against P1's Forward
+		assertEquals(4000, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 0, 4000, true, false),
+				"the boost is for its controller's side only");
+	}
+
+	@Test
+	void ifritBoostsHisControllersSummonsToo() {
+		MainWindow mw = ifritBoardWithP2AbilityResolving(null);
+		mw.currentAbilitySource     = null;
+		mw.currentResolutionIsSummon = true;
+		mw.currentSummonSource       = makeSummon("Shiva", "Ice", 2, "");
+		mw.currentSummonSourceIsP1   = false;
+
+		assertEquals(5000, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 0, 4000, true, false),
+				"the Summon arm names no Element either, so every Summon of his controller's counts");
+	}
+
+	// =========================================================================================
+	// Meltigemini 8-128R: "The power of Forwards cannot be increased by Summons or abilities."
+	//
+	// The unscoped twin of a suppression the engine already had. That one names the opponent's
+	// Forwards and so is searched for on the opposing side only; this one names no controller at
+	// all, so it binds both sides — its own controller's Forwards included — and has to be searched
+	// for on both.
+	// =========================================================================================
+
+	private static final String MELTIGEMINI_TEXT =
+			"The power of Forwards cannot be increased by Summons or abilities.";
+
+	@Test
+	void meltigeminiSuppressesPowerBoostsOnBothSides() {
+		MainWindow mw = new MainWindow();
+		CardData melti = makeFieldAbilityCard("Meltigemini", "Water", "Monster", MELTIGEMINI_TEXT);
+		mw.gameState.getIdentity().put(melti, false);
+		mw.placeP2CardInMonsterZone(melti);
+
+		assertTrue(mw.oppForwardPowerBoostSuppressedFor(true), "the Forwards across the table");
+		assertTrue(mw.oppForwardPowerBoostSuppressedFor(false),
+				"and its own controller's, which the opponent-scoped printing never touches");
+	}
+
+	@Test
+	void aBoostedForwardKeepsItsPrintedPowerWhileMeltigeminiIsOut() {
+		MainWindow mw = new MainWindow();
+		CardData target = makeForward("Vivi", "Fire", 3, 7000);
+		placeP1Forward(mw, target);
+		Consumer<GameContext> boost = ActionResolver.parse(
+				"Choose 1 Forward. It gains +2000 power until the end of the turn.", target);
+		assertNotNull(boost);
+
+		CardData melti = makeFieldAbilityCard("Meltigemini", "Water", "Monster", MELTIGEMINI_TEXT);
+		mw.gameState.getIdentity().put(melti, false);
+		mw.placeP2CardInMonsterZone(melti);
+		boost.accept(mw.buildGameContext(false));
+		assertEquals(7000, mw.effectiveP1ForwardPower(0), "the ability cannot increase it");
+
+		// With Meltigemini gone the very same effect lands.
+		mw.p2MonsterCards.clear();
+		boost.accept(mw.buildGameContext(false));
+		assertEquals(9000, mw.effectiveP1ForwardPower(0));
+	}
+
+	@Test
+	void meltigeminiLeavesFieldAbilityPowerGrantsAlone() {
+		// "Summons or abilities" is what it names; a standing field grant is neither.
+		MainWindow mw = new MainWindow();
+		CardData granter = makeBackupWithPowerGrant("Grantor", "Fire",
+				"The Forwards you control gain +1000 power.");
+		mw.gameState.getIdentity().put(granter, true);
+		mw.placeCardInFirstBackupSlot(granter);
+		placeP1Forward(mw, makeForward("Vivi", "Fire", 3, 7000));
+		assertEquals(8000, mw.effectiveP1ForwardPower(0), "the grant applies to begin with");
+
+		CardData melti = makeFieldAbilityCard("Meltigemini", "Water", "Monster", MELTIGEMINI_TEXT);
+		mw.gameState.getIdentity().put(melti, false);
+		mw.placeP2CardInMonsterZone(melti);
+		assertEquals(8000, mw.effectiveP1ForwardPower(0), "and still applies with Meltigemini out");
+	}
+
+	// =========================================================================================
+	// Dion 29-106H: "If you control 7 or more Characters, Dion can prime to pay 《Water》《1》
+	// instead of paying the Priming cost."
+	//
+	// The only printing in the corpus that discounts a Priming cost, and a replacement rather than
+	// a reduction: what it names is the whole cost to pay in place of the printed 《Water》《3》.
+	// The three readers of a Priming cost — the menu gate, the payment dialog and the payment —
+	// now all ask for the effective one, so a discount cannot be offered by one and refused by
+	// another.
+	// =========================================================================================
+
+	private static final String DION_TEXT =
+			"Priming \"Bahamut (XVI)\" -- 《Water》《3》[[br]]If you control 7 or more Characters, "
+			+ "Dion can prime to pay 《Water》《1》 instead of paying the Priming cost.";
+
+	/** Dion on P1's field, plus {@code others} more P1 Characters filling the Backup row and beyond. */
+	private static MainWindow dionBoard(int extraCharacters) {
+		MainWindow mw = new MainWindow();
+		CardData dion = new CardData(null, "Dion", "Water", 3, 7000, "Forward", false, 0, false, false,
+				Set.of(), 0, List.of(), CardData.parsePrimingTarget(DION_TEXT),
+				CardData.parsePrimingCost(DION_TEXT),
+				List.of(), List.of(), CardData.parseFieldAbilities(DION_TEXT, "Forward"),
+				List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				"Dominant", "XVI", null, DION_TEXT);
+		placeP1Forward(mw, dion);
+		for (int i = 0; i < extraCharacters; i++)
+			placeP1Forward(mw, makeForward("Ally " + i, "Water", 2, 5000));
+		return mw;
+	}
+
+	@Test
+	void dionPrintsTheFullPrimingCostUntilTheBoardFills() {
+		MainWindow mw = dionBoard(5);   // Dion + 5 = 6 Characters
+		CardData dion = mw.p1ForwardCards.get(0);
+		assertEquals(List.of("Water", "", "", ""), dion.primingCost(), "printed 《Water》《3》");
+		assertEquals(dion.primingCost(), mw.effectivePrimingCost(dion, true),
+				"6 Characters is one short of the discount");
+	}
+
+	@Test
+	void dionPrimesForLessWithSevenCharacters() {
+		MainWindow mw = dionBoard(6);   // Dion + 6 = 7 Characters
+		CardData dion = mw.p1ForwardCards.get(0);
+		assertEquals(List.of("Water", ""), mw.effectivePrimingCost(dion, true),
+				"《Water》《1》 replaces the printed cost outright");
+	}
+
+	@Test
+	void theDiscountCountsEveryCharacterRowAndLapsesWithTheBoard() {
+		MainWindow mw = dionBoard(4);   // Dion + 4 Forwards = 5
+		CardData dion = mw.p1ForwardCards.get(0);
+		mw.placeCardInFirstBackupSlot(makeJobCard("Terence", "Water", "Backup", "Dominant"));
+		mw.placeCardInMonsterZone(makeJobCard("Sleipnir", "Water", "Monster", "Beast"));
+		assertEquals(List.of("Water", ""), mw.effectivePrimingCost(dion, true),
+				"a Backup and a Monster are Characters too");
+
+		mw.p1MonsterCards.clear();
+		assertEquals(dion.primingCost(), mw.effectivePrimingCost(dion, true),
+				"and the discount lapses the moment the count drops");
+	}
 }

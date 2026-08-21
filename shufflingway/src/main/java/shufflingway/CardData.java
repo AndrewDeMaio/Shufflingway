@@ -1802,6 +1802,47 @@ public record CardData(
         return parseCpTokens(m.group(2));
     }
 
+    /**
+     * "If you control N or more Characters, [Name] can prime to pay [cost] instead of paying the
+     * Priming cost." — Dion 29-106H, the only printing that discounts a Priming cost.
+     *
+     * <p>A replacement, not a reduction: what it names is the whole cost to pay in place of the
+     * printed one, which is why the parsed tokens stand on their own rather than being subtracted
+     * from anything. Groups: {@code count}, {@code card}, {@code cost}.
+     */
+    private static final Pattern PRIMING_COST_DISCOUNT_PATTERN = Pattern.compile(
+        "(?i)^If\\s+you\\s+control\\s+(?<count>\\d+)\\s+or\\s+more\\s+Characters,\\s+" +
+        "(?<card>.+?)\\s+can\\s+prime\\s+to\\s+pay\\s+(?<cost>(?:《[^》]*》\\s*)+)" +
+        "instead\\s+of\\s+paying\\s+the\\s+Priming\\s+cost[.!]?\\s*$"
+    );
+
+    /**
+     * A Priming cost a card may pay in place of its printed one, and the board it needs to do so.
+     *
+     * @param minCharacters how many Characters its controller must control
+     * @param cost          the replacement cost, in the same token form as {@link #primingCost()}
+     */
+    public record PrimingCostDiscount(int minCharacters, List<String> cost) {
+        public PrimingCostDiscount { cost = List.copyOf(cost); }
+    }
+
+    /**
+     * The Priming cost discount {@code seg} declares for {@code cardName}, or {@code null} when it
+     * declares none or names another card.
+     *
+     * <p>Name-checked against its carrier because the sentence names the card that primes, and a
+     * card's own name in its own text means that card. The board condition is the caller's to
+     * check — a {@link CardData} cannot count Characters.
+     */
+    public static PrimingCostDiscount parsePrimingCostDiscount(String seg, String cardName) {
+        if (seg == null || cardName == null) return null;
+        Matcher m = PRIMING_COST_DISCOUNT_PATTERN.matcher(seg.trim());
+        if (!m.matches() || !m.group("card").trim().equalsIgnoreCase(cardName)) return null;
+        List<String> cost = parseCpTokens(m.group("cost"));
+        return cost.isEmpty() ? null
+                : new PrimingCostDiscount(Integer.parseInt(m.group("count")), cost);
+    }
+
     /** Shared CP-token parser used by both Warp and Priming cost parsing. */
     private static List<String> parseCpTokens(String costPart) {
         List<String> result = new ArrayList<>();
