@@ -2002,6 +2002,21 @@ final class ActionResolverPatterns {
         Pattern.DOTALL
     );
     /**
+     * "At the beginning of Main Phase 1 during each player's turn, &lt;effect&gt;" — Ardyn 28-002R,
+     * the both-turns twin of {@link #AT_BEGINNING_OF_MAIN_PHASE_EACH_YOUR_TURN_PATTERN} and the
+     * other spelling of {@link #AT_BEGINNING_OF_MAIN_PHASE_1_EACH_TURN_PATTERN}'s "Each turn, at
+     * the beginning of Main Phase 1".
+     *
+     * <p>Main Phase 1 only: no printing says it of Main Phase 2, and the trigger key it feeds
+     * exists for the first Main Phase alone. Group {@code inner} — the effect after the comma.
+     */
+    static final Pattern AT_BEGINNING_OF_MAIN_PHASE_1_EACH_PLAYERS_TURN_PATTERN = Pattern.compile(
+        "(?i)At\\s+the\\s+beginning\\s+of\\s+Main\\s+Phase\\s+1\\s+" +
+        "during\\s+each\\s+player'?s\\s+turns?,\\s+" +
+        "(?<inner>.+?)\\s*" + GLOBAL_TRIGGER_INNER_BOUNDARY,
+        Pattern.DOTALL
+    );
+    /**
      * "Each turn, at the beginning of Main Phase 1, [inner]" — fires at BOTH players' Main Phase 1 starts.
      * Group {@code inner} — the conditional effect to evaluate.
      */
@@ -3080,6 +3095,23 @@ final class ActionResolverPatterns {
      *   <li>Group {@code card}    — the card that cannot block; checked against the carrier's name</li>
      * </ul>
      */
+    /**
+     * Ardyn 28-002R: "If that player doesn't put 1 Character they control into the Break Zone,
+     * [CardName] deals that player 1 point of damage."
+     *
+     * <p>"That player" is the turn player, named by the trigger this effect hangs off — a Main
+     * Phase 1 trigger that fires on both players' turns — so the chooser and the recipient are the
+     * same seat and it may be either side of the table. That is what separates it from the
+     * opponent-selects family, whose chooser is always the resolving player's opponent.
+     * Groups: {@code count}, {@code targets}, {@code card}, {@code amount}.
+     */
+    static final Pattern TURN_PLAYER_BREAKS_OR_TAKES_DAMAGE = Pattern.compile(
+        "(?i)^If\\s+that\\s+player\\s+doesn'?t\\s+put\\s+(?<count>\\d+)\\s+" +
+        "(?<targets>Forwards?|Backups?|Monsters?|Characters?)\\s+" +
+        "(?:they|he\\s*/\\s*she|he|she)\\s+controls?\\s+into\\s+the\\s+Break\\s+Zone,\\s+" +
+        "(?<card>.+?)\\s+deals\\s+that\\s+player\\s+(?<amount>\\d+)\\s+points?\\s+of\\s+damage[.!]?$",
+        Pattern.DOTALL
+    );
     static final Pattern OPP_SELECTS_MAY_BREAK_ELSE_SELF_CANNOT_BLOCK = Pattern.compile(
         "(?i)^Your\\s+opponent\\s+selects?\\s+(?<count>\\d+)\\s+" +
         "(?<targets>Forwards?|Backups?|Characters?|Monsters?)\\s+" +

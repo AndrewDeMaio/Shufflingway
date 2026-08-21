@@ -1898,6 +1898,19 @@ public interface GameContext {
             String sourceName);
 
     /**
+     * Offers the <em>turn player</em> the chance to put one Character they control into the Break
+     * Zone, and deals them {@code damage} points if they do not — Ardyn 28-002R's toll, collected
+     * at the start of every Main Phase 1 on either player's turn.
+     *
+     * <p>The chooser is the turn player rather than the resolving player's opponent, which is what
+     * separates this from {@link #opponentMayBreakOwnCharacter}: on the carrier's own turn the two
+     * name opposite seats. A player with no eligible Character has nothing to decide and simply
+     * takes the damage.
+     */
+    void turnPlayerBreaksOwnCharacterOrTakesDamage(boolean forwards, boolean backups, boolean monsters,
+            int damage, String sourceName);
+
+    /**
      * Offers the ability user the chance to pay an optional cost that averts a consequence — the
      * "if you don't pay 《…》, [consequence]" wording (Umaro 15-107H, Cecil 15-073H, Leon 28-056C).
      * Exactly one cost form applies. When the player cannot afford it there is no choice to make,

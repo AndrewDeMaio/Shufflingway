@@ -25509,4 +25509,504 @@ public class CardBehaviorTest {
 		assertEquals(dion.primingCost(), mw.effectivePrimingCost(dion, true),
 				"and the discount lapses the moment the count drops");
 	}
+
+	// =========================================================================================
+	// Garland 17-004C: "If you control a Forward of cost 2 or less, Garland gains +1000 power and
+	// Brave."
+	//
+	// The condition parser reads a power floor ("of power N or more") but had no cost clause at
+	// all, and its pattern is anchored: "a Forward of cost 2 or less" matched as far as "a Forward"
+	// and then failed on the anchor, so the condition came back null and the whole boost was
+	// dropped. A cost ceiling is now a filter of its own, the mirror of the cost floor the
+	// condition already carried for other readers.
+	// =========================================================================================
+
+	private static final String GARLAND_TEXT =
+			"If you control a Forward of cost 2 or less, Garland gains +1000 power and Brave.";
+
+	/** A Forward carrying an IfControlBoost parsed from {@code text}. */
+	private static CardData makeIfControlForward(String name, String element, int cost, int power, String text) {
+		return new CardData(null, name, element, cost, power, "Forward", false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				List.of(), List.of(), CardData.parseFieldAbilities(text, "Forward"),
+				CardData.parseIfControlBoosts(text, "Forward"),
+				List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				null, null, null, text);
+	}
+
+	@Test
+	void garlandsConditionCarriesACostCeiling() {
+		List<IfControlBoost> boosts = CardData.parseIfControlBoosts(GARLAND_TEXT, "Forward");
+		assertEquals(1, boosts.size(), "the condition parses at all now");
+		ControlCondition cond = boosts.get(0).conditions().get(0);
+		assertEquals("Forward", cond.cardType());
+		assertEquals(2, cond.maxCost(), "cost 2 or less is a ceiling");
+		assertEquals(0, cond.minCost(), "and not a floor");
+		assertEquals(1000, boosts.get(0).powerBonus());
+		assertEquals(Set.of(CardData.Trait.BRAVE), boosts.get(0).grantedTraits());
+	}
+
+	@Test
+	void garlandNeedsACheapForwardBesideHim() {
+		MainWindow mw = new MainWindow();
+		CardData garland = makeIfControlForward("Garland", "Fire", 5, 9000, GARLAND_TEXT);
+		placeP1Forward(mw, garland);
+		assertEquals(9000, mw.effectiveP1ForwardPower(0), "alone, he is 9000");
+		assertFalse(mw.effectiveP1HasTrait(0, CardData.Trait.BRAVE));
+
+		placeP1Forward(mw, makeForward("Expensive", "Fire", 3, 8000));
+		assertEquals(9000, mw.effectiveP1ForwardPower(0), "a cost 3 Forward is over the ceiling");
+		assertFalse(mw.effectiveP1HasTrait(0, CardData.Trait.BRAVE));
+
+		placeP1Forward(mw, makeForward("Cheap", "Fire", 2, 5000));
+		assertEquals(10000, mw.effectiveP1ForwardPower(0), "cost 2 is within it");
+		assertTrue(mw.effectiveP1HasTrait(0, CardData.Trait.BRAVE), "and Brave comes with the power");
+	}
+
+	@Test
+	void garlandCountsOnlyHisOwnSideOfTheTable() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeIfControlForward("Garland", "Fire", 5, 9000, GARLAND_TEXT));
+		CardData theirs = makeForward("Their Cheap One", "Fire", 1, 3000);
+		mw.gameState.getIdentity().put(theirs, false);
+		mw.placeP2CardInForwardZone(theirs);
+
+		assertEquals(9000, mw.effectiveP1ForwardPower(0), "\"you control\" is his controller's field");
+	}
+
+	// =========================================================================================
+	// Black Chocobo 3-054C: "If Black Chocobo forms a party, that party cannot be blocked."
+	//
+	// What it shields is the party, not himself, which is why it is not the ordinary self-named
+	// "cannot be blocked" restriction. It is answered by the same per-attacker reader all the same:
+	// a party is one attack, and every caller already reads a restriction on any one member as
+	// gating the block for all of them. The board is what says whether a party exists, so the
+	// shield is off until two or more attackers are declared.
+	// =========================================================================================
+
+	private static final String BLACK_CHOCOBO_TEXT =
+			"If Black Chocobo forms a party, that party cannot be blocked.";
+
+	/** P2 declares {@code attackers} as one attack; P1 has a Forward that could block. */
+	private static MainWindow p2AttackWith(CardData... attackers) {
+		MainWindow mw = new MainWindow();
+		enterAttackDeclarationStep(mw, false);
+		CardData blocker = makeForward("Blocker", "Ice", 3, 9000);
+		mw.gameState.getIdentity().put(blocker, true);
+		mw.placeCardInForwardZone(blocker);
+		List<Integer> party = new ArrayList<>();
+		for (int i = 0; i < attackers.length; i++) {
+			mw.gameState.getIdentity().put(attackers[i], false);
+			mw.placeP2CardInForwardZone(attackers[i]);
+			mw.p2DeclaredAttackers.add(attackers[i]);
+			party.add(i);
+		}
+		if (attackers.length > 1) mw.pendingP2PartyIndices = party;
+		else { mw.pendingP2Attacker = attackers[0]; mw.pendingP2AttackerIdx = 0; }
+		return mw;
+	}
+
+	@Test
+	void blackChocobosPartyCannotBeBlocked() {
+		MainWindow mw = p2AttackWith(
+				makeFieldAbilityCard("Black Chocobo", "Wind", "Forward", BLACK_CHOCOBO_TEXT),
+				makeForward("Party Mate", "Wind", 3, 7000));
+
+		assertFalse(mw.isForwardBlockSelectable(0),
+				"a party he is part of cannot be blocked at all");
+	}
+
+	@Test
+	void blackChocoboAttackingAloneCanBeBlocked() {
+		MainWindow mw = p2AttackWith(
+				makeFieldAbilityCard("Black Chocobo", "Wind", "Forward", BLACK_CHOCOBO_TEXT));
+
+		assertTrue(mw.isForwardBlockSelectable(0),
+				"attacking alone is not forming a party, and the shield is the party's");
+	}
+
+	@Test
+	void aPartyWithoutHimIsBlockedNormally() {
+		MainWindow mw = p2AttackWith(
+				makeForward("Chocobo", "Wind", 2, 5000),
+				makeForward("Party Mate", "Wind", 3, 7000));
+
+		assertTrue(mw.isForwardBlockSelectable(0), "no Black Chocobo, no shield");
+	}
+
+	// =========================================================================================
+	// Ardyn 28-002R: "Damage 3 -- If Ardyn deals damage to a player, double the damage instead."
+	//
+	// Two things kept this one off. The doubler's target alternation named a Forward and "your
+	// opponent" but not "a player" — the widest of the three wordings, and the one Ardyn needs
+	// because his other ability damages whichever player failed to pay it. And the readers, holding
+	// the FieldAbility that carries the "Damage 3 --" gate, never consulted it, so the printing
+	// would have doubled from the first turn.
+	// =========================================================================================
+
+	private static final String ARDYN_DOUBLER =
+			"Damage 3 -- If Ardyn deals damage to a player, double the damage instead.";
+
+	@Test
+	void ardynDoublesHisPlayerDamageOnlyPastThreePoints() {
+		MainWindow mw = new MainWindow();
+		CardData ardyn = makeFieldAbilityCard("Ardyn", "Fire", "Forward", ARDYN_DOUBLER);
+		placeP1Forward(mw, ardyn);
+		assertEquals(3, ardyn.fieldAbilities().get(0).damageThreshold(), "the Damage 3 gate is on the printing");
+
+		giveP1Damage(mw, 2);
+		assertEquals(1, mw.combatDamagePointsToOpponent(ardyn), "two points is short of the gate");
+
+		giveP1Damage(mw, 1);   // 3 points in total now
+		assertEquals(2, mw.combatDamagePointsToOpponent(ardyn), "at three it opens");
+	}
+
+	@Test
+	void theDoublerReadsAPlayerAsWidelyAsYourOpponent() {
+		// The narrower wording keeps working, and neither reaches a Forward: "a player" is not one.
+		MainWindow mw = new MainWindow();
+		CardData ardyn  = makeFieldAbilityCard("Ardyn", "Fire", "Forward", ARDYN_DOUBLER);
+		CardData target = makeForward("Target", "Ice", 3, 9000);
+		placeP1Forward(mw, ardyn);
+		giveP1Damage(mw, 3);
+
+		assertEquals(1, mw.fieldAbilityCombatOutgoingMult(ardyn, target),
+				"his doubler names players, so combat damage to a Forward is untouched");
+	}
+
+	// =========================================================================================
+	// Steiner 4-129L: "Dull 1 active Water Forward other than Steiner: Steiner gains +1000 power
+	// until the end of the turn."
+	//
+	// The dull cost had no exclusion clause, and the cost group is anchored on the colon that ends
+	// it — so "other than Steiner" ran past the end of the cost and the whole ability failed to
+	// match, leaving the line in the field-ability list. The exclusion is now read for every branch
+	// of the cost, which also unpicks Penelo 17-057H: her Job branch was swallowing "other than
+	// Penelo" into the card name it accepts, leaving a name no card has.
+	// =========================================================================================
+
+	private static final String STEINER_ABILITY =
+			"Dull 1 active Water Forward other than Steiner: Steiner gains +1000 power until the end of the turn.";
+
+	/** A Forward whose action abilities are parsed from {@code text}. */
+	private static CardData makeActionForward(String name, String element, int power, String text) {
+		return new CardData(null, name, element, 4, power, "Forward", false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				CardData.parseActionAbilities(text), List.of(), CardData.parseFieldAbilities(text, "Forward"),
+				List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				"Knight", "IX", null, text);
+	}
+
+	@Test
+	void steinersDullCostExcludesHimself() {
+		List<ActionAbility> abilities = CardData.parseActionAbilities(STEINER_ABILITY);
+		assertEquals(1, abilities.size(), "the ability parses at all now");
+		DullForwardCost cost = abilities.get(0).dullForwardCosts().get(0);
+		assertEquals(1, cost.count());
+		assertEquals("active", cost.condition());
+		assertEquals("Water", cost.element());
+		assertEquals("Steiner", cost.exceptCardName());
+		assertEquals("Steiner gains +1000 power until the end of the turn.", abilities.get(0).effectText());
+		assertTrue(CardData.parseFieldAbilities(STEINER_ABILITY, "Forward").isEmpty(),
+				"and it is no longer also a field ability");
+	}
+
+	@Test
+	void steinerCannotPayHisOwnCostWithHimselfOrAnotherCopy() {
+		MainWindow mw = new MainWindow();
+		CardData steiner = makeActionForward("Steiner", "Water", 8000, STEINER_ABILITY);
+		ActionAbility ability = steiner.actionAbilities().get(0);
+		placeP1Forward(mw, steiner);
+		assertFalse(mw.canActivateAbility(ability, false, CardState.ACTIVE, 0, steiner, true),
+				"alone, the only active Water Forward is the one the cost excludes");
+
+		// A second copy is excluded too: the bar is by name, not by instance.
+		placeP1Forward(mw, makeActionForward("Steiner", "Water", 8000, STEINER_ABILITY));
+		assertFalse(mw.canActivateAbility(ability, false, CardState.ACTIVE, 0, steiner, true));
+
+		placeP1Forward(mw, makeForward("Zidane", "Water", 2, 5000));
+		assertTrue(mw.canActivateAbility(ability, false, CardState.ACTIVE, 0, steiner, true),
+				"another Water Forward can pay it");
+	}
+
+	@Test
+	void steinersCostStillFiltersOnElementAndState() {
+		MainWindow mw = new MainWindow();
+		CardData steiner = makeActionForward("Steiner", "Water", 8000, STEINER_ABILITY);
+		ActionAbility ability = steiner.actionAbilities().get(0);
+		placeP1Forward(mw, steiner);
+		placeP1Forward(mw, makeForward("Vivi", "Fire", 2, 5000));
+		assertFalse(mw.canActivateAbility(ability, false, CardState.ACTIVE, 0, steiner, true),
+				"a Fire Forward is the wrong Element");
+
+		placeP1Forward(mw, makeForward("Zidane", "Water", 2, 5000));
+		mw.p1ForwardStates.set(2, CardState.DULL);
+		assertFalse(mw.canActivateAbility(ability, false, CardState.ACTIVE, 0, steiner, true),
+				"and a dull one is not active");
+	}
+
+	@Test
+	void penelosJobCostKeepsItsCardNameAndItsExclusion() {
+		DullForwardCost cost = CardData.parseActionAbilities(
+				"Dull 1 active Job Dancer or Card Name Dancer other than Penelo: "
+				+ "Choose 1 Forward. Its power becomes 4000 until the end of the turn.")
+				.get(0).dullForwardCosts().get(0);
+		assertEquals("Dancer", cost.job());
+		assertEquals("Dancer", cost.orCardName(), "the card-name alternative, without the exclusion glued on");
+		assertEquals("Penelo", cost.exceptCardName());
+	}
+
+	// =========================================================================================
+	// Ardyn 28-002R: "At the beginning of Main Phase 1 during each player's turn, if that player
+	// doesn't put 1 Character they control into the Break Zone, Ardyn deals that player 1 point of
+	// damage."
+	//
+	// The trigger is the both-turns Main Phase 1 event under a third spelling, so it feeds the key
+	// that event already has. The effect is what needed a reader: "that player" is the turn player,
+	// which is neither "you" nor "your opponent" — on Ardyn's own turn it is his controller, and on
+	// the other turn it is not. Both the offer and the damage go to that one seat.
+	// =========================================================================================
+
+	private static final String ARDYN_TOLL =
+			"At the beginning of Main Phase 1 during each player's turn, if that player doesn't put "
+			+ "1 Character they control into the Break Zone, Ardyn deals that player 1 point of damage.";
+
+	/** Ardyn on P1's field, with {@code turn} the player whose Main Phase 1 is starting. */
+	private static MainWindow ardynBoard(GameState.Player turn) {
+		MainWindow mw = new MainWindow();
+		advanceTo(mw, turn, GameState.GamePhase.MAIN_1);
+		placeP1Forward(mw, makeAutoForward("Ardyn", "Fire", 9000, ARDYN_TOLL));
+		for (int i = 0; i < 8; i++) mw.gameState.getP2MainDeck().add(makeForward("Deck" + i, "Fire", 1, 1000));
+		return mw;
+	}
+
+	private static void resolveArdynToll(MainWindow mw) {
+		CardData ardyn = mw.p1ForwardCards.get(0);
+		AutoAbility toll = ardyn.autoAbilities().get(0);
+		assertEquals("beginning of main phase 1 each turn", toll.trigger(),
+				"the same event as the \"Each turn, at the beginning of Main Phase 1\" spelling");
+		Consumer<GameContext> fn = ActionResolver.parse(toll.effectText(), ardyn);
+		assertNotNull(fn, "the toll should parse");
+		fn.accept(mw.buildGameContext(true));
+	}
+
+	@Test
+	void ardynsTollFallsOnTheTurnPlayer() {
+		// P2's turn: the CPU is the one offered the choice, and it would rather take the point than
+		// give up a Character while the damage is survivable.
+		MainWindow mw = ardynBoard(GameState.Player.P2);
+		CardData theirs = makeForward("Their Backup Plan", "Ice", 2, 5000);
+		mw.gameState.getIdentity().put(theirs, false);
+		mw.placeP2CardInForwardZone(theirs);
+
+		resolveArdynToll(mw);
+
+		assertEquals(1, mw.gameState.getP2DamageZone().size(), "the turn player took the point");
+		assertEquals(1, mw.p2ForwardCards.size(), "and kept the Character");
+	}
+
+	@Test
+	void theTurnPlayerPaysWithACharacterWhenTheDamageWouldEndIt() {
+		MainWindow mw = ardynBoard(GameState.Player.P2);
+		CardData cheap = makeForward("Cheap", "Ice", 1, 3000);
+		CardData dear  = makeForward("Dear",  "Ice", 5, 9000);
+		mw.gameState.getIdentity().put(cheap, false);
+		mw.gameState.getIdentity().put(dear, false);
+		mw.placeP2CardInForwardZone(cheap);
+		mw.placeP2CardInForwardZone(dear);
+		// One more point ends the game. Seeded through the damage zone, which is what every damage
+		// threshold in the engine counts.
+		for (int i = 0; i < 6; i++)
+			mw.gameState.getP2DamageZone().add(makeForward("Dmg" + i, "Fire", 1, 1000));
+
+		resolveArdynToll(mw);
+
+		assertEquals(6, mw.gameState.getP2DamageZone().size(), "no point was taken");
+		assertEquals(1, mw.p2ForwardCards.size(), "a Character paid instead");
+		assertSame(dear, mw.p2ForwardCards.get(0), "and it was the cheapest one that went");
+	}
+
+	@Test
+	void aTurnPlayerWithNoCharactersJustTakesIt() {
+		MainWindow mw = ardynBoard(GameState.Player.P2);
+		resolveArdynToll(mw);
+		assertEquals(1, mw.gameState.getP2DamageZone().size(), "nothing to offer, so nothing to decide");
+	}
+
+	// =========================================================================================
+	// Setzer 21-031H: "Once per turn, you can cast a card removed by Setzer's abilities at any time
+	// you could normally cast it." — paired with his own "When Setzer enters the field, choose up
+	// to 2 Forwards in your Break Zone. Remove them from the game."
+	//
+	// The borrowed-cast machinery already models a card castable from the removed-from-game zone;
+	// what was missing was the permission that opens one. It is re-evaluated rather than recorded
+	// at removal time, because it is a field ability: a Setzer who leaves the field takes it with
+	// him, and the pile it opens is whatever his abilities have removed and not yet returned.
+	// =========================================================================================
+
+	private static final String SETZER_TEXT =
+			"Once per turn, you can cast a card removed by Setzer's abilities at any time you could "
+			+ "normally cast it.[[br]]When Setzer enters the field, choose up to 2 Forwards in your "
+			+ "Break Zone. Remove them from the game.";
+
+	/** Setzer on P2's field with two Forwards of theirs already removed from the game by his ability. */
+	private static MainWindow setzerBoard() {
+		MainWindow mw = new MainWindow();
+		CardData setzer = new CardData(null, "Setzer", "Ice", 3, 5000, "Forward", false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				List.of(), CardData.parseAutoAbilities(SETZER_TEXT),
+				CardData.parseFieldAbilities(SETZER_TEXT, "Forward"),
+				List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				"Gambler", "VI", null, SETZER_TEXT);
+		for (String name : List.of("Ally A", "Ally B")) {
+			CardData c = makeForward(name, "Ice", 2, 5000);
+			mw.gameState.getIdentity().put(c, false);
+			mw.gameState.getP2BreakZone().add(c);
+		}
+		mw.gameState.getIdentity().put(setzer, false);
+		mw.placeP2CardInForwardZone(setzer);
+
+		mw.currentAbilitySource     = setzer;
+		mw.currentAbilitySourceIsP1 = false;
+		Consumer<GameContext> etf = ActionResolver.parse(setzer.autoAbilities().get(0).effectText(), setzer);
+		assertNotNull(etf, "his enter-the-field removal should parse");
+		etf.accept(mw.buildGameContext(false));
+		return mw;
+	}
+
+	@Test
+	void setzerOpensTheCardsHisAbilityRemoved() {
+		MainWindow mw = setzerBoard();
+		assertEquals(2, mw.gameState.getP2PermanentRfp().size(), "both Forwards left the Break Zone");
+
+		mw.syncRfgRemovedPlayables(false);
+		assertEquals(2, mw.bzPlayableP2.size());
+		for (PlayableEntry entry : mw.bzPlayableP2.values()) {
+			assertEquals(PlayableEntry.SourceZone.RFP, entry.source(), "cast from where they were removed to");
+			assertFalse(entry.expiresThisTurn(), "\"at any time you could normally cast it\" is a standing permission");
+			assertEquals(0, entry.costReduction(), "and at full price");
+		}
+	}
+
+	@Test
+	void theOncePerTurnPrintingIsSpentAgainstItsOwnCard() {
+		MainWindow mw = setzerBoard();
+		CardData setzer = mw.p2ForwardCards.get(0);
+		mw.syncRfgRemovedPlayables(false);
+		assertEquals(2, mw.bzPlayableP2.size());
+
+		mw.p2Turn.castRemovedUsedThisTurn.add(setzer);
+		mw.syncRfgRemovedPlayables(false);
+		assertTrue(mw.bzPlayableP2.isEmpty(), "once per turn — the rest of the pile closes behind it");
+
+		mw.p2Turn.castRemovedUsedThisTurn.clear();
+		mw.syncRfgRemovedPlayables(false);
+		assertEquals(2, mw.bzPlayableP2.size(), "and opens again next turn");
+	}
+
+	@Test
+	void thePermissionLeavesWithSetzer() {
+		MainWindow mw = setzerBoard();
+		mw.syncRfgRemovedPlayables(false);
+		assertEquals(2, mw.bzPlayableP2.size());
+
+		mw.p2ForwardCards.clear();
+		mw.syncRfgRemovedPlayables(false);
+		assertTrue(mw.bzPlayableP2.isEmpty(),
+				"it is his field ability, and the cards stay removed once he is gone");
+	}
+
+	// =========================================================================================
+	// Rinoa 21-038R: "You can cast Summons removed by Rinoa's abilities at any time you could
+	// normally cast them." — the same permission as Setzer's, with the two things such a printing
+	// can vary set the other way: it names a card type, and it does not cap itself.
+	//
+	// So neither card carries a mechanism of its own. One pattern reads both halves off the text,
+	// one board sweep registers whatever the permissions on that side currently open, and the
+	// per-turn cap — the half only Setzer prints — is recorded against the remover, so spending his
+	// cast cannot close hers.
+	// =========================================================================================
+
+	private static final String RINOA_TEXT =
+			"You can cast Summons removed by Rinoa's abilities at any time you could normally cast "
+			+ "them.[[br]]When Rinoa enters the field, choose 1 Summon in your Break Zone. Remove it "
+			+ "from the game.";
+
+	/** A card of {@code type} whose auto and field abilities are parsed from {@code text}. */
+	private static CardData makePermissionCard(String name, String type, String text) {
+		return new CardData(null, name, "Ice", 3, type.equals("Backup") ? 0 : 5000, type,
+				false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				List.of(), CardData.parseAutoAbilities(text), CardData.parseFieldAbilities(text, type),
+				List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				null, "VIII", null, text);
+	}
+
+	@Test
+	void thePermissionRecordsWhatItOpensAndWhetherItCapsItself() {
+		AutoAbilityTriggers.CastRemovedPermission setzer =
+				AutoAbilityTriggers.castRemovedPermission(makePermissionCard("Setzer", "Forward", SETZER_TEXT));
+		assertNotNull(setzer);
+		assertEquals("card", setzer.cardType(), "\"a card\" is every type");
+		assertTrue(setzer.oncePerTurn());
+
+		AutoAbilityTriggers.CastRemovedPermission rinoa =
+				AutoAbilityTriggers.castRemovedPermission(makePermissionCard("Rinoa", "Backup", RINOA_TEXT));
+		assertNotNull(rinoa);
+		assertEquals("Summon", rinoa.cardType());
+		assertFalse(rinoa.oncePerTurn(), "hers carries no cap");
+
+		assertNull(AutoAbilityTriggers.castRemovedPermission(
+				makePermissionCard("Somebody Else", "Forward", RINOA_TEXT)),
+				"the sentence names the card whose removals it opens, so it is name-checked");
+	}
+
+	@Test
+	void rinoaOpensOnlyTheSummonsSheRemoved() {
+		MainWindow mw = new MainWindow();
+		CardData rinoa = makePermissionCard("Rinoa", "Backup", RINOA_TEXT);
+		mw.gameState.getIdentity().put(rinoa, false);
+		mw.placeP2CardInFirstBackupSlot(rinoa);
+
+		// Her own ability removed one Summon; a Forward removed by something else is not hers to open.
+		CardData summon  = makeSummon("Shiva", "Ice", 2, "");
+		CardData forward = makeForward("Squall", "Ice", 3, 7000);
+		for (CardData c : List.of(summon, forward)) {
+			mw.gameState.getIdentity().put(c, false);
+			mw.gameState.addToPermanentRfp(c);
+		}
+		mw.cardsRemovedBySource.computeIfAbsent(rinoa, k -> new ArrayList<>()).add(summon);
+		mw.cardsRemovedBySource.get(rinoa).add(forward);
+
+		mw.syncRfgRemovedPlayables(false);
+		assertEquals(1, mw.bzPlayableP2.size(), "the Forward is not a Summon");
+		assertSame(summon, mw.bzPlayableP2.keySet().iterator().next());
+		assertEquals(PlayableEntry.SourceZone.RFP, mw.bzPlayableP2.get(summon).source());
+	}
+
+	@Test
+	void rinoaKeepsCastingAfterSetzerHasSpentHisTurn() {
+		MainWindow mw = setzerBoard();
+		CardData setzer = mw.p2ForwardCards.get(0);
+		CardData rinoa  = makePermissionCard("Rinoa", "Backup", RINOA_TEXT);
+		mw.gameState.getIdentity().put(rinoa, false);
+		mw.placeP2CardInFirstBackupSlot(rinoa);
+		CardData summon = makeSummon("Shiva", "Ice", 2, "");
+		mw.gameState.getIdentity().put(summon, false);
+		mw.gameState.addToPermanentRfp(summon);
+		mw.cardsRemovedBySource.computeIfAbsent(rinoa, k -> new ArrayList<>()).add(summon);
+
+		mw.syncRfgRemovedPlayables(false);
+		assertEquals(3, mw.bzPlayableP2.size(), "his two Forwards and her Summon");
+
+		// Setzer's cap is his own: spending it closes his pile and leaves hers open.
+		mw.p2Turn.castRemovedUsedThisTurn.add(setzer);
+		mw.syncRfgRemovedPlayables(false);
+		assertEquals(1, mw.bzPlayableP2.size());
+		assertSame(summon, mw.bzPlayableP2.keySet().iterator().next());
+	}
 }

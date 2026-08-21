@@ -792,6 +792,17 @@ public class MainWindow {
 	 *  (used to remove them when that FA becomes inactive). */
 	private final Set<CardData> bzForwardFaP1 = Collections.newSetFromMap(new IdentityHashMap<>());
 	private final Set<CardData> bzForwardFaP2 = Collections.newSetFromMap(new IdentityHashMap<>());
+	/**
+	 * Cards registered in bzPlayableP1/P2 by a "you can cast [what] removed by [self]'s abilities"
+	 * permission, each mapped to the card whose ability removed it.
+	 *
+	 * <p>One map for every printing of that shape — Setzer 21-031H and Rinoa 21-038R today — rather
+	 * than a register per card: they differ only in what they open and whether they cap it, and both
+	 * answers live on the permission itself. The remover is the value because the cap belongs to it:
+	 * spending Setzer's one cast for the turn must not close Rinoa's.
+	 */
+	private final IdentityHashMap<CardData, CardData> removedPlayableSourceP1 = new IdentityHashMap<>();
+	private final IdentityHashMap<CardData, CardData> removedPlayableSourceP2 = new IdentityHashMap<>();
 	/** Cards registered in bzPlayableP1/P2 by their own "You can cast [self] from your Break Zone"
 	 *  ability (used to remove them when they leave the Break Zone). */
 	private final Set<CardData> bzSelfCastFaP1 = Collections.newSetFromMap(new IdentityHashMap<>());
@@ -1780,6 +1791,8 @@ public class MainWindow {
 		p1Turn.nextDamageZeroRedirectDmg = 0;     p2Turn.nextDamageZeroRedirectDmg = 0;
 		p1Turn.forwardPutToBZThisTurn = false;
 		p2Turn.forwardPutToBZThisTurn = false;
+		p1Turn.castRemovedUsedThisTurn.clear();
+		p2Turn.castRemovedUsedThisTurn.clear();
 		p1Turn.partyAnyElementThisTurn = false;
 		p2Turn.partyAnyElementThisTurn = false;
 		lastCardWasCast   = false;
@@ -7459,6 +7472,7 @@ public class MainWindow {
 	 */
 	void syncBzForwardPlayables(boolean isP1) {
 		syncBzSelfCastPlayables(isP1);
+		syncRfgRemovedPlayables(isP1);
 		IdentityHashMap<CardData, PlayableEntry> reg = isP1 ? bzPlayableP1 : bzPlayableP2;
 		Set<CardData> faSet = isP1 ? bzForwardFaP1 : bzForwardFaP2;
 		if (!playerHasCastForwardsFromBz(isP1)) {
@@ -7480,6 +7494,53 @@ public class MainWindow {
 			added = true;
 		}
 		if (added) refreshPlayableCardsButton();
+	}
+
+	/**
+	 * Registers the cards {@code isP1}'s field is currently opening from the removed-from-game zone
+	 * — every "you can cast [what] removed by [self]'s abilities at any time you could normally cast
+	 * [it]" permission on that side at once (Setzer 21-031H, Rinoa 21-038R).
+	 *
+	 * <p>Re-evaluated rather than registered at removal time, for the reason
+	 * {@link #syncBzForwardPlayables} is: the permission is a field ability, so it has to lapse when
+	 * its card leaves the field or loses its abilities, and the pile it opens is whatever
+	 * {@link #cardsRemovedBySource} currently records against a card still standing.
+	 *
+	 * <p>A once-per-turn printing is enforced by withholding <em>its own</em> registrations for the
+	 * rest of the turn, rather than by counting at the cast: everything that offers a borrowed card
+	 * to a player reads the registration, so a limit applied here covers the menu, the playable-cards
+	 * list and the CPU at once. Per remover, so one card's spent cast leaves another's alone.
+	 */
+	void syncRfgRemovedPlayables(boolean isP1) {
+		IdentityHashMap<CardData, PlayableEntry> reg = isP1 ? bzPlayableP1 : bzPlayableP2;
+		IdentityHashMap<CardData, CardData> owners = isP1 ? removedPlayableSourceP1 : removedPlayableSourceP2;
+		List<CardData> rfg  = isP1 ? gameState.getP1PermanentRfp() : gameState.getP2PermanentRfp();
+		boolean changed = false;
+
+		// Everything currently offered, so a card cast, returned, or whose remover has gone is
+		// dropped before the re-scan puts back only what still qualifies.
+		if (!owners.isEmpty()) {
+			owners.keySet().forEach(reg::remove);
+			owners.clear();
+			changed = true;
+		}
+		for (CardData remover : fieldCards(isP1)) {
+			if (remover == null || lostAbilitiesCards.contains(remover)) continue;
+			AutoAbilityTriggers.CastRemovedPermission perm =
+					AutoAbilityTriggers.castRemovedPermission(remover);
+			if (perm == null) continue;
+			if (perm.oncePerTurn() && turn(isP1).castRemovedUsedThisTurn.contains(remover)) continue;
+			List<CardData> removed = cardsRemovedBySource.get(remover);
+			if (removed == null) continue;
+			for (CardData card : removed) {
+				if (!rfg.contains(card) || card.castProhibited() || reg.containsKey(card)) continue;
+				if (!perm.admits(card)) continue;
+				reg.put(card, new PlayableEntry(PlayableEntry.SourceZone.RFP, 0, false, false, false, false));
+				owners.put(card, remover);
+				changed = true;
+			}
+		}
+		if (changed) refreshPlayableCardsButton();
 	}
 
 	/**
@@ -8990,6 +9051,11 @@ public class MainWindow {
 		bzPlayableP1.remove(card);
 		bzForwardFaP1.remove(card);
 		bzSelfCastFaP1.remove(card);
+		// The permission that opened this card is spent for the turn if its printing says so;
+		// recorded against the remover, which is what syncRfgRemovedPlayables asks about. Noted for
+		// every such cast, so the sync alone decides which printings the note actually binds.
+		CardData removedBy = removedPlayableSourceP1.remove(card);
+		if (removedBy != null) p1Turn.castRemovedUsedThisTurn.add(removedBy);
 		refreshP1BreakLabel();
 		refreshP1WarpZoneUI();
 		refreshP2WarpZoneUI();
@@ -9135,6 +9201,10 @@ public class MainWindow {
 		bzPlayableP2.remove(card);
 		bzForwardFaP2.remove(card);
 		bzSelfCastFaP2.remove(card);
+		// P2's side of the same note P1's cast path takes: a once-per-turn permission is spent by
+		// whoever uses it, and the CPU casts through this path.
+		CardData p2RemovedBy = removedPlayableSourceP2.remove(card);
+		if (p2RemovedBy != null) p2Turn.castRemovedUsedThisTurn.add(p2RemovedBy);
 		refreshP2BreakLabel();
 		refreshP1WarpZoneUI();
 		refreshP2WarpZoneUI();
@@ -11123,6 +11193,7 @@ public class MainWindow {
 		if (cond.category() != null && !meetsCategoryFilter(card, cond.category())) return false;
 		if (cond.minPower() > 0     && card.power() < cond.minPower())         return false;
 		if (cond.minCost()  > 0     && card.cost()  < cond.minCost())          return false;
+		if (cond.maxCost()  > 0     && card.cost()  > cond.maxCost())          return false;
 		return true;
 	}
 
@@ -14181,6 +14252,12 @@ public class MainWindow {
 		int dmg = (isP1 ? gameState.getP1DamageZone() : gameState.getP2DamageZone()).size();
 		for (FieldAbility fa : effectiveFieldAbilities(card)) {
 			if (fa.damageThreshold() > 0 && dmg < fa.damageThreshold()) continue;
+			// Black Chocobo 3-054C shields the party rather than himself — "If Black Chocobo forms
+			// a party, that party cannot be blocked." Answered here all the same, because every
+			// caller already reads one attacker's unblockability as the whole attack's: a party is
+			// one attack, and a restriction on any member gates the block for all of them.
+			if (CardData.isSelfPartyCannotBeBlocked(fa.effectText(), card.name())
+					&& isFormingParty(card, isP1)) return true;
 			// The bare printing and the quoted-grant spelling both land here; the grant is what
 			// Ritz prints, and it names its own carrier on both halves.
 			if (CardData.isSelfCannotBeBlocked(fa.effectText(), card.name())) return true;

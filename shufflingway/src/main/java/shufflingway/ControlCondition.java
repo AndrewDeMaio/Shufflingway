@@ -10,8 +10,8 @@ import java.util.List;
  *   <li><b>Named mode</b> ({@link #isNamedMode()}): every card name in {@link #requiredCardNames}
  *       must be present on the controlling player's field.</li>
  *   <li><b>Count mode</b>: at least {@link #minCount} field cards that satisfy all of the
- *       optional {@link #element}, {@link #job}, {@link #category}, {@link #cardType}, and
- *       {@link #minPower} filters must be present.  When {@link #exactCount} is {@code true}
+ *       optional {@link #element}, {@link #job}, {@link #category}, {@link #cardType},
+ *       {@link #minPower} and {@link #maxCost} filters must be present.  When {@link #exactCount} is {@code true}
  *       the count must be exactly {@link #minCount}, not "or more".  {@link #orCardNames} lists
  *       card-name alternatives that each individual card may satisfy instead of the job/element
  *       filters (e.g. "Job Samurai or Card Name Samurai").</li>
@@ -39,7 +39,8 @@ public record ControlCondition(
         boolean      opponentControls,  // true: check opponent's field instead of activating player's field
         int          minCost,           // 0 = no cost filter; > 0 = card cost must be ≥ this
         List<ControlCondition> orAlternatives, // per-card OR filters; a card counts if it matches ANY
-        boolean      bothFields         // true: count across BOTH players' fields ("neither player controls…")
+        boolean      bothFields,        // true: count across BOTH players' fields ("neither player controls…")
+        int          maxCost            // 0 = no cost ceiling; > 0 = card cost must be <= this
 ) {
     public ControlCondition {
         requiredCardNames = List.copyOf(requiredCardNames);
@@ -55,6 +56,21 @@ public record ControlCondition(
         this(requiredCardNames, minCount, exactCount, cardType, element, job, category, minPower,
                 orCardNames, anyOf, excludeElement, dullCardName, requiresCrystal, allHave,
                 opponentControls, minCost, List.of(), false);
+    }
+
+    /**
+     * Compatibility constructor preserving the prior 19-arg canonical form; defaults
+     * {@code maxCost} to 0 (no ceiling). Only Garland 17-004C prints one, so every other caller
+     * keeps the shorter form.
+     */
+    public ControlCondition(List<String> requiredCardNames, int minCount, boolean exactCount,
+            String cardType, String element, String job, String category, int minPower,
+            List<String> orCardNames, boolean anyOf, String excludeElement, String dullCardName,
+            boolean requiresCrystal, boolean allHave, boolean opponentControls, int minCost,
+            List<ControlCondition> orAlternatives, boolean bothFields) {
+        this(requiredCardNames, minCount, exactCount, cardType, element, job, category, minPower,
+                orCardNames, anyOf, excludeElement, dullCardName, requiresCrystal, allHave,
+                opponentControls, minCost, orAlternatives, bothFields, 0);
     }
 
     /**
@@ -182,6 +198,7 @@ public record ControlCondition(
         if (category       != null) sb.append(' ').append(category);
         if (minPower        > 0   ) sb.append(" pow>=").append(minPower);
         if (minCost         > 0   ) sb.append(" cost>=").append(minCost);
+        if (maxCost         > 0   ) sb.append(" cost<=").append(maxCost);
         if (cardType       != null) sb.append(' ').append(cardType);
         if (excludeElement != null) sb.append(" !").append(excludeElement);
         if (!orCardNames.isEmpty()) sb.append('/').append(String.join("|", orCardNames));

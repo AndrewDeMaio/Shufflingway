@@ -1,7 +1,9 @@
 package shufflingway;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -57,6 +59,14 @@ class PlayerTurnState {
 	int nextDamageZeroRedirectDmg = 0;
 
 	boolean forwardPutToBZThisTurn = false;
+
+	/**
+	 * Cards whose "you can cast [what] removed by [self]'s abilities" permission this player has
+	 * already used this turn. Only a printing that caps itself at once per turn reads it (Setzer
+	 * 21-031H does, Rinoa 21-038R does not), and it is keyed by the remover so that spending one
+	 * card's cast leaves another's open — see {@code MainWindow.syncRfgRemovedPlayables}.
+	 */
+	final Set<CardData> castRemovedUsedThisTurn = Collections.newSetFromMap(new IdentityHashMap<>());
 
 	/** Set by the opponent: this player's Forwards cannot block targets with power below their own. */
 	boolean forwardCannotBlockInferiorPower = false;

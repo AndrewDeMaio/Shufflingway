@@ -43,6 +43,7 @@ class TurnPhases {
 		mw.p2Turn.formedPartyThisTurn = false;
 		mw.p2Turn.forwardsLeftFieldThisTurn = 0;
 		mw.p2Turn.forwardPutToBZThisTurn = false;
+		mw.p2Turn.castRemovedUsedThisTurn.clear();
 		mw.p2Turn.elementForwardsEnteredThisTurn.clear();
 		mw.p2Turn.cardsTookDamageThisTurn.clear();
 		mw.p2Turn.forwardEnteredViaWarpThisTurn = false;
@@ -116,6 +117,7 @@ class TurnPhases {
 		mw.p2Turn.partyAnyElementThisTurn = false;
 		mw.p1Turn.forwardsLeftFieldThisTurn = 0;
 		mw.p1Turn.forwardPutToBZThisTurn = false;
+		mw.p1Turn.castRemovedUsedThisTurn.clear();
 		mw.p1Turn.elementForwardsEnteredThisTurn.clear();
 		mw.p1Turn.cardsTookDamageThisTurn.clear();
 		mw.p1Turn.forwardEnteredViaWarpThisTurn = false;

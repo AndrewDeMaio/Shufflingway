@@ -998,6 +998,12 @@ public class ActionResolver {
         if (result != null) return result;
 
 
+        // Ardyn 28-002R's toll. Ahead of the opponent-selects family for the same reason the
+        // line below it is: its own sentence names a seat those parsers would read as the
+        // resolving player's opponent.
+        result = tryParseTurnPlayerBreaksOrTakesDamage(effectText, source);
+        if (result != null) return result;
+
         // Must precede OpponentSelects, which claims the same text and drops both the option and the
         // block restriction — see OPP_SELECTS_MAY_BREAK_ELSE_SELF_CANNOT_BLOCK.
         result = tryParseOppSelectsMayBreakElseSelfCannotBlock(effectText, source);
@@ -1662,6 +1668,7 @@ public class ActionResolver {
         // OpponentSelects matcher would otherwise claim on its own, dropping the replacement.
         if (tryParseControlGatedInsteadUpgrade(effectText, source, 0) != null) return "ControlGatedInsteadUpgrade";
         // Mirrors parse(): ahead of OpponentSelects, which would otherwise claim it.
+        if (tryParseTurnPlayerBreaksOrTakesDamage(effectText, source) != null) return "TurnPlayerBreaksOrTakesDamage";
         if (tryParseOppSelectsMayBreakElseSelfCannotBlock(effectText, source) != null)
             return "OppSelectsMayBreakElseSelfCannotBlock";
         if (tryParseOpponentSelects(effectText)               != null) return "OpponentSelects";
@@ -2376,6 +2383,7 @@ public class ActionResolver {
         if (tryParsePlayFromHand(effectText, source, 0) != null)            return "PlayFromHand";
 
         // Mirrors parse(): ahead of OPPONENT_SELECTS_PATTERN, which would otherwise claim it.
+        if (tryParseTurnPlayerBreaksOrTakesDamage(effectText, source) != null) return "TurnPlayerBreaksOrTakesDamage";
         if (tryParseOppSelectsMayBreakElseSelfCannotBlock(effectText, source) != null)
             return "Your opponent may put 1 Character they control into the Break Zone; if they do, "
                     + source.name() + " cannot block this turn";

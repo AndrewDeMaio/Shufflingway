@@ -1607,6 +1607,25 @@ public record CardData(
     }
 
     /**
+     * "If [Self] forms a party, that party cannot be blocked." — Black Chocobo 3-054C.
+     *
+     * <p>Its own pattern rather than an arm of {@link #SELF_CANNOT_BE_BLOCKED}, because what it
+     * shields is not the printing card: the subject of "cannot be blocked" is the party. The
+     * carrier's name only says whose presence in a party turns it on, which is why the reader has
+     * to ask the board for a declared party before honouring it.
+     */
+    private static final Pattern SELF_PARTY_CANNOT_BE_BLOCKED = Pattern.compile(
+        "(?i)^If\\s+(?<name>.+?)\\s+forms\\s+a\\s+party,\\s+that\\s+party\\s+cannot\\s+be\\s+blocked[.!]?$"
+    );
+
+    /** Whether {@code clause} is the party-wide unblockable naming {@code cardName} as its member. */
+    static boolean isSelfPartyCannotBeBlocked(String clause, String cardName) {
+        if (clause == null || cardName == null) return false;
+        Matcher m = SELF_PARTY_CANNOT_BE_BLOCKED.matcher(clause.trim());
+        return m.matches() && m.group("name").trim().equalsIgnoreCase(cardName);
+    }
+
+    /**
      * "The damage dealt to [Self] is reduced by N instead." — Charlotte 13-023R's quoted half. The
      * passive spelling of a damage modifier, with the subject in the object position rather than
      * the subject one.
@@ -1895,7 +1914,12 @@ public record CardData(
         "(?:Forwards?(?:\\s+or\\s+(?:Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)?\\s*Backups?)?" + // Forwards [or Backups]
         "|Backups?(?:\\s+of\\s+the\\s+same\\s+Element)?(?:\\s+or\\s+\\d+\\s*(?:active|dull|damaged)?\\s*Backups?\\s+of\\s+the\\s+same\\s+Element(?:\\s+and\\s+[A-Za-z][A-Za-z\\s''\\-]*?)?)?" + // Backups [of the same Element] [or N Backups ... and Name]
         "|Characters?)" + // Characters
-        "|(?<dullbarename>(?-i:[A-Z])[A-Za-z''\\-]+)(?:\\s+(?:Forwards?|Backups?|Monsters?|Characters?))?(?:\\s+and\\s+[^:\\[]+)?)\\s*)?" + // bare-name branch: "Dull [cond] CardName [and N [cond] ...]"
+        "|(?<dullbarename>(?-i:[A-Z])[A-Za-z''\\-]+)(?:\\s+(?:Forwards?|Backups?|Monsters?|Characters?))?(?:\\s+and\\s+[^:\\[]+)?)" + // bare-name branch: "Dull [cond] CardName [and N [cond] ...]"
+        // "other than [Name]" applies to whichever branch matched — Steiner 4-129L to the standard
+        // one, Penelo 17-057H to the Job one. Written once outside the alternation, and ahead of the
+        // closing \s* so the cost still ends where the colon expects it. Without it the phrase ran
+        // past the end of the cost group and the whole ability failed to match.
+        "(?:\\s+other\\s+than\\s+(?<dullexcept>[^:,]+?))?\\s*)?" +
         // Appended after every numbered cost group on purpose: a group inserted higher up would
         // renumber groups 6-11, which the parse site reads positionally.
         "(?<bottomdeckcost>(?i)(?:,\\s*)?put\\s+(?<bottomdeckname>[^:,]+?)\\s+at\\s+the\\s+bottom\\s+of\\s+" +
@@ -1950,11 +1974,18 @@ public record CardData(
         "(?i)Dull\\s+(?:a\\s+total\\s+of\\s+)?(?<count>\\d+)\\s*(?<cond>active|dull|damaged)?\\s*" +
         "(?:Card\\s+Name\\s+(?<cardname>.+?)\\s+Forwards?" +
         "|Category\\s+(?<category>[A-Za-z0-9][A-Za-z0-9\\s''\\-]*?)(?:\\s+(?:Forwards?|Backups?|Monsters?|(?<catchar>Characters?)))?" + DULL_ITEM_END +
-        "|Job\\s+(?<job>[A-Za-z][A-Za-z''\\s\\-]*?)(?:\\s+(?:Forwards?|Backups?|Monsters?|(?<jobchar>Characters?)))?(?:\\s+(?:and/)?or\\s+Card\\s+Name\\s+(?<joborcardname>.+))?" + DULL_ITEM_END +
+        // The Job branch takes its own exclusion group, ahead of the item-end lookahead: that
+        // lookahead is what forces the greedy card-name capture to keep growing, and it grew right
+        // through "other than Penelo" (17-057H) into a name no card has.
+        "|Job\\s+(?<job>[A-Za-z][A-Za-z''\\s\\-]*?)(?:\\s+(?:Forwards?|Backups?|Monsters?|(?<jobchar>Characters?)))?(?:\\s+(?:and/)?or\\s+Card\\s+Name\\s+(?<joborcardname>.+?))?(?:\\s+other\\s+than\\s+(?<jobexcept>[^:,]+?))?" + DULL_ITEM_END +
         "|(?<elem>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)?\\s*" +
         "(?:Forwards?(?<orbackup>\\s+or\\s+(?:Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)?\\s*Backups?)?" + // Forwards [or Backups]
         "|(?<sameelembackup>Backups?(?:\\s+of\\s+the\\s+same\\s+Element)?)" + // Backups [of same element] — e.g. Yuri
-        "|(?<stdchar>Characters?)))"
+        "|(?<stdchar>Characters?)))" +
+        // The exclusion the cost group also carries, re-read here because this pattern parses the
+        // raw cost text on its own. Lazy Job/Card Name captures give it up rather than swallowing
+        // it, which is what left Penelo 17-057H with a card name of "Dancer other than Penelo".
+        "(?:\\s+other\\s+than\\s+(?<except>[^:,]+?))?(?=\\s*(?:,|and\\b|$))"
     );
 
     private static final Pattern SELF_MILL_COST_PATTERN = Pattern.compile(
@@ -2617,6 +2648,10 @@ public record CardData(
         "(?<type>Forwards?|Monsters?|Backups?|Characters?)?" +
         "(?:\\s+of\\s+an?\\s+Element\\s+other\\s+than\\s+(?<excludeelem>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark))?" +
         "(?:\\s+of\\s+power\\s+(?<power>\\d+)\\s+or\\s+more)?" +
+        // Garland 17-004C's "a Forward of cost 2 or less". Without it the pattern matched "a
+        // Forward" and then failed on the anchor, so the whole condition — and the boost hanging
+        // off it — was dropped. Both comparisons are read; no printing states a cost and a power.
+        "(?:\\s+of\\s+cost\\s+(?<cost>\\d+)\\s+or\\s+(?<costcmp>less|more))?" +
         "(?:\\s+or\\s+Card\\s+Name\\s+(?<altname>.+?))?" +
         "\\s*$"
     );
@@ -3574,6 +3609,19 @@ public record CardData(
             String trigger = "1".equals(mpEach.group("phase"))
                     ? "beginning of main phase 1" : "beginning of main phase 2";
             AutoAbility aa = parseAutoAbilityRestrictions("", trigger, false, false, false, false, effect, 0);
+            if (aa != null) result.add(aa);
+        }
+
+        // Eighth-and-three-quarters pass: "At the beginning of Main Phase 1 during each player's
+        // turn, [effect]" — Ardyn 28-002R. The same event as the pass below, spelled the other way
+        // round, so it produces that pass's trigger key rather than one of its own.
+        Matcher mpEachPlayer = ActionResolverPatterns.AT_BEGINNING_OF_MAIN_PHASE_1_EACH_PLAYERS_TURN_PATTERN
+                .matcher(textForSearch);
+        while (mpEachPlayer.find()) {
+            String effect = SUMMON_MARKUP.matcher(mpEachPlayer.group("inner").trim()).replaceAll("").trim();
+            if (effect.isEmpty()) continue;
+            AutoAbility aa = parseAutoAbilityRestrictions("", "beginning of main phase 1 each turn",
+                    false, false, false, false, effect, 0);
             if (aa != null) result.add(aa);
         }
 
@@ -7440,6 +7488,8 @@ public record CardData(
             // standing one of his own.
             if (matchesOutsideQuotes(
                     ActionResolverPatterns.AT_BEGINNING_OF_MAIN_PHASE_EACH_YOUR_TURN_PATTERN, seg)) continue;
+            if (matchesOutsideQuotes(
+                    ActionResolverPatterns.AT_BEGINNING_OF_MAIN_PHASE_1_EACH_PLAYERS_TURN_PATTERN, seg)) continue;
             if (ActionResolverPatterns.AT_BEGINNING_OF_OPP_MAIN_PHASE_1_PATTERN.matcher(seg).find()) continue;
             if (ActionResolverPatterns.AT_END_OF_OPP_TURN_PATTERN.matcher(seg).find()) continue;
             if (ActionResolverPatterns.AT_END_OF_EACH_PLAYERS_TURN_PATTERN.matcher(seg).find()) continue;
@@ -7634,6 +7684,8 @@ public record CardData(
                         boolean inclBkps = contM.group("orbackup") != null || contM.group("sameelembackup") != null;
                         boolean isChar   = contM.group("catchar") != null || contM.group("jobchar") != null
                                         || contM.group("stdchar") != null || inclBkps;
+                        String except = contM.group("except") != null
+                                ? contM.group("except") : contM.group("jobexcept");
                         costs.add(new DullForwardCost(count,
                                 cond     != null ? cond.toLowerCase()              : null,
                                 elem     != null ? elem.trim()                     : null,
@@ -7641,7 +7693,8 @@ public record CardData(
                                 job      != null ? job.trim()                      : null,
                                 category != null ? category.trim()                 : null,
                                 isChar           ? "Character"                     : null,
-                                jobOrName != null ? stripTrailingType(jobOrName)   : null));
+                                jobOrName != null ? stripTrailingType(jobOrName)   : null,
+                                except   != null ? except.trim()                   : null));
                     }
                 }
                 return List.copyOf(costs);
@@ -7663,6 +7716,9 @@ public record CardData(
                               || m.group("jobchar") != null
                               || m.group("stdchar") != null
                               || inclBackups;
+            // Whichever branch carried the exclusion — the Job branch has its own group, for
+            // the reason that pattern documents.
+            String except      = m.group("except") != null ? m.group("except") : m.group("jobexcept");
             costs.add(new DullForwardCost(count,
                     cond      != null ? cond.toLowerCase()          : null,
                     elem      != null ? elem.trim()                 : null,
@@ -7670,7 +7726,8 @@ public record CardData(
                     job       != null ? job.trim()                  : null,
                     category  != null ? category.trim()             : null,
                     isChar            ? "Character"                 : null,
-                    jobOrName != null ? stripTrailingType(jobOrName) : null));
+                    jobOrName != null ? stripTrailingType(jobOrName) : null,
+                    except    != null ? except.trim()               : null));
         }
         return costs.isEmpty() ? List.of() : List.copyOf(costs);
     }
@@ -7762,8 +7819,15 @@ public record CardData(
         String altRaw         = countM.group("altname");
         List<String> orCardNames = altRaw != null ? List.of(altRaw.trim()) : List.of();
         String excludeElement = countM.group("excludeelem");
+        int minCost = 0, maxCost = 0;
+        if (countM.group("cost") != null) {
+            int cost = Integer.parseInt(countM.group("cost"));
+            if ("less".equalsIgnoreCase(countM.group("costcmp"))) maxCost = cost; else minCost = cost;
+        }
 
-        return new ControlCondition(List.of(), minCount, exactCount, cardType, element, job, category, minPower, orCardNames, false, excludeElement);
+        return new ControlCondition(List.of(), minCount, exactCount, cardType, element, job, category,
+                minPower, orCardNames, false, excludeElement, null, false, false, false, minCost,
+                List.of(), false, maxCost);
     }
 
     /** Parses a "remove … from the game" cost phrase into a list of {@link RemoveFromGameCost} items. */

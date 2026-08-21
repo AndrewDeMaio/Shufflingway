@@ -3879,6 +3879,33 @@ final class ActionResolverChoose {
      * {@link #tryParseOpponentSelects} — see the note on
      * {@link ActionResolverPatterns#OPP_SELECTS_MAY_BREAK_ELSE_SELF_CANNOT_BLOCK}.
      */
+    /**
+     * Parses Ardyn 28-002R's toll: "If that player doesn't put 1 Character they control into the
+     * Break Zone, [Self] deals that player 1 point of damage."
+     *
+     * <p>Both halves fall to the context, because both name the turn player — the seat the trigger
+     * this effect hangs off is firing for, which is not always the resolving player's opponent.
+     */
+    static Consumer<GameContext> tryParseTurnPlayerBreaksOrTakesDamage(String text, CardData source) {
+        if (source == null) return null;
+        Matcher m = TURN_PLAYER_BREAKS_OR_TAKES_DAMAGE.matcher(text.trim());
+        if (!m.matches()) return null;
+        if (!m.group("card").trim().equalsIgnoreCase(source.name())) return null;
+
+        String  targets  = m.group("targets");
+        String  tgtLower = targets.toLowerCase();
+        boolean inclForwards = tgtLower.contains("forward") || tgtLower.contains("character");
+        boolean inclBackups  = tgtLower.contains("backup")  || tgtLower.contains("character");
+        boolean inclMonsters = tgtLower.contains("monster") || tgtLower.contains("character");
+        int     damage   = Integer.parseInt(m.group("amount"));
+        String  name     = source.name();
+        return ctx -> {
+            ctx.logEntry("Effect: the turn player puts 1 " + targets + " they control into the Break "
+                    + "Zone, or takes " + damage + " point(s) of damage from " + name);
+            ctx.turnPlayerBreaksOwnCharacterOrTakesDamage(inclForwards, inclBackups, inclMonsters, damage, name);
+        };
+    }
+
     static Consumer<GameContext> tryParseOppSelectsMayBreakElseSelfCannotBlock(String text, CardData source) {
         if (source == null) return null;
         Matcher m = OPP_SELECTS_MAY_BREAK_ELSE_SELF_CANNOT_BLOCK.matcher(text.trim());

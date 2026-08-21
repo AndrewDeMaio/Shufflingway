@@ -16,9 +16,18 @@ package shufflingway;
  * @param category   non-null → cards must have this category; null → any category
  * @param cardType   null/"Forward" = only forwards; "Character" = any field card (fwd/bkp/monster)
  * @param orCardName non-null → card also matches if its name equals this (used with job for "Job X and/or Card Name Y")
+ * @param exceptCardName non-null → a card of that name may not be dulled for this cost
+ *     ("other than Steiner"); the exclusion is by name, so a second copy is barred too
  */
 public record DullForwardCost(int count, String condition, String element, String cardName,
-                               String job, String category, String cardType, String orCardName) {
+                               String job, String category, String cardType, String orCardName,
+                               String exceptCardName) {
+
+    /** Compat constructor for the 8-arg form; defaults {@code exceptCardName} to none. */
+    public DullForwardCost(int count, String condition, String element, String cardName,
+                           String job, String category, String cardType, String orCardName) {
+        this(count, condition, element, cardName, job, category, cardType, orCardName, null);
+    }
 
     /** Compat constructor preserving the original 4-arg signature. */
     public DullForwardCost(int count, String condition, String element, String cardName) {

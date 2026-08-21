@@ -3663,6 +3663,43 @@ final class GameContextImpl implements GameContext {
 				return true;
 			}
 
+			@Override public void turnPlayerBreaksOwnCharacterOrTakesDamage(boolean inclForwards,
+					boolean inclBackups, boolean inclMonsters, int damage, String sourceName) {
+				boolean turnIsP1 = mw.gameState.getCurrentPlayer() == GameState.Player.P1;
+				List<ForwardTarget> eligible = ownCharacters(turnIsP1, inclForwards, inclBackups, inclMonsters);
+				ForwardTarget pick = null;
+				if (!eligible.isEmpty()) {
+					// The AI pays a Character only to stay alive. A point of damage is cheaper than a
+					// body almost every time; the exception is the point that would end the game.
+					int taken = (turnIsP1 ? mw.gameState.getP1DamageZone() : mw.gameState.getP2DamageZone()).size();
+					Supplier<ForwardTarget> cpuPick = () -> {
+						if (taken + damage < 7) return null;
+						ForwardTarget cheapest = null;
+						int bestCost = Integer.MAX_VALUE;
+						for (ForwardTarget t : eligible) {
+							CardData c = mw.fieldCardDataOrNull(t);
+							if (c != null && c.cost() < bestCost) { bestCost = c.cost(); cheapest = t; }
+						}
+						return cheapest;
+					};
+					pick = mw.selectOwnFieldTarget(turnIsP1, eligible,
+							"You may put 1 Character you control into the Break Zone — if you do not, "
+									+ sourceName + " deals you " + damage + " point(s) of damage",
+							"Waiting for your opponent to decide whether to break a Character...",
+							cpuPick);
+				}
+				if (pick != null) {
+					logSelectedOwnCard(turnIsP1, pick);
+					forceTargetToBreakZone(pick);
+					return;
+				}
+				logEntry((turnIsP1 ? "P1" : "[P2]") + " takes " + damage + " point(s) from "
+						+ sourceName + " rather than break a Character");
+				for (int i = 0; i < damage; i++) {
+					if (turnIsP1) mw.p1TakeDamage(); else mw.p2TakeDamage();
+				}
+			}
+
 			@Override public void selectControlledTypeAndBreak(boolean inclForwards, boolean inclBackups, boolean inclMonsters) {
 				List<ForwardTarget> eligible = ownCharacters(isP1, inclForwards, inclBackups, inclMonsters);
 				if (eligible.isEmpty()) {
@@ -6065,11 +6102,19 @@ final class GameContextImpl implements GameContext {
 			@Override public void dealDamageToOpponent(int amount) {
 				if (mw.currentAbilitySource != null
 						&& !mw.lostAbilitiesCards.contains(mw.currentAbilitySource)) {
+					// Read the same way DamageResolver.sourceHasOutgoingDmgToOpponentDoubler reads it,
+					// so the combat and ability paths agree: a "Damage N --" gate on the printing
+					// has to be met, and "a player" is the wider spelling of "your opponent".
+					Boolean doublerSide = mw.fieldSideOf(mw.currentAbilitySource);
+					int doublerDmg = doublerSide == null ? 0
+							: (doublerSide ? mw.gameState.getP1DamageZone() : mw.gameState.getP2DamageZone()).size();
 					for (FieldAbility fa : mw.effectiveFieldAbilities(mw.currentAbilitySource)) {
+						if (fa.damageThreshold() > 0 && doublerDmg < fa.damageThreshold()) continue;
 						Matcher m = AutoAbilityTriggers.FA_OUTGOING_DAMAGE_DOUBLER.matcher(fa.effectText());
 						if (!m.find()) continue;
 						if (!m.group("card").trim().equalsIgnoreCase(mw.currentAbilitySource.name())) continue;
-						if (!m.group("target").toLowerCase().contains("opponent")) continue;
+						String doublerTarget = m.group("target").toLowerCase();
+						if (!doublerTarget.contains("opponent") && !doublerTarget.contains("player")) continue;
 						logEntry(mw.currentAbilitySource.name() + " — outgoing damage to opponent doubled ("
 								+ amount + " → " + (amount * 2) + ")");
 						amount *= 2;

@@ -321,11 +321,16 @@ final class AutoAbilityTriggers {
 	 * "If [card] deals damage to a Forward or your opponent, double the damage instead."
 	 * Checked against the DEALING card's field abilities (combat via {@code fieldAbilityCombatOutgoingMult},
 	 * ability via {@code modifyIncomingDamage}/{@code dealDamageToOpponent}).
-	 * Groups: {@code card}, {@code target} (contains "Forward" and/or "opponent").
+	 *
+	 * <p>"a player" is Ardyn 28-002R's wording and is the widest of the three: his other ability
+	 * damages whichever player failed to pay it, so the doubler is written to cover either side
+	 * rather than the opponent alone. Readers that ask about damage to a player therefore test for
+	 * "opponent" <em>or</em> "player" — matching on "opponent" alone silently dropped this printing.
+	 * Groups: {@code card}, {@code target} (contains "Forward", "opponent" and/or "player").
 	 */
 	static final Pattern FA_OUTGOING_DAMAGE_DOUBLER = Pattern.compile(
 		"(?i)^If\\s+(?<card>.+?)\\s+deals\\s+damage\\s+to\\s+" +
-		"(?<target>a\\s+Forward(?:\\s+or\\s+your\\s+opponent)?|your\\s+opponent)" +
+		"(?<target>a\\s+Forward(?:\\s+or\\s+your\\s+opponent)?|your\\s+opponent|a\\s+player)" +
 		",\\s+double\\s+the\\s+damage\\s+instead\\.?$"
 	);
 
@@ -765,6 +770,59 @@ final class AutoAbilityTriggers {
 		for (FieldAbility fa : card.fieldAbilities())
 			if (FA_CAST_FORWARDS_FROM_BZ.matcher(fa.effectText().trim()).matches()) return true;
 		return false;
+	}
+
+	/**
+	 * "[Once per turn, ]you can cast [what] removed by [CardName]'s abilities at any time you could
+	 * normally cast [it|them]." — Setzer 21-031H (any card, once a turn) and Rinoa 21-038R (Summons,
+	 * as often as she likes).
+	 *
+	 * <p>Names the removing card rather than a zone: what it opens is the pile that card's own
+	 * abilities have removed from the game, which {@code MainWindow.cardsRemovedBySource} already
+	 * records for the counting printings. "At any time you could normally cast it" is ordinary
+	 * casting timing, so the permission needs no clause of its own — it is the absence of "this
+	 * turn" that makes the registration a standing one.
+	 * Groups: {@code once} (present iff the printing limits itself), {@code what}, {@code card}.
+	 */
+	static final Pattern FA_CAST_REMOVED_BY_SELF = Pattern.compile(
+		"(?i)^(?<once>Once\\s+per\\s+turn,\\s+)?you\\s+can\\s+cast\\s+" +
+		"(?:an?\\s+(?<what1>card|Forward|Backup|Monster|Character|Summon)" +
+		"|(?<what2>cards|Forwards|Backups|Monsters|Characters|Summons))\\s+removed\\s+by\\s+" +
+		"(?<card>.+?)(?:'s|s')\\s+abilit(?:y|ies)\\s+at\\s+any\\s+time\\s+you\\s+could\\s+normally\\s+" +
+		"cast\\s+(?:it|them)[.!]?$"
+	);
+
+	/**
+	 * A card's standing permission to cast what its own abilities have removed from the game.
+	 *
+	 * <p>One record for every printing of the shape rather than a mechanism per card: the two in
+	 * the corpus differ only in what they open and whether they cap it, and both are read by the
+	 * one board sweep in {@code MainWindow.syncRfgRemovedPlayables}.
+	 *
+	 * @param cardType   the type filter, in the singular form {@link CardFilters#matchesDiscardType}
+	 *                   takes; {@code "card"} for a printing that names no type
+	 * @param oncePerTurn whether the printing caps its controller at one such cast per turn
+	 */
+	record CastRemovedPermission(String cardType, boolean oncePerTurn) {
+		/** Whether this permission opens {@code card}. */
+		boolean admits(CardData card) {
+			return CardFilters.matchesDiscardType(card, cardType);
+		}
+	}
+
+	/**
+	 * The permission {@code card} prints over the cards its own abilities removed, or {@code null}
+	 * when it prints none. Name-checked against its carrier, because the sentence names the card
+	 * whose removals it opens and a card's own name in its own text means that card.
+	 */
+	static CastRemovedPermission castRemovedPermission(CardData card) {
+		for (FieldAbility fa : card.fieldAbilities()) {
+			Matcher m = FA_CAST_REMOVED_BY_SELF.matcher(fa.effectText().trim());
+			if (!m.matches() || !m.group("card").trim().equalsIgnoreCase(card.name())) continue;
+			String what = m.group("what1") != null ? m.group("what1") : m.group("what2");
+			return new CastRemovedPermission(what.replaceAll("(?i)s$", ""), m.group("once") != null);
+		}
+		return null;
 	}
 
 	/**
@@ -4509,6 +4567,10 @@ final class AutoAbilityTriggers {
 	 * alternate cast cost (Nine 13-123L), which pays with the same kind of requirement.
 	 */
 	boolean dullForwardCostMatches(DullForwardCost dfc, CardData card) {
+		// "other than [Name]" — Steiner 4-129L cannot pay his own cost with himself, and the bar is
+		// by name, so a second copy of him cannot pay it either.
+		if (dfc.exceptCardName() != null
+				&& CardFilters.meetsCardNameFilter(card, dfc.exceptCardName())) return false;
 		if (dfc.cardName() != null && !card.name().equalsIgnoreCase(dfc.cardName())) return false;
 		if (dfc.element()  != null && !dfc.element().isEmpty() && !mw.effectiveContainsElement(card, dfc.element())) return false;
 		if (dfc.job() != null) {

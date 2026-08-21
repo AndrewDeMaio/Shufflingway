@@ -787,11 +787,19 @@ class DamageResolver {
 
 	boolean sourceHasOutgoingDmgToOpponentDoubler(CardData attacker) {
 		if (attacker == null || mw.lostAbilitiesCards.contains(attacker)) return false;
+		// A "Damage N --" gate belongs to the printing, and this reader holds the FieldAbility that
+		// carries it — Ardyn 28-002R doubles nothing until his controller has taken 3.
+		Boolean side = mw.fieldSideOf(attacker);
+		int dmg = side == null ? 0
+				: (side ? mw.gameState.getP1DamageZone() : mw.gameState.getP2DamageZone()).size();
 		for (FieldAbility fa : mw.effectiveFieldAbilities(attacker)) {
+			if (fa.damageThreshold() > 0 && dmg < fa.damageThreshold()) continue;
 			Matcher m = AutoAbilityTriggers.FA_OUTGOING_DAMAGE_DOUBLER.matcher(fa.effectText());
-			if (m.find() && m.group("card").trim().equalsIgnoreCase(attacker.name())
-					&& m.group("target").toLowerCase().contains("opponent"))
-				return true;
+			if (!m.find() || !m.group("card").trim().equalsIgnoreCase(attacker.name())) continue;
+			// "a player" covers the opponent as surely as "your opponent" does; it is the wider
+			// wording, not a different one.
+			String target = m.group("target").toLowerCase();
+			if (target.contains("opponent") || target.contains("player")) return true;
 		}
 		return false;
 	}

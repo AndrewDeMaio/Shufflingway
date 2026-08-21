@@ -175,6 +175,15 @@ public class FieldAbilityParsingTest {
         // Dion 29-106H. Read per Priming attempt by MainWindow.effectivePrimingCost, name-checked
         // against its carrier exactly as that caller reads it.
         if (CardData.parsePrimingCostDiscount(fa.effectText(), source.name()) != null) return true;
+        // Black Chocobo 3-054C. Read per block-legality check by
+        // MainWindow.hasSelfCannotBeBlockedFieldAbility, which additionally asks the board for a
+        // declared party — the name here only says whose presence turns the shield on.
+        if (CardData.isSelfPartyCannotBeBlocked(fa.effectText(), source.name())) return true;
+        // Setzer 21-031H, Rinoa 21-038R. Read per playable-list refresh by
+        // MainWindow.syncRfgRemovedPlayables, name-checked against its carrier as that caller does.
+        if (AutoAbilityTriggers.castRemovedPermission(source) != null
+                && AutoAbilityTriggers.FA_CAST_REMOVED_BY_SELF
+                        .matcher(fa.effectText().trim()).matches()) return true;
         if (AutoAbilityTriggers.FA_OPP_FORWARD_SELF_BOOST_SUPPRESSED.matcher(fa.effectText()).find()) return true;
         if (AutoAbilityTriggers.FA_OPP_FORWARD_ETF_SUPPRESSED.matcher(fa.effectText()).find()) return true;
         if (AutoAbilityTriggers.FA_OUTGOING_FLAT_BOOST_VS_COST.matcher(fa.effectText()).find()) return true;
@@ -694,6 +703,15 @@ public class FieldAbilityParsingTest {
             String t2 = m.group("trait2");
             return "NullifyTraitFwdDmg[" + m.group("trait1").trim() + (t2 != null ? " or " + t2.trim() : "") + "]";
         }
+        if (CardData.isSelfPartyCannotBeBlocked(fa.effectText(), source.name()))
+            return "SelfPartyCannotBeBlocked";
+        AutoAbilityTriggers.CastRemovedPermission castRemoved =
+                AutoAbilityTriggers.castRemovedPermission(source);
+        if (castRemoved != null
+                && AutoAbilityTriggers.FA_CAST_REMOVED_BY_SELF
+                        .matcher(fa.effectText().trim()).matches())
+            return "CastRemovedByOwnAbilities[" + castRemoved.cardType()
+                    + (castRemoved.oncePerTurn() ? ", once per turn" : "") + "]";
         m = AutoAbilityTriggers.FA_OUTGOING_DAMAGE_DOUBLER.matcher(fa.effectText());
         if (m.find()) return "OutgoingDmgDoubler[to " + m.group("target") + "]";
         if (namesItself(AutoAbilityTriggers.FA_DOUBLE_ABILITY_DAMAGE, fa, source))
