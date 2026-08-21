@@ -27876,4 +27876,502 @@ public class CardBehaviorTest {
 				"a bare noun is not a printed wording and must not match");
 	}
 
+
+	// =========================================================================================
+	// Three Summons whose "if you do so / if not" shape the followup chain could not read.
+	//
+	//   Ifrit 5-003C     "You may discard 1 Card Name Ifrit ... If you do so, deal it 10000
+	//                     damage. If not, deal it 5000 damage." - the pattern stopped at the
+	//                     "if you do so" half, so the whole followup matched nothing and the card
+	//                     did nothing at all: no prompt, no damage on either branch.
+	//   Cuchulainn 10-110C  the hand-scaled power reduction worked; the "If its power has become
+	//                     0 or less by the previous effect, draw 1 card" payoff was dropped.
+	//   Ark 29-117H      "You may search for 1 Dark Forward and remove it from the game. If you
+	//                     do so, break the chosen Forwards. If not, deal 8000 damage to the chosen
+	//                     Forwards." - the split fed "remove it from the game" to the generic
+	//                     chain, which removed the CHOSEN Forwards from the game outright, free.
+	// =========================================================================================
+
+	/** Mocks the whole 20-argument selection call, answering with {@code targets}. */
+	private static GameContext contextChoosing(List<ForwardTarget> targets) {
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.consumePreloadedTargets()).thenReturn(null);
+		when(ctx.selectCharacters(
+				anyInt(), anyBoolean(), anyBoolean(), anyBoolean(),
+				any(), any(), anyInt(), any(), anyInt(), any(),
+				anyBoolean(), anyBoolean(), anyBoolean(),
+				any(), any(), any(), any(), anyBoolean(), any(), anyBoolean()
+		)).thenReturn(targets);
+		return ctx;
+	}
+
+	// --- Ifrit 5-003C ---------------------------------------------------------------------
+
+	private static final String IFRIT_EFFECT =
+			"Choose 1 Forward. You may discard 1 Card Name Ifrit from your hand. "
+			+ "If you do so, deal it 10000 damage. If not, deal it 5000 damage.";
+
+	/** Answers the optional discard by running one of its two branches. */
+	private static void answerDiscard(GameContext ctx, boolean accepted) {
+		doAnswer(inv -> {
+			int branch = accepted ? 1 : 2;
+			inv.<Consumer<GameContext>>getArgument(branch).accept(ctx);
+			return null;
+		}).when(ctx).mayDiscardCardNameFromHandOrElse(any(), any(), any());
+	}
+
+	@Test
+	void ifritDealsTheLargerDamageWhenTheCopyIsDiscarded() {
+		ForwardTarget t = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+		GameContext ctx = contextChoosing(List.of(t));
+		answerDiscard(ctx, true);
+
+		Consumer<GameContext> fn = ActionResolver.parse(IFRIT_EFFECT, makeForward("Ifrit", "Fire", 2, 0));
+		assertNotNull(fn, "Ifrit should parse");
+		fn.accept(ctx);
+
+		verify(ctx).damageTarget(t, 10000);
+		verify(ctx, never()).damageTarget(t, 5000);
+	}
+
+	@Test
+	void ifritStillDealsTheSmallerDamageWhenTheDiscardIsDeclined() {
+		ForwardTarget t = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+		GameContext ctx = contextChoosing(List.of(t));
+		answerDiscard(ctx, false);
+
+		ActionResolver.parse(IFRIT_EFFECT, makeForward("Ifrit", "Fire", 2, 0)).accept(ctx);
+
+		verify(ctx).damageTarget(t, 5000);
+		verify(ctx, never()).damageTarget(t, 10000);
+	}
+
+	/**
+	 * The discard has to be offered by name. Before the "If not" sentence was admitted, the whole
+	 * followup matched nothing and neither branch — nor the prompt — ever happened.
+	 */
+	@Test
+	void ifritOffersTheDiscardByName() {
+		ForwardTarget t = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+		GameContext ctx = contextChoosing(List.of(t));
+		ArgumentCaptor<String> name = ArgumentCaptor.forClass(String.class);
+
+		ActionResolver.parse(IFRIT_EFFECT, makeForward("Ifrit", "Fire", 2, 0)).accept(ctx);
+
+		verify(ctx).mayDiscardCardNameFromHandOrElse(name.capture(), any(), any());
+		assertEquals("Ifrit", name.getValue());
+	}
+
+	/** The older printing without an "If not" sentence must keep doing nothing on a decline. */
+	@Test
+	void theDiscardFollowupWithoutAnIfNotSentenceStillDoesNothingOnDecline() {
+		ForwardTarget t = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+		GameContext ctx = contextChoosing(List.of(t));
+		answerDiscard(ctx, false);
+
+		ActionResolver.parse(
+				"Choose 1 Forward. You may discard 1 Card Name Ifrit from your hand. "
+				+ "If you do so, deal it 10000 damage.",
+				makeForward("Ifrit", "Fire", 2, 0)).accept(ctx);
+
+		verify(ctx, never()).damageTarget(any(), anyInt());
+	}
+
+	// --- Cuchulainn 10-110C ---------------------------------------------------------------
+
+	private static final String CUCHULAINN_EFFECT =
+			"Choose 1 Forward. Until the end of the turn, it loses 1000 power for each card in your hand. "
+			+ "If its power has become 0 or less by the previous effect, draw 1 card.";
+
+	@Test
+	void cuchulainnDrawsWhenTheReductionTakesTheForwardToZero() {
+		ForwardTarget t = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+		GameContext ctx = contextChoosing(List.of(t));
+		when(ctx.yourHandSize()).thenReturn(5);
+		when(ctx.effectiveTargetPower(t)).thenReturn(5000);
+
+		Consumer<GameContext> fn = ActionResolver.parse(CUCHULAINN_EFFECT, makeForward("Cuchulainn", "Earth", 3, 0));
+		assertNotNull(fn, "Cuchulainn should parse");
+		fn.accept(ctx);
+
+		verify(ctx).reduceTarget(eq(t), eq(5000), any());
+		verify(ctx).drawCards(1);
+	}
+
+	@Test
+	void cuchulainnDrawsNothingWhenTheForwardSurvives() {
+		ForwardTarget t = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+		GameContext ctx = contextChoosing(List.of(t));
+		when(ctx.yourHandSize()).thenReturn(2);
+		when(ctx.effectiveTargetPower(t)).thenReturn(8000);
+
+		ActionResolver.parse(CUCHULAINN_EFFECT, makeForward("Cuchulainn", "Earth", 3, 0)).accept(ctx);
+
+		verify(ctx).reduceTarget(eq(t), eq(2000), any());
+		verify(ctx, never()).drawCards(anyInt());
+	}
+
+	/**
+	 * The power test is taken before the reduction is applied, not after. {@code reduceTarget} runs
+	 * the 0-power rule process as it goes, so a Forward reduced to nothing is already in the Break
+	 * Zone by the time anything downstream could read its power — and would read 0 for a Forward
+	 * that never dropped at all.
+	 */
+	@Test
+	void cuchulainnReadsThePowerBeforeTheReductionBreaksTheForward() {
+		ForwardTarget t = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+		GameContext ctx = contextChoosing(List.of(t));
+		when(ctx.yourHandSize()).thenReturn(3);
+		when(ctx.effectiveTargetPower(t)).thenReturn(3000);
+
+		ActionResolver.parse(CUCHULAINN_EFFECT, makeForward("Cuchulainn", "Earth", 3, 0)).accept(ctx);
+
+		InOrder order = inOrder(ctx);
+		order.verify(ctx).effectiveTargetPower(t);
+		order.verify(ctx).reduceTarget(eq(t), eq(3000), any());
+		order.verify(ctx).drawCards(1);
+	}
+
+	/** 3-105C Black Waltz 3 prints the reduction with no draw clause and must be unaffected. */
+	@Test
+	void theBareHandScaledReductionStillResolvesWithoutADrawClause() {
+		ForwardTarget t = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+		GameContext ctx = contextChoosing(List.of(t));
+		when(ctx.yourHandSize()).thenReturn(4);
+		when(ctx.effectiveTargetPower(t)).thenReturn(1000);
+
+		ActionResolver.parse(
+				"choose 1 Forward opponent controls. Until of the end of turn, it loses 1000 power "
+				+ "for each card in your hand.", makeForward("Black Waltz 3", "Ice", 4, 7000)).accept(ctx);
+
+		verify(ctx).reduceTarget(eq(t), eq(4000), any());
+		verify(ctx, never()).drawCards(anyInt());
+	}
+
+	// --- Ark 29-117H ----------------------------------------------------------------------
+
+	private static final String ARK_EFFECT =
+			"Choose up to 2 Forwards opponent controls. You may search for 1 Dark Forward and "
+			+ "remove it from the game. If you do so, break the chosen Forwards. "
+			+ "If not, deal 8000 damage to the chosen Forwards.";
+
+	private static void stubSearch(GameContext ctx, boolean found) {
+		when(ctx.searchDeckForCard(
+				anyBoolean(), anyBoolean(), anyBoolean(), anyBoolean(),
+				anyInt(), any(), any(), any(), any(), any(), any(), any(),
+				any(), anyInt(), anyBoolean(), anyBoolean()
+		)).thenReturn(found);
+	}
+
+	@Test
+	void arkBreaksTheChosenForwardsOnlyWhenADarkForwardIsActuallyRemoved() {
+		ForwardTarget a = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+		ForwardTarget b = new ForwardTarget(false, 1, ForwardTarget.CardZone.FORWARD);
+		GameContext ctx = contextChoosing(List.of(a, b));
+		when(ctx.promptYouMay(any())).thenReturn(true);
+		stubSearch(ctx, true);
+
+		Consumer<GameContext> fn = ActionResolver.parse(ARK_EFFECT, makeForward("Ark", "Dark", 5, 0));
+		assertNotNull(fn, "Ark should parse");
+		fn.accept(ctx);
+
+		verify(ctx).breakTarget(a);
+		verify(ctx).breakTarget(b);
+		verify(ctx, never()).damageTarget(any(), anyInt());
+	}
+
+	/** Declining the optional search is an "if not" — 8000 damage, and no search at all. */
+	@Test
+	void arkDealsDamageWhenTheSearchIsDeclined() {
+		ForwardTarget a = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+		GameContext ctx = contextChoosing(List.of(a));
+		when(ctx.promptYouMay(any())).thenReturn(false);
+		stubSearch(ctx, true);
+
+		ActionResolver.parse(ARK_EFFECT, makeForward("Ark", "Dark", 5, 0)).accept(ctx);
+
+		verify(ctx).damageTarget(a, 8000);
+		verify(ctx, never()).breakTarget(any());
+		verify(ctx, never()).searchDeckForCard(
+				anyBoolean(), anyBoolean(), anyBoolean(), anyBoolean(),
+				anyInt(), any(), any(), any(), any(), any(), any(), any(),
+				any(), anyInt(), anyBoolean(), anyBoolean());
+	}
+
+	/** Accepting but finding nothing is also an "if not" — the deck may simply hold no Dark Forward. */
+	@Test
+	void arkDealsDamageWhenTheSearchFindsNothing() {
+		ForwardTarget a = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+		GameContext ctx = contextChoosing(List.of(a));
+		when(ctx.promptYouMay(any())).thenReturn(true);
+		stubSearch(ctx, false);
+
+		ActionResolver.parse(ARK_EFFECT, makeForward("Ark", "Dark", 5, 0)).accept(ctx);
+
+		verify(ctx).damageTarget(a, 8000);
+		verify(ctx, never()).breakTarget(any());
+	}
+
+	/** The search is for a Dark Forward, and the card it finds leaves the game rather than the deck. */
+	@Test
+	void arkSearchesForADarkForwardAndRemovesItFromTheGame() {
+		GameContext ctx = contextChoosing(List.of(new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD)));
+		when(ctx.promptYouMay(any())).thenReturn(true);
+		stubSearch(ctx, true);
+		ArgumentCaptor<String>  elementFilter = ArgumentCaptor.forClass(String.class);
+		ArgumentCaptor<String>  destination   = ArgumentCaptor.forClass(String.class);
+		ArgumentCaptor<Boolean> inclForwards  = ArgumentCaptor.forClass(Boolean.class);
+		ArgumentCaptor<Boolean> inclBackups   = ArgumentCaptor.forClass(Boolean.class);
+
+		ActionResolver.parse(ARK_EFFECT, makeForward("Ark", "Dark", 5, 0)).accept(ctx);
+
+		verify(ctx).searchDeckForCard(
+				inclForwards.capture(), inclBackups.capture(), anyBoolean(), anyBoolean(),
+				anyInt(), any(), any(), any(), any(), elementFilter.capture(), any(), any(),
+				destination.capture(), anyInt(), anyBoolean(), anyBoolean());
+		assertEquals("Dark", elementFilter.getValue());
+		assertEquals("removedFromGame", destination.getValue());
+		assertTrue(inclForwards.getValue(), "Forwards only");
+		assertFalse(inclBackups.getValue());
+	}
+
+	/**
+	 * The regression that matters most: Ark used to remove the chosen Forwards themselves from the
+	 * game, skipping the search entirely, which is strictly better than what the card prints.
+	 */
+	@Test
+	void arkNeverRemovesTheChosenForwardsFromTheGame() {
+		for (boolean searchFound : List.of(true, false)) {
+			ForwardTarget a = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+			GameContext ctx = contextChoosing(List.of(a));
+			when(ctx.promptYouMay(any())).thenReturn(true);
+			stubSearch(ctx, searchFound);
+
+			ActionResolver.parse(ARK_EFFECT, makeForward("Ark", "Dark", 5, 0)).accept(ctx);
+
+			verify(ctx, never()).removeTargetFromGame(any());
+		}
+	}
+
+
+	// =========================================================================================
+	// The rest of the "if you do so / if not" family, worked down the list after the three
+	// Summons above.
+	//
+	//   Bahamut Fury 1-190S  same sentence as Ifrit with "1 card" instead of a named copy.
+	//   Madeen 29-116H       Ark's shape with remove/break as its two branches; WhenYouDoSo
+	//                        claimed the whole text and read "remove the chosen Forward from the
+	//                        game" as a bare remove-by-name, so the search never happened.
+	//   Gilgamesh 1-129C     already resolved correctly - only its description said "? + Damage",
+	//                        which is why it looked broken from the coverage report.
+	//   Vanille 1-093H       did not parse at all.
+	// =========================================================================================
+
+	// --- Bahamut Fury 1-190S --------------------------------------------------------------
+
+	private static final String BAHAMUT_FURY_EFFECT =
+			"Choose 1 Forward. You may discard 1 card from your hand. "
+			+ "If you do so, deal it 7000 damage. If not, deal it 5000 damage.";
+
+	private static void answerAnyDiscard(GameContext ctx, boolean accepted) {
+		doAnswer(inv -> {
+			inv.<Consumer<GameContext>>getArgument(accepted ? 1 : 2).accept(ctx);
+			return null;
+		}).when(ctx).mayDiscardCardOfTypeFromHandOrElse(any(), any(), any());
+	}
+
+	@Test
+	void bahamutFuryDealsSevenThousandWhenACardIsDiscarded() {
+		ForwardTarget t = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+		GameContext ctx = contextChoosing(List.of(t));
+		answerAnyDiscard(ctx, true);
+
+		Consumer<GameContext> fn = ActionResolver.parse(BAHAMUT_FURY_EFFECT, makeForward("Bahamut Fury", "Fire", 6, 0));
+		assertNotNull(fn, "Bahamut Fury should parse");
+		fn.accept(ctx);
+
+		verify(ctx).damageTarget(t, 7000);
+		verify(ctx, never()).damageTarget(t, 5000);
+	}
+
+	@Test
+	void bahamutFuryDealsFiveThousandWhenTheDiscardIsDeclined() {
+		ForwardTarget t = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+		GameContext ctx = contextChoosing(List.of(t));
+		answerAnyDiscard(ctx, false);
+
+		ActionResolver.parse(BAHAMUT_FURY_EFFECT, makeForward("Bahamut Fury", "Fire", 6, 0)).accept(ctx);
+
+		verify(ctx).damageTarget(t, 5000);
+		verify(ctx, never()).damageTarget(t, 7000);
+	}
+
+	/**
+	 * "1 card" is any card, and must go through the by-type route rather than the by-name one —
+	 * asking for a card named "card" would find nothing and silently take the "if not" branch every
+	 * time.
+	 */
+	@Test
+	void bahamutFuryOffersAnyCardRatherThanACardNamedCard() {
+		GameContext ctx = contextChoosing(List.of(new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD)));
+		ArgumentCaptor<String> type = ArgumentCaptor.forClass(String.class);
+
+		ActionResolver.parse(BAHAMUT_FURY_EFFECT, makeForward("Bahamut Fury", "Fire", 6, 0)).accept(ctx);
+
+		verify(ctx).mayDiscardCardOfTypeFromHandOrElse(type.capture(), any(), any());
+		assertEquals("card", type.getValue(), "the CardFilters vocabulary for 'any card'");
+		verify(ctx, never()).mayDiscardCardNameFromHandOrElse(any(), any(), any());
+	}
+
+	// --- Madeen 29-116H -------------------------------------------------------------------
+
+	private static final String MADEEN_EFFECT =
+			"Madeen cannot be cancelled. Choose 1 Forward opponent controls. "
+			+ "You may search for 1 Light Forward and remove it from the game. "
+			+ "If you do so, remove the chosen Forward from the game. If not, break the chosen Forward.";
+
+	@Test
+	void madeenRemovesTheChosenForwardOnlyWhenTheSearchSucceeds() {
+		ForwardTarget t = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+		GameContext ctx = contextChoosing(List.of(t));
+		when(ctx.promptYouMay(any())).thenReturn(true);
+		stubSearch(ctx, true);
+
+		Consumer<GameContext> fn = ActionResolver.parse(MADEEN_EFFECT, makeForward("Madeen", "Light", 5, 0));
+		assertNotNull(fn, "Madeen should parse");
+		fn.accept(ctx);
+
+		verify(ctx).removeTargetFromGame(t);
+		verify(ctx, never()).breakTarget(any());
+	}
+
+	/** Madeen's "if not" is a break, where Ark's is damage — the two branches are read, not assumed. */
+	@Test
+	void madeenBreaksTheChosenForwardWhenTheSearchIsDeclined() {
+		ForwardTarget t = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+		GameContext ctx = contextChoosing(List.of(t));
+		when(ctx.promptYouMay(any())).thenReturn(false);
+		stubSearch(ctx, true);
+
+		ActionResolver.parse(MADEEN_EFFECT, makeForward("Madeen", "Light", 5, 0)).accept(ctx);
+
+		verify(ctx).breakTarget(t);
+		verify(ctx, never()).removeTargetFromGame(any());
+	}
+
+	/**
+	 * The precedence guard that makes this work: WhenYouDoSo sits ~200 call sites earlier in
+	 * parse() and used to claim the whole sentence, resolving "remove the chosen Forward from the
+	 * game" as a remove-by-name and never offering the search that gates it.
+	 */
+	@Test
+	void madeenIsClaimedByTheChooseParserRatherThanWhenYouDoSo() {
+		CardData madeen = makeForward("Madeen", "Light", 5, 0);
+		assertEquals("ChooseCharacter / MaySearchRfgThenElse",
+				ActionResolver.fullDescription(MADEEN_EFFECT, madeen));
+
+		GameContext ctx = contextChoosing(List.of(new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD)));
+		when(ctx.promptYouMay(any())).thenReturn(true);
+		stubSearch(ctx, true);
+		ActionResolver.parse(MADEEN_EFFECT, madeen).accept(ctx);
+		verify(ctx, never()).removeNamedCardFromGame(any());
+	}
+
+	// --- Gilgamesh 1-129C -----------------------------------------------------------------
+
+	private static final String GILGAMESH_EFFECT =
+			"Choose 1 Forward. Remove the top card of your deck from the game. "
+			+ "If the removed card is a Forward, break it. If not, deal it 3000 damage.";
+
+	/**
+	 * This card was resolving correctly all along — the parser branch for it has always existed.
+	 * Only the description chain lacked an entry, which reported it as "? + Damage" and made it
+	 * read like a card doing half its text. Both halves are pinned here so the behaviour that was
+	 * never covered stays covered.
+	 */
+	@Test
+	void gilgameshBreaksOnAForwardOffTheTopAndBurnsOtherwise() {
+		for (boolean topIsForward : List.of(true, false)) {
+			ForwardTarget t = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+			GameContext ctx = contextChoosing(List.of(t));
+			when(ctx.removeTopCardOfDeckFromGameIsForward()).thenReturn(topIsForward);
+
+			ActionResolver.parse(GILGAMESH_EFFECT, makeForward("Gilgamesh", "Wind", 3, 7000)).accept(ctx);
+
+			if (topIsForward) {
+				verify(ctx).breakTarget(t);
+				verify(ctx, never()).damageTarget(any(), anyInt());
+			} else {
+				verify(ctx).damageTarget(t, 3000);
+				verify(ctx, never()).breakTarget(any());
+			}
+		}
+	}
+
+	@Test
+	void gilgameshNoLongerReportsAnUndescribedFollowup() {
+		assertEquals("ChooseCharacter / RfpTopDeckIfForwardBreakElseDamage",
+				ActionResolver.fullDescription(GILGAMESH_EFFECT, makeForward("Gilgamesh", "Wind", 3, 7000)));
+	}
+
+	// --- Vanille 1-093H -------------------------------------------------------------------
+
+	private static final String VANILLE_EFFECT =
+			"search for 1 Card Name Hecatoncheir and remove it from the game. "
+			+ "If you do so, return Vanille onto the field dull.";
+
+	@Test
+	void vanilleReturnsHerselfDullWhenHecatoncheirIsFound() {
+		GameContext ctx = mock(GameContext.class);
+		stubSearch(ctx, true);
+
+		Consumer<GameContext> fn = ActionResolver.parse(VANILLE_EFFECT, makeForward("Vanille", "Light", 2, 5000));
+		assertNotNull(fn, "Vanille should parse");
+		fn.accept(ctx);
+
+		verify(ctx).playAllByNameFromOwnBreakZoneDull("Vanille", true);
+	}
+
+	/** The search is mandatory but can come up empty — that is exactly what "if you do so" gates on. */
+	@Test
+	void vanilleStaysInTheBreakZoneWhenTheDeckHasNoHecatoncheir() {
+		GameContext ctx = mock(GameContext.class);
+		stubSearch(ctx, false);
+
+		ActionResolver.parse(VANILLE_EFFECT, makeForward("Vanille", "Light", 2, 5000)).accept(ctx);
+
+		verify(ctx, never()).playAllByNameFromOwnBreakZoneDull(any(), anyBoolean());
+	}
+
+	@Test
+	void vanilleSearchesByNameAndRemovesTheFindFromTheGame() {
+		GameContext ctx = mock(GameContext.class);
+		stubSearch(ctx, true);
+		ArgumentCaptor<String> nameFilter  = ArgumentCaptor.forClass(String.class);
+		ArgumentCaptor<String> destination = ArgumentCaptor.forClass(String.class);
+
+		ActionResolver.parse(VANILLE_EFFECT, makeForward("Vanille", "Light", 2, 5000)).accept(ctx);
+
+		verify(ctx).searchDeckForCard(
+				anyBoolean(), anyBoolean(), anyBoolean(), anyBoolean(),
+				anyInt(), any(), nameFilter.capture(), any(), any(), any(), any(), any(),
+				destination.capture(), anyInt(), anyBoolean(), anyBoolean());
+		assertEquals("Hecatoncheir", nameFilter.getValue());
+		assertEquals("removedFromGame", destination.getValue());
+	}
+
+	/**
+	 * 9-106R Ghis prints the same "return Ghis onto the field dull" wording but has just removed
+	 * itself from the game, so it must not be replayed out of the Break Zone. That is why the
+	 * wording is read inside the search parser rather than added to the shared play-onto-field
+	 * pattern, and this pins Ghis to the parser it already had.
+	 */
+	@Test
+	void ghisIsNotDivertedByVanillesReturnWording() {
+		CardData ghis = makeForward("Ghis", "Ice", 4, 7000);
+		String ghisEffect = "remove Ghis from the game. If you do so, return Ghis onto the field dull, "
+				+ "then remove the top 3 cards of your deck from the game.";
+		assertEquals("WhenYouDoSo", ActionResolver.fullDescription(ghisEffect, ghis));
+	}
+
 }

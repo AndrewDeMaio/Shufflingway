@@ -1625,12 +1625,12 @@ final class GameContextImpl implements GameContext {
 			@Override public void returnP2ForwardToDeckTop(int idx)      { mw.returnP2ForwardToDeck(idx, false); }
 			@Override public void returnP1ForwardUnderDeckTop(int idx, int position) { mw.returnP1ForwardUnderDeckTop(idx, position); }
 			@Override public void returnP2ForwardUnderDeckTop(int idx, int position) { mw.returnP2ForwardUnderDeckTop(idx, position); }
-			@Override public void searchDeckForCard(boolean inclForwards, boolean inclBackups,
+			@Override public boolean searchDeckForCard(boolean inclForwards, boolean inclBackups,
 					boolean inclMonsters, boolean inclSummons,
 					int costVal, String costCmp, String cardNameFilter, String jobFilter,
 					String categoryFilter, String elementFilter, String excludeName, String excludeElem,
 					String destination, int count, boolean entersDull, boolean requireWarp) {
-				mw.searchDeckForCard(isP1, inclForwards, inclBackups, inclMonsters, inclSummons,
+				return mw.searchDeckForCard(isP1, inclForwards, inclBackups, inclMonsters, inclSummons,
 						costVal, costCmp, cardNameFilter, jobFilter, categoryFilter, elementFilter, excludeName, excludeElem, destination, count, entersDull, requireWarp);
 			}
 			@Override public void searchDeckJobAndTypeDontShareElements(String jobFilter, String typeName) {
@@ -5717,28 +5717,43 @@ final class GameContextImpl implements GameContext {
 			}
 
 			@Override public void selfDiscardByType(String cardType) {
-				if (isP1) {
-					boolean discarded = mw.showDiscardByTypeDialog(cardType);
-					if (!discarded) markEffectFizzled();
-				} else {
-					List<CardData> hand = mw.gameState.getP2Hand();
-					List<Integer> eligible = new ArrayList<>();
-					for (int i = 0; i < hand.size(); i++) {
-						if (matchesDiscardType(hand.get(i), cardType)) eligible.add(i);
-					}
-					if (eligible.isEmpty()) { markEffectFizzled(); return; }
-					List<CardData> eligibleCards = eligible.stream().map(hand::get).collect(Collectors.toList());
-					int relIdx = MainWindow.pickWorstHandCard0(eligibleCards);
-					int idx = eligible.get(relIdx);
-					CardData d = mw.playerBreakFromHand(false, idx);
-					if (d != null) {
-						logEntry("[P2] Discards " + d.name());
-						mw.p2Turn.discardedByEffectThisTurn = true;
-						if (d.isForward()) mw.lastDiscardedForwardPower = d.power();
-					}
-					mw.refreshP2HandCountLabel();
-					mw.refreshP2BreakLabel();
+				if (!discardOneFromHandByType(cardType)) markEffectFizzled();
+			}
+
+			@Override public void mayDiscardCardOfTypeFromHandOrElse(String cardType,
+					java.util.function.Consumer<GameContext> ifDiscarded,
+					java.util.function.Consumer<GameContext> ifNot) {
+				// No markEffectFizzled() here, unlike selfDiscardByType: declining is not a dead
+				// end for these cards, it is the branch ifNot spells out.
+				if (discardOneFromHandByType(cardType)) ifDiscarded.accept(this);
+				else                                    ifNot.accept(this);
+			}
+
+			/**
+			 * Offers the ability user one optional discard of a card matching {@code cardType}
+			 * ({@code "card"} for any), and reports whether one actually went to the Break Zone.
+			 * Shared by the two methods above so they cannot drift in what counts as a discard.
+			 */
+			private boolean discardOneFromHandByType(String cardType) {
+				if (isP1) return mw.showDiscardByTypeDialog(cardType);
+				List<CardData> hand = mw.gameState.getP2Hand();
+				List<Integer> eligible = new ArrayList<>();
+				for (int i = 0; i < hand.size(); i++) {
+					if (matchesDiscardType(hand.get(i), cardType)) eligible.add(i);
 				}
+				if (eligible.isEmpty()) return false;
+				List<CardData> eligibleCards = eligible.stream().map(hand::get).collect(Collectors.toList());
+				int relIdx = MainWindow.pickWorstHandCard0(eligibleCards);
+				int idx = eligible.get(relIdx);
+				CardData d = mw.playerBreakFromHand(false, idx);
+				if (d != null) {
+					logEntry("[P2] Discards " + d.name());
+					mw.p2Turn.discardedByEffectThisTurn = true;
+					if (d.isForward()) mw.lastDiscardedForwardPower = d.power();
+				}
+				mw.refreshP2HandCountLabel();
+				mw.refreshP2BreakLabel();
+				return d != null;
 			}
 
 			@Override public void selfDiscardByJob(String jobName) {
@@ -6012,19 +6027,21 @@ final class GameContextImpl implements GameContext {
 				replayAction.accept(this);
 			}
 
-			@Override public void mayDiscardCardNameFromHand(String cardName, java.util.function.Consumer<GameContext> ifDiscarded) {
+			@Override public void mayDiscardCardNameFromHandOrElse(String cardName,
+					java.util.function.Consumer<GameContext> ifDiscarded,
+					java.util.function.Consumer<GameContext> ifNot) {
 				List<CardData> hand = isP1 ? mw.gameState.getP1Hand() : mw.gameState.getP2Hand();
 				int handIdx = -1;
 				for (int i = 0; i < hand.size(); i++) {
 					if (hand.get(i).name().equalsIgnoreCase(cardName)) { handIdx = i; break; }
 				}
-				if (handIdx < 0) { logEntry("[Effect] No " + cardName + " in hand — optional discard skipped"); return; }
-				if (!isP1) { logEntry("[P2 AI] Passes on optional discard of " + cardName); return; }
+				if (handIdx < 0) { logEntry("[Effect] No " + cardName + " in hand — optional discard skipped"); ifNot.accept(this); return; }
+				if (!isP1) { logEntry("[P2 AI] Passes on optional discard of " + cardName); ifNot.accept(this); return; }
 				String src = mw.currentAbilitySource != null ? mw.currentAbilitySource.name() : "Ability";
 				int choice = mw.showEffectOptionDialog(
 						src + " — Discard " + cardName + " from hand?",
 						"You May Discard", new Object[]{"Discard", "Pass"});
-				if (choice != 0) { logEntry("[Effect] Declined to discard " + cardName); return; }
+				if (choice != 0) { logEntry("[Effect] Declined to discard " + cardName); ifNot.accept(this); return; }
 				final int idx = handIdx;
 				CardData d = mw.playerBreakFromHand(true,idx);
 				if (d != null) { logEntry("[Effect] Discarded " + d.name()); mw.p1Turn.discardedByEffectThisTurn = true; }

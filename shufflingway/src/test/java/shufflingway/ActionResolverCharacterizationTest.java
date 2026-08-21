@@ -140,6 +140,24 @@ public class ActionResolverCharacterizationTest {
 						call(() -> FieldAbilityParsingTest.describeFieldAbility(fa, card, type))));
 				abilities++;
 			}
+
+			// Summons carry their whole effect in one unnamed block rather than in the ability
+			// lists above, so without this row the file covered every card type but this one.
+			//
+			// Gated on the card type, as SummonParsingTest's query is: CardData.summonEffect()
+			// only cleans markup off the card text and does not check what it is cleaning, so on
+			// a Forward it happily returns the card's entire text. Recording that would add
+			// thousands of rows whose "summon effect" is not one.
+			if ("Summon".equalsIgnoreCase(type)) {
+				final String summonText = card.summonEffect();
+				if (summonText != null && !summonText.isBlank()) {
+					body.add(line(entry.serial(), "summon", 0,
+							call(() -> ActionResolver.parse(summonText, card) != null ? "parsed" : "unparsed"),
+							call(() -> ActionResolver.matchedPatternName(summonText, card)),
+							call(() -> ActionResolver.fullDescription(summonText, card))));
+					abilities++;
+				}
+			}
 		}
 
 		out.add("# ActionResolver characterization: " + corpus.size()

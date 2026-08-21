@@ -1849,6 +1849,21 @@ public interface GameContext {
     void selfDiscardByType(String cardType);
 
     /**
+     * The two-branch form of {@link #selfDiscardByType}: offers the same optional discard, then
+     * runs {@code ifDiscarded} or {@code ifNot} according to what happened — "You may discard 1
+     * card from your hand. If you do so, deal it 7000 damage. If not, deal it 5000 damage."
+     * (1-190S Bahamut Fury).
+     *
+     * <p>{@code cardType} takes the {@code CardFilters.matchesDiscardType} vocabulary, where
+     * {@code "card"} means any card. Unlike {@code selfDiscardByType} this does not mark the
+     * effect fizzled when nothing is discarded: for these cards declining is not a dead end but
+     * the branch {@code ifNot} spells out.
+     */
+    void mayDiscardCardOfTypeFromHandOrElse(String cardType,
+            java.util.function.Consumer<GameContext> ifDiscarded,
+            java.util.function.Consumer<GameContext> ifNot);
+
+    /**
      * Prompts the ability user to discard 1 card with Job {@code jobName} from their hand.
      * Sets effectMadeProgress only when a card is actually discarded.
      * When P2 is the ability user the AI discards the worst eligible card automatically.
@@ -1969,11 +1984,20 @@ public interface GameContext {
     void mayDiscardCardNameToReplayAbility(String cardName, java.util.function.Consumer<GameContext> replayAction);
 
     /**
-     * Offers the player the option to discard a card named {@code cardName} from hand.
-     * Skips the offer silently if no such card is in hand.
-     * Calls {@code ifDiscarded} if the player accepts and the card is discarded.
+     * Offers the player the option to discard a card named {@code cardName} from hand, then runs
+     * {@code ifDiscarded} or {@code ifNot} according to what happened: "You may discard 1 Card
+     * Name Ifrit from your hand. If you do so, deal it 10000 damage. If not, deal it 5000 damage."
+     * (5-003C Ifrit).
+     *
+     * <p>{@code ifNot} runs for every way the discard can fail to happen — no copy in hand, the
+     * player declining, the AI passing — because each of them is the card's "if not". Pass a
+     * no-op for the printings that end after the "if you do so" sentence; there is deliberately no
+     * two-argument convenience overload, since silently having no else branch is what left Ifrit
+     * dealing no damage on either branch.
      */
-    void mayDiscardCardNameFromHand(String cardName, java.util.function.Consumer<GameContext> ifDiscarded);
+    void mayDiscardCardNameFromHandOrElse(String cardName,
+            java.util.function.Consumer<GameContext> ifDiscarded,
+            java.util.function.Consumer<GameContext> ifNot);
 
     /**
      * Prompts the controlling player to optionally put {@code source} into the Break Zone.
@@ -2348,10 +2372,15 @@ public interface GameContext {
      * @param destination    {@code "hand"} — add to hand, {@code "field"} — play onto field,
      *                       {@code "deckTop"} — place on top of deck,
      *                       {@code "underTop"} — place second from top of deck,
-     *                       {@code "breakZone"} — put into the Break Zone
+     *                       {@code "breakZone"} — put into the Break Zone,
+     *                       {@code "removedFromGame"} — remove it from the game
      * @param requireWarp    if {@code true}, restrict results to cards with the Warp trait
+     * @return whether a card was actually found, chosen and moved. False covers all three ways a
+     *         search can come up empty — blocked this turn, no match in the deck, or the player
+     *         looked and picked nothing — which is what "If you do so, … If not, …" branches on
+     *         (29-117H Ark). Callers that only search may ignore it.
      */
-    void searchDeckForCard(boolean inclForwards, boolean inclBackups, boolean inclMonsters, boolean inclSummons,
+    boolean searchDeckForCard(boolean inclForwards, boolean inclBackups, boolean inclMonsters, boolean inclSummons,
             int costVal, String costCmp, String cardNameFilter, String jobFilter,
             String categoryFilter, String elementFilter, String excludeName, String excludeElem,
             String destination, int count, boolean entersDull, boolean requireWarp);

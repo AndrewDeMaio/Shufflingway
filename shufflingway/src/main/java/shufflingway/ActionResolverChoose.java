@@ -1008,6 +1008,24 @@ final class ActionResolverChoose {
      * is what makes the trigger survive a lethal primary: the mark is on the Forward before the
      * damage that breaks it.
      */
+    /**
+     * Routes the "Choose … . You may search for 1 X and remove it from the game. If you do so, … .
+     * If not, … ." shape to {@link #tryParseChooseCharacter} early, without duplicating any of it.
+     *
+     * <p>Exists purely for call order. The followup branch that handles this family lives inside
+     * the choose parser, which {@code parse()} reaches long after
+     * {@code tryParseWhenYouDoSoSequence} — and that parser splits on "If you do so" and resolves
+     * the halves independently, so 29-116H Madeen's "remove the chosen Forward from the game" was
+     * read as a bare remove-by-name and the optional search was never offered. 29-117H Ark escaped
+     * only because neither of its branches parses standalone.
+     */
+    static Consumer<GameContext> tryParseChooseMaySearchRfgThenElse(String text, CardData source, int xValue) {
+        Matcher m = CHOOSE_CHARACTER_PATTERN.matcher(escapePeriodInName(text, source));
+        if (!m.find()) return null;
+        String followup = restorePeriodInName(m.group("followup").trim(), source);
+        if (!FOLLOWUP_MAY_SEARCH_RFG_THEN_ELSE.matcher(followup).matches()) return null;
+        return tryParseChooseCharacter(text, source, xValue);
+    }
     static Consumer<GameContext> tryParseChooseCharacter(String text, CardData source, int xValue) {
         Matcher bzDrawM = CHOOSE_THEN_WHEN_PUT_TO_BZ_DRAW.matcher(text.trim());
         if (bzDrawM.matches()) {
@@ -1479,19 +1497,78 @@ final class ActionResolverChoose {
         // Checked against the full followup before the primary/secondary split.
         Matcher mayDiscardNamedM = FOLLOWUP_MAY_DISCARD_NAMED_DEAL_DAMAGE.matcher(followup);
         if (mayDiscardNamedM.matches()) {
-            String discardName = mayDiscardNamedM.group("cardname").trim();
+            // Exactly one of the two is present — the pattern's alternation guarantees it.
+            String discardName = mayDiscardNamedM.group("cardname") != null
+                    ? mayDiscardNamedM.group("cardname").trim() : null;
+            String discardType = mayDiscardNamedM.group("cardtype") != null
+                    ? mayDiscardNamedM.group("cardtype").toLowerCase(java.util.Locale.ROOT)
+                            .replaceAll("s$", "") : null;
             int    damage      = Integer.parseInt(mayDiscardNamedM.group("amount"));
+            // 0 when the card prints no "If not" sentence, in which case declining does nothing.
+            int    elseDamage  = mayDiscardNamedM.group("elseamount") != null
+                    ? Integer.parseInt(mayDiscardNamedM.group("elseamount")) : 0;
+            String discardLabel = discardName != null ? "Card Name " + discardName : "1 " + discardType;
             return ctx -> {
-                ctx.logEntry(choosePrefix + " — May discard Card Name " + discardName + ", if so deal " + damage + " damage");
+                ctx.logEntry(choosePrefix + " — May discard " + discardLabel
+                        + ", if so deal " + damage + " damage"
+                        + (elseDamage > 0 ? ", if not deal " + elseDamage : ""));
                 List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
                         opponentOnly, selfOnly, condition, element, zone, opponentZone,
                         costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
                         jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                ctx.mayDiscardCardNameFromHand(discardName, ctx2 -> {
+                Consumer<GameContext> ifDiscarded = ctx2 -> {
                     sortedByIdxDesc(ts, true) .forEach(t -> ctx2.damageTarget(t, damage));
                     sortedByIdxDesc(ts, false).forEach(t -> ctx2.damageTarget(t, damage));
-                });
+                };
+                Consumer<GameContext> ifNot = ctx2 -> {
+                    if (elseDamage <= 0) return;
+                    sortedByIdxDesc(ts, true) .forEach(t -> ctx2.damageTarget(t, elseDamage));
+                    sortedByIdxDesc(ts, false).forEach(t -> ctx2.damageTarget(t, elseDamage));
+                };
+                if (discardName != null) ctx.mayDiscardCardNameFromHandOrElse(discardName, ifDiscarded, ifNot);
+                else                     ctx.mayDiscardCardOfTypeFromHandOrElse(discardType, ifDiscarded, ifNot);
             };
+        }
+
+        // --- "You may search for 1 [Elem] [Type] and remove it from the game. If you do so, break
+        //      the chosen Forwards. If not, deal N damage to the chosen Forwards." (29-117H Ark) ---
+        // Also read off the full followup: after the split its first sentence reaches the generic
+        // chain, where "remove it from the game" is taken as removing the chosen Forwards.
+        Matcher maySearchRfgM = FOLLOWUP_MAY_SEARCH_RFG_THEN_ELSE.matcher(followup);
+        if (maySearchRfgM.matches()) {
+            BiConsumer<GameContext, List<ForwardTarget>> thenAction =
+                    parseChosenTargetsAction(maySearchRfgM.group("thenact"));
+            BiConsumer<GameContext, List<ForwardTarget>> elseAction =
+                    parseChosenTargetsAction(maySearchRfgM.group("elseact"));
+            // Both branches or nothing — resolving one and dropping the other is worse than
+            // letting the text fall through to the generic chain.
+            if (thenAction != null && elseAction != null) {
+                String  searchElem  = maySearchRfgM.group("element");
+                String  typeRaw     = maySearchRfgM.group("type");
+                String  typeLower   = typeRaw.toLowerCase(java.util.Locale.ROOT);
+                boolean wantFwd     = typeLower.startsWith("forward") || typeLower.startsWith("character");
+                boolean wantBkp     = typeLower.startsWith("backup")  || typeLower.startsWith("character");
+                boolean wantMon     = typeLower.startsWith("monster") || typeLower.startsWith("character");
+                String  searchLabel = (searchElem != null ? searchElem + " " : "") + typeRaw;
+                return ctx -> {
+                    ctx.logEntry(choosePrefix + " — May search/RFG 1 " + searchLabel
+                            + ": if so \"" + maySearchRfgM.group("thenact")
+                            + "\", if not \"" + maySearchRfgM.group("elseact") + "\"");
+                    List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                            opponentOnly, selfOnly, condition, element, zone, opponentZone,
+                            costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
+                            jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
+                    // Declining and searching in vain are both "if not": the "if you do so" branch
+                    // is taken only when a card was really found and removed.
+                    boolean removed = ctx.promptYouMay(
+                                    "Search for 1 " + searchLabel + " and remove it from the game?")
+                            && ctx.searchDeckForCard(wantFwd, wantBkp, wantMon, false,
+                                    -1, null, null, null, null, searchElem, null, null,
+                                    "removedFromGame", 1, false, false);
+                    if (removed) thenAction.accept(ctx, ts);
+                    else         elseAction.accept(ctx, ts);
+                };
+            }
         }
 
         // --- "Divide N damage" ---
@@ -3458,6 +3535,18 @@ final class ActionResolverChoose {
         Matcher reduceForEachHandM = FOLLOWUP_POWER_REDUCE_UNTIL_FOR_EACH_HAND.matcher(primaryFollowup);
         if (reduceForEachHandM.find()) {
             int perCard = Integer.parseInt(reduceForEachHandM.group(1));
+            // "If its power has become 0 or less by the previous effect, draw N card." (10-110C
+            // Cúchulainn). Handled here rather than as a detached secondary because reduceTarget
+            // runs the 0-power rule process on the spot: by the time a separate clause could look
+            // at the Forward it is already in the Break Zone. The test is therefore made against
+            // the power the reduction is about to produce, before applying it.
+            final int drawIfZeroed;
+            {
+                Matcher zeroDrawM = secondaryText != null
+                        ? FOLLOWUP_IF_POWER_BECAME_ZERO_DRAW.matcher(secondaryText) : null;
+                drawIfZeroed = zeroDrawM != null && zeroDrawM.matches()
+                        ? Integer.parseInt(zeroDrawM.group("draw")) : 0;
+            }
             return ctx -> {
                 int n = ctx.yourHandSize();
                 int reduction = perCard * n;
@@ -3466,9 +3555,18 @@ final class ActionResolverChoose {
                         opponentOnly, selfOnly, condition, element, zone, opponentZone,
                         costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
                 EnumSet<CardData.Trait> noTraits = EnumSet.noneOf(CardData.Trait.class);
+                boolean anyZeroed = false;
+                if (drawIfZeroed > 0)
+                    for (ForwardTarget t : ts)
+                        if (ctx.effectiveTargetPower(t) - reduction <= 0) { anyZeroed = true; break; }
                 sortedByIdxDesc(ts, true) .forEach(t -> ctx.reduceTarget(t, reduction, noTraits));
                 sortedByIdxDesc(ts, false).forEach(t -> ctx.reduceTarget(t, reduction, noTraits));
-                if (secondary != null) secondary.accept(ctx);
+                if (anyZeroed) {
+                    ctx.logEntry("Effect: power reduced to 0 or less — draw " + drawIfZeroed);
+                    ctx.drawCards(drawIfZeroed);
+                }
+                // The draw clause is consumed above; anything else still runs as the secondary.
+                if (drawIfZeroed == 0 && secondary != null) secondary.accept(ctx);
             };
         }
 

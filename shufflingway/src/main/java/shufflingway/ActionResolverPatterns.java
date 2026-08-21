@@ -663,11 +663,72 @@ final class ActionResolverPatterns {
         "from\\s+(?:their|his/her|his|her)\\s+hand\\.?$"
     );
     /**
-     * Matches "You may discard 1 Card Name X from your hand. If you do so, deal it N damage."
-     * Groups: {@code cardname}, {@code amount}.
+     * Matches "You may discard 1 [Card Name X | card | &lt;type&gt;] from your hand. If you do so,
+     * deal it N damage. [If not, deal it M damage.]"
+     * Groups: {@code cardname} or {@code cardtype} (exactly one is non-null), {@code amount}, and
+     * {@code elseamount} for the declined branch.
+     *
+     * <p>The "If not" sentence is optional because both printings exist; 5-003C Ifrit has it, and
+     * without it here the sentence fell past the whole followup chain and the card did nothing at
+     * all — not even the smaller damage.
+     *
+     * <p>The unnamed alternative is 1-190S Bahamut Fury's "1 card", which is any card at all.
+     * {@code cardtype} is spelled in the {@code CardFilters.matchesDiscardType} vocabulary so the
+     * handler can pass it straight through.
      */
     static final Pattern FOLLOWUP_MAY_DISCARD_NAMED_DEAL_DAMAGE = Pattern.compile(
-        "(?i)^you\\s+may\\s+discard\\s+1\\s+Card\\s+Name\\s+(?<cardname>.+?)\\s+from\\s+your\\s+hand\\.\\s+If\\s+you\\s+do\\s+so,\\s+deal\\s+it\\s+(?<amount>\\d+)\\s+damage\\.?$"
+        "(?i)^you\\s+may\\s+discard\\s+1\\s+" +
+        "(?:Card\\s+Name\\s+(?<cardname>.+?)" +
+        "|(?<cardtype>card|Forwards?|Backups?|Monsters?|Characters?|Summons?))" +
+        "\\s+from\\s+your\\s+hand\\.\\s+" +
+        "If\\s+you\\s+do\\s+so,\\s+deal\\s+it\\s+(?<amount>\\d+)\\s+damage\\.?" +
+        "(?:\\s+If\\s+not,\\s+deal\\s+it\\s+(?<elseamount>\\d+)\\s+damage\\.?)?$"
+    );
+    /**
+     * Matches "If its/their power has become 0 or less by the previous effect, draw N card(s)." —
+     * the payoff clause on 10-110C Cúchulainn, whose power reduction scales with the caster's hand.
+     *
+     * <p>Read together with the reduction it refers to rather than as a standalone secondary: by
+     * the time a detached clause could look, {@code reduceTarget} has already run the 0-power rule
+     * process and the Forward is in the Break Zone, so there is no power left to read.
+     */
+    static final Pattern FOLLOWUP_IF_POWER_BECAME_ZERO_DRAW = Pattern.compile(
+        "(?i)^If\\s+(?:its|their)\\s+power\\s+(?:has\\s+)?becomes?\\s+0\\s+or\\s+less\\s+" +
+        "by\\s+the\\s+previous\\s+effect,\\s+draw\\s+(?<draw>\\d+)\\s+cards?[.!]?$"
+    );
+    /**
+     * Matches "You may search for 1 [Element] [Type] and remove it from the game. If you do so,
+     * &lt;then&gt;. If not, &lt;else&gt;." where each branch acts on the Forward(s) already chosen —
+     * 29-117H Ark (break, else 8000 damage) and 29-116H Madeen (remove from the game, else break).
+     *
+     * <p>Anchored whole, and matched against the entire followup rather than the primary half:
+     * the three sentences are one effect, and the "." split hands the first of them to the generic
+     * chain, where "remove it from the game" reads as removing the <em>chosen</em> Forwards. That
+     * is what Ark did — it removed the opponent's Forwards from the game outright, skipping both
+     * the search it is supposed to cost and the smaller "if not" outcome.
+     *
+     * <p>The branches are captured as text and read by {@link #CHOSEN_TARGETS_BREAK} and its
+     * siblings rather than enumerated here, so an unrecognised verb fails the whole match and the
+     * text falls through instead of resolving as half the card.
+     */
+    static final Pattern FOLLOWUP_MAY_SEARCH_RFG_THEN_ELSE = Pattern.compile(
+        "(?i)^You\\s+may\\s+search\\s+for\\s+1\\s+" +
+        "(?:(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?" +
+        "(?<type>Forwards?|Backups?|Monsters?|Characters?)\\s+and\\s+remove\\s+it\\s+from\\s+the\\s+game\\.\\s+" +
+        "If\\s+you\\s+do\\s+so,\\s+(?<thenact>[^.]+)\\.\\s+" +
+        "If\\s+not,\\s+(?<elseact>[^.]+)\\.?$"
+    );
+    /** "break the chosen Forward(s)" — one branch verb of {@link #FOLLOWUP_MAY_SEARCH_RFG_THEN_ELSE}. */
+    static final Pattern CHOSEN_TARGETS_BREAK = Pattern.compile(
+        "(?i)^break\\s+the\\s+chosen\\s+(?:Forwards?|Characters?)$"
+    );
+    /** "remove the chosen Forward(s) from the game" — 29-116H Madeen's "if you do so" branch. */
+    static final Pattern CHOSEN_TARGETS_REMOVE_FROM_GAME = Pattern.compile(
+        "(?i)^remove\\s+the\\s+chosen\\s+(?:Forwards?|Characters?)\\s+from\\s+the\\s+game$"
+    );
+    /** "deal N damage to the chosen Forward(s)" — 29-117H Ark's "if not" branch. */
+    static final Pattern CHOSEN_TARGETS_DEAL_DAMAGE = Pattern.compile(
+        "(?i)^deal\\s+(?<amount>\\d+)\\s+damage\\s+to\\s+the\\s+chosen\\s+(?:Forwards?|Characters?)$"
     );
     /**
      * Matches "Deal it/them N damage. If &lt;condition&gt;, deal it/them M damage instead."
@@ -1560,6 +1621,33 @@ final class ActionResolverPatterns {
      * ends before "at the end of the turn" and would resolve a delayed RFG-origin play as an
      * immediate Break-Zone one — both the timing and the zone wrong, silently.
      */
+    /**
+     * Matches "Search for 1 Card Name X and remove it from the game. [If|When] you do so,
+     * &lt;effect&gt;." — 1-093H Vanille, 20-047H Jenova Dreamweaver.
+     *
+     * <p>The search is mandatory but can still come up empty, which is what the "if you do so"
+     * gates on: the deck may hold no copy of the named card. Group {@code effect} is handed back
+     * to {@code parse()} rather than enumerated, so the payoff can be anything.
+     */
+    static final Pattern SEARCH_NAMED_RFG_THEN_IF_DO_SO = Pattern.compile(
+        "(?i)^search\\s+for\\s+1\\s+Card\\s+Name\\s+(?<name>.+?)\\s+and\\s+remove\\s+it\\s+from\\s+the\\s+game\\.\\s+" +
+        "(?:If|When)\\s+you\\s+do\\s+so,\\s+(?<effect>.+)$",
+        Pattern.DOTALL
+    );
+    /**
+     * Matches "Return [CardName] onto the field [dull]" — the payoff half of
+     * {@link #SEARCH_NAMED_RFG_THEN_IF_DO_SO} on 1-093H Vanille.
+     *
+     * <p>Deliberately <em>not</em> folded into {@link #PLAY_SOURCE_ONTO_FIELD_PATTERN} as another
+     * verb: that parser plays the card back out of the owner's Break Zone, which is right for
+     * Vanille (its trigger is being put there) but wrong for the corpus's only other "return …
+     * onto the field" card, 9-106R Ghis, which has just removed itself from the game and would be
+     * replayed from the wrong zone. Read only from the search parser, whose own gate keeps it off
+     * every text but this family's.
+     */
+    static final Pattern RETURN_SOURCE_ONTO_FIELD = Pattern.compile(
+        "(?i)^Return\\s+(?<name>.+?)\\s+onto\\s+(?:the\\s+)?field(?:\\s+(?<dull>dull))?[.!]?$"
+    );
     static final Pattern PLAY_SOURCE_ONTO_FIELD_PATTERN = Pattern.compile(
         "(?i)\\bPlay\\s+(?<name>\\S+(?:\\s+\\S+){0,2})\\s+onto\\s+(?:the\\s+)?field(?:\\s+(?<dull>dull))?" +
         "(?!\\s+at\\s+(?:the\\s+)?end\\s+of)[.!]?"

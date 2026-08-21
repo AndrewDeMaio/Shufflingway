@@ -4700,7 +4700,13 @@ public class MainWindow {
 	// Deck search
 	// -------------------------------------------------------------------------
 
-	void searchDeckForCard(boolean isP1,
+	/**
+	 * @return whether the search actually moved a card — false when searching is blocked, when the
+	 *         deck holds no match, or when the player looked and picked nothing. Callers that only
+	 *         search may ignore it; "search … <b>and</b> remove it from the game. If you do so, …"
+	 *         (29-117H Ark) branches on it, and a decline has to take the "If not" branch.
+	 */
+	boolean searchDeckForCard(boolean isP1,
 			boolean inclForwards, boolean inclBackups,
 			boolean inclMonsters, boolean inclSummons,
 			int costVal, String costCmp, String cardNameFilter, String jobFilter,
@@ -4709,14 +4715,14 @@ public class MainWindow {
 		if (turn(isP1).cannotSearchThisTurn) {
 			// No search took place, so nothing that watches for one should fire.
 			logEntry("Search blocked — opponent cannot search this turn");
-			return;
+			return false;
 		}
 		// The Character whose ability is searching, when there is one — a Summon or a game action
 		// searching leaves this null, and "a Character opponent controls searches" must not fire.
 		CardData searcher = (currentAbilitySource != null && currentAbilitySourceIsP1 == isP1)
 				? currentAbilitySource : null;
 		try {
-			searchDeckForCardImpl(isP1, inclForwards, inclBackups, inclMonsters, inclSummons,
+			return searchDeckForCardImpl(isP1, inclForwards, inclBackups, inclMonsters, inclSummons,
 					costVal, costCmp, cardNameFilter, jobFilter, categoryFilter, elementFilter,
 					excludeName, excludeElem, destination, count, entersDull, requireWarp);
 		} finally {
@@ -4726,7 +4732,8 @@ public class MainWindow {
 		}
 	}
 
-	private void searchDeckForCardImpl(boolean isP1,
+	/** @return whether a card was found, chosen, and moved to {@code destination}. */
+	private boolean searchDeckForCardImpl(boolean isP1,
 			boolean inclForwards, boolean inclBackups,
 			boolean inclMonsters, boolean inclSummons,
 			int costVal, String costCmp, String cardNameFilter, String jobFilter,
@@ -4777,7 +4784,7 @@ public class MainWindow {
 		if (matches.isEmpty()) {
 			shuffleDeck(isP1);
 			logEntry("Search: no matching card found in deck");
-			return;
+			return false;
 		}
 		List<CardData> chosen = new ArrayList<>();
 		if (!isP1) {
@@ -4806,7 +4813,7 @@ public class MainWindow {
 		shuffleDeck(isP1);
 		if (chosen.isEmpty()) {
 			logEntry("Search: no card selected");
-			return;
+			return false;
 		}
 		for (CardData card : chosen) {
 			switch (destination) {
@@ -4856,8 +4863,16 @@ public class MainWindow {
 					else      { addToBreakZone(card); refreshP2BreakLabel(); }
 					logEntry((isP1 ? "" : "[P2] ") + card.name() + " → Break Zone (search)");
 				}
+				// The card never reached the field, so nothing "leaves the field" and no
+				// leaves-field trigger fires — it goes straight from the deck to the RFG zone.
+				case "removedFromGame" -> {
+					gameState.addToPermanentRfp(card);
+					logEntry((isP1 ? "" : "[P2] ") + card.name() + " → Removed From Game (search)");
+					if (isP1) refreshP1WarpZoneUI(); else refreshP2WarpZoneUI();
+				}
 			}
 		}
+		return true;
 	}
 
 	void shuffleDeck(boolean isP1) {

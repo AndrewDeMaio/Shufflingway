@@ -226,6 +226,12 @@ public class ActionResolver {
         result = tryParseMayPayCostThenEffect(effectText, source, xValue);
         if (result != null) return result;
 
+        // Must precede tryParseWhenYouDoSoSequence: that parser splits on "If you do so" and
+        // resolves the halves independently, which turns 29-116H Madeen's "remove the chosen
+        // Forward from the game" into a bare remove-by-name and loses the search that gates it.
+        result = tryParseChooseMaySearchRfgThenElse(effectText, source, xValue);
+        if (result != null) return result;
+
         result = tryParseWhenYouDoSoSequence(effectText, source, xValue);
         if (result != null) return result;
 
@@ -1081,6 +1087,11 @@ public class ActionResolver {
         result = tryParseDualSearchPlayOntoField(effectText);
         if (result != null) return result;
 
+        // Must precede tryParseSearchDeck: that parser resolves the search alone and leaves the
+        // "If you do so, ..." payoff behind, which is the whole point of 1-093H Vanille.
+        result = tryParseSearchNamedRfgThenIfDoSo(effectText, source);
+        if (result != null) return result;
+
         result = tryParseSearchDeck(effectText, source, xValue);
         if (result != null) return result;
 
@@ -1451,6 +1462,10 @@ public class ActionResolver {
         // Must precede tryParseWhenYouDoSoSequence: that parser resolves both halves
         // independently, so it would claim the pay-then-effect shape first. Mirrors parse().
         if (tryParseMayPayCostThenEffect(effectText, source, 0) != null) return "MayPayCostThenEffect";
+        // Must precede WhenYouDoSo, mirroring parse(): that parser claims the whole sentence and
+        // names itself over a card the choose parser actually resolves.
+        if (tryParseChooseMaySearchRfgThenElse(effectText, source, 0) != null)
+            return "ChooseCharacter";
         if (tryParseWhenYouDoSoSequence(effectText, source, 0) != null) return "WhenYouDoSo";
         if (tryParseSelectNumber(effectText, source)                    != null) return "SelectNumber";
         if (tryParseAllMonstersTemporaryForward(effectText) != null) return "AllMonstersTemporaryForward";
@@ -1720,6 +1735,9 @@ public class ActionResolver {
         if (tryParseSearchNElementSummonsDiffCost(effectText)              != null) return "SearchNElementSummonsDiffCost";
         // Mirrors parse(): ahead of the single-pool search, whose prefix it shares.
         if (tryParseDualSearchPlayOntoField(effectText)            != null) return "DualSearchPlayOntoField";
+        // Must precede SearchDeck, mirroring parse(): that parser names the search alone and
+        // leaves the "If you do so, ..." payoff out of the report.
+        if (tryParseSearchNamedRfgThenIfDoSo(effectText, source) != null) return "SearchNamedRfgThenIfDoSo";
         if (tryParseSearchDeck(effectText, source, 0)                      != null) return "SearchDeck";
         if (tryParsePlayAllByNameFromBreakZone(effectText)      != null) return "PlayAllByNameFromBreakZone";
         if (tryParsePlaySourceFromBreakZone(effectText, source) != null) return "PlaySourceFromBreakZone";
@@ -1958,6 +1976,9 @@ public class ActionResolver {
         if (FOLLOWUP_KEYWORD_GRANT_UNTIL.matcher(followupText).find())               return "KeywordGrant";
         if (FOLLOWUP_POWER_REDUCE.matcher(followupText).find())                       return "PowerReduce";
         if (FOLLOWUP_POWER_REDUCE_UNTIL_FOR_EACH_HAND.matcher(followupText).find())  return "PowerReduceUntilForEachHand";
+        // The payoff half of the clause above, which the ". " split reports separately even though
+        // the parser resolves the two together.
+        if (FOLLOWUP_IF_POWER_BECAME_ZERO_DRAW.matcher(followupText).matches())      return "IfPowerBecameZeroDraw";
         if (FOLLOWUP_POWER_REDUCE_UNTIL_FOR_EACH.matcher(followupText).find())       return "PowerReduceUntilForEach";
         if (FOLLOWUP_POWER_REDUCE_UNTIL.matcher(followupText).find())                 return "PowerReduceUntil";
         if (OPPONENT_DISCARD.matcher(followupText).find())                            return "OpponentDiscard";
@@ -2046,6 +2067,10 @@ public class ActionResolver {
         if (CardData.CONTROL_IF_NOT_ANY_PATTERN.matcher(effectText).find())        return "UseRestriction";
         if (CardData.OPPONENT_CONTROLS_N_OR_MORE_PATTERN.matcher(effectText).find()) return "UseRestriction";
         if (tryParseMayPayCostThenEffect(effectText, source, 0)         != null) return "MayPayCostThenEffect";
+        // Must precede WhenYouDoSo, mirroring parse() and matchedPatternName(). The description
+        // itself is produced by the ChooseCharacter block further down, which reads the followup.
+        if (tryParseChooseMaySearchRfgThenElse(effectText, source, 0) != null)
+            return "ChooseCharacter / MaySearchRfgThenElse";
         if (tryParseWhenYouDoSoSequence(effectText, source, 0)          != null) return "WhenYouDoSo";
         if (tryParseIfNotPayOrElse(effectText, source, 0)               != null) return "IfNotPayOrElse";
         if (tryParseRemoveTopThenPileThreshold(effectText, source)          != null) return "RemoveTopThenPileThreshold";
@@ -2161,6 +2186,15 @@ public class ActionResolver {
                 return "ChooseCharacter / SelectJobGrant";
             if (FOLLOWUP_MAY_DISCARD_NAMED_DEAL_DAMAGE.matcher(followup).matches())
                 return "ChooseCharacter / MayDiscardNamedDealDamage";
+            // Read off the whole followup, mirroring the parser: split, its first sentence is
+            // described as a plain RemoveFromGame over the chosen Forwards.
+            if (FOLLOWUP_MAY_SEARCH_RFG_THEN_ELSE.matcher(followup).matches())
+                return "ChooseCharacter / MaySearchRfgThenElse";
+            // Naming gap only — the Choose parser has resolved this followup all along (1-129C
+            // Gilgamesh breaks or burns correctly), but with no entry here the ". " split below
+            // described it as "? + Damage", which reads like a card doing half its text.
+            if (FOLLOWUP_RFP_TOP_DECK_IF_FORWARD_BREAK_ELSE_DAMAGE.matcher(followup).find())
+                return "ChooseCharacter / RfpTopDeckIfForwardBreakElseDamage";
             if (FOLLOWUP_RFP_TOP_DECK_AND_DAMAGE_PER_CP.matcher(followup).find())
                 return "ChooseCharacter / RfpTopDeckDamagePerCp";
             if (FOLLOWUP_REVEAL_TOP_N_DAMAGE_PER_CP_ADD_ALL_TO_HAND.matcher(followup).find())
@@ -2477,6 +2511,9 @@ public class ActionResolver {
         if (tryParseSearchNElementSummonsDiffCost(effectText)         != null) return "SearchNElementSummonsDiffCost";
         // Mirrors parse(): ahead of the single-pool search, whose prefix it shares.
         if (tryParseDualSearchPlayOntoField(effectText)       != null) return "DualSearchPlayOntoField";
+        // Must precede SearchDeck, mirroring parse(): that parser names the search alone and
+        // leaves the "If you do so, ..." payoff out of the report.
+        if (tryParseSearchNamedRfgThenIfDoSo(effectText, source) != null) return "SearchNamedRfgThenIfDoSo";
         if (tryParseSearchDeck(effectText, source, 0) != null)              return "SearchDeck";
         if (tryParsePlayAllByNameFromBreakZone(effectText) != null)         return "PlayAllByNameFromBreakZone";
         if (tryParsePlaySourceFromBreakZone(effectText, source) != null)    return "PlaySourceFromBreakZone";
@@ -2802,6 +2839,42 @@ public class ActionResolver {
             }
             ControlCondition cc = CardData.parseControlCondition(rest);
             if (cc != null) return new DamageInsteadCondition.YouControl(cc, excludeName);
+        }
+        return null;
+    }
+
+    /**
+     * Parses one branch of a "If you do so, X. If not, Y." pair whose clauses refer back to the
+     * cards already chosen ("break the chosen Forwards", "remove the chosen Forward from the
+     * game", "deal 8000 damage to the chosen Forwards") into an action over those targets.
+     *
+     * <p>Separate from {@link #parseTargetAction} because the vocabulary is different — these
+     * clauses name their subject rather than saying "it"/"them" — and deliberately narrow:
+     * anything but the three printed verbs returns {@code null}, which fails the enclosing match
+     * and lets the text fall through rather than resolving as half the card.
+     */
+    static BiConsumer<GameContext, List<ForwardTarget>> parseChosenTargetsAction(String clause) {
+        String t = clause.trim();
+
+        if (CHOSEN_TARGETS_BREAK.matcher(t).matches())
+            return (ctx, ts) -> {
+                sortedByIdxDesc(ts, true) .forEach(ctx::breakTarget);
+                sortedByIdxDesc(ts, false).forEach(ctx::breakTarget);
+            };
+
+        if (CHOSEN_TARGETS_REMOVE_FROM_GAME.matcher(t).matches())
+            return (ctx, ts) -> {
+                sortedByIdxDesc(ts, true) .forEach(ctx::removeTargetFromGame);
+                sortedByIdxDesc(ts, false).forEach(ctx::removeTargetFromGame);
+            };
+
+        Matcher dmg = CHOSEN_TARGETS_DEAL_DAMAGE.matcher(t);
+        if (dmg.matches()) {
+            int amount = Integer.parseInt(dmg.group("amount"));
+            return (ctx, ts) -> {
+                sortedByIdxDesc(ts, true) .forEach(x -> ctx.damageTarget(x, amount));
+                sortedByIdxDesc(ts, false).forEach(x -> ctx.damageTarget(x, amount));
+            };
         }
         return null;
     }

@@ -987,4 +987,57 @@ final class ActionResolverSearch {
             search.accept(ctx);
         };
     }
+
+    /**
+     * Parses "Search for 1 Card Name X and remove it from the game. [If|When] you do so,
+     * <effect>." - 1-093H Vanille, 20-047H Jenova Dreamweaver.
+     *
+     * <p>The search itself is mandatory; what the "if you do so" gates on is whether it found
+     * anything, since the deck may hold no copy of the named card. That distinction is why this
+     * cannot be built out of the ordinary search parser plus a followup: the payoff has to see the
+     * search's outcome, which only {@link GameContext#searchDeckForCard} reports.
+     *
+     * <p>The payoff goes back through {@code parse()} so it can be anything. Only when that comes
+     * back empty is the local "return <self> onto the field" reading tried - see
+     * {@link ActionResolverPatterns#RETURN_SOURCE_ONTO_FIELD} for why that wording is read here
+     * rather than added to the shared play-onto-field pattern.
+     */
+    static Consumer<GameContext> tryParseSearchNamedRfgThenIfDoSo(String text, CardData source) {
+        Matcher m = SEARCH_NAMED_RFG_THEN_IF_DO_SO.matcher(text.trim());
+        if (!m.matches()) return null;
+        String searchName = m.group("name").trim();
+        String effectText = m.group("effect").trim();
+
+        Consumer<GameContext> payoff = parse(effectText, source);
+        if (payoff == null) payoff = returnSourceOntoFieldPayoff(effectText, source);
+        if (payoff == null) return null;
+
+        final Consumer<GameContext> resolvedPayoff = payoff;
+        return ctx -> {
+            ctx.logEntry("Effect: Search 1 Card Name " + searchName + " -> Removed From Game");
+            // Every filter left open but the name: the named card may be of any type.
+            boolean removed = ctx.searchDeckForCard(false, false, false, false,
+                    -1, null, searchName, null, null, null, null, null,
+                    "removedFromGame", 1, false, false);
+            if (removed) {
+                resolvedPayoff.accept(ctx);
+            } else {
+                ctx.logEntry("Effect: no " + searchName + " found - \"if you do so\" skipped");
+            }
+        };
+    }
+
+    /** "Return [source] onto the field [dull]" - plays the source back out of its Break Zone. */
+    private static Consumer<GameContext> returnSourceOntoFieldPayoff(String text, CardData source) {
+        if (source == null) return null;
+        Matcher m = RETURN_SOURCE_ONTO_FIELD.matcher(text.trim());
+        if (!m.matches()) return null;
+        String name = m.group("name").trim();
+        if (!name.equalsIgnoreCase(source.name())) return null;
+        boolean dull = m.group("dull") != null;
+        return ctx -> {
+            ctx.logEntry("Effect: Return " + name + " from Break Zone -> field" + (dull ? " dull" : ""));
+            ctx.playAllByNameFromOwnBreakZoneDull(name, dull);
+        };
+    }
 }
