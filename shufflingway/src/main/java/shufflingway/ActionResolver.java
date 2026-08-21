@@ -442,6 +442,14 @@ public class ActionResolver {
         result = tryParseChooseThenEndOfOppTurnAction(effectText, source, xValue);
         if (result != null) return result;
 
+        // Must precede tryParseChooseCharacter: that parser matches the first of the two choose
+        // clauses alone and applies the effect to it, silently dropping the second (19-114L Cloud
+        // broke a Forward of cost 4 or less and never one of cost 5 or more). Placed here, after
+        // every specific two-clause parser, because its descriptors are broad enough to claim
+        // their texts.
+        result = tryParseChooseTwoJointAction(effectText, source);
+        if (result != null) return result;
+
         result = tryParseChooseCharacter(effectText, source, xValue);
         if (result != null) return withAiTargetPreference(effectText, result);
 
@@ -1475,6 +1483,17 @@ public class ActionResolver {
         // the delayed action that the rest of the ability consists of.
         if (tryParseChooseThenEndOfOppTurnAction(effectText, source, 0) != null)
             return "ChooseThenEndOfOppTurnAction";
+        // Must precede ChooseCharacter, mirroring parse(): it claims the first choose clause and
+        // leaves the second one out of both the name and the effect.
+        //
+        // The mixed-types guards are not here to be named — they are checked so this one does not
+        // answer for a text they win in parse(), where they are called ~80 call sites earlier.
+        // Their own naming gap ("Choose 1 Forward and 1 Backup. Break them." still reports
+        // ChooseCharacter) is separate, outstanding Phase 2 work.
+        if (tryParseChooseThreeMixedTypes(effectText, source) == null
+                && tryParseChooseTwoMixedTypes(effectText, source) == null
+                && tryParseChooseTwoJointAction(effectText, source) != null)
+            return "ChooseTwoJointAction";
         if (tryParseChooseCharacter(effectText, source, 0)              != null) return "ChooseCharacter";
         if (tryParseIfSelfFwdReceivedDamageDraw(effectText, source)          != null) return "IfSelfFwdReceivedDamageDraw";
         if (tryParseIfRfpCount(effectText, source)               != null) return "IfRfpCount";
@@ -2091,6 +2110,14 @@ public class ActionResolver {
         // describes this as "ChooseCharacter / ? + IfControl(…: ?)".
         if (tryParseChooseTwoBzFwdPlayIfControl(effectText, source) != null)
             return "ChooseTwoBzFwdPlayIfControl";
+        // Mirrors parse() and matchedPatternName(): must precede the ChooseCharacter block, which
+        // describes only the first of the two choose clauses.
+        if (tryParseChooseTwoJointAction(effectText, source) != null) {
+            Matcher jointM = CHOOSE_FORMER_LATTER_PATTERN.matcher(effectText);
+            String followupName = jointM.find()
+                    ? matchedFollowupName(jointM.group("effects").trim(), source) : null;
+            return "ChooseTwoJointAction / " + (followupName != null ? followupName : "?");
+        }
         Matcher chooseM = CHOOSE_CHARACTER_PATTERN.matcher(escapedEffectText);
         if (chooseM.find()) {
             String followup      = restorePeriodInName(chooseM.group("followup").trim(), source);

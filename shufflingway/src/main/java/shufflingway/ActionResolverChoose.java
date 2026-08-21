@@ -873,6 +873,67 @@ final class ActionResolverChoose {
             action.accept(ctx, all);
         };
     }
+    /**
+     * Matches "Choose [up to] N [desc1] and [up to] M [desc2]. [effect]" where the effect acts on
+     * both chosen groups at once — "Break them.", "Dull them and Freeze them.", "Return them to
+     * their owners' hands." Each descriptor carries its own qualifiers (cost band, control side,
+     * Break Zone), which is what separates this from {@link #tryParseChooseTwoMixedTypes}: that
+     * parser reads a bare card type on each side and nothing else, so it cannot see the cost bands
+     * in 19-114L Cloud's "up to 1 Forward of cost 4 or less and up to 1 Forward of cost 5 or more".
+     *
+     * <p>Shares {@link ActionResolverPatterns#CHOOSE_FORMER_LATTER_PATTERN} with
+     * {@link #tryParseChooseFormerLatter} — the same two-clause selection, a different effect half.
+     * That parser runs far earlier in {@code parse()} and returns null unless the effect names the
+     * two groups separately ("the former" / "the latter"), so the two never compete for a text.
+     *
+     * <p>Deliberately placed last, immediately ahead of {@link #tryParseChooseCharacter}, rather
+     * than beside the other two-clause parsers: the pattern is broad enough to claim texts that
+     * {@code tryParseChooseTwoBzFwdPlayIfControl} and the other specific two-clause parsers own
+     * (22-113L Mont Leonis reads as two descriptors plus a "play them onto the field" effect), so
+     * every one of them gets first refusal. It must still precede {@code tryParseChooseCharacter},
+     * which matches the first clause alone and applies the effect to it — that is what left Cloud
+     * breaking a Forward of cost 4 or less and never one of cost 5 or more.
+     */
+    static Consumer<GameContext> tryParseChooseTwoJointAction(String text, CardData source) {
+        Matcher m = CHOOSE_FORMER_LATTER_PATTERN.matcher(text);
+        if (!m.find()) return null;
+
+        boolean upTo1  = m.group("upTo1") != null;
+        int     count1 = Integer.parseInt(m.group("count1"));
+        String  desc1  = m.group("desc1").trim();
+
+        boolean upTo2  = m.group("upTo2") != null;
+        int     count2 = Integer.parseInt(m.group("count2"));
+        String  desc2  = m.group("desc2").trim();
+
+        TargetDesc td1 = parseTargetDesc(desc1);
+        TargetDesc td2 = parseTargetDesc(desc2);
+        if (td1 == null || td2 == null) return null;
+
+        BiConsumer<GameContext, List<ForwardTarget>> action =
+                parseTargetAction(m.group("effects").trim(), 0);
+        if (action == null) return null;
+
+        String label = "Choose " + (upTo1 ? "up to " : "") + count1 + " " + desc1
+                     + " and " + (upTo2 ? "up to " : "") + count2 + " " + desc2;
+        return ctx -> {
+            ctx.logEntry(label);
+            List<ForwardTarget> all = new ArrayList<>(selectByTargetDesc(ctx, td1, count1, upTo1));
+            all.addAll(selectByTargetDesc(ctx, td2, count2, upTo2));
+            action.accept(ctx, all);
+        };
+    }
+    /** Runs one {@link TargetDesc} through {@link #selectTargets}, rebuilding its zone string. */
+    private static List<ForwardTarget> selectByTargetDesc(
+            GameContext ctx, TargetDesc td, int count, boolean upTo) {
+        String zone = td.fromBreakZone()
+                ? "in " + (td.opponentBz() ? "your opponent's" : "your") + " Break Zone" : null;
+        return selectTargets(ctx, count, upTo, td.opponentOnly(), td.selfOnly(),
+                td.condition(), td.element(), zone, td.opponentBz(),
+                td.costVal(), td.costCmp(), -1, null,
+                td.fwd(), td.bkp(), td.mon(),
+                null, null, null, td.excludeName(), false, null, false);
+    }
     static Consumer<GameContext> tryParseChooseThreeMixedTypes(String text, CardData source) {
         Matcher m = CHOOSE_THREE_MIXED_TYPES_PATTERN.matcher(text);
         if (!m.find()) return null;

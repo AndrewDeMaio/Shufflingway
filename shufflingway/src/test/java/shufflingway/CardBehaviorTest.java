@@ -27510,4 +27510,150 @@ public class CardBehaviorTest {
 		assertEquals(special.effectText(), waived.effectText());
 		assertEquals(special.abilityName(), waived.abilityName());
 	}
+
+	// =========================================================================================
+	// Cloud 19-114L: effect wiring for a two-clause choose whose halves carry different cost
+	// bands — "choose up to 1 Forward of cost 4 or less and up to 1 Forward of cost 5 or more.
+	// Break them." Every generic two-clause parser reads a bare card type on each side, so this
+	// text used to fall through to ChooseCharacter, which matches the first clause, breaks that
+	// Forward and silently discards the second choice. tryParseChooseTwoJointAction reads each
+	// half as its own TargetDesc, so both selections happen and both cost bands are honoured.
+	// =========================================================================================
+
+	private static final String CLOUD_ETF_EFFECT =
+			"choose up to 1 Forward of cost 4 or less and up to 1 Forward of cost 5 or more. Break them.";
+
+	@Test
+	void cloudChoosesBothCostBandsAndBreaksBoth() {
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.consumePreloadedTargets()).thenReturn(null);
+
+		ForwardTarget cheap = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+		ForwardTarget dear  = new ForwardTarget(false, 1, ForwardTarget.CardZone.FORWARD);
+		ArgumentCaptor<Integer> costVal = ArgumentCaptor.forClass(Integer.class);
+		ArgumentCaptor<String>  costCmp = ArgumentCaptor.forClass(String.class);
+		when(ctx.selectCharacters(
+				anyInt(), anyBoolean(), anyBoolean(), anyBoolean(),
+				any(), any(), costVal.capture(), costCmp.capture(), anyInt(), any(),
+				anyBoolean(), anyBoolean(), anyBoolean(),
+				any(), any(), any(), any(), anyBoolean(), any(), anyBoolean()
+		)).thenReturn(List.of(cheap), List.of(dear));
+
+		Consumer<GameContext> fn = ActionResolver.parse(CLOUD_ETF_EFFECT, null);
+		assertNotNull(fn, "Cloud's enters-the-field effect should parse");
+		fn.accept(ctx);
+
+		// Two selections, not one — the bug was that only the first ever ran.
+		assertEquals(List.of(4, 5), costVal.getAllValues(), "one prompt per cost band, in text order");
+		assertEquals(List.of("less", "more"), costCmp.getAllValues());
+
+		verify(ctx).breakTarget(cheap);
+		verify(ctx).breakTarget(dear);
+	}
+
+	/**
+	 * The second clause is optional in its own right: "up to 1" means the player may decline it,
+	 * and declining must not cost them the first break.
+	 */
+	@Test
+	void cloudBreaksTheOneChosenWhenTheOtherBandIsDeclined() {
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.consumePreloadedTargets()).thenReturn(null);
+
+		ForwardTarget cheap = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+		when(ctx.selectCharacters(
+				anyInt(), anyBoolean(), anyBoolean(), anyBoolean(),
+				any(), any(), anyInt(), any(), anyInt(), any(),
+				anyBoolean(), anyBoolean(), anyBoolean(),
+				any(), any(), any(), any(), anyBoolean(), any(), anyBoolean()
+		)).thenReturn(List.of(cheap), List.of());
+
+		ActionResolver.parse(CLOUD_ETF_EFFECT, null).accept(ctx);
+
+		verify(ctx).breakTarget(cheap);
+		verify(ctx, times(1)).breakTarget(any());
+	}
+
+	/** Both halves are chosen "up to", so an empty board breaks nothing rather than failing. */
+	@Test
+	void cloudBreaksNothingWhenNeitherBandHasATarget() {
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.consumePreloadedTargets()).thenReturn(null);
+		when(ctx.selectCharacters(
+				anyInt(), anyBoolean(), anyBoolean(), anyBoolean(),
+				any(), any(), anyInt(), any(), anyInt(), any(),
+				anyBoolean(), anyBoolean(), anyBoolean(),
+				any(), any(), any(), any(), anyBoolean(), any(), anyBoolean()
+		)).thenReturn(List.of());
+
+		ActionResolver.parse(CLOUD_ETF_EFFECT, null).accept(ctx);
+
+		verify(ctx, never()).breakTarget(any());
+	}
+
+	/**
+	 * The same shape with qualifiers other than a cost band. Prishe 19-111L splits by card type
+	 * and Unei 19-119L by controller; both were losing their second choice the same way.
+	 */
+	@Test
+	void theTwoClauseChooseAlsoCoversTypeAndControllerSplits() {
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.consumePreloadedTargets()).thenReturn(null);
+		ForwardTarget a = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+		ForwardTarget b = new ForwardTarget(false, 0, ForwardTarget.CardZone.BACKUP);
+		ArgumentCaptor<Boolean> inclFwd = ArgumentCaptor.forClass(Boolean.class);
+		ArgumentCaptor<Boolean> inclBkp = ArgumentCaptor.forClass(Boolean.class);
+		when(ctx.selectCharacters(
+				anyInt(), anyBoolean(), anyBoolean(), anyBoolean(),
+				any(), any(), anyInt(), any(), anyInt(), any(),
+				inclFwd.capture(), inclBkp.capture(), anyBoolean(),
+				any(), any(), any(), any(), anyBoolean(), any(), anyBoolean()
+		)).thenReturn(List.of(a), List.of(b));
+
+		ActionResolver.parse(
+				"choose up to 1 Forward and up to 1 Backup. Dull them and Freeze them.", null)
+			.accept(ctx);
+
+		assertEquals(List.of(true, false), inclFwd.getAllValues(), "Forward prompt, then Backup prompt");
+		assertEquals(List.of(false, true), inclBkp.getAllValues());
+		verify(ctx).dullAndFreezeTarget(a);
+		verify(ctx).dullAndFreezeTarget(b);
+	}
+
+	/**
+	 * Cloud's text reaches the resolver with the trigger clause already stripped, so the parser
+	 * that claims it has to be the one that reads both clauses — not ChooseCharacter, which would
+	 * report the same "parses" verdict while doing half the work.
+	 */
+	@Test
+	void cloudReportsTheTwoClauseParserRatherThanChooseCharacter() {
+		assertEquals("ChooseTwoJointAction",
+				ActionResolver.matchedPatternName(CLOUD_ETF_EFFECT, null));
+		assertEquals("ChooseTwoJointAction / Break",
+				ActionResolver.fullDescription(CLOUD_ETF_EFFECT, null));
+	}
+
+	/**
+	 * The two-clause parser sits last, immediately ahead of ChooseCharacter, so the narrower
+	 * two-clause parsers keep their texts. Mont Leonis 22-113L is the one its descriptors would
+	 * otherwise fit: two Break Zone Forwards with element and cost qualifiers.
+	 */
+	@Test
+	void theNarrowerTwoClauseParsersStillWinTheirOwnTexts() {
+		String montLeonis =
+				"Choose 1 Fire Forward of cost 3 or less in your Break Zone and 1 Ice Forward of cost 3 "
+				+ "or less in your Break Zone. If you control 3 or more Backups, play them onto the field. "
+				+ "They gain Haste until the end of the turn.";
+		assertEquals("ChooseTwoBzFwdPlayIfControl",
+				ActionResolver.matchedPatternName(montLeonis, null));
+
+		// "Choose 1 Forward and 1 Backup. Break them." stays with ChooseTwoMixedTypes, which is
+		// called ~80 sites earlier in parse() and already reads both of its clauses.
+		String sephiroth = "choose 1 Forward and 1 Backup. Break them.";
+		assertNotNull(ActionResolverChoose.tryParseChooseTwoMixedTypes(sephiroth, null));
+		assertNotEquals("ChooseTwoJointAction",
+				ActionResolver.matchedPatternName(sephiroth, null),
+				"the name must follow whichever parser parse() actually dispatches to");
+	}
+
 }
