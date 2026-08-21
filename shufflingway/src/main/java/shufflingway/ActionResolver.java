@@ -1067,6 +1067,12 @@ public class ActionResolver {
         result = tryParsePlaySourceFromBreakZone(effectText, source);
         if (result != null) return result;
 
+        // Must precede tryParsePlaySourceOntoField: that parser find()s a name group that
+        // happily spans "the Forward placed in the Break Zone", and only its name-equals-source
+        // check keeps it off this text — a check a future widening could relax.
+        result = tryParsePlayBrokenCardOntoFieldDull(effectText);
+        if (result != null) return result;
+
         result = tryParsePlaySourceOntoField(effectText, source);
         if (result != null) return result;
 
@@ -1679,6 +1685,7 @@ public class ActionResolver {
         if (tryParseSearchDeck(effectText, source, 0)                      != null) return "SearchDeck";
         if (tryParsePlayAllByNameFromBreakZone(effectText)      != null) return "PlayAllByNameFromBreakZone";
         if (tryParsePlaySourceFromBreakZone(effectText, source) != null) return "PlaySourceFromBreakZone";
+        if (tryParsePlayBrokenCardOntoFieldDull(effectText) != null) return "PlayBrokenCardOntoFieldDull";
         if (tryParseActivateNamedCard(effectText)               != null) return "ActivateNamedCard";
         if (tryParseAttackOnceMore(effectText)                  != null) return "AttackOnceMore";
         if (tryParseOpponentCannotSearchThisTurn(effectText)    != null) return "OpponentCannotSearch";
@@ -2400,6 +2407,7 @@ public class ActionResolver {
         if (tryParseSearchDeck(effectText, source, 0) != null)              return "SearchDeck";
         if (tryParsePlayAllByNameFromBreakZone(effectText) != null)         return "PlayAllByNameFromBreakZone";
         if (tryParsePlaySourceFromBreakZone(effectText, source) != null)    return "PlaySourceFromBreakZone";
+        if (tryParsePlayBrokenCardOntoFieldDull(effectText) != null) return "PlayBrokenCardOntoFieldDull";
         if (tryParseActivateNamedCard(effectText) != null)                  return "ActivateNamedCard";
         if (tryParseAttackOnceMore(effectText) != null)                     return "AttackOnceMore";
         if (tryParseOpponentCannotSearchThisTurn(effectText) != null)       return "OpponentCannotSearch";

@@ -677,6 +677,18 @@ public class MainWindow {
 	}
 
 	/**
+	 * The stored half of {@link #lostAbilitiesCards} — whether an <em>effect</em> has silenced
+	 * {@code card}, without asking whether the opposing field is silencing it.
+	 *
+	 * <p>For readers that {@link #abilitiesSuppressedByOpposingField} itself reaches, which is
+	 * anything it consults through {@link #effectiveFieldAbilities}: asking full membership from
+	 * there recurses back into this set, exactly as it would for the suppressor check inside it.
+	 */
+	private boolean abilitiesStrippedByEffect(CardData card) {
+		return ((LostAbilitiesSet) lostAbilitiesCards).strippedByEffect(card);
+	}
+
+	/**
 	 * Whether {@code card} is currently having its abilities suppressed by a standing field ability
 	 * on the opposing side — Gentiana 11-033R.
 	 *
@@ -926,6 +938,15 @@ public class MainWindow {
 	final Set<String> lastCastActualPaymentElements = new HashSet<>();
 	/** True if the most recently cast card was paid entirely by dulling Backups (no hand discards). */
 	boolean lastCastWasPaidByBackupsOnly = false;
+	/**
+	 * The card whose departure fired the "put into the Break Zone" trigger now resolving, or
+	 * {@code null} outside one — Lunafreya 8-132L's "play the Forward placed in the Break Zone onto
+	 * the field dull" is the effect that reads it.
+	 *
+	 * <p>Set and restored around each triggered resolution by {@code AutoAbilityTriggers}, so a
+	 * break happening inside another break's effect cannot leave the wrong card standing here.
+	 */
+	CardData triggeringBrokenCard = null;
 	/** True while a card is being placed as a direct result of being cast from hand; gates castOnly field abilities. */
 	boolean lastCardWasCast = false;
 	/** True while a card is entering the field via Warp resolution; gates warpOnly field abilities. */
@@ -1763,6 +1784,9 @@ public class MainWindow {
 		p2Turn.partyAnyElementThisTurn = false;
 		lastCardWasCast   = false;
 		lastCardWarpedIn  = false;
+		triggeringBrokenCard = null;
+		triggeringBrokenCard = null;
+		triggeringBrokenCard = null;
 
 		gameState.reset();
 		endOfTurnEffects.clear();
@@ -10194,6 +10218,38 @@ public class MainWindow {
 		return null;
 	}
 
+	/**
+	 * Whether {@code source}'s 《S》 cost may be paid with a Crystal rather than a discard — Glaciela
+	 * Wezette 17-113L hands that to every Category FFBE Character its controller controls, herself
+	 * included.
+	 *
+	 * <p>Only the permission is answered here, not the means: whether a Crystal is actually in hand
+	 * to spend is the caller's question, because the two are asked at different moments (the menu
+	 * gate wants both, the payment wants the permission again at commit time). Re-read per call for
+	 * the reason {@link #effectiveSpecialAbilityProxy} is — the granting card can leave the field
+	 * between the menu opening and the payment being made.
+	 *
+	 * <p>Every row is searched and every card's field abilities are read through
+	 * {@link #effectiveFieldAbilities}, so a granted copy of the permission counts as a printed one
+	 * does.
+	 */
+	boolean crystalMayPaySpecialCost(CardData source, boolean isP1) {
+		if (source == null) return false;
+		for (CardData c : fieldCards(isP1)) {
+			if (c == null || lostAbilitiesCards.contains(c)) continue;
+			for (FieldAbility fa : effectiveFieldAbilities(c)) {
+				String category = CardData.parseCrystalPaysSpecialCostCategory(fa.effectText());
+				if (category != null && CardFilters.meetsCategoryFilter(source, category)) return true;
+			}
+		}
+		return false;
+	}
+
+	/** Whether {@code source}'s 《S》 cost can be paid with a Crystal right now — permission and a Crystal to spend. */
+	boolean canPaySpecialCostWithCrystal(CardData source, boolean isP1) {
+		return playerCrystals(isP1) >= 1 && crystalMayPaySpecialCost(source, isP1);
+	}
+
 
 	// ---- Per-player data selectors used by the ability payment chain -----------
 
@@ -10847,7 +10903,10 @@ public class MainWindow {
 			String primerName = priming.getPrimerCardName(source, isP1);
 			if (!hasSameNameInHand(source.name(), primerName, isP1)) {
 				CardData.SpecialAbilityProxy proxy = effectiveSpecialAbilityProxy(source, isP1);
-				if (proxy == null || playerHand(isP1).stream().noneMatch(proxy::meetsSubstitute)) return false;
+				boolean handCanPay = proxy != null && playerHand(isP1).stream().anyMatch(proxy::meetsSubstitute);
+				// A Crystal pays the 《S》 outright under Glaciela Wezette 17-113L, so an empty hand
+				// is no longer the end of the question.
+				if (!handCanPay && !canPaySpecialCostWithCrystal(source, isP1)) return false;
 			}
 		}
 		if (ability.damageThreshold() > 0) {
@@ -11678,8 +11737,15 @@ public class MainWindow {
 					case CARD_NAME_IN_BREAK_ZONE -> {
 						List<CardData> bz = isP1 ? gameState.getP1BreakZone() : gameState.getP2BreakZone();
 						String nameFilter = ssb.cardNameFilter();
-						yield nameFilter == null ? 0 : (int) bz.stream()
-								.filter(c -> nameFilter.equalsIgnoreCase(c.name())).count();
+						String jobFilter  = ssb.jobFilter();
+						// Name or Job, whichever the printing names — Shinra Soldier 10-093C counts
+						// both ("For each Job Shinra Soldier or Card Name Shinra Soldier…"), and a
+						// Break Zone card satisfying either is one card, not two. Filters go through
+						// matchesScalingFilter for that disjunction, but only once at least one is
+						// set: with both null it answers "matches everything", which would count the
+						// whole Break Zone.
+						yield nameFilter == null && jobFilter == null ? 0 : (int) bz.stream()
+								.filter(c -> matchesScalingFilter(c, jobFilter, null, nameFilter)).count();
 					}
 					case SUMMONS_IN_BREAK_ZONE -> {
 						List<CardData> bz = isP1 ? gameState.getP1BreakZone() : gameState.getP2BreakZone();
@@ -12115,13 +12181,52 @@ public class MainWindow {
 	List<FieldAbility> effectiveFieldAbilities(CardData card) {
 		List<FieldAbility> granted   = grantedFieldAbilities.get(card);
 		List<FieldAbility> permanent = permanentFieldAbilities.get(card);
+		List<FieldAbility> gated     = handSizeGatedFieldAbilities(card);
 		boolean noGranted   = granted   == null || granted.isEmpty();
 		boolean noPermanent = permanent == null || permanent.isEmpty();
-		if (noGranted && noPermanent) return card.fieldAbilities();
+		if (noGranted && noPermanent && gated.isEmpty()) return card.fieldAbilities();
 		List<FieldAbility> all = new ArrayList<>(card.fieldAbilities());
 		if (!noGranted)   all.addAll(granted);
 		if (!noPermanent) all.addAll(permanent);
+		all.addAll(gated);
 		return all;
+	}
+
+	/**
+	 * The grant a card's own hand-size gate is currently making it — Lakshmi, Lady of Bliss
+	 * 14-111R's "If you have 5 or more cards in your hand, Lakshmi, Lady of Bliss gains \"If
+	 * Lakshmi, Lady of Bliss is dealt damage, reduce the damage by 2000 instead.\"".
+	 *
+	 * <p>Read live rather than stored, for the reason {@link #damageThresholdGrantedAutoAbilities}
+	 * is: this is the card's own text rather than a grant some effect made, and its condition stops
+	 * holding the moment the hand is spent down. What is handed back is the grant sentence with the
+	 * gate stripped — the shape an ungated printing of the same effect has (Charlotte 13-023R), so
+	 * every reader of a field ability treats the two identically and nothing needs to know a gate
+	 * was there.
+	 *
+	 * <p>Printed abilities only, never {@link #effectiveFieldAbilities}: that method calls this one.
+	 * A grant whose remainder no grant parser accepts is dropped rather than published, so a text
+	 * nobody can act on cannot masquerade as a live ability.
+	 *
+	 * <p>The silenced check is {@link #abilitiesStrippedByEffect} rather than full membership of
+	 * {@link #lostAbilitiesCards}, because that membership is computed by reading the opposing
+	 * field's abilities — through the very method that calls this one.
+	 */
+	private List<FieldAbility> handSizeGatedFieldAbilities(CardData card) {
+		if (abilitiesStrippedByEffect(card)) return List.of();
+		List<FieldAbility> out = null;
+		for (FieldAbility fa : card.fieldAbilities()) {
+			CardData.MinHandSizeGatedGrant gate =
+					CardData.parseMinHandSizeGatedGrant(fa.effectText());
+			if (gate == null) continue;
+			Boolean side = fieldSideOf(card);
+			if (side == null) return out == null ? List.of() : out;
+			if ((side ? gameState.getP1Hand() : gameState.getP2Hand()).size() < gate.minCards()) continue;
+			if (CardData.parseSelfGainsQuotedGrant(gate.remainder(), card.name()) == null) continue;
+			if (out == null) out = new ArrayList<>();
+			out.add(new FieldAbility(gate.remainder(), fa.damageThreshold()));
+		}
+		return out == null ? List.of() : out;
 	}
 
 	/**

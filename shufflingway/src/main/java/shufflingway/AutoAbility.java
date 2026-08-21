@@ -63,6 +63,9 @@ package shufflingway;
  *   <li>{@code warpOnly} — fires only when the card entered the field via Warp resolution.</li>
  *   <li>{@code oncePerTurn} — fires at most once per turn (tracked in {@code usedOncePerTurnAbilities}).</li>
  *   <li>{@code yourTurnOnly} — fires only during the ability owner's turn.</li>
+ *   <li>{@code opponentTurnOnly} — fires only while the turn belongs to the ability owner's
+ *       opponent, which is the mirror of {@code yourTurnOnly} and the only restriction the
+ *       corpus states ahead of the trigger rather than after the effect.</li>
  *   <li>{@code rfpConditionCard} — fires only if the named card is in the RFP zone.</li>
  *   <li>{@code bzConditionCard} — fires only if the named card is in the owner's Break Zone.</li>
  *   <li>{@code bzConditionJob} — additionally requires the Break Zone card to have this Job
@@ -77,6 +80,7 @@ public record AutoAbility(
         String  effectText,       // raw effect text, restrictions already stripped
         boolean oncePerTurn,           // "This effect will trigger only once per turn"
         boolean yourTurnOnly,          // "This effect will trigger only during your turn"
+        boolean opponentTurnOnly,      // "During your opponent's turn, when …" — fires only while the opponent has the turn
         String  rfpConditionCard,      // non-empty: trigger only if this card is in the RFP zone
         String  bzConditionCard,       // non-empty: trigger only if this card is in the owner's Break Zone
         String  bzConditionJob,        // non-empty: the Break Zone card must also have this Job
@@ -97,7 +101,7 @@ public record AutoAbility(
      */
     public AutoAbility withEffectText(String newEffectText) {
         return new AutoAbility(triggerCard, trigger, youMay, opponentMay, newEffectText,
-                oncePerTurn, yourTurnOnly, rfpConditionCard, bzConditionCard, bzConditionJob,
+                oncePerTurn, yourTurnOnly, opponentTurnOnly, rfpConditionCard, bzConditionCard, bzConditionJob,
                 castPaymentMinElements, castOnly, warpOnly, damageThreshold,
                 partyMinCount, partyCategory, partyJob, partyCardName);
     }
@@ -110,8 +114,22 @@ public record AutoAbility(
      */
     public AutoAbility withOncePerTurn() {
         return oncePerTurn ? this : new AutoAbility(triggerCard, trigger, youMay, opponentMay, effectText,
-                true, yourTurnOnly, rfpConditionCard, bzConditionCard, bzConditionJob,
+                true, yourTurnOnly, opponentTurnOnly, rfpConditionCard, bzConditionCard, bzConditionJob,
                 castPaymentMinElements, castOnly, warpOnly, damageThreshold,
                 partyMinCount, partyCategory, partyJob, partyCardName);
+    }
+
+    /**
+     * A copy of this ability with {@link #opponentTurnOnly()} set — the restriction Lunafreya
+     * 8-132L states as a "During your opponent's turn," prefix ahead of its trigger. Applied
+     * after the fact for the same reason {@link #withOncePerTurn()} is: the trigger sentence is
+     * parsed by the ordinary machinery once the prefix has been lifted off it.
+     */
+    public AutoAbility withOpponentTurnOnly() {
+        return opponentTurnOnly ? this
+                : new AutoAbility(triggerCard, trigger, youMay, opponentMay, effectText,
+                        oncePerTurn, yourTurnOnly, true, rfpConditionCard, bzConditionCard, bzConditionJob,
+                        castPaymentMinElements, castOnly, warpOnly, damageThreshold,
+                        partyMinCount, partyCategory, partyJob, partyCardName);
     }
 }

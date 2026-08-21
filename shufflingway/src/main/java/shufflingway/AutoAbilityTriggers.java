@@ -125,13 +125,15 @@ final class AutoAbilityTriggers {
 					items);
 			for (int i = ordered.size() - 1; i >= 0; i--) {
 				StackOrderingDialog.Item it = ordered.get(i);
-				executeAutoAbilityImpl(it.ability(), it.source(), it.controllerIsP1(), it.paidExtraCost());
+				executeAutoAbilityImpl(it.ability(), it.source(), it.controllerIsP1(), it.paidExtraCost(),
+						it.triggerCard());
 			}
 		} else {
 			// No dialog: preserve historical iteration order (first walked = pushed
 			// first = bottom of stack = resolves last).
 			for (StackOrderingDialog.Item it : items) {
-				executeAutoAbilityImpl(it.ability(), it.source(), it.controllerIsP1(), it.paidExtraCost());
+				executeAutoAbilityImpl(it.ability(), it.source(), it.controllerIsP1(), it.paidExtraCost(),
+						it.triggerCard());
 			}
 		}
 	}
@@ -1667,6 +1669,30 @@ final class AutoAbilityTriggers {
 	 *             [self name]" as a reference to that specific instance rather than every copy
 	 *             of the name. May be {@code null} when no source context is available.
 	 */
+	/**
+	 * The Elements an "other than …" exclusion names, or {@code null} when it names something else.
+	 *
+	 * <p>Only the two-or-more form is read as Elements — "Light and Dark", "Light or Dark", the
+	 * nineteen printings that spell it that way. A bare single Element name is deliberately left to
+	 * the card-name reading, because the two are genuinely ambiguous there: "a Job Manikin other
+	 * than Lightning" (Delusory Warlock 13-070C) and "a Category XIII Character other than
+	 * Lightning" (Lightning 4-115L) both mean the character, and every printing that means the
+	 * Element instead says "of an Element other than X".
+	 */
+	private static List<String> excludedElementsOrNull(String phrase) {
+		String[] parts = phrase.split("(?i)\\s+(?:and|or)\\s+");
+		if (parts.length < 2) return null;
+		List<String> out = new ArrayList<>(parts.length);
+		for (String part : parts) {
+			String name = null;
+			for (String e : ActionResolverPatterns.ELEMENT_NAMES)
+				if (e.equalsIgnoreCase(part.trim())) { name = e; break; }
+			if (name == null) return null;
+			out.add(name);
+		}
+		return out;
+	}
+
 	private boolean matchesSingleSubject(String subject, CardData enteringCard, CardData self) {
 		if (subject.isEmpty()) return false;
 		// "a [X] other than [Name]" — match base subject but exclude the named card
@@ -1675,6 +1701,13 @@ final class AutoAbilityTriggers {
 		if (otherThanM.matches()) {
 			String excludeName = otherThanM.group(2).trim();
 			if (!matchesSingleSubject(otherThanM.group(1).trim(), enteringCard, self)) return false;
+			// "a Forward other than Light and Dark you control" — Elements, not a card name.
+			List<String> excludedElements = excludedElementsOrNull(excludeName);
+			if (excludedElements != null) {
+				for (String e : excludedElements)
+					if (mw.effectiveContainsElement(enteringCard, e)) return false;
+				return true;
+			}
 			// "other than [self name]" refers to THIS specific card (the rule that a card naming
 			// itself means only that instance), so exclude only the source — another copy of the
 			// same name entering still qualifies.
@@ -2222,7 +2255,9 @@ final class AutoAbilityTriggers {
 			}
 			if (!fa.trigger().equals("put into break zone")) continue;
 			if (!matchesBreakZoneSubject(fa, card, broken, brokenIsP1, ownerIsP1, partyMembers)) continue;
-			executeAutoAbility(fa, card, ownerIsP1);
+			// The broken card travels with the trigger: an effect may name it back rather than only
+			// the watcher ("play the Forward placed in the Break Zone onto the field dull").
+			executeAutoAbility(fa, card, ownerIsP1, false, broken);
 		}
 	}
 
@@ -2955,16 +2990,45 @@ final class AutoAbilityTriggers {
 
 	/** @param paidExtraCost whether {@code source}'s optional extra cost was paid when it was cast. */
 	private void executeAutoAbility(AutoAbility fa, CardData source, boolean isP1, boolean paidExtraCost) {
+		executeAutoAbility(fa, source, isP1, paidExtraCost, null);
+	}
+
+	/**
+	 * @param triggerCard the card whose event fired this trigger, for the effects that name it back
+	 *     ("play the Forward placed in the Break Zone …" — Lunafreya 8-132L); {@code null} otherwise.
+	 *     Carried on the batch item rather than in a field, so a batch holding two triggers on one
+	 *     watcher resolves each against its own event.
+	 */
+	private void executeAutoAbility(AutoAbility fa, CardData source, boolean isP1, boolean paidExtraCost,
+			CardData triggerCard) {
 		if (mw.lostAbilitiesCards.contains(source)) return;
 		if (pendingBatch != null) {
-			pendingBatch.add(new StackOrderingDialog.Item(fa, source, isP1, paidExtraCost));
+			pendingBatch.add(new StackOrderingDialog.Item(fa, source, isP1, paidExtraCost, triggerCard));
 			return;
 		}
-		executeAutoAbilityImpl(fa, source, isP1, paidExtraCost);
+		executeAutoAbilityImpl(fa, source, isP1, paidExtraCost, triggerCard);
 	}
 
 	private void executeAutoAbilityImpl(AutoAbility fa, CardData source, boolean isP1) {
 		executeAutoAbilityImpl(fa, source, isP1, false);
+	}
+
+	/**
+	 * Runs one triggered ability with {@code triggerCard} standing as the card whose event fired it,
+	 * for the whole of the resolution. Held on {@link MainWindow#triggeringBrokenCard} rather than
+	 * passed down, because the effect that reads it is reached through
+	 * {@link ActionResolver#parse}'s {@code Consumer}, which carries no room for a second card.
+	 * Restored afterwards so a nested resolution cannot leave its own event behind.
+	 */
+	private void executeAutoAbilityImpl(AutoAbility fa, CardData source, boolean isP1,
+			boolean paidExtraCost, CardData triggerCard) {
+		CardData previous = mw.triggeringBrokenCard;
+		mw.triggeringBrokenCard = triggerCard;
+		try {
+			executeAutoAbilityImpl(fa, source, isP1, paidExtraCost);
+		} finally {
+			mw.triggeringBrokenCard = previous;
+		}
 	}
 
 	private void executeAutoAbilityImpl(AutoAbility fa, CardData source, boolean isP1, boolean paidExtraCost) {
@@ -2976,6 +3040,15 @@ final class AutoAbilityTriggers {
 
 		// "only during your turn" — skip when the ability owner is not the active player
 		if (fa.yourTurnOnly() && !isP1) return;
+
+		// "During your opponent's turn, when …" — the mirror, and read off the turn rather than off
+		// the side: the events this gates (a Forward of yours being broken) happen on both players'
+		// turns, so the question is whose turn it is now, not who owns the ability.
+		if (fa.opponentTurnOnly()
+				&& (mw.gameState.getCurrentPlayer() == GameState.Player.P1) == isP1) {
+			mw.logEntry("[AutoAbility] " + source.name() + " — only triggers during your opponent's turn");
+			return;
+		}
 
 		// cast payment element condition: "if the cost to cast X was paid with CP of N or more different Elements"
 		if (fa.castPaymentMinElements() > 0 && mw.lastCastPaymentDistinctElements < fa.castPaymentMinElements()) {
@@ -4228,6 +4301,7 @@ final class AutoAbilityTriggers {
 		new AbilityPaymentDialog(mw.frame, eff, source,
 				mw.playerHand(isP1), mw.cpPayableBackupCards(isP1), mw.playerBackupStates(isP1), mw.playerBackupUrls(isP1),
 				mw::showZoomAt, mw::hideZoom, null, null, mw.lightDarkDiscardGrants(isP1),
+				eff.isSpecial() && mw.canPaySpecialCostWithCrystal(source, isP1),
 				(discards, backups, xValue, sCostIdx) -> {
 					List<ForwardTarget> bzTargets = resolveBzCostTargetsForBzAbility(bzCosts, isP1);
 					if (bzTargets == null) return;
@@ -4740,6 +4814,7 @@ final class AutoAbilityTriggers {
 		new AbilityPaymentDialog(mw.frame, eff, source,
 				mw.playerHand(isP1), mw.cpPayableBackupCards(isP1), mw.playerBackupStates(isP1), mw.playerBackupUrls(isP1),
 				mw::showZoomAt, mw::hideZoom, proxy, primerName, mw.lightDarkDiscardGrants(isP1),
+				eff.isSpecial() && mw.canPaySpecialCostWithCrystal(source, isP1),
 				(discards, backups, xValue, sCostIdx) -> executeAbilityPayment(eff, source, applyDull,
 						discards, backups, autoResolveBzTargets(source, bzCosts, isP1), isP1, xValue, sCostIdx))
 			.show();
@@ -4836,19 +4911,50 @@ final class AutoAbilityTriggers {
 		// cancelled choice backs out of the whole activation.  Held as a CardData rather than an
 		// index because the CP discards below shift the hand.
 		CardData sCostCard = null;
+		boolean  sCostFromCrystal = false;
 		if (ability.isSpecial()) {
 			List<CardData> hand = mw.playerHand(isP1);
-			if (sCostHandIdx >= 0 && sCostHandIdx < hand.size()) {
+			// Glaciela Wezette 17-113L: a Crystal pays the 《S》 in place of the discard. Asked again
+			// here rather than trusted from the dialog, because she can leave the field between the
+			// choice and the payment.
+			boolean crystalPays = mw.canPaySpecialCostWithCrystal(source, isP1);
+			if (sCostHandIdx == AbilityPaymentDialog.S_COST_CRYSTAL) {
+				// The player ticked "pay 《C》". If the permission has since lapsed the activation
+				// backs out rather than silently falling back to a discard they did not choose.
+				if (!crystalPays) return;
+				sCostFromCrystal = true;
+			} else if (sCostHandIdx >= 0 && sCostHandIdx < hand.size()) {
 				sCostCard = hand.get(sCostHandIdx);
 			} else {
 				List<CardData> eligible = specialCostCandidates(source, hand, discardIndices, isP1);
-				if (eligible.size() > 1 && isP1) {
-					int pick = mw.showCardImageChooser(eligible,
-							"S Cost — discard 1 " + specialCostDescription(source, isP1), true);
-					if (pick < 0) return; // cancelled — nothing committed yet
-					sCostCard = eligible.get(pick);
-				} else if (!eligible.isEmpty()) {
-					sCostCard = eligible.get(0);
+				if (eligible.isEmpty()) {
+					// No card can pay, so the Crystal is the only reason this activation was legal.
+					if (!crystalPays) return;
+					sCostFromCrystal = true;
+				} else if (crystalPays && !isP1) {
+					// The CPU spends the Crystal rather than the card: a card in hand is CP, a body
+					// or an answer, and is the scarcer of the two often enough to be the default.
+					// It can cost the CPU a 《C》 cost later; no printing in the corpus makes that
+					// trade sharp enough to plan around.
+					sCostFromCrystal = true;
+				} else if (crystalPays) {
+					// Both are open and no dialog settled it (a zero-CP special skips the payment
+					// dialog entirely), so P1 is asked outright.
+					Object[] options = {"Pay 《C》", "Discard a card"};
+					int choice = mw.showEffectOptionDialog("Pay " + source.name()
+							+ "'s S cost with a Crystal, or by discarding?", "S Cost", options);
+					if (choice < 0) return; // dismissed — nothing committed yet
+					sCostFromCrystal = choice == 0;
+				}
+				if (!sCostFromCrystal && !eligible.isEmpty()) {
+					if (eligible.size() > 1 && isP1) {
+						int pick = mw.showCardImageChooser(eligible,
+								"S Cost — discard 1 " + specialCostDescription(source, isP1), true);
+						if (pick < 0) return; // cancelled — nothing committed yet
+						sCostCard = eligible.get(pick);
+					} else {
+						sCostCard = eligible.get(0);
+					}
 				}
 			}
 		}
@@ -4934,6 +5040,14 @@ final class AutoAbilityTriggers {
 			mw.logEntry("Dull cost: \"" + source.name() + "\" dulled");
 		}
 
+		// Special: spend the Crystal settled on above, or discard the card it stands in for. The
+		// Crystal is spent here rather than at the choice, so a cancel anywhere above leaves it
+		// unspent along with everything else.
+		if (sCostFromCrystal) {
+			mw.playerSpendCrystals(isP1, 1);
+			mw.refreshCrystalDisplays();
+			mw.logEntry((isP1 ? "" : "[P2] ") + "Special: paid 《C》 instead of discarding");
+		}
 		// Special: discard the card settled on above (looked up by identity — the CP discards
 		// may have shifted the hand since).
 		if (sCostCard != null) {

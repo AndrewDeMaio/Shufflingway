@@ -263,6 +263,13 @@ public class FieldAbilityParsingTest {
         // halves are each read by the parser that owns them, so recognition asks only that the gate
         // splits and that the remainder is a grant one of them accepts.
         if (oppDullCharsGatedSelfGrant(fa, source)) return true;
+        // Lakshmi, Lady of Bliss 14-111R. The hand-size twin of the row above: the gate is stripped
+        // per lookup by MainWindow.handSizeGatedFieldAbilities and the remainder published as a
+        // field ability, so recognition asks the same two questions that method asks.
+        if (minHandSizeGatedSelfGrant(fa, source)) return true;
+        // Glaciela Wezette 17-113L. Read by MainWindow.crystalMayPaySpecialCost as a board sweep,
+        // so it is not name-checked: the grant covers a Category, not its own carrier.
+        if (CardData.parseCrystalPaysSpecialCostCategory(fa.effectText()) != null) return true;
         // Edge 15-045H. Read per damage resolution by DamageResolver, self-named exactly as that
         // caller name-checks it.
         if (selfNamedCompulsion(AutoAbilityTriggers.FA_FIRST_OPP_EFFECT_DAMAGE_ZERO_EACH_TURN,
@@ -431,6 +438,22 @@ public class FieldAbilityParsingTest {
      * readers check it — each strips the gate and hands the remainder on — so the report claims it
      * only when at least one of them would find something to apply.
      */
+    /**
+     * True when {@code fa} is a hand-size-gated self grant the engine would publish — the gate
+     * splits off, and what is left is a quoted self grant naming the carrier.
+     *
+     * <p>The pair of questions {@code MainWindow.handSizeGatedFieldAbilities} asks, in the same
+     * order, so the report cannot claim recognition for a gated sentence that method drops. The
+     * traits/power spellings behind this gate belong to {@link CardData#parseIfControlBoosts} and
+     * are claimed by that row instead.
+     */
+    private static boolean minHandSizeGatedSelfGrant(FieldAbility fa, CardData source) {
+        CardData.MinHandSizeGatedGrant gate =
+                CardData.parseMinHandSizeGatedGrant(fa.effectText());
+        return gate != null
+                && CardData.parseSelfGainsQuotedGrant(gate.remainder(), source.name()) != null;
+    }
+
     private static boolean oppDullCharsGatedSelfGrant(FieldAbility fa, CardData source) {
         CardData.OppDullCharsGatedGrant gate =
                 CardData.parseOppDullCharsGatedGrant(fa.effectText());
@@ -686,6 +709,12 @@ public class FieldAbilityParsingTest {
             if (q != null && q.maxAttacks() > 1) sb.append(" atk×").append(q.maxAttacks());
             return sb.append(']').toString();
         }
+        if (minHandSizeGatedSelfGrant(fa, source)) {
+            CardData.MinHandSizeGatedGrant gate = CardData.parseMinHandSizeGatedGrant(fa.effectText());
+            return "HandSizeSelfGrant[≥" + gate.minCards() + " cards: " + gate.remainder() + "]";
+        }
+        String crystalSCategory = CardData.parseCrystalPaysSpecialCostCategory(fa.effectText());
+        if (crystalSCategory != null) return "CrystalPaysSpecialCost[" + crystalSCategory + "]";
         if (selfNamedCompulsion(AutoAbilityTriggers.FA_FIRST_OPP_EFFECT_DAMAGE_ZERO_EACH_TURN, fa, source))
             return "FirstOppEffectDmgZeroEachTurn";
         java.util.EnumSet<CardData.Trait> bzTraits =

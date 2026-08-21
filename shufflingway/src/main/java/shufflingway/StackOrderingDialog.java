@@ -39,8 +39,23 @@ import shufflingway.graphics.CardAnimation;
  */
 final class StackOrderingDialog {
 
-	/** Lightweight view-model: one ability + its source card + controller + extra-cost-paid state. */
-	record Item(AutoAbility ability, CardData source, boolean controllerIsP1, boolean paidExtraCost) {
+	/**
+	 * Lightweight view-model: one ability + its source card + controller + extra-cost-paid state,
+	 * plus the card whose event fired the trigger when the effect needs to name it.
+	 *
+	 * <p>{@code triggerCard} is carried per item rather than held in a field on the dispatcher
+	 * because a batch can collect two triggers on the same watcher from two different events — one
+	 * break causing another inside the same batch — and each has to resolve against the card that
+	 * fired it. {@code null} for every trigger whose effect never refers back to one.
+	 */
+	record Item(AutoAbility ability, CardData source, boolean controllerIsP1, boolean paidExtraCost,
+			CardData triggerCard) {
+
+		/** The common case: a trigger whose effect refers to no card but its own source. */
+		Item(AutoAbility ability, CardData source, boolean controllerIsP1, boolean paidExtraCost) {
+			this(ability, source, controllerIsP1, paidExtraCost, null);
+		}
+
 		String displayEffect() {
 			String txt = ability.effectText();
 			return txt == null || txt.isBlank() ? "(no effect text)" : txt;

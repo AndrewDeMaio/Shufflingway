@@ -24790,4 +24790,435 @@ public class CardBehaviorTest {
 		assertTrue(cpu.p2PlanPayment(cast, 1, 0, -1, backups, backupElems, discards, discardElems));
 		assertEquals(List.of(0), backups);
 	}
+
+	// =========================================================================================
+	// Shinra Soldier 10-093C: "For each Job Shinra Soldier or Card Name Shinra Soldier in your
+	// Break Zone, Shinra Soldier gains +1000 power."
+	//
+	// The Break Zone scaling parser read a Card Name and nothing else, so the Job half of this
+	// printing was invisible and only the copies sharing his name counted. Job and name are
+	// alternatives rather than both-required, and a Break Zone card satisfying either is one card,
+	// not two — which is how matchesScalingFilter already reads a filter pair, so the count runs
+	// through it.
+	// =========================================================================================
+
+	private static final String SHINRA_SOLDIER_TEXT =
+			"For each Job Shinra Soldier or Card Name Shinra Soldier in your Break Zone, "
+			+ "Shinra Soldier gains +1000 power.";
+
+	/** A Forward with a Job whose scaling boosts and field abilities are parsed from {@code text}. */
+	private static CardData makeJobScalingForward(String name, String job, int power, String text) {
+		return new CardData(null, name, "Lightning", 3, power, "Forward", false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				List.of(), List.of(), CardData.parseFieldAbilities(text, "Forward"),
+				List.of(), List.of(), CardData.parseScalingSelfPowerBoosts(text, "Forward", name),
+				List.of(), List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				job, "VII", null, text);
+	}
+
+	@Test
+	void shinraSoldierCountsTheJobAndTheNameAsAlternatives() {
+		CardData soldier = makeJobScalingForward("Shinra Soldier", "Standard Unit", 7000, SHINRA_SOLDIER_TEXT);
+		List<ScalingSelfPowerBoost> boosts = soldier.scalingSelfPowerBoosts();
+		assertEquals(1, boosts.size(), "one boost, not one per filter");
+		assertEquals(ScalingSelfPowerBoost.Source.CARD_NAME_IN_BREAK_ZONE, boosts.get(0).source());
+		assertEquals("Shinra Soldier", boosts.get(0).jobFilter());
+		assertEquals("Shinra Soldier", boosts.get(0).cardNameFilter());
+		assertEquals(1000, boosts.get(0).perUnit());
+	}
+
+	@Test
+	void shinraSoldierGainsPowerForEitherKindOfBreakZoneCard() {
+		MainWindow mw = new MainWindow();
+		CardData soldier = makeJobScalingForward("Shinra Soldier", "Standard Unit", 7000, SHINRA_SOLDIER_TEXT);
+		placeP1Forward(mw, soldier);
+		assertEquals(7000, mw.effectiveP1ForwardPower(0), "an empty Break Zone adds nothing");
+
+		// A copy of him by name, then a different card carrying the Job.
+		mw.gameState.getP1BreakZone().add(
+				makeJobScalingForward("Shinra Soldier", "Standard Unit", 7000, SHINRA_SOLDIER_TEXT));
+		assertEquals(8000, mw.effectiveP1ForwardPower(0), "the name half");
+		mw.gameState.getP1BreakZone().add(makeJobCard("Shinra Guard", "Lightning", "Forward", "Shinra Soldier"));
+		assertEquals(9000, mw.effectiveP1ForwardPower(0), "the Job half, on a card of another name");
+	}
+
+	@Test
+	void shinraSoldierCountsNeitherStrangersNorTheOpponentsBreakZone() {
+		MainWindow mw = new MainWindow();
+		CardData soldier = makeJobScalingForward("Shinra Soldier", "Standard Unit", 7000, SHINRA_SOLDIER_TEXT);
+		placeP1Forward(mw, soldier);
+		mw.gameState.getP1BreakZone().add(makeJobCard("Rufus", "Lightning", "Forward", "Shinra"));
+		mw.gameState.getP2BreakZone().add(makeJobCard("Shinra Guard", "Lightning", "Forward", "Shinra Soldier"));
+
+		assertEquals(7000, mw.effectiveP1ForwardPower(0),
+				"neither an unrelated Job nor the opponent's Break Zone counts — the text says your");
+	}
+
+	@Test
+	void aBreakZoneNameScalerWithNoJobHalfIsUnchanged() {
+		// Gilgamesh 7-088L and SOLDIER: 3rd Class 20-032C print the same shape without the Job
+		// clause, and the widened pattern must leave them counting names alone.
+		CardData gilgamesh = makeJobScalingForward("Gilgamesh", "Praetorian", 9000,
+				"For each Card Name Gilgamesh in your Break Zone, Gilgamesh gains +1000 power.");
+		assertEquals(1, gilgamesh.scalingSelfPowerBoosts().size());
+		assertNull(gilgamesh.scalingSelfPowerBoosts().get(0).jobFilter(), "no Job clause, no Job filter");
+
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, gilgamesh);
+		mw.gameState.getP1BreakZone().add(makeJobCard("Enkidu", "Wind", "Forward", "Praetorian"));
+		assertEquals(9000, mw.effectiveP1ForwardPower(0),
+				"sharing his Job is not sharing his name, and only the name was printed");
+	}
+
+	// =========================================================================================
+	// Lakshmi, Lady of Bliss 14-111R: "If you have 5 or more cards in your hand, Lakshmi, Lady of
+	// Bliss gains "If Lakshmi, Lady of Bliss is dealt damage, reduce the damage by 2000 instead.""
+	//
+	// Both halves already had a reader: DamageResolver applies a quoted self-granted damage
+	// modifier (Charlotte 13-023R), and IfControlBoost gates power and traits on hand size (Galuf
+	// 3-077H). What was missing was the join — a hand-size gate in front of a quoted grant. It is
+	// stripped and re-read per lookup like Machina 15-017H's Forward-count gate, because a hand
+	// empties mid-turn, and the remainder is published as a field ability so every reader sees the
+	// shape an ungated printing has.
+	//
+	// Her name is also the first to reach parseSelfGainsQuotedGrant carrying a comma.
+	// =========================================================================================
+
+	private static final String LAKSHMI_TEXT =
+			"If you have 5 or more cards in your hand, Lakshmi, Lady of Bliss gains "
+			+ "\"If Lakshmi, Lady of Bliss is dealt damage, reduce the damage by 2000 instead.\"";
+
+	@Test
+	void theHandSizeGateSplitsOffItsGrant() {
+		CardData.MinHandSizeGatedGrant gate = CardData.parseMinHandSizeGatedGrant(LAKSHMI_TEXT);
+		assertNotNull(gate, "the hand-size clause is a gate, not part of the grant");
+		assertEquals(5, gate.minCards());
+		assertNotNull(CardData.parseSelfGainsQuotedGrant(gate.remainder(), "Lakshmi, Lady of Bliss"),
+				"and what is left is an ordinary self grant — including for a name carrying a comma");
+	}
+
+	@Test
+	void lakshmiReducesDamageOnlyWhileTheHandIsBigEnough() {
+		MainWindow mw = new MainWindow();
+		CardData lakshmi = makeFieldAbilityCard("Lakshmi, Lady of Bliss", "Water", "Forward", LAKSHMI_TEXT);
+		placeP1Forward(mw, lakshmi);
+
+		fillP1Hand(mw, 5);
+		assertEquals(6000, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 0, 8000, true, false),
+				"5 cards in hand — the granted modifier takes 2000 off");
+		assertEquals(5000, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 0, 7000, false, false),
+				"the grant names no damage source, so battle damage is reduced too");
+
+		fillP1Hand(mw, 4);
+		assertEquals(8000, mw.modifyIncomingDamage(true, ForwardTarget.CardZone.FORWARD, 0, 8000, true, false),
+				"one card short — the gate is shut and the damage lands whole");
+	}
+
+	@Test
+	void lakshmisGrantIsPublishedAsAFieldAbilityWhileTheGateHolds() {
+		MainWindow mw = new MainWindow();
+		CardData lakshmi = makeFieldAbilityCard("Lakshmi, Lady of Bliss", "Water", "Forward", LAKSHMI_TEXT);
+		placeP1Forward(mw, lakshmi);
+
+		fillP1Hand(mw, 4);
+		assertEquals(1, mw.effectiveFieldAbilities(lakshmi).size(), "the printing alone");
+		fillP1Hand(mw, 5);
+		List<FieldAbility> live = mw.effectiveFieldAbilities(lakshmi);
+		assertEquals(2, live.size(), "the printing, plus the grant it is now making");
+		assertEquals("Lakshmi, Lady of Bliss gains \"If Lakshmi, Lady of Bliss is dealt damage, "
+				+ "reduce the damage by 2000 instead.\"", live.get(1).effectText(),
+				"published with the gate stripped, which is the shape an ungated printing has");
+	}
+
+	@Test
+	void aCardOffTheFieldMakesNoHandSizeGrant() {
+		// The gate asks about its controller's hand, and a card that is nowhere has no controller
+		// to ask about — reading one anyway would hand the ability to a card in a Break Zone.
+		MainWindow mw = new MainWindow();
+		CardData lakshmi = makeFieldAbilityCard("Lakshmi, Lady of Bliss", "Water", "Forward", LAKSHMI_TEXT);
+		fillP1Hand(mw, 7);
+		assertEquals(1, mw.effectiveFieldAbilities(lakshmi).size(), "off the field, nothing is granted");
+	}
+
+	// =========================================================================================
+	// Glaciela Wezette 17-113L: "You can pay with C instead of S when paying for the special
+	// abilities of Category FFBE Characters you control."
+	//
+	// The third way the corpus widens an S cost, and the only one that leaves the hand out of it:
+	// the other two substitute a different card to discard (SpecialAbilityProxy), while this one
+	// spends a Crystal. It also names its beneficiaries by Category rather than by card name, so it
+	// covers every FFBE Character its controller controls — Glaciela included.
+	// =========================================================================================
+
+	private static final String GLACIELA_TEXT =
+			"You can pay with 《C》 instead of 《S》 when paying for the special abilities of "
+			+ "Category FFBE Characters you control.";
+
+	private static final String FFBE_SPECIAL =
+			"[[s]]Surefire Burst[[/]] 《S》: Choose 1 Forward. Deal it 2000 damage.";
+
+	/** A Forward of {@code category} whose field and action abilities are parsed from {@code text}. */
+	private static CardData makeCategorySpecialForward(String name, String category, String text) {
+		return new CardData(null, name, "Water", 3, 7000, "Forward", false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				CardData.parseActionAbilities(text), List.of(), CardData.parseFieldAbilities(text, "Forward"),
+				List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				null, category, null, text);
+	}
+
+	@Test
+	void theCrystalPermissionNamesTheCategoryItCovers() {
+		assertEquals("FFBE", CardData.parseCrystalPaysSpecialCostCategory(GLACIELA_TEXT));
+		assertNull(CardData.parseCrystalPaysSpecialCostCategory(
+				"When Glaciela Wezette enters the field, gain 《C》."),
+				"a sentence that merely mentions a Crystal is not the permission");
+	}
+
+	@Test
+	void aCrystalPaysTheSCostOfAnFfbeCharacter() {
+		MainWindow mw = new MainWindow();
+		CardData glaciela = makeCategorySpecialForward("Glaciela Wezette", "FFBE",
+				GLACIELA_TEXT + "[[br]]" + FFBE_SPECIAL);
+		placeP1Forward(mw, glaciela);
+		ActionAbility special = glaciela.actionAbilities().get(0);
+		assertTrue(special.isSpecial(), "the S half of the cost");
+
+		assertFalse(mw.canActivateAbility(special, false, CardState.ACTIVE, 0, glaciela, true),
+				"no copy in hand and no Crystal — nothing pays the S cost");
+
+		mw.gameState.addP1Crystals(1);
+		assertTrue(mw.canPaySpecialCostWithCrystal(glaciela, true), "she covers her own Category");
+		assertTrue(mw.canActivateAbility(special, false, CardState.ACTIVE, 0, glaciela, true),
+				"the Crystal pays it instead");
+	}
+
+	@Test
+	void theCrystalPermissionReachesEveryFfbeCharacterAndStopsThere() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeCategorySpecialForward("Glaciela Wezette", "FFBE", GLACIELA_TEXT));
+		mw.gameState.addP1Crystals(1);
+
+		CardData ally     = makeCategorySpecialForward("Rain", "FFBE", FFBE_SPECIAL);
+		CardData stranger = makeCategorySpecialForward("Cloud", "VII", FFBE_SPECIAL);
+		placeP1Forward(mw, ally);
+		placeP1Forward(mw, stranger);
+
+		assertTrue(mw.canPaySpecialCostWithCrystal(ally, true), "another Character of the Category");
+		assertFalse(mw.canPaySpecialCostWithCrystal(stranger, true), "a Character of another Category");
+		assertFalse(mw.canPaySpecialCostWithCrystal(ally, false),
+				"you control — the permission does not cross the table");
+	}
+
+	@Test
+	void thePermissionIsNotTheMeansToUseIt() {
+		MainWindow mw = new MainWindow();
+		CardData glaciela = makeCategorySpecialForward("Glaciela Wezette", "FFBE", GLACIELA_TEXT);
+		placeP1Forward(mw, glaciela);
+
+		assertTrue(mw.crystalMayPaySpecialCost(glaciela, true), "the permission stands with no Crystal");
+		assertFalse(mw.canPaySpecialCostWithCrystal(glaciela, true), "but there is nothing to spend");
+		mw.gameState.addP1Crystals(1);
+		assertTrue(mw.canPaySpecialCostWithCrystal(glaciela, true));
+	}
+
+	@Test
+	void theCrystalPermissionLapsesWithItsCarrier() {
+		MainWindow mw = new MainWindow();
+		CardData glaciela = makeCategorySpecialForward("Glaciela Wezette", "FFBE", GLACIELA_TEXT);
+		CardData ally     = makeCategorySpecialForward("Rain", "FFBE", FFBE_SPECIAL);
+		placeP1Forward(mw, glaciela);
+		placeP1Forward(mw, ally);
+		mw.gameState.addP1Crystals(1);
+		assertTrue(mw.canPaySpecialCostWithCrystal(ally, true));
+
+		// A card that has lost its abilities takes the permission with it, exactly as it would take
+		// a printed one.
+		mw.lostAbilitiesCards.add(glaciela);
+		assertFalse(mw.canPaySpecialCostWithCrystal(ally, true),
+				"the grant is her ability, so a Glaciela without abilities grants nothing");
+	}
+
+	// =========================================================================================
+	// Reks 27-054C: "At the beginning of Main Phase 1 during each of your turns, put Reks into the
+	// Break Zone. When you do so, draw 2 cards."
+	//
+	// The recurring Main Phase trigger had a parser, but only for the "At the beginning of your
+	// Main Phase 1," spelling — five printings. Ten more say "At the beginning of Main Phase [1|2]
+	// during each of your turns," and every one of them fell through to the field-ability list, the
+	// trigger never firing. Both wordings name the same event, so the second produces the same
+	// trigger key rather than one of its own.
+	//
+	// The effect itself needed nothing: a self-break with a "When you do so" rider is a shape the
+	// auto-ability executor already pays and resolves.
+	// =========================================================================================
+
+	private static final String REKS_TEXT =
+			"At the beginning of Main Phase 1 during each of your turns, put Reks into the "
+			+ "Break Zone. When you do so, draw 2 cards.";
+
+	/** A Forward whose auto abilities and field abilities are both parsed from {@code text}. */
+	private static CardData makeAutoForward(String name, String element, int power, String text) {
+		return new CardData(null, name, element, 3, power, "Forward", false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				List.of(), CardData.parseAutoAbilities(text), CardData.parseFieldAbilities(text, "Forward"),
+				List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				null, null, null, text);
+	}
+
+	@Test
+	void theDuringEachOfYourTurnsWordingIsTheSameTriggerAsYourMainPhase1() {
+		List<AutoAbility> autos = CardData.parseAutoAbilities(REKS_TEXT);
+		assertEquals(1, autos.size());
+		assertEquals("beginning of main phase 1", autos.get(0).trigger());
+		assertEquals("put Reks into the Break Zone. When you do so, draw 2 cards.",
+				autos.get(0).effectText());
+		assertTrue(CardData.parseFieldAbilities(REKS_TEXT, "Forward").isEmpty(),
+				"and it is no longer also a field ability");
+
+		// The Main Phase 2 twin of the same wording — The Crystal Exarch 12-032R.
+		List<AutoAbility> mp2 = CardData.parseAutoAbilities(
+				"At the beginning of Main Phase 2 during each of your turns, draw 1 card.");
+		assertEquals(1, mp2.size());
+		assertEquals("beginning of main phase 2", mp2.get(0).trigger());
+	}
+
+	@Test
+	void reksBreaksHimselfAndDrawsTwoAtTheStartOfMainPhase1() {
+		MainWindow mw = new MainWindow();
+		CardData reks = makeAutoForward("Reks", "Wind", 6000, REKS_TEXT);
+		mw.gameState.getIdentity().put(reks, false);
+		mw.placeP2CardInForwardZone(reks);
+		for (int i = 0; i < 5; i++) mw.gameState.getP2MainDeck().add(makeForward("Deck" + i, "Wind", 2, 5000));
+
+		mw.autoAbilityTriggers.triggerAutoAbilitiesForBeginningOfMainPhase1(false);
+
+		assertTrue(mw.p2ForwardCards.isEmpty(), "Reks put himself into the Break Zone");
+		assertEquals(1, mw.gameState.getP2BreakZone().size());
+		assertSame(reks, mw.gameState.getP2BreakZone().get(0));
+		assertEquals(2, mw.gameState.getP2Hand().size(), "and the rider drew 2 cards");
+	}
+
+	@Test
+	void aGrantedCopyOfTheTriggerIsNotAStandingOneOfItsOwn() {
+		// Sabin 15-018C hands himself this very trigger inside a quotation, for a turn. Read as his
+		// own, the trigger fired forever and its effect was the quotation's tail — closing quote,
+		// duration clause and all.
+		String sabin = "When Sabin enters the field, Sabin gains \"At the beginning of Main Phase 1 "
+				+ "during each of your turns, choose 1 Forward opponent controls. Deal it 9000 damage.\" "
+				+ "until the end of your next turn.";
+		List<AutoAbility> autos = CardData.parseAutoAbilities(sabin);
+		assertEquals(1, autos.size(), "the grant is one ability: entering the field");
+		assertEquals("enters the field", autos.get(0).trigger());
+		assertTrue(autos.get(0).effectText().contains("\"At the beginning of Main Phase 1"),
+				"with the quoted ability handed on intact");
+	}
+
+	// =========================================================================================
+	// Lunafreya 8-132L: "During your opponent's turn, when a Forward other than Light and Dark you
+	// control is put from the field into the Break Zone, you may put Lunafreya into the Break Zone.
+	// If you do so, play the Forward placed in the Break Zone onto the field dull."
+	//
+	// Three gaps. The sentence opens on "During", so it read as a field ability as well as an auto
+	// ability; the turn restriction it states up front had no counterpart to yourTurnOnly, which is
+	// stated after the effect; and the payoff names the card whose departure fired the trigger,
+	// which nothing carried as far as the effect. The trigger card now travels on the batch item —
+	// per item rather than in a field, because one break can fire another inside the same batch.
+	// =========================================================================================
+
+	private static final String LUNAFREYA_8_132L_TEXT =
+			"During your opponent's turn, when a Forward other than Light and Dark you control is "
+			+ "put from the field into the Break Zone, you may put Lunafreya into the Break Zone. "
+			+ "If you do so, play the Forward placed in the Break Zone onto the field dull.";
+
+	/** A Backup whose auto abilities and field abilities are both parsed from {@code text}. */
+	private static CardData makeAutoBackup(String name, String element, String text) {
+		return new CardData(null, name, element, 4, 0, "Backup", false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				List.of(), CardData.parseAutoAbilities(text), CardData.parseFieldAbilities(text, "Backup"),
+				List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				null, null, null, text);
+	}
+
+	/** Lunafreya on P2's Backup row with a Water Forward beside her, on the turn named by {@code turn}. */
+	private static MainWindow lunafreyaBoard(GameState.Player turn) {
+		MainWindow mw = new MainWindow();
+		advanceTo(mw, turn, GameState.GamePhase.MAIN_1);
+		CardData luna = makeAutoBackup("Lunafreya", "Water", LUNAFREYA_8_132L_TEXT);
+		mw.gameState.getIdentity().put(luna, false);
+		mw.placeP2CardInFirstBackupSlot(luna);
+		CardData ally = makeForward("Noctis", "Water", 3, 7000);
+		mw.gameState.getIdentity().put(ally, false);
+		mw.placeP2CardInForwardZone(ally);
+		return mw;
+	}
+
+	@Test
+	void theTurnRestrictionIsLiftedOffAheadOfTheTrigger() {
+		List<AutoAbility> autos = CardData.parseAutoAbilities(LUNAFREYA_8_132L_TEXT);
+		assertEquals(1, autos.size());
+		AutoAbility aa = autos.get(0);
+		assertEquals("put into break zone", aa.trigger());
+		assertEquals("a Forward other than Light and Dark you control", aa.triggerCard());
+		assertTrue(aa.opponentTurnOnly(), "the \"During your opponent's turn,\" prefix");
+		assertTrue(aa.youMay(), "and the offer inside the effect");
+		assertTrue(CardData.parseFieldAbilities(LUNAFREYA_8_132L_TEXT, "Backup").isEmpty(),
+				"the segment is the auto ability, not also a standing one");
+	}
+
+	@Test
+	void lunafreyaTradesHerselfForTheBrokenForwardOnTheOpponentsTurn() {
+		MainWindow mw = lunafreyaBoard(GameState.Player.P1);
+		CardData ally = mw.p2ForwardCards.get(0);
+
+		mw.breakP2Forward(0);
+
+		assertEquals(1, mw.p2ForwardCards.size(), "the Forward came straight back");
+		assertSame(ally, mw.p2ForwardCards.get(0));
+		assertEquals(CardState.DULL, mw.p2ForwardStates.get(0), "dull, as the text says");
+		assertNull(mw.p2BackupCards[0], "Lunafreya paid for it with herself");
+		assertEquals(1, mw.gameState.getP2BreakZone().size());
+		assertEquals("Lunafreya", mw.gameState.getP2BreakZone().get(0).name());
+	}
+
+	@Test
+	void lunafreyaDoesNothingOnHerControllersOwnTurn() {
+		MainWindow mw = lunafreyaBoard(GameState.Player.P2);
+
+		mw.breakP2Forward(0);
+
+		assertTrue(mw.p2ForwardCards.isEmpty(), "the Forward stays broken");
+		assertNotNull(mw.p2BackupCards[0], "and Lunafreya is untouched");
+		assertEquals(1, mw.gameState.getP2BreakZone().size(), "only the Forward went to the Break Zone");
+	}
+
+	@Test
+	void lunafreyaIgnoresALightOrDarkForward() {
+		MainWindow mw = lunafreyaBoard(GameState.Player.P1);
+		CardData light = makeForward("Cecil", "Light", 3, 7000);
+		mw.gameState.getIdentity().put(light, false);
+		mw.placeP2CardInForwardZone(light);   // idx 1
+
+		mw.breakP2Forward(1);
+
+		assertEquals(1, mw.p2ForwardCards.size(), "the Light Forward is not brought back");
+		assertSame(mw.gameState.getP2BreakZone().get(0), light);
+		assertNotNull(mw.p2BackupCards[0], "so Lunafreya is not spent either");
+	}
+
+	@Test
+	void lunafreyaIgnoresTheOpponentsForward() {
+		MainWindow mw = lunafreyaBoard(GameState.Player.P1);
+		CardData theirs = makeForward("Ardyn", "Water", 3, 7000);
+		mw.gameState.getIdentity().put(theirs, true);
+		mw.placeCardInForwardZone(theirs);
+
+		mw.breakP1Forward(0);
+
+		assertTrue(mw.p1ForwardCards.isEmpty(), "it stays in its owner's Break Zone");
+		assertNotNull(mw.p2BackupCards[0], "\"you control\" — not the Forwards across the table");
+	}
 }

@@ -26,6 +26,7 @@ import javax.swing.BorderFactory;
 import javax.swing.BoxLayout;
 import javax.swing.ImageIcon;
 import javax.swing.JButton;
+import javax.swing.JCheckBox;
 import javax.swing.JDialog;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
@@ -46,11 +47,23 @@ public class AbilityPaymentDialog {
     // Amber used for the S-cost slot border, matching the special-ability label color.
     private static final Color S_COST_AMBER = new Color(0xED, 0x93, 0x0D);
 
+    /**
+     * The {@code sCostIdx} reported when the player elects to pay the 《S》 cost with a Crystal
+     * rather than a discard — Glaciela Wezette 17-113L's permission, offered only when
+     * {@code crystalMayPaySCost} was passed.
+     *
+     * <p>A sentinel rather than a second callback parameter because the two are alternatives for
+     * one slot: exactly one thing pays the S cost, and a value the payment already reads says so
+     * without every caller of the payment routine growing a flag it would pass {@code false}.
+     */
+    public static final int S_COST_CRYSTAL = -2;
+
     @FunctionalInterface
     public interface Callback {
         /**
          * @param sCostIdx hand index of the card committed to the Special (S) cost slot,
-         *                 or {@code -1} when the ability has no S cost.
+         *                 {@link #S_COST_CRYSTAL} when a Crystal pays it instead, or {@code -1}
+         *                 when the ability has no S cost.
          */
         void onConfirm(List<Integer> discards, List<Integer> backups, int xValue, int sCostIdx);
     }
@@ -68,6 +81,7 @@ public class AbilityPaymentDialog {
     private final String           primerName;
     private final Callback         onConfirm;
     private final java.util.Set<String> ldDiscardGrants;
+    private final boolean          crystalMayPaySCost;
 
     /**
      * @param primerName      name of the primer card beneath {@code source} when the source is a
@@ -75,12 +89,15 @@ public class AbilityPaymentDialog {
      *     card of either name in hand can pay its Special (S) cost.
      * @param ldDiscardGrants Light/Dark elements the player may discard from hand for CP via a
      *     field grant (see {@code MainWindow.lightDarkDiscardGrants}); empty when none apply.
+     * @param crystalMayPaySCost whether a Crystal may pay this ability's 《S》 cost in place of the
+     *     discard (see {@code MainWindow.canPaySpecialCostWithCrystal}); adds the option to the
+     *     S-cost row, and is the only way {@link #S_COST_CRYSTAL} is ever reported.
      */
     public AbilityPaymentDialog(JFrame owner, ActionAbility ability, CardData source,
             List<CardData> hand, CardData[] backupCards, CardState[] backupStates,
             String[] backupUrls, Consumer<String> onZoom, Runnable onZoomHide,
             CardData.SpecialAbilityProxy proxy, String primerName,
-            java.util.Set<String> ldDiscardGrants,
+            java.util.Set<String> ldDiscardGrants, boolean crystalMayPaySCost,
             Callback onConfirm) {
         this.owner        = owner;
         this.ability      = ability;
@@ -94,6 +111,7 @@ public class AbilityPaymentDialog {
         this.proxy        = proxy;
         this.primerName   = primerName;
         this.ldDiscardGrants = ldDiscardGrants;
+        this.crystalMayPaySCost = crystalMayPaySCost;
         this.onConfirm    = onConfirm;
     }
 
@@ -141,6 +159,10 @@ public class AbilityPaymentDialog {
         List<Integer> discardIdxs   = new ArrayList<>();
         // Tracks which hand card (by index) is committed to the S cost slot; -1 = empty.
         int[]         sCostIdx      = {-1};
+        // Set while the player has elected to pay the S cost with a Crystal instead; the slot and
+        // the Crystal are alternatives, so committing either clears the other.
+        boolean[]     sCostCrystal  = {false};
+        JCheckBox[]   sCostCrystalBox = {null};
         List<JLabel>  sameNamedLbls = new ArrayList<>();
         List<Integer> sameNamedIdxs = new ArrayList<>();
         JLabel[]      sCostSlotLbl  = {null};
@@ -171,7 +193,7 @@ public class AbilityPaymentDialog {
 
             // Any amount of CP may be produced when paying a cost; only the per-element minimums
             // below constrain the payment, and CP produced beyond the cost is wasted.
-            boolean sSlotOk = !ability.isSpecial() || sCostIdx[0] != -1;
+            boolean sSlotOk = !ability.isSpecial() || sCostIdx[0] != -1 || sCostCrystal[0];
             canAddBackup[0]  = true;
             canAddDiscard[0] = true;
             if (ability.hasXCost()) {
@@ -320,6 +342,32 @@ public class AbilityPaymentDialog {
             JPanel sp = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 6));
             sp.setAlignmentX(Component.LEFT_ALIGNMENT);
             sp.add(slotLbl);
+            // Glaciela Wezette 17-113L: a Crystal pays the S cost outright. Ticking it empties the
+            // slot, since only one of the two pays — and the slot is what the payment reads when
+            // the box is clear, so the card has to go back to the hand row rather than sit
+            // committed behind a Crystal that is now paying instead.
+            if (crystalMayPaySCost) {
+                JCheckBox crystalBox = new JCheckBox("Pay 《C》 instead");
+                crystalBox.setFont(FontLoader.loadPixelFont(9));
+                crystalBox.setOpaque(false);
+                crystalBox.setForeground(S_COST_AMBER);
+                crystalBox.setToolTipText("Spend 1 Crystal in place of the discard.");
+                crystalBox.addActionListener(ev -> {
+                    sCostCrystal[0] = crystalBox.isSelected();
+                    if (sCostCrystal[0] && sCostIdx[0] != -1) {
+                        int prevIdx   = sCostIdx[0];
+                        int prevLiIdx = sameNamedIdxs.indexOf(prevIdx);
+                        if (prevLiIdx >= 0)
+                            loadCardImage(sameNamedLbls.get(prevLiIdx), hand.get(prevIdx).imageUrl(), false);
+                        sCostIdx[0] = -1;
+                        slotLbl.setIcon(null);
+                        slotLbl.setText("?");
+                    }
+                    updateAll.run();
+                });
+                sCostCrystalBox[0] = crystalBox;
+                sp.add(crystalBox);
+            }
             center.add(sHdr);
             center.add(sp);
         }
@@ -356,7 +404,12 @@ public class AbilityPaymentDialog {
                         }
 
                         if (sCostIdx[0] == -1) {
-                            // S slot is empty — commit this card to it.
+                            // S slot is empty — commit this card to it, and take back any election
+                            // to pay with a Crystal: the cost is paid once, by one of the two.
+                            if (sCostCrystalBox[0] != null && sCostCrystal[0]) {
+                                sCostCrystalBox[0].setSelected(false);
+                                sCostCrystal[0] = false;
+                            }
                             sCostIdx[0] = hi;
                             loadCardImage(lbl, imgUrl, true); // grey out in hand row
                             if (sCostSlotLbl[0] != null)
@@ -399,7 +452,10 @@ public class AbilityPaymentDialog {
         confirmBtn.addActionListener(ev -> {
             dlg.dispose();
             onConfirm.onConfirm(new ArrayList<>(selectedDiscards), new ArrayList<>(selectedBackups),
-                    xValueHolder[0], ability.isSpecial() ? sCostIdx[0] : -1);
+                    xValueHolder[0],
+                    ability.isSpecial()
+                            ? (sCostCrystal[0] ? S_COST_CRYSTAL : sCostIdx[0])
+                            : -1);
         });
 
         JPanel south = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 6));

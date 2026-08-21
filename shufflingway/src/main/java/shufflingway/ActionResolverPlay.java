@@ -209,6 +209,16 @@ final class ActionResolverPlay {
         return null;
     }
     /**
+     * Parses "Play the Forward placed in the Break Zone onto the field dull" — Lunafreya 8-132L.
+     *
+     * <p>The card is the one whose departure fired the trigger this effect hangs off, so it is
+     * neither named nor chosen: the context resolves it from the trigger now resolving.
+     */
+    static Consumer<GameContext> tryParsePlayBrokenCardOntoFieldDull(String text) {
+        if (!PLAY_BROKEN_CARD_ONTO_FIELD_DULL.matcher(text.trim()).matches()) return null;
+        return GameContext::playTriggeringBrokenCardOntoFieldDull;
+    }
+    /**
      * Parses "Play [name] onto [the] field [dull]" for break-zone-origin abilities where
      * the card name matches the source.  Does not require a "from Break Zone" qualifier —
      * BZ-origin abilities say "Play [itself] onto the field" knowing they start in the BZ.

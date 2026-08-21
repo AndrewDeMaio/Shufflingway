@@ -707,6 +707,17 @@ public interface GameContext {
     void playTargetOntoFieldDull(ForwardTarget t);
 
     /**
+     * Plays the card whose departure fired the "put into the Break Zone" trigger now resolving back
+     * onto the resolving player's field, dull — Lunafreya 8-132L's "play the Forward placed in the
+     * Break Zone onto the field dull".
+     *
+     * <p>The card is named by the event rather than chosen, which is why it takes no target: "the
+     * Forward placed in the Break Zone" is the one this very trigger watched arrive there. Does
+     * nothing when it has since left that Break Zone, or when no such trigger is resolving.
+     */
+    void playTriggeringBrokenCardOntoFieldDull();
+
+    /**
      * Moves the target (chosen from either Break Zone) to the resolving player's hand — P1's on a
      * {@link #isP1()} context, P2's otherwise — regardless of which Break Zone it came from.
      */

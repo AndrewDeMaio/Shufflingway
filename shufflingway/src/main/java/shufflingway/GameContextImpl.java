@@ -4385,6 +4385,26 @@ final class GameContextImpl implements GameContext {
 				if (t.isP1()) mw.refreshP1BreakLabel(); else mw.refreshP2BreakLabel();
 			}
 
+			@Override public void playTriggeringBrokenCardOntoFieldDull() {
+				CardData broken = mw.triggeringBrokenCard;
+				if (broken == null) {
+					logEntry("No card was placed in the Break Zone by this trigger");
+					markEffectFizzled();
+					return;
+				}
+				// Found by identity in the resolving player's own Break Zone: the zone routinely
+				// holds several copies of a name, and it is this instance's return that was earned.
+				List<CardData> bz = isP1() ? mw.gameState.getP1BreakZone() : mw.gameState.getP2BreakZone();
+				int idx = -1;
+				for (int i = 0; i < bz.size(); i++) if (bz.get(i) == broken) { idx = i; break; }
+				if (idx < 0) {
+					logEntry(broken.name() + " is no longer in the Break Zone");
+					markEffectFizzled();
+					return;
+				}
+				playTargetOntoFieldDull(new ForwardTarget(isP1(), idx, ForwardTarget.CardZone.FORWARD));
+			}
+
 			@Override public void addTargetToHand(ForwardTarget t) {
 				List<CardData> bz = t.isP1() ? mw.gameState.getP1BreakZone() : mw.gameState.getP2BreakZone();
 				if (t.idx() >= bz.size()) return;

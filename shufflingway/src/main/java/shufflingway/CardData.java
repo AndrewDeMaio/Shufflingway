@@ -1457,9 +1457,15 @@ public record CardData(
      * <p>A quoted clause is <em>required</em>. The traits-only spelling ("Desch gains First
      * Strike.") belongs to {@link #SELF_TRAIT_GRANT}, and letting this pattern claim it as well
      * would put one text under two parsers with no rule for which wins.
+     *
+     * <p>The name charset admits a comma so that a card whose own name carries one can be matched
+     * — Lakshmi, Lady of Bliss 14-111R. That cannot widen what the parser claims, because the
+     * captured name still has to equal the caller's card name: a sentence whose prefix now fits
+     * the charset ("If you control a Card Name Zangan, Tifa gains …") captures the whole prefix
+     * and fails that check, exactly as it failed the match before.
      */
     private static final Pattern SELF_GAINS_QUOTED_GRANT = Pattern.compile(
-        "(?i)^(?<card>[A-Za-z][A-Za-z0-9''\\-\\s()]*?)\\s+gains?\\s+(?<grant>[^\"]*\"[^\"]+\".*?)[.!]?$"
+        "(?i)^(?<card>[A-Za-z][A-Za-z0-9'',\\-\\s()]*?)\\s+gains?\\s+(?<grant>[^\"]*\"[^\"]+\".*?)[.!]?$"
     );
 
     /**
@@ -1491,6 +1497,38 @@ public record CardData(
         Matcher m = IF_CONTROL_MAX_FORWARDS_PREFIX.matcher(text.trim());
         if (!m.matches()) return null;
         return new MaxForwardsGatedGrant(Integer.parseInt(m.group("max")), m.group("rest").trim());
+    }
+
+    /**
+     * "If you have N or more cards in your hand, [grant]" — the hand-size twin of
+     * {@link #IF_CONTROL_MAX_FORWARDS_PREFIX}, gating Lakshmi, Lady of Bliss 14-111R's quoted
+     * damage modifier.
+     *
+     * <p>Hand size moves constantly, so like the Forward count this gate cannot be settled at parse
+     * time and is re-read on every lookup. Group: {@code min}, {@code rest}.
+     *
+     * <p>{@link #IF_OWN_HAND_MIN_BOOST} reads the same opening for the power/trait grants
+     * (Galuf 3-077H), and the two do not collide: that one is consumed by
+     * {@link #parseIfControlBoosts} into an {@link IfControlBoost}, which declines a grant carrying
+     * neither power nor traits — which is every grant this one exists to carry.
+     */
+    private static final Pattern IF_OWN_HAND_MIN_PREFIX = Pattern.compile(
+        "(?i)^If\\s+you\\s+have\\s+(?<min>\\d+)\\s+or\\s+more\\s+cards?\\s+in\\s+your\\s+hand,\\s+(?<rest>\\S.*)$",
+        Pattern.DOTALL
+    );
+
+    /** A {@link #IF_OWN_HAND_MIN_PREFIX} gate and the grant sentence it guards. */
+    record MinHandSizeGatedGrant(int minCards, String remainder) {}
+
+    /**
+     * Splits "If you have N or more cards in your hand, [grant]" into its gate and its grant, or
+     * returns {@code null} when {@code text} is not that shape.
+     */
+    static MinHandSizeGatedGrant parseMinHandSizeGatedGrant(String text) {
+        if (text == null) return null;
+        Matcher m = IF_OWN_HAND_MIN_PREFIX.matcher(text.trim());
+        if (!m.matches()) return null;
+        return new MinHandSizeGatedGrant(Integer.parseInt(m.group("min")), m.group("rest").trim());
     }
 
     /**
@@ -3084,9 +3122,30 @@ public record CardData(
         return quotes % 2 == 1;
     }
 
-    /** A quoted granted ability that carries a trigger word of its own. */
+    /**
+     * "During your opponent's turn, [trigger sentence]" — Lunafreya 8-132L.
+     *
+     * <p>The remainder is a whole trigger sentence rather than an effect: what the gate restricts is
+     * when the trigger may fire, so it is lifted off and the sentence behind it read as any other.
+     * Group {@code rest} runs to the next {@code [[br]]} or to the end of the text.
+     */
+    private static final Pattern DURING_OPP_TURN_TRIGGER_PATTERN = Pattern.compile(
+        "(?i)During\\s+your\\s+opponent'?s\\s+turn,\\s+(?<rest>When\\b.+?)(?=\\s*\\[\\[br\\]\\]|\\s*$)",
+        Pattern.DOTALL
+    );
+
+    /**
+     * A quoted granted ability that carries a trigger of its own.
+     *
+     * <p>"At the beginning" counts alongside "When": a phase trigger handed to a card by a grant is
+     * as much a trigger as an event one, and four printings spell one that way without using the
+     * word "When" at all (Sabin 15-018C, Lann 16-102R, Reynn 16-105R, Titan (XVI) 29-068L). Left
+     * unmasked, Sabin's granted "At the beginning of Main Phase 1 during each of your turns, …"
+     * was read as a standing ability of his own, and the effect it produced was the quotation's
+     * tail — closing quote, duration clause and all.
+     */
     private static final Pattern QUOTED_TRIGGER_SPAN =
-            Pattern.compile("(?i)\"(?=[^\"]*\\bWhen\\b)[^\"]+\"");
+            Pattern.compile("(?i)\"(?=[^\"]*(?:\\bWhen\\b|\\bAt\\s+the\\s+beginning\\b))[^\"]+\"");
 
     /**
      * Token standing in for a masked quoted ability. Deliberately bare letters and digits: it has
@@ -3207,6 +3266,25 @@ public record CardData(
         }
         efm.appendTail(efBuf);
         textForSearch = efBuf.toString();
+
+        // Second-and-a-half pass: "During your opponent's turn, [trigger sentence]" — Lunafreya
+        // 8-132L, the only printing that states a turn restriction ahead of its trigger rather than
+        // as a trailing "This effect will trigger only during your turn." sentence.
+        //
+        // The remainder is an ordinary trigger sentence, so it is parsed by this very method rather
+        // than by a pattern of its own — the same gate-and-remainder split parseActionAbilities uses
+        // for the Break Zone grants — and every ability it yields is marked with the restriction.
+        // Stripped afterwards so the passes below cannot claim the sentence a second time without
+        // the gate.
+        Matcher oppTurnM = DURING_OPP_TURN_TRIGGER_PATTERN.matcher(textForSearch);
+        StringBuffer oppTurnBuf = new StringBuffer();
+        while (oppTurnM.find()) {
+            for (AutoAbility inner : parseAutoAbilities(oppTurnM.group("rest").trim()))
+                result.add(inner.withOpponentTurnOnly());
+            oppTurnM.appendReplacement(oppTurnBuf, "");
+        }
+        oppTurnM.appendTail(oppTurnBuf);
+        textForSearch = oppTurnBuf.toString();
 
         // Convert "If N or more [filter] Forwards form the party, also [effect]." into a second trigger sentence.
         textForSearch = expandPartyAttackFollowups(textForSearch);
@@ -3442,6 +3520,22 @@ public record CardData(
             if (aa != null) result.add(aa);
         }
 
+        // Eighth-and-a-half pass: "At the beginning of Main Phase [1|2] during each of your turns,
+        // [effect]" — the other spelling of the two passes above, and the one most of the corpus
+        // uses (Reks 27-054C, Shinryu 14-115L, Robel-Akbel 15-084L, Twintania 16-130H and six more).
+        // It fires on exactly the same event, so it produces the same trigger key rather than one of
+        // its own.
+        Matcher mpEach = ActionResolverPatterns.AT_BEGINNING_OF_MAIN_PHASE_EACH_YOUR_TURN_PATTERN
+                .matcher(textForSearch);
+        while (mpEach.find()) {
+            String effect = SUMMON_MARKUP.matcher(mpEach.group("inner").trim()).replaceAll("").trim();
+            if (effect.isEmpty()) continue;
+            String trigger = "1".equals(mpEach.group("phase"))
+                    ? "beginning of main phase 1" : "beginning of main phase 2";
+            AutoAbility aa = parseAutoAbilityRestrictions("", trigger, false, false, false, false, effect, 0);
+            if (aa != null) result.add(aa);
+        }
+
         // Ninth pass: "Each turn, at the beginning of Main Phase 1, [effect]" (fires both players)
         Matcher mp1et = ActionResolverPatterns.AT_BEGINNING_OF_MAIN_PHASE_1_EACH_TURN_PATTERN.matcher(textForSearch);
         while (mp1et.find()) {
@@ -3625,7 +3719,7 @@ public record CardData(
         // an optional ability, declining the prompt would skip the consequence too.
         if (youMay && ActionResolver.isPayOrElseGate(effect)) youMay = false;
         return new AutoAbility(card, trigger, youMay, opponentMay, effect,
-                oncePerTurn, yourTurnOnly, rfpConditionCard, bzConditionCard, bzConditionJob, castPaymentMinElements, castOnly, warpOnly, damageThreshold,
+                oncePerTurn, yourTurnOnly, false, rfpConditionCard, bzConditionCard, bzConditionJob, castPaymentMinElements, castOnly, warpOnly, damageThreshold,
                 partyMinCount, partyCategory, partyJob, partyCardName);
     }
 
@@ -5747,9 +5841,18 @@ public record CardData(
         "(?<target>.+?)\\s+gains?\\s+\\+(?<power>\\d+)\\s+power[.!]?$"
     );
 
-    /** "For each Card Name X in your Break Zone, [target] gains +N power." */
+    /**
+     * "For each [Job J or ]Card Name X in your Break Zone, [target] gains +N power."
+     *
+     * <p>The Job half is Shinra Soldier 10-093C's, and is a genuine alternative rather than an
+     * extra requirement: a Break Zone card counts if it carries the Job <em>or</em> the name, which
+     * is how {@code matchesScalingFilter} already reads a filter pair. Optional because the other
+     * two printings of this shape (Gilgamesh 7-088L, SOLDIER: 3rd Class 20-032C) name only a card.
+     * Groups: {@code job} (optional), {@code name}, {@code target}, {@code power}.
+     */
     private static final Pattern SCALING_SELF_BZ_CARD_NAME_PATTERN = Pattern.compile(
-        "(?i)^For\\s+each\\s+Card\\s+Name\\s+(?<name>.+?)\\s+in\\s+your\\s+Break\\s+Zone,\\s+" +
+        "(?i)^For\\s+each\\s+(?:Job\\s+(?<job>.+?)\\s+or\\s+)?Card\\s+Name\\s+(?<name>.+?)" +
+        "\\s+in\\s+your\\s+Break\\s+Zone,\\s+" +
         "(?<target>.+?)\\s+gains?\\s+\\+(?<power>\\d+)\\s+power[.!]?$"
     );
 
@@ -5955,7 +6058,8 @@ public record CardData(
                 if (perUnit <= 0) continue;
                 result.add(new ScalingSelfPowerBoost(
                         ScalingSelfPowerBoost.Source.CARD_NAME_IN_BREAK_ZONE, perUnit,
-                        null, null, bz.group("name").trim(), null, null, false));
+                        bz.group("job") != null ? bz.group("job").trim() : null,
+                        null, bz.group("name").trim(), null, null, false));
                 continue;
             }
             Matcher cc = SCALING_SELF_COUNTER_PATTERN.matcher(seg);
@@ -7023,6 +7127,42 @@ public record CardData(
         "(?:《S》|S)\\s+when\\s+paying\\s+for\\s+(?<target>.+?)'s\\s+special\\s+ability[.!]?\\s*$"
     );
 
+    /**
+     * Matches "You can pay with 《C》 instead of 《S》 when paying for the special abilities of
+     * Category [X] Characters you control." — Glaciela Wezette 17-113L.
+     *
+     * <p>The third way the corpus widens an S cost, and the only one that leaves the hand out of it
+     * altogether: the other two substitute a different card to discard
+     * ({@link #SPECIAL_ABILITY_PROXY_PATTERN}, {@link #SPECIAL_ABILITY_CONTROL_ANY_DISCARD_PATTERN}),
+     * while this one spends a Crystal instead. That is why it is not a
+     * {@link SpecialAbilityProxy} — every field of that record describes a substitute discard.
+     *
+     * <p>It also names its beneficiaries by Category rather than by card name, covering every
+     * Character of that Category its controller controls (the printing card included) instead of
+     * one named target. {@code 《C》} reaches this intact for the reason the Tifa pattern documents,
+     * and the bare spelling is accepted on the same grounds.
+     * Group: {@code category}.
+     */
+    private static final Pattern CRYSTAL_PAYS_SPECIAL_COST_PATTERN = Pattern.compile(
+        "(?i)^You\\s+can\\s+pay\\s+with\\s+(?:《C》|C)\\s+instead\\s+of\\s+(?:《S》|S)\\s+" +
+        "when\\s+paying\\s+for\\s+the\\s+special\\s+abilit(?:y|ies)\\s+of\\s+" +
+        "Category\\s+(?<category>.+?)\\s+Characters?\\s+you\\s+control[.!]?\\s*$"
+    );
+
+    /**
+     * The Category whose Characters may pay an 《S》 cost with a Crystal under {@code seg}, or
+     * {@code null} when {@code seg} is not that ability.
+     *
+     * <p>Static and segment-scoped like {@link #parseSpecialAbilityProxy}, because the reader is a
+     * board sweep: the grant lives on one card and applies to others, so the caller holds field
+     * abilities from every card its controller controls rather than from a single {@code CardData}.
+     */
+    public static String parseCrystalPaysSpecialCostCategory(String seg) {
+        if (seg == null || seg.isBlank()) return null;
+        Matcher m = CRYSTAL_PAYS_SPECIAL_COST_PATTERN.matcher(seg.trim());
+        return m.matches() ? m.group("category").trim() : null;
+    }
+
     /** Matches "The opponent's Forwards enter the field dull." */
     static final Pattern OPPONENT_FORWARDS_ENTER_DULL_PATTERN = Pattern.compile(
         "(?i)^(?:the\\s+)?(?:your\\s+)?opponent'?s?\\s+Forwards?\\s+enters?\\s+the\\s+field\\s+dull[.!]?\\s*$"
@@ -7241,6 +7381,10 @@ public record CardData(
             // trigger it carries; without this line the auto-ability it produces would be printed a
             // second time here as a field ability.
             if (DURING_EACH_TURN_CHOSEN_FIRST_TIME_PATTERN.matcher(seg).find()) continue;
+            // Same shape, same reason: Lunafreya 8-132L opens on "During your opponent's turn," and
+            // the trigger behind it is parsed as an auto ability, so the segment is not also a
+            // standing one.
+            if (DURING_OPP_TURN_TRIGGER_PATTERN.matcher(seg).find()) continue;
             // Quote-aware for the same reason as the end-of-turn line below: Titan (XVI) 29-068L
             // prints this trigger inside a grant, and that segment stays a field ability.
             if (matchesOutsideQuotes(AT_BEGINNING_OF_OPP_ATTACK_PHASE_PATTERN, seg)) continue;
@@ -7250,6 +7394,11 @@ public record CardData(
             if (ActionResolverPatterns.AT_BEGINNING_OF_MAIN_PHASE_1_PATTERN.matcher(seg).find()) continue;
             if (ActionResolverPatterns.AT_BEGINNING_OF_MAIN_PHASE_2_PATTERN.matcher(seg).find()) continue;
             if (ActionResolverPatterns.AT_BEGINNING_OF_MAIN_PHASE_1_EACH_TURN_PATTERN.matcher(seg).find()) continue;
+            // Quote-aware like the two above it: Sabin 15-018C hands this exact trigger to himself
+            // inside a grant, and that segment is an "enters the field" ability rather than a
+            // standing one of his own.
+            if (matchesOutsideQuotes(
+                    ActionResolverPatterns.AT_BEGINNING_OF_MAIN_PHASE_EACH_YOUR_TURN_PATTERN, seg)) continue;
             if (ActionResolverPatterns.AT_BEGINNING_OF_OPP_MAIN_PHASE_1_PATTERN.matcher(seg).find()) continue;
             if (ActionResolverPatterns.AT_END_OF_OPP_TURN_PATTERN.matcher(seg).find()) continue;
             if (ActionResolverPatterns.AT_END_OF_EACH_PLAYERS_TURN_PATTERN.matcher(seg).find()) continue;

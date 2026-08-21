@@ -1274,6 +1274,18 @@ final class ActionResolverPatterns {
         "(?i)Play\\s+(?:it|them)\\s+onto\\s+(?:the\\s+)?field\\s+dull[.!]?"
     );
     /**
+     * "Play the [Forward|Character|…] placed in the Break Zone onto the field dull" — Lunafreya
+     * 8-132L's payoff, naming the card whose arrival in the Break Zone fired the very trigger this
+     * effect hangs off.
+     *
+     * <p>No name and no choice: the definite article points back at the trigger's own event, which
+     * is why the effect takes no target and reads {@code MainWindow.triggeringBrokenCard} instead.
+     */
+    static final Pattern PLAY_BROKEN_CARD_ONTO_FIELD_DULL = Pattern.compile(
+        "(?i)^Play\\s+the\\s+(?:Forward|Backup|Monster|Character|card)\\s+placed\\s+in\\s+the\\s+" +
+        "Break\\s+Zone\\s+onto\\s+(?:the\\s+)?field\\s+dull[.!]?$"
+    );
+    /**
      * Matches "When it enters the field, if it is [cond], [inner]" — a conditional secondary
      * for Play-onto-field that fires only when the played card satisfies the condition.
      * Group {@code cond} is fed to {@link #parseRevealCondition}; group {@code inner}
@@ -1948,6 +1960,27 @@ final class ActionResolverPatterns {
     /** Same as {@link #AT_BEGINNING_OF_MAIN_PHASE_1_PATTERN} but for Main Phase 2. */
     static final Pattern AT_BEGINNING_OF_MAIN_PHASE_2_PATTERN = Pattern.compile(
         "(?i)At\\s+the\\s+beginning\\s+of\\s+your\\s+Main\\s+Phase\\s+2\\b[^,]*,\\s+" +
+        "(?<inner>.+?)\\s*" + GLOBAL_TRIGGER_INNER_BOUNDARY,
+        Pattern.DOTALL
+    );
+    /**
+     * "At the beginning of Main Phase [1|2] during each of your turns, &lt;effect&gt;" — the other
+     * spelling of {@link #AT_BEGINNING_OF_MAIN_PHASE_1_PATTERN} and its Main Phase 2 twin, and by
+     * far the commoner one: ten printings say it this way against five for "your Main Phase 1".
+     * Groups: {@code phase} — 1 or 2; {@code inner} — the effect after the trigger comma.
+     *
+     * <p>One pattern for both phases because the two wordings differ only in that digit, where the
+     * "your Main Phase N" pair are separate constants only because they were written separately.
+     *
+     * <p>Deliberately not folded into those by making "your " optional: this wording is also the
+     * tail of "When [X] enters the field or at the beginning of Main Phase 1 during each of your
+     * turns" ({@link #ETF_OR_PHASE_TRIGGER_PATTERN}), whose pass registers both triggers and strips
+     * its region first. A pass reading this constant must therefore run after that one — which the
+     * Main Phase passes already do.
+     */
+    static final Pattern AT_BEGINNING_OF_MAIN_PHASE_EACH_YOUR_TURN_PATTERN = Pattern.compile(
+        "(?i)At\\s+the\\s+beginning\\s+of\\s+Main\\s+Phase\\s+(?<phase>[12])\\s+" +
+        "during\\s+each\\s+of\\s+your\\s+turns,\\s+" +
         "(?<inner>.+?)\\s*" + GLOBAL_TRIGGER_INNER_BOUNDARY,
         Pattern.DOTALL
     );
