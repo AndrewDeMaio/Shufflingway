@@ -2530,6 +2530,44 @@ final class ActionResolverChoose {
             };
         }
 
+        // --- Extra-cost payoffs: 24-065H Fenrir and 18-136S Titan ---
+        // These two Summons put their whole effect behind an optional extra cost and then refer
+        // back to the card that paid it, rather than saying "If you paid the extra cost" like the
+        // other sixteen. That wording is what applyExtraCostPaid/stripExtraCostClause rewrite, so
+        // neither of these reaches the resolver pre-decided: the payoff has to read the payment at
+        // resolution time, through extraCostDiscardedCardCost()/extraCostRemovedCardPower().
+        //
+        // Fenrir must precede the Break followup below: "break it and draw 1 card" contains
+        // "break it", so FOLLOWUP_BREAK claimed it and broke the Forward outright, skipping the
+        // cost comparison that is the entire card.
+        Matcher extraCostMatchM = FOLLOWUP_IF_COST_EQUALS_DISCARD_BREAK_DRAW.matcher(primaryFollowup);
+        if (extraCostMatchM.find()) {
+            int draw = Integer.parseInt(extraCostMatchM.group("draw"));
+            BiConsumer<GameContext, List<ForwardTarget>> action = extraCostCostMatchBreakDraw(draw);
+            return ctx -> {
+                ctx.logEntry(choosePrefix + " — break and draw " + draw + " if cost matches the extra-cost discard");
+                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
+                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
+                        jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
+                action.accept(ctx, ts);
+                if (secondary != null) secondary.accept(ctx);
+            };
+        }
+
+        if (FOLLOWUP_DAMAGE_EXTRA_COST_POWER.matcher(primaryFollowup).find()) {
+            BiConsumer<GameContext, List<ForwardTarget>> action = extraCostPowerDamage();
+            return ctx -> {
+                ctx.logEntry(choosePrefix + " — damage equal to the power of the extra-cost Forward");
+                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
+                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
+                        jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
+                action.accept(ctx, ts);
+                if (secondary != null) secondary.accept(ctx);
+            };
+        }
+
         // --- Break followup ---
         if (FOLLOWUP_BREAK.matcher(primaryFollowup).find()) {
             return ctx -> {

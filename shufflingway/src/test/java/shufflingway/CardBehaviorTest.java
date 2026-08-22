@@ -28374,4 +28374,150 @@ public class CardBehaviorTest {
 		assertEquals("WhenYouDoSo", ActionResolver.fullDescription(ghisEffect, ghis));
 	}
 
+
+	// =========================================================================================
+	// Titan 18-136S and Fenrir 24-065H: the two extra-cost Summons that refer back to the card
+	// that paid the cost, rather than saying "If you paid the extra cost" like the other sixteen.
+	//
+	// That distinction is the whole reason they need resolution-time handling. The sixteen are
+	// settled before the resolver ever sees them - applyExtraCostPaid/stripExtraCostClause rewrite
+	// the text into one branch or the other - whereas these two have to read the payment itself,
+	// through extraCostRemovedCardPower() and extraCostDiscardedCardCost().
+	//
+	// Fenrir was the more dangerous of the two: "break it and draw 1 card" contains "break it", so
+	// the generic Break followup claimed it and broke the chosen Forward outright, with no cost
+	// comparison and no extra cost paid. It counted as "fully parsed" in the coverage report the
+	// whole time, because a wrong answer has no "?" in it.
+	// =========================================================================================
+
+	// --- Titan 18-136S --------------------------------------------------------------------
+
+	private static final String TITAN_EFFECT =
+			"Choose 1 Forward. Deal it damage equal to the power of the Forward removed by the extra cost.";
+
+	@Test
+	void titanDealsDamageEqualToTheRemovedForwardsPower() {
+		ForwardTarget t = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+		GameContext ctx = contextChoosing(List.of(t));
+		when(ctx.extraCostRemovedCardPower()).thenReturn(8000);
+
+		Consumer<GameContext> fn = ActionResolver.parse(TITAN_EFFECT, makeForward("Titan", "Earth", 4, 0));
+		assertNotNull(fn, "Titan should parse");
+		fn.accept(ctx);
+
+		verify(ctx).damageTarget(t, 8000);
+	}
+
+	/**
+	 * The extra cost is optional, and Titan is all payoff — cast without paying it, the Summon
+	 * chooses a Forward and does nothing. Dealing 0 damage would not be the same thing: it still
+	 * counts as having dealt damage to everything watching for that.
+	 */
+	@Test
+	void titanDealsNoDamageAtAllWhenTheExtraCostWentUnpaid() {
+		ForwardTarget t = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+		GameContext ctx = contextChoosing(List.of(t));
+		when(ctx.extraCostRemovedCardPower()).thenReturn(0);
+
+		ActionResolver.parse(TITAN_EFFECT, makeForward("Titan", "Earth", 4, 0)).accept(ctx);
+
+		verify(ctx, never()).damageTarget(any(), anyInt());
+	}
+
+	/** A Forward is still chosen either way — the choice is not conditional on the payment. */
+	@Test
+	void titanStillChoosesATargetWithoutTheExtraCost() {
+		GameContext ctx = contextChoosing(List.of(new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD)));
+		when(ctx.extraCostRemovedCardPower()).thenReturn(0);
+
+		ActionResolver.parse(TITAN_EFFECT, makeForward("Titan", "Earth", 4, 0)).accept(ctx);
+
+		verify(ctx).selectCharacters(
+				anyInt(), anyBoolean(), anyBoolean(), anyBoolean(),
+				any(), any(), anyInt(), any(), anyInt(), any(),
+				anyBoolean(), anyBoolean(), anyBoolean(),
+				any(), any(), any(), any(), anyBoolean(), any(), anyBoolean());
+	}
+
+	// --- Fenrir 24-065H -------------------------------------------------------------------
+
+	private static final String FENRIR_EFFECT =
+			"Choose 1 Forward opponent controls. If its cost is equal to the cost of the card "
+			+ "discarded by the extra cost, break it and draw 1 card.";
+
+	/** Chooses an opposing Forward of the given cost and resolves Fenrir against it. */
+	private static GameContext fenrirBoard(int chosenCost, int discardedCost) {
+		ForwardTarget t = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+		GameContext ctx = contextChoosing(List.of(t));
+		when(ctx.p2Forward(0)).thenReturn(makeForward("Bahamut", "Fire", chosenCost, 9000));
+		when(ctx.extraCostDiscardedCardCost()).thenReturn(discardedCost);
+		return ctx;
+	}
+
+	@Test
+	void fenrirBreaksAndDrawsWhenTheCostsMatch() {
+		GameContext ctx = fenrirBoard(3, 3);
+
+		Consumer<GameContext> fn = ActionResolver.parse(FENRIR_EFFECT, makeForward("Fenrir", "Ice", 3, 0));
+		assertNotNull(fn, "Fenrir should parse");
+		fn.accept(ctx);
+
+		verify(ctx).breakTarget(new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD));
+		verify(ctx).drawCards(1);
+	}
+
+	/** The regression: an unequal cost used to break the Forward anyway. */
+	@Test
+	void fenrirDoesNothingWhenTheCostsDiffer() {
+		GameContext ctx = fenrirBoard(5, 3);
+
+		ActionResolver.parse(FENRIR_EFFECT, makeForward("Fenrir", "Ice", 3, 0)).accept(ctx);
+
+		verify(ctx, never()).breakTarget(any());
+		verify(ctx, never()).drawCards(anyInt());
+	}
+
+	/** No discard means no cost to match — not a match against cost 0. */
+	@Test
+	void fenrirDoesNothingWhenTheExtraCostWentUnpaid() {
+		GameContext ctx = fenrirBoard(0, 0);
+
+		ActionResolver.parse(FENRIR_EFFECT, makeForward("Fenrir", "Ice", 3, 0)).accept(ctx);
+
+		verify(ctx, never()).breakTarget(any());
+		verify(ctx, never()).drawCards(anyInt());
+	}
+
+	/**
+	 * Both cards must report a followup naming the extra-cost payoff. Fenrir reporting plain
+	 * "Break" is what let a card that ignored its own condition sit in the "fully parsed" bucket.
+	 */
+	@Test
+	void theExtraCostPayoffsAreNamedRatherThanReportedAsPlainBreakOrNothing() {
+		assertEquals("ChooseCharacter / IfCostEqualsExtraCostDiscardBreakDraw",
+				ActionResolver.fullDescription(FENRIR_EFFECT, makeForward("Fenrir", "Ice", 3, 0)));
+		assertEquals("ChooseCharacter / DamageEqualToExtraCostPower",
+				ActionResolver.fullDescription(TITAN_EFFECT, makeForward("Titan", "Earth", 4, 0)));
+	}
+
+	/**
+	 * The sixteen "If you paid the extra cost" Summons are decided before the resolver sees them,
+	 * and must stay that way — 18-084C Ramuh resolves to one damage figure or the other, never to
+	 * an extra-cost lookup.
+	 */
+	@Test
+	void theIfYouPaidWordingIsStillSettledBeforeResolution() {
+		String ramuh = "Choose 1 Forward. Deal it 7000 damage. "
+				+ "If you paid the extra cost, deal it 15000 damage instead.";
+		assertEquals("Choose 1 Forward. Deal it 15000 damage.", ActionResolver.applyExtraCostPaid(ramuh));
+		assertEquals("Choose 1 Forward. Deal it 7000 damage.", ActionResolver.stripExtraCostClause(ramuh));
+
+		ForwardTarget t = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+		GameContext ctx = contextChoosing(List.of(t));
+		ActionResolver.parse(ActionResolver.applyExtraCostPaid(ramuh), makeForward("Ramuh", "Lightning", 3, 0))
+				.accept(ctx);
+		verify(ctx).damageTarget(t, 15000);
+		verify(ctx, never()).extraCostRemovedCardPower();
+	}
+
 }

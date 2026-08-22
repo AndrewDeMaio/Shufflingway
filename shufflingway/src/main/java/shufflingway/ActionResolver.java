@@ -1912,6 +1912,12 @@ public class ActionResolver {
                 && !FOLLOWUP_DULL_OR_FREEZE.matcher(followupText).find())             return "Dull";
         if (FOLLOWUP_DULL_AND_FREEZE.matcher(followupText).find())                    return "DullAndFreeze";
         if (FOLLOWUP_FREEZE.matcher(followupText).find())                             return "Freeze";
+        // Must precede Break, mirroring the Choose dispatch: "break it and draw 1 card" contains
+        // "break it", so the plain Break name hid 24-065H Fenrir's cost comparison entirely.
+        if (FOLLOWUP_IF_COST_EQUALS_DISCARD_BREAK_DRAW.matcher(followupText).find())
+            return "IfCostEqualsExtraCostDiscardBreakDraw";
+        if (FOLLOWUP_DAMAGE_EXTRA_COST_POWER.matcher(followupText).find())
+            return "DamageEqualToExtraCostPower";
         if (FOLLOWUP_BREAK.matcher(followupText).find())                              return "Break";
         if (FOLLOWUP_LOSE_ABILITIES_AND_POWER_BECOMES.matcher(followupText).find())    return "LoseAllAbilitiesAndPowerBecomes";
         if (FOLLOWUP_LOSE_ALL_ABILITIES_EOT.matcher(followupText).find())              return "LoseAllAbilitiesEot";
@@ -2853,6 +2859,53 @@ public class ActionResolver {
      * anything but the three printed verbs returns {@code null}, which fails the enclosing match
      * and lets the text fall through rather than resolving as half the card.
      */
+    /**
+     * "Deal it damage equal to the power of the Forward removed by the extra cost." — 18-136S
+     * Titan, whose whole effect is the payoff for an optional extra cost.
+     *
+     * <p>Deals nothing when the extra cost was not paid. The power reads back as 0 there, and
+     * dealing 0 damage is not the same as dealing none: it would still count as having dealt
+     * damage for everything watching for that.
+     */
+    static BiConsumer<GameContext, List<ForwardTarget>> extraCostPowerDamage() {
+        return (ctx, ts) -> {
+            int power = ctx.extraCostRemovedCardPower();
+            if (power <= 0) {
+                ctx.logEntry("Effect: no Forward removed by the extra cost — no damage dealt");
+                return;
+            }
+            ctx.logEntry("Effect: Deal it " + power + " damage (Extra Cost removed Forward power)");
+            sortedByIdxDesc(ts, true) .forEach(ft -> ctx.damageTarget(ft, power));
+            sortedByIdxDesc(ts, false).forEach(ft -> ctx.damageTarget(ft, power));
+        };
+    }
+
+    /**
+     * "If its cost is equal to the cost of the card discarded by the extra cost, break it and draw
+     * N card(s)." — 24-065H Fenrir. Nothing happens on an unpaid extra cost: the discarded cost
+     * reads back as 0, and a Forward of cost 0 is not a card that exists.
+     */
+    static BiConsumer<GameContext, List<ForwardTarget>> extraCostCostMatchBreakDraw(int draw) {
+        return (ctx, ts) -> {
+            int discardCost = ctx.extraCostDiscardedCardCost();
+            if (discardCost <= 0) {
+                ctx.logEntry("Effect: no card discarded for the extra cost — nothing to match");
+                return;
+            }
+            for (ForwardTarget ft : new ArrayList<>(ts)) {
+                CardData fwd = ft.isP1() ? ctx.p1Forward(ft.idx()) : ctx.p2Forward(ft.idx());
+                if (fwd == null) continue;
+                if (fwd.cost() != discardCost) {
+                    ctx.logEntry("Effect: " + fwd.name() + " costs " + fwd.cost()
+                            + ", discarded card cost " + discardCost + " — no match");
+                    continue;
+                }
+                ctx.breakTarget(ft);
+                ctx.drawCards(draw);
+            }
+        };
+    }
+
     static BiConsumer<GameContext, List<ForwardTarget>> parseChosenTargetsAction(String clause) {
         String t = clause.trim();
 
@@ -3194,30 +3247,12 @@ public class ActionResolver {
 
         // "If its cost equals the cost of the card discarded by the extra cost, break it and draw N" (Fenrir)
         Matcher fenrirM = FOLLOWUP_IF_COST_EQUALS_DISCARD_BREAK_DRAW.matcher(t);
-        if (fenrirM.find()) {
-            int draw = Integer.parseInt(fenrirM.group("draw"));
-            return (ctx, ts) -> {
-                int discardCost = ctx.extraCostDiscardedCardCost();
-                java.util.List<ForwardTarget> allTargets = new java.util.ArrayList<>(ts);
-                for (ForwardTarget ft : allTargets) {
-                    CardData fwd = ft.isP1() ? ctx.p1Forward(ft.idx()) : ctx.p2Forward(ft.idx());
-                    if (fwd != null && fwd.cost() == discardCost) {
-                        ctx.breakTarget(ft);
-                        ctx.drawCards(draw);
-                    }
-                }
-            };
-        }
+        if (fenrirM.find())
+            return extraCostCostMatchBreakDraw(Integer.parseInt(fenrirM.group("draw")));
 
         // "Deal it damage equal to the power of the Forward removed by the extra cost" (Titan)
-        if (FOLLOWUP_DAMAGE_EXTRA_COST_POWER.matcher(t).find()) {
-            return (ctx, ts) -> {
-                int power = ctx.extraCostRemovedCardPower();
-                ctx.logEntry("Effect: Deal it " + power + " damage (Extra Cost removed Forward power)");
-                sortedByIdxDesc(ts, true) .forEach(ft -> ctx.damageTarget(ft, power));
-                sortedByIdxDesc(ts, false).forEach(ft -> ctx.damageTarget(ft, power));
-            };
-        }
+        if (FOLLOWUP_DAMAGE_EXTRA_COST_POWER.matcher(t).find())
+            return extraCostPowerDamage();
 
         // "Deal it N damage" — check for a "If you have cast Card Name X other than X this turn" bonus
         Matcher dmgM = FOLLOWUP_DAMAGE.matcher(t);

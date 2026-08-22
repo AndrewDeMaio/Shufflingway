@@ -94,13 +94,13 @@ public class SummonParsingTest {
 
                 if (parsed && !partial) {
                     fullyParsed++;
-                    reservoirAdd(examplesFully, formatExample(source.name(), effectText, desc), fullyParsed, rng);
+                    reservoirAdd(examplesFully, formatExample(source, effectText, desc), fullyParsed, rng);
                 } else if (parsed || partial) {
                     partiallyParsed++;
-                    reservoirAdd(examplesPartial, formatExample(source.name(), effectText, desc), partiallyParsed, rng);
+                    reservoirAdd(examplesPartial, formatExample(source, effectText, desc), partiallyParsed, rng);
                 } else {
                     noneParsed++;
-                    reservoirAdd(examplesNone, formatExample(source.name(), effectText, desc), noneParsed, rng);
+                    reservoirAdd(examplesNone, formatExample(source, effectText, desc), noneParsed, rng);
                 }
             }
         }
@@ -119,8 +119,18 @@ public class SummonParsingTest {
         printExamples("Unrecognized",     examplesNone);
     }
 
-    private static String formatExample(String name, String effectText, String desc) {
-        return "  Card: " + name + "\n" +
+    /**
+     * {@code summonEffect()} strips the "If you cast X, you may … as an extra cost." sentence, so
+     * a card built around that cost printed here as a bare effect with no sign of what pays for
+     * it — 18-136S Titan read as "Choose 1 Forward. Deal it damage equal to the power of the
+     * Forward removed by the extra cost." with the removal itself nowhere on screen. The clause is
+     * restored on its own line rather than back into the effect text, which has to stay exactly
+     * what the resolver was handed.
+     */
+    private static String formatExample(CardData source, String effectText, String desc) {
+        ExtraCost ec = source.extraCost();
+        return "  Card: " + source.name() + "\n" +
+               (ec != null ? "  Extra cost: " + ec.description() + "\n" : "") +
                "  Effect: " + effectText + "\n" +
                "  Desc:   " + (desc != null ? desc : "(none)") + "\n";
     }
