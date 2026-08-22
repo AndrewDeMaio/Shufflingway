@@ -4084,6 +4084,26 @@ final class ActionResolverPatterns {
         "(?i)^Choose\\s+as\\s+many\\s+Forwards\\s+as\\s+you\\s+want\\s+with\\s+a\\s+total\\s+cost\\s+of\\s+"
         + "(?<max>\\d+)\\s+or\\s+less[.!]?\\s*Break\\s+them[.!]?$");
     /**
+     * Kefka 15-071H: "Divide all the Forwards opponent controls into N groups (You can make a group
+     * of 0 Forwards). Your opponent selects 1 group among them. Put all the Forwards of the other
+     * groups into the Break Zone."
+     *
+     * <p>Matched as one whole rather than three sentences because it is one decision made by two
+     * players: the division only means anything alongside the selection that answers it, and the
+     * removal only means anything alongside both. Group {@code groups} — how many groups the row is
+     * divided into.
+     *
+     * <p>The parenthetical permitting an empty group is optional in the pattern and carries no
+     * information the resolver needs — an empty group is what the dialog produces by default, and
+     * nothing in the effect would forbid one if the reminder were absent.
+     */
+    static final Pattern DIVIDE_OPP_FORWARDS_INTO_GROUPS = Pattern.compile(
+        "(?i)^Divide\\s+all\\s+the\\s+Forwards\\s+(?:your\\s+)?opponent\\s+controls?\\s+into\\s+"
+        + "(?<groups>\\d+)\\s+groups?(?:\\s*\\([^)]*\\))?[.!]?\\s+"
+        + "Your\\s+opponent\\s+selects\\s+1\\s+group\\s+among\\s+them[.!]?\\s+"
+        + "Put\\s+all\\s+the\\s+Forwards\\s+of\\s+the\\s+other\\s+groups\\s+into\\s+"
+        + "the\\s+Break\\s+Zone[.!]?$");
+    /**
      * Matches "Choose 1 Forward [control?] with a power inferior to [CardName]'s [power]. [followup]"
      * Groups: {@code control} — optional "opponent controls" / "you control";
      *         {@code sourcename} — name of the card whose power sets the ceiling;
@@ -5586,6 +5606,30 @@ final class ActionResolverPatterns {
         "(?i)Choose\\s+1\\s+(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+Summon\\s+in\\s+your\\s+Break\\s+Zone[.!]?\\s+" +
         "You\\s+can\\s+cast\\s+it\\s+at\\s+any\\s+time\\s+you\\s+could\\s+normally\\s+cast\\s+it\\s+this\\s+turn[.!]?\\s+" +
         "The\\s+cost\\s+required\\s+to\\s+cast\\s+it\\s+is\\s+reduced\\s+by\\s+(?<amount>\\d+)[.!]?"
+    );
+    /**
+     * Aemo 23-022R: "Your opponent removes all their hand from the game face down. Your opponent
+     * can look at these removed cards at any time. At the end of the turn, your opponent adds them
+     * back to their hand."
+     *
+     * <p>Anchored and matched whole. The three sentences are one effect -- the second says who may
+     * look at what the first removed, the third gives back what the first took -- and each refers
+     * to the one before it only as "these removed cards" and "them", neither of which the sentence
+     * splitter reads as a backward reference. Left to that rule the last sentence resolves alone,
+     * and "your opponent adds them back to their hand" with no antecedent is a removal that never
+     * happens followed by a return of nothing.
+     *
+     * <p>No groups: the effect has no numbers in it. Every quantity it deals with -- how many cards
+     * are removed, which ones come back -- is whatever the opponent's hand held when it resolved.
+     *
+     * <p>The middle sentence is required rather than optional. It is what makes the removal face
+     * down mean anything, and admitting the text without it would claim a differently-worded card
+     * that does not yet exist.
+     */
+    static final Pattern OPP_RFG_WHOLE_HAND_FACE_DOWN_RETURN_EOT = Pattern.compile(
+        "(?i)^Your\\s+opponent\\s+removes\\s+all\\s+(?:of\\s+)?their\\s+hand\\s+from\\s+the\\s+game\\s+face\\s+down[.!]?\\s+" +
+        "Your\\s+opponent\\s+can\\s+look\\s+at\\s+these\\s+removed\\s+cards\\s+at\\s+any\\s+time[.!]?\\s+" +
+        "At\\s+the\\s+end\\s+of\\s+the\\s+turn,?\\s+your\\s+opponent\\s+adds\\s+them\\s+back\\s+to\\s+their\\s+hand[.!]?$"
     );
     /**
      * "Your opponent removes the top card of their deck from the game [face down]. You can [look at

@@ -504,6 +504,35 @@ final class ActionResolverHand {
         }
         return null;
     }
+    /**
+     * Aemo 23-022R: "Your opponent removes all their hand from the game face down. Your opponent
+     * can look at these removed cards at any time. At the end of the turn, your opponent adds them
+     * back to their hand."
+     *
+     * <p>All three sentences resolve through one primitive. The removal and the return are the two
+     * halves of a single loan and have to be scheduled together -- see
+     * {@link GameContext#opponentRemovesHandFaceDownUntilEndOfTurn} -- and the middle sentence is
+     * a permission rather than an effect, carried by removing the cards face down in the first
+     * place.
+     *
+     * <p>Must precede {@code tryParseIndependentSentences}: nothing after the first sentence names
+     * what it is talking about, so the splitter takes the three apart and the last one, read alone,
+     * is a return of cards that were never removed.
+     *
+     * <p>The trailing "You can only use this ability during your turn." is stripped before
+     * matching, as the other whole-text parsers do -- it is a flag on the ability, gated at
+     * activation, and the pattern is anchored at both ends.
+     */
+    static Consumer<GameContext> tryParseOppRfgWholeHandFaceDown(String text) {
+        String matchOn = stripRestrictionSentences(text);
+        if (matchOn.isEmpty()) matchOn = text;
+        if (!OPP_RFG_WHOLE_HAND_FACE_DOWN_RETURN_EOT.matcher(matchOn.trim()).matches()) return null;
+        return ctx -> {
+            ctx.logEntry("Effect: Opponent removes their whole hand from the game face down "
+                    + "until the end of the turn");
+            ctx.opponentRemovesHandFaceDownUntilEndOfTurn();
+        };
+    }
     /** Parses "Your opponent randomly discards N card(s)" as a standalone effect. */
     static Consumer<GameContext> tryParseOpponentRandomDiscard(String text) {
         Matcher m = OPPONENT_RANDOM_DISCARD.matcher(text);

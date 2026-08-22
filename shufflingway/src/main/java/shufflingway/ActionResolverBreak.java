@@ -67,6 +67,27 @@ final class ActionResolverBreak {
             sortedByIdxDesc(ts, false).forEach(ctx::breakTarget);
         };
     }
+    /**
+     * Kefka 15-071H's Crystal ability. The whole three-sentence text resolves through one
+     * primitive, because the two decisions it describes belong to different players and have to be
+     * put to them in order — see {@link GameContext#divideOpponentForwardsIntoGroups}.
+     *
+     * <p>Must precede {@code tryParseIndependentSentences}: no sentence after the first carries a
+     * pronoun back to it that the splitter recognises, so left alone that rule would take the three
+     * apart and resolve whichever of them it could — which is the last one, putting an unbounded
+     * "all the Forwards" into the Break Zone with no division and no choice in front of it.
+     */
+    static Consumer<GameContext> tryParseDivideOppForwardsIntoGroups(String text) {
+        Matcher m = DIVIDE_OPP_FORWARDS_INTO_GROUPS.matcher(text.trim());
+        if (!m.matches()) return null;
+        int groups = Integer.parseInt(m.group("groups"));
+        if (groups < 2) return null;   // "divide into 1 group" would remove nothing and choose nothing
+        return ctx -> {
+            ctx.logEntry("Effect: Divide the Forwards opponent controls into " + groups
+                    + " groups — they keep 1, the rest go to the Break Zone");
+            ctx.divideOpponentForwardsIntoGroups(groups);
+        };
+    }
     /** Parses "Each player selects N [type](s) from their Break Zone and adds it/them to their hand." */
     static Consumer<GameContext> tryParseEachPlayerSalvageFromBreakZone(String text) {
         Matcher m = EACH_PLAYER_SALVAGE_FROM_BREAK_ZONE.matcher(text);

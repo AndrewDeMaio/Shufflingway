@@ -332,6 +332,24 @@ public interface GameContext {
     void forceTargetToBreakZone(ForwardTarget t);
 
     /**
+     * Kefka 15-071H: the resolving player divides every Forward their opponent controls into
+     * {@code groupCount} groups, that opponent keeps one group, and the rest are put into the
+     * Break Zone.
+     *
+     * <p>Two players decide in turn, which is what separates this from every other removal on this
+     * interface: the shape of the choice is set by one of them and its outcome by the other, so
+     * neither can be reduced to a target list the caller passes in.
+     *
+     * <p>Nothing is <em>chosen</em> here in the rules' sense — the effect names the whole row — so
+     * a Forward that cannot be chosen by Summons or abilities is divided up with the rest, and the
+     * cards that leave do so by being put into the Break Zone rather than broken.
+     *
+     * <p>An opponent with no Forwards is left alone, and a group may legally be empty: keeping the
+     * empty one loses the player everything, which is the threat the card trades on.
+     */
+    void divideOpponentForwardsIntoGroups(int groupCount);
+
+    /**
      * Moves the top {@code count} cards from the opponent's main deck into their Break Zone.
      */
     void opponentMillCards(int count);
@@ -1788,6 +1806,26 @@ public interface GameContext {
      * When P2 is the ability user, P1 is prompted via a selection dialog.
      */
     void forceOpponentHandRfp(int count);
+
+    /**
+     * Aemo 23-022R: the ability-user's opponent removes their whole hand from the game face down
+     * and takes it back at the end of the turn.
+     *
+     * <p>Nothing is selected and nothing is lost -- the hand comes back intact -- so what the card
+     * actually does is deny its use for the rest of the turn: no blocks paid for out of hand, no
+     * discard costs, and every "if your opponent has no cards in their hand" clause satisfied while
+     * it lasts. That is why it goes to the removed-from-game zone rather than a private holding
+     * area: effects that read that zone should see these cards, and hand size should not.
+     *
+     * <p>Face down means only that the ability user may not look at them; the owner may, at any
+     * time, and the removal is public. {@link GameState#addToPermanentRfpFaceDown} carries that,
+     * and the return clears it by taking the cards out of the zone.
+     *
+     * <p>Scheduled through {@link #addEndOfTurnEffect}, so the hand returns at the end of the turn
+     * the ability was used in -- which is the turn it names, the card being usable only on its
+     * controller's turn. An opponent holding no cards is left alone.
+     */
+    void opponentRemovesHandFaceDownUntilEndOfTurn();
 
     /**
      * Searches the field (both players' forwards, backups, and monsters) for a card

@@ -197,6 +197,20 @@ public class ActionResolver {
         result = tryParseRemoveSelfReturnNextMainPhase1(effectText, source);
         if (result != null) return result;
 
+        // Must precede tryParseIndependentSentences for the same reason: its three sentences
+        // refer back to each other only through "them" and "the other groups", neither of which
+        // that rule reads as a backward reference, so it took the ability apart and resolved the
+        // last sentence on its own -- every Forward on the board into the Break Zone.
+        result = tryParseDivideOppForwardsIntoGroups(effectText);
+        if (result != null) return result;
+
+        // Must precede tryParseIndependentSentences for the same reason again: "these removed
+        // cards" and "them" are all that tie Aemo's three sentences together, and neither counts
+        // as a backward reference, so the splitter resolved the last one alone -- a hand handed
+        // back that had never been taken away.
+        result = tryParseOppRfgWholeHandFaceDown(effectText);
+        if (result != null) return result;
+
         // Must precede tryParseIndependentSentences: the two sentences of a "Choose any number of
         // [types]. Cancel their effects." refer to each other only through "their", which that rule
         // does not read as a backward reference, so it split the ability and resolved the halves
@@ -1495,6 +1509,10 @@ public class ActionResolver {
         if (tryParseRemoveSelfReturnNextMainPhase1(effectText, source) != null)
             return "RemoveSelfReturnNextMainPhase1";
         // Mirrors parse(): claimed whole, ahead of the splitter that would report it in halves.
+        if (tryParseDivideOppForwardsIntoGroups(effectText) != null) return "DivideOppForwardsIntoGroups";
+        // Mirrors parse(): claimed whole, ahead of the splitter that would report it in thirds.
+        if (tryParseOppRfgWholeHandFaceDown(effectText) != null) return "OppRfgWholeHandFaceDown";
+        // Mirrors parse(): claimed whole, ahead of the splitter that would report it in halves.
         if (cancelAnyNumberFilter(effectText) != null) return "CancelAnyNumberAbilitiesOnStack";
         if (tryParseIndependentSentences(effectText, source, 0) != null) {
             String composed = composeOverSentences(effectText, s -> matchedPatternName(s, source));
@@ -2124,6 +2142,10 @@ public class ActionResolver {
         // alone and drops the return clause.
         if (tryParseRemoveSelfReturnNextMainPhase1(effectText, source) != null)
             return "RemoveSelfReturnNextMainPhase1";
+        // Mirrors parse(): claimed whole, ahead of the splitter that would report it in halves.
+        if (tryParseDivideOppForwardsIntoGroups(effectText) != null) return "DivideOppForwardsIntoGroups";
+        // Mirrors parse(); see the matching guard in matchedPatternNameOn().
+        if (tryParseOppRfgWholeHandFaceDown(effectText) != null) return "OppRfgWholeHandFaceDown";
         // Mirrors parse(); see the matching guard in matchedPatternNameOn().
         if (cancelAnyNumberFilter(effectText) != null) return "CancelAnyNumberAbilitiesOnStack";
         if (tryParseIndependentSentences(effectText, source, 0) != null) {

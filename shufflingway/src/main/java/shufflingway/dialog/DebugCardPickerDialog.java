@@ -14,6 +14,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.regex.Pattern;
 
 import javax.swing.BorderFactory;
+import javax.swing.BoxLayout;
 import javax.swing.ButtonGroup;
 import javax.swing.ImageIcon;
 import javax.swing.JButton;
@@ -50,8 +51,27 @@ import shufflingway.ImageCache;
  */
 public class DebugCardPickerDialog extends JDialog {
 
-    /** A single add: the chosen card serial, which player it targets, and how it arrives. */
-    public record Selection(String serial, boolean isP1, Origin origin) {}
+    /**
+     * A single add: the chosen card serial, which player it targets, how it arrives, and which of
+     * that player's holding zones it lands in.
+     */
+    public record Selection(String serial, boolean isP1, Origin origin, Zone zone) {}
+
+    /**
+     * Which holding zone an added card goes to. Only the flows that show the zone selector can
+     * report anything but {@link #BREAK_ZONE}; the others leave it at that default and ignore it.
+     */
+    public enum Zone {
+        BREAK_ZONE("BZ"),
+        RFP("RFP");
+
+        /** How the zone is named on the radio button and in the clear button's label. */
+        private final String label;
+
+        Zone(String label) { this.label = label; }
+
+        public String label() { return label; }
+    }
 
     /**
      * Where a spawned card is treated as having come from. The engine's own distinction is binary —
@@ -102,11 +122,21 @@ public class DebugCardPickerDialog extends JDialog {
     private boolean targetIsP1 = true;
     /** Arrival origin for the spawn flow; defaults to the way a card normally reaches the field. */
     private Origin origin = Origin.HAND;
+    /** Destination zone for the add; defaults to the Break Zone. */
+    private Zone zone = Zone.BREAK_ZONE;
+    /**
+     * The lower-left clear button, or {@code null} when the caller asked for none. Held so the
+     * radio buttons can relabel it: in the zone-aware flow its text names the exact zone it is
+     * about to wipe, and that pair moves as the radios move.
+     */
+    private JButton clearButton;
+    /** What {@link #clearButton} should currently say -- a fixed string, or a derived one. */
+    private java.util.function.Supplier<String> clearLabel = () -> "";
 
     private DebugCardPickerDialog(JFrame parent, String title,
             java.util.function.Consumer<Selection> addAction,
-            java.util.function.Consumer<Boolean> clearAction, String clearActionLabel,
-            boolean showOrigin) {
+            java.util.function.BiConsumer<Boolean, Zone> clearAction, String clearActionLabel,
+            boolean showOrigin, boolean showZone) {
         super(parent, title, false);
         setSize(720 + PREVIEW_W + 16, 560);
         setLocationRelativeTo(parent);
@@ -159,16 +189,36 @@ public class DebugCardPickerDialog extends JDialog {
         ButtonGroup targetGroup = new ButtonGroup();
         targetGroup.add(p1Radio);
         targetGroup.add(p2Radio);
-        p1Radio.addActionListener(e -> targetIsP1 = true);
-        p2Radio.addActionListener(e -> targetIsP1 = false);
+        p1Radio.addActionListener(e -> { targetIsP1 = true;  refreshClearButtonLabel(); });
+        p2Radio.addActionListener(e -> { targetIsP1 = false; refreshClearButtonLabel(); });
         JPanel targetPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 4));
         targetPanel.add(new JLabel("Target player:"));
         targetPanel.add(p1Radio);
         targetPanel.add(p2Radio);
 
-        JPanel northPanel = new JPanel(new BorderLayout());
-        northPanel.add(targetPanel, BorderLayout.NORTH);
-        northPanel.add(searchPanel, BorderLayout.CENTER);
+        // Destination zone, above the player it belongs to: the two together name one zone, and
+        // reading them in that order matches the clear button they drive ("Clear P1 BZ").
+        JPanel zonePanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 4));
+        if (showZone) {
+            JRadioButton bzZoneRadio  = new JRadioButton("BZ", true);
+            JRadioButton rfpZoneRadio = new JRadioButton("RFP");
+            bzZoneRadio.setToolTipText("Add to the selected player's Break Zone.");
+            rfpZoneRadio.setToolTipText("Add to the selected player's Removed From Game zone.");
+            ButtonGroup zoneGroup = new ButtonGroup();
+            zoneGroup.add(bzZoneRadio);
+            zoneGroup.add(rfpZoneRadio);
+            bzZoneRadio .addActionListener(e -> { zone = Zone.BREAK_ZONE; refreshClearButtonLabel(); });
+            rfpZoneRadio.addActionListener(e -> { zone = Zone.RFP;        refreshClearButtonLabel(); });
+            zonePanel.add(new JLabel("Zone:"));
+            zonePanel.add(bzZoneRadio);
+            zonePanel.add(rfpZoneRadio);
+        }
+
+        JPanel northPanel = new JPanel();
+        northPanel.setLayout(new BoxLayout(northPanel, BoxLayout.Y_AXIS));
+        if (showZone) northPanel.add(zonePanel);
+        northPanel.add(targetPanel);
+        northPanel.add(searchPanel);
 
         JButton addButton = new JButton("+ Add");
         JButton closeButton = new JButton("Close");
@@ -184,9 +234,15 @@ public class DebugCardPickerDialog extends JDialog {
         // Optional lower-left action (e.g. the "Add Card to Hand"/"Add Card to BZ" flows): wipe the
         // corresponding zone of whichever player is currently selected by the target radio buttons.
         if (clearAction != null) {
-            JButton clearButton = new JButton(clearActionLabel);
+            // Zone-aware callers get a label built from the live radio pair rather than a fixed
+            // string, so the button always names the one zone it is about to wipe.
+            clearLabel = showZone
+                    ? () -> "Clear " + (targetIsP1 ? "P1" : "P2") + " " + zone.label()
+                    : () -> clearActionLabel;
+            clearButton = new JButton();
             clearButton.setToolTipText("Remove all cards from the selected player's zone.");
-            clearButton.addActionListener(e -> clearAction.accept(targetIsP1));
+            clearButton.addActionListener(e -> clearAction.accept(targetIsP1, zone));
+            refreshClearButtonLabel();
             leftPanel.add(clearButton);
         }
         // Arrival origin, for the spawn flow. A card cast from hand fires castOnly enter-the-field
@@ -230,6 +286,11 @@ public class DebugCardPickerDialog extends JDialog {
 
         loadCards();
         searchField.requestFocusInWindow();
+    }
+
+    /** Re-reads {@link #clearLabel} onto the button. A no-op when the caller asked for no button. */
+    private void refreshClearButtonLabel() {
+        if (clearButton != null) clearButton.setText(clearLabel.get());
     }
 
     private void applyFilter(String text) {
@@ -307,7 +368,7 @@ public class DebugCardPickerDialog extends JDialog {
         }
         int modelRow = table.convertRowIndexToModel(row);
         String serial = (String) tableModel.getValueAt(modelRow, 0);
-        addAction.accept(new Selection(serial, targetIsP1, origin));
+        addAction.accept(new Selection(serial, targetIsP1, origin, zone));
     }
 
     private void loadCards() {
@@ -334,7 +395,7 @@ public class DebugCardPickerDialog extends JDialog {
      */
     public static void pickRepeated(JFrame parent, String title,
             java.util.function.Consumer<Selection> addAction) {
-        show(parent, title, addAction, null, null, false);
+        show(parent, title, addAction, null, null, false, false);
     }
 
     /**
@@ -344,7 +405,7 @@ public class DebugCardPickerDialog extends JDialog {
      */
     public static void pickRepeatedWithOrigin(JFrame parent, String title,
             java.util.function.Consumer<Selection> addAction) {
-        show(parent, title, addAction, null, null, true);
+        show(parent, title, addAction, null, null, true, false);
     }
 
     /**
@@ -355,15 +416,29 @@ public class DebugCardPickerDialog extends JDialog {
     public static void pickRepeated(JFrame parent, String title,
             java.util.function.Consumer<Selection> addAction,
             java.util.function.Consumer<Boolean> clearAction, String clearActionLabel) {
-        show(parent, title, addAction, clearAction, clearActionLabel, false);
+        show(parent, title, addAction,
+                clearAction == null ? null : (isP1, z) -> clearAction.accept(isP1),
+                clearActionLabel, false, false);
+    }
+
+    /**
+     * Variant that adds a Break Zone / RFG selector above the target player, so one picker feeds
+     * either holding zone. Each add reports its zone as {@link Selection#zone()}, and the
+     * lower-left button relabels itself for the live pair -- "Clear P1 BZ", "Clear P2 RFP" -- so
+     * the two radios always describe what it will wipe. Defaults to P1's Break Zone.
+     */
+    public static void pickRepeatedWithZone(JFrame parent, String title,
+            java.util.function.Consumer<Selection> addAction,
+            java.util.function.BiConsumer<Boolean, Zone> clearAction) {
+        show(parent, title, addAction, clearAction, null, false, true);
     }
 
     private static void show(JFrame parent, String title,
             java.util.function.Consumer<Selection> addAction,
-            java.util.function.Consumer<Boolean> clearAction, String clearActionLabel,
-            boolean showOrigin) {
-        DebugCardPickerDialog dialog =
-                new DebugCardPickerDialog(parent, title, addAction, clearAction, clearActionLabel, showOrigin);
+            java.util.function.BiConsumer<Boolean, Zone> clearAction, String clearActionLabel,
+            boolean showOrigin, boolean showZone) {
+        DebugCardPickerDialog dialog = new DebugCardPickerDialog(
+                parent, title, addAction, clearAction, clearActionLabel, showOrigin, showZone);
         dialog.setVisible(true);
     }
 }

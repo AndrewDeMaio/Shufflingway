@@ -138,29 +138,65 @@ class DebugUtility {
             JOptionPane.showMessageDialog(mw.frame, "Start a game first.", "Debug Spawn", JOptionPane.WARNING_MESSAGE);
             return;
         }
-        DebugCardPickerDialog.pickRepeated(mw.frame, "Add Card to BZ", this::addSelectedToBreakZone, this::clearBreakZone, "Clear BZ");
+        DebugCardPickerDialog.pickRepeatedWithZone(mw.frame, "Add Card to BZ/RFP",
+                this::addSelectedToHoldingZone, this::clearHoldingZone);
     }
 
-    private void addSelectedToBreakZone(DebugCardPickerDialog.Selection sel) {
+    private void addSelectedToHoldingZone(DebugCardPickerDialog.Selection sel) {
         CardData card = mw.buildCardDataFromSerial(sel.serial());
         if (card == null) {
             JOptionPane.showMessageDialog(mw.frame, "Card not found: " + sel.serial(), "Debug Spawn", JOptionPane.ERROR_MESSAGE);
             return;
         }
         boolean isP1 = sel.isP1();
+        // Identity first either way: both zones route the card by its owner rather than by an
+        // argument, so a card whose owner is not recorded yet lands on P2's side of the board.
         mw.gameState.getIdentity().put(card, isP1);
-        mw.addToBreakZone(card);
-        mw.logEntry("[Debug] Added " + card.name() + " (" + sel.serial() + ") to " + (isP1 ? "P1" : "P2") + " Break Zone.");
+        if (sel.zone() == DebugCardPickerDialog.Zone.RFP) {
+            // Face up, and straight into the zone: the debug tool is for setting up a position, so
+            // it should not fire the "instead of the Break Zone" redirects that addToBreakZone honours.
+            mw.gameState.addToPermanentRfp(card);
+            if (isP1) mw.refreshP1WarpZoneUI(); else mw.refreshP2WarpZoneUI();
+        } else {
+            mw.addToBreakZone(card);
+        }
+        mw.logEntry("[Debug] Added " + card.name() + " (" + sel.serial() + ") to "
+                + (isP1 ? "P1" : "P2") + " " + zoneName(sel.zone()) + ".");
     }
 
-    /** Debug helper: removes every card from the given player's Break Zone and refreshes its display. */
-    private void clearBreakZone(boolean isP1) {
+    /** Debug helper: empties the given player's Break Zone or RFG zone and refreshes its display. */
+    private void clearHoldingZone(boolean isP1, DebugCardPickerDialog.Zone zone) {
+        if (zone == DebugCardPickerDialog.Zone.RFP) { clearPermanentRfp(isP1); return; }
         var bz = isP1 ? mw.gameState.getP1BreakZone() : mw.gameState.getP2BreakZone();
         int removed = bz.size();
         if (removed == 0) return;
         bz.clear();
         if (isP1) mw.refreshP1BreakLabel(); else mw.refreshP2BreakLabel();
         mw.logEntry("[Debug] Removed all " + removed + " card(s) from " + (isP1 ? "P1" : "P2") + "'s Break Zone.");
+    }
+
+    /**
+     * Empties the given player's permanently-removed zone. The Warp zone sits behind the same RFP
+     * button on the board but is left alone: its cards are waiting on counters to reach the field,
+     * which is a different thing from having been removed, and nothing this dialog adds goes there.
+     *
+     * <p>Removed one at a time through {@code removeFromPermanentRfp} rather than by clearing the
+     * list, because the zone view is unmodifiable and because that call is what also clears a
+     * card's face-down flag.
+     */
+    private void clearPermanentRfp(boolean isP1) {
+        var rfp = isP1 ? mw.gameState.getP1PermanentRfp() : mw.gameState.getP2PermanentRfp();
+        int removed = rfp.size();
+        if (removed == 0) return;
+        for (CardData card : new ArrayList<>(rfp)) mw.gameState.removeFromPermanentRfp(card);
+        if (isP1) mw.refreshP1WarpZoneUI(); else mw.refreshP2WarpZoneUI();
+        mw.logEntry("[Debug] Removed all " + removed + " card(s) from " + (isP1 ? "P1" : "P2")
+                + "'s Removed From Game zone.");
+    }
+
+    /** How a destination zone is named in the debug log. */
+    private static String zoneName(DebugCardPickerDialog.Zone zone) {
+        return zone == DebugCardPickerDialog.Zone.RFP ? "Removed From Game zone" : "Break Zone";
     }
 
     /**

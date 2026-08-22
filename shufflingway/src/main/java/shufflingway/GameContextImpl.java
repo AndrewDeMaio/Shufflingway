@@ -2523,6 +2523,51 @@ final class GameContextImpl implements GameContext {
 				}
 			}
 
+			/**
+			 * The row is taken whole off the board rather than through {@link #selectCharacters}:
+			 * the effect divides <em>all</em> the Forwards its opponent controls, so nothing is
+			 * chosen, no "cannot be chosen" shield applies and no chosen-by-opponent trigger fires.
+			 *
+			 * <p>The two questions are put in the order the card prints them and each is answered
+			 * by a different seat, so on a networked table one client sends the division and waits
+			 * for the selection while the other does the reverse. An answer that does not survive
+			 * its legality check comes back empty, and the effect then does nothing at all — a
+			 * half-applied division would put the two boards further apart than an abandoned one.
+			 */
+			@Override public void divideOpponentForwardsIntoGroups(int groupCount) {
+				List<CardData> oppForwards =
+						new ArrayList<>(isP1 ? mw.p2ForwardCards : mw.p1ForwardCards);
+				if (oppForwards.isEmpty()) {
+					logEntry("Divide into groups — opponent controls no Forwards");
+					return;
+				}
+				List<Integer> assignment =
+						mw.divideForwardsIntoGroups(isP1, oppForwards, groupCount);
+				if (!MainWindow.isGroupAssignment(assignment, oppForwards.size(), groupCount)) {
+					logEntry("Divide into groups — no division was made");
+					return;
+				}
+				for (int g = 0; g < groupCount; g++) {
+					StringBuilder members = new StringBuilder();
+					for (int i = 0; i < oppForwards.size(); i++) {
+						if (assignment.get(i) != g) continue;
+						if (members.length() > 0) members.append(", ");
+						members.append(oppForwards.get(i).name());
+					}
+					logEntry("Group " + (g + 1) + ": "
+							+ (members.length() == 0 ? "(no Forwards)" : members));
+				}
+
+				int kept = mw.selectGroupToKeep(!isP1, oppForwards, assignment, groupCount);
+				if (kept < 0) {
+					logEntry("Divide into groups — no group was chosen");
+					return;
+				}
+				logEntry("[Opponent] Keeps group " + (kept + 1));
+
+				mw.putUnkeptForwardGroupsIntoBreakZone(this, !isP1, assignment, groupCount, kept);
+			}
+
 			@Override public void opponentMillCards(int count) {
 				Deque<CardData> deck = mw.gameState.getP2MainDeck();
 				JLayeredPane lp    = mw.frame.getRootPane().getLayeredPane();
@@ -5562,6 +5607,46 @@ final class GameContextImpl implements GameContext {
 						(ownerIsP1 ? mw.gameState.getP1Hand() : mw.gameState.getP2Hand()).add(d);
 						ctx.logEntry(d.name() + " returns to its owner's hand");
 					}
+					mw.refreshP1HandLabel();
+					mw.refreshP2HandCountLabel();
+					mw.refreshP1WarpZoneUI();
+					mw.refreshP2WarpZoneUI();
+				});
+			}
+
+			/**
+			 * The whole hand moves, so there is no selection to put to either seat and nothing to
+			 * synchronise -- both clients run this off state they already agree on.
+			 *
+			 * <p>The returning effect closes over the cards it removed rather than re-reading the
+			 * zone, so a card the opponent gets back some other way in the meantime is not returned
+			 * twice: {@code removeFromPermanentRfp} reports whether it was still there, and one
+			 * that was not is skipped.
+			 */
+			@Override public void opponentRemovesHandFaceDownUntilEndOfTurn() {
+				boolean victimIsP1 = !isP1;
+				List<CardData> hand = victimIsP1 ? mw.gameState.getP1Hand() : mw.gameState.getP2Hand();
+				if (hand.isEmpty()) { logEntry("Opponent's hand is empty — nothing to remove."); return; }
+
+				List<CardData> removed = new ArrayList<>(hand);
+				hand.clear();
+				for (CardData d : removed) mw.gameState.addToPermanentRfpFaceDown(d);
+				logEntry("[" + (victimIsP1 ? "P1" : "P2") + "] removes their hand ("
+						+ removed.size() + " card" + (removed.size() != 1 ? "s" : "")
+						+ ") from the game face down until the end of the turn");
+
+				if (victimIsP1) { mw.refreshP1HandLabel();      mw.refreshP1WarpZoneUI(); }
+				else            { mw.refreshP2HandCountLabel(); mw.refreshP2WarpZoneUI(); }
+
+				addEndOfTurnEffect(ctx -> {
+					for (CardData d : removed) {
+						if (!mw.gameState.removeFromPermanentRfp(d)) continue;
+						Boolean ownerIsP1 = mw.gameState.getIdentity().get(d);
+						if (ownerIsP1 == null) continue;
+						(ownerIsP1 ? mw.gameState.getP1Hand() : mw.gameState.getP2Hand()).add(d);
+					}
+					ctx.logEntry("[" + (victimIsP1 ? "P1" : "P2")
+							+ "] takes their removed hand back at the end of the turn");
 					mw.refreshP1HandLabel();
 					mw.refreshP2HandCountLabel();
 					mw.refreshP1WarpZoneUI();

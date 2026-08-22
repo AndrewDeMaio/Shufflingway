@@ -115,6 +115,28 @@ public enum ChoiceKind {
 	RANDOM,
 
 	/**
+	 * How the sender split their opponent's Forwards into groups — Kefka 15-071H. One entry per
+	 * Forward on that row, in slot order, holding the group it was put in; a row of four split
+	 * two-one-one reads {@code [0, 1, 2, 0]}.
+	 *
+	 * <p>Positions rather than slot indices, and so no flip: the list is built from a row both
+	 * clients hold in the same order, and it is the sender's opponent's row on one client and
+	 * the sender's own on the other — the same card either way. What crosses is which group each
+	 * card went into, and a group number means the same thing on both sides.
+	 */
+	DIVIDE_GROUPS,
+
+	/**
+	 * Which group the sender kept out of the ones they were shown: a single group number, as
+	 * numbered by the {@link #DIVIDE_GROUPS} answer that made them.
+	 *
+	 * <p>Its own kind rather than a second DIVIDE_GROUPS because the two are asked back to back
+	 * within one effect — but of opposite seats, so each client sends exactly one of them and
+	 * waits for the other, which is what keeps one question in flight at a time.
+	 */
+	SELECT_GROUP,
+
+	/**
 	 * The sender has finished with a combat priority window and passed. Carries nothing — the
 	 * message is the whole answer.
 	 *

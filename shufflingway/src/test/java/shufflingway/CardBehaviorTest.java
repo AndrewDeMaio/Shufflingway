@@ -29648,4 +29648,407 @@ public class CardBehaviorTest {
 				"the surcharge sentence is a rider, not one of the options");
 	}
 
+
+	// =========================================================================================
+	// Kefka 15-071H: "Divide all the Forwards opponent controls into 3 groups (You can make a
+	// group of 0 Forwards). Your opponent selects 1 group among them. Put all the Forwards of the
+	// other groups into the Break Zone."
+	//
+	// One effect, two deciders, in that order — so the tests come in three parts: that the whole
+	// text is claimed as one thing rather than split into sentences, that each seat's answer is
+	// the one the rules want, and that the removal takes the right cards off the row.
+	// =========================================================================================
+
+	private static final String KEFKA_15_TEXT =
+			"[[ex]]EX BURST[[/]] When Kefka enters the field, gain 《C》.[[br]]   "
+			+ "《C》《C》《C》: Divide all the Forwards opponent controls into 3 groups "
+			+ "(You can make a group of 0 Forwards). Your opponent selects 1 group among them. "
+			+ "Put all the Forwards of the other groups into the Break Zone.";
+
+	private static CardData makeKefka() {
+		return new CardData(null, "Kefka", "Earth", 4, 8000, "Forward", false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				CardData.parseActionAbilities(KEFKA_15_TEXT), CardData.parseAutoAbilities(KEFKA_15_TEXT),
+				List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				null, null, null, KEFKA_15_TEXT);
+	}
+
+	private static String kefkaDivideText() {
+		return makeKefka().actionAbilities().get(0).effectText();
+	}
+
+	@Test
+	void kefkaResolvesAsOneDivisionRatherThanThreeSentences() {
+		CardData kefka = makeKefka();
+		GameContext ctx = mock(GameContext.class);
+
+		Consumer<GameContext> effect = ActionResolver.parse(kefkaDivideText(), kefka);
+		assertNotNull(effect, "the three-sentence ability has to parse as a whole");
+		effect.accept(ctx);
+
+		verify(ctx).divideOpponentForwardsIntoGroups(3);
+		verify(ctx).logEntry(anyString());
+		// Nothing else at all: the sentence splitter used to reach the last sentence on its own and
+		// clear the board, which is the failure this ability is one bad ordering away from.
+		verifyNoMoreInteractions(ctx);
+	}
+
+	@Test
+	void kefkaIsReportedUnderItsOwnPatternName() {
+		CardData kefka = makeKefka();
+		assertEquals("DivideOppForwardsIntoGroups",
+				ActionResolver.matchedPatternName(kefkaDivideText(), kefka));
+		assertEquals("DivideOppForwardsIntoGroups",
+				ActionResolver.fullDescription(kefkaDivideText(), kefka));
+	}
+
+	@Test
+	void aDivisionIntoOneGroupIsNotADivision() {
+		assertNull(ActionResolverBreak.tryParseDivideOppForwardsIntoGroups(
+				"Divide all the Forwards opponent controls into 1 group. "
+				+ "Your opponent selects 1 group among them. "
+				+ "Put all the Forwards of the other groups into the Break Zone."),
+				"one group leaves nothing to choose between and nothing to break");
+	}
+
+	// --- The two answers ---------------------------------------------------------------------
+
+	@Test
+	void theAiSplitsTheRowSoNoGroupIsWorthKeeping() {
+		MainWindow mw = new MainWindow();
+		List<CardData> row = List.of(
+				makeForward("Big",    "Earth", 5, 9000),
+				makeForward("Large",  "Earth", 4, 8000),
+				makeForward("Medium", "Earth", 3, 7000),
+				makeForward("Small",  "Earth", 1, 2000));
+
+		// The AI seat: chooserIsP1 is false, so decide() takes the CPU branch and no dialog opens.
+		List<Integer> assignment = mw.divideForwardsIntoGroups(false, row, 3);
+
+		assertEquals(row.size(), assignment.size(), "one group number per Forward");
+		assertTrue(assignment.stream().allMatch(g -> g >= 0 && g < 3), "every group is in range");
+		assertNotEquals(assignment.get(0), assignment.get(1),
+				"the two biggest Forwards are kept apart — that is the whole point of balancing");
+		// Dealt strongest first into 3 groups, the fourth card joins the strongest one again.
+		assertEquals(assignment.get(0), assignment.get(3));
+	}
+
+	@Test
+	void theAiKeepsTheGroupWorthMost() {
+		MainWindow mw = new MainWindow();
+		List<CardData> row = List.of(
+				makeForward("Weak",   "Earth", 1, 2000),
+				makeForward("Strong", "Earth", 5, 9000),
+				makeForward("Middle", "Earth", 3, 5000));
+		// group 0 = Weak (2000), group 1 = Strong (9000), group 2 = Middle (5000)
+		assertEquals(1, mw.selectGroupToKeep(false, row, List.of(0, 1, 2), 3));
+	}
+
+	@Test
+	void theAiWouldRatherKeepOneBigForwardThanTwoSmallOnes() {
+		MainWindow mw = new MainWindow();
+		List<CardData> row = List.of(
+				makeForward("Small A", "Earth", 1, 2000),
+				makeForward("Small B", "Earth", 1, 2000),
+				makeForward("Huge",    "Earth", 7, 9000));
+		assertEquals(1, mw.selectGroupToKeep(false, row, List.of(0, 0, 1), 2),
+				"9000 in one card beats 4000 spread over two");
+	}
+
+	@Test
+	void anEmptyGroupIsStillAGroupTheAiCanBeOffered() {
+		MainWindow mw = new MainWindow();
+		List<CardData> row = List.of(makeForward("Only", "Earth", 3, 7000));
+		// Everything in group 2; groups 0 and 1 are empty and must not be picked over it.
+		assertEquals(2, mw.selectGroupToKeep(false, row, List.of(2), 3));
+	}
+
+	// --- The removal -------------------------------------------------------------------------
+
+	@Test
+	void everyGroupButTheKeptOneIsPutIntoTheBreakZone() {
+		MainWindow mw = new MainWindow();
+		CardData a = makeForward("A", "Earth", 2, 5000);
+		CardData b = makeForward("B", "Earth", 3, 6000);
+		CardData c = makeForward("C", "Earth", 4, 7000);
+		CardData d = makeForward("D", "Earth", 5, 8000);
+		placeP2Forward(mw, a);   // P2 idx 0
+		placeP2Forward(mw, b);   // P2 idx 1
+		placeP2Forward(mw, c);   // P2 idx 2
+		placeP2Forward(mw, d);   // P2 idx 3
+
+		// P1 controls Kefka, so the row being divided is P2's and group 1 is the one kept.
+		mw.putUnkeptForwardGroupsIntoBreakZone(
+				mw.buildGameContext(true), false, List.of(0, 1, 1, 2), 3, 1);
+
+		assertEquals(List.of(b, c), mw.p2ForwardCards, "only the kept group is still on the row");
+		assertTrue(mw.gameState.getP2BreakZone().contains(a), "A left with its group");
+		assertTrue(mw.gameState.getP2BreakZone().contains(d), "so did D");
+		assertFalse(mw.gameState.getP2BreakZone().contains(b), "B was kept");
+	}
+
+	@Test
+	void keepingAnEmptyGroupClearsTheRow() {
+		MainWindow mw = new MainWindow();
+		placeP2Forward(mw, makeForward("A", "Earth", 2, 5000));
+		placeP2Forward(mw, makeForward("B", "Earth", 3, 6000));
+
+		// Both Forwards in group 0; the player keeps group 2, which holds nothing.
+		mw.putUnkeptForwardGroupsIntoBreakZone(
+				mw.buildGameContext(true), false, List.of(0, 0), 3, 2);
+
+		assertTrue(mw.p2ForwardCards.isEmpty(), "keeping the empty group loses everything");
+		assertEquals(2, mw.gameState.getP2BreakZone().size());
+	}
+
+	@Test
+	void anAssignmentThatDoesNotMatchTheRowIsIgnored() {
+		MainWindow mw = new MainWindow();
+		placeP2Forward(mw, makeForward("A", "Earth", 2, 5000));
+		placeP2Forward(mw, makeForward("B", "Earth", 3, 6000));
+
+		// Three group numbers for a row of two — only a client that disagrees about the board
+		// sends this, and acting on part of it would widen the gap rather than close it.
+		mw.putUnkeptForwardGroupsIntoBreakZone(
+				mw.buildGameContext(true), false, List.of(0, 1, 2), 3, 0);
+
+		assertEquals(2, mw.p2ForwardCards.size(), "the board is left exactly as it was");
+		assertTrue(mw.gameState.getP2BreakZone().isEmpty());
+	}
+
+	@Test
+	void aHalfFinishedDivisionRemovesNothing() {
+		MainWindow mw = new MainWindow();
+		placeP2Forward(mw, makeForward("A", "Earth", 2, 5000));
+		placeP2Forward(mw, makeForward("B", "Earth", 3, 6000));
+
+		// What the divide dialog hands back for a card still sitting in the holding row. It
+		// belongs to no group, so it would read as "not the group being kept" and be broken.
+		mw.putUnkeptForwardGroupsIntoBreakZone(
+				mw.buildGameContext(true), false, java.util.Arrays.asList(0, -1), 3, 0);
+
+		assertEquals(2, mw.p2ForwardCards.size(), "an unfinished division takes nothing");
+		assertTrue(mw.gameState.getP2BreakZone().isEmpty());
+	}
+
+	@Test
+	void whatCountsAsADivisionOfTheRow() {
+		assertTrue(MainWindow.isGroupAssignment(List.of(0, 2, 1), 3, 3), "one group per Forward");
+		assertTrue(MainWindow.isGroupAssignment(List.of(0, 0, 0), 3, 3),
+				"every Forward in one group leaves the other two empty, which the card allows");
+		assertFalse(MainWindow.isGroupAssignment(List.of(0, 1), 3, 3), "too few group numbers");
+		assertFalse(MainWindow.isGroupAssignment(List.of(0, 1, 2, 0), 3, 3), "too many");
+		assertFalse(MainWindow.isGroupAssignment(java.util.Arrays.asList(0, -1, 1), 3, 3),
+				"a Forward left unplaced is not in a group");
+		assertFalse(MainWindow.isGroupAssignment(List.of(0, 1, 3), 3, 3), "there is no group 4");
+	}
+
+
+	// =========================================================================================
+	// Aemo 23-022R: "《Dull》, put Aemo into the Break Zone: Your opponent removes all their hand
+	// from the game face down. Your opponent can look at these removed cards at any time. At the
+	// end of the turn, your opponent adds them back to their hand. You can only use this ability
+	// during your turn."
+	//
+	// A loan rather than a removal: the hand leaves and comes back intact, so what the card buys
+	// is a turn in which the opponent has no hand to spend. The tests come in three parts -- that
+	// the three sentences are claimed as one effect rather than split, that the cards go to and
+	// come back from the right zone, and that "face down" is enforced against the player who is
+	// not allowed to look.
+	// =========================================================================================
+
+	private static final String AEMO_23_TEXT =
+			"《Dull》, put Aemo into the Break Zone: Your opponent removes all their hand from the "
+			+ "game face down. Your opponent can look at these removed cards at any time. At the "
+			+ "end of the turn, your opponent adds them back to their hand. You can only use this "
+			+ "ability during your turn.";
+
+	private static CardData makeAemo() {
+		return new CardData(null, "Aemo", "Ice", 2, 0, "Backup", false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				CardData.parseActionAbilities(AEMO_23_TEXT), CardData.parseAutoAbilities(AEMO_23_TEXT),
+				List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				null, null, null, AEMO_23_TEXT);
+	}
+
+	private static ActionAbility aemoAbility() {
+		return makeAemo().actionAbilities().get(0);
+	}
+
+	/** Puts {@code count} cards into P2's hand, registered as P2's so the RFG zone routes them. */
+	private static List<CardData> fillP2Hand(MainWindow mw, int count) {
+		List<CardData> added = new ArrayList<>();
+		for (int i = 0; i < count; i++) {
+			CardData c = makeForward("Held " + i, "Ice", i + 1, 1000 * (i + 1));
+			mw.gameState.getIdentity().put(c, false);
+			mw.gameState.getP2Hand().add(c);
+			added.add(c);
+		}
+		return added;
+	}
+
+	@Test
+	void aemoResolvesAsOneLoanRatherThanThreeSentences() {
+		CardData aemo = makeAemo();
+		GameContext ctx = mock(GameContext.class);
+
+		Consumer<GameContext> effect = ActionResolver.parse(aemoAbility().effectText(), aemo);
+		assertNotNull(effect, "the three-sentence ability has to parse as a whole");
+		effect.accept(ctx);
+
+		verify(ctx).opponentRemovesHandFaceDownUntilEndOfTurn();
+		verify(ctx).logEntry(anyString());
+		// Nothing else: the sentence splitter reaches "your opponent adds them back to their hand"
+		// on its own, which is a return of cards that were never taken.
+		verifyNoMoreInteractions(ctx);
+	}
+
+	@Test
+	void aemoIsReportedUnderItsOwnPatternName() {
+		CardData aemo = makeAemo();
+		assertEquals("OppRfgWholeHandFaceDown",
+				ActionResolver.matchedPatternName(aemoAbility().effectText(), aemo));
+		assertEquals("OppRfgWholeHandFaceDown",
+				ActionResolver.fullDescription(aemoAbility().effectText(), aemo));
+	}
+
+	@Test
+	void aemoCarriesItsTimingAsAFlagRatherThanAnEffect() {
+		ActionAbility a = aemoAbility();
+		assertTrue(a.yourTurnOnly(), "the ability is gated to its controller's turn at activation");
+		assertTrue(a.requiresDull(), "the Dull symbol is part of the cost");
+		assertFalse(a.breakZoneCosts().isEmpty(), "so is putting Aemo into the Break Zone");
+	}
+
+	@Test
+	void aemoNeedsTheSentenceThatSaysWhoMayLook() {
+		// Without it the removal is an ordinary face-down one and this parser must not claim it --
+		// the pattern is what distinguishes Aemo from a card that has not been printed.
+		assertNull(ActionResolverHand.tryParseOppRfgWholeHandFaceDown(
+				"Your opponent removes all their hand from the game face down. "
+				+ "At the end of the turn, your opponent adds them back to their hand."),
+				"two of the three sentences are not this ability");
+	}
+
+	// --- Where the cards go, and when they come back -----------------------------------------
+
+	@Test
+	void aemoTakesTheWholeHandIntoTheOpponentsRfgZone() {
+		MainWindow mw = new MainWindow();
+		List<CardData> held = fillP2Hand(mw, 3);
+
+		mw.buildGameContext(true).opponentRemovesHandFaceDownUntilEndOfTurn();
+
+		assertTrue(mw.gameState.getP2Hand().isEmpty(), "the whole hand leaves");
+		assertEquals(held, mw.gameState.getP2PermanentRfp(),
+				"and lands in its owner's removed-from-game zone, in order");
+		assertTrue(mw.gameState.getP1PermanentRfp().isEmpty(),
+				"the ability user's own zone is not touched");
+		for (CardData c : held)
+			assertTrue(mw.gameState.isFaceDownInRfp(c), c.name() + " is face down");
+	}
+
+	@Test
+	void aemoGivesTheHandBackAtTheEndOfTheTurn() {
+		MainWindow mw = new MainWindow();
+		List<CardData> held = fillP2Hand(mw, 3);
+
+		mw.buildGameContext(true).opponentRemovesHandFaceDownUntilEndOfTurn();
+		mw.fireEndOfTurnEffects(true);
+
+		assertEquals(held, mw.gameState.getP2Hand(), "the hand comes back intact");
+		assertTrue(mw.gameState.getP2PermanentRfp().isEmpty(), "and the RFG zone is empty again");
+		for (CardData c : held)
+			assertFalse(mw.gameState.isFaceDownInRfp(c),
+					"leaving the zone ends the card's face-down stay in it");
+	}
+
+	@Test
+	void aemoReturnsOnlyWhatIsStillRemoved() {
+		MainWindow mw = new MainWindow();
+		List<CardData> held = fillP2Hand(mw, 3);
+
+		mw.buildGameContext(true).opponentRemovesHandFaceDownUntilEndOfTurn();
+		// Something else claims one of the removed cards before the turn ends.
+		assertTrue(mw.gameState.removeFromPermanentRfp(held.get(1)));
+
+		mw.fireEndOfTurnEffects(true);
+
+		assertEquals(List.of(held.get(0), held.get(2)), mw.gameState.getP2Hand(),
+				"a card that left the zone in the meantime is not handed back a second time");
+	}
+
+	@Test
+	void aemoAgainstAnEmptyHandDoesNothingAtAll() {
+		MainWindow mw = new MainWindow();
+
+		mw.buildGameContext(true).opponentRemovesHandFaceDownUntilEndOfTurn();
+		mw.fireEndOfTurnEffects(true);
+
+		assertTrue(mw.gameState.getP2PermanentRfp().isEmpty());
+		assertTrue(mw.gameState.getP2Hand().isEmpty(),
+				"no return is scheduled, so nothing appears out of an empty removal");
+	}
+
+	// --- Face down, and to whom --------------------------------------------------------------
+
+	@Test
+	void theAbilityUserMayNotLookAtWhatTheyRemoved() {
+		MainWindow mw = new MainWindow();
+		List<CardData> held = fillP2Hand(mw, 2);
+
+		mw.buildGameContext(true).opponentRemovesHandFaceDownUntilEndOfTurn();
+
+		for (CardData c : held) {
+			assertTrue(mw.isFaceDownToLocalSeat(c, false),
+					"hidden in the opponent's zone, the one this screen's player may not look at");
+			assertFalse(mw.isFaceDownToLocalSeat(c, true),
+					"the owner may look at these removed cards at any time");
+		}
+	}
+
+	@Test
+	void anOrdinaryRemovalIsStillShownFaceUp() {
+		MainWindow mw = new MainWindow();
+		CardData c = makeForward("Plain", "Ice", 2, 5000);
+		mw.gameState.getIdentity().put(c, false);
+		mw.gameState.addToPermanentRfp(c);
+
+		assertFalse(mw.gameState.isFaceDownInRfp(c));
+		assertFalse(mw.isFaceDownToLocalSeat(c, false),
+				"removal from the game is public unless the effect says face down");
+	}
+
+	@Test
+	void aemoUsedByTheOpponentHidesNothingFromItsOwner() {
+		MainWindow mw = new MainWindow();
+		CardData mine = makeForward("Mine", "Ice", 2, 5000);
+		mw.gameState.getIdentity().put(mine, true);
+		mw.gameState.getP1Hand().add(mine);
+
+		// P2 activates, so P1's hand is the one removed -- and P1 is the player at this screen.
+		mw.buildGameContext(false).opponentRemovesHandFaceDownUntilEndOfTurn();
+
+		assertEquals(List.of(mine), mw.gameState.getP1PermanentRfp());
+		assertTrue(mw.gameState.isFaceDownInRfp(mine), "face down to the player who removed it");
+		assertFalse(mw.isFaceDownToLocalSeat(mine, true),
+				"but its owner is the one looking, and the card is theirs to look at");
+	}
+
+	@Test
+	void aCardRemovedAgainAfterComingBackStartsFaceUp() {
+		MainWindow mw = new MainWindow();
+		List<CardData> held = fillP2Hand(mw, 1);
+		CardData c = held.get(0);
+
+		mw.buildGameContext(true).opponentRemovesHandFaceDownUntilEndOfTurn();
+		mw.fireEndOfTurnEffects(true);
+		mw.gameState.addToPermanentRfp(c);
+
+		assertFalse(mw.gameState.isFaceDownInRfp(c),
+				"face down belongs to one stay in the zone, not to the card");
+	}
+
 }

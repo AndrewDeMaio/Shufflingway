@@ -23,8 +23,8 @@ public class DebugMenu extends JMenu {
         addItem("Add Card to Hand…",
                 "Add any card directly to the chosen player's hand.",
                 addToHand);
-        addItem("Add Card to BZ…",
-                "Add any card directly to the chosen player's Break Zone.",
+        addItem("Add Card to BZ/RFP…",
+                "Add any card directly to the chosen player's Break Zone or Removed From Game zone.",
                 addToBreakZone);
         addItem("Add/Remove Counters…",
                 "Place named counters on (or remove them from) any card on the field.",

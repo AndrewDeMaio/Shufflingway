@@ -105,6 +105,7 @@ import static shufflingway.CpPaymentUtils.contributingElement;
 import static shufflingway.CpPaymentUtils.matchesAnyElement;
 import shufflingway.dialog.AltCostPaymentDialog;
 import shufflingway.dialog.BreakZoneDialog;
+import shufflingway.dialog.DivideIntoGroupsDialog;
 import shufflingway.dialog.ExtraCostBzSelectDialog;
 import shufflingway.dialog.HandPickDialog;
 import shufflingway.dialog.LbDialog;
@@ -3352,13 +3353,18 @@ public class MainWindow {
 			return;
 		}
 		// Prefer the last-added permanent RFP card for the label; fall back to last warp card
-		String url = !perm.isEmpty()
+		// A face-down card the local seat does not own shows its back here, and carries no url:
+		// this label is the one part of the zone that is on screen without being asked for, so a
+		// hidden card reaching it would give the whole removal away at a glance.
+		boolean hideTop = !perm.isEmpty() && isFaceDownToLocalSeat(perm.get(perm.size() - 1), isP1);
+		String url = hideTop ? null
+				: !perm.isEmpty()
 				? perm.get(perm.size() - 1).imageUrl()
 				: zone.get(zone.size() - 1).card.imageUrl();
 		label.setUrl(url);
 		new SwingWorker<ImageIcon, Void>() {
 			@Override protected ImageIcon doInBackground() throws Exception {
-				Image img = ImageCache.load(url);
+				Image img = url == null ? loadCardbackImage() : ImageCache.load(url);
 				return img == null ? null
 						: new ImageIcon(img.getScaledInstance(CARD_W, CARD_H, Image.SCALE_SMOOTH));
 			}
@@ -3368,6 +3374,19 @@ public class MainWindow {
 			}
 		}.execute();
 		refreshRemoveButtons();
+	}
+
+	/**
+	 * Whether {@code card} sits in the RFG zone face down to the player at this screen -- Aemo
+	 * 23-022R. P1 is the local seat, so a face-down card is hidden exactly when it is not P1's own:
+	 * its owner may look at it at any time, and no one else may look at all.
+	 *
+	 * <p>{@code zoneIsP1} is the zone being rendered rather than the card's owner, but the two
+	 * agree -- cards are removed into their own owner's zone -- and the zone is what the callers
+	 * already have in hand.
+	 */
+	boolean isFaceDownToLocalSeat(CardData card, boolean zoneIsP1) {
+		return !zoneIsP1 && gameState.isFaceDownInRfp(card);
 	}
 
 	/**
@@ -3441,9 +3460,12 @@ public class MainWindow {
 
 	/** Shows the "Removed from Play" dialog for the specified player. */
 	private void showRemovedFromPlayDialog(String player) {
-		List<GameState.WarpEntry> warpZone = "P1".equals(player) ? gameState.getP1WarpZone() : gameState.getP2WarpZone();
-		List<CardData>            permZone = "P1".equals(player) ? gameState.getP1PermanentRfp() : gameState.getP2PermanentRfp();
-		RemovedFromPlayDialog.show(frame, warpZone, permZone, player, this::showZoomAt, this::hideZoom);
+		boolean isP1 = "P1".equals(player);
+		List<GameState.WarpEntry> warpZone = isP1 ? gameState.getP1WarpZone() : gameState.getP2WarpZone();
+		List<CardData>            permZone = isP1 ? gameState.getP1PermanentRfp() : gameState.getP2PermanentRfp();
+		RemovedFromPlayDialog.show(frame, warpZone, permZone, player,
+				card -> isFaceDownToLocalSeat(card, isP1), this::loadCardbackImage,
+				this::showZoomAt, this::hideZoom);
 	}
 
 	private void showBreakZoneDialog() { showBreakZoneDialog(gameState.getP1BreakZone(), "P1 Break Zone", true); }
@@ -6616,6 +6638,126 @@ public class MainWindow {
 				})
 				.legalWhen(usable::containsAll, "it was not among the cards revealed to them"));
 		return answer.isEmpty() ? -1 : answer.get(0);
+	}
+
+	/**
+	 * The player at seat {@code dividerIsP1} splits {@code forwards} — the Forward row belonging to
+	 * their <em>opponent</em> — into {@code groupCount} groups. Returns the group each Forward was
+	 * put in, one entry per card in the order given; empty when the answer could not be acted on.
+	 *
+	 * <p>Positions rather than slot codes, and so nothing to flip on arrival: both clients hold that
+	 * row in the same order, and a group number means the same thing whichever side asked.
+	 *
+	 * <p>A group may be empty and that is the point of the card, so no answer is rejected for
+	 * leaving one out. What is rejected is an answer that does not cover the row exactly once —
+	 * {@link DivideIntoGroupsDialog#showDivide} will not submit until every Forward is placed.
+	 */
+	List<Integer> divideForwardsIntoGroups(boolean dividerIsP1, List<CardData> forwards, int groupCount) {
+		if (forwards.isEmpty() || groupCount <= 0) return List.of();
+		return decide(PlayerChoice.by(dividerIsP1, ChoiceKind.DIVIDE_GROUPS)
+				.prompting("Waiting for your opponent to divide your Forwards into "
+						+ groupCount + " groups...")
+				.locally(() -> DivideIntoGroupsDialog.showDivide(
+						frame, forwards, groupCount, this::showZoomAt, this::hideZoom))
+				.byCpu(() -> cpuDivideIntoGroups(forwards, groupCount))
+				.legalWhen(a -> isGroupAssignment(a, forwards.size(), groupCount),
+						"that row holds " + forwards.size() + " Forwards here"));
+	}
+
+	/**
+	 * The AI's split: the Forwards dealt out strongest first, one per group in rotation.
+	 *
+	 * <p>Whoever divides does not choose what survives, so the aim is not a good group but a board
+	 * with no good group left on it — every option as close to equally poor as the row allows.
+	 * Round-robin off a strength-sorted row is the standard way to reach that, and it keeps the
+	 * biggest Forwards apart, which is what makes each remaining choice a small one.
+	 */
+	private List<Integer> cpuDivideIntoGroups(List<CardData> forwards, int groupCount) {
+		List<Integer> order = new ArrayList<>();
+		for (int i = 0; i < forwards.size(); i++) order.add(i);
+		order.sort((a, b) -> forwards.get(b).power() - forwards.get(a).power());
+		List<Integer> assignment = new ArrayList<>(java.util.Collections.nCopies(forwards.size(), 0));
+		for (int n = 0; n < order.size(); n++) assignment.set(order.get(n), n % groupCount);
+		return assignment;
+	}
+
+	/**
+	 * The player at seat {@code selectorIsP1} — the one whose Forwards these are — keeps one of the
+	 * groups {@code assignment} describes. Returns its number, or {@code -1} when no answer could be
+	 * acted on, in which case the caller must break nothing rather than guess.
+	 */
+	int selectGroupToKeep(boolean selectorIsP1, List<CardData> forwards,
+			List<Integer> assignment, int groupCount) {
+		List<Integer> answer = decide(PlayerChoice.by(selectorIsP1, ChoiceKind.SELECT_GROUP)
+				.prompting("Waiting for your opponent to choose which group to keep...")
+				.locally(() -> List.of(DivideIntoGroupsDialog.showSelect(
+						frame, forwards, assignment, groupCount, this::showZoomAt, this::hideZoom)))
+				.byCpu(() -> List.of(cpuBestGroup(forwards, assignment, groupCount)))
+				.legalWhen(a -> a.size() == 1 && a.get(0) >= 0 && a.get(0) < groupCount,
+						"there are only " + groupCount + " groups to keep"));
+		return answer.isEmpty() ? -1 : answer.get(0);
+	}
+
+	/**
+	 * The group the AI keeps: the one worth most in total power, and on a tie the one holding more
+	 * Forwards. Power rather than count because the choice is about what stays on the board, and a
+	 * single large Forward routinely outweighs two small ones.
+	 */
+	private int cpuBestGroup(List<CardData> forwards, List<Integer> assignment, int groupCount) {
+		int best = 0;
+		int bestPower = -1;
+		int bestCount = -1;
+		for (int g = 0; g < groupCount; g++) {
+			int power = 0;
+			int count = 0;
+			for (int i = 0; i < forwards.size() && i < assignment.size(); i++) {
+				if (assignment.get(i) != g) continue;
+				power += forwards.get(i).power();
+				count++;
+			}
+			if (power > bestPower || (power == bestPower && count > bestCount)) {
+				best = g; bestPower = power; bestCount = count;
+			}
+		}
+		return best;
+	}
+
+	/**
+	 * Whether {@code assignment} describes a division of a row of {@code size} Forwards into
+	 * {@code groupCount} groups: one group number per Forward, every one of them a real group.
+	 *
+	 * <p>Asked of a local answer as readily as a remote one. {@code decide} runs its legality
+	 * test over what arrives from another client only, and the divide dialog hands back a
+	 * holding-row marker for anything left unplaced — a marker that belongs to no group and so
+	 * would read as "not the group being kept", taking the whole row with it.
+	 */
+	static boolean isGroupAssignment(List<Integer> assignment, int size, int groupCount) {
+		return assignment.size() == size
+				&& assignment.stream().allMatch(g -> g != null && g >= 0 && g < groupCount);
+	}
+
+	/**
+	 * Puts every Forward on {@code ownerIsP1}'s row into the Break Zone except those in group
+	 * {@code kept} — the last step of Kefka 15-071H, once both players have answered.
+	 * {@code assignment} holds one group number per Forward, in slot order.
+	 *
+	 * <p>Highest slot first: the row closes up behind each card that leaves, so taking a lower
+	 * index first would shift every card still waiting. Removal goes through {@code ctx} rather
+	 * than straight to the board so the shields that answer to a put-into-the-Break-Zone effect
+	 * still get their say — the division named the whole row, but a card protected from the
+	 * opponent's effects is protected from this one too.
+	 *
+	 * <p>An assignment that does not describe the row is ignored outright, and nothing is
+	 * removed: a division nobody made is not a reason to clear a board.
+	 */
+	void putUnkeptForwardGroupsIntoBreakZone(GameContext ctx, boolean ownerIsP1,
+			List<Integer> assignment, int groupCount, int kept) {
+		List<CardData> row = ownerIsP1 ? p1ForwardCards : p2ForwardCards;
+		if (!isGroupAssignment(assignment, row.size(), groupCount)) return;
+		for (int i = row.size() - 1; i >= 0; i--) {
+			if (assignment.get(i) == kept) continue;
+			ctx.forceTargetToBreakZone(new ForwardTarget(ownerIsP1, i, ForwardTarget.CardZone.FORWARD));
+		}
 	}
 
 	/** Position of {@code card} in {@code list} by identity, or -1. Two copies are distinct here. */

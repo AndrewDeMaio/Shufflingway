@@ -76,6 +76,14 @@ public class GameState {
     private final List<WarpEntry>          p2WarpZone        = new ArrayList<>();
     private final List<CardData>           p1PermanentRfp    = new ArrayList<>();
     private final List<CardData>           p2PermanentRfp    = new ArrayList<>();
+    /**
+     * The cards in either permanent RFG zone that were removed face down -- Aemo 23-022R. Held by
+     * identity, so two copies of the same card removed by different effects are tracked apart.
+     * Membership is a property of the card's stay in the zone and ends with it: leaving the zone
+     * clears the flag, so a card that comes back and is removed again starts face up.
+     */
+    private final Set<CardData>            faceDownRfp       =
+            Collections.newSetFromMap(new IdentityHashMap<>());
     private final Map<String, Integer>     p1CpByElement     = new HashMap<>();
     private boolean p1OpeningHandPending  = false;
     private boolean p1MulliganUsed        = false;
@@ -129,6 +137,7 @@ public class GameState {
         p2WarpZone.clear();
         p1PermanentRfp.clear();
         p2PermanentRfp.clear();
+        faceDownRfp.clear();
         p1CpByElement.clear();
         p1Crystals    = 0;
         p2Crystals    = 0;
@@ -228,6 +237,26 @@ public class GameState {
         (identity.get(card) ? p1PermanentRfp : p2PermanentRfp).add(card);
     }
 
+    /**
+     * Removes {@code card} from the game face down, so that only its owner may look at it.
+     *
+     * <p>Face down is a matter of who may see the card, not of where it sits: it goes into the
+     * same zone as every other removed card and is subject to everything that reads that zone.
+     * What the flag changes is presentation, and it is read wherever the zone is rendered for the
+     * player who does not own it.
+     */
+    public void addToPermanentRfpFaceDown(CardData card)
+    {
+        addToPermanentRfp(card);
+        faceDownRfp.add(card);
+    }
+
+    /** Whether {@code card} is currently in a permanent RFG zone face down. */
+    public boolean isFaceDownInRfp(CardData card)
+    {
+        return faceDownRfp.contains(card);
+    }
+
     public boolean removeFromPermanentRfp(CardData card)
     {
         List<CardData> zone = identity.get(card) ? p1PermanentRfp : p2PermanentRfp;
@@ -235,6 +264,7 @@ public class GameState {
         for (int i = 0; i < zone.size(); i++) {
             if(zone.get(i) == card) {
                 zone.remove(i);
+                faceDownRfp.remove(card);
                 return true;
             }
         }
