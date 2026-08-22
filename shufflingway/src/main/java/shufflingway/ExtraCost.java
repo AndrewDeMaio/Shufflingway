@@ -14,12 +14,17 @@ import java.util.List;
  *   <li>{@link Type#CP_FIXED} — pay a fixed additional CP amount, e.g. {@code 《Wind》《2》}
  *       ("1 Wind + 2 generic"). {@link #cpElements} holds one entry per required CP
  *       (empty string {@code ""} = generic); {@link #count}/{@link #element} are unused.</li>
+ *   <li>{@link Type#CRYSTAL} — spend {@link #count} Crystals on top of the printed cost.
+ *       Crystals are a resource of their own rather than CP, so this cannot be folded into
+ *       {@link Type#CP_FIXED}: nothing on the board produces them and the payment dialog has
+ *       no slot for them. Bahamut SIN 28-087H, whose 《C》《C》 buys the second of its two
+ *       modal actions.</li>
  * </ul>
  */
 public record ExtraCost(Type type, int count, String element, boolean forwardOnly, String cardName,
         List<String> cpElements) {
 
-    public enum Type { BZ_REMOVE, DISCARD_HAND, CP_X, CP_FIXED }
+    public enum Type { BZ_REMOVE, DISCARD_HAND, CP_X, CP_FIXED, CRYSTAL }
 
     public ExtraCost {
         cpElements = cpElements == null ? List.of() : List.copyOf(cpElements);
@@ -45,6 +50,9 @@ public record ExtraCost(Type type, int count, String element, boolean forwardOnl
     public static ExtraCost cpFixed(List<String> cpElements) {
         return new ExtraCost(Type.CP_FIXED, 0, null, false, null, cpElements);
     }
+    public static ExtraCost crystals(int count) {
+        return new ExtraCost(Type.CRYSTAL, count, null, false, null, List.of());
+    }
 
     // ── Descriptions ─────────────────────────────────────────────────────────
 
@@ -59,6 +67,7 @@ public record ExtraCost(Type type, int count, String element, boolean forwardOnl
             }
             case DISCARD_HAND -> "Discard " + count + " card" + (count != 1 ? "s" : "");
             case CP_X         -> "Pay 《X》 extra CP";
+            case CRYSTAL      -> "Pay " + "《C》".repeat(Math.max(0, count));
             case CP_FIXED     -> {
                 List<String> parts = new java.util.ArrayList<>();
                 for (String e : cpElements) if (!e.isEmpty()) parts.add(e + " CP");

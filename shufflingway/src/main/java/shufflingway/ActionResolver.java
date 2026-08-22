@@ -197,6 +197,13 @@ public class ActionResolver {
         result = tryParseRemoveSelfReturnNextMainPhase1(effectText, source);
         if (result != null) return result;
 
+        // Must precede tryParseIndependentSentences: the two sentences of a "Choose any number of
+        // [types]. Cancel their effects." refer to each other only through "their", which that rule
+        // does not read as a backward reference, so it split the ability and resolved the halves
+        // apart -- a selection of field Characters, then a cancel with nothing chosen.
+        result = tryParseCancelAnyNumberAbilitiesOnStack(effectText);
+        if (result != null) return result;
+
         // Same reason, generalised: whichever sentence a pattern happens to match claims the whole
         // ability and the rest is discarded. Where every sentence stands alone, resolve them all.
         // Must stay ahead of the effect patterns for the same reason tryParseTrailingDraw does.
@@ -472,6 +479,12 @@ public class ActionResolver {
         result = tryParseChooseTwoJointAction(effectText, source);
         if (result != null) return result;
 
+        // Must precede tryParseChooseCharacter: that chain reads "as many … as you want" as an
+        // unbounded choose and has nowhere to put the total-cost budget, so it would offer every
+        // Forward on the board and break the lot.
+        result = tryParseChooseForwardsTotalCostBreak(effectText);
+        if (result != null) return result;
+
         result = tryParseChooseCharacter(effectText, source, xValue);
         if (result != null) return withAiTargetPreference(effectText, result);
 
@@ -491,6 +504,13 @@ public class ActionResolver {
         // claim this text off the protection clause quoted inside it, applying the grant and
         // silently dropping the "power becomes N" half (23-100L Young Excenmille).
         result = tryParseSelfGainsAndBasePowerBecomesPermanent(effectText, source);
+        if (result != null) return result;
+
+        // Alongside the parser above for the same reason: the quoted permission it hands out is
+        // what tryParseCannotBeChosenStandalone and the multi-attack readers would each claim a
+        // piece of. Order between the two is free -- one ends in a power clause, the other in the
+        // quote itself -- but they read as a pair.
+        result = tryParseSelfGainsTraitsAndQuotedPermanent(effectText, source);
         if (result != null) return result;
 
         result = tryParseCannotBeChosenStandalone(effectText, source);
@@ -1474,6 +1494,8 @@ public class ActionResolver {
         // alone and drops the return clause.
         if (tryParseRemoveSelfReturnNextMainPhase1(effectText, source) != null)
             return "RemoveSelfReturnNextMainPhase1";
+        // Mirrors parse(): claimed whole, ahead of the splitter that would report it in halves.
+        if (cancelAnyNumberFilter(effectText) != null) return "CancelAnyNumberAbilitiesOnStack";
         if (tryParseIndependentSentences(effectText, source, 0) != null) {
             String composed = composeOverSentences(effectText, s -> matchedPatternName(s, source));
             if (composed != null) return composed;
@@ -1555,6 +1577,9 @@ public class ActionResolver {
                 && tryParseChooseTwoMixedTypes(effectText, source) == null
                 && tryParseChooseTwoJointAction(effectText, source) != null)
             return "ChooseTwoJointAction";
+        // Mirrors parse(): ahead of ChooseCharacter, which reads the budget clause as an
+        // unbounded choose.
+        if (tryParseChooseForwardsTotalCostBreak(effectText) != null) return "ChooseForwardsTotalCostBreak";
         if (tryParseChooseCharacter(effectText, source, 0)              != null) return "ChooseCharacter";
         if (tryParseIfSelfFwdReceivedDamageDraw(effectText, source)          != null) return "IfSelfFwdReceivedDamageDraw";
         if (tryParseIfRfpCount(effectText, source)               != null) return "IfRfpCount";
@@ -1564,6 +1589,7 @@ public class ActionResolver {
         if (tryParsePlayerCannotCastSummons(effectText)                != null) return "PlayerCannotCastSummons";
         // Mirrors parse(): ahead of CannotBeChosen, which would claim it off the quoted clause.
         if (tryParseSelfGainsAndBasePowerBecomesPermanent(effectText, source) != null) return "SelfGainsAndBasePowerBecomesPermanent";
+        if (tryParseSelfGainsTraitsAndQuotedPermanent(effectText, source) != null) return "SelfGainsTraitsAndQuotedPermanent";
         if (tryParseCannotBeChosenStandalone(effectText, source) != null) return "CannotBeChosen";
         if (tryParseCannotBecomeDullOpp(effectText, source) != null)     return "CannotBecomeDullOpp";
         if (tryParseCannotBeReturnedToHandOpp(effectText, source) != null) return "CannotBeReturnedToHandOpp";
@@ -2015,6 +2041,9 @@ public class ActionResolver {
         if (FOLLOWUP_GAINS_MUST_BLOCK_NAMED_UNTIL_EOT.matcher(followupText).find())   return "MustBlockNamed";
         if (FOLLOWUP_MUST_BLOCK.matcher(followupText).find())                         return "MustBlock";
         if (FOLLOWUP_CANNOT_ATTACK.matcher(followupText).find())                      return "CannotAttack";
+        // Mirrors the choose chain: the compound grant is read before the plain compulsion.
+        if (FOLLOWUP_GAINS_QUOTED_EOT_AND_SELF_POWER_BOOST.matcher(followupText.trim()).matches())
+            return "GainsQuotedEotAndSelfPowerBoost";
         if (FOLLOWUP_MUST_ATTACK.matcher(followupText).find())                        return "MustAttack";
         // Must precede the plain form, mirroring the choose chain: that pattern's find() would take
         // the first clause and lose the action-ability half.
@@ -2095,6 +2124,8 @@ public class ActionResolver {
         // alone and drops the return clause.
         if (tryParseRemoveSelfReturnNextMainPhase1(effectText, source) != null)
             return "RemoveSelfReturnNextMainPhase1";
+        // Mirrors parse(); see the matching guard in matchedPatternNameOn().
+        if (cancelAnyNumberFilter(effectText) != null) return "CancelAnyNumberAbilitiesOnStack";
         if (tryParseIndependentSentences(effectText, source, 0) != null) {
             String composed = composeOverSentences(effectText, s -> fullDescription(s, source));
             if (composed != null) return composed;
@@ -2242,6 +2273,8 @@ public class ActionResolver {
                     ? matchedFollowupName(jointM.group("effects").trim(), source) : null;
             return "ChooseTwoJointAction / " + (followupName != null ? followupName : "?");
         }
+        // Mirrors parse() and matchedPatternName(): must precede the ChooseCharacter block.
+        if (tryParseChooseForwardsTotalCostBreak(effectText) != null) return "ChooseForwardsTotalCostBreak";
         Matcher chooseM = CHOOSE_CHARACTER_PATTERN.matcher(escapedEffectText);
         if (chooseM.find()) {
             String followup      = restorePeriodInName(chooseM.group("followup").trim(), source);
@@ -2357,6 +2390,7 @@ public class ActionResolver {
         if (tryParsePlayerCannotCastSummons(effectText)                != null) return "PlayerCannotCastSummons";
         // Mirrors parse(): ahead of CannotBeChosen, which would claim it off the quoted clause.
         if (tryParseSelfGainsAndBasePowerBecomesPermanent(effectText, source) != null) return "SelfGainsAndBasePowerBecomesPermanent";
+        if (tryParseSelfGainsTraitsAndQuotedPermanent(effectText, source) != null)     return "SelfGainsTraitsAndQuotedPermanent";
         if (tryParseCannotBeChosenStandalone(effectText, source) != null)       return "CannotBeChosen";
         if (tryParseCannotBecomeDullOpp(effectText, source) != null)            return "CannotBecomeDullOpp";
         if (tryParseCannotBeReturnedToHandOpp(effectText, source) != null)      return "CannotBeReturnedToHandOpp";
@@ -3780,6 +3814,34 @@ public class ActionResolver {
         return DOUBLECAST_FREE_SUMMONS_PATTERN.matcher(text.trim()).matches();
     }
 
+    /**
+     * What a modal Summon charges for taking every one of its options: {@code actions} — how many
+     * the surcharge buys — and {@code crystals} — what it costs. Bahamut SIN 28-087H is the only
+     * printing.
+     */
+    record SelectActionsSurcharge(int actions, int crystals) {}
+
+    /**
+     * The surcharge {@code text} rides on, or {@code null} when it carries none.
+     *
+     * <p>{@code cardName} is checked against the name the sentence prints: the clause names the
+     * card whose cost goes up, and a text quoting some <em>other</em> card's rider is not this
+     * card's price to pay.
+     *
+     * <p>A rider whose cost is not Crystals is turned down rather than read as free. Nothing else
+     * prints one yet, and a silent zero would put a "pay nothing extra" item on the play menu.
+     */
+    static SelectActionsSurcharge selectActionsSurcharge(String text, String cardName) {
+        if (text == null || cardName == null) return null;
+        Matcher m = SELECT_FOLLOWING_ACTIONS_COST_INCREASE.matcher(text);
+        if (!m.find()) return null;
+        if (!m.group("name").trim().equalsIgnoreCase(cardName.trim())) return null;
+        String cost = m.group("cost");
+        int crystals = (cost.length() - cost.replace("《C》", "").length()) / "《C》".length();
+        if (crystals == 0) return null;
+        return new SelectActionsSurcharge(Integer.parseInt(m.group("actions")), crystals);
+    }
+
     private static Consumer<GameContext> tryParseEndOfNextTurnIfCardOnFieldOppLoses(String text) {
         Matcher m = END_OF_NEXT_TURN_IF_CARD_ON_FIELD_OPP_LOSES.matcher(text);
         if (!m.matches()) return null;
@@ -4044,6 +4106,53 @@ public class ActionResolver {
     }
 
     /**
+     * The entry filter of a "Choose any number of [types]. Cancel their effects." text, or
+     * {@code null} when {@code effectText} is not one.
+     *
+     * <p>Every term in the list has to be a kind of Stack entry: the pattern's type group is
+     * deliberately loose, so this is where a list naming Forwards or anything else the Stack does
+     * not hold is turned down. Shared by the parser, the two reporting chains and
+     * {@link #stackCancelFilter}, so the gate that decides the ability may be activated and the
+     * resolution that acts on it can never disagree about what is eligible.
+     */
+    static Predicate<StackEntry> cancelAnyNumberFilter(String effectText) {
+        if (effectText == null) return null;
+        Matcher m = CANCEL_ANY_NUMBER_ABILITIES_ON_STACK.matcher(effectText.trim());
+        if (!m.matches()) return null;
+        String types = m.group("types").trim();
+        for (String term : types.split("(?i)\\s*,\\s*|\\s+or\\s+")) {
+            if (term.isBlank()) continue;
+            if (!CANCELLABLE_ENTRY_TYPE.matcher(term.trim()).matches()) return null;
+        }
+        return parseAbilityTypeFilter(types);
+    }
+
+    /**
+     * Parses "Choose any number of [types]. Cancel their effects." — Jecht 14-108H and Shelke
+     * 16-029R. The player picks as many matching entries off the Stack as they like and every one
+     * of them is cancelled.
+     *
+     * <p>Must precede {@code tryParseIndependentSentences}: neither sentence refers back to the
+     * other, so that rule accepted the pair and resolved them apart — the choose was read as a
+     * selection of field Characters and the cancel as an answer to a selection in progress, which
+     * between them cancelled something nobody had chosen. Shelke's shorter list did not even
+     * survive that far: its first sentence parses as nothing, so the whole ability fell through to
+     * the compound-sentence fallback and resolved as the bare cancel alone.
+     */
+    private static Consumer<GameContext> tryParseCancelAnyNumberAbilitiesOnStack(String text) {
+        Predicate<StackEntry> filter = cancelAnyNumberFilter(text);
+        if (filter == null) return null;
+        Matcher m = CANCEL_ANY_NUMBER_ABILITIES_ON_STACK.matcher(text.trim());
+        m.matches();
+        String types  = m.group("types").trim();
+        String prompt = "Choose any number of " + types + " to cancel:";
+        return ctx -> {
+            ctx.logEntry("Effect: Cancel any number of " + types + " on stack");
+            ctx.cancelAnyNumberOfAbilitiesOnStack(filter, prompt);
+        };
+    }
+
+    /**
      * Parses the general "Choose 1 [ability type(s)] [optional filter]. Cancel its effect." family.
      * Builds a {@link java.util.function.Predicate} over {@link StackEntry} from the parsed type string.
      */
@@ -4192,6 +4301,8 @@ public class ActionResolver {
                     ? filter.and(e -> e.isP1() != cancellerIsP1)
                     : filter;
         }
+        Predicate<StackEntry> anyNumber = cancelAnyNumberFilter(text);
+        if (anyNumber != null) return anyNumber;
         Matcher onStack = CANCEL_ABILITY_ON_STACK.matcher(text);
         if (onStack.find()) {
             Predicate<StackEntry> filter = parseAbilityTypeFilter(onStack.group("types").trim());

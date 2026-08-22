@@ -475,7 +475,15 @@ public record CardData(
      */
     public ExtraCost extraCost() {
         Matcher m = EXTRA_COST_SUMMON.matcher(textEn);
-        if (!m.find()) return null;
+        if (!m.find()) {
+            // Bahamut SIN 28-087H prices its modal choice instead of printing a "you may pay …
+            // as an extra cost" sentence, so it never reaches the pattern above. The surcharge
+            // is optional and paid at cast time like every other extra cost, which is exactly
+            // what this accessor exists to describe -- see ActionResolver.selectActionsSurcharge.
+            ActionResolver.SelectActionsSurcharge surcharge =
+                    ActionResolver.selectActionsSurcharge(textEn, name);
+            return surcharge != null ? ExtraCost.crystals(surcharge.crystals()) : null;
+        }
         String discardcount = m.group("discardcount");
         if (discardcount != null) return ExtraCost.discardHand(Integer.parseInt(discardcount));
         String cptoks = m.group("cptoks") != null ? m.group("cptoks") : m.group("cptoksinline");

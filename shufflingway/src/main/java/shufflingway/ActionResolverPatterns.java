@@ -405,6 +405,22 @@ final class ActionResolverPatterns {
         "\\.\\s*Cancel\\s+its\\s+effect[.!]?"
     );
     /**
+     * The plural sibling of {@link #CANCEL_ABILITY_ON_STACK}: "Choose any number of [types].
+     * Cancel their effects." — Jecht 14-108H's Jecht Block, whose list spans Summons and all three
+     * kinds of ability, and Shelke 16-029R's Countertek, whose list is auto-abilities alone.
+     *
+     * <p>Group {@code types} is the raw list, comma- and "or"-separated. It is captured loosely and
+     * validated term by term in the parser rather than enumerated here, so the pattern cannot claim
+     * a "Choose any number of Forwards. …" text on the strength of its opening words alone.
+     */
+    static final Pattern CANCEL_ANY_NUMBER_ABILITIES_ON_STACK = Pattern.compile(
+        "(?i)^Choose\\s+any\\s+number\\s+of\\s+(?<types>[^.!]+?)[.!]\\s*" +
+        "Cancel\\s+their\\s+effects?[.!]?$");
+    /** One entry of {@link #CANCEL_ANY_NUMBER_ABILITIES_ON_STACK}'s type list. */
+    static final Pattern CANCELLABLE_ENTRY_TYPE = Pattern.compile(
+        "(?i)^(?:Summons?|auto[- ]abilit(?:y|ies)|action\\s+abilit(?:y|ies)"
+        + "|special\\s+abilit(?:y|ies)|abilit(?:y|ies))$");
+    /**
      * Matches Faris 21-114L: "Choose 1 Summon or ability that is choosing only [Self].
      * You may choose another [Element] Forward you control to become the new target
      * (The newly chosen Forward must be a valid choice)."
@@ -2013,6 +2029,28 @@ final class ActionResolverPatterns {
     static final Pattern FOLLOWUP_MUST_ATTACK = Pattern.compile(
         "(?i)it\\s+must\\s+attack\\s+this\\s+turn\\s+if\\s+possible\\.?"
     );
+    /**
+     * Matches Azul 23-077H's followup: "Until the end of the turn, it gains "[quoted]" and [Self]
+     * gains +N power." — one clause hands the chosen Forward a quoted ability, the next pays the
+     * activating card for it.
+     *
+     * <p>Kept as one pattern rather than a grant plus a secondary because the sentence never
+     * breaks: the only ". " in it sits inside the quotation, so the choose chain's quote-aware
+     * split leaves the whole thing as the primary followup. Groups: {@code quoted} — the granted
+     * clause; {@code self} — the card being paid, checked against the source's own name by the
+     * caller; {@code amount} — the power it gains.
+     */
+    static final Pattern FOLLOWUP_GAINS_QUOTED_EOT_AND_SELF_POWER_BOOST = Pattern.compile(
+        "(?i)^Until\\s+the\\s+end\\s+of\\s+the\\s+turn,\\s+it\\s+gains\\s+" +
+        "\"(?<quoted>[^\"]+)\"\\s+and\\s+(?<self>[^\"]+?)\\s+gains\\s+" +
+        "\\+(?<amount>\\d+)\\s+power[.!]?$");
+    /**
+     * The self-reference a granted clause uses for whatever received it — "This Forward", "This
+     * Character", or a bare "It". Used to confirm that a quoted grant is talking about its new
+     * carrier rather than naming some other card.
+     */
+    static final Pattern GRANTED_CLAUSE_SELF_SUBJECT = Pattern.compile(
+        "(?i)^(?:this\\s+(?:Forward|Character|Backup|Monster)|it)$");
     /** Matches "it/they cannot attack or block this turn". */
     static final Pattern FOLLOWUP_CANNOT_ATTACK_OR_BLOCK = Pattern.compile(
         "(?i)(?:it|they)\\s+cannot\\s+attack\\s+or\\s+block\\s+this\\s+turn\\.?"
@@ -4034,6 +4072,18 @@ final class ActionResolverPatterns {
         "(?<cardtype>Backups?|Forwards?)\\s+you\\s+control[.,]?\\s+(?<followup>.+)"
     );
     /**
+     * Vincent 2-077L's Death Penalty: "Choose as many Forwards as you want with a total cost of N
+     * or less. Break them."
+     *
+     * <p>The only field-target selection in the corpus bounded by a <em>sum</em> rather than a
+     * count or a per-card ceiling, which is why it gets a pattern and a selection primitive of its
+     * own instead of another parameter on the choose chain: nothing else could use them.
+     * Group {@code max} — the budget the chosen Forwards' printed costs must not exceed.
+     */
+    static final Pattern CHOOSE_FORWARDS_TOTAL_COST_BREAK = Pattern.compile(
+        "(?i)^Choose\\s+as\\s+many\\s+Forwards\\s+as\\s+you\\s+want\\s+with\\s+a\\s+total\\s+cost\\s+of\\s+"
+        + "(?<max>\\d+)\\s+or\\s+less[.!]?\\s*Break\\s+them[.!]?$");
+    /**
      * Matches "Choose 1 Forward [control?] with a power inferior to [CardName]'s [power]. [followup]"
      * Groups: {@code control} — optional "opponent controls" / "you control";
      *         {@code sourcename} — name of the card whose power sets the ceiling;
@@ -4897,6 +4947,23 @@ final class ActionResolverPatterns {
     );
     /** Extracts the individual quoted action strings from the {@code actions} capture group. */
     static final Pattern SELECT_FOLLOWING_QUOTED_ACTION = Pattern.compile("\"([^\"]+)\"");
+    /**
+     * The surcharge rider on a modal choice: "If you selected N actions, the cost required to cast
+     * [Self] is increased by 《C》《C》." — Bahamut SIN 28-087H, the only card that prices its
+     * options rather than fixing how many of them you get.
+     *
+     * <p>Read from both sides of the cast. {@code CardData.extraCost()} turns it into the optional
+     * payment the play menu offers, and the modal parser turns it back into how many actions the
+     * player may then take — one pattern, so the price on the menu and the count at resolution
+     * cannot come apart.
+     *
+     * <p>Groups: {@code actions} — how many options the surcharge buys; {@code name} — the card
+     * being cast, checked against the source's own name by the caller; {@code cost} — the raw cost
+     * tokens, currently always Crystals.
+     */
+    static final Pattern SELECT_FOLLOWING_ACTIONS_COST_INCREASE = Pattern.compile(
+        "(?i)If\\s+you\\s+selected\\s+(?<actions>\\d+)\\s+actions?,\\s+the\\s+cost\\s+required\\s+to\\s+cast\\s+"
+        + "(?<name>[^.]+?)\\s+is\\s+increased\\s+by\\s+(?<cost>(?:《[^》]*》)+)[.!]?");
     /**
      * Matches an inline conditional upgrade sentence that may appear before the quoted actions:
      * "If you control N or more [Element] [Type], select [up to] M of the K following actions instead."
@@ -5884,6 +5951,29 @@ final class ActionResolverPatterns {
         "(?:\\s*,?\\s*(?:and\\s+)?(?:Haste|First\\s+Strike|Brave))*))\\s+and\\s+" +
         "(?<powersubject>.+?)'s\\s+power\\s+becomes\\s+(?<power>\\d+)[.!]?" +
         "(?:\\s*\\(This\\s+effect\\s+does\\s+not\\s+end\\s+at\\s+the\\s+end\\s+of\\s+the\\s+turn\\.?\\))?" +
+        "[.!]?\\s*$");
+    /**
+     * Matches "[Self] gains [traits] and "[quoted]"." — the trait-list sibling of
+     * {@link #SELF_GAINS_AND_BASE_POWER_BECOMES_PERMANENT}, whose second half is a quoted
+     * permission rather than a new base power (Ramza 16-017R: "Ramza gains First Strike, Brave and
+     * "Ramza can attack twice in the same turn."").
+     *
+     * <p>No duration is printed, so the grant lasts while the card stays on the field — the same
+     * reading its sibling takes, and the reason both are named "permanent". The reminder line some
+     * printings add is accepted in either number ("This effect does not" / "These effects don't"),
+     * since a sentence granting two things pluralises it.
+     *
+     * <p>The subject group excludes quote characters, and the negative lookahead refuses a leading
+     * "Until the end of the turn, …", so that wording cannot be read as a subject — both for the
+     * reason the sibling gives.
+     */
+    static final Pattern SELF_GAINS_TRAITS_AND_QUOTED_PERMANENT = Pattern.compile(
+        "(?i)^(?!Until\\b)(?<subject>[^\"]+?)\\s+gains\\s+" +
+        "(?<traits>(?:Haste|First\\s+Strike|Brave)" +
+        "(?:\\s*,?\\s*(?:and\\s+)?(?:Haste|First\\s+Strike|Brave))*)\\s+and\\s+" +
+        "\"(?<quoted>.+?)\"[.!]?" +
+        "(?:\\s*\\(Th(?:is|ese)\\s+effects?\\s+(?:does\\s+not|do\\s+not|don't)\\s+end\\s+" +
+        "at\\s+the\\s+end\\s+of\\s+the\\s+turn\\.?\\))?" +
         "[.!]?\\s*$");
     /**
      * "[Self] gains [+N power][, Haste[, First Strike][ and Brave]] (This effect does not end at

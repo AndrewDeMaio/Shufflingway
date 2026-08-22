@@ -29340,4 +29340,312 @@ public class CardBehaviorTest {
 		verify(ctx, never()).damageTarget(any(), anyInt());
 	}
 
+
+	// =========================================================================================
+	// Effect wiring — the round of cards whose selections are bounded by something other than a
+	// count: Bahamut SIN 28-087H (how many modal actions you may take is bought at cast time),
+	// Vincent 2-077L (a total-cost budget spent across the picks), Jecht 14-108H and Shelke
+	// 16-029R (as many Stack entries as you like), plus two self-grants that outlast the turn
+	// (Ramza 16-017R) or pay their own card for a compulsion (Azul 23-077H), and a check that
+	// Legendary Turk 17-042R's counter restriction actually gates activation.
+	// =========================================================================================
+
+	private static final String BAHAMUT_SIN_TEXT =
+			"Select up to 2 of the 2 following actions. If you selected 2 actions, the cost required "
+			+ "to cast Bahamut SIN is increased by 《C》《C》."
+			+ "[[br]]\"Choose 1 active Forward. Break it.\""
+			+ "[[br]]\"Choose 1 Forward of cost 3 or less. Break it.\"";
+
+	private static final String RAMZA_16_TEXT =
+			"《C》: Ramza gains Haste and Ramza's power becomes 9000.[[br]]   "
+			+ "《C》: Ramza gains First Strike, Brave and \"Ramza can attack twice in the same turn.\"[[br]]   "
+			+ "(These effects don't end at the end of the turn.)";
+
+	private static final String AZUL_TEXT =
+			"When Azul is dealt damage, choose up to 1 Forward opponent controls. Deal it the same "
+			+ "amount of damage.[[br]]   《C》: Choose 1 Forward. Until the end of the turn, it "
+			+ "gains \"This Forward must attack once per turn if possible.\" and Azul gains +2000 power.";
+
+	private static final String LEGENDARY_TURK_ABILITY_TEXT =
+			"Each Forward you control with a Turks Counter on it gains +5000 power.[[br]]   "
+			+ "Discard 2 cards: Choose 1 Category VII Forward you control. Place 1 Turks Counter on it.[[br]]   "
+			+ "Put Legendary Turk into the Break Zone: Choose 1 Forward. Break it. "
+			+ "You can only use this ability if a Turks Counter is placed on Legendary Turk.";
+
+	private static final String VINCENT_DEATH_PENALTY_TEXT =
+			"Vincent cannot be broken by opposing Summons or abilities that don't deal damage.[[br]]"
+			+ "[[s]]Death Penalty[[/]] 《S》《5》《Dull》: Choose as many Forwards "
+			+ "as you want with a total cost of 7 or less. Break them.";
+
+	/** A Forward whose action abilities are parsed from {@code text}, as the ETL would parse them. */
+	private static CardData makeActionAbilityForward(String name, String element, String text) {
+		return new CardData(null, name, element, 3, 7000, "Forward", false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				CardData.parseActionAbilities(text), List.of(),
+				CardData.parseFieldAbilities(text, "Forward"),
+				List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				null, null, null, text);
+	}
+
+	private static ActionAbility abilityOf(CardData card, int idx) {
+		return card.actionAbilities().get(idx);
+	}
+
+	// --- Ramza 16-017R: traits and a quoted permission, neither ending at end of turn ---------
+
+	@Test
+	void ramzaGrantsItsTraitsAndItsSecondAttackForGood() {
+		CardData ramza = makeActionAbilityForward("Ramza", "Fire", RAMZA_16_TEXT);
+		ActionAbility second = abilityOf(ramza, 1);
+		GameContext ctx = mock(GameContext.class);
+
+		Consumer<GameContext> effect = ActionResolver.parse(second.effectText(), ramza);
+		assertNotNull(effect, "the trait-plus-quoted-permission grant has to parse");
+		effect.accept(ctx);
+
+		verify(ctx).boostSourceForwardPermanently(ramza, 0,
+				EnumSet.of(CardData.Trait.FIRST_STRIKE, CardData.Trait.BRAVE));
+		verify(ctx).grantMaxAttacksPermanently(ramza, 2);
+		// No power is named in this half of the card — the other Crystal ability is the one that
+		// sets it, and granting any here would stack a phantom boost on top of that.
+		verify(ctx, never()).boostSourceForward(any(), anyInt(), any());
+	}
+
+	@Test
+	void ramzaIsReportedUnderItsOwnPatternName() {
+		CardData ramza = makeActionAbilityForward("Ramza", "Fire", RAMZA_16_TEXT);
+		String text = abilityOf(ramza, 1).effectText();
+		assertEquals("SelfGainsTraitsAndQuotedPermanent",
+				ActionResolver.matchedPatternName(text, ramza));
+		assertEquals("SelfGainsTraitsAndQuotedPermanent",
+				ActionResolver.fullDescription(text, ramza));
+	}
+
+	@Test
+	void ramzaSecondAttackSurvivesOnTheBoard() {
+		MainWindow mw = new MainWindow();
+		CardData ramza = makeActionAbilityForward("Ramza", "Fire", RAMZA_16_TEXT);
+		placeP1Forward(mw, ramza);
+		assertEquals(1, mw.maxAttacksPerTurn(ramza), "printed text alone grants no second attack");
+
+		ActionResolver.parse(abilityOf(ramza, 1).effectText(), ramza)
+				.accept(mw.buildGameContext(true));
+
+		assertEquals(2, mw.maxAttacksPerTurn(ramza), "the granted permission is read back off the board");
+		assertTrue(mw.effectiveP1HasTrait(0, CardData.Trait.BRAVE), "Brave came with it");
+		assertTrue(mw.effectiveP1HasTrait(0, CardData.Trait.FIRST_STRIKE), "so did First Strike");
+	}
+
+	// --- Azul 23-077H: a compulsion for the chosen Forward, paid for in Azul's own power ------
+
+	@Test
+	void azulCompelsTheChosenForwardAndPaysItselfPower() {
+		CardData azul = makeActionAbilityForward("Azul", "Lightning", AZUL_TEXT);
+		ForwardTarget chosen = fwd(false, 1);
+		GameContext ctx = contextChoosing(List.of(chosen));
+
+		ActionResolver.parse(abilityOf(azul, 0).effectText(), azul).accept(ctx);
+
+		verify(ctx).grantMustAttackOncePerTurnUntilEndOfTurn(chosen);
+		verify(ctx).boostSourceForward(azul, 2000, EnumSet.noneOf(CardData.Trait.class));
+	}
+
+	@Test
+	void azulsFollowupIsNoLongerReportedAsUnhandled() {
+		CardData azul = makeActionAbilityForward("Azul", "Lightning", AZUL_TEXT);
+		assertEquals("ChooseCharacter / GainsQuotedEotAndSelfPowerBoost",
+				ActionResolver.fullDescription(abilityOf(azul, 0).effectText(), azul));
+	}
+
+	@Test
+	void azulsCompulsionBindsTheChosenForwardOnTheBoard() {
+		MainWindow mw = new MainWindow();
+		enterP1AttackPhase(mw);
+		mw.attackSubStep = 1;   // declaration sub-step — where the compulsion is read
+		CardData azul   = makeActionAbilityForward("Azul", "Lightning", AZUL_TEXT);
+		CardData target = makeForward("Rude", "Lightning", 3, 7000);
+		placeP1Forward(mw, azul);    // idx 0
+		placeP1Forward(mw, target);  // idx 1
+		mw.p1ForwardPlayedOnTurn.set(0, 0);   // not summoning-sick
+		mw.p1ForwardPlayedOnTurn.set(1, 0);
+		assertEquals(-1, mw.p1ForwardCompelledToAttackIdx(), "nothing is compelled to start with");
+
+		mw.buildGameContext(true).grantMustAttackOncePerTurnUntilEndOfTurn(fwd(true, 1));
+
+		assertEquals(1, mw.p1ForwardCompelledToAttackIdx(), "the chosen Forward must now attack");
+		// "Once per turn" — one attack settles it, unlike the turn-scoped "must attack this turn".
+		mw.recordAttackDeclared(target);
+		assertEquals(-1, mw.p1ForwardCompelledToAttackIdx(), "one attack satisfies the compulsion");
+	}
+
+	// --- Jecht 14-108H / Shelke 16-029R: cancel as many Stack entries as you like -------------
+
+	@Test
+	void jechtBlockCancelsAnyNumberOfEntriesAcrossEveryKind() {
+		CardData jecht = makeActionAbilityForward("Jecht", "Water",
+				"[[s]]Jecht Block [[/]]《S》: Choose any number of Summons, auto-abilities, "
+				+ "action abilities or special abilities. Cancel their effects.");
+		String text = abilityOf(jecht, 0).effectText();
+		GameContext ctx = mock(GameContext.class);
+
+		ActionResolver.parse(text, jecht).accept(ctx);
+
+		ArgumentCaptor<Predicate<StackEntry>> filter = ArgumentCaptor.forClass(Predicate.class);
+		verify(ctx).cancelAnyNumberOfAbilitiesOnStack(filter.capture(), any());
+		Predicate<StackEntry> f = filter.getValue();
+		CardData any = makeForward("Any", "Water", 2, 5000);
+		assertTrue(f.test(new StackEntry(any, null, true)), "a Summon is in range");
+		assertTrue(f.test(new StackEntry(any, null, CardData.parseAutoAbilities(
+				"When Any enters the field, draw 1 card.").get(0), true, 0, false, null,
+				false, false, 0, 0)), "so is an auto-ability");
+		assertEquals("CancelAnyNumberAbilitiesOnStack",
+				ActionResolver.matchedPatternName(text, jecht));
+	}
+
+	@Test
+	void shelkesCountertekReachesAutoAbilitiesOnly() {
+		String text = "Choose any number of auto-abilities. Cancel their effects.";
+		Predicate<StackEntry> f = ActionResolver.cancelAnyNumberFilter(text);
+		assertNotNull(f, "the single-type list is the same family");
+		CardData any = makeForward("Any", "Ice", 2, 5000);
+		assertFalse(f.test(new StackEntry(any, null, true)), "a Summon is out of range");
+		assertTrue(f.test(new StackEntry(any, null, CardData.parseAutoAbilities(
+				"When Any enters the field, draw 1 card.").get(0), true, 0, false, null,
+				false, false, 0, 0)), "an auto-ability is in range");
+	}
+
+	@Test
+	void aTypeListNamingSomethingTheStackNeverHoldsIsDeclined() {
+		assertNull(ActionResolver.cancelAnyNumberFilter(
+				"Choose any number of Forwards. Cancel their effects."),
+				"Forwards are not Stack entries — the loose type group must not claim this");
+	}
+
+	@Test
+	void cancelAnyNumberGatesActivationOnHavingSomethingToCancel() {
+		String text = "Choose any number of auto-abilities. Cancel their effects.";
+		assertNotNull(ActionResolver.stackCancelFilter(text, true),
+				"an empty stack has to be able to shut this ability off");
+	}
+
+	// --- Legendary Turk 17-042R: the counter restriction on its Break Zone ability ------------
+
+	@Test
+	void legendaryTurksBreakAbilityNeedsATurksCounterOnItself() {
+		CardData turk = makeActionAbilityForward("Legendary Turk", "Ice", LEGENDARY_TURK_ABILITY_TEXT);
+		ActionAbility breakAbility = abilityOf(turk, 1);
+		assertEquals(1, breakAbility.minCounterRequired(), "the restriction parses as a minimum of 1");
+		assertEquals("Turks", breakAbility.minCounterType());
+
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, turk);
+		assertFalse(mw.canActivateAbility(breakAbility, false, CardState.ACTIVE, 0, turk, true),
+				"no Turks Counter — the ability is not available");
+
+		mw.gameState.placeCounters(turk, "Turks", 1);
+		assertTrue(mw.canActivateAbility(breakAbility, false, CardState.ACTIVE, 0, turk, true),
+				"one Turks Counter opens it");
+
+		// The counter has to be on Legendary Turk itself: one sitting on another Forward, which is
+		// where the card's own discard ability may well have put it, does not unlock this.
+		MainWindow other = new MainWindow();
+		CardData turk2  = makeActionAbilityForward("Legendary Turk", "Ice", LEGENDARY_TURK_ABILITY_TEXT);
+		CardData rufus  = makeForward("Rufus", "Ice", 3, 7000);
+		placeP1Forward(other, turk2);
+		placeP1Forward(other, rufus);
+		other.gameState.placeCounters(rufus, "Turks", 1);
+		assertFalse(other.canActivateAbility(abilityOf(turk2, 1), false, CardState.ACTIVE, 0, turk2, true),
+				"a counter on someone else is not a counter on Legendary Turk");
+	}
+
+	// --- Vincent 2-077L: a selection bounded by a total-cost budget ---------------------------
+
+	@Test
+	void vincentBreaksTheForwardsChosenWithinTheBudget() {
+		CardData vincent = makeActionAbilityForward("Vincent", "Earth", VINCENT_DEATH_PENALTY_TEXT);
+		String text = abilityOf(vincent, 0).effectText();
+		ForwardTarget a = fwd(false, 0);
+		ForwardTarget b = fwd(false, 2);
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.consumePreloadedTargets()).thenReturn(null);
+		when(ctx.selectForwardsWithTotalCostAtMost(anyInt())).thenReturn(new ArrayList<>(List.of(a, b)));
+
+		ActionResolver.parse(text, vincent).accept(ctx);
+
+		verify(ctx).selectForwardsWithTotalCostAtMost(7);
+		// Highest index first, so breaking one cannot shift the row index of the other.
+		InOrder order = inOrder(ctx);
+		order.verify(ctx).breakTarget(b);
+		order.verify(ctx).breakTarget(a);
+		assertEquals("ChooseForwardsTotalCostBreak", ActionResolver.matchedPatternName(text, vincent));
+	}
+
+	@Test
+	void theBudgetIsSpentInPrintedCost() {
+		MainWindow mw = new MainWindow();
+		CardData cheap = makeForward("Cheap", "Earth", 2, 5000);
+		CardData dear  = makeForward("Dear",  "Earth", 6, 9000);
+		placeP1Forward(mw, cheap);
+		placeP1Forward(mw, dear);
+		assertEquals(2, mw.fieldTargetCost(fwd(true, 0)));
+		assertEquals(6, mw.fieldTargetCost(fwd(true, 1)));
+		assertEquals(0, mw.fieldTargetCost(
+				new ForwardTarget(true, 0, ForwardTarget.CardZone.BACKUP)),
+				"an empty slot costs nothing");
+	}
+
+	// --- Bahamut SIN 28-087H: the second action is bought at cast time ------------------------
+
+	@Test
+	void bahamutSinPricesItsSecondActionAsAnExtraCost() {
+		CardData bahamut = makeSummon("Bahamut SIN", "Lightning", 4, BAHAMUT_SIN_TEXT);
+		ExtraCost ec = bahamut.extraCost();
+		assertNotNull(ec, "the surcharge is offered as an optional extra cost at cast time");
+		assertEquals(ExtraCost.Type.CRYSTAL, ec.type());
+		assertEquals(2, ec.count(), "《C》《C》 is two Crystals");
+
+		ActionResolver.SelectActionsSurcharge surcharge =
+				ActionResolver.selectActionsSurcharge(BAHAMUT_SIN_TEXT, "Bahamut SIN");
+		assertNotNull(surcharge);
+		assertEquals(2, surcharge.actions());
+		assertEquals(2, surcharge.crystals());
+	}
+
+	@Test
+	void aSurchargeNamingAnotherCardIsNotThisCardsPriceToPay() {
+		assertNull(ActionResolver.selectActionsSurcharge(BAHAMUT_SIN_TEXT, "Bahamut"),
+				"the clause names the card whose cost goes up, and it is not this one");
+	}
+
+	@Test
+	void bahamutSinOffersOneActionUnpaidAndBothWhenPaid() {
+		CardData bahamut = makeSummon("Bahamut SIN", "Lightning", 4, BAHAMUT_SIN_TEXT);
+		String effect = bahamut.summonEffect();
+
+		GameContext unpaid = mock(GameContext.class);
+		when(unpaid.wasExtraCostPaid()).thenReturn(false);
+		ActionResolver.parse(effect, bahamut).accept(unpaid);
+		verify(unpaid).chooseActions(eq(bahamut), anyList(), eq(1), eq(true));
+
+		GameContext paid = mock(GameContext.class);
+		when(paid.wasExtraCostPaid()).thenReturn(true);
+		ActionResolver.parse(effect, bahamut).accept(paid);
+		// Exactly two, not "up to" two: the Crystals were spent on taking both.
+		verify(paid).chooseActions(eq(bahamut), anyList(), eq(2), eq(false));
+	}
+
+	@Test
+	void bahamutSinStillOffersItsTwoPrintedActions() {
+		CardData bahamut = makeSummon("Bahamut SIN", "Lightning", 4, BAHAMUT_SIN_TEXT);
+		GameContext ctx = mock(GameContext.class);
+		ActionResolver.parse(bahamut.summonEffect(), bahamut).accept(ctx);
+
+		ArgumentCaptor<List<String>> actions = ArgumentCaptor.forClass(List.class);
+		verify(ctx).chooseActions(any(), actions.capture(), anyInt(), anyBoolean());
+		assertEquals(List.of("Choose 1 active Forward. Break it.",
+				"Choose 1 Forward of cost 3 or less. Break it."), actions.getValue(),
+				"the surcharge sentence is a rider, not one of the options");
+	}
+
 }

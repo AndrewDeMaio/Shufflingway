@@ -127,6 +127,15 @@ final class ActionResolverChoose {
         final int     baseSelect    = Integer.parseInt(m.group("select"));
         String actionsRaw = m.group("actions");
 
+        // "If you selected N actions, the cost required to cast [Self] is increased by 《C》《C》."
+        // -- Bahamut SIN 28-087H. The text reads as though the actions were picked first and
+        // billed afterwards, but a cast pays before it resolves: the surcharge is offered on the
+        // play menu as an ordinary extra cost, and what arrives here is whether it was paid.
+        // Paid buys exactly N actions, since that is what the payment was for; unpaid leaves the
+        // player free to take up to N-1 of them.
+        final SelectActionsSurcharge surcharge = source != null
+                ? selectActionsSurcharge(actionsRaw, source.name()) : null;
+
         // Detect inline conditional upgrade:
         // "If you control N or more [E] [T], select [up to] M of the K following actions instead."
         final boolean hasCondUpgrade;
@@ -182,6 +191,14 @@ final class ActionResolverChoose {
         return ctx -> {
             int     effSelect = baseSelect;
             boolean effUpTo   = baseUpTo;
+            if (surcharge != null) {
+                boolean paid = ctx.wasExtraCostPaid();
+                effSelect = paid ? surcharge.actions() : surcharge.actions() - 1;
+                effUpTo   = !paid;
+                ctx.logEntry("Select actions — extra cost " + (paid ? "paid" : "not paid")
+                        + ", may select " + (paid ? "" : "up to ") + effSelect);
+                if (effSelect <= 0) return;
+            }
             if (hasCondUpgrade
                     && ctx.selfFieldCount(condElem, condInclFwd, condInclBkp, condInclMon) >= condMinCount) {
                 effSelect = condSelect;
@@ -3347,6 +3364,40 @@ final class ActionResolverChoose {
                 }
                 if (secondary != null) secondary.accept(ctx);
             };
+        }
+
+        // --- "Until the end of the turn, it gains "<clause>" and <Self> gains +N power." ---
+        // Azul 23-077H. Must precede the must-attack branch below: the compulsion it hands out is
+        // spelled "must attack once per turn", which that branch's pattern does not read, so left
+        // to the chain the whole followup fell through to the unimplemented warning and the choose
+        // resolved as a bare target selection.
+        //
+        // Declines rather than half-applying when either half does not check out — a quoted clause
+        // this engine cannot enforce, or a power clause naming a card other than the source — for
+        // the reason permanentGrantForClause gives: an inert grant reports as handled, while an
+        // unparsed one stays visible.
+        Matcher grantAndPayM = FOLLOWUP_GAINS_QUOTED_EOT_AND_SELF_POWER_BOOST.matcher(primaryFollowup.trim());
+        if (source != null && grantAndPayM.matches()
+                && grantAndPayM.group("self").trim().equalsIgnoreCase(source.name())) {
+            String  quoted    = grantAndPayM.group("quoted").trim();
+            int     selfBoost = Integer.parseInt(grantAndPayM.group("amount"));
+            Matcher mustAtkM  = GRANTED_MUST_ATTACK_ONCE_PER_TURN.matcher(quoted);
+            if (mustAtkM.matches()
+                    && GRANTED_CLAUSE_SELF_SUBJECT.matcher(mustAtkM.group("subj").trim()).matches()) {
+                return ctx -> {
+                    ctx.logEntry(choosePrefix + " — must attack once per turn this turn; "
+                            + source.name() + " gains +" + selfBoost + " power");
+                    List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                            opponentOnly, selfOnly, condition, element, zone, opponentZone,
+                            costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
+                            jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
+                    ts.forEach(ctx::grantMustAttackOncePerTurnUntilEndOfTurn);
+                    // Paid whether or not a Forward was there to be compelled: the sentence promises
+                    // the boost outright, and Azul is the one card printing it.
+                    ctx.boostSourceForward(source, selfBoost, EnumSet.noneOf(CardData.Trait.class));
+                    if (secondary != null) secondary.accept(ctx);
+                };
+            }
         }
 
         // --- Must attack (this turn) followup ---

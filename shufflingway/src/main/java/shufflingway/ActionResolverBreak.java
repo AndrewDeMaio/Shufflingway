@@ -42,6 +42,31 @@ final class ActionResolverBreak {
             ts.forEach(ctx::breakTarget);
         };
     }
+    /**
+     * Vincent 2-077L: "Choose as many Forwards as you want with a total cost of N or less. Break
+     * them."
+     *
+     * <p>Kept out of the choose chain because its bound is on the selection as a whole: every
+     * filter that chain carries decides a card in or out on its own merits, while this one is a
+     * budget the player spends across the picks. The selection primitive it calls is what shows
+     * the running total and holds the confirm shut until the picks fit inside it.
+     *
+     * <p>Breaks highest index first per side, as every multi-target break does, so removing one
+     * Forward cannot shift the row index of another still waiting.
+     */
+    static Consumer<GameContext> tryParseChooseForwardsTotalCostBreak(String text) {
+        Matcher m = CHOOSE_FORWARDS_TOTAL_COST_BREAK.matcher(text.trim());
+        if (!m.matches()) return null;
+        int maxTotal = Integer.parseInt(m.group("max"));
+        return ctx -> {
+            ctx.logEntry("Effect: Choose as many Forwards as you want with a total cost of "
+                    + maxTotal + " or less — break them");
+            List<ForwardTarget> ts = ctx.selectForwardsWithTotalCostAtMost(maxTotal);
+            ctx.recordChosenTargets(ts);
+            sortedByIdxDesc(ts, true) .forEach(ctx::breakTarget);
+            sortedByIdxDesc(ts, false).forEach(ctx::breakTarget);
+        };
+    }
     /** Parses "Each player selects N [type](s) from their Break Zone and adds it/them to their hand." */
     static Consumer<GameContext> tryParseEachPlayerSalvageFromBreakZone(String text) {
         Matcher m = EACH_PLAYER_SALVAGE_FROM_BREAK_ZONE.matcher(text);

@@ -5,6 +5,7 @@ import static shufflingway.ActionResolverPatterns.*;
 import static shufflingway.ActionResolver.*;
 
 import java.util.EnumSet;
+import java.util.Locale;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
 
@@ -107,6 +108,59 @@ final class ActionResolverFieldAbility {
             ctx.setSourceForwardBasePowerPermanently(source, power, traits);
         };
     }
+    /**
+     * Parses "[Self] gains [traits] and "[quoted]"." — Ramza 16-017R's second Crystal ability,
+     * which hands itself First Strike and Brave alongside a quoted multi-attack permission.
+     *
+     * <p>The trait-list twin of {@link #tryParseSelfGainsAndBasePowerBecomesPermanent}, and treated
+     * the same way in every respect that matters: matched against the restriction-stripped text so
+     * a trailing "You can only use this ability if …" cannot defeat the end anchor, and declining
+     * the whole match when the quoted clause is one no grant primitive recognises rather than
+     * applying the traits alone.
+     *
+     * <p>The traits go through {@code boostSourceForwardPermanently} with a zero power amount:
+     * that primitive's power half is optional, and routing through it is what puts the traits in
+     * the same permanent map every other outlasts-the-turn grant writes to.
+     */
+    static Consumer<GameContext> tryParseSelfGainsTraitsAndQuotedPermanent(String text, CardData source) {
+        if (source == null) return null;
+        String matchOn = stripRestrictionSentences(text);
+        if (matchOn.isEmpty()) matchOn = text;
+        Matcher m = SELF_GAINS_TRAITS_AND_QUOTED_PERMANENT.matcher(matchOn.trim());
+        if (!m.matches()) return null;
+        if (!m.group("subject").trim().equalsIgnoreCase(source.name())) return null;
+
+        EnumSet<CardData.Trait> traits = parseTraits(m.group("traits"));
+        if (traits.isEmpty()) return null;
+        // The same sentence is printed by cards that grant it as a standing field ability —
+        // Gilgamesh 18-074L behind a Damage gate, Firion 18-130L and 21-099H behind a board
+        // condition — and those are enforced by the readers that scan field abilities
+        // (MainWindow.maxAttacksPerTurn, FieldGrantCalculator), never by executing them. Only
+        // the printed source separates the two readings, so it is the source that is asked:
+        // where the card prints this wording as a field ability, this is that ability rather
+        // than an effect to run, and the grant is neither permanent nor ours to apply.
+        if (printsAsFieldAbility(matchOn.trim(), source)) return null;
+        Consumer<GameContext> grant = permanentGrantForSelfClause(m.group("quoted").trim(), source);
+        if (grant == null) return null;
+        return ctx -> {
+            ctx.boostSourceForwardPermanently(source, 0, traits);
+            grant.accept(ctx);
+        };
+    }
+    /**
+     * True when {@code source} prints {@code text} inside one of its field abilities — the
+     * standing grants whose wording overlaps an executable one. Containment rather than
+     * equality, because a gate the field ability prints ("If you control 5 or more
+     * Characters, …") is stripped before the grant behind it reaches a parser.
+     */
+    private static boolean printsAsFieldAbility(String text, CardData source) {
+        for (FieldAbility fa : source.fieldAbilities())
+            if (fa.effectText() != null
+                    && fa.effectText().toLowerCase(Locale.ROOT).contains(text.toLowerCase(Locale.ROOT)))
+                return true;
+        return false;
+    }
+
     static Consumer<GameContext> tryParseOppFwdsLoseAllAbilitiesEot(String text) {
         if (!OPP_FWDS_LOSE_ALL_ABILITIES_EOT.matcher(text).matches()) return null;
         return ctx -> ctx.oppForwardsLoseAllAbilitiesUntilEndOfTurn();

@@ -137,6 +137,19 @@ public interface GameContext {
             String excludeElement, boolean withoutMulticard);
 
     /**
+     * Lets the resolving player pick any number of Forwards whose printed costs sum to at most
+     * {@code maxTotalCost}, and returns them — Vincent 2-077L's Death Penalty.
+     *
+     * <p>A budget rather than a per-card ceiling, so it cannot be expressed as one of
+     * {@link #selectCharacters}'s filters: which Forwards are still affordable depends on what has
+     * already been picked. The selection runs on the board like any other, with a running total on
+     * the confirm bar and the confirm held shut while the picks overspend.
+     *
+     * <p>Picking none is a legal answer, and returns an empty list.
+     */
+    List<ForwardTarget> selectForwardsWithTotalCostAtMost(int maxTotalCost);
+
+    /**
      * Shows a modal dialog letting P1 choose up to {@code maxCount} eligible
      * cards from a Break Zone and returns their targets.
      *
@@ -204,6 +217,17 @@ public interface GameContext {
      * targets are treated as passing the check (permissive fallback).
      */
     void cancelFilteredAbilityOnStack(java.util.function.Predicate<StackEntry> filter, String prompt, boolean requiresControllerTarget);
+
+    /**
+     * The plural form of {@link #cancelFilteredAbilityOnStack}: lets the resolving player pick as
+     * many matching Stack entries as they like and cancels every one of them — Jecht 14-108H's
+     * Jecht Block and Shelke 16-029R's Countertek.
+     *
+     * <p>Choosing none is a legal answer ("any number" includes zero), so a cancelled dialog
+     * cancels nothing rather than falling back to a default pick. Entries protected from being
+     * cancelled are never offered.
+     */
+    void cancelAnyNumberOfAbilitiesOnStack(java.util.function.Predicate<StackEntry> filter, String prompt);
 
     /**
      * Filters the stack to entries matching {@code filter} and presents a selection dialog the same
@@ -2175,6 +2199,21 @@ public interface GameContext {
      * end-of-turn hook. A target no longer on the field is a no-op.
      */
     void grantFieldAbilityUntilEndOfTurn(ForwardTarget target, String abilityText);
+
+    /**
+     * Compels the card at {@code target} to attack once this turn if it can — the turn-scoped
+     * counterpart of {@link #grantSelfMustAttackOncePerTurnPermanently}, for the wording that
+     * grants the compulsion to a chosen Forward rather than to the card printing it (Azul
+     * 23-077H: "it gains "This Forward must attack once per turn if possible."").
+     *
+     * <p>Not routed through {@link #grantFieldAbilityUntilEndOfTurn}: the must-attack rule is
+     * driven off a dedicated set rather than by scanning field-ability text, so granting the
+     * clause verbatim would be silently inert.
+     *
+     * <p>"Once per turn" is satisfied by a single attack, and the compulsion lifts at the end of
+     * the turn. A target no longer on the field is a no-op.
+     */
+    void grantMustAttackOncePerTurnUntilEndOfTurn(ForwardTarget target);
 
     /**
      * Hands the card at {@code target} an auto ability that outlasts the turn — the target-facing

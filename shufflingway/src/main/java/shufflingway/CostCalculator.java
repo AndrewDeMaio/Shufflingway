@@ -678,6 +678,9 @@ class CostCalculator {
 			case BZ_REMOVE    -> mw.gameState.getP1BreakZone().stream().filter(ec::matches).count() >= ec.count();
 			case DISCARD_HAND -> mw.gameState.getP1Hand().size() > ec.count(); // must have cards beyond the one being cast
 			case CP_X         -> true;
+			// Crystals are checked against the player's own stock; the printed CP cost is asked
+			// about separately by the menu item's canAffordCard call.
+			case CRYSTAL      -> mw.playerCrystals(true) >= ec.count();
 			case CP_FIXED     -> {
 				String[] extraElems = ec.cpElements().stream().filter(e -> !e.isEmpty())
 						.distinct().toArray(String[]::new);

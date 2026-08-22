@@ -920,6 +920,12 @@ public class MainWindow {
 	private int pendingExtraCostExtraCp = 0;
 	/** Fixed CP elements pending for a CP_FIXED extra cost (e.g. "Wind" + 2 generic, Samurai); null when not confirmed. */
 	private List<String> pendingExtraCostCpElements = null;
+	/**
+	 * Crystals pending for a CRYSTAL extra cost (Bahamut SIN 28-087H); 0 when none is pending.
+	 * Spent in {@code executePlay} alongside the other extra-cost payments rather than when the
+	 * player confirms, so cancelling out of the CP dialog that follows leaves them unspent.
+	 */
+	private int pendingExtraCostCrystals = 0;
 	/** Cost of the card discarded as the hand-discard extra cost; 0 if not applicable. */
 	int currentExtraCostDiscardedCardCost = 0;
 	/** The source card of the action ability currently resolving off the stack (null otherwise). */
@@ -8095,6 +8101,16 @@ public class MainWindow {
 				pendingExtraCostCpElements = ec.cpElements();
 				showPaymentDialog(card, handIdx);
 			}
+			case CRYSTAL -> {
+				// Crystals are not CP, so the payment dialog below never sees them: confirm here,
+				// then pay the printed cost as usual and spend the Crystals with it.
+				int result = JOptionPane.showConfirmDialog(frame,
+						"Pay " + ec.description() + " to cast " + card.name() + " with its extra cost?",
+						"Extra Cost: " + card.name(), JOptionPane.OK_CANCEL_OPTION);
+				if (result != JOptionPane.OK_OPTION) return;
+				pendingExtraCostCrystals = ec.count();
+				showPaymentDialog(card, handIdx);
+			}
 		}
 	}
 
@@ -9199,6 +9215,20 @@ public class MainWindow {
 			paidExtraCost = true;
 			logEntry("Extra Cost: paid " + ExtraCost.cpFixed(pendingExtraCostCpElements).description());
 			pendingExtraCostCpElements = null;
+		}
+		if (isP1 && pendingExtraCostCrystals > 0) {
+			int crystals = pendingExtraCostCrystals;
+			pendingExtraCostCrystals = 0;
+			// Guarded rather than assumed: the Crystal count can have moved between opening the
+			// menu and confirming the payment, and an unaffordable surcharge simply goes unpaid.
+			if (playerCrystals(true) >= crystals) {
+				paidExtraCost = true;
+				playerSpendCrystals(true, crystals);
+				refreshCrystalDisplays();
+				logEntry("Extra Cost: paid " + ExtraCost.crystals(crystals).description());
+			} else {
+				logEntry("Extra Cost: not enough Crystals — surcharge unpaid");
+			}
 		}
 
 		lastCardWasCast = true;
@@ -13520,6 +13550,19 @@ public class MainWindow {
 		return selectFieldTargetsInPlace(eligible, maxCount, upTo, title);
 	}
 
+	/**
+	 * Like {@link #showForwardSelectDialog} but bounded by a total-cost budget rather than a
+	 * count — Vincent 2-077L's Death Penalty, the one card that spends across its picks.
+	 *
+	 * <p>Never auto-selects the way the counted form does: an eligible board that happens to fit
+	 * inside the budget is still a choice, since taking fewer Forwards is always allowed.
+	 */
+	List<ForwardTarget> showForwardSelectWithinTotalCostDialog(
+			List<ForwardTarget> eligible, int maxTotalCost, String title) {
+		if (eligible.isEmpty()) { logEntry("Choose: no eligible targets"); return List.of(); }
+		return selectFieldTargetsInPlace(eligible, Integer.MAX_VALUE, true, title, maxTotalCost);
+	}
+
 	/** Maps a field {@link ForwardTarget} to its on-screen card label. */
 	private JLabel labelForTarget(ForwardTarget t) {
 		return switch (t.zone()) {
@@ -13538,6 +13581,17 @@ public class MainWindow {
 			case MONSTER -> t.isP1() ? p1MonsterStates.get(t.idx()) : p2MonsterStates.get(t.idx());
 			default      -> null;
 		};
+	}
+
+	/**
+	 * Printed cost of the card at a field {@link ForwardTarget}, or 0 when it names no card —
+	 * what a budgeted selection spends against. Printed rather than effective on purpose: the
+	 * budget wording ("with a total cost of N or less") reads the number on the card, so a cost
+	 * reduction that applied while casting it does not make it cheaper to break.
+	 */
+	int fieldTargetCost(ForwardTarget t) {
+		CardData card = autoAbilityTriggers.fieldCardData(t);
+		return card == null ? 0 : card.cost();
 	}
 
 	private static Color pulseColor(Color base, float t) {
@@ -13598,6 +13652,19 @@ public class MainWindow {
 	 */
 	List<ForwardTarget> selectFieldTargetsInPlace(
 			List<ForwardTarget> eligible, int maxCount, boolean upTo, String title) {
+		return selectFieldTargetsInPlace(eligible, maxCount, upTo, title, -1);
+	}
+
+	/**
+	 * @param maxTotalCost budget the chosen cards' printed costs must sum within, or {@code -1}
+	 *                     when the selection is bounded by count alone. A budgeted selection adds
+	 *                     a running total to the bar and holds Confirm shut while the picks
+	 *                     overspend — the overspend is allowed on the board on purpose, so the
+	 *                     player can see what a pick would cost instead of clicking a card that
+	 *                     silently does nothing.
+	 */
+	List<ForwardTarget> selectFieldTargetsInPlace(
+			List<ForwardTarget> eligible, int maxCount, boolean upTo, String title, int maxTotalCost) {
 		final Color GLOW_ELIGIBLE = new Color(90, 200, 255);
 		final Color GLOW_PICKED   = Color.YELLOW;
 
@@ -13608,6 +13675,9 @@ public class MainWindow {
 		List<ForwardTarget> result = new ArrayList<>();
 		boolean[] dulls = new boolean[eligible.size()];
 		final Timer[] pulseTimerRef = { null };
+		// Assigned once the bar exists; the listeners below are installed before it, and only a
+		// budgeted selection has anything to run here.
+		final Runnable[] onSelectionChanged = { () -> {} };
 
 		java.awt.SecondaryLoop loop =
 				java.awt.Toolkit.getDefaultToolkit().getSystemEventQueue().createSecondaryLoop();
@@ -13663,6 +13733,7 @@ public class MainWindow {
 						sel.add(fi);
 						if (!upTo && sel.size() == maxCount) { finish.run(); return; }
 					}
+					onSelectionChanged[0].run();
 				}
 			};
 			lbl.addMouseListener(ml);
@@ -13698,6 +13769,27 @@ public class MainWindow {
 			cancelBtn.setFont(FontLoader.loadPixelFont(11));
 			cancelBtn.addActionListener(ae -> { sel.clear(); finish.run(); });
 			JPanel south = new JPanel(new FlowLayout(FlowLayout.CENTER, 8, 6));
+			if (maxTotalCost >= 0) {
+				JLabel totalLbl = new JLabel("", SwingConstants.CENTER);
+				totalLbl.setFont(FontLoader.loadPixelFont(11));
+				// Sized for the largest total it could ever show — every eligible card picked at
+				// once. The bar is packed exactly once, before it becomes visible, so a label that
+				// only fits "0" would clip the moment the running total reached two digits.
+				int worstCase = 0;
+				for (ForwardTarget t : eligible) worstCase += fieldTargetCost(t);
+				totalLbl.setText("Total cost: " + worstCase + " / " + maxTotalCost);
+				totalLbl.setPreferredSize(totalLbl.getPreferredSize());
+				onSelectionChanged[0] = () -> {
+					int spent = 0;
+					for (Integer si : sel) spent += fieldTargetCost(eligible.get(si));
+					boolean withinBudget = spent <= maxTotalCost;
+					totalLbl.setText("Total cost: " + spent + " / " + maxTotalCost);
+					totalLbl.setForeground(withinBudget ? Color.BLACK : Color.RED);
+					confirmBtn.setEnabled(withinBudget);
+				};
+				onSelectionChanged[0].run();   // paints the zero-pick state before the first click
+				south.add(totalLbl);
+			}
 			south.add(confirmBtn);
 			south.add(cancelBtn);
 			bar.getContentPane().add(south, BorderLayout.SOUTH);

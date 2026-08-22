@@ -31,9 +31,11 @@ import javax.swing.JButton;
 import javax.swing.JDialog;
 import javax.swing.JLabel;
 import javax.swing.JLayeredPane;
+import javax.swing.JList;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
+import javax.swing.ListSelectionModel;
 import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
 import javax.swing.SwingWorker;
@@ -80,6 +82,14 @@ final class GameContextImpl implements GameContext {
 	 * is only ever true of the one selection this context is being used for.
 	 */
 	private int aiDamageTargetHint = 0;
+	/**
+	 * Budget the selection about to be made must keep its chosen Forwards' printed costs within,
+	 * or {@code -1} when the selection is unbounded. Set for the length of one call by
+	 * {@link #selectForwardsWithTotalCostAtMost} and read by {@link #selectCharacters} -- an
+	 * instance field for the same reason {@link #aiDamageTargetHint} is one: it is only ever true
+	 * of the single selection this context is being used for.
+	 */
+	private int totalCostBudget = -1;
 	/** Card the most recent {@link #lookAtTopDeck} put into hand; read by riders on that look. */
 	private CardData lastLookAddedToHand = null;
 
@@ -1215,10 +1225,33 @@ final class GameContextImpl implements GameContext {
 						+ preCondLabel
 						+ (element != null ? " " + element : "")
 						+ " " + targetNoun + (maxCount != 1 ? "s" : "") + postCondLabel + costLabel + powerLabel
+						+ (totalCostBudget >= 0 ? " with a total cost of " + totalCostBudget + " or less" : "")
 						+ (opponentOnly ? " (opponent)" : selfOnly ? " (yours)" : "");
 				if (!isP1) {
 					// AI (P2 controls the effect): auto-select rather than prompting the human.
 					if (eligible.isEmpty()) return List.of();
+					// A budgeted selection spends rather than counts, so it gets its own pick: the
+					// opponent's Forwards, most expensive first, taking each one the budget still
+					// covers. Most expensive first because the budget is spent in printed cost and
+					// the effect that asks for it is a break -- the dearest board presence the
+					// allowance reaches is the one worth removing.
+					if (totalCostBudget >= 0) {
+						List<ForwardTarget> byCostDesc = eligible.stream()
+								.filter(t -> t.isP1() != isP1)
+								.sorted(java.util.Comparator.comparingInt(
+										(ForwardTarget t) -> cardAtTarget(t).cost()).reversed())
+								.toList();
+						List<ForwardTarget> affordable = new ArrayList<>();
+						int spent = 0;
+						for (ForwardTarget t : byCostDesc) {
+							int cost = cardAtTarget(t).cost();
+							if (spent + cost > totalCostBudget) continue;
+							affordable.add(t);
+							spent += cost;
+						}
+						affordable.forEach(t -> logEntry("[AI] chose " + cardAtTarget(t).name()));
+						return fireChosenByOpponentTriggers(affordable);
+					}
 					// For unqualified targeting, prefer whichever side the effect actually helps or
 					// hurts: buffs go to the AI's own cards, everything else to the opponent's.
 					// Only a preference — if the preferred side has nothing eligible, the AI still
@@ -1263,8 +1296,32 @@ final class GameContextImpl implements GameContext {
 					});
 					return fireChosenByOpponentTriggers(picked);
 				}
-				List<ForwardTarget> chosen = mw.showForwardSelectDialog(eligible, maxCount, upTo, title);
+				List<ForwardTarget> chosen = totalCostBudget >= 0
+						? mw.showForwardSelectWithinTotalCostDialog(eligible, totalCostBudget, title)
+						: mw.showForwardSelectDialog(eligible, maxCount, upTo, title);
 				return fireChosenByOpponentTriggers(chosen);
+			}
+
+			/**
+			 * Runs an ordinary unbounded Forward selection with {@link #totalCostBudget} set, which
+			 * is what swaps in the budgeted dialog and the budgeted AI pick. Going through
+			 * {@link #selectCharacters} rather than gathering the Forwards here is deliberate: the
+			 * "cannot be chosen" sets, the taunt narrowing and the chosen-by-opponent triggers all
+			 * live in that method, and a selection that skipped them would be choosing cards the
+			 * rest of the engine says are not choosable.
+			 *
+			 * <p>The budget is cleared in a finally block, so a dialog the player dismisses cannot
+			 * leave it set for the next selection this context makes.
+			 */
+			@Override public List<ForwardTarget> selectForwardsWithTotalCostAtMost(int maxTotalCost) {
+				totalCostBudget = Math.max(0, maxTotalCost);
+				try {
+					return selectCharacters(Integer.MAX_VALUE, true, false, false, null, null,
+							-1, null, -1, null, true, false, false,
+							null, null, null, null, false, null, false);
+				} finally {
+					totalCostBudget = -1;
+				}
 			}
 
 			/**
@@ -2094,11 +2151,7 @@ final class GameContextImpl implements GameContext {
 					chosen = targets.get(0);
 				} else if (isP1) {
 					String[] options = new String[targets.size()];
-					for (int i = 0; i < targets.size(); i++) {
-						StackEntry e = targets.get(i);
-						String type = e.isSummon() ? "Summon" : e.isAutoAbility() ? "Auto" : e.isSpecialAbility() ? "Special" : "Action";
-						options[i] = e.source().name() + " (" + type + ", " + (e.isP1() ? "P1" : "P2") + ")";
-					}
+					for (int i = 0; i < targets.size(); i++) options[i] = describeStackEntry(targets.get(i));
 					Object sel = JOptionPane.showInputDialog(mw.frame,
 							prompt, "Cancel Effect", JOptionPane.PLAIN_MESSAGE, null, options, options[0]);
 					if (sel == null) return;
@@ -2117,6 +2170,62 @@ final class GameContextImpl implements GameContext {
 				}
 			}
 
+			/**
+			 * The multi-pick sibling of {@link #cancelFilteredAbilityOnStack}. The list is
+			 * multi-selection and starts empty: "any number" includes none, so an empty confirm and
+			 * a cancelled dialog both mean nothing is cancelled, and neither falls back to a
+			 * default pick the way the single-target form does.
+			 *
+			 * <p>The AI cancels everything on the far side of the field and nothing of its own —
+			 * its entries are there because it wants them to resolve.
+			 */
+			@Override public void cancelAnyNumberOfAbilitiesOnStack(
+					java.util.function.Predicate<StackEntry> filter, String prompt) {
+				List<StackEntry> targets = mw.gameState.getStack().stream()
+						.filter(filter)
+						.filter(e -> !mw.stackEntryProtectedFromCancel(e))
+						.collect(java.util.stream.Collectors.toList());
+				if (targets.isEmpty()) {
+					logEntry("No matching abilities on the stack to cancel");
+					return;
+				}
+				List<StackEntry> chosen;
+				if (isP1) {
+					String[] options = new String[targets.size()];
+					for (int i = 0; i < targets.size(); i++) options[i] = describeStackEntry(targets.get(i));
+					JList<String> list = new JList<>(options);
+					list.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
+					int ok = JOptionPane.showConfirmDialog(mw.frame,
+							new Object[]{prompt, new JScrollPane(list)},
+							"Cancel Effects", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+					if (ok != JOptionPane.OK_OPTION) { logEntry("Cancel — none chosen"); return; }
+					chosen = new ArrayList<>();
+					for (int i : list.getSelectedIndices()) chosen.add(targets.get(i));
+				} else {
+					chosen = targets.stream().filter(e -> e.isP1() != isP1).toList();
+					chosen.forEach(e -> logEntry("[AI] Chose to cancel: " + e.source().name()));
+				}
+				if (chosen.isEmpty()) { logEntry("Cancel — none chosen"); return; }
+				for (StackEntry e : chosen) {
+					if (mw.cancelStackEntry(e))
+						logEntry("Effect: " + e.source().name() + "'s "
+								+ stackEntryKind(e) + " effect will be cancelled");
+				}
+			}
+
+			/** "Name (Kind, seat)" — the one-line label the cancel dialogs list an entry under. */
+			private String describeStackEntry(StackEntry e) {
+				String type = e.isSummon() ? "Summon" : e.isAutoAbility() ? "Auto"
+						: e.isSpecialAbility() ? "Special" : "Action";
+				return e.source().name() + " (" + type + ", " + (e.isP1() ? "P1" : "P2") + ")";
+			}
+
+			/** The entry's kind as the log spells it out. */
+			private String stackEntryKind(StackEntry e) {
+				return e.isSummon() ? "Summon" : e.isAutoAbility() ? "auto-ability"
+						: e.isSpecialAbility() ? "special ability" : "action ability";
+			}
+
 			@Override public void cancelFilteredAbilityOnStackUnlessOpponentPays(java.util.function.Predicate<StackEntry> filter, String prompt, int cost) {
 				List<StackEntry> targets = mw.gameState.getStack().stream()
 						.filter(filter)
@@ -2131,11 +2240,7 @@ final class GameContextImpl implements GameContext {
 					chosen = targets.get(0);
 				} else if (isP1) {
 					String[] options = new String[targets.size()];
-					for (int i = 0; i < targets.size(); i++) {
-						StackEntry e = targets.get(i);
-						String type = e.isSummon() ? "Summon" : e.isAutoAbility() ? "Auto" : e.isSpecialAbility() ? "Special" : "Action";
-						options[i] = e.source().name() + " (" + type + ", " + (e.isP1() ? "P1" : "P2") + ")";
-					}
+					for (int i = 0; i < targets.size(); i++) options[i] = describeStackEntry(targets.get(i));
 					Object sel = JOptionPane.showInputDialog(mw.frame,
 							prompt, "Cancel Effect", JOptionPane.PLAIN_MESSAGE, null, options, options[0]);
 					if (sel == null) return;
@@ -4802,6 +4907,24 @@ final class GameContextImpl implements GameContext {
 				mw.permanentMustAttackOncePerTurn.add(source);
 				logEntry(source.name() + " must attack once per turn if possible"
 						+ " (does not end at end of turn)");
+			}
+
+			/**
+			 * Written into the same set the permanent grant uses, with an end-of-turn hook to take
+			 * it out again — the arrangement {@code basePowerOverrides} already uses to hold both
+			 * durations of one effect, and what keeps the compulsion's single reader
+			 * ({@code MainWindow.p1ForwardCompelledToAttackIdx}) from needing a second set.
+			 *
+			 * <p>A card already carrying the standing compulsion is left alone: adding it again
+			 * would be a no-op on a set, but the removal hook would then strip a grant that was
+			 * never meant to lapse.
+			 */
+			@Override public void grantMustAttackOncePerTurnUntilEndOfTurn(ForwardTarget target) {
+				CardData card = mw.autoAbilityTriggers.fieldCardData(target);
+				if (card == null) return;
+				if (!mw.permanentMustAttackOncePerTurn.add(card)) return;
+				mw.endOfTurnEffects.add(ctx -> mw.permanentMustAttackOncePerTurn.remove(card));
+				logEntry(card.name() + " must attack once per turn if possible (until end of turn)");
 			}
 
 			/**
