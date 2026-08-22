@@ -78,6 +78,14 @@ class DamageResolver {
 			mw.logEntry(card.name() + " is dull — incoming damage becomes 0");
 			return 0;
 		}
+		// 29-012H Neon's Runic, read here for the same reason and in the same way: the chosen
+		// effect's damage "becomes 0 instead", so it is settled before any multiplier below and
+		// is not lifted by the unreduced flag either.
+		if (fromAbility && mw.currentAbilitySource != null
+				&& mw.damageZeroedSourcesThisTurn.contains(mw.currentAbilitySource)) {
+			mw.logEntry(mw.currentAbilitySource.name() + " — its damage becomes 0 this turn");
+			return 0;
+		}
 		int amount = rawAmount * (mw.turn(isP1).forwardIncomingDmgMult)
 		                       * mw.perCardIncomingDmgMultiplierMap.getOrDefault(card, 1);
 

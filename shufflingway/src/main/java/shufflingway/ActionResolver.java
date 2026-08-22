@@ -281,6 +281,12 @@ public class ActionResolver {
         result = tryParseWarpCounterCountGate(effectText, source, xValue);
         if (result != null) return result;
 
+        // Must precede tryParseControlGatedInsteadUpgrade: that parser resolves the base and the
+        // alternative independently, and 4-090R Biggs' alternative is "it gains +2000 power" -- an
+        // "it" belonging to the Forward the base half chose, so alone it has nothing to boost.
+        result = tryParseChooseGatedBoostInstead(effectText, source, xValue);
+        if (result != null) return result;
+
         result = tryParseControlGatedInsteadUpgrade(effectText, source, xValue);
         if (result != null) return result;
 
@@ -558,6 +564,12 @@ public class ActionResolver {
         if (result != null) return result;
 
         result = tryParseCancelSummonTargetingMyCharacter(effectText);
+        if (result != null) return result;
+
+        // Must precede tryParseCancelStackEntry: the two share their first sentence, and that
+        // parser find()s on it, so it would cancel 29-012H Neon's chosen effect outright instead
+        // of letting it resolve with its damage blanked.
+        result = tryParseChooseStackEntryZeroItsDamage(effectText);
         if (result != null) return result;
 
         result = tryParseCancelStackEntry(effectText);
@@ -1561,6 +1573,8 @@ public class ActionResolver {
         if (tryParsePlayerNextDamageZeroRedirect(effectText)   != null) return "PlayerNextDamageZeroRedirect";
         if (tryParsePlayerNextDamageZero(effectText)           != null) return "PlayerNextDamageZero";
         if (tryParseCancelAutoAbilityAndDamageIfForward(effectText) != null) return "CancelAutoAbilityAndDamageIfForward";
+        // Must precede CancelSummonOrAutoAbility, mirroring parse(): they share a first sentence.
+        if (tryParseChooseStackEntryZeroItsDamage(effectText) != null) return "ChooseStackEntryZeroItsDamage";
         if (tryParseCancelStackEntry(effectText)               != null) return "CancelSummonOrAutoAbility";
         // Mirrors parse(): ahead of the general redirect, which would otherwise claim the name.
         if (tryParseRedirectChosenTarget(effectText, source)   != null) return "RedirectChosenTarget";
@@ -1739,6 +1753,8 @@ public class ActionResolver {
         if (tryParsePlayFromHand(effectText, source, 0)       != null) return "PlayFromHand";
         // Checked ahead of OpponentSelects: an "…, X instead." upgrade wraps a base clause the
         // OpponentSelects matcher would otherwise claim on its own, dropping the replacement.
+        // Must precede ControlGatedInsteadUpgrade, mirroring parse().
+        if (tryParseChooseGatedBoostInstead(effectText, source, 0) != null) return "ChooseCharacter";
         if (tryParseControlGatedInsteadUpgrade(effectText, source, 0) != null) return "ControlGatedInsteadUpgrade";
         // Mirrors parse(): ahead of OpponentSelects, which would otherwise claim it.
         if (tryParseTurnPlayerBreaksOrTakesDamage(effectText, source) != null) return "TurnPlayerBreaksOrTakesDamage";
@@ -2118,6 +2134,10 @@ public class ActionResolver {
         if (tryParseAddRemovedBySourceAbilityToHand(effectText, source)     != null) return "AddRemovedBySourceAbilityToHand";
         if (tryParseIfCastAtLeast(effectText, source, 0)                != null) return "IfCastAtLeast";
         if (tryParseIfControlCondOtherThan(effectText, source, 0)      != null) return "IfControlCondOtherThan";
+        // Must precede ControlGatedInsteadUpgrade, mirroring parse(): the description belongs to
+        // the ChooseCharacter block, which reads the whole followup.
+        if (tryParseChooseGatedBoostInstead(effectText, source, 0) != null)
+            return "ChooseCharacter / PowerBoostControlGatedInstead";
         if (tryParseControlGatedInsteadUpgrade(effectText, source, 0)  != null) return "ControlGatedInsteadUpgrade";
         // Mirrors parse(), where the gate sits beside the control gates. Described like
         // IfControl(…) below: the gate is named, the effect it guards described inside it.
@@ -2225,6 +2245,13 @@ public class ActionResolver {
                 return "ChooseCharacter / DamageInstead";
             if (FOLLOWUP_SELECT_JOB_GRANT.matcher(followup).find())
                 return "ChooseCharacter / SelectJobGrant";
+            // Both read off the whole followup, mirroring the Choose chain: the ". " split turns
+            // 4-090R Biggs' upgrade into a control gate over a targetless "it", and 29-107C Seer
+            // (FFTA2)'s doubling clause into an unrecognised tail.
+            if (FOLLOWUP_POWER_BOOST_CONTROL_GATED_INSTEAD.matcher(followup).matches())
+                return "ChooseCharacter / PowerBoostControlGatedInstead";
+            if (FOLLOWUP_DAMAGE_SELF_POWER_DOUBLED_IF_SUMMON_DISCARD.matcher(followup).matches())
+                return "ChooseCharacter / DamageSelfPowerDoubledIfSummonDiscard";
             if (FOLLOWUP_MAY_DISCARD_NAMED_DEAL_DAMAGE.matcher(followup).matches())
                 return "ChooseCharacter / MayDiscardNamedDealDamage";
             // Read off the whole followup, mirroring the parser: split, its first sentence is
@@ -2335,6 +2362,8 @@ public class ActionResolver {
         if (tryParsePlayerNextDamageZeroRedirect(effectText) != null)          return "PlayerNextDamageZeroRedirect";
         if (tryParsePlayerNextDamageZero(effectText) != null)                  return "PlayerNextDamageZero";
         if (tryParseCancelAutoAbilityAndDamageIfForward(effectText) != null) return "CancelAutoAbilityAndDamageIfForward";
+        // Must precede CancelSummonOrAutoAbility, mirroring parse(): they share a first sentence.
+        if (tryParseChooseStackEntryZeroItsDamage(effectText) != null) return "ChooseStackEntryZeroItsDamage";
         if (tryParseCancelStackEntry(effectText)              != null) return "CancelSummonOrAutoAbility";
         // Mirrors parse(): ahead of the general redirect, which would otherwise claim the name.
         if (tryParseRedirectChosenTarget(effectText, source)  != null) return "RedirectChosenTarget";
@@ -3954,6 +3983,22 @@ public class ActionResolver {
      * Parses "Choose 1 Summon or auto-ability. Cancel its effect." (Y'shtola).
      * The player selects a stack entry; its effect is suppressed when it resolves.
      */
+    /**
+     * Parses 29-012H Neon's Runic: "Choose 1 Summon or auto-ability. During this turn, if it deals
+     * damage to a Forward or a player, the damage becomes 0 instead."
+     *
+     * <p>Must precede {@link #tryParseCancelStackEntry}: that parser find()s on the shared first
+     * sentence, so it would claim this text and cancel the effect outright — strictly better than
+     * what Neon prints, which lets the effect resolve and only blanks its damage.
+     */
+    private static Consumer<GameContext> tryParseChooseStackEntryZeroItsDamage(String text) {
+        if (!CHOOSE_STACK_ENTRY_ZERO_ITS_DAMAGE.matcher(text.trim()).matches()) return null;
+        return ctx -> {
+            ctx.logEntry("Effect: Choose 1 Summon or auto-ability - its damage becomes 0 this turn");
+            ctx.chooseStackEntryZeroItsDamageThisTurn();
+        };
+    }
+
     private static Consumer<GameContext> tryParseCancelStackEntry(String text) {
         if (!STANDALONE_CANCEL_STACK_ENTRY_PATTERN.matcher(text).find()) return null;
         return ctx -> {

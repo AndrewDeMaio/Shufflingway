@@ -28765,4 +28765,205 @@ public class CardBehaviorTest {
 				.matcher("When Terra attacks, if Terra deals damage to a Forward, double the damage").matches());
 	}
 
+
+	// =========================================================================================
+	// Four more action abilities. Three of the four already "parsed" while doing the wrong
+	// thing, which is the failure mode the coverage report cannot see:
+	//
+	//   Neon 29-012H     did not parse at all.
+	//   Biggs 4-090R     gave +1000 and dropped the upgrade, so controlling Wedge did nothing.
+	//   Terra 29-033L    read as ChooseCharacter over a Break Zone Summon plus a stray
+	//                    remove-from-game - it never made the Summon castable.
+	//   Seer 29-107C     dealt its power and ignored the Summon discard that doubles it.
+	// =========================================================================================
+
+	// --- Neon 29-012H ---------------------------------------------------------------------
+
+	private static final String NEON_EFFECT =
+			"Choose 1 Summon or auto-ability. During this turn, if it deals damage to a Forward "
+			+ "or a player, the damage becomes 0 instead.";
+
+	@Test
+	void neonBlanksTheDamageOfTheChosenEffect() {
+		GameContext ctx = mock(GameContext.class);
+
+		Consumer<GameContext> fn = ActionResolver.parse(NEON_EFFECT, makeForward("Neon", "Wind", 4, 8000));
+		assertNotNull(fn, "Neon's Runic should parse");
+		fn.accept(ctx);
+
+		verify(ctx).chooseStackEntryZeroItsDamageThisTurn();
+	}
+
+	/**
+	 * Runic shares its first sentence with Y'shtola 5-068L's cancel, and that parser matches with
+	 * find(). Left alone it claimed this text and cancelled the effect outright — strictly better
+	 * than what Neon prints, which lets the effect resolve and only blanks its damage.
+	 */
+	@Test
+	void neonDoesNotCancelTheChosenEffect() {
+		GameContext ctx = mock(GameContext.class);
+		ActionResolver.parse(NEON_EFFECT, makeForward("Neon", "Wind", 4, 8000)).accept(ctx);
+		verify(ctx, never()).cancelStackEntry();
+
+		// Y'shtola's own wording still cancels.
+		GameContext y = mock(GameContext.class);
+		ActionResolver.parse("Choose 1 Summon or auto-ability. Cancel its effect.",
+				makeForward("Y'shtola", "Water", 5, 8000)).accept(y);
+		verify(y).cancelStackEntry();
+		verify(y, never()).chooseStackEntryZeroItsDamageThisTurn();
+	}
+
+	// --- Biggs 4-090R ---------------------------------------------------------------------
+
+	private static final String BIGGS_EFFECT =
+			"Choose 1 Job AVALANCHE Operative. It gains +1000 power until the end of the turn. "
+			+ "If you control Card Name Wedge, it gains +2000 power until the end of the turn instead.";
+
+	@Test
+	void biggsGivesTheSmallerBoostWithoutWedge() {
+		ForwardTarget t = new ForwardTarget(true, 0, ForwardTarget.CardZone.FORWARD);
+		GameContext ctx = contextChoosing(List.of(t));
+		when(ctx.controlConditionMet(any())).thenReturn(false);
+
+		Consumer<GameContext> fn = ActionResolver.parse(BIGGS_EFFECT, makeForward("Biggs", "Earth", 2, 0));
+		assertNotNull(fn, "Biggs should parse");
+		fn.accept(ctx);
+
+		verify(ctx).boostTarget(eq(t), eq(1000), any());
+	}
+
+	/**
+	 * "Instead" means one figure or the other, never both — the upgrade replaces the base boost
+	 * rather than stacking with it, so a Forward next to Wedge ends at +2000 and not +3000.
+	 */
+	@Test
+	void biggsGivesTheUpgradeInsteadOfBothWhenItControlsWedge() {
+		ForwardTarget t = new ForwardTarget(true, 0, ForwardTarget.CardZone.FORWARD);
+		GameContext ctx = contextChoosing(List.of(t));
+		when(ctx.controlConditionMet(any())).thenReturn(true);
+
+		ActionResolver.parse(BIGGS_EFFECT, makeForward("Biggs", "Earth", 2, 0)).accept(ctx);
+
+		verify(ctx).boostTarget(eq(t), eq(2000), any());
+		verify(ctx, never()).boostTarget(eq(t), eq(1000), any());
+		verify(ctx, times(1)).boostTarget(any(), anyInt(), any());
+	}
+
+	/** The choice is restricted to the Job named in the first sentence. */
+	@Test
+	void biggsChoosesOnlyAvalancheOperatives() {
+		GameContext ctx = contextChoosing(List.of(new ForwardTarget(true, 0, ForwardTarget.CardZone.FORWARD)));
+		ArgumentCaptor<String> jobFilter = ArgumentCaptor.forClass(String.class);
+
+		ActionResolver.parse(BIGGS_EFFECT, makeForward("Biggs", "Earth", 2, 0)).accept(ctx);
+
+		verify(ctx).selectCharacters(
+				anyInt(), anyBoolean(), anyBoolean(), anyBoolean(),
+				any(), any(), anyInt(), any(), anyInt(), any(),
+				anyBoolean(), anyBoolean(), anyBoolean(),
+				jobFilter.capture(), any(), any(), any(), anyBoolean(), any(), anyBoolean());
+		assertEquals("AVALANCHE Operative", jobFilter.getValue());
+	}
+
+	// --- Terra 29-033L --------------------------------------------------------------------
+
+	private static final String TERRA_BZ_EFFECT =
+			"Choose 1 Summon of cost 5 or less other than Light or Dark in your Break Zone. "
+			+ "Cast it without paying the cost. If you cast it, remove that Summon from the game "
+			+ "after use instead of putting it in the Break Zone.";
+
+	@Test
+	void terraMakesABreakZoneSummonCastableWithTheElementsSheExcludes() {
+		GameContext ctx = mock(GameContext.class);
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<Set<String>> excluded =
+				(ArgumentCaptor<Set<String>>) (ArgumentCaptor<?>) ArgumentCaptor.forClass(Set.class);
+
+		Consumer<GameContext> fn = ActionResolver.parse(TERRA_BZ_EFFECT, makeForward("Terra", "Ice", 5, 0));
+		assertNotNull(fn, "Terra's Break Zone cast should parse");
+		fn.accept(ctx);
+
+		verify(ctx).chooseSummonInBzByMaxCostFreeCastRfgAfterUse(eq(5), excluded.capture());
+		assertEquals(Set.of("Light", "Dark"), excluded.getValue());
+	}
+
+	/** 9-103R Iedolas prints the same ability with no exclusion and must keep excluding nothing. */
+	@Test
+	void theUnrestrictedPrintingStillExcludesNoElement() {
+		GameContext ctx = mock(GameContext.class);
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<Set<String>> excluded =
+				(ArgumentCaptor<Set<String>>) (ArgumentCaptor<?>) ArgumentCaptor.forClass(Set.class);
+
+		ActionResolver.parse(
+				"Choose 1 Summon of cost 4 or less in your Break Zone. Cast it without paying the cost. "
+				+ "Remove that Summon from the game after use instead of putting it in the Break Zone.",
+				makeForward("Iedolas", "Lightning", 3, 0)).accept(ctx);
+
+		verify(ctx).chooseSummonInBzByMaxCostFreeCastRfgAfterUse(eq(4), excluded.capture());
+		assertTrue(excluded.getValue().isEmpty());
+	}
+
+	/** It used to read as a Forward choice plus a stray removal, never making anything castable. */
+	@Test
+	void terraDoesNotFallBackToChoosingAForward() {
+		GameContext ctx = mock(GameContext.class);
+		ActionResolver.parse(TERRA_BZ_EFFECT, makeForward("Terra", "Ice", 5, 0)).accept(ctx);
+
+		verify(ctx, never()).selectCharacters(
+				anyInt(), anyBoolean(), anyBoolean(), anyBoolean(),
+				any(), any(), anyInt(), any(), anyInt(), any(),
+				anyBoolean(), anyBoolean(), anyBoolean(),
+				any(), any(), any(), any(), anyBoolean(), any(), anyBoolean());
+		verify(ctx, never()).removeNamedCardFromGame(any());
+	}
+
+	// --- Seer (FFTA2) 29-107C -------------------------------------------------------------
+
+	private static final String SEER_EFFECT =
+			"Choose 1 Forward opponent controls. Deal it damage equal to Seer (FFTA2)'s power. "
+			+ "If you discarded a Summon to pay this ability's cost, deal it double the damage "
+			+ "of the power of Seer (FFTA2) instead.";
+
+	private static GameContext seerBoard(int seerPower, boolean discardedSummon) {
+		ForwardTarget t = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+		GameContext ctx = contextChoosing(List.of(t));
+		when(ctx.fieldForwardPowerByName("Seer (FFTA2)")).thenReturn(seerPower);
+		when(ctx.lastDiscardedCostCardIsSummon()).thenReturn(discardedSummon);
+		return ctx;
+	}
+
+	@Test
+	void seerDealsItsPowerWhenTheDiscardWasNotASummon() {
+		GameContext ctx = seerBoard(7000, false);
+
+		Consumer<GameContext> fn = ActionResolver.parse(SEER_EFFECT, makeForward("Seer (FFTA2)", "Wind", 4, 7000));
+		assertNotNull(fn, "Seer should parse");
+		fn.accept(ctx);
+
+		verify(ctx).damageTarget(new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD), 7000);
+	}
+
+	@Test
+	void seerDoublesTheDamageWhenTheDiscardWasASummon() {
+		GameContext ctx = seerBoard(7000, true);
+
+		ActionResolver.parse(SEER_EFFECT, makeForward("Seer (FFTA2)", "Wind", 4, 7000)).accept(ctx);
+
+		verify(ctx).damageTarget(new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD), 14000);
+	}
+
+	/**
+	 * The figure is Seer's power on the field, not its printed power — a boosted Seer hits harder,
+	 * and both halves of the sentence scale with it.
+	 */
+	@Test
+	void seerReadsItsCurrentPowerRatherThanItsPrintedOne() {
+		GameContext ctx = seerBoard(9000, true);
+
+		ActionResolver.parse(SEER_EFFECT, makeForward("Seer (FFTA2)", "Wind", 4, 7000)).accept(ctx);
+
+		verify(ctx).damageTarget(any(), eq(18000));
+	}
+
 }

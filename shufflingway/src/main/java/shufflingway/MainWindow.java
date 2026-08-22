@@ -873,6 +873,16 @@ public class MainWindow {
 	 * the borrower to hand or removing it from the game collects the debt just the same.
 	 */
 	final Map<CardData, List<CardData>> putIntoBzWhenLeavesFieldThisTurn = new IdentityHashMap<>();
+	/**
+	 * Sources whose damage becomes 0 for the rest of this turn — 29-012H Neon's Runic, which picks
+	 * a Summon or auto-ability off the Stack and blanks the damage it was going to deal.
+	 *
+	 * <p>Identity-keyed: the mark belongs to the one card whose effect was chosen, not to every
+	 * copy sharing its name. A replacement rather than a reduction, so it is read before any
+	 * multiplier or "cannot be reduced" flag — 0 is 0 however the damage was going to be scaled.
+	 */
+	final Set<CardData> damageZeroedSourcesThisTurn =
+			Collections.newSetFromMap(new IdentityHashMap<>());
 	/** Maps a card to a permanent element override (Kam'lanaut ability); persists across turns. */
 	final Map<CardData, String> elementOverrideMap      = new HashMap<>();
 	/** Maps a card to a permanently-granted extra job (e.g. Bartz ability); persists across turns. */
@@ -2964,7 +2974,7 @@ public class MainWindow {
                                 perCardIncomingDmgMultiplierMap.clear();
                                 p1Turn.forwardIncomingDmgMult = 1;      p2Turn.forwardIncomingDmgMult = 1;
                                 p1Turn.abilityOutgoingDmgMult = 1;      p2Turn.abilityOutgoingDmgMult = 1;
-                                cannotBeChosenBySummons.clear();  cannotBeChosenByAbilities.clear();  cannotBeChosenBySummonsAnyone.clear();  cannotBeChosenByElement.clear();  nullifyElementDamageMap.clear();  nullifyElementDamageAbilityOnlyMap.clear();  rfgInsteadOfBzThisTurn.clear();  drawOnFieldToBzThisTurn.clear();  putIntoBzWhenLeavesFieldThisTurn.clear();  damagedBySourcesThisTurn.clear();
+                                cannotBeChosenBySummons.clear();  cannotBeChosenByAbilities.clear();  cannotBeChosenBySummonsAnyone.clear();  cannotBeChosenByElement.clear();  nullifyElementDamageMap.clear();  nullifyElementDamageAbilityOnlyMap.clear();  rfgInsteadOfBzThisTurn.clear();  drawOnFieldToBzThisTurn.clear();  putIntoBzWhenLeavesFieldThisTurn.clear();  damageZeroedSourcesThisTurn.clear();  damagedBySourcesThisTurn.clear();
                                 breaktouchBattleSet.clear();
                                 p1Turn.nonLethalProtection = false;    p2Turn.nonLethalProtection = false;
                                 p1Turn.dmgReductionDisabled = false;   p2Turn.dmgReductionDisabled = false;

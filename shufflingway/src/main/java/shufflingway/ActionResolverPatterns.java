@@ -1019,6 +1019,46 @@ final class ActionResolverPatterns {
         "(?i)^When\\s+that\\s+(?:Forward|Character)\\s+leaves\\s+the\\s+field\\s+this\\s+turn,\\s+" +
         "put\\s+(?<name>.+?)\\s+into\\s+the\\s+Break\\s+Zone[.!]?$"
     );
+    /**
+     * Matches "Choose 1 Summon or auto-ability. During this turn, if it deals damage to a Forward
+     * or a player, the damage becomes 0 instead." — 29-012H Neon's Runic.
+     *
+     * <p>The sibling of {@link #STANDALONE_CANCEL_STACK_ENTRY_PATTERN}: same choice off the Stack,
+     * a softer answer to it. Anchored whole so it cannot claim the cancel wording, which shares
+     * its first sentence exactly.
+     */
+    static final Pattern CHOOSE_STACK_ENTRY_ZERO_ITS_DAMAGE = Pattern.compile(
+        "(?is)^Choose\\s+1\\s+Summon\\s+or\\s+auto-ability[.!]?\\s+" +
+        "During\\s+this\\s+turn,\\s+if\\s+it\\s+deals\\s+damage\\s+to\\s+a\\s+Forward\\s+or\\s+a\\s+player,\\s+" +
+        "the\\s+damage\\s+becomes\\s+0\\s+instead[.!]?$"
+    );
+    /**
+     * Matches "It gains +N power until the end of the turn. If you control &lt;condition&gt;, it gains
+     * +M power until the end of the turn instead." — 4-090R Biggs, whose lend is bigger while it
+     * has Wedge to work with.
+     *
+     * <p>"Instead" is load bearing: the two grants replace one another rather than stacking, so
+     * the condition picks a single figure. Both halves are captured to keep the parser from
+     * assuming the second is the larger.
+     */
+    static final Pattern FOLLOWUP_POWER_BOOST_CONTROL_GATED_INSTEAD = Pattern.compile(
+        "(?is)^It\\s+gains\\s+\\+(?<base>\\d+)\\s+power\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn[.!]?\\s+" +
+        "If\\s+you\\s+control\\s+(?<cond>.+?),\\s+it\\s+gains\\s+\\+(?<alt>\\d+)\\s+power\\s+" +
+        "until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn\\s+instead[.!]?$"
+    );
+    /**
+     * Matches "Deal it damage equal to [Self]'s power. If you discarded a Summon to pay this
+     * ability's cost, deal it double the damage of the power of [Self] instead." — 29-107C Seer
+     * (FFTA2), whose 《Dull》, discard 1 card cost pays double when the discard was a Summon.
+     *
+     * <p>Both names are captured so the parser can hold them against the source: the sentence is
+     * about the card carrying it, and the doubled figure is its power, not the target's.
+     */
+    static final Pattern FOLLOWUP_DAMAGE_SELF_POWER_DOUBLED_IF_SUMMON_DISCARD = Pattern.compile(
+        "(?is)^Deal\\s+it\\s+damage\\s+equal\\s+to\\s+(?<name>.+?)'s\\s+power[.!]?\\s+" +
+        "If\\s+you\\s+discarded\\s+a\\s+Summon\\s+to\\s+pay\\s+this\\s+ability's\\s+cost,\\s+" +
+        "deal\\s+it\\s+double\\s+the\\s+damage\\s+of\\s+the\\s+power\\s+of\\s+(?<name2>.+?)\\s+instead[.!]?$"
+    );
     /** Matches "Break it" or "Break them". */
     static final Pattern FOLLOWUP_BREAK = Pattern.compile(
         "(?i)Break\\s+(?:it|them)"
@@ -5484,13 +5524,24 @@ final class ActionResolverPatterns {
         "(?<rfg>.*)$"
     );
     /**
-     * "Choose 1 Summon of cost N or less in your Break Zone. Cast it without paying the cost.
-     * Remove that Summon from the game after use instead of putting it in the Break Zone."
+     * "Choose 1 Summon of cost N or less [other than &lt;Element&gt; or &lt;Element&gt;] in your
+     * Break Zone. Cast it without paying the cost. [If you cast it,] remove that Summon from the
+     * game after use instead of putting it in the Break Zone." — 9-103R Iedolas, 29-033L Terra.
+     *
+     * <p>Two optional pieces separate the printings: Terra's Element exclusion, and the "If you
+     * cast it," hedging the removal. The hedge changes nothing at resolution — the removal has
+     * something to act on only if the Summon was cast — so it is matched and discarded rather
+     * than given a branch of its own.
      */
     static final Pattern CHOOSE_SUMMON_IN_BZ_MAX_COST_FREE_CAST_RFG = Pattern.compile(
-        "(?is)Choose\\s+1\\s+Summon\\s+of\\s+cost\\s+(?<cost>\\d+)\\s+or\\s+less\\s+in\\s+your\\s+Break\\s+Zone[.!]?\\s+" +
+        "(?is)Choose\\s+1\\s+Summon\\s+of\\s+cost\\s+(?<cost>\\d+)\\s+or\\s+less\\s+" +
+        "(?:other\\s+than\\s+(?<exclude>(?:Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)" +
+        "(?:\\s+(?:or|and)\\s+(?:Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark))*)\\s+)?" +
+        "in\\s+your\\s+Break\\s+Zone[.!]?\\s+" +
         "Cast\\s+it\\s+without\\s+paying\\s+the\\s+cost[.!]?\\s+" +
-        "Remove\\s+that\\s+Summon\\s+from\\s+the\\s+game\\s+after\\s+use\\s+instead\\s+of\\s+putting\\s+it\\s+in\\s+the\\s+Break\\s+Zone[.!]?"
+        "(?:If\\s+you\\s+cast\\s+it,\\s+)?" +
+        "[Rr]emove\\s+that\\s+Summon\\s+from\\s+the\\s+game\\s+after\\s+use\\s+instead\\s+of\\s+" +
+        "putting\\s+it\\s+in\\s+the\\s+Break\\s+Zone[.!]?"
     );
     /**
      * "Choose 1 Forward with N power or less and up to 1 Forward in your opponent's Break Zone.

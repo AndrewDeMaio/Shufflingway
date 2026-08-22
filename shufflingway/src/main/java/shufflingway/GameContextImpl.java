@@ -1944,19 +1944,44 @@ final class GameContextImpl implements GameContext {
 			}
 
 			@Override public void cancelStackEntry() {
-				// Y'shtola can only cancel Summons and auto-abilities, not action abilities.
+				StackEntry chosen = chooseSummonOrAutoAbilityOnStack("cancel");
+				if (chosen == null) return;
+				if (mw.cancelStackEntry(chosen)) {
+					String type = chosen.isSummon() ? "Summon" : "auto-ability";
+					logEntry("Effect: " + chosen.source().name() + "'s " + type + " effect will be cancelled");
+				}
+			}
+
+			@Override public void chooseStackEntryZeroItsDamageThisTurn() {
+				StackEntry chosen = chooseSummonOrAutoAbilityOnStack("blank the damage of");
+				if (chosen == null) return;
+				// Keyed on the source card, which is how both damage paths identify whatever is
+				// dealing right now (mw.currentAbilitySource).
+				mw.damageZeroedSourcesThisTurn.add(chosen.source());
+				String type = chosen.isSummon() ? "Summon" : "auto-ability";
+				logEntry("Effect: " + chosen.source().name() + "'s " + type
+						+ " deals 0 damage this turn");
+			}
+
+			/**
+			 * Prompts for one Summon or auto-ability on the Stack, or returns {@code null} when
+			 * there is none to pick or the player cancelled. {@code verb} names the action in the
+			 * dialog so the same chooser can serve Y'shtola's cancel and Neon's Runic.
+			 *
+			 * <p>Action abilities are excluded: every printing of this choice says "Summon or
+			 * auto-ability" and means exactly those two.
+			 */
+			private StackEntry chooseSummonOrAutoAbilityOnStack(String verb) {
 				List<StackEntry> targets = mw.gameState.getStack().stream()
 						.filter(e -> e.isSummon() || e.isAutoAbility())
 						.filter(e -> !mw.stackEntryProtectedFromCancel(e))
 						.collect(java.util.stream.Collectors.toList());
 				if (targets.isEmpty()) {
-					logEntry("No Summons or auto-abilities on the stack to cancel");
-					return;
+					logEntry("No Summons or auto-abilities on the stack to " + verb);
+					return null;
 				}
-				StackEntry chosen;
-				if (targets.size() == 1) {
-					chosen = targets.get(0);
-				} else if (isP1) {
+				if (targets.size() == 1) return targets.get(0);
+				if (isP1) {
 					String[] options = new String[targets.size()];
 					for (int i = 0; i < targets.size(); i++) {
 						StackEntry e = targets.get(i);
@@ -1965,22 +1990,17 @@ final class GameContextImpl implements GameContext {
 						options[i] = e.source().name() + " (" + type + ", " + owner + ")";
 					}
 					Object sel = JOptionPane.showInputDialog(mw.frame,
-							"Choose 1 Summon or auto-ability to cancel:",
-							"Cancel Effect", JOptionPane.PLAIN_MESSAGE, null, options, options[0]);
-					if (sel == null) return;
+							"Choose 1 Summon or auto-ability to " + verb + ":",
+							"Choose Effect", JOptionPane.PLAIN_MESSAGE, null, options, options[0]);
+					if (sel == null) return null;
 					int idx = java.util.Arrays.asList(options).indexOf(sel.toString());
-					if (idx < 0) return;
-					chosen = targets.get(idx);
-				} else {
-					// AI: target the most recently pushed opponent (P1) entry
-					chosen = targets.stream().filter(e -> e.isP1())
-							.reduce((a, b) -> b).orElse(targets.get(targets.size() - 1));
-					logEntry("[AI] Chose to cancel: " + chosen.source().name());
+					return idx < 0 ? null : targets.get(idx);
 				}
-				if (mw.cancelStackEntry(chosen)) {
-					String type = chosen.isSummon() ? "Summon" : "auto-ability";
-					logEntry("Effect: " + chosen.source().name() + "'s " + type + " effect will be cancelled");
-				}
+				// AI: target the most recently pushed opponent (P1) entry
+				StackEntry chosen = targets.stream().filter(e -> e.isP1())
+						.reduce((a, b) -> b).orElse(targets.get(targets.size() - 1));
+				logEntry("[AI] Chose to " + verb + ": " + chosen.source().name());
+				return chosen;
 			}
 
 			@Override public void cancelTriggeringSummon() {
@@ -5066,6 +5086,9 @@ final class GameContextImpl implements GameContext {
 			@Override public List<String> lastDiscardedCostCardElements() {
 				return mw.lastDiscardedCostCard == null ? List.of() : List.of(mw.lastDiscardedCostCard.elements());
 			}
+			@Override public boolean lastDiscardedCostCardIsSummon() {
+				return mw.lastDiscardedCostCard != null && mw.lastDiscardedCostCard.isSummon();
+			}
 			@Override public String lastDiscardedCostCardName() {
 				return mw.lastDiscardedCostCard == null ? null : mw.lastDiscardedCostCard.name();
 			}
@@ -6188,6 +6211,13 @@ final class GameContextImpl implements GameContext {
 			}
 
 			@Override public void dealDamageToOpponent(int amount) {
+				// Neon's Runic covers "a Forward or a player", so the player half is blanked here
+				// exactly as DamageResolver blanks the Forward half — before any doubling below.
+				if (mw.currentAbilitySource != null
+						&& mw.damageZeroedSourcesThisTurn.contains(mw.currentAbilitySource)) {
+					logEntry(mw.currentAbilitySource.name() + " — its damage becomes 0 this turn");
+					return;
+				}
 				if (mw.currentAbilitySource != null
 						&& !mw.lostAbilitiesCards.contains(mw.currentAbilitySource)) {
 					// Read the same way DamageResolver.sourceHasOutgoingDmgToOpponentDoubler reads it,
@@ -6962,11 +6992,18 @@ final class GameContextImpl implements GameContext {
 				}
 			}
 
-			@Override public void chooseSummonInBzByMaxCostFreeCastRfgAfterUse(int maxCost) {
+			@Override public void chooseSummonInBzByMaxCostFreeCastRfgAfterUse(int maxCost,
+					Set<String> excludedElements) {
 				List<CardData> bz = isP1 ? mw.gameState.getP1BreakZone() : mw.gameState.getP2BreakZone();
 				List<CardData> candidates = new ArrayList<>();
-				for (CardData c : bz)
-					if (c.isSummon() && c.cost() <= maxCost) candidates.add(c);
+				for (CardData c : bz) {
+					if (!c.isSummon() || c.cost() > maxCost) continue;
+					// A Multi-Element Summon carrying an excluded Element is excluded by it.
+					boolean excluded = false;
+					for (String e : excludedElements) if (c.containsElement(e)) { excluded = true; break; }
+					if (excluded) continue;
+					candidates.add(c);
+				}
 				if (candidates.isEmpty()) {
 					logEntry((isP1 ? "" : "[P2] ") + "No Summon of cost ≤ " + maxCost + " in Break Zone — effect fizzles");
 					return;

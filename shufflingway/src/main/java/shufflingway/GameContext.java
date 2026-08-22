@@ -167,6 +167,16 @@ public interface GameContext {
     void cancelStackEntry();
 
     /**
+     * Prompts for one Summon or auto-ability on the Stack — the same choice
+     * {@link #cancelStackEntry()} offers — and makes the damage it deals become 0 for the rest of
+     * this turn instead of cancelling it: 29-012H Neon's Runic.
+     *
+     * <p>A replacement, not a reduction, and it covers damage to Forwards and to a player alike,
+     * so both damage paths read it before anything that would scale the figure.
+     */
+    void chooseStackEntryZeroItsDamageThisTurn();
+
+    /**
      * Cancels the Summon whose casting triggered the ability now resolving — Clione 4-125C's
      * "cancel the Summon's effect". Nothing is chosen: "the Summon" is definite, and it is the
      * topmost Summon on the Stack, which is the one this trigger was pushed on top of.
@@ -1572,6 +1582,15 @@ public interface GameContext {
     String lastDiscardedCostCardName();
 
     /**
+     * Whether the card discarded to pay the current ability's cost was a Summon — 29-107C Seer
+     * (FFTA2), whose damage doubles when the discard it paid with was one.
+     *
+     * <p>Reads the cost payment, not the last discard of any kind: an effect that discarded a card
+     * earlier in the same ability must not be mistaken for the cost.
+     */
+    boolean lastDiscardedCostCardIsSummon();
+
+    /**
      * Returns {@code true} when the card most recently discarded by an effect (not a cost) in the
      * current ability chain is a Multi-Element card. Used by "If the discarded card is a
      * Multi-Element card, …" conditionals attached to a draw/discard effect.
@@ -2803,7 +2822,15 @@ public interface GameContext {
      * it as castable this turn (free cost, RFG after use). The card remains in the Break Zone
      * until cast; it is removed from the game when it resolves rather than going back to the BZ.
      */
-    void chooseSummonInBzByMaxCostFreeCastRfgAfterUse(int maxCost);
+    default void chooseSummonInBzByMaxCostFreeCastRfgAfterUse(int maxCost) {
+        chooseSummonInBzByMaxCostFreeCastRfgAfterUse(maxCost, java.util.Set.of());
+    }
+
+    /**
+     * As above, but skipping Summons of an excluded Element — 29-033L Terra's "of cost 5 or less
+     * other than Light or Dark in your Break Zone". An empty set excludes nothing.
+     */
+    void chooseSummonInBzByMaxCostFreeCastRfgAfterUse(int maxCost, java.util.Set<String> excludedElements);
 
     /**
      * Returns {@code true} if the most recent card cast by the ability user

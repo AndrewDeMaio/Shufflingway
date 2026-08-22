@@ -1019,6 +1019,23 @@ final class ActionResolverChoose {
      * read as a bare remove-by-name and the optional search was never offered. 29-117H Ark escaped
      * only because neither of its branches parses standalone.
      */
+    /**
+     * Routes "Choose … . It gains +N power … . If you control X, it gains +M power … instead."
+     * to {@link #tryParseChooseCharacter} early, without duplicating any of it — 4-090R Biggs.
+     *
+     * <p>Exists purely for call order, like {@link #tryParseChooseMaySearchRfgThenElse}.
+     * {@code tryParseControlGatedInsteadUpgrade} sits far earlier in {@code parse()} and splits
+     * the text into a base and an alternative it resolves independently; the alternative here is
+     * "it gains +2000 power", whose "it" is the Forward the base half chose, so on its own it has
+     * nothing to attach to and the upgrade quietly did nothing.
+     */
+    static Consumer<GameContext> tryParseChooseGatedBoostInstead(String text, CardData source, int xValue) {
+        Matcher m = CHOOSE_CHARACTER_PATTERN.matcher(escapePeriodInName(text, source));
+        if (!m.find()) return null;
+        String followup = restorePeriodInName(m.group("followup").trim(), source);
+        if (!FOLLOWUP_POWER_BOOST_CONTROL_GATED_INSTEAD.matcher(followup).matches()) return null;
+        return tryParseChooseCharacter(text, source, xValue);
+    }
     static Consumer<GameContext> tryParseChooseMaySearchRfgThenElse(String text, CardData source, int xValue) {
         Matcher m = CHOOSE_CHARACTER_PATTERN.matcher(escapePeriodInName(text, source));
         if (!m.find()) return null;
@@ -1504,6 +1521,55 @@ final class ActionResolverChoose {
                     };
                 }
             }
+        }
+
+        // --- "It gains +N power ... If you control X, it gains +M power ... instead." (4-090R Biggs) ---
+        // Read off the whole followup: split, the primary is a plain PowerBoost and the upgrade
+        // lands in the secondary as a control gate whose inner "it" has no target to attach to.
+        // "Instead" means one figure or the other, never both, so the condition picks the amount.
+        Matcher gatedBoostM = FOLLOWUP_POWER_BOOST_CONTROL_GATED_INSTEAD.matcher(followup);
+        if (gatedBoostM.matches()) {
+            ControlCondition cc = CardData.parseControlCondition(gatedBoostM.group("cond").trim());
+            if (cc != null) {
+                int baseBoost = Integer.parseInt(gatedBoostM.group("base"));
+                int altBoost  = Integer.parseInt(gatedBoostM.group("alt"));
+                EnumSet<CardData.Trait> noTraits = EnumSet.noneOf(CardData.Trait.class);
+                return ctx -> {
+                    List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                            opponentOnly, selfOnly, condition, element, zone, opponentZone,
+                            costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
+                            jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
+                    boolean upgraded = ctx.controlConditionMet(cc);
+                    int boost = upgraded ? altBoost : baseBoost;
+                    ctx.logEntry(choosePrefix + " +" + boost + " power until EOT"
+                            + (upgraded ? " (you control " + cc + ")" : ""));
+                    sortedByIdxDesc(ts, true) .forEach(t -> ctx.boostTarget(t, boost, noTraits));
+                    sortedByIdxDesc(ts, false).forEach(t -> ctx.boostTarget(t, boost, noTraits));
+                };
+            }
+        }
+
+        // --- "Deal it damage equal to [Self]'s power. If you discarded a Summon to pay this
+        //      ability's cost, deal it double ... instead." (29-107C Seer (FFTA2)) ---
+        Matcher seerM = FOLLOWUP_DAMAGE_SELF_POWER_DOUBLED_IF_SUMMON_DISCARD.matcher(followup);
+        if (source != null && seerM.matches()
+                && seerM.group("name").trim().equalsIgnoreCase(source.name())
+                && seerM.group("name2").trim().equalsIgnoreCase(source.name())) {
+            return ctx -> {
+                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
+                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
+                        jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
+                // The source's power now, not its printed power: a boosted Seer hits harder.
+                int power = ctx.fieldForwardPowerByName(source.name());
+                boolean doubled = ctx.lastDiscardedCostCardIsSummon();
+                int damage = doubled ? power * 2 : power;
+                ctx.logEntry(choosePrefix + " — deal " + damage + " ("
+                        + source.name() + "'s power" + (doubled ? ", doubled: Summon discarded" : "") + ")");
+                if (damage <= 0) return;
+                sortedByIdxDesc(ts, true) .forEach(t -> ctx.damageTarget(t, damage));
+                sortedByIdxDesc(ts, false).forEach(t -> ctx.damageTarget(t, damage));
+            };
         }
 
         // --- "You may discard 1 Card Name X from your hand. If you do so, deal it N damage." ---

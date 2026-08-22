@@ -309,9 +309,13 @@ final class ActionResolverCost {
         Matcher m = CHOOSE_SUMMON_IN_BZ_MAX_COST_FREE_CAST_RFG.matcher(text);
         if (!m.find()) return null;
         final int maxCost = Integer.parseInt(m.group("cost"));
+        final java.util.Set<String> excluded = m.group("exclude") != null
+                ? parseExcludeElements(m.group("exclude")) : java.util.Set.of();
+        String excludeLabel = excluded.isEmpty() ? "" : " other than " + excluded;
         return ctx -> {
-            ctx.logEntry("Effect: Choose Summon (cost ≤ " + maxCost + ") from BZ — cast free, RFG after use");
-            ctx.chooseSummonInBzByMaxCostFreeCastRfgAfterUse(maxCost);
+            ctx.logEntry("Effect: Choose Summon (cost ≤ " + maxCost + excludeLabel
+                    + ") from BZ — cast free, RFG after use");
+            ctx.chooseSummonInBzByMaxCostFreeCastRfgAfterUse(maxCost, excluded);
         };
     }
     static Consumer<GameContext> tryParseCostReductionThisTurn(String text) {
