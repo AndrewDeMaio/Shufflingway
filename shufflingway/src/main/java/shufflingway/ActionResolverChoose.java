@@ -2458,6 +2458,19 @@ final class ActionResolverChoose {
             };
         }
 
+        // --- Cannot-become-dull followup ("It cannot become dull by your opponent's … this turn") ---
+        if (FOLLOWUP_CANNOT_BECOME_DULL_BY_OPP.matcher(primaryFollowup).find()) {
+            return ctx -> {
+                ctx.logEntry(choosePrefix + " — Cannot become dull by opponent's Summons or abilities this turn");
+                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
+                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
+                ts.forEach(t -> ctx.boostTarget(t, 0,
+                        EnumSet.of(CardData.Trait.CANNOT_BE_DULLED_BY_OPP)));
+                if (secondary != null) secondary.accept(ctx);
+            };
+        }
+
         // --- Activate + Negate damage followup (must precede plain Activate to avoid partial match) ---
         if (FOLLOWUP_ACTIVATE_AND_NEGATE_DAMAGE.matcher(primaryFollowup).find()) {
             return ctx -> {
@@ -2638,6 +2651,19 @@ final class ActionResolverChoose {
             BiConsumer<GameContext, List<ForwardTarget>> action = extraCostPowerDamage();
             return ctx -> {
                 ctx.logEntry(choosePrefix + " — damage equal to the power of the extra-cost Forward");
+                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
+                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
+                        jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
+                action.accept(ctx, ts);
+                if (secondary != null) secondary.accept(ctx);
+            };
+        }
+
+        if (FOLLOWUP_DAMAGE_REVEALED_FORWARD_POWER.matcher(primaryFollowup).find()) {
+            BiConsumer<GameContext, List<ForwardTarget>> action = revealedForwardPowerDamage();
+            return ctx -> {
+                ctx.logEntry(choosePrefix + " — damage equal to the power of the revealed Forward");
                 List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
                         opponentOnly, selfOnly, condition, element, zone, opponentZone,
                         costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,

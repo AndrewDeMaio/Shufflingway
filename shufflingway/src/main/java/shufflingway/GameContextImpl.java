@@ -401,6 +401,7 @@ final class GameContextImpl implements GameContext {
 			}
 			@Override public boolean wasExtraCostPaid()          { return mw.currentSummonPaidExtraCost; }
 			@Override public int extraCostRemovedCardPower()     { return mw.currentExtraCostRemovedCardPower; }
+			@Override public int revealedForwardPower()          { return mw.currentRevealedForwardPower; }
 			@Override public int extraCostDiscardedCardCost()    { return mw.currentExtraCostDiscardedCardCost; }
 			@Override public void damageTargetUnreduced(ForwardTarget t, int amount) {
 				if (t.zone() == ForwardTarget.CardZone.BACKUP) { mw.applyDamageToBackup(t.isP1(), t.idx(), amount); return; }
@@ -1442,6 +1443,13 @@ final class GameContextImpl implements GameContext {
 				(isP1 ? mw.p1CannotBeBlockedByCost : mw.p2CannotBeBlockedByCost)
 						.put(source, new int[]{costVal, isMore ? 1 : 0});
 				logEntry(source.name() + " gains \"cannot be blocked by a Forward of cost " + costVal
+						+ " or " + (isMore ? "more" : "less") + "\" until end of turn");
+			}
+			@Override public void grantSelfCannotBeBlockedByPower(CardData source, int powerVal, boolean isMore) {
+				if (source == null) return;
+				(isP1 ? mw.p1CannotBeBlockedByPower : mw.p2CannotBeBlockedByPower)
+						.put(source, new int[]{powerVal, isMore ? 1 : 0});
+				logEntry(source.name() + " gains \"cannot be blocked by a Forward of power " + powerVal
 						+ " or " + (isMore ? "more" : "less") + "\" until end of turn");
 			}
 			@Override public void grantSelfCannotBlockUntilEndOfTurn(CardData source) {
@@ -5105,7 +5113,7 @@ final class GameContextImpl implements GameContext {
 				for (AutoAbility fa : source.autoAbilities()) {
 					if (fa.trigger().equals(triggerType)) {
 						mw.logEntry("[AutoAbility] " + source.name() + " — retriggered (" + triggerType + ")");
-						StackEntry retriggered = new StackEntry(source, null, fa, isP1, 0, false, null, false, false, 0);
+						StackEntry retriggered = new StackEntry(source, null, fa, isP1, 0, false, null, false, false, 0, 0);
 						mw.gameState.pushStack(retriggered);
 						// A retrigger is an auto ability going on the Stack like any other, so
 						// Bahamut (XVI) 29-115L sees it — and it is the first one of the turn as
@@ -5680,6 +5688,12 @@ final class GameContextImpl implements GameContext {
 					mw.p1Turn.attackDeclarationLimit = max;
 				}
 				logEntry("Effect: Opponent may only declare attack " + max + " time(s) this turn");
+			}
+
+			@Override public void setOppFieldEntryRemovedFromGameThisTurn() {
+				mw.turn(isP1).oppFieldEntryBecomesRfg = true;
+				logEntry("Effect: this turn, Characters entering the field by your opponent's "
+						+ "Summons or abilities are removed from the game instead");
 			}
 
 			@Override public void setOpponentCannotSearchThisTurn() {

@@ -1824,6 +1824,16 @@ public interface GameContext {
     void setOpponentCannotSearchThisTurn();
 
     /**
+     * Arms Alhanalem 18-018R for the rest of the turn: any Character that would enter the field
+     * because of a Summon or ability belonging to this player's opponent is removed from the game
+     * instead, never arriving and so never firing its "enters the field" ability.
+     *
+     * <p>A cast is untouched — the sentence names Summons and abilities, and paying a card's cost
+     * to put it on the field is neither.
+     */
+    void setOppFieldEntryRemovedFromGameThisTurn();
+
+    /**
      * Removes the named card from the current Battle — marks it as having escaped so that
      * {@code resolveCombat} skips damage resolution for that pairing.
      * Only meaningful while the card is in Battle (attacking or blocking).
@@ -2125,6 +2135,14 @@ public interface GameContext {
      * store. Locates the source by identity on either field; no-op if it isn't on the field.
      */
     void grantSelfCannotBeBlockedByCost(CardData source, int costVal, boolean isMore);
+
+    /**
+     * Grants {@code source} "cannot be blocked by a Forward of power N or more/less" until the end
+     * of the turn — Iris 12-117R.  The power twin of
+     * {@link #grantSelfCannotBeBlockedByCost}: an absolute threshold read against the blocker's
+     * effective power, so a pump given to the blocker in response can lift it over the line.
+     */
+    void grantSelfCannotBeBlockedByPower(CardData source, int powerVal, boolean isMore);
 
     /**
      * Grants {@code source} "[Self] cannot block." until end of turn (a temporarily-granted field
@@ -3139,6 +3157,12 @@ public interface GameContext {
      * Returns {@code 0} if the extra cost was not paid or no Forward was removed.
      */
     int extraCostRemovedCardPower();
+
+    /**
+     * The power of the Forward revealed from hand to pay this ability's {@link RevealCost}, or
+     * {@code 0} when none was — Rinoa 18-097R's Angelo Cannon deals damage equal to it.
+     */
+    int revealedForwardPower();
 
     /**
      * Returns the cost of the card discarded from hand as the extra cost (Fenrir).

@@ -127,6 +127,16 @@ class PlayerTurnState {
 	boolean cannotSearchThisTurn = false;
 
 	/**
+	 * Alhanalem 18-018R: while set, any Character entering the field because of a Summon or ability
+	 * belonging to <em>this player's opponent</em> is removed from the game instead of arriving.
+	 *
+	 * <p>Held by the player who used Alhanalem rather than by the one it bites, which is what the
+	 * printed "your opponent's" makes it: a permission its controller holds over the other seat.
+	 * See {@code MainWindow.fieldEntryBecomesRfg}.
+	 */
+	boolean oppFieldEntryBecomesRfg = false;
+
+	/**
 	 * Cards of this player's whose "for the first time in that turn" damage replacement has already
 	 * been spent this turn — Edge 15-045H's "During each turn, if Edge is dealt damage by your
 	 * opponent's Summons or abilities for the first time in that turn, the damage becomes 0

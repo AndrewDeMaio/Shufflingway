@@ -11903,7 +11903,7 @@ public class CardBehaviorTest {
 		assertTrue(calbrenaCan.test(abilityChoosing(other, false, fwd(false, 0))),
 				"a Character the opponent controls still counts");
 		assertFalse(calbrenaCan.test(new StackEntry(other, null, null, false, 0, false,
-				List.of(new ForwardTarget(true, 0, ForwardTarget.CardZone.BREAK_ZONE)), false, false, 0)),
+				List.of(new ForwardTarget(true, 0, ForwardTarget.CardZone.BREAK_ZONE)), false, false, 0, 0)),
 				"\"either player controls\" excludes a Break Zone target");
 	}
 
@@ -26333,7 +26333,7 @@ public class CardBehaviorTest {
 	private static StackEntry autoEntryFor(CardData source, boolean isP1) {
 		AutoAbility aa = CardData.parseAutoAbilities(
 				"When " + source.name() + " enters the field, draw 1 card.").get(0);
-		return new StackEntry(source, null, aa, isP1, 0, false, null, false, false, 0);
+		return new StackEntry(source, null, aa, isP1, 0, false, null, false, false, 0, 0);
 	}
 
 	/** Seats Yoran-Oran in P1's first Backup slot, where a Backup's field ability is read from. */
@@ -27307,7 +27307,7 @@ public class CardBehaviorTest {
 	private static StackEntry oppAutoEntry(CardData source, boolean isP1) {
 		return new StackEntry(source, null,
 				CardData.parseAutoAbilities("When " + source.name() + " enters the field, draw 1 card.").get(0),
-				isP1, 0, false, null, false, false, 0);
+				isP1, 0, false, null, false, false, 0, 0);
 	}
 
 	/** Bahamut on P2's field, facing a P1 Forward whose auto abilities are about to trigger. */
@@ -28964,6 +28964,380 @@ public class CardBehaviorTest {
 		ActionResolver.parse(SEER_EFFECT, makeForward("Seer (FFTA2)", "Wind", 4, 7000)).accept(ctx);
 
 		verify(ctx).damageTarget(any(), eq(18000));
+	}
+
+	// =========================================================================================
+	// P2 Warp casts.  MainWindow.executeP2WarpPlay had been written but never called: the commit
+	// that generalized Warp to both seats did the resolution half (counter ticking, the RFP zone
+	// UI, the placed/counter-removed triggers) and left the entry half unbuilt, so P2's Warp zone
+	// could never be anything but empty.  ComputerPlayer.findWarpPlan is that entry: it runs as
+	// findPlayPlan's last resort, once nothing in hand can be cast outright.
+	// =========================================================================================
+
+	/** A Forward carrying a Warp value and the printed Warp cost tokens {@code warpCost()} returns. */
+	private static CardData makeWarpForward(String name, String element, int cost, int warpValue,
+			List<String> warpCost) {
+		return new CardData(null, name, element, cost, 7000, "Forward", false, 0, false, false,
+				Set.of(), warpValue, warpCost, null, List.of(),
+				List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				null, null, null, "");
+	}
+
+	/** Puts an ACTIVE Backup of {@code element} in P2's slot {@code slot}. */
+	private static void giveP2Backup(MainWindow mw, int slot, String name, String element) {
+		mw.p2BackupCards[slot]  = makeFieldAbilityCard(name, element, "Backup", "");
+		mw.p2BackupStates[slot] = CardState.ACTIVE;
+	}
+
+	@Test
+	void theCpuWarpsAForwardItCouldNotOtherwiseAfford() {
+		// Vincent 23-060L in miniature: printed cost 7, Warp 6 for a single 《Earth》.
+		MainWindow mw = new MainWindow();
+		CardData vincent = makeWarpForward("Vincent", "Earth", 7, 6, List.of("Earth"));
+		mw.gameState.getP2Hand().add(vincent);
+		giveP2Backup(mw, 0, "Earth Backup", "Earth");
+
+		ComputerPlayer cpu = new ComputerPlayer(mw);
+		assertTrue(cpu.hasLegalHandCast(),
+				"one Backup cannot raise 7 CP, but it covers the Warp cost — findPlayPlan must reach it");
+		assertTrue(cpu.warpCastIfAble());
+
+		List<GameState.WarpEntry> zone = mw.gameState.getP2WarpZone();
+		assertEquals(1, zone.size(), "the card belongs in P2's Removed-From-Play zone, not on the field");
+		assertEquals(vincent, zone.get(0).card);
+		assertEquals(6, zone.get(0).counters);
+		assertEquals(CardState.DULL, mw.p2BackupStates[0], "the Backup paying the cost is dulled");
+		assertTrue(mw.gameState.getP2Hand().isEmpty());
+		assertTrue(mw.p2ForwardCards.isEmpty(), "a Warp cast does not put the Forward into play");
+	}
+
+	@Test
+	void theCpuWillNotWarpWhenAnElementRequirementHasNoSource() {
+		// 《Earth》《Earth》 against one Earth Backup, one Fire Backup and a Fire card in hand: four
+		// CP in total, but only one of them can be Earth.  A plain CP sum would wave this through.
+		MainWindow mw = new MainWindow();
+		CardData teodor = makeWarpForward("Teodor", "Earth", 9, 2, List.of("Earth", "Earth"));
+		mw.gameState.getP2Hand().add(teodor);
+		mw.gameState.getP2Hand().add(makeForward("Fire Spare", "Fire", 2, 5000));
+		giveP2Backup(mw, 0, "Earth Backup", "Earth");
+		giveP2Backup(mw, 1, "Fire Backup",  "Fire");
+
+		assertFalse(new ComputerPlayer(mw).warpCastIfAble());
+		assertTrue(mw.gameState.getP2WarpZone().isEmpty());
+		assertEquals(2, mw.gameState.getP2Hand().size(), "a refused plan must not spend anything");
+		assertEquals(CardState.ACTIVE, mw.p2BackupStates[0]);
+		assertEquals(CardState.ACTIVE, mw.p2BackupStates[1]);
+	}
+
+	@Test
+	void aGenericWarpCostIsPaidByBackupsOfAnyElement() {
+		// The Emperor 19-110H warps for 《2》 — no element named, so off-colour Backups pay it.
+		MainWindow mw = new MainWindow();
+		CardData emperor = makeWarpForward("The Emperor", "Ice", 4, 2, List.of("", ""));
+		mw.gameState.getP2Hand().add(emperor);
+		giveP2Backup(mw, 0, "Fire Backup",  "Fire");
+		giveP2Backup(mw, 1, "Water Backup", "Water");
+
+		assertTrue(new ComputerPlayer(mw).warpCastIfAble());
+		assertEquals(1, mw.gameState.getP2WarpZone().size());
+		assertEquals(CardState.DULL, mw.p2BackupStates[0]);
+		assertEquals(CardState.DULL, mw.p2BackupStates[1]);
+	}
+
+	@Test
+	void theCpuDiscardsForWarpCpButNeverDiscardsTheCardItIsWarping() {
+		// No Backups at all, so the 《Wind》 has to come from a hand discard — worth 2 CP, of which
+		// one is wasted.  The card being warped is excluded from its own payment.
+		MainWindow mw = new MainWindow();
+		CardData sophie = makeWarpForward("Sophie", "Wind", 4, 1, List.of("Wind"));
+		CardData spare  = makeForward("Wind Spare", "Wind", 2, 5000);
+		mw.gameState.getP2Hand().add(sophie);
+		mw.gameState.getP2Hand().add(spare);
+
+		assertTrue(new ComputerPlayer(mw).warpCastIfAble());
+		assertEquals(sophie, mw.gameState.getP2WarpZone().get(0).card);
+		assertTrue(mw.gameState.getP2BreakZone().contains(spare), "the spare paid the cost");
+		assertFalse(mw.gameState.getP2BreakZone().contains(sophie));
+		assertTrue(mw.gameState.getP2Hand().isEmpty());
+	}
+
+	// =========================================================================================
+	// Black Mage 4-079C, "《Earth》《Dull》: Choose 1 Forward. It cannot become dull by your
+	// opponent's Summons or abilities this turn."  The choose half already parsed; the sentence
+	// after it did not, so the ability picked a Forward and then did nothing to it.  It is the
+	// chosen-target spelling of what Guy 1-097H prints about itself, and lands on the same
+	// CANNOT_BE_DULLED_BY_OPP trait every dulling path already honours.
+	// =========================================================================================
+
+	private static final String BLACK_MAGE_DULL_SHIELD =
+			"Choose 1 Forward. It cannot become dull by your opponent's Summons or abilities this turn.";
+
+	@Test
+	void chosenForwardGainsDullImmunityForTheTurn() {
+		ForwardTarget t = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+		GameContext ctx = contextChoosing(List.of(t));
+
+		Consumer<GameContext> fn = ActionResolver.parse(BLACK_MAGE_DULL_SHIELD, null);
+		assertNotNull(fn, "the follow-up sentence must not be dropped");
+		fn.accept(ctx);
+
+		verify(ctx).boostTarget(t, 0, EnumSet.of(CardData.Trait.CANNOT_BE_DULLED_BY_OPP));
+	}
+
+	@Test
+	void theDullImmunityFollowupIsNamedInTheDescription() {
+		assertEquals("ChooseCharacter / CannotBecomeDullByOpp",
+				ActionResolver.fullDescription(BLACK_MAGE_DULL_SHIELD, null));
+	}
+
+	@Test
+	void aShieldedForwardCannotBeDulledByTheOpponent() {
+		// The grant is only worth having if the dulling paths honour it, which they do by trait.
+		MainWindow mw = new MainWindow();
+		mw.placeCardInForwardZone(makeForward("Shielded", "Earth", 3, 7000));
+		mw.p1ForwardTempTraits.get(0).add(CardData.Trait.CANNOT_BE_DULLED_BY_OPP);
+
+		mw.buildGameContext(false).dullTarget(new ForwardTarget(true, 0, ForwardTarget.CardZone.FORWARD));
+
+		assertEquals(CardState.ACTIVE, mw.p1ForwardStates.get(0),
+				"P2's ability must not dull a Forward carrying the immunity");
+	}
+
+	// =========================================================================================
+	// Iris 12-117R, "《Wind》《Earth》: Select 1 of the 2 following actions. ... 'Iris cannot be
+	// blocked by a Forward of power 9000 or more' ..."  The modal wrapper and the +2000 option
+	// already worked; the second option's quoted grant had no home.  Ark Angel MR 8-045R prints
+	// the same sentence permanently, so reading it was solved — what was missing was a turn-scoped
+	// place to put it, and a check both seats' block rules consult.
+	// =========================================================================================
+
+	private static final String IRIS_UNBLOCKABLE_GRANT =
+			"Iris gains 'Iris cannot be blocked by a Forward of power 9000 or more' until the end of the turn.";
+
+	private static CardData iris() { return makeForward("Iris", "Wind", 4, 5000); }
+
+	@Test
+	void irisSecondModalOptionParsesAsATurnScopedBlockRestriction() {
+		CardData source = iris();
+		assertNotNull(ActionResolver.parse(IRIS_UNBLOCKABLE_GRANT, source));
+		assertEquals("GainsQuotedFieldAbilityUntilEot",
+				ActionResolver.matchedPatternName(IRIS_UNBLOCKABLE_GRANT, source));
+
+		// Both halves of the printed modal now report a parser rather than a "?".
+		String modal = "Select 1 of the 2 following actions. "
+				+ "\"Iris gains +2000 power until the end of the turn.\" "
+				+ "\"" + IRIS_UNBLOCKABLE_GRANT + "\"";
+		assertEquals("SelectFollowingActions(1 of 2: StandaloneSelfBoost | GainsQuotedFieldAbilityUntilEot)",
+				ActionResolver.fullDescription(modal, source));
+	}
+
+	@Test
+	void theGrantedPowerFilterBarsBlockersAtOrAboveTheThreshold() {
+		MainWindow mw = new MainWindow();
+		CardData attacker = iris();
+		mw.placeCardInForwardZone(attacker);
+
+		ActionResolver.parse(IRIS_UNBLOCKABLE_GRANT, attacker).accept(mw.buildGameContext(true));
+
+		assertTrue(mw.attackerPowerFilterExcludes(attacker, true, 9000),  "9000 is 'or more'");
+		assertTrue(mw.attackerPowerFilterExcludes(attacker, true, 12000));
+		assertFalse(mw.attackerPowerFilterExcludes(attacker, true, 8000), "under the threshold may block");
+	}
+
+	@Test
+	void theGrantedPowerFilterIsForgottenAtEndOfTurn() {
+		MainWindow mw = new MainWindow();
+		CardData attacker = iris();
+		mw.placeCardInForwardZone(attacker);
+		ActionResolver.parse(IRIS_UNBLOCKABLE_GRANT, attacker).accept(mw.buildGameContext(true));
+		assertTrue(mw.attackerPowerFilterExcludes(attacker, true, 9000));
+
+		mw.turnPhases().runP2EndOfTurnCleanup();
+
+		assertFalse(mw.attackerPowerFilterExcludes(attacker, true, 9000),
+				"an until-end-of-turn grant must not survive the turn");
+	}
+
+	@Test
+	void thePrintedPowerFilterStillReadsThroughTheSameCheck() {
+		// Ark Angel MR 8-045R prints it rather than granting it; one accessor answers for both.
+		MainWindow mw = new MainWindow();
+		CardData arkAngel = makeForwardWithText("Ark Angel MR", "Wind", 5, 8000,
+				"Ark Angel MR cannot be blocked by a Forward of power 7000 or more.");
+
+		assertTrue(mw.attackerPowerFilterExcludes(arkAngel, true, 7000));
+		assertFalse(mw.attackerPowerFilterExcludes(arkAngel, true, 6000));
+	}
+
+	// =========================================================================================
+	// Alhanalem 18-018R, "《Dull》, put Alhanalem into the Break Zone: During this turn, if a
+	// Character enters the field by your opponent's Summons or abilities, remove it from the game
+	// instead."  A replacement rather than a removal — the Character never arrives, so its
+	// "enters the field" ability never fires either.  Asked from inside the place… methods, which
+	// is where those triggers fire, so both halves follow from the one check.
+	// =========================================================================================
+
+	private static final String ALHANALEM_EFFECT =
+			"During this turn, if a Character enters the field by your opponent's Summons or "
+			+ "abilities, remove it from the game instead.";
+
+	/** Stands an ability of {@code source}'s up as the effect currently resolving for {@code isP1}. */
+	private static void asResolvingAbility(MainWindow mw, String sourceName, boolean isP1) {
+		mw.currentAbilitySource     = makeForward(sourceName, "Fire", 2, 5000);
+		mw.currentAbilitySourceIsP1 = isP1;
+	}
+
+	@Test
+	void alhanalemArmsTheReplacementForItsControllerOnly() {
+		MainWindow mw = new MainWindow();
+		ActionResolver.parse(ALHANALEM_EFFECT, null).accept(mw.buildGameContext(true));
+
+		assertTrue(mw.p1Turn.oppFieldEntryBecomesRfg, "P1 used it, so P1 holds the permission");
+		assertFalse(mw.p2Turn.oppFieldEntryBecomesRfg);
+	}
+
+	@Test
+	void aCharacterPlayedByTheOpponentsAbilityIsRemovedFromTheGameInstead() {
+		MainWindow mw = new MainWindow();
+		ActionResolver.parse(ALHANALEM_EFFECT, null).accept(mw.buildGameContext(true));
+
+		// P2's ability now plays a Forward onto P2's field.
+		CardData intruder = makeForward("Intruder", "Fire", 3, 7000);
+		mw.gameState.getIdentity().put(intruder, false);   // owner decides which RFP zone takes it
+		asResolvingAbility(mw, "P2 Source", false);
+		mw.placeP2CardInForwardZone(intruder);
+
+		assertTrue(mw.p2ForwardCards.isEmpty(), "it must never reach the field");
+		assertTrue(mw.gameState.getP2PermanentRfp().contains(intruder));
+	}
+
+	@Test
+	void theReplacementLeavesCastsAndTheControllersOwnEffectsAlone() {
+		MainWindow mw = new MainWindow();
+		ActionResolver.parse(ALHANALEM_EFFECT, null).accept(mw.buildGameContext(true));
+
+		// A cast is neither a Summon nor an ability, so it arrives as normal.
+		asResolvingAbility(mw, "P2 Source", false);
+		mw.lastCardWasCast = true;
+		mw.placeP2CardInForwardZone(makeForward("Cast Normally", "Fire", 3, 7000));
+		mw.lastCardWasCast = false;
+		assertEquals(1, mw.p2ForwardCards.size(), "a cast Character is untouched");
+
+		// And so does a Character P1's own ability plays: the sentence names the opponent's.
+		asResolvingAbility(mw, "P1 Source", true);
+		mw.placeCardInForwardZone(makeForward("Own Effect", "Ice", 3, 7000));
+		assertEquals(1, mw.p1ForwardCards.size(), "your own ability is not 'your opponent's'");
+	}
+
+	@Test
+	void theReplacementIsForgottenAtEndOfTurn() {
+		MainWindow mw = new MainWindow();
+		ActionResolver.parse(ALHANALEM_EFFECT, null).accept(mw.buildGameContext(true));
+
+		mw.turnPhases().runP2EndOfTurnCleanup();
+
+		assertFalse(mw.p1Turn.oppFieldEntryBecomesRfg);
+		asResolvingAbility(mw, "P2 Source", false);
+		mw.placeP2CardInForwardZone(makeForward("Intruder", "Fire", 3, 7000));
+		assertEquals(1, mw.p2ForwardCards.size(), "next turn it arrives normally");
+	}
+
+	// =========================================================================================
+	// Rinoa 18-097R, "[[s]]Angelo Cannon[[/]] 《S》, reveal 1 Forward in your hand: Choose 1
+	// Forward. Deal it damage equal to the power of the Forward you revealed."
+	//
+	// ACTION_ABILITY_PATTERN already had a group for the reveal phrase — added so the ability
+	// would match at all — but nothing read it, so the cost was dropped and the damage figure had
+	// no source.  Revealing spends nothing, which is what makes it unlike every cost beside it:
+	// the payment's job is to record which card was shown, not to take it.
+	// =========================================================================================
+
+	private static final String ANGELO_CANNON =
+			"[[s]]Angelo Cannon[[/]] 《S》, reveal 1 Forward in your hand: Choose 1 Forward. "
+			+ "Deal it damage equal to the power of the Forward you revealed.";
+
+	private static ActionAbility angeloCannon() {
+		List<ActionAbility> as = CardData.parseActionAbilities(ANGELO_CANNON);
+		assertEquals(1, as.size());
+		return as.get(0);
+	}
+
+	@Test
+	void angeloCannonParsesItsRevealCost() {
+		ActionAbility a = angeloCannon();
+		assertEquals("Angelo Cannon", a.abilityName());
+		assertTrue(a.isSpecial());
+		assertEquals(new RevealCost(1, "Forward"), a.revealCost());
+		assertEquals("Choose 1 Forward. Deal it damage equal to the power of the Forward you revealed.",
+				a.effectText());
+	}
+
+	@Test
+	void aRevealCostBarsTheAbilityWhenNoMatchingCardIsInHand() {
+		MainWindow mw = new MainWindow();
+		CardData rinoa = makeForward("Rinoa", "Water", 3, 5000);
+		mw.placeCardInForwardZone(rinoa);
+		ActionAbility a = angeloCannon();
+		// A second copy, which the 《S》 will be discarding — present throughout, so what the
+		// assertions below turn on is the reveal cost and nothing else.
+		mw.gameState.getP1Hand().add(makeForward("Rinoa", "Water", 3, 5000));
+
+		// A hand with no other Forward cannot pay it, however many other cards it holds: the
+		// copy paying the 《S》 leaves the hand, so it cannot also be the one revealed.
+		mw.gameState.getP1Hand().add(makeSummon("Shiva", "Ice", 2, ""));
+		assertFalse(mw.canActivateAbility(a, false, CardState.ACTIVE, 0, rinoa, true));
+
+		mw.gameState.getP1Hand().add(makeForward("Squall", "Ice", 4, 8000));
+		assertTrue(mw.canActivateAbility(a, false, CardState.ACTIVE, 0, rinoa, true));
+	}
+
+	@Test
+	void payingTheRevealCostKeepsTheCardAndReportsItsPower() {
+		MainWindow mw = new MainWindow();
+		CardData squall = makeForward("Squall", "Ice", 4, 8000);
+		mw.gameState.getP1Hand().add(makeSummon("Shiva", "Ice", 2, ""));
+		mw.gameState.getP1Hand().add(squall);
+
+		// One eligible Forward, so the choice is forced and no dialog is reached.
+		assertEquals(8000, mw.payRevealCost(new RevealCost(1, "Forward"), true));
+		assertTrue(mw.gameState.getP1Hand().contains(squall), "a revealed card stays in hand");
+		assertEquals(2, mw.gameState.getP1Hand().size());
+	}
+
+	@Test
+	void theCpuRevealsItsStrongestForwardBecauseTheDamageScalesWithIt() {
+		MainWindow mw = new MainWindow();
+		mw.opponent = new ComputerPlayer(mw);
+		mw.gameState.getP2Hand().add(makeForward("Weak", "Water", 1, 3000));
+		mw.gameState.getP2Hand().add(makeForward("Strong", "Water", 7, 11000));
+		mw.gameState.getP2Hand().add(makeForward("Middling", "Water", 3, 7000));
+
+		assertEquals(11000, mw.payRevealCost(new RevealCost(1, "Forward"), false),
+				"unlike a discard, revealing costs nothing — so it shows the best one");
+		assertEquals(3, mw.gameState.getP2Hand().size());
+	}
+
+	@Test
+	void angeloCannonDealsTheRevealedForwardsPower() {
+		ForwardTarget t = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+		GameContext ctx = contextChoosing(List.of(t));
+		when(ctx.revealedForwardPower()).thenReturn(8000);
+
+		ActionResolver.parse(angeloCannon().effectText(), null).accept(ctx);
+
+		verify(ctx).damageTarget(t, 8000);
+	}
+
+	@Test
+	void angeloCannonDealsNothingWhenNoPowerWasRecorded() {
+		GameContext ctx = contextChoosing(
+				List.of(new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD)));
+		when(ctx.revealedForwardPower()).thenReturn(0);
+
+		ActionResolver.parse(angeloCannon().effectText(), null).accept(ctx);
+
+		verify(ctx, never()).damageTarget(any(), anyInt());
 	}
 
 }

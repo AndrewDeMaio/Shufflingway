@@ -638,6 +638,17 @@ final class ActionResolverPatterns {
         "(?i)deal\\s+it\\s+damage\\s+equal\\s+to\\s+the\\s+power\\s+of\\s+the\\s+Forward\\s+removed\\s+by\\s+the\\s+extra\\s+cost\\.?"
     );
     /**
+     * "Deal it damage equal to the power of the Forward you revealed." — Rinoa 18-097R's Angelo
+     * Cannon, whose cost reveals that Forward rather than spending it.
+     *
+     * <p>The twin of {@link #FOLLOWUP_DAMAGE_EXTRA_COST_POWER} in everything but where the figure
+     * comes from: at runtime it is read from {@link GameContext#revealedForwardPower()} rather than
+     * {@code extraCostRemovedCardPower()}. The two cannot be confused — each names its own cost.
+     */
+    static final Pattern FOLLOWUP_DAMAGE_REVEALED_FORWARD_POWER = Pattern.compile(
+        "(?i)deal\\s+it\\s+damage\\s+equal\\s+to\\s+the\\s+power\\s+of\\s+the\\s+Forward\\s+you\\s+revealed\\.?"
+    );
+    /**
      * Matches Fenrir's conditional break-and-draw:
      * "If its cost is equal to the cost of the card discarded by the extra cost, break it and draw N card(s)."
      * Group: {@code draw} — number of cards to draw.
@@ -2646,6 +2657,34 @@ final class ActionResolverPatterns {
         "(?i)(?:During\\s+this\\s+turn,\\s+)?(?:it|they)\\s+cannot\\s+be\\s+returned\\s+to\\s+" +
         "(?:its|their)\\s+owner's\\s+hand\\s+by\\s+(?:your\\s+)?opponent's\\s+" +
         "(?:Summons?(?:\\s+or\\s+abilities)?|abilities)\\.?"
+    );
+    /**
+     * "[During this turn,] it/they cannot become dull by your opponent's Summons or abilities
+     * [this turn]." — Black Mage 4-079C, the chosen-target form of the sentence Guy 1-097H and
+     * friends print about themselves.  Enforced through {@link CardData.Trait#CANNOT_BE_DULLED_BY_OPP},
+     * the trait the printed wording already grants permanently, so the dulling paths need nothing new.
+     *
+     * <p>Written alongside {@link #FOLLOWUP_CANNOT_BE_RETURNED_TO_HAND} because the two sentences
+     * are the same shape. It cannot be confused with {@link #FOLLOWUP_DULL}, which wants the verb
+     * ("dull it"), not the adjective this one ends on.
+     */
+    static final Pattern FOLLOWUP_CANNOT_BECOME_DULL_BY_OPP = Pattern.compile(
+        "(?i)(?:During\\s+this\\s+turn,\\s+)?(?:it|they)\\s+cannot\\s+become\\s+dull\\s+by\\s+" +
+        "(?:your\\s+)?opponent's\\s+(?:Summons?(?:\\s+or\\s+abilities)?|abilities)\\.?"
+    );
+    /**
+     * "During this turn, if a Character enters the field by your opponent's Summons or abilities,
+     * remove it from the game instead." — Alhanalem 18-018R.
+     *
+     * <p>A replacement effect, not a removal: the Character never arrives, so its
+     * "enters the field" ability never fires either. What decides whether it bites is who owns the
+     * Summon or ability doing the playing, not whose field the card was headed for — which is how
+     * the sentence is worded, and it matters for an effect that plays a Character onto the other
+     * side.
+     */
+    static final Pattern STANDALONE_OPP_FIELD_ENTRY_RFG_INSTEAD = Pattern.compile(
+        "(?i)^During\\s+this\\s+turn,\\s+if\\s+a\\s+Character\\s+enters\\s+the\\s+field\\s+by\\s+" +
+        "your\\s+opponent's\\s+Summons?\\s+or\\s+abilities,\\s+remove\\s+it\\s+from\\s+the\\s+game\\s+instead[.!]?$"
     );
     /** "It gains 'This Character/Forward/Monster cannot be broken.' until the end of the turn." Also matches the leading-Until form: "Until the end of the turn, it gains '...'." */
     static final Pattern FOLLOWUP_CANNOT_BE_BROKEN = Pattern.compile(
@@ -5749,6 +5788,15 @@ final class ActionResolverPatterns {
     /** A quoted "[Self] cannot be blocked by a Forward of cost N or more/less." field ability being granted. */
     static final Pattern GRANTED_CANNOT_BE_BLOCKED_BY_COST = Pattern.compile(
         "(?i)^(?<subj>.+?)\\s+cannot\\s+be\\s+blocked\\s+by\\s+a\\s+Forward\\s+of\\s+cost\\s+(?<cost>\\d+)\\s+or\\s+(?<cmp>more|less)[.!]?$");
+    /**
+     * A quoted "[Self] cannot be blocked by a Forward of power N or more/less." field ability being
+     * granted — Iris 12-117R, whose second modal option hands itself the sentence Ark Angel MR
+     * 8-045R prints permanently. Mirrors {@link CardData#parseFieldCannotBeBlockedByPower}, which
+     * reads the printed form, and sits beside the cost twin above because the wordings differ only
+     * in that noun.
+     */
+    static final Pattern GRANTED_CANNOT_BE_BLOCKED_BY_POWER = Pattern.compile(
+        "(?i)^(?<subj>.+?)\\s+cannot\\s+be\\s+blocked\\s+by\\s+a\\s+Forward\\s+of\\s+power\\s+(?<power>\\d+)(?:\\s+or\\s+(?<cmp>more|less))?[.!]?$");
     /**
      * A quoted "[Self] cannot block." field ability being granted — the printed form of the same
      * sentence is {@code CardData.FIELD_CANNOT_BLOCK}, read there into {@code cannotBlockAtAll()}.

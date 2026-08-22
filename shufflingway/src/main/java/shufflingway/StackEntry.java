@@ -22,42 +22,54 @@ import java.util.List;
  *                                   {@link MainWindow#resolveWarpCard}
  * @param paidExtraCost              {@code true} when the summon was cast with its optional extra cost paid
  * @param extraCostRemovedCardPower  power of the Forward removed by the extra cost (Titan); {@code 0} otherwise
+ * @param revealedForwardPower       power of the Forward revealed to pay a {@link RevealCost}
+ *                                   (Rinoa 18-097R); {@code 0} otherwise.  Carried on the entry
+ *                                   rather than read off a field at resolution time for the reason
+ *                                   {@code extraCostRemovedCardPower} is: the cost is paid at
+ *                                   activation, and another activation can happen before this one
+ *                                   comes off the stack
  */
-public record StackEntry(CardData source, ActionAbility ability, AutoAbility autoAbility, boolean isP1, int xValue, boolean isExBurst, List<ForwardTarget> preSelectedTargets, boolean isWarpResolve, boolean paidExtraCost, int extraCostRemovedCardPower) {
+public record StackEntry(CardData source, ActionAbility ability, AutoAbility autoAbility, boolean isP1, int xValue, boolean isExBurst, List<ForwardTarget> preSelectedTargets, boolean isWarpResolve, boolean paidExtraCost, int extraCostRemovedCardPower, int revealedForwardPower) {
 
     /** Convenience constructor for Summons and Action Abilities without an X cost. */
     public StackEntry(CardData source, ActionAbility ability, boolean isP1) {
-        this(source, ability, null, isP1, 0, false, null, false, false, 0);
+        this(source, ability, null, isP1, 0, false, null, false, false, 0, 0);
     }
 
     /** Convenience constructor for Action Abilities with an X cost. */
     public StackEntry(CardData source, ActionAbility ability, boolean isP1, int xValue) {
-        this(source, ability, null, isP1, xValue, false, null, false, false, 0);
+        this(source, ability, null, isP1, xValue, false, null, false, false, 0, 0);
     }
 
     /** Convenience constructor for Action Abilities with pre-selected targets. */
     public StackEntry(CardData source, ActionAbility ability, boolean isP1, int xValue, List<ForwardTarget> preSelectedTargets) {
-        this(source, ability, null, isP1, xValue, false, preSelectedTargets, false, false, 0);
+        this(source, ability, null, isP1, xValue, false, preSelectedTargets, false, false, 0, 0);
+    }
+
+    /** Convenience constructor for an Action Ability whose cost revealed a Forward (Rinoa 18-097R). */
+    public StackEntry(CardData source, ActionAbility ability, boolean isP1, int xValue,
+            List<ForwardTarget> preSelectedTargets, int revealedForwardPower) {
+        this(source, ability, null, isP1, xValue, false, preSelectedTargets, false, false, 0, revealedForwardPower);
     }
 
     /** Convenience constructor for EX Burst effects placed on the stack. */
     public StackEntry(CardData source, boolean isP1, boolean isExBurst) {
-        this(source, null, null, isP1, 0, isExBurst, null, false, false, 0);
+        this(source, null, null, isP1, 0, isExBurst, null, false, false, 0, 0);
     }
 
     /** Creates a stack entry that, when it resolves, places {@code card} on the field via Warp. */
     public static StackEntry forWarpResolve(CardData card, boolean isP1) {
-        return new StackEntry(card, null, null, isP1, 0, false, null, true, false, 0);
+        return new StackEntry(card, null, null, isP1, 0, false, null, true, false, 0, 0);
     }
 
     /** Creates a stack entry for a summon cast with its extra cost paid. */
     public static StackEntry forSummonWithExtraCost(CardData card, boolean isP1, int removedCardPower) {
-        return new StackEntry(card, null, null, isP1, 0, false, null, false, true, removedCardPower);
+        return new StackEntry(card, null, null, isP1, 0, false, null, false, true, removedCardPower, 0);
     }
 
     /** Creates a stack entry for a summon cast with its extra cost paid, including an X value (e.g. Valefor). */
     public static StackEntry forSummonWithExtraCost(CardData card, boolean isP1, int removedCardPower, int xValue) {
-        return new StackEntry(card, null, null, isP1, xValue, false, null, false, true, removedCardPower);
+        return new StackEntry(card, null, null, isP1, xValue, false, null, false, true, removedCardPower, 0);
     }
 
     /**
@@ -67,7 +79,7 @@ public record StackEntry(CardData source, ActionAbility ability, AutoAbility aut
      */
     public StackEntry withPreSelectedTargets(List<ForwardTarget> newTargets) {
         return new StackEntry(source, ability, autoAbility, isP1, xValue, isExBurst,
-                newTargets, isWarpResolve, paidExtraCost, extraCostRemovedCardPower);
+                newTargets, isWarpResolve, paidExtraCost, extraCostRemovedCardPower, revealedForwardPower);
     }
 
     public boolean isSummon()        { return ability == null && autoAbility == null && !isExBurst && !isWarpResolve; }

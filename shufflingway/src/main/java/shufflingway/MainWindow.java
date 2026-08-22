@@ -398,6 +398,11 @@ public class MainWindow {
 	final Set<CardData>          p2CannotBeBlocked       = Collections.newSetFromMap(new IdentityHashMap<>());
 	final Map<CardData, int[]>   p1CannotBeBlockedByCost = new IdentityHashMap<>();
 	final Map<CardData, int[]>   p2CannotBeBlockedByCost = new IdentityHashMap<>();
+	// The power twin, granted rather than printed (Iris 12-117R). Kept apart from the cost maps
+	// because the two thresholds are read against different things — the blocker's cost, and its
+	// effective power, which moves during the block.
+	final Map<CardData, int[]>   p1CannotBeBlockedByPower = new IdentityHashMap<>();
+	final Map<CardData, int[]>   p2CannotBeBlockedByPower = new IdentityHashMap<>();
 	final boolean[]       p1BackupFrozen       = new boolean[5];
 	final boolean[]       p2BackupFrozen       = new boolean[5];
 	final List<Boolean>   p1MonsterFrozen      = new ArrayList<>();
@@ -903,6 +908,8 @@ public class MainWindow {
 	boolean currentSummonPaidExtraCost = false;
 	/** Power of the Forward removed by the extra cost (Titan); 0 otherwise. */
 	int currentExtraCostRemovedCardPower = 0;
+	/** Power of the Forward revealed from hand to pay the resolving ability's reveal cost (Rinoa 18-097R); 0 otherwise. */
+	int currentRevealedForwardPower = 0;
 	/** BZ cards to remove from the game once the current extra-cost CP payment is confirmed. */
 	private List<CardData> pendingExtraCostBzRemovals = null;
 	/** Hand cards to discard as extra cost once the current CP payment is confirmed (Fenrir). */
@@ -2951,6 +2958,7 @@ public class MainWindow {
                                 clearBackupForwardState();
                                 p1CannotBeBlocked.clear();              p2CannotBeBlocked.clear();
                                 p1CannotBeBlockedByCost.clear();        p2CannotBeBlockedByCost.clear();
+                                p1CannotBeBlockedByPower.clear();       p2CannotBeBlockedByPower.clear();
                                 p1CannotBlock.clear();                  p2CannotBlock.clear();
                                 p1MustBlock.clear();                    p2MustBlock.clear();
                                 p1CannotAttack.clear();                 p2CannotAttack.clear();
@@ -2983,6 +2991,7 @@ public class MainWindow {
                                 p2Turn.attackDeclarationLimit = Integer.MAX_VALUE; p2Turn.attackDeclarationsThisTurn = 0;
                                 p1Turn.attackDeclarationLimit = Integer.MAX_VALUE;       p1Turn.attackDeclarationsThisTurn = 0;
                                 p1Turn.cannotSearchThisTurn = false; p2Turn.cannotSearchThisTurn = false;
+                                p1Turn.oppFieldEntryBecomesRfg = false; p2Turn.oppFieldEntryBecomesRfg = false;
                                 // attacksMadeThisTurn was just emptied, so the exhausted-attacker
                                 // glow comes off with it.
                                 refreshCombatGlows();
@@ -4395,6 +4404,7 @@ public class MainWindow {
 		p1CannotBlockPersistent.remove(departing);  p2CannotBlockPersistent.remove(departing);
 		p1CannotBeBlocked.remove(departing);        p2CannotBeBlocked.remove(departing);
 		p1CannotBeBlockedByCost.remove(departing);  p2CannotBeBlockedByCost.remove(departing);
+		p1CannotBeBlockedByPower.remove(departing); p2CannotBeBlockedByPower.remove(departing);
 		cannotUseActionAbilitiesThisTurn.remove(departing);
 	}
 
@@ -6447,6 +6457,85 @@ public class MainWindow {
 	 * whole hand is shown.  That case is derived independently on each client rather than
 	 * transmitted: with no decision in it, both arrive at the same answer.
 	 */
+	/**
+	 * True when an ability's 《S》 cost and its reveal cost are after the same hand card, so one of
+	 * the cards matching the reveal is already spoken for and must not be counted twice.
+	 *
+	 * <p>Only when the 《S》 has to come out of hand: a Crystal payment (Glaciela Wezette 17-113L)
+	 * or a counter waiver (Wakka 16-138S) leaves the hand untouched, and the same-named copy is
+	 * then free to be revealed.  Rinoa 18-097R is the printing that raises the question — her
+	 * Angelo Cannon is a Special whose other cost wants a Forward, and a second Rinoa in hand is
+	 * both.
+	 */
+	private boolean revealAndSpecialCostCompeteForOneCard(ActionAbility ability, CardData source, boolean isP1) {
+		if (!ability.isSpecial() || ability.revealCost() == null) return false;
+		if (canPaySpecialCostWithCrystal(source, isP1)) return false;
+		if (specialCostCounterWaiver(source, isP1) != null) return false;
+		for (CardData c : playerHand(isP1))
+			if (c.name().equalsIgnoreCase(source.name()) && ability.revealCost().matches(c)) return true;
+		return false;
+	}
+
+	/**
+	 * Pays an ability's {@link RevealCost} and returns the highest power among the cards shown —
+	 * the figure Rinoa 18-097R's Angelo Cannon deals as damage.  Returns 0 when nothing was shown.
+	 *
+	 * <p>Revealed cards stay in hand: the cost spends information, not cards.  That is what makes
+	 * the CPU's pick the opposite of a discard's — {@link #revealHandCards} shows its cheapest
+	 * because those are the ones it can bear to be seen holding, while here the effect scales with
+	 * what was shown, so it shows its strongest.
+	 *
+	 * <p>Answers as hand indices, and the "no decision in it" case is derived on each client rather
+	 * than transmitted, both for the reasons {@link #revealHandCards} documents.
+	 */
+	int payRevealCost(RevealCost cost, boolean isP1) {
+		if (cost == null) return 0;
+		List<CardData> hand = playerHand(isP1);
+		List<Integer> eligible = new ArrayList<>();
+		for (int i = 0; i < hand.size(); i++) if (cost.matches(hand.get(i))) eligible.add(i);
+		if (eligible.isEmpty()) return 0;
+
+		List<Integer> shown = eligible.size() <= cost.count() ? eligible
+				: decide(PlayerChoice.by(isP1, ChoiceKind.REVEAL_HAND)
+					.prompting("Waiting for your opponent to reveal " + cost.count()
+							+ " card(s) from their hand...")
+					.locally(() -> {
+						List<CardData> pool = new ArrayList<>();
+						for (int i : eligible) pool.add(hand.get(i));
+						List<Integer> out = new ArrayList<>();
+						for (CardData c : showHandSelectionDialog(pool, cost.count(),
+								"reveal to your opponent", "Reveal")) {
+							int i = handIndexByIdentity(hand, c);
+							if (i >= 0) out.add(i);
+						}
+						Collections.sort(out);
+						return out;
+					})
+					.byCpu(() -> {
+						List<Integer> ranked = new ArrayList<>(eligible);
+						ranked.sort((a, b) -> hand.get(b).power() - hand.get(a).power());
+						List<Integer> out = new ArrayList<>(
+								ranked.subList(0, Math.min(cost.count(), ranked.size())));
+						Collections.sort(out);
+						return out;
+					})
+					.legalWhen(sel -> sel.size() <= cost.count() && eligible.containsAll(sel),
+							"only a matching card in hand can pay a reveal cost"));
+
+		if (shown.isEmpty()) return 0;
+		int best = 0;
+		StringBuilder names = new StringBuilder();
+		for (int i : shown) {
+			CardData c = hand.get(i);
+			best = Math.max(best, c.power());
+			if (names.length() > 0) names.append(", ");
+			names.append(c.name());
+		}
+		// A revealed card is public, so it is named in the log whoever revealed it.
+		logEntry((isP1 ? "" : "[P2] ") + "Revealed " + names + " from hand (cost)");
+		return best;
+	}
+
 	List<Integer> revealHandCards(boolean revealerIsP1, int count) {
 		List<CardData> hand = revealerIsP1 ? gameState.getP1Hand() : gameState.getP2Hand();
 		if (hand.isEmpty()) return List.of();
@@ -8464,7 +8553,12 @@ public class MainWindow {
 	 * P2 equivalent of {@link #executeWarpPlay}: pays the Warp alternate cost (dulls P2
 	 * backups, breaks P2 hand cards), removes the card from P2's hand, and places it in
 	 * P2's Removed-From-Play zone with Warp counters.  Caller is responsible for choosing
-	 * which backups/hand cards satisfy the cost.
+	 * which backups/hand cards satisfy the cost — {@code ComputerPlayer.p2PlanWarpPayment}
+	 * does, and is the only caller.
+	 *
+	 * <p>Unlike {@link #executeWarpPlay} this takes no break-for-CP payments (Sherlotta 8-053H).
+	 * The planner never produces one, so the parameter would be dead; wiring that route would
+	 * mean adding it here and to the planner together.
 	 */
 	void executeP2WarpPlay(CardData card, int cardHandIdx,
 			List<Integer> discardIndices, List<Integer> backupDullIndices,
@@ -9507,8 +9601,8 @@ public class MainWindow {
 				: chooseSummonTargets(card, isP1, paidExtraCost, xValue);
 		lastSummonPreTargets = targets;
 		StackEntry entry = paidExtraCost
-				? new StackEntry(card, null, null, isP1, xValue, false, targets, false, true, extraCostRemovedCardPower)
-				: new StackEntry(card, null, null, isP1, xValue, false, targets, false, false, 0);
+				? new StackEntry(card, null, null, isP1, xValue, false, targets, false, true, extraCostRemovedCardPower, 0)
+				: new StackEntry(card, null, null, isP1, xValue, false, targets, false, false, 0, 0);
 		gameState.insertStack(depth, entry);
 		logEntry("[Stack] \"" + card.name() + "\" — Summon on the stack"
 				+ (paidExtraCost ? " (Extra Cost paid)" : ""));
@@ -9876,12 +9970,15 @@ public class MainWindow {
 				currentAbilitySource     = entry.source();
 				currentAbilitySourceIsP1 = entry.isP1();
 				currentAbilityIsSpecial  = entry.isSpecialAbility();
+				// Carried from activation, where the reveal cost was paid (Rinoa 18-097R).
+				currentRevealedForwardPower = entry.revealedForwardPower();
 				try {
 					if (entry.preSelectedTargets() != null) ctx.preloadTargets(entry.preSelectedTargets());
 					ActionResolver.resolve(entry.ability(), entry.source(), gameState, ctx, entry.xValue());
 				} finally {
 					currentAbilitySource    = null;
 					currentAbilityIsSpecial = false;
+					currentRevealedForwardPower = 0;
 				}
 				refreshP1HandLabel();
 				refreshP1BreakLabel();
@@ -10028,6 +10125,7 @@ public class MainWindow {
 
 	/** Places a card into the first empty P1 backup slot and renders it. */
 	void placeCardInFirstBackupSlot(CardData card) {
+		if (fieldEntryBecomesRfg(card, true)) return;
 		// A card arriving on the field is a new object: it has taken no damage and dealt none.
 		forgetDamageRecordFor(card);
 		if (p1BackupLabels == null) return;
@@ -10302,6 +10400,13 @@ public class MainWindow {
 		for (String e : ability.cpCost()) {
 			if (!firstCost) cost.append(", ");
 			cost.append(e.isEmpty() ? "any" : e);
+			firstCost = false;
+		}
+		if (ability.revealCost() != null) {
+			if (!firstCost) cost.append(", ");
+			cost.append("reveal ").append(ability.revealCost().count()).append(' ')
+					.append(ability.revealCost().cardType() != null
+							? ability.revealCost().cardType() : "card");
 			firstCost = false;
 		}
 		for (BreakZoneCost bz : ability.breakZoneCosts()) {
@@ -11316,6 +11421,13 @@ public class MainWindow {
 		if (ability.requiresOwnWarpCard()) {
 			List<GameState.WarpEntry> zone = isP1 ? gameState.getP1WarpZone() : gameState.getP2WarpZone();
 			if (zone.isEmpty()) return false;
+		}
+		if (ability.revealCost() != null) {
+			// Revealing costs nothing, but a cost that cannot be paid still bars the activation.
+			int matching = 0;
+			for (CardData c : playerHand(isP1)) if (ability.revealCost().matches(c)) matching++;
+			if (revealAndSpecialCostCompeteForOneCard(ability, source, isP1)) matching--;
+			if (matching < ability.revealCost().count()) return false;
 		}
 		if (ability.requiresSelfEmptyHand()) {
 			List<CardData> selfHand = isP1 ? gameState.getP1Hand() : gameState.getP2Hand();
@@ -13774,12 +13886,53 @@ public class MainWindow {
 	}
 
 	/** Adds a Forward card to P1's forward zone and wires up the debug context menu. */
+	/**
+	 * Alhanalem 18-018R's replacement, asked by every path that puts a Character on a field: true
+	 * when {@code card} is removed from the game instead of arriving — in which case this has
+	 * already removed it, and the caller must place nothing.
+	 *
+	 * <p>Asked from inside the {@code place…} methods rather than at their twenty-odd call sites,
+	 * because those methods are also where the "enters the field" abilities fire. A Character that
+	 * never arrives must not trigger, and answering here is what makes that true for free.
+	 *
+	 * <p>What decides it is who owns the Summon or ability doing the playing, not whose field the
+	 * card was bound for: the printed sentence says "by your opponent's Summons or abilities", so
+	 * an effect of theirs that hands a Character to <em>your</em> side is caught by it too. A cast
+	 * is not caught at all — paying a card's cost to put it on the field is neither a Summon nor an
+	 * ability.
+	 */
+	boolean fieldEntryBecomesRfg(CardData card, boolean enteringP1) {
+		if (card == null || lastCardWasCast) return false;
+		Boolean causerIsP1 = resolvingEffectController();
+		// The flag is held by the player who used Alhanalem, and bites what their opponent causes.
+		if (causerIsP1 == null || !turn(!causerIsP1).oppFieldEntryBecomesRfg) return false;
+		gameState.addToPermanentRfp(card);
+		logEntry((enteringP1 ? "" : "[P2] ") + card.name()
+				+ " would enter the field by your opponent's Summon or ability → Removed From Game instead");
+		// Ownership decides which zone took it, so both labels are refreshed rather than guessed at.
+		refreshP1WarpZoneUI();
+		refreshP2WarpZoneUI();
+		return true;
+	}
+
+	/**
+	 * Which player's Summon or ability is currently resolving, or {@code null} when neither is.
+	 * The two are tracked separately — a Summon on the stack and an ability off it — and every
+	 * "by your opponent's Summons or abilities" rule wants either.
+	 */
+	private Boolean resolvingEffectController() {
+		if (currentResolutionIsSummon && currentSummonSource != null) return currentSummonSourceIsP1;
+		if (currentAbilitySource != null) return currentAbilitySourceIsP1;
+		return null;
+	}
+
 	void placeCardInForwardZone(CardData card) {
 		placeCardInForwardZone(card, false);
 	}
 
 	/** @param paidExtraCost whether the optional extra cost was paid when casting {@code card} (threaded to its ETB auto-ability). */
 	void placeCardInForwardZone(CardData card, boolean paidExtraCost) {
+		if (fieldEntryBecomesRfg(card, true)) return;
 		// A card arriving on the field is a new object: it has taken no damage and dealt none.
 		forgetDamageRecordFor(card);
 		if (p1ForwardPanel == null) return;
@@ -13840,6 +13993,7 @@ public class MainWindow {
 
 	/** Adds a Monster card to P1's monster zone (right side of forward zone, newest leftmost). */
 	void placeCardInMonsterZone(CardData card) {
+		if (fieldEntryBecomesRfg(card, true)) return;
 		// A card arriving on the field is a new object: it has taken no damage and dealt none.
 		forgetDamageRecordFor(card);
 		if (p1MonsterPanel == null) return;
@@ -13953,6 +14107,7 @@ public class MainWindow {
 
 	/** Adds a Monster card to P2's monster zone (right side of forward zone). */
 	void placeP2CardInMonsterZone(CardData card) {
+		if (fieldEntryBecomesRfg(card, false)) return;
 		// A card arriving on the field is a new object: it has taken no damage and dealt none.
 		forgetDamageRecordFor(card);
 		if (p2MonsterPanel == null) return;
@@ -14719,13 +14874,26 @@ public class MainWindow {
 	 */
 	private boolean attackerBlockPowerFiltersExclude(ForwardTarget.CardZone blockerZone, int blockerIdx) {
 		int blockerPower = fieldForwardPower(true, blockerZone, blockerIdx);
-		for (ForwardTarget t : pendingP2AttackerTargets()) {
-			CardData attacker = pendingAttackerCard(t);
-			if (attacker == null) continue;
-			int[] intr = CardData.parseFieldCannotBeBlockedByPower(attacker.textEn(), attacker.name());
-			if (intr != null && blockerPowerExcluded(blockerPower, intr)) return true;
-		}
+		for (ForwardTarget t : pendingP2AttackerTargets())
+			if (attackerPowerFilterExcludes(pendingAttackerCard(t), false, blockerPower)) return true;
 		return false;
+	}
+
+	/**
+	 * True when {@code attacker}'s absolute "cannot be blocked by a Forward of power N or
+	 * more/less" restriction rules out a blocker of {@code blockerPower} — whether the restriction
+	 * is printed (Ark Angel MR 8-045R) or granted for the turn (Iris 12-117R).
+	 *
+	 * <p>Seat-agnostic because both sides need it: {@code attackerBlockPowerFiltersExclude} asks it
+	 * of a P2 attacker while P1 picks a blocker, and {@code ComputerPlayer.chooseBlocker} asks it of
+	 * a P1 attacker while P2 does.
+	 */
+	boolean attackerPowerFilterExcludes(CardData attacker, boolean attackerIsP1, int blockerPower) {
+		if (attacker == null) return false;
+		int[] dyn = (attackerIsP1 ? p1CannotBeBlockedByPower : p2CannotBeBlockedByPower).get(attacker);
+		if (dyn != null && blockerPowerExcluded(blockerPower, dyn)) return true;
+		int[] intr = CardData.parseFieldCannotBeBlockedByPower(attacker.textEn(), attacker.name());
+		return intr != null && blockerPowerExcluded(blockerPower, intr);
 	}
 
 	/** {@code filter} is {@code {powerVal, orMore}}, as {@link CardData#parseFieldCannotBeBlockedByPower} returns. */
@@ -16899,6 +17067,7 @@ public class MainWindow {
 	}
 
 	void placeP2CardInForwardZone(CardData card) {
+		if (fieldEntryBecomesRfg(card, false)) return;
 		// A card arriving on the field is a new object: it has taken no damage and dealt none.
 		forgetDamageRecordFor(card);
 		if (p2ForwardPanel == null) return;
@@ -16952,6 +17121,7 @@ public class MainWindow {
 	}
 
 	void placeP2CardInFirstBackupSlot(CardData card) {
+		if (fieldEntryBecomesRfg(card, false)) return;
 		// A card arriving on the field is a new object: it has taken no damage and dealt none.
 		forgetDamageRecordFor(card);
 		for (int i = 0; i < p2BackupCards.length; i++) {

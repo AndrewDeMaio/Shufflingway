@@ -93,7 +93,8 @@ public record ActionAbility(
         boolean                 requiresOwnWarpCard,          // true = ability disabled when the controller has no cards in the Warp zone
         boolean                 usableByEitherPlayer,         // "Each player can use this ability." — the non-controller may also activate it, paying costs from their own resources
         int                     requiresSelfPowerAtLeast,     // 0 = no restriction; >0 = source's current power must be at least this to activate
-        String                  bottomOfDeckCostCardName      // null = no such cost; else the card named by "put X at the bottom of its owner's deck" (Bartz 19-048C)
+        String                  bottomOfDeckCostCardName,     // null = no such cost; else the card named by "put X at the bottom of its owner's deck" (Bartz 19-048C)
+        RevealCost              revealCost                    // null = no such cost; else the "reveal N X in your hand" payment (Rinoa 18-097R)
 ) {
     /**
      * Compatibility constructor preserving the prior 51-arg signature; no bottom-of-deck cost.
@@ -130,7 +131,7 @@ public record ActionAbility(
                 blockerForAttacker, ownBreakZoneNameRequired, counterScaleName, minCounterRequired,
                 minCounterType, maxOpponentHandSize, requiresSourceIsForward, maxCounterAllowed,
                 maxCounterType, inlineCostReductionJob, inlineCostReductionExcludeName, requiresOwnWarpCard,
-                usableByEitherPlayer, requiresSelfPowerAtLeast, null);
+                usableByEitherPlayer, requiresSelfPowerAtLeast, null, null);
     }
 
     /**
@@ -157,7 +158,7 @@ public record ActionAbility(
                 ownBreakZoneNameRequired(), counterScaleName(), minCounterRequired(), minCounterType(),
                 maxOpponentHandSize(), requiresSourceIsForward(), maxCounterAllowed(), maxCounterType(),
                 inlineCostReductionJob(), inlineCostReductionExcludeName(), requiresOwnWarpCard(),
-                usableByEitherPlayer(), requiresSelfPowerAtLeast(), null);
+                usableByEitherPlayer(), requiresSelfPowerAtLeast(), null, null);
     }
 
     /**
@@ -182,7 +183,26 @@ public record ActionAbility(
                 ownBreakZoneNameRequired(), counterScaleName(), minCounterRequired(), minCounterType(),
                 maxOpponentHandSize(), requiresSourceIsForward(), maxCounterAllowed(), maxCounterType(),
                 inlineCostReductionJob(), inlineCostReductionExcludeName(), requiresOwnWarpCard(),
-                usableByEitherPlayer(), requiresSelfPowerAtLeast(), bottomOfDeckCostCardName());
+                usableByEitherPlayer(), requiresSelfPowerAtLeast(), bottomOfDeckCostCardName(), revealCost());
+    }
+
+    /** A copy whose cost also reveals cards from hand (Rinoa 18-097R). */
+    public ActionAbility withRevealCost(RevealCost cost) {
+        return new ActionAbility(abilityName(), requiresDull(), isSpecial(), crystalCost(),
+                selfMillCost(), hasXCost(), cpCost(), breakZoneCosts(), discardCosts(),
+                removeFromGameCosts(), returnToHandCosts(), counterCosts(), dullForwardCosts(),
+                yourTurnOnly(), opponentTurnOnly(), oncePerTurn(), mainPhaseOnly(),
+                whileCardAttacking(), whileCardBlocking(), whilePartyAttacking(), whileCardInHand(),
+                hasBlockingTargetEffect(), effectText(), damageThreshold(), controlCondition(),
+                cpBackupElement(), cpAllowedElements(), sourceInBattle(), requiresOppDiscardedThisTurn(),
+                requiresCastSummonThisTurn(), requiresElementForwardEnteredThisTurn(),
+                requiresCardNameEnteredThisTurn(), breakZoneOnly(), requiresOpponentEmptyHand(),
+                requiresSelfEmptyHand(), requiresNamedCardTookDamageThisTurn(), requiresSelfReceivedDamageThisTurn(),
+                requiresForwardPutToBZThisTurn(), requiresJobPutToBZThisTurn(), blockerForAttacker(),
+                ownBreakZoneNameRequired(), counterScaleName(), minCounterRequired(), minCounterType(),
+                maxOpponentHandSize(), requiresSourceIsForward(), maxCounterAllowed(), maxCounterType(),
+                inlineCostReductionJob(), inlineCostReductionExcludeName(), requiresOwnWarpCard(),
+                usableByEitherPlayer(), requiresSelfPowerAtLeast(), bottomOfDeckCostCardName(), cost);
     }
 
     /** A copy whose cost also puts {@code cardName} at the bottom of its owner's deck. */
@@ -201,7 +221,7 @@ public record ActionAbility(
                 ownBreakZoneNameRequired(), counterScaleName(), minCounterRequired(), minCounterType(),
                 maxOpponentHandSize(), requiresSourceIsForward(), maxCounterAllowed(), maxCounterType(),
                 inlineCostReductionJob(), inlineCostReductionExcludeName(), requiresOwnWarpCard(),
-                usableByEitherPlayer(), requiresSelfPowerAtLeast(), cardName);
+                usableByEitherPlayer(), requiresSelfPowerAtLeast(), cardName, revealCost());
     }
 
     public ActionAbility {
@@ -246,7 +266,7 @@ public record ActionAbility(
                 counterScaleName(), minCounterRequired(), minCounterType(), maxOpponentHandSize(),
                 requiresSourceIsForward(), maxCounterAllowed(), maxCounterType(),
                 inlineCostReductionJob(), inlineCostReductionExcludeName(), requiresOwnWarpCard(),
-                usableByEitherPlayer(), requiresSelfPowerAtLeast(), bottomOfDeckCostCardName());
+                usableByEitherPlayer(), requiresSelfPowerAtLeast(), bottomOfDeckCostCardName(), revealCost());
     }
 
     public ActionAbility withReducedCp(int reduction) {
@@ -274,7 +294,7 @@ public record ActionAbility(
                 usableByEitherPlayer(), requiresSelfPowerAtLeast(),
                 // Carried explicitly: routing through the compatibility constructor would silently
                 // drop the cost from the reduced copy.
-                bottomOfDeckCostCardName());
+                bottomOfDeckCostCardName(), revealCost());
     }
 
     /** Creates an action ability whose sole cost is "Put {@code bzCardName} into the Break Zone." */

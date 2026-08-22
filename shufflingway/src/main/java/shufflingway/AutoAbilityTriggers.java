@@ -3457,7 +3457,7 @@ final class AutoAbilityTriggers {
 		List<ForwardTarget> preTargets = effectText.isBlank() ? null
 				: ActionResolver.preSelectTargets(effectText, source, 0, mw.buildGameContext(effectIsP1));
 		if (preTargets != null && preTargets.isEmpty()) preTargets = null;
-		StackEntry entry = new StackEntry(source, null, fa, effectIsP1, 0, false, preTargets, false, paidExtraCost, 0);
+		StackEntry entry = new StackEntry(source, null, fa, effectIsP1, 0, false, preTargets, false, paidExtraCost, 0, 0);
 		mw.gameState.insertStack(depth, entry);
 		mw.cancelFirstOppForwardAuto(entry);
 	}
@@ -5522,6 +5522,11 @@ final class AutoAbilityTriggers {
 			}
 		}
 
+		// Reveal cost (Rinoa 18-097R), settled before the bottom-of-deck cost below can move the
+		// source: the cards shown stay in hand, so the only thing it leaves behind is the power the
+		// effect will read, carried to resolution on the stack entry.
+		int revealedPower = mw.payRevealCost(ability.revealCost(), isP1);
+
 		// Bottom-of-deck cost (Bartz 19-048C), paid last of all: it takes the source off the field,
 		// so every index-based cost above has already been settled against the board it was chosen
 		// on, and the effect goes onto the stack with the card gone — which is the printed order.
@@ -5538,7 +5543,8 @@ final class AutoAbilityTriggers {
 		int depth = mw.gameState.stackSize();
 		java.util.List<ForwardTarget> preTargets = ActionResolver.preSelectTargets(
 				ability.effectText(), source, xValue, mw.buildGameContext(isP1));
-		mw.gameState.insertStack(depth, new StackEntry(source, ability, isP1, xValue, preTargets));
+		mw.gameState.insertStack(depth,
+				new StackEntry(source, ability, isP1, xValue, preTargets, revealedPower));
 		mw.showStackWindow();
 		mw.refreshP1HandLabel();
 		mw.refreshP1BreakLabel();

@@ -20,6 +20,17 @@ final class ActionResolverState {
 
 	private ActionResolverState() {}
 
+    /**
+     * Parses Alhanalem 18-018R's "During this turn, if a Character enters the field by your
+     * opponent's Summons or abilities, remove it from the game instead."
+     *
+     * <p>Nothing is chosen and nothing happens on resolution: the effect arms a replacement that
+     * the field-entry paths consult for the rest of the turn.
+     */
+    static Consumer<GameContext> tryParseOppFieldEntryRfgInstead(String text) {
+        if (!STANDALONE_OPP_FIELD_ENTRY_RFG_INSTEAD.matcher(text.trim()).find()) return null;
+        return GameContext::setOppFieldEntryRemovedFromGameThisTurn;
+    }
     /** Parses "Dull [CardName]." — dulls the source card with no other effect. */
     static Consumer<GameContext> tryParseStandaloneSelfDull(String text, CardData source) {
         if (source == null) return null;

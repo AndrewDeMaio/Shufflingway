@@ -1,10 +1,13 @@
 package shufflingway;
 
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -182,6 +185,14 @@ class ComputerPlayer implements OpponentController {
 
 	/** Executes a planned P2 hand-cast: dulls backups, discards for CP, pays cost, plays the card. */
 	private void executeP2HandPlay(P2Plan plan) {
+		if (plan.warp()) {
+			// executeP2WarpPlay pays the Warp cost itself — it dulls and discards, banks the CP and
+			// clears it — so the ordinary payment step is skipped, and it takes the unadjusted hand
+			// index because it shifts that index past its own discards.
+			mw.executeP2WarpPlay(mw.gameState.getP2Hand().get(plan.cardIdx()), plan.cardIdx(),
+					plan.discardIndices(), plan.dullBackups(), plan.backupElements());
+			return;
+		}
 		mw.payP2CostViaBackupsAndDiscards(
 				plan.dullBackups(),    plan.backupElements(),
 				plan.discardIndices(), plan.discardElements());
@@ -494,7 +505,8 @@ class ComputerPlayer implements OpponentController {
 			List<Integer>          dullBackups,           // P2 backup indices to dull (1 CP each)
 			Map<Integer, String>   backupElements,        // backup idx → element of CP contributed
 			List<Integer>          discardIndices,        // P2 hand indices to discard (2 CP each)
-			Map<Integer, String>   discardElements        // hand idx → element of CP contributed
+			Map<Integer, String>   discardElements,       // hand idx → element of CP contributed
+			boolean                warp                   // pay warpCost() and bank the card rather than cast it
 	) {}
 
 	/**
@@ -503,6 +515,19 @@ class ComputerPlayer implements OpponentController {
 	 */
 	boolean hasLegalHandCast() {
 		return findPlayPlan() != null;
+	}
+
+	/**
+	 * Plans and performs a Warp cast for P2 if one is available, returning whether it did. The
+	 * main phase reaches this route through {@link #findPlayPlan}, which tries it only once the
+	 * ordinary casts are exhausted; this seam lets tests drive it on its own without naming the
+	 * private plan record.
+	 */
+	boolean warpCastIfAble() {
+		P2Plan plan = findWarpPlan();
+		if (plan == null) return false;
+		executeP2HandPlay(plan);
+		return true;
 	}
 
 	private P2Plan findPlayPlan() {
@@ -557,7 +582,7 @@ class ComputerPlayer implements OpponentController {
 		if (mw.p2DoublecastFreeSummons && mw.p2DoublecastLastSummonCost >= 0) {
 			for (int i : summonCands) {
 				if (hand.get(i).cost() < mw.p2DoublecastLastSummonCost)
-					return new P2Plan(i, 0, List.of(), Map.of(), List.of(), Map.of());
+					return new P2Plan(i, 0, List.of(), Map.of(), List.of(), Map.of(), false);
 			}
 		}
 
@@ -581,7 +606,7 @@ class ComputerPlayer implements OpponentController {
 			List<Integer>        discards      = new ArrayList<>();
 			Map<Integer, String> discardElems  = new LinkedHashMap<>();
 			if (p2PlanPayment(card, card.cost(), cardIdx, backups, backupElems, discards, discardElems)) {
-				return new P2Plan(cardIdx, card.cost(), backups, backupElems, discards, discardElems);
+				return new P2Plan(cardIdx, card.cost(), backups, backupElems, discards, discardElems, false);
 			}
 			// P2 could not raise the CP. A card printing a put-into-Break-Zone alternate cost has a
 			// second route onto the field that costs no CP at all; P2 does not take it yet, and
@@ -590,7 +615,145 @@ class ComputerPlayer implements OpponentController {
 				throw new IllegalStateException("p2PlanAltPutToBzCost is a stub — see its javadoc");
 			}
 		}
+		// Nothing casts outright. A Warp card offers a second, usually far cheaper route: pay the
+		// Warp cost now and the card enters the field by itself once its counters run out. Tried
+		// only after the ordinary plays are exhausted, so warping spends what is left over rather
+		// than competing with a card that would reach the field this turn.
+		return findWarpPlan();
+	}
+
+	/**
+	 * P2's Warp cast, or null when no card in hand can be warped.
+	 *
+	 * <p>Gated like the P1 hand menu's Warp item: the cast-timing restriction and the cast limit
+	 * (checked by the caller) apply, but the name-uniqueness and Light/Dark field rules do not — a
+	 * Warp cast puts the card in the Removed-From-Play zone rather than on the field, so those are
+	 * the business of the later turn when its counters run out and it enters.
+	 *
+	 * <p>Prefers the highest printed cost among the affordable ones. A Warp cost bears little
+	 * relation to the printed one, so printed cost stands in for what the card is worth once it
+	 * lands.
+	 */
+	private P2Plan findWarpPlan() {
+		List<CardData> hand = mw.gameState.getP2Hand();
+		List<Integer> cands = new ArrayList<>();
+		for (int i = 0; i < hand.size(); i++) {
+			CardData c = hand.get(i);
+			if (!c.hasWarp()) continue;
+			if (c.isSummon() && mw.summonCastingProhibited()) continue;
+			if (!mw.castRestrictionMet(c, false)) continue;
+			cands.add(i);
+		}
+		cands.sort((a, b) -> hand.get(b).cost() - hand.get(a).cost());
+
+		for (int cardIdx : cands) {
+			List<Integer>        backups     = new ArrayList<>();
+			Map<Integer, String> backupElems = new LinkedHashMap<>();
+			List<Integer>        discards    = new ArrayList<>();
+			if (p2PlanWarpPayment(hand.get(cardIdx), cardIdx, backups, backupElems, discards))
+				return new P2Plan(cardIdx, 0, backups, backupElems, discards, Map.of(), true);
+		}
 		return null;
+	}
+
+	/**
+	 * Plans P2's payment of {@code card}'s Warp cost into the out-params — backup slots to dull
+	 * (1 CP each, with the element each is booked to) and hand indices to discard (2 CP each).
+	 * Returns false, leaving the out-params in an unspecified state, when the cost cannot be
+	 * raised.
+	 *
+	 * <p>A Warp cost is a list of per-element requirements plus generic entries rather than a
+	 * single number, which is why it needs its own planner instead of {@link #p2PlanPayment}: only
+	 * a Backup carrying the element settles an element requirement, while any Backup settles a
+	 * generic one. Element requirements are therefore filled first — spending a matching Backup on
+	 * the generic part would strand the requirement it was the only source for.
+	 *
+	 * <p>Banked CP counts toward an element requirement because
+	 * {@link MainWindow#executeP2WarpPlay} clears that element's pool as part of the payment. CP
+	 * banked in an element the cost does not name is left alone there, so it is not counted here
+	 * either — the effect is that P2 warps slightly less often than the rules would strictly
+	 * allow, which is the safe direction to be wrong in.
+	 */
+	private boolean p2PlanWarpPayment(CardData card, int handIdx,
+			List<Integer> outBackups, Map<Integer, String> outBackupElems, List<Integer> outDiscards) {
+		List<String> warpCost = card.warpCost();
+		if (warpCost.isEmpty()) return true;   // 《0》 — Mist 20-115R, Tidus 24-048L
+
+		// A Fina-style grant ("Your Warp cost can be paid with CP of any Element") collapses every
+		// element requirement into a generic one.
+		boolean anyElement = mw.warpCostAnyElement(false);
+		LinkedHashMap<String, Integer> need = new LinkedHashMap<>();
+		int generic = 0;
+		for (String e : warpCost) {
+			if (anyElement || e.isEmpty()) generic++;
+			else need.merge(e, 1, Integer::sum);
+		}
+		for (Map.Entry<String, Integer> en : need.entrySet())
+			en.setValue(Math.max(0, en.getValue() - mw.gameState.getP2CpForElement(en.getKey())));
+
+		CardData[] backups = mw.cpPayableBackupCards(false);
+		String[] costElems = need.keySet().toArray(String[]::new);
+		Set<String> ldGrants = mw.lightDarkDiscardGrants(false);
+		List<CardData> hand = mw.gameState.getP2Hand();
+
+		// Element requirements: matching Backups first (a dull costs P2 nothing it keeps), then
+		// matching discards. A discard books its whole 2 CP to one element via
+		// CpPaymentUtils.contributingElement, so an odd CP is wasted rather than spilling into the
+		// generic part — the plan is scored the same way so it cannot over-count.
+		for (Map.Entry<String, Integer> en : need.entrySet()) {
+			String elem = en.getKey();
+			int deficit = en.getValue();
+			if (deficit <= 0) continue;
+
+			List<Integer> matching = new ArrayList<>();
+			for (int bi = 0; bi < backups.length; bi++)
+				if (p2BackupCanPay(backups, bi) && !outBackups.contains(bi)
+						&& mw.effectiveContainsElement(backups[bi], elem)) matching.add(bi);
+			// Least versatile first, so a mono-element Backup is spent before a dual one that a
+			// later requirement may be the only other source for.
+			matching.sort(Comparator.comparingInt(bi ->
+					(int) Arrays.stream(costElems)
+							.filter(e -> mw.effectiveContainsElement(backups[bi], e)).count()));
+			for (int bi : matching) {
+				if (deficit <= 0) break;
+				outBackups.add(bi);
+				outBackupElems.put(bi, elem);
+				deficit--;
+			}
+
+			List<Integer> discardable = new ArrayList<>();
+			for (int i = 0; i < hand.size(); i++)
+				if (i != handIdx && !outDiscards.contains(i) && hand.get(i).containsElement(elem)
+						&& CpPaymentUtils.canDiscardForCp(hand.get(i), ldGrants)) discardable.add(i);
+			discardable.sort((a, b) -> hand.get(a).cost() - hand.get(b).cost());
+			for (int di : discardable) {
+				if (deficit <= 0) break;
+				outDiscards.add(di);
+				deficit -= 2;
+			}
+			if (deficit > 0) return false;
+		}
+
+		// Generic requirements: any remaining Backup, then any remaining discardable hand card.
+		for (int bi = 0; bi < backups.length && generic > 0; bi++) {
+			if (!p2BackupCanPay(backups, bi) || outBackups.contains(bi)) continue;
+			outBackups.add(bi);
+			outBackupElems.put(bi, "");
+			generic--;
+		}
+		for (int i = 0; i < hand.size() && generic > 0; i++) {
+			if (i == handIdx || outDiscards.contains(i)) continue;
+			if (!CpPaymentUtils.canDiscardForCp(hand.get(i), ldGrants)) continue;
+			outDiscards.add(i);
+			generic -= 2;
+		}
+		return generic <= 0;
+	}
+
+	/** Whether P2's Backup in {@code slot} can currently be dulled for CP. */
+	private boolean p2BackupCanPay(CardData[] backups, int slot) {
+		return backups[slot] != null && mw.p2BackupStates[slot] == CardState.ACTIVE
+				&& !mw.p2BackupFrozen[slot];
 	}
 
 	/**
@@ -661,7 +824,7 @@ class ComputerPlayer implements OpponentController {
 		if (total >= cost) return true;
 
 		List<CardData> hand = mw.gameState.getP2Hand();
-		java.util.Set<String> ldGrants = mw.lightDarkDiscardGrants(false);
+		Set<String> ldGrants = mw.lightDarkDiscardGrants(false);
 		List<Integer> discardable = new ArrayList<>();
 		for (int i = 0; i < hand.size(); i++)
 			if (CpPaymentUtils.canDiscardForCp(hand.get(i), ldGrants)) discardable.add(i);
@@ -752,8 +915,8 @@ class ComputerPlayer implements OpponentController {
 			if (matches) matchingBackups.add(bi);
 			else offColorBackups.add(bi);
 		}
-		matchingBackups.sort(java.util.Comparator.comparingInt(bi ->
-				(int) java.util.Arrays.stream(elems)
+		matchingBackups.sort(Comparator.comparingInt(bi ->
+				(int) Arrays.stream(elems)
 						.filter(e -> mw.effectiveContainsElement(payable[bi], e)).count()));
 		for (int bi : matchingBackups) {
 			if (p2CanAfford(reducedCost, elems, simCp, anyCp)) break;
@@ -777,7 +940,7 @@ class ComputerPlayer implements OpponentController {
 
 		// Phase 2: discard cheapest matching-element hand cards (Light/Dark only via field grant).
 		List<CardData> hand = mw.gameState.getP2Hand();
-		java.util.Set<String> ldGrants = mw.lightDarkDiscardGrants(false);
+		Set<String> ldGrants = mw.lightDarkDiscardGrants(false);
 		List<Integer> discardable = new ArrayList<>();
 		List<Integer> offColorDiscards = new ArrayList<>();
 		for (int i = 0; i < hand.size(); i++) {
@@ -942,6 +1105,8 @@ class ComputerPlayer implements OpponentController {
 			if (mw.blockBarredByFieldCostLock(blocker)) continue;
 			if (mw.p2ForwardStates.get(i) != CardState.ACTIVE) continue;
 			if (mw.p1AttackerCostFiltersExclude(p1AttackerCard, blocker.cost())) continue;
+			if (mw.attackerPowerFilterExcludes(p1AttackerCard, true,
+					mw.fieldForwardPower(false, ForwardTarget.CardZone.FORWARD, i))) continue;
 			if (p1AttackerHigherPower && mw.fieldForwardPower(false, ForwardTarget.CardZone.FORWARD, i) > p1AttackerPower) continue;
 			if (mw.p2Turn.forwardCannotBlockInferiorPower && p1AttackerCard != null &&
 				mw.fieldForwardPower(false, ForwardTarget.CardZone.FORWARD, i) > p1AttackerFieldPower) continue;
@@ -954,6 +1119,8 @@ class ComputerPlayer implements OpponentController {
 			// isMonsterBlockSelectable: this loop is how a Monster becomes a blocker for P2.
 			if (p1AttackerCard != null && mw.barsMonsterForwardBlockers(p1AttackerCard)) continue;
 			if (mw.p1AttackerCostFiltersExclude(p1AttackerCard, mw.p2MonsterCards.get(i).cost())) continue;
+			if (mw.attackerPowerFilterExcludes(p1AttackerCard, true,
+					mw.fieldForwardPower(false, ForwardTarget.CardZone.MONSTER, i))) continue;
 			if (p1AttackerHigherPower && mw.fieldForwardPower(false, ForwardTarget.CardZone.MONSTER, i) > p1AttackerPower) continue;
 			if (mw.p2Turn.forwardCannotBlockInferiorPower && p1AttackerCard != null &&
 				mw.fieldForwardPower(false, ForwardTarget.CardZone.MONSTER, i) > p1AttackerFieldPower) continue;
@@ -962,6 +1129,8 @@ class ComputerPlayer implements OpponentController {
 		for (int i = 0; i < mw.p2BackupCards.length; i++) {
 			if (!mw.p2BackupCanBlockAsForward(i)) continue;
 			if (mw.p1AttackerCostFiltersExclude(p1AttackerCard, mw.p2BackupCards[i].cost())) continue;
+			if (mw.attackerPowerFilterExcludes(p1AttackerCard, true,
+					mw.fieldForwardPower(false, ForwardTarget.CardZone.BACKUP, i))) continue;
 			if (p1AttackerHigherPower && mw.fieldForwardPower(false, ForwardTarget.CardZone.BACKUP, i) > p1AttackerPower) continue;
 			if (mw.p2Turn.forwardCannotBlockInferiorPower && p1AttackerCard != null &&
 				mw.fieldForwardPower(false, ForwardTarget.CardZone.BACKUP, i) > p1AttackerFieldPower) continue;
@@ -1718,8 +1887,8 @@ class ComputerPlayer implements OpponentController {
 			if (matches) matchingBackups.add(bi);
 			else         offColorBackups.add(bi);
 		}
-		matchingBackups.sort(java.util.Comparator.comparingInt(bi ->
-				(int) java.util.Arrays.stream(elems)
+		matchingBackups.sort(Comparator.comparingInt(bi ->
+				(int) Arrays.stream(elems)
 						.filter(e -> mw.effectiveContainsElement(payable[bi], e)).count()));
 		for (int bi : matchingBackups) {
 			if (p2CanAfford(totalCost, elems, simCp, anyCp)) break;
@@ -1741,7 +1910,7 @@ class ComputerPlayer implements OpponentController {
 		if (p2CanAfford(totalCost, elems, simCp, anyCp)) return true;
 
 		List<CardData> hand = mw.gameState.getP2Hand();
-		java.util.Set<String> ldGrants = mw.lightDarkDiscardGrants(false);
+		Set<String> ldGrants = mw.lightDarkDiscardGrants(false);
 		List<Integer> discardable = new ArrayList<>();
 		for (int i = 0; i < hand.size(); i++) {
 			CardData c = hand.get(i);

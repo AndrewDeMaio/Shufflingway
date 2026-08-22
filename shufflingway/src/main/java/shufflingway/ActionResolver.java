@@ -747,6 +747,9 @@ public class ActionResolver {
         result = tryParseStandaloneSelfBoost(effectText, source);
         if (result != null) return result;
 
+        result = tryParseOppFieldEntryRfgInstead(effectText);
+        if (result != null) return result;
+
         result = tryParseStandaloneSelfDullAndShield(effectText, source);
         if (result != null) return result;
 
@@ -1649,6 +1652,7 @@ public class ActionResolver {
         if (tryParseSelfBoostEotPrefix(effectText, source)    != null) return "SelfBoostUntilEot";
         if (tryParseSelfAttacksPerOwnDamage(effectText, source) != null) return "SelfAttacksPerOwnDamage";
         if (tryParseStandaloneSelfBoost(effectText, source)   != null) return "StandaloneSelfBoost";
+        if (tryParseOppFieldEntryRfgInstead(effectText)                   != null) return "OppFieldEntryRfgInstead";
         if (tryParseStandaloneSelfDullAndShield(effectText, source) != null) return "StandaloneSelfDullAndShield";
         if (tryParseStandaloneSelfDull(effectText, source) != null)          return "StandaloneSelfDull";
         if (tryParseStandaloneShieldCannotBeBroken(effectText, source) != null) return "StandaloneShieldCannotBeBroken";
@@ -1950,6 +1954,7 @@ public class ActionResolver {
         if (FOLLOWUP_CANNOT_BE_CHOSEN_SUMMONS.matcher(followupText).find())           return "CannotBeChosenSummons";
         if (FOLLOWUP_CANNOT_BE_CHOSEN_ABILITIES.matcher(followupText).find())         return "CannotBeChosenAbilities";
         if (FOLLOWUP_CANNOT_BE_RETURNED_TO_HAND.matcher(followupText).find())         return "CannotBeReturnedToHand";
+        if (FOLLOWUP_CANNOT_BECOME_DULL_BY_OPP.matcher(followupText).find())          return "CannotBecomeDullByOpp";
         if (FOLLOWUP_DULL_OR_ACTIVATE.matcher(followupText).find())                   return "DullOrActivate";
         if (FOLLOWUP_DULL_OR_FREEZE.matcher(followupText).find())                     return "DullOrFreeze";
         if (FOLLOWUP_ACTIVATE.matcher(followupText).find())                           return "Activate";
@@ -1965,6 +1970,8 @@ public class ActionResolver {
             return "IfCostEqualsExtraCostDiscardBreakDraw";
         if (FOLLOWUP_DAMAGE_EXTRA_COST_POWER.matcher(followupText).find())
             return "DamageEqualToExtraCostPower";
+        if (FOLLOWUP_DAMAGE_REVEALED_FORWARD_POWER.matcher(followupText).find())
+            return "DamageEqualToRevealedForwardPower";
         if (FOLLOWUP_BREAK.matcher(followupText).find())                              return "Break";
         if (FOLLOWUP_LOSE_ABILITIES_AND_POWER_BECOMES.matcher(followupText).find())    return "LoseAllAbilitiesAndPowerBecomes";
         if (FOLLOWUP_LOSE_ALL_ABILITIES_EOT.matcher(followupText).find())              return "LoseAllAbilitiesEot";
@@ -2459,6 +2466,7 @@ public class ActionResolver {
         if (tryParseSelfBoostEotPrefix(effectText, source) != null)         return "SelfBoostUntilEot";
         if (tryParseSelfAttacksPerOwnDamage(effectText, source) != null)    return "SelfAttacksPerOwnDamage";
         if (tryParseStandaloneSelfBoost(effectText, source) != null)        return "StandaloneSelfBoost";
+        if (tryParseOppFieldEntryRfgInstead(effectText)                   != null) return "OppFieldEntryRfgInstead";
         if (tryParseStandaloneSelfDullAndShield(effectText, source) != null) return "StandaloneSelfDullAndShield";
         if (tryParseStandaloneSelfDull(effectText, source) != null)          return "StandaloneSelfDull";
         if (tryParseStandaloneShieldCannotBeBroken(effectText, source) != null) return "StandaloneShieldCannotBeBroken";
@@ -2945,6 +2953,26 @@ public class ActionResolver {
                 return;
             }
             ctx.logEntry("Effect: Deal it " + power + " damage (Extra Cost removed Forward power)");
+            sortedByIdxDesc(ts, true) .forEach(ft -> ctx.damageTarget(ft, power));
+            sortedByIdxDesc(ts, false).forEach(ft -> ctx.damageTarget(ft, power));
+        };
+    }
+
+    /**
+     * Damage equal to the power of the Forward revealed to pay the ability's cost — Rinoa 18-097R.
+     *
+     * <p>A revealed Forward of 0 power is a real card, unlike the extra-cost case above where 0
+     * means "nothing was removed": the reveal cost must have been paid for the ability to have been
+     * activated at all. It is still a no-op, so it is reported as one rather than dealing 0.
+     */
+    static BiConsumer<GameContext, List<ForwardTarget>> revealedForwardPowerDamage() {
+        return (ctx, ts) -> {
+            int power = ctx.revealedForwardPower();
+            if (power <= 0) {
+                ctx.logEntry("Effect: the revealed Forward has no power — no damage dealt");
+                return;
+            }
+            ctx.logEntry("Effect: Deal it " + power + " damage (revealed Forward's power)");
             sortedByIdxDesc(ts, true) .forEach(ft -> ctx.damageTarget(ft, power));
             sortedByIdxDesc(ts, false).forEach(ft -> ctx.damageTarget(ft, power));
         };
@@ -3599,6 +3627,14 @@ public class ActionResolver {
             int cost = Integer.parseInt(nb.group("cost"));
             boolean more = "more".equalsIgnoreCase(nb.group("cmp"));
             return ctx -> ctx.grantSelfCannotBeBlockedByCost(source, cost, more);
+        }
+        // Both are anchored on their own noun, so the order between them is free; kept adjacent
+        // because the two sentences read alike and a reader looking for one will find the other.
+        Matcher np = GRANTED_CANNOT_BE_BLOCKED_BY_POWER.matcher(quoted);
+        if (np.matches() && np.group("subj").trim().equalsIgnoreCase(source.name())) {
+            int power = Integer.parseInt(np.group("power"));
+            boolean more = !"less".equalsIgnoreCase(np.group("cmp"));   // default "or more"
+            return ctx -> ctx.grantSelfCannotBeBlockedByPower(source, power, more);
         }
         // Must follow GRANTED_CANNOT_BE_BLOCKED_BY_COST: both are anchored, but a "cannot be
         // blocked by …" text would only reach here on a wording that one does not cover, and

@@ -2161,12 +2161,13 @@ public record CardData(
             String counterRaw    = m.group(10);
             String dullCostRaw   = m.group("dullcost");
             String bottomDeckRaw = m.group("bottomdeckcost");
+            String revealRaw     = m.group("revealcost");
             String effectRaw     = DAMAGE_THRESHOLD_REMINDER_PAREN.matcher(m.group("effecttext").trim()).replaceAll("").trim();
             if (effectRaw.isEmpty()) continue;
             // Skip if there are no CP tokens or any non-CP cost phrase (spurious match)
             if ((costPart == null || costPart.isBlank()) && bzRaw == null && discardRaw == null
                     && removeRaw == null && returnRaw == null && counterRaw == null
-                    && dullCostRaw == null && bottomDeckRaw == null) continue;
+                    && dullCostRaw == null && bottomDeckRaw == null && revealRaw == null) continue;
 
             String  abilityName  = rawName != null ? rawName.trim() : "";
             boolean isSpecial    = !abilityName.isEmpty();
@@ -2340,9 +2341,30 @@ public record CardData(
             // card's own name, and the activation site is, so the self check belongs there.
             if (bottomDeckRaw != null && m.group("bottomdeckname") != null)
                 parsed = parsed.withBottomOfDeckCost(m.group("bottomdeckname").trim());
+            if (revealRaw != null && m.group("revealcount") != null)
+                parsed = parsed.withRevealCost(new RevealCost(
+                        Integer.parseInt(m.group("revealcount")),
+                        revealCostCardType(m.group("revealwhat"))));
             result.add(parsed);
         }
         return List.copyOf(result);
+    }
+
+    /**
+     * The card type a "reveal N X in your hand" cost names, or {@code null} when it names none
+     * ("reveal 1 card in your hand" would be any card).  The phrase is matched loosely because it
+     * is the tail of a cost group: "Forward"/"Forwards" both appear, and an unrecognised noun is
+     * better read as "any card" than as a cost that can never be paid.
+     */
+    private static String revealCostCardType(String what) {
+        if (what == null) return null;
+        String w = what.trim().toLowerCase(Locale.ROOT);
+        if (w.contains("forward"))   return "Forward";
+        if (w.contains("backup"))    return "Backup";
+        if (w.contains("monster"))   return "Monster";
+        if (w.contains("summon"))    return "Summon";
+        if (w.contains("character")) return "Character";
+        return null;
     }
 
     private static ActionAbility withOwnBzNameRequired(ActionAbility a, String bzCard) {
@@ -2359,7 +2381,10 @@ public record CardData(
                 a.requiresForwardPutToBZThisTurn(), a.requiresJobPutToBZThisTurn(), a.blockerForAttacker(), bzCard,
                 a.counterScaleName(), a.minCounterRequired(), a.minCounterType(), a.maxOpponentHandSize(), a.requiresSourceIsForward(),
                 a.maxCounterAllowed(), a.maxCounterType(), a.inlineCostReductionJob(), a.inlineCostReductionExcludeName(), a.requiresOwnWarpCard(),
-                a.usableByEitherPlayer(), a.requiresSelfPowerAtLeast());
+                // Spelled out rather than routed through the compatibility constructor, which
+                // would silently drop both from the copy.
+                a.usableByEitherPlayer(), a.requiresSelfPowerAtLeast(),
+                a.bottomOfDeckCostCardName(), a.revealCost());
     }
 
     /** Parses a "discard N [filter]" cost phrase into a {@link DiscardCost} list (0 or 1 item). */

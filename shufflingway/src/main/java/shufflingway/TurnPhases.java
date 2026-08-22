@@ -244,6 +244,7 @@ class TurnPhases {
 		mw.clearBackupForwardState();
 		mw.p1CannotBeBlocked.clear();              mw.p2CannotBeBlocked.clear();
 		mw.p1CannotBeBlockedByCost.clear();        mw.p2CannotBeBlockedByCost.clear();
+		mw.p1CannotBeBlockedByPower.clear();       mw.p2CannotBeBlockedByPower.clear();
 		mw.p1CannotBlock.clear();                  mw.p2CannotBlock.clear();
 		mw.p1MustBlock.clear();                    mw.p2MustBlock.clear();
 		mw.p1CannotAttack.clear();                 mw.p2CannotAttack.clear();
@@ -272,6 +273,7 @@ class TurnPhases {
 		mw.p2Turn.attackDeclarationLimit = Integer.MAX_VALUE; mw.p2Turn.attackDeclarationsThisTurn = 0;
 		mw.p1Turn.attackDeclarationLimit = Integer.MAX_VALUE;       mw.p1Turn.attackDeclarationsThisTurn = 0;
 		mw.p1Turn.cannotSearchThisTurn = false; mw.p2Turn.cannotSearchThisTurn = false;
+		mw.p1Turn.oppFieldEntryBecomesRfg = false; mw.p2Turn.oppFieldEntryBecomesRfg = false;
 		// Last, not with the row refreshes above: the exhausted-attacker glow reads
 		// attacksMadeThisTurn, which this method has just emptied.
 		mw.refreshCombatGlows();
