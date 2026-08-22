@@ -4525,25 +4525,37 @@ final class ActionResolverPatterns {
         "(?:it|they)\\s+loses?\\s+(\\d+)\\s+[Pp]ower\\s+for\\s+each\\s+card\\s+in\\s+your\\s+hand[.!]?"
     );
     /**
-     * Matches either word order of the "loses N power for each [Element] [Type] you control" followup
-     * (the reduce counterpart of {@link #FOLLOWUP_POWER_BOOST_UNTIL_FOR_EACH}):
+     * Matches either word order of the "loses N power for each [state] [Element] [Type]
+     * you control / opponent controls" followup (the reduce counterpart of
+     * {@link #FOLLOWUP_POWER_BOOST_UNTIL_FOR_EACH}):
      * <ul>
      *   <li>"Until end of turn, it loses N power for each [Element] Type you control."</li>
      *   <li>"It loses N power for each [Element] Type you control until end of turn."</li>
+     *   <li>"It loses N power for each dull Character opponent controls until end of turn."</li>
      * </ul>
-     * Groups: 1 = per-unit amount (until-prefix order), 4 = per-unit amount (suffix order);
-     * {@code element}/{@code chartype} (until-prefix) or {@code element2}/{@code chartype2} (suffix).
+     * Groups: {@code amount}/{@code state}/{@code element}/{@code chartype}/{@code opp} for the
+     * until-prefix order, the same names suffixed {@code 2} for the suffix order. All named —
+     * {@code amount} and {@code amount2} used to be read by index, which broke the moment the
+     * state and controller groups were added in front of them.
+     *
+     * <p>The state adjective and the opponent-side controller are only ever read together
+     * (2-133R C&ucirc;chulainn, the Impure is the sole printing of either), because the counting
+     * surface has no self-side call taking a card state — see the guard in the handlers.
      */
     static final Pattern FOLLOWUP_POWER_REDUCE_UNTIL_FOR_EACH = Pattern.compile(
         "(?i)(?:" +
             "Until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn\\s*,\\s+" +
-            "(?:it|they)\\s+loses?\\s+(\\d+)\\s+[Pp]ower\\s+for\\s+each\\s+" +
+            "(?:it|they)\\s+loses?\\s+(?<amount>\\d+)\\s+[Pp]ower\\s+for\\s+each\\s+" +
+            "(?:(?<state>dull|active|damaged)\\s+)?" +
             "(?:(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?" +
-            "(?<chartype>Forwards?|Backups?|Monsters?|Characters?)\\s+you\\s+control" +
+            "(?<chartype>Forwards?|Backups?|Monsters?|Characters?)\\s+" +
+            "(?:you\\s+control|(?<opp>(?:your\\s+)?opponent)\\s+controls)" +
         "|" +
-            "(?:it|they)\\s+loses?\\s+(\\d+)\\s+[Pp]ower\\s+for\\s+each\\s+" +
+            "(?:it|they)\\s+loses?\\s+(?<amount2>\\d+)\\s+[Pp]ower\\s+for\\s+each\\s+" +
+            "(?:(?<state2>dull|active|damaged)\\s+)?" +
             "(?:(?<element2>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?" +
-            "(?<chartype2>Forwards?|Backups?|Monsters?|Characters?)\\s+you\\s+control" +
+            "(?<chartype2>Forwards?|Backups?|Monsters?|Characters?)\\s+" +
+            "(?:you\\s+control|(?<opp2>(?:your\\s+)?opponent)\\s+controls)" +
             "\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn" +
         ")[.!]?"
     );
@@ -6194,6 +6206,32 @@ final class ActionResolverPatterns {
     static final Pattern CONTROL_GATED_INSTEAD_UPGRADE = Pattern.compile(
         "(?is)^(?<base>.+?[.!])\\s+If\\s+you\\s+control\\s+(?<cond>[^,]+?),\\s+" +
         "(?<alt>.+?)\\s+instead[.!]\\s*(?<rest>.*)$"
+    );
+    /**
+     * Matches "&lt;base&gt;. If the cost to cast &lt;name&gt; was paid with CP of &lt;n&gt; or
+     * more/less different Elements, &lt;tail&gt;." — the Summon form of the cast-payment condition.
+     *
+     * <p>On a Character the same condition is a prefix on a triggered ability and never reaches
+     * this family: {@code CardData}'s {@code FA_CAST_PAYMENT_ELEMENTS} strips it into
+     * {@link AutoAbility#castPaymentMinElements()}, and {@code AutoAbilityTriggers} tests it
+     * before the effect runs. A Summon carries its whole effect in one unnamed block with no
+     * trigger to hang that flag on, so the condition arrives here as a trailing sentence over a
+     * base that has already resolved.
+     *
+     * <p>{@code base} is non-greedy but unambiguous: "If the cost to cast" occurs once in every
+     * printing of this family, so only one split point exists.
+     */
+    static final Pattern CAST_PAYMENT_ELEMENTS_GATE = Pattern.compile(
+        "(?is)^(?<base>.+?[.!])\\s+If\\s+the\\s+cost\\s+to\\s+cast\\s+(?<card>[^,]+?)\\s+was\\s+paid\\s+" +
+        "with\\s+CP\\s+of\\s+(?<count>\\d+)\\s+or\\s+(?<cmp>more|less)\\s+different\\s+Elements,\\s+" +
+        "(?<tail>.+?)\\s*$"
+    );
+    /**
+     * Splits an "&lt;alternative&gt; instead" tail off {@link #CAST_PAYMENT_ELEMENTS_GATE}: the
+     * condition replaces the base's last clause rather than adding to it (16-016C Bahamut).
+     */
+    static final Pattern CAST_PAYMENT_ELEMENTS_TAIL_INSTEAD = Pattern.compile(
+        "(?is)^(?<alt>.+?)\\s+instead[.!]?\\s*$"
     );
     /**
      * Matches "if you control [cond] other than [name], [effect]."

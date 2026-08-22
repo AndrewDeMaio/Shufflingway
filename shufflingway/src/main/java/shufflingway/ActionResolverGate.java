@@ -117,6 +117,105 @@ final class ActionResolverGate {
             }
         };
     }
+    /**
+     * Parses "&lt;base&gt;. If the cost to cast &lt;name&gt; was paid with CP of &lt;n&gt; or
+     * more/less different Elements, &lt;tail&gt;." — the base always resolves, and the tail is
+     * added (or substituted, when it ends in "instead") when the payment met the threshold.
+     *
+     * <p>The condition is settled before the effect ever runs — the CP was spent to cast this
+     * card — so it is read straight off {@link GameContext#castPaymentDistinctElements()}, the
+     * same counter the auto-ability form of this condition tests.
+     *
+     * <p>Returns {@code null} when either half fails to parse, so unsupported wordings fall
+     * through to the regular matchers rather than losing the base effect.
+     */
+    static Consumer<GameContext> tryParseCastPaymentElementsGate(String text, CardData source, int xValue) {
+        Matcher m = CAST_PAYMENT_ELEMENTS_GATE.matcher(text.trim());
+        if (!m.matches()) return null;
+        int     required = Integer.parseInt(m.group("count"));
+        boolean atLeast  = m.group("cmp").equalsIgnoreCase("more");
+        String  baseText = m.group("base").trim();
+        String  tailText = m.group("tail").trim();
+
+        Consumer<GameContext> baseFn = parse(baseText, source, xValue);
+        if (baseFn == null) return null;
+
+        String label = "cast paid with CP of " + required + " or "
+                + (atLeast ? "more" : "less") + " different Element(s)";
+
+        Matcher inst = CAST_PAYMENT_ELEMENTS_TAIL_INSTEAD.matcher(tailText);
+        if (inst.matches()) {
+            String altText = insteadVariant(baseText, inst.group("alt").trim(), source);
+            Consumer<GameContext> altFn = altText == null
+                    ? null : parse(gateTailText(altText, source, xValue), source, xValue);
+            if (altFn == null) return null;
+            return ctx -> {
+                int paid = ctx.castPaymentDistinctElements();
+                if (atLeast ? paid >= required : paid <= required) {
+                    ctx.logEntry("Effect: " + label + " (paid " + paid + ") — replacement effect applies instead");
+                    altFn.accept(ctx);
+                } else {
+                    baseFn.accept(ctx);
+                }
+            };
+        }
+
+        Consumer<GameContext> tailFn = parse(gateTailText(tailText, source, xValue), source, xValue);
+        if (tailFn == null) return null;
+        return ctx -> {
+            baseFn.accept(ctx);
+            int paid = ctx.castPaymentDistinctElements();
+            if (atLeast ? paid >= required : paid <= required) {
+                ctx.logEntry("Effect: " + label + " (paid " + paid + ") — condition met");
+                tailFn.accept(ctx);
+            } else {
+                ctx.logEntry("Effect: " + label + " — paid " + paid + ", condition not met — skipped");
+            }
+        };
+    }
+
+    /**
+     * The text a gate's conditional tail is actually resolved from: as printed, or with the
+     * additive "also" removed when that is the only reading that parses.
+     *
+     * <p>"…, all the Forwards you control <em>also</em> gain +2000 power…" (16-046C Chocobo Chick
+     * (VII), 16-086C Ixion) puts the connector between subject and verb, where {@link #parse}'s
+     * leading-"also" strip cannot reach it, and the clause parses as nothing at all. The word
+     * carries no effect of its own — it marks the clause as additional to the base, which is what
+     * the gate already encodes.
+     *
+     * <p>Returned as text rather than as a parsed effect so the description chain can report the
+     * same clause the parser resolved. Tried second, so a tail that reads correctly as printed is
+     * never rewritten.
+     */
+    static String gateTailText(String tail, CardData source, int xValue) {
+        if (parse(tail, source, xValue) != null) return tail;
+        String withoutAlso = tail.replaceFirst("(?i)\\s+also\\b", "");
+        return !withoutAlso.equals(tail) && parse(withoutAlso, source, xValue) != null
+                ? withoutAlso : tail;
+    }
+
+    /**
+     * Builds the replacement text for an "… instead" tail: the alternative replaces the base's
+     * final sentence, so that sentence is dropped and the alternative put in its place.
+     *
+     * <p>Everything before it has to stay. Bahamut 16-016C's "deal it 12000 damage instead" reads
+     * "it" as the Forward the base's "Choose 1 Forward." picked, so parsing the alternative on its
+     * own leaves it with nothing to attach to — the trap {@code tryParseChooseGatedBoostInstead}
+     * exists to work around for {@code tryParseControlGatedInsteadUpgrade}.
+     *
+     * <p>Returns {@code null} for a single-sentence base, where there is no earlier clause to keep
+     * and the caller should fall through instead.
+     */
+    static String insteadVariant(String baseText, String alt, CardData source) {
+        String escaped = escapePeriodInName(baseText, source);
+        String body    = escaped.replaceAll("[.!]\\s*$", "");
+        int cut = Math.max(body.lastIndexOf('.'), body.lastIndexOf('!'));
+        if (cut < 0) return null;
+        String head = restorePeriodInName(escaped.substring(0, cut + 1).trim(), source);
+        return head + " " + Character.toUpperCase(alt.charAt(0)) + alt.substring(1) + ".";
+    }
+
     static Consumer<GameContext> tryParseOpponentControlsCardGate(String text, CardData source, int xValue) {
         Matcher m = OPP_CONTROL_CARD_GATE.matcher(text.trim());
         if (!m.matches()) return null;

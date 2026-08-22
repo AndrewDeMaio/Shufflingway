@@ -3764,20 +3764,28 @@ final class ActionResolverChoose {
             };
         }
 
-        // --- Power reduce for each [element] [type] you control (must precede plain UNTIL reduce) ---
+        // --- Power reduce for each [state] [element] [type] you control / opponent controls
+        //     (must precede plain UNTIL reduce) ---
         Matcher reduceForEachM = FOLLOWUP_POWER_REDUCE_UNTIL_FOR_EACH.matcher(primaryFollowup);
-        if (reduceForEachM.find()) {
-            boolean untilPrefix = reduceForEachM.group(1) != null;
-            int    perUnit    = Integer.parseInt(untilPrefix ? reduceForEachM.group(1) : reduceForEachM.group(4));
+        // A state adjective is only countable on the opponent's side: the counting surface has an
+        // opponent call taking one but no self-side equivalent, so a self-side "for each dull …"
+        // would silently count every card of the type. Fall through instead — no printing has it.
+        if (reduceForEachM.find() && !(reduceForEachSelfState(reduceForEachM))) {
+            boolean untilPrefix = reduceForEachM.group("amount") != null;
+            int    perUnit    = Integer.parseInt(untilPrefix ? reduceForEachM.group("amount") : reduceForEachM.group("amount2"));
             String srcElem    = untilPrefix ? reduceForEachM.group("element") : reduceForEachM.group("element2");
+            String srcState   = untilPrefix ? reduceForEachM.group("state")   : reduceForEachM.group("state2");
+            boolean srcOpp    = (untilPrefix ? reduceForEachM.group("opp")    : reduceForEachM.group("opp2")) != null;
             String srcType    = (untilPrefix ? reduceForEachM.group("chartype") : reduceForEachM.group("chartype2")).toLowerCase();
             boolean cntFwd    = srcType.startsWith("forward") || srcType.startsWith("character");
             boolean cntBkp    = srcType.startsWith("backup")  || srcType.startsWith("character");
             boolean cntMon    = srcType.startsWith("monster")  || srcType.startsWith("character");
             String typeLabel  = untilPrefix ? reduceForEachM.group("chartype") : reduceForEachM.group("chartype2");
-            String logSuffix  = " -" + perUnit + "×[" + (srcElem != null ? srcElem + " " : "") + typeLabel + " you control] until EOT";
+            String logSuffix  = " -" + perUnit + "×[" + (srcState != null ? srcState + " " : "")
+                    + (srcElem != null ? srcElem + " " : "") + typeLabel
+                    + (srcOpp ? " opponent controls" : " you control") + "] until EOT";
             return ctx -> {
-                int n         = ctx.countSelfFieldCards(cntFwd, cntBkp, cntMon, null, null, null, srcElem);
+                int n         = countForEachPowerSource(ctx, srcOpp, srcState, srcElem, cntFwd, cntBkp, cntMon);
                 int reduction = perUnit * n;
                 ctx.logEntry(choosePrefix + logSuffix + " (n=" + n + ", reduction=" + reduction + ")");
                 List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,

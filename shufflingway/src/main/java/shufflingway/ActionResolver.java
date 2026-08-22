@@ -175,6 +175,19 @@ public class ActionResolver {
         effectText = effectText.replaceFirst("(?i)^also\\s+", "").trim();
         Consumer<GameContext> result;
 
+        // Must precede every effect pattern, tryParseTrailingDraw included. The condition is the
+        // last sentence of the text, so every parser ahead of it matched the base under find(),
+        // claimed the whole ability and dropped the condition: Shiva 16-028C discarded from the
+        // opponent's hand unconditionally, Ixion 16-086C lost its board-wide half entirely, and
+        // Bahamut 16-016C dealt 9000 with the "12000 instead" never applied. Leviathan 16-125C is
+        // the reason this sits ahead of the trailing-draw rule specifically: its conditional half
+        // is "also draw 1 card, then discard 1 card", which that rule would otherwise split off
+        // the end of the sentence carrying the condition.
+        //
+        // Anchored with matches() over the whole text, so it claims nothing else.
+        result = tryParseCastPaymentElementsGate(effectText, source, xValue);
+        if (result != null) return result;
+
         // Must precede every effect pattern: a trailing "Draw 1 card." rides along behind a
         // complete effect, and whichever pattern matches the leading sentences claims the whole
         // text with find() and returns, so the sentence-splitting fallback at the end of this
@@ -1490,6 +1503,10 @@ public class ActionResolver {
 
     /** One ordered pass of the name chain over {@code effectText} exactly as given. */
     private static String matchedPatternNameOn(String effectText, CardData source) {
+        // Mirrors parse(): ahead of the trailing-draw rule, which would otherwise split Leviathan
+        // 16-125C's conditional half off the end of the sentence carrying the condition.
+        if (tryParseCastPaymentElementsGate(effectText, source, 0) != null)
+            return "CastPaymentElementsGate";
         // Mirrors parse()'s first dispatch. Reported as a composite so the leading effect still
         // names itself rather than being hidden behind a "TrailingDraw" label.
         if (tryParseTrailingDraw(effectText, source, 0) != null) {
@@ -1788,6 +1805,8 @@ public class ActionResolver {
         if (tryParseDiscardNCards(effectText)                 != null) return "DiscardNCards";
         if (tryParseDiscardJobFromHand(effectText)            != null) return "DiscardJobFromHand";
         if (tryParseDiscardThenDraw(effectText)               != null) return "DiscardThenDraw";
+        // Mirrors parse(), where this gate sits immediately ahead of IfEachPlayerEmptyHand.
+        if (tryParseIfAllHaveElement(effectText, source, 0)   != null) return "IfAllHaveElement";
         if (tryParseIfEachPlayerEmptyHand(effectText, source, 0) != null) return "IfEachPlayerEmptyHand";
         if (tryParseDealPlayerDamageToOpponent(effectText)    != null) return "DealPlayerDamageToOpponent";
         if (tryParseDealPlayerDamageToSelf(effectText)        != null) return "DealPlayerDamageToSelf";
@@ -2085,7 +2104,10 @@ public class ActionResolver {
         // The payoff half of the clause above, which the ". " split reports separately even though
         // the parser resolves the two together.
         if (FOLLOWUP_IF_POWER_BECAME_ZERO_DRAW.matcher(followupText).matches())      return "IfPowerBecameZeroDraw";
-        if (FOLLOWUP_POWER_REDUCE_UNTIL_FOR_EACH.matcher(followupText).find())       return "PowerReduceUntilForEach";
+        // Mirrors the two handlers: a self-side state count is declined there, so naming it here
+        // would report a branch that never ran.
+        Matcher pruferM = FOLLOWUP_POWER_REDUCE_UNTIL_FOR_EACH.matcher(followupText);
+        if (pruferM.find() && !reduceForEachSelfState(pruferM))                       return "PowerReduceUntilForEach";
         if (FOLLOWUP_POWER_REDUCE_UNTIL.matcher(followupText).find())                 return "PowerReduceUntil";
         if (OPPONENT_DISCARD.matcher(followupText).find())                            return "OpponentDiscard";
         if (source != null) {
@@ -2119,6 +2141,19 @@ public class ActionResolver {
      * primary, followup, and secondary layers.  A {@code "?"} in the result means that
      * layer has no matching pattern yet.  Returns {@code null} if no primary pattern matches.
      */
+    /**
+     * Describes one clause of a composite ability, degrading the way the gate descriptions do:
+     * the full description when there is one, the pattern name when there is only that, and "?"
+     * — this report's marker for an undescribed layer — when the clause is unrecognised.
+     */
+    private static String describeOrName(String clause, CardData source) {
+        if (clause == null) return "?";
+        String desc = fullDescription(clause, source);
+        if (desc != null) return desc;
+        String name = matchedPatternName(clause, source);
+        return name != null ? name : "?";
+    }
+
     public static String fullDescription(String effectText, CardData source) {
         effectText = effectText.replaceFirst("(?i)^(?:\\[\\[ex\\]\\])?\\s*EX\\s+BURST(?:\\[\\[/\\]\\])?\\s*", "").trim();
         effectText = effectText.replaceFirst("(?i)^Then,?\\s+", "").trim();
@@ -2126,6 +2161,26 @@ public class ActionResolver {
         // Strip trailing use-restriction sentences so they don't short-circuit before effect patterns match
         String noRestriction = stripRestrictionSentences(effectText);
         if (!noRestriction.isEmpty()) effectText = noRestriction;
+        // Mirrors parse(); see the matching guard in matchedPatternNameOn(). Described like the
+        // control gates below: the condition is named, the effect it guards described inside it.
+        if (tryParseCastPaymentElementsGate(effectText, source, 0) != null) {
+            Matcher cpg = CAST_PAYMENT_ELEMENTS_GATE.matcher(effectText.trim());
+            if (!cpg.matches()) return "CastPaymentElementsGate";
+            String baseTxt = cpg.group("base").trim();
+            String tailTxt = cpg.group("tail").trim();
+            String gate    = "IfCastPaidElements(" + cpg.group("count")
+                    + (cpg.group("cmp").equalsIgnoreCase("more") ? "+" : "-") + ": ";
+            Matcher inst = CAST_PAYMENT_ELEMENTS_TAIL_INSTEAD.matcher(tailTxt);
+            if (inst.matches()) {
+                String altTxt = insteadVariant(baseTxt, inst.group("alt").trim(), source);
+                if (altTxt != null) altTxt = gateTailText(altTxt, source, 0);
+                return gate + describeOrName(altTxt, source) + " | else "
+                        + describeOrName(baseTxt, source) + ")";
+            }
+            // Same normalisation the parser applied, so the report names the clause that ran.
+            return describeOrName(baseTxt, source) + " + " + gate
+                    + describeOrName(gateTailText(tailTxt, source, 0), source) + ")";
+        }
         // Mirrors parse()'s first dispatch; see the matching guard in matchedPatternNameOn().
         if (tryParseTrailingDraw(effectText, source, 0) != null) {
             String tdHead = trailingDrawHead(effectText);
@@ -2609,6 +2664,14 @@ public class ActionResolver {
         if (tryParseDiscardNCards(effectText) != null)                      return "DiscardNCards";
         if (tryParseDiscardJobFromHand(effectText) != null)                 return "DiscardJobFromHand";
         if (tryParseDiscardThenDraw(effectText) != null)                    return "DiscardThenDraw";
+        // Mirrors parse(), where this gate sits immediately ahead of IfEachPlayerEmptyHand.
+        // Described like the control gates: the condition is named, the effect it guards inside it.
+        if (tryParseIfAllHaveElement(effectText, source, 0) != null) {
+            Matcher ahe = IF_ALL_HAVE_ELEMENT_GATE.matcher(effectText.trim());
+            if (!ahe.matches()) return "IfAllHaveElement";
+            return "IfAllHaveElement(" + ahe.group("type").trim() + "=" + ahe.group("element").trim()
+                    + ": " + describeOrName(ahe.group("effect").trim(), source) + ")";
+        }
         if (tryParseIfEachPlayerEmptyHand(effectText, source, 0) != null)   return "IfEachPlayerEmptyHand";
         if (tryParseDealPlayerDamageToOpponent(effectText) != null)         return "DealPlayerDamageToOpponent";
         if (tryParseDealPlayerDamageToSelf(effectText) != null)             return "DealPlayerDamageToSelf";
@@ -3169,18 +3232,22 @@ public class ActionResolver {
                 sortedByIdxDesc(ts, false).forEach(ft -> ctx.reduceTarget(ft, reduction, traits));
             };
         }
-        // Power reduce for each [element] [type] you control (must precede plain reduce-until)
+        // Power reduce for each [state] [element] [type] you control / opponent controls
+        // (must precede plain reduce-until). Self-side state adjectives fall through — see
+        // reduceForEachSelfState.
         Matcher reduceForEachM = FOLLOWUP_POWER_REDUCE_UNTIL_FOR_EACH.matcher(t);
-        if (reduceForEachM.find()) {
-            boolean untilPrefix = reduceForEachM.group(1) != null;
-            int    perUnit = Integer.parseInt(untilPrefix ? reduceForEachM.group(1) : reduceForEachM.group(4));
+        if (reduceForEachM.find() && !reduceForEachSelfState(reduceForEachM)) {
+            boolean untilPrefix = reduceForEachM.group("amount") != null;
+            int    perUnit = Integer.parseInt(untilPrefix ? reduceForEachM.group("amount") : reduceForEachM.group("amount2"));
             String srcElem = untilPrefix ? reduceForEachM.group("element") : reduceForEachM.group("element2");
+            String srcState = untilPrefix ? reduceForEachM.group("state")  : reduceForEachM.group("state2");
+            boolean srcOpp  = (untilPrefix ? reduceForEachM.group("opp")   : reduceForEachM.group("opp2")) != null;
             String srcType = (untilPrefix ? reduceForEachM.group("chartype") : reduceForEachM.group("chartype2")).toLowerCase();
             boolean cntFwd = srcType.startsWith("forward") || srcType.startsWith("character");
             boolean cntBkp = srcType.startsWith("backup")  || srcType.startsWith("character");
             boolean cntMon = srcType.startsWith("monster")  || srcType.startsWith("character");
             return (ctx, ts) -> {
-                int n = ctx.countSelfFieldCards(cntFwd, cntBkp, cntMon, null, null, null, srcElem);
+                int n = countForEachPowerSource(ctx, srcOpp, srcState, srcElem, cntFwd, cntBkp, cntMon);
                 int reduction = perUnit * n;
                 EnumSet<CardData.Trait> noTraits = EnumSet.noneOf(CardData.Trait.class);
                 sortedByIdxDesc(ts, true) .forEach(ft -> ctx.reduceTarget(ft, reduction, noTraits));
@@ -3540,6 +3607,35 @@ public class ActionResolver {
      * sequence (e.g. "Dr. Mog") for the sentence delimiter ". ".  Restore with
      * {@link #restorePeriodInName}.
      */
+    /**
+     * True when a {@link ActionResolverPatterns#FOLLOWUP_POWER_REDUCE_UNTIL_FOR_EACH} match asks
+     * to count a card state on the ability user's own side.
+     *
+     * <p>{@link GameContext} exposes a state-filtered count for the opponent's field only
+     * ({@code countOppFieldCardsWithCondition}), so reading such a match on the self side would
+     * drop the adjective and count every card of the type instead. No printing needs it, so the
+     * two handlers skip the branch rather than the surface growing a self-side twin.
+     */
+    static boolean reduceForEachSelfState(Matcher m) {
+        boolean untilPrefix = m.group("amount") != null;
+        String  state = untilPrefix ? m.group("state") : m.group("state2");
+        boolean opp   = (untilPrefix ? m.group("opp") : m.group("opp2")) != null;
+        return state != null && !opp;
+    }
+
+    /**
+     * Counts the "for each …" source of a per-unit power followup on the requested side. The
+     * element filter and the state filter never co-occur in print, which is why the opponent
+     * branch picks one call or the other rather than combining them.
+     */
+    static int countForEachPowerSource(GameContext ctx, boolean opp, String state, String element,
+            boolean inclFwd, boolean inclBkp, boolean inclMon) {
+        if (!opp) return ctx.countSelfFieldCards(inclFwd, inclBkp, inclMon, null, null, null, element);
+        return state != null
+                ? ctx.countOppFieldCardsWithCondition(inclFwd, inclBkp, inclMon, state.toLowerCase(Locale.ROOT))
+                : ctx.countOppFieldCards(inclFwd, inclBkp, inclMon, null, null, null, element);
+    }
+
     static String escapePeriodInName(String text, CardData source) {
         if (source == null || !source.name().contains(".")) return text;
         return text.replace(source.name(), source.name().replace('.', '·'));

@@ -579,12 +579,18 @@ public class FieldAbilityParsingTest {
     }
 
     static String describeFieldAbility(FieldAbility fa, CardData source, String typeEn) {
-        String desc = ActionResolver.fullDescription(fa.effectText(), source);
-        if (desc != null) return desc;
+        // The continuous-boost parsers come first because they are what actually runs for a field
+        // ability: a continuous "If all the Characters you control have Ice Element, X gains +2000
+        // power" is a standing modifier resolved by IfControlBoost, not a one-shot ActionResolver
+        // effect. Asking ActionResolver first meant that whenever its chains happened to describe
+        // the text — which is now the case for that wording — the record showed a gate description
+        // and the boost data the engine uses went unrecorded.
         List<FieldPowerGrant> grants = CardData.parseFieldPowerGrants(fa.effectText(), typeEn);
         if (!grants.isEmpty()) return "FieldPowerGrant " + grants;
         List<IfControlBoost> boosts = CardData.parseIfControlBoosts(fa.effectText(), typeEn);
         if (!boosts.isEmpty()) return "IfControlBoost " + boosts;
+        String desc = ActionResolver.fullDescription(fa.effectText(), source);
+        if (desc != null) return desc;
         ActionResolver.ForwardAbilityGrant fwdGrant =
                 ActionResolverFieldAbility.tryParseForwardAbilityGrant(fa.effectText());
         if (fwdGrant != null)

@@ -30154,4 +30154,264 @@ public class CardBehaviorTest {
 				"7-005C talks about EX Bursts in its effect; only a leading marker is a marker");
 	}
 
+	// =========================================================================================
+	// Effect wiring — the six Summons that read back how their own cast was paid for.
+	//
+	// "Choose 1 Forward. Break it. If the cost to cast Shiva was paid with CP of 3 or more
+	// different Elements, your opponent discards 1 card from their hand." The condition is the
+	// last sentence, so every parser ahead of it matched the base under find(), claimed the whole
+	// ability and threw the condition away. What each card did before:
+	//
+	//   Shiva 16-028C     the opponent discarded whatever the payment had been
+	//   Cactuar 16-074C   Cactuar always dealt its caster the point of damage
+	//   Bahamut 16-016C   always 9000; the "12000 instead" never applied
+	//   Ixion 16-086C     the board-wide half was dropped entirely
+	//   Leviathan 16-125C the same
+	//   Chocobo Chick     the same
+	//
+	// The counter itself already existed — MainWindow records the distinct Elements of every cast
+	// payment for the Character form of this condition, which arrives as a trigger prefix and is
+	// tested by AutoAbilityTriggers. A Summon has no trigger to hang a flag on, so the gate reads
+	// the same counter off the GameContext at resolution time.
+	//
+	// Two of the tails put "also" between subject and verb — "all the Forwards you control also
+	// gain +2000 power" — where parse()'s leading-"also" strip cannot reach it, and the clause
+	// parsed as nothing at all.
+	// =========================================================================================
+
+	private static final String BAHAMUT_16_016C =
+			"Choose 1 Forward. Deal it 9000 damage. If the cost to cast Bahamut was paid with "
+			+ "CP of 3 or more different Elements, deal it 12000 damage instead.";
+	private static final String SHIVA_16_028C =
+			"Choose 1 dull Forward. Break it. If the cost to cast Shiva was paid with "
+			+ "CP of 3 or more different Elements, your opponent discards 1 card from their hand.";
+	private static final String CACTUAR_16_074C =
+			"Choose 1 Forward. Break it. If the cost to cast Cactuar was paid with "
+			+ "CP of 2 or less different Elements, Cactuar deals you 1 point of damage.";
+	private static final String IXION_16_086C =
+			"Choose 1 Forward. It loses 8000 power until the end of the turn. If the cost to cast "
+			+ "Ixion was paid with CP of 3 or more different Elements, all the Forwards opponent "
+			+ "controls also lose 2000 power until the end of the turn.";
+	private static final String LEVIATHAN_16_125C =
+			"Choose 1 Forward of cost 5 or less. Put it at the top or bottom of its owner's deck. "
+			+ "If the cost to cast Leviathan was paid with CP of 3 or more different Elements, "
+			+ "also draw 1 card, then discard 1 card from your hand.";
+	private static final String CHOCOBO_CHICK_16_046C =
+			"Activate all the Backups you control. Draw 1 card. If the cost to cast "
+			+ "Chocobo Chick (VII) was paid with CP of 3 or more different Elements, all the "
+			+ "Forwards you control also gain +2000 power until the end of the turn.";
+
+	/**
+	 * Resolves a cast-payment Summon against a mock that reports {@code distinctElements} paid,
+	 * with {@code chosen} answering any choice the base half makes.
+	 */
+	private static GameContext resolveCastPaymentSummon(
+			String name, String text, int distinctElements, ForwardTarget chosen) {
+		CardData summon = makeSummon(name, "Fire", 4, text);
+		Consumer<GameContext> fn = ActionResolver.parse(text, summon);
+		assertNotNull(fn, name + "'s cast-payment gate should parse");
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.consumePreloadedTargets()).thenReturn(null);
+		when(ctx.selectCharacters(anyInt(), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(),
+				anyInt(), any(), anyInt(), any(), anyBoolean(), anyBoolean(), anyBoolean(),
+				any(), any(), any(), any(), anyBoolean(), any(), anyBoolean())).thenReturn(List.of(chosen));
+		when(ctx.castPaymentDistinctElements()).thenReturn(distinctElements);
+		// Leviathan's base half moves the chosen card, so it reads the card behind the target.
+		when(ctx.p1Forward(anyInt())).thenReturn(makeForward("Chosen", "Fire", 3, 5000));
+		when(ctx.p2Forward(anyInt())).thenReturn(makeForward("Chosen", "Fire", 3, 5000));
+		fn.accept(ctx);
+		return ctx;
+	}
+
+	private static ForwardTarget anOpponentForward() {
+		return new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+	}
+
+	@Test
+	void bahamutDealsNineThousandWhenThePaymentWasTooNarrow() {
+		ForwardTarget t = anOpponentForward();
+		GameContext ctx = resolveCastPaymentSummon("Bahamut", BAHAMUT_16_016C, 2, t);
+		verify(ctx).damageTarget(t, 9000);
+		verify(ctx, never()).damageTarget(t, 12000);
+	}
+
+	@Test
+	void bahamutDealsTwelveThousandInsteadOnThreeElements() {
+		ForwardTarget t = anOpponentForward();
+		GameContext ctx = resolveCastPaymentSummon("Bahamut", BAHAMUT_16_016C, 3, t);
+		verify(ctx).damageTarget(t, 12000);
+		verify(ctx, never()).damageTarget(t, 9000);
+	}
+
+	@Test
+	void bahamutStillChoosesOnlyOnceOnTheUpgradedBranch() {
+		ForwardTarget t = anOpponentForward();
+		GameContext ctx = resolveCastPaymentSummon("Bahamut", BAHAMUT_16_016C, 3, t);
+		// "Deal it 12000 damage instead" replaces the base's last sentence, not its choice: the
+		// alternative's "it" is the Forward the base picked, so the choose clause has to survive
+		// into the replacement — and run exactly once.
+		verify(ctx, times(1)).selectCharacters(anyInt(), anyBoolean(), anyBoolean(), anyBoolean(),
+				any(), any(), anyInt(), any(), anyInt(), any(), anyBoolean(), anyBoolean(),
+				anyBoolean(), any(), any(), any(), any(), anyBoolean(), any(), anyBoolean());
+	}
+
+	@Test
+	void shivaBreaksRegardlessButOnlyMakesThemDiscardOnThreeElements() {
+		ForwardTarget t = anOpponentForward();
+		verify(resolveCastPaymentSummon("Shiva", SHIVA_16_028C, 3, t)).forceOpponentDiscard(1);
+		GameContext narrow = resolveCastPaymentSummon("Shiva", SHIVA_16_028C, 2, t);
+		verify(narrow).breakTarget(t);
+		verify(narrow, never()).forceOpponentDiscard(anyInt());
+	}
+
+	@Test
+	void cactuarPunishesTheNarrowPaymentRatherThanTheBroadOne() {
+		ForwardTarget t = anOpponentForward();
+		// The only "or less" printing in the family: the condition fires on a cheap payment.
+		verify(resolveCastPaymentSummon("Cactuar", CACTUAR_16_074C, 2, t)).dealDamageToSelf(1);
+		verify(resolveCastPaymentSummon("Cactuar", CACTUAR_16_074C, 3, t), never())
+				.dealDamageToSelf(anyInt());
+	}
+
+	@Test
+	void ixionAddsTheBoardWideDropOnThreeElements() {
+		ForwardTarget t = anOpponentForward();
+		GameContext ctx = resolveCastPaymentSummon("Ixion", IXION_16_086C, 3, t);
+		verify(ctx).reduceTarget(eq(t), eq(8000), any());
+		// "all the Forwards opponent controls also lose 2000 power" — the "also" sits between
+		// subject and verb, which is where the clause used to stop parsing.
+		verify(ctx).applyMassFieldPowerBoost(-2000, true, false, true, false, null, -1, null, null, null);
+	}
+
+	@Test
+	void ixionIsJustTheSingleTargetOnANarrowPayment() {
+		ForwardTarget t = anOpponentForward();
+		GameContext ctx = resolveCastPaymentSummon("Ixion", IXION_16_086C, 2, t);
+		verify(ctx).reduceTarget(eq(t), eq(8000), any());
+		verify(ctx, never()).applyMassFieldPowerBoost(anyInt(), anyBoolean(), anyBoolean(),
+				anyBoolean(), anyBoolean(), any(), anyInt(), any(), any(), any());
+	}
+
+	@Test
+	void leviathanDrawsAndDiscardsOnlyOnThreeElements() {
+		ForwardTarget t = anOpponentForward();
+		verify(resolveCastPaymentSummon("Leviathan", LEVIATHAN_16_125C, 3, t)).drawCards(1);
+		verify(resolveCastPaymentSummon("Leviathan", LEVIATHAN_16_125C, 2, t), never())
+				.drawCards(anyInt());
+	}
+
+	@Test
+	void chocoboChickBoostsTheBoardOnlyOnThreeElements() {
+		ForwardTarget t = anOpponentForward();
+		// The unconditional draw belongs to the base half and lands either way.
+		verify(resolveCastPaymentSummon("Chocobo Chick (VII)", CHOCOBO_CHICK_16_046C, 2, t)).drawCards(1);
+		verify(resolveCastPaymentSummon("Chocobo Chick (VII)", CHOCOBO_CHICK_16_046C, 3, t))
+				.applyMassFieldPowerBoost(2000, true, false, false, true, null, -1, null, null, null);
+		verify(resolveCastPaymentSummon("Chocobo Chick (VII)", CHOCOBO_CHICK_16_046C, 2, t), never())
+				.applyMassFieldPowerBoost(anyInt(), anyBoolean(), anyBoolean(), anyBoolean(),
+						anyBoolean(), any(), anyInt(), any(), any(), any());
+	}
+
+	@Test
+	void theCastPaymentGateIsReportedRatherThanTheBaseHalf() {
+		CardData shiva = makeSummon("Shiva", "Ice", 4, SHIVA_16_028C);
+		assertEquals("CastPaymentElementsGate",
+				ActionResolver.matchedPatternName(SHIVA_16_028C, shiva),
+				"naming the base half is what hid the dropped condition");
+		assertEquals("ChooseCharacter / Break + IfCastPaidElements(3+: OpponentDiscard)",
+				ActionResolver.fullDescription(SHIVA_16_028C, shiva));
+	}
+
+	// =========================================================================================
+	// Effect wiring — two EX Burst Summons whose second half went unread.
+	//
+	// Carbuncle 14-060R resolved its power grant and then its conditional draw, but neither the
+	// pattern name nor the description could say so: the gate that carries it was in parse()'s
+	// chain and in neither report chain, so the record read "AllFieldPowerBoost + ?".
+	//
+	// Cuchulainn 2-133R was the real casualty. "It loses 1000 power for each dull Character
+	// opponent controls" scales off the opponent's board, and the per-unit reduce followup could
+	// only count the caster's own — so no branch claimed it, the choose parser fell through to
+	// its "followup not yet implemented" log, and the card drew a card and did nothing else.
+	// =========================================================================================
+
+	private static final String CARBUNCLE_14_060R =
+			"[[ex]]EX BURST[[/]] All the Forwards you control gain +2000 power until the end of "
+			+ "the turn. If all the Backups you control have Earth Element, draw 1 card.";
+	private static final String CUCHULAINN_2_133R =
+			"[[ex]]EX BURST[[/]] Choose 1 Forward opponent controls. It loses 1000 power for each "
+			+ "dull Character opponent controls until the end of the turn. Draw 1 card.";
+
+	private static GameContext resolveCarbuncle(boolean allBackupsEarth) {
+		CardData carbuncle = makeSummon("Carbuncle", "Earth", 1, CARBUNCLE_14_060R);
+		Consumer<GameContext> fn = ActionResolver.parse(carbuncle.summonEffect(), carbuncle);
+		assertNotNull(fn, "Carbuncle's two halves should parse");
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.controlConditionMet(any())).thenReturn(allBackupsEarth);
+		fn.accept(ctx);
+		return ctx;
+	}
+
+	@Test
+	void carbuncleAlwaysBoostsAndDrawsOnlyOnAnAllEarthBench() {
+		verify(resolveCarbuncle(true)).drawCards(1);
+		GameContext mixed = resolveCarbuncle(false);
+		verify(mixed).applyMassFieldPowerBoost(2000, true, false, false, true, null, -1, null, null, null);
+		verify(mixed, never()).drawCards(anyInt());
+	}
+
+	@Test
+	void carbunclesConditionalDrawIsNamedRatherThanLeftAsAQuestionMark() {
+		CardData carbuncle = makeSummon("Carbuncle", "Earth", 1, CARBUNCLE_14_060R);
+		String text = carbuncle.summonEffect();
+		assertEquals("AllFieldPowerBoost + IfAllHaveElement",
+				ActionResolver.matchedPatternName(text, carbuncle));
+		assertEquals("AllFieldPowerBoost + IfAllHaveElement(Backups=Earth: DrawCards)",
+				ActionResolver.fullDescription(text, carbuncle));
+	}
+
+	/** Resolves Cuchulainn with {@code dullChars} dull Characters on the opponent's board. */
+	private static GameContext resolveCuchulainn(int dullChars, ForwardTarget chosen) {
+		CardData cu = makeSummon("Cuchulainn, the Impure", "Water", 4, CUCHULAINN_2_133R);
+		Consumer<GameContext> fn = ActionResolver.parse(cu.summonEffect(), cu);
+		assertNotNull(fn, "Cuchulainn's scaling power loss should parse");
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.consumePreloadedTargets()).thenReturn(null);
+		when(ctx.selectCharacters(anyInt(), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(),
+				anyInt(), any(), anyInt(), any(), anyBoolean(), anyBoolean(), anyBoolean(),
+				any(), any(), any(), any(), anyBoolean(), any(), anyBoolean())).thenReturn(List.of(chosen));
+		when(ctx.countOppFieldCardsWithCondition(anyBoolean(), anyBoolean(), anyBoolean(), eq("dull")))
+				.thenReturn(dullChars);
+		fn.accept(ctx);
+		return ctx;
+	}
+
+	@Test
+	void cuchulainnScalesOffTheOpponentsDullCharacters() {
+		ForwardTarget t = anOpponentForward();
+		verify(resolveCuchulainn(3, t)).reduceTarget(eq(t), eq(3000), any());
+		verify(resolveCuchulainn(1, t)).reduceTarget(eq(t), eq(1000), any());
+	}
+
+	@Test
+	void cuchulainnStillDrawsWhenNothingIsDull() {
+		ForwardTarget t = anOpponentForward();
+		GameContext ctx = resolveCuchulainn(0, t);
+		verify(ctx).reduceTarget(eq(t), eq(0), any());
+		verify(ctx).drawCards(1);
+	}
+
+	@Test
+	void aSelfSideStateCountIsLeftAloneRatherThanCountedWrong() {
+		// GameContext counts a card state on the opponent's field only, so the self-side reading
+		// would drop "dull" and count every Character. The branch declines it instead; the text
+		// falls through to the plain reduce rather than silently over-counting.
+		CardData cu = makeSummon("Cuchulainn, the Impure", "Water", 4, CUCHULAINN_2_133R);
+		String selfSide = "Choose 1 Forward opponent controls. It loses 1000 power for each dull "
+				+ "Character you control until the end of the turn.";
+		assertNotEquals("ChooseCharacter / PowerReduceUntilForEach",
+				ActionResolver.fullDescription(selfSide, cu),
+				"no printing has this shape, and counting it as unconditioned would be wrong");
+	}
+
 }
