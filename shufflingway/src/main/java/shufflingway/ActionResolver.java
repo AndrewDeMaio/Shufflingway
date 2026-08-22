@@ -167,8 +167,7 @@ public class ActionResolver {
      * @param xValue the CP amount paid into {@code 《X》}; {@code 0} when the ability has no X cost
      */
     public static Consumer<GameContext> parse(String effectText, CardData source, int xValue) {
-        // Strip leading "EX BURST" / "[[ex]]EX BURST[[/]]" prefix present on summon field ability texts.
-        effectText = effectText.replaceFirst("(?i)^(?:\\[\\[ex\\]\\])?\\s*EX\\s+BURST(?:\\[\\[/\\]\\])?\\s*", "").trim();
+        effectText = stripExBurstPrefix(effectText);
         // Strip leading "Then, " connector that appears when this text is a secondary clause.
         effectText = effectText.replaceFirst("(?i)^Then,?\\s+", "").trim();
         // Strip a leading "also" the same way — purely additive phrasing carried over from the
@@ -4598,6 +4597,85 @@ public class ActionResolver {
         }
         return true;
     }
+
+    /**
+     * Drops a leading EX Burst marker from {@code effectText}, in either form card text carries it:
+     * the tagged {@code [[ex]]EX BURST[[/]]} and the bare {@code EX BURST} that survives when
+     * {@link CardData#summonEffect()} strips only the opening tag.
+     *
+     * <p>The marker says how a Summon <em>may</em> resolve, not what it does, so it is never part of
+     * the effect. {@code parse()} drops it before matching; the game log drops it before printing,
+     * but only when the card did not in fact resolve off an EX Burst — there it is the whole story.
+     */
+    public static String stripExBurstPrefix(String effectText) {
+        if (effectText == null) return null;
+        return effectText
+                .replaceFirst("(?i)^(?:\\[\\[ex\\]\\])?\\s*EX\\s+BURST\\s*(?:\\[\\[/\\]\\])?\\s*", "")
+                .trim();
+    }
+
+    /**
+     * What a Summon must be able to choose on the field for casting it to accomplish anything —
+     * or {@code null} when casting it is worth something no matter what is out there.
+     *
+     * <p>Answered for the AI, which otherwise spends CP on a Summon that resolves into an empty
+     * board and does nothing at all. It is deliberately conservative in one direction: a Summon it
+     * cannot read is reported as {@code null} and stays castable, because declining to cast a card
+     * that would have worked is a worse mistake than the one being fixed.
+     *
+     * <p>That is also why the follow-up sentences are examined. Of the Summons opening with a
+     * mandatory choice, roughly a third carry a clause that stands on its own — "Draw 1 card", "All
+     * the Fire Forwards you control gain +2000 power" — and those are still worth casting into an
+     * empty board. Only a Summon whose every remaining sentence points back at the chosen card is
+     * reported here.
+     */
+    public static SummonTargetNeed summonTargetRequirement(String effectText) {
+        if (effectText == null) return null;
+        String text = stripExBurstPrefix(effectText);
+        Matcher m = OPENING_MANDATORY_CHOICE.matcher(text);
+        if (!m.find()) return null;
+
+        String what = m.group("what");
+        // A choice naming a zone other than the field ("in your Break Zone", "from your hand") is
+        // not answered by what is on the board, so this cannot speak to it.
+        if (what.matches("(?i).*\\b(?:Break\\s+Zone|hand|deck|removed\\s+from\\s+the\\s+game)\\b.*"))
+            return null;
+
+        Matcher kind = CHOSEN_CARD_KIND.matcher(what);
+        boolean forwards = false, backups = false, monsters = false;
+        while (kind.find()) {
+            String k = kind.group(1).toLowerCase();
+            if (k.startsWith("character")) { forwards = backups = monsters = true; }
+            else if (k.startsWith("forward")) forwards = true;
+            else if (k.startsWith("backup"))  backups  = true;
+            else if (k.startsWith("monster")) monsters = true;
+        }
+        if (!forwards && !backups && !monsters) return null;
+
+        // Every sentence after the choice has to be about what was chosen. One that is not happens
+        // regardless, and the Summon is worth casting for it alone.
+        for (String sentence : text.substring(m.end()).split("(?<=[.!])\\s+")) {
+            if (sentence.isBlank()) continue;
+            if (!REFERS_TO_CHOSEN.matcher(sentence).find()) return null;
+        }
+
+        boolean ownOnly = what.matches("(?i).*\\byou\\s+control\\b.*");
+        boolean oppOnly = what.matches("(?i).*\\bopponent\\s+controls?\\b.*");
+        return new SummonTargetNeed(forwards, backups, monsters,
+                ownOnly && !oppOnly, oppOnly && !ownOnly);
+    }
+
+    /**
+     * The field cards that would satisfy a Summon's mandatory choice.
+     *
+     * @param forwards  a Forward would answer the choice
+     * @param backups   a Backup would
+     * @param monsters  a Monster would
+     * @param ownOnly   the choice is restricted to the caster's own field
+     * @param oppOnly   the choice is restricted to their opponent's field
+     */
+    public record SummonTargetNeed(boolean forwards, boolean backups, boolean monsters,
+            boolean ownOnly, boolean oppOnly) {}
 
     /** Returns {@code true} if the effect text matches a "cancel 1 auto-ability" summon effect. */
     public static boolean cancelsAutoAbility(String effectText) {

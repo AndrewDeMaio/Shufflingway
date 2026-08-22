@@ -17,40 +17,20 @@ import javax.swing.JComponent;
 import shufflingway.AppSettings;
 
 /**
- * A player's hand drawn as a fan of face-down card backs peeking in from the board's outer edge.
+ * An opponent's hand drawn as a fan of face-down card backs peeking in from the board's outer edge.
  *
- * <p>Only the innermost {@link #PEEK_FRACTION} of each card is inside the component; the rest is
- * clipped away against the screen edge. The cards splay along a shallow arc and tilt progressively
- * toward the ends, so the row reads as a held hand rather than a stack.
+ * <p>Only the innermost {@link HandFanLayout#PEEK_FRACTION} of each card is inside the component;
+ * the rest is clipped away against the screen edge. {@link HandFanLayout} decides the shape — this
+ * class only paints backs into it.
  *
- * <p>The component is seat-agnostic: {@code isP1} mirrors the tilt direction, the arc direction and
- * the edge the cards hang from, so P1's fan peeks up from the bottom and P2's peeks down from the
- * top. Nothing else differs between the two.
+ * <p>Contents are never revealed — an opponent's hand is only ever a count — so the exact number
+ * lives in the tooltip and the fan itself carries no text. The seat's own hand is face up and
+ * interactive, and is drawn by {@link PlayerHandFanPanel} instead.
  *
- * <p>Contents are never revealed — a hand is only ever a count — so the exact number lives in the
- * tooltip and the fan itself carries no text.
+ * <p>{@code isP1} is still carried rather than assumed, because the seat decides which edge the
+ * cards hang from and which way the fan tilts, and a hot-seat build could want backs on either side.
  */
 public class HandFanPanel extends JComponent {
-
-	/**
-	 * Fraction of {@code CARD_H} that stays visible past the screen edge. Tune here.
-	 *
-	 * <p>Both seats pay this out of the same fixed board height, so the ceiling is roughly
-	 * {@code (boardHeight - bothZonesWithoutFans) / 2} — around 0.30 at 1080p. Past that the two
-	 * zones meet and overlap rather than degrading gracefully.
-	 */
-	public static final double PEEK_FRACTION = 0.28;
-
-	/** Per-card tilt for small hands, in degrees; the fan opens this much wider per extra card. */
-	private static final double MAX_STEP_DEG = 5.0;
-	/** Cap on half the total fan angle, so big hands splay wide but never curl over. */
-	private static final double MAX_HALF_SPREAD = 26.0;
-	/** Horizontal step between neighbouring cards for small hands, as a fraction of CARD_W. */
-	private static final double MAX_DX_FRACTION = 0.42;
-	/** Depth of the arc — how far the outermost cards retreat toward the edge, as a fraction of CARD_H. */
-	private static final double ARC_LIFT_FRACTION = 0.06;
-	/** Breathing room kept at each end so a wide fan never touches the neighbouring column. */
-	private static final int SIDE_PAD = 8;
 
 	// Every back is the same image, so without separation the overlaps read as one dark mass. A
 	// plain outline is not enough: it has to work against the near-black default art *and* against
@@ -70,9 +50,9 @@ public class HandFanPanel extends JComponent {
 	/** Identity of whatever {@link #back} was built from; a mismatch invalidates the cache. */
 	private String backKey = "";
 
-	/** Height the fan claims in its parent — i.e. how much of each card stays visible. */
+	/** @see HandFanLayout#peekHeight() */
 	public static int peekHeight() {
-		return (int) Math.round(CardAnimation.CARD_H * PEEK_FRACTION);
+		return HandFanLayout.peekHeight();
 	}
 
 	/**
@@ -143,50 +123,20 @@ public class HandFanPanel extends JComponent {
 		g.setRenderingHint(RenderingHints.KEY_INTERPOLATION,  RenderingHints.VALUE_INTERPOLATION_BILINEAR);
 		g.setRenderingHint(RenderingHints.KEY_RENDERING,      RenderingHints.VALUE_RENDER_QUALITY);
 
-		int    cw   = CardAnimation.CARD_W;
-		int    ch   = CardAnimation.CARD_H;
-		double half = (count - 1) / 2.0;
+		int cw = CardAnimation.CARD_W;
+		int ch = CardAnimation.CARD_H;
 
-		// n == 1 falls out as 0°: a single upright back, no special case needed.
-		double halfSpread = Math.toRadians(
-				Math.min(MAX_HALF_SPREAD, MAX_STEP_DEG * (count - 1) / 2.0));
-
-		// Budget the horizontal room against the *rotated* footprint, not the upright one. The
-		// outermost cards are the most tilted, and a tilted card is markedly wider than cw — at the
-		// 26° cap it reaches roughly 1.5x. Measuring the upright width instead lets the ends of a
-		// large fan clip off against the neighbouring column.
-		double halfExtent = (cw / 2.0) * Math.cos(halfSpread) + (ch / 2.0) * Math.sin(halfSpread);
-
-		// Small hands get a comfortable fixed step; large ones compress to fit. The min() alone
-		// keeps the fan inside the panel, so no lower bound is needed.
-		double room = Math.max(0, w - 2 * (halfExtent + SIDE_PAD));
-		double dx   = count > 1 ? Math.min(cw * MAX_DX_FRACTION, room / (count - 1)) : 0;
-
-		double lift = ch * ARC_LIFT_FRACTION;
-		// One flag mirrors both the tilt and the arc. Java2D rotates clockwise for positive angles,
-		// so the sign that splays the *visible* end of the rightmost card to the right differs by
-		// seat: P2's cards hang from above (visible end at the bottom), P1's from below.
-		double dir = isP1 ? 1 : -1;
-		// Puts the visible edge exactly on the panel edge; the remainder clips off past it.
-		double baseCy = isP1 ? ch / 2.0 : h - ch / 2.0;
+		HandFanLayout.Slot[] slots =
+				HandFanLayout.slots(count, w, isP1, HandFanLayout.restTop(isP1, h));
 
 		double diameter = Math.min(cw, ch) * CardAnimation.CORNER_RADIUS_FRACTION * 2.0;
 		RoundRectangle2D outline = new RoundRectangle2D.Double(0, 0, cw - 1, ch - 1, diameter, diameter);
 		double shadowOff = cw * SHADOW_OFFSET_FRACTION;
+		double dir       = isP1 ? 1 : -1;
 
 		// Left to right, so each card overlaps the one before it and the rightmost sits on top.
-		for (int i = 0; i < count; i++) {
-			double t     = (half == 0) ? 0 : (i - half) / half;   // -1 .. +1 across the fan
-			double theta = t * halfSpread * dir;
-			double cx    = w / 2.0 + (i - half) * dx;
-			double cy    = baseCy + dir * lift * t * t;           // parabola: ends retreat to the edge
-
-			// Pivot on the card's own centre. This keeps the three knobs orthogonal — dx is spread,
-			// theta is tilt, lift is arc depth — which is what makes the look tunable. The physical
-			// alternative (pivot on the off-screen far end, arc for free from the rotation) couples
-			// spread and arc; try it if the fan ever reads too flat.
-			AffineTransform tx = AffineTransform.getRotateInstance(theta, cx, cy);
-			tx.translate(cx - cw / 2.0, cy - ch / 2.0);
+		for (HandFanLayout.Slot slot : slots) {
+			AffineTransform tx = HandFanLayout.transformFor(slot);
 
 			// Shadow first, so it falls on the card already drawn to the left; the card then covers
 			// all of its own shadow but the offset sliver. Cast away from the screen edge, i.e. in

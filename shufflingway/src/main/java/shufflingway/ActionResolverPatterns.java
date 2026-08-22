@@ -4097,6 +4097,28 @@ final class ActionResolverPatterns {
      * information the resolver needs — an empty group is what the dialog produces by default, and
      * nothing in the effect would forbid one if the reminder were absent.
      */
+    /**
+     * The opening "Choose N &lt;something&gt;." of an effect that must have a target, with the
+     * described target in group {@code what}.
+     *
+     * <p>"Choose up to N" is excluded on purpose: choosing none is a legal choice there, so the
+     * effect resolves whether or not anything is on the board.
+     */
+    static final Pattern OPENING_MANDATORY_CHOICE = Pattern.compile(
+        "(?i)^Choose\\s+(?!up\\s+to\\b)\\d+\\s+(?<what>[^.!]*)[.!]");
+
+    /**
+     * A pronoun or phrase by which a sentence refers back to something already chosen. Used to tell
+     * a follow-up clause ("Deal it 4000 damage") from an effect that stands on its own and happens
+     * whether or not anything was chosen ("Draw 1 card").
+     */
+    static final Pattern REFERS_TO_CHOSEN = Pattern.compile(
+        "(?i)\\b(?:it|its|them|their|that\\s+\\w+|those|the\\s+former|the\\s+latter)\\b");
+
+    /** The Character kinds a choice can name. "Character" covers all three. */
+    static final Pattern CHOSEN_CARD_KIND = Pattern.compile(
+        "(?i)\\b(Forwards?|Characters?|Backups?|Monsters?)\\b");
+
     static final Pattern DIVIDE_OPP_FORWARDS_INTO_GROUPS = Pattern.compile(
         "(?i)^Divide\\s+all\\s+the\\s+Forwards\\s+(?:your\\s+)?opponent\\s+controls?\\s+into\\s+"
         + "(?<groups>\\d+)\\s+groups?(?:\\s*\\([^)]*\\))?[.!]?\\s+"

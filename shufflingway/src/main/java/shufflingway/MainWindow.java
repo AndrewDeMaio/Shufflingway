@@ -59,6 +59,7 @@ import javax.swing.BoxLayout;
 import javax.swing.Icon;
 import javax.swing.ImageIcon;
 import javax.swing.JButton;
+import javax.swing.JComponent;
 import javax.swing.JDialog;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
@@ -123,7 +124,9 @@ import shufflingway.graphics.CardSlideAnimator;
 import shufflingway.graphics.CrystalDisplay;
 import shufflingway.graphics.GradientPanel;
 import shufflingway.graphics.GrayscaleLabel;
+import shufflingway.graphics.HandFanOverlapLayout;
 import shufflingway.graphics.HandFanPanel;
+import shufflingway.graphics.PlayerHandFanPanel;
 import shufflingway.graphics.ShieldIcon;
 import shufflingway.graphics.TraitTab;
 import shufflingway.graphics.TriangleIcon;
@@ -173,10 +176,13 @@ public class MainWindow {
 	private CrystalDisplay p2CrystalDisplay;
 	private JButton p1LimitButton;
 	private JButton p2LimitButton;
-	private JPanel handPanel;
 	JLabel p1BreakLabel;
 	JLabel p2BreakLabel;
 	private HandFanPanel p2HandFan;
+	/** P1's own hand, fanned face up along the bottom edge of the board. */
+	PlayerHandFanPanel p1HandFan;
+	/** "Cards you can play from outside your hand", parked at the left end of the fan strip. */
+	private JButton playableCardsButton;
 	private GrayscaleLabel p1RemoveLabel;
 	private GrayscaleLabel p2RemoveLabel;
 	private JButton        p1RemoveButton;
@@ -229,13 +235,10 @@ public class MainWindow {
 	// Opening hand confirmation popup
 	private JWindow openingHandPopup;
 	// Hand hover popover (deck zone mouseover)
-	private JWindow handPopup;
 	// Stack overlay (shown while any entry is on the resolution stack)
 	private JWindow               summonStackWindow;
 	private Timer     stackCountdownTimer;
 	private int                   stackWindowGeneration = 0;
-	private Timer handPopupHideTimer;
-	private boolean handCardMenuOpen = false;
 
 	// --- Game state ---
 	final GameState gameState   = new GameState();
@@ -1429,19 +1432,26 @@ public class MainWindow {
 		});
 		glowTimer.start();
 
-		// Room held at the bottom edge for P1's hand fan, mirroring the space P2's fan occupies at
-		// the top. Empty for now: P1's hand is the player's own, so it wants a face-up treatment
-		// rather than the card backs HandFanPanel draws. Reserving it now settles the layout, so
-		// adding the fan later is a swap rather than another round of budget arithmetic.
-		JPanel p1FanSpace = new JPanel();
-		p1FanSpace.setOpaque(false);
-		p1FanSpace.setPreferredSize(new Dimension(0, HandFanPanel.peekHeight()));
-		p1FanSpace.setMinimumSize(new Dimension(0, HandFanPanel.peekHeight()));
+		// P1's hand, in the room reserved for it at the bottom edge — the mirror of P2's fan at the
+		// top, but face up and clickable, so it is a different component. See PlayerHandFanPanel.
+		p1HandFan = new PlayerHandFanPanel(
+				this::handCardState, this::onHandCardHover, this::onHandCardPressed);
 
-		JPanel p1BottomRow = new JPanel(new BorderLayout());
+		playableCardsButton = buildPlayableCardsButton();
+
+		// The button sits beside the fan rather than inside it: it is about cards that are *not* in
+		// hand, and the fan paints a hand. Left end, clear of a centred fan's widest spread, and
+		// hidden outright when there is nothing to play.
+		JPanel p1BottomRow = new JPanel(
+				new HandFanOverlapLayout(p1BackupWrapper, p1HandFan, playableCardsButton));
 		p1BottomRow.setOpaque(false);
-		p1BottomRow.add(p1BackupWrapper, BorderLayout.CENTER);
-		p1BottomRow.add(p1FanSpace,      BorderLayout.SOUTH);
+		p1BottomRow.add(p1BackupWrapper);
+		p1BottomRow.add(playableCardsButton);
+		p1BottomRow.add(p1HandFan);
+		// Painted first among siblings means painted last on screen: a risen card crosses the backup
+		// row above it, and the button stays clear of both.
+		p1BottomRow.setComponentZOrder(p1HandFan, 0);
+		p1BottomRow.setComponentZOrder(playableCardsButton, 1);
 
 		JPanel p1MainArea = new JPanel(new BorderLayout(0, 4));
 		// Transparent so p1ZonesPanel's board fade shows through the middle column, as on P2.
@@ -1627,23 +1637,12 @@ public class MainWindow {
 		logWithChat.add(logScrollPane, BorderLayout.CENTER);
 		logWithChat.add(chatPanel,     BorderLayout.SOUTH);
 
-		handPanel = new JPanel(null);
-		handPanel.setBackground(Color.DARK_GRAY);
-		handPanel.setPreferredSize(new Dimension(sidePanelW, (int)(CARD_H * 0.6)));
-		handPanel.setBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, Color.GRAY));
-		handPanel.addMouseListener(new MouseAdapter() {
-			@Override public void mouseEntered(MouseEvent e) {
-				if (!gameState.getP1Hand().isEmpty()) showHandPopup();
-			}
-			@Override public void mouseExited(MouseEvent e) { scheduleHandPopupHide(); }
-		});
-		refreshHandPanel();
-
+		// No hand zone here any more: P1's hand is on the board, fanned along the bottom edge. The
+		// strip this used to occupy goes to the log, which is what the space was always competing with.
 		sidePanel = new JPanel(new BorderLayout());
 		sidePanel.setPreferredSize(new Dimension(sidePanelW, 0));
 		sidePanel.add(sideNorth,    BorderLayout.NORTH);
 		sidePanel.add(logWithChat,  BorderLayout.CENTER);
-		sidePanel.add(handPanel,    BorderLayout.SOUTH);
 
 		// Draggable divider between game board and side panel.
 		// When the UI is scaled (smaller screen), resizing is disabled because
@@ -2557,72 +2556,107 @@ public class MainWindow {
 	}
 
 	void refreshP1HandLabel() {
-		refreshHandPanel();
+		refreshHandFan();
 	}
 
-	private void refreshHandPanel() {
-		if (handPanel == null) return;
-		handPanel.removeAll();
-		int n = gameState.getP1Hand().size();
-		String text = n == 0 ? "HAND" : "HAND - " + n;
-		int panelW = handPanel.getWidth() > 0 ? handPanel.getWidth() : sidePanelW;
-		int handH  = handPanel.getHeight() > 0 ? handPanel.getHeight() : (int)(CARD_H * 0.6);
+	/**
+	 * Hands P1's fan the cards it should be drawing, and updates the borrowed-cast button.
+	 *
+	 * <p>Only the contents: what each card costs and whether it can be cast is asked for on every
+	 * paint through {@link #handCardState(int)}, so this is needed when the hand gains or loses a
+	 * card and not merely when the answers move.
+	 */
+	private void refreshHandFan() {
+		if (p1HandFan == null) return;
+		List<String> urls = new ArrayList<>();
+		for (CardData card : gameState.getP1Hand()) urls.add(card.imageUrl());
+		p1HandFan.setCards(urls);
 
-		int borrowable = bzPlayableP1.size();
-		boolean showBtn = borrowable > 0;
-		// Reserve the right side for the button; keep the HAND label centered in the remaining space.
-		int btnW   = showBtn ? Math.min(170, Math.max(120, (int)(panelW * 0.42))) : 0;
-		int labelW = showBtn ? panelW - btnW - 16 : panelW;
-
-		JLabel lbl = new JLabel(text, SwingConstants.CENTER);
-		lbl.setFont(FontLoader.loadPixelFont(14));
-		lbl.setForeground(Color.LIGHT_GRAY);
-		lbl.setBounds(0, 0, labelW, handH);
-		handPanel.add(lbl);
-
-		if (showBtn) {
-			final Color goldText = new Color(212, 175, 55);
-			final Color goldEdge = new Color(150, 120, 50);
-			final Color baseBg   = new Color(34, 30, 22);
-			final Color hoverBg  = new Color(58, 50, 32);
-
-			JButton btn = new JButton("PLAYABLE  " + borrowable);
-			btn.setToolTipText("Cards you can play from outside your hand");
-			btn.setFont(FontLoader.loadPixelFont(9));
-			btn.setForeground(goldText);
-			btn.setBackground(baseBg);
-			btn.setOpaque(true);
-			btn.setFocusPainted(false);
-			btn.setFocusable(false);
-			btn.setBorder(BorderFactory.createCompoundBorder(
-					BorderFactory.createLineBorder(goldEdge, 1),
-					BorderFactory.createEmptyBorder(3, 10, 3, 10)));
-			btn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-			btn.addMouseListener(new MouseAdapter() {
-				@Override public void mouseEntered(MouseEvent e) {
-					btn.setBackground(hoverBg);
-					btn.setBorder(BorderFactory.createCompoundBorder(
-							BorderFactory.createLineBorder(goldText, 1),
-							BorderFactory.createEmptyBorder(3, 10, 3, 10)));
-				}
-				@Override public void mouseExited(MouseEvent e) {
-					btn.setBackground(baseBg);
-					btn.setBorder(BorderFactory.createCompoundBorder(
-							BorderFactory.createLineBorder(goldEdge, 1),
-							BorderFactory.createEmptyBorder(3, 10, 3, 10)));
-				}
-			});
-			int btnH = Math.min(26, handH - 12);
-			btn.setBounds(panelW - btnW - 8, (handH - btnH) / 2, btnW, btnH);
-			btn.addActionListener(e -> showPlayableCardsDialog());
-			handPanel.add(btn);
+		if (playableCardsButton != null) {
+			int borrowable = bzPlayableP1.size();
+			playableCardsButton.setText("PLAYABLE  " + borrowable);
+			playableCardsButton.setVisible(borrowable > 0);
 		}
-		handPanel.revalidate();
-		handPanel.repaint();
 	}
 
-	/** Rebuilds the hand zone so the "Playable Cards" button reflects the current borrowed-cast registry. */
-	void refreshPlayableCardsButton() { refreshHandPanel(); }
+	/**
+	 * What the fan should say about the card at {@code handIdx} right now: its printed cost, what
+	 * casting it would actually cost, and whether it can be cast at all.
+	 *
+	 * <p>Reached from the fan's paint, which is what keeps it honest — every input here moves
+	 * without the hand changing, and the popover this replaced got the same freshness for free by
+	 * being rebuilt each time it opened.
+	 */
+	private PlayerHandFanPanel.State handCardState(int handIdx) {
+		List<CardData> hand = gameState.getP1Hand();
+		if (handIdx < 0 || handIdx >= hand.size()) return PlayerHandFanPanel.State.UNKNOWN;
+		CardData card = hand.get(handIdx);
+		return new PlayerHandFanPanel.State(
+				card.cost(), effectiveCastCost(card), canCastFromHand(card, handIdx));
+	}
+
+	/**
+	 * Whether the card at {@code handIdx} can be cast from hand right now — timing window, name and
+	 * Light/Dark conflicts, affordability, a free Backup slot, cast restrictions and the per-turn
+	 * cast limit.
+	 *
+	 * <p>One method because two things ask: the fan rings a castable card in blue, and the card's
+	 * own menu enables or greys its Play item. They were the same expression written twice, and a
+	 * fan that says yes over a menu that says no is worse than either answer alone.
+	 */
+	private boolean canCastFromHand(CardData card, int handIdx) {
+		boolean isCharacter = card.isForward() || card.isBackup() || card.isMonster();
+		boolean nameConflict = isCharacter && !card.multicard()
+				&& hasCharacterNameOnField(card.name()) && !isMultiNameExceptionActive(card.name(), true);
+		boolean lightDarkConflict = isCharacter && isLightDarkConflict(card);
+		return castTimingWindowOpen(card) && !nameConflict && !lightDarkConflict
+				&& canAffordCard(card, handIdx)
+				&& (!card.isBackup() || hasAvailableBackupSlot())
+				&& castRestrictionMet(card)
+				&& (!card.isSummon() || !summonCastingProhibited())
+				&& !p1CastLimitReached();
+	}
+
+	/** The gold "PLAYABLE n" control that opens {@link #showPlayableCardsDialog()}. */
+	private JButton buildPlayableCardsButton() {
+		final Color goldText = new Color(212, 175, 55);
+		final Color goldEdge = new Color(150, 120, 50);
+		final Color baseBg   = new Color(34, 30, 22);
+		final Color hoverBg  = new Color(58, 50, 32);
+
+		JButton btn = new JButton("PLAYABLE  0");
+		btn.setToolTipText("Cards you can play from outside your hand");
+		btn.setFont(FontLoader.loadPixelFont(9));
+		btn.setForeground(goldText);
+		btn.setBackground(baseBg);
+		btn.setOpaque(true);
+		btn.setFocusPainted(false);
+		btn.setFocusable(false);
+		btn.setBorder(BorderFactory.createCompoundBorder(
+				BorderFactory.createLineBorder(goldEdge, 1),
+				BorderFactory.createEmptyBorder(3, 10, 3, 10)));
+		btn.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+		btn.addMouseListener(new MouseAdapter() {
+			@Override public void mouseEntered(MouseEvent e) {
+				btn.setBackground(hoverBg);
+				btn.setBorder(BorderFactory.createCompoundBorder(
+						BorderFactory.createLineBorder(goldText, 1),
+						BorderFactory.createEmptyBorder(3, 10, 3, 10)));
+			}
+			@Override public void mouseExited(MouseEvent e) {
+				btn.setBackground(baseBg);
+				btn.setBorder(BorderFactory.createCompoundBorder(
+						BorderFactory.createLineBorder(goldEdge, 1),
+						BorderFactory.createEmptyBorder(3, 10, 3, 10)));
+			}
+		});
+		btn.addActionListener(e -> showPlayableCardsDialog());
+		btn.setVisible(false);
+		return btn;
+	}
+
+	/** Rebuilds the fan so the "Playable Cards" button reflects the current borrowed-cast registry. */
+	void refreshPlayableCardsButton() { refreshHandFan(); }
 
 	/**
 	 * Shows every card P1 may currently cast from outside their hand (the {@link #bzPlayableP1}
@@ -3051,6 +3085,9 @@ public class MainWindow {
 		phaseTracker.setHasPriority(isP1Turn);
 		if (gameState.getCurrentPhase() == GameState.GamePhase.ATTACK && attackSubStep >= 0)
 			phaseTracker.setAttackStep(attackSubStep);
+		// The phase is the biggest single swing in what may be cast — nothing during Draw, the
+		// whole hand in Main Phase 1 — and this is the one hook every phase change passes through.
+		refreshHandCardStates();
 	}
 
 	/** Appends a timestamped entry to the game log. */
@@ -4009,7 +4046,7 @@ public class MainWindow {
 			for (int i = 0; i < p1ForwardCards.size(); i++) refreshP1ForwardSlot(i);
 		}
 		if (hadGrants) for (int i = 0; i < p1MonsterCards.size(); i++) refreshP1MonsterSlot(i);
-		if (hadCostReduces) refreshHandPopupIfVisible();
+		if (hadCostReduces) refreshHandCardStates();
 		if (isBreak) {
 			p2Turn.turnOpponentFwdBroken = true;
 			for (String j : card.jobs()) p1Turn.brokenJobsThisTurn.add(j.toLowerCase());
@@ -4093,7 +4130,7 @@ public class MainWindow {
 			for (int i = 0; i < p2ForwardCards.size(); i++) refreshP2ForwardSlot(i);
 		}
 		if (hadGrants) for (int i = 0; i < p2MonsterCards.size(); i++) refreshP2MonsterSlot(i);
-		if (hadCostReduces) refreshHandPopupIfVisible();
+		if (hadCostReduces) refreshHandCardStates();
 		if (isBreak) {
 			p1Turn.turnOpponentFwdBroken = true;
 			for (String j : card.jobs()) p2Turn.brokenJobsThisTurn.add(j.toLowerCase());
@@ -4327,7 +4364,7 @@ public class MainWindow {
 		p1ForwardPanel.repaint();
 		refreshP1ForwardSlot(idx);
 		if (!card.fieldPowerGrants().isEmpty()) refreshFieldGrantDependents(true);
-		if (!card.fieldCostReductions().isEmpty() || p1HandHasSelfCostModifiers()) refreshHandPopupIfVisible();
+		if (!card.fieldCostReductions().isEmpty() || p1HandHasSelfCostModifiers()) refreshHandCardStates();
 	}
 
 	/** Adds {@code card} to P2's forward zone with the given damage and state; does NOT fire ETF. */
@@ -4373,7 +4410,7 @@ public class MainWindow {
 		p2ForwardPanel.repaint();
 		refreshP2ForwardSlot(idx);
 		if (!card.fieldPowerGrants().isEmpty()) refreshFieldGrantDependents(false);
-		if (!card.fieldCostReductions().isEmpty() || p1HandHasSelfCostModifiers()) refreshHandPopupIfVisible();
+		if (!card.fieldCostReductions().isEmpty() || p1HandHasSelfCostModifiers()) refreshHandCardStates();
 	}
 
 	/**
@@ -6909,10 +6946,8 @@ public class MainWindow {
 		cardPreviewPanel.setMinimumSize  (new Dimension(w, previewH));
 		cardPreviewPanel.setMaximumSize  (new Dimension(w, previewH));
 		sidePanel.setPreferredSize(new Dimension(w, 0));
-		handPanel.setPreferredSize(new Dimension(w, (int)(CARD_H * 0.6)));
 		if (sideWrapper != null)
 			sideWrapper.setPreferredSize(new Dimension(w + RESIZE_HANDLE_W, 0));
-		refreshHandPanel();
 		frame.revalidate();
 		frame.repaint();
 	}
@@ -6921,148 +6956,43 @@ public class MainWindow {
 	// Hand card zoom / popup helpers
 	// -------------------------------------------------------------------------
 
-	private void showHandPopup() {
-		cancelHandPopupHide();
-		if (handPopup != null && handPopup.isVisible()) return;  // already open
-
-		if (handPopup != null) { handPopup.dispose(); }
-		handPopup = new JWindow(frame);
-
+	/**
+	 * Previews the hovered hand card in the side panel, and clears the preview when the pointer
+	 * leaves the fan. The fan reports index -1 for "no card", which is why this takes an index
+	 * rather than a card.
+	 */
+	private void onHandCardHover(int handIdx) {
 		List<CardData> hand = gameState.getP1Hand();
-
-		JPanel cardsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 6));
-		cardsPanel.setBorder(BorderFactory.createCompoundBorder(
-				BorderFactory.createRaisedBevelBorder(),
-				BorderFactory.createEmptyBorder(4, 4, 4, 4)));
-		cardsPanel.addMouseListener(new MouseAdapter() {
-			@Override public void mouseEntered(MouseEvent e) { cancelHandPopupHide(); }
-			@Override public void mouseExited(MouseEvent e) { scheduleHandPopupHide(); }
-		});
-
-		for (int i = 0; i < hand.size(); i++) {
-			final int idx = i;
-			final CardData card = hand.get(i);
-			final String url = card.imageUrl();
-
-			JLabel lbl = new JLabel("Loading...", SwingConstants.CENTER);
-			lbl.setPreferredSize(new Dimension(CARD_W, CARD_H));
-			lbl.setMinimumSize(new Dimension(CARD_W, CARD_H));
-			lbl.setOpaque(true);
-			lbl.setBackground(Color.DARK_GRAY);
-			lbl.setForeground(Color.WHITE);
-			lbl.setFont(FontLoader.loadPixelFont(10));
-			lbl.setBorder(BorderFactory.createLineBorder(Color.GRAY, 1));
-			lbl.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-
-			lbl.addMouseListener(new MouseAdapter() {
-				@Override public void mouseEntered(MouseEvent e) {
-					cancelHandPopupHide();
-					showHandCardZoom(url);
-				}
-				@Override public void mouseExited(MouseEvent e) {
-					hideZoom();
-					scheduleHandPopupHide();
-				}
-				@Override public void mousePressed(MouseEvent e) {
-					onHandPopupCardClicked(idx, card, lbl, e);
-				}
-			});
-
-			int effectiveCost = effectiveCastCost(card);
-			int delta = card.cost() - effectiveCost;
-
-			boolean handCanPlayAction = castTimingWindowOpen(card);
-			boolean handIsCharacter = card.isForward() || card.isBackup() || card.isMonster();
-			boolean handNameConflict = handIsCharacter && !card.multicard() && hasCharacterNameOnField(card.name()) && !isMultiNameExceptionActive(card.name(), true);
-			boolean handLightDarkConflict = handIsCharacter && isLightDarkConflict(card);
-			final boolean canPlay = handCanPlayAction && !handNameConflict && !handLightDarkConflict
-					&& canAffordCard(card, idx) && (!card.isBackup() || hasAvailableBackupSlot()) && castRestrictionMet(card)
-					&& (!card.isSummon() || !summonCastingProhibited()) && !p1CastLimitReached();
-
-			// Load image async; bake cost pill into the image when cost differs from base
-			new SwingWorker<ImageIcon, Void>() {
-				@Override protected ImageIcon doInBackground() throws Exception {
-					Image img = ImageCache.load(url);
-					if (img == null) return null;
-					BufferedImage bi = CardAnimation.toARGB(img, CARD_W, CARD_H);
-					if (delta != 0 || canPlay) {
-						Graphics2D g2 = bi.createGraphics();
-						g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-						if (delta != 0) {
-							String text = String.valueOf(effectiveCost);
-							g2.setFont(FontLoader.loadOverlayFont(15));
-							FontMetrics fm = g2.getFontMetrics();
-							int x = 8, y = fm.getAscent() + 7;
-							g2.setColor(Color.BLACK);
-							g2.drawString(text, x + 1, y + 1);
-							g2.drawString(text, x + 2, y + 1);
-							g2.drawString(text, x + 1, y + 2);
-							g2.drawString(text, x + 2, y + 2);
-							g2.setColor(delta > 0 ? new Color(0x44EE44) : new Color(0xFF8844));
-							g2.drawString(text, x, y);
-						}
-						if (canPlay) {
-							CardAnimation.drawGlow(g2, new Color(30, 144, 255), 0, 0, CARD_W, CARD_H);
-						}
-						g2.dispose();
-					}
-					return new ImageIcon(bi);
-				}
-				@Override protected void done() {
-					try {
-						ImageIcon icon = get();
-						if (icon != null) { lbl.setIcon(icon); lbl.setText(null); }
-					} catch (InterruptedException | ExecutionException ignored) {}
-				}
-			}.execute();
-
-			cardsPanel.add(lbl);
-		}
-
-		handPopup.getContentPane().add(cardsPanel);
-		handPopup.pack();
-
-		// Position above the hand panel: extend right for left sidebar, left for right sidebar
-		Point loc = handPanel.getLocationOnScreen();
-		Dimension screen = Toolkit.getDefaultToolkit().getScreenSize();
-		boolean sidebarOnRight = "right".equals(AppSettings.getSidePanelSide());
-		int x = sidebarOnRight
-				? loc.x + handPanel.getWidth() - handPopup.getWidth()
-				: loc.x;
-		int y = loc.y - handPopup.getHeight() - 4;
-		x = Math.max(0, Math.min(x, screen.width  - handPopup.getWidth()));
-		y = Math.max(0, Math.min(y, screen.height - handPopup.getHeight()));
-		handPopup.setLocation(x, y);
-		handPopup.setVisible(true);
+		if (handIdx < 0 || handIdx >= hand.size()) { hideZoom(); return; }
+		showHandCardZoom(hand.get(handIdx).imageUrl());
 	}
 
-	/** Dismisses the hand popover after a short delay (cancelled if mouse re-enters). */
-	private void scheduleHandPopupHide() {
-		if (handCardMenuOpen) return;
-		if (handPopupHideTimer != null) handPopupHideTimer.stop();
-		handPopupHideTimer = new Timer(120, e -> {
-			if (handPopup != null) { handPopup.dispose(); handPopup = null; }
-			handPopupHideTimer = null;
-		});
-		handPopupHideTimer.setRepeats(false);
-		handPopupHideTimer.start();
+	/** Opens the card's menu where it was clicked in the fan. */
+	private void onHandCardPressed(int handIdx, MouseEvent e) {
+		List<CardData> hand = gameState.getP1Hand();
+		if (handIdx < 0 || handIdx >= hand.size()) return;
+		onHandCardClicked(handIdx, hand.get(handIdx), p1HandFan, e);
 	}
 
-	private void cancelHandPopupHide() {
-		if (handPopupHideTimer != null) { handPopupHideTimer.stop(); handPopupHideTimer = null; }
+	/**
+	 * Says that something feeding a card's cost or castability has moved, so the fan should ask
+	 * again. The answers themselves come from {@link #handCardState(int)} during the repaint.
+	 */
+	private void refreshHandCardStates() {
+		if (p1HandFan != null) p1HandFan.repaint();
 	}
 
-	private void refreshHandPopupIfVisible() {
-		if (handPopup == null || !handPopup.isVisible()) return;
-		handPopup.dispose();
-		handPopup = null;
-		showHandPopup();
-	}
-
-	private void onHandPopupCardClicked(int handIdx, CardData card, JLabel cardLabel, MouseEvent e) {
+	/**
+	 * The menu of everything a card in hand can do: play it, play it by each alternative route it
+	 * offers, or use an ability it has while held.
+	 *
+	 * <p>{@code over} is the component the menu hangs off — the fan — and {@code e} carries the
+	 * point within it that was clicked, so the menu opens on the card rather than at its corner.
+	 */
+	private void onHandCardClicked(int handIdx, CardData card, JComponent over, MouseEvent e) {
 		if (gameState.isP1GameOver()) return;
-		cancelHandPopupHide();
-		handCardMenuOpen = true;
+		// The menu takes the pointer off the fan at once; without this the card drops mid-decision.
+		if (p1HandFan != null) p1HandFan.setHoverFrozen(true);
 
 		JPopupMenu menu = new JPopupMenu();
 
@@ -7071,12 +7001,9 @@ public class MainWindow {
 		boolean isCharacter = card.isForward() || card.isBackup() || card.isMonster();
 		boolean nameConflict = isCharacter && !card.multicard() && hasCharacterNameOnField(card.name()) && !isMultiNameExceptionActive(card.name(), true);
 		boolean lightDarkConflict = isCharacter && isLightDarkConflict(card);
-		playItem.setEnabled(canPlaySpecialAction && !nameConflict && !lightDarkConflict && canAffordCard(card, handIdx)
-				&& (!card.isBackup() || hasAvailableBackupSlot()) && castRestrictionMet(card)
-				&& (!card.isSummon() || !summonCastingProhibited()) && !p1CastLimitReached());
+		playItem.setEnabled(canCastFromHand(card, handIdx));
 		playItem.addActionListener(ae -> {
 			hideZoom();
-			if (handPopup != null) { handPopup.dispose(); handPopup = null; }
 			showPaymentDialog(card, handIdx);
 		});
 		menu.add(playItem);
@@ -7087,7 +7014,6 @@ public class MainWindow {
 					&& (!card.isSummon() || !summonCastingProhibited()) && !p1CastLimitReached());
 			warpItem.addActionListener(ae -> {
 				hideZoom();
-				if (handPopup != null) { handPopup.dispose(); handPopup = null; }
 				showWarpPaymentDialog(card, handIdx);
 			});
 			menu.add(warpItem);
@@ -7102,7 +7028,6 @@ public class MainWindow {
 					&& canAffordCard(card, handIdx) && canAffordExtraCost(card, handIdx, ec) && !p1CastLimitReached());
 			ecItem.addActionListener(ae -> {
 				hideZoom();
-				if (handPopup != null) { handPopup.dispose(); handPopup = null; }
 				showExtraCostPlayDialog(card, handIdx, ec);
 			});
 			menu.add(ecItem);
@@ -7138,7 +7063,6 @@ public class MainWindow {
 					&& (!card.isBackup() || hasAvailableBackupSlot()) && castRestrictionMet(card) && !p1CastLimitReached());
 			altItem.addActionListener(ae -> {
 				hideZoom();
-				if (handPopup != null) { handPopup.dispose(); handPopup = null; }
 				showAltCostPlayDialog(card, handIdx);
 			});
 			menu.add(altItem);
@@ -7152,7 +7076,6 @@ public class MainWindow {
 					&& (!card.isSummon() || !summonCastingProhibited()) && !p1CastLimitReached());
 			dItem.addActionListener(ae -> {
 				hideZoom();
-				if (handPopup != null) { handPopup.dispose(); handPopup = null; }
 				showFieldDiscardCastDialog(card, handIdx, grant);
 			});
 			menu.add(dItem);
@@ -7168,7 +7091,6 @@ public class MainWindow {
 			item.setEnabled(abilityEnabled);
 			item.addActionListener(ae -> {
 				hideZoom();
-				if (handPopup != null) { handPopup.dispose(); handPopup = null; }
 				autoAbilityTriggers.showActionAbilityPaymentDialog(ability, card, () -> {}, true);
 			});
 			menu.add(item);
@@ -7176,16 +7098,22 @@ public class MainWindow {
 
 		menu.addPopupMenuListener(new PopupMenuListener() {
 			@Override public void popupMenuWillBecomeVisible(PopupMenuEvent e) {}
-			@Override public void popupMenuCanceled(PopupMenuEvent e) {
-				handCardMenuOpen = false;
-			}
-			@Override public void popupMenuWillBecomeInvisible(PopupMenuEvent e) {
-				handCardMenuOpen = false;
-				scheduleHandPopupHide();
-			}
+			@Override public void popupMenuCanceled(PopupMenuEvent e) { releaseHandHover(); }
+			@Override public void popupMenuWillBecomeInvisible(PopupMenuEvent e) { releaseHandHover(); }
 		});
 
-		menu.show(cardLabel, e.getX(), e.getY());
+		menu.show(over, e.getX(), e.getY());
+	}
+
+	/**
+	 * Lets the fan follow the pointer again once a card menu has closed.
+	 *
+	 * <p>Deferred to the end of the event queue because the menu is still on screen while it is
+	 * becoming invisible, and a hover re-read taken then finds the menu rather than the fan.
+	 */
+	private void releaseHandHover() {
+		if (p1HandFan == null) return;
+		SwingUtilities.invokeLater(() -> p1HandFan.setHoverFrozen(false));
 	}
 
 	/** Shows a preview of a hand card in the side panel. */
@@ -7656,7 +7584,7 @@ public class MainWindow {
 		if (card.cost() > 0)
 			logEntry((isP1 ? "" : "[P2] ") + "Doublecast — Summons of cost "
 					+ (card.cost() - 1) + " or less now cast free");
-		refreshHandPopupIfVisible();
+		refreshHandCardStates();
 	}
 
 	List<CardData> drawP1Cards(int count) {
@@ -9313,7 +9241,7 @@ public class MainWindow {
 		if (card.isSummon()) {
 			playerTurn.summonCastThisTurn = true;
 			noteDoublecastSummonCast(isP1, card);
-			if (isP1) refreshHandPopupIfVisible();
+			if (isP1) refreshHandCardStates();
 		}
 		logEntry((isP1 ? "Played \"" : "[P2] Played \"") + card.name() + "\"");
 
@@ -9496,7 +9424,7 @@ public class MainWindow {
 		if (card.isSummon()) {
 			p1Turn.summonCastThisTurn = true;
 			noteDoublecastSummonCast(true, card);
-			refreshHandPopupIfVisible();
+			refreshHandCardStates();
 		}
 		logEntry("Played \"" + card.name() + "\" from " + sourceLabel);
 
@@ -9964,7 +9892,7 @@ public class MainWindow {
 			if (stackCountdownTimer != null) stackCountdownTimer.stop();
 			respondBtn.setEnabled(false);
 			p1IsRespondingToStack = true;
-			refreshHandPopupIfVisible();
+			refreshHandCardStates();
 
 			// No time limit on the response window when P2 is a CPU
 			if (isP2Cpu()) {
@@ -10044,7 +9972,11 @@ public class MainWindow {
 					effectText = ActionResolver.stripExtraCostClause(effectText);
 				}
 
-				logEntry("[Summon] Resolving \"" + entry.source().name() + "\": " + effectText);
+				// "EX BURST" belongs on the line only when the Summon actually resolved off one;
+				// on an ordinary cast it is a property of the card, not of what is happening.
+				String loggedText = entry.isExBurstEntry()
+						? effectText : ActionResolver.stripExBurstPrefix(effectText);
+				logEntry("[Summon] Resolving \"" + entry.source().name() + "\": " + loggedText);
 				Consumer<GameContext> effect = ActionResolver.parse(effectText, entry.source(), entry.xValue());
 				if (effect != null) {
 					// Targets were chosen when the Summon went on the Stack, so the opponent could
@@ -14218,7 +14150,7 @@ public class MainWindow {
 
 		refreshP1ForwardSlot(idx);
 		if (!card.fieldPowerGrants().isEmpty()) refreshFieldGrantDependents(true);
-		if (!card.fieldCostReductions().isEmpty() || p1HandHasSelfCostModifiers()) refreshHandPopupIfVisible();
+		if (!card.fieldCostReductions().isEmpty() || p1HandHasSelfCostModifiers()) refreshHandCardStates();
 		fieldEntryAnimator.fireEntersField(card, true, paidExtraCost);
 		syncBzForwardPlayables(true);
 		sendToBreakZoneByUniquenessRule(card, true);
@@ -15522,7 +15454,7 @@ public class MainWindow {
 		p1PriorityInP2MainOnDone = onPass;
 		if (nextPhaseButton != null) nextPhaseButton.setEnabled(true);
 		// P2 passes on a timer, so the hand popover may already be open — restate what is castable now.
-		refreshHandPopupIfVisible();
+		refreshHandCardStates();
 		logEntry("[Priority] P2 passes — you may cast Summons or use abilities. Click Next Phase to pass.");
 	}
 
@@ -15546,7 +15478,7 @@ public class MainWindow {
 		logEntry(lead + "Use an ability or summon, or pass priority with 'Next'");
 		p1CombatPriorityOnPass = onPass;
 		if (nextPhaseButton != null) nextPhaseButton.setEnabled(true);
-		refreshHandPopupIfVisible();   // the window just opened — recolour what is castable
+		refreshHandCardStates();   // the window just opened — recolour what is castable
 		refreshAttackButton();   // Skip is not a legal action while holding priority mid-combat
 	}
 
@@ -17347,7 +17279,7 @@ public class MainWindow {
 
 		refreshP2ForwardSlot(idx);
 		if (!card.fieldPowerGrants().isEmpty()) refreshFieldGrantDependents(false);
-		if (!card.fieldCostReductions().isEmpty() || p1HandHasSelfCostModifiers()) refreshHandPopupIfVisible();
+		if (!card.fieldCostReductions().isEmpty() || p1HandHasSelfCostModifiers()) refreshHandCardStates();
 		fieldEntryAnimator.fireEntersField(card, false, false);
 		syncBzForwardPlayables(false);
 		sendToBreakZoneByUniquenessRule(card, false);

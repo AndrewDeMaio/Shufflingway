@@ -559,6 +559,7 @@ class ComputerPlayer implements OpponentController {
 				if (!c.isSummon()) continue;
 				if (ActionResolver.cancelsAutoAbility(c.summonEffect()) && !p1HasAutoAbilityOnStack) continue;
 				if (!mw.castRestrictionMet(c, false)) continue;
+				if (!summonHasSomethingToHit(c)) continue;
 				summonCands.add(i);
 			}
 			summonCands.sort((a, b) -> hand.get(b).cost() - hand.get(a).cost());
@@ -754,6 +755,38 @@ class ComputerPlayer implements OpponentController {
 	private boolean p2BackupCanPay(CardData[] backups, int slot) {
 		return backups[slot] != null && mw.p2BackupStates[slot] == CardState.ACTIVE
 				&& !mw.p2BackupFrozen[slot];
+	}
+
+	/**
+	 * Whether casting {@code summon} would accomplish anything, given what is on the board.
+	 *
+	 * <p>A Summon whose whole effect is "Choose 1 Forward. Deal it 4000 damage." resolves into an
+	 * empty row as a no-op: the CP is spent, the card goes to the Break Zone, and nothing happens.
+	 * Left unchecked P2 casts such a Summon every turn it can afford one, because nothing else in
+	 * the plan looks at whether the effect has anywhere to land.
+	 *
+	 * <p>Only Summons that need a target are held back — see
+	 * {@link ActionResolver#summonTargetRequirement}, which reports nothing for a Summon that is
+	 * worth casting regardless, and for one it cannot read.
+	 */
+	private boolean summonHasSomethingToHit(CardData summon) {
+		ActionResolver.SummonTargetNeed need =
+				ActionResolver.summonTargetRequirement(summon.summonEffect());
+		if (need == null) return true;
+		// "you control" / "opponent controls" are read from P2's seat, since P2 is the caster.
+		boolean own = !need.oppOnly() && countFieldCards(false, need) > 0;
+		boolean opp = !need.ownOnly() && countFieldCards(true,  need) > 0;
+		return own || opp;
+	}
+
+	/** Counts the cards on one player's field that would answer {@code need}. */
+	private int countFieldCards(boolean isP1, ActionResolver.SummonTargetNeed need) {
+		int n = 0;
+		if (need.forwards()) n += (isP1 ? mw.p1ForwardCards : mw.p2ForwardCards).size();
+		if (need.monsters()) n += (isP1 ? mw.p1MonsterCards : mw.p2MonsterCards).size();
+		if (need.backups())
+			for (CardData b : isP1 ? mw.p1BackupCards : mw.p2BackupCards) if (b != null) n++;
+		return n;
 	}
 
 	/**

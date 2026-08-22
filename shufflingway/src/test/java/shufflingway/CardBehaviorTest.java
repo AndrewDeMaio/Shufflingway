@@ -30051,4 +30051,107 @@ public class CardBehaviorTest {
 				"face down belongs to one stay in the zone, not to the card");
 	}
 
+
+	// =========================================================================================
+	// Casting a Summon into an empty board, and saying so in the log.
+	//
+	// P2 cast Ifrit 1-004C ("Choose 1 Forward. Deal it 4000 damage.") turn after turn with no
+	// Forward anywhere to hit: the CP went, the card went to the Break Zone, nothing happened.
+	// Nothing in the AI's plan asked whether the effect had anywhere to land.
+	//
+	// The check has to be one-sided. A Summon that also does something untargeted — "Draw 1
+	// card", "All the Fire Forwards you control gain +2000 power" — is still worth casting into
+	// an empty board, and about a third of the Summons opening with a mandatory choice are of
+	// that kind. Declining to cast one of those is a worse mistake than the bug being fixed, so
+	// anything this cannot read confidently stays castable.
+	//
+	// The same log line carried "EX BURST" into an ordinary cast, which is a property of the
+	// card rather than a description of what is resolving.
+	// =========================================================================================
+
+	/** The reported card: its whole effect is the chosen Forward. */
+	private static final String IFRIT_1_004C = "[[ex]]EX BURST[[/]] Choose 1 Forward. Deal it 4000 damage.";
+
+	private static ActionResolver.SummonTargetNeed needFor(String text) {
+		return ActionResolver.summonTargetRequirement(text);
+	}
+
+	@Test
+	void aSummonThatIsOnlyItsTargetNeedsOne() {
+		ActionResolver.SummonTargetNeed need = needFor(IFRIT_1_004C);
+		assertNotNull(need, "with no Forward to choose, casting Ifrit does nothing at all");
+		assertTrue(need.forwards(), "a Forward is what would answer the choice");
+		assertFalse(need.backups(),  "and a Backup would not");
+		assertFalse(need.monsters(), "nor a Monster");
+		assertFalse(need.ownOnly(), "the choice names either player's Forwards");
+		assertFalse(need.oppOnly());
+	}
+
+	@Test
+	void aSummonThatAlsoDoesSomethingUntargetedIsStillWorthCasting() {
+		assertNull(needFor("Choose 1 Forward. Deal it 3000 damage. Draw 1 card."),
+				"the draw happens whether or not there was a Forward");
+		assertNull(needFor("Choose 1 Forward. Deal it 8000 damage. "
+				+ "All the Fire Forwards you control gain +2000 power until the end of the turn."),
+				"so does the power grant");
+	}
+
+	@Test
+	void chooseUpToIsAlreadySatisfiedByChoosingNothing() {
+		assertNull(needFor("Choose up to 2 Forwards opponent controls. Deal them 10000 damage."),
+				"choosing none is a legal choice, so an empty board is not a wasted cast");
+	}
+
+	@Test
+	void aChoiceOutsideTheFieldIsNotAnsweredByWhatIsOnIt() {
+		assertNull(needFor("Choose 1 Forward in your Break Zone. Return it to your hand."),
+				"the Break Zone is not the board, and this check cannot speak to it");
+		assertNull(needFor("Choose 1 auto-ability. Cancel its effect."),
+				"an auto-ability is not a Character");
+	}
+
+	@Test
+	void theSideTheChoiceNamesIsCarried() {
+		ActionResolver.SummonTargetNeed own = needFor("Choose 1 Forward you control. Dull it. "
+				+ "It cannot be broken this turn.");
+		assertNotNull(own);
+		assertTrue(own.ownOnly(),  "only the caster's own Forwards answer this one");
+		assertFalse(own.oppOnly());
+
+		ActionResolver.SummonTargetNeed opp = needFor("Choose 1 Forward opponent controls. Break it.");
+		assertNotNull(opp);
+		assertTrue(opp.oppOnly());
+		assertFalse(opp.ownOnly());
+	}
+
+	@Test
+	void aCharacterChoiceIsAnsweredByAnyOfTheThree() {
+		ActionResolver.SummonTargetNeed need = needFor("Choose 1 Character. Break it.");
+		assertNotNull(need);
+		assertTrue(need.forwards() && need.backups() && need.monsters(),
+				"\"Character\" covers Forwards, Backups and Monsters alike");
+	}
+
+	// --- What the log says ---------------------------------------------------------------
+
+	@Test
+	void theExBurstMarkerIsNotPartOfTheEffect() {
+		String effect = "Choose 1 Forward. Deal it 4000 damage.";
+		assertEquals(effect, ActionResolver.stripExBurstPrefix("EX BURST " + effect),
+				"the bare form summonEffect() leaves behind once it has taken the opening tag");
+		assertEquals(effect, ActionResolver.stripExBurstPrefix("[[ex]]EX BURST[[/]] " + effect));
+		assertEquals(effect, ActionResolver.stripExBurstPrefix("[[ex]]EX BURST[[/]]" + effect));
+		assertEquals(effect, ActionResolver.stripExBurstPrefix("[[ex]]EX BURST [[/]]" + effect),
+				"2-002C and 4-003C put the space inside the tag");
+	}
+
+	@Test
+	void textWithoutTheMarkerIsLeftAlone() {
+		String plain = "Choose 1 Forward. Deal it 8000 damage.";
+		assertEquals(plain, ActionResolver.stripExBurstPrefix(plain));
+		String mentions = "Choose 1 Forward. If Ifrit results from an EX Burst, deal it 8000 damage instead.";
+		assertEquals(mentions, ActionResolver.stripExBurstPrefix(mentions),
+				"7-005C talks about EX Bursts in its effect; only a leading marker is a marker");
+	}
+
 }
