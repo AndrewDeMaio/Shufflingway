@@ -915,4 +915,29 @@ final class ActionResolverPower {
                 ctx.reduceSourceForward(source, amount, noTraits);
         };
     }
+
+    /**
+     * Parses "Until the end of the turn, all the Forwards opponent controls lose [traits]." -
+     * 15-022C Amidatelion, which strips keywords off the whole opposing board.
+     *
+     * <p>Built out of the per-target trait removal rather than a new mass primitive:
+     * {@code reduceTarget} already takes the trait set, and a 0 power change makes it a
+     * trait-only edit. Iterating backwards keeps the indices valid, in step with every other
+     * whole-board effect here - though nothing removed by a trait strip can leave the field, so
+     * the ordering is belt and braces.
+     */
+    static Consumer<GameContext> tryParseAllOppForwardsLoseTraitsEot(String text) {
+        Matcher m = ALL_OPP_FORWARDS_LOSE_TRAITS_EOT.matcher(text.trim());
+        if (!m.matches()) return null;
+        EnumSet<CardData.Trait> traits = parseTraits(m.group("traits"));
+        if (traits.isEmpty()) return null;
+        return ctx -> {
+            ctx.logEntry("Effect: all opponent Forwards lose " + traits + " until end of turn");
+            boolean oppIsP1 = !ctx.isP1();
+            int count = oppIsP1 ? ctx.p1ForwardCount() : ctx.p2ForwardCount();
+            for (int i = count - 1; i >= 0; i--) {
+                ctx.reduceTarget(new ForwardTarget(oppIsP1, i, ForwardTarget.CardZone.FORWARD), 0, traits);
+            }
+        };
+    }
 }

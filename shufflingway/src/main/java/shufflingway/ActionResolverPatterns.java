@@ -972,6 +972,53 @@ final class ActionResolverPatterns {
         "|remove\\s+from\\s+the\\s+game|return\\s+to\\s+its\\s+owner'?s\\s+hand)" +
         "\\s+the\\s+other\\.?$"
     );
+    /**
+     * Matches "Break [Self] as well as the Forward that blocks or is blocked by [Self]." —
+     * 2-114C Ninja, which trades itself for whatever it is in Battle with.
+     *
+     * <p>Both names are captured so the parser can check them against the source: the sentence
+     * only means the source card, and reading it off a text naming something else would break the
+     * wrong pair.
+     */
+    static final Pattern BREAK_SELF_AND_BATTLE_PARTNER = Pattern.compile(
+        "(?i)^Break\\s+(?<name>.+?)\\s+as\\s+well\\s+as\\s+the\\s+Forward\\s+that\\s+" +
+        "blocks\\s+or\\s+is\\s+blocked\\s+by\\s+(?<name2>.+?)[.!]?$"
+    );
+    /**
+     * Matches "Until the end of the turn, all the Forwards opponent controls lose &lt;traits&gt;." —
+     * 15-022C Amidatelion, whose whole ability is stripping keywords off the opposing board.
+     *
+     * <p>Distinct from {@link #ALL_FIELD_POWER_BOOST_PATTERN}, which spells the same "all the
+     * Forwards … lose" shape but requires a power figure: this one moves no power at all, so that
+     * pattern could never reach it.
+     */
+    static final Pattern ALL_OPP_FORWARDS_LOSE_TRAITS_EOT = Pattern.compile(
+        "(?i)^Until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn,\\s+all\\s+(?:the\\s+)?Forwards?\\s+" +
+        "(?:your\\s+)?opponent\\s+controls\\s+lose\\s+" +
+        "(?<traits>(?:Haste|First\\s+Strike|Brave)" +
+        "(?:\\s*,\\s*(?:and\\s+)?(?:Haste|First\\s+Strike|Brave))*" +
+        "(?:\\s+and\\s+(?:Haste|First\\s+Strike|Brave))?)[.!]?$"
+    );
+    /**
+     * Matches "Remove [Self] from the game. At the beginning of your next Main Phase 1, play
+     * [Self] onto the field." — 23-051L Hope's self-blink across the turn boundary.
+     *
+     * <p>Must be read as one sentence pair: on its own the first half is an ordinary
+     * remove-from-game, which is exactly what used to happen — Hope left and never came back.
+     */
+    static final Pattern REMOVE_SELF_RETURN_NEXT_MAIN_PHASE_1 = Pattern.compile(
+        "(?i)^Remove\\s+(?<name>.+?)\\s+from\\s+(?:the\\s+)?game\\.\\s+" +
+        "At\\s+the\\s+beginning\\s+of\\s+your\\s+next\\s+Main\\s+Phase\\s+1,\\s+" +
+        "play\\s+(?<name2>.+?)\\s+onto\\s+the\\s+field[.!]?$"
+    );
+    /**
+     * Matches "When that Forward leaves the field this turn, put [Self] into the Break Zone." —
+     * the drawback half of 7-055R Chocobo's power lend, attached to the Forward just chosen.
+     */
+    static final Pattern SECONDARY_WHEN_TARGET_LEAVES_PUT_SELF_TO_BZ = Pattern.compile(
+        "(?i)^When\\s+that\\s+(?:Forward|Character)\\s+leaves\\s+the\\s+field\\s+this\\s+turn,\\s+" +
+        "put\\s+(?<name>.+?)\\s+into\\s+the\\s+Break\\s+Zone[.!]?$"
+    );
     /** Matches "Break it" or "Break them". */
     static final Pattern FOLLOWUP_BREAK = Pattern.compile(
         "(?i)Break\\s+(?:it|them)"

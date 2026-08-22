@@ -608,6 +608,17 @@ final class GameContextImpl implements GameContext {
 						+ (isP1 ? "P1" : "P2") + " draws " + count);
 			}
 
+			@Override public void markTargetPutSourceToBzOnLeaveThisTurn(ForwardTarget t, CardData source) {
+				if (t.zone() != ForwardTarget.CardZone.FORWARD || source == null) return;
+				CardData borrower = mw.autoAbilityTriggers.fieldCardData(t);
+				if (borrower == null) return;
+				mw.putIntoBzWhenLeavesFieldThisTurn
+						.computeIfAbsent(borrower, k -> new ArrayList<>())
+						.add(source);
+				logEntry((t.isP1() ? "" : "[P2] ") + borrower.name()
+						+ " — when it leaves the field this turn, " + source.name() + " → Break Zone");
+			}
+
 			@Override public void dullSourceForward(CardData source) {
 				List<CardData> fwds = isP1 ? mw.p1ForwardCards : mw.p2ForwardCards;
 				for (int i = 0; i < fwds.size(); i++) {
@@ -5164,6 +5175,35 @@ final class GameContextImpl implements GameContext {
 					}
 					return -1;
 				}
+
+			@Override public ForwardTarget combatBattlePartnerOf(String cardName) {
+				// Attacking half: the named card is the attacker one of the blockers points at.
+				if (mw.p2BlockedByAttacker != null
+						&& mw.p2BlockedByAttacker.name().equalsIgnoreCase(cardName)
+						&& mw.p2BlockingIdx >= 0)
+					return new ForwardTarget(false, mw.p2BlockingIdx, ForwardTarget.CardZone.FORWARD);
+				if (mw.p1BlockedByAttacker != null
+						&& mw.p1BlockedByAttacker.name().equalsIgnoreCase(cardName)
+						&& mw.p1BlockingIdx >= 0)
+					return new ForwardTarget(true, mw.p1BlockingIdx, ForwardTarget.CardZone.FORWARD);
+
+				// Blocking half: the named card is the blocker, so the partner is the attacker it
+				// blocks. That attacker is held as a CardData, so its index is looked up on the
+				// side opposite the blocker.
+				if (mw.p1BlockingIdx >= 0 && mw.p1BlockingIdx < mw.p1ForwardCards.size()
+						&& mw.p1ForwardCards.get(mw.p1BlockingIdx).name().equalsIgnoreCase(cardName)
+						&& mw.p1BlockedByAttacker != null) {
+					int idx = mw.p2ForwardCards.indexOf(mw.p1BlockedByAttacker);
+					if (idx >= 0) return new ForwardTarget(false, idx, ForwardTarget.CardZone.FORWARD);
+				}
+				if (mw.p2BlockingIdx >= 0 && mw.p2BlockingIdx < mw.p2ForwardCards.size()
+						&& mw.p2ForwardCards.get(mw.p2BlockingIdx).name().equalsIgnoreCase(cardName)
+						&& mw.p2BlockedByAttacker != null) {
+					int idx = mw.p1ForwardCards.indexOf(mw.p2BlockedByAttacker);
+					if (idx >= 0) return new ForwardTarget(true, idx, ForwardTarget.CardZone.FORWARD);
+				}
+				return null;
+			}
 
 			@Override public int effectiveTargetPower(ForwardTarget t) {
 				if (t.zone() == ForwardTarget.CardZone.BACKUP) return 0;

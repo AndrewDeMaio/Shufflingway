@@ -247,4 +247,37 @@ final class ActionResolverBreak {
             ctx.playAllByNameFromOwnBreakZoneDull(name, dull);
         };
     }
+
+    /**
+     * Parses "Break [Self] as well as the Forward that blocks or is blocked by [Self]." -
+     * 2-114C Ninja, a Forward that trades itself for whatever it is in Battle with.
+     *
+     * <p>The partner is resolved at resolution time rather than chosen: the text names it by its
+     * role in the current Battle, and that pairing can change between activation and resolution.
+     * Both halves of the sentence must name the source, which is what keeps this off any text
+     * describing some other card's Battle.
+     *
+     * <p>Ninja breaks whether or not it is in a Battle - "break [Self]" is unconditional, and
+     * only the second half depends on there being a partner.
+     */
+    static Consumer<GameContext> tryParseBreakSelfAndBattlePartner(String text, CardData source) {
+        if (source == null) return null;
+        Matcher m = BREAK_SELF_AND_BATTLE_PARTNER.matcher(text.trim());
+        if (!m.matches()) return null;
+        String name = m.group("name").trim();
+        if (!name.equalsIgnoreCase(source.name())) return null;
+        if (!m.group("name2").trim().equalsIgnoreCase(source.name())) return null;
+        return ctx -> {
+            ForwardTarget partner = ctx.combatBattlePartnerOf(name);
+            if (partner == null) {
+                ctx.logEntry("Effect: " + name + " is not in a Battle - only " + name + " breaks");
+            } else {
+                ctx.logEntry("Effect: Break " + name + " and the Forward it is in Battle with");
+                ctx.breakTarget(partner);
+            }
+            // After the partner: breaking the source first would shift the indices the partner
+            // target was resolved against when both are on the same side of the field.
+            ctx.breakSourceCard(source);
+        };
+    }
 }

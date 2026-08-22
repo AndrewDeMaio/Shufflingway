@@ -1097,6 +1097,18 @@ public interface GameContext {
     void markTargetDrawOnFieldToBzThisTurn(ForwardTarget t, int count);
 
     /**
+     * Marks the Forward at {@code t} so that when it leaves the field this turn, {@code source} is
+     * put into the Break Zone — 7-055R Chocobo, which lends +3000 power and follows the borrower
+     * off the field if it goes.
+     *
+     * <p>Fires on leaving the field by any route, not just the Break Zone one, which is what the
+     * printed "leaves the field" says and what separates it from
+     * {@link #markTargetDrawOnFieldToBzThisTurn}. The mark is dropped with the rest of the turn's
+     * state, so a borrower that survives the turn costs nothing.
+     */
+    void markTargetPutSourceToBzOnLeaveThisTurn(ForwardTarget t, CardData source);
+
+    /**
      * Arms {@link #markTargetDrawOnFieldToBzThisTurn} to be applied to the next set of targets
      * chosen through this context, so the mark lands between choosing a target and acting on it.
      */
@@ -1466,6 +1478,17 @@ public interface GameContext {
      * Returns {@code -1} if there is no current blocker for that card.
      */
     int combatBlockerIdxForAttacker(String attackerName, boolean attackerIsP1);
+
+    /**
+     * Returns the Forward paired with {@code cardName} in the current Battle — the one blocking it
+     * if it is the attacker, or the one it is blocking if it is the blocker — or {@code null} when
+     * the named card is not in a Battle or is unblocked.
+     *
+     * <p>Both directions, because 2-114C Ninja's "the Forward that blocks <b>or is blocked by</b>
+     * Ninja" names one Forward through either role, and the ability can be activated from either
+     * side of the pairing. {@link #combatBlockerIdxForAttacker} answers only the attacking half.
+     */
+    ForwardTarget combatBattlePartnerOf(String cardName);
 
     /**
      * Returns the effective power of the Forward that was dulled as a "Dull N active Forward"

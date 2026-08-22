@@ -862,6 +862,17 @@ public class MainWindow {
 	 * specific card instance, and holding a list keeps two marks on the same card from cancelling.
 	 */
 	final Map<CardData, List<PendingBzDraw>> drawOnFieldToBzThisTurn = new HashMap<>();
+	/**
+	 * Cards marked so that when they leave the field this turn, the cards listed against them are
+	 * put into the Break Zone — 7-055R Chocobo, which lends a Forward +3000 power and follows it
+	 * into the Break Zone if that Forward goes.
+	 *
+	 * <p>Keyed by the marked card and holding a list, like the draw marks above, so two Chocobos
+	 * lending to the same Forward both pay. Distinct from that map in when it fires: this one
+	 * hangs off <em>leaving the field</em> by any route, not only the Break Zone one, so returning
+	 * the borrower to hand or removing it from the game collects the debt just the same.
+	 */
+	final Map<CardData, List<CardData>> putIntoBzWhenLeavesFieldThisTurn = new IdentityHashMap<>();
 	/** Maps a card to a permanent element override (Kam'lanaut ability); persists across turns. */
 	final Map<CardData, String> elementOverrideMap      = new HashMap<>();
 	/** Maps a card to a permanently-granted extra job (e.g. Bartz ability); persists across turns. */
@@ -2953,7 +2964,7 @@ public class MainWindow {
                                 perCardIncomingDmgMultiplierMap.clear();
                                 p1Turn.forwardIncomingDmgMult = 1;      p2Turn.forwardIncomingDmgMult = 1;
                                 p1Turn.abilityOutgoingDmgMult = 1;      p2Turn.abilityOutgoingDmgMult = 1;
-                                cannotBeChosenBySummons.clear();  cannotBeChosenByAbilities.clear();  cannotBeChosenBySummonsAnyone.clear();  cannotBeChosenByElement.clear();  nullifyElementDamageMap.clear();  nullifyElementDamageAbilityOnlyMap.clear();  rfgInsteadOfBzThisTurn.clear();  drawOnFieldToBzThisTurn.clear();  damagedBySourcesThisTurn.clear();
+                                cannotBeChosenBySummons.clear();  cannotBeChosenByAbilities.clear();  cannotBeChosenBySummonsAnyone.clear();  cannotBeChosenByElement.clear();  nullifyElementDamageMap.clear();  nullifyElementDamageAbilityOnlyMap.clear();  rfgInsteadOfBzThisTurn.clear();  drawOnFieldToBzThisTurn.clear();  putIntoBzWhenLeavesFieldThisTurn.clear();  damagedBySourcesThisTurn.clear();
                                 breaktouchBattleSet.clear();
                                 p1Turn.nonLethalProtection = false;    p2Turn.nonLethalProtection = false;
                                 p1Turn.dmgReductionDisabled = false;   p2Turn.dmgReductionDisabled = false;

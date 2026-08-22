@@ -1252,6 +1252,19 @@ final class ActionResolverChoose {
                             secondary = ctx -> ctx.lastChosenTargets().forEach(ctx::shieldCannotBeBrokenByNonDmg);
                         } else if (FOLLOWUP_IF_PUT_TO_BZ_THIS_TURN_RFG_INSTEAD.matcher(secondaryText).find()) {
                             secondary = ctx -> ctx.lastChosenTargets().forEach(ctx::markTargetRfgInsteadOfBzThisTurn);
+                        } else if (source != null
+                                && SECONDARY_WHEN_TARGET_LEAVES_PUT_SELF_TO_BZ.matcher(secondaryText).matches()) {
+                            // "When that Forward leaves the field this turn, put [Self] into the
+                            // Break Zone." — 7-055R Chocobo's drawback, armed on the Forward the
+                            // primary just lent power to. Without it Chocobo handed out a free
+                            // +3000 and kept its side of the bargain to itself.
+                            Matcher leaveM = SECONDARY_WHEN_TARGET_LEAVES_PUT_SELF_TO_BZ.matcher(secondaryText);
+                            leaveM.matches();
+                            String lender = leaveM.group("name").trim();
+                            secondary = lender.equalsIgnoreCase(source.name())
+                                    ? ctx -> ctx.lastChosenTargets()
+                                            .forEach(t -> ctx.markTargetPutSourceToBzOnLeaveThisTurn(t, source))
+                                    : null;
                         } else {
                             Matcher rfpM = SECONDARY_PLAY_REMOVED_ONTO_FIELD.matcher(secondaryText);
                             if (rfpM.find()) {

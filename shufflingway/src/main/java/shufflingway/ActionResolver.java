@@ -190,6 +190,13 @@ public class ActionResolver {
         result = tryParseRemoveSelfThenPlaySelfOntoField(effectText, source);
         if (result != null) return result;
 
+        // Must precede tryParseIndependentSentences for the same reason as the parser above, and
+        // it is the same shape a turn later: both of 23-051L Hope's sentences name Hope outright,
+        // so nothing refers back, the splitter accepts them and resolves them separately -- the
+        // removal happened and the clause returning Hope at the next Main Phase 1 was discarded.
+        result = tryParseRemoveSelfReturnNextMainPhase1(effectText, source);
+        if (result != null) return result;
+
         // Same reason, generalised: whichever sentence a pattern happens to match claims the whole
         // ability and the rest is discarded. Where every sentence stands alone, resolve them all.
         // Must stay ahead of the effect patterns for the same reason tryParseTrailingDraw does.
@@ -588,6 +595,12 @@ public class ActionResolver {
         result = tryParsePartyForwardsPowerBoost(effectText);
         if (result != null) return result;
 
+        // Must precede tryParseAllFieldPowerBoost only for tidiness -- that pattern needs a power
+        // figure and cannot claim a trait-only strip -- but the two describe the same board, so
+        // they are kept together.
+        result = tryParseAllOppForwardsLoseTraitsEot(effectText);
+        if (result != null) return result;
+
         result = tryParseAllFieldPowerBoost(effectText);
         if (result != null) return result;
 
@@ -855,6 +868,11 @@ public class ActionResolver {
         if (result != null) return result;
 
         result = tryParseRemoveNamedFromGame(effectText, source);
+        if (result != null) return result;
+
+        // Must precede tryParseBreakSourceCard: "Break Ninja as well as ..." opens with exactly
+        // the self-break that parser reads, so it would break Ninja and drop the partner.
+        result = tryParseBreakSelfAndBattlePartner(effectText, source);
         if (result != null) return result;
 
         result = tryParseBreakSourceCard(effectText, source);
@@ -1437,6 +1455,10 @@ public class ActionResolver {
         if (tryParseRemoveSelfThenPlaySelfOntoField(effectText, source) != null) return "RemoveSelfThenPlaySelfOntoField";
         // Mirrors parse()'s independent-sentence composition, so a composed ability is named for
         // every sentence that runs rather than for whichever single pattern this chain finds first.
+        // Must precede IndependentSentences, mirroring parse(): the splitter reports the removal
+        // alone and drops the return clause.
+        if (tryParseRemoveSelfReturnNextMainPhase1(effectText, source) != null)
+            return "RemoveSelfReturnNextMainPhase1";
         if (tryParseIndependentSentences(effectText, source, 0) != null) {
             String composed = composeOverSentences(effectText, s -> matchedPatternName(s, source));
             if (composed != null) return composed;
@@ -1571,6 +1593,7 @@ public class ActionResolver {
         }
         if (tryParseAllForwardsSameElementAsNamedPowerBoost(effectText) != null) return "AllForwardsSameElementAsNamedPowerBoost";
         if (tryParsePartyForwardsPowerBoost(effectText) != null) return "PartyForwardsPowerBoost";
+        if (tryParseAllOppForwardsLoseTraitsEot(effectText) != null) return "AllOppForwardsLoseTraitsEot";
         if (tryParseAllFieldPowerBoost(effectText) != null) return "AllFieldPowerBoost";
         if (tryParseAllFieldJobCardNamePowerBoost(effectText) != null) return "AllFieldJobCardNamePowerBoost";
         if (tryParseTwoCardNamesPowerBoost(effectText) != null) return "TwoCardNamesPowerBoost";
@@ -1656,6 +1679,10 @@ public class ActionResolver {
         // thing being removed from the game and would answer in this parser's place.
         if (tryParseRemoveWarpCountersFromNamed(effectText, source) != null) return "RemoveWarpCountersFromNamed";
         if (tryParseRemoveNamedFromGame(effectText, source)   != null) return "RemoveNamedFromGame";
+        // Must precede BreakSourceCard, mirroring parse(): the sentence opens with the plain
+        // self-break that parser reads.
+        if (tryParseBreakSelfAndBattlePartner(effectText, source) != null)
+            return "BreakSelfAndBattlePartner";
         if (tryParseBreakSourceCard(effectText, source)        != null) return "BreakSourceCard";
         if (tryParsePutSourceIntoBreakZone(effectText, source) != null) return "PutSourceIntoBreakZone";
         if (tryParseBreaksAfterCombatNoDamage(effectText, source) != null) return "BreaksAfterCombatNoDamage";
@@ -1898,6 +1925,10 @@ public class ActionResolver {
         if (FOLLOWUP_CANNOT_BE_BROKEN_SIMPLE.matcher(followupText).find())           return "CannotBeBrokenSimple";
         if (FOLLOWUP_CANNOT_BE_BROKEN_BY_NON_DMG.matcher(followupText).find())      return "CannotBeBrokenByNonDmg";
         if (FOLLOWUP_IF_PUT_TO_BZ_THIS_TURN_RFG_INSTEAD.matcher(followupText).find()) return "IfPutToBzThisTurnRfgInstead";
+        // The Choose chain resolves this secondary; without an entry here 7-055R Chocobo reported
+        // "PowerBoost + ?" and read like a card handing out power for nothing.
+        if (SECONDARY_WHEN_TARGET_LEAVES_PUT_SELF_TO_BZ.matcher(followupText).matches())
+            return "WhenTargetLeavesPutSelfToBz";
         if (FOLLOWUP_GAINS_BREAKTOUCH_BATTLE.matcher(followupText).find())           return "BreaktouchBattle";
         if (FOLLOWUP_CANNOT_BE_CHOSEN_BOTH.matcher(followupText).find())              return "CannotBeChosenBoth";
         if (FOLLOWUP_CANNOT_BE_CHOSEN_SUMMONS.matcher(followupText).find())           return "CannotBeChosenSummons";
@@ -2037,6 +2068,10 @@ public class ActionResolver {
         // Mirrors parse(); see the matching guard in matchedPatternNameOn().
         if (tryParseRemoveSelfThenPlaySelfOntoField(effectText, source) != null) return "RemoveSelfThenPlaySelfOntoField";
         // Mirrors parse(); see the matching guard in matchedPatternNameOn().
+        // Must precede IndependentSentences, mirroring parse(): the splitter reports the removal
+        // alone and drops the return clause.
+        if (tryParseRemoveSelfReturnNextMainPhase1(effectText, source) != null)
+            return "RemoveSelfReturnNextMainPhase1";
         if (tryParseIndependentSentences(effectText, source, 0) != null) {
             String composed = composeOverSentences(effectText, s -> fullDescription(s, source));
             if (composed != null) return composed;
@@ -2341,6 +2376,9 @@ public class ActionResolver {
             return FIELD_OPPONENT_DEBUFF_PASSIVE.matcher(trimmed).matches()
                     ? "FieldOpponentPowerDebuff" : "FieldPowerGrant";
         }
+        // Mirrors parse() and matchedPatternName(): kept beside the mass power effect it shares a
+        // board with, though the pattern below needs a power figure and could not claim it.
+        if (tryParseAllOppForwardsLoseTraitsEot(effectText) != null) return "AllOppForwardsLoseTraitsEot";
         {
             Matcher bm = ALL_FIELD_POWER_BOOST_PATTERN.matcher(effectText);
             if (bm.find()) {
@@ -2437,6 +2475,9 @@ public class ActionResolver {
         // Must precede RemoveNamedFromGame, mirroring parse() and matchedPatternName().
         if (tryParseRemoveWarpCountersFromNamed(effectText, source) != null) return "RemoveWarpCountersFromNamed";
         if (tryParseRemoveNamedFromGame(effectText, source) != null)        return "RemoveNamedFromGame";
+        // Must precede BreakSourceCard, mirroring parse() and matchedPatternName().
+        if (tryParseBreakSelfAndBattlePartner(effectText, source) != null)
+            return "BreakSelfAndBattlePartner";
         if (tryParseBreakSourceCard(effectText, source)        != null)     return "BreakSourceCard";
         if (tryParsePutSourceIntoBreakZone(effectText, source) != null)     return "PutSourceIntoBreakZone";
         if (tryParseYouMayPutSelfToBZWhenDoSo(effectText, source)    != null) return "YouMayPutSelfToBZWhenDoSo";

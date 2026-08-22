@@ -237,4 +237,35 @@ final class ActionResolverPlay {
             ctx.playAllByNameFromOwnBreakZoneDull(resolvedName, dull);
         };
     }
+
+    /**
+     * Parses "Remove [Self] from the game. At the beginning of your next Main Phase 1, play [Self]
+     * onto the field." - 23-051L Hope, a self-blink that spans the turn boundary.
+     *
+     * <p>Read as one sentence pair, and it has to be: on its own the first half is an ordinary
+     * remove-from-game, which is what claimed this text before - Hope left the game and never
+     * came back.
+     *
+     * <p>The trailing "You can only use this ability during your turn." is stripped before
+     * matching, as the other whole-text parsers do. It is a restriction carried as a flag on the
+     * ability and gated at activation, not an effect to resolve here.
+     */
+    static Consumer<GameContext> tryParseRemoveSelfReturnNextMainPhase1(String text, CardData source) {
+        if (source == null) return null;
+        String matchOn = stripRestrictionSentences(text);
+        if (matchOn.isEmpty()) matchOn = text;
+        Matcher m = REMOVE_SELF_RETURN_NEXT_MAIN_PHASE_1.matcher(matchOn.trim());
+        if (!m.matches()) return null;
+        String name = m.group("name").trim();
+        if (!name.equalsIgnoreCase(source.name())) return null;
+        if (!m.group("name2").trim().equalsIgnoreCase(source.name())) return null;
+        return ctx -> {
+            ctx.logEntry("Effect: Remove " + name + " from the game, return at next Main Phase 1");
+            ctx.removeNamedCardFromGame(name);
+            // playNamedFromHoldingZoneOntoField, not the RFG-only route: by the time this fires a
+            // turn later the card may have been moved on by something else, and this one looks in
+            // the Break Zone too rather than silently doing nothing.
+            ctx.addPendingMainPhase1Effect(later -> later.playNamedFromHoldingZoneOntoField(name));
+        };
+    }
 }

@@ -28520,4 +28520,249 @@ public class CardBehaviorTest {
 		verify(ctx, never()).extraCostRemovedCardPower();
 	}
 
+
+	// =========================================================================================
+	// Five action abilities, each blocked by a different thing.
+	//
+	//   Ninja 2-114C       needed the Battle pairing read from either side of it.
+	//   Amidatelion 15-022C  a whole-board trait strip that moves no power at all.
+	//   Hope 23-051L       the independent-sentence rule split it and resolved only the removal,
+	//                      so Hope left the game and never came back.
+	//   Chocobo 7-055R     the +3000 lend worked; the promise to follow the borrower off the
+	//                      field was dropped, making it a free boost.
+	//   Terra 1-047R       the only printing of the damage doubler that omits "instead".
+	// =========================================================================================
+
+	// --- Ninja 2-114C ---------------------------------------------------------------------
+
+	private static final String NINJA_EFFECT =
+			"Break Ninja as well as the Forward that blocks or is blocked by Ninja.";
+
+	@Test
+	void ninjaBreaksItselfAndItsBattlePartner() {
+		CardData ninja = makeForward("Ninja", "Lightning", 3, 7000);
+		ForwardTarget partner = new ForwardTarget(false, 2, ForwardTarget.CardZone.FORWARD);
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.combatBattlePartnerOf("Ninja")).thenReturn(partner);
+
+		Consumer<GameContext> fn = ActionResolver.parse(NINJA_EFFECT, ninja);
+		assertNotNull(fn, "Ninja should parse");
+		fn.accept(ctx);
+
+		verify(ctx).breakTarget(partner);
+		verify(ctx).breakSourceCard(ninja);
+	}
+
+	/**
+	 * The partner is broken first. Breaking Ninja first would shift the indices the partner target
+	 * was resolved against whenever both sit on the same side of the field.
+	 */
+	@Test
+	void ninjaBreaksThePartnerBeforeItself() {
+		CardData ninja = makeForward("Ninja", "Lightning", 3, 7000);
+		ForwardTarget partner = new ForwardTarget(true, 0, ForwardTarget.CardZone.FORWARD);
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.combatBattlePartnerOf("Ninja")).thenReturn(partner);
+
+		ActionResolver.parse(NINJA_EFFECT, ninja).accept(ctx);
+
+		InOrder order = inOrder(ctx);
+		order.verify(ctx).breakTarget(partner);
+		order.verify(ctx).breakSourceCard(ninja);
+	}
+
+	/** Out of Battle there is no partner, and "Break Ninja" is unconditional either way. */
+	@Test
+	void ninjaStillBreaksItselfOutsideABattle() {
+		CardData ninja = makeForward("Ninja", "Lightning", 3, 7000);
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.combatBattlePartnerOf("Ninja")).thenReturn(null);
+
+		ActionResolver.parse(NINJA_EFFECT, ninja).accept(ctx);
+
+		verify(ctx).breakSourceCard(ninja);
+		verify(ctx, never()).breakTarget(any());
+	}
+
+	// --- Amidatelion 15-022C --------------------------------------------------------------
+
+	private static final String AMIDATELION_EFFECT =
+			"Until the end of the turn, all the Forwards opponent controls lose Haste, First Strike and Brave.";
+
+	@Test
+	void amidatelionStripsTheThreeKeywordsFromEveryOpposingForward() {
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.isP1()).thenReturn(true);
+		when(ctx.p2ForwardCount()).thenReturn(3);
+		ArgumentCaptor<ForwardTarget> targets = ArgumentCaptor.forClass(ForwardTarget.class);
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<EnumSet<CardData.Trait>> traits =
+				(ArgumentCaptor<EnumSet<CardData.Trait>>) (ArgumentCaptor<?>) ArgumentCaptor.forClass(EnumSet.class);
+
+		Consumer<GameContext> fn = ActionResolver.parse(AMIDATELION_EFFECT, makeForward("Amidatelion", "Water", 2, 0));
+		assertNotNull(fn, "Amidatelion should parse");
+		fn.accept(ctx);
+
+		verify(ctx, times(3)).reduceTarget(targets.capture(), eq(0), traits.capture());
+		assertEquals(EnumSet.of(CardData.Trait.HASTE, CardData.Trait.FIRST_STRIKE, CardData.Trait.BRAVE),
+				traits.getValue(), "all three keywords, and no power change");
+		for (ForwardTarget t : targets.getAllValues())
+			assertFalse(t.isP1(), "only the opponent's Forwards");
+	}
+
+	/** Reads the opponent off isP1(), so a P2 caster strips P1's board rather than its own. */
+	@Test
+	void amidatelionStripsTheOtherSideWhenP2CastsIt() {
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.isP1()).thenReturn(false);
+		when(ctx.p1ForwardCount()).thenReturn(2);
+		ArgumentCaptor<ForwardTarget> targets = ArgumentCaptor.forClass(ForwardTarget.class);
+
+		ActionResolver.parse(AMIDATELION_EFFECT, makeForward("Amidatelion", "Water", 2, 0)).accept(ctx);
+
+		verify(ctx, times(2)).reduceTarget(targets.capture(), eq(0), any());
+		for (ForwardTarget t : targets.getAllValues()) assertTrue(t.isP1());
+	}
+
+	// --- Hope 23-051L ---------------------------------------------------------------------
+
+	private static final String HOPE_EFFECT =
+			"Remove Hope from the game. At the beginning of your next Main Phase 1, play Hope onto the field. "
+			+ "You can only use this ability during your turn.";
+
+	@Test
+	void hopeRemovesItselfAndComesBackAtTheNextMainPhase1() {
+		GameContext ctx = mock(GameContext.class);
+		ArgumentCaptor<Consumer<GameContext>> queued = captorForConsumer();
+
+		Consumer<GameContext> fn = ActionResolver.parse(HOPE_EFFECT, makeForward("Hope", "Water", 3, 7000));
+		assertNotNull(fn, "Hope should parse");
+		fn.accept(ctx);
+
+		verify(ctx).removeNamedCardFromGame("Hope");
+		verify(ctx).addPendingMainPhase1Effect(queued.capture());
+
+		// The queued half is the part that used to be dropped entirely.
+		GameContext later = mock(GameContext.class);
+		queued.getValue().accept(later);
+		verify(later).playNamedFromHoldingZoneOntoField("Hope");
+	}
+
+	@SuppressWarnings("unchecked")
+	private static ArgumentCaptor<Consumer<GameContext>> captorForConsumer() {
+		return (ArgumentCaptor<Consumer<GameContext>>) (ArgumentCaptor<?>) ArgumentCaptor.forClass(Consumer.class);
+	}
+
+	/**
+	 * The independent-sentence rule is what claimed this text: both sentences name Hope outright,
+	 * so neither refers back to the other and the splitter resolved them separately — the removal
+	 * happened and the return was discarded. This pins the ability to the parser that reads both.
+	 */
+	@Test
+	void hopeIsNotSplitIntoTwoIndependentSentences() {
+		assertEquals("RemoveSelfReturnNextMainPhase1",
+				ActionResolver.fullDescription(HOPE_EFFECT, makeForward("Hope", "Water", 3, 7000)));
+	}
+
+	/** The trailing restriction is a flag on the ability, gated at activation, not an effect. */
+	@Test
+	void hopesTurnRestrictionDoesNotBlockTheEffectFromParsing() {
+		String withoutRestriction =
+				"Remove Hope from the game. At the beginning of your next Main Phase 1, play Hope onto the field.";
+		assertNotNull(ActionResolver.parse(withoutRestriction, makeForward("Hope", "Water", 3, 7000)));
+		assertEquals("RemoveSelfReturnNextMainPhase1",
+				ActionResolver.fullDescription(withoutRestriction, makeForward("Hope", "Water", 3, 7000)));
+	}
+
+	// --- Chocobo 7-055R -------------------------------------------------------------------
+
+	private static final String CHOCOBO_EFFECT =
+			"Choose 1 Forward other than Chocobo. It gains +3000 power until the end of the turn. "
+			+ "When that Forward leaves the field this turn, put Chocobo into the Break Zone.";
+
+	@Test
+	void chocoboLendsPowerAndMarksTheBorrowerToTakeItDown() {
+		CardData chocobo = makeForward("Chocobo", "Wind", 2, 5000);
+		ForwardTarget borrower = new ForwardTarget(true, 1, ForwardTarget.CardZone.FORWARD);
+		GameContext ctx = contextChoosing(List.of(borrower));
+		when(ctx.lastChosenTargets()).thenReturn(List.of(borrower));
+
+		Consumer<GameContext> fn = ActionResolver.parse(CHOCOBO_EFFECT, chocobo);
+		assertNotNull(fn, "Chocobo should parse");
+		fn.accept(ctx);
+
+		verify(ctx).boostTarget(eq(borrower), eq(3000), any());
+		verify(ctx).markTargetPutSourceToBzOnLeaveThisTurn(borrower, chocobo);
+	}
+
+	/** Chocobo cannot lend to itself — the exclusion has to reach the selection call. */
+	@Test
+	void chocoboCannotChooseItself() {
+		CardData chocobo = makeForward("Chocobo", "Wind", 2, 5000);
+		ForwardTarget borrower = new ForwardTarget(true, 1, ForwardTarget.CardZone.FORWARD);
+		GameContext ctx = contextChoosing(List.of(borrower));
+		when(ctx.lastChosenTargets()).thenReturn(List.of(borrower));
+		ArgumentCaptor<String> excludeName = ArgumentCaptor.forClass(String.class);
+
+		ActionResolver.parse(CHOCOBO_EFFECT, chocobo).accept(ctx);
+
+		verify(ctx).selectCharacters(
+				anyInt(), anyBoolean(), anyBoolean(), anyBoolean(),
+				any(), any(), anyInt(), any(), anyInt(), any(),
+				anyBoolean(), anyBoolean(), anyBoolean(),
+				any(), any(), any(), excludeName.capture(), anyBoolean(), any(), anyBoolean());
+		assertEquals("Chocobo", excludeName.getValue());
+	}
+
+	/** The drawback names the source, so a text naming some other card must not arm the mark. */
+	@Test
+	void theLeavesFieldMarkOnlyArmsForItsOwnSource() {
+		CardData chocobo = makeForward("Chocobo", "Wind", 2, 5000);
+		ForwardTarget borrower = new ForwardTarget(true, 1, ForwardTarget.CardZone.FORWARD);
+		GameContext ctx = contextChoosing(List.of(borrower));
+		when(ctx.lastChosenTargets()).thenReturn(List.of(borrower));
+
+		ActionResolver.parse(
+				"Choose 1 Forward other than Chocobo. It gains +3000 power until the end of the turn. "
+				+ "When that Forward leaves the field this turn, put Bahamut into the Break Zone.",
+				chocobo).accept(ctx);
+
+		verify(ctx, never()).markTargetPutSourceToBzOnLeaveThisTurn(any(), any());
+	}
+
+	// --- Terra 1-047R ---------------------------------------------------------------------
+
+	private static final String TERRA_EFFECT =
+			"Terra gains \"If Terra deals damage to a Forward, double the damage\" until the end of the turn.";
+
+	@Test
+	void terraGrantsHerselfTheDamageDoublerForTheTurn() {
+		CardData terra = makeForward("Terra", "Ice", 4, 8000);
+		GameContext ctx = mock(GameContext.class);
+		ArgumentCaptor<String> granted = ArgumentCaptor.forClass(String.class);
+
+		Consumer<GameContext> fn = ActionResolver.parse(TERRA_EFFECT, terra);
+		assertNotNull(fn, "Terra's Special should parse");
+		fn.accept(ctx);
+
+		verify(ctx).grantSelfFieldAbilityUntilEndOfTurn(eq(terra), granted.capture());
+		assertTrue(granted.getValue().contains("double the damage"));
+	}
+
+	/**
+	 * Terra's is the only printing of this doubler that omits "instead"; requiring it left the
+	 * grant matching nothing at all. Both spellings must read as the same ability, since the damage
+	 * paths recognise it through this one pattern.
+	 */
+	@Test
+	void theDamageDoublerReadsBothPrintings() {
+		assertTrue(AutoAbilityTriggers.FA_OUTGOING_DAMAGE_DOUBLER
+				.matcher("If Terra deals damage to a Forward, double the damage").matches());
+		assertTrue(AutoAbilityTriggers.FA_OUTGOING_DAMAGE_DOUBLER
+				.matcher("If Jack deals damage to a Forward or your opponent, double the damage instead.").matches());
+		// Still anchored: a sentence that merely ends this way is not a doubler.
+		assertFalse(AutoAbilityTriggers.FA_OUTGOING_DAMAGE_DOUBLER
+				.matcher("When Terra attacks, if Terra deals damage to a Forward, double the damage").matches());
+	}
+
 }

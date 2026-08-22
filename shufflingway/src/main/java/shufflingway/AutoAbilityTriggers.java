@@ -363,7 +363,10 @@ final class AutoAbilityTriggers {
 	static final Pattern FA_OUTGOING_DAMAGE_DOUBLER = Pattern.compile(
 		"(?i)^If\\s+(?<card>.+?)\\s+deals\\s+damage\\s+to\\s+" +
 		"(?<target>a\\s+Forward(?:\\s+or\\s+your\\s+opponent)?|your\\s+opponent|a\\s+player)" +
-		",\\s+double\\s+the\\s+damage\\s+instead\\.?$"
+		// "instead" is optional: every printing of this doubler carries it except the one Terra
+		// 1-047R grants itself ("… double the damage"), which is the only corpus text of this
+		// shape without it. Requiring it left that grant matching nothing at all.
+		",\\s+double\\s+the\\s+damage(?:\\s+instead)?\\.?$"
 	);
 
 	/**
@@ -2472,6 +2475,10 @@ final class AutoAbilityTriggers {
 			}
 		});
 		mw.clearPermanentGrants(departing);
+		// "When that Forward leaves the field this turn, put [lender] into the Break Zone"
+		// (7-055R Chocobo). Collected before the grants are cleared above would be wrong — the
+		// lender is a separate card, and this is its debt coming due, not the borrower's ability.
+		fireLeavesFieldPutIntoBzMarks(departing);
 		// Per-turn attack/block restrictions are keyed by instance, so they have to be dropped
 		// here or they would follow the card back in when it is replayed from the Break Zone.
 		mw.clearCombatRestrictionsFor(departing);
@@ -2488,6 +2495,33 @@ final class AutoAbilityTriggers {
 		// If a Forward just left, check the other player's field cards for
 		// "if your opponent doesn't control Forwards" field abilities
 		if (departing.isForward()) mw.fireOppNoForwardsFieldAbilities(!isP1);
+	}
+
+	/**
+	 * Puts into the Break Zone every card that lent {@code departing} something this turn on the
+	 * promise of following it off the field — 7-055R Chocobo's "When that Forward leaves the field
+	 * this turn, put Chocobo into the Break Zone."
+	 *
+	 * <p>The mark is consumed on the way through: a Forward only leaves the field once, and if the
+	 * lender is replayed later it has no outstanding debt. Lenders that have already left by some
+	 * other route are skipped rather than resurrected into the Break Zone.
+	 */
+	private void fireLeavesFieldPutIntoBzMarks(CardData departing) {
+		List<CardData> lenders = mw.putIntoBzWhenLeavesFieldThisTurn.remove(departing);
+		if (lenders == null) return;
+		for (CardData lender : lenders) {
+			int p1Idx = mw.p1ForwardCards.indexOf(lender);
+			int p2Idx = p1Idx >= 0 ? -1 : mw.p2ForwardCards.indexOf(lender);
+			if (p1Idx < 0 && p2Idx < 0) {
+				mw.logEntry(lender.name() + " already left the field — nothing to put into the Break Zone");
+				continue;
+			}
+			mw.logEntry(departing.name() + " left the field — " + lender.name() + " → Break Zone");
+			// A put, not a break: the printed wording is "put … into the Break Zone", so nothing
+			// watching for a break should fire.
+			if (p1Idx >= 0) mw.putP1ForwardIntoBreakZone(p1Idx);
+			else            mw.putP2ForwardIntoBreakZone(p2Idx);
+		}
 	}
 
 	/**
