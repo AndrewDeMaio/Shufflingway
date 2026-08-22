@@ -30401,6 +30401,137 @@ public class CardBehaviorTest {
 		verify(ctx).drawCards(1);
 	}
 
+	// =========================================================================================
+	// Effect wiring — Palom 3-016H's Meteor, the one ability that hands each pick its own amount.
+	//
+	// "Choose up to 3 Forwards opponent controls. Deal 1 of them 6000 damage, 1 of them 4000
+	// damage, and 1 of them 2000 damage." The Choose chain claimed it — one dialog, an unordered
+	// set of targets, and a followup chain with no branch for this wording — so it reached the
+	// "followup not yet implemented" fallback: it logged, chose nothing and dealt nothing.
+	//
+	// A single multi-select cannot express it even once a followup branch exists, because nothing
+	// in the returned set says which Forward takes which amount; the mapping would fall to
+	// selection order, which the board dialog neither shows nor lets the player control. So the
+	// selection is one prompt per amount, each labelled with the damage it carries and each blind
+	// to the Forwards the earlier prompts took.
+	//
+	// Every pick is made before any damage lands. Applying damage between prompts would let the
+	// first break shift the slot index a later pick was recorded at — the same hazard
+	// sortedByIdxDesc exists for, and the reason the picks come back as a batch.
+	// =========================================================================================
+
+	private static final String PALOM_METEOR_TEXT =
+			"[[s]]Meteor[[/]] 《S》《Fire》《Fire》《Fire》: Choose up to 3 Forwards opponent controls. "
+			+ "Deal 1 of them 6000 damage, 1 of them 4000 damage, and 1 of them 2000 damage.";
+
+	/** Palom's Meteor effect text, taken through the same ability split the engine uses. */
+	private static String palomMeteorEffect() {
+		CardData palom = makeActionAbilityForward("Palom", "Fire", PALOM_METEOR_TEXT);
+		return abilityOf(palom, 0).effectText();
+	}
+
+	private static GameContext.TieredDamagePick pick(int idx, int damage) {
+		return new GameContext.TieredDamagePick(fwd(false, idx), damage);
+	}
+
+	@Test
+	void meteorAsksOncePerAmountInPrintedOrder() {
+		CardData palom = makeActionAbilityForward("Palom", "Fire", PALOM_METEOR_TEXT);
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.consumePreloadedTargets()).thenReturn(null);
+		when(ctx.selectOppForwardsForTieredDamage(any())).thenReturn(List.of());
+
+		ActionResolver.parse(palomMeteorEffect(), palom).accept(ctx);
+
+		ArgumentCaptor<int[]> amounts = ArgumentCaptor.forClass(int[].class);
+		verify(ctx).selectOppForwardsForTieredDamage(amounts.capture());
+		assertArrayEquals(new int[] { 6000, 4000, 2000 }, amounts.getValue(),
+				"one prompt per amount, biggest first, as printed");
+	}
+
+	@Test
+	void meteorDealsEachPickTheAmountItsPromptCarried() {
+		CardData palom = makeActionAbilityForward("Palom", "Fire", PALOM_METEOR_TEXT);
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.consumePreloadedTargets()).thenReturn(null);
+		when(ctx.selectOppForwardsForTieredDamage(any()))
+				.thenReturn(List.of(pick(0, 6000), pick(1, 4000), pick(2, 2000)));
+
+		ActionResolver.parse(palomMeteorEffect(), palom).accept(ctx);
+
+		verify(ctx).damageTarget(fwd(false, 0), 6000);
+		verify(ctx).damageTarget(fwd(false, 1), 4000);
+		verify(ctx).damageTarget(fwd(false, 2), 2000);
+	}
+
+	@Test
+	void meteorDamagesTheHighestSlotFirst() {
+		CardData palom = makeActionAbilityForward("Palom", "Fire", PALOM_METEOR_TEXT);
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.consumePreloadedTargets()).thenReturn(null);
+		// Picked in prompt order, which is not slot order: the 6000 went to the lowest slot.
+		when(ctx.selectOppForwardsForTieredDamage(any()))
+				.thenReturn(List.of(pick(0, 6000), pick(3, 4000), pick(1, 2000)));
+
+		ActionResolver.parse(palomMeteorEffect(), palom).accept(ctx);
+
+		// Descending slot, each still carrying its own prompt's amount — a break at slot 3 cannot
+		// shift slots 1 and 0 out from under the damage still to be dealt.
+		InOrder order = inOrder(ctx);
+		order.verify(ctx).damageTarget(fwd(false, 3), 4000);
+		order.verify(ctx).damageTarget(fwd(false, 1), 2000);
+		order.verify(ctx).damageTarget(fwd(false, 0), 6000);
+	}
+
+	@Test
+	void meteorTakesAsFewPicksAsTheBoardOffers() {
+		CardData palom = makeActionAbilityForward("Palom", "Fire", PALOM_METEOR_TEXT);
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.consumePreloadedTargets()).thenReturn(null);
+		// "up to 3": a declined or unanswerable prompt drops its amount and the rest still land.
+		when(ctx.selectOppForwardsForTieredDamage(any()))
+				.thenReturn(List.of(pick(0, 6000), pick(1, 2000)));
+
+		ActionResolver.parse(palomMeteorEffect(), palom).accept(ctx);
+
+		verify(ctx).damageTarget(fwd(false, 0), 6000);
+		verify(ctx).damageTarget(fwd(false, 1), 2000);
+		verify(ctx, never()).damageTarget(any(), eq(4000));
+	}
+
+	@Test
+	void meteorAgainstAnEmptyBoardFizzlesRatherThanResolving() {
+		CardData palom = makeActionAbilityForward("Palom", "Fire", PALOM_METEOR_TEXT);
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.consumePreloadedTargets()).thenReturn(null);
+		when(ctx.selectOppForwardsForTieredDamage(any())).thenReturn(List.of());
+
+		ActionResolver.parse(palomMeteorEffect(), palom).accept(ctx);
+
+		verify(ctx).markEffectFizzled();
+		verify(ctx, never()).damageTarget(any(), anyInt());
+	}
+
+	@Test
+	void meteorIsReportedWithItsAmountsRatherThanAsAnUnreadFollowup() {
+		CardData palom = makeActionAbilityForward("Palom", "Fire", PALOM_METEOR_TEXT);
+		String text = palomMeteorEffect();
+		assertEquals("ChooseTieredDamage", ActionResolver.matchedPatternName(text, palom));
+		assertEquals("ChooseTieredDamage(6000/4000/2000)",
+				ActionResolver.fullDescription(text, palom),
+				"the amounts are the whole of what this parser decides");
+	}
+
+	@Test
+	void aCountThatDisagreesWithTheAmountsIsLeftToTheOtherMatchers() {
+		CardData palom = makeActionAbilityForward("Palom", "Fire", PALOM_METEOR_TEXT);
+		String mismatched = "Choose up to 2 Forwards opponent controls. Deal 1 of them 6000 damage, "
+				+ "1 of them 4000 damage, and 1 of them 2000 damage.";
+		assertNotEquals("ChooseTieredDamage", ActionResolver.matchedPatternName(mismatched, palom),
+				"two picks and three amounts is not a text this parser can resolve, and guessing "
+				+ "which half to believe would be worse than declining it");
+	}
+
 	@Test
 	void aSelfSideStateCountIsLeftAloneRatherThanCountedWrong() {
 		// GameContext counts a card state on the opponent's field only, so the self-side reading

@@ -21,6 +21,50 @@ final class ActionResolverDamage {
 
 	private ActionResolverDamage() {}
 
+    /**
+     * Parses "Choose up to N Forwards opponent controls. Deal 1 of them A damage, 1 of them B
+     * damage, and 1 of them C damage." — Palom 3-016H's Meteor.
+     *
+     * <p>Not a Choose-with-followup, which is why it is its own parser rather than a branch of
+     * {@code tryParseChooseCharacter}: that parser makes the whole selection in one dialog and
+     * hands the followup a set of targets, and this text needs each pick tied to its own amount.
+     * The general followup chain had no branch for the wording either, so the ability reached the
+     * "followup not yet implemented" fallback — it logged, chose nothing and dealt nothing.
+     *
+     * <p>The selection is delegated whole to {@link GameContext#selectOppForwardsForTieredDamage},
+     * one prompt per amount. Damage is applied only once every pick is in, highest slot first, so
+     * a break cannot shift the index a later pick was recorded at.
+     *
+     * <p>Returns {@code null} when the printed count and the number of amounts disagree, leaving
+     * such a text to the regular matchers rather than guessing which of the two to believe.
+     */
+    static Consumer<GameContext> tryParseChooseTieredDamage(String text) {
+        Matcher m = CHOOSE_TIERED_DAMAGE.matcher(text.trim());
+        if (!m.matches()) return null;
+
+        List<Integer> tiers = new ArrayList<>();
+        Matcher tm = TIERED_DAMAGE_ONE_OF_THEM.matcher(m.group("tiers"));
+        while (tm.find()) tiers.add(Integer.parseInt(tm.group("amount")));
+        if (tiers.size() != Integer.parseInt(m.group("count"))) return null;
+
+        int[] amounts = tiers.stream().mapToInt(Integer::intValue).toArray();
+        String logLabel = tiers.stream().map(String::valueOf).reduce((a, b) -> a + "/" + b).orElse("");
+        return ctx -> {
+            ctx.logEntry("Effect: Choose up to " + amounts.length
+                    + " Forwards opponent controls — deal " + logLabel + " damage");
+            List<GameContext.TieredDamagePick> picks = ctx.selectOppForwardsForTieredDamage(amounts);
+            if (picks.isEmpty()) {
+                ctx.markEffectFizzled();
+                return;
+            }
+            List<ForwardTarget> targets = picks.stream().map(GameContext.TieredDamagePick::target).toList();
+            for (boolean side : new boolean[] { true, false })
+                sortedByIdxDesc(targets, side).forEach(t -> picks.stream()
+                        .filter(p -> p.target().equals(t))
+                        .forEach(p -> ctx.damageTarget(p.target(), p.damage())));
+        };
+    }
+
     /** Parses "Divide N damage equally among all the [type] [you control|opponent controls]." — no target choice. */
     static Consumer<GameContext> tryParseDivideDamageEquallyAmongAll(String text) {
         Matcher m = DIVIDE_DAMAGE_EQUALLY_AMONG_ALL.matcher(text.trim());

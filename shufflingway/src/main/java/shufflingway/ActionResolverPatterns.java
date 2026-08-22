@@ -5535,6 +5535,25 @@ final class ActionResolverPatterns {
         "[.!]?"
     );
     /**
+     * Matches "Choose up to N Forwards opponent controls. Deal 1 of them A damage, 1 of them B
+     * damage, and 1 of them C damage." — Palom 3-016H's Meteor, the only printing that hands each
+     * pick a <em>different</em> amount.
+     *
+     * <p>{@code tiers} is captured whole and re-scanned with {@link #TIERED_DAMAGE_ONE_OF_THEM}
+     * rather than being spelled out as three groups, so the shape is not pinned to three amounts.
+     * The count and the number of amounts are cross-checked by the parser, not here.
+     */
+    static final Pattern CHOOSE_TIERED_DAMAGE = Pattern.compile(
+        "(?is)^Choose\\s+up\\s+to\\s+(?<count>\\d+)\\s+Forwards?\\s+" +
+        "(?<opponent>(?:your\\s+)?opponent\\s+controls)\\s*[.!]\\s*" +
+        "Deal\\s+(?<tiers>1\\s+of\\s+them\\s+\\d+\\s+damage" +
+        "(?:\\s*,?\\s*(?:and\\s+)?1\\s+of\\s+them\\s+\\d+\\s+damage)+)\\s*[.!]?\\s*$"
+    );
+    /** One "1 of them N damage" term of {@link #CHOOSE_TIERED_DAMAGE}'s {@code tiers} group. */
+    static final Pattern TIERED_DAMAGE_ONE_OF_THEM = Pattern.compile(
+        "(?i)1\\s+of\\s+them\\s+(?<amount>\\d+)\\s+damage"
+    );
+    /**
      * Matches "Deal damage equal to half of [name]'s power to all [the] [condition] Forward[s]
      * [opponent controls] [(round up/down to the nearest 1000)]."
      * <ul>

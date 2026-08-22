@@ -90,6 +90,21 @@ final class GameContextImpl implements GameContext {
 	 * of the single selection this context is being used for.
 	 */
 	private int totalCostBudget = -1;
+	/**
+	 * Targets the selection about to be made must not offer, or empty when it may offer anything.
+	 * Set for the length of one call by {@link #selectOppForwardsForTieredDamage} and read by
+	 * {@link #selectCharacters}, an instance field for the same reason the two above are.
+	 *
+	 * <p>Identity is by slot, which is only sound because that method makes every one of its picks
+	 * before any damage lands: nothing leaves the field mid-selection, so a recorded index still
+	 * names the card it was recorded for.
+	 */
+	private List<ForwardTarget> excludedTargets = List.of();
+	/**
+	 * Damage the pick about to be made will be dealt, shown in the selection's title so successive
+	 * prompts of a tiered selection can be told apart, or {@code 0} when the title says nothing.
+	 */
+	private int tieredDamageLabel = 0;
 	/** Card the most recent {@link #lookAtTopDeck} put into hand; read by riders on that look. */
 	private CardData lastLookAddedToHand = null;
 
@@ -1207,6 +1222,10 @@ final class GameContextImpl implements GameContext {
 							.toList();
 					if (!compelled.isEmpty() && maxCount <= compelled.size()) eligible.retainAll(compelled);
 				}
+				// Picks a tiered selection has already made. Removed last, after every other filter
+				// and after the taunt narrowing above, so a Forward that is out of the running for
+				// any other reason stays out for the reason that actually applies.
+				if (!excludedTargets.isEmpty()) eligible.removeAll(excludedTargets);
 				String costLabel  = formatCostFilterLabel(costVal, costCmp);
 				String powerLabel = powerVal >= 0 ? " of power " + powerVal + (powerCmp != null ? " or " + powerCmp : "") : "";
 				String targetNoun = inclForwards && !inclBackups && !inclMonsters ? "Forward"
@@ -1226,6 +1245,7 @@ final class GameContextImpl implements GameContext {
 						+ (element != null ? " " + element : "")
 						+ " " + targetNoun + (maxCount != 1 ? "s" : "") + postCondLabel + costLabel + powerLabel
 						+ (totalCostBudget >= 0 ? " with a total cost of " + totalCostBudget + " or less" : "")
+						+ (tieredDamageLabel > 0 ? " to deal " + tieredDamageLabel + " damage" : "")
 						+ (opponentOnly ? " (opponent)" : selfOnly ? " (yours)" : "");
 				if (!isP1) {
 					// AI (P2 controls the effect): auto-select rather than prompting the human.
@@ -1322,6 +1342,44 @@ final class GameContextImpl implements GameContext {
 				} finally {
 					totalCostBudget = -1;
 				}
+			}
+
+			/**
+			 * One prompt per amount, each labelled with the damage it carries and each blind to the
+			 * Forwards the earlier prompts took.
+			 *
+			 * <p>Delegates to {@link #selectCharacters} rather than walking the board itself, for
+			 * the same reason {@link #selectForwardsWithTotalCostAtMost} does: every "cannot be
+			 * chosen" shield, the must-be-chosen taunt narrowing and the AI's auto-pick all live in
+			 * that method. The per-prompt damage is also handed to the AI hint, so an AI controller
+			 * aims the 6000 at something 6000 actually breaks rather than spending it on a Forward
+			 * the 2000 would have finished.
+			 *
+			 * <p>Both scratch fields are cleared in a finally block, so a dialog the player
+			 * dismisses cannot leave them set for the next selection this context makes.
+			 */
+			@Override public List<GameContext.TieredDamagePick> selectOppForwardsForTieredDamage(int[] amounts) {
+				List<GameContext.TieredDamagePick> picks = new ArrayList<>();
+				List<ForwardTarget> taken = new ArrayList<>();
+				for (int amount : amounts) {
+					List<ForwardTarget> pick;
+					excludedTargets  = List.copyOf(taken);
+					tieredDamageLabel = amount;
+					setAiDamageTargetHint(amount);
+					try {
+						pick = selectCharacters(1, true, true, false, null, null,
+								-1, null, -1, null, true, false, false,
+								null, null, null, null, false, null, false);
+					} finally {
+						excludedTargets   = List.of();
+						tieredDamageLabel = 0;
+						setAiDamageTargetHint(0);
+					}
+					if (pick.isEmpty()) continue;
+					taken.add(pick.get(0));
+					picks.add(new GameContext.TieredDamagePick(pick.get(0), amount));
+				}
+				return picks;
 			}
 
 			/**

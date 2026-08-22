@@ -511,6 +511,14 @@ public class ActionResolver {
         result = tryParseChooseForwardsTotalCostBreak(effectText);
         if (result != null) return result;
 
+        // Must precede tryParseChooseCharacter for a related reason: that chain makes the whole
+        // selection in one dialog and hands its followup an unordered set, with nothing to say
+        // which pick takes which of the three amounts. It claimed this text and then found no
+        // followup branch for the wording, so Palom's Meteor logged "followup not yet implemented"
+        // and dealt nothing at all.
+        result = tryParseChooseTieredDamage(effectText);
+        if (result != null) return result;
+
         result = tryParseChooseCharacter(effectText, source, xValue);
         if (result != null) return withAiTargetPreference(effectText, result);
 
@@ -1614,6 +1622,9 @@ public class ActionResolver {
         // Mirrors parse(): ahead of ChooseCharacter, which reads the budget clause as an
         // unbounded choose.
         if (tryParseChooseForwardsTotalCostBreak(effectText) != null) return "ChooseForwardsTotalCostBreak";
+        // Mirrors parse(): ahead of ChooseCharacter, which claims the text and then has no
+        // followup branch for the per-pick amounts.
+        if (tryParseChooseTieredDamage(effectText) != null) return "ChooseTieredDamage";
         if (tryParseChooseCharacter(effectText, source, 0)              != null) return "ChooseCharacter";
         if (tryParseIfSelfFwdReceivedDamageDraw(effectText, source)          != null) return "IfSelfFwdReceivedDamageDraw";
         if (tryParseIfRfpCount(effectText, source)               != null) return "IfRfpCount";
@@ -2351,6 +2362,17 @@ public class ActionResolver {
         }
         // Mirrors parse() and matchedPatternName(): must precede the ChooseCharacter block.
         if (tryParseChooseForwardsTotalCostBreak(effectText) != null) return "ChooseForwardsTotalCostBreak";
+        // Same, and the amounts go in the description: they are the whole of what this parser
+        // decides, and the ChooseCharacter block below would report the followup as "?".
+        if (tryParseChooseTieredDamage(effectText) != null) {
+            Matcher tiered = CHOOSE_TIERED_DAMAGE.matcher(effectText.trim());
+            if (!tiered.matches()) return "ChooseTieredDamage";
+            Matcher tiers = TIERED_DAMAGE_ONE_OF_THEM.matcher(tiered.group("tiers"));
+            StringBuilder amounts = new StringBuilder();
+            while (tiers.find())
+                amounts.append(amounts.length() == 0 ? "" : "/").append(tiers.group("amount"));
+            return "ChooseTieredDamage(" + amounts + ")";
+        }
         Matcher chooseM = CHOOSE_CHARACTER_PATTERN.matcher(escapedEffectText);
         if (chooseM.find()) {
             String followup      = restorePeriodInName(chooseM.group("followup").trim(), source);

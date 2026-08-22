@@ -149,6 +149,30 @@ public interface GameContext {
      */
     List<ForwardTarget> selectForwardsWithTotalCostAtMost(int maxTotalCost);
 
+    /** One target picked for a tiered-damage selection, paired with the damage its tier carries. */
+    record TieredDamagePick(ForwardTarget target, int damage) {}
+
+    /**
+     * Lets the resolving player pick the opponent's Forwards for a selection that deals a
+     * <em>different</em> amount to each pick — Palom 3-016H's Meteor, "Deal 1 of them 6000 damage,
+     * 1 of them 4000 damage, and 1 of them 2000 damage."
+     *
+     * <p>Cannot be expressed as a single {@link #selectCharacters} call: that returns an unordered
+     * set of picks with nothing saying which one takes which amount, so the mapping would fall to
+     * selection order — which the board dialog neither shows nor lets the player control. This
+     * asks once per amount instead, labelling each prompt with the damage that pick will take, and
+     * never offers a Forward already picked. Declining a prompt drops that amount and the sequence
+     * carries on, which is what "up to" means here.
+     *
+     * <p>No damage is dealt — the picks are returned for the caller to apply, so the whole
+     * selection is made against an unchanged board. Applying damage between prompts would let the
+     * first break shift the indices the remaining picks are recorded at.
+     *
+     * @param amounts the damage each successive pick will be dealt, in prompt order
+     * @return one entry per prompt that was answered, in prompt order; empty when none were
+     */
+    List<TieredDamagePick> selectOppForwardsForTieredDamage(int[] amounts);
+
     /**
      * Shows a modal dialog letting P1 choose up to {@code maxCount} eligible
      * cards from a Break Zone and returns their targets.

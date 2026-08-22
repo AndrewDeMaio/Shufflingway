@@ -12,6 +12,9 @@ import org.junit.jupiter.api.Test;
 
 public class ActionAbilityParsingTest {
 
+    /** How many sampled cards each of the three coverage buckets prints. */
+    private static final int EXAMPLES_PER_CATEGORY = 5;
+
     @Test
     void reportActionAbilityParsingCoverage() throws Exception {
         File dbFile = new File("shufflingway.db");
@@ -194,13 +197,17 @@ public class ActionAbilityParsingTest {
         return sb.toString();
     }
 
-    /** Reservoir sampling (k=3): keeps up to 3 uniformly random items seen so far. */
+    /**
+     * Reservoir sampling: keeps up to {@link #EXAMPLES_PER_CATEGORY} uniformly random items of the
+     * {@code seen} seen so far, so each category's sample is drawn evenly across the whole corpus
+     * rather than from wherever the scan happened to stop.
+     */
     private static void reservoirAdd(List<String> reservoir, String item, int seen, java.util.Random rng) {
-        if (reservoir.size() < 3) {
+        if (reservoir.size() < EXAMPLES_PER_CATEGORY) {
             reservoir.add(item);
         } else {
             int j = rng.nextInt(seen);
-            if (j < 3) reservoir.set(j, item);
+            if (j < EXAMPLES_PER_CATEGORY) reservoir.set(j, item);
         }
     }
 
