@@ -13,6 +13,12 @@ package shufflingway;
  * <p>{@code null} rather than an all-permissive instance is what a caller gets for text this
  * cannot decode, so an unrecognised effect imposes no constraint instead of silently imposing an
  * empty one.
+ *
+ * <p>{@code zone} is non-null when the choice names a Break Zone rather than the field, and
+ * {@code opponentZone} / {@code bothZones} say which. The two callers above are field-only and
+ * turn such a spec down themselves: the choice is made when the effect resolves, because the
+ * Break Zone moves between casting and resolution. The cast-legality check is the one caller that
+ * wants it, since "is there one there right now" is answerable at either moment.
  */
 public record TargetSpec(
         int     maxCount,
@@ -34,5 +40,8 @@ public record TargetSpec(
         String  excludeName,
         boolean inclSummons,
         String  excludeElement,
-        boolean withoutMulticard
+        boolean withoutMulticard,
+        String  zone,
+        boolean opponentZone,
+        boolean bothZones
 ) {}

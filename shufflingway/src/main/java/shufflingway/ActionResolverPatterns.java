@@ -71,7 +71,14 @@ final class ActionResolverPatterns {
                     "(?:\\s+of\\s+cost\\s+(?<cost>\\d+)" +
                     "(?:,\\s*(?<costlist>\\d+(?:\\s*,\\s*\\d+)*))?" +
                     "(?:\\s+or\\s+(?<costcmp>less|more|higher|\\d+))?)?" +
-                    "(?:\\s+of\\s+(?:power\\s+)?(?<power>\\d+)(?:\\s+power)?(?:\\s+or\\s+(?<powercmp>less|more))?)?" +
+                    // "with 9000 power or less" (Zodiark 23-016R) is the same constraint that
+                    // "of power 9000 or less" states the other way round. Only the "of" spelling
+                    // was here, so that card's opening choice matched nothing at all: the clause
+                    // is optional, but what follows it is the mandatory followup separator, so the
+                    // leftover "with 9000 power or less" sank the whole pattern. A digit has to
+                    // come next either way, which keeps this clear of "with 《LB》" and of the
+                    // trait clause above.
+                    "(?:\\s+(?:of|with)\\s+(?:power\\s+)?(?<power>\\d+)(?:\\s+power)?(?:\\s+or\\s+(?<powercmp>less|more))?)?" +
                     "(?:\\s+(?<control>(?:your\\s+)?opponent\\s+controls|you\\s+control))?" +
                     "(?:\\s+other\\s+than\\s+(?:Card\\s+Name\\s+)?(?<excludename>\\S(?:.*?\\S)?))?" +
                     // Both orders are printed: "1 Forward you control other than X" and
@@ -4134,6 +4141,33 @@ final class ActionResolverPatterns {
      */
     static final Pattern OPENING_MANDATORY_CHOICE = Pattern.compile(
         "(?i)^Choose\\s+(?!up\\s+to\\b)\\d+\\s+(?<what>[^.!]*)[.!]");
+
+    /**
+     * The opening choice of {@link #OPENING_MANDATORY_CHOICE} naming something on the Stack
+     * rather than a card in a zone. Matched against that pattern's {@code what}, so the ability
+     * word has to be what the choice is <em>of</em> — a later mention of an ability cannot drag
+     * a choice of Forwards onto the Stack.
+     *
+     * <p>Group {@code types} is filled for the ability spellings and feeds
+     * {@link ActionResolver#parseAbilityTypeFilter}. The Summon alternative leaves it null: what
+     * that choice can point at depends on the qualifier after it, which
+     * {@link ActionResolver#stackCancelFilter} already reads.
+     */
+    static final Pattern OPENING_CHOICE_ON_STACK = Pattern.compile(
+        "(?i)^(?:(?<types>auto[- ]ability|action\\s+ability|special\\s+ability|ability)\\b"
+        + "|Summon\\s+(?:targeting|choosing)\\b)");
+
+    /**
+     * "Choose 1 card in your Damage Zone." (Ark 23-113R) — the one printing whose mandatory
+     * choice is answered by the Damage Zone, which is empty until its owner has taken damage.
+     *
+     * <p>Its own pattern rather than a {@code zone} alternative in
+     * {@link #CHOOSE_CHARACTER_PATTERN}: that group routes a choice to
+     * {@code selectCharactersFromBreakZone}, and a Damage Zone card is not a Character to be
+     * chosen off a board.
+     */
+    static final Pattern OPENING_CHOICE_FROM_DAMAGE_ZONE = Pattern.compile(
+        "(?i)^Choose\\s+(?!up\\s+to\\b)\\d+\\s+cards?\\s+in\\s+your\\s+Damage\\s+Zone\\b");
 
     /**
      * A pronoun or phrase by which a sentence refers back to something already chosen. Used to tell

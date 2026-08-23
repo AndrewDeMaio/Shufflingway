@@ -30852,4 +30852,268 @@ public class CardBehaviorTest {
 				"no printing has this shape, and counting it as unconditioned would be wrong");
 	}
 
+
+	// =========================================================================================
+	// Summon casting needs something to choose
+	//
+	// A Summon chooses its targets as it is cast, so a Summon whose text opens "Choose 1 Forward."
+	// cannot be cast at all while no Forward can be chosen. A Character is not held to this: it
+	// enters and its auto-abilities trigger, finding nothing to fire at if that is how the board
+	// stands.
+	//
+	// Only a mandatory opening choice binds the cast. "Choose up to 2" is answered by choosing
+	// none; "Select 1 of the 2 following actions" selects a mode rather than a target, and the
+	// quoted actions do their own choosing on resolution. The pool consulted is the one the choice
+	// prompt would be built from, so a Forward nothing may choose is no choice here either.
+	//
+	// Losing the target afterwards is a different question and not this one's: the Summon sits on
+	// the Stack and fizzles, and the cast that put it there stays legal.
+	// =========================================================================================
+
+	private static final String SHIVA_CHOOSE_FORWARD  = "Choose 1 Forward. Dull it and Freeze it.";
+	private static final String SHIVA_CHOOSE_DULL     = "Choose 1 dull Forward. Deal it 5000 damage.";
+	private static final String ODIN_CHOOSE_OPPONENTS = "Choose 1 Forward opponent controls. Break it.";
+	/** Ramuh 14-091R — "up to" is answered by choosing nothing, so the board never blocks it. */
+	private static final String RAMUH_UP_TO_TWO =
+			"Choose up to 2 Forwards. Deal them 4000 damage.";
+	/** Alexander 19-035R — the outer verb is "Select", and it names actions rather than targets. */
+	private static final String ALEXANDER_TWO_ACTIONS =
+			"Select 1 of the 2 following actions.[[br]]   \"Choose 1 Forward of cost 5 or more. Break it.\""
+			+ "[[br]]   \"Choose 1 Monster. Break it. Draw 1 card.\"";
+	/** Leviathan 14-113R's third action — a Break Zone choice, deferred to resolution as always. */
+	private static final String LEVIATHAN_FROM_BREAK_ZONE =
+			"Choose 1 Water Forward in your Break Zone. Add it to your hand.";
+
+	@Test
+	void aSummonWithNoForwardToChooseCannotBeCast() {
+		MainWindow mw = new MainWindow();
+		CardData shiva = makeSummon("Shiva", "Ice", 1, SHIVA_CHOOSE_FORWARD);
+
+		assertTrue(mw.summonCastBlocked(shiva, true),
+				"an empty board answers \"Choose 1 Forward\" with nothing, so there is no cast to make");
+
+		mw.placeP2CardInForwardZone(makeForward("Sabin", "Fire", 3, 7000));
+		assertFalse(mw.summonCastBlocked(shiva, true),
+				"one Forward anywhere on the board is a legal choice");
+	}
+
+	@Test
+	void theChoiceIsCheckedAgainstTheFilterItNames() {
+		MainWindow mw = new MainWindow();
+		CardData shiva = makeSummon("Shiva", "Ice", 2, SHIVA_CHOOSE_DULL);
+		placeP1Forward(mw, makeForward("Sabin", "Fire", 3, 7000));
+
+		assertTrue(mw.summonCastBlocked(shiva, true),
+				"the only Forward is active, and the text asks for a dull one");
+
+		mw.p1ForwardStates.set(0, CardState.DULL);
+		assertFalse(mw.summonCastBlocked(shiva, true));
+	}
+
+	@Test
+	void aChoiceRestrictedToTheOpponentIsNotAnsweredByYourOwnField() {
+		MainWindow mw = new MainWindow();
+		CardData odin = makeSummon("Odin", "Lightning", 4, ODIN_CHOOSE_OPPONENTS);
+		placeP1Forward(mw, makeForward("Sabin", "Fire", 3, 7000));
+
+		assertTrue(mw.summonCastBlocked(odin, true),
+				"P1's own Forward is not one the opponent controls");
+		// The same board seen from the other seat: P1's Forward is P2's opponent's.
+		assertFalse(mw.summonCastBlocked(odin, false));
+	}
+
+	@Test
+	void aForwardNothingMayChooseIsNoChoiceAtAll() {
+		MainWindow mw = new MainWindow();
+		CardData shiva = makeSummon("Shiva", "Ice", 1, SHIVA_CHOOSE_FORWARD);
+		// Belgemine 12-125H's shield names no player, so it binds her controller's opponent too.
+		mw.placeP2CardInForwardZone(makeForwardWithText("Belgemine", "Water", 4, 8000,
+				"Belgemine cannot be chosen by Summons."));
+
+		assertTrue(mw.summonCastBlocked(shiva, true),
+				"the board's only Forward is one this Summon could never point at");
+	}
+
+	@Test
+	void anOptionalChoiceLeavesTheCastAlone() {
+		MainWindow mw = new MainWindow();
+		assertFalse(mw.summonCastBlocked(makeSummon("Ramuh", "Lightning", 3, RAMUH_UP_TO_TWO), true),
+				"choosing none of them is a legal choice");
+	}
+
+	@Test
+	void selectingAnActionIsNotChoosingATarget() {
+		MainWindow mw = new MainWindow();
+		CardData alexander = makeSummon("Alexander", "Wind", 6, ALEXANDER_TWO_ACTIONS);
+
+		assertNull(ActionResolver.mandatoryCastTargetSpec(alexander.summonEffect(), alexander),
+				"the quoted actions choose when the Summon resolves; the cast selects among them");
+		assertFalse(mw.summonCastBlocked(alexander, true));
+	}
+
+	@Test
+	void aChoiceNamingTheBreakZoneIsAskedOfTheBreakZone() {
+		MainWindow mw = new MainWindow();
+		CardData leviathan = makeSummon("Leviathan", "Water", 3, LEVIATHAN_FROM_BREAK_ZONE);
+
+		TargetSpec spec = ActionResolver.mandatoryCastTargetSpec(leviathan.summonEffect(), leviathan);
+		assertNotNull(spec);
+		assertEquals("in your Break Zone", spec.zone(),
+				"which card is picked waits for resolution, since the zone moves;"
+						+ " whether one is there does not");
+		assertTrue(mw.summonCastBlocked(leviathan, true), "P1's Break Zone is empty");
+
+		mw.gameState.getP1BreakZone().add(makeForward("Kimahri", "Water", 2, 5000));
+		assertFalse(mw.summonCastBlocked(leviathan, true));
+	}
+
+	@Test
+	void charactersMayEnterWithNothingToFireAt() {
+		MainWindow mw = new MainWindow();
+		CardData forward = makeForwardWithText("Sabin", "Fire", 3, 7000,
+				"When Sabin enters the field, choose 1 Forward. Deal it 3000 damage.");
+
+		assertFalse(mw.summonCastBlocked(forward, true),
+				"the rule is about casting a Summon; a Forward's ability triggers on entering");
+	}
+
+	@Test
+	void askingLeavesNoResolutionInProgressBehind() {
+		MainWindow mw = new MainWindow();
+		mw.summonHasCastTarget(makeSummon("Shiva", "Ice", 1, SHIVA_CHOOSE_FORWARD), true);
+
+		assertFalse(mw.currentResolutionIsSummon,
+				"the question is asked from menu paint and from the AI's planning, outside any resolution");
+		assertNull(mw.currentSummonSource);
+	}
+
+
+	// =========================================================================================
+	// Summon casting needs something to choose — the choices the field cannot answer
+	//
+	// Three of them, and each was invisible to the field check for its own reason. A choice
+	// naming a Break Zone is decoded like any other but its pick waits for resolution, since the
+	// zone moves in between — whether one is there, though, is answerable at either moment. A
+	// choice naming the Stack is not a card in a zone at all, so the pattern that reads card
+	// kinds cannot see it. And one card chooses out of its owner's Damage Zone, which is empty
+	// until they have been dealt damage.
+	// =========================================================================================
+
+	/** Ark 12-002H — castable only in answer to something. */
+	private static final String ARK_CANCEL_AUTO_ABILITY =
+			"Choose 1 auto-ability. Cancel its effect. If that auto-ability triggered from a Forward, "
+			+ "deal that Forward 8000 damage.";
+	/** Bahamut 2-080C — the Summon it answers has to be pointed at the caster's own side. */
+	private static final String BAHAMUT_CANCEL_SUMMON_ON_MINE =
+			"Choose 1 Summon targeting a Character you control. Cancel its effect.";
+	/** Phoenix 26-017R — answered by the caster's own Break Zone. */
+	private static final String PHOENIX_FROM_BREAK_ZONE =
+			"Choose 1 Fire Forward of cost 2 or less in your Break Zone. Play it onto the field dull.";
+	/** Ark 23-113R — the one printing that chooses out of a Damage Zone. */
+	private static final String ARK_FROM_DAMAGE_ZONE =
+			"Choose 1 card in your Damage Zone. Add it to your hand and draw 1 card. Then, put 1 card "
+			+ "from your hand into the Damage Zone (its EX Burst effect will not trigger).";
+	/** Zodiark 23-016R — \"with 9000 power or less\", the other spelling of a power ceiling. */
+	private static final String ZODIARK_POWER_CEILING =
+			"Choose 1 Forward with 9000 power or less and up to 1 Forward in your opponent's Break "
+			+ "Zone. Remove them from the game.";
+
+	/** An auto-ability entry belonging to {@code isP1}, waiting on the Stack. */
+	private static StackEntry autoAbilityOnStack(CardData source, boolean isP1) {
+		return new StackEntry(source, null,
+				CardData.parseAutoAbilities("When " + source.name() + " enters the field, draw 1 card.").get(0),
+				isP1, 0, false, null, false, false, 0, 0);
+	}
+
+	private static void clearStack(MainWindow mw) {
+		while (mw.gameState.popStack() != null) { /* drained */ }
+	}
+
+	@Test
+	void aChoiceAnsweredByTheStackNeedsSomethingOnIt() {
+		MainWindow mw = new MainWindow();
+		CardData ark = makeSummon("Ark", "Ice", 3, ARK_CANCEL_AUTO_ABILITY);
+		// A board full of Forwards is no help: this Summon chooses off the Stack, not off it.
+		placeP1Forward(mw, makeForward("Sabin", "Fire", 3, 7000));
+
+		assertTrue(mw.summonCastBlocked(ark, true), "there is no auto-ability waiting to be cancelled");
+
+		mw.gameState.pushStack(autoAbilityOnStack(makeForward("Leon", "Dark", 3, 7000), false));
+		assertFalse(mw.summonCastBlocked(ark, true));
+	}
+
+	@Test
+	void aCounterToASummonNeedsOnePointedAtYourOwnSide() {
+		MainWindow mw = new MainWindow();
+		CardData bahamut = makeSummon("Bahamut", "Ice", 3, BAHAMUT_CANCEL_SUMMON_ON_MINE);
+		CardData shiva   = makeSummon("Shiva", "Ice", 1, SHIVA_CHOOSE_FORWARD);
+		placeP1Forward(mw, makeForward("Sabin", "Fire", 3, 7000));
+		mw.placeP2CardInForwardZone(makeForward("Leon", "Dark", 3, 7000));
+
+		assertTrue(mw.summonCastBlocked(bahamut, true), "nothing on the Stack to cancel");
+
+		mw.gameState.pushStack(summonChoosing(shiva, false, fwd(false, 0)));
+		assertTrue(mw.summonCastBlocked(bahamut, true),
+				"that Summon is choosing its own controller's Forward, not one P1 controls");
+
+		clearStack(mw);
+		mw.gameState.pushStack(summonChoosing(shiva, false, fwd(true, 0)));
+		assertFalse(mw.summonCastBlocked(bahamut, true));
+	}
+
+	@Test
+	void aChoiceAnsweredByTheBreakZoneNeedsACardThere() {
+		MainWindow mw = new MainWindow();
+		CardData phoenix = makeSummon("Phoenix", "Fire", 2, PHOENIX_FROM_BREAK_ZONE);
+		// The field is irrelevant to a choice that names the Break Zone.
+		placeP1Forward(mw, makeForward("Sabin", "Fire", 2, 7000));
+
+		assertTrue(mw.summonCastBlocked(phoenix, true), "an empty Break Zone answers nothing");
+
+		mw.gameState.getP1BreakZone().add(makeForward("Zidane", "Fire", 5, 8000));
+		assertTrue(mw.summonCastBlocked(phoenix, true), "cost 5 is past the ceiling the text names");
+
+		mw.gameState.getP1BreakZone().add(makeForward("Vaan", "Fire", 2, 5000));
+		assertFalse(mw.summonCastBlocked(phoenix, true));
+	}
+
+	@Test
+	void theBreakZoneAskedIsTheCastersOwn() {
+		MainWindow mw = new MainWindow();
+		CardData phoenix = makeSummon("Phoenix", "Fire", 2, PHOENIX_FROM_BREAK_ZONE);
+		mw.gameState.getP2BreakZone().add(makeForward("Vaan", "Fire", 2, 5000));
+
+		assertTrue(mw.summonCastBlocked(phoenix, true), "\"your Break Zone\" is P1's, and P1's is empty");
+		assertFalse(mw.summonCastBlocked(phoenix, false), "read from P2's seat, the same card is theirs");
+	}
+
+	@Test
+	void aChoiceAnsweredByTheDamageZoneNeedsDamageTaken() {
+		MainWindow mw = new MainWindow();
+		CardData ark = makeSummon("Ark", "Dark", 4, ARK_FROM_DAMAGE_ZONE);
+
+		assertTrue(mw.summonCastBlocked(ark, true), "nobody has taken damage yet, so the zone is empty");
+
+		mw.gameState.getP1DamageZone().add(makeForward("Zidane", "Wind", 5, 8000));
+		assertFalse(mw.summonCastBlocked(ark, true));
+	}
+
+	@Test
+	void withNPowerOrLessIsReadAsThePowerCeilingItIs() {
+		MainWindow mw = new MainWindow();
+		CardData zodiark = makeSummon("Zodiark", "Dark", 5, ZODIARK_POWER_CEILING);
+
+		TargetSpec spec = ActionResolver.mandatoryCastTargetSpec(zodiark.summonEffect(), zodiark);
+		assertNotNull(spec, "only the \"of power N\" spelling was readable, so this matched nothing at all");
+		assertEquals(9000, spec.powerVal());
+		assertEquals("less", spec.powerCmp());
+		assertNull(spec.zone(), "the Break Zone belongs to the optional second choice, not this one");
+
+		mw.placeP2CardInForwardZone(makeForward("Sephiroth", "Dark", 7, 10000));
+		assertTrue(mw.summonCastBlocked(zodiark, true), "10000 power is over the ceiling");
+
+		mw.placeP2CardInForwardZone(makeForward("Leon", "Dark", 3, 9000));
+		assertFalse(mw.summonCastBlocked(zodiark, true));
+	}
+
 }

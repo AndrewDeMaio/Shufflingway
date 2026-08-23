@@ -890,8 +890,18 @@ final class GameContextImpl implements GameContext {
 				return mw.fieldForwardBreakableBy(t.isP1(), t.zone(), t.idx(), damage);
 			}
 
-			@Override
-			public List<ForwardTarget> selectCharacters(
+			/**
+			 * Every target a {@link #selectCharacters} call with these filters could offer: the
+			 * whole of that method bar the prompt that picks from the list.
+			 *
+			 * <p>Split out so a cast-legality check can ask what a Summon would be able to choose
+			 * without asking anybody to choose it. The rule that needs the answer — a Summon whose
+			 * text opens with a mandatory choice cannot be cast while nothing answers it — has to
+			 * agree with what the prompt would really offer, and one method building the list is
+			 * what makes that agreement structural rather than a second reading of the card text
+			 * that can drift from this one.
+			 */
+			List<ForwardTarget> eligibleCharacters(
 					int maxCount, boolean upTo, boolean opponentOnly,
 					boolean selfOnly, String condition, String element,
 					int costVal, String costCmp, int powerVal, String powerCmp,
@@ -1214,6 +1224,31 @@ final class GameContextImpl implements GameContext {
 				// and after the taunt narrowing above, so a Forward that is out of the running for
 				// any other reason stays out for the reason that actually applies.
 				if (!excludedTargets.isEmpty()) eligible.removeAll(excludedTargets);
+				return eligible;
+			}
+
+			/** {@link #eligibleCharacters} for the filters a {@link TargetSpec} carries. */
+			List<ForwardTarget> eligibleCharacters(TargetSpec spec) {
+				return eligibleCharacters(spec.maxCount(), spec.upTo(), spec.opponentOnly(), spec.selfOnly(),
+						spec.condition(), spec.element(), spec.costVal(), spec.costCmp(), spec.powerVal(),
+						spec.powerCmp(), spec.inclForwards(), spec.inclBackups(), spec.inclMonsters(),
+						spec.jobFilter(), spec.cardNameFilter(), spec.categoryFilter(), spec.excludeName(),
+						spec.inclSummons(), spec.excludeElement(), spec.withoutMulticard());
+			}
+
+			@Override
+			public List<ForwardTarget> selectCharacters(
+					int maxCount, boolean upTo, boolean opponentOnly,
+					boolean selfOnly, String condition, String element,
+					int costVal, String costCmp, int powerVal, String powerCmp,
+					boolean inclForwards, boolean inclBackups, boolean inclMonsters,
+					String jobFilter, String cardNameFilter, String categoryFilter, String excludeName, boolean inclSummons,
+					String excludeElement, boolean withoutMulticard) {
+				List<ForwardTarget> eligible = eligibleCharacters(
+						maxCount, upTo, opponentOnly, selfOnly, condition, element,
+						costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
+						jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons,
+						excludeElement, withoutMulticard);
 				String costLabel  = formatCostFilterLabel(costVal, costCmp);
 				String powerLabel = powerVal >= 0 ? " of power " + powerVal + (powerCmp != null ? " or " + powerCmp : "") : "";
 				String targetNoun = inclForwards && !inclBackups && !inclMonsters ? "Forward"
@@ -1938,6 +1973,72 @@ final class GameContextImpl implements GameContext {
 				mw.refreshP2BreakLabel();
 			}
 
+			/**
+			 * Whether one Break Zone card answers these filters — the test the gathering loops
+			 * below used to spell out a line at a time, once per zone.
+			 */
+			private boolean breakZoneCardMatches(CardData card, String element,
+					int costVal, String costCmp, int powerVal, String powerCmp,
+					boolean inclForwards, boolean inclBackups, boolean inclMonsters, boolean inclSummons,
+					String jobFilter, String cardNameFilter, String categoryFilter, String excludeName,
+					boolean withoutMulticard) {
+				if (card.isForward() && !inclForwards) return false;
+				if (card.isBackup()  && !inclBackups)  return false;
+				if (card.isMonster() && !inclMonsters) return false;
+				if (card.isSummon()  && !inclSummons)  return false;
+				if (element != null && !card.containsElement(element)) return false;
+				if (!meetsCostConstraint(card.cost(), costVal, costCmp)) return false;
+				if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) return false;
+				if (!mw.meetsJobOrCardNameFilter(card, jobFilter, cardNameFilter, null)) return false;
+				if (!meetsCategoryFilter(card, categoryFilter)) return false;
+				if (excludeName != null && excludeName.equalsIgnoreCase(card.name())) return false;
+				return !(withoutMulticard && card.multicard());
+			}
+
+			/**
+			 * Every Break Zone card a {@link #selectCharactersFromBreakZone} call with these filters
+			 * could offer, each indexed into the zone it actually sits in.
+			 *
+			 * <p>The Break Zone twin of {@link #eligibleCharacters}, split out for the same reason: the
+			 * cast-legality check has to know whether a Summon opening "Choose 1 Forward in your Break
+			 * Zone." would find one, and asking the method that builds the prompt is what keeps that
+			 * answer from drifting away from what the prompt would offer.
+			 */
+			List<ForwardTarget> eligibleCharactersFromBreakZone(
+					int maxCount, boolean upTo, boolean opponentZone, boolean bothZones,
+					String condition, String element, int costVal, String costCmp,
+					int powerVal, String powerCmp,
+					boolean inclForwards, boolean inclBackups, boolean inclMonsters,
+					String jobFilter, String cardNameFilter, String categoryFilter, String excludeName, boolean inclSummons,
+					String excludeElement, boolean withoutMulticard) {
+				List<ForwardTarget> eligible = new ArrayList<>();
+				// Kalmia 18-090R shields a player's whole Break Zone from the other player's effects.
+				// It is opponent-scoped, so only the far half of a choice can close; the chooser's own
+				// half stays open to them.
+				boolean[] sides = bothZones ? new boolean[]{true, false} : new boolean[]{isP1 != opponentZone};
+				for (boolean sideIsP1 : sides) {
+					if (sideIsP1 != isP1 && mw.bzCardsProtectedFromOppChoice(sideIsP1)) continue;
+					List<CardData> bz = sideIsP1 ? mw.gameState.getP1BreakZone() : mw.gameState.getP2BreakZone();
+					for (int i = 0; i < bz.size(); i++) {
+						if (!breakZoneCardMatches(bz.get(i), element, costVal, costCmp, powerVal, powerCmp,
+								inclForwards, inclBackups, inclMonsters, inclSummons,
+								jobFilter, cardNameFilter, categoryFilter, excludeName, withoutMulticard))
+							continue;
+						eligible.add(new ForwardTarget(sideIsP1, i, ForwardTarget.CardZone.BREAK_ZONE));
+					}
+				}
+				return eligible;
+			}
+
+			/** {@link #eligibleCharactersFromBreakZone} for the filters a {@link TargetSpec} carries. */
+			List<ForwardTarget> eligibleCharactersFromBreakZone(TargetSpec spec) {
+				return eligibleCharactersFromBreakZone(spec.maxCount(), spec.upTo(), spec.opponentZone(),
+						spec.bothZones(), spec.condition(), spec.element(), spec.costVal(), spec.costCmp(),
+						spec.powerVal(), spec.powerCmp(), spec.inclForwards(), spec.inclBackups(),
+						spec.inclMonsters(), spec.jobFilter(), spec.cardNameFilter(), spec.categoryFilter(),
+						spec.excludeName(), spec.inclSummons(), spec.excludeElement(), spec.withoutMulticard());
+			}
+
 			@Override
 			public List<ForwardTarget> selectCharactersFromBreakZone(
 					int maxCount, boolean upTo, boolean opponentZone, boolean bothZones,
@@ -1947,49 +2048,17 @@ final class GameContextImpl implements GameContext {
 					String jobFilter, String cardNameFilter, String categoryFilter, String excludeName, boolean inclSummons,
 					String excludeElement, boolean withoutMulticard) {
 				if (bothZones) {
-					// Combine eligible cards from both break zones.
 					List<CardData> p1bz = mw.gameState.getP1BreakZone();
 					List<CardData> p2bz = mw.gameState.getP2BreakZone();
-					List<ForwardTarget> eligible = new ArrayList<>();
-					// combined flat list for display; index = offset into combined list
+					List<ForwardTarget> eligible = eligibleCharactersFromBreakZone(
+							maxCount, upTo, opponentZone, bothZones, condition, element, costVal, costCmp,
+							powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
+							jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons,
+							excludeElement, withoutMulticard);
+					// Flat list for display, in the same order: an index into it is what the tabbed
+					// dialog hands back, and what the mapping at the end of this branch undoes.
 					List<CardData> combined = new ArrayList<>();
-					// Kalmia 18-090R shields a player's whole Break Zone from the other player's
-					// effects. It is opponent-scoped, so only the far half of an "either Break
-					// Zone" choice can close; the chooser's own half stays open.
-					boolean skipP1Bz = !isP1 && mw.bzCardsProtectedFromOppChoice(true);
-					boolean skipP2Bz =  isP1 && mw.bzCardsProtectedFromOppChoice(false);
-					for (int i = 0; !skipP1Bz && i < p1bz.size(); i++) {
-						CardData card = p1bz.get(i);
-						if (card.isForward()  && !inclForwards) continue;
-						if (card.isBackup()   && !inclBackups)  continue;
-						if (card.isMonster()  && !inclMonsters) continue;
-						if (card.isSummon()   && !inclSummons)  continue;
-						if (element != null && !card.containsElement(element)) continue;
-						if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
-						if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
-						if (!mw.meetsJobOrCardNameFilter(card, jobFilter, cardNameFilter, null)) continue;
-						if (!meetsCategoryFilter(card, categoryFilter)) continue;
-						if (excludeName != null && excludeName.equalsIgnoreCase(card.name())) continue;
-						if (withoutMulticard && card.multicard()) continue;
-						eligible.add(new ForwardTarget(true, i, ForwardTarget.CardZone.BREAK_ZONE));
-						combined.add(card);
-					}
-					for (int i = 0; !skipP2Bz && i < p2bz.size(); i++) {
-						CardData card = p2bz.get(i);
-						if (card.isForward()  && !inclForwards) continue;
-						if (card.isBackup()   && !inclBackups)  continue;
-						if (card.isMonster()  && !inclMonsters) continue;
-						if (card.isSummon()   && !inclSummons)  continue;
-						if (element != null && !card.containsElement(element)) continue;
-						if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
-						if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
-						if (!mw.meetsJobOrCardNameFilter(card, jobFilter, cardNameFilter, null)) continue;
-						if (!meetsCategoryFilter(card, categoryFilter)) continue;
-						if (excludeName != null && excludeName.equalsIgnoreCase(card.name())) continue;
-						if (withoutMulticard && card.multicard()) continue;
-						eligible.add(new ForwardTarget(false, i, ForwardTarget.CardZone.BREAK_ZONE));
-						combined.add(card);
-					}
+					for (ForwardTarget t : eligible) combined.add((t.isP1() ? p1bz : p2bz).get(t.idx()));
 					String costLabel  = formatCostFilterLabel(costVal, costCmp);
 					String powerLabel = powerVal >= 0 ? " of power " + powerVal + (powerCmp != null ? " or " + powerCmp : "") : "";
 					String typeLabel  = breakZoneTypeLabel(inclForwards, inclBackups, inclMonsters, inclSummons, maxCount);
@@ -2021,25 +2090,11 @@ final class GameContextImpl implements GameContext {
 				boolean useP1Zone = isP1 != opponentZone;
 				List<CardData> bz = useP1Zone
 						? mw.gameState.getP1BreakZone() : mw.gameState.getP2BreakZone();
-				// Kalmia 18-090R closes the far Break Zone to this effect entirely; the near one
-				// is the chooser's own and is never shielded from them.
-				boolean shieldedZone = useP1Zone != isP1 && mw.bzCardsProtectedFromOppChoice(useP1Zone);
-				List<ForwardTarget> eligible = new ArrayList<>();
-				for (int i = 0; !shieldedZone && i < bz.size(); i++) {
-					CardData card = bz.get(i);
-					if (card.isForward()  && !inclForwards) continue;
-					if (card.isBackup()   && !inclBackups)  continue;
-					if (card.isMonster()  && !inclMonsters) continue;
-					if (card.isSummon()   && !inclSummons)  continue;
-					if (element != null && !card.containsElement(element)) continue;
-					if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
-					if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
-					if (!mw.meetsJobOrCardNameFilter(card, jobFilter, cardNameFilter, null)) continue;
-					if (!meetsCategoryFilter(card, categoryFilter)) continue;
-					if (excludeName != null && excludeName.equalsIgnoreCase(card.name())) continue;
-					if (withoutMulticard && card.multicard()) continue;
-					eligible.add(new ForwardTarget(useP1Zone, i, ForwardTarget.CardZone.BREAK_ZONE));
-				}
+				List<ForwardTarget> eligible = eligibleCharactersFromBreakZone(
+						maxCount, upTo, opponentZone, bothZones, condition, element, costVal, costCmp,
+						powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
+						jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons,
+						excludeElement, withoutMulticard);
 				String costLabel  = formatCostFilterLabel(costVal, costCmp);
 				String powerLabel = powerVal >= 0 ? " of power " + powerVal + (powerCmp != null ? " or " + powerCmp : "") : "";
 				String typeLabel  = breakZoneTypeLabel(inclForwards, inclBackups, inclMonsters, inclSummons, maxCount);

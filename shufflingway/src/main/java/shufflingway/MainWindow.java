@@ -2613,7 +2613,7 @@ public class MainWindow {
 				&& canAffordCard(card, handIdx)
 				&& (!card.isBackup() || hasAvailableBackupSlot())
 				&& castRestrictionMet(card)
-				&& (!card.isSummon() || !summonCastingProhibited())
+				&& !summonCastBlocked(card, true)
 				&& !p1CastLimitReached();
 	}
 
@@ -2683,9 +2683,11 @@ public class MainWindow {
 			boolean ldConflict    = isCharacter && isLightDarkConflict(cd);
 			boolean noSlot        = cd.isBackup() && !hasAvailableBackupSlot();
 			boolean summonBlocked = cd.isSummon() && summonCastingProhibited();
-			final boolean legal   = !nameConflict && !ldConflict && !noSlot && !summonBlocked && !p1CastLimitReached();
+			boolean noTarget      = !summonBlocked && !summonHasCastTarget(cd, true);
+			final boolean legal   = !nameConflict && !ldConflict && !noSlot && !summonBlocked && !noTarget && !p1CastLimitReached();
 			final String reason   = nameConflict ? "Name conflict" : ldConflict ? "Light/Dark"
-					: noSlot ? "No slot" : summonBlocked ? "Summons blocked" : null;
+					: noSlot ? "No slot" : summonBlocked ? "Summons blocked"
+					: noTarget ? "No target" : null;
 
 			JLabel lbl = new JLabel("...", SwingConstants.CENTER);
 			lbl.setPreferredSize(new Dimension(CARD_W, CARD_H));
@@ -3517,7 +3519,7 @@ public class MainWindow {
 			public boolean hasBzPlay(CardData card) {
 				return isP1 && bzPlayableP1.containsKey(card)
 						&& bzPlayableP1.get(card).source() == PlayableEntry.SourceZone.BREAK_ZONE
-						&& (!card.isSummon() || !summonCastingProhibited())
+						&& !summonCastBlocked(card, true)
 						&& !p1CastLimitReached();
 			}
 			public boolean canAffordBzPlay(CardData card) {
@@ -7047,7 +7049,7 @@ public class MainWindow {
 		if (card.hasWarp()) {
 			JMenuItem warpItem = new JMenuItem("Play (Warp " + card.warpValue() + ")");
 			warpItem.setEnabled(canPlaySpecialAction && canAffordWarpCost(card, handIdx) && castRestrictionMet(card)
-					&& (!card.isSummon() || !summonCastingProhibited()) && !p1CastLimitReached());
+					&& !summonCastBlocked(card, true) && !p1CastLimitReached());
 			warpItem.addActionListener(ae -> {
 				hideZoom();
 				showWarpPaymentDialog(card, handIdx);
@@ -7060,7 +7062,7 @@ public class MainWindow {
 		// cost") also appears on Forward/Character "enters the field" abilities (e.g. Samurai).
 		if (ec != null && (card.isSummon() || ec.type() == ExtraCost.Type.CP_FIXED)) {
 			JMenuItem ecItem = new JMenuItem("Play (Extra Cost: " + ec.description() + ")");
-			ecItem.setEnabled(canPlaySpecialAction && (!card.isSummon() || !summonCastingProhibited())
+			ecItem.setEnabled(canPlaySpecialAction && !summonCastBlocked(card, true)
 					&& canAffordCard(card, handIdx) && canAffordExtraCost(card, handIdx, ec) && !p1CastLimitReached());
 			ecItem.addActionListener(ae -> {
 				hideZoom();
@@ -7096,7 +7098,8 @@ public class MainWindow {
 			JMenuItem altItem = new JMenuItem(altLabel);
 			altItem.setEnabled(canPlaySpecialAction && !nameConflict && !lightDarkConflict
 					&& canAffordAltCost(card, handIdx)
-					&& (!card.isBackup() || hasAvailableBackupSlot()) && castRestrictionMet(card) && !p1CastLimitReached());
+					&& (!card.isBackup() || hasAvailableBackupSlot()) && castRestrictionMet(card)
+					&& !summonCastBlocked(card, true) && !p1CastLimitReached());
 			altItem.addActionListener(ae -> {
 				hideZoom();
 				showAltCostPlayDialog(card, handIdx);
@@ -7109,7 +7112,7 @@ public class MainWindow {
 			dItem.setEnabled(canPlaySpecialAction && !nameConflict && !lightDarkConflict
 					&& hasEligibleJobInHand(grant.job(), handIdx, grant.count())
 					&& (!card.isBackup() || hasAvailableBackupSlot()) && castRestrictionMet(card)
-					&& (!card.isSummon() || !summonCastingProhibited()) && !p1CastLimitReached());
+					&& !summonCastBlocked(card, true) && !p1CastLimitReached());
 			dItem.addActionListener(ae -> {
 				hideZoom();
 				showFieldDiscardCastDialog(card, handIdx, grant);
@@ -7704,6 +7707,84 @@ public class MainWindow {
 		for (CardData c : p2ForwardCards) if (c != null && ActionResolver.hasPlayerCannotCastSummonsFieldAbility(c)) return true;
 		for (CardData c : p2BackupCards)  if (c != null && ActionResolver.hasPlayerCannotCastSummonsFieldAbility(c)) return true;
 		return false;
+	}
+
+	/**
+	 * Whether {@code isP1} could choose everything {@code card}'s text opens by demanding — the
+	 * rule that a Summon whose effect begins "Choose 1 Forward." cannot be cast while there is no
+	 * Forward to choose.
+	 *
+	 * <p>Characters are not held to this: a Forward may enter with an auto-ability that finds
+	 * nothing to fire at, because the ability triggers on entering rather than gating it. A Summon
+	 * chooses as it is cast, so a board that answers nothing makes the cast itself illegal.
+	 *
+	 * <p>Only the choice as the cast would make it is checked. A target that leaves in response —
+	 * broken, returned to hand, made unchooseable — leaves the Summon on the Stack to fizzle when
+	 * it resolves; the cast was legal when it happened and nothing here revisits that.
+	 *
+	 * <p>Four places can answer a choice, and which one a Summon names is the first thing decided:
+	 *
+	 * <ul>
+	 *   <li>the <b>Stack</b> — "Choose 1 auto-ability. Cancel its effect."
+	 *   <li>the caster's <b>Damage Zone</b> — empty until they have been dealt damage
+	 *   <li>a <b>Break Zone</b> — <em>which</em> card is picked waits for resolution, since the
+	 *       zone moves in between, but whether one is there is answerable now
+	 *   <li>the <b>field</b>, which is everything else
+	 * </ul>
+	 *
+	 * <p>Each pool is the one its own choice prompt would be built from —
+	 * {@link GameContextImpl#eligibleCharacters} and its Break Zone twin, and for the Stack the
+	 * filter {@code canActivateAbility} gates an ability's activation on. So a Forward shielded by
+	 * "cannot be chosen by Summons", or a Break Zone closed by Kalmia, counts against the cast
+	 * exactly as it would count against the pick.
+	 *
+	 * <p>The character pools read the resolution fields to know whose Summon is choosing, so they
+	 * are set for the length of the question and put back after: this runs from menu paint and
+	 * from the AI's planning, both of them outside any resolution.
+	 */
+	boolean summonHasCastTarget(CardData card, boolean isP1) {
+		if (card == null || !card.isSummon()) return true;
+		String effect = card.summonEffect();
+
+		Predicate<StackEntry> onStack = ActionResolver.mandatoryCastStackChoice(effect, isP1);
+		if (onStack != null) return gameState.getStack().stream().anyMatch(onStack);
+
+		if (ActionResolver.mandatoryCastNeedsOwnDamageZoneCard(effect))
+			return !(isP1 ? gameState.getP1DamageZone() : gameState.getP2DamageZone()).isEmpty();
+
+		TargetSpec spec = ActionResolver.mandatoryCastTargetSpec(effect, card);
+		if (spec == null) return true;
+		boolean  savedIsSummon = currentResolutionIsSummon;
+		CardData savedSource   = currentSummonSource;
+		boolean  savedSourceP1 = currentSummonSourceIsP1;
+		currentResolutionIsSummon = true;
+		currentSummonSource       = card;
+		currentSummonSourceIsP1   = isP1;
+		try {
+			GameContextImpl ctx = new GameContextImpl(this, isP1, false);
+			return !(spec.zone() != null
+					? ctx.eligibleCharactersFromBreakZone(spec)
+					: ctx.eligibleCharacters(spec)).isEmpty();
+		} finally {
+			currentResolutionIsSummon = savedIsSummon;
+			currentSummonSource       = savedSource;
+			currentSummonSourceIsP1   = savedSourceP1;
+		}
+	}
+
+	/**
+	 * The two gates a Summon passes that no other card type does: the field-wide "Players cannot
+	 * cast Summons." prohibition, and having something to choose. Non-Summons are never blocked.
+	 *
+	 * <p>One method because every cast route has to ask both — the hand menu's Play item and each
+	 * of its alternative-cost siblings, the Break Zone's borrowed casts, and the AI's planner. They
+	 * were the prohibition written out eight times, and a route that grew the second check while
+	 * another kept only the first is a rule the player meets or dodges depending on which menu they
+	 * opened.
+	 */
+	boolean summonCastBlocked(CardData card, boolean isP1) {
+		return card != null && card.isSummon()
+				&& (summonCastingProhibited() || !summonHasCastTarget(card, isP1));
 	}
 
 	private boolean playerHasCastForwardsFromBz(boolean isP1) {
@@ -11159,9 +11240,10 @@ public class MainWindow {
 	 * chose "1 Forward of cost 3 or less" cannot be redirected onto a cost 7 Forward, or onto a
 	 * Backup, or onto the side of the field its text never offered.
 	 *
-	 * <p>Returns {@code true} when the effect's text yields no {@link TargetSpec} — an effect whose
-	 * targeting this cannot decode imposes no constraint here rather than a wrongly empty one, which
-	 * keeps the redirect no stricter than it was before the spec existed.
+	 * <p>Returns {@code true} when the effect's text yields no {@link TargetSpec}, or one naming a
+	 * Break Zone — an effect whose targeting this cannot decode, or whose targets are not field
+	 * slots at all, imposes no constraint here rather than a wrongly empty one, which keeps the
+	 * redirect no stricter than it was before the spec existed.
 	 *
 	 * <p>Mirrors the per-target checks {@code GameContextImpl.selectCharacters} runs, zone for zone.
 	 * The two are the same rule read at two moments, so a divergence here shows up as a redirect
@@ -11169,7 +11251,9 @@ public class MainWindow {
 	 */
 	private boolean targetMeetsEntrySpec(StackEntry entry, ForwardTarget t) {
 		TargetSpec spec = ActionResolver.targetSpec(entry.effectText(), entry.source());
-		if (spec == null) return true;
+		// A choice naming a Break Zone constrains cards there, not the field slots a redirect moves
+		// between, so it says nothing about this target either way.
+		if (spec == null || spec.zone() != null) return true;
 		boolean sideIsP1 = t.isP1();
 		// "opponent controls" / "you control" are relative to whoever controls the effect.
 		if (spec.opponentOnly() && sideIsP1 == entry.isP1()) return false;

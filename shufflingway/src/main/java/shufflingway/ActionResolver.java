@@ -5368,7 +5368,7 @@ public class ActionResolver {
      */
     public static List<ForwardTarget> preSelectTargets(String effectText, CardData source, int xValue, GameContext ctx) {
         TargetSpec spec = targetSpec(effectText, source);
-        if (spec == null) return null;
+        if (spec == null || spec.zone() != null) return null;
         // Every activation-time selection funnels through here — action abilities, Summons and auto
         // abilities alike — so it is the one place that can tell the context what the cards it is
         // about to pick are in for. Ignored unless the picker is the AI.
@@ -5382,8 +5382,12 @@ public class ActionResolver {
 
     /**
      * Decodes the target constraints of a "Choose N [targets]…" effect into a {@link TargetSpec},
-     * or {@code null} when {@code effectText} does not match {@link #CHOOSE_CHARACTER_PATTERN} or
-     * would need a break-zone selection (deferred to resolution time, since the zone state moves).
+     * or {@code null} when {@code effectText} does not match {@link #CHOOSE_CHARACTER_PATTERN}.
+     *
+     * <p>A choice naming a Break Zone is decoded like any other and reported through the spec's
+     * {@code zone}. Refusing it here is what this used to do, which left the two callers that must
+     * defer such a choice unable to tell "names the Break Zone" from "cannot be read at all" — and
+     * the cast-legality check, which needs to tell them apart, unable to ask.
      *
      * <p>Split out of {@link #preSelectTargets} so the redirect path can replay the same
      * constraints against a replacement target instead of re-deriving them: two decodings of one
@@ -5511,11 +5515,92 @@ public class ActionResolver {
         boolean opponentOnly = control != null && !control.equalsIgnoreCase("you control");
         boolean selfOnly     = "you control".equalsIgnoreCase(control);
         String  zone        = m.group("zone");
-        if (zone != null) return null; // break-zone targets deferred to resolution time
+        String  zoneLower   = zone == null ? null : zone.toLowerCase(Locale.ROOT);
+        boolean bothZones   = zoneLower != null
+                && (zoneLower.contains("either player") || zoneLower.contains("any player"));
+        boolean opponentZone = zoneLower != null && !bothZones && zoneLower.contains("opponent");
 
         return new TargetSpec(maxCount, upTo, opponentOnly, selfOnly, condition, element,
                 costVal2, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
-                jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, excludeElem, withoutMulticard);
+                jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, excludeElem, withoutMulticard,
+                zone, opponentZone, bothZones);
+    }
+
+    /**
+     * The targets a Summon has to be able to choose for its cast to be legal, or {@code null} when
+     * its text demands none.
+     *
+     * <p>A Summon that opens "Choose 1 Forward." cannot be cast while no Forward can be chosen —
+     * unlike a Character, whose auto-abilities are free to enter and find nothing to fire at. Only
+     * a mandatory opening choice counts, which is what {@link #OPENING_MANDATORY_CHOICE} says and
+     * why this leans on it rather than on {@link #targetSpec} alone:
+     *
+     * <ul>
+     *   <li>"Choose up to 2 Forwards" demands nothing — choosing none is a legal choice.
+     *   <li>"Select 1 of the 2 following actions" picks a mode, not a target; its quoted actions
+     *       do their own choosing when the Summon resolves, so the cast stands either way.
+     *   <li>A "Choose" buried inside a granted ability ("gains \"When this Forward attacks, choose
+     *       1 Forward…\"") belongs to that ability, not to this cast. The pattern is anchored, so
+     *       neither of the last two reaches {@code targetSpec} here.
+     * </ul>
+     *
+     * <p>A choice naming a Break Zone comes back like any other, reported through the spec's
+     * {@code zone}: whether one is there is as answerable now as at resolution, even though
+     * <em>which</em> one is picked has to wait. {@code null} is kept for a choice
+     * {@code targetSpec} cannot decode, so an effect this cannot read imposes no restriction
+     * rather than a wrongly empty one — the same choice {@link TargetSpec} documents for its
+     * own {@code null}. Choices answered by the Stack or the Damage Zone are read by
+     * {@link #mandatoryCastStackChoice} and {@link #mandatoryCastNeedsOwnDamageZoneCard}.
+     */
+    public static TargetSpec mandatoryCastTargetSpec(String summonEffect, CardData source) {
+        if (summonEffect == null) return null;
+        String text = stripExBurstPrefix(summonEffect).trim();
+        if (!OPENING_MANDATORY_CHOICE.matcher(text).find()) return null;
+        TargetSpec spec = targetSpec(text, source);
+        return spec == null || spec.upTo() ? null : spec;
+    }
+
+    /**
+     * The Stack entries a Summon has to be able to choose for its cast to be legal, or
+     * {@code null} when its opening choice does not name one.
+     *
+     * <p>The Stack half of {@link #mandatoryCastTargetSpec}: "Choose 1 auto-ability. Cancel its
+     * effect." is as unanswerable with an empty Stack as "Choose 1 Forward." is with an empty
+     * board. {@link ActionResolverPatterns#CHOOSE_CHARACTER_PATTERN} cannot read these at all —
+     * its list of things a choice can name is card kinds, and an ability waiting to resolve is
+     * not a card in any zone that pattern scans.
+     *
+     * <p>{@link #stackCancelFilter} decodes the cancels among them and is preferred where it
+     * does, since it also reads the "choosing a Character you control" qualifier. It is consulted
+     * only once the opening choice is known to name a Stack entry: it is unanchored, and a text
+     * that chooses a Forward and cancels something later would otherwise be read as choosing off
+     * the Stack. What is left is the choice that does something other than cancel (Zalera 25-088H
+     * puts the triggering Forward into the Break Zone), which the entry kind alone answers.
+     *
+     * <p>A qualifier past the kind ("triggered from a Forward") is not enforced, matching what
+     * {@code CANCEL_ABILITY_ON_STACK} does with the same phrase: this decides whether a cast may
+     * happen, and being narrower than the engine can actually verify would refuse legal ones.
+     */
+    static Predicate<StackEntry> mandatoryCastStackChoice(String summonEffect, boolean casterIsP1) {
+        if (summonEffect == null) return null;
+        String text = stripExBurstPrefix(summonEffect).trim();
+        Matcher opening = OPENING_MANDATORY_CHOICE.matcher(text);
+        if (!opening.find()) return null;
+        Matcher kind = OPENING_CHOICE_ON_STACK.matcher(opening.group("what").trim());
+        if (!kind.find()) return null;
+        Predicate<StackEntry> cancel = stackCancelFilter(text, casterIsP1);
+        if (cancel != null) return cancel;
+        String types = kind.group("types");
+        return types != null ? parseAbilityTypeFilter(types) : null;
+    }
+
+    /**
+     * Whether the Summon's opening choice is answered by a card in the caster's own Damage Zone
+     * — Ark 23-113R, which cannot be cast before its caster has taken any damage.
+     */
+    static boolean mandatoryCastNeedsOwnDamageZoneCard(String summonEffect) {
+        return summonEffect != null
+                && OPENING_CHOICE_FROM_DAMAGE_ZONE.matcher(stripExBurstPrefix(summonEffect).trim()).find();
     }
 
     static List<ForwardTarget> selectTargets(GameContext ctx,

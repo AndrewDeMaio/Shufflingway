@@ -559,6 +559,10 @@ class ComputerPlayer implements OpponentController {
 				if (!c.isSummon()) continue;
 				if (ActionResolver.cancelsAutoAbility(c.summonEffect()) && !p1HasAutoAbilityOnStack) continue;
 				if (!mw.castRestrictionMet(c, false)) continue;
+				// The rule: a mandatory "Choose 1 …" with nothing to choose makes the cast illegal.
+				// summonHasSomethingToHit below is the separate question of whether casting is worth
+				// it, and answers it for texts this one deliberately passes.
+				if (mw.summonCastBlocked(c, false)) continue;
 				if (!summonHasSomethingToHit(c)) continue;
 				summonCands.add(i);
 			}
@@ -641,7 +645,7 @@ class ComputerPlayer implements OpponentController {
 		for (int i = 0; i < hand.size(); i++) {
 			CardData c = hand.get(i);
 			if (!c.hasWarp()) continue;
-			if (c.isSummon() && mw.summonCastingProhibited()) continue;
+			if (mw.summonCastBlocked(c, false)) continue;
 			if (!mw.castRestrictionMet(c, false)) continue;
 			cands.add(i);
 		}
@@ -813,7 +817,7 @@ class ComputerPlayer implements OpponentController {
 			if (isChar && !card.multicard() && mw.p2HasCharacterNameOnField(card.name())) continue;
 			if (isChar && mw.isP2LightDarkConflict(card)) continue;
 			if (card.isBackup() && !mw.p2HasAvailableBackupSlot()) continue;
-			if (card.isSummon() && mw.summonCastingProhibited()) continue;
+			if (mw.summonCastBlocked(card, false)) continue;
 
 			List<Integer>        backups      = new ArrayList<>();
 			Map<Integer, String> backupElems  = new LinkedHashMap<>();
@@ -1663,6 +1667,7 @@ class ComputerPlayer implements OpponentController {
 			if (i == reservedIdx) continue;
 			CardData starter = hand.get(i);
 			if (!starter.isSummon()) continue;
+			if (mw.summonCastBlocked(starter, false)) continue;
 			boolean hasCheaper = false;
 			for (int j = 0; j < hand.size(); j++) {
 				if (j == i || j == reservedIdx) continue;
