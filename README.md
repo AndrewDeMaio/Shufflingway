@@ -18,9 +18,9 @@ The ultimate goal for this application will be to play against someone else with
 
 Current card coverage (estimate):
 
-* Action/Special Abilities: (97.7%)
+* Action/Special Abilities: (99.0%)
 
-* Auto Abilities: (91.9%)
+* Auto Abilities: (92.1%)
 
 * Field Abilities: **(100%)**
 
