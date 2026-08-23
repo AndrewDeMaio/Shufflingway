@@ -47,6 +47,5 @@ Once the application has been installed, you can update to any new releases from
 
 * Opus 29 is now live! Cards can be fetched via the Card Browser card update button. New overpayment rules have been implemented.
 * Next features (aside from parsing additions and bugfixes):
-  1. Relocating P1's hand to a fan-out at the bottom of the board.
-  2. Additional animations for better gameplay context
-  3. More trait icons for various card states (Shielded, primed, must attack, cannot block, etc.)
+  1. Additional animations for better gameplay context
+  2. More trait icons for various card states (Shielded, primed, must attack, cannot block, etc.)
