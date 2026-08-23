@@ -4797,12 +4797,6 @@ public class MainWindow {
 	// -------------------------------------------------------------------------
 
 	/**
-	 * @return whether the search actually moved a card — false when searching is blocked, when the
-	 *         deck holds no match, or when the player looked and picked nothing. Callers that only
-	 *         search may ignore it; "search … <b>and</b> remove it from the game. If you do so, …"
-	 *         (29-117H Ark) branches on it, and a decline has to take the "If not" branch.
-	 */
-	/**
 	 * True while a search wants its identity filters met together rather than as alternatives —
 	 * "Card Name Cecil with Job Paladin". Set for the length of one call by
 	 * {@link #searchDeckForNamedCardWithJob} and read by {@link #searchDeckForCardImpl}, an
@@ -4836,6 +4830,12 @@ public class MainWindow {
 		}
 	}
 
+	/**
+	 * @return whether the search actually moved a card — false when searching is blocked, when the
+	 *         deck holds no match, or when the player looked and picked nothing. Callers that only
+	 *         search may ignore it; "search … <b>and</b> remove it from the game. If you do so, …"
+	 *         (29-117H Ark) branches on it, and a decline has to take the "If not" branch.
+	 */
 	boolean searchDeckForCard(boolean isP1,
 			boolean inclForwards, boolean inclBackups,
 			boolean inclMonsters, boolean inclSummons,
