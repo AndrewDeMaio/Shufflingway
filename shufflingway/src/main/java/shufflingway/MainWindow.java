@@ -4802,6 +4802,40 @@ public class MainWindow {
 	 *         search may ignore it; "search … <b>and</b> remove it from the game. If you do so, …"
 	 *         (29-117H Ark) branches on it, and a decline has to take the "If not" branch.
 	 */
+	/**
+	 * True while a search wants its identity filters met together rather than as alternatives —
+	 * "Card Name Cecil with Job Paladin". Set for the length of one call by
+	 * {@link #searchDeckForNamedCardWithJob} and read by {@link #searchDeckForCardImpl}, an
+	 * instance field rather than a parameter so the sixteen-argument search signature and its
+	 * thirty-odd call sites stay as they are: only one printing in the corpus needs the flag.
+	 */
+	private boolean searchIdentityConjunctive = false;
+
+	/**
+	 * Searches for the card that satisfies <em>both</em> identity filters — the Cecil that carries
+	 * Job Paladin, not any Cecil and not any Paladin.
+	 *
+	 * <p>Runs the ordinary search with {@link #searchIdentityConjunctive} set, rather than
+	 * gathering the matches here, so the search-blocked check, the searched-the-deck triggers and
+	 * the destination handling all stay in one place. Cleared in a finally block, so a dialog the
+	 * player dismisses cannot leave it set for the next search.
+	 */
+	boolean searchDeckForNamedCardWithJob(boolean isP1,
+			boolean inclForwards, boolean inclBackups,
+			boolean inclMonsters, boolean inclSummons,
+			int costVal, String costCmp, String cardNameFilter, String jobFilter,
+			String elementFilter, String excludeName, String excludeElem,
+			String destination, int count, boolean entersDull, boolean requireWarp) {
+		searchIdentityConjunctive = true;
+		try {
+			return searchDeckForCard(isP1, inclForwards, inclBackups, inclMonsters, inclSummons,
+					costVal, costCmp, cardNameFilter, jobFilter, null, elementFilter,
+					excludeName, excludeElem, destination, count, entersDull, requireWarp);
+		} finally {
+			searchIdentityConjunctive = false;
+		}
+	}
+
 	boolean searchDeckForCard(boolean isP1,
 			boolean inclForwards, boolean inclBackups,
 			boolean inclMonsters, boolean inclSummons,
@@ -4849,15 +4883,17 @@ public class MainWindow {
 			if (requireWarp && !c.hasWarp()) continue;
 			if (!meetsCostConstraint(c.cost(), costVal, costCmp)) continue;
 			// Job, Card Name and Category identify a card three different ways. Stated together
-			// they are alternatives, never requirements to combine: "Category FFL Forwards or Job
-			// Warrior of Light Forwards" (12-099R Sarah) wants either. Alone, each is a plain
-			// requirement. No card in the corpus asks a search for two of these at once in the AND
-			// sense, so there is no conjunction to preserve — if one ever appears, it needs a flag
-			// from the parser rather than a change here, because only the text says which it is.
+			// they are usually alternatives: "Category FFL Forwards or Job Warrior of Light
+			// Forwards" (12-099R Sarah) wants either. Alone, each is a plain requirement.
+			//
+			// One printed phrase means them together instead — "Card Name Cecil with Job Paladin"
+			// (20-075L, 28-032H; 4-054L Onion Knight with Job Sage), which wants the one Cecil that
+			// is a Paladin rather than any Cecil or any Paladin. Only the text can tell the two
+			// readings apart, so the parser says which by way of searchIdentityConjunctive.
 			int idFilters = (jobFilter      != null ? 1 : 0)
 			              + (cardNameFilter != null ? 1 : 0)
 			              + (categoryFilter != null ? 1 : 0);
-			boolean passesIdentity = idFilters <= 1
+			boolean passesIdentity = idFilters <= 1 || searchIdentityConjunctive
 				? meetsJobFilterEffective(c, jobFilter)
 					&& meetsCardNameFilter(c, cardNameFilter)
 					&& meetsCategoryFilter(c, categoryFilter)
@@ -11919,6 +11955,30 @@ public class MainWindow {
 		for (String j : jobFilter.split("\\|"))
 			if (extra.equalsIgnoreCase(j.trim())) return true;
 		return false;
+	}
+
+	/**
+	 * Combines a job filter and a card-name filter the way every printing that supplies both means
+	 * them — as alternatives, not as a conjunction.
+	 *
+	 * <p>"Job Chocobo or Card Name Chocobo" (Bartz 29-052H, Billy 29-048C, and some thirty others)
+	 * fills both slots, and a card satisfies exactly one of them: the cards named "Chocobo" carry
+	 * the Job Standard Unit, and the Job Chocobo cards are named "Stray Chocobo", "Black Chocobo",
+	 * "Lucil". ANDing the two matched nothing at all. Every parser that fills both slots reached
+	 * them through an explicit "or"/"and/or" in the printed text, so both-set can be read as the
+	 * union without asking the caller which it meant.
+	 *
+	 * <p>A filter left null is "any", so the single-filter and no-filter cases fall out of the
+	 * conjunction unchanged. {@code controlledForwards} is the pool consulted for a card that has
+	 * "the Jobs of the Forwards you control"; pass {@code null} where the caller has no pool.
+	 */
+	boolean meetsJobOrCardNameFilter(CardData card, String jobFilter, String cardNameFilter,
+			List<CardData> controlledForwards) {
+		boolean jobOk = controlledForwards != null
+				? meetsJobFilterEffective(card, jobFilter, controlledForwards)
+				: meetsJobFilterEffective(card, jobFilter);
+		boolean nameOk = meetsCardNameFilter(card, cardNameFilter);
+		return jobFilter != null && cardNameFilter != null ? jobOk || nameOk : jobOk && nameOk;
 	}
 
 	// -------------------------------------------------------------------------

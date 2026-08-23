@@ -979,8 +979,7 @@ final class GameContextImpl implements GameContext {
 							if (!meetsElementExclusion(card, excludeElement)) continue;
 							if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
 							if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
-							if (!mw.meetsJobFilterEffective(card, jobFilter, mw.p1ForwardCards)) continue;
-							if (!meetsCardNameFilter(card, cardNameFilter)) continue;
+							if (!mw.meetsJobOrCardNameFilter(card, jobFilter, cardNameFilter, mw.p1ForwardCards)) continue;
 							if (!meetsCategoryFilter(card, categoryFilter)) continue;
 							if (excludeName != null && excludeName.equalsIgnoreCase(card.name())) continue;
 							if (withoutMulticard && card.multicard()) continue;
@@ -1001,8 +1000,7 @@ final class GameContextImpl implements GameContext {
 							if (element != null && !mw.effectiveContainsElement(mw.p1BackupCards[i], element)) continue;
 							if (!meetsCostConstraint(mw.p1BackupCards[i].cost(), costVal, costCmp)) continue;
 							if (!meetsPowerConstraint(mw.p1BackupCards[i].power(), powerVal, powerCmp)) continue;
-							if (!mw.meetsJobFilterEffective(mw.p1BackupCards[i], jobFilter, mw.p1ForwardCards)) continue;
-							if (!meetsCardNameFilter(mw.p1BackupCards[i], cardNameFilter)) continue;
+							if (!mw.meetsJobOrCardNameFilter(mw.p1BackupCards[i], jobFilter, cardNameFilter, mw.p1ForwardCards)) continue;
 							if (!meetsCategoryFilter(mw.p1BackupCards[i], categoryFilter)) continue;
 							if (excludeName != null && excludeName.equalsIgnoreCase(mw.p1BackupCards[i].name())) continue;
 							if (withoutMulticard && mw.p1BackupCards[i].multicard()) continue;
@@ -1017,8 +1015,7 @@ final class GameContextImpl implements GameContext {
 							if (!meetsElementExclusion(card, excludeElement)) continue;
 							if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
 							if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
-							if (!mw.meetsJobFilterEffective(card, jobFilter, mw.p1ForwardCards)) continue;
-							if (!meetsCardNameFilter(card, cardNameFilter)) continue;
+							if (!mw.meetsJobOrCardNameFilter(card, jobFilter, cardNameFilter, mw.p1ForwardCards)) continue;
 							if (!meetsCategoryFilter(card, categoryFilter)) continue;
 							if (excludeName != null && excludeName.equalsIgnoreCase(card.name())) continue;
 							if (withoutMulticard && card.multicard()) continue;
@@ -1036,8 +1033,7 @@ final class GameContextImpl implements GameContext {
 							if (!meetsElementExclusion(card, excludeElement)) continue;
 							if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
 							if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
-							if (!mw.meetsJobFilterEffective(card, jobFilter, mw.p2ForwardCards)) continue;
-							if (!meetsCardNameFilter(card, cardNameFilter)) continue;
+							if (!mw.meetsJobOrCardNameFilter(card, jobFilter, cardNameFilter, mw.p2ForwardCards)) continue;
 							if (!meetsCategoryFilter(card, categoryFilter)) continue;
 							if (excludeName != null && excludeName.equalsIgnoreCase(card.name())) continue;
 							if (withoutMulticard && card.multicard()) continue;
@@ -1058,8 +1054,7 @@ final class GameContextImpl implements GameContext {
 							if (element != null && !mw.effectiveContainsElement(mw.p2BackupCards[i], element)) continue;
 							if (!meetsCostConstraint(mw.p2BackupCards[i].cost(), costVal, costCmp)) continue;
 							if (!meetsPowerConstraint(mw.p2BackupCards[i].power(), powerVal, powerCmp)) continue;
-							if (!mw.meetsJobFilterEffective(mw.p2BackupCards[i], jobFilter, mw.p2ForwardCards)) continue;
-							if (!meetsCardNameFilter(mw.p2BackupCards[i], cardNameFilter)) continue;
+							if (!mw.meetsJobOrCardNameFilter(mw.p2BackupCards[i], jobFilter, cardNameFilter, mw.p2ForwardCards)) continue;
 							if (!meetsCategoryFilter(mw.p2BackupCards[i], categoryFilter)) continue;
 							if (excludeName != null && excludeName.equalsIgnoreCase(mw.p2BackupCards[i].name())) continue;
 							if (withoutMulticard && mw.p2BackupCards[i].multicard()) continue;
@@ -1074,8 +1069,7 @@ final class GameContextImpl implements GameContext {
 							if (!meetsElementExclusion(card, excludeElement)) continue;
 							if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
 							if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
-							if (!mw.meetsJobFilterEffective(card, jobFilter, mw.p2ForwardCards)) continue;
-							if (!meetsCardNameFilter(card, cardNameFilter)) continue;
+							if (!mw.meetsJobOrCardNameFilter(card, jobFilter, cardNameFilter, mw.p2ForwardCards)) continue;
 							if (!meetsCategoryFilter(card, categoryFilter)) continue;
 							if (excludeName != null && excludeName.equalsIgnoreCase(card.name())) continue;
 							if (withoutMulticard && card.multicard()) continue;
@@ -1096,8 +1090,7 @@ final class GameContextImpl implements GameContext {
 							if (!meetsElementExclusion(card, excludeElement)) continue;
 							if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
 							if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
-							if (!mw.meetsJobFilterEffective(card, jobFilter, mw.p2ForwardCards)) continue;
-							if (!meetsCardNameFilter(card, cardNameFilter)) continue;
+							if (!mw.meetsJobOrCardNameFilter(card, jobFilter, cardNameFilter, mw.p2ForwardCards)) continue;
 							if (!meetsCategoryFilter(card, categoryFilter)) continue;
 							if (excludeName != null && excludeName.equalsIgnoreCase(card.name())) continue;
 							if (withoutMulticard && card.multicard()) continue;
@@ -1118,8 +1111,7 @@ final class GameContextImpl implements GameContext {
 							if (element != null && !mw.effectiveContainsElement(mw.p2BackupCards[i], element)) continue;
 							if (!meetsCostConstraint(mw.p2BackupCards[i].cost(), costVal, costCmp)) continue;
 							if (!meetsPowerConstraint(mw.p2BackupCards[i].power(), powerVal, powerCmp)) continue;
-							if (!mw.meetsJobFilterEffective(mw.p2BackupCards[i], jobFilter, mw.p2ForwardCards)) continue;
-							if (!meetsCardNameFilter(mw.p2BackupCards[i], cardNameFilter)) continue;
+							if (!mw.meetsJobOrCardNameFilter(mw.p2BackupCards[i], jobFilter, cardNameFilter, mw.p2ForwardCards)) continue;
 							if (!meetsCategoryFilter(mw.p2BackupCards[i], categoryFilter)) continue;
 							if (excludeName != null && excludeName.equalsIgnoreCase(mw.p2BackupCards[i].name())) continue;
 							if (withoutMulticard && mw.p2BackupCards[i].multicard()) continue;
@@ -1134,8 +1126,7 @@ final class GameContextImpl implements GameContext {
 							if (!meetsElementExclusion(card, excludeElement)) continue;
 							if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
 							if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
-							if (!mw.meetsJobFilterEffective(card, jobFilter, mw.p2ForwardCards)) continue;
-							if (!meetsCardNameFilter(card, cardNameFilter)) continue;
+							if (!mw.meetsJobOrCardNameFilter(card, jobFilter, cardNameFilter, mw.p2ForwardCards)) continue;
 							if (!meetsCategoryFilter(card, categoryFilter)) continue;
 							if (excludeName != null && excludeName.equalsIgnoreCase(card.name())) continue;
 							if (withoutMulticard && card.multicard()) continue;
@@ -1153,8 +1144,7 @@ final class GameContextImpl implements GameContext {
 							if (!meetsElementExclusion(card, excludeElement)) continue;
 							if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
 							if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
-							if (!mw.meetsJobFilterEffective(card, jobFilter, mw.p1ForwardCards)) continue;
-							if (!meetsCardNameFilter(card, cardNameFilter)) continue;
+							if (!mw.meetsJobOrCardNameFilter(card, jobFilter, cardNameFilter, mw.p1ForwardCards)) continue;
 							if (!meetsCategoryFilter(card, categoryFilter)) continue;
 							if (excludeName != null && excludeName.equalsIgnoreCase(card.name())) continue;
 							if (withoutMulticard && card.multicard()) continue;
@@ -1175,8 +1165,7 @@ final class GameContextImpl implements GameContext {
 							if (element != null && !mw.effectiveContainsElement(mw.p1BackupCards[i], element)) continue;
 							if (!meetsCostConstraint(mw.p1BackupCards[i].cost(), costVal, costCmp)) continue;
 							if (!meetsPowerConstraint(mw.p1BackupCards[i].power(), powerVal, powerCmp)) continue;
-							if (!mw.meetsJobFilterEffective(mw.p1BackupCards[i], jobFilter, mw.p1ForwardCards)) continue;
-							if (!meetsCardNameFilter(mw.p1BackupCards[i], cardNameFilter)) continue;
+							if (!mw.meetsJobOrCardNameFilter(mw.p1BackupCards[i], jobFilter, cardNameFilter, mw.p1ForwardCards)) continue;
 							if (!meetsCategoryFilter(mw.p1BackupCards[i], categoryFilter)) continue;
 							if (excludeName != null && excludeName.equalsIgnoreCase(mw.p1BackupCards[i].name())) continue;
 							if (withoutMulticard && mw.p1BackupCards[i].multicard()) continue;
@@ -1191,8 +1180,7 @@ final class GameContextImpl implements GameContext {
 							if (!meetsElementExclusion(card, excludeElement)) continue;
 							if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
 							if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
-							if (!mw.meetsJobFilterEffective(card, jobFilter)) continue;
-							if (!meetsCardNameFilter(card, cardNameFilter)) continue;
+							if (!mw.meetsJobOrCardNameFilter(card, jobFilter, cardNameFilter, null)) continue;
 							if (!meetsCategoryFilter(card, categoryFilter)) continue;
 							if (excludeName != null && excludeName.equalsIgnoreCase(card.name())) continue;
 							if (withoutMulticard && card.multicard()) continue;
@@ -1767,6 +1755,14 @@ final class GameContextImpl implements GameContext {
 				return mw.searchDeckForCard(isP1, inclForwards, inclBackups, inclMonsters, inclSummons,
 						costVal, costCmp, cardNameFilter, jobFilter, categoryFilter, elementFilter, excludeName, excludeElem, destination, count, entersDull, requireWarp);
 			}
+			@Override public boolean searchDeckForNamedCardWithJob(boolean inclForwards, boolean inclBackups,
+					boolean inclMonsters, boolean inclSummons,
+					int costVal, String costCmp, String cardNameFilter, String jobFilter,
+					String elementFilter, String excludeName, String excludeElem,
+					String destination, int count, boolean entersDull, boolean requireWarp) {
+				return mw.searchDeckForNamedCardWithJob(isP1, inclForwards, inclBackups, inclMonsters, inclSummons,
+						costVal, costCmp, cardNameFilter, jobFilter, elementFilter, excludeName, excludeElem, destination, count, entersDull, requireWarp);
+			}
 			@Override public void searchDeckJobAndTypeDontShareElements(String jobFilter, String typeName) {
 				mw.searchDeckJobAndTypeDontShareElements(isP1, jobFilter, typeName);
 			}
@@ -1971,8 +1967,7 @@ final class GameContextImpl implements GameContext {
 						if (element != null && !card.containsElement(element)) continue;
 						if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
 						if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
-						if (!mw.meetsJobFilterEffective(card, jobFilter)) continue;
-						if (!meetsCardNameFilter(card, cardNameFilter)) continue;
+						if (!mw.meetsJobOrCardNameFilter(card, jobFilter, cardNameFilter, null)) continue;
 						if (!meetsCategoryFilter(card, categoryFilter)) continue;
 						if (excludeName != null && excludeName.equalsIgnoreCase(card.name())) continue;
 						if (withoutMulticard && card.multicard()) continue;
@@ -1988,8 +1983,7 @@ final class GameContextImpl implements GameContext {
 						if (element != null && !card.containsElement(element)) continue;
 						if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
 						if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
-						if (!mw.meetsJobFilterEffective(card, jobFilter)) continue;
-						if (!meetsCardNameFilter(card, cardNameFilter)) continue;
+						if (!mw.meetsJobOrCardNameFilter(card, jobFilter, cardNameFilter, null)) continue;
 						if (!meetsCategoryFilter(card, categoryFilter)) continue;
 						if (excludeName != null && excludeName.equalsIgnoreCase(card.name())) continue;
 						if (withoutMulticard && card.multicard()) continue;
@@ -2040,8 +2034,7 @@ final class GameContextImpl implements GameContext {
 					if (element != null && !card.containsElement(element)) continue;
 					if (!meetsCostConstraint(card.cost(), costVal, costCmp)) continue;
 					if (!meetsPowerConstraint(card.power(), powerVal, powerCmp)) continue;
-					if (!mw.meetsJobFilterEffective(card, jobFilter)) continue;
-					if (!meetsCardNameFilter(card, cardNameFilter)) continue;
+					if (!mw.meetsJobOrCardNameFilter(card, jobFilter, cardNameFilter, null)) continue;
 					if (!meetsCategoryFilter(card, categoryFilter)) continue;
 					if (excludeName != null && excludeName.equalsIgnoreCase(card.name())) continue;
 					if (withoutMulticard && card.multicard()) continue;
@@ -3352,12 +3345,9 @@ final class GameContextImpl implements GameContext {
 					boolean costOk = meetsCostConstraint(card.cost(), costVal, costCmp)
 					               || (costVal2 >= 0 && card.cost() == costVal2);
 					if (!costOk) continue;
-					// Job+name: OR when both are set; AND otherwise
-					boolean passesNameJob = (jobFilter == null && cardNameFilter == null)
-						|| (jobFilter != null && cardNameFilter != null
-							? mw.meetsJobFilterEffective(card, jobFilter) || meetsCardNameFilter(card, cardNameFilter)
-							: mw.meetsJobFilterEffective(card, jobFilter) && meetsCardNameFilter(card, cardNameFilter));
-					if (!passesNameJob) continue;
+					// Job+name: OR when both are set; AND otherwise. This rule started here and now
+					// lives in the shared helper, which the two board selections use as well.
+					if (!mw.meetsJobOrCardNameFilter(card, jobFilter, cardNameFilter, null)) continue;
 					if (!meetsCategoryFilter(card, categoryFilter)) continue;
 					if (!meetsElementFilter(card, elementFilter)) continue;
 					if (!meetsElementExclusion(card, excludeElement)) continue;
@@ -3429,8 +3419,7 @@ final class GameContextImpl implements GameContext {
 						if (c.isBackup()   && !inclBackups)  continue;
 						if (c.isMonster()  && !inclMonsters) continue;
 						if (c.isSummon()) continue;
-						if (!mw.meetsJobFilterEffective(c, jobFilter)) continue;
-						if (!meetsCardNameFilter(c, cardNameFilter)) continue;
+						if (!mw.meetsJobOrCardNameFilter(c, jobFilter, cardNameFilter, null)) continue;
 						if (!meetsCategoryFilter(c, categoryFilter)) continue;
 						if (!meetsElementFilter(c, elementFilter)) continue;
 						if (c.playByEffectProhibited(true)) continue;
@@ -7336,6 +7325,14 @@ final class GameContextImpl implements GameContext {
 				return countP1FieldCards(inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, elementFilter, -1);
 			}
 
+			/**
+			 * Job and card name are ANDed here, unlike in the selections — deliberately, and not
+			 * an oversight to "fix" later. A caller wanting the union of the two asks three times
+			 * and subtracts: job, name, then both, the last of which is this method's conjunctive
+			 * answer (see the "for each Job X or Card Name Y" scaling sources in
+			 * {@code ActionResolverChoose}). Making this OR would make that overlap term the union
+			 * itself, and the inclusion-exclusion would undercount every time.
+			 */
 			@Override public int countP1FieldCards(boolean inclForwards, boolean inclBackups,
 					boolean inclMonsters, String jobFilter, String cardNameFilter, String categoryFilter, String elementFilter, int costFilter) {
 				int count = 0;
@@ -7442,6 +7439,7 @@ final class GameContextImpl implements GameContext {
 				return countP2FieldCards(inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, elementFilter, -1);
 			}
 
+			/** Conjunctive for the reason {@link #countP1FieldCards} is — the overlap term. */
 			@Override public int countP2FieldCards(boolean inclForwards, boolean inclBackups,
 					boolean inclMonsters, String jobFilter, String cardNameFilter, String categoryFilter, String elementFilter, int costFilter) {
 				int count = 0;

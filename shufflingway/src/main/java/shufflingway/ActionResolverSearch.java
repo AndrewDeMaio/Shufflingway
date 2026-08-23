@@ -821,14 +821,26 @@ final class ActionResolverSearch {
 
         // --- Card name filter ---
         String cardNameFilter = null;
+        // Jobs named inside an identity list that also names cards, carried to the job filter below
+        // — "Card Name Chloe, Job Chocobo or Card Name Chocobo" (Billy 29-048C).
+        String listJobFilter = null;
+        // "Card Name X with Job Y" — the one identity phrase meaning both at once rather than
+        // either, so the search is told to require them together instead of taking its usual
+        // reading of two filled identity filters.
+        boolean identityConjunctive = m.group("cnamewithjob") != null;
+        String withJobName = m.group("cnamewithjob");
         String bracketName = m.group("bracketname");
-        if (bracketName != null) {
+        if (withJobName != null) {
+            cardNameFilter = withJobName.trim();
+        } else if (bracketName != null) {
             Matcher nm = CARD_NAME_BRACKET_PATTERN.matcher(bracketName);
             if (nm.find()) cardNameFilter = nm.group(1).trim();
         } else {
             String writtenNames = m.group("cardnames");
             if (writtenNames != null) {
-                cardNameFilter = splitCardNameList(writtenNames);
+                String[] split = splitCardNameAndJobList(writtenNames);
+                cardNameFilter = split[0];
+                listJobFilter  = split[1];
             } else {
                 String written = m.group("cardname");
                 if (written != null) cardNameFilter = written.trim();
@@ -838,7 +850,9 @@ final class ActionResolverSearch {
         // --- Job filter ---
         String jobFilter = null;
         String bracketJob = m.group("bracketjob");
-        if (bracketJob != null) {
+        if (identityConjunctive) {
+            jobFilter = m.group("jobwithcname").trim();
+        } else if (bracketJob != null) {
             Matcher jm = JOB_BRACKET_PATTERN.matcher(bracketJob);
             if (jm.find()) jobFilter = jm.group(1).trim();
         } else {
@@ -847,6 +861,8 @@ final class ActionResolverSearch {
                 // "Chocobo or Job Moogle or Job Ninja" → "Chocobo|Moogle|Ninja"
                 String[] parts = writtenJob.trim().split("(?i)\\s+or\\s+Job\\s+");
                 jobFilter = String.join("|", parts);
+            } else {
+                jobFilter = listJobFilter;
             }
         }
 
@@ -888,8 +904,10 @@ final class ActionResolverSearch {
         String elementFilter = elementsRaw != null
                 ? elementsRaw.trim().replaceAll("(?i)\\s+or\\s+", "|") : null;
 
-        // --- Exclude name (other than Card Name X) ---
-        String excludeName = m.group("excludename") != null ? m.group("excludename").trim() : null;
+        // --- Exclude name (other than Card Name X) — stated either side of the cost clause ---
+        String excludeNameRaw = m.group("excludename") != null
+                ? m.group("excludename") : m.group("excludename2");
+        String excludeName = excludeNameRaw != null ? excludeNameRaw.trim() : null;
 
         // --- Exclude element (other than Light or Dark) ---
         String excludeElemRaw = m.group("excludeelem");
@@ -918,8 +936,13 @@ final class ActionResolverSearch {
 
         // --- Cost filter ---
         String costStr = m.group("cost");
-        int    costVal = costStr == null ? -1 : Integer.parseInt(costStr);
-        String costCmpRaw = m.group("costcmp");
+        // "of cost X" reads the 《X》 this ability was paid with. Exact by default — 25-051L Rem
+        // fetches a Cadet costing exactly what was paid — but "of cost X or less" is printed too
+        // (5-041R Lightning, 22-049H Bartz), and carries its own comparator.
+        boolean costIsX = m.group("costx") != null;
+        int    costVal = costIsX ? xValue
+                       : costStr == null ? -1 : Integer.parseInt(costStr);
+        String costCmpRaw = costIsX ? m.group("costxcmp") : m.group("costcmp");
         // "of cost 5 or 6" — numeric second value → encode as "or_6" for meetsCostConstraint
         String costCmp = (costCmpRaw != null && costCmpRaw.matches("\\d+"))
                 ? "or_" + costCmpRaw : costCmpRaw;
@@ -962,9 +985,19 @@ final class ActionResolverSearch {
         final int fCount = count;
         final boolean fDull = entersDull;
         final boolean fWarp = requireWarp;
+        final boolean fBoth = identityConjunctive;
+        final int fCost = costVal;
+        final String fCostCmp = costCmp;
         Consumer<GameContext> search = ctx -> {
-            ctx.logEntry("Effect: Search deck for " + fCount + filterDesc + typeDesc + costLabel + " → " + destination + (fDull ? " dull" : ""));
-            ctx.searchDeckForCard(fwd, bk, mn, sm, costVal, costCmp, fName, fJob, fCat, fElem, fExclude, fExclElem, destination, fCount, fDull, fWarp);
+            ctx.logEntry("Effect: Search deck for " + fCount + filterDesc + typeDesc + costLabel
+                    + (fBoth ? " [name and job together]" : "")
+                    + " → " + destination + (fDull ? " dull" : ""));
+            if (fBoth) {
+                ctx.searchDeckForNamedCardWithJob(fwd, bk, mn, sm, fCost, fCostCmp, fName, fJob,
+                        fElem, fExclude, fExclElem, destination, fCount, fDull, fWarp);
+            } else {
+                ctx.searchDeckForCard(fwd, bk, mn, sm, fCost, fCostCmp, fName, fJob, fCat, fElem, fExclude, fExclElem, destination, fCount, fDull, fWarp);
+            }
             if (secondary != null) secondary.accept(ctx);
         };
 

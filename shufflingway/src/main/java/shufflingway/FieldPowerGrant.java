@@ -477,9 +477,16 @@ public record FieldPowerGrant(
         // "of an Element other than X" — a Multi-Element card carrying X is spared, since it does
         // have that Element (Tchakka 18-092C spares a Water/Fire Forward, not just a mono-Water one).
         if (!CardFilters.meetsElementExclusion(card, excludeElement)) return false;
+        // Job and card name are alternatives when a printing supplies both — "The Job Chocobo
+        // Forwards and Card Name Chocobo Forwards you control gain +3000 power" (Billy 29-048C)
+        // means either, and no card is both, so ANDing them granted nothing. The same rule the
+        // board selections and the deck search use. A filter left null is "any", so the
+        // single-filter and no-filter cases stay a plain conjunction.
+        boolean jobOk  = CardFilters.meetsJobFilter(card, jobFilter);
+        boolean nameOk = CardFilters.meetsCardNameFilter(card, inclCardName);
+        boolean identityOk = jobFilter != null && inclCardName != null ? jobOk || nameOk : jobOk && nameOk;
         return CardFilters.meetsElementFilter(card, elementFilter)
-            && CardFilters.meetsJobFilter(card, jobFilter)
             && CardFilters.meetsCategoryFilter(card, categoryFilter)
-            && CardFilters.meetsCardNameFilter(card, inclCardName);
+            && identityOk;
     }
 }

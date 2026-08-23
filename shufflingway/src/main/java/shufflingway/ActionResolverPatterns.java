@@ -3728,10 +3728,24 @@ final class ActionResolverPatterns {
             "\\s+(?:and/)?or\\s+Job\\s+(?<jobnmcnameor>.+?)" +
             "(?=\\s+of\\s+cost|\\s+(?:Forwards?|Backups?|Monsters?|Summons?|Characters?|card)\\b|\\s+other\\b|\\s+and\\b)\\s*" +
         "|" +
+            // "Card Name X with Job Y" — the one identity phrase that is a conjunction rather than
+            // a union: the card named X that also carries the Job Y (20-075L and 28-032H Cecil
+            // want the Paladin Cecil, not any Cecil and not any Paladin; 4-054L Onion Knight the
+            // Sage one). Must precede the plain card-name alternative, whose lazy group ran to the
+            // trailing "and" and took the whole phrase as a name — a search for a card called
+            // "Cecil with Job Paladin".
+            "Card\\s+Name\\s+(?<cnamewithjob>.+?)\\s+with\\s+Job\\s+(?<jobwithcname>.+?)" +
+            "(?=\\s+of\\s+cost|\\s+(?:Forwards?|Backups?|Monsters?|Summons?|Characters?|card)\\b|\\s+other\\b|\\s+and\\b)\\s*" +
+        "|" +
             // "Card Name A[, Card Name B][, or Card Name C]" — several names, OR'd together. Must
             // precede the single-name alternative, whose lazy group would otherwise run to the
             // trailing "and" and take the whole list as one (unmatchable) name.
-            "Card\\s+Name\\s+(?<cardnames>.+?(?:\\s*,\\s*|\\s+(?:and/)?or\\s+)Card\\s+Name\\s+.+?)" +
+            //
+            // A "Job Y" term may sit anywhere in the list ("Card Name Chloe, Job Chocobo or Card
+            // Name Chocobo" — Billy 29-048C); splitCardNameAndJobList sorts the two kinds out.
+            // Admitting it here rather than in a fourth union alternative keeps the two-term
+            // shapes on the alternatives above, which are tried first and already handle them.
+            "Card\\s+Name\\s+(?<cardnames>.+?(?:(?:\\s*,\\s*|\\s+(?:and/)?or\\s+)(?:Card\\s+Name|Job)\\s+.+?)+)" +
             "(?=\\s+of\\s+cost|\\s+(?:Forwards?|Backups?|Monsters?|Summons?|Characters?|card)\\b|\\s+other\\b|\\s+and\\b)" +
             "\\s+" +
         "|" +
@@ -3781,8 +3795,22 @@ final class ActionResolverPatterns {
         "(?<targets>(?:Forwards?|Backups?|Monsters?|Summons?|Characters?)(?:\\s+or\\s+(?:Forwards?|Backups?|Monsters?|Summons?|Characters?))*|cards?)?\\s*" +
         "(?<withwarp>with\\s+Warp)?\\s*" +
         "(?:\\s+other\\s+than\\s+a(?:n)?\\s+(?<excludetype>Forward|Backup|Monster|Summon|Character))?\\s*" +
-        "(?:\\s+other\\s+than\\s+Card\\s+Name\\s+(?<excludename>.+?)(?=\\s+of\\s+cost|\\s+and\\b))?" +
-        "(?:of\\s+cost\\s+(?<cost>\\d+)(?:\\s+or\\s+(?<costcmp>less|more|\\d+))?\\s*)?" +
+        // The trailing \s* completes this group's own "of cost" lookahead: without it the space the
+        // lookahead stopped in front of was left unconsumed, the cost clause could not start, and
+        // the group backtracked to the "and" instead — taking "Cyan of cost 3 or less" as a name.
+        // No printing states the exclusion before a cost, so this path had never fired.
+        "(?:\\s+other\\s+than\\s+Card\\s+Name\\s+(?<excludename>.+?)(?=\\s+of\\s+cost|\\s+and\\b))?\\s*" +
+        // "of cost X" is the 《X》 the ability was paid with, not a printed number (25-051L Rem).
+        // Without this alternative the whole cost clause failed to match and the Job group
+        // backtracked straight across it, searching for a job called "Class Zero Cadet of cost X".
+        "(?:of\\s+cost\\s+(?:(?<cost>\\d+)(?:\\s+or\\s+(?<costcmp>less|more|\\d+))?" +
+            "|(?<costx>X)(?:\\s+or\\s+(?<costxcmp>less|more))?)\\s*)?" +
+        // The name exclusion may follow the cost as well as precede it — "of cost X other than
+        // Card Name Rem" (25-051L). Only the element exclusion below was accepted after a cost, so
+        // this order left "other than Card Name Rem" with nothing to match and the whole clause
+        // backtracked away. Read into the same filter as the group above; the two orders are the
+        // same sentence.
+        "(?:\\s+other\\s+than\\s+Card\\s+Name\\s+(?<excludename2>.+?)(?=\\s+and\\b))?\\s*" +
         // "other than Light and Dark" as well as "... or Dark": both name a set to exclude, and
         // only "or" was accepted, so 7-114H Sarah (FFL)'s Job group backtracked across the
         // exclusion and searched for a job called "Warrior of Light Forward of cost 4 or less
@@ -6225,6 +6253,16 @@ final class ActionResolverPatterns {
     static final Pattern CONTROL_GATED_INSTEAD_UPGRADE = Pattern.compile(
         "(?is)^(?<base>.+?[.!])\\s+If\\s+you\\s+control\\s+(?<cond>[^,]+?),\\s+" +
         "(?<alt>.+?)\\s+instead[.!]\\s*(?<rest>.*)$"
+    );
+    /**
+     * The card-type noun a "Job X or Card Name Y" choose phrase may hang off either of its
+     * branches, as a trailing-anchored replacement string. It names the rows to search rather than
+     * part of the job or the name, so it comes off both before they become filters.
+     */
+    static final String TYPE_NOUN_SUFFIX = "(?i)\\s+(?:Forwards?|Backups?|Monsters?|Characters?)$";
+    /** The same noun, found anywhere in such a phrase, to decide which rows the choose searches. */
+    static final Pattern UNION_TYPE_NOUN = Pattern.compile(
+        "(?i)\\b(Forwards?|Backups?|Monsters?|Characters?)\\b"
     );
     /**
      * Matches "&lt;base&gt;. If the cost to cast &lt;name&gt; was paid with CP of &lt;n&gt; or

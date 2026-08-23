@@ -5306,6 +5306,42 @@ public class ActionResolver {
     }
 
     /**
+     * Splits a comma/or-separated identity list that mixes the two kinds of term — "Chloe, Job
+     * Chocobo or Card Name Chocobo" (Billy 29-048C) — into its card names and its jobs.
+     *
+     * <p>{@link #splitCardNameList} reads every term as a name, so the job in the middle became
+     * part of one: Billy searched for a card called "Chloe, Job Chocobo" and for one called
+     * "Chocobo", and never for the Job. The two halves come back separately because the search
+     * takes them as separate filters and reads two filled filters as alternatives.
+     *
+     * <p>Splits only where a separator is followed by a "Card Name"/"Job" marker, so a comma
+     * inside a printed name ("Cid, Lord of Levin") does not split the list. The leading term is
+     * unmarked — the pattern consumed the "Card Name" that introduced it — so one is put back
+     * before splitting.
+     *
+     * @return {@code {cardNames, jobs}}, each bar-joined, either {@code null} when that kind of
+     *         term did not appear
+     */
+    static String[] splitCardNameAndJobList(String printedList) {
+        List<String> names = new ArrayList<>();
+        List<String> jobs  = new ArrayList<>();
+        // The joiner is a comma, an "or", or the two together (Refia 10-128L prints "Arc,Card Name
+        // Ingus, or Card Name Luneth" — no space after the first, an Oxford comma before the last).
+        // Both alternatives consume a real character, so neither can split at a zero-width point.
+        String[] terms = ("Card Name " + printedList.trim()).split(
+                "(?i)\\s*,\\s*(?:(?:and/)?or\\s+)?(?=(?:Card\\s+Name|Job)\\s)"
+                + "|\\s+(?:and/)?or\\s+(?=(?:Card\\s+Name|Job)\\s)");
+        for (String raw : terms) {
+            String term = raw.trim();
+            if (term.regionMatches(true, 0, "Card Name ", 0, 10)) names.add(term.substring(10).trim());
+            else if (term.regionMatches(true, 0, "Job ", 0, 4))   jobs.add(term.substring(4).trim());
+        }
+        return new String[] {
+                names.isEmpty() ? null : String.join("|", names),
+                jobs.isEmpty()  ? null : String.join("|", jobs) };
+    }
+
+    /**
      * Returns the cost value that appears most frequently among P1's current Forwards.
      * Used by the opponent AI in dual-number selection to target the ability user's cards.
      * Returns 0 when P1 has no Forwards on the field.

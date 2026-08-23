@@ -2547,6 +2547,25 @@ public interface GameContext {
             String destination, int count, boolean entersDull, boolean requireWarp);
 
     /**
+     * As {@link #searchDeckForCard}, but requiring the name <em>and</em> the job together —
+     * "Card Name Cecil with Job Paladin" (20-075L, 28-032H; 4-054L Onion Knight with Job Sage).
+     *
+     * <p>Its own method rather than a flag on the search above, whose sixteen arguments are passed
+     * at some thirty call sites for the sake of one printed phrase. The ordinary search reads two
+     * filled identity filters as alternatives, which is right for the thirty-odd "Job X or Card
+     * Name X" printings and wrong for this one: it would fetch any Cecil, or any Paladin.
+     *
+     * <p>Takes no category filter — no printing combines "with Job" with one.
+     *
+     * @return whether a card was found, chosen and moved, as {@link #searchDeckForCard} does
+     */
+    boolean searchDeckForNamedCardWithJob(boolean inclForwards, boolean inclBackups,
+            boolean inclMonsters, boolean inclSummons,
+            int costVal, String costCmp, String cardNameFilter, String jobFilter,
+            String elementFilter, String excludeName, String excludeElem,
+            String destination, int count, boolean entersDull, boolean requireWarp);
+
+    /**
      * Searches the deck for up to 1 card with {@code jobFilter} job and up to 1 card of {@code typeName} type
      * that don't share any element, adding the selected cards to the active player's hand.
      */

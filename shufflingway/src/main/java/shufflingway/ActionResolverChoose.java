@@ -8,6 +8,7 @@ import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
@@ -1143,13 +1144,24 @@ final class ActionResolverChoose {
             int orCnIdx    = tgtLower.indexOf("or card name ");
             String rawJob  = targets.substring("Job ".length(), orCnIdx)
                                     .trim().replaceAll("(?i)\\s*and\\s*/\\s*$", "").trim();
+            // Either branch of the union may carry the type noun — "Job Warrior Forward or Card
+            // Name Warrior Forward" (21-009C) puts it on both, "Job Chocobo and/or Card Name
+            // Chocobo Characters" (Bartz 29-052H) on the last only. It names the rows to search,
+            // not part of the job or the name: left on, the filters looked for a job called
+            // "Warrior Forward" and a card called "Chocobo Characters", and matched nothing.
             List<String> jobParts = new ArrayList<>();
-            for (String p : rawJob.split("(?i)\\s+or\\s+Job\\s+")) jobParts.add(p.trim());
+            for (String p : rawJob.split("(?i)\\s+or\\s+Job\\s+"))
+                jobParts.add(p.trim().replaceAll(TYPE_NOUN_SUFFIX, "").trim());
             jobFilter      = String.join("|", jobParts);
-            cardNameFilter = targets.substring(orCnIdx + "or card name ".length()).trim();
-            inclForwards   = true;
-            inclBackups    = true;
-            inclMonsters   = true;
+            String rawName = targets.substring(orCnIdx + "or card name ".length()).trim();
+            cardNameFilter = rawName.replaceAll(TYPE_NOUN_SUFFIX, "").trim();
+            // Whichever branch stated it decides the rows; with none stated every row is eligible,
+            // which is what this branch did unconditionally before.
+            Matcher typeM  = UNION_TYPE_NOUN.matcher(targets);
+            String  rowType = typeM.find() ? typeM.group(1).toLowerCase(Locale.ROOT) : null;
+            inclForwards   = rowType == null || rowType.startsWith("forward") || rowType.startsWith("character");
+            inclBackups    = rowType == null || rowType.startsWith("backup")  || rowType.startsWith("character");
+            inclMonsters   = rowType == null || rowType.startsWith("monster") || rowType.startsWith("character");
         } else if (tgtLower.startsWith("job ")) {
             List<String> jobs = new ArrayList<>();
             Matcher wm = JOB_WRITTEN_SEGMENT.matcher(targets);

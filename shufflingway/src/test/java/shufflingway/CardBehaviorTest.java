@@ -30532,6 +30532,313 @@ public class CardBehaviorTest {
 				+ "which half to believe would be worse than declining it");
 	}
 
+	// =========================================================================================
+	// Board behaviour + effect wiring — "Job X or Card Name X", the union that was read as an AND.
+	//
+	// Some thirty printings name a card two ways at once, because the archetype is split across
+	// the two: the cards printed with the name "Chocobo" carry the Job Standard Unit, and the Job
+	// Chocobo cards are named "Stray Chocobo", "Black Chocobo", "Lucil". A card satisfies exactly
+	// one of the halves, never both — so combining them with AND matched nothing at all.
+	//
+	// The union was already implemented twice: in the deck search (which counts how many of the
+	// two identity filters are filled and switches to OR at two) and in the play-from-hand
+	// selection. It was missing from the two board selections and from the passive field grant,
+	// which is why these three landed:
+	//
+	//   Billy 29-048C  field  "The Job Chocobo Forwards and Card Name Chocobo Forwards you
+	//                         control gain +3000 power." No pattern matched the shape at all —
+	//                         the generic grant read "Chocobo Forwards and Card Name Chocobo" as
+	//                         one job name, so no Chocobo of either kind was granted anything.
+	//   Billy 29-048C  auto   "search for 1 Card Name Chloe, Job Chocobo or Card Name Chocobo" —
+	//                         a three-way list. The name-list splitter read every term as a name,
+	//                         so it hunted for a card called "Chloe, Job Chocobo".
+	//   Bartz 29-052H  auto   "choose up to 2 Job Chocobo and/or Card Name Chocobo Characters in
+	//                         your Break Zone" — the type noun stayed stuck to the name ("Chocobo
+	//                         Characters"), and the two filters were ANDed.
+	//
+	// The field-count methods stay conjunctive on purpose: a caller wanting the union there asks
+	// three times and subtracts, and the conjunctive answer is the overlap term.
+	// =========================================================================================
+
+	private static final String BILLY_FIELD_29_048C =
+			"The Job Chocobo Forwards and Card Name Chocobo Forwards you control gain +3000 power.";
+	private static final String BILLY_SEARCH_29_048C =
+			"When Billy enters the field, you may search for 1 Card Name Chloe, Job Chocobo or "
+			+ "Card Name Chocobo of cost 3 or less and play it onto the field.";
+	private static final String BARTZ_BZ_29_052H =
+			"When Bartz enters the field, choose up to 2 Job Chocobo and/or Card Name Chocobo "
+			+ "Characters in your Break Zone. Add them to your hand.";
+
+	/**
+	 * A Forward carrying {@code text}'s parsed {@link FieldPowerGrant}s — the list the board reads
+	 * when it works out effective power. {@code makeFieldAbilityForward} fills the
+	 * {@code fieldAbilities} slot instead, which is the recognition record rather than the grant.
+	 */
+	private static CardData makeFieldGrantForward(String name, String job, String text) {
+		return new CardData(null, name, "Wind", 3, 7000, "Forward", false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				List.of(), List.of(), CardData.parseFieldAbilities(text, "Forward"),
+				List.of(), CardData.parseFieldPowerGrants(text, "Forward"),
+				List.of(), List.of(), List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				job, null, null, text);
+	}
+
+	private static FieldPowerGrant billysGrant() {
+		List<FieldPowerGrant> grants = CardData.parseFieldPowerGrants(BILLY_FIELD_29_048C, "Forward");
+		assertEquals(1, grants.size(),
+				"one grant carrying both filters, not one per branch: a power bonus is additive, "
+				+ "so two grants would stack on any card that satisfied both");
+		return grants.get(0);
+	}
+
+	@Test
+	void billyGrantsBothKindsOfChocobo() {
+		FieldPowerGrant g = billysGrant();
+		assertTrue(g.appliesToCard(makeJobCard("Chocobo", "Wind", "Forward", "Standard Unit")),
+				"the cards printed as Card Name Chocobo carry the Job Standard Unit");
+		assertTrue(g.appliesToCard(makeJobCard("Stray Chocobo", "Wind", "Forward", "Chocobo")),
+				"and the Job Chocobo cards are named something else");
+		assertEquals(3000, g.powerBonus());
+	}
+
+	@Test
+	void billyGrantsNothingToCardsMatchingNeitherHalf() {
+		FieldPowerGrant g = billysGrant();
+		assertFalse(g.appliesToCard(makeJobCard("Cloud", "Wind", "Forward", "SOLDIER")));
+		assertFalse(g.appliesToCard(makeJobCard("Chocobo", "Wind", "Backup", "Standard Unit")),
+				"the grant names Forwards, so a Backup of the right name is still out");
+	}
+
+	@Test
+	void billysGrantReachesTheBoard() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeFieldGrantForward("Billy", "Chocobo Ranch Hand", BILLY_FIELD_29_048C));
+		placeP1Forward(mw, makeJobCard("Chocobo", "Wind", "Forward", "Standard Unit"));
+		placeP1Forward(mw, makeJobCard("Stray Chocobo", "Wind", "Forward", "Chocobo"));
+		placeP1Forward(mw, makeJobCard("Cloud", "Wind", "Forward", "SOLDIER"));
+		assertEquals(10000, mw.effectiveP1ForwardPower(1), "named Chocobo: 7000 + 3000");
+		assertEquals(10000, mw.effectiveP1ForwardPower(2), "Job Chocobo: 7000 + 3000");
+		assertEquals(7000,  mw.effectiveP1ForwardPower(3), "and nothing for anyone else");
+	}
+
+	@Test
+	void billyDoesNotGrantTwiceToACardThatIsBothAtOnce() {
+		// One grant, not two: a card holding the Job and the name — a runtime-granted Job, or
+		// "Bartz has all the jobs" (1-081R) — takes +3000, not +6000.
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeFieldGrantForward("Billy", "Chocobo Ranch Hand", BILLY_FIELD_29_048C));
+		placeP1Forward(mw, makeJobCard("Chocobo", "Wind", "Forward", "Chocobo"));
+		assertEquals(10000, mw.effectiveP1ForwardPower(1));
+	}
+
+	@Test
+	void billySearchesForChloeTheJobAndTheName() {
+		CardData billy = makeAutoAbilityForward("Billy", "Wind", 5000, BILLY_SEARCH_29_048C);
+		GameContext ctx = mock(GameContext.class);
+		ActionResolver.parse(billy.autoAbilities().get(0).effectText(), billy).accept(ctx);
+
+		ArgumentCaptor<String> name = ArgumentCaptor.forClass(String.class);
+		ArgumentCaptor<String> job  = ArgumentCaptor.forClass(String.class);
+		ArgumentCaptor<String> dest = ArgumentCaptor.forClass(String.class);
+		verify(ctx).searchDeckForCard(anyBoolean(), anyBoolean(), anyBoolean(), anyBoolean(),
+				eq(3), eq("less"), name.capture(), job.capture(), any(), any(), any(), any(),
+				dest.capture(), anyInt(), anyBoolean(), anyBoolean());
+		assertEquals("Chloe|Chocobo", name.getValue(), "both names, and only the names");
+		assertEquals("Chocobo", job.getValue(), "the job in the middle of the list is its own filter");
+		assertEquals("field", dest.getValue(), "\"play it onto the field\", not add to hand");
+	}
+
+	@Test
+	void bartzLooksForBothKindsOfChocoboInTheBreakZone() {
+		CardData bartz = makeAutoAbilityForward("Bartz", "Wind", 7000, BARTZ_BZ_29_052H);
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.consumePreloadedTargets()).thenReturn(null);
+		when(ctx.selectCharactersFromBreakZone(anyInt(), anyBoolean(), anyBoolean(), anyBoolean(),
+				any(), any(), anyInt(), any(), anyInt(), any(), anyBoolean(), anyBoolean(), anyBoolean(),
+				any(), any(), any(), any(), anyBoolean(), any(), anyBoolean())).thenReturn(List.of());
+
+		ActionResolver.parse(bartz.autoAbilities().get(0).effectText(), bartz).accept(ctx);
+
+		ArgumentCaptor<String> job  = ArgumentCaptor.forClass(String.class);
+		ArgumentCaptor<String> name = ArgumentCaptor.forClass(String.class);
+		ArgumentCaptor<Boolean> fwd = ArgumentCaptor.forClass(Boolean.class);
+		ArgumentCaptor<Boolean> bkp = ArgumentCaptor.forClass(Boolean.class);
+		verify(ctx).selectCharactersFromBreakZone(eq(2), eq(true), anyBoolean(), anyBoolean(),
+				any(), any(), anyInt(), any(), anyInt(), any(), fwd.capture(), bkp.capture(), anyBoolean(),
+				job.capture(), name.capture(), any(), any(), anyBoolean(), any(), anyBoolean());
+		assertEquals("Chocobo", job.getValue());
+		assertEquals("Chocobo", name.getValue(), "\"Characters\" names the rows, not the card");
+		assertTrue(fwd.getValue() && bkp.getValue(), "\"Characters\" is every row");
+	}
+
+	@Test
+	void theTypeNounComesOffBothBranchesOfTheUnion() {
+		// 21-009C states it twice — "Job Warrior  Forward or Card Name Warrior  Forward" — and it
+		// belongs to neither filter. Leaving it on the job half while stripping it from the name
+		// half would half-fix the card.
+		CardData warrior = makeForward("Warrior", "Wind", 3, 5000);
+		String text = "Choose 1 Job Warrior Forward or Card Name Warrior Forward you control. Dull it.";
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.consumePreloadedTargets()).thenReturn(null);
+		when(ctx.selectCharacters(anyInt(), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(),
+				anyInt(), any(), anyInt(), any(), anyBoolean(), anyBoolean(), anyBoolean(),
+				any(), any(), any(), any(), anyBoolean(), any(), anyBoolean())).thenReturn(List.of());
+
+		ActionResolver.parse(text, warrior).accept(ctx);
+
+		ArgumentCaptor<String> job  = ArgumentCaptor.forClass(String.class);
+		ArgumentCaptor<String> name = ArgumentCaptor.forClass(String.class);
+		ArgumentCaptor<Boolean> fwd = ArgumentCaptor.forClass(Boolean.class);
+		ArgumentCaptor<Boolean> bkp = ArgumentCaptor.forClass(Boolean.class);
+		verify(ctx).selectCharacters(anyInt(), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(),
+				anyInt(), any(), anyInt(), any(), fwd.capture(), bkp.capture(), anyBoolean(),
+				job.capture(), name.capture(), any(), any(), anyBoolean(), any(), anyBoolean());
+		assertEquals("Warrior", job.getValue());
+		assertEquals("Warrior", name.getValue());
+		assertTrue(fwd.getValue(), "\"Forward\" names the Forward row");
+		assertFalse(bkp.getValue(), "and only that row");
+	}
+
+	@Test
+	void aListMixingNamesAndJobsIsSortedIntoTwoFilters() {
+		String[] split = ActionResolver.splitCardNameAndJobList("Chloe, Job Chocobo or Card Name Chocobo");
+		assertEquals("Chloe|Chocobo", split[0]);
+		assertEquals("Chocobo", split[1]);
+
+		String[] namesOnly = ActionResolver.splitCardNameAndJobList("Ashe, Card Name Basch");
+		assertEquals("Ashe|Basch", namesOnly[0]);
+		assertNull(namesOnly[1], "a list of names alone still yields no job filter");
+
+		// The joiners the name-only splitter already had to cope with, kept working here.
+		String[] oxford = ActionResolver.splitCardNameAndJobList("Arc,Card Name Ingus, or Card Name Luneth");
+		assertEquals("Arc|Ingus|Luneth", oxford[0], "comma with no space, then an Oxford comma");
+		assertNull(oxford[1]);
+
+		String[] commaInName = ActionResolver.splitCardNameAndJobList("Cid, Lord of Levin or Job Dragoon");
+		assertEquals("Cid, Lord of Levin", commaInName[0],
+				"the comma inside a printed name is not a list separator — only one followed by a marker is");
+		assertEquals("Dragoon", commaInName[1]);
+	}
+
+	@Test
+	void theFieldCountsStayConjunctiveSoTheUnionArithmeticHolds() {
+		// countSelfFieldCards(job, name) is the overlap term of jobN + nameN - bothN. If it ORed,
+		// the subtraction would remove the whole union and the scaling source would undercount.
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeJobCard("Chocobo", "Wind", "Forward", "Standard Unit"));
+		placeP1Forward(mw, makeJobCard("Stray Chocobo", "Wind", "Forward", "Chocobo"));
+		GameContext ctx = mw.buildGameContext(true);
+		assertEquals(0, ctx.countSelfFieldCards(true, false, false, "Chocobo", "Chocobo"),
+				"neither card is both a Job Chocobo and named Chocobo");
+		assertEquals(1, ctx.countSelfFieldCards(true, false, false, "Chocobo", null));
+		assertEquals(1, ctx.countSelfFieldCards(true, false, false, null, "Chocobo"));
+	}
+
+	// =========================================================================================
+	// Effect wiring — the two search clauses the identity/cost groups read as part of a name.
+	//
+	// "Card Name Cecil with Job Paladin" (20-075L, 28-032H; 4-054L Onion Knight with Job Sage) is
+	// the one identity phrase in the corpus meaning both filters at once rather than either. The
+	// card-name group ran to the trailing "and" and took the whole phrase, so the search hunted
+	// for a card called "Cecil with Job Paladin". Filling both filters is not enough on its own:
+	// the search reads two filled identity filters as alternatives, which is right for the thirty
+	// "Job X or Card Name X" printings and would fetch any Cecil or any Paladin here — so this
+	// goes through its own conjunctive entry point.
+	//
+	// "of cost X" is the 《X》 the ability was paid with. The cost group accepted only digits, so
+	// the clause failed to match and whatever group sat in front of it backtracked straight
+	// across: Rem 25-051L searched for a job called "Class Zero Cadet of cost X", and three cards
+	// whose whole search clause hung on it (13-103L, 13-104L, 23-051L) did not parse at all.
+	// Rem also states its exclusion after the cost rather than before, which nothing accepted.
+	// =========================================================================================
+
+	private static final String CECIL_SEARCH_20_075L =
+			"Search for 1 Card Name Cecil with Job Paladin and play it onto the field.";
+	private static final String CECIL_SEARCH_28_032H =
+			"search for 1 Card Name Cecil with Job Paladin of cost 4 or less and play it onto the field.";
+	private static final String REM_SEARCH_25_051L =
+			"search for 1 Job Class Zero Cadet of cost X other than Card Name Rem and play it onto the field.";
+
+	/** Resolves a search clause against a mock, with {@code x} standing for any 《X》 paid. */
+	private static GameContext resolveSearch(String text, int x) {
+		CardData source = makeForward("Source", "Wind", 3, 7000);
+		Consumer<GameContext> fn = ActionResolver.parse(text, source, x);
+		assertNotNull(fn, "search clause should parse: " + text);
+		GameContext ctx = mock(GameContext.class);
+		fn.accept(ctx);
+		return ctx;
+	}
+
+	@Test
+	void cecilWantsTheOneCardThatIsBothAtOnce() {
+		GameContext ctx = resolveSearch(CECIL_SEARCH_20_075L, 0);
+		// The conjunctive entry point, not the ordinary search: that one reads two filled identity
+		// filters as alternatives and would fetch any Cecil, or any Paladin.
+		verify(ctx).searchDeckForNamedCardWithJob(anyBoolean(), anyBoolean(), anyBoolean(), anyBoolean(),
+				eq(-1), isNull(), eq("Cecil"), eq("Paladin"),
+				any(), any(), any(), eq("field"), anyInt(), anyBoolean(), anyBoolean());
+		verify(ctx, never()).searchDeckForCard(anyBoolean(), anyBoolean(), anyBoolean(), anyBoolean(),
+				anyInt(), any(), any(), any(), any(), any(), any(), any(), any(), anyInt(), anyBoolean(), anyBoolean());
+	}
+
+	@Test
+	void cecilKeepsACostCeilingStatedAfterTheJob() {
+		verify(resolveSearch(CECIL_SEARCH_28_032H, 0))
+				.searchDeckForNamedCardWithJob(anyBoolean(), anyBoolean(), anyBoolean(), anyBoolean(),
+						eq(4), eq("less"), eq("Cecil"), eq("Paladin"),
+						any(), any(), any(), eq("field"), anyInt(), anyBoolean(), anyBoolean());
+	}
+
+	@Test
+	void onionKnightUsesTheSameShapeWithADifferentJob() {
+		verify(resolveSearch(
+				"search for 1 Card Name Onion Knight with Job Sage and play it onto the field.", 0))
+				.searchDeckForNamedCardWithJob(anyBoolean(), anyBoolean(), anyBoolean(), anyBoolean(),
+						anyInt(), any(), eq("Onion Knight"), eq("Sage"),
+						any(), any(), any(), eq("field"), anyInt(), anyBoolean(), anyBoolean());
+	}
+
+	@Test
+	void remSearchesForACadetCostingExactlyWhatWasPaid() {
+		GameContext ctx = resolveSearch(REM_SEARCH_25_051L, 4);
+		verify(ctx).searchDeckForCard(anyBoolean(), anyBoolean(), anyBoolean(), anyBoolean(),
+				eq(4), isNull(), isNull(), eq("Class Zero Cadet"),
+				any(), any(), eq("Rem"), any(), eq("field"), anyInt(), anyBoolean(), anyBoolean());
+	}
+
+	@Test
+	void aCostOfXTracksThePaymentRatherThanBeingFixed() {
+		verify(resolveSearch(REM_SEARCH_25_051L, 7)).searchDeckForCard(
+				anyBoolean(), anyBoolean(), anyBoolean(), anyBoolean(),
+				eq(7), isNull(), any(), any(), any(), any(), any(), any(), any(), anyInt(), anyBoolean(), anyBoolean());
+	}
+
+	@Test
+	void costXCarriesItsOwnComparatorWhenOneIsPrinted() {
+		// "of cost X or less" is printed as often as the bare form — 5-041R Lightning, 22-049H
+		// Bartz, 8-141S Red XIII, 26-040R — and the ceiling has to survive.
+		verify(resolveSearch(
+				"search for 1 Card Name Lightning of cost X or less and play it onto the field.", 6))
+				.searchDeckForCard(anyBoolean(), anyBoolean(), anyBoolean(), anyBoolean(),
+						eq(6), eq("less"), eq("Lightning"), isNull(),
+						any(), any(), any(), any(), eq("field"), anyInt(), anyBoolean(), anyBoolean());
+	}
+
+	@Test
+	void theNameExclusionIsReadOnEitherSideOfTheCost() {
+		// Rem states it after the cost; every printing that states it at all states it before,
+		// though none of those also carries a cost. Same sentence either way.
+		verify(resolveSearch(REM_SEARCH_25_051L, 4)).searchDeckForCard(
+				anyBoolean(), anyBoolean(), anyBoolean(), anyBoolean(),
+				anyInt(), any(), any(), any(), any(), any(), eq("Rem"), any(), any(), anyInt(), anyBoolean(), anyBoolean());
+		verify(resolveSearch(
+				"search for 1 Job Samurai other than Card Name Cyan of cost 3 or less and add it to your hand.", 0))
+				.searchDeckForCard(anyBoolean(), anyBoolean(), anyBoolean(), anyBoolean(),
+						eq(3), eq("less"), any(), eq("Samurai"), any(), any(), eq("Cyan"), any(),
+						any(), anyInt(), anyBoolean(), anyBoolean());
+	}
+
 	@Test
 	void aSelfSideStateCountIsLeftAloneRatherThanCountedWrong() {
 		// GameContext counts a card state on the opponent's field only, so the self-side reading

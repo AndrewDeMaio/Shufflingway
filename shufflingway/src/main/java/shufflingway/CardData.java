@@ -5609,6 +5609,34 @@ public record CardData(
     );
 
     /**
+     * "The Job Chocobo Forwards and Card Name Chocobo Forwards you control gain +3000 power."
+     * — Billy 29-048C.
+     *
+     * <p>The generic {@link #FIELD_GRANT_PATTERN} claimed this text and read the whole phrase
+     * "Chocobo Forwards and Card Name Chocobo" as one job name, so the grant matched no card at
+     * all. Needed as its own pattern for the same reason Faris 21-114L's base-power twin and Maat
+     * 6-078R's dull-immunity twin are: the union of a job and a card name has no place in the
+     * generic shape.
+     *
+     * <p>Unlike those two, this one emits a <em>single</em> grant carrying both filters rather than
+     * one grant per branch. A power bonus is additive, so two grants would stack to +6000 on any
+     * card that satisfied both — which "Bartz has all the jobs" (1-081R) and a runtime-granted Job
+     * make reachable. {@link FieldPowerGrant#appliesToCard} reads two filled filters as
+     * alternatives, so one grant covers the union exactly once.
+     *
+     * <p>Groups: {@code job}, {@code cardname}, {@code type} (the noun both branches share),
+     * {@code bonus}.
+     */
+    private static final Pattern FIELD_GRANT_JOB_AND_CARD_NAME_PATTERN = Pattern.compile(
+        "(?i)^The\\s+Job\\s+(?<job>[A-Za-z][A-Za-z\\s''\\-]*?)\\s+" +
+        "(?<type>Forwards?|Backups?|Monsters?|Characters?)\\s+and\\s+" +
+        "Card\\s+Name\\s+(?<cardname>[A-Za-z][A-Za-z\\s''\\-]*?)\\s+" +
+        "(?:Forwards?|Backups?|Monsters?|Characters?)\\s+" +
+        "(?:other\\s+than\\s+(?<except>[A-Z][A-Za-z''\\-]+(?:\\s+[A-Za-z''\\-]+)*)\\s+)?" +
+        "you\\s+control\\s+gains?\\s+\\+(?<bonus>\\d+)\\s+power[.!]?$"
+    );
+
+    /**
      * "The Forwards you control gain +N power for every M cards with EX Burst in your Damage Zone."
      * Groups: {@code bonus}, {@code groupsize}.
      */
@@ -5853,6 +5881,24 @@ public record CardData(
                 result.add(new FieldPowerGrant(null, null, true, false, false,
                         null, 0, immune, false, -1, null, null,
                         dullImmM.group("cardname").trim(), 0, 0, null, null, false, false, 0, 0, 1, 0, 0,
+                        EnumSet.noneOf(Trait.class), false, 0));
+                continue;
+            }
+
+            Matcher jobAndCnM = FIELD_GRANT_JOB_AND_CARD_NAME_PATTERN.matcher(seg);
+            if (jobAndCnM.matches()) {
+                String type   = jobAndCnM.group("type").toLowerCase(Locale.ROOT);
+                boolean isChar = type.startsWith("character");
+                String except = jobAndCnM.group("except");
+                result.add(new FieldPowerGrant(
+                        jobAndCnM.group("job").trim(), null,
+                        isChar || type.startsWith("forward"),
+                        isChar || type.startsWith("backup"),
+                        isChar || type.startsWith("monster"),
+                        except != null ? except.trim() : null,
+                        Integer.parseInt(jobAndCnM.group("bonus")),
+                        EnumSet.noneOf(Trait.class), false, -1, null, null,
+                        jobAndCnM.group("cardname").trim(), 0, 0, null, null, false, false, 0, 0, 1, 0, 0,
                         EnumSet.noneOf(Trait.class), false, 0));
                 continue;
             }
