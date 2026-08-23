@@ -2253,15 +2253,21 @@ public record CardData(
             String  requiresElementForwardEnteredThisTurn = elemFwdM.find() ? elemFwdM.group("element").toLowerCase() : null;
             Matcher cardNameFwdM = CARD_NAME_ENTERED_THIS_TURN_PATTERN.matcher(effectRaw);
             String  requiresCardNameEnteredThisTurn = cardNameFwdM.find() ? cardNameFwdM.group("cardname").trim() : null;
-            Matcher ownBzM  = OWN_BZ_NAME_REQUIRED_RESTRICTION.matcher(effectRaw);
-            String  ownBzCard = ownBzM.find() ? ownBzM.group("card").trim() : null;
-            String  breakZoneOnly = null;
-            if (ownBzCard == null) {
-                Matcher bzOnlyM = CARD_IN_BREAK_ZONE_PATTERN.matcher(effectRaw);
-                breakZoneOnly = bzOnlyM.find() ? bzOnlyM.group("card").trim() : null;
-            }
+            // "You can only use this ability [during your Main Phase and] if X is in the Break
+            // Zone." always names the source card itself, on every printing in the corpus, and so
+            // always means "this ability is used from the Break Zone" — breakZoneOnly, never
+            // ownBreakZoneNameRequired. Reading it as the latter left 18 abilities unreachable:
+            // the card is in the Break Zone, so the field menu never asks, and the Break Zone
+            // dialog only lists abilities with breakZoneOnly set.
+            //
+            // ownBreakZoneNameRequired is still populated, but only by the grant that genuinely
+            // means it — "If you have a Card Name X in your Break Zone, Y gains …" (Innocence
+            // 13-137S), applied by withOwnBzNameRequired above. That one names another card and
+            // is used from the field, which is what the field distinguishes.
+            Matcher bzOnlyM = CARD_IN_BREAK_ZONE_PATTERN.matcher(effectRaw);
+            String  breakZoneOnly = bzOnlyM.find() ? bzOnlyM.group("card").trim() : null;
             ControlCondition controlCondition = null;
-            if (!whileCardInHand && breakZoneOnly == null && ownBzCard == null) {
+            if (!whileCardInHand && breakZoneOnly == null) {
                 Matcher compM = YOUR_TURN_AND_CONTROL_IF_PATTERN.matcher(effectRaw);
                 if (compM.find()) {
                     controlCondition = parseControlCondition(compM.group("condition"));
@@ -2344,7 +2350,7 @@ public record CardData(
             Matcher selfPowerM = SELF_POWER_AT_LEAST_RESTRICTION.matcher(effectRaw);
             int requiresSelfPowerAtLeast = selfPowerM.find()
                     ? Integer.parseInt(selfPowerM.group("power")) : 0;
-            ActionAbility parsed = new ActionAbility(abilityName, requiresDull, isSpecial, crystalCost, selfMillCost, hasXCost, cpCost, breakZoneCosts, discardCosts, removeFromGameCosts, returnToHandCosts, counterCosts, dullForwardCosts, yourTurnOnly, opponentTurnOnly, oncePerTurn, mainPhaseOnly, whileCardAtk, whileCardBlk, whilePartyAtk, whileCardInHand, hasBlockingTarget, effectRaw, damageThreshold, controlCondition, cpBackupElement, cpAllowedElements, sourceInBattle, requiresOppDiscardedThisTurn, requiresCastSummonThisTurn, requiresElementForwardEnteredThisTurn, requiresCardNameEnteredThisTurn, breakZoneOnly, requiresOpponentEmptyHand, requiresSelfEmptyHand, requiresNamedCardTookDamageThisTurn, requiresSelfReceivedDamageThisTurn, requiresForwardPutToBZThisTurn, requiresJobPutToBZThisTurn, blockerForAttacker, ownBzCard, counterScaleName, minCounterRequired, minCounterType, maxOpponentHandSize, requiresSourceIsForward, maxCounterAllowed, maxCounterType, inlineCostReductionJob, inlineCostReductionExcludeName, requiresOwnWarpCard, usableByEitherPlayer, requiresSelfPowerAtLeast);
+            ActionAbility parsed = new ActionAbility(abilityName, requiresDull, isSpecial, crystalCost, selfMillCost, hasXCost, cpCost, breakZoneCosts, discardCosts, removeFromGameCosts, returnToHandCosts, counterCosts, dullForwardCosts, yourTurnOnly, opponentTurnOnly, oncePerTurn, mainPhaseOnly, whileCardAtk, whileCardBlk, whilePartyAtk, whileCardInHand, hasBlockingTarget, effectRaw, damageThreshold, controlCondition, cpBackupElement, cpAllowedElements, sourceInBattle, requiresOppDiscardedThisTurn, requiresCastSummonThisTurn, requiresElementForwardEnteredThisTurn, requiresCardNameEnteredThisTurn, breakZoneOnly, requiresOpponentEmptyHand, requiresSelfEmptyHand, requiresNamedCardTookDamageThisTurn, requiresSelfReceivedDamageThisTurn, requiresForwardPutToBZThisTurn, requiresJobPutToBZThisTurn, blockerForAttacker, null, counterScaleName, minCounterRequired, minCounterType, maxOpponentHandSize, requiresSourceIsForward, maxCounterAllowed, maxCounterType, inlineCostReductionJob, inlineCostReductionExcludeName, requiresOwnWarpCard, usableByEitherPlayer, requiresSelfPowerAtLeast);
             // The named card is carried rather than resolved here: this parser is not given the
             // card's own name, and the activation site is, so the self check belongs there.
             if (bottomDeckRaw != null && m.group("bottomdeckname") != null)
@@ -2618,9 +2624,14 @@ public record CardData(
 
     /**
      * Matches restriction sentences of the form "You can only use this ability [during your Main Phase and] if
-     * [CardName] is in the Break Zone." — used for field abilities that require a named card to be in the
-     * controller's Break Zone.  The "during your Main Phase and" prefix is optional (combined restriction).
-     * Distinct from {@link #CARD_IN_BREAK_ZONE_PATTERN}, which is used for BZ-only abilities.
+     * [CardName] is in the Break Zone."  The "during your Main Phase and" prefix is optional (combined restriction).
+     *
+     * <p>Anchored at the end of the sentence, which is the only thing this adds over
+     * {@link #CARD_IN_BREAK_ZONE_PATTERN}: it exists so restriction stripping can take the whole
+     * sentence out as a unit, the same job {@link #YOUR_TURN_AND_BZ_RESTRICTION} does for the
+     * your-turn spelling. It sets no field of its own — every printing of this sentence names the
+     * source card, so what it states is that the ability is used from the Break Zone, and
+     * {@code CARD_IN_BREAK_ZONE_PATTERN} records that as {@code breakZoneOnly}.
      */
     static final Pattern OWN_BZ_NAME_REQUIRED_RESTRICTION = Pattern.compile(
         "(?i)You\\s+can\\s+only\\s+use\\s+this\\s+ability\\s+(?:during\\s+your\\s+Main\\s+Phase\\s+and\\s+)?if\\s+" +
@@ -3419,6 +3430,48 @@ public record CardData(
         return sb.toString();
     }
 
+    /**
+     * An action ability's cost marker: one or more {@code 《…》} tokens then a colon, not preceded
+     * by a quotation mark.
+     *
+     * <p>The same shape {@link #AUTO_ABILITY_PATTERN} already uses to decide where an auto
+     * ability's effect ends, quote guard included — a {@code 《5》:} inside a granted ability
+     * (Medusa's petrification removal) is not this card's own cost.
+     */
+    private static final Pattern ACTION_ABILITY_COST_MARKER =
+            Pattern.compile("(?<!\")(?:《[^》]+》)+\s*:");
+
+    /**
+     * {@code text} with each {@code [[br]]} segment truncated at its action-ability cost marker.
+     *
+     * <p>Everything after that colon is the action ability's effect, and a trigger sentence printed
+     * inside one belongs to that ability rather than standing on its own. Ardyn 26-122H is what
+     * this is for: "Damage 5 -- 《0》: Play Ardyn onto the field. When Ardyn enters the field, Ardyn
+     * deals you 1 point of damage." Read as a standing ability, the second sentence hurt its
+     * controller every time Ardyn entered the field by any route, including an ordinary cast — but
+     * the printing only says it happens when the Break Zone ability puts him there, and the
+     * resolver already runs it as the ability's second sentence.
+     *
+     * <p>No auto ability's effect text is shortened by this: {@code AUTO_ABILITY_PATTERN} already
+     * ends an effect at the same marker, so a trigger printed <em>before</em> the cost keeps
+     * exactly the text it had.
+     */
+    private static String truncateAtActionAbilityCost(String text) {
+        StringBuilder out = new StringBuilder();
+        int pos = 0;
+        while (pos <= text.length()) {
+            int br = text.indexOf("[[br]]", pos);
+            int end = br < 0 ? text.length() : br;
+            String segment = text.substring(pos, end);
+            Matcher m = ACTION_ABILITY_COST_MARKER.matcher(segment);
+            out.append(m.find() ? segment.substring(0, m.end()) : segment);
+            if (br < 0) break;
+            out.append("[[br]]");
+            pos = br + "[[br]]".length();
+        }
+        return out.toString();
+    }
+
     /** Puts the spans {@link #maskQuotedTriggerSpans} took out back into an extracted effect. */
     private static String unmaskQuotedTriggerSpans(String text, List<String> masked) {
         for (int i = 0; i < masked.size(); i++) {
@@ -3443,7 +3496,7 @@ public record CardData(
         // and Freeze it."") deleting it left the grant reading "Odin (XVI) gains  (This effect…)",
         // losing the very ability being granted. The tokens are swapped back before returning.
         List<String> maskedQuotes = new ArrayList<>();
-        String textForSearch = maskQuotedTriggerSpans(textEn, maskedQuotes);
+        String textForSearch = truncateAtActionAbilityCost(maskQuotedTriggerSpans(textEn, maskedQuotes));
 
         // First pass: "when [PrimerCard] primes into [TargetCard], [effect]"
         // Also handles "When [Target] [trigger] [, extra] or when [Primer] primes into [Target], [effect]"

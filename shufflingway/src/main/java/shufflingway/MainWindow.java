@@ -898,6 +898,14 @@ public class MainWindow {
 	final Map<CardData, String> permanentExtraJobMap    = new HashMap<>();
 	/** Forwards that have Breaktouch (battle damage) until end of turn. */
 	final Set<CardData> breaktouchBattleSet       = new HashSet<>();
+	/**
+	 * Forwards holding "When this Forward is dealt damage, break this Forward." until end of turn
+	 * — Vallaide 22-020R's grant, and the copy Hades 16-079H hands out while it is a Forward.
+	 *
+	 * <p>Keyed by card rather than by slot, like {@link #breaktouchBattleSet} beside it, so the
+	 * grant follows the Forward through row compaction. Cleared with it at end of turn.
+	 */
+	final Set<CardData> breakWhenDealtDamageSet   = new HashSet<>();
 	/** Cards that have escaped from the current Battle via an Escape ability — combat is skipped for their pairing. */
 	final Set<CardData> escapedFromBattle         = new HashSet<>();
 	/** Cards that deal no damage in the battle they are currently in (Vincent 2-078R). */
@@ -3026,7 +3034,7 @@ public class MainWindow {
                                 p1Turn.forwardIncomingDmgMult = 1;      p2Turn.forwardIncomingDmgMult = 1;
                                 p1Turn.abilityOutgoingDmgMult = 1;      p2Turn.abilityOutgoingDmgMult = 1;
                                 cannotBeChosenBySummons.clear();  cannotBeChosenByAbilities.clear();  cannotBeChosenBySummonsAnyone.clear();  cannotBeChosenByElement.clear();  nullifyElementDamageMap.clear();  nullifyElementDamageAbilityOnlyMap.clear();  rfgInsteadOfBzThisTurn.clear();  drawOnFieldToBzThisTurn.clear();  putIntoBzWhenLeavesFieldThisTurn.clear();  damageZeroedSourcesThisTurn.clear();  damagedBySourcesThisTurn.clear();
-                                breaktouchBattleSet.clear();
+                                breaktouchBattleSet.clear();   breakWhenDealtDamageSet.clear();
                                 p1Turn.nonLethalProtection = false;    p2Turn.nonLethalProtection = false;
                                 p1Turn.dmgReductionDisabled = false;   p2Turn.dmgReductionDisabled = false;
                                 p1Turn.forwardCannotBlockInferiorPower = false; p2Turn.forwardCannotBlockInferiorPower = false;
@@ -5607,6 +5615,15 @@ public class MainWindow {
 			dmgList.set(blockerIdx, dmgList.get(blockerIdx) + dmgToBlocker);
 			if (blockerIsP1) refreshP1ForwardSlot(blockerIdx); else refreshP2ForwardSlot(blockerIdx);
 		}
+
+		// "When this Forward is dealt damage, break this Forward." — temporary EOT grant on the
+		// Forward that took the blow (Vallaide 22-020R). Ahead of Breaktouch below because it is
+		// the damaged card's own ability rather than the striker's, and a combatant the main
+		// damage already broke needs neither.
+		if (!attackerBroken && breakOnDealtDamageGrant(attackerIsP1, ForwardTarget.CardZone.FORWARD,
+				attackerIdx, attacker, dmgToAttacker)) attackerBroken = true;
+		if (!blockerBroken && breakOnDealtDamageGrant(blockerIsP1, ForwardTarget.CardZone.FORWARD,
+				blockerIdx, blocker, dmgToBlocker)) blockerBroken = true;
 
 		// Breaktouch (battle): temporary EOT grant — fires after main damage is resolved
 		if (!blockerBroken && dmgToBlocker > 0 && breaktouchBattleSet.contains(attacker)) {
@@ -13480,6 +13497,32 @@ public class MainWindow {
 		}
 	}
 
+	/**
+	 * Breaks {@code card} if it is carrying Vallaide 22-020R's "When this Forward is dealt damage,
+	 * break this Forward." grant, and reports whether it did.
+	 *
+	 * <p>Called from every path that deals a Forward damage — ability/Summon damage and both combat
+	 * resolvers — because the grant says "is dealt damage" and does not care where the damage came
+	 * from or whether it was lethal. Callers pass the amount so a blow reduced to nothing does not
+	 * trigger it.
+	 *
+	 * <p>"Cannot be broken" saves the Forward here as it does against lethal damage: this is a
+	 * break, not the rule process that removes a Forward at 0 power.
+	 */
+	boolean breakOnDealtDamageGrant(boolean isP1, ForwardTarget.CardZone zone, int idx,
+			CardData card, int amount) {
+		if (amount <= 0 || card == null || !breakWhenDealtDamageSet.contains(card)) return false;
+		if (fieldForwardTrait(isP1, zone, idx, CardData.Trait.CANNOT_BE_BROKEN)) {
+			logEntry((isP1 ? "" : "[P2] ") + card.name()
+					+ " was dealt damage but cannot be broken");
+			return false;
+		}
+		logEntry((isP1 ? "" : "[P2] ") + card.name()
+				+ " — dealt damage, so it is broken (until end of turn)");
+		breakFieldCard(isP1, zone, idx);
+		return true;
+	}
+
 	/** Guards {@link #enforceForwardBreakRuleProcess} against re-entry from leaves-the-field triggers. */
 	private boolean enforcingForwardBreakRuleProcess;
 
@@ -16177,6 +16220,12 @@ public class MainWindow {
 
 		if (blkBroken) breakFieldCard(blkP1, blkZone, blkIdx);
 		else if (!atkFirst && dmgToBlk > 0) addFieldCombatDamage(blkP1, blkZone, blkIdx, dmgToBlk);
+
+		// "When this Forward is dealt damage, break this Forward." — see resolveCombat.
+		if (!atkBroken && breakOnDealtDamageGrant(atkP1, atkZone, atkIdx, attacker, dmgToAtk))
+			atkBroken = true;
+		if (!blkBroken && breakOnDealtDamageGrant(blkP1, blkZone, blkIdx, blocker, dmgToBlk))
+			blkBroken = true;
 
 		// Breaktouch (battle): temporary EOT grant — fires after main damage is resolved
 		if (!blkBroken && dmgToBlk > 0 && breaktouchBattleSet.contains(attacker)) {

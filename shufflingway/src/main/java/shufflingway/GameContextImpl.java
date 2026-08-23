@@ -685,6 +685,38 @@ final class GameContextImpl implements GameContext {
 				logEntry((t.isP1() ? "" : "[P2] ") + c.name() + " — Breaktouch (battle damage) until end of turn");
 			}
 
+			@Override public void gainTargetActionAbilitiesUntilEndOfTurn(CardData source, ForwardTarget target) {
+				CardData donor = mw.autoAbilityTriggers.fieldCardData(target);
+				if (source == null || donor == null) return;
+				List<ActionAbility> gained = new ArrayList<>();
+				for (ActionAbility aa : donor.actionAbilities()) {
+					if (aa.isSpecial() || aa.breakZoneOnly() != null || aa.whileCardInHand()) continue;
+					gained.add(aa.withEffectText(ActionResolver.substituteSourceName(
+							aa.effectText(), donor.name(), source.name())));
+				}
+				if (gained.isEmpty()) {
+					logEntry(donor.name() + " has no action abilities for " + source.name() + " to gain");
+					return;
+				}
+				// The borrower's own side, not the donor's: the abilities are used by source, and
+				// this is the map addAbilityMenuItems reads when source's menu is built.
+				Map<CardData, List<ActionAbility>> map = isP1 ? mw.p1TempGrantedAbilities : mw.p2TempGrantedAbilities;
+				map.computeIfAbsent(source, k -> new ArrayList<>()).addAll(gained);
+				// Dropped at end of turn with the rest of the temp-grant map
+				// (MainWindow.clearBackupForwardState), which is what "until the end of the turn"
+				// means here; an explicit end-of-turn effect would double up with it.
+				for (ActionAbility aa : gained)
+					logEntry(source.name() + " gains until end of turn: " + aa.effectText());
+			}
+
+			@Override public void grantBreakWhenDealtDamage(ForwardTarget t) {
+				CardData c = mw.autoAbilityTriggers.fieldCardData(t);
+				if (c == null) return;
+				mw.breakWhenDealtDamageSet.add(c);
+				logEntry((t.isP1() ? "" : "[P2] ") + c.name()
+						+ " gains \"When this Forward is dealt damage, break this Forward.\" until end of turn");
+			}
+
 			@Override public void shieldAllOwnForwardsCannotBeChosen(boolean bySummons, boolean byAbilities) {
 				List<CardData> fwds = isP1 ? mw.p1ForwardCards : mw.p2ForwardCards;
 				for (CardData c : fwds) {
@@ -5212,6 +5244,32 @@ final class GameContextImpl implements GameContext {
 					case BACKUP  -> { if (t.isP1()) mw.refreshP1BackupSlot(ridx); else mw.refreshP2BackupSlot(ridx); }
 					case MONSTER -> { if (t.isP1()) mw.refreshP1MonsterSlot(ridx); else mw.refreshP2MonsterSlot(ridx); }
 					default      -> { if (t.isP1()) mw.refreshP1ForwardSlot(ridx); else mw.refreshP2ForwardSlot(ridx); }
+				}
+			}
+
+			@Override public void duplicateOneCounterOnTarget(ForwardTarget t) {
+				CardData card = mw.autoAbilityTriggers.fieldCardData(t);
+				if (card == null) { logEntry("duplicateOneCounter — target card not found"); return; }
+				Map<String, Integer> counters = mw.gameState.getCountersMap(card);
+				if (counters.isEmpty()) {
+					logEntry(card.name() + " — no counters to copy (fizzle)");
+					return;
+				}
+				String chosen;
+				if (counters.size() == 1) {
+					chosen = counters.keySet().iterator().next();
+				} else {
+					String[] types = counters.keySet().toArray(new String[0]);
+					chosen = selectOption("Select a Counter to duplicate on " + card.name(), types);
+					if (chosen == null) chosen = types[0];
+				}
+				mw.gameState.placeCounters(card, chosen, 1);
+				logEntry(card.name() + " — placed 1 additional " + chosen + " Counter  [now: "
+						+ mw.gameState.getCountersMap(card) + "]");
+				switch (t.zone()) {
+					case BACKUP  -> { if (t.isP1()) mw.refreshP1BackupSlot(t.idx()); else mw.refreshP2BackupSlot(t.idx()); }
+					case MONSTER -> { if (t.isP1()) mw.refreshP1MonsterSlot(t.idx()); else mw.refreshP2MonsterSlot(t.idx()); }
+					default      -> { if (t.isP1()) mw.refreshP1ForwardSlot(t.idx()); else mw.refreshP2ForwardSlot(t.idx()); }
 				}
 			}
 

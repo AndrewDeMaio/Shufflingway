@@ -4469,6 +4469,12 @@ final class AutoAbilityTriggers {
 		if (ability.oncePerTurn()
 				&& mw.usedOncePerTurnAbilities.getOrDefault(source, Set.of()).contains(ability.effectText()))
 			return false;
+		// "Damage N --" gates a Break-Zone ability exactly as it gates a field one (Ardyn 26-122H,
+		// the only printing that pairs the two), so this mirrors canActivateAbility's check.
+		if (ability.damageThreshold() > 0) {
+			int dmg = isP1 ? mw.gameState.getP1DamageZone().size() : mw.gameState.getP2DamageZone().size();
+			if (dmg < ability.damageThreshold()) return false;
+		}
 		if (ability.crystalCost() > 0 && mw.playerCrystals(isP1) < ability.crystalCost()) return false;
 		for (BreakZoneCost bz : ability.breakZoneCosts())
 			if (!bzCostSatisfied(bz, isP1)) return false;

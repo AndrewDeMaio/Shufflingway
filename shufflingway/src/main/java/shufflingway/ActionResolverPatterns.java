@@ -80,7 +80,15 @@ final class ActionResolverPatterns {
                     // trait clause above.
                     "(?:\\s+(?:of|with)\\s+(?:power\\s+)?(?<power>\\d+)(?:\\s+power)?(?:\\s+or\\s+(?<powercmp>less|more))?)?" +
                     "(?:\\s+(?<control>(?:your\\s+)?opponent\\s+controls|you\\s+control))?" +
-                    "(?:\\s+other\\s+than\\s+(?:Card\\s+Name\\s+)?(?<excludename>\\S(?:.*?\\S)?))?" +
+                    "(?:\\s+other\\s+than\\s+(?:Card\\s+Name\\s+)?(?<excludename>\\S(?:.*?\\S)?)" +
+                    // "other than Card Name Leo, Light or Dark" (Leo 13-067L) — one "other than"
+                    // governing a card name and then a list of Elements. Attached to the name
+                    // rather than given a clause of its own because that is how it is printed;
+                    // without it the lazy name group stopped at "Leo" and the comma became the
+                    // followup separator, which swallowed the Elements *and* the "in your Break
+                    // Zone" that followed them, so the choice read the field instead.
+                    "(?:,\\s*(?<excludeelemlist>(?:Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)" +
+                    "(?:\\s+(?:or|and)\\s+(?:Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark))*))?)?" +
                     // Both orders are printed: "1 Forward you control other than X" and
                     // "1 Character other than X you control" (12-021R Necron and 16 others). Only
                     // the first has a place above, so without this the exclusion group — lazy, but
@@ -1524,6 +1532,14 @@ final class ActionResolverPatterns {
         "Job\\s+(?<job>.+?)\\s+you\\s+control[,.]\\s+play\\s+it\\s+onto\\s+(?:the\\s+)?field[.!]?"
     );
     /**
+     * Matches "If its cost is X, play it onto the field." — Leo 13-067L, where X is the number of
+     * Kingdom Counters the activation removed. An exact match on the cost, not a ceiling, which is
+     * what separates it from {@link #FOLLOWUP_PLAY_IF_COST_LE_JOB_COUNT} beside it.
+     */
+    static final Pattern FOLLOWUP_PLAY_IF_COST_IS_X = Pattern.compile(
+        "(?i)If\\s+its\\s+cost\\s+is\\s+X[,.]\\s+play\\s+it\\s+onto\\s+(?:the\\s+)?field[.!]?"
+    );
+    /**
      * Matches "If its cost is equal to or less than the number of cards in your hand, return it to its owner's hand."
      * Used by Leviathan (5-139C) EX Burst.
      */
@@ -1669,6 +1685,20 @@ final class ActionResolverPatterns {
     static final Pattern FOLLOWUP_GAINS_MUST_BLOCK_NAMED_UNTIL_EOT = Pattern.compile(
         "(?i)it\\s+gains\\s+[\"']This\\s+Forward\\s+must\\s+block\\s+(?<cardname>.+?)\\s+if\\s+possible[.!]?[\"']" +
         "\\s+until\\s+the\\s+end\\s+of\\s+the\\s+turn[.!]?"
+    );
+    /**
+     * The same compulsion stated inline rather than as a quoted grant: "If it is possible, it must
+     * block [CardName] this turn" (Lightning 1-141L's Army of One) and "it must block [CardName]
+     * this turn if possible" (Galuf 7-067L). Group {@code cardname} — the attacker to block.
+     *
+     * <p>Kept apart from {@link #FOLLOWUP_MUST_BLOCK}, which reads the unqualified compulsion.
+     * The two cannot overlap — that one requires "block" and "this turn" to be adjacent, and the
+     * attacker's name sits between them here — but they must not share a handler either, since
+     * the unqualified form compels the Forward against every attacker.
+     */
+    static final Pattern FOLLOWUP_MUST_BLOCK_NAMED_INLINE = Pattern.compile(
+        "(?i)(?:If\\s+it\\s+is\\s+possible,\\s+)?it\\s+must\\s+block\\s+(?<cardname>.+?)\\s+" +
+        "this\\s+turn(?:\\s+if\\s+possible)?[.!]?"
     );
     /** Matches "Return it to its owner's hand and draw N card(s)." — group {@code draw} is the count. */
     static final Pattern FOLLOWUP_RETURN_AND_DRAW = Pattern.compile(
@@ -2032,6 +2062,19 @@ final class ActionResolverPatterns {
     static final Pattern FOLLOWUP_CANNOT_ATTACK = Pattern.compile(
         "(?i)(?:it|they)\\s+cannot\\s+attack\\s+this\\s+turn\\.?"
     );
+    /**
+     * Gestahlian Empire Cid 11-026H's followup: "Select 1 Counter placed on it, and place 1
+     * additional Counter of the same type as the selected Counter on that Monster."
+     *
+     * <p>Which counter is duplicated is a decision, not something the text names — the card may be
+     * carrying several kinds — so this pattern captures nothing and the primitive it dispatches to
+     * does the asking.
+     */
+    static final Pattern FOLLOWUP_SELECT_COUNTER_AND_ADD_SAME_TYPE = Pattern.compile(
+        "(?i)^Select\\s+1\\s+Counter\\s+placed\\s+on\\s+it,?\\s+and\\s+place\\s+1\\s+additional\\s+" +
+        "Counter\\s+of\\s+the\\s+same\\s+type\\s+as\\s+the\\s+selected\\s+Counter\\s+on\\s+that\\s+" +
+        "(?:Monster|Forward|Backup|Character)[.!]?$"
+    );
     /** Matches "it must attack this turn if possible". */
     static final Pattern FOLLOWUP_MUST_ATTACK = Pattern.compile(
         "(?i)it\\s+must\\s+attack\\s+this\\s+turn\\s+if\\s+possible\\.?"
@@ -2051,6 +2094,21 @@ final class ActionResolverPatterns {
         "(?i)^Until\\s+the\\s+end\\s+of\\s+the\\s+turn,\\s+it\\s+gains\\s+" +
         "\"(?<quoted>[^\"]+)\"\\s+and\\s+(?<self>[^\"]+?)\\s+gains\\s+" +
         "\\+(?<amount>\\d+)\\s+power[.!]?$");
+    /**
+     * Tulien 21-072H's followup: "Until the end of the turn, it gains "[quoted]" and "[quoted]"."
+     * — two compulsions handed to the chosen Forward in one sentence.
+     *
+     * <p>Shaped like {@link #FOLLOWUP_GAINS_QUOTED_EOT_AND_SELF_POWER_BOOST} above and split from
+     * it for the same reason the sibling is split from the plain grants: what follows the "and"
+     * decides which primitives run, and neither pattern can read the other's tail. The sentence
+     * never breaks, because its only ". " sequences sit inside the quotations.
+     *
+     * <p>Groups {@code first} and {@code second} are the two quoted clauses, each checked by the
+     * caller before either is applied.
+     */
+    static final Pattern FOLLOWUP_GAINS_TWO_QUOTED_EOT = Pattern.compile(
+        "(?i)^Until\\s+the\\s+end\\s+of\\s+the\\s+turn,\\s+it\\s+gains\\s+" +
+        "\"(?<first>[^\"]+)\"\\s+and\\s+\"(?<second>[^\"]+)\"[.!]?$");
     /**
      * The self-reference a granted clause uses for whatever received it — "This Forward", "This
      * Character", or a bare "It". Used to confirm that a quoted grant is talking about its new
@@ -2838,6 +2896,29 @@ final class ActionResolverPatterns {
         "(?i)During\\s+this\\s+turn,?\\s+if\\s+a\\s+Job\\s+(?<job>.+?)\\s+or\\s+(?:a\\s+)?Card\\s+Name\\s+(?<cardname>.+?)" +
         "\\s+you\\s+control\\s+(?:is|are)\\s+dealt\\s+damage" +
         "\\s+by\\s+(?:a\\s+)?Summons?\\s+or\\s+an?\\s+abilit(?:y|ies),?\\s+the\\s+damage\\s+becomes?\\s+0\\s+instead[.!]?"
+    );
+    /**
+     * "[Self] gains his/her action abilities until the end of the turn." — Gogo 9-107C, borrowing
+     * the action abilities of a Forward the opponent controls.
+     *
+     * <p>Group {@code name} is checked against the source card by the parser: the sentence names
+     * the borrower, and a printing that named someone else would be a different effect.
+     */
+    static final Pattern FOLLOWUP_SOURCE_GAINS_TARGET_ACTION_ABILITIES = Pattern.compile(
+        "(?i)(?<name>[^.,]+?)\\s+gains?\\s+(?:his/her|his|her|their|its)\\s+action\\s+abilities" +
+        "\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn[.!]?"
+    );
+    /**
+     * "It gains 'When this Forward is dealt damage, break this Forward.' until the end of the
+     * turn." — Vallaide 22-020R, and the same sentence inside Hades 16-079H's attack trigger.
+     *
+     * <p>Kept apart from {@link #FOLLOWUP_GAINS_BREAKTOUCH_BATTLE} below rather than folded into
+     * one pattern: the two quotations differ by which side of the damage they watch, and reading
+     * one as the other would break the wrong Forward.
+     */
+    static final Pattern FOLLOWUP_GAINS_BREAK_WHEN_DEALT_DAMAGE = Pattern.compile(
+        "(?i)(?:it|they)\\s+gains?\\s+['\"]When\\s+this\\s+Forward\\s+is\\s+dealt\\s+damage,\\s+" +
+        "break\\s+this\\s+Forward\\.?['\"]\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn\\.?"
     );
     /** "It gains 'When this Forward deals battle damage to a Forward, break that Forward.' until the end of the turn." */
     static final Pattern FOLLOWUP_GAINS_BREAKTOUCH_BATTLE = Pattern.compile(
@@ -5549,12 +5630,23 @@ final class ActionResolverPatterns {
         "(?:\\s+(?<opponent>(?:your\\s+)?opponent\\s+controls))?[.!]?$"
     );
     /**
-     * Matches "Until the end of the turn, [CardName] gains 'When [CardName] attacks, [innerEffect]'"
-     * — grants the source card a temporary attack trigger for this turn.
-     * Group {@code inner} — the effect text inside the quoted auto-ability.
+     * Matches "Until the end of the turn, [CardName] gains [traits and] 'When [CardName] attacks,
+     * [innerEffect]'" — grants the source card a temporary attack trigger for this turn, and
+     * whatever keywords the same sentence hands it.
+     * <ul>
+     *   <li>Group {@code subject} — the card being granted, checked against the source by the parser</li>
+     *   <li>Group {@code traits}  — optional keyword run ("Haste, First Strike and "), Lightning 1-141L</li>
+     *   <li>Group {@code inner}   — the effect text inside the quoted auto-ability</li>
+     * </ul>
+     *
+     * <p>The traits run ends in the "and" that joins it to the quotation, which is why it is part
+     * of the group: without it the alternation could not tell "gains Haste and \"…\"" from a
+     * subject that happens to end in a keyword name.
      */
     static final Pattern SELF_GAINS_WHEN_ATTACKS_EOT = Pattern.compile(
-        "(?i)^Until\\s+the\\s+end\\s+of\\s+(?:the\\s+)?turn,?\\s+.+?\\s+gains?\\s+\"When\\s+.+?\\s+attacks?,\\s+(?<inner>.+?)\"[.!]?$"
+        "(?i)^Until\\s+the\\s+end\\s+of\\s+(?:the\\s+)?turn,?\\s+(?<subject>[^\"]+?)\\s+gains?\\s+" +
+        "(?<traits>(?:Haste|First\\s+Strike|Brave)(?:\\s*,?\\s*(?:and\\s+)?(?:Haste|First\\s+Strike|Brave))*\\s+and\\s+)?" +
+        "\"When\\s+.+?\\s+attacks?,\\s+(?<inner>.+?)\"[.!]?$"
     );
     /**
      * Matches "Deal [N] damage to the Forward that blocks [CardName][.]"
@@ -6084,6 +6176,16 @@ final class ActionResolverPatterns {
      */
     static final Pattern GRANTED_MUST_ATTACK_ONCE_PER_TURN = Pattern.compile(
         "(?i)^(?<subj>.+?)\\s+must\\s+attack\\s+once\\s+per\\s+turn\\s+if\\s+possible[.!]?$");
+    /**
+     * The block-side twin of {@link #GRANTED_MUST_ATTACK_ONCE_PER_TURN}, in the two orders it is
+     * printed: "This Forward must block if possible." (Tulien 21-072H) and the older "If possible,
+     * this Forward must block." Group {@code subj} or {@code subj2} carries the subject, whichever
+     * branch matched — the caller puts both through {@link #GRANTED_CLAUSE_SELF_SUBJECT} to confirm
+     * the clause is talking about its new carrier.
+     */
+    static final Pattern GRANTED_MUST_BLOCK_IF_POSSIBLE = Pattern.compile(
+        "(?i)^(?:If\\s+possible,\\s+(?<subj2>.+?)\\s+must\\s+block" +
+        "|(?<subj>.+?)\\s+must\\s+block\\s+if\\s+possible)[.!]?$");
     /**
      * "[Self] gains [traits | \"[quoted ability]\"] and [Self]'s power becomes N." — a grant that
      * states no duration, and so lasts as long as the card stays on the field (Hyoh 16-097H,

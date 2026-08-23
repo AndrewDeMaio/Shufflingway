@@ -2022,6 +2022,9 @@ public class ActionResolver {
         // "PowerBoost + ?" and read like a card handing out power for nothing.
         if (SECONDARY_WHEN_TARGET_LEAVES_PUT_SELF_TO_BZ.matcher(followupText).matches())
             return "WhenTargetLeavesPutSelfToBz";
+        if (FOLLOWUP_SOURCE_GAINS_TARGET_ACTION_ABILITIES.matcher(followupText).matches())
+                                                                                      return "GainsTargetActionAbilities";
+        if (FOLLOWUP_GAINS_BREAK_WHEN_DEALT_DAMAGE.matcher(followupText).find())     return "BreakWhenDealtDamage";
         if (FOLLOWUP_GAINS_BREAKTOUCH_BATTLE.matcher(followupText).find())           return "BreaktouchBattle";
         if (FOLLOWUP_CANNOT_BE_CHOSEN_BOTH.matcher(followupText).find())              return "CannotBeChosenBoth";
         if (FOLLOWUP_CANNOT_BE_CHOSEN_SUMMONS.matcher(followupText).find())           return "CannotBeChosenSummons";
@@ -2052,6 +2055,7 @@ public class ActionResolver {
         if (FOLLOWUP_REMOVE_FROM_GAME.matcher(followupText).find())                   return "RemoveFromGame";
         if (SECONDARY_PLAY_REMOVED_ONTO_FIELD.matcher(followupText).find())           return "PlayRemovedOntoField";
         if (FOLLOWUP_PLAY_IF_COST_LE_JOB_COUNT.matcher(followupText).matches())       return "PlayIfCostLeJobCount";
+        if (FOLLOWUP_PLAY_IF_COST_IS_X.matcher(followupText).matches())               return "PlayIfCostIsX";
         if (FOLLOWUP_RETURN_IF_COST_LE_HAND.matcher(followupText).matches())          return "ReturnIfCostLeHand";
         // Must precede PlayOntoField and AddToHand: this followup ends in the destination they
         // scan for, and both use find(), so either would claim it and report a search of the deck
@@ -2084,13 +2088,18 @@ public class ActionResolver {
         if (FOLLOWUP_ONLY_BLOCKED_BY_COST_LE_OWN.matcher(followupText).find())        return "OnlyBlockedByCostLeOwn";
         if (FOLLOWUP_CANNOT_BE_BLOCKED.matcher(followupText).find())                  return "CannotBeBlocked";
         if (FOLLOWUP_CANNOT_BE_BLOCKED_IF_ELEMENT_CP.matcher(followupText).find())   return "CannotBeBlockedIfElementCP";
-        // Mirrors the choose chain: the named form is checked ahead of the unqualified one.
+        // Mirrors the choose chain: the counter duplication, then the two named must-block forms
+        // ahead of the unqualified one.
+        if (FOLLOWUP_SELECT_COUNTER_AND_ADD_SAME_TYPE.matcher(followupText.trim()).matches())
+                                                                                      return "DuplicateCounter";
         if (FOLLOWUP_GAINS_MUST_BLOCK_NAMED_UNTIL_EOT.matcher(followupText).find())   return "MustBlockNamed";
+        if (FOLLOWUP_MUST_BLOCK_NAMED_INLINE.matcher(followupText).find())            return "MustBlockNamed";
         if (FOLLOWUP_MUST_BLOCK.matcher(followupText).find())                         return "MustBlock";
         if (FOLLOWUP_CANNOT_ATTACK.matcher(followupText).find())                      return "CannotAttack";
         // Mirrors the choose chain: the compound grant is read before the plain compulsion.
         if (FOLLOWUP_GAINS_QUOTED_EOT_AND_SELF_POWER_BOOST.matcher(followupText.trim()).matches())
             return "GainsQuotedEotAndSelfPowerBoost";
+        if (isMustAttackAndMustBlockGrant(followupText))                              return "MustAttackAndMustBlock";
         if (FOLLOWUP_MUST_ATTACK.matcher(followupText).find())                        return "MustAttack";
         // Must precede the plain form, mirroring the choose chain: that pattern's find() would take
         // the first clause and lose the action-ability half.
@@ -2348,6 +2357,11 @@ public class ActionResolver {
         if (tryParseChooseForwardsGainAbilityEot(effectText) != null) return "ChooseForwardsGainAbilityEot";
         if (tryParseChooseForwardPlacePetrification(effectText) != null) return "ChooseForwardPlacePetrification";
         if (tryParseRemoveAllCountersFromSelf(effectText, source) != null) return "RemoveAllCountersFromSelf";
+        // Mirrors parse() and matchedPatternName(): must precede the ChooseCharacter block, whose
+        // followup naming has nothing for either sentence and describes this as
+        // "ChooseCharacter / ? + ?" (Kimahri 1-102H).
+        if (tryParseChooseOppFwdGainsSpecialAbilityFreeOnce(effectText, source) != null)
+            return "ChooseOppFwdGainsSpecialAbilityFreeOnce";
         // Mirrors parse() and matchedPatternName(): must precede the ChooseCharacter block, which
         // describes this as "ChooseCharacter / ? + IfControl(…: ?)".
         if (tryParseChooseTwoBzFwdPlayIfControl(effectText, source) != null)
@@ -2953,16 +2967,35 @@ public class ActionResolver {
         };
     }
 
+    /**
+     * Parses "Until the end of the turn, [Self] gains [keywords and] "When [Self] attacks,
+     * [effect]"." — Heretical Knight Garland 9-061R for the bare form, Lightning 1-141L's Army of
+     * One for the one that hands over Haste and First Strike in the same breath.
+     *
+     * <p>The inner effect is read by the damage parser first and by the full chain second. The
+     * order is deliberate rather than redundant: Garland's "deal 6000 damage to all the Forwards
+     * opponent controls" has resolved through the damage parser since this was written, and the
+     * fallback is there for the inner texts that one declines — Lightning's is a choose whose
+     * followup compels the chosen Forward to block her.
+     */
     private static Consumer<GameContext> tryParseSelfGainsWhenAttacksEOT(String text, CardData source) {
         if (source == null) return null;
         Matcher m = SELF_GAINS_WHEN_ATTACKS_EOT.matcher(text);
         if (!m.matches()) return null;
+        if (!m.group("subject").trim().equalsIgnoreCase(source.name())) return null;
         String innerText = m.group("inner").trim();
         Consumer<GameContext> innerEffect = tryParseDealDamageToForwards(innerText);
+        if (innerEffect == null) innerEffect = parse(innerText, source);
         if (innerEffect == null) return null;
+        final Consumer<GameContext> attackEffect = innerEffect;
+        EnumSet<CardData.Trait> traits = parseTraits(m.group("traits"));
         return ctx -> {
+            if (!traits.isEmpty()) {
+                ctx.logEntry(source.name() + " gains " + traitNamesOnly(traits) + " until end of turn");
+                ctx.boostSourceForward(source, 0, traits);
+            }
             ctx.logEntry("Effect: " + source.name() + " gains 'When attacks, [effect]' until EOT");
-            ctx.addTempAttackTrigger(source, innerEffect);
+            ctx.addTempAttackTrigger(source, attackEffect);
         };
     }
 

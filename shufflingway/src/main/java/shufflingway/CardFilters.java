@@ -184,7 +184,7 @@ public final class CardFilters {
      */
     public static boolean meetsElementExclusion(CardData card, String excludeElement) {
         if (excludeElement == null) return true;
-        for (String e : excludeElement.split("(?i)\\s+and\\s+")) {
+        for (String e : excludeElement.split("(?i)\\s+(?:and|or)\\s+")) {
             if (card.containsElement(e.trim())) return false;
         }
         return true;

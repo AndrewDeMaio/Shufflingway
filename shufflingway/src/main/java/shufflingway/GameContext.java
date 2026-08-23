@@ -917,6 +917,17 @@ public interface GameContext {
     void removeOneCounterFromTarget(ForwardTarget t);
 
     /**
+     * Places one more Counter of a type already on the character at {@code t} — Gestahlian Empire
+     * Cid 11-026H, "Select 1 Counter placed on it, and place 1 additional Counter of the same type
+     * as the selected Counter on that Monster."
+     *
+     * <p>The mirror of {@link #removeOneCounterFromTarget} and it fizzles the same way: a card with
+     * no counters has no type to copy. One type is copied silently, several put the choice to the
+     * active player.
+     */
+    void duplicateOneCounterOnTarget(ForwardTarget t);
+
+    /**
      * General "look at the top N cards" effect.  The {@link LookConfig} specifies how
      * many cards to look at and what the player may do with them afterward.
      *
@@ -1207,6 +1218,31 @@ public interface GameContext {
      * when this Forward deals battle damage to a Forward, that Forward is broken.
      */
     void shieldBreaktouchBattle(ForwardTarget t);
+
+    /**
+     * Grants {@code t} "When this Forward is dealt damage, break this Forward." until end of turn
+     * — Vallaide 22-020R.
+     *
+     * <p>The mirror image of {@link #shieldBreaktouchBattle}: that one arms the Forward that
+     * <em>deals</em> the damage and only in battle, this one arms the Forward that
+     * <em>receives</em> it, from any source.
+     */
+    void grantBreakWhenDealtDamage(ForwardTarget t);
+
+    /**
+     * Lends {@code source} every action ability of the card at {@code target} until end of turn —
+     * Gogo 9-107C.
+     *
+     * <p>Action abilities only: Special abilities are a separate kind under rule 6-1-1 and the
+     * printing does not name them. Abilities that cannot be used from the field at all (Break Zone
+     * and in-hand ones) are left behind for the same reason.
+     *
+     * <p>Each borrowed ability's text is re-pointed at {@code source} through
+     * {@link ActionResolver#substituteSourceName}, so one that names its own card acts on the
+     * borrower rather than on the donor still standing across the table. Costs and restrictions
+     * are copied as printed.
+     */
+    void gainTargetActionAbilitiesUntilEndOfTurn(CardData source, ForwardTarget target);
 
     /**
      * Moves the Forward at {@code t} (currently opponent-controlled) to the active player's field.

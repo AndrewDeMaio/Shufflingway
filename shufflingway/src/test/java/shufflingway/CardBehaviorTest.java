@@ -31116,4 +31116,648 @@ public class CardBehaviorTest {
 		assertFalse(mw.summonCastBlocked(zodiark, true));
 	}
 
+	// =========================================================================================
+	// Ardyn 26-122H: "Damage 5 -- 《0》: Play Ardyn onto the field. When Ardyn enters the field,
+	// Ardyn deals you 1 point of damage. You can only use this ability during your Main Phase and
+	// if Ardyn is in the Break Zone."
+	//
+	// Parsing + board behaviour. Two things were wrong. The closing restriction was read as "a card
+	// named Ardyn must be in your Break Zone while this ability is used from the field", which is
+	// not something this ability can ever be: breakZoneOnly stayed null, and the Break Zone dialog
+	// lists only abilities that have it, so nothing could ever activate it. Seventeen other
+	// printings of the same sentence were dead for the same reason. Separately, the middle sentence
+	// was picked up a second time as a standing "When Ardyn enters the field" auto-ability, so
+	// casting Ardyn from hand dealt his controller a point of damage he never printed.
+	// =========================================================================================
+
+	private static final String ARDYN_26_122H =
+			"Put Ardyn into the Break Zone: Choose 1 Forward opponent controls. It loses 8000 power "
+			+ "until the end of the turn.[[br]]Damage 5 -- 《0》: Play Ardyn onto the field. "
+			+ "When Ardyn enters the field, Ardyn deals you 1 point of damage. You can only use this "
+			+ "ability during your Main Phase and if Ardyn is in the Break Zone.";
+
+	private static ActionAbility ardynBreakZoneAbility() {
+		List<ActionAbility> abilities = CardData.parseActionAbilities(ARDYN_26_122H);
+		assertEquals(2, abilities.size());
+		return abilities.get(1);
+	}
+
+	@Test
+	void ardynsRestrictionMakesTheAbilityOneUsedFromTheBreakZone() {
+		ActionAbility a = ardynBreakZoneAbility();
+		assertEquals("Ardyn", a.breakZoneOnly(), "the sentence names the source, so it is a BZ ability");
+		assertNull(a.ownBreakZoneNameRequired(), "that field is for a grant naming some other card");
+		assertTrue(a.mainPhaseOnly());
+		assertEquals(5, a.damageThreshold());
+	}
+
+	@Test
+	void theSiblingPrintingsOfThatSentenceAreReadTheSameWay() {
+		// Every card in the corpus that prints it names itself, so all of them are Break Zone
+		// abilities. Two spellings, with and without the Main Phase clause.
+		for (String text : List.of(
+				"《Fire》《Fire》《4》: Play Noel onto the field. You can only use this ability "
+						+ "during your Main Phase and if Noel is in the Break Zone.",
+				"Put 2 Ice Backups into the Break Zone: Play Undead Princess onto the field dull. "
+						+ "You can only use this ability if Undead Princess is in the Break Zone.")) {
+			ActionAbility a = CardData.parseActionAbilities(text).get(0);
+			assertNotNull(a.breakZoneOnly(), text);
+			assertNull(a.ownBreakZoneNameRequired(), text);
+		}
+	}
+
+	@Test
+	void theGrantThatReallyDoesNameAnotherCardStillSetsTheOtherField() {
+		// Innocence 13-137S: the abilities are used from the field and ask for a *copy* of Innocence
+		// in the Break Zone. That is what ownBreakZoneNameRequired is for, and it must survive.
+		String text = "If you have a Card Name Innocence in your Break Zone, Innocence gains "
+				+ "\"《Fire》《Dull》: Choose 1 Forward. Deal it 10000 damage.\"";
+		List<ActionAbility> granted = CardData.parseActionAbilities(text);
+		assertEquals(1, granted.size());
+		assertEquals("Innocence", granted.get(0).ownBreakZoneNameRequired());
+		assertNull(granted.get(0).breakZoneOnly());
+	}
+
+	@Test
+	void ardynPrintsNoStandingEntersTheFieldAbility() {
+		// The trigger sentence sits inside the Break Zone ability's effect, so it belongs to that
+		// ability. Read as a standing one it fired on every arrival, an ordinary cast included.
+		assertTrue(CardData.parseAutoAbilities(ARDYN_26_122H).isEmpty());
+	}
+
+	@Test
+	void aTriggerPrintedBeforeTheCostIsStillAnAutoAbility() {
+		// The truncation is per [[br]] segment and starts at the cost marker, so a trigger printed
+		// ahead of an action ability keeps both its place and its full effect text.
+		String text = "When Leo enters the field, place 1 Kingdom Counter on Leo for each Category "
+				+ "FFCC Character you control.[[br]]   《1》《Dull》, remove X Kingdom Counters from "
+				+ "Leo: Choose 1 Forward in your Break Zone. If its cost is X, play it onto the field.";
+		List<AutoAbility> autos = CardData.parseAutoAbilities(text);
+		assertEquals(1, autos.size());
+		assertEquals("enters the field", autos.get(0).trigger());
+		assertTrue(autos.get(0).effectText().contains("Kingdom Counter on Leo"));
+	}
+
+	@Test
+	void ardynComesBackFromTheBreakZoneAndThenHurtsYou() {
+		CardData ardyn = makeForwardWithText("Ardyn", "Dark", 4, 8000, ARDYN_26_122H);
+		Consumer<GameContext> fn = ActionResolver.parse(ardynBreakZoneAbility().effectText(), ardyn);
+		assertNotNull(fn);
+
+		GameContext ctx = mock(GameContext.class);
+		fn.accept(ctx);
+
+		// Order matters: he is on the field before the damage his arrival costs is dealt.
+		InOrder order = inOrder(ctx);
+		order.verify(ctx).playAllByNameFromOwnBreakZoneDull("Ardyn", false);
+		order.verify(ctx).dealDamageToSelf(1);
+	}
+
+	@Test
+	void theDamageFiveGateIsEnforcedFromTheBreakZoneToo() {
+		MainWindow mw = new MainWindow();
+		advanceTo(mw, GameState.Player.P1, GameState.GamePhase.MAIN_1);
+		CardData ardyn = makeForwardWithText("Ardyn", "Dark", 4, 8000, ARDYN_26_122H);
+		ActionAbility a = ardynBreakZoneAbility();
+
+		for (int i = 0; i < 4; i++) mw.gameState.getP1DamageZone().add(makeForward("Dmg", "Fire", 1, 1000));
+		assertFalse(mw.autoAbilityTriggers.canActivateBzAbility(a, ardyn, true), "4 damage is short of 5");
+
+		mw.gameState.getP1DamageZone().add(makeForward("Dmg", "Fire", 1, 1000));
+		assertTrue(mw.autoAbilityTriggers.canActivateBzAbility(a, ardyn, true));
+	}
+
+	// =========================================================================================
+	// Leo 13-067L: "《1》《Dull》, remove X Kingdom Counters from Leo: Choose 1 Forward other than
+	// Card Name Leo, Light or Dark in your Break Zone. If its cost is X, play it onto the field."
+	//
+	// Parsing + effect wiring. Both halves of the choice were lost. The exclusion clause names a
+	// card and then two Elements, and only the card had a place in the pattern — so the comma
+	// after "Leo" became the followup separator, which carried "Light or Dark" and the whole
+	// "in your Break Zone" into the followup. The choice then read the *field*. And the cost
+	// condition had no handler, so the generic play-onto-field followup ran instead and played the
+	// chosen card whatever it cost — the same for Lenna 12-109L, Zemus 5-108L, Ifalna 20-067R and
+	// Maquis the Phantasm 17-115R, which print the same sentence.
+	// =========================================================================================
+
+	private static final String LEO_13_067L_EFFECT =
+			"Choose 1 Forward other than Card Name Leo, Light or Dark in your Break Zone. "
+			+ "If its cost is X, play it onto the field. "
+			+ "You can only use this ability during your turn and only once per turn.";
+
+	// The cost half of this ability, the variable counter removal and the X it produces, is
+	// covered by the Lenna 12-109L section further up, which Leo shares.
+
+	@Test
+	void leoSearchesHisOwnBreakZoneWithBothExclusionsApplied() {
+		GameContext ctx = mock(GameContext.class);
+		stubOwnBzHit(ctx);
+		when(ctx.p1BreakZoneCard(0)).thenReturn(makeForward("Terra", "Fire", 3, 7000));
+
+		Consumer<GameContext> fn = ActionResolver.parse(LEO_13_067L_EFFECT, null, 3);
+		assertNotNull(fn);
+		fn.accept(ctx);
+
+		verify(ctx).selectCharactersFromBreakZone(
+				eq(1), anyBoolean(), eq(false), anyBoolean(),
+				any(), any(), anyInt(), any(), anyInt(), any(),
+				anyBoolean(), anyBoolean(), anyBoolean(),
+				any(), any(), any(), eq("Leo"), anyBoolean(), eq("Light or Dark"), anyBoolean());
+	}
+
+	@Test
+	void leoPlaysTheChosenForwardOnlyWhenItsCostIsExactlyX() {
+		for (int cost : new int[] { 2, 3, 4 }) {
+			GameContext ctx = mock(GameContext.class);
+			ForwardTarget hit = stubOwnBzHit(ctx);
+			when(ctx.p1BreakZoneCard(0)).thenReturn(makeForward("Terra", "Fire", cost, 7000));
+
+			ActionResolver.parse(LEO_13_067L_EFFECT, null, 3).accept(ctx);
+
+			if (cost == 3) verify(ctx).playTargetOntoField(hit);
+			else           verify(ctx, never()).playTargetOntoField(any());
+		}
+	}
+
+	@Test
+	void theElementExclusionReadsAnOrListAsWellAsAnAndList() {
+		// "Light or Dark" here; "Light and Dark" is how the other spelling of this constraint prints.
+		CardData light = makeForward("Cecil", "Light", 3, 7000);
+		CardData dark  = makeForward("Golbez", "Dark", 3, 7000);
+		CardData fire  = makeForward("Terra", "Fire", 3, 7000);
+		assertFalse(CardFilters.meetsElementExclusion(light, "Light or Dark"));
+		assertFalse(CardFilters.meetsElementExclusion(dark,  "Light or Dark"));
+		assertTrue (CardFilters.meetsElementExclusion(fire,  "Light or Dark"));
+	}
+
+	// =========================================================================================
+	// Vallaide 22-020R: "《1》: Choose 1 Forward. It gains \"When this Forward is dealt damage,
+	// break this Forward.\" until the end of the turn."
+	//
+	// Effect wiring + board behaviour. The choose header parsed and the grant did not, so the
+	// ability logged "followup not yet implemented" and the chosen Forward walked away unharmed.
+	// The grant watches the receiving side of any damage at all, which is what separates it from
+	// the Breaktouch grant beside it: that one watches the Forward that *deals* battle damage.
+	// =========================================================================================
+
+	private static final String VALLAIDE_22_020R_ABILITY =
+			"Choose 1 Forward. It gains \"When this Forward is dealt damage, break this Forward.\" "
+			+ "until the end of the turn. You can only use this ability once per turn.";
+
+	@Test
+	void vallaideArmsTheChosenForwardRatherThanShieldingIt() {
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.consumePreloadedTargets()).thenReturn(null);
+		when(ctx.selectCharacters(anyInt(), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(),
+				anyInt(), any(), anyInt(), any(), anyBoolean(), anyBoolean(), anyBoolean(),
+				any(), any(), any(), any(), anyBoolean(), any(), anyBoolean()))
+				.thenReturn(new ArrayList<>(List.of(fwd(false, 0))));
+
+		Consumer<GameContext> fn = ActionResolver.parse(VALLAIDE_22_020R_ABILITY, null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+
+		verify(ctx).grantBreakWhenDealtDamage(fwd(false, 0));
+		verify(ctx, never()).shieldBreaktouchBattle(any());
+	}
+
+	@Test
+	void anArmedForwardBreaksOnAnyAmountOfAbilityDamage() {
+		MainWindow mw = new MainWindow();
+		CardData victim = makeForward("Sephiroth", "Dark", 7, 10000);
+		placeP2Forward(mw, victim);
+		mw.buildGameContext(true).grantBreakWhenDealtDamage(fwd(false, 0));
+
+		mw.applyDamageToForward(false, 0, 1000, true, false);
+
+		assertTrue(mw.p2ForwardCards.isEmpty(), "1000 damage on a 10000 Forward is still damage");
+		assertEquals(List.of(victim), mw.gameState.getP2BreakZone());
+	}
+
+	@Test
+	void anArmedForwardBreaksOnCombatDamageItSurvived() {
+		// The armed Forward attacks into a blocker far too small to kill it, so the only thing
+		// that can break it is the grant. Run twice: once armed, once not.
+		for (boolean armed : new boolean[] { true, false }) {
+			MainWindow mw = new MainWindow();
+			CardData attacker = makeForward("Big", "Fire", 5, 9000);
+			CardData blocker  = makeForward("Chip", "Earth", 1, 3000);
+			placeP1Forward(mw, attacker);
+			placeP2Forward(mw, blocker);
+			if (armed) mw.buildGameContext(true).grantBreakWhenDealtDamage(fwd(true, 0));
+
+			mw.resolveCombat(attacker, true, 0, blocker, false, 0);
+
+			assertEquals(armed ? List.of() : List.of(attacker), mw.p1ForwardCards,
+					armed ? "3000 is not lethal to 9000, but it is damage"
+					      : "unarmed, the same blow leaves it standing");
+			assertTrue(mw.p2ForwardCards.isEmpty(), "the blocker died to the attacker's power either way");
+		}
+	}
+
+	@Test
+	void cannotBeBrokenStillSavesAnArmedForward() {
+		MainWindow mw = new MainWindow();
+		CardData victim = makeForward("Sephiroth", "Dark", 7, 10000);
+		placeP2Forward(mw, victim);
+		GameContext ctx = mw.buildGameContext(true);
+		ctx.grantBreakWhenDealtDamage(fwd(false, 0));
+		ctx.shieldCannotBeBroken(fwd(false, 0));
+
+		mw.applyDamageToForward(false, 0, 1000, true, false);
+
+		assertEquals(List.of(victim), mw.p2ForwardCards, "this is a break, and the shield answers breaks");
+	}
+
+	@Test
+	void theGrantIsDroppedWhenTheTurnEnds() {
+		MainWindow mw = new MainWindow();
+		CardData victim = makeForward("Sephiroth", "Dark", 7, 10000);
+		placeP2Forward(mw, victim);
+		mw.buildGameContext(true).grantBreakWhenDealtDamage(fwd(false, 0));
+
+		mw.turnPhases().runP2EndOfTurnCleanup();
+		mw.applyDamageToForward(false, 0, 1000, true, false);
+
+		assertEquals(List.of(victim), mw.p2ForwardCards, "the grant only lasted the turn");
+	}
+
+	// =========================================================================================
+	// Gogo 9-107C: "《0》: Choose 1 Forward opponent controls. Gogo gains his/her action abilities
+	// until the end of the turn."
+	//
+	// Effect wiring + board behaviour. The followup had no handler, so the ability chose a Forward
+	// and did nothing with it. The borrowed abilities go into the same until-end-of-turn grant map
+	// the menu already reads, with their text re-pointed at Gogo the way his Mimic re-points a
+	// copied special — an ability that names its own card would otherwise act on the donor still
+	// standing across the table.
+	// =========================================================================================
+
+	private static final String GOGO_9_107C_ABILITY =
+			"Choose 1 Forward opponent controls. Gogo gains his/her action abilities until the end "
+			+ "of the turn. You can only use this ability once per turn.";
+
+	/** A donor with one plain action ability that names itself, and one Special. */
+	private static CardData makeAbilityDonor() {
+		return makeForwardWithText("Tidus", "Water", 3, 7000,
+				"《1》: Activate Tidus. Tidus gains +1000 power until the end of the turn."
+				+ "[[br]][[s]]Blitz Ace[[/]] 《S》《Dull》: Choose 1 Forward. Break it.");
+	}
+
+	@Test
+	void gogoBorrowsTheChosenForwardsAbilitiesRatherThanTheOtherWayRound() {
+		CardData gogo = makeForward("Gogo", "Water", 3, 7000);
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.consumePreloadedTargets()).thenReturn(null);
+		when(ctx.selectCharacters(anyInt(), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(),
+				anyInt(), any(), anyInt(), any(), anyBoolean(), anyBoolean(), anyBoolean(),
+				any(), any(), any(), any(), anyBoolean(), any(), anyBoolean()))
+				.thenReturn(new ArrayList<>(List.of(fwd(false, 0))));
+
+		Consumer<GameContext> fn = ActionResolver.parse(GOGO_9_107C_ABILITY, gogo);
+		assertNotNull(fn);
+		fn.accept(ctx);
+
+		verify(ctx).gainTargetActionAbilitiesUntilEndOfTurn(gogo, fwd(false, 0));
+	}
+
+	@Test
+	void theBorrowedAbilityIsRePointedAtGogo() {
+		MainWindow mw = new MainWindow();
+		CardData gogo  = makeForward("Gogo", "Water", 3, 7000);
+		CardData donor = makeAbilityDonor();
+		placeP1Forward(mw, gogo);
+		placeP2Forward(mw, donor);
+
+		mw.buildGameContext(true).gainTargetActionAbilitiesUntilEndOfTurn(gogo, fwd(false, 0));
+
+		List<ActionAbility> gained = mw.p1TempGrantedAbilities.get(gogo);
+		assertEquals(1, gained.size(), "the Special is a different kind of ability and is not gained");
+		assertEquals("Activate Gogo. Gogo gains +1000 power until the end of the turn.",
+				gained.get(0).effectText());
+		assertEquals(List.of(""), gained.get(0).cpCost(), "the printed cost comes with it");
+		assertNull(mw.p2TempGrantedAbilities.get(donor), "the donor keeps what it had and gains nothing");
+	}
+
+	@Test
+	void theBorrowedAbilitiesAreDroppedWhenTheTurnEnds() {
+		MainWindow mw = new MainWindow();
+		CardData gogo = makeForward("Gogo", "Water", 3, 7000);
+		placeP1Forward(mw, gogo);
+		placeP2Forward(mw, makeAbilityDonor());
+		mw.buildGameContext(true).gainTargetActionAbilitiesUntilEndOfTurn(gogo, fwd(false, 0));
+		assertFalse(mw.p1TempGrantedAbilities.isEmpty());
+
+		mw.clearBackupForwardState();
+
+		assertTrue(mw.p1TempGrantedAbilities.isEmpty());
+	}
+
+	@Test
+	void aDonorWithNoActionAbilitiesLendsNothing() {
+		MainWindow mw = new MainWindow();
+		CardData gogo = makeForward("Gogo", "Water", 3, 7000);
+		placeP1Forward(mw, gogo);
+		placeP2Forward(mw, makeForward("Vanille", "Light", 2, 5000));
+
+		mw.buildGameContext(true).gainTargetActionAbilitiesUntilEndOfTurn(gogo, fwd(false, 0));
+
+		assertTrue(mw.p1TempGrantedAbilities.isEmpty());
+	}
+
+	// =========================================================================================
+	// Kimahri 1-102H, Ronso Rage: "Choose 1 Forward opponent controls. Kimahri gains its Special
+	// Ability until the end of the turn. You can use this ability without paying any cost but only
+	// once."
+	//
+	// Effect wiring. The copy itself already worked; what it copied was the donor's text verbatim,
+	// so a Special naming its own card acted on the donor rather than on Kimahri — Tidus's
+	// "Activate Tidus" activated the Tidus still standing across the table. Re-pointed through the
+	// same rewrite Gogo's Mimic and Clive's borrowed Eikon specials use.
+	// =========================================================================================
+
+	private static final String KIMAHRI_1_102H_ABILITY =
+			"Choose 1 Forward opponent controls. Kimahri gains its Special Ability until the end of "
+			+ "the turn. You can use this ability without paying any cost but only once.";
+
+	/** A donor with one self-naming Special and one ordinary action ability. */
+	private static CardData makeSpecialDonor() {
+		return makeForwardWithText("Tidus", "Water", 3, 7000,
+				"\u300a1\u300b: Choose 1 Forward. Deal it 1000 damage."
+				+ "[[br]][[s]]Blitz Ace[[/]] \u300aS\u300b\u300aDull\u300b: Activate Tidus. "
+				+ "Tidus gains +2000 power until the end of the turn.");
+	}
+
+	/** Runs Kimahri's ability against a mock that offers the donor as the only choice. */
+	private static List<ActionAbility> kimahriCopies(CardData kimahri, CardData donor) {
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.consumePreloadedTargets()).thenReturn(null);
+		when(ctx.selectCharacters(anyInt(), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(),
+				anyInt(), any(), anyInt(), any(), anyBoolean(), anyBoolean(), anyBoolean(),
+				any(), any(), any(), any(), anyBoolean(), any(), anyBoolean()))
+				.thenReturn(new ArrayList<>(List.of(fwd(false, 0))));
+		when(ctx.p2Forward(0)).thenReturn(donor);
+
+		Consumer<GameContext> fn = ActionResolver.parse(KIMAHRI_1_102H_ABILITY, kimahri);
+		assertNotNull(fn);
+		fn.accept(ctx);
+
+		ArgumentCaptor<ActionAbility> copied = ArgumentCaptor.forClass(ActionAbility.class);
+		verify(ctx, atLeast(0)).grantCopiedSpecialAbilityFreeOnce(eq(kimahri), copied.capture());
+		return copied.getAllValues();
+	}
+
+	@Test
+	void kimahriCopiesOnlyTheSpecialAndRePointsItAtHimself() {
+		List<ActionAbility> copies = kimahriCopies(makeForward("Kimahri", "Earth", 4, 8000), makeSpecialDonor());
+
+		assertEquals(1, copies.size(), "the donor's plain action ability is not a Special");
+		assertEquals("Blitz Ace", copies.get(0).abilityName());
+		assertEquals("Activate Kimahri. Kimahri gains +2000 power until the end of the turn.",
+				copies.get(0).effectText());
+	}
+
+	@Test
+	void aDonorSpecialThatNamesNobodyIsCopiedUnchanged() {
+		CardData donor = makeForwardWithText("Squall", "Ice", 3, 7000,
+				"[[s]]Renzokuken[[/]] \u300aS\u300b: Choose 1 Forward. Deal it 7000 damage.");
+		List<ActionAbility> copies = kimahriCopies(makeForward("Kimahri", "Earth", 4, 8000), donor);
+
+		assertEquals(1, copies.size());
+		assertEquals("Choose 1 Forward. Deal it 7000 damage.", copies.get(0).effectText());
+	}
+
+	@Test
+	void kimahrisAbilityIsDescribedByItsOwnParserRatherThanAsAChoose() {
+		// The name chain has always reported this parser; the description chain reached the
+		// ChooseCharacter block first and reported "ChooseCharacter / ? + ?".
+		CardData kimahri = makeForward("Kimahri", "Earth", 4, 8000);
+		assertEquals("ChooseOppFwdGainsSpecialAbilityFreeOnce",
+				ActionResolver.matchedPatternName(KIMAHRI_1_102H_ABILITY, kimahri));
+		assertEquals("ChooseOppFwdGainsSpecialAbilityFreeOnce",
+				ActionResolver.fullDescription(KIMAHRI_1_102H_ABILITY, kimahri));
+	}
+
+	// =========================================================================================
+	// Lightning 1-141L, Army of One: "Until the end of the turn, Lightning gains Haste, First
+	// Strike and "When Lightning attacks, choose up to 1 Forward opponent controls. If it is
+	// possible, it must block Lightning this turn"."
+	//
+	// Effect wiring. The whole ability was being claimed by the choose chain, which find()s the
+	// "choose up to 1 Forward opponent controls" printed *inside* the quotation: activating it
+	// asked for a Forward there and then, granted nothing, and compelled nobody. Two gaps behind
+	// that — the attack-trigger grant could not read the keywords the same sentence hands over, and
+	// the compulsion is spelled with the attacker's name in it, which no followup read.
+	// =========================================================================================
+
+	private static final String LIGHTNING_1_141L_ABILITY =
+			"Until the end of the turn, Lightning gains Haste, First Strike and \"When Lightning "
+			+ "attacks, choose up to 1 Forward opponent controls. If it is possible, it must block "
+			+ "Lightning this turn\".";
+
+	@Test
+	void armyOfOneGrantsTheKeywordsAndTheAttackTrigger() {
+		CardData lightning = makeForward("Lightning", "Lightning", 6, 9000);
+		Consumer<GameContext> fn = ActionResolver.parse(LIGHTNING_1_141L_ABILITY, lightning);
+		assertNotNull(fn);
+
+		GameContext ctx = mock(GameContext.class);
+		fn.accept(ctx);
+
+		verify(ctx).boostSourceForward(lightning, 0,
+				EnumSet.of(CardData.Trait.HASTE, CardData.Trait.FIRST_STRIKE));
+		verify(ctx).addTempAttackTrigger(eq(lightning), any());
+		// Nothing is chosen at activation — the choice belongs to the trigger, when she attacks.
+		verify(ctx, never()).selectCharacters(anyInt(), anyBoolean(), anyBoolean(), anyBoolean(),
+				any(), any(), anyInt(), any(), anyInt(), any(), anyBoolean(), anyBoolean(), anyBoolean(),
+				any(), any(), any(), any(), anyBoolean(), any(), anyBoolean());
+	}
+
+	@Test
+	void theGrantedTriggerCompelsTheChosenForwardToBlockLightning() {
+		CardData lightning = makeForward("Lightning", "Lightning", 6, 9000);
+		GameContext ctx = mock(GameContext.class);
+		ActionResolver.parse(LIGHTNING_1_141L_ABILITY, lightning).accept(ctx);
+
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<Consumer<GameContext>> trigger = ArgumentCaptor.forClass(Consumer.class);
+		verify(ctx).addTempAttackTrigger(eq(lightning), trigger.capture());
+
+		GameContext atk = mock(GameContext.class);
+		when(atk.consumePreloadedTargets()).thenReturn(null);
+		when(atk.selectCharacters(anyInt(), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(),
+				anyInt(), any(), anyInt(), any(), anyBoolean(), anyBoolean(), anyBoolean(),
+				any(), any(), any(), any(), anyBoolean(), any(), anyBoolean()))
+				.thenReturn(new ArrayList<>(List.of(fwd(false, 0))));
+
+		trigger.getValue().accept(atk);
+
+		// Stored in the wording MainWindow's block rules read, the same one Dio 26-075C's grant uses.
+		verify(atk).grantFieldAbilityUntilEndOfTurn(fwd(false, 0),
+				"This Forward must block Lightning if possible.");
+	}
+
+	@Test
+	void theBareFormOfTheAttackTriggerGrantStillParses() {
+		// Heretical Knight Garland 9-061R prints the same grant without keywords, and its inner
+		// effect goes through the damage parser rather than the fallback added for Lightning.
+		CardData garland = makeForward("Heretical Knight Garland", "Earth", 8, 9000);
+		String text = "Until the end of the turn, Heretical Knight Garland gains \"When Heretical "
+				+ "Knight Garland attacks, deal 6000 damage to all the Forwards opponent controls.\"";
+		assertEquals("SelfGainsWhenAttacksEOT", ActionResolver.matchedPatternName(text, garland));
+
+		GameContext ctx = mock(GameContext.class);
+		ActionResolver.parse(text, garland).accept(ctx);
+		verify(ctx).addTempAttackTrigger(eq(garland), any());
+		verify(ctx, never()).boostSourceForward(any(), anyInt(), any());
+	}
+
+	@Test
+	void theGrantIsDeclinedWhenTheSentenceNamesSomeoneElse() {
+		// The subject check keeps this parser off a sentence granting the trigger to another card:
+		// every primitive it calls acts on the source, so a mismatch would buff the wrong Forward.
+		// The text still parses — the choose chain claims it off the quotation, which is what it
+		// did for Lightning herself before this parser could read her keywords.
+		CardData snow = makeForward("Snow", "Lightning", 4, 8000);
+		assertNotEquals("SelfGainsWhenAttacksEOT",
+				ActionResolver.matchedPatternName(LIGHTNING_1_141L_ABILITY, snow));
+	}
+
+	// =========================================================================================
+	// Gestahlian Empire Cid 11-026H: "\u300aDull\u300b: Choose 1 Monster you control. Select 1 Counter
+	// placed on it, and place 1 additional Counter of the same type as the selected Counter on
+	// that Monster."
+	//
+	// Effect wiring + board behaviour. The choose header parsed and the followup did not, so the
+	// ability picked a Monster and logged "followup not yet implemented". Which counter is copied
+	// is a decision rather than something the text names, so the primitive asks whenever the
+	// Monster carries more than one kind — the mirror of the remove-one-counter effect.
+	// =========================================================================================
+
+	private static final String CID_11_026H_ABILITY =
+			"Choose 1 Monster you control. Select 1 Counter placed on it, and place 1 additional "
+			+ "Counter of the same type as the selected Counter on that Monster.";
+
+	private static CardData makeCounterMonster(String name) {
+		return new CardData(null, name, "Ice", 2, 5000, "Monster", false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+				List.of(), List.of(), false, false, null, false, false, false, false, false, 1,
+				null, null, null, "");
+	}
+
+	@Test
+	void cidChoosesAMonsterAndDuplicatesOneOfItsCounters() {
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.consumePreloadedTargets()).thenReturn(null);
+		ForwardTarget hit = new ForwardTarget(true, 0, ForwardTarget.CardZone.MONSTER);
+		when(ctx.selectCharacters(anyInt(), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(),
+				anyInt(), any(), anyInt(), any(), anyBoolean(), anyBoolean(), anyBoolean(),
+				any(), any(), any(), any(), anyBoolean(), any(), anyBoolean()))
+				.thenReturn(new ArrayList<>(List.of(hit)));
+
+		Consumer<GameContext> fn = ActionResolver.parse(CID_11_026H_ABILITY, null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+
+		verify(ctx).duplicateOneCounterOnTarget(hit);
+		// Monsters only, and only the controller's own.
+		verify(ctx).selectCharacters(eq(1), anyBoolean(), eq(false), eq(true), any(), any(),
+				anyInt(), any(), anyInt(), any(), eq(false), eq(false), eq(true),
+				any(), any(), any(), any(), anyBoolean(), any(), anyBoolean());
+	}
+
+	@Test
+	void theOnlyCounterTypeOnTheMonsterIsCopiedWithoutAsking() {
+		MainWindow mw = new MainWindow();
+		CardData monster = makeCounterMonster("Magitek Armor");
+		mw.gameState.getIdentity().put(monster, true);
+		mw.placeCardInMonsterZone(monster);
+		mw.gameState.placeCounters(monster, "Magitek", 3);
+
+		mw.buildGameContext(true).duplicateOneCounterOnTarget(
+				new ForwardTarget(true, 0, ForwardTarget.CardZone.MONSTER));
+
+		assertEquals(4, mw.gameState.getCounters(monster, "Magitek"));
+	}
+
+	@Test
+	void aMonsterCarryingNoCountersHasNothingToCopy() {
+		MainWindow mw = new MainWindow();
+		CardData monster = makeCounterMonster("Magitek Armor");
+		mw.gameState.getIdentity().put(monster, true);
+		mw.placeCardInMonsterZone(monster);
+
+		mw.buildGameContext(true).duplicateOneCounterOnTarget(
+				new ForwardTarget(true, 0, ForwardTarget.CardZone.MONSTER));
+
+		assertTrue(mw.gameState.getCountersMap(monster).isEmpty(), "no type to copy — the effect fizzles");
+	}
+
+	// =========================================================================================
+	// Tulien 21-072H: "\u300a0\u300b: Choose 1 Forward. Until the end of the turn, it gains "This Forward
+	// must attack once per turn if possible." and "This Forward must block if possible.""
+	//
+	// Effect wiring + board behaviour. Both compulsions are spelled the way a printed field ability
+	// spells them, which neither of the plain must-attack/must-block followups reads, and the
+	// sentence never breaks — its only ". " sequences sit inside the quotations. So the whole
+	// followup fell through to the unimplemented warning and the ability resolved as a bare target
+	// selection. Read as one grant, beside Azul 23-077H's quoted-clause-plus-power-boost.
+	// =========================================================================================
+
+	private static final String TULIEN_21_072H_ABILITY =
+			"Choose 1 Forward. Until the end of the turn, it gains \"This Forward must attack once "
+			+ "per turn if possible.\" and \"This Forward must block if possible.\" "
+			+ "You can only use this ability once per turn.";
+
+	@Test
+	void tulienHandsTheChosenForwardBothCompulsions() {
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.consumePreloadedTargets()).thenReturn(null);
+		when(ctx.selectCharacters(anyInt(), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(),
+				anyInt(), any(), anyInt(), any(), anyBoolean(), anyBoolean(), anyBoolean(),
+				any(), any(), any(), any(), anyBoolean(), any(), anyBoolean()))
+				.thenReturn(new ArrayList<>(List.of(fwd(false, 0))));
+
+		Consumer<GameContext> fn = ActionResolver.parse(TULIEN_21_072H_ABILITY, null);
+		assertNotNull(fn);
+		fn.accept(ctx);
+
+		verify(ctx).grantMustAttackOncePerTurnUntilEndOfTurn(fwd(false, 0));
+		verify(ctx).setP2ForwardMustBlock(0);
+	}
+
+	@Test
+	void bothCompulsionsLandOnTheBoardAndClearWithTheTurn() {
+		MainWindow mw = new MainWindow();
+		CardData victim = makeForward("Vaan", "Wind", 3, 7000);
+		placeP1Forward(mw, victim);
+		GameContext ctx = mw.buildGameContext(true);
+		ctx.preloadTargets(List.of(fwd(true, 0)));
+
+		ActionResolver.parse(TULIEN_21_072H_ABILITY, null).accept(ctx);
+
+		assertTrue(mw.permanentMustAttackOncePerTurn.contains(victim));
+		assertTrue(mw.p1MustBlock.contains(victim));
+	}
+
+	@Test
+	void aTwoQuotedGrantIsDeclinedWhenAClauseNamesAnotherCard() {
+		// The subject check the Azul branch applies, for the same reason: a clause naming a third
+		// party is a different effect, and applying it to the grantee would compel the wrong card.
+		// Declining leaves the ability visibly unhandled instead of silently doing the wrong thing.
+		String text = "Choose 1 Forward. Until the end of the turn, it gains \"Tulien must attack "
+				+ "once per turn if possible.\" and \"This Forward must block if possible.\"";
+		assertEquals("ChooseCharacter / ?", ActionResolver.fullDescription(text, null));
+	}
+
+	@Test
+	void theOlderOrderOfTheBlockClauseReadsTheSame() {
+		// "If possible, this Forward must block." is how the other printings spell it.
+		String text = "Choose 1 Forward. Until the end of the turn, it gains \"This Forward must "
+				+ "attack once per turn if possible.\" and \"If possible, this Forward must block.\"";
+		assertEquals("ChooseCharacter / MustAttackAndMustBlock",
+				ActionResolver.fullDescription(text, null));
+	}
+
 }

@@ -1075,6 +1075,54 @@ final class ActionResolverChoose {
         }
         return tryParseChooseCharacterInner(text, source, xValue);
     }
+    /**
+     * True when {@code followupText} is Tulien 21-072H's grant of both compulsions — the outer
+     * two-quotation shape, and each quotation a clause this engine can enforce on whoever receives
+     * it.
+     *
+     * <p>Shared by the choose chain and the followup-naming chain so the two cannot disagree: the
+     * outer pattern alone matches any pair of quotations, and reporting a name for a pair the
+     * parser then declines would hide the gap rather than show it.
+     *
+     * <p>Restrictions are stripped first. Tulien prints "You can only use this ability once per
+     * turn." right after the closing quotation, with no sentence break outside the quotes for the
+     * choose chain's split to find — so the restriction arrives as part of the primary followup,
+     * where an anchored pattern would trip over it.
+     */
+    static boolean isMustAttackAndMustBlockGrant(String followupText) {
+        String core = stripRestrictionSentences(followupText);
+        if (core.isEmpty()) core = followupText;
+        Matcher m = FOLLOWUP_GAINS_TWO_QUOTED_EOT.matcher(core.trim());
+        if (!m.matches()) return false;
+        Matcher mustAtk = GRANTED_MUST_ATTACK_ONCE_PER_TURN.matcher(m.group("first").trim());
+        Matcher mustBlk = GRANTED_MUST_BLOCK_IF_POSSIBLE.matcher(m.group("second").trim());
+        if (!mustAtk.matches() || !mustBlk.matches()) return false;
+        return grantedClauseNamesItsCarrier(mustAtk.group("subj"))
+                && grantedClauseNamesItsCarrier(
+                        mustBlk.group("subj") != null ? mustBlk.group("subj") : mustBlk.group("subj2"));
+    }
+
+    /**
+     * True when a granted clause's subject is the card receiving it ("This Forward", "It", …)
+     * rather than some other card named outright. A quoted grant that names a third party is a
+     * different effect, and applying it to the grantee would act on the wrong card.
+     */
+    private static boolean grantedClauseNamesItsCarrier(String subject) {
+        return subject != null && GRANTED_CLAUSE_SELF_SUBJECT.matcher(subject.trim()).matches();
+    }
+
+    /**
+     * Plays the Break Zone card at {@code t} onto the field when its cost is exactly {@code cost}
+     * — the payoff of "If its cost is X, play it onto the field." A card that misses says so in
+     * the log rather than vanishing quietly, since the player has already spent the X.
+     */
+    private static void playFromBzIfCostIs(GameContext ctx, ForwardTarget t, int cost) {
+        CardData card = t.isP1() ? ctx.p1BreakZoneCard(t.idx()) : ctx.p2BreakZoneCard(t.idx());
+        if (card == null) return;
+        if (card.cost() == cost) ctx.playTargetOntoField(t);
+        else ctx.logEntry(card.name() + " costs " + card.cost() + ", not " + cost + " — not played");
+    }
+
     static Consumer<GameContext> tryParseChooseCharacterInner(String text, CardData source, int xValue) {
         text = ELEM_TYPE_OR_ELEM_TYPE.matcher(text).replaceAll("$1 or $3 $2");
         text = escapePeriodInName(text, source);
@@ -1203,7 +1251,11 @@ final class ActionResolverChoose {
         String  excludeName      = restorePeriodInName(m.group("excludename") != null ? m.group("excludename").trim() : null, source);
         String  rawExcludeKw     = m.group("excludekw");
         boolean withoutMulticard = "Multicard".equalsIgnoreCase(rawExcludeKw != null ? rawExcludeKw.trim() : null);
-        String  rawExcludeElem = m.group("excludeelem");
+        // Two spellings of the same constraint: "of any Element except X and Y" stands alone,
+        // while "other than Card Name Z, X or Y" hangs off the name exclusion. Either fills the
+        // one exclusion string the selection layer reads.
+        String  rawExcludeElem = m.group("excludeelem") != null
+                ? m.group("excludeelem") : m.group("excludeelemlist");
         final String fExcludeElem = rawExcludeElem != null ? rawExcludeElem.trim() : null;
         String  costStr      = m.group("cost");
         String  costListStr  = m.group("costlist");
@@ -2860,6 +2912,24 @@ final class ActionResolverChoose {
             };
         }
 
+        // --- "If its cost is X, play it onto the field." (Leo 13-067L) ---
+        // Ahead of the generic PlayOntoField handler for the reason the job-count form above is:
+        // that one matches with find() and would play the chosen card whatever it cost. X is what
+        // the ability's variable counter cost removed, carried here as xValue.
+        if (FOLLOWUP_PLAY_IF_COST_IS_X.matcher(primaryFollowup).matches()) {
+            final int requiredCost = xValue;
+            return ctx -> {
+                ctx.logEntry(choosePrefix + " — Play onto Field if cost is " + requiredCost);
+                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
+                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
+                        jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
+                sortedByIdxDesc(ts, true) .forEach(t -> playFromBzIfCostIs(ctx, t, requiredCost));
+                sortedByIdxDesc(ts, false).forEach(t -> playFromBzIfCostIs(ctx, t, requiredCost));
+                if (secondary != null) secondary.accept(ctx);
+            };
+        }
+
         if (FOLLOWUP_PLAY_ONTO_FIELD.matcher(primaryFollowup).find()) {
             // Check for "When it enters the field, if it is [cond], [inner]" conditional secondary.
             // Peek at the chosen card's data before playing so we can evaluate the condition after.
@@ -3346,6 +3416,41 @@ final class ActionResolverChoose {
             };
         }
 
+        // --- "Select 1 Counter placed on it, and place 1 additional Counter of the same type." ---
+        // Gestahlian Empire Cid 11-026H. Which counter is copied is the player's call, so the
+        // primitive asks whenever the Monster carries more than one kind.
+        if (FOLLOWUP_SELECT_COUNTER_AND_ADD_SAME_TYPE.matcher(primaryFollowup.trim()).matches()) {
+            return ctx -> {
+                ctx.logEntry(choosePrefix + " — duplicate 1 Counter already on it");
+                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
+                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
+                ts.forEach(ctx::duplicateOneCounterOnTarget);
+                if (secondary != null) secondary.accept(ctx);
+            };
+        }
+
+        // --- Must block a named attacker, stated inline (Lightning 1-141L, Galuf 7-067L) ---
+        // Same compulsion the branch above grants through a quotation, so it stores the same
+        // sentence and lands in the same place; only the printed wording differs. Kept ahead of
+        // the plain must-block branch for the reason that one is: this reading is the narrower.
+        Matcher mbInline = FOLLOWUP_MUST_BLOCK_NAMED_INLINE.matcher(primaryFollowup);
+        if (mbInline.find()) {
+            String attackerName = mbInline.group("cardname").trim();
+            String granted = "This Forward must block " + attackerName + " if possible.";
+            return ctx -> {
+                ctx.logEntry(choosePrefix + " — Must block " + attackerName + " if possible this turn");
+                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
+                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
+                for (ForwardTarget t : ts) {
+                    if (t.zone() != ForwardTarget.CardZone.FORWARD) continue;
+                    ctx.grantFieldAbilityUntilEndOfTurn(t, granted);
+                }
+                if (secondary != null) secondary.accept(ctx);
+            };
+        }
+
         // --- Must block followup ---
         if (FOLLOWUP_MUST_BLOCK.matcher(primaryFollowup).find()) {
             return ctx -> {
@@ -3410,6 +3515,34 @@ final class ActionResolverChoose {
                     if (secondary != null) secondary.accept(ctx);
                 };
             }
+        }
+
+        // --- "Until the end of the turn, it gains "<clause>" and "<clause>"." ---
+        // Tulien 21-072H, handing the chosen Forward both compulsions at once. Beside the Azul
+        // branch above and ahead of the plain must-attack branch below for the same reason: the
+        // compulsions are spelled the way a printed field ability spells them ("This Forward must
+        // attack once per turn if possible."), which neither of the plain branches reads, so the
+        // whole followup fell through to the unimplemented warning and the choose resolved as a
+        // bare target selection.
+        //
+        // Declines rather than half-applying when either clause fails to check out, as the Azul
+        // branch does: a grant this engine cannot enforce reports as handled while an unparsed one
+        // stays visible.
+        if (isMustAttackAndMustBlockGrant(primaryFollowup)) {
+            return ctx -> {
+                ctx.logEntry(choosePrefix + " — must attack once per turn and must block, until end of turn");
+                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
+                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
+                        jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
+                for (ForwardTarget t : ts) {
+                    if (t.zone() != ForwardTarget.CardZone.FORWARD) continue;
+                    ctx.grantMustAttackOncePerTurnUntilEndOfTurn(t);
+                    if (t.isP1()) ctx.setP1ForwardMustBlock(t.idx());
+                    else          ctx.setP2ForwardMustBlock(t.idx());
+                }
+                if (secondary != null) secondary.accept(ctx);
+            };
         }
 
         // --- Must attack (this turn) followup ---
@@ -3988,6 +4121,38 @@ final class ActionResolverChoose {
             };
         }
 
+        // --- "[Self] gains his/her action abilities until EOT." (Gogo 9-107C) ---
+        // The one followup here that acts on the source rather than on what was chosen: the
+        // chosen Forward is the donor, and its abilities are re-pointed at the borrower on the
+        // way across, exactly as Gogo's Mimic re-points a copied special.
+        Matcher gainActionsM = FOLLOWUP_SOURCE_GAINS_TARGET_ACTION_ABILITIES.matcher(primaryFollowup);
+        if (source != null && gainActionsM.matches()
+                && restorePeriodInName(gainActionsM.group("name").trim(), source)
+                        .equalsIgnoreCase(source.name())) {
+            final CardData borrower = source;
+            return ctx -> {
+                ctx.logEntry(choosePrefix + " — " + borrower.name()
+                        + " gains its action abilities until end of turn");
+                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
+                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
+                ts.forEach(t -> ctx.gainTargetActionAbilitiesUntilEndOfTurn(borrower, t));
+                if (secondary != null) secondary.accept(ctx);
+            };
+        }
+
+        // --- "When this Forward is dealt damage, break this Forward." until EOT (Vallaide 22-020R) ---
+        if (FOLLOWUP_GAINS_BREAK_WHEN_DEALT_DAMAGE.matcher(primaryFollowup).find()) {
+            return ctx -> {
+                ctx.logEntry(choosePrefix + " — breaks when dealt damage, until end of turn");
+                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                        opponentOnly, selfOnly, condition, element, zone, opponentZone,
+                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
+                ts.forEach(ctx::grantBreakWhenDealtDamage);
+                if (secondary != null) secondary.accept(ctx);
+            };
+        }
+
         // --- Breaktouch battle: "When this Forward deals battle damage to a Forward, break that Forward" until EOT ---
         if (FOLLOWUP_GAINS_BREAKTOUCH_BATTLE.matcher(primaryFollowup).find()) {
             return ctx -> {
@@ -4444,8 +4609,14 @@ final class ActionResolverChoose {
                 ctx.logEntry(chosen.name() + " has no Special Ability to copy");
                 return;
             }
+            // Re-pointed at Kimahri on the way across, through the rewrite Gogo's Mimic and
+            // Clive's borrowed Eikon specials both use: a Special that names its own card — Tidus's
+            // "Activate Tidus", Odin (XVI)'s Iron Flash — would otherwise act on the donor still
+            // standing across the table. Costs are stripped by the grant itself, so only the effect
+            // needs changing.
             for (ActionAbility original : specials)
-                ctx.grantCopiedSpecialAbilityFreeOnce(source, original);
+                ctx.grantCopiedSpecialAbilityFreeOnce(source, original.withEffectText(
+                        substituteSourceName(original.effectText(), chosen.name(), source.name())));
         };
     }
     /**
