@@ -9527,6 +9527,11 @@ public record CardData(
         ControlCondition conjunction = parseControlConditionConjunction(cond);
         if (conjunction != null) return conjunction;
 
+        // Disjunction mode: "a Job Summoner Forward or a Job Guardian Forward" (16-136S Auron).
+        // Count mode's job group took the whole "Summoner Forward or a Job Guardian" as one Job.
+        ControlCondition disjunction = parseControlConditionDisjunction(cond);
+        if (disjunction != null) return disjunction;
+
         // Named-card mode: "(a) Card Name X [and Card Name Y [and Card Name Z]]"
         // Must be checked before count mode to avoid "a Card Name X" being parsed as count=1
         Matcher namedM = CONTROL_NAMED_CARDS_PATTERN.matcher(cond);
@@ -9609,6 +9614,26 @@ public record CardData(
             conditions.add(parsed);
         }
         return ControlCondition.forAll(conditions);
+    }
+
+    /**
+     * Reads {@code cond} as "a &lt;filter&gt; or a &lt;filter&gt;[ or …]" — one card matching any
+     * of them — or returns {@code null}. The sibling of {@link #parseControlConditionConjunction},
+     * split the same way (only before an article). Card Name lists stay with named mode, and every
+     * part has to be a single-card count condition, or the whole clause is left to the reads below.
+     */
+    private static ControlCondition parseControlConditionDisjunction(String cond) {
+        String[] parts = cond.split("(?i)\\s+or\\s+(?=an?\\s)");
+        if (parts.length < 2) return null;
+        List<ControlCondition> alternatives = new ArrayList<>();
+        for (String part : parts) {
+            String p = part.trim();
+            if (!p.matches("(?i)^an?\\s.+") || p.matches("(?i).*\\bCard\\s+Name\\b.*")) return null;
+            ControlCondition parsed = parseCountControlCondition(p);
+            if (parsed == null || parsed.minCount() != 1 || parsed.exactCount()) return null;
+            alternatives.add(parsed);
+        }
+        return ControlCondition.forAnyOfFilters(1, alternatives);
     }
 
     /** Parses a "remove … from the game" cost phrase into a list of {@link RemoveFromGameCost} items. */

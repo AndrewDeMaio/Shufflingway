@@ -311,6 +311,7 @@ class ComputerPlayer implements OpponentController {
 		mw.lastCastWasPaidByBackupsOnly = false;
 		mw.lastCastPaymentDiscardCount = 0;
 		mw.lastCastPaymentDiscardTotalCost = 0;
+		mw.lastCastPaymentDiscards.clear();
 
 		mw.logEntry("[P2] Plays " + toPlay.name()
 				+ (freeCast && mw.p2DoublecastFreeSummons ? " (free — Doublecast)"

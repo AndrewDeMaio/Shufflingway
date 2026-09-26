@@ -74,6 +74,29 @@ final class ActionResolverSearch {
      * Parses "Your opponent reveals their hand. Select N card(s) in their hand.
      * Your opponent removes it from the game."
      */
+    /**
+     * "Your opponent reveals their hand. Select N card(s) in their hand. Your opponent removes it
+     * from the game. You can cast it as though you owned it this turn." — 14-127H Zidane. Must
+     * precede {@link #tryParseRevealSelectHandRfp}, which shares the prefix and dropped the cast.
+     * The removed cards are found by diffing the opponent's removed zone around the removal.
+     */
+    static Consumer<GameContext> tryParseRevealSelectHandRfpCastableThisTurn(String text) {
+        Matcher m = REVEAL_SELECT_HAND_RFP_CASTABLE_THIS_TURN.matcher(text.trim());
+        if (!m.matches()) return null;
+        int count = Integer.parseInt(m.group("count"));
+        return ctx -> {
+            ctx.logEntry("Effect: Opponent reveals hand — select " + count
+                    + " to remove from game; castable as though you owned it this turn");
+            List<CardData> before = ctx.opponentRemovedFromGame();
+            ctx.selectFromOpponentHandAndRfp(count);
+            for (CardData c : ctx.opponentRemovedFromGame()) {
+                boolean isNew = true;
+                for (CardData b : before) if (b == c) { isNew = false; break; }
+                if (isNew) ctx.makeRemovedCardCastable(c, false, true);
+            }
+        };
+    }
+
     static Consumer<GameContext> tryParseRevealSelectHandRfp(String text) {
         Matcher m = REVEAL_SELECT_HAND_RFP.matcher(text);
         if (!m.find()) return null;

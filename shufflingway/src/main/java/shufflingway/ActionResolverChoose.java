@@ -351,6 +351,31 @@ final class ActionResolverChoose {
             dmgUpgThreshold = 0; dmgUpgUpTo = false; dmgUpgSelect = 0;
         }
 
+        // Any other game-state upgrade (17-138S Rosa). An unreadable condition leaves the sentence
+        // where it was and offers the base count: the upgrade only ever adds choices, so ignoring
+        // it is weaker than printed, never stronger — and declining would hand the whole ability
+        // to parsers that read one option as the entire effect.
+        DamageInsteadCondition parsedStateUpgrade = null;
+        Matcher stateUpM = SELECT_FOLLOWING_ACTIONS_STATE_UPGRADE.matcher(actionsRaw);
+        if (stateUpM.lookingAt()) {
+            parsedStateUpgrade = parseDamageInsteadCondition(stateUpM.group("cond").trim());
+            if (parsedStateUpgrade instanceof DamageInsteadCondition.TargetIsActive
+                    || parsedStateUpgrade instanceof DamageInsteadCondition.TargetIsMultiElement) parsedStateUpgrade = null;
+            // A condition about the card asking must name it (20-027C Genesis, 26-035R Snow,
+            // 9-002H Ifrita); a name that is not the source's leaves the upgrade unread.
+            parsedStateUpgrade = bindConditionToSource(parsedStateUpgrade, source);
+        }
+        final DamageInsteadCondition stateUpgrade = parsedStateUpgrade;
+        final boolean stateUpgUpTo;
+        final int     stateUpgSelect;
+        if (stateUpgrade != null) {
+            stateUpgUpTo   = stateUpM.group("stUpTo") != null;
+            stateUpgSelect = Integer.parseInt(stateUpM.group("stSelect"));
+            actionsRaw     = actionsRaw.substring(stateUpM.end());
+        } else {
+            stateUpgUpTo = false; stateUpgSelect = 0;
+        }
+
         List<String> actions = selectFollowingOptions(actionsRaw);
         if (actions.isEmpty()) return null;
         // "Select 1 from the following" prints no option count, so the menu is the total. Read
@@ -391,6 +416,10 @@ final class ActionResolverChoose {
             if (hasDmgUpgrade && ctx.selfDamageCount() >= dmgUpgThreshold) {
                 effSelect = dmgUpgSelect;
                 effUpTo   = dmgUpgUpTo;
+            }
+            if (stateUpgrade != null && insteadConditionMet(ctx, stateUpgrade)) {
+                effSelect = stateUpgSelect;
+                effUpTo   = stateUpgUpTo;
             }
             List<String> chosen = oppSelects
                     ? ctx.chooseActionsByOpponent(source, actions, effSelect, effUpTo)
@@ -2441,7 +2470,7 @@ final class ActionResolverChoose {
                 && !followup.matches("(?is).*\\binstead\\b.*")
                 && !FOLLOWUP_IF_SELF_CONTROLS_N_ELEMENT_TYPE_ACTION.matcher(primaryFollowup).matches()
                 && !FOLLOWUP_IF_SELF_CONTROLS_N_ELEMENT_TYPE_DAMAGE.matcher(primaryFollowup).matches()) {
-            DamageInsteadCondition gate = parseDamageInsteadCondition(stateGateM.group("cond"));
+            DamageInsteadCondition gate = bindConditionToSource(parseDamageInsteadCondition(stateGateM.group("cond")), source);
             // A power condition must name the card asking: "If Zell has 10000 power or more".
             if (gate instanceof DamageInsteadCondition.NamedPowerAtLeast np
                     && (source == null || !np.name().equalsIgnoreCase(source.name()))) gate = null;
@@ -2463,6 +2492,39 @@ final class ActionResolverChoose {
                             costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
                     if (secondary != null) secondary.accept(ctx);
                 };
+            }
+        }
+
+        // --- "Choose … . <head>. If <game-state condition>, it also <action>." ---
+        // 9-017C Belias. The same gate as above in trailing position, past an unrelated sentence
+        // (the draw), so the split handed it to a secondary that dropped it. Only conditions that
+        // do not depend on the chosen card; those ("If it is a Category VI Forward") read elsewhere.
+        {
+            Matcher tailGateM = FOLLOWUP_TRAILING_STATE_GATED_ALSO.matcher(followup.trim());
+            if (tailGateM.matches()) {
+                DamageInsteadCondition gate = bindConditionToSource(parseDamageInsteadCondition(tailGateM.group("cond").trim()), source);
+                if (gate != null && !(gate instanceof DamageInsteadCondition.TargetIsActive)
+                        && !(gate instanceof DamageInsteadCondition.TargetIsMultiElement)
+                        && !(gate instanceof DamageInsteadCondition.NamedPowerAtLeast)) {
+                    String headText = text.substring(0, m.start("followup")) + tailGateM.group("head").trim();
+                    Consumer<GameContext> base = tryParseChooseCharacterInner(headText, source, xValue);
+                    BiConsumer<GameContext, List<ForwardTarget>> also =
+                            parseTargetAction("it " + tailGateM.group("action").trim(), xValue);
+                    if (base != null && also != null) {
+                        final DamageInsteadCondition finalGate = gate;
+                        final String condText = tailGateM.group("cond").trim();
+                        final String actionText = tailGateM.group("action").trim();
+                        return ctx -> {
+                            base.accept(ctx);
+                            if (!insteadConditionMet(ctx, finalGate)) {
+                                ctx.logEntry("Effect: not met — " + condText);
+                                return;
+                            }
+                            ctx.logEntry("Effect: " + condText + " — it also " + actionText);
+                            also.accept(ctx, ctx.lastChosenTargets());
+                        };
+                    }
+                }
             }
         }
 
@@ -2749,6 +2811,33 @@ final class ActionResolverChoose {
                         // which is what gates the payoff. playCharacterFromHand marks that itself.
                         ctx.resetEffectProgress();
                         playEffect.accept(ctx);
+                        if (ctx.effectMadeProgress()) payoff.accept(ctx, ts);
+                    };
+                }
+            }
+        }
+
+        // --- "You may return N <type> you control to its owner's hand. If you do so, [action]." ---
+        // 6-119C Chime. The branch above with a bounce of your own for the price: the return goes
+        // through parse(), which fizzles it when declined or short, and the payoff acts on the
+        // chosen card ("the chosen Forward" read as "it").
+        {
+            Matcher mayReturnM = FOLLOWUP_MAY_RETURN_OWN_IF_DO_SO.matcher(followup.trim());
+            if (mayReturnM.matches()) {
+                String retText    = mayReturnM.group("ret").trim();
+                String payoffText = mayReturnM.group("effect").trim()
+                        .replaceAll("(?i)\\bthe\\s+chosen\\s+(?:Forward|Character|Backup|Monster)\\b", "it");
+                Consumer<GameContext> retEffect = parse(retText + ".", source, xValue);
+                BiConsumer<GameContext, List<ForwardTarget>> payoff = parseFormerLatterGroupAction(payoffText);
+                if (retEffect != null && payoff != null) {
+                    return ctx -> {
+                        ctx.logChooseHeader(choosePrefix + " — " + retText + "; if so: " + payoffText);
+                        List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                                opponentOnly, selfOnly, condition, element, zone, opponentZone, bothZones,
+                                costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
+                                jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
+                        ctx.resetEffectProgress();
+                        retEffect.accept(ctx);
                         if (ctx.effectMadeProgress()) payoff.accept(ctx, ts);
                     };
                 }
@@ -3164,7 +3253,7 @@ final class ActionResolverChoose {
             final DamageInsteadCondition insteadCond;
             final int altDamage;
             if (divideCondM.find()) {
-                DamageInsteadCondition parsedCond = parseDamageInsteadCondition(divideCondM.group("cond").trim());
+                DamageInsteadCondition parsedCond = bindConditionToSource(parseDamageInsteadCondition(divideCondM.group("cond").trim()), source);
                 // Anchored to "divide N damage" specifically — a bare \d+ search would wrongly
                 // grab a digit embedded in the condition text itself (e.g. "Category FFTA2").
                 Matcher mAmp = DIVIDE_DAMAGE_PATTERN.matcher(followup_cond);
@@ -3243,7 +3332,7 @@ final class ActionResolverChoose {
             int    baseDmg   = Integer.parseInt(insteadM.group("base"));
             int    altDmg    = Integer.parseInt(insteadM.group("alt"));
             String condText  = insteadM.group("cond").trim();
-            DamageInsteadCondition insteadCond = parseDamageInsteadCondition(condText);
+            DamageInsteadCondition insteadCond = bindConditionToSource(parseDamageInsteadCondition(condText), source);
             // Sazh 1-013H's price, printed on each arm and charged once. Absorbed here rather than
             // left to the split -- this branch claims the whole followup, so a skip it swallowed
             // and did not charge would be silently dropped. It has to name the printing card:
@@ -3251,14 +3340,26 @@ final class ActionResolverChoose {
             boolean skipNamesSource = damageInsteadSkipNamesSource(insteadM, source);
             boolean chargesSkip = skipNamesSource
                     && (insteadM.group("skipbefore") != null || insteadM.group("skipafter") != null);
-            if (insteadCond != null && skipNamesSource) {
+            // The optional higher tier is checked first; an unreadable one declines the branch
+            // rather than dropping it.
+            String cond2Text = insteadM.group("cond2");
+            DamageInsteadCondition cond2 = cond2Text != null ? bindConditionToSource(parseDamageInsteadCondition(cond2Text.trim()), source) : null;
+            int alt2Dmg = cond2Text != null ? Integer.parseInt(insteadM.group("alt2")) : 0;
+            boolean tier2Ok = cond2Text == null || cond2 != null;
+            if (insteadCond != null && skipNamesSource && tier2Ok) {
                 return ctx -> {
-                    ctx.logChooseHeader(choosePrefix + " — Deal " + baseDmg + "/" + altDmg + " damage (if " + condText + ")");
+                    ctx.logChooseHeader(choosePrefix + " — Deal " + baseDmg + "/" + altDmg
+                            + (cond2 != null ? "/" + alt2Dmg : "") + " damage (if " + condText
+                            + (cond2 != null ? "; if " + cond2Text.trim() : "") + ")");
                     List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
                             opponentOnly, selfOnly, condition, element, zone, opponentZone, bothZones,
                             costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                    sortedByIdxDesc(ts, true) .forEach(t -> ctx.damageTarget(t, resolveInsteadDamage(ctx, t, insteadCond, baseDmg, altDmg)));
-                    sortedByIdxDesc(ts, false).forEach(t -> ctx.damageTarget(t, resolveInsteadDamage(ctx, t, insteadCond, baseDmg, altDmg)));
+                    ToIntFunction<ForwardTarget> amount = t -> {
+                        if (cond2 != null && resolveInsteadDamage(ctx, t, cond2, 0, 1) == 1) return alt2Dmg;
+                        return resolveInsteadDamage(ctx, t, insteadCond, baseDmg, altDmg);
+                    };
+                    sortedByIdxDesc(ts, true) .forEach(t -> ctx.damageTarget(t, amount.applyAsInt(t)));
+                    sortedByIdxDesc(ts, false).forEach(t -> ctx.damageTarget(t, amount.applyAsInt(t)));
                     if (chargesSkip) ctx.sourceSkipsNextActivePhase(source);
                 };
             }
@@ -6682,6 +6783,29 @@ final class ActionResolverChoose {
                 ts.forEach(t -> ctx.shieldNextIncomingDamageReductionKickback(
                         t, reduction, source, kickback));
                 if (secondary != null) secondary.accept(ctx);
+            };
+        }
+
+        // --- Next incoming damage reduced by N, or by M if the chosen Forward is Card Name X ---
+        // 5-142H Rosa. Ahead of the plain reduction, which reads the first sentence and left the
+        // named upgrade to a secondary nothing implements. Read off the whole followup.
+        Matcher shieldNamedM = FOLLOWUP_SHIELD_NEXT_DMG_REDUCTION_NAMED_UPGRADE.matcher(followup.trim());
+        if (shieldNamedM.matches()) {
+            int    base = Integer.parseInt(shieldNamedM.group("base"));
+            int    alt  = Integer.parseInt(shieldNamedM.group("alt"));
+            String name = shieldNamedM.group("name").trim();
+            return ctx -> {
+                ctx.logChooseHeader(choosePrefix + " — Shield: next damage reduced by " + base
+                        + " (" + alt + " if it is " + name + ")");
+                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                        opponentOnly, selfOnly, condition, element, zone, opponentZone, bothZones,
+                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
+                for (ForwardTarget t : ts) {
+                    CardData c = t.zone() != ForwardTarget.CardZone.FORWARD ? null
+                            : t.isP1() ? ctx.p1Forward(t.idx()) : ctx.p2Forward(t.idx());
+                    boolean named = c != null && CardFilters.meetsCardNameFilter(c, name);
+                    ctx.shieldNextIncomingDamageReduction(t, named ? alt : base);
+                }
             };
         }
 

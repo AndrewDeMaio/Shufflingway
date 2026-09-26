@@ -3581,6 +3581,38 @@ final class GameContextImpl implements GameContext {
 			}
 
 			@Override public void opponentMillIfSameElementDraw(int millCount, int drawCount) {
+				List<CardData> milled = millOpponentTop(millCount);
+				if (milled.size() < 2) return;
+				// Check if all milled cards share at least one common element
+				boolean sameElement = false;
+				for (String e : List.of("fire","ice","wind","earth","lightning","water","light","dark")) {
+					boolean allHave = true;
+					for (CardData c : milled) if (!c.containsElement(e)) { allHave = false; break; }
+					if (allHave) { sameElement = true; break; }
+				}
+				if (sameElement) {
+					logEntry("All milled cards share an element — draw " + drawCount);
+					drawCards(drawCount);
+				} else {
+					logEntry("Milled cards do not share an element — no draw");
+				}
+			}
+
+			@Override public void opponentMillIfSameTypeDraw(int millCount, int drawCount) {
+				List<CardData> milled = millOpponentTop(millCount);
+				if (milled.size() < 2) return;
+				String type = milled.get(0).type();
+				boolean sameType = milled.stream().allMatch(c -> c.type().equalsIgnoreCase(type));
+				if (sameType) {
+					logEntry("All milled cards are " + type + "s — draw " + drawCount);
+					drawCards(drawCount);
+				} else {
+					logEntry("Milled cards are not all the same type — no draw");
+				}
+			}
+
+			/** Mills up to {@code millCount} cards off the opponent's deck, animated, and returns them. */
+			private List<CardData> millOpponentTop(int millCount) {
 				Deque<CardData> oppDeck = isP1 ? mw.gameState.getP2MainDeck() : mw.gameState.getP1MainDeck();
 				JLayeredPane lp = mw.frame.getRootPane().getLayeredPane();
 				JLabel deckLbl  = isP1 ? mw.p2DeckLabel  : mw.p1DeckLabel;
@@ -3601,20 +3633,7 @@ final class GameContextImpl implements GameContext {
 					if (isP1) { mw.refreshP2DeckLabel(); mw.refreshP2BreakLabel(); }
 					else      { mw.refreshP1DeckLabel(); mw.refreshP1BreakLabel(); }
 				}
-				if (milled.size() < 2) return;
-				// Check if all milled cards share at least one common element
-				boolean sameElement = false;
-				for (String e : List.of("fire","ice","wind","earth","lightning","water","light","dark")) {
-					boolean allHave = true;
-					for (CardData c : milled) if (!c.containsElement(e)) { allHave = false; break; }
-					if (allHave) { sameElement = true; break; }
-				}
-				if (sameElement) {
-					logEntry("All milled cards share an element — draw " + drawCount);
-					drawCards(drawCount);
-				} else {
-					logEntry("Milled cards do not share an element — no draw");
-				}
+				return milled;
 			}
 
 			@Override public void millCards(int count) {
@@ -8013,6 +8032,10 @@ final class GameContextImpl implements GameContext {
 				return new ArrayList<>(isP1 ? mw.gameState.getP1RemovedFromGame() : mw.gameState.getP2RemovedFromGame());
 			}
 
+			@Override public List<CardData> opponentRemovedFromGame() {
+				return new ArrayList<>(isP1 ? mw.gameState.getP2RemovedFromGame() : mw.gameState.getP1RemovedFromGame());
+			}
+
 			@Override public int removeCardsFromBreakZoneFromGame(int maxCount, boolean upTo,
 					boolean opponentZone, boolean bothZones, String element, int costVal, String costCmp,
 					boolean forwards, boolean backups, boolean monsters, boolean summons,
@@ -10437,6 +10460,18 @@ final class GameContextImpl implements GameContext {
 				return null;
 			}
 
+			@Override public CardData triggeringEnteredCard() { return mw.triggeringEnteredCard; }
+
+			@Override public boolean enteredFieldByAbilityOfCategory(CardData card, String category) {
+				CardData cause = card == null ? null : mw.enteredFieldByAbilityOf.get(card);
+				return cause != null && !cause.isSummon() && meetsCategoryFilter(cause, category);
+			}
+
+			@Override public List<CardData> cardsDiscardedToCastList(CardData card) {
+				return card != null && mw.lastCastPaymentCard == card
+						? new ArrayList<>(mw.lastCastPaymentDiscards) : List.of();
+			}
+
 			@Override public int triggeringEnteredCardPower() {
 				CardData entered = mw.triggeringEnteredCard;
 				if (entered == null) return 0;
@@ -10745,6 +10780,13 @@ final class GameContextImpl implements GameContext {
 				return mw.attacksMadeThisTurn.size();
 			}
 
+			@Override public int forwardsAttackingThisTurnCount(String categoryFilter) {
+				int n = 0;
+				for (CardData c : mw.attacksMadeThisTurn.keySet())
+					if (CardFilters.meetsCategoryFilter(c, categoryFilter)) n++;
+				return n;
+			}
+
 			@Override public int ownFieldCount(String cardType) {
 				String t = cardType.toLowerCase().replaceAll("s$", "");
 				List<CardData> fwds = isP1 ? mw.p1ForwardCards : mw.p2ForwardCards;
@@ -10827,7 +10869,12 @@ final class GameContextImpl implements GameContext {
 
 			@Override public boolean isExBurst() { return exBurst; }
 			@Override public boolean castWasPaidByBackupsOnly() { return mw.lastCastWasPaidByBackupsOnly; }
-			@Override public boolean sourceEnteredViaWarp() { return mw.lastCardWarpedIn; }
+			@Override public boolean sourceEnteredViaWarp() {
+				// The resolving ability's own card, by identity: the placement flag is gone by the time
+				// a trigger resolves off the Stack. The flag answers only outside any resolution.
+				CardData src = mw.currentAbilitySource;
+				return src != null ? mw.enteredViaWarp.contains(src) : mw.lastCardWarpedIn;
+			}
 
 
 	// =========================================================================================

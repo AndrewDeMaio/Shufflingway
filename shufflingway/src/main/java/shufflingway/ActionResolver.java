@@ -199,6 +199,13 @@ public class ActionResolver {
         result = tryParseCastPaymentElementsGate(effectText, source, xValue);
         if (result != null) return result;
 
+        // Here for the same reason: the condition leads a sentence whose payoff ("Lightning also
+        // deals your opponent 1 point of damage") find()s on its own further down and ran with the
+        // threshold dropped (19-138S Lightning). Anchored to one sentence.
+        result = tryParseForwardsAttackingThisTurnGate(effectText, source, xValue);
+        if (result != null) return result;
+        if (forwardsAttackingGateUnreadable(effectText, source, xValue)) return null;
+
         // Ahead of the Choose chain, which otherwise claims the "choose 1 Character …" inside
         // 17-084C Lorenzo's quotation and runs it on attack. Anchored end to end.
         result = tryParseUntilEotDoublesPowerAndQuoted(effectText, source);
@@ -549,6 +556,9 @@ public class ActionResolver {
         if (result != null) return result;
 
         result = tryParseDealDamageToForwardsForEach(effectText);
+        if (result != null) return result;
+
+        result = tryParseDealDamagePerGroupToAllOppForwards(effectText);
         if (result != null) return result;
 
         result = tryParseDealDamageToForwardsExceptElement(effectText);
@@ -1347,6 +1357,10 @@ public class ActionResolver {
         result = tryParseRevealSelectHandRfpUntilEndOfOppTurn(effectText);
         if (result != null) return result;
 
+        // Ahead of RevealSelectHandRfp, which shares the prefix and dropped the cast (14-127H).
+        result = tryParseRevealSelectHandRfpCastableThisTurn(effectText);
+        if (result != null) return result;
+
         result = tryParseRevealSelectHandRfp(effectText);
         if (result != null) return result;
 
@@ -1439,6 +1453,10 @@ public class ActionResolver {
         // declines backward references, so this is belt and braces — but the three sentences are
         // one effect and the one that owns them should be the one asked first.
         result = tryParseSearchSummonsDiffCostOpponentSelects(effectText);
+        if (result != null) return result;
+
+        // Ahead of ReturnNamedToHand, which read "1 Backup you control" as a card name.
+        result = tryParseReturnOwnTypeToHand(effectText);
         if (result != null) return result;
 
         result = tryParseReturnNamedToHand(effectText);
@@ -2345,6 +2363,10 @@ public class ActionResolver {
         // 16-125C's conditional half off the end of the sentence carrying the condition.
         if (tryParseCastPaymentElementsGate(effectText, source, 0) != null)
             return "CastPaymentElementsGate";
+        // Mirrors parse().
+        if (tryParseForwardsAttackingThisTurnGate(effectText, source, 0) != null)
+            return "ForwardsAttackingThisTurnGate";
+        if (forwardsAttackingGateUnreadable(effectText, source, 0)) return null;
         // Mirrors parse(): the cost-tiered reveal (10-072L) is read ahead of the Choose chain.
         if (ActionResolverSearch.tryParseRevealTopDeckCostTiers(effectText, source) != null)
             return "RevealTopDeck";
@@ -2451,6 +2473,7 @@ public class ActionResolver {
         if (tryParseDealNForEachJobOrNameToOppForwards(effectText)      != null) return "DealNForEachJobOrNameToOppForwards";
         if (tryParseSelfGainsWhenAttacksEOT(effectText, source)        != null) return "SelfGainsWhenAttacksEOT";
         if (tryParseDealDamageToForwardsForEach(effectText)             != null) return "DealDamageToForwardsForEach";
+        if (tryParseDealDamagePerGroupToAllOppForwards(effectText)     != null) return "DealDamagePerGroupToAllOppForwards";
         if (tryParseDealDamageToForwardsExceptElement(effectText)       != null) return "DealDamageToForwardsExceptElement";
         if (tryParseRfpAllFwdExceptElementsThenTwiceDeck(effectText)    != null) return "RfpAllFwdExceptElementsThenTwiceDeck";
         // Mirrors parse(): read beside the fixed-amount family it cannot use.
@@ -2740,6 +2763,7 @@ public class ActionResolver {
         if (tryParseStandaloneCannotBeBlocked(effectText, source) != null) return "StandaloneCannotBeBlocked";
         // Must precede RevealSelectHandRfp — see the same guard in parse().
         if (tryParseRevealSelectHandRfpUntilEndOfOppTurn(effectText) != null) return "RevealSelectHandRfpUntilEndOfOppTurn";
+        if (tryParseRevealSelectHandRfpCastableThisTurn(effectText) != null) return "RevealSelectHandRfpCastableThisTurn";
         if (tryParseRevealSelectHandRfp(effectText)            != null) return "RevealSelectHandRfp";
         if (tryParseRevealSelectHandDiscard(effectText)        != null) return "RevealSelectHandDiscard";
         if (tryParseOpponentRandomHandRfp(effectText)            != null) return "OpponentRandomHandRfp";
@@ -2767,6 +2791,7 @@ public class ActionResolver {
         // Mirrors parse(): ahead of the arm that used to claim Rydia 17-137S.
         if (tryParseSearchSummonsDiffCostOpponentSelects(effectText) != null)
             return "SearchSummonsDiffCostOpponentSelects";
+        if (tryParseReturnOwnTypeToHand(effectText) != null) return "ReturnOwnTypeToHand";
         if (tryParseReturnNamedToHand(effectText) != null) return "ReturnNamedToHand";
         if (tryParseYouMayRemoveNamedFromGame(effectText, source) != null) return "YouMayRemoveNamedFromGame";
         if (tryParseEndOfOppTurnPlayNamedOntoField(effectText) != null) return "EndOfOppTurnPlayNamedOntoField";
@@ -3698,6 +3723,15 @@ public class ActionResolver {
             return describeOrName(baseTxt, source) + " + " + gate
                     + describeOrName(gateTailText(tailTxt, source, 0), source) + ")";
         }
+        // Mirrors parse(): the condition named, the effect it guards described inside it.
+        if (tryParseForwardsAttackingThisTurnGate(effectText, source, 0) != null) {
+            Matcher fag = IF_FORWARDS_ATTACKING_THIS_TURN_GATE.matcher(effectText.trim());
+            if (!fag.matches()) return "ForwardsAttackingThisTurnGate";
+            String cat = fag.group("cat");
+            return "IfAttackedThisTurn(" + fag.group("count") + "+" + (cat != null ? " Category " + cat : "")
+                    + ": " + describeOrName(fag.group("effect").trim() + ".", source) + ")";
+        }
+        if (forwardsAttackingGateUnreadable(effectText, source, 0)) return null;
         // Mirrors parse(): the trailing cast-count gate, described the same way as the sibling
         // above — the base named as itself, the condition named around what it guards.
         if (tryParseCastCountGate(effectText, source, 0) != null) {
@@ -3956,6 +3990,7 @@ public class ActionResolver {
         if (tryParseDealNForEachJobOrNameToOppForwards(effectText)      != null) return "DealNForEachJobOrNameToOppForwards";
         if (tryParseSelfGainsWhenAttacksEOT(effectText, source)        != null) return "SelfGainsWhenAttacksEOT";
         if (tryParseDealDamageToForwardsForEach(effectText)         != null) return "DealDamageToForwardsForEach";
+        if (tryParseDealDamagePerGroupToAllOppForwards(effectText)        != null) return "DealDamagePerGroupToAllOppForwards";
         if (tryParseDealDamageToForwardsExceptElement(effectText)          != null) return "DealDamageToForwardsExceptElement";
         if (tryParseRfpAllFwdExceptElementsThenTwiceDeck(effectText)       != null) return "RfpAllFwdExceptElementsThenTwiceDeck";
         // Mirrors parse(); see the matching guard in matchedPatternNameOn().
@@ -4353,6 +4388,16 @@ public class ActionResolver {
                     return "ChooseCharacter / YouMayPlayFromHand[" + (innerDesc != null ? innerDesc : "?") + "]";
                 }
             }
+            // And its return-your-own sibling, 6-119C Chime.
+            {
+                Matcher mayReturnM = FOLLOWUP_MAY_RETURN_OWN_IF_DO_SO.matcher(followup.trim());
+                if (mayReturnM.matches()) {
+                    String innerEff  = mayReturnM.group("effect").trim()
+                            .replaceAll("(?i)\\bthe\\s+chosen\\s+(?:Forward|Character|Backup|Monster)\\b", "it");
+                    String innerDesc = matchedFollowupName(innerEff, source);
+                    return "ChooseCharacter / YouMayReturnOwn[" + (innerDesc != null ? innerDesc : "?") + "]";
+                }
+            }
             // Followups that span sentences by design, named off the whole text before the split
             // below can cut them in half. Mirrors the choose chain, where the branches for these
             // two match the unsplit followup for the same reason: each is one effect written as two
@@ -4730,6 +4775,7 @@ public class ActionResolver {
         if (tryParseRevealHandOptPickDiscardOppDraw(effectText) != null)    return "RevealHandOptPickDiscardOppDraw";
         // Must precede RevealSelectHandRfp — see the same guard in parse().
         if (tryParseRevealSelectHandRfpUntilEndOfOppTurn(effectText) != null) return "RevealSelectHandRfpUntilEndOfOppTurn";
+        if (tryParseRevealSelectHandRfpCastableThisTurn(effectText) != null) return "RevealSelectHandRfpCastableThisTurn";
         if (tryParseRevealSelectHandRfp(effectText) != null)               return "RevealSelectHandRfp";
         if (tryParseRevealSelectHandDiscard(effectText) != null)           return "RevealSelectHandDiscard";
         if (tryParseOpponentRandomHandRfp(effectText) != null)              return "OpponentRandomHandRfp";
@@ -4756,6 +4802,7 @@ public class ActionResolver {
         // Mirrors parse(): ahead of the arm that used to claim Rydia 17-137S.
         if (tryParseSearchSummonsDiffCostOpponentSelects(effectText) != null)
             return "SearchSummonsDiffCostOpponentSelects";
+        if (tryParseReturnOwnTypeToHand(effectText) != null)                 return "ReturnOwnTypeToHand";
         if (tryParseReturnNamedToHand(effectText) != null)                   return "ReturnNamedToHand";
         if (tryParseYouMayRemoveNamedFromGame(effectText, source) != null)   return "YouMayRemoveNamedFromGame";
         if (tryParseEndOfOppTurnPlayNamedOntoField(effectText) != null)     return "EndOfOppTurnPlayNamedOntoField";
@@ -5415,6 +5462,28 @@ public class ActionResolver {
         return after == null || after.trim().equalsIgnoreCase(source.name());
     }
 
+    /**
+     * Ties a condition that names the card asking to {@code source}: returns it bound (the
+     * identity-carrying variants get {@code source}), or {@code null} when the name is not the
+     * source's — "If Sazh entered the field due to …" reads only for Sazh. Conditions that name
+     * no card pass through unchanged, and so does a power condition, which is read by name.
+     */
+    static DamageInsteadCondition bindConditionToSource(DamageInsteadCondition c, CardData source) {
+        if (c == null) return null;
+        String own = source != null ? source.name() : null;
+        return switch (c) {
+            case DamageInsteadCondition.NamedEnteredViaWarp w ->
+                own != null && w.name().equalsIgnoreCase(own) ? c : null;
+            case DamageInsteadCondition.NamedEnteredByAbilityOfCategory e ->
+                own != null && e.name().equalsIgnoreCase(own)
+                        ? new DamageInsteadCondition.NamedEnteredByAbilityOfCategory(e.name(), e.category(), source) : null;
+            case DamageInsteadCondition.BreakZoneNamesBeforePayingAtLeast b ->
+                own != null && b.payerName().equalsIgnoreCase(own)
+                        ? new DamageInsteadCondition.BreakZoneNamesBeforePayingAtLeast(b.min(), b.names(), b.payerName(), source) : null;
+            default -> c;
+        };
+    }
+
     static DamageInsteadCondition parseDamageInsteadCondition(String cond) {
         String s = cond.trim();
 
@@ -5457,6 +5526,36 @@ public class ActionResolver {
                 .compile("(?i)you have cast (\\d+) or more cards this turn").matcher(s);
         if (castM.find())
             return new DamageInsteadCondition.YouCastAtLeast(Integer.parseInt(castM.group(1)));
+        Matcher castExclM = Pattern
+                .compile("(?i)^you have cast (\\d+) or more cards other than (.+?) this turn$").matcher(s);
+        if (castExclM.find())
+            return new DamageInsteadCondition.YouCastAtLeastOtherThan(
+                    Integer.parseInt(castExclM.group(1)), castExclM.group(2).trim());
+
+        // Select-actions upgrades (8-060L, 20-027C, 15-128L). Anchored: each is the whole condition.
+        if (s.matches("(?i)you paid the extra cost"))
+            return new DamageInsteadCondition.PaidExtraCost();
+        Matcher warpM = Pattern.compile("(?i)^(.+?) enters the field due to Warp$").matcher(s);
+        if (warpM.find())
+            return new DamageInsteadCondition.NamedEnteredViaWarp(warpM.group(1).trim());
+        Matcher partyM = Pattern.compile("(?i)^(\\d+) or more Forwards form the party$").matcher(s);
+        if (partyM.find())
+            return new DamageInsteadCondition.PartyAtLeast(Integer.parseInt(partyM.group(1)));
+        Matcher enteredNamedM = Pattern.compile("(?i)^the Forward is Card Name (.+)$").matcher(s);
+        if (enteredNamedM.find())
+            return new DamageInsteadCondition.EnteredCardNamed(enteredNamedM.group(1).trim());
+        Matcher byAbilityM = Pattern.compile(
+                "(?i)^(.+?) entered the field due to an ability of a Category (\\S+) Character$").matcher(s);
+        if (byAbilityM.find())
+            return new DamageInsteadCondition.NamedEnteredByAbilityOfCategory(
+                    byAbilityM.group(1).trim(), byAbilityM.group(2).trim(), null);
+        Matcher bzBeforePayM = Pattern.compile("(?i)^you have a total of (\\d+) or more Card Name (.+?) and/or "
+                + "Card Name (.+?) in your Break Zone \\(before paying the cost for (.+?)\\)$").matcher(s);
+        if (bzBeforePayM.find())
+            return new DamageInsteadCondition.BreakZoneNamesBeforePayingAtLeast(
+                    Integer.parseInt(bzBeforePayM.group(1)),
+                    List.of(bzBeforePayM.group(2).trim(), bzBeforePayM.group(3).trim()),
+                    bzBeforePayM.group(4).trim(), null);
 
         // A named card cast this turn: "you have cast Card Name X this turn" — Sazh 1-013H. Read
         // through the gate pattern 1-043H Snow's "Freeze it also" already uses, so the two spellings
@@ -6248,6 +6347,29 @@ public class ActionResolver {
             case DamageInsteadCondition.BreakZoneJobOrNameAtLeast(int min, String job, String name) ->
                 ctx.countSelfBreakZoneCards(name, null) + ctx.countSelfBreakZoneCards(null, job)
                         - ctx.countSelfBreakZoneCards(name, job) >= min;
+            case DamageInsteadCondition.YouCastAtLeastOtherThan(int min, String name) ->
+                ctx.selfCardsCastThisTurn() - ctx.countCardsNamedCastThisTurn(name) >= min;
+            case DamageInsteadCondition.PaidExtraCost() ->
+                ctx.wasExtraCostPaid();
+            case DamageInsteadCondition.NamedEnteredViaWarp(String name) ->
+                ctx.sourceEnteredViaWarp();
+            case DamageInsteadCondition.PartyAtLeast(int min) ->
+                ctx.currentPartyAttackerCount() >= min;
+            case DamageInsteadCondition.EnteredCardNamed(String name) -> {
+                CardData entered = ctx.triggeringEnteredCard();
+                yield entered != null && entered.name().equalsIgnoreCase(name);
+            }
+            case DamageInsteadCondition.NamedEnteredByAbilityOfCategory(String name, String category, CardData src) ->
+                src != null && ctx.enteredFieldByAbilityOfCategory(src, category);
+            // "before paying the cost": what is there now, less the named cards discarded to pay.
+            case DamageInsteadCondition.BreakZoneNamesBeforePayingAtLeast(int min, List<String> names,
+                    String payerName, CardData payer) -> {
+                int count = 0;
+                for (String n : names) count += ctx.countSelfBreakZoneCards(n, null);
+                for (CardData d : ctx.cardsDiscardedToCastList(payer))
+                    if (names.stream().anyMatch(n -> n.equalsIgnoreCase(d.name()))) count--;
+                yield payer != null && count >= min;
+            }
         };
     }
 
@@ -7065,6 +7187,11 @@ public class ActionResolver {
         // resolved here today and do mean the preloaded card — 7-040C Yunalesca and 5-130R
         // Tonberry both break if this declines for them.
         if (FOLLOWUP_FREEZE_BARE.matcher(m.group("followup").trim()).matches()) return null;
+        // Declined for the same reason when the payoff names "the chosen" card: the choice is in
+        // the primary, and resolving the halves apart loses it — 6-119C Chime's "return the chosen
+        // Forward" was read as a card named "the chosen Forward". The Choose chain reads it whole.
+        if (m.group("primary").trim().toLowerCase(Locale.ROOT).startsWith("choose ")
+                && CHOSEN_REFERENCE.matcher(m.group("followup")).find()) return null;
         Consumer<GameContext> primary  = parse(m.group("primary").trim(),  source, xValue);
         Consumer<GameContext> followup = parse(m.group("followup").trim(), source, xValue);
         if (primary == null || followup == null) return null;

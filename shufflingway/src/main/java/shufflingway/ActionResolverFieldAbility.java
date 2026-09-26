@@ -257,8 +257,20 @@ final class ActionResolverFieldAbility {
     }
 
     static Consumer<GameContext> tryParseOppFwdsLoseAllAbilitiesEot(String text) {
-        if (!OPP_FWDS_LOSE_ALL_ABILITIES_EOT.matcher(text).matches()) return null;
-        return ctx -> ctx.oppForwardsLoseAllAbilitiesUntilEndOfTurn();
+        Matcher m = OPP_FWDS_LOSE_ALL_ABILITIES_EOT.matcher(text);
+        if (!m.matches()) return null;
+        final String job = m.group("job");
+        if (job == null) return ctx -> ctx.oppForwardsLoseAllAbilitiesUntilEndOfTurn();
+        return ctx -> {
+            ctx.logEntry("Effect: All Job " + job + " Forwards opponent controls lose all their abilities until end of turn");
+            boolean oppIsP1 = !ctx.isP1();
+            int n = oppIsP1 ? ctx.p1ForwardCount() : ctx.p2ForwardCount();
+            for (int i = 0; i < n; i++) {
+                CardData c = oppIsP1 ? ctx.p1Forward(i) : ctx.p2Forward(i);
+                if (c != null && ctx.effectiveHasJob(c, job))
+                    ctx.targetLoseAllAbilitiesUntilEndOfTurn(new ForwardTarget(oppIsP1, i, ForwardTarget.CardZone.FORWARD));
+            }
+        };
     }
 
     /**

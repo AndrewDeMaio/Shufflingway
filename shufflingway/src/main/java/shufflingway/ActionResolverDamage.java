@@ -256,6 +256,7 @@ final class ActionResolverDamage {
         if (!m.matches()) return null;
         String excluded = m.group("card").trim();
         if (!excluded.equalsIgnoreCase(source.name())) return null;
+        final boolean rfgRider = m.group("rider") != null;
 
         return ctx -> {
             if (xValue <= 0) {
@@ -267,12 +268,34 @@ final class ActionResolverDamage {
             for (int i = ctx.p2ForwardCount() - 1; i >= 0; i--) {
                 CardData c = ctx.p2Forward(i);
                 if (c == null || excluded.equalsIgnoreCase(c.name())) continue;
+                // Armed before the damage: a lethal hit breaks the Forward inside the call.
+                if (rfgRider) ctx.markTargetRfgInsteadOfBzThisTurn(new ForwardTarget(false, i, ForwardTarget.CardZone.FORWARD));
                 ctx.damageP2Forward(i, xValue);
             }
             for (int i = ctx.p1ForwardCount() - 1; i >= 0; i--) {
                 CardData c = ctx.p1Forward(i);
                 if (c == null || excluded.equalsIgnoreCase(c.name())) continue;
+                if (rfgRider) ctx.markTargetRfgInsteadOfBzThisTurn(new ForwardTarget(true, i, ForwardTarget.CardZone.FORWARD));
                 ctx.damageP1Forward(i, xValue);
+            }
+        };
+    }
+
+    /** "Deal N damage for every M &lt;type&gt; you control to all the Forwards opponent controls." */
+    static Consumer<GameContext> tryParseDealDamagePerGroupToAllOppForwards(String text) {
+        Matcher m = DEAL_DAMAGE_PER_GROUP_TO_ALL_OPP_FORWARDS.matcher(text.trim());
+        if (!m.matches()) return null;
+        final int per   = Integer.parseInt(m.group("per"));
+        final int group = Integer.parseInt(m.group("group"));
+        final String type = m.group("type");
+        return ctx -> {
+            int damage = per * (ctx.ownFieldCount(type) / group);
+            ctx.logEntry("Effect: Deal " + per + " damage for every " + group + " " + type
+                    + " you control (" + damage + ") to all Forwards opponent controls");
+            if (damage <= 0) return;
+            boolean oppIsP1 = !ctx.isP1();
+            for (int i = (oppIsP1 ? ctx.p1ForwardCount() : ctx.p2ForwardCount()) - 1; i >= 0; i--) {
+                if (oppIsP1) ctx.damageP1Forward(i, damage); else ctx.damageP2Forward(i, damage);
             }
         };
     }

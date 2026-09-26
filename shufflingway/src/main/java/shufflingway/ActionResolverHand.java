@@ -729,6 +729,35 @@ final class ActionResolverHand {
         };
     }
     /** Parses "Return [name] to its owner's hand." or "Return [name] to your hand." */
+    /**
+     * "[You may] return N &lt;type&gt; you control to its owner's hand." The controller picks from
+     * their own field; returning fewer than N marks the effect fizzled, so a following "When/If you
+     * do so" payoff does not run.
+     */
+    static Consumer<GameContext> tryParseReturnOwnTypeToHand(String text) {
+        Matcher m = RETURN_OWN_TYPE_TO_OWNERS_HAND.matcher(text.trim());
+        if (!m.matches()) return null;
+        final boolean may   = m.group("may") != null;
+        final int     count = Integer.parseInt(m.group("count"));
+        final String  typeWord = m.group("type");
+        final String  type  = typeWord.toLowerCase(Locale.ROOT);
+        final boolean fwds  = type.startsWith("forward") || type.startsWith("character");
+        final boolean bkps  = type.startsWith("backup")  || type.startsWith("character");
+        final boolean mons  = type.startsWith("monster") || type.startsWith("character");
+        final String  except = m.group("except") != null ? m.group("except").trim() : null;
+        return ctx -> {
+            ctx.logEntry("Effect: " + (may ? "You may return " : "Return ") + count + " " + typeWord
+                    + (except != null ? " other than " + except : "") + " you control to its owner's hand");
+            List<ForwardTarget> ts = selectTargets(ctx, count, may, false, true, null, null, null, false, false,
+                    -1, null, -1, null, fwds, bkps, mons, null, null, null, except, false, null, false);
+            if (ts.size() < count) {
+                ctx.markEffectFizzled();
+                return;
+            }
+            returnTargetsToOwnersHand(ctx, ts);
+        };
+    }
+
     static Consumer<GameContext> tryParseReturnNamedToHand(String text) {
         Matcher m = RETURN_NAMED_TO_OWNERS_HAND.matcher(text);
         if (m.find()) {
@@ -1250,6 +1279,12 @@ final class ActionResolverHand {
         if (countStr == null) countStr = m.group("count2");
         int mill = countStr != null ? Integer.parseInt(countStr) : 2;
         int draw = Integer.parseInt(m.group("draw"));
+        if (m.group("attr").equalsIgnoreCase("type")) {
+            return ctx -> {
+                ctx.logEntry("Effect: Opponent mills " + mill + " — draw " + draw + " if all same type");
+                ctx.opponentMillIfSameTypeDraw(mill, draw);
+            };
+        }
         return ctx -> {
             ctx.logEntry("Effect: Opponent mills " + mill + " — draw " + draw + " if all same element");
             ctx.opponentMillIfSameElementDraw(mill, draw);

@@ -398,6 +398,19 @@ public class MainWindow {
 	 * "1 Forward"), and because an instance key needs no re-indexing when a slot is vacated.
 	 */
 	final Map<CardData, Integer> attacksMadeThisTurn = new IdentityHashMap<>();
+	/**
+	 * For a card now on the field, the card whose ability was resolving when it entered — 26-035R
+	 * Snow's "entered the field due to an ability of a Category XIII Character". Written on every
+	 * entry (removed when nothing was resolving), so a replay does not inherit the last cause.
+	 */
+	final Map<CardData, CardData> enteredFieldByAbilityOf = new IdentityHashMap<>();
+	/**
+	 * Cards now on the field whose latest entry was by Warp. {@link #lastCardWarpedIn} holds only
+	 * while the card is being placed, so a trigger resolving later off the Stack read it as
+	 * {@code false}; this keeps the answer on the card (20-027C Genesis). Same lifecycle as
+	 * {@link #enteredFieldByAbilityOf}.
+	 */
+	final Set<CardData> enteredViaWarp = Collections.newSetFromMap(new IdentityHashMap<>());
 	/** One-shot extra attacks granted this turn by "[X] can attack once more this turn.", by instance. */
 	final Map<CardData, Integer> extraAttacksThisTurn = new IdentityHashMap<>();
 	/** Cards granted a multi-attack permission until end of turn, instance to permitted count. */
@@ -1631,6 +1644,12 @@ public class MainWindow {
 	 * reading end, for the reason that field states.
 	 */
 	int lastCastPaymentDiscardTotalCost = 0;
+	/**
+	 * The cards themselves behind {@link #lastCastPaymentDiscardCount}, in hand order — 9-002H
+	 * Ifrita counts her Break Zone "before paying the cost", which is today's zone less these.
+	 * Owner-checked through {@link #lastCastPaymentCard}, like its siblings.
+	 */
+	final List<CardData> lastCastPaymentDiscards = new ArrayList<>();
 	/** True if the most recently cast card was paid entirely by dulling Backups (no hand discards). */
 	boolean lastCastWasPaidByBackupsOnly = false;
 	/**
@@ -4100,6 +4119,7 @@ public class MainWindow {
 		lastCastPaymentDistinctElements = 0;
 		lastCastPaymentDiscardCount = 0;
 		lastCastPaymentDiscardTotalCost = 0;
+		lastCastPaymentDiscards.clear();
 		lastCastPaymentElements.clear();
 		lastCastPaymentCard = null;
 		lastCastPaymentBackups.clear();
@@ -11794,6 +11814,8 @@ public class MainWindow {
 		// asks what the cards discarded to cast him cost, and by then they are gone.
 		int discardCostTotal = 0;
 		for (int di : discardIndices) discardCostTotal += hand.get(di).cost();
+		List<CardData> discardedForCost = new ArrayList<>();
+		for (int di : discardIndices) discardedForCost.add(hand.get(di));
 		List<Integer> discardRemovalOrder = new ArrayList<>(discardIndices);
 		discardRemovalOrder.sort(Collections.reverseOrder());
 		for (int di : discardRemovalOrder) {
@@ -11828,6 +11850,8 @@ public class MainWindow {
 		lastCastWasPaidByBackupsOnly = discardIndices.isEmpty() && !backupDullIndices.isEmpty();
 		lastCastPaymentDiscardCount  = discardIndices.size();
 		lastCastPaymentDiscardTotalCost = discardCostTotal;
+		lastCastPaymentDiscards.clear();
+		lastCastPaymentDiscards.addAll(discardedForCost);
 		// 19-127L Relm's second option watches for "your next Summon of cost 4 or less cast from
 		// your hand". This is that cast: executePlay is the from-hand path, and the marker is
 		// consumed here so the *next* Summon after this one is not also caught.
@@ -11987,6 +12011,8 @@ public class MainWindow {
 		// asks what the cards discarded to cast him cost, and by then they are gone.
 		int discardCostTotal = 0;
 		for (int di : discardIndices) discardCostTotal += gameState.getP1Hand().get(di).cost();
+		List<CardData> discardedForCost = new ArrayList<>();
+		for (int di : discardIndices) discardedForCost.add(gameState.getP1Hand().get(di));
 		List<Integer> discardRemovalOrder = new ArrayList<>(discardIndices);
 		discardRemovalOrder.sort(Collections.reverseOrder());
 		for (int di : discardRemovalOrder) {
@@ -12007,6 +12033,8 @@ public class MainWindow {
 		lastCastWasPaidByBackupsOnly = discardIndices.isEmpty() && !backupDullIndices.isEmpty();
 		lastCastPaymentDiscardCount  = discardIndices.size();
 		lastCastPaymentDiscardTotalCost = discardCostTotal;
+		lastCastPaymentDiscards.clear();
+		lastCastPaymentDiscards.addAll(discardedForCost);
 
 		// Remove the borrowed card from its source zone (by identity — duplicate-named copies may exist).
 		PlayableEntry borrowEntry = bzPlayableP1.get(card);
@@ -13024,6 +13052,8 @@ public class MainWindow {
 		// asks what the cards discarded to cast him cost, and by then they are gone.
 		int discardCostTotal = 0;
 		for (int di : discardIndices) discardCostTotal += hand.get(di).cost();
+		List<CardData> discardedForCost = new ArrayList<>();
+		for (int di : discardIndices) discardedForCost.add(hand.get(di));
 		List<Integer> discardRemovalOrder = new ArrayList<>(discardIndices);
 		discardRemovalOrder.sort(Collections.reverseOrder());
 		for (int di : discardRemovalOrder) {
@@ -13057,6 +13087,8 @@ public class MainWindow {
 		lastCastWasPaidByBackupsOnly = discardIndices.isEmpty() && !backupDullIndices.isEmpty();
 		lastCastPaymentDiscardCount  = discardIndices.size();
 		lastCastPaymentDiscardTotalCost = discardCostTotal;
+		lastCastPaymentDiscards.clear();
+		lastCastPaymentDiscards.addAll(discardedForCost);
 
 		// Deliberately no armSummonRecastIfWatched: 19-127L Relm watches "your next Summon of cost
 		// 4 or less cast from your hand", and this is the LB deck. executePlayFromBzP1 leaves it
@@ -15133,12 +15165,38 @@ public class MainWindow {
 
 	/** Returns {@code true} when all conditions of {@code icb} are satisfied for the given player. */
 	boolean icbConditionsMet(IfControlBoost icb, boolean isP1) {
+		return icbConditionsMet(icb, isP1, null);
+	}
+
+	/**
+	 * {@link #icbConditionsMet(IfControlBoost, boolean)} read as the board stood just before
+	 * {@code departed} left it — a leaves-the-field trigger looks back. The card is counted back
+	 * into the control pools: 21-079R Lich's "If you control 7 or more Earth Characters" counts
+	 * Lich, and after the break the live board is one short. {@code null} reads the live board.
+	 */
+	boolean icbConditionsMet(IfControlBoost icb, boolean isP1, CardData departed) {
 		for (ControlCondition cond : icb.conditions()) {
 			if (cond.requiresCrystal()) {
 				int crystals = playerCrystals(isP1);
 				if (cond.exactCount() ? crystals != cond.minCount() : crystals < 1) return false;
 			} else if (cond.stateCardName() != null) {
 				if (!isNamedCardInState(cond.stateCardName(), cond.namedState(), isP1)) return false;
+			} else if (departed != null && !cond.opponentControls() && !cond.bothFields()) {
+				String except = icb.exceptCardName();
+				List<CardData> fwds = new ArrayList<>(isP1 ? p1ForwardCards : p2ForwardCards);
+				CardData[] srcBkps  = isP1 ? p1BackupCards : p2BackupCards;
+				CardData[] bkps     = Arrays.copyOf(srcBkps, srcBkps.length + 1);
+				List<CardData> mons = new ArrayList<>(isP1 ? p1MonsterCards : p2MonsterCards);
+				if (departed.isForward())      fwds.add(departed);
+				else if (departed.isMonster()) mons.add(departed);
+				else if (departed.isBackup())  bkps[bkps.length - 1] = departed;
+				if (!except.isEmpty()) {
+					fwds.removeIf(c -> c.name().equalsIgnoreCase(except));
+					mons.removeIf(c -> c.name().equalsIgnoreCase(except));
+					for (int i = 0; i < bkps.length; i++)
+						if (bkps[i] != null && bkps[i].name().equalsIgnoreCase(except)) bkps[i] = null;
+				}
+				if (!controlConditionMetWithPools(cond, fwds, bkps, mons)) return false;
 			} else {
 				if (!controlConditionMetExcluding(cond, icb.exceptCardName(), isP1)) return false;
 			}
@@ -16073,13 +16131,51 @@ public class MainWindow {
 		List<AutoAbility> granted   = grantedAutoAbilities.get(card);
 		List<AutoAbility> selfGrant = damageThresholdGrantedAutoAbilities(card);
 		List<AutoAbility> fieldWide = filteredGrantedAutoAbilities(card);
+		List<AutoAbility> icbGrant  = conditionalSelfGrantedAutoAbilities(card);
 		boolean hasGranted = granted != null && !granted.isEmpty();
-		if (!hasGranted && selfGrant.isEmpty() && fieldWide.isEmpty()) return card.autoAbilities();
+		if (!hasGranted && selfGrant.isEmpty() && fieldWide.isEmpty() && icbGrant.isEmpty())
+			return card.autoAbilities();
 		List<AutoAbility> all = new ArrayList<>(card.autoAbilities());
 		if (hasGranted) all.addAll(granted);
 		all.addAll(selfGrant);
 		all.addAll(fieldWide);
+		all.addAll(icbGrant);
 		return all;
+	}
+
+	/**
+	 * Quoted auto abilities a card's own "If you control …, [Self] gains \"When …\"" hands itself
+	 * while the condition holds — 20-094R Cor, 21-079R Lich, 16-136S Auron, 29-035H Torgal, all
+	 * "When [Self] is put from the field into the Break Zone, …".
+	 *
+	 * <p>Attack triggers are left out: the attack dispatch reads {@code specialText} itself
+	 * ({@code AutoAbilityTriggers}, {@code ICB_WHEN_ATTACKS}), and would fire them twice.
+	 *
+	 * <p>Asked for after the card has left, the side falls back to its owner and the condition is
+	 * read with the card counted back onto the board ({@link #icbConditionsMet(IfControlBoost,
+	 * boolean, CardData)}) — the trigger looks back at the moment it left.
+	 */
+	private List<AutoAbility> conditionalSelfGrantedAutoAbilities(CardData card) {
+		if (card.ifControlBoosts().isEmpty() || lostAbilitiesCards.contains(card)) return List.of();
+		Boolean side = fieldSideOf(card);
+		boolean departed = side == null;
+		if (departed) side = gameState.getIdentity().get(card);
+		if (side == null) return List.of();
+		List<AutoAbility> out = null;
+		for (IfControlBoost icb : card.ifControlBoosts()) {
+			String special = icb.specialText();
+			if (special == null || special.isEmpty()) continue;
+			if (!icb.targetCardName().equalsIgnoreCase(card.name())) continue;
+			List<AutoAbility> parsed = CardData.parseAutoAbilities(special);
+			if (parsed.isEmpty()) continue;
+			if (!icbConditionsMet(icb, side, departed ? card : null)) continue;
+			for (AutoAbility aa : parsed) {
+				if (aa.trigger().equals("attacks")) continue;
+				if (out == null) out = new ArrayList<>();
+				out.add(aa);
+			}
+		}
+		return out == null ? List.of() : out;
 	}
 
 	/**

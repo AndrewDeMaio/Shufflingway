@@ -20248,6 +20248,43 @@ public class CardBehaviorTest {
 				"the granted \"when put into the Break Zone\" trigger draws as Yumcax leaves");
 	}
 
+	// 16-136S Auron / 20-094R Cor / 21-079R Lich / 29-035H Torgal: "If you control …, [Self] gains
+	// "When [Self] is put from the field into the Break Zone, …"". The quoted trigger sat in the
+	// IfControlBoost's specialText, which only the attack dispatch read — so none of them fired.
+	private static final String AURON_16_136S_TEXT = "If you control a Job Summoner Forward or a Job Guardian "
+			+ "Forward other than Auron, Auron gains \"When Auron is put from the field into the Break Zone, "
+			+ "draw 1 card.\"";
+
+	@Test
+	void auronsGrantedBreakTriggerFiresWhileItsConditionHolds() {
+		MainWindow with = boardWithP1Damage(0, 5);
+		CardData auron = makeFieldTextForward("Auron", "Fire", 8000, AURON_16_136S_TEXT);
+		placeP1Forward(with, auron);
+		placeP1Forward(with, makeJobCard("Kimahri", "Ice", "Forward", "Guardian"));
+		with.breakP1Forward(with.p1ForwardCards.indexOf(auron));
+		assertEquals(1, with.gameState.getP1Hand().size(), "a Guardian on the field: Auron draws as he leaves");
+
+		MainWindow without = boardWithP1Damage(0, 5);
+		CardData lone = makeFieldTextForward("Auron", "Fire", 8000, AURON_16_136S_TEXT);
+		placeP1Forward(without, lone);
+		without.breakP1Forward(0);
+		assertTrue(without.gameState.getP1Hand().isEmpty(), "no Summoner or Guardian: no trigger");
+	}
+
+	@Test
+	void aConditionalSelfGrantedBreakTriggerLooksBackAtTheBoard() {
+		// 21-079R Lich's shape: the count includes the card that is leaving. Read after the break,
+		// the live board is one short; the trigger looks back at the moment it left.
+		MainWindow mw = boardWithP1Damage(0, 5);
+		CardData rock = makeFieldTextForward("Rock", "Earth", 7000, "If you control 3 or more Earth "
+				+ "Characters, Rock gains \"When Rock is put from the field into the Break Zone, draw 1 card.\"");
+		placeP1Forward(mw, rock);
+		placeP1Forward(mw, makeForward("Earth A", "Earth", 2, 5000));
+		placeP1Forward(mw, makeForward("Earth B", "Earth", 2, 5000));
+		mw.breakP1Forward(mw.p1ForwardCards.indexOf(rock));
+		assertEquals(1, mw.gameState.getP1Hand().size(), "three Earth Characters as Rock left, counting Rock");
+	}
+
 	@Test
 	void gilgameshGainsBraveAndASecondAttackOnlyAtThreeDamage() {
 		MainWindow below = boardWithP1Damage(2, 0);
@@ -67137,6 +67174,537 @@ public class CardBehaviorTest {
 	@Test
 	void aRemovalJoinedToAnUnreadEffectDeclines() {
 		assertNull(ActionResolver.parse("Choose 1 Forward. Remove it from the game and frobnicate the moon.", null));
+	}
+
+	// =========================================================================================
+	// 19-138S Lightning — "When 1 or more Category XIII Forwards you control attack, all the
+	// Forwards you control gain +1000 power until the end of the turn. If 2 or more Category XIII
+	// Forwards were attacking this turn, also draw 1 card. If 3 or more Category XIII Forwards were
+	// attacking this turn, Lightning also deals your opponent 1 point of damage."
+	//
+	// The draw was dropped and the damage ran on every attack: its sentence find()s as a plain
+	// DealPlayerDamageToOpponent with the threshold in front of it discarded.
+	// =========================================================================================
+
+	private static final String LIGHTNING_19_138S_EFFECT =
+			"all the Forwards you control gain +1000 power until the end of the turn. If 2 or more "
+			+ "Category XIII Forwards were attacking this turn, also draw 1 card. If 3 or more Category "
+			+ "XIII Forwards were attacking this turn, Lightning also deals your opponent 1 point of damage.";
+
+	/** Resolves Lightning's payoff for P1 with the given attackers recorded this turn. */
+	private static MainWindow resolveLightningAttack(CardData... attackers) {
+		MainWindow mw = new MainWindow();
+		mw.gameState.getP1MainDeck().addLast(makeForward("Drawn", "Fire", 1, 1000));
+		mw.gameState.getP2MainDeck().addLast(makeForward("Damage", "Fire", 1, 1000));
+		for (CardData a : attackers) mw.recordAttackDeclared(a);
+		Consumer<GameContext> parsed = ActionResolver.parse(LIGHTNING_19_138S_EFFECT, null);
+		assertNotNull(parsed);
+		parsed.accept(mw.buildGameContext(true));
+		return mw;
+	}
+
+	@Test
+	void lightningOneCategoryXiiiAttackerOnlyBoosts() {
+		MainWindow mw = resolveLightningAttack(makeCategoryForward("L", "Light", "XIII"));
+		assertTrue(mw.gameState.getP1Hand().isEmpty(), "no draw below 2");
+		assertTrue(mw.gameState.getP2DamageZone().isEmpty(), "no damage below 3");
+	}
+
+	@Test
+	void lightningTwoCategoryXiiiAttackersAlsoDraw() {
+		MainWindow mw = resolveLightningAttack(makeCategoryForward("L", "Light", "XIII"),
+				makeCategoryForward("Snow", "Ice", "XIII"),
+				makeCategoryForward("Outsider", "Fire", "VII"));
+		assertEquals(1, mw.gameState.getP1Hand().size(), "two Category XIII attackers draw");
+		assertTrue(mw.gameState.getP2DamageZone().isEmpty(), "the Category VII attacker does not count toward 3");
+	}
+
+	@Test
+	void lightningThreeCategoryXiiiAttackersDrawAndDealDamage() {
+		MainWindow mw = resolveLightningAttack(makeCategoryForward("L", "Light", "XIII"),
+				makeCategoryForward("Snow", "Ice", "XIII"),
+				makeCategoryForward("Hope", "Wind", "XIII"));
+		assertEquals(1, mw.gameState.getP1Hand().size());
+		assertEquals(1, mw.gameState.getP2DamageZone().size(), "the third tier deals 1 point");
+	}
+
+	// =========================================================================================
+	// 4-083L Shantotto — "When Shantotto is dealt damage, deal the same amount of damage to all the
+	// Forwards other than Shantotto. If a Forward damaged by this ability is put into the Break Zone
+	// this turn, remove it from the game instead."
+	//
+	// The rider was matched and thrown away. It is armed on each Forward before the damage lands,
+	// because a lethal hit breaks the Forward inside the damage call.
+	// =========================================================================================
+
+	@Test
+	void shantottoRemovesTheForwardsHerDamageBreaks() {
+		MainWindow mw = new MainWindow();
+		CardData shantotto = makeForward("Shantotto", "Earth", 6, 9000);
+		CardData small = makeForward("Small", "Fire", 2, 3000);
+		CardData big = makeForward("Big", "Fire", 5, 9000);
+		placeP2Forward(mw, small);
+		placeP2Forward(mw, big);
+		String effect = "deal the same amount of damage to all the Forwards other than Shantotto. If a "
+				+ "Forward damaged by this ability is put into the Break Zone this turn, remove it from the "
+				+ "game instead.";
+		Consumer<GameContext> parsed = ActionResolver.parse(effect, shantotto, 4000);
+		assertNotNull(parsed);
+		parsed.accept(mw.buildGameContext(true));
+
+		assertFalse(mw.p2ForwardCards.contains(small), "4000 breaks the 3000 Forward");
+		assertTrue(mw.gameState.getP2BreakZone().isEmpty(), "and it does not reach the Break Zone");
+		assertTrue(mw.gameState.getP2PermanentRfp().contains(small), "it is removed from the game instead");
+		assertTrue(mw.p2ForwardCards.contains(big), "the 9000 Forward survives the hit");
+	}
+
+	// =========================================================================================
+	// 27-010L Xande — "When Xande enters the field, name 1 Job. All the Forwards with the named Job
+	// opponent controls lose all their abilities until the end of the turn."
+	//
+	// The Job was named and then nothing read it: the named-Job substitution produces "All the Job
+	// <X> Forwards opponent controls …", which the Forward sweep had no Job arm for.
+	// =========================================================================================
+
+	@Test
+	void xandeSilencesOnlyTheOpposingForwardsOfTheNamedJob() {
+		MainWindow mw = new MainWindow();
+		CardData xande = makeForward("Xande", "Fire", 5, 9000);
+		CardData knight = makeJobCard("Knight One", "Water", "Forward", "Knight");
+		CardData plain = makeForward("Plain", "Water", 3, 7000);
+		placeP1Forward(mw, knight);
+		placeP1Forward(mw, plain);
+		// P2 names the Job, so the naming runs without a dialog; P2 shortlists P1's Jobs.
+		Consumer<GameContext> parsed = ActionResolver.parse("name 1 Job. All the Forwards with the named "
+				+ "Job opponent controls lose all their abilities until the end of the turn.", xande);
+		assertNotNull(parsed);
+		parsed.accept(mw.buildGameContext(false));
+
+		assertTrue(mw.lostAbilitiesCards.contains(knight), "the Knight loses its abilities");
+		assertFalse(mw.lostAbilitiesCards.contains(plain), "a Forward without the Job keeps them");
+	}
+
+	// =========================================================================================
+	// 8-055C Selkie — "your opponent puts the top 2 cards of his/her deck into the Break Zone. If
+	// both cards are of the same type, draw 1 card." The Element sibling's parser, by card type.
+	// =========================================================================================
+
+	private static MainWindow resolveSelkie(CardData top, CardData second) {
+		MainWindow mw = new MainWindow();
+		mw.gameState.getP1MainDeck().addLast(makeForward("Drawn", "Fire", 1, 1000));
+		mw.gameState.getP2MainDeck().addLast(top);
+		mw.gameState.getP2MainDeck().addLast(second);
+		Consumer<GameContext> parsed = ActionResolver.parse("your opponent puts the top 2 cards of his/her "
+				+ "deck into the Break Zone. If both cards are of the same type, draw 1 card.", null);
+		assertNotNull(parsed);
+		parsed.accept(mw.buildGameContext(true));
+		return mw;
+	}
+
+	@Test
+	void selkieDrawsWhenBothMilledCardsShareAType() {
+		MainWindow mw = resolveSelkie(makeForward("A", "Fire", 2, 5000), makeForward("B", "Ice", 3, 6000));
+		assertEquals(2, mw.gameState.getP2BreakZone().size());
+		assertEquals(1, mw.gameState.getP1Hand().size(), "two Forwards: draw 1");
+	}
+
+	@Test
+	void selkieDoesNotDrawForMixedTypes() {
+		MainWindow mw = resolveSelkie(makeForward("A", "Fire", 2, 5000), makePlainBackup("B", "Fire", 2));
+		assertEquals(2, mw.gameState.getP2BreakZone().size());
+		assertTrue(mw.gameState.getP1Hand().isEmpty(), "a Forward and a Backup: no draw");
+	}
+
+	// =========================================================================================
+	// 25-096L Tidus — "you may return 1 Backup you control to its owner's hand. If you do so,
+	// during this turn, the cost required to cast your next Category X Character is reduced by 3."
+	//
+	// The discount's pattern had no "Character" type word, so only the return ran.
+	// =========================================================================================
+
+	private static final String TIDUS_25_096L_EFFECT = "return 1 Backup you control to its owner's hand. "
+			+ "If you do so, during this turn, the cost required to cast your next Category X Character is "
+			+ "reduced by 3.";
+
+	@Test
+	void tidusDiscountsTheNextCategoryXCharacterOnceABackupReturns() {
+		MainWindow mw = new MainWindow();
+		CardData backup = makePlainBackup("Helper", "Water", 2);
+		placeBackup(mw, backup, false);
+		Consumer<GameContext> parsed = ActionResolver.parse(TIDUS_25_096L_EFFECT, null);
+		assertNotNull(parsed);
+		parsed.accept(mw.buildGameContext(false));
+
+		assertTrue(mw.gameState.getP2Hand().contains(backup), "the Backup goes back to hand");
+		assertEquals(1, mw.activeCostReductions.size());
+		CostReductionModifier mod = mw.activeCostReductions.get(0);
+		assertEquals(3, mod.amount());
+		assertEquals("X", mod.categoryFilter());
+		assertTrue(mod.inclForwards() && mod.inclBackups() && mod.inclMonsters() && !mod.inclSummons(),
+				"a Character: any of the three field types, never a Summon");
+	}
+
+	@Test
+	void tidusGrantsNoDiscountWithoutABackupToReturn() {
+		MainWindow mw = new MainWindow();
+		Consumer<GameContext> parsed = ActionResolver.parse(TIDUS_25_096L_EFFECT, null);
+		assertNotNull(parsed);
+		parsed.accept(mw.buildGameContext(false));
+		assertTrue(mw.activeCostReductions.isEmpty(), "nothing returned, so no discount");
+	}
+
+	// "return 1 Backup you control" was read as a card named "1 Backup you control": nothing
+	// returned, progress stayed true, and every "When/If you do so" payoff behind it ran free.
+	// 10-117H Tidus bounced a Forward for nothing; 6-119C Chime too, by a second route — the
+	// sequence parser split off the choose, so "the chosen Forward" became a card name as well.
+
+	@Test
+	void tidus10117hBouncesNothingWithoutABackupToReturn() {
+		MainWindow mw = new MainWindow();
+		CardData victim = makeForward("Victim", "Fire", 3, 7000);
+		placeP1Forward(mw, victim);
+		Consumer<GameContext> parsed = ActionResolver.parse("return 1 Backup you control to its owner's "
+				+ "hand. When you do so, choose 1 Forward. Return it to its owner's hand.", null);
+		assertNotNull(parsed);
+		parsed.accept(mw.buildGameContext(false));
+		assertTrue(mw.p1ForwardCards.contains(victim), "no Backup returned, so no bounce");
+	}
+
+	private static final String CHIME_6_119C_EFFECT = "choose 1 Forward opponent controls. You may return "
+			+ "1 Forward you control to its owner's hand. If you do so, return the chosen Forward to its "
+			+ "owner's hand.";
+
+	@Test
+	void chimeBouncesNothingWithoutAForwardOfHerOwnToReturn() {
+		MainWindow mw = new MainWindow();
+		CardData victim = makeForward("Victim", "Fire", 3, 7000);
+		placeP1Forward(mw, victim);
+		Consumer<GameContext> parsed = ActionResolver.parse(CHIME_6_119C_EFFECT, null);
+		assertNotNull(parsed);
+		parsed.accept(mw.buildGameContext(false));
+		assertTrue(mw.p1ForwardCards.contains(victim));
+		assertTrue(mw.gameState.getP1Hand().isEmpty());
+	}
+
+	@Test
+	void chimeBouncesTheChosenForwardOnceHerOwnReturns() {
+		MainWindow mw = new MainWindow();
+		CardData victim = makeForward("Victim", "Fire", 3, 7000);
+		CardData own = makeForward("Own", "Water", 2, 5000);
+		placeP1Forward(mw, victim);
+		placeP2Forward(mw, own);
+		Consumer<GameContext> parsed = ActionResolver.parse(CHIME_6_119C_EFFECT, null);
+		assertNotNull(parsed);
+		parsed.accept(mw.buildGameContext(false));
+		assertTrue(mw.gameState.getP2Hand().contains(own), "P2 returns its own Forward");
+		assertTrue(mw.gameState.getP1Hand().contains(victim), "and the chosen Forward follows it");
+	}
+
+	@Test
+	void asuraReturnsAnotherCharacterNeverHerself() {
+		MainWindow mw = new MainWindow();
+		CardData asura = makeForward("Asura, Manusya of War", "Water", 8, 9000);
+		CardData backup = makePlainBackup("Helper", "Water", 2);
+		placeP2Forward(mw, asura);
+		placeBackup(mw, backup, false);
+		Consumer<GameContext> parsed = ActionResolver.parse("return 1 Character other than Asura, Manusya of "
+				+ "War you control to its owner's hand. When you do so, all the Forwards other than Asura, "
+				+ "Manusya of War lose 8000 power until the end of the turn.", asura);
+		assertNotNull(parsed);
+		parsed.accept(mw.buildGameContext(false));
+		assertTrue(mw.p2ForwardCards.contains(asura), "Asura is excluded from her own return");
+		assertTrue(mw.gameState.getP2Hand().contains(backup));
+	}
+
+	// =========================================================================================
+	// 8-016H Vivi — "choose 1 Forward opponent controls. Deal it 2000 damage. If you control 4 or
+	// more Category IX Characters, deal it 7000 damage instead. If you control 7 or more Category
+	// IX Characters, deal it 10000 damage instead." The third tier was dropped.
+	// =========================================================================================
+
+	private static int vividDamage(int categoryIxCount) {
+		MainWindow mw = new MainWindow();
+		CardData target = makeForward("Target", "Fire", 6, 11000);
+		placeP1Forward(mw, target);
+		for (int i = 0; i < categoryIxCount; i++) placeP2Forward(mw, makeCategoryForward("IX " + i, "Fire", "IX"));
+		Consumer<GameContext> parsed = ActionResolver.parse("choose 1 Forward opponent controls. Deal it 2000 "
+				+ "damage. If you control 4 or more Category IX Characters, deal it 7000 damage instead. If "
+				+ "you control 7 or more Category IX Characters, deal it 10000 damage instead.", null);
+		assertNotNull(parsed);
+		parsed.accept(mw.buildGameContext(false));
+		return mw.p1ForwardDamage.get(mw.p1ForwardCards.indexOf(target));
+	}
+
+	@Test
+	void viviDealsEachTierOfHerDamage() {
+		assertEquals(2000, vividDamage(3));
+		assertEquals(7000, vividDamage(4));
+		assertEquals(10000, vividDamage(7));
+	}
+
+	// =========================================================================================
+	// 9-017C Belias — "Choose 1 Forward. Until the end of the turn, it gains +1000 power and First
+	// Strike. Draw 1 card. If you have received 4 points of damage or more, it also gains Haste
+	// until the end of the turn." The trailing gate sat past the draw and was dropped.
+	// =========================================================================================
+
+	private static boolean beliasGrantsHaste(int damageTaken) {
+		MainWindow mw = new MainWindow();
+		CardData fwd = makeForward("Mine", "Fire", 3, 7000);
+		placeP2Forward(mw, fwd);
+		mw.gameState.getP2MainDeck().addLast(makeForward("Drawn", "Fire", 1, 1000));
+		for (int i = 0; i < damageTaken; i++) mw.gameState.getP2DamageZone().add(makeForward("Dmg", "Fire", 1, 1000));
+		Consumer<GameContext> parsed = ActionResolver.parse("Choose 1 Forward. Until the end of the turn, it "
+				+ "gains +1000 power and First Strike. Draw 1 card. If you have received 4 points of damage or "
+				+ "more, it also gains Haste until the end of the turn.", null);
+		assertNotNull(parsed);
+		parsed.accept(mw.buildGameContext(false));
+		assertEquals(1, mw.gameState.getP2Hand().size(), "the draw happens either way");
+		assertTrue(mw.effectiveCardHasTrait(fwd, false, CardData.Trait.FIRST_STRIKE));
+		return mw.effectiveCardHasTrait(fwd, false, CardData.Trait.HASTE);
+	}
+
+	@Test
+	void beliasGrantsHasteOnlyAtFourDamage() {
+		assertFalse(beliasGrantsHaste(3));
+		assertTrue(beliasGrantsHaste(4));
+	}
+
+	// 20-110H Hippokampos — "Deal 1000 damage for every 2 Characters you control to all the
+	// Forwards opponent controls." Dropped; only the become-a-Forward sentence ran.
+	@Test
+	void hippokamposDealsDamagePerPairOfCharacters() {
+		MainWindow mw = new MainWindow();
+		for (int i = 0; i < 4; i++) placeP1Forward(mw, makeForward("Mine " + i, "Water", 2, 5000));
+		placeBackup(mw, makePlainBackup("Helper", "Water", 2), true);   // 5 Characters: 2 pairs
+		placeP2Forward(mw, makeForward("Theirs", "Fire", 3, 7000));
+		Consumer<GameContext> parsed = ActionResolver.parse("Deal 1000 damage for every 2 Characters you "
+				+ "control to all the Forwards opponent controls.", null);
+		assertNotNull(parsed);
+		parsed.accept(mw.buildGameContext(true));
+		assertEquals(2000, (int) mw.p2ForwardDamage.get(0));
+		assertTrue(mw.p1ForwardDamage.stream().allMatch(d -> d == 0), "only the opponent's Forwards");
+	}
+
+	// 17-138S Rosa — "Select 1 of the 2 following actions. If you control a Card Name Cecil, select
+	// up to 2 of the 2 following actions instead." The upgrade was dropped.
+	@Test
+	void rosaSelectsUpToTwoWithCecil() {
+		String text = "Select 1 of the 2 following actions. If you control a Card Name Cecil, select up to 2 "
+				+ "of the 2 following actions instead. \"Choose 1 Forward. Activate it.\" \"Choose 1 Forward. "
+				+ "It gains +1000 power until the end of the turn.\"";
+		CardData rosa = makeForward("Rosa", "Water", 4, 8000);
+		for (boolean cecil : new boolean[] { false, true }) {
+			GameContext ctx = mock(GameContext.class);
+			when(ctx.controlConditionMet(any())).thenReturn(cecil);
+			Consumer<GameContext> parsed = ActionResolver.parse(text, rosa);
+			assertNotNull(parsed);
+			parsed.accept(ctx);
+			if (cecil) verify(ctx).chooseActions(eq(rosa), anyList(), eq(2), eq(true));
+			else       verify(ctx).chooseActions(eq(rosa), anyList(), eq(1), eq(false));
+		}
+	}
+
+	// 14-127H Zidane — "… Your opponent removes it from the game. You can cast it as though you
+	// owned it this turn." The removal ran; the cast permission was dropped.
+	@Test
+	void zidaneCanCastTheCardHeTookFromTheOpponentsHand() {
+		MainWindow mw = new MainWindow();
+		CardData cheap = makeForward("Cheap", "Fire", 1, 1000);
+		CardData dear = makeForward("Dear", "Ice", 6, 9000);
+		mw.gameState.getIdentity().put(cheap, true);
+		mw.gameState.getIdentity().put(dear, true);
+		mw.gameState.getP1Hand().add(cheap);
+		mw.gameState.getP1Hand().add(dear);
+		Consumer<GameContext> parsed = ActionResolver.parse("Your opponent reveals their hand. Select 1 card in "
+				+ "their hand. Your opponent removes it from the game. You can cast it as though you owned it this "
+				+ "turn. You can only use this ability during your turn.", null);
+		assertNotNull(parsed);
+		parsed.accept(mw.buildGameContext(false));
+
+		assertTrue(mw.gameState.getP1PermanentRfp().contains(dear), "removed from its owner's hand");
+		assertTrue(mw.bzPlayableP2.containsKey(dear), "and castable by the player who took it");
+		assertFalse(mw.bzPlayableP2.containsKey(cheap));
+	}
+
+	// The same "select … instead" upgrade over four more conditions: 15-128L party size, 20-027C
+	// entered by Warp (named for the card asking), 21-054H casts other than itself, 8-060L the
+	// extra cost. Each was ignored, offering only the base count.
+	private static void assertSelectUpgrade(String text, CardData source, Consumer<GameContext> meetCondition,
+			int upSelect, boolean upTo) {
+		for (boolean met : new boolean[] { false, true }) {
+			GameContext ctx = mock(GameContext.class);
+			if (met) meetCondition.accept(ctx);
+			Consumer<GameContext> parsed = ActionResolver.parse(text, source);
+			assertNotNull(parsed, text);
+			parsed.accept(ctx);
+			if (met) verify(ctx).chooseActions(eq(source), anyList(), eq(upSelect), eq(upTo));
+			else     verify(ctx).chooseActions(eq(source), anyList(), eq(1), eq(false));
+		}
+	}
+
+	@Test
+	void selectActionUpgradesReadTheirConditions() {
+		assertSelectUpgrade("select 1 of the 5 following actions. If 3 or more Forwards form the party, select "
+				+ "up to 2 of the 5 following actions instead. \"Choose 1 Forward. Deal it 8000 damage.\" \"Draw "
+				+ "1 card.\"", makeForward("Noctis", "Light", 2, 6000),
+				ctx -> when(ctx.currentPartyAttackerCount()).thenReturn(3), 2, true);
+		assertSelectUpgrade("select 1 of the 2 following actions. If Genesis enters the field due to Warp, select "
+				+ "up to 2 of the 2 following actions instead. \"Choose up to 2 Characters. Freeze them.\" \"Your "
+				+ "opponent randomly discards 1 card.\"", makeForward("Genesis", "Ice", 5, 9000),
+				ctx -> when(ctx.sourceEnteredViaWarp()).thenReturn(true), 2, true);
+		assertSelectUpgrade("Select 1 of the 2 following actions. If you have cast 2 or more cards other than "
+				+ "Pandemonium this turn, select up to 2 of the 2 following actions instead. \"Choose 1 Forward of "
+				+ "cost 5 or more. Deal it 8000 damage.\" \"Draw 1 card.\"", makeSummon("Pandemonium", "Wind", 4, ""),
+				ctx -> {
+					when(ctx.selfCardsCastThisTurn()).thenReturn(3);
+					when(ctx.countCardsNamedCastThisTurn("Pandemonium")).thenReturn(1);
+				}, 2, true);
+		assertSelectUpgrade("select 1 of the 2 following actions. If you paid the extra cost, select 2 of the 2 "
+				+ "following actions instead. \"Deal 5000 damage to all the Forwards opponent controls.\" "
+				+ "\"Activate all the Characters you control.\"", makeForward("Leviathan", "Water", 5, 9000),
+				ctx -> when(ctx.wasExtraCostPaid()).thenReturn(true), 2, false);
+	}
+
+	// 9-038R Rinoa — "If the Forward is Card Name Squall": the card whose arrival fired her.
+	@Test
+	void rinoaUpgradesWhenTheArrivingForwardIsSquall() {
+		CardData rinoa = makeForward("Rinoa", "Ice", 2, 5000);
+		assertSelectUpgrade("select 1 of the 3 following actions. If the Forward is Card Name Squall, select up "
+				+ "to 3 of the 3 following actions instead. \"Choose 1 Forward. Dull it.\" \"Choose 1 Forward. "
+				+ "Freeze it.\" \"Draw 1 card.\"", rinoa,
+				ctx -> when(ctx.triggeringEnteredCard()).thenReturn(makeForward("Squall", "Ice", 4, 8000)), 3, true);
+	}
+
+	// 26-035R Snow — "If Snow entered the field due to an ability of a Category XIII Character".
+	@Test
+	void snowUpgradesWhenACategoryXiiiAbilityPutHimOut() {
+		CardData snow = makeForward("Snow", "Ice", 4, 8000);
+		assertSelectUpgrade("select 1 of the 2 following actions. If Snow entered the field due to an ability of "
+				+ "a Category XIII Character, select up to 2 of the 2 following actions instead. \"Draw 1 card.\" "
+				+ "\"Your opponent discards 1 card.\"", snow,
+				ctx -> when(ctx.enteredFieldByAbilityOfCategory(snow, "XIII")).thenReturn(true), 2, true);
+	}
+
+	// 26-007R Sazh — "Deal it 4000 damage. If Sazh entered the field due to an ability of a Category
+	// XIII Character, deal it 8000 damage instead." The unread condition split off and both hits ran.
+	@Test
+	void sazhDealsOneOfHisTwoAmountsNeverBoth() {
+		CardData sazh = makeForward("Sazh", "Fire", 3, 7000);
+		String text = "choose 1 Forward opponent controls. Deal it 4000 damage. If Sazh entered the field due "
+				+ "to an ability of a Category XIII Character, deal it 8000 damage instead.";
+		ForwardTarget t = new ForwardTarget(true, 0, ForwardTarget.CardZone.FORWARD);
+		for (boolean met : new boolean[] { false, true }) {
+			GameContext ctx = mock(GameContext.class);
+			when(ctx.consumePreloadedTargets()).thenReturn(List.of(t));
+			when(ctx.enteredFieldByAbilityOfCategory(sazh, "XIII")).thenReturn(met);
+			ActionResolver.parse(text, sazh).accept(ctx);
+			verify(ctx).damageTarget(t, met ? 8000 : 4000);
+			verify(ctx, never()).damageTarget(t, met ? 4000 : 8000);
+		}
+	}
+
+	// 5-142H Rosa — "Choose 1 Forward. During this turn, the next damage dealt to it is reduced by 1000
+	// instead. If the Forward is Card Name Cecil, … reduced by 3000 instead." "The Forward" is the
+	// chosen one; the upgrade had been left to a secondary nothing read.
+	@Test
+	void rosaShieldsCecilForThreeThousand() {
+		String text = "Choose 1 Forward. During this turn, the next damage dealt to it is reduced by 1000 instead. "
+				+ "If the Forward is Card Name Cecil, during this turn, the next damage dealt to it is reduced by "
+				+ "3000 instead.";
+		ForwardTarget t = new ForwardTarget(true, 0, ForwardTarget.CardZone.FORWARD);
+		for (String chosen : new String[] { "Cecil", "Kain" }) {
+			GameContext ctx = mock(GameContext.class);
+			when(ctx.consumePreloadedTargets()).thenReturn(List.of(t));
+			when(ctx.p1Forward(0)).thenReturn(makeForward(chosen, "Light", 3, 7000));
+			ActionResolver.parse(text, makeForward("Rosa", "Water", 2, 5000)).accept(ctx);
+			int expected = chosen.equals("Cecil") ? 3000 : 1000;
+			verify(ctx).shieldNextIncomingDamageReduction(t, expected);
+			verify(ctx, never()).shieldNextIncomingDamageReduction(t, 4000 - expected);
+		}
+	}
+
+	// "If Genesis enters the field due to Warp" read the placement flag, which is down again by the
+	// time a trigger resolves off the Stack — so the answer was always no. It is kept on the card now.
+	@Test
+	void aWarpedInCardStillAnswersWarpWhenItsTriggerResolvesLater() {
+		MainWindow mw = new MainWindow();
+		CardData genesis = makeForward("Genesis", "Ice", 5, 9000);
+		CardData other = makeForward("Other", "Ice", 2, 5000);
+		mw.lastCardWarpedIn = true;
+		placeP2Forward(mw, genesis);
+		mw.lastCardWarpedIn = false;
+		placeP2Forward(mw, other);
+
+		GameContext ctx = mw.buildGameContext(false);
+		mw.currentAbilitySource = genesis;
+		assertTrue(ctx.sourceEnteredViaWarp(), "Genesis's trigger, resolved after the placement finished");
+		mw.currentAbilitySource = other;
+		assertFalse(ctx.sourceEnteredViaWarp(), "a card that did not warp in");
+
+		mw.breakP2Forward(mw.p2ForwardCards.indexOf(genesis));
+		placeP2Forward(mw, genesis);
+		mw.currentAbilitySource = genesis;
+		assertFalse(ctx.sourceEnteredViaWarp(), "back on the field some other way");
+		mw.currentAbilitySource = null;
+	}
+
+	@Test
+	void aCardRemembersWhoseAbilityPutItOnTheField() {
+		MainWindow mw = new MainWindow();
+		CardData lightning = makeCategoryForward("Lightning", "Light", "XIII");
+		CardData snow = makeForward("Snow", "Ice", 4, 8000);
+		CardData cast = makeForward("Cast", "Ice", 2, 5000);
+		mw.currentAbilitySource = lightning;
+		placeP2Forward(mw, snow);
+		mw.currentAbilitySource = null;
+		placeP2Forward(mw, cast);
+		GameContext ctx = mw.buildGameContext(false);
+		assertTrue(ctx.enteredFieldByAbilityOfCategory(snow, "XIII"), "put out by Lightning's ability");
+		assertFalse(ctx.enteredFieldByAbilityOfCategory(snow, "X"), "and Lightning is not Category X");
+		assertFalse(ctx.enteredFieldByAbilityOfCategory(cast, "XIII"), "nothing was resolving");
+	}
+
+	// 9-002H Ifrita — "a total of 5 or more Card Name Ifrita and/or Card Name Ifrit in your Break Zone
+	// (before paying the cost for Ifrita)": an Ifrit discarded to pay for her does not count.
+	@Test
+	void ifritaCountsHerBreakZoneAsItWasBeforeHerCost() {
+		MainWindow mw = new MainWindow();
+		CardData ifrita = makeSummon("Ifrita", "Fire", 3, "");
+		for (int i = 0; i < 4; i++) mw.gameState.getP1BreakZone().add(makeSummon("Ifrit", "Fire", 2, ""));
+		CardData discarded = makeSummon("Ifrit", "Fire", 2, "");
+		mw.gameState.getP1BreakZone().add(discarded);
+		DamageInsteadCondition parsed = ActionResolver.parseDamageInsteadCondition("you have a total of 5 or "
+				+ "more Card Name Ifrita and/or Card Name Ifrit in your Break Zone (before paying the cost for Ifrita)");
+		assertInstanceOf(DamageInsteadCondition.BreakZoneNamesBeforePayingAtLeast.class, parsed);
+		DamageInsteadCondition.BreakZoneNamesBeforePayingAtLeast b =
+				(DamageInsteadCondition.BreakZoneNamesBeforePayingAtLeast) parsed;
+		DamageInsteadCondition bound = new DamageInsteadCondition.BreakZoneNamesBeforePayingAtLeast(
+				b.min(), b.names(), b.payerName(), ifrita);
+		GameContext ctx = mw.buildGameContext(true);
+		assertTrue(ActionResolver.insteadConditionMet(ctx, bound), "five in the Break Zone, none paid for her");
+
+		mw.lastCastPaymentCard = ifrita;
+		mw.lastCastPaymentDiscards.add(discarded);
+		assertFalse(ActionResolver.insteadConditionMet(ctx, bound), "one of the five arrived paying for her");
+	}
+
+	@Test
+	void pandemoniumsOwnCastDoesNotCountTowardItsUpgrade() {
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.selfCardsCastThisTurn()).thenReturn(2);
+		when(ctx.countCardsNamedCastThisTurn("Pandemonium")).thenReturn(1);
+		CardData pandemonium = makeSummon("Pandemonium", "Wind", 4, "");
+		ActionResolver.parse("Select 1 of the 2 following actions. If you have cast 2 or more cards other than "
+				+ "Pandemonium this turn, select up to 2 of the 2 following actions instead. \"Choose 1 Forward of "
+				+ "cost 5 or more. Deal it 8000 damage.\" \"Draw 1 card.\"", pandemonium).accept(ctx);
+		verify(ctx).chooseActions(eq(pandemonium), anyList(), eq(1), eq(false));
+	}
+
+	@Test
+	void anUnreadAttackersGatePayoffLeavesTheSentenceUnparsed() {
+		assertNull(ActionResolver.parse(
+				"If 2 or more Forwards were attacking this turn, frobnicate the moon.", null));
 	}
 
 	// =========================================================================================

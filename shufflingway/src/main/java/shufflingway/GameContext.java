@@ -511,6 +511,12 @@ public interface GameContext {
     void opponentMillIfSameElementDraw(int millCount, int drawCount);
 
     /**
+     * {@link #opponentMillIfSameElementDraw} with card type in place of Element — 8-055C Selkie,
+     * "If both cards are of the same type, draw 1 card."
+     */
+    void opponentMillIfSameTypeDraw(int millCount, int drawCount);
+
+    /**
      * Moves the top {@code count} cards from the ability user's own main deck into their Break Zone,
      * animating each card sliding from deck to break zone.
      */
@@ -2041,6 +2047,12 @@ public interface GameContext {
      */
     int forwardsAttackingThisTurnCount();
 
+    /**
+     * {@link #forwardsAttackingThisTurnCount()} narrowed to one Category — 19-138S Lightning's "if
+     * N or more Category XIII Forwards were attacking this turn". {@code null} counts every one.
+     */
+    int forwardsAttackingThisTurnCount(String categoryFilter);
+
 
     /**
      * Whether {@code source} has activated the Special ability named {@code specialName} this turn
@@ -2995,6 +3007,12 @@ public interface GameContext {
      * how many.
      */
     List<CardData> ownRemovedFromGame();
+
+    /**
+     * {@link #ownRemovedFromGame()} for the opponent's zone — read around 14-127H Zidane's removal
+     * from the opponent's hand to learn which card became castable.
+     */
+    List<CardData> opponentRemovedFromGame();
 
     int removeCardsFromBreakZoneFromGame(int maxCount, boolean upTo, boolean opponentZone,
             boolean bothZones, String element, int costVal, String costCmp,
@@ -5163,6 +5181,8 @@ public interface GameContext {
      * Returns {@code true} if the source card of this auto-ability entered the field
      * via its Warp ability (played from the Break Zone), not from hand.
      * Used for "If [card] enters the field due to Warp" conditionals.
+     * Read off the card whose ability is resolving, by identity, so it still holds when the
+     * trigger resolves off the Stack after the placement has finished.
      */
     boolean sourceEnteredViaWarp();
 
@@ -5616,6 +5636,26 @@ public interface GameContext {
      * the field. 14-038H Lugae's "that Forward gains +2000 power and Brave".
      */
     ForwardTarget triggeringEnteredForwardTarget();
+
+    /**
+     * The card whose arrival fired the watcher being resolved, wherever it is now, or {@code null}
+     * — 9-038R Rinoa's "If the Forward is Card Name Squall".
+     */
+    CardData triggeringEnteredCard();
+
+    /**
+     * Whether {@code card} last entered the field while an ability of a Character in
+     * {@code category} was resolving — 26-035R Snow's "entered the field due to an ability of a
+     * Category XIII Character". By identity; {@code false} for a card cast, or put out by a Summon.
+     */
+    boolean enteredFieldByAbilityOfCategory(CardData card, String category);
+
+    /**
+     * The cards discarded for CP to pay for {@code card}, or an empty list when {@code card} was not
+     * the last card paid for — 9-002H Ifrita's Break Zone "before paying the cost". Owner-checked by
+     * identity like {@link #cardsDiscardedToCast}.
+     */
+    List<CardData> cardsDiscardedToCastList(CardData card);
 
     /**
      * Asks the resolving player to reveal any number of cards from their hand, and answers how many

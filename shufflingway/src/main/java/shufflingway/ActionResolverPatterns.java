@@ -1129,6 +1129,8 @@ final class ActionResolverPatterns {
         "your\\s+next\\s+Active\\s+Phase\\.\\s+)?" +
         "If\\s+(?<cond>.+?),\\s+deal\\s+(?:it|them|that\\s+(?:Forward|Character|Backup|Monster))\\s+" +
         "(?<alt>\\d+)\\s+damage\\s+instead\\.?" +
+        // A second, higher tier — 8-016H Vivi's "If you control 7 or more …, deal it 10000 damage instead."
+        "(?:\\s+If\\s+(?<cond2>[^.]+?),\\s+deal\\s+(?:it|them)\\s+(?<alt2>\\d+)\\s+damage\\s+instead\\.?)?" +
         "(?:\\s+(?<skipafter>[A-Za-z][^.]*?)\\s+(?:will|does)\\s+not\\s+activate\\s+during\\s+" +
         "your\\s+next\\s+Active\\s+Phase[.!]?)?"
     );
@@ -2184,6 +2186,18 @@ final class ActionResolverPatterns {
      * {@link #REVEAL_SELECT_HAND_RFP}: the two share a three-sentence prefix, so this must be
      * tried first or the delayed return is silently dropped. Group {@code count} — how many.
      */
+    /**
+     * {@link #REVEAL_SELECT_HAND_RFP} followed by "You can cast it as though you owned it this
+     * turn." — 14-127H Zidane. Anchored. Group {@code count}.
+     */
+    static final Pattern REVEAL_SELECT_HAND_RFP_CASTABLE_THIS_TURN = Pattern.compile(
+        "(?i)^Your\\s+opponent\\s+reveals?\\s+(?:his/her|his|her|their)\\s+hand[.!]\\s+" +
+        "Select\\s+(?<count>\\d+)\\s+cards?\\s+in\\s+(?:his/her|his|her|their)\\s+hand[.!]\\s+" +
+        "Your\\s+opponent\\s+removes?\\s+(?:it|them)\\s+from\\s+(?:the\\s+)?game[.!]\\s+" +
+        "You\\s+can\\s+cast\\s+(?:it|them)\\s+as\\s+though\\s+you\\s+owned\\s+(?:it|them)\\s+this\\s+turn[.!]?" +
+        // The use restriction the action ability prints after it; enforced by UseConditions.
+        "(?:\\s+You\\s+can\\s+only\\s+use\\s+this\\s+ability\\b[^.]*[.!]?)?\\s*$"
+    );
     static final Pattern REVEAL_SELECT_HAND_RFP_UNTIL_END_OF_OPP_TURN = Pattern.compile(
         "(?i)Your\\s+opponent\\s+reveals?\\s+(?:his/her|his|her|their)\\s+hand[.!]\\s+" +
         "Select\\s+(?:up\\s+to\\s+)?(?<count>\\d+)\\s+cards?\\s+(?:from|in)\\s+" +
@@ -3315,9 +3329,12 @@ final class ActionResolverPatterns {
      * matches(), so Malboro's longer "... and 3000 power" is not claimed off this prefix — that
      * text is a different effect and has its own pattern,
      * {@link #OPP_FWDS_LOSE_ALL_ABILITIES_AND_POWER_EOT}, read ahead of this one.
+     *
+     * <p>Group {@code job}: a Job filter, which only arrives by substitution — 27-010L Xande's
+     * "the Forwards with the named Job" reaches here as "the Job &lt;X&gt; Forwards".
      */
     static final Pattern OPP_FWDS_LOSE_ALL_ABILITIES_EOT = Pattern.compile(
-        "(?i)All\\s+(?:the\\s+)?Forwards?\\s+(?:(?:your\\s+)?opponent\\s+controls?)\\s+" +
+        "(?i)All\\s+(?:the\\s+)?(?:Job\\s+(?<job>.+?)\\s+)?Forwards?\\s+(?:(?:your\\s+)?opponent\\s+controls?)\\s+" +
         "lose\\s+(?:all\\s+)?(?:their\\s+)?abilities\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn[.!]?"
     );
     /**
@@ -3498,7 +3515,25 @@ final class ActionResolverPatterns {
      * cancel ahead of it.
      */
     static final Pattern RETURN_NAMED_TO_OWNERS_HAND = Pattern.compile(
-        "(?i)Return\\s+(?!(?:it|them|that|this|those|these)\\b)(?<named>.+?)\\s+to\\s+its\\s+owner(?:'s|s')?\\s+hand[.!]?"
+        "(?i)Return\\s+(?!(?:it|them|that|this|those|these)\\b)(?!\\d+\\s)(?!the\\s+chosen\\b)(?<named>.+?)\\s+to\\s+its\\s+owner(?:'s|s')?\\s+hand[.!]?"
+    );
+    /** "the chosen &lt;card&gt;" — a reference back to a Choose made earlier in the ability. */
+    static final Pattern CHOSEN_REFERENCE = Pattern.compile(
+        "(?i)\\bthe\\s+chosen\\s+(?:Forwards?|Characters?|Backups?|Monsters?)\\b"
+    );
+    /**
+     * Matches "[You may] return N &lt;type&gt; you control to its/their owner's hand(s)." — the
+     * controller picks from their own field. 10-117H / 25-096L Tidus, 6-119C Chime.
+     *
+     * <p>A count, not a name: {@link #RETURN_NAMED_TO_OWNERS_HAND} used to read "1 Backup you
+     * control" as a card name, return nothing, and let the "When you do so" payoff run anyway.
+     * Groups: {@code may}, {@code count}, {@code type}, {@code except} (26-114H Asura's "other than
+     * [Self]").
+     */
+    static final Pattern RETURN_OWN_TYPE_TO_OWNERS_HAND = Pattern.compile(
+        "(?i)^(?<may>You\\s+may\\s+)?return\\s+(?<count>\\d+)\\s+(?<type>Forwards?|Backups?|Monsters?|Characters?)\\s+" +
+        "(?:other\\s+than\\s+(?<except>.+?)\\s+)?" +
+        "you\\s+control\\s+to\\s+(?:its|their)\\s+owners?(?:'s|')?\\s+hands?[.!]?\\s*$"
     );
     /**
      * Matches "Return [name] to your hand." — named card, not a pronoun.  The name is limited to
@@ -5440,6 +5475,19 @@ final class ActionResolverPatterns {
     static final Pattern FOLLOWUP_SHIELD_NEXT_DMG_REDUCTION = Pattern.compile(
         "(?i)(?:During\\s+this\\s+turn,\\s+the\\s+next\\s+damage\\s+dealt\\s+to\\s+(?:it|him)\\s+is\\s+reduced\\s+by|Reduce\\s+the\\s+next\\s+damage\\s+dealt\\s+to\\s+(?:it|him)\\s+this\\s+turn\\s+by)\\s+(?<reduction>\\d+)(?:\\s+instead)?\\.?"
     );
+    /**
+     * The shield above with a named upgrade on the chosen card — 5-142H Rosa: "During this turn, the
+     * next damage dealt to it is reduced by 1000 instead. If the Forward is Card Name Cecil, during
+     * this turn, the next damage dealt to it is reduced by 3000 instead." Anchored over the whole
+     * followup. "The Forward" is the chosen one here, not an arriving one (compare 9-038R Rinoa).
+     * Groups: {@code base}, {@code name}, {@code alt}.
+     */
+    static final Pattern FOLLOWUP_SHIELD_NEXT_DMG_REDUCTION_NAMED_UPGRADE = Pattern.compile(
+        "(?i)^During\\s+this\\s+turn,\\s+the\\s+next\\s+damage\\s+dealt\\s+to\\s+it\\s+is\\s+reduced\\s+by\\s+" +
+        "(?<base>\\d+)\\s+instead[.!]\\s+If\\s+the\\s+(?:chosen\\s+)?Forward\\s+is\\s+(?:a\\s+)?Card\\s+Name\\s+" +
+        "(?<name>[^,]+),\\s+during\\s+this\\s+turn,\\s+the\\s+next\\s+damage\\s+dealt\\s+to\\s+it\\s+is\\s+" +
+        "reduced\\s+by\\s+(?<alt>\\d+)\\s+instead[.!]?\\s*$"
+    );
     /** Matches "During this turn, the damage dealt to it is increased by N instead." */
     static final Pattern FOLLOWUP_DEBUFF_INCOMING_DMG_INCREASE = Pattern.compile(
         "(?i)During\\s+this\\s+turn,\\s+the\\s+damage\\s+dealt\\s+to\\s+it\\s+is\\s+increased\\s+by\\s+(?<amount>\\d+)\\s+instead\\.?"
@@ -7013,14 +7061,14 @@ final class ActionResolverPatterns {
     );
     /**
      * Matches "Your opponent puts the top N cards of his/her deck into the Break Zone.
-     * If both [all] cards are of the same Element, draw M card(s)."
-     * Groups: {@code count}, {@code draw}.
+     * If both [all] cards are of the same Element, draw M card(s)." — or "the same type", 8-055C
+     * Selkie. Groups: {@code count}, {@code draw}, {@code attr} (Element or type).
      */
     static final Pattern OPPONENT_MILL_IF_SAME_ELEMENT_DRAW = Pattern.compile(
         "(?i)Your\\s+opponent\\s+puts?\\s+" +
         "(?:the\\s+top\\s+(?<count>\\d+)\\s+cards?\\s+of|(?<count2>\\d+)\\s+cards?\\s+from\\s+the\\s+top\\s+of)\\s+" +
         "(?:his/her|his|her|their)\\s+deck\\s+into\\s+the\\s+Break\\s+Zone[.!]?\\s+" +
-        "If\\s+(?:both|all)\\s+(?:the\\s+)?cards?\\s+are\\s+of\\s+the\\s+same\\s+Element,?\\s+" +
+        "If\\s+(?:both|all)\\s+(?:the\\s+)?cards?\\s+are\\s+of\\s+the\\s+same\\s+(?<attr>Element|type),?\\s+" +
         "draw\\s+(?<draw>\\d+)\\s+cards?[.!]?"
     );
     static final Pattern SELF_MILL_PATTERN = Pattern.compile(
@@ -9906,6 +9954,18 @@ final class ActionResolverPatterns {
      *
      * <p>Groups: {@code dmgCount}, {@code dmgUpTo} (optional), {@code dmgSelect}.
      */
+    /**
+     * Any other game-state upgrade: "If &lt;condition&gt;, select [up to] M of the K following
+     * actions instead." — 17-138S Rosa's "If you control a Card Name Cecil". Read after the
+     * specific upgrades above; the condition goes through {@code parseDamageInsteadCondition}.
+     * Groups: {@code cond}, {@code stUpTo}, {@code stSelect}.
+     */
+    static final Pattern SELECT_FOLLOWING_ACTIONS_STATE_UPGRADE = Pattern.compile(
+        "(?i)^If\\s+(?<cond>[^,]+),\\s+" +
+        "select\\s+(?<stUpTo>up\\s+to\\s+)?(?<stSelect>\\d+)\\s+of\\s+the\\s+\\d+\\s+" +
+        "following\\s+actions?\\s+instead[.!]?\\s*",
+        Pattern.DOTALL
+    );
     static final Pattern SELECT_FOLLOWING_ACTIONS_DAMAGE_UPGRADE = Pattern.compile(
         "(?i)^If\\s+you\\s+have\\s+received\\s+(?<dmgCount>\\d+)\\s+points?\\s+of\\s+damage" +
         "(?:\\s+or\\s+more)?,\\s+" +
@@ -10309,6 +10369,17 @@ final class ActionResolverPatterns {
         Pattern.DOTALL
     );
     /**
+     * Matches a Choose followup "You may return N &lt;type&gt; you control to its owner's hand. If
+     * you do so, &lt;action on the chosen card&gt;." — 6-119C Chime. The return is read by
+     * {@link #RETURN_OWN_TYPE_TO_OWNERS_HAND}. Groups: {@code ret} (with its "You may"),
+     * {@code effect}.
+     */
+    static final Pattern FOLLOWUP_MAY_RETURN_OWN_IF_DO_SO = Pattern.compile(
+        "(?i)^(?<ret>You\\s+may\\s+return\\s+\\d+\\s+(?:Forwards?|Backups?|Monsters?|Characters?)\\s+you\\s+control\\s+" +
+        "to\\s+(?:its|their)\\s+owners?(?:'s|')?\\s+hands?)[.!]\\s+If\\s+you\\s+do\\s+so[,.]?\\s+(?<effect>.+)$",
+        Pattern.DOTALL
+    );
+    /**
      * Matches "[primary action]. Then, if you don't pay 《1》 for each CP required to cast chosen
      * [type], put it into the Break Zone." (Ultimecia 27-092H) — a followup whose cost is the
      * chosen card's own cost, so it can only be priced once the target is known.
@@ -10593,17 +10664,27 @@ final class ActionResolverPatterns {
      * why this cannot go through the fixed-amount mass-damage family however its exclusion is
      * widened.
      *
-     * <p>The rider is matched and discarded rather than left to trail: it is a continuous
-     * replacement read as the damaged Forward leaves the field, not a step of this resolution, and
-     * an unmatched tail would leave the anchor unsatisfied. Groups: {@code card}.
+     * <p>The rider is a replacement armed on each Forward as it is dealt the damage, so a lethal
+     * hit is already covered when it breaks. Groups: {@code card}; {@code rider}, present when the
+     * remove-from-game sentence trails.
      */
     static final Pattern DEAL_SAME_AMOUNT_TO_ALL_FORWARDS_EXCEPT = Pattern.compile(
         "(?i)^deal\\s+the\\s+same\\s+amount\\s+of\\s+damage\\s+to\\s+all(?:\\s+the)?\\s+Forwards?\\s+" +
         "other\\s+than\\s+(?<card>[^.!]+?)[.!]" +
-        "(?:\\s*If\\s+(?:a|the)\\s+Forward\\s+damaged\\s+by\\s+this\\s+ability\\s+is\\s+put\\s+" +
+        "(?<rider>\\s*If\\s+(?:a|the)\\s+Forward\\s+damaged\\s+by\\s+this\\s+ability\\s+is\\s+put\\s+" +
         "(?:from\\s+the\\s+field\\s+)?into\\s+the\\s+Break\\s+Zone\\s+" +
         "(?:this\\s+turn|(?:on|during)\\s+the\\s+same\\s+turn),\\s+" +
         "remove\\s+it\\s+from\\s+the\\s+game\\s+instead[.!]?)?\\s*$"
+    );
+    /**
+     * Matches "Deal N damage for every M &lt;type&gt; you control to all the Forwards opponent
+     * controls." — 20-110H Hippokampos. Anchored: the count is the whole point of the sentence.
+     * Groups: {@code per}, {@code group}, {@code type}.
+     */
+    static final Pattern DEAL_DAMAGE_PER_GROUP_TO_ALL_OPP_FORWARDS = Pattern.compile(
+        "(?i)^Deal\\s+(?<per>\\d+)\\s+damage\\s+for\\s+every\\s+(?<group>\\d+)\\s+" +
+        "(?<type>Characters?|Forwards?|Backups?|Monsters?)\\s+you\\s+control\\s+" +
+        "to\\s+all(?:\\s+the)?\\s+Forwards\\s+(?:your\\s+)?opponent\\s+controls[.!]?\\s*$"
     );
     /** Matches "Deal N damage to [all] Forwards of all Elements except [Element]." */
     static final Pattern DEAL_DAMAGE_TO_FORWARDS_EXCEPT_ELEMENT = Pattern.compile(
@@ -10883,7 +10964,7 @@ final class ActionResolverPatterns {
             // Combined "Job X or Card Name Y" — captured with OR semantics in the modifier
             "Job\\s+(?<joborg>.+?)\\s+(?:and/)?or\\s+Card\\s+Name\\s+(?<cnameborg>\\S+)" +
             // Existing: optional job then card-name or type
-            "|(?:Job\\s+(?<job>.+?)\\s+)?(?:Card\\s+Name\\s+(?<cardname>\\S+)|(?<type>Forwards?|Backups?|Monsters?|Summons?|card))" +
+            "|(?:Job\\s+(?<job>.+?)\\s+)?(?:Card\\s+Name\\s+(?<cardname>\\S+)|(?<type>Forwards?|Backups?|Monsters?|Characters?|Summons?|card))" +
             // Job with no type word — last, and pinned to the clause that follows it
             "|Job\\s+(?<jobonly>.+?)(?=\\s+is\\s+reduced\\s+by\\s+\\d)" +
         ")\\s+" +
@@ -11484,6 +11565,14 @@ final class ActionResolverPatterns {
     static final Pattern FOLLOWUP_IF_STATE_CONDITION_CLAUSE = Pattern.compile(
         "(?i)If\\s+(?<cond>[^,]+?),\\s*"
     );
+    /**
+     * A Choose followup whose last sentence is a gated addition to the chosen card: "&lt;head&gt;.
+     * If &lt;condition&gt;, it also &lt;action&gt;." — 9-017C Belias, where a draw sits between
+     * the grant and the gate. Groups: {@code head}, {@code cond}, {@code action}.
+     */
+    static final Pattern FOLLOWUP_TRAILING_STATE_GATED_ALSO = Pattern.compile(
+        "(?is)^(?<head>.+?[.!])\\s+If\\s+(?<cond>[^,.]+),\\s+it\\s+also\\s+(?<action>[^.\"]+)[.!]?\\s*$"
+    );
 
     static final Pattern FOLLOWUP_IF_SELF_CONTROLS_N_ELEMENT_TYPE_ACTION = Pattern.compile(
         "(?i)^If\\s+you\\s+control\\s+" + SELF_CONTROLS_QUALIFIER +
@@ -11988,6 +12077,20 @@ final class ActionResolverPatterns {
         "(?<base>.+?)[.]\\s*" +
         "If\\s+(?<n2>\\d+)\\s+or\\s+more\\s+Forwards\\s+were\\s+attacking\\s+this\\s+turn,\\s+" +
         "(?<upgrade>.+?)\\s+instead[.!]?$"
+    );
+    /**
+     * Matches one sentence gated on this turn's attackers: "If N or more [Category X] Forwards were
+     * attacking this turn, [also] &lt;effect&gt;." — 19-138S Lightning's two upgrade sentences.
+     *
+     * <p>The effect stops at the first full stop, so a text carrying a second gated sentence does
+     * not match whole and hand the pair to a single payoff parser.
+     *
+     * <p>Groups: {@code count} — the threshold; {@code cat} — the Category, absent when every
+     * Forward counts; {@code effect} — the payoff.
+     */
+    static final Pattern IF_FORWARDS_ATTACKING_THIS_TURN_GATE = Pattern.compile(
+        "(?is)^If\\s+(?<count>\\d+)\\s+or\\s+more\\s+(?:Category\\s+(?<cat>\\S+)\\s+)?" +
+        "Forwards\\s+were\\s+attacking\\s+this\\s+turn,\\s*(?<effect>[^.]+)[.]?\\s*$"
     );
     /**
      * Matches "if you control N or less/fewer [Forwards/Backups/Monsters/Characters], [effect]."

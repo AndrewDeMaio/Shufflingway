@@ -269,6 +269,8 @@ public record ControlCondition(
         if (cardType       != null) sb.append(' ').append(cardType);
         if (excludeElement != null) sb.append(" !").append(excludeElement);
         if (!orCardNames.isEmpty()) sb.append('/').append(String.join("|", orCardNames));
+        if (!orAlternatives.isEmpty()) sb.append(" any(").append(orAlternatives.stream()
+                .map(ControlCondition::toString).collect(Collectors.joining(" | "))).append(')');
         if (stateCardName  != null) sb.append(' ').append(namedState.name().toLowerCase(Locale.ROOT))
                                       .append(':').append(stateCardName);
         return sb.toString();

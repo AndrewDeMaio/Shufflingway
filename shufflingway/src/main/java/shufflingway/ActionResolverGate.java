@@ -256,6 +256,40 @@ final class ActionResolverGate {
                 && tryParseBreakZoneCountGate(text, source, xValue) == null;
     }
 
+    /**
+     * "If N or more [Category X] Forwards were attacking this turn, [also] &lt;effect&gt;." — one
+     * gated sentence, 19-138S Lightning. Declines unless the payoff parses; the dispatch then
+     * stops on {@link #forwardsAttackingGateUnreadable} rather than letting the payoff's own
+     * parser run it ungated.
+     */
+    static Consumer<GameContext> tryParseForwardsAttackingThisTurnGate(String text, CardData source, int xValue) {
+        Matcher m = IF_FORWARDS_ATTACKING_THIS_TURN_GATE.matcher(text.trim());
+        if (!m.matches()) return null;
+
+        final int threshold = Integer.parseInt(m.group("count"));
+        final String category = m.group("cat");
+        Consumer<GameContext> inner = parse(m.group("effect").trim() + ".", source, xValue);
+        if (inner == null) return null;
+
+        final String label = threshold + "+ " + (category != null ? "Category " + category + " " : "")
+                + "Forwards attacking this turn";
+        return ctx -> {
+            int have = ctx.forwardsAttackingThisTurnCount(category);
+            if (have >= threshold) {
+                ctx.logEntry("Effect: " + label + " (" + have + ") — condition met");
+                inner.accept(ctx);
+            } else {
+                ctx.logEntry("Effect: " + label + " (" + have + ") — not met, skipped");
+            }
+        };
+    }
+
+    /** True when {@code text} is an attackers-this-turn gate whose payoff no parser reads. */
+    static boolean forwardsAttackingGateUnreadable(String text, CardData source, int xValue) {
+        return IF_FORWARDS_ATTACKING_THIS_TURN_GATE.matcher(text.trim()).matches()
+                && tryParseForwardsAttackingThisTurnGate(text, source, xValue) == null;
+    }
+
     static Consumer<GameContext> tryParseControlConditionGate(String text, CardData source, int xValue) {
         Matcher m = CONTROL_CONDITION_GATE.matcher(text.trim());
         if (!m.matches()) return null;

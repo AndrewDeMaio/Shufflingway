@@ -1895,6 +1895,12 @@ final class AutoAbilityTriggers {
 		// Recorded ahead of the suppression below: a card whose abilities do not trigger has still
 		// entered the field.
 		mw.turn(isP1).charactersEnteredThisTurn.add(card);
+		// Why it entered, for "entered the field due to an ability of …" (26-035R Snow). An
+		// ability resolving right now is the cause; a Summon is not an ability.
+		CardData cause = mw.currentAbilitySource;
+		if (cause != null && cause != card && !cause.isSummon()) mw.enteredFieldByAbilityOf.put(card, cause);
+		else mw.enteredFieldByAbilityOf.remove(card);
+		if (mw.lastCardWarpedIn) mw.enteredViaWarp.add(card); else mw.enteredViaWarp.remove(card);
 		if (mw.suppressAutoAbilityForNextCards > 0) {
 			mw.suppressAutoAbilityForNextCards--;
 			// Re-evaluate field boosts even when ETF auto-abilities are suppressed
@@ -3072,6 +3078,8 @@ final class AutoAbilityTriggers {
 		// Jack Garland 27-111L's named Job, on the same footing as the counters above: it is a
 		// property of this copy's stay on the field, not of the card.
 		mw.gameState.clearNamedJob(departing);
+		mw.enteredFieldByAbilityOf.remove(departing);
+		mw.enteredViaWarp.remove(departing);
 		// Re-evaluate all conditional field boosts now that the field composition has changed
 		mw.refreshAllForwardSlots();
 		for (int i = 0; i < mw.p2ForwardCards.size(); i++) mw.refreshP2ForwardSlot(i);

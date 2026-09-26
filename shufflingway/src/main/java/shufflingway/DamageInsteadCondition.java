@@ -1,5 +1,7 @@
 package shufflingway;
 
+import java.util.List;
+
 /**
  * Parsed condition for "Deal it N damage. If &lt;condition&gt;, deal it M damage instead."
  */
@@ -22,7 +24,14 @@ public sealed interface DamageInsteadCondition
                 DamageInsteadCondition.YouControlAtMost,
                 DamageInsteadCondition.NamedPowerAtLeast,
                 DamageInsteadCondition.YouHaveMoreDamageThanOpponent,
-                DamageInsteadCondition.BreakZoneJobOrNameAtLeast {
+                DamageInsteadCondition.BreakZoneJobOrNameAtLeast,
+                DamageInsteadCondition.YouCastAtLeastOtherThan,
+                DamageInsteadCondition.PaidExtraCost,
+                DamageInsteadCondition.NamedEnteredViaWarp,
+                DamageInsteadCondition.PartyAtLeast,
+                DamageInsteadCondition.EnteredCardNamed,
+                DamageInsteadCondition.NamedEnteredByAbilityOfCategory,
+                DamageInsteadCondition.BreakZoneNamesBeforePayingAtLeast {
 
     /** "If it is active" */
     record TargetIsActive() implements DamageInsteadCondition {}
@@ -102,4 +111,41 @@ public sealed interface DamageInsteadCondition
      * 25-002C) — cards that are Job X, Card Name Y, or both, each counted once.
      */
     record BreakZoneJobOrNameAtLeast(int min, String job, String name) implements DamageInsteadCondition {}
+
+    /**
+     * "If you have cast N or more cards other than [Name] this turn" (21-054H Pandemonium) — the
+     * turn's casts less those of the named card.
+     */
+    record YouCastAtLeastOtherThan(int min, String name) implements DamageInsteadCondition {}
+
+    /** "If you paid the extra cost" (8-060L). */
+    record PaidExtraCost() implements DamageInsteadCondition {}
+
+    /**
+     * "If [Name] enters the field due to Warp" (20-027C Genesis). Names the card asking; a caller
+     * that knows the source checks the name, as for {@link NamedPowerAtLeast}.
+     */
+    record NamedEnteredViaWarp(String name) implements DamageInsteadCondition {}
+
+    /** "If N or more Forwards form the party" (15-128L) — the attacking party's size. */
+    record PartyAtLeast(int min) implements DamageInsteadCondition {}
+
+    /** "If the Forward is Card Name X" (9-038R Rinoa) — the card whose arrival fired the trigger. */
+    record EnteredCardNamed(String name) implements DamageInsteadCondition {}
+
+    /**
+     * "If [Name] entered the field due to an ability of a Category X Character" (26-035R Snow).
+     * {@code source} is the card asking, bound by the caller that knows it (parsed as {@code null},
+     * which never holds).
+     */
+    record NamedEnteredByAbilityOfCategory(String name, String category, CardData source)
+            implements DamageInsteadCondition {}
+
+    /**
+     * "If you have a total of N or more Card Name X and/or Card Name Y in your Break Zone (before
+     * paying the cost for [Name])" (9-002H Ifrita) — the Break Zone less what was discarded to pay
+     * for {@code payer}. {@code payer} is bound by the caller, like the record above.
+     */
+    record BreakZoneNamesBeforePayingAtLeast(int min, List<String> names, String payerName, CardData payer)
+            implements DamageInsteadCondition {}
 }
