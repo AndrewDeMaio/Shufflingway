@@ -944,6 +944,94 @@ final class ActionResolverSearch {
                     null, null, mustAdd);
         };
     }
+    /**
+     * A reveal-and-add followed by "If it is a &lt;filter&gt;, also &lt;payoff&gt;." — 18-038C Kytes,
+     * "If it is a Category XII Character, also activate Kytes". The payoff reads the card the
+     * reveal added ({@link GameContext#cardAddedToHandByLook}); nothing added, nothing more.
+     */
+    static Consumer<GameContext> tryParseRevealAddThenIfAddedIsAlso(String text, CardData source, int xValue) {
+        Matcher m = REVEAL_ADD_THEN_IF_ADDED_IS_ALSO.matcher(text.trim());
+        if (!m.matches()) return null;
+        Consumer<GameContext> reveal = parse(m.group("reveal").trim(), source, xValue);
+        Consumer<GameContext> payoff = parse(m.group("payoff").trim() + ".", source, xValue);
+        if (reveal == null || payoff == null) return null;
+        final String elem = m.group("elem");
+        final String cat  = m.group("cat");
+        final String type = m.group("type").toLowerCase(Locale.ROOT);
+        Predicate<CardData> matches = c -> {
+            if (elem != null && !c.containsElement(elem)) return false;
+            if (cat != null && !CardFilters.meetsCategoryFilter(c, cat)) return false;
+            return switch (type) {
+                case "character" -> c.isForward() || c.isBackup() || c.isMonster();
+                case "forward"   -> c.isForward();
+                case "backup"    -> c.isBackup();
+                case "monster"   -> c.isMonster();
+                case "summon"    -> c.isSummon();
+                default          -> true;
+            };
+        };
+        return ctx -> {
+            reveal.accept(ctx);
+            CardData added = ctx.cardAddedToHandByLook();
+            if (added != null && matches.test(added)) payoff.accept(ctx);
+            else ctx.logEntry("Effect: the added card does not qualify — no more");
+        };
+    }
+
+    /**
+     * "reveal the top N … Add all the Lightning cards and Category XVI cards among them to your hand
+     * and put the rest of the cards into the Break Zone." — 29-095H Ramuh (XVI). Every filter must
+     * read ("Fire cards", "Category X cards", "Forwards", "Card Name X"), or the text is declined.
+     */
+    static Consumer<GameContext> tryParseRevealTopAddAllMatchingRestBz(String text) {
+        Matcher m = REVEAL_TOP_ADD_ALL_MATCHING_REST_BZ.matcher(text.trim());
+        if (!m.matches()) return null;
+        int n = Integer.parseInt(m.group("n"));
+        String filters = m.group("filters").trim();
+        Predicate<CardData> any = null;
+        for (String part : filters.split("(?i)\\s+and\\s+")) {
+            Predicate<CardData> p = revealAllFilter(part.trim());
+            if (p == null) return null;
+            any = any == null ? p : any.or(p);
+        }
+        final Predicate<CardData> matches = any;
+        return ctx -> ctx.revealTopAddAllMatchingRestBz(n, matches, filters);
+    }
+
+    private static final Pattern REVEAL_ALL_FILTER = Pattern.compile(
+        "(?i)^(?:(?<elem>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?(?:Category\\s+(?<cat>\\S+)\\s+)?" +
+        "(?<type>cards?|Characters?|Forwards?|Backups?|Monsters?|Summons?)$");
+
+    /** One "Lightning cards" / "Category XVI cards" / "Card Name X" filter of the reveal above. */
+    private static Predicate<CardData> revealAllFilter(String f) {
+        Matcher name = Pattern.compile("(?i)^Card\\s+Name\\s+(.+)$").matcher(f);
+        if (name.matches()) { String nm = name.group(1).trim(); return c -> CardFilters.meetsCardNameFilter(c, nm); }
+        Matcher m = REVEAL_ALL_FILTER.matcher(f);
+        if (!m.matches() || (m.group("elem") == null && m.group("cat") == null
+                && m.group("type").toLowerCase(Locale.ROOT).startsWith("card"))) return null;
+        String elem = m.group("elem"), cat = m.group("cat");
+        String type = m.group("type").toLowerCase(Locale.ROOT).replaceAll("s$", "");
+        return c -> (elem == null || c.containsElement(elem))
+                && (cat == null || CardFilters.meetsCategoryFilter(c, cat))
+                && switch (type) {
+                    case "character" -> !c.isSummon();
+                    case "forward"   -> c.isForward();
+                    case "backup"    -> c.isBackup();
+                    case "monster"   -> c.isMonster();
+                    case "summon"    -> c.isSummon();
+                    default          -> true;
+                };
+    }
+
+    /** 15-120H Mind Flayer — see {@link ActionResolverPatterns#LOOK_OPP_TOP_REMOVE_ONE_CASTABLE}. */
+    static Consumer<GameContext> tryParseLookOppTopRemoveOneCastable(String text) {
+        Matcher m = LOOK_OPP_TOP_REMOVE_ONE_CASTABLE.matcher(text.trim());
+        if (!m.matches()) return null;
+        int n = Integer.parseInt(m.group("n"));
+        boolean free = m.group("free") != null;
+        return ctx -> ctx.lookOpponentTopRemoveOneCastableRestBottom(n, free);
+    }
+
     static Consumer<GameContext> tryParseRevealTopNElementToHand(String text) {
         String s = stripRestrictionSentences(text);
         Matcher m = REVEAL_TOP_N_ELEMENT_TO_HAND.matcher(s.isEmpty() ? text : s);

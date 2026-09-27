@@ -30,6 +30,14 @@ public final class CardFilters {
         Matcher cat = DISCARD_CATEGORY_TYPE.matcher(cardType);
         if (cat.matches())
             return meetsCategoryFilter(c, cat.group(1)) && matchesDiscardType(c, cat.group(2));
+        // "Summon or Job Eikon" (29-095H Ramuh): any one alternative will do.
+        String[] alternatives = cardType.split("(?i)\\s+or\\s+");
+        if (alternatives.length > 1) {
+            for (String alt : alternatives) if (matchesDiscardType(c, alt.trim())) return true;
+            return false;
+        }
+        if (cardType.regionMatches(true, 0, "Job ", 0, 4))
+            return meetsJobFilter(c, cardType.substring(4).trim());
         return switch (cardType.toLowerCase()) {
             case "summon"    -> c.isSummon();
             case "forward"   -> c.isForward();

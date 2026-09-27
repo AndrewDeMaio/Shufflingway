@@ -2450,11 +2450,25 @@ final class ActionResolverPatterns {
      * ({@link #REMOVE_ALL_FIELD_FROM_GAME}), placed ahead of this pattern in {@code parse()}; the
      * guard is what stops this one claiming any future printing of the shape back off it.
      */
+    /**
+     * 15-120H Mind Flayer: "Look at the top N cards of your opponent's deck. Remove 1 card among them
+     * from the game and put the other to the bottom of your opponent's deck. You can cast the removed
+     * card as though you owned it [without paying the cost] this turn." Anchored. Groups {@code n},
+     * {@code free}.
+     */
+    static final Pattern LOOK_OPP_TOP_REMOVE_ONE_CASTABLE = Pattern.compile(
+        "(?i)^Look\\s+at\\s+the\\s+top\\s+(?<n>\\d+)\\s+cards\\s+of\\s+your\\s+opponent's\\s+deck[.!]\\s+" +
+        "Remove\\s+1\\s+card\\s+among\\s+them\\s+from\\s+the\\s+game\\s+and\\s+put\\s+the\\s+others?\\s+" +
+        "(?:cards?\\s+)?(?:at|on|to)\\s+the\\s+bottom\\s+of\\s+your\\s+opponent's\\s+deck[.!]\\s+" +
+        "You\\s+can\\s+cast\\s+the\\s+removed\\s+card\\s+as\\s+though\\s+you\\s+owned\\s+it" +
+        "(?<free>\\s+without\\s+paying\\s+the\\s+cost)?\\s+this\\s+turn[.!]?\\s*$"
+    );
     static final Pattern REMOVE_NAMED_FROM_GAME = Pattern.compile(
         // Quantities and back-references are not names: "remove any number of Forwards in your
         // Break Zone … from the game" (12-076R), "Remove that Summon from the game after use"
-        // (16-123L) each matched nothing and made the ability report as read.
-        "(?i)Remove\\s+(?!(?:it|them|any|up\\s+to|that|this|those|these)\\b)(?!the\\s+top\\b)(?!all\\b)" +
+        // (16-123L) each matched nothing and made the ability report as read. A count is not a name
+        // either: 15-120H Mind Flayer's "Remove 1 card among them" removed a card named that.
+        "(?i)Remove\\s+(?!(?:it|them|any|up\\s+to|that|this|those|these)\\b)(?!the\\s+top\\b)(?!all\\b)(?!\\d+\\s)" +
         "(?<named>.+?)\\s+from\\s+(?:the\\s+)?game[.!]?"
     );
     /** Matches "You may remove [CardName] from the game." — optional self-RFP. */
@@ -3871,7 +3885,9 @@ final class ActionResolverPatterns {
         "reveal\\s+the\\s+top\\s+(?<n>\\d+)\\s+cards?\\s+of\\s+your\\s+deck[.]?\\s+" +
         "Play\\s+1\\s+Card\\s+Name\\s+(?<cardname>.+?)\\s+among\\s+them\\s+onto\\s+(?:the\\s+)?field\\s+" +
         "and\\s+return\\s+the\\s+other\\s+cards?\\s+to\\s+the\\s+bottom\\s+of\\s+(?:your|the)\\s+deck" +
-        "(?:\\s+in\\s+any\\s+order)?[.!]?"
+        "(?:\\s+in\\s+any\\s+order)?[.!]?" +
+        // 15-109R Ultros's use restriction trails it; enforced by UseConditions, not here.
+        "(?:\\s+You\\s+can\\s+only\\s+use\\s+this\\s+ability\\b[^.]*[.!]?)?\\s*"
     );
     /**
      * Matches "Reveal the top N cards of your deck. Play up to M [Category X] [Job Y] [Type] among
@@ -5790,6 +5806,15 @@ final class ActionResolverPatterns {
      * instead." (Jet Bahamut-style) — marks the chosen target for redirect-to-RFG for the rest
      * of the turn, regardless of what later effect breaks it.
      */
+    /**
+     * A Choose ability ending in the remove-instead rider — "&lt;head&gt;. If it is put from the field
+     * into the Break Zone this turn, remove it from the game instead." (the Bahamut cycle, 17-015H
+     * Jet Bahamut, 19-004R Kukki-Chebukki). Group {@code head}: everything before the rider.
+     */
+    static final Pattern CHOOSE_THEN_RFG_INSTEAD_RIDER = Pattern.compile(
+        "(?is)^(?<head>.+?[.!])\\s+If\\s+(?:it|they)\\s+(?:is|are)\\s+put\\s+from\\s+the\\s+field\\s+into\\s+the\\s+" +
+        "Break\\s+Zone\\s+this\\s+turn,\\s+remove\\s+(?:it|them)\\s+from\\s+the\\s+game\\s+instead[.!]?\\s*$"
+    );
     static final Pattern FOLLOWUP_IF_PUT_TO_BZ_THIS_TURN_RFG_INSTEAD = Pattern.compile(
         "(?i)If\\s+(?:it|they)\\s+(?:is|are)\\s+put\\s+from\\s+the\\s+field\\s+into\\s+the\\s+Break\\s+Zone\\s+this\\s+turn,\\s+" +
         "remove\\s+(?:it|them)\\s+from\\s+the\\s+game\\s+instead\\.?"
@@ -9872,16 +9897,52 @@ final class ActionResolverPatterns {
      * enforced at resolution rather than read off the text, so the two are one rule and not two.
      *
      * <p>{@code traits} carries the keywords some of the cycle grants alongside the power — Varuna's
-     * Brave. A member granting a quoted ability instead (Gremlin, Condor, Flanborg, Geosgaeno) does
-     * not match, and stays visibly unwired rather than being promoted with its payload dropped.
+     * Brave. {@code grant} is a quoted ability granted with it (Gremlin, Condor, Flanborg), granted
+     * only when the promotion happens. It has to be read here: left unmatched, the find()-ing
+     * parsers took the quotation out of the middle and ran it as the trigger's effect — Gremlin
+     * dulled and froze a Forward on every discard, Condor activated every Wind Character whenever a
+     * Backup arrived.
      *
-     * <p>Condor also stacks a second gate ("if you control 5 or more Backups and if …"), which the
-     * single-clause guard here declines. It is the only member that does.
+     * <p>{@code ctrl} is Condor's second gate ("if you control 5 or more Backups and if …").
      */
+    /**
+     * "&lt;reveal the top N … Add 1 X among them to your hand and return the other cards to the bottom
+     * of your deck in any order.&gt; If it is a &lt;filter&gt;, also &lt;payoff&gt;." — 18-038C Kytes.
+     * Anchored: the payoff's own find()-ing parser claimed the whole text and ran it ungated,
+     * dropping the reveal. Groups: {@code reveal}, {@code elem}, {@code cat}, {@code type},
+     * {@code payoff}.
+     */
+    /**
+     * "reveal the top N cards of your deck. Add all the &lt;filter&gt; [and &lt;filter&gt;] among them to
+     * your hand and put the rest of the cards into the Break Zone." — 29-095H Ramuh (XVI). Anchored.
+     * Groups: {@code n}, {@code filters}.
+     */
+    static final Pattern REVEAL_TOP_ADD_ALL_MATCHING_REST_BZ = Pattern.compile(
+        "(?i)^reveal\\s+the\\s+top\\s+(?<n>\\d+)\\s+cards?\\s+of\\s+your\\s+deck[.!]\\s+Add\\s+all\\s+(?:the\\s+)?" +
+        "(?<filters>.+?)\\s+among\\s+them\\s+to\\s+your\\s+hand\\s+and\\s+put\\s+the\\s+rest\\s+of\\s+the\\s+cards\\s+" +
+        "into\\s+the\\s+Break\\s+Zone[.!]?\\s*$"
+    );
+    /**
+     * "discard 1 &lt;type&gt; or &lt;type&gt;" — an alternation of types and/or Jobs, 29-095H Ramuh's
+     * "1 Summon or Job Eikon". Anchored; at least one "or". Group {@code type}.
+     */
+    static final Pattern DISCARD_TYPE_ALTERNATION = Pattern.compile(
+        "(?i)^discard\\s+1\\s+(?<type>(?:Summon|Forward|Backup|Monster|Character|Job\\s+[^.]+?)" +
+        "(?:\\s+or\\s+(?:Summon|Forward|Backup|Monster|Character|Job\\s+[^.]+?))+)[.!]?\\s*$"
+    );
+    static final Pattern REVEAL_ADD_THEN_IF_ADDED_IS_ALSO = Pattern.compile(
+        "(?is)^(?<reveal>reveal\\s+the\\s+top\\s+\\d+\\s+cards?\\s+of\\s+your\\s+deck[.!]\\s+Add\\s+.+?\\s+among\\s+" +
+        "them\\s+to\\s+your\\s+hand\\s+and\\s+return\\s+the\\s+other\\s+cards\\s+to\\s+the\\s+bottom\\s+of\\s+your\\s+" +
+        "deck\\s+in\\s+any\\s+order[.!])\\s+If\\s+it\\s+is\\s+an?\\s+" +
+        "(?:(?<elem>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?(?:Category\\s+(?<cat>\\S+)\\s+)?" +
+        "(?<type>Character|Forward|Backup|Monster|Summon|card),\\s+also\\s+(?<payoff>[^.]+)[.!]?\\s*$"
+    );
     static final Pattern SELF_BECOME_FORWARD_PERMANENT = Pattern.compile(
-        "(?i)^\\s*(?:if\\s+(?<guard>[^.,]+?)\\s+is\\s+not\\s+a\\s+Forward,\\s+)?" +
+        "(?i)^\\s*(?:if\\s+(?<ctrl>you\\s+control\\s+[^.,]+?)\\s+and\\s+)?" +
+        "(?:if\\s+(?<guard>[^.,]+?)\\s+is\\s+not\\s+a\\s+Forward,\\s+)?" +
         "(?<name>[^.,]+?)\\s+also\\s+becomes?\\s+a\\s+Forward\\s+with\\s+(?<power>\\d+)\\s+power" +
-        "(?<traits>(?:\\s+and\\s+(?:Haste|First\\s+Strike|Brave))+)?[.!]?\\s*" +
+        "(?<traits>(?:\\s+and\\s+(?:Haste|First\\s+Strike|Brave))+)?" +
+        "(?:\\s+and\\s+\"(?<grant>[^\"]+)\")?[.!]?\\s*" +
         "\\(This\\s+effect\\s+does\\s+not\\s+end\\s+at\\s+the\\s+end\\s+of\\s+the\\s+turn\\.?" +
         "(?:\\s*This\\s+ability\\s+will\\s+not\\s+trigger\\s+if\\s+[^.]+?\\s+is\\s+a\\s+Forward\\.?)?\\)\\s*$"
     );

@@ -1917,6 +1917,17 @@ public interface GameContext {
     /** Returns and clears whatever {@link #armEffectOnFieldToBzMark} armed; {@code null} when none. */
     DelayedBzEffect consumeEffectOnFieldToBzMark();
 
+    /**
+     * Arms "If it is put from the field into the Break Zone this turn, remove it from the game
+     * instead." for the next selection, which applies it to what it chose before the effect acts —
+     * the Bahamut riders, whose damage usually breaks the Forward inside the damage call, so a mark
+     * applied after it came too late. Consumed like {@link #armEffectOnFieldToBzMark}.
+     */
+    void armRfgInsteadOfBzMark();
+
+    /** Returns and clears whether {@link #armRfgInsteadOfBzMark} was armed. */
+    boolean consumeRfgInsteadOfBzMark();
+
     /** Finds {@code source} on the field by name and dulls it. No-op if not found. */
     void dullSourceForward(CardData source);
 
@@ -5008,6 +5019,16 @@ public interface GameContext {
     void opponentRfpTopDeckMakeCastable(int costReduction, boolean anyElement);
 
     /**
+     * "Look at the top {@code look} cards of your opponent's deck. Remove 1 card among them from the
+     * game and put the other to the bottom of your opponent's deck. You can cast the removed card
+     * as though you owned it [without paying the cost] this turn." — 15-120H Mind Flayer.
+     *
+     * <p>The ability user picks; the removed card goes to its owner's removed-from-game zone and is
+     * registered through {@link #makeRemovedCardCastable}. No-op on an empty deck.
+     */
+    void lookOpponentTopRemoveOneCastableRestBottom(int look, boolean freeCast);
+
+    /**
      * "Choose 1 [Forward|Character] in your opponent's Break Zone. Remove it from the game.
      * [During this game,] you can cast it as though you owned it at any time you could normally
      * cast it." (Bel Dat 20-056H — Forward; Zidane 24-044H — Character)
@@ -5230,8 +5251,11 @@ public interface GameContext {
      * detail: those abilities fire on a recurring event, so without it Varuna would re-promote
      * every time a Forward of yours got through. Enforced here rather than read off the text
      * because "is a Forward" is a fact about the board, not about the sentence.
+     *
+     * @return whether it became a Forward now — {@code false} when it already was one or is gone,
+     *         which is what gates a grant printed beside the promotion (7-026R Gremlin)
      */
-    void makeSourceForwardPermanently(CardData source, int power, EnumSet<CardData.Trait> traits);
+    boolean makeSourceForwardPermanently(CardData source, int power, EnumSet<CardData.Trait> traits);
 
     /**
      * Makes all Monsters the ability user controls also become Forwards with {@code power}
@@ -5515,6 +5539,13 @@ public interface GameContext {
      */
     void revealTopAddAllMatchingRestBottom(int reveal,
             String jobFilter, String categoryFilter, String cardNameFilter, String typeFilter);
+
+    /**
+     * "Reveal the top N cards of your deck. Add all the [matching] among them to your hand and put
+     * the rest of the cards into the Break Zone." — 29-095H Ramuh (XVI), whose match is a union
+     * ("the Lightning cards and Category XVI cards"), hence a predicate. No choice is involved.
+     */
+    void revealTopAddAllMatchingRestBz(int reveal, Predicate<CardData> matches, String matchDesc);
 
     /**
      * "Reveal the top {@code reveal} cards of your deck. Remove 1 [Category {@code categoryFilter}]

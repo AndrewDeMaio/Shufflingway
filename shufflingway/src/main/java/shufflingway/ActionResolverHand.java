@@ -384,9 +384,31 @@ final class ActionResolverHand {
             ctx.discardCardOfTypeFromHandThenIfDidSo(spec, c -> {});
         };
     }
+    /**
+     * "discard 1 Summon or Job Eikon." — 29-095H Ramuh (XVI). The alternation goes to
+     * {@code selfDiscardByType} whole; {@code CardFilters.matchesDiscardType} reads the "or" and the
+     * Job, so the dialog, the eligibility check and the AI agree. Fizzles when nothing qualifies,
+     * which gates a "When you do so" behind it.
+     */
+    static Consumer<GameContext> tryParseDiscardTypeAlternation(String text) {
+        Matcher m = DISCARD_TYPE_ALTERNATION.matcher(text.trim());
+        if (!m.matches()) return null;
+        String type = m.group("type").trim();
+        return ctx -> {
+            ctx.logEntry("Effect: Discard 1 " + type);
+            ctx.selfDiscardByType(type);
+        };
+    }
+
     static Consumer<GameContext> tryParseYouMayDiscardType(String text) {
         Matcher m = DISCARD_TYPE.matcher(text);
         if (!m.find()) return null;
+        // Nothing may follow the discard: a "When you do so, …" behind it (20-102L Mira, 29-095H
+        // Ramuh) is the reason for the discard, and claiming the text here paid it and dropped that.
+        if (!text.substring(m.end()).isBlank()) return null;
+        // Nor may anything but "you may" precede it: "pay 《1》 and discard 1 Monster" is a price of
+        // two parts, and reading the discard alone skipped the CP.
+        if (!text.substring(0, m.start()).matches("(?i)\\s*(?:you\\s+may\\s+)?")) return null;
         String type = m.group("type");
         return ctx -> {
             ctx.logEntry("Effect: Discard 1 " + type);

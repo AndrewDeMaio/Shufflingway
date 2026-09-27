@@ -6804,6 +6804,7 @@ public class MainWindow {
 		else p2Turn.forwardsLeftFieldThisTurn++;
 		p2Turn.turnOpponentCharReturnedToHand = true;
 		autoAbilityTriggers.triggerAutoAbilitiesForLeavesField(card, true);
+		autoAbilityTriggers.triggerAutoAbilitiesForCharacterReturnedToHand(true, true);
 	}
 
 	void returnP2ForwardToHand(int idx) {
@@ -6855,6 +6856,7 @@ public class MainWindow {
 		else p2Turn.forwardsLeftFieldThisTurn++;
 		p1Turn.turnOpponentCharReturnedToHand = true;
 		autoAbilityTriggers.triggerAutoAbilitiesForLeavesField(card, false);
+		autoAbilityTriggers.triggerAutoAbilitiesForCharacterReturnedToHand(false, true);
 	}
 
 	void returnP1BackupToHand(int idx) {
@@ -6879,6 +6881,7 @@ public class MainWindow {
 		if (player1) refreshP1HandLabel(); else refreshP2HandCountLabel();
 		p2Turn.turnOpponentCharReturnedToHand = true;
 		autoAbilityTriggers.triggerAutoAbilitiesForLeavesField(c, true);
+		autoAbilityTriggers.triggerAutoAbilitiesForCharacterReturnedToHand(true, false);
 	}
 
 	void returnP2BackupToHand(int idx) {
@@ -6903,6 +6906,7 @@ public class MainWindow {
 		if (player1) refreshP1HandLabel(); else refreshP2HandCountLabel();
 		p1Turn.turnOpponentCharReturnedToHand = true;
 		autoAbilityTriggers.triggerAutoAbilitiesForLeavesField(c, false);
+		autoAbilityTriggers.triggerAutoAbilitiesForCharacterReturnedToHand(false, false);
 	}
 
 	void returnP1MonsterToHand(int idx) {
@@ -6927,6 +6931,7 @@ public class MainWindow {
 		if (p1MonsterPanel != null) { p1MonsterPanel.remove(lbl); p1MonsterPanel.revalidate(); p1MonsterPanel.repaint(); }
 		if (player1) refreshP1HandLabel(); else refreshP2HandCountLabel();
 		autoAbilityTriggers.triggerAutoAbilitiesForLeavesField(c, true);
+		autoAbilityTriggers.triggerAutoAbilitiesForCharacterReturnedToHand(true, false);
 	}
 
 	void returnP2MonsterToHand(int idx) {
@@ -6951,6 +6956,7 @@ public class MainWindow {
 		if (p2MonsterPanel != null) { p2MonsterPanel.remove(lbl); p2MonsterPanel.revalidate(); p2MonsterPanel.repaint(); }
 		if (player1) refreshP1HandLabel(); else refreshP2HandCountLabel();
 		autoAbilityTriggers.triggerAutoAbilitiesForLeavesField(c, false);
+		autoAbilityTriggers.triggerAutoAbilitiesForCharacterReturnedToHand(false, false);
 	}
 
 	// -------------------------------------------------------------------------
@@ -11640,6 +11646,7 @@ public class MainWindow {
 		playerTurn.castNamesThisTurn.add(card.name().toLowerCase());
 		playerTurn.castCountByNameThisTurn.merge(card.name().toLowerCase(), 1, Integer::sum);
 		autoAbilityTriggers.triggerAutoAbilitiesForNthCardCast(isP1, playerTurn.cardsCastThisTurn);
+		autoAbilityTriggers.triggerAutoAbilitiesForFilteredCast(card, isP1);
 	}
 
 	/**
@@ -12653,6 +12660,7 @@ public class MainWindow {
 
 		StackEntry entry = gameState.popStack();
 		if (entry == null) return;
+		resolutionSerial = nextResolutionSerial();
 
 		if (cancelledStackEntries.remove(entry)) {
 			String pfx = entry.isP1() ? "" : "[P2] ";
@@ -13770,9 +13778,28 @@ public class MainWindow {
 			// end-phase hand limit has no ability resolving, so it correctly fires nothing.
 			if (currentAbilitySource != null && currentAbilitySourceIsP1 != isP1)
 				autoAbilityTriggers.triggerAutoAbilitiesForDiscardByEffect(d, currentAbilitySourceIsP1);
+			// "When you discard 1 or more cards due to Summons or abilities" — 16-114C White Mage.
+			// Anyone's effect, Summons included; fired once per resolution however many cards go.
+			int side = isP1 ? 0 : 1;
+			if ((currentAbilitySource != null || currentSummonSource != null)
+					&& ownDiscardFiredSerial[side] != resolutionSerial) {
+				ownDiscardFiredSerial[side] = resolutionSerial;
+				autoAbilityTriggers.triggerAutoAbilitiesForOwnDiscardByEffect(isP1);
+			}
 		}
 		return d;
 	}
+
+	/**
+	 * Identifies the resolution in progress — each Stack entry, and each auto ability run inline,
+	 * which restores the outer value when it ends. Lets a "1 or more" trigger tell a second card of
+	 * the same effect from a new effect.
+	 */
+	int resolutionSerial = 0;
+	private int resolutionSerialCounter = 0;
+	int nextResolutionSerial() { return ++resolutionSerialCounter; }
+	/** The {@link #resolutionSerial} each side's "you discard by effect" last fired in; index 0 = P1. */
+	private final int[] ownDiscardFiredSerial = { -1, -1 };
 
 	/**
 	 * Announces that {@code handOwnerIsP1} moved one or more cards from a Break Zone into their

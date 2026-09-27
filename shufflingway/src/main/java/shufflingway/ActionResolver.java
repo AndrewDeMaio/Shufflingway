@@ -206,6 +206,28 @@ public class ActionResolver {
         if (result != null) return result;
         if (forwardsAttackingGateUnreadable(effectText, source, xValue)) return null;
 
+        // Anchored on the permanence reminder, so it claims nothing else. Here because every
+        // find()-ing parser below sees the quoted grant some of the cycle prints (7-026R Gremlin's
+        // "choose 1 Forward … Dull it and Freeze it") and ran it as the trigger's effect; and
+        // ahead of BecomeForwardUntilEot, which is blind to the reminder and reverted the Monster
+        // at end of turn.
+        result = tryParseSelfBecomeForwardPermanently(effectText, source);
+        if (result != null) return result;
+
+        // Anchored; here because its payoff's own find()-ing parser ("activate Kytes") claimed
+        // the whole text, dropped the reveal and ran the payoff ungated (18-038C Kytes).
+        result = tryParseRevealAddThenIfAddedIsAlso(effectText, source, xValue);
+        if (result != null) return result;
+
+        // Anchored whole-sentence reads of 29-095H Ramuh (XVI)'s halves; the discard's find()-ing
+        // sibling reads only the first type of the alternation.
+        result = tryParseRevealTopAddAllMatchingRestBz(effectText);
+        if (result != null) return result;
+        result = tryParseDiscardTypeAlternation(effectText);
+        if (result != null) return result;
+        result = tryParseLookOppTopRemoveOneCastable(effectText);
+        if (result != null) return result;
+
         // Ahead of the Choose chain, which otherwise claims the "choose 1 Character …" inside
         // 17-084C Lorenzo's quotation and runs it on attack. Anchored end to end.
         result = tryParseUntilEotDoublesPowerAndQuoted(effectText, source);
@@ -783,6 +805,10 @@ public class ActionResolver {
         // Anchored "Shuffle your deck, then <effect>". Must precede tryParsePlaySourceOntoField,
         // which find()s "play it onto the field" out of 16-020L Luso's reveal and resolves "it" as
         // Luso returning from a Break Zone it is not in.
+        // Anchored; ahead of the find()-ing shuffle readers, which took 15-109R Ultros's "shuffle
+        // your deck. Then, reveal … Play 1 Card Name Ultros" and ran the shuffle alone.
+        result = tryParseShuffleThenRevealPlayNamedRestBottom(effectText, source);
+        if (result != null) return result;
         result = tryParseShuffleDeckThen(effectText, source);
         if (result != null) return result;
         // Must precede tryParseShuffleDeck, which find()s the opening and drops the free cast.
@@ -1913,11 +1939,6 @@ public class ActionResolver {
         result = tryParseSelfSkipNextActivePhase(effectText, source);
         if (result != null) return result;
 
-        // Must precede tryParseBecomeForwardUntilEot, which reads with find() and is blind to the
-        // permanence reminder: it claimed the sentence and registered an end-of-turn revert, so a
-        // Monster that should have stayed a Forward went back to being a Monster that night.
-        result = tryParseSelfBecomeForwardPermanently(effectText, source);
-        if (result != null) return result;
 
         result = tryParseActivateNamedCard(effectText);
         if (result != null) return result;
@@ -2118,9 +2139,6 @@ public class ActionResolver {
         result = tryParseFlipUntilElementToHandRestShuffleBottom(effectText);
         if (result != null) return result;
 
-        result = tryParseShuffleThenRevealPlayNamedRestBottom(effectText, source);
-        if (result != null) return result;
-
         result = tryParseRevealPlayTypeOntoFieldRestBottom(effectText);
         if (result != null) return result;
 
@@ -2184,6 +2202,9 @@ public class ActionResolver {
             // orphaned once that has happened; while every sentence so far has resolved, the
             // referent is present and composing is what this fallback is for.
             boolean droppedEarlier = false;
+            // Whether the sentence just before the current one resolved — the cost a following
+            // "When you do so, …" is paid for with.
+            boolean previousResolved = false;
             for (String s : sentences) {
                 // "Then" and "Then," are the same connective. The comma form was left in place and
                 // then failed to parse, which would have kept 14-101R Ultros's second half unread
@@ -2202,22 +2223,28 @@ public class ActionResolver {
                 // sentence (7-057R Gnash, 2-099L Edea), not an action on a trigger's preloaded
                 // target. Resolving it standalone would act on nothing while making the whole
                 // ability report as handled — worse than leaving it unparsed.
-                if (isTriggeredTargetAction(trimmed)) { droppedEarlier = true; continue; }
+                if (isTriggeredTargetAction(trimmed)) { droppedEarlier = true; previousResolved = false; continue; }
                 // "Add it to your hand." is the same trap one card later: standing alone it is
                 // Gogo 24-022H's whole effect and names the card the trigger watched break, but
                 // reached *here* it is the followup of a Choose the chain above could not read
                 // (14-073R Muraga Fennes), and salvaging the triggering card instead of the chosen
                 // one is both wrong and invisible. Gogo's own text is a single sentence and never
                 // arrives at this fallback.
-                if (isTriggeringBrokenCardSalvage(trimmed)) { droppedEarlier = true; continue; }
+                if (isTriggeringBrokenCardSalvage(trimmed)) { droppedEarlier = true; previousResolved = false; continue; }
                 Consumer<GameContext> c = parse(trimmed, source, xValue);
-                if (c != null) { consumers.add(c); continue; }
+                if (c != null) { consumers.add(c); previousResolved = true; continue; }
                 droppedEarlier = true;
                 // Dropping an unparsed sentence is safe while the sentences are independent, but
                 // an unresolved "When you do so, …" gates everything after it. Composing past it
                 // would grant that payoff for free — 20-078H Noctis would take +2000 power without
-                // paying the cost in the sentence before. Stop here and keep only what came first.
-                if (DO_SO_CONDITIONAL_SENTENCE.matcher(trimmed).find()) break;
+                // paying the cost in the sentence before. Stop here, and drop that cost sentence
+                // too: it is the price of the payoff just lost, and running it alone paid for
+                // nothing (28-097H Vaan removed 3 cards from his Break Zone to no effect).
+                if (DO_SO_CONDITIONAL_SENTENCE.matcher(trimmed).find()) {
+                    if (previousResolved) consumers.remove(consumers.size() - 1);
+                    break;
+                }
+                previousResolved = false;
             }
             if (!consumers.isEmpty()) return ctx -> consumers.forEach(c -> c.accept(ctx));
         }
@@ -2367,6 +2394,12 @@ public class ActionResolver {
         if (tryParseForwardsAttackingThisTurnGate(effectText, source, 0) != null)
             return "ForwardsAttackingThisTurnGate";
         if (forwardsAttackingGateUnreadable(effectText, source, 0)) return null;
+        // Mirrors parse().
+        if (tryParseSelfBecomeForwardPermanently(effectText, source) != null) return "SelfBecomeForwardPermanent";
+        if (tryParseRevealAddThenIfAddedIsAlso(effectText, source, 0) != null) return "RevealAddThenIfAddedIsAlso";
+        if (tryParseRevealTopAddAllMatchingRestBz(effectText) != null) return "RevealTopAddAllMatchingRestBz";
+        if (tryParseDiscardTypeAlternation(effectText) != null) return "DiscardTypeAlternation";
+        if (tryParseLookOppTopRemoveOneCastable(effectText) != null) return "LookOppTopRemoveOneCastable";
         // Mirrors parse(): the cost-tiered reveal (10-072L) is read ahead of the Choose chain.
         if (ActionResolverSearch.tryParseRevealTopDeckCostTiers(effectText, source) != null)
             return "RevealTopDeck";
@@ -2550,6 +2583,7 @@ public class ActionResolver {
         // leading one, which cannot see past their opening clause.
         if (tryParseIfOpponentDamageAtMost(effectText, source) != null) return "IfOpponentDamageAtMost";
         if (tryParseIfSelfDamageAtMost(effectText, source) != null) return "IfSelfDamageAtMost";
+        if (tryParseShuffleThenRevealPlayNamedRestBottom(effectText, source) != null) return "ShuffleThenRevealPlayNamedRestBottom";
         if (tryParseShuffleDeckThen(effectText, source) != null) return "ShuffleDeckThen";
         if (tryParseShuffleThenRevealTopCastSummonFreeRestBz(effectText) != null)
             return "ShuffleThenRevealTopCastSummonFreeRestBz";
@@ -2981,8 +3015,6 @@ public class ActionResolver {
         if (tryParseCounterCountdownThenPlaySource(effectText, source) != null) return "CounterCountdownThenPlaySource";
         if (isBarePlaySourceOntoField(effectText, source))              return "PlaySourceOntoField";
         if (tryParseSelfSkipNextActivePhase(effectText, source) != null) return "SelfSkipNextActivePhase";
-        // Mirrors parse(): ahead of BecomeForwardUntilEot, which cannot see the reminder.
-        if (tryParseSelfBecomeForwardPermanently(effectText, source) != null) return "SelfBecomeForwardPermanent";
         if (tryParseActivateNamedCard(effectText)               != null) return "ActivateNamedCard";
         if (tryParseAttackOnceMore(effectText)                  != null) return "AttackOnceMore";
         if (tryParseOpponentCannotSearchThisTurn(effectText)    != null) return "OpponentCannotSearch";
@@ -3732,6 +3764,12 @@ public class ActionResolver {
                     + ": " + describeOrName(fag.group("effect").trim() + ".", source) + ")";
         }
         if (forwardsAttackingGateUnreadable(effectText, source, 0)) return null;
+        // Mirrors parse().
+        if (tryParseSelfBecomeForwardPermanently(effectText, source) != null) return "SelfBecomeForwardPermanent";
+        if (tryParseRevealAddThenIfAddedIsAlso(effectText, source, 0) != null) return "RevealAddThenIfAddedIsAlso";
+        if (tryParseRevealTopAddAllMatchingRestBz(effectText) != null) return "RevealTopAddAllMatchingRestBz";
+        if (tryParseDiscardTypeAlternation(effectText) != null) return "DiscardTypeAlternation";
+        if (tryParseLookOppTopRemoveOneCastable(effectText) != null) return "LookOppTopRemoveOneCastable";
         // Mirrors parse(): the trailing cast-count gate, described the same way as the sibling
         // above — the base named as itself, the condition named around what it guards.
         if (tryParseCastCountGate(effectText, source, 0) != null) {
@@ -4103,6 +4141,7 @@ public class ActionResolver {
         }
         if (tryParseShuffleThenRevealTopCastSummonFreeRestBz(effectText) != null)
             return "ShuffleThenRevealTopCastSummonFreeRestBz";
+        if (tryParseShuffleThenRevealPlayNamedRestBottom(effectText, source) != null) return "ShuffleThenRevealPlayNamedRestBottom";
         if (tryParseShuffleDeckThen(effectText, source) != null) {
             Matcher shuffleM = SHUFFLE_DECK_THEN.matcher(effectText.trim());
             if (shuffleM.matches())
@@ -5012,8 +5051,6 @@ public class ActionResolver {
         if (tryParseCounterCountdownThenPlaySource(effectText, source) != null) return "CounterCountdownThenPlaySource";
         if (isBarePlaySourceOntoField(effectText, source))                  return "PlaySourceOntoField";
         if (tryParseSelfSkipNextActivePhase(effectText, source) != null)    return "SelfSkipNextActivePhase";
-        // Mirrors parse() and matchedPatternName(), at the same position and for the same reason.
-        if (tryParseSelfBecomeForwardPermanently(effectText, source) != null) return "SelfBecomeForwardPermanent";
         if (tryParseActivateNamedCard(effectText) != null)                  return "ActivateNamedCard";
         if (tryParseAttackOnceMore(effectText) != null)                     return "AttackOnceMore";
         if (tryParseOpponentCannotSearchThisTurn(effectText) != null)       return "OpponentCannotSearch";
@@ -5107,7 +5144,6 @@ public class ActionResolver {
         if (tryParseFlipUntilCharactersPlayOntoFieldRestShuffleBottom(effectText) != null) return "FlipUntilCharactersPlayOntoFieldRestShuffleBottom";
         if (tryParseFlipUntilTypeToHandRestShuffleBottom(effectText)           != null) return "FlipUntilTypeToHandRestShuffleBottom";
         if (tryParseFlipUntilElementToHandRestShuffleBottom(effectText)        != null) return "FlipUntilElementToHandRestShuffleBottom";
-        if (tryParseShuffleThenRevealPlayNamedRestBottom(effectText, source) != null) return "ShuffleThenRevealPlayNamedRestBottom";
         if (tryParseRevealPlayTypeOntoFieldRestBottom(effectText)                != null) return "RevealPlayTypeOntoFieldRestBottom";
         if (tryParseRevealElementCardFromHandIfSoDraw(effectText)                != null) return "RevealElementCardFromHandIfSoDraw";
         if (tryParseShuffleDeck(effectText)                              != null) return "ShuffleDeck";
@@ -9740,6 +9776,7 @@ public class ActionResolver {
     private static List<ForwardTarget> applyArmedMarks(GameContext ctx, List<ForwardTarget> targets) {
         GameContext.DelayedBzEffect armed = ctx.consumeEffectOnFieldToBzMark();
         if (armed != null) targets.forEach(t -> ctx.markTargetEffectOnFieldToBzThisTurn(t, armed));
+        if (ctx.consumeRfgInsteadOfBzMark()) targets.forEach(ctx::markTargetRfgInsteadOfBzThisTurn);
         return targets;
     }
 }

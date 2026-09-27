@@ -121,19 +121,41 @@ final class FieldEntryAnimator {
 			boolean wasCast    = mw.lastCardWasCast;
 			boolean warpedIn   = mw.lastCardWarpedIn;
 			boolean viaAltCost = mw.lastCardCastViaAltCost;
+			// What was resolving as it arrived — "enters the field due to an ability" (21-018R Rain)
+			// and the entry-cause record read it.
+			CardData abilSource   = mw.currentAbilitySource;
+			boolean  abilSourceP1 = mw.currentAbilitySourceIsP1;
+			CardData sumSource    = mw.currentSummonSource;
+			boolean  sumSourceP1  = mw.currentSummonSourceIsP1;
+			boolean  isSummon     = mw.currentResolutionIsSummon;
 			queue.add(() -> {
 				boolean prevCast    = mw.lastCardWasCast;
 				boolean prevWarp    = mw.lastCardWarpedIn;
 				boolean prevAltCost = mw.lastCardCastViaAltCost;
+				CardData prevAbil   = mw.currentAbilitySource;
+				boolean  prevAbilP1 = mw.currentAbilitySourceIsP1;
+				CardData prevSum    = mw.currentSummonSource;
+				boolean  prevSumP1  = mw.currentSummonSourceIsP1;
+				boolean  prevIsSum  = mw.currentResolutionIsSummon;
 				mw.lastCardWasCast        = wasCast;
 				mw.lastCardWarpedIn       = warpedIn;
 				mw.lastCardCastViaAltCost = viaAltCost;
+				mw.currentAbilitySource      = abilSource;
+				mw.currentAbilitySourceIsP1  = abilSourceP1;
+				mw.currentSummonSource       = sumSource;
+				mw.currentSummonSourceIsP1   = sumSourceP1;
+				mw.currentResolutionIsSummon = isSummon;
 				try {
 					mw.autoAbilityTriggers.triggerAutoAbilitiesForEntersField(card, isP1, paidExtraCost);
 				} finally {
 					mw.lastCardWasCast        = prevCast;
 					mw.lastCardWarpedIn       = prevWarp;
 					mw.lastCardCastViaAltCost = prevAltCost;
+					mw.currentAbilitySource      = prevAbil;
+					mw.currentAbilitySourceIsP1  = prevAbilP1;
+					mw.currentSummonSource       = prevSum;
+					mw.currentSummonSourceIsP1   = prevSumP1;
+					mw.currentResolutionIsSummon = prevIsSum;
 				}
 			});
 			return;

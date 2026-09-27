@@ -3248,6 +3248,11 @@ public record CardData(
             // the comma this alternation's caller requires next, leaving the whole sentence unread:
             // both cards had no auto-ability at all rather than one with a too-wide trigger.
             "|enters?\\s+the\\s+field\\s+from\\s+your\\s+hand" +
+            // "enters the field due to an ability / due to a Summon or an ability / by Summons or
+            // abilities / due to your Summons or abilities / due to an ability of Card Name X" —
+            // 21-018R Rain, 20-068R Aerith, 28-081L Kain, 12-004R Alphinaud, 17-056L Noel and more.
+            "|enters?\\s+the\\s+field\\s+(?:due\\s+to|by)\\s+(?:your\\s+)?(?:(?:an?\\s+)?Summons?\\s+or\\s+" +
+                "(?:an?\\s+)?abilit(?:y|ies)|an?\\s+abilit(?:y|ies)(?:\\s+of\\s+Card\\s+Name\\s+[^,]+?)?)" +
             "|enters?\\s+the\\s+field(?:\\s+due\\s+to\\s+(?:your\\s+cast|Warp))?" +
             // "enters your field other than from your hand" must precede plain "enters your field"
             "|enters?\\s+your\\s+field\\s+other\\s+than\\s+from\\s+your\\s+hand" +
@@ -3270,6 +3275,11 @@ public record CardData(
             // "casts a card removed from the game" — 29-008L Zidane, whose other ability is what
             // puts the cards there. Player-scoped like the Summon arm above: the subject is "you".
             "|casts?\\s+a\\s+card\\s+removed\\s+from\\s+the\\s+game" +
+            // "When you cast a <filter>," — 10-078H Doga ("a Summon of cost 4 or more"), 11-012C
+            // Mootie ("a Card Name Bahamut"), 16-044L Wol ("a Character of cost 5 or more") … After
+            // the plain Summon arm, which keeps "casts a Summon," for itself.
+            // Not "… for the first time in that turn" (20-114L The Fiend), which its own mechanism reads.
+            "|casts?\\s+an?\\s+(?!card\\s+removed\\b)(?![^,.]*\\bfor\\s+the\\s+first\\s+time\\b)[^,.]+?" +
             "|is\\s+put\\s+into\\s+(?:your\\s+)?Damage\\s+Zone" +
             "|is\\s+removed\\s+from\\s+the\\s+game\\s+due\\s+to\\s+Warp" +
             "|deals?\\s+damage\\s+to\\s+your\\s+opponent" +
@@ -3306,6 +3316,18 @@ public record CardData(
             // the rest by whether the phrase mentions an ability.
             "|(?:is|are)\\s+chosen\\s+by\\s+(?:an?\\s+)?Summons?" +
                 "(?:\\s+or\\s+(?:an?\\s+)?abilit(?:y|ies))?\\s+of\\s+your\\s+opponent" +
+            // Chosen by anyone's Summon or ability — 17-120H Princess Sarah, 14-032R Proto fal'Cie
+            // Adam, 4-087R Delita, 21-076C Qun'mi, 22-068R Prishe — or by any Summon (2-017R Bergan),
+            // or by a Forward's ability (13-079L Behemoth K, 26-066L Vincent). After the arm above,
+            // which takes the "of your opponent" forms.
+            "|(?:is|are)\\s+chosen\\s+by\\s+(?:Summons\\s+or\\s+abilities|a\\s+Summon\\s+or\\s+an\\s+ability)" +
+            "|(?:is|are)\\s+chosen\\s+by\\s+a\\s+Summon(?!\\s+(?:or|of)\\b)" +
+            "|(?:is|are)\\s+chosen\\s+by\\s+a\\s+Forward's\\s+ability" +
+            // "When a Forward opponent controls returns to its owner's hand from the field" —
+            // 7-111R Geosgaeno, the one printing.
+            "|returns?\\s+to\\s+its\\s+owner's\\s+hand\\s+from\\s+the\\s+field" +
+            // The passive wording of the same event — 16-117H Tros, 21-133S Tidus, 24-095C Jecht …
+            "|(?:is|are)\\s+returned\\s+from\\s+the\\s+field\\s+to\\s+(?:its|their)\\s+owners?'s?\\s+hands?" +
             "|uses?\\s+an\\s+EX\\s+Burst" +
             // "becomes dull due to your Summon or ability" — PR-156 Zack, the watcher form of the
             // arm below. Must precede it: this pattern requires a comma straight after the trigger,
@@ -3330,6 +3352,9 @@ public record CardData(
             // hand" appears, and in the discarded type. The middle is left loose because the
             // "due to your …" tail is what identifies the trigger.
             "|discards?\\s+[^,]*?due\\s+to\\s+your\\s+Summons?\\s+or\\s+abilit(?:y|ies)" +
+            // "When you discard 1 or more cards due to Summons or abilities" — 16-114C White Mage:
+            // anyone's effect, and the discarding player is the watcher's own controller.
+            "|discards?\\s+1\\s+or\\s+more\\s+cards?\\s+due\\s+to\\s+Summons?\\s+or\\s+abilit(?:y|ies)" +
             // "are added to your opponent's hand from the Break Zone" — 25-111H The Emperor.
             "|(?:is|are)\\s+added\\s+to\\s+your\\s+opponent's\\s+hand\\s+from\\s+the\\s+Break\\s+Zone" +
             // "gain a 《C》" — 16-115H Sarah (MOBIUS). Player-scoped, so the subject is "you".
@@ -3771,7 +3796,8 @@ public record CardData(
     /** Matches the restriction sentence appended to a auto-ability effect, capturing flags. */
     private static final Pattern FA_TRIGGER_RESTRICTION = Pattern.compile(
         "(?i)[.!,]?\\s*This\\s+effect\\s+will\\s+trigger\\s+only\\s+" +
-        "(?:(?<yourTurn>during\\s+your\\s+turn)(?:\\s+and\\s+only\\s+)?)?(?<once>once\\s+per\\s+turn)?[.!]?\\s*$"
+        "(?:(?:(?<yourTurn>during\\s+your\\s+turn)|(?<oppTurn>during\\s+your\\s+opponent's\\s+turn))" +
+        "(?:\\s+and\\s+only\\s+)?)?(?<once>once\\s+per\\s+turn)?[.!]?\\s*$"
     );
 
     /**
@@ -3782,7 +3808,8 @@ public record CardData(
      */
     private static final Pattern FA_TRIGGER_RESTRICTION_MID = Pattern.compile(
         "(?i)\\s*This\\s+effect\\s+will\\s+trigger\\s+only\\s+" +
-        "(?:(?<yourTurn>during\\s+your\\s+turn)(?:\\s+and\\s+only\\s+)?)?(?<once>once\\s+per\\s+turn)?[.!]?"
+        "(?:(?:(?<yourTurn>during\\s+your\\s+turn)|(?<oppTurn>during\\s+your\\s+opponent's\\s+turn))" +
+        "(?:\\s+and\\s+only\\s+)?)?(?<once>once\\s+per\\s+turn)?[.!]?"
     );
 
     /**
@@ -4024,13 +4051,29 @@ public record CardData(
      * spans to {@code out} in the order their tokens are numbered.
      */
     private static String maskQuotedTriggerSpans(String text, List<String> out) {
-        Matcher m = QUOTED_TRIGGER_SPAN.matcher(text);
-        StringBuffer sb = new StringBuffer();
-        while (m.find()) {
-            m.appendReplacement(sb, QUOTE_MASK_PREFIX + out.size());
-            out.add(m.group());
+        // Quotes are paired in order — the 1st with the 2nd, the 3rd with the 4th. A regex that
+        // tries every quote mark as an opener pairs a *closing* quote with the next opening one
+        // once a quotation without a trigger word is skipped, and masks the unquoted text between
+        // them: 28-101L Steiner's and 19-132S Snow's own "When … enters the field" sat between a
+        // quoted grant and a later quotation, and vanished.
+        StringBuilder sb = new StringBuilder();
+        int pos = 0;
+        while (true) {
+            int open = text.indexOf('"', pos);
+            if (open < 0) break;
+            int close = text.indexOf('"', open + 1);
+            if (close < 0) break;
+            String span = text.substring(open, close + 1);
+            sb.append(text, pos, open);
+            if (QUOTED_TRIGGER_SPAN.matcher(span).matches()) {
+                sb.append(QUOTE_MASK_PREFIX).append(out.size());
+                out.add(span);
+            } else {
+                sb.append(span);
+            }
+            pos = close + 1;
         }
-        m.appendTail(sb);
+        sb.append(text.substring(pos));
         return sb.toString();
     }
 
@@ -4103,6 +4146,66 @@ public record CardData(
             if (text.contains(token)) text = text.replace(token, masked.get(i));
         }
         return text;
+    }
+
+    /** The filter of a "you cast a/an &lt;filter&gt;" trigger, lower-cased as the trigger name carries it. */
+    private static final Pattern CAST_FILTER = Pattern.compile(
+        "^an?\\s+(?:card\\s+name\\s+(?<name>.+)" +
+        "|(?<multi>multi-element\\s+)?(?:(?<elems>(?:fire|ice|wind|earth|lightning|water|light|dark)" +
+            "(?:\\s+or\\s+(?:fire|ice|wind|earth|lightning|water|light|dark))*)\\s+)?" +
+        "(?:category\\s+(?<cat>\\S+)\\s+)?(?<type>card|summon|character|forward|backup|monster)" +
+        "(?:\\s+of\\s+cost\\s+(?<cost>\\d+)\\s+or\\s+(?<cmp>more|less))?)$");
+
+    /**
+     * Whether {@code card} is what a "you cast a/an &lt;filter&gt;" trigger watches for — 10-078H Doga's
+     * "a Summon of cost 4 or more", 27-014H Terra's "a Wind or Lightning card", 11-012C Mootie's "a
+     * Card Name Bahamut", 18-068R Rikku's "a Multi-Element Forward". An unreadable filter matches
+     * nothing: the trigger stays silent rather than firing on every cast.
+     */
+    static boolean castFilterMatches(String filter, CardData card) {
+        Matcher m = CAST_FILTER.matcher(filter.trim().toLowerCase(Locale.ROOT));
+        if (!m.matches()) return false;
+        if (m.group("name") != null) return CardFilters.meetsCardNameFilter(card, m.group("name").trim());
+        if (m.group("multi") != null && card.elements().length < 2) return false;
+        if (m.group("elems") != null) {
+            boolean any = false;
+            for (String e : m.group("elems").split("\\s+or\\s+")) any |= card.containsElement(e.trim());
+            if (!any) return false;
+        }
+        if (m.group("cat") != null && !CardFilters.meetsCategoryFilter(card, m.group("cat"))) return false;
+        boolean typeOk = switch (m.group("type")) {
+            case "summon"    -> card.isSummon();
+            case "character" -> !card.isSummon();
+            case "forward"   -> card.isForward();
+            case "backup"    -> card.isBackup();
+            case "monster"   -> card.isMonster();
+            default          -> true;
+        };
+        if (!typeOk) return false;
+        if (m.group("cost") != null) {
+            int cost = Integer.parseInt(m.group("cost"));
+            return m.group("cmp").equals("more") ? card.cost() >= cost : card.cost() <= cost;
+        }
+        return true;
+    }
+
+    /** The lower-cased trigger phrase of an "enters the field due to / by …" auto ability. */
+    private static final Pattern ENTERS_BY_EFFECT_TRIGGER = Pattern.compile(
+        "^enters?\\s+the\\s+field\\s+(?:due\\s+to|by)\\s+(?<your>your\\s+)?(?:(?<either>(?:an?\\s+)?summons?\\s+or\\s+" +
+        "(?:an?\\s+)?abilit(?:y|ies))|an?\\s+abilit(?:y|ies)(?:\\s+of\\s+card\\s+name\\s+(?<name>[^,]+?))?)$");
+
+    /**
+     * The trigger name for {@link #ENTERS_BY_EFFECT_TRIGGER}: "enters the field by ability",
+     * "… by summon or ability", "… by own summon or ability" ("due to your …"), or "… by ability of
+     * &lt;name&gt;" (17-056L Noel). The name is kept in the original case the dispatch compares against.
+     */
+    private static String entersByEffectTrigger(String triggerRaw) {
+        Matcher m = ENTERS_BY_EFFECT_TRIGGER.matcher(triggerRaw);
+        if (!m.matches()) return "enters the field";
+        if (m.group("name") != null) return "enters the field by ability of " + m.group("name").trim();
+        if (m.group("either") != null)
+            return m.group("your") != null ? "enters the field by own summon or ability" : "enters the field by summon or ability";
+        return "enters the field by ability";
     }
 
     public static List<AutoAbility> parseAutoAbilities(String textEn) {
@@ -4303,6 +4406,9 @@ public record CardData(
             // Read first: the subject is a counter rather than a card, so every branch below would
             // be answering about the wrong thing if one of them claimed the phrase.
             if      (triggerRaw.startsWith("is placed on") || triggerRaw.startsWith("are placed on")) trigger = "counter placed";
+            // "enters the field due to / by …" an effect. Read ahead of every other enter branch; the
+            // dispatch checks what was resolving as the card arrived.
+            else if (ENTERS_BY_EFFECT_TRIGGER.matcher(triggerRaw).matches())                           trigger = entersByEffectTrigger(triggerRaw);
             else if (triggerRaw.contains("attack") && triggerRaw.contains("block"))                        trigger = "attacks or blocks";
             else if (triggerRaw.contains("attack") && (cardIsParty || triggerHasParty))                    trigger = "party attacks";
             else if (triggerRaw.contains("enter") && triggerRaw.contains("break zone"))                   trigger = "enters the field or put into break zone";
@@ -4339,6 +4445,9 @@ public record CardData(
             // "break zone", and "due to your Summons or abilities" contains "summon".
             else if (triggerRaw.contains("added to your opponent's hand"))                                  trigger = "opponent salvages from break zone";
             else if (triggerRaw.contains("discard") && triggerRaw.contains("due to your"))                  trigger = discardByEffectTrigger(triggerRaw);
+            // Its self-facing sibling, 16-114C White Mage. Same ordering constraint: "due to
+            // Summons" contains "summon".
+            else if (triggerRaw.contains("discard") && triggerRaw.contains("due to summon"))                trigger = "you discard by effect";
             // "becomes dull due to your Summon or ability" — PR-156 Zack. Must precede the "summon"
             // branch below for the same reason its two neighbours do: "due to your Summon or
             // ability" contains "summon", and that branch would file this as a cast-a-Summon
@@ -4354,6 +4463,11 @@ public record CardData(
             // is a cast trigger and belongs beside the Summon one rather than after the fall-through
             // that would silently classify it as "enters the field".
             else if (triggerRaw.contains("cast") && triggerRaw.contains("removed from the game"))           trigger = "cast removed card";
+            // "you cast a <filter>" — any card type, filtered at dispatch (castFilterMatches). Plain
+            // "casts a Summon" keeps its own trigger below; every filtered printing's subject is "you".
+            else if (card.equalsIgnoreCase("you") && triggerRaw.matches("casts?\\s+an?\\s+.+")
+                    && !triggerRaw.matches("casts?\\s+a\\s+summon"))
+                trigger = "you cast " + triggerRaw.replaceFirst("^casts?\\s+", "");
             // "a Forward damaged by Galuf is put from the field into the Break Zone on the same
             // turn" — the same event as the plain break-zone trigger below, qualified by who dealt
             // the damage. Told apart by the subject rather than by the "same turn" tail: the tail
@@ -4368,6 +4482,14 @@ public record CardData(
             // both branches below, which are satisfied by "chosen" + "abilit" alone and would file
             // this as the plain ability watcher. That one's dispatch carries no acting card, so
             // Delita's "break that Character" would have had nothing to break.
+            // Chosen by anyone — must precede every branch below, which are satisfied by "chosen"
+            // and "abilit"/"summon" alone and would file these as opponent-only watchers.
+            // Anchored at the end: "… a Summon or an ability of your opponent" (4-024R Llednar,
+            // 2-136R Porom) shares the prefix and is the opponent-only watcher below.
+            else if (triggerRaw.endsWith("chosen by a forward's ability"))                          trigger = "chosen by forward ability";
+            else if (triggerRaw.endsWith("chosen by summons or abilities")
+                    || triggerRaw.endsWith("chosen by a summon or an ability"))                     trigger = "chosen by summon or ability";
+            else if (triggerRaw.endsWith("chosen by a summon"))                                     trigger = "chosen by summon";
             else if (triggerRaw.contains("chosen") && triggerRaw.contains("ability of a character")) trigger = "chosen by opponent's character ability";
             // "chosen by your opponent's ability" with no Summon named. Must precede the branch
             // below, which is satisfied by "chosen" + "abilit" alone and would widen these five
@@ -4379,6 +4501,14 @@ public record CardData(
             else if (triggerRaw.contains("summon"))                                                         trigger = castSummonTrigger(card);
             else if (triggerRaw.contains("damage zone"))                                                    trigger = "damage zone";
             else if (triggerRaw.contains("leaves"))                                                         trigger = "leaves the field";
+            // 7-111R Geosgaeno's watcher, and the passive "is returned from the field" wording. The
+            // subject says Forward or Character, and whose: "a Character" alone (14-042L Bismarck,
+            // 14-102L Leviathan) watches both sides.
+            else if (triggerRaw.contains("returns to its owner's hand")
+                    || triggerRaw.contains("returned from the field to"))
+                trigger = !card.toLowerCase(Locale.ROOT).contains("opponent") ? "character returns to hand"
+                        : card.toLowerCase(Locale.ROOT).contains("character")
+                        ? "opponent character returns to hand" : "opponent forward returns to hand";
             else if (warpOnly)                                                                               trigger = "enters the field";
             else if (triggerRaw.contains("warp"))                                                           trigger = "warp placed";
             else if (triggerRaw.contains("deals damage") && triggerRaw.contains("opponent"))                trigger = "deals damage to opponent";
@@ -4754,7 +4884,7 @@ public record CardData(
             String effect, int damageThreshold,
             int partyMinCount, String partyCategory, String partyJob, List<String> partyCardNames) {
 
-        boolean oncePerTurn = false, yourTurnOnly = false;
+        boolean oncePerTurn = false, yourTurnOnly = false, opponentTurnOnly = false;
         String  rfpConditionCard = "";
         String  bzConditionCard  = "";
         String  bzConditionJob   = "";
@@ -4767,17 +4897,23 @@ public record CardData(
         // Scarlet. Cut out rather than truncated to, since there is text on both sides of it.
         if (!restr.find()) {
             Matcher mid = FA_TRIGGER_RESTRICTION_MID.matcher(effect);
-            if (mid.find() && (mid.group("yourTurn") != null || mid.group("once") != null)) {
-                yourTurnOnly = mid.group("yourTurn") != null;
-                oncePerTurn  = mid.group("once")     != null;
+            if (mid.find() && (mid.group("yourTurn") != null || mid.group("oppTurn") != null
+                    || mid.group("once") != null)) {
+                yourTurnOnly     = mid.group("yourTurn") != null;
+                opponentTurnOnly = mid.group("oppTurn")  != null;
+                oncePerTurn      = mid.group("once")     != null;
                 effect = (effect.substring(0, mid.start()) + " " + effect.substring(mid.end()))
                         .replaceAll("\\s+", " ").trim();
             }
         }
         restr = FA_TRIGGER_RESTRICTION.matcher(effect);
-        if (restr.find() && (restr.group("yourTurn") != null || restr.group("once") != null)) {
-            yourTurnOnly = restr.group("yourTurn") != null;
-            oncePerTurn  = restr.group("once")     != null;
+        if (restr.find() && (restr.group("yourTurn") != null || restr.group("oppTurn") != null
+                || restr.group("once") != null)) {
+            yourTurnOnly     = restr.group("yourTurn") != null;
+            // 25-027H Chadley, 16-114C White Mage, 17-120H Princess Sarah — read by the same
+            // dispatch check as the "During your opponent's turn, when …" prefix.
+            opponentTurnOnly = restr.group("oppTurn")  != null;
+            oncePerTurn      = restr.group("once")     != null;
             effect = effect.substring(0, restr.start()).trim().replaceAll("[.!,]+$", "").trim();
         }
 
@@ -4854,7 +4990,7 @@ public record CardData(
         // an optional ability, declining the prompt would skip the consequence too.
         if (youMay && ActionResolver.isPayOrElseGate(effect)) youMay = false;
         return new AutoAbility(card, trigger, youMay, opponentMay, effect,
-                oncePerTurn, yourTurnOnly, false, rfpConditionCard, bzConditionCard, bzConditionJob, castPaymentMinElements, castOnly, warpOnly, false, damageThreshold,
+                oncePerTurn, yourTurnOnly, opponentTurnOnly, rfpConditionCard, bzConditionCard, bzConditionJob, castPaymentMinElements, castOnly, warpOnly, false, damageThreshold,
                 partyMinCount, partyCategory, partyJob, partyCardNames);
     }
 

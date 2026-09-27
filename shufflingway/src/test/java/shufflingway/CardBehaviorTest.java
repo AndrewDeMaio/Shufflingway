@@ -3359,13 +3359,17 @@ public class CardBehaviorTest {
                 any(), any(), any(), any(), anyBoolean(), any(), anyBoolean()
         )).thenReturn(List.of(t));
         when(ctx.lastChosenTargets()).thenReturn(List.of(t));
+        // The rider is armed ahead of the selection and consumed by it.
+        when(ctx.consumeRfgInsteadOfBzMark()).thenReturn(true, false);
 
         Consumer<GameContext> fn = ActionResolver.parse(JET_BAHAMUT_EFFECT_TEXT, null);
         assertNotNull(fn, "Expected Jet Bahamut's effect text to parse");
         fn.accept(ctx);
 
-        verify(ctx).damageTarget(t, 5000);
-        verify(ctx).markTargetRfgInsteadOfBzThisTurn(t);
+        // Marked before the damage: a lethal hit breaks the Forward inside the damage call.
+        InOrder order = inOrder(ctx);
+        order.verify(ctx).markTargetRfgInsteadOfBzThisTurn(t);
+        order.verify(ctx).damageTarget(t, 5000);
     }
 
     @Test
@@ -56037,6 +56041,448 @@ public class CardBehaviorTest {
 
 		assertEquals(4000, mw.p1MonsterTempForwardPower.get(cactuar),
 				"\"does not end at the end of the turn\" — nothing was registered to take it back");
+	}
+
+	// 7-026R Gremlin / 7-050R Condor / 7-098R Flanborg: the same promotion with a quoted grant. The
+	// find()-ing parsers took the quotation as the trigger's effect — Gremlin dulled and froze a
+	// Forward on every discard instead of becoming one.
+	private static final String GREMLIN_7_026R_EFFECT = "if Gremlin is not a Forward, Gremlin also becomes a "
+			+ "Forward with 7000 power and \"When Gremlin is put from the field into the Break Zone, choose 1 "
+			+ "Forward opponent controls. Dull it and Freeze it\". (This effect does not end at the end of the "
+			+ "turn. This ability will not trigger if Gremlin is a Forward.)";
+
+	@Test
+	void gremlinBecomesAForwardAndGainsItsQuotedAbilityOnce() {
+		MainWindow mw = new MainWindow();
+		CardData gremlin = makeMonsterWithText("Gremlin", "Ice", "");
+		mw.gameState.getIdentity().put(gremlin, true);
+		mw.placeCardInMonsterZone(gremlin);
+		CardData theirs = makeForward("Theirs", "Fire", 3, 7000);
+		placeP2Forward(mw, theirs);
+
+		Consumer<GameContext> parsed = ActionResolver.parse(GREMLIN_7_026R_EFFECT, gremlin);
+		assertEquals("SelfBecomeForwardPermanent", ActionResolver.matchedPatternName(GREMLIN_7_026R_EFFECT, gremlin));
+		parsed.accept(mw.buildGameContext(true));
+		assertEquals(7000, mw.p1MonsterTempForwardPower.get(gremlin));
+		assertEquals(1, mw.grantedAutoAbilities.get(gremlin).size(), "the quoted Break Zone trigger");
+		assertEquals(CardState.ACTIVE, mw.p2ForwardStates.get(0), "nothing is dulled by the promotion itself");
+
+		parsed.accept(mw.buildGameContext(true));
+		assertEquals(1, mw.grantedAutoAbilities.get(gremlin).size(), "already a Forward: nothing granted twice");
+	}
+
+	@Test
+	void condorNeedsFiveBackupsToBecomeAForward() {
+		String effect = "if you control 5 or more Backups and if Condor is not a Forward, Condor also becomes a "
+				+ "Forward with 8000 power and \"When Condor attacks, activate all the Wind Characters other than "
+				+ "Condor you control\". (This effect does not end at the end of the turn. This ability will not "
+				+ "trigger if Condor is a Forward.)";
+		MainWindow mw = new MainWindow();
+		CardData condor = makeMonsterWithText("Condor", "Wind", "");
+		mw.gameState.getIdentity().put(condor, true);
+		mw.placeCardInMonsterZone(condor);
+		for (int i = 0; i < 4; i++) placeBackup(mw, makePlainBackup("B" + i, "Wind", 2), true);
+		Consumer<GameContext> parsed = ActionResolver.parse(effect, condor);
+		assertNotNull(parsed);
+		parsed.accept(mw.buildGameContext(true));
+		assertNull(mw.p1MonsterTempForwardPower.get(condor), "four Backups: stays a Monster");
+
+		placeBackup(mw, makePlainBackup("B4", "Wind", 2), true);
+		parsed.accept(mw.buildGameContext(true));
+		assertEquals(8000, mw.p1MonsterTempForwardPower.get(condor));
+		assertEquals(1, mw.grantedAutoAbilities.get(condor).size());
+	}
+
+	// 18-038C Kytes — "reveal the top 3 … Add 1 Wind card among them to your hand … If it is a
+	// Category XII Character, also activate Kytes." The activation ran every time; the reveal never.
+	@Test
+	void kytesActivatesOnlyForACategoryXiiCharacter() {
+		String text = "reveal the top 3 cards of your deck. Add 1 Wind card among them to your hand and return "
+				+ "the other cards to the bottom of your deck in any order. If it is a Category XII Character, also "
+				+ "activate Kytes.";
+		CardData kytes = makeForward("Kytes", "Wind", 4, 5000);
+		CardData[] added = { makeCategoryForward("Vaan", "Wind", "XII"), makeCategoryForward("Tidus", "Wind", "X"), null };
+		for (CardData card : added) {
+			GameContext ctx = mock(GameContext.class);
+			when(ctx.cardAddedToHandByLook()).thenReturn(card);
+			ActionResolver.parse(text, kytes).accept(ctx);
+			verify(ctx).revealTopAddUpToMatchingRestBottom(eq(3), eq(1), any(), any(), any(), any(), anyInt(),
+					any(), any(), anyBoolean());
+			if (card != null && card.name().equals("Vaan")) verify(ctx).logEntry("Effect: Activate Kytes");
+			else verify(ctx, never()).logEntry("Effect: Activate Kytes");
+		}
+	}
+
+	// 20-102L Mira — "When an opponent's Forward enters the field, you may pay 《1》 and discard 1
+	// Monster. When you do so, break that Forward." Both halves are the price; the arriving Forward
+	// is "that Forward". Everything on P2 so the AI answers the choices.
+	private static MainWindow miraBoard(boolean monsterInHand) {
+		MainWindow mw = new MainWindow();
+		CardData mira = makeAutoAbilityForward("Mira", "Lightning", 7000, "When an opponent's Forward enters "
+				+ "the field, you may pay 《1》 and discard 1 Monster. When you do so, break that Forward.");
+		placeP2Forward(mw, mira);
+		placeBackup(mw, makePlainBackup("Helper", "Lightning", 2), false);
+		if (monsterInHand) {
+			CardData monster = makeMonsterWithText("Bomb", "Fire", "");
+			mw.gameState.getIdentity().put(monster, false);
+			mw.gameState.getP2Hand().add(monster);
+		}
+		return mw;
+	}
+
+	@Test
+	void miraPaysAndDiscardsToBreakTheArrivingForward() {
+		MainWindow mw = miraBoard(true);
+		CardData arriving = makeForward("Arriving", "Fire", 3, 7000);
+		placeP1Forward(mw, arriving);
+		assertFalse(mw.p1ForwardCards.contains(arriving), "that Forward is broken");
+		assertTrue(mw.gameState.getP2Hand().isEmpty(), "the Monster was discarded");
+		assertEquals(CardState.DULL, mw.p2BackupStates[0], "and 《1》 paid");
+	}
+
+	@Test
+	void miraPaysNothingWithoutAMonsterToDiscard() {
+		MainWindow mw = miraBoard(false);
+		CardData arriving = makeForward("Arriving", "Fire", 3, 7000);
+		placeP1Forward(mw, arriving);
+		assertTrue(mw.p1ForwardCards.contains(arriving));
+		assertEquals(CardState.ACTIVE, mw.p2BackupStates[0], "no CP spent on a discard that cannot happen");
+	}
+
+	// 29-095H Ramuh (XVI) — "discard 1 Summon or Job Eikon. When you do so, reveal the top 2 … Add all
+	// the Lightning cards and Category XVI cards among them to your hand and put the rest … into the
+	// Break Zone." The discard ran and the payoff was dropped.
+	@Test
+	void ramuhDiscardsAnEikonAndTakesEveryLightningOrXviCard() {
+		MainWindow mw = new MainWindow();
+		CardData eikon = makeJobCard("Garuda", "Wind", "Forward", "Eikon");
+		mw.gameState.getIdentity().put(eikon, false);
+		mw.gameState.getP2Hand().add(eikon);
+		CardData bolt = makeForward("Bolt", "Lightning", 2, 5000);
+		CardData other = makeForward("Other", "Fire", 2, 5000);
+		mw.gameState.getP2MainDeck().addLast(bolt);
+		mw.gameState.getP2MainDeck().addLast(other);
+		Consumer<GameContext> parsed = ActionResolver.parse("discard 1 Summon or Job Eikon. When you do so, reveal "
+				+ "the top 2 cards of your deck. Add all the Lightning cards and Category XVI cards among them to your "
+				+ "hand and put the rest of the cards into the Break Zone.", null);
+		assertNotNull(parsed);
+		parsed.accept(mw.buildGameContext(false));
+		assertTrue(mw.gameState.getP2BreakZone().contains(eikon), "the Job Eikon is a legal discard");
+		assertTrue(mw.gameState.getP2Hand().contains(bolt), "the Lightning card goes to hand");
+		assertTrue(mw.gameState.getP2BreakZone().contains(other), "the rest to the Break Zone");
+	}
+
+	// 15-109R Ultros — "Put Ultros at the bottom of its owner's deck. If you do so, shuffle your deck.
+	// Then, reveal the top 5 cards of your deck. Play 1 Card Name Ultros among them onto the field …"
+	// Only the shuffle ran: the trailing use restriction defeated the anchored reveal-and-play.
+	@Test
+	void ultrosShufflesThenRevealsAndPlaysAnotherUltros() {
+		CardData ultros = makeForward("Ultros", "Water", 1, 3000);
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.effectMadeProgress()).thenReturn(true);
+		ActionResolver.parse("Put Ultros at the bottom of its owner's deck. If you do so, shuffle your deck. Then, "
+				+ "reveal the top 5 cards of your deck. Play 1 Card Name Ultros among them onto the field and return "
+				+ "the other cards to the bottom of your deck in any order. You can only use this ability once per "
+				+ "turn.", ultros).accept(ctx);
+		verify(ctx).shuffleDeck();
+		verify(ctx).revealTopNPlayNamedOntoFieldRestBottom(5, "Ultros");
+	}
+
+	// 15-120H Mind Flayer — "Look at the top 2 cards of your opponent's deck. Remove 1 card among them
+	// from the game and put the other to the bottom … You can cast the removed card as though you owned
+	// it without paying the cost this turn." It removed a card *named* "1 card among them": nothing.
+	@Test
+	void mindFlayerTakesOneOfTheOpponentsTopTwoToCastFree() {
+		MainWindow mw = new MainWindow();
+		CardData cheap = makeForward("Cheap", "Fire", 1, 1000);
+		CardData dear  = makeForward("Dear", "Ice", 6, 9000);
+		CardData deep  = makeForward("Deep", "Ice", 2, 3000);
+		for (CardData c : new CardData[] { cheap, dear, deep }) {
+			mw.gameState.getIdentity().put(c, true);
+			mw.gameState.getP1MainDeck().addLast(c);
+		}
+		Consumer<GameContext> parsed = ActionResolver.parse("Look at the top 2 cards of your opponent's deck. Remove 1 "
+				+ "card among them from the game and put the other to the bottom of your opponent's deck. You can cast "
+				+ "the removed card as though you owned it without paying the cost this turn.", null);
+		assertNotNull(parsed);
+		parsed.accept(mw.buildGameContext(false));
+
+		assertTrue(mw.gameState.getP1PermanentRfp().contains(dear), "the chosen card is removed from the game");
+		assertTrue(mw.bzPlayableP2.containsKey(dear), "and castable by the player who took it");
+		assertSame(deep, mw.gameState.getP1MainDeck().peekFirst(), "the untouched card is now on top");
+		assertSame(cheap, mw.gameState.getP1MainDeck().peekLast(), "the other goes to the bottom");
+	}
+
+	// The Bahamut rider — "Choose 1 Forward. Deal it 8000 damage. If it is put from the field into the
+	// Break Zone this turn, remove it from the game instead." (4-016R and nine more). Read as a trailing
+	// secondary it marked the Forward after the damage had already broken it, so a lethal hit sent it
+	// to the Break Zone. It is armed before the selection now, like the delayed Break Zone marks.
+	@Test
+	void bahamutRemovesTheForwardItsDamageBreaks() {
+		MainWindow mw = new MainWindow();
+		CardData victim = makeForward("Victim", "Fire", 3, 7000);
+		placeP1Forward(mw, victim);
+		Consumer<GameContext> parsed = ActionResolver.parse("Choose 1 Forward. Deal it 8000 damage. If it is put "
+				+ "from the field into the Break Zone this turn, remove it from the game instead.", null);
+		assertNotNull(parsed);
+		parsed.accept(mw.buildGameContext(false));
+		assertFalse(mw.p1ForwardCards.contains(victim), "8000 breaks it");
+		assertTrue(mw.gameState.getP1BreakZone().isEmpty(), "not to the Break Zone");
+		assertTrue(mw.gameState.getP1PermanentRfp().contains(victim), "removed from the game instead");
+	}
+
+	// 22-015C Meeth — "When Meeth enters the field, remove 1 Backup other than Meeth you control from the
+	// game. If you do so, draw 2 cards." The removal was read as a card named "1 Backup other than Meeth
+	// you control": nothing removed, 2 cards drawn. The trigger layer's removal shape reads it now.
+	private static MainWindow meethEnters(boolean otherBackup) {
+		MainWindow mw = new MainWindow();
+		for (int i = 0; i < 3; i++) mw.gameState.getP2MainDeck().addLast(makeForward("Card " + i, "Wind", 1, 1000));
+		if (otherBackup) placeBackup(mw, makePlainBackup("Helper", "Wind", 2), false);
+		CardData meeth = makeTextCard("Meeth", "Wind", "Backup", 2, 0, null, "When Meeth enters the field, remove 1 "
+				+ "Backup other than Meeth you control from the game. If you do so, draw 2 cards.");
+		mw.gameState.getIdentity().put(meeth, false);
+		mw.placeP2CardInFirstBackupSlot(meeth);
+		return mw;
+	}
+
+	@Test
+	void meethDrawsOnlyByRemovingAnotherBackup() {
+		MainWindow with = meethEnters(true);
+		assertEquals(2, with.gameState.getP2Hand().size(), "the Helper removed, 2 drawn");
+		assertEquals(1, with.gameState.getP2PermanentRfp().size());
+		assertEquals("Helper", with.gameState.getP2PermanentRfp().get(0).name(), "never Meeth herself");
+
+		MainWindow without = meethEnters(false);
+		assertTrue(without.gameState.getP2Hand().isEmpty(), "nothing to remove, nothing drawn");
+	}
+
+	// 16-114C White Mage — "When you discard 1 or more cards due to Summons or abilities, draw 1 card.
+	// This effect will trigger only during your opponent's turn." The trigger was never recognised.
+	private static long whiteMageTriggersOnStack(MainWindow mw, CardData whiteMage) {
+		return mw.gameState.getStack().stream().filter(e -> e.source() == whiteMage).count();
+	}
+
+	@Test
+	void whiteMageDrawsOncePerEffectThatMakesItsControllerDiscard() {
+		MainWindow mw = new MainWindow();
+		CardData whiteMage = makeTextCard("White Mage", "Water", "Forward", 3, 7000, null, "When you discard 1 or "
+				+ "more cards due to Summons or abilities, draw 1 card. This effect will trigger only during your "
+				+ "opponent's turn.");
+		placeP2Forward(mw, whiteMage);
+		for (int i = 0; i < 4; i++) {
+			CardData c = makeForward("Card " + i, "Fire", 1, 1000);
+			mw.gameState.getIdentity().put(c, false);
+			mw.gameState.getP2Hand().add(c);
+		}
+		CardData causer = makeForward("Causer", "Fire", 2, 5000);
+		advanceTo(mw, GameState.Player.P1, GameState.GamePhase.MAIN_1);
+
+		// One resolution of P1's ability discards two of P2's cards: one trigger.
+		mw.resolutionSerial = mw.nextResolutionSerial();
+		mw.currentAbilitySource = causer;
+		mw.currentAbilitySourceIsP1 = true;
+		mw.playerBreakFromHand(false, 0);
+		mw.playerBreakFromHand(false, 0);
+		assertEquals(1, whiteMageTriggersOnStack(mw, whiteMage), "\"1 or more cards\" — once per effect");
+
+		// A second effect is a second trigger.
+		mw.resolutionSerial = mw.nextResolutionSerial();
+		mw.playerBreakFromHand(false, 0);
+		assertEquals(2, whiteMageTriggersOnStack(mw, whiteMage));
+
+		// Not on its controller's own turn.
+		advanceTo(mw, GameState.Player.P2, GameState.GamePhase.MAIN_1);
+		mw.resolutionSerial = mw.nextResolutionSerial();
+		mw.playerBreakFromHand(false, 0);
+		assertEquals(2, whiteMageTriggersOnStack(mw, whiteMage), "only during your opponent's turn");
+		mw.currentAbilitySource = null;
+	}
+
+	// Chosen-by triggers that do not care whose effect chose — none was recognised: 22-068R Prishe,
+	// 2-017R Bergan, 13-079L Behemoth K and the rest of the family.
+	@Test
+	void prisheGainsPowerWhenChosenEvenByHerOwnSide() {
+		MainWindow mw = new MainWindow();
+		CardData prishe = makeTextCard("Prishe", "Earth", "Forward", 3, 7000, null, "When Prishe is chosen by a "
+				+ "Summon or an ability, Prishe gains +2000 power until the end of the turn.");
+		placeP2Forward(mw, prishe);
+		mw.currentAbilitySource = makeForward("Ally", "Earth", 2, 5000);
+		mw.currentAbilitySourceIsP1 = false;
+		ActionResolver.parse("Choose 1 Forward you control. Dull it.", null).accept(mw.buildGameContext(false));
+		mw.currentAbilitySource = null;
+		assertTrue(mw.gameState.getStack().stream().anyMatch(e -> e.source() == prishe),
+				"her trigger goes on the Stack, though her own side chose her");
+	}
+
+	@Test
+	void berganLeavesWhenChosenByASummon() {
+		MainWindow mw = new MainWindow();
+		CardData bergan = makeTextCard("Bergan", "Earth", "Forward", 3, 7000, null, "When Bergan is chosen by a "
+				+ "Summon, put Bergan into the Break Zone.");
+		placeP2Forward(mw, bergan);
+		mw.currentResolutionIsSummon = true;
+		mw.currentSummonSource = makeSummon("Spell", "Earth", 2, "");
+		ActionResolver.parse("Choose 1 Forward you control. Dull it.", null).accept(mw.buildGameContext(false));
+		mw.currentResolutionIsSummon = false;
+		mw.currentSummonSource = null;
+		assertTrue(mw.gameState.getStack().stream().anyMatch(e -> e.source() == bergan),
+				"chosen by a Summon: his trigger goes on the Stack");
+	}
+
+	@Test
+	void behemothKBreaksTheForwardWhoseAbilityChoseIt() {
+		MainWindow mw = new MainWindow();
+		CardData behemoth = makeTextCard("Behemoth K", "Fire", "Forward", 5, 9000, null, "When Behemoth K is chosen "
+				+ "by a Forward's ability, break that Forward.");
+		placeP1Forward(mw, behemoth);
+		CardData chooser = makeForward("Chooser", "Ice", 3, 7000);
+		placeP2Forward(mw, chooser);
+		mw.currentAbilitySource = chooser;
+		mw.currentAbilitySourceIsP1 = false;
+		ActionResolver.parse("Choose 1 Forward opponent controls. Dull it.", null).accept(mw.buildGameContext(false));
+		mw.currentAbilitySource = null;
+		assertTrue(mw.gameState.getP2BreakZone().contains(chooser), "the Forward that chose is broken");
+		assertTrue(mw.p1ForwardCards.contains(behemoth));
+	}
+
+	// 7-111R Geosgaeno — "When a Forward opponent controls returns to its owner's hand from the field,
+	// if Geosgaeno is not a Forward, Geosgaeno also becomes a Forward with 7000 power and "If Geosgaeno
+	// receives damage, the damage is reduced by 1000 instead". (…)" Neither the trigger nor the grant
+	// (a damage modifier, not an auto ability) was read.
+	private static final String GEOSGAENO_7_111R_TEXT = "When a Forward opponent controls returns to its owner's "
+			+ "hand from the field, if Geosgaeno is not a Forward, Geosgaeno also becomes a Forward with 7000 power "
+			+ "and \"If Geosgaeno receives damage, the damage is reduced by 1000 instead\". (This effect does not "
+			+ "end at the end of the turn. This ability will not trigger if Geosgaeno is a Forward.)";
+
+	@Test
+	void geosgaenoTriggersWhenAnOpposingForwardReturnsToHand() {
+		MainWindow mw = new MainWindow();
+		CardData geo = makeTextCard("Geosgaeno", "Water", "Monster", 2, 0, null, GEOSGAENO_7_111R_TEXT);
+		mw.gameState.getIdentity().put(geo, false);
+		mw.placeP2CardInMonsterZone(geo);
+		CardData theirs = makeForward("Theirs", "Fire", 3, 7000);
+		placeP1Forward(mw, theirs);
+		mw.returnP1ForwardToHand(mw.p1ForwardCards.indexOf(theirs));
+		assertTrue(mw.gameState.getStack().stream().anyMatch(e -> e.source() == geo));
+	}
+
+	// The passive wording, "a Forward / Character opponent controls is returned from the field to its
+	// owner's hand" — 16-117H Tros, 24-101C Tidus and three more, none recognised.
+	@Test
+	void returnedToHandWatchersSplitForwardsFromCharacters() {
+		MainWindow mw = new MainWindow();
+		CardData tros = makeTextCard("Tros", "Water", "Forward", 3, 7000, null, "When a Forward opponent controls "
+				+ "is returned from the field to its owner's hand, draw 1 card.");
+		CardData tidus = makeTextCard("Tidus", "Water", "Forward", 3, 7000, null, "When a Character opponent "
+				+ "controls is returned from the field to its owner's hand, draw 1 card.");
+		placeP2Forward(mw, tros);
+		placeP2Forward(mw, tidus);
+		CardData backup = makePlainBackup("Helper", "Fire", 2);
+		placeBackup(mw, backup, true);
+		mw.returnP1BackupToHand(0);
+		assertFalse(mw.gameState.getStack().stream().anyMatch(e -> e.source() == tros), "a Backup is not a Forward");
+		assertEquals(1, mw.gameState.getStack().stream().filter(e -> e.source() == tidus).count(), "but is a Character");
+
+		CardData fwd = makeForward("Theirs", "Fire", 3, 7000);
+		placeP1Forward(mw, fwd);
+		mw.returnP1ForwardToHand(mw.p1ForwardCards.indexOf(fwd));
+		assertEquals(1, mw.gameState.getStack().stream().filter(e -> e.source() == tros).count());
+		assertEquals(2, mw.gameState.getStack().stream().filter(e -> e.source() == tidus).count());
+	}
+
+	// "When a Character is returned from the field to its owner's hand" with no side named — 14-042L
+	// Bismarck — watches its own side too.
+	@Test
+	void anUnsidedReturnWatcherSeesItsOwnSide() {
+		MainWindow mw = new MainWindow();
+		CardData bismarck = makeTextCard("Bismarck", "Wind", "Forward", 5, 9000, null, "When a Character is "
+				+ "returned from the field to its owner's hand, draw 1 card.");
+		placeP2Forward(mw, bismarck);
+		CardData own = makeForward("Own", "Wind", 2, 5000);
+		placeP2Forward(mw, own);
+		mw.returnP2ForwardToHand(mw.p2ForwardCards.indexOf(own));
+		assertEquals(1, mw.gameState.getStack().stream().filter(e -> e.source() == bismarck).count());
+	}
+
+	// "When X enters the field due to an ability / by Summons or abilities / due to your Summons or
+	// abilities" — 21-018R Rain, 28-081L Kain, 12-004R Alphinaud and ten more, none recognised.
+	private static boolean entersAndTriggers(String name, String trigger, boolean abilityP1, boolean summon) {
+		MainWindow mw = new MainWindow();
+		CardData card = makeTextCard(name, "Fire", "Forward", 3, 7000, null,
+				"When " + name + " enters the field " + trigger + ", draw 1 card.");
+		if (summon) {
+			mw.currentResolutionIsSummon = true;
+			mw.currentSummonSource = makeSummon("Spell", "Fire", 2, "");
+			mw.currentSummonSourceIsP1 = abilityP1;
+		} else if (abilityP1 || name.equals("Rain") || name.equals("Alphinaud")) {
+			mw.currentAbilitySource = makeForward("Helper", "Fire", 2, 5000);
+			mw.currentAbilitySourceIsP1 = abilityP1;
+		}
+		placeP2Forward(mw, card);
+		return mw.gameState.getStack().stream().anyMatch(e -> e.source() == card);
+	}
+
+	@Test
+	void entersDueToAnEffectTriggersReadWhatWasResolving() {
+		assertTrue(entersAndTriggers("Rain", "due to an ability", false, false), "an ability put Rain out");
+		assertFalse(entersAndTriggers("Rain", "due to an ability", false, true), "a Summon is not an ability");
+		assertTrue(entersAndTriggers("Kain", "by Summons or abilities", false, true), "Kain takes Summons too");
+		assertTrue(entersAndTriggers("Alphinaud", "due to your Summons or abilities", false, false),
+				"P2's own ability put P2's Alphinaud out");
+		assertFalse(entersAndTriggers("Alphinaud", "due to your Summons or abilities", true, false),
+				"the opponent's ability is not \"your\"");
+
+		MainWindow plain = new MainWindow();
+		CardData rain = makeTextCard("Rain", "Fire", "Forward", 3, 7000, null,
+				"When Rain enters the field due to an ability, draw 1 card.");
+		placeP2Forward(plain, rain);
+		assertTrue(plain.gameState.getStack().isEmpty(), "nothing was resolving: no trigger");
+	}
+
+	// "When you cast a <filter>, …" — 10-078H Doga, 16-044L Wol, 27-014H Terra and eight more, none
+	// recognised. Fired from noteCardCast for every cast, Summon or Character, filter checked there.
+	private static long stackEntriesFrom(MainWindow mw, CardData source) {
+		return mw.gameState.getStack().stream().filter(e -> e.source() == source).count();
+	}
+
+	@Test
+	void filteredCastTriggersReadTheirFilter() {
+		MainWindow mw = new MainWindow();
+		CardData doga = makeTextCard("Doga", "Water", "Forward", 3, 7000, null,
+				"When you cast a Summon of cost 4 or more, draw 1 card.");
+		CardData wol = makeTextCard("Wol", "Light", "Forward", 3, 7000, null,
+				"When you cast a Character of cost 5 or more, draw 1 card.");
+		CardData terra = makeTextCard("Terra", "Wind", "Forward", 3, 7000, null,
+				"When you cast a Wind or Lightning card, draw 1 card.");
+		placeP2Forward(mw, doga);
+		placeP2Forward(mw, wol);
+		placeP2Forward(mw, terra);
+
+		mw.noteCardCast(makeSummon("Big Summon", "Fire", 4, ""), false);
+		mw.noteCardCast(makeSummon("Small Summon", "Fire", 3, ""), false);
+		mw.noteCardCast(makeForward("Big Forward", "Lightning", 5, 9000), false);
+		mw.noteCardCast(makeSummon("Pricey Summon", "Ice", 6, ""), false);
+
+		assertEquals(2, stackEntriesFrom(mw, doga), "Summons of cost 4 and 6, not 3");
+		assertEquals(1, stackEntriesFrom(mw, wol), "the cost-5 Forward; a Summon is not a Character");
+		assertEquals(1, stackEntriesFrom(mw, terra), "only the Lightning card");
+	}
+
+	@Test
+	void geosgaenoBecomesAForwardAndGainsItsDamageReduction() {
+		MainWindow mw = new MainWindow();
+		CardData geo = makeTextCard("Geosgaeno", "Water", "Monster", 2, 0, null, GEOSGAENO_7_111R_TEXT);
+		mw.gameState.getIdentity().put(geo, false);
+		mw.placeP2CardInMonsterZone(geo);
+		String effect = geo.autoAbilities().get(0).effectText();
+		ActionResolver.parse(effect, geo).accept(mw.buildGameContext(false));
+		assertEquals(7000, mw.p2MonsterTempForwardPower.get(geo));
+		assertTrue(mw.effectiveFieldAbilities(geo).stream()
+				.anyMatch(fa -> fa.effectText().toLowerCase().contains("reduce")), "the quoted damage reduction");
+
+		int idx = mw.p2MonsterCards.indexOf(geo);
+		mw.buildGameContext(true).damageTarget(new ForwardTarget(false, idx, ForwardTarget.CardZone.MONSTER), 3000);
+		assertEquals(2000, (int) mw.p2MonsterDamage.get(idx), "3000 dealt, 1000 of it prevented");
 	}
 
 	@Test

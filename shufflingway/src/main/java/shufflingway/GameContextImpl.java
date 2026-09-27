@@ -85,6 +85,8 @@ final class GameContextImpl implements GameContext {
 	 * target selection so it lands before the primary effect that may break the target.
 	 */
 	private GameContext.DelayedBzEffect armedBzEffectMark = null;
+	/** See {@link GameContext#armRfgInsteadOfBzMark}. */
+	private boolean armedRfgInsteadMark = false;
 	/**
 	 * Damage the selection about to be made will be dealt, or {@code 0} when the effect deals none.
 	 * Set by {@link ActionResolver#preSelectTargets} and read only by the AI's auto-selection branch
@@ -821,6 +823,12 @@ final class GameContextImpl implements GameContext {
 			}
 
 			@Override public void armEffectOnFieldToBzMark(DelayedBzEffect armed) { armedBzEffectMark = armed; }
+
+			@Override public void armRfgInsteadOfBzMark() { armedRfgInsteadMark = true; }
+
+			@Override public boolean consumeRfgInsteadOfBzMark() {
+				boolean a = armedRfgInsteadMark; armedRfgInsteadMark = false; return a;
+			}
 
 			@Override public DelayedBzEffect consumeEffectOnFieldToBzMark() {
 				DelayedBzEffect a = armedBzEffectMark; armedBzEffectMark = null; return a;
@@ -1848,11 +1856,34 @@ final class GameContextImpl implements GameContext {
 						.map(this::cardAtTarget)
 						.filter(Objects::nonNull)
 						.toList();
-				if (oppCharactersChosen.isEmpty() && oppForwardsChosen.isEmpty()) return selected;
 
 				// What each slot held before the triggers ran, so the selection can be re-anchored
 				// afterwards — the triggers resolve inline and may move the very cards it names.
 				List<CardData> chosenCards = selected.stream().map(this::cardAtTarget).toList();
+
+				// The chosen-by triggers that ignore whose effect chose (17-120H Princess Sarah, 2-017R
+				// Bergan, 13-079L Behemoth K …), on both sides. Ahead of the early return below, which
+				// is about the opponent-only watchers.
+				boolean anyChosenFired = false;
+				for (boolean side : new boolean[] { true, false }) {
+					List<CardData> onSide = selected.stream()
+							.filter(t -> t.isP1() == side)
+							.map(this::cardAtTarget)
+							.filter(Objects::nonNull)
+							.toList();
+					if (onSide.isEmpty()) continue;
+					anyChosenFired = true;
+					mw.lastChosenSelectionCancelled = false;
+					mw.autoAbilityTriggers.triggerAutoAbilitiesForChosenByAnyone(side, onSide,
+							mw.currentResolutionIsSummon, mw.currentAbilitySource, mw.currentAbilitySourceIsP1);
+					// 14-032R Proto fal'Cie Adam: "… If you do so, cancel its effect."
+					if (mw.lastChosenSelectionCancelled) {
+						logEntry("Selection cancelled");
+						return List.of();
+					}
+				}
+				if (oppCharactersChosen.isEmpty() && oppForwardsChosen.isEmpty())
+					return anyChosenFired ? reanchorSelection(selected, chosenCards) : selected;
 
 				if (mw.currentResolutionIsSummon && !oppForwardsChosen.isEmpty())
 					mw.autoAbilityTriggers.triggerAutoAbilitiesForChosenByOpponentSummon(
@@ -6062,6 +6093,40 @@ final class GameContextImpl implements GameContext {
 				}
 				if (isP1) { mw.refreshP1DeckLabel(); mw.refreshP1WarpZoneUI(); }
 				else      { mw.refreshP2DeckLabel(); mw.refreshP2WarpZoneUI(); }
+			}
+
+			@Override public void lookOpponentTopRemoveOneCastableRestBottom(int look, boolean freeCast) {
+				Deque<CardData> oppDeck = isP1 ? mw.gameState.getP2MainDeck() : mw.gameState.getP1MainDeck();
+				int n = Math.min(look, oppDeck.size());
+				if (n == 0) { logEntry("Look at opponent's top: deck is empty."); return; }
+				List<CardData> seen = new ArrayList<>();
+				for (CardData c : oppDeck) { seen.add(c); if (seen.size() >= n) break; }
+				String[] names = seen.stream().map(CardData::name).toArray(String[]::new);
+				// Answered by index, so two copies of one printing are still two choices; the AI
+				// takes the dearer card, which is the one worth casting for free.
+				int dearest = 0;
+				for (int i = 1; i < seen.size(); i++) if (seen.get(i).cost() > seen.get(dearest).cost()) dearest = i;
+				final int aiPick = dearest;
+				List<Integer> answer = n == 1 ? List.of(0) : mw.decide(PlayerChoice.by(isP1, ChoiceKind.OPTION)
+						.prompting("Waiting for your opponent to choose...")
+						.locally(() -> {
+							int idx = mw.showEffectOptionDialog("Remove 1 card from the game (you can cast it this turn):",
+									"Opponent's top " + n, (Object[]) names);
+							return idx >= 0 && idx < names.length ? List.of(idx) : List.of(aiPick);
+						})
+						.byCpu(() -> List.of(aiPick))
+						.legalWhen(a -> a.size() == 1 && a.get(0) >= 0 && a.get(0) < names.length,
+								"there are " + names.length + " cards to choose from here"));
+				CardData removed = seen.get(answer.isEmpty() ? aiPick : answer.get(0));
+				// Out of the deck by identity: two copies of one printing are equal records.
+				for (int i = 0; i < n; i++) oppDeck.removeFirst();
+				mw.gameState.addToPermanentRfp(removed, !isP1);
+				for (CardData c : seen) if (c != removed) oppDeck.addLast(c);
+				logEntry((isP1 ? "" : "[P2] ") + "Removes " + removed.name() + " from the top of the opponent's deck; "
+						+ (seen.size() - 1) + " other card(s) to the bottom");
+				if (isP1) { mw.refreshP2DeckLabel(); mw.refreshP2WarpZoneUI(); }
+				else      { mw.refreshP1DeckLabel(); mw.refreshP1WarpZoneUI(); }
+				makeRemovedCardCastable(removed, freeCast, true);
 			}
 
 			@Override public void makeRemovedCardCastable(CardData card, boolean freeCast, boolean thisTurnOnly) {
@@ -10954,30 +11019,29 @@ final class GameContextImpl implements GameContext {
 						+ " also becomes a Forward with " + power + " power");
 			}
 
-			@Override public void makeSourceForwardPermanently(
+			@Override public boolean makeSourceForwardPermanently(
 					CardData source, int power, EnumSet<CardData.Trait> traits) {
-				if (source == null) return;
+				if (source == null) return false;
 				// Located on the resolving player's own side, by identity: the ability names the
 				// card that printed it, so an opposing copy of the same Monster is a different card.
 				int idx = (isP1 ? mw.p1MonsterCards : mw.p2MonsterCards).indexOf(source);
 				if (idx >= 0) {
-					promoteIfNotAlreadyForward(
+					return promoteIfNotAlreadyForward(
 							new ForwardTarget(isP1, idx, ForwardTarget.CardZone.MONSTER),
 							source, power, traits,
 							isP1 ? mw.isP1MonsterTemporarilyForward(idx) : mw.isP2MonsterTemporarilyForward(idx));
-					return;
 				}
 				CardData[] backups = isP1 ? mw.p1BackupCards : mw.p2BackupCards;
 				for (int i = 0; i < backups.length; i++) {
 					if (backups[i] != source) continue;
-					promoteIfNotAlreadyForward(
+					return promoteIfNotAlreadyForward(
 							new ForwardTarget(isP1, i, ForwardTarget.CardZone.BACKUP),
 							source, power, traits,
 							isP1 ? mw.isP1BackupTemporarilyForward(i) : mw.isP2BackupTemporarilyForward(i));
-					return;
 				}
 				// Already a Forward in its own right, or gone from the field before this resolved.
 				logEntry(source.name() + " is not a Backup or Monster on the field — nothing becomes a Forward");
+				return false;
 			}
 
 			/**
@@ -10988,14 +11052,15 @@ final class GameContextImpl implements GameContext {
 			 * Monster row, so "is it on this row" answers yes and would let the ability fire again
 			 * on every later trigger.
 			 */
-			private void promoteIfNotAlreadyForward(ForwardTarget t, CardData source, int power,
+			private boolean promoteIfNotAlreadyForward(ForwardTarget t, CardData source, int power,
 					EnumSet<CardData.Trait> traits, boolean alreadyForward) {
 				if (alreadyForward) {
 					logEntry(source.name() + " is already a Forward — nothing to promote");
-					return;
+					return false;
 				}
 				makeTargetForwardPermanently(t, power);
 				if (!traits.isEmpty()) boostTargetPermanently(t, 0, traits);
+				return true;
 			}
 
 			@Override public void makeAllMonstersTemporaryForwards(int power) {
@@ -11373,9 +11438,18 @@ final class GameContextImpl implements GameContext {
 				for (CardData c : deck) { peeked.add(c); if (peeked.size() >= n) break; }
 				logEntry("Reveal top " + n + " card(s): " +
 						peeked.stream().map(CardData::name).collect(Collectors.joining(", ")));
+				// Remembered for cardAddedToHandByLook, as lookAtTopDeck does — 18-038C Kytes's "If it
+				// is a Category XII Character". Found by identity among the revealed cards.
+				List<CardData> hand = isP1 ? mw.gameState.getP1Hand() : mw.gameState.getP2Hand();
+				List<CardData> handBefore = new ArrayList<>(hand);
 				mw.lookDialogs().revealAddUpToMatchingRestBottom(peeked, deck, isP1, maxAdd,
 						jobFilter, categoryFilter, cardNameFilter, typeFilter, maxCost,
 						elementFilter, orElementFilter, false, mustAdd);
+				lastLookAddedToHand = null;
+				for (CardData c : hand) {
+					boolean isNew = handBefore.stream().noneMatch(b -> b == c);
+					if (isNew && peeked.stream().anyMatch(p -> p == c)) { lastLookAddedToHand = c; break; }
+				}
 			}
 
 			@Override public void revealTopAddUpToTypeMinCostRestBottom(int reveal, int maxAdd,
@@ -11436,6 +11510,19 @@ final class GameContextImpl implements GameContext {
 						peeked.stream().map(CardData::name).collect(Collectors.joining(", ")));
 				mw.lookDialogs().revealAddUpToMatchingRestBz(peeked, deck, isP1, maxAdd,
 						categoryFilter, typeFilter);
+			}
+
+			@Override public void revealTopAddAllMatchingRestBz(int reveal, Predicate<CardData> matches,
+					String matchDesc) {
+				Deque<CardData> deck = isP1 ? mw.gameState.getP1MainDeck() : mw.gameState.getP2MainDeck();
+				int n = Math.min(reveal, deck.size());
+				if (n == 0) { logEntry("Reveal top: deck is empty."); return; }
+				List<CardData> peeked = new ArrayList<>();
+				for (CardData c : deck) { peeked.add(c); if (peeked.size() >= n) break; }
+				logEntry("Reveal top " + n + " card(s): " +
+						peeked.stream().map(CardData::name).collect(Collectors.joining(", "))
+						+ " — all " + matchDesc + " to hand, the rest to the Break Zone");
+				mw.lookDialogs().revealAddAllMatchingRestBz(peeked, deck, isP1, matches);
 			}
 
 			@Override public void revealTopAddUpToMatchingRestShuffledBottom(int reveal, int maxAdd,

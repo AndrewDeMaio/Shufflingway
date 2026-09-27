@@ -183,8 +183,11 @@ final class AutoAbilityTriggers {
 	private static final Pattern FA_REMOVE_FIELD_WHEN_DO_SO =
 			Pattern.compile(
 				"(?i)^remove\\s+(?<count>\\d+)\\s+" +
+				// 26-026R Kuja's "1 Ice Backup", 22-015C Meeth's "1 Backup other than Meeth".
+				"(?:(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?" +
 				"(?<targets>Backups?|Forwards?|Monsters?|Characters?)\\s+" +
 				"(?:without\\s+《(?<excludekw>[^》]+)》\\s+)?" +
+				"(?:other\\s+than\\s+(?<except>.+?)\\s+)?" +
 				"(?<control>(?:your\\s+)?opponent\\s+controls|you\\s+control)\\s+" +
 				"from\\s+the\\s+game[.,]?\\s+" +
 				"(?:When|If)\\s+you\\s+do\\s+so[,.]?\\s+" +
@@ -1855,6 +1858,15 @@ final class AutoAbilityTriggers {
 		"(?i)^pay\\s+((?:《[^》]+》)+)\\s+or\\s+((?:《C》)+)[.,]?\\s+(?:When|If)\\s+you\\s+do\\s+so[,.]?\\s+(.+?)$",
 		Pattern.DOTALL
 	);
+	/**
+	 * "pay 《cost》 and discard 1 &lt;type&gt;. When you do so, sub-effect" — 20-102L Mira. Group 1 is
+	 * the cost run, group 2 the discard type, group 3 the sub-effect.
+	 */
+	private static final Pattern FA_PAY_AND_DISCARD_WHEN_DO_SO = Pattern.compile(
+		"(?i)^pay\\s+((?:《[^》]+》)+)\\s+and\\s+discard\\s+1\\s+(Summon|Forward|Backup|Monster|Character|card)[.,]?\\s+" +
+		"(?:When|If)\\s+you\\s+do\\s+so[,.]?\\s+(.+?)$",
+		Pattern.DOTALL
+	);
 	/** One 《…》 token of a {@link #FA_PAY_WHEN_DO_SO} cost run. */
 	private static final Pattern FA_COST_TOKEN = Pattern.compile("《([^》]+)》");
 	private static final Pattern FA_MAX_X = Pattern.compile(
@@ -1888,6 +1900,29 @@ final class AutoAbilityTriggers {
 	// =========================================================================================
 	void triggerAutoAbilitiesForEntersField(CardData card, boolean isP1) {
 		triggerAutoAbilitiesForEntersField(card, isP1, false);
+	}
+
+	/**
+	 * Whether the card entering {@code isP1}'s field is doing so "due to" what {@code trigger} names
+	 * (see {@code CardData.entersByEffectTrigger}). A Summon resolving — or its EX Burst, which runs
+	 * under the Summon as ability source — is a Summon, not an ability.
+	 */
+	private boolean enteredByEffect(String trigger, boolean isP1) {
+		CardData abil = mw.currentAbilitySource;
+		boolean bySummon  = (mw.currentResolutionIsSummon && mw.currentSummonSource != null)
+				|| (abil != null && abil.isSummon());
+		boolean byAbility = abil != null && !abil.isSummon() && !mw.currentResolutionIsSummon;
+		boolean summonIsP1 = mw.currentSummonSource != null ? mw.currentSummonSourceIsP1 : mw.currentAbilitySourceIsP1;
+		switch (trigger) {
+			case "enters the field by ability":            return byAbility;
+			case "enters the field by summon or ability":  return byAbility || bySummon;
+			case "enters the field by own summon or ability":
+				return (byAbility && mw.currentAbilitySourceIsP1 == isP1) || (bySummon && summonIsP1 == isP1);
+			default:
+				String prefix = "enters the field by ability of ";
+				return trigger.startsWith(prefix) && byAbility
+						&& CardFilters.meetsCardNameFilter(abil, trigger.substring(prefix.length()));
+		}
 	}
 
 	/** @param paidExtraCost whether {@code card}'s optional extra cost was paid when it was cast (threaded to its own "enters the field" trigger only, not to watcher abilities on other cards). */
@@ -1927,6 +1962,9 @@ final class AutoAbilityTriggers {
 					// The engine draws that line in one place on purpose; see
 					// GameContext.triggeringCardEnteredWithoutPayingCost, which answers the same way.
 					if (fa.trigger().equals("enters the field from hand") && !mw.lastCardWasCast) continue;
+					// "enters the field due to an ability / a Summon or an ability / your Summons or
+					// abilities / an ability of Card Name X" — answered by what is resolving as it arrives.
+					if (fa.trigger().startsWith("enters the field by ") && !enteredByEffect(fa.trigger(), isP1)) continue;
 					executeAutoAbility(fa, card, isP1, paidExtraCost);
 				}
 				// Watcher dispatch: "When a <Type> enters your field, ..." abilities live on other field cards
@@ -2166,12 +2204,13 @@ final class AutoAbilityTriggers {
 				continue;
 			}
 			// A watcher that points at the entering card in some other way is left dormant rather
-			// than run on the stack, where it has no target to point at. 20-102L Mira's "you may
-			// pay 《1》 and discard 1 Monster. When you do so, break that Forward." parses today as
-			// the discard alone, so running it would pay the cost and drop the payoff — worse than
-			// not firing. Wiring that sentence is what makes this branch go away.
+			// than run on the stack, where it has no target to point at — unless an inline shape
+			// runs it with the entering card standing behind "that Forward": the self-sacrifice
+			// form, and 20-102L Mira's "pay 《1》 and discard 1 Monster. When you do so, break that
+			// Forward."
+			String shape = AutoAbilityTriggers.inlineShapeOf(fa.effectText());
 			if (REFERS_TO_ENTERING_CARD.matcher(fa.effectText()).find()
-					&& !"PutSelfIntoBzIfDoSo".equals(AutoAbilityTriggers.inlineShapeOf(fa.effectText()))) {
+					&& !"PutSelfIntoBzIfDoSo".equals(shape) && !"PayAndDiscardWhenDoSo".equals(shape)) {
 				mw.logEntry("[AutoAbility] " + watcher.name()
 						+ " — not wired to act on the entering card; skipped");
 				continue;
@@ -3162,6 +3201,22 @@ final class AutoAbilityTriggers {
 	 * a Break Zone or off the top of a deck reaches the same code and is deliberately not this
 	 * event, because the zone is what the trigger names.
 	 */
+	/**
+	 * Fires "When you cast a/an &lt;filter&gt;, …" (10-078H Doga, 16-044L Wol, 27-014H Terra …) on the
+	 * caster's own field, for each ability whose filter {@code cast} satisfies.
+	 */
+	void triggerAutoAbilitiesForFilteredCast(CardData cast, boolean casterIsP1) {
+		withBatch(() -> {
+			for (CardData c : fieldCards(casterIsP1)) {
+				if (c == null) continue;
+				for (AutoAbility fa : mw.effectiveAutoAbilities(c))
+					if (fa.trigger().startsWith("you cast ")
+							&& CardData.castFilterMatches(fa.trigger().substring("you cast ".length()), cast))
+						executeAutoAbility(fa, c, casterIsP1);
+			}
+		});
+	}
+
 	void triggerAutoAbilitiesForCastRemovedCard(boolean casterIsP1) {
 		withBatch(() -> collectEventTriggers("cast removed card", casterIsP1));
 	}
@@ -3268,6 +3323,49 @@ final class AutoAbilityTriggers {
 					runWithPreloadedTarget(fa, watcher, chosenSideIsP1, actingTarget);
 				}
 		});
+		mw.showStackWindowIfNeeded();
+	}
+
+	/**
+	 * Fires the chosen-by triggers that do not care whose effect did the choosing, on
+	 * {@code chosenSideIsP1}'s side: "chosen by Summons or abilities" (17-120H Princess Sarah,
+	 * 14-032R Proto fal'Cie Adam, 4-087R Delita, 21-076C Qun'mi, 22-068R Prishe), "chosen by a
+	 * Summon" (2-017R Bergan) and "chosen by a Forward's ability" (13-079L Behemoth K, 26-066L
+	 * Vincent), whose payoff acts on the Forward that chose — it is applied to that card directly.
+	 *
+	 * @param chosen     the Characters selected, all on {@code chosenSideIsP1}'s side
+	 * @param bySummon   whether a Summon is what chose them
+	 * @param actingCard the card whose ability chose them, or {@code null}
+	 * @param actingIsP1 which side {@code actingCard} is controlled by
+	 */
+	void triggerAutoAbilitiesForChosenByAnyone(boolean chosenSideIsP1, List<CardData> chosen,
+			boolean bySummon, CardData actingCard, boolean actingIsP1) {
+		if (chosen.isEmpty()) return;
+		if (bySummon) triggerChosenByOpponentEvent(chosenSideIsP1, chosen, "chosen by summon or ability", "chosen by summon");
+		else          triggerChosenByOpponentEvent(chosenSideIsP1, chosen, "chosen by summon or ability");
+		if (bySummon || actingCard == null || !actingCard.isForward()) return;
+		ForwardTarget actingTarget = findFieldTarget(actingCard, actingIsP1);
+		if (actingTarget == null) return;
+		for (CardData watcher : fieldCards(chosenSideIsP1))
+			for (AutoAbility fa : mw.effectiveAutoAbilities(watcher)) {
+				if (!fa.trigger().equals("chosen by forward ability")) continue;
+				if (chosenSubjectMatch(fa.triggerCard(), watcher, chosen) == null) continue;
+				// "break that Forward" / "deal that Forward 9000 damage": read as a target action on
+				// "it", so Breaktouch's own sentence never becomes a triggered-target form.
+				String action = fa.effectText().trim().replaceAll("[.!]+$", "")
+						.replaceAll("(?i)\\bthat\\s+Forward\\b", "it");
+				BiConsumer<GameContext, List<ForwardTarget>> payoff = ActionResolver.parseTargetAction(action, 0);
+				if (payoff == null) {
+					mw.logEntry("[AutoAbility] Unrecognized effect: " + fa.effectText());
+					continue;
+				}
+				mw.logEntry("[AutoAbility] " + watcher.name() + " — chosen by " + actingCard.name()
+						+ "'s ability: " + fa.effectText());
+				withAbilitySource(watcher, () -> {
+					payoff.accept(mw.buildGameContext(chosenSideIsP1), List.of(actingTarget));
+					return true;
+				});
+			}
 		mw.showStackWindowIfNeeded();
 	}
 
@@ -3520,6 +3618,31 @@ final class AutoAbilityTriggers {
 		if (discarded.isSummon())
 			labels.add("opponent discards summon by effect");
 		for (String label : labels) triggerAutoAbilitiesForEvent(label, causerIsP1);
+	}
+
+	/**
+	 * Fires "When you discard 1 or more cards due to Summons or abilities" (16-114C White Mage) on
+	 * {@code discarderIsP1}'s own field. The caller fires it once per effect, not per card.
+	 */
+	void triggerAutoAbilitiesForOwnDiscardByEffect(boolean discarderIsP1) {
+		triggerAutoAbilitiesForEvent("you discard by effect", discarderIsP1);
+	}
+
+	/**
+	 * Fires the watchers of an opposing card returning from the field to its owner's hand, on the
+	 * side opposite the one it was on: "a Forward opponent controls returns / is returned …"
+	 * (7-111R Geosgaeno, 16-117H Tros, 21-133S / 27-121R) for a Forward, and "a Character opponent
+	 * controls is returned …" (24-095C Jecht, 24-101C Tidus) for any Character.
+	 */
+	void triggerAutoAbilitiesForCharacterReturnedToHand(boolean returnedFromP1Field, boolean wasForward) {
+		withBatch(() -> {
+			if (wasForward) collectEventTriggers("opponent forward returns to hand", !returnedFromP1Field);
+			collectEventTriggers("opponent character returns to hand", !returnedFromP1Field);
+			// "When a Character is returned …" with no side named — 14-042L Bismarck, 14-102L Leviathan.
+			collectEventTriggers("character returns to hand", true);
+			collectEventTriggers("character returns to hand", false);
+		});
+		mw.showStackWindowIfNeeded();
 	}
 
 	/**
@@ -4636,6 +4759,12 @@ final class AutoAbilityTriggers {
 		new InlineShape("PayWhenDoSo", FA_PAY_WHEN_DO_SO,
 				AutoAbilityTriggers::executePayWhenDoSoAutoAbility,
 				m -> List.of(withoutXPaymentSource(m.group(2).trim()).replaceAll("[.!,]+$", ""))),
+		// "pay 《…》 and discard 1 <type>. When you do so, [effect]" — the discard joins the payoff,
+		// behind a check that the payer holds one, so the CP is never spent on a discard that
+		// cannot happen.
+		new InlineShape("PayAndDiscardWhenDoSo", FA_PAY_AND_DISCARD_WHEN_DO_SO,
+				AutoAbilityTriggers::executePayAndDiscardWhenDoSoAutoAbility,
+				m -> List.of(m.group(3).trim().replaceAll("[.!,]+$", ""))),
 		// "pay 《…》 or 《C》《C》. When you do so, [effect]" — CP or Crystals, the payer's choice
 		new InlineShape("PayOrCrystalsWhenDoSo", FA_PAY_OR_CRYSTALS_WHEN_DO_SO,
 				AutoAbilityTriggers::executePayOrCrystalsWhenDoSoAutoAbility,
@@ -4770,11 +4899,14 @@ final class AutoAbilityTriggers {
 		boolean  prevSpecial = mw.currentAbilityIsSpecial;
 		mw.currentAbilitySource    = source;
 		mw.currentAbilityIsSpecial = false;
+		int prevSerial = mw.resolutionSerial;
+		mw.resolutionSerial = mw.nextResolutionSerial();
 		try {
 			return body.getAsBoolean();
 		} finally {
 			mw.currentAbilitySource    = prevSource;
 			mw.currentAbilityIsSpecial = prevSpecial;
+			mw.resolutionSerial        = prevSerial;
 		}
 	}
 
@@ -4889,9 +5021,11 @@ final class AutoAbilityTriggers {
 
 		// Select the card(s) to remove from the field
 		GameContext ctx = mw.buildGameContext(effectIsP1);
+		String element = m.group("element");
+		String except  = m.group("except") != null ? m.group("except").trim() : null;
 		java.util.List<ForwardTarget> targets = ctx.selectCharacters(count, false,
-				opponentOnly, selfOnly, null, null, -1, null, -1, null,
-				inclForwards, inclBackups, inclMonsters, null, null, null, null, false, null, withoutMulticard);
+				opponentOnly, selfOnly, null, element, -1, null, -1, null,
+				inclForwards, inclBackups, inclMonsters, null, null, null, except, false, null, withoutMulticard);
 		if (targets.isEmpty()) {
 			mw.logEntry("[AutoAbility] " + source.name() + " — no valid target for field removal");
 			return;
@@ -5504,6 +5638,29 @@ final class AutoAbilityTriggers {
 	}
 
 	/**
+	 * 20-102L Mira — see {@link #FA_PAY_AND_DISCARD_WHEN_DO_SO}. Both halves are the price, so the
+	 * payer must hold a card to discard before any CP is asked for; the discard then runs as the
+	 * first step after payment, and the payoff only when it happened.
+	 */
+	private void executePayAndDiscardWhenDoSoAutoAbility(AutoAbility fa, CardData source, boolean isP1,
+			boolean effectIsP1, Matcher m) {
+		String type = m.group(2);
+		if (mw.playerHand(effectIsP1).stream().noneMatch(c -> CardFilters.matchesDiscardType(c, type))) {
+			mw.logEntry("[AutoAbility] " + source.name() + " — no " + type + " in hand to discard, skipping");
+			return;
+		}
+		// "break that Forward" is Breaktouch's wording, which the resolver keeps off the triggered-
+		// target form on purpose; here it means the Forward whose arrival fired the trigger, so it
+		// is handed over in the "that Character" form that reads it that way (5-130R Tonberry).
+		String payoff = m.group(3).trim().replaceAll("(?i)\\bbreak\\s+that\\s+Forward\\b", "break that Character");
+		String rewritten = "pay " + m.group(1) + ". When you do so, discard 1 " + type
+				+ ". When you do so, " + payoff;
+		Matcher payM = FA_PAY_WHEN_DO_SO.matcher(rewritten);
+		if (!payM.matches()) return;
+		executePayWhenDoSoAutoAbility(fa, source, isP1, effectIsP1, payM);
+	}
+
+	/**
 	 * 25-010H Salamander (III) — see {@link #FA_PAY_OR_CRYSTALS_WHEN_DO_SO}. Offers whichever of
 	 * the two prices the payer can meet; the AI spends CP when it can and keeps its Crystals.
 	 */
@@ -5579,6 +5736,19 @@ final class AutoAbilityTriggers {
 			return;
 		}
 		Consumer<GameContext> effect = ActionResolver.parse(subEffect, source, xValue);
+		// "… break that Forward" — 20-102L Mira: the payoff names the card whose arrival fired the
+		// trigger, so it stands as the preloaded target, as for the self-sacrifice shapes.
+		if (effect != null && mw.triggeringEnteredCard != null
+				&& REFERS_TO_ENTERING_CARD.matcher(subEffect).find()) {
+			// Either side: Mira watches the opponent's field.
+			ForwardTarget entered = enteringCardTarget(mw.triggeringEnteredCard, true);
+			if (entered == null) entered = enteringCardTarget(mw.triggeringEnteredCard, false);
+			if (entered == null) {
+				mw.logEntry("[AutoAbility] " + source.name() + " — entering card no longer on field; skipped");
+				return;
+			}
+			ctx.preloadTargets(List.of(entered));
+		}
 		if (effect == null) {
 			// "Until the end of the turn, it gains …" — 13-009H Selphie, whose "it" is the Forward
 			// whose arrival fired the trigger. Preloaded here rather than by the caller because this

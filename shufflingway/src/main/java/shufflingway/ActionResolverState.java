@@ -1173,11 +1173,38 @@ final class ActionResolverState {
         if (guard != null && !guard.trim().equalsIgnoreCase(source.name())) return null;
         final int power = Integer.parseInt(m.group("power"));
         final EnumSet<CardData.Trait> traits = parseTraits(m.group("traits"));
+        // Condor's second gate. An unreadable one declines the whole sentence.
+        final ControlCondition ctrl;
+        if (m.group("ctrl") != null) {
+            ctrl = CardData.parseControlCondition(m.group("ctrl").trim().replaceFirst("(?i)^you\\s+control\\s+", ""));
+            if (ctrl == null) return null;
+        } else {
+            ctrl = null;
+        }
+        // The quoted grant must read as an auto ability, or the sentence is declined rather than
+        // promoted with its payload dropped.
+        final String grant = m.group("grant") != null ? m.group("grant").trim() : null;
+        // Or a self damage modifier (7-111R Geosgaeno's "If Geosgaeno receives damage, the damage
+        // is reduced by 1000 instead"), granted as a field ability in the wording the damage scan
+        // reads.
+        final String fieldGrant = grant != null && CardData.parseAutoAbilities(grant).isEmpty()
+                ? CardData.canonicalSelfDamageModifier(grant, source.name()) : null;
+        if (grant != null && fieldGrant == null && CardData.parseAutoAbilities(grant).isEmpty()) return null;
         return ctx -> {
+            if (ctrl != null && !ctx.controlConditionMet(ctrl)) {
+                ctx.logEntry("Effect: " + source.name() + " — control condition not met, stays as it is");
+                return;
+            }
             ctx.logEntry("Effect: " + source.name() + " also becomes a Forward with " + power
                     + " power" + (traits.isEmpty() ? "" : " and " + traitNamesOnly(traits))
+                    + (grant != null ? " and \"" + grant + "\"" : "")
                     + " (does not end at end of turn)");
-            ctx.makeSourceForwardPermanently(source, power, traits);
+            // Granted only with the promotion: a card that is already a Forward gains nothing
+            // twice ("This ability will not trigger if [Self] is a Forward").
+            if (ctx.makeSourceForwardPermanently(source, power, traits) && grant != null) {
+                if (fieldGrant != null) ctx.grantSelfFieldAbilityPermanently(source, fieldGrant);
+                else                    ctx.grantSelfAutoAbilityPermanently(source, grant);
+            }
         };
     }
 

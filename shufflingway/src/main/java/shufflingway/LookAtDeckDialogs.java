@@ -1799,6 +1799,19 @@ class LookAtDeckDialogs {
     private enum RestGoes { BREAK_ZONE, SHUFFLED_BOTTOM }
 
     /** Shared body: take up to {@code maxAdd} cards {@code eligible} accepts, route what is left. */
+    /**
+     * "Add all the [matching] among them to your hand and put the rest of the cards into the Break
+     * Zone." — 29-095H Ramuh (XVI). No choice to make, so no prompt: the split is computed and
+     * applied the way an answered reveal is, which every client arrives at identically.
+     */
+    void revealAddAllMatchingRestBz(List<CardData> cards, Deque<CardData> deck, boolean isP1,
+            Predicate<CardData> matches) {
+        List<CardData> taken = new ArrayList<>();
+        for (CardData c : cards) if (matches.test(c)) taken.add(c);
+        applyDeckLook(splitDecision(cards, taken, RestGoes.BREAK_ZONE), cards, deck, isP1, true, null, null,
+                RevealTake.FIELD);
+    }
+
     private void revealAddUpToRestBz(List<CardData> cards, Deque<CardData> deck, boolean isP1,
             int maxAdd, Predicate<CardData> eligible, String note) {
         revealAddUpTo(cards, deck, isP1, maxAdd, eligible, note, RestGoes.BREAK_ZONE);

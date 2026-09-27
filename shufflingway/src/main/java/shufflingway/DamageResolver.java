@@ -1016,10 +1016,20 @@ class DamageResolver {
 		List<CardData> mons    = isP1 ? mw.p1MonsterCards  : mw.p2MonsterCards;
 		List<Integer>  dmgList = isP1 ? mw.p1MonsterDamage : mw.p2MonsterDamage;
 		if (idx >= mons.size() || amount <= 0) return;
+		boolean asFwd = isP1 ? mw.isP1MonsterTemporarilyForward(idx) : mw.isP2MonsterTemporarilyForward(idx);
+		// A Monster acting as a Forward is a Forward for every eligible purpose, its incoming-damage
+		// modifiers included — 7-111R Geosgaeno's granted "the damage is reduced by 1000 instead".
+		// Both callers are ability damage.
+		if (asFwd) {
+			amount = modifyIncomingDamage(isP1, ForwardTarget.CardZone.MONSTER, idx, amount, true, false);
+			if (amount <= 0) {
+				mw.logEntry((isP1 ? "" : "[P2] ") + mons.get(idx).name() + " — damage reduced to 0");
+				return;
+			}
+		}
 		int accum  = dmgList.get(idx) + amount;
 		dmgList.set(idx, accum);
 		mw.recordDamagedBy(mons.get(idx), abilityDamageSource());
-		boolean asFwd = isP1 ? mw.isP1MonsterTemporarilyForward(idx) : mw.isP2MonsterTemporarilyForward(idx);
 		int effPow = asFwd ? (isP1 ? mw.p1MonsterForwardPower(idx) : mw.p2MonsterForwardPower(idx))
 		                   : (isP1 ? mw.effectiveP1MonsterPower(idx) : mw.effectiveP2MonsterPower(idx));
 		mw.logEntry((isP1 ? "" : "[P2] ") + mons.get(idx).name() + " takes " + amount + " damage"

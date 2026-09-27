@@ -1457,6 +1457,21 @@ final class ActionResolverChoose {
                 };
             }
         }
+        // The remove-instead rider, armed the same way and for the same reason: read as a trailing
+        // secondary it marked the Forward after the damage, which had usually broken it already.
+        Matcher rfgM = CHOOSE_THEN_RFG_INSTEAD_RIDER.matcher(text.trim());
+        if (rfgM.matches()) {
+            String head = rfgM.group("head").trim();
+            Consumer<GameContext> inner = CHOOSE_CHARACTER_PATTERN.matcher(escapePeriodInName(head, source)).find()
+                    ? tryParseChooseCharacterInner(head, source, xValue) : null;
+            if (inner != null) {
+                return ctx -> {
+                    ctx.armRfgInsteadOfBzMark();
+                    inner.accept(ctx);
+                    ctx.consumeRfgInsteadOfBzMark();   // clear if the effect never chose a target
+                };
+            }
+        }
         return tryParseChooseCharacterInner(text, source, xValue);
     }
 
