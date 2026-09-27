@@ -4800,6 +4800,7 @@ public class MainWindow {
 		autoAbilityTriggers.triggerAutoAbilitiesForDamageZone(true);
 		autoAbilityTriggers.triggerAutoAbilitiesForEitherPlayerReceivesDamage();
 		autoAbilityTriggers.triggerAutoAbilitiesForYouReceiveDamage(true);
+		if (gameState.getP1DamageZone().size() == 5) autoAbilityTriggers.triggerAutoAbilitiesForFifthDamage(true);
 		fireFieldSelfDamagePointsAbilities(true);
 		animateCardToDamage(true, idx);
 
@@ -4892,6 +4893,7 @@ public class MainWindow {
 		autoAbilityTriggers.triggerAutoAbilitiesForDamageZone(false);
 		autoAbilityTriggers.triggerAutoAbilitiesForEitherPlayerReceivesDamage();
 		autoAbilityTriggers.triggerAutoAbilitiesForYouReceiveDamage(false);
+		if (gameState.getP2DamageZone().size() == 5) autoAbilityTriggers.triggerAutoAbilitiesForFifthDamage(false);
 		fireFieldSelfDamagePointsAbilities(false);
 
 		int slotIdx = p2DamageCount - 1;
@@ -7236,8 +7238,10 @@ public class MainWindow {
 		// trigger is on being dealt damage, not on surviving it, so a Forward broken by this blow
 		// still triggers. Combat damage is dealt simultaneously, so both sides fire together, and
 		// a side whose damage First Strike zeroed above was dealt none and does not fire.
-		if (dmgToAttacker > 0) autoAbilityTriggers.fireIsDealtDamageTriggers(attacker, attackerIsP1, dmgToAttacker);
-		if (dmgToBlocker  > 0) autoAbilityTriggers.fireIsDealtDamageTriggers(blocker,  blockerIsP1, dmgToBlocker);
+		if (dmgToAttacker > 0) autoAbilityTriggers.fireIsDealtDamageTriggers(attacker, attackerIsP1, dmgToAttacker,
+				new AutoAbilityTriggers.DamageDealer(blocker, blockerIsP1, false));
+		if (dmgToBlocker  > 0) autoAbilityTriggers.fireIsDealtDamageTriggers(blocker,  blockerIsP1, dmgToBlocker,
+				new AutoAbilityTriggers.DamageDealer(attacker, attackerIsP1, false));
 
 		// Recorded here for the same reason the triggers fire here: before the break below, so a
 		// Forward killed by this blow still counts as damaged by whoever struck it.
@@ -20062,7 +20066,8 @@ public class MainWindow {
 							&& !effectiveHasTrait(false, blockerIdx, CardData.Trait.FIRST_STRIKE);
 					boolean blockerBroken = combinedPower >= blockerPower;
 					// See resolveP1BlockVsP2Party — the combined power is one instance of damage.
-					if (combinedPower > 0) autoAbilityTriggers.fireIsDealtDamageTriggers(blocker, false, combinedPower);
+					if (combinedPower > 0) autoAbilityTriggers.fireIsDealtDamageTriggers(blocker, false, combinedPower,
+							partyDealer(attackerIndices, true));
 					// Every member of the party dealt part of that one instance, so each is a damager
 					// of the blocker. Recorded before the break, as everywhere damage lands.
 					if (combinedPower > 0)
@@ -20139,6 +20144,18 @@ public class MainWindow {
 	}
 
 	/**
+	 * The dealer of a party's combined damage, for the "is dealt damage by …" triggers. Every member
+	 * dealt part of it; the first still on the field stands for them, which is all the dealer
+	 * clauses in print ask ("a Forward opponent controls") and the one card "that Forward" can name.
+	 */
+	private AutoAbilityTriggers.DamageDealer partyDealer(List<Integer> attackerIndices, boolean partyIsP1) {
+		List<CardData> fwds = partyIsP1 ? p1ForwardCards : p2ForwardCards;
+		for (int i : attackerIndices)
+			if (i < fwds.size()) return new AutoAbilityTriggers.DamageDealer(fwds.get(i), partyIsP1, false);
+		return null;
+	}
+
+	/**
 	 * Applies a party-block damage map: logs, updates p1ForwardDamage, and breaks lethal targets.
 	 * {@code blocker} is the P2 Forward whose power was spread across the party — the damager of
 	 * record for every entry in the map.
@@ -20157,7 +20174,8 @@ public class MainWindow {
 			logEntry("[P2] Deals " + dmg + " damage to " + p1ForwardCards.get(idx).name());
 			// One instance of damage per party member the blocker's power was spread across, each
 			// firing "is dealt damage" triggers in its own right — see resolveCombat.
-			autoAbilityTriggers.fireIsDealtDamageTriggers(p1ForwardCards.get(idx), true, dmg);
+			autoAbilityTriggers.fireIsDealtDamageTriggers(p1ForwardCards.get(idx), true, dmg,
+					new AutoAbilityTriggers.DamageDealer(blocker, false, false));
 			if (dmg > 0) recordDamagedBy(p1ForwardCards.get(idx), blocker);
 		}
 		List<Integer> toBreak = new ArrayList<>();
@@ -20185,7 +20203,8 @@ public class MainWindow {
 		boolean blockerBroken = combinedPower >= blockerPower;
 		// The party's combined power is one instance of damage to the blocker; triggers fire on it
 		// ahead of the break, as everywhere else damage lands.
-		if (combinedPower > 0) autoAbilityTriggers.fireIsDealtDamageTriggers(blocker, true, combinedPower);
+		if (combinedPower > 0) autoAbilityTriggers.fireIsDealtDamageTriggers(blocker, true, combinedPower,
+				partyDealer(attackerIndices, false));
 		// Each member dealt part of that instance, so each is a damager of the blocker.
 		if (combinedPower > 0)
 			for (int i : attackerIndices)
@@ -20227,7 +20246,8 @@ public class MainWindow {
 			p2ForwardDamage.set(idx, p2ForwardDamage.get(idx) + dmg);
 			logEntry("Deals " + dmg + " damage to " + p2ForwardCards.get(idx).name());
 			// See applyPartyBlockerDamage — one instance of damage per party member.
-			autoAbilityTriggers.fireIsDealtDamageTriggers(p2ForwardCards.get(idx), false, dmg);
+			autoAbilityTriggers.fireIsDealtDamageTriggers(p2ForwardCards.get(idx), false, dmg,
+					new AutoAbilityTriggers.DamageDealer(blocker, true, false));
 			if (dmg > 0) recordDamagedBy(p2ForwardCards.get(idx), blocker);
 		}
 		List<Integer> toBreak = new ArrayList<>();

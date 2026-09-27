@@ -3733,6 +3733,26 @@ final class AutoAbilityTriggers {
 	 *     outer one is still reading.
 	 */
 	void fireIsDealtDamageTriggers(CardData damaged, boolean damagedIsP1, int amount) {
+		fireIsDealtDamageTriggers(damaged, damagedIsP1, amount, null);
+	}
+
+	/**
+	 * Who dealt one instance of damage, for the triggers that say — "is dealt damage by a Forward
+	 * opponent controls" (15-077H Dadaluma), "by a Character" (5-037R Zeid), "by your opponent's
+	 * Summons or abilities" (21-073R Zazarg).
+	 *
+	 * @param card     the dealing card: the other combatant in battle, else the Summon or the card
+	 *     whose ability is resolving
+	 * @param isP1     which side controls {@code card}
+	 * @param byEffect whether a Summon or ability dealt it, rather than battle
+	 */
+	record DamageDealer(CardData card, boolean isP1, boolean byEffect) {}
+
+	/**
+	 * @param dealer who dealt the damage, or {@code null} when unknown — a trigger that names its
+	 *     dealer then declines rather than guessing.
+	 */
+	void fireIsDealtDamageTriggers(CardData damaged, boolean damagedIsP1, int amount, DamageDealer dealer) {
 		if (damaged == null) return;
 		int previousAmount = mw.lastDealtDamageAmount;
 		mw.lastDealtDamageAmount = amount;
@@ -3742,7 +3762,7 @@ final class AutoAbilityTriggers {
 			// the order they go on the stack.
 			withBatch(() -> {
 				for (CardData watcher : fieldCards(damagedIsP1))
-					fireIsDealtDamageTriggers(watcher, damagedIsP1, damaged);
+					fireIsDealtDamageTriggers(watcher, damagedIsP1, damaged, amount, dealer);
 			});
 		} finally {
 			mw.lastDealtDamageAmount = previousAmount;
@@ -3750,13 +3770,86 @@ final class AutoAbilityTriggers {
 		mw.showStackWindowIfNeeded();
 	}
 
-	private void fireIsDealtDamageTriggers(CardData watcher, boolean watcherIsP1, CardData damaged) {
+	/**
+	 * The qualifiers CardData carries on an "is dealt damage" subject: a size floor ("Baigan 4000
+	 * damage or more") and the dealer clause ("Zeid by a character opponent controls").
+	 */
+	private static final Pattern DEALT_DAMAGE_QUALIFIER = Pattern.compile(
+			"(?i)^(?<subject>.*?)(?:\\s+(?<min>\\d+)\\s+damage\\s+or\\s+more)?(?:\\s+by\\s+(?<by>.+))?$");
+
+	private void fireIsDealtDamageTriggers(CardData watcher, boolean watcherIsP1, CardData damaged,
+			int amount, DamageDealer dealer) {
 		for (AutoAbility fa : mw.effectiveAutoAbilities(watcher)) {
 			if (!fa.trigger().equals("is dealt damage")) continue;
-			if (!matchesDamagedSubject(fa.triggerCard(), watcher, damaged)) continue;
+			Matcher q = DEALT_DAMAGE_QUALIFIER.matcher(fa.triggerCard() == null ? "" : fa.triggerCard().trim());
+			if (!q.matches()) continue;
+			if (!matchesDamagedSubject(q.group("subject"), watcher, damaged)) continue;
+			if (q.group("min") != null && amount < Integer.parseInt(q.group("min"))) continue;
+			if (q.group("by") != null && !dealerMatches(q.group("by"), dealer, watcherIsP1)) continue;
+			// Only a trigger that names its dealer means the dealer by "that Forward": in the
+			// unqualified form (27-007H Gulool Ja Ja's echo) it is the damaged card.
+			if (q.group("by") != null && REFERS_TO_DEALER.matcher(fa.effectText()).find()) {
+				executeAutoAbility(atDealer(fa, dealer, watcherIsP1), watcher, watcherIsP1, false, dealer.card());
+				continue;
+			}
 			executeAutoAbility(fa, watcher, watcherIsP1);
 		}
 	}
+
+	/**
+	 * Whether {@code dealer} satisfies a trigger's "by …" clause. "Opponent" is relative to the
+	 * watcher, which is on the damaged side. A Forward's or Character's ability counts as dealt by
+	 * that card, the same reading {@link MainWindow#recordDamagedBy} takes; a Summon is neither.
+	 */
+	private static boolean dealerMatches(String by, DamageDealer dealer, boolean watcherIsP1) {
+		if (dealer == null || dealer.card() == null) return false;
+		String b = by.toLowerCase(Locale.ROOT);
+		if (b.contains("opponent") && dealer.isP1() == watcherIsP1) return false;
+		if (b.contains("summons or abilities")) return dealer.byEffect();
+		CardData c = dealer.card();
+		if (b.contains("forward")) return c.isForward();
+		return c.isForward() || c.isBackup() || c.isMonster();
+	}
+
+	/** A payoff that acts on the card that dealt the damage — "deal that Forward 5000 damage". */
+	private static final Pattern REFERS_TO_DEALER = Pattern.compile(
+			"(?i)\\bthat\\s+(?:Forward|Character)(?:'s)?\\b");
+
+	/**
+	 * A dealt-damage payoff about the dealer, in the form the Stack resolves: 26-083H Elena's "deal
+	 * that Forward 5000 damage", 17-082R Lich's "break that Forward", 5-037R Zeid's "that
+	 * Character's controller discards 1 card from his/her hand". The dealer travels as the entry's
+	 * trigger card and is preloaded as the target when the ability goes on the Stack (see
+	 * {@link #dealerTarget}); the controller form needs only the side, so it is settled here.
+	 *
+	 * <p>"break that Forward" is Breaktouch's wording, which must not become a triggered-target
+	 * form, so it goes on as "break that Character" — the same card, as 20-102L Mira's does.
+	 */
+	private static AutoAbility atDealer(AutoAbility fa, DamageDealer dealer, boolean watcherIsP1) {
+		String text = fa.effectText().trim();
+		Matcher controller = DEALER_CONTROLLER_DISCARDS.matcher(text);
+		if (controller.matches())
+			return fa.withEffectText(dealer.isP1() == watcherIsP1
+					? "discard " + controller.group("count") + " from your hand."
+					: "your opponent discards " + controller.group("count") + " from his/her hand.");
+		return fa.withEffectText(text.replaceAll("(?i)\\bbreak\\s+that\\s+Forward\\b", "break that Character"));
+	}
+
+	/**
+	 * The preloaded target of an "is dealt damage by …" payoff about the dealer — {@code dealer}
+	 * where it stands now, or {@code null} when it is off the field (or never stood there — a
+	 * Summon), in which case the payoff finds no target and does nothing.
+	 */
+	private List<ForwardTarget> dealerTarget(CardData dealer) {
+		Boolean side = mw.fieldSideOf(dealer);
+		ForwardTarget t = side == null ? null : findFieldTarget(dealer, side);
+		return t == null ? null : List.of(t);
+	}
+
+	/** "that Character's controller discards 1 card from his/her hand." — 5-037R Zeid. */
+	private static final Pattern DEALER_CONTROLLER_DISCARDS = Pattern.compile(
+			"(?i)^that\\s+(?:Forward|Character)'s\\s+controller\\s+discards\\s+(?<count>\\d+\\s+cards?)\\s+from\\s+"
+			+ "(?:his/her|his|her|their)\\s+hand[.!]?$");
 
 	/** Every card {@code isP1} has on the field, in Forward / Backup / Monster order. */
 	private List<CardData> fieldCards(boolean isP1) {
@@ -3771,15 +3864,15 @@ final class AutoAbilityTriggers {
 			Pattern.compile("(?i)^this\\s+(?:forward|backup|monster|character)$");
 
 	/**
-	 * The qualifying clauses this dispatch has already settled: "you control", since the walk only
-	 * visits the damaged card's own side, and a "by …" source clause (20-024H Calbrena, 5-037R
-	 * Zeid), which no printing in the corpus uses to narrow anything this dispatch decides.
+	 * The qualifying clause this dispatch has already settled: "you control", since the walk only
+	 * visits the damaged card's own side. (A "by …" dealer clause is peeled off earlier, by
+	 * {@link #DEALT_DAMAGE_QUALIFIER}.)
 	 *
 	 * <p>Deliberately not "opponent controls": the walk cannot satisfy that, so such a subject is
 	 * left intact and declines on the filter below rather than being read as its own side.
 	 */
 	private static final Pattern DAMAGED_SUBJECT_TAIL =
-			Pattern.compile("(?i)\\s+(?:you\\s+control|by\\s+.*)$");
+			Pattern.compile("(?i)\\s+you\\s+control$");
 
 	/**
 	 * True when {@code damaged} satisfies the subject of an "is dealt damage" trigger carried by
@@ -3856,6 +3949,23 @@ final class AutoAbilityTriggers {
 	/** Fires "you receive damage" abilities on all field cards belonging to the player who took damage. */
 	void triggerAutoAbilitiesForYouReceiveDamage(boolean isP1) {
 		triggerAutoAbilitiesForEvent("you receive damage", isP1);
+	}
+
+	/**
+	 * Fires "When you receive a fifth point of damage" — 17-019R Marilith, 17-054R Tiamat, 17-082R
+	 * Lich, 17-112R Kraken. Called as a point of damage takes {@code isP1}'s Damage Zone to 5.
+	 *
+	 * <p>Every printing says "This effect will trigger only if [Self] is in the Break Zone", so only
+	 * the Break Zone is walked, and only abilities carrying that condition.
+	 */
+	void triggerAutoAbilitiesForFifthDamage(boolean isP1) {
+		withBatch(() -> {
+			for (CardData c : new ArrayList<>(isP1 ? mw.gameState.getP1BreakZone() : mw.gameState.getP2BreakZone()))
+				for (AutoAbility fa : mw.effectiveAutoAbilities(c))
+					if (fa.trigger().equals("you receive fifth damage") && !fa.bzConditionCard().isEmpty())
+						executeAutoAbility(fa, c, isP1);
+		});
+		mw.showStackWindowIfNeeded();
 	}
 
 	/**
@@ -4693,6 +4803,11 @@ final class AutoAbilityTriggers {
 		List<ForwardTarget> preTargets = effectText.isBlank() ? null
 				: ActionResolver.preSelectTargets(effectText, source, entryX, mw.buildGameContext(effectIsP1));
 		if (preTargets != null && preTargets.isEmpty()) preTargets = null;
+		// "When X is dealt damage by a Forward …, deal that Forward …": the dealer came down as the
+		// trigger card (fireIsDealtDamageTriggers), and "that Forward" is it.
+		if (fa.trigger().equals("is dealt damage") && mw.triggeringBrokenCard != null
+				&& ActionResolver.isTriggeredTargetAction(effectText))
+			preTargets = dealerTarget(mw.triggeringBrokenCard);
 		// The trigger's own card travels with the entry. The field it is read from here is unwound
 		// the moment this push returns — resolution comes later, off the Stack — so an effect that
 		// names the card back ("add it to your hand") found nothing there and fizzled.

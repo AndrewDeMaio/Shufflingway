@@ -1292,7 +1292,8 @@ final class ActionResolverState {
         // "That Forward gains ..." and "It gains ..." are one sentence about one card; only the
         // trigger form has to name the type, having no earlier clause to point back at. Rewritten
         // so the followup vocabulary reads it without a demonstrative arm of its own.
-        String action_t = TRIGGERED_TARGET_DEMONSTRATIVE_SUBJECT.matcher(t).replaceFirst("It ");
+        String action_t = TRIGGERED_TARGET_DEMONSTRATIVE_SUBJECT.matcher(t).replaceFirst("It ")
+                .replaceFirst("(?i)^deal\\s+that\\s+(?:Forward|Character)\\s+", "Deal it ");
         BiConsumer<GameContext, List<ForwardTarget>> action = parseTargetAction(action_t, xValue);
         if (action == null) return null;
 

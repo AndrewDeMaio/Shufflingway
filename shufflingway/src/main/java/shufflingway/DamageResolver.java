@@ -1092,7 +1092,15 @@ class DamageResolver {
 					+ (effPow > 0 ? " (" + (effPow - accum) + " remaining)" : ""));
 			// Fires on being dealt damage, so before the break check below — 28-043R Gi Nattak's
 			// trigger still resolves when the damage is lethal.
-			mw.autoAbilityTriggers.fireIsDealtDamageTriggers(fwds.get(idx), isP1, amount);
+			CardData damagedCard = fwds.get(idx);
+			mw.autoAbilityTriggers.fireIsDealtDamageTriggers(damagedCard, isP1, amount, abilityDamageDealer());
+			// A trigger the layer resolves inline can move the damaged Forward — 9-072H Baigan puts
+			// himself into the Break Zone — so it is found again by identity before anything below
+			// indexes the row. Gone from the field, there is nothing left to break.
+			if (idx >= fwds.size() || fwds.get(idx) != damagedCard) {
+				idx = mw.identityIndexOf(fwds, damagedCard);
+				if (idx < 0) return;
+			}
 			// "When this Forward is dealt damage, break this Forward." — Vallaide 22-020R's grant, on
 			// the Forward that just took the damage. Ahead of the lethal check below because any damage
 			// at all is enough, and a Forward the damage would have broken anyway leaves by this route.
@@ -1130,6 +1138,22 @@ class DamageResolver {
 	 */
 	private CardData abilityDamageSource() {
 		return mw.currentAbilitySource != null ? mw.currentAbilitySource : mw.currentSummonSource;
+	}
+
+	/**
+	 * {@link #abilityDamageSource()} with its side, for the "is dealt damage by …" triggers. An
+	 * ability's card is placed by where it stands: the inline trigger paths set the source without
+	 * its side flag. {@code null} when nothing is known to be resolving.
+	 */
+	private AutoAbilityTriggers.DamageDealer abilityDamageDealer() {
+		if (mw.currentAbilitySource != null) {
+			Boolean side = mw.fieldSideOf(mw.currentAbilitySource);
+			return new AutoAbilityTriggers.DamageDealer(mw.currentAbilitySource,
+					side != null ? side : mw.currentAbilitySourceIsP1, true);
+		}
+		if (mw.currentSummonSource != null)
+			return new AutoAbilityTriggers.DamageDealer(mw.currentSummonSource, mw.currentSummonSourceIsP1, true);
+		return null;
 	}
 
 	/**

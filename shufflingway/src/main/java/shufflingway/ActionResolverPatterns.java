@@ -1474,6 +1474,11 @@ final class ActionResolverPatterns {
         // string this cannot match. Porom's is the only bare one.
         "|return\\s+it\\s+to\\s+its\\s+owner'?s\\s+hand" +
         "|break\\s+that\\s+Character" +
+        // "deal that Forward N damage" — 26-083H Elena, whose trigger preloads the Forward that
+        // dealt her damage. Demonstrative only, like the arm below; anchored, so 1-013H Sazh's
+        // "… deal that Forward 4000 damage instead" and 12-002H Amaterasu's conditional are longer
+        // strings this cannot match.
+        "|deal\\s+that\\s+(?:Forward|Character)\\s+\\d+\\s+damage" +
         // "that Forward gains +N power [and Haste/...] until the end of the turn" — 8-097H Jake.
         // The demonstrative form only: "it gains ..." is the Choose family's followup wording and
         // belongs to a card an earlier clause picked, not to the one that fired the trigger.

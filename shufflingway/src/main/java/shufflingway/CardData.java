@@ -3285,8 +3285,17 @@ public record CardData(
             "|deals?\\s+damage\\s+to\\s+your\\s+opponent" +
             "|deals?\\s+damage\\s+to\\s+a\\s+Forward" +
             // Distinct from "deals damage": the source is the card being damaged, not the dealer.
-            "|is\\s+dealt\\s+damage" +
-            "|receives?\\s+a\\s+point\\s+of\\s+damage" +
+            // The optional size floor (9-072H Baigan's "4000 damage or more") and "by <dealer>"
+            // clause (15-077H Dadaluma, 20-024H Calbrena, 21-073R Zazarg, 25-024H / 5-037R Zeid,
+            // 26-083H Elena) are carried into the subject — see DEALT_DAMAGE_QUALIFIER.
+            "|is\\s+dealt\\s+(?:\\d+\\s+damage\\s+or\\s+more|damage)" +
+                "(?:\\s+by\\s+(?:an?\\s+(?:Forward|Character)(?:\\s+opponent\\s+controls)?" +
+                "|your\\s+opponent's\\s+Summons\\s+or\\s+abilities))?" +
+            // "When you receive damage" (1-108H Cecil, 7-077L Noctis) is the same event as "a point
+            // of damage" — damage to a player is dealt a point at a time.
+            "|receives?\\s+(?:a\\s+point\\s+of\\s+)?damage" +
+            // 17-019R Marilith, 17-054R Tiamat, 17-082R Lich, 17-112R Kraken — from the Break Zone.
+            "|receives?\\s+a\\s+fifth\\s+point\\s+of\\s+damage" +
             "|(?:is|are)\\s+chosen\\s+by\\s+your\\s+opponent's\\s+Summons?(?:\\s+or\\s+abilit(?:y|ies))?" +
             // The ability-only complement of the arm above — 20-117L Yuna, 24-090L Leon,
             // 26-039H Star Sibyl, 27-021C Ilmatalle and the clause Ilmatalle grants its Warriors.
@@ -3935,8 +3944,17 @@ public record CardData(
             m.appendReplacement(sb, Matcher.quoteReplacement(replacement));
         }
         m.appendTail(sb);
-        return sb.toString();
+        // The same split with one subject — 17-082R Lich's "When Lich deals damage to a Forward or
+        // is dealt damage by a Forward, break that Forward.": Breaktouch's trigger, and the
+        // dealt-damage one whose "that Forward" is the dealer.
+        return DEALS_OR_DEALT_DAMAGE_TRIGGER.matcher(sb.toString()).replaceAll(
+                "When ${subj} deals damage to a Forward, ${effect}[[br]]When ${subj} is dealt damage by a Forward, ${effect}");
     }
+
+    /** "When X deals damage to a Forward or is dealt damage by a Forward, E" — see expandAlternativeTriggers. */
+    private static final Pattern DEALS_OR_DEALT_DAMAGE_TRIGGER = Pattern.compile(
+        "(?i)\\bWhen\\s+(?<subj>[^,.]+?)\\s+deals\\s+damage\\s+to\\s+a\\s+Forward\\s+or\\s+is\\s+dealt\\s+damage\\s+" +
+        "by\\s+a\\s+Forward,\\s+(?<effect>[^.]+\\.)");
 
     private static String expandMultiSubjectTriggers(String text) {
         Matcher m = MULTI_SUBJECT_TRIGGER.matcher(text);
@@ -4440,6 +4458,15 @@ public record CardData(
             else if (triggerRaw.equals("is blocked"))                                                       trigger = "is blocked";
             else if (triggerRaw.contains("block") && triggerRaw.contains("is blocked"))                    trigger = "blocks or is blocked";
             else if (triggerRaw.contains("block"))                                                          trigger = "blocks";
+            // The subject here is the card receiving the damage, not the one dealing it. Must
+            // precede the "summon" branch below: "by your opponent's Summons or abilities" contains
+            // "summon". The size floor and dealer clause ride on the subject, where the dispatch
+            // reads them (AutoAbilityTriggers.matchesDamagedSubject).
+            else if (triggerRaw.startsWith("is dealt ")) {
+                trigger = "is dealt damage";
+                card = card + triggerRaw.substring("is dealt".length())
+                        .replaceFirst("^\\s+damage(?=\\s+by\\b|$)", "");
+            }
             // Both of these must precede the "break zone" and "summon" branches below, which would
             // otherwise claim them: "added to your opponent's hand from the Break Zone" contains
             // "break zone", and "due to your Summons or abilities" contains "summon".
@@ -4513,9 +4540,9 @@ public record CardData(
             else if (triggerRaw.contains("warp"))                                                           trigger = "warp placed";
             else if (triggerRaw.contains("deals damage") && triggerRaw.contains("opponent"))                trigger = "deals damage to opponent";
             else if (triggerRaw.contains("deals damage"))                                                   trigger = "deals damage to forward";
-            // The subject here is the card receiving the damage, not the one dealing it.
-            else if (triggerRaw.contains("dealt damage"))                                                   trigger = "is dealt damage";
-            else if (triggerRaw.contains("receive") && triggerRaw.contains("a point of damage")) {
+            else if (triggerRaw.contains("receive") && triggerRaw.contains("fifth point of damage"))        trigger = "you receive fifth damage";
+            else if (triggerRaw.contains("receive")
+                    && (triggerRaw.contains("a point of damage") || triggerRaw.matches("receives?\\s+damage"))) {
                 if (card.equalsIgnoreCase("you"))   trigger = "you receive damage";
                 else                                trigger = "either player receives damage";
             }

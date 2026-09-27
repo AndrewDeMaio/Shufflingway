@@ -68154,5 +68154,331 @@ public class CardBehaviorTest {
 	}
 
 	// =========================================================================================
+	// "is dealt damage by <dealer>" — 15-077H Dadaluma, 20-024H Calbrena, 21-073R Zazarg,
+	// 25-024H / 5-037R Zeid, 26-083H Elena, 17-082R Lich, and 9-072H Baigan's size floor.
+	//
+	// The trigger arm read a bare "is dealt damage" and required a comma straight after, so every
+	// printing with a dealer clause or a size floor produced no ability at all. The clause now
+	// rides on the subject and the dispatch checks it against the dealer: the other combatant in
+	// battle, else the Summon or the card whose ability is resolving. A payoff about the dealer
+	// ("deal that Forward 5000 damage") goes on the Stack with the dealer preloaded.
+	//
+	// Watchers sit on P2's side, so any choice their payoff makes is the AI's, not a dialog.
+	// =========================================================================================
+
+	private static final String DADALUMA_15_077H = "When Dadaluma is dealt damage by a Forward opponent "
+			+ "controls, choose up to 1 Forward opponent controls. Deal it 8000 damage.";
+	private static final String ZAZARG_21_073R = "Brave[[br]]   When Stoneserpent General Zazarg is dealt "
+			+ "damage by your opponent's Summons or abilities, choose up to 1 Forward. Deal it 8000 damage.";
+	private static final String ZEID_25_024H = "Back Attack[[br]]When Zeid is dealt damage by a Character "
+			+ "opponent controls, your opponent selects 1 dull Character they control. Put it into the Break Zone.";
+	private static final String ZEID_5_037R = "When Zeid is dealt damage by a Character, that Character's "
+			+ "controller discards 1 card from his/her hand.";
+	private static final String ELENA_26_083H = "Haste[[br]]Damage 3 -- When Elena is dealt damage by a Forward "
+			+ "opponent controls, deal that Forward 5000 damage.";
+	private static final String LICH_17_082R = "When Lich deals damage to a Forward or is dealt damage by a "
+			+ "Forward, break that Forward.";
+	private static final String BAIGAN_9_072H_FULL = "If Baigan is dealt 3000 damage or less, the damage becomes 0 "
+			+ "instead.[[br]] When Baigan is dealt 4000 damage or more, you may put Baigan into the Break Zone. "
+			+ "When you do so, deal 7000 damage to all the Forwards opponent controls.";
+
+	/** P2 fields {@code watcher}; P1 fields a Forward to deal the damage. Returns the P1 Forward. */
+	private static CardData dealtDamageBoard(MainWindow mw, CardData watcher) {
+		CardData striker = makeForward("Striker", "Fire", 3, 7000);
+		placeP1Forward(mw, striker);
+		mw.suppressAutoAbilityForNextCards = 1;
+		placeP2Forward(mw, watcher);
+		return striker;
+	}
+
+	/** Deals {@code amount} to P2's Forward 0 as {@code source}'s ability (a Summon when it is one). */
+	private static void dealAbilityDamage(MainWindow mw, CardData source, boolean sourceIsP1, int amount) {
+		if (source.isSummon()) { mw.currentSummonSource = source; mw.currentSummonSourceIsP1 = sourceIsP1; }
+		else                   { mw.currentAbilitySource = source; mw.currentAbilitySourceIsP1 = sourceIsP1; }
+		try {
+			mw.applyDamageToForward(false, 0, amount, true, false);
+		} finally {
+			mw.currentSummonSource = null;
+			mw.currentAbilitySource = null;
+		}
+	}
+
+	/** Runs the one waiting entry the way resolveTopOfStack would: preloaded targets, then the effect. */
+	private static void resolveDealtDamageEntry(MainWindow mw, CardData source) {
+		assertEquals(1, mw.gameState.getStack().size());
+		StackEntry e = mw.gameState.getStack().get(0);
+		assertSame(source, e.source());
+		GameContext ctx = mw.buildGameContext(e.isP1());
+		if (e.preSelectedTargets() != null) ctx.preloadTargets(e.preSelectedTargets());
+		mw.currentAbilitySource = source;
+		try {
+			ActionResolver.parse(e.effectText(), source, e.xValue()).accept(ctx);
+		} finally {
+			mw.currentAbilitySource = null;
+		}
+	}
+
+	@Test
+	void dealtDamageByClausesParseIntoTheSubject() {
+		AutoAbility dadaluma = CardData.parseAutoAbilities(DADALUMA_15_077H).get(0);
+		assertEquals("is dealt damage", dadaluma.trigger());
+		assertEquals("Dadaluma by a forward opponent controls", dadaluma.triggerCard());
+
+		AutoAbility baigan = CardData.parseAutoAbilities(BAIGAN_9_072H_FULL).get(0);
+		assertEquals("is dealt damage", baigan.trigger());
+		assertEquals("Baigan 4000 damage or more", baigan.triggerCard());
+		assertTrue(baigan.youMay());
+
+		List<AutoAbility> lich = CardData.parseAutoAbilities(LICH_17_082R);
+		assertEquals(2, lich.size(), "one sentence, two triggers");
+		assertEquals("deals damage to forward", lich.get(0).trigger());
+		assertEquals("is dealt damage", lich.get(1).trigger());
+		assertEquals("Lich by a forward", lich.get(1).triggerCard());
+	}
+
+	@Test
+	void dadalumaAnswersAnOpposingForwardsAbilityDamage() {
+		MainWindow mw = new MainWindow();
+		CardData dadaluma = makeForwardWithText("Dadaluma", "Earth", 5, 7000, DADALUMA_15_077H);
+		CardData striker = dealtDamageBoard(mw, dadaluma);
+
+		dealAbilityDamage(mw, striker, true, 1000);
+
+		assertEquals(List.of(dadaluma), triggerSources(mw));
+	}
+
+	@Test
+	void dadalumaIgnoresSummonDamageAndHisOwnSidesForwards() {
+		MainWindow mw = new MainWindow();
+		CardData dadaluma = makeForwardWithText("Dadaluma", "Earth", 5, 7000, DADALUMA_15_077H);
+		dealtDamageBoard(mw, dadaluma);
+
+		dealAbilityDamage(mw, makeSummon("Ifrit", "Fire", 2, ""), true, 1000);
+		assertTrue(mw.gameState.getStack().isEmpty(), "a Summon is not a Forward");
+
+		CardData ally = makeForward("Ally", "Earth", 2, 5000);
+		mw.suppressAutoAbilityForNextCards = 1;
+		placeP2Forward(mw, ally);
+		dealAbilityDamage(mw, ally, false, 1000);
+		assertTrue(mw.gameState.getStack().isEmpty(), "his own Forward is not one opponent controls");
+	}
+
+	@Test
+	void dadalumaAnswersBattleDamage() {
+		MainWindow mw = new MainWindow();
+		CardData dadaluma = makeForwardWithText("Dadaluma", "Earth", 5, 7000, DADALUMA_15_077H);
+		CardData striker = dealtDamageBoard(mw, dadaluma);
+
+		mw.resolveCombat(striker, true, 0, dadaluma, false, 0);
+
+		assertEquals(List.of(dadaluma), triggerSources(mw));
+	}
+
+	@Test
+	void calbrenaHitsBackForHerPowerWhenAnOpposingForwardDamagesHer() {
+		MainWindow mw = new MainWindow();
+		CardData calbrena = makeForwardWithText("Calbrena", "Water", 4, 7000, "Back Attack[[br]]   When Calbrena "
+				+ "enters the field, choose 1 ability that is choosing only 1 Character either player controls. The "
+				+ "ability is now choosing Calbrena instead, if possible.[[br]]   When Calbrena is dealt damage by a "
+				+ "Forward opponent controls, choose 1 Forward opponent controls. Deal it damage equal to Calbrena's power.");
+		assertEquals(2, calbrena.autoAbilities().size(), "the dealt-damage sentence is read beside the enters one");
+		CardData striker = dealtDamageBoard(mw, calbrena);
+
+		dealAbilityDamage(mw, striker, true, 1000);
+		assertEquals(List.of(calbrena), triggerSources(mw));
+
+		resolveDealtDamageEntry(mw, calbrena);
+		assertTrue(mw.gameState.getP1BreakZone().contains(striker), "7000 to the only Forward P1 controls");
+	}
+
+	@Test
+	void zazargAnswersOpposingSummonsButNotBattle() {
+		MainWindow mw = new MainWindow();
+		CardData zazarg = makeForwardWithText("Stoneserpent General Zazarg", "Earth", 5, 8000, ZAZARG_21_073R);
+		CardData striker = dealtDamageBoard(mw, zazarg);
+
+		mw.resolveCombat(striker, true, 0, zazarg, false, 0);
+		assertTrue(mw.gameState.getStack().isEmpty(), "battle damage is not a Summon or ability");
+
+		dealAbilityDamage(mw, makeSummon("Ifrit", "Fire", 2, ""), true, 1000);
+		assertEquals(List.of(zazarg), triggerSources(mw));
+	}
+
+	@Test
+	void zeidAnswersAnOpposingBackupsAbilityButNotASummon() {
+		MainWindow mw = new MainWindow();
+		CardData zeid = makeForwardWithText("Zeid", "Ice", 5, 8000, ZEID_25_024H);
+		dealtDamageBoard(mw, zeid);
+		CardData backup = makePlainBackup("Scholar", "Ice", 2);
+		mw.gameState.getIdentity().put(backup, true);
+		mw.placeCardInFirstBackupSlot(backup);
+
+		dealAbilityDamage(mw, makeSummon("Shiva", "Ice", 2, ""), true, 1000);
+		assertTrue(mw.gameState.getStack().isEmpty(), "a Summon is not a Character");
+
+		dealAbilityDamage(mw, backup, true, 1000);
+		assertEquals(List.of(zeid), triggerSources(mw), "a Backup is a Character");
+	}
+
+	@Test
+	void zeidMakesTheDealersControllerDiscard() {
+		MainWindow mw = new MainWindow();
+		CardData zeid = makeForwardWithText("Zeid", "Ice", 5, 9000, ZEID_5_037R);
+		CardData striker = dealtDamageBoard(mw, zeid);
+
+		dealAbilityDamage(mw, striker, true, 1000);
+
+		assertEquals(List.of(zeid), triggerSources(mw));
+		assertEquals("your opponent discards 1 card from his/her hand.",
+				mw.gameState.getStack().get(0).effectText(), "the dealer is P1's, so P1 discards");
+	}
+
+	@Test
+	void elenaDealsFiveThousandToTheForwardThatDamagedHer() {
+		MainWindow mw = new MainWindow();
+		CardData elena = makeForwardWithText("Elena", "Lightning", 4, 7000, ELENA_26_083H);
+		CardData striker = dealtDamageBoard(mw, elena);
+		for (int i = 0; i < 3; i++) mw.gameState.getP2DamageZone().add(makeForward("Filler", "Fire", 1, 1000));
+
+		dealAbilityDamage(mw, striker, true, 1000);
+		assertEquals(List.of(elena), triggerSources(mw));
+		assertEquals(List.of(new ForwardTarget(true, 0, ForwardTarget.CardZone.FORWARD)),
+				mw.gameState.getStack().get(0).preSelectedTargets(), "the dealer is preloaded");
+
+		resolveDealtDamageEntry(mw, elena);
+		assertEquals(5000, mw.p1ForwardDamage.get(0));
+	}
+
+	@Test
+	void elenaNeedsThreeDamage() {
+		MainWindow mw = new MainWindow();
+		CardData elena = makeForwardWithText("Elena", "Lightning", 4, 7000, ELENA_26_083H);
+		CardData striker = dealtDamageBoard(mw, elena);
+
+		dealAbilityDamage(mw, striker, true, 1000);
+
+		assertTrue(mw.gameState.getStack().isEmpty());
+	}
+
+	@Test
+	void lichBreaksTheForwardThatDamagedHim() {
+		MainWindow mw = new MainWindow();
+		CardData lich = makeForwardWithText("Lich", "Earth", 5, 9000, LICH_17_082R);
+		CardData striker = dealtDamageBoard(mw, lich);
+
+		dealAbilityDamage(mw, striker, true, 1000);
+		assertEquals("break that Character.", mw.gameState.getStack().get(0).effectText(),
+				"Breaktouch's own sentence stays out of the triggered-target form");
+
+		resolveDealtDamageEntry(mw, lich);
+		assertFalse(mw.p1ForwardCards.contains(striker));
+		assertTrue(mw.gameState.getP1BreakZone().contains(striker));
+	}
+
+	// =========================================================================================
+	// "When you receive damage" (1-108H Cecil, 7-077L Noctis) and "When you receive a fifth point
+	// of damage" (17-019R Marilith, 17-054R Tiamat, 17-082R Lich, 17-112R Kraken — each from the
+	// Break Zone). The trigger arm read only "receive a point of damage", so neither parsed.
+	// Driven through p2TakeDamage, the per-point entry both dispatchers hang off.
+	// =========================================================================================
+
+	private static final String CECIL_1_108H =
+			"When you receive damage, choose 1 Forward opponent controls. You may deal it 5000 damage.";
+	private static final String NOCTIS_7_077L = "[[ex]]EX BURST[[/]] When you receive damage, choose up to 1 "
+			+ "Forward. If you have received 6 points of damage, break it.[[br]] When you receive damage, choose up "
+			+ "to 1 Forward opponent controls. Noctis and the chosen Forward deal damage equal to their respective "
+			+ "power to the other.[[br]] 《Earth》《Earth》《2》: During this turn, the next damage dealt to Noctis "
+			+ "becomes 0 instead.";
+	private static final String MARILITH_17_019R = "First Strike[[br]]   When you receive a fifth point of damage, "
+			+ "you may pay 《Fire》. When you do so, play Marilith onto the field dull. This effect will trigger "
+			+ "only if Marilith is in the Break Zone.";
+
+	/** P2 takes one point of damage off a plain top card, after {@code already} points. */
+	private static void p2TakesAPoint(MainWindow mw, int already) {
+		for (int i = 0; i < already; i++) mw.gameState.getP2DamageZone().add(makeForward("Filler", "Fire", 1, 1000));
+		CardData top = makeForward("Top", "Fire", 1, 1000);
+		mw.gameState.getIdentity().put(top, false);
+		mw.gameState.getP2MainDeck().addFirst(top);
+		mw.p2TakeDamage();
+	}
+
+	@Test
+	void cecilAnswersHisControllerReceivingDamage() {
+		assertEquals("you receive damage", CardData.parseAutoAbilities(CECIL_1_108H).get(0).trigger());
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForward("Genesis", "Ice", 3, 9000));
+		CardData cecil = makeForwardWithText("Cecil", "Water", 5, 8000, CECIL_1_108H);
+		mw.suppressAutoAbilityForNextCards = 1;
+		placeP2Forward(mw, cecil);
+
+		p2TakesAPoint(mw, 0);
+
+		assertEquals(List.of(cecil), triggerSources(mw));
+	}
+
+	@Test
+	void noctisAnswersEachPointWithBothAbilities() {
+		CardData noctis = makeForwardWithText("Noctis", "Earth", 5, 9000, NOCTIS_7_077L);
+		assertEquals(2, noctis.autoAbilities().size());
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForward("Genesis", "Ice", 3, 9000));
+		mw.suppressAutoAbilityForNextCards = 1;
+		placeP2Forward(mw, noctis);
+
+		p2TakesAPoint(mw, 0);
+
+		assertEquals(List.of(noctis, noctis), triggerSources(mw));
+	}
+
+	@Test
+	void theFifthPointTriggersFromTheBreakZoneOnly() {
+		for (String text : List.of(MARILITH_17_019R, LICH_17_082R + "[[br]]   When you receive a fifth point of "
+				+ "damage, you may pay 《Earth》. When you do so, play Lich onto the field dull. This effect will "
+				+ "trigger only if Lich is in the Break Zone.")) {
+			AutoAbility fifth = CardData.parseAutoAbilities(text).stream()
+					.filter(a -> a.trigger().equals("you receive fifth damage")).findFirst().orElseThrow();
+			assertFalse(fifth.bzConditionCard().isEmpty(), text);
+			assertTrue(fifth.youMay());
+		}
+	}
+
+	@Test
+	void marilithPlaysHerselfFromTheBreakZoneOnTheFifthPoint() {
+		MainWindow mw = new MainWindow();
+		CardData marilith = makeForwardWithText("Marilith", "Fire", 3, 7000, MARILITH_17_019R);
+		mw.gameState.getIdentity().put(marilith, false);
+		mw.gameState.getP2BreakZone().add(marilith);
+		CardData backup = makePlainBackup("Fire Backup", "Fire", 2);
+		mw.gameState.getIdentity().put(backup, false);
+		mw.placeP2CardInFirstBackupSlot(backup);
+		mw.p2BackupStates[0] = CardState.ACTIVE;   // Backups enter dull; this one pays the 《Fire》
+
+		p2TakesAPoint(mw, 3);
+		assertTrue(mw.gameState.getP2BreakZone().contains(marilith), "the fourth point is not the fifth");
+
+		p2TakesAPoint(mw, 0);
+		assertTrue(mw.p2ForwardCards.contains(marilith), "played from the Break Zone");
+		assertEquals(CardState.DULL, mw.p2ForwardStates.get(mw.p2ForwardCards.indexOf(marilith)));
+		assertFalse(mw.gameState.getP2BreakZone().contains(marilith));
+	}
+
+	@Test
+	void baiganAnswersOnlyFourThousandOrMore() {
+		MainWindow mw = new MainWindow();
+		CardData baigan = makeForwardWithText("Baigan", "Water", 5, 7000, BAIGAN_9_072H_FULL);
+		CardData striker = dealtDamageBoard(mw, baigan);
+
+		dealAbilityDamage(mw, striker, true, 3500);
+		assertTrue(mw.p2ForwardCards.contains(baigan), "3500 is under the floor");
+		assertTrue(mw.p1ForwardCards.contains(striker));
+
+		// The self-sacrifice is resolved by the trigger layer as the damage lands (the AI takes the
+		// offer), and the damage step then finds Baigan gone rather than indexing his old seat.
+		dealAbilityDamage(mw, striker, true, 4000);
+		assertTrue(mw.gameState.getP2BreakZone().contains(baigan));
+		assertTrue(mw.gameState.getP1BreakZone().contains(striker), "7000 to every Forward opponent controls");
+	}
+
+	// =========================================================================================
 
 }
