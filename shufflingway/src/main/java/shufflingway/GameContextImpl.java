@@ -5948,6 +5948,7 @@ final class GameContextImpl implements GameContext {
 							if (mw.p2BackupLabels[i] != null) { mw.p2BackupLabels[i].setIcon(null); mw.p2BackupLabels[i].setText(null); }
 							mw.refreshP2BreakLabel();
 						}
+						mw.autoAbilityTriggers.triggerAutoAbilitiesForBrokenByOpponent(c, t.isP1());
 					}
 					case MONSTER -> {
 						int i = t.idx();
@@ -9450,6 +9451,7 @@ final class GameContextImpl implements GameContext {
 									mw.p1BackupStates[i] = CardState.ACTIVE;
 									mw.refreshP1BackupSlot(i);
 									mw.refreshP1BreakLabel();
+									mw.autoAbilityTriggers.triggerAutoAbilitiesForBrokenByOpponent(c, true);
 								}
 								case DULL           -> dullTarget(slot);
 								case FREEZE         -> freezeTarget(slot);
@@ -9557,6 +9559,7 @@ final class GameContextImpl implements GameContext {
 									mw.p2BackupStates[i] = CardState.ACTIVE;
 									mw.refreshP2BackupSlot(i);
 									mw.refreshP2BreakLabel();
+									mw.autoAbilityTriggers.triggerAutoAbilitiesForBrokenByOpponent(c, false);
 								}
 								case DULL           -> dullTarget(slot);
 								case FREEZE         -> freezeTarget(slot);

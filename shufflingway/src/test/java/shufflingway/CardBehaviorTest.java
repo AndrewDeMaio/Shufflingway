@@ -8,6 +8,7 @@ import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -69428,6 +69429,133 @@ public class CardBehaviorTest {
 		assertEquals(2, mw.gameState.getP2Hand().size());
 	}
 
+	// =========================================================================================
+	// The cancel pair. 10-098L Feolthanos cancels a cheap effect that chooses him (through the
+	// chosen-by selection handshake); 5-090R Hill Gigas sacrifices himself to cancel an opposing
+	// Character's action ability and break its user (through MainWindow.cancelStackEntry).
+	// =========================================================================================
+
+	private static final String FEOLTHANOS_10_098L = "Summons and abilities of your opponent must choose Feolthanos if "
+			+ "possible.[[br]]   When Feolthanos is chosen by your opponent's Summon of cost 5 or less or an ability of "
+			+ "their Character of cost 5 or less, cancel its effect.";
+
+	/** P1 fields Feolthanos; P2 resolves {@code summon}'s "choose 1 Forward opponent controls. Deal it 5000 damage." */
+	private static MainWindow feolthanosChosenBySummonOfCost(int cost) {
+		MainWindow mw = new MainWindow();
+		CardData feolthanos = makeForwardWithText("Feolthanos", "Lightning", 7, 9000, FEOLTHANOS_10_098L);
+		mw.suppressAutoAbilityForNextCards = 1;
+		placeP1Forward(mw, feolthanos);
+		String text = "Choose 1 Forward opponent controls. Deal it 5000 damage.";
+		CardData summon = makeSummon("Bolt", "Lightning", cost, text);
+		mw.currentSummonSource = summon;
+		mw.currentSummonSourceIsP1 = false;
+		mw.currentResolutionIsSummon = true;
+		try {
+			ActionResolver.parse(text, summon).accept(mw.buildGameContext(false));
+		} finally {
+			mw.currentSummonSource = null;
+			mw.currentResolutionIsSummon = false;
+		}
+		return mw;
+	}
+
+	@Test
+	void feolthanosClassifiesWithHisCostCap() {
+		AutoAbility trigger = CardData.parseAutoAbilities(FEOLTHANOS_10_098L).get(0);
+		assertEquals("chosen by opponent's summon or ability of cost 5 or less", trigger.trigger());
+		assertEquals("Feolthanos", trigger.triggerCard());
+	}
+
+	@Test
+	void feolthanosCancelsACheapSummonThatChoosesHim() {
+		MainWindow mw = feolthanosChosenBySummonOfCost(3);
+		assertEquals(0, mw.p1ForwardDamage.get(0), "the selection was cancelled, so nothing is dealt");
+	}
+
+	@Test
+	void feolthanosLetsADearSummonThrough() {
+		MainWindow mw = feolthanosChosenBySummonOfCost(6);
+		assertEquals(5000, mw.p1ForwardDamage.get(0), "cost 6 is over his cap");
+	}
+
+	@Test
+	void feolthanosCancelsACheapCharactersAbilityButNotADearOnes() {
+		for (int cost : new int[] { 5, 6 }) {
+			MainWindow mw = new MainWindow();
+			CardData feolthanos = makeForwardWithText("Feolthanos", "Lightning", 7, 9000, FEOLTHANOS_10_098L);
+			mw.suppressAutoAbilityForNextCards = 1;
+			placeP1Forward(mw, feolthanos);
+			CardData user = makeForward("User", "Fire", cost, 8000);
+			mw.suppressAutoAbilityForNextCards = 1;
+			placeP2Forward(mw, user);
+
+			asAbilityOf(mw, user, false, () -> ActionResolver.parse(
+					"Choose 1 Forward opponent controls. Deal it 5000 damage.", user).accept(mw.buildGameContext(false)));
+
+			assertEquals(cost <= 5 ? 0 : 5000, mw.p1ForwardDamage.get(0), "a cost " + cost + " Character's ability");
+		}
+	}
+
+	private static final String HILL_GIGAS_5_090R = "When a Character opponent controls uses an action ability, put Hill "
+			+ "Gigas into the Break Zone. If you do so, cancel its effect and break that Character.";
+
+	private static CardData makeMonsterWithAutos(String name, String element, String text) {
+		return new CardData(null, name, element, 1, 0, "Monster", false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				CardData.parseActionAbilities(text), CardData.parseAutoAbilities(text),
+				CardData.parseFieldAbilities(text, "Monster"),
+				List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				null, null, null, text);
+	}
+
+	@Test
+	void hillGigasCancelsTheAbilityAndBreaksItsUser() {
+		MainWindow mw = new MainWindow();
+		CardData gigas = makeMonsterWithAutos("Hill Gigas", "Earth", HILL_GIGAS_5_090R);
+		assertEquals("opponent character uses action ability", gigas.autoAbilities().get(0).trigger());
+		mw.gameState.getIdentity().put(gigas, true);
+		mw.suppressAutoAbilityForNextCards = 1;
+		mw.placeCardInMonsterZone(gigas);
+		CardData user = makeForwardWithText("Drawer", "Fire", 2, 5000, "《0》: Draw 1 card.");
+		mw.suppressAutoAbilityForNextCards = 1;
+		placeP2Forward(mw, user);
+		CardData top = makeForward("Top", "Fire", 1, 1000);
+		mw.gameState.getIdentity().put(top, false);
+		mw.gameState.getP2MainDeck().addFirst(top);
+
+		assertTrue(mw.autoAbilityTriggers.executeP2AbilityActivation(user.actionAbilities().get(0), user,
+				() -> {}, new ArrayList<>(), new ArrayList<>(), 0));
+
+		assertTrue(mw.gameState.getP1BreakZone().contains(gigas), "the price");
+		assertTrue(mw.gameState.getP2BreakZone().contains(user), "the user is broken");
+		// Breaking the user runs the Stack in this harness, so the ability has resolved — cancelled.
+		assertTrue(mw.gameState.getStack().stream().noneMatch(e -> e.source() == user), "the ability has resolved");
+		assertFalse(mw.gameState.getP2Hand().contains(top), "and it drew nothing: its effect was cancelled");
+	}
+
+	@Test
+	void hillGigasIgnoresHisOwnSidesAbilities() {
+		MainWindow mw = new MainWindow();
+		CardData gigas = makeMonsterWithAutos("Hill Gigas", "Earth", HILL_GIGAS_5_090R);
+		mw.gameState.getIdentity().put(gigas, false);
+		mw.suppressAutoAbilityForNextCards = 1;
+		mw.placeP2CardInMonsterZone(gigas);
+		CardData user = makeForwardWithText("Drawer", "Fire", 2, 5000, "《0》: Draw 1 card.");
+		mw.suppressAutoAbilityForNextCards = 1;
+		placeP2Forward(mw, user);
+		CardData top = makeForward("Top", "Fire", 1, 1000);
+		mw.gameState.getIdentity().put(top, false);
+		mw.gameState.getP2MainDeck().addFirst(top);
+
+		mw.autoAbilityTriggers.executeP2AbilityActivation(user.actionAbilities().get(0), user,
+				() -> {}, new ArrayList<>(), new ArrayList<>(), 0);
+
+		assertTrue(mw.p2MonsterCards.contains(gigas));
+		StackEntry ability = mw.gameState.getStack().stream().filter(e -> e.source() == user).findFirst().orElseThrow();
+		assertFalse(mw.cancelledStackEntries.contains(ability), "his controller's own ability is left alone");
+	}
+
 	@Test
 	void fujinAndRaijinAnswerBeingMilledFromTheirOwnersDeck() {
 		MainWindow mw = new MainWindow();
@@ -69463,6 +69591,401 @@ public class CardBehaviorTest {
 
 		assertTrue(mw.gameState.getP1BreakZone().contains(p1Top), "P2's opponent is P1");
 		assertEquals(List.of(thief), triggerSources(mw));
+	}
+
+	// =========================================================================================
+	// The last three unrecognised triggers. 23-029R Zenos watches the opponent's Break Zone
+	// (GameState.setBreakZoneLeftListener); 2-041H Doctor Cid watches a Backup broken by the
+	// opponent; 15-028H Gogo repeats an action ability a Forward or Monster of his uses.
+	// =========================================================================================
+
+	private static final String ZENOS_23_029R = "When Zenos enters the field, choose up to 2 Forwards in your "
+			+ "opponent's Break Zone. Remove them from the game.[[br]]   When a card in your opponent's Break Zone "
+			+ "leaves the Break Zone, your opponent discards 1 card. This effect will trigger only once per turn.";
+
+	/** P2 fields Zenos; P1's and P2's Break Zones each hold two Forwards. */
+	private static MainWindow zenosWatchingP1sBreakZone(CardData zenos) {
+		MainWindow mw = new MainWindow();
+		mw.suppressAutoAbilityForNextCards = 1;
+		placeP2Forward(mw, zenos);
+		for (boolean p1 : new boolean[] { true, false })
+			for (int i = 0; i < 2; i++) {
+				CardData c = makeForward((p1 ? "P1 " : "P2 ") + i, "Fire", 2, 5000);
+				mw.gameState.getIdentity().put(c, p1);
+				(p1 ? mw.gameState.getP1BreakZone() : mw.gameState.getP2BreakZone()).add(c);
+			}
+		return mw;
+	}
+
+	@Test
+	void zenosClassifiesTheBreakZoneWatcher() {
+		AutoAbility watcher = CardData.parseAutoAbilities(ZENOS_23_029R).get(1);
+		assertEquals("opponent card leaves break zone", watcher.trigger());
+		assertTrue(watcher.oncePerTurn());
+		assertEquals("your opponent discards 1 card", watcher.effectText());
+	}
+
+	@Test
+	void zenosAnswersACardLeavingTheOpponentsBreakZoneOncePerTurn() {
+		CardData zenos = makeForwardWithText("Zenos", "Ice", 4, 7000, ZENOS_23_029R);
+		MainWindow mw = zenosWatchingP1sBreakZone(zenos);
+
+		mw.gameState.getP2BreakZone().remove(0);
+		assertTrue(triggerSources(mw).isEmpty(), "his own controller's Break Zone is not watched");
+
+		mw.gameState.getP1BreakZone().remove(0);
+		assertEquals(List.of(zenos), triggerSources(mw));
+
+		mw.gameState.getP1BreakZone().removeIf(c -> true);
+		assertEquals(List.of(zenos), triggerSources(mw), "once per turn");
+	}
+
+	@Test
+	void zenosSeesEveryWayOutOfTheBreakZone() {
+		for (int route = 0; route < 3; route++) {
+			CardData zenos = makeForwardWithText("Zenos", "Ice", 4, 7000, ZENOS_23_029R);
+			MainWindow mw = zenosWatchingP1sBreakZone(zenos);
+			List<CardData> bz = mw.gameState.getP1BreakZone();
+			switch (route) {
+				case 0 -> { Iterator<CardData> it = bz.iterator(); it.next(); it.remove(); }
+				case 1 -> bz.removeAll(List.of(bz.get(0)));
+				default -> bz.clear();
+			}
+			assertEquals(List.of(zenos), triggerSources(mw), "route " + route);
+		}
+	}
+
+	@Test
+	void aNewGameEmptiesTheBreakZonesSilently() {
+		MainWindow mw = zenosWatchingP1sBreakZone(makeForward("Zenos", "Ice", 4, 7000));
+		List<CardData> left = new ArrayList<>();
+		mw.gameState.setBreakZoneLeftListener((c, p1) -> left.add(c));
+		mw.gameState.reset();
+		assertTrue(mw.gameState.getP1BreakZone().isEmpty());
+		assertTrue(left.isEmpty());
+	}
+
+	private static final String DOCTOR_CID_2_041H = "When a Backup you control is broken by your opponent's Summon "
+			+ "or ability, your opponent puts 1 Character from his field into the Break Zone.";
+
+	/** P2 holds Doctor Cid in Backup slot 0 and another Backup in slot 1; P1 fields a Forward. */
+	private static MainWindow doctorCidBoard(CardData cid, CardData other, CardData breaker) {
+		MainWindow mw = new MainWindow();
+		for (CardData b : List.of(cid, other)) {
+			mw.gameState.getIdentity().put(b, false);
+			mw.placeP2CardInFirstBackupSlot(b);
+		}
+		mw.suppressAutoAbilityForNextCards = 1;
+		placeP1Forward(mw, breaker);
+		return mw;
+	}
+
+	private static ForwardTarget p2Backup(int slot) {
+		return new ForwardTarget(false, slot, ForwardTarget.CardZone.BACKUP);
+	}
+
+	@Test
+	void doctorCidClassifiesTheBrokenBackupWatcher() {
+		AutoAbility watcher = CardData.parseAutoAbilities(DOCTOR_CID_2_041H).get(0);
+		assertEquals("broken by opponent's effect", watcher.trigger());
+		assertEquals("a Backup you control", watcher.triggerCard());
+	}
+
+	@Test
+	void doctorCidAnswersABackupTheOpponentBreaks() {
+		CardData cid = makeTextBackup("Doctor Cid", "Ice", DOCTOR_CID_2_041H);
+		CardData other = makePlainBackup("Other", "Ice", 2);
+		CardData breaker = makeForward("Breaker", "Fire", 3, 7000);
+		MainWindow mw = doctorCidBoard(cid, other, breaker);
+
+		asAbilityOf(mw, breaker, true, () -> mw.buildGameContext(true).breakTarget(p2Backup(1)));
+
+		assertTrue(mw.gameState.getP2BreakZone().contains(other));
+		assertEquals(List.of(cid), triggerSources(mw));
+	}
+
+	@Test
+	void doctorCidAnswersHisOwnBreakFromTheBreakZone() {
+		CardData cid = makeTextBackup("Doctor Cid", "Ice", DOCTOR_CID_2_041H);
+		CardData breaker = makeForward("Breaker", "Fire", 3, 7000);
+		MainWindow mw = doctorCidBoard(cid, makePlainBackup("Other", "Ice", 2), breaker);
+
+		asAbilityOf(mw, breaker, true, () -> mw.buildGameContext(true).breakTarget(p2Backup(0)));
+
+		assertTrue(mw.gameState.getP2BreakZone().contains(cid));
+		assertEquals(List.of(cid), triggerSources(mw));
+	}
+
+	@Test
+	void doctorCidIgnoresAPutAnOwnEffectAndABareBreak() {
+		CardData cid = makeTextBackup("Doctor Cid", "Ice", DOCTOR_CID_2_041H);
+		CardData breaker = makeForward("Breaker", "Fire", 3, 7000);
+
+		MainWindow put = doctorCidBoard(cid, makePlainBackup("Other", "Ice", 2), breaker);
+		asAbilityOf(put, breaker, true, () -> put.buildGameContext(true).forceTargetToBreakZone(p2Backup(1)));
+		assertTrue(triggerSources(put).isEmpty(), "put into the Break Zone is not a break");
+
+		MainWindow own = doctorCidBoard(cid, makePlainBackup("Other", "Ice", 2), breaker);
+		asAbilityOf(own, cid, false, () -> own.buildGameContext(false).breakTarget(p2Backup(1)));
+		assertTrue(triggerSources(own).isEmpty(), "his controller's own ability");
+
+		MainWindow bare = doctorCidBoard(cid, makePlainBackup("Other", "Ice", 2), breaker);
+		bare.buildGameContext(true).breakTarget(p2Backup(1));
+		assertTrue(triggerSources(bare).isEmpty(), "nothing resolving: not a Summon or ability");
+	}
+
+	@Test
+	void doctorCidsPayoffIsTheOpponentsChoiceOfAnyCharacter() {
+		MainWindow mw = new MainWindow();
+		CardData cid = makeTextBackup("Doctor Cid", "Ice", DOCTOR_CID_2_041H);
+		CardData lone = makePlainBackup("Lone Backup", "Fire", 2);
+		mw.gameState.getIdentity().put(lone, false);
+		mw.placeP2CardInFirstBackupSlot(lone);
+
+		ActionResolver.parse(cid.autoAbilities().get(0).effectText(), cid).accept(mw.buildGameContext(true));
+
+		assertTrue(mw.gameState.getP2BreakZone().contains(lone), "a Backup is a Character");
+	}
+
+	private static final String GOGO_15_028H = "When a Forward or Monster you control uses an action ability, Gogo "
+			+ "uses the same action ability without paying the cost. This effect will trigger only once per turn.[[br]]   "
+			+ "[[s]]Mimic [[/]]《S》《Dull》: Use 1 special ability that a Character has used this turn other than Ability "
+			+ "Name Mimic without paying the cost.";
+
+	/** P2 fields Gogo and {@code user}. */
+	private static MainWindow gogoCopyBoard(CardData gogo, CardData user) {
+		MainWindow mw = new MainWindow();
+		for (CardData c : List.of(gogo, user)) {
+			mw.suppressAutoAbilityForNextCards = 1;
+			placeP2Forward(mw, c);
+		}
+		return mw;
+	}
+
+	private static boolean p2Uses(MainWindow mw, CardData user) {
+		return mw.autoAbilityTriggers.executeP2AbilityActivation(user.actionAbilities().get(0), user,
+				() -> {}, new ArrayList<>(), new ArrayList<>(), 0);
+	}
+
+	@Test
+	void gogoClassifiesHisCopyTrigger() {
+		AutoAbility trigger = CardData.parseAutoAbilities(GOGO_15_028H).get(0);
+		assertEquals("own character uses action ability", trigger.trigger());
+		assertEquals("a Forward or Monster you control", trigger.triggerCard());
+		assertTrue(trigger.oncePerTurn());
+		assertEquals("opponent character uses action ability", CardData.parseAutoAbilities(HILL_GIGAS_5_090R).get(0).trigger(),
+				"Hill Gigas keeps his");
+	}
+
+	@Test
+	void gogoUsesTheSameAbilityOnTopOfTheOriginalOncePerTurn() {
+		CardData gogo = makeForwardWithText("Gogo", "Ice", 3, 7000, GOGO_15_028H);
+		CardData user = makeForwardWithText("Setzer", "Wind", 2, 5000,
+				"《0》: Choose 1 Forward. Setzer deals it 1000 damage.");
+		MainWindow mw = gogoCopyBoard(gogo, user);
+
+		assertTrue(p2Uses(mw, user));
+
+		List<StackEntry> stack = mw.gameState.getStack();
+		assertEquals(List.of(user, gogo), triggerSources(mw), "the copy is above the original");
+		assertEquals("Choose 1 Forward. Gogo deals it 1000 damage.", stack.get(1).ability().effectText(),
+				"the user's name reads as Gogo's");
+
+		assertTrue(p2Uses(mw, user));
+		assertEquals(List.of(user, gogo, user), triggerSources(mw), "once per turn");
+	}
+
+	@Test
+	void gogoIgnoresABackupsAbilityAndTheOpponents() {
+		CardData gogo = makeForwardWithText("Gogo", "Ice", 3, 7000, GOGO_15_028H);
+		CardData backup = makeActionAbilityBackup("Drawer", "Wind", "《0》: Draw 1 card.");
+		MainWindow mw = gogoCopyBoard(gogo, makeForward("Filler", "Ice", 1, 1000));
+		mw.gameState.getIdentity().put(backup, false);
+		mw.placeP2CardInFirstBackupSlot(backup);
+
+		assertTrue(p2Uses(mw, backup));
+		assertEquals(List.of(backup), triggerSources(mw), "a Backup is not a Forward or Monster");
+
+		MainWindow opp = new MainWindow();
+		opp.suppressAutoAbilityForNextCards = 1;
+		placeP1Forward(opp, gogo);
+		CardData p2User = makeForwardWithText("Drawer", "Fire", 2, 5000, "《0》: Draw 1 card.");
+		opp.suppressAutoAbilityForNextCards = 1;
+		placeP2Forward(opp, p2User);
+		assertTrue(p2Uses(opp, p2User));
+		assertEquals(List.of(p2User), triggerSources(opp), "the opponent's Forward is not his");
+	}
+
+	// =========================================================================================
+	// Break Zone cost reductions: "Before paying the cost to cast X, you can remove N [cards] in
+	// your Break Zone from the game to reduce the cost required to cast X by M." Eight printings,
+	// read by CardData.altBzRemovalReduction and paid through AltPayment.bzRemovals. And 18-123L
+	// Sonon's two-Backup "instead of paying the CP cost", read by CardData.altFieldRemovals.
+	// =========================================================================================
+
+	private static String bzReduceText(String name, String what, int by) {
+		return "Before paying the cost to cast " + name + ", you can remove " + what + " in your Break Zone from the "
+				+ "game to reduce the cost required to cast " + name + " by " + by + ".";
+	}
+
+	private static final String KING_23_082H = bzReduceText("King", "4 Characters", 4)
+			+ "[[br]]   When King attacks, you may discard 2 cards. When you do so, choose 1 Forward. Break it.";
+
+	private static final String SONON_18_123L = "Back Attack[[br]]   You can remove 1 Earth Backup you control and 1 "
+			+ "Lightning Backup you control from the game (instead of paying the CP cost) to cast Sonon.";
+
+	@Test
+	void everyBreakZoneReductionReadsWhole() {
+		record Case(String name, String what, int by, int count, int filters, boolean distinct) {}
+		for (Case c : List.of(
+				new Case("Minwu", "3 Summons each of a different Element", 3, 3, 1, true),
+				new Case("Barnabas (XVI)", "3 Category XVI Characters", 3, 3, 1, false),
+				new Case("King", "4 Characters", 4, 4, 1, false),
+				new Case("Prishe", "1 Card Name Prishe", 5, 1, 1, false),
+				new Case("Kain", "1 Dark Forward", 2, 1, 1, false),
+				new Case("Unei", "a total of 2 Earth and/or Water Summons", 2, 2, 2, false),
+				new Case("Bahamut", "10 Fire Characters and/or Category X Characters", 5, 10, 2, false),
+				new Case("Odin", "6 Lightning cards", 6, 6, 1, false))) {
+			CardData.AltBzRemovalReduction r = CardData.parseAltBzRemovalReduction(bzReduceText(c.name(), c.what(), c.by()));
+			assertNotNull(r, c.name());
+			assertEquals(c.count(), r.count(), c.name());
+			assertEquals(c.filters(), r.anyOf().size(), c.name());
+			assertEquals(c.distinct(), r.distinctElements(), c.name());
+			assertEquals(c.by(), r.reduction(), c.name());
+		}
+		assertNull(CardData.parseAltBzRemovalReduction(bzReduceText("X", "2 Forwards of cost 3 or less", 2)),
+				"a qualifier it cannot read leaves the cost unread rather than looser");
+	}
+
+	@Test
+	void theBreakZoneReductionIsACastCostNotAFieldAbility() {
+		CardData king = makeTextCard("King", "Lightning", "Forward", 5, 9000, null, KING_23_082H);
+		assertTrue(king.fieldAbilities().isEmpty());
+		assertEquals(List.of("Lightning"), king.altCpElements(), "cost 5 reduced by 4");
+
+		String unei = bzReduceText("Unei", "a total of 2 Earth and/or Water Summons", 2);
+		assertTrue(CardData.parseFieldAbilities(unei, "Forward").isEmpty(),
+				"Unei's cost is no longer read as a RemoveNamedFromGame field ability");
+	}
+
+	@Test
+	void theBreakZoneFiltersAdmitWhatTheyPrint() {
+		CardData.AltBzRemovalReduction unei = CardData.parseAltBzRemovalReduction(
+				bzReduceText("Unei", "a total of 2 Earth and/or Water Summons", 2));
+		assertTrue(unei.admits(makeSummon("Titan", "Earth", 3, "")));
+		assertTrue(unei.admits(makeSummon("Leviathan", "Water", 3, "")));
+		assertFalse(unei.admits(makeSummon("Ifrit", "Fire", 3, "")));
+		assertFalse(unei.admits(makeForward("Earth Guy", "Earth", 3, 5000)), "a Forward is not a Summon");
+
+		CardData.AltBzRemovalReduction bahamut = CardData.parseAltBzRemovalReduction(
+				bzReduceText("Bahamut", "10 Fire Characters and/or Category X Characters", 5));
+		assertTrue(bahamut.admits(makeForward("Fire Guy", "Fire", 3, 5000)));
+		assertTrue(bahamut.admits(makeCategoryForward("Ice X", "Ice", "X")));
+		assertFalse(bahamut.admits(makeSummon("Ifrit", "Fire", 3, "")), "a Summon is not a Character");
+
+		CardData.AltBzRemovalReduction prishe = CardData.parseAltBzRemovalReduction(
+				bzReduceText("Prishe", "1 Card Name Prishe", 5));
+		assertTrue(prishe.admits(makeForward("Prishe", "Earth", 6, 9000)));
+		assertFalse(prishe.admits(makeForward("Ulmia", "Earth", 3, 5000)));
+	}
+
+	@Test
+	void minwusSummonsMustEachAnswerForADifferentElement() {
+		CardData.AltBzRemovalReduction minwu = CardData.parseAltBzRemovalReduction(
+				bzReduceText("Minwu", "3 Summons each of a different Element", 3));
+		CardData fire1 = makeSummon("Ifrit", "Fire", 3, ""), fire2 = makeSummon("Bomb", "Fire", 2, "");
+		CardData ice = makeSummon("Shiva", "Ice", 3, ""), fireWater = makeSummon("Steam", "Fire/Water", 3, "");
+
+		assertFalse(minwu.payableFrom(List.of(fire1, fire2, ice)), "two Fire Summons are one Element");
+		assertFalse(minwu.paidBy(List.of(fire1, fire2, ice)));
+		assertTrue(minwu.paidBy(List.of(fire1, ice, fireWater)), "the two-Element Summon stands for Water");
+		assertTrue(minwu.payableFrom(List.of(fire1, fire2, ice, fireWater)));
+	}
+
+	/** P1's Break Zone holds {@code n} Forwards. */
+	private static void p1BreakZoneForwards(MainWindow mw, int n) {
+		for (int i = 0; i < n; i++) {
+			CardData c = makeForward("Gone " + i, "Fire", 2, 5000);
+			mw.gameState.getIdentity().put(c, true);
+			mw.gameState.getP1BreakZone().add(c);
+		}
+	}
+
+	@Test
+	void kingIsAffordableOnlyWithFourCharactersInTheBreakZone() {
+		CardData king = makeTextCard("King", "Lightning", "Forward", 5, 9000, null, KING_23_082H);
+		MainWindow mw = new MainWindow();
+		activeP1Backups(mw, 0);
+		CardData lightning = makePlainBackup("Spark", "Lightning", 2);
+		mw.gameState.getIdentity().put(lightning, true);
+		mw.p1BackupCards[0] = lightning;
+		mw.p1BackupStates[0] = CardState.ACTIVE;
+
+		p1BreakZoneForwards(mw, 3);
+		assertFalse(mw.costs.canAffordAltCost(king, -1), "three is short of four");
+		p1BreakZoneForwards(mw, 1);
+		assertTrue(mw.costs.canAffordAltCost(king, -1), "four removed leave 1 Lightning CP");
+	}
+
+	@Test
+	void aBreakZoneReductionRemovesItsCardsAndPlaysTheCard() {
+		CardData free = makeTextCard("Free King", "Lightning", "Forward", 4, 9000, null,
+				bzReduceText("Free King", "4 Characters", 4));
+		MainWindow mw = new MainWindow();
+		p1BreakZoneForwards(mw, 5);
+		List<CardData> gone = List.copyOf(mw.gameState.getP1BreakZone().subList(1, 5));
+		mw.gameState.getIdentity().put(free, true);
+		mw.gameState.getP1Hand().add(free);
+
+		mw.executeAltPlay(true, free, 0, new AltPayment(0, List.of(), List.of(), List.of(), List.of(1, 2, 3, 4)),
+				List.of(), List.of(), Map.of(), null, false);
+
+		assertTrue(mw.p1ForwardCards.contains(free));
+		assertEquals(1, mw.gameState.getP1BreakZone().size());
+		assertTrue(mw.gameState.getP1PermanentRfp().containsAll(gone), "removed from the game");
+	}
+
+	@Test
+	void sononReadsBothBackupsAndNoCp() {
+		CardData sonon = makeTextCard("Sonon", "Earth/Lightning", "Forward", 4, 8000, null, SONON_18_123L);
+		assertEquals(List.of(new CardData.AltFieldRemoval(1, "Earth", "Backup"),
+				new CardData.AltFieldRemoval(1, "Lightning", "Backup")), sonon.altFieldRemovals());
+		assertTrue(sonon.altCpElements().isEmpty(), "instead of paying the CP cost");
+		assertTrue(sonon.fieldAbilities().stream().noneMatch(f -> f.effectText().contains("instead of paying")));
+	}
+
+	private static void p1Backup(MainWindow mw, int slot, String name, String element) {
+		CardData b = makePlainBackup(name, element, 2);
+		mw.gameState.getIdentity().put(b, true);
+		mw.p1BackupCards[slot] = b;
+		mw.p1BackupStates[slot] = CardState.ACTIVE;
+	}
+
+	@Test
+	void sononNeedsTwoBackupsNotOneThatMatchesBoth() {
+		CardData sonon = makeTextCard("Sonon", "Earth/Lightning", "Forward", 4, 8000, null, SONON_18_123L);
+		MainWindow mw = new MainWindow();
+		p1Backup(mw, 0, "Both", "Earth/Lightning");
+		assertFalse(mw.costs.canAffordAltCost(sonon, -1), "one Backup pays one clause");
+		p1Backup(mw, 1, "Rock", "Earth");
+		assertTrue(mw.costs.canAffordAltCost(sonon, -1), "the dual Backup takes the Lightning clause");
+	}
+
+	@Test
+	void sononRemovesHisTwoBackupsAndEnters() {
+		CardData sonon = makeTextCard("Sonon", "Earth/Lightning", "Forward", 4, 8000, null, SONON_18_123L);
+		MainWindow mw = new MainWindow();
+		p1Backup(mw, 0, "Rock", "Earth");
+		p1Backup(mw, 1, "Spark", "Lightning");
+		CardData rock = mw.p1BackupCards[0], spark = mw.p1BackupCards[1];
+		mw.gameState.getIdentity().put(sonon, true);
+		mw.gameState.getP1Hand().add(sonon);
+
+		mw.executeAltPlay(true, sonon, 0, new AltPayment(0, List.of(), List.of(0, 1), List.of(), List.of()),
+				List.of(), List.of(), Map.of(), null, false);
+
+		assertTrue(mw.p1ForwardCards.contains(sonon));
+		assertTrue(mw.gameState.getP1PermanentRfp().containsAll(List.of(rock, spark)));
 	}
 
 	// =========================================================================================

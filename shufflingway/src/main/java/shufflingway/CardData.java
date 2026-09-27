@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumSet;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -486,6 +487,8 @@ public record CardData(
         if (m.find()) return reducedCastCpElements(Integer.parseInt(m.group("reduction")));
         m = ALT_COST_SELF_REDUCE.matcher(textEn);
         if (m.find()) return reducedCastCpElements(Integer.parseInt(m.group("reduction")));
+        AltBzRemovalReduction bzReduce = altBzRemovalReduction();
+        if (bzReduce != null) return reducedCastCpElements(bzReduce.reduction());
         m = ALT_COST_NONSUMMON.matcher(textEn);
         if (m.find()) return List.copyOf(parseCostTokens(m.group("costs"), crystals));
         return List.of();
@@ -547,6 +550,177 @@ public record CardData(
         if (!m.find()) return null;
         return new AltFieldRemovalPerCard(m.group("active") != null, m.group("element"),
                 m.group("type").trim(), Integer.parseInt(m.group("each")));
+    }
+
+    /**
+     * The Break Zone form of {@link #ALT_COST_SUMMON_REMOVE_FIELD}: "Before paying the cost to cast
+     * X, you can remove N [cards] in your Break Zone from the game to reduce the cost required to
+     * cast X by M." — 17-123L Minwu, 29-091H Barnabas (XVI), 23-082H King, 28-069L Prishe, 17-131S
+     * Kain, 19-119L Unei, 16-132S Bahamut and 23-080R Odin. Group {@code what} is the card
+     * description {@link #parseAltBzRemovalReduction} reads.
+     */
+    private static final Pattern ALT_COST_BZ_REMOVE_REDUCE = Pattern.compile(
+        "(?i)Before\\s+paying\\s+the\\s+cost\\s+to\\s+cast\\s+.+?,\\s+" +
+        "you\\s+can\\s+remove\\s+(?<what>.+?)\\s+in\\s+your\\s+Break\\s+Zone\\s+from\\s+the\\s+game\\s+" +
+        "to\\s+reduce\\s+the\\s+cost\\s+required\\s+to\\s+cast\\s+.+?\\s+by\\s+(?<reduction>\\d+)\\."
+    );
+
+    /**
+     * "3 Summons each of a different Element", "a total of 2 Earth and/or Water Summons" — the count,
+     * the "and/or" union of filters, and Minwu's distinct-Element clause. "a total of" pools the
+     * union, which is how every printing counts it anyway.
+     */
+    private static final Pattern BZ_REMOVAL_WHAT = Pattern.compile(
+        "(?i)^(?:a\\s+total\\s+of\\s+)?(?<count>\\d+)\\s+(?<filters>.+?)" +
+        "(?<distinct>\\s+each\\s+of\\s+a\\s+different\\s+Element)?$"
+    );
+
+    /** One filter of the union: "Card Name Prishe", "Category XVI Characters", "Fire Characters", "Earth", "cards". */
+    private static final Pattern BZ_REMOVAL_FILTER = Pattern.compile(
+        "(?i)^(?:Card\\s+Name\\s+(?<name>.+)" +
+        "|(?:Category\\s+(?<category>\\S+)\\s+)?" +
+        "(?:(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)(?:\\s+|$))?" +
+        "(?<type>Characters?|Forwards?|Backups?|Monsters?|Summons?|cards?)?)$"
+    );
+
+    /**
+     * A card the Break Zone removal will take. {@code cardName} stands alone when present; otherwise
+     * each non-null field narrows the match, and {@code type} is the singular printed type
+     * ("Character", "Summon", "card") as {@link CardFilters#matchesDiscardType} reads it.
+     */
+    public record BzRemovalFilter(String element, String category, String cardName, String type) {
+        public boolean admits(CardData c) {
+            if (cardName != null) return CardFilters.meetsCardNameFilter(c, cardName);
+            if (element != null && !c.containsElement(element)) return false;
+            if (category != null && !CardFilters.meetsCategoryFilter(c, category)) return false;
+            return CardFilters.matchesDiscardType(c, type);
+        }
+    }
+
+    /**
+     * A cast-cost reduction bought by removing {@code count} cards from your own Break Zone, each
+     * admitted by one of {@code anyOf}. With {@code distinctElements} (17-123L Minwu) every card
+     * must answer for an Element none of the others does.
+     */
+    public record AltBzRemovalReduction(int count, List<BzRemovalFilter> anyOf, boolean distinctElements,
+            int reduction) {
+        public boolean admits(CardData c) {
+            for (BzRemovalFilter f : anyOf) if (f.admits(c)) return true;
+            return false;
+        }
+
+        /** Whether exactly these cards pay it. */
+        public boolean paidBy(List<CardData> picks) {
+            if (picks.size() != count) return false;
+            for (CardData c : picks) if (!admits(c)) return false;
+            return !distinctElements || distinctElementMatching(picks) == count;
+        }
+
+        /** Whether some {@code count} cards of {@code zone} would pay it. */
+        public boolean payableFrom(List<CardData> zone) {
+            List<CardData> eligible = new ArrayList<>();
+            for (CardData c : zone) if (admits(c)) eligible.add(c);
+            return distinctElements ? distinctElementMatching(eligible) >= count : eligible.size() >= count;
+        }
+
+        /**
+         * How many of {@code cards} can each be given an Element of their own — a matching, since a
+         * two-Element Summon may stand for either of its Elements but not for both.
+         */
+        private static int distinctElementMatching(List<CardData> cards) {
+            Map<String, Integer> owner = new HashMap<>();
+            int matched = 0;
+            for (int i = 0; i < cards.size(); i++)
+                if (augment(cards, i, owner, new HashSet<>())) matched++;
+            return matched;
+        }
+
+        private static boolean augment(List<CardData> cards, int i, Map<String, Integer> owner, Set<String> seen) {
+            for (String e : cards.get(i).elements()) {
+                if (!seen.add(e)) continue;
+                Integer holder = owner.get(e);
+                if (holder == null || augment(cards, holder, owner, seen)) {
+                    owner.put(e, i);
+                    return true;
+                }
+            }
+            return false;
+        }
+    }
+
+    /** This card's {@link AltBzRemovalReduction}, or {@code null} when it prints none it can read. */
+    public AltBzRemovalReduction altBzRemovalReduction() {
+        return parseAltBzRemovalReduction(textEn);
+    }
+
+    /**
+     * Reads the Break Zone reduction out of {@code text}, or {@code null}. A description that does
+     * not read whole gives {@code null} rather than a looser filter: a card could otherwise be cast
+     * for less than it prints.
+     */
+    static AltBzRemovalReduction parseAltBzRemovalReduction(String text) {
+        Matcher m = ALT_COST_BZ_REMOVE_REDUCE.matcher(text);
+        if (!m.find()) return null;
+        Matcher what = BZ_REMOVAL_WHAT.matcher(m.group("what").trim());
+        if (!what.matches()) return null;
+        String[] parts = what.group("filters").split("(?i)\\s+and/or\\s+");
+        List<String[]> read = new ArrayList<>();
+        String lastType = null;
+        for (int i = parts.length - 1; i >= 0; i--) {
+            Matcher f = BZ_REMOVAL_FILTER.matcher(parts[i].trim());
+            if (!f.matches()) return null;
+            String type = f.group("type");
+            // "Earth and/or Water Summons": a bare Element borrows the type that closes the list.
+            if (type == null) type = lastType;
+            if (f.group("name") == null && type == null) return null;
+            if (type != null) lastType = type;
+            read.add(0, new String[] { f.group("element"), f.group("category"),
+                    f.group("name") != null ? f.group("name").trim() : null,
+                    type != null ? type.replaceFirst("(?i)s$", "") : null });
+        }
+        List<BzRemovalFilter> filters = new ArrayList<>();
+        for (String[] r : read) filters.add(new BzRemovalFilter(r[0], r[1], r[2], r[3]));
+        return new AltBzRemovalReduction(Integer.parseInt(what.group("count")), List.copyOf(filters),
+                what.group("distinct") != null, Integer.parseInt(m.group("reduction")));
+    }
+
+    /**
+     * "You can remove 1 Earth Backup you control and 1 Lightning Backup you control from the game
+     * (instead of paying the CP cost) to cast Sonon." — 18-123L Sonon. {@link #ALT_COST_SUMMON_REMOVE_FIELD}'s
+     * price with no CP left over: one {@link AltFieldRemoval} per "and" clause.
+     */
+    private static final Pattern ALT_COST_REMOVE_FIELD_INSTEAD = Pattern.compile(
+        "(?i)You\\s+can\\s+remove\\s+(?<reqs>\\d+\\s+[^(.]+?)\\s+from\\s+the\\s+game\\s+" +
+        "\\(instead\\s+of\\s+paying\\s+the\\s+CP\\s+cost\\)\\s+to\\s+cast\\s+\\S[^.]*\\.?"
+    );
+
+    /** One clause of {@link #ALT_COST_REMOVE_FIELD_INSTEAD}: "1 Earth Backup you control". */
+    private static final Pattern FIELD_REMOVAL_CLAUSE = Pattern.compile(
+        "(?i)^(?<count>\\d+)\\s+(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+" +
+        "(?<type>Forwards?|Backups?|Monsters?|Characters?)\\s+you\\s+control$"
+    );
+
+    /**
+     * Every field card this card's alternate cast cost removes from the game, one entry per printed
+     * clause — the single {@link #altFieldRemoval()} of the reduction form, or Sonon's pair. Empty
+     * when it prints neither, or a clause does not read (a partial reading would understate the cost).
+     */
+    public List<AltFieldRemoval> altFieldRemovals() {
+        AltFieldRemoval single = altFieldRemoval();
+        return single != null ? List.of(single) : parseFieldRemovalsInstead(textEn);
+    }
+
+    /** {@link #ALT_COST_REMOVE_FIELD_INSTEAD}'s clauses in {@code text}, or empty. */
+    static List<AltFieldRemoval> parseFieldRemovalsInstead(String text) {
+        Matcher m = ALT_COST_REMOVE_FIELD_INSTEAD.matcher(text);
+        if (!m.find()) return List.of();
+        List<AltFieldRemoval> out = new ArrayList<>();
+        for (String clause : m.group("reqs").split("(?i)\\s+and\\s+")) {
+            Matcher c = FIELD_REMOVAL_CLAUSE.matcher(clause.trim());
+            if (!c.matches()) return List.of();
+            out.add(new AltFieldRemoval(Integer.parseInt(c.group("count")), c.group("element"), c.group("type")));
+        }
+        return List.copyOf(out);
     }
 
     /** The CP owed to cast this card with its cost reduced by {@code reduction}, floored at 0. */
@@ -3242,6 +3416,10 @@ public record CardData(
             "|Attack\\s+Phase\\s+starts" +
             // "When your opponent's auto-ability is put on the stack" — 10-074C Suzuhisa.
             "|auto-ability\\s+is\\s+put\\s+on\\s+the\\s+stack" +
+            // "When a Character opponent controls uses an action ability" — 5-090R Hill Gigas — and
+            // "When a Forward or Monster you control uses …" — 15-028H Gogo. Only after one of the
+            // two control phrases, which the classifier tells apart.
+            "|(?<=(?:opponent\\scontrols|you\\scontrol)\\s)uses?\\s+an\\s+action\\s+ability" +
             "|attacks?(?:\\s+or\\s+blocks?)?" +
             // "is blocked or chosen by your opponent's ability" — 26-003R / 29-001R Ifrit (XVI),
             // the corpus's only printing that joins a combat trigger to a targeting one. Must
@@ -3297,6 +3475,11 @@ public record CardData(
             // distinct from "of your opponent enters the field" (possessive-based; see below)
             "|enters?\\s+your\\s+opponent's\\s+field" +
             "|leaves?\\s+the\\s+field" +
+            // "When a card in your opponent's Break Zone leaves the Break Zone" — 23-029R Zenos.
+            "|leaves?\\s+the\\s+Break\\s+Zone" +
+            // "When a Backup you control is broken by your opponent's Summon or ability" — 2-041H
+            // Doctor Cid. A break, not a put: the dispatch sits on the break paths only.
+            "|(?:is|are)\\s+broken\\s+by\\s+your\\s+opponent's\\s+Summons?\\s+or\\s+abilit(?:y|ies)" +
             // The optional "on/during the same turn" tail belongs to the eight printings whose
             // subject is "[a|the] [type] damaged by [name]" — see DAMAGED_BY_BZ_SUBJECT. Widening
             // this arm rather than adding a second one keeps the alternation free of an ordering
@@ -3352,6 +3535,10 @@ public record CardData(
             "|receives?\\s+(?:a\\s+point\\s+of\\s+)?damage" +
             // 17-019R Marilith, 17-054R Tiamat, 17-082R Lich, 17-112R Kraken — from the Break Zone.
             "|receives?\\s+a\\s+fifth\\s+point\\s+of\\s+damage" +
+            // "… chosen by your opponent's Summon of cost 5 or less or an ability of their Character of
+            // cost 5 or less" — 10-098L Feolthanos. Ahead of the arm below, which reads its head.
+            "|(?:is|are)\\s+chosen\\s+by\\s+your\\s+opponent's\\s+Summon\\s+of\\s+cost\\s+\\d+\\s+or\\s+less\\s+or\\s+" +
+                "an\\s+ability\\s+of\\s+their\\s+Character\\s+of\\s+cost\\s+\\d+\\s+or\\s+less" +
             "|(?:is|are)\\s+chosen\\s+by\\s+your\\s+opponent's\\s+Summons?(?:\\s+or\\s+abilit(?:y|ies))?" +
             // The ability-only complement of the arm above — 20-117L Yuna, 24-090L Leon,
             // 26-039H Star Sibyl, 27-021C Ilmatalle and the clause Ilmatalle grants its Warriors.
@@ -4270,6 +4457,11 @@ public record CardData(
         return true;
     }
 
+    /** 10-098L Feolthanos's lower-cased trigger phrase. Both caps are 5; the first is kept. */
+    private static final Pattern CHOSEN_BY_CHEAP_EFFECT = Pattern.compile(
+        "^(?:is|are)\\s+chosen\\s+by\\s+your\\s+opponent's\\s+summon\\s+of\\s+cost\\s+(?<cap>\\d+)\\s+or\\s+less\\s+or\\s+" +
+        "an\\s+ability\\s+of\\s+their\\s+character\\s+of\\s+cost\\s+\\d+\\s+or\\s+less$");
+
     /** "the Forward Card Name Yuna" — a named watcher subject written with "the" (1-213S Tidus). */
     private static final Pattern THE_TYPE_CARD_NAME_SUBJECT = Pattern.compile(
         "(?i)^the\\s+(?<type>Forward|Backup|Monster|Character)\\s+Card\\s+Name\\s+(?<name>.+)$");
@@ -4493,6 +4685,9 @@ public record CardData(
             if      (triggerRaw.startsWith("is placed on") || triggerRaw.startsWith("are placed on")) trigger = "counter placed";
             // Ahead of the attack branches, which "attack phase" satisfies.
             else if (triggerRaw.equals("attack phase starts") && card.equalsIgnoreCase("your"))      trigger = "beginning of attack phase";
+            else if (triggerRaw.matches("uses?\\s+an\\s+action\\s+ability"))
+                trigger = card.matches("(?i).*\\byou\\s+control$") ? "own character uses action ability"
+                        : "opponent character uses action ability";
             else if (triggerRaw.equals("auto-ability is put on the stack")
                     && card.equalsIgnoreCase("your opponent's"))                                        trigger = "opponent auto-ability put on stack";
             // "enters the field due to / by …" an effect. Read ahead of every other enter branch; the
@@ -4603,6 +4798,14 @@ public record CardData(
             // "break zone".
             else if (triggerRaw.contains("break zone")
                     && DAMAGED_BY_BZ_SUBJECT.matcher(card).matches())                               trigger = "damaged card put into break zone";
+            // 23-029R Zenos, the one printing. Ahead of the plain branch below, which reads any
+            // "break zone" as a card arriving there.
+            else if (triggerRaw.matches("leaves?\\s+the\\s+break\\s+zone")
+                    && card.matches("(?i)^a\\s+card\\s+in\\s+your\\s+opponent's\\s+Break\\s+Zone$"))        trigger = "opponent card leaves break zone";
+            // 2-041H Doctor Cid. Ahead of the chosen and Summon branches, which read "summon" and
+            // "abilit" alone.
+            else if (triggerRaw.matches("(?:is|are)\\s+broken\\s+by\\s+your\\s+opponent's\\s+summons?\\s+or\\s+abilit(?:y|ies)"))
+                trigger = "broken by opponent's effect";
             // 11-065H Ardyn. A trigger of its own rather than a subject clause: only the card itself
             // prints it, and the self-dispatch is where the cause is known.
             else if (triggerRaw.contains("break zone") && triggerRaw.endsWith("by your opponent's summons or abilities"))
@@ -4625,6 +4828,13 @@ public record CardData(
             // and "abilit"/"summon" alone and would file these as opponent-only watchers.
             // Anchored at the end: "… a Summon or an ability of your opponent" (4-024R Llednar,
             // 2-136R Porom) shares the prefix and is the opponent-only watcher below.
+            // 10-098L Feolthanos: the opponent's Summon or Character ability, capped by its cost. Ahead
+            // of every chosen branch; the cap travels in the trigger name.
+            else if (CHOSEN_BY_CHEAP_EFFECT.matcher(triggerRaw).matches()) {
+                Matcher cheap = CHOSEN_BY_CHEAP_EFFECT.matcher(triggerRaw);
+                cheap.matches();
+                trigger = "chosen by opponent's summon or ability of cost " + cheap.group("cap") + " or less";
+            }
             else if (triggerRaw.endsWith("chosen by a forward's ability"))                          trigger = "chosen by forward ability";
             else if (triggerRaw.endsWith("chosen by summons or abilities")
                     || triggerRaw.endsWith("chosen by a summon or an ability"))                     trigger = "chosen by summon or ability";
@@ -9462,6 +9672,9 @@ public record CardData(
             if (ALT_COST_SUMMON.matcher(seg).find())    continue;
             if (ALT_COST_SUMMON_REMOVE_FIELD.matcher(seg).find()) continue;
             if (ALT_COST_REMOVE_ANY_NUMBER.matcher(seg).find()) continue;
+            // Only when it reads whole: one that does not stays listed, and so stays visibly unread.
+            if (parseAltBzRemovalReduction(seg) != null) continue;
+            if (!parseFieldRemovalsInstead(seg).isEmpty()) continue;
             if (ALT_COST_NONSUMMON.matcher(seg).find()) continue;
             if (ALT_COST_DULL.matcher(seg).find())      continue;
             if (ALT_COST_PUT_TO_BZ.matcher(seg).find()) continue;

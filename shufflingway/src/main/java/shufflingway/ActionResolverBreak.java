@@ -622,18 +622,19 @@ final class ActionResolverBreak {
         String  condition = m.group("condition");
         String  targets   = m.group("targets");
         String  tgtLower  = targets.toLowerCase();
-        boolean inclForwards = tgtLower.contains("forward") || tgtLower.contains("character");
-        boolean inclMonsters = tgtLower.contains("character");
+        boolean character    = tgtLower.contains("character");
+        boolean inclForwards = tgtLower.contains("forward") || character;
 
         String condLabel = condition != null ? " " + condition : "";
-        String logLabel  = "Opponent puts " + count + condLabel + " " + targets
-                         + " they control → Break Zone";
+        String what      = count + condLabel + " " + targets;
+        String logLabel  = "Opponent puts " + what + " they control → Break Zone";
 
+        // The opponent picks: "your opponent puts" is their choice, not the resolving player's.
         return ctx -> {
             ctx.logEntry("Effect: " + logLabel);
-            List<ForwardTarget> ts = ctx.selectCharacters(count, false, true, false,
-                    condition, null, -1, null, -1, null,
-                    inclForwards, false, inclMonsters, null, null, null, null, false, null, false);
+            List<ForwardTarget> ts = ctx.opponentSelectsOwnCharacters(count, false, condition,
+                    null, null, -1, null, inclForwards, character, character, what);
+            sortedByIdxDesc(ts, true) .forEach(ctx::forceTargetToBreakZone);
             sortedByIdxDesc(ts, false).forEach(ctx::forceTargetToBreakZone);
         };
     }

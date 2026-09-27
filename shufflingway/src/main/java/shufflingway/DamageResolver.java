@@ -1312,6 +1312,7 @@ class DamageResolver {
 		if (mw.breakOnDealtDamageGrant(isP1, ForwardTarget.CardZone.BACKUP, idx, c, amount)) return;
 		if (effPow > 0 && accum >= effPow) {
 			if (isP1) mw.autoAbilityTriggers.breakP1BackupSlot(idx); else mw.breakP2BackupSlot(idx);
+			mw.autoAbilityTriggers.triggerAutoAbilitiesForBrokenByOpponent(c, isP1);
 		} else {
 			if (isP1) mw.refreshP1BackupSlot(idx); else mw.refreshP2BackupSlot(idx);
 		}

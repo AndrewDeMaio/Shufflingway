@@ -3474,7 +3474,7 @@ final class AutoAbilityTriggers {
 	private void fireChosenByOpponentTriggers(CardData watcher, boolean isP1, Set<String> triggerTypes,
 			List<CardData> chosen) {
 		for (AutoAbility fa : mw.effectiveAutoAbilities(watcher)) {
-			if (!triggerTypes.contains(fa.trigger())) continue;
+			if (!triggerTypes.contains(fa.trigger()) && !cheapChosenByMatches(fa.trigger(), triggerTypes)) continue;
 			CardData subject = chosenSubjectMatch(fa.triggerCard(), watcher, chosen);
 			if (subject == null) continue;
 			// "you may return it to its owner's hand" (2-136R Porom) names no target of its own:
@@ -3493,6 +3493,30 @@ final class AutoAbilityTriggers {
 			}
 			executeAutoAbility(fa, watcher, isP1);
 		}
+	}
+
+	/** 10-098L Feolthanos's trigger name, as CardData builds it. */
+	private static final Pattern CHOSEN_BY_CHEAP_TRIGGER =
+			Pattern.compile("^chosen by opponent's summon or ability of cost (?<cap>\\d+) or less$");
+
+	/**
+	 * Whether a cost-capped chosen-by trigger (10-098L Feolthanos: "your opponent's Summon of cost 5
+	 * or less or an ability of their Character of cost 5 or less") answers this walk: the walk is the
+	 * uncapped "summon or ability" one, and what is choosing — the resolving Summon, or the Character
+	 * whose ability it is — costs no more than the cap. An ability of anything but a Character (an
+	 * EX Burst resolving off a Summon card) does not count.
+	 */
+	private boolean cheapChosenByMatches(String trigger, Set<String> triggerTypes) {
+		Matcher m = CHOSEN_BY_CHEAP_TRIGGER.matcher(trigger);
+		if (!m.matches() || !triggerTypes.contains("chosen by opponent's summon or ability")) return false;
+		int cap = Integer.parseInt(m.group("cap"));
+		CardData actor;
+		if (mw.currentResolutionIsSummon) actor = mw.currentSummonSource;
+		else {
+			actor = mw.currentAbilitySource;
+			if (actor != null && !(actor.isForward() || actor.isBackup() || actor.isMonster())) return false;
+		}
+		return actor != null && actor.cost() <= cap;
 	}
 
 	/**
@@ -3768,6 +3792,48 @@ final class AutoAbilityTriggers {
 					if (fa.trigger().equals("own card to break zone from hand or deck by effect")
 							&& matchesEntersFieldSubject(fa.triggerCard(), card, watcher))
 						executeAutoAbility(fa, watcher, ownerIsP1, false, card);
+		});
+		mw.showStackWindowIfNeeded();
+	}
+
+	/**
+	 * 23-029R Zenos's "When a card in your opponent's Break Zone leaves the Break Zone, your
+	 * opponent discards 1 card." Registered on {@link GameState#setBreakZoneLeftListener}, so every
+	 * departure reaches it — a cast, a cost, a recovery to hand or field, a removal from the game.
+	 * The watchers are on the field of the Break Zone owner's opponent.
+	 */
+	void triggerAutoAbilitiesForBreakZoneLeft(CardData card, boolean zoneIsP1) {
+		boolean watcherIsP1 = !zoneIsP1;
+		withBatch(() -> {
+			for (CardData watcher : fieldCards(watcherIsP1))
+				for (AutoAbility fa : mw.effectiveAutoAbilities(watcher))
+					if (fa.trigger().equals("opponent card leaves break zone"))
+						executeAutoAbility(fa, watcher, watcherIsP1, false, card);
+		});
+		mw.showStackWindowIfNeeded();
+	}
+
+	/**
+	 * 2-041H Doctor Cid's "When a Backup you control is broken by your opponent's Summon or ability,
+	 * your opponent puts 1 Character from his field into the Break Zone." Called by the paths that
+	 * break a Backup — {@code breakTarget}, the mass break, damage to a Backup acting as a Forward —
+	 * and not by the put-into-the-Break-Zone ones, which are not a break. Fires only while the
+	 * opponent's Summon or ability is resolving: a battle or a cost has no effect side.
+	 *
+	 * <p>The broken card watches too, from the Break Zone: a Doctor Cid broken this way is itself "a
+	 * Backup you control" as it leaves.
+	 */
+	void triggerAutoAbilitiesForBrokenByOpponent(CardData broken, boolean controllerIsP1) {
+		Boolean effectSide = mw.resolvingEffectSide();
+		if (effectSide == null || effectSide == controllerIsP1) return;
+		List<CardData> watchers = new ArrayList<>(fieldCards(controllerIsP1));
+		watchers.add(broken);
+		withBatch(() -> {
+			for (CardData watcher : watchers)
+				for (AutoAbility fa : mw.effectiveAutoAbilities(watcher))
+					if (fa.trigger().equals("broken by opponent's effect") && matchesEntersFieldSubject(
+							fa.triggerCard().replaceFirst("(?i)\\s+you\\s+control$", "").trim(), broken, watcher))
+						executeAutoAbility(fa, watcher, controllerIsP1, false, broken);
 		});
 		mw.showStackWindowIfNeeded();
 	}
@@ -8250,8 +8316,10 @@ final class AutoAbilityTriggers {
 		int depth = mw.gameState.stackSize();
 		java.util.List<ForwardTarget> preTargets = ActionResolver.preSelectTargets(
 				ability.effectText(), source, xValue, mw.buildGameContext(isP1));
-		mw.gameState.insertStack(depth,
-				new StackEntry(source, ability, isP1, xValue, preTargets, revealedPower));
+		StackEntry pushed = new StackEntry(source, ability, isP1, xValue, preTargets, revealedPower);
+		mw.gameState.insertStack(depth, pushed);
+		triggerAutoAbilitiesForOpponentUsesActionAbility(pushed, source, isP1);
+		triggerAutoAbilitiesForOwnUsesActionAbility(pushed, source, isP1);
 		mw.showStackWindow();
 		// The payer's zones. Every cost above spends from one seat's hand and files into one seat's
 		// Break Zone, and repainting P1's regardless left P2's activations invisible until the next
@@ -8260,6 +8328,105 @@ final class AutoAbilityTriggers {
 		else      { mw.refreshP2HandCountLabel(); mw.refreshP2BreakLabel(); }
 		return true;
 	}
+
+	/**
+	 * "When a Character opponent controls uses an action ability, put Hill Gigas into the Break
+	 * Zone. If you do so, cancel its effect and break that Character." — 5-090R Hill Gigas, the one
+	 * printing. Called right after the ability goes on the Stack.
+	 *
+	 * <p>Resolved here rather than put on the Stack: its payoff names the entry just pushed ("its
+	 * effect") and the card that used it ("that Character"), and a Stack entry can carry neither.
+	 * The outcome is the one the rules give — the trigger would sit above the ability and resolve
+	 * first. The cancel goes through {@link MainWindow#cancelStackEntry}, so a protected ability
+	 * refuses it; the price is paid either way, as "put … If you do so" prints it.
+	 *
+	 * <p>The user must be a Character on the field: an ability used from the Break Zone or the hand
+	 * is not a Character's the opponent controls.
+	 */
+	private void triggerAutoAbilitiesForOpponentUsesActionAbility(StackEntry entry, CardData user, boolean userIsP1) {
+		if (!Boolean.valueOf(userIsP1).equals(mw.fieldSideOf(user))) return;
+		boolean watcherIsP1 = !userIsP1;
+		for (CardData watcher : fieldCards(watcherIsP1)) {
+			if (mw.lostAbilitiesCards.contains(watcher)) continue;
+			for (AutoAbility fa : mw.effectiveAutoAbilities(watcher)) {
+				if (!fa.trigger().equals("opponent character uses action ability")) continue;
+				String subject = fa.triggerCard().replaceFirst("(?i)\\s+opponent\\s+controls$", "").trim();
+				if (!matchesEntersFieldSubject(subject, user, watcher)) continue;
+				Matcher m = FA_SACRIFICE_CANCEL_AND_BREAK_USER.matcher(fa.effectText().trim());
+				if (!m.matches() || !m.group("name").trim().equalsIgnoreCase(watcher.name())) {
+					mw.logEntry("[AutoAbility] Unrecognized effect: " + fa.effectText());
+					continue;
+				}
+				ForwardTarget self = findFieldTarget(watcher, watcherIsP1);
+				if (self == null) continue;
+				mw.logEntry("[AutoAbility] " + watcher.name() + " — " + user.name() + " used an action ability");
+				withAbilitySource(watcher, () -> {
+					mw.buildGameContext(watcherIsP1).forceTargetToBreakZone(self);
+					boolean paid = (watcherIsP1 ? mw.gameState.getP1BreakZone() : mw.gameState.getP2BreakZone())
+							.stream().anyMatch(c -> c == watcher);
+					if (!paid) return true;
+					if (mw.cancelStackEntry(entry))
+						mw.logEntry(watcher.name() + " — cancelled " + user.name() + "'s ability");
+					ForwardTarget userAt = findFieldTarget(user, userIsP1);
+					if (userAt != null) mw.buildGameContext(watcherIsP1).breakTarget(userAt);
+					return true;
+				});
+				return;   // the watcher has left the field; nothing else of its fires
+			}
+		}
+	}
+
+	/**
+	 * "When a Forward or Monster you control uses an action ability, Gogo uses the same action
+	 * ability without paying the cost. This effect will trigger only once per turn." — 15-028H Gogo,
+	 * the one printing. Called right after the ability goes on the Stack.
+	 *
+	 * <p>The copy goes on the Stack above the original, so it resolves first — the order the rules
+	 * give, with the trigger itself skipped: a Stack entry could not carry the ability it copies.
+	 * Resolved with Gogo as its source and his name put in for the user's, as Mimic does. Costs are
+	 * not paid, so X is 0. A copy is itself a use (Hill Gigas can answer it) but does not trigger
+	 * this again.
+	 */
+	private void triggerAutoAbilitiesForOwnUsesActionAbility(StackEntry entry, CardData user, boolean userIsP1) {
+		if (!Boolean.valueOf(userIsP1).equals(mw.fieldSideOf(user))) return;
+		for (CardData watcher : fieldCards(userIsP1)) {
+			if (mw.lostAbilitiesCards.contains(watcher)) continue;
+			for (AutoAbility fa : mw.effectiveAutoAbilities(watcher)) {
+				if (!fa.trigger().equals("own character uses action ability")) continue;
+				String subject = fa.triggerCard().replaceFirst("(?i)\\s+you\\s+control$", "").trim();
+				if (!matchesEntersFieldSubject(subject, user, watcher)) continue;
+				Matcher m = FA_USES_SAME_ACTION_ABILITY.matcher(fa.effectText().trim());
+				if (!m.matches() || !m.group("name").trim().equalsIgnoreCase(watcher.name())) {
+					mw.logEntry("[AutoAbility] Unrecognized effect: " + fa.effectText());
+					continue;
+				}
+				Set<String> used = mw.usedOncePerTurnAbilities.getOrDefault(watcher, Set.of());
+				if (fa.oncePerTurn() && used.contains(fa.effectText())) continue;
+				if (fa.oncePerTurn())
+					mw.usedOncePerTurnAbilities.computeIfAbsent(watcher, k -> new HashSet<>()).add(fa.effectText());
+
+				String text = ActionResolver.substituteSourceName(entry.ability().effectText(), user.name(), watcher.name());
+				ActionAbility copy = entry.ability().withEffectText(text);
+				mw.logEntry("[AutoAbility] " + watcher.name() + " uses " + user.name() + "'s action ability → " + text);
+				int depth = mw.gameState.stackSize();
+				List<ForwardTarget> preTargets = ActionResolver.preSelectTargets(
+						text, watcher, 0, mw.buildGameContext(userIsP1));
+				StackEntry pushed = new StackEntry(watcher, copy, userIsP1, 0, preTargets, entry.revealedForwardPower());
+				mw.gameState.insertStack(depth, pushed);
+				if (copy.isSpecial()) mw.specialAbilitiesUsedThisTurn.add(new UsedSpecialAbility(watcher, copy));
+				triggerAutoAbilitiesForOpponentUsesActionAbility(pushed, watcher, userIsP1);
+			}
+		}
+	}
+
+	/** "[Self] uses the same action ability without paying the cost." */
+	private static final Pattern FA_USES_SAME_ACTION_ABILITY = Pattern.compile(
+			"(?i)^(?<name>.+?)\\s+uses\\s+the\\s+same\\s+action\\s+ability\\s+without\\s+paying\\s+the\\s+cost[.!]?$");
+
+	/** "put [Self] into the Break Zone. If you do so, cancel its effect and break that Character." */
+	private static final Pattern FA_SACRIFICE_CANCEL_AND_BREAK_USER = Pattern.compile(
+			"(?i)^put\\s+(?<name>.+?)\\s+into\\s+the\\s+Break\\s+Zone\\.\\s+If\\s+you\\s+do\\s+so,\\s+cancel\\s+its\\s+effect\\s+"
+			+ "and\\s+break\\s+that\\s+Character[.!]?$");
 
 	/**
 	 * Moves {@code c} to the permanent RFP zone as an ability cost and records the instance in

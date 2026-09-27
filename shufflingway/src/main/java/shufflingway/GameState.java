@@ -133,7 +133,7 @@ public class GameState {
     private final Deque<CardData>          p1MainDeck        = new ArrayDeque<>();
     private final List<CardData>           p1LbDeck          = new ArrayList<>();
     private final List<CardData>           p1Hand            = new ArrayList<>();
-    private final List<CardData>           p1BreakZone       = new ArrayList<>();
+    private final BreakZoneList            p1BreakZone       = new BreakZoneList(true);
     private final List<CardData>           p1DamageZone      = new ArrayList<>();
     private final List<WarpEntry>          p1WarpZone        = new ArrayList<>();
     private final List<WarpEntry>          p2WarpZone        = new ArrayList<>();
@@ -161,7 +161,7 @@ public class GameState {
     private final List<CardData>           p2LbDeck      = new ArrayList<>();
     private final List<CardData>           p2DamageZone  = new ArrayList<>();
     private final List<CardData>           p2Hand        = new ArrayList<>();
-    private final List<CardData>           p2BreakZone   = new ArrayList<>();
+    private final BreakZoneList            p2BreakZone   = new BreakZoneList(false);
     private final Map<String, Integer>     p2CpByElement = new HashMap<>();
 
     // -------------------------------------------------------------------------
@@ -194,7 +194,7 @@ public class GameState {
         p1MainDeck.clear();
         p1LbDeck.clear();
         p1Hand.clear();
-        p1BreakZone.clear();
+        p1BreakZone.clearSilently();
         p1DamageZone.clear();
         p1WarpZone.clear();
         p2WarpZone.clear();
@@ -212,7 +212,7 @@ public class GameState {
         p2LbDeck.clear();
         p2DamageZone.clear();
         p2Hand.clear();
-        p2BreakZone.clear();
+        p2BreakZone.clearSilently();
         p2CpByElement.clear();
         currentPhase  = null;
         turnNumber    = 0;
@@ -320,6 +320,75 @@ public class GameState {
     public void setRemovedFromGameListener(java.util.function.Consumer<CardData> listener)
     {
         removedFromGameListener = listener != null ? listener : c -> {};
+    }
+
+    /**
+     * Told of every card that leaves a Break Zone, after it has gone, with whose Break Zone it was.
+     * {@link MainWindow} fires "When a card in your opponent's Break Zone leaves the Break Zone"
+     * (23-029R Zenos) off it.
+     */
+    private java.util.function.BiConsumer<CardData, Boolean> breakZoneLeftListener = (c, p1) -> {};
+
+    public void setBreakZoneLeftListener(java.util.function.BiConsumer<CardData, Boolean> listener)
+    {
+        breakZoneLeftListener = listener != null ? listener : (c, p1) -> {};
+    }
+
+    /**
+     * A Break Zone. Cards leave it from some thirty places — casts, costs, recoveries, removals —
+     * each removing from the list directly, so the list itself is the one place every departure
+     * passes through. Each removal route reports the cards it took after they are out. Iterator
+     * removal is covered too: {@code ArrayList}'s iterator removes through {@link #remove(int)}.
+     */
+    private final class BreakZoneList extends ArrayList<CardData> {
+        private final boolean p1;
+
+        BreakZoneList(boolean p1) { this.p1 = p1; }
+
+        private void left(Collection<CardData> gone) {
+            for (CardData c : gone) breakZoneLeftListener.accept(c, p1);
+        }
+
+        /** Empties the zone for a new game, which no card "leaves". */
+        void clearSilently() { super.clear(); }
+
+        @Override public CardData remove(int index) {
+            CardData c = super.remove(index);
+            left(List.of(c));
+            return c;
+        }
+
+        @Override public boolean remove(Object o) {
+            int i = indexOf(o);
+            if (i < 0) return false;
+            remove(i);
+            return true;
+        }
+
+        @Override public boolean removeIf(java.util.function.Predicate<? super CardData> filter) {
+            List<CardData> gone = new ArrayList<>();
+            for (CardData c : this) if (filter.test(c)) gone.add(c);
+            if (gone.isEmpty()) return false;
+            super.removeIf(filter);
+            left(gone);
+            return true;
+        }
+
+        @Override public boolean removeAll(Collection<?> c) { return removeIf(c::contains); }
+
+        @Override public boolean retainAll(Collection<?> c) { return removeIf(x -> !c.contains(x)); }
+
+        @Override public void clear() {
+            List<CardData> gone = new ArrayList<>(this);
+            super.clear();
+            left(gone);
+        }
+
+        @Override protected void removeRange(int from, int to) {
+            List<CardData> gone = new ArrayList<>(subList(from, to));
+            super.removeRange(from, to);
+            left(gone);
+        }
     }
 
     public void addToPermanentRfp(CardData card)

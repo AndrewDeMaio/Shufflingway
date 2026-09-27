@@ -1759,6 +1759,7 @@ public class MainWindow {
 	public MainWindow() {
         this.p1ForwardUrls = new ArrayList<>();
 		gameState.setRemovedFromGameListener(autoAbilityTriggers::triggerAutoAbilitiesForRemovedFromGame);
+		gameState.setBreakZoneLeftListener(autoAbilityTriggers::triggerAutoAbilitiesForBreakZoneLeft);
 		initialize();
 	}
 
@@ -3528,9 +3529,10 @@ public class MainWindow {
 
 	/** Whether {@code card} prints any alternative cost, so the hand menu offers a "Play (Alt: …)" item. */
 	private static boolean hasAltCost(CardData card) {
-		return card.altCrystalCost() > 0 || card.altCpCost() > 0 || card.altFieldRemoval() != null
+		return card.altCrystalCost() > 0 || card.altCpCost() > 0 || !card.altFieldRemovals().isEmpty()
 				|| !card.altDullCosts().isEmpty() || card.altPutToBzCost() != null
-				|| card.altPutToBzReduction() != null || card.altFieldRemovalPerCard() != null;
+				|| card.altPutToBzReduction() != null || card.altFieldRemovalPerCard() != null
+				|| card.altBzRemovalReduction() != null;
 	}
 
 	/** "Play (Alt: …)": the card's alternative cost can be paid now. */
@@ -9043,24 +9045,30 @@ public class MainWindow {
 		if (hasAltCost(card)) {
 			int ac = card.altCrystalCost();
 			List<String> altElems = card.altCpElements();
-			CardData.AltFieldRemoval afr = card.altFieldRemoval();
+			List<CardData.AltFieldRemoval> afrs = card.altFieldRemovals();
+			boolean afr = !afrs.isEmpty();
+			CardData.AltBzRemovalReduction bzRemovalReduce = card.altBzRemovalReduction();
 			String bzReduceStr = altBzReduce == null ? ""
 					: "put " + describeAltPutToBzReduction(altBzReduce) + " to BZ"
-					  + (altBz == null && altDull.isEmpty() && altElems.isEmpty() && afr == null ? "" : " + ");
+					  + (altBz == null && altDull.isEmpty() && altElems.isEmpty() && !afr ? "" : " + ");
 			String bzStr = altBz == null ? ""
 					: "put " + describeAltPutToBzCost(altBz) + " to BZ"
-					  + (altDull.isEmpty() && altElems.isEmpty() && afr == null ? "" : " + ");
+					  + (altDull.isEmpty() && altElems.isEmpty() && !afr ? "" : " + ");
 			String dullStr = altDull.isEmpty() ? ""
 					: "dull " + altDull.stream().map(MainWindow::describeAltDullClause)
 							.collect(Collectors.joining(" + "))
-					  + (altElems.isEmpty() && afr == null ? "" : " + ");
+					  + (altElems.isEmpty() && !afr ? "" : " + ");
 			CardData.AltFieldRemovalPerCard perCard = card.altFieldRemovalPerCard();
-			String removalStr = afr != null
-					? "remove " + afr.count() + " " + afr.element() + " " + afr.type()
+			String removalStr = afr
+					? "remove " + afrs.stream().map(r -> r.count() + " " + r.element() + " " + r.type())
+							.collect(Collectors.joining(" + "))
 					  + (altElems.isEmpty() ? "" : " + ")
 					: perCard != null
 					? "remove any number of " + describeAltFieldRemovalPerCard(perCard)
 					  + ", -" + perCard.reductionEach() + " CP each"
+					: bzRemovalReduce != null
+					? "remove " + describeAltBzRemovalReduction(bzRemovalReduce) + " in BZ"
+					  + (altElems.isEmpty() ? "" : " + ")
 					: "";
 			String crystalStr = ac > 0 ? "《C》".repeat(ac) : "";
 			String cpStr = altElems.isEmpty() ? "" : (ac > 0 ? " + " : "") + altElems.stream()
@@ -10484,12 +10492,16 @@ public class MainWindow {
 		// The card text pays this cost before the CP cost, so the Backup is chosen up front. It is
 		// only reserved here: cancelling the payment must leave the board untouched, so the actual
 		// removal waits until payment is confirmed below.
-		CardData.AltFieldRemoval fieldRemoval = card.altFieldRemoval();
+		List<CardData.AltFieldRemoval> fieldRemovals = card.altFieldRemovals();
 		CardData.AltFieldRemovalPerCard perCard = card.altFieldRemovalPerCard();
 		final List<Integer> removalSlots;
-		if (fieldRemoval != null) {
-			removalSlots = selectAltFieldRemoval(card, fieldRemoval);
-			if (removalSlots == null) return;
+		if (!fieldRemovals.isEmpty()) {
+			removalSlots = new ArrayList<>();
+			for (CardData.AltFieldRemoval removal : fieldRemovals) {
+				List<Integer> picked = selectAltFieldRemoval(card, removal, removalSlots);
+				if (picked == null) return;
+				removalSlots.addAll(picked);
+			}
 		} else if (perCard != null) {
 			// 15-088H Vayne: any number of active Backups, each worth its reduction. Chosen before the
 			// CP window, since how many go decides what is left to pay; like the fixed-count form
@@ -10534,15 +10546,27 @@ public class MainWindow {
 			bzReducePayment = List.of();
 		}
 
+		// The Break Zone form of the reduction (17-123L Minwu, 23-082H King …): the cards are picked
+		// now and resolved to Break Zone positions by altPayment, before anything has moved.
+		CardData.AltBzRemovalReduction bzRemovalReduce = card.altBzRemovalReduction();
+		final List<Integer> bzReductionIdxs;
+		if (bzRemovalReduce != null) {
+			List<CardData> picks = selectAltBzRemovalReduction(card, bzRemovalReduce);
+			if (picks == null) return;
+			bzReductionIdxs = indexesOf(gameState.getP1BreakZone(), picks);
+		} else {
+			bzReductionIdxs = List.of();
+		}
+
 		// Picking the cards is itself the confirmation, so a cost made up entirely of dulling or of
 		// handing cards over goes straight to the play rather than asking again with an empty price.
 		// Kefka 4-080L reaches this with no CP left to pay at all: its sentence buys the play
-		// outright rather than reducing a cost.
+		// outright rather than reducing a cost, and 18-123L Sonon's Backups do the same.
 		if (altElemsList.isEmpty() && altC == 0
 				&& (!dullIdxs.isEmpty() || !bzPayment.isEmpty() || !bzReducePayment.isEmpty()
-						|| (perCard != null && !removalSlots.isEmpty()))) {
+						|| !removalSlots.isEmpty() || !bzReductionIdxs.isEmpty())) {
 			executeAltPlayAndSend(card, handIdx,
-					altPayment(0, dullIdxs, removalSlots, bzPayment, bzReducePayment, bzRemovals),
+					altPayment(0, dullIdxs, removalSlots, bzPayment, bzReducePayment, bzRemovals, bzReductionIdxs),
 					Collections.emptyList(), Collections.emptyList(), Map.of());
 			return;
 		}
@@ -10555,7 +10579,7 @@ public class MainWindow {
 					new Object[]{"Confirm", "Cancel"}, "Confirm");
 			if (choice != 0) return;
 			executeAltPlayAndSend(card, handIdx,
-					altPayment(altC, dullIdxs, removalSlots, bzPayment, bzReducePayment, bzRemovals),
+					altPayment(altC, dullIdxs, removalSlots, bzPayment, bzReducePayment, bzRemovals, bzReductionIdxs),
 					Collections.emptyList(), Collections.emptyList(), Map.of());
 			return;
 		}
@@ -10592,7 +10616,7 @@ public class MainWindow {
 				payUrls, this::showZoomAt, this::hideZoom,
 				lightDarkDiscardGrants(true),
 				(discards, backups, breaks) -> executeAltPlayAndSend(card, handIdx,
-						altPayment(altC, dullIdxs, removalSlots, bzPayment, bzReducePayment, bzRemovals),
+						altPayment(altC, dullIdxs, removalSlots, bzPayment, bzReducePayment, bzRemovals, bzReductionIdxs),
 						discards, backups, breaks),
 				breakForCpBackupSlots(true)).show();
 	}
@@ -10658,8 +10682,10 @@ public class MainWindow {
 	 * indices, or {@code null} if they cancelled. Nothing is removed here — the cards are only
 	 * reserved, and {@link #executeAltFieldRemoval} takes them once payment is confirmed.
 	 */
-	private List<Integer> selectAltFieldRemoval(CardData card, CardData.AltFieldRemoval removal) {
+	private List<Integer> selectAltFieldRemoval(CardData card, CardData.AltFieldRemoval removal,
+			Collection<Integer> alreadyChosen) {
 		List<Integer> candidates = altFieldRemovalCandidates(removal);
+		candidates.removeAll(alreadyChosen);
 		List<Integer> chosen = new ArrayList<>();
 		for (int n = 0; n < removal.count(); n++) {
 			List<Integer> remaining = new ArrayList<>(candidates);
@@ -10671,6 +10697,69 @@ public class MainWindow {
 			int pick = cardPickerDialog.pickCardImage(options, title, true);
 			if (pick < 0) return null;
 			chosen.add(remaining.get(pick));
+		}
+		return chosen;
+	}
+
+	/**
+	 * Whether P1's Backups can pay every clause of {@code removals} at once, each Backup counted
+	 * once — 18-123L Sonon's Earth and Lightning pair, which one Earth/Lightning Backup matches both
+	 * clauses of but can only pay one.
+	 */
+	boolean altFieldRemovalsPayable(List<CardData.AltFieldRemoval> removals) {
+		List<List<Integer>> slots = new ArrayList<>();
+		for (CardData.AltFieldRemoval r : removals) {
+			List<Integer> candidates = altFieldRemovalCandidates(r);
+			for (int i = 0; i < r.count(); i++) slots.add(candidates);
+		}
+		return assignDistinct(slots, 0, new HashSet<>());
+	}
+
+	/** Backtracking behind {@link #altFieldRemovalsPayable}; a handful of slots at most. */
+	private static boolean assignDistinct(List<List<Integer>> slots, int at, Set<Integer> used) {
+		if (at == slots.size()) return true;
+		for (int c : slots.get(at)) {
+			if (!used.add(c)) continue;
+			if (assignDistinct(slots, at + 1, used)) return true;
+			used.remove(c);
+		}
+		return false;
+	}
+
+	/** "3 Summons each of a different Element", "1 Card Name Prishe" — for a menu label or a picker title. */
+	static String describeAltBzRemovalReduction(CardData.AltBzRemovalReduction r) {
+		StringBuilder sb = new StringBuilder().append(r.count()).append(' ');
+		List<String> parts = new ArrayList<>();
+		for (CardData.BzRemovalFilter f : r.anyOf()) {
+			if (f.cardName() != null) { parts.add("Card Name " + f.cardName()); continue; }
+			StringBuilder p = new StringBuilder();
+			if (f.category() != null) p.append("Category ").append(f.category()).append(' ');
+			if (f.element()  != null) p.append(f.element()).append(' ');
+			parts.add(p.append(f.type()).toString());
+		}
+		sb.append(String.join(" and/or ", parts));
+		if (r.distinctElements()) sb.append(" each of a different Element");
+		return sb.toString();
+	}
+
+	/**
+	 * Asks P1 which Break Zone cards to remove for {@code removal}, returning them, or {@code null}
+	 * if they cancelled or picked a set that does not pay it (Minwu's Elements must differ). Only
+	 * reserved: {@link #applyAltPayment} removes them once the CP is paid.
+	 */
+	private List<CardData> selectAltBzRemovalReduction(CardData card, CardData.AltBzRemovalReduction removal) {
+		List<CardData> options = gameState.getP1BreakZone().stream().filter(removal::admits).toList();
+		if (options.size() < removal.count()) return null;
+		String title = card.name() + " — remove " + describeAltBzRemovalReduction(removal)
+				+ " from your Break Zone (cost -" + removal.reduction() + ")";
+		List<Integer> picks = cardPickerDialog.pickMultiCardImage(options, title, removal.count(), false, false,
+				removal.count());
+		if (picks == null) return null;
+		List<CardData> chosen = picks.stream().map(options::get).toList();
+		if (!removal.paidBy(chosen)) {
+			showEffectOptionDialog(card.name() + " — those cards do not pay "
+					+ describeAltBzRemovalReduction(removal) + ".", "Alternate Cost", new Object[]{"OK"});
+			return null;
 		}
 		return chosen;
 	}
@@ -11043,11 +11132,13 @@ public class MainWindow {
 	 */
 	private AltPayment altPayment(int crystals, List<Integer> dullIdxs, List<Integer> removalSlots,
 			List<ForwardTarget> bzPayment, List<ForwardTarget> bzReducePayment,
-			List<String> bzRemovals) {
+			List<String> bzRemovals, List<Integer> bzReductionIdxs) {
 		List<ForwardTarget> putToBz = new ArrayList<>(bzPayment);
 		putToBz.addAll(bzReducePayment);
-		return new AltPayment(crystals, dullIdxs, removalSlots, putToBz,
-				selectAltBzRemovals(true, bzRemovals));
+		// The two Break Zone removals travel as one list: only one of them is ever non-empty.
+		List<Integer> bzIdxs = new ArrayList<>(selectAltBzRemovals(true, bzRemovals));
+		bzIdxs.addAll(bzReductionIdxs);
+		return new AltPayment(crystals, dullIdxs, removalSlots, putToBz, List.copyOf(bzIdxs));
 	}
 
 	/**

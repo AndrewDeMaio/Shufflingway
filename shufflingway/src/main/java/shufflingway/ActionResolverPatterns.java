@@ -7042,13 +7042,15 @@ final class ActionResolverPatterns {
      *   <li>"Your opponent puts 1 attacking Forward he/she controls into the Break Zone."</li>
      * </ul>
      * The second variant is the precise reprint; both resolve identically — the opponent
-     * chooses one of their own matching Forwards and sends it to the Break Zone.
+     * chooses one of their own matching Forwards and sends it to the Break Zone. "from his field"
+     * is 2-041H Doctor Cid's spelling of "he controls".
      */
     static final Pattern OPPONENT_PUTS_FORWARD_TO_BREAK_ZONE_PATTERN = Pattern.compile(
         "(?i)(?:Your\\s+)?[Oo]pponent\\s+puts?\\s+(?<count>\\d+)\\s+" +
         "(?:(?<condition>dull|damaged|attacking|blocking|active)\\s+)?" +
         "(?<targets>Forwards?|Characters?)" +
-        "(?:\\s+(?:he|she|they)(?:\\s*/\\s*(?:he|she|they))?\\s+controls?)?" +
+        "(?:\\s+(?:he|she|they)(?:\\s*/\\s*(?:he|she|they))?\\s+controls?" +
+        "|\\s+from\\s+(?:his|her|their)(?:\\s*/\\s*(?:his|her|their))?\\s+field)?" +
         "\\s+into\\s+the\\s+Break\\s+Zone[.]?"
     );
     /**

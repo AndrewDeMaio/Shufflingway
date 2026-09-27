@@ -735,10 +735,15 @@ class CostCalculator {
 
 		if (mw.playerCrystals(true) < card.altCrystalCost()) return false;
 
-		// Field removal check ("remove 1 Fire Backup you control from the game")
-		CardData.AltFieldRemoval fieldRemoval = card.altFieldRemoval();
-		if (fieldRemoval != null
-				&& mw.altFieldRemovalCandidates(fieldRemoval).size() < fieldRemoval.count()) return false;
+		// Field removal check ("remove 1 Fire Backup you control from the game", and 18-123L Sonon's
+		// Earth-and-Lightning pair, where one Backup can pay only one clause)
+		List<CardData.AltFieldRemoval> fieldRemovals = card.altFieldRemovals();
+		if (!fieldRemovals.isEmpty() && !mw.altFieldRemovalsPayable(fieldRemovals)) return false;
+
+		// Break Zone removal reduction ("remove 4 Characters in your Break Zone from the game to reduce
+		// the cost … by 4"). Unaffordable without the cards, as the reduced CP quoted is owed only then.
+		CardData.AltBzRemovalReduction bzReduce = card.altBzRemovalReduction();
+		if (bzReduce != null && !bzReduce.payableFrom(mw.gameState.getP1BreakZone())) return false;
 
 		// Dull check ("dull 1 active Fire Job Class Zero Cadet Forward you control and 1 …")
 		if (!mw.canPayAltDullCost(card)) return false;
