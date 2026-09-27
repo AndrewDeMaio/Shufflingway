@@ -159,6 +159,12 @@ public class CardDatabase implements AutoCloseable {
                                 .replace("1Job", "1 Job") // "Search for 1Job..."
                                 .replace("1Category", "1 Category") // "search for 1Category..."
                                 .replace("eachJob", "each Job") // "on eachJob Apprentice Mage..."
+                                .replace("aCategory", "a Category")         // Locke 15-042R
+                                .replace("ShijinForward", "Shijin Forward") // Suzaku 16-012R, Seiryu 16-049R
+                                .replace("CadetCharacter", "Cadet Character") // Sice 3-109C
+                                .replace("CadetForward", "Cadet Forward")   // Ace 3-153S
+                                .replace("Acefrom", "Ace from")             // Ace 3-153S
+                                .replace("Knightother", "Knight other")     // Trion 5-111R
                                 .replace("\"\"", "\"") // Alexander has doubled quotes around choice text
                                 .replaceAll("\\[Category\\s+\\(([^)]+)\\)\\]", "Category $1") // [Category (XII)] → Category XII
                                 .replaceAll("\\[Job\\s+\\(([^)]+)\\)\\]", "Job $1")           // [Job (Knight)] → Job Knight

@@ -5259,7 +5259,28 @@ final class AutoAbilityTriggers {
 	 * the handler asks. The pay shapes resolve through {@link #applyPayWhenDoSoEffect}, which knows X
 	 * (one unit here, as the AI buys) and falls back to {@link ActionResolver#parsePayGatedFollowup}.
 	 */
+	/**
+	 * 20-102L Mira's payoff as her handler resolves it. "break that Forward" is Breaktouch's
+	 * wording, which the resolver keeps off the triggered-target form on purpose; here it means the
+	 * Forward whose arrival fired the trigger, so it is handed over in the "that Character" form that
+	 * reads it that way (5-130R Tonberry).
+	 */
+	static String payAndDiscardPayoff(String payoff) {
+		return payoff.trim().replaceAll("(?i)\\bbreak\\s+that\\s+Forward\\b", "break that Character");
+	}
+
+	/**
+	 * Triggers whose dispatcher matches the effect itself instead of calling {@link #executeAutoAbility},
+	 * so no inline shape runs for them: 5-090R Hill Gigas and 15-028H Gogo. The partial-parse report
+	 * reads this to leave them out of the shapes it credits.
+	 */
+	static final Set<String> OWN_DISPATCHER_TRIGGERS =
+			Set.of("opponent character uses action ability", "own character uses action ability");
+
 	static boolean inlinePayoffReadable(String shape, String payoff, CardData source) {
+		if (shape.endsWith("PayAndDiscardWhenDoSo"))
+			return ActionResolver.parsePayGatedFollowup(payAndDiscardPayoff(payoff), source, 1) != null
+					|| ActionResolver.parse(payAndDiscardPayoff(payoff), source) != null;
 		// A per-target action on the card chosen up front (4-087R Delita, 7-020C Lulu).
 		if (shape.endsWith("ChooseThenMayPutIntoBz"))
 			return ActionResolver.parseFormerLatterGroupAction(payoff) != null;
@@ -5985,8 +6006,18 @@ final class AutoAbilityTriggers {
 
 	private void executePayWhenDoSoAutoAbility(AutoAbility fa, CardData source, boolean isP1,
 			boolean effectIsP1, Matcher payM) {
+		executePayWhenDoSoAutoAbility(fa, source, isP1, effectIsP1, payM, null);
+	}
+
+	/**
+	 * As above, with {@code heldBack} naming the cards the CP may come from when the payoff still
+	 * needs one of the payer's hand cards — 20-102L Mira's Monster, which discarding for CP would
+	 * spend before the discard that follows could take it. {@code null} holds nothing back.
+	 */
+	private void executePayWhenDoSoAutoAbility(AutoAbility fa, CardData source, boolean isP1,
+			boolean effectIsP1, Matcher payM, Predicate<CardData> heldBack) {
 		String costRun   = payM.group(1).trim();
-		Predicate<CardData> cpSource = xPaymentSource(payM.group(2));
+		Predicate<CardData> xSource = xPaymentSource(payM.group(2));
 		String subEffect = withoutXPaymentSource(payM.group(2).trim()).replaceAll("[.!,]+$", "");
 
 		int[] tally = tallyPayRun(costRun);
@@ -6002,10 +6033,12 @@ final class AutoAbilityTriggers {
 		final boolean isXCost = xPerUnit > 0;
 		// The rule covers 《X》 only. Both printings pay nothing else, so the whole payment is X; a
 		// run with a fixed part as well would need the two halves sourced apart, which nothing does.
-		if (cpSource != null && fixedCost > 0) {
+		if (xSource != null && fixedCost > 0) {
 			mw.logEntry("[AutoAbility] " + source.name() + " — 《X》 source rule beside a fixed cost is not supported, skipping");
 			return;
 		}
+		Predicate<CardData> cpSource = xSource == null ? heldBack
+				: heldBack == null ? xSource : xSource.and(heldBack);
 
 		Matcher maxM = FA_MAX_X.matcher(fa.effectText());
 		// "The maximum you can pay for 《X》 is N" bounds X, so the CP ceiling is the fixed part plus
@@ -6076,19 +6109,20 @@ final class AutoAbilityTriggers {
 	private void executePayAndDiscardWhenDoSoAutoAbility(AutoAbility fa, CardData source, boolean isP1,
 			boolean effectIsP1, Matcher m) {
 		String type = m.group(2);
-		if (mw.playerHand(effectIsP1).stream().noneMatch(c -> CardFilters.matchesDiscardType(c, type))) {
+		CardData kept = mw.playerHand(effectIsP1).stream()
+				.filter(c -> CardFilters.matchesDiscardType(c, type)).findFirst().orElse(null);
+		if (kept == null) {
 			mw.logEntry("[AutoAbility] " + source.name() + " — no " + type + " in hand to discard, skipping");
 			return;
 		}
-		// "break that Forward" is Breaktouch's wording, which the resolver keeps off the triggered-
-		// target form on purpose; here it means the Forward whose arrival fired the trigger, so it
-		// is handed over in the "that Character" form that reads it that way (5-130R Tonberry).
-		String payoff = m.group(3).trim().replaceAll("(?i)\\bbreak\\s+that\\s+Forward\\b", "break that Character");
+		String payoff = payAndDiscardPayoff(m.group(3));
 		String rewritten = "pay " + m.group(1) + ". When you do so, discard 1 " + type
 				+ ". When you do so, " + payoff;
 		Matcher payM = FA_PAY_WHEN_DO_SO.matcher(rewritten);
 		if (!payM.matches()) return;
-		executePayWhenDoSoAutoAbility(fa, source, isP1, effectIsP1, payM);
+		// One of the Monsters is held back from the CP payment, so paying cannot spend the card
+		// the discard needs. Any others may still be discarded for CP.
+		executePayWhenDoSoAutoAbility(fa, source, isP1, effectIsP1, payM, c -> c != kept);
 	}
 
 	/**

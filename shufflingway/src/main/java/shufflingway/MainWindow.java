@@ -13330,6 +13330,9 @@ public class MainWindow {
 	 * @param paidExtraCost whether the optional extra cost was paid when casting {@code card}
 	 */
 	void placeCardInFirstBackupSlot(CardData card, boolean paidExtraCost) {
+		// Owned by the side it is placed on when nothing else says so: the Break Zone exit reads
+		// the owner, and a card with none recorded would have nowhere to go.
+		gameState.getIdentity().putIfAbsent(card, true);
 		if (fieldEntryBecomesRfg(card, true)) return;
 		// A card arriving on the field is a new object: it has taken no damage and dealt none.
 		forgetDamageRecordFor(card);
@@ -13972,9 +13975,10 @@ public class MainWindow {
 	void noteDiscardedFromHand(CardData d, boolean isP1) {
 		// "due to your Summons or abilities" — an effect is mid-resolution and the hand that
 		// lost the card belongs to the other player. A discard paid as a cost or taken at the
-		// end-phase hand limit has no ability resolving, so it correctly fires nothing.
-		if (currentAbilitySource != null && currentAbilitySourceIsP1 != isP1)
-			autoAbilityTriggers.triggerAutoAbilitiesForDiscardByEffect(d, currentAbilitySourceIsP1);
+		// end-phase hand limit has no Summon or ability resolving, so it correctly fires nothing.
+		Boolean effectSide = resolvingEffectSide();
+		if (effectSide != null && effectSide != isP1)
+			autoAbilityTriggers.triggerAutoAbilitiesForDiscardByEffect(d, effectSide);
 		// "When you discard 1 or more cards due to Summons or abilities" — 16-114C White Mage.
 		// Anyone's effect, Summons included; fired once per resolution however many cards go.
 		int side = isP1 ? 0 : 1;
@@ -13985,7 +13989,6 @@ public class MainWindow {
 					currentAbilitySource != null && !currentAbilitySource.isSummon());
 		}
 		// The discarded card's own trigger (Black Waltz 1-3, Emerald Weapon).
-		Boolean effectSide = resolvingEffectSide();
 		if (effectSide != null)
 			autoAbilityTriggers.triggerAutoAbilitiesForSelfDiscarded(d, isP1,
 					currentAbilitySource != null, effectSide != isP1);
@@ -14064,6 +14067,7 @@ public class MainWindow {
 			p2BackupLabels[idx].setIcon(null);
 			p2BackupLabels[idx].setText(null);
 		}
+		syncBzForwardPlayables(false);
 		refreshP2BreakLabel();
 		autoAbilityTriggers.triggerAutoAbilitiesForLeavesField(c, false);
 		autoAbilityTriggers.triggerAutoAbilitiesForBreakZone(c, false, Collections.emptySet());
@@ -14090,7 +14094,9 @@ public class MainWindow {
 			p2MonsterPanel.revalidate();
 			p2MonsterPanel.repaint();
 		}
+		syncBzForwardPlayables(false);
 		refreshP2BreakLabel();
+		autoAbilityTriggers.triggerAutoAbilitiesForLeavesField(c, false);
 		autoAbilityTriggers.triggerAutoAbilitiesForBreakZone(c, false, Collections.emptySet());
 	}
 
@@ -17778,6 +17784,7 @@ public class MainWindow {
 
 	/** Adds a Monster card to P1's monster zone (right side of forward zone, newest leftmost). */
 	void placeCardInMonsterZone(CardData card) {
+		gameState.getIdentity().putIfAbsent(card, true);
 		if (fieldEntryBecomesRfg(card, true)) return;
 		// A card arriving on the field is a new object: it has taken no damage and dealt none.
 		forgetDamageRecordFor(card);
@@ -17893,6 +17900,7 @@ public class MainWindow {
 
 	/** Adds a Monster card to P2's monster zone (right side of forward zone). */
 	void placeP2CardInMonsterZone(CardData card) {
+		gameState.getIdentity().putIfAbsent(card, false);
 		if (fieldEntryBecomesRfg(card, false)) return;
 		// A card arriving on the field is a new object: it has taken no damage and dealt none.
 		forgetDamageRecordFor(card);
@@ -21195,6 +21203,7 @@ public class MainWindow {
 
 	/** @param paidExtraCost whether the optional extra cost was paid when casting {@code card} (threaded to its ETB auto-ability). */
 	void placeP2CardInFirstBackupSlot(CardData card, boolean paidExtraCost) {
+		gameState.getIdentity().putIfAbsent(card, false);
 		if (fieldEntryBecomesRfg(card, false)) return;
 		// A card arriving on the field is a new object: it has taken no damage and dealt none.
 		forgetDamageRecordFor(card);

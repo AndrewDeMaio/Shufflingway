@@ -874,6 +874,18 @@ final class GameContextImpl implements GameContext {
 				}
 			}
 
+			@Override public boolean dullActiveSource(CardData source) {
+				List<CardData> fwds = isP1 ? mw.p1ForwardCards : mw.p2ForwardCards;
+				List<CardState> states = isP1 ? mw.p1ForwardStates : mw.p2ForwardStates;
+				for (int i = 0; i < fwds.size(); i++) {
+					if (fwds.get(i) != source) continue;
+					if (states.get(i) != CardState.ACTIVE) return false;
+					dullTarget(new ForwardTarget(isP1, i, ForwardTarget.CardZone.FORWARD));
+					return states.get(i) == CardState.DULL;
+				}
+				return false;
+			}
+
 			@Override public void shieldSourceForward(CardData source) {
 				List<CardData> fwds = isP1 ? mw.p1ForwardCards : mw.p2ForwardCards;
 				List<EnumSet<CardData.Trait>> tempList =
@@ -5927,49 +5939,30 @@ final class GameContextImpl implements GameContext {
 				}
 				switch (t.zone()) {
 					case FORWARD -> { if (t.isP1()) breakP1Forward(t.idx()); else breakP2Forward(t.idx()); }
-					case BACKUP  -> {
-						int i = t.idx();
-						CardData[] cards = t.isP1() ? mw.p1BackupCards : mw.p2BackupCards;
-						CardState[] states = t.isP1() ? mw.p1BackupStates : mw.p2BackupStates;
-						if (i >= cards.length || cards[i] == null) return;
-						CardData c = cards[i];
-						String prefix = t.isP1() ? "" : "[P2] ";
-						logEntry(prefix + c.name() + " is broken");
-						(t.isP1() ? mw.gameState.getP1BreakZone() : mw.gameState.getP2BreakZone()).add(c);
-						JLabel backupLbl = t.isP1() ? mw.p1BackupLabels[i] : mw.p2BackupLabels[i];
-						if (backupLbl != null) mw.startBreakAnim(backupLbl);
-						cards[i] = null; states[i] = CardState.ACTIVE;
-						if (t.isP1()) {
-							mw.p1BackupUrls[i] = null;
-							if (mw.p1BackupLabels[i] != null) { mw.p1BackupLabels[i].setIcon(null); mw.p1BackupLabels[i].setText(null); }
-							mw.refreshP1BreakLabel();
-						} else {
-							mw.p2BackupUrls[i] = null;
-							if (mw.p2BackupLabels[i] != null) { mw.p2BackupLabels[i].setIcon(null); mw.p2BackupLabels[i].setText(null); }
-							mw.refreshP2BreakLabel();
-						}
-						mw.autoAbilityTriggers.triggerAutoAbilitiesForBrokenByOpponent(c, t.isP1());
-					}
-					case MONSTER -> {
-						int i = t.idx();
-						List<CardData> cards = t.isP1() ? mw.p1MonsterCards : mw.p2MonsterCards;
-						if (i >= cards.size()) return;
-						CardData c = cards.get(i);
-						String prefix = t.isP1() ? "" : "[P2] ";
-						logEntry(prefix + c.name() + " is broken");
-						(t.isP1() ? mw.gameState.getP1BreakZone() : mw.gameState.getP2BreakZone()).add(c);
-						cards.remove(i);
-						(t.isP1() ? mw.p1MonsterStates : mw.p2MonsterStates).remove(i);
-						(t.isP1() ? mw.p1MonsterFrozen : mw.p2MonsterFrozen).remove(i);
-						(t.isP1() ? mw.p1MonsterPlayedOnTurn : mw.p2MonsterPlayedOnTurn).remove(i);
-						(t.isP1() ? mw.p1MonsterUrls : mw.p2MonsterUrls).remove(i);
-						JLabel lbl = (t.isP1() ? mw.p1MonsterLabels : mw.p2MonsterLabels).remove(i);
-						mw.startBreakAnim(lbl);
-						JPanel panel = t.isP1() ? mw.p1MonsterPanel : mw.p2MonsterPanel;
-						panel.remove(lbl); panel.revalidate(); panel.repaint();
-						if (t.isP1()) mw.refreshP1BreakLabel(); else mw.refreshP2BreakLabel();
-					}
+					case BACKUP  -> breakBackupSlot(t.isP1(), t.idx());
+					case MONSTER -> breakMonsterSlot(t.isP1(), t.idx());
 				}
+			}
+
+			/**
+			 * Breaks the Backup in {@code isP1}'s slot {@code i} by an effect. The slot helpers are the
+			 * one exit Backups share with a put into the Break Zone — replacements ("remove it from the
+			 * game instead"), the card's own leaves-the-field and Break Zone triggers — and a break adds
+			 * only its own watchers on top (2-041H Doctor Cid).
+			 */
+			private void breakBackupSlot(boolean isP1, int i) {
+				CardData[] cards = isP1 ? mw.p1BackupCards : mw.p2BackupCards;
+				if (i < 0 || i >= cards.length || cards[i] == null) return;
+				CardData c = cards[i];
+				if (isP1) mw.autoAbilityTriggers.breakP1BackupSlot(i); else mw.breakP2BackupSlot(i);
+				mw.autoAbilityTriggers.triggerAutoAbilitiesForBrokenByOpponent(c, isP1);
+			}
+
+			/** The Monster twin of {@link #breakBackupSlot}. */
+			private void breakMonsterSlot(boolean isP1, int i) {
+				List<CardData> cards = isP1 ? mw.p1MonsterCards : mw.p2MonsterCards;
+				if (i < 0 || i >= cards.size()) return;
+				if (isP1) mw.autoAbilityTriggers.breakP1MonsterSlot(i); else mw.breakP2MonsterSlot(i);
 			}
 
 			@Override public void removeTargetFromGame(ForwardTarget t) {
@@ -9444,15 +9437,7 @@ final class GameContextImpl implements GameContext {
 							if (!meetsStateFilter(mw.p1BackupStates[i], stateFilter)) continue;
 							ForwardTarget slot = new ForwardTarget(true, i, ForwardTarget.CardZone.BACKUP);
 							switch (action) {
-								case BREAK -> {
-									logEntry(c.name() + " is broken");
-									mw.addToBreakZone(c, true);
-									mw.p1BackupCards[i] = null;
-									mw.p1BackupStates[i] = CardState.ACTIVE;
-									mw.refreshP1BackupSlot(i);
-									mw.refreshP1BreakLabel();
-									mw.autoAbilityTriggers.triggerAutoAbilitiesForBrokenByOpponent(c, true);
-								}
+								case BREAK          -> breakTarget(slot);
 								case DULL           -> dullTarget(slot);
 								case FREEZE         -> freezeTarget(slot);
 								case DULL_AND_FREEZE -> { dullTarget(slot); freezeTarget(slot); }
@@ -9465,6 +9450,8 @@ final class GameContextImpl implements GameContext {
 					}
 					if (monsters) {
 						for (int i = mw.p1MonsterCards.size() - 1; i >= 0; i--) {
+							// A break fires the Monster's own triggers, which can take more than it off the row.
+							if (i >= mw.p1MonsterCards.size()) continue;
 							CardData c = mw.p1MonsterCards.get(i);
 							if (element != null && !mw.effectiveContainsElement(c, element)) continue;
 							if (!meetsCostConstraint(c.cost(), costVal, costCmp)) continue;
@@ -9479,21 +9466,7 @@ final class GameContextImpl implements GameContext {
 							if (!meetsStateFilter(mw.p1MonsterStates.get(i), stateFilter)) continue;
 							ForwardTarget slot = new ForwardTarget(true, i, ForwardTarget.CardZone.MONSTER);
 							switch (action) {
-								case BREAK -> {
-									logEntry(c.name() + " is broken");
-									mw.addToBreakZone(c, true);
-									mw.p1MonsterTempForwardPower.remove(c);
-									mw.p1MonsterCards.remove(i);
-									mw.p1MonsterStates.remove(i);
-									mw.p1MonsterFrozen.remove(i);
-									mw.p1MonsterPlayedOnTurn.remove(i);
-									mw.p1MonsterUrls.remove(i);
-									JLabel lbl = mw.p1MonsterLabels.remove(i);
-									mw.p1MonsterPanel.remove(lbl);
-									mw.p1MonsterPanel.revalidate();
-									mw.p1MonsterPanel.repaint();
-									mw.refreshP1BreakLabel();
-								}
+								case BREAK          -> breakTarget(slot);
 								case DULL           -> dullTarget(slot);
 								case FREEZE         -> freezeTarget(slot);
 								case DULL_AND_FREEZE -> { dullTarget(slot); freezeTarget(slot); }
@@ -9552,15 +9525,7 @@ final class GameContextImpl implements GameContext {
 							if (!meetsStateFilter(mw.p2BackupStates[i], stateFilter)) continue;
 							ForwardTarget slot = new ForwardTarget(false, i, ForwardTarget.CardZone.BACKUP);
 							switch (action) {
-								case BREAK -> {
-									logEntry("[P2] " + c.name() + " is broken");
-									mw.addToBreakZone(c, true);
-									mw.p2BackupCards[i] = null;
-									mw.p2BackupStates[i] = CardState.ACTIVE;
-									mw.refreshP2BackupSlot(i);
-									mw.refreshP2BreakLabel();
-									mw.autoAbilityTriggers.triggerAutoAbilitiesForBrokenByOpponent(c, false);
-								}
+								case BREAK          -> breakTarget(slot);
 								case DULL           -> dullTarget(slot);
 								case FREEZE         -> freezeTarget(slot);
 								case DULL_AND_FREEZE -> { dullTarget(slot); freezeTarget(slot); }
@@ -9573,6 +9538,7 @@ final class GameContextImpl implements GameContext {
 					}
 					if (monsters) {
 						for (int i = mw.p2MonsterCards.size() - 1; i >= 0; i--) {
+							if (i >= mw.p2MonsterCards.size()) continue;
 							CardData c = mw.p2MonsterCards.get(i);
 							if (element != null && !mw.effectiveContainsElement(c, element)) continue;
 							if (!meetsCostConstraint(c.cost(), costVal, costCmp)) continue;
@@ -9585,21 +9551,7 @@ final class GameContextImpl implements GameContext {
 							if (!meetsStateFilter(mw.p2MonsterStates.get(i), stateFilter)) continue;
 							ForwardTarget slot = new ForwardTarget(false, i, ForwardTarget.CardZone.MONSTER);
 							switch (action) {
-								case BREAK -> {
-									logEntry("[P2] " + c.name() + " is broken");
-									mw.addToBreakZone(c, true);
-									mw.p2MonsterTempForwardPower.remove(c);
-									mw.p2MonsterCards.remove(i);
-									mw.p2MonsterStates.remove(i);
-									mw.p2MonsterFrozen.remove(i);
-									mw.p2MonsterPlayedOnTurn.remove(i);
-									mw.p2MonsterUrls.remove(i);
-									JLabel lbl = mw.p2MonsterLabels.remove(i);
-									mw.p2MonsterPanel.remove(lbl);
-									mw.p2MonsterPanel.revalidate();
-									mw.p2MonsterPanel.repaint();
-									mw.refreshP2BreakLabel();
-								}
+								case BREAK          -> breakTarget(slot);
 								case DULL           -> dullTarget(slot);
 								case FREEZE         -> freezeTarget(slot);
 								case DULL_AND_FREEZE -> { dullTarget(slot); freezeTarget(slot); }

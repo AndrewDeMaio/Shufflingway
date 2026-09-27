@@ -123,12 +123,27 @@ final class ActionResolverState {
             }
         };
     }
-    /** Parses "Dull [CardName]." — dulls the source card with no other effect. */
+    /**
+     * Parses "Dull [CardName]." — dulls the source card with no other effect — and "dull active
+     * [CardName]." (27-014H Terra), a price: when the source is not an active Forward it cannot be
+     * paid, and the effect is marked fizzled so a "When you do so" payoff behind it does not run.
+     */
     static Consumer<GameContext> tryParseStandaloneSelfDull(String text, CardData source) {
         if (source == null) return null;
         Matcher m = STANDALONE_SELF_DULL.matcher(text.trim());
         if (!m.find()) return null;
         String subject = m.group("subject").trim();
+        if (subject.regionMatches(true, 0, "active ", 0, 7)
+                && subject.substring(7).trim().equalsIgnoreCase(source.name())) {
+            return ctx -> {
+                if (ctx.dullActiveSource(source)) {
+                    ctx.logEntry(source.name() + " — dulled");
+                } else {
+                    ctx.logEntry(source.name() + " — not an active Forward, so it cannot be dulled");
+                    ctx.markEffectFizzled();
+                }
+            };
+        }
         if (!subject.equalsIgnoreCase(source.name())) return null;
         return ctx -> {
             ctx.logEntry(source.name() + " — dulled");

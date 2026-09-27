@@ -40,6 +40,16 @@ final class UseConditions {
 	private static final Pattern USES_PER_TURN = Pattern.compile(
 			"(?i)\\bup\\s+to\\s+(?<n>\\d+)\\s+times\\s+per\\s+turn");
 
+	/**
+	 * Whether {@link #met} reads a condition off {@code sentence} — the four text-only wordings. The
+	 * partial-parse report asks this, since those sentences are not taken up by any parser.
+	 */
+	static boolean readsText(String sentence) {
+		for (Pattern p : List.of(EACH_PLAYER_DAMAGE, CAST_N_THIS_TURN, ELEMENT_CARDS_IN_BZ, USES_PER_TURN))
+			if (p.matcher(sentence).find()) return true;
+		return false;
+	}
+
 	/** Whether {@code isP1} may use {@code ability} of {@code source} now, as far as these go. */
 	static boolean met(MainWindow mw, ActionAbility ability, CardData source, boolean isP1) {
 		GameState gs = mw.gameState;

@@ -4464,6 +4464,10 @@ public class ActionResolver {
             }
             if (FOLLOWUP_SELECT_COUNTER_AND_DOUBLE_SAME_TYPE.matcher(followup.trim()).matches())
                 return "ChooseCharacter / DoubleCounterType";
+            // 5-142H Rosa: the named upgrade replaces the base reduction ("instead"), so split it
+            // read as two shields where the card applies one.
+            if (FOLLOWUP_SHIELD_NEXT_DMG_REDUCTION_NAMED_UPGRADE.matcher(followup.trim()).matches())
+                return "ChooseCharacter / ShieldNextDmgReductionNamedUpgrade";
             // The Demon 20-007L, for the same reason: the damage sentence is scaled by what the
             // removal sentence took, so split it reads as an unimplemented followup plus a plain
             // damage clause — "? + Damage", which names a fixed hit the card never deals.

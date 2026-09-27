@@ -1937,6 +1937,13 @@ public interface GameContext {
     /** Finds {@code source} on the field by name and dulls it. No-op if not found. */
     void dullSourceForward(CardData source);
 
+    /**
+     * "dull active [Self]" as a price — 27-014H Terra's "you may dull active Terra. When you do so,
+     * …". Dulls this very instance only if it is an active Forward on its controller's field, and
+     * says whether it did: a Terra already dull, or gone, cannot pay, and the payoff must not run.
+     */
+    boolean dullActiveSource(CardData source);
+
     /** Registers that the named source card (found on own field) cannot be broken this turn. */
     void shieldSourceForward(CardData source);
 

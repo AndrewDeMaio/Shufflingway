@@ -69989,5 +69989,249 @@ public class CardBehaviorTest {
 	}
 
 	// =========================================================================================
+	// A Backup or Monster broken by an effect leaves through the same slot helpers a put into the
+	// Break Zone uses: its own triggers fire, "remove it from the game instead" applies, and the
+	// Monster row's parallel lists stay aligned. The mass break also asks breakTarget, so a card
+	// that cannot be broken survives it.
+	// =========================================================================================
+
+	private static final String GUARD_TEXT = "When Guard is put from the field into the Break Zone, draw 1 card.";
+
+	@Test
+	void aBackupBrokenByAnEffectFiresItsOwnBreakZoneTrigger() {
+		MainWindow mw = new MainWindow();
+		CardData guard = makeTextBackup("Guard", "Ice", GUARD_TEXT);
+		mw.gameState.getIdentity().put(guard, false);
+		mw.placeP2CardInFirstBackupSlot(guard);
+
+		mw.buildGameContext(true).breakTarget(p2Backup(0));
+
+		assertNull(mw.p2BackupCards[0]);
+		assertTrue(mw.gameState.getP2BreakZone().contains(guard));
+		assertEquals(List.of(guard), triggerSources(mw));
+	}
+
+	@Test
+	void aBackupBrokenByAnEffectHonoursRemoveFromGameInstead() {
+		MainWindow mw = new MainWindow();
+		CardData backup = makePlainBackup("Marked", "Ice", 2);
+		mw.gameState.getIdentity().put(backup, false);
+		mw.placeP2CardInFirstBackupSlot(backup);
+		mw.rfgInsteadOfBzThisTurn.add(backup);
+
+		mw.buildGameContext(true).breakTarget(p2Backup(0));
+
+		assertFalse(mw.gameState.getP2BreakZone().contains(backup));
+		assertTrue(mw.gameState.getP2PermanentRfp().contains(backup), "removed from the game instead");
+	}
+
+	@Test
+	void aMonsterBrokenByAnEffectTakesItsDamageWithIt() {
+		MainWindow mw = new MainWindow();
+		CardData hurt = makeMonsterWithAutos("Hurt", "Earth", ""), whole = makeMonsterWithAutos("Whole", "Earth", "");
+		for (CardData m : List.of(hurt, whole)) {
+			mw.gameState.getIdentity().put(m, false);
+			mw.placeP2CardInMonsterZone(m);
+		}
+		mw.p2MonsterDamage.set(0, 3000);
+
+		mw.buildGameContext(true).breakTarget(new ForwardTarget(false, 0, ForwardTarget.CardZone.MONSTER));
+
+		assertEquals(List.of(whole), mw.p2MonsterCards);
+		assertEquals(List.of(0), mw.p2MonsterDamage, "the damage left with the Monster that carried it");
+		assertTrue(mw.gameState.getP2BreakZone().contains(hurt));
+	}
+
+	@Test
+	void theMassBreakSparesABackupThatCannotBeBroken() {
+		MainWindow mw = new MainWindow();
+		CardData shielded = makeTextBackup("Shielded", "Ice", "Shielded cannot be broken.");
+		CardData plain = makePlainBackup("Plain", "Ice", 2);
+		for (CardData b : List.of(shielded, plain)) {
+			mw.gameState.getIdentity().put(b, false);
+			mw.placeP2CardInFirstBackupSlot(b);
+		}
+
+		ActionResolver.parse("Break all the Backups opponent controls.", makeSummon("Quake", "Earth", 5, ""))
+				.accept(mw.buildGameContext(true));
+
+		assertSame(shielded, mw.p2BackupCards[0], "cannot be broken");
+		assertNull(mw.p2BackupCards[1]);
+		assertTrue(mw.gameState.getP2BreakZone().contains(plain));
+	}
+
+	// =========================================================================================
+	// 15-042R Locke's reveal (read once the ETL splits the printed "aCategory") and 27-014H Terra's
+	// "dull active Terra. When you do so, …", where dulling is the price of the payoff.
+	// =========================================================================================
+
+	private static final String LOCKE_PAYOFF = "reveal the top card of your deck. If it is a Category VI Character, "
+			+ "add it to your hand. If it is not a Category VI Character, put it into the Break Zone.";
+
+	@Test
+	void lockeKeepsACategoryVICharacterAndBinsAnythingElse() {
+		CardData locke = makeForward("Locke", "Ice", 5, 9000);
+		for (boolean six : new boolean[] { true, false }) {
+			MainWindow mw = new MainWindow();
+			CardData top = six ? makeCategoryForward("Celes", "Ice", "VI") : makeCategoryForward("Squall", "Ice", "VIII");
+			mw.gameState.getIdentity().put(top, false);
+			mw.gameState.getP2MainDeck().addFirst(top);
+
+			ActionResolver.parse(LOCKE_PAYOFF, locke).accept(mw.buildGameContext(false));
+
+			assertEquals(six, mw.gameState.getP2Hand().contains(top), "Category VI: " + six);
+			assertEquals(!six, mw.gameState.getP2BreakZone().contains(top), "Category VI: " + six);
+		}
+	}
+
+	private static final String TERRA_PAYOFF = "dull active Terra. When you do so, choose 1 Forward. Deal it 8000 damage.";
+
+	/** P2 fields Terra, active or dull; P1 fields one 10000-power Forward. */
+	private static MainWindow terraBoard(CardData terra, boolean active) {
+		MainWindow mw = new MainWindow();
+		mw.suppressAutoAbilityForNextCards = 1;
+		placeP2Forward(mw, terra);
+		if (!active) mw.p2ForwardStates.set(0, CardState.DULL);
+		placeP1Forward(mw, makeForward("Target", "Fire", 5, 10000));
+		return mw;
+	}
+
+	@Test
+	void terraDullsHerselfToDealEightThousand() {
+		CardData terra = makeForward("Terra", "Fire", 4, 5000);
+		MainWindow mw = terraBoard(terra, true);
+
+		ActionResolver.parse(TERRA_PAYOFF, terra).accept(mw.buildGameContext(false));
+
+		assertEquals(CardState.DULL, mw.p2ForwardStates.get(0), "the price");
+		assertEquals(8000, mw.p1ForwardDamage.get(0));
+	}
+
+	@Test
+	void aDullTerraCannotPayAndDealsNothing() {
+		CardData terra = makeForward("Terra", "Fire", 4, 5000);
+		MainWindow mw = terraBoard(terra, false);
+
+		ActionResolver.parse(TERRA_PAYOFF, terra).accept(mw.buildGameContext(false));
+
+		assertEquals(0, mw.p1ForwardDamage.get(0), "no price paid, no payoff");
+	}
+
+	@Test
+	void aSummonThatMakesTheOpponentDiscardFiresTheDueToYourSummonsWatcher() {
+		MainWindow mw = new MainWindow();
+		CardData watcher = makeForwardWithText("Watcher", "Wind", 3, 7000, "When your opponent discards a card from "
+				+ "their hand due to your Summons or abilities, draw 1 card.");
+		mw.suppressAutoAbilityForNextCards = 1;
+		placeP1Forward(mw, watcher);
+		CardData drawn = makeForward("Drawn", "Wind", 1, 1000);
+		mw.gameState.getIdentity().put(drawn, true);
+		mw.gameState.getP1MainDeck().addFirst(drawn);
+		CardData held = makeForward("Held", "Fire", 2, 5000);
+		mw.gameState.getIdentity().put(held, false);
+		mw.gameState.getP2Hand().add(held);
+
+		String text = "Your opponent discards 1 card.";
+		CardData summon = makeSummon("Mind Blast", "Wind", 2, text);
+		mw.currentSummonSource = summon;
+		mw.currentSummonSourceIsP1 = true;
+		mw.currentResolutionIsSummon = true;
+		try {
+			ActionResolver.parse(text, summon).accept(mw.buildGameContext(true));
+		} finally {
+			mw.currentSummonSource = null;
+			mw.currentResolutionIsSummon = false;
+		}
+
+		assertTrue(mw.gameState.getP2BreakZone().contains(held), "the Summon made P2 discard");
+		assertTrue(mw.gameState.getP1Hand().contains(drawn), "and the watcher drew — a Summon counts, not only abilities");
+	}
+
+	private static final String MIRA_20_102L = "When an opponent's Forward enters the field, you may pay 《1》 and discard "
+			+ "1 Monster. When you do so, break that Forward.";
+
+	/** P2 fields Mira with no Backups and {@code hand} in hand; returns the board. */
+	private static MainWindow miraBoard(CardData... hand) {
+		MainWindow mw = new MainWindow();
+		mw.suppressAutoAbilityForNextCards = 1;
+		placeP2Forward(mw, makeForwardWithText("Mira", "Fire", 4, 8000, MIRA_20_102L));
+		for (CardData c : hand) {
+			mw.gameState.getIdentity().put(c, false);
+			mw.gameState.getP2Hand().add(c);
+		}
+		return mw;
+	}
+
+	@Test
+	void mirasAiDoesNotSpendItsOnlyMonsterOnTheCp() {
+		CardData monster = makeMonsterWithAutos("Bomb", "Fire", "");
+		MainWindow mw = miraBoard(monster);
+		CardData arriving = makeForward("Arriving", "Ice", 3, 7000);
+
+		placeP1Forward(mw, arriving);
+
+		assertTrue(mw.gameState.getP2Hand().contains(monster), "the only Monster is not paid away for CP");
+		assertTrue(mw.p1ForwardCards.contains(arriving), "nothing else pays 《1》, so the payoff is skipped");
+	}
+
+	@Test
+	void miraPaysWithTheOtherCardThenDiscardsTheMonster() {
+		CardData monster = makeMonsterWithAutos("Bomb", "Fire", "");
+		CardData spare = makeForward("Spare", "Fire", 2, 5000);
+		MainWindow mw = miraBoard(monster, spare);
+		CardData arriving = makeForward("Arriving", "Ice", 3, 7000);
+
+		placeP1Forward(mw, arriving);
+
+		assertTrue(mw.gameState.getP2BreakZone().containsAll(List.of(spare, monster)), "CP from the spare, then the discard");
+		assertFalse(mw.p1ForwardCards.contains(arriving), "that Forward is broken");
+	}
+
+	private static final String ADAM_14_032R = "If your opponent has 2 cards or less in their hand, Proto fal'Cie Adam "
+			+ "gains +2000 power and First Strike.[[br]]   When Proto fal'Cie Adam enters the field, place 2 Manipulator "
+			+ "Counters on Proto fal'Cie Adam.[[br]]   When Proto fal'Cie Adam is chosen by Summons or abilities, remove 1 "
+			+ "Manipulator Counter from Proto fal'Cie Adam. If you do so, cancel its effect.";
+
+	/** P1 fields Adam with {@code counters} Manipulator Counters; a P2 Summon chooses him for 5000 damage. */
+	private static MainWindow adamChosenWith(int counters) {
+		MainWindow mw = new MainWindow();
+		CardData adam = makeForwardWithText("Proto fal'Cie Adam", "Water", 3, 7000, ADAM_14_032R);
+		mw.suppressAutoAbilityForNextCards = 1;
+		placeP1Forward(mw, adam);
+		mw.gameState.placeCounters(adam, "Manipulator", counters);
+		// Four cards in P2's hand, so his power stays 7000.
+		for (int i = 0; i < 4; i++) {
+			CardData c = makeForward("Held " + i, "Fire", 1, 1000);
+			mw.gameState.getIdentity().put(c, false);
+			mw.gameState.getP2Hand().add(c);
+		}
+		String text = "Choose 1 Forward opponent controls. Deal it 5000 damage.";
+		CardData summon = makeSummon("Bolt", "Lightning", 3, text);
+		mw.currentSummonSource = summon;
+		mw.currentSummonSourceIsP1 = false;
+		mw.currentResolutionIsSummon = true;
+		try {
+			ActionResolver.parse(text, summon).accept(mw.buildGameContext(false));
+		} finally {
+			mw.currentSummonSource = null;
+			mw.currentResolutionIsSummon = false;
+		}
+		return mw;
+	}
+
+	@Test
+	void adamSpendsAManipulatorCounterToCancelTheEffectThatChoseHim() {
+		MainWindow mw = adamChosenWith(2);
+		assertEquals(0, mw.p1ForwardDamage.get(0), "cancelled");
+		assertEquals(1, mw.gameState.getCounters(mw.p1ForwardCards.get(0), "Manipulator"), "one counter paid it");
+	}
+
+	@Test
+	void adamWithNoCounterLeftCannotCancel() {
+		MainWindow mw = adamChosenWith(0);
+		assertEquals(5000, mw.p1ForwardDamage.get(0), "\"If you do so\" — nothing removed, nothing cancelled");
+	}
+
+	// =========================================================================================
 
 }
