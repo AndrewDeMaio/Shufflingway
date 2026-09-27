@@ -2775,18 +2775,37 @@ final class ActionResolverChoose {
                 String repeatRaw = youMayPayM.group("repeat");
                 int    cpCount   = 1 + (int) (repeatRaw == null ? 0
                         : repeatRaw.chars().filter(ch -> ch == '《').count());
+                int    cpGeneric = youMayPayM.group("generic") == null ? 0
+                        : Integer.parseInt(youMayPayM.group("generic"));
                 String cpEffText = youMayPayM.group("effect").trim();
                 BiConsumer<GameContext, List<ForwardTarget>> cpAction =
                         parseTargetAction(cpEffText, xValue);
+                // 7-018L Lann's "deal it damage equal to Lann's power" — a named card's power,
+                // read when the payment is made, the same way the plain DamageExpr followup reads it.
+                Matcher namedPowerM = FOLLOWUP_DAMAGE_EQUAL_TO_NAMED_POWER.matcher(cpEffText);
+                if (cpAction == null && namedPowerM.matches()) {
+                    String powerCard = namedPowerM.group("card").trim();
+                    cpAction = (ctx, ts) -> {
+                        int damage = Math.max(0, ctx.fieldForwardPowerByName(powerCard));
+                        ctx.logEntry("Effect: deal " + damage + " damage (" + powerCard + "'s power)");
+                        ts.forEach(t -> ctx.damageTarget(t, damage));
+                    };
+                }
                 if (cpAction != null) {
+                    BiConsumer<GameContext, List<ForwardTarget>> cpActionF = cpAction;
                     return ctx -> {
                         ctx.logChooseHeader(choosePrefix + " — You may pay 《" + cpElem + "》"
-                                + (cpCount > 1 ? " ×" + cpCount : "") + "; if so: " + cpEffText);
+                                + (cpCount > 1 ? " ×" + cpCount : "")
+                                + (cpGeneric > 0 ? " 《" + cpGeneric + "》" : "") + "; if so: " + cpEffText);
                         List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
                                 opponentOnly, selfOnly, condition, element, zone, opponentZone, bothZones,
                                 costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
                                 jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
-                        ctx.mayPayElementCpToEffect(cpElem, cpCount, ctx2 -> cpAction.accept(ctx2, ts));
+                        if (cpGeneric > 0)
+                            ctx.mayPayElementAndGenericCpToEffect(cpElem, cpCount, cpGeneric,
+                                    ctx2 -> cpActionF.accept(ctx2, ts));
+                        else
+                            ctx.mayPayElementCpToEffect(cpElem, cpCount, ctx2 -> cpActionF.accept(ctx2, ts));
                     };
                 }
             }

@@ -1324,7 +1324,20 @@ public record CardData(
         }
 
         after = SUMMON_MARKUP.matcher(after).replaceAll(" ");
+        // Reminder text, not an effect — 17-080R Ewen.
+        after = after.replaceAll("(?i)\\(\\s*This\\s+ability\\s+may\\s+only\\s+be\\s+used\\s+as\\s+an\\s+EX\\s+Burst\\.?\\s*\\)", " ");
         return after.replaceAll("\\s+", " ").trim();
+    }
+
+    /**
+     * The "Damage N --" printed in front of this card's EX Burst (17-080R Ewen and six others): the
+     * burst is usable only while its controller has received N points of damage. 0 when none.
+     */
+    public int exBurstDamageThreshold() {
+        Matcher m = EX_BURST_TAG.matcher(textEn);
+        if (!m.find()) return 0;
+        Matcher d = Pattern.compile("(?i)Damage\\s+(\\d+)\\s+--\\s*$").matcher(textEn.substring(0, m.start()));
+        return d.find() ? Integer.parseInt(d.group(1)) : 0;
     }
 
     /**
@@ -3224,6 +3237,11 @@ public record CardData(
         "(?<trigger>" +
             // "forms a party and attacks" must precede plain "attacks" to be preferred
             "forms?\\s+a\\s+party\\s+and\\s+attacks?" +
+            // "When your Attack Phase starts" — 1-173C Mime. The event the "At the beginning of the
+            // Attack Phase" printings watch. Ahead of the attack arm, which would read "Attack".
+            "|Attack\\s+Phase\\s+starts" +
+            // "When your opponent's auto-ability is put on the stack" — 10-074C Suzuhisa.
+            "|auto-ability\\s+is\\s+put\\s+on\\s+the\\s+stack" +
             "|attacks?(?:\\s+or\\s+blocks?)?" +
             // "is blocked or chosen by your opponent's ability" — 26-003R / 29-001R Ifrit (XVI),
             // the corpus's only printing that joins a combat trigger to a targeting one. Must
@@ -3248,6 +3266,16 @@ public record CardData(
             // the comma this alternation's caller requires next, leaving the whole sentence unread:
             // both cards had no auto-ability at all rather than one with a too-wide trigger.
             "|enters?\\s+the\\s+field\\s+from\\s+your\\s+hand" +
+            // "from the Break Zone" (20-130L Zenos, 25-093C Corsair, 3-082R Scarmiglione, 7-101H Mid
+            // Previa) and "from the deck" (15-109R Ultros), for the same reason as the arm above.
+            "|enters?\\s+the\\s+field\\s+from\\s+the\\s+(?:Break\\s+Zone|deck)" +
+            // "When you draw a card" (15-063C Romaa Mihgo), "When your opponent draws a card outside
+            // of his/her Draw Phase" (5-036L The Emperor).
+            "|draws?\\s+a\\s+card(?:\\s+outside\\s+of\\s+(?:his/her|their)\\s+Draw\\s+Phase)?" +
+            // "is added to your hand from the Break Zone" (14-079R Aphmau, 9-091H Nero (XIV)), "… from
+            // the deck due to a search effect" (16-140S Sin), or both (27-059C Galuf).
+            "|is\\s+added\\s+to\\s+your\\s+hand\\s+from\\s+(?:the\\s+Break\\s+Zone(?:\\s+or\\s+from\\s+the\\s+deck" +
+                "\\s+due\\s+to\\s+a\\s+search\\s+effect)?|the\\s+deck\\s+due\\s+to\\s+a\\s+search\\s+effect)" +
             // "enters the field due to an ability / due to a Summon or an ability / by Summons or
             // abilities / due to your Summons or abilities / due to an ability of Card Name X" —
             // 21-018R Rain, 20-068R Aerith, 28-081L Kain, 12-004R Alphinaud, 17-056L Noel and more.
@@ -3256,7 +3284,13 @@ public record CardData(
             "|enters?\\s+the\\s+field(?:\\s+due\\s+to\\s+(?:your\\s+cast|Warp))?" +
             // "enters your field other than from your hand" must precede plain "enters your field"
             "|enters?\\s+your\\s+field\\s+other\\s+than\\s+from\\s+your\\s+hand" +
+            // "enters your field due to Warp" — 21-025R Kiros's watcher; warpOnly is read off the
+            // raw text, as it is for the self form. Must precede the plain arm below, which reads its
+            // head and then fails on the comma.
+            "|enters?\\s+your\\s+field\\s+due\\s+to\\s+Warp" +
             "|enters?\\s+your\\s+field" +
+            // "enters either player's field" — 23-103C Quina.
+            "|enters?\\s+either\\s+player's\\s+field" +
             // "enters your opponent's field other than from their hand" must precede the plain form.
             "|enters?\\s+your\\s+opponent's\\s+field\\s+other\\s+than\\s+from\\s+(?:his/her|his|her|their)\\s+hand" +
             // "enters your opponent's field" — location-based phrasing of the watcher trigger,
@@ -3269,8 +3303,22 @@ public record CardData(
             // hazard: a separate arm would have to be placed ahead of this one, since find()
             // would otherwise match the shorter phrase and then fail on the comma that is not
             // there yet.
-            "|is\\s+put\\s+(?:from\\s+the\\s+field\\s+)?into\\s+the\\s+Break\\s+Zone" +
-                "(?:\\s+(?:on|during)\\s+the\\s+same\\s+turn)?" +
+            // "is put from your hand or your deck into the Break Zone due to Summons or abilities" —
+            // 29-043R Aerith, watching her Category VII Characters.
+            "|is\\s+put\\s+from\\s+your\\s+hand\\s+or\\s+your\\s+deck\\s+into\\s+the\\s+Break\\s+Zone\\s+due\\s+to\\s+" +
+                "Summons\\s+or\\s+abilities" +
+            // "is put from the field into its owner's deck" — 16-116L Tidus.
+            "|is\\s+put\\s+from\\s+the\\s+field\\s+into\\s+its\\s+owner's\\s+deck" +
+            // Milled: 22-084R Fujin / 22-087R Raijin ("from the deck", the card itself) and 10-050C
+            // Thief ("a card … from your opponent's deck").
+            "|is\\s+put\\s+from\\s+(?:the|your\\s+opponent's)\\s+deck\\s+into\\s+the\\s+Break\\s+Zone" +
+            // "… from the field" after the zone rather than before it is 27-073R Ardyn's order — the
+            // same event, and read as the same trigger.
+            // "from your field" — 1-213S Tidus, watching Yuna.
+            // "… by your opponent's Summons or abilities" — 11-065H Ardyn; a cause, checked at dispatch.
+            "|is\\s+put\\s+(?:from\\s+(?:the|your)\\s+field\\s+)?into\\s+the\\s+Break\\s+Zone" +
+                "(?:\\s+(?:on|during)\\s+the\\s+same\\s+turn|\\s+from\\s+the\\s+field" +
+                "|(?:\\s+in\\s+any\\s+situation)?\\s+by\\s+your\\s+opponent's\\s+Summons\\s+or\\s+abilities)?" +
             "|casts?\\s+a\\s+Summon" +
             // "casts a card removed from the game" — 29-008L Zidane, whose other ability is what
             // puts the cards there. Player-scoped like the Summon arm above: the subject is "you".
@@ -3282,8 +3330,16 @@ public record CardData(
             "|casts?\\s+an?\\s+(?!card\\s+removed\\b)(?![^,.]*\\bfor\\s+the\\s+first\\s+time\\b)[^,.]+?" +
             "|is\\s+put\\s+into\\s+(?:your\\s+)?Damage\\s+Zone" +
             "|is\\s+removed\\s+from\\s+the\\s+game\\s+due\\s+to\\s+Warp" +
+            // "[Self] in any zone is removed from the game" (28-115L Lightning) and "[Self] on the
+            // field is removed from the game" (29-063R Exdeath). The zone phrase sits in the trigger
+            // so the subject stays the card's name. After the Warp arm, which needs its own tail.
+            "|(?:in\\s+any\\s+zone|on\\s+the\\s+field)\\s+is\\s+removed\\s+from\\s+the\\s+game" +
+            // "deals damage to your opponent or to a Forward" — 10-001H Ignacio, 7-013R Berserker,
+            // 7-018L Lann. Ahead of the arm below, which reads its head and then fails on the comma.
+            "|deals?\\s+damage\\s+to\\s+your\\s+opponent\\s+or\\s+to\\s+a\\s+Forward" +
             "|deals?\\s+damage\\s+to\\s+your\\s+opponent" +
-            "|deals?\\s+damage\\s+to\\s+a\\s+Forward" +
+            // "… to a Forward opponent controls" — 20-014R Tifa, watching her Category VII Characters.
+            "|deals?\\s+damage\\s+to\\s+a\\s+Forward(?:\\s+opponent\\s+controls)?" +
             // Distinct from "deals damage": the source is the card being damaged, not the dealer.
             // The optional size floor (9-072H Baigan's "4000 damage or more") and "by <dealer>"
             // clause (15-077H Dadaluma, 20-024H Calbrena, 21-073R Zazarg, 25-024H / 5-037R Zeid,
@@ -3347,6 +3403,9 @@ public record CardData(
             // sits beside it: nothing in the corpus watches an activation that was not caused by
             // its own controller's effect, so widening to the bare form would invent a trigger.
             "|becomes?\\s+active\\s+due\\s+to\\s+your\\s+Summons?\\s+or\\s+abilit(?:y|ies)" +
+            // The passive wording of the same event — 19-043C Zu ("a dull Character you control is
+            // activated …") and 12-114R Baralai ("1 or more dull Backups you control is activated …").
+            "|(?:is|are)\\s+activated\\s+due\\s+to\\s+your\\s+Summons?\\s+or\\s+abilit(?:y|ies)" +
             "|becomes?\\s+dull" +
             // "is priming" — the act of paying a Priming cost, watched by 24-109R Dion,
             // 24-113R Barnabas (XVI), 26-021C Anabella, 26-084H Vivian and 29-085R Cidolfus.
@@ -3361,9 +3420,13 @@ public record CardData(
             // hand" appears, and in the discarded type. The middle is left loose because the
             // "due to your …" tail is what identifies the trigger.
             "|discards?\\s+[^,]*?due\\s+to\\s+your\\s+Summons?\\s+or\\s+abilit(?:y|ies)" +
+            // The discarded card's own trigger — 16-027C / 16-007R / 16-088L Black Waltz 1-3 ("due to
+            // an ability") and 19-039R Emerald Weapon ("due to your opponent's Summons or abilities").
+            "|is\\s+discarded\\s+from\\s+your\\s+hand\\s+due\\s+to\\s+" +
+                "(?:an\\s+ability|your\\s+opponent's\\s+Summons\\s+or\\s+abilities)" +
             // "When you discard 1 or more cards due to Summons or abilities" — 16-114C White Mage:
             // anyone's effect, and the discarding player is the watcher's own controller.
-            "|discards?\\s+1\\s+or\\s+more\\s+cards?\\s+due\\s+to\\s+Summons?\\s+or\\s+abilit(?:y|ies)" +
+            "|discards?\\s+1\\s+or\\s+more\\s+cards?\\s+due\\s+to\\s+(?:Summons?\\s+or\\s+abilit(?:y|ies)|an\\s+ability)" +
             // "are added to your opponent's hand from the Break Zone" — 25-111H The Emperor.
             "|(?:is|are)\\s+added\\s+to\\s+your\\s+opponent's\\s+hand\\s+from\\s+the\\s+Break\\s+Zone" +
             // "gain a 《C》" — 16-115H Sarah (MOBIUS). Player-scoped, so the subject is "you".
@@ -4207,6 +4270,10 @@ public record CardData(
         return true;
     }
 
+    /** "the Forward Card Name Yuna" — a named watcher subject written with "the" (1-213S Tidus). */
+    private static final Pattern THE_TYPE_CARD_NAME_SUBJECT = Pattern.compile(
+        "(?i)^the\\s+(?<type>Forward|Backup|Monster|Character)\\s+Card\\s+Name\\s+(?<name>.+)$");
+
     /** The lower-cased trigger phrase of an "enters the field due to / by …" auto ability. */
     private static final Pattern ENTERS_BY_EFFECT_TRIGGER = Pattern.compile(
         "^enters?\\s+the\\s+field\\s+(?:due\\s+to|by)\\s+(?<your>your\\s+)?(?:(?<either>(?:an?\\s+)?summons?\\s+or\\s+" +
@@ -4424,9 +4491,27 @@ public record CardData(
             // Read first: the subject is a counter rather than a card, so every branch below would
             // be answering about the wrong thing if one of them claimed the phrase.
             if      (triggerRaw.startsWith("is placed on") || triggerRaw.startsWith("are placed on")) trigger = "counter placed";
+            // Ahead of the attack branches, which "attack phase" satisfies.
+            else if (triggerRaw.equals("attack phase starts") && card.equalsIgnoreCase("your"))      trigger = "beginning of attack phase";
+            else if (triggerRaw.equals("auto-ability is put on the stack")
+                    && card.equalsIgnoreCase("your opponent's"))                                        trigger = "opponent auto-ability put on stack";
             // "enters the field due to / by …" an effect. Read ahead of every other enter branch; the
             // dispatch checks what was resolving as the card arrived.
             else if (ENTERS_BY_EFFECT_TRIGGER.matcher(triggerRaw).matches())                           trigger = entersByEffectTrigger(triggerRaw);
+            // Where the card came from. Ahead of the enter branches below: "from the break zone"
+            // would read as the enters-or-break-zone compound.
+            else if (triggerRaw.matches("enters?\\s+the\\s+field\\s+from\\s+the\\s+break\\s+zone"))   trigger = "enters the field from break zone";
+            else if (triggerRaw.matches("enters?\\s+the\\s+field\\s+from\\s+the\\s+deck"))            trigger = "enters the field from deck";
+            // The card's own removal. Ahead of the Warp and cast branches, which also say "removed".
+            else if (triggerRaw.equals("in any zone is removed from the game"))                          trigger = "removed from game";
+            else if (triggerRaw.equals("on the field is removed from the game"))                         trigger = "removed from game from field";
+            // Draw watchers. Only the two printings: "you" and "your opponent … outside of … Draw Phase".
+            else if (triggerRaw.matches("draws?\\s+a\\s+card") && card.equalsIgnoreCase("you"))      trigger = "you draw a card";
+            else if (triggerRaw.startsWith("draws a card outside of") && card.equalsIgnoreCase("your opponent"))
+                trigger = "opponent draws outside draw phase";
+            else if (triggerRaw.startsWith("is added to your hand from"))
+                trigger = triggerRaw.contains("break zone") && triggerRaw.contains("search") ? "added to hand from break zone or search"
+                        : triggerRaw.contains("break zone") ? "added to hand from break zone" : "added to hand by search";
             else if (triggerRaw.contains("attack") && triggerRaw.contains("block"))                        trigger = "attacks or blocks";
             else if (triggerRaw.contains("attack") && (cardIsParty || triggerHasParty))                    trigger = "party attacks";
             else if (triggerRaw.contains("enter") && triggerRaw.contains("break zone"))                   trigger = "enters the field or put into break zone";
@@ -4439,6 +4524,7 @@ public record CardData(
             else if (triggerRaw.contains("enter") && triggerRaw.contains("from your hand"))               trigger = "enters the field from hand";
             else if (triggerRaw.contains("enter") && triggerRaw.contains("opponent") && triggerRaw.contains("field")) trigger = "enters opponent's field";
             else if (triggerRaw.contains("enter") && triggerRaw.contains("your field"))                            trigger = "enters your field";
+            else if (triggerRaw.contains("enter") && triggerRaw.contains("either player's field"))                trigger = "enters either player's field";
             else if (triggerRaw.contains("attack")
                     && (FILTER_FORWARD_SUBJECT.matcher(card).matches()
                         || ELEMENT_FORWARD_SUBJECT.matcher(card).matches()))                                 trigger = "filtered forward attacks";
@@ -4471,10 +4557,22 @@ public record CardData(
             // otherwise claim them: "added to your opponent's hand from the Break Zone" contains
             // "break zone", and "due to your Summons or abilities" contains "summon".
             else if (triggerRaw.contains("added to your opponent's hand"))                                  trigger = "opponent salvages from break zone";
+            // The discarded card's own trigger, dispatched from the Break Zone it lands in. Must
+            // precede the watcher branch below: "due to your opponent's" contains "due to your".
+            else if (triggerRaw.equals("is put from the field into its owner's deck"))                   trigger = "put from field into deck";
+            // Ahead of the "summon" and "break zone" branches, both of which it contains.
+            else if (triggerRaw.startsWith("is put from your hand or your deck into the break zone"))    trigger = "own card to break zone from hand or deck by effect";
+            // Milled. Must precede the "break zone" branches below, which every one of these contains.
+            else if (triggerRaw.startsWith("is put from your opponent's deck"))                         trigger = "opponent card milled";
+            else if (triggerRaw.startsWith("is put from the deck"))                                     trigger = "milled";
+            else if (triggerRaw.startsWith("is discarded from your hand"))
+                trigger = triggerRaw.contains("opponent") ? "discarded by opponent's effect" : "discarded by ability";
             else if (triggerRaw.contains("discard") && triggerRaw.contains("due to your"))                  trigger = discardByEffectTrigger(triggerRaw);
             // Its self-facing sibling, 16-114C White Mage. Same ordering constraint: "due to
             // Summons" contains "summon".
             else if (triggerRaw.contains("discard") && triggerRaw.contains("due to summon"))                trigger = "you discard by effect";
+            // Its ability-only sibling, 29-040H Adelle — a Summon making you discard does not count.
+            else if (triggerRaw.contains("discard") && triggerRaw.endsWith("due to an ability"))          trigger = "you discard by ability";
             // "becomes dull due to your Summon or ability" — PR-156 Zack. Must precede the "summon"
             // branch below for the same reason its two neighbours do: "due to your Summon or
             // ability" contains "summon", and that branch would file this as a cast-a-Summon
@@ -4484,7 +4582,8 @@ public record CardData(
             else if (triggerRaw.contains("dull") && triggerRaw.contains("due to your"))                     trigger = "becomes dull by effect";
             // Its mirror, and under the same ordering constraint for the same reason — 13-109R
             // Hope carries both, one per [[br]] segment.
-            else if (triggerRaw.contains("active") && triggerRaw.contains("due to your"))                   trigger = "becomes active by effect";
+            // "activ", not "active": Zu's and Baralai's "is activated" does not contain "active".
+            else if (triggerRaw.contains("activ") && triggerRaw.contains("due to your"))                    trigger = "becomes active by effect";
             // "casts a card removed from the game" — 29-008L Zidane. Read before the branches below
             // for the reason its neighbours are: nothing else in the chain claims it today, but it
             // is a cast trigger and belongs beside the Summon one rather than after the fall-through
@@ -4504,7 +4603,20 @@ public record CardData(
             // "break zone".
             else if (triggerRaw.contains("break zone")
                     && DAMAGED_BY_BZ_SUBJECT.matcher(card).matches())                               trigger = "damaged card put into break zone";
-            else if (triggerRaw.contains("break zone"))                                                     trigger = "put into break zone";
+            // 11-065H Ardyn. A trigger of its own rather than a subject clause: only the card itself
+            // prints it, and the self-dispatch is where the cause is known.
+            else if (triggerRaw.contains("break zone") && triggerRaw.endsWith("by your opponent's summons or abilities"))
+                // "in any situation" (12-074H Argy) takes the hand and deck routes as well as the field.
+                trigger = triggerRaw.contains("in any situation") ? "put into break zone any way by opponent's effect"
+                        : "put into break zone by opponent's effect";
+            else if (triggerRaw.contains("break zone")) {
+                trigger = "put into break zone";
+                // 1-213S Tidus: "the Forward Card Name Yuna is put from your field …" is the watcher
+                // form the subject matcher reads as "a Card Name Yuna Forward you control".
+                Matcher theNamed = THE_TYPE_CARD_NAME_SUBJECT.matcher(card);
+                if (triggerRaw.contains("from your field") && theNamed.matches())
+                    card = "a Card Name " + theNamed.group("name").trim() + " " + theNamed.group("type") + " you control";
+            }
             // "chosen by an ability of a Character opponent controls" — 3-088L Delita. Must precede
             // both branches below, which are satisfied by "chosen" + "abilit" alone and would file
             // this as the plain ability watcher. That one's dispatch carries no acting card, so
@@ -4538,7 +4650,15 @@ public record CardData(
                         ? "opponent character returns to hand" : "opponent forward returns to hand";
             else if (warpOnly)                                                                               trigger = "enters the field";
             else if (triggerRaw.contains("warp"))                                                           trigger = "warp placed";
-            else if (triggerRaw.contains("deals damage") && triggerRaw.contains("opponent"))                trigger = "deals damage to opponent";
+            // One trigger for both events, not Breaktouch's: its payoff is an ordinary effect (draw,
+            // break itself), so it goes on the Stack whether or not the Forward survived.
+            else if (triggerRaw.contains("deals damage to your opponent or to a forward"))               trigger = "deals damage to opponent or forward";
+            // A filter subject watching someone else deal damage — 20-014R Tifa ("a Category VII
+            // Character you control"). Not Breaktouch, whose subject is the card itself.
+            else if (triggerRaw.equals("deals damage to a forward opponent controls")
+                    && card.matches("(?i)^an?\\s+.+\\s+you\\s+control$"))                                       trigger = "watched character deals damage to forward";
+            else if (triggerRaw.contains("deals damage") && triggerRaw.contains("opponent")
+                    && !triggerRaw.endsWith("forward opponent controls"))                                     trigger = "deals damage to opponent";
             else if (triggerRaw.contains("deals damage"))                                                   trigger = "deals damage to forward";
             else if (triggerRaw.contains("receive") && triggerRaw.contains("fifth point of damage"))        trigger = "you receive fifth damage";
             else if (triggerRaw.contains("receive")
@@ -5851,9 +5971,22 @@ public record CardData(
      * have already been identified as action or auto abilities are still re-examined here
      * because the outer structure differs; the parse is additive and does not conflict.
      */
+    /**
+     * "When your opponent controls 2 or more Forwards, Ephemeral Phantom gains +2000 power." — 2-004C,
+     * the one printing that states a continuous boost with "When". No event happens; it is the "If
+     * you control …" field boost in other words, and is read as one.
+     */
+    private static final Pattern STATIC_WHEN_CONTROL_BOOST = Pattern.compile(
+        "(?i)(?<lead>^|\\[\\[br\\]\\]\\s*)When\\s+(?<rest>(?:your\\s+opponent\\s+controls|you\\s+control)\\s+[^,.]+,\\s+[^.]*?\\bgains\\s+\\+\\d+\\s+power)");
+
+    private static String staticWhenAsIf(String textEn) {
+        return STATIC_WHEN_CONTROL_BOOST.matcher(textEn).replaceAll("${lead}If ${rest}");
+    }
+
     public static List<IfControlBoost> parseIfControlBoosts(String textEn, String cardType) {
         if (textEn == null || textEn.isBlank()) return List.of();
         if ("Summon".equalsIgnoreCase(cardType)) return List.of();
+        textEn = staticWhenAsIf(textEn);
 
         List<IfControlBoost> result = new ArrayList<>();
         for (String raw : textEn.split("(?i)\\[\\[br\\]\\]")) {
@@ -9298,7 +9431,7 @@ public record CardData(
         if ("Summon".equalsIgnoreCase(cardType))  return List.of();
 
         // Remove EX Burst block entirely — it is either an action ability or a summon effect
-        String text = EX_BURST_TAG.matcher(textEn).replaceAll(" ");
+        String text = EX_BURST_TAG.matcher(staticWhenAsIf(textEn)).replaceAll(" ");
         // Join "select N of M following actions" headers with their quoted sub-actions so the
         // whole ability collapses into a single [[br]]-delimited segment (same as auto-ability parsing).
         text = joinSelectActions(text);

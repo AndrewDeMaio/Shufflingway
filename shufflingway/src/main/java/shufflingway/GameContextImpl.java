@@ -153,6 +153,7 @@ final class GameContextImpl implements GameContext {
 	 */
 	private Consumer<CardData> revealPlacement() {
 		return c -> {
+			mw.entryOrigin.put(c, MainWindow.EntryOrigin.DECK);
 			if (c.isBackup())       { if (isP1) mw.placeCardInFirstBackupSlot(c); else mw.placeP2CardInFirstBackupSlot(c); }
 			else if (c.isMonster()) { if (isP1) mw.placeCardInMonsterZone(c);     else mw.placeP2CardInMonsterZone(c); }
 			else                    { if (isP1) mw.placeCardInForwardZone(c);     else mw.placeP2CardInForwardZone(c); }
@@ -1069,6 +1070,15 @@ final class GameContextImpl implements GameContext {
 				// have to redraw — the same refresh setCardElement's callers do by hand.
 				mw.refreshAllForwardSlots();
 				for (int i = 0; i < mw.p2ForwardCards.size(); i++) mw.refreshP2ForwardSlot(i);
+			}
+
+			@Override public void setSourceElementUntilEndOfTurn(CardData source, String element) {
+				if (source == null || element == null) return;
+				mw.elementOverrideMap.put(source, element);
+				logEntry(source.name() + " → element becomes " + element + " until the end of the turn");
+				addEndOfTurnEffect(later -> {
+					if (element.equals(mw.elementOverrideMap.get(source))) mw.elementOverrideMap.remove(source);
+				});
 			}
 
 			@Override public String selectElement(String prompt) {
@@ -2548,6 +2558,7 @@ final class GameContextImpl implements GameContext {
 				for (int i = bz.size() - 1; i >= 0; i--)
 					if (meetsCardNameFilter(bz.get(i), cardName)) toPlay.add(bz.remove(i));
 				for (CardData card : toPlay) {
+					mw.entryOrigin.put(card, MainWindow.EntryOrigin.BREAK_ZONE);
 					logEntry(card.name() + " played from Break Zone → field" + (dull ? " dull" : ""));
 					if (isP1) {
 						if (card.isBackup())       mw.placeCardInFirstBackupSlot(card);
@@ -2579,6 +2590,24 @@ final class GameContextImpl implements GameContext {
 				if (isP1) mw.refreshP1BreakLabel(); else mw.refreshP2BreakLabel();
 			}
 
+			@Override public void returnSourceFromBreakZoneToHand(CardData source) {
+				if (source == null) return;
+				Boolean ownerIsP1 = mw.gameState.getIdentity().get(source);
+				if (ownerIsP1 == null) return;
+				List<CardData> bz = ownerIsP1 ? mw.gameState.getP1BreakZone() : mw.gameState.getP2BreakZone();
+				for (int i = bz.size() - 1; i >= 0; i--) {
+					if (bz.get(i) != source) continue;
+					bz.remove(i);
+					(ownerIsP1 ? mw.gameState.getP1Hand() : mw.gameState.getP2Hand()).add(source);
+					logEntry((ownerIsP1 ? "" : "[P2] ") + source.name() + " → hand from Break Zone");
+					if (ownerIsP1) { mw.refreshP1BreakLabel(); mw.refreshP1HandLabel(); }
+					else           { mw.refreshP2BreakLabel(); mw.refreshP2HandCountLabel(); }
+					mw.noteAddedToHand(source, ownerIsP1, true);
+					mw.notifyCardsAddedToHandFromBreakZone(ownerIsP1);
+					return;
+				}
+			}
+
 			@Override public void returnSourceFromBreakZoneToField(CardData source, boolean dull) {
 				if (source == null) return;
 				List<CardData> bz = isP1 ? mw.gameState.getP1BreakZone() : mw.gameState.getP2BreakZone();
@@ -2588,6 +2617,7 @@ final class GameContextImpl implements GameContext {
 				for (int i = bz.size() - 1; i >= 0 && at < 0; i--) if (bz.get(i) == source) at = i;
 				if (at < 0) return;
 				CardData card = bz.remove(at);
+				mw.entryOrigin.put(card, MainWindow.EntryOrigin.BREAK_ZONE);
 				logEntry(card.name() + " returned from Break Zone → field" + (dull ? " dull" : ""));
 				if (card.isBackup()) {
 					if (isP1) mw.placeCardInFirstBackupSlot(card); else mw.placeP2CardInFirstBackupSlot(card);
@@ -2630,6 +2660,7 @@ final class GameContextImpl implements GameContext {
 				for (int i = bz.size() - 1; i >= 0 && at < 0; i--) if (bz.get(i) == source) at = i;
 				if (at < 0) return;
 				CardData card = bz.remove(at);
+				mw.entryOrigin.put(card, MainWindow.EntryOrigin.BREAK_ZONE);
 				logEntry(card.name() + " played from Break Zone → opponent's field");
 				boolean toP1 = !isP1;
 				if (card.isBackup())       { if (toP1) mw.placeCardInFirstBackupSlot(card); else mw.placeP2CardInFirstBackupSlot(card); }
@@ -2759,14 +2790,11 @@ final class GameContextImpl implements GameContext {
 				mw.lastRemovedFromGameCardPower = p1Forward(idx).power();
 				logEntry(p1Forward(idx).name() + " → Removed From Game");
 				mw.startRfpAnim(idx, true);
-				List<CardData> bz = mw.gameState.getP1BreakZone();
-				int before = bz.size();
+				// Straight to the removed-from-game zone. This used to break the Forward and then move
+				// it out of the Break Zone, so every removal fired the card's own "put into the Break
+				// Zone" triggers and counted as a Forward broken this turn.
 				mw.suppressNextBreakAnim = true;
-				mw.breakP1Forward(idx);
-				while (bz.size() > before)
-					mw.gameState.addToPermanentRfp(bz.remove(bz.size() - 1));
-				mw.refreshP1BreakLabel();
-				mw.refreshP1WarpZoneUI();
+				mw.removeP1ForwardToRfg(idx);
 			}
 
 			@Override public void removeP2ForwardFromGame(int idx) {
@@ -2775,14 +2803,11 @@ final class GameContextImpl implements GameContext {
 				mw.lastRemovedFromGameCardPower = mw.p2ForwardCards.get(idx).power();
 				logEntry("[P2] " + mw.p2ForwardCards.get(idx).name() + " → Removed From Game");
 				mw.startRfpAnim(idx, false);
-				List<CardData> bz = mw.gameState.getP2BreakZone();
-				int before = bz.size();
+				// Straight to the removed-from-game zone. This used to break the Forward and then move
+				// it out of the Break Zone, so every removal fired the card's own "put into the Break
+				// Zone" triggers and counted as a Forward broken this turn.
 				mw.suppressNextBreakAnim = true;
-				mw.breakP2Forward(idx);
-				while (bz.size() > before)
-					mw.gameState.addToPermanentRfp(bz.remove(bz.size() - 1));
-				mw.refreshP2BreakLabel();
-				mw.refreshP2WarpZoneUI();
+				mw.removeP2ForwardToRfg(idx);
 			}
 
 			/**
@@ -3589,26 +3614,7 @@ final class GameContextImpl implements GameContext {
 			}
 
 			@Override public void opponentMillCards(int count) {
-				Deque<CardData> deck = mw.gameState.getP2MainDeck();
-				JLayeredPane lp    = mw.frame.getRootPane().getLayeredPane();
-				Point start = SwingUtilities.convertPoint(
-						mw.p2DeckLabel, mw.p2DeckLabel.getWidth() / 2, mw.p2DeckLabel.getHeight() / 2, lp);
-				Point end   = SwingUtilities.convertPoint(
-						mw.p2BreakLabel, mw.p2BreakLabel.getWidth() / 2, mw.p2BreakLabel.getHeight() / 2, lp);
-				BufferedImage img = CardAnimation.toARGB(
-						mw.loadCardbackImage(), CardAnimation.CARD_W, CardAnimation.CARD_H);
-				int milled = 0;
-				for (int i = 0; i < count && !deck.isEmpty(); i++) {
-					CardData card = deck.pop();
-					mw.addToBreakZone(card);
-					logEntry("[P2] Mill: \"" + card.name() + "\" → Break Zone");
-					mw.cardSlideAnimator.startSlide(img, start, end, i * 5);
-					milled++;
-				}
-				if (milled > 0) {
-					mw.refreshP2DeckLabel();
-					mw.refreshP2BreakLabel();
-				}
+				millTop(!isP1, count);
 			}
 
 			@Override public void opponentMillIfSameElementDraw(int millCount, int drawCount) {
@@ -3644,50 +3650,52 @@ final class GameContextImpl implements GameContext {
 
 			/** Mills up to {@code millCount} cards off the opponent's deck, animated, and returns them. */
 			private List<CardData> millOpponentTop(int millCount) {
-				Deque<CardData> oppDeck = isP1 ? mw.gameState.getP2MainDeck() : mw.gameState.getP1MainDeck();
+				return millTop(!isP1, millCount);
+			}
+
+			@Override public void millCards(int count) {
+				millTop(isP1, count);
+			}
+
+			/**
+			 * Mills up to {@code count} cards off {@code deckIsP1}'s deck into its owner's Break Zone,
+			 * animated, and returns them. Relative to the side, not the seat: both public forms used to
+			 * name P1's and P2's deck outright, so a P2 "put the top 2 cards of your deck into the Break
+			 * Zone" (22-084R Fujin) milled P1. Each card is announced to the mill watchers as it lands.
+			 */
+			private List<CardData> millTop(boolean deckIsP1, int count) {
+				Deque<CardData> deck = deckIsP1 ? mw.gameState.getP1MainDeck() : mw.gameState.getP2MainDeck();
 				JLayeredPane lp = mw.frame.getRootPane().getLayeredPane();
-				JLabel deckLbl  = isP1 ? mw.p2DeckLabel  : mw.p1DeckLabel;
-				JLabel breakLbl = isP1 ? mw.p2BreakLabel : mw.p1BreakLabel;
+				JLabel deckLbl  = deckIsP1 ? mw.p1DeckLabel  : mw.p2DeckLabel;
+				JLabel breakLbl = deckIsP1 ? mw.p1BreakLabel : mw.p2BreakLabel;
 				Point start = SwingUtilities.convertPoint(deckLbl,  deckLbl.getWidth() / 2,  deckLbl.getHeight() / 2,  lp);
 				Point end   = SwingUtilities.convertPoint(breakLbl, breakLbl.getWidth() / 2, breakLbl.getHeight() / 2, lp);
 				BufferedImage img = CardAnimation.toARGB(
 						mw.loadCardbackImage(), CardAnimation.CARD_W, CardAnimation.CARD_H);
 				List<CardData> milled = new ArrayList<>();
-				for (int i = 0; i < millCount && !oppDeck.isEmpty(); i++) {
-					CardData card = oppDeck.pop();
-					(isP1 ? mw.gameState.getP2BreakZone() : mw.gameState.getP1BreakZone()).add(card);
-					logEntry((isP1 ? "[P2] " : "[P1] ") + "Mill: \"" + card.name() + "\" → Break Zone");
+				for (int i = 0; i < count && !deck.isEmpty(); i++) {
+					CardData card = deck.pop();
+					// addToBreakZone places the card by its owner; a card in a deck belongs to that deck's player.
+					mw.gameState.getIdentity().putIfAbsent(card, deckIsP1);
+					mw.addToBreakZone(card);
+					logEntry((deckIsP1 ? "[P1] " : "[P2] ") + "Mill: \"" + card.name() + "\" → Break Zone");
 					mw.cardSlideAnimator.startSlide(img, start, end, i * 5);
 					milled.add(card);
 				}
 				if (!milled.isEmpty()) {
-					if (isP1) { mw.refreshP2DeckLabel(); mw.refreshP2BreakLabel(); }
-					else      { mw.refreshP1DeckLabel(); mw.refreshP1BreakLabel(); }
+					if (deckIsP1) { mw.refreshP1DeckLabel(); mw.refreshP1BreakLabel(); }
+					else          { mw.refreshP2DeckLabel(); mw.refreshP2BreakLabel(); }
+				}
+				Boolean causeSide = mw.resolvingEffectSide();
+				for (CardData card : milled) {
+					mw.autoAbilityTriggers.triggerAutoAbilitiesForMilled(card, deckIsP1);
+					// 29-043R Aerith — anyone's Summon or ability.
+					if (causeSide != null) mw.autoAbilityTriggers.triggerAutoAbilitiesForOwnCardToBzByEffect(card, deckIsP1);
+					// 12-074H Argy — "in any situation", the deck included.
+					if (causeSide != null && causeSide != deckIsP1)
+						mw.autoAbilityTriggers.triggerAutoAbilitiesForPutIntoBzByOpponent(card, deckIsP1);
 				}
 				return milled;
-			}
-
-			@Override public void millCards(int count) {
-				Deque<CardData> deck = mw.gameState.getP1MainDeck();
-				JLayeredPane lp    = mw.frame.getRootPane().getLayeredPane();
-				Point start = SwingUtilities.convertPoint(
-						mw.p1DeckLabel, mw.p1DeckLabel.getWidth() / 2, mw.p1DeckLabel.getHeight() / 2, lp);
-				Point end   = SwingUtilities.convertPoint(
-						mw.p1BreakLabel, mw.p1BreakLabel.getWidth() / 2, mw.p1BreakLabel.getHeight() / 2, lp);
-				BufferedImage img = CardAnimation.toARGB(
-						mw.loadCardbackImage(), CardAnimation.CARD_W, CardAnimation.CARD_H);
-				int milled = 0;
-				for (int i = 0; i < count && !deck.isEmpty(); i++) {
-					CardData card = deck.pop();
-					mw.addToBreakZone(card);
-					logEntry("[P1] Mill: \"" + card.name() + "\" → Break Zone");
-					mw.cardSlideAnimator.startSlide(img, start, end, i * 5);
-					milled++;
-				}
-				if (milled > 0) {
-					mw.refreshP1DeckLabel();
-					mw.refreshP1BreakLabel();
-				}
 			}
 
 
@@ -5196,6 +5204,7 @@ final class GameContextImpl implements GameContext {
 					CardData card = bz.remove(i);
 					hand.add(card);
 					logEntry(card.name() + " → " + (oppIsP1 ? "P1" : "P2") + " hand from Break Zone");
+					mw.noteAddedToHand(card, oppIsP1, true);
 				}
 				if (oppIsP1) { mw.refreshP1BreakLabel(); mw.refreshP1HandLabel(); }
 				else         { mw.refreshP2BreakLabel(); mw.refreshP2HandCountLabel(); }
@@ -5472,6 +5481,7 @@ final class GameContextImpl implements GameContext {
 					CardData card = p1Bz.remove(t.idx());
 					mw.gameState.getP1Hand().add(card);
 					logEntry(card.name() + " → P1 hand from Break Zone");
+					mw.noteAddedToHand(card, true, true);
 				}
 				List<ForwardTarget> p2Sorted = new ArrayList<>(p2Picks);
 				p2Sorted.sort(java.util.Comparator.comparingInt(ForwardTarget::idx).reversed());
@@ -5479,6 +5489,7 @@ final class GameContextImpl implements GameContext {
 					CardData card = p2Bz.remove(t.idx());
 					mw.gameState.getP2Hand().add(card);
 					logEntry("[AI] " + card.name() + " → P2 hand from Break Zone");
+					mw.noteAddedToHand(card, false, true);
 				}
 
 				if (!p1Picks.isEmpty()) { mw.refreshP1BreakLabel(); mw.refreshP1HandLabel(); }
@@ -5521,6 +5532,7 @@ final class GameContextImpl implements GameContext {
 					CardData card = bz.remove(t.idx());
 					hand.add(card);
 					logEntry(card.name() + " → " + (isP1 ? "P1" : "P2") + " hand from Break Zone");
+					mw.noteAddedToHand(card, isP1, true);
 				}
 				if (isP1) { mw.refreshP1BreakLabel(); mw.refreshP1HandLabel(); }
 				else       { mw.refreshP2BreakLabel(); mw.refreshP2HandCountLabel(); }
@@ -5558,6 +5570,7 @@ final class GameContextImpl implements GameContext {
 				List<CardData> hand = isP1 ? mw.gameState.getP1Hand() : mw.gameState.getP2Hand();
 				hand.add(card);
 				logEntry(card.name() + " → " + (isP1 ? "P1" : "P2") + " hand from Break Zone");
+				mw.noteAddedToHand(card, isP1, true);
 				if (isP1) { mw.refreshP1BreakLabel(); mw.refreshP1HandLabel(); }
 				else       { mw.refreshP2BreakLabel(); mw.refreshP2HandCountLabel(); }
 				mw.notifyCardsAddedToHandFromBreakZone(isP1);
@@ -6368,6 +6381,7 @@ final class GameContextImpl implements GameContext {
 					return null;
 				}
 				CardData card = bz.remove(t.idx());
+				mw.entryOrigin.put(card, MainWindow.EntryOrigin.BREAK_ZONE);
 				String src = t.isP1() == isP1 ? "Break Zone" : "opponent's Break Zone";
 				// Which side the card lands on: normally the one whose Break Zone it came from,
 				// but "onto your field" puts it on the resolving player's instead.
@@ -6443,6 +6457,7 @@ final class GameContextImpl implements GameContext {
 					return;
 				}
 				CardData card = bz.remove(t.idx());
+				mw.entryOrigin.put(card, MainWindow.EntryOrigin.BREAK_ZONE);
 				String src = t.isP1() ? "Break Zone" : "opponent's Break Zone";
 				logEntry(card.name() + " played from " + src + " onto field (dull)");
 				if (t.isP1()) {
@@ -6644,6 +6659,7 @@ final class GameContextImpl implements GameContext {
 				if (t.isP1()) mw.refreshP1BreakLabel(); else mw.refreshP2BreakLabel();
 				if (isP1) mw.refreshP1HandLabel(); else mw.refreshP2HandCountLabel();
 				mw.notifyCardsAddedToHandFromBreakZone(isP1);
+				mw.noteAddedToHand(card, isP1, true);
 			}
 
 			@Override public void putBreakZoneTargetOnTopOfDeck(ForwardTarget t) {
@@ -8509,6 +8525,7 @@ final class GameContextImpl implements GameContext {
 						mw.refreshP1BreakLabel();
 						mw.refreshP1HandLabel();
 						mw.notifyCardsAddedToHandFromBreakZone(true);
+						mw.noteAddedToHand(c, true, true);
 						return;
 					}
 				}
@@ -8814,9 +8831,15 @@ final class GameContextImpl implements GameContext {
 
 			@Override public void mayPayElementCpToEffect(String element, int count,
 					java.util.function.Consumer<GameContext> onPay) {
-				final int need = Math.max(1, count);
-				String cost = ("《" + element + "》").repeat(need);
-				Map<String, Integer> elementNeeds = Map.of(element, need);
+				mayPayElementAndGenericCpToEffect(element, count, 0, onPay);
+			}
+
+			@Override public void mayPayElementAndGenericCpToEffect(String element, int count, int generic,
+					java.util.function.Consumer<GameContext> onPay) {
+				final int elementCp = Math.max(1, count);
+				final int need = elementCp + Math.max(0, generic);
+				String cost = ("《" + element + "》").repeat(elementCp) + (generic > 0 ? "《" + generic + "》" : "");
+				Map<String, Integer> elementNeeds = Map.of(element, elementCp);
 				if (!isP1) {
 					if (mw.autoAbilityTriggers.aiPayCp(false, need, elementNeeds) >= need) {
 						logEntry("[P2 AI] Paid " + cost + " — applying effect");
@@ -9205,6 +9228,7 @@ final class GameContextImpl implements GameContext {
 						logEntry("Discards " + d.name());
 						mw.p1Turn.discardedByEffectThisTurn = true;
 						mw.addToBreakZone(d, false);
+						mw.noteDiscardedFromHand(d, true);
 					}
 					mw.refreshP1HandLabel();
 				} else {
@@ -9215,6 +9239,7 @@ final class GameContextImpl implements GameContext {
 						logEntry("[P2] Discards " + d.name());
 						mw.p2Turn.discardedByEffectThisTurn = true;
 						mw.addToBreakZone(d, false);
+						mw.noteDiscardedFromHand(d, false);
 					}
 					mw.refreshP2HandCountLabel();
 				}

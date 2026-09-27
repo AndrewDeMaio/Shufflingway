@@ -8,6 +8,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
 import java.util.regex.Matcher;
@@ -153,7 +154,7 @@ final class ActionResolverPlay {
      * this queues {@link GameContext#playNamedFromHoldingZoneOntoField} for the current turn's
      * end phase and lets it find the card wherever the ability's earlier half left it.
      */
-    static Consumer<GameContext> tryParseEndOfTurnPlayNamedOntoField(String text) {
+    static Consumer<GameContext> tryParseEndOfTurnPlayNamedOntoField(String text, CardData source) {
         Matcher m = PLAY_NAMED_ONTO_FIELD_AT_END_OF_TURN.matcher(text.trim());
         if (!m.matches()) return null;
         String name = m.group("name").trim();
@@ -161,6 +162,18 @@ final class ActionResolverPlay {
         // Ghost (VII) 20-046C, Cactuar Conductor 26-049R), not at a name the RFG lookup could
         // find. That form is the choose chain's followup, and must be left to it.
         if (name.equalsIgnoreCase("it") || name.equalsIgnoreCase("them")) return null;
+        // Every named printing is the card itself (11-065H / B-024 Ardyn, 12-024H Emet-Selch,
+        // 16-124H Lightning, 21-117R Rhus, 28-081L Kain), so it comes back by identity from
+        // wherever the ability left it. By name, any copy — or the opponent's — would do.
+        if (source != null && name.equalsIgnoreCase(source.name())) {
+            return ctx -> {
+                ctx.logEntry("Effect: Play " + name + " onto the field at the end of the turn");
+                ctx.addEndOfTurnEffect(later -> {
+                    later.playSourceFromRfpOntoField(source);
+                    later.returnSourceFromBreakZoneToField(source, false);
+                });
+            };
+        }
         return ctx -> {
             ctx.logEntry("Effect: Play " + name + " onto the field at the end of the turn");
             ctx.addEndOfTurnEffect(ctx2 -> ctx2.playNamedFromHoldingZoneOntoField(name));
@@ -450,6 +463,53 @@ final class ActionResolverPlay {
         };
     }
 
+    /**
+     * Parses "At the end of the turn, remove [Self] from the game." — 20-130L Zenos, the price of
+     * casting him from the Break Zone. Queued, not done now: RemoveNamedFromGame find()s the
+     * removal out of the sentence and used to remove him the moment he arrived.
+     */
+    static Consumer<GameContext> tryParseRemoveSelfAtEndOfTurn(String text, CardData source) {
+        if (source == null) return null;
+        Matcher m = REMOVE_SELF_AT_END_OF_TURN.matcher(text.trim());
+        if (!m.matches()) return null;
+        if (!m.group("name").trim().equalsIgnoreCase(source.name())) return null;
+        return ctx -> {
+            ctx.logEntry("End-of-turn effect queued: remove " + source.name() + " from the game");
+            ctx.addEndOfTurnEffect(later -> later.removeSourceCardFromGame(source));
+        };
+    }
+
+    /**
+     * Parses "Name 1 Element other than Light and Dark. Until the end of the turn, the Element of
+     * [Self] becomes the named one." — 1-173C Mime. Both sentences or neither.
+     */
+    static Consumer<GameContext> tryParseNameElementSelfBecomesUntilEot(String text, CardData source) {
+        if (source == null) return null;
+        Matcher m = NAME_ELEMENT_SELF_BECOMES_UNTIL_EOT.matcher(text.trim());
+        if (!m.matches() || !m.group("name").trim().equalsIgnoreCase(source.name())) return null;
+        return ctx -> {
+            String element = ctx.selectElement(source.name() + " — name 1 Element other than Light and Dark",
+                    Set.of("Light", "Dark"));
+            if (element == null) { ctx.logEntry("No Element named"); return; }
+            ctx.setSourceElementUntilEndOfTurn(source, element);
+        };
+    }
+
+    /**
+     * Parses "Add [Self] to your hand at the end of the turn." — 12-074H Argy. Queued, and by
+     * identity: ReturnNamedToHand find()s "add Argy to your hand" out of the sentence and returned
+     * a card by that name at once.
+     */
+    static Consumer<GameContext> tryParseAddSelfToHandAtEndOfTurn(String text, CardData source) {
+        if (source == null) return null;
+        Matcher m = ADD_SELF_TO_HAND_AT_END_OF_TURN.matcher(text.trim());
+        if (!m.matches() || !m.group("name").trim().equalsIgnoreCase(source.name())) return null;
+        return ctx -> {
+            ctx.logEntry("End-of-turn effect queued: add " + source.name() + " to your hand");
+            ctx.addEndOfTurnEffect(later -> later.returnSourceFromBreakZoneToHand(source));
+        };
+    }
+
     static Consumer<GameContext> tryParsePlaySourceOntoField(String text, CardData source) {
         if (source == null) return null;
         Matcher m = PLAY_SOURCE_ONTO_FIELD_PATTERN.matcher(text);
@@ -471,9 +531,12 @@ final class ActionResolverPlay {
                 ctx.playSourceFromHandOntoField(source);
             };
         }
+        // This copy, by identity. Every printing (26-122H Ardyn, 11-117R Ceodore, 17-019R Marilith …)
+        // is an ability of the card in the Break Zone about itself; by name, a second copy there
+        // came out too, and the unique-name rule then sent both back.
         return ctx -> {
             ctx.logEntry("Effect: Play " + resolvedName + " from Break Zone → field" + (dull ? " dull" : ""));
-            ctx.playAllByNameFromOwnBreakZoneDull(resolvedName, dull);
+            ctx.returnSourceFromBreakZoneToField(source, dull);
         };
     }
 

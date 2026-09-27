@@ -9497,7 +9497,9 @@ public class CardBehaviorTest {
 
         GameContext endPhase = mock(GameContext.class);
         delayed.getValue().accept(endPhase);
-        verify(endPhase).playNamedFromHoldingZoneOntoField("Lightning");
+        // By identity — this Lightning, from wherever the first sentence left her — not by name.
+        verify(endPhase).playSourceFromRfpOntoField(lightning);
+        verify(endPhase, never()).playNamedFromHoldingZoneOntoField(anyString());
     }
 
     // The same wording with a pronoun (Kytes 15-047R, Ghost (VII) 20-046C) points at a card chosen
@@ -39549,7 +39551,7 @@ public class CardBehaviorTest {
 
 		// Order matters: he is on the field before the damage his arrival costs is dealt.
 		InOrder order = inOrder(ctx);
-		order.verify(ctx).playAllByNameFromOwnBreakZoneDull("Ardyn", false);
+		order.verify(ctx).returnSourceFromBreakZoneToField(ardyn, false);
 		order.verify(ctx).dealDamageToSelf(1);
 	}
 
@@ -68477,6 +68479,990 @@ public class CardBehaviorTest {
 		dealAbilityDamage(mw, striker, true, 4000);
 		assertTrue(mw.gameState.getP2BreakZone().contains(baigan));
 		assertTrue(mw.gameState.getP1BreakZone().contains(striker), "7000 to every Forward opponent controls");
+	}
+
+	// =========================================================================================
+	// Three more unrecognised triggers, each a phrase the trigger arm did not know:
+	//   "deals damage to your opponent or to a Forward" — 10-001H Ignacio, 7-013R Berserker,
+	//     7-018L Lann. One trigger for both events, run on the Stack whether or not the damaged
+	//     Forward survived (not Breaktouch's "deals damage to forward").
+	//   "is discarded from your hand due to an ability / your opponent's Summons or abilities" —
+	//     16-027C / 16-007R / 16-088L Black Waltz 1-3, 19-039R Emerald Weapon. Fired for the
+	//     discarded card itself, from the Break Zone it lands in.
+	//   "is put from the deck / your opponent's deck into the Break Zone" — 22-084R Fujin,
+	//     22-087R Raijin, 10-050C Thief. Fired per milled card.
+	// Watchers sit on P2's side, so any choice their payoff makes is the AI's.
+	// =========================================================================================
+
+	private static final String IGNACIO_10_001H = "When Ignacio deals damage to your opponent or to a Forward, "
+			+ "draw 1 card.[[br]]   Discard 1 Fire card: Ignacio gains +2000 power until the end of the turn.";
+	private static final String BERSERKER_7_013R =
+			"When Berserker deals damage to your opponent or to a Forward, break Berserker.";
+	private static final String LANN_7_018L = "If you control Card Name Reynn, Lann gains +1000 power.[[br]] When "
+			+ "Lann deals damage to your opponent or to a Forward, choose 1 Forward. You may pay "
+			+ "《Fire》《Fire》《Fire》《1》. If you do so, deal it damage equal to Lann's power.";
+	private static final String BLACK_WALTZ_2_16_007R = "When Black Waltz 2 is discarded from your hand due to an "
+			+ "ability, choose 1 Forward. Deal it 4000 damage.[[br]]   《0》: Discard 1 Job Black Mage from your hand. "
+			+ "When you do so, choose 1 Forward opponent controls. Deal it 5000 damage.";
+	private static final String EMERALD_WEAPON_19_039R = "When Emerald Weapon is discarded from your hand due to "
+			+ "your opponent's Summons or abilities, you may pay 《1》. If you do so, play Emerald Weapon from your "
+			+ "Break Zone onto the field.";
+	private static final String FUJIN_22_084R = "When Fujin enters the field, put the top 2 cards of your deck "
+			+ "into the Break Zone.[[br]]   When Fujin is put from the deck into the Break Zone, you may play Fujin "
+			+ "from your Break Zone onto the field.";
+	private static final String RAIJIN_22_087R = "When Raijin enters the field, put the top 2 cards of your deck "
+			+ "into the Break Zone.[[br]]   When Raijin is put from the deck into the Break Zone, you may play Raijin "
+			+ "from your Break Zone onto the field.";
+	private static final String THIEF_10_050C = "When a card is put from your opponent's deck into the Break Zone, "
+			+ "Thief gains +2000 power until the end of the turn.[[br]]   When Thief attacks, your opponent puts the "
+			+ "top card of his/her deck into the Break Zone.";
+
+	@Test
+	void theThreeNewTriggerPhrasesClassify() {
+		assertEquals("deals damage to opponent or forward", CardData.parseAutoAbilities(IGNACIO_10_001H).get(0).trigger());
+		assertEquals("deals damage to opponent or forward", CardData.parseAutoAbilities(BERSERKER_7_013R).get(0).trigger());
+		assertEquals("deals damage to opponent or forward", CardData.parseAutoAbilities(LANN_7_018L).get(0).trigger());
+		assertEquals("discarded by ability", CardData.parseAutoAbilities(BLACK_WALTZ_2_16_007R).get(0).trigger());
+		AutoAbility emerald = CardData.parseAutoAbilities(EMERALD_WEAPON_19_039R).get(0);
+		assertEquals("discarded by opponent's effect", emerald.trigger(),
+				"not the opponent-discard watcher, although \"due to your opponent's\" contains \"due to your\"");
+		assertTrue(emerald.youMay());
+		assertEquals("milled", CardData.parseAutoAbilities(FUJIN_22_084R).get(1).trigger());
+		assertEquals("milled", CardData.parseAutoAbilities(RAIJIN_22_087R).get(1).trigger());
+		assertEquals("opponent card milled", CardData.parseAutoAbilities(THIEF_10_050C).get(0).trigger());
+	}
+
+	/** P2 fields {@code dealer}; P1 fields a 3000-power blocker it can hit. Returns the blocker. */
+	private static CardData dealsDamageBoard(MainWindow mw, CardData dealer) {
+		CardData blocker = makeForward("Blocker", "Ice", 1, 3000);
+		placeP1Forward(mw, blocker);
+		mw.suppressAutoAbilityForNextCards = 1;
+		placeP2Forward(mw, dealer);
+		return blocker;
+	}
+
+	@Test
+	void ignacioDrawsForBattleDamageToAForwardEvenOneItBreaks() {
+		MainWindow mw = new MainWindow();
+		CardData ignacio = makeForwardWithText("Ignacio", "Fire", 5, 9000, IGNACIO_10_001H);
+		CardData blocker = dealsDamageBoard(mw, ignacio);
+
+		mw.resolveCombat(ignacio, false, 0, blocker, true, 0);
+
+		assertTrue(mw.gameState.getP1BreakZone().contains(blocker));
+		assertEquals(List.of(ignacio), triggerSources(mw));
+		assertEquals("draw 1 card.", mw.gameState.getStack().get(0).effectText());
+	}
+
+	@Test
+	void ignacioDrawsForDamageToTheOpponentToo() {
+		MainWindow mw = new MainWindow();
+		CardData ignacio = makeForwardWithText("Ignacio", "Fire", 5, 9000, IGNACIO_10_001H);
+		dealsDamageBoard(mw, ignacio);
+
+		mw.autoAbilityTriggers.triggerAutoAbilitiesForDealsDamageToOpponent(ignacio, false);
+
+		assertEquals(List.of(ignacio), triggerSources(mw));
+	}
+
+	@Test
+	void berserkerBreaksHimselfAfterDealingDamage() {
+		MainWindow mw = new MainWindow();
+		CardData berserker = makeForwardWithText("Berserker", "Fire", 2, 8000, BERSERKER_7_013R);
+		CardData blocker = dealsDamageBoard(mw, berserker);
+
+		mw.resolveCombat(berserker, false, 0, blocker, true, 0);
+		resolveDealtDamageEntry(mw, berserker);
+
+		assertTrue(mw.gameState.getP2BreakZone().contains(berserker));
+	}
+
+	@Test
+	void lannsPayoffIsGatedOnHisFullCost() {
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.consumePreloadedTargets()).thenReturn(null);
+		CardData lann = makeForwardWithText("Lann", "Fire", 4, 8000, LANN_7_018L);
+		AutoAbility trigger = lann.autoAbilities().get(0);
+
+		ActionResolver.parse(trigger.effectText(), lann).accept(ctx);
+
+		verify(ctx).mayPayElementAndGenericCpToEffect(eq("Fire"), eq(3), eq(1), any());
+		verify(ctx, never()).damageTarget(any(), anyInt());
+	}
+
+	@Test
+	void lannDealsHisPowerOncePaid() {
+		GameContext ctx = mock(GameContext.class);
+		ForwardTarget t = new ForwardTarget(true, 0, ForwardTarget.CardZone.FORWARD);
+		when(ctx.consumePreloadedTargets()).thenReturn(List.of(t));
+		when(ctx.fieldForwardPowerByName("Lann")).thenReturn(9000);
+		doAnswer(inv -> { inv.<Consumer<GameContext>>getArgument(3).accept(ctx); return null; })
+				.when(ctx).mayPayElementAndGenericCpToEffect(anyString(), anyInt(), anyInt(), any());
+		CardData lann = makeForwardWithText("Lann", "Fire", 4, 8000, LANN_7_018L);
+
+		ActionResolver.parse(lann.autoAbilities().get(0).effectText(), lann).accept(ctx);
+
+		verify(ctx).damageTarget(t, 9000);
+	}
+
+	/** Puts {@code card} in P2's hand and discards it with {@code cause} resolving. */
+	private static void p2DiscardsDuring(MainWindow mw, CardData card, CardData cause, boolean causeIsP1) {
+		mw.gameState.getIdentity().put(card, false);
+		mw.gameState.getP2Hand().add(card);
+		if (cause != null && cause.isSummon()) { mw.currentSummonSource = cause; mw.currentSummonSourceIsP1 = causeIsP1; }
+		else if (cause != null)                { mw.currentAbilitySource = cause; mw.currentAbilitySourceIsP1 = causeIsP1; }
+		try {
+			mw.playerBreakFromHand(false, mw.gameState.getP2Hand().indexOf(card));
+		} finally {
+			mw.currentAbilitySource = null;
+			mw.currentSummonSource = null;
+		}
+	}
+
+	@Test
+	void blackWaltzAnswersBeingDiscardedByAnAbility() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForward("Genesis", "Ice", 3, 9000));
+		CardData waltz = makeForwardWithText("Black Waltz 2", "Fire", 3, 7000, BLACK_WALTZ_2_16_007R);
+
+		p2DiscardsDuring(mw, waltz, makeForward("Caster", "Fire", 2, 5000), false);
+
+		assertTrue(mw.gameState.getP2BreakZone().contains(waltz));
+		assertEquals(List.of(waltz), triggerSources(mw), "resolved from the Break Zone");
+	}
+
+	@Test
+	void blackWaltzIgnoresSummonsAndPlainDiscards() {
+		MainWindow mw = new MainWindow();
+		p2DiscardsDuring(mw, makeForwardWithText("Black Waltz 2", "Fire", 3, 7000, BLACK_WALTZ_2_16_007R),
+				makeSummon("Ifrit", "Fire", 2, ""), false);
+		assertTrue(mw.gameState.getStack().isEmpty(), "\"due to an ability\" — a Summon is not one");
+
+		p2DiscardsDuring(mw, makeForwardWithText("Black Waltz 2", "Fire", 3, 7000, BLACK_WALTZ_2_16_007R), null, false);
+		assertTrue(mw.gameState.getStack().isEmpty(), "a discard paid as a cost is not due to an ability");
+	}
+
+	@Test
+	void emeraldWeaponAnswersOnlyTheOpponentsEffects() {
+		MainWindow mw = new MainWindow();
+		CardData backup = makePlainBackup("Wind Backup", "Wind", 2);
+		mw.gameState.getIdentity().put(backup, false);
+		mw.placeP2CardInFirstBackupSlot(backup);
+		mw.p2BackupStates[0] = CardState.ACTIVE;   // pays the 《1》
+
+		CardData own = makeForwardWithText("Emerald Weapon", "Wind", 5, 9000, EMERALD_WEAPON_19_039R);
+		p2DiscardsDuring(mw, own, makeForward("Ally", "Wind", 2, 5000), false);
+		assertTrue(mw.gameState.getP2BreakZone().contains(own), "his own side's ability");
+		assertEquals(CardState.ACTIVE, mw.p2BackupStates[0]);
+
+		// The pay-if-you-do-so payoff is resolved by the trigger layer as the discard lands.
+		CardData weapon = makeForwardWithText("Emerald Weapon", "Wind", 5, 9000, EMERALD_WEAPON_19_039R);
+		p2DiscardsDuring(mw, weapon, makeSummon("Shiva", "Ice", 2, ""), true);
+		assertTrue(mw.p2ForwardCards.contains(weapon), "an opposing Summon counts; he pays and returns");
+		assertEquals(CardState.DULL, mw.p2BackupStates[0]);
+		// Only this copy: the first one, discarded earlier, stays put. Both used to come out and
+		// both were then sent back by the unique-name rule.
+		assertEquals(1, mw.p2ForwardCards.size());
+		assertTrue(mw.gameState.getP2BreakZone().stream().anyMatch(c -> c == own));
+	}
+
+	@Test
+	void ardynPlaysOnlyHimselfFromTheBreakZone() {
+		MainWindow mw = new MainWindow();
+		CardData ardyn = makeForwardWithText("Ardyn", "Dark", 4, 8000, ARDYN_26_122H);
+		CardData twin  = makeForwardWithText("Ardyn", "Dark", 4, 8000, ARDYN_26_122H);
+		for (CardData c : List.of(twin, ardyn)) {
+			mw.gameState.getIdentity().put(c, false);
+			mw.gameState.getP2BreakZone().add(c);
+		}
+
+		ActionResolver.parse("Play Ardyn onto the field.", ardyn).accept(mw.buildGameContext(false));
+
+		// By name both came out, and the unique-name rule then sent both back.
+		assertEquals(1, mw.p2ForwardCards.size());
+		assertSame(ardyn, mw.p2ForwardCards.get(0));
+		assertTrue(mw.gameState.getP2BreakZone().stream().anyMatch(c -> c == twin), "the twin stays");
+	}
+
+	@Test
+	void blackWaltzOnesAbilityDiscardsBlackWaltzTwoAndBothPayOff() {
+		MainWindow mw = new MainWindow();
+		CardData dullTarget = makeForward("Genesis", "Ice", 3, 9000);
+		placeP1Forward(mw, dullTarget);
+		mw.p1ForwardStates.set(0, CardState.DULL);
+		CardData waltz1 = makeForwardWithText("Black Waltz 1", "Ice", 3, 7000, "When Black Waltz 1 is discarded "
+				+ "from your hand due to an ability, choose 1 Forward. Deal it 4000 damage.[[br]]   《0》: Discard 1 "
+				+ "Job Black Mage from your hand. When you do so, choose 1 dull Forward opponent controls. Deal it 7000 damage.");
+		CardData waltz2 = makeJobForwardWithAutos("Black Waltz 2", "Fire", 7000, "Black Mage", BLACK_WALTZ_2_16_007R);
+		mw.suppressAutoAbilityForNextCards = 1;
+		placeP2Forward(mw, waltz1);
+		mw.gameState.getIdentity().put(waltz2, false);
+		mw.gameState.getP2Hand().add(waltz2);
+
+		// Resolve Black Waltz 1's action ability the way the Stack does: its card is the source.
+		mw.currentAbilitySource = waltz1;
+		mw.currentAbilitySourceIsP1 = false;
+		try {
+			ActionResolver.parse(waltz1.actionAbilities().get(0).effectText(), waltz1)
+					.accept(mw.buildGameContext(false));
+		} finally {
+			mw.currentAbilitySource = null;
+		}
+
+		assertTrue(mw.gameState.getP2BreakZone().contains(waltz2), "the cost of the payoff");
+		assertEquals(7000, mw.p1ForwardDamage.get(0), "Black Waltz 1's payoff hit the dull Forward");
+		assertEquals(List.of(waltz2), triggerSources(mw), "and Black Waltz 2 answers being discarded by an ability");
+	}
+
+	@Test
+	void discardingAWholeHandFiresTheDiscardedCardsOwnTriggers() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForward("Genesis", "Ice", 3, 9000));
+		CardData waltz = makeForwardWithText("Black Waltz 2", "Fire", 3, 7000, BLACK_WALTZ_2_16_007R);
+		mw.gameState.getIdentity().put(waltz, false);
+		mw.gameState.getP2Hand().add(waltz);
+
+		mw.currentAbilitySource = makeForward("Caster", "Fire", 2, 5000);
+		mw.currentAbilitySourceIsP1 = false;
+		try {
+			mw.buildGameContext(false).selfDiscardEntireHand();
+		} finally {
+			mw.currentAbilitySource = null;
+		}
+
+		assertTrue(mw.gameState.getP2BreakZone().contains(waltz));
+		assertEquals(List.of(waltz), triggerSources(mw), "the whole-hand discard used to skip every discard trigger");
+	}
+
+	// =========================================================================================
+	// Where a card came from: "enters the field from the Break Zone / from the deck" (20-130L
+	// Zenos, 25-093C Corsair, 3-082R Scarmiglione, 7-101H Mid Previa, 15-109R Ultros) and "is
+	// added to your hand from the Break Zone / from the deck due to a search effect" (14-079R
+	// Aphmau, 9-091H Nero (XIV), 16-140S Sin, 27-059C Galuf). The entry origin is recorded on the
+	// card by the moves out of those zones (MainWindow.entryOrigin); the hand arrivals are
+	// announced per card (MainWindow.noteAddedToHand). Everything on P2's side.
+	// =========================================================================================
+
+	private static final String ZENOS_20_130L = "You can cast Zenos from your Break Zone.[[br]]   When Zenos enters "
+			+ "the field from the Break Zone, at the end of the turn, remove Zenos from the game.";
+	private static final String CORSAIR_25_093C = "When Corsair enters the field from the Break Zone, draw 1 card.";
+	private static final String MID_PREVIA_7_101H = "When Mid Previa enters the field, choose 1 active Forward. Deal "
+			+ "it 3000 damage.[[br]] When Mid Previa enters the field from the Break Zone, choose 1 active Forward. "
+			+ "Deal it 6000 damage.";
+	private static final String ULTROS_15_109R = "When Ultros enters the field from the deck, choose 1 Forward. "
+			+ "Put it at the bottom of its owner's deck.";
+	private static final String NERO_9_091H = "When Nero (XIV) is added to your hand from the Break Zone, choose 1 "
+			+ "Forward. Deal it 2000 damage.";
+	private static final String SIN_16_140S = "When Sin is added to your hand from the deck due to a search effect, you "
+			+ "may pay 《3》. When you do so, choose 1 Forward. Break it.";
+	private static final String GALUF_27_059C = "When Galuf is added to your hand from the Break Zone or from the deck "
+			+ "due to a search effect, you may pay 《2》. When you do so, you may play 1 Card Name Galuf of cost 4 or "
+			+ "less from your hand onto the field. This effect will trigger only during your turn.";
+
+	@Test
+	void theOriginTriggersClassify() {
+		assertEquals("enters the field from break zone", CardData.parseAutoAbilities(ZENOS_20_130L).get(0).trigger());
+		assertEquals("enters the field from break zone", CardData.parseAutoAbilities(CORSAIR_25_093C).get(0).trigger());
+		assertEquals("enters the field from deck", CardData.parseAutoAbilities(ULTROS_15_109R).get(0).trigger());
+		assertEquals("added to hand from break zone", CardData.parseAutoAbilities(NERO_9_091H).get(0).trigger());
+		assertEquals("added to hand by search", CardData.parseAutoAbilities(SIN_16_140S).get(0).trigger());
+		AutoAbility galuf = CardData.parseAutoAbilities(GALUF_27_059C).get(0);
+		assertEquals("added to hand from break zone or search", galuf.trigger());
+		assertTrue(galuf.yourTurnOnly());
+	}
+
+	/** {@code card} in P2's Break Zone, then played back by its own identity. */
+	private static void p2PlaysFromBreakZone(MainWindow mw, CardData card) {
+		mw.gameState.getIdentity().put(card, false);
+		mw.gameState.getP2BreakZone().add(card);
+		mw.buildGameContext(false).returnSourceFromBreakZoneToField(card, false);
+	}
+
+	@Test
+	void corsairDrawsOnlyWhenHeComesBackFromTheBreakZone() {
+		MainWindow mw = new MainWindow();
+		CardData fromHand = makeForwardWithText("Corsair", "Water", 3, 7000, CORSAIR_25_093C);
+		mw.gameState.getIdentity().put(fromHand, false);
+		mw.placeP2CardInForwardZone(fromHand);
+		assertTrue(mw.gameState.getStack().isEmpty(), "an ordinary arrival is not from the Break Zone");
+
+		MainWindow mw2 = new MainWindow();
+		CardData corsair = makeForwardWithText("Corsair", "Water", 3, 7000, CORSAIR_25_093C);
+		p2PlaysFromBreakZone(mw2, corsair);
+		assertEquals(List.of(corsair), triggerSources(mw2));
+		assertEquals("draw 1 card.", mw2.gameState.getStack().get(0).effectText());
+	}
+
+	@Test
+	void midPreviaFiresBothArrivalsFromTheBreakZone() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForward("Genesis", "Ice", 3, 9000));
+		CardData previa = makeForwardWithText("Mid Previa", "Water", 4, 0, MID_PREVIA_7_101H);
+
+		p2PlaysFromBreakZone(mw, previa);
+
+		assertEquals(List.of(previa, previa), triggerSources(mw), "enters the field, and enters it from the Break Zone");
+	}
+
+	@Test
+	void scarmiglioneAnswersReturningFromTheBreakZone() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForward("Genesis", "Ice", 3, 9000));
+		CardData scarmiglione = makeForwardWithText("Scarmiglione", "Earth", 4, 8000, "When Scarmiglione enters the "
+				+ "field from the Break Zone, choose 1 Forward. Deal it damage equal to half of Scarmiglione's power "
+				+ "(round up to the nearest 1000).");
+
+		p2PlaysFromBreakZone(mw, scarmiglione);
+
+		assertEquals(List.of(scarmiglione), triggerSources(mw));
+	}
+
+	@Test
+	void aphmauPaysToPlayHerselfWhenSalvaged() {
+		MainWindow mw = new MainWindow();
+		CardData aphmau = makeForwardWithText("Aphmau", "Lightning", 3, 7000, "When Aphmau is added to your hand from "
+				+ "the Break Zone, you may pay 《Lightning》. If you do so, play 1 Card Name Aphmau from your hand onto "
+				+ "the field.");
+		assertEquals("added to hand from break zone", aphmau.autoAbilities().get(0).trigger());
+		mw.gameState.getIdentity().put(aphmau, false);
+		mw.gameState.getP2BreakZone().add(aphmau);
+		CardData backup = makePlainBackup("Lightning Backup", "Lightning", 2);
+		mw.gameState.getIdentity().put(backup, false);
+		mw.placeP2CardInFirstBackupSlot(backup);
+		mw.p2BackupStates[0] = CardState.ACTIVE;
+
+		mw.buildGameContext(false).addTargetToHand(new ForwardTarget(false, 0, ForwardTarget.CardZone.BREAK_ZONE));
+
+		assertTrue(mw.p2ForwardCards.contains(aphmau), "salvaged, paid 《Lightning》, played from hand");
+	}
+
+	@Test
+	void zenosFromTheBreakZoneLeavesOnlyAtTheEndOfTheTurn() {
+		assertEquals("RemoveSelfAtEndOfTurn", ActionResolver.matchedPatternName(
+				"at the end of the turn, remove Zenos from the game.", makeForward("Zenos", "Dark", 4, 8000)));
+		MainWindow mw = new MainWindow();
+		CardData zenos = makeForwardWithText("Zenos", "Dark", 4, 8000, ZENOS_20_130L);
+		p2PlaysFromBreakZone(mw, zenos);
+		assertEquals(List.of(zenos), triggerSources(mw));
+
+		resolveDealtDamageEntry(mw, zenos);
+
+		assertTrue(mw.p2ForwardCards.contains(zenos), "queued for the end of the turn, not done now");
+	}
+
+	@Test
+	void theRemovalAtTheEndOfTheTurnIsQueuedNotImmediate() {
+		GameContext ctx = mock(GameContext.class);
+		CardData zenos = makeForward("Zenos", "Dark", 4, 8000);
+		ArgumentCaptor<Consumer<GameContext>> later = ArgumentCaptor.forClass(Consumer.class);
+
+		ActionResolver.parse("at the end of the turn, remove Zenos from the game.", zenos).accept(ctx);
+
+		verify(ctx, never()).removeSourceCardFromGame(any());
+		verify(ctx).addEndOfTurnEffect(later.capture());
+		later.getValue().accept(ctx);
+		verify(ctx).removeSourceCardFromGame(zenos);
+	}
+
+	@Test
+	void ultrosAnswersArrivingFromTheDeck() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForward("Genesis", "Ice", 3, 9000));
+		CardData ultros = makeForwardWithText("Ultros", "Water", 3, 7000, ULTROS_15_109R);
+		mw.gameState.getIdentity().put(ultros, false);
+		mw.gameState.getP2MainDeck().addFirst(ultros);
+
+		mw.searchDeckForCard(false, true, false, false, false, -1, null, "Ultros", null, null, null, null, null,
+				"field", 1, false, null);
+
+		assertTrue(mw.p2ForwardCards.contains(ultros));
+		assertEquals(List.of(ultros), triggerSources(mw));
+	}
+
+	@Test
+	void neroAnswersSalvageIntoHisOwnersHandOnly() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForward("Genesis", "Ice", 3, 9000));
+		CardData nero = makeForwardWithText("Nero (XIV)", "Lightning", 3, 7000, NERO_9_091H);
+		mw.gameState.getIdentity().put(nero, false);
+		mw.gameState.getP2BreakZone().add(nero);
+		ForwardTarget inBz = new ForwardTarget(false, 0, ForwardTarget.CardZone.BREAK_ZONE);
+
+		// P1's effect taking it into P1's hand: not "your hand" for Nero.
+		mw.buildGameContext(true).addTargetToHand(inBz);
+		assertTrue(mw.gameState.getP1Hand().contains(nero));
+		assertTrue(mw.gameState.getStack().isEmpty());
+
+		MainWindow mw2 = new MainWindow();
+		placeP1Forward(mw2, makeForward("Genesis", "Ice", 3, 9000));
+		CardData nero2 = makeForwardWithText("Nero (XIV)", "Lightning", 3, 7000, NERO_9_091H);
+		mw2.gameState.getIdentity().put(nero2, false);
+		mw2.gameState.getP2BreakZone().add(nero2);
+		mw2.buildGameContext(false).addTargetToHand(inBz);
+		assertEquals(List.of(nero2), triggerSources(mw2));
+	}
+
+	@Test
+	void sinBreaksAForwardWhenSearchedOutAndPaidFor() {
+		MainWindow mw = new MainWindow();
+		CardData victim = makeForward("Genesis", "Ice", 3, 9000);
+		placeP1Forward(mw, victim);
+		for (int i = 0; i < 3; i++) {
+			CardData b = makePlainBackup("Backup " + i, "Dark", 2);
+			mw.gameState.getIdentity().put(b, false);
+			mw.placeP2CardInFirstBackupSlot(b);
+			mw.p2BackupStates[i] = CardState.ACTIVE;
+		}
+		CardData sin = makeForwardWithText("Sin", "Dark", 10, 12000, SIN_16_140S);
+		mw.gameState.getIdentity().put(sin, false);
+		mw.gameState.getP2MainDeck().addFirst(sin);
+
+		mw.searchDeckForCard(false, true, false, false, false, -1, null, "Sin", null, null, null, null, null,
+				"hand", 1, false, null);
+
+		assertTrue(mw.gameState.getP2Hand().contains(sin));
+		assertTrue(mw.gameState.getP1BreakZone().contains(victim), "paid 《3》 and broke the only Forward");
+	}
+
+	@Test
+	void galufTriggersOnlyDuringHisControllersTurn() {
+		for (GameState.Player turn : List.of(GameState.Player.P1, GameState.Player.P2)) {
+			MainWindow mw = new MainWindow();
+			mw.gameState.startFirstTurn(turn);
+			CardData galuf = makeForwardWithText("Galuf", "Earth", 4, 8000, GALUF_27_059C);
+			mw.gameState.getIdentity().put(galuf, false);
+			mw.gameState.getP2BreakZone().add(galuf);
+			CardData backup = makePlainBackup("Earth Backup", "Earth", 2);
+			mw.gameState.getIdentity().put(backup, false);
+			mw.placeP2CardInFirstBackupSlot(backup);
+			mw.p2BackupStates[0] = CardState.ACTIVE;
+			CardData backup2 = makePlainBackup("Earth Backup 2", "Earth", 2);
+			mw.gameState.getIdentity().put(backup2, false);
+			mw.placeP2CardInFirstBackupSlot(backup2);
+			mw.p2BackupStates[1] = CardState.ACTIVE;
+
+			mw.buildGameContext(false).addTargetToHand(new ForwardTarget(false, 0, ForwardTarget.CardZone.BREAK_ZONE));
+
+			// P2's Galuf: a P2 "your turn" trigger used to never fire, on any turn.
+			assertEquals(turn == GameState.Player.P2, mw.p2ForwardCards.contains(galuf), "turn " + turn);
+		}
+	}
+
+	// "When you draw a card" (15-063C Romaa Mihgo) and "When your opponent draws a card outside of
+	// his/her Draw Phase" (5-036L The Emperor) — once per card, from the one draw choke point
+	// (MainWindow.drawP1Cards / drawP2Cards).
+
+	@Test
+	void romaaMihgoAnswersEachCardHerControllerDraws() {
+		MainWindow mw = new MainWindow();
+		CardData romaa = makeForwardWithText("Romaa Mihgo", "Wind", 2, 5000,
+				"When you draw a card, Romaa Mihgo gains +1000 power until the end of the turn.");
+		mw.suppressAutoAbilityForNextCards = 1;
+		placeP2Forward(mw, romaa);
+		for (int i = 0; i < 3; i++) {
+			CardData c = makeForward("Deck " + i, "Wind", 1, 1000);
+			mw.gameState.getIdentity().put(c, false);
+			mw.gameState.getP2MainDeck().addFirst(c);
+		}
+
+		mw.buildGameContext(false).drawCards(2);
+
+		assertEquals(List.of(romaa, romaa), triggerSources(mw), "two cards, two triggers");
+	}
+
+	@Test
+	void theEmperorAnswersOnlyDrawsOutsideTheDrawPhase() {
+		MainWindow mw = new MainWindow();
+		CardData emperor = makeForwardWithText("The Emperor", "Wind", 5, 8000, "When your opponent draws a card outside "
+				+ "of his/her Draw Phase, choose 1 Forward opponent controls. Dull it and Freeze it.");
+		mw.suppressAutoAbilityForNextCards = 1;
+		placeP2Forward(mw, emperor);
+		placeP1Forward(mw, makeForward("Genesis", "Ice", 3, 9000));
+		for (int i = 0; i < 4; i++) {
+			CardData c = makeForward("Deck " + i, "Fire", 1, 1000);
+			mw.gameState.getIdentity().put(c, true);
+			mw.gameState.getP1MainDeck().addFirst(c);
+		}
+
+		mw.gameState.startFirstTurn(GameState.Player.P1);
+		mw.gameState.advancePhase();   // ACTIVE → DRAW
+		mw.drawP1Cards(2);
+		assertTrue(mw.gameState.getStack().isEmpty(), "the Draw Phase draw is exempt");
+
+		mw.gameState.advancePhase();   // DRAW → MAIN_1
+		mw.drawP1Cards(1);
+		assertEquals(List.of(emperor), triggerSources(mw));
+	}
+
+	// =========================================================================================
+	// Fourth batch of unrecognised triggers: activated by your effects (19-043C Zu, 12-114R
+	// Baralai), a Forward opponent controls put into the Break Zone "from the field" (27-073R
+	// Ardyn), discard due to an ability (29-040H Adelle), a Monster entering either field
+	// (23-103C Quina), a Forward entering by Warp (21-025R Kiros), a named Forward leaving your field
+	// (1-213S Tidus), removal from the game (28-115L Lightning, 29-063R Exdeath), and a Break Zone
+	// trigger with a cause (11-065H Ardyn). Plus: removing a Forward from the game no longer breaks it.
+	// =========================================================================================
+
+	/** Runs {@code body} as if {@code source}'s ability (on {@code sourceIsP1}'s side) were resolving. */
+	private static void asAbilityOf(MainWindow mw, CardData source, boolean sourceIsP1, Runnable body) {
+		mw.currentAbilitySource = source;
+		mw.currentAbilitySourceIsP1 = sourceIsP1;
+		try { body.run(); } finally { mw.currentAbilitySource = null; }
+	}
+
+	@Test
+	void zuBecomesAForwardWhenYourEffectActivatesADullCharacter() {
+		MainWindow mw = new MainWindow();
+		// A Forward stand-in with power: a 0-power Forward would be broken by the rule process.
+		CardData zu = makeForwardWithText("Zu", "Wind", 3, 1000, "When a dull Character you control is activated due to "
+				+ "your Summons or abilities, until the end of the turn, Zu also becomes a Forward with 8000 power. "
+				+ "This effect will trigger only once per turn.");
+		assertEquals("becomes active by effect", zu.autoAbilities().get(0).trigger(),
+				"\"is activated\" is the passive wording of Hope's \"becomes active\"");
+		mw.suppressAutoAbilityForNextCards = 2;
+		placeP2Forward(mw, zu);
+		CardData tired = makeForward("Tired", "Wind", 2, 5000);
+		placeP2Forward(mw, tired);
+		mw.p2ForwardStates.set(1, CardState.DULL);
+
+		asAbilityOf(mw, makeForward("Caster", "Wind", 2, 5000), false,
+				() -> mw.buildGameContext(false).activateTarget(new ForwardTarget(false, 1, ForwardTarget.CardZone.FORWARD)));
+
+		assertEquals(List.of(zu), triggerSources(mw));
+	}
+
+	@Test
+	void baralaiFiresOncePerEffectHoweverManyBackupsWake() {
+		MainWindow mw = new MainWindow();
+		CardData baralai = makeForwardWithText("Baralai", "Water", 5, 8000, "When 1 or more dull Backups you control "
+				+ "is activated due to your Summons or abilities, deal 3000 damage to all the Forwards opponent controls.");
+		mw.suppressAutoAbilityForNextCards = 1;
+		placeP2Forward(mw, baralai);
+		for (int i = 0; i < 3; i++) {
+			CardData b = makePlainBackup("Backup " + i, "Water", 2);
+			mw.gameState.getIdentity().put(b, false);
+			mw.placeP2CardInFirstBackupSlot(b);
+			mw.p2BackupStates[i] = CardState.DULL;
+		}
+		GameContext ctx = mw.buildGameContext(false);
+
+		asAbilityOf(mw, makeForward("Caster", "Water", 2, 5000), false, () -> {
+			ctx.activateTarget(new ForwardTarget(false, 0, ForwardTarget.CardZone.BACKUP));
+			ctx.activateTarget(new ForwardTarget(false, 1, ForwardTarget.CardZone.BACKUP));
+		});
+		assertEquals(List.of(baralai), triggerSources(mw), "two Backups, one effect, one trigger");
+
+		mw.resolutionSerial = mw.nextResolutionSerial();
+		asAbilityOf(mw, makeForward("Caster", "Water", 2, 5000), false,
+				() -> ctx.activateTarget(new ForwardTarget(false, 2, ForwardTarget.CardZone.BACKUP)));
+		assertEquals(List.of(baralai, baralai), triggerSources(mw), "a second effect is a second event");
+	}
+
+	@Test
+	void ardynWatchesAnOpposingForwardPutIntoTheBreakZoneFromTheField() {
+		MainWindow mw = new MainWindow();
+		CardData ardyn = makeForwardWithText("Ardyn", "Dark", 5, 8000, "When a Forward opponent controls is put into "
+				+ "the Break Zone from the field, reveal the top card of your deck. If it is a Lightning card, add it to "
+				+ "your hand.");
+		assertEquals("put into break zone", ardyn.autoAbilities().get(0).trigger());
+		mw.suppressAutoAbilityForNextCards = 1;
+		placeP2Forward(mw, ardyn);
+		placeP1Forward(mw, makeForward("Genesis", "Ice", 3, 9000));
+
+		mw.breakP1Forward(0);
+
+		assertEquals(List.of(ardyn), triggerSources(mw));
+	}
+
+	@Test
+	void adelleAnswersAbilityDiscardsButNotSummonOnes() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForward("Genesis", "Ice", 3, 9000));
+		CardData adelle = makeForwardWithText("Adelle", "Earth", 3, 7000, "When you discard 1 or more cards due to an "
+				+ "ability, choose 1 Category FFTA2 Forward. It gains +2000 power until the end of the turn.");
+		assertEquals("you discard by ability", adelle.autoAbilities().get(0).trigger());
+		mw.suppressAutoAbilityForNextCards = 1;
+		placeP2Forward(mw, adelle);
+
+		p2DiscardsDuring(mw, makeForward("Chaff", "Earth", 1, 1000), makeSummon("Titan", "Earth", 3, ""), true);
+		assertTrue(mw.gameState.getStack().isEmpty(), "a Summon is not an ability");
+
+		mw.resolutionSerial = mw.nextResolutionSerial();
+		p2DiscardsDuring(mw, makeForward("Chaff", "Earth", 1, 1000), makeForward("Caster", "Fire", 2, 5000), true);
+		assertEquals(List.of(adelle), triggerSources(mw));
+	}
+
+	@Test
+	void quinaWatchesMonstersEnteringEitherField() {
+		MainWindow mw = new MainWindow();
+		CardData quina = makeForwardWithText("Quina", "Water", 3, 7000,
+				"When a Monster enters either player's field, draw 1 card. This effect will trigger only once per turn.");
+		assertEquals("enters either player's field", quina.autoAbilities().get(0).trigger());
+		mw.suppressAutoAbilityForNextCards = 1;
+		placeP2Forward(mw, quina);
+
+		CardData oppMonster = makeFieldAbilityCard("Goblin", "Fire", "Monster", "");
+		mw.gameState.getIdentity().put(oppMonster, true);
+		mw.placeCardInMonsterZone(oppMonster);
+
+		assertEquals(List.of(quina), triggerSources(mw), "the opponent's Monster counts");
+	}
+
+	@Test
+	void kirosAnswersOnlyAWarpArrival() {
+		MainWindow mw = new MainWindow();
+		CardData kiros = makeForwardWithText("Kiros", "Ice", 3, 7000, "When Kiros or a Forward enters your field due to "
+				+ "Warp, choose 1 Character. Dull it and Freeze it.");
+		AutoAbility trigger = kiros.autoAbilities().get(0);
+		assertEquals("enters your field", trigger.trigger());
+		assertTrue(trigger.warpOnly());
+		mw.suppressAutoAbilityForNextCards = 1;
+		placeP2Forward(mw, kiros);
+		placeP1Forward(mw, makeForward("Genesis", "Ice", 3, 9000));
+
+		placeP2Forward(mw, makeForward("Cast", "Ice", 2, 5000));
+		assertTrue(mw.gameState.getStack().isEmpty(), "an ordinary arrival");
+
+		mw.lastCardWarpedIn = true;
+		try { placeP2Forward(mw, makeForward("Warped", "Ice", 2, 5000)); } finally { mw.lastCardWarpedIn = false; }
+		assertEquals(List.of(kiros), triggerSources(mw));
+	}
+
+	@Test
+	void tidusWatchesYunaLeavingHisOwnField() {
+		String text = "When the Forward Card Name Yuna is put from your field into the Break Zone, draw 2 cards.";
+		MainWindow mw = new MainWindow();
+		CardData tidus = makeForwardWithText("Tidus", "Water", 3, 7000, text);
+		assertEquals("a Card Name Yuna Forward you control", tidus.autoAbilities().get(0).triggerCard());
+		mw.suppressAutoAbilityForNextCards = 2;
+		placeP2Forward(mw, tidus);
+		placeP2Forward(mw, makeForward("Yuna", "Water", 3, 5000));
+		placeP1Forward(mw, makeForward("Yuna", "Water", 3, 5000));
+
+		mw.breakP1Forward(0);
+		assertTrue(mw.gameState.getStack().isEmpty(), "the opponent's Yuna is not on his field");
+
+		mw.breakP2Forward(1);
+		assertEquals(List.of(tidus), triggerSources(mw));
+	}
+
+	@Test
+	void removingAForwardFromTheGameIsNotABreak() {
+		MainWindow mw = new MainWindow();
+		CardData probe = makeForwardWithText("Probe", "Fire", 2, 5000,
+				"When Probe is put from the field into the Break Zone, draw 1 card.");
+		mw.suppressAutoAbilityForNextCards = 1;
+		placeP2Forward(mw, probe);
+
+		mw.buildGameContext(true).removeP2ForwardFromGame(0);
+
+		assertTrue(mw.gameState.getP2PermanentRfp().contains(probe));
+		assertFalse(mw.gameState.getP2BreakZone().contains(probe));
+		assertTrue(mw.gameState.getStack().isEmpty(), "it never reached the Break Zone, so its own trigger does not fire");
+		assertFalse(mw.p1Turn.turnOpponentFwdBroken, "and it was not broken");
+	}
+
+	@Test
+	void exdeathSearchesOnlyWhenRemovedFromTheField() {
+		String text = "When Exdeath on the field is removed from the game, you may search for 1 Card Name Neo Exdeath "
+				+ "and add it to your hand.";
+		MainWindow mw = new MainWindow();
+		CardData exdeath = makeForwardWithText("Exdeath", "Dark", 5, 9000, text);
+		assertEquals("removed from game from field", exdeath.autoAbilities().get(0).trigger());
+		assertEquals("Exdeath", exdeath.autoAbilities().get(0).triggerCard());
+		mw.suppressAutoAbilityForNextCards = 1;
+		placeP2Forward(mw, exdeath);
+
+		mw.buildGameContext(true).removeP2ForwardFromGame(0);
+		assertEquals(List.of(exdeath), triggerSources(mw));
+
+		MainWindow mw2 = new MainWindow();
+		CardData inBz = makeForwardWithText("Exdeath", "Dark", 5, 9000, text);
+		mw2.gameState.getIdentity().put(inBz, false);
+		mw2.gameState.getP2BreakZone().add(inBz);
+		mw2.buildGameContext(true).removeTargetFromGame(new ForwardTarget(false, 0, ForwardTarget.CardZone.BREAK_ZONE));
+		assertTrue(mw2.gameState.getStack().isEmpty(), "removed from the Break Zone, not the field");
+	}
+
+	@Test
+	void lightningAnswersBeingRemovedFromAnyZone() {
+		MainWindow mw = new MainWindow();
+		CardData lightning = makeForwardWithText("Lightning", "Lightning", 5, 9000, "When Lightning in any zone is "
+				+ "removed from the game, you may pay 《4》. When you do so, choose 1 Forward opponent controls. Remove it "
+				+ "from the game.");
+		assertEquals("removed from game", lightning.autoAbilities().get(0).trigger());
+		CardData victim = makeForward("Genesis", "Ice", 3, 9000);
+		placeP1Forward(mw, victim);
+		for (int i = 0; i < 4; i++) {
+			CardData b = makePlainBackup("Backup " + i, "Lightning", 2);
+			mw.gameState.getIdentity().put(b, false);
+			mw.placeP2CardInFirstBackupSlot(b);
+			mw.p2BackupStates[i] = CardState.ACTIVE;
+		}
+		mw.gameState.getIdentity().put(lightning, false);
+		mw.gameState.getP2BreakZone().add(lightning);
+
+		mw.buildGameContext(false).removeTargetFromGame(new ForwardTarget(false, 0, ForwardTarget.CardZone.BREAK_ZONE));
+
+		assertTrue(mw.gameState.getP2PermanentRfp().contains(lightning));
+		assertTrue(mw.gameState.getP1PermanentRfp().contains(victim), "paid 《4》 and removed the only Forward");
+	}
+
+	@Test
+	void ardynComesBackOnlyFromTheOpponentsEffect() {
+		String text = "When Ardyn is put from the field into the Break Zone by your opponent's Summons or abilities, play "
+				+ "Ardyn onto the field at the end of the turn.";
+		MainWindow mw = new MainWindow();
+		CardData ardyn = makeForwardWithText("Ardyn", "Dark", 5, 8000, text);
+		assertEquals("put into break zone by opponent's effect", ardyn.autoAbilities().get(0).trigger());
+		mw.suppressAutoAbilityForNextCards = 1;
+		placeP2Forward(mw, ardyn);
+		mw.breakP2Forward(0);
+		assertTrue(mw.gameState.getStack().isEmpty(), "nothing resolving — battle, a cost, a rule");
+
+		MainWindow mw2 = new MainWindow();
+		CardData ardyn2 = makeForwardWithText("Ardyn", "Dark", 5, 8000, text);
+		mw2.suppressAutoAbilityForNextCards = 1;
+		placeP2Forward(mw2, ardyn2);
+		asAbilityOf(mw2, makeForward("Caster", "Fire", 2, 5000), true, () -> mw2.breakP2Forward(0));
+		assertEquals(List.of(ardyn2), triggerSources(mw2));
+	}
+
+	@Test
+	void aSelfNamedEndOfTurnPlayBringsBackThatCopyOnly() {
+		GameContext ctx = mock(GameContext.class);
+		CardData ardyn = makeForward("Ardyn", "Dark", 5, 8000);
+		ArgumentCaptor<Consumer<GameContext>> later = ArgumentCaptor.forClass(Consumer.class);
+
+		ActionResolver.parse("play Ardyn onto the field at the end of the turn.", ardyn).accept(ctx);
+
+		verify(ctx).addEndOfTurnEffect(later.capture());
+		later.getValue().accept(ctx);
+		verify(ctx).playSourceFromRfpOntoField(ardyn);
+		verify(ctx).returnSourceFromBreakZoneToField(ardyn, false);
+		verify(ctx, never()).playNamedFromHoldingZoneOntoField(anyString());
+	}
+
+	// =========================================================================================
+	// Fifth batch: 2-004C Ephemeral Phantom (a static boost printed with "When"), 17-080R Ewen (a
+	// "Damage 3 --" EX Burst that ignored its gate), 20-014R Tifa, 16-116L Tidus (field → deck),
+	// 12-074H Argy ("in any situation" by the opponent's effects, and an end-of-turn add that ran at
+	// once), 29-043R Aerith, 1-173C Mime, 10-074C Suzuhisa.
+	// =========================================================================================
+
+	@Test
+	void ephemeralPhantomsWhenIsAStaticBoost() {
+		String text = "When your opponent controls 2 or more Forwards, Ephemeral Phantom gains +2000 power.";
+		List<IfControlBoost> icbs = CardData.parseIfControlBoosts(text, "Forward");
+		assertEquals(1, icbs.size(), "read as the \"If your opponent controls …\" boost it describes");
+		assertTrue(CardData.parseAutoAbilities(text).isEmpty(), "no event, so no trigger");
+	}
+
+	@Test
+	void ewensExBurstNeedsThreePointsOfDamage() {
+		CardData ewen = makeForwardWithText("Ewen", "Earth", 1, 5000, "When Ewen is put from the field into the Break "
+				+ "Zone, you may put Ewen on top of its owner's deck.[[br]]   Damage 3 -- [[ex]]EX BURST[[/]] When Ewen is "
+				+ "put into the Damage Zone, choose 1 Forward. Break it. (This ability may only be used as an EX Burst.)");
+		assertEquals(3, ewen.exBurstDamageThreshold());
+		assertEquals("choose 1 Forward. Break it.", ewen.exBurstEffect(), "the reminder is not part of the effect");
+
+		for (int damage : new int[] { 2, 3 }) {
+			MainWindow mw = new MainWindow();
+			CardData victim = makeForward("Genesis", "Ice", 3, 9000);
+			placeP1Forward(mw, victim);
+			mw.gameState.getIdentity().put(ewen, false);
+			for (int i = 0; i < damage; i++) mw.gameState.getP2DamageZone().add(makeForward("Filler", "Fire", 1, 1000));
+
+			mw.autoAbilityTriggers.triggerExBurst(ewen, false);
+
+			assertEquals(damage >= 3, mw.gameState.getP1BreakZone().contains(victim), "at " + damage + " damage");
+		}
+	}
+
+	@Test
+	void tifaWatchesHerCategoryVIICharactersHitOpposingForwards() {
+		MainWindow mw = new MainWindow();
+		CardData tifa = makeForwardWithText("Tifa", "Fire", 2, 5000, "Haste[[br]]   When a Category VII Character you "
+				+ "control deals damage to a Forward opponent controls, choose 1 Forward. It gains \"This Forward cannot "
+				+ "block.\" until the end of the turn.");
+		assertEquals("watched character deals damage to forward", tifa.autoAbilities().get(0).trigger());
+		CardData cloud = makeCategoryForward("Cloud", "Wind", "VII");
+		CardData other = makeCategoryForward("Squall", "Ice", "VIII");
+		mw.suppressAutoAbilityForNextCards = 3;
+		placeP2Forward(mw, tifa);
+		placeP2Forward(mw, cloud);
+		placeP2Forward(mw, other);
+		CardData blocker = makeForward("Blocker", "Ice", 1, 3000);
+		placeP1Forward(mw, blocker);
+
+		mw.resolveCombat(other, false, 2, blocker, true, 0);
+		assertTrue(mw.gameState.getStack().isEmpty(), "a Category VIII Forward is not one she watches");
+
+		CardData blocker2 = makeForward("Blocker", "Ice", 1, 3000);
+		placeP1Forward(mw, blocker2);
+		mw.resolveCombat(cloud, false, 1, blocker2, true, 0);
+		assertEquals(List.of(tifa), triggerSources(mw));
+	}
+
+	@Test
+	void tidusDrawsWhenHeGoesToTheBottomOfHisDeck() {
+		MainWindow mw = new MainWindow();
+		CardData tidus = makeForwardWithText("Tidus", "Water", 3, 7000,
+				"When Tidus is put from the field into its owner's deck, draw 3 cards.");
+		assertEquals("put from field into deck", tidus.autoAbilities().get(0).trigger());
+		mw.suppressAutoAbilityForNextCards = 1;
+		placeP2Forward(mw, tidus);
+
+		mw.returnP2ForwardToDeck(0, true);
+
+		assertTrue(mw.gameState.getP2MainDeck().contains(tidus));
+		assertEquals(List.of(tidus), triggerSources(mw));
+	}
+
+	private static final String ARGY_12_074H = "When Argy is put into the Break Zone in any situation by your "
+			+ "opponent's Summons or abilities, add Argy to your hand at the end of the turn.";
+
+	@Test
+	void argysReturnIsQueuedForTheEndOfTheTurnAndTakesOnlyHim() {
+		GameContext ctx = mock(GameContext.class);
+		CardData argy = makeForward("Argy", "Lightning", 3, 7000);
+		ArgumentCaptor<Consumer<GameContext>> later = ArgumentCaptor.forClass(Consumer.class);
+
+		ActionResolver.parse("add Argy to your hand at the end of the turn.", argy).accept(ctx);
+
+		verify(ctx, never()).returnNamedCardToYourHand(anyString());
+		verify(ctx).addEndOfTurnEffect(later.capture());
+		later.getValue().accept(ctx);
+		verify(ctx).returnSourceFromBreakZoneToHand(argy);
+	}
+
+	@Test
+	void argyAnswersTheOpponentsEffectsFromTheFieldTheHandAndTheDeck() {
+		// The field.
+		MainWindow mw = new MainWindow();
+		CardData onField = makeForwardWithText("Argy", "Lightning", 3, 7000, ARGY_12_074H);
+		assertEquals("put into break zone any way by opponent's effect", onField.autoAbilities().get(0).trigger());
+		mw.suppressAutoAbilityForNextCards = 1;
+		placeP2Forward(mw, onField);
+		asAbilityOf(mw, makeForward("Caster", "Fire", 2, 5000), true, () -> mw.breakP2Forward(0));
+		assertEquals(List.of(onField), triggerSources(mw));
+
+		// The hand — and not by his own side's effect.
+		MainWindow mw2 = new MainWindow();
+		p2DiscardsDuring(mw2, makeForwardWithText("Argy", "Lightning", 3, 7000, ARGY_12_074H),
+				makeForward("Ally", "Fire", 2, 5000), false);
+		assertTrue(mw2.gameState.getStack().isEmpty(), "his own side's effect");
+		CardData inHand = makeForwardWithText("Argy", "Lightning", 3, 7000, ARGY_12_074H);
+		p2DiscardsDuring(mw2, inHand, makeForward("Caster", "Fire", 2, 5000), true);
+		assertEquals(List.of(inHand), triggerSources(mw2));
+
+		// The deck.
+		MainWindow mw3 = new MainWindow();
+		CardData inDeck = makeForwardWithText("Argy", "Lightning", 3, 7000, ARGY_12_074H);
+		mw3.gameState.getIdentity().put(inDeck, false);
+		mw3.gameState.getP2MainDeck().addFirst(inDeck);
+		asAbilityOf(mw3, makeForward("Caster", "Fire", 2, 5000), true,
+				() -> mw3.buildGameContext(true).opponentMillCards(1));
+		assertEquals(List.of(inDeck), triggerSources(mw3));
+	}
+
+	@Test
+	void aerithReturnsACategoryVIICharacterDiscardedByAnEffect() {
+		MainWindow mw = new MainWindow();
+		CardData aerith = makeForwardWithText("Aerith", "Wind", 3, 7000, "When a Category VII Character is put from your "
+				+ "hand or your deck into the Break Zone due to Summons or abilities, add it to your hand. This effect will "
+				+ "trigger only once per turn.");
+		assertEquals("own card to break zone from hand or deck by effect", aerith.autoAbilities().get(0).trigger());
+		mw.suppressAutoAbilityForNextCards = 1;
+		placeP2Forward(mw, aerith);
+		CardData cloud = makeCategoryForward("Cloud", "Wind", "VII");
+
+		p2DiscardsDuring(mw, cloud, makeSummon("Ifrit", "Fire", 2, ""), true);
+		assertEquals(List.of(aerith), triggerSources(mw));
+
+		StackEntry e = mw.gameState.getStack().get(0);
+		assertSame(cloud, e.triggerCard(), "the discarded card travels with the trigger");
+		mw.triggeringBrokenCard = e.triggerCard();
+		try {
+			resolveDealtDamageEntry(mw, aerith);
+		} finally {
+			mw.triggeringBrokenCard = null;
+		}
+		assertTrue(mw.gameState.getP2Hand().contains(cloud), "added back to her controller's hand");
+	}
+
+	@Test
+	void mimeNamesHerElementWhenHerAttackPhaseStarts() {
+		CardData mime = makeForwardWithText("Mime", "Water", 2, 5000, "When your Attack Phase starts, name 1 Element other "
+				+ "than Light and Dark. Until the end of the turn, the Element of Mime becomes the named one.");
+		AutoAbility trigger = mime.autoAbilities().get(0);
+		assertEquals("beginning of attack phase", trigger.trigger());
+
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.selectElement(anyString(), anySet())).thenReturn("Fire");
+		ActionResolver.parse(trigger.effectText(), mime).accept(ctx);
+
+		verify(ctx).selectElement(anyString(), eq(Set.of("Light", "Dark")));
+		verify(ctx).setSourceElementUntilEndOfTurn(mime, "Fire");
+	}
+
+	@Test
+	void suzuhisaAnswersTheOpponentsAutoAbilityGoingOnTheStack() {
+		MainWindow mw = new MainWindow();
+		CardData suzuhisa = makeForwardWithText("Suzuhisa", "Earth", 1, 3000, "When your opponent's auto-ability is put "
+				+ "on the stack, put Suzuhisa into the Break Zone. When you do so, draw 2 cards. This effect will trigger "
+				+ "only once per turn.");
+		assertEquals("opponent auto-ability put on stack", suzuhisa.autoAbilities().get(0).trigger());
+		mw.suppressAutoAbilityForNextCards = 1;
+		placeP2Forward(mw, suzuhisa);
+		for (int i = 0; i < 3; i++) {
+			CardData c = makeForward("Deck " + i, "Earth", 1, 1000);
+			mw.gameState.getIdentity().put(c, false);
+			mw.gameState.getP2MainDeck().addFirst(c);
+		}
+
+		// P1's Forward whose enters-the-field ability goes on the Stack.
+		placeP1Forward(mw, makeForwardWithText("Drawer", "Fire", 2, 5000, "When Drawer enters the field, draw 1 card."));
+
+		assertTrue(mw.gameState.getP2BreakZone().contains(suzuhisa), "resolved as the opponent's trigger went on");
+		assertEquals(2, mw.gameState.getP2Hand().size());
+	}
+
+	@Test
+	void fujinAndRaijinAnswerBeingMilledFromTheirOwnersDeck() {
+		MainWindow mw = new MainWindow();
+		CardData fujin  = makeForwardWithText("Fujin", "Lightning", 2, 5000, FUJIN_22_084R);
+		CardData raijin = makeForwardWithText("Raijin", "Lightning", 2, 5000, RAIJIN_22_087R);
+		CardData p1Top  = makeForward("P1 Top", "Fire", 1, 1000);
+		mw.gameState.getIdentity().put(p1Top, true);
+		mw.gameState.getP1MainDeck().addFirst(p1Top);
+		for (CardData c : List.of(raijin, fujin)) {
+			mw.gameState.getIdentity().put(c, false);
+			mw.gameState.getP2MainDeck().addFirst(c);
+		}
+
+		mw.buildGameContext(false).millCards(2);
+
+		assertTrue(mw.gameState.getP2BreakZone().containsAll(List.of(fujin, raijin)));
+		assertTrue(mw.gameState.getP1MainDeck().contains(p1Top), "P2's \"your deck\" is P2's, not P1's");
+		assertEquals(List.of(fujin, raijin), triggerSources(mw));
+	}
+
+	@Test
+	void thiefAnswersEachCardMilledFromTheOpponentsDeck() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForward("Genesis", "Ice", 3, 9000));
+		CardData thief = makeForwardWithText("Thief", "Wind", 4, 7000, THIEF_10_050C);
+		mw.suppressAutoAbilityForNextCards = 1;
+		placeP2Forward(mw, thief);
+		CardData p1Top = makeForward("P1 Top", "Fire", 1, 1000);
+		mw.gameState.getIdentity().put(p1Top, true);
+		mw.gameState.getP1MainDeck().addFirst(p1Top);
+
+		mw.buildGameContext(false).opponentMillCards(1);
+
+		assertTrue(mw.gameState.getP1BreakZone().contains(p1Top), "P2's opponent is P1");
+		assertEquals(List.of(thief), triggerSources(mw));
 	}
 
 	// =========================================================================================

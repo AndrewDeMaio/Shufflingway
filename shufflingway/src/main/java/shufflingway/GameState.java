@@ -310,9 +310,22 @@ public class GameState {
         return identity.getOrDefault(card, Boolean.TRUE);
     }
 
+    /**
+     * Told of every card filed into a removed-from-game zone, after it lands — the one place all
+     * of them converge. {@link MainWindow} fires "When [Self] in any zone is removed from the game"
+     * (28-115L Lightning) off it.
+     */
+    private java.util.function.Consumer<CardData> removedFromGameListener = c -> {};
+
+    public void setRemovedFromGameListener(java.util.function.Consumer<CardData> listener)
+    {
+        removedFromGameListener = listener != null ? listener : c -> {};
+    }
+
     public void addToPermanentRfp(CardData card)
     {
         (ownedByP1(card) ? p1PermanentRfp : p2PermanentRfp).add(card);
+        removedFromGameListener.accept(card);
     }
 
     /**
@@ -331,6 +344,7 @@ public class GameState {
         boolean isP1  = known != null ? known : fallbackOwnerIsP1;
         if (known == null) identity.put(card, isP1);
         (isP1 ? p1PermanentRfp : p2PermanentRfp).add(card);
+        removedFromGameListener.accept(card);
     }
 
     /**

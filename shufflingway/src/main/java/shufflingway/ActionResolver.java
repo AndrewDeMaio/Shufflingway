@@ -1485,6 +1485,10 @@ public class ActionResolver {
         result = tryParseReturnOwnTypeToHand(effectText);
         if (result != null) return result;
 
+        // Must precede ReturnNamedToHand, which find()s the add and drops "at the end of the turn".
+        result = tryParseAddSelfToHandAtEndOfTurn(effectText, source);
+        if (result != null) return result;
+
         result = tryParseReturnNamedToHand(effectText);
         if (result != null) return result;
 
@@ -1497,7 +1501,7 @@ public class ActionResolver {
         // Must precede tryParsePlaySourceOntoField: that parser matches with find() and its
         // expression ends at "onto the field", so it would claim this text as an immediate
         // Break-Zone play. Its pattern also carries a lookahead against the same wording.
-        result = tryParseEndOfTurnPlayNamedOntoField(effectText);
+        result = tryParseEndOfTurnPlayNamedOntoField(effectText, source);
         if (result != null) return result;
 
         result = tryParseRemoveAllOppBzFromGame(effectText);
@@ -1537,6 +1541,12 @@ public class ActionResolver {
 
         // Must precede RemoveNamedFromGame, which reads the removal and drops the grant (14-038H).
         result = ActionResolverPower.tryParseRemoveSelfThenEnteredForwardGainsPermanently(effectText, source);
+        if (result != null) return result;
+        // Must precede RemoveNamedFromGame, which find()s the removal and drops "at the end of the
+        // turn" — 20-130L Zenos was removed the moment he entered.
+        result = tryParseRemoveSelfAtEndOfTurn(effectText, source);
+        if (result != null) return result;
+        result = tryParseNameElementSelfBecomesUntilEot(effectText, source);
         if (result != null) return result;
         result = tryParseRemoveNamedFromGame(effectText, source);
         if (result != null) return result;
@@ -2826,10 +2836,11 @@ public class ActionResolver {
         if (tryParseSearchSummonsDiffCostOpponentSelects(effectText) != null)
             return "SearchSummonsDiffCostOpponentSelects";
         if (tryParseReturnOwnTypeToHand(effectText) != null) return "ReturnOwnTypeToHand";
+        if (tryParseAddSelfToHandAtEndOfTurn(effectText, source) != null) return "AddSelfToHandAtEndOfTurn";
         if (tryParseReturnNamedToHand(effectText) != null) return "ReturnNamedToHand";
         if (tryParseYouMayRemoveNamedFromGame(effectText, source) != null) return "YouMayRemoveNamedFromGame";
         if (tryParseEndOfOppTurnPlayNamedOntoField(effectText) != null) return "EndOfOppTurnPlayNamedOntoField";
-        if (tryParseEndOfTurnPlayNamedOntoField(effectText)    != null) return "EndOfTurnPlayNamedOntoField";
+        if (tryParseEndOfTurnPlayNamedOntoField(effectText, source)    != null) return "EndOfTurnPlayNamedOntoField";
         if (tryParseRemoveAllOppBzFromGame(effectText)         != null) return "RemoveAllOppBzFromGame";
         if (tryParseRevealTopNRfgOneCastableRestBottom(effectText) != null) return "RevealTopNRfgOneCastableRestBottom";
         // Must precede RemoveNamedFromGame, mirroring parse(): it reads the counter clause as the
@@ -2845,6 +2856,8 @@ public class ActionResolver {
         if (ActionResolverFieldAbility.tryParseNameCardTypeRemoveOppBzFromGame(effectText) != null) return "NameCardTypeRemoveOppBzFromGame";
         if (ActionResolverPower.tryParseRemoveSelfThenEnteredForwardGainsPermanently(effectText, source) != null)
             return "RemoveSelfThenEnteredForwardGainsPermanently";
+        if (tryParseRemoveSelfAtEndOfTurn(effectText, source) != null) return "RemoveSelfAtEndOfTurn";
+        if (tryParseNameElementSelfBecomesUntilEot(effectText, source) != null) return "NameElementSelfBecomesUntilEot";
         if (tryParseRemoveNamedFromGame(effectText, source)   != null) return "RemoveNamedFromGame";
         // Must precede BreakSourceCard, mirroring parse(): the sentence opens with the plain
         // self-break that parser reads.
@@ -4842,10 +4855,11 @@ public class ActionResolver {
         if (tryParseSearchSummonsDiffCostOpponentSelects(effectText) != null)
             return "SearchSummonsDiffCostOpponentSelects";
         if (tryParseReturnOwnTypeToHand(effectText) != null)                 return "ReturnOwnTypeToHand";
+        if (tryParseAddSelfToHandAtEndOfTurn(effectText, source) != null)    return "AddSelfToHandAtEndOfTurn";
         if (tryParseReturnNamedToHand(effectText) != null)                   return "ReturnNamedToHand";
         if (tryParseYouMayRemoveNamedFromGame(effectText, source) != null)   return "YouMayRemoveNamedFromGame";
         if (tryParseEndOfOppTurnPlayNamedOntoField(effectText) != null)     return "EndOfOppTurnPlayNamedOntoField";
-        if (tryParseEndOfTurnPlayNamedOntoField(effectText)  != null)      return "EndOfTurnPlayNamedOntoField";
+        if (tryParseEndOfTurnPlayNamedOntoField(effectText, source)  != null)      return "EndOfTurnPlayNamedOntoField";
         if (tryParseRemoveAllOppBzFromGame(effectText)       != null)      return "RemoveAllOppBzFromGame";
         if (tryParseRevealTopNRfgOneCastableRestBottom(effectText) != null) return "RevealTopNRfgOneCastableRestBottom";
         // Must precede RemoveNamedFromGame, mirroring parse() and matchedPatternName().
@@ -4864,6 +4878,8 @@ public class ActionResolver {
         if (ActionResolverFieldAbility.tryParseNameCardTypeRemoveOppBzFromGame(effectText) != null) return "NameCardTypeRemoveOppBzFromGame";
         if (ActionResolverPower.tryParseRemoveSelfThenEnteredForwardGainsPermanently(effectText, source) != null)
             return "RemoveSelfThenEnteredForwardGainsPermanently";
+        if (tryParseRemoveSelfAtEndOfTurn(effectText, source) != null)     return "RemoveSelfAtEndOfTurn";
+        if (tryParseNameElementSelfBecomesUntilEot(effectText, source) != null) return "NameElementSelfBecomesUntilEot";
         if (tryParseRemoveNamedFromGame(effectText, source) != null)        return "RemoveNamedFromGame";
         // Must precede BreakSourceCard, mirroring parse() and matchedPatternName().
         if (tryParseBreakSelfAndBattlePartner(effectText, source) != null)

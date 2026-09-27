@@ -411,6 +411,18 @@ public class MainWindow {
 	 * {@link #enteredFieldByAbilityOf}.
 	 */
 	final Set<CardData> enteredViaWarp = Collections.newSetFromMap(new IdentityHashMap<>());
+
+	/** A zone a card can be brought onto the field from, for the triggers that ask which. */
+	enum EntryOrigin { BREAK_ZONE, DECK }
+	/**
+	 * Where a card on its way onto the field is coming from — "When Zenos enters the field from the
+	 * Break Zone" (20-130L), "When Ultros enters the field from the deck" (15-109R). Written by the
+	 * moves that take a card out of those zones, just before they place it; consumed by the
+	 * enters-field dispatch, which may run later than the placement (FieldEntryAnimator), so it is
+	 * kept on the card rather than in a flag. Dropped if the card goes to the Break Zone first (a
+	 * Break Zone cast that is cancelled). A card with no entry arrived from anywhere else.
+	 */
+	final Map<CardData, EntryOrigin> entryOrigin = new IdentityHashMap<>();
 	/** One-shot extra attacks granted this turn by "[X] can attack once more this turn.", by instance. */
 	final Map<CardData, Integer> extraAttacksThisTurn = new IdentityHashMap<>();
 	/** Cards granted a multi-attack permission until end of turn, instance to permitted count. */
@@ -1746,6 +1758,7 @@ public class MainWindow {
 
 	public MainWindow() {
         this.p1ForwardUrls = new ArrayList<>();
+		gameState.setRemovedFromGameListener(autoAbilityTriggers::triggerAutoAbilitiesForRemovedFromGame);
 		initialize();
 	}
 
@@ -5014,7 +5027,17 @@ public class MainWindow {
 	void putP1ForwardIntoBreakZone(int idx) { p1ForwardToBreakZone(idx, false); }
 
 	/** Shared body of {@link #breakP1Forward} and {@link #putP1ForwardIntoBreakZone}. */
-	private void p1ForwardToBreakZone(int idx, boolean isBreak) {
+	private void p1ForwardToBreakZone(int idx, boolean isBreak) { p1ForwardLeavesField(idx, isBreak, false); }
+
+	/**
+	 * Removes P1's Forward at {@code idx} from the game — straight from the field, not by way of
+	 * the Break Zone. It leaves the field, so "leaves the field" watchers fire; it is not broken
+	 * and never reaches the Break Zone, so nothing watching either of those does.
+	 */
+	void removeP1ForwardToRfg(int idx) { p1ForwardLeavesField(idx, false, true); }
+
+	/** Shared body of the break, the put and the removal from the game. */
+	private void p1ForwardLeavesField(int idx, boolean isBreak, boolean toRfg) {
 		if (idx < 0 || idx >= p1ForwardCards.size()) return;
 		startBreakAnim(p1ForwardLabels.get(idx));
 		CardData card    = p1ForwardCards.get(idx);
@@ -5029,7 +5052,9 @@ public class MainWindow {
 			}
 		}
 
-		if (topCard != null) {
+		if (toRfg) {
+			fileForwardRemovedFromGame(card, topCard, true);
+		} else if (topCard != null) {
 			// Primed: both cards move to break zone, then top card is immediately RFP'd
 			addToBreakZone(card, true);
 			addToBreakZone(topCard);
@@ -5091,7 +5116,7 @@ public class MainWindow {
 		}
 		if (gameState.getCurrentPlayer() == GameState.Player.P1) p1Turn.forwardsLeftFieldThisTurn++;
 		else p2Turn.forwardsLeftFieldThisTurn++;
-		p1Turn.forwardPutToBZThisTurn = true;
+		if (!toRfg) p1Turn.forwardPutToBZThisTurn = true;
 		// If the broken card was itself stolen from P2, drop its tracking entry
 		stolenForwards.remove(card);
 		// Restore any forwards that were conditioned on this card remaining on the field
@@ -5101,7 +5126,8 @@ public class MainWindow {
 		refreshP1BreakLabel();
 		if (topCard != null) refreshP1WarpZoneUI();
 		autoAbilityTriggers.triggerAutoAbilitiesForLeavesField(card, true);
-		autoAbilityTriggers.triggerAutoAbilitiesForBreakZone(card, true, partySnapshot);
+		if (toRfg) autoAbilityTriggers.triggerAutoAbilitiesForRemovedFromField(card, true);
+		else       autoAbilityTriggers.triggerAutoAbilitiesForBreakZone(card, true, partySnapshot);
 	}
 
 	/** Removes P2's forward at {@code idx} from the field and sends it to P2's Break Zone. */
@@ -5111,7 +5137,17 @@ public class MainWindow {
 	void putP2ForwardIntoBreakZone(int idx) { p2ForwardToBreakZone(idx, false); }
 
 	/** Shared body of {@link #breakP2Forward} and {@link #putP2ForwardIntoBreakZone}. */
-	private void p2ForwardToBreakZone(int idx, boolean isBreak) {
+	private void p2ForwardToBreakZone(int idx, boolean isBreak) { p2ForwardLeavesField(idx, isBreak, false); }
+
+	/**
+	 * Removes P2's Forward at {@code idx} from the game — straight from the field, not by way of
+	 * the Break Zone. It leaves the field, so "leaves the field" watchers fire; it is not broken
+	 * and never reaches the Break Zone, so nothing watching either of those does.
+	 */
+	void removeP2ForwardToRfg(int idx) { p2ForwardLeavesField(idx, false, true); }
+
+	/** Shared body of the break, the put and the removal from the game. */
+	private void p2ForwardLeavesField(int idx, boolean isBreak, boolean toRfg) {
 		if (idx < 0 || idx >= p2ForwardCards.size()) return;
 		startBreakAnim(p2ForwardLabels.get(idx));
 		CardData card    = p2ForwardCards.get(idx);
@@ -5126,7 +5162,9 @@ public class MainWindow {
 			}
 		}
 
-		if (topCard != null) {
+		if (toRfg) {
+			fileForwardRemovedFromGame(card, topCard, false);
+		} else if (topCard != null) {
 			addToBreakZone(card, true);
 			addToBreakZone(topCard);
 			logEntry("[P2] " + card.name() + " + " + topCard.name() + " → Break Zone (Primed)");
@@ -5175,12 +5213,34 @@ public class MainWindow {
 		}
 		if (gameState.getCurrentPlayer() == GameState.Player.P1) p1Turn.forwardsLeftFieldThisTurn++;
 		else p2Turn.forwardsLeftFieldThisTurn++;
-		p2Turn.forwardPutToBZThisTurn = true;
+		if (!toRfg) p2Turn.forwardPutToBZThisTurn = true;
 		syncBzForwardPlayables(false);
 		refreshP2BreakLabel();
 		autoAbilityTriggers.triggerAutoAbilitiesForLeavesField(card, false);
-		autoAbilityTriggers.triggerAutoAbilitiesForBreakZone(card, false, partySnapshot);
-		if (topCard != null) autoAbilityTriggers.triggerAutoAbilitiesForBreakZone(topCard, false, Collections.emptySet());
+		if (toRfg) {
+			autoAbilityTriggers.triggerAutoAbilitiesForRemovedFromField(card, false);
+		} else {
+			autoAbilityTriggers.triggerAutoAbilitiesForBreakZone(card, false, partySnapshot);
+			if (topCard != null) autoAbilityTriggers.triggerAutoAbilitiesForBreakZone(topCard, false, Collections.emptySet());
+		}
+	}
+
+	/**
+	 * Files a Forward leaving the field into its owner's removed-from-game zone, with the Primed
+	 * card under it. An LB card goes back to the LB deck instead, as it does from the Break Zone.
+	 */
+	private void fileForwardRemovedFromGame(CardData card, CardData topCard, boolean isP1) {
+		if (card.isLb()) {
+			logEntry((isP1 ? "" : "[P2] ") + card.name()
+					+ " is an LB card — it returns to the LB deck face up rather than leaving the game");
+		} else {
+			gameState.addToPermanentRfp(card);
+		}
+		if (topCard != null) {
+			gameState.addToPermanentRfp(topCard);
+			logEntry((isP1 ? "" : "[P2] ") + topCard.name() + " → Removed From Game");
+		}
+		if (isP1) refreshP1WarpZoneUI(); else refreshP2WarpZoneUI();
 	}
 
 	// -------------------------------------------------------------------------
@@ -5808,6 +5868,7 @@ public class MainWindow {
 		if (player1) refreshP1DeckLabel(); else refreshP2DeckLabel();
 		if (topCard != null) refreshP1WarpZoneUI();
 		autoAbilityTriggers.triggerAutoAbilitiesForLeavesField(card, true);
+		autoAbilityTriggers.triggerAutoAbilitiesForPutIntoDeck(card);
 	}
 
 	void returnP2ForwardToDeck(int idx, boolean toBottom) {
@@ -5856,6 +5917,7 @@ public class MainWindow {
 		}
 		if (player1) refreshP1DeckLabel(); else refreshP2DeckLabel();
 		autoAbilityTriggers.triggerAutoAbilitiesForLeavesField(card, false);
+		autoAbilityTriggers.triggerAutoAbilitiesForPutIntoDeck(card);
 	}
 
 	void returnP1ForwardUnderDeckTop(int idx, int position) {
@@ -5919,6 +5981,7 @@ public class MainWindow {
 		if (player1) refreshP1DeckLabel(); else refreshP2DeckLabel();
 		if (topCard != null) refreshP1WarpZoneUI();
 		autoAbilityTriggers.triggerAutoAbilitiesForLeavesField(card, true);
+		autoAbilityTriggers.triggerAutoAbilitiesForPutIntoDeck(card);
 	}
 
 	void returnP2ForwardUnderDeckTop(int idx, int position) {
@@ -5969,6 +6032,7 @@ public class MainWindow {
 		}
 		if (player1) refreshP1DeckLabel(); else refreshP2DeckLabel();
 		autoAbilityTriggers.triggerAutoAbilitiesForLeavesField(card, false);
+		autoAbilityTriggers.triggerAutoAbilitiesForPutIntoDeck(card);
 	}
 
 	// -------------------------------------------------------------------------
@@ -6428,8 +6492,10 @@ public class MainWindow {
 					logEntry((isP1 ? "" : "[P2] ") + card.name() + " → hand (search)");
 					if (isP1) refreshP1HandLabel(); else refreshP2HandCountLabel();
 					animateCardDraw(isP1, 1);
+					noteAddedToHand(card, isP1, false);
 				}
 				case "field" -> {
+					entryOrigin.put(card, EntryOrigin.DECK);
 					logEntry((isP1 ? "" : "[P2] ") + card.name() + " → field (search)" + (entersDull ? " dull" : ""));
 					if (isP1) {
 						if (card.isBackup())       placeCardInFirstBackupSlot(card);
@@ -7242,6 +7308,9 @@ public class MainWindow {
 				new AutoAbilityTriggers.DamageDealer(blocker, blockerIsP1, false));
 		if (dmgToBlocker  > 0) autoAbilityTriggers.fireIsDealtDamageTriggers(blocker,  blockerIsP1, dmgToBlocker,
 				new AutoAbilityTriggers.DamageDealer(attacker, attackerIsP1, false));
+		// And the dealer's side of the same blows — "When Ignacio deals damage to … a Forward".
+		if (dmgToBlocker  > 0) autoAbilityTriggers.triggerAutoAbilitiesForDealsDamageToForward(attacker, attackerIsP1);
+		if (dmgToAttacker > 0) autoAbilityTriggers.triggerAutoAbilitiesForDealsDamageToForward(blocker,  blockerIsP1);
 
 		// Recorded here for the same reason the triggers fire here: before the break below, so a
 		// Forward killed by this blow still counts as damaged by whoever struck it.
@@ -9069,6 +9138,7 @@ public class MainWindow {
 
 	void addToBreakZone(CardData card, boolean fromField)
 	{
+		entryOrigin.remove(card);
 		boolean player1 = gameState.getIdentity().get(card);
 
 		// FA1: "If a card is put into your Break Zone in any situation, remove it from the game instead."
@@ -9594,12 +9664,14 @@ public class MainWindow {
 	List<CardData> drawP1Cards(int count) {
 		List<CardData> drawn = gameState.drawToHand(count);
 		p1Turn.cardsDrawnThisTurn += drawn.size();
+		autoAbilityTriggers.triggerAutoAbilitiesForDraw(true, drawn.size());
 		return drawn;
 	}
 
 	List<CardData> drawP2Cards(int count) {
 		List<CardData> drawn = gameState.drawP2ToHand(count);
 		p2Turn.cardsDrawnThisTurn += drawn.size();
+		autoAbilityTriggers.triggerAutoAbilitiesForDraw(false, drawn.size());
 		return drawn;
 	}
 
@@ -12131,10 +12203,15 @@ public class MainWindow {
 			if (gameState.removeFromPermanentRfp(card))
 				return BORROW_SOURCE_RFG;
 		}
+		// Cast out of a Break Zone: it will enter the field from there (20-130L Zenos).
 		List<CardData> p1bz = gameState.getP1BreakZone();
-		for (int i = 0; i < p1bz.size(); i++) if (p1bz.get(i) == card) { p1bz.remove(i); return "Break Zone"; }
+		for (int i = 0; i < p1bz.size(); i++) if (p1bz.get(i) == card) {
+			p1bz.remove(i); entryOrigin.put(card, EntryOrigin.BREAK_ZONE); return "Break Zone";
+		}
 		List<CardData> p2bz = gameState.getP2BreakZone();
-		for (int i = 0; i < p2bz.size(); i++) if (p2bz.get(i) == card) { p2bz.remove(i); return "Break Zone"; }
+		for (int i = 0; i < p2bz.size(); i++) if (p2bz.get(i) == card) {
+			p2bz.remove(i); entryOrigin.put(card, EntryOrigin.BREAK_ZONE); return "Break Zone";
+		}
 		// Fallback: also sweep RFP zones if the entry was missing/mislabeled.
 		if (gameState.removeFromPermanentRfp(card))
 			return BORROW_SOURCE_RFG;
@@ -13777,21 +13854,55 @@ public class MainWindow {
 		CardData d = isP1 ? gameState.breakFromHand(i) : gameState.breakP2FromHand(i);
 		if (d != null) {
 			animateCardDiscard(isP1, d);
-			// "due to your Summons or abilities" — an effect is mid-resolution and the hand that
-			// lost the card belongs to the other player. A discard paid as a cost or taken at the
-			// end-phase hand limit has no ability resolving, so it correctly fires nothing.
-			if (currentAbilitySource != null && currentAbilitySourceIsP1 != isP1)
-				autoAbilityTriggers.triggerAutoAbilitiesForDiscardByEffect(d, currentAbilitySourceIsP1);
-			// "When you discard 1 or more cards due to Summons or abilities" — 16-114C White Mage.
-			// Anyone's effect, Summons included; fired once per resolution however many cards go.
-			int side = isP1 ? 0 : 1;
-			if ((currentAbilitySource != null || currentSummonSource != null)
-					&& ownDiscardFiredSerial[side] != resolutionSerial) {
-				ownDiscardFiredSerial[side] = resolutionSerial;
-				autoAbilityTriggers.triggerAutoAbilitiesForOwnDiscardByEffect(isP1);
-			}
+			noteDiscardedFromHand(d, isP1);
 		}
 		return d;
+	}
+
+	/**
+	 * Announces that {@code d} has just been discarded from {@code isP1}'s hand, to every trigger
+	 * that watches discards. Called per card by each discard path — {@link #playerBreakFromHand}
+	 * and the whole-hand discard, which moves the cards itself.
+	 */
+	/**
+	 * Whose Summon or ability is resolving right now — true for P1 — or {@code null} when none is
+	 * (battle, a cost, a game rule). An ability's side is read off the field where its card stands:
+	 * an auto ability run inline sets the source, not its side.
+	 */
+	Boolean resolvingEffectSide() {
+		if (currentAbilitySource != null) {
+			Boolean onField = fieldSideOf(currentAbilitySource);
+			return onField != null ? onField : currentAbilitySourceIsP1;
+		}
+		if (currentSummonSource != null) return currentSummonSourceIsP1;
+		return null;
+	}
+
+	void noteDiscardedFromHand(CardData d, boolean isP1) {
+		// "due to your Summons or abilities" — an effect is mid-resolution and the hand that
+		// lost the card belongs to the other player. A discard paid as a cost or taken at the
+		// end-phase hand limit has no ability resolving, so it correctly fires nothing.
+		if (currentAbilitySource != null && currentAbilitySourceIsP1 != isP1)
+			autoAbilityTriggers.triggerAutoAbilitiesForDiscardByEffect(d, currentAbilitySourceIsP1);
+		// "When you discard 1 or more cards due to Summons or abilities" — 16-114C White Mage.
+		// Anyone's effect, Summons included; fired once per resolution however many cards go.
+		int side = isP1 ? 0 : 1;
+		if ((currentAbilitySource != null || currentSummonSource != null)
+				&& ownDiscardFiredSerial[side] != resolutionSerial) {
+			ownDiscardFiredSerial[side] = resolutionSerial;
+			autoAbilityTriggers.triggerAutoAbilitiesForOwnDiscardByEffect(isP1,
+					currentAbilitySource != null && !currentAbilitySource.isSummon());
+		}
+		// The discarded card's own trigger (Black Waltz 1-3, Emerald Weapon).
+		Boolean effectSide = resolvingEffectSide();
+		if (effectSide != null)
+			autoAbilityTriggers.triggerAutoAbilitiesForSelfDiscarded(d, isP1,
+					currentAbilitySource != null, effectSide != isP1);
+		// 29-043R Aerith — anyone's Summon or ability.
+		if (effectSide != null) autoAbilityTriggers.triggerAutoAbilitiesForOwnCardToBzByEffect(d, isP1);
+		// 12-074H Argy — "in any situation", the hand included.
+		if (effectSide != null && effectSide != isP1)
+			autoAbilityTriggers.triggerAutoAbilitiesForPutIntoBzByOpponent(d, isP1);
 	}
 
 	/**
@@ -13810,6 +13921,19 @@ public class MainWindow {
 	 * hand, so their opponent's watchers (25-111H The Emperor) can react. Call once per effect
 	 * rather than per card: the trigger reads "1 or more cards".
 	 */
+	/**
+	 * Announces one card arriving in {@code handOwnerIsP1}'s hand from the Break Zone or, by a
+	 * search, from the deck — for its own "When [Self] is added to your hand from …" (14-079R
+	 * Aphmau, 9-091H Nero (XIV), 16-140S Sin, 27-059C Galuf). Per card, beside the per-effect
+	 * {@link #notifyCardsAddedToHandFromBreakZone}. "Your hand" is the owner's: a card taken into
+	 * the other player's hand fires nothing.
+	 */
+	void noteAddedToHand(CardData card, boolean handOwnerIsP1, boolean fromBreakZone) {
+		Boolean owner = gameState.getIdentity().get(card);
+		if (owner == null || owner != handOwnerIsP1) return;
+		autoAbilityTriggers.triggerAutoAbilitiesForAddedToHand(card, handOwnerIsP1, fromBreakZone);
+	}
+
 	void notifyCardsAddedToHandFromBreakZone(boolean handOwnerIsP1) {
 		autoAbilityTriggers.triggerAutoAbilitiesForBreakZoneToHand(handOwnerIsP1);
 	}
@@ -20073,6 +20197,10 @@ public class MainWindow {
 					if (combinedPower > 0)
 						for (int i : attackerIndices)
 							if (i < p1ForwardCards.size()) recordDamagedBy(blocker, p1ForwardCards.get(i));
+					if (combinedPower > 0)
+						for (int i : attackerIndices)
+							if (i < p1ForwardCards.size())
+								autoAbilityTriggers.triggerAutoAbilitiesForDealsDamageToForward(p1ForwardCards.get(i), true);
 					if (blockerBroken) breakP2Forward(blockerIdx);
 					if (!partyFirst || !blockerBroken) {
 						// How the blocker spreads its damage is the opponent's call.
@@ -20177,6 +20305,7 @@ public class MainWindow {
 			autoAbilityTriggers.fireIsDealtDamageTriggers(p1ForwardCards.get(idx), true, dmg,
 					new AutoAbilityTriggers.DamageDealer(blocker, false, false));
 			if (dmg > 0) recordDamagedBy(p1ForwardCards.get(idx), blocker);
+			if (dmg > 0) autoAbilityTriggers.triggerAutoAbilitiesForDealsDamageToForward(blocker, false);
 		}
 		List<Integer> toBreak = new ArrayList<>();
 		for (int idx : damageMap.keySet()) {
@@ -20209,6 +20338,10 @@ public class MainWindow {
 		if (combinedPower > 0)
 			for (int i : attackerIndices)
 				if (i < p2ForwardCards.size()) recordDamagedBy(blocker, p2ForwardCards.get(i));
+		if (combinedPower > 0)
+			for (int i : attackerIndices)
+				if (i < p2ForwardCards.size())
+					autoAbilityTriggers.triggerAutoAbilitiesForDealsDamageToForward(p2ForwardCards.get(i), false);
 		if (blockerBroken) breakP1Forward(blockerIdx);
 
 		if (!partyFirst || !blockerBroken) {
@@ -20249,6 +20382,7 @@ public class MainWindow {
 			autoAbilityTriggers.fireIsDealtDamageTriggers(p2ForwardCards.get(idx), false, dmg,
 					new AutoAbilityTriggers.DamageDealer(blocker, true, false));
 			if (dmg > 0) recordDamagedBy(p2ForwardCards.get(idx), blocker);
+			if (dmg > 0) autoAbilityTriggers.triggerAutoAbilitiesForDealsDamageToForward(blocker, true);
 		}
 		List<Integer> toBreak = new ArrayList<>();
 		for (int idx : damageMap.keySet()) {

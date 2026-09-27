@@ -2477,6 +2477,19 @@ final class ActionResolverPatterns {
         "(?<named>.+?)\\s+from\\s+(?:the\\s+)?game[.!]?"
     );
     /** Matches "You may remove [CardName] from the game." — optional self-RFP. */
+    /** 1-173C Mime's Element-naming sentence pair. Anchored end to end. */
+    static final Pattern NAME_ELEMENT_SELF_BECOMES_UNTIL_EOT = Pattern.compile(
+        "(?i)^name\\s+1\\s+Element\\s+other\\s+than\\s+Light\\s+and\\s+Dark\\.\\s+Until\\s+the\\s+end\\s+of\\s+the\\s+turn,\\s+" +
+        "the\\s+Element\\s+of\\s+(?<name>.+?)\\s+becomes\\s+the\\s+named\\s+one[.!]?$"
+    );
+    /** "Add [Self] to your hand at the end of the turn." — 12-074H Argy. Anchored. */
+    static final Pattern ADD_SELF_TO_HAND_AT_END_OF_TURN = Pattern.compile(
+        "(?i)^add\\s+(?<name>.+?)\\s+to\\s+your\\s+hand\\s+at\\s+the\\s+end\\s+of\\s+the\\s+turn[.!]?$"
+    );
+    /** "At the end of the turn, remove [Self] from the game." — 20-130L Zenos. Anchored. */
+    static final Pattern REMOVE_SELF_AT_END_OF_TURN = Pattern.compile(
+        "(?i)^at\\s+the\\s+end\\s+of\\s+(?:the|this)\\s+turn,\\s+remove\\s+(?<name>.+?)\\s+from\\s+the\\s+game[.!]?$"
+    );
     static final Pattern YOU_MAY_REMOVE_NAMED_FROM_GAME = Pattern.compile(
         "(?i)^you\\s+may\\s+remove\\s+(?<name>.+?)\\s+from\\s+(?:the\\s+)?game[.!]?\\s*$"
     );
@@ -10406,9 +10419,19 @@ final class ActionResolverPatterns {
      * copies of it; {@code effect} — the conditional action text.
      */
     static final Pattern FOLLOWUP_YOU_MAY_PAY_ELEMENT_IF_DO_SO = Pattern.compile(
-        "(?i)^You\\s+may\\s+pay\\s+《(?<element>[^》]+)》(?<repeat>(?:\\s*《\\k<element>》)*)[.!]?\\s+" +
+        // The optional generic tail is 7-018L Lann's 《Fire》《Fire》《Fire》《1》.
+        "(?i)^You\\s+may\\s+pay\\s+《(?<element>[^》\\d]+)》(?<repeat>(?:\\s*《\\k<element>》)*)" +
+        "(?:\\s*《(?<generic>\\d+)》)?[.!]?\\s+" +
         "If\\s+you\\s+do\\s+so[,.]?\\s+(?<effect>.+)$",
         Pattern.DOTALL
+    );
+    /**
+     * "deal it damage equal to [Card Name]'s power" as the payoff of
+     * {@link #FOLLOWUP_YOU_MAY_PAY_ELEMENT_IF_DO_SO} — 7-018L Lann. Anchored: the payoff is the whole
+     * remainder of that followup.
+     */
+    static final Pattern FOLLOWUP_DAMAGE_EQUAL_TO_NAMED_POWER = Pattern.compile(
+        "(?i)^deal\\s+it\\s+damage\\s+equal\\s+to\\s+(?<card>[^.]+?)'s\\s+power\\s*[.!]?$"
     );
     /**
      * Matches "You may play [filters] from your hand onto the field. If you do so, [effect]." — the

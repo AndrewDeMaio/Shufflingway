@@ -1831,6 +1831,12 @@ public interface GameContext {
     void setTargetElement(ForwardTarget t, String element);
 
     /**
+     * {@code source}'s Element becomes {@code element} until the end of the turn — 1-173C Mime.
+     * The override is taken back at the end of the turn only if nothing has replaced it since.
+     */
+    void setSourceElementUntilEndOfTurn(CardData source, String element);
+
+    /**
      * Shows a modal dialog for the ability user to name one Element, or picks randomly for the AI.
      *
      * @param prompt text shown above the picker
@@ -3376,6 +3382,14 @@ public interface GameContext {
     void mayPayElementCpToEffect(String element, int count,
             java.util.function.Consumer<GameContext> onPay);
 
+    /**
+     * {@link #mayPayElementCpToEffect} with {@code generic} CP of any Element on top — 7-018L Lann's
+     * "You may pay 《Fire》《Fire》《Fire》《1》. If you do so, …". A separate method rather than a wider
+     * signature, so the mock tests naming the three-argument form keep verifying what runs.
+     */
+    void mayPayElementAndGenericCpToEffect(String element, int count, int generic,
+            java.util.function.Consumer<GameContext> onPay);
+
     /** {@link #mayPayElementCpToEffect} for a cost naming a single CP of {@code element}. */
     default void mayPayElementCpToEffect(String element, java.util.function.Consumer<GameContext> onPay) {
         mayPayElementCpToEffect(element, 1, onPay);
@@ -4384,6 +4398,13 @@ public interface GameContext {
      * some other effect has already moved on.
      */
     void returnSourceFromBreakZoneToField(CardData source, boolean dull);
+
+    /**
+     * Moves {@code source} itself from its owner's Break Zone into its owner's hand — 12-074H
+     * Argy's "add Argy to your hand at the end of the turn". By identity, so a second copy stays;
+     * a no-op when the card has already left the Break Zone.
+     */
+    void returnSourceFromBreakZoneToHand(CardData source);
 
     /**
      * Moves {@code source} itself out of the active player's Break Zone and onto the <em>other</em>

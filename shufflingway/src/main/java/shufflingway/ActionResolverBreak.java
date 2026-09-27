@@ -654,9 +654,12 @@ final class ActionResolverBreak {
         String name = m.group("name").trim();
         if (!name.equalsIgnoreCase(source.name())) return null;
         boolean dull = m.group("dull") != null;
+        // The card itself, by identity: "play Emerald Weapon from your Break Zone" means this copy.
+        // Every copy of the name used to come out, and two same-named arrivals are both sent back by
+        // the unique-name rule, so a second copy in the Break Zone cost the player the first.
         return ctx -> {
             ctx.logEntry("Effect: Play " + name + " from Break Zone → field" + (dull ? " dull" : ""));
-            ctx.playAllByNameFromOwnBreakZoneDull(name, dull);
+            ctx.returnSourceFromBreakZoneToField(source, dull);
         };
     }
 

@@ -1936,6 +1936,8 @@ final class AutoAbilityTriggers {
 		if (cause != null && cause != card && !cause.isSummon()) mw.enteredFieldByAbilityOf.put(card, cause);
 		else mw.enteredFieldByAbilityOf.remove(card);
 		if (mw.lastCardWarpedIn) mw.enteredViaWarp.add(card); else mw.enteredViaWarp.remove(card);
+		// Consumed here whether or not anything fires: the next arrival of this card is a new one.
+		MainWindow.EntryOrigin origin = mw.entryOrigin.remove(card);
 		if (mw.suppressAutoAbilityForNextCards > 0) {
 			mw.suppressAutoAbilityForNextCards--;
 			// Re-evaluate field boosts even when ETF auto-abilities are suppressed
@@ -1965,6 +1967,9 @@ final class AutoAbilityTriggers {
 					// "enters the field due to an ability / a Summon or an ability / your Summons or
 					// abilities / an ability of Card Name X" — answered by what is resolving as it arrives.
 					if (fa.trigger().startsWith("enters the field by ") && !enteredByEffect(fa.trigger(), isP1)) continue;
+					// "enters the field from the Break Zone / from the deck" (20-130L Zenos, 15-109R Ultros).
+					if (fa.trigger().equals("enters the field from break zone") && origin != MainWindow.EntryOrigin.BREAK_ZONE) continue;
+					if (fa.trigger().equals("enters the field from deck") && origin != MainWindow.EntryOrigin.DECK) continue;
 					executeAutoAbility(fa, card, isP1, paidExtraCost);
 				}
 				// Watcher dispatch: "When a <Type> enters your field, ..." abilities live on other field cards
@@ -1983,6 +1988,7 @@ final class AutoAbilityTriggers {
 			// opponent's cards and uses trigger "enters opponent's field".
 			// Not suppressed — the controller still gets their own triggers.
 			fireEntersOpponentFieldWatchers(card, isP1);
+			fireEntersEitherFieldWatchers(card);
 		});
 		// Remedi-style watchers ("a Character enters your opponent's field other than from their
 		// hand") — only when the entering card was NOT played from hand. Run inline (outside the
@@ -2125,6 +2131,19 @@ final class AutoAbilityTriggers {
 		for (CardData c : fwds) fireEntersYourFieldWatcher(c, enteringCard, enteringIsP1);
 		for (CardData c : bkps) if (c != null) fireEntersYourFieldWatcher(c, enteringCard, enteringIsP1);
 		for (CardData c : mons) fireEntersYourFieldWatcher(c, enteringCard, enteringIsP1);
+	}
+
+	/**
+	 * "When a Monster enters either player's field" — 23-103C Quina. Watchers on both sides, each
+	 * resolving under its own controller.
+	 */
+	private void fireEntersEitherFieldWatchers(CardData enteringCard) {
+		for (boolean watcherIsP1 : new boolean[] { true, false })
+			for (CardData watcher : fieldCards(watcherIsP1))
+				for (AutoAbility fa : mw.effectiveAutoAbilities(watcher))
+					if (fa.trigger().equals("enters either player's field")
+							&& matchesEntersFieldSubject(fa.triggerCard(), enteringCard, watcher))
+						executeAutoAbility(fa, watcher, watcherIsP1);
 	}
 
 	private void fireEntersYourFieldWatcher(CardData watcher, CardData enteringCard, boolean enteringIsP1) {
@@ -2416,6 +2435,13 @@ final class AutoAbilityTriggers {
 		Matcher jobM = java.util.regex.Pattern.compile(
 				"(?i)^an?\\s+Job\\s+(?<job>.+)$").matcher(subject);
 		if (jobM.matches()) return enteringCard.hasJob(jobM.group("job").trim());
+		// "a Card Name X Forward" — name and type (1-213S Tidus's "the Forward Card Name Yuna"). Tried
+		// only when the name part names the card, so a card whose own name ends in a type word
+		// still falls through to the plain name arm below.
+		Matcher nameTypeM = java.util.regex.Pattern.compile(
+				"(?i)^an?\\s+Card\\s+Name\\s+(?<name>.+?)\\s+(?<type>Forwards?|Backups?|Monsters?|Characters?)$").matcher(subject);
+		if (nameTypeM.matches() && CardFilters.meetsCardNameFilter(enteringCard, nameTypeM.group("name").trim()))
+			return meetsSubjectTypeFilter(enteringCard, nameTypeM.group("type"));
 		// "a Card Name X" — match by card name or alias
 		Matcher nameM = java.util.regex.Pattern.compile(
 				"(?i)^an?\\s+Card\\s+Name\\s+(?<name>.+)$").matcher(subject);
@@ -2546,8 +2572,38 @@ final class AutoAbilityTriggers {
 				// already scoped this list to the attacking card.
 				if (!fa.triggerCard().equalsIgnoreCase(attacker.name())
 						&& !DAMAGE_TO_OPPONENT_SUBJECT_SELF.matcher(fa.triggerCard().trim()).matches()) continue;
-				if (fa.trigger().equals("deals damage to opponent")) executeAutoAbility(fa, attacker, attackerIsP1);
+				if (fa.trigger().equals("deals damage to opponent")
+						|| fa.trigger().equals("deals damage to opponent or forward"))
+					executeAutoAbility(fa, attacker, attackerIsP1);
 			}
+		});
+		mw.showStackWindowIfNeeded();
+	}
+
+	/**
+	 * Fires "When [Self] deals damage to your opponent or to a Forward" (10-001H Ignacio, 7-013R
+	 * Berserker, 7-018L Lann) for battle damage {@code dealer} has just dealt to a Forward — once
+	 * per damage instance, broken or not. Not Breaktouch's "deals damage to forward", whose payoff
+	 * acts on the damaged card and which {@code DamageResolver} resolves itself.
+	 */
+	void triggerAutoAbilitiesForDealsDamageToForward(CardData dealer, boolean dealerIsP1) {
+		if (dealer == null) return;
+		withBatch(() -> {
+			for (AutoAbility fa : mw.effectiveAutoAbilities(dealer)) {
+				if (!fa.trigger().equals("deals damage to opponent or forward")) continue;
+				if (!fa.triggerCard().equalsIgnoreCase(dealer.name())
+						&& !DAMAGE_TO_OPPONENT_SUBJECT_SELF.matcher(fa.triggerCard().trim()).matches()) continue;
+				executeAutoAbility(fa, dealer, dealerIsP1);
+			}
+			// Watchers on the dealer's side — 20-014R Tifa's "a Category VII Character you control
+			// deals damage to a Forward opponent controls". Every caller is battle damage to an
+			// opposing Forward.
+			for (CardData watcher : fieldCards(dealerIsP1))
+				for (AutoAbility fa : mw.effectiveAutoAbilities(watcher)) {
+					if (!fa.trigger().equals("watched character deals damage to forward")) continue;
+					String subject = fa.triggerCard().replaceFirst("(?i)\\s+you\\s+control$", "").trim();
+					if (matchesEntersFieldSubject(subject, dealer, watcher)) executeAutoAbility(fa, watcher, dealerIsP1);
+				}
 		});
 		mw.showStackWindowIfNeeded();
 	}
@@ -3001,7 +3057,17 @@ final class AutoAbilityTriggers {
 			// control") arguably describes the broken card too, but firing those here would change
 			// what every existing watcher does when it is the card that broke; that is a separate
 			// question from letting a card see its own departure.
+			// "… by your opponent's Summons or abilities" (11-065H Ardyn): the cause is whatever is
+			// resolving as the card leaves; battle, costs and rules have none.
+			Boolean causeSide = mw.resolvingEffectSide();
+			boolean byOpponentsEffect = causeSide != null && causeSide != brokenIsP1;
 			for (AutoAbility fa : mw.effectiveAutoAbilities(broken)) {
+				if (fa.trigger().equals("put into break zone by opponent's effect")
+						|| fa.trigger().equals("put into break zone any way by opponent's effect")) {
+					if (byOpponentsEffect && subjectNamesItsOwnCard(fa, broken))
+						executeAutoAbility(fa, broken, brokenIsP1);
+					continue;
+				}
 				if (!fa.trigger().equals("enters the field or put into break zone")
 						&& !fa.trigger().equals("put into break zone")) continue;
 				if (!subjectNamesItsOwnCard(fa, broken)) continue;
@@ -3624,8 +3690,155 @@ final class AutoAbilityTriggers {
 	 * Fires "When you discard 1 or more cards due to Summons or abilities" (16-114C White Mage) on
 	 * {@code discarderIsP1}'s own field. The caller fires it once per effect, not per card.
 	 */
-	void triggerAutoAbilitiesForOwnDiscardByEffect(boolean discarderIsP1) {
-		triggerAutoAbilitiesForEvent("you discard by effect", discarderIsP1);
+	void triggerAutoAbilitiesForOwnDiscardByEffect(boolean discarderIsP1, boolean byAbility) {
+		withBatch(() -> {
+			collectEventTriggers("you discard by effect", discarderIsP1);
+			// 29-040H Adelle: "due to an ability" — not a Summon.
+			if (byAbility) collectEventTriggers("you discard by ability", discarderIsP1);
+		});
+		mw.showStackWindowIfNeeded();
+	}
+
+	/**
+	 * Fires the draw watchers for {@code count} cards {@code drawerIsP1} has just drawn, once per
+	 * card: "When you draw a card" (15-063C Romaa Mihgo) on the drawer's field, and "When your
+	 * opponent draws a card outside of his/her Draw Phase" (5-036L The Emperor) on the other side,
+	 * except while the Draw Phase is running.
+	 */
+	void triggerAutoAbilitiesForDraw(boolean drawerIsP1, int count) {
+		if (count <= 0) return;
+		boolean inDrawPhase = mw.gameState.getCurrentPhase() == GameState.GamePhase.DRAW;
+		withBatch(() -> {
+			for (int i = 0; i < count; i++) {
+				collectEventTriggers("you draw a card", drawerIsP1);
+				if (!inDrawPhase) collectEventTriggers("opponent draws outside draw phase", !drawerIsP1);
+			}
+		});
+		mw.showStackWindowIfNeeded();
+	}
+
+	/**
+	 * Fires a card's own "When [Self] in any zone is removed from the game" (28-115L Lightning).
+	 * Registered on {@link GameState#setRemovedFromGameListener}, so every removal reaches it —
+	 * from the field, the Break Zone, the hand or the deck. The card resolves from where it now is.
+	 */
+	void triggerAutoAbilitiesForRemovedFromGame(CardData card) {
+		Boolean ownerIsP1 = mw.gameState.getIdentity().get(card);
+		if (ownerIsP1 == null) return;
+		fireOwnRemovalTriggers(card, ownerIsP1, "removed from game");
+	}
+
+	/**
+	 * Fires a Forward's own "When [Self] on the field is removed from the game" (29-063R Exdeath),
+	 * from the field exit that files it there ({@code MainWindow.removeP1ForwardToRfg}).
+	 */
+	void triggerAutoAbilitiesForRemovedFromField(CardData card, boolean controllerIsP1) {
+		fireOwnRemovalTriggers(card, controllerIsP1, "removed from game from field");
+	}
+
+	/**
+	 * Fires a Forward's own "When [Self] is put from the field into its owner's deck" (16-116L
+	 * Tidus), from the four field → deck moves. It resolves from the deck, under its owner.
+	 */
+	void triggerAutoAbilitiesForPutIntoDeck(CardData card) {
+		Boolean ownerIsP1 = mw.gameState.getIdentity().get(card);
+		if (ownerIsP1 == null) return;
+		fireOwnRemovalTriggers(card, ownerIsP1, "put from field into deck");
+	}
+
+	/**
+	 * The hand and deck routes of 12-074H Argy's "put into the Break Zone in any situation by your
+	 * opponent's Summons or abilities" — called by the discard and the mill for each card they move
+	 * while an effect of the owner's opponent is resolving. The field route is the break-zone dispatch.
+	 */
+	void triggerAutoAbilitiesForPutIntoBzByOpponent(CardData card, boolean ownerIsP1) {
+		fireOwnRemovalTriggers(card, ownerIsP1, "put into break zone any way by opponent's effect");
+	}
+
+	/**
+	 * 29-043R Aerith's "When a Category VII Character is put from your hand or your deck into the
+	 * Break Zone due to Summons or abilities, add it to your hand" — watchers on the owner's field,
+	 * called by the discard and the mill for each card they move while any Summon or ability is
+	 * resolving. The card travels as the trigger card, which "add it to your hand" returns by identity.
+	 */
+	void triggerAutoAbilitiesForOwnCardToBzByEffect(CardData card, boolean ownerIsP1) {
+		withBatch(() -> {
+			for (CardData watcher : fieldCards(ownerIsP1))
+				for (AutoAbility fa : mw.effectiveAutoAbilities(watcher))
+					if (fa.trigger().equals("own card to break zone from hand or deck by effect")
+							&& matchesEntersFieldSubject(fa.triggerCard(), card, watcher))
+						executeAutoAbility(fa, watcher, ownerIsP1, false, card);
+		});
+		mw.showStackWindowIfNeeded();
+	}
+
+	private void fireOwnRemovalTriggers(CardData card, boolean isP1, String trigger) {
+		withBatch(() -> {
+			for (AutoAbility fa : mw.effectiveAutoAbilities(card))
+				if (fa.trigger().equals(trigger) && meetsCardNameFilter(card, fa.triggerCard()))
+					executeAutoAbility(fa, card, isP1);
+		});
+		mw.showStackWindowIfNeeded();
+	}
+
+	/**
+	 * Fires a card's own "When [Self] is added to your hand from the Break Zone" (14-079R Aphmau,
+	 * 9-091H Nero (XIV)), "… from the deck due to a search effect" (16-140S Sin), or both (27-059C
+	 * Galuf). The card is in its owner's hand and resolves from there.
+	 *
+	 * @param fromBreakZone the Break Zone; otherwise a search took it from the deck
+	 */
+	void triggerAutoAbilitiesForAddedToHand(CardData card, boolean ownerIsP1, boolean fromBreakZone) {
+		withBatch(() -> {
+			for (AutoAbility fa : mw.effectiveAutoAbilities(card)) {
+				boolean fires = switch (fa.trigger()) {
+					case "added to hand from break zone"           -> fromBreakZone;
+					case "added to hand by search"                 -> !fromBreakZone;
+					case "added to hand from break zone or search" -> true;
+					default                                        -> false;
+				};
+				if (fires && meetsCardNameFilter(card, fa.triggerCard())) executeAutoAbility(fa, card, ownerIsP1);
+			}
+		});
+		mw.showStackWindowIfNeeded();
+	}
+
+	/**
+	 * Fires the triggers on one card put from {@code ownerIsP1}'s deck into the Break Zone: its own
+	 * "When [Self] is put from the deck into the Break Zone" (22-084R Fujin, 22-087R Raijin),
+	 * resolved from the Break Zone, and the opponent's "When a card is put from your opponent's deck
+	 * into the Break Zone" watchers (10-050C Thief). Once per card.
+	 */
+	void triggerAutoAbilitiesForMilled(CardData milled, boolean ownerIsP1) {
+		withBatch(() -> {
+			for (AutoAbility fa : mw.effectiveAutoAbilities(milled))
+				if (fa.trigger().equals("milled") && meetsCardNameFilter(milled, fa.triggerCard()))
+					executeAutoAbility(fa, milled, ownerIsP1);
+			collectEventTriggers("opponent card milled", !ownerIsP1);
+		});
+		mw.showStackWindowIfNeeded();
+	}
+
+	/**
+	 * Fires the discarded card's own "When [Self] is discarded from your hand due to …" — 16-027C /
+	 * 16-007R / 16-088L Black Waltz 1-3 ("an ability") and 19-039R Emerald Weapon ("your
+	 * opponent's Summons or abilities"). The card is in its owner's Break Zone by now and resolves
+	 * from there.
+	 *
+	 * @param byAbility    whether an ability (not a Summon) is what made it be discarded
+	 * @param byOpponent   whether that Summon or ability is the owner's opponent's
+	 */
+	void triggerAutoAbilitiesForSelfDiscarded(CardData discarded, boolean ownerIsP1,
+			boolean byAbility, boolean byOpponent) {
+		withBatch(() -> {
+			for (AutoAbility fa : mw.effectiveAutoAbilities(discarded)) {
+				boolean fires = fa.trigger().equals("discarded by ability") ? byAbility
+						: fa.trigger().equals("discarded by opponent's effect") && byOpponent;
+				if (!fires || !meetsCardNameFilter(discarded, fa.triggerCard())) continue;
+				executeAutoAbility(fa, discarded, ownerIsP1);
+			}
+		});
+		mw.showStackWindowIfNeeded();
 	}
 
 	/**
@@ -4091,6 +4304,12 @@ final class AutoAbilityTriggers {
 			if (wantsOpponent != (changedIsP1 != watcherIsP1)) return false;
 			part = part.substring(0, side.start()).trim();
 		}
+		// "1 or more dull Backups" names the same single card a watcher checks as "a dull Backup";
+		// how often it fires is the dispatcher's business.
+		Matcher oneOrMore = ONE_OR_MORE_SUBJECT.matcher(part);
+		if (oneOrMore.lookingAt())
+			part = "a " + part.substring(oneOrMore.end())
+					.replaceFirst("(?i)\\b(Forward|Backup|Monster|Character)s\\b", "$1");
 		part = STATE_CHANGE_SUBJECT_STATE.matcher(part).replaceFirst("a ").trim();
 		return matchesSingleSubject(part, changed, watcher);
 	}
@@ -4116,11 +4335,24 @@ final class AutoAbilityTriggers {
 					if (!fa.trigger().equals("becomes active by effect")) continue;
 					if (!matchesStateChangeSubject(fa.triggerCard(), activated, activatedIsP1,
 							watcher, causerIsP1)) continue;
+					// "1 or more dull Backups … is activated" (12-114R Baralai): one event per effect,
+					// however many it wakes — the White Mage reading of "1 or more".
+					if (ONE_OR_MORE_SUBJECT.matcher(fa.triggerCard()).lookingAt()) {
+						Integer last = oneOrMoreActivatedSerial.get(watcher);
+						if (last != null && last == mw.resolutionSerial) continue;
+						oneOrMoreActivatedSerial.put(watcher, mw.resolutionSerial);
+					}
 					executeAutoAbility(fa, watcher, causerIsP1);
 				}
 		});
 		mw.showStackWindowIfNeeded();
 	}
+
+	/** "1 or more …" opening a subject — a trigger that fires once for however many cards. */
+	private static final Pattern ONE_OR_MORE_SUBJECT = Pattern.compile("(?i)^1\\s+or\\s+more\\s+");
+
+	/** The resolution each "1 or more … is activated" watcher last fired in, by watcher. */
+	private final Map<CardData, Integer> oneOrMoreActivatedSerial = new java.util.IdentityHashMap<>();
 
 	/**
 	 * Fires "opponent uses ex burst" abilities on the field cards of the player whose opponent
@@ -4152,6 +4384,14 @@ final class AutoAbilityTriggers {
 		String effect = card.exBurstEffect();
 		if (effect.isEmpty()) {
 			mw.logEntry("[EX BURST] " + card.name() + " — no parseable effect");
+			return;
+		}
+		// "Damage 3 -- EX BURST …" (17-080R Ewen): counted with the card that was just revealed,
+		// which is already in the Damage Zone.
+		int needed = card.exBurstDamageThreshold();
+		int received = (isP1 ? mw.gameState.getP1DamageZone() : mw.gameState.getP2DamageZone()).size();
+		if (received < needed) {
+			mw.logEntry("[EX BURST] " + card.name() + " — needs " + needed + " points of damage (has " + received + ")");
 			return;
 		}
 		// Strip any extra cost clause — extra cost cannot be paid when triggered as an EX Burst.
@@ -4629,8 +4869,13 @@ final class AutoAbilityTriggers {
 			if (dmg < fa.damageThreshold()) return;
 		}
 
-		// "only during your turn" — skip when the ability owner is not the active player
-		if (fa.yourTurnOnly() && !isP1) return;
+		// "only during your turn" — skip when the ability owner is not the active player. Read off the
+		// turn, as the mirror below is: a P2 ability used to never fire, and a P1 one fired on both turns.
+		if (fa.yourTurnOnly()
+				&& (mw.gameState.getCurrentPlayer() == GameState.Player.P1) != isP1) {
+			mw.logEntry("[AutoAbility] " + source.name() + " — only triggers during your turn");
+			return;
+		}
 
 		// "During your opponent's turn, when …" — the mirror, and read off the turn rather than off
 		// the side: the events this gates (a Forward of yours being broken) happen on both players'
@@ -4815,6 +5060,11 @@ final class AutoAbilityTriggers {
 				paidExtraCost, 0, 0, mw.triggeringBrokenCard, mw.triggeringEnteredCard);
 		mw.gameState.insertStack(depth, entry);
 		mw.cancelFirstOppForwardAuto(entry);
+		// "When your opponent's auto-ability is put on the stack" — 10-074C Suzuhisa. Only the ones
+		// that actually go on it: the shapes this layer resolves inline never do. Collected, not
+		// shown: this runs mid-push, and showing the Stack here would start resolving it under the
+		// caller that is still putting things on it.
+		withBatch(() -> collectEventTriggers("opponent auto-ability put on stack", !isP1));
 	}
 
 
