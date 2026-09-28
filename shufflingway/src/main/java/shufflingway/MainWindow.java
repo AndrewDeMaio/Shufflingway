@@ -1324,8 +1324,44 @@ public class MainWindow {
 	 */
 	final Set<CardData> returnToHandAfterUseSummons = Collections.newSetFromMap(new IdentityHashMap<>());
 
-	/** Effects deferred until the start of P1's next Main Phase 1. */
-	final List<Consumer<GameContext>> pendingMainPhase1Effects = new ArrayList<>();
+	/**
+	 * An effect deferred to the beginning of a Main Phase 1: the owner's own next one ("your next
+	 * Main Phase 1"), or, when {@code eitherPlayer}, whichever player's comes first ("the next Main
+	 * Phase 1", 17-109R Cú Chulainn). Resolved as its owner's.
+	 */
+	record PendingMainPhase1(boolean ownerIsP1, boolean eitherPlayer, Consumer<GameContext> effect) {}
+
+	/** Effects deferred to the beginning of a Main Phase 1 — see {@link PendingMainPhase1}. */
+	final List<PendingMainPhase1> pendingMainPhase1Effects = new ArrayList<>();
+
+	/**
+	 * Fires the deferred effects due at the beginning of {@code activeIsP1}'s Main Phase 1, each in
+	 * its owner's context, and drops them. Called from every place a Main Phase 1 begins: P1's two
+	 * turn-start routes, the AI's turn and a remote opponent's.
+	 */
+	void firePendingMainPhase1(boolean activeIsP1) {
+		List<PendingMainPhase1> due = new ArrayList<>();
+		for (PendingMainPhase1 p : pendingMainPhase1Effects)
+			if (p.eitherPlayer() || p.ownerIsP1() == activeIsP1) due.add(p);
+		if (due.isEmpty()) return;
+		pendingMainPhase1Effects.removeAll(due);
+		for (PendingMainPhase1 p : due) p.effect().accept(buildGameContext(p.ownerIsP1()));
+	}
+
+	/**
+	 * What the beginning of P1's Main Phase 1 sets off once it is not skipped: the deferred
+	 * effects, then the phase's auto abilities, then the Break Zone playables it opens. Shared by
+	 * the button-driven route and {@link TurnPhases#runP1TurnStart}, which had run none of it — so
+	 * after turn 1, P1's "at the beginning of Main Phase 1" abilities never fired against the AI
+	 * or a remote opponent.
+	 */
+	void beginP1MainPhase1() {
+		firePendingMainPhase1(true);
+		autoAbilityTriggers.triggerAutoAbilitiesForBeginningOfMainPhase1(true);
+		autoAbilityTriggers.triggerAutoAbilitiesForBeginningOfMainPhase1EachTurn();
+		autoAbilityTriggers.triggerAutoAbilitiesForBeginningOfOppMainPhase1(false);
+		syncBzForwardPlayables(true);
+	}
 
 	/** Tracks once-per-turn ability uses this turn; keyed by card instance identity, value is set of effectText strings used. */
 	final IdentityHashMap<CardData, Set<String>> usedOncePerTurnAbilities = new IdentityHashMap<>();
@@ -3873,16 +3909,7 @@ public class MainWindow {
                                 return;
                             }
                             processWarpCounters(true);
-                            if (!pendingMainPhase1Effects.isEmpty()) {
-                                List<Consumer<GameContext>> pending = new ArrayList<>(pendingMainPhase1Effects);
-                                pendingMainPhase1Effects.clear();
-                                GameContext ctx = buildGameContext(true);
-                                pending.forEach(e -> e.accept(ctx));
-                            }
-                            autoAbilityTriggers.triggerAutoAbilitiesForBeginningOfMainPhase1(true);
-                            autoAbilityTriggers.triggerAutoAbilitiesForBeginningOfMainPhase1EachTurn();
-                            autoAbilityTriggers.triggerAutoAbilitiesForBeginningOfOppMainPhase1(false);
-                            syncBzForwardPlayables(true);
+                            beginP1MainPhase1();
             }
 
 			case MAIN_1 -> {

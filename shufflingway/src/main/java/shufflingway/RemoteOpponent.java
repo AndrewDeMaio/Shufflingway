@@ -764,6 +764,7 @@ class RemoteOpponent implements OpponentController {
 			case MAIN_1 -> {
 				mw.logEntry("[P2] Main Phase 1");
 				mw.processWarpCounters(false);
+				mw.firePendingMainPhase1(false);
 				mw.autoAbilityTriggers.triggerAutoAbilitiesForBeginningOfMainPhase1(false);
 				mw.autoAbilityTriggers.triggerAutoAbilitiesForBeginningOfMainPhase1EachTurn();
 				mw.autoAbilityTriggers.triggerAutoAbilitiesForBeginningOfOppMainPhase1(true);

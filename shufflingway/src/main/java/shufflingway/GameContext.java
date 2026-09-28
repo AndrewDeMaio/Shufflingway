@@ -4678,10 +4678,18 @@ public interface GameContext {
     void addTempBreakZoneTrigger(CardData card, Consumer<GameContext> effect);
 
     /**
-     * Registers {@code effect} to execute at the start of the player's next Main Phase 1
-     * (and persist until end of that turn via normal boost expiry).
+     * Registers {@code effect} to execute at the start of the ability user's own next Main Phase 1
+     * ("your next Main Phase 1"), resolved as theirs (and persisting until the end of that turn via
+     * normal boost expiry).
      */
     void addPendingMainPhase1Effect(Consumer<GameContext> effect);
+
+    /**
+     * "At the beginning of the next Main Phase 1, …" — whichever player's comes first, resolved as
+     * the ability user's. 17-109R Cú Chulainn, usually cast as an EX Burst on the opponent's turn,
+     * when the next one is its caster's.
+     */
+    void addPendingNextMainPhase1Effect(Consumer<GameContext> effect);
 
     /**
      * Returns {@code true} if the ability user controls a field card whose name

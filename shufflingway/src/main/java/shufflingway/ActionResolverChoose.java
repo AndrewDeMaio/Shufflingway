@@ -4164,6 +4164,33 @@ final class ActionResolverChoose {
             };
         }
 
+        // --- "Deal it N damage for each CP required to cast the discarded card." (17-098R Cissnei) ---
+        // Beside the branch above and ahead of FOLLOWUP_DAMAGE_FOR_EACH for the same reason: the flat
+        // damage branch took "Deal it 1000 damage" and dropped the multiplier. The discard is the
+        // effect's own ("discard 1 card. When you do so, choose …"), so lastDiscardedCard(). The
+        // choice happens whatever the product, since the text chooses first.
+        if (FOLLOWUP_DAMAGE_PER_CP_OF_DISCARDED.matcher(primaryFollowup.trim()).matches()) {
+            Matcher perCpM = FOLLOWUP_DAMAGE_PER_CP_OF_DISCARDED.matcher(primaryFollowup.trim());
+            perCpM.matches();
+            int perCp = Integer.parseInt(perCpM.group("perunit"));
+            return ctx -> {
+                CardData discarded = ctx.lastDiscardedCard();
+                int damage = discarded != null ? perCp * discarded.cost() : 0;
+                ctx.logChooseHeader(choosePrefix + " — " + perCp + " damage x "
+                        + (discarded != null ? discarded.cost() + " CP (" + discarded.name() + ")" : "no discarded card")
+                        + " = " + damage + " damage");
+                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                        opponentOnly, selfOnly, condition, element, zone, opponentZone, bothZones,
+                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
+                        jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
+                if (damage > 0) {
+                    sortedByIdxDesc(ts, true) .forEach(t -> ctx.damageTarget(t, damage));
+                    sortedByIdxDesc(ts, false).forEach(t -> ctx.damageTarget(t, damage));
+                }
+                if (secondary != null) secondary.accept(ctx);
+            };
+        }
+
         // --- "Deal it N damage for each [Name] Counter placed on [card]." (counter-scaled xValue) ---
         // Must be checked before FOLLOWUP_DAMAGE_FOR_EACH, which would match on the flat N and drop the for-each.
         Matcher dmgForEachCounterM = FOLLOWUP_DAMAGE_FOR_EACH_COUNTER.matcher(primaryFollowup);
@@ -5596,8 +5623,10 @@ final class ActionResolverChoose {
         // Remove from game
         // =====================================================================================
         // --- "Remove them from the game. If these cards are of the same card type, also draw N card(s)." ---
-        Matcher rfpSameTypeDrawM = FOLLOWUP_RFP_IF_SAME_TYPE_DRAW.matcher(followup);
-        if (rfpSameTypeDrawM.find()) {
+        // The whole followup, and no secondary after it: the split's secondary is this branch's own
+        // second sentence, and running it too logged 21-085H Emperor Gestahl's draw as unread.
+        Matcher rfpSameTypeDrawM = FOLLOWUP_RFP_IF_SAME_TYPE_DRAW.matcher(followup.trim());
+        if (rfpSameTypeDrawM.matches()) {
             int drawCount = Integer.parseInt(rfpSameTypeDrawM.group("count"));
             return ctx -> {
                 ctx.logChooseHeader(choosePrefix + " — Remove From Game (if same type, draw " + drawCount + ")");
@@ -5613,7 +5642,6 @@ final class ActionResolverChoose {
                 sortedByIdxDesc(ts, true) .forEach(ctx::removeTargetFromGame);
                 sortedByIdxDesc(ts, false).forEach(ctx::removeTargetFromGame);
                 if (!ts.isEmpty() && typesSeen.size() == 1) ctx.drawCards(drawCount);
-                if (secondary != null) secondary.accept(ctx);
             };
         }
 
@@ -7578,6 +7606,30 @@ final class ActionResolverChoose {
                     if (secondary != null) secondary.accept(ctx);
                 };
             }
+        }
+
+        // --- "At the beginning of the next Main Phase 1, put it into the Break Zone." (17-109R) ---
+        // Whichever player's Main Phase 1 comes first, and by identity: by then the chosen card's
+        // slot may hold another, and one that has left the field is left alone.
+        if (FOLLOWUP_NEXT_MAIN_PHASE_1_PUT_TO_BZ.matcher(primaryFollowup.trim()).matches()) {
+            return ctx -> {
+                ctx.logChooseHeader(choosePrefix + " — put into the Break Zone at the next Main Phase 1");
+                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                        opponentOnly, selfOnly, condition, element, zone, opponentZone, bothZones,
+                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
+                List<CardData> marked = new ArrayList<>();
+                for (ForwardTarget t : ts) {
+                    CardData card = ctx.targetCard(t);
+                    if (card != null) marked.add(card);
+                }
+                if (!marked.isEmpty()) ctx.addPendingNextMainPhase1Effect(later -> {
+                    for (CardData card : marked) {
+                        ForwardTarget at = later.fieldSlotOf(card);
+                        if (at != null) later.forceTargetToBreakZone(at);
+                    }
+                });
+                if (secondary != null) secondary.accept(ctx);
+            };
         }
 
         // --- "Select 1 Counter placed on it, and remove the selected Counter." (Cid 12-079C) ---

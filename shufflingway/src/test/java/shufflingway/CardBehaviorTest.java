@@ -17387,6 +17387,43 @@ public class CardBehaviorTest {
 				null, null, null, YUFFIE_FREE_WITH_VINCENT);
 	}
 
+	private static final String CULINARIAN_20_013C =
+			"If you control 3 or more Fire Backups, the cost required to cast Culinarian is reduced by 2.";
+
+	/** Culinarian as printed: a cost-2 Fire Backup whose reduction is parsed from its text. */
+	private static CardData makeCulinarian() {
+		return new CardData(null, "Culinarian", "Fire", 2, 0, "Backup", false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				List.of(), List.of(), CardData.parseFieldAbilities(CULINARIAN_20_013C, "Backup"),
+				List.of(), List.of(), List.of(), List.of(),
+				CardData.parseSelfCostModifiers(CULINARIAN_20_013C),
+				List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				null, null, null, CULINARIAN_20_013C);
+	}
+
+	// A cost reduced to 0 is paid with nothing, so it needs no source of its Element: the Element
+	// minimum is a rule about a payment. The playable check still asked for one, so Culinarian with
+	// three dull Fire Backups and no Fire card in hand could not be played, though its cast opens
+	// no payment at all.
+	@Test
+	void aCastReducedToZeroNeedsNoSourceOfItsElement() {
+		MainWindow mw = new MainWindow();
+		CardData culinarian = makeCulinarian();
+		for (int i = 0; i < 3; i++) {
+			mw.p1BackupCards[i]  = makePlainBackup("Fire Backup " + i, "Fire", 2);
+			mw.p1BackupStates[i] = CardState.DULL;
+		}
+		mw.gameState.getP1Hand().add(culinarian);
+
+		assertEquals(0, mw.effectiveCastCost(culinarian), "three Fire Backups make it free");
+		assertTrue(mw.canAffordCard(culinarian, 0), "and free needs nothing to pay with");
+
+		mw.p1BackupCards[2] = null;
+		assertEquals(2, mw.effectiveCastCost(culinarian));
+		assertFalse(mw.canAffordCard(culinarian, 0), "at cost 2, with every Backup dull, it cannot be paid");
+	}
+
 	@Test
 	void theCostReplacementParsesAsASetToRatherThanADelta() {
 		List<SelfCostModifier> mods = CardData.parseSelfCostModifiers(YUFFIE_FREE_WITH_VINCENT);
@@ -37764,6 +37801,92 @@ public class CardBehaviorTest {
 		when(other.targetCard(mine)).thenReturn(makeJobCard("Zidane", "Wind", "Forward", "Thief"));
 		ActionResolver.parse(sam, null).accept(other);
 		verify(other).boostTarget(mine, 1000, EnumSet.noneOf(CardData.Trait.class));
+	}
+
+	// 17-098R Cissnei: "Deal it 1000 damage for each CP required to cast the discarded card." The
+	// flat damage branch took "Deal it 1000 damage" and dropped the multiplier.
+	@Test
+	void cissneiDealsDamagePerCpOfTheDiscardedCardAndTheTurksBonus() {
+		MainWindow mw = new MainWindow();
+		CardData victim = makeForward("Victim", "Fire", 5, 10000);
+		mw.gameState.getIdentity().put(victim, true);
+		mw.placeCardInForwardZone(victim);
+		CardData turk = makeJobCard("Reno", "Lightning", "Forward", "Member of the Turks");   // cost 3
+		mw.gameState.getP2Hand().add(turk);
+
+		ActionResolver.parse("discard 1 card. When you do so, choose 1 Forward. Deal it 1000 damage for each "
+				+ "CP required to cast the discarded card. If the discarded card is a Job Member of the Turks, "
+				+ "also deal it 5000 damage.", makeForward("Cissnei", "Lightning", 3, 7000))
+				.accept(mw.buildGameContext(false));
+
+		assertTrue(mw.gameState.getP2BreakZone().contains(turk), "the Turk is discarded");
+		assertEquals(3000 + 5000, (int) mw.p1ForwardDamage.get(0), "3 CP x 1000, and 5000 for a Turk");
+	}
+
+	// 21-085H Emperor Gestahl. The dedicated branch read both sentences and then also ran the split's
+	// copy of the second, which logged the draw as unread. It draws only when all four match.
+	@Test
+	void gestahlDrawsOnlyWhenTheRemovedCardsShareACardType() {
+		String gestahl = "Choose 4 cards in your opponent's Break Zone. Remove them from the game. If these "
+				+ "cards are of the same card type, also draw 1 card.";
+		for (boolean mixed : new boolean[]{false, true}) {
+			MainWindow mw = new MainWindow();
+			for (int i = 0; i < 4; i++)
+				mw.gameState.getP1BreakZone().add(mixed && i == 3 ? makeSummon("Spell", "Fire", 2, "Draw 1 card.")
+						: makeForward("Fwd" + i, "Fire", 2, 5000));
+			mw.gameState.getP2MainDeck().add(makeForward("Top", "Ice", 1, 1000));
+			int hand = mw.gameState.getP2Hand().size();
+
+			ActionResolver.parse(gestahl, makeForward("Emperor Gestahl", "Dark", 5, 0))
+					.accept(mw.buildGameContext(false));
+
+			assertTrue(mw.gameState.getP1BreakZone().isEmpty(), "all four are removed");
+			assertEquals(hand + (mixed ? 0 : 1), mw.gameState.getP2Hand().size(),
+					mixed ? "a Summon among Forwards is not one card type" : "four Forwards draw");
+		}
+	}
+
+	// "At the beginning of the next Main Phase 1" is whichever player's comes first. The queue was
+	// drained only at P1's, and only by the button-driven route: 17-109R Cú Chulainn EX Burst by
+	// the AI during P1's turn put nothing away until a turn later, if ever.
+
+	@Test
+	void cuChulainnPutsTheChosenForwardAwayAtTheNextMainPhase1() {
+		MainWindow mw = new MainWindow();
+		CardData theirs = makeForward("Theirs", "Fire", 3, 7000);
+		mw.gameState.getIdentity().put(theirs, true);
+		mw.placeCardInForwardZone(theirs);
+		for (int i = 0; i < 2; i++) mw.gameState.getP1MainDeck().add(makeForward("Draw" + i, "Fire", 1, 1000));
+
+		ActionResolver.parse("Choose 1 Forward. At the beginning of the next Main Phase 1, put it into the "
+				+ "Break Zone.", makeForward("Cú Chulainn", "Earth", 4, 0)).accept(mw.buildGameContext(false));
+		assertTrue(mw.p1ForwardCards.contains(theirs), "not yet");
+
+		mw.turnPhases().runP1TurnStart();
+		assertTrue(mw.gameState.getP1BreakZone().contains(theirs), "at P1's Main Phase 1, the next one");
+	}
+
+	@Test
+	void yourNextMainPhase1WaitsForItsOwnersTurn() {
+		MainWindow mw = new MainWindow();
+		boolean[] fired = { false };
+		mw.buildGameContext(false).addPendingMainPhase1Effect(ctx -> fired[0] = true);
+
+		mw.firePendingMainPhase1(true);
+		assertFalse(fired[0], "P1's Main Phase 1 is not P2's");
+		mw.firePendingMainPhase1(false);
+		assertTrue(fired[0]);
+	}
+
+	// runP1TurnStart — how every P1 turn after the first begins against the AI or a remote player —
+	// went straight to Main Phase 1 without firing its auto abilities.
+	@Test
+	void p1sMainPhase1AbilitiesFireOnTheTurnStartRoute() {
+		MainWindow mw = boardWithScions(9);
+		for (int i = 0; i < 2; i++) mw.gameState.getP1MainDeck().add(makeForward("Draw" + i, "Fire", 1, 1000));
+
+		mw.turnPhases().runP1TurnStart();
+		assertTrue(mw.gameState.isP1GameOver(), "10 Scions standing at Main Phase 1");
 	}
 
 	// The left part must not carry a gate: "If its cost is …, break it" is a condition around the

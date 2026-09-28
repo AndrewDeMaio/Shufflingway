@@ -660,6 +660,13 @@ class CostCalculator {
 		int totalGenerate = 0;
 		int totalCostNeeded = effectiveCastCost(card) + extraGenericCost;
 
+		// A cost reduced to nothing is paid with nothing: the cast opens no payment, so the
+		// per-Element minimum below, which is a rule about a payment, asks for no source. It had
+		// held 20-013C Culinarian — free with 3 Fire Backups — back until a Fire card sat in hand
+		// or a Fire Backup was active. An extra cost's own Elements still have to be paid.
+		if (totalCostNeeded <= 0 && (extraRequiredElems == null || extraRequiredElems.length == 0))
+			return true;
+
 		if (card.isLightOrDark() && offElementPays) {
 			// L/D cards accept any element — sum all banked CP and all available sources
 			int totalExisting = mw.gameState.getP1CpByElement().values().stream().mapToInt(Integer::intValue).sum();

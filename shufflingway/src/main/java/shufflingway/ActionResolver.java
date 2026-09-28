@@ -3620,8 +3620,11 @@ public class ActionResolver {
                 return "ChooseCharacter / MillTopDeckIfNot" + cap(millNotTypeM.group("type")) + "Break";
             if (FOLLOWUP_REVEAL_TOP_N_DAMAGE_PER_CP_ADD_ALL_TO_HAND.matcher(followup).find())
                 return "ChooseCharacter / RevealTopNDamagePerCpAddAllToHand";
-            if (FOLLOWUP_RFP_IF_SAME_TYPE_DRAW.matcher(followup).find())
+            if (FOLLOWUP_RFP_IF_SAME_TYPE_DRAW.matcher(followup.trim()).matches())
                 return "ChooseCharacter / RfpIfSameTypeDraw";
+            // Mirrors the choose chain: delayed, where the plain name read as an immediate put.
+            if (FOLLOWUP_NEXT_MAIN_PHASE_1_PUT_TO_BZ.matcher(followup.trim()).matches())
+                return "ChooseCharacter / AtNextMainPhase1(PutToBreakZone)";
             if (FOLLOWUP_REVEAL_TOP_N_JOB_DEAL_DMG_PLACE_BOTTOM.matcher(followup).find())
                 return "ChooseCharacter / RevealTopNJobDealDmgPlaceBottom";
             // Mirrors the choose parser, where this is read off the whole followup beside the

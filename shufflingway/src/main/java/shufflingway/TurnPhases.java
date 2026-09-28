@@ -210,9 +210,19 @@ class TurnPhases {
 		mw.advanceLocalPhase(); // DRAW → MAIN_1
 		mw.refreshPhaseTracker();
 		mw.logEntry("Main Phase 1");
+		// Before the phase's own triggers and its Warp processing, as on the button-driven route.
+		if (mw.consumePhaseSkip(true, GameState.GamePhase.MAIN_1)) {
+			mw.logEntry("Main Phase 1 skipped");
+			mw.sendTurnStartChecksum();
+			mw.onNextPhase();
+			return;
+		}
 		mw.processWarpCounters(true);
 		mw.nextPhaseButton.setEnabled(true);
+		// Taken before the phase sets anything off, where it always was, so both sides hash the
+		// same turn-start state.
 		mw.sendTurnStartChecksum();
+		mw.beginP1MainPhase1();
 	}
 
 	private static String activePhaseMessage(String head, int activated, int thawed) {

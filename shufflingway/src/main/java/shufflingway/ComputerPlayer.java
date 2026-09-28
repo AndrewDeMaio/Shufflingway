@@ -137,6 +137,7 @@ class ComputerPlayer implements OpponentController {
 			return;
 		}
 		mw.processWarpCounters(false);
+		mw.firePendingMainPhase1(false);
 		mw.autoAbilityTriggers.triggerAutoAbilitiesForBeginningOfMainPhase1(false);
 		mw.autoAbilityTriggers.triggerAutoAbilitiesForBeginningOfMainPhase1EachTurn();
 		mw.autoAbilityTriggers.triggerAutoAbilitiesForBeginningOfOppMainPhase1(true);

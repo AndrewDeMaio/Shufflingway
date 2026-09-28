@@ -2836,11 +2836,11 @@ final class ActionResolverPatterns {
     );
     /**
      * Matches the compound followup "Remove them from the game. If these cards are of the
-     * same card type, also draw N card(s)."
+     * same card type, also draw N card(s)." — the whole followup, read with {@code matches()}.
      * Group {@code count} — number of cards to draw.
      */
     static final Pattern FOLLOWUP_RFP_IF_SAME_TYPE_DRAW = Pattern.compile(
-        "(?i)Remove\\s+them\\s+from\\s+(?:the\\s+)?game[.!]?\\s+" +
+        "(?i)^Remove\\s+them\\s+from\\s+(?:the\\s+)?game[.!]?\\s+" +
         "If\\s+these\\s+cards?\\s+are\\s+of\\s+the\\s+same\\s+card\\s+type,?\\s+" +
         "(?:also\\s+)?draw\\s+(?<count>\\d+)\\s+cards?[.!]?"
     );
@@ -8711,6 +8711,18 @@ final class ActionResolverPatterns {
 
     /** "it is &lt;what&gt;" — an upgrade condition about the chosen card (1-106C Golem, 16-055C). */
     static final Pattern CHOSEN_CARD_IS = Pattern.compile("(?i)^it\\s+is\\s+(?<what>.+)$");
+
+    /** "Deal it N damage for each CP required to cast the discarded card." — 17-098R Cissnei. */
+    static final Pattern FOLLOWUP_DAMAGE_PER_CP_OF_DISCARDED = Pattern.compile(
+        "(?i)^Deal\\s+(?:it|them)\\s+(?<perunit>\\d+)\\s+damage\\s+for\\s+each\\s+CP\\s+required\\s+to\\s+"
+            + "(?:cast|play)\\s+the\\s+discarded\\s+card[.!]?$"
+    );
+
+    /** "At the beginning of the next Main Phase 1, put it into the Break Zone." — 17-109R Cú Chulainn. */
+    static final Pattern FOLLOWUP_NEXT_MAIN_PHASE_1_PUT_TO_BZ = Pattern.compile(
+        "(?i)^At\\s+the\\s+beginning\\s+of\\s+the\\s+next\\s+Main\\s+Phase\\s+1,\\s+"
+            + "put\\s+(?:it|them)\\s+into\\s+the\\s+Break\\s+Zone[.!]?$"
+    );
 
     /** A leading "If &lt;condition&gt;, " — a gate in front of a clause's action. */
     static final Pattern LEADING_IF_GATE = Pattern.compile("(?i)If\\s+[^,]+,\\s+");
