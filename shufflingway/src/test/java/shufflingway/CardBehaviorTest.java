@@ -37398,10 +37398,10 @@ public class CardBehaviorTest {
 		verify(three).damageTarget(theirs, 5000);
 	}
 
-	// A half that joins a second action stays unread: the branch it would reach reads the first
-	// action alone, so 16-137S Rikku would have put the Forward on top of the deck and not drawn.
+	// 16-137S Rikku. The upgrade joins a second action, which targetActionAndEffect reads whole —
+	// the put branch alone would have put the Forward on top of the deck and not drawn.
 	@Test
-	void anUpgradeJoiningASecondActionIsLeftAsAGap() {
+	void rikkuPutsOnTopAndDrawsWithASummoner() {
 		ForwardTarget theirs = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
 		GameContext ctx = ctxChoosing(List.of(theirs));
 		when(ctx.controlConditionMet(any())).thenReturn(true);
@@ -37410,8 +37410,368 @@ public class CardBehaviorTest {
 				+ "control a Job Summoner Forward, put it on top of its owner's deck and draw 1 card instead.",
 				null).accept(ctx);
 
+		verify(ctx).returnP2ForwardToDeckTop(0);
+		verify(ctx).drawCards(1);
+		verify(ctx, never()).returnP2ForwardToHand(anyInt());
+	}
+
+	// A join nothing reads whole stays a logged gap rather than half an upgrade: "break it" points
+	// back at the chosen card, so it is neither a standalone effect nor a second subject-first action.
+	@Test
+	void anUpgradeJoiningAnUnreadSecondActionIsLeftAsAGap() {
+		ForwardTarget theirs = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+		GameContext ctx = ctxChoosing(List.of(theirs));
+		when(ctx.controlConditionMet(any())).thenReturn(true);
+
+		ActionResolver.parse("choose 1 Forward opponent controls. Return it to its owner's hand. If you "
+				+ "control a Job Summoner Forward, activate it and break it instead.", null).accept(ctx);
+
 		verify(ctx).logEntry(contains("not yet implemented"));
-		verify(ctx, never()).returnP2ForwardToDeckTop(anyInt());
+		verify(ctx, never()).breakTarget(any());
+	}
+
+	// "If <cond>, <alt> instead." is never a second effect after the base. 25-075C broke after
+	// dulling, whatever it controlled: the split's break arm found the verb in the sentence.
+	@Test
+	void anInsteadSentenceIsNotRunAfterTheBase() {
+		String text = "choose 1 Forward opponent controls. Dull it. If you control 5 or more Job Class Zero "
+				+ "Cadet, break it instead.";
+		ForwardTarget theirs = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+
+		GameContext unmet = ctxChoosing(List.of(theirs));
+		when(unmet.controlConditionMet(any())).thenReturn(false);
+		ActionResolver.parse(text, null).accept(unmet);
+		verify(unmet).dullTarget(theirs);
+		verify(unmet, never()).breakTarget(any());
+
+		GameContext met = ctxChoosing(List.of(theirs));
+		when(met.controlConditionMet(any())).thenReturn(true);
+		ActionResolver.parse(text, null).accept(met);
+		verify(met).breakTarget(theirs);
+		verify(met, never()).dullTarget(any());
+	}
+
+	// 3-151S: a base behind a board-state gate goes back through the chain's state gate whole.
+	@Test
+	void aGatedBaseKeepsItsGateUnderTheUpgrade() {
+		String text = "choose 1 Forward opponent controls. If you control 2 or more Job Class Zero Cadet "
+				+ "Forwards, dull it. If you control 5 or more Job Class Zero Cadet Forwards, break it instead.";
+		ForwardTarget theirs = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+		GameContext ctx = ctxChoosing(List.of(theirs));
+		when(ctx.controlConditionMet(any())).thenReturn(false);   // and the mock counts no Cadets
+
+		ActionResolver.parse(text, null).accept(ctx);
+
+		verify(ctx, never()).dullTarget(any());
+		verify(ctx, never()).breakTarget(any());
+	}
+
+	// 3-102R Odin keeps his dedicated reader: "If it has 7000 power or less" asks about the chosen
+	// card, which the general upgrade cannot put back through the chain without losing it.
+	@Test
+	void odinsPowerGateIsNotTakenByTheGeneralUpgrade() {
+		assertEquals("ChooseCharacter / BreakIfPower(7000-) | IfControl(1+ Class Zero Cadet Forward: Break)",
+				ActionResolver.fullDescription("Choose 1 Forward. If it has 7000 power or less, break it. If "
+						+ "you control a Job Class Zero Cadet Forward, break it regardless of its power instead.",
+						null));
+	}
+
+	// An alt that never mentions the chosen card is run on its own after the choice: 8-050C's
+	// sweep had run unconditionally after the base.
+	@Test
+	void aStandaloneAltRunsOnItsOwnAndOnlyWhenMet() {
+		String text = "choose up to 2 Backups you control. If you have received 3 points of damage or more, "
+				+ "activate them. If you have received 5 points of damage or more, activate all the Backups "
+				+ "you control instead.";
+		GameContext unmet = ctxChoosing(List.of());
+		when(unmet.selfDamageCount()).thenReturn(3);
+		ActionResolver.parse(text, null).accept(unmet);
+		verify(unmet, never()).logEntry(contains("Activate all Backups"));
+
+		GameContext met = ctxChoosing(List.of());
+		when(met.selfDamageCount()).thenReturn(5);
+		ActionResolver.parse(text, null).accept(met);
+		verify(met).logEntry(contains("Activate all Backups"));
+		verify(met, never()).activateTarget(any());
+	}
+
+	// "<action on it>, and <effect of its own>": both parts, where the Activate branch read the
+	// first alone. 11-055R Pandemonium's base, on a real board.
+	@Test
+	void pandemoniumActivatesTheBackupAndSweepsTheOpponentsForwards() {
+		MainWindow mw = new MainWindow();
+		mw.p1BackupCards[0]  = makeForward("Scholar", "Wind", 2, 0);
+		mw.p1BackupStates[0] = CardState.DULL;
+		CardData weak = makeForward("Weak", "Fire", 1, 2000);
+		placeP2Forward(mw, weak);
+
+		GameContext ctx = mw.buildGameContext(true);
+		ctx.preloadTargets(List.of(new ForwardTarget(true, 0, ForwardTarget.CardZone.BACKUP)));
+		ActionResolver.parse("Choose up to 1 Backup you control. Activate it, and deal 2000 damage to all "
+				+ "the Forwards opponent controls.", makeForward("Pandemonium", "Wind", 5, 0)).accept(ctx);
+
+		assertEquals(CardState.ACTIVE, mw.p1BackupStates[0], "the Backup is activated");
+		assertTrue(mw.gameState.getP2BreakZone().contains(weak), "and the sweep deals its 2000");
+	}
+
+	@Test
+	void shockTrooperBreaksTheChosenForwardAndItself() {
+		CardData trooper = makeForward("Shock Trooper", "Ice", 4, 8000);
+		ForwardTarget theirs = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+		GameContext ctx = ctxChoosing(List.of(theirs));
+
+		ActionResolver.parse("choose 1 Forward opponent controls. Break it and break Shock Trooper.", trooper)
+				.accept(ctx);
+
+		verify(ctx).breakTarget(theirs);
+		verify(ctx).breakSourceCard(trooper);
+	}
+
+	// A right part whose subject is the chosen cards acts on them, not on the source: 21-107R
+	// Mihli's "they gain +1000 power", parsed standalone, boosted Mihli.
+	@Test
+	void mihliActivatesAndBoostsTheChosenForwards() {
+		CardData mihli = makeForward("Springserpent General Mihli Aliapoh", "Water", 4, 8000);
+		ForwardTarget a = new ForwardTarget(true, 0, ForwardTarget.CardZone.FORWARD);
+		ForwardTarget b = new ForwardTarget(true, 1, ForwardTarget.CardZone.FORWARD);
+		GameContext ctx = ctxChoosing(List.of(a, b));
+
+		ActionResolver.parse("Choose 2 Forwards other than Springserpent General Mihli Aliapoh. Activate them "
+				+ "and they gain +1000 power until the end of the turn.", mihli).accept(ctx);
+
+		verify(ctx).activateTarget(a);
+		verify(ctx).activateTarget(b);
+		verify(ctx).boostTarget(a, 1000, EnumSet.noneOf(CardData.Trait.class));
+		verify(ctx).boostTarget(b, 1000, EnumSet.noneOf(CardData.Trait.class));
+		verify(ctx, never()).boostSourceForward(any(), anyInt(), any());
+	}
+
+	// "At the end of the turn, <return | remove | break> it." after a choose: delayed, by identity.
+	// Unread, 9-110C King of Concordia kept the +2000 and the Forward; 1-104H's break arm broke the
+	// Forward at once, wasting the +5000 it had just given.
+
+	@Test
+	void kingOfConcordiaReturnsTheBoostedForwardAtTheEndOfTheTurn() {
+		MainWindow mw = new MainWindow();
+		CardData ally = makeForward("Ally", "Wind", 3, 7000);
+		mw.gameState.getIdentity().put(ally, true);
+		mw.placeCardInForwardZone(ally);
+
+		GameContext ctx = mw.buildGameContext(true);
+		ctx.preloadTargets(List.of(new ForwardTarget(true, 0, ForwardTarget.CardZone.FORWARD)));
+		ActionResolver.parse("Choose 1 Forward you control. It gains +2000 power until the end of the turn. "
+				+ "At the end of the turn, return it to its owner's hand.",
+				makeForward("King of Concordia", "Wind", 3, 0)).accept(ctx);
+
+		assertEquals(9000, mw.effectiveP1ForwardPower(0), "boosted for the turn");
+		assertTrue(mw.p1ForwardCards.contains(ally), "and still on the field until the turn ends");
+
+		mw.fireEndOfTurnEffects(true);
+		assertFalse(mw.p1ForwardCards.contains(ally));
+		assertTrue(mw.gameState.getP1Hand().contains(ally), "back in its owner's hand");
+	}
+
+	@Test
+	void aDelayedBreakWaitsForTheEndOfTheTurn() {
+		MainWindow mw = new MainWindow();
+		CardData ally = makeForward("Ally", "Fire", 3, 7000);
+		mw.gameState.getIdentity().put(ally, true);
+		mw.placeCardInForwardZone(ally);
+
+		GameContext ctx = mw.buildGameContext(true);
+		ctx.preloadTargets(List.of(new ForwardTarget(true, 0, ForwardTarget.CardZone.FORWARD)));
+		ActionResolver.parse("Choose 1 Forward you control. It gains +5000 power until the end of the turn. "
+				+ "At the end of the turn, break it.", makeForward("Firion", "Fire", 3, 7000)).accept(ctx);
+
+		assertTrue(mw.p1ForwardCards.contains(ally), "not broken yet");
+		mw.fireEndOfTurnEffects(true);
+		assertTrue(mw.gameState.getP1BreakZone().contains(ally), "broken at the end of the turn");
+	}
+
+	// "Remove it from the game. Play it onto the field at the end of the turn." 15-047R Kytes: the
+	// card was removed and never came back.
+	@Test
+	void kytesPlaysTheRemovedForwardBackAtTheEndOfTheTurn() {
+		MainWindow mw = new MainWindow();
+		CardData theirs = makeForward("Theirs", "Fire", 3, 7000);
+		placeP2Forward(mw, theirs);
+
+		GameContext ctx = mw.buildGameContext(true);
+		ctx.preloadTargets(List.of(new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD)));
+		ActionResolver.parse("Choose 1 Forward. Remove it from the game. Play it onto the field at the end of "
+				+ "the turn.", makeForward("Kytes", "Lightning", 3, 5000)).accept(ctx);
+
+		assertTrue(mw.gameState.getP2PermanentRfp().contains(theirs), "removed");
+		mw.fireEndOfTurnEffects(true);
+		assertFalse(mw.gameState.getP2PermanentRfp().contains(theirs));
+		assertTrue(mw.p2ForwardCards.contains(theirs), "and back on its owner's field");
+	}
+
+	// "attacking" and "blocking" filters read the combat in progress. The selector passed
+	// p1AttackSelection — emptied when the attack is declared — for P1 and false for P2, and false
+	// for blocking on both sides, so "Choose 1 attacking/blocking Forward" found nothing mid-combat.
+	// Driven through P2's context, whose choice is the CPU's and needs no dialog.
+
+	@Test
+	void anAttackingFilterFindsTheDeclaredAttacker() {
+		MainWindow mw = new MainWindow();
+		CardData attacker  = makeForward("Attacker", "Fire", 3, 5000);
+		CardData bystander = makeForward("Bystander", "Fire", 3, 5000);
+		mw.gameState.getIdentity().put(attacker, true);
+		mw.gameState.getIdentity().put(bystander, true);
+		mw.placeCardInForwardZone(bystander);
+		mw.placeCardInForwardZone(attacker);
+		mw.p1DeclaredAttackers.add(attacker);
+		assertEquals(1, mw.buildGameContext(false).countOppFieldCardsWithCondition(true, false, false, "attacking"));
+
+		ActionResolver.parse("Choose 1 attacking Forward. Deal it 5000 damage.", null)
+				.accept(mw.buildGameContext(false));
+
+		assertTrue(mw.gameState.getP1BreakZone().contains(attacker), "the attacker is chosen and broken");
+		assertTrue(mw.p1ForwardCards.contains(bystander), "the Forward standing back is not attacking");
+	}
+
+	@Test
+	void aBlockingFilterFindsTheBlocker() {
+		MainWindow mw = new MainWindow();
+		CardData idle    = makeForward("Idle", "Ice", 3, 7000);
+		CardData blocker = makeForward("Blocker", "Ice", 3, 7000);
+		mw.gameState.getIdentity().put(idle, true);
+		mw.gameState.getIdentity().put(blocker, true);
+		mw.placeCardInForwardZone(idle);     // idx 0
+		mw.placeCardInForwardZone(blocker);  // idx 1
+		mw.p1BlockingIdx = 1;
+
+		ActionResolver.parse("Choose 1 blocking Forward. Break it.", null).accept(mw.buildGameContext(false));
+
+		assertTrue(mw.gameState.getP1BreakZone().contains(blocker));
+		assertTrue(mw.p1ForwardCards.contains(idle));
+	}
+
+	// "N or more Job X and/or Card Name Y" counts cards that are either. Named-card mode used to
+	// find the "Card Name Y" inside it, so 29-056R drew for one card named Chocobo.
+	@Test
+	void aJobAndOrNameCountCountsEachCardOnce() {
+		ControlCondition three = CardData.parseControlCondition("3 or more Job Chocobo and/or Card Name Chocobo");
+		MainWindow mw = new MainWindow();
+		// Distinct names: a second Card Name Chocobo would be sent away by the uniqueness rule.
+		CardData named = makeJobCard("Chocobo", "Wind", "Forward", "Chocobo");   // both — counts once
+		CardData boco  = makeJobCard("Boco", "Wind", "Forward", "Chocobo");      // by Job
+		CardData third = makeJobCard("Koko", "Wind", "Forward", "Chocobo");      // by Job
+		for (CardData c : List.of(named, boco, third)) mw.gameState.getIdentity().put(c, true);
+		mw.placeCardInForwardZone(named);
+		mw.placeCardInForwardZone(boco);
+		assertFalse(mw.buildGameContext(true).controlConditionMet(three), "two cards are not three");
+
+		mw.placeCardInForwardZone(third);
+		assertTrue(mw.buildGameContext(true).controlConditionMet(three));
+
+		// And a card counts by its name alone.
+		MainWindow byName = new MainWindow();
+		CardData nameOnly = makeJobCard("Chocobo", "Wind", "Forward", "Warrior");
+		for (CardData c : List.of(nameOnly, boco, third)) {
+			byName.gameState.getIdentity().put(c, true);
+			byName.placeCardInForwardZone(c);
+		}
+		assertTrue(byName.buildGameContext(true).controlConditionMet(three));
+	}
+
+	// "If <cond>, also <action>." after a choose: the payoff only when the condition holds. Unread,
+	// each logged a gap; the find() arms behind would have taken the verb without the condition.
+
+	@Test
+	void lightningDrawsOnlyWhenTheDiscardedCardIsLightning() {
+		String text = "choose 1 Forward. Break it. If the discarded card is a Card Name Lightning, also draw 1 card.";
+		ForwardTarget theirs = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+
+		GameContext hit = ctxChoosing(List.of(theirs));
+		when(hit.lastDiscardedCard()).thenReturn(makeForward("Lightning", "Lightning", 5, 9000));
+		ActionResolver.parse(text, null).accept(hit);
+		verify(hit).breakTarget(theirs);
+		verify(hit).drawCards(1);
+
+		GameContext miss = ctxChoosing(List.of(theirs));
+		when(miss.lastDiscardedCard()).thenReturn(makeForward("Snow", "Ice", 5, 9000));
+		ActionResolver.parse(text, null).accept(miss);
+		verify(miss).breakTarget(theirs);
+		verify(miss, never()).drawCards(anyInt());
+	}
+
+	@Test
+	void klaraAlsoFreezesTheChosenCharactersWithThreeWarriors() {
+		String text = "choose up to 2 Characters. Dull them. If you control 3 or more Job Warrior and/or Card "
+				+ "Name Warrior, also Freeze them.";
+		ForwardTarget a = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+		ForwardTarget b = new ForwardTarget(false, 1, ForwardTarget.CardZone.FORWARD);
+
+		GameContext met = ctxChoosing(List.of(a, b));
+		when(met.controlConditionMet(any())).thenReturn(true);
+		ActionResolver.parse(text, null).accept(met);
+		verify(met).freezeTarget(a);
+		verify(met).freezeTarget(b);
+
+		GameContext unmet = ctxChoosing(List.of(a, b));
+		ActionResolver.parse(text, null).accept(unmet);
+		verify(unmet, never()).freezeTarget(any());
+	}
+
+	@Test
+	void soldierCandidateReadsANamedCardInTheBreakZone() {
+		String text = "choose 1 Character opponent controls. Dull it. If you have a Card Name SOLDIER Candidate "
+				+ "in your Break Zone, also Freeze it.";
+		ForwardTarget theirs = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+		GameContext ctx = ctxChoosing(List.of(theirs));
+		when(ctx.countSelfBreakZoneCards("SOLDIER Candidate", null)).thenReturn(1);
+
+		ActionResolver.parse(text, null).accept(ctx);
+
+		verify(ctx).dullTarget(theirs);
+		verify(ctx).freezeTarget(theirs);
+	}
+
+	// An upgrade gated on the chosen card is settled per card, after the choice.
+
+	@Test
+	void golemGivesTheLargerBoostToABlockingForward() {
+		String golem = "Choose 1 Forward. It gains +2000 power until the end of the turn. If it is blocking, "
+				+ "it gains +4000 power until the end of the turn instead.";
+		ForwardTarget mine = new ForwardTarget(true, 0, ForwardTarget.CardZone.FORWARD);
+
+		GameContext blocking = ctxChoosing(List.of(mine));
+		when(blocking.isP1ForwardBlocking(0)).thenReturn(true);
+		ActionResolver.parse(golem, null).accept(blocking);
+		verify(blocking).boostTarget(mine, 4000, EnumSet.noneOf(CardData.Trait.class));
+		verify(blocking, never()).boostTarget(any(), eq(2000), any());
+
+		GameContext idle = ctxChoosing(List.of(mine));
+		ActionResolver.parse(golem, null).accept(idle);
+		verify(idle).boostTarget(mine, 2000, EnumSet.noneOf(CardData.Trait.class));
+		verify(idle, never()).boostTarget(any(), eq(4000), any());
+	}
+
+	@Test
+	void chocoboSamGivesTheLargerBoostToAChocobo() {
+		String sam = "Choose 1 Forward. It gains +1000 power until the end of the turn. If it is a Job Chocobo "
+				+ "or a Card Name Chocobo, it gains +3000 power until the end of the turn instead.";
+		ForwardTarget mine = new ForwardTarget(true, 0, ForwardTarget.CardZone.FORWARD);
+
+		GameContext chocobo = ctxChoosing(List.of(mine));
+		when(chocobo.targetCard(mine)).thenReturn(makeJobCard("Boco", "Wind", "Forward", "Chocobo"));
+		ActionResolver.parse(sam, null).accept(chocobo);
+		verify(chocobo).boostTarget(mine, 3000, EnumSet.noneOf(CardData.Trait.class));
+
+		GameContext other = ctxChoosing(List.of(mine));
+		when(other.targetCard(mine)).thenReturn(makeJobCard("Zidane", "Wind", "Forward", "Thief"));
+		ActionResolver.parse(sam, null).accept(other);
+		verify(other).boostTarget(mine, 1000, EnumSet.noneOf(CardData.Trait.class));
+	}
+
+	// The left part must not carry a gate: "If its cost is …, break it" is a condition around the
+	// break, and reading it as a plain break drew and broke whatever 24-065H Fenrir discarded.
+	@Test
+	void aGatedLeftPartIsNotReadAsAPlainAction() {
+		assertNull(ActionResolverChoose.targetActionAndEffect("If its cost is equal to the cost of the card "
+				+ "discarded, break it and draw 1 card", null, 0));
 	}
 
 	// Its control-gated sibling keeps its own reading — the two branches are anchored end to end.

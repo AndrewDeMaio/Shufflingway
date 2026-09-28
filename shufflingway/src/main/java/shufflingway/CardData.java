@@ -3298,6 +3298,16 @@ public record CardData(
     );
 
     /**
+     * "N or more Job X and/or Card Name Y" — a count over cards that are either (23-109C Dancer,
+     * 26-099C, 27-025C Klara, 29-056R). Checked ahead of named-card mode, whose find() took the
+     * "Card Name Y" out of the middle and read the whole as one card by that name, count and Job
+     * dropped.
+     */
+    private static final Pattern CONTROL_COUNT_JOB_AND_OR_NAME = Pattern.compile(
+        "(?i)^\\d+\\s+or\\s+more\\s+Job\\s+.+?\\s+and/or\\s+Card\\s+Name\\s+.+$"
+    );
+
+    /**
      * Named-card mode: "Card Name X [<sep> [a] Card Name Y [<sep> [a] Card Name Z]]"
      * where {@code sep} is a comma, a conjunction, or both. {@code and} gives AND semantics and
      * {@code or} gives OR; the optional "a" article is allowed before each name.
@@ -10044,6 +10054,10 @@ public record CardData(
         // Count mode's job group took the whole "Summoner Forward or a Job Guardian" as one Job.
         ControlCondition disjunction = parseControlConditionDisjunction(cond);
         if (disjunction != null) return disjunction;
+
+        // "N or more Job X and/or Card Name Y" is count mode's "Job X or Card Name Y", counted.
+        if (CONTROL_COUNT_JOB_AND_OR_NAME.matcher(cond).matches())
+            return parseCountControlCondition(cond.replaceFirst("(?i)\\s+and/or\\s+Card\\s+Name\\s+", " or Card Name "));
 
         // Named-card mode: "(a) Card Name X [and Card Name Y [and Card Name Z]]"
         // Must be checked before count mode to avoid "a Card Name X" being parsed as count=1

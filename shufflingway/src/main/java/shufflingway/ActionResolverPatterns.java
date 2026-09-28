@@ -8677,12 +8677,61 @@ final class ActionResolverPatterns {
     );
 
     /**
-     * A clause that goes on to a second action: ", …" or "and &lt;verb&gt;". Used to decline a
+     * "At the end of the turn, &lt;return it to its owner's hand | remove it from the game | break
+     * it&gt;." as the sentence after a choose followup — 9-110C King of Concordia, 1-104H. The
+     * {@code action} group names which.
+     */
+    static final Pattern SECONDARY_AT_END_OF_TURN_ACTION = Pattern.compile(
+        "(?i)^At\\s+the\\s+end\\s+of\\s+(?:the|this)\\s+turn,\\s+(?<action>"
+            + "return\\s+(?:it|them)\\s+to\\s+(?:its|their)\\s+owners?'?s?\\s+hands?"
+            + "|remove\\s+(?:it|them)\\s+from\\s+the\\s+game"
+            + "|break\\s+(?:it|them))[.!]?$"
+    );
+
+    /**
+     * "Play it/them onto the field at the end of the turn." after a remove-from-game followup —
+     * 15-047R Kytes, 20-046C Ghost (VII), 26-049R Cactuar Conductor.
+     */
+    static final Pattern SECONDARY_PLAY_REMOVED_AT_END_OF_TURN = Pattern.compile(
+        "(?i)^Play\\s+(?:it|them)\\s+onto\\s+the\\s+field\\s+at\\s+the\\s+end\\s+of\\s+(?:the|this)\\s+turn[.!]?$"
+    );
+
+    /** "If &lt;cond&gt;, also &lt;action&gt;." — {@code secondaryConditionGatedAlsoAction}. */
+    static final Pattern SECONDARY_IF_ALSO_ACTION = Pattern.compile(
+        "(?i)^If\\s+(?<cond>[^.,]+?),\\s+also\\s+(?<action>[^.]+?)[.!]?$"
+    );
+
+    /** "the discarded card is &lt;filter&gt;" — a condition on the card the effect discarded. */
+    static final Pattern DISCARDED_CARD_IS = Pattern.compile(
+        "(?i)^the\\s+discarded\\s+card\\s+is\\s+(?<filter>.+)$"
+    );
+
+    /** "Break Zone" anywhere in a choose header: the choice is made from a Break Zone. */
+    static final Pattern BREAK_ZONE_WORDS = Pattern.compile("(?i)\\bBreak\\s+Zone\\b");
+
+    /** "it is &lt;what&gt;" — an upgrade condition about the chosen card (1-106C Golem, 16-055C). */
+    static final Pattern CHOSEN_CARD_IS = Pattern.compile("(?i)^it\\s+is\\s+(?<what>.+)$");
+
+    /** A leading "If &lt;condition&gt;, " — a gate in front of a clause's action. */
+    static final Pattern LEADING_IF_GATE = Pattern.compile("(?i)If\\s+[^,]+,\\s+");
+
+    /** The joins {@code targetActionAndEffect} tries between two actions: " and " or ", and ". */
+    static final Pattern CLAUSE_AND_JOIN = Pattern.compile("(?i),?\\s+and\\s+");
+
+    /**
+     * The chosen card(s) as a subject: "and they gain +1000 power" (21-107R Mihli). Used with
+     * {@code lookingAt()} for a clause that opens with it; with {@code find()} it also catches the
+     * "they" that {@link #REFERS_TO_CHOSEN} leaves out.
+     */
+    static final Pattern CHOSEN_AS_SUBJECT = Pattern.compile("(?i)\\b(?:it|they)\\b");
+
+    /**
+     * A clause that goes on to a second action: ", and …", ", then …" or "and &lt;verb&gt;". Used to decline a
      * clause before handing it to a reader that matches with {@code find()} and could take the
      * first action alone ({@code stateGatedInsteadUpgrade}).
      */
     static final Pattern JOINS_SECOND_ACTION = Pattern.compile(
-        "(?i),|\\band\\s+(?:deal|draw|activate|dull|freeze|break|return|put|remove|discard|play|search"
+        "(?i),\\s+(?:and|then)\\b|\\band\\s+(?:deal|draw|activate|dull|freeze|break|return|put|remove|discard|play|search"
             + "|select|reveal|gain|lose|it|they|you|your|choose)\\b"
     );
 

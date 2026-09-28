@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.function.BiConsumer;
+import java.util.function.BiPredicate;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -1590,11 +1591,19 @@ final class ActionResolverChoose {
      * before the choice, when there is no card to ask.
      */
     static Consumer<GameContext> stateGatedInsteadUpgrade(String header, String baseText, String upgradeText,
-                                                          CardData source, int xValue) {
+                                                          CardData source, int xValue,
+                                                          Consumer<GameContext> chooseOnly) {
         Matcher u = SECONDARY_STATE_GATED_INSTEAD.matcher(upgradeText.trim());
         if (!u.matches()) return null;
         String condText = u.group("cond").trim();
         DamageInsteadCondition gate = bindConditionToSource(parseDamageInsteadCondition(condText), source);
+        // A condition on the chosen card is settled per card, after the choice — for a choice on
+        // the field. One from a Break Zone ("Add it to your hand. If it is …, play it onto the field
+        // instead.", 17-009C) is the added-card reader's, which follows the card out of the zone.
+        BiPredicate<GameContext, ForwardTarget> perTarget = chosenCardCondition(condText, gate);
+        if (perTarget != null && BREAK_ZONE_WORDS.matcher(header).find()) return null;
+        if (perTarget != null)
+            return perTargetInsteadUpgrade(baseText, u.group("alt").trim(), condText, perTarget, source, xValue, chooseOnly);
         // "the Forward is Card Name X" is the triggering card's name in an enters-the-field text,
         // but after a choose it is the chosen one — 5-142H Rosa's, read per target further down.
         if (gate == null || gate instanceof DamageInsteadCondition.TargetIsActive
@@ -1603,20 +1612,246 @@ final class ActionResolverChoose {
         if (gate instanceof DamageInsteadCondition.NamedPowerAtLeast np
                 && (source == null || !np.name().equalsIgnoreCase(source.name()))) return null;
         String altText = u.group("alt").trim();
-        // A half that joins a second action is declined. The branches it would go to match with
-        // find(), and non-null says only that one of them took something: 16-137S Rikku's "put it on
-        // top of its owner's deck and draw 1 card" came back as the put alone, and 11-055R
-        // Pandemonium's "Activate it, and deal 2000 damage to all …" as the activation alone.
-        if (JOINS_SECOND_ACTION.matcher(baseText).find() || JOINS_SECOND_ACTION.matcher(altText).find()) return null;
+        // A half that joins a second action is declined unless targetActionAndEffect reads both
+        // parts. The other branches it could reach match with find(), and non-null says only that
+        // one of them took something: 16-137S Rikku's "put it on top of its owner's deck and draw
+        // 1 card" came back from the put branch as the put alone.
+        if (joinsUnreadSecondAction(baseText, source, xValue) || joinsUnreadSecondAction(altText, source, xValue))
+            return null;
+        if (!leadingGateReadAsBoardState(baseText, source) || !leadingGateReadAsBoardState(altText, source))
+            return null;
         Consumer<GameContext> base = tryParseChooseCharacterInner(header + baseText.trim() + ".", source, xValue);
-        Consumer<GameContext> alt  = tryParseChooseCharacterInner(
-                header + Character.toUpperCase(altText.charAt(0)) + altText.substring(1) + ".", source, xValue);
+        Consumer<GameContext> alt;
+        if (REFERS_TO_CHOSEN.matcher(altText).find() || CHOSEN_AS_SUBJECT.matcher(altText).find()) {
+            alt = tryParseChooseCharacterInner(
+                    header + Character.toUpperCase(altText.charAt(0)) + altText.substring(1) + ".", source, xValue);
+        } else {
+            // An alt that never mentions the chosen card — "activate all the Backups you control"
+            // (1-082R, 8-050C) — stands on its own, and is read on its own: put back under the
+            // header, the chain's find() branches read it as an action on the choice. The choice
+            // still happens, as printed, before it.
+            Consumer<GameContext> standalone = parse(altText, source, xValue);
+            alt = standalone == null ? null : ctx -> {
+                chooseOnly.accept(ctx);
+                standalone.accept(ctx);
+            };
+        }
         if (base == null || alt == null || base instanceof UnreadFollowup || alt instanceof UnreadFollowup) return null;
         return ctx -> {
             boolean met = insteadConditionMet(ctx, gate);
             ctx.logEntry("Effect: " + condText + (met ? " — " + altText + " instead" : " — not met"));
             (met ? alt : base).accept(ctx);
         };
+    }
+
+    /**
+     * The condition of an "If it is …, … instead." upgrade as a test of one chosen card, or null when
+     * it is not about the chosen card: its combat state ("it is blocking", 1-106C Golem), what it is
+     * ("it is a Job Chocobo or a Card Name Chocobo", 16-055C Chocobo Sam, read by
+     * {@code parseRevealCondition}), or the two target states {@code parseDamageInsteadCondition}
+     * already reads (active, Multi-Element).
+     */
+    private static BiPredicate<GameContext, ForwardTarget> chosenCardCondition(String condText,
+                                                                           DamageInsteadCondition gate) {
+        if (gate instanceof DamageInsteadCondition.TargetIsActive
+                || gate instanceof DamageInsteadCondition.TargetIsMultiElement)
+            return (ctx, t) -> resolveInsteadDamage(ctx, t, gate, 0, 1) == 1;
+        Matcher it = CHOSEN_CARD_IS.matcher(condText);
+        if (!it.matches()) return null;
+        String what = it.group("what").trim();
+        if (what.equalsIgnoreCase("blocking"))
+            return (ctx, t) -> t.zone() == ForwardTarget.CardZone.FORWARD
+                    && (t.isP1() ? ctx.isP1ForwardBlocking(t.idx()) : ctx.isP2ForwardBlocking(t.idx()));
+        if (what.equalsIgnoreCase("attacking"))
+            return (ctx, t) -> t.zone() == ForwardTarget.CardZone.FORWARD
+                    && (t.isP1() ? ctx.isP1ForwardAttacking(t.idx()) : ctx.isP2ForwardAttacking(t.idx()));
+        Predicate<CardData> filter = parseRevealCondition(what);
+        if (filter == null) return null;
+        return (ctx, t) -> {
+            CardData card = ctx.targetCard(t);
+            return card != null && filter.test(card);
+        };
+    }
+
+    /**
+     * The per-card form of {@link #stateGatedInsteadUpgrade}: choose, then each chosen card gets the
+     * alt when the condition holds for it and the base when it does not. Both halves must be one
+     * action on the chosen cards that {@code parseTargetAction} reads, or this declines.
+     */
+    private static Consumer<GameContext> perTargetInsteadUpgrade(String baseText, String altText, String condText,
+                                                                 BiPredicate<GameContext, ForwardTarget> holds,
+                                                                 CardData source, int xValue,
+                                                                 Consumer<GameContext> chooseOnly) {
+        if (joinsUnreadSecondAction(baseText, source, xValue) || joinsUnreadSecondAction(altText, source, xValue)
+                || LEADING_IF_GATE.matcher(baseText.trim()).lookingAt()) return null;
+        BiConsumer<GameContext, List<ForwardTarget>> base = parseTargetAction(baseText, xValue);
+        BiConsumer<GameContext, List<ForwardTarget>> alt  = parseTargetAction(altText, xValue);
+        if (base == null || alt == null) return null;
+        return ctx -> {
+            chooseOnly.accept(ctx);
+            List<ForwardTarget> met = new ArrayList<>(), unmet = new ArrayList<>();
+            for (ForwardTarget t : ctx.lastChosenTargets()) (holds.test(ctx, t) ? met : unmet).add(t);
+            if (!met.isEmpty()) {
+                ctx.logEntry("Effect: " + condText + " — " + altText + " instead");
+                alt.accept(ctx, met);
+            }
+            if (!unmet.isEmpty()) base.accept(ctx, unmet);
+        };
+    }
+
+    /**
+     * False when {@code clause} opens with an "If &lt;cond&gt;, " whose condition is not a board
+     * state {@code parseDamageInsteadCondition} reads. Those are the gates the chain's state-gate
+     * branch settles first when the clause goes back through it; any other — 3-102R Odin's "If it
+     * has 7000 power or less" — reaches a find() branch that takes the action and drops the gate.
+     */
+    private static boolean leadingGateReadAsBoardState(String clause, CardData source) {
+        Matcher gate = LEADING_IF_GATE.matcher(clause.trim());
+        if (!gate.lookingAt()) return true;
+        String cond = clause.trim().substring(0, gate.end()).replaceFirst("(?i)^If\\s+", "").replaceFirst(",\\s*$", "");
+        return boardStateCondition(cond, source) != null;
+    }
+
+    /**
+     * {@code cond} as a board state {@code parseDamageInsteadCondition} reads and binds to the
+     * source, or null — and null too for the variants that ask about a chosen or entering card,
+     * or about a named card's power, which a test of the board alone cannot answer.
+     */
+    private static DamageInsteadCondition boardStateCondition(String cond, CardData source) {
+        DamageInsteadCondition c = bindConditionToSource(parseDamageInsteadCondition(cond), source);
+        return c == null || c instanceof DamageInsteadCondition.TargetIsActive
+                || c instanceof DamageInsteadCondition.TargetIsMultiElement
+                || c instanceof DamageInsteadCondition.EnteredCardNamed
+                || c instanceof DamageInsteadCondition.NamedPowerAtLeast ? null : c;
+    }
+
+    /**
+     * "If &lt;condition&gt;, also &lt;action&gt;." after a choose followup — 17-098R Cissnei, 20-122R
+     * Leslie, 25-026C SOLDIER Candidate, 27-025C Klara, 28-093H Lightning. The condition is a board
+     * state or "the discarded card is &lt;filter&gt;" (the card the effect discarded); an action on
+     * "it"/"them" goes to the chosen cards, anything else runs on its own. Both must read, or null.
+     */
+    static Consumer<GameContext> secondaryConditionGatedAlsoAction(String secondaryText, CardData source, int xValue) {
+        Matcher m = SECONDARY_IF_ALSO_ACTION.matcher(secondaryText.trim());
+        if (!m.matches()) return null;
+        String condText = m.group("cond").trim();
+        String action   = m.group("action").trim();
+        Predicate<GameContext> gate;
+        Matcher disc = DISCARDED_CARD_IS.matcher(condText);
+        if (disc.matches()) {
+            Predicate<CardData> filter = parseRevealCondition(disc.group("filter").trim());
+            if (filter == null) return null;
+            // The card the effect discarded — "discard 1 card. When you do so, choose …", where the
+            // "When you do so" has already stopped the chain if the discard found nothing.
+            gate = ctx -> {
+                CardData d = ctx.lastDiscardedCard();
+                return d != null && filter.test(d);
+            };
+        } else {
+            DamageInsteadCondition c = boardStateCondition(condText, source);
+            // "If you paid the extra cost" is settled by rewriting the text before it is parsed
+            // (applyExtraCostPaid / stripExtraCostClause); the printed wording stays unread so the
+            // rewrite is the only thing that can pay it out (18-045C Dryad).
+            if (c == null || c instanceof DamageInsteadCondition.PaidExtraCost) return null;
+            gate = ctx -> insteadConditionMet(ctx, c);
+        }
+        if (JOINS_SECOND_ACTION.matcher(action).find()) return null;
+        Consumer<GameContext> run;
+        if (REFERS_TO_CHOSEN.matcher(action).find() || CHOSEN_AS_SUBJECT.matcher(action).find()) {
+            BiConsumer<GameContext, List<ForwardTarget>> onChosen = parseTargetAction(action, xValue);
+            if (onChosen == null) return null;
+            run = ctx -> onChosen.accept(ctx, ctx.lastChosenTargets());
+        } else {
+            run = parse(Character.toUpperCase(action.charAt(0)) + action.substring(1) + ".", source, xValue);
+            if (run == null) return null;
+        }
+        final Consumer<GameContext> payoff = run;
+        return ctx -> {
+            if (!gate.test(ctx)) {
+                ctx.logEntry("Effect: " + condText + " — not met");
+                return;
+            }
+            ctx.logEntry("Effect: " + condText + " — also " + action);
+            payoff.accept(ctx);
+        };
+    }
+
+    /**
+     * True when {@code clause} goes on to a second action that nothing here is sure to read with the
+     * first. A leading "If &lt;cond&gt;, " is set aside — its comma joins a gate, not an action — and
+     * "Dull it and Freeze it" is read whole everywhere. Otherwise, with no gate in front, the clause
+     * passes when {@link #targetActionAndEffect} reads both parts.
+     */
+    private static boolean joinsUnreadSecondAction(String clause, CardData source, int xValue) {
+        String t = clause.trim().replaceAll("[.!]$", "");
+        Matcher gate = LEADING_IF_GATE.matcher(t);
+        boolean gated = gate.lookingAt();
+        String core = gated ? t.substring(gate.end()) : t;
+        if (!JOINS_SECOND_ACTION.matcher(core).find()) return false;
+        if (FOLLOWUP_DULL_AND_FREEZE.matcher(core).matches()) return false;
+        return gated || targetActionAndEffect(core, source, xValue) == null;
+    }
+
+    /**
+     * "&lt;action on the chosen card&gt;[,] and &lt;effect of its own&gt;" — 11-055R Pandemonium's
+     * "Activate it, and deal 2000 damage to all the Forwards opponent controls", 16-137S Rikku's
+     * "put it on top of its owner's deck and draw 1 card".
+     *
+     * <p>Each "and" is tried as the join, left to right. The left part must be one action on the
+     * chosen card that {@code parseTargetAction} reads and that joins nothing further; the right
+     * part must parse on its own and must not point back at the chosen card ("it", "its", "them"),
+     * which a standalone parse cannot see. Both or nothing: unread, the Activate branch took
+     * Pandemonium's activation out of the front of the clause and dropped the damage.
+     */
+    static BiConsumer<GameContext, List<ForwardTarget>> targetActionAndEffect(String clause, CardData source,
+                                                                              int xValue) {
+        AndJoin j = splitTargetActionAndEffect(clause, source, xValue);
+        return j != null ? j.action() : null;
+    }
+
+    /**
+     * Where {@link #targetActionAndEffect} splits a clause, and how it reads each side: {@code left}
+     * is an action on the chosen cards, and so is {@code right} when {@code rightOnChosen}; otherwise
+     * {@code right} stands on its own. The describer names the two parts from this, so it reports
+     * the split the chain runs.
+     */
+    record AndJoin(String left, String right, boolean rightOnChosen,
+                   BiConsumer<GameContext, List<ForwardTarget>> action) {}
+
+    static AndJoin splitTargetActionAndEffect(String clause, CardData source, int xValue) {
+        String t = clause.trim().replaceAll("[.!]$", "");
+        Matcher and = CLAUSE_AND_JOIN.matcher(t);
+        while (and.find()) {
+            String left  = t.substring(0, and.start()).trim();
+            String right = t.substring(and.end()).trim();
+            // No comma in the left part: "If its cost is …, break it" (24-065H Fenrir) is a gate
+            // around the action, and parseTargetAction would find the break and drop the gate.
+            if (left.isEmpty() || right.isEmpty() || left.contains(",")
+                    || JOINS_SECOND_ACTION.matcher(left).find()) continue;
+            BiConsumer<GameContext, List<ForwardTarget>> act = parseTargetAction(left, xValue);
+            if (act == null) continue;
+            // A right part whose subject is the chosen cards (21-107R Mihli's "Activate them and they
+            // gain +1000 power …") is a second action on them: parsed standalone, its "they" had no
+            // one to mean and the boost went to the source. Any other back-reference ("Dull it and
+            // Freeze it") declines — those pairs have readers of their own.
+            if (CHOSEN_AS_SUBJECT.matcher(right).lookingAt()) {
+                if (JOINS_SECOND_ACTION.matcher(right).find()) continue;
+                BiConsumer<GameContext, List<ForwardTarget>> then = parseTargetAction(right, xValue);
+                if (then == null) continue;
+                return new AndJoin(left, right, true, (ctx, ts) -> {
+                    act.accept(ctx, ts);
+                    then.accept(ctx, ts);
+                });
+            }
+            if (REFERS_TO_CHOSEN.matcher(right).find() || CHOSEN_AS_SUBJECT.matcher(right).find()) continue;
+            Consumer<GameContext> effect = parse(right, source, xValue);
+            if (effect == null) continue;
+            return new AndJoin(left, right, false, (ctx, ts) -> {
+                act.accept(ctx, ts);
+                effect.accept(ctx);
+            });
+        }
+        return null;
     }
 
     /**
@@ -2290,6 +2525,49 @@ final class ActionResolverChoose {
                         Matcher ctrlDiscM = FOLLOWUP_TARGET_CONTROLLER_DISCARDS.matcher(secondaryText);
                         if (alsoGated != null) {
                             secondary = alsoGated;
+                        } else if (SECONDARY_STATE_GATED_INSTEAD.matcher(secondaryText.trim()).matches()) {
+                            // "If <cond>, <alt> instead." replaces the base; it is never a second
+                            // effect after it. Left to the arms below, which scan with find(),
+                            // 25-075C's "break it instead" broke after the dull and 8-081R's
+                            // "remove it from the game instead" removed after the break, each with
+                            // the condition dropped. Read with the base by stateGatedInsteadUpgrade
+                            // or a dedicated reader; otherwise the base runs and this logs.
+                            secondaryUnread[0] = true;
+                            secondary = ctx -> ctx.logEntry("[ActionResolver] Secondary followup not yet implemented: " + secondaryText);
+                        } else if (SECONDARY_AT_END_OF_TURN_ACTION.matcher(secondaryText.trim()).matches()) {
+                            // Delayed, and by identity: at the end of the turn the chosen card's slot
+                            // may hold another. Ahead of the break arm below, which found 1-104H's
+                            // "break it" and broke the Forward at once, +5000 and all.
+                            Matcher eotM = SECONDARY_AT_END_OF_TURN_ACTION.matcher(secondaryText.trim());
+                            eotM.matches();
+                            String act = eotM.group("action").toLowerCase(Locale.ROOT);
+                            secondary = ctx -> {
+                                for (ForwardTarget t : ctx.lastChosenTargets()) {
+                                    CardData card = ctx.targetCard(t);
+                                    if (card == null) continue;
+                                    if (act.startsWith("return"))      ctx.returnToOwnersHandAtEndOfTurn(card);
+                                    else if (act.startsWith("remove")) ctx.removeFromGameAtEndOfTurn(card);
+                                    else ctx.addEndOfTurnEffect(later -> {
+                                        ForwardTarget at = later.fieldSlotOf(card);
+                                        if (at != null) later.breakTarget(at);
+                                    });
+                                }
+                            };
+                        } else if (secondaryConditionGatedAlsoAction(secondaryText, source, xValue) != null) {
+                            // "If <cond>, also <action>." Ahead of the arms below, which scan with
+                            // find() and would take "Freeze it" or "draw 1 card" out of the sentence
+                            // with the condition dropped.
+                            secondary = secondaryConditionGatedAlsoAction(secondaryText, source, xValue);
+                        } else if (SECONDARY_PLAY_REMOVED_AT_END_OF_TURN.matcher(secondaryText.trim()).matches()
+                                && FOLLOWUP_REMOVE_FROM_GAME.matcher(primaryFollowup).find()) {
+                            // The cards the removal took, returned by identity at the end of the turn:
+                            // unread, 15-047R Kytes removed the Forward and it never came back. Only
+                            // behind a removal, which is what fills removedCards; behind anything
+                            // else "it" means nothing here and the sentence stays unread.
+                            secondary = ctx -> {
+                                List<CardData> taken = List.copyOf(removedCards);
+                                ctx.addEndOfTurnEffect(later -> taken.forEach(later::playSourceFromRfpOntoField));
+                            };
                         } else if (ctrlDiscM.matches()) {
                             final int discardCount = Integer.parseInt(ctrlDiscM.group("count"));
                             secondary = ctx -> {
@@ -3620,6 +3898,24 @@ final class ActionResolverChoose {
             }
         }
 
+        // --- "<base>. If <game-state condition>, <alt> instead." — the general upgrade ---
+        // Behind every dedicated "instead" reader above, which keep their texts, and ahead of the
+        // plain action branches below, which would claim the base and run the upgrade sentence as
+        // a logged gap. Only for a secondary the split could not read. Ahead of the single hand
+        // gate just below too, which reads only its own sentence and ran 9-026C's "If your
+        // opponent has no cards …, break it instead" as that gap.
+        if (secondaryUnread[0]) {
+            Consumer<GameContext> upgrade = stateGatedInsteadUpgrade(
+                    text.substring(0, m.start("followup")), primaryFollowup, secondaryText, source, xValue,
+                    ctx -> {
+                        ctx.logChooseHeader(choosePrefix);
+                        selectTargets(ctx, maxCount, upTo,
+                                opponentOnly, selfOnly, condition, element, zone, opponentZone, bothZones,
+                                costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
+                    });
+            if (upgrade != null) return upgrade;
+        }
+
         // --- "If opponent has [no|N cards or less] cards in hand, [action]" as single followup ---
         Matcher handM = OPPONENT_HAND_CONDITION_PATTERN.matcher(primaryFollowup);
         if (handM.matches()) {
@@ -3642,14 +3938,20 @@ final class ActionResolverChoose {
             }
         }
 
-        // --- "<base>. If <game-state condition>, <alt> instead." — the general upgrade ---
-        // Behind every dedicated "instead" reader above, which keep their texts, and ahead of the
-        // plain action branches below, which would claim the base and run the upgrade sentence as
-        // a logged gap. Only for a secondary the split could not read.
-        if (secondaryUnread[0]) {
-            Consumer<GameContext> upgrade = stateGatedInsteadUpgrade(
-                    text.substring(0, m.start("followup")), primaryFollowup, secondaryText, source, xValue);
-            if (upgrade != null) return upgrade;
+        // --- "<action on it>[,] and <effect of its own>." (11-055R Pandemonium) ---
+        // Ahead of the plain action branches below for the same reason: they match with find() and
+        // would read the first action alone. Both parts must read, or this declines.
+        BiConsumer<GameContext, List<ForwardTarget>> andEffect =
+                targetActionAndEffect(primaryFollowup, source, xValue);
+        if (andEffect != null) {
+            return ctx -> {
+                ctx.logChooseHeader(choosePrefix + " — " + primaryFollowup);
+                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                        opponentOnly, selfOnly, condition, element, zone, opponentZone, bothZones,
+                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
+                andEffect.accept(ctx, ts);
+                if (secondary != null) secondary.accept(ctx);
+            };
         }
 
         // --- "Select 1 number and reveal the top card of your deck.

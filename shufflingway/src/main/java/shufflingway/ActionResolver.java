@@ -2540,6 +2540,22 @@ public class ActionResolver {
     }
 
     /**
+     * The name of one sentence of a choose followup as the chain runs it: a clause
+     * {@code targetActionAndEffect} splits ("Activate it, and deal 2000 damage to all …") is named
+     * by both parts, since the chain reads it ahead of the single-action branches that
+     * {@link #matchedFollowupName} would name it after; anything else is that name, or "?".
+     */
+    static String chosenFollowupName(String clause, CardData source) {
+        ActionResolverChoose.AndJoin j = ActionResolverChoose.splitTargetActionAndEffect(clause, source, 0);
+        if (j != null) {
+            String left  = matchedFollowupName(j.left(), source);
+            String right = j.rightOnChosen() ? matchedFollowupName(j.right(), source) : describeOrName(j.right(), source);
+            return "ActionAnd(" + (left != null ? left : "?") + ", " + (right != null ? right : "?") + ")";
+        }
+        return matchedFollowupName(clause, source);
+    }
+
+    /**
      * Returns the name of the first followup pattern that matches {@code followupText}, or
      * {@code null} if no followup pattern recognises it.  The ordering mirrors the precedence
      * used inside {@link #tryParseChooseCharacter}.
@@ -3722,7 +3738,28 @@ public class ActionResolver {
             String secondaryRaw  = dotIdx >= 0 ? followup.substring(dotIdx + 2).trim() : null;
             String secondaryTxt  = secondaryRaw != null ? stripRestrictionSentences(secondaryRaw) : null;
             if (secondaryTxt != null && secondaryTxt.isEmpty()) secondaryTxt = null;
-            String followupName  = matchedFollowupName(primaryPart, source);
+            // Mirrors the choose chain's general upgrade, which reads every "If <cond>, <alt>
+            // instead." secondary the dedicated readers above have not, and which runs one half or
+            // the other: described as the split, it read "PowerBoost + PowerBoost", a card that
+            // does both.
+            if (secondaryTxt != null && SECONDARY_STATE_GATED_INSTEAD.matcher(secondaryTxt.trim()).matches()) {
+                String header = escapedEffectText.substring(0, chooseM.start("followup"));
+                if (ActionResolverChoose.stateGatedInsteadUpgrade(header, primaryPart, secondaryTxt, source, 0,
+                        ctx -> { }) != null) {
+                    Matcher upM = SECONDARY_STATE_GATED_INSTEAD.matcher(secondaryTxt.trim());
+                    upM.matches();
+                    String altTxt   = upM.group("alt").trim();
+                    String baseName = chosenFollowupName(primaryPart, source);
+                    // An alt that never mentions the chosen card is run on its own, so named so.
+                    boolean onChosen = REFERS_TO_CHOSEN.matcher(altTxt).find()
+                            || CHOSEN_AS_SUBJECT.matcher(altTxt).find();
+                    String altName  = onChosen ? chosenFollowupName(altTxt, source) : describeOrName(altTxt, source);
+                    return "ChooseCharacter / IfInstead(" + upM.group("cond").trim() + ": "
+                            + (baseName != null ? baseName : "?") + " -> "
+                            + (altName != null ? altName : "?") + ")";
+                }
+            }
+            String followupName  = chosenFollowupName(primaryPart, source);
             String secondaryDesc = null;
             // For AddToHand primaries, prefer the conditional-on-added-card form
             // ("If (it|the added card) (is|has) X, Y") over the generic flat description,
@@ -3774,6 +3811,30 @@ public class ActionResolver {
             if (secondaryDesc == null && secondaryTxt != null
                     && MAY_COST_REPLAY_ABILITY.matcher(secondaryTxt).find())
                 secondaryDesc = "MayReplayAbility";
+            // Mirrors the choose chain's two delayed secondaries, read there ahead of the break arm:
+            // described by the fallbacks below, 1-104H's delayed break read as a plain "Break".
+            if (secondaryDesc == null && secondaryTxt != null) {
+                Matcher eotM = SECONDARY_AT_END_OF_TURN_ACTION.matcher(secondaryTxt.trim());
+                if (eotM.matches()) {
+                    String act = eotM.group("action").toLowerCase(Locale.ROOT);
+                    secondaryDesc = "AtEndOfTurn(" + (act.startsWith("return") ? "ReturnToOwnersHand"
+                            : act.startsWith("remove") ? "RemoveFromGame" : "Break") + ")";
+                } else if (SECONDARY_PLAY_REMOVED_AT_END_OF_TURN.matcher(secondaryTxt.trim()).matches()
+                        && FOLLOWUP_REMOVE_FROM_GAME.matcher(primaryPart).find()) {
+                    secondaryDesc = "AtEndOfTurn(PlayRemovedOntoField)";
+                }
+            }
+            // Mirrors the choose chain's "If <cond>, also <action>." reader, which runs the payoff
+            // only when the condition holds.
+            if (secondaryDesc == null && secondaryTxt != null
+                    && ActionResolverChoose.secondaryConditionGatedAlsoAction(secondaryTxt, source, 0) != null) {
+                Matcher alsoM = SECONDARY_IF_ALSO_ACTION.matcher(secondaryTxt.trim());
+                alsoM.matches();
+                String act = alsoM.group("action").trim();
+                boolean onChosen = REFERS_TO_CHOSEN.matcher(act).find() || CHOSEN_AS_SUBJECT.matcher(act).find();
+                String actName = onChosen ? matchedFollowupName(act, source) : describeOrName(act, source);
+                secondaryDesc = "IfAlso(" + alsoM.group("cond").trim() + ": " + (actName != null ? actName : "?") + ")";
+            }
             // Mirrors the choose chain, where this is read first among the secondaries: the
             // sentence adds an action to the cards the primary chose, and the generic fallback
             // below described 1-059R Laguna's as unread and 1-043H Snow's as an unconditional
@@ -4377,11 +4438,14 @@ public class ActionResolver {
         if (oppDmgM.find())
             return new DamageInsteadCondition.OpponentDamageAtLeast(Integer.parseInt(oppDmgM.group(1)));
 
-        // Opponent hand size: "your opponent has N cards or less in their hand", and the
-        // "N or less cards" order 29-022R Cray Claw prints.
+        // Opponent hand size: "your opponent has N cards or less in their hand", the "N or less
+        // cards" order 29-022R Cray Claw prints, and the older "his/her hand".
         Matcher oppHandM = Pattern
-                .compile("(?i)your opponent has (\\d+) (?:cards? or (?:less|fewer)|or (?:less|fewer) cards?) in their hand")
+                .compile("(?i)your opponent has (\\d+) (?:cards? or (?:less|fewer)|or (?:less|fewer) cards?) "
+                        + "in (?:their|his/her) hand")
                 .matcher(s);
+        if (s.matches("(?i)your\\s+opponent\\s+has\\s+no\\s+cards\\s+in\\s+(?:their|his/her)\\s+hand"))
+            return new DamageInsteadCondition.OpponentHandAtMost(0);
         if (oppHandM.find())
             return new DamageInsteadCondition.OpponentHandAtMost(Integer.parseInt(oppHandM.group(1)));
 
@@ -4432,6 +4496,10 @@ public class ActionResolver {
 
         if (s.matches("(?i)you\\s+have\\s+a\\s+《C》"))
             return new DamageInsteadCondition.YouHaveCrystal();
+        Matcher bzNamedM = Pattern.compile("(?i)^you\\s+have\\s+a\\s+Card\\s+Name\\s+(.+?)\\s+in\\s+your\\s+Break\\s+Zone$")
+                .matcher(s);
+        if (bzNamedM.matches())
+            return new DamageInsteadCondition.BreakZoneHasCardNamed(bzNamedM.group(1).trim());
         Matcher discElemM = Pattern.compile("(?i)^the\\s+discarded\\s+card\\s+is\\s+of\\s+(\\w+)\\s+Element$").matcher(s);
         if (discElemM.matches())
             return new DamageInsteadCondition.DiscardedCostCardOfElement(discElemM.group(1));
@@ -5251,6 +5319,8 @@ public class ActionResolver {
                 ctx.lastDiscardedCostCardElements().stream().anyMatch(element::equalsIgnoreCase);
             case DamageInsteadCondition.SourceCountersAtLeast(int min, String counter, String name, CardData src) ->
                 src != null && ctx.getCounters(src, counter) >= min;
+            case DamageInsteadCondition.BreakZoneHasCardNamed(String name) ->
+                ctx.countSelfBreakZoneCards(name, null) >= 1;
         };
     }
 

@@ -6,9 +6,9 @@ import static shufflingway.ActionResolver.*;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
-import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
 import java.util.regex.Matcher;
@@ -466,8 +466,10 @@ final class ActionResolverPlay {
         Matcher m = NAME_ELEMENT_SELF_BECOMES_UNTIL_EOT.matcher(text.trim());
         if (!m.matches() || !m.group("name").trim().equalsIgnoreCase(source.name())) return null;
         return ctx -> {
+            // Ordered, not Set.of: that randomises iteration order per JVM run, which leaks into
+            // anything that records the call.
             String element = ctx.selectElement(source.name() + " — name 1 Element other than Light and Dark",
-                    Set.of("Light", "Dark"));
+                    new LinkedHashSet<>(List.of("Light", "Dark")));
             if (element == null) { ctx.logEntry("No Element named"); return; }
             ctx.setSourceElementUntilEndOfTurn(source, element);
         };

@@ -34,7 +34,8 @@ public sealed interface DamageInsteadCondition
                 DamageInsteadCondition.BreakZoneNamesBeforePayingAtLeast,
                 DamageInsteadCondition.YouHaveCrystal,
                 DamageInsteadCondition.DiscardedCostCardOfElement,
-                DamageInsteadCondition.SourceCountersAtLeast {
+                DamageInsteadCondition.SourceCountersAtLeast,
+                DamageInsteadCondition.BreakZoneHasCardNamed {
 
     /** "If it is active" */
     record TargetIsActive() implements DamageInsteadCondition {}
@@ -167,4 +168,7 @@ public sealed interface DamageInsteadCondition
      */
     record SourceCountersAtLeast(int min, String counter, String name, CardData source)
             implements DamageInsteadCondition {}
+
+    /** "If you have a Card Name X in your Break Zone" (25-026C SOLDIER Candidate). */
+    record BreakZoneHasCardNamed(String name) implements DamageInsteadCondition {}
 }

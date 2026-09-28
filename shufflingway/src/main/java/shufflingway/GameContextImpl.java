@@ -1374,7 +1374,7 @@ final class GameContextImpl implements GameContext {
 									: isEnteredThisTurnCondition(condition)
 									? mw.p1ForwardPlayedOnTurn.get(i) == mw.gameState.getTurnNumber()
 									: meetsTargetCondition(mw.p1ForwardStates.get(i), mw.p1ForwardDamage.get(i),
-											mw.p1AttackSelection.contains(i), false, condition))
+											mw.isForwardAttacking(true, i), mw.isForwardBlocking(true, i), condition))
 								eligible.add(new ForwardTarget(true, i, ForwardTarget.CardZone.FORWARD));
 						}
 						if (inclBackups || inclForwards) for (int i = 0; i < mw.p1BackupCards.length; i++) {
@@ -1437,7 +1437,7 @@ final class GameContextImpl implements GameContext {
 									: isEnteredThisTurnCondition(condition)
 									? mw.p2ForwardPlayedOnTurn.get(i) == mw.gameState.getTurnNumber()
 									: meetsTargetCondition(mw.p2ForwardStates.get(i), mw.p2ForwardDamage.get(i),
-											false, false, condition))
+											mw.isForwardAttacking(false, i), mw.isForwardBlocking(false, i), condition))
 								eligible.add(new ForwardTarget(false, i, ForwardTarget.CardZone.FORWARD));
 						}
 						if (inclBackups || inclForwards) for (int i = 0; i < mw.p2BackupCards.length; i++) {
@@ -1503,7 +1503,7 @@ final class GameContextImpl implements GameContext {
 									: isEnteredThisTurnCondition(condition)
 									? mw.p2ForwardPlayedOnTurn.get(i) == mw.gameState.getTurnNumber()
 									: meetsTargetCondition(mw.p2ForwardStates.get(i), mw.p2ForwardDamage.get(i),
-											false, false, condition))
+											mw.isForwardAttacking(false, i), mw.isForwardBlocking(false, i), condition))
 								eligible.add(new ForwardTarget(false, i, ForwardTarget.CardZone.FORWARD));
 						}
 						if (inclBackups || inclForwards) for (int i = 0; i < mw.p2BackupCards.length; i++) {
@@ -1566,7 +1566,7 @@ final class GameContextImpl implements GameContext {
 									: isEnteredThisTurnCondition(condition)
 									? mw.p1ForwardPlayedOnTurn.get(i) == mw.gameState.getTurnNumber()
 									: meetsTargetCondition(mw.p1ForwardStates.get(i), mw.p1ForwardDamage.get(i),
-											mw.p1AttackSelection.contains(i), false, condition))
+											mw.isForwardAttacking(true, i), mw.isForwardBlocking(true, i), condition))
 								eligible.add(new ForwardTarget(true, i, ForwardTarget.CardZone.FORWARD));
 						}
 						if (inclBackups || inclForwards) for (int i = 0; i < mw.p1BackupCards.length; i++) {
@@ -2779,10 +2779,10 @@ final class GameContextImpl implements GameContext {
 	// =========================================================================================
 	// Combat: attacking, blocking, breaking and removal
 	// =========================================================================================
-			@Override public boolean isP1ForwardAttacking(int idx) { return mw.p1AttackSelection.contains(idx); }
-			@Override public boolean isP2ForwardAttacking(int idx) { return false; }
-			@Override public boolean isP1ForwardBlocking(int idx)  { return false; }
-			@Override public boolean isP2ForwardBlocking(int idx)  { return false; }
+			@Override public boolean isP1ForwardAttacking(int idx) { return mw.isForwardAttacking(true, idx); }
+			@Override public boolean isP2ForwardAttacking(int idx) { return mw.isForwardAttacking(false, idx); }
+			@Override public boolean isP1ForwardBlocking(int idx)  { return mw.isForwardBlocking(true, idx); }
+			@Override public boolean isP2ForwardBlocking(int idx)  { return mw.isForwardBlocking(false, idx); }
 
 			@Override public void breakBlockingForward() {
 				if (isP1) {
@@ -10869,7 +10869,8 @@ final class GameContextImpl implements GameContext {
 					for (int i = 0; i < fwds.size(); i++) {
 						int d = i < dmg.size()    ? dmg.get(i)    : 0;
 						CardState s = i < states.size() ? states.get(i) : CardState.ACTIVE;
-						if (CardFilters.meetsTargetCondition(s, d, false, false, cardCondition)) return true;
+						if (CardFilters.meetsTargetCondition(s, d, mw.isForwardAttacking(oppIsP1, i),
+								mw.isForwardBlocking(oppIsP1, i), cardCondition)) return true;
 					}
 				}
 				if (norm == null || norm.equals("monster") || norm.equals("character")) {
@@ -10899,7 +10900,8 @@ final class GameContextImpl implements GameContext {
 					for (int i = 0; i < fwds.size(); i++) {
 						int d = i < dmg.size()    ? dmg.get(i)    : 0;
 						CardState s = i < states.size() ? states.get(i) : CardState.ACTIVE;
-						if (CardFilters.meetsTargetCondition(s, d, false, false, condition)) count++;
+						if (CardFilters.meetsTargetCondition(s, d, mw.isForwardAttacking(oppIsP1, i),
+								mw.isForwardBlocking(oppIsP1, i), condition)) count++;
 					}
 				}
 				if (inclMonsters) {

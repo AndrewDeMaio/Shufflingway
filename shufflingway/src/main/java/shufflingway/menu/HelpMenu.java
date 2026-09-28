@@ -8,8 +8,10 @@ import java.awt.event.ActionEvent;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.List;
 
 import javax.swing.JButton;
@@ -139,20 +141,52 @@ public class HelpMenu extends JMenu {
             reset.start();
         });
         JButton closeBtn = new JButton("Close");
+        JButton clearBtn = new JButton("Clear Error Log");
 
         JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 4));
         buttons.add(new JLabel(logPath.toString()));
         buttons.add(copyBtn);
         buttons.add(closeBtn);
 
+        JPanel clearPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
+        clearPanel.add(clearBtn);
+
+        JPanel south = new JPanel(new BorderLayout());
+        south.add(clearPanel, BorderLayout.WEST);
+        south.add(buttons, BorderLayout.EAST);
+
         JDialog dlg = new JDialog(owner, "Error Log", false);
         dlg.setLayout(new BorderLayout());
         dlg.add(scroll, BorderLayout.CENTER);
-        dlg.add(buttons, BorderLayout.SOUTH);
+        dlg.add(south, BorderLayout.SOUTH);
         dlg.pack();
         dlg.setLocationRelativeTo(owner);
         closeBtn.addActionListener(e -> dlg.dispose());
+        clearBtn.addActionListener(e -> {
+            int choice = JOptionPane.showConfirmDialog(dlg,
+                    "Are you sure you want to clear the error log?", "Clear Error Log",
+                    JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+            if (choice != JOptionPane.YES_OPTION) return;
+            try {
+                clearLog(logPath);
+                textArea.setText("");
+            } catch (IOException ex) {
+                JOptionPane.showMessageDialog(dlg, "Could not clear the log:\n" + ex.getMessage(),
+                        "Clear Error Log", JOptionPane.ERROR_MESSAGE);
+            }
+        });
         dlg.setVisible(true);
+    }
+
+    /**
+     * Empties the log file in place. The app's {@code FileHandler} holds it open in append mode, so
+     * its next write lands at the new end of the file rather than at its old offset.
+     */
+    private static void clearLog(Path logPath) throws IOException {
+        if (!Files.exists(logPath)) return;
+        try (FileChannel ch = FileChannel.open(logPath, StandardOpenOption.WRITE)) {
+            ch.truncate(0);
+        }
     }
 
     private void showUpdateResult(UpdateChecker.ReleaseInfo info) {

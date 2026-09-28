@@ -664,6 +664,27 @@ public class MainWindow {
 		for (CardData c : declared) if (c == base || c == top) return true;
 		return false;
 	}
+
+	/**
+	 * Whether the Forward in slot {@code idx} is attacking in the combat in progress — one of the
+	 * declared attackers, by identity as {@link #isFormingParty} reads them. This is what an
+	 * "attacking Forward" filter asks; {@link #p1AttackSelection} is emptied at declaration and
+	 * P2 has no selection at all, so reading that left every attacking filter empty mid-combat.
+	 */
+	boolean isForwardAttacking(boolean isP1, int idx) {
+		List<CardData> declared = isP1 ? p1DeclaredAttackers : p2DeclaredAttackers;
+		List<CardData> fwds     = isP1 ? p1ForwardCards : p2ForwardCards;
+		if (idx < 0 || idx >= fwds.size()) return false;
+		CardData base = fwds.get(idx);
+		CardData top  = isP1 ? effectiveP1Forward(idx) : effectiveP2Forward(idx);
+		for (CardData c : declared) if (c == base || c == top) return true;
+		return isP1 && p1AttackSelection.contains(idx);
+	}
+
+	/** Whether the Forward in slot {@code idx} is the one blocking in the combat in progress. */
+	boolean isForwardBlocking(boolean isP1, int idx) {
+		return idx >= 0 && idx == (isP1 ? p1BlockingIdx : p2BlockingIdx);
+	}
 	int                  p1BlockingIdx     = -1;
 
 	// In-place field targeting: while active, the normal field-card click handlers
@@ -14507,7 +14528,7 @@ public class MainWindow {
 						: CardFilters.isEnteredThisTurnCondition(condition)
 						? played.get(i) == gameState.getTurnNumber()
 						: CardFilters.meetsTargetCondition(states.get(i), dmg.get(i),
-								sideIsP1 && p1AttackSelection.contains(i), false, condition);
+								isForwardAttacking(sideIsP1, i), isForwardBlocking(sideIsP1, i), condition);
 			}
 			case BACKUP -> {
 				if (CardFilters.isBlockingTargetFilter(condition)) return false;
