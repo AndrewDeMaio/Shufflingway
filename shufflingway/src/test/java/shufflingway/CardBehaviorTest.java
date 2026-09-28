@@ -57182,6 +57182,8 @@ public class CardBehaviorTest {
 		when(ctx.effectMadeProgress()).thenReturn(true);
 		when(ctx.removeCardsFromBreakZoneFromGameEitherSpec(any(), any(), anyInt(), anyBoolean(), anyString()))
 				.thenReturn(3);
+		// The removal is the payoff's price, which is only taken when all 3 can be.
+		when(ctx.breakZoneRemovalCapacity(any(), any(), anyInt(), any())).thenReturn(3);
 		ArgumentCaptor<TargetSpec> a = ArgumentCaptor.forClass(TargetSpec.class);
 		ArgumentCaptor<TargetSpec> b = ArgumentCaptor.forClass(TargetSpec.class);
 
@@ -70652,6 +70654,85 @@ public class CardBehaviorTest {
 
 		assertEquals(CardState.DULL, mw.p2ForwardStates.get(0), "two is not the three the payoff is bought with");
 		assertNull(mw.grantedMaxAttacks.get(vaan));
+		assertTrue(mw.gameState.getP2PermanentRfp().isEmpty(), "and neither card is spent on a price it cannot meet");
+		assertEquals(2, mw.gameState.getP2BreakZone().size());
+	}
+
+	/** P2's context over a Break Zone holding {@code cards}. */
+	private static GameContext p2WithBreakZone(MainWindow mw, CardData... cards) {
+		for (CardData c : cards) {
+			mw.gameState.getIdentity().put(c, false);
+			mw.gameState.getP2BreakZone().add(c);
+		}
+		return mw.buildGameContext(false);
+	}
+
+	@Test
+	void aRemovalPriceIsUnpayableWhenTheBreakZoneIsShort() {
+		String vaan = VAAN_ATTACK;
+		GameContext two = p2WithBreakZone(new MainWindow(),
+				makeCategoryForward("M1", "Water", "MBM"), makeCategoryForward("M2", "Water", "MBM"),
+				makeCategoryForward("Other", "Water", "XII"));
+		assertTrue(ActionResolver.whenYouDoSoPriceUnpayable(vaan, two), "two MBM Characters cannot pay 3");
+
+		GameContext three = p2WithBreakZone(new MainWindow(), makeCategoryForward("M1", "Water", "MBM"),
+				makeCategoryForward("M2", "Water", "MBM"), makeCategoryForward("M3", "Water", "MBM"));
+		assertFalse(ActionResolver.whenYouDoSoPriceUnpayable(vaan, three));
+	}
+
+	@Test
+	void anAndOrRemovalPriceCountsBothPoolsOnce() {
+		// 29-005L Cloud's price: 3 from Fire cards and/or Category VII cards, one pool.
+		String cloud = "remove 3 Fire cards in your Break Zone and/or Category VII cards in your Break Zone "
+				+ "from the game. When you do so, draw 1 card.";
+		CardData both = makeCategoryForward("Both", "Fire", "VII");
+		GameContext mixed = p2WithBreakZone(new MainWindow(), makeForward("Ember", "Fire", 2, 5000), both,
+				makeCategoryForward("Seven", "Ice", "VII"));
+		assertFalse(ActionResolver.whenYouDoSoPriceUnpayable(cloud, mixed), "one of each, and a card that is both");
+
+		GameContext short2 = p2WithBreakZone(new MainWindow(), makeForward("Ember", "Fire", 2, 5000),
+				makeCategoryForward("Both", "Fire", "VII"));
+		assertTrue(ActionResolver.whenYouDoSoPriceUnpayable(cloud, short2), "a card answering both counts once");
+	}
+
+	@Test
+	void aRemovalPriceHonoursItsSelectionRider() {
+		// 28-063H Kirin: "4 Forwards of cost 4, each of a different Element".
+		String kirin = "remove 4 Forwards of cost 4, each of a different Element in your Break Zone from the "
+				+ "game. When you do so, draw 1 card.";
+		GameContext repeat = p2WithBreakZone(new MainWindow(), makeForward("A", "Fire", 4, 7000),
+				makeForward("B", "Fire", 4, 7000), makeForward("C", "Ice", 4, 7000), makeForward("D", "Wind", 4, 7000));
+		assertTrue(ActionResolver.whenYouDoSoPriceUnpayable(kirin, repeat), "four Forwards, three Elements");
+
+		GameContext distinct = p2WithBreakZone(new MainWindow(), makeForward("A", "Fire", 4, 7000),
+				makeForward("B", "Earth", 4, 7000), makeForward("C", "Ice", 4, 7000), makeForward("D", "Wind", 4, 7000));
+		assertFalse(ActionResolver.whenYouDoSoPriceUnpayable(kirin, distinct));
+	}
+
+	@Test
+	void anUnpayableRemovalIsNotOfferedAndGoesNowhere() {
+		MainWindow mw = new MainWindow();
+		CardData vaan = makeForwardWithText("Vaan", "Water", 4, 8000, "When Vaan attacks, you may " + VAAN_ATTACK);
+		placeP2Forward(mw, vaan);
+		p2WithBreakZone(mw, makeCategoryForward("M1", "Water", "MBM"));
+
+		mw.autoAbilityTriggers.triggerAutoAbilitiesForAttack(vaan, false);
+
+		assertTrue(mw.gameState.getStack().isEmpty(), "the AI is not handed an offer it cannot pay");
+		assertEquals(1, mw.gameState.getP2BreakZone().size());
+	}
+
+	@Test
+	void aPayableRemovalIsOfferedAndTaken() {
+		MainWindow mw = new MainWindow();
+		CardData vaan = makeForwardWithText("Vaan", "Water", 4, 8000, "When Vaan attacks, you may " + VAAN_ATTACK);
+		placeP2Forward(mw, vaan);
+		p2WithBreakZone(mw, makeCategoryForward("M1", "Water", "MBM"), makeCategoryForward("M2", "Water", "MBM"),
+				makeCategoryForward("M3", "Water", "MBM"));
+
+		mw.autoAbilityTriggers.triggerAutoAbilitiesForAttack(vaan, false);
+
+		assertEquals(1, mw.gameState.getStack().size(), "three MBM Characters pay, so the AI takes it");
 	}
 
 	@Test

@@ -8269,6 +8269,22 @@ final class GameContextImpl implements GameContext {
 						title, PickGate.ANY).size();
 			}
 
+			@Override public int breakZoneRemovalCapacity(TargetSpec first, TargetSpec second,
+					int maxCount, PickGate gate) {
+				List<ForwardTarget> pool = new ArrayList<>(eligibleCharactersFromBreakZone(first));
+				if (second != null)
+					for (ForwardTarget t : eligibleCharactersFromBreakZone(second))
+						if (!pool.contains(t)) pool.add(t);
+				PickGate g = gate == null ? PickGate.ANY : gate;
+				List<CardData> taken = new ArrayList<>();
+				for (ForwardTarget t : pool) {
+					if (taken.size() >= maxCount) break;
+					CardData c = cardAtTarget(t);
+					if (g.allows(taken, c)) taken.add(c);
+				}
+				return taken.size();
+			}
+
 			@Override public int removeAllOpponentBzFromGame() {
 				List<CardData> bz = isP1 ? mw.gameState.getP2BreakZone() : mw.gameState.getP1BreakZone();
 				int removed = 0;

@@ -7280,7 +7280,10 @@ public class ActionResolver {
         // Forward" was read as a card named "the chosen Forward". The Choose chain reads it whole.
         if (m.group("primary").trim().toLowerCase(Locale.ROOT).startsWith("choose ")
                 && CHOSEN_REFERENCE.matcher(m.group("followup")).find()) return null;
-        Consumer<GameContext> primary  = parse(m.group("primary").trim(),  source, xValue);
+        // A counted Break Zone removal here is the payoff's price, which is all N or nothing — read
+        // in that form rather than as the removal parse() would give, which takes what there is.
+        Consumer<GameContext> price    = tryParseBzRemovalPrice(m.group("primary"));
+        Consumer<GameContext> primary  = price != null ? price : parse(m.group("primary").trim(), source, xValue);
         Consumer<GameContext> followup = parse(m.group("followup").trim(), source, xValue);
         if (primary == null || followup == null) return null;
         return ctx -> {
@@ -7288,6 +7291,15 @@ public class ActionResolver {
             primary.accept(ctx);
             if (ctx.effectMadeProgress()) followup.accept(ctx);
         };
+    }
+
+    /**
+     * True when {@code text} is "X. When/If you do so, Y" with X a counted Break Zone removal that
+     * {@code ctx}'s player cannot pay in full now — see {@link ActionResolverState#tryParseBzRemovalPrice}.
+     */
+    static boolean whenYouDoSoPriceUnpayable(String text, GameContext ctx) {
+        Matcher m = WHEN_YOU_DO_SO_SEQUENCE.matcher(text);
+        return m.find() && bzRemovalPriceUnpayable(m.group("primary"), ctx);
     }
 
     /**

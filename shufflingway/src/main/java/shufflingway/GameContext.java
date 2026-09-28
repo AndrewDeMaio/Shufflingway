@@ -3098,6 +3098,20 @@ public interface GameContext {
             int maxCount, boolean upTo, String title);
 
     /**
+     * How many cards, up to {@code maxCount}, one legal selection from the Break Zone can take —
+     * asked before a counted removal that is the price of "When/If you do so" (28-097H Vaan's
+     * "remove 3 Category MBM Characters …"), which is all N or nothing.
+     *
+     * <p>Counted the way the AI picks: a first legal run in zone order under {@code gate}. For a
+     * distinct-Element gate over multi-Element cards that can come in under the true maximum, which
+     * refuses a payable price rather than taking a short one.
+     *
+     * @param second a second description whose pool is united with {@code first}'s ("and/or" —
+     *               29-005L Cloud), or {@code null}
+     */
+    int breakZoneRemovalCapacity(TargetSpec first, TargetSpec second, int maxCount, PickGate gate);
+
+    /**
      * Searches P1 and P2 permanent RFP zones for a card matching {@code cardName} and places
      * the first match onto its owner's forward zone (triggering entering-field abilities).
      */

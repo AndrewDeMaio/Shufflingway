@@ -5087,6 +5087,14 @@ final class AutoAbilityTriggers {
 			return;
 		}
 
+		// "you may remove 3 … When you do so, …" with fewer than 3 there to take: resolution would
+		// refuse the price, so there is nothing to offer — to P1 or to the AI.
+		if ((fa.youMay() || fa.opponentMay())
+				&& ActionResolver.whenYouDoSoPriceUnpayable(resolvedText, mw.buildGameContext(effectIsP1))) {
+			mw.logEntry("[AutoAbility] " + source.name() + " — cannot pay the removal, offer skipped");
+			return;
+		}
+
 		// youMay / opponentMay: player decides at trigger time whether to put ability on stack.
 		boolean p1GetsDialog = (fa.youMay() && isP1) || (fa.opponentMay() && !isP1);
 		if (p1GetsDialog) {
