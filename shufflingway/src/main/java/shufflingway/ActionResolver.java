@@ -4339,6 +4339,9 @@ public class ActionResolver {
             case DamageInsteadCondition.BreakZoneNamesBeforePayingAtLeast b ->
                 own != null && b.payerName().equalsIgnoreCase(own)
                         ? new DamageInsteadCondition.BreakZoneNamesBeforePayingAtLeast(b.min(), b.names(), b.payerName(), source) : null;
+            case DamageInsteadCondition.SourceCountersAtLeast s ->
+                own != null && s.name().equalsIgnoreCase(own)
+                        ? new DamageInsteadCondition.SourceCountersAtLeast(s.min(), s.counter(), s.name(), source) : null;
             default -> c;
         };
     }
@@ -4374,9 +4377,11 @@ public class ActionResolver {
         if (oppDmgM.find())
             return new DamageInsteadCondition.OpponentDamageAtLeast(Integer.parseInt(oppDmgM.group(1)));
 
-        // Opponent hand size: "your opponent has N cards or less in their hand"
+        // Opponent hand size: "your opponent has N cards or less in their hand", and the
+        // "N or less cards" order 29-022R Cray Claw prints.
         Matcher oppHandM = Pattern
-                .compile("(?i)your opponent has (\\d+) cards? or (?:less|fewer) in their hand").matcher(s);
+                .compile("(?i)your opponent has (\\d+) (?:cards? or (?:less|fewer)|or (?:less|fewer) cards?) in their hand")
+                .matcher(s);
         if (oppHandM.find())
             return new DamageInsteadCondition.OpponentHandAtMost(Integer.parseInt(oppHandM.group(1)));
 
@@ -4424,6 +4429,17 @@ public class ActionResolver {
         Matcher castNamedM = ALSO_GATE_CAST_NAMED_THIS_TURN.matcher(s);
         if (castNamedM.matches())
             return new DamageInsteadCondition.YouCastCardNamed(castNamedM.group("name").trim());
+
+        if (s.matches("(?i)you\\s+have\\s+a\\s+《C》"))
+            return new DamageInsteadCondition.YouHaveCrystal();
+        Matcher discElemM = Pattern.compile("(?i)^the\\s+discarded\\s+card\\s+is\\s+of\\s+(\\w+)\\s+Element$").matcher(s);
+        if (discElemM.matches())
+            return new DamageInsteadCondition.DiscardedCostCardOfElement(discElemM.group(1));
+        Matcher srcCtrM = Pattern.compile("(?i)^there\\s+are\\s+(\\d+)\\s+or\\s+more\\s+(.+?)\\s+Counters\\s+"
+                + "placed\\s+on\\s+(.+)$").matcher(s);
+        if (srcCtrM.matches())
+            return new DamageInsteadCondition.SourceCountersAtLeast(Integer.parseInt(srcCtrM.group(1)),
+                    srcCtrM.group(2).trim(), srcCtrM.group(3).trim(), null);
 
         // Forward count comparison
         if (s.equalsIgnoreCase("the number of Forwards your opponent controls is greater than the number of Forwards you control"))
@@ -4878,8 +4894,8 @@ public class ActionResolver {
             String counterName = placeCounterM.group("name").trim();
             return (ctx, ts) -> {
                 for (ForwardTarget ft : ts) {
-                    CardData card = ft.isP1() ? ctx.p1Forward(ft.idx()) : ctx.p2Forward(ft.idx());
-                    ctx.placeCounters(card, counterName, count);
+                    CardData card = ctx.targetCard(ft);
+                    if (card != null) ctx.placeCounters(card, counterName, count);
                 }
             };
         }
@@ -5229,6 +5245,12 @@ public class ActionResolver {
                     if (names.stream().anyMatch(n -> n.equalsIgnoreCase(d.name()))) count--;
                 yield payer != null && count >= min;
             }
+            case DamageInsteadCondition.YouHaveCrystal() ->
+                ctx.crystalCount() >= 1;
+            case DamageInsteadCondition.DiscardedCostCardOfElement(String element) ->
+                ctx.lastDiscardedCostCardElements().stream().anyMatch(element::equalsIgnoreCase);
+            case DamageInsteadCondition.SourceCountersAtLeast(int min, String counter, String name, CardData src) ->
+                src != null && ctx.getCounters(src, counter) >= min;
         };
     }
 

@@ -6287,6 +6287,96 @@ public class CardBehaviorTest {
                 "Guardian Counter — ability damage reduced by 5000");
     }
 
+    // The placing half of the family. The tests above seat the counter with gameState.placeCounters,
+    // so for a long time none of them noticed that the printed ability placed nothing: the Choose
+    // chain logged "followup not yet implemented" and stopped.
+
+    @Test
+    void legendaryTurksActionPlacesATurksCounterOnTheChosenForward() {
+        MainWindow mw = new MainWindow();
+        CardData turk    = makeFieldAbilityCard("Legendary Turk", "Ice", "Forward", LEGENDARY_TURK_TEXT);
+        CardData counted = makeForward("Rufus", "Ice", 3, 7000);
+        mw.placeCardInForwardZone(turk);    // P1 idx 0
+        mw.placeCardInForwardZone(counted); // P1 idx 1
+
+        GameContext ctx = mw.buildGameContext(true);
+        ctx.preloadTargets(List.of(new ForwardTarget(true, 1, ForwardTarget.CardZone.FORWARD)));
+        ActionResolver.parse(CardData.parseActionAbilities(LEGENDARY_TURK_TEXT).get(0).effectText(), turk)
+                .accept(ctx);
+
+        assertEquals(1, mw.gameState.getCounters(counted, "Turks"));
+        assertEquals(0, mw.gameState.getCounters(turk, "Turks"), "only the chosen Forward");
+        assertEquals(12000, mw.effectiveP1ForwardPower(1), "and the standing grant reads it");
+    }
+
+    @Test
+    void tidusPlacesAGuardianCounterOnTheChosenForwardAndHimself() {
+        MainWindow mw = new MainWindow();
+        CardData tidus   = makeFieldAbilityCard("Tidus", "Water", "Forward", TIDUS_TEXT);
+        CardData counted = makeForward("Wakka", "Water", 3, 9000);
+        mw.placeCardInForwardZone(tidus);   // idx 0
+        mw.placeCardInForwardZone(counted); // idx 1
+
+        GameContext ctx = mw.buildGameContext(true);
+        ctx.preloadTargets(List.of(new ForwardTarget(true, 1, ForwardTarget.CardZone.FORWARD)));
+        ActionResolver.parse(CardData.parseAutoAbilities(TIDUS_TEXT).get(0).effectText(), tidus).accept(ctx);
+
+        assertEquals(1, mw.gameState.getCounters(counted, "Guardian"), "the chosen Forward");
+        assertEquals(1, mw.gameState.getCounters(tidus, "Guardian"), "and Tidus");
+    }
+
+    @Test
+    void orphanPlacesDoomCountersThenBreaksWhatReachedThree() {
+        String orphanEtb = "choose up to 2 Forwards or Monsters opponent controls. Place 1 Doom Counter on them. "
+                + "Then, break all Characters with 3 or more Doom Counters placed on them.";
+        MainWindow mw = new MainWindow();
+        CardData orphan = makeForward("Orphan", "Light", 5, 9000);
+        CardData ripe   = makeForward("Ripe", "Fire", 3, 7000);
+        CardData fresh  = makeForward("Fresh", "Fire", 3, 7000);
+        mw.placeCardInForwardZone(orphan);
+        placeP2Forward(mw, ripe);  // P2 idx 0
+        placeP2Forward(mw, fresh); // P2 idx 1
+        mw.gameState.placeCounters(ripe, "Doom", 2);
+
+        GameContext ctx = mw.buildGameContext(true);
+        ctx.preloadTargets(List.of(new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD),
+                                   new ForwardTarget(false, 1, ForwardTarget.CardZone.FORWARD)));
+        ActionResolver.parse(orphanEtb, orphan).accept(ctx);
+
+        assertTrue(mw.gameState.getP2BreakZone().contains(ripe), "the third Doom Counter breaks it");
+        assertFalse(mw.gameState.getP2BreakZone().contains(fresh), "one counter is not three");
+        assertEquals(1, mw.gameState.getCounters(fresh, "Doom"));
+    }
+
+    @Test
+    void aPlacementNamingAnotherCardThanTheSourceIsNotRead() {
+        // "on it and <Name>" places on the source only when it names the source; anything else
+        // would put the counter on a card nobody chose, so it stays unread.
+        CardData tidus = makeForward("Tidus", "Water", 4, 8000);
+        assertEquals("ChooseCharacter", ActionResolver.matchedPatternName(
+                "choose 1 Forward. Place 1 Guardian Counter on it and Tidus.", tidus));
+        GameContext ctx = mock(GameContext.class);
+        ActionResolver.parse("choose 1 Forward. Place 1 Guardian Counter on it and Yuna.", tidus).accept(ctx);
+        verify(ctx, never()).placeCounters(any(), any(), anyInt());
+    }
+
+    @Test
+    void cidFfccRemovesOneCounterFromTheChosenCharacter() {
+        MainWindow mw = new MainWindow();
+        CardData cid    = makeForward("Cid (FFCC)", "Wind", 2, 5000);
+        CardData victim = makeForward("Victim", "Fire", 3, 7000);
+        mw.placeCardInForwardZone(cid);
+        placeP2Forward(mw, victim);
+        mw.gameState.placeCounters(victim, "Doom", 2);
+
+        GameContext ctx = mw.buildGameContext(true);
+        ctx.preloadTargets(List.of(new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD)));
+        ActionResolver.parse("Choose 1 Character opponent controls. Select 1 Counter placed on it, "
+                + "and remove the selected Counter.", cid).accept(ctx);
+
+        assertEquals(1, mw.gameState.getCounters(victim, "Doom"));
+    }
+
     // =========================================================================================
     // The threshold twin of the family above: "The Forwards with 2 or more EXP Counters on them
     // you control gain …" (Palom 23-018R, Porom 23-110R). Same standing grant, same two payload
@@ -37148,6 +37238,180 @@ public class CardBehaviorTest {
 
 		verify(ctx).reduceTarget(theirs, 8000, EnumSet.noneOf(CardData.Trait.class));
 		verify(ctx, never()).reduceTarget(any(), eq(4000), any());
+	}
+
+	// As printed, the ability ends in a use restriction. The two tests above leave it off, and with
+	// it on the anchored upgrade reader missed and the split ran the base figure alone.
+	@Test
+	void edeaUpgradesWithHerPrintedUseRestrictionStillAttached() {
+		ForwardTarget theirs = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+		GameContext ctx = ctxChoosing(List.of(theirs));
+		when(ctx.countSelfBreakZoneMatching(true, true, true, true, null, -1)).thenReturn(10);
+
+		ActionResolver.parse(EDEA_22_075H + " You can only use this ability during your turn and only "
+				+ "once per turn.", null).accept(ctx);
+
+		verify(ctx).reduceTarget(theirs, 8000, EnumSet.noneOf(CardData.Trait.class));
+		verify(ctx, never()).reduceTarget(any(), eq(4000), any());
+	}
+
+	// The general upgrade (stateGatedInsteadUpgrade): a base, then "If <condition>, <alt> instead."
+	// with no dedicated reader. Unread, the base ran and the upgrade sentence was a logged gap.
+
+	private static final String WARRIOR_17_069C =
+			"Choose 1 Forward. It gains +2000 power until the end of the turn. If you have received a "
+			+ "point of damage this turn, it gains +10000 power until the end of the turn instead.";
+
+	private static final String CAGNAZZO_25_089R =
+			"choose 1 Forward opponent controls. Return it to its owner's hand. If you control a Card "
+			+ "Name Golbez, put it into the Break Zone instead.";
+
+	@Test
+	void warriorGainsTheUpgradedBoostAloneWhenDamagedThisTurn() {
+		ForwardTarget mine = new ForwardTarget(true, 0, ForwardTarget.CardZone.FORWARD);
+		GameContext ctx = ctxChoosing(List.of(mine));
+		when(ctx.selfReceivedDamageThisTurn()).thenReturn(true);
+
+		ActionResolver.parse(WARRIOR_17_069C, null).accept(ctx);
+
+		verify(ctx).boostTarget(mine, 10000, EnumSet.noneOf(CardData.Trait.class));
+		verify(ctx, never()).boostTarget(any(), eq(2000), any());
+	}
+
+	@Test
+	void warriorGainsTheBaseBoostWhenUndamaged() {
+		ForwardTarget mine = new ForwardTarget(true, 0, ForwardTarget.CardZone.FORWARD);
+		GameContext ctx = ctxChoosing(List.of(mine));
+		when(ctx.selfReceivedDamageThisTurn()).thenReturn(false);
+
+		ActionResolver.parse(WARRIOR_17_069C, null).accept(ctx);
+
+		verify(ctx).boostTarget(mine, 2000, EnumSet.noneOf(CardData.Trait.class));
+		verify(ctx, never()).boostTarget(any(), eq(10000), any());
+		verify(ctx, never()).logEntry(contains("not yet implemented"));
+	}
+
+	@Test
+	void cagnazzoBreaksInsteadOfReturningWithGolbez() {
+		ForwardTarget theirs = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+		GameContext ctx = ctxChoosing(List.of(theirs));
+		when(ctx.controlConditionMet(any())).thenReturn(true);
+
+		ActionResolver.parse(CAGNAZZO_25_089R, makeForward("Cagnazzo", "Water", 4, 8000)).accept(ctx);
+
+		verify(ctx).forceTargetToBreakZone(theirs);
+		verify(ctx, never()).returnP2ForwardToHand(anyInt());
+	}
+
+	@Test
+	void cagnazzoReturnsItWithoutGolbez() {
+		ForwardTarget theirs = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+		GameContext ctx = ctxChoosing(List.of(theirs));
+		when(ctx.controlConditionMet(any())).thenReturn(false);
+
+		ActionResolver.parse(CAGNAZZO_25_089R, makeForward("Cagnazzo", "Water", 4, 8000)).accept(ctx);
+
+		verify(ctx).returnP2ForwardToHand(0);
+		verify(ctx, never()).forceTargetToBreakZone(any());
+	}
+
+	// Upgrade conditions parseDamageInsteadCondition did not read, which left the upgrade a logged gap.
+
+	@Test
+	void palomUpgradesOnHisOwnExpCounters() {
+		CardData palom = makeForward("Palom", "Fire", 2, 4000);
+		ForwardTarget theirs = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+		GameContext ctx = ctxChoosing(List.of(theirs));
+		when(ctx.getCounters(palom, "EXP")).thenReturn(3);
+
+		ActionResolver.parse("Choose 1 Forward. Deal it 2000 damage. If there are 3 or more EXP Counters "
+				+ "placed on Palom, deal it 8000 damage instead. You can only use this ability once per turn.",
+				palom).accept(ctx);
+
+		verify(ctx).damageTarget(theirs, 8000);
+		verify(ctx, never()).damageTarget(any(), eq(2000));
+	}
+
+	@Test
+	void countersOnACardOtherThanTheSourceAreNotRead() {
+		assertNull(ActionResolver.bindConditionToSource(ActionResolver.parseDamageInsteadCondition(
+				"there are 3 or more EXP Counters placed on Porom"), makeForward("Palom", "Fire", 2, 4000)));
+	}
+
+	@Test
+	void warriorOfLightUpgradesWithACrystal() {
+		ForwardTarget theirs = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+		GameContext ctx = ctxChoosing(List.of(theirs));
+		when(ctx.crystalCount()).thenReturn(1);
+
+		ActionResolver.parse("choose 1 Forward. Deal it 5000 damage. If you have a 《C》, deal it 8000 damage "
+				+ "instead.", null).accept(ctx);
+
+		verify(ctx).damageTarget(theirs, 8000);
+	}
+
+	@Test
+	void onionKnightUpgradesOnTheDiscardedCardsElement() {
+		ForwardTarget theirs = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+		String text = "Choose 1 Forward. Deal it 3000 damage. If the discarded card is of Earth Element, "
+				+ "deal it 6000 damage instead.";
+
+		GameContext earth = ctxChoosing(List.of(theirs));
+		when(earth.lastDiscardedCostCardElements()).thenReturn(List.of("Water", "Earth"));
+		ActionResolver.parse(text, null).accept(earth);
+		verify(earth).damageTarget(theirs, 6000);
+
+		GameContext fire = ctxChoosing(List.of(theirs));
+		when(fire.lastDiscardedCostCardElements()).thenReturn(List.of("Fire"));
+		ActionResolver.parse(text, null).accept(fire);
+		verify(fire).damageTarget(theirs, 3000);
+	}
+
+	@Test
+	void gladiatorUpgradesTheBoostOnTheDiscardedCardsElement() {
+		ForwardTarget mine = new ForwardTarget(true, 0, ForwardTarget.CardZone.FORWARD);
+		GameContext ctx = ctxChoosing(List.of(mine));
+		when(ctx.lastDiscardedCostCardElements()).thenReturn(List.of("Fire"));
+
+		ActionResolver.parse("Choose 1 Forward. It gains +1000 power until the end of the turn. If the "
+				+ "discarded card is of Fire Element, it gains +3000 power until the end of the turn instead.",
+				null).accept(ctx);
+
+		verify(ctx).boostTarget(mine, 3000, EnumSet.noneOf(CardData.Trait.class));
+		verify(ctx, never()).boostTarget(any(), eq(1000), any());
+	}
+
+	@Test
+	void crayClawReadsTheOrLessCardsWordOrder() {
+		ForwardTarget theirs = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+		String text = "choose 1 Forward opponent controls. Deal it 5000 damage. If your opponent has 2 or "
+				+ "less cards in their hand, deal it 8000 damage instead.";
+
+		GameContext two = ctxChoosing(List.of(theirs));
+		when(two.opponentHandSize()).thenReturn(2);
+		ActionResolver.parse(text, null).accept(two);
+		verify(two).damageTarget(theirs, 8000);
+
+		GameContext three = ctxChoosing(List.of(theirs));
+		when(three.opponentHandSize()).thenReturn(3);
+		ActionResolver.parse(text, null).accept(three);
+		verify(three).damageTarget(theirs, 5000);
+	}
+
+	// A half that joins a second action stays unread: the branch it would reach reads the first
+	// action alone, so 16-137S Rikku would have put the Forward on top of the deck and not drawn.
+	@Test
+	void anUpgradeJoiningASecondActionIsLeftAsAGap() {
+		ForwardTarget theirs = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+		GameContext ctx = ctxChoosing(List.of(theirs));
+		when(ctx.controlConditionMet(any())).thenReturn(true);
+
+		ActionResolver.parse("choose 1 Forward opponent controls. Return it to its owner's hand. If you "
+				+ "control a Job Summoner Forward, put it on top of its owner's deck and draw 1 card instead.",
+				null).accept(ctx);
+
+		verify(ctx).logEntry(contains("not yet implemented"));
+		verify(ctx, never()).returnP2ForwardToDeckTop(anyInt());
 	}
 
 	// Its control-gated sibling keeps its own reading — the two branches are anchored end to end.

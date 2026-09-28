@@ -31,7 +31,10 @@ public sealed interface DamageInsteadCondition
                 DamageInsteadCondition.PartyAtLeast,
                 DamageInsteadCondition.EnteredCardNamed,
                 DamageInsteadCondition.NamedEnteredByAbilityOfCategory,
-                DamageInsteadCondition.BreakZoneNamesBeforePayingAtLeast {
+                DamageInsteadCondition.BreakZoneNamesBeforePayingAtLeast,
+                DamageInsteadCondition.YouHaveCrystal,
+                DamageInsteadCondition.DiscardedCostCardOfElement,
+                DamageInsteadCondition.SourceCountersAtLeast {
 
     /** "If it is active" */
     record TargetIsActive() implements DamageInsteadCondition {}
@@ -147,5 +150,21 @@ public sealed interface DamageInsteadCondition
      * for {@code payer}. {@code payer} is bound by the caller, like the record above.
      */
     record BreakZoneNamesBeforePayingAtLeast(int min, List<String> names, String payerName, CardData payer)
+            implements DamageInsteadCondition {}
+
+    /** "If you have a 《C》" (24-002C Warrior of Light) — at least one Crystal. */
+    record YouHaveCrystal() implements DamageInsteadCondition {}
+
+    /**
+     * "If the discarded card is of X Element" (26-010C Onion Knight, 26-024C Musician, 26-068C
+     * Gladiator) — the card discarded to pay the ability's cost. A Multi-Element card is of each.
+     */
+    record DiscardedCostCardOfElement(String element) implements DamageInsteadCondition {}
+
+    /**
+     * "If there are N or more X Counters placed on [Name]" (15-011L Palom) — counters on the card
+     * asking. {@code source} is bound by the caller, like {@link NamedEnteredByAbilityOfCategory}.
+     */
+    record SourceCountersAtLeast(int min, String counter, String name, CardData source)
             implements DamageInsteadCondition {}
 }

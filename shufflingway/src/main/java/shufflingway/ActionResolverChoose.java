@@ -1566,6 +1566,60 @@ final class ActionResolverChoose {
         return d != null ? d : delayedText;
     }
     /**
+     * What the Choose chain returns for a header it recognised and a followup it did not: a log
+     * line. A type of its own so a caller that re-enters the chain on part of a text can tell an
+     * unread part from a read one — both come back non-null.
+     */
+    record UnreadFollowup(String followup) implements Consumer<GameContext> {
+        @Override public void accept(GameContext ctx) {
+            ctx.logEntry("[ActionResolver] Choose effect — followup not yet implemented: " + followup);
+        }
+    }
+
+    /**
+     * "Choose … . &lt;base&gt;. If &lt;game-state condition&gt;, &lt;alt&gt; instead." — the
+     * upgrade sentence, read with the base it replaces. 17-069C Warrior, 18-099C Leo, 25-036R King.
+     *
+     * <p>Called only with a secondary the split could not read, so it claims nothing another reader
+     * has: unread, the primary branch ran the base and the upgrade logged "not yet implemented".
+     * "Instead" makes it one or the other, so each half goes back through the chain whole, under
+     * the same header, and the condition picks which runs. Both halves and the condition must be
+     * understood, or this declines and the text stays a logged gap rather than half a card.
+     *
+     * <p>Conditions on the chosen card ("If it is blocking") are declined: the condition is tested
+     * before the choice, when there is no card to ask.
+     */
+    static Consumer<GameContext> stateGatedInsteadUpgrade(String header, String baseText, String upgradeText,
+                                                          CardData source, int xValue) {
+        Matcher u = SECONDARY_STATE_GATED_INSTEAD.matcher(upgradeText.trim());
+        if (!u.matches()) return null;
+        String condText = u.group("cond").trim();
+        DamageInsteadCondition gate = bindConditionToSource(parseDamageInsteadCondition(condText), source);
+        // "the Forward is Card Name X" is the triggering card's name in an enters-the-field text,
+        // but after a choose it is the chosen one — 5-142H Rosa's, read per target further down.
+        if (gate == null || gate instanceof DamageInsteadCondition.TargetIsActive
+                || gate instanceof DamageInsteadCondition.TargetIsMultiElement
+                || gate instanceof DamageInsteadCondition.EnteredCardNamed) return null;
+        if (gate instanceof DamageInsteadCondition.NamedPowerAtLeast np
+                && (source == null || !np.name().equalsIgnoreCase(source.name()))) return null;
+        String altText = u.group("alt").trim();
+        // A half that joins a second action is declined. The branches it would go to match with
+        // find(), and non-null says only that one of them took something: 16-137S Rikku's "put it on
+        // top of its owner's deck and draw 1 card" came back as the put alone, and 11-055R
+        // Pandemonium's "Activate it, and deal 2000 damage to all …" as the activation alone.
+        if (JOINS_SECOND_ACTION.matcher(baseText).find() || JOINS_SECOND_ACTION.matcher(altText).find()) return null;
+        Consumer<GameContext> base = tryParseChooseCharacterInner(header + baseText.trim() + ".", source, xValue);
+        Consumer<GameContext> alt  = tryParseChooseCharacterInner(
+                header + Character.toUpperCase(altText.charAt(0)) + altText.substring(1) + ".", source, xValue);
+        if (base == null || alt == null || base instanceof UnreadFollowup || alt instanceof UnreadFollowup) return null;
+        return ctx -> {
+            boolean met = insteadConditionMet(ctx, gate);
+            ctx.logEntry("Effect: " + condText + (met ? " — " + altText + " instead" : " — not met"));
+            (met ? alt : base).accept(ctx);
+        };
+    }
+
+    /**
      * "If &lt;condition&gt;, &lt;action&gt; it/them/this Forward also." — a choose followup's
      * second sentence, adding one more action to the cards the first sentence already chose and
      * gating it on a condition. 1-059R Laguna, 1-043H Snow and 5-029L Orphan.
@@ -2129,7 +2183,18 @@ final class ActionResolverChoose {
                                              || zone.toLowerCase(java.util.Locale.ROOT).contains("all break zones"));
         boolean opponentZone = zone != null && !bothZones && zone.toLowerCase(java.util.Locale.ROOT).contains("opponent");
 
-        String  followup     = restorePeriodInName(m.group("followup").trim(), source);
+        // Use restrictions ("You can only use this ability once per turn.") are carried on the
+        // ability, not read here. A trailing run of them is dropped before any branch sees the
+        // followup: the readers that take the whole followup are anchored, and one made 22-075H
+        // Edea's "… instead." miss and fall through to the split, which ran only the base −4000.
+        // Only a trailing run — the strip also takes mid-text boilerplate (the divided-damage
+        // increment note), and cut from the middle it merges the sentences either side of it.
+        String  printed      = restorePeriodInName(m.group("followup").trim(), source);
+        String  sansUse      = stripRestrictionSentences(printed);
+        boolean trailingUse  = !sansUse.isEmpty() && printed.startsWith(sansUse)
+                && printed.substring(sansUse.length()).matches("(?s).*[A-Za-z].*");
+        String  followup     = !trailingUse ? printed
+                             : sansUse.matches("(?s).*[.!]") ? sansUse : sansUse + ".";
         boolean unreduced    = CANNOT_BE_REDUCED_PATTERN.matcher(followup).find();
 
         // If the followup contains ". " (sentence boundary), split into a primary effect
@@ -2148,6 +2213,9 @@ final class ActionResolverChoose {
         // rows and left for the one secondary that asks what the chosen card was. Same single-holder
         // reasoning as removedByEffect above.
         final List<CardData> removedCards = new ArrayList<>();
+        // Set when the split below finds a secondary that nothing reads, which the primary branch
+        // would then run as a logged gap after the base; stateGatedInsteadUpgrade gets first look.
+        final boolean[] secondaryUnread = {false};
         {
             int dotSpaceIdx = sentenceBreakOutsideQuotes(followup);
             // A few followups are one effect spread over two sentences, and splitting them leaves
@@ -2301,6 +2369,7 @@ final class ActionResolverChoose {
                                 Consumer<GameContext> parsed =
                                         secondaryCounterGatedPowerBecomes(secondaryText, source);
                                 if (parsed == null) parsed = parse(secondaryText, source);
+                                secondaryUnread[0] = parsed == null;
                                 secondary = (parsed != null) ? parsed
                                         : ctx -> ctx.logEntry("[ActionResolver] Secondary followup not yet implemented: " + secondaryText);
                             }
@@ -3571,6 +3640,16 @@ final class ActionResolverChoose {
                     if (secondary != null) secondary.accept(ctx);
                 };
             }
+        }
+
+        // --- "<base>. If <game-state condition>, <alt> instead." — the general upgrade ---
+        // Behind every dedicated "instead" reader above, which keep their texts, and ahead of the
+        // plain action branches below, which would claim the base and run the upgrade sentence as
+        // a logged gap. Only for a secondary the split could not read.
+        if (secondaryUnread[0]) {
+            Consumer<GameContext> upgrade = stateGatedInsteadUpgrade(
+                    text.substring(0, m.start("followup")), primaryFollowup, secondaryText, source, xValue);
+            if (upgrade != null) return upgrade;
         }
 
         // --- "Select 1 number and reveal the top card of your deck.
@@ -7170,9 +7249,49 @@ final class ActionResolverChoose {
                             costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard));
         }
 
+        // --- "Place N [Name] Counter(s) on it/them[ and [Self]]." ---
+        // Anchored, so it claims only a followup that is the placement and nothing else. A second
+        // sentence (Orphan 11-025H's "Then, break all Characters with 3 or more Doom Counters…")
+        // has already been split off into the secondary, which runs after the placement.
+        Matcher placeCtrM = CHOSEN_PLACE_COUNTERS.matcher(primaryFollowup);
+        if (placeCtrM.matches()) {
+            int     count   = Integer.parseInt(placeCtrM.group("count"));
+            String  counter = placeCtrM.group("name").trim();
+            String  also    = placeCtrM.group("also");
+            // The source too, when "and <Name>" names it; any other name declines the branch.
+            CardData self   = also != null && source != null && also.trim().equalsIgnoreCase(source.name())
+                    ? source : null;
+            if (also == null || self != null) {
+                return ctx -> {
+                    ctx.logChooseHeader(choosePrefix + " — place " + count + " " + counter + " Counter(s)"
+                            + (self != null ? " on it and " + self.name() : ""));
+                    List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                            opponentOnly, selfOnly, condition, element, zone, opponentZone, bothZones,
+                            costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
+                    for (ForwardTarget t : ts) {
+                        CardData card = ctx.targetCard(t);
+                        if (card != null) ctx.placeCounters(card, counter, count);
+                    }
+                    if (self != null) ctx.placeCounters(self, counter, count);
+                    if (secondary != null) secondary.accept(ctx);
+                };
+            }
+        }
+
+        // --- "Select 1 Counter placed on it, and remove the selected Counter." (Cid 12-079C) ---
+        if (FOLLOWUP_REMOVE_ONE_COUNTER.matcher(primaryFollowup).matches()) {
+            return ctx -> {
+                ctx.logChooseHeader(choosePrefix + " — remove 1 Counter");
+                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                        opponentOnly, selfOnly, condition, element, zone, opponentZone, bothZones,
+                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
+                ts.forEach(ctx::removeOneCounterFromTarget);
+                if (secondary != null) secondary.accept(ctx);
+            };
+        }
+
         // Recognised "Choose" header but followup not yet implemented
-        Consumer<GameContext> warnEffect = ctx -> ctx.logEntry(
-                "[ActionResolver] Choose effect — followup not yet implemented: " + followup);
+        Consumer<GameContext> warnEffect = new UnreadFollowup(followup);
         return secondary == null ? warnEffect : warnEffect.andThen(secondary);
     }
 

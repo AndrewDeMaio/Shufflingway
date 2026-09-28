@@ -8293,6 +8293,16 @@ final class ActionResolverPatterns {
         "(?i)Place\\s+(?<count>\\d+)\\s+(?<name>.+?)\\s+Counters?\\s+on\\s+(?:it|them)[.!]?"
     );
     /**
+     * The Choose chain's reading of {@link #FOLLOWUP_PLACE_COUNTER_ON_IT}, anchored for
+     * {@code matches()}: "Place N [Name] Counter(s) on it/them[ and [Self]]." — Gargas 17-045R,
+     * Kimahri 16-108C, Orphan 11-025H; the {@code also} group is Tidus 27-102R's "on it and Tidus",
+     * which the caller accepts only when it names the source.
+     */
+    static final Pattern CHOSEN_PLACE_COUNTERS = Pattern.compile(
+        "(?i)Place\\s+(?<count>\\d+)\\s+(?<name>[A-Za-z][A-Za-z' -]*?)\\s+Counters?\\s+on\\s+(?:it|them)" +
+        "(?:\\s+and\\s+(?<also>[^.!]+?))?\\s*[.!]?"
+    );
+    /**
      * Matches "Select 1 Counter placed on it, and remove the selected Counter."
      * The counter type is chosen by the player at resolution time (dialog if multiple types).
      */
@@ -8653,6 +8663,27 @@ final class ActionResolverPatterns {
     static final Pattern SECONDARY_CONDITION_GATED_ACTION_ALSO = Pattern.compile(
         "(?i)^If\\s+(?<cond>.+?),\\s+(?<action>.+?)\\s+" +
         "(?:it|them|this\\s+(?:Forward|Character|Backup|Monster))\\s+also[.!]?$"
+    );
+
+    /**
+     * "If &lt;condition&gt;, &lt;alt&gt; instead." as the one sentence after a choose followup's
+     * base — 17-069C Warrior's "If you have received a point of damage this turn, it gains +10000
+     * power until the end of the turn instead." Read by {@code stateGatedInsteadUpgrade}, which
+     * validates both groups by parsing them; no period inside either, so a second sentence after
+     * the upgrade declines rather than being read into it.
+     */
+    static final Pattern SECONDARY_STATE_GATED_INSTEAD = Pattern.compile(
+        "(?i)^If\\s+(?<cond>[^.,]+?),\\s+(?<alt>[^.]+?)\\s+instead[.!]?$"
+    );
+
+    /**
+     * A clause that goes on to a second action: ", …" or "and &lt;verb&gt;". Used to decline a
+     * clause before handing it to a reader that matches with {@code find()} and could take the
+     * first action alone ({@code stateGatedInsteadUpgrade}).
+     */
+    static final Pattern JOINS_SECOND_ACTION = Pattern.compile(
+        "(?i),|\\band\\s+(?:deal|draw|activate|dull|freeze|break|return|put|remove|discard|play|search"
+            + "|select|reveal|gain|lose|it|they|you|your|choose)\\b"
     );
 
     /**
