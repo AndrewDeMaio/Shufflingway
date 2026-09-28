@@ -71255,4 +71255,62 @@ public class CardBehaviorTest {
 		verify(scratched, never()).drawCards(anyInt());
 	}
 
+	// =========================================================================================
+	// Discarding one card from hand
+	//
+	// MainWindow.playerBreakFromHand — costs, the hand limit, and every "discard N" effect — files
+	// the card through addToBreakZone, so "If a card is put into your Break Zone in any situation,
+	// remove it from the game instead" (Ace) applies to it as it does to the whole-hand discard.
+	// And a Summon counts as "your Summons or abilities" for the opponent-discard watchers (the
+	// set-7 Gremlin family), not only an ability.
+	// =========================================================================================
+
+	private static final String BZ_TO_RFG_ANY_SITUATION =
+			"If a card is put into your Break Zone in any situation, remove it from the game instead.";
+
+	@Test
+	void aSingleDiscardHonoursTheAnySituationReplacement() {
+		MainWindow mw = new MainWindow();
+		placeP2Forward(mw, makeForwardWithText("Ace", "Fire", 3, 7000, BZ_TO_RFG_ANY_SITUATION));
+		CardData discarded = makeForward("Discarded", "Ice", 2, 5000);
+
+		p2DiscardsDuring(mw, discarded, null, false);
+
+		assertFalse(mw.gameState.getP2Hand().contains(discarded));
+		assertFalse(mw.gameState.getP2BreakZone().contains(discarded), "it used to land in the Break Zone");
+		assertTrue(mw.gameState.getP2PermanentRfp().stream().anyMatch(c -> c == discarded));
+	}
+
+	@Test
+	void aSingleDiscardWithoutAReplacementStillGoesToTheBreakZone() {
+		MainWindow mw = new MainWindow();
+		CardData discarded = makeForward("Discarded", "Ice", 2, 5000);
+
+		p2DiscardsDuring(mw, discarded, null, false);
+
+		assertTrue(mw.gameState.getP2BreakZone().stream().anyMatch(c -> c == discarded));
+		assertTrue(mw.gameState.getP2PermanentRfp().isEmpty());
+	}
+
+	@Test
+	void anOpposingSummonFiresTheOpponentDiscardsWatcher() {
+		MainWindow mw = new MainWindow();
+		CardData watcher = makeForwardWithText("Gremlin", "Fire", 3, 7000,
+				"When your opponent discards a card from their hand due to your Summons or abilities, draw 1 card.");
+		placeP2Forward(mw, watcher);
+		CardData discarded = makeForward("Discarded", "Ice", 2, 5000);
+		mw.gameState.getIdentity().put(discarded, true);
+		mw.gameState.getP1Hand().add(discarded);
+
+		mw.currentSummonSource = makeSummon("Shiva", "Ice", 2, "");
+		mw.currentSummonSourceIsP1 = false;
+		try {
+			mw.playerBreakFromHand(true, mw.gameState.getP1Hand().indexOf(discarded));
+		} finally {
+			mw.currentSummonSource = null;
+		}
+
+		assertEquals(List.of(watcher), triggerSources(mw));
+	}
+
 }

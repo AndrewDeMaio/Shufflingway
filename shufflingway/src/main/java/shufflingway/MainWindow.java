@@ -13970,12 +13970,19 @@ public class MainWindow {
 		for (int i = 0; i < p2ForwardCards.size(); i++) refreshP2ForwardSlot(i);
 		enforceForwardBreakRuleProcess();
 	}
+	/**
+	 * Discards hand card {@code i} into its owner's Break Zone, through {@link #addToBreakZone} so
+	 * "remove it from the game instead" replacements apply — as they do for the whole-hand discard.
+	 * Grants no CP.
+	 */
 	CardData playerBreakFromHand(boolean isP1, int i)  {
-		CardData d = isP1 ? gameState.breakFromHand(i) : gameState.breakP2FromHand(i);
-		if (d != null) {
-			animateCardDiscard(isP1, d);
-			noteDiscardedFromHand(d, isP1);
-		}
+		List<CardData> hand = playerHand(isP1);
+		if (i < 0 || i >= hand.size()) return null;
+		CardData d = hand.remove(i);
+		gameState.getIdentity().putIfAbsent(d, isP1);
+		addToBreakZone(d, false);
+		animateCardDiscard(isP1, d);
+		noteDiscardedFromHand(d, isP1);
 		return d;
 	}
 

@@ -788,29 +788,6 @@ public class GameState {
         return p1Hand.remove(idx);
     }
 
-    /**
-     * Sends a card from the player's hand to the Break Zone without granting CP.
-     * Used for payment discards (CP is credited separately via addP1Cp with the
-     * correct contributing element) and for mandatory end-phase discards.
-     *
-     * @param idx index into p1Hand
-     * @return the discarded CardData, or {@code null} if idx is invalid
-     */
-    public CardData breakFromHand(int idx) {
-        if (idx < 0 || idx >= p1Hand.size()) return null;
-        CardData card = p1Hand.remove(idx);
-        p1BreakZone.add(card);
-        return card;
-    }
-
-    /** P2 equivalent of {@link #breakFromHand}: moves a P2 hand card to the P2 Break Zone without granting CP. */
-    public CardData breakP2FromHand(int idx) {
-        if (idx < 0 || idx >= p2Hand.size()) return null;
-        CardData card = p2Hand.remove(idx);
-        p2BreakZone.add(card);
-        return card;
-    }
-
     // -------------------------------------------------------------------------
     // Crystal Points
     // -------------------------------------------------------------------------
