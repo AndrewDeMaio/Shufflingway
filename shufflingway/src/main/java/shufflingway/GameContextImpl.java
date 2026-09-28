@@ -976,6 +976,18 @@ final class GameContextImpl implements GameContext {
 				logEntry("Effect: no Forward can be chosen by an EX Burst this turn");
 			}
 
+			@Override public void shieldOwnForwardsCannotBeChosenByExBurst() {
+				mw.turn(isP1).forwardsCannotBeChosenByExBurstThisTurn = true;
+				logEntry("Effect: your Forwards cannot be chosen by EX Bursts this turn");
+			}
+
+			@Override public void shieldCannotBeChosenByExBurst(ForwardTarget t) {
+				CardData card = mw.autoAbilityTriggers.fieldCardData(t);
+				if (card == null) return;
+				mw.cannotBeChosenByExBurstThisTurn.add(card);
+				logEntry("Effect: " + card.name() + " cannot be chosen by EX Bursts this turn");
+			}
+
 			@Override public void shieldCannotBeChosenUntilYourNextTurn(
 					ForwardTarget t, boolean bySummons, boolean byAbilities) {
 				CardData card = mw.autoAbilityTriggers.fieldCardData(t);
@@ -1306,6 +1318,20 @@ final class GameContextImpl implements GameContext {
 						sumTmp.addAll(mw.p2ForwardCards);
 						ablTmp.addAll(mw.p1ForwardCards);
 						ablTmp.addAll(mw.p2ForwardCards);
+					}
+					// 21-048L Princess Sarah's one-Forward form of the same shield, and 21-061H
+					// Ursula's one-side form.
+					if (exBurst) {
+						sumTmp.addAll(mw.cannotBeChosenByExBurstThisTurn);
+						ablTmp.addAll(mw.cannotBeChosenByExBurstThisTurn);
+						if (mw.p1Turn.forwardsCannotBeChosenByExBurstThisTurn) {
+							sumTmp.addAll(mw.p1ForwardCards);
+							ablTmp.addAll(mw.p1ForwardCards);
+						}
+						if (mw.p2Turn.forwardsCannotBeChosenByExBurstThisTurn) {
+							sumTmp.addAll(mw.p2ForwardCards);
+							ablTmp.addAll(mw.p2ForwardCards);
+						}
 					}
 					summonImmuneAnyone   = sumTmp;
 					abilityImmuneAnyone  = ablTmp;

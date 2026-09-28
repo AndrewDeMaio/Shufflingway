@@ -284,7 +284,6 @@ public class FieldAbilityParsingTest {
         // reveal by MainWindow.exBurstSuppressionCostCap, straight off the source's field
         // abilities — self-named, exactly as that caller checks it.
         if (ActionResolver.exBurstSuppressionMaxCost(fa.effectText(), source.name()) != null) return true;
-        if (ActionResolverFieldAbility.tryParseBeginningOfOppMainPhase1FieldAbility(fa.effectText(), source) != null) return true;
         // Vayne 9-022L. Read off the granter at the moment it fires by
         // MainWindow.fireGrantedEndOfTurnForwardAbilities, which walks both fields and hands each
         // grantee its own copy — live well before it was listed here, so this row closes a
@@ -639,8 +638,29 @@ public class FieldAbilityParsingTest {
         if (!grants.isEmpty()) return "FieldPowerGrant " + grants;
         List<IfControlBoost> boosts = CardData.parseIfControlBoosts(fa.effectText(), typeEn);
         if (!boosts.isEmpty()) return "IfControlBoost " + boosts;
+        // The bare self grant, power and traits alike — Kain 28-081L behind its "Damage 3 --" gate.
+        // Ahead of ActionResolver for the reason the two above are: the static grant is what the
+        // engine applies for a field ability, while parse() names the same sentence only as
+        // FieldSelfPowerBoost and records none of its figures.
+        //
+        // Texts carrying a quoted clause are excluded outright. Lion 10-123R ("Lion gains +1000
+        // power and \"If Lion receives damage …\"") is not recognised, and describing it by the
+        // half that does parse would read as coverage the row does not have.
+        java.util.Set<CardData.Trait> selfTraits = fa.effectText().contains("\"")
+                ? java.util.Set.<CardData.Trait>of()
+                : CardData.parseSelfTraitGrant(fa.effectText(), source.name());
+        int selfPow = fa.effectText().contains("\"")
+                ? 0 : CardData.parseSelfPowerGrant(fa.effectText(), source.name());
+        if (!selfTraits.isEmpty() || selfPow > 0)
+            return "SelfGrant[" + (selfPow > 0 ? "+" + selfPow + " power" : "")
+                    + (selfPow > 0 && !selfTraits.isEmpty() ? " " : "")
+                    + (selfTraits.isEmpty() ? "" : selfTraits.toString()) + "]";
         String desc = ActionResolver.fullDescription(fa.effectText(), source);
         if (desc != null) return desc;
+        // A cast-time rule AutoAbilityTriggers reads straight off the field text; parse() never
+        // claims it, so ActionResolver has no description to give.
+        if (AutoAbilityTriggers.FA_DISCARD_JOB_TO_CAST.matcher(fa.effectText()).find())
+            return "DiscardJobToCast";
         ActionResolver.ForwardAbilityGrant fwdGrant =
                 ActionResolverFieldAbility.tryParseForwardAbilityGrant(fa.effectText());
         if (fwdGrant != null)
@@ -1038,22 +1058,6 @@ public class FieldAbilityParsingTest {
         String dullExcept = CardData.parseAllForwardsExceptEnterDull(fa.effectText());
         if (dullExcept != null) return "AllForwardsEnterDull[excl." + dullExcept + "]";
         if (CardData.parseOpponentForwardsEnterDull(fa.effectText())) return "OppForwardsEnterDull";
-        // The bare self grant, power and traits alike — Kain 28-081L behind its "Damage 3 --" gate.
-        // Last of the self-grant branches, so the quoted and conditional spellings above name
-        // themselves first and only the plain sentence lands here.
-        //
-        // Texts carrying a quoted clause are excluded outright. Lion 10-123R ("Lion gains +1000
-        // power and \"If Lion receives damage …\"") is not recognised, and describing it by the
-        // half that does parse would read as coverage the row does not have.
-        java.util.Set<CardData.Trait> selfTraits = fa.effectText().contains("\"")
-                ? java.util.Set.<CardData.Trait>of()
-                : CardData.parseSelfTraitGrant(fa.effectText(), source.name());
-        int selfPow = fa.effectText().contains("\"")
-                ? 0 : CardData.parseSelfPowerGrant(fa.effectText(), source.name());
-        if (!selfTraits.isEmpty() || selfPow > 0)
-            return "SelfGrant[" + (selfPow > 0 ? "+" + selfPow + " power" : "")
-                    + (selfPow > 0 && !selfTraits.isEmpty() ? " " : "")
-                    + (selfTraits.isEmpty() ? "" : selfTraits.toString()) + "]";
         if (CardData.isHasAllJobsAbility(fa.effectText())) return "HasAllJobs";
         if (CardData.isHasJobsOfForwardsAbility(fa.effectText())) return "HasJobsOfForwardsYouControl";
         return null;

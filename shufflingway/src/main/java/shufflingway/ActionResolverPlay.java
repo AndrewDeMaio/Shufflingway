@@ -399,28 +399,6 @@ final class ActionResolverPlay {
             ctx.searchDeckMatchingTriggeringBrokenCardType(category, "hand", 1);
         };
     }
-    /**
-     * Parses "Play [name] onto [the] field [dull]" for break-zone-origin abilities where
-     * the card name matches the source.  Does not require a "from Break Zone" qualifier —
-     * BZ-origin abilities say "Play [itself] onto the field" knowing they start in the BZ.
-     */
-    /**
-     * True when {@code text} is nothing but the imperative {@link #tryParsePlaySourceOntoField}
-     * exists for -- "Play [Self] onto the field [dull]" and no more.
-     *
-     * <p>The naming chains read this rather than calling the parser, because the parser matches
-     * with find() and would answer for text it never claims in parse(). Deliberately narrower
-     * than parse(), so the abilities that reach the parser only through find() keep reporting no
-     * name rather than reporting one this check cannot stand behind.
-     */
-    static boolean isBarePlaySourceOntoField(String text, CardData source) {
-        if (source == null) return false;
-        Matcher m = PLAY_SOURCE_ONTO_FIELD_BARE.matcher(text.trim());
-        if (!m.matches()) return false;
-        String name = m.group("name").trim();
-        String resolved = name.equalsIgnoreCase("it") ? source.name() : name;
-        return resolved.equalsIgnoreCase(source.name());
-    }
 
     /**
      * Parses 16-067L Aerith's countdown: "if 1 or more Reraise Counters are placed on Aerith, remove
@@ -510,6 +488,11 @@ final class ActionResolverPlay {
         };
     }
 
+    /**
+     * Parses "Play [name] onto [the] field [dull]" for break-zone-origin abilities where
+     * the card name matches the source.  Does not require a "from Break Zone" qualifier —
+     * BZ-origin abilities say "Play [itself] onto the field" knowing they start in the BZ.
+     */
     static Consumer<GameContext> tryParsePlaySourceOntoField(String text, CardData source) {
         if (source == null) return null;
         Matcher m = PLAY_SOURCE_ONTO_FIELD_PATTERN.matcher(text);
@@ -520,6 +503,7 @@ final class ActionResolverPlay {
         // Read as the source, 11-136S / 4-094R / 5-033R played themselves back from the Break
         // Zone instead of searching, and 14-106H Golbez / 16-020L Luso instead of revealing.
         if (name.equalsIgnoreCase("it") && SEARCHED_OR_REVEALED_CARD.matcher(text).find()) return null;
+        if (name.equalsIgnoreCase("it") && IT_IS_TESTED_OR_REPLACED.matcher(text).find()) return null;
         String resolvedName = name.equalsIgnoreCase("it") ? source.name() : name;
         if (!resolvedName.equalsIgnoreCase(source.name())) return null;
         boolean dull = m.group("dull") != null;

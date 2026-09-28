@@ -1632,7 +1632,7 @@ public class CardBehaviorTest {
 
     @Test
     void dancerIsNamedForBothArmsOfTheInstead() {
-        assertEquals("ChooseCharacter / SweepInsteadIfControl(5+ Backup: PowerReduce -> AllFieldPowerBoost)",
+        assertEquals("IfControl(5+ Backup: AllFieldPowerBoost | else ChooseCharacter / PowerReduce)",
                 ActionResolver.fullDescription(DANCER_SWEEP_INSTEAD, null));
     }
 
@@ -1666,7 +1666,7 @@ public class CardBehaviorTest {
     void puppetmasterTakesTheSameBranchWithADullBase() {
         // The second member of the cycle, and the reason the branch reads both halves through the
         // existing parsers rather than spelling out a power reduction: nothing here is Dancer-shaped.
-        assertEquals("ChooseCharacter / SweepInsteadIfControl(5+ Backup: Dull -> AllFieldEffect)",
+        assertEquals("IfControl(5+ Backup: AllFieldEffect | else ChooseCharacter / Dull)",
                 ActionResolver.fullDescription(PUPPETMASTER_SWEEP_INSTEAD, null));
 
         Consumer<GameContext> fn = ActionResolver.parse(PUPPETMASTER_SWEEP_INSTEAD, null);
@@ -9373,6 +9373,38 @@ public class CardBehaviorTest {
         assertNull(mw.pendingP2Attacker);
         assertEquals(-1, mw.pendingP2AttackerIdx);
         assertEquals(-1, mw.p1BlockingIdx, "no blocker is mid-battle in a game that just started");
+    }
+
+    @Test
+    void aNewGameStartsBothPlayersFromAFreshTurnState() {
+        // Swept at the end of each turn but, until resetForNewGame replaced the objects, not
+        // between games: a game ended mid-turn carried its bans and multipliers into the next.
+        MainWindow mw = new MainWindow();
+        for (PlayerTurnState t : List.of(mw.p1Turn, mw.p2Turn)) {
+            t.fwdBoostSuppressedThisTurn = true;
+            t.forwardsCannotBeChosenByExBurstThisTurn = true;
+            t.cannotCastSummonsThisTurn = true;
+            t.cannotSearchThisTurn = true;
+            t.forwardIncomingDmgMult = 2;
+            t.attackDeclarationLimit = 1;
+            t.nonLethalProtection = true;
+            t.cardsCastThisTurn = 3;
+        }
+
+        mw.resetForNewGame();
+
+        for (PlayerTurnState t : List.of(mw.p1Turn, mw.p2Turn)) {
+            assertFalse(t.fwdBoostSuppressedThisTurn);
+            assertFalse(t.forwardsCannotBeChosenByExBurstThisTurn);
+            assertFalse(t.cannotCastSummonsThisTurn);
+            assertFalse(t.cannotSearchThisTurn);
+            assertEquals(1, t.forwardIncomingDmgMult);
+            assertEquals(Integer.MAX_VALUE, t.attackDeclarationLimit);
+            assertFalse(t.nonLethalProtection);
+            assertEquals(0, t.cardsCastThisTurn);
+        }
+        assertSame(mw.p1Turn, mw.turn(true), "turn() reads the replacement, not a stale copy");
+        assertSame(mw.p2Turn, mw.turn(false));
     }
 
     // =========================================================================================
@@ -40232,12 +40264,10 @@ public class CardBehaviorTest {
     // Break-Zone self-play — naming the imperative without claiming the sentences it hides in
     //
     // "Play [Self] onto the field." parses (26-122H Ardyn and 30 other abilities reach that
-    // parser), but neither naming chain had an entry for it, so the ability-parsing report showed
-    // Ardyn as "?" with only its second sentence named. The parser matches with find(), and the
-    // corpus is full of longer sentences carrying that phrase — "search for 1 Forward … and play
-    // it onto the field" — which parse() gives to an earlier parser. Naming off the parser itself
-    // therefore renamed nine abilities away from the one that runs them; the naming chains read an
-    // anchored helper instead, which is narrower than parse() on purpose.
+    // parser). The parser matches with find(), and the corpus is full of longer sentences carrying
+    // that phrase — "search for 1 Forward … and play it onto the field" — which parse() gives to an
+    // earlier parser. The name follows the site parse() picked, so those keep the name of the
+    // parser that runs them and Ardyn's own sentence is named for this one.
     // =========================================================================================
 
     private static final String ARDYN_26_122H_EFFECT =
@@ -40256,29 +40286,14 @@ public class CardBehaviorTest {
     }
 
     @Test
-    void theBareImperativeIsNamedOnlyWhenItIsTheWholeClause() {
-        CardData ardyn = makeForward("Ardyn", "Dark", 5, 9000);
-
-        assertTrue(ActionResolverPlay.isBarePlaySourceOntoField("Play Ardyn onto the field.", ardyn));
-        assertTrue(ActionResolverPlay.isBarePlaySourceOntoField("Play it onto the field dull.", ardyn),
-                "\"it\" is the self-referential pronoun the parser already resolves to the source");
-        assertFalse(ActionResolverPlay.isBarePlaySourceOntoField(
-                        "Search for 1 Forward of cost 3 and play it onto the field.", ardyn),
-                "the phrase sits inside a sentence another parser claims");
-        assertFalse(ActionResolverPlay.isBarePlaySourceOntoField(
-                        "The cost required to play Ardyn onto the field is reduced by 1.", ardyn),
-                "a cost modifier is not an instruction to play anything");
-    }
-
-    @Test
     void aMidSentencePlayKeepsTheNameOfTheParserThatActuallyRunsIt() {
-        // 17-009C Samurai. The trailing clause matches the loose play-onto-field pattern, and
-        // naming off that pattern rather than the anchored helper renamed this whole family.
+        // 17-009C Samurai. The rider is read as the added card's branch, not as a standalone
+        // "play it onto the field", which PlaySourceOntoField would take for the source.
         CardData samurai = makeForward("Samurai", "Fire", 2, 5000);
         String text = "Choose 1 Job Standard Unit Forward in your Break Zone. Add it to your hand. "
                 + "If it is a Fire Forward of cost 3 or less, play it onto the field instead.";
 
-        assertEquals("ChooseCharacter / AddToHand + PlayOntoField",
+        assertEquals("ChooseCharacter / AddToHand + IfAddedCard(PlayOntoField)",
                 ActionResolver.fullDescription(text, samurai));
     }
 
@@ -49747,7 +49762,10 @@ public class CardBehaviorTest {
 		AutoAbility etf = CardData.parseAutoAbilities(CUTTER_25_057R).get(0);
 		assertTrue(AutoAbilityTriggers.dispatchedByTriggers(etf, cutter),
 				"the payment run is what the triggers dispatch; parse() alone never charges it");
-		assertEquals("PayCpWhenDoSo",
+		// Named for the site parse() reaches at X = 1. The Choose chain is read ahead of
+		// PayCpWhenDoSo and claims "choose X dull Forwards" on its own, as it does for every
+		// "pay 《N》. When you do so, choose …" trigger.
+		assertEquals("ChooseCharacter",
 				ActionResolver.matchedPatternName(etf.effectText(), cutter));
 	}
 
@@ -70789,5 +70807,452 @@ public class CardBehaviorTest {
 	}
 
 	// =========================================================================================
+
+	// =========================================================================================
+	// Samurai 17-009C and its cycle — "If it is a <Element> Forward of cost 3 or less, play it onto
+	// the field instead."
+	//
+	// The rider tests the card the ability just chose, and runs through the add-to-hand branch
+	// that 24-085C Mid already uses — but only once parseRevealCondition can read the condition.
+	// It could not read an Element with a cost bound, nor 12-096H's "also a Forward", so the
+	// sentence fell through to a standalone parse, where tryParsePlaySourceOntoField took "play it
+	// onto the field" as the source: every use played Samurai itself out of the Break Zone, and the
+	// chosen card went to hand as well. That parser now declines an "it" under test or replaced.
+	// =========================================================================================
+
+	private static final String SAMURAI_17_009C =
+			"Choose 1 Job Standard Unit Forward in your Break Zone. Add it to your hand. "
+			+ "If it is a Fire Forward of cost 3 or less, play it onto the field instead.";
+
+	private static GameContext samuraiRiderMock(ForwardTarget chosen, CardData inBreakZone) {
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.consumePreloadedTargets()).thenReturn(List.of(chosen));
+		when(ctx.p1BreakZoneCard(0)).thenReturn(inBreakZone);
+		return ctx;
+	}
+
+	@Test
+	void samuraiPlaysTheChosenFireForwardOfCostThreeOrLess() {
+		ForwardTarget chosen = fwd(true, 0);
+		GameContext ctx = samuraiRiderMock(chosen, makeForward("Soldier", "Fire", 3, 7000));
+
+		ActionResolver.parse(SAMURAI_17_009C, makeForward("Samurai", "Fire", 2, 5000)).accept(ctx);
+
+		verify(ctx).playTargetOntoField(chosen);
+		verify(ctx, never()).addTargetToHand(any());
+		verify(ctx, never()).returnSourceFromBreakZoneToField(any(), anyBoolean());
+	}
+
+	@Test
+	void samuraiAddsAnythingOutsideTheConditionToHand() {
+		for (CardData card : List.of(
+				makeForward("Soldier", "Fire", 4, 7000),     // cost too high
+				makeForward("Soldier", "Ice", 3, 7000))) {   // wrong Element
+			ForwardTarget chosen = fwd(true, 0);
+			GameContext ctx = samuraiRiderMock(chosen, card);
+
+			ActionResolver.parse(SAMURAI_17_009C, makeForward("Samurai", "Fire", 2, 5000)).accept(ctx);
+
+			verify(ctx).addTargetToHand(chosen);
+			verify(ctx, never()).playTargetOntoField(any());
+			verify(ctx, never()).returnSourceFromBreakZoneToField(any(), anyBoolean());
+		}
+	}
+
+	@Test
+	void theMonsterThatIsAlsoAForwardIsPlayed() {
+		// 12-096H: "choose 1 Monster of cost 2 or less … If it is also a Forward, play it onto the
+		// field instead."
+		String text = "choose 1 Monster of cost 2 or less in your Break Zone. Add it to your hand. "
+				+ "If it is also a Forward, play it onto the field instead.";
+		CardData source = makeForward("Seifer", "Fire", 3, 7000);
+
+		ForwardTarget chosen = fwd(true, 0);
+		GameContext played = samuraiRiderMock(chosen, makeTextCard("Gigas", "Fire", "Forward", 2, 5000, null, ""));
+		ActionResolver.parse(text, source).accept(played);
+		verify(played).playTargetOntoField(chosen);
+
+		GameContext added = samuraiRiderMock(chosen, makeTextCard("Bomb", "Fire", "Monster", 2, 0, null, ""));
+		ActionResolver.parse(text, source).accept(added);
+		verify(added).addTargetToHand(chosen);
+		verify(added, never()).playTargetOntoField(any());
+	}
+
+	@Test
+	void aTestedOrReplacedItIsNeverTheSource() {
+		CardData samurai = makeForward("Samurai", "Fire", 2, 5000);
+		assertNull(ActionResolverPlay.tryParsePlaySourceOntoField(
+				"If it is a Fire Forward of cost 3 or less, play it onto the field instead.", samurai));
+		assertNotNull(ActionResolverPlay.tryParsePlaySourceOntoField("Play it onto the field.", samurai),
+				"a bare self-play still names the source");
+	}
+
+	@Test
+	void theSamuraiRiderIsDescribedAsTheAddedCardsBranch() {
+		assertEquals("ChooseCharacter / AddToHand + IfAddedCard(PlayOntoField)",
+				ActionResolver.fullDescription(SAMURAI_17_009C, makeForward("Samurai", "Fire", 2, 5000)));
+	}
+
+	// =========================================================================================
+	// Summon-in-the-Break-Zone choices that ChooseCharacter used to claim first
+	//
+	// Three dedicated parsers sat ~1,100 lines below tryParseChooseCharacter in dispatch(), which
+	// finds their opening "Choose … Summon in your Break Zone" with find() and ran it with the rest
+	// unread: 3-126H chose four Summons and logged "followup not yet implemented"; 22-066C chose one
+	// and neither made it castable nor reduced its cost. 23-011L happened to resolve correctly
+	// through the choose chain and now resolves through its own parser to the same calls.
+	// =========================================================================================
+
+	@Test
+	void chooseFourSummonsAddsOneAndRemovesTheRest() {
+		GameContext ctx = mock(GameContext.class);
+		ActionResolver.parse("Choose 4 Summons in your Break Zone. Add 1 of them to your hand, "
+				+ "and remove the rest from the game.", null).accept(ctx);
+		verify(ctx).chooseSummonsFromBzPickOneToHandRestRfg(4);
+		assertEquals("ChooseNSummonsBzPickOneHandRestRfg", ActionResolver.matchedPatternName(
+				"Choose 4 Summons in your Break Zone. Add 1 of them to your hand, "
+				+ "and remove the rest from the game.", null));
+	}
+
+	@Test
+	void theChosenEarthSummonBecomesCastableAtThreeLess() {
+		GameContext ctx = mock(GameContext.class);
+		ActionResolver.parse("Choose 1 Earth Summon in your Break Zone. You can cast it at any time "
+				+ "you could normally cast it this turn. The cost required to cast it is reduced by 3.",
+				null).accept(ctx);
+		verify(ctx).chooseSummonInBzMakeCastable("Earth", 3);
+	}
+
+	@Test
+	void theSummonAddedToHandStillDiscountsTheNextSummon() {
+		GameContext ctx = mock(GameContext.class);
+		ActionResolver.parse("choose 1 Summon in your Break Zone. Add it to your hand. During this "
+				+ "turn, the cost required to cast your next Summon is reduced by 2 (it cannot become 0).",
+				null).accept(ctx);
+		verify(ctx).chooseSummonFromOwnBzToHand();
+		verify(ctx).applyNextCastCostReduction(any());
+	}
+
+	// =========================================================================================
+	// Princess Sarah 21-048L — "Choose 1 Forward. Until the end of the turn, it gains "This Forward
+	// cannot be chosen by EX Bursts.""
+	//
+	// ChooseCharacter read the opening choose and logged the grant as "followup not yet
+	// implemented"; tryParseChooseForwardsGainAbilityEot, the parser for quoted grants, declined on
+	// the trailing use restriction — and would only have granted an action ability anyway. Now the
+	// one-Forward form of Wol's EX Burst shield.
+	// =========================================================================================
+
+	private static final String SARAH_21_048L =
+			"Choose 1 Forward. Until the end of the turn, it gains \"This Forward cannot be chosen by "
+			+ "EX Bursts.\" You can only use this ability during your Main Phase and only once per turn.";
+
+	@Test
+	void sarahShieldsTheChosenForwardFromExBursts() {
+		ForwardTarget chosen = fwd(true, 0);
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.consumePreloadedTargets()).thenReturn(List.of(chosen));
+
+		ActionResolver.parse(SARAH_21_048L, makeForward("Princess Sarah", "Light", 3, 0)).accept(ctx);
+
+		verify(ctx).shieldCannotBeChosenByExBurst(chosen);
+		assertEquals("ChooseForwardCannotBeChosenByExBurstsEot",
+				ActionResolver.matchedPatternName(SARAH_21_048L, null));
+	}
+
+	@Test
+	void anExBurstCannotChooseTheShieldedForwardButACastStillCan() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForward("Mine", "Earth", 3, 7000));
+		mw.buildGameContext(true, false).shieldCannotBeChosenByExBurst(fwd(true, 0));
+
+		assertFalse(aChooseFindsAForward(mw, true), "the only Forward is out of an EX Burst's reach");
+		assertTrue(aChooseFindsAForward(mw, false), "an ordinary choose is untouched");
+
+		mw.cannotBeChosenByExBurstThisTurn.clear();
+		assertTrue(aChooseFindsAForward(mw, true), "\"until the end of the turn\" is the set's lifetime");
+	}
+
+	@Test
+	void sarahsShieldCoversOnlyTheForwardShePicked() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForward("Mine", "Earth", 3, 7000));
+		placeP2Forward(mw, makeForward("Theirs", "Fire", 3, 7000));
+		mw.buildGameContext(true, false).shieldCannotBeChosenByExBurst(fwd(true, 0));
+
+		assertTrue(aChooseFindsAForward(mw, true), "the other Forward is still choosable");
+	}
+
+	// =========================================================================================
+	// 1-052R — "Choose 1 Forward and 1 Backup opponent controls. Dull the Forward and return the
+	// Backup to its owner's hand. Your opponent discards 1 card from his/her hand."
+	//
+	// One action per chosen type, which ChooseTwoMixedTypes (one action for both groups) cannot
+	// read. ChooseCharacter took it instead: it chose only a Forward, left the rest "not yet
+	// implemented", and returned a card *named* "the Backup" to hand.
+	// =========================================================================================
+
+	private static final String SUMMON_1_052R =
+			"Choose 1 Forward and 1 Backup opponent controls. Dull the Forward and return the Backup "
+			+ "to its owner's hand. Your opponent discards 1 card from his/her hand.";
+
+	@Test
+	void eachChosenTypeTakesItsOwnAction() {
+		ForwardTarget forward = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+		ForwardTarget backup  = new ForwardTarget(false, 0, ForwardTarget.CardZone.BACKUP);
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.consumePreloadedTargets()).thenReturn(null);
+		when(ctx.selectCharacters(anyInt(), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(),
+				anyInt(), any(), anyInt(), any(), anyBoolean(), anyBoolean(), anyBoolean(),
+				any(), any(), any(), any(), anyBoolean(), any(), anyBoolean()))
+				.thenReturn(List.of(forward), List.of(backup));
+
+		ActionResolver.parse(SUMMON_1_052R, null).accept(ctx);
+
+		verify(ctx).dullTarget(forward);
+		verify(ctx).returnP2BackupToHand(0);
+		verify(ctx, never()).returnP2ForwardToHand(anyInt());
+		verify(ctx).forceOpponentDiscard(1);
+		verify(ctx, never()).returnNamedCardToOwnersHand(any());
+	}
+
+	@Test
+	void theSplitChoiceIsNamedForItsOwnParser() {
+		assertEquals("ChooseTypeAndTypeSplitActions", ActionResolver.matchedPatternName(SUMMON_1_052R, null));
+	}
+
+	@Test
+	void anUnreadableTrailingSentenceLeavesTheSplitChoiceUnclaimed() {
+		// Fail closed: the choice is not claimed at the cost of its last sentence.
+		assertNull(ActionResolverChoose.tryParseChooseTypeAndTypeSplitActions(
+				"Choose 1 Forward and 1 Backup opponent controls. Dull the Forward and return the Backup "
+				+ "to its owner's hand. Your opponent frobnicates.", null));
+	}
+
+	// =========================================================================================
+	// "You may pay 《Fire》《Fire》《Fire》. When you do so, …" as a SelectFollowingActions option
+	//
+	// Each chosen option is resolved with parse(), and a payment run of one Element repeated (or
+	// with generic CP on top) did not parse: tryParseMayPayCostThenEffect declines those runs,
+	// because it is also handed auto abilities whose payment the trigger layer charges. Picking
+	// the option logged "unrecognized" and did nothing — 10-131S Ace, 17-076H, 17-097H, 9-053R,
+	// and 27-035R, whose option also carries a leading control condition that the "When you do
+	// so" veto rejected. tryParseYouMayPayElementRunThenEffect takes only sentences that literally
+	// say "You may", and only the runs the other parser declines.
+	// =========================================================================================
+
+	private static final String ACE_10_131S =
+			"select 1 of the 2 following actions. \"Choose 1 Forward opponent controls. Deal it 5000 damage.\" "
+			+ "\"You may pay 《Fire》《Fire》《Fire》. When you do so, choose 1 Forward opponent controls. "
+			+ "Deal it 9000 damage.\"";
+
+	@Test
+	void acesPaidOptionOffersThreeFireWhenPicked() {
+		String paid = "You may pay 《Fire》《Fire》《Fire》. When you do so, choose 1 Forward opponent controls. "
+				+ "Deal it 9000 damage.";
+		CardData ace = makeTextCard("Ace", "Fire", "Backup", 2, 0, null, "");
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.isP1()).thenReturn(true);
+		when(ctx.chooseActions(any(), any(), anyInt(), anyBoolean())).thenReturn(List.of(paid));
+
+		ActionResolver.parse(ACE_10_131S, ace).accept(ctx);
+
+		verify(ctx).mayPayElementCpToEffect(eq("Fire"), eq(3), any());
+		verify(ctx, never()).logEntry(startsWith("Select actions — unrecognized"));
+	}
+
+	@Test
+	void anElementRunWithGenericCpOnTopChargesBoth() {
+		GameContext ctx = mock(GameContext.class);
+		ActionResolver.parse("You may pay 《Earth》《Earth》《2》. When you do so, break all Forwards.", null)
+				.accept(ctx);
+		verify(ctx).mayPayElementAndGenericCpToEffect(eq("Earth"), eq(2), eq(2), any());
+	}
+
+	@Test
+	void aSingleElementCostStaysWithTheExistingParser() {
+		assertEquals("MayPayCostThenEffect", ActionResolver.matchedPatternName(
+				"You may pay 《Lightning》. When you do so, choose 1 Forward of cost 2 or less. Break it.", null));
+	}
+
+	@Test
+	void aLiftedAutoAbilityPaymentIsNotClaimed() {
+		// The trigger layer charges these itself; without the literal "You may" this parser stays out.
+		assertNull(ActionResolverCost.tryParseYouMayPayElementRunThenEffect(
+				"pay 《Fire》《Fire》. When you do so, choose 1 Forward. Deal it 7000 damage.", null, 0));
+	}
+
+	@Test
+	void lagunasOptionIsGatedOnTheControlConditionAsAWhole() {
+		String option = "If you control a Card Name Laguna, you may pay 《Ice》《1》. When you do so, "
+				+ "search for 1 Card Name Squall and play it onto the field.";
+		CardData source = makeTextCard("Kiros", "Ice", "Forward", 3, 7000, null, "");
+
+		GameContext without = mock(GameContext.class);
+		when(without.controlConditionMet(any())).thenReturn(false);
+		ActionResolver.parse(option, source).accept(without);
+		verify(without, never()).mayPayElementAndGenericCpToEffect(any(), anyInt(), anyInt(), any());
+
+		GameContext with = mock(GameContext.class);
+		when(with.controlConditionMet(any())).thenReturn(true);
+		ActionResolver.parse(option, source).accept(with);
+		verify(with).mayPayElementAndGenericCpToEffect(eq("Ice"), eq(1), eq(1), any());
+	}
+
+	// =========================================================================================
+	// "select up to N Backups [you control]. Activate them." — 11-102C's Nyx rider and 3-061R's
+	// control-gated second half. Neither sentence parsed, so both logged "not yet implemented" at
+	// resolution while their descriptions read "IfAddedCard(Activate)" and "… + Activate".
+	// =========================================================================================
+
+	private static List<ForwardTarget> anyBackupSelection(GameContext ctx) {
+		return ctx.selectCharacters(anyInt(), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(),
+				anyInt(), any(), anyInt(), any(), anyBoolean(), eq(true), anyBoolean(),
+				any(), any(), any(), any(), anyBoolean(), any(), anyBoolean());
+	}
+
+	@Test
+	void nyxAddedToHandActivatesUpToTwoBackups() {
+		String text = "choose 1 Category XV Character in your Break Zone. Add it to your hand. "
+				+ "If it is Card Name Nyx, select up to 2 Backups. Activate them.";
+		ForwardTarget chosen = fwd(true, 0);
+		ForwardTarget backup = new ForwardTarget(true, 0, ForwardTarget.CardZone.BACKUP);
+		GameContext ctx = mock(GameContext.class);
+		// Preloaded for the choice only; the rider's selection goes to the picker.
+		when(ctx.consumePreloadedTargets()).thenReturn(List.of(chosen), (List<ForwardTarget>) null);
+		when(ctx.p1BreakZoneCard(0)).thenReturn(makeTextCard("Nyx", "Lightning", "Forward", 4, 8000, null, ""));
+		when(anyBackupSelection(ctx)).thenReturn(List.of(backup));
+
+		ActionResolver.parse(text, makeTextCard("Regis", "Light", "Forward", 5, 9000, null, "")).accept(ctx);
+
+		verify(ctx).addTargetToHand(chosen);
+		verify(ctx).activateTarget(backup);
+	}
+
+	@Test
+	void anyOtherCardAddedToHandActivatesNothing() {
+		String text = "choose 1 Category XV Character in your Break Zone. Add it to your hand. "
+				+ "If it is Card Name Nyx, select up to 2 Backups. Activate them.";
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.consumePreloadedTargets()).thenReturn(List.of(fwd(true, 0)));
+		when(ctx.p1BreakZoneCard(0)).thenReturn(makeTextCard("Noctis", "Lightning", "Forward", 4, 8000, null, ""));
+
+		ActionResolver.parse(text, makeTextCard("Regis", "Light", "Forward", 5, 9000, null, "")).accept(ctx);
+
+		verify(ctx, never()).activateTarget(any());
+	}
+
+	@Test
+	void theCadetsControlGateActivatesThreeOfYourOwnBackups() {
+		// 3-061R's second half, as the choose chain hands it over.
+		ForwardTarget backup = new ForwardTarget(true, 1, ForwardTarget.CardZone.BACKUP);
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.consumePreloadedTargets()).thenReturn(null);
+		when(ctx.controlConditionMet(any())).thenReturn(true);
+		when(anyBackupSelection(ctx)).thenReturn(List.of(backup));
+
+		ActionResolver.parse("If you control a Job Class Zero Cadet Forward, select up to 3 Backups you "
+				+ "control. Activate them.", null).accept(ctx);
+
+		verify(ctx).selectCharacters(eq(3), eq(true), eq(false), eq(true), any(), any(),
+				anyInt(), any(), anyInt(), any(), eq(false), eq(true), eq(false),
+				any(), any(), any(), any(), anyBoolean(), any(), anyBoolean());
+		verify(ctx).activateTarget(backup);
+	}
+
+	// =========================================================================================
+	// Ursula 21-061H — "《C》: During this turn, the Forwards you control cannot be chosen by EX
+	// Bursts."
+	//
+	// Resolved as shieldAllOwnForwardsCannotBeChosen(true, false), the Summon shield: it kept the
+	// opponent's ordinarily cast Summons off Ursula's side as well, and let every Character's EX
+	// Burst through. Now the one-side form of Wol's EX Burst ban.
+	// =========================================================================================
+
+	private static final String URSULA_21_061H =
+			"During this turn, the Forwards you control cannot be chosen by EX Bursts.";
+
+	private static void resolveUrsulaAsP1(MainWindow mw) {
+		ActionResolver.parse(URSULA_21_061H, makeForward("Ursula", "Earth", 4, 8000))
+				.accept(mw.buildGameContext(true, false));
+	}
+
+	@Test
+	void ursulasForwardsAreOutOfAnExBurstsReach() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForward("Mine", "Earth", 3, 7000));
+		assertTrue(aChooseFindsAForward(mw, true), "an EX Burst finds it to begin with");
+
+		resolveUrsulaAsP1(mw);
+
+		assertFalse(aChooseFindsAForward(mw, true));
+	}
+
+	@Test
+	void ursulaDoesNotStopAnOrdinaryCast() {
+		// The old reading's over-reach: it was the Summon shield.
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForward("Mine", "Earth", 3, 7000));
+		resolveUrsulaAsP1(mw);
+
+		assertTrue(aChooseFindsAForward(mw, false));
+	}
+
+	@Test
+	void ursulaCoversOnlyHerOwnSideAndLaterArrivals() {
+		MainWindow mw = new MainWindow();
+		resolveUrsulaAsP1(mw);
+		placeP1Forward(mw, makeForward("Latecomer", "Earth", 3, 7000));
+		assertFalse(aChooseFindsAForward(mw, true), "a Forward arriving afterwards is hers too");
+
+		placeP2Forward(mw, makeForward("Theirs", "Fire", 3, 7000));
+		assertTrue(aChooseFindsAForward(mw, true), "the opponent's Forwards are not covered");
+		assertTrue(mw.p1Turn.forwardsCannotBeChosenByExBurstThisTurn);
+		assertFalse(mw.p2Turn.forwardsCannotBeChosenByExBurstThisTurn);
+	}
+
+	// =========================================================================================
+	// Recurring phase triggers read by CardData, not by the field-ability parsers
+	//
+	// "At the end of each player's turn, …", "At the beginning of your opponent's Main Phase 1, …"
+	// and their siblings are lifted by CardData.parseAutoAbilities into phase-triggered auto
+	// abilities, whose inner effect then goes through parse() like any other. Seven parsers that read
+	// the whole sentence, trigger included, for a fireField… dispatcher that no longer exists were
+	// deleted as dead; Auron 20-002H is pinned here because its gated draw had no test on the path
+	// that replaced them.
+	// =========================================================================================
+
+	private static final String AURON_20_002H_END_OF_TURN =
+			"At the end of each player's turn, if Auron has received 4000 damage or more, draw 1 card.";
+
+	private static GameContext auronOnTheFieldWithDamage(CardData auron, int damage) {
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.isP1()).thenReturn(true);
+		when(ctx.p1ForwardCount()).thenReturn(1);
+		when(ctx.p1Forward(0)).thenReturn(auron);
+		when(ctx.p1ForwardCurrentDamage(0)).thenReturn(damage);
+		return ctx;
+	}
+
+	@Test
+	void auronsEndOfTurnDrawIsLiftedIntoAnEachPlayersTurnTrigger() {
+		List<AutoAbility> autos = CardData.parseAutoAbilities(AURON_20_002H_END_OF_TURN);
+		assertEquals(1, autos.size());
+		assertEquals("end of each player's turn", autos.get(0).trigger());
+	}
+
+	@Test
+	void auronDrawsOnlyWithFourThousandDamageOrMore() {
+		CardData auron = makeForward("Auron", "Fire", 5, 9000);
+		String effect = CardData.parseAutoAbilities(AURON_20_002H_END_OF_TURN).get(0).effectText();
+
+		GameContext hurt = auronOnTheFieldWithDamage(auron, 4000);
+		ActionResolver.parse(effect, auron).accept(hurt);
+		verify(hurt).drawCards(1);
+
+		GameContext scratched = auronOnTheFieldWithDamage(auron, 3000);
+		ActionResolver.parse(effect, auron).accept(scratched);
+		verify(scratched, never()).drawCards(anyInt());
+	}
 
 }

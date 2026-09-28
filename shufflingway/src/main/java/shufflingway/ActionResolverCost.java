@@ -112,6 +112,38 @@ final class ActionResolverCost {
         return ctx -> ctx.mayPayCostToEffect(cp, element, crystals, effect);
     }
     /**
+     * "You may pay 《Fire》《Fire》《Fire》. When you do so, [effect]." — an Element repeated, with or
+     * without generic CP on top. {@link #tryParseMayPayCostThenEffect} declines these runs because
+     * it is also handed auto abilities whose payment the trigger layer charges; this sibling takes
+     * only the sentences that literally say "You may", and only the runs the other one declines, so
+     * it claims nothing that parser reads. Written for the SelectFollowingActions options that went
+     * "unrecognized" when picked: 10-131S, 17-076H, 17-097H, 9-053R.
+     */
+    static Consumer<GameContext> tryParseYouMayPayElementRunThenEffect(String text, CardData source, int xValue) {
+        Matcher m = YOU_MAY_PAY_CP_RUN_THEN_EFFECT.matcher(text.trim());
+        if (!m.matches()) return null;
+        String element = null;
+        int count = 0, generic = 0;
+        Matcher t = COST_TOKEN.matcher(m.group("costs"));
+        while (t.find()) {
+            String tok = t.group(1).trim();
+            if (tok.matches("\\d+")) generic += Integer.parseInt(tok);
+            else if (tok.equalsIgnoreCase("C") || tok.equalsIgnoreCase("X")) return null;
+            else if (element == null) { element = tok; count = 1; }
+            else if (element.equalsIgnoreCase(tok)) count++;
+            else return null;                               // two Elements: not a run of one
+        }
+        if (element == null || (count < 2 && generic == 0)) return null;   // the other parser's
+        Consumer<GameContext> effect = parse(m.group("effect").trim(), source, xValue);
+        if (effect == null) return null;
+        final String elem = element;
+        final int n = count, g = generic;
+        return g == 0
+                ? ctx -> ctx.mayPayElementCpToEffect(elem, n, effect)
+                : ctx -> ctx.mayPayElementAndGenericCpToEffect(elem, n, g, effect);
+    }
+
+    /**
      * Parses "[you may pay 《X》.] if you don't pay 《X》, [consequence]". The consequence must itself
      * be a supported effect — otherwise the whole ability stays unparsed rather than silently
      * resolving as an unconditional consequence, which is what the bare consequence patterns would
@@ -341,13 +373,6 @@ final class ActionResolverCost {
             if (opp <= 0) return;
             ctx.logEntry("Effect: Opponent has " + opp + " 《C》 — gain 1 Crystal");
             ctx.gainCrystal(1);
-        };
-    }
-    static Consumer<GameContext> tryParseGainCrystalPerX(String text, int xValue) {
-        if (!GAIN_CRYSTAL_PER_X.matcher(text).find()) return null;
-        return ctx -> {
-            ctx.logEntry("Effect: Gain " + xValue + " Crystal(s) (for each CP paid as X)");
-            ctx.gainCrystal(xValue);
         };
     }
     /**

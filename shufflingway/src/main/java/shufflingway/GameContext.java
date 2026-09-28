@@ -1784,6 +1784,21 @@ public interface GameContext {
     void shieldAllForwardsCannotBeChosenByExBurst();
 
     /**
+     * The one-Forward form of {@link #shieldAllForwardsCannotBeChosenByExBurst}, until the end of
+     * the turn — 21-048L Princess Sarah's "it gains 'This Forward cannot be chosen by EX Bursts.'"
+     * Symmetric for the same reason: the quoted ability names no player, so no EX Burst of either
+     * player's may choose it.
+     */
+    void shieldCannotBeChosenByExBurst(ForwardTarget t);
+
+    /**
+     * The one-side form of {@link #shieldAllForwardsCannotBeChosenByExBurst} — 21-061H Ursula's
+     * "During this turn, the Forwards you control cannot be chosen by EX Bursts." The acting
+     * player's Forwards, including ones that arrive later in the turn, against every EX Burst.
+     */
+    void shieldOwnForwardsCannotBeChosenByExBurst();
+
+    /**
      * Finds the named card on the active player's field and applies "cannot be chosen" protection.
      */
     void shieldNamedCardCannotBeChosen(String name, boolean bySummons, boolean byAbilities);

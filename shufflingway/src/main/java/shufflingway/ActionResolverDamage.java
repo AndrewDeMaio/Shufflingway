@@ -818,34 +818,6 @@ final class ActionResolverDamage {
         };
     }
     /**
-     * Parses "At the end of each player's turn, if [CardName] has received N damage or more, draw M card(s)."
-     * Fires at the end of every player's turn (both P1's and P2's end phase).
-     * The source card must be on the field; the check is against accumulated combat damage on that forward.
-     */
-    static Consumer<GameContext> tryParseEndOfEachPlayersTurnIfSelfFwdDamage(String text, CardData source) {
-        if (source == null) return null;
-        Matcher m = AT_END_OF_EACH_PLAYERS_TURN_IF_SELF_FWD_DAMAGE_DRAW.matcher(text.trim());
-        if (!m.matches()) return null;
-        String targetName = m.group("cardname").trim();
-        if (!targetName.equalsIgnoreCase(source.name())) return null;
-        int minDamage = Integer.parseInt(m.group("damage"));
-        int drawCount = Integer.parseInt(m.group("draw"));
-        return ctx -> {
-            int fwdCount = ctx.isP1() ? ctx.p1ForwardCount() : ctx.p2ForwardCount();
-            for (int i = 0; i < fwdCount; i++) {
-                CardData fwd = ctx.isP1() ? ctx.p1Forward(i) : ctx.p2Forward(i);
-                if (fwd.name().equalsIgnoreCase(targetName)) {
-                    int dmg = ctx.isP1() ? ctx.p1ForwardCurrentDamage(i) : ctx.p2ForwardCurrentDamage(i);
-                    if (dmg >= minDamage) {
-                        ctx.logEntry("Field: " + source.name() + " — draw " + drawCount + " (" + dmg + " damage)");
-                        ctx.drawCards(drawCount);
-                    }
-                    return;
-                }
-            }
-        };
-    }
-    /**
      * Parses "if [CardName] has received N damage or more, draw M card(s)." —
      * the inner effect of "At the end of each player's turn, …" auto abilities.
      */

@@ -20,8 +20,10 @@ import java.util.function.Predicate;
  * several dozen individually-named fields.
  *
  * <p>Field lifetimes are unchanged by the move: some values are cleared at a turn boundary,
- * others ("next damage" shields) are consumed on use.  Nothing here resets itself; the reset
- * points remain exactly where they were in {@code MainWindow}.
+ * others ("next damage" shields) are consumed on use.  Nothing here resets itself; the turn
+ * boundary resets remain in {@code MainWindow.onNextPhase}.  A new game replaces both objects
+ * outright ({@code MainWindow.resetForNewGame}), so every field's initialiser is its start-of-game
+ * value — give a new field the value a fresh game should see.
  *
  * <p>Access it through {@link MainWindow#turn(boolean)} rather than reaching for
  * {@code p1Turn}/{@code p2Turn} directly, so side-relative code reads as
@@ -31,6 +33,13 @@ class PlayerTurnState {
 
 	/** This player's Forwards cannot have their power increased this turn. */
 	boolean fwdBoostSuppressedThisTurn = false;
+
+	/**
+	 * This player's Forwards cannot be chosen by EX Bursts this turn — 21-061H Ursula. One side's
+	 * form of {@code MainWindow.forwardsCannotBeChosenByExBurstThisTurn}: it covers Forwards that
+	 * arrive later in the turn, and every EX Burst, whoever's it is.
+	 */
+	boolean forwardsCannotBeChosenByExBurstThisTurn = false;
 
 	/**
 	 * Turn-scoped filter variants of {@code MainWindow.nullifyAbilityDmgSet}: a Forward on this

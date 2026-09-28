@@ -387,6 +387,18 @@ final class ActionResolverPatterns {
      * — two cards of different types from the same pool.
      * Optional control qualifier ("opponent controls" / "you control"); if absent, any side is valid.
      */
+    /**
+     * "Choose 1 Forward and 1 Backup opponent controls. Dull the Forward and return the Backup to
+     * its owner's hand. [rest]" — 1-052R, one action per chosen type. {@code a1}/{@code a2} are the
+     * verbs with their objects cut out, so "a1 it" and "a2 it a2tail" are target actions.
+     */
+    static final Pattern CHOOSE_TYPE_AND_TYPE_SPLIT_ACTIONS = Pattern.compile(
+        "(?i)^Choose\\s+1\\s+(?<t1>Forward|Backup|Monster)\\s+and\\s+1\\s+(?<t2>Forward|Backup|Monster)" +
+        "(?:\\s+(?<control>opponent\\s+controls|you\\s+control))?[.]\\s+" +
+        "(?<a1>[^.]+?)\\s+the\\s+\\k<t1>\\s+and\\s+(?<a2>\\w+)\\s+the\\s+\\k<t2>(?<a2tail>[^.]*)[.]" +
+        "(?:\\s+(?<rest>.+))?$",
+        Pattern.DOTALL
+    );
     static final Pattern CHOOSE_TWO_MIXED_TYPES_PATTERN = Pattern.compile(
         "(?i)Choose\\s+(?<count1>\\d+)\\s+(?<type1>Forwards?|Backups?|Characters?|Monsters?)\\s+" +
         "and\\s+(?<count2>\\d+)\\s+(?<type2>Forwards?|Backups?|Characters?|Monsters?)" +
@@ -3702,19 +3714,6 @@ final class ActionResolverPatterns {
         "(?i)^Play\\s+(?<name>.+?)\\s+from\\s+your\\s+Break\\s+Zone\\s+onto\\s+" +
         "your\\s+opponent's\\s+field[.!]?$"
     );
-    /**
-     * The anchored form of {@link #PLAY_SOURCE_ONTO_FIELD_PATTERN}: the clause is the whole
-     * text, with nothing in front of it.
-     *
-     * <p>Read only by the naming chains. The loose pattern below is matched with find() and
-     * so reports a hit inside every "search for 1 Forward ... and play it onto the field" in
-     * the corpus, none of which reach its parser in parse() -- an earlier parser claims them.
-     * Naming off it renamed 9 abilities away from the parser that really runs them; this form
-     * fills the gap without moving any of them.
-     */
-    static final Pattern PLAY_SOURCE_ONTO_FIELD_BARE = Pattern.compile(
-        "(?i)^Play\\s+(?<name>\\S+(?:\\s+\\S+){0,2})\\s+onto\\s+(?:the\\s+)?field(?:\\s+(?<dull>dull))?[.!]?$"
-    );
     static final Pattern PLAY_SOURCE_ONTO_FIELD_PATTERN = Pattern.compile(
         "(?i)\\bPlay\\s+(?<name>\\S+(?:\\s+\\S+){0,2})\\s+onto\\s+(?:the\\s+)?field(?:\\s+(?<dull>dull))?" +
         "(?!\\s+at\\s+(?:the\\s+)?end\\s+of)[.!]?"
@@ -3762,6 +3761,15 @@ final class ActionResolverPatterns {
      */
     static final Pattern SEARCHED_OR_REVEALED_CARD = Pattern.compile(
         "(?i)\\b(?:search\\s+for|reveal)\\b"
+    );
+    /**
+     * A "play it onto the field" whose "it" is a card under test ("If it is a Fire Forward …") or
+     * whose play replaces something else ("… instead"). Either way "it" is a card an earlier
+     * sentence chose, never the ability's source — 17-009C Samurai played itself from the Break
+     * Zone when its rider on the chosen card went unread.
+     */
+    static final Pattern IT_IS_TESTED_OR_REPLACED = Pattern.compile(
+        "(?i)\\bif\\s+it\\s+is\\b|\\binstead\\b"
     );
     /**
      * Matches "If its power has become N or less/more, return [name] to your/its owner's hand."
@@ -4504,17 +4512,6 @@ final class ActionResolverPatterns {
         "(?i)At\\s+the\\s+end\\s+of\\s+each\\s+player'?s\\s+turn,\\s+" +
         "(?<inner>.+?)\\s*" + GLOBAL_TRIGGER_INNER_BOUNDARY,
         Pattern.DOTALL
-    );
-    /**
-     * "At the end of each player's turn, if [CardName] has received N damage or more, draw M card(s)."
-     * Fires at the end of every player's turn (both P1 and P2).
-     * Groups: {@code cardname} — the card name (must equal source); {@code damage} — minimum accumulated
-     * combat damage; {@code draw} — number of cards to draw.
-     */
-    static final Pattern AT_END_OF_EACH_PLAYERS_TURN_IF_SELF_FWD_DAMAGE_DRAW = Pattern.compile(
-        "(?i)^At\\s+the\\s+end\\s+of\\s+each\\s+player'?s\\s+turn,\\s+" +
-        "if\\s+(?<cardname>.+?)\\s+has\\s+received\\s+(?<damage>\\d+)\\s+damage\\s+or\\s+more,\\s+" +
-        "draw\\s+(?<draw>\\d+)\\s+cards?[.!]?\\s*$"
     );
     /**
      * "If there are N or more cards removed from the game, &lt;effect&gt;"
@@ -9820,18 +9817,6 @@ final class ActionResolverPatterns {
         "(?<actions>\"[^\"]+\"(?:\\s*\"[^\"]+\")*)\\s*$"
     );
     /**
-     * Detects "select [up to] N of the M following actions" — handled by MainWindow's
-     * {@code executeSelectFollowingActionsAutoAbility}, not by ActionResolver's parse chain.
-     * Used only for pattern-name reporting.
-     */
-    static final Pattern SELECT_FOLLOWING_ACTIONS_DETECT = Pattern.compile(
-        "(?i)^(?:" +
-        "(?:if\\s+[^,]+,\\s+)?(?:your\\s+opponent\\s+)?selects?\\s+(?:up\\s+to\\s+)?\\d+\\s+" +
-        "(?:of\\s+the\\s+\\d+\\s+following\\s+actions?|from\\s+the\\s+following)" +
-        "|select\\s+the\\s+following\\s+actions?\\s+from\\s+top\\s+to\\s+bottom\\b" +
-        ")"
-    );
-    /**
      * Captures the components of "[if cond,] select [up to] N of the M following actions. "a" "b" ..."
      * so the action-ability parse chain can resolve it as a modal choice.
      *
@@ -12185,6 +12170,16 @@ final class ActionResolverPatterns {
         "(?is)^(?:you\\s+may\\s+)?pay\\s+(?<costs>(?:《[^》]+》)+)\\s*[.!]?\\s+" +
         "(?:If|When)\\s+you\\s+do\\s+so[,.]?\\s+(?<effect>.+)$"
     );
+    /**
+     * {@link #MAY_PAY_COST_THEN_EFFECT} with the "You may" required rather than optional. An auto
+     * ability's "you may" is lifted into {@link AutoAbility#youMay()} before its effect reaches the
+     * resolver, and its payment is charged by the trigger layer, so requiring the words keeps this
+     * to sentences parse() itself has to resolve — a SelectFollowingActions option (10-131S Ace).
+     */
+    static final Pattern YOU_MAY_PAY_CP_RUN_THEN_EFFECT = Pattern.compile(
+        "(?is)^you\\s+may\\s+pay\\s+(?<costs>(?:《[^》]+》)+)\\s*[.!]?\\s+" +
+        "(?:If|When)\\s+you\\s+do\\s+so[,.]?\\s+(?<effect>.+)$"
+    );
     /** One 《…》 token of a cost run. */
     static final Pattern COST_TOKEN = Pattern.compile("《([^》]+)》");
     /** Matches "If a Forward you controlled formed a party this turn, &lt;effect&gt;." */
@@ -12894,6 +12889,23 @@ final class ActionResolverPatterns {
      * (Machinist) — grants the quoted action ability to each chosen Forward until end of turn.
      * Group {@code upto} present when "up to"; {@code count}; {@code ability} — the quoted grant text.
      */
+    /**
+     * "Choose 1 Forward. Until the end of the turn, it gains "This Forward cannot be chosen by EX
+     * Bursts."" — 21-048L Princess Sarah. The quoted clause is a protection rather than an action
+     * ability, so {@link #CHOOSE_FORWARDS_GAIN_ABILITY_EOT}'s grant cannot carry it.
+     */
+    /**
+     * "select up to N Backups [you control]. Activate them." — 11-102C's Nyx rider and 3-061R's
+     * control-gated second half, both logged "not yet implemented" while described as read.
+     */
+    static final Pattern SELECT_UP_TO_N_BACKUPS_ACTIVATE = Pattern.compile(
+        "(?i)^select\\s+(?<upto>up\\s+to\\s+)?(?<count>\\d+)\\s+Backups?(?<own>\\s+you\\s+control)?[.]\\s+" +
+        "Activate\\s+(?:them|it)[.!]?$"
+    );
+    static final Pattern CHOOSE_FORWARD_GAINS_CANNOT_BE_CHOSEN_BY_EX_BURSTS_EOT = Pattern.compile(
+        "(?i)^Choose\\s+1\\s+Forward[.!]?\\s+Until\\s+the\\s+end\\s+of\\s+the\\s+turn,?\\s+it\\s+gains\\s+" +
+        "\"This\\s+Forward\\s+cannot\\s+be\\s+chosen\\s+by\\s+EX\\s+Bursts?[.!]?\"[.!]?$"
+    );
     static final Pattern CHOOSE_FORWARDS_GAIN_ABILITY_EOT = Pattern.compile(
         "(?i)^choose\\s+(?<upto>up\\s+to\\s+)?(?<count>\\d+)\\s+Forwards?[.!]?\\s+" +
         "Until\\s+the\\s+end\\s+of\\s+the\\s+turn,?\\s+(?:they|it)\\s+gains?\\s+" +

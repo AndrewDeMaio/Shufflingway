@@ -1217,6 +1217,44 @@ final class ActionResolverChoose {
             ctx.redirectNextIncomingDamage(targets.get(0), redirectTargets.get(0));
         };
     }
+    /**
+     * 1-052R: two single-type choices, each with its own action — see
+     * {@link ActionResolverPatterns#CHOOSE_TYPE_AND_TYPE_SPLIT_ACTIONS}. Every piece has to read,
+     * trailing sentence included, or the ability is left unclaimed: ChooseCharacter took it before,
+     * chose only the Forward, and returned a card named "the Backup".
+     */
+    static Consumer<GameContext> tryParseChooseTypeAndTypeSplitActions(String text, CardData source) {
+        Matcher m = CHOOSE_TYPE_AND_TYPE_SPLIT_ACTIONS.matcher(text.trim());
+        if (!m.matches()) return null;
+        BiConsumer<GameContext, List<ForwardTarget>> act1 =
+                parseTargetAction(m.group("a1").trim() + " it.", 0);
+        BiConsumer<GameContext, List<ForwardTarget>> act2 =
+                parseTargetAction(m.group("a2").trim() + " it" + m.group("a2tail") + ".", 0);
+        if (act1 == null || act2 == null) return null;
+        String restText = m.group("rest");
+        Consumer<GameContext> rest = restText != null ? parse(restText.trim(), source) : null;
+        if (restText != null && rest == null) return null;
+
+        String control = m.group("control");
+        boolean opponentOnly = control != null && !control.toLowerCase().contains("you control");
+        boolean selfOnly     = control != null &&  control.toLowerCase().contains("you control");
+        String t1 = m.group("t1").toLowerCase(), t2 = m.group("t2").toLowerCase();
+        String label = "Choose 1 " + m.group("t1") + " and 1 " + m.group("t2");
+        return ctx -> {
+            ctx.logChooseHeader(label);
+            List<ForwardTarget> ts1 = selectTargets(ctx, 1, false, opponentOnly, selfOnly,
+                    null, null, null, false, false, -1, null, -1, null,
+                    t1.equals("forward"), t1.equals("backup"), t1.equals("monster"),
+                    null, null, null, null, false, null, false);
+            List<ForwardTarget> ts2 = selectTargets(ctx, 1, false, opponentOnly, selfOnly,
+                    null, null, null, false, false, -1, null, -1, null,
+                    t2.equals("forward"), t2.equals("backup"), t2.equals("monster"),
+                    null, null, null, null, false, null, false);
+            act1.accept(ctx, ts1);
+            act2.accept(ctx, ts2);
+            if (rest != null) rest.accept(ctx);
+        };
+    }
     static Consumer<GameContext> tryParseChooseTwoMixedTypes(String text, CardData source) {
         Matcher m = CHOOSE_TWO_MIXED_TYPES_PATTERN.matcher(text);
         if (!m.find()) return null;
@@ -7828,6 +7866,37 @@ final class ActionResolverChoose {
             List<ForwardTarget> ts = selectTargets(ctx, count, upTo, false, false, null, null, null, false, false,
                     -1, null, -1, null, true, false, false, null, null, null, null, false, null, false);
             for (ForwardTarget t : ts) ctx.grantEotActionAbility(t, ability);
+        };
+    }
+    /**
+     * Parses "select up to N Backups [you control]. Activate them."; see the pattern. Selected the
+     * way {@code tryParseSelectCharCostLeExclToBz} selects, through the ordinary picker with the
+     * side the text prints: "you control" is the controller's own, and a bare "Backups" is either.
+     */
+    static Consumer<GameContext> tryParseSelectUpToNBackupsActivate(String text) {
+        Matcher m = SELECT_UP_TO_N_BACKUPS_ACTIVATE.matcher(text.trim());
+        if (!m.matches()) return null;
+        boolean upTo  = m.group("upto") != null;
+        int     count = Integer.parseInt(m.group("count"));
+        boolean own   = m.group("own") != null;
+        return ctx -> {
+            ctx.logEntry("Effect: select " + (upTo ? "up to " : "") + count + " Backup(s)"
+                    + (own ? " you control" : "") + " — activate them");
+            List<ForwardTarget> ts = selectTargets(ctx, count, upTo, false, own, null, null, null, false, false,
+                    -1, null, -1, null, false, true, false, null, null, null, null, false, null, false);
+            for (ForwardTarget t : ts) ctx.activateTarget(t);
+        };
+    }
+    /** Parses 21-048L Princess Sarah's EX Burst shield; see the pattern. */
+    static Consumer<GameContext> tryParseChooseForwardCannotBeChosenByExBurstsEot(String text) {
+        String core = stripRestrictionSentences(text);
+        if (core.isEmpty()) core = text;
+        if (!CHOOSE_FORWARD_GAINS_CANNOT_BE_CHOSEN_BY_EX_BURSTS_EOT.matcher(core.trim()).matches()) return null;
+        return ctx -> {
+            ctx.logEntry("Effect: choose 1 Forward — it cannot be chosen by EX Bursts this turn");
+            List<ForwardTarget> ts = selectTargets(ctx, 1, false, false, false, null, null, null, false, false,
+                    -1, null, -1, null, true, false, false, null, null, null, null, false, null, false);
+            for (ForwardTarget t : ts) ctx.shieldCannotBeChosenByExBurst(t);
         };
     }
     static Consumer<GameContext> tryParseChooseForwardPlacePetrification(String text) {

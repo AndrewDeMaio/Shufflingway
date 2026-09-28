@@ -20,7 +20,7 @@ final class ActionResolverRestriction {
 
     static Consumer<GameContext> tryParseOwnForwardsCannotBeChosenByExBurst(String text) {
         if (!OWN_FORWARDS_CANNOT_BE_CHOSEN_BY_EX_BURST.matcher(text.trim()).matches()) return null;
-        return ctx -> ctx.shieldAllOwnForwardsCannotBeChosen(true, false);
+        return ctx -> ctx.shieldOwnForwardsCannotBeChosenByExBurst();
     }
     static Consumer<GameContext> tryParseAllForwardsCannotBeChosenByExBursts(String text) {
         if (!ALL_FORWARDS_CANNOT_BE_CHOSEN_BY_EX_BURSTS.matcher(text.trim()).matches()) return null;

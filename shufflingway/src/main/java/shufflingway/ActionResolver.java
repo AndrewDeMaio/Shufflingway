@@ -5,6 +5,7 @@ import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -178,6 +179,29 @@ public class ActionResolver {
      * @param xValue the CP amount paid into {@code 《X》}; {@code 0} when the ability has no X cost
      */
     public static Consumer<GameContext> parse(String effectText, CardData source, int xValue) {
+        Dispatch d = dispatch(effectText, source, xValue);
+        return d != null ? d.effect() : null;
+    }
+
+    /**
+     * The call site in {@link #dispatch}'s chain that claimed a text, and the effect it resolved
+     * to. {@code site} is the claiming parser's method name without its {@code tryParse} prefix,
+     * or {@code "SentenceFallback"} / {@code "HasAllElements"} for the two claims at the end of the
+     * chain that are not a parser call. {@code parts} is empty except on the sentence fallback,
+     * where it holds the sentences that fallback composed, in order.
+     */
+    record Dispatch(String site, Consumer<GameContext> effect, List<String> parts) {}
+
+    private static Dispatch claim(String site, Consumer<GameContext> effect) {
+        return new Dispatch(site, effect, List.of());
+    }
+
+    /**
+     * parse()'s chain, reporting which call site claimed the text as well as what it resolved to.
+     * This is the one place the resolver's precedence is written down: the name and description
+     * of an ability are looked up from the site that won here, never decided by a second walk.
+     */
+    static Dispatch dispatch(String effectText, CardData source, int xValue) {
         effectText = stripExBurstPrefix(effectText);
         // Strip leading "Then, " connector that appears when this text is a secondary clause.
         effectText = effectText.replaceFirst("(?i)^Then,?\\s+", "").trim();
@@ -197,13 +221,13 @@ public class ActionResolver {
         //
         // Anchored with matches() over the whole text, so it claims nothing else.
         result = tryParseCastPaymentElementsGate(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("CastPaymentElementsGate", result);
 
         // Here for the same reason: the condition leads a sentence whose payoff ("Lightning also
         // deals your opponent 1 point of damage") find()s on its own further down and ran with the
         // threshold dropped (19-138S Lightning). Anchored to one sentence.
         result = tryParseForwardsAttackingThisTurnGate(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("ForwardsAttackingThisTurnGate", result);
         if (forwardsAttackingGateUnreadable(effectText, source, xValue)) return null;
 
         // Anchored on the permanence reminder, so it claims nothing else. Here because every
@@ -212,77 +236,77 @@ public class ActionResolver {
         // ahead of BecomeForwardUntilEot, which is blind to the reminder and reverted the Monster
         // at end of turn.
         result = tryParseSelfBecomeForwardPermanently(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("SelfBecomeForwardPermanently", result);
 
         // Anchored; here because its payoff's own find()-ing parser ("activate Kytes") claimed
         // the whole text, dropped the reveal and ran the payoff ungated (18-038C Kytes).
         result = tryParseRevealAddThenIfAddedIsAlso(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("RevealAddThenIfAddedIsAlso", result);
 
         // Anchored whole-sentence reads of 29-095H Ramuh (XVI)'s halves; the discard's find()-ing
         // sibling reads only the first type of the alternation.
         result = tryParseRevealTopAddAllMatchingRestBz(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("RevealTopAddAllMatchingRestBz", result);
         result = tryParseDiscardTypeAlternation(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("DiscardTypeAlternation", result);
         result = tryParseLookOppTopRemoveOneCastable(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("LookOppTopRemoveOneCastable", result);
 
         // Ahead of the Choose chain, which otherwise claims the "choose 1 Character …" inside
         // 17-084C Lorenzo's quotation and runs it on attack. Anchored end to end.
         result = tryParseUntilEotDoublesPowerAndQuoted(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("UntilEotDoublesPowerAndQuoted", result);
 
         // Here for the same reason as the gate above, and it is the same failure: the thresholds
         // are the last three sentences, so every parser below matched a tier under find() and ran
         // it ungated — G'raha Tia 27-044L handed out a flat 4 CP discount on any reveal at all.
         // Anchored with matches() over the whole text, so it claims nothing else.
         result = ActionResolverSearch.tryParseRevealTopNTieredByDistinctElements(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("RevealTopNTieredByDistinctElements", result);
 
         // The same trailing shape with a different condition, and here for the same reason: the
         // gate is the last sentence, so every parser below matched the base under find(), claimed
         // the whole ability and dropped it. 12-039C Alexander drew one card on any turn.
         result = tryParseCastCountGate(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("CastCountGate", result);
 
         // The negated member of the same family, and a prefix like the two below rather than the
         // trailing sentence above: 9-099R Livia's payoff is "put Livia into the Break Zone", which
         // every parser below claims off the gate's tail and runs however she was paid for — the
         // one reading of the card under which she never stays on the field at all.
         result = tryParseCastPaymentElementsNotIncludedGate(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("CastPaymentElementsNotIncludedGate", result);
 
         // Beside its sibling and for the same reason: the gate is a prefix, so every parser
         // below would claim the effect off its tail and run it whatever the cast was paid with.
         result = tryParseCastPaymentElementCpGate(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("CastPaymentElementCpGate", result);
 
         // The strict sibling of the gate above — "only paid with Ice CP" rather than "included
         // Lightning CP" — and here for the same reason. Left to the general matchers, 7-029H
         // Kefka froze the opponent's board and 7-046R Vata activated its Wind Backups on every
         // cast, whatever the CP had actually been.
         result = tryParseCastPaymentOnlyElementCpGate(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("CastPaymentOnlyElementCpGate", result);
 
         // The "exactly N different Elements" member of the same family. CardData's
         // FA_CAST_PAYMENT_ELEMENTS strips only the "N or more" wording into
         // AutoAbility.castPaymentMinElements, so this one survives as a prefix and had its guarded
         // half claimed off its tail — 9-021R Varis searched unconditionally.
         result = tryParseCastPaymentExactElementsGate(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("CastPaymentExactElementsGate", result);
 
         // Beside the gate above and read for the same reason: both are prefixes, and every parser
         // below matches with find(), so a gate left for later has its guarded half claimed off its
         // tail and run whatever the condition says.
         result = tryParseCrystalHeldGate(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("CrystalHeldGate", result);
 
         // Both halves of the offer read together. The consequence sentence matches the mass-effect
         // matchers on its own, so leaving it to them applied the punishment whether or not the
         // opponent paid the discard to avoid it (7-029H Kefka).
         result = tryParseOpponentMayDiscardElseEffect(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("OpponentMayDiscardElseEffect", result);
 
         // Must precede every effect pattern: a trailing "Draw 1 card." rides along behind a
         // complete effect, and whichever pattern matches the leading sentences claims the whole
@@ -290,41 +314,41 @@ public class ActionResolver {
         // method is never reached and the draw is dropped. Recurses for the head, so the leading
         // effect still resolves through the normal chain below.
         result = tryParseTrailingDraw(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("TrailingDraw", result);
 
         // Must precede tryParseIndependentSentences: its two sentences carry no pronoun back to
         // each other, so that rule accepts them and resolves the replay through the Break Zone —
         // but the removal in front of it has just put the card in the RFG zone.
         result = tryParseRemoveSelfThenPlaySelfOntoField(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("RemoveSelfThenPlaySelfOntoField", result);
 
         // Must precede tryParseIndependentSentences for the same reason as the parser above, and
         // it is the same shape a turn later: both of 23-051L Hope's sentences name Hope outright,
         // so nothing refers back, the splitter accepts them and resolves them separately -- the
         // removal happened and the clause returning Hope at the next Main Phase 1 was discarded.
         result = tryParseRemoveSelfReturnNextMainPhase1(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("RemoveSelfReturnNextMainPhase1", result);
 
         // Must precede tryParseIndependentSentences for the same reason: its three sentences
         // refer back to each other only through "them" and "the other groups", neither of which
         // that rule reads as a backward reference, so it took the ability apart and resolved the
         // last sentence on its own -- every Forward on the board into the Break Zone.
         result = tryParseDivideOppForwardsIntoGroups(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("DivideOppForwardsIntoGroups", result);
 
         // Must precede tryParseIndependentSentences for the same reason again: "these removed
         // cards" and "them" are all that tie Aemo's three sentences together, and neither counts
         // as a backward reference, so the splitter resolved the last one alone -- a hand handed
         // back that had never been taken away.
         result = tryParseOppRfgWholeHandFaceDown(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("OppRfgWholeHandFaceDown", result);
 
         // Must precede tryParseIndependentSentences: the two sentences of a "Choose any number of
         // [types]. Cancel their effects." refer to each other only through "their", which that rule
         // does not read as a backward reference, so it split the ability and resolved the halves
         // apart -- a selection of field Characters, then a cancel with nothing chosen.
         result = tryParseCancelAnyNumberAbilitiesOnStack(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("CancelAnyNumberAbilitiesOnStack", result);
 
         // Must precede tryParseIndependentSentences for the same reason once more: the condition
         // in the third sentence asks about the removal in the first two, and nothing the splitter
@@ -332,7 +356,7 @@ public class ActionResolver {
         // and 22-111L Raegen played a free Forward onto the field however many Elements he had
         // actually removed.
         result = tryParseChooseBzCardsRfgElementGate(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("ChooseBzCardsRfgElementGate", result);
 
         // Must precede tryParseIndependentSentences: its two sentences both parse alone —
         // "Name 1 Job." names a Job and nothing more, and "Deal N damage to all Forwards
@@ -341,77 +365,80 @@ public class ActionResolver {
         // every Forward in play, which is why the Job option carried a name in the report
         // while being the worst-behaved of its three.
         result = tryParseNameJobOrElementThenDamageMatching(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("NameJobOrElementThenDamageMatching", result);
 
         // Same reason, generalised: whichever sentence a pattern happens to match claims the whole
         // ability and the rest is discarded. Where every sentence stands alone, resolve them all.
         // Must stay ahead of the effect patterns for the same reason tryParseTrailingDraw does.
         result = tryParseIndependentSentences(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("IndependentSentences", result);
 
         // "Cast it as though you owned it" family — matched early because the highly specific
         // borrowed-cast phrasing would otherwise be intercepted by generic Choose/Remove matchers.
         result = tryParseOppRfpTopDeckCastable(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("OppRfpTopDeckCastable", result);
 
         result = tryParseChooseFromOppBzCastable(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("ChooseFromOppBzCastable", result);
 
         result = tryParseChooseSummonsFromBzCastable(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("ChooseSummonsFromBzCastable", result);
 
         result = tryParseArmNextSummonRecast(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("ArmNextSummonRecast", result);
 
         result = tryParseChooseSummonInBzMaxCostFreeCastRfg(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("ChooseSummonInBzMaxCostFreeCastRfg", result);
 
         // Must precede the ChooseCharacter family, for the reason the whole cluster sits here: its
         // opening sentence is a plain Break Zone choose, and read on its own the opponent's half of
         // the decision is dropped and the tail becomes a bare "remove from the game".
         result = tryParseChooseSummonsDiffCostOppSelectsOther(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("ChooseSummonsDiffCostOppSelectsOther", result);
 
         result = tryParseSelectFollowingActions(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("SelectFollowingActions", result);
 
         // Ahead of the choose/search families for the same reason as the line above: its quoted
         // options match them.
         result = tryParseDiscardHandOppSelectsRepeatableActions(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("DiscardHandOppSelectsRepeatableActions", result);
 
         // Must precede tryParseWhenYouDoSoSequence: Zidane-style text contains "If you do so"
         // which that parser would split, causing it to match first via OPPONENT_DRAW on the tail.
         result = tryParseRevealHandOptPickDiscardOppDraw(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("RevealHandOptPickDiscardOppDraw", result);
 
         result = tryParseRevealHandOptPickRfpOppDraw(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("RevealHandOptPickRfpOppDraw", result);
 
         // Must precede tryParseWhenYouDoSoSequence: that parser resolves both halves independently,
         // and a bare "pay 《…》" is not an effect it can resolve, so the optional cost would be lost.
         result = tryParseMayPayCostThenEffect(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("MayPayCostThenEffect", result);
+        // Beside it, for the same reason: the runs it declines.
+        result = tryParseYouMayPayElementRunThenEffect(effectText, source, xValue);
+        if (result != null) return claim("YouMayPayElementRunThenEffect", result);
 
         // Must precede tryParseWhenYouDoSoSequence: that parser splits on "If you do so" and
         // resolves the halves independently, which turns 29-116H Madeen's "remove the chosen
         // Forward from the game" into a bare remove-by-name and loses the search that gates it.
         result = tryParseChooseMaySearchRfgThenElse(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("ChooseMaySearchRfgThenElse", result);
 
         // Must precede tryParseWhenYouDoSoSequence: that parser resolves both halves independently,
         // and this payoff's "the same number" is however many counters the first half took off — a
         // quantity that exists only inside the one resolution and cannot survive the split.
         result = tryParseRemoveAnyCountersThenChooseSameNumber(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("RemoveAnyCountersThenChooseSameNumber", result);
 
         // Beside the parser above and here for the same reason: 28-071H Yang's "the same number" is
         // however many cards the discard actually took, which the split cannot carry across.
         result = tryParseDiscardAnyNumberThenChooseSameNumber(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("DiscardAnyNumberThenChooseSameNumber", result);
 
         result = tryParseWhenYouDoSoSequence(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("WhenYouDoSoSequence", result);
 
         // Anchored whole-text readings of "X. If you do so, Y" whose X parse() cannot read alone.
         // They sit ahead of the guard below, which declines such texts, and ahead of the find()
@@ -422,37 +449,37 @@ public class ActionResolver {
         //  - tryParseRemoveNamedFromGame's lazy name group reads 29-086H Shadow's "Remove 2 Warp
         //    Counters from Shadow" as the thing to remove from the game.
         result = tryParseSearchNamedRfgThenIfDoSo(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("SearchNamedRfgThenIfDoSo", result);
         // Must precede SearchDeck for the same reason: it find()s the search and drops the
         // "Then, you may play …" sentence (25-007R Glenn, B-036 Shinra Soldier).
         result = tryParseSearchToHandThenMayPlayFromHand(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("SearchToHandThenMayPlayFromHand", result);
         // 2-134C Horne, anchored: DrawCards find()s "Draw 1 card" off the front and drops both
         // the per-Moogle count and the put-back.
         result = tryParseDrawPerJobThenBottomAsMany(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("DrawPerJobThenBottomAsMany", result);
         result = tryParsePlayFaceDownLbCardOntoFieldDull(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("PlayFaceDownLbCardOntoFieldDull", result);
         result = tryParseRevealElementCardFromHandIfSoDraw(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("RevealElementCardFromHandIfSoDraw", result);
         result = tryParseMayRemoveWarpCountersThenNoCastNoAttack(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("MayRemoveWarpCountersThenNoCastNoAttack", result);
         // Counted openers the guard below would decline, read whole with their scaled or tiered
         // payoff: 12-010C Warrior / 14-003R Illua (dull any number of Backups), 19-080R Vivi and
         // 12-089C Dragoon (reveal any number from hand). The Choose chain would otherwise take the
         // payoff alone and deal a fixed amount for nothing paid.
         result = tryParseDullAnyNumberBackupsPerDulled(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("DullAnyNumberBackupsPerDulled", result);
         result = tryParseRevealAnyFromHandPerRevealed(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("RevealAnyFromHandPerRevealed", result);
         result = tryParseRevealAnyFromHandThresholds(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("RevealAnyFromHandThresholds", result);
         // 24-033L Bhunivelze's "put any number of Forwards and/or Monsters you control into the
         // Break Zone. When you do so, …" — the count drives both payoffs. Anchored end to end. It
         // once passed the guard only because the trigger layer's self-break shape claimed the text
         // (and then refused it, so the card did nothing in play).
         result = tryParsePutAnyNumberToBzOppSelectsAndDiscards(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("PutAnyNumberToBzOppSelectsAndDiscards", result);
 
         // Fail closed on "X. When/If you do so, Y" when nothing above read it and X does not parse
         // on its own. Every find() parser below would otherwise take Y and run it without X — a free
@@ -463,271 +490,284 @@ public class ActionResolver {
         // Must precede every consequence pattern: those match with find(), so left alone they would
         // claim the text after the gate and resolve the consequence unconditionally.
         result = tryParseIfNotPayOrElse(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("IfNotPayOrElse", result);
         result = tryParseIfNotRemoveFromBzOrElse(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("IfNotRemoveFromBzOrElse", result);
 
         // Same reasoning: the mass-break matcher would find "break all the Forwards opponent
         // controls" in the tail and apply it with no regard for the pile threshold in front of it.
         result = tryParseRemoveTopThenPileThreshold(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("RemoveTopThenPileThreshold", result);
 
         result = tryParseAddRemovedBySourceAbilityToHand(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("AddRemovedBySourceAbilityToHand", result);
 
         // Beside the other resolution-time gates, and ahead of every parser that could match its
         // inner effect on its own: the gate is a prefix, so a find()-based reader of the payoff
         // would resolve it unconditionally.
         result = tryParseIfSourceUsedSpecialsThisTurn(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("IfSourceUsedSpecialsThisTurn", result);
 
         result = tryParseIfOwnForwardFormedParty(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("IfOwnForwardFormedParty", result);
 
         result = tryParseIfOppDiscardedThisTurn(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("IfOppDiscardedThisTurn", result);
 
         result = tryParseIfControlAtMost(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("IfControlAtMost", result);
 
         result = tryParseIfAllHaveElement(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("IfAllHaveElement", result);
 
         // Must precede the generic damage/draw matchers: their leading ".+?" would otherwise
         // swallow the "if each player has no cards…" clause and drop the condition entirely.
         result = tryParseIfEachPlayerEmptyHand(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("IfEachPlayerEmptyHand", result);
 
         result = tryParseIfNDiffElements(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("IfNDiffElements", result);
 
         result = tryParseIfSelfIsStateGate(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("IfSelfIsStateGate", result);
 
         result = tryParseIfControlCondOtherThan(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("IfControlCondOtherThan", result);
 
         // Must precede tryParseControlConditionGate: that one claims the opening gate and hands the
         // rest to a parser that reads the base sentence and drops the "If you control M or more,
         // … instead" behind it — 16-122R Marche never drew his second card.
         result = tryParseControlGatedElidedInstead(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("ControlGatedElidedInstead", result);
 
         result = tryParseControlConditionGate(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("ControlConditionGate", result);
 
         result = tryParseWarpCounterCountGate(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("WarpCounterCountGate", result);
 
         // Must precede tryParseControlGatedInsteadUpgrade: that parser resolves the base and the
         // alternative independently, and 4-090R Biggs' alternative is "it gains +2000 power" -- an
         // "it" belonging to the Forward the base half chose, so alone it has nothing to boost.
         result = tryParseChooseGatedBoostInstead(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("ChooseGatedBoostInstead", result);
 
         result = tryParseControlGatedInsteadUpgrade(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("ControlGatedInsteadUpgrade", result);
 
         result = tryParseOpponentControlsCardGate(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("OpponentControlsCardGate", result);
 
         result = tryParseIfOppControlsNOrMoreCondTypeGate(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("IfOppControlsNOrMoreCondTypeGate", result);
 
         result = tryParseDiscardConditionalElement(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("DiscardConditionalElement", result);
 
         result = tryParseDiscardConditionalElementSingle(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("DiscardConditionalElementSingle", result);
 
         result = tryParseDiscardConditionalTargetLoseAbilities(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("DiscardConditionalTargetLoseAbilities", result);
 
         result = tryParseDiscardConditionalSelfBoostInstead(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("DiscardConditionalSelfBoostInstead", result);
 
         result = tryParseDrawDiscardIfMultiElement(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("DrawDiscardIfMultiElement", result);
 
         result = tryParseIfCastAtLeast(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("IfCastAtLeast", result);
 
         result = tryParseSelectNumber(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("SelectNumber", result);
 
         result = tryParseAllMonstersTemporaryForward(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("AllMonstersTemporaryForward", result);
 
         result = tryParseBecomeForwardUntilEot(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("BecomeForwardUntilEot", result);
 
         // After tryParseBecomeForwardUntilEot, which reads this closing sentence as part of its own
         // promotions; ahead of the self-boost parsers, which find() 17-013C Berserker's boost and
         // drop the break.
         result = tryParseThenBreakSelfAtEndOfTurn(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("ThenBreakSelfAtEndOfTurn", result);
 
         result = tryParseForEachJobAndNameDealDamageToForwards(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("ForEachJobAndNameDealDamageToForwards", result);
 
         result = tryParseDealNForEachJobOrNameToOppForwards(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("DealNForEachJobOrNameToOppForwards", result);
 
         result = tryParseDealBasePlusBzNameDamageToForwards(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("DealBasePlusBzNameDamageToForwards", result);
 
         result = tryParseSelfGainsWhenAttacksEOT(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("SelfGainsWhenAttacksEOT", result);
 
         result = tryParseDealDamageToForwardsForEach(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("DealDamageToForwardsForEach", result);
 
         result = tryParseDealDamagePerGroupToAllOppForwards(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("DealDamagePerGroupToAllOppForwards", result);
 
         result = tryParseDealDamageToForwardsExceptElement(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("DealDamageToForwardsExceptElement", result);
 
         result = tryParseRfpAllFwdExceptElementsThenTwiceDeck(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("RfpAllFwdExceptElementsThenTwiceDeck", result);
 
         // Must precede tryParseDealDamageToForwards: that one reads a stated number and matches
         // with find(), so it never claimed this text — but it is the parser this belongs beside,
         // and the amount here comes from the trigger rather than from the words.
         result = tryParseDealSameAmountToAllForwardsExcept(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("DealSameAmountToAllForwardsExcept", result);
 
         result = tryParseDealDamageToForwards(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("DealDamageToForwards", result);
 
         result = tryParseDivideDamageEquallyAmongAll(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("DivideDamageEquallyAmongAll", result);
 
         result = tryParseNoForwardCostCannotAttack(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("NoForwardCostCannotAttack", result);
 
         result = tryParseAllForwardsCannotBeChosenByExBursts(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("AllForwardsCannotBeChosenByExBursts", result);
 
         result = tryParseOwnForwardsCannotBeChosenByExBurst(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("OwnForwardsCannotBeChosenByExBurst", result);
 
         result = tryParseExBurstSuppression(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("ExBurstSuppression", result);
 
         result = tryParseDealHalfPowerDamageToForwards(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("DealHalfPowerDamageToForwards", result);
 
         result = tryParseDealPowerMinusNDamageToForwards(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("DealPowerMinusNDamageToForwards", result);
 
         result = tryParseDealHalfSourcePowerDamageToForwards(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("DealHalfSourcePowerDamageToForwards", result);
 
         result = tryParseDamageToCombatBlocker(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("DamageToCombatBlocker", result);
 
         result = tryParseChooseOneEach(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("ChooseOneEach", result);
 
         result = tryParseChooseForwardRedirectToNamed(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("ChooseForwardRedirectToNamed", result);
 
         result = tryParseChooseFormerLatter(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("ChooseFormerLatter", result);
 
         result = tryParseChooseFwdPowerLeAndOptOppBzFwdRfp(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("ChooseFwdPowerLeAndOptOppBzFwdRfp", result);
+
+        // Anchored end to end; ahead of the mixed-type pair, which applies one action to both
+        // groups and so cannot read an action per type.
+        result = tryParseChooseTypeAndTypeSplitActions(effectText, source);
+        if (result != null) return claim("ChooseTypeAndTypeSplitActions", result);
 
         result = tryParseChooseThreeMixedTypes(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("ChooseThreeMixedTypes", result);
 
         result = tryParseChooseTwoMixedTypes(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("ChooseTwoMixedTypes", result);
 
         result = tryParseChooseForwardDealSelfDamageBreakIfCostLeDamage(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("ChooseForwardDealSelfDamageBreakIfCostLeDamage", result);
 
         result = tryParseChooseForwardSharedPowerLoss(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("ChooseForwardSharedPowerLoss", result);
 
         result = tryParseChooseOppFwdDynCostBreak(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("ChooseOppFwdDynCostBreak", result);
 
         result = tryParseChooseFwdPowerInferiorToSource(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("ChooseFwdPowerInferiorToSource", result);
 
         result = tryParseChooseFwdBzCostInferiorToRemovedPlay(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("ChooseFwdBzCostInferiorToRemovedPlay", result);
 
         result = tryParseChooseOppFwdGainsSpecialAbilityFreeOnce(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("ChooseOppFwdGainsSpecialAbilityFreeOnce", result);
 
         result = tryParseUseSpecialAbilityUsedThisTurn(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("UseSpecialAbilityUsedThisTurn", result);
 
         result = tryParseChooseOppDamagedFwdIfHasAbilityBreak(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("ChooseOppDamagedFwdIfHasAbilityBreak", result);
 
         result = tryParseChooseAsManyAsFieldCount(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("ChooseAsManyAsFieldCount", result);
 
         result = tryParseChooseAsManyAsBzRfgJobCount(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("ChooseAsManyAsBzRfgJobCount", result);
 
         result = tryParseChooseAsManyAsPutToBzThisTurn(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("ChooseAsManyAsPutToBzThisTurn", result);
 
         result = tryParseChooseCounterScaleCharsActivate(effectText, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("ChooseCounterScaleCharsActivate", result);
 
         result = tryParseChooseAnyNumberReturnToHand(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("ChooseAnyNumberReturnToHand", result);
 
         // Must precede tryParseChooseCharacter: a filtered Forward grant carries its granted
         // ability as a quotation, and that chain finds the effect inside it and runs it detached
         // from both its trigger and its grantee (Snow & Lightning PR-158).
         result = tryParseFilteredForwardsQuotedGrant(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("FilteredForwardsQuotedGrant", result);
 
         // Checked ahead of tryParseChooseCharacter: its "Summons?" target noun would otherwise
         // match bare "Choose 1 Summon. If your opponent doesn't pay..." text first, and its generic
         // followup dispatch's unanchored "Cancel its effect" substring match would misfire on the
         // conditional-pay clause as if it were a plain unconditional cancel.
         result = tryParseCancelStackEntryUnlessPay(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("CancelStackEntryUnlessPay", result);
 
         // Checked ahead of tryParseChooseCharacter: these "choose … Forward(s) …" compounds would
         // otherwise be claimed by ChooseCharacter's generic followup dispatch, which only partially
         // handles them (the reveal-cost-parity branch, and the ability-granting forms).
         result = tryParseChooseFwdRevealCostParity(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("ChooseFwdRevealCostParity", result);
+
+        // Ahead of tryParseChooseCharacter, which reads "Choose 1 Forward" and leaves the grant
+        // unimplemented. Anchored after stripping the trailing use restriction.
+        result = tryParseChooseForwardCannotBeChosenByExBurstsEot(effectText);
+        if (result != null) return claim("ChooseForwardCannotBeChosenByExBurstsEot", result);
+
+        result = tryParseSelectUpToNBackupsActivate(effectText);
+        if (result != null) return claim("SelectUpToNBackupsActivate", result);
 
         result = tryParseChooseForwardsGainAbilityEot(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("ChooseForwardsGainAbilityEot", result);
 
         result = tryParseChooseForwardPlacePetrification(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("ChooseForwardPlacePetrification", result);
 
         result = tryParseChooseOwnFwdBoostProtectionsOrAllIfDmg(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("ChooseOwnFwdBoostProtectionsOrAllIfDmg", result);
 
         result = tryParseActivateAllOwnFwdsGainProtections(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("ActivateAllOwnFwdsGainProtections", result);
 
         result = tryParseRemoveAllCountersFromSelf(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("RemoveAllCountersFromSelf", result);
 
         // Must precede tryParseChooseCharacter: that parser matches the choose half and treats the
         // control gate as a detached secondary, which leaves both the play and the sacrifice
         // unresolved (it described this card as "ChooseCharacter / ? + IfControl(…: ?)").
         result = tryParseChooseTwoBzFwdPlayIfControl(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("ChooseTwoBzFwdPlayIfControl", result);
 
         // Must precede tryParseChooseCharacter: that parser matches the choose half alone and
         // returns, silently discarding the "At the end of your opponent's turn, …" clause.
         result = tryParseChooseThenEndOfOppTurnAction(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("ChooseThenEndOfOppTurnAction", result);
 
         // Must precede tryParseChooseTwoJointAction, which reads one filter per descriptor and so
         // loses the "in your Break Zone" that Xande 10-008L states once for both — it would take
@@ -735,15 +775,15 @@ public class ActionResolver {
         // learned "play them onto the field" and "add them to your hand", at which point the joint
         // parser's guard (it needs a readable action) stopped holding them back.
         result = tryParseSelectNamedFromBzPlay(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("SelectNamedFromBzPlay", result);
 
         result = tryParseChooseTwoCostsFromBzPlayBoth(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("ChooseTwoCostsFromBzPlayBoth", result);
 
         // Same, for 17-071R Dorando: the bespoke parser is the one that has been reading it, and
         // its two allowances over one zone are what it was written for.
         result = tryParseChooseUpTo1EachInOwnBzToHand(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("ChooseUpTo1EachInOwnBzToHand", result);
 
         // Must precede tryParseChooseCharacter: that parser matches the first of the two choose
         // clauses alone and applies the effect to it, silently dropping the second (19-114L Cloud
@@ -751,19 +791,19 @@ public class ActionResolver {
         // every specific two-clause parser, because its descriptors are broad enough to claim
         // their texts.
         result = tryParseChooseTwoJointAction(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("ChooseTwoJointAction", result);
 
         // Must precede tryParseChooseCharacter: that chain reads "as many … as you want" as an
         // unbounded choose and has nowhere to put the total-cost budget, so it would offer every
         // Forward on the board and break the lot.
         result = tryParseChooseForwardsTotalCostBreak(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("ChooseForwardsTotalCostBreak", result);
 
         // Must precede tryParseChooseCharacter: that chain reads one target description per choose,
         // so it takes the first half of Gnash 7-057R's "or" and breaks a cost-1 Forward while the
         // Monster the other half offered was never on the prompt.
         result = tryParseChooseEitherCostSpecBreak(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("ChooseEitherCostSpecBreak", result);
 
         // Must precede tryParseChooseCharacter for a related reason: that chain makes the whole
         // selection in one dialog and hands its followup an unordered set, with nothing to say
@@ -771,13 +811,13 @@ public class ActionResolver {
         // followup branch for the wording, so Palom's Meteor logged "followup not yet implemented"
         // and dealt nothing at all.
         result = tryParseChooseTieredDamage(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("ChooseTieredDamage", result);
 
         // Must precede tryParseChooseCharacter: that chain finds "choose 1 Forward" in the third
         // sentence and reads it on its own, dropping both the Forward given up and the cost that
         // pick is supposed to set — the user could take any Forward on the board.
         result = tryParseSelectOwnFwdToBzGainControlSameCost(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("SelectOwnFwdToBzGainControlSameCost", result);
 
         // The three "put from the field into the Break Zone this turn" gate forms. Each wraps an
         // arbitrary effect, and every parser below matches with find(), so any of them would claim
@@ -800,9 +840,9 @@ public class ActionResolver {
         // opponent's damage wrapping an arbitrary effect (29-013H Bahamut), which the effect
         // parsers below would otherwise claim out of the middle of the sentence and run ungated.
         result = tryParseIfOpponentDamageAtMost(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("IfOpponentDamageAtMost", result);
         result = tryParseIfSelfDamageAtMost(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("IfSelfDamageAtMost", result);
 
         // Anchored "Shuffle your deck, then <effect>". Must precede tryParsePlaySourceOntoField,
         // which find()s "play it onto the field" out of 16-020L Luso's reveal and resolves "it" as
@@ -810,209 +850,223 @@ public class ActionResolver {
         // Anchored; ahead of the find()-ing shuffle readers, which took 15-109R Ultros's "shuffle
         // your deck. Then, reveal … Play 1 Card Name Ultros" and ran the shuffle alone.
         result = tryParseShuffleThenRevealPlayNamedRestBottom(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("ShuffleThenRevealPlayNamedRestBottom", result);
         result = tryParseShuffleDeckThen(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("ShuffleDeckThen", result);
         // Must precede tryParseShuffleDeck, which find()s the opening and drops the free cast.
         result = tryParseShuffleThenRevealTopCastSummonFreeRestBz(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("ShuffleThenRevealTopCastSummonFreeRestBz", result);
 
         // Anchored "<discard>. If the discarded card is Category X, <effect>." Must precede the
         // DrawCards parsers, which find() the draw/discard and drop the gated payoff (20-113R Porom),
         // and GAIN_CRYSTAL, which would find() the payoff and run it ungated.
         result = tryParseDiscardThenIfDiscardedCategory(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("DiscardThenIfDiscardedCategory", result);
         // The card-type sibling, for the same reason: DrawCards find()s "draw 1 card" off the
         // front and drops the discard with the payoff (28-113R Leonora).
         result = tryParseDiscardThenIfDiscardedType(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("DiscardThenIfDiscardedType", result);
         result = tryParseDiscardThenIfAnyDiscardedCategory(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("DiscardThenIfAnyDiscardedCategory", result);
 
         result = tryParseIfPutFromFieldToBzThisTurnInstead(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("IfPutFromFieldToBzThisTurnInstead", result);
 
         result = tryParseIfPutFromFieldToBzThisTurn(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("IfPutFromFieldToBzThisTurn", result);
 
         result = tryParseIfPutFromFieldToBzThisTurnMidGate(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("IfPutFromFieldToBzThisTurnMidGate", result);
 
         // Must precede tryParseChooseCharacter: its zone group switches a selection between the
         // field and a Break Zone rather than spanning both, so the one shared allowance this text
         // states cannot survive that route.
         result = tryParseChooseOppFwdsOrOwnBzFwdsRfg(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("ChooseOppFwdsOrOwnBzFwdsRfg", result);
 
         // Must precede tryParseChooseCharacter: Arciela 18-128H's Fire arm contains a whole
         // choose-and-damage sentence, which that parser finds in the middle of the ability and
         // runs with neither the reveal nor the count in front of it.
         result = tryParseRevealHandElementThresholds(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("RevealHandElementThresholds", result);
 
         // Must precede tryParseChooseCharacter, for the same reason as the parser above: 10-072L
         // Shantotto's cost-2-or-less tier is a whole choose sentence, found and run without a reveal.
         result = ActionResolverSearch.tryParseRevealTopDeckCostTiers(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("RevealTopDeckCostTiers", result);
+
+        // Must precede tryParseChooseCharacter, which finds each one's opening "Choose … Summon in
+        // your Break Zone" and runs it with the rest of the ability unread: 3-126H chose four
+        // Summons and did nothing with them, and 22-066C chose one and neither made it castable
+        // nor reduced its cost. Each is a multi-sentence pattern, so it claims nothing but its own
+        // printing.
+        result = tryParseChooseSummonFromBzToHandWithCostReduction(effectText);
+        if (result != null) return claim("ChooseSummonFromBzToHandWithCostReduction", result);
+
+        result = tryParseChooseNSummonsBzPickOneHandRestRfg(effectText);
+        if (result != null) return claim("ChooseNSummonsBzPickOneHandRestRfg", result);
+
+        result = tryParseChooseSummonInBzCastable(effectText);
+        if (result != null) return claim("ChooseSummonInBzCastable", result);
 
         result = tryParseChooseCharacter(effectText, source, xValue);
-        if (result != null) return withAiTargetPreference(effectText, result);
+        if (result != null) return claim("ChooseCharacter", withAiTargetPreference(effectText, result));
 
         result = tryParseIfSelfFwdReceivedDamageDraw(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("IfSelfFwdReceivedDamageDraw", result);
 
         result = tryParseElementChange(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("ElementChange", result);
 
         result = tryParseDelayedEffect(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("DelayedEffect", result);
 
         result = tryParsePlayerCannotCastSummons(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("PlayerCannotCastSummons", result);
 
         // Must precede tryParseCannotBeChosenStandalone: that parser matches with find() and would
         // claim this text off the protection clause quoted inside it, applying the grant and
         // silently dropping the "power becomes N" half (23-100L Young Excenmille).
         result = tryParseSelfGainsAndBasePowerBecomesPermanent(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("SelfGainsAndBasePowerBecomesPermanent", result);
 
         // Alongside the parser above for the same reason: the quoted permission it hands out is
         // what tryParseCannotBeChosenStandalone and the multi-attack readers would each claim a
         // piece of. Order between the two is free -- one ends in a power clause, the other in the
         // quote itself -- but they read as a pair.
         result = tryParseSelfGainsTraitsAndQuotedPermanent(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("SelfGainsTraitsAndQuotedPermanent", result);
 
         // Must precede tryParseCannotBeChosenStandalone: that parser matches with find() and would
         // claim this text off its opening clause, applying an opponent-scoped shield in place of the
         // symmetric one the sentence asks for and dropping the trait grant that follows.
         result = tryParseSelfCannotBeChosenByAnyAndGainsTraits(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("SelfCannotBeChosenByAnyAndGainsTraits", result);
 
         result = tryParseCannotBeChosenStandalone(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("CannotBeChosenStandalone", result);
 
         result = tryParseCannotBecomeDullOpp(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("CannotBecomeDullOpp", result);
 
         result = tryParseCannotBeReturnedToHandOpp(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("CannotBeReturnedToHandOpp", result);
 
         result = tryParseCharactersCannotBeReturnedToHandOpp(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("CharactersCannotBeReturnedToHandOpp", result);
 
         result = tryParseCannotBePutIntoBzOpp(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("CannotBePutIntoBzOpp", result);
 
         result = tryParseStandaloneCannotAttackOrBlock(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("StandaloneCannotAttackOrBlock", result);
 
         result = tryParseNegateAllDamage(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("NegateAllDamage", result);
 
         result = tryParsePlayerNextDamageZeroRedirect(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("PlayerNextDamageZeroRedirect", result);
 
         result = tryParsePlayerNextDamageZero(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("PlayerNextDamageZero", result);
 
         result = tryParseCancelAutoAbilityAndDamageIfForward(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("CancelAutoAbilityAndDamageIfForward", result);
 
         result = tryParseRedirectChosenTarget(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("RedirectChosenTarget", result);
 
         // Ahead of the cancel family it borrows its shape from: this text ends in "triggers the
         // same auto-ability" rather than "Cancel its effect", so neither claims the other, but the
         // two belong together.
         result = tryParseCopyChosenAutoAbilityOnStack(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("CopyChosenAutoAbilityOnStack", result);
 
         result = tryParseCancelAutoAbilityTriggeredFrom(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("CancelAutoAbilityTriggeredFrom", result);
 
         result = tryParseChosenAutoAbilitySourceToBreakZone(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("ChosenAutoAbilitySourceToBreakZone", result);
 
         result = tryParseDelayedReturnSelfFromBreakZone(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("DelayedReturnSelfFromBreakZone", result);
 
         result = tryParseCancelAbilityOnStack(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("CancelAbilityOnStack", result);
 
         result = tryParseCancelChosenTargetUnlessPay(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("CancelChosenTargetUnlessPay", result);
 
         result = tryParseCancelChosenTargetUnlessDiscard(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("CancelChosenTargetUnlessDiscard", result);
 
         // Anchored, so it only claims an ability that is nothing but the action; the target is
         // the triggering card, preloaded by AutoAbilityTriggers.
         result = tryParseTriggeredDamageInsteadIfEnteredUnpaid(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("TriggeredDamageInsteadIfEnteredUnpaid", result);
 
         result = tryParseTriggeredTargetAction(effectText, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("TriggeredTargetAction", result);
 
         result = tryParseCancelChosenTargetBare(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("CancelChosenTargetBare", result);
 
         result = tryParseCancelTriggeringSummon(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("CancelTriggeringSummon", result);
 
         // Must precede tryParseIfOppNotPayAction, which matches the same opening with find():
         // this payoff lands on the printing card, not on a preloaded target.
         result = tryParseIfOppNotPaySourceCannotBeBroken(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("IfOppNotPaySourceCannotBeBroken", result);
 
         result = tryParseIfOppNotPayAction(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("IfOppNotPayAction", result);
 
         // Shares its opening two sentences with tryParseCancelChosenRevealTopIfType; both are
         // end-anchored on their own tail, so either order is safe, but they belong together.
         result = tryParseRevealTopToHandIfTypeElseTopOrBottom(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("RevealTopToHandIfTypeElseTopOrBottom", result);
 
         result = tryParseCancelChosenRevealTopIfType(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("CancelChosenRevealTopIfType", result);
 
         result = tryParseCancelChosenMillTopIfNotType(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("CancelChosenMillTopIfNotType", result);
 
         result = tryParseCancelChosenMillBothIfSameType(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("CancelChosenMillBothIfSameType", result);
 
         result = tryParseCancelSummonTargetingMyCharacter(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("CancelSummonTargetingMyCharacter", result);
 
         // Must precede tryParseCancelStackEntry: the two share their first sentence, and that
         // parser find()s on it, so it would cancel 29-012H Neon's chosen effect outright instead
         // of letting it resolve with its damage blanked.
         result = tryParseChooseStackEntryZeroItsDamage(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("ChooseStackEntryZeroItsDamage", result);
 
         result = tryParseCancelStackEntry(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("CancelStackEntry", result);
 
         result = tryParseDullAllOppFwdsPowerLeSource(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("DullAllOppFwdsPowerLeSource", result);
 
         result = tryParseRevealTopBreakSameCostAddToHand(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("RevealTopBreakSameCostAddToHand", result);
 
         // Must precede tryParseAllFieldEffect. Every parser below matches with find(), so the
         // "break all …" tail of a delayed clause would be claimed here and run immediately,
         // silently discarding the "at the end of your opponent's turn" that governs it.
         result = tryParseEndOfOppTurnDelayedEffect(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("EndOfOppTurnDelayedEffect", result);
 
         result = tryParsePlaceCounterOnAllForwards(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("PlaceCounterOnAllForwards", result);
 
         // Must precede tryParseAllFieldEffect: that one matches with find() and would claim the
         // sweep sentence on its own, silently dropping the draw that counts what the sweep woke up.
         result = tryParseAllFieldActivateThenDraw(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("AllFieldActivateThenDraw", result);
 
         // Must precede tryParseAllFieldEffect: that one refuses a power filter rather than
         // dropping it, so this is the only parser that reads 14-062L's sweep and the payoff
@@ -1020,10 +1074,10 @@ public class ActionResolver {
         // Ahead of the sentence-by-sentence fallback, which ran 17-079L's naming alone and dropped
         // the sweep it names for.
         result = tryParseNameJobBreakNamedOrJob(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("NameJobBreakNamedOrJob", result);
 
         result = tryParseBreakForwardsBelowSelfPower(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("BreakForwardsBelowSelfPower", result);
 
         // Must precede tryParseAllFieldEffect, and every other find() parser below it: those claim
         // the base sentence on its own and discard the "If …, … instead" that replaces it. 16-140S
@@ -1032,7 +1086,7 @@ public class ActionResolver {
         // pattern is anchored end to end and the parser declines unless the condition and both
         // halves are separately understood.
         result = tryParseEffectThenConditionalInstead(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("EffectThenConditionalInstead", result);
 
         // Ahead of every mass-power parser: this text carries "all the Forwards opponent controls
         // lose 7000 power" inside a branch, and those matchers are unanchored — AllFieldPowerBoost
@@ -1042,7 +1096,7 @@ public class ActionResolver {
         // "Reveal the top card … If it is X, …" shape more generally and would claim this text
         // first, resolving its branches as bare effects and losing the Forward/otherwise split.
         result = tryParseRevealOpponentTopBranchOnType(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("RevealOpponentTopBranchOnType", result);
 
         // Must precede tryParseAllFieldEffect. "Reveal the top card of your deck. If it is X,
         // <sweep>." puts a sweep in the middle of a sentence, and a find() parser reaching in
@@ -1052,39 +1106,39 @@ public class ActionResolver {
         // 750 lines below the sweep and never got the chance. It reads the header and every
         // clause or declines, so hoisting it cannot claim a text it only half understands.
         result = tryParseRevealTopDeck(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("RevealTopDeck", result);
 
         // Must precede tryParseAllFieldEffect for the same reason, and 11-035R Setzer is the
         // printing that showed it: the sweep in his odd branch was being lifted out from behind
         // its condition and run every time the ability was used.
         result = tryParseRevealCostParityEffects(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("RevealCostParityEffects", result);
 
         // Must precede tryParseAllFieldEffect: that one claims the sweep on its own under find()
         // and drops the draw joined to it by "and".
         result = tryParseAllFieldEffectAndDraw(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("AllFieldEffectAndDraw", result);
 
         // Same reason, for any other clause joined by "and" (23-121L Cait Sith's discard). Must
         // also precede tryParseOpponentDiscard and its kind, which take the tail under find().
         result = tryParseAllFieldEffectAndThen(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("AllFieldEffectAndThen", result);
 
         // Must precede tryParseAllFieldEffect for the same reason: 3-147L Zodiark's per-Forward
         // self-damage follows the sweep sentence and was dropped.
         result = tryParseBreakAllThenSelfDamagePerBroken(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("BreakAllThenSelfDamagePerBroken", result);
 
         // Must precede tryParseAllFieldEffect for the same reason: the sweep sentence is read whole
         // and "They gain …" after it was dropped (17-017H Sabin, 5-099H Illua).
         result = tryParseAllFieldEffectThenTheyGain(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("AllFieldEffectThenTheyGain", result);
 
         result = tryParseAllFieldEffect(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("AllFieldEffect", result);
 
         result = tryParseFieldPowerGrantPassive(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("FieldPowerGrantPassive", result);
 
         // Must follow the grant guard above, which reads the same "If you have N or more … in your
         // Break Zone," opening: a grant behind that condition is applied out of fieldPowerGrants()
@@ -1092,20 +1146,20 @@ public class ActionResolver {
         // payoff parsers far below (OpponentDiscard at ~1400, CastSummonFromHandFree at ~1470),
         // each of which find()s its own verb and would run it with the condition dropped.
         result = tryParseBreakZoneCountGate(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("BreakZoneCountGate", result);
         if (breakZoneCountGateUnreadable(effectText, source, xValue)) return null;
 
         result = tryParseAllForwardsSameElementAsNamedPowerBoost(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("AllForwardsSameElementAsNamedPowerBoost", result);
 
         result = tryParsePartyForwardsPowerBoost(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("PartyForwardsPowerBoost", result);
 
         // Must precede tryParseAllFieldPowerBoost only for tidiness -- that pattern needs a power
         // figure and cannot claim a trait-only strip -- but the two describe the same board, so
         // they are kept together.
         result = tryParseAllOppForwardsLoseTraitsEot(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("AllOppForwardsLoseTraitsEot", result);
 
         // Must precede tryParseAllFieldPowerBoost: that pattern carries an element and a category
         // group of its own and reads them as a conjunction, which is the wrong reading of the two
@@ -1113,37 +1167,37 @@ public class ActionResolver {
         // it wants the verb straight after the noun phrase — so this is precedence for the reader,
         // and insurance against that pattern ever being loosened.
         result = tryParseAllElementAndCategoryPowerBoost(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("AllElementAndCategoryPowerBoost", result);
 
         result = tryParseAllFieldPowerBoost(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("AllFieldPowerBoost", result);
 
         // Must precede every power parser below it. Tenzen 24-115R states three payloads on one
         // filtered set, and each of those reads with find(): the job-or-name boost would claim
         // the "+3000 power" and drop the Brave and the attack permission, and the mass keyword
         // grant would then never see the sentence at all.
         result = tryParseUntilEotAllJobCardNameGainPowerTraitsAbility(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("UntilEotAllJobCardNameGainPowerTraitsAbility", result);
 
         result = tryParseAllFieldJobCardNamePowerBoost(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("AllFieldJobCardNamePowerBoost", result);
 
         result = tryParseTwoCardNamesPowerBoost(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("TwoCardNamesPowerBoost", result);
 
         result = tryParseAllFieldJobPowerBoost(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("AllFieldJobPowerBoost", result);
 
         // Beside its Job twin, and after it: the two name disjoint filters, so neither can take
         // the other's text and this position is for reading order rather than precedence.
         result = tryParseAllFieldCardNamePowerBoost(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("AllFieldCardNamePowerBoost", result);
 
         result = tryParseAllFieldJobKeywordGrant(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("AllFieldJobKeywordGrant", result);
 
         result = tryParseAllFieldKeywordGrant(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("AllFieldKeywordGrant", result);
 
         // The quoted-protection twin of the grant above. Ordered after it and not before: the
         // two share their whole opening and differ only in what follows "gain", so whichever
@@ -1154,314 +1208,314 @@ public class ActionResolver {
         // ordering is belt-and-braces rather than load-bearing — but the two read the same text,
         // and whichever is first should be the one that can answer for it.
         result = tryParseAllOwnForwardsGainQuotedAbilityEot(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("AllOwnForwardsGainQuotedAbilityEot", result);
 
         result = tryParseAllFieldQuotedProtectionGrant(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("AllFieldQuotedProtectionGrant", result);
 
         result = tryParseUntilEotDualPowerShift(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("UntilEotDualPowerShift", result);
 
         // Must precede UntilEotAllFieldPowerBoost: that pattern stops at the power amount and
         // scans with find(), so it claims this sentence's "+N power" and drops the per-damage
         // multiplier behind it.
         result = tryParseUntilEotAllFieldPowerPerSelfDamage(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("UntilEotAllFieldPowerPerSelfDamage", result);
 
         // Must precede UntilEotAllFieldPowerBoost for the same reason: 2-087R Hashmal's "+1000
         // power" is found in the second sentence and the naming, and the named grant, are dropped.
         result = tryParseNameJobOrElementAllForwardsBoost(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("NameJobOrElementAllForwardsBoost", result);
 
         result = tryParseUntilEotAllFieldPowerBoost(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("UntilEotAllFieldPowerBoost", result);
 
         result = tryParseReturnAllToHand(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("ReturnAllToHand", result);
 
         result = tryParseStandalonePowerBoostAndAttackTrigger(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("StandalonePowerBoostAndAttackTrigger", result);
 
         result = tryParseStandalonePowerBoostAndCannotBeChosen(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("StandalonePowerBoostAndCannotBeChosen", result);
 
         result = tryParseStandaloneGainsTraitsAndCannotBeBlocked(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("StandaloneGainsTraitsAndCannotBeBlocked", result);
 
         result = tryParseStandaloneGainsTraitsAndCannotBeBlockedTrailing(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("StandaloneGainsTraitsAndCannotBeBlockedTrailing", result);
 
         result = tryParseStandaloneGainsCannotBeBlocked(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("StandaloneGainsCannotBeBlocked", result);
 
         result = tryParseSelfBasePowerBecomesUntil(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("SelfBasePowerBecomesUntil", result);
 
         result = tryParseStandalonePowerBoostUntil(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("StandalonePowerBoostUntil", result);
 
         result = tryParseStandaloneDoublePowerUntil(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("StandaloneDoublePowerUntil", result);
 
         result = tryParseStandaloneDoublesItsPowerUntil(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("StandaloneDoublesItsPowerUntil", result);
 
         result = tryParseStandaloneDoublePowerMainPhaseNextTurn(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("StandaloneDoublePowerMainPhaseNextTurn", result);
 
         result = tryParseStandalonePowerReduceUntil(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("StandalonePowerReduceUntil", result);
 
         result = tryParseFieldSelfPowerBoost(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("FieldSelfPowerBoost", result);
 
         result = tryParseDoubleOutgoingDamageThisTurn(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("DoubleOutgoingDamageThisTurn", result);
 
         result = tryParseDoubleOutgoingDamageThisTurnAlt(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("DoubleOutgoingDamageThisTurnAlt", result);
 
         result = tryParseSelfOutgoingDmgBoostThisTurn(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("SelfOutgoingDmgBoostThisTurn", result);
 
         result = tryParseGainOutgoingDmgBoostUntilEot(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("GainOutgoingDmgBoostUntilEot", result);
 
         result = tryParseActivateSelfAndSelfGains(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("ActivateSelfAndSelfGains", result);
 
         result = tryParseGainsQuotedFieldAbilityUntilEot(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("GainsQuotedFieldAbilityUntilEot", result);
 
         // Must precede the permanent grant parsers below: they anchor on "[Self] gains "…"" and
         // would claim 17-133S Scarmiglione's sentence off its second half, granting a clause still
         // reading "of the named Element" — which no reader matches, so the doubler would be inert
         // and the naming would never be asked for.
         result = tryParseNameElementThenGainsQuotedPermanent(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("NameElementThenGainsQuotedPermanent", result);
 
         // Beside its quoted-only sibling below, and ahead of it: that one is anchored on a double
         // quote straight after "gains", which this sentence does not have, so the order is for
         // the reader rather than load-bearing.
         result = tryParseGainsKeywordsAndQuotedAbilityPermanent(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("GainsKeywordsAndQuotedAbilityPermanent", result);
 
         result = tryParseGainsQuotedAbilitiesPermanent(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("GainsQuotedAbilitiesPermanent", result);
 
         result = tryParseSelfPowerBoostPermanent(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("SelfPowerBoostPermanent", result);
 
         result = tryParseUntilEotGainsPowerTraitsAndQuoted(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("UntilEotGainsPowerTraitsAndQuoted", result);
 
         result = tryParseDoubleOpponentIncomingDamageThisTurn(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("DoubleOpponentIncomingDamageThisTurn", result);
 
         result = tryParseAllForwardIncomingDmgIncreaseThisTurn(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("AllForwardIncomingDmgIncreaseThisTurn", result);
 
         result = tryParseChooseForwardDoubleIncomingThisTurn(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("ChooseForwardDoubleIncomingThisTurn", result);
 
         result = tryParseChooseForwardDoubleNextOutgoing(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("ChooseForwardDoubleNextOutgoing", result);
 
         result = tryParseDoublePlayerAbilityOutgoingThisTurn(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("DoublePlayerAbilityOutgoingThisTurn", result);
 
         result = tryParseStandaloneSelfBoostForEachCrystal(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("StandaloneSelfBoostForEachCrystal", result);
 
         // Must precede tryParseSelfBoostEotPrefix and tryParseStandaloneSelfBoost below: both read
         // the same "<Name> gains +N power … until end of turn" frame and would hand out a flat
         // boost, dropping the "for each …" multiplier that is the whole effect.
         result = tryParseStandaloneSelfBoostForEachControlled(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("StandaloneSelfBoostForEachControlled", result);
 
         // Same frame, distinct-Element multiplier. Mutually exclusive with the parser above, but
         // subject to the same "must precede the flat self-boost parsers" constraint.
         result = tryParseStandaloneSelfBoostForEachDistinctElement(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("StandaloneSelfBoostForEachDistinctElement", result);
 
         result = tryParseStandaloneItPowerBoostUntil(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("StandaloneItPowerBoostUntil", result);
 
         result = tryParseSelfPowerBoostAndActivate(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("SelfPowerBoostAndActivate", result);
 
         result = tryParseIfHandSizeSelfBoost(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("IfHandSizeSelfBoost", result);
 
         result = tryParseSelfBoostEotPrefix(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("SelfBoostEotPrefix", result);
 
         result = tryParseSelfAttacksPerOwnDamage(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("SelfAttacksPerOwnDamage", result);
 
         result = tryParseStandaloneSelfBoost(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("StandaloneSelfBoost", result);
 
         result = tryParseOppFieldEntryRfgInstead(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("OppFieldEntryRfgInstead", result);
 
         result = tryParseStandaloneSelfDullAndShield(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("StandaloneSelfDullAndShield", result);
 
         result = tryParseStandaloneSelfLosesAllAbilities(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("StandaloneSelfLosesAllAbilities", result);
 
         result = tryParseOppLoseJobsUntilEot(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("OppLoseJobsUntilEot", result);
 
         result = tryParseStandaloneSelfDull(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("StandaloneSelfDull", result);
 
         // The self-dull price in front of a "When you do so" payoff. Anchored over the whole
         // clause, so it claims nothing but that bare imperative; it exists so the sequence
         // parser above can resolve its primary half instead of dropping the cost.
         result = tryParseDullActiveYouControl(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("DullActiveYouControl", result);
 
         result = tryParseStandaloneShieldCannotBeBroken(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("StandaloneShieldCannotBeBroken", result);
 
         result = tryParseAllOwnForwardsNullifyAbilityDamage(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("AllOwnForwardsNullifyAbilityDamage", result);
 
         result = tryParseOwnJobOrNameNullifyAbilityDamage(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("OwnJobOrNameNullifyAbilityDamage", result);
 
         result = tryParseDoublecastFreeSummons(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("DoublecastFreeSummons", result);
 
         result = tryParseCastRfgCostCardThisTurn(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("CastRfgCostCardThisTurn", result);
 
         result = tryParseChooseCardRemovedBySourceToBz(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("ChooseCardRemovedBySourceToBz", result);
 
         result = tryParseAllForwardsCannotBlock(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("AllForwardsCannotBlock", result);
 
         result = tryParseForwardsOfCostCannotBlock(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("ForwardsOfCostCannotBlock", result);
 
         result = tryParseEndOfNextTurnIfCardOnFieldOppLoses(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("EndOfNextTurnIfCardOnFieldOppLoses", result);
 
         // Behind the scheduled form above, which prints this same clause as its tail.
         result = tryParseOpponentLosesTheGame(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("OpponentLosesTheGame", result);
 
         result = tryParseOppFwdsCannotBlockInferiorPower(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("OppFwdsCannotBlockInferiorPower", result);
 
         result = tryParseAllFwdsBlockedOnlyByLowerCostThisTurn(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("AllFwdsBlockedOnlyByLowerCostThisTurn", result);
 
         // Must precede tryParseOppFwdsLoseAllAbilitiesEot: that one anchors and so cannot claim
         // this longer text, but the two read the same opening and the specific one goes first.
         result = tryParseOppFwdsLoseAllAbilitiesAndPowerEot(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("OppFwdsLoseAllAbilitiesAndPowerEot", result);
 
         result = tryParseOppFwdsLoseAllAbilitiesEot(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("OppFwdsLoseAllAbilitiesEot", result);
 
         // The Character-wide sibling of the two above. Order against them is free rather than
         // load-bearing — all three anchor, and a sentence naming Forwards cannot match the one
         // naming Characters — but it belongs beside them so the family stays readable.
         result = tryParseOppCharactersLoseAllAbilitiesEot(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("OppCharactersLoseAllAbilitiesEot", result);
 
         result = tryParseOppFwdPowerBoostSuppressedThisTurn(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("OppFwdPowerBoostSuppressedThisTurn", result);
 
         result = tryParseOppFwdsLosePowerPerPlayCost(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("OppFwdsLosePowerPerPlayCost", result);
 
         result = tryParseStandaloneCannotBeBlocked(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("StandaloneCannotBeBlocked", result);
 
         // Must precede tryParseRevealSelectHandRfp: shares its three-sentence prefix and adds the
         // delayed return that makes the removal temporary.
         result = tryParseRevealSelectHandRfpUntilEndOfOppTurn(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("RevealSelectHandRfpUntilEndOfOppTurn", result);
 
         // Ahead of RevealSelectHandRfp, which shares the prefix and dropped the cast (14-127H).
         result = tryParseRevealSelectHandRfpCastableThisTurn(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("RevealSelectHandRfpCastableThisTurn", result);
 
         result = tryParseRevealSelectHandRfp(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("RevealSelectHandRfp", result);
 
         result = tryParseRevealSelectHandDiscard(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("RevealSelectHandDiscard", result);
 
         result = tryParseOpponentRandomHandRfp(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("OpponentRandomHandRfp", result);
 
         result = tryParseOpponentRandomHandToBottomDeck(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("OpponentRandomHandToBottomDeck", result);
 
         result = tryParseOpponentHandRfp(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("OpponentHandRfp", result);
 
         // Beside its per-type sibling, and both must precede the flat reveals below: those
         // read a count over one filter and would take "up to 1 Wind card and up to 1 Earth
         // card" for a single allowance, letting a player take two cards of one Element.
         result = tryParseRevealTopNAddPerElementQuota(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("RevealTopNAddPerElementQuota", result);
 
         result = tryParseRevealTopNAddOnePerTypeRestBz(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("RevealTopNAddOnePerTypeRestBz", result);
 
         result = tryParseRevealTopNAddUpToExcludingNameRestBz(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("RevealTopNAddUpToExcludingNameRestBz", result);
 
         // Ahead of the plain reveal-and-play parsers: they would match this text's first two
         // sentences and drop the Element/Job grant that the last one hangs on the played card.
         result = tryParseRevealPlayCategoryTypeRestShuffledBottomGrantElementJob(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("RevealPlayCategoryTypeRestShuffledBottomGrantElementJob", result);
 
         // Ahead of the remove-from-game parsers, whose lazy name group reads "1 card with Warp
         // among them" as a card name and claims the whole sentence.
         result = tryParseRevealTopNRemoveWarpCardPlaceCountersRestShuffledBottom(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("RevealTopNRemoveWarpCardPlaceCountersRestShuffledBottom", result);
 
         // Ahead of the plain bottom-of-deck reveals below, which would otherwise claim this text
         // and let the player order the leftovers that the card says to shuffle.
         result = tryParseRevealTopNAddUpToMatchingRestShuffledBottom(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("RevealTopNAddUpToMatchingRestShuffledBottom", result);
 
         // Ahead of every "rest to the bottom" reveal below: those end on "return the other cards
         // to the bottom of your deck", this one on "put the rest into the Break Zone", so the two
         // never compete — but it must stay ahead of parse()'s compound-sentence fallback, which
         // used to split this text and read the second sentence as a return-a-named-card.
         result = tryParseRevealTopNAddUpToMatchingRestBz(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("RevealTopNAddUpToMatchingRestBz", result);
 
         result = tryParseRevealTopNTypeToHand(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("RevealTopNTypeToHand", result);
 
         // Must precede PlayFromHand, whose find() claims the "Then, you may play …" tail.
         result = tryParseRevealAddThen(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("RevealAddThen", result);
 
         result = tryParseRevealTopNCategoryToHand(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("RevealTopNCategoryToHand", result);
 
         result = tryParseRevealTopNJobOrNameToHand(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("RevealTopNJobOrNameToHand", result);
 
         result = tryParseRevealTopNElementToHand(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("RevealTopNElementToHand", result);
 
         result = tryParseRevealAddToHandOrPlayOntoField(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("RevealAddToHandOrPlayOntoField", result);
 
         result = tryParseRevealPlayOntoFieldAndAddToHand(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("RevealPlayOntoFieldAndAddToHand", result);
 
         // Must precede tryParseReturnNamedToHand. 26-053L Bartz ends "and add the other cards to
         // your hand", which ADD_NAMED_TO_YOUR_HAND reads as a card literally named "the other
@@ -1469,60 +1523,60 @@ public class ActionResolver {
         // because this parser is fully anchored: it matches complete texts of one exact shape and
         // cannot claim a prefix of anything else.
         result = tryParseRevealPlayElementTypeCostOntoFieldRestBottom(effectText, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("RevealPlayElementTypeCostOntoFieldRestBottom", result);
 
         // Sits beside the parser above and is anchored the same way, so neither can take the
         // other's text: that one ends at "among them", this one is still reading a second
         // alternative there.
         result = tryParseRevealPlayTypeCostOrNamedCostRestBottom(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("RevealPlayTypeCostOrNamedCostRestBottom", result);
 
         // Must precede tryParseReturnNamedToHand: RETURN_NAMED_TO_OWNERS_HAND scans with find()
         // and takes the description in front of "to its owner's hand" for a card name, so
         // 13-081H Lightning's pile was looked for on the field under a name no card has.
         result = tryParseReturnRemovedBySourceToOwnersHand(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("ReturnRemovedBySourceToOwnersHand", result);
 
         // Must precede tryParseReturnNamedToHand: its "Add [name] to your hand" arm claimed
         // 17-137S Rydia off her last sentence, reading "the other" as a card name. That arm now
         // declines backward references, so this is belt and braces — but the three sentences are
         // one effect and the one that owns them should be the one asked first.
         result = tryParseSearchSummonsDiffCostOpponentSelects(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("SearchSummonsDiffCostOpponentSelects", result);
 
         // Ahead of ReturnNamedToHand, which read "1 Backup you control" as a card name.
         result = tryParseReturnOwnTypeToHand(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("ReturnOwnTypeToHand", result);
 
         // Must precede ReturnNamedToHand, which find()s the add and drops "at the end of the turn".
         result = tryParseAddSelfToHandAtEndOfTurn(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("AddSelfToHandAtEndOfTurn", result);
 
         result = tryParseReturnNamedToHand(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("ReturnNamedToHand", result);
 
         result = tryParseYouMayRemoveNamedFromGame(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("YouMayRemoveNamedFromGame", result);
 
         result = tryParseEndOfOppTurnPlayNamedOntoField(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("EndOfOppTurnPlayNamedOntoField", result);
 
         // Must precede tryParsePlaySourceOntoField: that parser matches with find() and its
         // expression ends at "onto the field", so it would claim this text as an immediate
         // Break-Zone play. Its pattern also carries a lookahead against the same wording.
         result = tryParseEndOfTurnPlayNamedOntoField(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("EndOfTurnPlayNamedOntoField", result);
 
         result = tryParseRemoveAllOppBzFromGame(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("RemoveAllOppBzFromGame", result);
 
         // Must precede tryParseRemoveNamedFromGame: that parser find()s a lazy name group and
         // claims this text off its middle clause, leaving the reveal and the cast permission behind.
         result = tryParseRevealTopNRfgOneCastableRestBottom(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("RevealTopNRfgOneCastableRestBottom", result);
 
         result = tryParseRemoveWarpCountersFromNamed(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("RemoveWarpCountersFromNamed", result);
 
         // Must precede tryParseRemoveNamedFromGame: that parser's lazy name group reads the whole
         // filter phrase ("up to 3 Job Warring Triad with different names in your Break Zone") as a
@@ -1533,155 +1587,155 @@ public class ActionResolver {
         // find(). tryParseRemoveNamedFromGame is the one that used to claim 11-138S Sephiroth,
         // reading "3 cards from your Break Zone" as a card name to look for on the field.
         result = tryParseEffectOrPutSelfToBreakZone(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("EffectOrPutSelfToBreakZone", result);
 
         result = tryParseRemoveFromBreakZoneFromGame(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("RemoveFromBreakZoneFromGame", result);
 
         // Both must precede tryParseRemoveNamedFromGame, which used to claim every one of these
         // sentences: its name group is lazy and matched with find(), so "all the Forwards" was read
         // as a card name, searched for on the field, and not found. Both of these are anchored, so
         // neither can take anything out of the middle of a longer text in turn.
         result = ActionResolverFieldAbility.tryParseRemoveAllFieldFromGame(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("RemoveAllFieldFromGame", result);
 
         result = ActionResolverFieldAbility.tryParseNameCardTypeRemoveOppBzFromGame(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("NameCardTypeRemoveOppBzFromGame", result);
 
         // Must precede RemoveNamedFromGame, which reads the removal and drops the grant (14-038H).
         result = ActionResolverPower.tryParseRemoveSelfThenEnteredForwardGainsPermanently(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("RemoveSelfThenEnteredForwardGainsPermanently", result);
         // Must precede RemoveNamedFromGame, which find()s the removal and drops "at the end of the
         // turn" — 20-130L Zenos was removed the moment he entered.
         result = tryParseRemoveSelfAtEndOfTurn(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("RemoveSelfAtEndOfTurn", result);
         result = tryParseNameElementSelfBecomesUntilEot(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("NameElementSelfBecomesUntilEot", result);
         result = tryParseRemoveNamedFromGame(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("RemoveNamedFromGame", result);
 
         // Must precede tryParseBreakSourceCard: "Break Ninja as well as ..." opens with exactly
         // the self-break that parser reads, so it would break Ninja and drop the partner.
         result = tryParseBreakSelfAndBattlePartner(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("BreakSelfAndBattlePartner", result);
 
         result = tryParseBreakSourceCard(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("BreakSourceCard", result);
 
         result = tryParsePutSourceIntoBreakZone(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("PutSourceIntoBreakZone", result);
 
         result = tryParseBreaksAfterCombatNoDamage(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("BreaksAfterCombatNoDamage", result);
 
         // Ahead of everything the base sentence could match on its own: the rider is the last
         // sentence, and a parser that claimed the text without it would drop the repeat silently.
         result = tryParsePerformThisActionTwiceAtDamage(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("PerformThisActionTwiceAtDamage", result);
 
         result = tryParsePutOwnTypeToBzIfDoSo(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("PutOwnTypeToBzIfDoSo", result);
 
         result = tryParseYouMayPutSelfToBZWhenDoSo(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("YouMayPutSelfToBZWhenDoSo", result);
 
         result = tryParseIfOppNoForwardsPutToBreakZone(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("IfOppNoForwardsPutToBreakZone", result);
 
         result = tryParseIfEitherPlayerNoForwardsPutSourceToBz(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("IfEitherPlayerNoForwardsPutSourceToBz", result);
 
         result = tryParseIfSelfDamagePointsPutToBreakZone(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("IfSelfDamagePointsPutToBreakZone", result);
 
         result = tryParsePutSourceToBottomOfDeck(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("PutSourceToBottomOfDeck", result);
 
         result = tryParsePutSourceOnTopOfDeck(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("PutSourceOnTopOfDeck", result);
 
         result = tryParseBreakBlockingForward(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("BreakBlockingForward", result);
 
         result = tryParseDamageBlockingForward(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("DamageBlockingForward", result);
 
         // Must precede tryParseRemoveAllCounters, whose pattern is unanchored and finds its clause
         // in this sentence's tail — which claimed Yuffie 25-049C and threw away the counters
         // without ever dealing the damage they were banked for.
         result = tryParseDamageBlockingForwardPerCounterThenClear(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("DamageBlockingForwardPerCounterThenClear", result);
 
         result = tryParseBreakForwardThatBlocksCard(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("BreakForwardThatBlocksCard", result);
 
         result = tryParseChooseExBurstFromDamageZone(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("ChooseExBurstFromDamageZone", result);
 
         result = tryParseDamageZoneSwap(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("DamageZoneSwap", result);
 
         result = tryParseEachPlayerRandomDiscardThenCategoryDraw(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("EachPlayerRandomDiscardThenCategoryDraw", result);
 
         result = tryParseOpponentDrawThenRandomDiscard(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("OpponentDrawThenRandomDiscard", result);
 
         result = tryParseOpponentDraw(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("OpponentDraw", result);
 
         result = tryParseOpponentRandomDiscard(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("OpponentRandomDiscard", result);
 
         result = tryParseEachPlayerSelectForwardDamage(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("EachPlayerSelectForwardDamage", result);
 
         result = tryParseBothPlayersSelectForwardToBreakZone(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("BothPlayersSelectForwardToBreakZone", result);
 
         result = tryParseSelectCharCostLeExclToBz(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("SelectCharCostLeExclToBz", result);
 
         result = tryParseSelectControlledCharacterToBz(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("SelectControlledCharacterToBz", result);
 
         result = tryParseSelectControlledCharacterBreak(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("SelectControlledCharacterBreak", result);
 
         result = tryParseEachPlayerSelectUpToNToBreakZone(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("EachPlayerSelectUpToNToBreakZone", result);
 
         result = tryParseEachPlayerSelectUpToNActiveDullFreeze(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("EachPlayerSelectUpToNActiveDullFreeze", result);
 
         // Must precede tryParseIndependentSentences: its second sentence reads on its own as an
         // unbounded "put all the Forwards opponent controls into the Break Zone", so the splitter
         // resolved it with no selection in front of it and took the whole row.
         result = tryParseOppSelectsUpToNForwardsBreakRest(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("OppSelectsUpToNForwardsBreakRest", result);
 
         // Its two-sided sibling, and here for the same reason — more so, because this one's sweep
         // names no side at all, so the splitter took every Forward in play and not just one row.
         result = tryParseEachPlayerSelectsForwardsBreakRest(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("EachPlayerSelectsForwardsBreakRest", result);
 
         result = tryParseEachPlayerDiscard(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("EachPlayerDiscard", result);
 
         result = tryParseEachPlayerSalvageFromBreakZone(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("EachPlayerSalvageFromBreakZone", result);
 
         result = tryParseSelectCharacterFromBzToHand(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("SelectCharacterFromBzToHand", result);
 
         result = tryParseChooseWarpCardFromBzToHand(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("ChooseWarpCardFromBzToHand", result);
 
         result = tryParseEachPlayerDraw(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("EachPlayerDraw", result);
 
         result = tryParseNameCardTypeOpponentDiscardDrawIfMatch(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("NameCardTypeOpponentDiscardDrawIfMatch", result);
 
         // Must precede tryParseOpponentDiscard and the other inner-effect parsers below: this
         // is a gate wrapping an arbitrary effect, and those match with find(), so one of them
@@ -1689,327 +1743,316 @@ public class ActionResolver {
         // unconditionally. Disjoint from tryParseIfRfpCount, which needs a literal "there are"
         // and counts both players' RFP zones rather than only the ability user's.
         result = tryParseIfSelfRfgCount(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("IfSelfRfgCount", result);
 
         // Directly ahead of tryParseOpponentDiscard, whose find() takes the whole text and drops
         // whatever comes before the discard (24-026H Zalera, 23-117L Chaos).
         result = tryParseEffectThenOpponentDiscard(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("EffectThenOpponentDiscard", result);
 
         result = tryParseOpponentDiscard(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("OpponentDiscard", result);
 
         result = tryParseDiscardHandThenDraw(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("DiscardHandThenDraw", result);
 
         result = tryParseDrawThenPlaceHandToBottom(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("DrawThenPlaceHandToBottom", result);
 
         result = tryParsePlaceUpToHandToBottomThenRedraw(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("PlaceUpToHandToBottomThenRedraw", result);
 
         result = tryParsePayCpWhenDoSo(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("PayCpWhenDoSo", result);
 
         result = tryParseDrawDiscardRetriggerIfCardName(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("DrawDiscardRetriggerIfCardName", result);
 
         result = tryParseDrawOnePerForwardCapped(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("DrawOnePerForwardCapped", result);
 
         result = tryParseDrawCards(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("DrawCards", result);
 
         result = tryParseDiscardCategoryType(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("DiscardCategoryType", result);
 
         result = tryParseYouMayDiscardType(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("YouMayDiscardType", result);
 
         result = tryParseDiscardElementFromHand(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("DiscardElementFromHand", result);
 
         result = tryParseMayRevealElementFromHand(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("MayRevealElementFromHand", result);
 
         result = tryParseDiscardHand(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("DiscardHand", result);
 
         // Must precede tryParseDiscardNCards, and the sentence-splitting fallback below it: this
         // text opens with a plain "discard 1 card from your hand." that resolves on its own, so
         // whichever of those saw it first claimed the ability and dropped both Category branches.
         result = tryParseDiscardConditionalCategoryBranches(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("DiscardConditionalCategoryBranches", result);
 
         // Must precede the sentence-splitting fallback, for the same reason as the Category
         // branches above: it ran "discard 1 card." alone and dropped the payoff.
         result = tryParseDiscardThenSameAsDiscarded(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("DiscardThenSameAsDiscarded", result);
 
         result = tryParseDiscardNCards(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("DiscardNCards", result);
 
         result = tryParseDiscardJobFromHand(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("DiscardJobFromHand", result);
 
         result = tryParseDiscardThenDraw(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("DiscardThenDraw", result);
 
         result = tryParseDealPlayerDamageToOpponent(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("DealPlayerDamageToOpponent", result);
 
         // Ahead of both halves' own parsers: DealPlayerDamageToSelf and PlayFromHand each read one
         // sentence of 16-089H Zack, and PlayFromHand's find() used to take the text and drop the
         // drawback. Anchored end to end, so it claims nothing else.
         result = tryParsePlayFromHandThenIfItsCost(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("PlayFromHandThenIfItsCost", result);
 
         // 26-098L Lightning's end-of-turn return, for the same reason as Zack's drawback above.
         result = tryParsePlayFromHandWithRiders(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("PlayFromHandWithRiders", result);
 
         result = tryParseDealPlayerDamageToSelf(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("DealPlayerDamageToSelf", result);
 
         result = tryParseRandomRevealHandCastIfSummonFree(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("RandomRevealHandCastIfSummonFree", result);
 
         result = tryParseCastSummonFromHandDiscounted(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("CastSummonFromHandDiscounted", result);
 
         result = tryParseCastSummonFromHandDiscountedAnyElement(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("CastSummonFromHandDiscountedAnyElement", result);
 
         result = tryParseCastSummonFromHandFree(effectText, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("CastSummonFromHandFree", result);
 
         result = tryParseSearchAndCastSummonFree(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("SearchAndCastSummonFree", result);
 
         result = tryParseSearchForwardKeyedToBzCostForward(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("SearchForwardKeyedToBzCostForward", result);
 
         // Must precede tryParseSearchDeck: that parser resolves the search alone and leaves the
         // "You can cast it … this turn" permission behind, which is the searched Summon removed
         // from the game with nothing to show for it.
         result = tryParseSearchSummonRfgFreeCastThisTurn(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("SearchSummonRfgFreeCastThisTurn", result);
 
         result = tryParseSearchSummonRfgThenCastFree(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("SearchSummonRfgThenCastFree", result);
 
         result = tryParsePlayAnyNumberFromHand(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("PlayAnyNumberFromHand", result);
 
         // Must precede tryParsePlayFromHand: that one declines the "each player may" wording by
         // guard, so this is the only reading of it, and the pair is clearer kept adjacent.
         result = tryParseEachPlayerMayPlayFromHand(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("EachPlayerMayPlayFromHand", result);
 
         result = tryParsePlayFromHand(effectText, source, xValue);
-        if (result != null) return result;
-
+        if (result != null) return claim("PlayFromHand", result);
 
         // Ardyn 28-002R's toll. Ahead of the opponent-selects family for the same reason the
         // line below it is: its own sentence names a seat those parsers would read as the
         // resolving player's opponent.
         result = tryParseTurnPlayerBreaksOrTakesDamage(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("TurnPlayerBreaksOrTakesDamage", result);
 
         // Must precede OpponentSelects, which claims the same text and drops both the option and the
         // block restriction — see OPP_SELECTS_MAY_BREAK_ELSE_SELF_CANNOT_BLOCK.
         result = tryParseOppSelectsMayBreakElseSelfCannotBlock(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("OppSelectsMayBreakElseSelfCannotBlock", result);
 
         // Ahead of the board-scoped OpponentSelects, which the Break Zone form shares a prefix
         // with. That one requires "they control" and so cannot claim this text today; the order
         // is what keeps a later widening of it from doing so.
         result = tryParseOpponentSelectsFromOwnBzToHand(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("OpponentSelectsFromOwnBzToHand", result);
 
         // Ahead of OpponentSelects, which reads the first of the two selections and lets the second
         // ride along in its followup — resolving 27-101L Sin's Forwards and forgetting its Backup.
         result = tryParseOpponentSelectsTwoTypes(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("OpponentSelectsTwoTypes", result);
 
         result = tryParseOpponentSelects(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("OpponentSelects", result);
 
         result = tryParseBzFwdToHandOppFwdToBzByDamage(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("BzFwdToHandOppFwdToBzByDamage", result);
 
         result = tryParseIfRfpCount(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("IfRfpCount", result);
 
         result = tryParseOpponentPutsForwardToBreakZone(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("OpponentPutsForwardToBreakZone", result);
 
         result = tryParseOpponentMillIfSameElementDraw(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("OpponentMillIfSameElementDraw", result);
 
         result = tryParseOpponentMill(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("OpponentMill", result);
 
         result = tryParseSelfMill(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("SelfMill", result);
 
         // Must precede tryParseOpponentRevealHand for the reason the line below does, and it is
         // the stronger case: Thief 8-052C's middle sentence is a reveal, so the whole-hand parser
         // takes it and drops the naming in front of it and the discard behind it.
         result = tryParseNameElementOppRandomRevealDiscard(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("NameElementOppRandomRevealDiscard", result);
 
         // Must precede tryParseOpponentRevealHand: both open with "Your opponent reveals ...",
         // and the whole-hand parser would claim this text's opening clause under find().
         result = tryParseOpponentRevealNSelectOneDiscard(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("OpponentRevealNSelectOneDiscard", result);
 
         // Must precede tryParseOpponentRevealHand for the same reason as the line above: this one
         // spells the whole effect as a single comma-joined sentence, whose opening clause is
         // exactly what the whole-hand parser find()s — resolving the reveal and dropping the
         // discard that is the point of the ability.
         result = tryParseRevealHandAndSelectDiscard(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("RevealHandAndSelectDiscard", result);
 
         result = tryParseOpponentRevealHand(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("OpponentRevealHand", result);
 
         result = tryParseEachPlayerRevealCharacterMayPlay(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("EachPlayerRevealCharacterMayPlay", result);
 
         result = tryParseEachPlayerMaySearchForwardMinPower(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("EachPlayerMaySearchForwardMinPower", result);
 
         result = tryParseStandaloneDamageShields(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("StandaloneDamageShields", result);
 
         result = tryParseDualSearchJobAndTypeDontShareElements(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("DualSearchJobAndTypeDontShareElements", result);
 
         result = tryParseSearchElementOrCategoryCharsDiffCost(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("SearchElementOrCategoryCharsDiffCost", result);
 
         result = tryParseSearchNElementSummonsDiffCost(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("SearchNElementSummonsDiffCost", result);
 
         // Must precede tryParseSearchDeck: that parser reads a single pool, so on a two-cost text
         // it claims the first half and the second search is lost.
         result = tryParseDualSearchPlayOntoField(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("DualSearchPlayOntoField", result);
 
         // "Return [Self] to the field dull." on its own — Calbrena 5-079H's granted leaves-field
         // trigger, where the sentence arrives with no search in front of it. Anchored end to end
         // and self-named, so it cannot reach Vanille 1-093H's, which is the tail of a longer text
         // and is read by the parser above as part of it.
         result = ActionResolverSearch.tryParseReturnSourceOntoField(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("ReturnSourceOntoField", result);
 
         // Its far-side twin, beside it: both are anchored and self-named, so neither can reach the
         // other's wording and the order between them decides nothing.
         result = ActionResolverSearch.tryParsePlaySourceFromBzOntoOppField(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("PlaySourceFromBzOntoOppField", result);
 
         // Must precede tryParseSearchDeck. Its pattern find()s the filters it recognises and
         // ignores what it does not, so "search for a Monster with the same name and add it to
         // your hand" reads there as a plain search for any Monster -- the name, the one thing
         // the sentence is about, dropped. Mira 4-137L is the only printing.
         result = tryParseSearchMatchingBrokenCard(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("SearchMatchingBrokenCard", result);
 
         // The type sibling of the name search above, and beside it for that reason: both take
         // their filter from the trigger's event rather than from the sentence.
         result = tryParseSearchSameCardTypeAsBrokenCard(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("SearchSameCardTypeAsBrokenCard", result);
 
         // Reads its cost off the payment record at resolution, so it cannot be one of the
         // ordinary search patterns, whose cost filters are printed.
         result = tryParseSearchCostOfCardsDiscardedToCast(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("SearchCostOfCardsDiscardedToCast", result);
 
         result = tryParseSearchDeck(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("SearchDeck", result);
 
         result = tryParsePlayAllByNameFromBreakZone(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("PlayAllByNameFromBreakZone", result);
 
         result = tryParsePlaySourceFromBreakZone(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("PlaySourceFromBreakZone", result);
 
         // Must precede tryParsePlaySourceOntoField: that parser find()s a name group that
         // happily spans "the Forward placed in the Break Zone", and only its name-equals-source
         // check keeps it off this text — a check a future widening could relax.
         result = tryParsePlayBrokenCardOntoFieldDull(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("PlayBrokenCardOntoFieldDull", result);
 
         result = tryParseAddBrokenCardToHand(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("AddBrokenCardToHand", result);
 
         // Must precede tryParsePlaySourceOntoField, which matches with find(): it took the
         // "Play it onto the field" out of the middle of this sentence, resolved the "it" to the
         // ability's own source and tried to return that card from the Break Zone. 7-106L Agrias
         // did that instead of digging for a Character for as long as the parser has existed.
         result = tryParseFlipUntilCharactersPlayOntoFieldRestShuffleBottom(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("FlipUntilCharactersPlayOntoFieldRestShuffleBottom", result);
 
         // Must precede tryParsePlaySourceOntoField, which find()s the countdown's closing "play
         // Aerith onto the field" and runs it without the counter check.
         result = tryParseCounterCountdownThenPlaySource(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("CounterCountdownThenPlaySource", result);
 
         result = tryParsePlaySourceOntoField(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("PlaySourceOntoField", result);
 
         result = tryParseSelfSkipNextActivePhase(effectText, source);
-        if (result != null) return result;
-
+        if (result != null) return claim("SelfSkipNextActivePhase", result);
 
         result = tryParseActivateNamedCard(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("ActivateNamedCard", result);
 
         result = tryParseAttackOnceMore(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("AttackOnceMore", result);
 
         result = tryParseOpponentAttackOnceThisTurn(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("OpponentAttackOnceThisTurn", result);
 
         result = tryParseOpponentCannotSearchThisTurn(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("OpponentCannotSearchThisTurn", result);
 
         result = tryParseOpponentCannotCastAnyCardsThisTurn(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("OpponentCannotCastAnyCardsThisTurn", result);
 
         result = tryParseOpponentCannotCastSummonsThisTurn(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("OpponentCannotCastSummonsThisTurn", result);
 
         result = tryParseRemoveFromBattle(effectText);
-        if (result != null) return result;
-
-        result = tryParseChooseSummonFromBzToHandWithCostReduction(effectText);
-        if (result != null) return result;
-
-        result = tryParseChooseNSummonsBzPickOneHandRestRfg(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("RemoveFromBattle", result);
 
         result = tryParseSelectNamedFromRfgToHand(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("SelectNamedFromRfgToHand", result);
 
         result = tryParseChooseWarpCardRemoveCounter(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("ChooseWarpCardRemoveCounter", result);
 
         result = tryParseChooseWarpCardMayRemoveCounter(effectText);
-        if (result != null) return result;
-
-        result = tryParseChooseSummonInBzCastable(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("ChooseWarpCardMayRemoveCounter", result);
 
         result = tryParseCostReductionThisTurn(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("CostReductionThisTurn", result);
 
         result = tryParsePlayCostReductionThisTurn(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("PlayCostReductionThisTurn", result);
 
         result = tryParseExtraTurnThenLose(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("ExtraTurnThenLose", result);
 
         // Must precede tryParseGainCrystal: a trailing "Gain 《C》." sentence rides along behind a
         // complete effect, and the bare parser matches it with find() and claims the whole ability,
@@ -2019,13 +2062,13 @@ public class ActionResolver {
         // composes the gain inside its own parser, and hoisting this above them would reroute a
         // dozen working abilities through a different code path to reach the same result.
         result = tryParseTrailingGainCrystal(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("TrailingGainCrystal", result);
 
         result = tryParseGainCrystal(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("GainCrystal", result);
 
         result = tryParseGainCrystalIfOpponentHas(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("GainCrystalIfOpponentHas", result);
 
         // Must precede every counter parser below. Omega 14-117L's two branches are each an
         // ordinary counter or damage effect, so tryParsePlaceCounters — read with find() — claimed
@@ -2033,22 +2076,22 @@ public class ActionResolver {
         // Weapon Counter. A gate goes above the parsers that read its inner effects, the way the
         // Break-Zone gates near the top of this chain do.
         result = tryParseCounterAbsentElsePresentGate(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("CounterAbsentElsePresentGate", result);
 
         // Must precede tryParsePlaceCounters: that parser is read with find() and reads
         // "each Job Apprentice Mage you control" as the card name being counted on, with only its
         // source-name check keeping it off this text.
         result = tryParsePlaceCountersOnEachJob(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("PlaceCountersOnEachJob", result);
 
         result = tryParsePlaceCountersForEach(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("PlaceCountersForEach", result);
 
         result = tryParsePlaceCounters(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("PlaceCounters", result);
 
         result = tryParseRemoveAllCounters(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("RemoveAllCounters", result);
 
         // Last of the counter parsers on purpose. This is the generic reading of "if N or more X
         // Counters are placed on [Self], …", and every counter with a parser of its own has to get
@@ -2056,120 +2099,120 @@ public class ActionResolver {
         // Reraise gate carries a "Then, if there are none left" tail this one cannot see. What is
         // left for it is the counters nothing else claims — Number 24 20-036H's Barrier.
         result = tryParseCountersOnSelfGate(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("CountersOnSelfGate", result);
 
         // Beside it, and last for the same reason: the article form of the same gate. The two
         // patterns are exclusive, so their order relative to each other decides nothing.
         result = tryParseCounterPresentOnSelfGate(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("CounterPresentOnSelfGate", result);
 
         result = tryParseLookTopDeckOptionallyBreak(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("LookTopDeckOptionallyBreak", result);
 
         result = tryParseLookTopDeckBottomOrKeep(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("LookTopDeckBottomOrKeep", result);
 
         result = tryParseCounterScaleLookAddToHand(effectText, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("CounterScaleLookAddToHand", result);
 
         result = tryParseLookSelfFieldScaleAddToHandRestBottom(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("LookSelfFieldScaleAddToHandRestBottom", result);
 
         result = tryParseLookTopDeckAddToHandRestBottom(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("LookTopDeckAddToHandRestBottom", result);
 
         result = tryParseLookTopDeckAddToHandOneToBreakRestBottom(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("LookTopDeckAddToHandOneToBreakRestBottom", result);
 
         // Beside its Break-Zone sibling: the same two picks over different destinations, and
         // anchored, so neither can claim the other's sentence.
         result = tryParseLookTopDeckAddToHandOneToBottomRestTop(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("LookTopDeckAddToHandOneToBottomRestTop", result);
 
         result = tryParseLookTopDeckAddToHandRestBreak(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("LookTopDeckAddToHandRestBreak", result);
 
         result = tryParseLookTopDeckTopOrBottom(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("LookTopDeckTopOrBottom", result);
 
         result = tryParseLookTopDeckReturnTopOrdered(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("LookTopDeckReturnTopOrdered", result);
 
         result = tryParseLookTopDeckPickOneTopRestBottom(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("LookTopDeckPickOneTopRestBottom", result);
 
         result = tryParseLookTopDeckCastSummonFreeRestBottom(effectText, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("LookTopDeckCastSummonFreeRestBottom", result);
 
         // Beside its Summon sibling, which it does not overlap: that one requires the word
         // "Summon" and a restriction on it, this one requires "Cast 1 card" and is anchored.
         result = tryParseLookTopDeckCastAnyFreeRestBottomOrdered(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("LookTopDeckCastAnyFreeRestBottomOrdered", result);
 
         // Must precede tryParseLookTopDeckPeek: Keiss opens "Look at the top card of your deck
         // and your opponent's deck", whose first half the peek reader would otherwise claim.
         result = tryParseLookTopBothDecksTopOrBottom(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("LookTopBothDecksTopOrBottom", result);
 
         result = tryParseLookTopDeckPeek(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("LookTopDeckPeek", result);
 
         // Must precede tryParseRemoveTopOfDeckFromGame: that one matches with find() and stops at
         // the first full stop, so it claimed these printings off their opening sentence and dropped
         // the "You can cast them this turn" permission the removal exists to grant.
         result = tryParseRemoveTopOfDeckRfgCastableThisTurn(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("RemoveTopOfDeckRfgCastableThisTurn", result);
 
         // Ahead of tryParseRemoveTopOfDeckFromGame for that same reason: 6-127L Hraesvelgr's option
         // opens with the phase skip and ends with a removal, and the removal's find() claimed the
         // option off the tail alone, resolving with the skip silently dropped.
         result = tryParseSkipOpponentPhasesNextTurn(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("SkipOpponentPhasesNextTurn", result);
 
         // Must precede RemoveTopOfDeckFromGame, which find()s the removal and drops "If it's a
         // Forward, …" (1-131R Cait Sith).
         result = tryParseRemoveTopOfDeckThenIfItsType(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("RemoveTopOfDeckThenIfItsType", result);
         // Same reason: the removal alone dropped 12-019R Amidatelion's cast permission.
         result = tryParseRemoveTopOfDeckThenIfCostMayCast(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("RemoveTopOfDeckThenIfCostMayCast", result);
         // And 27-015R Bakool Ja Ja's game-long permission.
         result = tryParseRemoveTopOfDeckCastableThisGame(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("RemoveTopOfDeckCastableThisGame", result);
         result = tryParseRemoveTopOfDeckFromGame(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("RemoveTopOfDeckFromGame", result);
 
         result = tryParseAddRemovedByPreviousEffectToHand(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("AddRemovedByPreviousEffectToHand", result);
 
         result = tryParseRevealPlayNamedWithMaxCostRestBottom(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("RevealPlayNamedWithMaxCostRestBottom", result);
 
         // Must precede tryParseRevealPlayJobTypeTotalCostRestBottom: that one reads a single filter
         // over the whole budget, and Mid Previa 26-115H names a quota per card type.
         result = tryParseRevealPlayPerTypeQuotaTotalCost(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("RevealPlayPerTypeQuotaTotalCost", result);
 
         result = tryParseRevealPlayJobTypeTotalCostRestBottom(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("RevealPlayJobTypeTotalCostRestBottom", result);
 
         result = tryParseRevealPlayNamedOrJobMaxCostRestBottom(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("RevealPlayNamedOrJobMaxCostRestBottom", result);
 
         result = tryParseFlipUntilTypeToHandRestShuffleBottom(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("FlipUntilTypeToHandRestShuffleBottom", result);
 
         result = tryParseFlipUntilElementToHandRestShuffleBottom(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("FlipUntilElementToHandRestShuffleBottom", result);
 
         result = tryParseRevealPlayTypeOntoFieldRestBottom(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("RevealPlayTypeOntoFieldRestBottom", result);
 
         result = tryParseShuffleDeck(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("ShuffleDeck", result);
 
         result = tryParseBackupCpDraw(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("BackupCpDraw", result);
 
         // Must follow tryParseBackupCpDraw: that one reads the unqualified Summon wording ("If the
         // CP paid to cast Shiva was only produced by Backups, also draw 1 card") with find(), and
@@ -2177,43 +2220,43 @@ public class ActionResolver {
         // The general form is what 7-092C Thancred needs — a Category qualifier on the paying
         // Backups, and an arbitrary effect behind the gate rather than a fixed draw.
         result = tryParseCastCpProducedByBackupsGate(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("CastCpProducedByBackupsGate", result);
 
         result = tryParseNameElementOnlySelfBecomes(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("NameElementOnlySelfBecomes", result);
 
         result = tryParseNameElementAndJobSelfBecomes(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("NameElementAndJobSelfBecomes", result);
 
         result = tryParseNameJobAndElementSelfGainsPermanent(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("NameJobAndElementSelfGainsPermanent", result);
 
         result = tryParseNameJobOrCategoryRevealAddToHand(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("NameJobOrCategoryRevealAddToHand", result);
 
         // Beside its sibling below rather than ahead of it: the two are the halves of Jack
         // Garland 27-111L, one naming a Job and the other reading it back, and neither text can
         // match the other's pattern.
         result = tryParseNamedJobReference(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("NamedJobReference", result);
 
         result = tryParseNameJob(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("NameJob", result);
 
         result = tryParseGrantPartyAnyElementThisTurn(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("GrantPartyAnyElementThisTurn", result);
 
         result = tryParseSourcePowerBecomesRemovedForwardPower(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("SourcePowerBecomesRemovedForwardPower", result);
 
         result = tryParseSourcePowerBecomesOpponentWeakestForward(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("SourcePowerBecomesOpponentWeakestForward", result);
 
         result = tryParseOpponentGainsControlOfSource(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("OpponentGainsControlOfSource", result);
 
         result = tryParseMayGiveSourceControlToOpponent(effectText, source);
-        if (result != null) return result;
+        if (result != null) return claim("MayGiveSourceControlToOpponent", result);
 
         // Compound-sentence fallback: split on ". " between sentences and compose effects.
         // Handles "Activate <cardName>. <cardName> gains +2000 power until the end of the turn." etc.
@@ -2221,6 +2264,8 @@ public class ActionResolver {
         String[] sentences = effectText.split("(?<=\\.)\\s+(?=[A-Z])");
         if (sentences.length > 1) {
             List<Consumer<GameContext>> consumers = new ArrayList<>();
+            // The sentences behind each consumer, in step with it, so the claim is named for them.
+            List<String> composed = new ArrayList<>();
             // Whether a sentence ahead of the current one was dropped. A back-reference is only
             // orphaned once that has happened; while every sentence so far has resolved, the
             // referent is present and composing is what this fallback is for.
@@ -2255,7 +2300,7 @@ public class ActionResolver {
                 // arrives at this fallback.
                 if (isTriggeringBrokenCardSalvage(trimmed)) { droppedEarlier = true; previousResolved = false; continue; }
                 Consumer<GameContext> c = parse(trimmed, source, xValue);
-                if (c != null) { consumers.add(c); previousResolved = true; continue; }
+                if (c != null) { consumers.add(c); composed.add(trimmed); previousResolved = true; continue; }
                 droppedEarlier = true;
                 // Dropping an unparsed sentence is safe while the sentences are independent, but
                 // an unresolved "When you do so, …" gates everything after it. Composing past it
@@ -2264,27 +2309,32 @@ public class ActionResolver {
                 // too: it is the price of the payoff just lost, and running it alone paid for
                 // nothing (28-097H Vaan removed 3 cards from his Break Zone to no effect).
                 if (DO_SO_CONDITIONAL_SENTENCE.matcher(trimmed).find()) {
-                    if (previousResolved) consumers.remove(consumers.size() - 1);
+                    if (previousResolved) {
+                        consumers.remove(consumers.size() - 1);
+                        composed.remove(composed.size() - 1);
+                    }
                     break;
                 }
                 previousResolved = false;
             }
-            if (!consumers.isEmpty()) return ctx -> consumers.forEach(c -> c.accept(ctx));
+            if (!consumers.isEmpty())
+                return new Dispatch("SentenceFallback",
+                        ctx -> consumers.forEach(c -> c.accept(ctx)), List.copyOf(composed));
         }
 
         result = tryParseConditionalOpponentHand(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("ConditionalOpponentHand", result);
 
         result = tryParseConditionalOpponentHandMin(effectText, source, xValue);
-        if (result != null) return result;
+        if (result != null) return claim("ConditionalOpponentHandMin", result);
 
-        if (CardData.HAS_ALL_ELEMENTS_PATTERN.matcher(effectText.trim()).matches()) return ctx -> {};
+        if (CardData.HAS_ALL_ELEMENTS_PATTERN.matcher(effectText.trim()).matches()) return claim("HasAllElements", ctx -> {});
 
         result = tryParseMultiPlayGrant(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("MultiPlayGrant", result);
 
         result = tryParseLightDarkDiscardCpGrant(effectText);
-        if (result != null) return result;
+        if (result != null) return claim("LightDarkDiscardCpGrant", result);
 
         return null;
     }
@@ -2380,822 +2430,113 @@ public class ActionResolver {
         return ctx -> parts.forEach(p -> p.accept(ctx));
     }
 
-    /** Returns the name of the first pattern that matches {@code effectText}, or {@code null}. */
+    /**
+     * Returns the name of the call site in {@link #dispatch}'s chain that claims {@code effectText},
+     * or {@code null} when nothing does.
+     *
+     * <p>The name is looked up from the site that won, never decided by a second walk over the
+     * parsers, so it cannot name a parser {@code parse()} did not run. See {@link #siteName}.
+     */
     public static String matchedPatternName(String effectText, CardData source) {
-        // Leading normalisations parse() applies before dispatching, so the name is decided from the
-        // same text parse() matched against. The EX BURST strip matters to the anchored parsers: an
-        // EX BURST Summon such as 1-172C Moogle ("EX BURST Draw 2 cards, then discard 1 card …")
-        // is resolved by one, and with the marker left on the front it matched nothing here.
-        // stripExBurstPrefix's word boundary leaves a clause opening "EX Bursts of cards …" alone,
-        // so the ExBurstSuppression name is unaffected.
+        // dispatch() normalises its input the same way; doing it here as well hands the composing
+        // sites below the text they were matched against.
         effectText = stripExBurstPrefix(effectText);
         effectText = effectText.replaceFirst("(?i)^Then,?\\s+", "").trim();
         effectText = effectText.replaceFirst("(?i)^also\\s+", "").trim();
 
-        String name = matchedPatternNameOn(effectText, source);
-        if (name != null) return name;
-
-        // Retry without trailing use-restriction sentences — "You can only use this ability during
-        // your turn." and friends, which defeat the anchored parsers. Deliberately a fallback and
-        // not a preamble: parse() does not strip them, so stripping up front lets an earlier
-        // pattern claim text parse() resolves differently, and the reported name stops naming the
-        // parser that actually ran. Restricting the retry to texts nothing matched mirrors how
-        // parse() reaches these itself — through its own trailing sentence-split fallback.
-        String noRestriction = stripRestrictionSentences(effectText);
-        if (!noRestriction.isEmpty() && !noRestriction.equals(effectText))
-            return matchedPatternNameOn(noRestriction, source);
-        return null;
+        Dispatch d = dispatch(effectText, source, 0);
+        // Probed again at X = 1 for the reason AutoAbilityTriggers.dispatchedByTriggers is: 25-057R
+        // Cutter's followup counts its targets in X and declines at zero, and naming it is a
+        // question about the shape of the sentence, not about any particular payment.
+        if (d == null) d = dispatch(effectText, source, 1);
+        return d != null ? siteName(d, effectText, source) : null;
     }
 
-    /** One ordered pass of the name chain over {@code effectText} exactly as given. */
-    private static String matchedPatternNameOn(String effectText, CardData source) {
-        // Mirrors parse(): ahead of the trailing-draw rule, which would otherwise split Leviathan
-        // 16-125C's conditional half off the end of the sentence carrying the condition.
-        if (tryParseCastPaymentElementsGate(effectText, source, 0) != null)
-            return "CastPaymentElementsGate";
-        // Mirrors parse().
-        if (tryParseForwardsAttackingThisTurnGate(effectText, source, 0) != null)
-            return "ForwardsAttackingThisTurnGate";
-        if (forwardsAttackingGateUnreadable(effectText, source, 0)) return null;
-        // Mirrors parse().
-        if (tryParseSelfBecomeForwardPermanently(effectText, source) != null) return "SelfBecomeForwardPermanent";
-        if (tryParseRevealAddThenIfAddedIsAlso(effectText, source, 0) != null) return "RevealAddThenIfAddedIsAlso";
-        if (tryParseRevealTopAddAllMatchingRestBz(effectText) != null) return "RevealTopAddAllMatchingRestBz";
-        if (tryParseDiscardTypeAlternation(effectText) != null) return "DiscardTypeAlternation";
-        if (tryParseLookOppTopRemoveOneCastable(effectText) != null) return "LookOppTopRemoveOneCastable";
-        // Mirrors parse(): the cost-tiered reveal (10-072L) is read ahead of the Choose chain.
-        if (ActionResolverSearch.tryParseRevealTopDeckCostTiers(effectText, source) != null)
-            return "RevealTopDeck";
-        // Mirrors parse(): ahead of the Choose chain, which would name Lorenzo's quotation.
-        if (tryParseUntilEotDoublesPowerAndQuoted(effectText, source) != null)
-            return "UntilEotDoublesPowerAndQuoted";
-        if (ActionResolverSearch.tryParseRevealTopNTieredByDistinctElements(effectText, source, 0) != null)
-            return "RevealTopNTieredByDistinctElements";
-        if (tryParseCastCountGate(effectText, source, 0) != null)
-            return "CastCountGate";
-        if (tryParseCastPaymentElementsNotIncludedGate(effectText, source, 0) != null)
-            return "CastPaymentElementsNotIncludedGate";
-        if (tryParseCastPaymentElementCpGate(effectText, source, 0) != null)
-            return "CastPaymentElementCpGate";
-        if (tryParseCastPaymentOnlyElementCpGate(effectText, source, 0) != null)
-            return "CastPaymentOnlyElementCpGate";
-        if (tryParseCastPaymentExactElementsGate(effectText, source, 0) != null)
-            return "CastPaymentExactElementsGate";
-        // Mirrors parse(), where these are read beside the gate above.
-        if (tryParseCrystalHeldGate(effectText, source, 0) != null)   return "CrystalHeldGate";
-        if (tryParseOpponentMayDiscardElseEffect(effectText, source, 0) != null)
-            return "OpponentMayDiscardElseEffect";
-        // Mirrors parse()'s first dispatch. Reported as a composite so the leading effect still
-        // names itself rather than being hidden behind a "TrailingDraw" label.
-        if (tryParseTrailingDraw(effectText, source, 0) != null) {
-            String tdHead = trailingDrawHead(effectText);
-            if (tdHead != null) {
-                String headName = matchedPatternName(tdHead, source);
-                return (headName != null ? headName : "?") + " + DrawCards";
+    /**
+     * Names historically reported for a site under something other than its label. Each is the
+     * literal the old hand-kept name chain returned from that parser's own entry; they are kept so
+     * the names the tests and the golden file pin did not move when that chain was retired. A site
+     * missing here is named by its label, so a new parser needs no entry.
+     */
+    static final Map<String, String> SITE_ALIASES = Map.ofEntries(
+            Map.entry("AllFwdsBlockedOnlyByLowerCostThisTurn", "AllFwdsBlockedOnlyByLowerCost"),
+            Map.entry("CancelStackEntry",                      "CancelSummonOrAutoAbility"),
+            Map.entry("CannotBeChosenStandalone",              "CannotBeChosen"),
+            Map.entry("ChooseGatedBoostInstead",               "ChooseCharacter"),
+            Map.entry("ChooseMaySearchRfgThenElse",            "ChooseCharacter"),
+            Map.entry("DualSearchJobAndTypeDontShareElements", "DualSearchDontShareElements"),
+            Map.entry("EachPlayerRevealCharacterMayPlay",      "EachPlayerRevealMayPlay"),
+            Map.entry("EffectThenConditionalInstead",          "ConditionalInstead"),
+            Map.entry("EndOfOppTurnDelayedEffect",             "EndOfOppTurnDelayed"),
+            Map.entry("FilteredForwardsQuotedGrant",           "FilteredForwardsGrant"),
+            Map.entry("IfOppControlsNOrMoreCondTypeGate",      "IfOppControlsNOrMoreCondType"),
+            Map.entry("NegateAllDamage",                       "NegateDamage"),
+            Map.entry("OpponentCannotCastAnyCardsThisTurn",    "OpponentCannotCastAnyCards"),
+            Map.entry("OpponentCannotCastSummonsThisTurn",     "OpponentCannotCastSummons"),
+            Map.entry("OpponentCannotSearchThisTurn",          "OpponentCannotSearch"),
+            Map.entry("RevealPlayJobTypeTotalCostRestBottom",  "RevealPlayJobTypeTotalCost"),
+            Map.entry("RevealTopDeckCostTiers",                "RevealTopDeck"),
+            Map.entry("SelfBecomeForwardPermanently",          "SelfBecomeForwardPermanent"),
+            Map.entry("SelfBoostEotPrefix",                    "SelfBoostUntilEot"),
+            Map.entry("SourcePowerBecomesRemovedForwardPower", "SourcePowerBecomesRemovedPower"),
+            Map.entry("StandaloneCannotAttackOrBlock",         "CannotAttackOrBlock"),
+            Map.entry("WhenYouDoSoSequence",                   "WhenYouDoSo"));
+
+    /**
+     * The name reported for a claim. Most sites are named by their label (or its alias); the ones
+     * below read more than one clause and are named for each, so a composed ability is not hidden
+     * behind the name of whatever joined it together.
+     */
+    private static String siteName(Dispatch d, String text, CardData source) {
+        switch (d.site()) {
+            case "TrailingDraw" -> {
+                String head = trailingDrawHead(text);
+                if (head != null) return nameOrUnread(head, source) + " + DrawCards";
             }
-        }
-        // Mirrors parse(): claimed whole, ahead of the sentence composition that would split it.
-        if (tryParseRemoveSelfThenPlaySelfOntoField(effectText, source) != null) return "RemoveSelfThenPlaySelfOntoField";
-        // Mirrors parse()'s independent-sentence composition, so a composed ability is named for
-        // every sentence that runs rather than for whichever single pattern this chain finds first.
-        // Must precede IndependentSentences, mirroring parse(): the splitter reports the removal
-        // alone and drops the return clause.
-        if (tryParseRemoveSelfReturnNextMainPhase1(effectText, source) != null)
-            return "RemoveSelfReturnNextMainPhase1";
-        // Mirrors parse(): claimed whole, ahead of the splitter that would report it in halves.
-        if (tryParseDivideOppForwardsIntoGroups(effectText) != null) return "DivideOppForwardsIntoGroups";
-        // Mirrors parse(): claimed whole, ahead of the splitter that would report it in thirds.
-        if (tryParseOppRfgWholeHandFaceDown(effectText) != null) return "OppRfgWholeHandFaceDown";
-        // Mirrors parse(): claimed whole, ahead of the splitter that would report it in halves.
-        if (cancelAnyNumberFilter(effectText) != null) return "CancelAnyNumberAbilitiesOnStack";
-        // Mirrors parse(): claimed whole, ahead of the splitter that would report it in thirds and
-        // name it after the payoff alone — the half that runs unconditionally when the gate is lost.
-        if (tryParseChooseBzCardsRfgElementGate(effectText, source, 0) != null)
-            return "ChooseBzCardsRfgElementGate";
-        // Mirrors parse(): claimed whole, ahead of the splitter. Both of The Demon 20-007L's
-        // sentences parse alone, so the splitter reports it as "NameJob + DealDamageToForwards"
-        // — a name for an unfiltered sweep of both boards, which is what it used to do.
-        if (tryParseNameJobOrElementThenDamageMatching(effectText) != null)
-            return "NameJobOrElementThenDamageMatching";
-        if (tryParseIndependentSentences(effectText, source, 0) != null) {
-            String composed = composeOverSentences(effectText, s -> matchedPatternName(s, source));
-            if (composed != null) return composed;
-        }
-        // Mirrors parse(): the pay-or-else gate is reported ahead of its consequence's own pattern.
-        if (tryParseIfNotPayOrElse(effectText, source, 0)               != null) return "IfNotPayOrElse";
-        if (tryParseIfNotRemoveFromBzOrElse(effectText, source)         != null) return "IfNotRemoveFromBzOrElse";
-        if (tryParseRemoveTopThenPileThreshold(effectText, source)          != null) return "RemoveTopThenPileThreshold";
-        if (tryParseAddRemovedBySourceAbilityToHand(effectText, source)     != null) return "AddRemovedBySourceAbilityToHand";
-        if (tryParseOppRfpTopDeckCastable(effectText)                   != null) return "OppRfpTopDeckCastable";
-        if (tryParseChooseFromOppBzCastable(effectText)                 != null) return "ChooseFromOppBzCastable";
-        if (tryParseChooseSummonsFromBzCastable(effectText)             != null) return "ChooseSummonsFromBzCastable";
-        if (tryParseArmNextSummonRecast(effectText) != null) return "ArmNextSummonRecast";
-        if (tryParseChooseSummonInBzMaxCostFreeCastRfg(effectText)      != null) return "ChooseSummonInBzMaxCostFreeCastRfg";
-        if (tryParseChooseSummonsDiffCostOppSelectsOther(effectText)    != null) return "ChooseSummonsDiffCostOppSelectsOther";
-        // Mirrors parse(), where this is the 5th call site. It must precede the ChooseCharacter
-        // family: a modal "select 1 of the 3 following actions" carries its options as quoted text,
-        // and those match the general choose/search patterns, so left to the late
-        // SELECT_FOLLOWING_ACTIONS_DETECT fallback the ability is reported as whichever option
-        // happens to match first rather than as the choice it is.
-        if (tryParseSelectFollowingActions(effectText, source)          != null) return "SelectFollowingActions";
-        if (tryParseDiscardHandOppSelectsRepeatableActions(effectText, source) != null)
-            return "DiscardHandOppSelectsRepeatableActions";
-        // Must precede tryParseWhenYouDoSoSequence: Zidane-style text contains "If you do so",
-        // which that parser would otherwise claim. Mirrors parse().
-        if (tryParseRevealHandOptPickDiscardOppDraw(effectText) != null) return "RevealHandOptPickDiscardOppDraw";
-        if (tryParseRevealHandOptPickRfpOppDraw(effectText)    != null) return "RevealHandOptPickRfpOppDraw";
-        // Must precede tryParseWhenYouDoSoSequence: that parser resolves both halves
-        // independently, so it would claim the pay-then-effect shape first. Mirrors parse().
-        if (tryParseMayPayCostThenEffect(effectText, source, 0) != null) return "MayPayCostThenEffect";
-        // Must precede WhenYouDoSo, mirroring parse(): that parser claims the whole sentence and
-        // names itself over a card the choose parser actually resolves.
-        if (tryParseChooseMaySearchRfgThenElse(effectText, source, 0) != null)
-            return "ChooseCharacter";
-        // Must precede WhenYouDoSo, mirroring parse(): the payoff's count comes from the removal in
-        // the same sentence and cannot survive that parser's split.
-        if (tryParseRemoveAnyCountersThenChooseSameNumber(effectText, source) != null)
-            return "RemoveAnyCountersThenChooseSameNumber";
-        // Beside it, and ahead of WhenYouDoSo for the same reason.
-        if (tryParseDiscardAnyNumberThenChooseSameNumber(effectText, source) != null)
-            return "DiscardAnyNumberThenChooseSameNumber";
-        if (tryParseWhenYouDoSoSequence(effectText, source, 0) != null) return "WhenYouDoSo";
-        if (tryParseDullAnyNumberBackupsPerDulled(effectText, source) != null) return "DullAnyNumberBackupsPerDulled";
-        if (tryParseRevealAnyFromHandPerRevealed(effectText, source) != null) return "RevealAnyFromHandPerRevealed";
-        if (tryParseRevealAnyFromHandThresholds(effectText, source) != null) return "RevealAnyFromHandThresholds";
-        if (tryParseSelectNumber(effectText, source)                    != null) return "SelectNumber";
-        if (tryParseAllMonstersTemporaryForward(effectText) != null) return "AllMonstersTemporaryForward";
-        if (tryParseBecomeForwardUntilEot(effectText, source) != null) return "BecomeForwardUntilEot";
-        if (tryParseThenBreakSelfAtEndOfTurn(effectText, source) != null) return "ThenBreakSelfAtEndOfTurn";
-        if (tryParseForEachJobAndNameDealDamageToForwards(effectText)   != null) return "ForEachJobAndNameDealDamageToForwards";
-        if (tryParseDealNForEachJobOrNameToOppForwards(effectText)      != null) return "DealNForEachJobOrNameToOppForwards";
-        if (tryParseSelfGainsWhenAttacksEOT(effectText, source)        != null) return "SelfGainsWhenAttacksEOT";
-        if (tryParseDealDamageToForwardsForEach(effectText)             != null) return "DealDamageToForwardsForEach";
-        if (tryParseDealDamagePerGroupToAllOppForwards(effectText)     != null) return "DealDamagePerGroupToAllOppForwards";
-        if (tryParseDealDamageToForwardsExceptElement(effectText)       != null) return "DealDamageToForwardsExceptElement";
-        if (tryParseRfpAllFwdExceptElementsThenTwiceDeck(effectText)    != null) return "RfpAllFwdExceptElementsThenTwiceDeck";
-        // Mirrors parse(): read beside the fixed-amount family it cannot use.
-        if (tryParseDealSameAmountToAllForwardsExcept(effectText, source, 0) != null)
-            return "DealSameAmountToAllForwardsExcept";
-        if (tryParseDealDamageToForwards(effectText)                    != null) return "DealDamageToForwards";
-        if (tryParseDivideDamageEquallyAmongAll(effectText)             != null) return "DivideDamageEquallyAmongAll";
-        if (tryParseNoForwardCostCannotAttack(effectText)               != null) return "NoForwardCostCannotAttack";
-        if (tryParseAllForwardsCannotBeChosenByExBursts(effectText)     != null) return "AllForwardsCannotBeChosenByExBursts";
-        if (tryParseOwnForwardsCannotBeChosenByExBurst(effectText)      != null) return "OwnForwardsCannotBeChosenByExBurst";
-        if (tryParseExBurstSuppression(effectText)                      != null) return "ExBurstSuppression";
-        if (tryParseDealHalfPowerDamageToForwards(effectText)           != null) return "DealHalfPowerDamageToForwards";
-        if (tryParseDealPowerMinusNDamageToForwards(effectText)         != null) return "DealPowerMinusNDamageToForwards";
-        if (tryParseDealHalfSourcePowerDamageToForwards(effectText)     != null) return "DealHalfSourcePowerDamageToForwards";
-        if (tryParseDamageToCombatBlocker(effectText)                   != null) return "DamageToCombatBlocker";
-        if (tryParseChooseOppFwdDynCostBreak(effectText)                   != null) return "ChooseOppFwdDynCostBreak";
-        if (tryParseChooseFwdPowerInferiorToSource(effectText, source)     != null) return "ChooseFwdPowerInferiorToSource";
-        if (tryParseChooseFwdBzCostInferiorToRemovedPlay(effectText)       != null) return "ChooseFwdBzCostInferiorToRemovedPlay";
-        if (tryParseChooseOppFwdGainsSpecialAbilityFreeOnce(effectText, source) != null) return "ChooseOppFwdGainsSpecialAbilityFreeOnce";
-        if (tryParseUseSpecialAbilityUsedThisTurn(effectText, source) != null) return "UseSpecialAbilityUsedThisTurn";
-        if (tryParseChooseOppDamagedFwdIfHasAbilityBreak(effectText)     != null) return "ChooseOppDamagedFwdIfHasAbilityBreak";
-        if (tryParseChooseAsManyAsFieldCount(effectText, source)         != null) return "ChooseAsManyAsFieldCount";
-        if (tryParseChooseAsManyAsBzRfgJobCount(effectText)             != null) return "ChooseAsManyAsBzRfgJobCount";
-        if (tryParseChooseAsManyAsPutToBzThisTurn(effectText)           != null) return "ChooseAsManyAsPutToBzThisTurn";
-        if (tryParseChooseCounterScaleCharsActivate(effectText, 1)    != null) return "ChooseCounterScaleCharsActivate";
-        if (tryParseChooseAnyNumberReturnToHand(effectText)    != null) return "ChooseAnyNumberReturnToHand";
-        // Mirrors parse(): ahead of ChooseCharacter, which finds the effect inside the granted
-        // ability's quotation and names the sentence for it (Snow & Lightning PR-158).
-        if (tryParseFilteredForwardsQuotedGrant(effectText)    != null) return "FilteredForwardsGrant";
-        if (tryParseCancelStackEntryUnlessPay(effectText)      != null) return "CancelStackEntryUnlessPay";
-        if (tryParseChooseFwdRevealCostParity(effectText)             != null) return "ChooseFwdRevealCostParity";
-        if (tryParseChooseForwardsGainAbilityEot(effectText)          != null) return "ChooseForwardsGainAbilityEot";
-        if (tryParseChooseForwardPlacePetrification(effectText)       != null) return "ChooseForwardPlacePetrification";
-        if (tryParseRemoveAllCountersFromSelf(effectText, source)     != null) return "RemoveAllCountersFromSelf";
-        // Must precede ChooseCharacter, mirroring parse(): it claims the choose half and leaves
-        // the control-gated play and sacrifice undescribed.
-        if (tryParseChooseTwoBzFwdPlayIfControl(effectText, source) != null)
-            return "ChooseTwoBzFwdPlayIfControl";
-        // Must precede ChooseCharacter: it matches the choose half alone and returns, dropping
-        // the delayed action that the rest of the ability consists of.
-        if (tryParseChooseThenEndOfOppTurnAction(effectText, source, 0) != null)
-            return "ChooseThenEndOfOppTurnAction";
-        // Must precede ChooseCharacter, mirroring parse(): it claims the first choose clause and
-        // leaves the second one out of both the name and the effect.
-        //
-        // The mixed-types guards are not here to be named — they are checked so this one does not
-        // answer for a text they win in parse(), where they are called ~80 call sites earlier.
-        // Their own naming gap ("Choose 1 Forward and 1 Backup. Break them." still reports
-        // ChooseCharacter) is separate, outstanding Phase 2 work.
-        // Mirrors parse(): both of these read a Break-Zone scope the joint parser splits across
-        // its two descriptors and loses, so they are asked first.
-        if (tryParseSelectNamedFromBzPlay(effectText) != null) return "SelectNamedFromBzPlay";
-        if (tryParseChooseTwoCostsFromBzPlayBoth(effectText) != null) return "ChooseTwoCostsFromBzPlayBoth";
-        if (tryParseChooseUpTo1EachInOwnBzToHand(effectText) != null) return "ChooseUpTo1EachInOwnBzToHand";
-        if (tryParseChooseThreeMixedTypes(effectText, source) == null
-                && tryParseChooseTwoMixedTypes(effectText, source) == null
-                && tryParseChooseTwoJointAction(effectText, source) != null)
-            return "ChooseTwoJointAction";
-        // Mirrors parse(): ahead of ChooseCharacter, which reads the budget clause as an
-        // unbounded choose.
-        if (tryParseChooseForwardsTotalCostBreak(effectText) != null) return "ChooseForwardsTotalCostBreak";
-        // Mirrors parse(): ahead of ChooseCharacter, which reads only the first of the two
-        // alternative target descriptions.
-        if (tryParseChooseEitherCostSpecBreak(effectText) != null) return "ChooseEitherCostSpecBreak";
-        // Mirrors parse(): ahead of ChooseCharacter, which claims the text and then has no
-        // followup branch for the per-pick amounts.
-        if (tryParseChooseTieredDamage(effectText) != null) return "ChooseTieredDamage";
-        // Mirrors parse(): ahead of ChooseCharacter, which claims the third sentence alone.
-        if (tryParseSelectOwnFwdToBzGainControlSameCost(effectText)     != null) return "SelectOwnFwdToBzGainControlSameCost";
-        // Mirrors parse(): ahead of ChooseCharacter, which cannot span the two zones at once.
-        if (tryParseChooseOppFwdsOrOwnBzFwdsRfg(effectText)             != null) return "ChooseOppFwdsOrOwnBzFwdsRfg";
-        // Mirrors parse(): ahead of ChooseCharacter, because the gated effect may itself be a
-        // choose (16-021C Rain), and in parse()'s order — the two compound forms before the
-        // leading one, which cannot see past their opening clause.
-        if (tryParseIfOpponentDamageAtMost(effectText, source) != null) return "IfOpponentDamageAtMost";
-        if (tryParseIfSelfDamageAtMost(effectText, source) != null) return "IfSelfDamageAtMost";
-        if (tryParseShuffleThenRevealPlayNamedRestBottom(effectText, source) != null) return "ShuffleThenRevealPlayNamedRestBottom";
-        if (tryParseShuffleDeckThen(effectText, source) != null) return "ShuffleDeckThen";
-        if (tryParseShuffleThenRevealTopCastSummonFreeRestBz(effectText) != null)
-            return "ShuffleThenRevealTopCastSummonFreeRestBz";
-        if (tryParseDiscardThenIfDiscardedCategory(effectText, source) != null) return "DiscardThenIfDiscardedCategory";
-        if (tryParseDiscardThenIfDiscardedType(effectText, source) != null) return "DiscardThenIfDiscardedType";
-        if (tryParseDiscardThenIfAnyDiscardedCategory(effectText, source) != null)
-            return "DiscardThenIfAnyDiscardedCategory";
-        if (tryParseIfPutFromFieldToBzThisTurnInstead(effectText, source) != null) return "IfPutFromFieldToBzThisTurnInstead";
-        if (tryParseIfPutFromFieldToBzThisTurn(effectText, source)        != null) return "IfPutFromFieldToBzThisTurn";
-        if (tryParseIfPutFromFieldToBzThisTurnMidGate(effectText, source) != null) return "IfPutFromFieldToBzThisTurnMidGate";
-        // Mirrors parse(): tryParseChooseFormerLatter is dispatched long before ChooseCharacter
-        // there, so Samurai 29-006C resolves through it while this chain — whose own
-        // ChooseFormerLatter call sits hundreds of lines below — would answer ChooseCharacter for
-        // code that did not run.
-        //
-        // Guarded on the one anchored shape rather than by hoisting that call up here. The two
-        // chains disagree about where the former/latter cluster belongs, and moving it would
-        // rename every other former/latter record in the corpus; reconciling the orders is the
-        // registry work, not something to settle from inside one guard.
-        //
-        // PHASE2-GUARD: delete this whole block when the chains become one ordered registry —
-        // an ordered registry cannot disagree with itself, so it makes the guard dead code. It
-        // will not show up as work to do on its own: the attribution report only lists abilities
-        // that parse and go unnamed, and this block is what stops 29-006C being one of them.
-        {
-            Matcher formerLatterM = CHOOSE_FORMER_LATTER_PATTERN.matcher(effectText);
-            if (formerLatterM.find() && FORMER_TO_HAND_IF_JOB_OR_NAME_DAMAGE_LATTER
-                    .matcher(formerLatterM.group("effects").trim()).matches())
-                return "ChooseFormerLatter";
-        }
-        // Mirrors parse(): ahead of ChooseCharacter, which claims the Fire arm's choose out of the
-        // middle of the ability.
-        if (tryParseRevealHandElementThresholds(effectText, source) != null)
-            return "RevealHandElementThresholds";
-        if (tryParseChooseCharacter(effectText, source, 0)              != null) return "ChooseCharacter";
-        if (tryParseIfSelfFwdReceivedDamageDraw(effectText, source)          != null) return "IfSelfFwdReceivedDamageDraw";
-        if (tryParseIfRfpCount(effectText, source)               != null) return "IfRfpCount";
-        if (tryParseIfSelfRfgCount(effectText, source)           != null) return "IfSelfRfgCount";
-        if (tryParseElementChange(effectText, source) != null) return "ElementChange";
-        if (tryParseDelayedEffect(effectText)                 != null) return "DelayedEffect";
-        if (tryParsePlayerCannotCastSummons(effectText)                != null) return "PlayerCannotCastSummons";
-        // Mirrors parse(): ahead of CannotBeChosen, which would claim it off the quoted clause.
-        if (tryParseSelfGainsAndBasePowerBecomesPermanent(effectText, source) != null) return "SelfGainsAndBasePowerBecomesPermanent";
-        if (tryParseSelfGainsTraitsAndQuotedPermanent(effectText, source) != null) return "SelfGainsTraitsAndQuotedPermanent";
-        // Mirrors parse(): ahead of CannotBeChosen, which claims this off its opening clause.
-        if (tryParseSelfCannotBeChosenByAnyAndGainsTraits(effectText, source) != null)
-            return "SelfCannotBeChosenByAnyAndGainsTraits";
-        if (tryParseCannotBeChosenStandalone(effectText, source) != null) return "CannotBeChosen";
-        if (tryParseCannotBecomeDullOpp(effectText, source) != null)     return "CannotBecomeDullOpp";
-        if (tryParseCannotBeReturnedToHandOpp(effectText, source) != null) return "CannotBeReturnedToHandOpp";
-        if (tryParseCharactersCannotBeReturnedToHandOpp(effectText) != null) return "CharactersCannotBeReturnedToHandOpp";
-        if (tryParseCannotBePutIntoBzOpp(effectText, source) != null)    return "CannotBePutIntoBzOpp";
-        if (tryParseChooseOwnFwdBoostProtectionsOrAllIfDmg(effectText) != null) return "ChooseOwnFwdBoostProtectionsOrAllIfDmg";
-        if (tryParseActivateAllOwnFwdsGainProtections(effectText) != null) return "ActivateAllOwnFwdsGainProtections";
-        if (tryParseStandaloneCannotAttackOrBlock(effectText, source) != null) return "CannotAttackOrBlock";
-        if (tryParseNegateAllDamage(effectText)                != null) return "NegateDamage";
-        if (tryParsePlayerNextDamageZeroRedirect(effectText)   != null) return "PlayerNextDamageZeroRedirect";
-        if (tryParsePlayerNextDamageZero(effectText)           != null) return "PlayerNextDamageZero";
-        if (tryParseCancelAutoAbilityAndDamageIfForward(effectText) != null) return "CancelAutoAbilityAndDamageIfForward";
-        // Must precede CancelSummonOrAutoAbility, mirroring parse(): they share a first sentence.
-        if (tryParseChooseStackEntryZeroItsDamage(effectText) != null) return "ChooseStackEntryZeroItsDamage";
-        if (tryParseCancelStackEntry(effectText)               != null) return "CancelSummonOrAutoAbility";
-        // Mirrors parse(): ahead of the general redirect, which would otherwise claim the name.
-        if (tryParseRedirectChosenTarget(effectText, source)   != null) return "RedirectChosenTarget";
-        if (tryParseCopyChosenAutoAbilityOnStack(effectText, source) != null) return "CopyChosenAutoAbilityOnStack";
-        if (tryParseCancelAutoAbilityTriggeredFrom(effectText) != null) return "CancelAutoAbilityTriggeredFrom";
-        if (tryParseChosenAutoAbilitySourceToBreakZone(effectText, source) != null) return "ChosenAutoAbilitySourceToBreakZone";
-        if (tryParseDelayedReturnSelfFromBreakZone(effectText, source) != null) return "DelayedReturnSelfFromBreakZone";
-        if (tryParseCancelAbilityOnStack(effectText)           != null) return "CancelAbilityOnStack";
-        if (tryParseCancelChosenTargetUnlessPay(effectText)    != null) return "CancelChosenTargetUnlessPay";
-        if (tryParseCancelChosenTargetUnlessDiscard(effectText) != null) return "CancelChosenTargetUnlessDiscard";
-        if (tryParseTriggeredDamageInsteadIfEnteredUnpaid(effectText) != null) return "TriggeredDamageInsteadIfEnteredUnpaid";
-        if (tryParseTriggeredTargetAction(effectText, 0)      != null) return "TriggeredTargetAction";
-        if (tryParseCancelChosenTargetBare(effectText)         != null) return "CancelChosenTargetBare";
-        if (tryParseCancelTriggeringSummon(effectText)         != null) return "CancelTriggeringSummon";
-        // Mirrors parse(): ahead of the target-action sibling, whose opening this text shares.
-        if (tryParseIfOppNotPaySourceCannotBeBroken(effectText, source) != null) return "IfOppNotPaySourceCannotBeBroken";
-        if (tryParseIfOppNotPayAction(effectText)             != null) return "IfOppNotPayAction";
-        // Mirrors parse(): checked alongside its sentence-sharing sibling below.
-        if (tryParseRevealTopToHandIfTypeElseTopOrBottom(effectText) != null) return "RevealTopToHandIfTypeElseTopOrBottom";
-        if (tryParseCancelChosenRevealTopIfType(effectText)    != null) return "CancelChosenRevealTopIfType";
-        if (tryParseCancelChosenMillTopIfNotType(effectText)   != null) return "CancelChosenMillTopIfNotType";
-        if (tryParseCancelChosenMillBothIfSameType(effectText) != null) return "CancelChosenMillBothIfSameType";
-        if (tryParseCancelSummonTargetingMyCharacter(effectText) != null) return "CancelSummonTargetingMyCharacter";
-        if (tryParseSelectNumber(effectText, source)          != null) return "SelectNumber";
-        if (tryParseDullAllOppFwdsPowerLeSource(effectText, source)        != null) return "DullAllOppFwdsPowerLeSource";
-        if (tryParseRevealTopBreakSameCostAddToHand(effectText)           != null) return "RevealTopBreakSameCostAddToHand";
-        // Must precede AllFieldEffect — see the ordering note in parse().
-        if (tryParseEndOfOppTurnDelayedEffect(effectText, source) != null) return "EndOfOppTurnDelayed";
-        if (tryParsePlaceCounterOnAllForwards(effectText)     != null) return "PlaceCounterOnAllForwards";
-        // Must precede AllFieldEffect — see the ordering note in parse().
-        if (tryParseAllFieldActivateThenDraw(effectText)      != null) return "AllFieldActivateThenDraw";
-        // Mirrors parse(): read ahead of the general sweep, which declines this text.
-        if (tryParseNameJobBreakNamedOrJob(effectText, source) != null)
-            return "NameJobBreakNamedOrJob";
-        if (tryParseBreakForwardsBelowSelfPower(effectText, source) != null)
-            return "BreakForwardsBelowSelfPower";
-        // Mirrors parse(): ahead of AllFieldEffect, which would otherwise name the ability after
-        // the base sentence alone and hide the replacement clause from the golden file.
-        if (tryParseEffectThenConditionalInstead(effectText, source, 0) != null) return "ConditionalInstead";
-        // Mirrors parse(): ahead of AllFieldEffect, which would otherwise name a reveal-and-branch
-        // ability after the sweep it lifts out of the middle of one of the branches.
-        // Mirrors parse(): ahead of RevealTopDeck, which reads the same "Reveal the top card …
-        // If it is X, …" shape more generally and would name this text after its own branches.
-        if (tryParseRevealOpponentTopBranchOnType(effectText) != null) return "RevealOpponentTopBranchOnType";
-        if (tryParseRevealTopDeck(effectText, source)         != null) return "RevealTopDeck";
-        if (tryParseRevealCostParityEffects(effectText, source) != null) return "RevealCostParityEffects";
-        // Mirrors parse(): ahead of AllFieldEffect, which names the sweep alone and leaves the
-        // draw out of the report.
-        if (tryParseAllFieldEffectAndDraw(effectText)         != null) return "AllFieldEffectAndDraw";
-        if (tryParseAllFieldEffectAndThen(effectText, source) != null) return "AllFieldEffectAndThen";
-        if (tryParseBreakAllThenSelfDamagePerBroken(effectText) != null) return "BreakAllThenSelfDamagePerBroken";
-        if (tryParseAllFieldEffectThenTheyGain(effectText, source) != null) return "AllFieldEffectThenTheyGain";
-        if (tryParseAllFieldEffect(effectText)                != null) return "AllFieldEffect";
-        if (tryParseFieldPowerGrantPassive(effectText, source) != null) {
-            String trimmed = effectText.trim();
-            return FIELD_OPPONENT_DEBUFF_PASSIVE.matcher(trimmed).matches()
-                    ? "FieldOpponentPowerDebuff" : "FieldPowerGrant";
-        }
-        // Mirrors parse(): after the grant guard, ahead of the payoff parsers that would otherwise
-        // name the ability after its effect alone and hide the condition from the golden file.
-        if (tryParseBreakZoneCountGate(effectText, source, 0) != null) return "BreakZoneCountGate";
-        if (breakZoneCountGateUnreadable(effectText, source, 0)) return null;
-        if (tryParseAllForwardsSameElementAsNamedPowerBoost(effectText) != null) return "AllForwardsSameElementAsNamedPowerBoost";
-        if (tryParsePartyForwardsPowerBoost(effectText) != null) return "PartyForwardsPowerBoost";
-        if (tryParseAllOppForwardsLoseTraitsEot(effectText) != null) return "AllOppForwardsLoseTraitsEot";
-        // Mirrors parse(): ahead of AllFieldPowerBoost, whose two filters mean a conjunction.
-        if (tryParseAllElementAndCategoryPowerBoost(effectText) != null)
-            return "AllElementAndCategoryPowerBoost";
-        if (tryParseAllFieldPowerBoost(effectText) != null) return "AllFieldPowerBoost";
-        if (tryParseUntilEotAllJobCardNameGainPowerTraitsAbility(effectText) != null) return "UntilEotAllJobCardNameGainPowerTraitsAbility";
-        if (tryParseAllFieldJobCardNamePowerBoost(effectText) != null) return "AllFieldJobCardNamePowerBoost";
-        if (tryParseTwoCardNamesPowerBoost(effectText) != null) return "TwoCardNamesPowerBoost";
-        if (tryParseAllFieldJobPowerBoost(effectText) != null) return "AllFieldJobPowerBoost";
-        if (tryParseAllFieldCardNamePowerBoost(effectText) != null) return "AllFieldCardNamePowerBoost";
-        if (tryParseAllFieldJobKeywordGrant(effectText) != null) return "AllFieldJobKeywordGrant";
-        if (tryParseAllFieldKeywordGrant(effectText) != null) return "AllFieldKeywordGrant";
-        // Mirrors parse(): ahead of AllFieldQuotedProtectionGrant, which reads the same sentence.
-        if (tryParseAllOwnForwardsGainQuotedAbilityEot(effectText) != null) return "AllOwnForwardsGainQuotedAbilityEot";
-        if (tryParseAllFieldQuotedProtectionGrant(effectText) != null) return "AllFieldQuotedProtectionGrant";
-        if (tryParseUntilEotDualPowerShift(effectText) != null) return "UntilEotDualPowerShift";
-        // Must precede UntilEotAllFieldPowerBoost — see the ordering note in parse().
-        if (tryParseUntilEotAllFieldPowerPerSelfDamage(effectText) != null) return "UntilEotAllFieldPowerPerSelfDamage";
-        if (tryParseNameJobOrElementAllForwardsBoost(effectText) != null) return "NameJobOrElementAllForwardsBoost";
-        if (tryParseUntilEotAllFieldPowerBoost(effectText) != null) return "UntilEotAllFieldPowerBoost";
-        if (tryParseStandalonePowerBoostAndAttackTrigger(effectText, source) != null) return "StandalonePowerBoostAndAttackTrigger";
-        if (tryParseStandalonePowerBoostAndCannotBeChosen(effectText, source) != null) return "StandalonePowerBoostAndCannotBeChosen";
-        if (tryParseStandaloneGainsTraitsAndCannotBeBlocked(effectText, source) != null) return "StandaloneGainsTraitsAndCannotBeBlocked";
-        if (tryParseStandaloneGainsTraitsAndCannotBeBlockedTrailing(effectText, source) != null) return "StandaloneGainsTraitsAndCannotBeBlockedTrailing";
-        if (tryParseStandaloneGainsCannotBeBlocked(effectText, source) != null) return "StandaloneGainsCannotBeBlocked";
-        if (tryParseSelfBasePowerBecomesUntil(effectText, source) != null) return "SelfBasePowerBecomesUntil";
-        if (tryParseStandalonePowerBoostUntil(effectText, source) != null) return "StandalonePowerBoostUntil";
-        if (tryParseStandaloneDoublePowerUntil(effectText, source) != null) return "StandaloneDoublePowerUntil";
-        if (tryParseStandaloneDoublesItsPowerUntil(effectText, source) != null) return "StandaloneDoublesItsPowerUntil";
-        if (tryParseStandaloneDoublePowerMainPhaseNextTurn(effectText, source) != null) return "StandaloneDoublePowerMainPhaseNextTurn";
-        if (tryParseStandalonePowerReduceUntil(effectText, source) != null) return "StandalonePowerReduceUntil";
-        if (tryParseFieldSelfPowerBoost(effectText, source)    != null) return "FieldSelfPowerBoost";
-        if (tryParseDoubleOutgoingDamageThisTurn(effectText, source) != null)    return "DoubleOutgoingDamageThisTurn";
-        if (tryParseDoubleOutgoingDamageThisTurnAlt(effectText, source) != null) return "DoubleOutgoingDamageThisTurnAlt";
-        if (tryParseSelfOutgoingDmgBoostThisTurn(effectText, source) != null)   return "SelfOutgoingDmgBoostThisTurn";
-        if (tryParseGainOutgoingDmgBoostUntilEot(effectText, source) != null)   return "GainOutgoingDmgBoostUntilEot";
-        if (tryParseActivateSelfAndSelfGains(effectText, source) != null)       return "ActivateSelfAndSelfGains";
-        if (tryParseGainsQuotedFieldAbilityUntilEot(effectText, source) != null) return "GainsQuotedFieldAbilityUntilEot";
-        // Mirrors parse(): ahead of the permanent grants, which would otherwise claim
-        // Scarmiglione 17-133S off the second half of his sentence.
-        if (tryParseNameElementThenGainsQuotedPermanent(effectText, source) != null)
-            return "NameElementThenGainsQuotedPermanent";
-        // Mirrors parse(): beside its quoted-only sibling.
-        if (tryParseGainsKeywordsAndQuotedAbilityPermanent(effectText, source) != null)
-            return "GainsKeywordsAndQuotedAbilityPermanent";
-        if (tryParseGainsQuotedAbilitiesPermanent(effectText, source) != null)  return "GainsQuotedAbilitiesPermanent";
-        if (tryParseSelfPowerBoostPermanent(effectText, source) != null)        return "SelfPowerBoostPermanent";
-        if (tryParseUntilEotGainsPowerTraitsAndQuoted(effectText, source) != null) return "UntilEotGainsPowerTraitsAndQuoted";
-        if (tryParseDoubleOpponentIncomingDamageThisTurn(effectText) != null)   return "DoubleOpponentIncomingDamageThisTurn";
-        if (tryParseAllForwardIncomingDmgIncreaseThisTurn(effectText) != null)  return "AllForwardIncomingDmgIncreaseThisTurn";
-        if (tryParseChooseForwardDoubleIncomingThisTurn(effectText) != null)    return "ChooseForwardDoubleIncomingThisTurn";
-        if (tryParseChooseForwardDoubleNextOutgoing(effectText) != null)        return "ChooseForwardDoubleNextOutgoing";
-        if (tryParseDoublePlayerAbilityOutgoingThisTurn(effectText) != null)   return "DoublePlayerAbilityOutgoingThisTurn";
-        if (tryParseStandaloneSelfBoostForEachCrystal(effectText, source) != null) return "StandaloneSelfBoostForEachCrystal";
-        // Mirrors parse(): ahead of the two flat self-boost parsers, which share its frame.
-        if (tryParseStandaloneSelfBoostForEachControlled(effectText, source) != null) return "StandaloneSelfBoostForEachControlled";
-        if (tryParseStandaloneSelfBoostForEachDistinctElement(effectText, source) != null) return "StandaloneSelfBoostForEachDistinctElement";
-        if (tryParseIfHandSizeSelfBoost(effectText, source)               != null) return "IfHandSizeSelfBoost";
-        if (tryParseSelfBoostEotPrefix(effectText, source)    != null) return "SelfBoostUntilEot";
-        if (tryParseSelfAttacksPerOwnDamage(effectText, source) != null) return "SelfAttacksPerOwnDamage";
-        if (tryParseStandaloneSelfBoost(effectText, source)   != null) return "StandaloneSelfBoost";
-        if (tryParseOppFieldEntryRfgInstead(effectText)                   != null) return "OppFieldEntryRfgInstead";
-        if (tryParseStandaloneSelfLosesAllAbilities(effectText, source) != null) return "StandaloneSelfLosesAllAbilities";
-        if (tryParseOppLoseJobsUntilEot(effectText) != null) return "OppLoseJobsUntilEot";
-        if (tryParseStandaloneSelfDullAndShield(effectText, source) != null) return "StandaloneSelfDullAndShield";
-        if (tryParseStandaloneSelfDull(effectText, source) != null)          return "StandaloneSelfDull";
-        if (tryParseDullActiveYouControl(effectText, source, 0) != null)     return "DullActiveYouControl";
-        if (tryParseStandaloneShieldCannotBeBroken(effectText, source) != null) return "StandaloneShieldCannotBeBroken";
-        if (tryParseAllOwnForwardsNullifyAbilityDamage(effectText)        != null) return "AllOwnForwardsNullifyAbilityDamage";
-        if (tryParseOwnJobOrNameNullifyAbilityDamage(effectText)          != null) return "OwnJobOrNameNullifyAbilityDamage";
-        if (tryParseDoublecastFreeSummons(effectText)                     != null) return "DoublecastFreeSummons";
-        if (tryParseCastRfgCostCardThisTurn(effectText)                   != null) return "CastRfgCostCardThisTurn";
-        if (tryParseChooseCardRemovedBySourceToBz(effectText, source)     != null) return "ChooseCardRemovedBySourceToBz";
-        if (tryParseAllForwardsCannotBlock(effectText)                    != null) return "AllForwardsCannotBlock";
-        if (tryParseForwardsOfCostCannotBlock(effectText)                 != null) return "ForwardsOfCostCannotBlock";
-        if (tryParseEndOfNextTurnIfCardOnFieldOppLoses(effectText)        != null) return "EndOfNextTurnIfCardOnFieldOppLoses";
-        if (tryParseOpponentLosesTheGame(effectText)                      != null) return "OpponentLosesTheGame";
-        if (tryParseOppFwdsCannotBlockInferiorPower(effectText)           != null) return "OppFwdsCannotBlockInferiorPower";
-        if (tryParseAllFwdsBlockedOnlyByLowerCostThisTurn(effectText)    != null) return "AllFwdsBlockedOnlyByLowerCost";
-        if (tryParseOppFwdsLoseAllAbilitiesAndPowerEot(effectText) != null) return "OppFwdsLoseAllAbilitiesAndPowerEot";
-        if (tryParseOppFwdsLoseAllAbilitiesEot(effectText)         != null) return "OppFwdsLoseAllAbilitiesEot";
-        // Mirrors parse(), where this sits beside the two above for the same reason.
-        if (tryParseOppCharactersLoseAllAbilitiesEot(effectText)   != null) return "OppCharactersLoseAllAbilitiesEot";
-        if (tryParseOppFwdPowerBoostSuppressedThisTurn(effectText) != null) return "OppFwdPowerBoostSuppressedThisTurn";
-        if (tryParseOppFwdsLosePowerPerPlayCost(effectText)        != null) return "OppFwdsLosePowerPerPlayCost";
-        if (tryParseStandaloneGainsCannotBeBlocked(effectText, source) != null) return "StandaloneGainsCannotBeBlocked";
-        if (tryParseStandaloneCannotBeBlocked(effectText, source) != null) return "StandaloneCannotBeBlocked";
-        // Must precede RevealSelectHandRfp — see the same guard in parse().
-        if (tryParseRevealSelectHandRfpUntilEndOfOppTurn(effectText) != null) return "RevealSelectHandRfpUntilEndOfOppTurn";
-        if (tryParseRevealSelectHandRfpCastableThisTurn(effectText) != null) return "RevealSelectHandRfpCastableThisTurn";
-        if (tryParseRevealSelectHandRfp(effectText)            != null) return "RevealSelectHandRfp";
-        if (tryParseRevealSelectHandDiscard(effectText)        != null) return "RevealSelectHandDiscard";
-        if (tryParseOpponentRandomHandRfp(effectText)            != null) return "OpponentRandomHandRfp";
-        if (tryParseOpponentRandomHandToBottomDeck(effectText)   != null) return "OpponentRandomHandToBottomDeck";
-        if (tryParseOpponentHandRfp(effectText)               != null) return "OpponentHandRfp";
-        if (tryParseRevealTopNAddPerElementQuota(effectText) != null) return "RevealTopNAddPerElementQuota";
-        if (tryParseRevealTopNAddOnePerTypeRestBz(effectText) != null) return "RevealTopNAddOnePerTypeRestBz";
-        if (tryParseRevealTopNAddUpToExcludingNameRestBz(effectText) != null) return "RevealTopNAddUpToExcludingNameRestBz";
-        if (tryParseRevealPlayCategoryTypeRestShuffledBottomGrantElementJob(effectText) != null) return "RevealPlayCategoryTypeRestShuffledBottomGrantElementJob";
-        if (tryParseRevealTopNRemoveWarpCardPlaceCountersRestShuffledBottom(effectText) != null) return "RevealTopNRemoveWarpCardPlaceCountersRestShuffledBottom";
-        if (tryParseRevealTopNAddUpToMatchingRestShuffledBottom(effectText) != null) return "RevealTopNAddUpToMatchingRestShuffledBottom";
-        if (tryParseRevealTopNAddUpToMatchingRestBz(effectText) != null) return "RevealTopNAddUpToMatchingRestBz";
-        if (tryParseRevealTopNTypeToHand(effectText) != null) return "RevealTopNTypeToHand";
-        if (tryParseRevealAddThen(effectText, source, 0) != null) return "RevealAddThen";
-        if (tryParseRevealTopNCategoryToHand(effectText) != null) return "RevealTopNCategoryToHand";
-        if (tryParseRevealTopNJobOrNameToHand(effectText) != null) return "RevealTopNJobOrNameToHand";
-        if (tryParseRevealTopNElementToHand(effectText) != null) return "RevealTopNElementToHand";
-        if (tryParseRevealAddToHandOrPlayOntoField(effectText) != null) return "RevealAddToHandOrPlayOntoField";
-        if (tryParseRevealPlayOntoFieldAndAddToHand(effectText) != null) return "RevealPlayOntoFieldAndAddToHand";
-        // Must precede ReturnNamedToHand — see the ordering note in parse().
-        if (tryParseRevealPlayElementTypeCostOntoFieldRestBottom(effectText, 0) != null) return "RevealPlayElementTypeCostOntoFieldRestBottom";
-        if (tryParseRevealPlayTypeCostOrNamedCostRestBottom(effectText) != null) return "RevealPlayTypeCostOrNamedCostRestBottom";
-        // Must precede ReturnNamedToHand, mirroring parse(): that parser takes the description in
-        // front of "to its owner's hand" for a card name.
-        if (tryParseReturnRemovedBySourceToOwnersHand(effectText, source) != null) return "ReturnRemovedBySourceToOwnersHand";
-        // Mirrors parse(): ahead of the arm that used to claim Rydia 17-137S.
-        if (tryParseSearchSummonsDiffCostOpponentSelects(effectText) != null)
-            return "SearchSummonsDiffCostOpponentSelects";
-        if (tryParseReturnOwnTypeToHand(effectText) != null) return "ReturnOwnTypeToHand";
-        if (tryParseAddSelfToHandAtEndOfTurn(effectText, source) != null) return "AddSelfToHandAtEndOfTurn";
-        if (tryParseReturnNamedToHand(effectText) != null) return "ReturnNamedToHand";
-        if (tryParseYouMayRemoveNamedFromGame(effectText, source) != null) return "YouMayRemoveNamedFromGame";
-        if (tryParseEndOfOppTurnPlayNamedOntoField(effectText) != null) return "EndOfOppTurnPlayNamedOntoField";
-        if (tryParseEndOfTurnPlayNamedOntoField(effectText, source)    != null) return "EndOfTurnPlayNamedOntoField";
-        if (tryParseRemoveAllOppBzFromGame(effectText)         != null) return "RemoveAllOppBzFromGame";
-        if (tryParseRevealTopNRfgOneCastableRestBottom(effectText) != null) return "RevealTopNRfgOneCastableRestBottom";
-        // Must precede RemoveNamedFromGame, mirroring parse(): it reads the counter clause as the
-        // thing being removed from the game and would answer in this parser's place.
-        if (tryParseMayRemoveWarpCountersThenNoCastNoAttack(effectText, source) != null) return "MayRemoveWarpCountersThenNoCastNoAttack";
-        if (tryParseRemoveWarpCountersFromNamed(effectText, source) != null) return "RemoveWarpCountersFromNamed";
-        // Must precede RemoveNamedFromGame, mirroring parse(): that parser reads this family's whole
-        // filter phrase as a card name.
-        if (tryParseEffectOrPutSelfToBreakZone(effectText, source) != null) return "EffectOrPutSelfToBreakZone";
-        if (tryParseRemoveFromBreakZoneFromGame(effectText, source) != null)
-            return removeFromBreakZonePatternName(effectText);
-        if (ActionResolverFieldAbility.tryParseRemoveAllFieldFromGame(effectText) != null) return "RemoveAllFieldFromGame";
-        if (ActionResolverFieldAbility.tryParseNameCardTypeRemoveOppBzFromGame(effectText) != null) return "NameCardTypeRemoveOppBzFromGame";
-        if (ActionResolverPower.tryParseRemoveSelfThenEnteredForwardGainsPermanently(effectText, source) != null)
-            return "RemoveSelfThenEnteredForwardGainsPermanently";
-        if (tryParseRemoveSelfAtEndOfTurn(effectText, source) != null) return "RemoveSelfAtEndOfTurn";
-        if (tryParseNameElementSelfBecomesUntilEot(effectText, source) != null) return "NameElementSelfBecomesUntilEot";
-        if (tryParseRemoveNamedFromGame(effectText, source)   != null) return "RemoveNamedFromGame";
-        // Must precede BreakSourceCard, mirroring parse(): the sentence opens with the plain
-        // self-break that parser reads.
-        if (tryParseBreakSelfAndBattlePartner(effectText, source) != null)
-            return "BreakSelfAndBattlePartner";
-        if (tryParseBreakSourceCard(effectText, source)        != null) return "BreakSourceCard";
-        if (tryParsePutSourceIntoBreakZone(effectText, source) != null) return "PutSourceIntoBreakZone";
-        if (tryParseBreaksAfterCombatNoDamage(effectText, source) != null) return "BreaksAfterCombatNoDamage";
-        if (tryParsePerformThisActionTwiceAtDamage(effectText, source) != null) return "PerformThisActionTwiceAtDamage";
-        if (tryParsePutOwnTypeToBzIfDoSo(effectText, source)   != null) return "PutOwnTypeToBzIfDoSo";
-        if (tryParsePutAnyNumberToBzOppSelectsAndDiscards(effectText) != null) return "PutAnyNumberToBzOppSelectsAndDiscards";
-        if (tryParseYouMayPutSelfToBZWhenDoSo(effectText, source)    != null) return "YouMayPutSelfToBZWhenDoSo";
-        if (tryParseIfOppNoForwardsPutToBreakZone(effectText, source)          != null) return "IfOppNoForwardsPutToBreakZone";
-        if (tryParseIfEitherPlayerNoForwardsPutSourceToBz(effectText, source)  != null) return "IfEitherPlayerNoForwardsPutSourceToBz";
-        if (tryParseIfSelfDamagePointsPutToBreakZone(effectText, source)      != null) return "IfSelfDamagePointsPutToBreakZone";
-        if (tryParsePutSourceToBottomOfDeck(effectText, source) != null) return "PutSourceToBottomOfDeck";
-        if (tryParsePutSourceOnTopOfDeck(effectText, source)   != null) return "PutSourceOnTopOfDeck";
-        if (tryParseBreakBlockingForward(effectText)           != null) return "BreakBlockingForward";
-        if (tryParseDamageBlockingForward(effectText, source)  != null) return "DamageBlockingForward";
-        if (tryParseDamageBlockingForwardPerCounterThenClear(effectText, source) != null)
-                                                                        return "DamageBlockingForwardPerCounterThenClear";
-        if (tryParseBreakForwardThatBlocksCard(effectText)     != null) return "BreakForwardThatBlocksCard";
-        if (tryParseChooseExBurstFromDamageZone(effectText)    != null) return "ChooseExBurstFromDamageZone";
-        if (tryParseExBurstSuppression(effectText)             != null) return "ExBurstSuppression";
-        if (tryParseDamageZoneSwap(effectText)                 != null) {
-            Matcher m = DAMAGE_ZONE_SWAP_PATTERN.matcher(effectText.trim());
-            return m.matches() && m.group("draw") != null ? "DamageZoneSwap + DrawCards" : "DamageZoneSwap";
-        }
-        if (tryParseEachPlayerRandomDiscardThenCategoryDraw(effectText) != null)
-            return "EachPlayerRandomDiscardThenCategoryDraw";
-        if (tryParseOpponentDrawThenRandomDiscard(effectText)  != null) return "OpponentDrawThenRandomDiscard";
-        if (tryParseOpponentDraw(effectText)                   != null) return "OpponentDraw";
-        if (tryParseOpponentRandomDiscard(effectText)         != null) return "OpponentRandomDiscard";
-        if (tryParseEachPlayerSelectForwardDamage(effectText)  != null) return "EachPlayerSelectForwardDamage";
-        if (tryParseBothPlayersSelectForwardToBreakZone(effectText) != null) return "BothPlayersSelectForwardToBreakZone";
-        if (tryParseSelectCharCostLeExclToBz(effectText)             != null) return "SelectCharCostLeExclToBz";
-        if (tryParseSelectControlledCharacterToBz(effectText)        != null) return "SelectControlledCharacterToBz";
-        if (tryParseSelectControlledCharacterBreak(effectText)       != null) return "SelectControlledCharacterBreak";
-        if (tryParseEachPlayerSelectUpToNToBreakZone(effectText)   != null) return "EachPlayerSelectUpToNToBreakZone";
-        if (tryParseEachPlayerSelectUpToNActiveDullFreeze(effectText) != null)
-            return "EachPlayerSelectUpToNActiveDullFreeze";
-        if (tryParseOppSelectsUpToNForwardsBreakRest(effectText) != null)
-            return "OppSelectsUpToNForwardsBreakRest";
-        if (tryParseEachPlayerSelectsForwardsBreakRest(effectText) != null)
-            return "EachPlayerSelectsForwardsBreakRest";
-        if (tryParseEachPlayerDiscard(effectText)              != null) return "EachPlayerDiscard";
-        if (tryParseEachPlayerSalvageFromBreakZone(effectText) != null) return "EachPlayerSalvageFromBreakZone";
-        if (tryParseSelectCharacterFromBzToHand(effectText)    != null) return "SelectCharacterFromBzToHand";
-        if (tryParseChooseWarpCardFromBzToHand(effectText)     != null) return "ChooseWarpCardFromBzToHand";
-        if (tryParseEachPlayerDraw(effectText)                 != null) return "EachPlayerDraw";
-        if (tryParseNameCardTypeOpponentDiscardDrawIfMatch(effectText) != null) return "NameCardTypeOpponentDiscardDrawIfMatch";
-        // Must precede OpponentDiscard, mirroring parse(), where this parser sits four hundred
-        // lines ahead of it. Placed after it, the name chain reported the base clause of a
-        // "<base>. If you control X, <upgrade> instead." ability while parse() ran the whole
-        // gate — 16-022R Erwin and 23-020C Red Mage, which reached this shape the moment their
-        // replacement clause gained a parser of its own.
-        if (tryParseControlGatedInsteadUpgrade(effectText, source, 0) != null) return "ControlGatedInsteadUpgrade";
-        if (tryParseEffectThenOpponentDiscard(effectText, source) != null) return "EffectThenOpponentDiscard";
-        if (tryParseOpponentDiscard(effectText)               != null) return "OpponentDiscard";
-        if (tryParseDiscardHandThenDraw(effectText)           != null) return "DiscardHandThenDraw";
-        if (tryParseDrawThenPlaceHandToBottom(effectText)     != null) return "DrawThenPlaceHandToBottom";
-        if (tryParsePlaceUpToHandToBottomThenRedraw(effectText) != null) return "PlaceUpToHandToBottomThenRedraw";
-        // Probed at X = 1, not 0, for the reason AutoAbilityTriggers.dispatchedByTriggers is:
-        // 25-057R Cutter's followup counts its targets in X and declines at zero, and naming it
-        // is a question about the shape of the sentence, not about any particular payment.
-        if (tryParsePayCpWhenDoSo(effectText, source, 1)      != null) return "PayCpWhenDoSo";
-        if (tryParseDrawDiscardRetriggerIfCardName(effectText, source) != null) return "DrawDiscardRetriggerIfCardName";
-        // Mirrors parse(), which reads 2-134C Horne whole long before DrawCards.
-        if (tryParseDrawPerJobThenBottomAsMany(effectText) != null) return "DrawPerJobThenBottomAsMany";
-        if (tryParseDrawCards(effectText)                     != null) return "DrawCards";
-        if (tryParseDiscardCategoryType(effectText)           != null) return "DiscardCategoryType";
-        if (tryParseYouMayDiscardType(effectText)             != null) return "YouMayDiscardType";
-        if (tryParseMayRevealElementFromHand(effectText)      != null) return "MayRevealElementFromHand";
-        if (tryParseDiscardHand(effectText)                   != null) return "DiscardHand";
-        // Mirrors parse(): ahead of DiscardNCards, which claims this text's opening sentence.
-        if (tryParseDiscardConditionalCategoryBranches(effectText, source, 0) != null)
-            return "DiscardConditionalCategoryBranches";
-        if (tryParseDiscardThenSameAsDiscarded(effectText, source) != null) return "DiscardThenSameAsDiscarded";
-        if (tryParseDiscardNCards(effectText)                 != null) return "DiscardNCards";
-        if (tryParseDiscardJobFromHand(effectText)            != null) return "DiscardJobFromHand";
-        if (tryParseDiscardThenDraw(effectText)               != null) return "DiscardThenDraw";
-        // Mirrors parse(), where this gate sits immediately ahead of IfEachPlayerEmptyHand.
-        if (tryParseIfAllHaveElement(effectText, source, 0)   != null) return "IfAllHaveElement";
-        if (tryParseIfEachPlayerEmptyHand(effectText, source, 0) != null) return "IfEachPlayerEmptyHand";
-        // Mirrors parse(), where this gate follows IfEachPlayerEmptyHand. Missing here, the gated
-        // texts fell through to FieldPowerGrant far below and were named for a passive boost they
-        // are not.
-        if (tryParseIfNDiffElements(effectText, source, 0)    != null) return "IfNDiffElements";
-        if (tryParseDealPlayerDamageToOpponent(effectText)    != null) return "DealPlayerDamageToOpponent";
-        // Mirrors parse().
-        if (tryParsePlayFromHandThenIfItsCost(effectText, source, 0) != null) return "PlayFromHandThenIfItsCost";
-        if (tryParsePlayFromHandWithRiders(effectText, source, 0) != null) return "PlayFromHandWithRiders";
-        if (tryParseDealPlayerDamageToSelf(effectText)        != null) return "DealPlayerDamageToSelf";
-        if (tryParseRandomRevealHandCastIfSummonFree(effectText) != null) return "RandomRevealHandCastIfSummonFree";
-        if (tryParseCastSummonFromHandDiscounted(effectText)     != null) return "CastSummonFromHandDiscounted";
-        if (tryParseCastSummonFromHandDiscountedAnyElement(effectText) != null) return "CastSummonFromHandDiscountedAnyElement";
-        if (tryParseCastSummonFromHandFree(effectText, 0)     != null) return "CastSummonFromHandFree";
-        if (tryParseSearchAndCastSummonFree(effectText, source) != null) return "SearchAndCastSummonFree";
-        if (tryParseSearchForwardKeyedToBzCostForward(effectText, source) != null) return "SearchForwardKeyedToBzCostForward";
-        if (tryParseSearchSummonRfgFreeCastThisTurn(effectText) != null) return "SearchSummonRfgFreeCastThisTurn";
-        if (tryParseSearchSummonRfgThenCastFree(effectText)     != null) return "SearchSummonRfgThenCastFree";
-        if (tryParsePlayAnyNumberFromHand(effectText, source) != null) return "PlayAnyNumberFromHand";
-        if (tryParseEachPlayerMayPlayFromHand(effectText, source, 0) != null) return "EachPlayerMayPlayFromHand";
-        if (tryParsePlayFromHand(effectText, source, 0)       != null) return "PlayFromHand";
-        // Checked ahead of OpponentSelects: an "…, X instead." upgrade wraps a base clause the
-        // OpponentSelects matcher would otherwise claim on its own, dropping the replacement.
-        // Must precede ControlGatedInsteadUpgrade, mirroring parse().
-        // Mirrors parse(), where it sits ahead of the plain control gate. Nothing else in this
-        // chain names 16-122R Marche's shape, so it read as an unnamed ability.
-        if (tryParseControlGatedElidedInstead(effectText, source, 0) != null) return "ControlGatedElidedInstead";
-        if (tryParseChooseGatedBoostInstead(effectText, source, 0) != null) return "ChooseCharacter";
-        // Mirrors parse(): ahead of OpponentSelects, which would otherwise claim it.
-        if (tryParseTurnPlayerBreaksOrTakesDamage(effectText, source) != null) return "TurnPlayerBreaksOrTakesDamage";
-        if (tryParseOppSelectsMayBreakElseSelfCannotBlock(effectText, source) != null)
-            return "OppSelectsMayBreakElseSelfCannotBlock";
-        // Mirrors parse(): ahead of OpponentSelects, whose prefix it shares.
-        if (tryParseOpponentSelectsFromOwnBzToHand(effectText) != null) return "OpponentSelectsFromOwnBzToHand";
-        // Mirrors parse(): ahead of OpponentSelects, whose half-reading of 27-101L Sin this
-        // replaces.
-        if (tryParseOpponentSelectsTwoTypes(effectText)       != null) return "OpponentSelectsTwoTypes";
-        if (tryParseOpponentSelects(effectText)               != null) return "OpponentSelects";
-        if (tryParseBzFwdToHandOppFwdToBzByDamage(effectText)  != null) return "BzFwdToHandOppFwdToBzByDamage";
-        if (tryParseOpponentPutsForwardToBreakZone(effectText) != null) return "OpponentPutsForwardToBreakZone";
-        if (tryParseOpponentMillIfSameElementDraw(effectText)  != null) return "OpponentMillIfSameElementDraw";
-        if (tryParseOpponentMill(effectText)                  != null) return "OpponentMill";
-        if (tryParseSelfMill(effectText)                      != null) return "SelfMill";
-        // Mirrors parse(): ahead of both of the reveal parsers below, whose find() would name
-        // this ability after the one sentence of it they can read.
-        if (tryParseNameElementOppRandomRevealDiscard(effectText, source) != null)
-            return "NameElementOppRandomRevealDiscard";
-        // Must precede OpponentRevealHand — see the ordering note in parse().
-        if (tryParseOpponentRevealNSelectOneDiscard(effectText) != null) return "OpponentRevealNSelectOneDiscard";
-        // Mirrors parse(): ahead of OpponentRevealHand, whose find() takes this text's
-        // opening clause and names the ability after half of itself.
-        if (tryParseRevealHandAndSelectDiscard(effectText)     != null) return "RevealHandAndSelectDiscard";
-        if (tryParseOpponentRevealHand(effectText, source, 0)            != null) return "OpponentRevealHand";
-        if (tryParseEachPlayerRevealCharacterMayPlay(effectText)      != null) return "EachPlayerRevealMayPlay";
-        if (tryParseEachPlayerMaySearchForwardMinPower(effectText)     != null) return "EachPlayerMaySearchForwardMinPower";
-        if (tryParseStandaloneDamageShields(effectText, source) != null) return "StandaloneDamageShields";
-        if (tryParseDualSearchJobAndTypeDontShareElements(effectText)      != null) return "DualSearchDontShareElements";
-        if (tryParseSearchElementOrCategoryCharsDiffCost(effectText)       != null) return "SearchElementOrCategoryCharsDiffCost";
-        if (tryParseSearchNElementSummonsDiffCost(effectText)              != null) return "SearchNElementSummonsDiffCost";
-        // Mirrors parse(): ahead of the single-pool search, whose prefix it shares.
-        if (tryParseDualSearchPlayOntoField(effectText)            != null) return "DualSearchPlayOntoField";
-        // Must precede SearchDeck, mirroring parse(): that parser names the search alone and
-        // leaves the "If you do so, ..." payoff out of the report.
-        if (tryParseSearchNamedRfgThenIfDoSo(effectText, source) != null) return "SearchNamedRfgThenIfDoSo";
-        if (tryParseSearchToHandThenMayPlayFromHand(effectText, source, 0) != null)
-            return "SearchToHandThenMayPlayFromHand";
-        if (ActionResolverSearch.tryParseReturnSourceOntoField(effectText, source) != null)
-            return "ReturnSourceOntoField";
-        if (ActionResolverSearch.tryParsePlaySourceFromBzOntoOppField(effectText, source) != null)
-            return "PlaySourceFromBzOntoOppField";
-        if (tryParseSearchMatchingBrokenCard(effectText) != null) return "SearchMatchingBrokenCard";
-        // Mirrors parse(): the two trigger-card / payment-record searches sit beside it.
-        if (tryParseSearchSameCardTypeAsBrokenCard(effectText) != null) return "SearchSameCardTypeAsBrokenCard";
-        if (tryParseSearchCostOfCardsDiscardedToCast(effectText, source) != null) return "SearchCostOfCardsDiscardedToCast";
-        if (tryParseSearchDeck(effectText, source, 0)                      != null) return "SearchDeck";
-        if (tryParsePlayAllByNameFromBreakZone(effectText)      != null) return "PlayAllByNameFromBreakZone";
-        if (tryParsePlaySourceFromBreakZone(effectText, source) != null) return "PlaySourceFromBreakZone";
-        if (tryParsePlayBrokenCardOntoFieldDull(effectText) != null) return "PlayBrokenCardOntoFieldDull";
-        // Mirrors parse(), at the same position and for the same reason.
-        if (tryParsePlayFaceDownLbCardOntoFieldDull(effectText) != null) return "PlayFaceDownLbCardOntoFieldDull";
-        if (tryParseAddBrokenCardToHand(effectText) != null) return "AddBrokenCardToHand";
-        // Reads the anchored helper, not tryParsePlaySourceOntoField itself: that parser matches
-        // with find(), so it reports a hit from the middle of texts an earlier parser claims in
-        // parse() ("...search for 1 Forward ... and play it onto the field"). Naming off the loose
-        // form moved 9 abilities onto this name and away from the one that actually runs them.
-        if (tryParseCounterCountdownThenPlaySource(effectText, source) != null) return "CounterCountdownThenPlaySource";
-        if (isBarePlaySourceOntoField(effectText, source))              return "PlaySourceOntoField";
-        if (tryParseSelfSkipNextActivePhase(effectText, source) != null) return "SelfSkipNextActivePhase";
-        if (tryParseActivateNamedCard(effectText)               != null) return "ActivateNamedCard";
-        if (tryParseAttackOnceMore(effectText)                  != null) return "AttackOnceMore";
-        if (tryParseOpponentCannotSearchThisTurn(effectText)    != null) return "OpponentCannotSearch";
-        if (tryParseOpponentCannotCastAnyCardsThisTurn(effectText) != null) return "OpponentCannotCastAnyCards";
-        if (tryParseOpponentCannotCastSummonsThisTurn(effectText) != null) return "OpponentCannotCastSummons";
-        if (tryParseRemoveFromBattle(effectText)                != null) return "RemoveFromBattle";
-        if (tryParseChooseSummonFromBzToHandWithCostReduction(effectText) != null) return "ChooseSummonFromBzToHandWithCostReduction";
-        if (tryParseChooseNSummonsBzPickOneHandRestRfg(effectText)        != null) return "ChooseNSummonsBzPickOneHandRestRfg";
-        if (tryParseSelectNamedFromRfgToHand(effectText)                  != null) return "SelectNamedFromRfgToHand";
-        if (tryParseChooseWarpCardRemoveCounter(effectText)               != null) return "ChooseWarpCardRemoveCounter";
-        if (tryParseChooseWarpCardMayRemoveCounter(effectText)            != null) return "ChooseWarpCardMayRemoveCounter";
-        if (tryParseChooseSummonInBzCastable(effectText)              != null) return "ChooseSummonInBzCastable";
-        if (tryParseArmNextSummonRecast(effectText) != null) return "ArmNextSummonRecast";
-        if (tryParseChooseSummonInBzMaxCostFreeCastRfg(effectText)    != null) return "ChooseSummonInBzMaxCostFreeCastRfg";
-        if (tryParseCostReductionThisTurn(effectText)                 != null) return "CostReductionThisTurn";
-        if (tryParsePlayCostReductionThisTurn(effectText)        != null) return "PlayCostReductionThisTurn";
-        // Strict form on purpose: genuine self-cost text is a card-level property stripped in
-        // parseFieldAbilities, so it never reaches here as an ability. The loose predicate only
-        // ever fired on abilities that merely end in a cost-reduction clause.
-        if (CardData.yieldsSelfCostModifier(effectText))                  return "SelfCostModifier";
-        if (CardData.FIELD_CAST_COST_INCREASE_PATTERN.matcher(effectText).find()) return "CastCostIncrease";
-        if (AutoAbilityTriggers.FA_DISCARD_JOB_TO_CAST.matcher(effectText).find()) return "DiscardJobToCast";
-        if (tryParseExtraTurnThenLose(effectText)               != null) return "ExtraTurnThenLose";
-        if (tryParseGainCrystalPerX(effectText, 0)               != null) return "GainCrystalPerX";
-        // Mirrors parse()'s position for this guard; composite so the leading effect still names
-        // itself rather than being hidden behind a bare "GainCrystal" label.
-        if (tryParseTrailingGainCrystal(effectText, source, 0)   != null) {
-            String gcHead = trailingGainCrystalHead(effectText);
-            if (gcHead != null) {
-                String headName = matchedPatternName(gcHead, source);
-                return (headName != null ? headName : "?") + " + GainCrystal";
+            case "TrailingGainCrystal" -> {
+                String head = trailingGainCrystalHead(text);
+                if (head != null) return nameOrUnread(head, source) + " + GainCrystal";
             }
+            case "IndependentSentences" -> {
+                String composed = composeOverSentences(text, s -> matchedPatternName(s, source));
+                if (composed != null) return composed;
+            }
+            case "SentenceFallback" -> {
+                List<String> names = new ArrayList<>();
+                for (String part : d.parts()) names.add(nameOrUnread(part, source));
+                return String.join(" + ", names);
+            }
+            case "RemoveFromBreakZoneFromGame" -> {
+                return removeFromBreakZonePatternName(text);
+            }
+            case "LookTopDeckAddToHandRestBottom" -> {
+                return lookAddToHandRestBottomPatternName(text);
+            }
+            case "LookTopDeckTopOrBottom" -> {
+                String then = trailingThenText(text, LOOK_TOP_DECK_TOP_OR_BOTTOM);
+                return then == null ? "LookTopDeckTopOrBottom"
+                        : "LookTopDeckTopOrBottom + " + matchedPatternName(then, source);
+            }
+            case "SkipOpponentPhasesNextTurn" -> {
+                String tail = skipOpponentPhasesTail(text, source);
+                return tail == null ? "SkipOpponentPhasesNextTurn" : "SkipOpponentPhasesNextTurn + " + tail;
+            }
+            case "DamageZoneSwap" -> {
+                Matcher m = DAMAGE_ZONE_SWAP_PATTERN.matcher(text.trim());
+                return m.matches() && m.group("draw") != null ? "DamageZoneSwap + DrawCards" : "DamageZoneSwap";
+            }
+            case "FieldPowerGrantPassive" -> {
+                return FIELD_OPPONENT_DEBUFF_PASSIVE.matcher(text.trim()).matches()
+                        ? "FieldOpponentPowerDebuff" : "FieldPowerGrant";
+            }
+            default -> { }
         }
-        if (tryParseGainCrystal(effectText)                      != null) return "GainCrystal";
-        if (tryParseGainCrystalIfOpponentHas(effectText)         != null) return "GainCrystalIfOpponentHas";
-        // Mirrors parse(): the two-branch counter gate is read ahead of every counter parser,
-        // any of which would otherwise name it after the one branch it can see.
-        if (tryParseCounterAbsentElsePresentGate(effectText, source, 0) != null)
-                                                                        return "CounterAbsentElsePresentGate";
-        // Mirrors parse(): ahead of PlaceCounters, which reads "each Job Apprentice Mage you
-        // control" as the card name the counters are placed on.
-        if (tryParsePlaceCountersOnEachJob(effectText)           != null) return "PlaceCountersOnEachJob";
-        if (tryParsePlaceCountersForEach(effectText, source)     != null) return "PlaceCountersForEach";
-        if (tryParsePlaceCounters(effectText, source)            != null) return "PlaceCounters";
-        if (tryParseRemoveAllCounters(effectText, source)         != null) return "RemoveAllCounters";
-        if (tryParseLookTopDeckOptionallyBreak(effectText)        != null) return "LookTopDeckOptionallyBreak";
-        if (tryParseLookTopDeckBottomOrKeep(effectText)           != null) return "LookTopDeckBottomOrKeep";
-        if (tryParseCounterScaleLookAddToHand(effectText, 1)               != null) return "CounterScaleLookAddToHand";
-        if (tryParseLookSelfFieldScaleAddToHandRestBottom(effectText)   != null) return "LookSelfFieldScaleAddToHandRestBottom";
-        if (tryParseLookTopDeckAddToHandRestBottom(effectText)          != null) return lookAddToHandRestBottomPatternName(effectText);
-        if (tryParseLookTopDeckAddToHandOneToBreakRestBottom(effectText) != null) return "LookTopDeckAddToHandOneToBreakRestBottom";
-        if (tryParseLookTopDeckAddToHandOneToBottomRestTop(effectText) != null) return "LookTopDeckAddToHandOneToBottomRestTop";
-        if (tryParseLookTopDeckAddToHandRestBreak(effectText)           != null) return "LookTopDeckAddToHandRestBreak";
-        if (tryParseLookTopDeckTopOrBottom(effectText, source)          != null) {
-            String then = trailingThenText(effectText, LOOK_TOP_DECK_TOP_OR_BOTTOM);
-            return then == null ? "LookTopDeckTopOrBottom"
-                    : "LookTopDeckTopOrBottom + " + matchedPatternName(then, source);
-        }
-        if (tryParseLookTopDeckReturnTopOrdered(effectText)             != null) return "LookTopDeckReturnTopOrdered";
-        if (tryParseLookTopDeckPickOneTopRestBottom(effectText)              != null) return "LookTopDeckPickOneTopRestBottom";
-        if (tryParseLookTopDeckCastSummonFreeRestBottom(effectText, 0)       != null) return "LookTopDeckCastSummonFreeRestBottom";
-        if (tryParseLookTopDeckCastAnyFreeRestBottomOrdered(effectText)      != null) return "LookTopDeckCastAnyFreeRestBottomOrdered";
-        if (tryParseLookTopBothDecksTopOrBottom(effectText)                  != null) return "LookTopBothDecksTopOrBottom";
-        if (tryParseLookTopDeckPeek(effectText)                              != null) return "LookTopDeckPeek";
-        if (tryParseAddRemovedByPreviousEffectToHand(effectText, source)    != null) return "AddRemovedByPreviousEffectToHand";
-        // Mirrors parse(): ahead of the bare removal, which claims this text off its first sentence.
-        if (tryParseRemoveTopOfDeckRfgCastableThisTurn(effectText, source) != null)
-            return "RemoveTopOfDeckRfgCastableThisTurn";
-        // Mirrors parse(): ahead of the removal, whose find() would otherwise name this off
-        // Hraesvelgr 6-127L's tail sentence alone.
-        if (tryParseSkipOpponentPhasesNextTurn(effectText, source)          != null) {
-            String tail = skipOpponentPhasesTail(effectText, source);
-            return tail == null ? "SkipOpponentPhasesNextTurn"
-                                : "SkipOpponentPhasesNextTurn + " + tail;
-        }
-        if (tryParseRemoveTopOfDeckThenIfItsType(effectText, source)        != null) return "RemoveTopOfDeckThenIfItsType";
-        if (tryParseRemoveTopOfDeckThenIfCostMayCast(effectText)            != null) return "RemoveTopOfDeckThenIfCostMayCast";
-        if (tryParseRemoveTopOfDeckCastableThisGame(effectText)             != null) return "RemoveTopOfDeckCastableThisGame";
-        if (tryParseRemoveTopOfDeckFromGame(effectText, source)             != null) return "RemoveTopOfDeckFromGame";
-        if (tryParseRevealPlayNamedWithMaxCostRestBottom(effectText)         != null) return "RevealPlayNamedWithMaxCostRestBottom";
-        // Mirrors parse(): ahead of the single-filter sibling below, which would read
-        // Mid Previa 26-115H's three type quotas as one filter over the whole budget.
-        if (tryParseRevealPlayPerTypeQuotaTotalCost(effectText) != null) return "RevealPlayPerTypeQuotaTotalCost";
-        if (tryParseRevealPlayJobTypeTotalCostRestBottom(effectText)        != null) return "RevealPlayJobTypeTotalCost";
-        if (tryParseRevealPlayNamedOrJobMaxCostRestBottom(effectText)        != null) return "RevealPlayNamedOrJobMaxCostRestBottom";
-        // Mirrors parse(), where this is read ahead of tryParsePlaySourceOntoField rather than
-        // beside its own family; the position here only has to keep it off its two siblings,
-        // which it cannot collide with anyway (they end in "Add it to your hand").
-        if (tryParseFlipUntilCharactersPlayOntoFieldRestShuffleBottom(effectText) != null) return "FlipUntilCharactersPlayOntoFieldRestShuffleBottom";
-        if (tryParseFlipUntilTypeToHandRestShuffleBottom(effectText)         != null) return "FlipUntilTypeToHandRestShuffleBottom";
-        if (tryParseFlipUntilElementToHandRestShuffleBottom(effectText)      != null) return "FlipUntilElementToHandRestShuffleBottom";
-        if (tryParseRevealPlayTypeOntoFieldRestBottom(effectText) != null) return "RevealPlayTypeOntoFieldRestBottom";
-        if (tryParseRevealElementCardFromHandIfSoDraw(effectText) != null) return "RevealElementCardFromHandIfSoDraw";
-        if (tryParseShuffleDeck(effectText)                                  != null) return "ShuffleDeck";
-        if (tryParseNameElementOnlySelfBecomes(effectText, source) != null) return "NameElementOnlySelfBecomes";
-        if (tryParseNameElementAndJobSelfBecomes(effectText, source) != null) return "NameElementAndJobSelfBecomes";
-        // Mirrors parse(), where these are the two halves of Jack Garland 27-111L. NameJob had no
-        // entry here at all and reported as unnamed while fullDescription named it.
-        if (tryParseNamedJobReference(effectText, source, 0) != null) return "NamedJobReference";
-        if (tryParseNameJob(effectText, source)             != null) return "NameJob";
-        if (tryParseGrantPartyAnyElementThisTurn(effectText) != null) return "GrantPartyAnyElementThisTurn";
-        if (tryParseSourcePowerBecomesRemovedForwardPower(effectText, source) != null) return "SourcePowerBecomesRemovedPower";
-        if (tryParseSourcePowerBecomesOpponentWeakestForward(effectText, source) != null) return "SourcePowerBecomesOpponentWeakestForward";
-        if (tryParseOpponentGainsControlOfSource(effectText, source) != null) return "OpponentGainsControlOfSource";
-        if (tryParseMayGiveSourceControlToOpponent(effectText, source) != null) return "MayGiveSourceControlToOpponent";
-        if (tryParseIfSourceUsedSpecialsThisTurn(effectText, source, 0)  != null) return "IfSourceUsedSpecialsThisTurn";
-        if (tryParseIfOwnForwardFormedParty(effectText, source, 0)       != null) return "IfOwnForwardFormedParty";
-        if (tryParseIfOppDiscardedThisTurn(effectText, source, 0)        != null) return "IfOppDiscardedThisTurn";
-        if (tryParseIfControlAtMost(effectText, source, 0)             != null) return "IfControlAtMost";
-        if (tryParseIfCastAtLeast(effectText, source, 0)               != null) return "IfCastAtLeast";
-        if (tryParseIfSelfIsStateGate(effectText, source, 0)           != null) return "IfSelfIsStateGate";
-        if (tryParseIfControlCondOtherThan(effectText, source, 0)      != null) return "IfControlCondOtherThan";
-        // The plain "If you control <condition>, <effect>" gate, at the position parse() reads it:
-        // after the two narrower control gates above and ahead of the counter gate below.
-        //
-        // This entry is what the naming gap mostly was — 34 of the 71 abilities that parse()
-        // resolves and matchedPatternName() could not label, roughly half the backlog in one line.
-        // Like the warp gate below it names the gate rather than the effect behind it; the
-        // description chain is where the condition and the inner effect are spelled out, as
-        // "IfControl(<condition>: <inner>)".
-        if (tryParseControlConditionGate(effectText, source, 0)        != null) return "ControlConditionGate";
-        // Reports the gate itself, not the effect behind it. Without an entry here the whole
-        // gated sentence falls through to RemoveNamedFromGame, which find()s a name out of the
-        // counter clause and would answer for a parser that never runs.
-        if (tryParseWarpCounterCountGate(effectText, source, 0)        != null) return "WarpCounterCountGate";
-        // Mirrors parse(): the generic counter gate is read after every counter that has a parser
-        // of its own, so it names only what those leave.
-        if (tryParseCountersOnSelfGate(effectText, source, 0) != null) return "CountersOnSelfGate";
-        if (tryParseCounterPresentOnSelfGate(effectText, source, 0) != null) return "CounterPresentOnSelfGate";
-        if (tryParseIfOppControlsNOrMoreCondTypeGate(effectText, source, 0) != null) return "IfOppControlsNOrMoreCondType";
-        if (tryParseDiscardConditionalElement(effectText, source, 0)   != null) return "DiscardConditionalElement";
-        if (tryParseDiscardConditionalElementSingle(effectText, source, 0) != null) return "DiscardConditionalElementSingle";
-        if (tryParseDiscardConditionalTargetLoseAbilities(effectText) != null) return "DiscardConditionalTargetLoseAbilities";
-        if (tryParseDiscardConditionalSelfBoostInstead(effectText, source, 0) != null) return "DiscardConditionalSelfBoostInstead";
-        if (tryParseDrawDiscardIfMultiElement(effectText) != null) return "DrawDiscardIfMultiElement";
-        if (tryParseConditionalOpponentHand(effectText, source, 0)     != null) return "ConditionalOpponentHand";
-        if (tryParseConditionalOpponentHandMin(effectText, source, 0) != null) return "ConditionalOpponentHandMin";
-        if (tryParsePerformThisActionTwiceAtDamage(effectText, source) != null) return "PerformThisActionTwiceAtDamage";
-        if (tryParsePutOwnTypeToBzIfDoSo(effectText, source)   != null) return "PutOwnTypeToBzIfDoSo";
-        if (tryParsePutAnyNumberToBzOppSelectsAndDiscards(effectText) != null) return "PutAnyNumberToBzOppSelectsAndDiscards";
-        if (tryParseYouMayPutSelfToBZWhenDoSo(effectText, source)    != null) return "YouMayPutSelfToBZWhenDoSo";
-        if (SELECT_FOLLOWING_ACTIONS_DETECT.matcher(effectText).find())        return "SelectFollowingActions";
-        if (CardData.HAS_ALL_ELEMENTS_PATTERN.matcher(effectText.trim()).matches()) return "HasAllElements";
-        if (tryParseMultiPlayGrant(effectText) != null)                         return "MultiPlayGrant";
-        if (tryParseLightDarkDiscardCpGrant(effectText) != null)                return "LightDarkDiscardCpGrant";
-        // Mirrors parse()'s position for this gate, which sits behind tryParseBackupCpDraw so the
-        // unqualified Summon wording keeps its own parser. That one has no entry in this chain, so
-        // the mirroring position here is simply "late": nothing ahead claims the qualified form.
-        if (tryParseCastCpProducedByBackupsGate(effectText, source, 0) != null)
-            return "CastCpProducedByBackupsGate";
-        return null;
+        return SITE_ALIASES.getOrDefault(d.site(), d.site());
+    }
+
+    private static String nameOrUnread(String clause, CardData source) {
+        String name = matchedPatternName(clause, source);
+        return name != null ? name : "?";
     }
 
     /**
@@ -3716,16 +3057,24 @@ public class ActionResolver {
         effectText = stripExBurstPrefix(effectText);
         effectText = effectText.replaceFirst("(?i)^Then,?\\s+", "").trim();
         effectText = effectText.replaceFirst("(?i)^also\\s+", "").trim();
-        // Mirrors parse() and matchedPatternName(). Each tier is described inside the threshold it
-        // is gated on, the way the control gates below describe what they guard.
+
+        // Described from the site dispatch() picked, exactly as the name is, so a description
+        // cannot describe a parser parse() did not run. Probed again at X = 1 for the reason
+        // matchedPatternName() is. A site with no entry below is described by its name.
+        Dispatch claimed = dispatch(effectText, source, 0);
+        if (claimed == null) claimed = dispatch(effectText, source, 1);
+        if (claimed == null) return null;
+        final String site = claimed.site();
+        final String asGiven = effectText;
+
+        // Each tier is described inside the threshold it is gated on, the way the control gates
+        // below describe what they guard.
         //
-        // Ahead of the restriction strip below, which every other entry in this method sits behind:
-        // this pattern is anchored over the whole text, and the strip rewrites G'raha Tia 27-044L's
-        // — "also during this turn, …" answers one of the restriction patterns — so by the time the
-        // strip has run there is nothing left for an end-to-end match to hold on to. parse() does no
-        // such strip, so reading the text as given is also what keeps this naming the parser that
-        // actually ran.
-        if (ActionResolverSearch.tryParseRevealTopNTieredByDistinctElements(effectText, source, 0) != null) {
+        // Read from the text as given, ahead of the restriction strip below: this pattern is
+        // anchored over the whole text, and the strip rewrites G'raha Tia 27-044L's — "also during
+        // this turn, …" answers one of the restriction patterns — so by the time the strip has run
+        // there is nothing left for an end-to-end match to hold on to.
+        if (site.equals("RevealTopNTieredByDistinctElements")) {
             Matcher rt = REVEAL_TOP_N_TIERED_BY_DISTINCT_ELEMENTS.matcher(effectText.trim());
             if (!rt.matches()) return "RevealTopNTieredByDistinctElements";
             StringBuilder sb = new StringBuilder("RevealTop" + rt.group("reveal") + "Elements(");
@@ -3741,28 +3090,22 @@ public class ActionResolver {
             }
             return sb.append(")").toString();
         }
-        // Arciela 18-128H's thresholds, described the same way and placed here for the same
-        // reason: the pattern is anchored over the whole ability, and the strip below would take
-        // the trailing "(If you reveal 3 or more cards of each Element, …)" reminder off the end
+        // Arciela 18-128H's thresholds, described the same way and read from the text as given for
+        // the same reason: the pattern is anchored over the whole ability, and the strip below would
+        // take the trailing "(If you reveal 3 or more cards of each Element, …)" reminder off the end
         // and leave nothing for an end-to-end match to hold.
-        {
+        if (site.equals("RevealHandElementThresholds")) {
             String revealDesc = ActionResolverHand.revealHandElementThresholdsDescription(effectText, source);
-            if (revealDesc != null
-                    && ActionResolverHand.tryParseRevealHandElementThresholds(effectText, source) != null)
-                return revealDesc;
+            if (revealDesc != null) return revealDesc;
         }
-        // Strip trailing use-restriction sentences so they don't short-circuit before effect patterns match
+        // Every entry below reads the text with its trailing use-restriction sentences stripped.
         String noRestriction = stripRestrictionSentences(effectText);
         if (!noRestriction.isEmpty()) effectText = noRestriction;
-        // Mirrors parse(): the cost-tiered reveal (10-072L) is read ahead of the Choose chain.
-        if (ActionResolverSearch.tryParseRevealTopDeckCostTiers(effectText, source) != null)
+        if (site.equals("RevealTopDeckCostTiers"))
             return revealTopDeckDescription(effectText, source);
-        // Mirrors parse(): ahead of the Choose chain, which would describe Lorenzo's quotation.
-        if (tryParseUntilEotDoublesPowerAndQuoted(effectText, source) != null)
-            return "UntilEotDoublesPowerAndQuoted";
-        // Mirrors parse(); see the matching guard in matchedPatternNameOn(). Described like the
-        // control gates below: the condition is named, the effect it guards described inside it.
-        if (tryParseCastPaymentElementsGate(effectText, source, 0) != null) {
+        // Described like the control gates below: the condition is named, the effect it guards
+        // described inside it.
+        if (site.equals("CastPaymentElementsGate")) {
             Matcher cpg = CAST_PAYMENT_ELEMENTS_GATE.matcher(effectText.trim());
             if (!cpg.matches()) return "CastPaymentElementsGate";
             String baseTxt = cpg.group("base").trim();
@@ -3785,24 +3128,17 @@ public class ActionResolver {
             return describeOrName(baseTxt, source) + " + " + gate
                     + describeOrName(gateTailText(tailTxt, source, 0), source) + ")";
         }
-        // Mirrors parse(): the condition named, the effect it guards described inside it.
-        if (tryParseForwardsAttackingThisTurnGate(effectText, source, 0) != null) {
+        // The condition named, the effect it guards described inside it.
+        if (site.equals("ForwardsAttackingThisTurnGate")) {
             Matcher fag = IF_FORWARDS_ATTACKING_THIS_TURN_GATE.matcher(effectText.trim());
             if (!fag.matches()) return "ForwardsAttackingThisTurnGate";
             String cat = fag.group("cat");
             return "IfAttackedThisTurn(" + fag.group("count") + "+" + (cat != null ? " Category " + cat : "")
                     + ": " + describeOrName(fag.group("effect").trim() + ".", source) + ")";
         }
-        if (forwardsAttackingGateUnreadable(effectText, source, 0)) return null;
-        // Mirrors parse().
-        if (tryParseSelfBecomeForwardPermanently(effectText, source) != null) return "SelfBecomeForwardPermanent";
-        if (tryParseRevealAddThenIfAddedIsAlso(effectText, source, 0) != null) return "RevealAddThenIfAddedIsAlso";
-        if (tryParseRevealTopAddAllMatchingRestBz(effectText) != null) return "RevealTopAddAllMatchingRestBz";
-        if (tryParseDiscardTypeAlternation(effectText) != null) return "DiscardTypeAlternation";
-        if (tryParseLookOppTopRemoveOneCastable(effectText) != null) return "LookOppTopRemoveOneCastable";
-        // Mirrors parse(): the trailing cast-count gate, described the same way as the sibling
+        // The trailing cast-count gate, described the same way as the sibling
         // above — the base named as itself, the condition named around what it guards.
-        if (tryParseCastCountGate(effectText, source, 0) != null) {
+        if (site.equals("CastCountGate")) {
             Matcher ccg = CAST_COUNT_GATE.matcher(effectText.trim());
             if (!ccg.matches()) return "CastCountGate";
             String baseTxt = ccg.group("base").trim();
@@ -3820,21 +3156,21 @@ public class ActionResolver {
             return describeOrName(baseTxt, source) + " + " + gate
                     + describeOrName(gateTailText(tailTxt, source, 0), source) + ")";
         }
-        // Mirrors parse(): the negated sibling of the gate above, described the same way.
-        if (tryParseCastPaymentElementsNotIncludedGate(effectText, source, 0) != null) {
+        // The negated sibling of the gate above, described the same way.
+        if (site.equals("CastPaymentElementsNotIncludedGate")) {
             Matcher ncpg = CAST_PAYMENT_ELEMENTS_NOT_INCLUDED_GATE.matcher(effectText.trim());
             if (!ncpg.matches()) return "CastPaymentElementsNotIncludedGate";
             return "IfCastNotPaidElements(" + ncpg.group("count") + "+: "
                     + describeOrName(ncpg.group("effect").trim(), source) + ")";
         }
-        // Mirrors parse(): described like the gates above, with the guarded effect inside.
-        if (tryParseCrystalHeldGate(effectText, source, 0) != null) {
+        // Described like the gates above, with the guarded effect inside.
+        if (site.equals("CrystalHeldGate")) {
             Matcher cg = CRYSTAL_HELD_GATE.matcher(effectText.trim());
             if (!cg.matches()) return "CrystalHeldGate";
             return (cg.group("negated") != null ? "IfNoCrystal(" : "IfCrystal(")
                     + describeOrName(cg.group("inner").trim(), source) + ")";
         }
-        if (tryParseCastPaymentElementCpGate(effectText, source, 0) != null) {
+        if (site.equals("CastPaymentElementCpGate")) {
             // One entry per gate, split the way the parser splits: 9-123L Chaos (MOBIUS) chains
             // three, and reading only the anchored pattern named the first and hid the rest
             // inside its greedy inner group.
@@ -3855,131 +3191,63 @@ public class ActionResolver {
                     + describeOrName(gateText.substring(effectStart).trim(), source) + ")");
             return String.join(" + ", gates);
         }
-        // Mirrors parse(): the strict sibling of the gate above — the whole payment had to be that
-        // Element, not merely include it — described the same way, with the guarded effect inside.
-        if (tryParseCastPaymentOnlyElementCpGate(effectText, source, 0) != null) {
+        // The strict sibling of the gate above — the whole payment had to be that Element, not merely
+        // include it — described the same way, with the guarded effect inside.
+        if (site.equals("CastPaymentOnlyElementCpGate")) {
             Matcher oe = CAST_PAYMENT_ONLY_ELEMENT_CP_GATE.matcher(effectText.trim());
             if (!oe.matches()) return "CastPaymentOnlyElementCpGate";
             return "IfCastPaidOnly" + cap(oe.group("element")) + "Cp("
                     + describeOrName(oe.group("effect").trim(), source) + ")";
         }
-        // Mirrors parse(): the "exactly N Elements" member of the same family.
-        if (tryParseCastPaymentExactElementsGate(effectText, source, 0) != null) {
+        // The "exactly N Elements" member of the same family.
+        if (site.equals("CastPaymentExactElementsGate")) {
             Matcher ee = CAST_PAYMENT_EXACT_ELEMENTS_GATE.matcher(effectText.trim());
             if (!ee.matches()) return "CastPaymentExactElementsGate";
             return "IfCastPaidExactElements(" + ee.group("count") + ": "
                     + describeOrName(ee.group("effect").trim(), source) + ")";
         }
-        // Mirrors parse(): the offer and its consequence are one clause, so both are named.
-        if (tryParseOpponentMayDiscardElseEffect(effectText, source, 0) != null) {
+        // The offer and its consequence are one clause, so both are named.
+        if (site.equals("OpponentMayDiscardElseEffect")) {
             Matcher od = OPPONENT_MAY_DISCARD_ELSE_EFFECT.matcher(effectText.trim());
             if (!od.matches()) return "OpponentMayDiscardElseEffect";
             return "OpponentMayDiscard(" + od.group("count") + ") | else "
                     + describeOrName(od.group("effect").trim(), source);
         }
-        // Mirrors parse()'s first dispatch; see the matching guard in matchedPatternNameOn().
-        if (tryParseTrailingDraw(effectText, source, 0) != null) {
+        if (site.equals("TrailingDraw")) {
             String tdHead = trailingDrawHead(effectText);
             if (tdHead != null) {
                 String headDesc = fullDescription(tdHead, source);
                 return (headDesc != null ? headDesc : "?") + " + DrawCards";
             }
         }
-        // Mirrors parse(); see the matching guard in matchedPatternNameOn().
-        if (tryParseRemoveSelfThenPlaySelfOntoField(effectText, source) != null) return "RemoveSelfThenPlaySelfOntoField";
-        // Mirrors parse(); see the matching guard in matchedPatternNameOn().
-        // Must precede IndependentSentences, mirroring parse(): the splitter reports the removal
-        // alone and drops the return clause.
-        if (tryParseRemoveSelfReturnNextMainPhase1(effectText, source) != null)
-            return "RemoveSelfReturnNextMainPhase1";
-        // Mirrors parse(): claimed whole, ahead of the splitter that would report it in halves.
-        if (tryParseDivideOppForwardsIntoGroups(effectText) != null) return "DivideOppForwardsIntoGroups";
-        // Mirrors parse(); see the matching guard in matchedPatternNameOn().
-        if (tryParseOppRfgWholeHandFaceDown(effectText) != null) return "OppRfgWholeHandFaceDown";
-        // Mirrors parse(); see the matching guard in matchedPatternNameOn().
-        if (cancelAnyNumberFilter(effectText) != null) return "CancelAnyNumberAbilitiesOnStack";
-        // Mirrors parse(); see the matching guard in matchedPatternNameOn(). The payoff is described
-        // in brackets, as SelectFollowingActions describes its options: the gate is the ability, but
-        // which effect it guards is the thing a reader wants to see.
-        if (tryParseChooseBzCardsRfgElementGate(effectText, source, 0) != null)
+        // The payoff is described in brackets, as SelectFollowingActions describes its options: the
+        // gate is the ability, but which effect it guards is the thing a reader wants to see.
+        if (site.equals("ChooseBzCardsRfgElementGate"))
             return chooseBzCardsRfgElementGateDescription(effectText, source);
-        // Mirrors parse(): claimed whole, ahead of the splitter. Both of The Demon 20-007L's
-        // sentences parse alone, so the splitter reports it as "NameJob + DealDamageToForwards"
-        // — a name for an unfiltered sweep of both boards, which is what it used to do.
-        if (tryParseNameJobOrElementThenDamageMatching(effectText) != null)
-            return "NameJobOrElementThenDamageMatching";
-        if (tryParseIndependentSentences(effectText, source, 0) != null) {
+        if (site.equals("IndependentSentences")) {
             String composed = composeOverSentences(effectText, s -> fullDescription(s, source));
             if (composed != null) return composed;
         }
-        if (tryParseChooseSummonInBzCastable(effectText)              != null) return "ChooseSummonInBzCastable";
-        if (tryParseChooseSummonFromBzToHandWithCostReduction(effectText) != null) return "ChooseSummonFromBzToHandWithCostReduction";
-        if (tryParseChooseNSummonsBzPickOneHandRestRfg(effectText)    != null) return "ChooseNSummonsBzPickOneHandRestRfg";
-        if (tryParseSelectNamedFromRfgToHand(effectText)              != null) return "SelectNamedFromRfgToHand";
-        if (tryParseOppRfpTopDeckCastable(effectText)                != null) return "OppRfpTopDeckCastable";
-        if (tryParseChooseFromOppBzCastable(effectText)              != null) return "ChooseFromOppBzCastable";
-        if (tryParseChooseSummonsFromBzCastable(effectText)          != null) return "ChooseSummonsFromBzCastable";
-        if (tryParseArmNextSummonRecast(effectText) != null) return "ArmNextSummonRecast";
-        if (tryParseChooseSummonInBzMaxCostFreeCastRfg(effectText)   != null) return "ChooseSummonInBzMaxCostFreeCastRfg";
-        if (tryParseChooseSummonsDiffCostOppSelectsOther(effectText) != null) return "ChooseSummonsDiffCostOppSelectsOther";
-        // See the matching guard in matchedPatternName(): ahead of the choose/search families so a
-        // modal ability is described as the choice it is, not as one of its quoted options.
-        if (tryParseSelectFollowingActions(effectText, source)       != null)
+        // Described as the choice it is, not as one of its quoted options.
+        if (site.equals("SelectFollowingActions"))
             return selectFollowingActionsDescription(effectText, source);
-        if (tryParseDiscardHandOppSelectsRepeatableActions(effectText, source) != null)
-            return "DiscardHandOppSelectsRepeatableActions";
-        // Strict form: see the matching guard in matchedPatternName(). Sitting this early in the
-        // chain, the loose predicate claimed the description of any ability whose text ends in a
-        // cost-reduction clause, masking the real one.
-        if (CardData.yieldsSelfCostModifier(effectText))                        return "SelfCostModifier";
-        if (CardData.FIELD_CAST_COST_INCREASE_PATTERN.matcher(effectText).find()) return "CastCostIncrease";
-        if (AutoAbilityTriggers.FA_DISCARD_JOB_TO_CAST.matcher(effectText).find()) return "DiscardJobToCast";
-        if (CardData.YOUR_TURN_ONLY_PATTERN.matcher(effectText).matches())  return "YourTurnOnly";
-        if (CardData.ONCE_PER_TURN_PATTERN.matcher(effectText).matches())   return "OncePerTurn";
-        if (CardData.YOUR_TURN_ONLY_PATTERN.matcher(effectText).find()
-                && CardData.ONCE_PER_TURN_PATTERN.matcher(effectText).find()) return "YourTurnOnly+OncePerTurn";
-        if (CardData.MAIN_PHASE_ONLY_PATTERN.matcher(effectText).matches())        return "MainPhaseOnly";
-        if (CardData.WHILE_PARTY_ATTACKING_PATTERN.matcher(effectText).matches()) return "WhilePartyAttacking";
-        if (CardData.WHILE_CARD_ATTACKING_PATTERN.matcher(effectText).matches())  return "WhileCardAttacking";
-        if (CardData.WHILE_CARD_BLOCKING_PATTERN.matcher(effectText).matches())   return "WhileCardBlocking";
-        if (CardData.WHILE_CARD_IN_HAND_PATTERN.matcher(effectText).matches())   return "WhileCardInHand";
-        if (CardData.CONTROL_IF_PATTERN.matcher(effectText).find())                  return "UseRestriction";
-        if (CardData.YOUR_TURN_AND_CONTROL_IF_PATTERN.matcher(effectText).find())  return "UseRestriction";
-        if (CardData.CONTROL_IF_NOT_ANY_PATTERN.matcher(effectText).find())        return "UseRestriction";
-        if (CardData.OPPONENT_CONTROLS_N_OR_MORE_PATTERN.matcher(effectText).find()) return "UseRestriction";
-        if (tryParseMayPayCostThenEffect(effectText, source, 0)         != null) return "MayPayCostThenEffect";
-        // Must precede WhenYouDoSo, mirroring parse() and matchedPatternName(). The description
-        // itself is produced by the ChooseCharacter block further down, which reads the followup.
-        if (tryParseChooseMaySearchRfgThenElse(effectText, source, 0) != null)
+        if (site.equals("ChooseMaySearchRfgThenElse"))
             return "ChooseCharacter / MaySearchRfgThenElse";
-        // Must precede WhenYouDoSo, mirroring parse() and matchedPatternName().
-        if (tryParseRemoveAnyCountersThenChooseSameNumber(effectText, source) != null)
+        if (site.equals("RemoveAnyCountersThenChooseSameNumber"))
             return removeAnyCountersDescription(effectText, source);
-        if (tryParseDiscardAnyNumberThenChooseSameNumber(effectText, source) != null)
+        if (site.equals("DiscardAnyNumberThenChooseSameNumber"))
             return discardAnyNumberDescription(effectText, source);
-        // Must precede WhenYouDoSo, mirroring parse(): "If you do so" is inside Zidane-style text.
-        if (tryParseRevealHandOptPickRfpOppDraw(effectText)             != null) return "RevealHandOptPickRfpOppDraw";
-        if (tryParseWhenYouDoSoSequence(effectText, source, 0)          != null) return "WhenYouDoSo";
-        if (tryParseDullAnyNumberBackupsPerDulled(effectText, source)   != null) return "DullAnyNumberBackupsPerDulled";
-        if (tryParseRevealAnyFromHandPerRevealed(effectText, source)    != null) return "RevealAnyFromHandPerRevealed";
-        if (tryParseRevealAnyFromHandThresholds(effectText, source)     != null) return "RevealAnyFromHandThresholds";
-        if (tryParseIfNotPayOrElse(effectText, source, 0)               != null) return "IfNotPayOrElse";
-        if (tryParseIfNotRemoveFromBzOrElse(effectText, source)         != null) return "IfNotRemoveFromBzOrElse";
-        if (tryParseRemoveTopThenPileThreshold(effectText, source)          != null) return "RemoveTopThenPileThreshold";
-        if (tryParseAddRemovedBySourceAbilityToHand(effectText, source)     != null) return "AddRemovedBySourceAbilityToHand";
-        // Mirrors parse(), where this gate precedes every reader of its inner effect. Described by
-        // the gate plus what it unlocks, so the report shows both halves.
-        if (tryParseIfSourceUsedSpecialsThisTurn(effectText, source, 0) != null)
+        // Described by the gate plus what it unlocks, so the report shows both halves.
+        if (site.equals("IfSourceUsedSpecialsThisTurn"))
             return "IfSourceUsedSpecialsThisTurn(" + ifSourceUsedSpecialsInnerDescription(effectText, source) + ")";
         // Described by the gate plus what it unlocks, for the reason the gate above is: the inner
         // effect is an ordinary one this chain can already name, and a bare gate name would hide it.
         Matcher oppDiscM = IF_OPP_DISCARDED_FROM_HAND_THIS_TURN.matcher(effectText.trim());
-        if (oppDiscM.matches() && tryParseIfOppDiscardedThisTurn(effectText, source, 0) != null)
+        if (site.equals("IfOppDiscardedThisTurn") && oppDiscM.matches())
             return "IfOppDiscardedThisTurn(" + fullDescription(oppDiscM.group("effect").trim(), source) + ")";
-        if (tryParseIfCastAtLeast(effectText, source, 0)                != null) return "IfCastAtLeast";
-        // Mirrors parse(), where the gate sits ahead of the control gates. Described the way
-        // IfWarpCounters(…) below is: the gate is named and the effect it guards described inside.
-        if (tryParseIfSelfIsStateGate(effectText, source, 0) != null) {
+        // Described the way IfWarpCounters(…) below is: the gate is named and the effect it guards
+        // described inside.
+        if (site.equals("IfSelfIsStateGate")) {
             Matcher selfState = IF_SELF_IS_STATE_GATE.matcher(effectText.trim());
             if (!selfState.matches()) return "IfSelfIsStateGate";
             String innerTxt  = selfState.group("effect").trim();
@@ -3988,15 +3256,11 @@ public class ActionResolver {
             return "IfSelfIs" + cap(selfState.group("state")) + "("
                     + (innerDesc != null ? innerDesc : "?") + ")";
         }
-        if (tryParseIfControlCondOtherThan(effectText, source, 0)      != null) return "IfControlCondOtherThan";
-        // Must precede ControlGatedInsteadUpgrade, mirroring parse(): the description belongs to
-        // the ChooseCharacter block, which reads the whole followup.
-        if (tryParseChooseGatedBoostInstead(effectText, source, 0) != null)
+        // Named as the choose followup it is.
+        if (site.equals("ChooseGatedBoostInstead"))
             return "ChooseCharacter / PowerBoostControlGatedInstead";
-        if (tryParseControlGatedInsteadUpgrade(effectText, source, 0)  != null) return "ControlGatedInsteadUpgrade";
-        // Mirrors parse(), where the gate sits beside the control gates. Described like
-        // IfControl(…) below: the gate is named, the effect it guards described inside it.
-        if (tryParseWarpCounterCountGate(effectText, source, 0)        != null) {
+        // Described like IfControl(…) below: the gate is named, the effect it guards described inside it.
+        if (site.equals("WarpCounterCountGate")) {
             Matcher wcg = WARP_COUNTER_COUNT_GATE.matcher(effectText.trim());
             if (!wcg.matches()) return "WarpCounterCountGate";
             String innerTxt  = wcg.group("effect").trim();
@@ -4005,25 +3269,25 @@ public class ActionResolver {
             return "IfWarpCounters(" + wcg.group("count") + "+ on " + wcg.group("card").trim()
                     + ": " + (innerDesc != null ? innerDesc : "?") + ")";
         }
-        // Mirrors parse() and matchedPatternName(): the generic counter gate is read after the
-        // Warp one above, which owns the counters that do not live in the counter map.
-        if (tryParseCountersOnSelfGate(effectText, source, 0) != null) {
+        // The generic counter gate; the Warp one above owns the counters that do not live in the
+        // counter map.
+        if (site.equals("CountersOnSelfGate")) {
             Matcher cg = COUNTERS_ON_SELF_GATE.matcher(effectText.trim());
             if (!cg.matches()) return "CountersOnSelfGate";
             return "IfSelfCounters(" + cg.group("count") + "+ " + cg.group("counter").trim() + ": "
                     + describeOrName(cg.group("inner").trim(), source) + ")";
         }
-        if (tryParseCounterPresentOnSelfGate(effectText, source, 0) != null) {
+        if (site.equals("CounterPresentOnSelfGate")) {
             Matcher cp = COUNTER_PRESENT_ON_SELF_GATE.matcher(effectText.trim());
             if (!cp.matches()) return "CounterPresentOnSelfGate";
             return "IfSelfCounters(1+ " + cp.group("counter").trim() + ": "
                     + describeOrName(cp.group("inner").trim(), source) + ")";
         }
-        // Mirrors parse(): ahead of the plain control gate, which describes only the base half and
-        // leaves the replacement clause out of the golden file entirely.
-        {
+        // Both halves described: the plain control gate's description would leave the replacement
+        // clause out of the golden file entirely.
+        if (site.equals("ControlGatedElidedInstead")) {
             Matcher em = CONTROL_GATED_ELIDED_INSTEAD.matcher(effectText.trim());
-            if (em.matches() && tryParseControlGatedElidedInstead(effectText, source, 0) != null) {
+            if (em.matches()) {
                 String noun = em.group("noun").trim();
                 return "IfControl(" + em.group("basecount") + "+ " + noun + ": "
                         + describeOrName(em.group("base").trim(), source)
@@ -4031,7 +3295,7 @@ public class ActionResolver {
                         + describeOrName(em.group("upgrade").trim(), source) + ")";
             }
         }
-        if (tryParseControlConditionGate(effectText, source, 0)        != null) {
+        if (site.equals("ControlConditionGate")) {
             Matcher ccg = CONTROL_CONDITION_GATE.matcher(effectText.trim());
             if (!ccg.matches()) return "ControlConditionGate";
             // Through the shared splitter, so the description names the same condition the parser
@@ -4046,109 +3310,50 @@ public class ActionResolver {
                     + CardData.parseControlCondition(halves[0])
                     + ": " + (innerDesc != null ? innerDesc : "?") + ")";
         }
-        if (tryParseIfOppControlsNOrMoreCondTypeGate(effectText, source, 0) != null) return "IfOppControlsNOrMoreCondTypeDraw";
-        if (tryParseDiscardConditionalElement(effectText, source, 0)    != null) return "DiscardConditionalElement";
-        if (tryParseDiscardConditionalElementSingle(effectText, source, 0) != null) return "DiscardConditionalElementSingle";
-        if (tryParseDiscardConditionalTargetLoseAbilities(effectText) != null) return "DiscardConditionalTargetLoseAbilities";
-        if (tryParseDiscardConditionalSelfBoostInstead(effectText, source, 0) != null) return "DiscardConditionalSelfBoostInstead";
-        if (tryParseDrawDiscardIfMultiElement(effectText) != null) return "DrawDiscardIfMultiElement";
-        if (tryParseSelectNumber(effectText, source)          != null) return "SelectNumber";
-        if (tryParseForEachJobAndNameDealDamageToForwards(effectText)   != null) return "ForEachJobAndNameDealDamageToForwards";
-        // Mirrors its position in parse() and matchedPatternName(), both of which check it
-        // immediately after the sibling above — it is the same effect in the other word order.
-        if (tryParseDealNForEachJobOrNameToOppForwards(effectText)      != null) return "DealNForEachJobOrNameToOppForwards";
-        if (tryParseSelfGainsWhenAttacksEOT(effectText, source)        != null) return "SelfGainsWhenAttacksEOT";
-        if (tryParseDealDamageToForwardsForEach(effectText)         != null) return "DealDamageToForwardsForEach";
-        if (tryParseDealDamagePerGroupToAllOppForwards(effectText)        != null) return "DealDamagePerGroupToAllOppForwards";
-        if (tryParseDealDamageToForwardsExceptElement(effectText)          != null) return "DealDamageToForwardsExceptElement";
-        if (tryParseRfpAllFwdExceptElementsThenTwiceDeck(effectText)       != null) return "RfpAllFwdExceptElementsThenTwiceDeck";
-        // Mirrors parse(); see the matching guard in matchedPatternNameOn().
-        if (tryParseDealSameAmountToAllForwardsExcept(effectText, source, 0) != null)
-            return "DealSameAmountToAllForwardsExcept";
-        if (tryParseDealDamageToForwards(effectText)                       != null) return "DealDamageToForwards";
-        if (tryParseDivideDamageEquallyAmongAll(effectText)                != null) return "DivideDamageEquallyAmongAll";
-        if (tryParseNoForwardCostCannotAttack(effectText)           != null) return "NoForwardCostCannotAttack";
-        if (tryParseAllForwardsCannotBeChosenByExBursts(effectText) != null) return "AllForwardsCannotBeChosenByExBursts";
-        if (tryParseOwnForwardsCannotBeChosenByExBurst(effectText)  != null) return "OwnForwardsCannotBeChosenByExBurst";
-        if (tryParseExBurstSuppression(effectText)                  != null) return "ExBurstSuppression";
-        if (tryParseDealHalfPowerDamageToForwards(effectText)       != null) return "DealHalfPowerDamageToForwards";
-        if (tryParseDealPowerMinusNDamageToForwards(effectText)     != null) return "DealPowerMinusNDamageToForwards";
-        if (tryParseDealHalfSourcePowerDamageToForwards(effectText) != null) return "DealHalfSourcePowerDamageToForwards";
-        if (tryParseDamageToCombatBlocker(effectText)               != null) return "DamageToCombatBlocker";
-        if (MAY_COST_REPLAY_ABILITY.matcher(effectText).find())               return "MayReplayAbility";
+        // Both branches, the way CastPaymentElementsGate describes an "instead": the replacement
+        // under the condition, the base behind "else". Read from the text as given, because the
+        // restriction strip takes "If you control …, … instead." for a use condition.
+        if (site.equals("ControlGatedInsteadUpgrade")) {
+            Matcher cgi = CONTROL_GATED_INSTEAD_UPGRADE.matcher(asGiven.trim());
+            if (cgi.matches()) {
+                String rest    = cgi.group("rest").trim();
+                String altText = cgi.group("alt").trim() + "." + (rest.isEmpty() ? "" : " " + rest);
+                return "IfControl(" + CardData.parseControlCondition(cgi.group("cond").trim()) + ": "
+                        + describeOrName(altText, source) + " | else "
+                        + describeOrName(cgi.group("base").trim(), source) + ")";
+            }
+        }
+        if (site.equals("IfOppControlsNOrMoreCondTypeGate")) return "IfOppControlsNOrMoreCondTypeDraw";
 
         String normalizedEffectText = ELEM_TYPE_OR_ELEM_TYPE.matcher(
                 CHOOSE_ELEM_TYPE_ANDOR_ELEM_TYPE.matcher(effectText).replaceAll("$1$2 or $4 $3"))
                 .replaceAll("$1 or $3 $2");
         String escapedEffectText = escapePeriodInName(normalizedEffectText, source);
         Matcher oneEachM = CHOOSE_ONE_EACH_PATTERN.matcher(normalizedEffectText);
-        if (oneEachM.find()) {
+        if (site.equals("ChooseOneEach") && oneEachM.find()) {
             String followupName = matchedFollowupName(oneEachM.group("followup").trim(), source);
             if (followupName != null) return "ChooseOneEach / " + followupName;
-            // followup not describable by matchedFollowupName — fall through to tryParseChooseFormerLatter
         }
-        if (tryParseChooseForwardRedirectToNamed(normalizedEffectText) != null) return "ChooseForwardRedirectToNamed";
-        if (tryParseChooseFormerLatter(normalizedEffectText, source) != null) return "ChooseFormerLatter";
-        if (tryParseChooseForwardDealSelfDamageBreakIfCostLeDamage(normalizedEffectText) != null)
-            return "ChooseForwardDealSelfDamageBreakIfCostLeDamage";
-        if (tryParseChooseForwardSharedPowerLoss(normalizedEffectText, source) != null)
-            return "ChooseForwardSharedPowerLoss";
-        if (tryParseChooseFwdPowerLeAndOptOppBzFwdRfp(normalizedEffectText) != null)
-            return "ChooseFwdPowerLeAndOptOppBzFwdRfp";
-        if (tryParseChooseAnyNumberReturnToHand(normalizedEffectText) != null)
-            return "ChooseAnyNumberReturnToHand";
         Matcher threeMixedM = CHOOSE_THREE_MIXED_TYPES_PATTERN.matcher(normalizedEffectText);
-        if (threeMixedM.find()) {
+        if (site.equals("ChooseThreeMixedTypes") && threeMixedM.find()) {
             String followupName = matchedFollowupName(threeMixedM.group("followup").trim(), source);
             return "ChooseThreeMixedTypes / " + (followupName != null ? followupName : "?");
         }
         Matcher mixedM = CHOOSE_TWO_MIXED_TYPES_PATTERN.matcher(normalizedEffectText);
-        if (mixedM.find()) {
+        if (site.equals("ChooseTwoMixedTypes") && mixedM.find()) {
             String followupName = matchedFollowupName(mixedM.group("followup").trim(), source);
             return "ChooseTwoMixedTypes / " + (followupName != null ? followupName : "?");
         }
-        // Mirrors parse() and matchedPatternName(): ahead of the ChooseCharacter block, which reads
-        // the effect out of the granted ability's quotation and described Snow & Lightning PR-158
-        // as "ChooseCharacter / DullAndFreeze" — the grant, its filter and its trigger all dropped.
-        if (tryParseFilteredForwardsQuotedGrant(effectText) != null) return "FilteredForwardsGrant";
-        // Checked ahead of the ChooseCharacter block: these "choose … Forward(s) …" compounds would
-        // otherwise be described as "ChooseCharacter / ?" (their branches aren't recognised followups),
-        // keeping the card stuck in "partially parsed" coverage.
-        if (tryParseChooseFwdRevealCostParity(effectText) != null) return "ChooseFwdRevealCostParity";
-        if (tryParseChooseForwardsGainAbilityEot(effectText) != null) return "ChooseForwardsGainAbilityEot";
-        if (tryParseChooseForwardPlacePetrification(effectText) != null) return "ChooseForwardPlacePetrification";
-        if (tryParseRemoveAllCountersFromSelf(effectText, source) != null) return "RemoveAllCountersFromSelf";
-        // Mirrors parse() and matchedPatternName(): must precede the ChooseCharacter block, whose
-        // followup naming has nothing for either sentence and describes this as
-        // "ChooseCharacter / ? + ?" (Kimahri 1-102H).
-        if (tryParseChooseOppFwdGainsSpecialAbilityFreeOnce(effectText, source) != null)
-            return "ChooseOppFwdGainsSpecialAbilityFreeOnce";
-        // Mirrors parse() and matchedPatternName(): must precede the ChooseCharacter block, which
-        // describes this as "ChooseCharacter / ? + IfControl(…: ?)".
-        if (tryParseChooseTwoBzFwdPlayIfControl(effectText, source) != null)
-            return "ChooseTwoBzFwdPlayIfControl";
-        // Mirrors parse() and matchedPatternName(): both read a Break-Zone scope the joint parser
-        // splits across its two descriptors and loses, so they are asked ahead of it.
-        if (tryParseSelectNamedFromBzPlay(effectText) != null) return "SelectNamedFromBzPlay";
-        if (tryParseChooseTwoCostsFromBzPlayBoth(effectText) != null) return "ChooseTwoCostsFromBzPlayBoth";
-        if (tryParseChooseUpTo1EachInOwnBzToHand(effectText) != null)
+        if (site.equals("ChooseUpTo1EachInOwnBzToHand"))
             return "ChooseUpTo1EachInOwnBz / AddToHand";
-        // Mirrors parse() and matchedPatternName(): must precede the ChooseCharacter block, which
-        // describes only the first of the two choose clauses.
-        if (tryParseChooseTwoJointAction(effectText, source) != null) {
+        if (site.equals("ChooseTwoJointAction")) {
             Matcher jointM = CHOOSE_FORMER_LATTER_PATTERN.matcher(effectText);
             String followupName = jointM.find()
                     ? matchedFollowupName(jointM.group("effects").trim(), source) : null;
             return "ChooseTwoJointAction / " + (followupName != null ? followupName : "?");
         }
-        // Mirrors parse() and matchedPatternName(): must precede the ChooseCharacter block.
-        if (tryParseChooseForwardsTotalCostBreak(effectText) != null) return "ChooseForwardsTotalCostBreak";
-        // Same: ahead of the ChooseCharacter block, which reads only the first of the two
-        // alternative target descriptions.
-        if (tryParseChooseEitherCostSpecBreak(effectText) != null) return "ChooseEitherCostSpecBreak";
-        // Same, and the amounts go in the description: they are the whole of what this parser
-        // decides, and the ChooseCharacter block below would report the followup as "?".
-        if (tryParseChooseTieredDamage(effectText) != null) {
+        // The amounts go in the description: they are the whole of what this parser decides.
+        if (site.equals("ChooseTieredDamage")) {
             Matcher tiered = CHOOSE_TIERED_DAMAGE.matcher(effectText.trim());
             if (!tiered.matches()) return "ChooseTieredDamage";
             Matcher tiers = TIERED_DAMAGE_ONE_OF_THEM.matcher(tiered.group("tiers"));
@@ -4157,77 +3362,64 @@ public class ActionResolver {
                 amounts.append(amounts.length() == 0 ? "" : "/").append(tiers.group("amount"));
             return "ChooseTieredDamage(" + amounts + ")";
         }
-        // Mirrors parse() and matchedPatternName(): ahead of the ChooseCharacter block, because the
-        // gated effect may itself be a choose — 16-021C Rain, which the block would otherwise
-        // describe as a flat "ChooseCharacter / Damage" with its condition reported as read.
-        //
         // Each carries its gated effect's own description rather than stopping at the gate name,
         // so the report still says what the card does when the condition holds; that inner text is
         // the whole payload, and a bare "IfPutFromFieldToBzThisTurn" would hide it.
-        if (tryParseIfOpponentDamageAtMost(effectText, source) != null) return "IfOpponentDamageAtMost";
-        if (tryParseIfSelfDamageAtMost(effectText, source) != null) {
+        if (site.equals("IfSelfDamageAtMost")) {
             Matcher selfM = IF_DAMAGE_AT_MOST_INNER.matcher(effectText.trim());
             if (selfM.find())
                 return "IfSelfDamageAtMost / " + descOrUnread(selfM.group("inner"), source);
         }
-        if (tryParseShuffleThenRevealTopCastSummonFreeRestBz(effectText) != null)
-            return "ShuffleThenRevealTopCastSummonFreeRestBz";
-        if (tryParseShuffleThenRevealPlayNamedRestBottom(effectText, source) != null) return "ShuffleThenRevealPlayNamedRestBottom";
-        if (tryParseShuffleDeckThen(effectText, source) != null) {
+        if (site.equals("ShuffleDeckThen")) {
             Matcher shuffleM = SHUFFLE_DECK_THEN.matcher(effectText.trim());
             if (shuffleM.matches())
                 return "ShuffleDeck + " + descOrUnread(shuffleM.group("rest"), source);
         }
-        if (tryParseDiscardThenIfDiscardedCategory(effectText, source) != null) {
+        if (site.equals("DiscardThenIfDiscardedCategory")) {
             Matcher discM = DISCARD_THEN_IF_DISCARDED_CATEGORY.matcher(effectText.trim());
             if (discM.matches())
                 return descOrUnread(discM.group("head"), source) + " + IfDiscardedCategory("
                         + discM.group("cat").trim() + ": " + descOrUnread(discM.group("eff"), source) + ")";
         }
-        if (tryParseDiscardThenIfDiscardedType(effectText, source) != null) {
+        if (site.equals("DiscardThenIfDiscardedType")) {
             Matcher discM = DISCARD_THEN_IF_DISCARDED_TYPE.matcher(effectText.trim());
             if (discM.matches())
                 return descOrUnread(discM.group("head"), source) + " + IfDiscardedType("
                         + discM.group("type") + ": " + descOrUnread(discM.group("eff"), source) + ")";
         }
-        if (tryParseDiscardThenIfAnyDiscardedCategory(effectText, source) != null) {
+        if (site.equals("DiscardThenIfAnyDiscardedCategory")) {
             Matcher discM = DISCARD_THEN_IF_ANY_DISCARDED_CATEGORY.matcher(effectText.trim());
             if (discM.matches())
                 return descOrUnread(discM.group("head"), source) + " + IfAnyDiscardedCategory("
                         + discM.group("cat").trim() + ": " + descOrUnread(discM.group("eff"), source) + ")";
         }
-        if (tryParseIfPutFromFieldToBzThisTurnInstead(effectText, source) != null) {
+        if (site.equals("IfPutFromFieldToBzThisTurnInstead")) {
             Matcher insteadM = PUT_FROM_FIELD_TO_BZ_THIS_TURN_INSTEAD.matcher(effectText.trim());
             if (insteadM.find())
                 return "IfPutFromFieldToBzThisTurn(" + descOrUnread(insteadM.group("base"), source)
                         + " else " + descOrUnread(insteadM.group("alt"), source) + ")";
         }
-        if (tryParseIfPutFromFieldToBzThisTurn(effectText, source) != null) {
+        if (site.equals("IfPutFromFieldToBzThisTurn")) {
             Matcher gateM = IF_PUT_FROM_FIELD_TO_BZ_THIS_TURN_INNER.matcher(effectText.trim());
             if (gateM.find())
                 return "IfPutFromFieldToBzThisTurn / " + descOrUnread(gateM.group("inner"), source);
         }
-        if (tryParseIfPutFromFieldToBzThisTurnMidGate(effectText, source) != null) {
+        if (site.equals("IfPutFromFieldToBzThisTurnMidGate")) {
             Matcher midM = PUT_FROM_FIELD_TO_BZ_THIS_TURN_MIDGATE.matcher(effectText.trim());
             if (midM.find())
                 return "IfPutFromFieldToBzThisTurn / "
                         + descOrUnread(midM.group("lead").trim() + " " + midM.group("tail").trim(), source);
         }
-        // Mirrors parse() and matchedPatternName(): ahead of the ChooseCharacter block, which
-        // describes 14-098R Ultimecia's third sentence on its own and reports the two ahead of it
-        // as unread.
-        if (tryParseSelectOwnFwdToBzGainControlSameCost(effectText) != null)
+        if (site.equals("SelectOwnFwdToBzGainControlSameCost"))
             return "SelectOwnFwdToBz + GainControlOfSameCost";
-        // Mirrors parse() and matchedPatternName(): ahead of the ChooseCharacter block, which
-        // cannot span the two zones this choice offers at once.
-        if (tryParseChooseOppFwdsOrOwnBzFwdsRfg(effectText) != null)
+        if (site.equals("ChooseOppFwdsOrOwnBzFwdsRfg"))
             return "ChooseOppFwdsOrOwnBzFwds / RemoveFromGame";
         // Mirrors tryParseChooseCharacter, which strips this trailing delayed trigger and parses
         // the rest as an ordinary choose-and-act. Without the same strip here the clause fell past
         // the choose block's sentence split and was reported as an unread tail — 15-014H Brynhildr
         // read as "ChooseCharacter / Damage + ?" while its draw had been arming all along.
         Matcher bzEffectM = CHOOSE_THEN_WHEN_PUT_TO_BZ_EFFECT.matcher(effectText.trim());
-        if (bzEffectM.matches() && tryParseChooseCharacter(effectText, source, 0) != null) {
+        if (site.equals("ChooseCharacter") && bzEffectM.matches()) {
             String headDesc    = fullDescription(bzEffectM.group("head").trim(), source);
             String delayedDesc = fullDescription(bzEffectM.group("delayed").trim(), source);
             // The delayed half carries its own description, so the report says what the mark will
@@ -4237,30 +3429,26 @@ public class ActionResolver {
             return (headDesc != null ? headDesc : "ChooseCharacter")
                     + " + OnFieldToBz(" + (delayedDesc != null ? delayedDesc : "?") + ")";
         }
-        // Mirrors parse(), where this sits far above the power-boost readers and the choose chain
-        // alike. It has to be above both: the boost pattern is read with find() and 4-142R Malboro
-        // quotes one inside the ability it grants itself, and the choose pattern below is read the
-        // same way — 25-048R The Mandragoras quotes "choose 1 Forward opponent controls. Break it."
-        // inside one of its two granted clauses and was described as "ChooseCharacter / Break", a
-        // choice it never makes, with no mention of either grant. Named here for every printing of
-        // the family, as parse() resolves it.
+        // Named for every printing of the family, as parse() resolves it. The clauses a printing
+        // grants itself in quotation marks are not choices it makes: 25-048R The Mandragoras quotes
+        // "choose 1 Forward opponent controls. Break it." inside one of its two granted clauses.
         //
         // The rider is named beside it when the promotion's own branch applied one, so a printing
         // whose quoted clause is honoured says so and one whose clause was dropped reads as the
         // bare promotion it resolves to. The three trigger-bearing branches name nothing extra —
         // their rider is the reason they exist and is already covered by the parser name.
-        if (tryParseBecomeForwardUntilEot(effectText, source) != null) {
+        if (site.equals("BecomeForwardUntilEot")) {
             Consumer<GameContext> rider = becomeForwardRiderGrant(effectText, source);
             return "BecomeForwardUntilEot"
                     + (rider != null ? " + " + becomeForwardRiderName(effectText, source) : "");
         }
-        if (tryParseThenBreakSelfAtEndOfTurn(effectText, source) != null) {
+        if (site.equals("ThenBreakSelfAtEndOfTurn")) {
             Matcher eotM = THEN_BREAK_SELF_AT_END_OF_TURN.matcher(effectText.trim());
             if (eotM.matches())
                 return descOrUnread(eotM.group("head"), source) + " + BreakSelfAtEndOfTurn";
         }
         Matcher chooseM = CHOOSE_CHARACTER_PATTERN.matcher(escapedEffectText);
-        if (chooseM.find()) {
+        if (site.equals("ChooseCharacter") && chooseM.find()) {
             String followup      = restorePeriodInName(chooseM.group("followup").trim(), source);
             // Mirrors the choose chain's cast-payment gate, which is settled ahead of every
             // followup parser: the condition sits between the choose and its followup, so name
@@ -4544,9 +3732,13 @@ public class ActionResolver {
                 if (condM.matches()
                         && parseRevealCondition(condM.group("cond").trim()) != null) {
                     String innerTxt  = condM.group("inner").trim();
-                    String innerDesc = fullDescription(innerTxt, source);
-                    if (innerDesc == null) innerDesc = matchedPatternName(innerTxt, source);
-                    if (innerDesc == null) innerDesc = matchedFollowupName(innerTxt, source);
+                    // Read the way the choose chain runs it: "<action> instead" is a target action
+                    // on the added card, and only anything else goes through parse() standalone.
+                    Matcher addedInsteadM = FOLLOWUP_ADD_TO_HAND_INNER_INSTEAD.matcher(innerTxt);
+                    boolean onTarget = addedInsteadM.matches()
+                            && parseTargetAction(addedInsteadM.group("action").trim(), 0) != null;
+                    String innerDesc = onTarget
+                            ? matchedFollowupName(innerTxt, source) : fullDescription(innerTxt, source);
                     secondaryDesc = "IfAddedCard(" + (innerDesc != null ? innerDesc : "?") + ")";
                 }
             }
@@ -4576,6 +3768,12 @@ public class ActionResolver {
                     secondaryDesc = "IfETF(" + (innerDesc != null ? innerDesc : "?") + ")";
                 }
             }
+            // Mirrors the choose chain, which reads a "You may pay … use this ability again"
+            // replay offer ahead of every other secondary; split into sentences it read "? + ?"
+            // (14-064R, 18-033R, 9-087H), though the offer runs.
+            if (secondaryDesc == null && secondaryTxt != null
+                    && MAY_COST_REPLAY_ABILITY.matcher(secondaryTxt).find())
+                secondaryDesc = "MayReplayAbility";
             // Mirrors the choose chain, where this is read first among the secondaries: the
             // sentence adds an action to the cards the primary chose, and the generic fallback
             // below described 1-059R Laguna's as unread and 1-043H Snow's as an unconditional
@@ -4630,84 +3828,18 @@ public class ActionResolver {
             return sb.toString();
         }
 
-        if (tryParsePlayerCannotCastSummons(effectText)                != null) return "PlayerCannotCastSummons";
-        // Mirrors parse(): ahead of CannotBeChosen, which would claim it off the quoted clause.
-        if (tryParseSelfGainsAndBasePowerBecomesPermanent(effectText, source) != null) return "SelfGainsAndBasePowerBecomesPermanent";
-        if (tryParseSelfGainsTraitsAndQuotedPermanent(effectText, source) != null)     return "SelfGainsTraitsAndQuotedPermanent";
-        // Mirrors parse(); see the matching guard in matchedPatternName().
-        if (tryParseSelfCannotBeChosenByAnyAndGainsTraits(effectText, source) != null)
-            return "SelfCannotBeChosenByAnyAndGainsTraits";
-        if (tryParseCannotBeChosenStandalone(effectText, source) != null)       return "CannotBeChosen";
-        if (tryParseCannotBecomeDullOpp(effectText, source) != null)            return "CannotBecomeDullOpp";
-        if (tryParseCannotBeReturnedToHandOpp(effectText, source) != null)      return "CannotBeReturnedToHandOpp";
-        if (tryParseCharactersCannotBeReturnedToHandOpp(effectText) != null)    return "CharactersCannotBeReturnedToHandOpp";
-        if (tryParseCannotBePutIntoBzOpp(effectText, source) != null)           return "CannotBePutIntoBzOpp";
-        if (tryParseChooseOwnFwdBoostProtectionsOrAllIfDmg(effectText) != null) return "ChooseOwnFwdBoostProtectionsOrAllIfDmg";
-        if (tryParseActivateAllOwnFwdsGainProtections(effectText) != null)      return "ActivateAllOwnFwdsGainProtections";
-        if (tryParseStandaloneCannotAttackOrBlock(effectText, source) != null) return "CannotAttackOrBlock";
-        if (tryParseNegateAllDamage(effectText) != null)                       return "NegateDamage";
-        if (tryParsePlayerNextDamageZeroRedirect(effectText) != null)          return "PlayerNextDamageZeroRedirect";
-        if (tryParsePlayerNextDamageZero(effectText) != null)                  return "PlayerNextDamageZero";
-        if (tryParseCancelAutoAbilityAndDamageIfForward(effectText) != null) return "CancelAutoAbilityAndDamageIfForward";
-        // Must precede CancelSummonOrAutoAbility, mirroring parse(): they share a first sentence.
-        if (tryParseChooseStackEntryZeroItsDamage(effectText) != null) return "ChooseStackEntryZeroItsDamage";
-        if (tryParseCancelStackEntry(effectText)              != null) return "CancelSummonOrAutoAbility";
-        // Mirrors parse(): ahead of the general redirect, which would otherwise claim the name.
-        if (tryParseRedirectChosenTarget(effectText, source)  != null) return "RedirectChosenTarget";
-        if (tryParseCopyChosenAutoAbilityOnStack(effectText, source) != null) return "CopyChosenAutoAbilityOnStack";
-        if (tryParseCancelAutoAbilityTriggeredFrom(effectText) != null) return "CancelAutoAbilityTriggeredFrom";
-        if (tryParseChosenAutoAbilitySourceToBreakZone(effectText, source) != null) return "ChosenAutoAbilitySourceToBreakZone";
-        if (tryParseDelayedReturnSelfFromBreakZone(effectText, source) != null) return "DelayedReturnSelfFromBreakZone";
-        if (tryParseCancelAbilityOnStack(effectText)          != null) return "CancelAbilityOnStack";
-        if (tryParseCancelStackEntryUnlessPay(effectText)     != null) return "CancelStackEntryUnlessPay";
-        if (tryParseCancelChosenTargetUnlessPay(effectText)   != null) return "CancelChosenTargetUnlessPay";
-        if (tryParseCancelChosenTargetUnlessDiscard(effectText) != null) return "CancelChosenTargetUnlessDiscard";
-        if (tryParseTriggeredDamageInsteadIfEnteredUnpaid(effectText) != null) return "TriggeredDamageInsteadIfEnteredUnpaid";
-        if (tryParseTriggeredTargetAction(effectText, 0)      != null) return "TriggeredTargetAction";
-        if (tryParseCancelChosenTargetBare(effectText)         != null) return "CancelChosenTargetBare";
-        if (tryParseCancelTriggeringSummon(effectText)         != null) return "CancelTriggeringSummon";
-        // Mirrors parse(): ahead of the target-action sibling, whose opening this text shares.
-        if (tryParseIfOppNotPaySourceCannotBeBroken(effectText, source) != null) return "IfOppNotPaySourceCannotBeBroken";
-        if (tryParseIfOppNotPayAction(effectText)             != null) return "IfOppNotPayAction";
-        // Mirrors parse(): checked alongside its sentence-sharing sibling below.
-        if (tryParseRevealTopToHandIfTypeElseTopOrBottom(effectText) != null) return "RevealTopToHandIfTypeElseTopOrBottom";
-        if (tryParseCancelChosenRevealTopIfType(effectText)    != null) return "CancelChosenRevealTopIfType";
-        if (tryParseCancelChosenMillTopIfNotType(effectText)   != null) return "CancelChosenMillTopIfNotType";
-        if (tryParseCancelChosenMillBothIfSameType(effectText) != null) return "CancelChosenMillBothIfSameType";
-        if (tryParseCancelSummonTargetingMyCharacter(effectText) != null) return "CancelSummonTargetingMyCharacter";
-        if (tryParseSelectNumber(effectText, source) != null)               return "SelectNumber";
-        if (tryParseChooseOppFwdDynCostBreak(effectText)               != null) return "ChooseOppFwdDynCostBreak";
-        if (tryParseChooseFwdPowerInferiorToSource(effectText, source) != null) return "ChooseFwdPowerInferiorToSource";
-        if (tryParseChooseFwdBzCostInferiorToRemovedPlay(effectText)   != null) return "ChooseFwdBzCostInferiorToRemovedPlay";
-        if (tryParseDullAllOppFwdsPowerLeSource(effectText, source)    != null) return "DullAllOppFwdsPowerLeSource";
-        if (tryParseRevealTopBreakSameCostAddToHand(effectText)       != null) return "RevealTopBreakSameCostAddToHand";
-        if (tryParseIfSelfFwdReceivedDamageDraw(effectText, source)            != null) return "IfSelfFwdReceivedDamageDraw";
-        if (tryParseIfRfpCount(effectText, source)                     != null) return "IfRfpCount";
-        if (tryParseIfSelfRfgCount(effectText, source)                 != null) return "IfSelfRfgCount";
-        // Mirrors parse() and matchedPatternName(), where this sits at the same position.
-        if (tryParseElementChange(effectText, source)                  != null) return "ElementChange";
-        // Must precede AllFieldEffect — see the ordering note in parse().
-        if (tryParseEndOfOppTurnDelayedEffect(effectText, source) != null) {
+        if (site.equals("EndOfOppTurnDelayedEffect")) {
             Matcher delayed = AT_END_OF_OPP_TURN_DELAY_PREFIX.matcher(effectText.trim());
             String inner = delayed.matches() ? delayed.group("inner").trim() : effectText;
             return "At the end of your opponent's turn: " + fullDescription(inner, source);
         }
-        if (tryParsePlaceCounterOnAllForwards(effectText) != null)          return "PlaceCounterOnAllForwards";
-        // Must precede AllFieldEffect — see the ordering note in parse().
-        if (tryParseAllFieldActivateThenDraw(effectText) != null)           return "AllFieldEffect + DrawCards";
-        // Mirrors parse(); see the matching guard in matchedPatternNameOn().
-        if (tryParseNameJobBreakNamedOrJob(effectText, source) != null)
-            return "NameJobBreakNamedOrJob";
-        if (tryParseBreakForwardsBelowSelfPower(effectText, source) != null)
-            return "BreakForwardsBelowSelfPower";
-        // Mirrors parse(): ahead of AllFieldEffect, which would otherwise describe the ability as
-        // its base sweep and leave the replacement clause invisible in the golden file. The
-        // condition is named as well as the two halves, because 17-048C Thief and 17-111C Chemist
-        // replace an effect with the same-named one at a different size — "OpponentMill else
-        // OpponentMill" alone would not move if a threshold changed.
-        {
+        if (site.equals("AllFieldActivateThenDraw"))           return "AllFieldEffect + DrawCards";
+        // The condition is named as well as the two halves, because 17-048C Thief and 17-111C
+        // Chemist replace an effect with the same-named one at a different size — "OpponentMill
+        // else OpponentMill" alone would not move if a threshold changed.
+        if (site.equals("EffectThenConditionalInstead")) {
             Matcher im = EFFECT_THEN_CONDITIONAL_INSTEAD.matcher(effectText.trim());
-            if (im.matches() && tryParseEffectThenConditionalInstead(effectText, source, 0) != null) {
+            if (im.matches()) {
                 String baseDesc = fullDescription(im.group("base").trim(), source);
                 String upDesc   = fullDescription(im.group("upgrade").trim(), source);
                 DamageInsteadCondition c = parseDamageInsteadCondition(im.group("cond").trim());
@@ -4716,15 +3848,9 @@ public class ActionResolver {
                         + (upDesc != null ? upDesc : "?") + ")";
             }
         }
-        // Mirrors parse(): ahead of AllFieldEffect, which would otherwise describe a
-        // reveal-and-branch ability as the bare sweep it lifts out of one of the branches.
-        // Mirrors parse(): ahead of the mass power reader below, which finds the power loss inside
-        // this text's first branch and describes the whole ability as that sweep — and ahead of
-        // RevealTopDeck, which reads the same shape more generally.
-        if (tryParseRevealOpponentTopBranchOnType(effectText) != null) return "RevealOpponentTopBranchOnType";
-        if (tryParseRevealTopDeck(effectText, source) != null)
+        if (site.equals("RevealTopDeck"))
             return revealTopDeckDescription(effectText, source) + restrictionDesc(effectText);
-        if (tryParseRevealCostParityEffects(effectText, source) != null) {
+        if (site.equals("RevealCostParityEffects")) {
             Matcher pm = REVEAL_COST_PARITY_EFFECTS.matcher(effectText.trim());
             if (!pm.matches()) return "RevealCostParityEffects";
             String firstDesc  = fullDescription(pm.group("firsteffect").trim(),  source);
@@ -4734,33 +3860,19 @@ public class ActionResolver {
                     + pm.group("second").toLowerCase() + ": "
                     + (secondDesc != null ? secondDesc : "?");
         }
-        // Mirrors parse(): ahead of AllFieldEffect, which describes the sweep alone.
-        if (tryParseAllFieldEffectAndDraw(effectText) != null)              return "AllFieldEffectAndDraw";
-        if (tryParseAllFieldEffectAndThen(effectText, source) != null)      return "AllFieldEffectAndThen";
-        if (tryParseBreakAllThenSelfDamagePerBroken(effectText) != null)    return "BreakAllThenSelfDamagePerBroken";
-        if (tryParseAllFieldEffectThenTheyGain(effectText, source) != null) return "AllFieldEffectThenTheyGain";
-        if (tryParseAllFieldEffect(effectText) != null)                     return "AllFieldEffect";
-        if (tryParseFieldPowerGrantPassive(effectText, source) != null) {
+        if (site.equals("FieldPowerGrantPassive")) {
             String trimmed = effectText.trim();
             return FIELD_OPPONENT_DEBUFF_PASSIVE.matcher(trimmed).matches()
                     ? "FieldOpponentPowerDebuff" : "FieldPowerGrant";
         }
-        // Mirrors parse(). Named for the gate and what it guards, so the description says the
-        // condition is there — a bare payoff name reads exactly as it did while the condition was
-        // being dropped.
-        if (breakZoneCountGateUnreadable(effectText, source, 0)) return null;
-        if (tryParseBreakZoneCountGate(effectText, source, 0) != null) {
+        // Named for the gate and what it guards, so the description says the condition is there — a
+        // bare payoff name reads exactly as it did while the condition was being dropped.
+        if (site.equals("BreakZoneCountGate")) {
             Matcher bzGateM = BREAK_ZONE_COUNT_GATE.matcher(effectText.trim());
             String inner = bzGateM.matches() ? fullDescription(bzGateM.group("effect").trim(), source) : null;
             return "IfBreakZoneCount(" + (inner != null ? inner : "?") + ")";
         }
-        // Mirrors parse() and matchedPatternName(): kept beside the mass power effect it shares a
-        // board with, though the pattern below needs a power figure and could not claim it.
-        if (tryParseAllOppForwardsLoseTraitsEot(effectText) != null) return "AllOppForwardsLoseTraitsEot";
-        // Mirrors parse(); see the note there.
-        if (tryParseAllElementAndCategoryPowerBoost(effectText) != null)
-            return "AllElementAndCategoryPowerBoost";
-        {
+        if (site.equals("AllFieldPowerBoost")) {
             Matcher bm = ALL_FIELD_POWER_BOOST_PATTERN.matcher(effectText);
             if (bm.find()) {
                 String trailing = effectText.substring(bm.end()).trim().replaceAll("^[.!,]+\\s*", "").trim();
@@ -4771,210 +3883,35 @@ public class ActionResolver {
                 return "AllFieldPowerBoost";
             }
         }
-        if (tryParseAllForwardsSameElementAsNamedPowerBoost(effectText) != null) return "AllForwardsSameElementAsNamedPowerBoost";
-        if (tryParsePartyForwardsPowerBoost(effectText) != null)            return "PartyForwardsPowerBoost";
-        if (tryParseUntilEotAllJobCardNameGainPowerTraitsAbility(effectText) != null) return "UntilEotAllJobCardNameGainPowerTraitsAbility";
-        if (tryParseAllFieldJobCardNamePowerBoost(effectText) != null)       return "AllFieldJobCardNamePowerBoost";
-        if (tryParseTwoCardNamesPowerBoost(effectText) != null)             return "TwoCardNamesPowerBoost";
-        if (tryParseAllFieldJobPowerBoost(effectText) != null)              return "AllFieldJobPowerBoost";
-        if (tryParseAllFieldCardNamePowerBoost(effectText) != null)         return "AllFieldCardNamePowerBoost";
-        if (tryParseAllFieldJobKeywordGrant(effectText) != null)            return "AllFieldJobKeywordGrant";
-        if (tryParseAllFieldKeywordGrant(effectText) != null)               return "AllFieldKeywordGrant";
-        // Mirrors parse() and matchedPatternName(): ahead of AllFieldQuotedProtectionGrant.
-        if (tryParseAllOwnForwardsGainQuotedAbilityEot(effectText) != null) return "AllOwnForwardsGainQuotedAbilityEot";
-        if (tryParseAllFieldQuotedProtectionGrant(effectText) != null)      return "AllFieldQuotedProtectionGrant";
-        if (tryParseUntilEotDualPowerShift(effectText) != null)            return "UntilEotDualPowerShift";
-        // Must precede UntilEotAllFieldPowerBoost — see the ordering note in parse().
-        if (tryParseUntilEotAllFieldPowerPerSelfDamage(effectText) != null) return "UntilEotAllFieldPowerPerSelfDamage";
-        if (tryParseNameJobOrElementAllForwardsBoost(effectText) != null)  return "NameJobOrElementAllForwardsBoost";
-        if (tryParseUntilEotAllFieldPowerBoost(effectText) != null)        return "UntilEotAllFieldPowerBoost";
-        if (tryParseStandalonePowerBoostAndAttackTrigger(effectText, source) != null) return "StandalonePowerBoostAndAttackTrigger";
-        if (tryParseStandalonePowerBoostAndCannotBeChosen(effectText, source) != null) return "StandalonePowerBoostAndCannotBeChosen";
-        if (tryParseStandaloneGainsTraitsAndCannotBeBlocked(effectText, source) != null) return "StandaloneGainsTraitsAndCannotBeBlocked";
-        if (tryParseStandaloneGainsCannotBeBlocked(effectText, source) != null) return "StandaloneGainsCannotBeBlocked";
-        if (tryParseSelfBasePowerBecomesUntil(effectText, source) != null)  return "SelfBasePowerBecomesUntil";
-        if (tryParseStandalonePowerBoostUntil(effectText, source) != null)  return "StandalonePowerBoostUntil";
-        if (tryParseStandaloneDoublePowerUntil(effectText, source) != null) return "StandaloneDoublePowerUntil";
-        if (tryParseStandaloneDoublesItsPowerUntil(effectText, source) != null) return "StandaloneDoublesItsPowerUntil";
-        if (tryParseStandaloneDoublePowerMainPhaseNextTurn(effectText, source) != null) return "StandaloneDoublePowerMainPhaseNextTurn";
-        if (tryParseStandalonePowerReduceUntil(effectText, source) != null) return "StandalonePowerReduceUntil";
-        if (tryParseDoubleOutgoingDamageThisTurn(effectText, source) != null)    return "DoubleOutgoingDamageThisTurn";
-        if (tryParseDoubleOutgoingDamageThisTurnAlt(effectText, source) != null) return "DoubleOutgoingDamageThisTurnAlt";
-        if (tryParseSelfOutgoingDmgBoostThisTurn(effectText, source) != null)   return "SelfOutgoingDmgBoostThisTurn";
-        if (tryParseGainOutgoingDmgBoostUntilEot(effectText, source) != null)   return "GainOutgoingDmgBoostUntilEot";
-        if (tryParseActivateSelfAndSelfGains(effectText, source) != null)       return "ActivateSelfAndSelfGains";
-        if (tryParseGainsQuotedFieldAbilityUntilEot(effectText, source) != null) return "GainsQuotedFieldAbilityUntilEot";
-        // Mirrors parse(): ahead of the permanent grants, which would otherwise claim
-        // Scarmiglione 17-133S off the second half of his sentence.
-        if (tryParseNameElementThenGainsQuotedPermanent(effectText, source) != null)
-            return "NameElementThenGainsQuotedPermanent";
-        // Mirrors parse(): beside its quoted-only sibling.
-        if (tryParseGainsKeywordsAndQuotedAbilityPermanent(effectText, source) != null)
-            return "GainsKeywordsAndQuotedAbilityPermanent";
-        if (tryParseGainsQuotedAbilitiesPermanent(effectText, source) != null)  return "GainsQuotedAbilitiesPermanent";
-        if (tryParseSelfPowerBoostPermanent(effectText, source) != null)        return "SelfPowerBoostPermanent";
-        if (tryParseUntilEotGainsPowerTraitsAndQuoted(effectText, source) != null) return "UntilEotGainsPowerTraitsAndQuoted";
-        if (tryParseDoubleOpponentIncomingDamageThisTurn(effectText) != null)   return "DoubleOpponentIncomingDamageThisTurn";
-        if (tryParseAllForwardIncomingDmgIncreaseThisTurn(effectText) != null)  return "AllForwardIncomingDmgIncreaseThisTurn";
-        if (tryParseChooseForwardDoubleIncomingThisTurn(effectText) != null)    return "ChooseForwardDoubleIncomingThisTurn";
-        if (tryParseChooseForwardDoubleNextOutgoing(effectText) != null)        return "ChooseForwardDoubleNextOutgoing";
-        if (tryParseDoublePlayerAbilityOutgoingThisTurn(effectText) != null)   return "DoublePlayerAbilityOutgoingThisTurn";
-        if (tryParseStandaloneSelfBoostForEachCrystal(effectText, source) != null) return "StandaloneSelfBoostForEachCrystal";
-        // Mirrors parse(): ahead of the two flat self-boost parsers, which share its frame.
-        if (tryParseStandaloneSelfBoostForEachControlled(effectText, source) != null) return "StandaloneSelfBoostForEachControlled";
-        if (tryParseStandaloneSelfBoostForEachDistinctElement(effectText, source) != null) return "StandaloneSelfBoostForEachDistinctElement";
-        if (tryParseIfHandSizeSelfBoost(effectText, source)               != null) return "IfHandSizeSelfBoost";
-        if (tryParseSelfBoostEotPrefix(effectText, source) != null)         return "SelfBoostUntilEot";
-        if (tryParseSelfAttacksPerOwnDamage(effectText, source) != null)    return "SelfAttacksPerOwnDamage";
-        if (tryParseStandaloneSelfBoost(effectText, source) != null)        return "StandaloneSelfBoost";
-        if (tryParseOppFieldEntryRfgInstead(effectText)                   != null) return "OppFieldEntryRfgInstead";
-        if (tryParseStandaloneSelfLosesAllAbilities(effectText, source) != null) return "StandaloneSelfLosesAllAbilities";
-        if (tryParseOppLoseJobsUntilEot(effectText) != null) return "OppLoseJobsUntilEot";
-        if (tryParseStandaloneSelfDullAndShield(effectText, source) != null) return "StandaloneSelfDullAndShield";
-        if (tryParseStandaloneSelfDull(effectText, source) != null)          return "StandaloneSelfDull";
-        if (tryParseDullActiveYouControl(effectText, source, 0) != null)     return "DullActiveYouControl";
-        if (tryParseStandaloneShieldCannotBeBroken(effectText, source) != null) return "StandaloneShieldCannotBeBroken";
-        if (tryParseAllOwnForwardsNullifyAbilityDamage(effectText)        != null) return "AllOwnForwardsNullifyAbilityDamage";
-        if (tryParseOwnJobOrNameNullifyAbilityDamage(effectText)          != null) return "OwnJobOrNameNullifyAbilityDamage";
-        if (tryParseDoublecastFreeSummons(effectText)                     != null) return "DoublecastFreeSummons";
-        if (tryParseCastRfgCostCardThisTurn(effectText)                   != null) return "CastRfgCostCardThisTurn";
-        if (tryParseChooseCardRemovedBySourceToBz(effectText, source)     != null) return "ChooseCardRemovedBySourceToBz";
-        if (tryParseAllForwardsCannotBlock(effectText)                    != null) return "AllForwardsCannotBlock";
-        if (tryParseForwardsOfCostCannotBlock(effectText)                 != null) return "ForwardsOfCostCannotBlock";
-        if (tryParseEndOfNextTurnIfCardOnFieldOppLoses(effectText)        != null) return "EndOfNextTurnIfCardOnFieldOppLoses";
-        if (tryParseOpponentLosesTheGame(effectText)                      != null) return "OpponentLosesTheGame";
-        if (tryParseOppFwdsCannotBlockInferiorPower(effectText)           != null) return "OppFwdsCannotBlockInferiorPower";
-        if (tryParseAllFwdsBlockedOnlyByLowerCostThisTurn(effectText)    != null) return "AllFwdsBlockedOnlyByLowerCost";
-        if (tryParseOppFwdsLoseAllAbilitiesAndPowerEot(effectText) != null) return "OppFwdsLoseAllAbilitiesAndPowerEot";
-        if (tryParseOppFwdsLoseAllAbilitiesEot(effectText)         != null) return "OppFwdsLoseAllAbilitiesEot";
-        // Mirrors parse(), where this sits beside the two above for the same reason.
-        if (tryParseOppCharactersLoseAllAbilitiesEot(effectText)   != null) return "OppCharactersLoseAllAbilitiesEot";
-        if (tryParseOppFwdPowerBoostSuppressedThisTurn(effectText) != null) return "OppFwdPowerBoostSuppressedThisTurn";
-        if (tryParseOppFwdsLosePowerPerPlayCost(effectText)        != null) return "OppFwdsLosePowerPerPlayCost";
-        if (tryParseStandaloneGainsCannotBeBlocked(effectText, source) != null) return "StandaloneGainsCannotBeBlocked";
-        if (tryParseStandaloneCannotBeBlocked(effectText, source) != null) return "StandaloneCannotBeBlocked";
-        if (tryParseRevealHandOptPickDiscardOppDraw(effectText) != null)    return "RevealHandOptPickDiscardOppDraw";
-        // Must precede RevealSelectHandRfp — see the same guard in parse().
-        if (tryParseRevealSelectHandRfpUntilEndOfOppTurn(effectText) != null) return "RevealSelectHandRfpUntilEndOfOppTurn";
-        if (tryParseRevealSelectHandRfpCastableThisTurn(effectText) != null) return "RevealSelectHandRfpCastableThisTurn";
-        if (tryParseRevealSelectHandRfp(effectText) != null)               return "RevealSelectHandRfp";
-        if (tryParseRevealSelectHandDiscard(effectText) != null)           return "RevealSelectHandDiscard";
-        if (tryParseOpponentRandomHandRfp(effectText) != null)              return "OpponentRandomHandRfp";
-        if (tryParseOpponentRandomHandToBottomDeck(effectText) != null)     return "OpponentRandomHandToBottomDeck";
-        if (tryParseOpponentHandRfp(effectText) != null)                   return "OpponentHandRfp";
-        if (tryParseRevealTopNAddPerElementQuota(effectText) != null) return "RevealTopNAddPerElementQuota";
-        if (tryParseRevealTopNAddOnePerTypeRestBz(effectText) != null)         return "RevealTopNAddOnePerTypeRestBz";
-        if (tryParseRevealTopNAddUpToExcludingNameRestBz(effectText) != null)  return "RevealTopNAddUpToExcludingNameRestBz";
-        if (tryParseRevealPlayCategoryTypeRestShuffledBottomGrantElementJob(effectText) != null) return "RevealPlayCategoryTypeRestShuffledBottomGrantElementJob";
-        if (tryParseRevealTopNRemoveWarpCardPlaceCountersRestShuffledBottom(effectText) != null) return "RevealTopNRemoveWarpCardPlaceCountersRestShuffledBottom";
-        if (tryParseRevealTopNAddUpToMatchingRestShuffledBottom(effectText) != null) return "RevealTopNAddUpToMatchingRestShuffledBottom";
-        if (tryParseRevealTopNAddUpToMatchingRestBz(effectText) != null)       return "RevealTopNAddUpToMatchingRestBz";
-        if (tryParseRevealTopNTypeToHand(effectText)       != null)           return "RevealTopNTypeToHand";
-        if (tryParseRevealAddThen(effectText, source, 0) != null) {
+        if (site.equals("RevealAddThen")) {
             Matcher thenM = REVEAL_ADD_THEN.matcher(effectText.trim());
             thenM.matches();
             return "RevealAddThen(" + describeOrName(thenM.group("reveal").trim(), source) + " + "
                     + describeOrName(thenM.group("then").trim(), source) + ")";
         }
-        if (tryParseRevealTopNCategoryToHand(effectText)   != null)          return "RevealTopNCategoryToHand";
-        if (tryParseRevealTopNJobOrNameToHand(effectText)  != null)          return "RevealTopNJobOrNameToHand";
-        if (tryParseRevealTopNElementToHand(effectText)    != null)           return "RevealTopNElementToHand";
-        if (tryParseRevealAddToHandOrPlayOntoField(effectText) != null) return "RevealAddToHandOrPlayOntoField";
-        if (tryParseRevealPlayOntoFieldAndAddToHand(effectText) != null) return "RevealPlayOntoFieldAndAddToHand";
-        // Must precede ReturnNamedToHand — see the ordering note in parse().
-        if (tryParseRevealPlayElementTypeCostOntoFieldRestBottom(effectText)     != null) return "RevealPlayElementTypeCostOntoFieldRestBottom";
-        if (tryParseRevealPlayTypeCostOrNamedCostRestBottom(effectText)         != null) return "RevealPlayTypeCostOrNamedCostRestBottom";
-        // Must precede ReturnNamedToHand, mirroring parse() and matchedPatternName().
-        if (tryParseReturnRemovedBySourceToOwnersHand(effectText, source) != null) return "ReturnRemovedBySourceToOwnersHand";
-        // Mirrors parse(): ahead of the arm that used to claim Rydia 17-137S.
-        if (tryParseSearchSummonsDiffCostOpponentSelects(effectText) != null)
-            return "SearchSummonsDiffCostOpponentSelects";
-        if (tryParseReturnOwnTypeToHand(effectText) != null)                 return "ReturnOwnTypeToHand";
-        if (tryParseAddSelfToHandAtEndOfTurn(effectText, source) != null)    return "AddSelfToHandAtEndOfTurn";
-        if (tryParseReturnNamedToHand(effectText) != null)                   return "ReturnNamedToHand";
-        if (tryParseYouMayRemoveNamedFromGame(effectText, source) != null)   return "YouMayRemoveNamedFromGame";
-        if (tryParseEndOfOppTurnPlayNamedOntoField(effectText) != null)     return "EndOfOppTurnPlayNamedOntoField";
-        if (tryParseEndOfTurnPlayNamedOntoField(effectText, source)  != null)      return "EndOfTurnPlayNamedOntoField";
-        if (tryParseRemoveAllOppBzFromGame(effectText)       != null)      return "RemoveAllOppBzFromGame";
-        if (tryParseRevealTopNRfgOneCastableRestBottom(effectText) != null) return "RevealTopNRfgOneCastableRestBottom";
-        // Must precede RemoveNamedFromGame, mirroring parse() and matchedPatternName().
-        if (tryParseMayRemoveWarpCountersThenNoCastNoAttack(effectText, source) != null) return "MayRemoveWarpCountersThenNoCastNoAttack";
-        if (tryParseRemoveWarpCountersFromNamed(effectText, source) != null) return "RemoveWarpCountersFromNamed";
-        // Must precede RemoveNamedFromGame, mirroring parse() and matchedPatternName().
-        if (tryParseEffectOrPutSelfToBreakZone(effectText, source) != null) {
+        if (site.equals("EffectOrPutSelfToBreakZone")) {
             Matcher upkeepM = EFFECT_OR_PUT_SELF_TO_BZ.matcher(effectText.trim());
             if (upkeepM.find())
                 return "EffectOrPutSelfToBreakZone(" + descOrUnread(upkeepM.group("alt"), source)
                         + " else PutSourceIntoBreakZone)";
         }
-        if (tryParseRemoveFromBreakZoneFromGame(effectText, source) != null)
+        if (site.equals("RemoveFromBreakZoneFromGame"))
             return removeFromBreakZoneDescription(effectText, source);
-        if (ActionResolverFieldAbility.tryParseRemoveAllFieldFromGame(effectText) != null) return "RemoveAllFieldFromGame";
-        if (ActionResolverFieldAbility.tryParseNameCardTypeRemoveOppBzFromGame(effectText) != null) return "NameCardTypeRemoveOppBzFromGame";
-        if (ActionResolverPower.tryParseRemoveSelfThenEnteredForwardGainsPermanently(effectText, source) != null)
-            return "RemoveSelfThenEnteredForwardGainsPermanently";
-        if (tryParseRemoveSelfAtEndOfTurn(effectText, source) != null)     return "RemoveSelfAtEndOfTurn";
-        if (tryParseNameElementSelfBecomesUntilEot(effectText, source) != null) return "NameElementSelfBecomesUntilEot";
-        if (tryParseRemoveNamedFromGame(effectText, source) != null)        return "RemoveNamedFromGame";
-        // Must precede BreakSourceCard, mirroring parse() and matchedPatternName().
-        if (tryParseBreakSelfAndBattlePartner(effectText, source) != null)
-            return "BreakSelfAndBattlePartner";
-        if (tryParseBreakSourceCard(effectText, source)        != null)     return "BreakSourceCard";
-        if (tryParsePutSourceIntoBreakZone(effectText, source) != null)     return "PutSourceIntoBreakZone";
-        if (tryParsePerformThisActionTwiceAtDamage(effectText, source) != null) return "PerformThisActionTwiceAtDamage";
-        if (tryParsePutOwnTypeToBzIfDoSo(effectText, source)   != null) return "PutOwnTypeToBzIfDoSo";
-        if (tryParsePutAnyNumberToBzOppSelectsAndDiscards(effectText) != null) return "PutAnyNumberToBzOppSelectsAndDiscards";
-        if (tryParseYouMayPutSelfToBZWhenDoSo(effectText, source)    != null) return "YouMayPutSelfToBZWhenDoSo";
-        if (tryParseIfOppNoForwardsPutToBreakZone(effectText, source)          != null) return "IfOppNoForwardsPutToBreakZone";
-        if (tryParseIfEitherPlayerNoForwardsPutSourceToBz(effectText, source)  != null) return "IfEitherPlayerNoForwardsPutSourceToBz";
-        if (tryParseIfSelfDamagePointsPutToBreakZone(effectText, source) != null) return "IfSelfDamagePointsPutToBreakZone";
-        if (tryParsePutSourceToBottomOfDeck(effectText, source) != null)   return "PutSourceToBottomOfDeck";
-        if (tryParsePutSourceOnTopOfDeck(effectText, source)   != null)     return "PutSourceOnTopOfDeck";
-        if (tryParseBreakBlockingForward(effectText)           != null)     return "BreakBlockingForward";
-        if (tryParseDamageBlockingForward(effectText, source)  != null)     return "DamageBlockingForward";
-        if (tryParseDamageBlockingForwardPerCounterThenClear(effectText, source) != null)
+        if (site.equals("DamageBlockingForwardPerCounterThenClear"))
                                                                             return "DamageBlockingForwardPerCounterThenClear";
-        if (tryParseBreakForwardThatBlocksCard(effectText)     != null)     return "BreakForwardThatBlocksCard";
-        if (tryParseChooseExBurstFromDamageZone(effectText)    != null)     return "ChooseExBurstFromDamageZone";
-        if (tryParseExBurstSuppression(effectText)             != null)     return "ExBurstSuppression";
-        if (tryParseDamageZoneSwap(effectText)              != null) {
+        if (site.equals("DamageZoneSwap")) {
             Matcher m = DAMAGE_ZONE_SWAP_PATTERN.matcher(effectText.trim());
             return m.matches() && m.group("draw") != null ? "DamageZoneSwap + DrawCards" : "DamageZoneSwap";
         }
-        if (tryParseEachPlayerRandomDiscardThenCategoryDraw(effectText) != null) {
+        if (site.equals("EachPlayerRandomDiscardThenCategoryDraw")) {
             Matcher m = EACH_PLAYER_RANDOM_DISCARD_THEN_CATEGORY_DRAW.matcher(effectText.trim());
             m.matches();
             return "Each player randomly discards " + m.group("count") + "; a Category "
                     + m.group("category") + " discard draws that player " + m.group("draw");
         }
-        if (tryParseOpponentDrawThenRandomDiscard(effectText) != null)      return "OpponentDrawThenRandomDiscard";
-        if (tryParseOpponentDraw(effectText) != null)                       return "OpponentDraw";
-        if (tryParseOpponentRandomDiscard(effectText) != null)              return "OpponentRandomDiscard";
-        if (tryParseEachPlayerSelectForwardDamage(effectText) != null)      return "EachPlayerSelectForwardDamage";
-        if (tryParseBothPlayersSelectForwardToBreakZone(effectText) != null) return "BothPlayersSelectForwardToBreakZone";
-        if (tryParseSelectCharCostLeExclToBz(effectText)             != null)  return "SelectCharCostLeExclToBz";
-        if (tryParseSelectControlledCharacterToBz(effectText)        != null)  return "SelectControlledCharacterToBz";
-        if (tryParseSelectControlledCharacterBreak(effectText)       != null)  return "SelectControlledCharacterBreak";
-        if (tryParseEachPlayerSelectUpToNToBreakZone(effectText) != null)   return "EachPlayerSelectUpToNToBreakZone";
-        if (tryParseEachPlayerSelectUpToNActiveDullFreeze(effectText) != null)
-            return "EachPlayerSelectUpToNActiveDullFreeze";
-        if (tryParseOppSelectsUpToNForwardsBreakRest(effectText) != null)
-            return "OppSelectsUpToNForwardsBreakRest";
-        if (tryParseEachPlayerSelectsForwardsBreakRest(effectText) != null)
-            return "EachPlayerSelectsForwardsBreakRest";
-        if (tryParseEachPlayerDiscard(effectText) != null)                  return "EachPlayerDiscard";
-        if (tryParseEachPlayerSalvageFromBreakZone(effectText) != null)     return "EachPlayerSalvageFromBreakZone";
-        if (tryParseEachPlayerDraw(effectText) != null)                     return "EachPlayerDraw";
-        if (tryParseNameCardTypeOpponentDiscardDrawIfMatch(effectText) != null) return "NameCardTypeOpponentDiscardDrawIfMatch";
-        if (tryParseEffectThenOpponentDiscard(effectText, source) != null)  return "EffectThenOpponentDiscard";
-        if (tryParseOpponentDiscard(effectText) != null)                    return "OpponentDiscard";
-        if (tryParseDiscardHandThenDraw(effectText) != null)                return "DiscardHandThenDraw";
-        if (tryParseDrawDiscardRetriggerIfCardName(effectText, source) != null) return "DrawDiscardRetriggerIfCardName";
-        if (tryParsePlaceUpToHandToBottomThenRedraw(effectText) != null)    return "PlaceUpToHandToBottomThenRedraw";
-        // Mirrors parse() and matchedPatternName(), and probed at X = 1 for the reason given there.
         // The cost is a payment, not an effect, so what is worth reporting is what it buys —
         // Shantotto 22-118H's five Earth buy a board sweep, and this line is what says so.
-        if (tryParsePayCpWhenDoSo(effectText, source, 1) != null) {
+        if (site.equals("PayCpWhenDoSo")) {
             Matcher pc = PAY_CP_WHEN_DO_SO.matcher(effectText);
             if (!pc.find()) return "PayCpWhenDoSo";
             String followup = pc.group("followup").trim();
@@ -4984,32 +3921,16 @@ public class ActionResolver {
                 return "PayCp(EnteringCardBoost)";
             return "PayCp(" + describeOrName(followup, source) + ")";
         }
-        // Mirrors parse(), which reads 2-134C Horne whole long before DrawCards.
-        if (tryParseDrawPerJobThenBottomAsMany(effectText) != null) return "DrawPerJobThenBottomAsMany";
-        if (tryParseDrawCards(effectText) != null)                          return "DrawCards";
-        if (tryParseDiscardCategoryType(effectText) != null)                return "DiscardCategoryType";
-        if (tryParseYouMayDiscardType(effectText) != null)                  return "YouMayDiscardType";
-        if (tryParseMayRevealElementFromHand(effectText) != null)           return "MayRevealElementFromHand";
-        if (tryParseDiscardHand(effectText) != null)                        return "DiscardHand";
-        // Mirrors parse(): ahead of DiscardNCards, which claims this text's opening sentence.
-        if (tryParseDiscardConditionalCategoryBranches(effectText, source, 0) != null)
-            return "DiscardConditionalCategoryBranches";
-        if (tryParseDiscardThenSameAsDiscarded(effectText, source) != null) return "DiscardThenSameAsDiscarded";
-        if (tryParseDiscardNCards(effectText) != null)                      return "DiscardNCards";
-        if (tryParseDiscardJobFromHand(effectText) != null)                 return "DiscardJobFromHand";
-        if (tryParseDiscardThenDraw(effectText) != null)                    return "DiscardThenDraw";
-        // Mirrors parse(), where this gate sits immediately ahead of IfEachPlayerEmptyHand.
         // Described like the control gates: the condition is named, the effect it guards inside it.
-        if (tryParseIfAllHaveElement(effectText, source, 0) != null) {
+        if (site.equals("IfAllHaveElement")) {
             Matcher ahe = IF_ALL_HAVE_ELEMENT_GATE.matcher(effectText.trim());
             if (!ahe.matches()) return "IfAllHaveElement";
             return "IfAllHaveElement(" + ahe.group("type").trim() + "=" + ahe.group("element").trim()
                     + ": " + describeOrName(ahe.group("effect").trim(), source) + ")";
         }
-        if (tryParseIfEachPlayerEmptyHand(effectText, source, 0) != null)   return "IfEachPlayerEmptyHand";
-        // Mirrors parse() and matchedPatternName(). Described like the control gates above: the
-        // condition is named, the effect it guards described inside it.
-        if (tryParseIfNDiffElements(effectText, source, 0) != null) {
+        // Described like the control gates above: the condition is named, the effect it guards
+        // described inside it.
+        if (site.equals("IfNDiffElements")) {
             Matcher nde = IF_N_DIFF_ELEMENTS_AMONG.matcher(effectText.trim());
             if (!nde.matches()) return "IfNDiffElements";
             boolean exact = nde.group("exactly") != null;
@@ -5017,113 +3938,38 @@ public class ActionResolver {
                     + (exact ? "" : "+") + " among " + nde.group("type").trim()
                     + ": " + describeOrName(nde.group("effect").trim(), source) + ")";
         }
-        if (tryParseDealPlayerDamageToOpponent(effectText) != null)         return "DealPlayerDamageToOpponent";
-        // Mirrors parse().
-        if (tryParsePlayFromHandThenIfItsCost(effectText, source, 0) != null) return "PlayFromHandThenIfItsCost";
-        if (tryParsePlayFromHandWithRiders(effectText, source, 0) != null) return "PlayFromHandWithRiders";
-        if (tryParseDealPlayerDamageToSelf(effectText) != null)             return "DealPlayerDamageToSelf";
-        if (tryParseRandomRevealHandCastIfSummonFree(effectText) != null)   return "RandomRevealHandCastIfSummonFree";
-        if (tryParseCastSummonFromHandDiscounted(effectText) != null)       return "CastSummonFromHandDiscounted";
-        if (tryParseCastSummonFromHandDiscountedAnyElement(effectText) != null) return "CastSummonFromHandDiscountedAnyElement";
-        if (tryParseCastSummonFromHandFree(effectText, 0) != null)          return "CastSummonFromHandFree";
-        if (tryParseSearchAndCastSummonFree(effectText, source) != null)    return "SearchAndCastSummonFree";
-        if (tryParseSearchForwardKeyedToBzCostForward(effectText, source) != null) return "SearchForwardKeyedToBzCostForward";
-        if (tryParseSearchSummonRfgFreeCastThisTurn(effectText) != null)    return "SearchSummonRfgFreeCastThisTurn";
-        if (tryParseSearchSummonRfgThenCastFree(effectText)     != null)    return "SearchSummonRfgThenCastFree";
-        if (tryParsePlayAnyNumberFromHand(effectText, source) != null)      return "PlayAnyNumberFromHand";
-        if (tryParseEachPlayerMayPlayFromHand(effectText, source, 0) != null) return "EachPlayerMayPlayFromHand";
-        if (tryParsePlayFromHand(effectText, source, 0) != null)            return "PlayFromHand";
 
-        // Mirrors parse(): ahead of OPPONENT_SELECTS_PATTERN, which would otherwise claim it.
-        if (tryParseTurnPlayerBreaksOrTakesDamage(effectText, source) != null) return "TurnPlayerBreaksOrTakesDamage";
-        if (tryParseOppSelectsMayBreakElseSelfCannotBlock(effectText, source) != null)
+        if (site.equals("OppSelectsMayBreakElseSelfCannotBlock"))
             return "Your opponent may put 1 Character they control into the Break Zone; if they do, "
                     + source.name() + " cannot block this turn";
 
-        // Mirrors parse(): ahead of OpponentSelects, whose prefix it shares.
         Matcher bzSelM = OPPONENT_SELECTS_FROM_OWN_BZ_TO_HAND.matcher(effectText.trim());
-        if (bzSelM.matches())
+        if (site.equals("OpponentSelectsFromOwnBzToHand") && bzSelM.matches())
             return "Your opponent selects " + bzSelM.group("count") + " " + bzSelM.group("targets")
                     + " in their Break Zone and adds "
                     + ("1".equals(bzSelM.group("count")) ? "it" : "them") + " to their hand";
 
-        // Mirrors parse(): ahead of OpponentSelects, which reads only the first of the two
-        // selections 27-101L Sin asks for.
-        if (tryParseOpponentSelectsTwoTypes(effectText) != null) return "OpponentSelectsTwoTypes";
-
         Matcher opSelM = OPPONENT_SELECTS_PATTERN.matcher(effectText);
-        if (opSelM.find()) {
+        if (site.equals("OpponentSelects") && opSelM.find()) {
             String followup     = opSelM.group("followup").trim();
             String followupName = matchedFollowupName(followup, source);
             return "OpponentSelects / " + (followupName != null ? followupName : "?");
         }
 
-        if (tryParseBzFwdToHandOppFwdToBzByDamage(effectText) != null)      return "BzFwdToHandOppFwdToBzByDamage";
-        if (tryParseOpponentMillIfSameElementDraw(effectText) != null)      return "OpponentMillIfSameElementDraw";
-        if (tryParseOpponentMill(effectText) != null)                       return "OpponentMill";
-        if (tryParseSelfMill(effectText) != null)                           return "SelfMill";
-        // Mirrors parse(); see the note in matchedPatternNameOn().
-        if (tryParseNameElementOppRandomRevealDiscard(effectText, source) != null)
+        if (site.equals("NameElementOppRandomRevealDiscard"))
             return "Name 1 Element; opponent randomly reveals cards and discards a named one";
-        // Must precede OpponentRevealHand — see the ordering note in parse().
-        if (tryParseOpponentRevealNSelectOneDiscard(effectText) != null)
+        if (site.equals("OpponentRevealNSelectOneDiscard"))
             return "Opponent reveals cards from their hand; you select 1 for them to discard";
-        // Mirrors parse(); see the note in matchedPatternNameOn().
-        if (tryParseRevealHandAndSelectDiscard(effectText) != null)         return "RevealHandAndSelectDiscard";
-        if (tryParseOpponentRevealHand(effectText, source, 0) != null)                 return "OpponentRevealHand";
-        if (tryParseEachPlayerRevealCharacterMayPlay(effectText) != null)   return "EachPlayerRevealMayPlay";
-        if (tryParseEachPlayerMaySearchForwardMinPower(effectText) != null) return "EachPlayerMaySearchForwardMinPower";
-        if (tryParseStandaloneDamageShields(effectText, source) != null)    return "StandaloneDamageShields";
-        if (tryParseDualSearchJobAndTypeDontShareElements(effectText) != null) return "DualSearchDontShareElements";
-        if (tryParseSearchNElementSummonsDiffCost(effectText)         != null) return "SearchNElementSummonsDiffCost";
-        // Mirrors parse(): ahead of the single-pool search, whose prefix it shares.
-        if (tryParseDualSearchPlayOntoField(effectText)       != null) return "DualSearchPlayOntoField";
-        // Must precede SearchDeck, mirroring parse(): that parser names the search alone and
-        // leaves the "If you do so, ..." payoff out of the report.
-        if (tryParseSearchNamedRfgThenIfDoSo(effectText, source) != null) return "SearchNamedRfgThenIfDoSo";
-        if (tryParseSearchToHandThenMayPlayFromHand(effectText, source, 0) != null)
-            return "SearchToHandThenMayPlayFromHand";
-        if (ActionResolverSearch.tryParseReturnSourceOntoField(effectText, source) != null)
-            return "ReturnSourceOntoField";
-        if (ActionResolverSearch.tryParsePlaySourceFromBzOntoOppField(effectText, source) != null)
-            return "PlaySourceFromBzOntoOppField";
-        if (tryParseSearchMatchingBrokenCard(effectText) != null) return "SearchMatchingBrokenCard";
-        // Mirrors parse(): the two trigger-card / payment-record searches sit beside it.
-        if (tryParseSearchSameCardTypeAsBrokenCard(effectText) != null) return "SearchSameCardTypeAsBrokenCard";
-        if (tryParseSearchCostOfCardsDiscardedToCast(effectText, source) != null) return "SearchCostOfCardsDiscardedToCast";
-        if (tryParseSearchDeck(effectText, source, 0) != null)              return "SearchDeck";
-        if (tryParsePlayAllByNameFromBreakZone(effectText) != null)         return "PlayAllByNameFromBreakZone";
-        if (tryParsePlaySourceFromBreakZone(effectText, source) != null)    return "PlaySourceFromBreakZone";
-        if (tryParsePlayBrokenCardOntoFieldDull(effectText) != null) return "PlayBrokenCardOntoFieldDull";
-        // Mirrors parse() and matchedPatternName(), at the same position and for the same reason.
-        if (tryParsePlayFaceDownLbCardOntoFieldDull(effectText) != null) return "PlayFaceDownLbCardOntoFieldDull";
-        if (tryParseAddBrokenCardToHand(effectText) != null) return "AddBrokenCardToHand";
-        // See the matching guard in matchedPatternName(): the anchored helper, not the find()-based
-        // parser, so this cannot claim a clause sitting inside a longer ability.
-        if (tryParseCounterCountdownThenPlaySource(effectText, source) != null) return "CounterCountdownThenPlaySource";
-        if (isBarePlaySourceOntoField(effectText, source))                  return "PlaySourceOntoField";
-        if (tryParseSelfSkipNextActivePhase(effectText, source) != null)    return "SelfSkipNextActivePhase";
-        if (tryParseActivateNamedCard(effectText) != null)                  return "ActivateNamedCard";
-        if (tryParseAttackOnceMore(effectText) != null)                     return "AttackOnceMore";
-        if (tryParseOpponentCannotSearchThisTurn(effectText) != null)       return "OpponentCannotSearch";
-        if (tryParseOpponentCannotCastAnyCardsThisTurn(effectText) != null) return "OpponentCannotCastAnyCards";
-        if (tryParseOpponentCannotCastSummonsThisTurn(effectText) != null) return "OpponentCannotCastSummons";
-        if (tryParseExtraTurnThenLose(effectText) != null)                  return "ExtraTurnThenLose";
-        if (tryParseGainCrystalPerX(effectText, 0) != null)                 return "GainCrystalPerX";
-        // Mirrors parse(); see the matching guard in matchedPatternNameOn().
-        if (tryParseTrailingGainCrystal(effectText, source, 0) != null) {
+        if (site.equals("TrailingGainCrystal")) {
             String gcHead = trailingGainCrystalHead(effectText);
             if (gcHead != null) {
                 String headDesc = fullDescription(gcHead, source);
                 return (headDesc != null ? headDesc : "?") + " + GainCrystal";
             }
         }
-        if (tryParseGainCrystal(effectText)        != null)                  return "GainCrystal";
-        if (tryParseGainCrystalIfOpponentHas(effectText) != null)            return "GainCrystalIfOpponentHas";
-        // Mirrors parse(); see the matching guard in matchedPatternName(). Both branches are
-        // described, and the "instead" branch clause by clause — describing that run as one would
-        // reproduce, in the report, the same partial reading the parser refuses to make.
-        if (tryParseCounterAbsentElsePresentGate(effectText, source, 0) != null) {
+        // Both branches are described, and the "instead" branch clause by clause — describing that
+        // run as one would reproduce, in the report, the same partial reading the parser refuses to make.
+        if (site.equals("CounterAbsentElsePresentGate")) {
             Matcher cg = COUNTER_ABSENT_ELSE_PRESENT_GATE.matcher(effectText.trim());
             if (!cg.matches()) return "CounterAbsentElsePresentGate";
             StringBuilder present = new StringBuilder();
@@ -5135,110 +3981,35 @@ public class ActionResolver {
                     + describeOrName(cg.group("absent").trim() + ".", source)
                     + " | " + cg.group("count") + "+: " + present + ")";
         }
-        // Mirrors parse(); see the matching guard in matchedPatternName().
-        if (tryParsePlaceCountersOnEachJob(effectText) != null)              return "PlaceCountersOnEachJob";
-        if (tryParsePlaceCountersForEach(effectText, source) != null)        return "PlaceCountersForEach";
-        if (tryParsePlaceCounters(effectText, source) != null)               return "PlaceCounters";
-        if (tryParseRemoveAllCounters(effectText, source) != null)           return "RemoveAllCounters";
-        if (tryParseLookTopDeckOptionallyBreak(effectText)        != null) return "LookTopDeckOptionallyBreak";
-        if (tryParseLookTopDeckBottomOrKeep(effectText)           != null) return "LookTopDeckBottomOrKeep";
-        if (tryParseChooseOppFwdGainsSpecialAbilityFreeOnce(effectText, source) != null) return "ChooseOppFwdGainsSpecialAbilityFreeOnce";
-        if (tryParseUseSpecialAbilityUsedThisTurn(effectText, source) != null) return "UseSpecialAbilityUsedThisTurn";
-        if (tryParseChooseOppDamagedFwdIfHasAbilityBreak(effectText)       != null) return "ChooseOppDamagedFwdIfHasAbilityBreak";
         // Named with its gated second sentence when it has one — 22-022R Quistis's conditional
         // Freeze. A bare name here would read exactly as it did while that sentence was being
         // dropped, which is the state this description exists to make visible.
-        if (tryParseChooseAsManyAsFieldCount(effectText, source)           != null)
+        if (site.equals("ChooseAsManyAsFieldCount"))
             return "ChooseAsManyAsFieldCount"
                     + ActionResolverChoose.asManyAsFieldCountGateSuffix(effectText);
-        if (tryParseChooseAsManyAsBzRfgJobCount(effectText)               != null) return "ChooseAsManyAsBzRfgJobCount";
-        if (tryParseChooseAsManyAsPutToBzThisTurn(effectText)             != null) return "ChooseAsManyAsPutToBzThisTurn";
-        if (tryParseChooseCounterScaleCharsActivate(effectText, 1)         != null) return "ChooseCounterScaleCharsActivate";
-        if (tryParseCounterScaleLookAddToHand(effectText, 1)               != null) return "CounterScaleLookAddToHand";
-        if (tryParseLookSelfFieldScaleAddToHandRestBottom(effectText)   != null) return "LookSelfFieldScaleAddToHandRestBottom";
-        if (tryParseLookTopDeckAddToHandRestBottom(effectText)          != null) return lookAddToHandRestBottomPatternName(effectText);
-        if (tryParseLookTopDeckAddToHandOneToBreakRestBottom(effectText) != null) return "LookTopDeckAddToHandOneToBreakRestBottom";
-        if (tryParseLookTopDeckAddToHandOneToBottomRestTop(effectText) != null) return "LookTopDeckAddToHandOneToBottomRestTop";
-        if (tryParseLookTopDeckAddToHandRestBreak(effectText)           != null) return "LookTopDeckAddToHandRestBreak";
-        if (tryParseLookTopDeckTopOrBottom(effectText, source)          != null) {
+        if (site.equals("LookTopDeckAddToHandRestBottom")) return lookAddToHandRestBottomPatternName(effectText);
+        if (site.equals("LookTopDeckTopOrBottom")) {
             String then = trailingThenText(effectText, LOOK_TOP_DECK_TOP_OR_BOTTOM);
             return then == null ? "LookTopDeckTopOrBottom"
                     : "LookTopDeckTopOrBottom + " + fullDescription(then, source);
         }
-        if (tryParseLookTopDeckReturnTopOrdered(effectText)             != null) return "LookTopDeckReturnTopOrdered";
-        if (tryParseLookTopDeckPickOneTopRestBottom(effectText)              != null) return "LookTopDeckPickOneTopRestBottom";
-        if (tryParseLookTopDeckCastSummonFreeRestBottom(effectText, 0)       != null) return "LookTopDeckCastSummonFreeRestBottom";
-        if (tryParseLookTopDeckCastAnyFreeRestBottomOrdered(effectText)      != null) return "LookTopDeckCastAnyFreeRestBottomOrdered";
-        if (tryParseLookTopBothDecksTopOrBottom(effectText)                  != null) return "LookTopBothDecksTopOrBottom";
-        if (tryParseLookTopDeckPeek(effectText)                              != null) return "LookTopDeckPeek";
-        if (tryParseAddRemovedByPreviousEffectToHand(effectText, source)    != null) return "AddRemovedByPreviousEffectToHand";
-        // Mirrors parse(): ahead of the bare removal, which claims this text off its first sentence.
-        if (tryParseRemoveTopOfDeckRfgCastableThisTurn(effectText, source) != null)
-            return "RemoveTopOfDeckRfgCastableThisTurn";
-        // Mirrors parse(): ahead of the removal, whose find() would otherwise name this off
-        // Hraesvelgr 6-127L's tail sentence alone.
-        if (tryParseSkipOpponentPhasesNextTurn(effectText, source)          != null) {
+        if (site.equals("SkipOpponentPhasesNextTurn")) {
             String tail = skipOpponentPhasesTail(effectText, source);
             return tail == null ? "SkipOpponentPhasesNextTurn"
                                 : "SkipOpponentPhasesNextTurn + " + tail;
         }
-        if (tryParseRemoveTopOfDeckThenIfItsType(effectText, source)        != null) return "RemoveTopOfDeckThenIfItsType";
-        if (tryParseRemoveTopOfDeckThenIfCostMayCast(effectText)            != null) return "RemoveTopOfDeckThenIfCostMayCast";
-        if (tryParseRemoveTopOfDeckCastableThisGame(effectText)             != null) return "RemoveTopOfDeckCastableThisGame";
-        if (tryParseRemoveTopOfDeckFromGame(effectText, source)             != null) return "RemoveTopOfDeckFromGame";
-        if (tryParseRevealPlayNamedWithMaxCostRestBottom(effectText)           != null) return "RevealPlayNamedWithMaxCostRestBottom";
-        // Mirrors parse(): ahead of the single-filter sibling below, which would read
-        // Mid Previa 26-115H's three type quotas as one filter over the whole budget.
-        if (tryParseRevealPlayPerTypeQuotaTotalCost(effectText) != null) return "RevealPlayPerTypeQuotaTotalCost";
-        if (tryParseRevealPlayJobTypeTotalCostRestBottom(effectText)          != null) return "RevealPlayJobTypeTotalCost";
-        if (tryParseRevealPlayNamedOrJobMaxCostRestBottom(effectText)          != null) return "RevealPlayNamedOrJobMaxCostRestBottom";
-        // Mirrors parse() and matchedPatternName(); see the note there about its real position.
-        if (tryParseFlipUntilCharactersPlayOntoFieldRestShuffleBottom(effectText) != null) return "FlipUntilCharactersPlayOntoFieldRestShuffleBottom";
-        if (tryParseFlipUntilTypeToHandRestShuffleBottom(effectText)           != null) return "FlipUntilTypeToHandRestShuffleBottom";
-        if (tryParseFlipUntilElementToHandRestShuffleBottom(effectText)        != null) return "FlipUntilElementToHandRestShuffleBottom";
-        if (tryParseRevealPlayTypeOntoFieldRestBottom(effectText)                != null) return "RevealPlayTypeOntoFieldRestBottom";
-        if (tryParseRevealElementCardFromHandIfSoDraw(effectText)                != null) return "RevealElementCardFromHandIfSoDraw";
-        if (tryParseShuffleDeck(effectText)                              != null) return "ShuffleDeck";
-        if (tryParseBackupCpDraw(effectText)                             != null) return "BackupCpDraw";
-        // Mirrors parse(): must follow BackupCpDraw, which claims the unqualified Summon wording.
         // Described like the other cast-payment gates, with the guarded effect named inside it —
         // and from the same text the parser resolves, duration prefix reattached.
-        if (tryParseCastCpProducedByBackupsGate(effectText, source, 0) != null) {
+        if (site.equals("CastCpProducedByBackupsGate")) {
             Matcher bg = CAST_CP_PRODUCED_BY_BACKUPS_GATE.matcher(effectText.trim());
             if (!bg.matches()) return "CastCpProducedByBackupsGate";
             String inner = (bg.group("until") != null ? bg.group("until") : "") + bg.group("effect").trim();
             return "IfCastCpFrom" + (bg.group("category") != null ? bg.group("category") : "")
                     + "Backups(" + describeOrName(inner, source) + ")";
         }
-        if (tryParseAllMonstersTemporaryForward(effectText)            != null) return "AllMonstersTemporaryForward";
-        if (tryParseNameElementOnlySelfBecomes(effectText, source)      != null) return "NameElementOnlySelfBecomes";
-        if (tryParseNameElementAndJobSelfBecomes(effectText, source)   != null) return "NameElementAndJobSelfBecomes";
-        if (tryParseNamedJobReference(effectText, source, 0) != null)
+        if (site.equals("NamedJobReference"))
             return "NamedJob(" + describeOrName(namedJobText(effectText, PLACEHOLDER_JOB), source) + ")";
-        if (tryParseNameJob(effectText, source)                        != null) return "NameJob";
-        if (tryParseGrantPartyAnyElementThisTurn(effectText)           != null) return "GrantPartyAnyElementThisTurn";
-        if (tryParseSourcePowerBecomesRemovedForwardPower(effectText, source) != null) return "SourcePowerBecomesRemovedPower";
-        if (tryParseSourcePowerBecomesOpponentWeakestForward(effectText, source) != null) return "SourcePowerBecomesOpponentWeakestForward";
-        if (tryParseOpponentGainsControlOfSource(effectText, source) != null) return "OpponentGainsControlOfSource";
-        if (tryParseMayGiveSourceControlToOpponent(effectText, source) != null) return "MayGiveSourceControlToOpponent";
-        if (tryParseConditionalOpponentHand(effectText, source, 0)    != null) return "ConditionalOpponentHand";
-        if (tryParseConditionalOpponentHandMin(effectText, source, 0) != null) return "ConditionalOpponentHandMin";
-        if (tryParsePerformThisActionTwiceAtDamage(effectText, source) != null) return "PerformThisActionTwiceAtDamage";
-        if (tryParsePutOwnTypeToBzIfDoSo(effectText, source)   != null) return "PutOwnTypeToBzIfDoSo";
-        if (tryParsePutAnyNumberToBzOppSelectsAndDiscards(effectText) != null) return "PutAnyNumberToBzOppSelectsAndDiscards";
-        if (tryParseYouMayPutSelfToBZWhenDoSo(effectText, source)    != null) return "YouMayPutSelfToBZWhenDoSo";
-        if (SELECT_FOLLOWING_ACTIONS_DETECT.matcher(effectText).find())    return "SelectFollowingActions";
-        if (CardData.HAS_ALL_ELEMENTS_PATTERN.matcher(effectText.trim()).matches()) return "HasAllElements";
-        if (tryParseMultiPlayGrant(effectText) != null)                     return "MultiPlayGrant";
-        if (tryParseLightDarkDiscardCpGrant(effectText) != null)            return "LightDarkDiscardCpGrant";
-        // Must follow every pattern above: a trailing "during this turn, the cost required to cast
-        // your next X is reduced by N" clause rides along with a primary effect on many cards, so
-        // placing these earlier claims descriptions belonging to SearchDeck, ChooseCharacter and
-        // the RemoveFromGame family. Until the self-cost guard above was tightened it matched the
-        // same texts and stood in for these two, which is why they were never needed here before.
-        if (tryParseCostReductionThisTurn(effectText)                != null) return "CostReductionThisTurn";
-        if (tryParsePlayCostReductionThisTurn(effectText)            != null) return "PlayCostReductionThisTurn";
-        return null;
+        return siteName(claimed, asGiven, source);
     }
 
     /**
@@ -7318,7 +6089,13 @@ public class ActionResolver {
         if (LEADING_REVEAL_ANY_FROM_HAND_GATED.matcher(text.trim()).find()) return true;
         Matcher m = WHEN_YOU_DO_SO_SEQUENCE.matcher(text.trim());
         if (!m.matches()) return false;
-        return parse(m.group("primary").trim(), source, xValue) == null;
+        if (parse(m.group("primary").trim(), source, xValue) != null) return false;
+        // "If you control C, you may pay X. When you do so, Y" (27-035R's option): the condition
+        // governs the payment and its payoff together, so X read alone is "If you control C, you
+        // may pay X" and never parses. The control gate reads the whole, and it reads its inner
+        // text through parse(), where this same check applies — so it only claims the text when
+        // the payment and the payoff both read.
+        return ActionResolverGate.tryParseControlConditionGate(text, source, xValue) == null;
     }
 
     /**
@@ -8215,6 +6992,10 @@ public class ActionResolver {
         }
         boolean negated = false;
 
+        // "also a Forward" (12-096H): the card already met the choice's own filter, and "also" adds
+        // nothing to the test beyond the type that follows it.
+        cond = cond.replaceFirst("(?i)^also\\s+", "");
+
         Matcher negM = Pattern.compile("(?i)^not\\s+an?\\s+(.+)$").matcher(cond);
         if (negM.matches()) {
             negated = true;
@@ -8264,16 +7045,24 @@ public class ActionResolver {
             return negated ? pred.negate() : pred;
         }
 
-        // 4. "[Element] [type|card]" — element alone, element+type, or element+"card"
+        // 4. "[Element] [type|card] [of cost N [or less|more]]" — element alone, element+type, or
+        // element+"card"; the cost bound is the Samurai cycle's ("a Fire Forward of cost 3 or less",
+        // 17-009C and its five Element siblings), read the way the type branch below reads it.
         Matcher elemM = Pattern.compile(
             "(?i)^(Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)" +
-            "(?:\\s+(Forward|Character|Backup|Summon|Monster|card))?$"
+            "(?:\\s+(Forward|Character|Backup|Summon|Monster|card))?" +
+            "(?:\\s+of\\s+cost\\s+(?<cost>\\d+)(?:\\s+or\\s+(?<cmp>less|more))?)?$"
         ).matcher(cond);
         if (elemM.matches()) {
             String elem     = elemM.group(1);
             String elemType = elemM.group(2);
+            int cost        = elemM.group("cost") != null ? Integer.parseInt(elemM.group("cost")) : -1;
+            String cmp      = elemM.group("cmp");
             pred = card -> {
                 if (!card.containsElement(elem)) return false;
+                if (cost >= 0 && !(cmp == null ? card.cost() == cost
+                        : cmp.equalsIgnoreCase("less") ? card.cost() <= cost : card.cost() >= cost))
+                    return false;
                 return elemType == null || elemType.equalsIgnoreCase("card")
                         || meetsTypeCheck(card, elemType);
             };
@@ -8527,9 +7316,8 @@ public class ActionResolver {
     public static String stripExBurstPrefix(String effectText) {
         if (effectText == null) return null;
         // \b after BURST is what keeps this a marker strip. Without it the plural in a clause that
-        // opens "EX Bursts of cards put into the Damage Zone …" (6-017C Bahamut's second half) was
-        // read as the marker plus a stray "s", and parse() went on to match nothing at all —
-        // while matchedPatternName(), which does not strip, named the parser that should have run.
+        // opens "EX Bursts of cards put into the Damage Zone …" (6-017C Bahamut's second half)
+        // reads as the marker plus a stray "s", and nothing matches what is left.
         return effectText
                 .replaceFirst("(?i)^(?:\\[\\[ex\\]\\])?\\s*EX\\s+BURST\\b\\s*(?:\\[\\[/\\]\\])?\\s*", "")
                 .trim();

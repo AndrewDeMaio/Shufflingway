@@ -384,21 +384,6 @@ final class ActionResolverFieldAbility {
         return parse(m.group("effect").trim(), grantee);
     }
     /**
-     * Parses "At the end of each of your turns, &lt;effect&gt;" — a recurring field-ability
-     * trigger.  Returns a consumer that executes the inner effect directly; the caller
-     * ({@code fireFieldEndOfTurnAbilities}) is responsible for invoking it each end phase.
-     * The inner effect is resolved via the full {@link #parse} dispatcher so all supported
-     * effect types work.
-     */
-    static Consumer<GameContext> tryParseEndOfEachTurnFieldAbility(String text, CardData source) {
-        Matcher m = AT_END_OF_EACH_TURN_PATTERN.matcher(text);
-        if (!m.find()) return null;
-        String inner = m.group("inner").trim();
-        Consumer<GameContext> innerEffect = parse(inner, source);
-        if (innerEffect == null) return null;
-        return innerEffect;
-    }
-    /**
      * Parses "At the end of your opponent's turn, &lt;effect&gt;" appearing inside an ability that
      * resolves now — 20-057L The Goddess's "When The Goddess enters the field, at the end of your
      * opponent's turn, break all the Forwards opponent controls with a Doom Counter on them."
@@ -1167,55 +1152,5 @@ final class ActionResolverFieldAbility {
             ctx.applyMassFieldKeywordGrant(traits, inclForwards, inclMonsters,
                     opponentOnly, selfOnly, element, -1, null, null);
         };
-    }
-    /**
-     * Parses "At the beginning of your Main Phase 1, &lt;effect&gt;" — a recurring
-     * field-ability trigger.  Strips the trigger prefix and dispatches the inner effect
-     * through the full {@link #parse} chain so any supported effect can follow.
-     * {@code fireFieldMainPhase1Abilities} is responsible for invoking it each Main Phase 1 start.
-     */
-    static Consumer<GameContext> tryParseBeginningOfMainPhase1FieldAbility(String text, CardData source) {
-        Matcher m = AT_BEGINNING_OF_MAIN_PHASE_1_PATTERN.matcher(text);
-        if (!m.find()) return null;
-        return parse(m.group("inner").trim(), source);
-    }
-    /**
-     * Parses "At the beginning of your Main Phase 2, &lt;effect&gt;" — same as
-     * {@link #tryParseBeginningOfMainPhase1FieldAbility} but for Main Phase 2.
-     */
-    static Consumer<GameContext> tryParseBeginningOfMainPhase2FieldAbility(String text, CardData source) {
-        Matcher m = AT_BEGINNING_OF_MAIN_PHASE_2_PATTERN.matcher(text);
-        if (!m.find()) return null;
-        return parse(m.group("inner").trim(), source);
-    }
-    /**
-     * Parses "Each turn, at the beginning of Main Phase 1, &lt;effect&gt;" — fires at the start of
-     * BOTH players' Main Phase 1 for all cards the controller has on the field.
-     * {@code fireFieldMainPhase1EachTurnAbilities} is responsible for invoking it.
-     */
-    static Consumer<GameContext> tryParseBeginningOfMainPhase1EachTurnFieldAbility(String text, CardData source) {
-        Matcher m = AT_BEGINNING_OF_MAIN_PHASE_1_EACH_TURN_PATTERN.matcher(text);
-        if (!m.find()) return null;
-        return parse(m.group("inner").trim(), source);
-    }
-    /**
-     * Parses "At the beginning of your opponent's Main Phase 1, &lt;effect&gt;" — fires at the start of
-     * the controller's opponent's Main Phase 1.
-     * {@code fireFieldOppMainPhase1Abilities} is responsible for invoking it.
-     */
-    static Consumer<GameContext> tryParseBeginningOfOppMainPhase1FieldAbility(String text, CardData source) {
-        Matcher m = AT_BEGINNING_OF_OPP_MAIN_PHASE_1_PATTERN.matcher(text);
-        if (!m.find()) return null;
-        return parse(m.group("inner").trim(), source);
-    }
-    /**
-     * Parses "At the end of your opponent's turn, &lt;effect&gt;" — fires when the controlling
-     * player's opponent ends their turn.
-     * {@code fireFieldEndOfOpponentTurnAbilities} is responsible for invoking it.
-     */
-    static Consumer<GameContext> tryParseEndOfOpponentTurnFieldAbility(String text, CardData source) {
-        Matcher m = AT_END_OF_OPP_TURN_PATTERN.matcher(text);
-        if (!m.find()) return null;
-        return parse(m.group("inner").trim(), source);
     }
 }

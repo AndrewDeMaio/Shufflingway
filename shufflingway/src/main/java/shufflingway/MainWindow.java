@@ -854,8 +854,10 @@ public class MainWindow {
 	int     lastRemovedFromGameCardPower = 0;
 
 	/** Per-player turn-scoped rules state. Prefer {@link #turn(boolean)} over these directly. */
-	final PlayerTurnState p1Turn = new PlayerTurnState();
-	final PlayerTurnState p2Turn = new PlayerTurnState();
+	// Not final: resetForNewGame replaces both. Read them through turn(isP1) or directly each
+	// time, never into a field of your own, or a new game will keep writing to the old object.
+	PlayerTurnState p1Turn = new PlayerTurnState();
+	PlayerTurnState p2Turn = new PlayerTurnState();
 
 	/** The turn-scoped state of the given player. */
 	PlayerTurnState turn(boolean isP1) {
@@ -1343,6 +1345,8 @@ public class MainWindow {
 	 * player, so neither player's EX Bursts may choose a Forward.
 	 */
 	boolean forwardsCannotBeChosenByExBurstThisTurn = false;
+	/** One Forward's form of the flag above, for this turn — 21-048L Princess Sarah. */
+	final Set<CardData> cannotBeChosenByExBurstThisTurn = new HashSet<>();
 	/**
 	 * Forwards shielded from the opponent's Summons / abilities until the beginning of their
 	 * controller's next turn -- 14-126C Aerith's second option, the only printing of that duration
@@ -2679,6 +2683,7 @@ public class MainWindow {
 		cannotBeChosenBySummonsAnyone.clear();
 		cannotBeChosenByAbilitiesAnyone.clear();
 		forwardsCannotBeChosenByExBurstThisTurn = false;
+		cannotBeChosenByExBurstThisTurn.clear();
 		cannotBeChosenByElement.clear();
 		p1TempAttackTriggers.clear();
 		p2TempAttackTriggers.clear();
@@ -2691,23 +2696,13 @@ public class MainWindow {
 		p1CannotBlock.clear();
 		p2CannotBlock.clear();
 		cannotUseActionAbilitiesThisTurn.clear();
-		// Per-turn tracking flags.
-		p1Turn.receivedDamageThisTurn = false;
-		p2Turn.receivedDamageThisTurn = false;
+		// Per-player turn state: fresh objects rather than a field-by-field reset, so a field added
+		// to PlayerTurnState cannot be missed here. The shield icons read the outgoing state, so
+		// they fade first.
 		if (p1Turn.nextDamageZero && p1ShieldIcon != null) p1ShieldIcon.triggerFade();
 		if (p2Turn.nextDamageZero && p2ShieldIcon != null) p2ShieldIcon.triggerFade();
-		p1Turn.nextDamageZero = false;
-		p2Turn.nextDamageZero = false;
-		p1Turn.nextDamageZeroRedirectName = null; p2Turn.nextDamageZeroRedirectName = null;
-		p1Turn.nextDamageZeroRedirectDmg = 0;     p2Turn.nextDamageZeroRedirectDmg = 0;
-		p1Turn.forwardPutToBZThisTurn = false;
-		p2Turn.forwardPutToBZThisTurn = false;
-		p1Turn.putToBzFromFieldThisTurn.clear();
-		p2Turn.putToBzFromFieldThisTurn.clear();
-		p1Turn.castRemovedUsedThisTurn.clear();
-		p2Turn.castRemovedUsedThisTurn.clear();
-		p1Turn.partyAnyElementThisTurn = false;
-		p2Turn.partyAnyElementThisTurn = false;
+		p1Turn = new PlayerTurnState();
+		p2Turn = new PlayerTurnState();
 		lastCardWasCast   = false;
 		lastCardWarpedIn  = false;
 		lastCardCastViaAltCost = false;
@@ -4011,13 +4006,15 @@ public class MainWindow {
                                 p1DoublecastLastSummonCost = -1;  p2DoublecastLastSummonCost = -1;
                                 allForwardsCannotBeBlockedByHigherCostThisTurn = false;
                                 p1Turn.fwdBoostSuppressedThisTurn = false; p2Turn.fwdBoostSuppressedThisTurn = false;
+                                p1Turn.forwardsCannotBeChosenByExBurstThisTurn = false;
+                                p2Turn.forwardsCannotBeChosenByExBurstThisTurn = false;
                                 nullifyAbilityOnlyDmgSet.clear(); nullifySummonOnlyDmgSet.clear(); perCardNonLethalDmgSet.clear();
                                 nextOutgoingDmgZeroSet.clear();    allOutgoingDmgZeroThisTurnSet.clear();    abilityDmgToForwardZeroedThisTurnSet.clear();    outgoingDmgMultiplierMap.clear();
                                 nextOutgoingDmgDoublerSet.clear(); outgoingDmgFlatBoostMap.clear();
                                 perCardIncomingDmgMultiplierMap.clear();
                                 p1Turn.forwardIncomingDmgMult = 1;      p2Turn.forwardIncomingDmgMult = 1;
                                 p1Turn.abilityOutgoingDmgMult = 1;      p2Turn.abilityOutgoingDmgMult = 1;
-                                cannotBeChosenBySummons.clear();  cannotBeChosenByAbilities.clear();  cannotBeChosenBySummonsAnyone.clear();  cannotBeChosenByAbilitiesAnyone.clear();  forwardsCannotBeChosenByExBurstThisTurn = false;  cannotBeChosenByElement.clear();  nullifyElementDamageMap.clear();  nullifyElementDamageAbilityOnlyMap.clear();  rfgInsteadOfBzThisTurn.clear();  effectOnFieldToBzThisTurn.clear();  putIntoBzWhenLeavesFieldThisTurn.clear();  damageZeroedSourcesThisTurn.clear();  damagedBySourcesThisTurn.clear();
+                                cannotBeChosenBySummons.clear();  cannotBeChosenByAbilities.clear();  cannotBeChosenBySummonsAnyone.clear();  cannotBeChosenByAbilitiesAnyone.clear();  forwardsCannotBeChosenByExBurstThisTurn = false;  cannotBeChosenByExBurstThisTurn.clear();  cannotBeChosenByElement.clear();  nullifyElementDamageMap.clear();  nullifyElementDamageAbilityOnlyMap.clear();  rfgInsteadOfBzThisTurn.clear();  effectOnFieldToBzThisTurn.clear();  putIntoBzWhenLeavesFieldThisTurn.clear();  damageZeroedSourcesThisTurn.clear();  damagedBySourcesThisTurn.clear();
                                 breaktouchBattleSet.clear();   breakWhenDealtDamageSet.clear();
                                 p1Turn.nonLethalProtection = false;    p2Turn.nonLethalProtection = false;
                                 p1Turn.dmgReductionDisabled = false;   p2Turn.dmgReductionDisabled = false;
