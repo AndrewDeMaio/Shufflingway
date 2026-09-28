@@ -990,15 +990,18 @@ class ComputerPlayer implements OpponentController {
 		for (String e : Elements.ALL) total += mw.gameState.getP2CpForElement(e);
 		if (total >= cost) return true;
 
+		// Any Element may pay, but a Backups-only card still refuses discards and off-Element Backups.
+		String backupElemOnly = card.cpBackupElement();
 		CardData[] payable = p2CpBackups();
 		for (int bi = 0; bi < payable.length && total < cost; bi++) {
 			CardData bk = payable[bi];
 			if (bk == null || mw.p2BackupStates[bi] != CardState.ACTIVE || mw.p2BackupFrozen[bi]) continue;
+			if (!mw.costs.backupMayPay(bk, backupElemOnly)) continue;
 			outBackups.add(bi);
 			outBackupElems.put(bi, bk.elements()[0]);
 			total += 1;
 		}
-		if (total >= cost) return true;
+		if (total >= cost || backupElemOnly != null) return total >= cost;
 
 		List<CardData> hand = mw.gameState.getP2Hand();
 		Set<String> ldGrants = mw.lightDarkDiscardGrants(false);
@@ -1069,14 +1072,22 @@ class ComputerPlayer implements OpponentController {
 	boolean p2PlanPayment(CardData card, int reducedCost, int excludeHandIdx, int reservedHandIdx,
 			List<Integer> outBackups, Map<Integer, String> outBackupElems,
 			List<Integer> outDiscards, Map<Integer, String> outDiscardElems) {
-		String[] elems = card.elements();
+		// The printed payment restrictions, read as the payment dialog and P1's affordability check
+		// read them. "You can only pay with Lightning CP to cast Sakura." leaves Lightning the only
+		// Element and no off-Element source; "… produced by [Lightning] Backups …" rules out every
+		// discard and, when an Element is named, every Backup not of it.
+		String   elemOnly       = card.castElementOnly();
+		String[] elems          = elemOnly != null ? new String[]{ elemOnly } : card.elements();
+		boolean  offElementPays = elemOnly == null;
+		String   backupElemOnly = card.cpBackupElement();
+		boolean  discardsPay    = backupElemOnly == null;
 		int[] simCp = new int[elems.length];
 		for (int ei = 0; ei < elems.length; ei++)
 			simCp[ei] = mw.gameState.getP2CpForElement(elems[ei]);
 		int anyCp = 0;
 		// Every cast needs at least 1 CP of each of the card's Elements, except a Light or Dark
-		// card, which any CP pays for.
-		boolean needsEachElement = !card.isLightOrDark();
+		// card, which any CP pays for — unless it is held to one Element as well.
+		boolean needsEachElement = !card.isLightOrDark() || !offElementPays;
 
 		if (p2CanAfford(reducedCost, elems, simCp, anyCp, needsEachElement)) return true;
 
@@ -1090,10 +1101,11 @@ class ComputerPlayer implements OpponentController {
 			if (bk == null) continue;
 			if (mw.p2BackupStates[bi] != CardState.ACTIVE) continue;
 			if (mw.p2BackupFrozen[bi]) continue;
+			if (!mw.costs.backupMayPay(bk, backupElemOnly)) continue;
 			boolean matches = false;
 			for (String e : elems) if (p2BackupProduces(bk, e, card)) { matches = true; break; }
 			if (matches) matchingBackups.add(bi);
-			else offColorBackups.add(bi);
+			else if (offElementPays) offColorBackups.add(bi);
 		}
 		matchingBackups.sort(Comparator.comparingInt(bi ->
 				(int) Arrays.stream(elems)
@@ -1123,14 +1135,14 @@ class ComputerPlayer implements OpponentController {
 		Set<String> ldGrants = mw.lightDarkDiscardGrants(false);
 		List<Integer> discardable = new ArrayList<>();
 		List<Integer> offColorDiscards = new ArrayList<>();
-		for (int i = 0; i < hand.size(); i++) {
+		for (int i = 0; i < hand.size() && discardsPay; i++) {
 			if (i == excludeHandIdx || i == reservedHandIdx) continue;
 			CardData c = hand.get(i);
 			if (!CpPaymentUtils.canDiscardForCp(c, ldGrants)) continue;
 			boolean matches = false;
 			for (String e : elems) if (c.containsElement(e)) { matches = true; break; }
-			if (matches) discardable.add(i);
-			else         offColorDiscards.add(i);
+			if (matches)             discardable.add(i);
+			else if (offElementPays) offColorDiscards.add(i);
 		}
 		discardable.sort((a, b) -> hand.get(a).cost() - hand.get(b).cost());
 		for (int di : discardable) {

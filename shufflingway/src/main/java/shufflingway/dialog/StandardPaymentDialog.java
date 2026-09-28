@@ -220,9 +220,16 @@ public class StandardPaymentDialog {
         BreakForCpEntries breaks = new BreakForCpEntries(breakForCpSlots, backupCards, backupUrls,
                 onZoom, onZoomHide);
 
+        // "… only pay with CP produced by Lightning Backups …" (24-083H Firion): a Backup of that
+        // Element, whatever CP it then produces. Empty when any Backup may pay.
+        final String backupElemOnly = card.cpBackupElement();
         List<Integer> eligibleBackupSlots = new ArrayList<>();
         for (int i = 0; i < backupCards.length; i++) {
             if (backupCards[i] != null && backupStates[i] == CardState.ACTIVE) {
+                if (backupElemOnly != null && !backupElemOnly.isEmpty()
+                        && !backupCards[i].containsElement(backupElemOnly)
+                        && gainedElementsOf(backupCards[i]).stream().noneMatch(backupElemOnly::equalsIgnoreCase))
+                    continue;
                 if (castElemOnly == null
                         || backupCards[i].containsElement(castElemOnly)
                         || gainedElementsOf(backupCards[i]).stream().anyMatch(castElemOnly::equalsIgnoreCase)
@@ -433,7 +440,8 @@ public class StandardPaymentDialog {
 
         JLabel hint = new JLabel(
                 backupCpOnly
-                ? "<html><center>Backups only: dull for 1 CP each.<br>Hand discards are not allowed for this card.</center></html>"
+                ? "<html><center>" + (backupElemOnly.isEmpty() ? "Backups" : backupElemOnly + " Backups")
+                        + " only: dull for 1 CP each.<br>Hand discards are not allowed for this card.</center></html>"
                 : "<html><center>Backups: dull for 1 CP. Hand cards ("
                         + CpPaymentUtils.discardEligibility(elem, isLD, castElemOnly != null, ldDiscardGrants)
                         + "): discard for 2 CP.</center></html>",

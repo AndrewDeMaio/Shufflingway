@@ -1497,7 +1497,7 @@ public class DeckManager extends JFrame {
         table.getColumnModel().getColumn(2).setMaxWidth(80);
         int[][] specs = {
             {0, 70,  90},  // Serial
-            {3, 75, 100},  // Element
+            {3, 90, 120},  // Element
             {4, 45,  60},  // Cost
             {5, 55,  70},  // Power
         };
@@ -1507,6 +1507,19 @@ public class DeckManager extends JFrame {
             col.setMaxWidth(s[2]);
         }
         table.getColumnModel().getColumn(6).setPreferredWidth(70);  // Rarity (browser) / Job (deck)
+        setCategoryColumns(table, 8);
+    }
+
+    /**
+     * Category 1 and Category 2, from {@code firstCol}. The table is AUTO_RESIZE_ALL_COLUMNS, and
+     * the columns without a max width — Name, Job and these two — split the leftover width evenly,
+     * so a column's share of the table is set by how far its preferred width sits below the
+     * others'. Each category comes out about 10% narrower than an even share at the default window
+     * size (211px against Job's 250 in the browser); the width they give up goes to Name and Job.
+     */
+    private static void setCategoryColumns(JTable table, int firstCol) {
+        table.getColumnModel().getColumn(firstCol).setPreferredWidth(36);
+        table.getColumnModel().getColumn(firstCol + 1).setPreferredWidth(36);
     }
 
     /** Sizes all deck table columns independently (column order differs from the browser). */
@@ -1515,7 +1528,7 @@ public class DeckManager extends JFrame {
             {0,  28,  38},  // Qty
             {1,  70,  90},  // Serial
             {3,  80,  80},  // Type
-            {4,  75, 100},  // Element
+            {4,  90, 120},  // Element
             {5,  45,  60},  // Cost
             {6,  55,  70},  // Power
         };
@@ -1526,5 +1539,6 @@ public class DeckManager extends JFrame {
         }
         table.getColumnModel().getColumn(2).setPreferredWidth(86);  // Name
         table.getColumnModel().getColumn(7).setPreferredWidth(70);  // Job
+        setCategoryColumns(table, 8);
     }
 }

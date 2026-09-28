@@ -71482,4 +71482,105 @@ public class CardBehaviorTest {
 		assertTrue(mw.canAffordCard(rude, 0), "three Backups, one of them Ice");
 	}
 
+	private static final String FIRION_24_083H_RESTRICTION =
+			"You can only pay with CP produced by Lightning Backups to cast Firion.";
+
+	@Test
+	void theCastPaymentRestrictionsReadEveryPrintedWording() {
+		CardData firion = makeForwardWithText("Firion", "Lightning", 2, 7000, FIRION_24_083H_RESTRICTION);
+		assertEquals("Lightning", firion.cpBackupElement());
+		assertTrue(firion.castBackupCpOnly(), "an Element-named Backups-only cast is still Backups-only");
+
+		// 12-060R Graham: the older "play … from your hand onto the field" is the same cast.
+		assertEquals("Earth", makeForwardWithText("Graham", "Earth", 3, 7000,
+				"You can only pay with CP produced by Earth Backups to play Graham from your hand onto the field.")
+				.cpBackupElement());
+		assertEquals("", makeForwardWithText("Bahamut", "Fire", 4, 9000,
+				"You can only pay with CP produced by Backups to cast Bahamut.").cpBackupElement(),
+				"any Backup may pay");
+		// 2-007L Emperor Xande.
+		assertEquals("Fire", makeForwardWithText("Emperor Xande", "Fire", 5, 9000,
+				"You can only pay with Fire CP to play Emperor Xande onto the field.").castElementOnly());
+
+		// 20-077L Tifa restricts an ability's payment, not her cast.
+		CardData tifa = makeForwardWithText("Tifa", "Earth", 1, 5000,
+				"You can only pay with CP produced by Backups to use this ability.");
+		assertNull(tifa.cpBackupElement());
+		assertFalse(tifa.castBackupCpOnly());
+	}
+
+	@Test
+	void anElementBackupsOnlyCastCountsOnlyBackupsOfThatElement() {
+		MainWindow mw = new MainWindow();
+		CardData firion = makeForwardWithText("Firion", "Lightning", 2, 7000, FIRION_24_083H_RESTRICTION);
+		mw.gameState.getP1Hand().add(firion);
+		mw.gameState.getP1Hand().add(makeForward("Lightning Card", "Lightning", 2, 5000));
+		activeP1Backups(mw, "Lightning", "Water", "Water");
+
+		assertFalse(mw.canAffordCard(firion, 0), "one Lightning Backup; the Water Backups and the discard do not count");
+
+		activeP1Backups(mw, "Lightning", "Lightning", "Water");
+		assertTrue(mw.canAffordCard(firion, 0));
+	}
+
+	/** Seats active P2 Backups of the given Elements, one per slot from the left. */
+	private static void activeP2Backups(MainWindow mw, String... elements) {
+		for (int i = 0; i < elements.length; i++) {
+			mw.p2BackupCards[i]  = makePlainBackup(elements[i] + " Backup " + i, elements[i], 2);
+			mw.p2BackupStates[i] = CardState.ACTIVE;
+		}
+	}
+
+	/** Whether P2 would plan a payment of {@code cost} for hand card 0, and which Backups it dulls. */
+	private static boolean p2Plans(MainWindow mw, CardData card, int cost, List<Integer> backups, List<Integer> discards) {
+		return new ComputerPlayer(mw).p2PlanPayment(card, cost, 0, -1,
+				backups, new LinkedHashMap<>(), discards, new LinkedHashMap<>());
+	}
+
+	@Test
+	void theCpuHonoursAnElementOnlyCast() {
+		MainWindow mw = new MainWindow();
+		CardData sakura = makeForwardWithText("Sakura", "Lightning", 4, 8000,
+				"You can only pay with Lightning CP to cast Sakura.");
+		mw.gameState.getP2Hand().add(sakura);
+		mw.gameState.getP2Hand().add(makeForward("Water Card", "Water", 2, 5000));
+		activeP2Backups(mw, "Lightning", "Water", "Water");
+
+		assertFalse(p2Plans(mw, sakura, 4, new ArrayList<>(), new ArrayList<>()),
+				"5 CP on offer, 1 of it Lightning");
+	}
+
+	@Test
+	void theCpuHonoursABackupsOnlyCast() {
+		MainWindow mw = new MainWindow();
+		CardData rude = makeForwardWithText("Rude", "Ice", 3, 7000,
+				"You can only pay with CP produced by Backups to cast Rude.");
+		mw.gameState.getP2Hand().add(rude);
+		mw.gameState.getP2Hand().add(makeForward("Ice Card", "Ice", 2, 5000));
+		mw.gameState.getP2Hand().add(makeForward("Ice Card", "Ice", 2, 5000));
+		activeP2Backups(mw, "Ice");
+
+		List<Integer> discards = new ArrayList<>();
+		assertFalse(p2Plans(mw, rude, 3, new ArrayList<>(), discards), "one Backup; the discards may not pay");
+		assertTrue(discards.isEmpty());
+
+		activeP2Backups(mw, "Ice", "Wind", "Wind");
+		assertTrue(p2Plans(mw, rude, 3, new ArrayList<>(), new ArrayList<>()));
+	}
+
+	@Test
+	void theCpuHonoursAnElementBackupsOnlyCast() {
+		MainWindow mw = new MainWindow();
+		CardData firion = makeForwardWithText("Firion", "Lightning", 2, 7000, FIRION_24_083H_RESTRICTION);
+		mw.gameState.getP2Hand().add(firion);
+		activeP2Backups(mw, "Lightning", "Water");
+
+		assertFalse(p2Plans(mw, firion, 2, new ArrayList<>(), new ArrayList<>()), "the Water Backup may not pay");
+
+		activeP2Backups(mw, "Water", "Lightning", "Lightning");
+		List<Integer> backups = new ArrayList<>();
+		assertTrue(p2Plans(mw, firion, 2, backups, new ArrayList<>()));
+		assertEquals(List.of(1, 2), backups.stream().sorted().toList(), "the two Lightning Backups, not the Water one");
+	}
+
 }

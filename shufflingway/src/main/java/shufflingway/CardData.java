@@ -873,14 +873,11 @@ public record CardData(
 
     /**
      * Returns {@code true} when the card's main casting cost may only be paid with CP produced
-     * by Backups — hand-card discards are not eligible.
-     * Matches text of the form "You can only pay with CP produced by Backups to cast [Name]."
+     * by Backups — hand-card discards are not eligible. {@link #cpBackupElement} says whether the
+     * Backups must also be of one Element (24-083H Firion's "… produced by Lightning Backups …").
      */
-    private static final Pattern CAST_BACKUP_CP_ONLY = Pattern.compile(
-        "(?i)You\\s+can\\s+only\\s+pay\\s+with\\s+CP\\s+produced\\s+by\\s+Backups\\s+to\\s+cast\\s+\\S[^.]*\\.?"
-    );
     public boolean castBackupCpOnly() {
-        return CAST_BACKUP_CP_ONLY.matcher(textEn).find();
+        return cpBackupElement() != null;
     }
 
     /**
@@ -1467,6 +1464,8 @@ public record CardData(
      * {@code ""} if any Backup CP is accepted, or {@code null} if there is no such restriction.
      * Detected from "You can only pay with CP produced by [Element] Backups to cast/play [CardName]"
      * which, when present, always appears as the first {@code [[br]]}-delimited segment of the card text.
+     * Read by every cast payment — {@code StandardPaymentDialog}, {@code CostCalculator.canAffordCard}
+     * and {@code ComputerPlayer.p2PlanPayment} — so the three agree on what may pay.
      */
     public String cpBackupElement() {
         Matcher m = CP_BACKUP_ONLY_CAST.matcher(textEn);
@@ -9174,11 +9173,12 @@ public record CardData(
     );
 
     /**
-     * Matches "You can only pay with [Element] CP to cast [CardName]."
+     * Matches "You can only pay with [Element] CP to cast [CardName]." and the older "… to play
+     * [CardName] onto the field." (2-007L Emperor Xande, 8-074H Gladiolus), which is the same cast.
      * Unlike {@link #CP_BACKUP_ONLY_CAST}, this restricts the element of CP (not the source type).
      */
     private static final Pattern CAST_ELEMENT_ONLY = Pattern.compile(
-        "(?i)You\\s+can\\s+only\\s+pay\\s+with\\s+(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+CP\\s+to\\s+cast\\b"
+        "(?i)You\\s+can\\s+only\\s+pay\\s+with\\s+(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+CP\\s+to\\s+(?:cast|play)\\b"
     );
 
     /**

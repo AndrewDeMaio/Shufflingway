@@ -642,7 +642,8 @@ class CostCalculator {
 	 * dialog agree: every active Backup and every discardable card, the off-Element ones towards
 	 * the generic part of the cost only. Two printed restrictions narrow that, as the dialog does —
 	 * "You can only pay with [Element] CP to cast …" (13-075R Sakura) admits only sources of that
-	 * Element, and "… only pay with CP produced by Backups …" (8-015H Bahamut) admits no discards.
+	 * Element, and "… only pay with CP produced by [Element] Backups …" (8-015H Bahamut, 24-083H
+	 * Firion) admits no discards, and only Backups of that Element when one is named.
 	 */
 	boolean canAffordCard(CardData card, int excludeHandIdx, String[] extraRequiredElems, int extraGenericCost) {
 		String   elemOnly = card.castElementOnly();
@@ -651,7 +652,9 @@ class CostCalculator {
 				: java.util.stream.Stream.concat(Arrays.stream(base), Arrays.stream(extraRequiredElems))
 						.distinct().toArray(String[]::new);
 		boolean offElementPays = elemOnly == null;
-		boolean discardsPay    = !card.castBackupCpOnly();
+		// Non-null when only Backups may pay; non-empty when they must also be of that Element.
+		String  backupElemOnly = card.cpBackupElement();
+		boolean discardsPay    = backupElemOnly == null;
 		List<CardData> hand  = mw.gameState.getP1Hand();
 		Set<String> ldGrants = mw.lightDarkDiscardGrants(true);
 		int totalGenerate = 0;
@@ -666,7 +669,8 @@ class CostCalculator {
 			}
 			if (!mw.backupCpSuppressed(true))
 				for (int i = 0; i < mw.p1BackupCards.length; i++) {
-					if (mw.p1BackupCards[i] != null && mw.p1BackupStates[i] == CardState.ACTIVE)
+					if (mw.p1BackupCards[i] != null && mw.p1BackupStates[i] == CardState.ACTIVE
+							&& backupMayPay(mw.p1BackupCards[i], backupElemOnly))
 						totalGenerate += 1;
 				}
 			return totalExisting + totalGenerate >= totalCostNeeded;
@@ -693,7 +697,8 @@ class CostCalculator {
 			sources.add(producible);
 		}
 		for (int i = 0; i < mw.p1BackupCards.length && !mw.backupCpSuppressed(true); i++) {
-			if (mw.p1BackupCards[i] != null && mw.p1BackupStates[i] == CardState.ACTIVE) {
+			if (mw.p1BackupCards[i] != null && mw.p1BackupStates[i] == CardState.ACTIVE
+					&& backupMayPay(mw.p1BackupCards[i], backupElemOnly)) {
 				CardData bkp = mw.p1BackupCards[i];
 				String anyElemCat = bkp.backupCpAnyElementCategory();
 				boolean isAnyElem = bkp.backupCpAnyElement()
@@ -719,6 +724,16 @@ class CostCalculator {
 		}
 		if (!CpPaymentUtils.distinctSourcesCover(unbanked, sources)) return false;
 		return totalExisting + totalGenerate >= totalCostNeeded;
+	}
+
+	/**
+	 * Whether {@code bkp} may be dulled towards a cast restricted to "CP produced by [Element]
+	 * Backups" — {@code backupElemOnly} from {@link CardData#cpBackupElement}. Any Backup may when
+	 * it is {@code null} or empty; otherwise only one that is (or has become) that Element.
+	 */
+	boolean backupMayPay(CardData bkp, String backupElemOnly) {
+		return backupElemOnly == null || backupElemOnly.isEmpty()
+				|| mw.effectiveContainsElement(bkp, backupElemOnly);
 	}
 
 	/** The elements of {@code elems} a CP source could pay, by {@code produces}. */
