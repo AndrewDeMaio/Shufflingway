@@ -203,6 +203,43 @@ class SummonBehaviorTest {
 		assertTrue(mw.cancelledStackEntries.isEmpty(), "and it is still not cancelled");
 	}
 
+	// =========================================================================================
+	// 9-017C Belias: "Choose 1 Forward. Until the end of the turn, it gains +1000 power and First
+	// Strike. Draw 1 card. If you have received 4 points of damage or more, it also gains Haste
+	// until the end of the turn."
+	// =========================================================================================
+
+	private static final String BELIAS_9_017C = "EX BURST Choose 1 Forward. Until the end of the turn, it "
+			+ "gains +1000 power and First Strike. Draw 1 card. If you have received 4 points of damage or "
+			+ "more, it also gains Haste until the end of the turn.";
+
+	/** P2 casts Belias with {@code damage} points of damage, its one Forward the only choice. */
+	private static MainWindow castBelias(int damage) {
+		MainWindow mw = new MainWindow();
+		placeP2Forward(mw, makeForward("Mine", "Fire", 3, 7000));
+		for (int i = 0; i < damage; i++) mw.gameState.getP2DamageZone().add(makeForward("Damage " + i, "Fire", 1, 1000));
+		CardData belias = makeSummon("Belias", "Fire", 1, BELIAS_9_017C);
+		Consumer<GameContext> fn = ActionResolver.parse(belias.summonEffect(), belias);
+		assertNotNull(fn);
+		fn.accept(mw.buildGameContext(false));
+		return mw;
+	}
+
+	@Test
+	void beliasGrantsHasteAtFourDamage() {
+		MainWindow mw = castBelias(4);
+		assertEquals(8000, mw.effectiveP2ForwardPower(0));
+		assertTrue(mw.effectiveP2HasTrait(0, CardData.Trait.FIRST_STRIKE));
+		assertTrue(mw.effectiveP2HasTrait(0, CardData.Trait.HASTE));
+	}
+
+	@Test
+	void beliasGrantsNoHasteBelowFourDamage() {
+		MainWindow mw = castBelias(3);
+		assertTrue(mw.effectiveP2HasTrait(0, CardData.Trait.FIRST_STRIKE));
+		assertFalse(mw.effectiveP2HasTrait(0, CardData.Trait.HASTE));
+	}
+
 	@Test
 	void hashmalsElementReachesOnlyTheCopyOnTheField() {
 		// CardData is a record: two copies of one printing are equal. The grant is by identity.

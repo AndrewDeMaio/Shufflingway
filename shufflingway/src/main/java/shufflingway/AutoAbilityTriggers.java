@@ -4753,6 +4753,10 @@ final class AutoAbilityTriggers {
 	private void executeAutoAbility(AutoAbility fa, CardData source, boolean isP1, boolean paidExtraCost,
 			CardData triggerCard) {
 		if (mw.lostAbilitiesCards.contains(source)) return;
+		// Checked before batching as well as at dispatch: an arrival gate that fails did not trigger
+		// at all, so it must not appear in the stack-ordering dialog beside the triggers that did
+		// (17-140S Golbez's discount drawback on a full-price cast).
+		if (arrivalGateFails(fa)) return;
 		if (pendingBatch != null) {
 			pendingBatch.add(new StackOrderingDialog.Item(fa, source, isP1, paidExtraCost, triggerCard,
 					mw.triggeringEnteredCard));
@@ -4763,6 +4767,22 @@ final class AutoAbilityTriggers {
 
 	private void executeAutoAbilityImpl(AutoAbility fa, CardData source, boolean isP1) {
 		executeAutoAbilityImpl(fa, source, isP1, false);
+	}
+
+	/**
+	 * Whether {@code fa} is gated on how its card arrived and the arrival in progress is not that
+	 * one. Reads MainWindow's arrival flags, which hold while the card's enter-the-field triggers
+	 * are collected and dispatched ({@link FieldEntryAnimator#fireEntersField} restores them for a
+	 * queued run).
+	 */
+	private boolean arrivalGateFails(AutoAbility fa) {
+		// "due to your cast" — only fires when the card entered the field by being cast from hand
+		if (fa.castOnly() && !mw.lastCardWasCast) return true;
+		// "due to Warp" — only fires when the card entered the field via Warp resolution
+		if (fa.warpOnly() && !mw.lastCardWarpedIn) return true;
+		// "If you do so" — only fires when the card was cast under its own optional cost
+		// reduction. The discount is what buys this drawback, so a full-price cast skips it.
+		return fa.altCostOnly() && !mw.lastCardCastViaAltCost;
 	}
 
 	/**
@@ -5012,15 +5032,7 @@ final class AutoAbilityTriggers {
 			return;
 		}
 
-		// "due to your cast" — only fires when the card entered the field by being cast from hand
-		if (fa.castOnly() && !mw.lastCardWasCast) return;
-
-		// "due to Warp" — only fires when the card entered the field via Warp resolution
-		if (fa.warpOnly() && !mw.lastCardWarpedIn) return;
-
-		// "If you do so" — only fires when the card was cast under its own optional cost
-		// reduction. The discount is what buys this drawback, so a full-price cast skips it.
-		if (fa.altCostOnly() && !mw.lastCardCastViaAltCost) return;
+		if (arrivalGateFails(fa)) return;
 
 		// "only if [card] is removed from the game" — skip if that card is not in the RFP zone
 		if (!fa.rfpConditionCard().isEmpty()) {

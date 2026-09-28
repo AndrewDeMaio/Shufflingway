@@ -12613,6 +12613,17 @@ public class MainWindow {
 		return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
 	}
 
+	/**
+	 * Upper-cases the first character. An auto ability's effect text starts mid-sentence once its
+	 * trigger is peeled off ("choose 1 Forward …"), which reads as a fragment when shown alone.
+	 */
+	static String capitalizeFirst(String s) {
+		if (s == null || s.isEmpty()) return s;
+		char first = s.charAt(0);
+		char upper = Character.toUpperCase(first);
+		return first == upper ? s : upper + s.substring(1);
+	}
+
 	// -------------------------------------------------------------------------
 	// Stack window and stack resolution
 	// -------------------------------------------------------------------------
@@ -12729,7 +12740,7 @@ public class MainWindow {
 		if (stackEffectText != null && !stackEffectText.isBlank()) {
 			JLabel effectLabel = new JLabel("<html><div style='text-align:center;width:"
 					+ UiScale.scale(230) + "px'>"
-					+ escapeForHtmlLabel(stackEffectText) + "</div></html>",
+					+ escapeForHtmlLabel(capitalizeFirst(stackEffectText)) + "</div></html>",
 					SwingConstants.CENTER);
 			effectLabel.setFont(FontLoader.loadPixelFont(9));
 			effectLabel.setForeground(new Color(205, 195, 220));
