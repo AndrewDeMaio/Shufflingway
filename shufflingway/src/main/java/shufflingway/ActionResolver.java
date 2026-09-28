@@ -1439,6 +1439,10 @@ public class ActionResolver {
         result = tryParseRevealTopNTypeToHand(effectText);
         if (result != null) return result;
 
+        // Must precede PlayFromHand, whose find() claims the "Then, you may play …" tail.
+        result = tryParseRevealAddThen(effectText, source, xValue);
+        if (result != null) return result;
+
         result = tryParseRevealTopNCategoryToHand(effectText);
         if (result != null) return result;
 
@@ -1753,6 +1757,10 @@ public class ActionResolver {
         // sentence of 16-089H Zack, and PlayFromHand's find() used to take the text and drop the
         // drawback. Anchored end to end, so it claims nothing else.
         result = tryParsePlayFromHandThenIfItsCost(effectText, source, xValue);
+        if (result != null) return result;
+
+        // 26-098L Lightning's end-of-turn return, for the same reason as Zack's drawback above.
+        result = tryParsePlayFromHandWithRiders(effectText, source, xValue);
         if (result != null) return result;
 
         result = tryParseDealPlayerDamageToSelf(effectText);
@@ -2821,6 +2829,7 @@ public class ActionResolver {
         if (tryParseRevealTopNAddUpToMatchingRestShuffledBottom(effectText) != null) return "RevealTopNAddUpToMatchingRestShuffledBottom";
         if (tryParseRevealTopNAddUpToMatchingRestBz(effectText) != null) return "RevealTopNAddUpToMatchingRestBz";
         if (tryParseRevealTopNTypeToHand(effectText) != null) return "RevealTopNTypeToHand";
+        if (tryParseRevealAddThen(effectText, source, 0) != null) return "RevealAddThen";
         if (tryParseRevealTopNCategoryToHand(effectText) != null) return "RevealTopNCategoryToHand";
         if (tryParseRevealTopNJobOrNameToHand(effectText) != null) return "RevealTopNJobOrNameToHand";
         if (tryParseRevealTopNElementToHand(effectText) != null) return "RevealTopNElementToHand";
@@ -2949,6 +2958,7 @@ public class ActionResolver {
         if (tryParseDealPlayerDamageToOpponent(effectText)    != null) return "DealPlayerDamageToOpponent";
         // Mirrors parse().
         if (tryParsePlayFromHandThenIfItsCost(effectText, source, 0) != null) return "PlayFromHandThenIfItsCost";
+        if (tryParsePlayFromHandWithRiders(effectText, source, 0) != null) return "PlayFromHandWithRiders";
         if (tryParseDealPlayerDamageToSelf(effectText)        != null) return "DealPlayerDamageToSelf";
         if (tryParseRandomRevealHandCastIfSummonFree(effectText) != null) return "RandomRevealHandCastIfSummonFree";
         if (tryParseCastSummonFromHandDiscounted(effectText)     != null) return "CastSummonFromHandDiscounted";
@@ -4845,6 +4855,12 @@ public class ActionResolver {
         if (tryParseRevealTopNAddUpToMatchingRestShuffledBottom(effectText) != null) return "RevealTopNAddUpToMatchingRestShuffledBottom";
         if (tryParseRevealTopNAddUpToMatchingRestBz(effectText) != null)       return "RevealTopNAddUpToMatchingRestBz";
         if (tryParseRevealTopNTypeToHand(effectText)       != null)           return "RevealTopNTypeToHand";
+        if (tryParseRevealAddThen(effectText, source, 0) != null) {
+            Matcher thenM = REVEAL_ADD_THEN.matcher(effectText.trim());
+            thenM.matches();
+            return "RevealAddThen(" + describeOrName(thenM.group("reveal").trim(), source) + " + "
+                    + describeOrName(thenM.group("then").trim(), source) + ")";
+        }
         if (tryParseRevealTopNCategoryToHand(effectText)   != null)          return "RevealTopNCategoryToHand";
         if (tryParseRevealTopNJobOrNameToHand(effectText)  != null)          return "RevealTopNJobOrNameToHand";
         if (tryParseRevealTopNElementToHand(effectText)    != null)           return "RevealTopNElementToHand";
@@ -4989,6 +5005,7 @@ public class ActionResolver {
         if (tryParseDealPlayerDamageToOpponent(effectText) != null)         return "DealPlayerDamageToOpponent";
         // Mirrors parse().
         if (tryParsePlayFromHandThenIfItsCost(effectText, source, 0) != null) return "PlayFromHandThenIfItsCost";
+        if (tryParsePlayFromHandWithRiders(effectText, source, 0) != null) return "PlayFromHandWithRiders";
         if (tryParseDealPlayerDamageToSelf(effectText) != null)             return "DealPlayerDamageToSelf";
         if (tryParseRandomRevealHandCastIfSummonFree(effectText) != null)   return "RandomRevealHandCastIfSummonFree";
         if (tryParseCastSummonFromHandDiscounted(effectText) != null)       return "CastSummonFromHandDiscounted";

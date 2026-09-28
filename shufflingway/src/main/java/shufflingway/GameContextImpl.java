@@ -2458,6 +2458,7 @@ final class GameContextImpl implements GameContext {
 						return;
 					}
 				}
+				if (divertedToRfg(true, idx)) return;
 				mw.returnP1ForwardToHand(idx);
 			}
 			@Override public void returnP2ForwardToHand(int idx) {
@@ -2471,6 +2472,7 @@ final class GameContextImpl implements GameContext {
 						return;
 					}
 				}
+				if (divertedToRfg(false, idx)) return;
 				mw.returnP2ForwardToHand(idx);
 			}
 			@Override public boolean askTopOrBottom(String cardName) {
@@ -2504,12 +2506,25 @@ final class GameContextImpl implements GameContext {
 			@Override public List<Integer> divideDamageAmount(int damage, String prompt, List<CardData> cards) {
 				return mw.showDivideDamageDialog(damage, prompt, cards);
 			}
-			@Override public void returnP1ForwardToDeckBottom(int idx)   { mw.returnP1ForwardToDeck(idx, true);  }
-			@Override public void returnP2ForwardToDeckBottom(int idx)   { mw.returnP2ForwardToDeck(idx, true);  }
-			@Override public void returnP1ForwardToDeckTop(int idx)      { mw.returnP1ForwardToDeck(idx, false); }
-			@Override public void returnP2ForwardToDeckTop(int idx)      { mw.returnP2ForwardToDeck(idx, false); }
-			@Override public void returnP1ForwardUnderDeckTop(int idx, int position) { mw.returnP1ForwardUnderDeckTop(idx, position); }
-			@Override public void returnP2ForwardUnderDeckTop(int idx, int position) { mw.returnP2ForwardUnderDeckTop(idx, position); }
+			@Override public void returnP1ForwardToDeckBottom(int idx)   { if (!divertedToRfg(true, idx))  mw.returnP1ForwardToDeck(idx, true);  }
+			@Override public void returnP2ForwardToDeckBottom(int idx)   { if (!divertedToRfg(false, idx)) mw.returnP2ForwardToDeck(idx, true);  }
+			@Override public void returnP1ForwardToDeckTop(int idx)      { if (!divertedToRfg(true, idx))  mw.returnP1ForwardToDeck(idx, false); }
+			@Override public void returnP2ForwardToDeckTop(int idx)      { if (!divertedToRfg(false, idx)) mw.returnP2ForwardToDeck(idx, false); }
+			@Override public void returnP1ForwardUnderDeckTop(int idx, int position) { if (!divertedToRfg(true, idx))  mw.returnP1ForwardUnderDeckTop(idx, position); }
+			@Override public void returnP2ForwardUnderDeckTop(int idx, int position) { if (!divertedToRfg(false, idx)) mw.returnP2ForwardUnderDeckTop(idx, position); }
+
+			/**
+			 * A Forward marked "If it leaves the field for any reason, remove it from the game instead"
+			 * (14-019R Red XIII) goes to the removed-from-game zone in place of the hand or deck it was
+			 * headed for. The Break Zone route is diverted by {@link MainWindow#addToBreakZone}.
+			 */
+			private boolean divertedToRfg(boolean side, int idx) {
+				List<CardData> fwds = side ? mw.p1ForwardCards : mw.p2ForwardCards;
+				if (idx < 0 || idx >= fwds.size() || !mw.rfgWhenLeavesField.remove(fwds.get(idx))) return false;
+				logEntry(fwds.get(idx).name() + " → Removed From Game instead");
+				if (side) mw.removeP1ForwardToRfg(idx); else mw.removeP2ForwardToRfg(idx);
+				return true;
+			}
 
 	// =========================================================================================
 	// Deck search
@@ -4336,6 +4351,41 @@ final class GameContextImpl implements GameContext {
 				return played;
 			}
 
+			@Override public CardData firstPlayableFromHand(boolean inclForwards, boolean inclBackups,
+					boolean inclMonsters, int costVal, String costCmp, int costVal2,
+					String jobFilter, String cardNameFilter, String categoryFilter,
+					String elementFilter, String excludeName, String excludeElement, String withTrait) {
+				for (CardData card : isP1 ? mw.gameState.getP1Hand() : mw.gameState.getP2Hand())
+					if (playableFromHand(card, inclForwards, inclBackups, inclMonsters, costVal, costCmp,
+							costVal2, jobFilter, cardNameFilter, categoryFilter, elementFilter, excludeName,
+							excludeElement, withTrait)) return card;
+				return null;
+			}
+
+			/** Whether a play-from-hand under these filters may take {@code card} — see {@link #playCharacterFromHandFor}. */
+			private boolean playableFromHand(CardData card, boolean inclForwards, boolean inclBackups,
+					boolean inclMonsters, int costVal, String costCmp, int costVal2, String jobFilter,
+					String cardNameFilter, String categoryFilter, String elementFilter, String excludeName,
+					String excludeElement, String withTrait) {
+				if (card.isForward()  && !inclForwards) return false;
+				if (card.isBackup()   && !inclBackups)  return false;
+				if (card.isMonster()  && !inclMonsters) return false;
+				if (card.isSummon()) return false;
+				boolean costOk = meetsCostConstraint(card.cost(), costVal, costCmp)
+				               || (costVal2 >= 0 && card.cost() == costVal2);
+				if (!costOk) return false;
+				// Job+name: OR when both are set; AND otherwise. This rule started here and now
+				// lives in the shared helper, which the two board selections use as well.
+				if (!mw.meetsJobOrCardNameFilter(card, jobFilter, cardNameFilter, null)) return false;
+				if (!meetsCategoryFilter(card, categoryFilter)) return false;
+				if (!meetsElementFilter(card, elementFilter)) return false;
+				if (!meetsElementExclusion(card, excludeElement)) return false;
+				if (mw.excludedByOtherThanClause(card, excludeName)) return false;
+				if ("Warp".equalsIgnoreCase(withTrait) && !card.hasWarp()) return false;
+				// "You cannot play X from your hand due to Summons or abilities."
+				return !card.playByEffectProhibited(true);
+			}
+
 			@Override public void eachPlayerMayPlayCharacterFromHand(boolean inclForwards,
 					boolean inclBackups, boolean inclMonsters, int costVal, String costCmp,
 					int costVal2, String jobFilter, String cardNameFilter, String categoryFilter,
@@ -4380,27 +4430,10 @@ final class GameContextImpl implements GameContext {
 					String excludeElement, boolean suppressAutoAbility, String withTrait) {
 				List<CardData> hand = forP1 ? mw.gameState.getP1Hand() : mw.gameState.getP2Hand();
 				List<Integer> eligible = new ArrayList<>();
-				for (int i = 0; i < hand.size(); i++) {
-					CardData card = hand.get(i);
-					if (card.isForward()  && !inclForwards) continue;
-					if (card.isBackup()   && !inclBackups)  continue;
-					if (card.isMonster()  && !inclMonsters) continue;
-					if (card.isSummon()) continue;
-					boolean costOk = meetsCostConstraint(card.cost(), costVal, costCmp)
-					               || (costVal2 >= 0 && card.cost() == costVal2);
-					if (!costOk) continue;
-					// Job+name: OR when both are set; AND otherwise. This rule started here and now
-					// lives in the shared helper, which the two board selections use as well.
-					if (!mw.meetsJobOrCardNameFilter(card, jobFilter, cardNameFilter, null)) continue;
-					if (!meetsCategoryFilter(card, categoryFilter)) continue;
-					if (!meetsElementFilter(card, elementFilter)) continue;
-					if (!meetsElementExclusion(card, excludeElement)) continue;
-					if (mw.excludedByOtherThanClause(card, excludeName)) continue;
-					if ("Warp".equalsIgnoreCase(withTrait) && !card.hasWarp()) continue;
-					// "You cannot play X from your hand due to Summons or abilities."
-					if (card.playByEffectProhibited(true)) continue;
-					eligible.add(i);
-				}
+				for (int i = 0; i < hand.size(); i++)
+					if (playableFromHand(hand.get(i), inclForwards, inclBackups, inclMonsters, costVal, costCmp,
+							costVal2, jobFilter, cardNameFilter, categoryFilter, elementFilter, excludeName,
+							excludeElement, withTrait)) eligible.add(i);
 				if (eligible.isEmpty()) {
 					logEntry((forP1 ? "" : "[P2] ") + "No eligible cards in hand to play.");
 					return null;
@@ -8907,6 +8940,11 @@ final class GameContextImpl implements GameContext {
 
 			@Override public void mayPayCostToEffect(int cp, String element, int crystals,
 					java.util.function.Consumer<GameContext> onPay) {
+				mayPayCostToEffect(cp, element, crystals, onPay, null);
+			}
+
+			@Override public void mayPayCostToEffect(int cp, String element, int crystals,
+					java.util.function.Consumer<GameContext> onPay, CardData keep) {
 				String src  = mw.currentAbilitySource != null ? mw.currentAbilitySource.name() : "Ability";
 				String cost = crystals > 0 ? "《C》" + (crystals > 1 ? " ×" + crystals : "")
 						: element != null ? "《" + element + "》" : "《" + cp + "》";
@@ -8926,8 +8964,10 @@ final class GameContextImpl implements GameContext {
 						return;
 					}
 					int need = element != null ? 1 : cp;
-					int paid = mw.autoAbilityTriggers.aiPayCp(false, need,
-							element != null ? Map.of(element, 1) : Map.of());
+					Map<String, Integer> needs = element != null ? Map.of(element, 1) : Map.of();
+					// A card the payoff needs is not paid away for the CP; short without it, pay nothing.
+					int paid = keep == null ? mw.autoAbilityTriggers.aiPayCp(false, need, needs)
+							: mw.autoAbilityTriggers.aiPayCp(false, need, needs, c -> c != keep, true);
 					if (paid >= need) { logEntry("[P2] " + src + " — pays " + cost); onPay.accept(this); }
 					else               logEntry("[P2] " + src + " — did not pay " + cost + "; effect skipped");
 					return;
@@ -10002,6 +10042,46 @@ final class GameContextImpl implements GameContext {
 	// =========================================================================================
 			@Override public void addEndOfTurnEffect(Consumer<GameContext> effect) {
 				mw.endOfTurnEffects.add(effect);
+			}
+
+			@Override public boolean joinAttackAsParty(CardData joiner, CardData partner) {
+				return joiner != null && partner != null && mw.joinAttackAsParty(joiner, partner, isP1);
+			}
+
+			@Override public void removeFromGameWhenItLeavesField(CardData card) {
+				if (card != null) mw.rfgWhenLeavesField.add(card);
+			}
+
+			@Override public void removeFromGameAtEndOfTurn(CardData card) {
+				if (card == null) return;
+				addEndOfTurnEffect(ctx -> {
+					for (boolean side : new boolean[] { true, false }) {
+						ForwardTarget at = mw.findFieldTarget(card, side);
+						if (at == null) continue;
+						ctx.logEntry(card.name() + " — removed from the game at the end of the turn");
+						mw.rfgWhenLeavesField.remove(card);
+						ctx.removeTargetFromGame(at);
+						return;
+					}
+				});
+			}
+
+			@Override public void returnToOwnersHandAtEndOfTurn(CardData card) {
+				if (card == null) return;
+				addEndOfTurnEffect(ctx -> {
+					for (boolean side : new boolean[] { true, false }) {
+						ForwardTarget at = mw.findFieldTarget(card, side);
+						if (at == null) continue;
+						ctx.logEntry(card.name() + " — returned to its owner's hand at the end of the turn");
+						switch (at.zone()) {
+							case FORWARD -> { if (side) ctx.returnP1ForwardToHand(at.idx()); else ctx.returnP2ForwardToHand(at.idx()); }
+							case BACKUP  -> { if (side) ctx.returnP1BackupToHand(at.idx());  else ctx.returnP2BackupToHand(at.idx()); }
+							case MONSTER -> { if (side) ctx.returnP1MonsterToHand(at.idx()); else ctx.returnP2MonsterToHand(at.idx()); }
+							default      -> { }
+						}
+						return;
+					}
+				});
 			}
 
 			@Override public void addEndOfOpponentTurnEffect(Consumer<GameContext> effect) {

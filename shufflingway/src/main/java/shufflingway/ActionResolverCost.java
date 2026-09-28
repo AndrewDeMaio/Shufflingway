@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -102,6 +103,12 @@ final class ActionResolverCost {
         final String effectText = m.group("effect").trim();
         Consumer<GameContext> effect = parse(effectText, source, xValue);
         if (effect == null) return null;
+        // A payoff that plays from hand needs a card there (14-019R Red XIII): the payer must not
+        // discard it for the CP. Asked at resolution, against the hand as it is then.
+        Function<GameContext, CardData> needed =
+                ActionResolverHand.firstPlayableFromHand(effectText, xValue);
+        if (needed != null)
+            return ctx -> ctx.mayPayCostToEffect(cp, element, crystals, effect, needed.apply(ctx));
         return ctx -> ctx.mayPayCostToEffect(cp, element, crystals, effect);
     }
     /**

@@ -4231,9 +4231,13 @@ public record CardData(
     private static String discardByEffectTrigger(String triggerRaw) {
         int dueTo = triggerRaw.indexOf("due to");
         String discarded = dueTo < 0 ? triggerRaw : triggerRaw.substring(0, dueTo);
-        if (discarded.contains("character")) return "opponent discards character by effect";
-        if (discarded.contains("summon"))    return "opponent discards summon by effect";
-        return "opponent discards by effect";
+        // "1 or more" is one event for however many cards the effect takes (15-024R Orphan, 18-019R
+        // Weiss …); "a card" is one per card (7-026R Gremlin). The dispatch fires the suffixed name
+        // once per resolution.
+        String once = discarded.contains("1 or more") ? " (1 or more)" : "";
+        if (discarded.contains("character")) return "opponent discards character by effect" + once;
+        if (discarded.contains("summon"))    return "opponent discards summon by effect" + once;
+        return "opponent discards by effect" + once;
     }
 
     /**

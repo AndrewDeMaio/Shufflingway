@@ -14,6 +14,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -3707,8 +3708,20 @@ final class AutoAbilityTriggers {
 			labels.add("opponent discards character by effect");
 		if (discarded.isSummon())
 			labels.add("opponent discards summon by effect");
-		for (String label : labels) triggerAutoAbilitiesForEvent(label, causerIsP1);
+		for (String label : labels) {
+			triggerAutoAbilitiesForEvent(label, causerIsP1);
+			// The "1 or more" printings: once per resolution per label, however many cards go.
+			String once = label + " (1 or more)";
+			Map<String, Integer> fired = oneOrMoreDiscardSerial.computeIfAbsent(causerIsP1, k -> new HashMap<>());
+			if (!Integer.valueOf(mw.resolutionSerial).equals(fired.get(once))) {
+				fired.put(once, mw.resolutionSerial);
+				triggerAutoAbilitiesForEvent(once, causerIsP1);
+			}
+		}
 	}
+
+	/** The resolution each "1 or more" discard label last fired in, by the causing side. */
+	private final Map<Boolean, Map<String, Integer>> oneOrMoreDiscardSerial = new HashMap<>();
 
 	/**
 	 * Fires "When you discard 1 or more cards due to Summons or abilities" (16-114C White Mage) on
@@ -6288,7 +6301,17 @@ final class AutoAbilityTriggers {
 	 * ({@link #xPaymentSource}); {@code null} for any.
 	 */
 	int aiPayCp(boolean payerIsP1, int target, Map<String, Integer> elementNeeds, Predicate<CardData> cpSource) {
-		if (elementNeeds.isEmpty() && cpSource == null) return aiPayCp(payerIsP1, target);
+		return aiPayCp(payerIsP1, target, elementNeeds, cpSource, false);
+	}
+
+	/**
+	 * As above; with {@code allOrNothing}, a plan short of {@code target} spends nothing and returns
+	 * 0. The optional-cost payers want that — a cost they cannot meet in full buys nothing — where an
+	 * 《X》 payment keeps what it could buy.
+	 */
+	int aiPayCp(boolean payerIsP1, int target, Map<String, Integer> elementNeeds, Predicate<CardData> cpSource,
+			boolean allOrNothing) {
+		if (elementNeeds.isEmpty() && cpSource == null && !allOrNothing) return aiPayCp(payerIsP1, target);
 		Predicate<CardData> may = cpSource != null ? cpSource : c -> true;
 		CardData[]     bkpCards  = mw.playerBackupCards(payerIsP1);
 		CardState[]    bkpStates = mw.playerBackupStates(payerIsP1);
@@ -6323,6 +6346,10 @@ final class AutoAbilityTriggers {
 			if (cpSource != null && (!CpPaymentUtils.canDiscardForCp(hand.get(i), Set.of()) || !may.test(hand.get(i))))
 				continue;
 			discards.add(i); planned += 2;
+		}
+		if (allOrNothing && planned < target) {
+			mw.logEntry("[AI] Cannot cover 《" + target + "》 — pays nothing");
+			return 0;
 		}
 		for (int i : dulls) {
 			bkpStates[i] = CardState.DULL;

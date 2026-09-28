@@ -597,6 +597,16 @@ public interface GameContext {
             boolean suppressAutoAbility, String withTrait);
 
     /**
+     * The first card {@link #playCharacterFromHand} would accept from this player's hand under the
+     * same filters, or {@code null} — asked, not played. The AI plays the first eligible card, so
+     * this is the card it would take.
+     */
+    CardData firstPlayableFromHand(boolean inclForwards, boolean inclBackups, boolean inclMonsters,
+            int costVal, String costCmp, int costVal2,
+            String jobFilter, String cardNameFilter, String categoryFilter,
+            String elementFilter, String excludeName, String excludeElement, String withTrait);
+
+    /**
      * The "each player may play 1 [type] … from their hand onto the field" wording — 28-051R
      * Black Cat. Both players get the same offer, applied to their own hand and their own field,
      * with the same filters and the same meaning for every parameter as
@@ -3555,6 +3565,14 @@ public interface GameContext {
             java.util.function.Consumer<GameContext> onPay);
 
     /**
+     * As above, with {@code keep} a hand card the payoff needs — the Forward 14-019R Red XIII's
+     * payoff plays. The AI will not discard it for the CP, and declines rather than spend it; a
+     * human chooses their own payment. {@code null} keeps nothing.
+     */
+    void mayPayCostToEffect(int cp, String element, int crystals,
+            java.util.function.Consumer<GameContext> onPay, CardData keep);
+
+    /**
      * Vincent 2-078R: {@code source} deals no damage for the rest of the battle it is in, and is
      * broken once that battle finishes — whether it was blocked, went unblocked, or survived.
      */
@@ -4541,6 +4559,37 @@ public interface GameContext {
      * before turn-cleanup clearing.
      */
     void addEndOfTurnEffect(Consumer<GameContext> effect);
+
+    /**
+     * "At the end of the turn, return it to its owner's hand." for a card this effect just played —
+     * 26-098L Lightning's party partner. At the end of the turn this very instance is found on
+     * either field and returned; one that has already left the field is left alone.
+     */
+    void returnToOwnersHandAtEndOfTurn(CardData card);
+
+    /**
+     * "…forming a party with [partner] and attacking" for a card this effect just put onto the field
+     * — 26-098L Lightning. Joins {@code joiner} to its controller's attack in progress, in a party with
+     * {@code partner}; from the block step on the attack is a party attack. Nothing happens unless
+     * {@code partner} is attacking.
+     *
+     * @return whether it joined
+     */
+    boolean joinAttackAsParty(CardData joiner, CardData partner);
+
+    /**
+     * "If it leaves the field for any reason, remove it from the game instead." for a card this
+     * effect just played — 14-019R Red XIII. Marks this instance in
+     * {@code MainWindow.rfgWhenLeavesField}; a Forward's way to the Break Zone, the hand or the deck
+     * then ends in the removed-from-game zone instead.
+     */
+    void removeFromGameWhenItLeavesField(CardData card);
+
+    /**
+     * "At the end of the turn, remove it from the game." for a card this effect just played — 14-019R
+     * Red XIII. Found on either field by identity at the end of the turn; one already gone is left alone.
+     */
+    void removeFromGameAtEndOfTurn(CardData card);
 
     /**
      * Schedules {@code effect} to fire at the end of the opponent's next turn.

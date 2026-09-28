@@ -914,6 +914,22 @@ final class ActionResolverSearch {
                     null, -1, null, null, true);
         };
     }
+    /**
+     * {@link ActionResolverPatterns#REVEAL_ADD_THEN}: the reveal, then the effect after "Then,".
+     * Claimed only when both halves read, so neither can run without the other.
+     */
+    static Consumer<GameContext> tryParseRevealAddThen(String text, CardData source, int xValue) {
+        Matcher m = REVEAL_ADD_THEN.matcher(text.trim());
+        if (!m.matches()) return null;
+        Consumer<GameContext> reveal = parse(m.group("reveal").trim(), source, xValue);
+        Consumer<GameContext> then   = parse(m.group("then").trim(), source, xValue);
+        if (reveal == null || then == null) return null;
+        return ctx -> {
+            reveal.accept(ctx);
+            then.accept(ctx);
+        };
+    }
+
     static Consumer<GameContext> tryParseRevealTopNTypeToHand(String text) {
         String s = stripRestrictionSentences(text);
         Matcher m = REVEAL_TOP_N_TYPE_TO_HAND.matcher(s.isEmpty() ? text : s);

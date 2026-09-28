@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.HashSet;
@@ -13944,7 +13945,9 @@ public class CardBehaviorTest {
 				"When your opponent discards a card from his/her hand due to your Summons or abilities, draw 1 card.")) {
 			List<AutoAbility> autos = CardData.parseAutoAbilities(text);
 			assertEquals(1, autos.size(), text);
-			assertEquals("opponent discards by effect", autos.get(0).trigger(), text);
+			// "1 or more" is one event per effect, so it carries its own name.
+			assertEquals(text.contains("1 or more") ? "opponent discards by effect (1 or more)" : "opponent discards by effect",
+					autos.get(0).trigger(), text);
 		}
 	}
 
@@ -13957,8 +13960,8 @@ public class CardBehaviorTest {
 				+ "choose 1 Character. Dull it and Freeze it.[[br]]"
 				+ "When your opponent discards 1 or more Summons due to your Summons or abilities, draw 1 card.");
 		assertEquals(2, autos.size());
-		assertEquals("opponent discards character by effect", autos.get(0).trigger());
-		assertEquals("opponent discards summon by effect",    autos.get(1).trigger());
+		assertEquals("opponent discards character by effect (1 or more)", autos.get(0).trigger());
+		assertEquals("opponent discards summon by effect (1 or more)",    autos.get(1).trigger());
 	}
 
 	// The cause clause always says "Summons", so classifying on the whole trigger would read
@@ -13968,7 +13971,7 @@ public class CardBehaviorTest {
 		List<AutoAbility> autos = CardData.parseAutoAbilities(
 				"When your opponent discards 1 or more cards due to your Summons or abilities, draw 1 card.");
 		assertEquals(1, autos.size());
-		assertEquals("opponent discards by effect", autos.get(0).trigger(),
+		assertEquals("opponent discards by effect (1 or more)", autos.get(0).trigger(),
 				"\"due to your Summons\" names the cause, not the discarded card");
 	}
 
@@ -70147,6 +70150,37 @@ public class CardBehaviorTest {
 		assertTrue(mw.gameState.getP1Hand().contains(drawn), "and the watcher drew — a Summon counts, not only abilities");
 	}
 
+	@Test
+	void aOneOrMoreDiscardWatcherFiresOncePerEffectAndAPerCardOneForEachCard() {
+		for (boolean oneOrMore : new boolean[] { true, false }) {
+			MainWindow mw = new MainWindow();
+			String subject = oneOrMore ? "1 or more cards" : "a card from their hand";
+			CardData watcher = makeForwardWithText("Watcher", "Wind", 3, 7000, "When your opponent discards " + subject
+					+ " due to your Summons or abilities, draw 1 card.");
+			mw.suppressAutoAbilityForNextCards = 1;
+			placeP1Forward(mw, watcher);
+			for (int i = 0; i < 3; i++) {
+				CardData d = makeForward("Deck " + i, "Wind", 1, 1000);
+				mw.gameState.getIdentity().put(d, true);
+				mw.gameState.getP1MainDeck().addFirst(d);
+			}
+			for (int i = 0; i < 2; i++) {
+				CardData h = makeForward("Held " + i, "Fire", 2, 5000);
+				mw.gameState.getIdentity().put(h, false);
+				mw.gameState.getP2Hand().add(h);
+			}
+
+			// Through the Stack, as a real cast resolves: the watchers wait for the Summon to finish.
+			CardData summon = makeSummon("Mind Blast", "Wind", 2, "Your opponent discards 2 cards.");
+			mw.gameState.getIdentity().put(summon, true);
+			mw.pushSummonOnStack(summon, true, 0, 0, false, null, false);
+			mw.showStackWindow();
+
+			assertTrue(mw.gameState.getP2Hand().isEmpty(), "both cards discarded");
+			assertEquals(oneOrMore ? 1 : 2, mw.gameState.getP1Hand().size(), subject);
+		}
+	}
+
 	private static final String MIRA_20_102L = "When an opponent's Forward enters the field, you may pay 《1》 and discard "
 			+ "1 Monster. When you do so, break that Forward.";
 
@@ -70230,6 +70264,281 @@ public class CardBehaviorTest {
 	void adamWithNoCounterLeftCannotCancel() {
 		MainWindow mw = adamChosenWith(0);
 		assertEquals(5000, mw.p1ForwardDamage.get(0), "\"If you do so\" — nothing removed, nothing cancelled");
+	}
+
+	// =========================================================================================
+	// The partial-parse report's DATA-GATED rows, checked on a real board: each ability asks which
+	// card was chosen or revealed, which the report's recording stub cannot answer.
+	// =========================================================================================
+
+	@Test
+	void albaGainsHasteForASummonAndPowerForACharacter() {
+		String text = "choose 1 card in your opponent's Break Zone. Remove it from the game. If it is a Summon, Alba "
+				+ "gains Haste until the end of the turn. If it is a Character, Alba gains +3000 power until the end of "
+				+ "the turn.";
+		for (boolean summon : new boolean[] { true, false }) {
+			MainWindow mw = new MainWindow();
+			CardData alba = makeForward("Alba", "Wind", 2, 5000);
+			mw.suppressAutoAbilityForNextCards = 1;
+			placeP2Forward(mw, alba);
+			CardData gone = summon ? makeSummon("Ifrit", "Fire", 3, "") : makeForward("Gone", "Fire", 3, 7000);
+			mw.gameState.getIdentity().put(gone, true);
+			mw.gameState.getP1BreakZone().add(gone);
+
+			ActionResolver.parse(text, alba).accept(mw.buildGameContext(false));
+
+			assertTrue(mw.gameState.getP1PermanentRfp().contains(gone), "removed: " + gone.name());
+			assertEquals(summon, mw.effectiveP2HasTrait(0, CardData.Trait.HASTE), "Haste only for a Summon");
+			assertEquals(summon ? 5000 : 8000, mw.fieldForwardPower(false, ForwardTarget.CardZone.FORWARD, 0),
+					"+3000 only for a Character");
+		}
+	}
+
+	/** P2's deck: {@code top} first, then four Forwards, then an "Under" card below the five revealed. */
+	private static List<CardData> revealFiveDeck(MainWindow mw, CardData top) {
+		List<CardData> deck = new ArrayList<>(List.of(top));
+		for (int i = 0; i < 4; i++) deck.add(makeForward("Miss " + i, "Fire", 6, 9000));
+		deck.add(makeForward("Under", "Fire", 6, 9000));
+		stackP2Deck(mw, deck.toArray(CardData[]::new));
+		return deck;
+	}
+
+	@Test
+	void shadowAddsTheRevealedBackupAndBottomsTheRest() {
+		MainWindow mw = new MainWindow();
+		CardData shadow = makeForward("Shadow", "Fire", 5, 9000);
+		CardData backup = makePlainBackup("Interceptor", "Fire", 4);   // cost 4: too dear for the free play
+		List<CardData> deck = revealFiveDeck(mw, backup);
+
+		ActionResolver.parse("reveal the top 5 cards of your deck. Add 1 Backup among them to your hand and return the "
+				+ "other cards to the bottom of your deck in any order. Then, you may play 1 Backup of cost 2 or less "
+				+ "from your hand onto the field.", shadow).accept(mw.buildGameContext(false));
+
+		assertTrue(mw.gameState.getP2Hand().contains(backup), "the Backup is added");
+		assertSame(deck.get(5), mw.gameState.getP2MainDeck().peekFirst(), "the other four went under");
+		assertEquals(5, mw.gameState.getP2MainDeck().size());
+	}
+
+	@Test
+	void tsengAddsTheRevealedTurkAndBottomsTheRest() {
+		MainWindow mw = new MainWindow();
+		CardData tseng = makeForward("Tseng", "Lightning", 4, 7000);
+		CardData turk = makeJobCard("Reno", "Lightning", "Forward", "Member of the Turks");
+		List<CardData> deck = revealFiveDeck(mw, turk);
+
+		ActionResolver.parse("reveal the top 5 cards of your deck. Add 1 Job Member of the Turks among them to your hand "
+				+ "and return the other cards to the bottom of your deck in any order. Then, you may play 1 Job Member "
+				+ "of the Turks from your hand onto the field.", tseng).accept(mw.buildGameContext(false));
+
+		assertTrue(mw.gameState.getP2Hand().contains(turk) || mw.p2ForwardCards.contains(turk),
+				"the Turk is added (and may then be played)");
+		assertSame(deck.get(5), mw.gameState.getP2MainDeck().peekFirst(), "the other four went under");
+	}
+
+	@Test
+	void zackDealsHisControllerAPointOnlyForADearCharacter() {
+		String text = "play 1 Category VII Character from your hand onto the field. If its cost is 5 or more, Zack deals "
+				+ "you 1 point of damage.";
+		for (int cost : new int[] { 5, 4 }) {
+			MainWindow mw = new MainWindow();
+			CardData zack = makeForward("Zack", "Lightning", 5, 9000);
+			CardData played = new CardData(null, "Cloud", "Wind", cost, 8000, "Forward", false, 0, false, false,
+					Set.of(), 0, List.of(), null, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+					List.of(), List.of(), List.of(), List.of(), List.of(), false, false, null, false, false, false,
+					false, false, 1, null, "VII", null, "");
+			mw.gameState.getIdentity().put(played, false);
+			mw.gameState.getP2Hand().add(played);
+			// A point of damage moves the top card of the deck into the Damage Zone.
+			stackP2Deck(mw, makeForward("D1", "Fire", 1, 1000), makeForward("D2", "Fire", 1, 1000));
+
+			ActionResolver.parse(text, zack).accept(mw.buildGameContext(false));
+
+			assertTrue(mw.p2ForwardCards.contains(played), "played at cost " + cost);
+			assertEquals(cost >= 5 ? 1 : 0, mw.gameState.getP2DamageZone().size(), "cost " + cost);
+		}
+	}
+
+	@Test
+	void leviathanDrawsAndDiscardsOnlyForThreeElements() {
+		String text = "Choose 1 Forward of cost 5 or less. Put it at the top or bottom of its owner's deck. If the cost to "
+				+ "cast Leviathan was paid with CP of 3 or more different Elements, also draw 1 card, then discard 1 "
+				+ "card from your hand.";
+		for (int elements : new int[] { 3, 2 }) {
+			MainWindow mw = new MainWindow();
+			placeP1Forward(mw, makeForward("Target", "Fire", 3, 7000));
+			CardData held = makeForward("Held", "Water", 2, 5000);
+			mw.gameState.getIdentity().put(held, false);
+			mw.gameState.getP2Hand().add(held);
+			stackP2Deck(mw, makeForward("Drawn", "Water", 1, 1000), makeForward("D2", "Water", 1, 1000));
+			mw.lastCastPaymentDistinctElements = elements;
+			CardData leviathan = makeSummon("Leviathan", "Water", 4, text);
+
+			ActionResolver.parse(text, leviathan).accept(mw.buildGameContext(false));
+
+			assertTrue(mw.p1ForwardCards.isEmpty(), "the Forward went to its owner's deck");
+			assertEquals(elements >= 3 ? 1 : 0, mw.gameState.getP2BreakZone().size(), elements + " Elements: the discard");
+			assertEquals(1, mw.gameState.getP2Hand().size(), elements + " Elements: drew one and discarded one, or neither");
+		}
+	}
+
+	@Test
+	void lightningsPartnerGoesBackToHandAtTheEndOfTheTurn() {
+		MainWindow mw = new MainWindow();
+		CardData lightning = makeForward("Lightning", "Lightning", 3, 7000);
+		mw.suppressAutoAbilityForNextCards = 1;
+		placeP2Forward(mw, lightning);
+		CardData snow = makeCategoryForward("Snow", "Ice", "XIII");
+		mw.gameState.getIdentity().put(snow, false);
+		mw.gameState.getP2Hand().add(snow);
+
+		ActionResolver.parse("play 1 Category XIII Forward of cost 6 or less from your hand onto the field dull, forming a "
+				+ "party with Lightning and attacking (you can play a Forward of any Element). At the end of the turn, "
+				+ "return it to its owner's hand.", lightning).accept(mw.buildGameContext(false));
+		assertTrue(mw.p2ForwardCards.contains(snow), "played");
+
+		mw.fireEndOfTurnEffects(false);
+		assertTrue(mw.gameState.getP2Hand().contains(snow), "and returned at the end of the turn");
+		assertFalse(mw.p2ForwardCards.contains(snow));
+	}
+
+	private static final String LIGHTNING_PAYOFF = "play 1 Category XIII Forward of cost 6 or less from your hand onto "
+			+ "the field dull, forming a party with Lightning and attacking (you can play a Forward of any Element). At "
+			+ "the end of the turn, return it to its owner's hand.";
+
+	/** P2 fields an attacking Lightning with a Category XIII Forward of another Element in hand; resolves her payoff. */
+	private static MainWindow lightningAttackingWithPartner(CardData lightning, CardData partner) {
+		MainWindow mw = new MainWindow();
+		mw.suppressAutoAbilityForNextCards = 1;
+		placeP2Forward(mw, lightning);
+		mw.p2DeclaredAttackers.add(lightning);
+		mw.gameState.getIdentity().put(partner, false);
+		mw.gameState.getP2Hand().add(partner);
+		ActionResolver.parse(LIGHTNING_PAYOFF, lightning).accept(mw.buildGameContext(false));
+		return mw;
+	}
+
+	@Test
+	void lightningsPartnerJoinsHerAttackAsAParty() {
+		CardData lightning = makeForward("Lightning", "Lightning", 3, 7000);
+		CardData snow = makeCategoryForward("Snow", "Ice", "XIII");
+		MainWindow mw = lightningAttackingWithPartner(lightning, snow);
+
+		assertEquals(List.of(lightning, snow), mw.p2DeclaredAttackers, "Snow is attacking alongside her");
+		assertEquals(CardState.DULL, mw.p2ForwardStates.get(1), "entered dull");
+		assertTrue(mw.turn(false).formedPartyThisTurn);
+
+		List<Integer> party = mw.partyWithJoiners(false, List.of(0));
+		assertEquals(List.of(0, 1), party, "the single attack becomes a party of both");
+		assertNull(mw.partyWithJoiners(false, List.of(0)), "the joiner is spent once read");
+
+		placeP1Forward(mw, makeForward("Blocker", "Fire", 3, 7000));
+		mw.openP1BlockVsParty(party, 14000, () -> { });
+		assertEquals(List.of(0, 1), mw.pendingP2PartyIndices, "P1 blocks a party of two");
+	}
+
+	@Test
+	void lightningsPartnerDoesNotJoinWhenSheIsNotAttacking() {
+		MainWindow mw = new MainWindow();
+		CardData lightning = makeForward("Lightning", "Lightning", 3, 7000);
+		mw.suppressAutoAbilityForNextCards = 1;
+		placeP2Forward(mw, lightning);
+		CardData snow = makeCategoryForward("Snow", "Ice", "XIII");
+		mw.gameState.getIdentity().put(snow, false);
+		mw.gameState.getP2Hand().add(snow);
+
+		ActionResolver.parse(LIGHTNING_PAYOFF, lightning).accept(mw.buildGameContext(false));
+
+		assertTrue(mw.p2ForwardCards.contains(snow), "still played");
+		assertTrue(mw.p2DeclaredAttackers.isEmpty(), "but there is no attack to join");
+		assertNull(mw.partyWithJoiners(false, List.of(0)));
+	}
+
+	private static final String RED_XIII_PAYOFF ="you may pay 《Fire》. If you do so, play 1 Forward from your hand onto "
+			+ "the field. If it leaves the field for any reason, remove it from the game instead. At the end of the turn, "
+			+ "remove it from the game.";
+
+	/** P2 fields Red XIII with an active Fire Backup to pay 《Fire》 and a Forward in hand; resolves his payoff. */
+	private static MainWindow redXiiiPlayed(CardData forward) {
+		MainWindow mw = new MainWindow();
+		CardData red = makePlainBackup("Red XIII", "Fire", 2);
+		mw.gameState.getIdentity().put(red, false);
+		mw.placeP2CardInFirstBackupSlot(red);
+		CardData fire = makePlainBackup("Kindling", "Fire", 1);
+		mw.gameState.getIdentity().put(fire, false);
+		mw.placeP2CardInFirstBackupSlot(fire);
+		// Backups enter dull; these two have been out since an earlier turn.
+		Arrays.fill(mw.p2BackupStates, CardState.ACTIVE);
+		mw.gameState.getIdentity().put(forward, false);
+		mw.gameState.getP2Hand().add(forward);
+		ActionResolver.parse(RED_XIII_PAYOFF, red).accept(mw.buildGameContext(false));
+		return mw;
+	}
+
+	@Test
+	void redXiiisForwardIsRemovedFromTheGameAtTheEndOfTheTurn() {
+		CardData guest = makeForward("Guest", "Fire", 4, 8000);
+		MainWindow mw = redXiiiPlayed(guest);
+		assertTrue(mw.p2ForwardCards.contains(guest), "paid and played");
+
+		mw.fireEndOfTurnEffects(false);
+		assertTrue(mw.gameState.getP2PermanentRfp().contains(guest));
+	}
+
+	@Test
+	void redXiiisForwardIsRemovedInsteadOfBreakingEarly() {
+		CardData guest = makeForward("Guest", "Fire", 4, 8000);
+		MainWindow mw = redXiiiPlayed(guest);
+
+		mw.buildGameContext(true).breakTarget(new ForwardTarget(false, mw.p2ForwardCards.indexOf(guest),
+				ForwardTarget.CardZone.FORWARD));
+
+		assertFalse(mw.gameState.getP2BreakZone().contains(guest), "not the Break Zone");
+		assertTrue(mw.gameState.getP2PermanentRfp().contains(guest), "removed from the game instead");
+	}
+
+	/** P2 fields Red XIII with no active Backup, holds {@code hand}, and resolves his payoff. */
+	private static MainWindow redXiiiWithNoBackupToDull(CardData... hand) {
+		MainWindow mw = new MainWindow();
+		CardData red = makePlainBackup("Red XIII", "Fire", 2);
+		mw.gameState.getIdentity().put(red, false);
+		mw.placeP2CardInFirstBackupSlot(red);   // enters dull, so it cannot pay
+		for (CardData c : hand) {
+			mw.gameState.getIdentity().put(c, false);
+			mw.gameState.getP2Hand().add(c);
+		}
+		ActionResolver.parse(RED_XIII_PAYOFF, red).accept(mw.buildGameContext(false));
+		return mw;
+	}
+
+	@Test
+	void theAiDoesNotDiscardTheForwardRedXiiiWouldPlay() {
+		CardData guest = makeForward("Guest", "Fire", 4, 8000);
+		MainWindow mw = redXiiiWithNoBackupToDull(guest);
+
+		assertTrue(mw.gameState.getP2Hand().contains(guest), "the only Forward is not paid away");
+		assertTrue(mw.gameState.getP2BreakZone().isEmpty(), "and nothing else was spent");
+	}
+
+	@Test
+	void theAiPaysRedXiiiWithASpareCardAndPlaysTheForward() {
+		CardData guest = makeForward("Guest", "Fire", 4, 8000);
+		CardData spare = makeSummon("Kindling", "Fire", 1, "");
+		MainWindow mw = redXiiiWithNoBackupToDull(guest, spare);
+
+		assertTrue(mw.gameState.getP2BreakZone().contains(spare), "the CP came from the spare");
+		assertTrue(mw.p2ForwardCards.contains(guest), "and Guest was played");
+	}
+
+	@Test
+	void redXiiisForwardIsRemovedInsteadOfReturningToHand() {
+		CardData guest = makeForward("Guest", "Fire", 4, 8000);
+		MainWindow mw = redXiiiPlayed(guest);
+
+		mw.buildGameContext(false).returnP2ForwardToHand(mw.p2ForwardCards.indexOf(guest));
+
+		assertFalse(mw.gameState.getP2Hand().contains(guest), "\"for any reason\" covers the hand too");
+		assertTrue(mw.gameState.getP2PermanentRfp().contains(guest));
+		assertTrue(mw.rfgWhenLeavesField.isEmpty(), "the mark is spent");
 	}
 
 	// =========================================================================================

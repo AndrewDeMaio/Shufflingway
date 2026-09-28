@@ -5069,6 +5069,19 @@ final class ActionResolverPatterns {
      * belongs to {@code tryParseLookTopDeckAddToHandRestBottom}, which sits later in the chain and
      * would be shadowed if this pattern accepted it.
      */
+    /**
+     * A reveal-and-add followed by "Then, &lt;effect&gt;." — 11-009L Shadow and 15-135S Tseng ("Then,
+     * you may play 1 Backup of cost 2 or less from your hand onto the field"). Every reveal pattern
+     * is anchored at the end, so the tail made them all decline and PlayFromHand's find() claimed the
+     * whole text off its last sentence, dropping the reveal. Groups {@code reveal} and {@code then}
+     * are parsed on their own.
+     */
+    static final Pattern REVEAL_ADD_THEN = Pattern.compile(
+        "(?i)^(?<reveal>(?:you\\s+may\\s+)?reveal\\s+the\\s+top\\s+\\d+\\s+cards?\\s+of\\s+your\\s+deck[.!]?\\s+" +
+        "Add\\s+[^.]+?\\s+among\\s+them\\s+to\\s+your\\s+hand\\s+and\\s+return\\s+the\\s+other\\s+cards?\\s+to\\s+" +
+        "the\\s+bottom\\s+of\\s+(?:your|the)\\s+deck(?:\\s+in\\s+any\\s+order)?[.!])\\s+" +
+        "Then,\\s+(?<then>.+)$"
+    );
     static final Pattern REVEAL_TOP_N_TYPE_TO_HAND = Pattern.compile(
         "(?i)^\\s*(?:you\\s+may\\s+)?reveal\\s+the\\s+top\\s+(?<n>\\d+)\\s+cards?\\s+of\\s+your\\s+deck[.!]?\\s+" +
         // "up to" is optional in the wording and captured in {@code upto}. It used to be discarded,
@@ -7247,6 +7260,23 @@ final class ActionResolverPatterns {
      * {@link #PLAY_FROM_HAND_PATTERN} and the effect by {@code parse()}.
      * Groups: {@code play}, {@code cost}, {@code cmp}, {@code rest}.
      */
+    /**
+     * "play … from your hand onto the field …." followed by riders about the card played — 26-098L
+     * Lightning ("At the end of the turn, return it to its owner's hand.") and 14-019R Red XIII ("If
+     * it leaves the field for any reason, remove it from the game instead. At the end of the turn,
+     * remove it from the game."). The play sentence may carry a parenthesised aside before its stop
+     * ("(you can play a Forward of any Element)."). Group {@code play} is read by PlayFromHand;
+     * {@code riders} is only ever these sentences, since the group is anchored to the end.
+     */
+    /** "forming a party with [partner] and attacking" inside a play sentence — 26-098L Lightning. */
+    static final Pattern FORMING_PARTY_AND_ATTACKING = Pattern.compile(
+        "(?i)\\bforming\\s+a\\s+party\\s+with\\s+(?<partner>.+?)\\s+and\\s+attacking\\b");
+    static final Pattern PLAY_FROM_HAND_WITH_RIDERS = Pattern.compile(
+        "(?i)^(?<play>play\\s+[^.!]+?\\s+from\\s+your\\s+hand\\s+onto\\s+the\\s+field[^.!]*[.!])" +
+        "(?<riders>(?:\\s*(?:If\\s+it\\s+leaves\\s+the\\s+field\\s+for\\s+any\\s+reason,\\s+remove\\s+it\\s+from\\s+the\\s+game\\s+instead" +
+            "|At\\s+the\\s+end\\s+of\\s+the\\s+turn,\\s+(?:return\\s+it\\s+to\\s+its\\s+owner's\\s+hand" +
+            "|remove\\s+it\\s+from\\s+the\\s+game))[.!]?)+)\\s*$"
+    );
     static final Pattern PLAY_FROM_HAND_THEN_IF_ITS_COST = Pattern.compile(
         "(?i)^(?<play>play\\s+[^.!]+?\\s+from\\s+your\\s+hand\\s+onto\\s+the\\s+field(?:\\s+dull)?[.!])\\s*" +
         "If\\s+its\\s+cost\\s+is\\s+(?<cost>\\d+)\\s+or\\s+(?<cmp>more|less),\\s*(?<rest>[^.!]+[.!]?)$"

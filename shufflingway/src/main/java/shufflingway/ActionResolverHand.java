@@ -10,6 +10,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.regex.Matcher;
 
 /**
@@ -1126,6 +1127,33 @@ final class ActionResolverHand {
     }
 
     /**
+     * {@link ActionResolverPatterns#PLAY_FROM_HAND_WITH_RIDERS} — 26-098L Lightning, 14-019R Red XIII.
+     * Each rider is applied to the card played, by identity. Lightning's "forming a party with
+     * Lightning and attacking" joins it to her attack ({@link GameContext#joinAttackAsParty}); a
+     * partner other than the source is not read, and the whole text is left unparsed.
+     */
+    static Consumer<GameContext> tryParsePlayFromHandWithRiders(String text, CardData source, int xValue) {
+        Matcher m = PLAY_FROM_HAND_WITH_RIDERS.matcher(text.trim());
+        if (!m.matches()) return null;
+        String play = m.group("play").trim();
+        if (EACH_PLAYER_MAY_PLAY_FROM_HAND.matcher(play).find()) return null;
+        Matcher joinM = FORMING_PARTY_AND_ATTACKING.matcher(play);
+        boolean joins = joinM.find();
+        if (joins && (source == null || !joinM.group("partner").trim().equalsIgnoreCase(source.name()))) return null;
+        String riders = m.group("riders").toLowerCase(Locale.ROOT);
+        boolean rfgOnLeaving = riders.contains("for any reason");
+        boolean returnAtEot  = riders.contains("return it to its owner's hand");
+        boolean rfgAtEot     = riders.contains("end of the turn, remove it from the game");
+        return parsePlayFromHand(play, source, xValue, false, (ctx, played) -> {
+            if (played == null) return;
+            if (joins)        ctx.joinAttackAsParty(played, source);
+            if (rfgOnLeaving) ctx.removeFromGameWhenItLeavesField(played);
+            if (returnAtEot)  ctx.returnToOwnersHandAtEndOfTurn(played);
+            if (rfgAtEot)     ctx.removeFromGameAtEndOfTurn(played);
+        });
+    }
+
+    /**
      * Parses "each player may play 1 [type] [of cost N or less] from their hand onto the field"
      * — 28-051R Black Cat.
      *
@@ -1152,6 +1180,63 @@ final class ActionResolverHand {
      */
     private static Consumer<GameContext> parsePlayFromHand(String text, CardData source, int xValue,
             boolean eachPlayer, BiConsumer<GameContext, CardData> afterPlay) {
+        PlaySpec s = playSpec(text, xValue);
+        if (s == null) return null;
+        return ctx -> {
+            int cost = s.resolvedCost(ctx);
+            ctx.logEntry("Effect: " + (eachPlayer ? "Each player may play 1" : "Play 1") + s.label());
+            if (eachPlayer) {
+                ctx.eachPlayerMayPlayCharacterFromHand(s.inclForwards(), s.inclBackups(), s.inclMonsters(),
+                        cost, s.resolvedCmp(), s.costVal2(), s.job(), s.name(), s.category(), s.element(),
+                        s.excludeName(), s.entersDull(), s.excludeElement(), s.suppressAuto(), s.withTrait());
+            } else {
+                CardData played = ctx.playCharacterFromHand(s.inclForwards(), s.inclBackups(), s.inclMonsters(),
+                        cost, s.resolvedCmp(), s.costVal2(), s.job(), s.name(), s.category(), s.element(),
+                        s.excludeName(), s.entersDull(), s.excludeElement(), s.suppressAuto(), s.withTrait());
+                if (afterPlay != null) afterPlay.accept(ctx, played);
+            }
+        };
+    }
+
+    /**
+     * The card a "play 1 … from your hand onto the field" payoff would take from the resolving
+     * player's hand now, or {@code null} — the first eligible, which is the card the AI plays. Read by
+     * the optional-cost payers so the CP is not paid by discarding that very card (14-019R Red XIII).
+     * {@code null} when {@code text} does not open with such a play.
+     */
+    static Function<GameContext, CardData> firstPlayableFromHand(String text, int xValue) {
+        if (!text.trim().regionMatches(true, 0, "play ", 0, 5)) return null;
+        PlaySpec s = playSpec(text, xValue);
+        if (s == null) return null;
+        return ctx -> ctx.firstPlayableFromHand(s.inclForwards(), s.inclBackups(), s.inclMonsters(),
+                s.resolvedCost(ctx), s.resolvedCmp(), s.costVal2(), s.job(), s.name(), s.category(),
+                s.element(), s.excludeName(), s.excludeElement(), s.withTrait());
+    }
+
+    /**
+     * What a "play 1 … from your hand onto the field" sentence asks for, read once at parse time.
+     * A dynamic cost ("of cost equal to or less than the number of …") is counted at resolution by
+     * {@link #resolvedCost}.
+     */
+    private record PlaySpec(boolean inclForwards, boolean inclBackups, boolean inclMonsters,
+            int costVal, String costCmp, int costVal2, String job, String name, String category,
+            String element, String excludeName, boolean entersDull, String excludeElement,
+            boolean suppressAuto, String withTrait, boolean dynamic, String dynJob, String dynName,
+            String label) {
+
+        int resolvedCost(GameContext ctx) {
+            if (!dynamic) return costVal;
+            if (dynJob != null && dynName != null)
+                return ctx.countSelfFieldCards(true, true, true, dynJob, null)
+                     + ctx.countSelfFieldCards(true, true, true, null, dynName)
+                     - ctx.countSelfFieldCards(true, true, true, dynJob, dynName);
+            return ctx.countSelfFieldCards(true, true, true, dynJob, dynName);
+        }
+
+        String resolvedCmp() { return dynamic ? "less" : costCmp; }
+    }
+
+    private static PlaySpec playSpec(String text, int xValue) {
         Matcher m = PLAY_FROM_HAND_PATTERN.matcher(text);
         if (!m.find()) return null;
 
@@ -1264,35 +1349,11 @@ final class ActionResolverHand {
         final boolean fSuppressAuto = ITS_AUTO_ABILITY_WILL_NOT_TRIGGER.matcher(text).find();
         final String fWithTrait = m.group("trait");
 
-        return ctx -> {
-            int resolvedCost = fCostVal;
-            String resolvedCmp = fCostCmp;
-            if (isDynamic) {
-                int n;
-                if (fDynJob != null && fDynName != null) {
-                    n = ctx.countSelfFieldCards(true, true, true, fDynJob, null)
-                      + ctx.countSelfFieldCards(true, true, true, null, fDynName)
-                      - ctx.countSelfFieldCards(true, true, true, fDynJob, fDynName);
-                } else {
-                    n = ctx.countSelfFieldCards(true, true, true, fDynJob, fDynName);
-                }
-                resolvedCost = n;
-                resolvedCmp  = "less";
-            }
-            ctx.logEntry("Effect: " + (eachPlayer ? "Each player may play 1" : "Play 1")
-                    + filterDesc + tgtLabel + costLabel + exclLabel + dullLabel + " from hand"
-                    + (fSuppressAuto ? " (no ETF auto-ability)" : ""));
-            if (eachPlayer) {
-                ctx.eachPlayerMayPlayCharacterFromHand(inclForwards, inclBackups, inclMonsters,
-                        resolvedCost, resolvedCmp, fCostVal2,
-                        fJob, fName, fCat, fElem, fExclude, fEntersDull, fExcludeElem, fSuppressAuto, fWithTrait);
-            } else {
-                CardData played = ctx.playCharacterFromHand(inclForwards, inclBackups, inclMonsters,
-                        resolvedCost, resolvedCmp, fCostVal2,
-                        fJob, fName, fCat, fElem, fExclude, fEntersDull, fExcludeElem, fSuppressAuto, fWithTrait);
-                if (afterPlay != null) afterPlay.accept(ctx, played);
-            }
-        };
+        String label = filterDesc + tgtLabel + costLabel + exclLabel + dullLabel + " from hand"
+                + (fSuppressAuto ? " (no ETF auto-ability)" : "");
+        return new PlaySpec(inclForwards, inclBackups, inclMonsters, fCostVal, fCostCmp, fCostVal2,
+                fJob, fName, fCat, fElem, fExclude, fEntersDull, fExcludeElem, fSuppressAuto, fWithTrait,
+                isDynamic, fDynJob, fDynName, label);
     }
     static Consumer<GameContext> tryParseOpponentMillIfSameElementDraw(String text) {
         Matcher m = OPPONENT_MILL_IF_SAME_ELEMENT_DRAW.matcher(text);

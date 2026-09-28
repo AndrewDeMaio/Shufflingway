@@ -1423,6 +1423,13 @@ public class MainWindow {
 	 */
 	final Map<CardData, List<CardData>> putIntoBzWhenLeavesFieldThisTurn = new IdentityHashMap<>();
 	/**
+	 * Cards that are removed from the game instead, whenever and however they leave the field —
+	 * 14-019R Red XIII's "If it leaves the field for any reason, remove it from the game instead."
+	 * By identity, and spent on the way out. Read by {@link #addToBreakZone} for the Break Zone and by
+	 * GameContextImpl's Forward returns for the hand and the deck.
+	 */
+	final Set<CardData> rfgWhenLeavesField = Collections.newSetFromMap(new IdentityHashMap<>());
+	/**
 	 * Sources whose damage becomes 0 for the rest of this turn — 29-012H Neon's Runic, which picks
 	 * a Summon or auto-ability off the Stack and blanks the damage it was going to deal.
 	 *
@@ -2714,6 +2721,7 @@ public class MainWindow {
 
 		gameState.reset();
 		endOfTurnEffects.clear();
+		rfgWhenLeavesField.clear();
 		scheduledForP1EndTurn.clear();
 		scheduledForP2EndTurn.clear();
 		pendingMainPhase1Effects.clear();
@@ -5043,6 +5051,8 @@ public class MainWindow {
 		if (idx < 0 || idx >= p1ForwardCards.size()) return;
 		startBreakAnim(p1ForwardLabels.get(idx));
 		CardData card    = p1ForwardCards.get(idx);
+		// Already headed where the mark would send it; spent so a replayed copy starts unmarked.
+		if (toRfg) rfgWhenLeavesField.remove(card);
 		boolean  hadGrants      = !card.fieldPowerGrants().isEmpty();
 		boolean  hadCostReduces = !card.fieldCostReductions().isEmpty() || p1HandHasSelfCostModifiers();
 		CardData topCard = p1ForwardPrimedTop.get(idx);
@@ -5153,6 +5163,8 @@ public class MainWindow {
 		if (idx < 0 || idx >= p2ForwardCards.size()) return;
 		startBreakAnim(p2ForwardLabels.get(idx));
 		CardData card    = p2ForwardCards.get(idx);
+		// Already headed where the mark would send it; spent so a replayed copy starts unmarked.
+		if (toRfg) rfgWhenLeavesField.remove(card);
 		boolean hadGrants      = !card.fieldPowerGrants().isEmpty();
 		boolean hadCostReduces = !card.fieldCostReductions().isEmpty() || p1HandHasSelfCostModifiers();
 		CardData topCard = p2ForwardPrimedTop.get(idx);
@@ -7682,12 +7694,18 @@ public class MainWindow {
 		String announce = "[P2] " + attacker.name() + " ("
 				+ ((pendingP2AttackerIsMonster || pendingP2AttackerIsBackup) ? "Forward — " : "")
 				+ displayPow + ") attacks!";
+		p2AttackJoiners.clear();
 		combatPriorityRound(false, announce, () -> {
 			if (survivingDeclaredAttackers(false).isEmpty()) {
 				logEntry("No attackers remain — Declare Blockers skipped.");
 				setAttackSubStep(-1);
 				finish.run();
 				return;
+			}
+			// A Forward that joined the attack (26-098L Lightning) makes it a party from here on.
+			if (!pendingP2AttackerIsMonster && !pendingP2AttackerIsBackup) {
+				List<Integer> party = partyWithJoiners(false, List.of(attackerIdx));
+				if (party != null) { openP1BlockVsParty(party, partyPower(false, party), finish); return; }
 			}
 			setAttackSubStep(2);
 			refreshPhaseTracker();
@@ -7881,6 +7899,7 @@ public class MainWindow {
 		}
 		setAttackSubStep(1);
 		refreshPhaseTracker();
+		p2AttackJoiners.clear();
 		combatPriorityRound(false, "[P2] Party Attack: " + names + " (" + combinedPower + " combined)!", () -> {
 			if (survivingDeclaredAttackers(false).isEmpty()) {
 				logEntry("No attackers remain — Declare Blockers skipped.");
@@ -7888,34 +7907,44 @@ public class MainWindow {
 				finish.run();
 				return;
 			}
-			setAttackSubStep(2);
-			refreshPhaseTracker();
-
-			if (!hasEligibleP1Blocker()) {
-				logEntry("No eligible blockers.");
-				combatPriorityRound(false, null, () -> {
-					setAttackSubStep(3);
-					setPlayerDamageSource(partyExBurstSuppressor(attackerIndices, false));
-					p1TakeDamage();
-					for (int idx : attackerIndices)
-						autoAbilityTriggers.triggerAutoAbilitiesForDealsDamageToOpponent(p2ForwardCards.get(idx), false);
-					setAttackSubStep(-1);
-					finish.run();
-				});
-				return;
-			}
-
-			pendingP2PartyIndices  = new ArrayList<>(attackerIndices);
-			pendingP2PartyCombined = combinedPower;
-			pendingP2BlockDone     = finish;
-			p1BlockerSelection     = -1;
-			p1BlockerMonsterIdx    = -1;
-			p1BlockerBackupIdx     = -1;
-
-			refreshAttackButton();
-			refreshAllForwardSlots();
-			logEntry("Select a blocker or click 'Take Damage'.");
+			List<Integer> joined = partyWithJoiners(false, attackerIndices);
+			if (joined != null) openP1BlockVsParty(joined, partyPower(false, joined), finish);
+			else                openP1BlockVsParty(attackerIndices, combinedPower, finish);
 		});
+	}
+
+	/**
+	 * The block step against P2's party, once the declaration's priority round is over — shared by
+	 * a declared party and by a single attacker another Forward joined (26-098L Lightning).
+	 */
+	void openP1BlockVsParty(List<Integer> attackerIndices, int combinedPower, Runnable finish) {
+		setAttackSubStep(2);
+		refreshPhaseTracker();
+
+		if (!hasEligibleP1Blocker()) {
+			logEntry("No eligible blockers.");
+			combatPriorityRound(false, null, () -> {
+				setAttackSubStep(3);
+				setPlayerDamageSource(partyExBurstSuppressor(attackerIndices, false));
+				p1TakeDamage();
+				for (int idx : attackerIndices)
+					autoAbilityTriggers.triggerAutoAbilitiesForDealsDamageToOpponent(p2ForwardCards.get(idx), false);
+				setAttackSubStep(-1);
+				finish.run();
+			});
+			return;
+		}
+
+		pendingP2PartyIndices  = new ArrayList<>(attackerIndices);
+		pendingP2PartyCombined = combinedPower;
+		pendingP2BlockDone     = finish;
+		p1BlockerSelection     = -1;
+		p1BlockerMonsterIdx    = -1;
+		p1BlockerBackupIdx     = -1;
+
+		refreshAttackButton();
+		refreshAllForwardSlots();
+		logEntry("Select a blocker or click 'Take Damage'.");
 	}
 
 
@@ -9161,7 +9190,7 @@ public class MainWindow {
 			// Targeted marker: "If it is put from the field into the Break Zone this turn, remove it
 			// from the game instead." (e.g. Jet Bahamut) — set on this specific card instance by an
 			// action ability, independent of any player's field abilities.
-			if (rfgInsteadOfBzThisTurn.remove(card)) {
+			if (rfgInsteadOfBzThisTurn.remove(card) | rfgWhenLeavesField.remove(card)) {
 				gameState.addToPermanentRfp(card);
 				logEntry((player1 ? "" : "[P2] ") + card.name() + " → Removed From Game instead of Break Zone (marked this turn)");
 				if (player1) refreshP1WarpZoneUI(); else refreshP2WarpZoneUI();
@@ -19434,6 +19463,58 @@ public class MainWindow {
 		continueAttackPhase();
 	}
 
+	/**
+	 * Forwards put onto the field attacking, forming a party with an attacker — 26-098L Lightning's
+	 * "play … onto the field dull, forming a party with Lightning and attacking". Filled by
+	 * {@link #joinAttackAsParty} while the declaration's priority round resolves the attack
+	 * triggers; spent by {@link #partyWithJoiners} as the block step opens.
+	 */
+	private final List<CardData> p1AttackJoiners = new ArrayList<>(), p2AttackJoiners = new ArrayList<>();
+
+	/**
+	 * Adds {@code joiner} to {@code isP1}'s attack in progress, in a party with {@code partner}.
+	 * Only while {@code partner} is a declared attacker and both are Forwards on that field; a Forward
+	 * put onto the field attacking was not declared, so its own "when it attacks" does not fire.
+	 *
+	 * @return whether it joined
+	 */
+	boolean joinAttackAsParty(CardData joiner, CardData partner, boolean isP1) {
+		List<CardData> declared = isP1 ? p1DeclaredAttackers : p2DeclaredAttackers;
+		List<CardData> fwds     = isP1 ? p1ForwardCards : p2ForwardCards;
+		if (identityIndexOf(declared, partner) < 0 || identityIndexOf(fwds, partner) < 0
+				|| identityIndexOf(fwds, joiner) < 0 || identityIndexOf(declared, joiner) >= 0) return false;
+		declared.add(joiner);
+		(isP1 ? p1AttackJoiners : p2AttackJoiners).add(joiner);
+		turn(isP1).formedPartyThisTurn = true;
+		logEntry((isP1 ? "" : "[P2] ") + joiner.name() + " joins the attack, forming a party with " + partner.name());
+		refreshCombatGlows();
+		return true;
+	}
+
+	/**
+	 * {@code declaredIdx} with the Forwards that joined {@code isP1}'s attack added, by where they
+	 * stand now, or {@code null} when none joined (or none is still there). Spends the joiners.
+	 */
+	List<Integer> partyWithJoiners(boolean isP1, List<Integer> declaredIdx) {
+		List<CardData> joiners = isP1 ? p1AttackJoiners : p2AttackJoiners;
+		if (joiners.isEmpty()) return null;
+		List<CardData> fwds = isP1 ? p1ForwardCards : p2ForwardCards;
+		List<Integer> party = new ArrayList<>(declaredIdx);
+		for (CardData j : joiners) {
+			int i = identityIndexOf(fwds, j);
+			if (i >= 0 && !party.contains(i)) party.add(i);
+		}
+		joiners.clear();
+		return party.size() > declaredIdx.size() ? party : null;
+	}
+
+	/** The combined power of {@code isP1}'s Forwards at {@code indices}. */
+	private int partyPower(boolean isP1, List<Integer> indices) {
+		int total = 0;
+		for (int i : indices) total += isP1 ? effectiveP1ForwardPower(i) : effectiveP2ForwardPower(i);
+		return total;
+	}
+
 	private List<CardData> survivingDeclaredAttackers(boolean attackerIsP1) {
 		List<CardData> declared = attackerIsP1 ? p1DeclaredAttackers : p2DeclaredAttackers;
 		List<CardData> onField  = attackerIsP1 ? p1ForwardCards      : p2ForwardCards;
@@ -20174,6 +20255,7 @@ public class MainWindow {
 	void executeP1Attack(List<Integer> selection) {
 		if (selection.isEmpty()) return;
 		p1Turn.attackDeclarationsThisTurn++;
+		p1AttackJoiners.clear();
 
 		// Dull the attackers (Brave ones stay active) and trigger their attack auto-abilities
 		for (int idx : selection) {
@@ -20209,6 +20291,12 @@ public class MainWindow {
 				if (survivingDeclaredAttackers(true).isEmpty()) { skipBlockStepNoAttackers(); return; }
 				setAttackSubStep(2);
 				refreshAttackButton();
+				// A Forward that joined the attack (26-098L Lightning) makes it a party from here on.
+				List<Integer> party = partyWithJoiners(true, List.of(idx));
+				if (party != null) {
+					p2OfferBlockParty(party, partyPower(true, party), this::continueAttackPhase);
+					return;
+				}
 				opponent.requestBlocker(effectiveP1ForwardPower(idx),
 						new ForwardTarget(true, idx, ForwardTarget.CardZone.FORWARD),
 						blockIsCompelled(attacker, false), blk -> {
@@ -20259,7 +20347,9 @@ public class MainWindow {
 				if (survivingDeclaredAttackers(true).isEmpty()) { skipBlockStepNoAttackers(); return; }
 				setAttackSubStep(2);
 				refreshAttackButton();
-				p2OfferBlockParty(selection, fCombined, this::continueAttackPhase);
+				List<Integer> joined = partyWithJoiners(true, selection);
+				if (joined != null) p2OfferBlockParty(joined, partyPower(true, joined), this::continueAttackPhase);
+				else                p2OfferBlockParty(selection, fCombined, this::continueAttackPhase);
 			});
 		}
 	}
