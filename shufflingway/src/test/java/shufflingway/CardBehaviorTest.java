@@ -20,6 +20,8 @@ import java.util.function.Consumer;
 import java.util.function.Predicate;
 import java.util.regex.Matcher;
 
+import javax.swing.SwingUtilities;
+
 import org.json.JSONObject;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
@@ -71311,6 +71313,173 @@ public class CardBehaviorTest {
 		}
 
 		assertEquals(List.of(watcher), triggerSources(mw));
+	}
+
+	// =========================================================================================
+	// Animated arrivals: a card slides or bursts onto the field before its enter-the-field
+	// triggers fire (FieldEntryAnimator). What the placement set up must still reach them.
+	// =========================================================================================
+
+	@Test
+	void aSuppressedArrivalStaysSilentWhileAnotherCardEntersDuringItsAnimation() throws Exception {
+		MainWindow mw = new MainWindow();
+		CardData quiet = makeForwardWithText("Quiet", "Fire", 3, 7000, "When Quiet enters the field, draw 1 card.");
+		CardData loud  = makeForwardWithText("Loud",  "Fire", 3, 7000, "When Loud enters the field, draw 1 card.");
+		mw.gameState.getIdentity().put(quiet, false);
+
+		// "Its auto-ability will not trigger" for Quiet, which is still sliding in when Loud arrives.
+		mw.suppressAutoAbilityForNextCards = 1;
+		mw.fieldEntryAnimator.placeWithAnim(quiet, false, FieldEntryAnimator.Style.FROM_HAND, null,
+				() -> mw.placeP2CardInForwardZone(quiet));
+		placeP2Forward(mw, loud);
+		assertEquals(List.of(loud), triggerSources(mw), "Loud is not the arrival the suppression was for");
+
+		SwingUtilities.invokeAndWait(() -> { });   // the animation finishes; Quiet's held triggers run
+
+		assertEquals(List.of(loud), triggerSources(mw), "Quiet arrived silent");
+		assertFalse(mw.fieldEntryAnimator.isBusy());
+		assertEquals(0, mw.suppressAutoAbilityForNextCards);
+	}
+
+	@Test
+	void aPlayFromHandIsPlacedOutrightWhenTheWindowIsNotOnScreen() {
+		MainWindow mw = new MainWindow();
+		CardData card = makeForwardWithText("Arrival", "Fire", 3, 7000, "When Arrival enters the field, draw 1 card.");
+		mw.gameState.getIdentity().put(card, false);
+
+		mw.placeFromHandWithAnim(card, false, null, () -> mw.placeP2CardInForwardZone(card));
+
+		assertEquals(List.of(card), triggerSources(mw), "no animation to wait for, so the trigger is not held");
+		assertFalse(mw.fieldEntryAnimator.isBusy());
+	}
+
+	// =========================================================================================
+	// Affordability of a multi-Element cost: each Element needs 1 CP from a source of its own. A
+	// Fire/Ice discard pays Fire or Ice, not both (CpPaymentUtils.distinctSourcesCover).
+	// =========================================================================================
+
+	@Test
+	void oneSourceCannotPayTwoElements() {
+		assertFalse(CpPaymentUtils.distinctSourcesCover(List.of("Fire", "Ice"), List.of(Set.of("Fire", "Ice"))));
+		assertTrue(CpPaymentUtils.distinctSourcesCover(List.of("Fire", "Ice"),
+				List.of(Set.of("Fire", "Ice"), Set.of("Ice"))));
+		assertTrue(CpPaymentUtils.distinctSourcesCover(List.of(), List.of()), "nothing needed is always met");
+	}
+
+	@Test
+	void aSourceTakenByAnEarlierElementIsMovedWhenAnotherCanTakeItsPlace() {
+		// Fire claims the Fire/Ice source first; Ice can only use that one, so Fire moves to the Fire source.
+		assertTrue(CpPaymentUtils.distinctSourcesCover(List.of("Fire", "Ice"),
+				List.of(Set.of("Fire", "Ice"), Set.of("Fire"))));
+	}
+
+	@Test
+	void twoCopiesOfAFireIceForwardCannotPayForEachOther() {
+		// Leon 12-113C: Fire/Ice, cost 2. Discarding the other copy makes 2 CP of Fire or of Ice.
+		MainWindow mw = new MainWindow();
+		mw.gameState.getP1Hand().add(makeForward("Leon", "Fire/Ice", 2, 7000));
+		mw.gameState.getP1Hand().add(makeForward("Leon", "Fire/Ice", 2, 7000));
+
+		assertFalse(mw.canAffordCard(mw.gameState.getP1Hand().get(0), 0), "no second source for the other Element");
+		assertFalse(mw.canAffordCard(mw.gameState.getP1Hand().get(1), 1));
+	}
+
+	@Test
+	void aSourceForTheOtherElementMakesTheFireIceForwardAffordable() {
+		MainWindow mw = new MainWindow();
+		mw.gameState.getP1Hand().add(makeForward("Leon", "Fire/Ice", 2, 7000));
+		mw.gameState.getP1Hand().add(makeForward("Leon", "Fire/Ice", 2, 7000));
+		mw.gameState.getP1Hand().add(makeForward("Ice Card", "Ice", 2, 5000));
+
+		assertTrue(mw.canAffordCard(mw.gameState.getP1Hand().get(0), 0), "Leon pays Fire, the Ice card pays Ice");
+	}
+
+	@Test
+	void bankedCpOfTheOtherElementMakesTheFireIceForwardAffordable() {
+		MainWindow mw = new MainWindow();
+		mw.gameState.getP1Hand().add(makeForward("Leon", "Fire/Ice", 2, 7000));
+		mw.gameState.getP1Hand().add(makeForward("Leon", "Fire/Ice", 2, 7000));
+		mw.gameState.addP1Cp("Ice", 1);
+
+		assertTrue(mw.canAffordCard(mw.gameState.getP1Hand().get(0), 0));
+	}
+
+	@Test
+	void aFireIceBackupPaysOnlyOneElementOfAFireIceCost() {
+		MainWindow mw = new MainWindow();
+		CardData backup = makePlainBackup("Rebel Backup", "Fire/Ice", 2);
+		mw.p1BackupCards[0] = backup;
+		mw.p1BackupStates[0] = CardState.ACTIVE;
+		mw.gameState.getP1Hand().add(makeForward("Leon", "Fire/Ice", 2, 7000));
+		mw.gameState.getP1Hand().add(makeForward("Fire Card", "Fire", 2, 5000));
+
+		assertTrue(mw.canAffordCard(mw.gameState.getP1Hand().get(0), 0), "the Fire card pays Fire, the Backup Ice");
+
+		mw.gameState.getP1Hand().remove(1);
+		assertFalse(mw.canAffordCard(mw.gameState.getP1Hand().get(0), 0),
+				"the Backup alone is one source for two Elements");
+	}
+
+	/** Seats active P1 Backups of the given Elements, one per slot from the left. */
+	private static void activeP1Backups(MainWindow mw, String... elements) {
+		for (int i = 0; i < elements.length; i++) {
+			mw.p1BackupCards[i]  = makePlainBackup(elements[i] + " Backup " + i, elements[i], 2);
+			mw.p1BackupStates[i] = CardState.ACTIVE;
+		}
+	}
+
+	@Test
+	void anOffElementBackupPaysTheGenericPartOfACost() {
+		MainWindow mw = new MainWindow();
+		activeP1Backups(mw, "Fire", "Water", "Water");
+		mw.gameState.getP1Hand().add(makeForward("Fire Card", "Fire", 3, 7000));
+
+		assertTrue(mw.canAffordCard(mw.gameState.getP1Hand().get(0), 0),
+				"1 Fire CP for the Element, 2 Water CP for the rest — the payment dialog accepts this");
+	}
+
+	@Test
+	void offElementBackupsCannotStandInForTheElementItself() {
+		MainWindow mw = new MainWindow();
+		activeP1Backups(mw, "Water", "Water", "Water");
+		mw.gameState.getP1Hand().add(makeForward("Fire Card", "Fire", 2, 7000));
+
+		assertFalse(mw.canAffordCard(mw.gameState.getP1Hand().get(0), 0), "3 CP, none of it Fire");
+	}
+
+	@Test
+	void anElementOnlyCastCountsOnlySourcesOfThatElement() {
+		// 13-075R Sakura: "You can only pay with Lightning CP to cast Sakura."
+		MainWindow mw = new MainWindow();
+		CardData sakura = makeForwardWithText("Sakura", "Lightning", 4, 8000,
+				"You can only pay with Lightning CP to cast Sakura.");
+		assertEquals("Lightning", sakura.castElementOnly());
+		activeP1Backups(mw, "Lightning", "Water", "Water");
+		mw.gameState.getP1Hand().add(sakura);
+		mw.gameState.getP1Hand().add(makeForward("Water Card", "Water", 2, 5000));
+
+		assertFalse(mw.canAffordCard(sakura, 0), "only 1 of the 5 CP on offer is Lightning");
+
+		mw.gameState.getP1Hand().add(makeForward("Lightning Card", "Lightning", 2, 5000));
+		activeP1Backups(mw, "Lightning", "Lightning", "Water");
+		assertTrue(mw.canAffordCard(sakura, 0), "2 Lightning Backups and a Lightning discard make 4 Lightning CP");
+	}
+
+	@Test
+	void aBackupOnlyCastCountsNoDiscards() {
+		// 20-039R Rude: "You can only pay with CP produced by Backups to cast Rude."
+		MainWindow mw = new MainWindow();
+		CardData rude = makeForwardWithText("Rude", "Ice", 3, 7000,
+				"You can only pay with CP produced by Backups to cast Rude.");
+		assertTrue(rude.castBackupCpOnly());
+		mw.gameState.getP1Hand().add(rude);
+		mw.gameState.getP1Hand().add(makeForward("Ice Card", "Ice", 2, 5000));
+		mw.gameState.getP1Hand().add(makeForward("Ice Card", "Ice", 2, 5000));
+
+		assertFalse(mw.canAffordCard(rude, 0), "4 Ice CP in hand, none of it from a Backup");
+
+		activeP1Backups(mw, "Ice", "Wind", "Wind");
+		assertTrue(mw.canAffordCard(rude, 0), "three Backups, one of them Ice");
 	}
 
 }

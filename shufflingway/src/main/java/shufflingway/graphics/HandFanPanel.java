@@ -5,6 +5,7 @@ import java.awt.Dimension;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.Image;
+import java.awt.Point;
 import java.awt.RenderingHints;
 import java.awt.geom.AffineTransform;
 import java.awt.geom.RoundRectangle2D;
@@ -105,6 +106,17 @@ public class HandFanPanel extends JComponent {
 		backKey = key;
 		back    = null;   // rebuilt lazily on the next paint
 		return true;
+	}
+
+	/**
+	 * Centre of card {@code i} in this panel's coordinates, or {@code null} outside the fan. Most of
+	 * the card lies past the screen edge, so a slide starting here comes out of the hand.
+	 */
+	public Point cardCenter(int i) {
+		int w = getWidth(), h = getHeight();
+		if (i < 0 || i >= count || w <= 0 || h <= 0) return null;
+		HandFanLayout.Slot s = HandFanLayout.slots(count, w, isP1, HandFanLayout.restTop(isP1, h))[i];
+		return new Point((int) Math.round(s.cx()), (int) Math.round(s.cy()));
 	}
 
 	@Override

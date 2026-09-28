@@ -8,6 +8,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.function.Predicate;
@@ -636,20 +637,30 @@ class CostCalculator {
 	 * total needed and {@code extraRequiredElems} to the set of elements that must have at
 	 * least one available source — used to pre-check a fixed-CP extra cost (e.g. "pay 《Wind》《2》
 	 * as an extra cost") on top of the card's own casting cost.
+	 *
+	 * <p>Counts what {@code StandardPaymentDialog} will accept, so the hand's playable ring and the
+	 * dialog agree: every active Backup and every discardable card, the off-Element ones towards
+	 * the generic part of the cost only. Two printed restrictions narrow that, as the dialog does —
+	 * "You can only pay with [Element] CP to cast …" (13-075R Sakura) admits only sources of that
+	 * Element, and "… only pay with CP produced by Backups …" (8-015H Bahamut) admits no discards.
 	 */
 	boolean canAffordCard(CardData card, int excludeHandIdx, String[] extraRequiredElems, int extraGenericCost) {
-		String[] elems = (extraRequiredElems == null || extraRequiredElems.length == 0) ? card.elements()
-				: java.util.stream.Stream.concat(Arrays.stream(card.elements()), Arrays.stream(extraRequiredElems))
+		String   elemOnly = card.castElementOnly();
+		String[] base     = elemOnly != null ? new String[]{ elemOnly } : card.elements();
+		String[] elems = (extraRequiredElems == null || extraRequiredElems.length == 0) ? base
+				: java.util.stream.Stream.concat(Arrays.stream(base), Arrays.stream(extraRequiredElems))
 						.distinct().toArray(String[]::new);
+		boolean offElementPays = elemOnly == null;
+		boolean discardsPay    = !card.castBackupCpOnly();
 		List<CardData> hand  = mw.gameState.getP1Hand();
 		Set<String> ldGrants = mw.lightDarkDiscardGrants(true);
 		int totalGenerate = 0;
 		int totalCostNeeded = effectiveCastCost(card) + extraGenericCost;
 
-		if (card.isLightOrDark()) {
+		if (card.isLightOrDark() && offElementPays) {
 			// L/D cards accept any element — sum all banked CP and all available sources
 			int totalExisting = mw.gameState.getP1CpByElement().values().stream().mapToInt(Integer::intValue).sum();
-			for (int i = 0; i < hand.size(); i++) {
+			for (int i = 0; i < hand.size() && discardsPay; i++) {
 				if (i == excludeHandIdx) continue;
 				if (CpPaymentUtils.canDiscardForCp(hand.get(i), ldGrants)) totalGenerate += 2;
 			}
@@ -661,21 +672,25 @@ class CostCalculator {
 			return totalExisting + totalGenerate >= totalCostNeeded;
 		}
 
-		boolean[] hasElemSource = new boolean[elems.length];
+		// Each element of the cost needs 1 CP of its own. Banked CP of an element covers it outright;
+		// the rest must each be matched to a different source, since one discard or one Backup pays
+		// one element however many it carries — see CpPaymentUtils.distinctSourcesCover.
+		List<String> unbanked = new ArrayList<>();
 		int totalExisting = 0;
-		for (int ei = 0; ei < elems.length; ei++) {
-			int ex = mw.gameState.getP1CpForElement(elems[ei]);
+		for (String e : elems) {
+			int ex = mw.gameState.getP1CpForElement(e);
 			totalExisting += ex;
-			if (ex > 0) hasElemSource[ei] = true;
+			if (ex == 0) unbanked.add(e);
 		}
-		for (int i = 0; i < hand.size(); i++) {
+		List<Set<String>> sources = new ArrayList<>();
+		for (int i = 0; i < hand.size() && discardsPay; i++) {
 			if (i == excludeHandIdx) continue;
 			CardData h = hand.get(i);
 			if (!CpPaymentUtils.canDiscardForCp(h, ldGrants)) continue;
+			Set<String> producible = elementsProducible(elems, h::containsElement);
+			if (producible.isEmpty() && !offElementPays) continue;
 			totalGenerate += 2;
-			for (int ei = 0; ei < elems.length; ei++) {
-				if (h.containsElement(elems[ei])) hasElemSource[ei] = true;
-			}
+			sources.add(producible);
 		}
 		for (int i = 0; i < mw.p1BackupCards.length && !mw.backupCpSuppressed(true); i++) {
 			if (mw.p1BackupCards[i] != null && mw.p1BackupStates[i] == CardState.ACTIVE) {
@@ -689,21 +704,28 @@ class CostCalculator {
 						|| mw.isGrantedAnyElementCp(bkp);
 				if (isAnyElem) {
 					totalGenerate += 1;
-					for (int ei = 0; ei < elems.length; ei++) hasElemSource[ei] = true;
+					sources.add(elementsProducible(elems, e -> true));
 				} else {
 					List<String> grantedSpecific = mw.getGrantedSpecificElementsCp(bkp);
-					for (int ei = 0; ei < elems.length; ei++) {
-						if (mw.effectiveContainsElement(bkp, elems[ei]) || grantedSpecific.contains(elems[ei])) {
-							totalGenerate += 1;
-							hasElemSource[ei] = true;
-							break;
-						}
+					Set<String> producible = elementsProducible(elems,
+							e -> mw.effectiveContainsElement(bkp, e) || grantedSpecific.contains(e));
+					// An off-Element Backup still pays the generic part of the cost.
+					if (!producible.isEmpty() || offElementPays) {
+						totalGenerate += 1;
+						sources.add(producible);
 					}
 				}
 			}
 		}
-		for (boolean hs : hasElemSource) if (!hs) return false;
+		if (!CpPaymentUtils.distinctSourcesCover(unbanked, sources)) return false;
 		return totalExisting + totalGenerate >= totalCostNeeded;
+	}
+
+	/** The elements of {@code elems} a CP source could pay, by {@code produces}. */
+	private static Set<String> elementsProducible(String[] elems, Predicate<String> produces) {
+		Set<String> out = new LinkedHashSet<>();
+		for (String e : elems) if (produces.test(e)) out.add(e);
+		return out;
 	}
 
 	/** Returns {@code true} when P1 can pay the extra cost. */

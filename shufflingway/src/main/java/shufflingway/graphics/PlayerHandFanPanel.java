@@ -311,6 +311,16 @@ public class PlayerHandFanPanel extends JComponent {
 		return slots;
 	}
 
+	/**
+	 * Centre of card {@code i} as drawn right now, in this panel's coordinates, or {@code null}
+	 * outside the hand. Where a card played from hand starts its slide onto the field.
+	 */
+	public Point cardCenter(int i) {
+		if (i < 0 || i >= cards.size()) return null;
+		HandFanLayout.Slot s = currentSlots()[i];
+		return new Point((int) Math.round(s.cx()), (int) Math.round(s.cy()));
+	}
+
 	/** The card silhouette in card-local coordinates, matching the rounding {@code toARGB} applies. */
 	private static Shape outline() {
 		int cw = CardAnimation.CARD_W, ch = CardAnimation.CARD_H;

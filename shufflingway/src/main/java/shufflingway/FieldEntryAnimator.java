@@ -18,6 +18,7 @@ import javax.swing.Timer;
 
 import shufflingway.graphics.CardAnimation;
 import shufflingway.graphics.CardRfpAnimator;
+import shufflingway.graphics.CardSlideAnimator;
 import static shufflingway.graphics.CardAnimation.CARD_H;
 import static shufflingway.graphics.CardAnimation.CARD_W;
 
@@ -47,7 +48,13 @@ final class FieldEntryAnimator {
 		/** Reversed removed-from-game burst — the card expands out of a flash of light. */
 		RFG_RETURN,
 		/** A Warp card arriving once its last counter came off; borrows the RFG burst for now. */
-		WARP_IN
+		WARP_IN,
+		/**
+		 * A card played from hand — cast, or put onto the field by an effect — sliding from its
+		 * place in the hand to its slot. It travels already turned to the state it enters in, so a
+		 * card that enters dull slides out dull.
+		 */
+		FROM_HAND
 	}
 
 	private final MainWindow mw;
@@ -79,6 +86,15 @@ final class FieldEntryAnimator {
 	 * do not fire until the animation has finished.
 	 */
 	void placeWithAnim(CardData card, boolean isP1, Style style, Runnable placement) {
+		placeWithAnim(card, isP1, style, null, placement);
+	}
+
+	/**
+	 * @param origin where the card starts from, in layered-pane coordinates; read by styles that
+	 *               travel ({@link Style#FROM_HAND}), ignored by those that appear in place. A
+	 *               travelling style with no origin appears at its slot without moving.
+	 */
+	void placeWithAnim(CardData card, boolean isP1, Style style, Point origin, Runnable placement) {
 		// Already mid-animation (re-entrant arrival of the same instance) — just place it.
 		if (pending.containsKey(card)) { placement.run(); return; }
 		pending.put(card, new ArrayList<>());
@@ -91,7 +107,7 @@ final class FieldEntryAnimator {
 			if (!placed) finish(card, isP1, null);
 		}
 		// Deferred one EDT pass: the destination slot has no bounds until its zone is laid out.
-		SwingUtilities.invokeLater(() -> play(card, isP1, style));
+		SwingUtilities.invokeLater(() -> play(card, isP1, style, origin));
 	}
 
 	/**
@@ -113,7 +129,8 @@ final class FieldEntryAnimator {
 	 * "was one of its alternate costs taken?" — at the moment they run, and the placement that set
 	 * them has long returned by then, so a queued run restores the values they had when the card
 	 * actually arrived.  Without this, {@code castOnly}, {@code warpOnly} and {@code altCostOnly}
-	 * abilities would silently stop firing.
+	 * abilities would silently stop firing.  The pending "will not trigger" suppression is taken
+	 * the same way, so it silences this arrival and not whichever card enters next.
 	 */
 	void fireEntersField(CardData card, boolean isP1, boolean paidExtraCost) {
 		List<Runnable> queue = pending.get(card);
@@ -128,6 +145,11 @@ final class FieldEntryAnimator {
 			CardData sumSource    = mw.currentSummonSource;
 			boolean  sumSourceP1  = mw.currentSummonSourceIsP1;
 			boolean  isSummon     = mw.currentResolutionIsSummon;
+			// "Its auto-ability will not trigger" belongs to this arrival, so it is taken now: left
+			// in the count, it would silence whatever reached the field next while this card was
+			// still sliding in, and leave this one to fire.
+			boolean suppressed = mw.suppressAutoAbilityForNextCards > 0;
+			if (suppressed) mw.suppressAutoAbilityForNextCards--;
 			queue.add(() -> {
 				boolean prevCast    = mw.lastCardWasCast;
 				boolean prevWarp    = mw.lastCardWarpedIn;
@@ -137,6 +159,8 @@ final class FieldEntryAnimator {
 				CardData prevSum    = mw.currentSummonSource;
 				boolean  prevSumP1  = mw.currentSummonSourceIsP1;
 				boolean  prevIsSum  = mw.currentResolutionIsSummon;
+				int      prevSuppress = mw.suppressAutoAbilityForNextCards;
+				mw.suppressAutoAbilityForNextCards = suppressed ? 1 : 0;
 				mw.lastCardWasCast        = wasCast;
 				mw.lastCardWarpedIn       = warpedIn;
 				mw.lastCardCastViaAltCost = viaAltCost;
@@ -156,6 +180,7 @@ final class FieldEntryAnimator {
 					mw.currentSummonSource       = prevSum;
 					mw.currentSummonSourceIsP1   = prevSumP1;
 					mw.currentResolutionIsSummon = prevIsSum;
+					mw.suppressAutoAbilityForNextCards = prevSuppress;
 				}
 			});
 			return;
@@ -168,7 +193,7 @@ final class FieldEntryAnimator {
 	 * {@link #finish}.  Falls straight through to the reveal when the card has no field slot (a
 	 * Summon cast out of the RFG zone goes to the stack instead) or has no artwork.
 	 */
-	private void play(CardData card, boolean isP1, Style style) {
+	private void play(CardData card, boolean isP1, Style style, Point origin) {
 		JLabel label = mw.findFieldSlotLabel(card, isP1);
 		String url   = card.imageUrl();
 		if (label == null || label.getWidth() == 0 || url == null) {
@@ -189,19 +214,27 @@ final class FieldEntryAnimator {
 				try { loaded = get(); } catch (InterruptedException | ExecutionException ignored) {}
 				if (loaded == null) { finish(card, isP1, null); return; }
 				final BufferedImage img = loaded;
-				Timer t = new Timer(start(style, img, center), e -> finish(card, isP1, img));
+				Timer t = new Timer(start(style, img, origin, center), e -> finish(card, isP1, img));
 				t.setRepeats(false);
 				t.start();
 			}
 		}.execute();
 	}
 
-	/** Starts {@code style}'s arrival animation over {@code center} and returns its duration in ms. */
-	private int start(Style style, BufferedImage img, Point center) {
+	/**
+	 * Starts {@code style}'s arrival animation ending on {@code center} and returns its duration in
+	 * ms. {@code img} is the slot render, so it lands matching the card that replaces it.
+	 */
+	private int start(Style style, BufferedImage img, Point origin, Point center) {
 		return switch (style) {
 			case RFG_RETURN, WARP_IN -> {
 				mw.rfpAnimator.startWarpIn(img, center);
 				yield CardRfpAnimator.TOTAL_FRAMES * CardRfpAnimator.FRAME_MS;
+			}
+			case FROM_HAND -> {
+				if (origin == null) yield 0;
+				mw.cardSlideAnimator.startSlide(img, origin, center, 0);
+				yield CardSlideAnimator.TOTAL_FRAMES * CardSlideAnimator.FRAME_MS;
 			}
 		};
 	}

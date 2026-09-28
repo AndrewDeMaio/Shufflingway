@@ -1,5 +1,7 @@
 package shufflingway;
 
+import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -63,6 +65,38 @@ public class CpPaymentUtils {
 			if (c != null && matchesAnyElement(c, elems))
 				paid.merge(contributingElement(c, elems, paid, needs), 2, Integer::sum);
 		return paid;
+	}
+
+	/**
+	 * Whether every element in {@code needed} can be given a CP source of its own from
+	 * {@code sources}, each source being the set of those elements it could produce.
+	 *
+	 * <p>A source pays one element, not all of them: discarding a Fire/Ice card makes 2 CP of Fire
+	 * <em>or</em> of Ice, and an any-element Backup makes 1 CP of one. So a Fire/Ice cost cannot be
+	 * met by a single Fire/Ice discard, and asking each element separately whether some source
+	 * could cover it says yes to exactly that. This is a bipartite matching, found by augmenting
+	 * paths; {@code needed} is never more than a few elements.
+	 */
+	public static boolean distinctSourcesCover(List<String> needed, List<Set<String>> sources) {
+		int[] paying = new int[sources.size()];   // element index each source is assigned, or -1
+		Arrays.fill(paying, -1);
+		for (int e = 0; e < needed.size(); e++)
+			if (!assignSource(e, needed, sources, paying, new boolean[sources.size()])) return false;
+		return true;
+	}
+
+	/** Finds element {@code e} a source, moving an earlier element to another source if that frees one. */
+	private static boolean assignSource(int e, List<String> needed, List<Set<String>> sources,
+			int[] paying, boolean[] tried) {
+		for (int s = 0; s < sources.size(); s++) {
+			if (tried[s] || !sources.get(s).contains(needed.get(e))) continue;
+			tried[s] = true;
+			if (paying[s] < 0 || assignSource(paying[s], needed, sources, paying, tried)) {
+				paying[s] = e;
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/** Returns true if {@code source} contains any element from {@code playedElems}. */

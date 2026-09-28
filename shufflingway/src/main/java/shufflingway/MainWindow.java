@@ -9556,6 +9556,41 @@ public class MainWindow {
 		fieldEntryAnimator.placeWithAnim(card, isP1, FieldEntryAnimator.Style.RFG_RETURN, placement);
 	}
 
+	/**
+	 * Places a card played from hand — cast, or put onto the field by an effect — and slides it from
+	 * {@code origin} to the slot it took, already in the state it entered in: a Backup slides out
+	 * dull. {@code placement} runs right away; see {@link FieldEntryAnimator} for what the animation
+	 * holds back.
+	 *
+	 * <p>Placed outright when the window is not on screen. A {@code MainWindow} built under test is
+	 * never shown, and holding its enter-the-field triggers for an EDT pass would leave every test
+	 * that casts a card asserting against a board whose abilities have not fired yet.
+	 *
+	 * @param origin where the card sat in hand, from {@link #handCardOrigin}, read before the play
+	 *               reflowed the hand
+	 */
+	void placeFromHandWithAnim(CardData card, boolean isP1, Point origin, Runnable placement) {
+		if (frame == null || !frame.isShowing() || cardSlideAnimator == null) { placement.run(); return; }
+		fieldEntryAnimator.placeWithAnim(card, isP1, FieldEntryAnimator.Style.FROM_HAND, origin, placement);
+	}
+
+	/**
+	 * Where card {@code handIdx} of {@code isP1}'s hand sits on screen, in layered-pane coordinates:
+	 * its place in the fan, or the off-screen hand anchor {@link #animateCardDraw} uses when the fan
+	 * cannot say. {@code null} when the window is not on screen.
+	 */
+	Point handCardOrigin(boolean isP1, int handIdx) {
+		if (frame == null || !frame.isShowing()) return null;
+		JLayeredPane lp = frame.getRootPane().getLayeredPane();
+		JComponent fan = isP1 ? p1HandFan : p2HandFan;
+		Point inFan = fan == null || !fan.isShowing() ? null
+				: isP1 ? p1HandFan.cardCenter(handIdx) : p2HandFan.cardCenter(handIdx);
+		if (inFan != null) return SwingUtilities.convertPoint(fan, inFan, lp);
+		int cx = lp.getWidth() / 2;
+		return isP1 ? new Point(cx, lp.getHeight() + CardAnimation.CARD_H)
+				: new Point(cx, -CardAnimation.CARD_H);
+	}
+
 	/** Locates {@code card} on {@code isP1}'s field by identity; {@code null} when it is not there. */
 	ForwardTarget findFieldSlot(CardData card, boolean isP1) {
 		int fIdx = identityIndexOf(isP1 ? p1ForwardCards : p2ForwardCards, card);
@@ -11944,6 +11979,8 @@ public class MainWindow {
 			Map<Integer, String> backupElementOverrides,
 			List<ForwardTarget> replayedSummonTargets, boolean targetsAreReplayed,
 			Map<Integer, String> backupBreaks, ExtraPayment extra) {
+		// Read while the card is still where the player saw it: the discards below reflow the fan.
+		Point handOrigin = handCardOrigin(isP1, cardHandIdx);
 		// Resolved before anything is spent: the surcharge indexes the hand and Break Zone as they
 		// stood when it was chosen, and this play is about to move cards through both.
 		List<CardData> extraBzCards   = resolveExtraPaymentCards(isP1, extra, true);
@@ -12116,12 +12153,19 @@ public class MainWindow {
 		}
 
 		lastCardWasCast = true;
+		boolean paidExtra = paidExtraCost;
 		if (card.isBackup()) {
-			if (isP1) placeCardInFirstBackupSlot(card, paidExtraCost); else placeP2CardInFirstBackupSlot(card, paidExtraCost);
+			placeFromHandWithAnim(card, isP1, handOrigin, () -> {
+				if (isP1) placeCardInFirstBackupSlot(card, paidExtra); else placeP2CardInFirstBackupSlot(card, paidExtra);
+			});
 		} else if (card.isForward()) {
-			if (isP1) placeCardInForwardZone(card, paidExtraCost); else placeP2CardInForwardZone(card, paidExtraCost);
+			placeFromHandWithAnim(card, isP1, handOrigin, () -> {
+				if (isP1) placeCardInForwardZone(card, paidExtra); else placeP2CardInForwardZone(card, paidExtra);
+			});
 		} else if (card.isMonster()) {
-			if (isP1) placeCardInMonsterZone(card); else placeP2CardInMonsterZone(card);
+			placeFromHandWithAnim(card, isP1, handOrigin, () -> {
+				if (isP1) placeCardInMonsterZone(card); else placeP2CardInMonsterZone(card);
+			});
 		} else if (card.isSummon()) {
 			// The targets chosen here leave with this cast's own PLAY_CARD, so they must not also
 			// go out as a CHOICE — see choiceTravelsWithThePlay.

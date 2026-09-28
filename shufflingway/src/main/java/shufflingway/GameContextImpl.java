@@ -4474,11 +4474,12 @@ final class GameContextImpl implements GameContext {
 				} else {
 					handIdx = eligible.get(0); // AI: play first eligible card
 				}
+				Point origin = mw.handCardOrigin(forP1, handIdx);
 				CardData card = hand.remove(handIdx);
 				logEntry((forP1 ? "" : "[P2] ") + card.name() + " played from hand onto field"
 						+ (entersDull ? " (dull)" : "") + (suppressAutoAbility ? " (no ETF auto-ability)" : ""));
 				if (suppressAutoAbility) mw.suppressAutoAbilityForNextCards = 1;
-				placeFromHand(forP1, card, entersDull);
+				placeFromHand(forP1, card, entersDull, origin);
 				return card;
 			}
 
@@ -4492,13 +4493,23 @@ final class GameContextImpl implements GameContext {
 					markEffectFizzled();
 					return;
 				}
+				Point origin = mw.handCardOrigin(isP1, handIdx);
 				CardData card = hand.remove(handIdx);
 				logEntry((isP1 ? "" : "[P2] ") + card.name() + " played from hand onto field");
-				placeFromHand(isP1, card, false);
+				placeFromHand(isP1, card, false, origin);
 			}
 
-			/** Puts a card just taken out of {@code forP1}'s hand into the matching field zone. */
-			private void placeFromHand(boolean forP1, CardData card, boolean entersDull) {
+			/**
+			 * Puts a card just taken out of {@code forP1}'s hand into the matching field zone, sliding
+			 * it there from {@code origin} (see {@link MainWindow#placeFromHandWithAnim}).
+			 *
+			 * @param origin where the card sat in hand, read before it was removed
+			 */
+			private void placeFromHand(boolean forP1, CardData card, boolean entersDull, Point origin) {
+				mw.placeFromHandWithAnim(card, forP1, origin, () -> placeFromHandNow(forP1, card, entersDull));
+			}
+
+			private void placeFromHandNow(boolean forP1, CardData card, boolean entersDull) {
 				if (forP1) {
 					if (card.isBackup()) {
 						mw.placeCardInFirstBackupSlot(card);
@@ -4559,19 +4570,10 @@ final class GameContextImpl implements GameContext {
 					} else {
 						handIdx = eligible.get(0);
 					}
+					Point origin = mw.handCardOrigin(isP1, handIdx);
 					CardData card = hand.remove(handIdx);
 					logEntry((isP1 ? "" : "[P2] ") + card.name() + " played from hand onto field");
-					if (isP1) {
-						if (card.isBackup()) mw.placeCardInFirstBackupSlot(card);
-						else if (card.isMonster()) mw.placeCardInMonsterZone(card);
-						else mw.placeCardInForwardZone(card);
-						mw.refreshP1HandLabel();
-					} else {
-						if (card.isBackup()) mw.placeP2CardInFirstBackupSlot(card);
-						else if (card.isMonster()) mw.placeP2CardInMonsterZone(card);
-						else mw.placeP2CardInForwardZone(card);
-						mw.refreshP2HandCountLabel();
-					}
+					placeFromHand(isP1, card, false, origin);
 				}
 			}
 

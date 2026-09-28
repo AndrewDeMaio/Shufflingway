@@ -56,8 +56,10 @@ public class CardSlideAnimator extends JComponent {
 
 	/**
 	 * Queues a card-slide animation. Both points must already be in the
-	 * layered-pane coordinate space and represent the center of the card.
-	 * {@code delayFrames} ticks elapse before the card begins moving.
+	 * layered-pane coordinate space and represent the center of {@code img},
+	 * whatever its size — a bare card, or a slot render with the card already
+	 * turned to its field state. {@code delayFrames} ticks elapse before the
+	 * card begins moving.
 	 */
 	public void startSlide(BufferedImage img, Point start, Point end, int delayFrames) {
 		slides.add(new Slide(img, start, end, delayFrames));
@@ -88,8 +90,8 @@ public class CardSlideAnimator extends JComponent {
 			int x = (int) Math.round(s.start.x + (s.end.x - s.start.x) * t);
 			int y = (int) Math.round(s.start.y + (s.end.y - s.start.y) * t);
 			g2.drawImage(s.img,
-					x - CardAnimation.CARD_W / 2,
-					y - CardAnimation.CARD_H / 2,
+					x - s.img.getWidth()  / 2,
+					y - s.img.getHeight() / 2,
 					null);
 		}
 		g2.dispose();

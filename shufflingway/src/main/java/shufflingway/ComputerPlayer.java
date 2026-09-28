@@ -1,5 +1,6 @@
 package shufflingway;
 
+import java.awt.Point;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
@@ -279,6 +280,7 @@ class ComputerPlayer implements OpponentController {
 		int adjustedIdx = plan.cardIdx();
 		for (int di : plan.discardIndices()) if (di < plan.cardIdx()) adjustedIdx--;
 
+		Point handOrigin = mw.handCardOrigin(false, adjustedIdx);
 		CardData toPlay = mw.gameState.removeP2FromHand(adjustedIdx);
 		mw.refreshP2HandCountLabel();
 		if (toPlay == null) return;
@@ -319,9 +321,9 @@ class ComputerPlayer implements OpponentController {
 		mw.lastCardWasCast = true;
 		mw.noteCardCast(toPlay, false);
 		if (toPlay.isSummon()) { mw.p2Turn.summonCastThisTurn = true; mw.noteDoublecastSummonCast(false, toPlay); }
-		if (toPlay.isForward())      mw.placeP2CardInForwardZone(toPlay);
-		else if (toPlay.isBackup())  mw.placeP2CardInFirstBackupSlot(toPlay);
-		else if (toPlay.isMonster()) mw.placeP2CardInMonsterZone(toPlay);
+		if (toPlay.isForward())      mw.placeFromHandWithAnim(toPlay, false, handOrigin, () -> mw.placeP2CardInForwardZone(toPlay));
+		else if (toPlay.isBackup())  mw.placeFromHandWithAnim(toPlay, false, handOrigin, () -> mw.placeP2CardInFirstBackupSlot(toPlay));
+		else if (toPlay.isMonster()) mw.placeFromHandWithAnim(toPlay, false, handOrigin, () -> mw.placeP2CardInMonsterZone(toPlay));
 		else if (toPlay.isSummon())  mw.showSummonOnStack(toPlay, false);
 		mw.lastCardWasCast = false;
 	}
