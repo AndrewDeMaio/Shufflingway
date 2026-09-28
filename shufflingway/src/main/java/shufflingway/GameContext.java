@@ -4609,6 +4609,14 @@ public interface GameContext {
     boolean promptYouMay(String prompt);
 
     /**
+     * {@link #promptYouMay} for a price that averts a consequence rather than buys an effect — the
+     * "if you don't remove …, put [Self] into the Break Zone" wording (19-002L Ace). The AI accepts,
+     * as it does in {@link #mayPayCostOrElse}: the consequence costs it more than the price. The
+     * caller checks the price can be paid before asking.
+     */
+    boolean promptPayToAvert(String prompt);
+
+    /**
      * Registers {@code effect} as a temporary "when this card attacks" trigger that fires
      * once this turn (cleared at end of turn).  Used by action abilities that grant a
      * temporary attack auto-ability (e.g. "Until end of turn, X gains +N power and

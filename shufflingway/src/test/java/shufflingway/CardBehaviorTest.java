@@ -70542,5 +70542,171 @@ public class CardBehaviorTest {
 	}
 
 	// =========================================================================================
+	// The last twelve auto abilities the coverage report listed. 19-002L Ace, 3-030L Kuja, 28-097H
+	// Vaan and 17-082R Lich's Breaktouch half were real gaps; the other eight already ran through
+	// trigger-layer paths that AutoAbilityTriggers.dispatchedByTriggers could not see.
+	// =========================================================================================
+
+	private static final String ACE_ENTRY = "if you don't remove 5 Fire cards from your Break Zone from the "
+			+ "game, put Ace into the Break Zone.";
+
+	/** P2 fields {@code ace} over {@code fireCards} Fire Forwards and one Water in the Break Zone, and resolves his entry. */
+	private static MainWindow aceEnters(CardData ace, int fireCards) {
+		MainWindow mw = new MainWindow();
+		placeP2Forward(mw, ace);
+		List<CardData> bz = new ArrayList<>();
+		for (int i = 0; i < fireCards; i++) bz.add(makeForward("Ember " + i, "Fire", 2, 5000));
+		bz.add(makeForward("Tide", "Water", 2, 5000));
+		for (CardData c : bz) {
+			mw.gameState.getIdentity().put(c, false);
+			mw.gameState.getP2BreakZone().add(c);
+		}
+		ActionResolver.parse(ACE_ENTRY, ace).accept(mw.buildGameContext(false));
+		return mw;
+	}
+
+	@Test
+	void aceStaysWhenFiveFireCardsAreRemoved() {
+		CardData ace = makeForward("Ace", "Fire", 1, 9000);
+		MainWindow mw = aceEnters(ace, 5);
+
+		assertTrue(mw.p2ForwardCards.contains(ace), "the AI pays to keep him");
+		assertEquals(List.of("Tide"), mw.gameState.getP2BreakZone().stream().map(CardData::name).toList(),
+				"exactly the five Fire cards went");
+		assertEquals(5, mw.gameState.getP2PermanentRfp().size());
+	}
+
+	@Test
+	void aceGoesToTheBreakZoneWhenFourFireCardsCannotPay() {
+		CardData ace = makeForward("Ace", "Fire", 1, 9000);
+		MainWindow mw = aceEnters(ace, 4);
+
+		assertFalse(mw.p2ForwardCards.contains(ace));
+		assertTrue(mw.gameState.getP2BreakZone().contains(ace));
+		assertTrue(mw.gameState.getP2PermanentRfp().isEmpty(), "nothing is taken toward a price that cannot be met");
+	}
+
+	private static final String KUJA_DULL = "choose 1 Forward. You may pay 《1》. If you do so, dull it.";
+
+	/** P2's Kuja resolves his dull against a lone P1 Forward, holding {@code hand}. */
+	private static MainWindow kujaResolves(CardData foe, CardData... hand) {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, foe);
+		mw.gameState.getP2Hand().clear();
+		for (CardData c : hand) {
+			mw.gameState.getIdentity().put(c, false);
+			mw.gameState.getP2Hand().add(c);
+		}
+		ActionResolver.parse(KUJA_DULL, makeForward("Kuja", "Ice", 3, 7000)).accept(mw.buildGameContext(false));
+		return mw;
+	}
+
+	@Test
+	void kujaDullsTheChosenForwardWhenHePays() {
+		CardData spare = makeForward("Spare", "Ice", 2, 5000);
+		MainWindow mw = kujaResolves(makeForward("Foe", "Fire", 3, 7000), spare);
+
+		assertEquals(CardState.DULL, mw.p1ForwardStates.get(0));
+		assertTrue(mw.gameState.getP2BreakZone().contains(spare), "the 《1》 was paid");
+	}
+
+	@Test
+	void kujaDoesNotDullWithoutPaying() {
+		MainWindow mw = kujaResolves(makeForward("Foe", "Fire", 3, 7000));
+
+		assertEquals(CardState.ACTIVE, mw.p1ForwardStates.get(0), "no CP, so no dull");
+	}
+
+	private static final String VAAN_ATTACK = "remove 3 Category MBM Characters in your Break Zone from the game. "
+			+ "When you do so, activate Vaan and Vaan gains \"Vaan can attack twice in the same turn.\" until "
+			+ "the end of the turn.";
+
+	/** P2's dull {@code vaan} resolves his attack trigger over {@code mbmCards} Category MBM Characters. */
+	private static MainWindow vaanAttacks(CardData vaan, int mbmCards) {
+		MainWindow mw = new MainWindow();
+		placeP2Forward(mw, vaan);
+		mw.p2ForwardStates.set(0, CardState.DULL);
+		for (int i = 0; i < mbmCards; i++) {
+			CardData c = makeCategoryForward("Moogle " + i, "Water", "MBM");
+			mw.gameState.getIdentity().put(c, false);
+			mw.gameState.getP2BreakZone().add(c);
+		}
+		ActionResolver.parse(VAAN_ATTACK, vaan).accept(mw.buildGameContext(false));
+		return mw;
+	}
+
+	@Test
+	void vaanRemovesThreeToActivateAndAttackAgain() {
+		CardData vaan = makeForward("Vaan", "Water", 4, 8000);
+		MainWindow mw = vaanAttacks(vaan, 3);
+
+		assertEquals(3, mw.gameState.getP2PermanentRfp().size());
+		assertEquals(CardState.ACTIVE, mw.p2ForwardStates.get(0));
+		assertEquals(Integer.valueOf(2), mw.grantedMaxAttacks.get(vaan));
+	}
+
+	@Test
+	void vaanGetsNothingFromARemovalShortOfThree() {
+		CardData vaan = makeForward("Vaan", "Water", 4, 8000);
+		MainWindow mw = vaanAttacks(vaan, 2);
+
+		assertEquals(CardState.DULL, mw.p2ForwardStates.get(0), "two is not the three the payoff is bought with");
+		assertNull(mw.grantedMaxAttacks.get(vaan));
+	}
+
+	@Test
+	void theActivateAndGainsCompoundNeedsBothHalvesToRead() {
+		CardData vaan = makeForward("Vaan", "Water", 4, 8000);
+		assertNotNull(ActionResolver.parse("activate Vaan and Vaan gains \"Vaan can attack twice in the same "
+				+ "turn.\" until the end of the turn.", vaan));
+		assertNull(ActionResolver.parse("activate Vaan and Vaan gains \"Vaan frobnicates.\" until the end of "
+				+ "the turn.", vaan), "an unread grant declines the activation with it");
+	}
+
+	@Test
+	void lichBreaksTheForwardHeDamages() {
+		MainWindow mw = new MainWindow();
+		CardData lich = makeForwardWithText("Lich", "Earth", 5, 9000, LICH_17_082R);
+		CardData foe  = makeForward("Foe", "Fire", 3, 7000);
+		placeP2Forward(mw, lich);
+		placeP1Forward(mw, foe);
+
+		assertTrue(mw.fireBreaktouchForDamage(lich, false, true, ForwardTarget.CardZone.FORWARD, 0, 1000));
+		assertFalse(mw.p1ForwardCards.contains(foe));
+		assertTrue(mw.gameState.getP1BreakZone().contains(foe));
+	}
+
+	@Test
+	void theReportCreditsTheTriggerLayersOwnDispatchers() {
+		String[][] cards = {
+			{ "Grenade", "Monster", "When a Forward of your opponent with 8000 power or less enters the field, "
+					+ "put Grenade into the Break Zone. If you do so, deal it 8000 damage." },
+			{ "Hill Gigas", "Monster", "When a Character opponent controls uses an action ability, put Hill Gigas "
+					+ "into the Break Zone. If you do so, cancel its effect and break that Character." },
+			{ "Gogo", "Forward", "When a Forward or Monster you control uses an action ability, Gogo uses the "
+					+ "same action ability without paying the cost. This effect will trigger only once per turn." },
+			{ "Behemoth K", "Forward", "When Behemoth K is chosen by a Forward's ability, break that Forward." },
+			{ "Zeid", "Forward", "When Zeid is dealt damage by a Character, that Character's controller discards "
+					+ "1 card from his/her hand." },
+			{ "Mira", "Forward", "When an opponent's Forward enters the field, you may pay 《1》 and discard 1 "
+					+ "Monster. When you do so, break that Forward." },
+		};
+		for (String[] c : cards) {
+			CardData card = makeTextCard(c[0], "Fire", c[1], 2, c[1].equals("Forward") ? 7000 : 0, null, c[2]);
+			assertEquals(1, card.autoAbilities().size(), c[0]);
+			assertTrue(AutoAbilityTriggers.dispatchedByTriggers(card.autoAbilities().get(0), card), c[0]);
+		}
+	}
+
+	@Test
+	void theReportDoesNotCreditAnArrivalPayoffWithNoArrival() {
+		// "deal it" means the arriving Forward only behind an enters-field trigger; behind an attack
+		// there is no such card, and the handler declines.
+		CardData card = makeTextCard("Bomb", "Fire", "Forward", 2, 5000, null, "When Bomb attacks, put Bomb "
+				+ "into the Break Zone. If you do so, deal it 8000 damage.");
+		assertFalse(AutoAbilityTriggers.dispatchedByTriggers(card.autoAbilities().get(0), card));
+	}
+
+	// =========================================================================================
 
 }

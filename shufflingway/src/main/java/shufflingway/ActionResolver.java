@@ -464,6 +464,8 @@ public class ActionResolver {
         // claim the text after the gate and resolve the consequence unconditionally.
         result = tryParseIfNotPayOrElse(effectText, source, xValue);
         if (result != null) return result;
+        result = tryParseIfNotRemoveFromBzOrElse(effectText, source);
+        if (result != null) return result;
 
         // Same reasoning: the mass-break matcher would find "break all the Forwards opponent
         // controls" in the tail and apply it with no regard for the pile threshold in front of it.
@@ -1223,6 +1225,9 @@ public class ActionResolver {
         if (result != null) return result;
 
         result = tryParseGainOutgoingDmgBoostUntilEot(effectText, source);
+        if (result != null) return result;
+
+        result = tryParseActivateSelfAndSelfGains(effectText, source);
         if (result != null) return result;
 
         result = tryParseGainsQuotedFieldAbilityUntilEot(effectText, source);
@@ -2478,6 +2483,7 @@ public class ActionResolver {
         }
         // Mirrors parse(): the pay-or-else gate is reported ahead of its consequence's own pattern.
         if (tryParseIfNotPayOrElse(effectText, source, 0)               != null) return "IfNotPayOrElse";
+        if (tryParseIfNotRemoveFromBzOrElse(effectText, source)         != null) return "IfNotRemoveFromBzOrElse";
         if (tryParseRemoveTopThenPileThreshold(effectText, source)          != null) return "RemoveTopThenPileThreshold";
         if (tryParseAddRemovedBySourceAbilityToHand(effectText, source)     != null) return "AddRemovedBySourceAbilityToHand";
         if (tryParseOppRfpTopDeckCastable(effectText)                   != null) return "OppRfpTopDeckCastable";
@@ -2763,6 +2769,7 @@ public class ActionResolver {
         if (tryParseDoubleOutgoingDamageThisTurnAlt(effectText, source) != null) return "DoubleOutgoingDamageThisTurnAlt";
         if (tryParseSelfOutgoingDmgBoostThisTurn(effectText, source) != null)   return "SelfOutgoingDmgBoostThisTurn";
         if (tryParseGainOutgoingDmgBoostUntilEot(effectText, source) != null)   return "GainOutgoingDmgBoostUntilEot";
+        if (tryParseActivateSelfAndSelfGains(effectText, source) != null)       return "ActivateSelfAndSelfGains";
         if (tryParseGainsQuotedFieldAbilityUntilEot(effectText, source) != null) return "GainsQuotedFieldAbilityUntilEot";
         // Mirrors parse(): ahead of the permanent grants, which would otherwise claim
         // Scarmiglione 17-133S off the second half of his sentence.
@@ -3957,6 +3964,7 @@ public class ActionResolver {
         if (tryParseRevealAnyFromHandPerRevealed(effectText, source)    != null) return "RevealAnyFromHandPerRevealed";
         if (tryParseRevealAnyFromHandThresholds(effectText, source)     != null) return "RevealAnyFromHandThresholds";
         if (tryParseIfNotPayOrElse(effectText, source, 0)               != null) return "IfNotPayOrElse";
+        if (tryParseIfNotRemoveFromBzOrElse(effectText, source)         != null) return "IfNotRemoveFromBzOrElse";
         if (tryParseRemoveTopThenPileThreshold(effectText, source)          != null) return "RemoveTopThenPileThreshold";
         if (tryParseAddRemovedBySourceAbilityToHand(effectText, source)     != null) return "AddRemovedBySourceAbilityToHand";
         // Mirrors parse(), where this gate precedes every reader of its inner effect. Described by
@@ -4438,6 +4446,12 @@ public class ActionResolver {
                     String innerDesc = matchedFollowupName(innerEff, source);
                     return "ChooseCharacter / YouMayPayElement[" + (innerDesc != null ? innerDesc : "?") + "]";
                 }
+                Matcher youMayPayCpM = FOLLOWUP_YOU_MAY_PAY_GENERIC_IF_DO_SO.matcher(followup);
+                if (youMayPayCpM.matches()) {
+                    String innerEff  = youMayPayCpM.group("effect").trim();
+                    String innerDesc = matchedFollowupName(innerEff, source);
+                    return "ChooseCharacter / YouMayPayCp[" + (innerDesc != null ? innerDesc : "?") + "]";
+                }
             }
             // Its play-from-hand sibling, described the same way and beside it for the same reason:
             // the ". " split named 2-097H Al-Cid "? + Damage", a burn owed only when a Forward was
@@ -4788,6 +4802,7 @@ public class ActionResolver {
         if (tryParseDoubleOutgoingDamageThisTurnAlt(effectText, source) != null) return "DoubleOutgoingDamageThisTurnAlt";
         if (tryParseSelfOutgoingDmgBoostThisTurn(effectText, source) != null)   return "SelfOutgoingDmgBoostThisTurn";
         if (tryParseGainOutgoingDmgBoostUntilEot(effectText, source) != null)   return "GainOutgoingDmgBoostUntilEot";
+        if (tryParseActivateSelfAndSelfGains(effectText, source) != null)       return "ActivateSelfAndSelfGains";
         if (tryParseGainsQuotedFieldAbilityUntilEot(effectText, source) != null) return "GainsQuotedFieldAbilityUntilEot";
         // Mirrors parse(): ahead of the permanent grants, which would otherwise claim
         // Scarmiglione 17-133S off the second half of his sentence.

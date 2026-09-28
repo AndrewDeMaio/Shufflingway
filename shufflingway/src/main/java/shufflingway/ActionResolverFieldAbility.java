@@ -42,6 +42,21 @@ final class ActionResolverFieldAbility {
         return grantedSelfFieldAbilityEffect(m.group("quoted").trim(), source);
     }
     /**
+     * "activate [Self] and [Self] gains …" — 28-097H Vaan. Split into its two effects, and claimed
+     * only when both read: activating him without the grant, or the reverse, is not the card.
+     */
+    static Consumer<GameContext> tryParseActivateSelfAndSelfGains(String text, CardData source) {
+        if (source == null) return null;
+        Matcher m = ACTIVATE_SELF_AND_SELF_GAINS.matcher(text.trim());
+        if (!m.matches()) return null;
+        String self = m.group("subject").trim();
+        if (!self.equalsIgnoreCase(source.name())) return null;
+        Consumer<GameContext> activate = ActionResolverState.tryParseActivateNamedCard("activate " + self + ".");
+        Consumer<GameContext> gains    = ActionResolver.parse(self + " gains " + m.group("rest").trim(), source);
+        if (activate == null || gains == null) return null;
+        return activate.andThen(gains);
+    }
+    /**
      * "Name 1 Element. [Self] gains "&lt;clause naming the Element&gt;." (This effect does not end
      * at the end of the turn.)" — 17-133S Scarmiglione.
      *

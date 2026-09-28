@@ -774,6 +774,47 @@ final class ActionResolverState {
                 "break", opponentZone, bothZones);
     }
 
+    /**
+     * "if you don't remove N [filters] from your Break Zone from the game, [consequence]" — 19-002L
+     * Ace. The removal is the price that averts the consequence, so the player is asked only when
+     * the Break Zone can pay it in full; otherwise, or on a refusal, the consequence applies.
+     *
+     * <p>Declines any filter the pre-count cannot answer (Job, Card Name, Category, cost, a
+     * selection rider): offering a price that turns out unpayable after the player accepts would
+     * run the consequence anyway, but only after taking some of their cards.
+     */
+    static Consumer<GameContext> tryParseIfNotRemoveFromBzOrElse(String text, CardData source) {
+        Matcher m = IF_NOT_REMOVE_FROM_BZ_OR_ELSE.matcher(text.trim());
+        if (!m.matches()) return null;
+        String removalText = m.group("removal").trim();
+        Matcher r = REMOVE_FROM_BREAK_ZONE_FROM_GAME.matcher(removalText);
+        if (!r.matches() || r.group("rider") != null || r.group("qty") == null) return null;
+        int count = Integer.parseInt(r.group("qty"));
+        BzRemovalFilters f = parseBzRemovalFilters(r.group("filters"));
+        if (f == null || f.job() != null || f.cardName() != null || f.category() != null
+                || f.costVal() >= 0 || f.gate() != PickGate.ANY) return null;
+        Consumer<GameContext> removal     = tryParseRemoveFromBreakZoneFromGame(removalText, source);
+        Consumer<GameContext> consequence = parse(m.group("consequence").trim(), source);
+        if (removal == null || consequence == null) return null;
+        String price = removalText.substring(0, 1).toUpperCase(Locale.ROOT) + removalText.substring(1);
+        return ctx -> {
+            int have = ctx.countSelfBreakZoneMatching(f.forwards(), f.backups(), f.monsters(),
+                    f.summons(), f.element(), -1);
+            if (have < count) {
+                ctx.logEntry("Effect: only " + have + " eligible in the Break Zone — cannot " + removalText);
+            } else if (ctx.promptPayToAvert(price + "? If you don't: " + m.group("consequence").trim())) {
+                // A removal short of the count marks the effect fizzled — see
+                // tryParseRemoveFromBreakZoneFromGame — and a short payment has not averted anything.
+                ctx.resetEffectProgress();
+                removal.accept(ctx);
+                if (ctx.effectMadeProgress()) return;
+            } else {
+                ctx.logEntry("Effect: declined to " + removalText);
+            }
+            consequence.accept(ctx);
+        };
+    }
+
     static Consumer<GameContext> tryParseRemoveFromBreakZoneFromGame(String text, CardData source) {
         String trimmed = text.trim();
         Matcher m = REMOVE_FROM_BREAK_ZONE_FROM_GAME.matcher(trimmed);
@@ -818,21 +859,28 @@ final class ActionResolverState {
         // than a field: the parsed Consumer is a long-lived singleton the engine reuses, so the
         // count has to be written and read inside one resolution.
         int[] removed = new int[1];
-        final Consumer<GameContext> base;
+        final Consumer<GameContext> remove;
         if (unionA != null) {
             TargetSpec specA = bzUnionSpec(unionA, maxCount, upTo, opponentZone, bothZones);
             TargetSpec specB = bzUnionSpec(unionB, maxCount, upTo, opponentZone, bothZones);
             String label = "Choose " + (upTo ? "up to " : "") + maxCount + " card(s) in "
                     + (opponentZone ? "opponent's" : "your") + " Break Zone to remove from the game ("
                     + split.group("a").trim() + " and/or " + split.group("b").trim() + ")";
-            base = ctx -> removed[0] = ctx.removeCardsFromBreakZoneFromGameEitherSpec(
+            remove = ctx -> removed[0] = ctx.removeCardsFromBreakZoneFromGameEitherSpec(
                     specA, specB, maxCount, upTo, label);
         } else {
-            base = ctx -> removed[0] = ctx.removeCardsFromBreakZoneFromGame(
+            remove = ctx -> removed[0] = ctx.removeCardsFromBreakZoneFromGame(
                     maxCount, upTo, opponentZone, bothZones, f.element(), f.costVal(), f.costCmp(),
                     f.forwards(), f.backups(), f.monsters(), f.summons(),
                     f.job(), f.cardName(), f.category(), f.gate());
         }
+        // A counted removal that comes up short has not been done: "remove 3 … When you do so"
+        // (28-097H Vaan, 27-101L Sin and the rest) pays out only for all 3. Only the "if/when you
+        // do so" gates read the flag, so a standalone removal still takes what there is.
+        boolean exact = !upTo && maxCount != Integer.MAX_VALUE;
+        final Consumer<GameContext> base = !exact ? remove : remove.andThen(ctx -> {
+            if (removed[0] < maxCount) ctx.markEffectFizzled();
+        });
 
         String tail = trimmed.substring(m.end()).trim();
         if (tail.isEmpty()) return base;

@@ -10437,6 +10437,16 @@ final class ActionResolverPatterns {
         Pattern.DOTALL
     );
     /**
+     * "if you don't remove N [filters] from your Break Zone from the game, [consequence]" — the
+     * {@link #IF_NOT_PAY_OR_ELSE} shape with a Break Zone removal as the price. 19-002L Ace is the
+     * only printing. Group {@code removal} is handed whole to the Break Zone removal parser.
+     */
+    static final Pattern IF_NOT_REMOVE_FROM_BZ_OR_ELSE = Pattern.compile(
+        "(?i)^if\\s+you\\s+don'?t\\s+(?<removal>remove\\s+\\d+\\s+[^,]+?\\s+(?:in|from)\\s+your\\s+Break\\s+Zone" +
+        "\\s+from\\s+the\\s+game)\\s*,\\s+(?<consequence>.+)$",
+        Pattern.DOTALL
+    );
+    /**
      * Matches "You may pay 《Element》[《Element》…]. If you do so, [effect]." — an optional CP
      * payment followed by a conditional target action, used as the followup inside
      * {@link #tryParseChooseCharacter}.
@@ -10454,6 +10464,15 @@ final class ActionResolverPatterns {
         // The optional generic tail is 7-018L Lann's 《Fire》《Fire》《Fire》《1》.
         "(?i)^You\\s+may\\s+pay\\s+《(?<element>[^》\\d]+)》(?<repeat>(?:\\s*《\\k<element>》)*)" +
         "(?:\\s*《(?<generic>\\d+)》)?[.!]?\\s+" +
+        "If\\s+you\\s+do\\s+so[,.]?\\s+(?<effect>.+)$",
+        Pattern.DOTALL
+    );
+    /**
+     * {@link #FOLLOWUP_YOU_MAY_PAY_ELEMENT_IF_DO_SO} with a cost of generic CP only — 3-030L Kuja's
+     * "You may pay 《1》. If you do so, dull it.". Groups: {@code generic}, {@code effect}.
+     */
+    static final Pattern FOLLOWUP_YOU_MAY_PAY_GENERIC_IF_DO_SO = Pattern.compile(
+        "(?i)^You\\s+may\\s+pay\\s+《(?<generic>\\d+)》[.!]?\\s+" +
         "If\\s+you\\s+do\\s+so[,.]?\\s+(?<effect>.+)$",
         Pattern.DOTALL
     );
@@ -11912,6 +11931,13 @@ final class ActionResolverPatterns {
      */
     static final Pattern GAINS_QUOTED_FIELD_ABILITY_UNTIL_EOT = Pattern.compile(
         "(?i)^(?<subject>.+?)\\s+gains\\s+(?<q>[\"'])(?<quoted>.+?)\\k<q>\\s+until\\s+(?:the\\s+)?end\\s+of\\s+(?:the\\s+)?turn[.!]?$");
+    /**
+     * "activate [Self] and [Self] gains …" — 28-097H Vaan's payoff, one sentence carrying two
+     * effects on the same card. Anchored, and the subject must repeat: {@code rest} is handed back
+     * as "[Self] gains {@code rest}", so both halves are read by the parsers that already own them.
+     */
+    static final Pattern ACTIVATE_SELF_AND_SELF_GAINS = Pattern.compile(
+        "(?is)^activate\\s+(?<subject>[^\"',.]+?)\\s+and\\s+\\k<subject>\\s+gains\\s+(?<rest>.+)$");
     /**
      * "[Self] gains \"[ability]\"[ and \"[ability]\"] (This effect does not end at the end of the
      * turn.)" — the priming payoff on Odin (XVI) 29-118L and 24-112L.

@@ -2811,6 +2811,26 @@ final class ActionResolverChoose {
             }
         }
 
+        // --- "You may pay 《N》. If you do so, [target action]." (generic CP) ---
+        {
+            Matcher youMayPayM = FOLLOWUP_YOU_MAY_PAY_GENERIC_IF_DO_SO.matcher(followup);
+            if (youMayPayM.matches()) {
+                int    cp        = Integer.parseInt(youMayPayM.group("generic"));
+                String cpEffText = youMayPayM.group("effect").trim();
+                BiConsumer<GameContext, List<ForwardTarget>> cpAction = parseTargetAction(cpEffText, xValue);
+                if (cpAction != null) {
+                    return ctx -> {
+                        ctx.logChooseHeader(choosePrefix + " — You may pay 《" + cp + "》; if so: " + cpEffText);
+                        List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                                opponentOnly, selfOnly, condition, element, zone, opponentZone, bothZones,
+                                costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
+                                jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
+                        ctx.mayPayCostToEffect(cp, null, 0, ctx2 -> cpAction.accept(ctx2, ts));
+                    };
+                }
+            }
+        }
+
         // --- "You may play 1 [Elem] [Type] of cost N or less from your hand onto the field.
         //      If you do so, [target action]." ---
         // 2-097H Al-Cid. Beside the branch above and for the same reason: checked against the full

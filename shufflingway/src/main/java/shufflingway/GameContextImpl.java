@@ -10098,6 +10098,11 @@ final class GameContextImpl implements GameContext {
 						"Waiting for your opponent: " + prompt, false);
 			}
 
+			@Override public boolean promptPayToAvert(String prompt) {
+				return askYesNo(isP1, ChoiceKind.MAY, prompt, "Optional Cost",
+						"Waiting for your opponent: " + prompt, true);
+			}
+
 			/**
 			 * Puts a yes/no question to the seat at {@code seatIsP1} and returns their answer.
 			 *

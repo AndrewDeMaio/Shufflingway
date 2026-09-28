@@ -2680,14 +2680,16 @@ final class AutoAbilityTriggers {
 
 	/**
 	 * Breaktouch proper: "break it." and nothing else, as the whole effect of a "deals damage to a
-	 * Forward" trigger — Tonberry 19-097C and its two reprints.
+	 * Forward" trigger — Tonberry 19-097C and its two reprints. 17-082R Lich prints it as "break
+	 * that Forward.", the damaged Forward all the same.
 	 *
 	 * <p>The break used to be the <em>fallback</em> for that trigger, taken by anything the damaged-
 	 * card path did not claim. Only three shapes are printed, and the third is Gulool Ja Ja 27-007H's
 	 * choice — which was therefore breaking the Forward it damaged, a Breaktouch it does not have.
 	 * Naming the effect is what confines the break to the cards that print it.
 	 */
-	static final Pattern FA_BREAKTOUCH_BREAK_IT = Pattern.compile("(?i)^break\\s+it\\s*[.!]?$");
+	static final Pattern FA_BREAKTOUCH_BREAK_IT =
+			Pattern.compile("(?i)^break\\s+(?:it|that\\s+Forward)\\s*[.!]?$");
 
 	/**
 	 * "choose 1 Forward opponent controls other than that Forward. Deal it the same amount of
@@ -3417,11 +3419,7 @@ final class AutoAbilityTriggers {
 			for (AutoAbility fa : mw.effectiveAutoAbilities(watcher)) {
 				if (!fa.trigger().equals("chosen by forward ability")) continue;
 				if (chosenSubjectMatch(fa.triggerCard(), watcher, chosen) == null) continue;
-				// "break that Forward" / "deal that Forward 9000 damage": read as a target action on
-				// "it", so Breaktouch's own sentence never becomes a triggered-target form.
-				String action = fa.effectText().trim().replaceAll("[.!]+$", "")
-						.replaceAll("(?i)\\bthat\\s+Forward\\b", "it");
-				BiConsumer<GameContext, List<ForwardTarget>> payoff = ActionResolver.parseTargetAction(action, 0);
+				BiConsumer<GameContext, List<ForwardTarget>> payoff = chosenByForwardPayoff(fa.effectText());
 				if (payoff == null) {
 					mw.logEntry("[AutoAbility] Unrecognized effect: " + fa.effectText());
 					continue;
@@ -3434,6 +3432,17 @@ final class AutoAbilityTriggers {
 				});
 			}
 		mw.showStackWindowIfNeeded();
+	}
+
+	/**
+	 * The payoff of a "chosen by a Forward's ability" trigger, applied to the Forward that chose:
+	 * "break that Forward" / "deal that Forward 9000 damage" read as a target action on "it", so
+	 * Breaktouch's own sentence never becomes a triggered-target form. {@code null} when unread.
+	 */
+	static BiConsumer<GameContext, List<ForwardTarget>> chosenByForwardPayoff(String effectText) {
+		String action = effectText.trim().replaceAll("[.!]+$", "")
+				.replaceAll("(?i)\\bthat\\s+Forward\\b", "it");
+		return ActionResolver.parseTargetAction(action, 0);
 	}
 
 	/**
@@ -4078,9 +4087,7 @@ final class AutoAbilityTriggers {
 			if (!matchesDamagedSubject(q.group("subject"), watcher, damaged)) continue;
 			if (q.group("min") != null && amount < Integer.parseInt(q.group("min"))) continue;
 			if (q.group("by") != null && !dealerMatches(q.group("by"), dealer, watcherIsP1)) continue;
-			// Only a trigger that names its dealer means the dealer by "that Forward": in the
-			// unqualified form (27-007H Gulool Ja Ja's echo) it is the damaged card.
-			if (q.group("by") != null && REFERS_TO_DEALER.matcher(fa.effectText()).find()) {
+			if (paysOffAtDealer(fa)) {
 				executeAutoAbility(atDealer(fa, dealer, watcherIsP1), watcher, watcherIsP1, false, dealer.card());
 				continue;
 			}
@@ -4788,42 +4795,37 @@ final class AutoAbilityTriggers {
 	 * so all along.
 	 *
 	 * <p>Every arm mirrors what the matching executor actually requires, so this cannot claim a card
-	 * the engine would reject — the "when you do so" shapes hand their tail back to {@code parse()}
-	 * and do nothing when it comes back null, so the tail is checked here too. <b>Keep this list in
-	 * step with the dispatch block in {@link #executeAutoAbilityImpl}</b>; the two are in the same
-	 * order deliberately.
-	 *
-	 * <p>The two "select the following actions" shapes are deliberately absent: their executors end
-	 * by calling {@code parse()} on the whole effect text, so a card reaching them is already
-	 * recognised by the ordinary check and adding it here would say nothing new.
+	 * the engine would reject. The inline shapes are read off {@link #INLINE_SHAPES} through
+	 * {@link #inlineClaimOf} and {@link #inlinePayoffReadable}, the table and the readers the
+	 * runtime dispatches with, so the two cannot drift.
 	 */
 	static boolean dispatchedByTriggers(AutoAbility fa, CardData source) {
 		String text = fa.effectText();
-		Matcher m = FA_REMOVE_COUNTER_WHEN_DO_SO.matcher(text);
-		if (m.find()) return subEffectParses(m.group("sub"), source);
-		m = FA_PAY_WHEN_DO_SO.matcher(text);
-		// Probed at X = 1, not 0: a sub-effect whose *count* is the ability's 《X》 ("choose X dull
-		// Forwards" — 25-057R Cutter) declines at zero, because choosing none is not a choice
-		// anyone makes. Any positive value proves the shape is claimed; the real X arrives when
-		// the payment resolves.
-		if (m.find()) return subEffectParses(m.group(2), source, 1);
-		m = FA_REMOVE_FIELD_WHEN_DO_SO.matcher(text);
-		if (m.find()) return subEffectParses(m.group("sub"), source);
-		m = FA_PUT_INTO_BZ_WHEN_DO_SO.matcher(text);
-		if (m.find()) return subEffectParses(m.group("sub"), source);
-		m = FA_DULL_SELF_IF_DO_SO.matcher(text);
-		if (m.find()) return subEffectParses(m.group("sub"), source);
-		m = FA_PUT_SELF_INTO_BZ_IF_DO_SO.matcher(text);
-		if (m.find()) return subEffectParses(m.group("sub"), source);
-		m = FA_CHOOSE_THEN_MAY_PUT_INTO_BZ.matcher(text);
-		// The payoff acts on the card the ability already chose, so it is resolved against a
-		// target list rather than through parse(), which answers null for "break the chosen
-		// Forward" and would report both printings unimplemented.
-		if (m.find()) return ActionResolver.parseFormerLatterGroupAction(m.group("sub").trim()) != null;
-		// Self-contained: these two resolve entirely inside their executor and consult nothing
-		// further, so matching is the whole of the question.
-		if (FA_REVEAL_SUMMONS_CONDITIONAL.matcher(text).find()) return true;
-		if (FA_REVEAL_SUMMONS_SAME_NUMBER.matcher(text).find()) return true;
+		// Dispatchers that match the effect themselves and never call executeAutoAbility.
+		switch (fa.trigger()) {
+			case "opponent character uses action ability" -> {
+				Matcher m = FA_SACRIFICE_CANCEL_AND_BREAK_USER.matcher(text.trim());
+				return m.matches() && m.group("name").trim().equalsIgnoreCase(source.name());
+			}
+			case "own character uses action ability" -> {
+				Matcher m = FA_USES_SAME_ACTION_ABILITY.matcher(text.trim());
+				return m.matches() && m.group("name").trim().equalsIgnoreCase(source.name());
+			}
+			case "chosen by forward ability" -> { return chosenByForwardPayoff(text) != null; }
+			default -> { }
+		}
+		// A payoff about the dealer reaches executeAutoAbility rewritten by the dealer's side
+		// (atDealer), so both rewrites are what has to resolve.
+		if (paysOffAtDealer(fa)) {
+			for (boolean dealerOnWatcherSide : new boolean[]{ true, false }) {
+				String rewritten = atDealer(fa, new DamageDealer(null, dealerOnWatcherSide, false), true).effectText();
+				Boolean inline = inlineClaimResolves(rewritten, fa, source);
+				if (!(inline != null ? inline : ActionResolver.parse(rewritten, source) != null)) return false;
+			}
+			return true;
+		}
+		Boolean inline = inlineClaimResolves(text, fa, source);
+		if (inline != null) return inline;
 		// "If you paid the extra cost, …". executeAutoAbilityImpl rewrites the effect into the
 		// branch that was actually taken before it asks parse() anything, so the printed text is
 		// the wrong thing to ask about — parse() declines it on purpose, because reading it loosely
@@ -4858,14 +4860,51 @@ final class AutoAbilityTriggers {
 				&& FA_BREAKTOUCH_BREAK_IT.matcher(text.trim()).matches();
 	}
 
-	/** Whether a "when you do so" tail resolves, which is what its executor requires of it. */
-	private static boolean subEffectParses(String sub, CardData source) {
-		return subEffectParses(sub, source, 0);
+	/**
+	 * Whether the {@link #INLINE_SHAPES} entry that claims {@code text} can resolve it, asked the
+	 * way its handler asks; {@code null} when no shape claims it and it goes to the Stack.
+	 */
+	private static Boolean inlineClaimResolves(String text, AutoAbility fa, CardData source) {
+		InlineClaim c = inlineClaimOf(text);
+		if (c == null) return null;
+		// A gate whose rest no shape takes is logged as unrecognised by its handler.
+		if (c.shape().equals("ConditionGateMay")) return false;
+		if (c.shape().endsWith("PutSelfIntoBzIfDoSo") && !arrivalPayoffResolves(text, fa)) return false;
+		return c.payoffs().stream().allMatch(p -> inlinePayoffReadable(c.shape(), p, source));
 	}
 
-	/** As above, resolving the sub-effect's {@code X} references against {@code xValue}. */
-	private static boolean subEffectParses(String sub, CardData source, int xValue) {
-		return sub != null && ActionResolver.parse(sub.trim(), source, xValue) != null;
+	/**
+	 * The arrival sentence of a self-sacrifice payoff ("deal it 8000 damage" — 5-008R Grenade), which
+	 * {@link #selfSacrificePayoffs} leaves out because {@link #readSelfSacrificePayoff} reads it
+	 * itself: only against an entering card, so only behind an enters-field trigger. True when the
+	 * payoff has no such sentence.
+	 */
+	private static boolean arrivalPayoffResolves(String text, AutoAbility fa) {
+		Matcher m = FA_PUT_SELF_INTO_BZ_IF_DO_SO.matcher(text);
+		if (!m.find()) return true;
+		String first = m.group("sub").trim().split("(?<=[.!])\\s+(?=[A-Z])", 2)[0].trim();
+		Matcher em = SACRIFICE_PAYOFF_ON_ARRIVAL.matcher(first);
+		if (!em.matches()) return true;
+		return fa.trigger().contains("enters") && ActionResolver.parseTargetAction(arrivalAction(em), 0) != null;
+	}
+
+	/** A {@link #SACRIFICE_PAYOFF_ON_ARRIVAL} match as the target action it performs: "Deal it 8000 damage". */
+	private static String arrivalAction(Matcher em) {
+		String verb = em.group("verb").trim();
+		return Character.toUpperCase(verb.charAt(0)) + verb.substring(1).toLowerCase(Locale.ROOT)
+				+ " it" + (em.group("tail") != null ? em.group("tail") : "");
+	}
+
+	/**
+	 * Whether an "is dealt damage by …" trigger's payoff is about the dealer ("break that Forward",
+	 * "that Character's controller discards …"), which {@link #atDealer} rewrites before it goes on
+	 * the Stack. Only a trigger that names its dealer means the dealer by "that Forward": in the
+	 * unqualified form (27-007H Gulool Ja Ja's echo) it is the damaged card.
+	 */
+	private static boolean paysOffAtDealer(AutoAbility fa) {
+		if (!fa.trigger().equals("is dealt damage")) return false;
+		Matcher q = DEALT_DAMAGE_QUALIFIER.matcher(fa.triggerCard() == null ? "" : fa.triggerCard().trim());
+		return q.matches() && q.group("by") != null && REFERS_TO_DEALER.matcher(fa.effectText()).find();
 	}
 
 	/**
@@ -5662,10 +5701,7 @@ final class AutoAbilityTriggers {
 		if (arrived == null) return null;
 		boolean arrivedIsP1 = Boolean.TRUE.equals(mw.gameState.getIdentity().get(arrived));
 		if (enteringCardTarget(arrived, arrivedIsP1) == null) return null;
-		String verb = em.group("verb").trim();
-		String action = Character.toUpperCase(verb.charAt(0)) + verb.substring(1).toLowerCase(Locale.ROOT)
-				+ " it" + (em.group("tail") != null ? em.group("tail") : "");
-		BiConsumer<GameContext, List<ForwardTarget>> onArrival = ActionResolver.parseTargetAction(action, 0);
+		BiConsumer<GameContext, List<ForwardTarget>> onArrival = ActionResolver.parseTargetAction(arrivalAction(em), 0);
 		if (onArrival == null) return null;
 		Consumer<GameContext> rest = null;
 		if (parts.length > 1) {
