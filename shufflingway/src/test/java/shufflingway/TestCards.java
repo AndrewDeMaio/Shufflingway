@@ -30,6 +30,37 @@ final class TestCards {
 				null, null, null, text);
 	}
 
+	static CardData makeBackup(String name, String element, int cost) {
+		return new CardData(null, name, element, cost, 0, "Backup", false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				null, null, null, "");
+	}
+
+	/** Seats {@code card} active in P1's first empty Backup slot, with its owner recorded. */
+	static void placeP1Backup(MainWindow mw, CardData card) {
+		mw.gameState.getIdentity().put(card, true);
+		placeBackup(mw.p1BackupCards, mw.p1BackupStates, card);
+	}
+
+	/** Seats {@code card} active in P2's first empty Backup slot, with its owner recorded. */
+	static void placeP2Backup(MainWindow mw, CardData card) {
+		mw.gameState.getIdentity().put(card, false);
+		placeBackup(mw.p2BackupCards, mw.p2BackupStates, card);
+	}
+
+	private static void placeBackup(CardData[] slots, CardState[] states, CardData card) {
+		for (int i = 0; i < slots.length; i++) {
+			if (slots[i] == null) {
+				slots[i]  = card;
+				states[i] = CardState.ACTIVE;
+				return;
+			}
+		}
+		throw new IllegalStateException("no empty Backup slot for " + card.name());
+	}
+
 	/** Seats {@code card} on P1's Forward row with its owner recorded, as a real game would. */
 	static void placeP1Forward(MainWindow mw, CardData card) {
 		mw.gameState.getIdentity().put(card, true);

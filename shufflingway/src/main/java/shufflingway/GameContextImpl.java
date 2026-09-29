@@ -11152,9 +11152,12 @@ final class GameContextImpl implements GameContext {
 					}
 				}
 				if (inclBackups) {
-					CardData[] bkps = oppIsP1 ? mw.p1BackupCards : mw.p2BackupCards;
-					for (CardData c : bkps) {
-						if (c != null && CardFilters.meetsTargetCondition(CardState.ACTIVE, 0, false, false, condition)) count++;
+					CardData[]  bkps   = oppIsP1 ? mw.p1BackupCards  : mw.p2BackupCards;
+					CardState[] states = oppIsP1 ? mw.p1BackupStates : mw.p2BackupStates;
+					for (int i = 0; i < bkps.length; i++) {
+						if (bkps[i] == null) continue;
+						CardState s = states[i] != null ? states[i] : CardState.ACTIVE;
+						if (CardFilters.meetsTargetCondition(s, 0, false, false, condition)) count++;
 					}
 				}
 				return count;
