@@ -1,0 +1,41 @@
+Last updated 9/29/2026
+
+**Standard**
+
+Banned
+[1-089H] Rikku
+[3-131H] Ghido
+[5-034C] Gesper
+[5-040C] Thaumaturge
+[5-067R] Miounne
+[11-072R] Tyro
+[11-124H] Relm
+[12-038H] Althea
+[12-097H] Syldra
+[13-120H] Doga 
+[14-116H] Macherie
+[14-118H] Sterne Leonis 
+[16-043H] Atomos
+[16-051L] Cecil
+[20-125R] Rosa
+
+Restricted [1]
+[13-119L] Sophie 
+[19-012L] Refia 
+[25-104L] Yuna
+
+Conditional [Name Limit 3]
+[23-117L] Chaos (Chaos, Feral Chaos)
+
+
+**Title**
+
+Banned
+[6-062R] 
+[10-098L]
+[12-110L]
+[13-048H]
+[15-042R]
+[16-100L] 
+[19-138S] 
+[20-075L] 

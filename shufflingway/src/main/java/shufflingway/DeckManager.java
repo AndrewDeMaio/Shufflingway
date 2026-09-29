@@ -6,9 +6,14 @@ import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
+import java.awt.FontMetrics;
+import java.awt.Graphics;
+import java.awt.Graphics2D;
 import java.awt.GridLayout;
 import java.awt.Image;
 import java.awt.Insets;
+import java.awt.Polygon;
+import java.awt.RenderingHints;
 import java.awt.Toolkit;
 import java.awt.datatransfer.StringSelection;
 import java.awt.event.KeyEvent;
@@ -25,18 +30,22 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.concurrent.ExecutionException;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import javax.swing.BorderFactory;
+import javax.swing.DefaultListCellRenderer;
 import javax.swing.DefaultListModel;
+import javax.swing.Icon;
 import javax.swing.ImageIcon;
 import javax.swing.JButton;
 import javax.swing.JComboBox;
@@ -114,6 +123,11 @@ public class DeckManager extends JFrame {
     private static final Color FORMAT_L6_COLOR = new Color(0x2E, 0x7D, 0x32);
     private static final Color FORMAT_T_COLOR  = new Color(0x6A, 0x1B, 0x9A);
 
+    private static final Color BANNED_FG             = new Color(0xC6, 0x28, 0x28);
+    private static final Color LIMITED_FG            = new Color(0xE6, 0x51, 0x00);
+    private static final Color BANNED_DECK_BG        = new Color(0xFF, 0xCD, 0xD2);
+    private static final Color BANNED_DECK_SELECT_BG = new Color(0xC6, 0x28, 0x28);
+
     private static final Set<String> TITLE_EXCLUDED_CATEGORIES =
             Set.of("Special", "Anniversary", "FFRK", "MQ");
 
@@ -155,6 +169,13 @@ public class DeckManager extends JFrame {
 
     // Format legality labels
     private JLabel formatS, formatL3, formatL6, formatT;
+    private JLabel banlistWarningIcon;
+
+    private final Banlist banlist = Banlist.get();
+    /** Saved decks that break the Standard banlist; drives the My Decks highlight. */
+    private final Set<Integer> banlistDeckIds = new HashSet<>();
+    /** What in the open deck breaks the Standard banlist; its serials render in red. */
+    private Banlist.Violations standardViolations = Banlist.Violations.NONE;
 
     public DeckManager(JFrame parent) {
         super("Deck Manager");
@@ -220,6 +241,21 @@ public class DeckManager extends JFrame {
 
     private JPanel buildDeckListPanel() {
         deckList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        deckList.setCellRenderer(new DefaultListCellRenderer() {
+            @Override
+            public Component getListCellRendererComponent(
+                    JList<?> list, Object value, int index, boolean sel, boolean focus) {
+                super.getListCellRendererComponent(list, value, index, sel, focus);
+                if (value instanceof DeckEntry entry && banlistDeckIds.contains(entry.id())) {
+                    setBackground(sel ? BANNED_DECK_SELECT_BG : BANNED_DECK_BG);
+                    setForeground(sel ? Color.WHITE : BANNED_FG);
+                    setToolTipText("Breaks the Standard banlist");
+                } else {
+                    setToolTipText(null);
+                }
+                return this;
+            }
+        });
         deckList.addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting()) {
                 DeckEntry entry = deckList.getSelectedValue();
@@ -305,16 +341,15 @@ public class DeckManager extends JFrame {
             @Override
             public Component prepareRenderer(TableCellRenderer renderer, int row, int col) {
                 Component c = super.prepareRenderer(renderer, row, col);
-                if (!isRowSelected(row) && renderer == getDefaultRenderer(Object.class)) {
-                    String serial = (String) browserModel.getValueAt(convertRowIndexToModel(row), 0);
-                    if (lbSerials.contains(serial) && col == 0) {
-                        c.setBackground(LB_BG);
-                        c.setForeground(LB_FG);
-                    } else {
-                        c.setBackground(getBackground());
-                        c.setForeground(getForeground());
-                    }
-                }
+                if (isRowSelected(row)) return c;
+                String serial = (String) browserModel.getValueAt(convertRowIndexToModel(row), 0);
+                boolean lbCell = lbSerials.contains(serial) && col == 0;
+                if (renderer == getDefaultRenderer(Object.class))
+                    c.setBackground(lbCell ? LB_BG : getBackground());
+                // Set on every cell: a DefaultTableCellRenderer keeps its last foreground.
+                c.setForeground(lbCell ? LB_FG
+                        : banlist.isBannedInStandard(serial) ? BANNED_FG
+                        : banlist.isLimitedInStandard(serial) ? LIMITED_FG : getForeground());
                 return c;
             }
             @Override
@@ -419,16 +454,16 @@ public class DeckManager extends JFrame {
                     return lbl;
                 }
                 Component c = super.prepareRenderer(renderer, row, col);
-                if (!isRowSelected(row) && renderer == getDefaultRenderer(Object.class)) {
-                    String serial = (String) deckModel.getValueAt(row, 1);
-                    if (lbSerials.contains(serial) && col == 1) {
-                        c.setBackground(LB_BG);
-                        c.setForeground(LB_FG);
-                    } else {
-                        c.setBackground(getBackground());
-                        c.setForeground(getForeground());
-                    }
-                }
+                if (isRowSelected(row)) return c;
+                String serial = (String) deckModel.getValueAt(row, 1);
+                boolean lbCell = lbSerials.contains(serial) && col == 1;
+                boolean breaksBanlist = standardViolations.flags(serial);
+                if (renderer == getDefaultRenderer(Object.class))
+                    c.setBackground(lbCell ? LB_BG : getBackground());
+                // Set on every cell: a DefaultTableCellRenderer keeps its last foreground.
+                c.setForeground(lbCell ? LB_FG
+                        : breaksBanlist ? BANNED_FG
+                        : banlist.isLimitedInStandard(serial) ? LIMITED_FG : getForeground());
                 return c;
             }
             @Override
@@ -542,8 +577,13 @@ public class DeckManager extends JFrame {
         removePanel.add(collapseAllBtn);
         removePanel.add(expandAllBtn);
 
+        JLabel formatsLabel = new JLabel("Formats:");
+        banlistWarningIcon = new JLabel(new WarningIcon(formatsLabel.getFontMetrics(formatsLabel.getFont()).getHeight()));
+        banlistWarningIcon.setVisible(false);
+
         JPanel formatPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 4));
-        formatPanel.add(new JLabel("Formats:"));
+        formatPanel.add(banlistWarningIcon);
+        formatPanel.add(formatsLabel);
         formatPanel.add(formatS);
         formatPanel.add(formatL3);
         formatPanel.add(formatL6);
@@ -665,7 +705,12 @@ public class DeckManager extends JFrame {
     private void loadDeckList() throws SQLException {
         int prevId = selectedDeckId;
         deckListModel.clear();
-        for (DeckEntry entry : db.getDecks()) deckListModel.addElement(entry);
+        banlistDeckIds.clear();
+        for (DeckEntry entry : db.getDecks()) {
+            deckListModel.addElement(entry);
+            if (!banlist.check(Banlist.STANDARD, Banlist.fromDeckRows(db.getDeckCards(entry.id()))).isEmpty())
+                banlistDeckIds.add(entry.id());
+        }
         // Restore selection if the deck still exists
         for (int i = 0; i < deckListModel.size(); i++) {
             if (deckListModel.get(i).id() == prevId) {
@@ -1019,13 +1064,34 @@ public class DeckManager extends JFrame {
 
         int mainTotal = getMainDeckTotal();
 
-        // Standard: exactly 50 main deck cards
-        boolean legalS = (mainTotal == MAX_DECK_SIZE);
+        // Standard: exactly 50 main deck cards and nothing that breaks the banlist
+        List<Object[]> deckRows = new ArrayList<>();
+        Map<String, String> deckNames = new HashMap<>();
+        for (List<Object[]> group : allDeckGroups()) {
+            for (Object[] r : group) {
+                deckRows.add(r);
+                deckNames.put((String) r[1], (String) r[2]);
+            }
+        }
+        standardViolations = banlist.check(Banlist.STANDARD, Banlist.fromDeckRows(deckRows));
+        boolean breaksBanlist = !standardViolations.isEmpty();
+        String warning = breaksBanlist ? standardBanlistWarning(standardViolations, deckNames) : null;
+        boolean legalS = (mainTotal == MAX_DECK_SIZE) && !breaksBanlist;
+        banlistWarningIcon.setVisible(breaksBanlist);
+        banlistWarningIcon.setToolTipText(warning);
+        deckTable.repaint();
+        if (selectedDeckId >= 0) {
+            boolean changed = breaksBanlist ? banlistDeckIds.add(selectedDeckId)
+                                            : banlistDeckIds.remove(selectedDeckId);
+            if (changed) deckList.repaint();
+        }
 
         // Find the highest numeric set prefix across the entire card pool
         int maxPrefix = computeMaxGlobalSetPrefix();
 
-        // L3 / L6: all non-LB deck cards must be from the latest N sets or PR-
+        // L3 / L6: all non-LB deck cards must be from the latest N sets or PR-. Deriving from
+        // legalS applies the banlist only within each window: a deck that passes the set check
+        // holds no card from outside it, so any banned or over-restricted card is inside it.
         boolean legalL3 = legalS && isLimitedSetLegal(3, maxPrefix);
         boolean legalL6 = legalS && isLimitedSetLegal(6, maxPrefix);
 
@@ -1105,6 +1171,66 @@ public class DeckManager extends JFrame {
             }
         } catch (SQLException ignored) {}
         return false;
+    }
+
+    /**
+     * The warning-icon tooltip listing what in the open deck breaks the Standard banlist: banned
+     * cards, then restricted cards over their limit grouped by that limit, then each broken name
+     * limit with the cards counted against it.
+     */
+    private static String standardBanlistWarning(Banlist.Violations v, Map<String, String> names) {
+        List<String> sections = new ArrayList<>();
+        if (!v.banned().isEmpty())
+            sections.add("Banned in Standard:<br>" + cardList(v.banned(), names));
+        Map<Integer, List<String>> restrictedByLimit = new TreeMap<>();
+        v.overRestricted().forEach((serial, limit) ->
+                restrictedByLimit.computeIfAbsent(limit, k -> new ArrayList<>()).add(serial));
+        restrictedByLimit.forEach((limit, serials) -> sections.add(
+                "Restricted to " + limit + " in Standard:<br>" + cardList(serials, names)));
+        v.overNameLimit().forEach((rule, serials) -> sections.add(
+                "Limited to " + rule.limit() + " named " + rule.describeNames() + " in Standard:<br>"
+                + cardList(serials, names)));
+        return "<html>" + String.join("<br><br>", sections) + "</html>";
+    }
+
+    /** "Name (serial)" per line, for a warning tooltip. */
+    private static String cardList(Collection<String> serials, Map<String, String> names) {
+        List<String> lines = new ArrayList<>();
+        for (String serial : serials) lines.add(names.get(serial) + " (" + serial + ")");
+        return String.join("<br>", lines);
+    }
+
+    /** A yellow warning triangle sized to sit beside a line of text. */
+    private static final class WarningIcon implements Icon {
+        private static final Color FILL    = new Color(0xFF, 0xC1, 0x07);
+        private static final Color OUTLINE = new Color(0x8D, 0x6E, 0x00);
+        private final int size;
+
+        WarningIcon(int size) { this.size = Math.max(12, size); }
+
+        @Override public int getIconWidth()  { return size; }
+        @Override public int getIconHeight() { return size; }
+
+        @Override
+        public void paintIcon(Component c, Graphics g, int x, int y) {
+            Graphics2D g2 = (Graphics2D) g.create();
+            try {
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.translate(x, y);
+                int s = size - 1;
+                Polygon tri = new Polygon(new int[]{s / 2, s, 0}, new int[]{0, s, s}, 3);
+                g2.setColor(FILL);
+                g2.fillPolygon(tri);
+                g2.setColor(OUTLINE);
+                g2.drawPolygon(tri);
+                g2.setColor(Color.BLACK);
+                g2.setFont(c.getFont().deriveFont(Font.BOLD, size * 0.7f));
+                FontMetrics fm = g2.getFontMetrics();
+                g2.drawString("!", (size - fm.stringWidth("!")) / 2f, s - size * 0.12f);
+            } finally {
+                g2.dispose();
+            }
+        }
     }
 
     // -------------------------------------------------------------------------

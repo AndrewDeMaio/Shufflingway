@@ -8,7 +8,9 @@ import java.awt.FlowLayout;
 import java.awt.GridLayout;
 import java.awt.event.KeyEvent;
 import java.sql.SQLException;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 import javax.swing.BorderFactory;
 import javax.swing.DefaultListCellRenderer;
@@ -28,11 +30,18 @@ import javax.swing.SwingConstants;
 
 import scraper.DeckDatabase;
 import scraper.DeckDatabase.DeckSummary;
+import shufflingway.AppSettings;
+import shufflingway.Banlist;
 
 public class DeckSelectDialog extends JDialog {
 
+    private static final Color BANNED_FG = new Color(0xC6, 0x28, 0x28);
+
     private int playerDeckId = -1;
     private int cpuDeckId    = -1;
+
+    /** Decks refused for breaking the Standard banlist; empty unless it is enabled against the CPU. */
+    private final Set<Integer> banlistDeckIds = new HashSet<>();
 
     public DeckSelectDialog(JFrame parent) {
         super(parent, "New Game – Choose Decks", true);
@@ -63,14 +72,13 @@ public class DeckSelectDialog extends JDialog {
         Runnable updateStart = () -> {
             DeckSummary p = playerList.getSelectedValue();
             DeckSummary c = cpuList.getSelectedValue();
-            startBtn.setEnabled(p != null && p.mainCardCount() == 50
-                             && c != null && c.mainCardCount() == 50);
+            startBtn.setEnabled(p != null && isEligible(p) && c != null && isEligible(c));
         };
 
         playerList.addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting()) {
                 DeckSummary sel = playerList.getSelectedValue();
-                if (sel != null && sel.mainCardCount() != 50) playerList.clearSelection();
+                if (sel != null && !isEligible(sel)) playerList.clearSelection();
                 else updateStart.run();
             }
         });
@@ -78,7 +86,7 @@ public class DeckSelectDialog extends JDialog {
         cpuList.addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting()) {
                 DeckSummary sel = cpuList.getSelectedValue();
-                if (sel != null && sel.mainCardCount() != 50) cpuList.clearSelection();
+                if (sel != null && !isEligible(sel)) cpuList.clearSelection();
                 else updateStart.run();
             }
         });
@@ -119,7 +127,9 @@ public class DeckSelectDialog extends JDialog {
         listsPanel.add(playerPanel);
         listsPanel.add(cpuPanel);
 
-        JLabel headerLabel = new JLabel("Select a deck with exactly 50 main cards for each side:");
+        JLabel headerLabel = new JLabel(AppSettings.isBanlistAgainstCpu()
+                ? "Select a deck with exactly 50 main cards that follows the banlist for each side:"
+                : "Select a deck with exactly 50 main cards for each side:");
         headerLabel.setBorder(BorderFactory.createEmptyBorder(0, 0, 4, 0));
 
         JPanel btnPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
@@ -143,7 +153,15 @@ public class DeckSelectDialog extends JDialog {
 
     private List<DeckSummary> loadDecks() {
         try (DeckDatabase db = new DeckDatabase()) {
-            return db.getDecksSummary();
+            List<DeckSummary> decks = db.getDecksSummary();
+            if (AppSettings.isBanlistAgainstCpu()) {
+                Banlist banlist = Banlist.get();
+                for (DeckSummary d : decks) {
+                    if (!banlist.check(Banlist.STANDARD, Banlist.fromDeckRows(db.getDeckCards(d.id()))).isEmpty())
+                        banlistDeckIds.add(d.id());
+                }
+            }
+            return decks;
         } catch (SQLException e) {
             JOptionPane.showMessageDialog(this, "Error loading decks:\n" + e.getMessage(),
                     "Database Error", JOptionPane.ERROR_MESSAGE);
@@ -151,15 +169,24 @@ public class DeckSelectDialog extends JDialog {
         }
     }
 
-    private static class DeckListRenderer extends DefaultListCellRenderer {
+    private boolean isEligible(DeckSummary d) {
+        return d.mainCardCount() == 50 && !banlistDeckIds.contains(d.id());
+    }
+
+    private class DeckListRenderer extends DefaultListCellRenderer {
         @Override
         public Component getListCellRendererComponent(
                 JList<?> list, Object value, int index, boolean isSelected, boolean cellHasFocus) {
             super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
+            setToolTipText(null);
             if (value instanceof DeckSummary d) {
                 setText(d.name() + "  (" + d.mainCardCount() + " / 50"
                         + (d.lbCardCount() > 0 ? " +" + d.lbCardCount() + " LB" : "") + ")");
-                if (d.mainCardCount() != 50) {
+                if (banlistDeckIds.contains(d.id())) {
+                    setForeground(BANNED_FG);
+                    setBackground(list.getBackground());
+                    setToolTipText("Breaks the Standard banlist");
+                } else if (d.mainCardCount() != 50) {
                     setForeground(Color.GRAY);
                     setBackground(list.getBackground());
                 }

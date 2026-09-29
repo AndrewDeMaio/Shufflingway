@@ -225,6 +225,20 @@ public final class AppSettings {
         props.setProperty("gameplay.auto.advance.main.phases", Boolean.toString(enabled));
     }
 
+    /**
+     * Whether decks that break the Standard {@link Banlist} — a banned card, a restricted card over
+     * its limit, or a conditional name limit — are refused when choosing decks for a game against
+     * the CPU. Defaults to {@code false}.
+     */
+    public static boolean isBanlistAgainstCpu() {
+        return Boolean.parseBoolean(props.getProperty("gameplay.banlist.against.cpu", "false"));
+    }
+
+    /** Sets the banlist-against-CPU flag (call {@link #save()} to persist). */
+    public static void setBanlistAgainstCpu(boolean enabled) {
+        props.setProperty("gameplay.banlist.against.cpu", Boolean.toString(enabled));
+    }
+
     /** Whether the Welcome dialog opens at launch. Defaults to {@code true}. */
     public static boolean isShowWelcome() {
         return Boolean.parseBoolean(props.getProperty("startup.show.welcome", "true"));
