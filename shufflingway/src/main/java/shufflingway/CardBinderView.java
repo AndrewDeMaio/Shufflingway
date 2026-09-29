@@ -82,6 +82,10 @@ final class CardBinderView extends JList<Integer> {
     private static final float NAME_MAX_SIZE = 20f;
     private static final float NAME_MIN_SIZE = 10f;
     private static final int   NAME_PAD      = 10;
+    /** The serial under the name is this fraction of the name's size, and never below the floor. */
+    private static final float SERIAL_SCALE    = 0.75f;
+    private static final float SERIAL_MIN_SIZE = 8f;
+    private static final int   SERIAL_GAP      = 3;
 
     private final JTable table;
     private final int serialCol;
@@ -537,52 +541,98 @@ final class CardBinderView extends JList<Integer> {
                     g2.drawImage(img, GAP, GAP, null);
                 } else {
                     g2.drawImage(cardback(), GAP, GAP, null);
-                    if (hasNoStoredImage(serial)) paintName(g2, name == null ? serial : name);
+                    if (hasNoStoredImage(serial))
+                        paintName(g2, name == null ? serial : name, name == null ? null : serial);
                 }
             } finally {
                 g2.dispose();
             }
         }
 
-        /** The name, wrapped and centred on the card, filled in its element colours and outlined. */
-        private void paintName(Graphics2D g2, String text) {
+        /**
+         * The name, wrapped and centred on the card, and under it the serial in a smaller size —
+         * both filled in the card's element colours and outlined. The two shrink together until
+         * the block fits the card. {@code serialText} may be null (the name line is the serial).
+         */
+        private void paintName(Graphics2D g2, String text, String serialText) {
             g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
             int maxW = THUMB_W - 2 * NAME_PAD;
             int maxH = THUMB_H - 2 * NAME_PAD;
             boolean pixelFont = FontLoader.canDisplayAll(text);
 
-            Font font = null;
-            List<String> lines = null;
+            Font font = null, serialFont = null;
+            List<String> lines = null, serialLines = List.of();
             for (float size = NAME_MAX_SIZE; size >= NAME_MIN_SIZE; size -= 1f) {
-                font = pixelFont ? FontLoader.uiFontUnscaled(size) : new Font(Font.DIALOG, Font.BOLD, (int) size);
+                font       = nameFont(pixelFont, size);
+                serialFont = nameFont(pixelFont, Math.max(SERIAL_MIN_SIZE, size * SERIAL_SCALE));
                 FontMetrics fm = g2.getFontMetrics(font);
-                lines = wrap(text, fm, maxW);
-                boolean fits = lines.size() * fm.getHeight() <= maxH;
+                FontMetrics sm = g2.getFontMetrics(serialFont);
+                lines       = wrap(text, fm, maxW);
+                serialLines = serialText == null ? List.of() : serialLines(serialText, sm, maxW);
+                int height = lines.size() * fm.getHeight()
+                        + (serialLines.isEmpty() ? 0 : SERIAL_GAP + serialLines.size() * sm.getHeight());
+                boolean fits = height <= maxH;
                 for (String line : lines) fits &= fm.stringWidth(line) <= maxW;
+                for (String line : serialLines) fits &= sm.stringWidth(line) <= maxW;
                 if (fits) break;
             }
 
             FontMetrics fm = g2.getFontMetrics(font);
+            FontMetrics sm = g2.getFontMetrics(serialFont);
+            int height = lines.size() * fm.getHeight()
+                    + (serialLines.isEmpty() ? 0 : SERIAL_GAP + serialLines.size() * sm.getHeight());
+            float top = GAP + (THUMB_H - height) / 2f;
+            Path2D namePath = outlineOf(g2, lines, font, fm, top);
+            float serialTop = top + lines.size() * fm.getHeight() + SERIAL_GAP;
+            Path2D serialPath = outlineOf(g2, serialLines, serialFont, sm, serialTop);
+
+            List<String> elements = splitElements(element);
+            Color outline = outlineFor(elements);
+            g2.setColor(outline);
+            g2.setStroke(new BasicStroke(3.5f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            g2.draw(namePath);
+            g2.setStroke(new BasicStroke(2.5f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            g2.draw(serialPath);
+            // Each is filled across its own width, so a multi-element name's bands sit over the
+            // name and the serial's over the serial, rather than one set stretched across both.
+            g2.setPaint(fillFor(elements, namePath.getBounds2D()));
+            g2.fill(namePath);
+            if (!serialLines.isEmpty()) {
+                g2.setPaint(fillFor(elements, serialPath.getBounds2D()));
+                g2.fill(serialPath);
+            }
+        }
+
+        /** The outlines of {@code lines}, each centred across the card, starting at {@code top}. */
+        private Path2D outlineOf(Graphics2D g2, List<String> lines, Font font, FontMetrics fm, float top) {
             FontRenderContext frc = g2.getFontRenderContext();
-            float lineH = fm.getHeight();
-            float y = GAP + (THUMB_H - lines.size() * lineH) / 2f + fm.getAscent();
             Path2D path = new Path2D.Float();
+            float y = top + fm.getAscent();
             for (String line : lines) {
                 if (!line.isEmpty()) {
                     TextLayout tl = new TextLayout(line, font, frc);
                     float x = GAP + (THUMB_W - tl.getAdvance()) / 2f;
                     path.append(tl.getOutline(AffineTransform.getTranslateInstance(x, y)), false);
                 }
-                y += lineH;
+                y += fm.getHeight();
             }
-
-            List<String> elements = splitElements(element);
-            g2.setStroke(new BasicStroke(3.5f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-            g2.setColor(outlineFor(elements));
-            g2.draw(path);
-            g2.setPaint(fillFor(elements, path.getBounds2D()));
-            g2.fill(path);
+            return path;
         }
+    }
+
+    private static Font nameFont(boolean pixelFont, float size) {
+        return pixelFont ? FontLoader.uiFontUnscaled(size) : new Font(Font.DIALOG, Font.BOLD, Math.round(size));
+    }
+
+    /**
+     * The serial on one line, or split at its slashes when a reprint's pair ("Re-179L/16-129L")
+     * is too wide for the card.
+     */
+    private static List<String> serialLines(String serial, FontMetrics fm, int maxW) {
+        if (fm.stringWidth(serial) <= maxW || !serial.contains("/")) return List.of(serial);
+        List<String> parts = new ArrayList<>();
+        for (String p : serial.split("/")) if (!p.isBlank()) parts.add(p.strip());
+        return parts;
     }
 
     /** Greedy word wrap; a single word wider than {@code maxW} gets a line of its own. */
