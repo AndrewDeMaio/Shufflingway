@@ -297,6 +297,36 @@ class WireProtocolTest {
                 "executePlay's own send is the caller's job, and nothing else may go out from here");
     }
 
+    @Test
+    void anAbilityThatSpendsItsOwnSourceIsSentWithTheSlotItHeld() throws InterruptedException {
+        // The activation used to be sent after the payment, by which time a "put [self] into the
+        // Break Zone" cost had taken the source off the field — so the sender could not say where
+        // it was, reported a desync, and sent nothing. It now goes from the commit point.
+        MainWindow mw = sendingWindow();
+        mw.desyncReported = true;   // the old failure opened a modal; make it a missing message instead
+        String text = "Put Sage into the Break Zone: "
+                + "All the Forwards you control gain +1000 power until the end of the turn.";
+        CardData sage = new CardData(null, "Sage", "Fire", 2, 0, "Backup", false, 0, false, false,
+                Set.of(), 0, List.of(), null, List.of(),
+                CardData.parseActionAbilities(text), List.of(), List.of(), List.of(), List.of(),
+                List.of(), List.of(), List.of(), List.of(), List.of(),
+                false, false, null, false, false, false, false, false, 1,
+                null, null, null, text);
+        ActionAbility ability = sage.actionAbilities().get(0);
+        assertFalse(ability.breakZoneCosts().isEmpty(), "the text has to parse as a Break Zone cost");
+        mw.gameState.getIdentity().put(sage, true);
+        mw.p1BackupCards[2]  = sage;
+        mw.p1BackupStates[2] = CardState.ACTIVE;
+
+        mw.autoAbilityTriggers.showActionAbilityPaymentDialog(ability, sage, () -> {}, true);
+
+        GameAction sent = next();
+        assertEquals(ActionType.ACTIVATE_ABILITY, sent.type());
+        assertEquals("BACKUP", sent.payload().getString("zone"));
+        assertEquals(2, sent.payload().getInt("idx"), "where it stood when the payment committed");
+        assertNull(mw.p1BackupCards[2], "and the cost was still paid here");
+    }
+
     /** Seats a Forward on the opponent's field, owned by them, so breaking it can find an owner. */
     private static void seatP2Forward(MainWindow mw, CardData card) {
         mw.gameState.getIdentity().put(card, false);

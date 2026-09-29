@@ -1456,10 +1456,14 @@ class MultiplayerSetupTest {
                 new ForwardTarget(true, 2, ForwardTarget.CardZone.BACKUP), 0,
                 new AbilityPayment(List.of(1), List.of(3), List.of(
                         new ForwardTarget(true, 0, ForwardTarget.CardZone.MONSTER)),
-                        4, 5, Map.of(2, "Ice"))).payload();
+                        4, 5, Map.of(2, "Ice"), List.of(List.of(0, 6), List.of(2)), true)).payload();
 
         assertEquals("BACKUP", payload.getString("zone"));
         assertEquals(2, payload.getInt("idx"));
+        assertFalse(payload.getBoolean("opponentsCard"), "the sender's own Backup");
+        assertEquals(List.of(0, 6), intList(payload.getJSONArray("discardCosts").getJSONArray(0)));
+        assertEquals(List.of(2), intList(payload.getJSONArray("discardCosts").getJSONArray(1)));
+        assertTrue(payload.getBoolean("counterWaiver"));
         assertEquals("Sage", payload.getString("card"));
         assertEquals(0, payload.getInt("ability"));
         assertEquals(List.of(1), intList(payload.getJSONArray("discards")));
@@ -1520,6 +1524,150 @@ class MultiplayerSetupTest {
 
         assertEquals(0, mw.gameState.stackSize(),
                 "the two clients disagree about the card's text, which is worse than a bad index");
+    }
+
+    /**
+     * Seats {@code source} in their Backup slot 0, active, and seats them as the remote player —
+     * which is what routes their questions to the answers delivered here rather than to the CPU.
+     */
+    private static RemoteOpponent seatTheirAbilityBackup(MainWindow mw, CardData source) {
+        mw.p2BackupCards[0]  = source;
+        mw.p2BackupStates[0] = CardState.ACTIVE;
+        RemoteOpponent remote = new RemoteOpponent(mw, null, hostSetup(1L, true));
+        mw.opponent = remote;
+        return remote;
+    }
+
+    private static GameAction activateTheirBackup(CardData source, AbilityPayment payment) {
+        return RemoteOpponent.activateAbilityAction(source,
+                new ForwardTarget(true, 0, ForwardTarget.CardZone.BACKUP), 0, payment);
+    }
+
+    @Test
+    void theirDullCostDullsTheSourceHereToo() {
+        // The replay used to be handed a no-op for the source's own 《Dull》, so the most common
+        // cost in the game was paid on the activator's board and never on this one.
+        MainWindow mw = new MainWindow();
+        CardData source = abilityBackup("Sage", "Fire", DULL_FOR_POWER);
+        RemoteOpponent remote = seatTheirAbilityBackup(mw, source);
+
+        remote.onActionReceived(activateTheirBackup(source, AbilityPayment.none()));
+
+        assertEquals(1, mw.gameState.stackSize());
+        assertEquals(CardState.DULL, mw.p2BackupStates[0], "their Backup paid its 《Dull》 here too");
+    }
+
+    @Test
+    void theirDiscardCostSpendsTheCardTheyPickedRatherThanTheOneTheCpuWould() {
+        // Picked before their payment committed, so it rides in the activation. Left to this client
+        // it was the CPU's rule — the first card that pays — and a different card left their hand.
+        MainWindow mw = new MainWindow();
+        CardData source = abilityBackup("Sage", "Fire",
+                "Discard 1 card: All the Forwards you control gain +1000 power until the end of the turn.");
+        assertEquals(1, source.actionAbilities().get(0).discardCosts().size(),
+                "the text has to parse as a discard cost for this to mean anything");
+        RemoteOpponent remote = seatTheirAbilityBackup(mw, source);
+        CardData first  = backup("First", "Fire", 3);
+        CardData second = backup("Second", "Fire", 3);
+        mw.gameState.getP2Hand().addAll(List.of(first, second));
+
+        remote.onActionReceived(activateTheirBackup(source, new AbilityPayment(List.of(), List.of(),
+                List.of(), 0, -1, Map.of(), List.of(List.of(1)), false)));
+
+        assertEquals(1, mw.gameState.stackSize());
+        assertEquals(1, mw.gameState.getP2Hand().size());
+        assertSame(first, mw.gameState.getP2Hand().get(0), "the card they kept is still in hand");
+    }
+
+    @Test
+    void aDiscardCostArrivingWithoutItsPicksIsRefused() {
+        MainWindow mw = new MainWindow();
+        mw.desyncReported = true;
+        CardData source = abilityBackup("Sage", "Fire",
+                "Discard 1 card: All the Forwards you control gain +1000 power until the end of the turn.");
+        RemoteOpponent remote = seatTheirAbilityBackup(mw, source);
+        mw.gameState.getP2Hand().add(backup("First", "Fire", 3));
+
+        remote.onActionReceived(activateTheirBackup(source, AbilityPayment.none()));
+
+        assertEquals(0, mw.gameState.stackSize(),
+                "guessing which card they spent is how the two hands came apart");
+        assertEquals(1, mw.gameState.getP2Hand().size(), "and nothing was spent on the guess");
+        assertEquals(CardState.ACTIVE, mw.p2BackupStates[0]);
+    }
+
+    @Test
+    void theForwardTheyDullForACostIsTheOneTheyChose() {
+        // Chosen after their payment committed, so it crosses as a CHOICE to this client, which is
+        // replaying the same payment. Delivered first, the way a fast sender's answer lands.
+        MainWindow mw = new MainWindow();
+        CardData source = abilityBackup("Sage", "Fire",
+                "Dull 1 active Forward: All the Forwards you control gain +1000 power until the end of the turn.");
+        assertEquals(1, source.actionAbilities().get(0).dullForwardCosts().size(),
+                "the text has to parse as a dull cost for this to mean anything");
+        RemoteOpponent remote = seatTheirAbilityBackup(mw, source);
+        for (String name : List.of("Left", "Right")) {
+            CardData fwd = warpForward(name, "Fire", List.of(), 0);
+            mw.gameState.getIdentity().put(fwd, false);
+            mw.placeP2CardInForwardZone(fwd);
+        }
+
+        // Packed from their seat: their own Forward in slot 1. The CPU would have taken slot 0.
+        remote.onActionReceived(RemoteOpponent.choiceAction(ChoiceKind.OWN_FIELD_CARD,
+                List.of(new ForwardTarget(true, 1, ForwardTarget.CardZone.FORWARD).choiceCode())));
+        remote.onActionReceived(activateTheirBackup(source, AbilityPayment.none()));
+
+        assertEquals(1, mw.gameState.stackSize());
+        assertEquals(CardState.ACTIVE, mw.p2ForwardStates.get(0));
+        assertEquals(CardState.DULL,   mw.p2ForwardStates.get(1));
+    }
+
+    @Test
+    void theirUseOfAnAbilityOnThisPlayersCardIsPaidByThemAndDullsThisCard() {
+        // "Each player can use this ability." The source is on this side of the board, which the
+        // activation has to say — it used to look only on the sender's own field, find nothing,
+        // and report a desync instead of sending.
+        MainWindow mw = new MainWindow();
+        CardData source = abilityBackup("Sage", "Fire",
+                DULL_FOR_POWER + " Each player can use this ability.");
+        assertTrue(source.actionAbilities().get(0).usableByEitherPlayer());
+        mw.p1BackupCards[0]  = source;
+        mw.p1BackupStates[0] = CardState.ACTIVE;
+        RemoteOpponent remote = new RemoteOpponent(mw, null, hostSetup(1L, true));
+
+        remote.onActionReceived(RemoteOpponent.activateAbilityAction(source,
+                new ForwardTarget(false, 0, ForwardTarget.CardZone.BACKUP), 0, AbilityPayment.none()));
+
+        assertEquals(1, mw.gameState.stackSize());
+        assertFalse(mw.gameState.peekStack().isP1(), "their ability, though the card is mine");
+        assertEquals(CardState.DULL, mw.p1BackupStates[0]);
+    }
+
+    @Test
+    void aCounterWaiverThisBoardDoesNotOfferIsRefused() {
+        MainWindow mw = new MainWindow();
+        mw.desyncReported = true;
+        CardData source = abilityBackup("Sage", "Fire", DULL_FOR_POWER);
+        RemoteOpponent remote = seatTheirAbilityBackup(mw, source);
+
+        remote.onActionReceived(activateTheirBackup(source, AbilityPayment.none().waivedByCounters()));
+
+        assertEquals(0, mw.gameState.stackSize(),
+                "replaying it as an ordinary payment would charge a cost they never paid");
+        assertEquals(CardState.ACTIVE, mw.p2BackupStates[0]);
+    }
+
+    @Test
+    void twoAnswersOfOneKindAreTakenInTheOrderTheyArrived() {
+        // One payment can ask a kind twice — two costs that each dull something. An answer that
+        // replaced the one before it would leave the first question answered with the second's.
+        MainWindow mw = new MainWindow();
+        RemoteOpponent remote = new RemoteOpponent(mw, null, hostSetup(1L, true));
+        remote.onActionReceived(RemoteOpponent.choiceAction(ChoiceKind.OPTION, List.of(1)));
+        remote.onActionReceived(RemoteOpponent.choiceAction(ChoiceKind.OPTION, List.of(2)));
+
+        assertEquals(List.of(1), remote.awaitAnswer(PlayerChoice.by(false, ChoiceKind.OPTION)));
+        assertEquals(List.of(2), remote.awaitAnswer(PlayerChoice.by(false, ChoiceKind.OPTION)));
     }
 
     @Test

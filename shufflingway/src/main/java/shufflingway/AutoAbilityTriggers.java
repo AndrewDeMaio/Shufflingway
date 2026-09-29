@@ -59,6 +59,7 @@ import static shufflingway.CardFilters.meetsDiscardCost;
 import static shufflingway.CpPaymentUtils.contributingElement;
 import static shufflingway.CpPaymentUtils.matchesAnyElement;
 import shufflingway.dialog.AbilityPaymentDialog;
+import shufflingway.net.ChoiceKind;
 
 /**
  * Auto-ability trigger dispatch and resolution. Extracted from MainWindow to keep that
@@ -7076,7 +7077,8 @@ final class AutoAbilityTriggers {
 		if (rawCost.isEmpty() && !eff.hasXCost()) {
 			List<ForwardTarget> bzTargets = resolveBzCostTargetsForBzAbility(bzCosts, isP1);
 			if (bzTargets == null) return;
-			executeAbilityPayment(eff, source, () -> {}, new ArrayList<>(), new ArrayList<>(), bzTargets, isP1, 0, -1);
+			executeAbilityPayment(eff, source, () -> {},
+					new AbilityPayment(List.of(), List.of(), bzTargets, 0, -1, Map.of()), isP1, settled -> {});
 			return;
 		}
 
@@ -7087,8 +7089,9 @@ final class AutoAbilityTriggers {
 				(discards, backups, xValue, sCostIdx, breaks) -> {
 					List<ForwardTarget> bzTargets = resolveBzCostTargetsForBzAbility(bzCosts, isP1);
 					if (bzTargets == null) return;
-					executeAbilityPayment(eff, source, () -> {}, discards, backups, bzTargets, isP1,
-							xValue, sCostIdx, breaks);
+					executeAbilityPayment(eff, source, () -> {},
+							new AbilityPayment(discards, backups, bzTargets, xValue, sCostIdx, breaks),
+							isP1, settled -> {});
 				}, mw.breakForCpBackupSlots(isP1))
 			.show();
 	}
@@ -7171,6 +7174,9 @@ final class AutoAbilityTriggers {
 	 * worth choosing are the costs actually sitting there. The human is offered those, and the AI
 	 * takes the most expensive one it can reach — spending more counters than any Break Zone card
 	 * costs would buy nothing.
+	 *
+	 * <p>Crosses as an {@link ChoiceKind#OPTION}, a position in that list: both clients build it
+	 * from the same Break Zone, and a list of one is taken on both without asking.
 	 */
 	private int chooseVariableCounterAmount(CounterCost cc, CardData source, boolean isP1) {
 		int available = mw.gameState.getCounters(source, cc.counterName());
@@ -7191,15 +7197,26 @@ final class AutoAbilityTriggers {
 			useful = all;
 		}
 
-		if (!isP1) return useful.get(useful.size() - 1);   // AI: the biggest it can actually use
+		if (useful.size() == 1) return useful.get(0);
 
-		Object[] options = useful.stream().map(n -> "X = " + n).toArray();
-		int choice = mw.showEffectOptionDialog(
-				"<html><body style='width:320px'>" + source.name() + " has <b>" + available + "</b> "
-				+ cc.counterName() + " Counter(s).<br><br>Remove how many? The number removed is the "
-				+ "cost this ability can play back from your Break Zone.</body></html>",
-				source.name() + " — remove " + cc.counterName() + " Counters", options);
-		return choice >= 0 && choice < useful.size() ? useful.get(choice) : useful.get(0);
+		List<Integer> amounts = useful;
+		List<Integer> answer = mw.decide(PlayerChoice.by(isP1, ChoiceKind.OPTION)
+				.prompting("Waiting for your opponent to choose how many " + cc.counterName()
+						+ " Counters to remove...")
+				.locally(() -> {
+					Object[] options = amounts.stream().map(n -> "X = " + n).toArray();
+					int choice = mw.showEffectOptionDialog(
+							"<html><body style='width:320px'>" + source.name() + " has <b>" + available + "</b> "
+							+ cc.counterName() + " Counter(s).<br><br>Remove how many? The number removed is the "
+							+ "cost this ability can play back from your Break Zone.</body></html>",
+							source.name() + " — remove " + cc.counterName() + " Counters", options);
+					return List.of(choice >= 0 && choice < amounts.size() ? choice : 0);
+				})
+				// AI: the biggest it can actually use
+				.byCpu(() -> List.of(amounts.size() - 1))
+				.legalWhen(a -> a.size() == 1 && a.get(0) >= 0 && a.get(0) < amounts.size(),
+						"only " + amounts + " are amounts it can remove here"));
+		return answer.isEmpty() ? amounts.get(0) : amounts.get(answer.get(0));
 	}
 
 	/** True when {@code source} (the activating card) has enough counters to pay {@code cc}. */
@@ -7285,19 +7302,26 @@ final class AutoAbilityTriggers {
 	 * share an Element <em>with one another</em>, and dulling Yuri himself may stand in for one of
 	 * them. A constraint between picks is not something one counted dialog can express, so P1
 	 * takes them one at a time and the pool narrows to the Elements still in play after each.
+	 *
+	 * <p>Asked after the payment has committed, so each pick goes through {@link MainWindow#decide}:
+	 * a remote payer's client sends it, and this one — replaying the same payment — waits for it.
+	 * A pool with no choice in it (exactly as many cards as the cost takes, or one left for a step)
+	 * is taken on both clients without asking, so nothing crosses for it.
 	 */
 	private List<ForwardTarget> selectDullCostTargets(DullForwardCost dfc, List<ForwardTarget> targets,
 			Map<ForwardTarget, CardData> cardOf, CardData source, boolean isP1) {
 		ForwardTarget sourceTarget = dfc.sourceReplacesOne() ? activeFieldSlotOf(source, isP1) : null;
+		String waitPrompt = "Waiting for your opponent to choose what to dull for "
+				+ source.name() + "'s cost...";
 		if (!dfc.sameElement() && sourceTarget == null) {
-			if (isP1) {
-				List<ForwardTarget> picks = mw.showForwardSelectDialog(targets, dfc.count(), false, "Dull Cost");
-				return picks.size() < dfc.count() ? null : picks;
-			}
-			return targets.size() < dfc.count() ? null
-					: new ArrayList<>(targets.subList(0, dfc.count()));
+			if (targets.size() < dfc.count()) return null;
+			if (targets.size() == dfc.count()) return new ArrayList<>(targets);
+			List<ForwardTarget> picks = mw.selectOwnFieldTargets(isP1, targets, dfc.count(), false,
+					"Dull Cost", waitPrompt, () -> new ArrayList<>(targets.subList(0, dfc.count())));
+			return picks.size() < dfc.count() ? null : picks;
 		}
-		if (!isP1) return planP2DullCostTargets(dfc, targets, cardOf, sourceTarget);
+		// The CPU plans the whole set up front and answers each step from the plan.
+		List<ForwardTarget> plan = isP1 ? null : planP2DullCostTargets(dfc, targets, cardOf, sourceTarget);
 
 		List<ForwardTarget> chosen = new ArrayList<>();
 		Set<String> shared = null;            // null until the first field pick fixes the Elements
@@ -7313,9 +7337,11 @@ final class AutoAbilityTriggers {
 			// printed alternative asks that of the Backups, not of Yuri.
 			if (sourceTarget != null && !chosen.contains(sourceTarget)) step.add(sourceTarget);
 			if (step.isEmpty()) return null;
-			List<ForwardTarget> pick = mw.showForwardSelectDialog(step, 1, false, "Dull Cost");
-			if (pick.isEmpty()) return null;
-			ForwardTarget t = pick.get(0);
+			int stepIdx = n;
+			ForwardTarget t = step.size() == 1 ? step.get(0)
+					: mw.selectOwnFieldTarget(isP1, step, "Dull Cost", waitPrompt,
+							() -> plan == null || plan.size() <= stepIdx ? null : plan.get(stepIdx));
+			if (t == null) return null;
 			chosen.add(t);
 			if (t.equals(sourceTarget)) continue;
 			List<String> elems = mw.effectiveElements(cardOf.get(t));
@@ -7641,7 +7667,11 @@ final class AutoAbilityTriggers {
 		} else {
 			List<ForwardTarget> eligible = eligibleRfthFieldTargets(rth, isP1);
 			if (eligible.isEmpty()) { mw.logEntry("No eligible field card for return-to-hand cost."); return; }
-			List<ForwardTarget> picks = mw.showForwardSelectDialog(eligible, rth.count(), false, "Return to Hand (cost)");
+			// Asked after the payment committed, so through decide — see selectDullCostTargets.
+			List<ForwardTarget> picks = eligible.size() <= rth.count() ? eligible
+					: mw.selectOwnFieldTargets(isP1, eligible, rth.count(), false, "Return to Hand (cost)",
+							"Waiting for your opponent to choose what to return to their hand...",
+							() -> new ArrayList<>(eligible.subList(0, rth.count())));
 			mw.applyTargetsHighestIndexFirst(picks, t -> returnTargetToHand(ctx, t));
 		}
 	}
@@ -7864,16 +7894,13 @@ final class AutoAbilityTriggers {
 					+ "'s special ability without paying the cost?", "Special Cost", options);
 			if (choice < 0) return; // dismissed — nothing committed yet
 			if (choice == 0) {
-				int removed = mw.gameState.removeCounters(source, waiver.counterName(), waiver.count());
-				mw.logEntry(source.name() + " — removed " + removed + " " + waiver.counterName()
-						+ " Counter(s): special ability used without paying the cost"
-						+ "  [remaining: " + mw.gameState.getCounters(source, waiver.counterName()) + "]");
+				spendCounterWaiver(source, waiver);
 				// A cost-stripped copy rather than a flag threaded through the payment: the waiver
 				// says "without paying the cost", and an ability with no costs is exactly that.
 				// Its restrictions travel with it, so a once-per-turn or your-turn-only ability is
 				// no more usable than it was.
 				payAndReport(ability, eff.withCostsWaived(), source, () -> {},
-						new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), isP1, 0, -1, Map.of());
+						AbilityPayment.none().waivedByCounters(), isP1);
 				return;
 			}
 		}
@@ -7881,8 +7908,8 @@ final class AutoAbilityTriggers {
 		// Zero CP + no X: confirm immediately.  Any S cost is resolved inside executeAbilityPayment,
 		// which prompts when more than one hand card can pay it.
 		if (rawCost.isEmpty() && !eff.hasXCost()) {
-			payAndReport(ability, eff, source, applyDull, new ArrayList<>(), new ArrayList<>(),
-					autoResolveBzTargets(source, bzCosts, isP1), isP1, 0, -1, Map.of());
+			payAndReport(ability, eff, source, applyDull, new AbilityPayment(List.of(), List.of(),
+					autoResolveBzTargets(source, bzCosts, isP1), 0, -1, Map.of()), isP1);
 			return;
 		}
 
@@ -7898,19 +7925,30 @@ final class AutoAbilityTriggers {
 				mw::showZoomAt, mw::hideZoom, proxy, primerName, mw.lightDarkDiscardGrants(isP1),
 				eff.isSpecial() && mw.canPaySpecialCostWithCrystal(source, isP1),
 				(discards, backups, xValue, sCostIdx, breaks) -> payAndReport(ability, eff, source, applyDull,
-						discards, backups, autoResolveBzTargets(source, bzCosts, isP1), isP1, xValue,
-						sCostIdx, breaks),
+						new AbilityPayment(discards, backups, autoResolveBzTargets(source, bzCosts, isP1),
+								xValue, sCostIdx, breaks), isP1),
 				mw.breakForCpBackupSlots(isP1))
 			.show();
 	}
 
 
+	/** Removes the counters a 《S》-cost waiver spends (Wakka 16-138S), as both clients do. */
+	private void spendCounterWaiver(CardData source, CardData.SpecialCostCounterWaiver waiver) {
+		int removed = mw.gameState.removeCounters(source, waiver.counterName(), waiver.count());
+		mw.logEntry(source.name() + " — removed " + removed + " " + waiver.counterName()
+				+ " Counter(s): special ability used without paying the cost"
+				+ "  [remaining: " + mw.gameState.getCounters(source, waiver.counterName()) + "]");
+	}
+
 	/**
 	 * Pays for an activation and, when it was the local player's, tells the opponent about it.
 	 *
-	 * <p>Sent only once the payment has actually committed: {@code executeAbilityPayment} answers
-	 * {@code false} for an activation the player backed out of partway, and an abandoned ability
-	 * never reached a Stack the other client would have to mirror.
+	 * <p>Sent from the payment's commit point, not after it returns. An activation the player
+	 * backs out of never reaches it, so an abandoned ability is never sent; and a cost that takes
+	 * the source off the field — "put [self] into the Break Zone", Bartz 19-048C's bottom-of-deck —
+	 * has not been paid yet, so the source is still in the slot the message names. Everything the
+	 * payment asks after the commit crosses as a {@code CHOICE} to a far client already running the
+	 * same payment.
 	 *
 	 * <p>{@code printed} is the ability as the card prints it, which is what the index on the wire
 	 * addresses; {@code eff} is that ability with the board's discounts and surcharges applied.
@@ -7918,29 +7956,91 @@ final class AutoAbilityTriggers {
 	 * board, the same way it derives every other cost.
 	 */
 	private boolean payAndReport(ActionAbility printed, ActionAbility eff, CardData source,
-			Runnable applyDull, List<Integer> discardIndices, List<Integer> backupDullIndices,
-			List<ForwardTarget> bzTargets, boolean isP1, int xValue, int sCostHandIdx,
-			Map<Integer, String> backupBreaks) {
-		boolean paid = executeAbilityPayment(eff, source, applyDull, discardIndices,
-				backupDullIndices, bzTargets, isP1, xValue, sCostHandIdx, backupBreaks);
-		if (paid && isP1)
-			mw.sendAbilityActivation(printed, source, new AbilityPayment(discardIndices,
-					backupDullIndices, bzTargets, xValue, sCostHandIdx, backupBreaks));
-		return paid;
+			Runnable applyDull, AbilityPayment payment, boolean isP1) {
+		return executeAbilityPayment(eff, source, applyDull, payment, isP1, settled -> {
+			if (isP1) mw.sendAbilityActivation(printed, source, settled);
+		});
 	}
 
 	/**
 	 * Replays a remote player's activation: the same payment, run against the board this client
-	 * holds them on.
+	 * holds them on, dulling the source at {@code at} for a 《Dull》 cost exactly as their client did.
 	 *
 	 * <p>The effective cost is recomputed here rather than taken from the wire, so the discount a
-	 * card on their field gives them is read off that field as this client sees it.
+	 * card on their field gives them is read off that field as this client sees it. The choices
+	 * they settled before committing are checked against that board before any of it is spent —
+	 * see {@link #remotePaymentProblem}.
+	 *
+	 * @param at where the source sits on this board — almost always their side, but their own
+	 *           use of an "each player can use this ability" ability of one of this player's cards
+	 *           sits on this one
 	 */
-	boolean executeRemoteAbilityActivation(ActionAbility ability, CardData source,
+	boolean executeRemoteAbilityActivation(ActionAbility ability, CardData source, ForwardTarget at,
 			AbilityPayment payment) {
-		return executeAbilityPayment(mw.effectiveAbilityCost(ability, false), source, () -> {},
-				payment.discards(), payment.backupDulls(), payment.bzTargets(), false,
-				payment.xValue(), payment.sCostHandIdx(), payment.backupBreaks());
+		ActionAbility eff = mw.effectiveAbilityCost(ability, false);
+		if (payment.counterWaiver()) {
+			CardData.SpecialCostCounterWaiver waiver = eff.isSpecial()
+					? mw.specialCostCounterWaiver(source, false) : null;
+			if (waiver == null) {
+				mw.reportDesync("opponent used \"" + source.name() + "\"'s special ability by removing "
+						+ "counters, but it has no such waiver open here");
+				return false;
+			}
+			spendCounterWaiver(source, waiver);
+			eff = eff.withCostsWaived();
+		}
+		String problem = remotePaymentProblem(eff, source, payment);
+		if (problem != null) {
+			mw.reportDesync("opponent paid for \"" + source.name() + "\"'s ability with " + problem);
+			return false;
+		}
+		return executeAbilityPayment(eff, source, mw.abilityCostDull(at), payment, false, settled -> {});
+	}
+
+	/**
+	 * What is wrong with the choices a remote player settled before committing an activation, as
+	 * this board sees them, or {@code null} when every one of them is a choice they could have
+	 * made here. Only the pre-commit choices are checked: each post-commit answer is checked by
+	 * {@link MainWindow#decide} as it arrives.
+	 *
+	 * <p>Checked before the payment runs rather than inside it, because a refusal part-way through
+	 * would leave a half-paid cost on one board and none on the other.
+	 */
+	private String remotePaymentProblem(ActionAbility ability, CardData source, AbilityPayment payment) {
+		List<CardData> hand = mw.playerHand(false);
+		Set<Integer> reserved = new HashSet<>(payment.discards());
+		int s = payment.sCostHandIdx();
+		boolean sOwed = ability.isSpecial() && !mw.specialSCostWaivedThisTurn.contains(source);
+		if (sOwed) {
+			if (s == AbilityPaymentDialog.S_COST_CRYSTAL) {
+				if (!mw.canPaySpecialCostWithCrystal(source, false))
+					return "a Crystal for the 《S》, which nothing lets them do here";
+			} else if (!specialCostCandidateIdxs(source, hand, payment.discards(), false).contains(s)) {
+				return "hand slot " + s + " for the 《S》, which cannot pay it here";
+			} else {
+				reserved.add(s);
+			}
+		}
+		List<DiscardCost> costs = ability.discardCosts();
+		List<List<Integer>> picks = payment.discardCostPicks();
+		if (picks.isEmpty()) return costs.isEmpty() ? null : "no cards for its discard cost";
+		if (picks.size() != costs.size())
+			return picks.size() + " discard-cost picks for " + costs.size() + " discard cost(s)";
+		for (int d = 0; d < costs.size(); d++) {
+			DiscardCost dc = costs.get(d);
+			List<Integer> pick = picks.get(d);
+			if (pick.size() != dc.count())
+				return pick.size() + " card(s) for a discard cost of " + dc.count();
+			List<Integer> eligible = discardCostCandidateIdxs(dc, hand, reserved);
+			Set<String> types = new HashSet<>();
+			for (int slot : pick) {
+				if (!eligible.contains(slot) || !reserved.add(slot))
+					return "hand slot " + slot + " for a discard cost it cannot pay here";
+				if (dc.eachDifferentType() && !types.add(discardTypeKey(hand.get(slot))))
+					return "two cards of one type for a cost that wants each of a different type";
+			}
+		}
+		return null;
 	}
 
 	/**
@@ -7956,7 +8056,9 @@ final class AutoAbilityTriggers {
 	boolean executeP2AbilityActivation(ActionAbility ability, CardData source,
 			Runnable applyDull, List<Integer> backupDullIndices, List<Integer> discardIndices, int xValue) {
 		List<ForwardTarget> bzTargets = autoResolveBzTargets(source, ability.breakZoneCosts(), false);
-		return executeAbilityPayment(ability, source, applyDull, discardIndices, backupDullIndices, bzTargets, false, xValue, -1);
+		return executeAbilityPayment(ability, source, applyDull,
+				new AbilityPayment(discardIndices, backupDullIndices, bzTargets, xValue, -1, Map.of()),
+				false, settled -> {});
 	}
 
 	/**
@@ -8012,15 +8114,6 @@ final class AutoAbilityTriggers {
 	}
 
 	/**
-	 * Executes the full payment for an action ability: dulls selected backups,
-	 * discards hand cards for CP, optionally dulls the source card, optionally
-	 * discards a same-name card (Special), then calls {@link ActionResolver#resolve}.
-	 *
-	 * @param sCostHandIdx hand index the player already committed to the S cost slot in
-	 *     {@link AbilityPaymentDialog}, or {@code -1} when the choice has not been made yet
-	 *     (the zero-CP fast path and the CPU path both pass {@code -1}).
-	 */
-	/**
 	 * Pays "put [self] at the bottom of its owner's deck", if this ability prints one.
 	 *
 	 * <p>The cost names a card, and it is only paid when that name is the source's own — the
@@ -8049,27 +8142,40 @@ final class AutoAbilityTriggers {
 	// =========================================================================================
 	// Paying an ability's costs
 	// =========================================================================================
-	private boolean executeAbilityPayment(ActionAbility ability, CardData source,
-			Runnable applyDull, List<Integer> discardIndices, List<Integer> backupDullIndices,
-			List<ForwardTarget> bzTargets, boolean isP1, int xValue, int sCostHandIdx) {
-		return executeAbilityPayment(ability, source, applyDull, discardIndices, backupDullIndices,
-				bzTargets, isP1, xValue, sCostHandIdx, Map.of());
-	}
-
 	/**
-	 * @param backupBreaks Backups put into the Break Zone for CP as part of this payment, slot to
-	 *                     the Element each produces (Sherlotta 8-053H) — "a CP cost" in her text is
-	 *                     any of them, an ability's included
+	 * Pays for an activation in two halves split by a commit point.
+	 *
+	 * <p>Before it, nothing is spent: the choices a player can still back out of are settled — the
+	 * card or Crystal that pays a 《S》 cost, and the cards a discard cost takes — and a cancel
+	 * abandons the whole activation. At it, {@code onCommit} is told the payment with those
+	 * choices filled in. After it, every cost is spent in printed order, and any choice left (which
+	 * Forwards to dull, which card to remove from the game) is put through {@link MainWindow#decide}.
+	 *
+	 * <p>The split is what lets the activation cross the wire. The payment {@code onCommit} sees is
+	 * everything the far client cannot work out for itself up to that point, and it is sent from
+	 * there — before any cost has moved the source off the field, so the slot it names is still
+	 * the source's — and the far client then runs this same method over the same board, standing at
+	 * the same post-commit questions as the activator and waiting for each answer.
+	 *
+	 * @param payment  what the activator settled before calling: CP, X, Break Zone costs, and any
+	 *                 《S》 payer or discard-cost picks already made. The last two are settled here
+	 *                 when the payment leaves them open
+	 * @param onCommit told the settled payment once, when the activation stops being abandonable
+	 *                 and before anything is spent; never told when it is abandoned
 	 * @return {@code true} when the ability reached the stack, {@code false} when the activation
 	 *         was abandoned — a cancelled dialog, a lapsed permission, or a cost that turned out
 	 *         to be unpayable.  P2's callers must not re-offer an ability that answered
 	 *         {@code false}: an abandonment that commits nothing leaves the board exactly as the
 	 *         Main Phase scan found it, which is the shape of an infinite loop.
 	 */
-	private boolean executeAbilityPayment(ActionAbility ability, CardData source,
-			Runnable applyDull, List<Integer> discardIndices, List<Integer> backupDullIndices,
-			List<ForwardTarget> bzTargets, boolean isP1, int xValue, int sCostHandIdx,
-			Map<Integer, String> backupBreaks) {
+	private boolean executeAbilityPayment(ActionAbility ability, CardData source, Runnable applyDull,
+			AbilityPayment payment, boolean isP1, Consumer<AbilityPayment> onCommit) {
+		List<Integer> discardIndices      = payment.discards();
+		List<Integer> backupDullIndices   = payment.backupDulls();
+		List<ForwardTarget> bzTargets     = payment.bzTargets();
+		int xValue                        = payment.xValue();
+		int sCostHandIdx                  = payment.sCostHandIdx();
+		Map<Integer, String> backupBreaks = payment.backupBreaks();
 		List<String> rawCost = ability.cpCost();
 		LinkedHashMap<String, Integer> costByElem = new LinkedHashMap<>();
 		for (String e : rawCost) if (!e.isEmpty()) costByElem.merge(e, 1, Integer::sum);
@@ -8079,6 +8185,7 @@ final class AutoAbilityTriggers {
 		// cancelled choice backs out of the whole activation.  Held as a CardData rather than an
 		// index because the CP discards below shift the hand.
 		CardData sCostCard = null;
+		int      sCostSlot = -1;          // sCostCard's slot in the hand as it stands now
 		boolean  sCostFromCrystal = false;
 		// 17-002L Edgar's waiver: no 《S》 at all this time. Spent below, once the activation commits,
 		// so an activation backed out of partway keeps it.
@@ -8096,6 +8203,7 @@ final class AutoAbilityTriggers {
 				sCostFromCrystal = true;
 			} else if (sCostHandIdx >= 0 && sCostHandIdx < hand.size()) {
 				sCostCard = hand.get(sCostHandIdx);
+				sCostSlot = sCostHandIdx;
 			} else {
 				List<Integer> eligibleIdxs = specialCostCandidateIdxs(source, hand, discardIndices, isP1);
 				List<CardData> eligible = new ArrayList<>();
@@ -8125,12 +8233,14 @@ final class AutoAbilityTriggers {
 								"S Cost — discard 1 " + specialCostDescription(source, isP1), true);
 						if (pick < 0) return false; // cancelled — nothing committed yet
 						sCostCard = eligible.get(pick);
+						sCostSlot = eligibleIdxs.get(pick);
 					} else {
 						// P2, or P1 holding a single candidate: the cheapest copy. P2's planner
 						// reserved a slot by that same rule and kept it out of the CP payment, so
 						// reading it the same way here is what makes the reservation hold — the slot
 						// itself never travels between them.
-						sCostCard = hand.get(cheapest(hand, eligibleIdxs));
+						sCostSlot = cheapest(hand, eligibleIdxs);
+						sCostCard = hand.get(sCostSlot);
 					}
 				}
 			}
@@ -8139,39 +8249,55 @@ final class AutoAbilityTriggers {
 		// Pre-select discard-cost cards before committing any payment.
 		// This lets the player cancel the discard dialog and back out of the entire activation.
 		// We exclude indices already committed to CP payment and the S-cost slot to prevent overlap.
+		// A payment that arrives with its picks already made (a remote player's) takes them as given;
+		// the CPU picks its own after the commit, below.
 		List<List<CardData>> discardCostPicks = Collections.emptyList();
-		if (isP1 && !ability.discardCosts().isEmpty()) {
+		List<List<Integer>>  discardCostSlots = List.of();
+		boolean picksGiven = !payment.discardCostPicks().isEmpty();
+		if ((isP1 || picksGiven) && !ability.discardCosts().isEmpty()) {
 			Set<Integer> reservedIdxs = new HashSet<>(discardIndices);
-			if (sCostCard != null) {
-				int sIdx = mw.playerHand(isP1).indexOf(sCostCard);
-				if (sIdx >= 0) reservedIdxs.add(sIdx);
-			}
+			if (sCostSlot >= 0) reservedIdxs.add(sCostSlot);
 			List<List<CardData>> picks = new ArrayList<>();
-			for (DiscardCost dc : ability.discardCosts()) {
+			List<List<Integer>>  slots = new ArrayList<>();
+			for (int d = 0; d < ability.discardCosts().size(); d++) {
+				DiscardCost dc = ability.discardCosts().get(d);
 				List<CardData> hand = mw.playerHand(isP1);
-				// The picker is offered every candidate — which Forward of three to spend is P1's
-				// call — but only opened when a completable selection exists, since the picker
-				// enforces "each of a different card type" by refusing clicks and would otherwise
-				// strand the player in a dialog they cannot satisfy.
-				List<Integer> eligibleIdx = discardCostCandidateIdxs(dc, hand, reservedIdxs);
-				if (discardCostPayerIdxs(dc, hand, reservedIdxs).size() < dc.count()) {
-					mw.logEntry("[P1] Not enough eligible cards for discard cost.");
-					return false;
+				List<Integer> pickedSlots;
+				if (picksGiven) {
+					pickedSlots = payment.discardCostPicks().get(d);
+				} else {
+					// The picker is offered every candidate — which Forward of three to spend is P1's
+					// call — but only opened when a completable selection exists, since the picker
+					// enforces "each of a different card type" by refusing clicks and would otherwise
+					// strand the player in a dialog they cannot satisfy.
+					List<Integer> eligibleIdx = discardCostCandidateIdxs(dc, hand, reservedIdxs);
+					if (discardCostPayerIdxs(dc, hand, reservedIdxs).size() < dc.count()) {
+						mw.logEntry("[P1] Not enough eligible cards for discard cost.");
+						return false;
+					}
+					List<CardData> eligible = new ArrayList<>();
+					for (int i : eligibleIdx) eligible.add(hand.get(i));
+					List<Integer> chosen = mw.showCardMultiImageChooser(eligible, "Discard Cost",
+							dc.count(), dc.eachDifferentType(), false);
+					if (chosen == null || chosen.size() != dc.count()) return false; // cancelled — nothing committed yet
+					pickedSlots = new ArrayList<>();
+					for (int p : chosen) pickedSlots.add(eligibleIdx.get(p));
 				}
-				List<CardData> eligible = new ArrayList<>();
-				for (int i : eligibleIdx) eligible.add(hand.get(i));
-				List<Integer> chosen = mw.showCardMultiImageChooser(eligible, "Discard Cost",
-						dc.count(), dc.eachDifferentType(), false);
-				if (chosen == null || chosen.size() != dc.count()) return false; // cancelled — nothing committed yet
 				List<CardData> pickedCards = new ArrayList<>();
-				for (int p : chosen) {
-					pickedCards.add(eligible.get(p));
-					reservedIdxs.add(eligibleIdx.get(p));
+				for (int slot : pickedSlots) {
+					pickedCards.add(hand.get(slot));
+					reservedIdxs.add(slot);
 				}
 				picks.add(pickedCards);
+				slots.add(pickedSlots);
 			}
 			discardCostPicks = picks;
+			discardCostSlots = slots;
 		}
+
+		// ── Commit point ── nothing above has been spent, and nothing below can be taken back.
+		onCommit.accept(payment.settled(
+				sCostFromCrystal ? AbilityPaymentDialog.S_COST_CRYSTAL : sCostSlot, discardCostSlots));
 
 		CardData[]  bkpCards  = mw.playerBackupCards(isP1);
 		CardState[] bkpStates = mw.playerBackupStates(isP1);
@@ -8282,13 +8408,13 @@ final class AutoAbilityTriggers {
 		}
 
 		// Discard costs — paid from hand, no CP generated.
-		// P1: apply cards pre-selected above (looked up by identity since CP discards may have shifted indices).
-		// P2: auto-select now.
+		// Picked before the commit: apply the cards settled above (looked up by identity since CP
+		// discards may have shifted indices). The CPU: auto-select now.
 		int dcPickIdx = 0;
 		for (DiscardCost dc : ability.discardCosts()) {
 			List<CardData> hand = mw.playerHand(isP1);
 			List<CardData> toDiscard;
-			if (isP1) {
+			if (!discardCostPicks.isEmpty()) {
 				toDiscard = discardCostPicks.get(dcPickIdx++);
 			} else {
 				// Payers rather than candidates: "each of a different card type" constrains the set,
@@ -8591,63 +8717,53 @@ final class AutoAbilityTriggers {
 				if (isP1) mw.refreshP1DeckLabel(); else mw.refreshP2DeckLabel();
 			}
 			case "HAND" -> {
-				int target = rfg.count();
-				for (int pick = 0; pick < target; pick++) {
-					List<Integer> eligible = eligibleRfgHandIndices(rfg, isP1);
-					if (eligible.isEmpty()) { mw.logEntry("No eligible hand card for remove-from-game cost."); break; }
-					List<CardData> hand = mw.playerHand(isP1);
-					if (eligible.size() == 1 && rfg.cardName() != null) {
-						// Named card — auto-select
-						CardData c = hand.get(eligible.get(0));
-						hand.remove((int) eligible.get(0));
-						removeCardAsCost(c, isP1);
-					} else {
-						String[] options = eligible.stream()
-								.map(i -> hand.get(i).name() + " (Cost: " + hand.get(i).cost() + ")")
-								.toArray(String[]::new);
-						String label = "Remove from game (hand)" + (target > 1 ? " (" + (pick + 1) + "/" + target + ")" : "");
-						String choice = (String) JOptionPane.showInputDialog(mw.frame,
-								"Choose a card to remove from game:", label,
-								JOptionPane.PLAIN_MESSAGE, null, options, options[0]);
-						if (choice == null) break;
-						int listIdx = java.util.Arrays.asList(options).indexOf(choice);
-						if (listIdx < 0) break;
-						int handIdx = eligible.get(listIdx);
-						CardData c = hand.get(handIdx);
-						hand.remove(handIdx);
-						removeCardAsCost(c, isP1);
-					}
-				}
+				List<Integer> eligible = eligibleRfgHandIndices(rfg, isP1);
+				List<CardData> hand = mw.playerHand(isP1);
+				if (eligible.isEmpty()) mw.logEntry("No eligible hand card for remove-from-game cost.");
+				List<Integer> slots = eligible.size() <= rfg.count() ? eligible
+						: mw.decide(PlayerChoice.by(isP1, ChoiceKind.HAND_CARDS)
+							.prompting("Waiting for your opponent to choose what to remove from the game...")
+							.locally(() -> {
+								List<CardData> pool = new ArrayList<>();
+								for (int i : eligible) pool.add(hand.get(i));
+								List<Integer> chosen = mw.showCardMultiImageChooser(pool,
+										"Remove from game (cost)", rfg.count(), false, true);
+								List<Integer> out = new ArrayList<>();
+								if (chosen != null) for (int p : chosen) out.add(eligible.get(p));
+								return out;
+							})
+							// The CPU spends its cheapest cards.
+							.byCpu(() -> eligible.stream()
+									.sorted(Comparator.comparingInt(i -> hand.get(i).cost()))
+									.limit(rfg.count()).toList())
+							.legalWhen(sel -> sel.size() <= rfg.count() && eligible.containsAll(sel)
+									&& new HashSet<>(sel).size() == sel.size(),
+									"only a matching card in hand can pay a remove-from-game cost"));
+				List<Integer> descending = new ArrayList<>(slots);
+				descending.sort(Collections.reverseOrder());
+				for (int handIdx : descending) removeCardAsCost(hand.remove(handIdx), isP1);
 				if (isP1) mw.refreshP1HandLabel(); else mw.refreshP2HandCountLabel();
 			}
 			case "BREAK_ZONE" -> {
 				List<CardData> bz = isP1 ? mw.gameState.getP1BreakZone() : mw.gameState.getP2BreakZone();
-				if (rfg.count() == -1) {
-					// Remove all matching cards
-					List<Integer> eligible = eligibleRfgBzIndices(rfg, isP1);
-					for (int i = eligible.size() - 1; i >= 0; i--) {
-						removeCardAsCost(bz.remove((int) eligible.get(i)), isP1);
-					}
+				List<Integer> eligible = eligibleRfgBzIndices(rfg, isP1);
+				List<Integer> slots;
+				if (rfg.count() == -1 || eligible.size() <= rfg.count()) {
+					// All matching cards, or no more than the cost takes: nothing to choose.
+					if (eligible.isEmpty()) mw.logEntry("No eligible Break Zone card for remove-from-game cost.");
+					slots = eligible;
 				} else {
-					for (int pick = 0; pick < rfg.count(); pick++) {
-						List<Integer> eligible = eligibleRfgBzIndices(rfg, isP1);
-						if (eligible.isEmpty()) { mw.logEntry("No eligible Break Zone card for remove-from-game cost."); break; }
-						if (eligible.size() == 1 && rfg.cardName() != null) {
-							removeCardAsCost(bz.remove((int) eligible.get(0)), isP1);
-						} else {
-							String[] options = eligible.stream().map(i -> bz.get(i).name()).toArray(String[]::new);
-							String label = "Remove from game (Break Zone)" + (rfg.count() > 1 ? " (" + (pick + 1) + "/" + rfg.count() + ")" : "");
-							String choice = (String) JOptionPane.showInputDialog(mw.frame,
-									"Choose a card to remove from game:", label,
-									JOptionPane.PLAIN_MESSAGE, null, options, options[0]);
-							if (choice == null) break;
-							int listIdx = java.util.Arrays.asList(options).indexOf(choice);
-							if (listIdx < 0) break;
-							int bzIdx = eligible.get(listIdx);
-							removeCardAsCost(bz.remove(bzIdx), isP1);
-						}
-					}
+					List<ForwardTarget> pool = new ArrayList<>();
+					for (int i : eligible) pool.add(new ForwardTarget(isP1, i, ForwardTarget.CardZone.BREAK_ZONE));
+					slots = mw.selectOwnBreakZoneTargets(isP1, pool, bz, rfg.count(),
+							"Remove from game (cost)",
+							"Waiting for your opponent to choose what to remove from the game...",
+							() -> new ArrayList<>(pool.subList(0, rfg.count())))
+						.stream().map(ForwardTarget::idx).toList();
 				}
+				List<Integer> descending = new ArrayList<>(slots);
+				descending.sort(Collections.reverseOrder());
+				for (int bzIdx : descending) removeCardAsCost(bz.remove(bzIdx), isP1);
 				// The payer's zone, not P1's: an ability P2 used from its own Break Zone left the
 				// card it had just removed still showing on top of that pile.
 				if (isP1) mw.refreshP1BreakLabel(); else mw.refreshP2BreakLabel();
@@ -8664,7 +8780,11 @@ final class AutoAbilityTriggers {
 					List<ForwardTarget> eligible = eligibleRfgFieldTargets(rfg, isP1);
 					if (eligible.isEmpty()) { mw.logEntry("No eligible field card for remove-from-game cost."); }
 					else {
-						List<ForwardTarget> picks = mw.showForwardSelectDialog(eligible, rfg.count(), false, "Remove from Game (field)");
+						List<ForwardTarget> picks = eligible.size() <= rfg.count() ? eligible
+								: mw.selectOwnFieldTargets(isP1, eligible, rfg.count(), false,
+										"Remove from Game (field)",
+										"Waiting for your opponent to choose what to remove from the game...",
+										() -> new ArrayList<>(eligible.subList(0, rfg.count())));
 						mw.applyTargetsHighestIndexFirst(picks, ctx::removeTargetFromGame);
 					}
 				}

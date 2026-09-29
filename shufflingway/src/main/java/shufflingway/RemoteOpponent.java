@@ -1,5 +1,6 @@
 package shufflingway;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumMap;
@@ -595,8 +596,13 @@ class RemoteOpponent implements OpponentController {
 
 	// ── Two-sided card choices ───────────────────────────────────────────
 
-	/** Answers that have arrived, keyed by kind and removed as they are consumed. */
-	private final Map<ChoiceKind, List<Integer>> deliveredChoices = new EnumMap<>(ChoiceKind.class);
+	/**
+	 * Answers that have arrived, queued by kind in arrival order and removed as they are consumed.
+	 * A queue rather than one slot because one effect can ask a kind more than once, and the sender
+	 * may answer the second before this client has taken the first: a later answer overwriting an
+	 * earlier one would silently drop it.
+	 */
+	private final Map<ChoiceKind, ArrayDeque<List<Integer>>> deliveredChoices = new EnumMap<>(ChoiceKind.class);
 	/** The kind {@link #awaitChoice} is parked on, and the dialog holding the EDT while it waits. */
 	private ChoiceKind awaitedChoiceKind;
 	private JDialog    awaitedChoiceDialog;
@@ -611,8 +617,14 @@ class RemoteOpponent implements OpponentController {
 			mw.reportDesync("opponent sent a choice of unknown kind \"" + raw + "\"");
 			return;
 		}
-		deliveredChoices.put(kind, indices(payload, "indices"));
+		deliveredChoices.computeIfAbsent(kind, k -> new ArrayDeque<>()).addLast(indices(payload, "indices"));
 		if (kind == awaitedChoiceKind && awaitedChoiceDialog != null) awaitedChoiceDialog.dispose();
+	}
+
+	/** The oldest undelivered answer of {@code kind}, removed, or {@code null} when none is queued. */
+	private List<Integer> takeDelivered(ChoiceKind kind) {
+		ArrayDeque<List<Integer>> queue = deliveredChoices.get(kind);
+		return queue == null ? null : queue.pollFirst();
 	}
 
 	/**
@@ -628,16 +640,17 @@ class RemoteOpponent implements OpponentController {
 	 * their own dialog closes.  {@link #deliveredChoices} is checked first for that reason; racing
 	 * the two would hang the client that lost.
 	 *
-	 * <p><b>Limitation.</b> Answers are keyed by kind alone, not by which decision they belong to.
-	 * The protocol is strictly one question at a time — each answer is removed as it is consumed,
-	 * and neither side sends until the other has — so a stale entry can only survive if one client
-	 * abandoned an effect the other completed.  That is already a reported desync by the time it
-	 * happens.  A sequence number would not help: the clients would have to agree on it, and the
-	 * case that breaks the keying is exactly the case that would break the counter.
+	 * <p><b>Limitation.</b> Answers are keyed by kind alone, not by which decision they belong to,
+	 * and taken oldest first. Both clients ask the same questions in the same order, so the head of
+	 * a kind's queue is always the answer to the question being asked; a stale entry can only
+	 * survive if one client abandoned an effect the other completed.  That is already a reported
+	 * desync by the time it happens.  A sequence number would not help: the clients would have to
+	 * agree on it, and the case that breaks the keying is exactly the case that would break the
+	 * counter.
 	 */
 	private List<Integer> awaitChoice(ChoiceKind kind, String prompt) {
 		if (cancelled) return List.of();
-		List<Integer> already = deliveredChoices.remove(kind);
+		List<Integer> already = takeDelivered(kind);
 		if (already != null) return already;
 		JDialog dialog = mw.buildWaitingForOpponentDialog(prompt);
 		awaitedChoiceKind   = kind;
@@ -645,7 +658,7 @@ class RemoteOpponent implements OpponentController {
 		dialog.setVisible(true);
 		awaitedChoiceKind   = null;
 		awaitedChoiceDialog = null;
-		List<Integer> answer = deliveredChoices.remove(kind);
+		List<Integer> answer = takeDelivered(kind);
 		return answer != null ? answer : List.of();
 	}
 
@@ -1060,8 +1073,9 @@ class RemoteOpponent implements OpponentController {
 	/**
 	 * Builds an ACTIVATE_ABILITY for an action ability the local player just used.
 	 *
-	 * <p>{@code at} locates the source on the sender's own field, so it crosses as a zone and a
-	 * slot with no side: what the sender holds, the receiver holds as their opponent's. The
+	 * <p>{@code at} locates the source as the sender sees it. It crosses as a zone and a slot plus
+	 * whether it sits on the sender's opponent's field — the "each player can use this ability"
+	 * case — since what the sender holds as their own, the receiver holds as their opponent's. The
 	 * ability travels as its position among the card's printed action abilities, which both
 	 * clients parse from the same text rather than exchanging.
 	 */
@@ -1072,9 +1086,12 @@ class RemoteOpponent implements OpponentController {
 			bzTargets.put(new JSONObject().put("idx", t.idx()).put("zone", t.zone().name()));
 		JSONObject breaks = new JSONObject();
 		payment.backupBreaks().forEach((slot, element) -> breaks.put(String.valueOf(slot), element));
+		JSONArray discardCosts = new JSONArray();
+		for (List<Integer> pick : payment.discardCostPicks()) discardCosts.put(new JSONArray(pick));
 		return GameAction.of(ActionType.ACTIVATE_ABILITY, new JSONObject()
 				.put("zone", at.zone().name())
 				.put("idx", at.idx())
+				.put("opponentsCard", !at.isP1())
 				.put("card", source.name())
 				.put("ability", abilityIdx)
 				.put("discards", new JSONArray(payment.discards()))
@@ -1082,7 +1099,9 @@ class RemoteOpponent implements OpponentController {
 				.put("bzTargets", bzTargets)
 				.put("x", payment.xValue())
 				.put("sCost", payment.sCostHandIdx())
-				.put("backupBreaks", breaks));
+				.put("backupBreaks", breaks)
+				.put("discardCosts", discardCosts)
+				.put("counterWaiver", payment.counterWaiver()));
 	}
 
 	/**
@@ -1100,11 +1119,13 @@ class RemoteOpponent implements OpponentController {
 			return;
 		}
 		int idx = payload.optInt("idx", -1);
-		CardData source = mw.fieldCardAt(false, zone, idx);
+		// Their opponent's card is this player's own.
+		boolean sourceIsP1 = payload.optBoolean("opponentsCard", false);
+		CardData source = mw.fieldCardAt(sourceIsP1, zone, idx);
 		String expected = payload.optString("card", "");
 		if (source == null || !source.name().equals(expected)) {
-			mw.reportDesync("opponent used an ability of \"" + expected + "\" in their " + zone
-					+ " slot " + idx + ", which holds "
+			mw.reportDesync("opponent used an ability of \"" + expected + "\" in "
+					+ (sourceIsP1 ? "your " : "their ") + zone + " slot " + idx + ", which holds "
 					+ (source == null ? "nothing" : "\"" + source.name() + "\"") + " here");
 			return;
 		}
@@ -1131,9 +1152,21 @@ class RemoteOpponent implements OpponentController {
 			for (String key : rawBreaks.keySet())
 				breaks.put(Integer.valueOf(key), rawBreaks.getString(key));
 
+		List<List<Integer>> discardCosts = new ArrayList<>();
+		JSONArray rawDiscardCosts = payload.optJSONArray("discardCosts");
+		if (rawDiscardCosts != null)
+			for (int i = 0; i < rawDiscardCosts.length(); i++) {
+				JSONArray pick = rawDiscardCosts.getJSONArray(i);
+				List<Integer> slots = new ArrayList<>(pick.length());
+				for (int j = 0; j < pick.length(); j++) slots.add(pick.getInt(j));
+				discardCosts.add(slots);
+			}
+
 		mw.autoAbilityTriggers.executeRemoteAbilityActivation(abilities.get(abilityIdx), source,
+				new ForwardTarget(sourceIsP1, idx, zone),
 				new AbilityPayment(indices(payload, "discards"), indices(payload, "backups"),
-						bzTargets, payload.optInt("x", 0), payload.optInt("sCost", -1), breaks));
+						bzTargets, payload.optInt("x", 0), payload.optInt("sCost", -1), breaks,
+						discardCosts, payload.optBoolean("counterWaiver", false)));
 	}
 
 	/**

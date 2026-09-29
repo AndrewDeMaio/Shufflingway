@@ -15,10 +15,13 @@ package shufflingway.net;
  * sender's own side is the receiver's opponent. Field codes are therefore always written from the
  * sender's point of view and flipped on arrival.
  *
- * <p><b>One question at a time.</b> A kind is identity enough only because neither client sends a
- * second question before the first is answered. Two questions of the same kind travelling in the
- * same direction within one effect would be indistinguishable, so an effect that needs that has to
- * introduce a kind for the second.
+ * <p><b>One sequence of questions.</b> A kind is identity enough only because both clients ask the
+ * same questions in the same order. Answers of one kind are queued as they land and consumed
+ * oldest first, so an effect may ask the same kind several times over — an activation's payment
+ * asks {@link #OWN_FIELD_CARD} once per cost that dulls or removes something — provided each
+ * client asks them in the same order. What the queue cannot tell apart is two questions of one
+ * kind asked in a different order on the two clients, and an answer sent for a question the other
+ * client never asks at all, which sits at the head of the queue for the next one.
  */
 public enum ChoiceKind {
 
@@ -31,6 +34,16 @@ public enum ChoiceKind {
 	 * was chosen out of.
 	 */
 	SELECT_REVEALED,
+
+	/**
+	 * Cards the sender took out of their own hand to pay for something — the cards an action
+	 * ability's "remove N cards in your hand from the game" cost takes. Indices into that hand,
+	 * which both clients hold in the same order, so nothing flips.
+	 *
+	 * <p>Not {@link #REVEAL_HAND}, whose cards stay in hand: the two are legal under different
+	 * rules, and a payment can reveal and remove in the same activation.
+	 */
+	HAND_CARDS,
 
 	/**
 	 * A card the sender picked from their own field: "each player selects 1 Forward", and the
@@ -91,8 +104,8 @@ public enum ChoiceKind {
 	 * {@code [1]} for triggered, {@code [0]} for declined.
 	 *
 	 * <p>Separate from {@link #MAY} only to keep them apart on the wire. One reveal can offer an
-	 * optional effect and then turn up an EX Burst, which would put two questions of one kind in
-	 * flight in the same direction — the one case the rule above does not cover.
+	 * optional effect and then turn up an EX Burst, and two clients that disagreed about whether
+	 * the reveal offered anything would otherwise read one answer as the other.
 	 */
 	EX_BURST,
 
@@ -107,6 +120,9 @@ public enum ChoiceKind {
 	 * Which of a handful of options written into the card text the sender picked, as a position in
 	 * that list. The list is built from the ability's own words, so both clients have it in hand
 	 * before the question is asked and neither has to be sent it.
+	 *
+	 * <p>Also a list read off a board both clients hold: the amounts a variable "remove X
+	 * counters" cost can usefully be paid with (Lenna 12-109L), built from the payer's Break Zone.
 	 */
 	OPTION,
 

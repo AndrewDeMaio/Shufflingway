@@ -11306,7 +11306,9 @@ public class MainWindow {
 	 */
 	void sendAbilityActivation(ActionAbility ability, CardData source, AbilityPayment payment) {
 		if (!(opponent instanceof RemoteOpponent)) return;
+		// Their card when it is not this player's: an "each player can use this ability" ability.
 		ForwardTarget at = findFieldTarget(source, true);
+		if (at == null) at = findFieldTarget(source, false);
 		int abilityIdx = source.actionAbilities().indexOf(ability);
 		if (at == null || abilityIdx < 0) {
 			reportDesync("\"" + source.name() + "\" used an ability this build cannot describe to "
@@ -11315,6 +11317,39 @@ public class MainWindow {
 			return;
 		}
 		sendToOpponent(RemoteOpponent.activateAbilityAction(source, at, abilityIdx, payment));
+	}
+
+	/**
+	 * Dulls the field card at {@code at} to pay its own ability's 《Dull》 cost: what a field card's
+	 * ability menu hands the payment, and what an opponent's activation is replayed with.
+	 *
+	 * <p>One method for both because the far client has to dull the source exactly as the
+	 * activator's did. A Forward that becomes dull this way owes its becomes-dull triggers, and it
+	 * has to owe them on both boards or on neither.
+	 */
+	Runnable abilityCostDull(ForwardTarget at) {
+		int idx = at.idx();
+		boolean p1 = at.isP1();
+		return switch (at.zone()) {
+			case FORWARD -> () -> {
+				List<CardState> states = p1 ? p1ForwardStates : p2ForwardStates;
+				CardState before = states.get(idx);
+				states.set(idx, CardState.DULL);
+				if (p1) animateDullForward(idx, null); else refreshP2ForwardSlot(idx);
+				if (before == CardState.ACTIVE)
+					autoAbilityTriggers.triggerAutoAbilitiesForBecomesDull(
+							(p1 ? p1ForwardCards : p2ForwardCards).get(idx), p1);
+			};
+			case BACKUP -> () -> {
+				if (p1) { p1BackupStates[idx] = CardState.DULL; animateDullBackup(idx, true); }
+				else    { p2BackupStates[idx] = CardState.DULL; animateDullP2Backup(idx, true); }
+			};
+			case MONSTER -> () -> {
+				if (p1) { p1MonsterStates.set(idx, CardState.DULL); refreshP1MonsterSlot(idx); }
+				else    { p2MonsterStates.set(idx, CardState.DULL); refreshP2MonsterSlot(idx); }
+			};
+			case BREAK_ZONE -> () -> {};
+		};
 	}
 
 	/**
@@ -17692,7 +17727,7 @@ public class MainWindow {
 		CardData card = p1BackupCards[idx];
 		if (card != null) {
 			autoAbilityTriggers.addAbilityMenuItems(menu, card, p1BackupFrozen[idx], p1BackupStates[idx], p1BackupPlayedOnTurn[idx],
-					() -> { p1BackupStates[idx] = CardState.DULL; animateDullBackup(idx, true); }, true);
+					abilityCostDull(new ForwardTarget(true, idx, ForwardTarget.CardZone.BACKUP)), true);
 		}
 
 		if (menu.getComponentCount() > 0) menu.show(slot, e.getX(), e.getY());
@@ -18167,7 +18202,7 @@ public class MainWindow {
 		// Action abilities
 		autoAbilityTriggers.addAbilityMenuItems(menu, p1MonsterCards.get(idx), p1MonsterFrozen.get(idx),
 				p1MonsterStates.get(idx), p1MonsterPlayedOnTurn.get(idx),
-				() -> { p1MonsterStates.set(idx, CardState.DULL); refreshP1MonsterSlot(idx); }, true);
+				abilityCostDull(new ForwardTarget(true, idx, ForwardTarget.CardZone.MONSTER)), true);
 
 
 
@@ -20939,13 +20974,7 @@ public class MainWindow {
 				? p1ForwardPrimedTop.get(idx) : p1ForwardCards.get(idx);
 		autoAbilityTriggers.addAbilityMenuItems(menu, effectiveFwd, p1ForwardFrozen.get(idx),
 				p1ForwardStates.get(idx), p1ForwardPlayedOnTurn.get(idx),
-				() -> {
-					CardState p1AACostBefore = p1ForwardStates.get(idx);
-					p1ForwardStates.set(idx, CardState.DULL);
-					animateDullForward(idx, null);
-					if (p1AACostBefore == CardState.ACTIVE)
-						autoAbilityTriggers.triggerAutoAbilitiesForBecomesDull(p1ForwardCards.get(idx), true);
-				}, true);
+				abilityCostDull(new ForwardTarget(true, idx, ForwardTarget.CardZone.FORWARD)), true);
 
 		// Prime — visible only when not yet primed
 		CardData fwd = p1ForwardCards.get(idx);
@@ -20965,7 +20994,7 @@ public class MainWindow {
 		CardData card = p2BackupCards[idx];
 		if (card != null) {
 			autoAbilityTriggers.addAbilityMenuItems(menu, card, p2BackupFrozen[idx], p2BackupStates[idx], 0,
-					() -> { p2BackupStates[idx] = CardState.DULL; animateDullP2Backup(idx, true); }, false);
+					abilityCostDull(new ForwardTarget(false, idx, ForwardTarget.CardZone.BACKUP)), false);
 		}
 		if (menu.getComponentCount() > 0) menu.show(slot, e.getX(), e.getY());
 	}
@@ -20975,7 +21004,7 @@ public class MainWindow {
 		JPopupMenu menu = new JPopupMenu();
 		autoAbilityTriggers.addAbilityMenuItems(menu, p2MonsterCards.get(idx), p2MonsterFrozen.get(idx),
 				p2MonsterStates.get(idx), p2MonsterPlayedOnTurn.get(idx),
-				() -> { p2MonsterStates.set(idx, CardState.DULL); refreshP2MonsterSlot(idx); }, false);
+				abilityCostDull(new ForwardTarget(false, idx, ForwardTarget.CardZone.MONSTER)), false);
 		if (menu.getComponentCount() > 0) menu.show(slot, e.getX(), e.getY());
 	}
 
@@ -20986,13 +21015,7 @@ public class MainWindow {
 		CardData effectiveFwd = p2ForwardPrimedTop.get(idx) != null ? p2ForwardPrimedTop.get(idx) : fwd;
 		autoAbilityTriggers.addAbilityMenuItems(menu, effectiveFwd, p2ForwardFrozen.get(idx),
 				p2ForwardStates.get(idx), p2ForwardPlayedOnTurn.get(idx),
-				() -> {
-					CardState p2AACostBefore = p2ForwardStates.get(idx);
-					p2ForwardStates.set(idx, CardState.DULL);
-					refreshP2ForwardSlot(idx);
-					if (p2AACostBefore == CardState.ACTIVE)
-						autoAbilityTriggers.triggerAutoAbilitiesForBecomesDull(p2ForwardCards.get(idx), false);
-				}, false);
+				abilityCostDull(new ForwardTarget(false, idx, ForwardTarget.CardZone.FORWARD)), false);
 
 		if (menu.getComponentCount() > 0) menu.show(slot, e.getX(), e.getY());
 	}
