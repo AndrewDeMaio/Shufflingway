@@ -30,6 +30,25 @@ final class TestCards {
 				job, null, null, "");
 	}
 
+	/** A 3-cost, 7000-power card of {@code type} carrying a single {@code job}. */
+	static CardData makeJobCard(String name, String element, String type, String job) {
+		return new CardData(null, name, element, 3, 7000, type, false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				job, null, null, "");
+	}
+
+	/** A 3-cost, 7000-power Forward with an element and a category (no job). */
+	static CardData makeCategoryForward(String name, String element, String category) {
+		return new CardData(null, name, element, 3, 7000, "Forward", false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+				List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				null, category, null, "");
+	}
+
 	static CardData makeMonster(String name, String element, int cost) {
 		return new CardData(null, name, element, cost, 0, "Monster", false, 0, false, false,
 				Set.of(), 0, List.of(), null, List.of(),
@@ -71,6 +90,17 @@ final class TestCards {
 	static void placeP2Backup(MainWindow mw, CardData card) {
 		mw.gameState.getIdentity().put(card, false);
 		placeBackup(mw.p2BackupCards, mw.p2BackupStates, card);
+	}
+
+	/** Seats {@code card} active in {@code isP1}'s first empty Backup slot, with its owner recorded. */
+	static void placeBackup(MainWindow mw, CardData card, boolean isP1) {
+		if (isP1) placeP1Backup(mw, card);
+		else      placeP2Backup(mw, card);
+	}
+
+	/** A Forward-row target on {@code isP1}'s side at slot {@code idx}. */
+	static ForwardTarget fwd(boolean isP1, int idx) {
+		return new ForwardTarget(isP1, idx, ForwardTarget.CardZone.FORWARD);
 	}
 
 	private static void placeBackup(CardData[] slots, CardState[] states, CardData card) {
