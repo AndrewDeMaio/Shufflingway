@@ -21,6 +21,7 @@ import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
+import java.awt.image.BufferedImage;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
@@ -97,6 +98,8 @@ public class DeckManager extends JFrame {
     private final DefaultTableModel browserModel;
     private TableRowSorter<DefaultTableModel> browserSorter;
     private JTable cardTable;
+    private CardBinderView.Switchable browserViews;
+    private CardBinderView binderView;
 
     // Deck contents (bottom-center)
     private final DefaultTableModel deckModel;
@@ -207,6 +210,10 @@ public class DeckManager extends JFrame {
         add(buildCenterSplit(),   BorderLayout.CENTER);
         add(imagePanel,           BorderLayout.EAST);
 
+        // Trim the default width to whole binder columns, so no strip is left beside the last card.
+        browserViews.fitWindowToColumns(this, browserViews.columnsThatFit(this));
+        setLocationRelativeTo(parent);
+
         // Open DB and load data
         try {
             db = new DeckDatabase();
@@ -228,6 +235,10 @@ public class DeckManager extends JFrame {
         addWindowListener(new WindowAdapter() {
             @Override public void windowClosing(WindowEvent e) {
                 if (db != null) try { db.close(); } catch (SQLException ignored) {}
+            }
+            // Escape closes through dispose(), which skips windowClosing.
+            @Override public void windowClosed(WindowEvent e) {
+                binderView.shutdown();
             }
         });
     }
@@ -433,10 +444,24 @@ public class DeckManager extends JFrame {
         searchPanel.add(addBtn);
         searchPanel.add(addMaxBtn);
 
+        // Binder view: the same rows as a grid of cards, sharing the table's selection so the
+        // preview and the Add buttons work unchanged.
+        CardBinderView.Switchable views = CardBinderView.around(cardTable, 0, 1, 3);
+        browserViews = views;
+        binderView = views.binder();
+        binderView.addMouseListener(new MouseAdapter() {
+            @Override public void mouseClicked(MouseEvent e) {
+                int i = binderView.locationToIndex(e.getPoint());
+                if (e.getClickCount() == 2 && i >= 0
+                        && binderView.getCellBounds(i, i).contains(e.getPoint()))
+                    addSelectedCard();
+            }
+        });
+
         JPanel panel = new JPanel(new BorderLayout());
         panel.setBorder(BorderFactory.createTitledBorder("Card Browser"));
-        panel.add(searchPanel,                BorderLayout.NORTH);
-        panel.add(new JScrollPane(cardTable), BorderLayout.CENTER);
+        panel.add(views.barWithToggle(searchPanel), BorderLayout.NORTH);
+        panel.add(views.content(),                  BorderLayout.CENTER);
         return panel;
     }
 
@@ -1558,13 +1583,16 @@ public class DeckManager extends JFrame {
     // Card image preview
     // -------------------------------------------------------------------------
 
+    /** A loaded preview: the full-size icon, where it came from and a binder-size copy. */
+    private record Preview(ImageIcon icon, String url, BufferedImage thumb) {}
+
     private void loadCardImageAsync(String serial) {
         cardImageLabel.setIcon(null);
         cardImageLabel.setText("Loading…");
 
-        new SwingWorker<ImageIcon, Void>() {
+        new SwingWorker<Preview, Void>() {
             @Override
-            protected ImageIcon doInBackground() throws Exception {
+            protected Preview doInBackground() throws Exception {
                 try (java.sql.Connection conn = DriverManager.getConnection(scraper.AppPaths.dbUrl());
                      PreparedStatement ps = conn.prepareStatement(
                              "SELECT image_url FROM cards WHERE serial = ?")) {
@@ -1575,7 +1603,9 @@ public class DeckManager extends JFrame {
                             if (url != null && !url.isBlank()) {
                                 Image img = ImageCache.load(url);
                                 if (img != null)
-                                    return new ImageIcon(img.getScaledInstance(PREVIEW_W, PREVIEW_H, Image.SCALE_SMOOTH));
+                                    return new Preview(
+                                            new ImageIcon(img.getScaledInstance(PREVIEW_W, PREVIEW_H, Image.SCALE_SMOOTH)),
+                                            url, CardBinderView.thumbnail(img));
                             }
                         }
                     }
@@ -1586,10 +1616,12 @@ public class DeckManager extends JFrame {
             @Override
             protected void done() {
                 try {
-                    ImageIcon icon = get();
-                    if (icon != null) {
-                        cardImageLabel.setIcon(icon);
+                    Preview preview = get();
+                    if (preview != null) {
+                        cardImageLabel.setIcon(preview.icon());
                         cardImageLabel.setText(null);
+                        // The preview may have just downloaded this card; show it in the binder too.
+                        binderView.imageLoaded(serial, preview.url(), preview.thumb());
                     } else {
                         cardImageLabel.setIcon(null);
                         cardImageLabel.setText("No image available");

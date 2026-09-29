@@ -69,9 +69,20 @@ public final class ImageCache {
             }
         }
 
-        if (bytes == null) return null;
-        if (isWebP(bytes)) return WebPCodec.decodeImage(bytes);
-        return ImageIO.read(new ByteArrayInputStream(bytes));
+        return bytes == null ? null : decode(bytes);
+    }
+
+    /**
+     * Like {@link #load} but never touches the network: returns {@code null} when no image is
+     * stored for {@code url}. Bytes read from the DB here are not kept in the memory layer, so a
+     * view that sweeps thousands of cards (the Deck Manager's binder) does not pin them all for
+     * the session.
+     */
+    public static Image loadStored(String url) throws IOException {
+        if (url == null) return null;
+        byte[] bytes = mem.get(url);
+        if (bytes == null) bytes = fetchFromDb(url);
+        return bytes == null ? null : decode(bytes);
     }
 
     /** Closes the backing DB connection.  Safe to call even if never opened. */
@@ -123,6 +134,11 @@ public final class ImageCache {
         BufferedImage img = ImageIO.read(new ByteArrayInputStream(raw));
         if (img == null) return raw;
         return WebPCodec.encodeImage(img, WEBP_QUALITY);
+    }
+
+    private static Image decode(byte[] bytes) throws IOException {
+        if (isWebP(bytes)) return WebPCodec.decodeImage(bytes);
+        return ImageIO.read(new ByteArrayInputStream(bytes));
     }
 
     private static boolean isWebP(byte[] b) {

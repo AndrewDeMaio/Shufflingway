@@ -6,6 +6,9 @@ import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Image;
 import java.awt.event.KeyEvent;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
+import java.awt.image.BufferedImage;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
@@ -28,7 +31,6 @@ import javax.swing.JLabel;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JProgressBar;
-import javax.swing.JScrollPane;
 import javax.swing.JTable;
 import javax.swing.JTextField;
 import javax.swing.KeyStroke;
@@ -77,6 +79,10 @@ public class CardBrowser extends JDialog {
     private final JLabel countLabel;
     private TableRowSorter<DefaultTableModel> sorter;
     private final Set<String> lbSerials = new HashSet<>();
+    private final CardBinderView binderView;
+
+    /** A loaded preview: the full-size icon, where it came from and a binder-size copy. */
+    private record Preview(ImageIcon icon, String url, BufferedImage thumb) {}
 
     public CardBrowser(JFrame parent) {
         super(parent, "Card Browser", true);
@@ -232,15 +238,26 @@ public class CardBrowser extends JDialog {
         JPanel southPanel = new JPanel(new BorderLayout());
         southPanel.add(countLabel, BorderLayout.EAST);
 
-        add(searchPanel, BorderLayout.NORTH);
-        add(new JScrollPane(cardTable), BorderLayout.CENTER);
+        // List / binder views of the same rows, sharing the table's selection and so its preview.
+        CardBinderView.Switchable views = CardBinderView.around(cardTable, 0, 1, 3);
+        binderView = views.binder();
+
+        add(views.barWithToggle(searchPanel), BorderLayout.NORTH);
+        add(views.content(), BorderLayout.CENTER);
         add(imagePanel, BorderLayout.EAST);
         add(southPanel, BorderLayout.SOUTH);
+        views.fitWindowToColumns(this, 6);
+        setLocationRelativeTo(parent);
 
         getRootPane().registerKeyboardAction(
                 e -> dispose(),
                 KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0),
                 JComponent.WHEN_IN_FOCUSED_WINDOW);
+        addWindowListener(new WindowAdapter() {
+            @Override public void windowClosed(WindowEvent e) {
+                binderView.shutdown();
+            }
+        });
 
         SwingWorker<Boolean, Void> initWorker = new SwingWorker<Boolean, Void>() {
             @Override
@@ -356,9 +373,9 @@ public class CardBrowser extends JDialog {
         cardImageLabel.setIcon(null);
         cardImageLabel.setText("Loading…");
 
-        new SwingWorker<ImageIcon, Void>() {
+        new SwingWorker<Preview, Void>() {
             @Override
-            protected ImageIcon doInBackground() throws Exception {
+            protected Preview doInBackground() throws Exception {
                 try (Connection conn = DriverManager.getConnection(DB_URL);
                      PreparedStatement ps = conn.prepareStatement(
                              "SELECT image_url FROM cards WHERE serial = ?")) {
@@ -369,8 +386,9 @@ public class CardBrowser extends JDialog {
                             if (url != null && !url.isBlank()) {
                                 Image img = ImageCache.load(url);
                                 if (img != null) {
-                                    return new ImageIcon(
-                                            img.getScaledInstance(PREVIEW_W, PREVIEW_H, Image.SCALE_SMOOTH));
+                                    return new Preview(new ImageIcon(
+                                            img.getScaledInstance(PREVIEW_W, PREVIEW_H, Image.SCALE_SMOOTH)),
+                                            url, CardBinderView.thumbnail(img));
                                 }
                             }
                         }
@@ -382,10 +400,12 @@ public class CardBrowser extends JDialog {
             @Override
             protected void done() {
                 try {
-                    ImageIcon icon = get();
-                    if (icon != null) {
-                        cardImageLabel.setIcon(icon);
+                    Preview preview = get();
+                    if (preview != null) {
+                        cardImageLabel.setIcon(preview.icon());
                         cardImageLabel.setText(null);
+                        // The preview may have just downloaded this card; show it in the binder too.
+                        binderView.imageLoaded(serial, preview.url(), preview.thumb());
                     } else {
                         cardImageLabel.setIcon(null);
                         cardImageLabel.setText("No image available");
