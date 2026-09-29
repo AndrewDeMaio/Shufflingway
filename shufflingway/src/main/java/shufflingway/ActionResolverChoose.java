@@ -7,10 +7,12 @@ import static shufflingway.ActionResolver.*;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.function.BiConsumer;
+import java.util.function.BiFunction;
 import java.util.function.BiPredicate;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -1645,6 +1647,197 @@ final class ActionResolverChoose {
     }
 
     /**
+     * A secondary sentence about the chosen card that nothing else reads — 24-073H Valigarmanda's
+     * "Deal it 9000 damage.", 14-070C Ba'Gamnan's "It gains "If possible, this Forward must block."
+     * …" — sent back through the chain under the same header, with the cards already chosen
+     * preloaded. On its own "it" means nothing; as a followup it is the choice, and every branch
+     * the chain has for a single sentence can read it.
+     *
+     * <p>Only a sentence that opens on the chosen card ({@link ActionResolverPatterns#SECONDARY_OPENS_ON_CHOSEN})
+     * and finds no card of its own outside a quotation: "Search for 1 Summon and add it to your hand"
+     * would otherwise add the chosen Forward.
+     *
+     * <p>Null unless the chain reads the sentence: an {@link UnreadFollowup} is declined, so the
+     * secondary stays a logged gap rather than becoming a second, silent one.
+     */
+    static Consumer<GameContext> secondaryOnChosen(String header, String secondaryText, CardData source, int xValue) {
+        String s = secondaryText.trim();
+        // An odd quote count is a split through a quotation — 22-122L Tidus's option menu, whose
+        // "Put it on top of its owner's deck." belongs to a Backup chosen by another option.
+        if (s.isEmpty() || !SECONDARY_OPENS_ON_CHOSEN.matcher(s).lookingAt()
+                || s.chars().filter(ch -> ch == '"').count() % 2 != 0
+                || SENTENCE_FINDS_A_CARD.matcher(s.replaceAll("\"[^\"]*\"", "")).find()) return null;
+        String sentence = Character.toUpperCase(s.charAt(0)) + s.substring(1) + (s.matches("(?s).*[.!\"]") ? "" : ".");
+        Consumer<GameContext> onChosen = tryParseChooseCharacterInner(header + sentence, source, xValue);
+        if (onChosen == null || onChosen instanceof UnreadFollowup) return null;
+        return ctx -> {
+            ctx.preloadTargets(ctx.lastChosenTargets());
+            onChosen.accept(ctx);
+        };
+    }
+
+    /**
+     * "Search for N &lt;type&gt; with the same name and add it to your hand | put it onto the
+     * field." after a remove-from-game primary — the name of the card the removal took
+     * ({@code removed}, filled by that branch as it resolves). Null for any other secondary,
+     * including the "of the same Element" form, which nothing here needs.
+     */
+    static Consumer<GameContext> searchSameNameAsRemoved(String secondaryText, List<CardData> removed) {
+        Matcher m = FOLLOWUP_SEARCH_MATCHING_CHOSEN.matcher(secondaryText.trim().replaceAll("[.!]$", ""));
+        if (!m.matches() || m.group("samename") == null
+                || m.group("job") != null || m.group("category") != null) return null;
+        int count = Integer.parseInt(m.group("count"));
+        String type = m.group("searchtype") != null ? m.group("searchtype").toLowerCase(Locale.ROOT) : "";
+        boolean anyType = type.isEmpty() || type.startsWith("card");
+        boolean fwd = anyType || type.startsWith("forward") || type.startsWith("character");
+        boolean bkp = anyType || type.startsWith("backup")  || type.startsWith("character");
+        boolean mon = anyType || type.startsWith("monster") || type.startsWith("character");
+        boolean sum = anyType || type.startsWith("summon");
+        String destination = m.group("destination").toLowerCase(Locale.ROOT).contains("hand") ? "hand" : "field";
+        return ctx -> {
+            if (removed.isEmpty()) {
+                ctx.logEntry("Nothing was removed — no search takes place");
+                return;
+            }
+            String name = removed.get(0).name();
+            ctx.logEntry("Effect: search for " + count + " named " + name + " → " + destination);
+            ctx.searchDeckForCard(fwd, bkp, mon, sum, -1, null, name, null, null, null, null, null,
+                    destination, count, false, null);
+        };
+    }
+
+    /**
+     * The count behind "N multiplied by each &lt;what&gt;" — "Forward of cost 3 or less you control"
+     * (15-012H Faris), "card in your Break Zone" (29-103H Setzer) — or null for any other wording.
+     */
+    static ToIntFunction<GameContext> multipliedDamageCount(String what) {
+        Matcher m = MULTIPLIED_BY_EACH_OWN_FORWARD_COST.matcher(what.trim());
+        if (m.matches()) {
+            int n = Integer.parseInt(m.group("cost"));
+            boolean less = m.group("cmp").equalsIgnoreCase("less");
+            return ctx -> {
+                int count = 0;
+                // The field count takes an exact cost; "or less | or more" is the sum over the range.
+                for (int c = less ? 0 : n; c <= (less ? n : 20); c++)
+                    count += ctx.countSelfFieldCards(true, false, false, null, null, null, null, c);
+                return count;
+            };
+        }
+        if (what.trim().matches("(?i)card\\s+in\\s+your\\s+Break\\s+Zone"))
+            return ctx -> ctx.countSelfBreakZoneCards(null, null);
+        return null;
+    }
+
+    /**
+     * "[Until the end of the turn, ]it gains "&lt;A&gt;" and "&lt;B&gt;"[ until the end of the turn]."
+     * anywhere in a choose followup, as one sentence per grant — so each reaches the branch that
+     * reads it. 22-057R Carbuncle and 27-124S Cloud: the cannot-be-broken arm find()'d the first
+     * quotation and the second was dropped. 21-072H Tulien's pair is left whole for
+     * {@link #isMustAttackAndMustBlockGrant}, which reads it that way; a pair with no turn scope
+     * (22-034H Medusa's permanent one) is left alone.
+     */
+    static String splitTwoQuotedGrants(String followup) {
+        if (isMustAttackAndMustBlockGrant(followup)) return followup;
+        Matcher g = TWO_QUOTED_GRANTS_SENTENCE.matcher(followup);
+        StringBuilder out = new StringBuilder();
+        boolean changed = false;
+        while (g.find()) {
+            if ((g.group("lead") == null) == (g.group("trail") == null)) continue;
+            // Both clauses must be about the card receiving them. One naming a third party
+            // ("Tulien must attack …") is a different effect, declined whole rather than half-read.
+            if (!GRANT_ABOUT_ITS_CARRIER.matcher(g.group("a")).find()
+                    || !GRANT_ABOUT_ITS_CARRIER.matcher(g.group("b")).find()) continue;
+            String subject = g.group("subject");
+            subject = Character.toUpperCase(subject.charAt(0)) + subject.substring(1);
+            g.appendReplacement(out, Matcher.quoteReplacement(
+                    subject + " \"" + g.group("a") + "\" until the end of the turn. "
+                    + subject + " \"" + g.group("b") + "\" until the end of the turn."));
+            changed = true;
+        }
+        if (!changed) return followup;
+        g.appendTail(out);
+        return out.toString();
+    }
+
+    /**
+     * "[Until the end of the turn, ]it gains +N power and "&lt;grant&gt;"." as the two sentences it
+     * is — "It gains +N power until the end of the turn. It gains "&lt;grant&gt;" until the end of
+     * the turn." — so the boost reads as the primary and the grant as a secondary on the same card.
+     * Read whole, the power branches find() the front and the grant was dropped: 13-050R Mid,
+     * 20-109H Cecil, 14-029R Shivalry, 18-020C Quistis, 23-041C Jornee, 23-083H Queen. Any other
+     * followup comes back unchanged.
+     */
+    static String splitPowerAndQuotedGrant(String followup) {
+        Matcher g = FOLLOWUP_GAINS_POWER_AND_QUOTED_UNTIL_EOT.matcher(followup.trim());
+        if (!g.matches() || (g.group("lead") == null) == (g.group("trail") == null)) return followup;
+        String subject = g.group("subject");
+        subject = Character.toUpperCase(subject.charAt(0)) + subject.substring(1);
+        return subject + " +" + g.group("amount") + " power" + g.group("traits") + " until the end of the turn. "
+                + subject + " " + g.group("quoted") + " until the end of the turn." + g.group("rest");
+    }
+
+    /**
+     * A followup made only of "If its cost is N or less|more, &lt;action&gt;." sentences, as one
+     * (test, action) pair per sentence in printed order, or null when any sentence is not that
+     * shape or its action is not one {@code parseTargetAction} reads whole. 29-037C MAI.
+     */
+    static List<Map.Entry<Predicate<CardData>, BiConsumer<GameContext, List<ForwardTarget>>>>
+            costGatedBranches(String followup, int xValue) {
+        String[] sentences = followup.trim().split("(?<=[.!])\\s+");
+        if (sentences.length < 1) return null;
+        List<Map.Entry<Predicate<CardData>, BiConsumer<GameContext, List<ForwardTarget>>>> out = new ArrayList<>();
+        for (String s : sentences) {
+            Matcher m = CHOSEN_COST_GATED_SENTENCE.matcher(s.trim());
+            if (!m.matches()) return null;
+            String action = m.group("action").trim();
+            if (JOINS_SECOND_ACTION.matcher(action).find()) return null;
+            BiConsumer<GameContext, List<ForwardTarget>> act = parseTargetAction(action, xValue);
+            if (act == null) return null;
+            int n = Integer.parseInt(m.group("n"));
+            boolean less = m.group("cmp").equalsIgnoreCase("less");
+            out.add(Map.entry(c -> less ? c.cost() <= n : c.cost() >= n, act));
+        }
+        return out;
+    }
+
+    /**
+     * The card a "you may put 1 &lt;what&gt; …" price names, as a test of the controller's own field
+     * cards built at resolution (Delita's "of the same cost" reads the card just chosen), or null
+     * when any of the wording is not read. See {@link ActionResolverPatterns#OWN_PAY_FILTER}.
+     */
+    static BiFunction<GameContext, List<ForwardTarget>, Predicate<CardData>> ownPayFilter(String what) {
+        String w = what.trim().replaceFirst("(?i)\\s+you\\s+control$", "").replaceFirst("(?i)^of\\s+your\\s+", "");
+        Matcher f = OWN_PAY_FILTER.matcher(w);
+        if (!f.matches()) return null;
+        String type = f.group("type").toLowerCase(Locale.ROOT).replaceAll("s$", "");
+        Predicate<CardData> ofType = switch (type) {
+            case "forward" -> CardData::isForward;
+            case "backup"  -> CardData::isBackup;
+            case "monster" -> CardData::isMonster;
+            default        -> c -> true;
+        };
+        Predicate<CardData> base = ofType;
+        if (f.group("cost") != null) {
+            int n = Integer.parseInt(f.group("cost"));
+            boolean less = f.group("cmp").equalsIgnoreCase("less");
+            base = base.and(c -> less ? c.cost() <= n : c.cost() >= n);
+        }
+        if (f.group("other") != null) {
+            String other = f.group("other").trim();
+            base = base.and(c -> !c.name().equalsIgnoreCase(other));
+        }
+        final Predicate<CardData> fixed = base;
+        if (f.group("same") == null) return (ctx, chosen) -> fixed;
+        // "of the same cost" — as the Forward just chosen; nothing is eligible without one.
+        return (ctx, chosen) -> {
+            CardData first = chosen.isEmpty() ? null : ctx.targetCard(chosen.get(0));
+            if (first == null) return c -> false;
+            int cost = first.cost();
+            return fixed.and(c -> c.cost() == cost);
+        };
+    }
+
+    /**
      * The condition of an "If it is …, … instead." upgrade as a test of one chosen card, or null when
      * it is not about the chosen card: its combat state ("it is blocking", 1-106C Golem), what it is
      * ("it is a Job Chocobo or a Card Name Chocobo", 16-055C Chocobo Sam, read by
@@ -1917,7 +2110,18 @@ final class ActionResolverChoose {
         if (gate == null) return null;
         final String payload = m.group("payload").trim();
         BiConsumer<GameContext, List<ForwardTarget>> action = parseTargetAction("it gains " + payload, 0);
+        // A quoted trigger, turn-scoped by a leading or trailing "until the end of the turn" —
+        // 15-004C Edgar, 9-075R Yang. Granted as an auto ability, and only one parseAutoAbilities
+        // reads: the chain had run the choose inside the quotation on the spot.
+        Matcher quotedM = QUOTED_GRANT_PAYLOAD.matcher(payload);
+        if (action == null && quotedM.matches()
+                && secondaryText.replaceAll("\"[^\"]*\"", "").matches("(?is).*\\buntil\\s+the\\s+end\\s+of\\s+the\\s+turn\\b.*")
+                && grantableTrigger(quotedM.group("quoted").trim())) {
+            final String granted = quotedM.group("quoted").trim();
+            action = (ctx, ts) -> ts.forEach(t -> ctx.grantAutoAbilityUntilEndOfTurn(t, granted));
+        }
         if (action == null) return null;
+        final BiConsumer<GameContext, List<ForwardTarget>> grant = action;
         final String condLabel = m.group("cond").trim();
         return ctx -> {
             List<ForwardTarget> chosen = ctx.lastChosenTargets();
@@ -1936,7 +2140,7 @@ final class ActionResolverChoose {
                 return;
             }
             ctx.logEntry("Effect: the chosen card is a " + condLabel + " — it also gains " + payload);
-            action.accept(ctx, matching);
+            grant.accept(ctx, matching);
         };
     }
 
@@ -2049,8 +2253,25 @@ final class ActionResolverChoose {
         Matcher m = SECONDARY_CHOSEN_CARD_GATED_GRANT_ALSO.matcher(secondaryText.trim());
         if (!m.matches() || secondaryChosenCardGatedGrantAlso(secondaryText) == null) return null;
         String payloadName = matchedFollowupName("it gains " + m.group("payload").trim(), source);
+        // The quoted trigger the reader grants when parseTargetAction declines — named here too
+        // when the turn scope leads the sentence (9-075R Yang), which the name lookup cannot see.
+        if (payloadName == null && QUOTED_GRANT_PAYLOAD.matcher(m.group("payload").trim()).matches())
+            payloadName = "GainsQuotedAutoAbilityUntilEot";
         return "IfChosenCard(" + m.group("cond").trim() + ": "
                 + (payloadName != null ? payloadName : "?") + ")";
+    }
+
+    /**
+     * True when {@code quoted} is a triggered ability the engine would enforce once granted: its
+     * trigger is one {@code parseAutoAbilities} classifies, and the effect behind it parses. The
+     * trigger alone is not enough — "When this Forward attacks, &lt;anything&gt;" classifies, and
+     * granting it would hand out an ability that does nothing when it fires.
+     */
+    static boolean grantableTrigger(String quoted) {
+        List<AutoAbility> autos = CardData.parseAutoAbilities(quoted);
+        if (autos.isEmpty()) return false;
+        for (AutoAbility a : autos) if (parse(a.effectText(), null) == null) return false;
+        return true;
     }
 
     /** The name {@link #secondaryChosenCardGatedSourceGrant} reports, or {@code null} if it declines. */
@@ -2216,6 +2437,10 @@ final class ActionResolverChoose {
         text = escapePeriodInName(text, source);
         Matcher m = CHOOSE_CHARACTER_PATTERN.matcher(text);
         if (!m.find()) return null;
+        // A choose inside a quotation belongs to a granted ability or an option of a menu, never
+        // to this ability: 22-122L Tidus's first option "Choose 1 Forward. Put it at the bottom …"
+        // claimed his whole text, gate, payment and menu, as that choose and its followup.
+        if (text.substring(0, m.start()).chars().filter(ch -> ch == '"').count() % 2 != 0) return null;
 
         boolean any          = m.group("anycount") != null;
         boolean upTo         = m.group("upto") != null;
@@ -2428,8 +2653,11 @@ final class ActionResolverChoose {
         String  sansUse      = stripRestrictionSentences(printed);
         boolean trailingUse  = !sansUse.isEmpty() && printed.startsWith(sansUse)
                 && printed.substring(sansUse.length()).matches("(?s).*[A-Za-z].*");
-        String  followup     = !trailingUse ? printed
-                             : sansUse.matches("(?s).*[.!]") ? sansUse : sansUse + ".";
+        // "During this turn, if <cond>, …" asks the condition now, so the lead-in says nothing the
+        // gate readers need; left on, they missed the "If" and 15-122L Mog (VI)'s return ran with
+        // its "drawn 4 or more cards" dropped.
+        String  followup     = splitTwoQuotedGrants(splitPowerAndQuotedGrant(LEADING_DURING_THIS_TURN_IF.matcher(!trailingUse ? printed
+                             : sansUse.matches("(?s).*[.!]") ? sansUse : sansUse + ".").replaceFirst("")));
         boolean unreduced    = CANNOT_BE_REDUCED_PATTERN.matcher(followup).find();
 
         // If the followup contains ". " (sentence boundary), split into a primary effect
@@ -2568,6 +2796,12 @@ final class ActionResolverChoose {
                                 List<CardData> taken = List.copyOf(removedCards);
                                 ctx.addEndOfTurnEffect(later -> taken.forEach(later::playSourceFromRfpOntoField));
                             };
+                        } else if (FOLLOWUP_REMOVE_FROM_GAME.matcher(primaryFollowup).find()
+                                && searchSameNameAsRemoved(secondaryText, removedCards) != null) {
+                            // 27-052H Chaos, Walker of the Wheel. "the same name" is the removed
+                            // card's, read from removedCards: the same-name search branch reads the
+                            // chosen slot, which the removal has emptied by then.
+                            secondary = searchSameNameAsRemoved(secondaryText, removedCards);
                         } else if (ctrlDiscM.matches()) {
                             final int discardCount = Integer.parseInt(ctrlDiscM.group("count"));
                             secondary = ctx -> {
@@ -2583,6 +2817,16 @@ final class ActionResolverChoose {
                             // chosen Forward whatever the opponent held. 16-035C YKT-63 and 9-026C
                             // Cid Aulstyne both print the condition, and both were ignoring it.
                             secondary = secondaryConditionalOpponentHandAction(secondaryText);
+                        } else if (sentenceBreakOutsideQuotes(secondaryText) >= 0
+                                && secondaryOnChosen(text.substring(0, m.start("followup")),
+                                        secondaryText, source, xValue) != null) {
+                            // More than one sentence, opening on the chosen card: back through the
+                            // chain, which splits it again and reads each sentence on its own. The
+                            // find() arms below take the first verb they meet and drop the rest —
+                            // 22-057R Carbuncle's cannot-be-broken arm swallowed the second grant
+                            // and the Backup-CP draw after it.
+                            secondary = secondaryOnChosen(text.substring(0, m.start("followup")),
+                                    secondaryText, source, xValue);
                         } else if (FOLLOWUP_BREAK.matcher(secondaryText).find()) {
                             // "Break it." as a secondary applies to the same targets chosen for the primary.
                             secondary = ctx -> {
@@ -2646,6 +2890,11 @@ final class ActionResolverChoose {
                                 // Forward the primary chose, which a standalone parse cannot see.
                                 Consumer<GameContext> parsed =
                                         secondaryCounterGatedPowerBecomes(secondaryText, source);
+                                // Ahead of the standalone parse, which reads "it" as the card
+                                // that printed the ability: 13-050R Mid's grant shielded Mid.
+                                if (parsed == null)
+                                    parsed = secondaryOnChosen(text.substring(0, m.start("followup")),
+                                            secondaryText, source, xValue);
                                 if (parsed == null) parsed = parse(secondaryText, source);
                                 secondaryUnread[0] = parsed == null;
                                 secondary = (parsed != null) ? parsed
@@ -2895,6 +3144,33 @@ final class ActionResolverChoose {
             }
         }
 
+        // --- "If its cost is N or less|more, <action>. [If its cost is …, <action>.]" ---
+        // 29-037C MAI. Every sentence a gate on the chosen card's cost, each tested on its own (the
+        // branches are independent conditions, not if/else). Ahead of the plain action branches,
+        // one of which found "break it" and broke any Monster, cost unread. All sentences must
+        // read, or this declines.
+        {
+            List<Map.Entry<Predicate<CardData>, BiConsumer<GameContext, List<ForwardTarget>>>> branches =
+                    costGatedBranches(followup, xValue);
+            if (branches != null) {
+                return ctx -> {
+                    ctx.logChooseHeader(choosePrefix + " — by its cost: " + followup);
+                    List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                            opponentOnly, selfOnly, condition, element, zone, opponentZone, bothZones,
+                            costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
+                            jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
+                    // Read every card's cost before any branch acts, since an action can move it.
+                    Map<ForwardTarget, CardData> cards = new LinkedHashMap<>();
+                    for (ForwardTarget t : ts) cards.put(t, chosenTargetCard(ctx, t));
+                    for (var b : branches) {
+                        List<ForwardTarget> hit = new ArrayList<>();
+                        cards.forEach((t, c) -> { if (c != null && b.getKey().test(c)) hit.add(t); });
+                        if (!hit.isEmpty()) b.getValue().accept(ctx, hit);
+                    }
+                };
+            }
+        }
+
         // --- "Choose … . <head>. If <game-state condition>, it also <action>." ---
         // 9-017C Belias. The same gate as above in trailing position, past an unrelated sentence
         // (the draw), so the split handed it to a secondary that dropped it. Only conditions that
@@ -2939,12 +3215,20 @@ final class ActionResolverChoose {
         // attacks, choose 1 Forward. Deal it 5000 damage." and was resolving as the choose itself
         // dealing 5000 damage.
         //
-        // Scoped to quotations that span a sentence on purpose. The single-sentence grants
-        // (breaktouch, cannot-be-chosen, must-block, ability-damage shield) have handlers further
-        // down that nothing in between has ever claimed, and are left on that path untouched.
+        // Scoped to quotations that span a sentence, or that are a triggered ability, on purpose.
+        // The single-sentence grants (breaktouch, cannot-be-chosen, must-block, ability-damage
+        // shield) have handlers further down that nothing in between has ever claimed, and are left
+        // on that path untouched. A trigger is not one of them: 14-029R Shivalry's one-sentence
+        // "When a Forward … is put … into the Break Zone …, your opponent discards 1 card" reached
+        // the discard arm, which ran the discard on the spot.
         {
+            // Two triggers keep dedicated handlers below — 22-020R Vallaide's break-when-dealt-damage
+            // and 15-089C's breaktouch — and are left to them.
             Matcher anyGrantM = FOLLOWUP_GAINS_QUOTED_ABILITY.matcher(primaryFollowup.trim());
-            if (anyGrantM.matches() && anyGrantM.group("quoted").contains(". ")) {
+            if (anyGrantM.matches() && (anyGrantM.group("quoted").contains(". ")
+                    || QUOTED_TRIGGER_OPENING.matcher(anyGrantM.group("quoted")).lookingAt()
+                       && !FOLLOWUP_GAINS_BREAK_WHEN_DEALT_DAMAGE.matcher(primaryFollowup).find()
+                       && !FOLLOWUP_GAINS_BREAKTOUCH_BATTLE.matcher(primaryFollowup).find())) {
                 // Permanent grant ("(This effect does not end at the end of the turn.)"), the one
                 // shape this engine can apply: it goes into the permanent granted-ability map and
                 // is dropped only when the grantee leaves the field (21-079R Lich).
@@ -3028,6 +3312,28 @@ final class ActionResolverChoose {
                         });
                     };
                 }
+            }
+        }
+
+        // --- "It gains +N power[, keywords]. (This effect does not end at the end of the turn.)" ---
+        // 28-060R Angeal. Beside Ellone's block and for the same reason: split, the boost read as
+        // an ordinary until-end-of-turn one and the reminder as a second effect nobody runs.
+        {
+            String powerCore = stripRestrictionSentences(followup);
+            if (powerCore.isEmpty()) powerCore = followup;
+            Matcher permPowerM = FOLLOWUP_GAINS_POWER_PERMANENT.matcher(powerCore.trim());
+            if (permPowerM.matches()) {
+                final int boost = Integer.parseInt(permPowerM.group("amount"));
+                final EnumSet<CardData.Trait> traits = parseTraits(permPowerM.group("traits"));
+                return ctx -> {
+                    ctx.logChooseHeader(choosePrefix + " — gains +" + boost + " power"
+                            + (traits.isEmpty() ? "" : " and " + traitNamesOnly(traits)) + " (does not end at end of turn)");
+                    List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                            opponentOnly, selfOnly, condition, element, zone, opponentZone, bothZones,
+                            costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
+                            jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
+                    ts.forEach(t -> ctx.boostTargetPermanently(t, boost, traits));
+                };
             }
         }
 
@@ -3278,6 +3584,38 @@ final class ActionResolverChoose {
                         ctx.resetEffectProgress();
                         retEffect.accept(ctx);
                         if (ctx.effectMadeProgress()) payoff.accept(ctx, ts);
+                    };
+                }
+            }
+        }
+
+        // --- "You may put 1 <what> into the Break Zone | return 1 <what> to its owner's hand. If you
+        //      do so, <action on the chosen card>." ---
+        // 7-020C Lulu, 4-087R Delita, 2-051L Vaan. The branch above with a price its return pattern
+        // cannot say — a cost ceiling, an exclusion, or Delita's "of the same cost", read off the
+        // Forward just chosen. The price is selected from the player's own field, not chosen.
+        {
+            Matcher mayPayM = FOLLOWUP_MAY_PAY_OWN_CARD_IF_DO_SO.matcher(followup.trim());
+            if (mayPayM.matches()) {
+                boolean toHand = mayPayM.group("verb").equalsIgnoreCase("return");
+                String  what   = mayPayM.group("what").trim();
+                BiFunction<GameContext, List<ForwardTarget>, Predicate<CardData>> price = ownPayFilter(what);
+                String payoffText = mayPayM.group("effect").trim()
+                        .replaceAll("(?i)\\bthe\\s+(?:chosen\\s+)?(?:Forward|Character|Backup|Monster)\\b", "it");
+                BiConsumer<GameContext, List<ForwardTarget>> payoff = parseFormerLatterGroupAction(payoffText);
+                if (price != null && payoff != null) {
+                    String label = what.replaceFirst("(?i)\\s+you\\s+control$", "").replaceFirst("(?i)^of\\s+your\\s+", "");
+                    return ctx -> {
+                        ctx.logChooseHeader(choosePrefix + " — you may " + (toHand ? "return " : "put ") + label
+                                + (toHand ? " to its owner's hand" : " into the Break Zone") + "; if so: " + payoffText);
+                        List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                                opponentOnly, selfOnly, condition, element, zone, opponentZone, bothZones,
+                                costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
+                                jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
+                        // Nothing chosen, nothing for the price to buy: it is not offered.
+                        if (ts.isEmpty()) return;
+                        ctx.mayPayWithOwnFieldCardThenDoSo(price.apply(ctx, ts), toHand, label,
+                                () -> payoff.accept(ctx, ts));
                     };
                 }
             }
@@ -3679,6 +4017,46 @@ final class ActionResolverChoose {
         // =====================================================================================
         // Damage followups
         // =====================================================================================
+        // --- "Deal them a total amount of damage equal to N multiplied by each <what>, split as you
+        //      wish among the chosen Forwards." --- 15-012H Faris, 29-103H Setzer. The total is
+        //      counted as the ability resolves and divided as "Divide N damage" is. Ahead of that
+        //      branch, which does not run a secondary: Setzer's Break Zone removal is one, and it
+        //      comes after the count.
+        {
+            Matcher totalM = FOLLOWUP_TOTAL_DAMAGE_MULTIPLIED_SPLIT.matcher(primaryFollowup.trim());
+            ToIntFunction<GameContext> perWhat = totalM.matches() ? multipliedDamageCount(totalM.group("what")) : null;
+            if (perWhat != null) {
+                final int per = Integer.parseInt(totalM.group("per"));
+                final String what = totalM.group("what").trim();
+                final boolean fUnreduced = unreduced;
+                return ctx -> {
+                    int total = per * perWhat.applyAsInt(ctx);
+                    ctx.logChooseHeader(choosePrefix + " — " + per + "×[" + what + "] = " + total + " damage, divided");
+                    List<ForwardTarget> ts = selectTargets(ctx, maxCount, any || upTo,
+                            opponentOnly, selfOnly, condition, element, zone, opponentZone, bothZones,
+                            costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
+                            jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
+                    if (!ts.isEmpty() && total > 0) {
+                        List<Integer> allocation;
+                        if (ts.size() == 1) allocation = List.of(total);
+                        else {
+                            List<CardData> cards = new ArrayList<>();
+                            for (ForwardTarget t : ts) cards.add(ctx.targetCard(t));
+                            allocation = ctx.divideDamageAmount(total, "Divide Damage: ", cards);
+                        }
+                        Map<ForwardTarget, Integer> amountByTarget = new HashMap<>();
+                        for (int i = 0; i < ts.size(); i++) amountByTarget.put(ts.get(i), allocation.get(i));
+                        for (boolean side : new boolean[]{true, false})
+                            sortedByIdxDesc(ts, side).forEach(t -> {
+                                int amt = amountByTarget.get(t);
+                                if (amt > 0) damageTargetMaybeUnreduced(ctx, t, amt, fUnreduced);
+                            });
+                    }
+                    if (secondary != null) secondary.accept(ctx);
+                };
+            }
+        }
+
         // --- "Divide N damage" ---
         Matcher divideM = DIVIDE_DAMAGE_PATTERN.matcher(followup);
         if (divideM.find())
@@ -4960,8 +5338,15 @@ final class ActionResolverChoose {
                 };
             } else if (exprM.group("card") != null) {
                 String cardName = exprM.group("card").trim();
+                // "this Forward's power" is the card resolving the ability — the grantee, when this
+                // runs as a granted trigger (9-075R Yang's). By name it looked for a card called
+                // "this Forward" and dealt 0.
+                final CardData self = cardName.matches("(?i)this\\s+(?:Forward|Character)") ? source : null;
                 return ctx -> {
-                    int damage = Math.max(0, ctx.fieldForwardPowerByName(cardName));
+                    ForwardTarget selfSlot = self != null ? ctx.fieldSlotOf(self) : null;
+                    int damage = self != null
+                            ? (selfSlot != null ? Math.max(0, ctx.effectiveTargetPower(selfSlot)) : 0)
+                            : Math.max(0, ctx.fieldForwardPowerByName(cardName));
                     ctx.logChooseHeader(choosePrefix + " — Deal " + damage + " damage (" + cardName + "'s power)");
                     List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
                             opponentOnly, selfOnly, condition, element, zone, opponentZone, bothZones,
@@ -5029,14 +5414,46 @@ final class ActionResolverChoose {
             };
         }
 
+        // --- "[Self] and it gain "This Forward cannot be chosen by …" until the end of your opponent's turn." ---
+        // 28-072L Rydia: the source and the chosen Forward both. Usable only during her own turn, so
+        // "the end of your opponent's turn" and "the beginning of your next turn" bound the same
+        // window, which is the lifetime shieldCannotBeChosenUntilYourNextTurn keeps. Ahead of the
+        // block below, whose gains form find()s the quotation and would shield the chosen one only.
+        {
+            Matcher bothM = FOLLOWUP_SELF_AND_IT_GAIN_CANNOT_BE_CHOSEN.matcher(primaryFollowup.trim());
+            if (source != null && bothM.matches() && bothM.group("name").trim().equalsIgnoreCase(source.name())) {
+                String scope = bothM.group("scope").toLowerCase(Locale.ROOT);
+                final boolean bs = scope.contains("summon"), ba = scope.contains("abilit");
+                final CardData self = source;
+                final String label = " — it and " + self.name() + " cannot be chosen by opponent's "
+                        + bothM.group("scope") + " until your next turn";
+                return ctx -> {
+                    ctx.logChooseHeader(choosePrefix + label);
+                    List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                            opponentOnly, selfOnly, condition, element, zone, opponentZone, bothZones,
+                            costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
+                            jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
+                    ts.forEach(t -> ctx.shieldCannotBeChosenUntilYourNextTurn(t, bs, ba));
+                    ForwardTarget own = ctx.fieldSlotOf(self);
+                    if (own != null && !ts.contains(own)) ctx.shieldCannotBeChosenUntilYourNextTurn(own, bs, ba);
+                    if (secondary != null) secondary.accept(ctx);
+                };
+            }
+        }
+
         // --- Cannot-be-chosen followups (gains form, then both, Summons, abilities) ---
         {   // scoped block so scope-parsing locals don't leak
             String fp = primaryFollowup;
             Matcher gcM = FOLLOWUP_GAINS_CANNOT_BE_CHOSEN.matcher(fp);
             if (!gcM.find()) gcM = null;
-            boolean chosenBoth      = gcM != null || FOLLOWUP_CANNOT_BE_CHOSEN_BOTH.matcher(fp).find();
-            boolean chosenSummons   = chosenBoth  || (gcM == null && FOLLOWUP_CANNOT_BE_CHOSEN_SUMMONS.matcher(fp).find());
-            boolean chosenAbilities = chosenBoth  || (gcM == null && FOLLOWUP_CANNOT_BE_CHOSEN_ABILITIES.matcher(fp).find());
+            // The quoted form says its own scope: 13-050R Mid's and 20-109H Cecil's are "abilities"
+            // alone, and were shielding against Summons too.
+            String gcScope = gcM == null ? "" : gcM.group("scope").toLowerCase(Locale.ROOT);
+            boolean chosenBoth      = gcM == null && FOLLOWUP_CANNOT_BE_CHOSEN_BOTH.matcher(fp).find();
+            boolean chosenSummons   = chosenBoth || gcScope.contains("summon")
+                                   || (gcM == null && FOLLOWUP_CANNOT_BE_CHOSEN_SUMMONS.matcher(fp).find());
+            boolean chosenAbilities = chosenBoth || gcScope.contains("abilit")
+                                   || (gcM == null && FOLLOWUP_CANNOT_BE_CHOSEN_ABILITIES.matcher(fp).find());
             if (chosenSummons || chosenAbilities) {
                 final boolean bs = chosenSummons, ba = chosenAbilities;
                 // Aerith 14-126C's longer duration, which only the quoted form prints. An
@@ -5058,7 +5475,9 @@ final class ActionResolverChoose {
         }
 
         // --- Cannot-be-returned-to-hand followup ("During this turn, it cannot be returned…") ---
-        if (FOLLOWUP_CANNOT_BE_RETURNED_TO_HAND.matcher(primaryFollowup).find()) {
+        // The quoted grant form too — 27-124S Cloud's second quotation, once split from the first.
+        if (FOLLOWUP_CANNOT_BE_RETURNED_TO_HAND.matcher(primaryFollowup).find()
+                || FOLLOWUP_GAINS_QUOTED_CANNOT_BE_RETURNED.matcher(primaryFollowup.trim()).matches()) {
             return ctx -> {
                 ctx.logChooseHeader(choosePrefix + " — Cannot be returned to owner's hand by opponent this turn");
                 List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
@@ -5194,16 +5613,20 @@ final class ActionResolverChoose {
         // The pattern is anchored and admits only that reminder after the sentence, so a match
         // here proves there is no real secondary to run. Anything else still falls to the split.
         Matcher elemBecomesM = FOLLOWUP_ELEMENT_BECOMES.matcher(followup);
-        if (!elemBecomesM.matches()) elemBecomesM = FOLLOWUP_ELEMENT_BECOMES.matcher(primaryFollowup);
+        // Read whole, the reminder is the only thing after the sentence, and the split's secondary
+        // is that reminder — not an effect to run after it.
+        final boolean elemReadWhole = elemBecomesM.matches();
+        if (!elemReadWhole) elemBecomesM = FOLLOWUP_ELEMENT_BECOMES.matcher(primaryFollowup);
         if (elemBecomesM.matches()) {
             String newElement = elemBecomesM.group("element");
+            final Consumer<GameContext> after = elemReadWhole ? null : secondary;
             return ctx -> {
                 ctx.logChooseHeader(choosePrefix + " — Element becomes " + newElement);
                 List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
                         opponentOnly, selfOnly, condition, element, zone, opponentZone, bothZones,
                         costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
                 ts.forEach(t -> ctx.setTargetElement(t, newElement));
-                if (secondary != null) secondary.accept(ctx);
+                if (after != null) after.accept(ctx);
             };
         }
 
@@ -7457,6 +7880,35 @@ final class ActionResolverChoose {
                         opponentOnly, selfOnly, condition, element, zone, opponentZone, bothZones,
                         costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
                 ts.forEach(t -> ctx.gainTargetActionAbilitiesUntilEndOfTurn(borrower, t));
+                if (secondary != null) secondary.accept(ctx);
+            };
+        }
+
+        // --- "The next time you use its special ability this turn, you can do so without paying 《S》." ---
+        // 17-002L Edgar. The 《S》 only; the special's CP is still paid.
+        if (FOLLOWUP_TARGET_NEXT_SPECIAL_FREE.matcher(primaryFollowup.trim()).matches()) {
+            return ctx -> {
+                ctx.logChooseHeader(choosePrefix + " — its next special ability this turn needs no 《S》");
+                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                        opponentOnly, selfOnly, condition, element, zone, opponentZone, bothZones,
+                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
+                ts.forEach(ctx::waiveNextSpecialSCostThisTurn);
+                if (secondary != null) secondary.accept(ctx);
+            };
+        }
+
+        // --- "During this turn, you can cast it at any time you could normally cast it as long as you
+        //      have no cards in hand." --- 22-016H Minwu (FFBE), a card chosen in the Break Zone.
+        if (zone != null && !opponentZone && !bothZones
+                && FOLLOWUP_CAST_IT_FROM_BZ_ANYTIME_NO_HAND.matcher(primaryFollowup.trim()).matches()) {
+            return ctx -> {
+                ctx.logChooseHeader(choosePrefix + " — castable this turn while your hand is empty");
+                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                        opponentOnly, selfOnly, condition, element, zone, opponentZone, bothZones,
+                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
+                for (ForwardTarget t : ts)
+                    ctx.makeBreakZoneCardCastableThisTurnWhileHandEmpty(
+                            t.isP1() ? ctx.p1BreakZoneCard(t.idx()) : ctx.p2BreakZoneCard(t.idx()));
                 if (secondary != null) secondary.accept(ctx);
             };
         }

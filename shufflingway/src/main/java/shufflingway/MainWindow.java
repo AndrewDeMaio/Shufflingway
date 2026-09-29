@@ -1375,6 +1375,13 @@ public class MainWindow {
 	/** Special abilities activated this turn (either player), in activation order, for Gogo's "Mimic". Cleared each turn. */
 	final List<UsedSpecialAbility> specialAbilitiesUsedThisTurn = new ArrayList<>();
 
+	/**
+	 * Cards whose next special ability this turn is used without paying the 《S》 — the Forward
+	 * 17-002L Edgar chooses. Only the 《S》: CP and every other cost are still paid. Spent when an
+	 * activation commits, and cleared each turn with the specials used.
+	 */
+	final Set<CardData> specialSCostWaivedThisTurn = Collections.newSetFromMap(new IdentityHashMap<>());
+
 	/** Forwards that cannot be selected as targets by the opponent's Summons this turn. */
 	final Set<CardData> cannotBeChosenBySummons        = new HashSet<>();
 	/** Forwards that cannot be selected as targets by the opponent's abilities this turn. */
@@ -2727,6 +2734,7 @@ public class MainWindow {
 		usedOncePerTurnAbilities.clear();
 		abilityUsesThisTurn.clear();
 		specialAbilitiesUsedThisTurn.clear();
+		specialSCostWaivedThisTurn.clear();
 		elementOverrideMap.clear();
 		tempGainedElements.clear();
 		permanentExtraJobMap.clear();
@@ -3685,7 +3693,17 @@ public class MainWindow {
 		boolean noTarget      = !summonBlocked && !summonHasCastTarget(cd, true);
 		return nameConflict ? "Name conflict" : ldConflict ? "Light/Dark"
 				: noSlot ? "No slot" : summonBlocked ? "Summons blocked"
-				: noTarget ? "No target" : null;
+				: noTarget ? "No target"
+				: !borrowedHandConditionMet(cd, true) ? "Hand not empty" : null;
+	}
+
+	/**
+	 * False when {@code card}'s registration asks for an empty hand and the caster holds a card —
+	 * Minwu (FFBE) 22-016H's "as long as you have no cards in hand". Every other entry: true.
+	 */
+	boolean borrowedHandConditionMet(CardData card, boolean isP1) {
+		PlayableEntry entry = (isP1 ? bzPlayableP1 : bzPlayableP2).get(card);
+		return entry == null || !entry.requiresEmptyHand() || playerHand(isP1).isEmpty();
 	}
 
 	private void showPlayableCardsDialog() {
@@ -4112,6 +4130,7 @@ public class MainWindow {
 				usedOncePerTurnAbilities.clear();
 				abilityUsesThisTurn.clear();
 				specialAbilitiesUsedThisTurn.clear();
+				specialSCostWaivedThisTurn.clear();
 			}
 		}
 	}
@@ -4583,6 +4602,7 @@ public class MainWindow {
 				// not use the Break Zone abilities of cards you were not.
 				return bzPlayableP1.containsKey(card)
 						&& bzPlayableP1.get(card).source() == PlayableEntry.SourceZone.BREAK_ZONE
+						&& borrowedHandConditionMet(card, true)
 						&& !summonCastBlocked(card, true)
 						&& !p1CastLimitReached();
 			}
@@ -8589,6 +8609,7 @@ public class MainWindow {
 		if (!ability.isSpecial() || ability.revealCost() == null) return false;
 		if (canPaySpecialCostWithCrystal(source, isP1)) return false;
 		if (specialCostCounterWaiver(source, isP1) != null) return false;
+		if (specialSCostWaivedThisTurn.contains(source)) return false;
 		for (CardData c : playerHand(isP1))
 			if (c.name().equalsIgnoreCase(source.name()) && ability.revealCost().matches(c)) return true;
 		return false;
@@ -14906,7 +14927,8 @@ public class MainWindow {
 				// A Crystal pays the 《S》 outright under Glaciela Wezette 17-113L, and Wakka
 				// 16-138S's Reel Counters waive the whole cost — so an empty hand is no longer the
 				// end of the question either way.
-				if (!handCanPay && !canPaySpecialCostWithCrystal(source, isP1) && !costWaived) return false;
+				if (!handCanPay && !canPaySpecialCostWithCrystal(source, isP1) && !costWaived
+						&& !specialSCostWaivedThisTurn.contains(source)) return false;
 			}
 		}
 		// Turn history, hands, damage, the Break Zone, the field: the same check the Break Zone and
@@ -16264,16 +16286,18 @@ public class MainWindow {
 		List<Consumer<GameContext>> scheduled = isP1 ? scheduledForP1EndTurn : scheduledForP2EndTurn;
 		if (endOfTurnEffects.isEmpty() && scheduled.isEmpty()) return;
 		GameContext ctx = buildGameContext(isP1);
+		// What is due now is taken before anything runs: an end-of-turn effect that schedules for
+		// this same player's end of turn means their next one (scheduleAtEndOfControllerNextTurn).
+		// Taken after, it fired in this same pass — a turn early for 15-018C Sabin's grant and for
+		// the "at the end of your next turn, … your opponent loses" check.
+		List<Consumer<GameContext>> due = new ArrayList<>(scheduled);
+		scheduled.clear();
 		if (!endOfTurnEffects.isEmpty()) {
 			List<Consumer<GameContext>> pending = new ArrayList<>(endOfTurnEffects);
 			endOfTurnEffects.clear();
 			pending.forEach(e -> e.accept(ctx));
 		}
-		if (!scheduled.isEmpty()) {
-			List<Consumer<GameContext>> pending = new ArrayList<>(scheduled);
-			scheduled.clear();
-			pending.forEach(e -> e.accept(ctx));
-		}
+		due.forEach(e -> e.accept(ctx));
 	}
 
 	// -------------------------------------------------------------------------
@@ -19343,6 +19367,24 @@ public class MainWindow {
 	}
 
 	/**
+	 * Asks P2 to declare a blocker against one attacker. No opponent means a bare window (tests), as
+	 * in {@link #p2AutoPass}: there is no one to block, and combat goes on unblocked. Called from a
+	 * timer, so without this an attack declared in a test threw on the event thread after it ended.
+	 */
+	private void requestP2Blocker(int attackerPower, ForwardTarget attacker, boolean forcedBlock,
+			Consumer<ForwardTarget> onChosen) {
+		if (opponent == null) { onChosen.accept(null); return; }
+		opponent.requestBlocker(attackerPower, attacker, forcedBlock, onChosen);
+	}
+
+	/** The party-attack form of {@link #requestP2Blocker}. */
+	private void requestP2PartyBlocker(List<Integer> attackerIndices, int combinedPower, boolean forcedBlock,
+			Consumer<Integer> onChosen) {
+		if (opponent == null) { onChosen.accept(null); return; }
+		opponent.requestPartyBlocker(attackerIndices, combinedPower, forcedBlock, onChosen);
+	}
+
+	/**
 	 * Grants P1 priority during P2's main phase. Enables the Next Phase button so P1 can cast
 	 * Summons or use Action abilities, then pass by clicking Next. Calling {@link #onNextPhase()}
 	 * while this is active clears the state and runs {@code onPass}.
@@ -19856,7 +19898,7 @@ public class MainWindow {
 			if (survivingDeclaredAttackers(true).isEmpty()) { skipBlockStepNoAttackers(); return; }
 			setAttackSubStep(2);
 			refreshAttackButton();
-			opponent.requestBlocker(attackerPower,
+			requestP2Blocker(attackerPower,
 					new ForwardTarget(true, monIdx, ForwardTarget.CardZone.MONSTER),
 					blockIsCompelled(attacker, false), blk -> {
 				if (blk != null) {
@@ -20250,7 +20292,7 @@ public class MainWindow {
 			if (survivingDeclaredAttackers(true).isEmpty()) { skipBlockStepNoAttackers(); return; }
 			setAttackSubStep(2);
 			refreshAttackButton();
-			opponent.requestBlocker(attackerPower,
+			requestP2Blocker(attackerPower,
 					new ForwardTarget(true, bIdx, ForwardTarget.CardZone.BACKUP),
 					blockIsCompelled(attacker, false), blk -> {
 				if (blk != null) {
@@ -20404,7 +20446,7 @@ public class MainWindow {
 					p2OfferBlockParty(party, partyPower(true, party), this::continueAttackPhase);
 					return;
 				}
-				opponent.requestBlocker(effectiveP1ForwardPower(idx),
+				requestP2Blocker(effectiveP1ForwardPower(idx),
 						new ForwardTarget(true, idx, ForwardTarget.CardZone.FORWARD),
 						blockIsCompelled(attacker, false), blk -> {
 					if (blk != null) {
@@ -20471,7 +20513,7 @@ public class MainWindow {
 		boolean forced = attackerIndices.stream()
 				.anyMatch(i -> i < p1ForwardCards.size() && attackerMustBeBlocked(p1ForwardCards.get(i)))
 				|| forwardsMustBlock(false);
-		opponent.requestPartyBlocker(attackerIndices, combinedPower, forced, chosenIdx -> {
+		requestP2PartyBlocker(attackerIndices, combinedPower, forced, chosenIdx -> {
 			if (chosenIdx != null) {
 				final int blockerIdx   = chosenIdx;
 				CardData  blocker      = p2ForwardCards.get(blockerIdx);

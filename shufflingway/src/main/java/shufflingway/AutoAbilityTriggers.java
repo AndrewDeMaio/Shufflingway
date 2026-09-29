@@ -3133,7 +3133,10 @@ final class AutoAbilityTriggers {
 			boolean brokenIsP1, boolean watcherIsP1) {
 		Matcher m = CardData.DAMAGED_BY_BZ_SUBJECT.matcher(fa.triggerCard().trim());
 		if (!m.matches()) return false;
-		if (!CardFilters.meetsCardNameFilter(watcher, m.group("name").trim())) return false;
+		// "this Forward" is a granted copy's name for its carrier — 14-029R Shivalry's grant.
+		String damager = m.group("name").trim();
+		if (!damager.matches("(?i)this\\s+(?:Forward|Character)")
+				&& !CardFilters.meetsCardNameFilter(watcher, damager)) return false;
 		if (!mw.wasDamagedBy(broken, watcher)) return false;
 
 		// The half ahead of "damaged by" is an ordinary break-zone subject: an optional controller
@@ -7886,7 +7889,11 @@ final class AutoAbilityTriggers {
 		CardData.SpecialAbilityProxy proxy = eff.isSpecial()
 				? mw.effectiveSpecialAbilityProxy(source, isP1) : null;
 		String primerName = eff.isSpecial() ? mw.priming.getPrimerCardName(source, isP1) : null;
-		new AbilityPaymentDialog(mw.frame, eff, source,
+		// 17-002L Edgar's "without paying 《S》": the dialog is shown the ability with no S slot to
+		// fill, and the payment below skips the discard on the same waiver.
+		ActionAbility shown = eff.isSpecial() && mw.specialSCostWaivedThisTurn.contains(source)
+				? eff.withSpecialCostWaived() : eff;
+		new AbilityPaymentDialog(mw.frame, shown, source,
 				mw.playerHand(isP1), mw.cpPayableBackupCards(isP1), mw.playerBackupStates(isP1), mw.playerBackupUrls(isP1),
 				mw::showZoomAt, mw::hideZoom, proxy, primerName, mw.lightDarkDiscardGrants(isP1),
 				eff.isSpecial() && mw.canPaySpecialCostWithCrystal(source, isP1),
@@ -8073,7 +8080,10 @@ final class AutoAbilityTriggers {
 		// index because the CP discards below shift the hand.
 		CardData sCostCard = null;
 		boolean  sCostFromCrystal = false;
-		if (ability.isSpecial()) {
+		// 17-002L Edgar's waiver: no 《S》 at all this time. Spent below, once the activation commits,
+		// so an activation backed out of partway keeps it.
+		final boolean sCostWaived = ability.isSpecial() && mw.specialSCostWaivedThisTurn.contains(source);
+		if (ability.isSpecial() && !sCostWaived) {
 			List<CardData> hand = mw.playerHand(isP1);
 			// Glaciela Wezette 17-113L: a Crystal pays the 《S》 in place of the discard. Asked again
 			// here rather than trusted from the dialog, because she can leave the field between the
@@ -8423,6 +8433,10 @@ final class AutoAbilityTriggers {
 		payBottomOfDeckCost(ability, source, isP1);
 
 		mw.logEntry("\"" + source.name() + "\" activated ability");
+		if (sCostWaived) {
+			mw.specialSCostWaivedThisTurn.remove(source);
+			mw.logEntry(source.name() + " — special ability used without paying 《S》");
+		}
 
 		// Record special abilities used this turn so Gogo's "Mimic" can replay one later.
 		if (ability.isSpecial())

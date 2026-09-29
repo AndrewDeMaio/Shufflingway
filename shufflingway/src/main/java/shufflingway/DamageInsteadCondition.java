@@ -35,7 +35,10 @@ public sealed interface DamageInsteadCondition
                 DamageInsteadCondition.YouHaveCrystal,
                 DamageInsteadCondition.DiscardedCostCardOfElement,
                 DamageInsteadCondition.SourceCountersAtLeast,
-                DamageInsteadCondition.BreakZoneHasCardNamed {
+                DamageInsteadCondition.BreakZoneHasCardNamed,
+                DamageInsteadCondition.DiscardedNamedToCast,
+                DamageInsteadCondition.CostRemovedCardMatches,
+                DamageInsteadCondition.YouDrewAtLeast {
 
     /** "If it is active" */
     record TargetIsActive() implements DamageInsteadCondition {}
@@ -171,4 +174,20 @@ public sealed interface DamageInsteadCondition
 
     /** "If you have a Card Name X in your Break Zone" (25-026C SOLDIER Candidate). */
     record BreakZoneHasCardNamed(String name) implements DamageInsteadCondition {}
+
+    /**
+     * "If you discarded a Card Name X to cast [Name]" (29-094H Ramuh) — among the cards discarded
+     * for CP to cast the card asking. {@code payer} is bound by the caller, like
+     * {@link BreakZoneNamesBeforePayingAtLeast}.
+     */
+    record DiscardedNamedToCast(String name, String payerName, CardData payer) implements DamageInsteadCondition {}
+
+    /**
+     * "If a &lt;filter&gt; card is removed by this ability's cost" (29-098R Quina). {@code filter}
+     * is read by {@code parseRevealCondition}.
+     */
+    record CostRemovedCardMatches(String filter) implements DamageInsteadCondition {}
+
+    /** "If you have drawn N or more cards [this turn]" (15-122L Mog (VI)). */
+    record YouDrewAtLeast(int min) implements DamageInsteadCondition {}
 }

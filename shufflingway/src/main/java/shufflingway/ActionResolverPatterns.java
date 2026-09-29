@@ -3566,6 +3566,14 @@ final class ActionResolverPatterns {
         "(?i)\\bthe\\s+chosen\\s+(?:Forwards?|Characters?|Backups?|Monsters?)\\b"
     );
     /**
+     * "the Forward" — singular, definite, with no "chosen": after a choose earlier in the ability
+     * it can only mean that card (2-051L Vaan's "If you do so, activate the Forward"). Read alone
+     * it became a card named "the Forward".
+     */
+    static final Pattern CHOSEN_DEFINITE_REFERENCE = Pattern.compile(
+        "(?i)\\bthe\\s+(?:Forward|Character|Backup|Monster)\\b"
+    );
+    /**
      * Matches "[You may] return N &lt;type&gt; you control to its/their owner's hand(s)." — the
      * controller picks from their own field. 10-117H / 25-096L Tidus, 6-119C Chime.
      *
@@ -5648,6 +5656,79 @@ final class ActionResolverPatterns {
         "(?i)^(?:it|they)\\s+gains?\\s+\\+(?<amount>\\d+)\\s+power\\s+and\\s+\"(?<quoted>[^\"]+)\"" +
         "\\s*\\(This\\s+effect\\s+does\\s+not\\s+end\\s+at\\s+the\\s+end\\s+of\\s+the\\s+turn\\.?\\)[.!]?\\s*$"
     );
+    /**
+     * "Deal them a total amount of damage equal to &lt;per&gt; multiplied by each &lt;what&gt;, split
+     * as you wish among the chosen Forwards[ (damage must be in increments of 1000)]." — 15-012H
+     * Faris, 29-103H Setzer. {@code what} is read by {@code multipliedDamageCount}.
+     */
+    static final Pattern FOLLOWUP_TOTAL_DAMAGE_MULTIPLIED_SPLIT = Pattern.compile(
+        "(?i)^Deal\\s+them\\s+a\\s+total\\s+amount\\s+of\\s+damage\\s+equal\\s+to\\s+(?<per>\\d+)\\s+multiplied\\s+by\\s+"
+            + "each\\s+(?<what>[^,]+?),\\s+split\\s+as\\s+you\\s+wish\\s+among\\s+the\\s+chosen\\s+Forwards"
+            + "(?:\\s*\\(damage\\s+must\\s+be\\s+in\\s+increments\\s+of\\s+1000\\))?[.!]?$"
+    );
+    /** "Forward of cost N or less|more you control" — a {@code FOLLOWUP_TOTAL_DAMAGE_MULTIPLIED_SPLIT} count. */
+    static final Pattern MULTIPLIED_BY_EACH_OWN_FORWARD_COST = Pattern.compile(
+        "(?i)^Forward\\s+of\\s+cost\\s+(?<cost>\\d+)\\s+or\\s+(?<cmp>less|more)\\s+you\\s+control$"
+    );
+    /**
+     * "&lt;Name&gt; and it gain "This Forward cannot be chosen by your opponent's &lt;scope&gt;." until
+     * the end of your opponent's turn" — 28-072L Rydia, the source and the chosen Forward together.
+     */
+    static final Pattern FOLLOWUP_SELF_AND_IT_GAIN_CANNOT_BE_CHOSEN = Pattern.compile(
+        "(?i)^(?<name>.+?)\\s+and\\s+it\\s+gain\\s+\"This\\s+(?:Forward|Character)\\s+cannot\\s+be\\s+chosen\\s+by\\s+"
+            + "your\\s+opponent's\\s+(?<scope>Summons(?:\\s+or\\s+abilities)?|abilities)\\.?\"\\s+"
+            + "until\\s+the\\s+end\\s+of\\s+your\\s+opponent's\\s+turn[.!]?$"
+    );
+    /**
+     * "It gains +N power[, &lt;keywords&gt;]. (This effect does not end at the end of the turn.)" —
+     * the whole of a choose followup (28-060R Angeal). Anchored at both ends: nothing may follow the
+     * reminder.
+     */
+    static final Pattern FOLLOWUP_GAINS_POWER_PERMANENT = Pattern.compile(
+        "(?i)^(?:it|they)\\s+gains?\\s+\\+(?<amount>\\d+)\\s+power"
+            + "(?<traits>(?:\\s*,?\\s*(?:and\\s+)?(?:Haste|First\\s+Strike|Brave))*)[.!]?"
+            + "\\s*\\(This\\s+effect\\s+does\\s+not\\s+end\\s+at\\s+the\\s+end\\s+of\\s+the\\s+turn\\.?\\)[.!]?\\s*$"
+    );
+    /**
+     * "[Until the end of the turn, ]it gains +N power[, &lt;keywords&gt;] and "&lt;grant&gt;"[ until
+     * the end of the turn]." opening a choose followup — two grants in one sentence, turn-scoped by
+     * one of the two phrases (13-050R Mid, 14-029R Shivalry, 11-066C Antlion). The power boost
+     * patterns find() the front of it and dropped the quotation; the choose chain rewrites it as
+     * two sentences instead. {@code rest} is whatever follows the sentence.
+     */
+    static final Pattern FOLLOWUP_GAINS_POWER_AND_QUOTED_UNTIL_EOT = Pattern.compile(
+        "(?is)^(?<lead>Until\\s+the\\s+end\\s+of\\s+the\\s+turn,\\s+)?(?<subject>(?:it|they)\\s+gains?)\\s+"
+            + "\\+(?<amount>\\d+)\\s+power(?<traits>(?:,\\s*(?:Haste|First\\s+Strike|Brave))*),?\\s+and\\s+"
+            + "(?<quoted>\"[^\"]+\")(?<trail>\\s+until\\s+the\\s+end\\s+of\\s+the\\s+turn)?[.!]?(?<rest>(?:\\s+.*)?)$"
+    );
+    /**
+     * A choose followup's later sentence that opens on the chosen card: as its subject ("It gains
+     * …", "Until the end of the turn, it also becomes …"), as the object of the verb ("Deal it 9000
+     * damage."), or as "the next damage dealt to it". Read by {@code secondaryOnChosen}; "it" deeper
+     * in a sentence is usually a card the sentence found itself ("search for 1 Summon and add it").
+     */
+    static final Pattern SECONDARY_OPENS_ON_CHOSEN = Pattern.compile(
+        "(?i)^(?:(?:Until\\s+the\\s+end\\s+of\\s+the\\s+turn|During\\s+this\\s+turn),\\s+)?"
+            + "(?:(?:it|they)\\b|(?:deal|dull|freeze|break|activate|return|put|remove)\\s+(?:it|them)\\b"
+            + "|the\\s+next\\s+damage\\s+dealt\\s+to\\s+(?:it|them)\\b)"
+    );
+    /**
+     * The opening of a granted trigger that says "damaged by the grantee" the long way: "When a
+     * Forward opponent controls is put from the field into the Break Zone on the same turn that the
+     * chosen Forward has dealt it damage, …" (14-029R Shivalry). {@code quotedGrantUntilEot} rewrites
+     * it as "When &lt;subject&gt; damaged by this Forward is put … on the same turn, …", the wording
+     * of the damaged-card Break Zone trigger (15-066C Galuf).
+     */
+    static final Pattern QUOTED_SAME_TURN_CHOSEN_DEALT_IT_DAMAGE = Pattern.compile(
+        "(?i)^When\\s+(?<subject>.+?)\\s+is\\s+put\\s+from\\s+the\\s+field\\s+into\\s+the\\s+Break\\s+Zone\\s+"
+            + "on\\s+the\\s+same\\s+turn\\s+that\\s+the\\s+chosen\\s+Forward\\s+has\\s+dealt\\s+it\\s+damage,\\s+"
+    );
+    /** A granted quotation that is a triggered ability: "When this Forward attacks, …", "At the end of …". */
+    static final Pattern QUOTED_TRIGGER_OPENING = Pattern.compile("(?i)^(?:When|Whenever|At\\s+the)\\b");
+    /** A sentence that finds a card of its own, so its "it" is not the chosen one. */
+    static final Pattern SENTENCE_FINDS_A_CARD = Pattern.compile(
+        "(?i)\\b(?:choose|chooses|select|selects|search|reveal|reveals|look\\s+at)\\b"
+    );
     /** Matches "Negate all [the] damage dealt to it/them." — removes all existing damage immediately. */
     static final Pattern FOLLOWUP_NEGATE_DAMAGE = Pattern.compile(
         "(?i)Negate\\s+all\\s+(?:the\\s+)?damage\\s+dealt\\s+to\\s+(?:it|them)\\.?"
@@ -5748,17 +5829,18 @@ final class ActionResolverPatterns {
     static final Pattern FOLLOWUP_SELF_AND_TARGET_GAIN_QUOTE_UNTIL_OPP_TURN = Pattern.compile(
         "(?i)\\S.*?\\s+and\\s+it\\s+gains?\\s+['\"].+?['\"]\\s+until\\s+the\\s+end\\s+of\\s+your\\s+opponent.s\\s+turn[.!]?"
     );
-    /** "The next time you use its special ability this turn, you can do so without paying [cost]."
-     *  Edgar-style: waives the special-ability cost for the chosen target once this turn. */
+    /** "The next time you use its special ability this turn, you can do so without paying 《S》."
+     *  17-002L Edgar: waives the 《S》 alone of the chosen Forward's next special this turn. Anchored,
+     *  and 《S》 only — the waiver it resolves to touches nothing else. */
     static final Pattern FOLLOWUP_TARGET_NEXT_SPECIAL_FREE = Pattern.compile(
-        "(?i)The\\s+next\\s+time\\s+you\\s+use\\s+its\\s+special\\s+ability\\s+this\\s+turn,\\s+" +
-        "you\\s+can\\s+do\\s+so\\s+without\\s+paying\\s+.+?[.!]?"
+        "(?i)^The\\s+next\\s+time\\s+you\\s+use\\s+its\\s+special\\s+ability\\s+this\\s+turn,\\s+" +
+        "you\\s+can\\s+do\\s+so\\s+without\\s+paying\\s+《S》[.!]?$"
     );
     /** "During this turn, you can cast it at any time you could normally cast it as long as you have
      *  no cards in hand."  Minwu (FFBE)-style: allows instant-casting the chosen BZ card this turn. */
     static final Pattern FOLLOWUP_CAST_IT_FROM_BZ_ANYTIME_NO_HAND = Pattern.compile(
-        "(?i)During\\s+this\\s+turn,\\s+you\\s+can\\s+cast\\s+it\\s+at\\s+any\\s+time\\s+" +
-        "you\\s+could\\s+normally\\s+cast\\s+it\\s+as\\s+long\\s+as\\s+you\\s+have\\s+no\\s+cards\\s+in\\s+hand[.!]?"
+        "(?i)^During\\s+this\\s+turn,\\s+you\\s+can\\s+cast\\s+it\\s+at\\s+any\\s+time\\s+" +
+        "you\\s+could\\s+normally\\s+cast\\s+it\\s+as\\s+long\\s+as\\s+you\\s+have\\s+no\\s+cards\\s+in\\s+hand[.!]?$"
     );
     /**
      * "It/They cannot be chosen by your opponent's Summons or abilities [this turn]."
@@ -6773,6 +6855,17 @@ final class ActionResolverPatterns {
         "(?i)^dull\\s+any\\s+number\\s+of\\s+active\\s+" +
         "(?:(?<elem>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark)\\s+)?Backups\\s+you\\s+control[.!]?\\s+" +
         "When\\s+you\\s+do\\s+so,\\s+(?<sub>.+)$", Pattern.DOTALL
+    );
+    /**
+     * "dull N active Forwards you control. When you do so, choose 1 Forward[ …]. Deal it damage equal
+     * to the total power of the Forwards you dulled due to this ability." — 26-064R Ignis. Groups:
+     * {@code n}, {@code choose} (the choose sentence, with its period).
+     */
+    static final Pattern DULL_N_FORWARDS_DAMAGE_TOTAL_POWER = Pattern.compile(
+        "(?i)^dull\\s+(?<n>\\d+)\\s+active\\s+Forwards\\s+you\\s+control[.!]?\\s+When\\s+you\\s+do\\s+so,\\s+"
+            + "(?<choose>choose\\s+1\\s+Forward(?:\\s+opponent\\s+controls)?[.!])\\s+"
+            + "Deal\\s+it\\s+damage\\s+equal\\s+to\\s+the\\s+total\\s+power\\s+of\\s+the\\s+Forwards\\s+you\\s+"
+            + "dulled\\s+due\\s+to\\s+this\\s+ability[.!]?$"
     );
     /** "3000 damage / +3000 power for each Backup you dulled due to this ability"; groups {@code amt}, {@code unit}. */
     static final Pattern PER_BACKUP_DULLED = Pattern.compile(
@@ -8706,6 +8799,23 @@ final class ActionResolverPatterns {
         "(?i)^the\\s+discarded\\s+card\\s+is\\s+(?<filter>.+)$"
     );
 
+    /**
+     * One "If its cost is N or less|more, &lt;action&gt;." sentence of a choose followup — 29-037C
+     * MAI prints two, one per branch. Read by {@code costGatedBranches}.
+     */
+    static final Pattern CHOSEN_COST_GATED_SENTENCE = Pattern.compile(
+        "(?i)^If\\s+its\\s+cost\\s+is\\s+(?<n>\\d+)\\s+or\\s+(?<cmp>less|more),\\s+(?<action>[^.]+?)[.!]?$"
+    );
+
+    /**
+     * "During this turn, " in front of "if you …" — a question about the player, answered now (15-122L
+     * Mog (VI)). Not in front of "if it is dealt damage …": that is a replacement standing for the
+     * rest of the turn (13-059H Scarmiglione, 5-136C), and the lead-in is what makes it one.
+     */
+    static final Pattern LEADING_DURING_THIS_TURN_IF = Pattern.compile(
+        "(?i)^During\\s+this\\s+turn,\\s+(?=if\\s+you\\b)"
+    );
+
     /** "Break Zone" anywhere in a choose header: the choice is made from a Break Zone. */
     static final Pattern BREAK_ZONE_WORDS = Pattern.compile("(?i)\\bBreak\\s+Zone\\b");
 
@@ -8745,6 +8855,11 @@ final class ActionResolverPatterns {
     static final Pattern JOINS_SECOND_ACTION = Pattern.compile(
         "(?i),\\s+(?:and|then)\\b|\\band\\s+(?:deal|draw|activate|dull|freeze|break|return|put|remove|discard|play|search"
             + "|select|reveal|gain|lose|it|they|you|your|choose)\\b"
+    );
+
+    /** A grant payload that is one quotation, with an optional trailing "until the end of the turn". */
+    static final Pattern QUOTED_GRANT_PAYLOAD = Pattern.compile(
+        "(?is)^\"(?<quoted>[^\"]+)\"(?:\\s+until\\s+the\\s+end\\s+of\\s+the\\s+turn)?$"
     );
 
     /**
@@ -10591,6 +10706,29 @@ final class ActionResolverPatterns {
      * {@link #RETURN_OWN_TYPE_TO_OWNERS_HAND}. Groups: {@code ret} (with its "You may"),
      * {@code effect}.
      */
+    /**
+     * "You may put 1 &lt;what&gt; into the Break Zone | return 1 &lt;what&gt; to its owner's hand.
+     * If you do so, &lt;effect&gt;." inside a choose followup — 7-020C Lulu, 4-087R Delita, 2-051L
+     * Vaan. {@code what} is read by {@link #OWN_PAY_FILTER}.
+     */
+    static final Pattern FOLLOWUP_MAY_PAY_OWN_CARD_IF_DO_SO = Pattern.compile(
+        "(?i)^You\\s+may\\s+(?<verb>put|return)\\s+1\\s+(?<what>.+?)\\s+"
+            + "(?:into\\s+the\\s+Break\\s+Zone|to\\s+(?:its|their)\\s+owners?(?:'s|')?\\s+hands?)[.!]\\s+"
+            + "If\\s+you\\s+do\\s+so[,.]?\\s+(?<effect>[^.]+?)[.!]?$"
+    );
+
+    /**
+     * The card a {@link #FOLLOWUP_MAY_PAY_OWN_CARD_IF_DO_SO} price names, with "you control" and
+     * "of your" already removed: "Backup of cost 2 or less", "Backup other than Lulu", "Forwards of
+     * the same cost other than Delita".
+     */
+    static final Pattern OWN_PAY_FILTER = Pattern.compile(
+        "(?i)^(?<type>Forwards?|Backups?|Monsters?|Characters?)"
+            + "(?:\\s+of\\s+cost\\s+(?<cost>\\d+)\\s+or\\s+(?<cmp>less|more))?"
+            + "(?<same>\\s+of\\s+the\\s+same\\s+cost)?"
+            + "(?:\\s+other\\s+than\\s+(?<other>.+))?$"
+    );
+
     static final Pattern FOLLOWUP_MAY_RETURN_OWN_IF_DO_SO = Pattern.compile(
         "(?i)^(?<ret>You\\s+may\\s+return\\s+\\d+\\s+(?:Forwards?|Backups?|Monsters?|Characters?)\\s+you\\s+control\\s+" +
         "to\\s+(?:its|their)\\s+owners?(?:'s|')?\\s+hands?)[.!]\\s+If\\s+you\\s+do\\s+so[,.]?\\s+(?<effect>.+)$",
@@ -10713,7 +10851,10 @@ final class ActionResolverPatterns {
     );
     /**
      * The mass form of the grant above: "All the Forwards you control gain "[ability]" until the
-     * end of the turn." — 23-049C Ninja's replacement clause.
+     * end of the turn." — 23-049C Ninja's replacement clause; "Until the end of the turn, all the
+     * Forwards [of &lt;filter&gt;] you control gain "When this Forward attacks, …"" — 20-006C
+     * Blacksmith, 23-126L Edge. The turn scope leads or trails; {@code filter} is read by
+     * {@code ownForwardUnionFilter}.
      *
      * <p>Anchored at both ends, unlike the followup twin, because this is a whole effect rather
      * than the tail of a choose. Read ahead of {@link #ALL_FIELD_QUOTED_PROTECTION_GRANT}, which
@@ -10721,9 +10862,38 @@ final class ActionResolverPatterns {
      * declines this one, and the ordering keeps that from being an accident.
      */
     static final Pattern ALL_OWN_FORWARDS_GAIN_QUOTED_ABILITY_EOT = Pattern.compile(
-        "(?i)^All\\s+(?:the\\s+)?Forwards\\s+you\\s+control\\s+gain\\s+" +
+        "(?i)^(?<pre>Until\\s+the\\s+end\\s+of\\s+the\\s+turn,\\s+)?All\\s+(?:the\\s+)?Forwards" +
+        "(?:\\s+of\\s+(?<filter>[^\"]+?))?\\s+you\\s+control\\s+gain\\s+" +
         "(?:\"(?<granted>[^\"]+)\"|'(?<gq>[^']+)')" +
-        "\\s+until\\s+the\\s+end\\s+of\\s+the\\s+turn[.!]?$"
+        "(?<post>\\s+until\\s+the\\s+end\\s+of\\s+the\\s+turn)?[.!]?$"
+    );
+    /**
+     * One sentence of a choose followup granting two quotations to the chosen card: "[Until the end
+     * of the turn, ]it gains "&lt;a&gt;" and "&lt;b&gt;"[ until the end of the turn][.]" — at the start
+     * of the followup or after a sentence end. Read by {@code splitTwoQuotedGrants}.
+     */
+    static final Pattern TWO_QUOTED_GRANTS_SENTENCE = Pattern.compile(
+        "(?i)(?:^|(?<=[.!\"]\\s))(?<lead>Until\\s+the\\s+end\\s+of\\s+the\\s+turn,\\s+)?(?<subject>it\\s+gains|they\\s+gain)\\s+"
+            + "\"(?<a>[^\"]+)\"\\s+and\\s+\"(?<b>[^\"]+)\"(?<trail>\\s+until\\s+the\\s+end\\s+of\\s+the\\s+turn)?[.!]?"
+    );
+    /**
+     * "It gains "This Forward cannot be returned to its owner's hand by your opponent's Summons or
+     * abilities." until the end of the turn." — 27-124S Cloud. Anchored: the whole followup.
+     */
+    static final Pattern FOLLOWUP_GAINS_QUOTED_CANNOT_BE_RETURNED = Pattern.compile(
+        "(?i)^(?:Until\\s+the\\s+end\\s+of\\s+the\\s+turn,\\s+)?(?:it\\s+gains|they\\s+gain)\\s+\"This\\s+(?:Forward|Character)"
+            + "\\s+cannot\\s+be\\s+returned\\s+to\\s+its\\s+owner's\\s+hand\\s+by\\s+your\\s+opponent's\\s+Summons\\s+or\\s+"
+            + "abilities\\.?\"(?:\\s+until\\s+the\\s+end\\s+of\\s+the\\s+turn)?[.!]?$"
+    );
+    /** A granted clause that speaks of whatever receives it: "this Forward", "this Character". */
+    static final Pattern GRANT_ABOUT_ITS_CARRIER = Pattern.compile("(?i)\\bthis\\s+(?:Forward|Character)\\b");
+    /** "[Self] gains "&lt;quoted&gt;" until the end of your next turn." — 15-018C Sabin. */
+    static final Pattern GAINS_QUOTED_UNTIL_END_OF_YOUR_NEXT_TURN = Pattern.compile(
+        "(?i)^(?<subject>[^\"]+?)\\s+gains\\s+\"(?<quoted>[^\"]+)\"\\s+until\\s+the\\s+end\\s+of\\s+your\\s+next\\s+turn[.!]?$"
+    );
+    /** One term of an "all the Forwards of &lt;terms&gt;" filter: an Element, or a Job / Card Name / Category. */
+    static final Pattern OWN_FORWARD_FILTER_TERM = Pattern.compile(
+        "(?i)^(?:(?<kind>Job|Card\\s+Name|Category)\\s+(?<value>.+)|(?<element>Fire|Ice|Wind|Earth|Lightning|Water|Light|Dark))$"
     );
 
     /**
@@ -11895,6 +12065,10 @@ final class ActionResolverPatterns {
     static final Pattern DAMAGE_INCREMENT_CLARIFICATION = Pattern.compile(
         "(?i)\\(\\s*(?:Units?\\s+must\\s+be\\s+\\d+\\.?|damage\\s+must\\s+be\\s+in\\s+increments\\s+of\\s+\\d+)\\s*\\)\\.?"
     );
+    /** {@link #DAMAGE_INCREMENT_CLARIFICATION} with the space in front of it, for removing it whole. */
+    static final Pattern DAMAGE_INCREMENT_CLARIFICATION_SPACED = Pattern.compile(
+        "\\s*(?:" + DAMAGE_INCREMENT_CLARIFICATION.pattern() + ")"
+    );
     /**
      * Matches "Divide N damage among them as you like/equally" or "...split [it] as you wish/like
      * among the chosen ..." — a chosen-target damage allocation left to the controller's discretion
@@ -12115,10 +12289,12 @@ final class ActionResolverPatterns {
      */
     static final Pattern SELF_GAINS_TRAITS_AND_QUOTED_PERMANENT = Pattern.compile(
         "(?i)^(?!Until\\b)(?<subject>[^\"]+?)\\s+gains\\s+" +
-        "(?<traits>(?:Haste|First\\s+Strike|Brave)" +
-        "(?:\\s*,?\\s*(?:and\\s+)?(?:Haste|First\\s+Strike|Brave))*)\\s+and\\s+" +
+        // "+N power" ahead of the keywords, or in place of them (11-135S Vincent, 16-102R Lann).
+        // With power the reminder is required — see tryParseSelfGainsTraitsAndQuotedPermanent.
+        "(?:\\+(?<amount>\\d+)\\s+power)?" +
+        "(?<traits>(?:\\s*,?\\s*(?:and\\s+)?(?:Haste|First\\s+Strike|Brave))*)\\s+and\\s+" +
         "\"(?<quoted>.+?)\"[.!]?" +
-        "(?:\\s*\\(Th(?:is|ese)\\s+effects?\\s+(?:does\\s+not|do\\s+not|don't)\\s+end\\s+" +
+        "(?<perm>\\s*\\(Th(?:is|ese)\\s+effects?\\s+(?:does\\s+not|do\\s+not|don't)\\s+end\\s+" +
         "at\\s+the\\s+end\\s+of\\s+the\\s+turn\\.?\\))?" +
         "[.!]?\\s*$");
     /**

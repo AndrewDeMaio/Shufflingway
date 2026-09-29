@@ -18,6 +18,8 @@ package shufflingway;
  *       putting it into the Break Zone (Krile/Nanaa).</li>
  *   <li>{@link #expiresThisTurn} — registration lasts only "this turn"; {@code false} means
  *       "at any time you could normally cast it" / "during this game" (persists).</li>
+ *   <li>{@link #requiresEmptyHand} — castable only "as long as you have no cards in hand" (Minwu
+ *       (FFBE) 22-016H); asked at every cast, not at registration.</li>
  * </ul>
  */
 public record PlayableEntry(
@@ -26,7 +28,14 @@ public record PlayableEntry(
         boolean anyElement,
         boolean freeCast,
         boolean rfgAfterUse,
-        boolean expiresThisTurn) {
+        boolean expiresThisTurn,
+        boolean requiresEmptyHand) {
+
+    /** Every entry but Minwu's: no condition on the caster's hand. */
+    public PlayableEntry(SourceZone source, int costReduction, boolean anyElement, boolean freeCast,
+            boolean rfgAfterUse, boolean expiresThisTurn) {
+        this(source, costReduction, anyElement, freeCast, rfgAfterUse, expiresThisTurn, false);
+    }
 
     /** The zone a borrowed card is drawn from when cast. */
     public enum SourceZone { BREAK_ZONE, RFP }

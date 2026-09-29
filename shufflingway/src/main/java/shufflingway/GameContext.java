@@ -1020,6 +1020,23 @@ public interface GameContext {
             java.util.function.Consumer<GameContext> whenDoSo);
 
     /**
+     * "You may put 1 &lt;filter&gt; you control into the Break Zone | return 1 &lt;filter&gt; you
+     * control to its owner's hand. If you do so, {@code whenDoSo}." printed inside a choose followup
+     * — 7-020C Lulu, 4-087R Delita, 2-051L Vaan.
+     *
+     * <p>The sibling of {@link #putOwnTypeToBzThenDoSo} for a price its type filter cannot say:
+     * {@code eligible} is tested against each of the controller's own field cards, and is built at
+     * resolution, so Delita's "of the same cost" can read the Forward just chosen. The card is
+     * <em>selected</em>, not chosen, so nothing that watches choices sees it.
+     *
+     * <p><b>Asks whether to pay:</b> the "you may" sits inside the effect, after the choice, not on
+     * the trigger. P1 answers by picking a card or none; the AI pays with its cheapest eligible
+     * card. Nothing eligible, or declined, and {@code whenDoSo} does not run.
+     */
+    void mayPayWithOwnFieldCardThenDoSo(java.util.function.Predicate<CardData> eligible,
+            boolean returnToHand, String what, Runnable whenDoSo);
+
+    /**
      * "Put any number of [Characters] you control into the Break Zone" and answers how many
      * actually went — Bhunivelze 24-033L, where that count is the ability's whole scaling term:
      * the opponent then loses that many Forwards and discards that many cards.
@@ -5398,6 +5415,39 @@ public interface GameContext {
     void grantCopiedSpecialAbilityFreeOnce(CardData source, ActionAbility original);
 
     /**
+     * "The next time you use its special ability this turn, you can do so without paying 《S》." —
+     * 17-002L Edgar. The card at {@code t}'s next special ability this turn skips the same-named
+     * discard (or its substitute); CP and every other cost are still paid. Kept by identity in
+     * {@code MainWindow.specialSCostWaivedThisTurn}, spent when an activation commits.
+     */
+    void waiveNextSpecialSCostThisTurn(ForwardTarget t);
+
+    /**
+     * "Until the end of the turn, all the Forwards [of &lt;filter&gt;] you control gain "&lt;trigger&gt;"."
+     * — 20-006C Blacksmith, 23-126L Edge. Each of the ability user's Forwards on the field as this
+     * resolves that passes {@code filter} gains {@code abilityText} until the end of the turn, as
+     * {@link #grantSelfAutoAbilityUntilEndOfTurn} grants it; one arriving later does not.
+     */
+    void grantAutoAbilityToOwnForwardsUntilEndOfTurn(Predicate<CardData> filter, String abilityText);
+
+    /**
+     * {@code source} gains {@code abilityText} until the end of its controller's next turn — 15-018C
+     * Sabin's "At the beginning of Main Phase 1 during each of your turns, …". Granted as
+     * {@link #grantSelfAutoAbilityUntilEndOfTurn} grants, and withdrawn by
+     * {@link #scheduleAtEndOfControllerNextTurn}, so on the controller's own turn it outlasts this
+     * turn and the opponent's and ends with the next one.
+     */
+    void grantSelfAutoAbilityUntilEndOfYourNextTurn(CardData source, String abilityText);
+
+    /**
+     * "During this turn, you can cast it at any time you could normally cast it as long as you have
+     * no cards in hand." — Minwu (FFBE) 22-016H, of a card chosen in the ability user's Break Zone.
+     * A {@link PlayableEntry} over the Break Zone, this turn only, with
+     * {@link PlayableEntry#requiresEmptyHand} set: the hand is asked at every cast.
+     */
+    void makeBreakZoneCardCastableThisTurnWhileHandEmpty(CardData card);
+
+    /**
      * Gogo's "Mimic": lets the acting player use one special ability that a Character has used this
      * turn — excluding any whose ability name equals {@code excludedAbilityName} — without paying its
      * cost. Where the copied effect names its original user, {@code mimicSource}'s name is substituted
@@ -5809,6 +5859,19 @@ public interface GameContext {
      * identity like {@link #cardsDiscardedToCast}.
      */
     List<CardData> cardsDiscardedToCastList(CardData card);
+
+    /**
+     * The cards the current ability's cost removed from the game ("Remove the top 3 cards of your
+     * deck from the game: …") — 29-098R Quina's "If a Category IX card is removed by this ability's
+     * cost". The same record "you can cast [X] removed by this ability's cost" reads.
+     */
+    List<CardData> cardsRemovedByThisAbilitysCost();
+
+    /**
+     * How many cards the ability user has drawn this turn — 15-122L Mog (VI)'s "if you have drawn 4
+     * or more cards". {@link PlayerTurnState#cardsDrawnThisTurn}.
+     */
+    int selfCardsDrawnThisTurn();
 
     /**
      * Asks the resolving player to reveal any number of cards from their hand, and answers how many

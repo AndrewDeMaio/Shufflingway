@@ -42,6 +42,20 @@ final class ActionResolverFieldAbility {
         return grantedSelfFieldAbilityEffect(m.group("quoted").trim(), source);
     }
     /**
+     * "[Self] gains "&lt;trigger&gt;" until the end of your next turn." — 15-018C Sabin. The sibling
+     * of {@link #tryParseGainsQuotedFieldAbilityUntilEot} for the longer duration; only a trigger
+     * whose effect parses is granted ({@code grantableTrigger}), and nothing else the quoted-grant
+     * readers know is read at this duration.
+     */
+    static Consumer<GameContext> tryParseGainsQuotedTriggerUntilEndOfYourNextTurn(String text, CardData source) {
+        if (source == null) return null;
+        Matcher m = GAINS_QUOTED_UNTIL_END_OF_YOUR_NEXT_TURN.matcher(text.trim());
+        if (!m.matches() || !m.group("subject").trim().equalsIgnoreCase(source.name())) return null;
+        final String granted = m.group("quoted").trim();
+        if (!ActionResolverChoose.grantableTrigger(granted)) return null;
+        return ctx -> ctx.grantSelfAutoAbilityUntilEndOfYourNextTurn(source, granted);
+    }
+    /**
      * "activate [Self] and [Self] gains …" — 28-097H Vaan. Split into its two effects, and claimed
      * only when both read: activating him without the grant, or the reverse, is not the card.
      */
@@ -241,7 +255,12 @@ final class ActionResolverFieldAbility {
         if (!m.group("subject").trim().equalsIgnoreCase(source.name())) return null;
 
         EnumSet<CardData.Trait> traits = parseTraits(m.group("traits"));
-        if (traits.isEmpty()) return null;
+        final int power = m.group("amount") != null ? Integer.parseInt(m.group("amount")) : 0;
+        if (traits.isEmpty() && power == 0) return null;
+        // A power grant with no reminder is how the standing field grants read ("Josef gains +2000
+        // power and "When Josef attacks, …"" behind a board condition); only the reminder makes
+        // this one an effect that outlasts the turn.
+        if (power > 0 && m.group("perm") == null) return null;
         // The same sentence is printed by cards that grant it as a standing field ability —
         // Gilgamesh 18-074L behind a Damage gate, Firion 18-130L and 21-099H behind a board
         // condition — and those are enforced by the readers that scan field abilities
@@ -253,7 +272,7 @@ final class ActionResolverFieldAbility {
         Consumer<GameContext> grant = permanentGrantForSelfClause(m.group("quoted").trim(), source);
         if (grant == null) return null;
         return ctx -> {
-            ctx.boostSourceForwardPermanently(source, 0, traits);
+            ctx.boostSourceForwardPermanently(source, power, traits);
             grant.accept(ctx);
         };
     }

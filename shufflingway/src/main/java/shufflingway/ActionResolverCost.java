@@ -606,6 +606,36 @@ final class ActionResolverCost {
     }
 
     /**
+     * 26-064R Ignis — see {@link ActionResolverPatterns#DULL_N_FORWARDS_DAMAGE_TOTAL_POWER}. The
+     * Warrior shape with a sum for a count: each dulled Forward's power is read as it is dulled, and
+     * the payoff is the chosen Forward dealt that total. The dull is the cost, so fewer than N
+     * active Forwards is not doing so and nothing is chosen.
+     */
+    static Consumer<GameContext> tryParseDullForwardsDamageTotalPower(String text, CardData source) {
+        Matcher m = DULL_N_FORWARDS_DAMAGE_TOTAL_POWER.matcher(text.trim());
+        if (!m.matches()) return null;
+        int n = Integer.parseInt(m.group("n"));
+        String header = m.group("choose").trim();
+        if (parse(header + " Deal it 1000 damage.", source) == null) return null;
+        return ctx -> {
+            ctx.logEntry("Effect: Dull " + n + " active Forwards you control");
+            List<ForwardTarget> dulled = ctx.selectCharacters(n, false, false, true, "active", null,
+                    -1, null, -1, null, true, false, false, null, null, null, null, false, null, false);
+            if (dulled.size() < n) {
+                ctx.logEntry("Fewer than " + n + " active Forwards dulled — no effect");
+                ctx.markEffectFizzled();
+                return;
+            }
+            int total = 0;
+            for (ForwardTarget t : dulled) total += ctx.effectiveTargetPower(t);
+            dulled.forEach(ctx::dullTarget);
+            ctx.logEntry("Effect: total power dulled — " + total);
+            Consumer<GameContext> payoff = parse(header + " Deal it " + total + " damage.", source);
+            if (payoff != null) payoff.accept(ctx);
+        };
+    }
+
+    /**
      * The filter a reveal-any-number names ("Lightning cards", "Job Dragoon or Card Name Dragoon"),
      * or {@code null} when it is a kind this cannot read.
      */

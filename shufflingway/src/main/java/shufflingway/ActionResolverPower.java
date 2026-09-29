@@ -9,6 +9,7 @@ import java.util.EnumSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 import java.util.regex.Matcher;
 
 /**
@@ -1020,10 +1021,49 @@ final class ActionResolverPower {
      * and stays visibly unhandled rather than resolving as a silent no-op. Today that is the
      * cost-based block restriction and nothing else.
      */
+    /**
+     * "Lightning, Job Ninja and Card Name Ninja" (23-126L Edge) as a test of a Forward: any one
+     * term suffices — the Forwards of each kind named, not only a Forward that is all three. Null
+     * when a term is not an Element, Job, Card Name or Category.
+     */
+    static Predicate<CardData> ownForwardUnionFilter(String terms) {
+        Predicate<CardData> union = c -> false;
+        for (String term : terms.trim().split("\\s*,\\s*(?:and\\s+|or\\s+)?|\\s+(?:and|or)\\s+")) {
+            Matcher t = OWN_FORWARD_FILTER_TERM.matcher(term.trim());
+            if (!t.matches()) return null;
+            Predicate<CardData> one;
+            if (t.group("element") != null) {
+                String e = t.group("element");
+                one = c -> CardFilters.meetsElementFilter(c, e);
+            } else {
+                String kind = t.group("kind").toLowerCase(Locale.ROOT), v = t.group("value").trim();
+                one = kind.startsWith("job") ? c -> CardFilters.meetsJobFilter(c, v)
+                    : kind.startsWith("card") ? c -> CardFilters.meetsCardNameFilter(c, v)
+                    : c -> CardFilters.meetsCategoryFilter(c, v);
+            }
+            union = union.or(one);
+        }
+        return union;
+    }
+
     static Consumer<GameContext> tryParseAllOwnForwardsGainQuotedAbilityEot(String text) {
         Matcher m = ALL_OWN_FORWARDS_GAIN_QUOTED_ABILITY_EOT.matcher(text.trim());
         if (!m.matches()) return null;
+        // Turn-scoped by exactly one of the two phrases; with neither it is a standing grant.
+        if ((m.group("pre") == null) == (m.group("post") == null)) return null;
         String granted = (m.group("granted") != null ? m.group("granted") : m.group("gq")).trim();
+        Predicate<CardData> filter = m.group("filter") == null ? c -> true : ownForwardUnionFilter(m.group("filter"));
+        if (filter == null) return null;
+        // A triggered ability — 20-006C Blacksmith, 23-126L Edge — to each Forward on the field now.
+        if (ActionResolverChoose.grantableTrigger(granted)) {
+            final String label = m.group("filter") == null ? "all Forwards you control"
+                    : "the Forwards of " + m.group("filter").trim() + " you control";
+            return ctx -> {
+                ctx.logEntry("Effect: " + label + " gain \"" + granted + "\" until end of turn");
+                ctx.grantAutoAbilityToOwnForwardsUntilEndOfTurn(filter, granted);
+            };
+        }
+        if (m.group("filter") != null) return null;
         int[] nb = grantedThisForwardCannotBeBlockedByCost(granted);
         if (nb == null) return null;
         final int     cost   = nb[0];

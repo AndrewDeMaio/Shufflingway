@@ -951,6 +951,7 @@ class ComputerPlayer implements OpponentController {
 		for (Map.Entry<CardData, PlayableEntry> entry : entries) {
 			CardData card = entry.getKey();
 			PlayableEntry pe = entry.getValue();
+			if (!mw.borrowedHandConditionMet(card, false)) continue;
 			int reducedCost = mw.borrowedCastCost(card, pe, false);
 
 			// Respect uniqueness / Light-Dark / backup-slot legality so borrowed casts can't create field collisions.
@@ -2312,7 +2313,8 @@ class ComputerPlayer implements OpponentController {
 		// payers up front, and call the ability unaffordable when they cannot all be found.
 		List<CardData> handNow = mw.gameState.getP2Hand();
 		Set<Integer> reservedHandIdxs = new LinkedHashSet<>();
-		if (ability.isSpecial() && !mw.canPaySpecialCostWithCrystal(source, false)) {
+		if (ability.isSpecial() && !mw.canPaySpecialCostWithCrystal(source, false)
+				&& !mw.specialSCostWaivedThisTurn.contains(source)) {
 			int sCostSlot = p2SpecialCostPayerSlot(source);
 			if (sCostSlot < 0) return false;
 			reservedHandIdxs.add(sCostSlot);

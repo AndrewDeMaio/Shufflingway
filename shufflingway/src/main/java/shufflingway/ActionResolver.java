@@ -437,6 +437,11 @@ public class ActionResolver {
         result = tryParseDiscardAnyNumberThenChooseSameNumber(effectText, source);
         if (result != null) return claim("DiscardAnyNumberThenChooseSameNumber", result);
 
+        // And again: 26-064R Ignis's damage is the total power of the Forwards the first half
+        // dulled, which the split cannot carry across either.
+        result = tryParseDullForwardsDamageTotalPower(effectText, source);
+        if (result != null) return claim("DullForwardsDamageTotalPower", result);
+
         result = tryParseWhenYouDoSoSequence(effectText, source, xValue);
         if (result != null) return claim("WhenYouDoSoSequence", result);
 
@@ -1286,6 +1291,9 @@ public class ActionResolver {
 
         result = tryParseGainsQuotedFieldAbilityUntilEot(effectText, source);
         if (result != null) return claim("GainsQuotedFieldAbilityUntilEot", result);
+
+        result = tryParseGainsQuotedTriggerUntilEndOfYourNextTurn(effectText, source);
+        if (result != null) return claim("GainsQuotedTriggerUntilEndOfYourNextTurn", result);
 
         // Must precede the permanent grant parsers below: they anchor on "[Self] gains "…"" and
         // would claim 17-133S Scarmiglione's sentence off its second half, granting a clause still
@@ -2604,8 +2612,12 @@ public class ActionResolver {
         // is a real ability — anything else falls through to the unimplemented-followup warning
         // there and so must go unnamed here too.
         {
+            // Triggers too, less the two with handlers of their own — the chain's scope, exactly.
             Matcher anyGrantM = FOLLOWUP_GAINS_QUOTED_ABILITY.matcher(followupText.trim());
-            if (anyGrantM.matches() && anyGrantM.group("quoted").contains(". ")) {
+            if (anyGrantM.matches() && (anyGrantM.group("quoted").contains(". ")
+                    || QUOTED_TRIGGER_OPENING.matcher(anyGrantM.group("quoted")).lookingAt()
+                       && !FOLLOWUP_GAINS_BREAK_WHEN_DEALT_DAMAGE.matcher(followupText).find()
+                       && !FOLLOWUP_GAINS_BREAKTOUCH_BATTLE.matcher(followupText).find())) {
                 Matcher permM = FOLLOWUP_GAINS_QUOTED_ABILITY_PERMANENT.matcher(followupText.trim());
                 if (permM.matches() && !CardData.parseAutoAbilities(
                         PERMANENCE_REMINDER.matcher(permM.group("quoted").trim())
@@ -2800,7 +2812,8 @@ public class ActionResolver {
         if (FOLLOWUP_CANNOT_BE_CHOSEN_BOTH.matcher(followupText).find())              return "CannotBeChosenBoth";
         if (FOLLOWUP_CANNOT_BE_CHOSEN_SUMMONS.matcher(followupText).find())           return "CannotBeChosenSummons";
         if (FOLLOWUP_CANNOT_BE_CHOSEN_ABILITIES.matcher(followupText).find())         return "CannotBeChosenAbilities";
-        if (FOLLOWUP_CANNOT_BE_RETURNED_TO_HAND.matcher(followupText).find())         return "CannotBeReturnedToHand";
+        if (FOLLOWUP_CANNOT_BE_RETURNED_TO_HAND.matcher(followupText).find()
+                || FOLLOWUP_GAINS_QUOTED_CANNOT_BE_RETURNED.matcher(followupText.trim()).matches()) return "CannotBeReturnedToHand";
         if (FOLLOWUP_CANNOT_BECOME_DULL_BY_OPP.matcher(followupText).find())          return "CannotBecomeDullByOpp";
         if (FOLLOWUP_DULL_OR_ACTIVATE.matcher(followupText).find())                   return "DullOrActivate";
         if (FOLLOWUP_DULL_OR_FREEZE.matcher(followupText).find())                     return "DullOrFreeze";
@@ -3465,7 +3478,9 @@ public class ActionResolver {
         }
         Matcher chooseM = CHOOSE_CHARACTER_PATTERN.matcher(escapedEffectText);
         if (site.equals("ChooseCharacter") && chooseM.find()) {
-            String followup      = restorePeriodInName(chooseM.group("followup").trim(), source);
+            // Split as the choose chain splits it: "it gains +N power and "<grant>"" is two sentences.
+            String followup      = ActionResolverChoose.splitTwoQuotedGrants(ActionResolverChoose.splitPowerAndQuotedGrant(
+                    restorePeriodInName(chooseM.group("followup").trim(), source)));
             // Mirrors the choose chain's cast-payment gate, which is settled ahead of every
             // followup parser: the condition sits between the choose and its followup, so name
             // the followup with the gate around it rather than as an effect that always happens.
@@ -3622,9 +3637,39 @@ public class ActionResolver {
                 return "ChooseCharacter / RevealTopNDamagePerCpAddAllToHand";
             if (FOLLOWUP_RFP_IF_SAME_TYPE_DRAW.matcher(followup.trim()).matches())
                 return "ChooseCharacter / RfpIfSameTypeDraw";
+            // Mirrors the choose chain's cost-gated branches: split, 29-037C MAI read as a break and
+            // a return, both unconditional.
+            if (ActionResolverChoose.costGatedBranches(followup, 0) != null) {
+                List<String> parts = new ArrayList<>();
+                for (String s : followup.trim().split("(?<=[.!])\\s+")) {
+                    Matcher g = CHOSEN_COST_GATED_SENTENCE.matcher(s.trim());
+                    g.matches();
+                    String name = matchedFollowupName(g.group("action").trim(), source);
+                    parts.add("cost " + g.group("n") + (g.group("cmp").equalsIgnoreCase("less") ? "-" : "+")
+                            + ": " + (name != null ? name : "?"));
+                }
+                return "ChooseCharacter / ByCost(" + String.join(" | ", parts) + ")";
+            }
             // Mirrors the choose chain: delayed, where the plain name read as an immediate put.
             if (FOLLOWUP_NEXT_MAIN_PHASE_1_PUT_TO_BZ.matcher(followup.trim()).matches())
                 return "ChooseCharacter / AtNextMainPhase1(PutToBreakZone)";
+            // Mirrors the choose chain's own-card price, read off the whole followup: split, the
+            // price described as "?" over a payoff that looked unconditional.
+            {
+                // Behind the chain's plain may-return branch, which claims 6-119C Chime first.
+                Matcher payOwnM = FOLLOWUP_MAY_PAY_OWN_CARD_IF_DO_SO.matcher(followup.trim());
+                if (payOwnM.matches() && !FOLLOWUP_MAY_RETURN_OWN_IF_DO_SO.matcher(followup.trim()).matches()
+                        && ActionResolverChoose.ownPayFilter(payOwnM.group("what")) != null) {
+                    String payoff = payOwnM.group("effect").trim()
+                            .replaceAll("(?i)\\bthe\\s+(?:chosen\\s+)?(?:Forward|Character|Backup|Monster)\\b", "it");
+                    if (parseFormerLatterGroupAction(payoff) != null) {
+                        String payoffName = matchedFollowupName(payoff, source);
+                        return "ChooseCharacter / MayPayOwn"
+                                + (payOwnM.group("verb").equalsIgnoreCase("return") ? "ReturnToHand" : "PutToBreakZone")
+                                + "(" + (payoffName != null ? payoffName : "?") + ")";
+                    }
+                }
+            }
             if (FOLLOWUP_REVEAL_TOP_N_JOB_DEAL_DMG_PLACE_BOTTOM.matcher(followup).find())
                 return "ChooseCharacter / RevealTopNJobDealDmgPlaceBottom";
             // Mirrors the choose parser, where this is read off the whole followup beside the
@@ -3863,6 +3908,19 @@ public class ActionResolver {
             if (secondaryDesc == null && secondaryTxt != null && !secondaryTxt.isEmpty()
                     && secondaryCounterGatedPowerBecomes(secondaryTxt, source) != null)
                 secondaryDesc = "IfSourceCounters(PowerBecomes)";
+            // Mirrors the choose chain, which sends a sentence about the chosen card back through
+            // itself on that card, ahead of the standalone parse: described standalone, 17-065H
+            // Arciela's "It gains +4000 power" named the boost to Arciela it used to run.
+            if (secondaryDesc == null && secondaryTxt != null && !secondaryTxt.isEmpty()) {
+                String header = escapedEffectText.substring(0, chooseM.start("followup"));
+                if (ActionResolverChoose.secondaryOnChosen(header, secondaryTxt, source, 0) != null) {
+                    String s = secondaryTxt.trim();
+                    String onChosen = fullDescription(header + Character.toUpperCase(s.charAt(0)) + s.substring(1)
+                            + (s.matches("(?s).*[.!\"]") ? "" : "."), source);
+                    secondaryDesc = onChosen != null && onChosen.startsWith("ChooseCharacter / ")
+                            ? onChosen.substring("ChooseCharacter / ".length()) : "?";
+                }
+            }
             if (secondaryDesc == null && secondaryTxt != null && !secondaryTxt.isEmpty())
                 secondaryDesc = fullDescription(secondaryTxt, source);
             if (secondaryDesc == null && secondaryTxt != null && !secondaryTxt.isEmpty())
@@ -4406,6 +4464,9 @@ public class ActionResolver {
             case DamageInsteadCondition.SourceCountersAtLeast s ->
                 own != null && s.name().equalsIgnoreCase(own)
                         ? new DamageInsteadCondition.SourceCountersAtLeast(s.min(), s.counter(), s.name(), source) : null;
+            case DamageInsteadCondition.DiscardedNamedToCast d ->
+                own != null && d.payerName().equalsIgnoreCase(own)
+                        ? new DamageInsteadCondition.DiscardedNamedToCast(d.name(), d.payerName(), source) : null;
             default -> c;
         };
     }
@@ -4499,6 +4560,18 @@ public class ActionResolver {
 
         if (s.matches("(?i)you\\s+have\\s+a\\s+《C》"))
             return new DamageInsteadCondition.YouHaveCrystal();
+        Matcher drewM = Pattern.compile("(?i)^you\\s+have\\s+drawn\\s+(\\d+)\\s+or\\s+more\\s+cards(?:\\s+this\\s+turn)?$")
+                .matcher(s);
+        if (drewM.matches()) return new DamageInsteadCondition.YouDrewAtLeast(Integer.parseInt(drewM.group(1)));
+        Matcher discToCastM = Pattern.compile(
+                "(?i)^you\\s+discarded\\s+a\\s+Card\\s+Name\\s+(.+?)\\s+to\\s+cast\\s+(.+)$").matcher(s);
+        if (discToCastM.matches())
+            return new DamageInsteadCondition.DiscardedNamedToCast(discToCastM.group(1).trim(),
+                    discToCastM.group(2).trim(), null);
+        Matcher costRfgM = Pattern.compile(
+                "(?i)^an?\\s+(.+?)\\s+(?:card\\s+)?is\\s+removed\\s+by\\s+this\\s+ability's\\s+cost$").matcher(s);
+        if (costRfgM.matches() && parseRevealCondition(costRfgM.group(1).trim()) != null)
+            return new DamageInsteadCondition.CostRemovedCardMatches(costRfgM.group(1).trim());
         Matcher bzNamedM = Pattern.compile("(?i)^you\\s+have\\s+a\\s+Card\\s+Name\\s+(.+?)\\s+in\\s+your\\s+Break\\s+Zone$")
                 .matcher(s);
         if (bzNamedM.matches())
@@ -5324,6 +5397,15 @@ public class ActionResolver {
                 src != null && ctx.getCounters(src, counter) >= min;
             case DamageInsteadCondition.BreakZoneHasCardNamed(String name) ->
                 ctx.countSelfBreakZoneCards(name, null) >= 1;
+            case DamageInsteadCondition.DiscardedNamedToCast(String name, String payerName, CardData payer) ->
+                payer != null && ctx.cardsDiscardedToCastList(payer).stream()
+                        .anyMatch(d -> d.name().equalsIgnoreCase(name));
+            case DamageInsteadCondition.YouDrewAtLeast(int min) ->
+                ctx.selfCardsDrawnThisTurn() >= min;
+            case DamageInsteadCondition.CostRemovedCardMatches(String filter) -> {
+                Predicate<CardData> f = parseRevealCondition(filter);
+                yield f != null && ctx.cardsRemovedByThisAbilitysCost().stream().anyMatch(f);
+            }
         };
     }
 
@@ -5663,7 +5745,11 @@ public class ActionResolver {
         s = CardData.EACH_PLAYER_CAN_USE_PATTERN           .matcher(s).replaceAll("").trim();
         // Boilerplate divide-damage rounding clarification — restates a fixed game rule
         // (damage is always allocated in increments of 1000), carries no extra info to describe.
-        s = DAMAGE_INCREMENT_CLARIFICATION.matcher(s).replaceAll("").trim();
+        // The note sits inside the sentence, before its period; the period stays, or the sentence
+        // after it merges into this one — 29-103H Setzer's Break Zone removal read as part of the
+        // damage.
+        s = DAMAGE_INCREMENT_CLARIFICATION_SPACED.matcher(s)
+                .replaceAll(r -> r.group().endsWith(".") ? "." : "").trim();
         // Strip leftover leading/trailing ", and" / "," / "." artifacts
         s = s.replaceAll("^[,.;\\s]+|[,.;\\s]+$", "").trim();
         return s;
@@ -5739,7 +5825,8 @@ public class ActionResolver {
     static String quotedGrantUntilEot(Matcher m) {
         if (m.group("pre") == null && m.group("post") == null) return null;
         String quoted = m.group("granted") != null ? m.group("granted") : m.group("gq");
-        return quoted == null ? null : quoted.trim();
+        return quoted == null ? null : QUOTED_SAME_TURN_CHOSEN_DEALT_IT_DAMAGE.matcher(quoted.trim())
+                .replaceFirst("When ${subject} damaged by this Forward is put from the field into the Break Zone on the same turn, ");
     }
 
     /**
@@ -6144,8 +6231,11 @@ public class ActionResolver {
         // Declined for the same reason when the payoff names "the chosen" card: the choice is in
         // the primary, and resolving the halves apart loses it — 6-119C Chime's "return the chosen
         // Forward" was read as a card named "the chosen Forward". The Choose chain reads it whole.
+        // "the Forward" with no "chosen" is the same reference: 2-051L Vaan's "activate the Forward"
+        // was resolved alone as a card of that name, after a price the split had left unread.
         if (m.group("primary").trim().toLowerCase(Locale.ROOT).startsWith("choose ")
-                && CHOSEN_REFERENCE.matcher(m.group("followup")).find()) return null;
+                && (CHOSEN_REFERENCE.matcher(m.group("followup")).find()
+                    || CHOSEN_DEFINITE_REFERENCE.matcher(m.group("followup")).find())) return null;
         // A counted Break Zone removal here is the payoff's price, which is all N or nothing — read
         // in that form rather than as the removal parse() would give, which takes what there is.
         Consumer<GameContext> price    = tryParseBzRemovalPrice(m.group("primary"));

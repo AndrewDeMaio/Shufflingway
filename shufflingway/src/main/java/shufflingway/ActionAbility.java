@@ -202,6 +202,32 @@ public record ActionAbility(
     }
 
     /**
+     * A copy with the 《S》 alone cleared and every other cost kept — what the payment dialog is shown
+     * when "you can do so without paying 《S》" is open (17-002L Edgar), so it does not ask for a
+     * same-named card. For display only: the payment is still handed the ability itself, which is
+     * still a special ability to everything that asks.
+     */
+    public ActionAbility withSpecialCostWaived() {
+        if (!isSpecial()) return this;
+        return new ActionAbility(abilityName(), requiresDull(), false, crystalCost(),
+                selfMillCost(), hasXCost(), cpCost(), breakZoneCosts(), discardCosts(),
+                removeFromGameCosts(), returnToHandCosts(), counterCosts(), dullForwardCosts(),
+                yourTurnOnly(), opponentTurnOnly(), oncePerTurn(), mainPhaseOnly(),
+                whileCardAttacking(), whileCardBlocking(), whilePartyAttacking(), whileCardInHand(),
+                hasBlockingTargetEffect(), effectText(), damageThreshold(), controlCondition(),
+                cpBackupElement(), cpAllowedElements(), sourceInBattle(), requiresOppDiscardedThisTurn(),
+                requiresCastSummonThisTurn(), requiresElementForwardEnteredThisTurn(),
+                requiresCardNameEnteredThisTurn(), breakZoneOnly(), requiresOpponentEmptyHand(),
+                requiresSelfEmptyHand(), requiresNamedCardTookDamageThisTurn(), requiresSelfReceivedDamageThisTurn(),
+                requiresForwardPutToBZThisTurn(), requiresJobPutToBZThisTurn(), blockerForAttacker(),
+                ownBreakZoneNameRequired(), counterScaleName(), minCounterRequired(), minCounterType(),
+                maxOpponentHandSize(), requiresSourceIsForward(), maxCounterAllowed(), maxCounterType(),
+                inlineCostReductionJob(), inlineCostReductionExcludeName(), requiresOwnWarpCard(),
+                usableByEitherPlayer(), requiresSelfPowerAtLeast(), bottomOfDeckCostCardName(), revealCost(),
+                requiresSelfDamageAtLeast());
+    }
+
+    /**
      * A copy carrying {@code newEffectText} in place of {@link #effectText()}, with every cost and
      * restriction left as printed. Used when an ability is lent to a card other than the one that
      * printed it and its text has to be re-pointed at the borrower

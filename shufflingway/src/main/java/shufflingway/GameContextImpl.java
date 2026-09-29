@@ -9172,6 +9172,50 @@ final class GameContextImpl implements GameContext {
 				whenDoSo.accept(this);
 			}
 
+			@Override public void mayPayWithOwnFieldCardThenDoSo(java.util.function.Predicate<CardData> eligible,
+					boolean returnToHand, String what, Runnable whenDoSo) {
+				List<ForwardTarget> candidates = new ArrayList<>();
+				List<CardData> fwds = mw.playerForwardCards(isP1);
+				for (int i = 0; i < fwds.size(); i++)
+					if (eligible.test(fwds.get(i))) candidates.add(new ForwardTarget(isP1, i, ForwardTarget.CardZone.FORWARD));
+				CardData[] bkps = mw.playerBackupCards(isP1);
+				for (int i = 0; i < bkps.length; i++)
+					if (bkps[i] != null && eligible.test(bkps[i]))
+						candidates.add(new ForwardTarget(isP1, i, ForwardTarget.CardZone.BACKUP));
+				List<CardData> mons = isP1 ? mw.p1MonsterCards : mw.p2MonsterCards;
+				for (int i = 0; i < mons.size(); i++)
+					if (eligible.test(mons.get(i))) candidates.add(new ForwardTarget(isP1, i, ForwardTarget.CardZone.MONSTER));
+				if (candidates.isEmpty()) {
+					logEntry("[Effect] No " + what + " to pay with — nothing happens");
+					markEffectFizzled();
+					return;
+				}
+				ForwardTarget pick;
+				if (!isP1) {
+					// The AI pays with the card it will miss least.
+					pick = candidates.stream().min(java.util.Comparator.comparingInt(
+							t -> { CardData c = cardAtTarget(t); return c == null ? 0 : c.cost(); })).orElseThrow();
+				} else {
+					List<ForwardTarget> picks = mw.showForwardSelectDialog(candidates, 1, true,
+							(returnToHand ? "You may return " : "You may put ") + what
+							+ (returnToHand ? " to its owner's hand" : " into the Break Zone"));
+					pick = picks == null || picks.isEmpty() ? null : picks.get(0);
+				}
+				if (pick == null) {
+					logEntry("[Effect] Declined to pay — nothing happens");
+					markEffectFizzled();
+					return;
+				}
+				if (!returnToHand) forceTargetToBreakZone(pick);
+				else switch (pick.zone()) {
+					case FORWARD -> { if (isP1) returnP1ForwardToHand(pick.idx()); else returnP2ForwardToHand(pick.idx()); }
+					case BACKUP  -> { if (isP1) returnP1BackupToHand(pick.idx());  else returnP2BackupToHand(pick.idx()); }
+					case MONSTER -> { if (isP1) returnP1MonsterToHand(pick.idx()); else returnP2MonsterToHand(pick.idx()); }
+					default      -> { }
+				}
+				whenDoSo.run();
+			}
+
 			@Override public int putAnyNumberOfOwnCharactersToBz(boolean inclForwards,
 					boolean inclBackups, boolean inclMonsters, String what) {
 				List<ForwardTarget> eligible = new ArrayList<>();
@@ -10650,6 +10694,14 @@ final class GameContextImpl implements GameContext {
 						? new ArrayList<>(mw.lastCastPaymentDiscards) : List.of();
 			}
 
+			@Override public List<CardData> cardsRemovedByThisAbilitysCost() {
+				return List.copyOf(mw.lastRfgCostCards);
+			}
+
+			@Override public int selfCardsDrawnThisTurn() {
+				return mw.turn(isP1).cardsDrawnThisTurn;
+			}
+
 			@Override public int triggeringEnteredCardPower() {
 				CardData entered = mw.triggeringEnteredCard;
 				if (entered == null) return 0;
@@ -11210,6 +11262,36 @@ final class GameContextImpl implements GameContext {
 				logEntry(source.name() + " gains: Put " + bzCardName + " into the Break Zone: " + effectText);
 			}
 
+			@Override public void grantAutoAbilityToOwnForwardsUntilEndOfTurn(Predicate<CardData> filter,
+					String abilityText) {
+				for (CardData card : List.copyOf(isP1 ? mw.p1ForwardCards : mw.p2ForwardCards))
+					if (card != null && filter.test(card)) grantSelfAutoAbilityUntilEndOfTurn(card, abilityText);
+			}
+			@Override public void grantSelfAutoAbilityUntilEndOfYourNextTurn(CardData source, String abilityText) {
+				List<AutoAbility> granted = CardData.parseAutoAbilities(abilityText);
+				if (granted.isEmpty()) return;
+				mw.grantedAutoAbilities.computeIfAbsent(source, k -> new ArrayList<>()).addAll(granted);
+				// Withdrawn by identity on the entries added here, as the end-of-turn grant is.
+				scheduleAtEndOfControllerNextTurn(ctx -> {
+					List<AutoAbility> list = mw.grantedAutoAbilities.get(source);
+					if (list == null) return;
+					for (AutoAbility a : granted) list.remove(a);
+					if (list.isEmpty()) mw.grantedAutoAbilities.remove(source);
+				});
+				logEntry(source.name() + " gains \"" + abilityText + "\" until the end of your next turn");
+			}
+			@Override public void waiveNextSpecialSCostThisTurn(ForwardTarget t) {
+				CardData card = mw.autoAbilityTriggers.fieldCardData(t);
+				if (card == null) return;
+				mw.specialSCostWaivedThisTurn.add(card);
+				logEntry(card.name() + " — its next special ability this turn can be used without paying 《S》");
+			}
+			@Override public void makeBreakZoneCardCastableThisTurnWhileHandEmpty(CardData card) {
+				if (card == null) return;
+				mw.registerBorrowedPlayable(isP1, card, new PlayableEntry(
+						PlayableEntry.SourceZone.BREAK_ZONE, 0, false, false, false, true, true));
+				logEntry(card.name() + " can be cast from the Break Zone this turn while your hand is empty");
+			}
 			@Override public void grantCopiedSpecialAbilityFreeOnce(CardData source, ActionAbility original) {
 				ActionAbility copy = new ActionAbility(
 					original.abilityName(), false, false, 0, 0, false,

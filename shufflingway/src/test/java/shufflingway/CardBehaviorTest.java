@@ -37803,6 +37803,518 @@ public class CardBehaviorTest {
 		verify(other).boostTarget(mine, 1000, EnumSet.noneOf(CardData.Trait.class));
 	}
 
+	// 15-122L Mog (VI): two draw-count tiers, the higher one replacing the lower. The return ran
+	// whatever had been drawn — "During this turn, if …" hid the gate from the gate readers.
+	@Test
+	void mogReturnsOrBreaksByHowManyCardsWereDrawn() {
+		String mog = "choose up to 1 Forward other than Mog (VI). During this turn, if you have drawn 4 or more "
+				+ "cards, return it to its owner's hand. If you have drawn 6 or more cards, put it into the Break "
+				+ "Zone instead.";
+		ForwardTarget theirs = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+		for (int drawn : new int[]{3, 4, 6}) {
+			GameContext ctx = ctxChoosing(List.of(theirs));
+			when(ctx.selfCardsDrawnThisTurn()).thenReturn(drawn);
+			ActionResolver.parse(mog, makeForward("Mog (VI)", "Earth", 3, 7000)).accept(ctx);
+			verify(ctx, times(drawn == 4 ? 1 : 0)).returnP2ForwardToHand(0);
+			verify(ctx, times(drawn == 6 ? 1 : 0)).forceTargetToBreakZone(theirs);
+		}
+	}
+
+	// 29-037C MAI: "If its cost is 2 or less, break it. If its cost is 3 or more, return it to its
+	// owner's hand." The plain break branch found "break it" and broke any Monster, cost unread.
+	@Test
+	void maiBreaksACheapMonsterAndReturnsADearOne() {
+		String mai = "choose 1 Monster opponent controls. If its cost is 2 or less, break it. If its cost is 3 "
+				+ "or more, return it to its owner's hand.";
+		for (int cost : new int[]{2, 4}) {
+			MainWindow mw = new MainWindow();
+			CardData monster = new CardData(null, "Beast", "Water", cost, 5000, "Monster",
+					false, 0, false, false, Set.of(), 0, List.of(), null, List.of(),
+					List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+					List.of(), List.of(), false, false, null, false, false, false, false, false, 1,
+					null, null, null, "");
+			mw.gameState.getIdentity().put(monster, true);
+			mw.placeCardInMonsterZone(monster);
+
+			ActionResolver.parse(mai, makeForward("MAI", "Water", 3, 7000)).accept(mw.buildGameContext(false));
+
+			if (cost == 2) assertTrue(mw.gameState.getP1BreakZone().contains(monster), "cost 2 is broken");
+			else {
+				assertTrue(mw.gameState.getP1Hand().contains(monster), "cost 4 returns to hand");
+				assertFalse(mw.gameState.getP1BreakZone().contains(monster), "and is not broken");
+			}
+		}
+	}
+
+	// Upgrades whose condition was unread: what was discarded to cast the card, and what the
+	// ability's cost removed. Each alt is "<action> and draw 1 card", read by targetActionAndEffect.
+
+	@Test
+	void ramuhUpgradesWhenARamuhWasDiscardedToCastIt() {
+		String text = "Choose 1 Forward opponent controls. Deal it 5000 damage. If you discarded a Card Name "
+				+ "Ramuh to cast Ramuh, deal it 7000 damage and draw 1 card instead.";
+		CardData ramuh = makeSummon("Ramuh", "Lightning", 2, text);
+		ForwardTarget theirs = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+
+		GameContext paidWithRamuh = ctxChoosing(List.of(theirs));
+		when(paidWithRamuh.cardsDiscardedToCastList(ramuh)).thenReturn(List.of(makeSummon("Ramuh", "Lightning", 2, text)));
+		ActionResolver.parse(text, ramuh).accept(paidWithRamuh);
+		verify(paidWithRamuh).damageTarget(theirs, 7000);
+		verify(paidWithRamuh).drawCards(1);
+		verify(paidWithRamuh, never()).damageTarget(any(), eq(5000));
+
+		GameContext paidOtherwise = ctxChoosing(List.of(theirs));
+		when(paidOtherwise.cardsDiscardedToCastList(ramuh)).thenReturn(List.of(makeForward("Snow", "Ice", 3, 7000)));
+		ActionResolver.parse(text, ramuh).accept(paidOtherwise);
+		verify(paidOtherwise).damageTarget(theirs, 5000);
+		verify(paidOtherwise, never()).drawCards(anyInt());
+	}
+
+	@Test
+	void quinaUpgradesWhenTheCostRemovedACategoryIxCard() {
+		String text = "Choose 1 Forward opponent controls. It loses 2000 power until the end of the turn. If a "
+				+ "Category IX card is removed by this ability's cost, it loses 5000 power until the end of the "
+				+ "turn and draw 1 card instead.";
+		ForwardTarget theirs = new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD);
+
+		GameContext ix = ctxChoosing(List.of(theirs));
+		when(ix.cardsRemovedByThisAbilitysCost()).thenReturn(List.of(makeCategoryForward("Vivi", "Fire", "IX")));
+		ActionResolver.parse(text, null).accept(ix);
+		verify(ix).reduceTarget(theirs, 5000, EnumSet.noneOf(CardData.Trait.class));
+		verify(ix).drawCards(1);
+
+		GameContext other = ctxChoosing(List.of(theirs));
+		when(other.cardsRemovedByThisAbilitysCost()).thenReturn(List.of(makeCategoryForward("Cloud", "Wind", "VII")));
+		ActionResolver.parse(text, null).accept(other);
+		verify(other).reduceTarget(theirs, 2000, EnumSet.noneOf(CardData.Trait.class));
+		verify(other, never()).drawCards(anyInt());
+	}
+
+	// "choose …. You may put 1 <what> into the Break Zone | return 1 <what> to its owner's hand. If you
+	// do so, <action on the chosen card>." Unread, Lulu and Delita chose and did nothing; Vaan's
+	// payoff ran alone, unpaid, against a card named "the Forward". Driven from P2, whose price the
+	// AI pays with its cheapest eligible card.
+
+	@Test
+	void luluPaysWithAnotherBackupToDealTheDamage() {
+		String lulu = "choose 1 Forward. You may put 1 Backup other than Lulu you control into the Break Zone. "
+				+ "If you do so, deal it 7000 damage.";
+		MainWindow mw = new MainWindow();
+		CardData victim = makeForward("Victim", "Fire", 3, 7000);
+		mw.gameState.getIdentity().put(victim, true);
+		mw.placeCardInForwardZone(victim);
+		CardData self  = makePlainBackup("Lulu", "Ice", 2);
+		CardData spare = makePlainBackup("Spare", "Ice", 2);
+		for (CardData b : List.of(self, spare)) {
+			mw.gameState.getIdentity().put(b, false);
+			mw.placeP2CardInFirstBackupSlot(b);
+		}
+
+		ActionResolver.parse(lulu, self).accept(mw.buildGameContext(false));
+
+		assertTrue(mw.gameState.getP2BreakZone().contains(spare), "paid with the other Backup");
+		assertFalse(mw.gameState.getP2BreakZone().contains(self), "never with Lulu");
+		assertTrue(mw.gameState.getP1BreakZone().contains(victim), "and the 7000 is dealt");
+	}
+
+	@Test
+	void luluWithNoOtherBackupPaysNothingAndDealsNothing() {
+		MainWindow mw = new MainWindow();
+		CardData victim = makeForward("Victim", "Fire", 3, 7000);
+		mw.gameState.getIdentity().put(victim, true);
+		mw.placeCardInForwardZone(victim);
+		CardData self = makePlainBackup("Lulu", "Ice", 2);
+		mw.gameState.getIdentity().put(self, false);
+		mw.placeP2CardInFirstBackupSlot(self);
+
+		ActionResolver.parse("choose 1 Forward. You may put 1 Backup other than Lulu you control into the Break "
+				+ "Zone. If you do so, deal it 7000 damage.", self).accept(mw.buildGameContext(false));
+
+		assertTrue(mw.p1ForwardCards.contains(victim));
+		assertEquals(0, (int) mw.p1ForwardDamage.get(0));
+	}
+
+	@Test
+	void delitaPaysWithAForwardOfTheChosenForwardsCost() {
+		MainWindow mw = new MainWindow();
+		CardData victim = makeForward("Victim", "Fire", 3, 9000);
+		mw.gameState.getIdentity().put(victim, true);
+		mw.placeCardInForwardZone(victim);
+		CardData delita = makeForward("Delita", "Lightning", 3, 7000);
+		CardData dearer = makeForward("Dearer", "Lightning", 4, 7000);
+		CardData same   = makeForward("Same", "Lightning", 3, 7000);
+		for (CardData f : List.of(delita, dearer, same)) placeP2Forward(mw, f);
+
+		ActionResolver.parse("choose 1 Forward opponent controls. You may put 1 of your Forwards of the same cost "
+				+ "other than Delita into the Break Zone. If you do so, break the chosen Forward.", delita)
+				.accept(mw.buildGameContext(false));
+
+		assertTrue(mw.gameState.getP2BreakZone().contains(same), "the cost-3 Forward pays");
+		assertFalse(mw.gameState.getP2BreakZone().contains(dearer), "not the cost-4 one");
+		assertFalse(mw.gameState.getP2BreakZone().contains(delita), "and never Delita herself");
+		assertTrue(mw.gameState.getP1BreakZone().contains(victim), "and the chosen Forward is broken");
+	}
+
+	@Test
+	void vaanReturnsACheapBackupToActivateTheChosenForward() {
+		MainWindow mw = new MainWindow();
+		CardData vaan = makeForward("Vaan", "Wind", 3, 7000);
+		placeP2Forward(mw, vaan);
+		mw.p2ForwardStates.set(0, CardState.DULL);
+		CardData cheap = makePlainBackup("Cheap", "Wind", 2);
+		mw.gameState.getIdentity().put(cheap, false);
+		mw.placeP2CardInFirstBackupSlot(cheap);
+
+		ActionResolver.parse("choose 1 Forward you control. You may return 1 Backup of cost 2 or less you control "
+				+ "to its owner's hand. If you do so, activate the Forward.", vaan).accept(mw.buildGameContext(false));
+
+		assertTrue(mw.gameState.getP2Hand().contains(cheap), "the Backup goes back to hand");
+		assertEquals(CardState.ACTIVE, mw.p2ForwardStates.get(0), "and the Forward is activated");
+	}
+
+	// A later sentence about the chosen card goes back through the choose chain on the same card
+	// (secondaryOnChosen). On its own it had nothing to read "it" as: unread, or read as the card
+	// that printed the ability.
+
+	@Test
+	void valigarmandaDoesAllThreeThingsToTheOneForwardItChose() {
+		MainWindow mw = new MainWindow();
+		CardData victim = makeForward("Victim", "Fire", 5, 20000);
+		placeP1Forward(mw, victim);
+
+		ActionResolver.parse("Choose 1 Forward. Dull it and Freeze it. It loses 9000 power until the end of the "
+				+ "turn. Deal it 9000 damage.", makeSummon("Valigarmanda", "Water", 7, ""))
+				.accept(mw.buildGameContext(false));
+
+		assertEquals(CardState.DULL, mw.p1ForwardStates.get(0));
+		assertTrue(mw.p1ForwardFrozen.get(0), "frozen");
+		assertEquals(9000, (int) mw.p1ForwardPowerReduction.get(0), "loses 9000");
+		assertEquals(9000, (int) mw.p1ForwardDamage.get(0), "and is dealt 9000");
+	}
+
+	@Test
+	void midsGrantProtectsTheChosenForwardFromAbilitiesOnly() {
+		MainWindow mw = new MainWindow();
+		CardData mid  = makeForward("Mid", "Water", 3, 6000);
+		CardData ally = makeForward("Ally", "Water", 3, 7000);
+		placeP2Forward(mw, mid);
+		placeP2Forward(mw, ally);
+
+		ActionResolver.parse("choose 1 Forward other than Mid you control. Until the end of the turn, it gains "
+				+ "+1000 power and \"This Forward cannot be chosen by your opponent's abilities.\"", mid)
+				.accept(mw.buildGameContext(false));
+
+		assertEquals(1000, (int) mw.p2ForwardPowerBoost.get(1), "the chosen Forward gets the power");
+		assertTrue(mw.cannotBeChosenByAbilities.contains(ally), "and the grant");
+		assertFalse(mw.cannotBeChosenBySummons.contains(ally), "which says abilities, not Summons");
+		assertFalse(mw.cannotBeChosenByAbilities.contains(mid), "Mid is not the one protected");
+	}
+
+	@Test
+	void antlionsForwardGetsThePowerAndCannotBeBroken() {
+		MainWindow mw = new MainWindow();
+		CardData ally = makeForward("Ally", "Earth", 3, 7000);
+		placeP2Forward(mw, ally);
+
+		ActionResolver.parse("Choose 1 Forward you control. Dull it. Until the end of the turn, it gains +2000 "
+				+ "power and \"This Forward cannot be broken.\"", makeForward("Antlion", "Earth", 2, 5000))
+				.accept(mw.buildGameContext(false));
+
+		assertEquals(CardState.DULL, mw.p2ForwardStates.get(0));
+		assertEquals(2000, (int) mw.p2ForwardPowerBoost.get(0));
+		assertTrue(mw.p2ForwardTempTraits.get(0).contains(CardData.Trait.CANNOT_BE_BROKEN), "cannot be broken");
+	}
+
+	// 14-029R Shivalry grants "When a Forward opponent controls is put from the field into the Break
+	// Zone on the same turn that the chosen Forward has dealt it damage, your opponent discards 1 card
+	// from their hand." — the damaged-card Break Zone trigger, with the grantee as the damager.
+	@Test
+	void shivalrysGrantDiscardsWhenAForwardTheChosenOneDamagedIsBroken() {
+		MainWindow mw = new MainWindow();
+		CardData grantee = makeForward("Grantee", "Fire", 3, 7000);
+		placeP1Forward(mw, grantee);
+		CardData victim = makeForward("Victim", "Ice", 3, 7000);
+		CardData bystander = makeForward("Bystander", "Ice", 3, 7000);
+		placeP2Forward(mw, victim);
+		placeP2Forward(mw, bystander);
+		mw.gameState.getP2Hand().add(makeForward("Held", "Ice", 2, 5000));
+		mw.gameState.getP2Hand().add(makeForward("Held too", "Ice", 2, 5000));
+
+		GameContext ctx = mw.buildGameContext(true);
+		ctx.preloadTargets(List.of(new ForwardTarget(true, 0, ForwardTarget.CardZone.FORWARD)));
+		ActionResolver.parse("Choose 1 Forward. Until the end of the turn, it gains +3000 power and \"When a "
+				+ "Forward opponent controls is put from the field into the Break Zone on the same turn that the "
+				+ "chosen Forward has dealt it damage, your opponent discards 1 card from their hand.\"",
+				makeSummon("Shivalry", "Fire", 4, "")).accept(ctx);
+		assertEquals(3000, (int) mw.p1ForwardPowerBoost.get(0));
+
+		ctx.breakTarget(new ForwardTarget(false, 1, ForwardTarget.CardZone.FORWARD));
+		assertEquals(2, mw.gameState.getP2Hand().size(), "a Forward it did not damage: no discard");
+
+		mw.recordDamagedBy(victim, grantee);
+		ctx.breakTarget(new ForwardTarget(false, 0, ForwardTarget.CardZone.FORWARD));
+		assertEquals(1, mw.gameState.getP2Hand().size(), "one it damaged: the opponent discards 1");
+	}
+
+	// The last eleven runtime gaps, and the fail-opens a choose inside a quotation had been causing.
+
+	@Test
+	void angealsBoostOutlastsTheTurn() {
+		MainWindow mw = new MainWindow();
+		CardData ally = makeForward("Ally", "Earth", 3, 7000);
+		placeP2Forward(mw, ally);
+
+		ActionResolver.parse("choose 1 Forward. It gains +3000 power. (This effect does not end at the end of the "
+				+ "turn.)", makeForward("Angeal", "Earth", 3, 7000)).accept(mw.buildGameContext(false));
+
+		assertEquals(3000, (int) mw.permanentPowerBoost.getOrDefault(ally, 0));
+		assertEquals(0, (int) mw.p2ForwardPowerBoost.get(0), "not the until-end-of-turn boost");
+	}
+
+	@Test
+	void necronsReminderIsNotRunAsASecondEffect() {
+		ForwardTarget mine = fwd(true, 0);
+		GameContext ctx = ctxChoosing(List.of(mine));
+		ActionResolver.parse("choose 1 Character other than Necron you control. Its Element becomes Dark. (This "
+				+ "effect does not end at the end of the turn.)", makeForward("Necron", "Dark", 6, 9000)).accept(ctx);
+		verify(ctx).setTargetElement(mine, "Dark");
+		verify(ctx, never()).logEntry(contains("not yet implemented"));
+	}
+
+	@Test
+	void rydiaShieldsHerselfAndTheChosenForwardUntilHerNextTurn() {
+		MainWindow mw = new MainWindow();
+		CardData rydia = makeForward("Rydia", "Earth", 5, 5000);
+		CardData cecil = makeCategoryForward("Cecil", "Dark", "IV");
+		placeP2Forward(mw, rydia);
+		placeP2Forward(mw, cecil);
+
+		ActionResolver.parse("Choose 1 Category IV Forward you control. Rydia and it gain \"This Forward cannot be "
+				+ "chosen by your opponent's Summons or abilities.\" until the end of your opponent's turn.", rydia)
+				.accept(mw.buildGameContext(false));
+
+		for (CardData c : List.of(rydia, cecil)) {
+			assertTrue(mw.cannotBeChosenBySummonsUntilNextTurn.contains(c), c.name() + " vs Summons");
+			assertTrue(mw.cannotBeChosenByAbilitiesUntilNextTurn.contains(c), c.name() + " vs abilities");
+		}
+	}
+
+	@Test
+	void chaosSearchesForTheNameOfTheCardItRemoved() {
+		MainWindow mw = new MainWindow();
+		CardData onField = makeForward("Twin", "Wind", 3, 7000);
+		placeP2Forward(mw, onField);
+		CardData inDeck = makeForward("Twin", "Wind", 3, 7000);
+		mw.gameState.getP2MainDeck().add(makeForward("Other", "Wind", 3, 7000));
+		mw.gameState.getP2MainDeck().add(inDeck);
+
+		ActionResolver.parse("Choose 1 Character you control. Remove it from the game. Search for 1 Character with "
+				+ "the same name and add it to your hand.", makeSummon("Chaos, Walker of the Wheel", "Wind", 1, ""))
+				.accept(mw.buildGameContext(false));
+
+		assertFalse(mw.p2ForwardCards.contains(onField), "removed");
+		assertTrue(mw.gameState.getP2Hand().contains(inDeck), "and the other Twin is found");
+	}
+
+	@Test
+	void edgarsForwardUsesItsNextSpecialWithoutTheSameNamedDiscard() {
+		MainWindow mw = new MainWindow();
+		CardData sabin = makeForwardWithText("Sabin", "Earth", 4, 8000, "[[s]]Blitz[[/]] 《S》: Draw 1 card.");
+		placeP2Forward(mw, sabin);
+		ActionAbility blitz = sabin.actionAbilities().get(0);
+		assertTrue(blitz.isSpecial());
+		assertFalse(mw.canActivateAbility(blitz, false, CardState.ACTIVE, 0, sabin, false),
+				"no same-named card in hand: the 《S》 cannot be paid");
+
+		ActionResolver.parse("Choose 1 Forward you control. The next time you use its special ability this turn, you "
+				+ "can do so without paying 《S》.", makeForward("Edgar", "Wind", 3, 7000))
+				.accept(mw.buildGameContext(false));
+		assertTrue(mw.canActivateAbility(blitz, false, CardState.ACTIVE, 0, sabin, false), "waived");
+
+		CardData copy = makeForward("Sabin", "Earth", 4, 8000);
+		mw.gameState.getP2Hand().add(copy);
+		mw.autoAbilityTriggers.showActionAbilityPaymentDialog(blitz, sabin, () -> {}, false);
+		assertTrue(mw.gameState.getP2Hand().contains(copy), "the same-named copy is not discarded");
+		assertFalse(mw.specialSCostWaivedThisTurn.contains(sabin), "and the waiver is spent");
+	}
+
+	@Test
+	void minwusCardIsCastableOnlyWithAnEmptyHand() {
+		MainWindow mw = new MainWindow();
+		CardData summon = makeSummon("Cure", "Light", 2, "Draw 1 card.");
+		mw.gameState.getP1BreakZone().add(summon);
+		GameContext ctx = mw.buildGameContext(true);
+		ctx.preloadTargets(List.of(new ForwardTarget(true, 0, ForwardTarget.CardZone.BREAK_ZONE)));
+
+		ActionResolver.parse("Choose 1 card in your Break Zone. During this turn, you can cast it at any time you "
+				+ "could normally cast it as long as you have no cards in hand.", makeForward("Minwu", "Light", 3, 7000))
+				.accept(ctx);
+
+		assertTrue(mw.bzPlayableP1.get(summon).requiresEmptyHand());
+		mw.gameState.getP1Hand().add(makeForward("Held", "Fire", 2, 5000));
+		assertFalse(mw.borrowedHandConditionMet(summon, true), "a card in hand: not castable");
+		mw.gameState.getP1Hand().clear();
+		assertTrue(mw.borrowedHandConditionMet(summon, true), "an empty hand: castable");
+	}
+
+	@Test
+	void ignisDealsTheTotalPowerOfTheForwardsItDulled() {
+		ForwardTarget a = fwd(false, 0), b = fwd(false, 1), victim = fwd(true, 0);
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.consumePreloadedTargets()).thenReturn(null);
+		when(ctx.selectCharacters(eq(2), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(), anyInt(), any(),
+				anyInt(), any(), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(), any(), any(), anyBoolean(),
+				any(), anyBoolean())).thenReturn(List.of(a, b));
+		when(ctx.selectCharacters(eq(1), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(), anyInt(), any(),
+				anyInt(), any(), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(), any(), any(), anyBoolean(),
+				any(), anyBoolean())).thenReturn(List.of(victim));
+		when(ctx.lastChosenTargets()).thenReturn(List.of(victim));
+		when(ctx.effectiveTargetPower(a)).thenReturn(7000);
+		when(ctx.effectiveTargetPower(b)).thenReturn(5000);
+
+		ActionResolver.parse("dull 2 active Forwards you control. When you do so, choose 1 Forward. Deal it damage "
+				+ "equal to the total power of the Forwards you dulled due to this ability.",
+				makeForward("Ignis", "Fire", 3, 7000)).accept(ctx);
+
+		verify(ctx).dullTarget(a);
+		verify(ctx).dullTarget(b);
+		verify(ctx).damageTarget(victim, 12000);
+	}
+
+	@Test
+	void farisCountsHerCheapForwardsAndSetzerCountsHisBreakZoneBeforeEmptyingIt() {
+		ForwardTarget victim = fwd(true, 0);
+		GameContext faris = ctxChoosing(List.of(victim));
+		when(faris.countSelfFieldCards(true, false, false, null, null, null, null, 2)).thenReturn(1);
+		when(faris.countSelfFieldCards(true, false, false, null, null, null, null, 3)).thenReturn(1);
+		ActionResolver.parse("Choose any number of Forwards. Deal them a total amount of damage equal to 5000 "
+				+ "multiplied by each Forward of cost 3 or less you control, split as you wish among the chosen "
+				+ "Forwards (damage must be in increments of 1000).", makeForward("Faris", "Fire", 3, 7000)).accept(faris);
+		verify(faris).damageTarget(victim, 10000);
+
+		GameContext setzer = ctxChoosing(List.of(victim));
+		when(setzer.countSelfBreakZoneCards(null, null)).thenReturn(4);
+		ActionResolver.parse("Choose any number of Forwards. Deal them a total amount of damage equal to 1000 "
+				+ "multiplied by each card in your Break Zone, split as you wish among the chosen Forwards (damage "
+				+ "must be in increments of 1000). Remove all the cards in your Break Zone from the game.",
+				makeForward("Setzer", "Wind", 3, 7000)).accept(setzer);
+		InOrder order = inOrder(setzer);
+		order.verify(setzer).damageTarget(victim, 4000);
+		order.verify(setzer).removeCardsFromBreakZoneFromGame(anyInt(), anyBoolean(), anyBoolean(), anyBoolean(),
+				any(), anyInt(), any(), anyBoolean(), anyBoolean(), anyBoolean(), anyBoolean(), any(), any(), any(), any());
+	}
+
+	// A choose printed inside a quotation is the granted ability's, not this one's. ChooseCharacter
+	// found it with find() and ran it on the spot: Vincent broke a Character when he should have
+	// gained "When Vincent attacks, …".
+	@Test
+	void vincentGainsTheTriggerRatherThanBreakingSomethingNow() {
+		CardData vincent = makeForward("Vincent", "Earth", 3, 7000);
+		GameContext ctx = ctxChoosing(List.of(fwd(false, 0)));
+		ActionResolver.parse("Vincent gains +3000 power, First Strike and \"When Vincent attacks, choose 1 "
+				+ "Character. Break it.\" (This effect does not end at the end of the turn.)", vincent).accept(ctx);
+		verify(ctx, never()).breakTarget(any());
+		verify(ctx).boostSourceForwardPermanently(vincent, 3000, EnumSet.of(CardData.Trait.FIRST_STRIKE));
+	}
+
+	@Test
+	void yangsGrantedTriggerDealsItsCarriersPower() {
+		MainWindow mw = new MainWindow();
+		CardData monk = makeForward("Monk", "Earth", 3, 9000);
+		placeP2Forward(mw, monk);
+		CardData victim = makeForward("Victim", "Fire", 3, 20000);
+		placeP1Forward(mw, victim);
+
+		ActionResolver.parse("choose 1 Forward opponent controls. Deal it damage equal to this Forward's power.", monk)
+				.accept(mw.buildGameContext(false));
+
+		assertEquals(9000, (int) mw.p1ForwardDamage.get(0));
+	}
+
+	// 15-018C Sabin: "Sabin gains "At the beginning of Main Phase 1 during each of your turns, …" until
+	// the end of your next turn." Granted on his own turn, it outlasts this turn and the opponent's.
+	@Test
+	void sabinsGrantLastsUntilTheEndOfHisNextTurn() {
+		MainWindow mw = new MainWindow();
+		CardData sabin = makeForward("Sabin", "Fire", 5, 9000);
+		placeP2Forward(mw, sabin);
+		ActionResolver.parse("Sabin gains \"At the beginning of Main Phase 1 during each of your turns, choose 1 "
+				+ "Forward opponent controls. Deal it 9000 damage.\" until the end of your next turn.", sabin)
+				.accept(mw.buildGameContext(false));
+		Predicate<MainWindow> granted = w -> w.effectiveAutoAbilities(sabin).stream()
+				.anyMatch(a -> a.trigger().equals("beginning of main phase 1"));
+
+		assertTrue(granted.test(mw), "granted");
+		mw.fireEndOfTurnEffects(false);
+		assertTrue(granted.test(mw), "survives the end of this turn");
+		mw.fireEndOfTurnEffects(true);
+		assertTrue(granted.test(mw), "and the opponent's");
+		mw.fireEndOfTurnEffects(false);
+		assertFalse(granted.test(mw), "and ends with his next turn");
+	}
+
+	// 20-006C Blacksmith / 23-126L Edge: a trigger to each of your Forwards on the field now. Edge's
+	// filter is a union — the Forwards of each kind named.
+	@Test
+	void edgeGrantsItsTriggerToLightningJobNinjaAndCardNameNinjaForwards() {
+		MainWindow mw = new MainWindow();
+		CardData lightning = makeForward("Bolt", "Lightning", 3, 7000);
+		CardData ninja     = makeForward("Ninja", "Water", 3, 7000);
+		CardData other     = makeForward("Other", "Fire", 3, 7000);
+		for (CardData c : List.of(lightning, ninja, other)) placeP2Forward(mw, c);
+
+		ActionResolver.parse("until the end of the turn, all the Forwards of Lightning, Job Ninja and Card Name Ninja "
+				+ "you control gain \"When this Forward attacks, choose 1 Forward opponent controls. Deal it 7000 "
+				+ "damage.\"", makeForward("Edge", "Lightning", 5, 9000)).accept(mw.buildGameContext(false));
+
+		Predicate<CardData> hasTrigger = c -> mw.effectiveAutoAbilities(c).stream()
+				.anyMatch(a -> a.effectText().contains("Deal it 7000 damage"));
+		assertTrue(hasTrigger.test(lightning), "Lightning");
+		assertTrue(hasTrigger.test(ninja), "Card Name Ninja");
+		assertFalse(hasTrigger.test(other), "neither");
+		mw.fireEndOfTurnEffects(false);
+		assertFalse(hasTrigger.test(lightning), "until the end of the turn");
+	}
+
+	// Two quoted grants in one sentence, read one per sentence. The cannot-be-broken arm had found the
+	// first and dropped everything after it — Carbuncle's second grant and its Backup-CP draw.
+	@Test
+	void carbuncleGrantsBothProtectionsAndDrawsWhenPaidOnlyByBackups() {
+		ForwardTarget mine = fwd(true, 0);
+		GameContext ctx = ctxChoosing(List.of(mine));
+		when(ctx.castWasPaidByBackupsOnly()).thenReturn(true);
+		ActionResolver.parse("Choose 1 Character you control. Dull it. Until the end of the turn, it gains \"This "
+				+ "Character cannot be broken.\" and \"This Character cannot be chosen by your opponent's Summons or "
+				+ "abilities.\" If the CP paid to cast Carbuncle was only produced by Backups, also draw 1 card.",
+				makeSummon("Carbuncle", "Light", 3, "")).accept(ctx);
+		verify(ctx).dullTarget(mine);
+		verify(ctx).shieldCannotBeBroken(mine);
+		verify(ctx).shieldCannotBeChosen(mine, true, true);
+		verify(ctx).drawCards(1);
+	}
+
+	@Test
+	void cloudsForwardCannotBeBrokenOrReturned() {
+		ForwardTarget mine = fwd(true, 0);
+		GameContext ctx = ctxChoosing(List.of(mine));
+		ActionResolver.parse("choose 1 Forward you control. Until the end of the turn, it gains \"This Forward cannot "
+				+ "be broken.\" and \"This Forward cannot be returned to its owner's hand by your opponent's Summons or "
+				+ "abilities.\"", makeForward("Cloud", "Wind", 5, 9000)).accept(ctx);
+		verify(ctx).shieldCannotBeBroken(mine);
+		verify(ctx).boostTarget(mine, 0, EnumSet.of(CardData.Trait.CANNOT_BE_RETURNED_TO_HAND_BY_OPP));
+	}
+
+	// The divided-damage note sits before its sentence's period. Stripped with the period, 29-103H
+	// Setzer's Break Zone removal merged into the damage sentence and went undescribed.
+	@Test
+	void setzersDescriptionNamesTheBreakZoneRemoval() {
+		assertEquals("ChooseCharacter / DivideDamageAmongChosen + RemoveFromBreakZoneFromGame",
+				ActionResolver.fullDescription("Choose any number of Forwards. Deal them a total amount of damage "
+						+ "equal to 1000 multiplied by each card in your Break Zone, split as you wish among the chosen "
+						+ "Forwards (damage must be in increments of 1000). Remove all the cards in your Break Zone from "
+						+ "the game.", makeForward("Setzer", "Wind", 3, 7000)));
+	}
+
 	// 17-098R Cissnei: "Deal it 1000 damage for each CP required to cast the discarded card." The
 	// flat damage branch took "Deal it 1000 damage" and dropped the multiplier.
 	@Test
@@ -53171,7 +53683,7 @@ public class CardBehaviorTest {
 
 	@Test
 	void antlionAndWolStillGrantToTheForwardTheyChose() {
-		assertEquals("ChooseCharacter / Dull + PowerBoostUntil", ActionResolver.fullDescription(
+		assertEquals("ChooseCharacter / Dull + PowerBoost + CannotBeBroken", ActionResolver.fullDescription(
 				"Choose 1 Forward you control. Dull it. Until the end of the turn, it gains +2000 "
 				+ "power and \"This Forward cannot be broken.\"", null));
 		assertEquals("ChooseCharacter / Dull + CannotBeBroken", ActionResolver.fullDescription(
