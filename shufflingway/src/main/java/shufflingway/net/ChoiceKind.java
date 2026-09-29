@@ -29,16 +29,18 @@ public enum ChoiceKind {
 	REVEAL_HAND,
 
 	/**
-	 * The one card the sender picked out of what they were shown. It indexes their opponent's hand
-	 * — the receiver's own — because that is the hand the card is discarded from, not the subset it
-	 * was chosen out of.
+	 * The card or cards the sender picked out of their opponent's hand, which they had been shown —
+	 * one out of a reveal, or several out of a whole revealed hand. Each indexes that opponent's
+	 * hand — the receiver's own — because that is the hand the cards leave, not the subset they
+	 * were chosen out of.
 	 */
 	SELECT_REVEALED,
 
 	/**
-	 * Cards the sender took out of their own hand to pay for something — the cards an action
-	 * ability's "remove N cards in your hand from the game" cost takes. Indices into that hand,
-	 * which both clients hold in the same order, so nothing flips.
+	 * Cards the sender picked out of their own hand: the cards an action ability's "remove N cards
+	 * in your hand from the game" cost takes, a discard an effect tells them to make, the card an
+	 * effect lets them play or cast. Indices into that hand, which both clients hold in the same
+	 * order, so nothing flips.
 	 *
 	 * <p>Not {@link #REVEAL_HAND}, whose cards stay in hand: the two are legal under different
 	 * rules, and a payment can reveal and remove in the same activation.
@@ -206,6 +208,32 @@ public enum ChoiceKind {
 	 * which both clients build the same way from the same deck, so nothing flips.
 	 */
 	DECK_SEARCH,
+
+	/**
+	 * How the sender paid CP an effect asked of them as it resolved — "you may pay 《2》. When you do
+	 * so, …", "your opponent may pay 《1》 to prevent it". Three shapes: empty for a declined or
+	 * cancelled payment, {@code [-1]} for the Crystal alternative some of these costs offer, and
+	 * otherwise {@code [n, b1…bn, h…]} — the count of Backups dulled, their slots, then the hand
+	 * indices discarded for CP. Slots and hand indices are shared between clients, so nothing flips.
+	 *
+	 * <p>Its own kind rather than a {@link #HAND_CARDS} and an {@link #OWN_FIELD_CARD} sent back to
+	 * back: the payment is legal or not as a whole — enough CP, of the Elements the cost names — and
+	 * no check on either half alone could say which.
+	 */
+	CP_PAYMENT,
+
+	/**
+	 * How the sender paid for a card they cast from hand while an effect resolved — "cast 1 Summon
+	 * from your hand, its cost reduced by N". A {@code CastPayment}, flattened: the hand indices
+	 * discarded, the Backup slots dulled, and the Elements the payer chose for Backups dulled or
+	 * broken, each Element a position in the fixed Element list. Empty for a cast they backed out
+	 * of. All of it addresses the sender's own hand and Backup row, so nothing flips.
+	 *
+	 * <p>Not a PLAY_CARD, which is what an ordinary cast from hand sends: this cast happens inside a
+	 * resolution both clients are running, so the far client is parked on a question, and only an
+	 * answer releases it.
+	 */
+	CAST_PAYMENT,
 
 	/**
 	 * The sender has finished with a combat priority window and passed. Carries nothing — the

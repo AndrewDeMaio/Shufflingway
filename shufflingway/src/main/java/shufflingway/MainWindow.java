@@ -48,6 +48,7 @@ import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
+import java.util.function.IntSupplier;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.regex.Matcher;
@@ -8585,6 +8586,143 @@ public class MainWindow {
 	}
 
 	/**
+	 * The player at seat {@code chooserIsP1} picks one of {@code optionCount} options; returns the
+	 * position picked, or -1 when they picked none.
+	 *
+	 * <p>For any question whose answers form a list both clients build the same way from what they
+	 * already agree on: options printed on the card, the entries on the Stack, the cards in a zone
+	 * both hold in the same order. Only the position crosses, so a list built in a seat-relative
+	 * order — "your side first" — is not one of these; field picks go through
+	 * {@link #selectChosenTargets} instead, which flips the side on arrival.
+	 *
+	 * @param localPick asks the local human; -1 declines
+	 * @param cpuPick   the AI's answer; -1 declines
+	 */
+	int decideOption(boolean chooserIsP1, int optionCount, String waitPrompt,
+	                 IntSupplier localPick, IntSupplier cpuPick) {
+		if (optionCount <= 0) return -1;
+		List<Integer> answer = decide(PlayerChoice.by(chooserIsP1, ChoiceKind.OPTION)
+				.prompting(waitPrompt)
+				.locally(() -> onePick(localPick.getAsInt(), optionCount))
+				.byCpu(() -> onePick(cpuPick.getAsInt(), optionCount))
+				.legalWhen(a -> a.size() <= 1 && a.stream().allMatch(i -> i >= 0 && i < optionCount),
+						"there are " + optionCount + " options here"));
+		return answer.isEmpty() ? -1 : answer.get(0);
+	}
+
+	private static List<Integer> onePick(int pick, int optionCount) {
+		return pick >= 0 && pick < optionCount ? List.of(pick) : List.of();
+	}
+
+	/**
+	 * The many-option form of {@link #decideOption}: up to {@code max} distinct positions among
+	 * {@code optionCount}, in the order they were picked.
+	 */
+	List<Integer> decideOptions(boolean chooserIsP1, int optionCount, int max, String waitPrompt,
+	                            Supplier<List<Integer>> localPick, Supplier<List<Integer>> cpuPick) {
+		if (optionCount <= 0) return List.of();
+		return decide(PlayerChoice.by(chooserIsP1, ChoiceKind.OPTION)
+				.prompting(waitPrompt)
+				.locally(localPick)
+				.byCpu(cpuPick)
+				.legalWhen(a -> a.size() <= max && new HashSet<>(a).size() == a.size()
+								&& a.stream().allMatch(i -> i >= 0 && i < optionCount),
+						"there are " + optionCount + " options here, and at most " + max + " may be picked"));
+	}
+
+	/**
+	 * Puts a yes/no question to the seat at {@code chooserIsP1}: an optional effect, an optional
+	 * cost, a "you may". Answered under {@link ChoiceKind#MAY}.
+	 *
+	 * @param localAsk  asks the local human
+	 * @param cpuAnswer the AI's answer, reached only when the other seat is the built-in opponent
+	 */
+	boolean decideYesNo(boolean chooserIsP1, String waitPrompt, BooleanSupplier localAsk,
+	                    BooleanSupplier cpuAnswer) {
+		List<Integer> answer = decide(PlayerChoice.by(chooserIsP1, ChoiceKind.MAY)
+				.prompting(waitPrompt)
+				.locally(() -> List.of(localAsk.getAsBoolean() ? 1 : 0))
+				.byCpu(()   -> List.of(cpuAnswer.getAsBoolean() ? 1 : 0))
+				.legalWhen(a -> a.size() == 1 && (a.get(0) == 0 || a.get(0) == 1),
+						"a yes or a no is the only answer that fits"));
+		return !answer.isEmpty() && answer.get(0) == 1;
+	}
+
+	/**
+	 * The player at seat {@code chooserIsP1} picks up to {@code count} of the cards in their own
+	 * hand that {@code eligible} indexes — to discard, to play, to put on the bottom of their deck.
+	 * Returns hand indices in the order picked; empty when nothing was picked.
+	 *
+	 * <p>Hand indices need no flip: both clients hold each hand in the same order.
+	 *
+	 * @param localPick asks the local human, answering in hand indices
+	 * @param cpuPick   the AI's answer, in hand indices
+	 */
+	List<Integer> selectOwnHandCards(boolean chooserIsP1, List<Integer> eligible, int count,
+	                                 String waitPrompt, Supplier<List<Integer>> localPick,
+	                                 Supplier<List<Integer>> cpuPick) {
+		if (eligible.isEmpty() || count <= 0) return List.of();
+		return decide(PlayerChoice.by(chooserIsP1, ChoiceKind.HAND_CARDS)
+				.prompting(waitPrompt)
+				.locally(localPick)
+				.byCpu(cpuPick)
+				.legalWhen(sel -> sel.size() <= count && eligible.containsAll(sel)
+								&& new HashSet<>(sel).size() == sel.size(),
+						"no such card in their hand is eligible here"));
+	}
+
+	/**
+	 * The player at seat {@code chooserIsP1} picks up to {@code count} of the cards in their
+	 * <em>opponent's</em> hand that {@code eligible} indexes — a hand they have been shown.
+	 * Returns indices into that hand, in the order picked. Answered under
+	 * {@link ChoiceKind#SELECT_REVEALED}, whose indices address the opponent's hand for exactly this
+	 * reason: it is the hand the cards leave.
+	 */
+	List<Integer> selectOpponentHandCards(boolean chooserIsP1, List<Integer> eligible, int count,
+	                                      String waitPrompt, Supplier<List<Integer>> localPick,
+	                                      Supplier<List<Integer>> cpuPick) {
+		if (eligible.isEmpty() || count <= 0) return List.of();
+		return decide(PlayerChoice.by(chooserIsP1, ChoiceKind.SELECT_REVEALED)
+				.prompting(waitPrompt)
+				.locally(localPick)
+				.byCpu(cpuPick)
+				.legalWhen(sel -> sel.size() <= count && eligible.containsAll(sel)
+								&& new HashSet<>(sel).size() == sel.size(),
+						"no such card in that hand is eligible here"));
+	}
+
+	/**
+	 * Discards the cards at {@code handIndices} from {@code isP1}'s hand, highest index first so
+	 * each index still names the card it was picked as, and records them as discarded by an effect.
+	 * Returns the cards that went, in discard order.
+	 *
+	 * <p>The same bookkeeping for either seat. It used to be written once per branch — the P1
+	 * dialog's and the AI's — and the two had drifted: only one of them remembered the last
+	 * discarded card, which is what "the discarded card" effects read.
+	 *
+	 * @param logSuffix appended to each log line — " (forced)", or empty
+	 */
+	List<CardData> discardFromHand(boolean isP1, List<Integer> handIndices, String logSuffix) {
+		List<Integer> descending = new ArrayList<>(handIndices);
+		descending.sort(Collections.reverseOrder());
+		List<CardData> out = new ArrayList<>(descending.size());
+		for (int di : descending) {
+			CardData d = playerBreakFromHand(isP1, di);
+			if (d == null) continue;
+			logEntry((isP1 ? "" : "[P2] ") + "Discards " + d.name() + logSuffix);
+			lastDiscardedCard = d;
+			lastDiscardedCardName = d.name();
+			discardedByEffect.add(d);
+			if (d.isForward()) lastDiscardedForwardPower = d.power();
+			out.add(d);
+		}
+		if (!out.isEmpty()) turn(isP1).discardedByEffectThisTurn = true;
+		if (isP1) { refreshP1HandLabel();      refreshP1BreakLabel(); }
+		else      { refreshP2HandCountLabel(); refreshP2BreakLabel(); }
+		return out;
+	}
+
+	/**
 	 * The player at seat {@code revealerIsP1} reveals {@code count} cards <em>of their own
 	 * choosing</em> from hand; returns the hand indices they showed, ascending.
 	 *
@@ -11868,6 +12006,93 @@ public class MainWindow {
 	}
 
 	/**
+	 * Has the seat at {@code payerIsP1} pay for {@code card}, which sits at {@code handIdx} in their
+	 * hand, for a cast an effect allows while it resolves; returns the payment, or {@code null} when
+	 * they backed out. Nothing is spent here — both clients cast from the answer with
+	 * {@link #castFromHandInsideResolution}.
+	 *
+	 * <p>The local player pays in the standard payment dialog; a remote one's answer arrives as a
+	 * {@link ChoiceKind#CAST_PAYMENT} and is checked against the hand and Backups this client holds
+	 * them with; the AI's is {@code cpuPayment}.
+	 */
+	CastPayment decideCastPayment(boolean payerIsP1, CardData card, int handIdx,
+	                              Supplier<CastPayment> cpuPayment) {
+		List<Integer> answer = decide(PlayerChoice.by(payerIsP1, ChoiceKind.CAST_PAYMENT)
+				.prompting("Waiting for your opponent to pay for " + card.name() + "...")
+				.locally(() -> {
+					CastPayment paid = askCastPayment(card, handIdx);
+					return paid == null ? List.of() : paid.toAnswer();
+				})
+				.byCpu(() -> {
+					CastPayment paid = cpuPayment.get();
+					return paid == null ? List.of() : paid.toAnswer();
+				})
+				.legalWhen(a -> a.isEmpty() || castPaymentFits(payerIsP1, handIdx, CastPayment.fromAnswer(a)),
+						"that payment does not match their hand and Backups here"));
+		return CastPayment.fromAnswer(answer);
+	}
+
+	/**
+	 * The local half of {@link #decideCastPayment}: the standard payment dialog, with its confirm
+	 * collected rather than played. {@code null} when the player cancelled.
+	 */
+	private CastPayment askCastPayment(CardData card, int handIdx) {
+		int cost = effectiveCastCost(card);
+		if (cost <= 0) return CastPayment.NOTHING;
+		CastPayment[] paid = { null };
+		new StandardPaymentDialog(frame, card, handIdx, cost,
+				gameState.getP1Hand(), cpPayableBackupCards(true), p1BackupStates, p1BackupUrls,
+				this::showZoomAt, this::hideZoom,
+				new ArrayList<>(p1ForwardCards),
+				(discards, backups, overrides, breaks) ->
+						paid[0] = new CastPayment(discards, backups, overrides, breaks),
+				isAnyElementCast(card), null, lightDarkDiscardGrants(true),
+				this::gainedElementsForPayment, breakForCpBackupSlots(true), this::jobsStripped)
+			.show();
+		return paid[0];
+	}
+
+	/**
+	 * Whether {@code paid} addresses cards {@code payerIsP1} holds here: distinct hand slots other
+	 * than the card being cast, and Backup slots holding an active Backup. How much CP that makes is
+	 * left to the cast, as it is for a PLAY_CARD; what is refused is a payment that no longer lines
+	 * up with the board, which would spend the wrong cards.
+	 */
+	private boolean castPaymentFits(boolean payerIsP1, int handIdx, CastPayment paid) {
+		if (paid == null) return false;
+		List<CardData> hand = playerHand(payerIsP1);
+		CardData[]  bkps   = playerBackupCards(payerIsP1);
+		CardState[] states = playerBackupStates(payerIsP1);
+		return new HashSet<>(paid.discards()).size() == paid.discards().size()
+				&& paid.discards().stream().allMatch(i -> i >= 0 && i < hand.size() && i != handIdx)
+				&& new HashSet<>(paid.backups()).size() == paid.backups().size()
+				&& paid.backups().stream().allMatch(s -> s >= 0 && s < bkps.length
+						&& bkps[s] != null && states[s] == CardState.ACTIVE)
+				&& paid.backupBreaks().keySet().stream().allMatch(s -> s >= 0 && s < bkps.length && bkps[s] != null);
+	}
+
+	/**
+	 * Casts {@code card} from {@code isP1}'s hand with {@code paid}, for a cast an effect allows
+	 * while it resolves. The same {@link #executePlay} as any cast from hand, with one difference:
+	 * no PLAY_CARD follows, because the far client is running this same resolution and casts from
+	 * the same answer — so a Summon's targets cannot ride in one either, and cross as an ordinary
+	 * {@link ChoiceKind#CHOSEN_TARGETS} as they are chosen.
+	 */
+	void castFromHandInsideResolution(boolean isP1, CardData card, int handIdx, CastPayment paid) {
+		boolean was = castInsideResolution;
+		castInsideResolution = true;
+		try {
+			executePlay(isP1, card, handIdx, paid.discards(), paid.backups(), paid.backupElements(),
+					null, false, paid.backupBreaks(), null);
+		} finally {
+			castInsideResolution = was;
+		}
+	}
+
+	/** Set while {@link #castFromHandInsideResolution} runs a cast; see there. */
+	private boolean castInsideResolution = false;
+
+	/**
 	 * Pays the break half of a CP payment: puts each named Backup into the Break Zone and banks the
 	 * CP it produces — Sherlotta 8-053H, "you may put Sherlotta into the Break Zone to produce 1 CP
 	 * of any Element in order to pay a CP cost."
@@ -12338,8 +12563,9 @@ public class MainWindow {
 			});
 		} else if (card.isSummon()) {
 			// The targets chosen here leave with this cast's own PLAY_CARD, so they must not also
-			// go out as a CHOICE — see choiceTravelsWithThePlay.
-			choiceTravelsWithThePlay = true;
+			// go out as a CHOICE — see choiceTravelsWithThePlay. A cast inside a resolution sends
+			// no PLAY_CARD, so its targets have to go out as the CHOICE after all.
+			choiceTravelsWithThePlay = !castInsideResolution;
 			try {
 				showSummonOnStack(card, isP1, extraCostRemovedPower, extraCostXVal, paidExtraCost,
 						replayedSummonTargets, targetsAreReplayed);
@@ -12359,7 +12585,7 @@ public class MainWindow {
 	 * source-hand-index to skip past in discard accounting, and consumes the BZ-playable
 	 * registration so the card can't be replayed for free.
 	 */
-	private void executePlayFromBzP1(CardData card,
+	void executePlayFromBzP1(CardData card,
 			List<Integer> discardIndices, List<Integer> backupDullIndices,
 			Map<Integer, String> backupElementOverrides) {
 		executePlayFromBzP1(card, discardIndices, backupDullIndices, backupElementOverrides, Map.of());
@@ -12373,47 +12599,104 @@ public class MainWindow {
 	private void executePlayFromBzP1(CardData card,
 			List<Integer> discardIndices, List<Integer> backupDullIndices,
 			Map<Integer, String> backupElementOverrides, Map<Integer, String> backupBreaks) {
+		// Sent from the commit point, before anything is spent: the source is still where it was
+		// and every payment index still addresses the zone it was picked from. A Summon's targets
+		// are chosen later, as it goes on the Stack, and follow as an ordinary CHOSEN_TARGETS.
+		BorrowedSource from = borrowedSourceOf(card, true);
+		if (from != null)
+			sendToOpponent(RemoteOpponent.borrowedPlayAction(card, from, discardIndices,
+					backupDullIndices, backupElementOverrides, backupBreaks));
+		else if (opponent instanceof RemoteOpponent)
+			reportDesync("\"" + card.name() + "\" is not in a Break Zone or Removed From Game here");
+		executePlayFromBz(true, card, discardIndices, backupDullIndices, backupElementOverrides, backupBreaks);
+	}
+
+	/**
+	 * Where a borrowed card sits before it is cast, as the wire names it: the zone, whether it is
+	 * the caster's own or their opponent's, and its place in that zone by identity.
+	 *
+	 * @param own whether the zone belongs to the caster
+	 */
+	record BorrowedSource(PlayableEntry.SourceZone zone, boolean own, int idx) {}
+
+	/** Locates {@code card} for {@code casterIsP1}, or {@code null} when it is in neither zone. */
+	BorrowedSource borrowedSourceOf(CardData card, boolean casterIsP1) {
+		for (boolean side : new boolean[]{ casterIsP1, !casterIsP1 }) {
+			int rfg = identityIndexOf(side ? gameState.getP1PermanentRfp() : gameState.getP2PermanentRfp(), card);
+			if (rfg >= 0) return new BorrowedSource(PlayableEntry.SourceZone.RFP, side == casterIsP1, rfg);
+			int bz = identityIndexOf(side ? gameState.getP1BreakZone() : gameState.getP2BreakZone(), card);
+			if (bz >= 0) return new BorrowedSource(PlayableEntry.SourceZone.BREAK_ZONE, side == casterIsP1, bz);
+		}
+		return null;
+	}
+
+	/** The inverse of {@link #borrowedSourceOf}: the card at {@code from} for {@code casterIsP1}, or null. */
+	CardData borrowedCardAt(BorrowedSource from, boolean casterIsP1) {
+		boolean p1Zone = from.own() == casterIsP1;
+		List<CardData> zone = from.zone() == PlayableEntry.SourceZone.RFP
+				? (p1Zone ? gameState.getP1PermanentRfp() : gameState.getP2PermanentRfp())
+				: (p1Zone ? gameState.getP1BreakZone()    : gameState.getP2BreakZone());
+		return from.idx() >= 0 && from.idx() < zone.size() ? zone.get(from.idx()) : null;
+	}
+
+	/**
+	 * Casts a borrowed card for {@code isP1} with a payment chosen in the standard payment dialog
+	 * — the local player's cast, and a networked opponent's replayed from its {@code BORROWED_PLAY}.
+	 * One method for both, so the two clients spend the same payment by the same rule.
+	 *
+	 * <p>The CPU plans its payment differently and pays through {@link #executePlayFromBzP2}; the
+	 * two meet again in {@link #completeBorrowedPlay}.
+	 */
+	void executePlayFromBz(boolean isP1, CardData card,
+			List<Integer> discardIndices, List<Integer> backupDullIndices,
+			Map<Integer, String> backupElementOverrides, Map<Integer, String> backupBreaks) {
 		String[] elems = card.elements();
 		boolean  isLD  = card.isLightOrDark();
+		CardData[]     backupCards  = playerBackupCards(isP1);
+		CardState[]    backupStates = playerBackupStates(isP1);
+		List<CardData> hand         = playerHand(isP1);
 		Map<String, Integer> execCostByElem = new LinkedHashMap<>();
 		if (!isLD) for (String e : elems) execCostByElem.put(e, 1);
 		Map<String, Integer> execCpAccum = new LinkedHashMap<>();
 		lastCastActualPaymentElements.clear();
 		lastCastPaymentBackups.clear();
+		List<String> dulledForCp = new ArrayList<>();
+		List<String> discardedForCp = new ArrayList<>();
 
 		List<Integer> sortedBackups = new ArrayList<>(backupDullIndices);
 		if (!isLD) sortedBackups.sort(Comparator.comparingInt(s ->
 				(int) Arrays.stream(elems)
-						.filter(e -> effectiveContainsElement(p1BackupCards[s], e)).count()));
+						.filter(e -> effectiveContainsElement(backupCards[s], e)).count()));
 		for (int bi : sortedBackups) {
-			lastCastPaymentBackups.add(p1BackupCards[bi]);
-			p1BackupStates[bi] = CardState.DULL;
-			animateDullBackup(bi, true);
+			lastCastPaymentBackups.add(backupCards[bi]);
+			backupStates[bi] = CardState.DULL;
+			if (isP1) animateDullBackup(bi, true); else animateDullP2Backup(bi, true);
 			String cpElem;
 			if (backupElementOverrides.containsKey(bi)) {
 				cpElem = backupElementOverrides.get(bi);
 			} else if (isLD) {
-				cpElem = p1BackupCards[bi].elements()[0];
+				cpElem = backupCards[bi].elements()[0];
 			} else {
-				cpElem = contributingElement(p1BackupCards[bi], elems, execCpAccum, execCostByElem);
+				cpElem = contributingElement(backupCards[bi], elems, execCpAccum, execCostByElem);
 			}
-			gameState.addP1Cp(cpElem, 1);
+			addCp(isP1, cpElem, 1);
 			execCpAccum.merge(cpElem, 1, Integer::sum);
+			dulledForCp.add(backupCards[bi].name());
 			String actualElem = backupElementOverrides.containsKey(bi)
-					? backupElementOverrides.get(bi) : p1BackupCards[bi].elements()[0];
+					? backupElementOverrides.get(bi) : backupCards[bi].elements()[0];
 			if (!actualElem.isEmpty()) lastCastActualPaymentElements.add(actualElem);
 		}
 
 		// Break-for-CP payments (Sherlotta 8-053H), in the same window executePlay spends them in.
-		breakBackupsForCp(true, backupBreaks).forEach((e, n) -> execCpAccum.merge(e, n, Integer::sum));
+		breakBackupsForCp(isP1, backupBreaks).forEach((e, n) -> execCpAccum.merge(e, n, Integer::sum));
 
 		List<Integer> assignOrder = new ArrayList<>(discardIndices);
 		if (!isLD) assignOrder.sort(Comparator.comparingInt(i ->
 				(int) Arrays.stream(elems)
-						.filter(e -> gameState.getP1Hand().get(i).containsElement(e)).count()));
+						.filter(e -> hand.get(i).containsElement(e)).count()));
 		Map<Integer, String> cpAssignments = new LinkedHashMap<>();
 		for (int i : assignOrder) {
-			CardData d = gameState.getP1Hand().get(i);
+			CardData d = hand.get(i);
 			String cpElem = isLD ? d.elements()[0]
 					: contributingElement(d, elems, execCpAccum, execCostByElem);
 			cpAssignments.put(i, cpElem);
@@ -12424,20 +12707,22 @@ public class MainWindow {
 		// Summed here because the removals below empty the very hand slots it reads — 16-107R Ezel
 		// asks what the cards discarded to cast him cost, and by then they are gone.
 		int discardCostTotal = 0;
-		for (int di : discardIndices) discardCostTotal += gameState.getP1Hand().get(di).cost();
+		for (int di : discardIndices) discardCostTotal += hand.get(di).cost();
 		List<CardData> discardedForCost = new ArrayList<>();
-		for (int di : discardIndices) discardedForCost.add(gameState.getP1Hand().get(di));
+		for (int di : discardIndices) discardedForCost.add(hand.get(di));
 		List<Integer> discardRemovalOrder = new ArrayList<>(discardIndices);
 		discardRemovalOrder.sort(Collections.reverseOrder());
 		for (int di : discardRemovalOrder) {
-			gameState.addP1Cp(cpAssignments.get(di), 2);
-			playerBreakFromHand(true, di);
+			discardedForCp.add(hand.get(di).name());
+			addCp(isP1, cpAssignments.get(di), 2);
+			playerBreakFromHand(isP1, di);
 		}
+		logCpPayment(isP1, dulledForCp, discardedForCp);
 		Set<String> cpToClear = new java.util.LinkedHashSet<>(Arrays.asList(elems));
 		cpToClear.addAll(execCpAccum.keySet());
 		for (String e : cpToClear) {
-			gameState.spendP1Cp(e, gameState.getP1CpForElement(e));
-			gameState.clearP1Cp(e);
+			spendCp(isP1, e, cpForElement(isP1, e));
+			clearCp(isP1, e);
 		}
 		lastCastPaymentDistinctElements = (int) execCpAccum.keySet().stream()
 				.filter(e -> !e.isEmpty()).distinct().count();
@@ -12450,35 +12735,48 @@ public class MainWindow {
 		lastCastPaymentDiscards.clear();
 		lastCastPaymentDiscards.addAll(discardedForCost);
 
+		completeBorrowedPlay(isP1, card);
+	}
+
+	/**
+	 * Everything a borrowed cast does once it is paid for, whoever paid and however: takes the
+	 * card out of the zone it was borrowed from, spends the permission that let it be cast, and
+	 * puts it onto the field or the Stack.
+	 *
+	 * <p>Shared by the standard-payment path and the CPU's, which used to carry a copy each. The
+	 * copies had drifted: the CPU's never consumed a one-shot cost reduction its cast had used.
+	 */
+	private void completeBorrowedPlay(boolean isP1, CardData card) {
+		Map<CardData, PlayableEntry> playable = isP1 ? bzPlayableP1 : bzPlayableP2;
 		// Remove the borrowed card from its source zone (by identity — duplicate-named copies may exist).
-		PlayableEntry borrowEntry = bzPlayableP1.get(card);
+		PlayableEntry borrowEntry = playable.get(card);
 		String sourceLabel = removeBorrowedSourceCard(card, borrowEntry);
 		boolean fromRfg = BORROW_SOURCE_RFG.equals(sourceLabel);
-		bzPlayableP1.remove(card);
-		bzForwardFaP1.remove(card);
-		bzSelfCastFaP1.remove(card);
+		playable.remove(card);
+		(isP1 ? bzForwardFaP1 : bzForwardFaP2).remove(card);
+		(isP1 ? bzSelfCastFaP1 : bzSelfCastFaP2).remove(card);
 		// The permission that opened this card is spent for the turn if its printing says so;
 		// recorded against the remover, which is what syncRfgRemovedPlayables asks about. Noted for
 		// every such cast, so the sync alone decides which printings the note actually binds.
-		CardData removedBy = removedPlayableSourceP1.remove(card);
-		if (removedBy != null) p1Turn.castRemovedUsedThisTurn.add(removedBy);
-		refreshP1BreakLabel();
+		CardData removedBy = (isP1 ? removedPlayableSourceP1 : removedPlayableSourceP2).remove(card);
+		if (removedBy != null) turn(isP1).castRemovedUsedThisTurn.add(removedBy);
+		if (isP1) refreshP1BreakLabel(); else refreshP2BreakLabel();
 		refreshP1WarpZoneUI();
 		refreshP2WarpZoneUI();
 		refreshPlayableCardsButton();
 
 		activeCostReductions.removeIf(m -> m.consumeOnUse() && m.matches(card));
-		noteCardCast(card, true);
+		noteCardCast(card, isP1);
 		if (card.isSummon()) {
-			p1Turn.summonCastThisTurn = true;
-			noteDoublecastSummonCast(true, card);
-			refreshHandCardStates();
+			turn(isP1).summonCastThisTurn = true;
+			noteDoublecastSummonCast(isP1, card);
+			if (isP1) refreshHandCardStates();
 		}
-		logEntry("Played \"" + card.name() + "\" from " + sourceLabel);
+		logEntry((isP1 ? "" : "[P2] ") + "Played \"" + card.name() + "\" from " + sourceLabel);
 		// "When you cast a card removed from the game" (29-008L Zidane). The zone the card came
 		// out of is what the trigger names, so it is asked here where that is still known — a
 		// borrowed cast out of a Break Zone reaches the same code and is not this event.
-		if (fromRfg) autoAbilityTriggers.triggerAutoAbilitiesForCastRemovedCard(true);
+		if (fromRfg) autoAbilityTriggers.triggerAutoAbilitiesForCastRemovedCard(isP1);
 
 		// Summons cast under a "remove from the game after use" clause go to the owner's RFP zone
 		// instead of the Break Zone once they resolve (Krile 12-061L, Nanaa Mihgo 22-048H).
@@ -12489,14 +12787,14 @@ public class MainWindow {
 		// (castOnly) abilities are skipped and "enters other than from your hand" abilities fire.
 		lastCardWasCast = false;
 		Runnable placement = () -> {
-			if (card.isBackup())       placeCardInFirstBackupSlot(card);
-			else if (card.isForward()) placeCardInForwardZone(card);
-			else if (card.isMonster()) placeCardInMonsterZone(card);
-			else if (card.isSummon())  showSummonOnStack(card, true);
+			if (card.isBackup())       { if (isP1) placeCardInFirstBackupSlot(card); else placeP2CardInFirstBackupSlot(card); }
+			else if (card.isForward()) { if (isP1) placeCardInForwardZone(card);     else placeP2CardInForwardZone(card); }
+			else if (card.isMonster()) { if (isP1) placeCardInMonsterZone(card);     else placeP2CardInMonsterZone(card); }
+			else if (card.isSummon())  showSummonOnStack(card, isP1);
 		};
 		// Cards coming out of the RFG zone animate in before they are drawn and before their
 		// enter-the-field abilities fire; everything else is placed outright.
-		if (fromRfg) placeFromRfgWithAnim(card, true, placement);
+		if (fromRfg) placeFromRfgWithAnim(card, isP1, placement);
 		else         placement.run();
 		lastCardWasCast = false;
 	}
@@ -12603,11 +12901,12 @@ public class MainWindow {
 	}
 
 	/**
-	 * P2 equivalent of {@link #executePlayFromBzP1}: pays a reduced cost from P2's dulled
-	 * backups and hand discards, removes the source from P2's Break Zone, and places the
-	 * card into the appropriate zone.  Caller is responsible for choosing the discard and
+	 * The CPU's borrowed cast: pays a reduced cost from P2's dulled backups and hand discards
+	 * with the Element assignments its planner made, then finishes as every borrowed cast does
+	 * ({@link #completeBorrowedPlay}). Caller is responsible for choosing the discard and
 	 * backup-dull plans such that the resulting P2 CP covers {@code reducedCost} with
-	 * per-element minimums satisfied.
+	 * per-element minimums satisfied. A remote human's cast does not come here — it replays the
+	 * standard payment through {@link #executePlayFromBz}.
 	 */
 	void executePlayFromBzP2(CardData card, PlayableEntry entry, int reducedCost,
 			List<Integer> discardIndices, Map<Integer, String> discardElementAssignments,
@@ -12647,45 +12946,7 @@ public class MainWindow {
 			for (String e : elems) gameState.clearP2Cp(e);
 		}
 
-		// Remove the borrowed card from its source zone (Break Zone or removed-from-game, either player).
-		PlayableEntry borrowEntry = bzPlayableP2.get(card);
-		String sourceLabel = removeBorrowedSourceCard(card, borrowEntry);
-		boolean fromRfg = BORROW_SOURCE_RFG.equals(sourceLabel);
-		bzPlayableP2.remove(card);
-		bzForwardFaP2.remove(card);
-		bzSelfCastFaP2.remove(card);
-		// P2's side of the same note P1's cast path takes: a once-per-turn permission is spent by
-		// whoever uses it, and the CPU casts through this path.
-		CardData p2RemovedBy = removedPlayableSourceP2.remove(card);
-		if (p2RemovedBy != null) p2Turn.castRemovedUsedThisTurn.add(p2RemovedBy);
-		refreshP2BreakLabel();
-		refreshP1WarpZoneUI();
-		refreshP2WarpZoneUI();
-		refreshPlayableCardsButton();
-
-		if (card.isSummon() && borrowEntry != null && borrowEntry.rfgAfterUse())
-			rfgAfterUseSummons.add(card);
-
-		noteCardCast(card, false);
-		if (card.isSummon()) { p2Turn.summonCastThisTurn = true; noteDoublecastSummonCast(false, card); }
-		logEntry("[P2] Played \"" + card.name() + "\" from " + sourceLabel);
-		// P2's side of the same event — see the note on P1's cast path.
-		if (fromRfg) autoAbilityTriggers.triggerAutoAbilitiesForCastRemovedCard(false);
-
-		// Borrowed casts are NOT cast from hand: leave lastCardWasCast false so "due to your cast"
-		// (castOnly) abilities are skipped and "enters other than from your hand" abilities fire.
-		lastCardWasCast = false;
-		Runnable placement = () -> {
-			if (card.isBackup())       placeP2CardInFirstBackupSlot(card);
-			else if (card.isForward()) placeP2CardInForwardZone(card);
-			else if (card.isMonster()) placeP2CardInMonsterZone(card);
-			else if (card.isSummon())  showSummonOnStack(card, false);
-		};
-		// Cards coming out of the RFG zone animate in before they are drawn and before their
-		// enter-the-field abilities fire; everything else is placed outright.
-		if (fromRfg) placeFromRfgWithAnim(card, false, placement);
-		else         placement.run();
-		lastCardWasCast = false;
+		completeBorrowedPlay(false, card);
 	}
 
 	// -------------------------------------------------------------------------
@@ -20863,20 +21124,23 @@ public class MainWindow {
 		return new ForwardTarget(false, chosen, ForwardTarget.CardZone.FORWARD);
 	}
 
-	List<ForwardTarget> aiPickForwardsOrMonstersForBreak(int maxCount, boolean inclForwards, boolean inclMonsters) {
+	/** The AI's cheapest {@code maxCount} Forwards and/or Monsters on {@code seatIsP1}'s side — what it gives up to a break. */
+	List<ForwardTarget> aiPickForwardsOrMonstersForBreak(boolean seatIsP1, int maxCount,
+	                                                     boolean inclForwards, boolean inclMonsters) {
+		List<CardData> fwds = playerForwardCards(seatIsP1);
+		List<CardData> mons = playerMonsterCards(seatIsP1);
 		List<ForwardTarget> eligible = new ArrayList<>();
 		if (inclForwards)
-			for (int i = 0; i < p2ForwardCards.size(); i++)
-				eligible.add(new ForwardTarget(false, i, ForwardTarget.CardZone.FORWARD));
+			for (int i = 0; i < fwds.size(); i++)
+				eligible.add(new ForwardTarget(seatIsP1, i, ForwardTarget.CardZone.FORWARD));
 		if (inclMonsters)
-			for (int i = 0; i < p2MonsterCards.size(); i++)
-				eligible.add(new ForwardTarget(false, i, ForwardTarget.CardZone.MONSTER));
+			for (int i = 0; i < mons.size(); i++)
+				eligible.add(new ForwardTarget(seatIsP1, i, ForwardTarget.CardZone.MONSTER));
 		eligible.sort(java.util.Comparator.comparingInt(t -> {
-			CardData c = t.zone() == ForwardTarget.CardZone.FORWARD
-					? p2ForwardCards.get(t.idx()) : p2MonsterCards.get(t.idx());
+			CardData c = t.zone() == ForwardTarget.CardZone.FORWARD ? fwds.get(t.idx()) : mons.get(t.idx());
 			return c.cost();
 		}));
-		return eligible.subList(0, Math.min(maxCount, eligible.size()));
+		return List.copyOf(eligible.subList(0, Math.min(maxCount, eligible.size())));
 	}
 
 	ForwardTarget aiPickForwardForBreak() {

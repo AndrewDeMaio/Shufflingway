@@ -1802,4 +1802,46 @@ class MultiplayerSetupTest {
         assertEquals(CardState.DULL, mw.p2BackupStates[0], "and their Backup paid for it");
         assertTrue(mw.gameState.getP1WarpZone().isEmpty(), "none of it touched this player");
     }
+
+    @Test
+    void aCpPaymentEncodesItsBackupsAndDiscardsApart() {
+        AutoAbilityTriggers.CpPlan plan = AutoAbilityTriggers.CpPlan.of(List.of(0, 2), List.of(1));
+
+        assertEquals(List.of(2, 0, 2, 1), plan.toAnswer(), "the count first, so the two halves split again");
+        AutoAbilityTriggers.CpPlan back = AutoAbilityTriggers.CpPlan.fromAnswer(plan.toAnswer());
+        assertEquals(List.of(0, 2), back.dulls());
+        assertEquals(List.of(1), back.discards());
+        assertEquals(4, back.produced(), "1 CP a Backup, 2 a discard");
+    }
+
+    @Test
+    void aCrystalPaymentAndADeclineAreTheirOwnShapes() {
+        assertEquals(List.of(-1), AutoAbilityTriggers.CpPlan.CRYSTALS.toAnswer());
+        assertTrue(AutoAbilityTriggers.CpPlan.fromAnswer(List.of(-1)).crystals());
+        assertNull(AutoAbilityTriggers.CpPlan.fromAnswer(List.of()), "empty is a payment declined");
+        assertNull(AutoAbilityTriggers.CpPlan.fromAnswer(List.of(3, 0)),
+                "a count longer than the answer is malformed, not a payment");
+    }
+
+    @Test
+    void aCastPaymentSurvivesBeingFlattened() {
+        CastPayment paid = new CastPayment(List.of(3, 1), List.of(0),
+                Map.of(2, "Ice", 0, "Fire"), Map.of(4, "Wind"));
+
+        CastPayment back = CastPayment.fromAnswer(paid.toAnswer());
+
+        assertEquals(List.of(3, 1), back.discards(), "discard order is the payer's, and is kept");
+        assertEquals(List.of(0), back.backups());
+        assertEquals(Map.of(2, "Ice", 0, "Fire"), back.backupElements());
+        assertEquals(Map.of(4, "Wind"), back.backupBreaks());
+    }
+
+    @Test
+    void aFreeCastIsNotADeclinedOne() {
+        assertEquals(List.of(0, 0, 0, 0), CastPayment.NOTHING.toAnswer());
+        assertEquals(CastPayment.NOTHING, CastPayment.fromAnswer(List.of(0, 0, 0, 0)));
+        assertNull(CastPayment.fromAnswer(List.of()), "empty is backing out of the cast");
+        assertNull(CastPayment.fromAnswer(List.of(0, 0, 0, 1, 2, 99)),
+                "an Element outside the list is malformed");
+    }
 }

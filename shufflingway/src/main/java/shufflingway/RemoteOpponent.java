@@ -4,6 +4,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -114,6 +115,7 @@ class RemoteOpponent implements OpponentController {
 			case LB_PLAY        -> applyLbPlay(action.payload());
 			case WARP_PLAY      -> applyWarpPlay(action.payload());
 			case PRIME          -> applyPrime(action.payload());
+			case BORROWED_PLAY  -> applyBorrowedPlay(action.payload());
 			case ACTIVATE_ABILITY -> applyActivateAbility(action.payload());
 			case DISCARD_HAND   -> applyDiscard(action.payload());
 			case ATTACK         -> applyAttack(action.payload());
@@ -246,6 +248,66 @@ class RemoteOpponent implements OpponentController {
 		mw.executePlay(false, card, handIdx,
 				indices(payload, "discards"), indices(payload, "backups"), overrides,
 				summonTargets, targetsAreReplayed, breaks, extra);
+	}
+
+	/**
+	 * The opponent cast a card they had been allowed to borrow out of a Break Zone or a Removed From
+	 * Game zone. Checked before anything moves: the card has to be where they say, named as they
+	 * say, and castable by them here too — the permission is granted by an effect both clients
+	 * resolved, so a card this client does not hold as playable means the two have parted.
+	 */
+	private void applyBorrowedPlay(JSONObject payload) {
+		PlayableEntry.SourceZone zone;
+		try {
+			zone = PlayableEntry.SourceZone.valueOf(payload.optString("zone", ""));
+		} catch (IllegalArgumentException e) {
+			mw.reportDesync("opponent cast a borrowed card from a zone this client does not know");
+			return;
+		}
+		MainWindow.BorrowedSource from = new MainWindow.BorrowedSource(zone,
+				payload.optBoolean("own", true), payload.optInt("idx", -1));
+		CardData card     = mw.borrowedCardAt(from, false);
+		String   expected = payload.optString("card", "");
+		if (card == null || !card.name().equals(expected)) {
+			mw.reportDesync("opponent cast \"" + expected + "\" from " + zone + " position " + from.idx()
+					+ ", which holds " + (card == null ? "nothing" : "\"" + card.name() + "\"") + " here");
+			return;
+		}
+		if (!mw.bzPlayableP2.containsKey(card)) {
+			mw.reportDesync("opponent cast \"" + card.name() + "\" as though they owned it, but this"
+					+ " client never let them");
+			return;
+		}
+		List<Integer> discards = indices(payload, "discards");
+		List<Integer> backups  = indices(payload, "backups");
+		if (!standardPaymentFits(discards, backups, card)) return;
+		mw.executePlayFromBz(false, card, discards, backups,
+				stringMap(payload, "backupElements"), stringMap(payload, "backupBreaks"));
+	}
+
+	/**
+	 * Whether a standard payment's indices address cards the opponent holds here: distinct hand
+	 * slots in range, and Backup slots that hold an active Backup. Reports a desync when not, so a
+	 * payment that no longer lines up is refused before it spends half of itself.
+	 */
+	private boolean standardPaymentFits(List<Integer> discards, List<Integer> backups, CardData card) {
+		List<CardData> hand = mw.gameState.getP2Hand();
+		boolean ok = new HashSet<>(discards).size() == discards.size()
+				&& discards.stream().allMatch(i -> i >= 0 && i < hand.size())
+				&& new HashSet<>(backups).size() == backups.size()
+				&& backups.stream().allMatch(s -> s >= 0 && s < mw.p2BackupCards.length
+						&& mw.p2BackupCards[s] != null && mw.p2BackupStates[s] == CardState.ACTIVE);
+		if (!ok) mw.reportDesync("opponent paid for \"" + card.name() + "\" with discards " + discards
+				+ " and Backups " + backups + ", which do not match their hand and Backups here");
+		return ok;
+	}
+
+	/** Reads a {@code {"slot": "Element"}} object back into slot → Element; empty when absent. */
+	private static Map<Integer, String> stringMap(JSONObject payload, String key) {
+		Map<Integer, String> out = new LinkedHashMap<>();
+		JSONObject raw = payload.optJSONObject(key);
+		if (raw != null) for (String k : raw.keySet()) out.put(Integer.valueOf(k), raw.getString(k));
+		return out;
 	}
 
 	/**
@@ -965,6 +1027,31 @@ class RemoteOpponent implements OpponentController {
 		if (alt != null) payload.put("alt", encodeAltPayment(alt));
 		if (extra != null) payload.put("extra", encodeExtraPayment(extra));
 		return GameAction.of(ActionType.PLAY_CARD, payload);
+	}
+
+	/**
+	 * Builds a BORROWED_PLAY for a card the local player is casting out of a Break Zone or a
+	 * Removed From Game zone. Locations and payment are indices, for the reason PLAY_CARD's are;
+	 * {@code from} is written from the sender's seat, so "own" means the sender's zone.
+	 */
+	static GameAction borrowedPlayAction(CardData card, MainWindow.BorrowedSource from,
+	                                     List<Integer> discards, List<Integer> backupDulls,
+	                                     Map<Integer, String> backupElements,
+	                                     Map<Integer, String> backupBreaks) {
+		JSONObject overrides = new JSONObject();
+		backupElements.forEach((slot, element) -> overrides.put(String.valueOf(slot), element));
+		JSONObject breaks = new JSONObject();
+		if (backupBreaks != null)
+			backupBreaks.forEach((slot, element) -> breaks.put(String.valueOf(slot), element));
+		return GameAction.of(ActionType.BORROWED_PLAY, new JSONObject()
+				.put("zone", from.zone().name())
+				.put("own", from.own())
+				.put("idx", from.idx())
+				.put("card", card.name())
+				.put("discards", new JSONArray(discards))
+				.put("backups", new JSONArray(backupDulls))
+				.put("backupElements", overrides)
+				.put("backupBreaks", breaks));
 	}
 
 	/**

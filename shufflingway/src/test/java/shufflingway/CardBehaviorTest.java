@@ -67755,6 +67755,11 @@ public class CardBehaviorTest {
 		CardData summon = makeSummon("Ifrit", "Fire", 3, "");
 		mw.gameState.getIdentity().put(summon, false);
 		mw.gameState.getP2Hand().add(summon);
+		// 3 off a cost of 3 floors at 1, and the CPU pays what its cast costs.
+		CardData payer = makePlainBackup("Payer", "Water", 2);
+		mw.gameState.getIdentity().put(payer, false);
+		mw.p2BackupCards[0]  = payer;
+		mw.p2BackupStates[0] = CardState.ACTIVE;
 
 		mw.buildGameContext(false).castSummonFromHandDiscountedAnyElement(3, true);
 
@@ -72901,6 +72906,318 @@ public class CardBehaviorTest {
 		mw.abilityCostDull(new ForwardTarget(true, 0, ForwardTarget.CardZone.BACKUP)).run();
 
 		assertEquals(CardState.DULL, mw.p1BackupStates[0], "no transition, so no trigger");
+	}
+
+
+	// =========================================================================================
+	// Seat-routed decisions made as an effect resolves.
+	//
+	// Each of these used to branch on "is the local player choosing?" and hand every other answer
+	// to the AI — right against the built-in opponent, wrong against a remote human, whose client
+	// asked them while this one guessed. Each now goes through MainWindow.decide, so the remote
+	// seat's answer is read off the wire. The answers delivered here are ones the AI would never
+	// give, so a pass proves the wire was read rather than the heuristic agreeing by luck.
+	// =========================================================================================
+
+	/** Puts {@code card} in P2's hand, owned by P2. */
+	private static CardData inP2Hand(MainWindow mw, CardData card) {
+		mw.gameState.getIdentity().put(card, false);
+		mw.gameState.getP2Hand().add(card);
+		return card;
+	}
+
+	@Test
+	void anOpponentsForcedDiscardIsTheCardTheyChose() {
+		MainWindow mw = new MainWindow();
+		RemoteOpponent remote = seatAgainstRemote(mw);
+		inP2Hand(mw, makeForward("Cheap", "Fire", 1, 3000));
+		CardData dear = inP2Hand(mw, makeForward("Dear", "Fire", 7, 10000));
+		// The AI throws away its least valuable card; they kept that and let the dear one go.
+		remote.onActionReceived(RemoteOpponent.choiceAction(ChoiceKind.HAND_CARDS, List.of(1)));
+
+		mw.buildGameContext(true).forceOpponentDiscard(1);
+
+		assertEquals(List.of("Cheap"), forwardNames(mw.gameState.getP2Hand()));
+		assertTrue(mw.gameState.getP2BreakZone().contains(dear));
+		assertSame(dear, mw.lastDiscardedCard, "the same bookkeeping whichever seat discarded");
+	}
+
+	@Test
+	void aPaymentTheOpponentOwesIsTheOneTheyMade() {
+		MainWindow mw = new MainWindow();
+		RemoteOpponent remote = seatAgainstRemote(mw);
+		mw.p2BackupCards[0]  = makePlainBackup("Backup", "Fire", 2);
+		mw.p2BackupStates[0] = CardState.ACTIVE;
+		inP2Hand(mw, makeForward("Kept", "Fire", 2, 5000));
+		CardData spent = inP2Hand(mw, makeForward("Spent", "Fire", 2, 5000));
+		// No Backups dulled, hand index 1 discarded. The AI would have dulled the Backup.
+		remote.onActionReceived(RemoteOpponent.choiceAction(ChoiceKind.CP_PAYMENT, List.of(0, 1)));
+		boolean[] applied = { false };
+
+		mw.buildGameContext(true).opponentMayPayToPreventAction(1, () -> applied[0] = true);
+
+		assertFalse(applied[0], "they paid, so the effect was prevented");
+		assertEquals(CardState.ACTIVE, mw.p2BackupStates[0]);
+		assertTrue(mw.gameState.getP2BreakZone().contains(spent));
+	}
+
+	@Test
+	void aPaymentTheOpponentDeclinedLetsTheEffectLand() {
+		MainWindow mw = new MainWindow();
+		RemoteOpponent remote = seatAgainstRemote(mw);
+		mw.p2BackupCards[0]  = makePlainBackup("Backup", "Fire", 2);
+		mw.p2BackupStates[0] = CardState.ACTIVE;
+		remote.onActionReceived(RemoteOpponent.choiceAction(ChoiceKind.CP_PAYMENT, List.of()));
+		boolean[] applied = { false };
+
+		mw.buildGameContext(true).opponentMayPayToPreventAction(1, () -> applied[0] = true);
+
+		assertTrue(applied[0]);
+		assertEquals(CardState.ACTIVE, mw.p2BackupStates[0], "nothing was spent");
+	}
+
+	@Test
+	void aPaymentShortOfTheCostIsRefusedAndSpendsNothing() {
+		MainWindow mw = new MainWindow();
+		mw.desyncReported = true;   // the refusal reports a desync; keep its dialog from opening
+		RemoteOpponent remote = seatAgainstRemote(mw);
+		mw.p2BackupCards[0]  = makePlainBackup("Backup", "Fire", 2);
+		mw.p2BackupStates[0] = CardState.ACTIVE;
+		mw.p2BackupCards[1]  = makePlainBackup("Other", "Fire", 2);
+		mw.p2BackupStates[1] = CardState.ACTIVE;
+		// One Backup dulled against a cost of 2.
+		remote.onActionReceived(RemoteOpponent.choiceAction(ChoiceKind.CP_PAYMENT, List.of(1, 0)));
+		boolean[] applied = { false };
+
+		mw.buildGameContext(true).opponentMayPayToPreventAction(2, () -> applied[0] = true);
+
+		assertTrue(applied[0], "an answer this client will not act on is no payment");
+		assertEquals(CardState.ACTIVE, mw.p2BackupStates[0], "and a half-paid cost is not left behind");
+	}
+
+	@Test
+	void theCpuPaysWhatItOwesItselfRatherThanAskingThisPlayer() {
+		// The payment dialog had no AI half: a cost the CPU owed was put to the local human, over
+		// the CPU's Backups and hand. Reaching a dialog here would hang or throw, not pass.
+		MainWindow mw = new MainWindow();
+		mw.p2BackupCards[0]  = makePlainBackup("Backup", "Fire", 2);
+		mw.p2BackupStates[0] = CardState.ACTIVE;
+		boolean[] applied = { false };
+
+		mw.buildGameContext(true).opponentMayPayToPreventAction(1, () -> applied[0] = true);
+
+		assertFalse(applied[0]);
+		assertEquals(CardState.DULL, mw.p2BackupStates[0], "the CPU paid with its own Backup");
+	}
+
+	@Test
+	void anOpponentsYouMayIsTheirAnswer() {
+		MainWindow mw = new MainWindow();
+		RemoteOpponent remote = seatAgainstRemote(mw);
+		// The AI accepts every "you may" of this shape; they declined.
+		remote.onActionReceived(RemoteOpponent.choiceAction(ChoiceKind.MAY, List.of(0)));
+		boolean[] ran = { false };
+
+		mw.buildGameContext(false).playerMayDoEffect("draw 1 card", ctx -> ran[0] = true);
+
+		assertFalse(ran[0]);
+	}
+
+	@Test
+	void anOpponentsPickFromTheirBreakZoneIsReadFromTheWire() {
+		MainWindow mw = new MainWindow();
+		RemoteOpponent remote = seatAgainstRemote(mw);
+		CardData cheap = makeForward("Cheap", "Fire", 1, 3000);
+		CardData dear  = makeForward("Dear", "Fire", 7, 10000);
+		for (CardData c : List.of(cheap, dear)) {
+			mw.gameState.getIdentity().put(c, false);
+			mw.gameState.getP2BreakZone().add(c);
+		}
+		// Packed from their seat, where their Break Zone is P1's. The AI takes the costliest.
+		remote.onActionReceived(RemoteOpponent.choiceAction(ChoiceKind.OWN_FIELD_CARD,
+				List.of(new ForwardTarget(true, 0, ForwardTarget.CardZone.FORWARD).choiceCode())));
+
+		mw.buildGameContext(false).salvageCharacterFromOwnBreakZone(1, true, false, false);
+
+		assertEquals(List.of("Cheap"), forwardNames(mw.gameState.getP2Hand()));
+		assertEquals(List.of("Dear"), forwardNames(mw.gameState.getP2BreakZone()));
+	}
+
+	@Test
+	void anOpponentsNumberIsTheOneTheySent() {
+		MainWindow mw = new MainWindow();
+		RemoteOpponent remote = seatAgainstRemote(mw);
+		// Positions from min: 2..5, and they picked 3. The AI picks the maximum.
+		remote.onActionReceived(RemoteOpponent.choiceAction(ChoiceKind.OPTION, List.of(1)));
+
+		assertEquals(3, mw.buildGameContext(false).selectNumber(2, 5, "How many?"));
+	}
+
+	@Test
+	void anOpponentsDamageDivisionIsTheOneTheySent() {
+		MainWindow mw = new MainWindow();
+		RemoteOpponent remote = seatAgainstRemote(mw);
+		List<CardData> cards = List.of(makeForward("Weak", "Fire", 1, 2000),
+				makeForward("Strong", "Fire", 5, 9000));
+		remote.onActionReceived(RemoteOpponent.choiceAction(ChoiceKind.OPTION, List.of(0, 5000)));
+
+		assertEquals(List.of(0, 5000),
+				mw.buildGameContext(false).divideDamageAmount(5000, "Divide", cards),
+				"the AI breaks the weak one first; they put it all on the strong one");
+	}
+
+	@Test
+	void theCpuDividesItsOwnDamageRatherThanAskingThisPlayer() {
+		MainWindow mw = new MainWindow();
+		List<CardData> cards = List.of(makeForward("Strong", "Fire", 5, 9000),
+				makeForward("Weak", "Fire", 1, 2000));
+
+		List<Integer> split = mw.buildGameContext(false).divideDamageAmount(5000, "Divide", cards);
+
+		assertEquals(List.of(3000, 2000), split, "enough to break the weak one, the rest on the other");
+	}
+
+
+	// =========================================================================================
+	// Casts that are not an ordinary cast from hand.
+	//
+	// A card borrowed out of a Break Zone or a Removed From Game zone ("cast it as though you
+	// owned it") sent nothing at all, so the far client never saw it leave or arrive. It now
+	// travels as a BORROWED_PLAY. A Summon cast from hand while an effect resolves ("cast 1
+	// Summon from your hand, its cost reduced by N") sent a PLAY_CARD into a resolution the far
+	// client was running too, where the CPU's branch had already cast its first Summon for free.
+	// It now crosses as two answers — which Summon, and the payment — and both clients cast it.
+	// =========================================================================================
+
+	/** A Backup of P2's in {@code slot}, active and able to pay. */
+	private static void activeP2Backup(MainWindow mw, int slot, String name) {
+		CardData b = makePlainBackup(name, "Fire", 2);
+		mw.gameState.getIdentity().put(b, false);
+		mw.p2BackupCards[slot]  = b;
+		mw.p2BackupStates[slot] = CardState.ACTIVE;
+	}
+
+	@Test
+	void anOpponentsBorrowedCastComesOutOfTheZoneTheyNamed() {
+		MainWindow mw = new MainWindow();
+		// Borrowed out of this player's Break Zone: their opponent's, from where they sit.
+		mw.gameState.getP1BreakZone().add(makeForward("Filler", "Fire", 1, 1000));
+		CardData borrowed = makeForward("Borrowed", "Fire", 2, 6000);
+		mw.gameState.getIdentity().put(borrowed, true);
+		mw.gameState.getP1BreakZone().add(borrowed);
+		mw.registerBorrowedPlayable(false, borrowed, PlayableEntry.bzThisTurn(0));
+		activeP2Backup(mw, 0, "Payer");
+		RemoteOpponent remote = inboundOnly(mw);
+
+		remote.onActionReceived(RemoteOpponent.borrowedPlayAction(borrowed,
+				new MainWindow.BorrowedSource(PlayableEntry.SourceZone.BREAK_ZONE, false, 1),
+				List.of(), List.of(0), Map.of(), Map.of()));
+
+		assertTrue(mw.p2ForwardCards.contains(borrowed), "it arrived on their field");
+		assertEquals(List.of("Filler"), forwardNames(mw.gameState.getP1BreakZone()));
+		assertEquals(CardState.DULL, mw.p2BackupStates[0], "and their Backup paid for it");
+		assertFalse(mw.bzPlayableP2.containsKey(borrowed), "the permission is spent");
+	}
+
+	@Test
+	void aBorrowedCastThisClientNeverAllowedIsRefused() {
+		MainWindow mw = new MainWindow();
+		mw.desyncReported = true;   // the refusal reports a desync; keep its dialog from opening
+		CardData borrowed = makeForward("Borrowed", "Fire", 2, 6000);
+		mw.gameState.getIdentity().put(borrowed, true);
+		mw.gameState.getP1BreakZone().add(borrowed);
+		activeP2Backup(mw, 0, "Payer");
+
+		inboundOnly(mw).onActionReceived(RemoteOpponent.borrowedPlayAction(borrowed,
+				new MainWindow.BorrowedSource(PlayableEntry.SourceZone.BREAK_ZONE, false, 0),
+				List.of(), List.of(0), Map.of(), Map.of()));
+
+		assertTrue(mw.gameState.getP1BreakZone().contains(borrowed), "nothing moved");
+		assertEquals(CardState.ACTIVE, mw.p2BackupStates[0], "and nothing was spent");
+	}
+
+	@Test
+	void theCpusBorrowedCastSpendsItsOneShotDiscount() {
+		// The CPU's copy of the borrowed-cast tail never consumed a cost reduction its cast used;
+		// the standard path's always had. Both now finish in the same place.
+		MainWindow mw = new MainWindow();
+		CardData borrowed = makeForward("Borrowed", "Fire", 2, 6000);
+		mw.gameState.getIdentity().put(borrowed, false);
+		mw.gameState.getP2BreakZone().add(borrowed);
+		PlayableEntry entry = PlayableEntry.bzThisTurn(0);
+		mw.registerBorrowedPlayable(false, borrowed, entry);
+		CostReductionModifier mod = new CostReductionModifier(1, true, true, true, false, false, false,
+				null, null, "borrowed", null, false);
+		mw.activeCostReductions.add(mod);
+
+		mw.executePlayFromBzP2(borrowed, entry, 0, List.of(), Map.of(), List.of(), Map.of());
+
+		assertTrue(mw.p2ForwardCards.contains(borrowed));
+		assertFalse(mw.activeCostReductions.contains(mod));
+	}
+
+	private static final String DISCOUNTED_TARGETLESS_SUMMON = "Draw 1 card.";
+
+	@Test
+	void anOpponentsDiscountedCastIsTheSummonTheyChoseAndThePaymentTheyMade() {
+		MainWindow mw = new MainWindow();
+		RemoteOpponent remote = seatAgainstRemote(mw);
+		inP2Hand(mw, makeSummon("First", "Fire", 2, DISCOUNTED_TARGETLESS_SUMMON));
+		CardData second = inP2Hand(mw, makeSummon("Second", "Fire", 2, DISCOUNTED_TARGETLESS_SUMMON));
+		inP2Hand(mw, makeForward("Fodder", "Fire", 1, 1000));
+		activeP2Backup(mw, 0, "Payer");
+		// The AI would cast the first Summon, paying with the Backup. They cast the second, and
+		// paid by discarding the Forward (hand index 2) instead.
+		remote.onActionReceived(RemoteOpponent.choiceAction(ChoiceKind.HAND_CARDS, List.of(1)));
+		remote.onActionReceived(RemoteOpponent.choiceAction(ChoiceKind.CAST_PAYMENT,
+				new CastPayment(List.of(2), List.of(), Map.of(), Map.of()).toAnswer()));
+
+		mw.buildGameContext(false).castSummonFromHandDiscounted(1);
+
+		assertSame(second, mw.gameState.peekStack().source(), "the Summon they chose is on the Stack");
+		assertEquals(List.of("First"), forwardNames(mw.gameState.getP2Hand()),
+				"the other Summon stayed, and the Forward paid");
+		assertEquals(CardState.ACTIVE, mw.p2BackupStates[0]);
+		assertTrue(mw.activeCostReductions.isEmpty(), "the discount did not outlive the cast");
+	}
+
+	@Test
+	void anOpponentWhoBacksOutOfTheirDiscountedCastCastsNothing() {
+		MainWindow mw = new MainWindow();
+		RemoteOpponent remote = seatAgainstRemote(mw);
+		inP2Hand(mw, makeSummon("Only", "Fire", 2, DISCOUNTED_TARGETLESS_SUMMON));
+		activeP2Backup(mw, 0, "Payer");
+		remote.onActionReceived(RemoteOpponent.choiceAction(ChoiceKind.HAND_CARDS, List.of(0)));
+		remote.onActionReceived(RemoteOpponent.choiceAction(ChoiceKind.CAST_PAYMENT, List.of()));
+
+		mw.buildGameContext(false).castSummonFromHandDiscounted(1);
+
+		assertEquals(0, mw.gameState.stackSize());
+		assertEquals(1, mw.gameState.getP2Hand().size());
+		assertEquals(CardState.ACTIVE, mw.p2BackupStates[0]);
+	}
+
+	@Test
+	void theCpuPaysForItsDiscountedCastInsteadOfCastingItFree() {
+		MainWindow mw = new MainWindow();
+		CardData summon = inP2Hand(mw, makeSummon("Summon", "Fire", 2, DISCOUNTED_TARGETLESS_SUMMON));
+		activeP2Backup(mw, 0, "Payer");
+
+		mw.buildGameContext(false).castSummonFromHandDiscounted(1);
+
+		assertSame(summon, mw.gameState.peekStack().source());
+		assertEquals(CardState.DULL, mw.p2BackupStates[0], "cost 2, 1 off: one Backup's worth");
+	}
+
+	@Test
+	void theCpuCastsNoDiscountedSummonItCannotPayFor() {
+		MainWindow mw = new MainWindow();
+		inP2Hand(mw, makeSummon("Summon", "Fire", 3, DISCOUNTED_TARGETLESS_SUMMON));
+
+		mw.buildGameContext(false).castSummonFromHandDiscounted(1);
+
+		assertEquals(0, mw.gameState.stackSize(), "it used to cast it for nothing");
+		assertEquals(1, mw.gameState.getP2Hand().size());
 	}
 
 }

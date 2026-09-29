@@ -29,6 +29,7 @@ import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.IntUnaryOperator;
+import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -3660,17 +3661,10 @@ final class AutoAbilityTriggers {
 		// The offer, for the printings that print one — 2-136R Porom's "you may return it to its
 		// owner's hand". The stack path makes it for every other optional auto-ability; this one
 		// resolves inline, so it has to make it here or an optional effect would be compulsory.
-		boolean p1GetsDialog = (fa.youMay() && watcherIsP1) || (fa.opponentMay() && !watcherIsP1);
-		if (p1GetsDialog) {
-			String prompt = (fa.youMay() ? "You may: " : "Your opponent may: ") + fa.effectText();
-			int choice = mw.showEffectOptionDialog(watcher.name() + " — " + prompt,
-					"Auto Ability", new Object[]{"OK", "Decline"});
-			if (choice != 0) {
-				mw.logEntry("[AutoAbility] " + watcher.name() + " — optional effect declined");
-				return;
-			}
-		} else if (fa.youMay() || fa.opponentMay()) {
-			mw.logEntry("[AutoAbility] [AI] auto-accepts optional ability");
+		if (!acceptsOptional(fa, watcherIsP1, watcher.name() + " — " + optionalPrompt(fa, fa.effectText()),
+				() -> aiAccepts("optional ability"))) {
+			mw.logEntry("[AutoAbility] " + watcher.name() + " — optional effect declined");
+			return;
 		}
 		GameContext ctx = mw.buildGameContext(watcherIsP1);
 		ctx.preloadTargets(List.of(target));
@@ -3685,6 +3679,44 @@ final class AutoAbilityTriggers {
 			mw.currentAbilitySource    = prevSource;
 			mw.currentAbilityIsSpecial = prevSpecial;
 		}
+	}
+
+	/**
+	 * Puts an auto ability's "you may" or "your opponent may" to the player it names, and reports
+	 * whether they took it up; {@code true} outright when the ability offers no choice.
+	 *
+	 * <p>The offer used to go to the local player whenever it was theirs and be accepted for anyone
+	 * else — right against the AI, wrong against a remote human, whose client asked them while this
+	 * one assumed a yes. One declined offer was enough to part the two boards.
+	 *
+	 * @param controllerIsP1 the ability's controller; "your opponent may" asks the other seat
+	 * @param question       the whole question, as the dialog shows it
+	 * @param cpuAnswer      the AI's answer
+	 */
+	private boolean acceptsOptional(AutoAbility fa, boolean controllerIsP1, String question,
+			BooleanSupplier cpuAnswer) {
+		return acceptsOptional(fa, controllerIsP1, question, "OK", "Decline", cpuAnswer);
+	}
+
+	/** As above, with the buttons worded for the offer — "Pay" and "Decline". */
+	private boolean acceptsOptional(AutoAbility fa, boolean controllerIsP1, String question,
+			String yes, String no, BooleanSupplier cpuAnswer) {
+		if (!fa.youMay() && !fa.opponentMay()) return true;
+		boolean chooserIsP1 = fa.youMay() ? controllerIsP1 : !controllerIsP1;
+		return mw.decideYesNo(chooserIsP1, "Waiting for your opponent to decide: " + question,
+				() -> mw.showEffectOptionDialog(question, "Auto Ability", new Object[]{yes, no}) == 0,
+				cpuAnswer);
+	}
+
+	/** "You may: …" or "Your opponent may: …", as the offer dialogs word it. */
+	private static String optionalPrompt(AutoAbility fa, String what) {
+		return (fa.youMay() ? "You may: " : "Your opponent may: ") + what;
+	}
+
+	/** The AI's usual answer to an offer: it takes it, and says so. */
+	private boolean aiAccepts(String what) {
+		mw.logEntry("[AutoAbility] [AI] auto-accepts " + what);
+		return true;
 	}
 
 	/** Locates {@code card} in {@code isP1}'s field zones, or {@code null} if it has left. */
@@ -4977,16 +5009,10 @@ final class AutoAbilityTriggers {
 			return;
 		}
 
-		boolean p1GetsDialog = (fa.youMay() && isP1) || (fa.opponentMay() && !isP1);
-		if (p1GetsDialog) {
-			int choice = mw.showEffectOptionDialog(source.name() + " — " + fa.effectText(),
-					"Auto Ability", new Object[]{"Dull " + source.name(), "Decline"});
-			if (choice != 0) {
-				mw.logEntry("[AutoAbility] " + source.name() + " — self-dull declined");
-				return;
-			}
-		} else if (fa.youMay() || fa.opponentMay()) {
-			mw.logEntry("[AutoAbility] [AI] auto-accepts self-dull for " + source.name());
+		if (!acceptsOptional(fa, isP1, source.name() + " — " + fa.effectText(),
+				"Dull " + source.name(), "Decline", () -> aiAccepts("self-dull for " + source.name()))) {
+			mw.logEntry("[AutoAbility] " + source.name() + " — self-dull declined");
+			return;
 		}
 
 		mw.buildGameContext(isP1).dullTarget(slot);
@@ -5112,10 +5138,10 @@ final class AutoAbilityTriggers {
 		}
 
 		// youMay / opponentMay: player decides at trigger time whether to put ability on stack.
-		boolean p1GetsDialog = (fa.youMay() && isP1) || (fa.opponentMay() && !isP1);
-		if (p1GetsDialog) {
+		if (fa.youMay() || fa.opponentMay()) {
 			// If the effect requires discarding a card of a specific type, skip offering
-			// when the player has no eligible cards in hand — nothing to choose from.
+			// when the player has no eligible cards in hand — nothing to choose from. Read off the
+			// board, so both clients skip together whoever is being offered.
 			String discardType = ActionResolver.youMayDiscardType(fa.effectText());
 			if (discardType != null) {
 				List<CardData> hand = effectIsP1 ? mw.gameState.getP1Hand() : mw.gameState.getP2Hand();
@@ -5133,15 +5159,11 @@ final class AutoAbilityTriggers {
 					return;
 				}
 			}
-			String prompt = (fa.youMay() ? "You may: " : "Your opponent may: ") + fa.effectText();
-			int choice = mw.showEffectOptionDialog(source.name() + " — " + prompt,
-					"Auto Ability", new Object[]{"OK", "Decline"});
-			if (choice != 0) {
+			if (!acceptsOptional(fa, isP1, source.name() + " — " + optionalPrompt(fa, fa.effectText()),
+					() -> aiAccepts("optional ability"))) {
 				mw.logEntry("[AutoAbility] " + source.name() + " — optional effect declined");
 				return;
 			}
-		} else if (fa.youMay() || fa.opponentMay()) {
-			mw.logEntry("[AutoAbility] [AI] auto-accepts optional ability");
 		}
 
 		if (fa.oncePerTurn())
@@ -5490,18 +5512,10 @@ final class AutoAbilityTriggers {
 			return;
 		}
 
-		// youMay / AI decision
-		boolean p1GetsDialog = (fa.youMay() && isP1) || (fa.opponentMay() && !isP1);
-		if (p1GetsDialog) {
-			String prompt = (fa.youMay() ? "You may: " : "Your opponent may: ") + fa.effectText();
-			int choice = mw.showEffectOptionDialog(source.name() + " — " + prompt,
-					"Auto Ability", new Object[]{"OK", "Decline"});
-			if (choice != 0) {
-				mw.logEntry("[AutoAbility] " + source.name() + " — optional effect declined");
-				return;
-			}
-		} else if (fa.youMay() || fa.opponentMay()) {
-			mw.logEntry("[AutoAbility] [AI] auto-accepts optional ability");
+		if (!acceptsOptional(fa, isP1, source.name() + " — " + optionalPrompt(fa, fa.effectText()),
+				() -> aiAccepts("optional ability"))) {
+			mw.logEntry("[AutoAbility] " + source.name() + " — optional effect declined");
+			return;
 		}
 
 		// Remove the counter(s)
@@ -5533,18 +5547,10 @@ final class AutoAbilityTriggers {
 		boolean inclMonsters   = targetsRaw.contains("monster") || targetsRaw.contains("character");
 		String  subEffect      = m.group("sub").trim();
 
-		// youMay / AI decision
-		boolean p1GetsDialog = (fa.youMay() && isP1) || (fa.opponentMay() && !isP1);
-		if (p1GetsDialog) {
-			String prompt = (fa.youMay() ? "You may: " : "Your opponent may: ") + fa.effectText();
-			int choice = mw.showEffectOptionDialog(source.name() + " — " + prompt,
-					"Auto Ability", new Object[]{"OK", "Decline"});
-			if (choice != 0) {
-				mw.logEntry("[AutoAbility] " + source.name() + " — optional effect declined");
-				return;
-			}
-		} else if (fa.youMay() || fa.opponentMay()) {
-			mw.logEntry("[AutoAbility] [AI] auto-accepts optional ability");
+		if (!acceptsOptional(fa, isP1, source.name() + " — " + optionalPrompt(fa, fa.effectText()),
+				() -> aiAccepts("optional ability"))) {
+			mw.logEntry("[AutoAbility] " + source.name() + " — optional effect declined");
+			return;
 		}
 
 		// Select the card(s) to remove from the field
@@ -5597,18 +5603,10 @@ final class AutoAbilityTriggers {
 			inclForwards = inclBackups = inclMonsters = true;
 		}
 
-		// youMay / AI decision
-		boolean p1GetsDialog = (fa.youMay() && isP1) || (fa.opponentMay() && !isP1);
-		if (p1GetsDialog) {
-			String prompt = (fa.youMay() ? "You may: " : "Your opponent may: ") + fa.effectText();
-			int choice = mw.showEffectOptionDialog(source.name() + " — " + prompt,
-					"Auto Ability", new Object[]{"OK", "Decline"});
-			if (choice != 0) {
-				mw.logEntry("[AutoAbility] " + source.name() + " — optional effect declined");
-				return;
-			}
-		} else if (fa.youMay() || fa.opponentMay()) {
-			mw.logEntry("[AutoAbility] [AI] auto-accepts optional ability");
+		if (!acceptsOptional(fa, isP1, source.name() + " — " + optionalPrompt(fa, fa.effectText()),
+				() -> aiAccepts("optional ability"))) {
+			mw.logEntry("[AutoAbility] " + source.name() + " — optional effect declined");
+			return;
 		}
 
 		// Select the card(s) to put into the Break Zone
@@ -5665,16 +5663,10 @@ final class AutoAbilityTriggers {
 		// Gated exactly as the sibling executePutIntoBzWhenDoSoAutoAbility gates it, which had this
 		// right already — the two differ only in whether the card put into the Break Zone is the
 		// source itself or one it selects.
-		boolean p1GetsDialog = (fa.youMay() && isP1) || (fa.opponentMay() && !isP1);
-		if (p1GetsDialog) {
-			int choice = mw.showEffectOptionDialog(source.name() + " — " + fa.effectText(),
-					"Auto Ability", new Object[]{"Put into Break Zone", "Decline"});
-			if (choice != 0) {
-				mw.logEntry("[AutoAbility] " + source.name() + " — self-break declined");
-				return;
-			}
-		} else if (fa.youMay() || fa.opponentMay()) {
-			mw.logEntry("[AutoAbility] [AI] auto-accepts self-break for " + source.name());
+		if (!acceptsOptional(fa, isP1, source.name() + " — " + fa.effectText(),
+				"Put into Break Zone", "Decline", () -> aiAccepts("self-break for " + source.name()))) {
+			mw.logEntry("[AutoAbility] " + source.name() + " — self-break declined");
+			return;
 		}
 
 		// Break the source where it actually stands (no selection dialog needed — the text names it).
@@ -5815,21 +5807,19 @@ final class AutoAbilityTriggers {
 		boolean priceBkp   = includesRow(priceType, "backup");
 		boolean priceMon   = includesRow(priceType, "monster");
 
-		// The offer belongs to the ability's controller. Only the local seat is asked; the AI takes
-		// the trade, the same answer every other optional cost in this class gives it.
+		// The offer belongs to the ability's controller; the AI takes the trade, the same answer
+		// every other optional cost in this class gives it.
 		//
 		// Asked before the price is picked rather than after checking that a price exists, which
 		// is the order the sibling executors use: the selection below reports an empty pick as a
 		// skipped payoff, so an accepted offer with nothing to hand over costs nothing.
-		if (effectIsP1) {
-			int choice = mw.showEffectOptionDialog(source.name() + " — " + fa.effectText(),
-					"Auto Ability", new Object[]{"Put into Break Zone", "Decline"});
-			if (choice != 0) {
-				mw.logEntry("[AutoAbility] " + source.name() + " — optional cost declined, payoff skipped");
-				return;
-			}
-		} else {
-			mw.logEntry("[AutoAbility] [AI] auto-accepts optional cost for " + source.name());
+		String offer = source.name() + " — " + fa.effectText();
+		if (!mw.decideYesNo(effectIsP1, "Waiting for your opponent to decide: " + offer,
+				() -> mw.showEffectOptionDialog(offer, "Auto Ability",
+						new Object[]{"Put into Break Zone", "Decline"}) == 0,
+				() -> aiAccepts("optional cost for " + source.name()))) {
+			mw.logEntry("[AutoAbility] " + source.name() + " — optional cost declined, payoff skipped");
+			return;
 		}
 
 		GameContext priceCtx = mw.buildGameContext(effectIsP1);
@@ -5872,40 +5862,24 @@ final class AutoAbilityTriggers {
 		List<CardData> summonsInHand = new ArrayList<>();
 		for (CardData c : hand) if (c.isSummon()) summonsInHand.add(c);
 
-		boolean p1GetsDialog = (fa.youMay() && isP1) || (fa.opponentMay() && !isP1);
 		List<CardData> revealed;
-
-		if (p1GetsDialog) {
-			if (summonsInHand.isEmpty()) {
-				mw.logEntry("[AutoAbility] " + source.name() + " — no Summons in hand, reveals 0");
-				revealed = Collections.emptyList();
-			} else {
-				String prompt = (fa.youMay() ? "You may: " : "Your opponent may: ") + fa.effectText();
-				int choice = mw.showEffectOptionDialog(source.name() + " — " + prompt,
-						"Auto Ability", new Object[]{"Reveal...", "Decline"});
-				if (choice != 0) {
-					mw.logEntry("[AutoAbility] " + source.name() + " — optional effect declined");
-					return;
-				}
-				revealed = mw.showRevealSummonsFromHandDialog(summonsInHand, source.name(), minN);
-			}
+		if (summonsInHand.isEmpty()) {
+			// Nothing to choose, so nobody is asked: revealing none is the only reveal there is, and
+			// both clients read that off the same hand.
+			mw.logEntry("[AutoAbility] " + source.name() + " — no Summons in hand, reveals 0");
+			revealed = Collections.emptyList();
 		} else {
-			// CPU logic: decline if 0 summons; reveal 1 if only 1 available; reveal exactly minN if 2+
-			if (summonsInHand.isEmpty()) {
-				mw.logEntry("[AutoAbility] [AI] " + source.name() + " — no Summons in hand, declines");
+			if (!acceptsOptional(fa, isP1, source.name() + " — " + optionalPrompt(fa, fa.effectText()),
+					"Reveal...", "Decline", () -> true)) {
+				mw.logEntry("[AutoAbility] " + source.name() + " — optional effect declined");
 				return;
-			} else if (summonsInHand.size() < minN) {
-				revealed = new ArrayList<>(summonsInHand.subList(0, 1));
-				mw.logEntry("[AutoAbility] [AI] " + source.name() + " — reveals 1 Summon: " + summonsInHand.get(0).name());
-			} else {
-				revealed = new ArrayList<>(summonsInHand.subList(0, minN));
-				StringBuilder sb = new StringBuilder();
-				for (int i = 0; i < revealed.size(); i++) {
-					if (i > 0) sb.append(", ");
-					sb.append(revealed.get(i).name());
-				}
-				mw.logEntry("[AutoAbility] [AI] " + source.name() + " — reveals " + minN + " Summon(s): " + sb);
 			}
+			// CPU logic: reveal 1 if fewer than minN are held, else exactly minN.
+			revealed = revealSummons(effectIsP1, hand, summonsInHand,
+					() -> mw.showRevealSummonsFromHandDialog(summonsInHand, source.name(), minN),
+					() -> new ArrayList<>(summonsInHand.subList(0,
+							summonsInHand.size() < minN ? 1 : minN)),
+					source);
 		}
 
 		int count = revealed.size();
@@ -5922,6 +5896,43 @@ final class AutoAbilityTriggers {
 		} else {
 			mw.logEntry("[AutoAbility] " + source.name() + " — revealed " + count + " Summon(s), no additional effect");
 		}
+	}
+
+	/**
+	 * The seat at {@code revealerIsP1} reveals any number of {@code summons} from their own
+	 * {@code hand}; returns the cards shown. Crosses as {@link ChoiceKind#REVEAL_HAND} hand indices.
+	 *
+	 * @param localPick asks the local human, answering with cards out of {@code summons}
+	 * @param cpuPick   the AI's reveal, out of {@code summons}
+	 */
+	private List<CardData> revealSummons(boolean revealerIsP1, List<CardData> hand, List<CardData> summons,
+			Supplier<List<CardData>> localPick, Supplier<List<CardData>> cpuPick, CardData source) {
+		List<Integer> eligible = new ArrayList<>();
+		for (CardData c : summons) eligible.add(MainWindow.identityIndexOf(hand, c));
+		List<Integer> shown = mw.decide(PlayerChoice.by(revealerIsP1, ChoiceKind.REVEAL_HAND)
+				.prompting("Waiting for your opponent to reveal Summons...")
+				.locally(() -> handIndicesOf(hand, localPick.get()))
+				.byCpu(() -> handIndicesOf(hand, cpuPick.get()))
+				.legalWhen(a -> eligible.containsAll(a) && new HashSet<>(a).size() == a.size(),
+						"only Summons in their hand can be revealed here"));
+		List<CardData> revealed = new ArrayList<>(shown.size());
+		for (int i : shown) revealed.add(hand.get(i));
+		mw.logEntry("[AutoAbility] " + (revealerIsP1 ? "" : "[P2] ") + source.name() + " — reveals "
+				+ revealed.size() + " Summon(s)"
+				+ (revealed.isEmpty() ? "" : ": " + revealed.stream().map(CardData::name)
+						.collect(java.util.stream.Collectors.joining(", "))));
+		return revealed;
+	}
+
+	/** Where each of {@code cards} sits in {@code hand}, by identity; cards not there are dropped. */
+	private static List<Integer> handIndicesOf(List<CardData> hand, List<CardData> cards) {
+		List<Integer> out = new ArrayList<>();
+		if (cards == null) return out;
+		for (CardData c : cards) {
+			int i = MainWindow.identityIndexOf(hand, c);
+			if (i >= 0 && !out.contains(i)) out.add(i);
+		}
+		return out;
 	}
 
 	/**
@@ -5949,32 +5960,22 @@ final class AutoAbilityTriggers {
 		List<CardData> summonsInHand = new ArrayList<>();
 		for (CardData c : hand) if (c.isSummon()) summonsInHand.add(c);
 
-		boolean p1GetsDialog = (fa.youMay() && isP1) || (fa.opponentMay() && !isP1);
-		List<CardData> revealed;
-
 		if (summonsInHand.isEmpty()) {
 			mw.logEntry("[AutoAbility] " + source.name() + " — no Summons in hand, reveals 0");
 			return;
 		}
-		if (p1GetsDialog) {
-			String prompt = (fa.youMay() ? "You may: " : "Your opponent may: ") + fa.effectText();
-			int choice = mw.showEffectOptionDialog(source.name() + " — " + prompt,
-					"Auto Ability", new Object[]{"Reveal...", "Decline"});
-			if (choice != 0) {
-				mw.logEntry("[AutoAbility] " + source.name() + " — optional effect declined");
-				return;
-			}
-			revealed = mw.showRevealSummonsFromHandDialog(summonsInHand, source.name(),
-					"Reveal any number — you then get that many targets.");
-		} else {
-			// The AI reveals everything it can: the count is the target count, and a revealed
-			// Summon stays in hand, so there is nothing to weigh against taking the maximum.
-			revealed = new ArrayList<>(summonsInHand);
-			StringBuilder names = new StringBuilder();
-			for (CardData c : revealed) names.append(names.length() == 0 ? "" : ", ").append(c.name());
-			mw.logEntry("[AutoAbility] [AI] " + source.name() + " — reveals " + revealed.size()
-					+ " Summon(s): " + names);
+		if (!acceptsOptional(fa, isP1, source.name() + " — " + optionalPrompt(fa, fa.effectText()),
+				"Reveal...", "Decline", () -> true)) {
+			mw.logEntry("[AutoAbility] " + source.name() + " — optional effect declined");
+			return;
 		}
+		// The AI reveals everything it can: the count is the target count, and a revealed Summon
+		// stays in hand, so there is nothing to weigh against taking the maximum.
+		List<CardData> revealed = revealSummons(effectIsP1, hand, summonsInHand,
+				() -> mw.showRevealSummonsFromHandDialog(summonsInHand, source.name(),
+						"Reveal any number — you then get that many targets."),
+				() -> new ArrayList<>(summonsInHand),
+				source);
 
 		int count = revealed.size();
 		if (count == 0) {
@@ -6135,42 +6136,34 @@ final class AutoAbilityTriggers {
 			}
 		}
 
-		// P1 gets a confirm dialog; AI auto-accepts.
-		boolean p1GetsDialog = (fa.youMay() && isP1) || (fa.opponentMay() && !isP1);
-		if (p1GetsDialog) {
-			String prompt = (fa.youMay() ? "You may: " : "Your opponent may: ") + fa.effectText();
-			int choice = mw.showEffectOptionDialog(source.name() + " — " + prompt,
-					"Auto Ability", new Object[]{"OK", "Decline"});
-			if (choice != 0) {
-				mw.logEntry("[AutoAbility] " + source.name() + " — optional effect declined");
-				return;
-			}
-		} else if (fa.youMay() || fa.opponentMay()) {
-			// Decline if the effect targets Forwards but the opponent has none to target.
-			boolean effectNeedsForward = subEffect.toLowerCase(java.util.Locale.ROOT).contains("forward");
-			if (effectNeedsForward && mw.p1ForwardCards.isEmpty()) {
+		// The payer is asked, then pays. The AI declines when the effect aims at Forwards and its
+		// opponent has none; otherwise it takes the offer.
+		String finalSubEffect = subEffect;
+		if (!acceptsOptional(fa, isP1, source.name() + " — " + optionalPrompt(fa, fa.effectText()), () -> {
+			boolean effectNeedsForward = finalSubEffect.toLowerCase(java.util.Locale.ROOT).contains("forward");
+			if (effectNeedsForward && mw.playerForwardCards(!effectIsP1).isEmpty()) {
 				mw.logEntry("[AutoAbility] [AI] declines optional ability — no opponent Forwards to target");
-				return;
+				return false;
 			}
-			mw.logEntry("[AutoAbility] [AI] auto-accepts optional ability");
-		}
-
-		IntUnaryOperator xFromPaid = paid -> xBoughtBy(paid, fixedCost, xPerUnit);
-
-		if (!isP1) {
-			// The AI buys one unit of X, which is what it has always done for a plain 《X》.
-			int target = isXCost ? fixedCost + xPerUnit : fixedCost;
-			int paid   = aiPayCp(effectIsP1, target, elementNeeds, cpSource);
-			if (paid < fixedCost) {
-				mw.logEntry("[AutoAbility] " + source.name() + " — [AI] could not pay " + costRun);
-				return;
-			}
-			applyPayWhenDoSoEffect(subEffect, source, xFromPaid.applyAsInt(paid), effectIsP1);
+			return aiAccepts("optional ability");
+		})) {
+			mw.logEntry("[AutoAbility] " + source.name() + " — optional effect declined");
 			return;
 		}
 
-		String finalSubEffect = subEffect;
-		showAutoAbilityPaymentDialog(source.name(), fixedCost, maxCp, isP1, 0, elementNeeds, cpSource,
+		IntUnaryOperator xFromPaid = paid -> xBoughtBy(paid, fixedCost, xPerUnit);
+		// The AI buys one unit of X, which is what it has always done for a plain 《X》, and pays
+		// nothing when it cannot reach the fixed part.
+		int aiTarget = isXCost ? fixedCost + xPerUnit : fixedCost;
+		payCpAtResolution(source.name(), fixedCost, maxCp, effectIsP1, 0, elementNeeds, cpSource,
+				() -> {
+					CpPlan plan = aiPlanCp(effectIsP1, aiTarget, elementNeeds, cpSource, false);
+					if (plan == null || plan.produced() < fixedCost) {
+						mw.logEntry("[AutoAbility] " + source.name() + " — [AI] could not pay " + costRun);
+						return null;
+					}
+					return plan;
+				},
 				paid -> applyPayWhenDoSoEffect(finalSubEffect, source, xFromPaid.applyAsInt(paid), effectIsP1), null);
 	}
 
@@ -6225,41 +6218,42 @@ final class AutoAbilityTriggers {
 			return;
 		}
 
-		boolean payCrystals;
-		// Whoever pays chooses how; effectIsP1 is the payer, "your opponent may" included.
-		if (effectIsP1) {
-			List<String> options = new ArrayList<>();
-			if (canCp)      options.add("Pay " + costRun);
-			if (canCrystal) options.add("Pay " + crystals + " Crystal" + (crystals == 1 ? "" : "s"));
-			options.add("Decline");
-			int choice = mw.showEffectOptionDialog(source.name() + " — " + fa.effectText(),
-					"Auto Ability", options.toArray());
-			if (choice < 0 || choice == options.size() - 1) {
-				mw.logEntry("[AutoAbility] " + source.name() + " — optional effect declined");
-				return;
-			}
-			payCrystals = options.get(choice).contains("Crystal");
-		} else {
-			if (subEffect.toLowerCase(Locale.ROOT).contains("forward") && mw.p1ForwardCards.isEmpty()) {
-				mw.logEntry("[AutoAbility] [AI] declines optional ability — no opponent Forwards to target");
-				return;
-			}
-			payCrystals = !canCp;
+		// Whoever pays chooses how; effectIsP1 is the payer, "your opponent may" included. Three
+		// answers — CP, Crystals, decline — as a position in the options offered, which both
+		// clients build from the same board. The AI spends CP when it can and keeps its Crystals.
+		List<String> options = new ArrayList<>();
+		if (canCp)      options.add("Pay " + costRun);
+		if (canCrystal) options.add("Pay " + crystals + " Crystal" + (crystals == 1 ? "" : "s"));
+		options.add("Decline");
+		int choice = mw.decideOption(effectIsP1, options.size(),
+				"Waiting for your opponent to decide how to pay for " + source.name() + "...",
+				() -> mw.showEffectOptionDialog(source.name() + " — " + fa.effectText(),
+						"Auto Ability", options.toArray()),
+				() -> {
+					if (subEffect.toLowerCase(Locale.ROOT).contains("forward")
+							&& mw.playerForwardCards(!effectIsP1).isEmpty()) {
+						mw.logEntry("[AutoAbility] [AI] declines optional ability — no opponent Forwards to target");
+						return options.size() - 1;
+					}
+					return 0;
+				});
+		if (choice < 0 || choice == options.size() - 1) {
+			mw.logEntry("[AutoAbility] " + source.name() + " — optional effect declined");
+			return;
 		}
 
-		if (payCrystals) {
+		if (options.get(choice).contains("Crystal")) {
 			mw.playerSpendCrystals(effectIsP1, crystals);
 			mw.refreshCrystalDisplays();
 			mw.logEntry((effectIsP1 ? "" : "[P2] ") + "Paid " + crystals + " Crystal(s)");
 			applyPayWhenDoSoEffect(subEffect, source, 0, effectIsP1);
-		} else if (!effectIsP1) {
-			if (aiPayCp(effectIsP1, fixedCost, elementNeeds) < fixedCost) {
-				mw.logEntry("[AutoAbility] " + source.name() + " — [AI] could not pay " + costRun);
-				return;
-			}
-			applyPayWhenDoSoEffect(subEffect, source, 0, effectIsP1);
 		} else {
-			showAutoAbilityPaymentDialog(source.name(), fixedCost, fixedCost, isP1, 0, elementNeeds,
+			payCpAtResolution(source.name(), fixedCost, fixedCost, effectIsP1, 0, elementNeeds, null,
+					() -> {
+						CpPlan plan = aiPlanCp(effectIsP1, fixedCost, elementNeeds, null, true);
+						if (plan == null) mw.logEntry("[AutoAbility] " + source.name() + " — [AI] could not pay " + costRun);
+						return plan;
+					},
 					paid -> applyPayWhenDoSoEffect(subEffect, source, 0, effectIsP1), null);
 		}
 	}
@@ -6323,26 +6317,85 @@ final class AutoAbilityTriggers {
 	 */
 	int aiPayCp(boolean payerIsP1, int target) {
 		if (target <= 0) return 0;
+		CpPlan plan = aiPlanCp(payerIsP1, target);
+		applyCpPlan(payerIsP1, plan, "[AI] Pay CP: ");
+		return Math.min(plan.produced(), target);
+	}
+
+	/**
+	 * Which Backups a payer dulls and which hand cards they discard to produce CP — a payment
+	 * decided but not yet made. {@code crystals} stands for the whole cost paid in Crystals instead,
+	 * where a cost offers that.
+	 *
+	 * <p>Kept apart from the spending because the two happen on different clients' say-so: the
+	 * payer decides, and both clients spend what was decided.
+	 */
+	record CpPlan(boolean crystals, List<Integer> dulls, List<Integer> discards) {
+		static final CpPlan CRYSTALS = new CpPlan(true, List.of(), List.of());
+
+		static CpPlan of(List<Integer> dulls, List<Integer> discards) {
+			return new CpPlan(false, List.copyOf(dulls), List.copyOf(discards));
+		}
+
+		/** CP this plan produces: 1 per Backup dulled, 2 per card discarded. */
+		int produced() { return dulls.size() + discards.size() * 2; }
+
+		/** The {@link ChoiceKind#CP_PAYMENT} answer: {@code [-1]}, or {@code [n, dulls…, discards…]}. */
+		List<Integer> toAnswer() {
+			if (crystals) return List.of(-1);
+			List<Integer> out = new ArrayList<>(1 + dulls.size() + discards.size());
+			out.add(dulls.size());
+			out.addAll(dulls);
+			out.addAll(discards);
+			return out;
+		}
+
+		/** Reads back a {@link #toAnswer}; {@code null} for an empty answer — a payment declined. */
+		static CpPlan fromAnswer(List<Integer> answer) {
+			if (answer.isEmpty()) return null;
+			if (answer.size() == 1 && answer.get(0) == -1) return CRYSTALS;
+			int n = answer.get(0);
+			if (n < 0 || n > answer.size() - 1) return null;
+			return of(answer.subList(1, 1 + n), answer.subList(1 + n, answer.size()));
+		}
+	}
+
+	/** The plain plan {@link #aiPayCp(boolean, int)} spends: active Backups in slot order, then hand cards from the end. */
+	private CpPlan aiPlanCp(boolean payerIsP1, int target) {
 		CardData[]  bkpCards  = mw.playerBackupCards(payerIsP1);
 		CardState[] bkpStates = mw.playerBackupStates(payerIsP1);
-		int paid = 0;
-		for (int i = 0; i < bkpCards.length && paid < target; i++) {
-			if (bkpCards[i] != null && bkpStates[i] == CardState.ACTIVE) {
-				bkpStates[i] = CardState.DULL;
-				mw.playerDullBackupSlot(payerIsP1, i);
-				paid++;
-				mw.logEntry("[AI] Pay CP: dull " + bkpCards[i].name() + " (" + paid + "/" + target + ")");
-			}
+		List<Integer> dulls = new ArrayList<>();
+		int planned = 0;
+		for (int i = 0; i < bkpCards.length && planned < target; i++) {
+			if (bkpCards[i] != null && bkpStates[i] == CardState.ACTIVE) { dulls.add(i); planned++; }
 		}
-		List<Integer> discardIdx = new ArrayList<>();
+		List<Integer> discards = new ArrayList<>();
 		List<CardData> hand = mw.playerHand(payerIsP1);
-		for (int i = hand.size() - 1; i >= 0 && paid < target; i--) {
-			mw.logEntry("[AI] Pay CP: discard " + hand.get(i).name() + " from hand (" + Math.min(paid + 2, target) + "/" + target + ")");
-			discardIdx.add(i);
-			paid += 2;
+		for (int i = hand.size() - 1; i >= 0 && planned < target; i--) { discards.add(i); planned += 2; }
+		return CpPlan.of(dulls, discards);
+	}
+
+	/**
+	 * Spends {@code plan} from {@code payerIsP1}'s side: dulls its Backups, then discards its hand
+	 * cards highest index first so each index still names the card it was picked as. Returns the
+	 * CP produced. The Crystal route is left to the caller, which knows how many to spend.
+	 */
+	private int applyCpPlan(boolean payerIsP1, CpPlan plan, String logPrefix) {
+		CardData[]  bkpCards  = mw.playerBackupCards(payerIsP1);
+		CardState[] bkpStates = mw.playerBackupStates(payerIsP1);
+		for (int i : plan.dulls()) {
+			bkpStates[i] = CardState.DULL;
+			mw.playerDullBackupSlot(payerIsP1, i);
+			mw.logEntry(logPrefix + "dull " + bkpCards[i].name());
 		}
-		for (int di : discardIdx) mw.playerBreakFromHand(payerIsP1, di);
-		return Math.min(paid, target);
+		List<CardData> hand = mw.playerHand(payerIsP1);
+		List<Integer> discards = new ArrayList<>(plan.discards());
+		discards.sort(Comparator.reverseOrder());
+		for (int di : discards) {
+			mw.logEntry(logPrefix + "discard " + hand.get(di).name() + " from hand");
+			mw.playerBreakFromHand(payerIsP1, di);
+		}
+		return plan.produced();
 	}
 
 	/**
@@ -6372,6 +6425,20 @@ final class AutoAbilityTriggers {
 	int aiPayCp(boolean payerIsP1, int target, Map<String, Integer> elementNeeds, Predicate<CardData> cpSource,
 			boolean allOrNothing) {
 		if (elementNeeds.isEmpty() && cpSource == null && !allOrNothing) return aiPayCp(payerIsP1, target);
+		CpPlan plan = aiPlanCp(payerIsP1, target, elementNeeds, cpSource, allOrNothing);
+		if (plan == null) return 0;
+		applyCpPlan(payerIsP1, plan, "[AI] Pay CP: ");
+		return Math.min(plan.produced(), target);
+	}
+
+	/**
+	 * The payment {@link #aiPayCp(boolean, int, Map, Predicate, boolean)} would make, without
+	 * making it; {@code null} when it would pay nothing — an Element it cannot produce, or, with
+	 * {@code allOrNothing}, a plan short of {@code target}.
+	 */
+	CpPlan aiPlanCp(boolean payerIsP1, int target, Map<String, Integer> elementNeeds, Predicate<CardData> cpSource,
+			boolean allOrNothing) {
+		if (elementNeeds.isEmpty() && cpSource == null && !allOrNothing) return aiPlanCp(payerIsP1, target);
 		Predicate<CardData> may = cpSource != null ? cpSource : c -> true;
 		CardData[]     bkpCards  = mw.playerBackupCards(payerIsP1);
 		CardState[]    bkpStates = mw.playerBackupStates(payerIsP1);
@@ -6393,7 +6460,7 @@ final class AutoAbilityTriggers {
 			}
 			if (shortBy > 0) {
 				mw.logEntry("[AI] Cannot produce 《" + need.getKey() + "》 — pays nothing");
-				return 0;
+				return null;
 			}
 		}
 		for (int i = 0; i < bkpCards.length && planned < target; i++) {
@@ -6409,19 +6476,9 @@ final class AutoAbilityTriggers {
 		}
 		if (allOrNothing && planned < target) {
 			mw.logEntry("[AI] Cannot cover 《" + target + "》 — pays nothing");
-			return 0;
+			return null;
 		}
-		for (int i : dulls) {
-			bkpStates[i] = CardState.DULL;
-			mw.playerDullBackupSlot(payerIsP1, i);
-			mw.logEntry("[AI] Pay CP: dull " + bkpCards[i].name());
-		}
-		discards.sort(Comparator.reverseOrder());
-		for (int di : discards) {
-			mw.logEntry("[AI] Pay CP: discard " + hand.get(di).name() + " from hand");
-			mw.playerBreakFromHand(payerIsP1, di);
-		}
-		return Math.min(planned, target);
+		return CpPlan.of(dulls, discards);
 	}
 
 	// ─── "Select N of M following actions" auto-ability ─────────────────────────
@@ -6449,18 +6506,12 @@ final class AutoAbilityTriggers {
 
 		// youMay / opponentMay decline dialog (the select dialog itself is the interaction,
 		// but we still honour an explicit "you may" decline option)
-		boolean p1GetsDialog = (fa.youMay() && isP1) || (fa.opponentMay() && !isP1);
-		if (p1GetsDialog) {
-			String prompt = "Select " + (upTo ? "up to " : "") + selectCount + " of "
-					+ totalCount + " actions for " + source.name() + "?";
-			int choice = mw.showEffectOptionDialog(prompt, "Auto Ability",
-					new Object[]{"Choose Actions", "Decline"});
-			if (choice != 0) {
-				mw.logEntry("[AutoAbility] " + source.name() + " — optional select declined");
-				return;
-			}
-		} else if (fa.youMay() || fa.opponentMay()) {
-			mw.logEntry("[AutoAbility] [AI] auto-accepts select ability");
+		String prompt = "Select " + (upTo ? "up to " : "") + selectCount + " of "
+				+ totalCount + " actions for " + source.name() + "?";
+		if (!acceptsOptional(fa, isP1, prompt, "Choose Actions", "Decline",
+				() -> aiAccepts("select ability"))) {
+			mw.logEntry("[AutoAbility] " + source.name() + " — optional select declined");
+			return;
 		}
 
 		if (fa.oncePerTurn())
@@ -6495,13 +6546,16 @@ final class AutoAbilityTriggers {
 
 		if (maxCount == 0) return;
 
-		int chosenCount;
-		if (isP1) {
-			chosenCount = showChooseActionCountDialog(source, actions, maxCount, excludeElem);
-		} else {
-			chosenCount = maxCount;
-			mw.logEntry("[AutoAbility] [AI] " + source.name() + " takes " + chosenCount + " action(s) from top");
-		}
+		// How many to take, from 0 to maxCount — the answer is the number itself, a position in that
+		// range. The AI takes them all.
+		int max = maxCount;
+		int chosenCount = Math.max(0, mw.decideOption(isP1, maxCount + 1,
+				"Waiting for your opponent to choose how many actions to take...",
+				() -> showChooseActionCountDialog(source, actions, max, excludeElem),
+				() -> {
+					mw.logEntry("[AutoAbility] [AI] " + source.name() + " takes " + max + " action(s) from top");
+					return max;
+				}));
 
 		if (fa.oncePerTurn())
 			mw.usedOncePerTurnAbilities.computeIfAbsent(source, k -> new HashSet<>())
@@ -6743,6 +6797,121 @@ final class AutoAbilityTriggers {
 	void showAutoAbilityPaymentDialog(String cardName, int minCp, int maxCp,
 			boolean isP1, int crystalAltCost, Map<String, Integer> elementNeeds, Predicate<CardData> cpSource,
 			java.util.function.IntConsumer onConfirm, Runnable onCrystalPaid) {
+		payCpAtResolution(cardName, minCp, maxCp, isP1, crystalAltCost, elementNeeds, cpSource,
+				() -> aiCpPaymentPlan(isP1, minCp, crystalAltCost, elementNeeds, cpSource),
+				onConfirm, onCrystalPaid);
+	}
+
+	/**
+	 * The AI's answer to a payment it did not plan for itself: the whole of {@code minCp} if it can
+	 * produce it, else the Crystals when the cost offers them and it holds enough, else nothing.
+	 * A cost paid for its effect is one the AI takes whenever it can, which is what the optional-
+	 * cost payers beside this one already decide.
+	 */
+	private CpPlan aiCpPaymentPlan(boolean payerIsP1, int minCp, int crystalAltCost,
+			Map<String, Integer> elementNeeds, Predicate<CardData> cpSource) {
+		CpPlan plan = aiPlanCp(payerIsP1, minCp, elementNeeds, cpSource, true);
+		if (plan != null) return plan;
+		return crystalAltCost > 0 && mw.playerCrystals(payerIsP1) >= crystalAltCost ? CpPlan.CRYSTALS : null;
+	}
+
+	/**
+	 * Has the seat at {@code payerIsP1} pay CP as an effect resolves, and spends what they paid on
+	 * both clients.
+	 *
+	 * <p>The payer's own client shows the payment dialog; the other waits for the answer under
+	 * {@link ChoiceKind#CP_PAYMENT}; the AI answers with {@code cpuPlan}. Nothing is spent until the
+	 * answer is in, and then the same plan is spent on either client — which is what the dialog
+	 * alone could not do. It used to dull and discard as it confirmed, so the far client learned
+	 * nothing, and it had no AI half at all: a payment the CPU owed was put to the local human, over
+	 * the CPU's own Backups and hand.
+	 *
+	 * @param cpuPlan the AI's payment; {@code null} declines
+	 */
+	void payCpAtResolution(String cardName, int minCp, int maxCp, boolean payerIsP1, int crystalAltCost,
+			Map<String, Integer> elementNeeds, Predicate<CardData> cpSource, Supplier<CpPlan> cpuPlan,
+			java.util.function.IntConsumer onConfirm, Runnable onCrystalPaid) {
+		List<Integer> answer = mw.decide(PlayerChoice.by(payerIsP1, ChoiceKind.CP_PAYMENT)
+				.prompting("Waiting for your opponent to pay for " + cardName + "...")
+				.locally(() -> askCpPayment(cardName, minCp, maxCp, payerIsP1, crystalAltCost,
+						elementNeeds, cpSource))
+				.byCpu(() -> {
+					CpPlan plan = cpuPlan.get();
+					return plan == null ? List.of() : plan.toAnswer();
+				})
+				.legalWhen(a -> cpPaymentProblem(a, minCp, payerIsP1, crystalAltCost, elementNeeds,
+						cpSource) == null, "that payment does not cover the cost here"));
+		CpPlan plan = CpPlan.fromAnswer(answer);
+		String who = payerIsP1 ? "" : "[P2] ";
+		if (plan == null) {
+			mw.logEntry("[AutoAbility] " + who + cardName + " — payment declined");
+			return;
+		}
+		if (plan.crystals()) {
+			mw.playerSpendCrystals(payerIsP1, crystalAltCost);
+			mw.refreshCrystalDisplays();
+			mw.logEntry("[AutoAbility] " + who + cardName + " — paid " + crystalAltCost + " Crystal"
+					+ (crystalAltCost == 1 ? "" : "s"));
+			if (onCrystalPaid != null) onCrystalPaid.run();
+			return;
+		}
+		int produced = applyCpPlan(payerIsP1, plan, "[AutoAbility] " + who + cardName + " — pay CP: ");
+		// Producing CP beyond the cost is legal but the surplus is not part of the payment:
+		// clamp so an odd fixed cost paid with a 2-CP discard can't inflate X.
+		int paid = maxCp == Integer.MAX_VALUE ? produced : Math.min(produced, maxCp);
+		mw.logEntry("[AutoAbility] " + who + cardName + " — paid " + paid + " CP"
+				+ (produced > paid ? " (" + (produced - paid) + " excess CP wasted)" : ""));
+		if (payerIsP1) { mw.refreshP1HandLabel();      mw.refreshP1BreakLabel(); }
+		else           { mw.refreshP2HandCountLabel(); mw.refreshP2BreakLabel(); }
+		onConfirm.accept(paid);
+	}
+
+	/**
+	 * Why {@code answer} is not a payment {@code payerIsP1} could have made here, or {@code null}
+	 * when it is. The dialog enforces all of this as it is filled in; a remote answer is the one
+	 * thing that reaches the spending without having gone through it.
+	 */
+	private String cpPaymentProblem(List<Integer> answer, int minCp, boolean payerIsP1, int crystalAltCost,
+			Map<String, Integer> elementNeeds, Predicate<CardData> cpSource) {
+		if (answer.isEmpty()) return null;
+		CpPlan plan = CpPlan.fromAnswer(answer);
+		if (plan == null) return "malformed payment";
+		if (plan.crystals())
+			return crystalAltCost > 0 && mw.playerCrystals(payerIsP1) >= crystalAltCost
+					? null : "no Crystal alternative they can afford";
+		CardData[]  bkpCards  = mw.playerBackupCards(payerIsP1);
+		CardState[] bkpStates = mw.playerBackupStates(payerIsP1);
+		List<CardData> hand   = mw.playerHand(payerIsP1);
+		if (new HashSet<>(plan.dulls()).size() != plan.dulls().size()
+				|| new HashSet<>(plan.discards()).size() != plan.discards().size()) return "a card paid twice";
+		List<CardData> dulled = new ArrayList<>();
+		for (int slot : plan.dulls()) {
+			if (slot < 0 || slot >= bkpCards.length || bkpCards[slot] == null
+					|| bkpStates[slot] != CardState.ACTIVE) return "no active Backup in slot " + slot;
+			if (cpSource != null && !cpSource.test(bkpCards[slot])) return bkpCards[slot].name() + " cannot pay this";
+			dulled.add(bkpCards[slot]);
+		}
+		Set<String> ldGrants = mw.lightDarkDiscardGrants(payerIsP1);
+		List<CardData> discarded = new ArrayList<>();
+		for (int hi : plan.discards()) {
+			if (hi < 0 || hi >= hand.size()) return "no card at hand index " + hi;
+			CardData c = hand.get(hi);
+			if (!CpPaymentUtils.canDiscardForCp(c, ldGrants) || (cpSource != null && !cpSource.test(c)))
+				return c.name() + " cannot be discarded for CP";
+			discarded.add(c);
+		}
+		if (plan.produced() < minCp) return "only " + plan.produced() + " CP of " + minCp;
+		if (!CpPaymentUtils.elementNeedsMet(dulled, discarded, elementNeeds)) return "the Elements the cost names are not all paid";
+		return null;
+	}
+
+	/**
+	 * The local half of {@link #payCpAtResolution}: shows the payer their Backups and hand, and
+	 * returns what they chose as a {@link ChoiceKind#CP_PAYMENT} answer. Spends nothing.
+	 */
+	private List<Integer> askCpPayment(String cardName, int minCp, int maxCp,
+			boolean isP1, int crystalAltCost, Map<String, Integer> elementNeeds, Predicate<CardData> cpSource) {
+		List<List<Integer>> result = new ArrayList<>(List.of(List.of()));
 		CardData[]     bkpCards  = mw.playerBackupCards(isP1);
 		CardState[]    bkpStates = mw.playerBackupStates(isP1);
 		String[]       bkpUrls  = mw.playerBackupUrls(isP1);
@@ -6919,28 +7088,10 @@ final class AutoAbilityTriggers {
 
 		JButton cancelBtn = new JButton("Cancel");
 		cancelBtn.setFont(FontLoader.loadPixelFont(11));
-		cancelBtn.addActionListener(ev -> {
-			mw.logEntry("[AutoAbility] " + cardName + " — payment cancelled");
-			dlg.dispose();
-		});
+		cancelBtn.addActionListener(ev -> dlg.dispose());
 		confirmBtn.addActionListener(ev -> {
 			dlg.dispose();
-			for (int slot : selectedBackups) {
-				bkpStates[slot] = CardState.DULL;
-				mw.playerDullBackupSlot(isP1, slot);
-			}
-			List<Integer> sortedDiscards = new ArrayList<>(selectedDiscards);
-			sortedDiscards.sort(Collections.reverseOrder());
-			for (int di : sortedDiscards) mw.playerBreakFromHand(isP1, di);
-			// Producing CP beyond the cost is legal but the surplus is not part of the payment:
-			// clamp so an odd fixed cost paid with a 2-CP discard can't inflate X.
-			int produced = selectedBackups.size() + selectedDiscards.size() * 2;
-			int paid     = maxCp == Integer.MAX_VALUE ? produced : Math.min(produced, maxCp);
-			mw.logEntry("[AutoAbility] " + cardName + " — paid " + paid + " CP"
-					+ (produced > paid ? " (" + (produced - paid) + " excess CP wasted)" : ""));
-			mw.refreshP1HandLabel();
-			mw.refreshP1BreakLabel();
-			onConfirm.accept(paid);
+			result.set(0, CpPlan.of(selectedBackups, selectedDiscards).toAnswer());
 		});
 
 		JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 6));
@@ -6951,10 +7102,7 @@ final class AutoAbilityTriggers {
 			crystalBtn.setEnabled(mw.playerCrystals(isP1) >= crystalAltCost);
 			crystalBtn.addActionListener(ev -> {
 				dlg.dispose();
-				mw.playerSpendCrystals(isP1, crystalAltCost);
-				mw.refreshCrystalDisplays();
-				mw.logEntry("[AutoAbility] " + cardName + " — paid " + crystalAltCost + " Crystal" + (crystalAltCost == 1 ? "" : "s"));
-				if (onCrystalPaid != null) onCrystalPaid.run();
+				result.set(0, CpPlan.CRYSTALS.toAnswer());
 			});
 			buttonPanel.add(crystalBtn);
 		}
@@ -6973,6 +7121,7 @@ final class AutoAbilityTriggers {
 		dlg.getContentPane().add(topPanel,  BorderLayout.NORTH);
 		dlg.getContentPane().add(mainPanel, BorderLayout.CENTER);
 		dlg.pack(); dlg.setLocationRelativeTo(mw.frame); dlg.setVisible(true);
+		return result.get(0);
 	}
 
 	boolean canActivateHandAbility(ActionAbility ability, CardData source, boolean isP1) {

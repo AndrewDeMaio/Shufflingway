@@ -10,6 +10,7 @@ import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.Deque;
 import java.util.EnumSet;
@@ -21,8 +22,10 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.function.IntSupplier;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.regex.Matcher;
@@ -171,15 +174,21 @@ final class GameContextImpl implements GameContext {
 	 * pays for a smaller reveal, so more shown can only be worth the same or more.
 	 */
 	private List<CardData> revealAnyNumberFromHand(List<CardData> hand) {
+		List<Integer> picked = mw.decide(PlayerChoice.by(isP1, ChoiceKind.REVEAL_HAND)
+				.prompting("Waiting for your opponent to reveal cards from their hand...")
+				.locally(() -> shufflingway.dialog.HandPickDialog.showRevealAnyNumber(
+						mw.frame, hand, "Reveal any number of cards from your hand.",
+						mw::showZoomAt, mw::hideZoom))
+				.byCpu(() -> {
+					List<Integer> all = new ArrayList<>();
+					for (int i = 0; i < hand.size(); i++) all.add(i);
+					return all;
+				})
+				.legalWhen(a -> new HashSet<>(a).size() == a.size()
+								&& a.stream().allMatch(i -> i >= 0 && i < hand.size()),
+						"their hand holds " + hand.size() + " cards here"));
 		List<CardData> shown = new ArrayList<>();
-		if (isP1) {
-			List<Integer> picked = shufflingway.dialog.HandPickDialog.showRevealAnyNumber(
-					mw.frame, hand, "Reveal any number of cards from your hand.",
-					mw::showZoomAt, mw::hideZoom);
-			for (int i : picked) if (i >= 0 && i < hand.size()) shown.add(hand.get(i));
-		} else {
-			shown.addAll(hand);
-		}
+		for (int i : picked) if (i >= 0 && i < hand.size()) shown.add(hand.get(i));
 		return shown;
 	}
 
@@ -445,18 +454,8 @@ final class GameContextImpl implements GameContext {
 				List<GameState.WarpEntry> zone = isP1
 						? mw.gameState.getP1WarpZone() : mw.gameState.getP2WarpZone();
 				if (zone.isEmpty()) { logEntry(p + "Warp zone is empty — no target."); return; }
-				GameState.WarpEntry chosen;
-				if (zone.size() == 1) {
-					chosen = zone.get(0);
-				} else if (!isP1) {
-					chosen = zone.get(0); // P2 AI: pick first
-				} else {
-					List<CardData> cards = new java.util.ArrayList<>();
-					for (GameState.WarpEntry e : zone) cards.add(e.card);
-					int idx = mw.showCardImageChooser(cards, "Choose 1 card — Remove Warp Counter", false);
-					if (idx < 0) return;
-					chosen = zone.get(idx);
-				}
+				GameState.WarpEntry chosen = pickWarpEntry(zone);
+				if (chosen == null) return;
 				logEntry(p + "Remove Warp Counter from \"" + chosen.card.name()
 						+ "\" (" + chosen.counters + " → " + (chosen.counters - 1) + ")");
 				// Push warp-resolve first (sits below the trigger on the stack) so the
@@ -478,18 +477,8 @@ final class GameContextImpl implements GameContext {
 				List<GameState.WarpEntry> zone = isP1
 						? mw.gameState.getP1WarpZone() : mw.gameState.getP2WarpZone();
 				if (zone.isEmpty()) { logEntry(p + "Warp zone is empty — no target."); return; }
-				GameState.WarpEntry chosen;
-				if (zone.size() == 1) {
-					chosen = zone.get(0);
-				} else if (!isP1) {
-					chosen = zone.get(0); // P2 AI: pick first
-				} else {
-					List<CardData> cards = new java.util.ArrayList<>();
-					for (GameState.WarpEntry e : zone) cards.add(e.card);
-					int idx = mw.showCardImageChooser(cards, "Choose 1 card — Remove Warp Counter", false);
-					if (idx < 0) return;
-					chosen = zone.get(idx);
-				}
+				GameState.WarpEntry chosen = pickWarpEntry(zone);
+				if (chosen == null) return;
 				if (!promptYouMay("Remove 1 Warp Counter from \"" + chosen.card.name() + "\" ("
 						+ chosen.counters + " → " + (chosen.counters - 1) + ")?")) {
 					logEntry(p + "Declined to remove Warp Counter from \"" + chosen.card.name() + "\"");
@@ -507,6 +496,22 @@ final class GameContextImpl implements GameContext {
 					if (isP1) mw.refreshP1BreakLabel(); else mw.refreshP2BreakLabel();
 				}
 				if (isP1) mw.refreshP1WarpZoneUI(); else mw.refreshP2WarpZoneUI();
+			}
+
+			/**
+			 * This context's player picks 1 card in their Warp zone, or {@code null} when they
+			 * picked none. A lone card is taken without asking. Both clients hold the zone in the
+			 * order the cards were Warped, so the position is the answer; the AI takes the first.
+			 */
+			private GameState.WarpEntry pickWarpEntry(List<GameState.WarpEntry> zone) {
+				if (zone.size() == 1) return zone.get(0);
+				List<CardData> cards = new ArrayList<>();
+				for (GameState.WarpEntry e : zone) cards.add(e.card);
+				int idx = mw.decideOption(isP1, zone.size(),
+						"Waiting for your opponent to choose a card in their Warp zone...",
+						() -> mw.showCardImageChooser(cards, "Choose 1 card — Remove Warp Counter", false),
+						() -> 0);
+				return idx < 0 ? null : zone.get(idx);
 			}
 
 			@Override public int warpCountersOnNamed(String cardName) {
@@ -689,17 +694,18 @@ final class GameContextImpl implements GameContext {
 					markEffectFizzled();
 					return;
 				}
-				CardData pick;
-				if (removed.size() == 1) {
-					pick = removed.get(0);
-				} else if (isP1) {
-					int idx = mw.showCardImageChooser(removed,
-							"Choose 1 card removed by " + source.name() + "'s ability", true);
-					if (idx < 0) { markEffectFizzled(); return; }
-					pick = removed.get(idx);
-				} else {
-					pick = removed.get(0);
-				}
+				// tempExiledCards iterates in identity-hash order, which differs between the two
+				// clients; the order the cards reached the zone does not.
+				List<CardData> rfgOrder = new ArrayList<>(mw.gameState.getP1RemovedFromGame());
+				rfgOrder.addAll(mw.gameState.getP2RemovedFromGame());
+				removed.sort(Comparator.comparingInt(c -> MainWindow.identityIndexOf(rfgOrder, c)));
+				int idx = removed.size() == 1 ? 0 : mw.decideOption(isP1, removed.size(),
+						"Waiting for your opponent to choose a card removed by " + source.name() + "...",
+						() -> mw.showCardImageChooser(removed,
+								"Choose 1 card removed by " + source.name() + "'s ability", true),
+						() -> 0);
+				if (idx < 0) { markEffectFizzled(); return; }
+				CardData pick = removed.get(idx);
 				mw.tempExiledCards.remove(pick);
 				mw.gameState.removeFromPermanentRfp(pick);
 				mw.addToBreakZone(pick);
@@ -1814,21 +1820,22 @@ final class GameContextImpl implements GameContext {
 				}
 				int     maxCount = first.maxCount();
 				boolean upTo     = first.upTo();
-				if (!isP1) {
-					// The AI's pick, on the same reasoning selectCharacters uses for a break: the
-					// dearest board presence the choice reaches is the one worth removing. Both
-					// descriptions this shape is printed with name the opponent's cards, so there
-					// is no side preference left to express.
-					List<ForwardTarget> byCostDesc = new ArrayList<>(pool);
-					byCostDesc.sort(Comparator.comparingInt(
-							(ForwardTarget t) -> cardAtTarget(t).cost()).reversed());
-					List<ForwardTarget> picked =
-							List.copyOf(byCostDesc.subList(0, Math.min(maxCount, byCostDesc.size())));
-					picked.forEach(t -> logEntry("[AI] chose " + cardAtTarget(t).name()));
-					return fireChosenByOpponentTriggers(picked);
-				}
-				return fireChosenByOpponentTriggers(
-						mw.showForwardSelectDialog(pool, maxCount, upTo, title));
+				return fireChosenByOpponentTriggers(mw.selectChosenTargets(isP1, pool, maxCount,
+						title, "Waiting for your opponent to choose targets...",
+						() -> mw.showForwardSelectDialog(pool, maxCount, upTo, title),
+						() -> {
+							// The AI's pick, on the same reasoning selectCharacters uses for a break:
+							// the dearest board presence the choice reaches is the one worth removing.
+							// Both descriptions this shape is printed with name the opponent's cards,
+							// so there is no side preference left to express.
+							List<ForwardTarget> byCostDesc = new ArrayList<>(pool);
+							byCostDesc.sort(Comparator.comparingInt(
+									(ForwardTarget t) -> cardAtTarget(t).cost()).reversed());
+							List<ForwardTarget> picked =
+									List.copyOf(byCostDesc.subList(0, Math.min(maxCount, byCostDesc.size())));
+							picked.forEach(t -> logEntry("[AI] chose " + cardAtTarget(t).name()));
+							return picked;
+						}));
 			}
 
 			@Override public List<ForwardTarget> selectForwardsWithTotalCostAtMost(int maxTotalCost) {
@@ -2502,35 +2509,89 @@ final class GameContextImpl implements GameContext {
 				mw.returnP2ForwardToHand(idx);
 			}
 			@Override public boolean askTopOrBottom(String cardName) {
-					if (!isP1) {
-						logEntry("[AI] places " + cardName + " on top of the deck");
-						return true;
-					}
-				Object[] options = { "Top", "Bottom" };
-				int result = JOptionPane.showOptionDialog(mw.frame,
-						"Place " + cardName + " at the top or bottom of the deck?",
-						"Choose Deck Position",
-						JOptionPane.YES_NO_OPTION, JOptionPane.QUESTION_MESSAGE,
-						null, options, options[0]);
-				return result != 1;
+				// Option 0 is the top. Closing the dialog is read as the top too, as it always was.
+				int pick = mw.decideOption(isP1, 2,
+						"Waiting for your opponent to place " + cardName + " on their deck...",
+						() -> {
+							Object[] options = { "Top", "Bottom" };
+							int result = JOptionPane.showOptionDialog(mw.frame,
+									"Place " + cardName + " at the top or bottom of the deck?",
+									"Choose Deck Position",
+									JOptionPane.YES_NO_OPTION, JOptionPane.QUESTION_MESSAGE,
+									null, options, options[0]);
+							return result == 1 ? 1 : 0;
+						},
+						() -> {
+							logEntry("[AI] places " + cardName + " on top of the deck");
+							return 0;
+						});
+				return pick != 1;
 			}
 			@Override public int selectNumber(int min, int max, String prompt) {
-					if (!isP1) {
-						logEntry("[AI] selected " + max + " (" + prompt + ")");
-						return max;
-					}
-				return mw.showNumberSelectDialog(prompt, min, max);
+				// Sent as the distance from min, a position in the range the dialog offered.
+				int pick = mw.decideOption(isP1, max - min + 1,
+						"Waiting for your opponent to choose a number...",
+						() -> mw.showNumberSelectDialog(prompt, min, max) - min,
+						() -> {
+							logEntry("[AI] selected " + max + " (" + prompt + ")");
+							return max - min;
+						});
+				return pick < 0 ? min : min + pick;
 			}
 			@Override public int selectPowerAmount(int maxAmount, String prompt) {
-				if (!isP1) {
-					logEntry("[AI] selected " + maxAmount + " (" + prompt + ")");
-					return maxAmount;
-				}
-				return mw.showPowerAmountDialog(maxAmount, prompt);
+				// The dialog steps in thousands from 0, so the answer is how many steps.
+				int steps = Math.max(0, maxAmount / 1000);
+				int pick = mw.decideOption(isP1, steps + 1,
+						"Waiting for your opponent to choose an amount...",
+						() -> mw.showPowerAmountDialog(maxAmount, prompt) / 1000,
+						() -> {
+							logEntry("[AI] selected " + maxAmount + " (" + prompt + ")");
+							return steps;
+						});
+				return pick < 0 ? 0 : pick * 1000;
 			}
 
 			@Override public List<Integer> divideDamageAmount(int damage, String prompt, List<CardData> cards) {
-				return mw.showDivideDamageDialog(damage, prompt, cards);
+				// The amounts themselves cross, one per card in the order given. Both clients build
+				// that list from the same targets, and what makes an answer legal is that it hands
+				// out exactly the damage there is — no per-card check could say that.
+				List<Integer> answer = mw.decide(PlayerChoice.by(isP1, ChoiceKind.OPTION)
+						.prompting("Waiting for your opponent to divide the damage...")
+						.locally(() -> mw.showDivideDamageDialog(damage, prompt, cards))
+						.byCpu(() -> aiDivideDamage(damage, cards))
+						.legalWhen(a -> a.size() == cards.size() && a.stream().allMatch(n -> n >= 0)
+										&& a.stream().mapToInt(Integer::intValue).sum() == damage,
+								"the " + damage + " damage is not divided among the " + cards.size() + " cards"));
+				if (answer.size() == cards.size()) return answer;
+				// Nothing usable came back. Everything on the first card is at least a division.
+				List<Integer> fallback = new ArrayList<>(Collections.nCopies(cards.size(), 0));
+				if (!fallback.isEmpty()) fallback.set(0, damage);
+				return fallback;
+			}
+
+			/**
+			 * The AI's division: enough to break each card in turn, weakest first, and whatever is
+			 * left over onto the last card it reached. Printed power, since the card is all this
+			 * question is handed.
+			 */
+			private List<Integer> aiDivideDamage(int damage, List<CardData> cards) {
+				List<Integer> out = new ArrayList<>(Collections.nCopies(cards.size(), 0));
+				if (cards.isEmpty()) return out;
+				List<Integer> order = new ArrayList<>();
+				for (int i = 0; i < cards.size(); i++) order.add(i);
+				order.sort(Comparator.comparingInt(i -> cards.get(i) == null ? 0 : cards.get(i).power()));
+				int left = damage, last = order.get(0);
+				for (int i : order) {
+					if (left <= 0) break;
+					int power = cards.get(i) == null ? 0 : cards.get(i).power();
+					int need  = Math.max(1000, (power + 999) / 1000 * 1000);
+					int give  = Math.min(left, need);
+					out.set(i, give);
+					left -= give;
+					last = i;
+				}
+				out.set(last, out.get(last) + left);
+				return out;
 			}
 			@Override public void returnP1ForwardToDeckBottom(int idx)   { if (!divertedToRfg(true, idx))  mw.returnP1ForwardToDeck(idx, true);  }
 			@Override public void returnP2ForwardToDeckBottom(int idx)   { if (!divertedToRfg(false, idx)) mw.returnP2ForwardToDeck(idx, true);  }
@@ -3066,26 +3127,55 @@ final class GameContextImpl implements GameContext {
 					return null;
 				}
 				if (targets.size() == 1) return targets.get(0);
-				if (isP1) {
-					String[] options = new String[targets.size()];
-					for (int i = 0; i < targets.size(); i++) {
-						StackEntry e = targets.get(i);
-						String type  = e.isSummon() ? "Summon" : "Auto";
-						String owner = e.isP1() ? "P1" : "P2";
-						options[i] = e.source().name() + " (" + type + ", " + owner + ")";
-					}
-					Object sel = JOptionPane.showInputDialog(mw.frame,
-							"Choose 1 Summon or auto-ability to " + verb + ":",
-							"Choose Effect", JOptionPane.PLAIN_MESSAGE, null, options, options[0]);
-					if (sel == null) return null;
-					int idx = java.util.Arrays.asList(options).indexOf(sel.toString());
-					return idx < 0 ? null : targets.get(idx);
+				String[] options = new String[targets.size()];
+				for (int i = 0; i < targets.size(); i++) {
+					StackEntry e = targets.get(i);
+					String type  = e.isSummon() ? "Summon" : "Auto";
+					String owner = e.isP1() ? "P1" : "P2";
+					options[i] = e.source().name() + " (" + type + ", " + owner + ")";
 				}
-				// AI: target the most recently pushed opponent (P1) entry
-				StackEntry chosen = targets.stream().filter(e -> e.isP1())
+				return pickOneStackEntry(targets,
+						() -> askFromList("Choose 1 Summon or auto-ability to " + verb + ":",
+								"Choose Effect", options),
+						() -> {
+							StackEntry chosen = latestOpponentEntry(targets);
+							logEntry("[AI] Chose to " + verb + ": " + chosen.source().name());
+							return chosen;
+						});
+			}
+
+			/**
+			 * This context's player picks 1 of {@code targets}, all entries on the Stack; {@code null}
+			 * when they picked none. Both clients hold the same Stack in the same order, so the
+			 * position in {@code targets} — filtered the same way on both — is the answer.
+			 *
+			 * @param localPick asks the local human, answering a position in {@code targets} or -1
+			 * @param cpuPick   the AI's answer, one of {@code targets}
+			 */
+			private StackEntry pickOneStackEntry(List<StackEntry> targets,
+					IntSupplier localPick, Supplier<StackEntry> cpuPick) {
+				int idx = mw.decideOption(isP1, targets.size(),
+						"Waiting for your opponent to choose an effect on the Stack...",
+						localPick, () -> indexOfEntry(targets, cpuPick.get()));
+				return idx < 0 ? null : targets.get(idx);
+			}
+
+			private static int indexOfEntry(List<StackEntry> entries, StackEntry entry) {
+				for (int i = 0; i < entries.size(); i++) if (entries.get(i) == entry) return i;
+				return -1;
+			}
+
+			/** The AI's usual Stack pick: the newest of its opponent's entries, else the newest of any. */
+			private StackEntry latestOpponentEntry(List<StackEntry> targets) {
+				return targets.stream().filter(e -> e.isP1() != isP1)
 						.reduce((a, b) -> b).orElse(targets.get(targets.size() - 1));
-				logEntry("[AI] Chose to " + verb + ": " + chosen.source().name());
-				return chosen;
+			}
+
+			/** A single-choice list dialog; the position of the option chosen, or -1 when dismissed. */
+			private int askFromList(String prompt, String title, String[] options) {
+				Object sel = JOptionPane.showInputDialog(mw.frame, prompt, title,
+						JOptionPane.PLAIN_MESSAGE, null, options, options[0]);
+				return sel == null ? -1 : java.util.Arrays.asList(options).indexOf(sel.toString());
 			}
 
 			@Override public void cancelTriggeringSummon() {
@@ -3116,24 +3206,20 @@ final class GameContextImpl implements GameContext {
 				StackEntry chosen;
 				if (targets.size() == 1) {
 					chosen = targets.get(0);
-				} else if (isP1) {
+				} else {
 					String[] options = new String[targets.size()];
 					for (int i = 0; i < targets.size(); i++) {
 						StackEntry e = targets.get(i);
 						options[i] = e.source().name() + " (Auto, " + (e.isP1() ? "P1" : "P2") + ")";
 					}
-					Object sel = JOptionPane.showInputDialog(mw.frame,
-							"Choose 1 auto-ability to cancel:",
-							"Cancel Effect", JOptionPane.PLAIN_MESSAGE, null, options, options[0]);
-					if (sel == null) return;
-					int idx = java.util.Arrays.asList(options).indexOf(sel.toString());
-					if (idx < 0) return;
-					chosen = targets.get(idx);
-				} else {
-					// AI: prefer the most recently pushed P1 entry
-					chosen = targets.stream().filter(e -> e.isP1())
-							.reduce((a, b) -> b).orElse(targets.get(targets.size() - 1));
-					logEntry("[AI] Chose to cancel: " + chosen.source().name());
+					chosen = pickOneStackEntry(targets,
+							() -> askFromList("Choose 1 auto-ability to cancel:", "Cancel Effect", options),
+							() -> {
+								StackEntry pick = latestOpponentEntry(targets);
+								logEntry("[AI] Chose to cancel: " + pick.source().name());
+								return pick;
+							});
+					if (chosen == null) return;
 				}
 				if (mw.cancelStackEntry(chosen))
 					logEntry("Effect: " + chosen.source().name() + "'s auto-ability effect will be cancelled");
@@ -3168,22 +3254,21 @@ final class GameContextImpl implements GameContext {
 				StackEntry chosen;
 				if (targets.size() == 1) {
 					chosen = targets.get(0);
-				} else if (isP1) {
+				} else {
 					String[] options = new String[targets.size()];
 					for (int i = 0; i < targets.size(); i++) options[i] = describeStackEntry(targets.get(i));
-					Object sel = JOptionPane.showInputDialog(mw.frame,
-							prompt, "Copy Auto-Ability", JOptionPane.PLAIN_MESSAGE, null, options, options[0]);
-					if (sel == null) return;
-					int idx = java.util.Arrays.asList(options).indexOf(sel.toString());
-					if (idx < 0) return;
-					chosen = targets.get(idx);
-				} else {
-					// The AI copies the dearest source it can reach, on the reading that a bigger
-					// Forward's trigger is the better one to have twice.
-					chosen = targets.stream()
-							.max(Comparator.comparingInt(e -> e.source().cost()))
-							.orElse(targets.get(0));
-					logEntry("[AI] copying " + chosen.source().name() + "'s auto-ability");
+					chosen = pickOneStackEntry(targets,
+							() -> askFromList(prompt, "Copy Auto-Ability", options),
+							() -> {
+								// The AI copies the dearest source it can reach, on the reading that a
+								// bigger Forward's trigger is the better one to have twice.
+								StackEntry pick = targets.stream()
+										.max(Comparator.comparingInt(e -> e.source().cost()))
+										.orElse(targets.get(0));
+								logEntry("[AI] copying " + pick.source().name() + "'s auto-ability");
+								return pick;
+							});
+					if (chosen == null) return;
 				}
 
 				// A fresh selection for the copy: its targets are chosen by its new controller,
@@ -3235,19 +3320,15 @@ final class GameContextImpl implements GameContext {
 					return null;
 				}
 				if (targets.size() == 1) return targets.get(0);
-				if (isP1) {
-					String[] options = new String[targets.size()];
-					for (int i = 0; i < targets.size(); i++) options[i] = describeStackEntry(targets.get(i));
-					Object sel = JOptionPane.showInputDialog(mw.frame,
-							prompt, dialogTitle, JOptionPane.PLAIN_MESSAGE, null, options, options[0]);
-					if (sel == null) return null;
-					int idx = java.util.Arrays.asList(options).indexOf(sel.toString());
-					return idx < 0 ? null : targets.get(idx);
-				}
-				StackEntry chosen = targets.stream().filter(e -> e.isP1())
-						.reduce((a, b) -> b).orElse(targets.get(targets.size() - 1));
-				logEntry("[AI] Chose " + purpose + ": " + chosen.source().name());
-				return chosen;
+				String[] options = new String[targets.size()];
+				for (int i = 0; i < targets.size(); i++) options[i] = describeStackEntry(targets.get(i));
+				return pickOneStackEntry(targets,
+						() -> askFromList(prompt, dialogTitle, options),
+						() -> {
+							StackEntry chosen = latestOpponentEntry(targets);
+							logEntry("[AI] Chose " + purpose + ": " + chosen.source().name());
+							return chosen;
+						});
 			}
 
 			@Override public ForwardTarget fieldSlotOf(CardData card) {
@@ -3275,22 +3356,31 @@ final class GameContextImpl implements GameContext {
 					logEntry("No matching abilities on the stack to cancel");
 					return;
 				}
-				List<StackEntry> chosen;
-				if (isP1) {
-					String[] options = new String[targets.size()];
-					for (int i = 0; i < targets.size(); i++) options[i] = describeStackEntry(targets.get(i));
-					JList<String> list = new JList<>(options);
-					list.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
-					int ok = JOptionPane.showConfirmDialog(mw.frame,
-							new Object[]{prompt, new JScrollPane(list)},
-							"Cancel Effects", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
-					if (ok != JOptionPane.OK_OPTION) { logEntry("Cancel — none chosen"); return; }
-					chosen = new ArrayList<>();
-					for (int i : list.getSelectedIndices()) chosen.add(targets.get(i));
-				} else {
-					chosen = targets.stream().filter(e -> e.isP1() != isP1).toList();
-					chosen.forEach(e -> logEntry("[AI] Chose to cancel: " + e.source().name()));
-				}
+				List<Integer> picks = mw.decideOptions(isP1, targets.size(), targets.size(),
+						"Waiting for your opponent to choose effects on the Stack to cancel...",
+						() -> {
+							String[] options = new String[targets.size()];
+							for (int i = 0; i < targets.size(); i++) options[i] = describeStackEntry(targets.get(i));
+							JList<String> list = new JList<>(options);
+							list.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
+							int ok = JOptionPane.showConfirmDialog(mw.frame,
+									new Object[]{prompt, new JScrollPane(list)},
+									"Cancel Effects", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+							List<Integer> out = new ArrayList<>();
+							if (ok == JOptionPane.OK_OPTION) for (int i : list.getSelectedIndices()) out.add(i);
+							return out;
+						},
+						() -> {
+							List<Integer> out = new ArrayList<>();
+							for (int i = 0; i < targets.size(); i++) {
+								if (targets.get(i).isP1() == isP1) continue;
+								out.add(i);
+								logEntry("[AI] Chose to cancel: " + targets.get(i).source().name());
+							}
+							return out;
+						});
+				List<StackEntry> chosen = new ArrayList<>(picks.size());
+				for (int i : picks) chosen.add(targets.get(i));
 				if (chosen.isEmpty()) { logEntry("Cancel — none chosen"); return; }
 				for (StackEntry e : chosen) {
 					if (mw.cancelStackEntry(e))
@@ -3324,19 +3414,17 @@ final class GameContextImpl implements GameContext {
 				StackEntry chosen;
 				if (targets.size() == 1) {
 					chosen = targets.get(0);
-				} else if (isP1) {
+				} else {
 					String[] options = new String[targets.size()];
 					for (int i = 0; i < targets.size(); i++) options[i] = describeStackEntry(targets.get(i));
-					Object sel = JOptionPane.showInputDialog(mw.frame,
-							prompt, "Cancel Effect", JOptionPane.PLAIN_MESSAGE, null, options, options[0]);
-					if (sel == null) return;
-					int idx = java.util.Arrays.asList(options).indexOf(sel.toString());
-					if (idx < 0) return;
-					chosen = targets.get(idx);
-				} else {
-					chosen = targets.stream().filter(e -> e.isP1())
-							.reduce((a, b) -> b).orElse(targets.get(targets.size() - 1));
-					logEntry("[AI] Chose to threaten: " + chosen.source().name());
+					chosen = pickOneStackEntry(targets,
+							() -> askFromList(prompt, "Cancel Effect", options),
+							() -> {
+								StackEntry pick = latestOpponentEntry(targets);
+								logEntry("[AI] Chose to threaten: " + pick.source().name());
+								return pick;
+							});
+					if (chosen == null) return;
 				}
 				String type = chosen.isSummon() ? "Summon" : chosen.isAutoAbility() ? "auto-ability"
 						: chosen.isSpecialAbility() ? "special ability" : "action ability";
@@ -3468,30 +3556,11 @@ final class GameContextImpl implements GameContext {
 					return;
 				}
 
-				boolean discarded;
-				if (opponentIsP1) {
-					// Human opponent decides whether to pay the discard cost.
-					int choice = mw.showEffectOptionDialog(
-							src + " — discard " + count + " card" + (count == 1 ? "" : "s")
-									+ " or the effect choosing your Character(s) is cancelled?",
-							"Discard or Cancel", new Object[]{"Discard", "Decline"});
-					if (choice == 0) {
-						mw.showForcedDiscardDialog(count, true);   // modal; discards exactly `count`
-						discarded = true;
-					} else {
-						discarded = false;
-					}
-				} else {
-					// P2 AI opponent: discard its worst `count` cards to keep its effect.
-					for (int i = 0; i < count; i++) {
-						int idx = MainWindow.pickWorstHandCard0(mw.gameState.getP2Hand());
-						CardData d = mw.playerBreakFromHand(false, idx);
-						if (d != null) logEntry("[P2] Discards " + d.name() + " to keep its effect");
-					}
-					mw.refreshP2HandCountLabel();
-					mw.refreshP2BreakLabel();
-					discarded = true;
-				}
+				// The AI always pays to keep its effect.
+				boolean discarded = seatMayDiscard(opponentIsP1, count,
+						src + " — discard " + count + " card" + (count == 1 ? "" : "s")
+								+ " or the effect choosing your Character(s) is cancelled?",
+						"Discard or Cancel", () -> true);
 
 				if (!discarded) {
 					mw.lastChosenSelectionCancelled = true;
@@ -3538,20 +3607,20 @@ final class GameContextImpl implements GameContext {
 			/** Lets the player settle which eligible entry to redirect; the AI takes the topmost. */
 			private StackEntry pickRedirectEntry(List<StackEntry> eligible) {
 				if (eligible.size() == 1) return eligible.get(0);
-				if (!isP1) {
-					StackEntry pick = eligible.get(eligible.size() - 1);
-					logEntry("[AI] Chose to redirect: " + pick.source().name());
-					return pick;
-				}
 				String[] options = new String[eligible.size()];
 				for (int i = 0; i < eligible.size(); i++) {
 					StackEntry e = eligible.get(i);
 					options[i] = e.source().name() + " (" + entryTypeLabel(e) + ", "
 							+ (e.isP1() ? "P1" : "P2") + ")";
 				}
-				int idx = mw.showEffectOptionDialog(
-						"Choose 1 Summon or ability to redirect:", "Redirect Target", options);
-				return idx >= 0 && idx < eligible.size() ? eligible.get(idx) : null;
+				return pickOneStackEntry(eligible,
+						() -> mw.showEffectOptionDialog(
+								"Choose 1 Summon or ability to redirect:", "Redirect Target", options),
+						() -> {
+							StackEntry pick = eligible.get(eligible.size() - 1);
+							logEntry("[AI] Chose to redirect: " + pick.source().name());
+							return pick;
+						});
 			}
 
 			/** The card {@code entry} is currently choosing — what "another" excludes. */
@@ -3584,27 +3653,35 @@ final class GameContextImpl implements GameContext {
 					logEntry("No " + poolDescription + " is a valid choice — no redirect");
 					return null;
 				}
-				if (!isP1) {
-					ForwardTarget pick = candidates.get(0);
-					logEntry("[AI] redirects onto " + mw.fieldCardDataOrNull(pick).name());
-					return pick;
-				}
-				// "You may" — declining is a legal outcome, so the list carries its own opt-out.
-				String[] options = new String[candidates.size() + 1];
-				for (int i = 0; i < candidates.size(); i++) {
-					ForwardTarget t = candidates.get(i);
-					options[i] = mw.fieldCardDataOrNull(t).name()
-							+ (t.isP1() ? " (yours)" : " (opponent's)");
-				}
-				options[candidates.size()] = "Don't redirect";
-				int idx = mw.showEffectOptionDialog(
-						"Choose the new target for " + entry.source().name() + "'s effect:",
-						"Redirect Target", options);
-				if (idx < 0 || idx >= candidates.size()) {
+				// A field card, so it crosses as a target code: the candidate list is built from this
+				// seat's point of view, and a position in it would name different cards on each client.
+				List<ForwardTarget> picked = mw.selectChosenTargets(isP1, candidates, 1,
+						"Redirect Target", "Waiting for your opponent to choose a new target...",
+						() -> {
+							// "You may" — declining is a legal outcome, so the list carries its own opt-out.
+							String[] options = new String[candidates.size() + 1];
+							for (int i = 0; i < candidates.size(); i++) {
+								ForwardTarget t = candidates.get(i);
+								options[i] = mw.fieldCardDataOrNull(t).name()
+										+ (t.isP1() ? " (yours)" : " (opponent's)");
+							}
+							options[candidates.size()] = "Don't redirect";
+							int idx = mw.showEffectOptionDialog(
+									"Choose the new target for " + entry.source().name() + "'s effect:",
+									"Redirect Target", options);
+							return idx >= 0 && idx < candidates.size()
+									? List.of(candidates.get(idx)) : List.of();
+						},
+						() -> {
+							ForwardTarget pick = candidates.get(0);
+							logEntry("[AI] redirects onto " + mw.fieldCardDataOrNull(pick).name());
+							return List.of(pick);
+						});
+				if (picked.isEmpty()) {
 					logEntry("Declined to redirect " + entry.source().name() + "'s effect");
 					return null;
 				}
-				return candidates.get(idx);
+				return picked.get(0);
 			}
 
 			private String entryTypeLabel(StackEntry e) {
@@ -4464,16 +4541,11 @@ final class GameContextImpl implements GameContext {
 					logEntry((forP1 ? "" : "[P2] ") + "No eligible cards in hand to play.");
 					return null;
 				}
-				int handIdx;
-				if (forP1) {
-					List<CardData> candidates = new ArrayList<>();
-					for (int i : eligible) candidates.add(hand.get(i));
-					int listIdx = mw.showCardImageChooser(candidates, "Play a card onto the field", true, false);
-					if (listIdx < 0) return null; // cancelled — this is how "may" is declined
-					handIdx = eligible.get(listIdx);
-				} else {
-					handIdx = eligible.get(0); // AI: play first eligible card
-				}
+				// Cancelling the chooser is how "may" is declined. The AI plays the first eligible card.
+				int handIdx = pickOneOwnHandCard(forP1, hand, eligible, "play onto the field",
+						candidates -> mw.showCardImageChooser(candidates, "Play a card onto the field", true, false),
+						() -> eligible.get(0));
+				if (handIdx < 0) return null;
 				Point origin = mw.handCardOrigin(forP1, handIdx);
 				CardData card = hand.remove(handIdx);
 				logEntry((forP1 ? "" : "[P2] ") + card.name() + " played from hand onto field"
@@ -4481,6 +4553,31 @@ final class GameContextImpl implements GameContext {
 				if (suppressAutoAbility) mw.suppressAutoAbilityForNextCards = 1;
 				placeFromHand(forP1, card, entersDull, origin);
 				return card;
+			}
+
+			/**
+			 * The seat at {@code seatIsP1} picks 1 of the cards in their hand that {@code eligible}
+			 * indexes; returns its hand index, or -1 when they picked none.
+			 *
+			 * @param localPick shown the eligible cards, answers a position among them or -1
+			 * @param cpuPick   the AI's answer, a hand index
+			 */
+			private int pickOneOwnHandCard(boolean seatIsP1, List<CardData> hand, List<Integer> eligible,
+					String verb, Function<List<CardData>, Integer> localPick, IntSupplier cpuPick) {
+				List<Integer> picked = mw.selectOwnHandCards(seatIsP1, eligible, 1,
+						"Waiting for your opponent to choose a card to " + verb + "...",
+						() -> {
+							List<CardData> candidates = new ArrayList<>();
+							for (int i : eligible) candidates.add(hand.get(i));
+							int listIdx = localPick.apply(candidates);
+							return listIdx >= 0 && listIdx < eligible.size()
+									? List.of(eligible.get(listIdx)) : List.of();
+						},
+						() -> {
+							int handIdx = cpuPick.getAsInt();
+							return handIdx >= 0 ? List.of(handIdx) : List.of();
+						});
+				return picked.isEmpty() ? -1 : picked.get(0);
 			}
 
 			@Override public void playSourceFromHandOntoField(CardData source) {
@@ -4560,16 +4657,12 @@ final class GameContextImpl implements GameContext {
 						eligible.add(i);
 					}
 					if (eligible.isEmpty()) return;
-					int handIdx;
-					if (isP1) {
-						List<CardData> candidates = new ArrayList<>();
-						for (int i : eligible) candidates.add(hand.get(i));
-						int listIdx = mw.showCardImageChooser(candidates, "Play a card onto the field (any number)", true, true);
-						if (listIdx < 0) return;
-						handIdx = eligible.get(listIdx);
-					} else {
-						handIdx = eligible.get(0);
-					}
+					// One card per question, and declining the question is how the loop ends.
+					int handIdx = pickOneOwnHandCard(isP1, hand, eligible, "play onto the field",
+							candidates -> mw.showCardImageChooser(candidates,
+									"Play a card onto the field (any number)", true, true),
+							() -> eligible.get(0));
+					if (handIdx < 0) return;
 					Point origin = mw.handCardOrigin(isP1, handIdx);
 					CardData card = hand.remove(handIdx);
 					logEntry((isP1 ? "" : "[P2] ") + card.name() + " played from hand onto field");
@@ -4583,74 +4676,47 @@ final class GameContextImpl implements GameContext {
 				boolean includeP1 = opponentOnly ? !isP1 : (selfOnly ? isP1 : true);
 				boolean includeP2 = opponentOnly ?  isP1 : (selfOnly ? !isP1 : true);
 
-				if (!isP1) {
-					// P2 AI: return all eligible cards from P1's zone (opponent), nothing from own
-					if (includeP1) {
-						if (inclForwards)
-							for (int i = mw.p1ForwardCards.size() - 1; i >= 0; i--) returnP1ForwardToHand(i);
-						if (inclBackups)
-							for (int i = mw.p1BackupCards.length - 1; i >= 0; i--)
-								if (mw.p1BackupCards[i] != null) returnP1BackupToHand(i);
-						if (inclMonsters)
-							for (int i = mw.p1MonsterCards.size() - 1; i >= 0; i--) returnP1MonsterToHand(i);
-					}
-					return;
-				}
-
-				// P1 human: loop-chooser, rebuilt each iteration so indices stay valid
+				// One card per question, rebuilt each time so slots stay valid, until the chooser
+				// declines. A card already chosen is not offered again: one that a protection kept on
+				// the field would otherwise be offered forever, and the AI would take it every time.
+				List<CardData> tried = new ArrayList<>();
+				String title = "Return a Character to hand (cancel when done)";
 				while (true) {
-					List<CardData> candidates = new ArrayList<>();
-					List<int[]>    zoneIdx    = new ArrayList<>(); // [player: 0=P1 1=P2, zone: 0=fwd 1=bkp 2=mon, idx]
-					if (includeP1) {
+					List<ForwardTarget> eligible = new ArrayList<>();
+					for (boolean side : new boolean[]{ true, false }) {
+						if (side ? !includeP1 : !includeP2) continue;
 						if (inclForwards)
-							for (int i = 0; i < mw.p1ForwardCards.size(); i++) {
-								CardData c = mw.p1ForwardCards.get(i);
-								if (c != null) { candidates.add(c); zoneIdx.add(new int[]{0, 0, i}); }
-							}
+							for (int i = 0; i < mw.playerForwardCards(side).size(); i++)
+								eligible.add(new ForwardTarget(side, i, ForwardTarget.CardZone.FORWARD));
 						if (inclBackups)
-							for (int i = 0; i < mw.p1BackupCards.length; i++) {
-								CardData c = mw.p1BackupCards[i];
-								if (c != null) { candidates.add(c); zoneIdx.add(new int[]{0, 1, i}); }
-							}
+							for (int i = 0; i < mw.playerBackupCards(side).length; i++)
+								if (mw.playerBackupCards(side)[i] != null)
+									eligible.add(new ForwardTarget(side, i, ForwardTarget.CardZone.BACKUP));
 						if (inclMonsters)
-							for (int i = 0; i < mw.p1MonsterCards.size(); i++) {
-								CardData c = mw.p1MonsterCards.get(i);
-								if (c != null) { candidates.add(c); zoneIdx.add(new int[]{0, 2, i}); }
-							}
+							for (int i = 0; i < mw.playerMonsterCards(side).size(); i++)
+								eligible.add(new ForwardTarget(side, i, ForwardTarget.CardZone.MONSTER));
 					}
-					if (includeP2) {
-						if (inclForwards)
-							for (int i = 0; i < mw.p2ForwardCards.size(); i++) {
-								CardData c = mw.p2ForwardCards.get(i);
-								if (c != null) { candidates.add(c); zoneIdx.add(new int[]{1, 0, i}); }
-							}
-						if (inclBackups)
-							for (int i = 0; i < mw.p2BackupCards.length; i++) {
-								CardData c = mw.p2BackupCards[i];
-								if (c != null) { candidates.add(c); zoneIdx.add(new int[]{1, 1, i}); }
-							}
-						if (inclMonsters)
-							for (int i = 0; i < mw.p2MonsterCards.size(); i++) {
-								CardData c = mw.p2MonsterCards.get(i);
-								if (c != null) { candidates.add(c); zoneIdx.add(new int[]{1, 2, i}); }
-							}
-					}
-					if (candidates.isEmpty()) return;
-					int pick = mw.showCardImageChooser(candidates, "Return a Character to hand (cancel when done)", true);
-					if (pick < 0) return;
-					int[] zi = zoneIdx.get(pick);
-					if (zi[0] == 0) { // P1 zone
-						switch (zi[1]) {
-							case 0 -> returnP1ForwardToHand(zi[2]);
-							case 1 -> returnP1BackupToHand(zi[2]);
-							case 2 -> returnP1MonsterToHand(zi[2]);
-						}
-					} else { // P2 zone
-						switch (zi[1]) {
-							case 0 -> returnP2ForwardToHand(zi[2]);
-							case 1 -> returnP2BackupToHand(zi[2]);
-							case 2 -> returnP2MonsterToHand(zi[2]);
-						}
+					eligible.removeIf(t -> cardAtTarget(t) == null
+							|| MainWindow.identityIndexOf(tried, cardAtTarget(t)) >= 0);
+					if (eligible.isEmpty()) return;
+					List<ForwardTarget> picked = mw.selectChosenTargets(isP1, eligible, 1, title,
+							"Waiting for your opponent to choose a Character to return...",
+							() -> {
+								List<CardData> candidates = new ArrayList<>();
+								for (ForwardTarget t : eligible) candidates.add(cardAtTarget(t));
+								int pick = mw.showCardImageChooser(candidates, title, true);
+								return pick >= 0 && pick < eligible.size() ? List.of(eligible.get(pick)) : List.of();
+							},
+							// The AI returns its opponent's Characters, one after another, and none of its own.
+							() -> eligible.stream().filter(t -> t.isP1() != isP1).limit(1).toList());
+					if (picked.isEmpty()) return;
+					ForwardTarget t = picked.get(0);
+					tried.add(cardAtTarget(t));
+					switch (t.zone()) {
+						case FORWARD -> { if (t.isP1()) returnP1ForwardToHand(t.idx()); else returnP2ForwardToHand(t.idx()); }
+						case BACKUP  -> { if (t.isP1()) returnP1BackupToHand(t.idx());  else returnP2BackupToHand(t.idx()); }
+						case MONSTER -> { if (t.isP1()) returnP1MonsterToHand(t.idx()); else returnP2MonsterToHand(t.idx()); }
+						default      -> { return; }
 					}
 				}
 			}
@@ -4674,19 +4740,13 @@ final class GameContextImpl implements GameContext {
 					markEffectFizzled();
 					return;
 				}
-				int handIdx;
-				if (isP1) {
-					List<CardData> candidates = new ArrayList<>();
-					for (int i : eligible) candidates.add(hand.get(i));
-					String title = "Cast 1 Summon from hand for free"
-							+ (maxCost >= 0 ? " (cost " + maxCost + " or less)" : "")
-							+ (excludeElements != null ? " (not " + excludeElements + ")" : "");
-					int listIdx = mw.showCardImageChooser(candidates, title, true);
-					if (listIdx < 0) { markEffectFizzled(); return; }
-					handIdx = eligible.get(listIdx);
-				} else {
-					handIdx = eligible.get(0);
-				}
+				String title = "Cast 1 Summon from hand for free"
+						+ (maxCost >= 0 ? " (cost " + maxCost + " or less)" : "")
+						+ (excludeElements != null ? " (not " + excludeElements + ")" : "");
+				int handIdx = pickOneOwnHandCard(isP1, hand, eligible, "cast",
+						candidates -> mw.showCardImageChooser(candidates, title, true),
+						() -> eligible.get(0));
+				if (handIdx < 0) { markEffectFizzled(); return; }
 				CardData card = hand.remove(handIdx);
 				if (isP1) mw.refreshP1HandLabel(); else mw.refreshP2HandCountLabel();
 				if (returnToHandAfterUse) mw.returnToHandAfterUseSummons.add(card);
@@ -4761,50 +4821,59 @@ final class GameContextImpl implements GameContext {
 					markEffectFizzled();
 					return;
 				}
-				int handIdx;
-				if (isP1) {
-					List<CardData> candidates = new ArrayList<>();
-					for (int i : eligible) candidates.add(hand.get(i));
-					java.util.function.ToIntFunction<CardData> costFn =
-							c -> Math.max(1, mw.effectiveCastCost(c) - discount);
-					int listIdx = mw.showCardImageChooser(candidates,
-							"Cast a Summon (cost reduced by " + discount + ", min 1" + riders + ")", true, costFn);
-					if (listIdx < 0) { markEffectFizzled(); return; }
-					handIdx = eligible.get(listIdx);
-				} else {
-					handIdx = eligible.get(0);
-				}
+				// Two questions to the caster, each crossing on its own: which Summon, then how it was
+				// paid for. The AI casts the first Summon it can pay for, and pays the whole of it —
+				// it used to cast the first Summon for nothing at all.
+				int handIdx = pickOneOwnHandCard(isP1, hand, eligible, "cast",
+						candidates -> mw.showCardImageChooser(candidates,
+								"Cast a Summon (cost reduced by " + discount + ", min 1" + riders + ")", true,
+								c -> Math.max(1, mw.effectiveCastCost(c) - discount)),
+						() -> {
+							for (int i : eligible)
+								if (aiDiscountedCastPayment(hand.get(i), discount, anyElement) != null) return i;
+							return -1;
+						});
+				if (handIdx < 0) { markEffectFizzled(); return; }
 				CardData card = hand.get(handIdx);
 				CostReductionModifier mod = new CostReductionModifier(
 						discount, true, true,
 						false, false, false, true,
 						null, null, card.name().toLowerCase(), null, false);
-				if (isP1) {
-					mw.activeCostReductions.add(mod);
-					if (anyElement)  mw.anyElementHandCasts.add(card);
-					if (rfgAfterUse) mw.rfgAfterUseHandCasts.add(card);
-					try {
-						// Modal: by the time it returns the cast was committed — executePlay has taken
-						// the discount and moved the removal rider — or the payment was cancelled.
-						// Either way nothing here may outlive this one cast.
-						mw.showPaymentDialog(card, handIdx);
-					} finally {
-						mw.activeCostReductions.remove(mod);
-						mw.anyElementHandCasts.remove(card);
-						mw.rfgAfterUseHandCasts.remove(card);
+				// Nothing here may outlive this one cast: the discount and the riders are set for the
+				// payment and the play, and lifted whether or not the cast went ahead.
+				mw.activeCostReductions.add(mod);
+				if (anyElement)  mw.anyElementHandCasts.add(card);
+				if (rfgAfterUse) mw.rfgAfterUseHandCasts.add(card);
+				try {
+					CastPayment paid = mw.decideCastPayment(isP1, card, handIdx,
+							() -> aiDiscountedCastPayment(card, discount, anyElement));
+					if (paid == null) {
+						logEntry((isP1 ? "" : "[P2] ") + "Did not cast \"" + card.name() + "\"");
+						return;
 					}
-				} else {
-					// The CPU's cast here spends no CP, so there is no Element to relax; only the
-					// removal rider has anything to do.
-					hand.remove(handIdx);
-					mw.refreshP2HandCountLabel();
-					mw.p2Turn.summonCastThisTurn = true;
-					mw.noteCardCast(card, false);
-					mw.noteDoublecastSummonCast(false, card);
-					if (rfgAfterUse) mw.rfgAfterUseSummons.add(card);
-					logEntry("[P2] Cast \"" + card.name() + "\" from hand (cost -" + discount + riders + ")");
-					mw.showSummonOnStack(card, false);
+					logEntry((isP1 ? "" : "[P2] ") + "Casts \"" + card.name() + "\" from hand (cost -"
+							+ discount + riders + ")");
+					mw.castFromHandInsideResolution(isP1, card, handIdx, paid);
+				} finally {
+					mw.activeCostReductions.remove(mod);
+					mw.anyElementHandCasts.remove(card);
+					mw.rfgAfterUseHandCasts.remove(card);
 				}
+			}
+
+			/**
+			 * The AI's payment for casting {@code card} out of its hand at {@code discount} off, or
+			 * {@code null} when it cannot cover it. The card being cast is never discarded to pay
+			 * for itself.
+			 */
+			private CastPayment aiDiscountedCastPayment(CardData card, int discount, boolean anyElement) {
+				int cost = Math.max(1, mw.castCostFor(card, isP1) - discount);
+				Map<String, Integer> needs = new java.util.LinkedHashMap<>();
+				if (!anyElement && !card.isLightOrDark())
+					for (String e : card.elements()) needs.put(e, 1);
+				AutoAbilityTriggers.CpPlan plan = mw.autoAbilityTriggers.aiPlanCp(isP1, cost, needs,
+						c -> c != card, true);
+				return plan == null ? null : new CastPayment(plan.discards(), plan.dulls(), Map.of(), Map.of());
 			}
 
 			@Override public int searchAndCastSummonFreeFromDeck(int maxCost, String elementFilter) {
@@ -4947,55 +5016,57 @@ final class GameContextImpl implements GameContext {
 			}
 
 			@Override public void eachPlayerMaySearchForwardMinPowerToHand(int count, int minPower) {
-				// P1
-				Deque<CardData> p1Deck = mw.gameState.getP1MainDeck();
-				List<CardData> p1Matches = new ArrayList<>();
-				for (CardData c : p1Deck) if (c.isForward() && c.power() >= minPower) p1Matches.add(c);
+				// P1's half then P2's on both clients, so each asks its own player first and then
+				// waits for the other's — the two questions cross in opposite directions.
+				maySearchForwardMinPowerToHand(true,  minPower);
+				maySearchForwardMinPowerToHand(false, minPower);
+			}
+
+			/** One seat's half of {@link #eachPlayerMaySearchForwardMinPowerToHand}. */
+			private void maySearchForwardMinPowerToHand(boolean seatIsP1, int minPower) {
+				String who = seatIsP1 ? "P1" : "[P2]";
+				Deque<CardData> deck = seatIsP1 ? mw.gameState.getP1MainDeck() : mw.gameState.getP2MainDeck();
+				List<CardData> matches = new ArrayList<>();
+				for (CardData c : deck) if (c.isForward() && c.power() >= minPower) matches.add(c);
 				// Each half is blocked on its own: "your opponent cannot search" binds one player, and
 				// the other still gets the search this card offers them.
-				if (mw.turn(true).cannotSearchThisTurn) {
-					logEntry("P1 search blocked — cannot search this turn");
-				} else if (p1Matches.isEmpty()) {
-					logEntry("P1 search: no Forward of " + minPower + "+ power in deck");
-					mw.shuffleDeck(true);
-				} else {
-					String src = mw.currentAbilitySource != null ? mw.currentAbilitySource.name() : "Ability";
-					int choice = mw.showEffectOptionDialog(
-							src + " — Search for 1 Forward of power " + minPower + " or more?",
-							"You May Search", new Object[]{"Search", "Pass"});
-					if (choice == 0) {
-						CardData pick = mw.cardPickerDialog.pickFromDeckSearch(p1Matches);
-						if (pick != null) {
-							mw.gameState.removeFromP1MainDeck(pick);
-							mw.gameState.getP1Hand().add(pick);
-							logEntry(pick.name() + " → hand (search)");
-							mw.refreshP1HandLabel();
-							mw.animateCardDraw(true, 1);
-						}
-					} else {
-						logEntry("P1 passes on search");
+				if (mw.turn(seatIsP1).cannotSearchThisTurn) {
+					logEntry(who + " search blocked — cannot search this turn");
+					return;
+				}
+				if (matches.isEmpty()) {
+					logEntry(who + " search: no Forward of " + minPower + "+ power in deck");
+					mw.shuffleDeck(seatIsP1);
+					return;
+				}
+				String src = mw.currentAbilitySource != null ? mw.currentAbilitySource.name() : "Ability";
+				// The AI always searches, and takes the most powerful Forward it finds.
+				boolean search = mw.decideYesNo(seatIsP1, "Waiting for your opponent to decide whether to search...",
+						() -> mw.showEffectOptionDialog(
+								src + " — Search for 1 Forward of power " + minPower + " or more?",
+								"You May Search", new Object[]{"Search", "Pass"}) == 0,
+						() -> true);
+				if (search) {
+					List<CardData> picked = mw.chooseFromDeckSearch(seatIsP1, matches, 1,
+							() -> java.util.Optional.ofNullable(mw.cardPickerDialog.pickFromDeckSearch(matches))
+									.map(List::of).orElse(List.of()),
+							() -> List.of(matches.stream()
+									.max(Comparator.comparingInt(CardData::power)).orElseThrow()),
+							picks -> true);
+					if (!picked.isEmpty()) {
+						CardData pick = picked.get(0);
+						// The picked card itself, not the first equal one, so both clients take the same copy.
+						for (java.util.Iterator<CardData> it = deck.iterator(); it.hasNext(); )
+							if (it.next() == pick) { it.remove(); break; }
+						mw.playerHand(seatIsP1).add(pick);
+						logEntry((seatIsP1 ? "" : "[P2] ") + pick.name() + " → hand (search)");
+						if (seatIsP1) mw.refreshP1HandLabel(); else mw.refreshP2HandCountLabel();
+						mw.animateCardDraw(seatIsP1, 1);
 					}
-					mw.shuffleDeck(true);
-				}
-
-				// P2
-				Deque<CardData> p2Deck = mw.gameState.getP2MainDeck();
-				List<CardData> p2Matches = new ArrayList<>();
-				for (CardData c : p2Deck) if (c.isForward() && c.power() >= minPower) p2Matches.add(c);
-				if (mw.turn(false).cannotSearchThisTurn) {
-					logEntry("[P2] search blocked — cannot search this turn");
-				} else if (p2Matches.isEmpty()) {
-					logEntry("[P2] search: no Forward of " + minPower + "+ power in deck");
-					mw.shuffleDeck(false);
 				} else {
-					p2Matches.sort(java.util.Comparator.comparingInt(CardData::power).reversed());
-					CardData pick = p2Matches.get(0);
-					mw.gameState.getP2MainDeck().remove(pick);
-					mw.gameState.getP2Hand().add(pick);
-					logEntry("[P2 AI] " + pick.name() + " → hand (search)");
-					mw.refreshP2HandCountLabel();
-					mw.shuffleDeck(false);
+					logEntry(who + " passes on search");
 				}
+				mw.shuffleDeck(seatIsP1);
 			}
 
 			/**
@@ -5346,32 +5417,93 @@ final class GameContextImpl implements GameContext {
 					logEntry("Effect: opponent cannot discard " + count + " card(s) — declined by default");
 					return false;
 				}
-				if (oppIsP1) {
-					int choice = mw.showEffectOptionDialog(
-							sourceName + " — discard " + count + " card" + (count == 1 ? "" : "s") + "?",
-							"Discard or Decline", new Object[]{"Discard", "Decline"});
-					if (choice != 0) {
-						logEntry("Effect: opponent declined to discard");
-						return false;
-					}
-					mw.showForcedDiscardDialog(count, true);   // modal; discards exactly `count`
-				} else {
-					// The AI weighs the two prices rather than always paying: two cards is steep,
-					// so it only buys out while it can spare them.
-					if (oppHand.size() <= count + 1) {
-						logEntry("[P2] Declines to discard " + count + " card(s)");
-						return false;
-					}
-					for (int i = 0; i < count; i++) {
-						int idx = MainWindow.pickWorstHandCard0(mw.gameState.getP2Hand());
-						CardData d = mw.playerBreakFromHand(false, idx);
-						if (d != null) logEntry("[P2] Discards " + d.name());
-					}
-					mw.refreshP2HandCountLabel();
-					mw.refreshP2BreakLabel();
+				// The AI weighs the two prices rather than always paying: two cards is steep, so it
+				// only buys out while it can spare them.
+				if (!seatMayDiscard(oppIsP1, count,
+						sourceName + " — discard " + count + " card" + (count == 1 ? "" : "s") + "?",
+						"Discard or Decline", () -> oppHand.size() > count + 1)) {
+					logEntry("Effect: opponent declined to discard");
+					return false;
 				}
 				logEntry("Effect: opponent discarded " + count + " card(s)");
 				return true;
+			}
+
+			/**
+			 * Offers the seat at {@code seatIsP1} a discard of exactly {@code count} cards, and makes
+			 * it if they accept; reports whether they did. The caller has already checked that the
+			 * hand can cover it. Two questions, each crossing on its own: whether to discard, then
+			 * which cards — the AI throwing away its least valuable.
+			 *
+			 * @param cpuAccepts whether the AI takes the offer
+			 */
+			private boolean seatMayDiscard(boolean seatIsP1, int count, String prompt, String title,
+					BooleanSupplier cpuAccepts) {
+				boolean accepted = mw.decideYesNo(seatIsP1,
+						"Waiting for your opponent to decide whether to discard...",
+						() -> mw.showEffectOptionDialog(prompt, title,
+								new Object[]{"Discard", "Decline"}) == 0,
+						cpuAccepts);
+				if (!accepted) return false;
+				List<Integer> all = new ArrayList<>();
+				for (int i = 0; i < mw.playerHand(seatIsP1).size(); i++) all.add(i);
+				discardOwnHandCards(seatIsP1, all, count, false, "discard", " (forced by opponent)");
+				return true;
+			}
+
+			/**
+			 * The seat at {@code seatIsP1} discards up to {@code count} of the cards in their hand
+			 * that {@code eligible} indexes — exactly {@code count} where the hand allows, unless
+			 * {@code upTo}. Returns what they discarded. A pool no bigger than the count is taken
+			 * without asking, the choice being no choice.
+			 *
+			 * <p>The AI throws away its least valuable cards; the local human picks in the hand
+			 * dialog, or in a narrowed chooser when only some of the hand qualifies.
+			 */
+			private List<CardData> discardOwnHandCards(boolean seatIsP1, List<Integer> eligible, int count,
+					boolean upTo, String verb, String logSuffix) {
+				List<CardData> hand = mw.playerHand(seatIsP1);
+				int must = Math.min(count, eligible.size());
+				if (must <= 0) return List.of();
+				List<Integer> picks = !upTo && eligible.size() <= must ? eligible
+						: mw.selectOwnHandCards(seatIsP1, eligible, must,
+								"Waiting for your opponent to choose cards to " + verb + "...",
+								() -> askOwnHandCards(hand, eligible, must, upTo, verb),
+								() -> worstHandCards(hand, eligible, upTo ? 0 : must));
+				return mw.discardFromHand(seatIsP1, picks, logSuffix);
+			}
+
+			/**
+			 * The local human's half of a pick from their own hand: the whole-hand dialog when every
+			 * card qualifies, else a chooser over just the ones that do. Answers in hand indices.
+			 */
+			private List<Integer> askOwnHandCards(List<CardData> hand, List<Integer> eligible, int count,
+					boolean upTo, String verb) {
+				List<Integer> out = new ArrayList<>();
+				if (eligible.size() == hand.size()) {
+					shufflingway.dialog.HandPickDialog.showForcedDiscard(mw.frame, hand, count, upTo,
+							mw::showZoomAt, mw::hideZoom, out::addAll);
+					return out;
+				}
+				List<CardData> pool = new ArrayList<>();
+				for (int i : eligible) pool.add(hand.get(i));
+				List<Integer> chosen = mw.showCardMultiImageChooser(pool,
+						Character.toUpperCase(verb.charAt(0)) + verb.substring(1) + " " + count
+								+ " card" + (count == 1 ? "" : "s"), count, false, false);
+				if (chosen != null) for (int p : chosen) if (p >= 0 && p < eligible.size()) out.add(eligible.get(p));
+				return out;
+			}
+
+			/** The AI's pick: {@code count} of the eligible hand cards, least valuable first. */
+			private List<Integer> worstHandCards(List<CardData> hand, List<Integer> eligible, int count) {
+				List<Integer> pool = new ArrayList<>(eligible);
+				List<Integer> out  = new ArrayList<>();
+				while (out.size() < count && !pool.isEmpty()) {
+					List<CardData> cards = new ArrayList<>();
+					for (int i : pool) cards.add(hand.get(i));
+					out.add(pool.remove(MainWindow.pickWorstHandCard0(cards)));
+				}
+				return out;
 			}
 
 			@Override public void turnPlayerBreaksOwnCharacterOrTakesDamage(boolean inclForwards,
@@ -5512,40 +5644,11 @@ final class GameContextImpl implements GameContext {
 						: c.isMonster() ? mons
 						:                 smns;
 				String what = (fwds && bkps && mons && smns) ? "card" : "eligible card";
+				String title = "Each player salvages " + count + " " + what + "(s) — choose from your Break Zone";
 
-				// P1 picks via dialog
-				List<ForwardTarget> p1Picks = List.of();
-				List<Integer> p1Eligible = new ArrayList<>();
-				for (int i = 0; i < p1Bz.size(); i++) if (eligibleCard.test(p1Bz.get(i))) p1Eligible.add(i);
-				if (!p1Eligible.isEmpty()) {
-					List<ForwardTarget> eligible = new ArrayList<>();
-					for (int i : p1Eligible) {
-						CardData c = p1Bz.get(i);
-						ForwardTarget.CardZone cz = c.isBackup() ? ForwardTarget.CardZone.BACKUP
-								: c.isMonster() ? ForwardTarget.CardZone.MONSTER
-								: ForwardTarget.CardZone.FORWARD;
-						eligible.add(new ForwardTarget(true, i, cz));
-					}
-					p1Picks = mw.showBreakZoneSelectDialog(eligible, p1Bz, count, false,
-							"Each player salvages " + count + " " + what + "(s) — choose from your Break Zone");
-				} else {
-					logEntry("P1 Break Zone holds no " + what + " — skipping salvage");
-				}
-
-				// P2 (AI) auto-picks highest-cost eligible cards
-				List<ForwardTarget> p2Picks = new ArrayList<>();
-				List<Integer> idxs = new ArrayList<>();
-				for (int i = 0; i < p2Bz.size(); i++) if (eligibleCard.test(p2Bz.get(i))) idxs.add(i);
-				if (!idxs.isEmpty()) {
-					idxs.sort((a, b) -> Integer.compare(p2Bz.get(b).cost(), p2Bz.get(a).cost()));
-					for (int i = 0; i < Math.min(count, idxs.size()); i++) {
-						int idx = idxs.get(i);
-						p2Picks.add(new ForwardTarget(false, idx, ForwardTarget.CardZone.FORWARD));
-						logEntry("[AI] salvaged " + p2Bz.get(idx).name() + " from P2 Break Zone");
-					}
-				} else {
-					logEntry("[P2] Break Zone holds no " + what + " — skipping salvage");
-				}
+				// Both seats choose before anything moves, P1's question first on both clients.
+				List<ForwardTarget> p1Picks = salvagePicks(true,  count, eligibleCard, what, title);
+				List<ForwardTarget> p2Picks = salvagePicks(false, count, eligibleCard, what, title);
 
 				// Apply picks in reverse-index order to preserve indices during removal
 				List<ForwardTarget> p1Sorted = new ArrayList<>(p1Picks);
@@ -5561,7 +5664,7 @@ final class GameContextImpl implements GameContext {
 				for (ForwardTarget t : p2Sorted) {
 					CardData card = p2Bz.remove(t.idx());
 					mw.gameState.getP2Hand().add(card);
-					logEntry("[AI] " + card.name() + " → P2 hand from Break Zone");
+					logEntry("[P2] " + card.name() + " → P2 hand from Break Zone");
 					mw.noteAddedToHand(card, false, true);
 				}
 
@@ -5569,6 +5672,40 @@ final class GameContextImpl implements GameContext {
 				if (!p2Picks.isEmpty()) { mw.refreshP2BreakLabel(); mw.refreshP2HandCountLabel(); }
 				if (!p1Picks.isEmpty()) mw.notifyCardsAddedToHandFromBreakZone(true);
 				if (!p2Picks.isEmpty()) mw.notifyCardsAddedToHandFromBreakZone(false);
+			}
+
+			/**
+			 * The seat at {@code seatIsP1} picks up to {@code count} cards out of their own Break Zone
+			 * that {@code eligibleCard} admits; the AI takes the costliest.
+			 */
+			private List<ForwardTarget> salvagePicks(boolean seatIsP1, int count,
+					Predicate<CardData> eligibleCard, String what, String title) {
+				List<CardData> bz = seatIsP1 ? mw.gameState.getP1BreakZone() : mw.gameState.getP2BreakZone();
+				List<ForwardTarget> eligible = new ArrayList<>();
+				for (int i = 0; i < bz.size(); i++) {
+					CardData c = bz.get(i);
+					if (!eligibleCard.test(c)) continue;
+					ForwardTarget.CardZone cz = c.isBackup() ? ForwardTarget.CardZone.BACKUP
+							: c.isMonster() ? ForwardTarget.CardZone.MONSTER
+							: ForwardTarget.CardZone.FORWARD;
+					eligible.add(new ForwardTarget(seatIsP1, i, cz));
+				}
+				if (eligible.isEmpty()) {
+					logEntry((seatIsP1 ? "P1" : "[P2]") + " Break Zone holds no " + what + " — skipping salvage");
+					return List.of();
+				}
+				return mw.selectOwnBreakZoneTargets(seatIsP1, eligible, bz, count, title,
+						"Waiting for your opponent to choose from their Break Zone...",
+						() -> costliestInBreakZone(eligible, bz, count));
+			}
+
+			/** The AI's Break Zone pick: up to {@code count} of {@code eligible}, costliest first. */
+			private List<ForwardTarget> costliestInBreakZone(List<ForwardTarget> eligible, List<CardData> bz, int count) {
+				List<ForwardTarget> copy = new ArrayList<>(eligible);
+				copy.sort((a, b) -> Integer.compare(bz.get(b.idx()).cost(), bz.get(a.idx()).cost()));
+				List<ForwardTarget> picks = List.copyOf(copy.subList(0, Math.min(count, copy.size())));
+				picks.forEach(t -> logEntry("[AI] salvaged " + bz.get(t.idx()).name() + " from Break Zone"));
+				return picks;
 			}
 
 			@Override public void salvageCharacterFromOwnBreakZone(int count, boolean fwds, boolean bkps, boolean mons) {
@@ -5588,16 +5725,10 @@ final class GameContextImpl implements GameContext {
 					logEntry((isP1 ? "P1" : "P2") + " Break Zone has no eligible character(s) — salvage skipped");
 					return;
 				}
-				List<ForwardTarget> picks;
-				if (isP1) {
-					picks = mw.showBreakZoneSelectDialog(eligible, bz, count, false,
-							"Choose " + count + " Character(s) from your Break Zone to add to hand");
-				} else {
-					List<ForwardTarget> copy = new ArrayList<>(eligible);
-					copy.sort((a, b) -> Integer.compare(bz.get(b.idx()).cost(), bz.get(a.idx()).cost()));
-					picks = copy.subList(0, Math.min(count, copy.size()));
-					picks.forEach(t -> logEntry("[AI] salvaged " + bz.get(t.idx()).name() + " from Break Zone"));
-				}
+				List<ForwardTarget> picks = mw.selectOwnBreakZoneTargets(isP1, eligible, bz, count,
+						"Choose " + count + " Character(s) from your Break Zone to add to hand",
+						"Waiting for your opponent to choose from their Break Zone...",
+						() -> costliestInBreakZone(eligible, bz, count));
 				List<ForwardTarget> sorted = new ArrayList<>(picks);
 				sorted.sort(java.util.Comparator.comparingInt(ForwardTarget::idx).reversed());
 				List<CardData> hand = isP1 ? mw.gameState.getP1Hand() : mw.gameState.getP2Hand();
@@ -5627,18 +5758,12 @@ final class GameContextImpl implements GameContext {
 					logEntry((isP1 ? "P1" : "P2") + " Break Zone has no card with Warp — skipped");
 					return;
 				}
-				ForwardTarget pick;
-				if (isP1) {
-					List<ForwardTarget> picks = mw.showBreakZoneSelectDialog(eligible, bz, 1, false,
-							"Choose 1 Card with Warp from your Break Zone to add to hand");
-					if (picks.isEmpty()) return;
-					pick = picks.get(0);
-				} else {
-					pick = eligible.stream()
-							.max(java.util.Comparator.comparingInt(t -> bz.get(t.idx()).cost()))
-							.orElse(eligible.get(0));
-					logEntry("[AI] chose " + bz.get(pick.idx()).name() + " (with Warp) from Break Zone");
-				}
+				List<ForwardTarget> picks = mw.selectOwnBreakZoneTargets(isP1, eligible, bz, 1,
+						"Choose 1 Card with Warp from your Break Zone to add to hand",
+						"Waiting for your opponent to choose from their Break Zone...",
+						() -> costliestInBreakZone(eligible, bz, 1));
+				if (picks.isEmpty()) return;
+				ForwardTarget pick = picks.get(0);
 				CardData card = bz.remove(pick.idx());
 				List<CardData> hand = isP1 ? mw.gameState.getP1Hand() : mw.gameState.getP2Hand();
 				hand.add(card);
@@ -5659,21 +5784,23 @@ final class GameContextImpl implements GameContext {
 					for (int i = 0; i < mw.p1MonsterCards.size(); i++)
 						p1Eligible.add(new ForwardTarget(true, i, ForwardTarget.CardZone.MONSTER));
 
-				List<ForwardTarget> p1Picks;
-				if (p1Eligible.isEmpty()) {
-					logEntry("P1 has no eligible targets — skipping selection");
-					p1Picks = List.of();
-				} else {
-					p1Picks = mw.selectFieldTargetsInPlace(p1Eligible, count, true,
-							"Select up to " + count + " Forwards/Monsters to put in Break Zone");
-				}
+				List<ForwardTarget> p2Eligible = new ArrayList<>();
+				if (inclForwards)
+					for (int i = 0; i < mw.p2ForwardCards.size(); i++)
+						p2Eligible.add(new ForwardTarget(false, i, ForwardTarget.CardZone.FORWARD));
+				if (inclMonsters)
+					for (int i = 0; i < mw.p2MonsterCards.size(); i++)
+						p2Eligible.add(new ForwardTarget(false, i, ForwardTarget.CardZone.MONSTER));
 
-				// P2 AI: pick lowest-cost targets up to count
-				List<ForwardTarget> p2Picks = mw.aiPickForwardsOrMonstersForBreak(count, inclForwards, inclMonsters);
-				for (ForwardTarget t : p2Picks)
-					logEntry("[AI] selected " + (t.zone() == ForwardTarget.CardZone.FORWARD
-							? mw.p2ForwardCards.get(t.idx()).name()
-							: mw.p2MonsterCards.get(t.idx()).name()));
+				String title = "Select up to " + count + " Forwards/Monsters to put in Break Zone";
+				String wait  = "Waiting for your opponent to select what they put into the Break Zone...";
+				// Both seats choose before anything breaks, P1's question first on both clients.
+				if (p1Eligible.isEmpty()) logEntry("P1 has no eligible targets — skipping selection");
+				List<ForwardTarget> p1Picks = mw.selectOwnFieldTargets(true, p1Eligible, count, true,
+						title, wait, () -> mw.aiPickForwardsOrMonstersForBreak(true, count, inclForwards, inclMonsters));
+				List<ForwardTarget> p2Picks = mw.selectOwnFieldTargets(false, p2Eligible, count, true,
+						title, wait, () -> mw.aiPickForwardsOrMonstersForBreak(false, count, inclForwards, inclMonsters));
+				for (ForwardTarget t : p2Picks) logSelectedOwnCard(false, t);
 
 				// Break in descending index order to avoid shifting
 				p1Picks.stream().sorted(java.util.Comparator.comparingInt(ForwardTarget::idx).reversed())
@@ -5760,27 +5887,36 @@ final class GameContextImpl implements GameContext {
 
 				// "(select as many as possible)" is not a choice about how many, so the prompt asks
 				// for exactly what is there: an "up to" bar would let the player confirm on none.
-				List<ForwardTarget> p1Picks = p1Eligible.isEmpty() ? List.of()
-						: mw.selectFieldTargetsInPlace(p1Eligible,
-								Math.min(count, p1Eligible.size()), false,
-								"Select " + Math.min(count, p1Eligible.size())
-										+ " active Character(s) to dull and Freeze");
-
-				// The AI gives up its cheapest, the same reading of "which hurts least" the break
-				// selections take.
-				p2Eligible.sort(Comparator.comparingInt(t -> {
-					CardData c = cardAtTarget(t);
-					return c == null ? 0 : c.cost();
-				}));
-				List<ForwardTarget> p2Picks =
-						List.copyOf(p2Eligible.subList(0, Math.min(count, p2Eligible.size())));
-				for (ForwardTarget t : p2Picks) {
-					CardData c = cardAtTarget(t);
-					if (c != null) logEntry("[AI] selected " + c.name());
-				}
+				List<ForwardTarget> p1Picks = selectActiveToDullFreeze(true,  count, p1Eligible);
+				List<ForwardTarget> p2Picks = selectActiveToDullFreeze(false, count, p2Eligible);
 
 				p1Picks.forEach(this::dullAndFreezeTarget);
 				p2Picks.forEach(this::dullAndFreezeTarget);
+			}
+
+			/**
+			 * One seat's half of {@link #eachPlayerSelectUpToNActiveAndDullFreeze}. "(select as many
+			 * as possible)" is not a choice about how many, so the seat is asked for exactly what is
+			 * there: an "up to" bar would let them confirm on none. The AI gives up its cheapest, the
+			 * same reading of "which hurts least" the break selections take.
+			 */
+			private List<ForwardTarget> selectActiveToDullFreeze(boolean seatIsP1, int count,
+					List<ForwardTarget> eligible) {
+				int n = Math.min(count, eligible.size());
+				if (n == 0) return List.of();
+				List<ForwardTarget> picks = mw.selectOwnFieldTargets(seatIsP1, eligible, n, false,
+						"Select " + n + " active Character(s) to dull and Freeze",
+						"Waiting for your opponent to select what they dull and Freeze...",
+						() -> {
+							List<ForwardTarget> byCost = new ArrayList<>(eligible);
+							byCost.sort(Comparator.comparingInt(t -> {
+								CardData c = cardAtTarget(t);
+								return c == null ? 0 : c.cost();
+							}));
+							return List.copyOf(byCost.subList(0, n));
+						});
+				for (ForwardTarget t : picks) logSelectedOwnCard(seatIsP1, t);
+				return picks;
 			}
 
 			/** Every active Character {@code isP1Side} controls, in the rows the caller asked for. */
@@ -5932,20 +6068,25 @@ final class GameContextImpl implements GameContext {
 				if (state == null) return;
 				CardData card = mw.autoAbilityTriggers.fieldCardData(t);
 				String name = card != null ? card.name() : "Forward";
-				boolean chooseDull;
-				if (!isP1) {
-					// AI picks the option that actually changes state
-					chooseDull = (state != CardState.DULL);
-					logEntry("[AI] chooses to " + (chooseDull ? "Dull" : "Freeze") + " " + name);
-				} else {
-					Object[] options = { "Dull", "Freeze" };
-					int result = JOptionPane.showOptionDialog(mw.frame,
-							"Dull or Freeze " + name + "?",
-							"Dull or Freeze",
-							JOptionPane.YES_NO_OPTION, JOptionPane.QUESTION_MESSAGE,
-							null, options, options[0]);
-					chooseDull = (result != 1);
-				}
+				// Option 0 dulls, 1 freezes; a closed dialog dulls, as it always did.
+				int pick = mw.decideOption(isP1, 2,
+						"Waiting for your opponent to choose Dull or Freeze...",
+						() -> {
+							Object[] options = { "Dull", "Freeze" };
+							int result = JOptionPane.showOptionDialog(mw.frame,
+									"Dull or Freeze " + name + "?",
+									"Dull or Freeze",
+									JOptionPane.YES_NO_OPTION, JOptionPane.QUESTION_MESSAGE,
+									null, options, options[0]);
+							return result == 1 ? 1 : 0;
+						},
+						() -> {
+							// AI picks the option that actually changes state
+							boolean dull = state != CardState.DULL;
+							logEntry("[AI] chooses to " + (dull ? "Dull" : "Freeze") + " " + name);
+							return dull ? 0 : 1;
+						});
+				boolean chooseDull = pick != 1;
 				if (chooseDull) dullTarget(t);
 				else            freezeTarget(t);
 			}
@@ -6294,17 +6435,19 @@ final class GameContextImpl implements GameContext {
 				}
 				String title = (source.name() + " — add 1 removed card to your hand");
 				for (int i = 0; i < count && !removed.isEmpty(); i++) {
-					int pick;
-					if (removed.size() == 1) {
-						pick = 0;
-					} else if (isP1) {
-						pick = mw.cardPickerDialog.pickCardImage(removed, title, false);
-						if (pick < 0) pick = 0;   // dialog dismissed — take the first rather than stall
-					} else {
-						pick = 0;                  // AI takes the costliest of what it set aside
-						for (int j = 1; j < removed.size(); j++)
-							if (removed.get(j).cost() > removed.get(pick).cost()) pick = j;
-					}
+					int pick = removed.size() == 1 ? 0 : mw.decideOption(isP1, removed.size(),
+							"Waiting for your opponent to choose a removed card...",
+							() -> {
+								int p = mw.cardPickerDialog.pickCardImage(removed, title, false);
+								return p < 0 ? 0 : p;   // dialog dismissed — take the first rather than stall
+							},
+							() -> {
+								int best = 0;           // AI takes the costliest of what it set aside
+								for (int j = 1; j < removed.size(); j++)
+									if (removed.get(j).cost() > removed.get(best).cost()) best = j;
+								return best;
+							});
+					if (pick < 0) pick = 0;
 					CardData c = removed.remove(pick);
 					mw.gameState.removeFromPermanentRfp(c);
 					(isP1 ? mw.gameState.getP1Hand() : mw.gameState.getP2Hand()).add(c);
@@ -6492,14 +6635,15 @@ final class GameContextImpl implements GameContext {
 					eligible.add(new ForwardTarget(isP1, i, ForwardTarget.CardZone.BREAK_ZONE));
 				}
 				if (eligible.isEmpty()) return null;
-				if (!isP1) {
-					ForwardTarget pick = eligible.get(new java.util.Random().nextInt(eligible.size()));
-					logEntry("[AI] chose " + bz.get(pick.idx()).name());
-					return pick;
-				}
 				String title = "Choose 1 " + element + " Forward of cost " + maxCost
 						+ " or less in your Break Zone";
-				List<ForwardTarget> chosen = mw.showBreakZoneSelectDialog(eligible, bz, 1, false, title);
+				List<ForwardTarget> chosen = mw.selectOwnBreakZoneTargets(isP1, eligible, bz, 1, title,
+						"Waiting for your opponent to choose from their Break Zone...",
+						() -> {
+							ForwardTarget pick = eligible.get(new java.util.Random().nextInt(eligible.size()));
+							logEntry("[AI] chose " + bz.get(pick.idx()).name());
+							return List.of(pick);
+						});
 				return chosen.isEmpty() ? null : chosen.get(0);
 			}
 
@@ -7353,15 +7497,20 @@ final class GameContextImpl implements GameContext {
 				CardData picked = null;
 				if (eligible.isEmpty()) {
 					logEntry("No eligible " + what + " among top " + n + " card(s)");
-				} else if (isP1) {
-					String title = "Cast 1 " + what + " from top " + n + " for free";
-					int listIdx = mw.showCardImageChooser(eligible, title, optional);
-					if (listIdx >= 0) picked = eligible.get(listIdx);
 				} else {
-					picked = eligible.stream()
-							.max(java.util.Comparator.comparingInt(CardData::cost))
-							.orElse(null);
-					if (picked != null) logEntry("[AI] chose " + picked.name());
+					// The peeked cards come off the same seeded deck on both clients, in the same order.
+					String title = "Cast 1 " + what + " from top " + n + " for free";
+					int listIdx = mw.decideOption(isP1, eligible.size(),
+							"Waiting for your opponent to choose a card to cast...",
+							() -> mw.showCardImageChooser(eligible, title, optional),
+							() -> {
+								int best = 0;
+								for (int j = 1; j < eligible.size(); j++)
+									if (eligible.get(j).cost() > eligible.get(best).cost()) best = j;
+								logEntry("[AI] chose " + eligible.get(best).name());
+								return best;
+							});
+					if (listIdx >= 0) picked = eligible.get(listIdx);
 				}
 
 				for (int i = 0; i < n; i++) deck.pollFirst();
@@ -7504,7 +7653,40 @@ final class GameContextImpl implements GameContext {
 
 			@Override public List<String> chooseActions(CardData source,
 					List<String> actions, int selectCount, boolean upTo) {
-				if (isP1) return mw.autoAbilityTriggers.showSelectActionsDialog(source, actions, selectCount, upTo);
+				return actionsChosenBy(isP1, source, actions, selectCount, upTo,
+						() -> aiChooseActions(actions, selectCount));
+			}
+
+			/**
+			 * The seat at {@code chooserIsP1} picks up to {@code selectCount} of {@code actions}, the
+			 * options printed on the card. Positions in that list cross, since both clients read it
+			 * off the same text; the actions come back in the order they were picked.
+			 */
+			private List<String> actionsChosenBy(boolean chooserIsP1, CardData source, List<String> actions,
+					int selectCount, boolean upTo, Supplier<List<String>> cpuPick) {
+				List<Integer> picks = mw.decideOptions(chooserIsP1, actions.size(), selectCount,
+						"Waiting for your opponent to select actions...",
+						() -> positionsOf(actions,
+								mw.autoAbilityTriggers.showSelectActionsDialog(source, actions, selectCount, upTo)),
+						() -> positionsOf(actions, cpuPick.get()));
+				List<String> out = new ArrayList<>(picks.size());
+				for (int i : picks) out.add(actions.get(i));
+				return out;
+			}
+
+			/** Where each of {@code chosen} sits in {@code actions}, a repeated wording taking the next copy. */
+			private static List<Integer> positionsOf(List<String> actions, List<String> chosen) {
+				List<Integer> out = new ArrayList<>();
+				if (chosen == null) return out;
+				for (String a : chosen) {
+					for (int i = 0; i < actions.size(); i++) {
+						if (!out.contains(i) && actions.get(i).equals(a)) { out.add(i); break; }
+					}
+				}
+				return out;
+			}
+
+			private List<String> aiChooseActions(List<String> actions, int selectCount) {
 				// AI: a "remove from either/opponent's Break Zone" action is worth taking only when
 				// the opponent has cards there. When they do, prefer it (strips their resources);
 				// when they don't, skip it entirely (it would only hit our own cards). All other
@@ -7529,17 +7711,17 @@ final class GameContextImpl implements GameContext {
 
 			@Override public List<String> chooseActionsByOpponent(CardData source,
 					List<String> actions, int selectCount, boolean upTo) {
-				// The chooser is the other seat, so the human gets the dialog when the resolving
-				// player is the AI — the mirror of the test above, not a copy of it.
-				if (!isP1) return mw.autoAbilityTriggers.showSelectActionsDialog(source, actions, selectCount, upTo);
-				// Printed order, deliberately: the preference the sibling above applies was written
-				// for a player choosing effects to inflict, and here every option is aimed at the
-				// chooser instead. Picking well under those terms means weighing damage to oneself,
-				// which this AI has no notion of; taking them in order is at least predictable and
-				// never pretends to a judgement it is not making.
-				mw.logEntry("[AI] " + source.name() + " — selecting " + Math.min(selectCount, actions.size())
-						+ " action(s) in printed order");
-				return new ArrayList<>(actions.subList(0, Math.min(selectCount, actions.size())));
+				// The chooser is the other seat.
+				return actionsChosenBy(!isP1, source, actions, selectCount, upTo, () -> {
+					// Printed order, deliberately: the preference the sibling above applies was
+					// written for a player choosing effects to inflict, and here every option is aimed
+					// at the chooser instead. Picking well under those terms means weighing damage to
+					// oneself, which this AI has no notion of; taking them in order is at least
+					// predictable and never pretends to a judgement it is not making.
+					mw.logEntry("[AI] " + source.name() + " — selecting " + Math.min(selectCount, actions.size())
+							+ " action(s) in printed order");
+					return new ArrayList<>(actions.subList(0, Math.min(selectCount, actions.size())));
+				});
 			}
 
 
@@ -7663,24 +7845,12 @@ final class GameContextImpl implements GameContext {
 	// Opponent hand disruption
 	// =========================================================================================
 			@Override public void forceOpponentDiscard(int count) {
-				if (isP1) {
-					List<CardData> hand = mw.gameState.getP2Hand();
-					int actual = Math.min(count, hand.size());
-					for (int i = 0; i < actual; i++) {
-						int idx = MainWindow.pickWorstHandCard0(hand);
-						CardData d = mw.playerBreakFromHand(false,idx);
-						if (d != null) {
-							logEntry("[P2] Discards " + d.name() + " (forced)");
-							mw.p2Turn.discardedByEffectThisTurn = true;
-							mw.p1Turn.causedOpponentDiscardThisTurn = true;
-						}
-					}
-					mw.refreshP2HandCountLabel();
-					mw.refreshP2BreakLabel();
-				} else {
-					mw.showForcedDiscardDialog(count, true);
-					mw.p2Turn.causedOpponentDiscardThisTurn = true;
-				}
+				// The opponent chooses what they discard.
+				boolean victimIsP1 = !isP1;
+				List<Integer> all = new ArrayList<>();
+				for (int i = 0; i < mw.playerHand(victimIsP1).size(); i++) all.add(i);
+				if (!discardOwnHandCards(victimIsP1, all, count, false, "discard", " (forced)").isEmpty())
+					mw.turn(isP1).causedOpponentDiscardThisTurn = true;
 			}
 
 			@Override public void forceOpponentRandomDiscard(int count) {
@@ -7788,41 +7958,61 @@ final class GameContextImpl implements GameContext {
 			}
 
 			@Override public void selectFromOpponentHandAndRfp(int count) {
-				if (isP1) {
-					mw.showHandRfpSelectionDialog(mw.gameState.getP2Hand(), count, false);
-				} else {
-					// AI picks highest-cost cards from P1's hand
-					int actual = Math.min(count, mw.gameState.getP1Hand().size());
-					for (int i = 0; i < actual; i++) {
-						List<CardData> hand = mw.gameState.getP1Hand();
-						if (hand.isEmpty()) break;
-						int best = 0;
-						for (int j = 1; j < hand.size(); j++)
-							if (hand.get(j).cost() > hand.get(best).cost()) best = j;
-						CardData d = mw.gameState.removeFromHand(best);
-						if (d != null) { mw.gameState.addToPermanentRfp(d); logEntry("[P2 AI selects from P1 hand] " + d.name() + " removed from game"); }
-					}
-					mw.refreshP1HandLabel();
-					mw.refreshP1WarpZoneUI();
+				List<CardData> hand = mw.playerHand(!isP1);
+				List<CardData> picked = pickFromOpponentHand(hand, null, count,
+						"remove from the game", "Remove From Game");
+				for (CardData d : picked) {
+					int idx = indexByIdentity(hand, d);
+					if (idx < 0) continue;
+					hand.remove(idx);
+					mw.gameState.addToPermanentRfp(d);
+					logEntry("[Opponent] " + d.name() + " removed from game (selected from their hand)");
 				}
+				if (isP1) { mw.refreshP2HandCountLabel(); mw.refreshP2WarpZoneUI(); }
+				else      { mw.refreshP1HandLabel();      mw.refreshP1WarpZoneUI(); }
+			}
+
+			/**
+			 * This context's player picks up to {@code count} cards out of their opponent's hand,
+			 * which they are looking at, among those {@code eligible} admits ({@code null} for any);
+			 * returns them in the order picked. The AI takes the costliest.
+			 *
+			 * <p>Positions in the opponent's hand cross the wire, not positions among the eligible
+			 * cards: the hand is the one list both clients hold in the same order.
+			 */
+			private List<CardData> pickFromOpponentHand(List<CardData> hand, Predicate<CardData> eligible,
+					int count, String verbPhrase, String buttonLabel) {
+				List<Integer> idxs = new ArrayList<>();
+				for (int i = 0; i < hand.size(); i++) if (eligible == null || eligible.test(hand.get(i))) idxs.add(i);
+				List<Integer> picks = mw.selectOpponentHandCards(isP1, idxs, count,
+						"Waiting for your opponent to choose from your hand...",
+						() -> {
+							List<CardData> choices = new ArrayList<>();
+							for (int i : idxs) choices.add(hand.get(i));
+							List<Integer> out = new ArrayList<>();
+							for (CardData c : mw.showHandSelectionDialog(choices, count, verbPhrase, buttonLabel)) {
+								int i = indexByIdentity(hand, c);
+								if (i >= 0 && !out.contains(i)) out.add(i);
+							}
+							return out;
+						},
+						() -> {
+							List<Integer> byCost = new ArrayList<>(idxs);
+							byCost.sort((x, y) -> hand.get(y).cost() - hand.get(x).cost());
+							return new ArrayList<>(byCost.subList(0, Math.min(count, byCost.size())));
+						});
+				List<CardData> out = new ArrayList<>(picks.size());
+				for (int i : picks) out.add(hand.get(i));
+				return out;
 			}
 
 			@Override public void selectFromOpponentHandAndDiscard(int count, Predicate<CardData> eligible, String eligibleDesc) {
 				List<CardData> hand = isP1 ? mw.gameState.getP2Hand() : mw.gameState.getP1Hand();
-				List<CardData> choices = new ArrayList<>();
-				for (CardData c : hand) if (eligible == null || eligible.test(c)) choices.add(c);
-				if (choices.isEmpty()) {
+				if (hand.stream().noneMatch(c -> eligible == null || eligible.test(c))) {
 					logEntry("Opponent's hand holds no " + eligibleDesc + " — nothing discarded.");
 					return;
 				}
-				List<CardData> picked;
-				if (isP1) {
-					picked = mw.showHandSelectionDialog(choices, count, "discard", "Discard");
-				} else {
-					// AI picks the highest-cost qualifying cards from P1's hand.
-					choices.sort((x, y) -> y.cost() - x.cost());
-					picked = new ArrayList<>(choices.subList(0, Math.min(count, choices.size())));
-				}
+				List<CardData> picked = pickFromOpponentHand(hand, eligible, count, "discard", "Discard");
 				for (CardData d : picked) {
 					int idx = indexByIdentity(hand, d);
 					if (idx < 0) continue;
@@ -7917,15 +8107,8 @@ final class GameContextImpl implements GameContext {
 			@Override public void selectFromOpponentHandRfpUntilEndOfOpponentTurn(int count) {
 				List<CardData> hand = isP1 ? mw.gameState.getP2Hand() : mw.gameState.getP1Hand();
 				if (hand.isEmpty()) { logEntry("Opponent's hand is empty."); return; }
-				List<CardData> picked;
-				if (isP1) {
-					picked = mw.showHandSelectionDialog(new ArrayList<>(hand), count,
-							"remove from the game", "Remove From Game");
-				} else {
-					List<CardData> byCost = new ArrayList<>(hand);
-					byCost.sort((x, y) -> y.cost() - x.cost());
-					picked = new ArrayList<>(byCost.subList(0, Math.min(count, byCost.size())));
-				}
+				List<CardData> picked = pickFromOpponentHand(hand, null, count,
+						"remove from the game", "Remove From Game");
 				List<CardData> removed = new ArrayList<>();
 				for (CardData d : picked) {
 					int idx = indexByIdentity(hand, d);
@@ -7996,15 +8179,7 @@ final class GameContextImpl implements GameContext {
 			@Override public void revealHandOptPickDiscardOpponentDraws() {
 				List<CardData> hand = isP1 ? mw.gameState.getP2Hand() : mw.gameState.getP1Hand();
 				if (hand.isEmpty()) { logEntry("Opponent's hand is empty."); return; }
-				CardData picked;
-				if (isP1) {
-					picked = mw.showRevealHandOptPickDialog(hand);
-				} else {
-					int best = 0;
-					for (int j = 1; j < hand.size(); j++)
-						if (hand.get(j).cost() > hand.get(best).cost()) best = j;
-					picked = hand.get(best);
-				}
+				CardData picked = pickOptionallyFromRevealedHand(hand, hand);
 				if (picked == null) return;
 				int idx = indexByIdentity(hand, picked);
 				if (idx < 0 || mw.playerBreakFromHand(!isP1, idx) == null) return;
@@ -8031,45 +8206,68 @@ final class GameContextImpl implements GameContext {
 					logEntry("Opponent's hand holds no " + eligibleDesc + " — nothing removed.");
 					return;
 				}
-				if (isP1) {
-					CardData picked = mw.showRevealHandOptPickDialog(choices);
-					if (picked != null) {
-						oppHand.remove(indexByIdentity(oppHand, picked));
-						mw.gameState.addToPermanentRfp(picked);
-						logEntry("[P2] " + picked.name() + " removed from game by P1");
-						mw.refreshP2HandCountLabel();
-						mw.refreshP2WarpZoneUI();
-						drawCardsForOpponent(1);
-					}
-				} else {
-					CardData best = choices.get(0);
-					for (CardData c : choices) if (c.cost() > best.cost()) best = c;
-					CardData d = mw.gameState.removeFromHand(indexByIdentity(oppHand, best));
-					if (d != null) {
-						mw.gameState.addToPermanentRfp(d);
-						logEntry("[P2 AI] " + d.name() + " selected from P1 hand — removed from game");
-						mw.refreshP1HandLabel();
-						mw.refreshP1WarpZoneUI();
-						drawCardsForOpponent(1);
-					}
+				CardData picked = pickOptionallyFromRevealedHand(oppHand, choices);
+				if (picked == null) return;
+				oppHand.remove(indexByIdentity(oppHand, picked));
+				mw.gameState.addToPermanentRfp(picked);
+				logEntry("[Opponent] " + picked.name() + " removed from game (selected from revealed hand)");
+				if (isP1) { mw.refreshP2HandCountLabel(); mw.refreshP2WarpZoneUI(); }
+				else      { mw.refreshP1HandLabel();      mw.refreshP1WarpZoneUI(); }
+				drawCardsForOpponent(1);
+			}
+
+			/**
+			 * This context's player may pick 1 of {@code choices} out of their opponent's revealed
+			 * {@code hand}, or none; the AI takes the costliest. Crosses as a position in the hand.
+			 */
+			private CardData pickOptionallyFromRevealedHand(List<CardData> hand, List<CardData> choices) {
+				List<Integer> idxs = new ArrayList<>();
+				for (CardData c : choices) {
+					int i = indexByIdentity(hand, c);
+					if (i >= 0) idxs.add(i);
 				}
+				List<Integer> picks = mw.selectOpponentHandCards(isP1, idxs, 1,
+						"Waiting for your opponent to choose from your revealed hand...",
+						() -> {
+							CardData c = mw.showRevealHandOptPickDialog(choices);
+							int i = c == null ? -1 : indexByIdentity(hand, c);
+							return i < 0 ? List.of() : List.of(i);
+						},
+						() -> {
+							int best = idxs.get(0);
+							for (int i : idxs) if (hand.get(i).cost() > hand.get(best).cost()) best = i;
+							return List.of(best);
+						});
+				return picks.isEmpty() ? null : hand.get(picks.get(0));
 			}
 
 			@Override public void forceOpponentHandRfp(int count) {
-				if (isP1) {
-					List<CardData> hand = mw.gameState.getP2Hand();
-					int actual = Math.min(count, hand.size());
-					for (int i = 0; i < actual; i++) {
-						if (hand.isEmpty()) break;
-						int idx = MainWindow.pickWorstHandCard0(hand);
-						CardData d = hand.remove(idx);
-						mw.gameState.addToPermanentRfp(d);
-						logEntry("[P2] Removes from game: " + d.name());
-					}
-					mw.refreshP2HandCountLabel();
-				} else {
-					mw.showHandRfpSelectionDialog(mw.gameState.getP1Hand(), count, true);
+				// The opponent chooses what they remove.
+				boolean victimIsP1 = !isP1;
+				List<CardData> hand = mw.playerHand(victimIsP1);
+				int must = Math.min(count, hand.size());
+				if (must == 0) return;
+				List<Integer> all = new ArrayList<>();
+				for (int i = 0; i < hand.size(); i++) all.add(i);
+				List<Integer> picks = all.size() <= must ? all
+						: mw.selectOwnHandCards(victimIsP1, all, must,
+								"Waiting for your opponent to choose cards to remove from the game...",
+								() -> {
+									List<Integer> out = new ArrayList<>();
+									shufflingway.dialog.HandPickDialog.showHandRfp(mw.frame, hand, must,
+											mw::showZoomAt, mw::hideZoom, out::addAll);
+									return out;
+								},
+								() -> worstHandCards(hand, all, must));
+				List<Integer> descending = new ArrayList<>(picks);
+				descending.sort(Collections.reverseOrder());
+				for (int i : descending) {
+					CardData d = hand.remove(i);
+					mw.gameState.addToPermanentRfp(d);
+					logEntry((victimIsP1 ? "" : "[P2] ") + "Removes from game: " + d.name());
 				}
+				if (victimIsP1) { mw.refreshP1HandLabel();      mw.refreshP1WarpZoneUI(); }
+				else            { mw.refreshP2HandCountLabel(); mw.refreshP2WarpZoneUI(); }
 			}
 
 
@@ -8241,29 +8439,52 @@ final class GameContextImpl implements GameContext {
 				for (ForwardTarget t : eligible) pool.add((t.isP1() ? p1bz : p2bz).get(t.idx()));
 
 				int cap = Math.min(maxCount, eligible.size());
-				List<ForwardTarget> picks;
-				if (isP1) {
-					// Re-indexed onto pool so one dialog can show cards drawn from either zone, then
-					// mapped back to real zone indices before anything is removed.
-					List<ForwardTarget> reindexed = new ArrayList<>(eligible.size());
-					for (int i = 0; i < eligible.size(); i++)
-						reindexed.add(new ForwardTarget(eligible.get(i).isP1(), i, ForwardTarget.CardZone.BREAK_ZONE));
-					List<ForwardTarget> chosen =
-							mw.showBreakZoneSelectDialog(reindexed, pool, cap, upTo, title, gate);
-					picks = new ArrayList<>(chosen.size());
-					for (ForwardTarget t : chosen) picks.add(eligible.get(t.idx()));
-				} else {
-					// The AI takes the first legal run in zone order. The gate still applies: a hand
-					// it could not legally have chosen is not one the rules let it take.
-					picks = new ArrayList<>();
-					List<CardData> taken = new ArrayList<>();
-					for (int i = 0; i < eligible.size() && taken.size() < cap; i++) {
-						if (!gate.allows(taken, pool.get(i))) continue;
-						taken.add(pool.get(i));
-						picks.add(eligible.get(i));
-					}
-					picks.forEach(t -> logEntry("[AI] removes " + pool.get(eligible.indexOf(t)).name()
-							+ " from the game"));
+				PickGate g = gate;
+				// Target codes cross, so the side flips on arrival; the gate is checked again on the
+				// answer, because a remote one never went through the dialog that enforces it.
+				List<Integer> answer = mw.decide(PlayerChoice.by(isP1, ChoiceKind.BREAK_ZONE_TARGETS)
+						.prompting("Waiting for your opponent to choose from a Break Zone...")
+						.locally(() -> {
+							// Re-indexed onto pool so one dialog can show cards drawn from either zone,
+							// then mapped back to real zone indices before anything is removed.
+							List<ForwardTarget> reindexed = new ArrayList<>(eligible.size());
+							for (int i = 0; i < eligible.size(); i++)
+								reindexed.add(new ForwardTarget(eligible.get(i).isP1(), i, ForwardTarget.CardZone.BREAK_ZONE));
+							List<ForwardTarget> chosen =
+									mw.showBreakZoneSelectDialog(reindexed, pool, cap, upTo, title, g);
+							List<Integer> codes = new ArrayList<>(chosen.size());
+							for (ForwardTarget t : chosen) codes.add(eligible.get(t.idx()).choiceCode());
+							return codes;
+						})
+						.byCpu(() -> {
+							// The AI takes the first legal run in zone order. The gate still applies: a
+							// hand it could not legally have chosen is not one the rules let it take.
+							List<Integer> codes = new ArrayList<>();
+							List<CardData> taken = new ArrayList<>();
+							for (int i = 0; i < eligible.size() && taken.size() < cap; i++) {
+								if (!g.allows(taken, pool.get(i))) continue;
+								taken.add(pool.get(i));
+								codes.add(eligible.get(i).choiceCode());
+								logEntry("[AI] removes " + pool.get(i).name() + " from the game");
+							}
+							return codes;
+						})
+						.arrivingAs(ForwardTarget::flipChoiceSide)
+						.legalWhen(codes -> {
+							if (codes.size() > cap) return false;
+							List<CardData> taken = new ArrayList<>();
+							for (int code : codes) {
+								ForwardTarget t = ForwardTarget.fromChoiceCode(code);
+								int i = t == null ? -1 : eligible.indexOf(t);
+								if (i < 0 || !g.allows(taken, pool.get(i))) return false;
+								taken.add(pool.get(i));
+							}
+							return true;
+						}, "no such card in that Break Zone may be removed here"));
+				List<ForwardTarget> picks = new ArrayList<>(answer.size());
+				for (int code : answer) {
+					ForwardTarget t = ForwardTarget.fromChoiceCode(code);
+					if (t != null) picks.add(t);
 				}
 				if (picks.isEmpty()) {
 					logEntry("Effect: no cards removed from the game");
@@ -8287,6 +8508,32 @@ final class GameContextImpl implements GameContext {
 				}
 				if (removed.isEmpty()) markEffectFizzled();
 				return removed;
+			}
+
+			private static final String[] CARD_TYPES = {"Forward", "Backup", "Monster", "Summon"};
+
+			/**
+			 * This context's player names 1 card type; {@code null} when they dismissed the dialog.
+			 * A position in {@link #CARD_TYPES} crosses, the four types being a list both clients
+			 * hold without being told.
+			 *
+			 * @param cpuName the AI's type, one of {@link #CARD_TYPES}
+			 */
+			private String nameCardType(String prompt, String title, Supplier<String> cpuName) {
+				int pick = mw.decideOption(isP1, CARD_TYPES.length,
+						"Waiting for your opponent to name a card type...",
+						() -> {
+							Object sel = JOptionPane.showInputDialog(mw.frame, prompt, title,
+									JOptionPane.QUESTION_MESSAGE, null, CARD_TYPES, CARD_TYPES[0]);
+							return sel == null ? -1 : java.util.Arrays.asList(CARD_TYPES).indexOf(sel);
+						},
+						() -> {
+							String name = cpuName.get();
+							for (int i = 0; i < CARD_TYPES.length; i++)
+								if (CARD_TYPES[i].equalsIgnoreCase(name)) return i;
+							return 0;
+						});
+				return pick < 0 ? null : CARD_TYPES[pick];
 			}
 
 			@Override public int removeCardsFromBreakZoneFromGameEitherSpec(
@@ -8337,20 +8584,12 @@ final class GameContextImpl implements GameContext {
 			}
 
 			@Override public void nameCardTypeRemoveAllOfTypeFromOppBzFromGame() {
-				final String[] TYPES = {"Forward", "Backup", "Monster", "Summon"};
-				String namedType;
-				if (isP1) {
-					Object sel = javax.swing.JOptionPane.showInputDialog(mw.frame,
-							"Name 1 card type:", "Name a Card Type",
-							javax.swing.JOptionPane.QUESTION_MESSAGE, null, TYPES, TYPES[0]);
-					if (sel == null) { logEntry("Ability cancelled"); return; }
-					namedType = (String) sel;
-				} else {
-					// The type that takes the most out of the zone it is aimed at, which is the
-					// whole of what this naming decides — unlike Setzer 17-030H's, which is a guess
-					// at a hidden hand and so picks from what the AI can see there instead.
-					namedType = mostCommonCardType(mw.gameState.getP1BreakZone());
-				}
+				// The type that takes the most out of the zone it is aimed at, which is the whole of
+				// what this naming decides — unlike Setzer 17-030H's, which is a guess at a hidden
+				// hand and so picks from what the AI can see there instead.
+				String namedType = nameCardType("Name 1 card type:", "Name a Card Type",
+						() -> mostCommonCardType(isP1 ? mw.gameState.getP2BreakZone() : mw.gameState.getP1BreakZone()));
+				if (namedType == null) { logEntry("Ability cancelled"); return; }
 				logEntry((isP1 ? "" : "[P2] ") + "Names card type: " + namedType);
 				emptyBreakZoneIntoRfg(isP1 ? mw.gameState.getP2BreakZone() : mw.gameState.getP1BreakZone(),
 						!isP1, namedType);
@@ -8667,42 +8906,53 @@ final class GameContextImpl implements GameContext {
 			// discard more than 1 under an "if you do so", so this reading and "discarded none"
 			// agree everywhere in the corpus; it is the sentence, not a card, that decides it.
 			@Override public void selfDiscard(int count) {
-				int discarded;
-				if (isP1) {
-					// The 3-argument form for its return: the dialog is modal, so the count is
-					// final by the time it comes back. upTo=false — this is an instruction.
-					discarded = mw.showForcedDiscardDialog(count, false, false);
-				} else {
-					discarded = 0;
-					List<CardData> hand = mw.gameState.getP2Hand();
-					int actual = Math.min(count, hand.size());
-					for (int i = 0; i < actual; i++) {
-						int idx = MainWindow.pickWorstHandCard0(hand);
-						CardData d = mw.playerBreakFromHand(false,idx);
-						if (d != null) { logEntry("[P2] Discards " + d.name()); mw.p2Turn.discardedByEffectThisTurn = true; mw.lastDiscardedCardName = d.name(); mw.lastDiscardedCard = d; mw.discardedByEffect.add(d); discarded++; }
-					}
-					mw.refreshP2HandCountLabel();
-					mw.refreshP2BreakLabel();
-				}
+				// Not "up to" — this is an instruction.
+				int discarded = discardOwnHandCards(isP1, handIndices(isP1), count, false, "discard", "").size();
 				if (discarded < count) markEffectFizzled();
 			}
 
+			/** Every index in {@code seatIsP1}'s hand. */
+			private List<Integer> handIndices(boolean seatIsP1) {
+				List<Integer> all = new ArrayList<>();
+				for (int i = 0; i < mw.playerHand(seatIsP1).size(); i++) all.add(i);
+				return all;
+			}
+
 			@Override public int mayDiscardAnyNumberFromHand(int aiCap) {
-				if (isP1)
-					return mw.showForcedDiscardDialog(mw.gameState.getP1Hand().size(), false, true);
-				List<CardData> hand = mw.gameState.getP2Hand();
-				int take = Math.min(Math.max(aiCap, 0), hand.size());
-				for (int i = 0; i < take; i++) {
-					CardData d = mw.playerBreakFromHand(false, MainWindow.pickWorstHandCard0(hand));
-					if (d == null) continue;
-					logEntry("[P2] Discards " + d.name());
-					mw.p2Turn.discardedByEffectThisTurn = true;
-					mw.lastDiscardedCardName = d.name();
-					mw.lastDiscardedCard = d;
-					mw.discardedByEffect.add(d);
-				}
-				if (take > 0) { mw.refreshP2HandCountLabel(); mw.refreshP2BreakLabel(); }
-				return take;
+				List<CardData> hand = mw.playerHand(isP1);
+				List<Integer> all = handIndices(isP1);
+				if (all.isEmpty()) return 0;
+				List<Integer> picks = mw.selectOwnHandCards(isP1, all, all.size(),
+						"Waiting for your opponent to choose cards to discard...",
+						() -> askOwnHandCards(hand, all, all.size(), true, "discard"),
+						() -> worstHandCards(hand, all, Math.min(Math.max(aiCap, 0), hand.size())));
+				return mw.discardFromHand(isP1, picks, "").size();
+			}
+
+			/**
+			 * The seat at {@code seatIsP1} discards 1 card from their hand that {@code matches}
+			 * admits, and the card is returned; {@code null} when they hold none. The picker shows
+			 * the whole hand with the eligible cards lit, and cannot be dismissed — a player reaching
+			 * it has already committed. The AI throws away the least valuable eligible card.
+			 *
+			 * @param label names the kind of card in the picker — "Summon", "Job Knight"
+			 */
+			private CardData discardOneMatching(boolean seatIsP1, Predicate<CardData> matches, String label) {
+				List<CardData> hand = mw.playerHand(seatIsP1);
+				List<Integer> eligible = new ArrayList<>();
+				for (int i = 0; i < hand.size(); i++) if (matches.test(hand.get(i))) eligible.add(i);
+				if (eligible.isEmpty()) return null;
+				List<Integer> picks = mw.selectOwnHandCards(seatIsP1, eligible, 1,
+						"Waiting for your opponent to choose a card to discard...",
+						() -> {
+							List<Integer> out = new ArrayList<>();
+							shufflingway.dialog.HandPickDialog.showDiscardByType(mw.frame, hand, eligible, label,
+									mw::showZoomAt, mw::hideZoom, out::add);
+							return out;
+						},
+						() -> worstHandCards(hand, eligible, 1));
+				List<CardData> gone = mw.discardFromHand(seatIsP1, picks, "");
+				return gone.isEmpty() ? null : gone.get(0);
 			}
 
 			@Override public void selfDiscardByType(String cardType) {
@@ -8752,140 +9002,80 @@ final class GameContextImpl implements GameContext {
 			 * declinable.
 			 */
 			private boolean offerDiscardOfType(String cardType) {
-				if (isP1) {
-					List<CardData> hand = mw.gameState.getP1Hand();
-					boolean anyEligible = hand.stream().anyMatch(c -> matchesDiscardType(c, cardType));
-					if (!anyEligible) {
-						logEntry("[Effect] No " + cardType + " in hand — optional discard skipped");
-						return false;
-					}
-					String src = mw.currentAbilitySource != null ? mw.currentAbilitySource.name() : "Ability";
-					int choice = mw.showEffectOptionDialog(
-							src + " — Discard 1 " + cardType + " from hand?",
-							"You May Discard", new Object[]{"Discard", "Pass"});
-					if (choice != 0) {
-						logEntry("[Effect] Declined to discard a " + cardType);
-						return false;
-					}
+				List<CardData> hand = mw.playerHand(isP1);
+				boolean anyEligible = hand.stream().anyMatch(c -> matchesDiscardType(c, cardType));
+				if (!anyEligible) {
+					logEntry("[Effect] No " + cardType + " in hand — optional discard skipped");
+					return false;
+				}
+				if (!offerOptionalDiscard("Discard 1 " + cardType + " from hand?")) {
+					logEntry("[Effect] Declined to discard a " + cardType);
+					return false;
 				}
 				return discardOneFromHandByType(cardType);
 			}
 
 			/**
-			 * Offers the ability user one optional discard of a card matching {@code cardType}
-			 * ({@code "card"} for any), and reports whether one actually went to the Break Zone.
-			 * Shared by the two methods above so they cannot drift in what counts as a discard.
+			 * Asks this context's player whether to take up an optional discard — the "you may?" that
+			 * comes before the picker, which cannot itself be declined. The AI takes every offer it
+			 * can afford: whether a card is worth the upgrade is a valuation question, not part of
+			 * making the offer declinable.
+			 */
+			private boolean offerOptionalDiscard(String question) {
+				String src = mw.currentAbilitySource != null ? mw.currentAbilitySource.name() : "Ability";
+				return mw.decideYesNo(isP1, "Waiting for your opponent to decide whether to discard...",
+						() -> mw.showEffectOptionDialog(src + " — " + question,
+								"You May Discard", new Object[]{"Discard", "Pass"}) == 0,
+						() -> true);
+			}
+
+			/**
+			 * Discards 1 card matching {@code cardType} ({@code "card"} for any) from this context's
+			 * player's hand, and reports whether one actually went to the Break Zone. Shared by the
+			 * methods above so they cannot drift in what counts as a discard.
 			 */
 			private boolean discardOneFromHandByType(String cardType) {
-				if (isP1) return mw.showDiscardByTypeDialog(cardType);
-				List<CardData> hand = mw.gameState.getP2Hand();
-				List<Integer> eligible = new ArrayList<>();
-				for (int i = 0; i < hand.size(); i++) {
-					if (matchesDiscardType(hand.get(i), cardType)) eligible.add(i);
-				}
-				if (eligible.isEmpty()) return false;
-				List<CardData> eligibleCards = eligible.stream().map(hand::get).collect(Collectors.toList());
-				int relIdx = MainWindow.pickWorstHandCard0(eligibleCards);
-				int idx = eligible.get(relIdx);
-				CardData d = mw.playerBreakFromHand(false, idx);
-				if (d != null) {
-					logEntry("[P2] Discards " + d.name());
-					mw.p2Turn.discardedByEffectThisTurn = true;
-					if (d.isForward()) mw.lastDiscardedForwardPower = d.power();
-				}
-				mw.refreshP2HandCountLabel();
-				mw.refreshP2BreakLabel();
-				return d != null;
+				return discardOneMatching(isP1, c -> matchesDiscardType(c, cardType), cardType) != null;
 			}
 
 			@Override public void selfDiscardByJob(String jobName) {
-				if (isP1) {
-					boolean discarded = mw.showDiscardByJobDialog(jobName);
-					if (!discarded) markEffectFizzled();
-				} else {
-					List<CardData> hand = mw.gameState.getP2Hand();
-					List<Integer> eligible = new ArrayList<>();
-					for (int i = 0; i < hand.size(); i++) {
-						if (CardFilters.meetsJobFilter(hand.get(i), jobName)) eligible.add(i);
-					}
-					if (eligible.isEmpty()) { markEffectFizzled(); return; }
-					List<CardData> eligibleCards = eligible.stream().map(hand::get).collect(Collectors.toList());
-					int relIdx = MainWindow.pickWorstHandCard0(eligibleCards);
-					int idx = eligible.get(relIdx);
-					CardData d = mw.playerBreakFromHand(false, idx);
-					if (d != null) {
-						logEntry("[P2] Discards " + d.name());
-						mw.p2Turn.discardedByEffectThisTurn = true;
-						if (d.isForward()) mw.lastDiscardedForwardPower = d.power();
-					}
-					mw.refreshP2HandCountLabel();
-					mw.refreshP2BreakLabel();
-				}
+				if (discardOneMatching(isP1, c -> CardFilters.meetsJobFilter(c, jobName), "Job " + jobName) == null)
+					markEffectFizzled();
 			}
 
 			@Override public void mayDiscardCardOfJobFromHand(String jobName) {
-				List<CardData> hand = isP1 ? mw.gameState.getP1Hand() : mw.gameState.getP2Hand();
+				List<CardData> hand = mw.playerHand(isP1);
 				boolean anyEligible = hand.stream().anyMatch(c -> CardFilters.meetsJobFilter(c, jobName));
 				if (!anyEligible) {
 					logEntry("[Effect] No Job " + jobName + " in hand — optional discard skipped");
 					markEffectFizzled();
 					return;
 				}
-				if (isP1) {
-					String src = mw.currentAbilitySource != null ? mw.currentAbilitySource.name() : "Ability";
-					int choice = mw.showEffectOptionDialog(
-							src + " — Discard 1 Job " + jobName + " from hand?",
-							"You May Discard", new Object[]{"Discard", "Pass"});
-					if (choice != 0) {
-						logEntry("[Effect] Declined to discard a Job " + jobName);
-						markEffectFizzled();
-						return;
-					}
-					// The pick itself is no longer optional — the offer has been accepted.
-					if (!mw.showDiscardByJobDialog(jobName)) markEffectFizzled();
+				if (!offerOptionalDiscard("Discard 1 Job " + jobName + " from hand?")) {
+					logEntry("[Effect] Declined to discard a Job " + jobName);
+					markEffectFizzled();
 					return;
 				}
+				// The pick itself is no longer optional — the offer has been accepted.
 				selfDiscardByJob(jobName);
 			}
 
 			@Override public void selfDiscardByElement(String element) {
-				if (isP1) {
-					boolean discarded = mw.showDiscardByElementDialog(element);
-					if (!discarded) markEffectFizzled();
-				} else {
-					List<CardData> hand = mw.gameState.getP2Hand();
-					List<Integer> eligible = new ArrayList<>();
-					for (int i = 0; i < hand.size(); i++) {
-						if (hand.get(i).containsElement(element)) eligible.add(i);
-					}
-					if (eligible.isEmpty()) { markEffectFizzled(); return; }
-					List<CardData> eligibleCards = eligible.stream().map(hand::get).collect(Collectors.toList());
-					int relIdx = MainWindow.pickWorstHandCard0(eligibleCards);
-					int idx = eligible.get(relIdx);
-					CardData d = mw.playerBreakFromHand(false, idx);
-					if (d != null) {
-						logEntry("[P2] Discards " + d.name());
-						mw.p2Turn.discardedByEffectThisTurn = true;
-						if (d.isForward()) mw.lastDiscardedForwardPower = d.power();
-					}
-					mw.refreshP2HandCountLabel();
-					mw.refreshP2BreakLabel();
-				}
+				if (discardOneMatching(isP1, c -> c.containsElement(element), element + " card") == null)
+					markEffectFizzled();
 			}
 
 			@Override public void mayRevealCardByElementFromHand(String element) {
-				List<CardData> hand = isP1 ? mw.gameState.getP1Hand() : mw.gameState.getP2Hand();
-				List<Integer> eligible = new ArrayList<>();
-				for (int i = 0; i < hand.size(); i++) {
-					if (hand.get(i).containsElement(element)) eligible.add(i);
-				}
-				if (eligible.isEmpty()) { markEffectFizzled(); return; }
-				if (isP1) {
-					boolean revealed = mw.showRevealByElementFromHandDialog(element);
-					if (!revealed) markEffectFizzled();
-				} else {
-					logEntry("[P2] Reveals " + hand.get(eligible.get(0)).name() + " (a " + element + " card from hand)");
-				}
+				List<CardData> hand = mw.playerHand(isP1);
+				if (hand.stream().noneMatch(c -> c.containsElement(element))) { markEffectFizzled(); return; }
+				// Only whether a card was shown matters to the effect, so that is what crosses.
+				// The AI always shows one.
+				boolean revealed = mw.decideYesNo(isP1,
+						"Waiting for your opponent to decide whether to reveal a card...",
+						() -> mw.showRevealByElementFromHandDialog(element),
+						() -> true);
+				if (!revealed) { markEffectFizzled(); return; }
+				if (!isP1) logEntry("[P2] Reveals a " + element + " card from hand");
 			}
 
 
@@ -8893,11 +9083,12 @@ final class GameContextImpl implements GameContext {
 	// Optional payments and "you may" prompts
 	// =========================================================================================
 			@Override public void mayPayToReplayAbility(String element, java.util.function.Consumer<GameContext> replayAction) {
-				if (!isP1) { logEntry("[P2 AI] Passes on ability replay (pay 《" + element + "》)"); return; }
 				String label = "Pay 《" + element + "》 to use this ability again?";
 				String src   = mw.currentAbilitySource != null ? mw.currentAbilitySource.name() : "Ability";
-				int choice = mw.showEffectOptionDialog(src + " — " + label, "Replay Ability", new Object[]{"Pay", "Pass"});
-				if (choice != 0) { logEntry("Replay: declined to pay 《" + element + "》"); return; }
+				if (!mayDo(src + " — " + label, "Replay Ability", "Pay", "Pass", () -> {
+					logEntry("[P2 AI] Passes on ability replay (pay 《" + element + "》)");
+					return false;
+				})) { logEntry("Replay: declined to pay 《" + element + "》"); return; }
 				mw.autoAbilityTriggers.showAutoAbilityPaymentDialog(src + " (replay)", 1, 1, isP1, 0,
 						element != null ? Map.of(element, 1) : Map.of(), paid -> {
 					if (paid >= 1) { logEntry("Replay: paid 《" + element + "》 — using ability again"); replayAction.accept(this); }
@@ -8915,20 +9106,29 @@ final class GameContextImpl implements GameContext {
 				final int need = elementCp + Math.max(0, generic);
 				String cost = ("《" + element + "》").repeat(elementCp) + (generic > 0 ? "《" + generic + "》" : "");
 				Map<String, Integer> elementNeeds = Map.of(element, elementCp);
-				if (!isP1) {
-					if (mw.autoAbilityTriggers.aiPayCp(false, need, elementNeeds) >= need) {
-						logEntry("[P2 AI] Paid " + cost + " — applying effect");
-						onPay.accept(this);
-					}
-					return;
-				}
 				String src    = mw.currentAbilitySource != null ? mw.currentAbilitySource.name() : "Ability";
 				String label  = "Pay " + cost + "?";
-				int choice = mw.showEffectOptionDialog(src + " — " + label, "Optional Cost", new Object[]{"Pay", "Pass"});
-				if (choice != 0) { logEntry("Optional pay: declined " + cost); return; }
+				// The AI pays whenever it can cover the whole cost.
+				if (!mayDo(src + " — " + label, "Optional Cost", "Pay", "Pass",
+						() -> mw.autoAbilityTriggers.aiPlanCp(isP1, need, elementNeeds, null, true) != null)) {
+					logEntry("Optional pay: declined " + cost);
+					return;
+				}
 				mw.autoAbilityTriggers.showAutoAbilityPaymentDialog(src, need, need, isP1, 0, elementNeeds, paid -> {
 					if (paid >= need) { logEntry("Optional pay: paid " + cost + " — applying effect"); onPay.accept(this); }
 				}, null);
+			}
+
+			/**
+			 * Puts a "you may" to this context's player as a two-button dialog, answered under
+			 * {@link ChoiceKind#MAY}; {@code yes} is the button that takes it up.
+			 *
+			 * @param cpuAnswer whether the AI takes it up
+			 */
+			private boolean mayDo(String question, String title, String yes, String no, BooleanSupplier cpuAnswer) {
+				return mw.decideYesNo(isP1, "Waiting for your opponent: " + question,
+						() -> mw.showEffectOptionDialog(question, title, new Object[]{yes, no}) == 0,
+						cpuAnswer);
 			}
 
 			@Override public void mayPayCostOrElse(int cp, String element, int crystals, Runnable onNotPaid) {
@@ -8942,48 +9142,42 @@ final class GameContextImpl implements GameContext {
 					return;
 				}
 
-				if (!isP1) {
-					// Every printed consequence (self-break, self-damage, discard) costs the AI more
-					// than the cost itself, so it pays whenever it can.
-					if (crystals > 0) {
-						mw.playerSpendCrystals(false, crystals);
-						mw.refreshCrystalDisplays();
-						logEntry("[P2] " + src + " — pays " + cost);
-						return;
-					}
-					int need = element != null ? 1 : cp;
-					int paid = mw.autoAbilityTriggers.aiPayCp(false, need,
-							element != null ? Map.of(element, 1) : Map.of());
-					if (paid >= need) { logEntry("[P2] " + src + " — pays " + cost); return; }
-					logEntry("[P2] " + src + " — did not pay " + cost + "; effect applies");
-					onNotPaid.run();
-					return;
-				}
-
-				int choice = mw.showEffectOptionDialog(src + " — pay " + cost + "?",
-						"Optional Cost", new Object[]{"Pay", "Decline"});
-				if (choice != 0) {
+				// Every printed consequence (self-break, self-damage, discard) costs the AI more than
+				// the cost itself, so it pays whenever it can.
+				if (!mayDo(src + " — pay " + cost + "?", "Optional Cost", "Pay", "Decline", () -> true)) {
 					logEntry(src + " — declined to pay " + cost + "; effect applies");
 					onNotPaid.run();
 					return;
 				}
-				if (crystals > 0) {
-					mw.playerSpendCrystals(true, crystals);
-					mw.refreshCrystalDisplays();
-					logEntry(src + " — paid " + cost);
-					return;
-				}
-				int need = element != null ? 1 : cp;
-				boolean[] paidInFull = { false };
-				mw.autoAbilityTriggers.showAutoAbilityPaymentDialog(src, need, need, true, 0,
-						element != null ? Map.of(element, 1) : Map.of(),
-						paid -> paidInFull[0] = paid >= need, null);
-				if (paidInFull[0]) {
-					logEntry(src + " — paid " + cost);
+				if (payOptionalCost(src, cp, element, crystals, null)) {
+					logEntry((isP1 ? "" : "[P2] ") + src + " — paid " + cost);
 				} else {
-					logEntry(src + " — did not pay " + cost + "; effect applies");
+					logEntry((isP1 ? "" : "[P2] ") + src + " — did not pay " + cost + "; effect applies");
 					onNotPaid.run();
 				}
+			}
+
+			/**
+			 * Pays the optional cost this context's player has just agreed to: the Crystals outright,
+			 * or the CP through the routed payment. Reports whether it was paid in full.
+			 *
+			 * @param keep a card the AI must not spend on the CP — the payoff needs it — or null
+			 */
+			private boolean payOptionalCost(String src, int cp, String element, int crystals, CardData keep) {
+				if (crystals > 0) {
+					mw.playerSpendCrystals(isP1, crystals);
+					mw.refreshCrystalDisplays();
+					return true;
+				}
+				int need = element != null ? 1 : cp;
+				Map<String, Integer> needs = element != null ? Map.of(element, 1) : Map.of();
+				boolean[] paidInFull = { false };
+				// Short of the whole cost the AI pays nothing: a cost it cannot meet buys nothing.
+				mw.autoAbilityTriggers.payCpAtResolution(src, need, need, isP1, 0, needs, null,
+						() -> mw.autoAbilityTriggers.aiPlanCp(isP1, need, needs,
+								keep == null ? null : c -> c != keep, true),
+						paid -> paidInFull[0] = paid >= need, null);
+				return paidInFull[0];
 			}
 
 			@Override public void mayPayCostToEffect(int cp, String element, int crystals,
@@ -9002,45 +9196,18 @@ final class GameContextImpl implements GameContext {
 					return;
 				}
 
-				if (!isP1) {
-					// The payment buys a strictly positive effect, so the AI takes it when it can.
-					if (crystals > 0) {
-						mw.playerSpendCrystals(false, crystals);
-						mw.refreshCrystalDisplays();
-						logEntry("[P2] " + src + " — pays " + cost);
-						onPay.accept(this);
-						return;
-					}
-					int need = element != null ? 1 : cp;
-					Map<String, Integer> needs = element != null ? Map.of(element, 1) : Map.of();
-					// A card the payoff needs is not paid away for the CP; short without it, pay nothing.
-					int paid = keep == null ? mw.autoAbilityTriggers.aiPayCp(false, need, needs)
-							: mw.autoAbilityTriggers.aiPayCp(false, need, needs, c -> c != keep, true);
-					if (paid >= need) { logEntry("[P2] " + src + " — pays " + cost); onPay.accept(this); }
-					else               logEntry("[P2] " + src + " — did not pay " + cost + "; effect skipped");
-					return;
-				}
-
-				int choice = mw.showEffectOptionDialog(src + " — pay " + cost + "?",
-						"Optional Cost", new Object[]{"Pay", "Decline"});
-				if (choice != 0) {
+				// The payment buys a strictly positive effect, so the AI takes it when it can — and a
+				// card the payoff needs is not paid away for the CP; short without it, it pays nothing.
+				if (!mayDo(src + " — pay " + cost + "?", "Optional Cost", "Pay", "Decline", () -> true)) {
 					logEntry(src + " — declined to pay " + cost + "; effect skipped");
 					return;
 				}
-				if (crystals > 0) {
-					mw.playerSpendCrystals(true, crystals);
-					mw.refreshCrystalDisplays();
-					logEntry(src + " — paid " + cost);
+				if (payOptionalCost(src, cp, element, crystals, keep)) {
+					logEntry((isP1 ? "" : "[P2] ") + src + " — paid " + cost);
 					onPay.accept(this);
-					return;
+				} else {
+					logEntry((isP1 ? "" : "[P2] ") + src + " — did not pay " + cost + "; effect skipped");
 				}
-				int need = element != null ? 1 : cp;
-				boolean[] paidInFull = { false };
-				mw.autoAbilityTriggers.showAutoAbilityPaymentDialog(src, need, need, true, 0,
-						element != null ? Map.of(element, 1) : Map.of(),
-						paid -> paidInFull[0] = paid >= need, null);
-				if (paidInFull[0]) { logEntry(src + " — paid " + cost); onPay.accept(this); }
-				else                 logEntry(src + " — did not pay " + cost + "; effect skipped");
 			}
 
 			@Override public void breakAfterCombatAndDealNoDamage(CardData source) {
@@ -9067,55 +9234,56 @@ final class GameContextImpl implements GameContext {
 
 			@Override public void mayDullActiveCardToReplayAbility(String cardName, java.util.function.Consumer<GameContext> replayAction) {
 				// Find an active card of that name on the ability user's side
+				List<CardData>  fwds      = mw.playerForwardCards(isP1);
+				List<CardState> fwdStates = isP1 ? mw.p1ForwardStates : mw.p2ForwardStates;
 				int fwdIdx = -1;
-				for (int i = 0; i < mw.p1ForwardCards.size(); i++) {
-					if (mw.p1ForwardCards.get(i).name().equalsIgnoreCase(cardName)
-							&& mw.p1ForwardStates.get(i) == CardState.ACTIVE) { fwdIdx = i; break; }
+				for (int i = 0; i < fwds.size(); i++) {
+					if (fwds.get(i).name().equalsIgnoreCase(cardName)
+							&& fwdStates.get(i) == CardState.ACTIVE) { fwdIdx = i; break; }
 				}
+				CardData[]  bkps      = mw.playerBackupCards(isP1);
+				CardState[] bkpStates = mw.playerBackupStates(isP1);
 				int bkpIdx = -1;
 				if (fwdIdx < 0) {
-					for (int i = 0; i < mw.p1BackupCards.length; i++) {
-						if (mw.p1BackupCards[i] != null && mw.p1BackupCards[i].name().equalsIgnoreCase(cardName)
-								&& mw.p1BackupStates[i] == CardState.ACTIVE) { bkpIdx = i; break; }
+					for (int i = 0; i < bkps.length; i++) {
+						if (bkps[i] != null && bkps[i].name().equalsIgnoreCase(cardName)
+								&& bkpStates[i] == CardState.ACTIVE) { bkpIdx = i; break; }
 					}
 				}
 				if (fwdIdx < 0 && bkpIdx < 0) {
 					logEntry("Replay: no active " + cardName + " on field — offer skipped");
 					return;
 				}
-				if (!isP1) { logEntry("[P2 AI] Passes on ability replay (dull " + cardName + ")"); return; }
 				String src = mw.currentAbilitySource != null ? mw.currentAbilitySource.name() : "Ability";
-				int choice = mw.showEffectOptionDialog(
-						src + " — Dull active " + cardName + " to use this ability again?",
-						"Replay Ability", new Object[]{"Dull", "Pass"});
-				if (choice != 0) { logEntry("Replay: declined to dull " + cardName); return; }
+				if (!mayDo(src + " — Dull active " + cardName + " to use this ability again?",
+						"Replay Ability", "Dull", "Pass", () -> {
+							logEntry("[P2 AI] Passes on ability replay (dull " + cardName + ")");
+							return false;
+						})) { logEntry("Replay: declined to dull " + cardName); return; }
 				if (fwdIdx >= 0) {
-					dullP1Forward(fwdIdx);
+					if (isP1) dullP1Forward(fwdIdx); else dullP2Forward(fwdIdx);
 				} else {
-					mw.p1BackupStates[bkpIdx] = CardState.DULL;
-					mw.refreshP1BackupSlot(bkpIdx);
+					bkpStates[bkpIdx] = CardState.DULL;
+					if (isP1) mw.refreshP1BackupSlot(bkpIdx); else mw.refreshP2BackupSlot(bkpIdx);
 				}
 				logEntry("Replay: dulled " + cardName + " — using ability again");
 				replayAction.accept(this);
 			}
 
 			@Override public void mayDiscardCardNameToReplayAbility(String cardName, java.util.function.Consumer<GameContext> replayAction) {
-				List<CardData> hand = isP1 ? mw.gameState.getP1Hand() : mw.gameState.getP2Hand();
+				List<CardData> hand = mw.playerHand(isP1);
 				int handIdx = -1;
 				for (int i = 0; i < hand.size(); i++) {
 					if (hand.get(i).name().equalsIgnoreCase(cardName)) { handIdx = i; break; }
 				}
 				if (handIdx < 0) { logEntry("Replay: no " + cardName + " in hand — offer skipped"); return; }
-				if (!isP1) { logEntry("[P2 AI] Passes on ability replay (discard " + cardName + ")"); return; }
 				String src = mw.currentAbilitySource != null ? mw.currentAbilitySource.name() : "Ability";
-				int choice = mw.showEffectOptionDialog(
-						src + " — Discard " + cardName + " from hand to use this ability again?",
-						"Replay Ability", new Object[]{"Discard", "Pass"});
-				if (choice != 0) { logEntry("Replay: declined to discard " + cardName); return; }
-				CardData d = mw.playerBreakFromHand(true,handIdx);
-				if (d != null) { logEntry("Replay: discarded " + d.name()); mw.p1Turn.discardedByEffectThisTurn = true; }
-				mw.refreshP1HandLabel();
-				mw.refreshP1BreakLabel();
+				if (!mayDo(src + " — Discard " + cardName + " from hand to use this ability again?",
+						"Replay Ability", "Discard", "Pass", () -> {
+							logEntry("[P2 AI] Passes on ability replay (discard " + cardName + ")");
+							return false;
+						})) { logEntry("Replay: declined to discard " + cardName); return; }
+				mw.discardFromHand(isP1, List.of(handIdx), " (replay)");
 				logEntry("Replay: using ability again");
 				replayAction.accept(this);
 			}
@@ -9123,23 +9291,18 @@ final class GameContextImpl implements GameContext {
 			@Override public void mayDiscardCardNameFromHandOrElse(String cardName,
 					java.util.function.Consumer<GameContext> ifDiscarded,
 					java.util.function.Consumer<GameContext> ifNot) {
-				List<CardData> hand = isP1 ? mw.gameState.getP1Hand() : mw.gameState.getP2Hand();
+				List<CardData> hand = mw.playerHand(isP1);
 				int handIdx = -1;
 				for (int i = 0; i < hand.size(); i++) {
 					if (hand.get(i).name().equalsIgnoreCase(cardName)) { handIdx = i; break; }
 				}
 				if (handIdx < 0) { logEntry("[Effect] No " + cardName + " in hand — optional discard skipped"); ifNot.accept(this); return; }
-				if (!isP1) { logEntry("[P2 AI] Passes on optional discard of " + cardName); ifNot.accept(this); return; }
 				String src = mw.currentAbilitySource != null ? mw.currentAbilitySource.name() : "Ability";
-				int choice = mw.showEffectOptionDialog(
-						src + " — Discard " + cardName + " from hand?",
-						"You May Discard", new Object[]{"Discard", "Pass"});
-				if (choice != 0) { logEntry("[Effect] Declined to discard " + cardName); ifNot.accept(this); return; }
-				final int idx = handIdx;
-				CardData d = mw.playerBreakFromHand(true,idx);
-				if (d != null) { logEntry("[Effect] Discarded " + d.name()); mw.p1Turn.discardedByEffectThisTurn = true; }
-				mw.refreshP1HandLabel();
-				mw.refreshP1BreakLabel();
+				if (!mayDo(src + " — Discard " + cardName + " from hand?", "You May Discard", "Discard", "Pass", () -> {
+					logEntry("[P2 AI] Passes on optional discard of " + cardName);
+					return false;
+				})) { logEntry("[Effect] Declined to discard " + cardName); ifNot.accept(this); return; }
+				mw.discardFromHand(isP1, List.of(handIdx), "");
 				ifDiscarded.accept(this);
 			}
 
@@ -9150,20 +9313,13 @@ final class GameContextImpl implements GameContext {
 					logEntry("[Effect] Not enough " + type + "s to put into the Break Zone — nothing happens");
 					return;
 				}
-				List<ForwardTarget> picks;
-				if (eligible.size() == count) {
-					picks = eligible;                       // no choice to make
-				} else if (!isP1) {
-					// The AI already accepted the ability; what is left is which cards to spend, and
-					// the cheapest are the ones it wants back least.
-					List<ForwardTarget> byCost = new ArrayList<>(eligible);
-					byCost.sort(java.util.Comparator.comparingInt(
-							t -> { CardData c = cardAtTarget(t); return c == null ? 0 : c.cost(); }));
-					picks = new ArrayList<>(byCost.subList(0, count));
-				} else {
-					picks = mw.showForwardSelectDialog(eligible, count, false,
-							"Put " + count + " " + type + "(s) into the Break Zone");
-				}
+				List<ForwardTarget> picks = eligible.size() == count ? eligible   // no choice to make
+						: mw.selectOwnFieldTargets(isP1, eligible, count, false,
+								"Put " + count + " " + type + "(s) into the Break Zone",
+								"Waiting for your opponent to choose what to put into the Break Zone...",
+								// The AI already accepted the ability; what is left is which cards to
+								// spend, and the cheapest are the ones it wants back least.
+								() -> cheapestOf(eligible, count));
 				if (picks == null || picks.size() < count) {
 					logEntry("[Effect] Break Zone cost cancelled — nothing happens");
 					return;
@@ -9190,17 +9346,14 @@ final class GameContextImpl implements GameContext {
 					markEffectFizzled();
 					return;
 				}
-				ForwardTarget pick;
-				if (!isP1) {
-					// The AI pays with the card it will miss least.
-					pick = candidates.stream().min(java.util.Comparator.comparingInt(
-							t -> { CardData c = cardAtTarget(t); return c == null ? 0 : c.cost(); })).orElseThrow();
-				} else {
-					List<ForwardTarget> picks = mw.showForwardSelectDialog(candidates, 1, true,
-							(returnToHand ? "You may return " : "You may put ") + what
-							+ (returnToHand ? " to its owner's hand" : " into the Break Zone"));
-					pick = picks == null || picks.isEmpty() ? null : picks.get(0);
-				}
+				// "You may", so the pick is "up to" 1 and none declines. The AI pays with the card it
+				// will miss least.
+				List<ForwardTarget> picks = mw.selectOwnFieldTargets(isP1, candidates, 1, true,
+						(returnToHand ? "You may return " : "You may put ") + what
+								+ (returnToHand ? " to its owner's hand" : " into the Break Zone"),
+						"Waiting for your opponent to choose what to pay with...",
+						() -> cheapestOf(candidates, 1));
+				ForwardTarget pick = picks.isEmpty() ? null : picks.get(0);
 				if (pick == null) {
 					logEntry("[Effect] Declined to pay — nothing happens");
 					markEffectFizzled();
@@ -9240,30 +9393,27 @@ final class GameContextImpl implements GameContext {
 					return 0;
 				}
 
-				List<ForwardTarget> picks;
-				if (isP1) {
-					// upTo, with the whole eligible board as the ceiling: "any number" spans none
-					// through all of them, so unlike a counted selection this must never auto-pick
-					// — a board that happens to be small is still the player's choice to spend.
-					picks = mw.showForwardSelectDialog(eligible, eligible.size(), true,
-							"Put any number of " + what + " into the Break Zone");
-				} else {
-					// The AI has already accepted the trigger's "you may"; what is left is how many
-					// to spend. Past the opponent's Forward count the selection half buys nothing
-					// — they have no more to hand over — so each further Character trades itself
-					// for a single discard, which is not a trade worth making. Cheapest first, for
-					// the reason putOwnTypeToBzThenDoSo spends cheapest first.
-					List<ForwardTarget> byCost = new ArrayList<>(eligible);
-					CardData src = mw.currentAbilitySource;
-					// The carrier is itself eligible, and it has just arrived: spending the card
-					// that bought the effect to pay for the effect is never what the AI wants.
-					if (src != null) byCost.removeIf(t -> cardAtTarget(t) == src);
-					byCost.sort(Comparator.comparingInt(
-							t -> { CardData c = cardAtTarget(t); return c == null ? 0 : c.cost(); }));
-					int cap = Math.min(byCost.size(), mw.playerForwardCards(!isP1).size());
-					picks = new ArrayList<>(byCost.subList(0, Math.max(0, cap)));
-				}
-				if (picks == null || picks.isEmpty()) {
+				// upTo, with the whole eligible board as the ceiling: "any number" spans none through
+				// all of them, so unlike a counted selection this must never auto-pick — a board
+				// that happens to be small is still the player's choice to spend.
+				List<ForwardTarget> picks = mw.selectOwnFieldTargets(isP1, eligible, eligible.size(), true,
+						"Put any number of " + what + " into the Break Zone",
+						"Waiting for your opponent to choose what to put into the Break Zone...",
+						() -> {
+							// The AI has already accepted the trigger's "you may"; what is left is how
+							// many to spend. Past the opponent's Forward count the selection half buys
+							// nothing — they have no more to hand over — so each further Character
+							// trades itself for a single discard, which is not a trade worth making.
+							// Cheapest first, for the reason putOwnTypeToBzThenDoSo spends cheapest first.
+							List<ForwardTarget> byCost = new ArrayList<>(eligible);
+							CardData src = mw.currentAbilitySource;
+							// The carrier is itself eligible, and it has just arrived: spending the card
+							// that bought the effect to pay for the effect is never what the AI wants.
+							if (src != null) byCost.removeIf(t -> cardAtTarget(t) == src);
+							int cap = Math.min(byCost.size(), mw.playerForwardCards(!isP1).size());
+							return cheapestOf(byCost, Math.max(0, cap));
+						});
+				if (picks.isEmpty()) {
 					logEntry("[Effect] Nothing put into the Break Zone");
 					return 0;
 				}
@@ -9272,13 +9422,20 @@ final class GameContextImpl implements GameContext {
 				return picks.size();
 			}
 
+			/** The {@code count} cheapest of {@code targets} — what the AI gives up when it pays with its own cards. */
+			private List<ForwardTarget> cheapestOf(List<ForwardTarget> targets, int count) {
+				List<ForwardTarget> byCost = new ArrayList<>(targets);
+				byCost.sort(Comparator.comparingInt(
+						t -> { CardData c = cardAtTarget(t); return c == null ? 0 : c.cost(); }));
+				return List.copyOf(byCost.subList(0, Math.min(count, byCost.size())));
+			}
+
 			@Override public void mayBreakSourceWhenDoSo(CardData source, java.util.function.Consumer<GameContext> whenDoSo) {
-				if (!isP1) { logEntry("[P2 AI] Passes on optional break of " + source.name()); return; }
 				String title = (mw.currentAbilitySource != null ? mw.currentAbilitySource.name() : source.name());
-				int choice = mw.showEffectOptionDialog(
-						title + " — Put " + source.name() + " into the Break Zone?",
-						"You May", new Object[]{"Break", "Pass"});
-				if (choice != 0) { logEntry("[Effect] Declined to break " + source.name()); return; }
+				if (!mayDo(title + " — Put " + source.name() + " into the Break Zone?", "You May", "Break", "Pass", () -> {
+					logEntry("[P2 AI] Passes on optional break of " + source.name());
+					return false;
+				})) { logEntry("[Effect] Declined to break " + source.name()); return; }
 				logEntry("[Effect] " + source.name() + " → Break Zone (by choice)");
 				breakSourceCard(source);
 				whenDoSo.accept(this);
@@ -9290,59 +9447,71 @@ final class GameContextImpl implements GameContext {
 						.filter(c -> c.containsElement(element))
 						.collect(Collectors.toList());
 				if (eligible.isEmpty()) { logEntry("[Effect] No " + element + " card in hand — fizzle"); return; }
-				CardData toReveal;
-				if (!isP1) {
-					toReveal = eligible.get(0);
-				} else if (eligible.size() == 1) {
-					toReveal = eligible.get(0);
-				} else {
-					String src = mw.currentAbilitySource != null ? mw.currentAbilitySource.name() : "Ability";
-					Object[] names = eligible.stream().map(CardData::name).toArray();
-					int pick = mw.showEffectOptionDialog(src + " — Choose " + element + " card to reveal:", "Reveal", names);
-					toReveal = eligible.get(Math.max(0, Math.min(pick, eligible.size() - 1)));
-				}
+				// Which card is shown changes nothing but the log, but the answer still crosses so
+				// both logs name the same one.
+				String src = mw.currentAbilitySource != null ? mw.currentAbilitySource.name() : "Ability";
+				int pick = eligible.size() == 1 ? 0 : mw.decideOption(isP1, eligible.size(),
+						"Waiting for your opponent to reveal a card...",
+						() -> {
+							Object[] names = eligible.stream().map(CardData::name).toArray();
+							int p = mw.showEffectOptionDialog(src + " — Choose " + element + " card to reveal:", "Reveal", names);
+							return Math.max(0, Math.min(p, eligible.size() - 1));
+						},
+						() -> 0);
+				CardData toReveal = eligible.get(Math.max(0, pick));
 				logEntry("[Effect] Reveals " + toReveal.name() + " from hand");
 				drawCards(drawCount);
 			}
 
 			@Override public void playerMayDoEffect(String prompt, java.util.function.Consumer<GameContext> effect) {
-				if (!isP1) { logEntry("[P2 AI] Auto-accepts: " + prompt); effect.accept(this); return; }
 				String src = mw.currentAbilitySource != null ? mw.currentAbilitySource.name() : "Ability";
-				int choice = mw.showEffectOptionDialog(src + " — " + prompt, "You May", new Object[]{"OK", "Decline"});
-				if (choice != 0) { logEntry("[Effect] Declined: " + prompt); return; }
+				if (!mayDo(src + " — " + prompt, "You May", "OK", "Decline", () -> {
+					logEntry("[P2 AI] Auto-accepts: " + prompt);
+					return true;
+				})) { logEntry("[Effect] Declined: " + prompt); return; }
 				effect.accept(this);
 			}
 
 			@Override public int placeUpToFromHandToBottomOfDeck(int max) {
-				if (isP1) return mw.showPlaceToBottomOfDeckDialog(max, true);
 				// The AI always cycles as many of its worst cards as it can: the returned cards go
 				// under the deck before the redraw, so the deck never gets shorter.
-				List<CardData> hand = mw.gameState.getP2Hand();
-				int actual = Math.min(max, hand.size());
-				for (int i = 0; i < actual; i++) {
-					CardData d = hand.remove(MainWindow.pickWorstHandCard0(hand));
-					mw.gameState.getP2MainDeck().addLast(d);
-					logEntry("[P2] Places " + d.name() + " at bottom of deck");
-				}
-				if (actual > 0) { mw.refreshP2HandCountLabel(); mw.refreshP2DeckLabel(); }
-				return actual;
+				return placeHandCardsOnDeckBottom(max, true);
 			}
 
 			@Override public void placeFromHandToBottomOfDeck(int count) {
-				if (isP1) {
-					mw.showPlaceToBottomOfDeckDialog(count);
-				} else {
-					List<CardData> hand = mw.gameState.getP2Hand();
-					int actual = Math.min(count, hand.size());
-					for (int i = 0; i < actual; i++) {
-						int idx = MainWindow.pickWorstHandCard0(hand);
-						CardData d = hand.remove(idx);
-						mw.gameState.getP2MainDeck().addLast(d);
-						logEntry("[P2] Places " + d.name() + " at bottom of deck");
-					}
-					mw.refreshP2HandCountLabel();
-					mw.refreshP2DeckLabel();
+				placeHandCardsOnDeckBottom(count, false);
+			}
+
+			/**
+			 * This context's player puts {@code count} cards from their hand on the bottom of their
+			 * deck — up to that many with {@code upTo}. Highest hand index goes under first, the
+			 * order the dialog always placed them in. Returns how many went.
+			 */
+			private int placeHandCardsOnDeckBottom(int count, boolean upTo) {
+				List<CardData> hand = mw.playerHand(isP1);
+				int must = Math.min(count, hand.size());
+				if (must == 0) return 0;
+				List<Integer> all = handIndices(isP1);
+				List<Integer> picks = mw.selectOwnHandCards(isP1, all, must,
+						"Waiting for your opponent to choose cards to put on the bottom of their deck...",
+						() -> {
+							List<Integer> out = new ArrayList<>();
+							shufflingway.dialog.HandPickDialog.showPlaceToBottom(mw.frame, hand, must, upTo,
+									mw::showZoomAt, mw::hideZoom, out::addAll);
+							return out;
+						},
+						() -> worstHandCards(hand, all, must));
+				List<Integer> descending = new ArrayList<>(picks);
+				descending.sort(Collections.reverseOrder());
+				Deque<CardData> deck = isP1 ? mw.gameState.getP1MainDeck() : mw.gameState.getP2MainDeck();
+				for (int i : descending) {
+					CardData d = hand.remove(i);
+					deck.addLast(d);
+					logEntry((isP1 ? "" : "[P2] ") + "Places " + d.name() + " at bottom of deck");
 				}
+				if (isP1) { mw.refreshP1HandLabel();      mw.refreshP1DeckLabel(); }
+				else      { mw.refreshP2HandCountLabel(); mw.refreshP2DeckLabel(); }
+				return descending.size();
 			}
 
 			@Override public void selfDiscardEntireHand() {
@@ -10263,6 +10432,25 @@ final class GameContextImpl implements GameContext {
 	// =========================================================================================
 	// Break Zone salvage and cast-from-Break-Zone
 	// =========================================================================================
+			/**
+			 * This context's player picks 1 of {@code candidates}; {@code null} when they picked
+			 * none. The AI takes the first.
+			 *
+			 * <p>The position crosses, so {@code candidates} must be built in the same order on both
+			 * clients — one zone, or the controller's zone before their opponent's. Never "P1's
+			 * first": the seats are swapped on the other client.
+			 */
+			private CardData pickCard(List<CardData> candidates, String what, Supplier<CardData> localPick) {
+				int idx = mw.decideOption(isP1, candidates.size(),
+						"Waiting for your opponent to choose " + what + "...",
+						() -> {
+							CardData c = localPick.get();
+							return c == null ? -1 : MainWindow.identityIndexOf(candidates, c);
+						},
+						() -> 0);
+				return idx < 0 ? null : candidates.get(idx);
+			}
+
 			@Override public void chooseSummonFromOwnBzToHand() {
 				List<CardData> bz = isP1 ? mw.gameState.getP1BreakZone() : mw.gameState.getP2BreakZone();
 				List<CardData> candidates = new ArrayList<>();
@@ -10271,9 +10459,8 @@ final class GameContextImpl implements GameContext {
 					logEntry((isP1 ? "P1" : "P2") + " Break Zone has no Summon — effect fizzles");
 					return;
 				}
-				CardData picked = isP1
-						? mw.chooseCardFromBzDialog(candidates, "Choose 1 Summon from your Break Zone")
-						: candidates.get(0);
+				CardData picked = pickCard(candidates, "a Summon from their Break Zone",
+						() -> mw.chooseCardFromBzDialog(candidates, "Choose 1 Summon from your Break Zone"));
 				if (picked == null) return;
 				bz.remove(picked);
 				List<CardData> hand = isP1 ? mw.gameState.getP1Hand() : mw.gameState.getP2Hand();
@@ -10295,10 +10482,9 @@ final class GameContextImpl implements GameContext {
 					markEffectFizzled();
 					return;
 				}
-				CardData picked = isP1
-						? mw.chooseCardFromBzDialog(candidates,
-								"Select 1 Card Name " + cardName + " removed from the game")
-						: candidates.get(0);
+				CardData picked = pickCard(candidates, "a card removed from the game",
+						() -> mw.chooseCardFromBzDialog(candidates,
+								"Select 1 Card Name " + cardName + " removed from the game"));
 				if (picked == null) return;
 				if (!mw.gameState.removeFromPermanentRfp(picked)) return;
 				(isP1 ? mw.gameState.getP1Hand() : mw.gameState.getP2Hand()).add(picked);
@@ -10319,24 +10505,23 @@ final class GameContextImpl implements GameContext {
 				List<CardData> pool;
 				if (allSummons.size() <= total) {
 					pool = new ArrayList<>(allSummons);
-				} else if (isP1) {
+				} else {
+					// One question per Summon, each over what is left; declining stops early.
 					pool = new ArrayList<>();
 					List<CardData> remaining = new ArrayList<>(allSummons);
 					for (int i = 0; i < total && !remaining.isEmpty(); i++) {
-						CardData pick = mw.chooseCardFromBzDialog(remaining,
-								"Choose Summon " + (i + 1) + " of " + total + " from your Break Zone");
+						String title = "Choose Summon " + (i + 1) + " of " + total + " from your Break Zone";
+						CardData pick = pickCard(remaining, "Summons from their Break Zone",
+								() -> mw.chooseCardFromBzDialog(remaining, title));
 						if (pick == null) break;
 						pool.add(pick);
-						remaining.remove(pick);
+						remaining.remove(MainWindow.identityIndexOf(remaining, pick));
 					}
 					if (pool.isEmpty()) return;
-				} else {
-					pool = new ArrayList<>(allSummons.subList(0, total));
 				}
 				// Pick 1 from the pool to add to hand
-				CardData kept = isP1
-						? mw.chooseCardFromBzDialog(pool, "Choose 1 Summon to add to your hand")
-						: pool.get(0);
+				CardData kept = pickCard(pool, "a Summon to add to their hand",
+						() -> mw.chooseCardFromBzDialog(pool, "Choose 1 Summon to add to your hand"));
 				if (kept == null) return;
 				bz.remove(kept);
 				List<CardData> hand = isP1 ? mw.gameState.getP1Hand() : mw.gameState.getP2Hand();
@@ -10363,9 +10548,8 @@ final class GameContextImpl implements GameContext {
 							+ (isP1 ? "your" : "P2's") + " Break Zone — effect fizzles");
 					return;
 				}
-				CardData picked = isP1
-						? mw.chooseSummonFromBzDialog(candidates, element)
-						: candidates.get(0);
+				CardData picked = pickCard(candidates, "a Summon in their Break Zone",
+						() -> mw.chooseSummonFromBzDialog(candidates, element));
 				if (picked == null) return;
 				mw.registerBorrowedPlayable(isP1, picked, PlayableEntry.bzThisTurn(costReduction));
 				logEntry((isP1 ? "" : "[P2] ") + picked.name()
@@ -10403,9 +10587,8 @@ final class GameContextImpl implements GameContext {
 					logEntry("No eligible card in opponent's Break Zone — effect fizzles");
 					return;
 				}
-				CardData picked = isP1
-						? mw.chooseCardFromBzDialog(candidates, "Choose 1 card in opponent's Break Zone")
-						: candidates.get(0);
+				CardData picked = pickCard(candidates, "a card in your Break Zone",
+						() -> mw.chooseCardFromBzDialog(candidates, "Choose 1 card in opponent's Break Zone"));
 				if (picked == null) return;
 				List<CardData> ownerBz = isP1 ? mw.gameState.getP2BreakZone() : mw.gameState.getP1BreakZone();
 				ownerBz.remove(picked);
@@ -10433,9 +10616,10 @@ final class GameContextImpl implements GameContext {
 						if (picks == 0) logEntry("No eligible Summon in Break Zone — effect fizzles");
 						return;
 					}
-					CardData picked = isP1
-							? mw.chooseCardFromBzDialog(candidates, "Choose a Summon from the Break Zone")
-							: candidates.get(0);
+					// The controller's Break Zone first, then their opponent's — the same order on
+					// both clients, since it is the same player's.
+					CardData picked = pickCard(candidates, "a Summon from a Break Zone",
+							() -> mw.chooseCardFromBzDialog(candidates, "Choose a Summon from the Break Zone"));
 					if (picked == null) return;
 					// The pick may come from either Break Zone; try our own first, then the opponent's.
 					// addToPermanentRfp resolves the card's true owner from the identity map.
@@ -10488,10 +10672,9 @@ final class GameContextImpl implements GameContext {
 							+ " in " + zoneLabel + " — effect fizzles");
 					return;
 				}
-				CardData picked = isP1
-						? mw.chooseCardFromBzDialog(candidates,
-								"Choose a " + elemLabel + "Summon of cost ≤ " + maxCost + " in " + zoneLabel)
-						: candidates.get(0);
+				CardData picked = pickCard(candidates, "a Summon in a Break Zone",
+						() -> mw.chooseCardFromBzDialog(candidates,
+								"Choose a " + elemLabel + "Summon of cost ≤ " + maxCost + " in " + zoneLabel));
 				if (picked == null) return;
 				PlayableEntry entry = new PlayableEntry(PlayableEntry.SourceZone.BREAK_ZONE, 0, false, true, true, true);
 				mw.registerBorrowedPlayable(isP1, picked, entry);
@@ -11322,13 +11505,17 @@ final class GameContextImpl implements GameContext {
 					logEntry(mimicSource.name() + " — Mimic: no special ability has been used this turn to copy");
 					return;
 				}
-				UsedSpecialAbility chosen;
-				if (isP1) {
-					chosen = mw.chooseMimicSpecialAbility(options);
-					if (chosen == null) { logEntry(mimicSource.name() + " — Mimic cancelled"); return; }
-				} else {
-					chosen = options.get(0); // AI: replay the earliest eligible special used this turn
-				}
+				// Both clients record the specials used this turn in the order they were used.
+				// The AI replays the earliest eligible one.
+				int pick = mw.decideOption(isP1, options.size(),
+						"Waiting for your opponent to choose a special ability to copy...",
+						() -> {
+							UsedSpecialAbility c = mw.chooseMimicSpecialAbility(options);
+							return c == null ? -1 : options.indexOf(c);
+						},
+						() -> 0);
+				if (pick < 0) { logEntry(mimicSource.name() + " — Mimic cancelled"); return; }
+				UsedSpecialAbility chosen = options.get(pick);
 				// Substitute the mimicking card's name for the original user's where the effect names it.
 				String substituted = ActionResolver.substituteSourceName(
 						chosen.ability().effectText(), chosen.source().name(), mimicSource.name());
@@ -11346,21 +11533,22 @@ final class GameContextImpl implements GameContext {
 				List<CardData> hand = isP1 ? mw.gameState.getP1Hand()       : mw.gameState.getP2Hand();
 				if (dz.isEmpty()) { logEntry("Damage Zone swap — no cards in Damage Zone"); return; }
 
-				int dzIdx;
-				if (isP1) {
-					dzIdx = mw.showPickOneCardDialog(
-							"Choose a card from your Damage Zone",
-							"Pick 1 card to add to your hand.",
-							dz, "Add to Hand", false);
-				} else {
-					int worst = 0, worstScore = Integer.MAX_VALUE;
-					for (int i = 0; i < dz.size(); i++) {
-						CardData c = dz.get(i);
-						int score = c.cost() + (c.exBurst() ? -100 : 0);
-						if (score < worstScore) { worstScore = score; worst = i; }
-					}
-					dzIdx = worst;
-				}
+				// The Damage Zone is public and held in the same order on both clients.
+				int dzIdx = mw.decideOption(isP1, dz.size(),
+						"Waiting for your opponent to choose a card from their Damage Zone...",
+						() -> mw.showPickOneCardDialog(
+								"Choose a card from your Damage Zone",
+								"Pick 1 card to add to your hand.",
+								dz, "Add to Hand", false),
+						() -> {
+							int worst = 0, worstScore = Integer.MAX_VALUE;
+							for (int i = 0; i < dz.size(); i++) {
+								CardData c = dz.get(i);
+								int score = c.cost() + (c.exBurst() ? -100 : 0);
+								if (score < worstScore) { worstScore = score; worst = i; }
+							}
+							return worst;
+						});
 				if (dzIdx < 0) { logEntry("Damage Zone swap — cancelled"); return; }
 
 				CardData taken = dz.remove(dzIdx);
@@ -11373,16 +11561,13 @@ final class GameContextImpl implements GameContext {
 
 				if (hand.isEmpty()) { logEntry("Damage Zone swap — hand empty, no card to return"); return; }
 
-				int handIdx;
-				if (isP1) {
-					handIdx = mw.showPickOneCardDialog(
-							"Choose a card from your hand",
-							"Pick 1 card to put into your Damage Zone (its EX Burst will not trigger).",
-							hand, "Put into Damage Zone", false);
-					if (handIdx < 0) { logEntry("Damage Zone swap — cancelled at return step"); return; }
-				} else {
-					handIdx = MainWindow.pickWorstHandCard0(hand);
-				}
+				int handIdx = pickOneOwnHandCard(isP1, hand, handIndices(isP1), "put into their Damage Zone",
+						candidates -> mw.showPickOneCardDialog(
+								"Choose a card from your hand",
+								"Pick 1 card to put into your Damage Zone (its EX Burst will not trigger).",
+								candidates, "Put into Damage Zone", false),
+						() -> MainWindow.pickWorstHandCard0(hand));
+				if (handIdx < 0) { logEntry("Damage Zone swap — cancelled at return step"); return; }
 
 				CardData returned = hand.remove(handIdx);
 				dz.add(returned);
@@ -11404,18 +11589,18 @@ final class GameContextImpl implements GameContext {
 					logEntry("[EX Burst] No triggerable EX Burst cards in Damage Zone");
 					return;
 				}
-				if (isP1) {
-					CardData chosen = mw.showPickExBurstFromDamageZoneDialog(eligible);
-					if (chosen == null) return;
-					logEntry("[EX Burst] " + chosen.name() + " — placed on stack");
-					mw.gameState.pushStack(new StackEntry(chosen, true, true));
-					mw.showStackWindow();
-				} else {
-					CardData chosen = eligible.get(0);
-					logEntry("[AI EX Burst] " + chosen.name() + " — placed on stack");
-					mw.gameState.pushStack(new StackEntry(chosen, false, true));
-					mw.showStackWindowIfNeeded();
-				}
+				int pick = mw.decideOption(isP1, eligible.size(),
+						"Waiting for your opponent to choose an EX Burst...",
+						() -> {
+							CardData chosen = mw.showPickExBurstFromDamageZoneDialog(eligible);
+							return chosen == null ? -1 : MainWindow.identityIndexOf(eligible, chosen);
+						},
+						() -> 0);
+				if (pick < 0) return;
+				CardData chosen = eligible.get(pick);
+				logEntry((isP1 ? "" : "[P2] ") + "[EX Burst] " + chosen.name() + " — placed on stack");
+				mw.gameState.pushStack(new StackEntry(chosen, isP1, true));
+				if (isP1) mw.showStackWindow(); else mw.showStackWindowIfNeeded();
 			}
 
 
@@ -12037,20 +12222,11 @@ final class GameContextImpl implements GameContext {
 			}
 
 			@Override public void flipUntilTypeToHandRestShuffleBottom() {
-				final String[] TYPES = {"Forward", "Backup", "Monster", "Summon"};
 				Deque<CardData> deck = isP1 ? mw.gameState.getP1MainDeck() : mw.gameState.getP2MainDeck();
-				String selectedType;
-				if (!isP1) {
-					selectedType = ComputerPlayer.pickMostCommonCardType(new ArrayList<>(deck));
-					logEntry("[AI] selects card type: " + selectedType);
-				} else {
-					Object sel = javax.swing.JOptionPane.showInputDialog(mw.frame,
-							"Select 1 card type:", "Select Card Type",
-							javax.swing.JOptionPane.PLAIN_MESSAGE, null, TYPES, TYPES[0]);
-					if (sel == null) { logEntry("Card type selection cancelled."); return; }
-					selectedType = (String) sel;
-					logEntry("Selected card type: " + selectedType);
-				}
+				String selectedType = nameCardType("Select 1 card type:", "Select Card Type",
+						() -> ComputerPlayer.pickMostCommonCardType(new ArrayList<>(deck)));
+				if (selectedType == null) { logEntry("Card type selection cancelled."); return; }
+				logEntry((isP1 ? "" : "[P2] ") + "Selected card type: " + selectedType);
 				List<CardData> revealed = new ArrayList<>();
 				CardData found = null;
 				while (!deck.isEmpty()) {
@@ -12122,51 +12298,25 @@ final class GameContextImpl implements GameContext {
 	// Name a type; mass job and element grants
 	// =========================================================================================
 			@Override public void nameCardTypeOpponentDiscardDrawIfMatch() {
-				final String[] TYPES = {"Forward", "Backup", "Monster", "Summon"};
-				// Step 1: Name 1 card type
-				String namedType;
-				if (isP1) {
-					Object sel = javax.swing.JOptionPane.showInputDialog(mw.frame,
-							"Name 1 card type:", "Name a Card Type",
-							javax.swing.JOptionPane.QUESTION_MESSAGE, null, TYPES, TYPES[0]);
-					if (sel == null) { logEntry("Ability cancelled"); return; }
-					namedType = (String) sel;
-				} else {
-					namedType = ComputerPlayer.pickMostCommonCardType(mw.gameState.getP1Hand());
-				}
+				// Step 1: Name 1 card type. The AI guesses from its opponent's hand.
+				String namedType = nameCardType("Name 1 card type:", "Name a Card Type",
+						() -> ComputerPlayer.pickMostCommonCardType(mw.playerHand(!isP1)));
+				if (namedType == null) { logEntry("Ability cancelled"); return; }
 				logEntry((isP1 ? "" : "[P2] ") + "Names card type: " + namedType);
 
-				// Step 2: Opponent discards 1 card
-				CardData discarded = null;
-				if (isP1) {
-					// P2 CPU discards, avoiding the named type if possible
-					List<CardData> hand = mw.gameState.getP2Hand();
-					if (hand.isEmpty()) { logEntry("[P2] hand is empty — no card to discard"); return; }
-					int idx = ComputerPlayer.pickWorstAvoidingType(hand, namedType);
-					discarded = mw.playerBreakFromHand(false, idx);
-					if (discarded != null) {
-						logEntry("[P2] Discards " + discarded.name() + " (forced)");
-						mw.p2Turn.discardedByEffectThisTurn = true;
-						mw.p1Turn.causedOpponentDiscardThisTurn = true;
-					}
-					mw.refreshP2HandCountLabel();
-					mw.refreshP2BreakLabel();
-				} else {
-					// P1 must choose a card to discard
-					List<CardData> hand = mw.gameState.getP1Hand();
-					if (hand.isEmpty()) { logEntry("P1 hand is empty — no card to discard"); return; }
-					int idx = mw.showPickOneCardDialog("Discard 1 card",
-							"Choose 1 card to discard.", hand, "Discard", false);
-					if (idx < 0) { logEntry("Discard cancelled"); return; }
-					discarded = mw.playerBreakFromHand(true, idx);
-					if (discarded != null) {
-						logEntry("[P1] Discards " + discarded.name() + " (forced)");
-						mw.p1Turn.discardedByEffectThisTurn = true;
-						mw.p2Turn.causedOpponentDiscardThisTurn = true;
-					}
-					mw.refreshP1HandLabel();
-					mw.refreshP1BreakLabel();
-				}
+				// Step 2: Opponent discards 1 card of their choosing — the AI avoiding the named type
+				// where it can.
+				boolean victimIsP1 = !isP1;
+				List<CardData> hand = mw.playerHand(victimIsP1);
+				if (hand.isEmpty()) { logEntry((victimIsP1 ? "P1" : "[P2]") + " hand is empty — no card to discard"); return; }
+				int idx = pickOneOwnHandCard(victimIsP1, hand, handIndices(victimIsP1), "discard",
+						candidates -> mw.showPickOneCardDialog("Discard 1 card",
+								"Choose 1 card to discard.", candidates, "Discard", false),
+						() -> ComputerPlayer.pickWorstAvoidingType(hand, namedType));
+				if (idx < 0) { logEntry("Discard cancelled"); return; }
+				List<CardData> gone = mw.discardFromHand(victimIsP1, List.of(idx), " (forced)");
+				CardData discarded = gone.isEmpty() ? null : gone.get(0);
+				if (discarded != null) mw.turn(isP1).causedOpponentDiscardThisTurn = true;
 
 				// Step 3: Draw 1 if type matches
 				if (discarded != null) {

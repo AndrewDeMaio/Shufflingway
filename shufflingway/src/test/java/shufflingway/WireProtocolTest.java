@@ -371,6 +371,75 @@ class WireProtocolTest {
         assertFalse(sent.payload().getBoolean("opponentsCard"));
     }
 
+    @Test
+    void aPickFromTheLocalPlayersHandIsSentAsHandIndices() throws InterruptedException {
+        // A discard, a card to play, a card to put under the deck: the other client is resolving
+        // the same effect and waiting on which card left.
+        MainWindow mw = sendingWindow();
+
+        List<Integer> picked = mw.selectOwnHandCards(true, List.of(0, 1, 2), 1, "Waiting...",
+                () -> List.of(2), List::of);
+
+        assertEquals(List.of(2), picked);
+        GameAction sent = next();
+        assertEquals(ChoiceKind.HAND_CARDS.name(), sent.payload().getString("kind"));
+        assertEquals(List.of(2), indicesOf(sent), "hand order is shared, so nothing is packed or flipped");
+    }
+
+    @Test
+    void aYouMayTheLocalPlayerAnswersIsSent() throws InterruptedException {
+        MainWindow mw = sendingWindow();
+
+        assertFalse(mw.decideYesNo(true, "Waiting...", () -> false, () -> true));
+
+        GameAction sent = next();
+        assertEquals(ChoiceKind.MAY.name(), sent.payload().getString("kind"));
+        assertEquals(List.of(0), indicesOf(sent), "a decline travels too — the far client is waiting on it");
+    }
+
+    @Test
+    void anOptionTheLocalPlayerPicksIsSentAsItsPosition() throws InterruptedException {
+        MainWindow mw = sendingWindow();
+
+        assertEquals(2, mw.decideOption(true, 4, "Waiting...", () -> 2, () -> 0));
+
+        GameAction sent = next();
+        assertEquals(ChoiceKind.OPTION.name(), sent.payload().getString("kind"));
+        assertEquals(List.of(2), indicesOf(sent));
+    }
+
+    @Test
+    void aDismissedOptionIsSentAsNoAnswer() throws InterruptedException {
+        // -1 is the dialog's "closed", and the far client has to learn the effect went nowhere.
+        MainWindow mw = sendingWindow();
+
+        assertEquals(-1, mw.decideOption(true, 4, "Waiting...", () -> -1, () -> 0));
+
+        assertEquals(List.of(), indicesOf(next()));
+    }
+
+    @Test
+    void aBorrowedCastIsSentFromWhereTheCardStoodBeforeItMoved() throws InterruptedException {
+        // A card cast "as though you owned it" out of the opponent's Break Zone used to send
+        // nothing, so the far client never saw it leave their Break Zone or arrive on this field.
+        MainWindow mw = sendingWindow();
+        mw.gameState.getP2BreakZone().add(forward("Filler"));
+        CardData borrowed = forward("Borrowed");
+        mw.gameState.getIdentity().put(borrowed, false);
+        mw.gameState.getP2BreakZone().add(borrowed);
+        mw.registerBorrowedPlayable(true, borrowed, PlayableEntry.bzThisTurn(0));
+
+        mw.executePlayFromBzP1(borrowed, List.of(), List.of(), Map.of());
+
+        GameAction sent = next();
+        assertEquals(ActionType.BORROWED_PLAY, sent.type());
+        assertEquals("BREAK_ZONE", sent.payload().getString("zone"));
+        assertFalse(sent.payload().getBoolean("own"), "their Break Zone, from this seat");
+        assertEquals(1, sent.payload().getInt("idx"), "where it stood before the cast took it");
+        assertEquals("Borrowed", sent.payload().getString("card"));
+        assertTrue(mw.p1ForwardCards.contains(borrowed), "and the cast still happened here");
+    }
+
     /** Seats a Forward on the opponent's field, owned by them, so breaking it can find an owner. */
     private static void seatP2Forward(MainWindow mw, CardData card) {
         mw.gameState.getIdentity().put(card, false);

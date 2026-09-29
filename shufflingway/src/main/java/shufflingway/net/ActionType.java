@@ -95,6 +95,16 @@ public enum ActionType {
                     //   position in that same before-search deck. The receiver shuffles from its
                     //   own stream for this deck, as the sender did, and checks the result against
                     //   "deck"; both already hold the deck, so it reveals nothing.
+    BORROWED_PLAY,  // payload: { "zone": "BREAK_ZONE"|"RFP", "own": bool, "idx": n, "card": "...",
+                    //            "discards": [idx, ...], "backups": [slot, ...],
+                    //            "backupElements": { "slot": "Fire" }, "backupBreaks": { "slot": "Fire" } }
+                    //   A card the sender cast "as though they owned it" out of a Break Zone or a
+                    //   Removed From Game zone — a permission an effect granted on both clients.
+                    //   "own" says whether that zone is the sender's; "idx" is the card's place in
+                    //   it and "card" its name, checked on arrival. Sent at the commit point, before
+                    //   the payment spends anything, so the payment indices address the hand and
+                    //   Backup row as they stood. A Summon's targets are not here: it chooses them
+                    //   as it goes on the Stack, and they follow as a CHOICE of kind CHOSEN_TARGETS.
     ACTIVATE_ABILITY, // payload: { "zone": "FORWARD"|"BACKUP"|"MONSTER"|"BREAK_ZONE"|"HAND",
                     //             "idx": n, "opponentsCard": bool, "primedTop": bool, "card": "...",
                     //             "ability": n, "abilityText": "...",
