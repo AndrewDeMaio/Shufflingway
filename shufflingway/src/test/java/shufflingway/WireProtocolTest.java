@@ -440,6 +440,22 @@ class WireProtocolTest {
         assertTrue(mw.p1ForwardCards.contains(borrowed), "and the cast still happened here");
     }
 
+    @Test
+    void passingOnTheOpponentsStackEntryTellsThem() throws InterruptedException {
+        // Their client is waiting on exactly this; a pass that stayed here would leave their
+        // entry unresolved forever, which is what the old local countdown amounted to.
+        MainWindow mw = sendingWindow();
+        CardData theirs = forward("Theirs");
+        mw.gameState.getIdentity().put(theirs, false);
+        mw.gameState.pushStack(new StackEntry(theirs, false, true));
+
+        mw.passStackPriority();
+
+        GameAction sent = next();
+        assertEquals(ChoiceKind.STACK_PASS.name(), sent.payload().getString("kind"));
+        assertEquals(List.of(), indicesOf(sent));
+    }
+
     /** Seats a Forward on the opponent's field, owned by them, so breaking it can find an owner. */
     private static void seatP2Forward(MainWindow mw, CardData card) {
         mw.gameState.getIdentity().put(card, false);

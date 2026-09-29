@@ -72592,11 +72592,22 @@ public class CardBehaviorTest {
 		mw.gameState.getIdentity().put(quiet, false);
 
 		// "Its auto-ability will not trigger" for Quiet, which is still sliding in when Loud arrives.
-		mw.suppressAutoAbilityForNextCards = 1;
-		mw.fieldEntryAnimator.placeWithAnim(quiet, false, FieldEntryAnimator.Style.FROM_HAND, null,
-				() -> mw.placeP2CardInForwardZone(quiet));
-		placeP2Forward(mw, loud);
-		assertEquals(List.of(loud), triggerSources(mw), "Loud is not the arrival the suppression was for");
+		//
+		// Both placements run in one EDT task, as they would in the game. The animator queues its
+		// play step with invokeLater, so inside this task it cannot have run yet — Quiet is
+		// guaranteed to be mid-arrival when Loud lands. Driven from the test thread instead, the
+		// play step could run on the EDT between (or during) the two placements: Quiet's held
+		// trigger briefly sets the suppression count while it runs, which could silence Loud, and
+		// the animator's in-flight count was written from two threads with nothing ordering them.
+		List<List<CardData>> seen = new ArrayList<>();
+		SwingUtilities.invokeAndWait(() -> {
+			mw.suppressAutoAbilityForNextCards = 1;
+			mw.fieldEntryAnimator.placeWithAnim(quiet, false, FieldEntryAnimator.Style.FROM_HAND, null,
+					() -> mw.placeP2CardInForwardZone(quiet));
+			placeP2Forward(mw, loud);
+			seen.add(triggerSources(mw));
+		});
+		assertEquals(List.of(loud), seen.get(0), "Loud is not the arrival the suppression was for");
 
 		SwingUtilities.invokeAndWait(() -> { });   // the animation finishes; Quiet's held triggers run
 
@@ -73207,6 +73218,153 @@ public class CardBehaviorTest {
 
 		assertSame(summon, mw.gameState.peekStack().source());
 		assertEquals(CardState.DULL, mw.p2BackupStates[0], "cost 2, 1 off: one Backup's worth");
+	}
+
+	// =========================================================================================
+	// Decisions MainWindow asks itself mid-resolution. The same bug as the rest of this family,
+	// found by the audit of MainWindow's own dialogs: the local player asked, the other seat
+	// answered by the AI — or, for a field ability, by the local player on the other seat's behalf.
+	// =========================================================================================
+
+	@Test
+	void anOpponentWhoDeclinesTheirExBurstIsNotGivenIt() {
+		MainWindow mw = new MainWindow();
+		RemoteOpponent remote = seatAgainstRemote(mw);
+		CardData ewen = makeForwardWithText("Ewen", "Earth", 1, 5000, "When Ewen is put from the field into the Break "
+				+ "Zone, you may put Ewen on top of its owner's deck.[[br]]   Damage 3 -- [[ex]]EX BURST[[/]] When Ewen is "
+				+ "put into the Damage Zone, choose 1 Forward. Break it. (This ability may only be used as an EX Burst.)");
+		CardData victim = makeForward("Genesis", "Ice", 3, 9000);
+		placeP1Forward(mw, victim);
+		mw.gameState.getIdentity().put(ewen, false);
+		for (int i = 0; i < 3; i++) mw.gameState.getP2DamageZone().add(makeForward("Filler", "Fire", 1, 1000));
+		// The AI always activates; they declined.
+		remote.onActionReceived(RemoteOpponent.choiceAction(ChoiceKind.EX_BURST, List.of(0)));
+
+		mw.autoAbilityTriggers.triggerExBurst(ewen, false);
+
+		assertTrue(mw.p1ForwardCards.contains(victim));
+	}
+
+	@Test
+	void theOpponentsRemoveInsteadAbilityIsTheirChoiceNotThisPlayers() {
+		MainWindow mw = new MainWindow();
+		RemoteOpponent remote = seatAgainstRemote(mw);
+		CardData holder = makeTextCard("Warden", "Dark", "Backup", 3, 0, null,
+				"If a Character is put from the field into the Break Zone, you may remove it from the game instead.");
+		mw.gameState.getIdentity().put(holder, false);
+		mw.p2BackupCards[0]  = holder;
+		mw.p2BackupStates[0] = CardState.ACTIVE;
+		CardData victim = makeForward("Victim", "Fire", 2, 5000);
+		mw.gameState.getIdentity().put(victim, true);
+		// The AI would remove its opponent's Character; they let it go to the Break Zone.
+		remote.onActionReceived(RemoteOpponent.choiceAction(ChoiceKind.MAY, List.of(0)));
+
+		mw.addToBreakZone(victim, true);
+
+		assertTrue(mw.gameState.getP1BreakZone().contains(victim));
+	}
+
+	@Test
+	void theCpuDecidesItsOwnRemoveInsteadAbility() {
+		// This player used to be asked, on the CPU's behalf, what the CPU's field ability did.
+		MainWindow mw = new MainWindow();
+		CardData holder = makeTextCard("Warden", "Dark", "Backup", 3, 0, null,
+				"If a Character is put from the field into the Break Zone, you may remove it from the game instead.");
+		mw.gameState.getIdentity().put(holder, false);
+		mw.p2BackupCards[0]  = holder;
+		mw.p2BackupStates[0] = CardState.ACTIVE;
+		CardData victim = makeForward("Victim", "Fire", 2, 5000);
+		mw.gameState.getIdentity().put(victim, true);
+
+		mw.addToBreakZone(victim, true);
+
+		assertFalse(mw.gameState.getP1BreakZone().contains(victim), "the CPU removes its opponent's Characters");
+	}
+
+	@Test
+	void anOpponentsDifferentCostSearchTakesWhatTheyChose() {
+		MainWindow mw = new MainWindow();
+		RemoteOpponent remote = seatAgainstRemote(mw);
+		for (int cost = 1; cost <= 3; cost++) {
+			CardData s = makeSummon("Summon " + cost, "Fire", cost, "Draw 1 card.");
+			mw.gameState.getIdentity().put(s, false);
+			mw.gameState.getP2MainDeck().addLast(s);
+		}
+		// The AI takes the first pair of different costs; they took the cost-3 Summon alone.
+		remote.onActionReceived(RemoteOpponent.choiceAction(ChoiceKind.DECK_SEARCH, List.of(2)));
+
+		mw.searchDeckNElementSummonsDifferentCost(false, 2, "Fire");
+
+		assertEquals(List.of("Summon 3"), forwardNames(mw.gameState.getP2Hand()));
+		assertEquals(2, mw.gameState.getP2MainDeck().size());
+	}
+
+	// =========================================================================================
+	// The Stack priority handshake. Both clients hold the same Stack, so it is mirrored: the
+	// controller's client waits for the opponent's STACK_PASS on its own entry, and the other
+	// client sends one when its player clicks OK. Before this the controller's client resolved its
+	// own entries at once, and the other client ran a local 10-second countdown that told nobody.
+	// =========================================================================================
+
+	@Test
+	void theControllersEntryResolvesOnTheOpponentsPass() {
+		MainWindow mw = new MainWindow();
+		RemoteOpponent remote = seatAgainstRemote(mw);
+		CardData summon = makeSummon("Mine", "Ice", 2, "");
+		mw.gameState.getIdentity().put(summon, true);
+		mw.pushSummonOnStack(summon, true, 0, 0, false, null, false);
+		StackEntry entry = mw.gameState.peekStack();
+		remote.onActionReceived(RemoteOpponent.choiceAction(ChoiceKind.STACK_PASS, List.of()));
+
+		mw.resolveOnOpponentsPass(remote, entry);
+
+		assertEquals(0, mw.gameState.stackSize(), "they passed, so it resolved");
+		assertTrue(mw.gameState.getP1BreakZone().contains(summon));
+	}
+
+	@Test
+	void aPassWaitsForTheEntryItIsForToBeOnTop() {
+		// The wait is scheduled after the push; by the time it runs, a response can sit above the
+		// entry, and the pass that is coming is for that response's turn, not this one's.
+		MainWindow mw = new MainWindow();
+		RemoteOpponent remote = seatAgainstRemote(mw);
+		CardData mine = makeSummon("Mine", "Ice", 2, "");
+		mw.gameState.getIdentity().put(mine, true);
+		mw.pushSummonOnStack(mine, true, 0, 0, false, null, false);
+		StackEntry entry = mw.gameState.peekStack();
+		mw.pushSummonOnStack(makeSummon("Theirs", "Fire", 2, ""), false, 0, 0, false, null, false);
+		remote.onActionReceived(RemoteOpponent.choiceAction(ChoiceKind.STACK_PASS, List.of()));
+
+		mw.resolveOnOpponentsPass(remote, entry);
+
+		assertEquals(2, mw.gameState.stackSize(), "nothing resolved out of turn");
+	}
+
+	@Test
+	void passingOnTheOpponentsEntryResolvesIt() {
+		MainWindow mw = new MainWindow();
+		inboundOnly(mw);
+		CardData theirs = makeSummon("Theirs", "Fire", 2, "");
+		mw.gameState.getIdentity().put(theirs, false);
+		mw.pushSummonOnStack(theirs, false, 0, 0, false, null, false);
+
+		mw.passStackPriority();
+
+		assertEquals(0, mw.gameState.stackSize());
+		assertTrue(mw.gameState.getP2BreakZone().contains(theirs));
+	}
+
+	@Test
+	void theCpuStillPassesAtOnce() {
+		// No handshake without a remote player: the controller's entry resolves as it always did.
+		MainWindow mw = new MainWindow();
+		CardData summon = makeSummon("Mine", "Ice", 2, "");
+		mw.gameState.getIdentity().put(summon, true);
+		mw.pushSummonOnStack(summon, true, 0, 0, false, null, false);
+
+		mw.showStackWindow();
+
+		assertEquals(0, mw.gameState.stackSize());
 	}
 
 	@Test

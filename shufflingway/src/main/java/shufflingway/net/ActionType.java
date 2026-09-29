@@ -125,8 +125,10 @@ public enum ActionType {
                     //   it: the choices settled before the payment committed. Sent from that
                     //   commit point, so the source is still where it was; the payment's later
                     //   choices follow as CHOICEs.
-    DISCARD_HAND,   // payload: { "indices": [idx, ...] } — a discard with no CP, e.g. the
-                    //   end-phase trim to five. Replicated because it renumbers the hand.
+    DISCARD_HAND,   // payload: { "indices": [idx, ...] } — a discard with no CP: the end-phase
+                    //   trim to five, and the Job card discarded to cast a card for free under a
+                    //   field grant (sent just before that cast's PLAY_CARD, which has no field
+                    //   for it). Replicated because it renumbers the hand.
     ATTACK,         // payload: { "zone": "FORWARD"|"MONSTER"|"BACKUP", "indices": [n, ...],
                     //            "power": n }
                     //   The sender's own attackers, so the side flips on arrival; the slot indices

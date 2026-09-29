@@ -4528,83 +4528,92 @@ final class AutoAbilityTriggers {
 		// can run resolves to a log line, and a glow that blinks on and straight off reads as a
 		// glitch.  From this point there is always a dialog and possibly target picks to make.
 		if (isP1) mw.startExBurstGlow(exBurstDamageSlot(card));
-		if (isP1) {
-			JDialog dlg = new JDialog(mw.frame, "EX Burst — " + card.name(), true);
-			dlg.setResizable(false);
-			dlg.setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
-
-			JLabel cardLabel = new JLabel("...", SwingConstants.CENTER);
-			cardLabel.setPreferredSize(new Dimension(CARD_W, CARD_H));
-			cardLabel.setMinimumSize(new Dimension(CARD_W, CARD_H));
-			cardLabel.setOpaque(true);
-			cardLabel.setBackground(Color.DARK_GRAY);
-			cardLabel.setBorder(BorderFactory.createLineBorder(new Color(160, 110, 220), 1));
-			cardLabel.addMouseListener(new MouseAdapter() {
-				@Override public void mouseEntered(MouseEvent e) { mw.showZoomAt(card.imageUrl()); }
-				@Override public void mouseExited(MouseEvent e)  { mw.hideZoom(); }
-			});
-			new SwingWorker<ImageIcon, Void>() {
-				@Override protected ImageIcon doInBackground() throws Exception {
-					Image img = ImageCache.load(card.imageUrl());
-					return img == null ? null : new ImageIcon(img.getScaledInstance(CARD_W, CARD_H, Image.SCALE_SMOOTH));
-				}
-				@Override protected void done() {
-					try { ImageIcon ic = get(); if (ic != null) { cardLabel.setIcon(ic); cardLabel.setText(null); } }
-					catch (InterruptedException | ExecutionException ignored) {}
-				}
-			}.execute();
-
-			JLabel nameLabel = new JLabel(card.name(), SwingConstants.CENTER);
-			nameLabel.setFont(FontLoader.loadPixelFont(9));
-			nameLabel.setPreferredSize(new Dimension(CARD_W, 18));
-
-			JLabel effectLabel = new JLabel(
-					"<html><div style='text-align:center;width:" + CARD_W + "px'>" + effect + "</div></html>",
-					SwingConstants.CENTER);
-
-			JPanel infoPanel = new JPanel();
-			infoPanel.setLayout(new BoxLayout(infoPanel, BoxLayout.Y_AXIS));
-			nameLabel.setAlignmentX(java.awt.Component.CENTER_ALIGNMENT);
-			effectLabel.setAlignmentX(java.awt.Component.CENTER_ALIGNMENT);
-			infoPanel.add(nameLabel);
-			infoPanel.add(effectLabel);
-
-			JPanel wrapper = new JPanel(new BorderLayout(0, 4));
-			wrapper.setBorder(BorderFactory.createEmptyBorder(8, 8, 0, 8));
-			wrapper.add(cardLabel,  BorderLayout.CENTER);
-			wrapper.add(infoPanel,  BorderLayout.SOUTH);
-
-			boolean[] activated = {false};
-			JButton declineBtn = new JButton("Decline");
-			declineBtn.setFont(FontLoader.loadPixelFont(11));
-			declineBtn.addActionListener(ae -> { mw.hideZoom(); dlg.dispose(); });
-			JButton okBtn = new JButton("OK");
-			okBtn.setFont(FontLoader.loadPixelFont(11));
-			okBtn.addActionListener(ae -> { activated[0] = true; mw.hideZoom(); dlg.dispose(); });
-
-			JPanel south = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 6));
-			south.add(declineBtn);
-			south.add(okBtn);
-			south.setBorder(BorderFactory.createEmptyBorder(0, 8, 8, 8));
-
-			dlg.getContentPane().setLayout(new BorderLayout(0, 4));
-			dlg.getContentPane().add(wrapper, BorderLayout.CENTER);
-			dlg.getContentPane().add(south,   BorderLayout.SOUTH);
-			dlg.pack();
-			dlg.setLocationRelativeTo(mw.frame);
-			dlg.setVisible(true);
-
-			if (!activated[0]) {
-				mw.logEntry("[EX BURST] " + card.name() + " — declined");
-				return;
-			}
-		} else {
-			mw.logEntry("[EX BURST] [AI] " + card.name() + " — auto-activates");
+		// Asked of the damaged player, whoever holds that seat; the AI always activates.
+		String shownEffect = effect;
+		boolean activate = mw.decideYesNoAs(isP1, shufflingway.net.ChoiceKind.EX_BURST,
+				"Waiting for your opponent to decide on " + card.name() + "'s EX Burst...",
+				() -> askExBurst(card, shownEffect),
+				() -> {
+					mw.logEntry("[EX BURST] [AI] " + card.name() + " — auto-activates");
+					return true;
+				});
+		if (!activate) {
+			mw.logEntry("[EX BURST] " + card.name() + " — declined");
+			return;
 		}
 		mw.logEntry("[EX BURST] " + card.name() + " — " + effect);
 		if (card.isSummon()) { mw.currentResolutionIsSummon = true; mw.currentSummonSource = card; }
 		try { fn.accept(mw.buildGameContext(isP1, true)); } finally { mw.currentResolutionIsSummon = false; mw.currentSummonSource = null; }
 		triggerAutoAbilitiesForOpponentUsesExBurst(isP1);
+	}
+
+	/** The local player's EX Burst prompt: the card, its effect, OK or Decline. */
+	private boolean askExBurst(CardData card, String effect) {
+		JDialog dlg = new JDialog(mw.frame, "EX Burst — " + card.name(), true);
+		dlg.setResizable(false);
+		dlg.setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
+
+		JLabel cardLabel = new JLabel("...", SwingConstants.CENTER);
+		cardLabel.setPreferredSize(new Dimension(CARD_W, CARD_H));
+		cardLabel.setMinimumSize(new Dimension(CARD_W, CARD_H));
+		cardLabel.setOpaque(true);
+		cardLabel.setBackground(Color.DARK_GRAY);
+		cardLabel.setBorder(BorderFactory.createLineBorder(new Color(160, 110, 220), 1));
+		cardLabel.addMouseListener(new MouseAdapter() {
+			@Override public void mouseEntered(MouseEvent e) { mw.showZoomAt(card.imageUrl()); }
+			@Override public void mouseExited(MouseEvent e)  { mw.hideZoom(); }
+		});
+		new SwingWorker<ImageIcon, Void>() {
+			@Override protected ImageIcon doInBackground() throws Exception {
+				Image img = ImageCache.load(card.imageUrl());
+				return img == null ? null : new ImageIcon(img.getScaledInstance(CARD_W, CARD_H, Image.SCALE_SMOOTH));
+			}
+			@Override protected void done() {
+				try { ImageIcon ic = get(); if (ic != null) { cardLabel.setIcon(ic); cardLabel.setText(null); } }
+				catch (InterruptedException | ExecutionException ignored) {}
+			}
+		}.execute();
+
+		JLabel nameLabel = new JLabel(card.name(), SwingConstants.CENTER);
+		nameLabel.setFont(FontLoader.loadPixelFont(9));
+		nameLabel.setPreferredSize(new Dimension(CARD_W, 18));
+
+		JLabel effectLabel = new JLabel(
+				"<html><div style='text-align:center;width:" + CARD_W + "px'>" + effect + "</div></html>",
+				SwingConstants.CENTER);
+
+		JPanel infoPanel = new JPanel();
+		infoPanel.setLayout(new BoxLayout(infoPanel, BoxLayout.Y_AXIS));
+		nameLabel.setAlignmentX(java.awt.Component.CENTER_ALIGNMENT);
+		effectLabel.setAlignmentX(java.awt.Component.CENTER_ALIGNMENT);
+		infoPanel.add(nameLabel);
+		infoPanel.add(effectLabel);
+
+		JPanel wrapper = new JPanel(new BorderLayout(0, 4));
+		wrapper.setBorder(BorderFactory.createEmptyBorder(8, 8, 0, 8));
+		wrapper.add(cardLabel,  BorderLayout.CENTER);
+		wrapper.add(infoPanel,  BorderLayout.SOUTH);
+
+		boolean[] activated = {false};
+		JButton declineBtn = new JButton("Decline");
+		declineBtn.setFont(FontLoader.loadPixelFont(11));
+		declineBtn.addActionListener(ae -> { mw.hideZoom(); dlg.dispose(); });
+		JButton okBtn = new JButton("OK");
+		okBtn.setFont(FontLoader.loadPixelFont(11));
+		okBtn.addActionListener(ae -> { activated[0] = true; mw.hideZoom(); dlg.dispose(); });
+
+		JPanel south = new JPanel(new FlowLayout(FlowLayout.CENTER, 12, 6));
+		south.add(declineBtn);
+		south.add(okBtn);
+		south.setBorder(BorderFactory.createEmptyBorder(0, 8, 8, 8));
+
+		dlg.getContentPane().setLayout(new BorderLayout(0, 4));
+		dlg.getContentPane().add(wrapper, BorderLayout.CENTER);
+		dlg.getContentPane().add(south,   BorderLayout.SOUTH);
+		dlg.pack();
+		dlg.setLocationRelativeTo(mw.frame);
+		dlg.setVisible(true);
+		return activated[0];
 	}
 
 	/**

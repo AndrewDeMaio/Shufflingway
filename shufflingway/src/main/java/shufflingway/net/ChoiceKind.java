@@ -102,8 +102,8 @@ public enum ChoiceKind {
 	LB_DECK_CARD,
 
 	/**
-	 * Whether the sender triggered the EX Burst on a card that just reached their hand:
-	 * {@code [1]} for triggered, {@code [0]} for declined.
+	 * Whether the sender triggered an EX Burst: the one on the card their damage just revealed, or
+	 * on a card that just reached their hand. {@code [1]} for triggered, {@code [0]} for declined.
 	 *
 	 * <p>Separate from {@link #MAY} only to keep them apart on the wire. One reveal can offer an
 	 * optional effect and then turn up an EX Burst, and two clients that disagreed about whether
@@ -234,6 +234,21 @@ public enum ChoiceKind {
 	 * answer releases it.
 	 */
 	CAST_PAYMENT,
+
+	/**
+	 * The sender has passed on the entry at the top of the Stack — the one its controller, the
+	 * receiver, is waiting to resolve. Carries nothing.
+	 *
+	 * <p>Both clients hold the same Stack, so the handshake is mirrored: the controller's client
+	 * waits for this, and the other client sends it when its player clicks OK in the Stack window.
+	 * A response cast instead arrives as the play it is, and pushes above the entry on both
+	 * clients; the pass for the entry comes only once priority returns to it.
+	 *
+	 * <p>Its own kind rather than a {@link #PRIORITY_PASS}, because the two are waited on in nested
+	 * windows — a Summon cast inside a combat priority window is resolved, pass and all, before the
+	 * combat window closes — and a stack pass taken by the combat wait would release it early.
+	 */
+	STACK_PASS,
 
 	/**
 	 * The sender has finished with a combat priority window and passed. Carries nothing — the

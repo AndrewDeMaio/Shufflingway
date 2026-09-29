@@ -310,7 +310,6 @@ public class MainWindow {
 	// Hand hover popover (deck zone mouseover)
 	// Stack overlay (shown while any entry is on the resolution stack)
 	private JWindow               summonStackWindow;
-	private Timer     stackCountdownTimer;
 	private int                   stackWindowGeneration = 0;
 
 	// --- Game state ---
@@ -2711,7 +2710,6 @@ public class MainWindow {
 		// --- Tear down any in-progress game before resetting state ---
 		// Stop timers first so they cannot fire callbacks after state is cleared.
 		stackWindowGeneration++;
-		if (stackCountdownTimer  != null) { stackCountdownTimer.stop();    stackCountdownTimer  = null; }
 		if (p2AutoPassTimer      != null) { p2AutoPassTimer.stop();         p2AutoPassTimer      = null; }
 		mainPhaseAutoAdvance.reset();
 		// Dispose any floating windows.
@@ -6661,30 +6659,35 @@ public class MainWindow {
 			logEntry("Search: no eligible cards found");
 			return;
 		}
-		CardData[] picks = { null, null };
-		if (!isP1) {
-			// AI: try to find a non-sharing pair, otherwise take one card
-			if (!pool1.isEmpty() && !pool2.isEmpty()) {
-				outer:
-				for (CardData c1 : pool1) {
-					for (CardData c2 : pool2) {
-						if (!shufflingway.dialog.CardPickerDialog.dualSearchSharesElement(c1, c2)) { picks[0] = c1; picks[1] = c2; break outer; }
-					}
-				}
-				if (picks[0] == null) picks[0] = pool1.get(0);
-			} else if (!pool1.isEmpty()) {
-				picks[0] = pool1.get(0);
-			} else {
-				picks[1] = pool2.get(0);
-			}
-		} else {
-			picks = cardPickerDialog.pickDualSearch(pool1, pool2, "Job " + jobFilter, typeName);
-		}
-		if (picks == null) return;
+		// One list for the wire: the Job half, then the type half. A card in both halves appears
+		// in both, and the legality check below reads the pair against the halves, not positions.
+		List<CardData> matches = new ArrayList<>(pool1);
+		matches.addAll(pool2);
+		List<CardData> picks = chooseFromDeckSearch(isP1, matches, 2,
+				() -> {
+					CardData[] pair = cardPickerDialog.pickDualSearch(pool1, pool2, "Job " + jobFilter, typeName);
+					List<CardData> out = new ArrayList<>();
+					if (pair != null) for (CardData c : pair) if (c != null) out.add(c);
+					return out;
+				},
+				() -> {
+					// AI: try to find a non-sharing pair, otherwise take one card
+					for (CardData c1 : pool1)
+						for (CardData c2 : pool2)
+							if (c1 != c2 && !shufflingway.dialog.CardPickerDialog.dualSearchSharesElement(c1, c2))
+								return List.of(c1, c2);
+					return List.of(!pool1.isEmpty() ? pool1.get(0) : pool2.get(0));
+				},
+				// At most one from each half, and a pair that does not share an Element.
+				p -> {
+					if (p.size() < 2) return true;
+					CardData a = p.get(0), b = p.get(1);
+					boolean split = (identityIndexOf(pool1, a) >= 0 && identityIndexOf(pool2, b) >= 0)
+							|| (identityIndexOf(pool1, b) >= 0 && identityIndexOf(pool2, a) >= 0);
+					return a != b && split && !shufflingway.dialog.CardPickerDialog.dualSearchSharesElement(a, b);
+				});
 		for (CardData pick : picks) {
-			if (pick == null) continue;
-			if (isP1) gameState.removeFromP1MainDeck(pick);
-			else      deck.remove(pick);
+			removeByIdentity(deck, pick);
 			playerHand(isP1).add(pick);
 			logEntry((isP1 ? "" : "[P2] ") + pick.name() + " → hand (search)");
 			if (isP1) refreshP1HandLabel(); else refreshP2HandCountLabel();
@@ -6712,24 +6715,13 @@ public class MainWindow {
 			return;
 		}
 
-		List<CardData> chosen = new ArrayList<>();
-		if (!isP1) {
-			// AI: prefer a different-cost pair, otherwise take the single best card
-			CardData first = null, second = null;
-			outer:
-			for (CardData a : pool)
-				for (CardData b : pool)
-					if (a != b && a.cost() != b.cost()) { first = a; second = b; break outer; }
-			if (first != null) { chosen.add(first); chosen.add(second); }
-			else                chosen.add(pool.get(0));
-		} else {
-			List<CardData> picks = cardPickerDialog.pickTwoFromDeckSearchDifferentCost(pool);
-			chosen.addAll(picks);
-		}
+		List<CardData> chosen = chooseFromDeckSearch(isP1, pool, 2,
+				() -> cardPickerDialog.pickTwoFromDeckSearchDifferentCost(pool),
+				() -> aiDifferentCostPair(pool, 2),
+				MainWindow::allCostsDiffer);
 
 		for (CardData card : chosen) {
-			if (isP1) gameState.removeFromP1MainDeck(card);
-			else      deck.remove(card);
+			removeByIdentity(deck, card);
 			playerHand(isP1).add(card);
 			logEntry((isP1 ? "" : "[P2] ") + card.name() + " → hand (search)");
 			if (isP1) refreshP1HandLabel(); else refreshP2HandCountLabel();
@@ -6752,23 +6744,13 @@ public class MainWindow {
 			logEntry("Search: no " + element + " Summons found");
 			return;
 		}
-		List<CardData> chosen = new ArrayList<>();
-		if (!isP1) {
-			// AI: prefer a different-cost pair, otherwise take the single best card
-			CardData first = null, second = null;
-			outer:
-			for (CardData a : pool)
-				for (CardData b : pool)
-					if (a != b && a.cost() != b.cost()) { first = a; second = b; break outer; }
-			if (first != null) { chosen.add(first); if (count > 1) chosen.add(second); }
-			else chosen.add(pool.get(0));
-		} else {
-			List<CardData> picks = cardPickerDialog.pickTwoFromDeckSearchDifferentCost(pool);
-			chosen.addAll(picks);
-		}
+		// The dialog takes up to two; "count" is what the printing asks for, and bounds the answer.
+		List<CardData> chosen = chooseFromDeckSearch(isP1, pool, Math.max(1, count),
+				() -> cardPickerDialog.pickTwoFromDeckSearchDifferentCost(pool),
+				() -> aiDifferentCostPair(pool, count),
+				MainWindow::allCostsDiffer);
 		for (CardData card : chosen) {
-			if (isP1) gameState.removeFromP1MainDeck(card);
-			else      deck.remove(card);
+			removeByIdentity(deck, card);
 			playerHand(isP1).add(card);
 			logEntry((isP1 ? "" : "[P2] ") + card.name() + " → hand (search)");
 			if (isP1) refreshP1HandLabel(); else refreshP2HandCountLabel();
@@ -6777,12 +6759,28 @@ public class MainWindow {
 	}
 
 	/**
+	 * The AI's take from a "different cost" search: a pair of different costs when the pool has
+	 * one and {@code count} allows two, otherwise the first card.
+	 */
+	private static List<CardData> aiDifferentCostPair(List<CardData> pool, int count) {
+		if (count > 1)
+			for (CardData a : pool)
+				for (CardData b : pool)
+					if (a != b && a.cost() != b.cost()) return List.of(a, b);
+		return List.of(pool.get(0));
+	}
+
+	/** Whether no two of {@code picks} share a cost — the rider on the "different cost" searches. */
+	private static boolean allCostsDiffer(List<CardData> picks) {
+		return picks.stream().map(CardData::cost).distinct().count() == picks.size();
+	}
+
+	/**
 	 * 17-137S Rydia — see {@link GameContext#searchSummonsDiffCostOpponentSelectsOneBreakRestToHand}.
 	 *
-	 * <p>Resolved locally rather than over the wire, as the rest of the search family is. A deck
-	 * search is hidden information: the opponent's client does not hold the pool it was drawn from,
-	 * so the selection cannot travel as an index the way {@code opponentRevealsSelectOneDiscard}'s
-	 * hand positions do. That limitation belongs to every search here, not to this card.
+	 * <p>Two questions to two seats: the searcher's picks cross as a {@link ChoiceKind#DECK_SEARCH}
+	 * — both clients hold both decks, dealt from the shared seed, so a position in the matches names
+	 * the same card on both — and the opponent's denial as an {@link ChoiceKind#OPTION} among them.
 	 */
 	void searchSummonsDiffCostOpponentSelectsOneBreakRestToHand(boolean isP1, int count) {
 		if (turn(isP1).cannotSearchThisTurn) {
@@ -6798,17 +6796,15 @@ public class MainWindow {
 			return;
 		}
 
-		List<CardData> chosen = isP1
-				? cardPickerDialog.pickTwoFromDeckSearchDifferentCost(pool)
-				: aiPickSummonsOfDistinctCost(pool, count);
+		List<CardData> chosen = chooseFromDeckSearch(isP1, pool, Math.max(2, count),
+				() -> cardPickerDialog.pickTwoFromDeckSearchDifferentCost(pool),
+				() -> aiPickSummonsOfDistinctCost(pool, count),
+				MainWindow::allCostsDiffer);
 		if (chosen.isEmpty()) {
 			logEntry((isP1 ? "" : "[P2] ") + "Search declined — nothing taken");
 			return;
 		}
-		for (CardData c : chosen) {
-			if (isP1) gameState.removeFromP1MainDeck(c);
-			else      deck.remove(c);
-		}
+		for (CardData c : chosen) removeByIdentity(deck, c);
 		StringBuilder found = new StringBuilder();
 		for (CardData c : chosen) {
 			if (found.length() > 0) found.append(", ");
@@ -6816,14 +6812,13 @@ public class MainWindow {
 		}
 		logEntry((isP1 ? "" : "[P2] ") + "Search found " + found + " — opponent selects 1 for the Break Zone");
 
-		// The opponent denies the dearest on offer: they are removing an option, so the one worth
-		// most is the one worth denying. The same rule stands in for an unanswered prompt.
-		int denied = indexOfDearest(chosen);
-		if (chosen.size() > 1 && !isP1) {
-			int picked = showCardImageChooser(chosen,
-					"Select 1 card to put into your opponent's Break Zone", false);
-			if (picked >= 0 && picked < chosen.size()) denied = picked;
-		}
+		// The opponent chooses. The AI denies the dearest on offer: it is removing an option, so the
+		// one worth most is the one worth denying. The same rule stands in for an unanswered prompt.
+		int denied = chosen.size() == 1 ? 0 : decideOption(!isP1, chosen.size(),
+				"Waiting for your opponent to choose which card you lose...",
+				() -> showCardImageChooser(chosen, "Select 1 card to put into your opponent's Break Zone", false),
+				() -> indexOfDearest(chosen));
+		if (denied < 0) denied = indexOfDearest(chosen);
 
 		CardData toBreak = chosen.get(denied);
 		addToBreakZone(toBreak);
@@ -8639,7 +8634,16 @@ public class MainWindow {
 	 */
 	boolean decideYesNo(boolean chooserIsP1, String waitPrompt, BooleanSupplier localAsk,
 	                    BooleanSupplier cpuAnswer) {
-		List<Integer> answer = decide(PlayerChoice.by(chooserIsP1, ChoiceKind.MAY)
+		return decideYesNoAs(chooserIsP1, ChoiceKind.MAY, waitPrompt, localAsk, cpuAnswer);
+	}
+
+	/**
+	 * As {@link #decideYesNo}, answered under {@code kind} — {@link ChoiceKind#EX_BURST}, which is a
+	 * yes/no kept apart from {@code MAY} on the wire.
+	 */
+	boolean decideYesNoAs(boolean chooserIsP1, ChoiceKind kind, String waitPrompt,
+	                      BooleanSupplier localAsk, BooleanSupplier cpuAnswer) {
+		List<Integer> answer = decide(PlayerChoice.by(chooserIsP1, kind)
 				.prompting(waitPrompt)
 				.locally(() -> List.of(localAsk.getAsBoolean() ? 1 : 0))
 				.byCpu(()   -> List.of(cpuAnswer.getAsBoolean() ? 1 : 0))
@@ -9422,23 +9426,18 @@ public class MainWindow {
 			}
 
 			// FA2: "If a Character is put from the field into the Break Zone, you may remove it from the game instead."
+			// Asked of whoever holds the ability, P1's holder first on both clients. The AI removes
+			// its opponent's Characters and leaves its own where it can get them back.
 			if (!card.isSummon()) {
-				if (playerHasBzToRfgCharacterFromField(true)) {
-					int choice = showEffectOptionDialog(
-							"Remove \"" + card.name() + "\" from the game instead of the Break Zone?",
-							"Field Ability", new Object[]{"Remove from Game", "Break Zone"});
-					if (choice == 0) {
-						gameState.addToPermanentRfp(card);
-						logEntry((player1 ? "" : "[P2] ") + card.name() + " → Removed From Game instead of Break Zone");
-						if (player1) refreshP1WarpZoneUI(); else refreshP2WarpZoneUI();
-						return;
-					}
-				}
-				if (playerHasBzToRfgCharacterFromField(false)) {
-					int choice = showEffectOptionDialog(
-							"[P2] Remove \"" + card.name() + "\" from the game instead of the Break Zone?",
-							"[P2] Field Ability", new Object[]{"Remove from Game", "Break Zone"});
-					if (choice == 0) {
+				for (boolean holder : new boolean[]{ true, false }) {
+					if (!playerHasBzToRfgCharacterFromField(holder)) continue;
+					boolean remove = decideYesNo(holder,
+							"Waiting for your opponent to decide where " + card.name() + " goes...",
+							() -> showEffectOptionDialog(
+									"Remove \"" + card.name() + "\" from the game instead of the Break Zone?",
+									"Field Ability", new Object[]{"Remove from Game", "Break Zone"}) == 0,
+							() -> player1 != holder);
+					if (remove) {
 						gameState.addToPermanentRfp(card);
 						logEntry((player1 ? "" : "[P2] ") + card.name() + " → Removed From Game instead of Break Zone");
 						if (player1) refreshP1WarpZoneUI(); else refreshP2WarpZoneUI();
@@ -12187,11 +12186,13 @@ public class MainWindow {
 		if (eligible.isEmpty()) { logEntry("No eligible Job " + grant.job() + " in hand"); return; }
 		HandPickDialog.showDiscardByType(frame, hand, eligible, "Job " + grant.job(),
 				this::showZoomAt, this::hideZoom, discardIdx -> {
+					// The discard is a cost the PLAY_CARD below has no field for, so it goes first as
+					// its own action; the far client then finds the hand the play's index assumes.
+					// A cost, so it is not a discard "due to an effect" and marks nothing as one.
+					sendToOpponent(RemoteOpponent.discardAction(List.of(discardIdx)));
 					CardData d = playerBreakFromHand(true, discardIdx);
-					if (d != null) {
+					if (d != null)
 						logEntry("Discards " + d.name() + " (alt cost — casting " + card.name() + " for free)");
-						p1Turn.discardedByEffectThisTurn = true;
-					}
 					refreshP1HandLabel();
 					refreshP1BreakLabel();
 					int adjustedHandIdx = discardIdx < handIdx ? handIdx - 1 : handIdx;
@@ -13151,18 +13152,23 @@ public class MainWindow {
 		StackEntry entry = gameState.peekStack();
 		if (entry == null) return;
 
-		if (stackCountdownTimer != null) { stackCountdownTimer.stop(); stackCountdownTimer = null; }
 		if (summonStackWindow   != null) { summonStackWindow.dispose(); summonStackWindow = null; }
 
-		// P1 acted → CPU (P2) has priority → auto-resolve silently
-		if (entry.isP1()) {
+		// Already cancelled (e.g. by Amaterasu) — no response window needed. Checked first, and on
+		// both clients alike: the cancel was an effect both resolved, so neither opens a window or
+		// waits for a pass on it.
+		if (cancelledStackEntries.contains(entry)) {
 			resolveTopOfStack();
 			return;
 		}
 
-		// Already cancelled (e.g. by Amaterasu) — no response window needed
-		if (cancelledStackEntries.contains(entry)) {
-			resolveTopOfStack();
+		// P1 acted → P2 has priority. The CPU passes at once. A remote player is holding the same
+		// entry on their own client, in the window below, so this client waits for their pass.
+		if (entry.isP1()) {
+			if (opponent instanceof RemoteOpponent remote && frame.isShowing())
+				awaitOpponentsStackPass(remote, entry);
+			else
+				resolveTopOfStack();
 			return;
 		}
 
@@ -13230,8 +13236,7 @@ public class MainWindow {
 		imagePanel.add(textPanel, BorderLayout.SOUTH);
 		panel.add(imagePanel, BorderLayout.CENTER);
 
-		int[] countdown = { 10 };
-		JLabel countdownLabel = new JLabel("Resolving in 10...", SwingConstants.CENTER);
+		JLabel countdownLabel = new JLabel("Your response...", SwingConstants.CENTER);
 		countdownLabel.setFont(FontLoader.loadPixelFont(10));
 		countdownLabel.setForeground(Color.LIGHT_GRAY);
 
@@ -13276,61 +13281,60 @@ public class MainWindow {
 			}
 		}.execute();
 
-		// 10-second countdown timer — but no time limit when P2 is a CPU
-		if (isP2Cpu()) {
-			countdownLabel.setText("Your response...");
-		} else {
-			stackCountdownTimer = new Timer(1000, null);
-			stackCountdownTimer.addActionListener(e -> {
-				if (stackWindowGeneration != myGeneration) { ((Timer) e.getSource()).stop(); return; }
-				countdown[0]--;
-				if (countdown[0] <= 0) {
-					stackCountdownTimer.stop();
-					resolveTopOfStack();
-				} else {
-					countdownLabel.setText("Resolving in " + countdown[0] + "...");
-				}
-			});
-			stackCountdownTimer.start();
-		}
+		// No time limit, against the CPU or a remote player: the window closes when this player
+		// says so. A countdown that resolved on its own told the opponent nothing — their client
+		// was left waiting on an entry this one had already resolved. (No timeout, by decision.)
+		countdownLabel.setText("Your response...");
 
+		// OK passes. After Respond it still does: a player who looked for a response and found
+		// none passes the same way.
 		okBtn.addActionListener(e -> {
 			if (stackWindowGeneration != myGeneration) return;
-			if (stackCountdownTimer != null) stackCountdownTimer.stop();
-			resolveTopOfStack();
+			passStackPriority();
 		});
 
 		respondBtn.addActionListener(e -> {
 			if (stackWindowGeneration != myGeneration) return;
-			if (stackCountdownTimer != null) stackCountdownTimer.stop();
 			respondBtn.setEnabled(false);
 			p1IsRespondingToStack = true;
 			refreshHandCardStates();
-
-			// No time limit on the response window when P2 is a CPU
-			if (isP2Cpu()) {
-				countdownLabel.setText("Responding...");
-				return;
-			}
-
-			// 20-second response window
-			int[] responseCountdown = { 20 };
-			countdownLabel.setText("Response window: 20s...");
-			Timer responseTimer = new Timer(1000, null);
-			responseTimer.addActionListener(re -> {
-				if (stackWindowGeneration != myGeneration) { ((Timer) re.getSource()).stop(); return; }
-				responseCountdown[0]--;
-				if (responseCountdown[0] <= 0) {
-					((Timer) re.getSource()).stop();
-					p1IsRespondingToStack = false;
-					// Only auto-resolve if we're still the top entry (nothing was pushed during response)
-					if (gameState.peekStack() == entry) resolveTopOfStack();
-				} else {
-					countdownLabel.setText("Response window: " + responseCountdown[0] + "s...");
-				}
-			});
-			responseTimer.start();
+			countdownLabel.setText("Responding — cast a response, or OK to pass...");
 		});
+	}
+
+	/**
+	 * This player passes on the opponent's entry at the top of the Stack: tells a remote opponent,
+	 * whose client is waiting on exactly this, and resolves it here.
+	 */
+	void passStackPriority() {
+		if (opponent instanceof RemoteOpponent remote)
+			remote.send(RemoteOpponent.choiceAction(ChoiceKind.STACK_PASS, List.of()));
+		resolveTopOfStack();
+	}
+
+	/**
+	 * This player's own entry is at the top of the Stack and a remote opponent holds priority on it.
+	 * Waits for their pass, then resolves it.
+	 *
+	 * <p><b>Deferred to a later EDT event, and that is load-bearing.</b> Every play pushes its entry
+	 * before the action announcing it goes out — {@code executePlay} places a Summon, and the arrival
+	 * that fires an enter-the-field trigger, before its PLAY_CARD is sent. Waiting in place would wait
+	 * for a pass on an entry the opponent has not been told about. The send happens later in the
+	 * same event as the push, so by the time this runs it has gone.
+	 *
+	 * <p>Not started twice for one entry: when a response resolves and priority returns to an entry
+	 * that is already being waited on, the existing wait is the one that takes the pass.
+	 */
+	private void awaitOpponentsStackPass(RemoteOpponent remote, StackEntry entry) {
+		if (remote.isAwaitingStackPass(entry)) return;
+		SwingUtilities.invokeLater(() -> resolveOnOpponentsPass(remote, entry));
+	}
+
+	/** The body of {@link #awaitOpponentsStackPass}, run once the play that pushed {@code entry} has gone out. */
+	void resolveOnOpponentsPass(RemoteOpponent remote, StackEntry entry) {
+		if (gameState.peekStack() != entry || remote.isAwaitingStackPass(entry)) return;
+		if (!remote.awaitStackPass(entry) || gameState.isP1GameOver()) return;
+		if (gameState.peekStack() == entry) resolveTopOfStack();
 	}
 
 	/**
@@ -13338,12 +13342,14 @@ public class MainWindow {
 	 * if the stack is non-empty.
 	 */
 	private void resolveTopOfStack() {
-		if (stackCountdownTimer != null) { stackCountdownTimer.stop(); stackCountdownTimer = null; }
 		if (summonStackWindow   != null) { summonStackWindow.dispose(); summonStackWindow = null; }
 		p1IsRespondingToStack = false;
 
 		StackEntry entry = gameState.popStack();
 		if (entry == null) return;
+		// Off the Stack now, whatever took it off: a wait still open for a pass on it has nothing
+		// left to wait for.
+		if (opponent instanceof RemoteOpponent remote) remote.releaseStackWait(entry);
 		resolutionSerial = nextResolutionSerial();
 
 		if (cancelledStackEntries.remove(entry)) {

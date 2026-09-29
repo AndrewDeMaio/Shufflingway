@@ -84,6 +84,7 @@ class RemoteOpponent implements OpponentController {
 		pendingPartyBlock = null;
 		mw.setAwaitingRemoteBlock(false);
 		if (awaitedChoiceDialog != null) awaitedChoiceDialog.dispose();
+		for (StackWait w : stackWaits) { w.released = true; w.dialog.dispose(); }
 		if (block      != null) block.accept(null);
 		if (partyBlock != null) partyBlock.accept(null);
 	}
@@ -159,7 +160,8 @@ class RemoteOpponent implements OpponentController {
 		}
 		selected.sort(java.util.Collections.reverseOrder());
 		for (int idx : selected) mw.playerBreakFromHand(false, idx);
-		mw.logEntry("[P2] Discarded " + selected.size() + " card(s) — hand reduced to 5");
+		// Two senders: the end-phase trim to five, and a discard paid to cast a card for free.
+		mw.logEntry("[P2] Discarded " + selected.size() + " card(s)");
 		mw.refreshP2HandCountLabel();
 		mw.refreshP2BreakLabel();
 	}
@@ -714,14 +716,95 @@ class RemoteOpponent implements OpponentController {
 		if (cancelled) return List.of();
 		List<Integer> already = takeDelivered(kind);
 		if (already != null) return already;
-		JDialog dialog = mw.buildWaitingForOpponentDialog(prompt);
-		awaitedChoiceKind   = kind;
-		awaitedChoiceDialog = dialog;
-		dialog.setVisible(true);
-		awaitedChoiceKind   = null;
-		awaitedChoiceDialog = null;
+		parkUntilAnswered(kind, mw.buildWaitingForOpponentDialog(prompt));
 		List<Integer> answer = takeDelivered(kind);
 		return answer != null ? answer : List.of();
+	}
+
+	/**
+	 * Shows {@code dialog} until an answer of {@code kind} arrives or the dialog is released.
+	 *
+	 * <p>Waits nest: one runs its modal loop, an inbound action inside it starts another, and the
+	 * inner one returns first. So the wait being replaced is saved and put back, rather than cleared
+	 * — clearing it left the outer dialog up with nothing able to take it down. And an answer the
+	 * outer wait wants may have landed while the inner one held the field, which disposed nothing;
+	 * it is checked for on the way out, so the outer wait ends as soon as control returns to it.
+	 */
+	private void parkUntilAnswered(ChoiceKind kind, JDialog dialog) {
+		ChoiceKind outerKind   = awaitedChoiceKind;
+		JDialog    outerDialog = awaitedChoiceDialog;
+		awaitedChoiceKind   = kind;
+		awaitedChoiceDialog = dialog;
+		try {
+			dialog.setVisible(true);
+		} finally {
+			awaitedChoiceKind   = outerKind;
+			awaitedChoiceDialog = outerDialog;
+			// A cancel takes down every level, not just the one it found holding the field.
+			if (outerDialog != null && (cancelled || (outerKind != null && hasDelivered(outerKind))))
+				outerDialog.dispose();
+		}
+	}
+
+	/** Whether an answer of {@code kind} is queued and not yet taken. */
+	private boolean hasDelivered(ChoiceKind kind) {
+		ArrayDeque<List<Integer>> queue = deliveredChoices.get(kind);
+		return queue != null && !queue.isEmpty();
+	}
+
+	/** The Stack entries this client is waiting on a pass for, innermost last. */
+	private final List<StackWait> stackWaits = new ArrayList<>();
+
+	/** One wait for the opponent's pass on {@code entry}; {@code released} when it ended without one. */
+	private static final class StackWait {
+		final StackEntry entry;
+		final JDialog    dialog;
+		boolean          released;
+		StackWait(StackEntry entry, JDialog dialog) { this.entry = entry; this.dialog = dialog; }
+	}
+
+	/**
+	 * Waits for the opponent to pass on {@code entry}, this player's own entry at the top of the
+	 * Stack; {@code true} when they did. {@code false} when the wait was released instead — the
+	 * entry left the Stack some other way while it was open (see {@link #releaseStackWait}) — or the
+	 * game ended under it.
+	 *
+	 * <p>A response the opponent casts meanwhile arrives inside this wait, as the play it is, and is
+	 * pushed, windowed and resolved from here. Priority then returns to {@code entry}, and it is the
+	 * pass for it that ends the wait.
+	 */
+	boolean awaitStackPass(StackEntry entry) {
+		if (cancelled) return false;
+		if (takeDelivered(ChoiceKind.STACK_PASS) != null) return true;
+		StackWait wait = new StackWait(entry, mw.buildWaitingForOpponentDialog(
+				"Waiting for your opponent to respond to " + entry.source().name() + "..."));
+		stackWaits.add(wait);
+		try {
+			parkUntilAnswered(ChoiceKind.STACK_PASS, wait.dialog);
+		} finally {
+			stackWaits.remove(wait);
+		}
+		if (wait.released || cancelled) return false;
+		return takeDelivered(ChoiceKind.STACK_PASS) != null;
+	}
+
+	/** Whether a pass on {@code entry} is already being waited for. */
+	boolean isAwaitingStackPass(StackEntry entry) {
+		for (StackWait w : stackWaits) if (w.entry == entry) return true;
+		return false;
+	}
+
+	/**
+	 * Ends any wait for a pass on {@code entry}, which has just left the Stack without one: resolved
+	 * from inside a nested flow, or cancelled — a cancelled entry resolves on both clients with no
+	 * window, so no pass for it is ever coming.
+	 */
+	void releaseStackWait(StackEntry entry) {
+		for (StackWait w : stackWaits) {
+			if (w.entry != entry) continue;
+			w.released = true;
+			w.dialog.dispose();
+		}
 	}
 
 	/**
