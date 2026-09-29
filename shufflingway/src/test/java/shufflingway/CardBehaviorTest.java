@@ -72842,4 +72842,65 @@ public class CardBehaviorTest {
 		assertEquals(List.of(1, 2), backups.stream().sorted().toList(), "the two Lightning Backups, not the Water one");
 	}
 
+	// =========================================================================================
+	// Paying a 《Dull》 cost is becoming dull, whatever row the source is on and whoever pays.
+	// MainWindow.abilityCostDull is the one runnable the menu, the CPU and a remote replay use.
+	// =========================================================================================
+
+	/** A card of {@code type} that activates itself when it becomes dull, so the trigger shows. */
+	private static CardData selfActivatingOnDull(String name, String type) {
+		String text = "When " + name + " becomes dull, activate " + name + ".";
+		return new CardData(null, name, "Fire", 2, 5000, type, false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				List.of(), CardData.parseAutoAbilities(text), List.of(), List.of(), List.of(),
+				List.of(), List.of(), List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				null, null, null, text);
+	}
+
+	@Test
+	void aBackupDulledForItsOwnCostFiresItsBecomesDullTrigger() {
+		MainWindow mw = new MainWindow();
+		CardData sage = selfActivatingOnDull("Sage", "Backup");
+		assertEquals("becomes dull", sage.autoAbilities().get(0).trigger());
+		mw.gameState.getIdentity().put(sage, false);
+		mw.p2BackupCards[0]  = sage;
+		mw.p2BackupStates[0] = CardState.ACTIVE;
+
+		// The CPU's own activation hands the payment this runnable.
+		mw.abilityCostDull(new ForwardTarget(false, 0, ForwardTarget.CardZone.BACKUP)).run();
+
+		// P2's trigger waits on the Stack for P1's response window rather than resolving at once.
+		assertEquals(1, mw.gameState.stackSize(),
+				"the trigger fired — Forwards were the only row that did");
+		assertEquals("becomes dull", mw.gameState.peekStack().autoAbility().trigger());
+		assertSame(sage, mw.gameState.peekStack().source());
+	}
+
+	@Test
+	void aMonsterDulledForItsOwnCostFiresItsBecomesDullTrigger() {
+		MainWindow mw = new MainWindow();
+		CardData golem = selfActivatingOnDull("Golem", "Monster");
+		mw.gameState.getIdentity().put(golem, true);
+		mw.placeCardInMonsterZone(golem);
+		assertEquals(CardState.ACTIVE, mw.p1MonsterStates.get(0));
+
+		mw.abilityCostDull(new ForwardTarget(true, 0, ForwardTarget.CardZone.MONSTER)).run();
+
+		assertEquals(CardState.ACTIVE, mw.p1MonsterStates.get(0));
+	}
+
+	@Test
+	void anAlreadyDullSourceDoesNotBecomeDullAgain() {
+		MainWindow mw = new MainWindow();
+		CardData sage = selfActivatingOnDull("Sage", "Backup");
+		mw.gameState.getIdentity().put(sage, true);
+		mw.p1BackupCards[0]  = sage;
+		mw.p1BackupStates[0] = CardState.DULL;
+
+		mw.abilityCostDull(new ForwardTarget(true, 0, ForwardTarget.CardZone.BACKUP)).run();
+
+		assertEquals(CardState.DULL, mw.p1BackupStates[0], "no transition, so no trigger");
+	}
+
 }

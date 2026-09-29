@@ -1552,27 +1552,24 @@ class ComputerPlayer implements OpponentController {
 			CardData card = mw.p2ForwardCards.get(i);
 			if (card == null) continue;
 			CardData eff = mw.p2ForwardPrimedTop.get(i) != null ? mw.p2ForwardPrimedTop.get(i) : card;
-			final int fi = i;
 			if (tryP2UseAbility(eff, mw.p2ForwardFrozen.get(i), mw.p2ForwardStates.get(i),
 					mw.p2ForwardPlayedOnTurn.get(i),
-					() -> { mw.p2ForwardStates.set(fi, CardState.DULL); mw.refreshP2ForwardSlot(fi); },
+					mw.abilityCostDull(new ForwardTarget(false, i, ForwardTarget.CardZone.FORWARD)),
 					resume)) return;
 		}
 		for (int i = 0; i < mw.p2BackupCards.length; i++) {
 			CardData card = mw.p2BackupCards[i];
 			if (card == null) continue;
-			final int bi = i;
 			if (tryP2UseAbility(card, mw.p2BackupFrozen[i], mw.p2BackupStates[i], 0,
-					() -> { mw.p2BackupStates[bi] = CardState.DULL; mw.animateDullP2Backup(bi, true); },
+					mw.abilityCostDull(new ForwardTarget(false, i, ForwardTarget.CardZone.BACKUP)),
 					resume)) return;
 		}
 		for (int i = 0; i < mw.p2MonsterCards.size(); i++) {
 			CardData card = mw.p2MonsterCards.get(i);
 			if (card == null) continue;
-			final int mi = i;
 			if (tryP2UseAbility(card, mw.p2MonsterFrozen.get(i), mw.p2MonsterStates.get(i),
 					mw.p2MonsterPlayedOnTurn.get(i),
-					() -> { mw.p2MonsterStates.set(mi, CardState.DULL); mw.refreshP2MonsterSlot(mi); },
+					mw.abilityCostDull(new ForwardTarget(false, i, ForwardTarget.CardZone.MONSTER)),
 					resume)) return;
 		}
 		tryP2BzActionAbilities(() -> tryP2SharedOpponentAbilities(onDone, resume), resume);
@@ -1604,7 +1601,7 @@ class ComputerPlayer implements OpponentController {
 				if (!p2PlanAbilityPayment(ability, card, backupDullIndices, backupElems, discardIndices, discardElems)) continue;
 				mw.logEntry("[P2] Activates reactive shield: " + card.name() + " — " + ability.effectText());
 				if (!mw.autoAbilityTriggers.executeP2AbilityActivation(ability, card,
-						() -> { mw.p2ForwardStates.set(fi, CardState.DULL); mw.refreshP2ForwardSlot(fi); },
+						mw.abilityCostDull(new ForwardTarget(false, fi, ForwardTarget.CardZone.FORWARD)),
 						backupDullIndices, discardIndices, 0)) {
 					logAbandonedActivation(card);
 					continue;
@@ -1696,27 +1693,24 @@ class ComputerPlayer implements OpponentController {
 		for (int i = 0; i < mw.p1ForwardCards.size(); i++) {
 			CardData card = mw.p1ForwardCards.get(i);
 			if (card == null) continue;
-			final int fi = i;
 			if (tryP2UseOpponentSharedAbility(card, mw.p1ForwardFrozen.get(i), mw.p1ForwardStates.get(i),
 					mw.p1ForwardPlayedOnTurn.get(i),
-					() -> { mw.p1ForwardStates.set(fi, CardState.DULL); mw.animateDullForward(fi, null); },
+					mw.abilityCostDull(new ForwardTarget(true, i, ForwardTarget.CardZone.FORWARD)),
 					resume)) return;
 		}
 		for (int i = 0; i < mw.p1BackupCards.length; i++) {
 			CardData card = mw.p1BackupCards[i];
 			if (card == null) continue;
-			final int bi = i;
 			if (tryP2UseOpponentSharedAbility(card, mw.p1BackupFrozen[i], mw.p1BackupStates[i], 0,
-					() -> { mw.p1BackupStates[bi] = CardState.DULL; mw.refreshP1BackupSlot(bi); },
+					mw.abilityCostDull(new ForwardTarget(true, i, ForwardTarget.CardZone.BACKUP)),
 					resume)) return;
 		}
 		for (int i = 0; i < mw.p1MonsterCards.size(); i++) {
 			CardData card = mw.p1MonsterCards.get(i);
 			if (card == null) continue;
-			final int mi = i;
 			if (tryP2UseOpponentSharedAbility(card, mw.p1MonsterFrozen.get(i), mw.p1MonsterStates.get(i),
 					mw.p1MonsterPlayedOnTurn.get(i),
-					() -> { mw.p1MonsterStates.set(mi, CardState.DULL); mw.refreshP1MonsterSlot(mi); },
+					mw.abilityCostDull(new ForwardTarget(true, i, ForwardTarget.CardZone.MONSTER)),
 					resume)) return;
 		}
 		onDone.run();

@@ -11294,38 +11294,94 @@ public class MainWindow {
 	}
 
 	/**
-	 * Tells a networked opponent that this player activated an action ability off one of their
-	 * field cards, and what they paid for it.
+	 * Tells a networked opponent that this player activated an action ability, and what they paid
+	 * for it.
 	 *
-	 * <p>The card is located by zone and slot and the ability by its position among the card's
-	 * printed action abilities — both things the far client reads off the same board and the same
-	 * card text. An ability that is <em>not</em> printed on its card has no such position: a
-	 * granted one, or the Petrification removal the engine synthesises. Those are reported rather
-	 * than quietly skipped, because an activation the other client never hears about is a board
-	 * that has already diverged, and saying so beats discovering it from a checksum later.
+	 * <p>The card is located by {@link #locateAbilitySource} and the ability by its position in
+	 * {@link AutoAbilityTriggers#abilityCatalogue} — both things the far client reads off the same
+	 * board and the same card text. An ability that is in neither has no position to send. That is
+	 * reported rather than quietly skipped, because an activation the other client never hears
+	 * about is a board that has already diverged, and saying so beats discovering it from a
+	 * checksum later.
 	 */
 	void sendAbilityActivation(ActionAbility ability, CardData source, AbilityPayment payment) {
 		if (!(opponent instanceof RemoteOpponent)) return;
-		// Their card when it is not this player's: an "each player can use this ability" ability.
-		ForwardTarget at = findFieldTarget(source, true);
-		if (at == null) at = findFieldTarget(source, false);
-		int abilityIdx = source.actionAbilities().indexOf(ability);
+		AbilitySource at = locateAbilitySource(source);
+		int abilityIdx = at == null ? -1
+				: autoAbilityTriggers.abilityCatalogue(source, at.ownerIsP1()).indexOf(ability);
 		if (at == null || abilityIdx < 0) {
 			reportDesync("\"" + source.name() + "\" used an ability this build cannot describe to "
-					+ "the other client" + (at == null ? " (it is not on the field)"
-					: " (it is granted rather than printed)"));
+					+ "the other client" + (at == null ? " (the card is nowhere it can name)"
+					: " (the ability is not one the card offers)"));
 			return;
 		}
-		sendToOpponent(RemoteOpponent.activateAbilityAction(source, at, abilityIdx, payment));
+		sendToOpponent(RemoteOpponent.activateAbilityAction(source, at, abilityIdx, ability, payment));
+	}
+
+	/**
+	 * Where {@code card} sits, by identity, anywhere an action ability can be used from: either
+	 * player's field — as the card in a slot or as the top of a primed stack — their Break Zone, or
+	 * their hand. This player's zones are searched first. {@code null} when it is in none of them.
+	 */
+	AbilitySource locateAbilitySource(CardData card) {
+		for (boolean p1 : new boolean[] { true, false }) {
+			ForwardTarget slot = findFieldTarget(card, p1);
+			if (slot != null) return AbilitySource.onField(slot);
+			List<CardData> tops = p1 ? p1ForwardPrimedTop : p2ForwardPrimedTop;
+			for (int i = 0; i < tops.size(); i++)
+				if (tops.get(i) == card)
+					return new AbilitySource(AbilitySource.Zone.FORWARD, i, p1, true);
+			List<CardData> bz = p1 ? gameState.getP1BreakZone() : gameState.getP2BreakZone();
+			for (int i = 0; i < bz.size(); i++)
+				if (bz.get(i) == card) return new AbilitySource(AbilitySource.Zone.BREAK_ZONE, i, p1, false);
+			List<CardData> hand = playerHand(p1);
+			for (int i = 0; i < hand.size(); i++)
+				if (hand.get(i) == card) return new AbilitySource(AbilitySource.Zone.HAND, i, p1, false);
+		}
+		return null;
+	}
+
+	/** The card at {@code at}, or {@code null} when that position holds nothing. */
+	CardData abilitySourceCard(AbilitySource at) {
+		boolean p1 = at.ownerIsP1();
+		int i = at.idx();
+		return switch (at.zone()) {
+			case FORWARD -> {
+				List<CardData> row = at.primedTop()
+						? (p1 ? p1ForwardPrimedTop : p2ForwardPrimedTop)
+						: (p1 ? p1ForwardCards : p2ForwardCards);
+				yield i >= 0 && i < row.size() ? row.get(i) : null;
+			}
+			case BACKUP, MONSTER -> fieldCardAt(p1, at.fieldSlot().zone(), i);
+			case BREAK_ZONE -> {
+				List<CardData> bz = p1 ? gameState.getP1BreakZone() : gameState.getP2BreakZone();
+				yield i >= 0 && i < bz.size() ? bz.get(i) : null;
+			}
+			case HAND -> {
+				List<CardData> hand = playerHand(p1);
+				yield i >= 0 && i < hand.size() ? hand.get(i) : null;
+			}
+		};
+	}
+
+	/**
+	 * What paying a 《Dull》 cost does to the source at {@code at}: {@link #abilityCostDull} for a
+	 * card on the field, nothing for one used from the Break Zone or hand, which has no state to
+	 * change.
+	 */
+	Runnable abilityCostDull(AbilitySource at) {
+		ForwardTarget slot = at.fieldSlot();
+		return slot == null ? () -> {} : abilityCostDull(slot);
 	}
 
 	/**
 	 * Dulls the field card at {@code at} to pay its own ability's 《Dull》 cost: what a field card's
 	 * ability menu hands the payment, and what an opponent's activation is replayed with.
 	 *
-	 * <p>One method for both because the far client has to dull the source exactly as the
-	 * activator's did. A Forward that becomes dull this way owes its becomes-dull triggers, and it
-	 * has to owe them on both boards or on neither.
+	 * <p>One method for every activator — the local player, the CPU and a remote player's replay —
+	 * because the far client has to dull the source exactly as the activator's did. A Character
+	 * that goes from active to dull this way owes its becomes-dull triggers, whatever row it is on,
+	 * and it has to owe them on both boards or on neither.
 	 */
 	Runnable abilityCostDull(ForwardTarget at) {
 		int idx = at.idx();
@@ -11341,12 +11397,22 @@ public class MainWindow {
 							(p1 ? p1ForwardCards : p2ForwardCards).get(idx), p1);
 			};
 			case BACKUP -> () -> {
-				if (p1) { p1BackupStates[idx] = CardState.DULL; animateDullBackup(idx, true); }
-				else    { p2BackupStates[idx] = CardState.DULL; animateDullP2Backup(idx, true); }
+				CardState[] states = p1 ? p1BackupStates : p2BackupStates;
+				CardState before = states[idx];
+				states[idx] = CardState.DULL;
+				if (p1) animateDullBackup(idx, true); else animateDullP2Backup(idx, true);
+				if (before == CardState.ACTIVE)
+					autoAbilityTriggers.triggerAutoAbilitiesForBecomesDull(
+							(p1 ? p1BackupCards : p2BackupCards)[idx], p1);
 			};
 			case MONSTER -> () -> {
-				if (p1) { p1MonsterStates.set(idx, CardState.DULL); refreshP1MonsterSlot(idx); }
-				else    { p2MonsterStates.set(idx, CardState.DULL); refreshP2MonsterSlot(idx); }
+				List<CardState> states = p1 ? p1MonsterStates : p2MonsterStates;
+				CardState before = states.get(idx);
+				states.set(idx, CardState.DULL);
+				if (p1) refreshP1MonsterSlot(idx); else refreshP2MonsterSlot(idx);
+				if (before == CardState.ACTIVE)
+					autoAbilityTriggers.triggerAutoAbilitiesForBecomesDull(
+							(p1 ? p1MonsterCards : p2MonsterCards).get(idx), p1);
 			};
 			case BREAK_ZONE -> () -> {};
 		};

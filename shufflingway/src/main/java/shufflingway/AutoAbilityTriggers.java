@@ -7077,8 +7077,8 @@ final class AutoAbilityTriggers {
 		if (rawCost.isEmpty() && !eff.hasXCost()) {
 			List<ForwardTarget> bzTargets = resolveBzCostTargetsForBzAbility(bzCosts, isP1);
 			if (bzTargets == null) return;
-			executeAbilityPayment(eff, source, () -> {},
-					new AbilityPayment(List.of(), List.of(), bzTargets, 0, -1, Map.of()), isP1, settled -> {});
+			payAndReport(ability, eff, source, () -> {},
+					new AbilityPayment(List.of(), List.of(), bzTargets, 0, -1, Map.of()), isP1);
 			return;
 		}
 
@@ -7089,9 +7089,8 @@ final class AutoAbilityTriggers {
 				(discards, backups, xValue, sCostIdx, breaks) -> {
 					List<ForwardTarget> bzTargets = resolveBzCostTargetsForBzAbility(bzCosts, isP1);
 					if (bzTargets == null) return;
-					executeAbilityPayment(eff, source, () -> {},
-							new AbilityPayment(discards, backups, bzTargets, xValue, sCostIdx, breaks),
-							isP1, settled -> {});
+					payAndReport(ability, eff, source, () -> {},
+							new AbilityPayment(discards, backups, bzTargets, xValue, sCostIdx, breaks), isP1);
 				}, mw.breakForCpBackupSlots(isP1))
 			.show();
 	}
@@ -7142,7 +7141,8 @@ final class AutoAbilityTriggers {
 			}
 		} else {
 			for (int i = 0; i < mw.p2ForwardCards.size(); i++) {
-				if (mw.p2ForwardCards.get(i) == source)
+				CardData top = mw.p2ForwardPrimedTop.get(i);
+				if (top == source || mw.p2ForwardCards.get(i) == source)
 					return new ForwardTarget(false, i, ForwardTarget.CardZone.FORWARD);
 			}
 			for (int i = 0; i < mw.p2BackupCards.length; i++) {
@@ -7808,21 +7808,57 @@ final class AutoAbilityTriggers {
 	 * activation verdict for each. Shared by the menu and {@link #hasUsableFieldAbility} so the
 	 * two cannot disagree about what the player can do.
 	 */
-	private void forEachFieldAbility(CardData card, boolean isFrozen, CardState state, int playedTurn,
-			boolean isP1, FieldAbilityVisitor visitor) {
-		if (mw.lostAbilitiesCards.contains(card)) return;
+	/**
+	 * The three groups a card's action abilities come in, in the order {@link #abilityCatalogue}
+	 * lists them: its own and those it borrows, those granted to it for the turn, and the
+	 * Petrification removal it is offered while petrified ({@code null} when it is not).
+	 */
+	private record AbilityGroups(List<ActionAbility> ownAndBorrowed, List<ActionAbility> granted,
+	                             ActionAbility petrifyRemoval) {
+		List<ActionAbility> all() {
+			List<ActionAbility> out = new ArrayList<>(ownAndBorrowed);
+			out.addAll(granted);
+			if (petrifyRemoval != null) out.add(petrifyRemoval);
+			return out;
+		}
+	}
+
+	private AbilityGroups abilityGroups(CardData card, boolean ownerIsP1) {
 		// Printed abilities first, then the ones borrowed from the removed-from-game zone (Clive
 		// 26-005H). Borrowed specials join this list rather than the temp-granted one below so they
 		// go through the same phase and 《S》-cost checks a printed special does; the temp list is
 		// for cost-free once-per-turn copies, which these are not.
 		List<ActionAbility> abilities = new ArrayList<>(card.actionAbilities());
-		abilities.addAll(mw.rfgJobSpecialAbilities(card, isP1));
-		List<ActionAbility> tempAbilities = (isP1 ? mw.p1TempGrantedAbilities : mw.p2TempGrantedAbilities)
+		abilities.addAll(mw.rfgJobSpecialAbilities(card, ownerIsP1));
+		List<ActionAbility> tempAbilities = (ownerIsP1 ? mw.p1TempGrantedAbilities : mw.p2TempGrantedAbilities)
 				.getOrDefault(card, List.of());
 		// Medusa grants a petrified Forward "《5》: Remove all Petrification Counters from this Forward."
 		// It's driven off the counter's presence rather than a stored grant (which wouldn't survive the
 		// turn), so synthesize the menu item whenever the card carries a Petrification Counter.
 		boolean petrified = mw.gameState.getCounters(card, "Petrification") > 0;
+		return new AbilityGroups(abilities, tempAbilities, petrified ? petrificationRemovalAbility() : null);
+	}
+
+	/**
+	 * Every action ability {@code card} offers as it stands, in a fixed order: printed, borrowed,
+	 * granted for the turn, and the Petrification removal. An activation crosses the wire as a
+	 * position in this list, which both clients build from state they hold alike — the card's
+	 * text, the removed-from-game zone the borrowed ones come from, the grants effects have made,
+	 * and its counters. The printed abilities come first, so their positions are the card's own.
+	 *
+	 * @param ownerIsP1 whose card it is, which decides whose zone and grants are read
+	 */
+	List<ActionAbility> abilityCatalogue(CardData card, boolean ownerIsP1) {
+		return abilityGroups(card, ownerIsP1).all();
+	}
+
+	private void forEachFieldAbility(CardData card, boolean isFrozen, CardState state, int playedTurn,
+			boolean isP1, FieldAbilityVisitor visitor) {
+		if (mw.lostAbilitiesCards.contains(card)) return;
+		AbilityGroups groups = abilityGroups(card, isP1);
+		List<ActionAbility> abilities = groups.ownAndBorrowed();
+		List<ActionAbility> tempAbilities = groups.granted();
+		boolean petrified = groups.petrifyRemoval() != null;
 		if (abilities.isEmpty() && tempAbilities.isEmpty() && !petrified) return;
 
 		GameState.GamePhase phase = mw.gameState.getCurrentPhase();
@@ -7850,8 +7886,8 @@ final class AutoAbilityTriggers {
 			visitor.visit(ability, isP1,
 					isMainPhase && mw.canActivateAbility(ability, isFrozen, state, playedTurn, card, isP1));
 
-		ActionAbility petrifyRemoval = petrificationRemovalAbility();
-		if (petrified && petrifyRemoval != null)
+		ActionAbility petrifyRemoval = groups.petrifyRemoval();
+		if (petrifyRemoval != null)
 			visitor.visit(petrifyRemoval, isP1,
 					isMainPhase && mw.canActivateAbility(petrifyRemoval, isFrozen, state, playedTurn, card, isP1));
 	}
@@ -7950,15 +7986,15 @@ final class AutoAbilityTriggers {
 	 * payment asks after the commit crosses as a {@code CHOICE} to a far client already running the
 	 * same payment.
 	 *
-	 * <p>{@code printed} is the ability as the card prints it, which is what the index on the wire
-	 * addresses; {@code eff} is that ability with the board's discounts and surcharges applied.
-	 * Only the first is transmitted — the receiver derives the second from its own copy of the
-	 * board, the same way it derives every other cost.
+	 * <p>{@code offered} is the ability as the card offers it — printed, borrowed or granted —
+	 * which is what the index on the wire addresses; {@code eff} is that ability with the board's
+	 * discounts and surcharges applied. Only the first is transmitted — the receiver derives the
+	 * second from its own copy of the board, the same way it derives every other cost.
 	 */
-	private boolean payAndReport(ActionAbility printed, ActionAbility eff, CardData source,
+	private boolean payAndReport(ActionAbility offered, ActionAbility eff, CardData source,
 			Runnable applyDull, AbilityPayment payment, boolean isP1) {
 		return executeAbilityPayment(eff, source, applyDull, payment, isP1, settled -> {
-			if (isP1) mw.sendAbilityActivation(printed, source, settled);
+			if (isP1) mw.sendAbilityActivation(offered, source, settled);
 		});
 	}
 
@@ -7971,11 +8007,11 @@ final class AutoAbilityTriggers {
 	 * they settled before committing are checked against that board before any of it is spent —
 	 * see {@link #remotePaymentProblem}.
 	 *
-	 * @param at where the source sits on this board — almost always their side, but their own
-	 *           use of an "each player can use this ability" ability of one of this player's cards
-	 *           sits on this one
+	 * @param at where the source sits on this board — almost always one of their zones, but their
+	 *           own use of an "each player can use this ability" ability of one of this player's
+	 *           cards sits on this side
 	 */
-	boolean executeRemoteAbilityActivation(ActionAbility ability, CardData source, ForwardTarget at,
+	boolean executeRemoteAbilityActivation(ActionAbility ability, CardData source, AbilitySource at,
 			AbilityPayment payment) {
 		ActionAbility eff = mw.effectiveAbilityCost(ability, false);
 		if (payment.counterWaiver()) {

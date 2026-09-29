@@ -95,24 +95,26 @@ public enum ActionType {
                     //   position in that same before-search deck. The receiver shuffles from its
                     //   own stream for this deck, as the sender did, and checks the result against
                     //   "deck"; both already hold the deck, so it reveals nothing.
-    ACTIVATE_ABILITY, // payload: { "zone": "FORWARD"|"BACKUP"|"MONSTER", "idx": n,
-                    //             "opponentsCard": bool, "card": "...",
-                    //             "ability": n, "discards": [idx, ...], "backups": [slot, ...],
+    ACTIVATE_ABILITY, // payload: { "zone": "FORWARD"|"BACKUP"|"MONSTER"|"BREAK_ZONE"|"HAND",
+                    //             "idx": n, "opponentsCard": bool, "primedTop": bool, "card": "...",
+                    //             "ability": n, "abilityText": "...",
+                    //             "discards": [idx, ...], "backups": [slot, ...],
                     //             "bzTargets": [{ "idx": n, "zone": "FORWARD" }, ...],
                     //             "x": n, "sCost": n, "backupBreaks": { "slot": "Fire" },
                     //             "discardCosts": [[idx, ...], ...], "counterWaiver": bool }
-                    //   An action ability the sender activated off a field card. "zone"/"idx"
-                    //   locate that card on their own side — the receiver's P2 — or, with
-                    //   "opponentsCard", on their opponent's: an "each player can use this
-                    //   ability" ability of one of the receiver's own cards.
-                    //   "ability" indexes the card's printed action abilities, which both clients
-                    //   parse from the same text. What the ability costs is not sent — both ends
-                    //   read it off the card and apply the same board-derived discounts — only
-                    //   what was handed over to pay it: the choices settled before the payment
-                    //   committed. Sent from that commit point, so the source is still in its
-                    //   slot; the payment's later choices follow as CHOICEs.
-                    //   Abilities that are not printed on the card (granted ones, and the
-                    //   Petrification removal) carry no index and are not replicated yet.
+                    //   An action ability the sender activated. "zone"/"idx" locate the card it
+                    //   came off in the sender's own zones — the receiver's P2 — or, with
+                    //   "opponentsCard", in their opponent's: an "each player can use this
+                    //   ability" ability of one of the receiver's own cards. "primedTop" means
+                    //   the top card of the primed stack in that Forward slot.
+                    //   "ability" indexes the card's abilityCatalogue — printed, borrowed, granted
+                    //   for the turn, Petrification removal — which both clients build from state
+                    //   they hold alike; "abilityText" is checked against the entry it lands on.
+                    //   What the ability costs is not sent — both ends read it off the card and
+                    //   apply the same board-derived discounts — only what was handed over to pay
+                    //   it: the choices settled before the payment committed. Sent from that
+                    //   commit point, so the source is still where it was; the payment's later
+                    //   choices follow as CHOICEs.
     DISCARD_HAND,   // payload: { "indices": [idx, ...] } — a discard with no CP, e.g. the
                     //   end-phase trim to five. Replicated because it renumbers the hand.
     ATTACK,         // payload: { "zone": "FORWARD"|"MONSTER"|"BACKUP", "indices": [n, ...],

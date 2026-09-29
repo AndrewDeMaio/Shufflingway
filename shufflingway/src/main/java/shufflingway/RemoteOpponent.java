@@ -1073,14 +1073,15 @@ class RemoteOpponent implements OpponentController {
 	/**
 	 * Builds an ACTIVATE_ABILITY for an action ability the local player just used.
 	 *
-	 * <p>{@code at} locates the source as the sender sees it. It crosses as a zone and a slot plus
-	 * whether it sits on the sender's opponent's field — the "each player can use this ability"
-	 * case — since what the sender holds as their own, the receiver holds as their opponent's. The
-	 * ability travels as its position among the card's printed action abilities, which both
-	 * clients parse from the same text rather than exchanging.
+	 * <p>{@code at} locates the source as the sender sees it: a zone and a position in it, whether
+	 * that zone is the sender's opponent's — the "each player can use this ability" case, since
+	 * what the sender holds as their own the receiver holds as their opponent's — and whether it is
+	 * the top of a primed stack. The ability travels as its position in the card's
+	 * {@code abilityCatalogue}, which both clients build from state they hold alike, with its text
+	 * alongside as a check.
 	 */
-	static GameAction activateAbilityAction(CardData source, ForwardTarget at, int abilityIdx,
-	                                        AbilityPayment payment) {
+	static GameAction activateAbilityAction(CardData source, AbilitySource at, int abilityIdx,
+	                                        ActionAbility ability, AbilityPayment payment) {
 		JSONArray bzTargets = new JSONArray();
 		for (ForwardTarget t : payment.bzTargets())
 			bzTargets.put(new JSONObject().put("idx", t.idx()).put("zone", t.zone().name()));
@@ -1091,9 +1092,11 @@ class RemoteOpponent implements OpponentController {
 		return GameAction.of(ActionType.ACTIVATE_ABILITY, new JSONObject()
 				.put("zone", at.zone().name())
 				.put("idx", at.idx())
-				.put("opponentsCard", !at.isP1())
+				.put("opponentsCard", !at.ownerIsP1())
+				.put("primedTop", at.primedTop())
 				.put("card", source.name())
 				.put("ability", abilityIdx)
+				.put("abilityText", ability.effectText())
 				.put("discards", new JSONArray(payment.discards()))
 				.put("backups", new JSONArray(payment.backupDulls()))
 				.put("bzTargets", bzTargets)
@@ -1105,35 +1108,44 @@ class RemoteOpponent implements OpponentController {
 	}
 
 	/**
-	 * The opponent activated an action ability. The card it came off lives here on their side of
-	 * the board in the same slot, and the ability is the same position in the same printed list —
-	 * both checked against the name they sent before anything is spent, the same guard a cast from
-	 * hand gets and for the same reason.
+	 * The opponent activated an action ability. The card it came off is at the same position here,
+	 * and the ability is the same position in the same catalogue — both checked against the name
+	 * and text they sent before anything is spent, the same guard a cast from hand gets and for
+	 * the same reason.
 	 */
 	private void applyActivateAbility(JSONObject payload) {
-		ForwardTarget.CardZone zone;
+		AbilitySource.Zone zone;
 		try {
-			zone = ForwardTarget.CardZone.valueOf(payload.optString("zone", ""));
+			zone = AbilitySource.Zone.valueOf(payload.optString("zone", ""));
 		} catch (IllegalArgumentException e) {
 			mw.reportDesync("opponent used an ability from a zone this client does not know");
 			return;
 		}
-		int idx = payload.optInt("idx", -1);
-		// Their opponent's card is this player's own.
-		boolean sourceIsP1 = payload.optBoolean("opponentsCard", false);
-		CardData source = mw.fieldCardAt(sourceIsP1, zone, idx);
+		// Written from their seat: their opponent's card is this player's own.
+		AbilitySource at = new AbilitySource(zone, payload.optInt("idx", -1),
+				!payload.optBoolean("opponentsCard", false), payload.optBoolean("primedTop", false))
+				.flipped();
+		CardData source = mw.abilitySourceCard(at);
 		String expected = payload.optString("card", "");
 		if (source == null || !source.name().equals(expected)) {
 			mw.reportDesync("opponent used an ability of \"" + expected + "\" in "
-					+ (sourceIsP1 ? "your " : "their ") + zone + " slot " + idx + ", which holds "
+					+ (at.ownerIsP1() ? "your " : "their ") + zone
+					+ (at.primedTop() ? " (primed top)" : "") + " slot " + at.idx() + ", which holds "
 					+ (source == null ? "nothing" : "\"" + source.name() + "\"") + " here");
 			return;
 		}
 		int abilityIdx = payload.optInt("ability", -1);
-		List<ActionAbility> abilities = source.actionAbilities();
+		List<ActionAbility> abilities = mw.autoAbilityTriggers.abilityCatalogue(source, at.ownerIsP1());
 		if (abilityIdx < 0 || abilityIdx >= abilities.size()) {
 			mw.reportDesync("opponent used ability " + abilityIdx + " of \"" + source.name()
-					+ "\", which prints " + abilities.size() + " here");
+					+ "\", which offers " + abilities.size() + " here");
+			return;
+		}
+		String expectedText = payload.optString("abilityText", "");
+		if (!abilities.get(abilityIdx).effectText().equals(expectedText)) {
+			mw.reportDesync("opponent used \"" + source.name() + "\"'s ability \"" + expectedText
+					+ "\", but its ability " + abilityIdx + " here is \""
+					+ abilities.get(abilityIdx).effectText() + "\"");
 			return;
 		}
 
@@ -1162,8 +1174,7 @@ class RemoteOpponent implements OpponentController {
 				discardCosts.add(slots);
 			}
 
-		mw.autoAbilityTriggers.executeRemoteAbilityActivation(abilities.get(abilityIdx), source,
-				new ForwardTarget(sourceIsP1, idx, zone),
+		mw.autoAbilityTriggers.executeRemoteAbilityActivation(abilities.get(abilityIdx), source, at,
 				new AbilityPayment(indices(payload, "discards"), indices(payload, "backups"),
 						bzTargets, payload.optInt("x", 0), payload.optInt("sCost", -1), breaks,
 						discardCosts, payload.optBoolean("counterWaiver", false)));

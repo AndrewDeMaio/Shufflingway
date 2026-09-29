@@ -1449,10 +1449,20 @@ class MultiplayerSetupTest {
                 null, null, null, text);
     }
 
+    /**
+     * An activation of {@code source}'s ability {@code abilityIdx}, off the field slot {@code at}
+     * as the sender sees it, carrying the text of its first printed ability as the check.
+     */
+    private static GameAction activation(CardData source, ForwardTarget at, int abilityIdx,
+                                         AbilityPayment payment) {
+        return RemoteOpponent.activateAbilityAction(source, AbilitySource.onField(at), abilityIdx,
+                source.actionAbilities().get(0), payment);
+    }
+
     @Test
     void theActivationActionNamesTheCardTheAbilityAndWhatItCost() {
         CardData source = abilityBackup("Sage", "Fire", DULL_FOR_POWER);
-        JSONObject payload = RemoteOpponent.activateAbilityAction(source,
+        JSONObject payload = activation(source,
                 new ForwardTarget(true, 2, ForwardTarget.CardZone.BACKUP), 0,
                 new AbilityPayment(List.of(1), List.of(3), List.of(
                         new ForwardTarget(true, 0, ForwardTarget.CardZone.MONSTER)),
@@ -1461,6 +1471,8 @@ class MultiplayerSetupTest {
         assertEquals("BACKUP", payload.getString("zone"));
         assertEquals(2, payload.getInt("idx"));
         assertFalse(payload.getBoolean("opponentsCard"), "the sender's own Backup");
+        assertFalse(payload.getBoolean("primedTop"));
+        assertEquals(source.actionAbilities().get(0).effectText(), payload.getString("abilityText"));
         assertEquals(List.of(0, 6), intList(payload.getJSONArray("discardCosts").getJSONArray(0)));
         assertEquals(List.of(2), intList(payload.getJSONArray("discardCosts").getJSONArray(1)));
         assertTrue(payload.getBoolean("counterWaiver"));
@@ -1483,7 +1495,7 @@ class MultiplayerSetupTest {
         mw.p2BackupStates[0] = CardState.ACTIVE;
         RemoteOpponent remote = new RemoteOpponent(mw, null, hostSetup(1L, true));
 
-        remote.onActionReceived(RemoteOpponent.activateAbilityAction(source,
+        remote.onActionReceived(activation(source,
                 new ForwardTarget(true, 0, ForwardTarget.CardZone.BACKUP), 0,
                 new AbilityPayment(List.of(), List.of(), List.of(), 0, -1, Map.of())));
 
@@ -1500,7 +1512,7 @@ class MultiplayerSetupTest {
         RemoteOpponent remote = new RemoteOpponent(mw, null, hostSetup(1L, true));
 
         // Slot 0 is empty on this client, so the activation addresses nothing.
-        remote.onActionReceived(RemoteOpponent.activateAbilityAction(source,
+        remote.onActionReceived(activation(source,
                 new ForwardTarget(true, 0, ForwardTarget.CardZone.BACKUP), 0,
                 new AbilityPayment(List.of(), List.of(), List.of(), 0, -1, Map.of())));
 
@@ -1518,7 +1530,7 @@ class MultiplayerSetupTest {
         mw.p2BackupStates[0] = CardState.ACTIVE;
         RemoteOpponent remote = new RemoteOpponent(mw, null, hostSetup(1L, true));
 
-        remote.onActionReceived(RemoteOpponent.activateAbilityAction(source,
+        remote.onActionReceived(activation(source,
                 new ForwardTarget(true, 0, ForwardTarget.CardZone.BACKUP), 7,
                 new AbilityPayment(List.of(), List.of(), List.of(), 0, -1, Map.of())));
 
@@ -1539,7 +1551,7 @@ class MultiplayerSetupTest {
     }
 
     private static GameAction activateTheirBackup(CardData source, AbilityPayment payment) {
-        return RemoteOpponent.activateAbilityAction(source,
+        return activation(source,
                 new ForwardTarget(true, 0, ForwardTarget.CardZone.BACKUP), 0, payment);
     }
 
@@ -1635,7 +1647,7 @@ class MultiplayerSetupTest {
         mw.p1BackupStates[0] = CardState.ACTIVE;
         RemoteOpponent remote = new RemoteOpponent(mw, null, hostSetup(1L, true));
 
-        remote.onActionReceived(RemoteOpponent.activateAbilityAction(source,
+        remote.onActionReceived(activation(source,
                 new ForwardTarget(false, 0, ForwardTarget.CardZone.BACKUP), 0, AbilityPayment.none()));
 
         assertEquals(1, mw.gameState.stackSize());
@@ -1654,6 +1666,111 @@ class MultiplayerSetupTest {
 
         assertEquals(0, mw.gameState.stackSize(),
                 "replaying it as an ordinary payment would charge a cost they never paid");
+        assertEquals(CardState.ACTIVE, mw.p2BackupStates[0]);
+    }
+
+    /** Their activation of {@code ability} off {@code source}, found at {@code at} in their own zones. */
+    private static GameAction theirActivation(CardData source, AbilitySource at, int abilityIdx,
+                                              ActionAbility ability) {
+        return RemoteOpponent.activateAbilityAction(source, at, abilityIdx, ability, AbilityPayment.none());
+    }
+
+    private static RemoteOpponent remoteSeatedIn(MainWindow mw) {
+        RemoteOpponent remote = new RemoteOpponent(mw, null, hostSetup(1L, true));
+        mw.opponent = remote;
+        return remote;
+    }
+
+    @Test
+    void theirAbilityOffAPrimedStackIsTheTopCardsAndDullsTheSlot() {
+        MainWindow mw = new MainWindow();
+        CardData base = warpForward("Clive", "Fire", List.of(), 0);
+        CardData top  = abilityBackup("Ifrit", "Fire", DULL_FOR_POWER);
+        mw.gameState.getIdentity().put(base, false);
+        mw.placeP2CardInForwardZone(base);
+        mw.p2ForwardPrimedTop.set(0, top);
+        RemoteOpponent remote = remoteSeatedIn(mw);
+
+        remote.onActionReceived(theirActivation(top,
+                new AbilitySource(AbilitySource.Zone.FORWARD, 0, true, true), 0,
+                top.actionAbilities().get(0)));
+
+        assertEquals(1, mw.gameState.stackSize());
+        assertSame(top, mw.gameState.peekStack().source(), "the top card's ability, not the Forward's");
+        assertEquals(CardState.DULL, mw.p2ForwardStates.get(0), "and the slot paid its 《Dull》");
+    }
+
+    @Test
+    void theirBreakZoneAbilityIsFoundInTheirBreakZone() {
+        MainWindow mw = new MainWindow();
+        CardData sage = abilityBackup("Sage", "Fire",
+                "《Fire》: All the Forwards you control gain +1000 power until the end of the turn. "
+                + "You can only use this ability if Sage is in the Break Zone.");
+        mw.gameState.getP2BreakZone().add(backup("Filler", "Fire", 2));
+        mw.gameState.getP2BreakZone().add(sage);
+        RemoteOpponent remote = remoteSeatedIn(mw);
+
+        remote.onActionReceived(theirActivation(sage,
+                new AbilitySource(AbilitySource.Zone.BREAK_ZONE, 1, true, false), 0,
+                sage.actionAbilities().get(0)));
+
+        assertEquals(1, mw.gameState.stackSize());
+        assertSame(sage, mw.gameState.peekStack().source());
+    }
+
+    @Test
+    void theirHandAbilityIsFoundInTheirHand() {
+        MainWindow mw = new MainWindow();
+        CardData sage = abilityBackup("Sage", "Fire",
+                "《Fire》: All the Forwards you control gain +1000 power until the end of the turn. "
+                + "You can only use this ability if Sage is in your hand.");
+        assertTrue(sage.actionAbilities().get(0).whileCardInHand());
+        mw.gameState.getP2Hand().add(backup("Filler", "Fire", 2));
+        mw.gameState.getP2Hand().add(sage);
+        RemoteOpponent remote = remoteSeatedIn(mw);
+
+        remote.onActionReceived(theirActivation(sage,
+                new AbilitySource(AbilitySource.Zone.HAND, 1, true, false), 0,
+                sage.actionAbilities().get(0)));
+
+        assertEquals(1, mw.gameState.stackSize());
+        assertSame(sage, mw.gameState.peekStack().source());
+    }
+
+    private static final String GRANTED_BOOST =
+            "《Dull》: All the Forwards you control gain +2000 power until the end of the turn.";
+
+    @Test
+    void anAbilityGrantedForTheTurnIsFoundAfterThePrintedOnes() {
+        MainWindow mw = new MainWindow();
+        CardData source = abilityBackup("Sage", "Fire", DULL_FOR_POWER);
+        ActionAbility granted = CardData.parseActionAbilities(GRANTED_BOOST).get(0);
+        RemoteOpponent remote = seatTheirAbilityBackup(mw, source);
+        mw.p2TempGrantedAbilities.put(source, List.of(granted));
+
+        remote.onActionReceived(theirActivation(source,
+                AbilitySource.onField(new ForwardTarget(true, 0, ForwardTarget.CardZone.BACKUP)), 1, granted));
+
+        assertEquals(1, mw.gameState.stackSize());
+        assertEquals(granted.effectText(), mw.gameState.peekStack().ability().effectText(),
+                "the granted ability resolves, not the printed one");
+        assertEquals(CardState.DULL, mw.p2BackupStates[0]);
+    }
+
+    @Test
+    void anAbilityWhoseTextDisagreesWithItsPositionIsRefused() {
+        // The two clients built the card's list differently — a grant one of them never made.
+        // Resolving whatever sits at the index would be a different ability from the one used.
+        MainWindow mw = new MainWindow();
+        mw.desyncReported = true;
+        CardData source = abilityBackup("Sage", "Fire", DULL_FOR_POWER);
+        ActionAbility granted = CardData.parseActionAbilities(GRANTED_BOOST).get(0);
+        RemoteOpponent remote = seatTheirAbilityBackup(mw, source);
+
+        remote.onActionReceived(theirActivation(source,
+                AbilitySource.onField(new ForwardTarget(true, 0, ForwardTarget.CardZone.BACKUP)), 0, granted));
+
+        assertEquals(0, mw.gameState.stackSize());
         assertEquals(CardState.ACTIVE, mw.p2BackupStates[0]);
     }
 

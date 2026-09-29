@@ -304,14 +304,8 @@ class WireProtocolTest {
         // it was, reported a desync, and sent nothing. It now goes from the commit point.
         MainWindow mw = sendingWindow();
         mw.desyncReported = true;   // the old failure opened a modal; make it a missing message instead
-        String text = "Put Sage into the Break Zone: "
-                + "All the Forwards you control gain +1000 power until the end of the turn.";
-        CardData sage = new CardData(null, "Sage", "Fire", 2, 0, "Backup", false, 0, false, false,
-                Set.of(), 0, List.of(), null, List.of(),
-                CardData.parseActionAbilities(text), List.of(), List.of(), List.of(), List.of(),
-                List.of(), List.of(), List.of(), List.of(), List.of(),
-                false, false, null, false, false, false, false, false, 1,
-                null, null, null, text);
+        CardData sage = abilityCard("Sage", "Backup", "Put Sage into the Break Zone: "
+                + "All the Forwards you control gain +1000 power until the end of the turn.");
         ActionAbility ability = sage.actionAbilities().get(0);
         assertFalse(ability.breakZoneCosts().isEmpty(), "the text has to parse as a Break Zone cost");
         mw.gameState.getIdentity().put(sage, true);
@@ -325,6 +319,56 @@ class WireProtocolTest {
         assertEquals("BACKUP", sent.payload().getString("zone"));
         assertEquals(2, sent.payload().getInt("idx"), "where it stood when the payment committed");
         assertNull(mw.p1BackupCards[2], "and the cost was still paid here");
+    }
+
+    private static final String BOOST = "All the Forwards you control gain +1000 power until the end of the turn.";
+
+    private static CardData abilityCard(String name, String type, String text) {
+        return new CardData(null, name, "Fire", 2, 5000, type, false, 0, false, false,
+                Set.of(), 0, List.of(), null, List.of(),
+                CardData.parseActionAbilities(text), List.of(), List.of(), List.of(), List.of(),
+                List.of(), List.of(), List.of(), List.of(), List.of(),
+                false, false, null, false, false, false, false, false, 1,
+                null, null, null, text);
+    }
+
+    @Test
+    void anAbilityOffAPrimedStackIsSentAsTheTopCard() throws InterruptedException {
+        // The Forward menu hands the payment the primed top card, which is not what the slot's
+        // Forward list holds — so the source was "not on the field" and nothing was sent.
+        MainWindow mw = sendingWindow();
+        mw.desyncReported = true;
+        CardData base = forward("Clive");
+        CardData top  = abilityCard("Ifrit", "Forward", "《Dull》: " + BOOST);
+        mw.gameState.getIdentity().put(base, true);
+        mw.placeCardInForwardZone(base);
+        mw.p1ForwardPrimedTop.set(0, top);
+
+        mw.sendAbilityActivation(top.actionAbilities().get(0), top, AbilityPayment.none());
+
+        GameAction sent = next();
+        assertEquals("FORWARD", sent.payload().getString("zone"));
+        assertEquals(0, sent.payload().getInt("idx"));
+        assertTrue(sent.payload().getBoolean("primedTop"));
+        assertEquals("Ifrit", sent.payload().getString("card"));
+    }
+
+    @Test
+    void aBreakZoneAbilityIsSentWithItsPlaceInTheBreakZone() throws InterruptedException {
+        MainWindow mw = sendingWindow();
+        mw.desyncReported = true;
+        CardData sage = abilityCard("Sage", "Backup",
+                "《Fire》: " + BOOST + " You can only use this ability if Sage is in the Break Zone.");
+        assertNotNull(sage.actionAbilities().get(0).breakZoneOnly(), "the text has to parse as a Break Zone ability");
+        mw.gameState.getP1BreakZone().add(forward("Filler"));
+        mw.gameState.getP1BreakZone().add(sage);
+
+        mw.sendAbilityActivation(sage.actionAbilities().get(0), sage, AbilityPayment.none());
+
+        GameAction sent = next();
+        assertEquals("BREAK_ZONE", sent.payload().getString("zone"));
+        assertEquals(1, sent.payload().getInt("idx"));
+        assertFalse(sent.payload().getBoolean("opponentsCard"));
     }
 
     /** Seats a Forward on the opponent's field, owned by them, so breaking it can find an owner. */
