@@ -887,10 +887,12 @@ final class ActionResolverDamage {
             List<ForwardTarget> bzTs = ctx.selectCharactersFromBreakZone(
                     1, true, false, false, null, null, dmg, "less", -1, null,
                     true, false, false, null, null, null, null, false, null, false);
-            sortedByIdxDesc(bzTs, true).forEach(ctx::addTargetToHand);
-            List<ForwardTarget> oppTs = ctx.selectCharacters(
-                    1, false, true, false, null, null, dmg, "less", -1, null,
-                    true, false, false, null, null, null, null, false, null, false);
+            sortedByIdxDesc(bzTs, true) .forEach(ctx::addTargetToHand);
+            sortedByIdxDesc(bzTs, false).forEach(ctx::addTargetToHand);
+            // "Your opponent selects": the opponent picks which of their own Forwards to lose.
+            List<ForwardTarget> oppTs = ctx.opponentSelectsOwnCharacters(1, false, null, null, null,
+                    dmg, "less", true, false, false, "1 Forward of cost " + dmg + " or less");
+            sortedByIdxDesc(oppTs, true) .forEach(ctx::forceTargetToBreakZone);
             sortedByIdxDesc(oppTs, false).forEach(ctx::forceTargetToBreakZone);
         };
     }

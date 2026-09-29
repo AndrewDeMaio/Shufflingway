@@ -1097,6 +1097,37 @@ final class ActionResolverHand {
     }
 
     /**
+     * {@link ActionResolverPatterns#BREAK_THEN_OPPONENT_MAY_PLAY_IF_BROKEN} — 3-071H Chaos, Walker
+     * of the Wheel. The opponent's play is offered only when the break put the chosen Forward into
+     * the Break Zone: a Forward that cannot be broken, or one removed from the game instead, earns
+     * the opponent nothing. The card is held by identity across the break, since its slot does not
+     * survive it.
+     */
+    static Consumer<GameContext> tryParseBreakThenOpponentMayPlayIfBroken(String text, CardData source,
+            int xValue) {
+        Matcher m = BREAK_THEN_OPPONENT_MAY_PLAY_IF_BROKEN.matcher(text.trim());
+        if (!m.matches()) return null;
+        PlaySpec s = playSpec(m.group("play"), xValue);
+        if (s == null) return null;
+        return ctx -> {
+            ctx.logEntry("Effect: Choose 1 Forward opponent controls — break it; if it reaches the"
+                    + " Break Zone, your opponent may play 1" + s.label());
+            List<ForwardTarget> ts = selectTargets(ctx, 1, false, true, false, null, null, null,
+                    false, false, -1, null, -1, null, true, false, false, null, null, null, null,
+                    false, null, false);
+            if (ts.isEmpty()) return;
+            ForwardTarget t      = ts.get(0);
+            CardData      chosen = ctx.targetCard(t);
+            ctx.breakTarget(t);
+            if (!ctx.isInBreakZone(chosen)) return;
+            ctx.opponentMayPlayCharacterFromHand(s.inclForwards(), s.inclBackups(), s.inclMonsters(),
+                    s.resolvedCost(ctx), s.resolvedCmp(), s.costVal2(), s.job(), s.name(), s.category(),
+                    s.element(), s.excludeName(), s.entersDull(), s.excludeElement(), s.suppressAuto(),
+                    s.withTrait());
+        };
+    }
+
+    /**
      * Parses "[play 1 … from your hand onto the field.] If its cost is N or more/less, [effect]"
      * — 16-089H Zack, whose drawback lands only when the card he played is dear enough.
      *

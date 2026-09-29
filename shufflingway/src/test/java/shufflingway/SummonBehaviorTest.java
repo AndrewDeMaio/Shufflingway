@@ -6,9 +6,12 @@ import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.verify;
 import static shufflingway.TestCards.*;
 
 import java.util.Arrays;
@@ -976,6 +979,802 @@ class SummonBehaviorTest {
 		assertEquals(9000, mw.effectiveP2ForwardPower(0));
 		assertEquals(7000, mw.effectiveP2ForwardPower(1), "Water only");
 		assertEquals(7000, mw.effectiveP1ForwardPower(0), "all Water Forwards, the opponent's too");
+	}
+
+	// =========================================================================================
+	// 3-002R Ifrit: "EX BURST Choose 1 Forward. Deal it 7000 damage. If you control a Job Class Zero
+	// Cadet Forward, deal it 8000 damage instead."
+	// =========================================================================================
+
+	private static final String IFRIT_3_002R = "[[ex]]EX BURST[[/]] Choose 1 Forward. Deal it 7000 damage. If you "
+			+ "control a Job Class Zero Cadet Forward, deal it 8000 damage instead.";
+
+	@Test
+	void ifritDeals7000Damage() {
+		MainWindow mw = new MainWindow();
+		CardData theirs = makeForward("Theirs", "Water", 6, 10000);
+		placeP1Forward(mw, theirs);
+		castAsP2(mw, makeSummon("Ifrit", "Fire", 4, IFRIT_3_002R));
+		assertEquals(7000, damageOn(mw, theirs));
+	}
+
+	@Test
+	void ifritDeals8000InsteadWithAClassZeroCadet() {
+		MainWindow mw = new MainWindow();
+		CardData theirs = makeForward("Theirs", "Water", 6, 10000);
+		placeP1Forward(mw, theirs);
+		placeP2Forward(mw, makeForwardWithJob("Cadet", "Fire", 2, 5000, "Class Zero Cadet"));
+		castAsP2(mw, makeSummon("Ifrit", "Fire", 4, IFRIT_3_002R));
+		assertEquals(8000, damageOn(mw, theirs));
+	}
+
+	// =========================================================================================
+	// 3-020H Phoenix: "Choose up to 1 Forward of cost 2 or less in your Break Zone. Play it onto the
+	// field. Deal 2000 damage to all the Forwards opponent controls."
+	// =========================================================================================
+
+	private static final String PHOENIX_3_020H = "Choose up to 1 Forward of cost 2 or less in your Break Zone. "
+			+ "Play it onto the field. Deal 2000 damage to all the Forwards opponent controls.";
+
+	@Test
+	void phoenixPlaysACheapForwardFromTheBreakZoneThenDamagesTheOpponentsForwards() {
+		MainWindow mw = new MainWindow();
+		CardData cheap  = makeForward("Cheap", "Fire", 2, 5000);
+		CardData costly = makeForward("Costly", "Fire", 3, 7000);
+		mw.gameState.getP2BreakZone().add(costly);
+		mw.gameState.getP2BreakZone().add(cheap);
+		CardData small = makeForward("Small", "Water", 1, 2000);
+		CardData large = makeForward("Large", "Water", 4, 8000);
+		placeP1Forward(mw, small);
+		placeP1Forward(mw, large);
+		castAsP2(mw, makeSummon("Phoenix", "Fire", 4, PHOENIX_3_020H));
+
+		assertTrue(mw.p2ForwardCards.contains(cheap), "played onto the field");
+		assertTrue(mw.gameState.getP2BreakZone().contains(costly), "cost 3 cannot be chosen");
+		assertEquals(0, mw.p2ForwardDamage.get(mw.p2ForwardCards.indexOf(cheap)), "opponent's Forwards only");
+		assertTrue(mw.gameState.getP1BreakZone().contains(small));
+		assertEquals(2000, damageOn(mw, large));
+	}
+
+	// =========================================================================================
+	// 3-032R Shiva: "Choose up to 2 Forwards opponent controls. Dull them."
+	// =========================================================================================
+
+	private static final String SHIVA_3_032R = "Choose up to 2 Forwards opponent controls. Dull them.";
+
+	@Test
+	void shivaDullsTwoOfTheOpponentsForwards() {
+		MainWindow mw = new MainWindow();
+		for (int i = 0; i < 3; i++) placeP1Forward(mw, makeForward("Theirs " + i, "Water", 3, 7000));
+		placeP2Forward(mw, makeForward("Mine", "Ice", 3, 7000));
+		castAsP2(mw, makeSummon("Shiva", "Ice", 2, SHIVA_3_032R));
+
+		long dull = mw.p1ForwardStates.stream().filter(s -> s == CardState.DULL).count();
+		assertEquals(2, dull);
+		assertEquals(CardState.ACTIVE, mw.p2ForwardStates.get(0), "opponent's Forwards only");
+	}
+
+	// =========================================================================================
+	// 3-037H Zalera, the Death Seraph: "Break all the dull Forwards of costs 2, 3, 5, 7, 11, and 13
+	// opponent controls."
+	// =========================================================================================
+
+	private static final String ZALERA_3_037H = "Break all the dull Forwards of costs 2, 3, 5, 7, 11, and 13 "
+			+ "opponent controls.";
+
+	@Test
+	void zaleraBreaksTheOpponentsDullForwardsOfPrimeCost() {
+		MainWindow mw = new MainWindow();
+		CardData two = makeForward("Two", "Water", 2, 5000);
+		CardData three = makeForward("Three", "Water", 3, 7000);
+		CardData four = makeForward("Four", "Water", 4, 8000);
+		CardData five = makeForward("Five", "Water", 5, 9000);
+		CardData activeThree = makeForward("Active Three", "Water", 3, 7000);
+		CardData mine = makeForward("Mine", "Ice", 2, 5000);
+		for (CardData c : List.of(two, three, four, five, activeThree)) placeP1Forward(mw, c);
+		for (CardData c : List.of(two, three, four, five)) dullP1Forward(mw, c);
+		placeP2Forward(mw, mine);
+		dullP2Forward(mw, mine);
+		castAsP2(mw, makeSummon("Zalera, the Death Seraph", "Ice", 4, ZALERA_3_037H));
+
+		assertTrue(mw.gameState.getP1BreakZone().containsAll(List.of(two, three, five)));
+		assertTrue(mw.p1ForwardCards.contains(four), "4 is not on the list");
+		assertTrue(mw.p1ForwardCards.contains(activeThree), "dull Forwards only");
+		assertTrue(mw.p2ForwardCards.contains(mine), "opponent's Forwards only");
+	}
+
+	// =========================================================================================
+	// 3-061R Diablos: "EX BURST Choose 1 Forward. Deal it 1000 damage for each Character you control.
+	// If you control a Job Class Zero Cadet Forward, select up to 3 Backups you control. Activate
+	// them."
+	// =========================================================================================
+
+	private static final String DIABLOS_3_061R = "[[ex]]EX BURST[[/]] Choose 1 Forward. Deal it 1000 damage for each "
+			+ "Character you control. If you control a Job Class Zero Cadet Forward, select up to 3 Backups you "
+			+ "control. Activate them.";
+
+	/** P2 with {@code mine} and two dull Backups — three Characters — against one P1 Forward. */
+	private static MainWindow castDiablos(CardData mine, CardData theirs) {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, theirs);
+		placeP2Forward(mw, mine);
+		placeP2Backup(mw, makeBackup("Backup A", "Wind", 2));
+		placeP2Backup(mw, makeBackup("Backup B", "Wind", 2));
+		mw.p2BackupStates[0] = CardState.DULL;
+		mw.p2BackupStates[1] = CardState.DULL;
+		castAsP2(mw, makeSummon("Diablos", "Wind", 3, DIABLOS_3_061R));
+		return mw;
+	}
+
+	@Test
+	void diablosDeals1000DamagePerCharacterYouControl() {
+		CardData theirs = makeForward("Theirs", "Water", 5, 9000);
+		MainWindow mw = castDiablos(makeForward("Mine", "Wind", 3, 7000), theirs);
+		assertEquals(3000, damageOn(mw, theirs));
+		assertEquals(CardState.DULL, mw.p2BackupStates[0], "no Cadet, no activation");
+	}
+
+	@Test
+	void diablosActivatesYourBackupsWithAClassZeroCadet() {
+		CardData theirs = makeForward("Theirs", "Water", 5, 9000);
+		MainWindow mw = castDiablos(makeForwardWithJob("Cadet", "Wind", 3, 7000, "Class Zero Cadet"), theirs);
+		assertEquals(3000, damageOn(mw, theirs));
+		assertEquals(CardState.ACTIVE, mw.p2BackupStates[0]);
+		assertEquals(CardState.ACTIVE, mw.p2BackupStates[1]);
+	}
+
+	// =========================================================================================
+	// 3-071H Chaos, Walker of the Wheel: "EX BURST Choose 1 Forward opponent controls. Break it. If
+	// that Forward is put into the Break Zone, your opponent may play 1 Forward from their hand
+	// onto the field."
+	//
+	// The last sentence was read as the caster's own play from their own hand, on every cast. The
+	// opponent's offer is checked through a spy: P1 answering it for real opens a dialog.
+	// =========================================================================================
+
+	private static final String CHAOS_3_071H = "[[ex]]EX BURST[[/]] Choose 1 Forward opponent controls. Break it. If "
+			+ "that Forward is put into the Break Zone, your opponent may play 1 Forward from their hand onto the field.";
+
+	/** P2 casts Chaos through a spy that declines the opponent's play; returns the spy. */
+	private static GameContext castChaosAsP2(MainWindow mw) {
+		GameContext ctx = spy(mw.buildGameContext(false));
+		doReturn(null).when(ctx).opponentMayPlayCharacterFromHand(anyBoolean(), anyBoolean(), anyBoolean(),
+				anyInt(), any(), anyInt(), any(), any(), any(), any(), any(), anyBoolean(), any(), anyBoolean(), any());
+		CardData chaos = makeSummon("Chaos, Walker of the Wheel", "Wind", 3, CHAOS_3_071H);
+		ActionResolver.parse(chaos.summonEffect(), chaos).accept(ctx);
+		return ctx;
+	}
+
+	@Test
+	void chaosBreaksTheForwardAndOffersTheOpponentAPlay() {
+		MainWindow mw = new MainWindow();
+		CardData theirs = makeForward("Theirs", "Water", 4, 8000);
+		placeP1Forward(mw, theirs);
+		GameContext ctx = castChaosAsP2(mw);
+
+		assertTrue(mw.gameState.getP1BreakZone().contains(theirs));
+		verify(ctx).opponentMayPlayCharacterFromHand(eq(true), eq(false), eq(false), anyInt(), any(), anyInt(),
+				any(), any(), any(), any(), any(), anyBoolean(), any(), anyBoolean(), any());
+	}
+
+	@Test
+	void chaosNeverPlaysFromTheCastersHand() {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, makeForward("Theirs", "Water", 4, 8000));
+		CardData mineInHand = makeForward("In My Hand", "Wind", 2, 5000);
+		mw.gameState.getP2Hand().add(mineInHand);
+		castChaosAsP2(mw);
+
+		assertTrue(mw.gameState.getP2Hand().contains(mineInHand));
+		assertTrue(mw.p2ForwardCards.isEmpty());
+	}
+
+	@Test
+	void chaosOffersNothingWhenTheForwardIsNotPutIntoTheBreakZone() {
+		MainWindow mw = new MainWindow();
+		CardData theirs = makeForward("Theirs", "Water", 4, 8000);
+		placeP1Forward(mw, theirs);
+		mw.p1ForwardTempTraits.get(0).add(CardData.Trait.CANNOT_BE_BROKEN);
+		GameContext ctx = castChaosAsP2(mw);
+
+		assertTrue(mw.p1ForwardCards.contains(theirs));
+		verify(ctx, never()).opponentMayPlayCharacterFromHand(anyBoolean(), anyBoolean(), anyBoolean(), anyInt(),
+				any(), anyInt(), any(), any(), any(), any(), any(), anyBoolean(), any(), anyBoolean(), any());
+	}
+
+	// =========================================================================================
+	// 3-074R Atomos: "Choose 1 Forward. Deal it damage equal to the highest power Forward you control."
+	// =========================================================================================
+
+	private static final String ATOMOS_3_074R = "Choose 1 Forward. Deal it damage equal to the highest power "
+			+ "Forward you control.";
+
+	@Test
+	void atomosDealsDamageEqualToYourHighestPowerForward() {
+		MainWindow mw = new MainWindow();
+		placeP2Forward(mw, makeForward("Small", "Earth", 2, 5000));
+		placeP2Forward(mw, makeForward("Big", "Earth", 4, 8000));
+		CardData theirs = makeForward("Theirs", "Water", 6, 10000);
+		placeP1Forward(mw, theirs);
+		castAsP2(mw, makeSummon("Atomos", "Earth", 4, ATOMOS_3_074R));
+		assertEquals(8000, damageOn(mw, theirs));
+	}
+
+	// =========================================================================================
+	// 3-087H Zeromus, the Condemner: "EX BURST Choose up to 1 Forward from your Break Zone of cost
+	// equal to or less than the damage you have been dealt. Return it to your hand. Your opponent
+	// selects 1 Forward of cost equal to or less than the damage you have been dealt and puts it
+	// into the Break Zone."
+	//
+	// "Your opponent selects" was the caster choosing the opponent's Forward. Each half is tested
+	// from the seat where only the CPU has a choice to make.
+	// =========================================================================================
+
+	private static final String ZEROMUS_3_087H = "[[ex]]EX BURST[[/]] Choose up to 1 Forward from your Break Zone of "
+			+ "cost equal to or less than the damage you have been dealt. Return it to your hand. Your opponent "
+			+ "selects 1 Forward of cost equal to or less than the damage you have been dealt and puts it into the "
+			+ "Break Zone.";
+
+	private static void takeDamage(List<CardData> damageZone, int points) {
+		for (int i = 0; i < points; i++) damageZone.add(makeForward("Damage " + i, "Earth", 1, 1000));
+	}
+
+	@Test
+	void zeromusReturnsAForwardFromYourBreakZoneWithinYourDamage() {
+		// P2 casts at 3 damage. P1's one Forward costs 5, over the limit, so P1 has nothing to select.
+		MainWindow mw = new MainWindow();
+		takeDamage(mw.gameState.getP2DamageZone(), 3);
+		CardData three = makeForward("Three", "Earth", 3, 7000);
+		CardData four  = makeForward("Four", "Earth", 4, 8000);
+		mw.gameState.getP2BreakZone().add(four);
+		mw.gameState.getP2BreakZone().add(three);
+		CardData theirs = makeForward("Theirs", "Water", 5, 9000);
+		placeP1Forward(mw, theirs);
+		castAsP2(mw, makeSummon("Zeromus, the Condemner", "Earth", 7, ZEROMUS_3_087H));
+
+		assertTrue(mw.gameState.getP2Hand().contains(three));
+		assertTrue(mw.gameState.getP2BreakZone().contains(four), "cost 4 is over 3 damage");
+		assertTrue(mw.p1ForwardCards.contains(theirs), "cost 5 is over 3 damage");
+	}
+
+	@Test
+	void zeromusLetsTheOpponentSelectWhichForwardTheyLose() {
+		// P1 casts at 3 damage with an empty Break Zone; the CPU gives up its cheapest eligible one.
+		MainWindow mw = new MainWindow();
+		takeDamage(mw.gameState.getP1DamageZone(), 3);
+		CardData two   = makeForward("Two", "Water", 2, 5000);
+		CardData three = makeForward("Three", "Water", 3, 7000);
+		CardData five  = makeForward("Five", "Water", 5, 9000);
+		placeP2Forward(mw, three);
+		placeP2Forward(mw, two);
+		placeP2Forward(mw, five);
+		castAsP1(mw, makeSummon("Zeromus, the Condemner", "Earth", 7, ZEROMUS_3_087H));
+
+		assertTrue(mw.gameState.getP2BreakZone().contains(two));
+		assertTrue(mw.p2ForwardCards.containsAll(List.of(three, five)));
+	}
+
+	// =========================================================================================
+	// 3-102R Odin: "Choose 1 Forward. If it has 7000 power or less, break it. If you control a Job
+	// Class Zero Cadet Forward, break it regardless of its power instead."
+	// =========================================================================================
+
+	private static final String ODIN_3_102R = "Choose 1 Forward. If it has 7000 power or less, break it. If you "
+			+ "control a Job Class Zero Cadet Forward, break it regardless of its power instead.";
+
+	@Test
+	void odinBreaksAForwardOf7000PowerOrLess() {
+		MainWindow mw = new MainWindow();
+		CardData theirs = makeForward("Theirs", "Water", 4, 7000);
+		placeP1Forward(mw, theirs);
+		castAsP2(mw, makeSummon("Odin", "Lightning", 4, ODIN_3_102R));
+		assertTrue(mw.gameState.getP1BreakZone().contains(theirs));
+	}
+
+	@Test
+	void odinLeavesAForwardOver7000Power() {
+		MainWindow mw = new MainWindow();
+		CardData theirs = makeForward("Theirs", "Water", 5, 8000);
+		placeP1Forward(mw, theirs);
+		castAsP2(mw, makeSummon("Odin", "Lightning", 4, ODIN_3_102R));
+		assertTrue(mw.p1ForwardCards.contains(theirs));
+	}
+
+	@Test
+	void odinBreaksAnyForwardWithAClassZeroCadet() {
+		MainWindow mw = new MainWindow();
+		CardData theirs = makeForward("Theirs", "Water", 5, 8000);
+		placeP1Forward(mw, theirs);
+		placeP2Forward(mw, makeForwardWithJob("Cadet", "Lightning", 2, 5000, "Class Zero Cadet"));
+		castAsP2(mw, makeSummon("Odin", "Lightning", 4, ODIN_3_102R));
+		assertTrue(mw.gameState.getP1BreakZone().contains(theirs));
+	}
+
+	// =========================================================================================
+	// 3-112H Exodus, the Judge-Sal: "Select 1 number. Your opponent selects 1 number. Break all
+	// Forwards of cost equal to either number."
+	//
+	// The opponent's number used to be worked out by the AI from P1's Forwards, whoever cast it: a
+	// human facing the CPU's Exodus never picked, and two networked clients worked out different
+	// numbers from their mirrored boards.
+	// =========================================================================================
+
+	private static final String EXODUS_3_112H = "Select 1 number. Your opponent selects 1 number. Break all Forwards "
+			+ "of cost equal to either number.";
+
+	@Test
+	void exodusBreaksEveryForwardOfEitherNumberOnBothSides() {
+		MainWindow mw = new MainWindow();
+		CardData p1Three = makeForward("P1 Three", "Water", 3, 7000);
+		CardData p1Four  = makeForward("P1 Four", "Water", 4, 8000);
+		CardData p1Five  = makeForward("P1 Five", "Water", 5, 9000);
+		CardData p2Three = makeForward("P2 Three", "Lightning", 3, 7000);
+		CardData p2Two   = makeForward("P2 Two", "Lightning", 2, 5000);
+		for (CardData c : List.of(p1Three, p1Four, p1Five)) placeP1Forward(mw, c);
+		for (CardData c : List.of(p2Three, p2Two)) placeP2Forward(mw, c);
+		GameContext ctx = spy(mw.buildGameContext(false));
+		doReturn(3).when(ctx).selectNumber(anyInt(), anyInt(), anyString());
+		doReturn(5).when(ctx).opponentSelectsNumber(anyInt(), anyInt(), anyString());
+		CardData exodus = makeSummon("Exodus, the Judge-Sal", "Lightning", 4, EXODUS_3_112H);
+		ActionResolver.parse(exodus.summonEffect(), exodus).accept(ctx);
+
+		assertEquals(List.of(p1Four), mw.p1ForwardCards);
+		assertEquals(List.of(p2Two), mw.p2ForwardCards);
+	}
+
+	@Test
+	void exodusAsksTheOpponentForTheSecondNumber() {
+		// P1 casts and names 2; the CPU, answering for itself, names the cost most of P1's share.
+		MainWindow mw = new MainWindow();
+		CardData fourA = makeForward("Four A", "Water", 4, 8000);
+		CardData fourB = makeForward("Four B", "Water", 4, 8000);
+		CardData six   = makeForward("Six", "Water", 6, 10000);
+		CardData cpuTwo = makeForward("CPU Two", "Lightning", 2, 5000);
+		for (CardData c : List.of(fourA, fourB, six)) placeP1Forward(mw, c);
+		placeP2Forward(mw, cpuTwo);
+		GameContext ctx = spy(mw.buildGameContext(true));
+		doReturn(2).when(ctx).selectNumber(anyInt(), anyInt(), anyString());
+		CardData exodus = makeSummon("Exodus, the Judge-Sal", "Lightning", 4, EXODUS_3_112H);
+		ActionResolver.parse(exodus.summonEffect(), exodus).accept(ctx);
+
+		assertEquals(List.of(six), mw.p1ForwardCards, "the CPU named 4");
+		assertTrue(mw.gameState.getP2BreakZone().contains(cpuTwo), "P1 named 2");
+	}
+
+	// =========================================================================================
+	// 3-123R Famfrit, the Darkening Cloud: "EX BURST Both players select 1 Forward they control and
+	// put it into the Break Zone."
+	//
+	// P1 is given no Forwards, so only the CPU has a choice to make; P1 selecting opens a dialog.
+	// =========================================================================================
+
+	private static final String FAMFRIT_3_123R = "[[ex]]EX BURST[[/]] Both players select 1 Forward they control and "
+			+ "put it into the Break Zone.";
+
+	@Test
+	void famfritHasTheCasterPutTheirCheapestForwardIntoTheBreakZone() {
+		MainWindow mw = new MainWindow();
+		CardData two  = makeForward("Two", "Water", 2, 5000);
+		CardData five = makeForward("Five", "Water", 5, 9000);
+		placeP2Forward(mw, five);
+		placeP2Forward(mw, two);
+		castAsP2(mw, makeSummon("Famfrit, the Darkening Cloud", "Water", 3, FAMFRIT_3_123R));
+
+		assertTrue(mw.gameState.getP2BreakZone().contains(two));
+		assertTrue(mw.p2ForwardCards.contains(five), "one Forward each");
+	}
+
+	// =========================================================================================
+	// 3-135H Syldra: "Choose up to 2 Forwards opponent controls. Return them to their owners' hand."
+	// =========================================================================================
+
+	private static final String SYLDRA_3_135H = "Choose up to 2 Forwards opponent controls. Return them to their "
+			+ "owners' hand.";
+
+	@Test
+	void syldraReturnsTwoOfTheOpponentsForwardsToTheirHand() {
+		MainWindow mw = new MainWindow();
+		CardData a = makeForward("A", "Fire", 3, 7000);
+		CardData b = makeForward("B", "Fire", 4, 8000);
+		CardData mine = makeForward("Mine", "Water", 3, 7000);
+		placeP1Forward(mw, a);
+		placeP1Forward(mw, b);
+		placeP2Forward(mw, mine);
+		castAsP2(mw, makeSummon("Syldra", "Water", 6, SYLDRA_3_135H));
+
+		assertTrue(mw.gameState.getP1Hand().containsAll(List.of(a, b)));
+		assertTrue(mw.p2ForwardCards.contains(mine), "opponent's Forwards only");
+	}
+
+	// =========================================================================================
+	// 3-145L Ultima, the High Seraph: "If you control a Light Forward, the cost to cast Ultima, The
+	// High Seraph is reduced by 2. Remove from the game all the Forwards on the field other than
+	// Light and Dark. Then, remove from the top of your deck twice the number of cards removed by
+	// the previous effect."
+	// =========================================================================================
+
+	private static final String ULTIMA_3_145L = "If you control a Light Forward, the cost to cast Ultima, The High "
+			+ "Seraph is reduced by 2. [[br]] Remove from the game all the Forwards on the field other than Light "
+			+ "and Dark. Then, remove from the top of your deck twice the number of cards removed by the previous "
+			+ "effect.";
+
+	@Test
+	void ultimaRemovesEveryForwardButLightAndDarkThenTwiceThatFromYourDeck() {
+		MainWindow mw = new MainWindow();
+		CardData fire  = makeForward("Fire One", "Fire", 3, 7000);
+		CardData light = makeForward("Light One", "Light", 3, 7000);
+		CardData water = makeForward("Water One", "Water", 3, 7000);
+		CardData dark  = makeForward("Dark One", "Dark", 3, 7000);
+		placeP1Forward(mw, fire);
+		placeP1Forward(mw, light);
+		placeP2Forward(mw, water);
+		placeP2Forward(mw, dark);
+		fillP2Deck(mw, 6);
+		castAsP2(mw, makeSummon("Ultima, the High Seraph", "Light", 7, ULTIMA_3_145L));
+
+		assertTrue(mw.gameState.getP1RemovedFromGame().contains(fire));
+		assertTrue(mw.gameState.getP2RemovedFromGame().contains(water));
+		assertEquals(List.of(light), mw.p1ForwardCards);
+		assertEquals(List.of(dark), mw.p2ForwardCards);
+		assertEquals(2, mw.gameState.getP2MainDeck().size(), "two removed, so four off the deck");
+	}
+
+	// =========================================================================================
+	// 3-147L Zodiark, Keeper of Precepts: "If you control a Dark Forward, the cost to cast Zodiark,
+	// Keeper of Precepts is reduced by 3. Break all the Forwards opponent controls. You receive
+	// damage equal to the number of Forwards broken by this effect."
+	// =========================================================================================
+
+	private static final String ZODIARK_3_147L = "If you control a Dark Forward, the cost to cast Zodiark, Keeper of "
+			+ "Precepts is reduced by 3.[[br]] Break all the Forwards opponent controls. You receive damage equal to "
+			+ "the number of Forwards broken by this effect.";
+
+	@Test
+	void zodiarkBreaksTheOpponentsForwardsAndYouTakeDamageForEach() {
+		MainWindow mw = new MainWindow();
+		CardData a = makeForward("A", "Water", 3, 7000);
+		CardData b = makeForward("B", "Water", 5, 9000);
+		CardData mine = makeForward("Mine", "Dark", 3, 7000);
+		placeP1Forward(mw, a);
+		placeP1Forward(mw, b);
+		placeP2Forward(mw, mine);
+		fillP2Deck(mw, 4);
+		castAsP2(mw, makeSummon("Zodiark, Keeper of Precepts", "Dark", 7, ZODIARK_3_147L));
+
+		assertTrue(mw.gameState.getP1BreakZone().containsAll(List.of(a, b)));
+		assertTrue(mw.p2ForwardCards.contains(mine), "opponent's Forwards only");
+		assertEquals(2, mw.gameState.getP2DamageZone().size(), "one point per Forward broken");
+	}
+
+	// =========================================================================================
+	// 4-003C Ifrit: "EX BURST Choose 1 Forward. Deal it 4000 damage. If you control 5 or more Fire
+	// Characters, deal it 7000 damage instead."
+	// =========================================================================================
+
+	private static final String IFRIT_4_003C = "[[ex]]EX BURST [[/]]Choose 1 Forward. Deal it 4000 damage. If you "
+			+ "control 5 or more Fire Characters, deal it 7000 damage instead.";
+
+	/** P2 with {@code fireBackups} Fire Backups casts Ifrit at P1's 9000 Forward. */
+	private static int ifrit4003Damage(int fireBackups) {
+		MainWindow mw = new MainWindow();
+		CardData theirs = makeForward("Theirs", "Water", 5, 9000);
+		placeP1Forward(mw, theirs);
+		for (int i = 0; i < fireBackups; i++) placeP2Backup(mw, makeBackup("Fire " + i, "Fire", 2));
+		castAsP2(mw, makeSummon("Ifrit", "Fire", 2, IFRIT_4_003C));
+		return damageOn(mw, theirs);
+	}
+
+	@Test
+	void ifritDeals4000BelowFiveFireCharacters() {
+		assertEquals(4000, ifrit4003Damage(4));
+	}
+
+	@Test
+	void ifritDeals7000InsteadWithFiveFireCharacters() {
+		assertEquals(7000, ifrit4003Damage(5));
+	}
+
+	// =========================================================================================
+	// 4-016R Bahamut: "Choose 1 Forward. Deal it 8000 damage. If it is put from the field into the
+	// Break Zone this turn, remove it from the game instead."
+	// =========================================================================================
+
+	private static final String BAHAMUT_4_016R = "Choose 1 Forward. Deal it 8000 damage. If it is put from the field "
+			+ "into the Break Zone this turn, remove it from the game instead.";
+
+	@Test
+	void bahamutRemovesTheForwardItBreaksFromTheGame() {
+		MainWindow mw = new MainWindow();
+		CardData theirs = makeForward("Theirs", "Water", 4, 8000);
+		placeP1Forward(mw, theirs);
+		castAsP2(mw, makeSummon("Bahamut", "Fire", 4, BAHAMUT_4_016R));
+
+		assertTrue(mw.gameState.getP1RemovedFromGame().contains(theirs));
+		assertFalse(mw.gameState.getP1BreakZone().contains(theirs));
+	}
+
+	@Test
+	void bahamutDeals8000Damage() {
+		MainWindow mw = new MainWindow();
+		CardData theirs = makeForward("Theirs", "Water", 6, 10000);
+		placeP1Forward(mw, theirs);
+		castAsP2(mw, makeSummon("Bahamut", "Fire", 4, BAHAMUT_4_016R));
+		assertEquals(8000, damageOn(mw, theirs));
+	}
+
+	// =========================================================================================
+	// 4-033C Shiva: "EX BURST Choose 1 dull Forward. Deal it 6000 damage and 1000 more damage for each
+	// Card Name Shiva in your Break Zone."
+	// =========================================================================================
+
+	private static final String SHIVA_4_033C = "[[ex]]EX BURST[[/]] Choose 1 dull Forward. Deal it 6000 damage and "
+			+ "1000 more damage for each Card Name Shiva in your Break Zone.";
+
+	@Test
+	void shivaDeals6000Plus1000PerShivaInYourBreakZone() {
+		MainWindow mw = new MainWindow();
+		CardData theirs = makeForward("Theirs", "Water", 6, 10000);
+		placeP1Forward(mw, theirs);
+		dullP1Forward(mw, theirs);
+		mw.gameState.getP2BreakZone().add(makeSummon("Shiva", "Ice", 2, "Draw 1 card."));
+		mw.gameState.getP2BreakZone().add(makeSummon("Shiva", "Ice", 3, "Draw 1 card."));
+		mw.gameState.getP2BreakZone().add(makeSummon("Ifrit", "Fire", 2, "Draw 1 card."));
+		castAsP2(mw, makeSummon("Shiva", "Ice", 2, SHIVA_4_033C));
+		assertEquals(8000, damageOn(mw, theirs), "two Shiva: 6000 + 2000");
+	}
+
+	@Test
+	void shivaDoesNothingWithOnlyAnActiveForward4033() {
+		MainWindow mw = new MainWindow();
+		CardData theirs = makeForward("Theirs", "Water", 3, 5000);
+		placeP1Forward(mw, theirs);
+		castAsP2(mw, makeSummon("Shiva", "Ice", 2, SHIVA_4_033C));
+		assertEquals(0, damageOn(mw, theirs));
+	}
+
+	// =========================================================================================
+	// 4-046R Lich: "Deal each Forward opponent controls damage equal to half of its power (round up to
+	// the nearest 1000)."
+	// =========================================================================================
+
+	private static final String LICH_4_046R = "Deal each Forward opponent controls damage equal to half of its power "
+			+ "(round up to the nearest 1000).";
+
+	@Test
+	void lichDealsHalfPowerRoundedUpToEachOpposingForward() {
+		MainWindow mw = new MainWindow();
+		CardData odd  = makeForward("Odd", "Water", 3, 7000);
+		CardData even = makeForward("Even", "Water", 4, 8000);
+		CardData mine = makeForward("Mine", "Ice", 3, 7000);
+		placeP1Forward(mw, odd);
+		placeP1Forward(mw, even);
+		placeP2Forward(mw, mine);
+		castAsP2(mw, makeSummon("Lich", "Ice", 4, LICH_4_046R));
+
+		assertEquals(4000, damageOn(mw, odd), "3500 rounds up to 4000");
+		assertEquals(4000, damageOn(mw, even));
+		assertEquals(0, mw.p2ForwardDamage.get(0), "opponent's Forwards only");
+	}
+
+	// =========================================================================================
+	// 4-051H Alexander: "EX BURST Choose 1 Forward of power 9000 or more. Break it."
+	// =========================================================================================
+
+	private static final String ALEXANDER_4_051H = "[[ex]]EX BURST[[/]] Choose 1 Forward of power 9000 or more. Break it.";
+
+	@Test
+	void alexanderBreaksAForwardOfPower9000OrMore() {
+		MainWindow mw = new MainWindow();
+		CardData theirs = makeForward("Theirs", "Water", 5, 9000);
+		placeP1Forward(mw, theirs);
+		castAsP2(mw, makeSummon("Alexander", "Wind", 5, ALEXANDER_4_051H));
+		assertTrue(mw.gameState.getP1BreakZone().contains(theirs));
+	}
+
+	@Test
+	void alexanderDoesNothingWithOnlyAForwardUnder9000Power() {
+		MainWindow mw = new MainWindow();
+		CardData theirs = makeForward("Theirs", "Water", 5, 8000);
+		placeP1Forward(mw, theirs);
+		castAsP2(mw, makeSummon("Alexander", "Wind", 5, ALEXANDER_4_051H));
+		assertTrue(mw.p1ForwardCards.contains(theirs));
+	}
+
+	// =========================================================================================
+	// 4-052C Alexander: "EX BURST Select 1 of the 2 following actions. 'Choose 1 Monster. Break it.'
+	// 'Choose 1 Backup you control. Activate it. Draw 1 card.'"
+	// =========================================================================================
+
+	private static final String ALEXANDER_4_052C = "[[ex]]EX BURST[[/]] Select 1 of the 2 following actions.[[br]] "
+			+ "\"Choose 1 Monster. Break it.\"[[br]] \"Choose 1 Backup you control. Activate it. Draw 1 card.\"";
+
+	@Test
+	void alexandersFirstActionBreaksAMonster() {
+		MainWindow mw = new MainWindow();
+		CardData monster = makeMonster("Their Monster", "Water", 3);
+		placeP1Monster(mw, monster);
+		castAsP2Selecting(mw, makeSummon("Alexander", "Wind", 2, ALEXANDER_4_052C), 0);
+		assertTrue(mw.gameState.getP1BreakZone().contains(monster));
+	}
+
+	@Test
+	void alexandersSecondActionActivatesYourBackupAndDraws() {
+		MainWindow mw = new MainWindow();
+		placeP2Backup(mw, makeBackup("Mine", "Wind", 2));
+		mw.p2BackupStates[0] = CardState.DULL;
+		fillP2Deck(mw, 2);
+		castAsP2Selecting(mw, makeSummon("Alexander", "Wind", 2, ALEXANDER_4_052C), 1);
+
+		assertEquals(CardState.ACTIVE, mw.p2BackupStates[0]);
+		assertEquals(1, mw.gameState.getP2Hand().size());
+	}
+
+	// =========================================================================================
+	// 4-073C Atomos: "EX BURST Select 1 of the 2 following actions. 'Choose 1 dull Forward. Break it.'
+	// 'Choose 1 Forward. Deal it 8000 damage.'"
+	// =========================================================================================
+
+	private static final String ATOMOS_4_073C = "[[ex]]EX BURST[[/]] Select 1 of the 2 following actions.[[br]] "
+			+ "\"Choose 1 dull Forward. Break it.\"[[br]] \"Choose 1 Forward. Deal it 8000 damage.\"";
+
+	@Test
+	void atomossFirstActionBreaksADullForward() {
+		MainWindow mw = new MainWindow();
+		CardData theirs = makeForward("Theirs", "Water", 6, 10000);
+		placeP1Forward(mw, theirs);
+		dullP1Forward(mw, theirs);
+		castAsP2Selecting(mw, makeSummon("Atomos", "Earth", 6, ATOMOS_4_073C), 0);
+		assertTrue(mw.gameState.getP1BreakZone().contains(theirs));
+	}
+
+	@Test
+	void atomossSecondActionDeals8000Damage() {
+		MainWindow mw = new MainWindow();
+		CardData theirs = makeForward("Theirs", "Water", 6, 10000);
+		placeP1Forward(mw, theirs);
+		castAsP2Selecting(mw, makeSummon("Atomos", "Earth", 6, ATOMOS_4_073C), 1);
+		assertEquals(8000, damageOn(mw, theirs));
+	}
+
+	// =========================================================================================
+	// 4-093R Hecatoncheir: "Choose 1 Forward you control and 1 Forward opponent controls. Each Forward
+	// deals damage equal to its power to the other."
+	// =========================================================================================
+
+	private static final String HECATONCHEIR_4_093R = "Choose 1 Forward you control and 1 Forward opponent controls. "
+			+ "Each Forward deals damage equal to its power to the other.";
+
+	@Test
+	void hecatoncheirMakesTheTwoForwardsFight() {
+		MainWindow mw = new MainWindow();
+		CardData mine   = makeForward("Mine", "Earth", 4, 7000);
+		CardData theirs = makeForward("Theirs", "Water", 3, 5000);
+		placeP2Forward(mw, mine);
+		placeP1Forward(mw, theirs);
+		castAsP2(mw, makeSummon("Hecatoncheir", "Earth", 2, HECATONCHEIR_4_093R));
+
+		assertTrue(mw.gameState.getP1BreakZone().contains(theirs), "7000 into a 5000");
+		assertEquals(5000, mw.p2ForwardDamage.get(0), "5000 back into a 7000");
+	}
+
+	// =========================================================================================
+	// 4-114L Raiden: "Choose up to 2 Forwards opponent controls. Remove the first Forward from the
+	// game, and break the other."
+	// =========================================================================================
+
+	private static final String RAIDEN_4_114L = "Choose up to 2 Forwards opponent controls. Remove the first Forward "
+			+ "from the game, and break the other.";
+
+	@Test
+	void raidenRemovesOneForwardFromTheGameAndBreaksTheOther() {
+		MainWindow mw = new MainWindow();
+		CardData a = makeForward("A", "Water", 3, 7000);
+		CardData b = makeForward("B", "Water", 4, 8000);
+		CardData mine = makeForward("Mine", "Lightning", 3, 7000);
+		placeP1Forward(mw, a);
+		placeP1Forward(mw, b);
+		placeP2Forward(mw, mine);
+		castAsP2(mw, makeSummon("Raiden", "Lightning", 9, RAIDEN_4_114L));
+
+		assertTrue(mw.p1ForwardCards.isEmpty());
+		assertEquals(1, mw.gameState.getP1RemovedFromGame().size(), "one removed");
+		assertEquals(1, mw.gameState.getP1BreakZone().size(), "one broken");
+		assertTrue(mw.p2ForwardCards.contains(mine), "opponent's Forwards only");
+	}
+
+	@Test
+	void raidenBreaksTheRightForwardWhenTheFirstSatInALowerSlot() {
+		// Removing the first shifts the slots behind it. The other used to be broken by its old
+		// index: out of bounds here with two, the wrong Forward with three.
+		MainWindow mw = new MainWindow();
+		CardData a = makeForward("A", "Water", 3, 7000);
+		CardData b = makeForward("B", "Water", 4, 8000);
+		CardData c = makeForward("C", "Water", 5, 9000);
+		for (CardData f : List.of(a, b, c)) placeP1Forward(mw, f);
+		GameContext ctx = spy(mw.buildGameContext(false));
+		doReturn(List.of(new ForwardTarget(true, 0, ForwardTarget.CardZone.FORWARD),
+				new ForwardTarget(true, 1, ForwardTarget.CardZone.FORWARD))).when(ctx).consumePreloadedTargets();
+		CardData raiden = makeSummon("Raiden", "Lightning", 9, RAIDEN_4_114L);
+		ActionResolver.parse(raiden.summonEffect(), raiden).accept(ctx);
+
+		assertTrue(mw.gameState.getP1RemovedFromGame().contains(a), "the first, removed");
+		assertTrue(mw.gameState.getP1BreakZone().contains(b), "the other, broken");
+		assertEquals(List.of(c), mw.p1ForwardCards, "and nothing else");
+	}
+
+	// =========================================================================================
+	// 4-116C Ramuh: "EX BURST Select 1 of the 2 following actions. 'Choose 1 Forward of cost 2 or less.
+	// Break it.' 'Choose 1 Monster of cost 2 or less. Break it.'"
+	// =========================================================================================
+
+	private static final String RAMUH_4_116C = "[[ex]]EX BURST[[/]] Select 1 of the 2 following actions.[[br]] "
+			+ "\"Choose 1 Forward of cost 2 or less. Break it.\"[[br]] \"Choose 1 Monster of cost 2 or less. Break it.\"";
+
+	@Test
+	void ramuhsFirstActionBreaksACheapForward() {
+		MainWindow mw = new MainWindow();
+		CardData theirs = makeForward("Theirs", "Water", 2, 5000);
+		placeP1Forward(mw, theirs);
+		castAsP2Selecting(mw, makeSummon("Ramuh", "Lightning", 1, RAMUH_4_116C), 0);
+		assertTrue(mw.gameState.getP1BreakZone().contains(theirs));
+	}
+
+	@Test
+	void ramuhsFirstActionLeavesACost3Forward() {
+		MainWindow mw = new MainWindow();
+		CardData theirs = makeForward("Theirs", "Water", 3, 5000);
+		placeP1Forward(mw, theirs);
+		castAsP2Selecting(mw, makeSummon("Ramuh", "Lightning", 1, RAMUH_4_116C), 0);
+		assertTrue(mw.p1ForwardCards.contains(theirs));
+	}
+
+	@Test
+	void ramuhsSecondActionBreaksACheapMonster() {
+		MainWindow mw = new MainWindow();
+		CardData monster = makeMonster("Their Monster", "Water", 2);
+		placeP1Monster(mw, monster);
+		castAsP2Selecting(mw, makeSummon("Ramuh", "Lightning", 1, RAMUH_4_116C), 1);
+		assertTrue(mw.gameState.getP1BreakZone().contains(monster));
+	}
+
+	// =========================================================================================
+	// 4-128C PuPu: "EX BURST Discard 1 card. Then, draw 2 cards."
+	// =========================================================================================
+
+	private static final String PUPU_4_128C = "[[ex]]EX BURST[[/]] Discard 1 card. Then, draw 2 cards.[[br]]";
+
+	@Test
+	void pupuDiscardsOneThenDrawsTwo() {
+		MainWindow mw = new MainWindow();
+		CardData spare = makeForward("Spare", "Water", 2, 5000);
+		mw.gameState.getP2Hand().add(spare);
+		fillP2Deck(mw, 3);
+		castAsP2(mw, makeSummon("PuPu", "Water", 1, PUPU_4_128C));
+
+		assertTrue(mw.gameState.getP2BreakZone().contains(spare), "the discard");
+		assertEquals(2, mw.gameState.getP2Hand().size(), "then two drawn");
+		assertEquals(1, mw.gameState.getP2MainDeck().size());
+	}
+
+	// =========================================================================================
+	// 4-143R Leviathan: "EX BURST Choose 1 Forward you control and 1 Forward opponent controls. Return
+	// them to their owners' hand."
+	// =========================================================================================
+
+	private static final String LEVIATHAN_4_143R = "[[ex]]EX BURST[[/]] Choose 1 Forward you control and 1 Forward "
+			+ "opponent controls. Return them to their owners' hand.";
+
+	@Test
+	void leviathanReturnsOneForwardFromEachSideToItsOwner() {
+		MainWindow mw = new MainWindow();
+		CardData mine   = makeForward("Mine", "Water", 3, 7000);
+		CardData theirs = makeForward("Theirs", "Fire", 4, 8000);
+		placeP2Forward(mw, mine);
+		placeP1Forward(mw, theirs);
+		castAsP2(mw, makeSummon("Leviathan", "Water", 3, LEVIATHAN_4_143R));
+
+		assertTrue(mw.gameState.getP2Hand().contains(mine));
+		assertTrue(mw.gameState.getP1Hand().contains(theirs));
 	}
 
 	// =========================================================================================

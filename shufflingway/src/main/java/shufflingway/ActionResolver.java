@@ -914,6 +914,11 @@ public class ActionResolver {
         result = tryParseChooseSummonInBzCastable(effectText);
         if (result != null) return claim("ChooseSummonInBzCastable", result);
 
+        // Must precede ChooseCharacter, which claims the whole text and reads the last sentence as
+        // the caster's own play (3-071H Chaos, Walker of the Wheel).
+        result = tryParseBreakThenOpponentMayPlayIfBroken(effectText, source, xValue);
+        if (result != null) return claim("BreakThenOpponentMayPlayIfBroken", result);
+
         result = tryParseChooseCharacter(effectText, source, xValue);
         if (result != null) return claim("ChooseCharacter", withAiTargetPreference(effectText, result));
 
@@ -8456,21 +8461,6 @@ public class ActionResolver {
         return new String[] {
                 names.isEmpty() ? null : String.join("|", names),
                 jobs.isEmpty()  ? null : String.join("|", jobs) };
-    }
-
-    /**
-     * Returns the cost value that appears most frequently among P1's current Forwards.
-     * Used by the opponent AI in dual-number selection to target the ability user's cards.
-     * Returns 0 when P1 has no Forwards on the field.
-     */
-    static int aiMostCommonP1ForwardCost(GameContext ctx) {
-        java.util.Map<Integer, Integer> freq = new java.util.HashMap<>();
-        for (int i = 0; i < ctx.p1ForwardCount(); i++)
-            freq.merge(ctx.p1Forward(i).cost(), 1, Integer::sum);
-        return freq.entrySet().stream()
-                .max(java.util.Map.Entry.comparingByValue())
-                .map(java.util.Map.Entry::getKey)
-                .orElse(0);
     }
 
     /**

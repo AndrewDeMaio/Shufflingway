@@ -7371,6 +7371,18 @@ final class ActionResolverPatterns {
         "(?i)^(?<play>play\\s+[^.!]+?\\s+from\\s+your\\s+hand\\s+onto\\s+the\\s+field(?:\\s+dull)?[.!])\\s*" +
         "If\\s+its\\s+cost\\s+is\\s+(?<cost>\\d+)\\s+or\\s+(?<cmp>more|less),\\s*(?<rest>[^.!]+[.!]?)$"
     );
+    /**
+     * 3-071H Chaos, Walker of the Wheel: "Choose 1 Forward opponent controls. Break it. If that
+     * Forward is put into the Break Zone, your opponent may play 1 Forward from their hand onto the
+     * field." Anchored end to end: the Choose chain read the last sentence through
+     * {@link #PLAY_FROM_HAND_PATTERN}'s {@code find()}, which starts at "play" and drops "your
+     * opponent may" — the caster played from their own hand on every cast, a drawback turned bonus.
+     */
+    static final Pattern BREAK_THEN_OPPONENT_MAY_PLAY_IF_BROKEN = Pattern.compile(
+        "(?i)^Choose\\s+1\\s+Forward\\s+opponent\\s+controls\\.\\s+Break\\s+it\\.\\s+" +
+        "If\\s+that\\s+Forward\\s+is\\s+put\\s+into\\s+the\\s+Break\\s+Zone,\\s+your\\s+opponent\\s+may\\s+" +
+        "(?<play>play\\s+1\\s+[^.]+?\\s+from\\s+their\\s+hand\\s+onto\\s+the\\s+field)\\.?\\s*$"
+    );
     static final Pattern PLAY_FROM_HAND_PATTERN = Pattern.compile(
         // "a Forward" as well as "1 Forward". The article is not a stylistic variant to be
         // tolerated -- it is the whole reason the excludeelem group below had never once

@@ -4945,6 +4945,9 @@ final class ActionResolverChoose {
                         opponentOnly, selfOnly, condition, element, zone, opponentZone, bothZones,
                         costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
                         jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
+                // The other is held by identity: acting on the first can take it off the field and
+                // shift the slots behind it, leaving the other's index pointing elsewhere.
+                CardData otherCard = ts.size() > 1 ? ctx.targetCard(ts.get(1)) : null;
                 if (!ts.isEmpty()) {
                     ForwardTarget first = ts.get(0);
                     if      (firstsfx.contains("from the game"))  ctx.removeTargetFromGame(first);
@@ -4960,8 +4963,8 @@ final class ActionResolverChoose {
                     else if (firstpfx.equalsIgnoreCase("freeze"))      ctx.freezeTarget(first);
                     else if (firstpfx.equalsIgnoreCase("activate"))    ctx.activateTarget(first);
                 }
-                if (ts.size() > 1) {
-                    ForwardTarget other = ts.get(1);
+                ForwardTarget other = otherCard != null ? ctx.locateOnField(otherCard) : null;
+                if (other != null) {
                     if      (othereffect.contains("freeze") && othereffect.contains("dull")) ctx.dullAndFreezeTarget(other);
                     else if (othereffect.equals("activate"))                                  ctx.activateTarget(other);
                     else if (othereffect.equals("break"))                                     ctx.breakTarget(other);
@@ -5247,8 +5250,10 @@ final class ActionResolverChoose {
         Matcher exprM = FOLLOWUP_DAMAGE_EXPR.matcher(primaryFollowup);
         if (exprM.find()) {
             if (exprM.group("highest") != null) {
+                // "the highest power Forward you control" — the resolving player's side, which is
+                // P2 when the CPU or a remote player resolves it (3-074R Atomos, 13-053R Alexander).
                 return ctx -> {
-                    int damage = ctx.highestP1ForwardPower();
+                    int damage = ctx.isP1() ? ctx.highestP1ForwardPower() : ctx.highestP2ForwardPower();
                     ctx.logChooseHeader(choosePrefix + " — Deal " + damage + " damage (highest Forward power)");
                     List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
                             opponentOnly, selfOnly, condition, element, zone, opponentZone, bothZones,
@@ -8341,13 +8346,14 @@ final class ActionResolverChoose {
         final String innerText = rest;
 
         // --- Dual variant: "Break all Forwards of cost equal to either number." ---
-        // P1 selects via dialog; the opponent AI picks the cost most common among P1's forwards.
+        // Each player picks from their own seat: the resolving player, then their opponent.
         if (dualSelect && SELECT_NUMBER_INNER_EITHER_BREAK.matcher(innerText).find()) {
             return ctx -> {
                 int n1 = ctx.selectNumber(0, 11, "Select a number:");
                 ctx.logEntry("Effect: Player selects number " + n1);
-                int n2 = aiMostCommonP1ForwardCost(ctx);
-                ctx.logEntry("Effect: Opponent selects number " + n2 + " (AI)");
+                int n2 = ctx.opponentSelectsNumber(0, 11,
+                        "Your opponent selected " + n1 + ". Select a number:");
+                ctx.logEntry("Effect: Opponent selects number " + n2);
                 ctx.logEntry("Effect: Break all Forwards of cost " + n1
                         + (n1 != n2 ? " or " + n2 : ""));
                 ctx.applyMassFieldEffect(GameContext.MassAction.BREAK,

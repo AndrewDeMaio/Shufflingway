@@ -626,6 +626,27 @@ public interface GameContext {
             boolean suppressAutoAbility, String withTrait);
 
     /**
+     * The resolving player's opponent may play 1 matching Character from their hand onto their
+     * own field — "your opponent may play 1 Forward from their hand onto the field" (3-071H Chaos,
+     * Walker of the Wheel). Same filters, and the same meaning for every parameter, as
+     * {@link #playCharacterFromHand}; the opponent chooses, and may decline.
+     *
+     * @return the card played, or {@code null} if none was
+     */
+    CardData opponentMayPlayCharacterFromHand(boolean inclForwards, boolean inclBackups,
+            boolean inclMonsters, int costVal, String costCmp, int costVal2,
+            String jobFilter, String cardNameFilter, String categoryFilter,
+            String elementFilter, String excludeName, boolean entersDull, String excludeElement,
+            boolean suppressAutoAbility, String withTrait);
+
+    /**
+     * Whether {@code card} is in either player's Break Zone, by identity — "if that Forward is put
+     * into the Break Zone" read after the break, which a protection or a replacement (removed from
+     * the game instead) may have stopped (3-071H Chaos, Walker of the Wheel).
+     */
+    boolean isInBreakZone(CardData card);
+
+    /**
      * Repeatedly prompts the ability user to play matching characters from their hand onto the
      * field until no eligible cards remain or they decline.
      */
@@ -2818,6 +2839,14 @@ public interface GameContext {
      */
     CardData targetCard(ForwardTarget t);
 
+    /**
+     * Where {@code card} sits on either field now, by identity, or {@code null} once it has left —
+     * the inverse of {@link #targetCard}. For an effect that acts on one chosen card and then
+     * another: removing the first shifts the slots behind it, so the second has to be found again
+     * (4-114L Raiden's "remove the first Forward from the game, and break the other").
+     */
+    ForwardTarget locateOnField(CardData card);
+
     /** True when the ability user currently controls {@code card} (by identity, any field zone). */
     boolean selfControlsCard(CardData card);
 
@@ -4281,6 +4310,16 @@ public interface GameContext {
      *               "Opponent selects a number:")
      */
     int selectNumber(int min, int max, String prompt);
+
+    /**
+     * The resolving player's opponent picks a number in {@code [min, max]} — the second half of
+     * "Select 1 number. Your opponent selects 1 number." (3-112H Exodus, the Judge-Sal). Asked of
+     * whoever holds that seat: the local human, the CPU, or the remote player.
+     *
+     * <p>The CPU answers with the cost most common among the resolving player's Forwards — the
+     * number that breaks the most of theirs.
+     */
+    int opponentSelectsNumber(int min, int max, String prompt);
 
     /**
      * Shows a power-amount picker: values 0, 1000, 2000 … {@code maxAmount} in steps of 1000.

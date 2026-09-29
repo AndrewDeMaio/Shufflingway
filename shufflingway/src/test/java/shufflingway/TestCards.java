@@ -21,6 +21,29 @@ final class TestCards {
 				null, null, null, "");
 	}
 
+	/** A plain Forward with a Job, for "Job X" filters and conditions. */
+	static CardData makeForwardWithJob(String name, String element, int cost, int power, String job) {
+		return new CardData(null, name, element, cost, power, "Forward", false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				job, null, null, "");
+	}
+
+	static CardData makeMonster(String name, String element, int cost) {
+		return new CardData(null, name, element, cost, 0, "Monster", false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				null, null, null, "");
+	}
+
+	/** Seats {@code card} on P1's Monster row with its owner recorded. */
+	static void placeP1Monster(MainWindow mw, CardData card) {
+		mw.gameState.getIdentity().put(card, true);
+		mw.placeCardInMonsterZone(card);
+	}
+
 	static CardData makeSummon(String name, String element, int cost, String text) {
 		return new CardData(null, name, element, cost, 0, "Summon", false, 0, false, false,
 				Set.of(), 0, List.of(), null, List.of(),

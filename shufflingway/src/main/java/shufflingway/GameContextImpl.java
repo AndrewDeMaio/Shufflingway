@@ -2538,6 +2538,28 @@ final class GameContextImpl implements GameContext {
 						});
 				return pick < 0 ? min : min + pick;
 			}
+			@Override public int opponentSelectsNumber(int min, int max, String prompt) {
+				int pick = mw.decideOption(!isP1, max - min + 1,
+						"Waiting for your opponent to choose a number...",
+						() -> mw.showNumberSelectDialog(prompt, min, max) - min,
+						() -> {
+							int n = mostCommonForwardCost(isP1, min, max);
+							logEntry("[AI] selected " + n + " (" + prompt + ")");
+							return n - min;
+						});
+				return pick < 0 ? min : min + pick;
+			}
+
+			/** The cost most Forwards on {@code seatIsP1}'s side share, within range; {@code min} if none. */
+			private int mostCommonForwardCost(boolean seatIsP1, int min, int max) {
+				Map<Integer, Integer> freq = new HashMap<>();
+				for (CardData c : seatIsP1 ? mw.p1ForwardCards : mw.p2ForwardCards)
+					if (c.cost() >= min && c.cost() <= max) freq.merge(c.cost(), 1, Integer::sum);
+				return freq.entrySet().stream()
+						.max(Map.Entry.comparingByValue())
+						.map(Map.Entry::getKey)
+						.orElse(min);
+			}
 			@Override public int selectPowerAmount(int maxAmount, String prompt) {
 				// The dialog steps in thousands from 0, so the answer is how many steps.
 				int steps = Math.max(0, maxAmount / 1000);
@@ -4509,6 +4531,24 @@ final class GameContextImpl implements GameContext {
 						excludeElement, suppressAutoAbility, withTrait) != null;
 				// One player passing is not the effect failing; both passing is.
 				if (!playedFirst && !playedSecond) markEffectFizzled();
+			}
+
+			@Override public CardData opponentMayPlayCharacterFromHand(boolean inclForwards,
+					boolean inclBackups, boolean inclMonsters, int costVal, String costCmp,
+					int costVal2, String jobFilter, String cardNameFilter, String categoryFilter,
+					String elementFilter, String excludeName, boolean entersDull,
+					String excludeElement, boolean suppressAutoAbility, String withTrait) {
+				return playCharacterFromHandFor(!isP1, inclForwards, inclBackups, inclMonsters,
+						costVal, costCmp, costVal2, jobFilter, cardNameFilter, categoryFilter,
+						elementFilter, excludeName, entersDull, excludeElement, suppressAutoAbility,
+						withTrait);
+			}
+
+			@Override public boolean isInBreakZone(CardData card) {
+				if (card == null) return false;
+				for (CardData c : mw.gameState.getP1BreakZone()) if (c == card) return true;
+				for (CardData c : mw.gameState.getP2BreakZone()) if (c == card) return true;
+				return false;
 			}
 
 			/**
@@ -11612,6 +11652,12 @@ final class GameContextImpl implements GameContext {
 	// =========================================================================================
 			@Override public CardData targetCard(ForwardTarget t) {
 				return t == null ? null : mw.autoAbilityTriggers.fieldCardData(t);
+			}
+
+			@Override public ForwardTarget locateOnField(CardData card) {
+				if (card == null) return null;
+				ForwardTarget t = mw.findFieldTarget(card, true);
+				return t != null ? t : mw.findFieldTarget(card, false);
 			}
 
 			@Override public boolean selfControlsCard(CardData card) {
