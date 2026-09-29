@@ -21,14 +21,17 @@ import shufflingway.net.ActionType;
 import shufflingway.net.GameAction;
 import shufflingway.net.GameConnection;
 import shufflingway.net.LobbyExchange;
+import shufflingway.net.LobbyExchange.LobbySettings;
 import shufflingway.net.MatchSetup;
 
 /**
- * The host's "Enable Debugging" option on its way through the lobby: the LOBBY_SETTINGS updates
- * the joiner shows before Start, and the final value GAME_SETUP carries into the match.
+ * The lobby on the wire: the host's options (debugging, the Standard banlist) as LOBBY_SETTINGS
+ * the joiner sees before Start, the joiner's LOBBY_READY back, the deck swap Start sets off,
+ * and the final values GAME_SETUP carries into the match.
  *
  * <p>Loopback on an ephemeral port, read with {@code receiveSync} as the lobby reads it, before
- * any reader thread is started.
+ * any reader thread is started. Each side's replies wait in the socket buffer, so one test
+ * thread can play both ends in turn.
  */
 class LobbyExchangeTest {
 
@@ -51,34 +54,72 @@ class LobbyExchangeTest {
         if (listener != null) listener.close();
     }
 
-    private static GameAction deckList() {
+    private static GameAction deckList(String name, String serial) {
         return GameAction.of(ActionType.DECK_LIST, new JSONObject()
-                .put("deckName", "Host deck")
-                .put("username", "Host")
-                .put("serials", new JSONArray(List.of("1-001H"))));
+                .put("deckName", name)
+                .put("username", name)
+                .put("serials", new JSONArray(List.of(serial))));
+    }
+
+    private static GameAction settings(boolean debug, boolean banlist, int resets) {
+        return LobbyExchange.lobbySettingsAction(new LobbySettings(debug, banlist, resets));
     }
 
     @Test
-    void theJoinerSeesEachDebugSettingBeforeTheDeckList() throws IOException {
-        host.send(LobbyExchange.lobbySettingsAction(false));   // on connect
-        host.send(LobbyExchange.lobbySettingsAction(true));    // the host ticks the box
-        host.send(deckList());                                 // and presses Start
+    void theJoinerSeesEachSettingBeforeStartThenAnswersWithItsDeck() throws IOException {
+        host.send(settings(false, false, 0));        // on connect
+        host.send(settings(true, false, 0));         // the host ticks Enable Debugging
+        host.send(settings(true, true, 1));          // and Enable Standard Banlist
+        host.send(deckList("Host deck", "1-001H"));  // and presses Start
 
-        List<Boolean> seen = new ArrayList<>();
-        LobbyExchange.RemoteDeck deck = LobbyExchange.awaitDeckList(joiner, seen::add);
+        List<LobbySettings> seen = new ArrayList<>();
+        LobbyExchange.RemoteDeck hostDeck = LobbyExchange.joinerAwaitStart(joiner, seen::add,
+                () -> deckList("Joiner deck", "2-002H"));
 
-        assertEquals(List.of(false, true), seen, "each setting reaches the joiner, in order");
-        assertEquals(List.of("1-001H"), deck.serials(), "and the deck list is still read after them");
+        assertEquals(List.of(new LobbySettings(false, false, 0), new LobbySettings(true, false, 0),
+                new LobbySettings(true, true, 1)), seen, "each setting reaches the joiner, in order");
+        assertEquals(List.of("1-001H"), hostDeck.serials(), "and Start still delivers the host's deck");
+
+        LobbyExchange.RemoteDeck joinerDeck = LobbyExchange.hostAwaitJoinerDeck(host, (r, ready) -> {});
+        assertEquals(List.of("2-002H"), joinerDeck.serials(), "the joiner's answer is its deck");
+    }
+
+    @Test
+    void aJoinerWithNoDeckDeclinesStartAndTheLobbyGoesOn() throws IOException {
+        host.send(settings(false, true, 1));
+        host.send(deckList("Host deck", "1-001H"));   // Start, before the joiner has a deck
+        host.send(deckList("Host deck", "1-001H"));   // Start again, once it has confirmed one
+
+        List<GameAction> answers = new ArrayList<>(List.of(
+                LobbyExchange.lobbyReadyAction(1, false),
+                deckList("Joiner deck", "2-002H")));
+        LobbyExchange.joinerAwaitStart(joiner, s -> {}, () -> answers.remove(0));
+
+        List<String> readies = new ArrayList<>();
+        joiner.send(LobbyExchange.lobbyReadyAction(1, true));   // behind the deck: left for the game's reader
+        LobbyExchange.RemoteDeck joinerDeck = LobbyExchange.hostAwaitJoinerDeck(host,
+                (resets, ready) -> readies.add(resets + ":" + ready));
+
+        assertEquals(List.of("1:false"), readies, "the decline reaches the host, with its reset count");
+        assertEquals(List.of("2-002H"), joinerDeck.serials(), "and the second Start gets the deck");
+        assertTrue(answers.isEmpty());
+    }
+
+    @Test
+    void settingsFromAnOlderHostReadAsBanlistOff() {
+        GameAction old = GameAction.of(ActionType.LOBBY_SETTINGS, new JSONObject().put("debug", true));
+        assertEquals(new LobbySettings(true, false, 0), LobbyExchange.settingsOf(old));
     }
 
     @Test
     void gameSetupCarriesTheFinalDebugSettingPastALateUpdate() throws IOException {
-        host.send(LobbyExchange.lobbySettingsAction(false));   // still in flight when Start is pressed
-        LobbyExchange.sendGameSetup(host, true, true);
+        host.send(settings(false, false, 0));   // still in flight when Start is pressed
+        LobbyExchange.sendGameSetup(host, true, true, true);
 
         GameAction setup = LobbyExchange.awaitGameSetup(joiner);
         assertEquals(ActionType.GAME_SETUP, setup.type());
         assertTrue(setup.payload().getBoolean("debug"), "GAME_SETUP is the final word");
+        assertTrue(setup.payload().getBoolean("banlist"), "and carries the banlist into the match");
         assertTrue(setup.payload().getBoolean("hostGoesFirst"));
     }
 

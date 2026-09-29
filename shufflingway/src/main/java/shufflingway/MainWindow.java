@@ -2667,7 +2667,8 @@ public class MainWindow {
 	/** The messages {@link NewGameDialog} negotiates with. GAME_SETUP only arrives after the lobby for a new game. */
 	private static boolean isNewGameMessage(ActionType type) {
 		return type == ActionType.NEW_GAME_REQUEST || type == ActionType.NEW_GAME_READY
-				|| type == ActionType.NEW_GAME_CANCEL || type == ActionType.GAME_SETUP;
+				|| type == ActionType.NEW_GAME_CANCEL || type == ActionType.NEW_GAME_SETTINGS
+				|| type == ActionType.GAME_SETUP;
 	}
 
 	private void onNewGameMessage(GameAction action) {

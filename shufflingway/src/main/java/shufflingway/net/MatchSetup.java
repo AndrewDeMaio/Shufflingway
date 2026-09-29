@@ -19,20 +19,30 @@ import java.util.Random;
  * @param hostGoesFirst  whether the host takes the first turn (the host's coin flip)
  * @param debugEnabled   whether the host allowed the Debug menu for this match; when false it
  *                       is unusable on both clients for the whole game
+ * @param banlistEnabled whether the host enforced the Standard banlist on both decks; a new game
+ *                       on the same connection starts from this setting
  */
 public record MatchSetup(int localDeckId, List<String> remoteSerials, String remoteDeckName,
                          String remoteUsername, long seed, boolean localIsHost,
-                         boolean hostGoesFirst, boolean debugEnabled) {
+                         boolean hostGoesFirst, boolean debugEnabled, boolean banlistEnabled) {
 
 	public MatchSetup {
 		remoteSerials = List.copyOf(remoteSerials);
 	}
 
-	/** A match with debugging off, the lobby's default. */
+	/** A match with the banlist off, the lobby's default. */
+	public MatchSetup(int localDeckId, List<String> remoteSerials, String remoteDeckName,
+	                  String remoteUsername, long seed, boolean localIsHost, boolean hostGoesFirst,
+	                  boolean debugEnabled) {
+		this(localDeckId, remoteSerials, remoteDeckName, remoteUsername, seed, localIsHost,
+				hostGoesFirst, debugEnabled, false);
+	}
+
+	/** A match with debugging and the banlist off, the lobby's defaults. */
 	public MatchSetup(int localDeckId, List<String> remoteSerials, String remoteDeckName,
 	                  String remoteUsername, long seed, boolean localIsHost, boolean hostGoesFirst) {
 		this(localDeckId, remoteSerials, remoteDeckName, remoteUsername, seed, localIsHost,
-				hostGoesFirst, false);
+				hostGoesFirst, false, false);
 	}
 
 	/** True when the local player takes the first turn. */

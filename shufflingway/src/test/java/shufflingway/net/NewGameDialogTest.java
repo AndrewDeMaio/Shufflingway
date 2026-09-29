@@ -24,7 +24,11 @@ class NewGameDialogTest {
     private static final List<String> JOINER_SERIALS = List.of("2-001H", "2-002R");
 
     private static MatchSetup previous(boolean localIsHost, String opponent, boolean debug) {
-        return new MatchSetup(1, List.of("x"), "Old deck", opponent, 42L, localIsHost, true, debug);
+        return previous(localIsHost, opponent, debug, false);
+    }
+
+    private static MatchSetup previous(boolean localIsHost, String opponent, boolean debug, boolean banlist) {
+        return new MatchSetup(1, List.of("x"), "Old deck", opponent, 42L, localIsHost, true, debug, banlist);
     }
 
     private static GameAction ready(String deckName, String username, List<String> serials) {
@@ -40,11 +44,67 @@ class NewGameDialogTest {
         MatchSetup hostStarted, joinerStarted;
 
         Pair(boolean debug) {
-            host   = new NewGameDialog(null, previous(true, "Joiner", debug), true,
+            this(debug, false);
+        }
+
+        Pair(boolean debug, boolean banlist) {
+            host   = new NewGameDialog(null, previous(true, "Joiner", debug, banlist), true,
                     a -> joiner.onAction(a), s -> hostStarted = s);
-            joiner = new NewGameDialog(null, previous(false, "Host", debug), false,
+            joiner = new NewGameDialog(null, previous(false, "Host", debug, banlist), false,
                     a -> host.onAction(a), s -> joinerStarted = s);
         }
+
+        void bothReady() {
+            host.markReady(ready("Host deck", "Host", HOST_SERIALS), 5);
+            joiner.markReady(ready("Joiner deck", "Joiner", JOINER_SERIALS), 7);
+        }
+    }
+
+    @Test
+    void theBanlistCarriesOverFromTheMatchBeingReplaced() {
+        Pair p = new Pair(false, true);
+        p.bothReady();
+        p.host.startAsHost();
+        assertTrue(p.hostStarted.banlistEnabled() && p.joinerStarted.banlistEnabled(),
+                "a banlist match leads to a banlist new game unless the host unticks it");
+
+        Pair off = new Pair(false, false);
+        off.bothReady();
+        off.host.startAsHost();
+        assertFalse(off.hostStarted.banlistEnabled() || off.joinerStarted.banlistEnabled());
+    }
+
+    @Test
+    void switchingTheBanlistOnDropsBothReadysAndAStaleReadyWithThem() {
+        Pair p = new Pair(false, false);
+        p.bothReady();
+        assertEquals("Start Game", p.host.readyLabel());
+
+        p.host.setBanlistAsHost(true);
+        assertEquals("Ready", p.host.readyLabel(), "the host's deck and Ready are voided");
+        assertFalse(p.host.readyEnabled(), "and its deck deselected");
+        assertEquals("Ready", p.joiner.readyLabel(), "so are the joiner's");
+        assertFalse(p.joiner.readyEnabled());
+
+        // A Ready the joiner sent before the reset reached it, arriving after.
+        p.host.onAction(ready("Joiner deck", "Joiner", JOINER_SERIALS));
+        p.host.markReady(ready("Host deck", "Host", HOST_SERIALS), 5);
+        assertFalse(p.host.readyEnabled(), "the stale Ready is ignored: still waiting on the joiner");
+
+        p.joiner.markReady(ready("Joiner deck", "Joiner", JOINER_SERIALS), 7);
+        assertEquals("Start Game", p.host.readyLabel(), "a Ready after the reset counts");
+        p.host.startAsHost();
+        assertTrue(p.hostStarted.banlistEnabled() && p.joinerStarted.banlistEnabled());
+    }
+
+    @Test
+    void switchingTheBanlistOffKeepsBothReadys() {
+        Pair p = new Pair(false, true);
+        p.bothReady();
+        p.host.setBanlistAsHost(false);
+        assertEquals("Start Game", p.host.readyLabel(), "turning it off voids no deck");
+        p.host.startAsHost();
+        assertFalse(p.hostStarted.banlistEnabled() || p.joinerStarted.banlistEnabled());
     }
 
     @Test

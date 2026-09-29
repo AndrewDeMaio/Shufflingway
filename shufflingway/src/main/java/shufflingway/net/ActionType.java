@@ -10,9 +10,11 @@ public enum ActionType {
     DECK_LIST,      // payload: { "deckName": "...", "serials": ["1-001H", ...] }
                     //   The sender's own deck, expanded one entry per copy and ordered by
                     //   serial — the same order getDeckCardsDetailed produces locally.
-    GAME_SETUP,     // payload: { "seed": <long>, "hostGoesFirst": <bool>, "debug": <bool> }
+    GAME_SETUP,     // payload: { "seed": <long>, "hostGoesFirst": <bool>, "debug": <bool>,
+                    //            "banlist": <bool> }
                     //   Host-authored. The seed drives both decks' shuffles on both clients;
-                    //   "debug" is whether the Debug menu is usable during the match.
+                    //   "debug" is whether the Debug menu is usable during the match; "banlist"
+                    //   whether the Standard banlist was enforced, kept for the next new game.
     DEBUG,          // payload: { "op": "spawn" | "hand" | "clearHand" | "zone" | "clearZone"
                     //                   | "counter" | "state" | "break" | "damage", ... }
                     //   A Debug-menu change, in a game whose host enabled debugging. Sides are
@@ -21,13 +23,26 @@ public enum ActionType {
     NEW_GAME_REQUEST, // payload: {}
                     //   Mid-session: the sender wants to abandon the game in progress and start a
                     //   new one on the same connection. The receiver is asked to pick a deck.
-    NEW_GAME_READY, // payload: as DECK_LIST — the sender's deck for the new game, sent on Ready
+    NEW_GAME_READY, // payload: as DECK_LIST, plus "resets": <int> — the sender's deck for the new
+                    //   game, sent on Ready, as of the NEW_GAME_SETTINGS "resets" it last saw; a
+                    //   Ready from before the latest reset is stale and ignored.
     NEW_GAME_CANCEL,// payload: {} — the sender backed out; both return to the game in progress.
                     //   Once both sides are Ready the host starts the new game with GAME_SETUP.
-    LOBBY_SETTINGS, // payload: { "debug": <bool> }
+    NEW_GAME_SETTINGS, // payload: { "banlist": <bool>, "resets": <int> }
+                    //   Host → joiner while both pick decks for a new game: the host switched the
+                    //   Standard banlist. "resets" counts the times it was switched on; each one
+                    //   voids both players' decks and Ready.
+    LOBBY_SETTINGS, // payload: { "debug": <bool>, "banlist": <bool>, "resets": <int> }
                     //   Host → joiner while both wait in the lobby: the host's current match
                     //   options, sent on connect and again whenever one changes, so the joiner
                     //   can show them before Start. GAME_SETUP carries the final values.
+                    //   "banlist" is whether decks breaking the Standard banlist are refused.
+                    //   "resets" counts the times the host has switched it on; each one voids
+                    //   the deck either player had chosen.
+    LOBBY_READY,    // payload: { "resets": <int>, "ready": <bool> }
+                    //   Joiner → host: whether the joiner has a deck confirmed, as of the
+                    //   LOBBY_SETTINGS "resets" it last saw — the host ignores a stale one.
+                    //   "ready": false also answers a host DECK_LIST (Start) with no deck.
     STATE_CHECKSUM, // payload: { "label": "...", "checksum": "..." }
                     //   Desync detection: a hash of state both clients must agree on.
 

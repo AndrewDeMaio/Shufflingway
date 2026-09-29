@@ -24,10 +24,14 @@ import java.util.Random;
  * for an opponent to connect. Share your IP address and port with the opponent
  * out-of-band (chat, voice, etc.).
  *
- * <p>"Start Game" unlocks once an opponent has connected <em>and</em> the host has picked a
- * deck. Pressing it runs {@link LobbyExchange} — decks are swapped, the host picks the shuffle
- * seed and flips for first turn — and the results are exposed as a {@link MatchSetup} alongside
- * the live {@link GameConnection}. Cancelling returns {@code null} from both.
+ * <p>"Start Game" unlocks once an opponent has connected and confirmed a deck, <em>and</em> the
+ * host has picked one. Pressing it runs {@link LobbyExchange} — decks are swapped, the host picks
+ * the shuffle seed and flips for first turn — and the results are exposed as a
+ * {@link MatchSetup} alongside the live {@link GameConnection}. Cancelling returns {@code null}
+ * from both.
+ *
+ * <p>Switching on "Enable Standard Banlist" deselects both players' decks; each has to choose
+ * again from the decks the banlist allows.
  */
 public class HostLobbyDialog extends JDialog {
 
@@ -46,6 +50,22 @@ public class HostLobbyDialog extends JDialog {
      * Offered only to a host who has the Debug menu at all; otherwise the match runs without it.
      */
     private final JCheckBox debugBox;
+    /** "Enable Standard Banlist": decks that break it cannot be chosen, by either player. */
+    private final JCheckBox banlistBox;
+
+    /** Times the banlist has been switched on; sent with the settings to void older LOBBY_READYs. */
+    private int banlistResets;
+    /** Whether the joiner has a deck confirmed under the current settings. EDT only. */
+    private boolean opponentReady;
+    /** Start was pressed and the deck swap is under way. EDT only. */
+    private boolean starting;
+    private volatile boolean cancelled;
+
+    /** Fixed when Start is pressed, for the lobby reader to build the match from. */
+    private volatile int     matchDeckId = -1;
+    private volatile boolean matchHostGoesFirst;
+    private volatile boolean matchDebug;
+    private volatile boolean matchBanlist;
 
     public HostLobbyDialog(Frame owner) {
         super(owner, "Host Game", true);
@@ -77,9 +97,18 @@ public class HostLobbyDialog extends JDialog {
         debugBox.setToolTipText("Let both players use the Debug menu during this game.");
         debugBox.addActionListener(e -> sendLobbySettings());
 
+        banlistBox = new JCheckBox("Enable Standard Banlist", false);
+        banlistBox.setToolTipText(
+                "Decks that break the Standard banlist cannot be chosen, by either player.");
+        banlistBox.addActionListener(e -> onBanlistToggled());
+
+        JPanel options = new JPanel(new GridLayout(0, 1, 0, 2));
+        options.add(banlistBox);
+        if (AppSettings.isDebugEnabled()) options.add(debugBox);
+
         JPanel south = new JPanel(new BorderLayout(0, 4));
         south.add(statusLabel, BorderLayout.CENTER);
-        if (AppSettings.isDebugEnabled()) south.add(debugBox, BorderLayout.SOUTH);
+        south.add(options, BorderLayout.SOUTH);
 
         JPanel centre = new JPanel(new BorderLayout(0, 6));
         centre.add(deckChooser, BorderLayout.CENTER);
@@ -114,49 +143,126 @@ public class HostLobbyDialog extends JDialog {
     /** Tells a connected joiner the current settings, so their lobby can show them before Start. */
     private void sendLobbySettings() {
         GameConnection conn = connection;
-        if (conn != null) conn.send(LobbyExchange.lobbySettingsAction(debugEnabled()));
-    }
-
-    /** Start unlocks only once both halves are ready: an opponent connected and a deck picked. */
-    private void refreshStartButton() {
-        startBtn.setEnabled(connection != null && deckChooser.getSelectedDeckId() >= 0);
+        if (conn != null) conn.send(LobbyExchange.lobbySettingsAction(new LobbyExchange.LobbySettings(
+                debugEnabled(), banlistBox.isSelected(), banlistResets)));
     }
 
     /**
-     * Swaps decks with the joiner, authors the seed and coin flip, and closes the dialog.
-     * Runs off the EDT because it blocks on the joiner's deck list.
+     * Switching the banlist on voids both players' decks: the host's is deselected here, and the
+     * joiner, told by the settings that follow, drops theirs and has to confirm one again.
+     */
+    private void onBanlistToggled() {
+        boolean on = banlistBox.isSelected();
+        deckChooser.setBanlistEnforced(on);
+        if (on) {
+            banlistResets++;
+            deckChooser.clearSelection();
+            opponentReady = false;
+        }
+        sendLobbySettings();
+        showOpponentStatus();
+        refreshStartButton();
+    }
+
+    /** Start unlocks only once both halves are ready: the joiner's deck confirmed, and one picked here. */
+    private void refreshStartButton() {
+        startBtn.setEnabled(connection != null && opponentReady && !starting
+                && deckChooser.getSelectedDeckId() >= 0);
+    }
+
+    private void showOpponentStatus() {
+        GameConnection conn = connection;
+        if (conn == null || starting) return;
+        statusLabel.setText("Connected: " + conn.getRemoteAddress() + " — "
+                + (opponentReady ? "opponent is ready." : "opponent is choosing a deck…"));
+    }
+
+    /**
+     * Sends this side's deck, which asks the joiner for theirs; the lobby reader takes the answer
+     * from there and authors the seed and coin flip. The deck is read off the EDT.
      */
     private void beginMatch() {
         int    deckId   = deckChooser.getSelectedDeckId();
         String deckName = deckChooser.getSelectedDeckName();
-        if (deckId < 0 || connection == null) return;
+        GameConnection conn = connection;
+        if (deckId < 0 || conn == null || !opponentReady) return;
 
-        startBtn.setEnabled(false);
-        cancelBtn.setEnabled(false);
-        debugBox.setEnabled(false);   // the value is sent with the setup below and fixed from here
-        boolean debug = debugEnabled();
+        starting = true;
+        lockSettings(true);   // the values are sent with the setup and fixed from here
+        matchDeckId        = deckId;
+        matchHostGoesFirst = new Random().nextBoolean();
+        matchDebug         = debugEnabled();
+        matchBanlist       = banlistBox.isSelected();
         statusLabel.setText("Exchanging decks…");
 
         new Thread(() -> {
             try {
-                connection.send(LobbyExchange.deckListAction(deckId, deckName));
-                LobbyExchange.RemoteDeck remote = LobbyExchange.awaitDeckList(connection);
+                conn.send(LobbyExchange.deckListAction(deckId, deckName));
+            } catch (SQLException ex) {
+                SwingUtilities.invokeLater(() -> startFailed("Setup failed: " + ex.getMessage()));
+            }
+        }, "HostLobby-setup").start();
+    }
 
-                boolean hostGoesFirst = new Random().nextBoolean();
-                long    seed          = LobbyExchange.sendGameSetup(connection, hostGoesFirst, debug);
+    /** Freezes the lobby while Start is under way; unlocking leaves Start to {@link #refreshStartButton}. */
+    private void lockSettings(boolean locked) {
+        if (locked) startBtn.setEnabled(false);
+        cancelBtn.setEnabled(!locked);
+        debugBox.setEnabled(!locked);
+        banlistBox.setEnabled(!locked);
+        deckChooser.setEnabled(!locked);
+    }
 
-                setup = new MatchSetup(deckId, remote.serials(), remote.name(), remote.username(),
-                        seed, true, hostGoesFirst, debug);
+    /** Start did not go through; back to waiting in the lobby. */
+    private void startFailed(String message) {
+        starting = false;
+        lockSettings(false);
+        statusLabel.setText(message);
+        refreshStartButton();
+    }
+
+    /**
+     * Reads the joiner from connect until it answers Start with its deck, then sends the game
+     * setup. It ends there, before the game's own reader starts on the same connection.
+     */
+    private void startLobbyReader(GameConnection conn) {
+        new Thread(() -> {
+            try {
+                LobbyExchange.RemoteDeck remote = LobbyExchange.hostAwaitJoinerDeck(conn,
+                        (resets, ready) -> SwingUtilities.invokeLater(() -> onJoinerReady(resets, ready)));
+                // The joiner sends its deck only in answer to ours, so Start has fixed the match.
+                if (matchDeckId < 0) throw new IOException("Opponent sent a deck before Start");
+                boolean hostGoesFirst = matchHostGoesFirst;
+                boolean debug         = matchDebug;
+                boolean banlist       = matchBanlist;
+                long    seed          = LobbyExchange.sendGameSetup(conn, hostGoesFirst, debug, banlist);
+                setup = new MatchSetup(matchDeckId, remote.serials(), remote.name(), remote.username(),
+                        seed, true, hostGoesFirst, debug, banlist);
                 SwingUtilities.invokeLater(this::dispose);
-            } catch (IOException | SQLException ex) {
+            } catch (IOException ex) {
+                if (cancelled) return;
+                conn.close();
                 SwingUtilities.invokeLater(() -> {
-                    statusLabel.setText("Setup failed: " + ex.getMessage());
-                    cancelBtn.setEnabled(true);
-                    debugBox.setEnabled(true);
+                    connection = null;
+                    opponentReady = false;
+                    starting = false;
+                    lockSettings(false);
+                    statusLabel.setText("Opponent disconnected.");
                     refreshStartButton();
                 });
             }
-        }, "HostLobby-setup").start();
+        }, "HostLobby-reader").start();
+    }
+
+    private void onJoinerReady(int resets, boolean ready) {
+        if (resets != banlistResets) return;   // sent before the joiner saw the latest reset
+        opponentReady = ready;
+        if (starting && !ready) {
+            startFailed("Opponent has no deck confirmed yet.");
+            return;
+        }
+        showOpponentStatus();
+        refreshStartButton();
     }
 
     private void openServerSocket() {
@@ -180,8 +286,10 @@ public class HostLobbyDialog extends JDialog {
                         // Assigned and first sent on the EDT, where the checkbox is read, so a
                         // toggle cannot fall between the two and leave the joiner a stale value.
                         connection = conn;
+                        opponentReady = false;
                         sendLobbySettings();
-                        statusLabel.setText("Connected: " + conn.getRemoteAddress());
+                        startLobbyReader(conn);
+                        showOpponentStatus();
                         cancelBtn.setText("Cancel");
                         refreshStartButton();
                     });
@@ -237,6 +345,7 @@ public class HostLobbyDialog extends JDialog {
     }
 
     private void cancel() {
+        cancelled = true;
         try { if (serverSocket != null) serverSocket.close(); }
         catch (IOException ignored) {}
         if (connection != null) { connection.close(); connection = null; }

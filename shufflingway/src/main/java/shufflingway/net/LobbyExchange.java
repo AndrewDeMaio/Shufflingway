@@ -5,7 +5,9 @@ import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -17,16 +19,18 @@ import shufflingway.AppSettings;
  * The post-handshake half of the lobby: swapping decks and agreeing on the shuffle seed and
  * who moves first.
  *
- * <p>Runs on the lobby's background thread using {@link GameConnection#receiveSync}, before
- * the reader thread starts, so it reads as straight-line code rather than a callback state
- * machine. Both sides send their own deck first and only then read the other's, so neither
- * blocks waiting for a message the peer has not been told to send yet.
+ * <p>Runs on each lobby's background thread using {@link GameConnection#receiveSync}, before
+ * the game's reader thread starts. Each side's loop ends on the last message the peer sends
+ * before the game, so nothing is left reading when that reader takes over.
  *
  * <p>Order on the wire:
  * <pre>
  *   host → joiner : LOBBY_SETTINGS (on connect, and again whenever the host changes one)
- *   host → joiner : DECK_LIST      (once the host has picked a deck and pressed Start)
- *   joiner → host : DECK_LIST      (as soon as the joiner connects)
+ *   joiner → host : LOBBY_READY    (once the joiner has seen the settings, and whenever its
+ *                                   confirmed deck comes or goes)
+ *   host → joiner : DECK_LIST      (the host pressed Start)
+ *   joiner → host : DECK_LIST      (its confirmed deck — or LOBBY_READY false if it has none,
+ *                                   and the host waits for another Start)
  *   host → joiner : GAME_SETUP     (seed + coin flip + final settings; host-authored)
  * </pre>
  */
@@ -63,34 +67,84 @@ public final class LobbyExchange {
 	public record RemoteDeck(String name, String username, List<String> serials) {}
 
 	/**
-	 * Blocks for the peer's DECK_LIST.
+	 * The host's lobby options.
 	 *
-	 * @throws IOException if the connection drops or the peer sends something else — including
-	 *                     a DISCONNECT, whose reason is surfaced as the message
+	 * @param debug   whether the Debug menu will be usable during the match
+	 * @param banlist whether decks breaking the Standard banlist are refused, on both sides
+	 * @param resets  how many times the host has switched the banlist on; each one voids the deck
+	 *                either player had chosen, and a LOBBY_READY from before it is stale
 	 */
-	public static RemoteDeck awaitDeckList(GameConnection conn) throws IOException {
-		return awaitDeckList(conn, debug -> {});
+	public record LobbySettings(boolean debug, boolean banlist, int resets) {}
+
+	public static GameAction lobbySettingsAction(LobbySettings s) {
+		return GameAction.of(ActionType.LOBBY_SETTINGS, new JSONObject()
+				.put("debug", s.debug())
+				.put("banlist", s.banlist())
+				.put("resets", s.resets()));
+	}
+
+	public static LobbySettings settingsOf(GameAction action) {
+		JSONObject p = action.payload();
+		return new LobbySettings(p.optBoolean("debug", false), p.optBoolean("banlist", false),
+				p.optInt("resets", 0));
+	}
+
+	/** Joiner → host: whether a deck is confirmed, as of the settings' {@code resets}. */
+	public static GameAction lobbyReadyAction(int resets, boolean ready) {
+		return GameAction.of(ActionType.LOBBY_READY, new JSONObject()
+				.put("resets", resets)
+				.put("ready", ready));
 	}
 
 	/**
-	 * Joiner side of {@link #awaitDeckList(GameConnection)}: the host's LOBBY_SETTINGS may arrive
-	 * any number of times before its deck list, and each is handed to {@code onDebugSetting}
-	 * (on this background thread) rather than taken for the deck list.
+	 * Host side of the lobby: reads the joiner until it answers Start with its deck. Each
+	 * LOBBY_READY on the way is handed to {@code onReady} as {@code (resets, ready)}, on this
+	 * thread; one with {@code ready} false after a Start means the joiner had no deck to send.
+	 *
+	 * @throws IOException if the connection drops or the joiner sends something else — including
+	 *                     a DISCONNECT, whose reason is surfaced as the message
 	 */
-	public static RemoteDeck awaitDeckList(GameConnection conn, Consumer<Boolean> onDebugSetting)
-			throws IOException {
-		GameAction action = conn.receiveSync();
-		while (action.type() == ActionType.LOBBY_SETTINGS) {
-			onDebugSetting.accept(action.payload().optBoolean("debug", false));
-			action = conn.receiveSync();
+	public static RemoteDeck hostAwaitJoinerDeck(GameConnection conn,
+			BiConsumer<Integer, Boolean> onReady) throws IOException {
+		while (true) {
+			GameAction action = conn.receiveSync();
+			switch (action.type()) {
+				case LOBBY_READY -> onReady.accept(action.payload().optInt("resets", 0),
+						action.payload().optBoolean("ready", false));
+				case DECK_LIST -> { return remoteDeckOf(action); }
+				case DISCONNECT -> throw new IOException(
+						action.payload().optString("reason", "Opponent left the lobby"));
+				default -> throw new IOException("Unexpected " + action.type() + " in the lobby");
+			}
 		}
-		if (action.type() == ActionType.DISCONNECT) {
-			throw new IOException(action.payload().optString("reason", "Opponent left the lobby"));
+	}
+
+	/**
+	 * Joiner side of the lobby: reads the host until it presses Start and this side answers with
+	 * a deck. Each LOBBY_SETTINGS is handed to {@code onSettings}; each host DECK_LIST asks
+	 * {@code answer} for the reply — a DECK_LIST ends the lobby, anything else (LOBBY_READY
+	 * false) declines and the wait goes on. Both run on this thread, in wire order.
+	 *
+	 * @return the host's deck
+	 * @throws IOException as for {@link #hostAwaitJoinerDeck}
+	 */
+	public static RemoteDeck joinerAwaitStart(GameConnection conn, Consumer<LobbySettings> onSettings,
+			Supplier<GameAction> answer) throws IOException {
+		while (true) {
+			GameAction action = conn.receiveSync();
+			switch (action.type()) {
+				case LOBBY_SETTINGS -> onSettings.accept(settingsOf(action));
+				case DECK_LIST -> {
+					RemoteDeck hostDeck = remoteDeckOf(action);
+					GameAction reply = answer.get();
+					conn.send(reply);
+					if (reply.type() == ActionType.DECK_LIST) return hostDeck;
+				}
+				case DISCONNECT -> throw new IOException(
+						action.payload().optString("reason", "Host left the lobby"));
+				default -> throw new IOException("Unexpected " + action.type() + " in the lobby");
+			}
 		}
-		if (action.type() != ActionType.DECK_LIST) {
-			throw new IOException("Expected a deck list, got " + action.type());
-		}
-		return remoteDeckOf(action);
 	}
 
 	/**
@@ -109,18 +163,15 @@ public final class LobbyExchange {
 				AppSettings.clampUsername(action.payload().optString("username", "")), serials);
 	}
 
-	/** The host's lobby options as they stand, for the joiner to display before Start. */
-	public static GameAction lobbySettingsAction(boolean debugEnabled) {
-		return GameAction.of(ActionType.LOBBY_SETTINGS, new JSONObject().put("debug", debugEnabled));
-	}
-
 	/** Host side: picks the seed and the coin flip, and tells the joiner along with the final settings. */
-	public static long sendGameSetup(GameConnection conn, boolean hostGoesFirst, boolean debugEnabled) {
+	public static long sendGameSetup(GameConnection conn, boolean hostGoesFirst, boolean debugEnabled,
+			boolean banlistEnabled) {
 		long seed = new Random().nextLong();
 		conn.send(GameAction.of(ActionType.GAME_SETUP, new JSONObject()
 				.put("seed", seed)
 				.put("hostGoesFirst", hostGoesFirst)
-				.put("debug", debugEnabled)));
+				.put("debug", debugEnabled)
+				.put("banlist", banlistEnabled)));
 		return seed;
 	}
 
