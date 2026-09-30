@@ -3114,6 +3114,14 @@ final class GameContextImpl implements GameContext {
 				}
 			}
 
+			@Override public void cancelChosenSummonOnStack(int costVal, String costCmp) {
+				StackEntry chosen = chooseStackEntry("cancel", true, "Summon",
+						e -> e.isSummon() && meetsCostConstraint(e.source().cost(), costVal, costCmp));
+				if (chosen == null) return;
+				if (mw.cancelStackEntry(chosen))
+					logEntry("Effect: " + chosen.source().name() + "'s Summon effect will be cancelled");
+			}
+
 			@Override public void chooseStackEntryZeroItsDamageThisTurn() {
 				// Not a cancel, so cancel protection (29-116H Madeen, Yoran-Oran 29-075H) does not
 				// keep an entry out of reach: the effect still resolves, only its damage becomes 0.
@@ -3140,12 +3148,22 @@ final class GameContextImpl implements GameContext {
 			 *                  that cannot be cancelled; other uses of the choice may reach them
 			 */
 			private StackEntry chooseSummonOrAutoAbilityOnStack(String verb, boolean forCancel) {
+				return chooseStackEntry(verb, forCancel, "Summon or auto-ability",
+						e -> e.isSummon() || e.isAutoAbility());
+			}
+
+			/**
+			 * {@link #chooseSummonOrAutoAbilityOnStack} over the entries {@code eligible} admits,
+			 * {@code what} naming them in the dialog — "Summon" for the Summon-only cancels.
+			 */
+			private StackEntry chooseStackEntry(String verb, boolean forCancel, String what,
+					Predicate<StackEntry> eligible) {
 				List<StackEntry> targets = mw.gameState.getStack().stream()
-						.filter(e -> e.isSummon() || e.isAutoAbility())
+						.filter(eligible)
 						.filter(e -> !forCancel || !mw.stackEntryProtectedFromCancel(e))
 						.collect(java.util.stream.Collectors.toList());
 				if (targets.isEmpty()) {
-					logEntry("No Summons or auto-abilities on the stack to " + verb);
+					logEntry("No " + what + " on the stack to " + verb);
 					return null;
 				}
 				if (targets.size() == 1) return targets.get(0);
@@ -3157,7 +3175,7 @@ final class GameContextImpl implements GameContext {
 					options[i] = e.source().name() + " (" + type + ", " + owner + ")";
 				}
 				return pickOneStackEntry(targets,
-						() -> askFromList("Choose 1 Summon or auto-ability to " + verb + ":",
+						() -> askFromList("Choose 1 " + what + " to " + verb + ":",
 								"Choose Effect", options),
 						() -> {
 							StackEntry chosen = latestOpponentEntry(targets);
@@ -5836,10 +5854,14 @@ final class GameContextImpl implements GameContext {
 				String wait  = "Waiting for your opponent to select what they put into the Break Zone...";
 				// Both seats choose before anything breaks, P1's question first on both clients.
 				if (p1Eligible.isEmpty()) logEntry("P1 has no eligible targets — skipping selection");
-				List<ForwardTarget> p1Picks = mw.selectOwnFieldTargets(true, p1Eligible, count, true,
-						title, wait, () -> mw.aiPickForwardsOrMonstersForBreak(true, count, inclForwards, inclMonsters));
-				List<ForwardTarget> p2Picks = mw.selectOwnFieldTargets(false, p2Eligible, count, true,
-						title, wait, () -> mw.aiPickForwardsOrMonstersForBreak(false, count, inclForwards, inclMonsters));
+				// "Select as many as possible": up to the count, but never fewer than the seat has.
+				// With no more than the count there is nothing to choose, so the seat is not asked.
+				List<ForwardTarget> p1Picks = p1Eligible.size() <= count ? p1Eligible
+						: mw.selectOwnFieldTargets(true, p1Eligible, count, false,
+								title, wait, () -> mw.aiPickForwardsOrMonstersForBreak(true, count, inclForwards, inclMonsters));
+				List<ForwardTarget> p2Picks = p2Eligible.size() <= count ? p2Eligible
+						: mw.selectOwnFieldTargets(false, p2Eligible, count, false,
+								title, wait, () -> mw.aiPickForwardsOrMonstersForBreak(false, count, inclForwards, inclMonsters));
 				for (ForwardTarget t : p2Picks) logSelectedOwnCard(false, t);
 
 				// Break in descending index order to avoid shifting
@@ -9530,6 +9552,48 @@ final class GameContextImpl implements GameContext {
 
 			@Override public void placeFromHandToBottomOfDeck(int count) {
 				placeHandCardsOnDeckBottom(count, false);
+			}
+
+			@Override public void placeFromHandOnTopOrBottomOfDeck(int count) {
+				List<CardData> hand = mw.playerHand(isP1);
+				int must = Math.min(count, hand.size());
+				if (must == 0) return;
+				List<Integer> all = handIndices(isP1);
+				List<Integer> picks = mw.selectOwnHandCards(isP1, all, must,
+						"Waiting for your opponent to choose cards to put on their deck...",
+						() -> {
+							List<Integer> out = new ArrayList<>();
+							shufflingway.dialog.HandPickDialog.showHandSelect(mw.frame, hand, must,
+									"put on the top or bottom of your deck", "Choose",
+									mw::showZoomAt, mw::hideZoom, out::addAll);
+							return out;
+						},
+						() -> worstHandCards(hand, all, must));
+				List<Integer> descending = new ArrayList<>(picks);
+				descending.sort(Collections.reverseOrder());
+				List<CardData> taken = new ArrayList<>();
+				for (int i : descending) taken.add(hand.remove(i));
+				Deque<CardData> deck = isP1 ? mw.gameState.getP1MainDeck() : mw.gameState.getP2MainDeck();
+				for (CardData d : taken) {
+					// askTopOrBottom's question, with the AI's answer turned round: this is its own
+					// card, picked as its worst, and the top would hand it straight back.
+					int pick = mw.decideOption(isP1, 2,
+							"Waiting for your opponent to place a card on their deck...",
+							() -> {
+								Object[] options = { "Top", "Bottom" };
+								int result = JOptionPane.showOptionDialog(mw.frame,
+										"Place " + d.name() + " at the top or bottom of your deck?",
+										"Choose Deck Position",
+										JOptionPane.YES_NO_OPTION, JOptionPane.QUESTION_MESSAGE,
+										null, options, options[0]);
+								return result == 1 ? 1 : 0;
+							},
+							() -> 1);
+					if (pick == 1) deck.addLast(d); else deck.addFirst(d);
+					logEntry((isP1 ? "" : "[P2] ") + "Places a card at the " + (pick == 1 ? "bottom" : "top") + " of deck");
+				}
+				if (isP1) { mw.refreshP1HandLabel();      mw.refreshP1DeckLabel(); }
+				else      { mw.refreshP2HandCountLabel(); mw.refreshP2DeckLabel(); }
 			}
 
 			/**

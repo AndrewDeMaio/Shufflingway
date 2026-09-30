@@ -278,6 +278,18 @@ public interface GameContext {
     void cancelStackEntry();
 
     /**
+     * "Choose 1 Summon [of cost N or less]. Cancel its effect." — a Summon on the Stack only, and
+     * within the cost bound: 4-136C Summoner (3 or less), 8-088C Layle (4), 9-068H Mist Dragon (5),
+     * and at any cost 1-053C Summoner, 5-031H Edward, 4-038L Celes and 23-043R Venat.
+     * {@link #cancelStackEntry} also offers auto-abilities, which only the "Summon or auto-ability"
+     * printings allow.
+     *
+     * @param costVal the printed-cost bound, or {@code -1} for none
+     * @param costCmp {@code "less"} or {@code "more"}; ignored without a bound
+     */
+    void cancelChosenSummonOnStack(int costVal, String costCmp);
+
+    /**
      * Prompts for one Summon or auto-ability on the Stack — the same choice
      * {@link #cancelStackEntry()} offers — and makes the damage it deals become 0 for the rest of
      * this turn instead of cancelling it: 29-012H Neon's Runic.
@@ -819,9 +831,11 @@ public interface GameContext {
     void selectOwnForwardToBzThenGainControlOfSameCost();
 
     /**
-     * Each player selects up to {@code count} Forwards and/or Monsters they control
-     * and puts them into the Break Zone.
-     * P1 picks via dialog; P2 (AI) picks lowest-cost eligible targets.
+     * Each player selects up to {@code count} Forwards and/or Monsters they control, "select as many
+     * as possible", and puts them into the Break Zone — 9-113H Famfrit. "Up to" only caps the
+     * number: each player gives up {@code min(count, what they control)}. A player with no more
+     * than that has no choice to make and is not asked; the rest pick exactly that many. The AI
+     * picks its lowest-cost eligible targets.
      */
     void eachPlayerSelectUpToNAndBreak(int count, boolean inclForwards, boolean inclMonsters);
 
@@ -3377,6 +3391,14 @@ public interface GameContext {
      * them at the bottom of their deck. The AI places its worst cards automatically.
      */
     void placeFromHandToBottomOfDeck(int count);
+
+    /**
+     * {@link #placeFromHandToBottomOfDeck}, with the top of the deck offered as well: the player
+     * chooses {@code count} card(s) from their hand, then for each whether it goes on the top or
+     * the bottom — 10-125H Leviathan's "put 1 card from your hand on the top or bottom of your
+     * deck". The AI puts its worst cards on the bottom, where it will not draw them again.
+     */
+    void placeFromHandOnTopOrBottomOfDeck(int count);
 
     /**
      * Prompts the ability user to place <em>up to</em> {@code max} card(s) from their hand at the

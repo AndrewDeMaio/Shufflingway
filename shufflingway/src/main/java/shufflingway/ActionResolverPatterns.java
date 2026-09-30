@@ -10593,6 +10593,15 @@ final class ActionResolverPatterns {
      * Matches "Draw N card(s), then place M card(s) from your hand at the bottom of your deck."
      * Group 1 = draw count, Group 2 = place count.
      */
+    /**
+     * 10-125H Leviathan: "Draw N cards, then put M card(s) from your hand on the top or bottom of
+     * your deck." The top-or-bottom sibling of {@link #DRAW_THEN_PLACE_HAND_TO_BOTTOM}; anchored end
+     * to end.
+     */
+    static final Pattern DRAW_THEN_PUT_HAND_ON_TOP_OR_BOTTOM = Pattern.compile(
+        "(?i)^Draw\\s+(?<draw>\\d+)\\s+cards?[,.]?\\s+then\\s+put\\s+(?<put>\\d+)\\s+cards?\\s+from\\s+your\\s+hand\\s+" +
+        "on\\s+the\\s+top\\s+or\\s+bottom\\s+of\\s+your\\s+deck\\.?\\s*$"
+    );
     static final Pattern DRAW_THEN_PLACE_HAND_TO_BOTTOM = Pattern.compile(
         "(?i)Draw\\s+(\\d+)\\s+cards?[,.]?\\s+then\\s+place\\s+(\\d+)\\s+cards?\\s+from\\s+your\\s+hand\\s+at\\s+the\\s+bottom\\s+of\\s+your\\s+deck[.!]?"
     );
@@ -11006,10 +11015,13 @@ final class ActionResolverPatterns {
     /**
      * "Draw N card(s)[, then discard M card(s)]." Refuses "… for each …": a count scaled by
      * something is a different effect, and read as a flat draw it ran as "Draw 1 card" whatever
-     * the count came to (8-135H Ark).
+     * the count came to (8-135H Ark). Refuses a ", then …" it does not read for the same reason:
+     * 10-125H Leviathan's "then put 1 card from your hand on the top or bottom of your deck" was
+     * dropped, and it kept both cards.
      */
     static final Pattern DRAW_CARDS = Pattern.compile(
-        "(?i)^Draw\\s+(\\d+)\\s+cards?(?!\\s+for\\s+each\\b)(?:\\s*[,.]?\\s*then\\s+discard\\s+(\\d+)\\s+cards?)?[.!]?"
+        "(?i)^Draw\\s+(\\d+)\\s+cards?(?!\\s+for\\s+each\\b)(?![,.]?\\s*then\\s+(?!discard\\b))" +
+        "(?:\\s*[,.]?\\s*then\\s+discard\\s+(\\d+)\\s+cards?)?[.!]?"
     );
     /**
      * Matches "Discard N card(s)[,] then draw M card(s)".

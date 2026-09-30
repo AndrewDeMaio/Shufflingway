@@ -7659,9 +7659,14 @@ final class ActionResolverChoose {
 
         // --- Cancel effect followup (counters a Summon on the stack) ---
         if (FOLLOWUP_CANCEL_EFFECT.matcher(primaryFollowup).find()) {
+            // "Choose 1 Summon [of cost N or less]" names a Summon and a bound, and both are the
+            // printing's: the general cancel offers auto-abilities too, at any cost, so 9-068H Mist
+            // Dragon cancelled a cost-6 Summon it cannot reach.
+            boolean summonsOnly = inclSummons && !inclForwards && !inclBackups && !inclMonsters;
             return ctx -> {
                 ctx.logChooseHeader(choosePrefix + " — Cancel its effect");
-                ctx.cancelStackEntry();
+                if (summonsOnly) ctx.cancelChosenSummonOnStack(costVal, costCmp);
+                else             ctx.cancelStackEntry();
                 if (secondary != null) secondary.accept(ctx);
             };
         }

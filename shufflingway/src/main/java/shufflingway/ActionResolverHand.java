@@ -220,6 +220,19 @@ final class ActionResolverHand {
             else            ctx.logEntry("Effect: No cards returned — no cards drawn");
         };
     }
+    /** {@link ActionResolverPatterns#DRAW_THEN_PUT_HAND_ON_TOP_OR_BOTTOM} — 10-125H Leviathan. */
+    static Consumer<GameContext> tryParseDrawThenPutHandOnTopOrBottom(String text) {
+        Matcher m = DRAW_THEN_PUT_HAND_ON_TOP_OR_BOTTOM.matcher(text.trim());
+        if (!m.matches()) return null;
+        int drawCount = Integer.parseInt(m.group("draw"));
+        int putCount  = Integer.parseInt(m.group("put"));
+        return ctx -> {
+            ctx.logEntry("Effect: Draw " + drawCount + " card(s), then put " + putCount
+                    + " card(s) on the top or bottom of deck");
+            ctx.drawCards(drawCount);
+            ctx.placeFromHandOnTopOrBottomOfDeck(putCount);
+        };
+    }
     static Consumer<GameContext> tryParseDrawThenPlaceHandToBottom(String text) {
         Matcher m = DRAW_THEN_PLACE_HAND_TO_BOTTOM.matcher(text);
         if (!m.find()) return null;

@@ -1774,6 +1774,9 @@ public class ActionResolver {
         result = tryParseDiscardHandThenDraw(effectText);
         if (result != null) return claim("DiscardHandThenDraw", result);
 
+        result = tryParseDrawThenPutHandOnTopOrBottom(effectText);
+        if (result != null) return claim("DrawThenPutHandOnTopOrBottom", result);
+
         result = tryParseDrawThenPlaceHandToBottom(effectText);
         if (result != null) return claim("DrawThenPlaceHandToBottom", result);
 
