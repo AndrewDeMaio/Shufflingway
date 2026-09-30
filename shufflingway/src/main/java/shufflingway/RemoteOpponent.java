@@ -823,6 +823,9 @@ class RemoteOpponent implements OpponentController {
 	 */
 	List<Integer> awaitAnswer(PlayerChoice choice) {
 		List<Integer> answer = awaitChoice(choice.kind(), choice.waitPrompt());
+		// A stopped controller answers with nothing. That is the game ending, not the two boards
+		// disagreeing, and a question that demands an exact count would otherwise report it as one.
+		if (cancelled) return List.of();
 		List<Integer> local  = new ArrayList<>(answer.size());
 		for (int raw : answer) local.add(choice.fromWire().applyAsInt(raw));
 		if (!choice.legal().test(local)) {

@@ -126,10 +126,8 @@ public class DeckManager extends JFrame {
     private static final Color FORMAT_L6_COLOR = new Color(0x2E, 0x7D, 0x32);
     private static final Color FORMAT_T_COLOR  = new Color(0x6A, 0x1B, 0x9A);
 
-    private static final Color BANNED_FG             = new Color(0xC6, 0x28, 0x28);
-    private static final Color LIMITED_FG            = new Color(0xE6, 0x51, 0x00);
-    private static final Color BANNED_DECK_BG        = new Color(0xFF, 0xCD, 0xD2);
-    private static final Color BANNED_DECK_SELECT_BG = new Color(0xC6, 0x28, 0x28);
+    private static final Color BANNED_FG  = new Color(0xC6, 0x28, 0x28);
+    private static final Color LIMITED_FG = new Color(0xE6, 0x51, 0x00);
 
     private static final Set<String> TITLE_EXCLUDED_CATEGORIES =
             Set.of("Special", "Anniversary", "FFRK", "MQ");
@@ -258,8 +256,8 @@ public class DeckManager extends JFrame {
                     JList<?> list, Object value, int index, boolean sel, boolean focus) {
                 super.getListCellRendererComponent(list, value, index, sel, focus);
                 if (value instanceof DeckEntry entry && banlistDeckIds.contains(entry.id())) {
-                    setBackground(sel ? BANNED_DECK_SELECT_BG : BANNED_DECK_BG);
-                    setForeground(sel ? Color.WHITE : BANNED_FG);
+                    // Red text only, as in the card tables; a selected row keeps the selection colours.
+                    if (!sel) setForeground(BANNED_FG);
                     setToolTipText("Breaks the Standard banlist");
                 } else {
                     setToolTipText(null);

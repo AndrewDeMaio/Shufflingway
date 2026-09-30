@@ -70938,6 +70938,76 @@ public class CardBehaviorTest {
 		assertEquals(List.of(3000, 2000), split, "enough to break the weak one, the rest on the other");
 	}
 
+	/**
+	 * Three Forwards on P2's side for 9-113H Famfrit's "each player selects up to 2 (select as many
+	 * as possible)", which P2 must answer with exactly two. P1 holds nothing and is not asked.
+	 */
+	private static MainWindow famfritAgainstRemote(RemoteOpponent[] remoteOut) {
+		MainWindow mw = new MainWindow();
+		remoteOut[0] = seatAgainstRemote(mw);
+		placeP2Forward(mw, makeForward("Cheap", "Water", 2, 5000));
+		placeP2Forward(mw, makeForward("Mid", "Water", 3, 7000));
+		placeP2Forward(mw, makeForward("Dear", "Water", 6, 10000));
+		return mw;
+	}
+
+	/** Delivers {@code slots} of their own Forward row as their OWN_FIELD_CARD answer. */
+	private static void remoteGaveUp(RemoteOpponent remote, int... slots) {
+		List<Integer> codes = new ArrayList<>();
+		for (int slot : slots)
+			codes.add(new ForwardTarget(true, slot, ForwardTarget.CardZone.FORWARD).choiceCode());
+		remote.onActionReceived(RemoteOpponent.choiceAction(ChoiceKind.OWN_FIELD_CARD, codes));
+	}
+
+	@Test
+	void anOpponentsExactCountSelectionIsTheOneTheySent() {
+		RemoteOpponent[] remote = new RemoteOpponent[1];
+		MainWindow mw = famfritAgainstRemote(remote);
+		// The AI would give up its two cheapest; they kept the cheapest.
+		remoteGaveUp(remote[0], 1, 2);
+
+		mw.buildGameContext(true).eachPlayerSelectUpToNAndBreak(2, true, true);
+
+		assertEquals(List.of("Cheap"), forwardNames(mw.p2ForwardCards));
+	}
+
+	@Test
+	void anOpponentsExactCountSelectionThatFallsShortIsRefused() {
+		RemoteOpponent[] remote = new RemoteOpponent[1];
+		MainWindow mw = famfritAgainstRemote(remote);
+		mw.desyncReported = true;
+		remoteGaveUp(remote[0], 2);
+
+		mw.buildGameContext(true).eachPlayerSelectUpToNAndBreak(2, true, true);
+
+		assertEquals(3, mw.p2ForwardCards.size(),
+				"one where the card says two would keep a Forward Famfrit takes");
+	}
+
+	@Test
+	void anOpponentsSelectionNamingOneCardTwiceIsRefused() {
+		RemoteOpponent[] remote = new RemoteOpponent[1];
+		MainWindow mw = famfritAgainstRemote(remote);
+		mw.desyncReported = true;
+		remoteGaveUp(remote[0], 2, 2);
+
+		mw.buildGameContext(true).eachPlayerSelectUpToNAndBreak(2, true, true);
+
+		assertEquals(3, mw.p2ForwardCards.size(), "the right count, but only one card given up");
+	}
+
+	@Test
+	void aChoiceStillOutstandingWhenTheGameStopsIsNotADesync() {
+		RemoteOpponent[] remote = new RemoteOpponent[1];
+		MainWindow mw = famfritAgainstRemote(remote);
+		remote[0].cancel();
+
+		mw.buildGameContext(true).eachPlayerSelectUpToNAndBreak(2, true, true);
+
+		assertFalse(mw.desyncReported, "the empty answer is the game ending, not the boards disagreeing");
+		assertEquals(3, mw.p2ForwardCards.size());
+	}
+
 
 	// =========================================================================================
 	// Casts that are not an ordinary cast from hand.

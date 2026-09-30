@@ -8420,7 +8420,9 @@ public class MainWindow {
 	 * the picks in the order they were made, empty when nothing was chosen.
 	 *
 	 * @param count      the most the chooser may pick
-	 * @param upTo       {@code true} lets them confirm with fewer than {@code count}
+	 * @param upTo       {@code true} lets them confirm with fewer than {@code count}; otherwise they
+	 *                   pick exactly {@code min(count, eligible.size())}, and a remote answer of any
+	 *                   other size is refused
 	 * @param cpuPick    the AI's answer; may return an empty list to pick nothing
 	 */
 	List<ForwardTarget> selectOwnFieldTargets(boolean chooserIsP1, List<ForwardTarget> eligible,
@@ -8428,6 +8430,9 @@ public class MainWindow {
 	                                          String title, String waitPrompt,
 	                                          Supplier<List<ForwardTarget>> cpuPick) {
 		if (eligible.isEmpty()) return List.of();
+		// Without upTo the in-place selection only closes on the full count, so an honest answer
+		// is exactly that many — or every eligible card, when there are fewer than the count.
+		int required = Math.min(count, eligible.size());
 		List<Integer> answer = decide(PlayerChoice.by(chooserIsP1, ChoiceKind.OWN_FIELD_CARD)
 				.prompting(waitPrompt)
 				.locally(() -> selectFieldTargetsInPlace(eligible, count, upTo, title)
@@ -8435,12 +8440,18 @@ public class MainWindow {
 				.byCpu(() -> cpuPick.get().stream().map(ForwardTarget::choiceCode).toList())
 				// The chooser packed their own side; from here that side is the opponent's.
 				.arrivingAs(ForwardTarget::flipChoiceSide)
-				// Size as well as membership: "up to 2" is a bound the sender could exceed, and a
-				// third pick arriving unchecked would spare a Forward the effect must take.
-				.legalWhen(codes -> codes.size() <= count && codes.stream().allMatch(code -> {
-					ForwardTarget t = ForwardTarget.fromChoiceCode(code);
-					return t != null && eligible.contains(t);
-				}), "no such card of theirs is eligible here"));
+				// Size as well as membership, in both directions. "Up to 2" is a ceiling the sender
+				// could exceed, sparing a Forward the effect must take; "select 2" is also a floor
+				// they could fall short of, keeping one Famfrit 9-113H takes. A pick sent twice is
+				// one card given up, not two, so repeats are refused as well.
+				.legalWhen(codes -> (upTo ? codes.size() <= count : codes.size() == required)
+						&& new HashSet<>(codes).size() == codes.size()
+						&& codes.stream().allMatch(code -> {
+							ForwardTarget t = ForwardTarget.fromChoiceCode(code);
+							return t != null && eligible.contains(t);
+						}),
+						(upTo ? "that is not up to " + count : "that is not exactly " + required)
+								+ " distinct eligible cards of theirs"));
 		List<ForwardTarget> out = new ArrayList<>(answer.size());
 		for (int code : answer) {
 			ForwardTarget t = ForwardTarget.fromChoiceCode(code);
