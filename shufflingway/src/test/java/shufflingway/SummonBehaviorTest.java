@@ -3995,20 +3995,31 @@ class SummonBehaviorTest {
 
 	@Test
 	void ifritaTakingAllThreeActionsResolvesEachOfThem() {
+		// One opposing Forward, so the 7000 has only one place to go: which of several the CPU
+		// would choose is its own business, and a board offering it a choice made this flaky.
 		MainWindow mw = new MainWindow();
 		CardData big     = makeForward("Big", "Water", 5, 11000);
-		CardData small   = makeForward("Small", "Water", 2, 3000);
 		CardData monster = makeMonster("Their Monster", "Water", 3);
 		placeP1Forward(mw, big);
-		placeP1Forward(mw, small);
 		placeP1Monster(mw, monster);
 		for (int i = 0; i < 5; i++) mw.gameState.getP2BreakZone().add(makeSummon("Ifrit", "Fire", 2, ""));
 		castAsP2Selecting(mw, makeSummon("Ifrita", "Fire", 3, IFRITA_9_002H), 0, 1, 2);
 
 		assertTrue(mw.gameState.getP1BreakZone().contains(monster), "the Monster break");
-		assertTrue(mw.gameState.getP1BreakZone().contains(small), "3000 to all breaks the 3000 Forward");
-		assertEquals(List.of(big), mw.p1ForwardCards);
 		assertEquals(10000, damageOn(mw, big), "7000 from the first action and 3000 from the third");
+	}
+
+	@Test
+	void ifritasSweepHitsOnlyTheOpponentsForwards() {
+		MainWindow mw = new MainWindow();
+		CardData small = makeForward("Small", "Water", 2, 3000);
+		CardData mine  = makeForward("Mine", "Fire", 3, 7000);
+		placeP1Forward(mw, small);
+		placeP2Forward(mw, mine);
+		castAsP2Selecting(mw, makeSummon("Ifrita", "Fire", 3, IFRITA_9_002H), 2);
+
+		assertTrue(mw.gameState.getP1BreakZone().contains(small), "3000 to all breaks the 3000 Forward");
+		assertEquals(0, mw.p2ForwardDamage.get(0), "opponent's Forwards only");
 	}
 
 	// =========================================================================================

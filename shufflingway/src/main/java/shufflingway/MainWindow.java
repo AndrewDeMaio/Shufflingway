@@ -12202,20 +12202,32 @@ public class MainWindow {
 				});
 	}
 
-	/** Returns true if any field card grants any-element payment for {@code card}. */
+	/** Returns true if any field card grants any-element payment for {@code card}, cast by P1. */
 	private boolean isAnyElementCast(CardData card) {
+		return isAnyElementCast(card, true);
+	}
+
+	/**
+	 * Whether {@code card}, cast by {@code casterIsP1}'s player, may be paid for with CP of any
+	 * Element — its own printing, a cast an effect allows that way, or a field grant such as
+	 * 26-059R Llymlaen's "The cost required to cast your Job The Twelve can be paid with CP of any
+	 * Element". Read by the payment dialog, by P1's affordability check and by the AI's planner, so
+	 * the three agree on what may pay; the affordability check had counted only Light and Dark as
+	 * payable with anything, and left a castable card unlit.
+	 */
+	boolean isAnyElementCast(CardData card, boolean casterIsP1) {
 		// The card's own printing comes first: Tifa 11-071L carries the permission on the card being
 		// played, which the board walk below cannot see — it is still in hand, not on the field.
-		if (selfGrantsAnyElement(card)) return true;
+		if (selfGrantsAnyElement(card, casterIsP1)) return true;
 		if (anyElementHandCasts.contains(card)) return true;
 		for (int s = 0; s < 2; s++) {
 			boolean sIsP1 = s == 0;
 			List<CardData> fwds = sIsP1 ? p1ForwardCards : p2ForwardCards;
 			CardData[]     bkps = sIsP1 ? p1BackupCards  : p2BackupCards;
 			List<CardData> mons = sIsP1 ? p1MonsterCards : p2MonsterCards;
-			for (CardData src : fwds)                   { if (srcGrantsAnyElement(src, card, sIsP1)) return true; }
-			for (CardData bkp : bkps) if (bkp != null) { if (srcGrantsAnyElement(bkp, card, sIsP1)) return true; }
-			for (CardData src : mons)                   { if (srcGrantsAnyElement(src, card, sIsP1)) return true; }
+			for (CardData src : fwds)                   { if (srcGrantsAnyElement(src, card, sIsP1, casterIsP1)) return true; }
+			for (CardData bkp : bkps) if (bkp != null) { if (srcGrantsAnyElement(bkp, card, sIsP1, casterIsP1)) return true; }
+			for (CardData src : mons)                   { if (srcGrantsAnyElement(src, card, sIsP1, casterIsP1)) return true; }
 		}
 		return false;
 	}
@@ -12227,15 +12239,21 @@ public class MainWindow {
 	 * a Tifa played while no Cloud is on the field is neither discounted nor freely payable.
 	 */
 	boolean selfGrantsAnyElement(CardData card) {
+		return selfGrantsAnyElement(card, true);
+	}
+
+	/** {@link #selfGrantsAnyElement(CardData)}, with the unit count read from {@code casterIsP1}'s side. */
+	boolean selfGrantsAnyElement(CardData card, boolean casterIsP1) {
 		for (SelfCostModifier mod : card.selfCostModifiers())
-			if (mod.anyElement() && computeSelfCostUnits(mod, true) > 0) return true;
+			if (mod.anyElement() && computeSelfCostUnits(mod, casterIsP1) > 0) return true;
 		return false;
 	}
 
-	private boolean srcGrantsAnyElement(CardData src, CardData card, boolean srcIsP1) {
+	private boolean srcGrantsAnyElement(CardData src, CardData card, boolean srcIsP1, boolean casterIsP1) {
 		for (FieldCostReduction fcr : src.fieldCostReductions()) {
 			if (!fcr.anyElement()) continue;
-			if (fcr.ownerOnly() && !srcIsP1) continue;
+			// "your Job The Twelve": the grant answers only for its own controller's casts.
+			if (fcr.ownerOnly() && srcIsP1 != casterIsP1) continue;
 			if (!fieldCostModifierLive(fcr, srcIsP1)) continue;
 			if (!fcr.matchesCard(card)) continue;
 			if (fcr.bzConditionJob() != null) {
@@ -15044,6 +15062,8 @@ public class MainWindow {
 		// recorded in the sets below because those hold what some effect granted; this one is a
 		// property of the card's own text and lasts as long as it is on the field.
 		if (ActionResolver.hasCannotBeChosenByOppFieldAbility(c, bySummon, ownerDamage)) return true;
+		// The same shield handed over inside a gated quoted grant (Oschon 26-047H, Weiss 18-019R).
+		if (grantedSelfCannotBeChosenByOpp(c, sideIsP1, bySummon)) return true;
 		if ((bySummon ? cannotBeChosenBySummons : cannotBeChosenByAbilities).contains(c)) return true;
 		// Aerith 14-126C's longer lease, read beside the turn-scoped store rather than folded into
 		// it: same answer, different sweep.
@@ -16344,6 +16364,10 @@ public class MainWindow {
 					// self power grant. Null means the gate is shut.
 					String grantText = oppDullCharsGrantRemainder(fa.effectText(), isP1);
 					if (grantText == null) continue;
+					// Bartz 3-065L's Job-count gate, the same way. Not the power gate: reading it asks
+					// for this card's power, which is what is being computed here.
+					grantText = fieldGrantCalculator.openSelfGateRemainder(grantText, src, isP1, false);
+					if (grantText == null) continue;
 					boost += CardData.parseSelfPowerGrant(grantText, src.name());
 				}
 			}
@@ -17037,6 +17061,9 @@ public class MainWindow {
 				if (forwardCount(side) > gate.maxForwards()) continue;
 				text = gate.remainder();
 			}
+			// Ramza 5-118L gates his on his own current power, which moves with every boost.
+			text = fieldGrantCalculator.openSelfGateRemainder(text, card, side, true);
+			if (text == null) continue;
 			CardData.SelfGainsQuotedGrant g =
 					CardData.parseSelfGainsQuotedGrant(text, card.name());
 			if (g == null || g.abilityTexts().isEmpty()) continue;
@@ -17092,6 +17119,7 @@ public class MainWindow {
 		max = Math.max(max, attacksFromOwnDamage(card));
 		max = Math.max(max, attacksFromHandSizeGrant(card));
 		max = Math.max(max, attacksFromDamageThresholdGrant(card));
+		max = Math.max(max, attacksFromSelfGatedGrant(card));
 		max = Math.max(max, attacksFromOppDullCharsGrant(card));
 		max = Math.max(max, attacksFromNamedGrant(card));
 		max = Math.max(max, attacksFromFilteredGrant(card));
@@ -17173,6 +17201,56 @@ public class MainWindow {
 			if (g != null) best = Math.max(best, g.maxAttacks());
 		}
 		return best;
+	}
+
+	/**
+	 * Gilgamesh 7-088L: "If Gilgamesh has 10000 power or more, Gilgamesh gains Brave and can attack
+	 * twice in the same turn." Bartz 3-065L's five-Job line grants the same second attack. Read here
+	 * against the gate on the card itself — current power, Job count — like
+	 * {@link #attacksFromDamageThresholdGrant} against damage; the Brave goes through
+	 * {@code FieldGrantCalculator}, which takes the same gate off.
+	 *
+	 * <p>Returns 0 when the card has no such ability, so it never lowers an existing permission.
+	 */
+	private int attacksFromSelfGatedGrant(CardData card) {
+		if (lostAbilitiesCards.contains(card)) return 0;
+		Boolean side = fieldSideOf(card);
+		if (side == null) return 0;
+		int best = 0;
+		for (FieldAbility fa : effectiveFieldAbilities(card)) {
+			String text = fieldGrantCalculator.openSelfGateRemainder(fa.effectText(), card, side, true);
+			// Ungated grants are attacksFromDamageThresholdGrant's; this reader owns the gated ones.
+			if (text == null || text.equals(fa.effectText())) continue;
+			CardData.SelfGainsQuotedGrant g = CardData.parseSelfGainsQuotedGrant(text, card.name());
+			if (g != null) best = Math.max(best, g.maxAttacks());
+		}
+		return best;
+	}
+
+	/**
+	 * Whether {@code c} hands itself "[Self] cannot be chosen by your opponent's Summons/abilities."
+	 * inside a standing quoted grant whose condition holds now, covering {@code bySummon} — Oschon
+	 * 26-047H behind its own power ("If Oschon has 10000 power or more, …"), Weiss 18-019R behind a
+	 * "Damage 5 --" prefix. The quoted twin of {@link ActionResolver#hasCannotBeChosenByOppFieldAbility},
+	 * read beside it wherever that is.
+	 */
+	boolean grantedSelfCannotBeChosenByOpp(CardData c, boolean sideIsP1, boolean bySummon) {
+		if (c == null || lostAbilitiesCards.contains(c)) return false;
+		int dmg = (sideIsP1 ? gameState.getP1DamageZone() : gameState.getP2DamageZone()).size();
+		for (FieldAbility fa : effectiveFieldAbilities(c)) {
+			if (fa.damageThreshold() > 0 && dmg < fa.damageThreshold()) continue;
+			String text = fieldGrantCalculator.openSelfGateRemainder(fa.effectText(), c, sideIsP1, true);
+			if (text == null) continue;
+			CardData.SelfGainsQuotedGrant g = CardData.parseSelfGainsQuotedGrant(text, c.name());
+			if (g == null) continue;
+			for (String passive : g.passiveTexts()) {
+				String scope = CardData.selfCannotBeChosenByOppScope(passive, c.name());
+				if (scope == null) continue;
+				String s = scope.toLowerCase(Locale.ROOT);
+				if (bySummon ? s.contains("summon") : s.contains("abilit")) return true;
+			}
+		}
+		return false;
 	}
 
 	/**

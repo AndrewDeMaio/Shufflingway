@@ -1295,6 +1295,9 @@ final class GameContextImpl implements GameContext {
 							// opponent-scoped sets, so the card's own controller can still choose it.
 							if (ActionResolver.hasCannotBeChosenByOppFieldAbility(c, true,  mw.damageReceivedBy(p1side))) sumOpp.add(c);
 							if (ActionResolver.hasCannotBeChosenByOppFieldAbility(c, false, mw.damageReceivedBy(p1side))) ablOpp.add(c);
+							// Its quoted twin, behind a gate (Oschon 26-047H's power, Weiss 18-019R's damage).
+							if (mw.grantedSelfCannotBeChosenByOpp(c, p1side, true))  sumOpp.add(c);
+							if (mw.grantedSelfCannotBeChosenByOpp(c, p1side, false)) ablOpp.add(c);
 							// Royal Ripeness 5-007H: printed immunity to one named Element, both
 							// halves of it — its Summons and its abilities alike.
 							String pe = ActionResolver.cannotBeChosenByElementFieldAbility(c);

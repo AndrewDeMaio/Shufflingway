@@ -313,8 +313,11 @@ class DamageResolver {
 			// 13-023R). parseSelfGainsQuotedGrant has already rewritten it into the canonical
 			// wording, so the matcher above reads it unchanged; what kept it out of reach was the
 			// outer sentence it is nested in, which no damage pattern matches.
+			// Oschon 26-047H hands his shield over only while his power is 10000 or more.
+			String grantText = mw.fieldGrantCalculator.openSelfGateRemainder(fa.effectText(), card, isP1, true);
+			if (grantText == null) continue;
 			CardData.SelfGainsQuotedGrant sgq =
-					CardData.parseSelfGainsQuotedGrant(fa.effectText(), card.name());
+					CardData.parseSelfGainsQuotedGrant(grantText, card.name());
 			if (sgq == null) continue;
 			for (String passive : sgq.passiveTexts()) {
 				Matcher pm = AutoAbilityTriggers.FA_DAMAGE_MODIFIER.matcher(passive);

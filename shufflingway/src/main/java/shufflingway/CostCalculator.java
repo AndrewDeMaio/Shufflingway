@@ -667,8 +667,10 @@ class CostCalculator {
 		if (totalCostNeeded <= 0 && (extraRequiredElems == null || extraRequiredElems.length == 0))
 			return true;
 
-		if (card.isLightOrDark() && offElementPays) {
-			// L/D cards accept any element — sum all banked CP and all available sources
+		// A Light or Dark card accepts CP of any Element, and so does a card a field ability lets be
+		// paid that way (26-059R Llymlaen's Job The Twelve) — the payment dialog already took both.
+		if ((card.isLightOrDark() || mw.isAnyElementCast(card, true)) && offElementPays) {
+			// Any element pays — sum all banked CP and all available sources
 			int totalExisting = mw.gameState.getP1CpByElement().values().stream().mapToInt(Integer::intValue).sum();
 			for (int i = 0; i < hand.size() && discardsPay; i++) {
 				if (i == excludeHandIdx) continue;

@@ -414,6 +414,8 @@ public class FieldAbilityParsingTest {
         // Machina 15-017H. A board-gated self grant; the gate comes off and the remainder is an
         // ordinary quoted grant, read by FieldGrantCalculator and MainWindow.effectiveAutoAbilities.
         if (maxForwardsGatedSelfGrant(fa, source)) return true;
+        if (selfPowerGatedSelfGrant(fa, source)) return true;
+        if (selfJobCountGatedSelfGrant(fa, source)) return true;
         // The Night Dancer 17-078R. Read at declaration time by MainWindow.effectiveAttackDeclarationLimit.
         if (AutoAbilityTriggers.FA_OPP_ATTACKS_LIMITED_BY_OWN_BACKUPS.matcher(fa.effectText().trim()).matches()) return true;
         // Lenna 18-100L, Ultimecia 22-073L, and the Summons-only Terra 23-011L. Both read by
@@ -433,6 +435,38 @@ public class FieldAbilityParsingTest {
     private static boolean maxForwardsGatedSelfGrant(FieldAbility fa, CardData source) {
         CardData.MaxForwardsGatedGrant g = CardData.parseMaxForwardsGatedGrant(fa.effectText());
         return g != null && CardData.parseSelfGainsQuotedGrant(g.remainder(), source.name()) != null;
+    }
+
+    /**
+     * Whether {@code fa} is a self grant gated on its carrier's own power — Ramza 5-118L. The gate
+     * comes off before the grant is checked, as {@link #maxForwardsGatedSelfGrant} does for Machina.
+     */
+    private static boolean selfPowerGatedSelfGrant(FieldAbility fa, CardData source) {
+        CardData.SelfPowerGatedGrant g = CardData.parseSelfPowerGatedGrant(fa.effectText(), source.name());
+        return g != null && CardData.parseSelfGainsQuotedGrant(g.remainder(), source.name()) != null;
+    }
+
+    /** {@link #selfPowerGatedSelfGrant} gated on the carrier's Job count instead — Bartz 3-065L. */
+    private static boolean selfJobCountGatedSelfGrant(FieldAbility fa, CardData source) {
+        CardData.SelfJobCountGatedGrant g = CardData.parseSelfJobCountGatedGrant(fa.effectText(), source.name());
+        return g != null && CardData.parseSelfGainsQuotedGrant(g.remainder(), source.name()) != null;
+    }
+
+    /** The grant half of a self-gated description: power, traits, attacks, triggers and passives. */
+    private static String describeSelfGrantRemainder(String remainder, CardData source) {
+        CardData.SelfGainsQuotedGrant q = CardData.parseSelfGainsQuotedGrant(remainder, source.name());
+        int power = CardData.parseSelfPowerGrant(remainder, source.name());
+        StringBuilder sb = new StringBuilder();
+        if (power > 0) sb.append(" +").append(power).append(" power");
+        sb.append(' ').append(q.traits());
+        if (q.maxAttacks() > 1) sb.append(" atk×").append(q.maxAttacks());
+        for (String t : q.abilityTexts())
+            for (AutoAbility a : CardData.parseAutoAbilities(t)) {
+                String eff = ActionResolver.fullDescription(a.effectText(), source);
+                sb.append(" on ").append(a.trigger()).append('=').append(eff != null ? eff : "?");
+            }
+        for (String p : q.passiveTexts()) sb.append(" passive=\"").append(p).append('"');
+        return sb.toString();
     }
 
     private static CardData buildSource(ResultSet rs, String textEn) throws Exception {
@@ -655,6 +689,18 @@ public class FieldAbilityParsingTest {
             return "SelfGrant[" + (selfPow > 0 ? "+" + selfPow + " power" : "")
                     + (selfPow > 0 && !selfTraits.isEmpty() ? " " : "")
                     + (selfTraits.isEmpty() ? "" : selfTraits.toString()) + "]";
+        // Ahead of ActionResolver, which named Oschon 26-047H "CannotBeChosen" off the quoted clause
+        // and said nothing of the power gate the whole grant hangs on.
+        if (selfPowerGatedSelfGrant(fa, source)) {
+            CardData.SelfPowerGatedGrant g = CardData.parseSelfPowerGatedGrant(fa.effectText(), source.name());
+            return "SelfPowerGatedSelfGrant[pow≥" + g.minPower()
+                    + describeSelfGrantRemainder(g.remainder(), source) + "]";
+        }
+        if (selfJobCountGatedSelfGrant(fa, source)) {
+            CardData.SelfJobCountGatedGrant g = CardData.parseSelfJobCountGatedGrant(fa.effectText(), source.name());
+            return "SelfJobCountGatedSelfGrant[jobs≥" + g.minJobs()
+                    + describeSelfGrantRemainder(g.remainder(), source) + "]";
+        }
         String desc = ActionResolver.fullDescription(fa.effectText(), source);
         if (desc != null) return desc;
         // A cast-time rule AutoAbilityTriggers reads straight off the field text; parse() never

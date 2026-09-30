@@ -120,6 +120,9 @@ class FieldGrantCalculator {
                 // take the remainder. Null means the opposing board does not meet it.
                 grantText = mw.oppDullCharsGrantRemainder(grantText, isP1);
                 if (grantText == null) continue;
+                // Ramza 5-118L's gate is on his own current power, Bartz 3-065L's on his Job count.
+                grantText = openSelfGateRemainder(grantText, src, isP1, true);
+                if (grantText == null) continue;
                 out.addAll(CardData.parseSelfTraitGrant(grantText, src.name()));
                 CardData.SelfGainsQuotedGrant quoted =
                         CardData.parseSelfGainsQuotedGrant(grantText, src.name());
@@ -222,7 +225,7 @@ class FieldGrantCalculator {
      * {@code fieldForwardPower} would answer 0 for a Monster that is not currently acting as a
      * Forward, and a wrong number is worse than a longer switch.
      */
-    private int currentPower(CardData card, boolean isP1) {
+    int currentPower(CardData card, boolean isP1) {
         ForwardTarget slot = mw.findFieldSlot(card, isP1);
         if (slot == null) return card.power();
         return switch (slot.zone()) {
@@ -264,6 +267,26 @@ class FieldGrantCalculator {
         long onField = fwds.stream().filter(CardData::isLb).count()
                      + mons.stream().filter(CardData::isLb).count();
         return (int) (spent.size() - onField);
+    }
+
+    /**
+     * {@code text} with a gate on its own card taken off while the gate holds, unchanged when it has
+     * none, or {@code null} while it is shut: "If [Self] has N power or more, …" (Ramza 5-118L,
+     * Gilgamesh 7-088L, Oschon 26-047H) and "If [Self] has N Jobs or more, …" (Bartz 3-065L). Every
+     * reader of a self grant takes its gate off here, so they all open and shut together.
+     *
+     * @param readPowerGate {@code false} from inside the power calculation itself, where asking
+     *                      for the card's power would recurse; no power-gated printing grants power
+     */
+    String openSelfGateRemainder(String text, CardData card, boolean isP1, boolean readPowerGate) {
+        if (text == null) return null;
+        if (readPowerGate) {
+            CardData.SelfPowerGatedGrant pg = CardData.parseSelfPowerGatedGrant(text, card.name());
+            if (pg != null) return currentPower(card, isP1) >= pg.minPower() ? pg.remainder() : null;
+        }
+        CardData.SelfJobCountGatedGrant jg = CardData.parseSelfJobCountGatedGrant(text, card.name());
+        if (jg != null) return countEffectiveJobs(card, isP1) >= jg.minJobs() ? jg.remainder() : null;
+        return text;
     }
 
     private int countEffectiveJobs(CardData card, boolean isP1) {

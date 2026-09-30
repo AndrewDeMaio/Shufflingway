@@ -1958,6 +1958,106 @@ public record CardData(
     record MaxForwardsGatedGrant(int maxForwards, String remainder) {}
 
     /**
+     * "If [Self] has N power or more, [grant]" — the power gate on Ramza 5-118L's quoted self grant
+     * ("Ramza gains Haste and \"When Ramza attacks, choose 1 Forward of cost 3 or less opponent
+     * controls. Break it.\""). Stripped and read the way {@link #IF_CONTROL_MAX_FORWARDS_PREFIX} is:
+     * the gate against the card's current power on every lookup, the remainder by the ordinary
+     * grant parser. Groups: {@code name}, {@code n}, {@code rest}.
+     */
+    private static final Pattern IF_SELF_POWER_PREFIX = Pattern.compile(
+        "(?i)^If\\s+(?<name>.+?)\\s+has\\s+(?<n>\\d+)\\s+power\\s+or\\s+more,\\s+(?<rest>\\S.*)$",
+        Pattern.DOTALL
+    );
+
+    /** An {@link #IF_SELF_POWER_PREFIX} gate and the grant sentence it guards. */
+    record SelfPowerGatedGrant(int minPower, String remainder) {}
+
+    /**
+     * "[Self] gains [traits] and can attack twice in the same turn." — the multi-attack permission
+     * printed bare rather than quoted (Gilgamesh 7-088L). Traits only before the permission, so a
+     * grant carrying anything else is not rewritten and stays unread.
+     */
+    private static final Pattern SELF_GAINS_TRAITS_AND_CAN_ATTACK = Pattern.compile(
+        "(?i)^(?<name>.+?)\\s+gains?\\s+" +
+        "(?<traits>(?:(?:\\+\\d+\\s+power|Haste|First\\s+Strike|Brave|Back\\s+Attack)(?:\\s*,\\s*|\\s+and\\s+)?)+?)\\s+and\\s+" +
+        "(?<attack>can\\s+attack\\s+(?:twice|\\d+\\s+times)\\s+(?:in\\s+the\\s+same\\s+turn|per\\s+turn))[.!]?\\s*$"
+    );
+
+    /**
+     * {@code rest} with a bare "… and can attack twice in the same turn" permission rewritten into
+     * the quoted spelling Gilgamesh 18-074L prints, so {@link #parseSelfGainsQuotedGrant} reads it;
+     * unchanged when it is not that shape or names another card. A "+N power" in front stays outside
+     * the quotes, where {@link #parseSelfPowerGrant} reads it (Bartz 3-065L).
+     */
+    private static String quoteBareAttackPermission(String rest, String cardName) {
+        Matcher at = SELF_GAINS_TRAITS_AND_CAN_ATTACK.matcher(rest);
+        if (!at.matches() || !at.group("name").trim().equalsIgnoreCase(cardName)) return rest;
+        String name = at.group("name").trim();
+        return name + " gains " + at.group("traits").trim() + " and \"" + name + " "
+                + at.group("attack").trim() + ".\"";
+    }
+
+    /**
+     * "If [Self] has N Jobs or more, [grant]" — Bartz 3-065L's five-Job line, "Bartz gains +3000
+     * power, Brave, and can attack twice in the same turn." The Job-count twin of
+     * {@link #IF_SELF_POWER_PREFIX}, stripped and read the same way; the keyword-only form (his
+     * three-Job "Haste and First Strike") belongs to {@link #IF_SELF_JOB_COUNT_TRAIT_GRANT}.
+     * Groups: {@code name}, {@code n}, {@code rest}.
+     */
+    private static final Pattern IF_SELF_JOB_COUNT_PREFIX = Pattern.compile(
+        "(?i)^If\\s+(?<name>.+?)\\s+has\\s+(?<n>\\d+)\\s+Jobs?\\s+or\\s+more,\\s+(?<rest>\\S.*)$",
+        Pattern.DOTALL
+    );
+
+    /** An {@link #IF_SELF_JOB_COUNT_PREFIX} gate and the grant sentence it guards. */
+    record SelfJobCountGatedGrant(int minJobs, String remainder) {}
+
+    /**
+     * Splits "If [cardName] has N Jobs or more, [grant]" into its gate and its grant, or returns
+     * {@code null} when {@code text} is not that shape, names another card, or grants nothing the
+     * quoted-grant reader takes — the keyword-only form is {@link #IF_SELF_JOB_COUNT_TRAIT_GRANT}'s.
+     */
+    static SelfJobCountGatedGrant parseSelfJobCountGatedGrant(String text, String cardName) {
+        if (text == null || cardName == null) return null;
+        Matcher m = IF_SELF_JOB_COUNT_PREFIX.matcher(text.trim());
+        if (!m.matches() || !m.group("name").trim().equalsIgnoreCase(cardName)) return null;
+        String rest = quoteBareAttackPermission(m.group("rest").trim(), cardName);
+        if (!rest.contains("\"")) return null;
+        return new SelfJobCountGatedGrant(Integer.parseInt(m.group("n")), rest);
+    }
+
+    /**
+     * Splits "If [cardName] has N power or more, [grant]" into its gate and its grant, or returns
+     * {@code null} when {@code text} is not that shape, names another card, or grants no quoted
+     * ability. The keyword-only form (Ramza 7-104H's "… Ramza gains Haste.") belongs to
+     * {@link #IF_SELF_POWER_TRAIT_GRANT}, so it is left there.
+     *
+     * <p>Gilgamesh 7-088L prints his second attack bare ("gains Brave and can attack twice in the
+     * same turn"). The remainder is handed back in the quoted spelling Gilgamesh 18-074L prints, so
+     * {@link #parseSelfGainsQuotedGrant} and every reader behind it take both halves unchanged.
+     */
+    static SelfPowerGatedGrant parseSelfPowerGatedGrant(String text, String cardName) {
+        if (text == null || cardName == null) return null;
+        Matcher m = IF_SELF_POWER_PREFIX.matcher(text.trim());
+        if (!m.matches() || !m.group("name").trim().equalsIgnoreCase(cardName)) return null;
+        String rest = quoteBareAttackPermission(m.group("rest").trim(), cardName);
+        if (!rest.contains("\"")) return null;
+        return new SelfPowerGatedGrant(Integer.parseInt(m.group("n")), rest);
+    }
+
+    /**
+     * The scope word of "[cardName] cannot be chosen by your opponent's Summons/abilities." when
+     * {@code clause} is exactly that, naming its own carrier — "Summons", "abilities" or "Summons or
+     * abilities" — or {@code null}. The quoted twin of the printed standing shield, read by
+     * {@code MainWindow.grantedSelfCannotBeChosenByOpp} (Oschon 26-047H, Weiss 18-019R).
+     */
+    static String selfCannotBeChosenByOppScope(String clause, String cardName) {
+        if (clause == null || cardName == null) return null;
+        Matcher m = ActionResolverPatterns.FA_SELF_CANNOT_BE_CHOSEN_BY_OPP.matcher(clause.trim());
+        return m.matches() && m.group("name").trim().equalsIgnoreCase(cardName) ? m.group("scope") : null;
+    }
+
+    /**
      * Splits "If you control N or less Forwards, [grant]" into its gate and its grant, or returns
      * {@code null} when {@code text} is not that shape.
      */
@@ -2174,6 +2274,9 @@ public record CardData(
             // grant's other half (traits, power) apply while the quoted ability silently did
             // nothing — the half-an-ability failure the decline below exists to prevent.
             if (isSelfCannotBeBlocked(clause, cardName)) { passives.add(clause); continue; }
+            // "[Self] cannot be chosen by your opponent's …" — read per choice by
+            // MainWindow.grantedSelfCannotBeChosenByOpp (Oschon 26-047H, Weiss 18-019R).
+            if (selfCannotBeChosenByOppScope(clause, cardName) != null) { passives.add(clause); continue; }
             // "If [Self] deals damage to a Forward or your opponent, double the damage instead."
             // — Kefka 23-004R. Every reader of the doubler goes through selfPassiveClauses, so a
             // granted copy is seen wherever a printed one is.
@@ -9009,6 +9112,20 @@ public record CardData(
      * carries no multi-attack permission. Every Forward may attack once; a permission replaces that
      * allowance rather than adding to it.
      */
+    /**
+     * Whether {@code seg} is the printed "[Name] can attack twice in the same turn." line itself —
+     * read as a static property by {@link #parseMaxAttacksPerTurn}, so not a field ability. The
+     * pattern's subject is lazy, so on its own it also matched any grant whose tail reads the same:
+     * "If Gilgamesh has 10000 power or more, Gilgamesh gains Brave and can attack twice …" (7-088L)
+     * and Bartz 3-065L's Job-count twin, which were dropped before any reader saw them.
+     */
+    private static boolean isBareCanAttackTwice(String seg) {
+        Matcher m = FIELD_CAN_ATTACK_TWICE.matcher(seg);
+        if (!m.matches()) return false;
+        String subject = m.group("cardname").trim();
+        return !subject.matches("(?is)^(?:If|During)\\b.*") && !subject.matches("(?is).*\\bgains?\\b.*");
+    }
+
     public static int parseMaxAttacksPerTurn(String textEn, String cardName) {
         if (textEn == null || textEn.isBlank()) return 1;
         for (String raw : textEn.split("(?i)\\[\\[br\\]\\]")) {
@@ -9241,7 +9358,8 @@ public record CardData(
      * the keyword — Ramza 5-118L ("Haste and \"When Ramza attacks …\""), Gilgamesh 7-088L ("Brave
      * and can attack twice in the same turn") and Oschon 26-047H (two quoted abilities and no
      * keyword at all). Matching those on the trait half alone would grant the keyword and silently
-     * drop the rest, so the anchor refuses them; they stay unhandled, which is what they were.
+     * drop the rest, so the anchor refuses them. {@link #parseSelfPowerGatedGrant} reads all three
+     * whole instead.
      */
     static final Pattern IF_SELF_POWER_TRAIT_GRANT = Pattern.compile(
         "(?i)^If\\s+(?<n1>.+?)\\s+has\\s+(?<n>\\d+)\\s+power\\s+or\\s+more,\\s+(?<n2>.+?)\\s+gains?\\s+" +
@@ -9828,7 +9946,7 @@ public record CardData(
             if (BECOME_FORWARD_IF_CONTROL_N_MONSTERS_PATTERN.matcher(seg).find()) continue;
             if (BECOME_FORWARD_DURING_TURN_PATTERN.matcher(seg).find())       continue;
             if (BECOME_FORWARD_UNCONDITIONAL_PATTERN.matcher(seg).find())     continue;
-            if (FIELD_CAN_ATTACK_TWICE.matcher(seg).matches())               continue;
+            if (isBareCanAttackTwice(seg))                                    continue;
             if (FIELD_GRANT_CARD_NAME_TRAIT_YOUR_TURN.matcher(seg).matches()) continue;
             if (FIELD_GRANT_CARD_NAME_TRAIT_ALWAYS.matcher(seg).matches())    continue;
 

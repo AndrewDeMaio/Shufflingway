@@ -17102,6 +17102,84 @@ public class CardBehaviorTest {
 		assertFalse(mw.canAffordCard(culinarian, 0), "at cost 2, with every Backup dull, it cannot be paid");
 	}
 
+	// Llymlaen 26-059R: "The cost required to cast your Job The Twelve can be paid with CP of any
+	// Element." The payment dialog honoured it, but the affordability check behind the hand's
+	// playable ring counted only Light and Dark as payable with anything — so a Job The Twelve
+	// with no source of its own Element stayed unlit and could not be clicked, though the dialog
+	// would have taken the payment. The CPU's planner had the same blind spot.
+
+	private static final String LLYMLAEN_26_059R =
+			"The cost required to cast your Job The Twelve can be paid with CP of any Element.";
+
+	private static CardData makeLlymlaen() {
+		return new CardData(null, "Llymlaen", "Wind", 2, 0, "Backup", false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				List.of(), List.of(), CardData.parseFieldAbilities(LLYMLAEN_26_059R, "Backup"),
+				List.of(), List.of(), List.of(),
+				CardData.parseFieldCostReductions(LLYMLAEN_26_059R, "Backup"),
+				List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				null, null, null, LLYMLAEN_26_059R);
+	}
+
+	/** P1 holds {@code card} with three active Wind Backups, Llymlaen among them when {@code withLlymlaen}. */
+	private static MainWindow windBackupsHolding(CardData card, boolean withLlymlaen) {
+		MainWindow mw = new MainWindow();
+		mw.gameState.getP1Hand().clear();
+		mw.gameState.getP1Hand().add(card);
+		TestCards.placeP1Backup(mw, withLlymlaen ? makeLlymlaen() : makePlainBackup("Wind 0", "Wind", 2));
+		TestCards.placeP1Backup(mw, makePlainBackup("Wind 1", "Wind", 2));
+		TestCards.placeP1Backup(mw, makePlainBackup("Wind 2", "Wind", 2));
+		return mw;
+	}
+
+	@Test
+	void llymlaenReadsAsAnAnyElementPermission() {
+		List<FieldCostReduction> fcrs = CardData.parseFieldCostReductions(LLYMLAEN_26_059R, "Backup");
+		assertTrue(fcrs.stream().anyMatch(FieldCostReduction::anyElement));
+	}
+
+	@Test
+	void llymlaenLetsAJobTheTwelveBeCastWithNoSourceOfItsElement() {
+		CardData twelve = TestCards.makeForwardWithJob("Twelve One", "Earth", 3, 7000, "The Twelve");
+		assertTrue(windBackupsHolding(twelve, true).canAffordCard(twelve, 0),
+				"three Wind CP pay for an Earth Job The Twelve");
+		assertFalse(windBackupsHolding(twelve, false).canAffordCard(twelve, 0),
+				"without Llymlaen, there is no Earth CP to be had");
+	}
+
+	@Test
+	void llymlaenDoesNotReachACardOutsideTheJob() {
+		CardData other = TestCards.makeForwardWithJob("Knight", "Earth", 3, 7000, "Warrior");
+		assertFalse(windBackupsHolding(other, true).canAffordCard(other, 0));
+	}
+
+	@Test
+	void theOpponentsLlymlaenDoesNotHelpYou() {
+		// "your Job The Twelve": the permission is its controller's alone.
+		CardData twelve = TestCards.makeForwardWithJob("Twelve One", "Earth", 3, 7000, "The Twelve");
+		MainWindow mw = windBackupsHolding(twelve, false);
+		TestCards.placeP2Backup(mw, makeLlymlaen());
+		assertFalse(mw.canAffordCard(twelve, 0));
+	}
+
+	@Test
+	void theCpuPlansAJobTheTwelveCastOffLlymlaenToo() {
+		for (boolean withLlymlaen : new boolean[]{ true, false }) {
+			MainWindow mw = new MainWindow();
+			mw.gameState.startFirstTurn(GameState.Player.P2);
+			CardData twelve = TestCards.makeForwardWithJob("Twelve One", "Earth", 3, 7000, "The Twelve");
+			mw.gameState.getIdentity().put(twelve, false);
+			mw.gameState.getP2Hand().clear();
+			mw.gameState.getP2Hand().add(twelve);
+			TestCards.placeP2Backup(mw, withLlymlaen ? makeLlymlaen() : makePlainBackup("Wind 0", "Wind", 2));
+			TestCards.placeP2Backup(mw, makePlainBackup("Wind 1", "Wind", 2));
+			TestCards.placeP2Backup(mw, makePlainBackup("Wind 2", "Wind", 2));
+			assertEquals(withLlymlaen, new ComputerPlayer(mw).hasLegalHandCast(),
+					withLlymlaen ? "Llymlaen opens the cast to the CPU" : "and nothing else does");
+		}
+	}
+
 	@Test
 	void theCostReplacementParsesAsASetToRatherThanADelta() {
 		List<SelfCostModifier> mods = CardData.parseSelfCostModifiers(YUFFIE_FREE_WITH_VINCENT);
@@ -27683,8 +27761,8 @@ public class CardBehaviorTest {
 	void aLongerSentenceSharingThePrefixIsNotClaimed() {
 		// Three corpus printings open exactly like Ramza's and then keep going. Claiming them on
 		// the keyword alone would grant that keyword and drop everything after it, so the trait
-		// list is anchored to the end of the sentence and these stay unhandled — which is what
-		// they already were.
+		// list is anchored to the end of the sentence and this reader refuses them. Ramza 5-118L
+		// is read whole by CardData.parseSelfPowerGatedGrant instead (below).
 		assertEquals(-1, CardData.parseIfSelfPowerTraitGrantThreshold(
 				"If Ramza has 10000 power or more, Ramza gains Haste and \"When Ramza attacks, "
 				+ "choose 1 Forward of cost 3 or less opponent controls. Break it.\"", "Ramza"),
@@ -27705,6 +27783,291 @@ public class CardBehaviorTest {
 		// Both names in the sentence are checked, so a card naming someone else is not a self grant.
 		assertEquals(-1, CardData.parseIfSelfPowerTraitGrantThreshold(
 				"If Ramza has 4000 power or more, Ramza gains Haste.", "Steiner"));
+	}
+
+	// Ramza 5-118L: "If Ramza has 10000 power or more, Ramza gains Haste and "When Ramza attacks,
+	// choose 1 Forward of cost 3 or less opponent controls. Break it."" The same power gate in
+	// front of a keyword and a quoted attack trigger, stripped the way Machina 15-017H's Forward
+	// count is and read against current power, so both halves open and close together.
+
+	private static final String RAMZA_5_118L_GATE = "If Ramza has 10000 power or more, Ramza gains Haste and "
+			+ "\"When Ramza attacks, choose 1 Forward of cost 3 or less opponent controls. Break it.\"";
+
+	private static CardData ramza5() {
+		return new CardData(null, "Ramza", "Earth", 5, 6000, "Forward", false, 0, false, false,
+				Set.of(), 0, List.of(), null, List.of(),
+				List.of(), List.of(), CardData.parseFieldAbilities(RAMZA_5_118L_GATE, "Forward"),
+				List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+				false, false, null, false, false, false, false, false, 1,
+				null, null, null, RAMZA_5_118L_GATE);
+	}
+
+	private static boolean hasAttackTrigger(MainWindow mw, CardData card) {
+		return mw.effectiveAutoAbilities(card).stream().anyMatch(a -> a.trigger().equals("attacks"));
+	}
+
+	@Test
+	void ramza5GainsNeitherHalfBelowTenThousand() {
+		MainWindow mw = new MainWindow();
+		CardData ramza = ramza5();
+		placeP1Forward(mw, ramza);
+		mw.p1ForwardPowerBoost.set(0, 3000);                       // 9000
+
+		assertFalse(mw.effectiveP1HasTrait(0, CardData.Trait.HASTE));
+		assertFalse(hasAttackTrigger(mw, ramza), "the attack trigger is behind the same gate");
+	}
+
+	@Test
+	void ramza5GainsHasteAndTheAttackTriggerAtTenThousand() {
+		MainWindow mw = new MainWindow();
+		CardData ramza = ramza5();
+		placeP1Forward(mw, ramza);
+		mw.p1ForwardPowerBoost.set(0, 4000);                       // 10000
+
+		assertTrue(mw.effectiveP1HasTrait(0, CardData.Trait.HASTE));
+		assertTrue(hasAttackTrigger(mw, ramza));
+		AutoAbility onAttack = mw.effectiveAutoAbilities(ramza).stream()
+				.filter(a -> a.trigger().equals("attacks")).findFirst().orElseThrow();
+		assertEquals("ChooseCharacter / Break", ActionResolver.fullDescription(onAttack.effectText(), ramza));
+
+		mw.p1ForwardPowerBoost.set(0, 0);                          // back to 6000
+		assertFalse(mw.effectiveP1HasTrait(0, CardData.Trait.HASTE), "and both close again");
+		assertFalse(hasAttackTrigger(mw, ramza));
+	}
+
+	@Test
+	void ramza5sGateAnswersOnlyForRamzaAndOnlyForAQuotedGrant() {
+		assertNotNull(CardData.parseSelfPowerGatedGrant(RAMZA_5_118L_GATE, "Ramza"));
+		assertNull(CardData.parseSelfPowerGatedGrant(RAMZA_5_118L_GATE, "Steiner"));
+		assertNull(CardData.parseSelfPowerGatedGrant("If Ramza has 4000 power or more, Ramza gains Haste.", "Ramza"),
+				"the keyword-only form stays with the trait reader");
+	}
+
+	// Oschon 26-047H: "If Oschon has 10000 power or more, Oschon gains "Oschon cannot be chosen by
+	// your opponent's abilities." and "If Oschon is dealt damage by your opponent's abilities, the
+	// damage becomes 0 instead."" Both halves were dropped: the quoted-grant reader had no reader
+	// for the first clause, so it declined the whole grant.
+
+	private static final String OSCHON_26_047H_GATE = "If Oschon has 10000 power or more, Oschon gains \"Oschon "
+			+ "cannot be chosen by your opponent's abilities.\" and \"If Oschon is dealt damage by your "
+			+ "opponent's abilities, the damage becomes 0 instead.\"";
+
+	private static final String BREAK_OPPOSING_FORWARD = "Choose 1 Forward opponent controls. Break it.";
+
+	/** P1's Oschon (printed 7000) with {@code boost} more power. */
+	private static MainWindow oschonAt(int boost, CardData oschon) {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, oschon);
+		mw.p1ForwardPowerBoost.set(0, boost);
+		return mw;
+	}
+
+	/** P2 resolves {@code text} as an ability, or as a Summon with {@code asSummon}. */
+	private static void p2Resolves(MainWindow mw, String text, boolean asSummon) {
+		CardData caster = makeForward("Caster", "Fire", 3, 7000);
+		mw.currentResolutionIsSummon = asSummon;
+		try {
+			ActionResolver.parse(text, caster).accept(mw.buildGameContext(false));
+		} finally {
+			mw.currentResolutionIsSummon = false;
+		}
+	}
+
+	@Test
+	void oschonBelowTenThousandCanBeChosenByAnOpposingAbility() {
+		CardData oschon = makeCostTextForward("Oschon", "Water", 4, OSCHON_26_047H_GATE);
+		MainWindow mw = oschonAt(2000, oschon);                     // 9000
+		p2Resolves(mw, BREAK_OPPOSING_FORWARD, false);
+		assertTrue(mw.gameState.getP1BreakZone().contains(oschon));
+	}
+
+	@Test
+	void oschonAtTenThousandCannotBeChosenByAnOpposingAbility() {
+		CardData oschon = makeCostTextForward("Oschon", "Water", 4, OSCHON_26_047H_GATE);
+		MainWindow mw = oschonAt(3000, oschon);                     // 10000
+		p2Resolves(mw, BREAK_OPPOSING_FORWARD, false);
+		assertEquals(List.of(oschon), mw.p1ForwardCards);
+	}
+
+	@Test
+	void butAnOpposingSummonCanStillChooseHim() {
+		// "your opponent's abilities" — a Summon is not one.
+		CardData oschon = makeCostTextForward("Oschon", "Water", 4, OSCHON_26_047H_GATE);
+		MainWindow mw = oschonAt(3000, oschon);
+		p2Resolves(mw, BREAK_OPPOSING_FORWARD, true);
+		assertTrue(mw.gameState.getP1BreakZone().contains(oschon));
+	}
+
+	@Test
+	void andSoCanHisOwnController() {
+		CardData oschon = makeCostTextForward("Oschon", "Water", 4, OSCHON_26_047H_GATE);
+		MainWindow mw = oschonAt(3000, oschon);
+		assertTrue(mw.grantedSelfCannotBeChosenByOpp(oschon, true, false));
+		assertFalse(mw.grantedSelfCannotBeChosenByOpp(oschon, true, true), "abilities only, not Summons");
+		ActionResolver.parse("Choose 1 Forward you control. Break it.", makeForward("Mine", "Water", 2, 5000))
+				.accept(mw.buildGameContext(true));
+		assertTrue(mw.gameState.getP1BreakZone().contains(oschon), "the shield is against the opponent");
+	}
+
+	@Test
+	void oschonAtTenThousandTakesNoDamageFromAnOpposingAbility() {
+		CardData oschon = makeCostTextForward("Oschon", "Water", 4, OSCHON_26_047H_GATE);
+		MainWindow mw = oschonAt(3000, oschon);
+		p2Resolves(mw, "Deal 5000 damage to all the Forwards opponent controls.", false);
+		assertEquals(0, mw.p1ForwardDamage.get(0));
+	}
+
+	@Test
+	void oschonBelowTenThousandTakesTheDamage() {
+		CardData oschon = makeCostTextForward("Oschon", "Water", 4, OSCHON_26_047H_GATE);
+		MainWindow mw = oschonAt(2000, oschon);
+		p2Resolves(mw, "Deal 5000 damage to all the Forwards opponent controls.", false);
+		assertEquals(5000, mw.p1ForwardDamage.get(0));
+	}
+
+	// Gilgamesh 7-088L: "If Gilgamesh has 10000 power or more, Gilgamesh gains Brave and can attack
+	// twice in the same turn." The second attack is printed bare rather than quoted, and read as
+	// Gilgamesh 18-074L's quoted spelling of it.
+
+	private static final String GILGAMESH_7_088L_GATE = "If Gilgamesh has 10000 power or more, Gilgamesh gains "
+			+ "Brave and can attack twice in the same turn.";
+
+	@Test
+	void gilgameshGainsBraveAndASecondAttackAtTenThousand() {
+		CardData gilgamesh = makeCostTextForward("Gilgamesh", "Lightning", 5, GILGAMESH_7_088L_GATE);
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, gilgamesh);
+		mw.p1ForwardPowerBoost.set(0, 2000);                       // 9000
+		assertFalse(mw.effectiveP1HasTrait(0, CardData.Trait.BRAVE));
+		assertEquals(1, mw.maxAttacksPerTurn(gilgamesh));
+
+		mw.p1ForwardPowerBoost.set(0, 3000);                       // 10000
+		assertTrue(mw.effectiveP1HasTrait(0, CardData.Trait.BRAVE));
+		assertEquals(2, mw.maxAttacksPerTurn(gilgamesh));
+	}
+
+	@Test
+	void gilgameshsBarePermissionIsReadAsTheQuotedOne() {
+		CardData.SelfPowerGatedGrant g = CardData.parseSelfPowerGatedGrant(GILGAMESH_7_088L_GATE, "Gilgamesh");
+		assertNotNull(g);
+		assertEquals(10000, g.minPower());
+		CardData.SelfGainsQuotedGrant q = CardData.parseSelfGainsQuotedGrant(g.remainder(), "Gilgamesh");
+		assertEquals(Set.of(CardData.Trait.BRAVE), q.traits());
+		assertEquals(2, q.maxAttacks());
+	}
+
+	// Weiss 18-019R: "Damage 5 -- Weiss gains +1000 power and "Weiss cannot be chosen by your
+	// opponent's Summons or abilities."" The same quoted shield behind a damage prefix, read by the
+	// same reader Oschon's is.
+
+	@Test
+	void weissCannotBeChosenOnceItsControllerHasFiveDamage() {
+		String text = "Damage 5 -- Weiss gains +1000 power and \"Weiss cannot be chosen by your opponent's "
+				+ "Summons or abilities.\"";
+		CardData weiss = makeCostTextForward("Weiss", "Dark", 5, text);
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, weiss);
+		for (int i = 0; i < 4; i++) mw.gameState.getP1DamageZone().add(makeForward("Dmg " + i, "Fire", 1, 1000));
+		assertFalse(mw.grantedSelfCannotBeChosenByOpp(weiss, true, true), "four is not five");
+
+		mw.gameState.getP1DamageZone().add(makeForward("Dmg 4", "Fire", 1, 1000));
+		assertTrue(mw.grantedSelfCannotBeChosenByOpp(weiss, true, true));
+		assertTrue(mw.grantedSelfCannotBeChosenByOpp(weiss, true, false));
+		p2Resolves(mw, BREAK_OPPOSING_FORWARD, true);
+		assertEquals(List.of(weiss), mw.p1ForwardCards);
+	}
+
+	// Bartz 3-065L: "Bartz has the Jobs of the Forwards you control. If Bartz has 3 Jobs or more,
+	// Bartz gains Haste and First Strike. If Bartz has 5 Jobs or more, Bartz gains +3000 power,
+	// Brave, and can attack twice in the same turn." The five-Job line was dropped outright — a
+	// loose "can attack twice" skip took the whole sentence for a bare permission — and is read
+	// now through the same gate machinery as Gilgamesh 7-088L's, with a Job count as the gate.
+
+	private static final String BARTZ_3_065L = "Bartz has the Jobs of the Forwards you control.[[br]] If Bartz has "
+			+ "3 Jobs or more, Bartz gains Haste and First Strike.[[br]] If Bartz has 5 Jobs or more, Bartz gains "
+			+ "+3000 power, Brave, and can attack twice in the same turn.";
+
+	private static CardData makeBartz() {
+		return new CardData(null, "Bartz", "Wind", 5, 6000, "Forward", false, 0, false, false,
+				CardData.parseTraits(BARTZ_3_065L, "Bartz"), 0, List.of(), null, List.of(),
+				CardData.parseActionAbilities(BARTZ_3_065L), CardData.parseAutoAbilities(BARTZ_3_065L),
+				CardData.parseFieldAbilities(BARTZ_3_065L, "Forward"),
+				CardData.parseIfControlBoosts(BARTZ_3_065L, "Forward"),
+				CardData.parseFieldPowerGrants(BARTZ_3_065L, "Forward"),
+				List.of(),
+				CardData.parseFieldCostReductions(BARTZ_3_065L, "Forward"),
+				CardData.parseSelfCostModifiers(BARTZ_3_065L),
+				List.of(), List.of(),
+				false, false, null, false, false, false, false, false,
+				CardData.parseMaxAttacksPerTurn(BARTZ_3_065L, "Bartz"),
+				"Freelancer", null, null, BARTZ_3_065L);
+	}
+
+	/** P1's Bartz beside {@code others} Forwards, each of a Job of its own: Bartz has 1 + others Jobs. */
+	private static MainWindow bartzWithJobs(CardData bartz, int others) {
+		MainWindow mw = new MainWindow();
+		placeP1Forward(mw, bartz);
+		String[] jobs = { "Knight", "Monk", "Thief", "Black Mage", "White Mage" };
+		for (int i = 0; i < others; i++)
+			placeP1Forward(mw, makeJobCard("Ally " + i, "Wind", "Forward", jobs[i]));
+		return mw;
+	}
+
+	@Test
+	void bartzPrintsOnlyOneAttackAndHasNoStandingGrants() {
+		CardData bartz = makeBartz();
+		assertEquals(1, bartz.maxAttacksPerTurn(), "the second attack is gated, not printed");
+		assertTrue(bartz.fieldAbilities().stream().anyMatch(fa -> fa.effectText().startsWith("If Bartz has 5 Jobs")),
+				"and the five-Job line reaches the field abilities rather than being skipped");
+	}
+
+	@Test
+	void bartzAtFourJobsHasOnlyTheThreeJobGrant() {
+		CardData bartz = makeBartz();
+		MainWindow mw = bartzWithJobs(bartz, 3);
+
+		assertTrue(mw.effectiveP1HasTrait(0, CardData.Trait.HASTE));
+		assertTrue(mw.effectiveP1HasTrait(0, CardData.Trait.FIRST_STRIKE));
+		assertFalse(mw.effectiveP1HasTrait(0, CardData.Trait.BRAVE), "four is not five");
+		assertEquals(6000, mw.effectiveP1ForwardPower(0));
+		assertEquals(1, mw.maxAttacksPerTurn(bartz));
+	}
+
+	@Test
+	void bartzAtFiveJobsGainsThePowerBraveAndASecondAttack() {
+		CardData bartz = makeBartz();
+		MainWindow mw = bartzWithJobs(bartz, 4);
+
+		assertEquals(9000, mw.effectiveP1ForwardPower(0), "6000 + 3000");
+		assertTrue(mw.effectiveP1HasTrait(0, CardData.Trait.BRAVE));
+		assertTrue(mw.effectiveP1HasTrait(0, CardData.Trait.HASTE), "and keeps the three-Job grant");
+		assertEquals(2, mw.maxAttacksPerTurn(bartz));
+	}
+
+	@Test
+	void bartzLosesItAllWhenAForwardLeavesAndTheCountDrops() {
+		CardData bartz = makeBartz();
+		MainWindow mw = bartzWithJobs(bartz, 4);
+		mw.buildGameContext(true).returnP1ForwardToHand(4);       // one Job fewer: four
+
+		assertEquals(6000, mw.effectiveP1ForwardPower(0));
+		assertFalse(mw.effectiveP1HasTrait(0, CardData.Trait.BRAVE));
+		assertEquals(1, mw.maxAttacksPerTurn(bartz));
+	}
+
+	@Test
+	void bartzsFiveJobLineReadsAsItsThreeHalves() {
+		CardData.SelfJobCountGatedGrant g = CardData.parseSelfJobCountGatedGrant(
+				"If Bartz has 5 Jobs or more, Bartz gains +3000 power, Brave, and can attack twice in the same turn.",
+				"Bartz");
+		assertNotNull(g);
+		assertEquals(5, g.minJobs());
+		assertEquals(3000, CardData.parseSelfPowerGrant(g.remainder(), "Bartz"));
+		CardData.SelfGainsQuotedGrant q = CardData.parseSelfGainsQuotedGrant(g.remainder(), "Bartz");
+		assertEquals(Set.of(CardData.Trait.BRAVE), q.traits());
+		assertEquals(2, q.maxAttacks());
+		assertNull(CardData.parseSelfJobCountGatedGrant("If Bartz has 3 Jobs or more, Bartz gains Haste and "
+				+ "First Strike.", "Bartz"), "the keyword-only line stays with the trait reader");
 	}
 
 	// =========================================================================================

@@ -1132,9 +1132,10 @@ class ComputerPlayer implements OpponentController {
 		for (int ei = 0; ei < elems.length; ei++)
 			simCp[ei] = mw.gameState.getP2CpForElement(elems[ei]);
 		int anyCp = 0;
-		// Every cast needs at least 1 CP of each of the card's Elements, except a Light or Dark
-		// card, which any CP pays for — unless it is held to one Element as well.
-		boolean needsEachElement = !card.isLightOrDark() || !offElementPays;
+		// Every cast needs at least 1 CP of each of the card's Elements, except a Light or Dark card
+		// and a card a field ability lets be paid with any Element (26-059R Llymlaen), which any CP
+		// pays for — unless it is held to one Element as well.
+		boolean needsEachElement = !(card.isLightOrDark() || mw.isAnyElementCast(card, false)) || !offElementPays;
 
 		if (p2CanAfford(reducedCost, elems, simCp, anyCp, needsEachElement)) return true;
 
