@@ -311,7 +311,8 @@ public interface GameContext {
 
     /**
      * Cancels one auto-ability on the stack (chosen by the active player), then if the source
-     * card is a Forward currently on the field, deals {@code damage} to it.
+     * card is a Forward currently on the field, deals {@code damage} to it — 12-002H Amaterasu.
+     * The Forward is found by identity, so another copy of the same printing is untouched.
      */
     void cancelAutoAbilityAndDamageSourceIfForward(int damage);
 
@@ -1279,10 +1280,14 @@ public interface GameContext {
 
 
     /**
-     * Like {@link #playTargetOntoField} but the card enters the field in a dulled state.
-     * Only meaningful for Forwards; Backups and Monsters enter normally.
+     * Like {@link #playTargetOntoField} but the card enters the field in a dulled state — "Choose
+     * 1 … in your Break Zone. Play it onto the field dull." (Fenrir 12-068H, Phoenix 26-017R,
+     * Tama 4-086H, Lenna 21-119H, Alphinaud 23-098C). Only meaningful for Forwards; Backups and
+     * Monsters enter normally, in their own zones.
+     *
+     * @return where the card landed, or {@code null} when the play did not happen
      */
-    void playTargetOntoFieldDull(ForwardTarget t);
+    ForwardTarget playTargetOntoFieldDull(ForwardTarget t);
 
     /**
      * Plays the card whose departure fired the "put into the Break Zone" trigger now resolving back

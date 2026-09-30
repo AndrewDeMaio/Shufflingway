@@ -200,11 +200,12 @@ final class ActionResolverChoose {
      * read and nothing is tracked.
      */
     private static void playOneFromBreakZone(GameContext ctx, ForwardTarget t, String zone,
-            boolean noAutoAbility, boolean trackLanded, List<CardData> landed) {
+            boolean noAutoAbility, boolean dull, boolean trackLanded, List<CardData> landed) {
         CardData moving = trackLanded && zone != null
                 ? (t.isP1() ? ctx.p1BreakZoneCard(t.idx()) : ctx.p2BreakZoneCard(t.idx()))
                 : null;
         ForwardTarget placed = noAutoAbility ? ctx.playTargetOntoFieldNoAutoAbility(t)
+                             : dull          ? ctx.playTargetOntoFieldDull(t)
                                              : ctx.playTargetOntoField(t);
         if (moving != null && placed != null) landed.add(moving);
     }
@@ -4614,6 +4615,28 @@ final class ActionResolverChoose {
             };
         }
 
+        // --- "Deal it N damage for each CP required to cast it." (12-059C Kujata) ---
+        // The same shape scaled by the chosen card's own cost, and ahead of the flat damage branch
+        // for the same reason: that one took "Deal it 2000 damage" and dropped the multiplier.
+        Matcher perCpOfChosenM = FOLLOWUP_DAMAGE_PER_CP_OF_CHOSEN.matcher(primaryFollowup.trim());
+        if (perCpOfChosenM.matches()) {
+            int perCp = Integer.parseInt(perCpOfChosenM.group("perunit"));
+            return ctx -> {
+                ctx.logChooseHeader(choosePrefix + " — " + perCp + " damage for each CP required to cast it");
+                List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
+                        opponentOnly, selfOnly, condition, element, zone, opponentZone, bothZones,
+                        costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters,
+                        jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
+                Consumer<ForwardTarget> hit = t -> {
+                    CardData card = ctx.targetCard(t);
+                    if (card != null) ctx.damageTarget(t, perCp * card.cost());
+                };
+                sortedByIdxDesc(ts, true) .forEach(hit);
+                sortedByIdxDesc(ts, false).forEach(hit);
+                if (secondary != null) secondary.accept(ctx);
+            };
+        }
+
         // --- "Deal it N damage for each [Name] Counter placed on [card]." (counter-scaled xValue) ---
         // Must be checked before FOLLOWUP_DAMAGE_FOR_EACH, which would match on the flat N and drop the for-each.
         Matcher dmgForEachCounterM = FOLLOWUP_DAMAGE_FOR_EACH_COUNTER.matcher(primaryFollowup);
@@ -6376,6 +6399,9 @@ final class ActionResolverChoose {
             // it is read here and not run as a secondary — see the guard that nulls it out above.
             final boolean noAutoAbility = secondaryText != null
                     && ITS_AUTO_ABILITY_WILL_NOT_TRIGGER.matcher(secondaryText).matches();
+            // "Play it onto the field dull" — the find() above matches the play and would drop
+            // the state it enters in.
+            final boolean dull = FOLLOWUP_PLAY_ONTO_FIELD_DULL.matcher(primaryFollowup).find();
             // Reeve 16-104R's "As long as it is on the field, Reeve does not activate during your
             // Active Phase." — read here for the same reason, and nulled out of the secondary slot
             // by the same guard: "it" is the card this play is about to move, and only this branch
@@ -6403,7 +6429,7 @@ final class ActionResolverChoose {
                 etfCond = null; etfInner = null; etfInnerText = null;
             }
             return ctx -> {
-                ctx.logChooseHeader(choosePrefix + " — Play onto Field"
+                ctx.logChooseHeader(choosePrefix + " — Play onto Field" + (dull ? " dull" : "")
                         + (noAutoAbility ? " (its auto-ability will not trigger)" : ""));
                 List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
                         opponentOnly, selfOnly, condition, element, zone, opponentZone, bothZones,
@@ -6421,10 +6447,10 @@ final class ActionResolverChoose {
                 // needs it, so the ordinary play costs one empty list.
                 List<CardData> landedCards = new ArrayList<>();
                 sortedByIdxDesc(ts, true) .forEach(t ->
-                        playOneFromBreakZone(ctx, t, zone, noAutoAbility,
+                        playOneFromBreakZone(ctx, t, zone, noAutoAbility, dull,
                                 lockSelfWhilePlayedStands, landedCards));
                 sortedByIdxDesc(ts, false).forEach(t ->
-                        playOneFromBreakZone(ctx, t, zone, noAutoAbility,
+                        playOneFromBreakZone(ctx, t, zone, noAutoAbility, dull,
                                 lockSelfWhilePlayedStands, landedCards));
                 // Armed off the card that landed, not the one that was picked: a play the board
                 // refused leaves it in the Break Zone, and "as long as it is on the field" is false

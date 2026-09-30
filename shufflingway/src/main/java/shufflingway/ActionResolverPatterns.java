@@ -891,8 +891,9 @@ final class ActionResolverPatterns {
      */
     static final Pattern CANCEL_AUTO_ABILITY_DAMAGE_IF_FORWARD = Pattern.compile(
         "(?i)^Choose\\s+1\\s+auto-ability\\.\\s+Cancel\\s+its\\s+effect\\.\\s+" +
-        "If\\s+the\\s+cancelled\\s+auto-ability\\s+triggered\\s+from\\s+a\\s+Forward,\\s+" +
-        "deal\\s+that\\s+Forward\\s+(?<amount>\\d+)\\s+damage\\.?$"
+        // 12-002H prints "If that auto-ability", its Re-001H reprint "If the cancelled auto-ability".
+        "If\\s+(?:the\\s+cancelled|that)\\s+auto-ability\\s+triggered\\s+from\\s+a\\s+Forward,\\s+" +
+        "deal\\s+that\\s+Forward\\s+(?<amount>\\d+)\\s+damage\\.?\\s*$"
     );
 
     // =========================================================================================
@@ -8838,6 +8839,11 @@ final class ActionResolverPatterns {
     static final Pattern FOLLOWUP_DAMAGE_PER_CP_OF_DISCARDED = Pattern.compile(
         "(?i)^Deal\\s+(?:it|them)\\s+(?<perunit>\\d+)\\s+damage\\s+for\\s+each\\s+CP\\s+required\\s+to\\s+"
             + "(?:cast|play)\\s+the\\s+discarded\\s+card[.!]?$"
+    );
+
+    /** "Deal it N damage for each CP required to cast it." — the chosen card's own cost; 12-059C Kujata. */
+    static final Pattern FOLLOWUP_DAMAGE_PER_CP_OF_CHOSEN = Pattern.compile(
+        "(?i)^Deal\\s+it\\s+(?<perunit>\\d+)\\s+damage\\s+for\\s+each\\s+CP\\s+required\\s+to\\s+cast\\s+it[.!]?$"
     );
 
     /** "At the beginning of the next Main Phase 1, put it into the Break Zone." — 17-109R Cú Chulainn. */

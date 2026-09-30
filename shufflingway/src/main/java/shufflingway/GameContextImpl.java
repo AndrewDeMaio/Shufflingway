@@ -3271,16 +3271,16 @@ final class GameContextImpl implements GameContext {
 					logEntry(chosen.source().name() + " is not a Forward — no damage");
 					return;
 				}
+				// "That Forward" is the one the ability triggered from, by identity: another copy of
+				// the same printing is a different card and takes nothing.
 				CardData src = chosen.source();
-				List<CardData> fwds = chosen.isP1() ? mw.p1ForwardCards : mw.p2ForwardCards;
-				int fwdIdx = fwds.indexOf(src);
-				if (fwdIdx < 0) {
+				ForwardTarget slot = fieldSlotOf(src);
+				if (slot == null || slot.zone() != ForwardTarget.CardZone.FORWARD) {
 					logEntry(src.name() + " is no longer on the field — no damage");
 					return;
 				}
 				logEntry(src.name() + " is a Forward — dealing " + damage + " damage");
-				if (chosen.isP1()) damageP1Forward(fwdIdx, damage);
-				else               damageP2Forward(fwdIdx, damage);
+				damageTarget(slot, damage);
 			}
 
 			@Override public void copyChosenAutoAbilityOnStack(
@@ -6712,30 +6712,19 @@ final class GameContextImpl implements GameContext {
 				return chosen.isEmpty() ? null : chosen.get(0);
 			}
 
-			@Override public void playTargetOntoFieldDull(ForwardTarget t) {
-				List<CardData> bz = t.isP1() ? mw.gameState.getP1BreakZone() : mw.gameState.getP2BreakZone();
-				if (t.idx() >= bz.size()) return;
-				if (bz.get(t.idx()).playByEffectProhibited(false)) {
-					logEntry(bz.get(t.idx()).name() + " cannot be played onto the field by an ability");
-					markEffectFizzled();
-					return;
-				}
-				CardData card = bz.remove(t.idx());
-				mw.entryOrigin.put(card, MainWindow.EntryOrigin.BREAK_ZONE);
-				String src = t.isP1() ? "Break Zone" : "opponent's Break Zone";
-				logEntry(card.name() + " played from " + src + " onto field (dull)");
-				if (t.isP1()) {
-					mw.placeCardInForwardZone(card);
-					int newIdx = mw.p1ForwardCards.size() - 1;
-					mw.p1ForwardStates.set(newIdx, CardState.DULL);
-					mw.refreshP1ForwardSlot(newIdx);
+			@Override public ForwardTarget playTargetOntoFieldDull(ForwardTarget t) {
+				ForwardTarget landed = playFromBreakZone(t, false, false);
+				if (landed == null || landed.zone() != ForwardTarget.CardZone.FORWARD) return landed;
+				// It enters dull rather than becoming dull, so the state is set, not dulled.
+				logEntry("  (enters dull)");
+				if (landed.isP1()) {
+					mw.p1ForwardStates.set(landed.idx(), CardState.DULL);
+					mw.refreshP1ForwardSlot(landed.idx());
 				} else {
-					mw.placeP2CardInForwardZone(card);
-					int newIdx = mw.p2ForwardCards.size() - 1;
-					mw.p2ForwardStates.set(newIdx, CardState.DULL);
-					mw.refreshP2ForwardSlot(newIdx);
+					mw.p2ForwardStates.set(landed.idx(), CardState.DULL);
+					mw.refreshP2ForwardSlot(landed.idx());
 				}
-				if (t.isP1()) mw.refreshP1BreakLabel(); else mw.refreshP2BreakLabel();
+				return landed;
 			}
 
 			@Override public void playTriggeringBrokenCardOntoFieldDull() {
