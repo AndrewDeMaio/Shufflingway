@@ -273,6 +273,32 @@ class ComputerPlayer implements OpponentController {
 					plan.discardIndices(), plan.dullBackups(), plan.backupElements(), Map.of());
 			return;
 		}
+		// What the payment produces, read before the discards leave the hand: the Element of CP
+		// each dull and discard contributes, and the Element of the card that contributed it. The
+		// same two records executePlay writes for a human cast — 6-074C Cactuar counts the first.
+		// The plan's Element is the pool bucket the CP is deposited into, not always the CP made:
+		// an off-colour source is booked to the card's own Element, and a generic one can be left
+		// blank. Where the source cannot produce the booked Element, it paid its own.
+		CardData casting = mw.gameState.getP2Hand().get(plan.cardIdx());
+		Set<String> paidCp   = new LinkedHashSet<>();
+		Set<String> paidFrom = new LinkedHashSet<>();
+		for (int bi : plan.dullBackups()) {
+			CardData bk  = mw.p2BackupCards[bi];
+			String booked = plan.backupElements().get(bi);
+			paidCp.add(booked != null && !booked.isEmpty() && p2BackupProduces(bk, booked, casting)
+					? booked : bk.elements()[0]);
+			paidFrom.add(bk.elements()[0]);
+		}
+		for (int di : plan.discardIndices()) {
+			CardData d   = mw.gameState.getP2Hand().get(di);
+			String booked = plan.discardElements().get(di);
+			paidCp.add(booked != null && !booked.isEmpty() && d.containsElement(booked)
+					? booked : d.elements()[0]);
+			paidFrom.add(d.elements()[0]);
+		}
+		paidCp.removeIf(e -> e == null || e.isEmpty());
+		paidFrom.removeIf(e -> e == null || e.isEmpty());
+
 		mw.payP2CostViaBackupsAndDiscards(
 				plan.dullBackups(),    plan.backupElements(),
 				plan.discardIndices(), plan.discardElements());
@@ -305,8 +331,15 @@ class ComputerPlayer implements OpponentController {
 
 		mw.lastCastPaymentElements.clear();
 		mw.lastCastActualPaymentElements.clear();
-		if (!freeCast)
+		if (!freeCast && !paidCp.isEmpty()) {
+			mw.lastCastPaymentElements.addAll(paidCp);
+			mw.lastCastActualPaymentElements.addAll(paidFrom);
+		} else if (!freeCast) {
+			// Paid wholly out of CP already in the pool, which records no source: the card's own
+			// Elements are the most that payment can be said to have included.
 			for (String e : elems) if (!e.isEmpty()) { mw.lastCastPaymentElements.add(e); mw.lastCastActualPaymentElements.add(e); }
+		}
+		mw.lastCastPaymentDistinctElements = mw.lastCastPaymentElements.size();
 		mw.lastCastPaymentCard = toPlay;
 		// See the note on the Limit Break path above: the pool payment names no Backups, and the
 		// previous cast's record must not be left standing for a Backup-source gate to read.
@@ -662,6 +695,18 @@ class ComputerPlayer implements OpponentController {
 	 */
 	boolean warpCastIfAble() {
 		P2Plan plan = findWarpPlan();
+		if (plan == null) return false;
+		executeP2HandPlay(plan);
+		return true;
+	}
+
+	/**
+	 * Plans and performs P2's next hand cast, returning whether it made one — the step the main
+	 * phase takes after its ability sweep. A seam for tests, like {@link #warpCastIfAble}, so a
+	 * cast's payment record can be checked without driving the timer-paced main phase.
+	 */
+	boolean castFromHandIfAble() {
+		P2Plan plan = findPlayPlan();
 		if (plan == null) return false;
 		executeP2HandPlay(plan);
 		return true;

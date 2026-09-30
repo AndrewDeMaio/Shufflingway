@@ -10954,8 +10954,9 @@ public record CardData(
     private static final Pattern SELF_COND_OWN_FORWARD_FORMED_PARTY = Pattern.compile(
         "(?i)^a\\s+Forward\\s+you\\s+controlled\\s+formed\\s+a\\s+party\\s+this\\s+turn$"
     );
+    /** 16-030L Shantotto ("their hand") and 6-029C Doomtrain, printed before the wording changed ("his/her hand"). */
     private static final Pattern SELF_COND_OPPONENT_HAND_N_OR_LESS = Pattern.compile(
-        "(?i)^your\\s+opponent\\s+has\\s+(?<n>\\d+)\\s+cards?\\s+or\\s+less\\s+in\\s+their\\s+hand$"
+        "(?i)^your\\s+opponent\\s+has\\s+(?<n>\\d+)\\s+cards?\\s+or\\s+less\\s+in\\s+(?:their|his/her)\\s+hand$"
     );
     private static final Pattern SELF_COND_N_OR_MORE_FORWARDS_LEFT_FIELD = Pattern.compile(
         "(?i)^(?<n>\\d+)\\s+or\\s+more\\s+Forwards\\s+have\\s+left\\s+the\\s+field$"

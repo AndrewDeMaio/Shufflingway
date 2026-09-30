@@ -1747,6 +1747,13 @@ public class MainWindow {
 	 */
 	final List<CardData> lastCastPaymentBackups = new ArrayList<>();
 	/**
+	 * Each Summon on the Stack's own payment record, taken as it was pushed and restored for its
+	 * resolution, since a cast made in response overwrites the {@code lastCastPayment*} fields
+	 * above in between (6-074C Cactuar). Keyed on the Summon by identity rather than on its entry,
+	 * which a redirect replaces.
+	 */
+	final Map<CardData, CastPaymentRecord> summonCastPayments = new IdentityHashMap<>();
+	/**
 	 * The card whose departure fired the "put into the Break Zone" trigger now resolving, or
 	 * {@code null} outside one — Lunafreya 8-132L's "play the Forward placed in the Break Zone onto
 	 * the field dull" is the effect that reads it.
@@ -4203,14 +4210,8 @@ public class MainWindow {
 		p2DeclaredAttackers.clear();
 		Arrays.fill(p1BackupPlayedOnTurn, 0);
 		Arrays.fill(p1BackupFrozen, false);
-		lastCastPaymentDistinctElements = 0;
-		lastCastPaymentDiscardCount = 0;
-		lastCastPaymentDiscardTotalCost = 0;
-		lastCastPaymentDiscards.clear();
-		lastCastPaymentElements.clear();
-		lastCastPaymentCard = null;
-		lastCastPaymentBackups.clear();
-		lastCastWasPaidByBackupsOnly = false;
+		CastPaymentRecord.unpaid(null).restore(this);
+		summonCastPayments.clear();
 
 		// Monster zone
 		if (p1MonsterPanel != null) {
@@ -13067,6 +13068,10 @@ public class MainWindow {
 				? new StackEntry(card, null, null, isP1, xValue, false, targets, false, true, extraCostRemovedCardPower, 0)
 				: new StackEntry(card, null, null, isP1, xValue, false, targets, false, false, 0, 0);
 		gameState.insertStack(depth, entry);
+		// Every cast path records its payment before pushing; a record for another card means
+		// this one was cast by an effect without paying.
+		summonCastPayments.put(card, lastCastPaymentCard == card
+				? CastPaymentRecord.capture(this) : CastPaymentRecord.unpaid(card));
 		logEntry("[Stack] \"" + card.name() + "\" — Summon on the stack"
 				+ (paidExtraCost ? " (Extra Cost paid)" : ""));
 		turn(isP1).summonsCastThisTurn++;
@@ -13415,6 +13420,10 @@ public class MainWindow {
 				logEntry("[Summon] Resolving \"" + entry.source().name() + "\": "
 						+ resolvingEffectText(entry));
 				Consumer<GameContext> effect = ActionResolver.parse(effectText, entry.source(), entry.xValue());
+				// This Summon's own payment, which a cast made in response has since overwritten on
+				// the lastCastPayment* fields. An EX Burst was never cast, so it paid nothing.
+				CastPaymentRecord ownPayment = summonCastPayments.remove(entry.source());
+				if (entry.isExBurstEntry()) ownPayment = CastPaymentRecord.unpaid(entry.source());
 				if (effect != null) {
 					// Targets were chosen when the Summon went on the Stack, so the opponent could
 					// respond to them; resolution uses that choice rather than asking again.
@@ -13427,10 +13436,14 @@ public class MainWindow {
 					// header would restate it. Set here rather than off currentResolutionIsSummon,
 					// which is also true on the summon paths that print no such line.
 					summonEffectTextAlreadyLogged = true;
+					// Put back afterwards: "the last cast" is still the response.
+					CastPaymentRecord lastCast = ownPayment != null ? CastPaymentRecord.capture(this) : null;
+					if (ownPayment != null) ownPayment.restore(this);
 					try { effect.accept(ctx); } finally {
 						currentResolutionIsSummon = false;
 						currentSummonSource   = null;
 						summonEffectTextAlreadyLogged = false;
+						if (lastCast != null) lastCast.restore(this);
 					}
 				} else logEntry("[ActionResolver] Summon effect not yet implemented: " + effectText);
 				if (pendingSummonReturnToHand) {
