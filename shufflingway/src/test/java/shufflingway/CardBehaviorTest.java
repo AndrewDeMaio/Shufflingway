@@ -25252,6 +25252,59 @@ public class CardBehaviorTest {
 				isNull(), isNull(), isNull(), isNull(), isNull(), eq(false), isNull(), eq(false), isNull());
 	}
 
+	// Board behaviour, through the real trigger and the real Stack. The effect text reaches the
+	// resolver (and CardProbe) as a bare "play 1 … from his/her hand", with "your opponent may"
+	// lifted into the flag, so read in isolation it looks like the controller's own play. The
+	// flag is what hands both the offer and the resolution to the other seat. Both hands hold
+	// something playable here: a play from the controller's hand would leave a trace on P1's side.
+	//
+	// Placing the card fires its enters-the-field trigger; the P2 offer goes to the AI, which
+	// accepts, so one entry is waiting on the Stack for P1 to pass.
+	@Test
+	void leonEnteringP1sFieldPlaysFromP2sHandOntoP2sField() {
+		MainWindow mw = new MainWindow();
+		mw.gameState.startFirstTurn(GameState.Player.P1);
+		CardData leon   = makeAutoAbilityForward("Leon", LEON_1_060H);
+		CardData mine   = makeForward("Mine", "Ice", 2, 5000);
+		CardData theirs = makeForward("Theirs", "Earth", 2, 5000);
+		mw.gameState.getP1Hand().clear();
+		mw.gameState.getP1Hand().add(mine);
+		mw.gameState.getP2Hand().clear();
+		mw.gameState.getP2Hand().add(theirs);
+
+		mw.placeCardInForwardZone(leon);
+		assertEquals(1, mw.gameState.stackSize(), "the opponent took the offer");
+		assertFalse(mw.gameState.peekStack().isP1(), "and the entry resolves on their side");
+		mw.passStackPriority();
+
+		assertEquals(List.of(theirs), mw.p2ForwardCards, "the opponent played onto their own field");
+		assertTrue(mw.gameState.getP2Hand().isEmpty(), "out of their own hand");
+		assertEquals(List.of(leon), mw.p1ForwardCards, "Leon's controller played nothing");
+		assertEquals(List.of(mine), mw.gameState.getP1Hand());
+	}
+
+	@Test
+	void shadowLordEnteringP1sFieldPlaysABackupFromP2sHand() {
+		MainWindow mw = new MainWindow();
+		mw.gameState.startFirstTurn(GameState.Player.P1);
+		CardData shadowLord = makeAutoAbilityForward("Shadow Lord",
+				"When Shadow Lord enters the field, your opponent may play 1 Backup of cost 2 or "
+				+ "less from their hand onto the field.");
+		CardData mine   = makePlainBackup("Mine", "Earth", 2);
+		CardData theirs = makePlainBackup("Theirs", "Wind", 2);
+		mw.gameState.getP1Hand().clear();
+		mw.gameState.getP1Hand().add(mine);
+		mw.gameState.getP2Hand().clear();
+		mw.gameState.getP2Hand().add(theirs);
+
+		mw.placeCardInForwardZone(shadowLord);
+		mw.passStackPriority();
+
+		assertEquals(theirs, mw.p2BackupCards[0], "the opponent's Backup, in the opponent's row");
+		assertNull(mw.p1BackupCards[0], "nothing reached the controller's Backup row");
+		assertEquals(List.of(mine), mw.gameState.getP1Hand());
+	}
+
 	// =========================================================================================
 	// Black Cat 28-051R: "When Black Cat enters the field, each player may play 1 Character of
 	// cost 3 or less from their hand onto the field."

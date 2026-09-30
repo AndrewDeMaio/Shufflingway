@@ -2329,6 +2329,39 @@ final class ActionResolverChoose {
     }
 
     /**
+     * Reads a power boost's second sentence "If its power has become N or less/more, return [name]
+     * to your/its owner's hand." (5-077H Carbuncle) as a gate on the Forwards the boost just
+     * chose, or returns null when the sentence is anything else.
+     *
+     * <p>Anchored end to end: a sentence carrying more than the return is left to the general
+     * chain rather than read with its tail dropped. Both boost orders ("gains +N power until …"
+     * and "Until …, it gains +N power") call this, so neither can run the return ungated.
+     */
+    static BiConsumer<GameContext, List<ForwardTarget>> conditionalPowerReturn(String secondaryText) {
+        if (secondaryText == null) return null;
+        Matcher m = CONDITIONAL_POWER_RETURN.matcher(secondaryText.trim());
+        if (!m.matches()) return null;
+        String  card      = m.group("name").trim();
+        int     threshold = Integer.parseInt(m.group("threshold"));
+        boolean orLess    = "less".equalsIgnoreCase(m.group("cmp"));
+        boolean toOwner   = m.group("toowner") != null;
+        return (ctx, ts) -> {
+            boolean met = ts.stream().anyMatch(t -> {
+                int p = ctx.effectiveTargetPower(t);
+                return orLess ? p <= threshold : p >= threshold;
+            });
+            if (!met) {
+                ctx.logEntry("Condition not met: " + card + " stays (power " + (orLess ? "> " : "< ") + threshold + ")");
+                return;
+            }
+            ctx.logEntry("Condition met (power " + (orLess ? "≤ " : "≥ ") + threshold + "): return " + card
+                    + " to " + (toOwner ? "owner's" : "your") + " hand");
+            if (toOwner) ctx.returnNamedCardToOwnersHand(card);
+            else         ctx.returnNamedCardToYourHand(card);
+        };
+    }
+
+    /**
      * Builds Porom 15-119L's second sentence: "If N or more [X] Counters are placed on [Self], its
      * power also becomes P until the end of the turn."
      *
@@ -7206,6 +7239,9 @@ final class ActionResolverChoose {
             int boost = Integer.parseInt(boostM.group(1));
             EnumSet<CardData.Trait> traits = parseTraits(boostM.group(2));
             String logSuffix = boostLogSuffix(boost, traits);
+            // 5-077H Carbuncle prints its duration in this order. The gate needs the targets the
+            // boost chose, so it is read here; the generic secondary would return the card ungated.
+            BiConsumer<GameContext, List<ForwardTarget>> powerReturn = conditionalPowerReturn(secondaryText);
             return ctx -> {
                 ctx.logChooseHeader(choosePrefix + logSuffix);
                 List<ForwardTarget> ts = selectTargets(ctx, maxCount, upTo,
@@ -7213,7 +7249,8 @@ final class ActionResolverChoose {
                         costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
                 sortedByIdxDesc(ts, true) .forEach(t -> ctx.boostTarget(t, boost, traits));
                 sortedByIdxDesc(ts, false).forEach(t -> ctx.boostTarget(t, boost, traits));
-                if (secondary != null) secondary.accept(ctx);
+                if (powerReturn != null) powerReturn.accept(ctx, ts);
+                else if (secondary != null) secondary.accept(ctx);
             };
         }
 
@@ -7326,29 +7363,7 @@ final class ActionResolverChoose {
             EnumSet<CardData.Trait> traits = parseTraits(boostUntilM.group(2));
             String logSuffix = boostLogSuffix(boost, traits);
 
-            // Detect "If its power has become N or less/more, return [name] to hand" secondary
-            // and handle it inline so we have access to the target list for the power check.
-            final String    crCard;
-            final int       crThreshold;
-            final boolean   crOrLess;
-            final boolean   crToOwner;
-            final Consumer<GameContext> boostSecondary;
-            {
-                Matcher crM = secondaryText != null ? CONDITIONAL_POWER_RETURN.matcher(secondaryText) : null;
-                if (crM != null && crM.find()) {
-                    crCard       = crM.group("name").trim();
-                    crThreshold  = Integer.parseInt(crM.group("threshold"));
-                    crOrLess     = "less".equalsIgnoreCase(crM.group("cmp"));
-                    crToOwner    = crM.group("toowner") != null;
-                    boostSecondary = null;
-                } else {
-                    crCard       = null;
-                    crThreshold  = 0;
-                    crOrLess     = false;
-                    crToOwner    = false;
-                    boostSecondary = secondary;
-                }
-            }
+            BiConsumer<GameContext, List<ForwardTarget>> powerReturn = conditionalPowerReturn(secondaryText);
 
             return ctx -> {
                 ctx.logChooseHeader(choosePrefix + logSuffix);
@@ -7357,21 +7372,8 @@ final class ActionResolverChoose {
                         costVal, costCmp, powerVal, powerCmp, inclForwards, inclBackups, inclMonsters, jobFilter, cardNameFilter, categoryFilter, excludeName, inclSummons, fExcludeElem, withoutMulticard);
                 sortedByIdxDesc(ts, true) .forEach(t -> ctx.boostTarget(t, boost, traits));
                 sortedByIdxDesc(ts, false).forEach(t -> ctx.boostTarget(t, boost, traits));
-                if (crCard != null) {
-                    boolean condMet = ts.stream().anyMatch(t -> {
-                        int p = ctx.effectiveTargetPower(t);
-                        return crOrLess ? p <= crThreshold : p >= crThreshold;
-                    });
-                    if (condMet) {
-                        ctx.logEntry("Condition met (power " + (crOrLess ? "≤ " : "≥ ") + crThreshold + "): return " + crCard + " to " + (crToOwner ? "owner's" : "your") + " hand");
-                        if (crToOwner) ctx.returnNamedCardToOwnersHand(crCard);
-                        else           ctx.returnNamedCardToYourHand(crCard);
-                    } else {
-                        ctx.logEntry("Condition not met: " + crCard + " stays (power " + (crOrLess ? "> " : "< ") + crThreshold + ")");
-                    }
-                } else if (boostSecondary != null) {
-                    boostSecondary.accept(ctx);
-                }
+                if (powerReturn != null) powerReturn.accept(ctx, ts);
+                else if (secondary != null) secondary.accept(ctx);
             };
         }
 

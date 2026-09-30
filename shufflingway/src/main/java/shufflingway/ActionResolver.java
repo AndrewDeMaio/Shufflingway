@@ -3908,6 +3908,17 @@ public class ActionResolver {
             // unconditional power boost, which is exactly how it was running.
             if (secondaryDesc == null && secondaryTxt != null && !secondaryTxt.isEmpty())
                 secondaryDesc = secondaryIfNRemovedFromGameName(secondaryTxt, source);
+            // Mirrors the choose chain, where both power-boost orders read this gate off the
+            // Forwards they chose. Described standalone, 5-077H Carbuncle's return would name no
+            // condition at all.
+            if (secondaryDesc == null && secondaryTxt != null
+                    && ("PowerBoost".equals(followupName) || "PowerBoostUntil".equals(followupName))
+                    && ActionResolverChoose.conditionalPowerReturn(secondaryTxt) != null) {
+                Matcher crM = CONDITIONAL_POWER_RETURN.matcher(secondaryTxt.trim());
+                if (crM.matches())
+                    secondaryDesc = "IfPowerBecame(" + crM.group("threshold") + " or " + crM.group("cmp").toLowerCase()
+                            + ": ReturnNamedToHand)";
+            }
             // Mirrors the choose chain, where this is tried ahead of the general parse: the
             // sentence reads as a bare conditional on its own and no chain entry claims it.
             if (secondaryDesc == null && secondaryTxt != null && !secondaryTxt.isEmpty()
