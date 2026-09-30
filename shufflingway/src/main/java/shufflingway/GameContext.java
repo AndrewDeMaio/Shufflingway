@@ -2510,6 +2510,18 @@ public interface GameContext {
     /** Returns the lowest effective power among all P2 Forwards on the field; {@code 0} if none. */
     int lowestP2ForwardPower();
 
+    /**
+     * All the Forwards on both fields lose {@code amount} power until the end of the turn, as
+     * {@link #applyMassFieldPowerBoost} would, and the number left at 0 power or less — 8-135H
+     * Ark's "Draw 1 card for each Forward whose power became 0 or less due to the previous effect".
+     *
+     * <p>One call rather than a loss and a separate count because the count has to fall between
+     * the two halves of the loss: after the power drops, and before the rule process puts those
+     * Forwards into the Break Zone. Read after the loss rather than predicted from it, so a Forward
+     * whose power the effect could not lower is not counted.
+     */
+    int allForwardsLosePowerCountingZeroed(int amount);
+
     /** Returns the lowest effective power among the opponent's (of the ability-user) Forwards; {@code 0} if none. */
     default int opponentLowestForwardPower() { return isP1() ? lowestP2ForwardPower() : lowestP1ForwardPower(); }
 

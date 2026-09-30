@@ -7796,6 +7796,16 @@ final class GameContextImpl implements GameContext {
 				return min == Integer.MAX_VALUE ? 0 : min;
 			}
 
+			@Override public int allForwardsLosePowerCountingZeroed(int amount) {
+				massFieldPowerChange(-amount, true, false, false, false,
+						null, -1, null, null, null, EnumSet.noneOf(CardData.Trait.class));
+				int n = 0;
+				for (int i = 0; i < mw.p1ForwardCards.size(); i++) if (mw.effectiveP1ForwardPower(i) <= 0) n++;
+				for (int i = 0; i < mw.p2ForwardCards.size(); i++) if (mw.effectiveP2ForwardPower(i) <= 0) n++;
+				mw.enforceForwardBreakRuleProcess();
+				return n;
+			}
+
 			@Override public int fieldForwardPowerByName(String cardName) {
 				for (int i = 0; i < mw.p1ForwardCards.size(); i++)
 					if (mw.p1ForwardCards.get(i).name().equalsIgnoreCase(cardName))
@@ -9915,6 +9925,18 @@ final class GameContextImpl implements GameContext {
 
 			@Override
 			public void applyMassFieldPowerBoost(int amount, boolean inclForwards, boolean inclMonsters,
+					boolean opponentOnly, boolean selfOnly,
+					String element, int costVal, String costCmp, String category, String excludeName,
+					EnumSet<CardData.Trait> traitFilter) {
+				massFieldPowerChange(amount, inclForwards, inclMonsters, opponentOnly, selfOnly,
+						element, costVal, costCmp, category, excludeName, traitFilter);
+				// A loss can leave a Forward at 0 power, or below the damage it already carries;
+				// the rule process puts those into the Break Zone, as a single-target loss does.
+				if (amount < 0) mw.enforceForwardBreakRuleProcess();
+			}
+
+			/** {@link #applyMassFieldPowerBoost} without the rule process that follows a loss. */
+			private void massFieldPowerChange(int amount, boolean inclForwards, boolean inclMonsters,
 					boolean opponentOnly, boolean selfOnly,
 					String element, int costVal, String costCmp, String category, String excludeName,
 					EnumSet<CardData.Trait> traitFilter) {

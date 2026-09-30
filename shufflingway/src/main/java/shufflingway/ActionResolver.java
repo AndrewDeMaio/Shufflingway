@@ -1179,6 +1179,11 @@ public class ActionResolver {
         result = tryParseAllElementAndCategoryPowerBoost(effectText);
         if (result != null) return claim("AllElementAndCategoryPowerBoost", result);
 
+        // Must precede tryParseAllFieldPowerBoost, which find()s the loss in 8-135H Ark's first
+        // sentence and would read the draw that counts off it as a sentence of its own.
+        result = tryParseAllForwardsLosePowerDrawPerZeroed(effectText);
+        if (result != null) return claim("AllForwardsLosePowerDrawPerZeroed", result);
+
         result = tryParseAllFieldPowerBoost(effectText);
         if (result != null) return claim("AllFieldPowerBoost", result);
 
@@ -1783,6 +1788,9 @@ public class ActionResolver {
 
         result = tryParseDrawOnePerForwardCapped(effectText);
         if (result != null) return claim("DrawOnePerForwardCapped", result);
+
+        result = tryParseDrawPerTypeDiscardedToCast(effectText, source);
+        if (result != null) return claim("DrawPerTypeDiscardedToCast", result);
 
         result = tryParseDrawCards(effectText);
         if (result != null) return claim("DrawCards", result);
@@ -3908,6 +3916,10 @@ public class ActionResolver {
             // unconditional power boost, which is exactly how it was running.
             if (secondaryDesc == null && secondaryTxt != null && !secondaryTxt.isEmpty())
                 secondaryDesc = secondaryIfNRemovedFromGameName(secondaryTxt, source);
+            // Mirrors the choose chain's reader for 12-093C Scholar's count of the Forwards it dulled.
+            if (secondaryDesc == null && secondaryTxt != null && "Dull".equals(followupName)
+                    && SECONDARY_DRAW_PER_CHOSEN_DULLED.matcher(secondaryTxt.trim()).matches())
+                secondaryDesc = "DrawPerChosenDulled";
             // Mirrors the choose chain, where both power-boost orders read this gate off the
             // Forwards they chose. Described standalone, 5-077H Carbuncle's return would name no
             // condition at all.

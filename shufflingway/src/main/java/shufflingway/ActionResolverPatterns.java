@@ -9440,6 +9440,16 @@ final class ActionResolverPatterns {
         "opponent\\s+(?<amount>\\d+)\\s+points?\\s+of\\s+damage[.!]?)?\\s*$"
     );
     /**
+     * 8-135H Ark: "All the Forwards lose N power until the end of the turn. Draw 1 card for each
+     * Forward whose power became 0 or less due to the previous effect." Anchored end to end: the
+     * draw is counted off the loss, so neither sentence is read without the other.
+     */
+    static final Pattern ALL_FORWARDS_LOSE_POWER_DRAW_PER_ZEROED = Pattern.compile(
+        "(?i)^All\\s+the\\s+Forwards\\s+lose\\s+(?<amount>\\d+)\\s+power\\s+until\\s+the\\s+end\\s+of\\s+the\\s+" +
+        "turn\\.\\s+Draw\\s+1\\s+card\\s+for\\s+each\\s+Forward\\s+whose\\s+power\\s+became\\s+0\\s+or\\s+less\\s+" +
+        "due\\s+to\\s+the\\s+previous\\s+effect\\.?\\s*$"
+    );
+    /**
      * Matches "All [the] [element] Forwards/Backups/Characters [of cost N [or less|more]]
      * [you control | opponent controls] gain +N power until [the] end of [the] turn."
      * <ul>
@@ -10976,8 +10986,30 @@ final class ActionResolverPatterns {
     // =========================================================================================
     // Draw, discard and player damage
     // =========================================================================================
+    /**
+     * A Choose secondary, "Then, draw 1 card for each Forward you have dulled due to this ability."
+     * — 12-093C Scholar. Anchored end to end; the Choose chain takes it only behind a Dull of
+     * active Forwards, where the count is the number chosen.
+     */
+    static final Pattern SECONDARY_DRAW_PER_CHOSEN_DULLED = Pattern.compile(
+        "(?i)^(?:Then,\\s+)?draw\\s+1\\s+card\\s+for\\s+each\\s+Forward\\s+you\\s+have\\s+dulled\\s+due\\s+to\\s+" +
+        "this\\s+ability\\.?$"
+    );
+    /**
+     * "Draw 1 card for each [type] you discarded to cast [Self]." — 13-120H Doga's "for each Summon
+     * you discarded to cast Doga". Anchored end to end; {@code type} is a card type or "card".
+     */
+    static final Pattern DRAW_PER_TYPE_DISCARDED_TO_CAST = Pattern.compile(
+        "(?i)^draw\\s+1\\s+card\\s+for\\s+each\\s+(?<type>Summon|Forward|Backup|Monster|card)\\s+you\\s+" +
+        "discarded\\s+to\\s+cast\\s+(?<name>[^.]+?)\\.?\\s*$"
+    );
+    /**
+     * "Draw N card(s)[, then discard M card(s)]." Refuses "… for each …": a count scaled by
+     * something is a different effect, and read as a flat draw it ran as "Draw 1 card" whatever
+     * the count came to (8-135H Ark).
+     */
     static final Pattern DRAW_CARDS = Pattern.compile(
-        "(?i)^Draw\\s+(\\d+)\\s+cards?(?:\\s*[,.]?\\s*then\\s+discard\\s+(\\d+)\\s+cards?)?[.!]?"
+        "(?i)^Draw\\s+(\\d+)\\s+cards?(?!\\s+for\\s+each\\b)(?:\\s*[,.]?\\s*then\\s+discard\\s+(\\d+)\\s+cards?)?[.!]?"
     );
     /**
      * Matches "Discard N card(s)[,] then draw M card(s)".

@@ -702,6 +702,21 @@ final class ActionResolverPower {
         };
     }
     /**
+     * {@link ActionResolverPatterns#ALL_FORWARDS_LOSE_POWER_DRAW_PER_ZEROED} — 8-135H Ark. Every
+     * Forward on both fields loses the power, then the caster draws one card for each Forward
+     * left at 0 power or less, counted before those Forwards are put into the Break Zone.
+     */
+    static Consumer<GameContext> tryParseAllForwardsLosePowerDrawPerZeroed(String text) {
+        Matcher m = ALL_FORWARDS_LOSE_POWER_DRAW_PER_ZEROED.matcher(text.trim());
+        if (!m.matches()) return null;
+        int amount = Integer.parseInt(m.group("amount"));
+        return ctx -> {
+            ctx.logEntry("Effect: All Forwards -" + amount + " power until end of turn; draw 1 for each at 0 or less");
+            int zeroed = ctx.allForwardsLosePowerCountingZeroed(amount);
+            if (zeroed > 0) ctx.drawCards(zeroed);
+        };
+    }
+    /**
      * Parses "All [the] [element] [targets] [with Keyword[ or Keyword]] [of cost N] [control]
      * gain +N power until end of turn."
      */
@@ -745,6 +760,9 @@ final class ActionResolverPower {
 
         String trailingRaw = text.substring(m.end()).trim().replaceAll("^[.!,]+\\s*", "").trim();
         Consumer<GameContext> secondary = trailingRaw.isEmpty() ? null : parse(trailingRaw, null);
+        // Fail closed: a sentence after the boost that cannot be read leaves the whole text
+        // unclaimed, rather than running the boost alone as though the sentence were not printed.
+        if (!trailingRaw.isEmpty() && secondary == null) return null;
 
         String logMsg = "All " + elemLabel + catLabel + targets + traitLabel + costLabel + excludeLabel
                 + controlLabel + " " + change + " power until end of turn";

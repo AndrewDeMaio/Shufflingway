@@ -2860,6 +2860,18 @@ final class ActionResolverChoose {
                             // and the Backup-CP draw after it.
                             secondary = secondaryOnChosen(text.substring(0, m.start("followup")),
                                     secondaryText, source, xValue);
+                        } else if (SECONDARY_DRAW_PER_CHOSEN_DULLED.matcher(secondaryText.trim()).matches()
+                                && FOLLOWUP_DULL.matcher(primaryFollowup).find()
+                                && text.substring(0, m.start("followup")).toLowerCase(Locale.ROOT).contains(" active ")) {
+                            // 12-093C Scholar: "choose up to 2 active Forwards you control. Dull them.
+                            // Then, draw 1 card for each Forward you have dulled due to this
+                            // ability." Only an active Forward may be chosen, so every one chosen is
+                            // one dulled, and the count is the choice. The generic parse read the
+                            // front of the sentence as a flat "Draw 1 card".
+                            secondary = ctx -> {
+                                int n = ctx.lastChosenTargets().size();
+                                if (n > 0) ctx.drawCards(n);
+                            };
                         } else if (FOLLOWUP_BREAK.matcher(secondaryText).find()) {
                             // "Break it." as a secondary applies to the same targets chosen for the primary.
                             secondary = ctx -> {

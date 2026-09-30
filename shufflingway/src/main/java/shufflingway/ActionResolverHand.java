@@ -317,6 +317,24 @@ final class ActionResolverHand {
         };
     }
 
+    /**
+     * {@link ActionResolverPatterns#DRAW_PER_TYPE_DISCARDED_TO_CAST} — 13-120H Doga. Counts the
+     * cards of the named type among those discarded to pay for the source's own cast, so a copy
+     * that arrived without being paid for draws nothing. Only when the card named is the source.
+     */
+    static Consumer<GameContext> tryParseDrawPerTypeDiscardedToCast(String text, CardData source) {
+        Matcher m = DRAW_PER_TYPE_DISCARDED_TO_CAST.matcher(text.trim());
+        if (!m.matches() || source == null || !m.group("name").trim().equalsIgnoreCase(source.name())) return null;
+        String  type    = m.group("type");
+        boolean anyCard = type.equalsIgnoreCase("card");
+        return ctx -> {
+            int n = 0;
+            for (CardData d : ctx.cardsDiscardedToCastList(source))
+                if (anyCard || d.type().equalsIgnoreCase(type)) n++;
+            ctx.logEntry("Effect: Draw 1 card for each " + type + " discarded to cast " + source.name() + " (" + n + ")");
+            if (n > 0) ctx.drawCards(n);
+        };
+    }
     static Consumer<GameContext> tryParseDrawCards(String text) {
         Matcher m = DRAW_CARDS.matcher(text);
         if (!m.find()) return null;

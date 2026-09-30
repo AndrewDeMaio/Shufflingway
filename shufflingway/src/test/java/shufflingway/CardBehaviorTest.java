@@ -37218,6 +37218,66 @@ public class CardBehaviorTest {
 		verify(paidOtherwise, never()).drawCards(anyInt());
 	}
 
+	// Doga 13-120H: "When Doga enters the field, draw 1 card for each Summon you discarded to cast
+	// Doga." DrawCards used to take the "Draw 1 card" off the front and draw one whatever was paid.
+	private static final String DOGA_13_120H_DRAW = "draw 1 card for each Summon you discarded to cast Doga.";
+
+	@Test
+	void dogaDrawsOneForEachSummonDiscardedToCastIt() {
+		CardData doga = makeForward("Doga", "Water", 5, 8000);
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.cardsDiscardedToCastList(doga)).thenReturn(List.of(
+				makeSummon("Shiva", "Ice", 2, ""), makeForward("Snow", "Ice", 3, 7000), makeSummon("Ramuh", "Water", 3, "")));
+
+		assertEquals("DrawPerTypeDiscardedToCast", ActionResolver.matchedPatternName(DOGA_13_120H_DRAW, doga));
+		ActionResolver.parse(DOGA_13_120H_DRAW, doga).accept(ctx);
+		verify(ctx).drawCards(2);
+	}
+
+	@Test
+	void dogaPaidForWithoutSummonsDrawsNothing() {
+		CardData doga = makeForward("Doga", "Water", 5, 8000);
+		GameContext ctx = mock(GameContext.class);
+		when(ctx.cardsDiscardedToCastList(doga)).thenReturn(List.of(makeForward("Snow", "Ice", 3, 7000)));
+
+		ActionResolver.parse(DOGA_13_120H_DRAW, doga).accept(ctx);
+		verify(ctx, never()).drawCards(anyInt());
+	}
+
+	// Scholar 12-093C: "When Scholar enters the field, choose up to 2 active Forwards you control.
+	// Dull them. Then, draw 1 card for each Forward you have dulled due to this ability."
+	private static final String SCHOLAR_12_093C_EFFECT = "choose up to 2 active Forwards you control. Dull them. "
+			+ "Then, draw 1 card for each Forward you have dulled due to this ability.";
+
+	@Test
+	void scholarDrawsOneForEachForwardItDulled() {
+		ForwardTarget a = new ForwardTarget(true, 0, ForwardTarget.CardZone.FORWARD);
+		ForwardTarget b = new ForwardTarget(true, 1, ForwardTarget.CardZone.FORWARD);
+		GameContext ctx = ctxChoosing(List.of(a, b));
+		when(ctx.lastChosenTargets()).thenReturn(List.of(a, b));
+
+		ActionResolver.parse(SCHOLAR_12_093C_EFFECT, makeForward("Scholar", "Water", 2, 5000)).accept(ctx);
+		verify(ctx).drawCards(2);
+		assertEquals("ChooseCharacter / Dull + DrawPerChosenDulled",
+				ActionResolver.fullDescription(SCHOLAR_12_093C_EFFECT, null));
+	}
+
+	@Test
+	void scholarDullingNothingDrawsNothing() {
+		GameContext ctx = ctxChoosing(List.of());
+		when(ctx.lastChosenTargets()).thenReturn(List.of());
+
+		ActionResolver.parse(SCHOLAR_12_093C_EFFECT, makeForward("Scholar", "Water", 2, 5000)).accept(ctx);
+		verify(ctx, never()).drawCards(anyInt());
+	}
+
+	@Test
+	void aDrawScaledForEachSomethingIsNeverReadAsAFlatDraw() {
+		// The fail-closed half: a "for each" the dedicated readers do not know stays unclaimed.
+		assertNull(ActionResolverHand.tryParseDrawCards("Draw 1 card for each Forward you control."));
+		assertNotNull(ActionResolverHand.tryParseDrawCards("Draw 2 cards, then discard 1 card."));
+	}
+
 	@Test
 	void quinaUpgradesWhenTheCostRemovedACategoryIxCard() {
 		String text = "Choose 1 Forward opponent controls. It loses 2000 power until the end of the turn. If a "
